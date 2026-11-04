@@ -1,4 +1,4 @@
-// node aggregate.mjs out/lp.json out/upstream.json out/chrome.json > wpt.md
+// bun aggregate.mjs out/lp.json out/upstream.json out/chrome.json > wpt.md
 import fs from 'node:fs';
 const runs = process.argv.slice(2).map((f) => JSON.parse(fs.readFileSync(f)));
 const labels = runs.map((r) => r.label);

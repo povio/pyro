@@ -179,9 +179,9 @@ shim around Chrome).
 ```sh
 (cd bench && bun install)
 git clone -b fork --depth=1 https://github.com/lightpanda-io/wpt.git /abs/wpt   # testharnessreport.js exposes window.report
-node bench/wpt/serve.mjs /abs/wpt 9415 &
-node bench/wpt/run.mjs --wpt /abs/wpt --bin lp=$PWD/target/release/lightningpanda --sample-encoding 10 --out /tmp/lp.json
-node bench/wpt/aggregate.mjs /tmp/lp.json [/tmp/other.json ...]                 # markdown table
+bun bench/wpt/serve.mjs /abs/wpt 9415 &
+bun bench/wpt/run.mjs --wpt /abs/wpt --bin lp=$PWD/target/release/lightningpanda --sample-encoding 10 --out /tmp/lp.json
+bun bench/wpt/aggregate.mjs /tmp/lp.json [/tmp/other.json ...]                 # markdown table
 ```
 
 `--list` prints what would run. The default directories are dom, html/dom, encoding, url, fetch/api/basic, xhr,
@@ -193,3 +193,18 @@ files. Tests that need Python handlers, testdriver, `.sub`/`.https`/`.h2` or a n
 binary (577 files), and cross-origin hosts do not resolve. Compare binaries within one setup, not against published
 WPT numbers. The denominator per page is the largest subtest count any binary reported, so a crashed page counts its
 subtests as failures.
+
+## Playwright feature suite
+
+`bench/playwright-suite/` has 38 tests, one per Playwright feature a typical app E2E suite uses, against local
+fixture pages. It connects with `connectOverCDP`, so any binary with a `serve --host --port` command line works.
+
+```bash
+cd bench/playwright-suite && bun install
+TARGET=lp BIN=$PWD/../../target/release/lightningpanda bunx playwright test
+LIGHTNINGPANDA_FORK=1 TARGET=lp BIN=... bunx playwright test    # fork template mode
+TARGET=chrome bunx playwright test                              # Playwright's headless shell over CDP (macOS arm64 path, or set CHROME_BIN)
+```
+
+Results go to `results/$TARGET.json` (or `$OUT/$TARGET.json`). `baseline/visual.png` is the `toHaveScreenshot`
+reference, taken with `TARGET=chrome-launch bunx playwright test --update-snapshots` on macOS.

@@ -1,0 +1,9 @@
+{
+  "name": "lightningpanda-playwright-suite",
+  "private": true,
+  "type": "module",
+  "description": "Common Playwright features, run against any CDP browser binary over connectOverCDP",
+  "dependencies": {
+    "@playwright/test": "1.59.1"
+  }
+}

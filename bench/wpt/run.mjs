@@ -1,5 +1,5 @@
 // WPT testharness runner over CDP (Playwright connectOverCDP), identical for every target.
-// Usage: node run.mjs --wpt DIR --base http://127.0.0.1:9415 --bin label=/path/to/serve-compatible-binary
+// Usage: bun run.mjs --wpt DIR --base http://127.0.0.1:9415 --bin label=/path/to/serve-compatible-binary
 //                     --out results.json [--dirs dom,url,...] [--jobs 6] [--timeout 15000] [--long-timeout 45000]
 //                     [--sample-encoding N] [--match REGEX] [--list]
 // Start bench/wpt/serve.mjs first. See bench/README.md.
