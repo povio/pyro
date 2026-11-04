@@ -1224,6 +1224,16 @@ await check('popup event from window.open and a target=_blank link', async () =>
     assert.equal(await p.evaluate(() => b.closed), true);
   } finally { await p.close(); }
 });
+await check('streams: ReadableStream, pipeThrough and Response bodies', async () => {
+  const text = await page.evaluate(async () => {
+    const source = new ReadableStream({
+      start(c) { c.enqueue('st'); c.enqueue('ream'); c.close(); },
+    });
+    const body = source.pipeThrough(new TextEncoderStream());
+    return new Response(body).text();
+  });
+  assert.equal(text, 'stream');
+});
 await check('second context is independent', async () => {
   const other = await browser.newContext();
   const p2 = await other.newPage();

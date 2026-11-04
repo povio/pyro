@@ -353,9 +353,9 @@ fn parse_request<'s>(
 /// Fetch "extract a body" for the supported BodyInit types: FormData
 /// (multipart/form-data with a generated boundary), Blob, URLSearchParams,
 /// BufferSource, else ToString. Returns (bytes, Content-Type or "" when the
-/// type sets none). ReadableStream bodies are not supported by this
-/// implementation; other objects are stringified as the Web IDL union's last
-/// member, USVString.
+/// type sets none). ReadableStream bodies are handled by the callers, which
+/// drain them first (`Response` constructor, `fetch`); other objects are
+/// stringified as the Web IDL union's last member, USVString.
 pub(crate) fn extract_body(s: &Scope<'_>, body: Value<'_>) -> JsResult<(Bytes, String)> {
     if let Some((bytes, mime)) = crate::form_data::multipart_body(s, body)? {
         return Ok((bytes, mime));
@@ -375,6 +375,17 @@ pub(crate) fn install(s: &Scope<'_>) -> JsResult<()> {
     let function = s.function("fetch", |s, _this, args| {
         let deferred = s.deferred()?;
         let promise = deferred.promise.get(s);
+        match crate::streams::fetch_stream_body(s, args.get(0), args.get(1)) {
+            Ok(Some(sent)) => {
+                deferred.resolve(s, sent)?;
+                return Ok(promise);
+            }
+            Ok(None) => {}
+            Err(error) => {
+                deferred.reject(s, error.to_value(s))?;
+                return Ok(promise);
+            }
+        }
         let result = (|| {
             args.require(1, "fetch")?;
             let page = page_of(s)?;
