@@ -111,10 +111,12 @@ const startEngine = async (name, build, cmd, cmdArgs, port, env = {}) => {
     partial = lines.pop();
     for (const line of lines) if (line.includes('-profile')) console.log(name, line);
   });
+  let exit;
+  proc.on('exit', (code, signal) => (exit = { code, signal }));
   await waitCdp(port);
   const connect = () => chromium.connectOverCDP(`http://127.0.0.1:${port}`);
   const browser = await connect();
-  return { name, build, browser, pid: proc.pid, proc, connect, stderr: () => err };
+  return { name, build, browser, pid: proc.pid, proc, connect, stderr: () => err, exit: () => exit };
 };
 
 const launchChrome = (build, port) =>
@@ -263,6 +265,9 @@ for (const c of cases) {
         s.stop();
         rows.push({ case: c.name, engine: e.name, rep, error: String(err).slice(0, 300) });
         console.log(`${c.name} ${e.name} rep${rep} ERROR ${String(err).slice(0, 200)}`);
+        if (String(err).includes('has been closed')) {
+          console.log(`${e.name} server exit ${JSON.stringify(e.exit() ?? 'none yet')}, stderr tail:\n${e.stderr().slice(-1000)}`);
+        }
         try {
           await e.page.close();
         } catch {}

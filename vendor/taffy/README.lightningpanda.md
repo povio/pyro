@@ -78,3 +78,5 @@ Debug builds round the whole tree again after each pass and assert that it match
 (`assert_rounding_is_current`), so every test checks the skip. `rounding_skips_what_a_change_did_not_touch`
 in `crates/lp-render/tests/mirror.rs` fails if the skip stops firing; `LP.geometryStats` reports
 `roundedNodes` and `roundingSkips`.
+
+`compute/mod.rs`: `compute_root_layout_in` takes an initial containing block of another size than the root's available space (print: Blink's rounds down, the page area up). The `UPSTREAM.patch` hunk for it is at the end of that file.

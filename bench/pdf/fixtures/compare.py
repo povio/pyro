@@ -10,6 +10,10 @@ constant offset (ysame), with the largest spread of that offset (maxdy, pt).
 usage: compare.py --summarize IN.json OUT.json
 
 A summary keeps, for each page: word count, a hash of its sorted words, first and last sorted word, distinct y (pt).
+
+usage: compare.py --geometry A.json B.json
+
+Compares what geometry.mjs writes: page counts, link rects of page 1 within 0.1 pt, media boxes within 0.01 pt.
 """
 import collections
 import hashlib
@@ -35,6 +39,23 @@ def load(path):
 if sys.argv[1] == '--summarize':
     json.dump(load(sys.argv[2]), open(sys.argv[3], 'w'), separators=(',', ':'))
     sys.exit()
+
+if sys.argv[1] == '--geometry':
+    a, b = json.load(open(sys.argv[2])), json.load(open(sys.argv[3]))
+    largest, far, pages = 0.0, 0, 0
+    for c, l in zip(a, b):
+        at = (c['pn'], round(c['t'], 3), c['s'])
+        if c['pages'] != l['pages']:
+            pages += 1
+            print('pages', at, c['pages'], l['pages'])
+        for k in ('x0', 'x1', 'top', 'bot'):
+            d = abs(c['p1'][k] - l['p1'][k])
+            largest = max(largest, d)
+            far += d > 0.1
+        if max(abs(x - y) for x, y in zip(c['p1']['mb'], l['p1']['mb'])) > 0.01:
+            print('media box', at, c['p1']['mb'], l['p1']['mb'])
+    print('cases', len(a), 'page mismatches', pages, 'rect edges over 0.1 pt', far, 'largest', round(largest, 5))
+    sys.exit(1 if pages or far else 0)
 
 a, b = load(sys.argv[1]), load(sys.argv[2])
 verbose = '-v' in sys.argv

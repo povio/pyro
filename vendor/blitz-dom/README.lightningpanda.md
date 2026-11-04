@@ -117,3 +117,9 @@ way its block axis runs; paint turns the lines, and these read them physically:
   the writing mode of the box that placed the node); `physical_unrounded_geometry` is public for paint.
 
 `Node::text_offset_at_point` (hit testing) still takes logical coordinates.
+
+## `@page` rules of linked sheets
+
+`src/net.rs`, `src/document.rs` (`linked_page_css`): a `<link>` sheet with `@page` rules keeps its text, for
+printing. The servo build of Stylo parses neither `size` nor `page`, so the parsed rule does not have them. lp-render's
+`page_box` reads them.

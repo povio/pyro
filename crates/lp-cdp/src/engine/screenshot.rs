@@ -388,7 +388,6 @@ impl EngineHost {
             page_ranges: Option<String>,
             transfer_mode: Option<String>,
             // Accepted, not produced.
-            #[allow(dead_code)]
             prefer_css_page_size: Option<bool>,
             #[allow(dead_code)]
             display_header_footer: Option<bool>,
@@ -451,6 +450,11 @@ impl EngineHost {
             scale,
             print_background: p.print_background,
             page_ranges,
+            // `preferCSSPageSize` writes pages of the box's own size (close to Chrome's @page size).
+            place_on_paper: p.prefer_css_page_size != Some(true),
+            print_media: self.pages.get(&cmd.page).and_then(|state| state.emulated_media.as_ref()).is_none_or(|raw| {
+                !matches!(raw.get("media").and_then(|m| m.as_str()).map(str::trim), Some("screen"))
+            }),
             // Chrome's default: tagged.
             tagged: p.generate_tagged_pdf.unwrap_or(true),
         };
