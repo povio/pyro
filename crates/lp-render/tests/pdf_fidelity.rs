@@ -438,6 +438,62 @@ fn a_cut_drops_margins_and_a_forced_break_keeps_them() {
     assert_eq!(print_with(html, |o| o.paper = (576.0, 384.0)).pages.len(), 1);
 }
 
+/// A box this tall (fractional px).
+fn fractional_box(height: f64, style: &str) -> String {
+    format!(r#"<div style="height:{height}px;{style}"></div>"#)
+}
+
+#[test]
+fn a_fraction_of_a_px_decides_whether_a_line_fits() {
+    // 384 px pages, the line 20 px tall: its bottom is past the end at any fraction.
+    assert_eq!(page_tops(&(fractional_box(364.0 + 1.0 / 64.0, "") + &lines(1, ""))), [0.0, 364.0]);
+    assert_eq!(page_tops(&(fractional_box(364.25, "") + &lines(1, ""))), [0.0, 364.0]);
+    // The cut is painted where the line is, 365 from 364.5 up.
+    assert_eq!(page_tops(&(fractional_box(364.75, "") + &lines(1, ""))), [0.0, 365.0]);
+    assert_eq!(page_tops(&(fractional_box(363.75, "") + &lines(1, ""))).len(), 1);
+    // An avoided box likewise.
+    assert_eq!(page_tops(&(fractional_box(100.0, "") + &fractional_box(284.25, "break-inside:avoid"))), [0.0, 100.0]);
+    assert_eq!(page_tops(&(fractional_box(100.0, "") + &fractional_box(284.0, "break-inside:avoid"))).len(), 1);
+}
+
+#[test]
+fn fractional_line_heights_break_as_in_chrome() {
+    let tops = |line_height: f64, n: usize, style: &str| {
+        page_tops(&format!(r#"<div style="line-height:{line_height}px;{style}">{}</div>"#, vec!["x"; n].join("<br>")))
+    };
+    // Chrome's lines per page: 18 + 18 + 13; 17 + 17 + 12; 12 + 12 + 9.
+    assert_eq!(tops(20.5, 49, ""), [0.0, 369.0, 738.0]);
+    assert_eq!(tops(21.92, 46, ""), [0.0, 373.0, 745.0]);
+    assert_eq!(tops(30.7, 33, ""), [0.0, 368.0, 737.0]);
+    // Each page holds a whole page's worth from its fractional start: 19 + 19 + 13.
+    assert_eq!(page_tops(&(0..51).map(|_| lines(1, "height:19.7px")).collect::<String>()), [0.0, 374.0, 749.0]);
+}
+
+#[test]
+fn a_fraction_past_the_page_end_makes_a_page() {
+    let pages = |height: f64| page_tops(&fractional_box(height, "")).len();
+    assert_eq!(pages(384.0), 1);
+    assert_eq!(pages(384.0 - 1.0 / 64.0), 1);
+    assert_eq!(pages(384.0 + 1.0 / 64.0), 2);
+    assert_eq!(pages(384.25), 2);
+    assert_eq!(pages(768.25), 3);
+}
+
+#[test]
+fn a_forced_break_at_a_fraction_is_below_the_first_content() {
+    // A box a quarter px tall is content: page 1 holds it alone.
+    assert_eq!(page_tops(&(fractional_box(0.25, "") + &lines(1, "break-before:page"))).len(), 2);
+}
+
+/// `unrounded_layout` is in the placer's writing mode, so under a vertical box cuts stay on the painted positions:
+/// the avoided box is 350 px down the page (its inline offset), not 200.5 (its block offset). Not Chrome's paging of
+/// vertical flows, which is not implemented: this is what the snapped walk gives.
+#[test]
+fn cuts_under_a_vertical_box_use_physical_positions() {
+    let body = r#"<div style="writing-mode:vertical-lr;width:400.5px;height:1000px"><div style="margin-inline-start:350px;margin-block-start:200.5px;inline-size:100px;block-size:50.25px;break-inside:avoid"></div></div>"#;
+    assert_eq!(page_tops(body)[..2], [0.0, 350.0]);
+}
+
 /// What a page holds, whole CSS px, and overflowing documents, measured on Chrome 156 by 1 px rows: the rows of
 /// page 1 are its height, and their written height the scale.
 #[test]
