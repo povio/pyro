@@ -132,6 +132,9 @@ pub struct LayoutData {
     /// The unrounded layout and absolute offset the final layout was last rounded from
     /// (incremental rounding: `RoundTree::rounded_unchanged`).
     pub rounded_from: Option<(Layout, f32, f32)>,
+    /// lightningpanda: the half collapsed borders of a cell in a table without uniform ones (top,
+    /// right, bottom, left; see `CollapsedEdges`).
+    pub collapsed_border: Option<[f32; 4]>,
     /// The writing mode this node's layout algorithm ran in (the root takes it from `<body>`),
     /// recorded by the layout pass for CSSOM geometry lookups.
     #[cfg(feature = "writing-mode")]
@@ -147,6 +150,7 @@ impl LayoutData {
             scroll_offset: crate::Point::ZERO,
             scrollable_overflow: KurboRect::ZERO,
             rounded_from: None,
+            collapsed_border: None,
             #[cfg(feature = "writing-mode")]
             writing_mode: stylo_taffy::WritingMode::empty(),
         }

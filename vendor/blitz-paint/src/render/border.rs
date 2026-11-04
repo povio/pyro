@@ -147,6 +147,12 @@ fn sample_points_along_path(path: &BezPath, spacing: f64, count: usize) -> Vec<P
 impl ElementCx<'_, '_> {
     /// Draw all borders for a node
     pub(crate) fn draw_border(&self, scene: &mut impl PaintScene) {
+        // A table without uniform collapsed borders draws them all (`draw_collapsed_edges`).
+        if self.node.layout_data().collapsed_border.is_some()
+            || matches!(&self.element.special_data, SpecialElementData::TableRoot(table) if table.collapsed_edges.is_some())
+        {
+            return;
+        }
         let style = &*self.style;
         let border = style.get_border();
         let current_color = style.clone_color();
@@ -525,6 +531,10 @@ impl ElementCx<'_, '_> {
         let Some(grid_info) = &mut *table.computed_grid_info.borrow_mut() else {
             return;
         };
+        if let Some(edges) = &table.collapsed_edges {
+            self.draw_collapsed_edges(scene, edges, grid_info);
+            return;
+        }
         let Some(border_style) = table.border_style.as_deref() else {
             return;
         };
@@ -592,6 +602,63 @@ impl ElementCx<'_, '_> {
         }
     }
 
+    /// The winning borders of a table without uniform ones, centered on the grid lines. Segments of one
+    /// width and color are drawn as one rectangle, so that they have no seams.
+    fn draw_collapsed_edges(
+        &self,
+        scene: &mut impl PaintScene,
+        edges: &blitz_dom::CollapsedEdges,
+        grid_info: &taffy::DetailedGridInfo<style::Atom>,
+    ) {
+        let cols = PhysicalTracks::from_tracks(&grid_info.columns);
+        let rows = PhysicalTracks::from_tracks(&grid_info.rows);
+        let xs: Vec<f64> = line_positions(&cols);
+        let ys: Vec<f64> = line_positions(&rows);
+        if xs.len() != edges.columns + 1 || ys.len() != edges.rows + 1 {
+            return;
+        }
+        let mut fill = |x0: f64, y0: f64, x1: f64, y1: f64, color: style::color::AbsoluteColor| {
+            let shape = Rect::new(x0, y0, x1, y1).scale_from_origin(self.scale);
+            scene.fill(Fill::NonZero, self.transform, color.as_srgb_color(), None, &shape);
+        };
+        // A rule starts and ends on the middle of the rules across it.
+        for line in 0..=edges.rows {
+            let mut c = 0;
+            while c < edges.columns {
+                let edge = *edges.horizontal_at(line, c);
+                let mut end = c + 1;
+                while end < edges.columns && same_edge(edges.horizontal_at(line, end), &edge) {
+                    end += 1;
+                }
+                if edge.width > 0.0 {
+                    let half = edge.width as f64 / 2.0;
+                    let across = |col: usize| {
+                        let up = line.checked_sub(1).map_or(0.0, |r| edges.vertical_at(r, col).width);
+                        let down = (line < edges.rows).then(|| edges.vertical_at(line, col).width).unwrap_or(0.0);
+                        up.max(down) as f64 / 2.0
+                    };
+                    fill(xs[c] - across(c), ys[line] - half, xs[end] + across(end), ys[line] + half, edge.color);
+                }
+                c = end;
+            }
+        }
+        for line in 0..=edges.columns {
+            let mut r = 0;
+            while r < edges.rows {
+                let edge = *edges.vertical_at(r, line);
+                let mut end = r + 1;
+                while end < edges.rows && same_edge(edges.vertical_at(end, line), &edge) {
+                    end += 1;
+                }
+                if edge.width > 0.0 {
+                    let half = edge.width as f64 / 2.0;
+                    fill(xs[line] - half, ys[r], xs[line] + half, ys[end], edge.color);
+                }
+                r = end;
+            }
+        }
+    }
+
     /// ❌ dotted - Defines a dotted border
     /// ❌ dashed - Defines a dashed border
     /// ✅ solid - Defines a solid border
@@ -632,4 +699,17 @@ impl ElementCx<'_, '_> {
 
         scene.fill(Fill::NonZero, self.transform, color, None, &path);
     }
+}
+
+fn same_edge(a: &blitz_dom::CollapsedEdge, b: &blitz_dom::CollapsedEdge) -> bool {
+    a.width == b.width && a.color == b.color
+}
+
+/// The grid lines around `tracks`, in physical order.
+fn line_positions(tracks: &PhysicalTracks<'_>) -> Vec<f64> {
+    let mut lines: Vec<f64> = tracks.iter().map(|track| track.start as f64).collect();
+    if let Some(last) = tracks.iter().last() {
+        lines.push(last.end as f64);
+    }
+    lines
 }
