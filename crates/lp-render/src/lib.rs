@@ -1552,7 +1552,8 @@ struct LineContext {
 ///   however tall. At the top of a page it has nowhere to go: it is cut, and
 ///   what it holds (lines, nested avoided boxes) keeps its own constraints.
 ///   Margins, borders and padding above the first content of the page do not
-///   count as content, an empty box of any height does.
+///   count as content, an empty box of any height does. For a monolithic box
+///   they do: any margin or parent's padding above it moves it to the next page.
 /// - An inline formatting context's lines split at the lowest line that leaves
 ///   `orphans` on this page's part and `widows` for the rest. When both cannot
 ///   be had, `orphans` wins: a first part with fewer lines than `orphans` moves
@@ -1881,7 +1882,11 @@ impl Breaks {
                 // A line less than a px over a cut that moved up overflows a
                 // box a fraction shorter than it, and stays above the cut.
                 let reach = if u.line.is_some() && end < y + ph { self.dpr } else { TOUCHING };
-                if u.bottom > end + reach && u.top > first_content + TOUCHING && !(last_resort && u.avoid_only) {
+                // A monolithic box below the top of the page, by however little,
+                // moves. What has lines or children to split stays under a margin.
+                let monolithic = u.line.is_none() && !u.avoid_only;
+                let top = if monolithic { y } else { first_content };
+                if u.bottom > end + reach && u.top > top + TOUCHING && !(last_resort && u.avoid_only) {
                     cut = cut.min(u.top);
                 }
                 if let Some((context, index)) = u.line.filter(|_| u.bottom <= end + TOUCHING) {
