@@ -84,3 +84,9 @@ pub fn realm_disposed(page: &PageDom, realm: RealmId) {
     drop(page.define_properties.borrow_mut().remove(&realm));
     page.pinned.borrow_mut().retain(|(r, _), _| *r != realm);
 }
+
+/// The loader fetched the parser-blocking script `node` written to the
+/// script-created parser (`PageHooks::written_script_queued`).
+pub fn written_script_fetched(page: &Rc<PageDom>, node: NodeId, url: &str, source: Result<String, String>) {
+    crate::html::written_script_fetched(page, node, url, source);
+}

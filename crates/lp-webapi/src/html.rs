@@ -2474,9 +2474,16 @@ pub(crate) fn upgrade_if_custom<'s>(s: &Scope<'s>, page: &Rc<PageDom>, el: NodeI
 // script-created parser, write() parses into it synchronously, running inline
 // classic scripts in the main world as they are reached (their own writes are
 // parsed at the insertion point), and close() ends it;
-// the embedder then reports DOMContentLoaded/load. Writing while the network
-// parser is still loading the document, and external or module scripts in
-// written markup, are reported explicitly as unsupported.
+// the embedder then reports DOMContentLoaded/load.
+//
+// While the network parser loads the document, a script it reached has that
+// parser on loan (`PageDom::lend_network_parser`), so its writes parse at the
+// insertion point too. External and module scripts in written markup go to the
+// embedder's loader; a parser-blocking one stops tokenizing (later writes only
+// queue input) until it was fetched and ran. External and module scripts have
+// no insertion point otherwise, so their writes are ignored. A write or open
+// outside any script while the network parser runs, which aborts the load in a
+// browser, is reported explicitly as unsupported.
 
 fn html_document(page: &PageDom, doc: NodeId) -> JsResult<()> {
     let html = page.dom.borrow().document_data(doc).map(|d| d.kind == lp_dom::DocumentKind::Html).js()?;
@@ -2490,6 +2497,16 @@ fn network_parser_active(page: &PageDom, doc: NodeId) -> bool {
     !page.script_parser_active.get() && page.ready_state(doc) != "complete"
 }
 
+/// A script the network parser reached is running and `doc` is that parser's.
+fn writes_to_network_parser(page: &PageDom, doc: NodeId) -> bool {
+    page.network_parser_lent.get() && doc == page.document()
+}
+
+/// A written parser-blocking script of `doc` is pending: input only queues.
+fn writes_blocked(page: &PageDom, doc: NodeId) -> bool {
+    doc == page.document() && page.written_pending.get().is_some()
+}
+
 /// `document.open()` (the two-argument form; three arguments open a window).
 pub(crate) fn document_open<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value<'s>> {
     let page = n.page();
@@ -2500,8 +2517,8 @@ pub(crate) fn document_open<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsR
     }
     html_document(page, n.id)?;
     let document = node_value(s, page, Some(n.id))?;
-    // From a script the script-created parser is running: no-op.
-    if page.script_parser_active.get() && page.script_nesting.get() > 0 {
+    // From a script the active parser is running: no-op.
+    if (page.script_parser_active.get() || writes_to_network_parser(page, n.id)) && page.script_nesting.get() > 0 {
         return Ok(document);
     }
     open_document(page, n.id)?;
@@ -2512,12 +2529,14 @@ fn open_document(page: &Rc<PageDom>, doc: NodeId) -> JsResult<()> {
     if network_parser_active(page, doc) {
         return Err(JsError::dom(
             "NotSupportedError",
-            "document.open/write while the document is still loading is not supported by lightningpanda",
+            "document.open/write outside a parser-run script while the document is still loading is not supported by lightningpanda",
         ));
     }
     if let Some(mut old) = page.script_parser.borrow_mut().take() {
         old.end();
     }
+    page.written_scripts.borrow_mut().clear();
+    page.written_pending.set(None);
     // Erase all event listeners and handlers of the document's nodes and window.
     let mut keys: Vec<TargetKey> = {
         let dom = page.dom.borrow();
@@ -2553,21 +2572,29 @@ pub(crate) fn document_write<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>, ln: b
     if ln {
         text.push('\n');
     }
-    if !page.script_parser_active.get() {
-        // Implicit open on a loaded document.
+    if !page.script_parser_active.get() && !writes_to_network_parser(page, n.id) {
+        // No insertion point: ignored from an external or module script, else
+        // an implicit open on a loaded document.
+        if page.ignore_destructive_writes.get() > 0 {
+            return Ok(s.undefined());
+        }
         open_document(page, n.id)?;
     }
-    if page.script_nesting.get() > 0 {
-        // From a script the parser is running: parse at the insertion point
-        // now, before the rest of the outer input.
-        let Some(step) = with_parser(page, |p| p.begin_nested(&text)) else { return Ok(s.undefined()) };
-        let result = drive_parser(page, n.id, step);
-        with_parser(page, |p| p.end_nested());
-        return result.map(|_| s.undefined());
-    }
-    let Some(step) = with_parser(page, |p| p.feed(&text)) else { return Ok(s.undefined()) };
+    let blocked = writes_blocked(page, n.id);
+    let Some(step) = with_parser(page, n.id, |p| {
+        if blocked {
+            p.push_input(&text);
+            lp_dom::parse::ParseStep::NeedInput
+        } else {
+            p.feed(&text)
+        }
+    }) else {
+        return Ok(s.undefined());
+    };
     let result = drive_parser(page, n.id, step);
-    if page.script_parser_close.take() {
+    // From a script the parser is running, its deferred close waits until the
+    // outer write returns.
+    if page.script_nesting.get() == 0 && !writes_blocked(page, n.id) && page.script_parser_close.take() {
         close_document(page, n.id);
     }
     result.map(|_| s.undefined())
@@ -2580,9 +2607,9 @@ pub(crate) fn document_close<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<
     if !page.script_parser_active.get() {
         return Ok(s.undefined());
     }
-    if page.script_nesting.get() > 0 {
-        // From a script the parser is running: close once the outer write
-        // returns.
+    if page.script_nesting.get() > 0 || writes_blocked(page, n.id) {
+        // From a script the parser is running, or with a written script still
+        // to come: close once the outer write returns or the script ran.
         page.script_parser_close.set(true);
         return Ok(s.undefined());
     }
@@ -2591,8 +2618,13 @@ pub(crate) fn document_close<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<
 }
 
 fn close_document(page: &Rc<PageDom>, doc: NodeId) {
-    if let Some(step) = with_parser(page, |p| p.resume()) {
+    if let Some(step) = with_parser(page, doc, |p| p.resume()) {
         let _ = drive_parser(page, doc, step);
+    }
+    // A blocking script at the very end of the input: close once it ran.
+    if writes_blocked(page, doc) {
+        page.script_parser_close.set(true);
+        return;
     }
     let Some(mut parser) = page.script_parser.borrow_mut().take() else { return };
     parser.end();
@@ -2610,27 +2642,32 @@ fn close_document(page: &Rc<PageDom>, doc: NodeId) {
     }
 }
 
-/// Runs `f` on the script-created parser. The parser is borrowed only for the
-/// tokenizer call, never while a script runs, so scripts can write to it.
-fn with_parser<R>(page: &PageDom, f: impl FnOnce(&mut lp_dom::parse::DocumentParser) -> R) -> Option<R> {
-    let mut parser = page.script_parser.borrow_mut().take()?;
+/// Runs `f` on the parser writes to `doc` go to. The parser is borrowed only
+/// for the tokenizer call, never while a script runs, so scripts can write to it.
+fn with_parser<R>(page: &PageDom, doc: NodeId, f: impl FnOnce(&mut lp_dom::parse::DocumentParser) -> R) -> Option<R> {
+    let slot = if writes_to_network_parser(page, doc) { &page.network_parser } else { &page.script_parser };
+    let mut parser = slot.borrow_mut().take()?;
     let result = f(&mut parser);
-    let mut slot = page.script_parser.borrow_mut();
+    let mut slot = slot.borrow_mut();
     if slot.is_none() {
         *slot = Some(parser);
     }
     Some(result)
 }
 
-/// Runs the parser until it needs input, executing the scripts it yields.
-/// The first script error is returned after parsing continued past it.
+/// Runs the parser until it needs input or a written script blocks it,
+/// executing the inline scripts it yields. The first script error is returned
+/// after parsing continued past it.
 fn drive_parser(page: &Rc<PageDom>, doc: NodeId, mut step: lp_dom::parse::ParseStep) -> JsResult<()> {
     let mut first_error = None;
     while let lp_dom::parse::ParseStep::Script(node) = step {
         if let Err(err) = run_parser_script(page, doc, node) {
             first_error.get_or_insert(err);
         }
-        match with_parser(page, |p| p.resume()) {
+        if writes_blocked(page, doc) {
+            break;
+        }
+        match with_parser(page, doc, |p| p.resume()) {
             Some(next) => step = next,
             None => break,
         }
@@ -2644,42 +2681,95 @@ fn run_parser_script(page: &Rc<PageDom>, doc: NodeId, node: NodeId) -> JsResult<
         return Ok(());
     }
     let info = {
-        let mut dom = page.dom.borrow_mut();
+        let dom = page.dom.borrow();
         let Ok(info) = dom.script_info(node) else { return Ok(()) };
         if info.already_started {
             return Ok(());
         }
-        let _ = dom.mark_script_started(node);
         info
     };
     match info.kind {
         ScriptKind::Classic if !info.nomodule && info.src.is_none() => {}
         ScriptKind::Classic if !info.nomodule => {
-            return Err(JsError::dom(
-                "NotSupportedError",
-                "external scripts in document.write markup are not supported by lightningpanda",
-            ))
+            return queue_written_script(page, doc, node, !info.async_ && !info.defer, "external")
         }
-        ScriptKind::Module => {
-            return Err(JsError::dom(
-                "NotSupportedError",
-                "module scripts in document.write markup are not supported by lightningpanda",
-            ))
-        }
+        ScriptKind::Module => return queue_written_script(page, doc, node, false, "module"),
         // nomodule classic scripts, import maps and data blocks do not run.
-        _ => return Ok(()),
+        _ => {
+            let _ = page.dom.borrow_mut().mark_script_started(node);
+            return Ok(());
+        }
     }
-    let Some(realm) = page.main_world_realm() else { return Ok(()) };
+    let _ = page.dom.borrow_mut().mark_script_started(node);
     let url = page.dom.borrow().document_data(doc).map(|d| d.url.clone()).unwrap_or_default();
+    eval_parser_script(page, doc, node, &info.inline_text, &url)
+}
+
+/// Hands a script in written markup to the loader, which marks it started. A
+/// parser-blocking one stops tokenizing until it ran.
+fn queue_written_script(page: &PageDom, doc: NodeId, node: NodeId, blocking: bool, what: &str) -> JsResult<()> {
+    let accepted = doc == page.document()
+        && (page.network_parser_lent.get() || page.hooks().is_some_and(|h| h.written_script_queued()));
+    if !accepted {
+        let _ = page.dom.borrow_mut().mark_script_started(node);
+        return Err(JsError::dom(
+            "NotSupportedError",
+            format!("{what} scripts in document.write markup are not supported by lightningpanda"),
+        ));
+    }
+    page.written_scripts.borrow_mut().push(node);
+    if blocking {
+        page.written_pending.set(Some(node));
+    }
+    Ok(())
+}
+
+/// Evaluates a script of the parser at its insertion point.
+fn eval_parser_script(page: &Rc<PageDom>, doc: NodeId, node: NodeId, text: &str, url: &str) -> JsResult<()> {
+    let Some(realm) = page.main_world_realm() else { return Ok(()) };
     let scope = realm.scope()?;
+    let outer_script = page.current_script();
     page.set_current_script(Some(node));
     page.script_nesting.set(page.script_nesting.get() + 1);
-    if let Err(e) = scope.eval(&info.inline_text, Some(&url), 1) {
+    with_parser(page, doc, |p| p.open_insertion_point());
+    if let Err(e) = scope.eval(text, Some(url), 1) {
         scope.report_exception(&e);
     }
+    with_parser(page, doc, |p| p.close_insertion_point());
     page.script_nesting.set(page.script_nesting.get() - 1);
-    page.set_current_script(None);
+    page.set_current_script(outer_script);
     Ok(())
+}
+
+/// The loader fetched the parser-blocking script `node` written to the
+/// script-created parser: runs it, then parses on.
+pub(crate) fn written_script_fetched(page: &Rc<PageDom>, node: NodeId, url: &str, source: Result<String, String>) {
+    // A later document.open() dropped the parser this script belonged to.
+    if page.is_disposed() || page.written_pending.get() != Some(node) {
+        return;
+    }
+    page.written_pending.set(None);
+    let doc = page.document();
+    match source {
+        Ok(text) => {
+            let _ = eval_parser_script(page, doc, node, &text, url);
+        }
+        Err(error) => {
+            if let Some(realm) = page.main_world_realm() {
+                if let Ok(scope) = realm.scope() {
+                    scope.report_exception(&JsError::Type(format!("Failed to load script: {error}")));
+                }
+            }
+        }
+    }
+    if !writes_blocked(page, doc) {
+        if let Some(step) = with_parser(page, doc, |p| p.resume()) {
+            let _ = drive_parser(page, doc, step);
+        }
+    }
+    if !writes_blocked(page, doc) && page.script_parser_close.take() {
+        close_document(page, doc);
+    }
 }
 
 pub(crate) fn dom_implementation<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Object<'s>> {
