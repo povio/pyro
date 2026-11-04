@@ -5758,12 +5758,62 @@ mod screenshot {
         assert!(pdf.contains("/StructTreeRoot") && pdf.contains("/S/H1"), "tagged by default");
         let (pdf, _) = print(&mut h, json!({"generateTaggedPDF": false}));
         assert!(!pdf.contains("/StructTreeRoot"), "generateTaggedPDF: false");
-        // Letter with 0.4in margins is 739 px of content, laid out at that
+        // Letter with 0.4in margins is 741.33 px of content, laid out at that
         // width for printing only.
         assert_eq!(eval_value(&mut h, width), before, "the screen layout is restored");
         let r = h.page("Page.printToPDF", json!({"pageRanges": "9"}));
         assert!(r.get("error").is_some(), "{r}");
         assert_eq!(eval_value(&mut h, width), before, "restored after a failed print too");
+    }
+
+    /// Page size and link rects measured on Chrome 156: paper rounded up and
+    /// margins down to whole points, the origin in whole px.
+    #[test]
+    fn print_to_pdf_page_geometry_matches_chrome() {
+        let mut h = Harness::new();
+        load_html(
+            &mut h,
+            r#"<!doctype html><body style="margin:0"><div style="height:70px"></div><a href="https://example.com/b" style="display:block;margin-left:40px;width:200px;height:50px"></a>"#,
+        );
+        let (letter, a4) = ((8.5, 11.0, "612 792"), (8.27, 11.69, "595.92 841.92"));
+        for ((w, height, media), margin, scale, want) in [
+            (letter, 0.4, 1.0, [57.75, 674.25, 207.75, 711.75]),
+            (letter, 0.4, 0.8, [51.75, 692.25, 171.75, 722.25]),
+            (letter, 0.4, 1.5, [72.75, 629.25, 297.75, 685.5]),
+            (letter, 0.5, 1.0, [66.0, 666.0, 216.0, 703.5]),
+            (a4, 1.0 / 2.54, 1.0, [57.75, 724.17, 207.75, 761.67]),
+            (a4, 0.5, 0.8, [60.0, 733.92, 180.0, 763.92]),
+            (a4, 0.0, 1.0, [30.0, 751.92, 180.0, 789.42]),
+        ] {
+            let r = h.page(
+                "Page.printToPDF",
+                json!({"paperWidth": w, "paperHeight": height, "marginTop": margin, "marginBottom": margin,
+                       "marginLeft": margin, "marginRight": margin, "scale": scale}),
+            );
+            let pdf =
+                lp_cdp::fetch_protocol::base64_decode(r["result"]["data"].as_str().unwrap_or_else(|| panic!("{r}")))
+                    .unwrap();
+            let pdf = String::from_utf8_lossy(&pdf).into_owned();
+            assert!(pdf.contains(&format!("/MediaBox[0 0 {media}]")), "{w}x{height}");
+            let got: Vec<f64> = pdf
+                .split("/Rect[")
+                .nth(1)
+                .and_then(|r| r.split(']').next())
+                .map(|r| r.split_whitespace().filter_map(|v| v.parse().ok()).collect())
+                .unwrap_or_default();
+            let matches = got.len() == 4 && got.iter().zip(want).all(|(a, b)| (a - b).abs() < 0.01);
+            assert!(matches, "{w}x{height} margin {margin} scale {scale}: {got:?}, Chrome {want:?}");
+        }
+        // A fractional print width (741.33 px) restores the screen layout, which is whole px.
+        let width = "document.querySelector('a').parentElement.getBoundingClientRect().width";
+        let before = eval_value(&mut h, width);
+        assert!(h.page("Page.printToPDF", json!({})).get("error").is_none());
+        assert_eq!(eval_value(&mut h, width), before, "the screen layout is restored");
+        // Whole points decide whether content is left, as in Chrome.
+        let thin = |m: f64| json!({"paperWidth": 1, "paperHeight": 1, "marginTop": m, "marginBottom": m, "marginLeft": 0, "marginRight": 0});
+        assert!(h.page("Page.printToPDF", thin(0.497)).get("error").is_none());
+        let r = h.page("Page.printToPDF", thin(0.5));
+        assert_eq!(r["error"]["message"], "invalid print parameters: content area is empty", "{r}");
     }
 
     /// A layout sub-resource still downloading delays the PDF, not the

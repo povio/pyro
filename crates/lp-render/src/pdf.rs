@@ -274,12 +274,10 @@ pub fn write(
         }
         s.finish();
         if let Some(ex) = extras {
-            let (offset, content_scale) = match placement {
-                Some(p) => (p.offset, scale * p.scale),
-                None => ((0.0, 0.0), scale),
-            };
+            // `scale` already includes the placement's scale.
+            let offset = placement.map_or((0.0, 0.0), |p| p.offset);
             for link in &ex.links {
-                let Some(annotation) = link_annotation(link, *page, pages, offset, content_scale) else { continue };
+                let Some(annotation) = link_annotation(link, *page, pages, offset, scale) else { continue };
                 stats.links += 1;
                 if tagged {
                     leaves.push((p.add_tagged_annotation(annotation), Some(link.structure)));
@@ -568,10 +566,11 @@ impl Replay<'_, '_> {
                         y1 = y1.max(g.y as f64);
                     }
                     let bounds = Rect::new(x0 - size, y0 - size * 1.5, x1 + size * 2.0, y1 + size);
-                    // A recorded run's content area: a line on the next page
-                    // (cuts are at line tops) is not written on this one.
+                    // A recorded run's middle: a line on the next page (cuts are
+                    // at line tops, and a content area can start above its line
+                    // box) is not written on this one.
                     let bounds = match source.and_then(|i| self.extras?.runs.get(i)) {
-                        Some(r) => r.bounds.inflate(-0.5, -0.5),
+                        Some(r) => r.bounds.inflate(-0.5, 0.5 - r.bounds.height() / 2.0),
                         None => c.transform.transform_rect_bbox(bounds),
                     };
                     if !self.visible(bounds) {

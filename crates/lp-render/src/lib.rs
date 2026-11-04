@@ -180,6 +180,42 @@ pub struct LayoutBoxes {
     pub timings: Timings,
 }
 
+/// Chrome's page geometry for a paper and margins in inches (top, right,
+/// bottom, left), as [`PdfOptions::paper`] and [`PdfOptions::margins`] in CSS px;
+/// `None` when no content area is left. Measured on Chrome 156 (Letter, A4,
+/// Legal and small papers; margins from 0 to 1 in; scales 0.8 to 1.5):
+///
+/// - The paper is rounded up to whole points and margins down to whole points.
+///   The content box is what is left of those, in points (0.4 in on Letter:
+///   612 - 28 - 28 = 556 pt = 741.33 px).
+/// - The written page size is that paper on a 300 dpi grid (A4's 596 x 842 pt
+///   gives 2483 x 3508 dots, a 595.92 x 841.92 pt MediaBox).
+/// - The content box's origin is the top and left margin in whole CSS px, rounded
+///   (28 pt = 37.33 px starts at 37 px, 29 pt = 38.67 px at 39 px).
+///
+/// Scale does not enter: it divides the content box when laying out.
+pub fn chrome_page_geometry(paper_in: (f64, f64), margins_in: [f64; 4]) -> Option<((f64, f64), [f64; 4])> {
+    const PT_PER_IN: f64 = 72.0;
+    const PT_PER_DOT: f64 = PT_PER_IN / 300.0;
+    let paper_pt = ((paper_in.0 * PT_PER_IN).ceil(), (paper_in.1 * PT_PER_IN).ceil());
+    let [top, right, bottom, left] = margins_in.map(|m| (m * PT_PER_IN).floor());
+    let content_pt = (paper_pt.0 - left - right, paper_pt.1 - top - bottom);
+    if content_pt.0 < 1.0 || content_pt.1 < 1.0 {
+        return None;
+    }
+    let to_px = |pt: f64| pt / pdf::PX_TO_PT;
+    let page_px = |pt: f64| to_px((pt / PT_PER_DOT).round() * PT_PER_DOT);
+    let paper = (page_px(paper_pt.0), page_px(paper_pt.1));
+    let (origin_top, origin_left) = (to_px(top).round(), to_px(left).round());
+    let margins = [
+        origin_top,
+        paper.0 - origin_left - to_px(content_pt.0),
+        paper.1 - origin_top - to_px(content_pt.1),
+        origin_left,
+    ];
+    Some((paper, margins))
+}
+
 /// `Page.printToPDF` options.
 #[derive(Clone, Debug)]
 pub struct PdfOptions {
@@ -1249,18 +1285,21 @@ fn paint_paper(
     let content = ((opts.paper.0 - left - right).max(1.0), (opts.paper.1 - top - bottom).max(1.0));
     // The print layout's viewport (CSS px).
     let (cw, ch) = (content.0 / scale, content.1 / scale);
-    let saved = ((cw - viewport.0 as f64).abs() > 0.5).then(|| doc.viewport().clone());
+    let saved = ((cw - viewport.0 as f64).abs() > 1.0 / 64.0).then(|| doc.viewport().clone());
     if let Some(v) = &saved {
         let mut print = v.clone();
         print.window_size = ((cw * dpr).round().max(1.0) as u32, (ch * dpr).round().max(1.0) as u32);
         doc.set_viewport(print);
+        doc.set_layout_size(Some((cw as f32, ch as f32)));
         doc.resolve(0.0);
     }
     let width = if saved.is_some() { cw } else { viewport.0 as f64 };
     let root = doc.root_element();
     let (size, overflow) = (root.final_layout().size, *root.scrollable_overflow());
     let doc_w = (size.width as f64).max(overflow.x1).max(width) * dpr;
-    let doc_h = (size.height as f64).max(overflow.y1).max(viewport.1 as f64) * dpr;
+    // The content's height, not the viewport's: a short document on a page
+    // smaller than the viewport is one page, as in Chrome.
+    let doc_h = (size.height as f64).max(overflow.y1) * dpr;
     let (pw, ph) = (cw * dpr, ch * dpr);
     let (avoid, forced) = break_constraints(doc, dpr, ph);
     let mut pages = Vec::new();
@@ -1280,6 +1319,7 @@ fn paint_paper(
         Err(e) => {
             // The screen layout comes back whatever happens to the print.
             if let Some(v) = saved {
+                doc.set_layout_size(None);
                 doc.set_viewport(v);
                 doc.resolve(0.0);
             }
@@ -1296,6 +1336,7 @@ fn paint_paper(
     extras.canvas = if opts.print_background { canvas_color(doc) } else { None };
     let relaid = saved.is_some();
     if let Some(v) = saved {
+        doc.set_layout_size(None);
         doc.set_viewport(v);
         doc.resolve(0.0);
     }
@@ -1481,7 +1522,7 @@ fn pdf_extras(doc: &blitz_dom::BaseDocument, runs: Vec<blitz_paint::TextRun>, dp
                     // Boxes of their own (block, inline-block): the border box;
                     // inline links get their text's.
                     let boxed = node.primary_styles().is_some_and(|s| !s.clone_display().is_inline_flow());
-                    let rects: Vec<Rect> = boxed.then(|| element_bounds(doc, c, dpr)).flatten().into_iter().collect();
+                    let rects: Vec<Rect> = boxed.then(|| unrounded_bounds(doc, c, dpr)).flatten().into_iter().collect();
                     let boxed = !rects.is_empty();
                     match link_target(c) {
                         Some(target) => {
@@ -1536,6 +1577,11 @@ fn pdf_extras(doc: &blitz_dom::BaseDocument, runs: Vec<blitz_paint::TextRun>, dp
                 structure(id, doc, &mut ex, &mut structs, &kind_of, &link_target, dpr);
             }
         }
+    }
+    // Chrome writes the area of an inline link in whole CSS px (boxes keep theirs).
+    let snap = |v: f64| (v / dpr).round() * dpr;
+    for rect in ex.links.iter_mut().filter(|l| !l.boxed).flat_map(|l| l.rects.iter_mut()) {
+        *rect = Rect::new(snap(rect.x0), snap(rect.y0), snap(rect.x1), snap(rect.y1));
     }
     ex.links.retain(|l| !l.rects.is_empty());
     ex.runs = runs;
@@ -1603,7 +1649,18 @@ fn content_extent(doc: &blitz_dom::BaseDocument, id: blitz_dom::NodeId) -> (f64,
 /// coordinates crop the wrong region for translated bottom sheets and scaled
 /// component ancestors).
 pub(crate) fn element_bounds(doc: &blitz_dom::BaseDocument, id: blitz_dom::NodeId, dpr: f64) -> Option<Rect> {
-    let size = doc.get_node(id)?.final_layout().size;
+    bounds_of(doc, id, dpr, true)
+}
+
+/// [`element_bounds`] before pixel snapping (a link's area in a print layout,
+/// as Chrome writes it).
+fn unrounded_bounds(doc: &blitz_dom::BaseDocument, id: blitz_dom::NodeId, dpr: f64) -> Option<Rect> {
+    bounds_of(doc, id, dpr, false)
+}
+
+fn bounds_of(doc: &blitz_dom::BaseDocument, id: blitz_dom::NodeId, dpr: f64, snapped: bool) -> Option<Rect> {
+    let layout = |n: &blitz_dom::Node| if snapped { *n.final_layout() } else { *n.unrounded_layout() };
+    let size = layout(doc.get_node(id)?).size;
     let mut chain = Vec::new();
     let mut current = Some(id);
     while let Some(current_id) = current {
@@ -1614,7 +1671,7 @@ pub(crate) fn element_bounds(doc: &blitz_dom::BaseDocument, id: blitz_dom::NodeI
     let mut transform = Affine::IDENTITY;
     for current_id in chain.into_iter().rev() {
         let current_node = doc.get_node(current_id)?;
-        let location = current_node.final_layout().location;
+        let location = layout(current_node).location;
         transform = transform
             * Affine::translate((location.x as f64 * dpr, location.y as f64 * dpr))
             * current_node.transform().as_deref().copied().unwrap_or_default();
@@ -1662,6 +1719,50 @@ fn ensure<R: ImageRenderer>(slot: &mut Option<(R, (u32, u32))>, w: u32, h: u32) 
 
 #[cfg(test)]
 mod settle_resolution_tests {
+    use super::chrome_page_geometry;
+
+    /// (paper in, margins in) -> page size pt, origin px, content size pt, measured on Chrome 156.
+    #[test]
+    fn page_geometry_matches_chrome() {
+        for (paper, margins, page, origin, content) in [
+            // Letter 0.4 in: margins are 28 pt, the origin 37 px, the content 556 x 736 pt.
+            ((8.5, 11.0), [0.4; 4], (612.0, 792.0), (37.0, 37.0), (556.0, 736.0)),
+            // 1 cm is 28.35 pt.
+            ((8.5, 11.0), [1.0 / 2.54; 4], (612.0, 792.0), (37.0, 37.0), (556.0, 736.0)),
+            ((8.5, 11.0), [0.5; 4], (612.0, 792.0), (48.0, 48.0), (540.0, 720.0)),
+            ((8.5, 11.0), [0.0; 4], (612.0, 792.0), (0.0, 0.0), (612.0, 792.0)),
+            // 29 pt = 38.67 px and 8 pt = 10.67 px round up, 28 pt = 37.33 px down.
+            ((8.5, 11.0), [0.41; 4], (612.0, 792.0), (39.0, 39.0), (554.0, 734.0)),
+            ((8.5, 11.0), [0.123; 4], (612.0, 792.0), (11.0, 11.0), (596.0, 776.0)),
+            // Top, right, bottom, left round on their own.
+            ((8.5, 11.0), [0.3, 0.2, 0.7, 0.9], (612.0, 792.0), (28.0, 85.0), (534.0, 721.0)),
+            // A4: 596 x 842 pt on a 300 dpi grid.
+            ((8.27, 11.69), [0.4; 4], (595.92, 841.92), (37.0, 37.0), (540.0, 786.0)),
+            ((8.2677165, 11.6929134), [0.0; 4], (595.92, 841.92), (0.0, 0.0), (596.0, 842.0)),
+            ((8.27, 11.69), [0.77, 0.13, 0.21, 0.55], (595.92, 841.92), (73.0, 52.0), (548.0, 772.0)),
+            // 289 x 363 pt.
+            ((4.01, 5.03), [0.4; 4], (288.96, 363.12), (37.0, 37.0), (233.0, 307.0)),
+        ] {
+            let ((w, h), [top, right, bottom, left]) = chrome_page_geometry(paper, margins).unwrap();
+            let close = |a: f64, b: f64| (a - b).abs() < 1e-6;
+            let at = format!("{paper:?} {margins:?}");
+            assert!(close(w * 0.75, page.0) && close(h * 0.75, page.1), "page {at}: {w} {h}");
+            assert!(close(top, origin.0) && close(left, origin.1), "origin {at}: {top} {left}");
+            assert!(close((w - left - right) * 0.75, content.0), "content width {at}");
+            assert!(close((h - top - bottom) * 0.75, content.1), "content height {at}");
+        }
+    }
+
+    #[test]
+    fn an_empty_content_area_has_no_geometry() {
+        // Chrome: 0.5 + 0.5 in on 1 in fails; 0.497 in is 35 pt, which leaves 2 pt.
+        assert!(chrome_page_geometry((1.0, 1.0), [0.5, 0.0, 0.5, 0.0]).is_none());
+        assert!(chrome_page_geometry((1.0, 1.0), [0.497, 0.0, 0.497, 0.0]).is_some());
+        assert!(chrome_page_geometry((1.0, 1.0), [0.0, 0.5, 0.0, 0.5]).is_none());
+        // 1.001 in rounds up to 73 pt.
+        assert!(chrome_page_geometry((1.001, 1.0), [0.0, 0.5, 0.0, 0.5]).is_some());
+    }
+
     use super::*;
     use lp_dom::parse::{parse_document, DomRef};
     use lp_dom::snapshot::{render_key, RenderHtml, RenderNodeKind};

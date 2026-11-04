@@ -216,3 +216,80 @@ fn forced_breaks_and_break_inside_avoid() {
     // cross 400 + 1056 and moves to page 4.
     assert_eq!(ys, vec![0.0, 200.0, 400.0, 1300.0]);
 }
+
+fn close(got: &[f64], want: &[f64]) -> bool {
+    got.len() == want.len() && got.iter().zip(want).all(|(a, b)| (a - b).abs() < 0.01)
+}
+
+/// Rects measured on Chrome 156 (Letter, 0.4 in margins), through the geometry `Page.printToPDF` uses.
+#[test]
+fn link_rects_land_where_chrome_puts_them() {
+    let html = r#"<!doctype html><body style="margin:0"><div style="height:70px"></div>
+        <a href="https://example.com/b" style="display:block;margin-left:40px;width:200px;height:50px"></a>"#;
+    let (paper, margins) = lp_render::chrome_page_geometry((8.5, 11.0), [0.4; 4]).unwrap();
+    for (scale, want) in [
+        (1.0, [57.75, 674.25, 207.75, 711.75]),
+        (0.8, [51.75, 692.25, 171.75, 722.25]),
+        (1.5, [72.75, 629.25, 297.75, 685.5]),
+    ] {
+        let out = print_with(html, |o| {
+            o.paper = paper;
+            o.margins = margins;
+            o.scale = scale;
+        });
+        let found = rects(&inflated(&out.bytes));
+        assert!(found.len() == 1 && close(&found[0], &want), "scale {scale}: {found:?}");
+    }
+}
+
+#[test]
+fn inline_link_areas_are_whole_css_pixels() {
+    let html = r#"<!doctype html><body style="margin:0;font:20px/30px sans-serif"><a href="https://example.com/a">example text</a>"#;
+    let out = print(html);
+    let found = rects(&inflated(&out.bytes));
+    assert_eq!(found.len(), 1, "{found:?}");
+    for v in &found[0] {
+        let px = v / 0.75;
+        assert!((px - px.round()).abs() < 0.01, "{found:?}");
+    }
+}
+
+#[test]
+fn a_short_document_on_a_page_smaller_than_the_viewport_is_one_page() {
+    // The 600 px viewport is taller than a 300 px page; the content is 20 px.
+    let out = print_with(r#"<!doctype html><body style="margin:0"><div style="height:20px">x</div>"#, |o| {
+        o.paper = (816.0, 300.0)
+    });
+    assert_eq!(out.pages.len(), 1);
+}
+
+#[test]
+fn a_heading_after_a_forced_break_is_written_on_its_page_only() {
+    let out = print(
+        r#"<!doctype html><body style="margin:8px;font:16px/20px sans-serif"><p>before</p><h2 style="break-before:page">UniqueHeading</h2>"#,
+    );
+    assert_eq!(out.pages.len(), 2);
+    let text = inflated(&out.bytes);
+    assert_eq!(out.stats.links, 0);
+    // The heading's single tagged run is written once: one marked-content sequence per page's text.
+    assert_eq!(text.matches("BDC").count(), 2, "one text run on each page");
+}
+
+/// A full-width box at Chrome's fractional content width (Letter, 0.4 in: 741.33 px), measured on Chrome 156
+/// within LayoutUnit precision; the screen layout's whole pixels would end 0.25 pt short.
+#[test]
+fn a_full_width_link_ends_at_the_fractional_content_width() {
+    let html = r#"<!doctype html><body style="margin:0"><a href="https://example.com/w" style="display:block;height:10px"></a>"#;
+    let (paper, margins) = lp_render::chrome_page_geometry((8.5, 11.0), [0.4; 4]).unwrap();
+    for (scale, chrome_x1) in [(1.0, 583.75781), (0.8, 583.75781), (1.5, 583.78125)] {
+        let out = print_with(html, |o| {
+            o.paper = paper;
+            o.margins = margins;
+            o.scale = scale;
+        });
+        let found = rects(&inflated(&out.bytes));
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!((found[0][0] - 27.75).abs() < 0.01, "scale {scale}: {found:?}");
+        assert!((found[0][2] - chrome_x1).abs() < 0.1, "scale {scale}: {found:?}");
+    }
+}
