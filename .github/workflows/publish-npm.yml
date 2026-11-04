@@ -194,4 +194,5 @@ jobs:
           DIST_TAG: ${{ needs.release.outputs.dist-tag }}
           # Optional bootstrap token; omit after configuring npm trusted publishing.
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish npm-package/*.tgz --access public --tag "$DIST_TAG"
+        # The ./ prefix makes npm treat this as a local tarball, not owner/repo.
+        run: npm publish ./npm-package/*.tgz --access public --tag "$DIST_TAG"
