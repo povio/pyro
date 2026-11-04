@@ -61,10 +61,11 @@ impl DeviceChanges {
 
 pub(crate) fn make_device(
     viewport: &Viewport,
+    layout_size: Option<(f32, f32)>,
     media_type: MediaType,
     font_ctx: Arc<Mutex<FontContext>>,
 ) -> Device {
-    let (width, height) = viewport.logical_size();
+    let (width, height) = layout_size.unwrap_or_else(|| viewport.logical_size());
     let viewport_size = euclid::Size2D::new(width, height);
     let device_size = euclid::Size2D::new(width, height) * viewport.scale();
     let device_pixel_ratio = euclid::Scale::new(viewport.scale());

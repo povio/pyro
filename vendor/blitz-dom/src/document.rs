@@ -246,6 +246,8 @@ pub struct BaseDocument {
     /// last [`resolve`](Self::resolve), to be applied (coalesced into a single
     /// device rebuild) at the start of the next resolve.
     pub(crate) pending_device_changes: DeviceChanges,
+    /// See [`BaseDocument::set_layout_size`].
+    layout_size: Option<(f32, f32)>,
     /// Strategy for Stylo's style traversal during `resolve`.
     pub(crate) style_threading: StyleThreading,
     /// Whether incremental layout is enabled for this document. When disabled,
@@ -460,7 +462,7 @@ impl BaseDocument {
 
         let viewport = config.viewport.unwrap_or_default();
         let media_type = config.media_type.unwrap_or_else(MediaType::screen);
-        let device = make_device(&viewport, media_type.clone(), font_ctx.clone());
+        let device = make_device(&viewport, None, media_type.clone(), font_ctx.clone());
         let stylist = Stylist::new(device, QuirksMode::NoQuirks);
         let snapshots = SnapshotMap::new();
         let nodes = Box::new(NodeTree::new());
@@ -505,6 +507,7 @@ impl BaseDocument {
             media_type,
             svg_sprites: HashMap::new(),
             pending_device_changes: DeviceChanges::empty(),
+            layout_size: None,
             style_threading: config.style_threading,
             incremental_layout: config.incremental.unwrap_or(true),
             subdocument_depth: config.subdocument_depth,
@@ -2114,6 +2117,15 @@ impl BaseDocument {
         self.mousedown_node_id
     }
 
+    /// Lays out at this size (CSS px) instead of the viewport's whole pixels:
+    /// print lays out at the paper's fractional content box. `None` goes back.
+    pub fn set_layout_size(&mut self, size: Option<(f32, f32)>) {
+        if self.layout_size != size {
+            self.layout_size = size;
+            self.queue_device_changes(DeviceChanges::VIEWPORT_SIZE);
+        }
+    }
+
     pub fn set_viewport(&mut self, viewport: Viewport) {
         let changes = DeviceChanges::from_viewports(&self.viewport, &viewport);
         self.viewport = viewport;
@@ -2254,6 +2266,7 @@ impl BaseDocument {
 
         self.set_stylist_device(make_device(
             &self.viewport,
+            self.layout_size,
             self.media_type.clone(),
             self.font_ctx.clone(),
         ));

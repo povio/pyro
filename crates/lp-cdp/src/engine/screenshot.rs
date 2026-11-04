@@ -402,7 +402,7 @@ impl EngineHost {
             generate_document_outline: Option<bool>,
         }
         let p = cmd.command.params::<Option<P>>()?.unwrap_or_default();
-        let (mut w, mut h) = (p.paper_width.unwrap_or(8.5) * 96.0, p.paper_height.unwrap_or(11.0) * 96.0);
+        let (mut w, mut h) = (p.paper_width.unwrap_or(8.5), p.paper_height.unwrap_or(11.0));
         if !(w > 0.0 && w.is_finite()) {
             return Err(CdpError::invalid_params("paperWidth is zero or negative"));
         }
@@ -431,11 +431,11 @@ impl EngineHost {
             if !(v >= 0.0 && v.is_finite()) {
                 return Err(CdpError::invalid_params(format!("{name} is negative")));
             }
-            margins[i] = v * 96.0;
+            margins[i] = v;
         }
-        if w - margins[1] - margins[3] < 1.0 || h - margins[0] - margins[2] < 1.0 {
+        let Some((paper, margins)) = lp_render::chrome_page_geometry((w, h), margins) else {
             return Err(CdpError::invalid_params("invalid print parameters: content area is empty"));
-        }
+        };
         let page_ranges = match p.page_ranges.as_deref().map(str::trim) {
             None | Some("") => Vec::new(),
             Some(ranges) => {
@@ -444,7 +444,7 @@ impl EngineHost {
         };
         let opts = lp_render::PdfOptions {
             page_selector: ".pz-page".into(),
-            paper: (w, h),
+            paper,
             margins,
             scale,
             print_background: p.print_background,

@@ -98,3 +98,5 @@ lp-render's mirror tests (incremental documents against fresh builds after rando
 - `src/layout/mod.rs`: a textarea or select with a percentage width contributes zero to min-content sizing,
   as text inputs already did (CSS Sizing 3 §5.2.2, compressible): in a flex-wrap row it shrinks into the
   space left on the line instead of wrapping below.
+
+`BaseDocument::set_layout_size` lays out at a fractional CSS size instead of the viewport's whole pixels (`make_device`); printing uses it for the paper's content box.
