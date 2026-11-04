@@ -1,6 +1,18 @@
-diff --color -ruN a/properties/helpers.mako.rs b/properties/helpers.mako.rs
---- a/properties/helpers.mako.rs	2026-11-02 08:53:22
-+++ b/properties/helpers.mako.rs	2026-11-02 08:53:22
+diff -ruN a/properties/counted_unknown_properties.py b/properties/counted_unknown_properties.py
+--- a/properties/counted_unknown_properties.py	2006-07-24 03:21:28
++++ b/properties/counted_unknown_properties.py	2026-11-04 11:22:23
+@@ -7,8 +7,6 @@
+     "speak",
+     "text-size-adjust",
+     "-webkit-user-drag",
+-    "orphans",
+-    "widows",
+     "-webkit-user-modify",
+     "-webkit-margin-before",
+     "-webkit-margin-after",
+diff -ruN a/properties/helpers.mako.rs b/properties/helpers.mako.rs
+--- a/properties/helpers.mako.rs	2006-07-24 03:21:28
++++ b/properties/helpers.mako.rs	2026-11-04 11:22:23
 @@ -64,7 +64,17 @@
                      % endif
                      CSSWideKeyword::Inherit => {
@@ -19,9 +31,99 @@ diff --color -ruN a/properties/helpers.mako.rs b/properties/helpers.mako.rs
                          % endif
                          % if property.is_zoom_dependent():
                              if !context.builder.effective_zoom_for_inheritance.is_one() {
-diff --color -ruN a/rule_cache.rs b/rule_cache.rs
---- a/rule_cache.rs	2026-11-02 08:53:22
-+++ b/rule_cache.rs	2026-11-02 08:53:22
+diff -ruN a/properties/longhands.toml b/properties/longhands.toml
+--- a/properties/longhands.toml	2006-07-24 03:21:28
++++ b/properties/longhands.toml	2026-11-04 11:22:23
+@@ -476,7 +476,6 @@
+ type = "BreakBetween"
+ initial = "computed::BreakBetween::Auto"
+ struct = "box"
+-engine = "gecko"
+ spec = "https://drafts.csswg.org/css-break/#propdef-break-after"
+ animation_type = "discrete"
+ affects = "layout"
+@@ -485,7 +484,6 @@
+ type = "BreakBetween"
+ initial = "computed::BreakBetween::Auto"
+ struct = "box"
+-engine = "gecko"
+ spec = "https://drafts.csswg.org/css-break/#propdef-break-before"
+ animation_type = "discrete"
+ affects = "layout"
+@@ -494,9 +492,26 @@
+ type = "BreakWithin"
+ initial = "computed::BreakWithin::Auto"
+ struct = "box"
+-engine = "gecko"
+ spec = "https://drafts.csswg.org/css-break/#propdef-break-inside"
+ animation_type = "discrete"
++affects = "layout"
++
++[orphans]
++type = "PositiveInteger"
++initial = "From::from(2)"
++struct = "inherited_text"
++spec = "https://drafts.csswg.org/css-break/#propdef-orphans"
++animation_type = "discrete"
++servo_restyle_damage = "repaint"
++affects = "layout"
++
++[widows]
++type = "PositiveInteger"
++initial = "From::from(2)"
++struct = "inherited_text"
++spec = "https://drafts.csswg.org/css-break/#propdef-widows"
++animation_type = "discrete"
++servo_restyle_damage = "repaint"
+ affects = "layout"
+ 
+ [caption-side]
+diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
+--- a/properties/shorthands.rs	2006-07-24 03:21:28
++++ b/properties/shorthands.rs	2026-11-04 11:22:23
+@@ -545,7 +545,6 @@
+     }
+ }
+ 
+-#[cfg(feature = "gecko")]
+ pub mod container {
+     use super::*;
+     pub use crate::properties::generated::shorthands::container::*;
+diff -ruN a/properties/shorthands.toml b/properties/shorthands.toml
+--- a/properties/shorthands.toml	2006-07-24 03:21:28
++++ b/properties/shorthands.toml	2026-11-04 11:22:23
+@@ -209,7 +209,7 @@
+ kind = "two_properties"
+ 
+ [container]
+-engine = "gecko"
++servo_pref = "layout.container-queries.enabled"
+ sub_properties = ["container-name", "container-type"]
+ spec = "https://drafts.csswg.org/css-contain-3/#container-shorthand"
+ 
+@@ -218,19 +218,16 @@
+ spec = "https://drafts.csswg.org/css-inline-3/#transverse-alignment"
+ 
+ [page-break-before]
+-engine = "gecko"
+ flags = "IS_LEGACY_SHORTHAND"
+ sub_properties = ["break-before"]
+ spec = "https://drafts.csswg.org/css-break-3/#page-break-properties"
+ 
+ [page-break-after]
+-engine = "gecko"
+ flags = "IS_LEGACY_SHORTHAND"
+ sub_properties = ["break-after"]
+ spec = "https://drafts.csswg.org/css-break-3/#page-break-properties"
+ 
+ [page-break-inside]
+-engine = "gecko"
+ flags = "IS_LEGACY_SHORTHAND"
+ sub_properties = ["break-inside"]
+ spec = "https://drafts.csswg.org/css-break-3/#page-break-properties"
+diff -ruN a/rule_cache.rs b/rule_cache.rs
+--- a/rule_cache.rs	2006-07-24 03:21:28
++++ b/rule_cache.rs	2026-11-04 11:22:23
 @@ -26,9 +26,53 @@
      line_height: Option<NonNegativeLength>,
      writing_mode: Option<WritingMode>,
@@ -103,92 +205,38 @@ diff --color -ruN a/rule_cache.rs b/rule_cache.rs
          };
          self.map
              .entry(rules)
-diff --git a/properties/longhands.toml b/properties/longhands.toml
---- a/properties/longhands.toml
-+++ b/properties/longhands.toml
-@@ -476,7 +476,6 @@
- type = "BreakBetween"
- initial = "computed::BreakBetween::Auto"
- struct = "box"
--engine = "gecko"
- spec = "https://drafts.csswg.org/css-break/#propdef-break-after"
- animation_type = "discrete"
- affects = "layout"
-@@ -485,7 +484,6 @@
- type = "BreakBetween"
- initial = "computed::BreakBetween::Auto"
- struct = "box"
--engine = "gecko"
- spec = "https://drafts.csswg.org/css-break/#propdef-break-before"
- animation_type = "discrete"
- affects = "layout"
-@@ -494,11 +492,28 @@
- type = "BreakWithin"
- initial = "computed::BreakWithin::Auto"
- struct = "box"
--engine = "gecko"
- spec = "https://drafts.csswg.org/css-break/#propdef-break-inside"
- animation_type = "discrete"
- affects = "layout"
+diff -ruN a/stylesheets/rule_parser.rs b/stylesheets/rule_parser.rs
+--- a/stylesheets/rule_parser.rs	2006-07-24 03:21:28
++++ b/stylesheets/rule_parser.rs	2026-11-04 11:22:23
+@@ -282,7 +282,7 @@
+             "counter-style" if cfg!(feature = "gecko") => Self::CounterStyle,
+             "media" => Self::Media,
+             "custom-media" if crate::pref!("layout.css.custom-media.enabled") => Self::CustomMedia,
+-            "container" if cfg!(feature = "gecko") => Self::Container,
++            "container" => Self::Container,
+             "supports" => Self::Supports,
+             "keyframes" => Self::Keyframes(None),
+             "-webkit-keyframes" => Self::Keyframes(Some(VendorPrefix::WebKit)),
+diff -ruN a/stylist.rs b/stylist.rs
+--- a/stylist.rs	2006-07-24 03:21:28
++++ b/stylist.rs	2026-11-04 11:22:23
+@@ -1004,6 +1004,13 @@
+         ExtraStyleDataIterator(self.cascade_data.iter_origins_rev())
+     }
  
-+[orphans]
-+type = "PositiveInteger"
-+initial = "From::from(2)"
-+struct = "inherited_text"
-+spec = "https://drafts.csswg.org/css-break/#propdef-orphans"
-+animation_type = "discrete"
-+servo_restyle_damage = "repaint"
-+affects = "layout"
++    /// Whether active cascade data contains a container condition.
++    pub fn has_container_queries(&self) -> bool {
++        self.cascade_data
++            .iter_origins()
++            .any(|(data, _)| data.container_conditions.len() > 1)
++    }
 +
-+[widows]
-+type = "PositiveInteger"
-+initial = "From::from(2)"
-+struct = "inherited_text"
-+spec = "https://drafts.csswg.org/css-break/#propdef-widows"
-+animation_type = "discrete"
-+servo_restyle_damage = "repaint"
-+affects = "layout"
-+
- [caption-side]
- type = "table::CaptionSide"
- initial = "computed::table::CaptionSide::Top"
-diff --git a/properties/shorthands.toml b/properties/shorthands.toml
-index c32a4dc..92a6958 100644
---- a/properties/shorthands.toml
-+++ b/properties/shorthands.toml
-@@ -218,19 +218,16 @@ sub_properties = ["alignment-baseline", "baseline-shift", "baseline-source"]
- spec = "https://drafts.csswg.org/css-inline-3/#transverse-alignment"
- 
- [page-break-before]
--engine = "gecko"
- flags = "IS_LEGACY_SHORTHAND"
- sub_properties = ["break-before"]
- spec = "https://drafts.csswg.org/css-break-3/#page-break-properties"
- 
- [page-break-after]
--engine = "gecko"
- flags = "IS_LEGACY_SHORTHAND"
- sub_properties = ["break-after"]
- spec = "https://drafts.csswg.org/css-break-3/#page-break-properties"
- 
- [page-break-inside]
--engine = "gecko"
- flags = "IS_LEGACY_SHORTHAND"
- sub_properties = ["break-inside"]
- spec = "https://drafts.csswg.org/css-break-3/#page-break-properties"
---- a/properties/counted_unknown_properties.py
-+++ b/properties/counted_unknown_properties.py
-@@ -7,8 +7,6 @@
-     "speak",
-     "text-size-adjust",
-     "-webkit-user-drag",
--    "orphans",
--    "widows",
-     "-webkit-user-modify",
-     "-webkit-margin-before",
-     "-webkit-margin-after",
---- a/values/generics/mod.rs
-+++ b/values/generics/mod.rs
+     /// Returns the number of selectors.
+     pub fn num_selectors(&self) -> usize {
+         self.cascade_data
+diff -ruN a/values/generics/mod.rs b/values/generics/mod.rs
+--- a/values/generics/mod.rs	2006-07-24 03:21:28
++++ b/values/generics/mod.rs	2026-11-04 11:22:23
 @@ -110,6 +110,7 @@
      ToCss,
      ToResolvedValue,
@@ -197,3 +245,35 @@ index c32a4dc..92a6958 100644
  )]
  #[repr(transparent)]
  pub struct GreaterThanOrEqualToOne<T>(pub T);
+diff -ruN a/values/specified/box.rs b/values/specified/box.rs
+--- a/values/specified/box.rs	2006-07-24 03:21:28
++++ b/values/specified/box.rs	2026-11-04 11:48:34
+@@ -2001,6 +2001,8 @@
+     Auto,
+     Page,
+     Avoid,
++    AvoidPage,
++    AvoidColumn,
+     Left,
+     Right,
+ }
+@@ -2018,7 +2020,9 @@
+             BreakBetween::Auto | BreakBetween::Avoid | BreakBetween::Left | BreakBetween::Right => {
+                 Ok(break_value)
+             },
+-            BreakBetween::Page => Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError)),
++            BreakBetween::Page | BreakBetween::AvoidPage | BreakBetween::AvoidColumn => {
++                Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError))
++            },
+         }
+     }
+ 
+@@ -2035,7 +2039,7 @@
+                 self.to_css(dest)
+             },
+             BreakBetween::Page => dest.write_str("always"),
+-            BreakBetween::Always => Ok(()),
++            BreakBetween::Always | BreakBetween::AvoidPage | BreakBetween::AvoidColumn => Ok(()),
+         }
+     }
+ }
