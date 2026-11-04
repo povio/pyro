@@ -5,6 +5,8 @@ interface. This is an implemented subset, not full Fetch or TOS compatibility.
 The binding uses the existing `lp-net` HTTP/CORS/cookie/interception path and
 JavaScriptCore promises. No browser/runtime wiring is added by this change.
 
+Over HTTP/2 `Response.statusText` is empty, as the protocol has no reason phrase.
+
 Before fetching, the embedder must provide:
 
 - `page.net`: the context's `NetClient`.

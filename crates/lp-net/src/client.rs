@@ -9,14 +9,14 @@
 //! 2-3 copies per body (HttpClient.zig:4241 -> Fetch.zig:302 / captured
 //! responses).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use bytes::Bytes;
-use http::{header, HeaderMap, HeaderValue, Method, StatusCode};
+use http::{header, HeaderMap, HeaderValue, Method, StatusCode, Version};
 use http_body_util::{BodyExt, Full};
 use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::client::legacy::Client;
@@ -55,6 +55,9 @@ pub struct NetConfig {
     pub enforce_cors: bool,
     /// Concurrent connections per origin (Chromium uses 6).
     pub max_per_origin: usize,
+    /// Concurrent requests per origin once it has answered over HTTP/2, on
+    /// its shared connection (Chromium's default stream limit is 100 too).
+    pub max_per_h2_origin: usize,
     /// Maximum credential submissions for one HTTP hop. No unbounded auth loops.
     pub max_auth_retries: u32,
     /// Private in-memory HTTP cache budget for this client (one browser
@@ -89,6 +92,7 @@ impl Default for NetConfig {
             max_body: 256 * 1024 * 1024,
             enforce_cors: true,
             max_per_origin: 6,
+            max_per_h2_origin: 100,
             max_auth_retries: 3,
             http_cache_max_bytes: 64 * 1024 * 1024,
             http_cache_max_entry_bytes: 8 * 1024 * 1024,
@@ -663,6 +667,7 @@ fn http_client(config: &NetConfig, tls: &rustls::ClientConfig, proxy: Option<Arc
         .with_tls_config(tls.clone())
         .https_or_http()
         .enable_http1()
+        .enable_http2()
         .wrap_connector(connector);
     Client::builder(TokioExecutor::new()).pool_idle_timeout(Duration::from_secs(30)).build(connector)
 }
@@ -713,6 +718,8 @@ struct Io {
     insecure: std::cell::OnceCell<HttpClient>,
     preflight: Mutex<PreflightCache>,
     per_origin: Mutex<HashMap<String, Arc<Semaphore>>>,
+    /// Origins whose semaphore grew to `max_per_h2_origin`.
+    h2_origins: Mutex<HashSet<String>>,
 }
 
 fn io_main(mut rx: mpsc::UnboundedReceiver<Cmd>, shared: Arc<Shared>, cookies: Arc<Mutex<CookieJar>>) {
@@ -739,6 +746,7 @@ fn io_main(mut rx: mpsc::UnboundedReceiver<Cmd>, shared: Arc<Shared>, cookies: A
             insecure: std::cell::OnceCell::new(),
             preflight: Mutex::new(PreflightCache::default()),
             per_origin: Mutex::new(HashMap::new()),
+            h2_origins: Mutex::new(HashSet::new()),
         });
         let tasks: std::rc::Rc<std::cell::RefCell<HashMap<RequestId, Task>>> = Default::default();
         while let Some(cmd) = rx.recv().await {
@@ -957,6 +965,18 @@ impl Io {
         let key = url.origin().ascii_serialization();
         let mut m = self.per_origin.lock().unwrap();
         m.entry(key).or_insert_with(|| Arc::new(Semaphore::new(self.shared.config.max_per_origin))).clone()
+    }
+
+    /// An origin that answered over HTTP/2 multiplexes one connection: the
+    /// six-connection limit no longer applies to it.
+    fn multiplexing(&self, url: &Url) {
+        let key = url.origin().ascii_serialization();
+        if self.h2_origins.lock().unwrap().insert(key.clone()) {
+            let cfg = &self.shared.config;
+            if let Some(semaphore) = self.per_origin.lock().unwrap().get(&key) {
+                semaphore.add_permits(cfg.max_per_h2_origin.saturating_sub(cfg.max_per_origin));
+            }
+        }
     }
 
     fn build_headers(&self, req: &Request, origin_url: Option<&Url>, cors_cross: bool) -> HeaderMap {
@@ -1317,6 +1337,10 @@ impl Io {
             };
             let status = resp.status();
             let resp_headers = resp.headers().clone();
+            let protocol = resp.version();
+            if protocol == Version::HTTP_2 {
+                self.multiplexing(&url);
+            }
             let cookies_allowed = match req.credentials {
                 Credentials::Include => true,
                 Credentials::SameOrigin => cors::is_same_origin_request(&req),
@@ -1371,8 +1395,9 @@ impl Io {
                     match req.redirect {
                         RedirectMode::Error => return Err(NetError::RedirectNotAllowed),
                         RedirectMode::Manual => {
-                            let head =
-                                self.head(&url, status, resp_headers, ResponseKind::OpaqueRedirect, redirects > 0);
+                            let head = self
+                                .head(&url, status, resp_headers, ResponseKind::OpaqueRedirect, redirects > 0)
+                                .over(protocol);
                             return self.finish_empty(id, &req, sink, head);
                         }
                         RedirectMode::Follow => {}
@@ -1385,7 +1410,9 @@ impl Io {
                     if redirects > self.shared.config.max_redirects {
                         return Err(NetError::TooManyRedirects);
                     }
-                    let head = self.head(&url, status, resp_headers.clone(), ResponseKind::Basic, redirects > 1);
+                    let head = self
+                        .head(&url, status, resp_headers.clone(), ResponseKind::Basic, redirects > 1)
+                        .over(protocol);
                     deliver(
                         sink,
                         ResponseEvent::Redirect {
@@ -1454,7 +1481,7 @@ impl Io {
                     Ok(ResponseDecision::Fail(reason)) => return Err(NetError::Blocked(cdp_reason(&reason))),
                     Err(_) => return Err(NetError::Other("response interception dropped".into())),
                 };
-                let head = self.head(&url, status, resp_headers, kind, redirects > 0);
+                let head = self.head(&url, status, resp_headers, kind, redirects > 0).over(protocol);
                 return self.deliver_body(id, &req, sink, head, body);
             }
             let (store, mut max_entry) = {
@@ -1470,7 +1497,7 @@ impl Io {
             }
             let shared_response = shared_store.map(|_| resp_headers.clone());
             let mut stored: Option<Vec<Bytes>> = (store.is_some() || shared_store.is_some()).then(Vec::new);
-            let head = self.head(&url, status, resp_headers, kind, redirects > 0);
+            let head = self.head(&url, status, resp_headers, kind, redirects > 0).over(protocol);
             self.shared.emit(NetEvent::ResponseReceived {
                 id,
                 head: Box::new(head.clone()),
@@ -1535,10 +1562,10 @@ impl Io {
                     if chunks.len() == 1 { chunks.into_iter().next().unwrap() } else { Bytes::from(chunks.concat()) };
                 if let Some(response) = store {
                     let mut cache = self.shared.cache.lock().unwrap();
-                    cache.insert(&url, sent, status, &response, body.clone(), request_time, response_time);
+                    cache.insert(&url, sent, status, &response, body.clone(), request_time, response_time, protocol);
                 }
                 if let (Some(s), Some(response)) = (shared_store, shared_response) {
-                    s.with(|c| c.insert(&url, sent, status, &response, body, request_time, response_time));
+                    s.with(|c| c.insert(&url, sent, status, &response, body, request_time, response_time, protocol));
                 }
             }
             self.shared.emit(NetEvent::LoadingFinished { id, encoded_len: encoded, timestamp: self.shared.now() });
@@ -1622,7 +1649,7 @@ impl Io {
         if body.len() > req.max_body.unwrap_or(self.shared.config.max_body) {
             return Err(NetError::TooLarge);
         }
-        let mut head = self.head(url, cached.status, cached.headers, kind, redirected);
+        let mut head = self.head(url, cached.status, cached.headers, kind, redirected).over(cached.protocol);
         head.from_cache = from_cache;
         self.shared.emit(NetEvent::ResponseReceived {
             id,
@@ -1666,6 +1693,7 @@ impl Io {
             from_cache: false,
             kind,
             remote_addr: None,
+            protocol: Version::HTTP_11,
         }
     }
 
@@ -1879,6 +1907,7 @@ impl NetClient {
             from_cache: false,
             kind: ResponseKind::Basic,
             remote_addr: None,
+            protocol: Version::HTTP_11,
         };
         if !shared.observed() {
             return head;

@@ -17,7 +17,7 @@ fn authorized(head: &str) -> bool {
 }
 
 #[derive(Clone, Copy, PartialEq)]
-enum Mode {
+pub(crate) enum Mode {
     Open,
     /// Answers 407 without `USER_PASS`.
     Auth,
@@ -25,14 +25,14 @@ enum Mode {
     Refuse,
 }
 
-struct Proxy {
+pub(crate) struct Proxy {
     port: u16,
     /// Request heads, as received.
     log: Arc<Mutex<Vec<String>>>,
 }
 
 impl Proxy {
-    fn start(mode: Mode) -> Proxy {
+    pub(crate) fn start(mode: Mode) -> Proxy {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         let log = Arc::new(Mutex::new(Vec::new()));
@@ -48,10 +48,10 @@ impl Proxy {
     fn server(&self) -> String {
         format!("http://127.0.0.1:{}", self.port)
     }
-    fn heads(&self) -> Vec<String> {
+    pub(crate) fn heads(&self) -> Vec<String> {
         self.log.lock().unwrap().clone()
     }
-    fn client(&self, bypass: &str) -> NetClient {
+    pub(crate) fn client(&self, bypass: &str) -> NetClient {
         client_for(&self.server(), bypass)
     }
 }

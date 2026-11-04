@@ -5,6 +5,7 @@
 mod auth;
 mod cache;
 mod client;
+mod h2;
 mod proxy;
 mod static_files;
 

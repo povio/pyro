@@ -179,6 +179,19 @@ pub struct ResponseHead {
     pub kind: ResponseKind,
     /// Remote address "ip:port" when known (CDP remoteIPAddress).
     pub remote_addr: Option<String>,
+    /// HTTP version of the response (CDP `protocol`).
+    pub protocol: http::Version,
+}
+
+impl ResponseHead {
+    /// This head as sent over `protocol`. HTTP/2 has no reason phrase.
+    pub(crate) fn over(mut self, protocol: http::Version) -> Self {
+        self.protocol = protocol;
+        if protocol == http::Version::HTTP_2 {
+            self.status_text.clear();
+        }
+        self
+    }
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]

@@ -9,6 +9,7 @@ import { createRequire } from 'node:module';
 import net from 'node:net';
 import http from 'node:http';
 import https from 'node:https';
+import http2 from 'node:http2';
 import { X509Certificate, createPrivateKey } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -1035,11 +1036,17 @@ try {
 // to a local TLS server whatever the host asked for.
 {
   const data = path.join(here, '..', '..', 'crates', 'lp-net', 'tests', 'data');
-  const tls = https.createServer({
+  const certificate = {
     cert: new X509Certificate(readFileSync(path.join(data, 'self-signed.der'))).toString(),
     key: createPrivateKey({ key: readFileSync(path.join(data, 'self-signed.key.der')), format: 'der', type: 'pkcs8' })
       .export({ format: 'pem', type: 'pkcs8' }),
-  }, (req, res) => {
+  };
+  const h2 = http2.createSecureServer(certificate, (req, res) => {
+    res.setHeader('content-type', 'text/html');
+    res.end(`<title>${req.httpVersion}</title>`);
+  });
+  await new Promise(resolve => h2.listen(0, '127.0.0.1', resolve));
+  const tls = https.createServer(certificate, (req, res) => {
     res.setHeader('content-type', 'text/html');
     res.end(`<title>tunnelled ${req.headers.host}</title>`);
   });
@@ -1109,6 +1116,19 @@ try {
       await assert.rejects(titleVia({ proxy: { server: 'http://127.0.0.1:9' } }, 'http://site.invalid/'),
         /ERR_PROXY_CONNECTION_FAILED/);
     });
+    await check('https negotiates HTTP/2 and reports it in Network', async () => {
+      const c = await browser.newContext({ ignoreHTTPSErrors: true });
+      try {
+        const p = await c.newPage();
+        const session = await c.newCDPSession(p);
+        await session.send('Network.enable');
+        const received = new Promise(resolve => session.once('Network.responseReceived', e => resolve(e.response)));
+        const response = await p.goto(`https://127.0.0.1:${h2.address().port}/`);
+        assert.equal(await p.title(), '2.0');
+        assert.equal(response.statusText(), '');
+        assert.equal((await received).protocol, 'h2');
+      } finally { await c.close(); }
+    });
     await check('newContext proxy: SOCKS is refused explicitly', async () => {
       await assert.rejects(browser.newContext({ proxy: { server: 'socks5://127.0.0.1:1' } }), /SOCKS proxies are not supported/);
     });
@@ -1117,6 +1137,7 @@ try {
       s.closeAllConnections();
       s.close();
     }
+    h2.close();
   }
 }
 await check('second context is independent', async () => {
