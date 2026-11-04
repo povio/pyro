@@ -258,6 +258,20 @@ python3 compare.py --geometry chrome-156/geometry.json out.json
 | avoid, shrink, sizes | `fx-av`, `fx-sh`, `fx-sr`, `fx-tw`, `fx-engine` | 381 | `break-inside: avoid`, overflowing documents, page sizes |
 | gaps closed by #251 | `fx-b`, `fx-b2`, `fx-b3`, `fx-f`, `fx-h`, `fx-h1`, `fx-k`, `fx-m`, `fx-s`, `fx-v` | 1706 | monolithic boxes, `break-*: avoid`, forced breaks, line and box positions at a cut |
 
+Page placement and text x of whole PDFs against Chrome:
+
+```sh
+bun page-placement.mjs <work dir> chrome-156/page-placement.json [/abs/lightningpanda]   # documents x papers x options, and the 300 dpi page size
+bun pdf-deltas.mjs <chrome pdf dir> <lp pdf dir> out.json        # per PDF of a run.mjs run: x and y delta of 30 pt tiles at 600 dpi, pixel diff at 150 dpi
+python3 page-stream-diff.py; python3 page-shift-check.py         # two lp-fixed runs (r-base, r-head): how each stream changed; pixels after undoing a page shift
+bun text-x.mjs <work dir> chrome; bun text-x.mjs <work dir> /abs/lightningpanda   # fractional text x: paper-cut and `.pz-page`, with screenshots
+```
+
+`pdf-resample.mjs` compares a page's error against Chrome at 150 dpi as poppler rasterizes it and box-averaged from a higher resolution, to tell a real move from a sampling effect.
+
+`chrome-156/tos-deltas.json` holds the 44 ToS cases before and after (median, p95, max of per-tile deltas in pt; the search stops at 2.4 pt, and
+tiles match by ink profiles, so regular text can alias: read medians and p95 first). `text-x-before.json` and `text-x-after.json` hold the text-x set.
+
 Compare only runs from one Chrome version: the summaries say what 156 did on the machine that measured them (macOS,
 its Arial). Word assignment is what the sets pin; a page's y differs by a constant between engines, because pdftotext
 reads a different ascent from each PDF's font.

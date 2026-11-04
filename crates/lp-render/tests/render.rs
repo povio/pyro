@@ -565,3 +565,15 @@ fn overflow_on_body_is_the_viewports() {
     let (img, _, _) = Renderer::new().render(&snapshot, Area::Viewport, Backend::Cpu, &fetcher()).unwrap();
     assert_eq!(pixel(&img, 500, 20), WHITE);
 }
+
+/// Text in screenshots stays at its box's whole-pixel x; only PDF output moves it.
+#[test]
+fn screenshot_text_keeps_the_box_x() {
+    let page = |padding: &str| {
+        format!("<!doctype html><body style='margin:0;font:16px sans-serif'><div style='padding-left:{padding}'>Whole pixels</div>")
+    };
+    let mut r = Renderer::new();
+    let (a, _, _) = r.render(&snap(&page("37.7953px")), Area::Viewport, Backend::Cpu, &fetcher()).unwrap();
+    let (b, _, _) = r.render(&snap(&page("38px")), Area::Viewport, Backend::Cpu, &fetcher()).unwrap();
+    assert!(compare(&a, &b, 0, None).equal);
+}

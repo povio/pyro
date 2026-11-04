@@ -345,6 +345,9 @@ pub struct BaseDocument {
     pub(crate) nodes_to_id: HashMap<String, SmallVec<[NodeId; 1]>>,
     /// Map of `<style>` and `<link>` node IDs to their associated stylesheet
     pub(crate) nodes_to_stylesheet: BTreeMap<NodeId, DocumentStyleSheet>,
+    /// lightningpanda: the text of `<link>` sheets with `@page` rules, by node. Parsing drops what
+    /// printing needs of them: the servo build of Stylo has no `size` and no `page`.
+    pub(crate) linked_page_css: BTreeMap<NodeId, String>,
     /// Incremented whenever `nodes_to_stylesheet` changes (a stylesheet is
     /// added, replaced or removed), so that CSSOM wrappers can detect that
     /// their cached rule data is stale.
@@ -520,6 +523,7 @@ impl BaseDocument {
             devtool_settings: DevtoolSettings::default(),
             url: base_url,
             nodes_to_stylesheet: BTreeMap::new(),
+            linked_page_css: BTreeMap::new(),
             stylesheet_generation: 0,
             font_ctx,
             #[cfg(feature = "parallel-construct")]
@@ -1399,9 +1403,17 @@ impl BaseDocument {
         };
 
         match resource {
-            Resource::Css(css) => {
+            Resource::Css(css, page_css) => {
                 let node_id = res.node_id.unwrap();
                 self.add_stylesheet_for_node(css, node_id);
+                match page_css {
+                    Some(text) => {
+                        self.linked_page_css.insert(node_id, text);
+                    }
+                    None => {
+                        self.linked_page_css.remove(&node_id);
+                    }
+                }
             }
             Resource::ImportedCss(import_rule, sheet) => {
                 let mut guard = self.guard.write();
@@ -2511,6 +2523,11 @@ impl BaseDocument {
             current = node.containing_block();
         }
         (pos, *self.nodes[node_id].unrounded_layout())
+    }
+
+    /// The text of the `<link>` sheet of `node_id`, when it has `@page` rules.
+    pub fn linked_page_css(&self, node_id: NodeId) -> Option<&str> {
+        self.linked_page_css.get(&node_id).map(String::as_str)
     }
 
     /// Computes the size and position of the `Node` relative to the viewport
