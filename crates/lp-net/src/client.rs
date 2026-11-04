@@ -9,14 +9,14 @@
 //! 2-3 copies per body (HttpClient.zig:4241 -> Fetch.zig:302 / captured
 //! responses).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use bytes::Bytes;
-use http::{header, HeaderMap, HeaderValue, Method, StatusCode};
+use http::{header, HeaderMap, HeaderValue, Method, StatusCode, Version};
 use http_body_util::{BodyExt, Full};
 use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::client::legacy::Client;
@@ -27,6 +27,7 @@ use url::Url;
 use crate::auth::auth_challenge;
 use crate::cookies::{site_context, CookieJar, SiteContext};
 use crate::cors::{self, PreflightCache};
+use crate::proxy::{basic_authorization, ProxyConfig, ProxyConnector, ProxyError, ProxyState};
 use crate::request::*;
 use crate::subscription::{NetSubscription, NetWake, SubscriptionLimits, Subscriptions};
 
@@ -54,6 +55,9 @@ pub struct NetConfig {
     pub enforce_cors: bool,
     /// Concurrent connections per origin (Chromium uses 6).
     pub max_per_origin: usize,
+    /// Concurrent requests per origin once it has answered over HTTP/2, on
+    /// its shared connection (Chromium's default stream limit is 100 too).
+    pub max_per_h2_origin: usize,
     /// Maximum credential submissions for one HTTP hop. No unbounded auth loops.
     pub max_auth_retries: u32,
     /// Private in-memory HTTP cache budget for this client (one browser
@@ -73,6 +77,9 @@ pub struct NetConfig {
     /// request through the I/O thread. Default true; `LIGHTNINGPANDA_STATIC_DIRECT=0`
     /// turns it off (benchmark comparison).
     pub static_direct: bool,
+    /// HTTP forward proxy for this client's requests (`serve --proxy`,
+    /// `Target.createBrowserContext proxyServer`).
+    pub proxy: Option<ProxyConfig>,
 }
 
 impl Default for NetConfig {
@@ -85,12 +92,14 @@ impl Default for NetConfig {
             max_body: 256 * 1024 * 1024,
             enforce_cors: true,
             max_per_origin: 6,
+            max_per_h2_origin: 100,
             max_auth_retries: 3,
             http_cache_max_bytes: 64 * 1024 * 1024,
             http_cache_max_entry_bytes: 8 * 1024 * 1024,
             shared_asset_cache: crate::cache::SharedAssetCache::from_env(),
             static_files: Default::default(),
             static_direct: std::env::var("LIGHTNINGPANDA_STATIC_DIRECT").map_or(true, |v| v != "0"),
+            proxy: None,
         }
     }
 }
@@ -180,8 +189,9 @@ pub struct AuthChallenge {
     pub proxy: bool,
 }
 
-/// Server Basic credentials use UTF-8. Other schemes and proxy credentials
-/// return explicit errors; this build has no proxy transport or auth cache.
+/// Basic credentials use UTF-8; other schemes return explicit errors. Proxy
+/// credentials answered once are kept for the context, like a browser's; there
+/// is no server credential cache.
 #[derive(Clone)]
 pub enum AuthDecision {
     /// Return the challenge response; this headless client has no credential
@@ -340,6 +350,7 @@ struct Shared {
     /// `Security.setIgnoreCertificateErrors`: HTTPS requests skip certificate
     /// verification (handshake signatures are still checked).
     ignore_certificate_errors: std::sync::atomic::AtomicBool,
+    proxy: Option<Arc<ProxyState>>,
 }
 
 impl Shared {
@@ -377,6 +388,7 @@ impl NetClient {
     pub fn new(config: NetConfig) -> std::io::Result<Self> {
         let (tx, rx) = mpsc::unbounded_channel();
         let cache = crate::cache::HttpCache::new(config.http_cache_max_bytes, config.http_cache_max_entry_bytes);
+        let proxy = config.proxy.clone().map(|p| Arc::new(ProxyState::new(p)));
         let shared = Arc::new(Shared {
             suspending: std::sync::atomic::AtomicBool::new(false),
             config,
@@ -386,6 +398,7 @@ impl NetClient {
             cache: Mutex::new(cache),
             epoch: Instant::now(),
             ignore_certificate_errors: std::sync::atomic::AtomicBool::new(false),
+            proxy,
         });
         let cookies = Arc::new(Mutex::new(CookieJar::new()));
         let (s2, c2) = (shared.clone(), cookies.clone());
@@ -566,7 +579,7 @@ impl NetClient {
 // ---------------------------------------------------------------------------
 // I/O thread
 
-type HttpClient = Client<hyper_rustls::HttpsConnector<HttpConnector>, Full<Bytes>>;
+type HttpClient = Client<hyper_rustls::HttpsConnector<ProxyConnector>, Full<Bytes>>;
 
 /// The TLS settings of every client: Mozilla's root certificates (webpki-roots),
 /// rustls on ring. Plain data, built once per process (a fork child keeps it;
@@ -644,15 +657,17 @@ impl rustls::client::danger::ServerCertVerifier for AnyCertificate {
 }
 
 /// An HTTP(S) client over `tls`, with this context's connect settings.
-fn http_client(config: &NetConfig, tls: &rustls::ClientConfig) -> HttpClient {
+fn http_client(config: &NetConfig, tls: &rustls::ClientConfig, proxy: Option<Arc<ProxyState>>) -> HttpClient {
     let mut connector = HttpConnector::new();
     connector.set_connect_timeout(Some(config.connect_timeout));
     connector.set_nodelay(true);
     connector.enforce_http(false);
+    let connector = ProxyConnector::new(connector, proxy, config.connect_timeout);
     let connector = hyper_rustls::HttpsConnectorBuilder::new()
         .with_tls_config(tls.clone())
         .https_or_http()
         .enable_http1()
+        .enable_http2()
         .wrap_connector(connector);
     Client::builder(TokioExecutor::new()).pool_idle_timeout(Duration::from_secs(30)).build(connector)
 }
@@ -703,6 +718,8 @@ struct Io {
     insecure: std::cell::OnceCell<HttpClient>,
     preflight: Mutex<PreflightCache>,
     per_origin: Mutex<HashMap<String, Arc<Semaphore>>>,
+    /// Origins whose semaphore grew to `max_per_h2_origin`.
+    h2_origins: Mutex<HashSet<String>>,
 }
 
 fn io_main(mut rx: mpsc::UnboundedReceiver<Cmd>, shared: Arc<Shared>, cookies: Arc<Mutex<CookieJar>>) {
@@ -721,7 +738,7 @@ fn io_main(mut rx: mpsc::UnboundedReceiver<Cmd>, shared: Arc<Shared>, cookies: A
     };
     let local = tokio::task::LocalSet::new();
     local.block_on(&rt, async move {
-        let client = http_client(&shared.config, &tls_config());
+        let client = http_client(&shared.config, &tls_config(), shared.proxy.clone());
         let io = std::rc::Rc::new(Io {
             shared,
             cookies,
@@ -729,6 +746,7 @@ fn io_main(mut rx: mpsc::UnboundedReceiver<Cmd>, shared: Arc<Shared>, cookies: A
             insecure: std::cell::OnceCell::new(),
             preflight: Mutex::new(PreflightCache::default()),
             per_origin: Mutex::new(HashMap::new()),
+            h2_origins: Mutex::new(HashSet::new()),
         });
         let tasks: std::rc::Rc<std::cell::RefCell<HashMap<RequestId, Task>>> = Default::default();
         while let Some(cmd) = rx.recv().await {
@@ -885,17 +903,48 @@ fn certificate_error(io: &std::io::Error) -> Option<String> {
     certificate_error(inner.downcast_ref::<std::io::Error>()?)
 }
 
-fn classify(e: &hyper_util::client::legacy::Error) -> NetError {
+/// Why a hop got no response.
+enum SendError {
+    Net(NetError),
+    /// 407 to CONNECT. Without an answer it fails like a refused tunnel.
+    ProxyChallenge {
+        scheme: String,
+        realm: String,
+    },
+}
+
+impl From<SendError> for NetError {
+    fn from(e: SendError) -> NetError {
+        match e {
+            SendError::Net(e) => e,
+            SendError::ProxyChallenge { .. } => NetError::Proxy(TUNNEL_FAILED),
+        }
+    }
+}
+
+const TUNNEL_FAILED: &str = "net::ERR_TUNNEL_CONNECTION_FAILED";
+
+fn classify(e: &hyper_util::client::legacy::Error) -> SendError {
     let mut src: Option<&(dyn std::error::Error + 'static)> = std::error::Error::source(e);
     let mut text = e.to_string();
     while let Some(s) = src {
+        match s.downcast_ref::<ProxyError>() {
+            Some(ProxyError::Unreachable(_)) => {
+                return SendError::Net(NetError::Proxy("net::ERR_PROXY_CONNECTION_FAILED"))
+            }
+            Some(ProxyError::Tunnel(_)) => return SendError::Net(NetError::Proxy(TUNNEL_FAILED)),
+            Some(ProxyError::Challenge { scheme, realm }) => {
+                return SendError::ProxyChallenge { scheme: scheme.clone(), realm: realm.clone() }
+            }
+            None => {}
+        }
         if let Some(io) = s.downcast_ref::<std::io::Error>() {
             if let Some(c) = certificate_error(io) {
-                return NetError::Certificate(c);
+                return SendError::Net(NetError::Certificate(c));
             }
             match io.kind() {
-                std::io::ErrorKind::ConnectionRefused => return NetError::ConnectionRefused,
-                std::io::ErrorKind::TimedOut => return NetError::Timeout,
+                std::io::ErrorKind::ConnectionRefused => return SendError::Net(NetError::ConnectionRefused),
+                std::io::ErrorKind::TimedOut => return SendError::Net(NetError::Timeout),
                 _ => {}
             }
         }
@@ -903,12 +952,12 @@ fn classify(e: &hyper_util::client::legacy::Error) -> NetError {
         src = s.source();
     }
     if text.contains("dns error") || text.contains("failed to lookup") {
-        return NetError::NameNotResolved;
+        return SendError::Net(NetError::NameNotResolved);
     }
     if e.is_connect() {
-        return NetError::ConnectionRefused;
+        return SendError::Net(NetError::ConnectionRefused);
     }
-    NetError::Other(text)
+    SendError::Net(NetError::Other(text))
 }
 
 impl Io {
@@ -916,6 +965,18 @@ impl Io {
         let key = url.origin().ascii_serialization();
         let mut m = self.per_origin.lock().unwrap();
         m.entry(key).or_insert_with(|| Arc::new(Semaphore::new(self.shared.config.max_per_origin))).clone()
+    }
+
+    /// An origin that answered over HTTP/2 multiplexes one connection: the
+    /// six-connection limit no longer applies to it.
+    fn multiplexing(&self, url: &Url) {
+        let key = url.origin().ascii_serialization();
+        if self.h2_origins.lock().unwrap().insert(key.clone()) {
+            let cfg = &self.shared.config;
+            if let Some(semaphore) = self.per_origin.lock().unwrap().get(&key) {
+                semaphore.add_permits(cfg.max_per_h2_origin.saturating_sub(cfg.max_per_origin));
+            }
+        }
     }
 
     fn build_headers(&self, req: &Request, origin_url: Option<&Url>, cors_cross: bool) -> HeaderMap {
@@ -1009,20 +1070,32 @@ impl Io {
         }
     }
 
+    fn proxy_for(&self, url: &Url) -> Option<&ProxyState> {
+        self.shared.proxy.as_deref().filter(|p| p.applies_to(url))
+    }
+
     async fn send(
         &self,
         method: Method,
         url: &Url,
-        headers: HeaderMap,
+        mut headers: HeaderMap,
         body: Option<Bytes>,
-    ) -> Result<http::Response<hyper::body::Incoming>, NetError> {
+    ) -> Result<http::Response<hyper::body::Incoming>, SendError> {
+        // On a tunnel the proxy sees this header at CONNECT, and it must not
+        // reach the target. An absolute-form request carries it itself.
+        if url.scheme() == "http" {
+            if let Some(value) = self.proxy_for(url).and_then(|p| p.authorization()) {
+                headers.insert(header::PROXY_AUTHORIZATION, value);
+            }
+        }
         let mut b = http::Request::builder().method(method).uri(url.as_str());
         if let Some(h) = b.headers_mut() {
             *h = headers;
         }
-        let r = b.body(Full::new(body.unwrap_or_default())).map_err(|_| NetError::InvalidUrl)?;
+        let r = b.body(Full::new(body.unwrap_or_default())).map_err(|_| SendError::Net(NetError::InvalidUrl))?;
         let client = if self.shared.ignore_certificate_errors.load(Ordering::Relaxed) {
-            self.insecure.get_or_init(|| http_client(&self.shared.config, &tls_config_insecure()))
+            self.insecure
+                .get_or_init(|| http_client(&self.shared.config, &tls_config_insecure(), self.shared.proxy.clone()))
         } else {
             &self.client
         };
@@ -1078,7 +1151,8 @@ impl Io {
             }
 
             // CDP Fetch interception (request stage).
-            let interceptor = self.shared.interceptor.lock().unwrap().clone();
+            let interceptor =
+                if req.skip_interception { None } else { self.shared.interceptor.lock().unwrap().clone() };
             let (mut method, mut url, mut headers, mut body) =
                 (req.method.clone(), req.url.clone(), headers, req.body.clone());
             if let Some(i) = &interceptor {
@@ -1183,21 +1257,35 @@ impl Io {
             let auth_interceptor = interceptor.as_ref().filter(|i| i.handles_auth());
             let resp = loop {
                 // Ordinary traffic does not need retry copies of the header map.
-                let resp = if auth_interceptor.is_some() {
-                    self.send(method.clone(), &url, headers.clone(), body.clone()).await?
+                let sent = if auth_interceptor.is_some() {
+                    self.send(method.clone(), &url, headers.clone(), body.clone()).await
                 } else {
-                    self.send(method.clone(), &url, std::mem::take(&mut headers), body.take()).await?
+                    self.send(method.clone(), &url, std::mem::take(&mut headers), body.take()).await
                 };
-                let proxy = resp.status() == StatusCode::PROXY_AUTHENTICATION_REQUIRED;
-                if resp.status() != StatusCode::UNAUTHORIZED && !proxy {
-                    break resp;
-                }
-                let Some(interceptor) = auth_interceptor else { break resp };
-                let challenge_header = if proxy { header::PROXY_AUTHENTICATE } else { header::WWW_AUTHENTICATE };
-                let Some((scheme, realm)) = auth_challenge(resp.headers(), challenge_header) else { break resp };
+                // `resp` is None for a 407 to CONNECT: no response to fall back on.
+                let (resp, proxy, scheme, realm) = match sent {
+                    Ok(resp) => {
+                        let proxy = resp.status() == StatusCode::PROXY_AUTHENTICATION_REQUIRED;
+                        if (resp.status() != StatusCode::UNAUTHORIZED && !proxy) || auth_interceptor.is_none() {
+                            break resp;
+                        }
+                        let challenge_header =
+                            if proxy { header::PROXY_AUTHENTICATE } else { header::WWW_AUTHENTICATE };
+                        let Some((scheme, realm)) = auth_challenge(resp.headers(), challenge_header) else {
+                            break resp;
+                        };
+                        (Some(resp), proxy, scheme, realm)
+                    }
+                    Err(SendError::ProxyChallenge { scheme, realm }) if auth_interceptor.is_some() => {
+                        (None, true, scheme, realm)
+                    }
+                    Err(e) => return Err(e.into()),
+                };
+                let Some(interceptor) = auth_interceptor else { unreachable!("no challenge without an interceptor") };
                 if auth_attempts >= self.shared.config.max_auth_retries {
                     return Err(NetError::Blocked("net::ERR_INVALID_AUTH_CREDENTIALS".into()));
                 }
+                let proxy_state = if proxy { self.proxy_for(&url) } else { None };
                 let (tx, rx) = oneshot::channel();
                 interceptor.auth_required(
                     AuthChallenge {
@@ -1211,7 +1299,8 @@ impl Io {
                             frame_id: req.frame_id.clone(),
                             loader_id: req.loader_id.clone(),
                         },
-                        origin: url.origin().ascii_serialization(),
+                        origin: proxy_state
+                            .map_or_else(|| url.origin().ascii_serialization(), |p| p.origin().to_owned()),
                         scheme: scheme.clone(),
                         realm,
                         proxy,
@@ -1219,27 +1308,26 @@ impl Io {
                     tx,
                 );
                 match rx.await {
-                    Ok(AuthDecision::Default | AuthDecision::CancelAuth) => break resp,
+                    Ok(AuthDecision::Default | AuthDecision::CancelAuth) => match resp {
+                        Some(resp) => break resp,
+                        None => return Err(NetError::Proxy(TUNNEL_FAILED)),
+                    },
                     Ok(AuthDecision::ProvideCredentials { username, password }) => {
-                        if proxy {
-                            return Err(NetError::Other(
-                                "proxy authentication requires proxy transport support".into(),
-                            ));
+                        if proxy && proxy_state.is_none() {
+                            return Err(NetError::Other("407 from a server that is not the proxy".into()));
                         }
                         if scheme != "basic" {
                             return Err(NetError::Other(format!("unsupported authentication scheme: {scheme}")));
                         }
-                        if username.contains(':') {
-                            return Err(NetError::Other("Basic authentication username contains ':'".into()));
+                        let value = basic_authorization(&username, &password).map_err(NetError::Other)?;
+                        // Proxy credentials belong to the connection, not to this
+                        // request: `send` and the connector add them from now on.
+                        match proxy_state {
+                            Some(state) => state.set_authorization(value),
+                            None => {
+                                headers.insert(header::AUTHORIZATION, value);
+                            }
                         }
-                        use base64::Engine;
-                        let value = base64::engine::general_purpose::STANDARD.encode(format!("{username}:{password}"));
-                        let name = if proxy { header::PROXY_AUTHORIZATION } else { header::AUTHORIZATION };
-                        headers.insert(
-                            name,
-                            HeaderValue::from_str(&format!("Basic {value}"))
-                                .map_err(|_| NetError::Other("invalid credentials".into()))?,
-                        );
                         auth_attempts += 1;
                         // Drop the challenge body without buffering it. Keep the same
                         // request ID and request-stage pause throughout auth retries.
@@ -1250,6 +1338,10 @@ impl Io {
             };
             let status = resp.status();
             let resp_headers = resp.headers().clone();
+            let protocol = resp.version();
+            if protocol == Version::HTTP_2 {
+                self.multiplexing(&url);
+            }
             let cookies_allowed = match req.credentials {
                 Credentials::Include => true,
                 Credentials::SameOrigin => cors::is_same_origin_request(&req),
@@ -1304,8 +1396,9 @@ impl Io {
                     match req.redirect {
                         RedirectMode::Error => return Err(NetError::RedirectNotAllowed),
                         RedirectMode::Manual => {
-                            let head =
-                                self.head(&url, status, resp_headers, ResponseKind::OpaqueRedirect, redirects > 0);
+                            let head = self
+                                .head(&url, status, resp_headers, ResponseKind::OpaqueRedirect, redirects > 0)
+                                .over(protocol);
                             return self.finish_empty(id, &req, sink, head);
                         }
                         RedirectMode::Follow => {}
@@ -1318,7 +1411,9 @@ impl Io {
                     if redirects > self.shared.config.max_redirects {
                         return Err(NetError::TooManyRedirects);
                     }
-                    let head = self.head(&url, status, resp_headers.clone(), ResponseKind::Basic, redirects > 1);
+                    let head = self
+                        .head(&url, status, resp_headers.clone(), ResponseKind::Basic, redirects > 1)
+                        .over(protocol);
                     deliver(
                         sink,
                         ResponseEvent::Redirect {
@@ -1387,7 +1482,7 @@ impl Io {
                     Ok(ResponseDecision::Fail(reason)) => return Err(NetError::Blocked(cdp_reason(&reason))),
                     Err(_) => return Err(NetError::Other("response interception dropped".into())),
                 };
-                let head = self.head(&url, status, resp_headers, kind, redirects > 0);
+                let head = self.head(&url, status, resp_headers, kind, redirects > 0).over(protocol);
                 return self.deliver_body(id, &req, sink, head, body);
             }
             let (store, mut max_entry) = {
@@ -1403,7 +1498,7 @@ impl Io {
             }
             let shared_response = shared_store.map(|_| resp_headers.clone());
             let mut stored: Option<Vec<Bytes>> = (store.is_some() || shared_store.is_some()).then(Vec::new);
-            let head = self.head(&url, status, resp_headers, kind, redirects > 0);
+            let head = self.head(&url, status, resp_headers, kind, redirects > 0).over(protocol);
             self.shared.emit(NetEvent::ResponseReceived {
                 id,
                 head: Box::new(head.clone()),
@@ -1468,10 +1563,10 @@ impl Io {
                     if chunks.len() == 1 { chunks.into_iter().next().unwrap() } else { Bytes::from(chunks.concat()) };
                 if let Some(response) = store {
                     let mut cache = self.shared.cache.lock().unwrap();
-                    cache.insert(&url, sent, status, &response, body.clone(), request_time, response_time);
+                    cache.insert(&url, sent, status, &response, body.clone(), request_time, response_time, protocol);
                 }
                 if let (Some(s), Some(response)) = (shared_store, shared_response) {
-                    s.with(|c| c.insert(&url, sent, status, &response, body, request_time, response_time));
+                    s.with(|c| c.insert(&url, sent, status, &response, body, request_time, response_time, protocol));
                 }
             }
             self.shared.emit(NetEvent::LoadingFinished { id, encoded_len: encoded, timestamp: self.shared.now() });
@@ -1555,7 +1650,7 @@ impl Io {
         if body.len() > req.max_body.unwrap_or(self.shared.config.max_body) {
             return Err(NetError::TooLarge);
         }
-        let mut head = self.head(url, cached.status, cached.headers, kind, redirected);
+        let mut head = self.head(url, cached.status, cached.headers, kind, redirected).over(cached.protocol);
         head.from_cache = from_cache;
         self.shared.emit(NetEvent::ResponseReceived {
             id,
@@ -1599,6 +1694,7 @@ impl Io {
             from_cache: false,
             kind,
             remote_addr: None,
+            protocol: Version::HTTP_11,
         }
     }
 
@@ -1812,6 +1908,7 @@ impl NetClient {
             from_cache: false,
             kind: ResponseKind::Basic,
             remote_addr: None,
+            protocol: Version::HTTP_11,
         };
         if !shared.observed() {
             return head;

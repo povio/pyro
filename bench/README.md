@@ -60,10 +60,65 @@ cargo build --release                                        # from the reposito
 (cd bench && bun install && (cd rss-sampler && cargo build --release))
 bun bench/scripts/cdp-perf.mjs --list                        # scenarios
 bun bench/scripts/cdp-perf.mjs --bin $PWD/target/release/lightningpanda --out /tmp/cdp-perf/now.json
-bench/scripts/cdp-perf-ab.sh origin/main                     # main vs. the working tree, interleaved
+bench/scripts/cdp-perf-ab.sh origin/main                     # main vs. the working tree, interleaved (see below)
 node bench/scripts/cdp-perf-compare.mjs run.json --base base --head head
 node bench/scripts/cdp-perf-compare.mjs old.json new.json    # two separate runs (less reliable)
 ```
+
+### A/B comparison (`cdp-perf-ab.sh`)
+
+`bench/scripts/cdp-perf-ab.sh BASE [HEAD] [-- cdp-perf options]` builds both sides and runs them interleaved.
+
+- **Profile.** By default it builds with `perf` (`bench/scripts/perf-profile.toml`: release without LTO, 16 codegen
+  units, incremental, no debug info), passed with `cargo --config` so that any commit can be built with the same
+  settings. It is not the shipped code, so compare its base with its head and never with release numbers.
+  `--shipping-profile` builds the real release profile, in a target directory per SHA; use it for final sign-off.
+- **Reuse.** The `perf` profile has one reused checkout and target directory per side
+  (`$LP_PERF_WORK/slot-a`, `slot-b`). Finished binaries are kept in `$LP_PERF_WORK/bin-<profile>-<sha>/`, and a
+  commit with a matching binary is not rebuilt.
+- **Provenance.** A shared target directory has silently produced identical binaries before
+  (`results/build-provenance-audit`), so the checkout must be clean and at the SHA right before and after cargo, a
+  crate whose sources changed since the slot's last build must not be reported fresh, the binary must carry
+  `allow-jit`, and the run is refused when base and head are identical (SHA-256, or `__text` and both `__const`
+  sections on macOS) although files the build reads differ. Integration tests and Markdown do not count as such files.
+- **`--auto-filter`** picks the scenarios from the changed paths, taking the union: `lp-render` and `screenshot.rs`
+  select `page`, `lp` and `pdf` (and remind you to run `bench/pdf/run.mjs`, since cdp-perf measures only paper-cut
+  printing);
+  `lp-webapi`, `lp-js` and `lp-jsc-sys` select `runtime`, `dom` and `lp`; `lp-net` selects `network` and
+  `throughput`; anything else, including the `lp-cdp` engine and `vendor/`, selects
+  `^(rtt|throughput|runtime|dom|page|target|network|lp|tos|pdf)\.`. Documentation and integration tests alone skip the run.
+- **Shared machine.** It refuses to start while any cargo build is running and lists each with its owner (this
+  repository or another project) and directory; `--force` overrides. It then waits for `/tmp/lp-bench.lock`, held
+  until it exits. If a run was killed outright, `rmdir` the lock by hand.
+- **Output.** `stages.txt` in the results directory records the time and load average of each stage. A load average
+  above the CPU count prints a warning: do not trust wall-clock verdicts from such a run.
+- **Instructions retired.** The `instructions/op` column (macOS; the script builds `rss-sampler`) counts what the
+  browser process executed, so load barely moves it. It is informational and does not set the verdict. It misses
+  whatever changes speed without changing the instruction count, such as code layout and cache behaviour.
+
+Measured on d667459d vs 430345ba on an M1 Max with other builds running. Each build time is one sample, and the
+load average differs between them, so read these as orders of magnitude:
+
+| stage | old flow (release, target per SHA) | `perf` profile | load average |
+|---|---|---:|---:|
+| first build, empty cache | 3:25-5:23 per side | not faster: 10:07, 8:28 (before `vendor/` became cacheable) | 270-160 |
+| cold build, warm sccache | | 4:24, 4:55 | 55-157 |
+| rebuild, 430345ba and d667459d swapped between slots | 2:59, 2:47 (`--shipping-profile`, release rebuild of the workspace crates) | 0:47, 0:49 | 105-160 |
+| rebuild, unused function added to `lp-cdp` | | 0:03 | 118 |
+| binary already built | | 0:00 | 108 |
+| dirty working tree, first build then next edit | | 9:40, 0:22 | 158-90 |
+
+In one interleaved 9-round run of `^(page\.|lp\.)` with all four binaries (load average 148 falling to 97):
+
+- **Absolute numbers:** `perf` against `release` was 0.91-1.34x in wall clock (mostly noise), and within 0.98-1.10x in
+  instructions. The largest gap is `page.navigate.about:blank` (+7-10%); the `lp.*` flows are within 1%.
+- **Instructions, head against base:** the two profiles agree that nothing changed: at most 2.1% on any scenario,
+  and the spread between rounds was 1-2% on most `lp.*` rows, up to 17% on `page.navigate.*`.
+- **Wall-clock verdicts:** no regression on either profile, but they agreed on only 4 of 8 scenarios. Every
+  disagreement is an `unclear` with p > 0.38, on different scenarios per profile. That is load, not the profile.
+
+Under this load use instructions to look for a change, and confirm a wall-clock claim with `--shipping-profile` on a
+quiet machine.
 
 Scenarios (`--filter REGEX` matches names or groups; `--quick` = 1 round at 20% iterations, for checking the
 harness only):
@@ -81,6 +136,11 @@ harness only):
 - **targets**: context + target create, attach, `Page`/`Runtime.enable`, close, dispose, with per-step laps.
 - **network**: 20 parallel `fetch()` with `Network.enable`; one `Fetch.requestPaused` → `fulfillRequest`.
 - **input**: `Input.dispatchMouseEvent` clicks and `Input.dispatchKeyEvent` typing, verified in the page.
+- **pdf**: `Page.printToPDF` of a document without `.pz-page` elements, which is cut into pages. `pdf.paginate.text`
+  is about 20 Letter pages of plain lines, `pdf.paginate.avoid` about 20 pages of `break-inside: avoid` boxes, and
+  `pdf.paginate.shrink` a 1200 px wide document that takes a second layout to shrink to fit. The content is set once;
+  a sample is one print, checked by its page count (within 2, so versions with other pagination rules compare). `bench/pdf/run.mjs` measures the other path: its ToS documents
+  have `.pz-page`, which skips pagination altogether.
 - **webview** (`Bun.WebView`, needs `bun`): open + navigate + close, `navigate` of each fixture page,
   `evaluate`, raw `view.cdp()`, selector `click` (with its actionability checks), `type`, and a whole form
   test flow with laps.
@@ -113,6 +173,9 @@ add `--perf-trace`. The browser then times each stage of every command (`io.ws_r
 lists every stage costing at least 10 ns per operation, with the timer floor measured on that host. Stages
 are inclusive and timing adds a few tens of ns per stage, so compare traced builds only with traced builds.
 Normal builds compile the timers out (`crates/lp-cdp-protocol/src/perf.rs`).
+
+`--fork` starts `serve --fork` and reads CPU from every descendant of `serve`, since connections run in forked
+children. Without it, setting `LIGHTNINGPANDA_FORK=1` still runs fork mode, but CPU reads as about zero.
 
 Reading it for optimization: compare `rtt.Browser.getVersion` (protocol floor) with the other `rtt`/`runtime`
 rows to see the cost of the browser-thread hop and JS work; the navigation milestones show whether time goes
@@ -208,3 +271,50 @@ TARGET=chrome bunx playwright test                              # Playwright's h
 
 Results go to `results/$TARGET.json` (or `$OUT/$TARGET.json`). `baseline/visual.png` is the `toHaveScreenshot`
 reference, taken with `TARGET=chrome-launch bunx playwright test --update-snapshots` on macOS.
+
+## Page-break fixtures against Chrome (`pdf/fixtures/`)
+
+Reproducible sets for how paper-cut `Page.printToPDF` documents break, with Chrome 156's results. `generators/` holds
+one module per set, each exporting `cases` (name, HTML, print options); `chrome-156/` the measured summaries (per page:
+word count, a hash of its sorted words, first and last word, distinct y), no PDFs. Names are `group|...`.
+
+```sh
+cd bench/pdf/fixtures                                  # needs pdftotext and Chrome at its default path
+bun probe.mjs generators/fx-fr.mjs chrome out.json    # or a binary instead of chrome
+python3 compare.py chrome-156/fr.json out.json [-v]    # per group: words on the same pages, page counts, positions
+bun print-72.mjs /abs/lightningpanda                  # the 72: pages, lines and link rects, Chrome measured live
+./run.sh /abs/lightningpanda /tmp/out [fr sub ...]     # every set (or those named), against chrome-156/
+bun geometry.mjs /abs/lightningpanda out.json         # the 152 geometry matrix
+python3 compare.py --geometry chrome-156/geometry.json out.json
+```
+
+| Sets | Generators | Cases | What varies |
+|---|---|---|---|
+| fractional spacers | `fx-fr` | 342 | a position's fraction before 20 px lines, 9 paper setups |
+| sub-pixel groups | `fx-sub` | 1656 | line heights, accumulated fractions, nested margins, later pages, under 0.5 px overflow, forced breaks, floats |
+| whole-px analogues | `fx-sub2`, `fx-sub3` | 86 | the same shapes in whole px, also parallel columns and tables |
+| vertical writing | `fx-vert` | 24 | vertical blocks and documents |
+| tall monolithic boxes | `fx-mt` | 512 | margin, border and padding above images, size containment, vertical boxes |
+| page geometry | `fx-72` | 120 | paper, margin and scale on links, text, breaks, shrink to fit |
+| orphans, widows | `fx-wo`, `fx-wo2`, `fx-wo3` | 125 | `orphans` and `widows` around cuts |
+| avoid, shrink, sizes | `fx-av`, `fx-sh`, `fx-sr`, `fx-tw`, `fx-engine` | 381 | `break-inside: avoid`, overflowing documents, page sizes |
+| gaps closed by #251 | `fx-b`, `fx-b2`, `fx-b3`, `fx-f`, `fx-h`, `fx-h1`, `fx-k`, `fx-m`, `fx-s`, `fx-v` | 1706 | monolithic boxes, `break-*: avoid`, forced breaks, line and box positions at a cut |
+
+Page placement and text x of whole PDFs against Chrome:
+
+```sh
+bun page-placement.mjs <work dir> chrome-156/page-placement.json [/abs/lightningpanda]   # documents x papers x options, and the 300 dpi page size
+bun pdf-deltas.mjs <chrome pdf dir> <lp pdf dir> out.json        # per PDF of a run.mjs run: x and y delta of 30 pt tiles at 600 dpi, pixel diff at 150 dpi
+python3 page-stream-diff.py; python3 page-shift-check.py         # two lp-fixed runs (r-base, r-head): how each stream changed; pixels after undoing a page shift
+bun text-x.mjs <work dir> chrome; bun text-x.mjs <work dir> /abs/lightningpanda   # fractional text x: paper-cut and `.pz-page`, with screenshots
+python3 width-check.py chrome-156/width-x.json <probe of fx-width>   # what paper-cut print lays out in: marker x and link rects
+```
+
+`pdf-resample.mjs` compares a page's error against Chrome at 150 dpi as poppler rasterizes it and box-averaged from a higher resolution, to tell a real move from a sampling effect.
+
+`chrome-156/tos-deltas.json` holds the 44 ToS cases before and after (median, p95, max of per-tile deltas in pt; the search stops at 2.4 pt, and
+tiles match by ink profiles, so regular text can alias: read medians and p95 first). `text-x-before.json` and `text-x-after.json` hold the text-x set, `text-x-width.json` the same on the paper-cut layout width.
+
+Compare only runs from one Chrome version: the summaries say what 156 did on the machine that measured them (macOS,
+its Arial). Word assignment is what the sets pin; a page's y differs by a constant between engines, because pdftotext
+reads a different ascent from each PDF's font.

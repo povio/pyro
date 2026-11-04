@@ -1,0 +1,146 @@
+diff --git a/Source/JavaScriptCore/API/JSCallbackObject.cpp b/Source/JavaScriptCore/API/JSCallbackObject.cpp
+index e2866d1..bd362ab 100644
+--- a/Source/JavaScriptCore/API/JSCallbackObject.cpp
++++ b/Source/JavaScriptCore/API/JSCallbackObject.cpp
+@@ -113,6 +113,12 @@ Structure* JSCallbackObject<JSNonFinalObject>::createStructure(VM& vm, JSGlobalO
+     return Structure::create(vm, globalObject, proto, TypeInfo(ObjectType, StructureFlags), info()); 
+ }
+     
++template <>
++Structure* JSCallbackObject<JSNonFinalObject>::createCacheableStructure(VM& vm, JSGlobalObject* globalObject, JSValue proto)
++{
++    return Structure::create(vm, globalObject, proto, TypeInfo(ObjectType, StructureFlags & ~(OverridesGetOwnPropertySlot | OverridesPut | ProhibitsPropertyCaching)), info());
++}
++
+ template <>
+ Structure* JSCallbackObject<JSGlobalObject>::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue proto)
+ { 
+diff --git a/Source/JavaScriptCore/API/JSCallbackObject.h b/Source/JavaScriptCore/API/JSCallbackObject.h
+index 04c2722..058598c 100644
+--- a/Source/JavaScriptCore/API/JSCallbackObject.h
++++ b/Source/JavaScriptCore/API/JSCallbackObject.h
+@@ -174,6 +174,9 @@ public:
+     bool inherits(JSClassRef) const;
+ 
+     static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
++    // For wrappers of a class with wrappersAreCacheable. Same cell and ClassInfo, but lookups skip
++    // the C++ getOwnPropertySlot and put, and inline caches accept the structure.
++    static Structure* createCacheableStructure(VM&, JSGlobalObject*, JSValue);
+     
+     JSValue getPrivateProperty(const Identifier& propertyName) const
+     {
+diff --git a/Source/JavaScriptCore/API/JSCallbackObjectFunctions.h b/Source/JavaScriptCore/API/JSCallbackObjectFunctions.h
+index a7de7a7..5055eca 100644
+--- a/Source/JavaScriptCore/API/JSCallbackObjectFunctions.h
++++ b/Source/JavaScriptCore/API/JSCallbackObjectFunctions.h
+@@ -210,7 +210,9 @@ bool JSCallbackObject<Parent>::getOwnPropertySlot(JSObject* object, JSGlobalObje
+     if (found)
+         return true;
+ 
+-    if (propertyName.uid() == vm.propertyNames->toStringTagSymbol.impl()) {
++    // A cacheable wrapper's [[Get]] skips this function and finds the tag on its prototype, so
++    // don't answer with an own tag here either: getOwnPropertyDescriptor must agree.
++    if (propertyName.uid() == vm.propertyNames->toStringTagSymbol.impl() && thisObject->structure()->typeInfo().prohibitsPropertyCaching()) {
+         String className = thisObject->classRef()->className();
+         if (className.isEmpty())
+             className = thisObject->className();
+diff --git a/Source/JavaScriptCore/API/JSClassRef.cpp b/Source/JavaScriptCore/API/JSClassRef.cpp
+index 30029cb..43f3aee 100644
+--- a/Source/JavaScriptCore/API/JSClassRef.cpp
++++ b/Source/JavaScriptCore/API/JSClassRef.cpp
+@@ -77,6 +77,11 @@ OpaqueJSClass::OpaqueJSClass(const JSClassDefinition* definition, OpaqueJSClass*
+         prototypeClass = JSClassRetain(protoClass);
+     if (definition->parentClass)
+         parentClass = JSClassRetain(definition->parentClass);
++
++    wrappersAreCacheable = !hasProperty && !getProperty && !setProperty && !deleteProperty && !getPropertyNames
++        && !callAsFunction && !callAsConstructor && !hasInstance && !convertToType
++        && m_staticValues.isEmpty() && m_staticFunctions.isEmpty()
++        && (!parentClass || parentClass->wrappersAreCacheable);
+ }
+ 
+ OpaqueJSClass::~OpaqueJSClass()
+diff --git a/Source/JavaScriptCore/API/JSClassRef.h b/Source/JavaScriptCore/API/JSClassRef.h
+index a8d2c36..a8ceed7 100644
+--- a/Source/JavaScriptCore/API/JSClassRef.h
++++ b/Source/JavaScriptCore/API/JSClassRef.h
+@@ -125,6 +125,10 @@ struct OpaqueJSClass : public ThreadSafeRefCounted<OpaqueJSClass> {
+     JSObjectHasInstanceCallback OPAQUE_JSCLASS_METHOD(hasInstance);
+     JSObjectConvertToTypeCallback OPAQUE_JSCLASS_METHOD(convertToType);
+ 
++    // No class in the chain can answer for a property or be called, so a wrapper's property
++    // lookups are ordinary object lookups, which inline caches may remember.
++    bool wrappersAreCacheable { false };
++
+ private:
+     friend struct OpaqueJSClassContextData;
+ 
+diff --git a/Source/JavaScriptCore/API/JSObjectRef.cpp b/Source/JavaScriptCore/API/JSObjectRef.cpp
+index 039858f..b363cbc 100644
+--- a/Source/JavaScriptCore/API/JSObjectRef.cpp
++++ b/Source/JavaScriptCore/API/JSObjectRef.cpp
+@@ -91,7 +91,8 @@ JSObjectRef JSObjectMake(JSContextRef ctx, JSClassRef jsClass, void* data)
+     if (!jsClass)
+         return toRef(constructEmptyObject(globalObject));
+ 
+-    JSCallbackObject<JSNonFinalObject>* object = JSCallbackObject<JSNonFinalObject>::create(globalObject, globalObject->callbackObjectStructure(), jsClass, data);
++    Structure* structure = jsClass->wrappersAreCacheable && Options::cacheCallbackObjectLookups() ? globalObject->cacheableCallbackObjectStructure() : globalObject->callbackObjectStructure();
++    JSCallbackObject<JSNonFinalObject>* object = JSCallbackObject<JSNonFinalObject>::create(globalObject, structure, jsClass, data);
+     if (JSObject* prototype = jsClass->prototype(globalObject))
+         object->setPrototypeDirect(vm, prototype);
+ 
+diff --git a/Source/JavaScriptCore/runtime/JSGlobalObject.cpp b/Source/JavaScriptCore/runtime/JSGlobalObject.cpp
+index 1ededfb..4b0b2c1 100644
+--- a/Source/JavaScriptCore/runtime/JSGlobalObject.cpp
++++ b/Source/JavaScriptCore/runtime/JSGlobalObject.cpp
+@@ -1223,6 +1223,10 @@ void JSGlobalObject::init(VM& vm)
+         [] (const Initializer<Structure>& init) {
+             init.set(JSCallbackObject<JSNonFinalObject>::createStructure(init.vm, init.owner, init.owner->m_objectPrototype.get()));
+         });
++    m_cacheableCallbackObjectStructure.initLater(
++        [] (const Initializer<Structure>& init) {
++            init.set(JSCallbackObject<JSNonFinalObject>::createCacheableStructure(init.vm, init.owner, init.owner->m_objectPrototype.get()));
++        });
+     m_rawJSONObjectStructure.initLater(
+         [] (const Initializer<Structure>& init) {
+             init.set(JSRawJSONObject::createStructure(init.vm, init.owner, jsNull()));
+@@ -2992,6 +2996,7 @@ void JSGlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+     thisObject->m_callbackConstructorStructure.visit(visitor);
+     thisObject->m_callbackFunctionStructure.visit(visitor);
+     thisObject->m_callbackObjectStructure.visit(visitor);
++    thisObject->m_cacheableCallbackObjectStructure.visit(visitor);
+     thisObject->m_rawJSONObjectStructure.visit(visitor);
+ #if JSC_OBJC_API_ENABLED
+     thisObject->m_objcCallbackFunctionStructure.visit(visitor);
+diff --git a/Source/JavaScriptCore/runtime/JSGlobalObject.h b/Source/JavaScriptCore/runtime/JSGlobalObject.h
+index 10195b6..5f373ad 100644
+--- a/Source/JavaScriptCore/runtime/JSGlobalObject.h
++++ b/Source/JavaScriptCore/runtime/JSGlobalObject.h
+@@ -351,6 +351,7 @@ public:
+     LazyProperty<JSGlobalObject, Structure> m_callbackConstructorStructure;
+     LazyProperty<JSGlobalObject, Structure> m_callbackFunctionStructure;
+     LazyProperty<JSGlobalObject, Structure> m_callbackObjectStructure;
++    LazyProperty<JSGlobalObject, Structure> m_cacheableCallbackObjectStructure;
+     LazyProperty<JSGlobalObject, Structure> m_rawJSONObjectStructure;
+ #if JSC_OBJC_API_ENABLED
+     LazyProperty<JSGlobalObject, Structure> m_objcCallbackFunctionStructure;
+@@ -902,6 +903,7 @@ public:
+     Structure* callbackConstructorStructure() const { return m_callbackConstructorStructure.get(this); }
+     Structure* callbackFunctionStructure() const { return m_callbackFunctionStructure.get(this); }
+     Structure* callbackObjectStructure() const { return m_callbackObjectStructure.get(this); }
++    Structure* cacheableCallbackObjectStructure() const { return m_cacheableCallbackObjectStructure.get(this); }
+     Structure* rawJSONObjectStructure() const { return m_rawJSONObjectStructure.get(this); }
+ #if JSC_OBJC_API_ENABLED
+     Structure* objcCallbackFunctionStructure() const { return m_objcCallbackFunctionStructure.get(this); }
+diff --git a/Source/JavaScriptCore/runtime/OptionsList.h b/Source/JavaScriptCore/runtime/OptionsList.h
+index c7387ff..487b9b7 100644
+--- a/Source/JavaScriptCore/runtime/OptionsList.h
++++ b/Source/JavaScriptCore/runtime/OptionsList.h
+@@ -207,6 +207,7 @@ bool hasCapacityToUseLargeGigacage();
+     v(Bool, verboseSanitizeStack, false, Normal, nullptr) \
+     v(Bool, useGenerationalGC, true, Normal, nullptr) \
+     v(Bool, useConcurrentGC, true, Normal, nullptr) \
++    v(Bool, cacheCallbackObjectLookups, true, Normal, "let inline caches remember lookups on C API wrappers of classes without property hooks"_s) \
+     v(Bool, dropLocksInAPICallbacks, false, Normal, "drop the JS lock around C API callbacks, as stock JSC does"_s) \
+     v(Bool, collectContinuously, false, Normal, nullptr) \
+     v(Double, collectContinuouslyPeriodMS, 1, Normal, nullptr) \

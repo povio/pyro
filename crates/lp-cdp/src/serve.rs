@@ -47,6 +47,13 @@ options:
                                         entries separated by ';')
   --static-fallback <spa|network>      missing navigation paths use index.html (default spa)
                                         or the normal network at the unchanged URL
+  --proxy <URL>                         send requests through this HTTP proxy,
+                                        http://[user:pass@]host:port: CONNECT for https,
+                                        absolute-form for http; no SOCKS. A context's
+                                        own proxyServer takes its place
+  --proxy-bypass <LIST>                 hosts that skip the proxy, in Chrome's
+                                        --proxy-bypass-list syntax. Loopback always
+                                        skips it, unless the list has <-loopback>
   --prepare <URL>                       keep one page booted at URL per connection, ready
                                         for Lightningpanda.acquirePreparedPage (repeatable;
                                         env LIGHTNINGPANDA_PREPARE, ';'-separated)
@@ -109,6 +116,9 @@ const PREBOOT_LIMIT: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// No command for this long after a prepared page was taken: boot the next.
 const REFILL_QUIET: std::time::Duration = std::time::Duration::from_millis(15);
+/// With no command for this long, a closed page whose collection was put off
+/// (`Engine::release_closed`) is collected: the client may stay idle for good.
+const RELEASE_QUIET: std::time::Duration = std::time::Duration::from_secs(1);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServeOptions {
@@ -125,6 +135,10 @@ pub struct ServeOptions {
     /// in place of origins.
     pub static_roots: Vec<(String, PathBuf)>,
     pub static_spa_fallback: bool,
+    /// `--proxy URL`: forward proxy of every context without its own.
+    pub proxy: Option<String>,
+    /// `--proxy-bypass LIST`.
+    pub proxy_bypass: Option<String>,
     /// `--prepare URL` (or `LIGHTNINGPANDA_PREPARE`): pages booted ahead.
     pub prepare: Vec<String>,
     /// `--prepare-refill after-close`: replacements wait for the acquired
@@ -163,6 +177,8 @@ impl Default for ServeOptions {
                 })
                 .unwrap_or_default(),
             static_spa_fallback: true,
+            proxy: None,
+            proxy_bypass: None,
             prepare: std::env::var(PREPARE_ENV)
                 .ok()
                 .map(|v| v.split(';').map(str::trim).filter(|e| !e.is_empty()).map(str::to_owned).collect())
@@ -250,6 +266,8 @@ pub fn parse_args(args: &[String]) -> Result<ServeOptions, String> {
                 "network" => o.static_spa_fallback = false,
                 other => return Err(format!("--static-fallback: '{other}' is not spa or network")),
             },
+            "--proxy" => o.proxy = Some(value()?),
+            "--proxy-bypass" => o.proxy_bypass = Some(value()?),
             "--prepare" => o.prepare.push(value()?),
             "--prepare-refill" => match value()?.as_str() {
                 "quiet" => o.prepare_refill_after_close = false,
@@ -305,6 +323,12 @@ pub fn browser_profile(options: &ServeOptions) -> Result<BrowserProfile, String>
         profile.net.static_files = lp_net::StaticFiles::new(options.static_roots.clone())
             .map_err(|e| format!("--static: {e}"))?
             .with_spa_fallback(options.static_spa_fallback);
+    }
+    if let Some(server) = &options.proxy {
+        profile.net.proxy =
+            lp_net::ProxyConfig::parse(server, options.proxy_bypass.as_deref()).map_err(|e| format!("--proxy: {e}"))?;
+    } else if options.proxy_bypass.is_some() {
+        return Err("--proxy-bypass needs --proxy".into());
     }
     for url in &options.prepare {
         lp_net::Url::parse(url).map_err(|e| format!("--prepare: '{url}' is not an absolute URL ({e})"))?;
@@ -664,6 +688,15 @@ pub(crate) fn serve_browser(
             browser.refill_prepared();
             continue;
         }
+        let release_at = browser.host().thread.browser.engine.release_pending().then(|| quiet_since + RELEASE_QUIET);
+        if release_at.is_some_and(|at| std::time::Instant::now() >= at) && inbox.is_empty() {
+            browser.host().thread.browser.engine.settle();
+            continue;
+        }
+        let quiet_at = match (quiet_at, release_at) {
+            (Some(q), Some(r)) => Some(q.min(r)),
+            (q, r) => q.or(r),
+        };
         let deadline = match (conn.borrow().next_deadline(), quiet_at) {
             (Some(d), Some(q)) => Some(d.min(q)),
             (d, q) => d.or(q),
@@ -775,6 +808,14 @@ mod tests {
         .unwrap();
         assert!(browser_profile(&o).unwrap().prepared[0].refill_after_close);
         assert!(parse_args(&["--prepare-refill".to_owned(), "later".to_owned()]).is_err());
+        let proxy = |args: &[&str]| {
+            let args: Vec<String> = args.iter().map(|a| (*a).to_owned()).collect();
+            browser_profile(&parse_args(&args).unwrap()).map(|p| p.net.proxy.is_some())
+        };
+        assert_eq!(proxy(&[]), Ok(false));
+        assert_eq!(proxy(&["--proxy", "http://127.0.0.1:3128", "--proxy-bypass", "<-loopback>,*.test"]), Ok(true));
+        assert!(proxy(&["--proxy", "socks5://127.0.0.1:1080"]).unwrap_err().contains("SOCKS"));
+        assert!(proxy(&["--proxy-bypass", "*.test"]).is_err());
         assert!(parse_args(&["--prepare".to_owned(), "/relative".to_owned()]).is_ok());
         assert!(browser_profile(&parse_args(&["--prepare".to_owned(), "/relative".to_owned()]).unwrap()).is_err());
     }

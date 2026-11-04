@@ -59,7 +59,8 @@ pub enum Resource {
     Image(ImageType, u32, u32, Arc<Vec<u8>>),
     #[cfg(feature = "svg")]
     Svg(ImageType, crate::node::SvgImageData),
-    Css(DocumentStyleSheet),
+    /// The sheet, and its text when it has `@page` rules (see `BaseDocument::linked_page_css`).
+    Css(DocumentStyleSheet, Option<String>),
     /// Stylesheet loaded for an `@import` rule, to be attached to the rule on the document thread
     ImportedCss(ServoArc<Locked<ImportRule>>, ServoArc<Stylesheet>),
     Font(Bytes, FontFaceOverrides),
@@ -170,7 +171,10 @@ impl NetHandler for ResourceHandler<StylesheetHandler> {
 
         self.respond(
             resolved_url,
-            Ok(Resource::Css(DocumentStyleSheet(ServoArc::new(sheet)))),
+            Ok(Resource::Css(
+                DocumentStyleSheet(ServoArc::new(sheet)),
+                css.contains("@page").then(|| css.to_owned()),
+            )),
         );
     }
 }

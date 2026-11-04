@@ -67,32 +67,44 @@ impl PageHooks for Hooks {
             if !b.doc(page).is_some_and(|p| p.main_frame.loader_id == loader) {
                 return;
             }
-            let new_context = request
-                .target
-                .as_deref()
-                .is_some_and(|t| !matches!(t.to_ascii_lowercase().as_str(), "" | "_self" | "_top" | "_parent"));
-            // `_blank` (and, until named browsing contexts exist, any other
-            // name) opens a popup page; the embedder creates and navigates it.
-            if new_context && request.method == "GET" && page.child.is_none() {
-                if let Some(frame_id) = b.doc(page).map(|p| p.main_frame.id.clone()) {
+            let named = request.target.as_deref().and_then(|t| b.page(page.page)?.frames.named_frame(page, t));
+            let new_context = named.is_none()
+                && request
+                    .target
+                    .as_deref()
+                    .is_some_and(|t| !matches!(t.to_ascii_lowercase().as_str(), "" | "_self" | "_top" | "_parent"));
+            // `_blank` (and any name that is not a frame of this page) opens a
+            // popup page; the embedder creates and navigates it.
+            if new_context && request.method == "GET" {
+                let frame = b.doc(page).map(|p| (p.main_frame.id.clone(), p.main_frame.sandbox.popups_blocked));
+                if let Some((frame_id, false)) = frame {
                     b.emit(
                         page.page,
-                        crate::PageEvent::PopupRequested { frame_id, url: request.url, opener: request.opener },
+                        crate::PageEvent::PopupRequested {
+                            frame_id,
+                            url: request.url,
+                            opener: request.opener,
+                            ticket: request.popup,
+                        },
                     );
                 }
                 return;
             }
-            let result = if request.method != "GET"
-                || new_context
+            let result = if new_context
                 || (page.child.is_some() && request.target.as_deref().is_some_and(|t| matches!(t, "_top" | "_parent")))
             {
-                Err(JsError::Unsupported("form POST and cross-frame navigation targets"))
+                Err(JsError::Unsupported("form POST to a new window and cross-frame navigation targets"))
             } else {
                 b.navigate_frame_with_handling(
-                    page,
+                    named.unwrap_or(page),
                     NavigateOpts {
+                        post: request.body.map(|body| (body, request.content_type.unwrap_or_default())),
                         url: request.url,
-                        reason: NavigationReason::Anchor,
+                        reason: if request.method == "POST" {
+                            NavigationReason::FormPost
+                        } else {
+                            NavigationReason::Anchor
+                        },
                         cdp_request_id: None,
                         referrer: b.doc(page).map(|p| p.main_frame.url.clone()),
                     },
@@ -107,6 +119,14 @@ impl PageHooks for Hooks {
                     }
                 }
             }
+        });
+    }
+
+    fn popup_command(&self, popup: std::rc::Rc<lp_webapi::PopupState>, command: lp_webapi::PopupCommand) {
+        let page = self.page;
+        // The queue `navigate` uses, so this follows the popup's request.
+        self.sched.post(TaskSource::Navigation, move |b| {
+            b.emit(page.page, crate::PageEvent::PopupCommand { popup, command });
         });
     }
 
@@ -197,6 +217,17 @@ impl PageHooks for Hooks {
         true
     }
 
+    fn written_script_queued(&self) -> bool {
+        let page = self.page;
+        let loader = self.loader.clone();
+        self.sched.post(TaskSource::Networking, move |b| {
+            if b.doc(page).is_some_and(|p| p.main_frame.loader_id == loader) {
+                b.prepare_written_scripts(page);
+            }
+        });
+        true
+    }
+
     fn network_delivery(&self, id: lp_net::RequestId, frontier: lp_net::NetworkDelivery) {
         // Clone the observer out of the cell first, as `emit_to` does: the
         // callback must not run under the cell borrow.
@@ -253,6 +284,10 @@ impl PageHooks for Hooks {
         let Some(host) = self.frames.upgrade() else { return Ok(Some(scope.null())) };
         let Some(key) = host.owner(node) else { return Ok(Some(scope.null())) };
         host.document_value(scope, self.page, key).map(Some)
+    }
+    fn sibling_realms(&self, scope: &lp_js::Scope<'_>) -> Vec<lp_js::Realm> {
+        let Some(host) = self.frames.upgrade().filter(|h| h.has_children()) else { return Vec::new() };
+        host.sibling_realms(self.page, scope.realm_id())
     }
     fn frame_window<'s>(&self, scope: &lp_js::Scope<'s>, node: lp_dom::NodeId) -> Option<lp_js::Value<'s>> {
         let host = self.frames.upgrade()?;
@@ -383,6 +418,7 @@ pub(crate) fn create(
         dom.borrow_mut().create_document(lp_dom::DocumentKind::Html, url)
     };
     dom.borrow_mut().set_document_active(doc, true).map_err(|e| JsError::Type(format!("{e:?}")))?;
+    dom.borrow_mut().set_allow_declarative_shadow_roots(doc, true).map_err(|e| JsError::Type(format!("{e:?}")))?;
     dom.borrow_mut().set_resource_tracking(true);
     dom.borrow_mut()
         .set_document_base_url(doc, matches!(url, "about:blank" | "about:srcdoc").then_some(frame.base_url.as_str()))

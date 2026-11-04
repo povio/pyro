@@ -288,3 +288,37 @@ import('/missing.js').then(() => out.push('missing:ok'), () => out.push('missing
     assert_eq!(eval(&thread, page, "out.sort().join()"), "first:1:1,missing:rejected");
     assert_eq!(loader.log.borrow().iter().filter(|u| *u == "http://site.test/chunk.js").count(), 2);
 }
+
+/// A script without a URL uses the current document base URL, including after
+/// `history.pushState`.
+#[test]
+fn import_without_a_script_url_uses_the_document_base() {
+    if unsafe { lp_js::sys::modules::lp_jsc_import_maps_available() } != 1 {
+        eprintln!("needs the resolve hook of the patched JavaScriptCore; skipping");
+        return;
+    }
+    let mut thread = crate::browser_thread().unwrap();
+    let page = thread.browser.create_page().unwrap();
+    let loader = Rc::new(StaticLoader::default());
+    loader.insert("http://site.test/a/", "text/html", "<!doctype html><title>t</title>", Duration::ZERO);
+    for path in ["/a/rel.js", "/b/rel.js"] {
+        loader.insert(
+            &format!("http://site.test{path}"),
+            "text/javascript",
+            "export const url = import.meta.url;",
+            Duration::ZERO,
+        );
+    }
+    thread.browser.set_loader(Some(loader.clone()));
+    thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/a/")).unwrap();
+    settle(&mut thread);
+    eval(&thread, page, "globalThis.out = []; import('./rel.js').then(m => out.push(m.url), e => out.push('' + e));");
+    settle(&mut thread);
+    eval(
+        &thread,
+        page,
+        "history.pushState(null, '', '/b/'); import('./rel.js').then(m => out.push(m.url), e => out.push('' + e));",
+    );
+    settle(&mut thread);
+    assert_eq!(eval(&thread, page, "out.join()"), "http://site.test/a/rel.js,http://site.test/b/rel.js");
+}

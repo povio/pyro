@@ -392,7 +392,7 @@ fn unsupported_commands_fail_explicitly() {
 }
 
 #[test]
-fn locale_and_timezone_overrides_are_recorded_and_locale_sets_languages() {
+fn locale_override_sets_languages() {
     let mut h = Harness::new();
     let langs = |h: &mut Harness| {
         let r = h.page("Runtime.evaluate", json!({"expression":"navigator.languages.join()","returnByValue":true}));
@@ -412,15 +412,79 @@ fn locale_and_timezone_overrides_are_recorded_and_locale_sets_languages() {
     assert_eq!(langs(&mut h), default, "absent locale resets");
     let r = h.page("Emulation.setLocaleOverride", json!({"locale":"de DE"}));
     assert_eq!(r["error"]["code"], -32602, "{r}");
+}
 
-    for id in ["Europe/Ljubljana", "America/Argentina/Buenos_Aires", "Etc/GMT+5", "UTC", ""] {
+#[test]
+fn timezone_override_applies_to_date_intl_and_the_whole_connection() {
+    let mut h = Harness::new();
+    if !lp_js::sys::SOURCE_BUILD {
+        // The system JavaScriptCore has no per-VM zone: refused, not faked.
+        let r = h.page("Emulation.setTimezoneOverride", json!({"timezoneId":"Asia/Tokyo"}));
+        assert_eq!(r["error"]["code"], -32000, "{r}");
+        assert_eq!(h.page("Emulation.setTimezoneOverride", json!({"timezoneId":""}))["result"], json!({}));
+        return;
+    }
+    let zone = |h: &mut Harness| eval_value(h, "Intl.DateTimeFormat().resolvedOptions().timeZone");
+    let offset = |h: &mut Harness, when: &str| eval_value(h, &format!("new Date('{when}').getTimezoneOffset()"));
+    let host = zone(&mut h);
+
+    // An old Date object, with its local time and the default formats already cached.
+    eval_value(&mut h, "globalThis.old = new Date(Date.UTC(2024, 0, 15, 12)); old.getHours(); old.toLocaleString(); 0");
+    for (id, winter, summer, hours) in [
+        ("Asia/Tokyo", -540, -540, 21),
+        ("Europe/Ljubljana", -60, -120, 13),
+        ("America/New_York", 300, 240, 7),
+        ("UTC", 0, 0, 12),
+    ] {
         let r = h.page("Emulation.setTimezoneOverride", json!({"timezoneId": id}));
         assert_eq!(r["result"], json!({}), "{id}: {r}");
+        assert_eq!(zone(&mut h), json!(id));
+        assert_eq!(offset(&mut h, "2024-01-15T12:00:00Z"), json!(winter), "{id}");
+        assert_eq!(offset(&mut h, "2024-07-15T12:00:00Z"), json!(summer), "{id}");
+        assert_eq!(eval_value(&mut h, "old.getHours()"), json!(hours), "{id}: a cached local time goes stale");
+        assert_eq!(
+            eval_value(&mut h, "old.toLocaleString() === new Intl.DateTimeFormat(undefined, {year:'numeric', month:'numeric', day:'numeric', hour:'numeric', minute:'numeric', second:'numeric'}).format(old)"),
+            json!(true),
+            "{id}: the default format follows"
+        );
+        assert_eq!(
+            eval_value(&mut h, "old.toLocaleTimeString('en-US', {hour:'numeric', hour12:false})"),
+            json!(format!("{hours:02}")),
+            "{id}"
+        );
     }
-    for id in ["Europe//Paris", "../etc", "Europe/", " UTC"] {
+
+    // IDs are checked against the zones Intl knows, and a bad one changes nothing.
+    for id in ["Europe/Atlantis", "Europe//Paris", "../etc", "Europe/", " UTC", "UTC\u{0}x", "Ljubljana"] {
         let r = h.page("Emulation.setTimezoneOverride", json!({"timezoneId": id}));
-        assert!(r["error"]["message"].as_str().unwrap().starts_with("Invalid timezone"), "{id}: {r}");
+        assert_eq!(r["error"]["code"], -32602, "{id}: {r}");
+        assert!(r["error"]["message"].as_str().unwrap().starts_with("Invalid timezone id"), "{id}: {r}");
+        assert_eq!(zone(&mut h), json!("UTC"));
     }
+
+    // Reset; then the zone holds across a new page and against a different one.
+    assert_eq!(h.page("Emulation.setTimezoneOverride", json!({"timezoneId":""}))["result"], json!({}));
+    assert_eq!(zone(&mut h), host);
+    assert_eq!(h.page("Emulation.setTimezoneOverride", json!({"timezoneId":"Asia/Tokyo"}))["result"], json!({}));
+    let first = h.session.clone();
+    let id = h.send(None, "Target.createTarget", json!({"url": "about:blank"}));
+    let attached = h.until_response(id).into_iter().find(|m| m["method"] == "Target.attachedToTarget").unwrap();
+    let target = attached["params"]["targetInfo"]["targetId"].as_str().unwrap().to_owned();
+    h.session = attached["params"]["sessionId"].as_str().unwrap().to_owned();
+    assert_eq!(zone(&mut h), json!("Asia/Tokyo"), "one VM, one zone");
+    let r = h.page("Emulation.setTimezoneOverride", json!({"timezoneId":"Europe/Paris"}));
+    assert_eq!(r["error"]["code"], -32000, "{r}");
+    assert!(r["error"]["message"].as_str().unwrap().starts_with("Cannot set timezone Europe/Paris"), "{r}");
+    assert_eq!(h.page("Emulation.setTimezoneOverride", json!({"timezoneId":"Asia/Tokyo"}))["result"], json!({}));
+
+    // The zone stays while one page holds it, and goes with the last.
+    h.session = first;
+    assert_eq!(h.page("Emulation.setTimezoneOverride", json!({"timezoneId":""}))["result"], json!({}));
+    assert_eq!(zone(&mut h), json!("Asia/Tokyo"));
+    h.call(None, "Target.closeTarget", json!({"targetId": target}));
+    assert_eq!(zone(&mut h), host);
+    assert_eq!(h.page("Emulation.setTimezoneOverride", json!({"timezoneId":"Europe/Paris"}))["result"], json!({}));
+    assert_eq!(zone(&mut h), json!("Europe/Paris"));
 }
 
 #[test]
@@ -2187,7 +2251,6 @@ fn device_metrics_reject_invalid_and_unsupported_fields_atomically() {
         assert_eq!(result["error"]["code"], -32602, "{params}: {result}");
     }
     for (key, value) in [
-        ("mobile", json!(true)),
         ("scale", json!(0.5)),
         ("positionX", json!(10)),
         ("viewport", json!({"x":0,"y":0,"width":100,"height":100,"scale":1})),
@@ -2586,6 +2649,41 @@ fn emulated_media_flips_match_media_and_fires_change() {
     assert_eq!(eval_value(&mut h, "log.join()"), json!("dark:true,resize:400:384,dark:false"));
     let r = h.page("Emulation.setEmulatedMedia", json!({"media": "tv"}));
     assert_eq!(r["error"]["code"], -32602, "{r}");
+}
+
+/// What makes a document scroll, against Chrome 156 on the 800 x 600 viewport: `overflow` on `body` is the viewport's
+/// (its content counts), a box fixed to the viewport and an empty box do not count.
+#[test]
+fn scrollable_overflow_of_body_overflow_fixed_and_empty_boxes() {
+    let mut h = Harness::new();
+    h.page("Emulation.setDeviceMetricsOverride", json!({"width":800,"height":600,"deviceScaleFactor":1,"mobile":false}));
+    let wide = r#"<div style="width:2000px;height:50px"></div>"#;
+    let tall = r#"<div style="width:50px;height:1000px"></div>"#;
+    let far = "left:1900px;top:2000px";
+    for (doc, chrome) in [
+        // Goes to the viewport, so what is in `body` is scrollable overflow.
+        (format!(r#"<body style="margin:0;overflow:hidden;width:300px">{wide}"#), [2000, 600]),
+        (format!(r#"<body style="margin:0;overflow:hidden;height:100px">{tall}"#), [800, 1000]),
+        // Stays on `body`: the root has its own.
+        (format!(r#"<html style="overflow:hidden"><body style="margin:0;overflow:hidden;width:300px">{wide}"#), [800, 600]),
+        (format!(r#"<html style="overflow:hidden"><body style="margin:0;overflow:hidden;height:100px">{tall}"#), [800, 600]),
+        // Empty boxes count for nothing, wherever they are.
+        (r#"<body style="margin:0"><div style="width:2000px;height:0"></div>"#.into(), [800, 600]),
+        (format!(r#"<body style="margin:0"><div style="position:absolute;{far};width:0;height:10px"></div>"#), [800, 600]),
+        // Fixed does not count, absolute does.
+        (format!(r#"<body style="margin:0"><div style="position:fixed;{far};width:50px;height:10px"></div>"#), [800, 600]),
+        (format!(r#"<body style="margin:0"><div style="position:absolute;{far};width:50px;height:10px"></div>"#), [1950, 2010]),
+    ] {
+        load_html(&mut h, &format!("<!doctype html>{doc}"));
+        let scroll = eval_value(&mut h, "[document.documentElement.scrollWidth, document.documentElement.scrollHeight]");
+        assert_eq!(scroll, json!(chrome), "{doc}");
+        let metrics = h.page("Page.getLayoutMetrics", json!({}));
+        let content = &metrics["result"]["cssContentSize"];
+        assert_eq!([content["width"].as_f64().unwrap(), content["height"].as_f64().unwrap()], chrome.map(f64::from), "{doc}");
+    }
+    // `body` keeps its own scroll sizes, 2000 px wide inside 300 px, either way.
+    load_html(&mut h, &format!(r#"<!doctype html><body style="margin:0;overflow:hidden;width:300px">{wide}"#));
+    assert_eq!(eval_value(&mut h, "[document.body.scrollWidth, document.body.clientWidth]"), json!([2000, 300]));
 }
 
 fn eval_value(h: &mut Harness, expression: &str) -> Value {
@@ -3282,7 +3380,7 @@ fn links_and_window_open_targeting_blank_open_paused_popups() {
     };
     assert_eq!(navigated["params"]["frame"]["url"], json!("data:text/html,<title>popped</title>"));
 
-    // window.open with noopener opens a popup and returns null; opener access is refused explicitly.
+    // window.open with noopener opens a popup and returns null.
     let r = h.page(
         "Runtime.evaluate",
         json!({"expression":"String(window.open('data:text/html,second', '_blank', 'noopener'))","returnByValue":true}),
@@ -3294,8 +3392,117 @@ fn links_and_window_open_targeting_blank_open_paused_popups() {
             && m["params"]["sessionId"] != json!(popup)
     });
     assert_eq!(second["params"]["targetInfo"]["openerId"], json!(opener));
-    let r = h.page("Runtime.evaluate", json!({"expression":"window.open('data:text/html,x')"}));
-    assert!(r["result"]["exceptionDetails"].is_object(), "scriptable popups are unsupported: {r}");
+}
+
+#[test]
+fn window_open_returns_a_minimal_popup_object() {
+    let mut h = Harness::new();
+    let opener = h.frame_id.clone();
+    let value = |h: &mut Harness, expression: &str| {
+        let r = h.page("Runtime.evaluate", json!({ "expression": expression, "returnByValue": true }));
+        r["result"]["result"]["value"].clone()
+    };
+    let attached_popup = |h: &mut Harness, seen: &mut Vec<String>| {
+        let known = seen.clone();
+        let opener = opener.clone();
+        let attached = h.until_event(move |m| {
+            m["method"] == "Target.attachedToTarget"
+                && m["params"]["targetInfo"]["targetId"] != json!(opener)
+                && !known.iter().any(|s| m["params"]["sessionId"] == json!(s))
+        });
+        seen.push(attached["params"]["sessionId"].as_str().unwrap().to_owned());
+        attached
+    };
+    let mut seen = Vec::new();
+
+    let expr = "globalThis.w = window.open('data:text/html,<title>first</title>'); [typeof w, w.closed, typeof w.document, typeof w.opener, w.location.href, typeof PopupWindow].join()";
+    assert_eq!(value(&mut h, expr), json!("object,false,undefined,undefined,about:blank,undefined"));
+    let attached = attached_popup(&mut h, &mut seen);
+    assert_eq!(attached["params"]["targetInfo"]["openerId"], json!(opener));
+    assert_eq!(attached["params"]["targetInfo"]["canAccessOpener"], json!(true));
+    assert_eq!(attached["params"]["waitingForDebugger"], json!(true));
+    let popup = attached["params"]["sessionId"].as_str().unwrap().to_owned();
+    let target = attached["params"]["targetInfo"]["targetId"].clone();
+
+    // Navigating a popup still paused replaces what it loads when resumed.
+    assert_eq!(value(&mut h, "w.location === w.location && (w.location.href = 'data:text/html,<title>second</title>', w.focus(), w.blur(), 1)"), json!(1));
+    h.call(Some(&popup), "Page.enable", json!({}));
+    let id = h.send(Some(&popup), "Runtime.runIfWaitingForDebugger", json!({}));
+    let mut events = h.until_response(id);
+    let is_navigated = |m: &Value| m["method"] == "Page.frameNavigated" && m["sessionId"] == json!(popup);
+    let navigated = match events.iter().position(is_navigated) {
+        Some(i) => events.swap_remove(i),
+        None => h.until_event(is_navigated),
+    };
+    assert_eq!(navigated["params"]["frame"]["url"], json!("data:text/html,<title>second</title>"));
+
+    // An unparseable URL throws and opens nothing.
+    let invalid = "(() => { try { window.open('http://[') } catch (e) { return e.name } })()";
+    assert_eq!(value(&mut h, invalid), json!("SyntaxError"));
+
+    // Its document is now cross-origin: href reads throw, writes still navigate.
+    let thrown = "(() => { try { return w.location.href } catch (e) { return e.name } })()";
+    assert_eq!(value(&mut h, thrown), json!("SecurityError"));
+    assert_eq!(
+        value(&mut h, "(() => { try { w.location = 'http://[' } catch (e) { return e.name } })()"),
+        json!("SyntaxError")
+    );
+    value(&mut h, "w.location.assign('data:text/html,<title>third</title>'); 1");
+    h.until_event(|m| {
+        m["method"] == "Page.frameNavigated"
+            && m["params"]["frame"]["url"] == json!("data:text/html,<title>third</title>")
+    });
+
+    // close() closes the target; closed reads true at once.
+    assert_eq!(value(&mut h, "w.close(); w.closed"), json!(true));
+    h.until_event(|m| m["method"] == "Target.detachedFromTarget" && m["params"]["targetId"] == target);
+
+    // The client closing the popup reads as closed too.
+    assert_eq!(value(&mut h, "globalThis.x = window.open(); x.closed"), json!(false));
+    let attached = attached_popup(&mut h, &mut seen);
+    let target = attached["params"]["targetInfo"]["targetId"].clone();
+    // A popup with no URL still commits about:blank when resumed; Playwright's
+    // `popup` event waits for that commit.
+    let blank = attached["params"]["sessionId"].as_str().unwrap().to_owned();
+    h.call(Some(&blank), "Page.enable", json!({}));
+    let id = h.send(Some(&blank), "Runtime.runIfWaitingForDebugger", json!({}));
+    let mut events = h.until_response(id);
+    let is_navigated = |m: &Value| m["method"] == "Page.frameNavigated" && m["sessionId"] == json!(blank);
+    let navigated = match events.iter().position(is_navigated) {
+        Some(i) => events.swap_remove(i),
+        None => h.until_event(is_navigated),
+    };
+    assert_eq!(navigated["params"]["frame"]["url"], json!("about:blank"));
+    h.call(None, "Target.closeTarget", json!({ "targetId": target }));
+    assert_eq!(value(&mut h, "x.closed"), json!(true));
+
+    // close() in the same task as open(): the popup opens and closes in order.
+    assert_eq!(value(&mut h, "globalThis.y = window.open(); y.close(); y.closed"), json!(true));
+    let attached = attached_popup(&mut h, &mut seen);
+    let target = attached["params"]["targetInfo"]["targetId"].clone();
+    h.until_event(|m| m["method"] == "Target.detachedFromTarget" && m["params"]["targetId"] == target);
+}
+
+#[test]
+fn child_frames_open_popups_unless_sandboxed() {
+    let mut h = Harness::new();
+    let opener = h.frame_id.clone();
+    h.page("Page.enable", json!({}));
+    let page = "data:text/html,<iframe id=f></iframe><iframe id=s sandbox='allow-same-origin allow-scripts'></iframe>";
+    let seen = h.page_with_events("Page.navigate", json!({ "url": page }));
+    if !seen.iter().any(|m| m["method"] == "Page.loadEventFired") {
+        h.until_event(|m| m["method"] == "Page.loadEventFired");
+    }
+    let expr = "globalThis.blocked = document.getElementById('s').contentWindow.open('about:blank'); new Promise(r => setTimeout(r, 0)).then(() => blocked.closed)";
+    let r = h.page("Runtime.evaluate", json!({ "expression": expr, "awaitPromise": true, "returnByValue": true }));
+    assert_eq!(r["result"]["result"]["value"], json!(true), "no allow-popups: {r}");
+    h.page(
+        "Runtime.evaluate",
+        json!({ "expression": "globalThis.open1 = document.getElementById('f').contentWindow.open('about:blank'); 1" }),
+    );
+    let attached =
+        h.until_event(|m| m["method"] == "Target.attachedToTarget" && m["params"]["targetInfo"]["targetId"] != opener);
+    assert_eq!(attached["params"]["targetInfo"]["openerId"], json!(opener));
 }
 
 #[test]
@@ -5816,6 +6023,64 @@ mod screenshot {
         assert_eq!(r["error"]["message"], "invalid print parameters: content area is empty", "{r}");
     }
 
+    /// Pagination of one document mixing what moves cuts: the page count and every link area are Chrome 156's on A4
+    /// without margins. Its 900 px width shrinks it, avoided boxes move (the 1200 px one, taller than a page, too),
+    /// `widows` holds lines back and the forced break keeps its margin.
+    #[test]
+    fn print_to_pdf_paginates_a_mixed_document_as_chrome() {
+        let mut h = Harness::new();
+        let link = |id: String| format!(r#"<a href="https://example.com/{id}">x</a>"#);
+        let lines = |p: &str, n: usize| (0..n).map(|i| link(format!("{p}{i}"))).collect::<Vec<_>>().join("<br>");
+        let block = |id: &str, h: u32, style: &str| {
+            format!(r#"<a href="https://example.com/{id}" style="display:block;height:{h}px;{style}"></a>"#)
+        };
+        let html = format!(
+            r#"<!doctype html><body style="margin:0;font:16px/20px Arial"><div style="height:900px"></div><div>{}</div><div style="height:10px"></div>{}<div style="height:600px"></div>{}<div style="widows:3">{}</div><div style="break-before:page;margin-top:30px">{}</div><div style="width:900px">{}</div>"#,
+            lines("a", 3),
+            block("b", 300, "break-inside:avoid"),
+            block("c", 1200, "break-inside:avoid;margin-top:20px"),
+            lines("d", 4),
+            lines("e", 1),
+            lines("f", 2),
+        );
+        load_html(&mut h, &html);
+        let r = h.page(
+            "Page.printToPDF",
+            json!({"paperWidth": 8.27, "paperHeight": 11.69, "marginTop": 0, "marginBottom": 0, "marginLeft": 0, "marginRight": 0}),
+        );
+        let pdf = lp_cdp::fetch_protocol::base64_decode(r["result"]["data"].as_str().unwrap_or_else(|| panic!("{r}")))
+            .unwrap();
+        let pdf = String::from_utf8_lossy(&pdf).into_owned();
+        assert_eq!(pdf.matches("/MediaBox[").count(), 5, "pages");
+        let mut got: Vec<Vec<f64>> = pdf
+            .split("/Rect[")
+            .skip(1)
+            .filter_map(|r| r.split(']').next())
+            .map(|r| r.split_whitespace().filter_map(|v| v.parse().ok()).collect())
+            .collect();
+        got.sort_by(|a, b| a[1].total_cmp(&b[1]));
+        // Bottom edges and heights (pt), sorted: page by page they say which line is where.
+        let chrome = [
+            (0.54, 198.75),
+            (21.74, 11.27),
+            (34.99, 11.27),
+            (46.92, 795.0),
+            (207.25, 11.26),
+            (220.49, 11.27),
+            (233.75, 11.26),
+            (783.62, 11.26),
+            (796.87, 11.26),
+            (810.12, 11.26),
+            (816.74, 11.27),
+            (830.0, 11.26),
+        ];
+        assert_eq!(got.len(), chrome.len(), "{got:?}");
+        for (rect, (bottom, height)) in got.iter().zip(chrome) {
+            let close = (rect[1] - bottom).abs() < 0.05 && ((rect[3] - rect[1]) - height).abs() < 0.05;
+            assert!(close, "{rect:?}, Chrome bottom {bottom} height {height}: {got:?}");
+        }
+    }
+
     /// A layout sub-resource still downloading delays the PDF, not the
     /// browser thread: commands sent after printToPDF answer first.
     #[test]
@@ -6471,7 +6736,7 @@ fn driver_clicks_fixed_dialog_content_outside_overflow_ancestor() {
         &mut h,
         r#"<!doctype html><div style="width:20px;height:20px;overflow:hidden"><div style="position:fixed;left:100px;top:100px;width:200px;height:100px"><button id=inside>Dialog action</button></div></div><output id=out></output>"#,
     );
-    let r = h.page("LP.run", json!({"timeout":100,"steps":[
+    let r = h.page("LP.run", json!({"timeout":3000,"steps":[
         {"eval":{"expression":"document.querySelector('#inside').addEventListener('click',()=>document.querySelector('#out').textContent='clicked');null"}},
         {"act":{"locator":{"css":"#inside"},"action":"click"}},
         {"check":{"locator":{"css":"#out"},"assert":"text","expected":"clicked"}}
@@ -6570,7 +6835,7 @@ fn driver_clicks_rowspanning_cell_content_above_later_row_background() {
         &mut h,
         r#"<!doctype html><body style="margin:0"><table style="border-collapse:collapse;width:240px"><tbody><tr><td style="height:20px;width:120px;padding:0">First row</td><td rowspan=2 style="width:120px;padding:0;vertical-align:middle"><button id=action style="height:20px">action</button></td></tr><tr><td style="height:60px;padding:0">Second row</td></tr></tbody></table><output id=out></output>"#,
     );
-    let r = h.page("LP.run",json!({"timeout":100,"steps":[
+    let r = h.page("LP.run",json!({"timeout":3000,"steps":[
         {"eval":{"expression":"document.querySelector('#action').addEventListener('click',()=>document.querySelector('#out').textContent='clicked');null"}},
         {"act":{"locator":{"css":"#action"},"action":"click"}},
         {"check":{"locator":{"css":"#out"},"assert":"text","expected":"clicked"}}

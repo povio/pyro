@@ -82,6 +82,8 @@ struct FontEntry {
     font: Font,
     /// Glyph id to the character it maps from (the lowest code point).
     chars: HashMap<u32, char>,
+    /// The bundled font list bullets are drawn with.
+    marker: bool,
 }
 
 /// Fonts and images converted for krilla, kept across documents.
@@ -108,7 +110,8 @@ impl PdfCache {
                         }
                     }
                 }
-                Some(FontEntry { font, chars })
+                let marker = data.data.as_ref() == blitz_dom::BULLET_FONT;
+                Some(FontEntry { font, chars, marker })
             })
             .as_ref()
     }
@@ -206,18 +209,20 @@ pub struct Extras {
     /// cut short (at a break) are filled with it to the slice's height.
     pub slice_height: f64,
     pub canvas: Option<[u8; 4]>,
+    /// How much of a page's slice the paper's content box shows (device px).
+    /// A page holds whole CSS px, so its last row can be cut by this.
+    pub shown_height: f64,
 }
 
 type Leaves = Vec<(krilla::tagging::Identifier, Option<u32>)>;
 
 /// Writes `scene` (device px, document coordinates) as a PDF with one page
-/// per rectangle of `pages`; `scale` converts device px to points. Without
-/// a `placement` each page is its rectangle's size.
+/// per rectangle of `placed`; `scale` converts device px to points. Without
+/// a placement a page is its rectangle's size.
 pub fn write(
     scene: &Scene,
-    pages: &[Rect],
+    placed: &[(Rect, Option<Placement>)],
     scale: f64,
-    placement: Option<Placement>,
     extras: Option<&Extras>,
     cache: &mut PdfCache,
 ) -> Result<(Vec<u8>, PdfStats), String> {
@@ -231,7 +236,9 @@ pub fn write(
     };
     let dpr = PX_TO_PT / scale;
     let mut leaves: Leaves = Vec::new();
-    for page in pages {
+    let pages: Vec<Rect> = placed.iter().map(|&(page, _)| page).collect();
+    for (page, placement) in placed {
+        let placement = *placement;
         let (w, h) = match placement {
             Some(p) => (p.paper.0 as f32, p.paper.1 as f32),
             None => ((page.width() * scale) as f32, (page.height() * scale) as f32),
@@ -251,7 +258,12 @@ pub fn write(
         if let Some(ex) = extras {
             fill_short_page(&mut s, *page, ex);
         }
-        if let Some(clip) = rect_path(*page) {
+        // What the paper's content box shows of the page.
+        let shown = match extras {
+            Some(ex) => Rect::new(page.x0, page.y0, page.x1, page.y1.min(page.y0 + ex.shown_height)),
+            None => *page,
+        };
+        if let Some(clip) = rect_path(shown) {
             s.push_clip_path(&clip, &FillRule::NonZero);
         }
         Replay {
@@ -277,7 +289,7 @@ pub fn write(
             // `scale` already includes the placement's scale.
             let offset = placement.map_or((0.0, 0.0), |p| p.offset);
             for link in &ex.links {
-                let Some(annotation) = link_annotation(link, *page, pages, offset, scale) else { continue };
+                let Some(annotation) = link_annotation(link, *page, shown, &pages, offset, scale) else { continue };
                 stats.links += 1;
                 if tagged {
                     leaves.push((p.add_tagged_annotation(annotation), Some(link.structure)));
@@ -311,11 +323,13 @@ fn fill_short_page(s: &mut Surface<'_>, page: Rect, ex: &Extras) {
     s.draw_path(&rest);
 }
 
-/// `link`'s annotation on `page` (`None`: it is not on it). `offset` and
-/// `content_scale` place the page's content on paper (pt).
+/// `link`'s annotation on `page`, of what `shown` shows of it (`None`: it is
+/// not on it). `offset` and `content_scale` place the page's content on paper
+/// (pt).
 fn link_annotation(
     link: &Link,
     page: Rect,
+    shown: Rect,
     pages: &[Rect],
     offset: (f64, f64),
     content_scale: f64,
@@ -325,7 +339,7 @@ fn link_annotation(
         .rects
         .iter()
         .filter_map(|r| {
-            let r = r.intersect(page);
+            let r = r.intersect(shown);
             if r.width() <= 0.0 || r.height() <= 0.0 {
                 return None;
             }
@@ -340,9 +354,10 @@ fn link_annotation(
     let target = match &link.target {
         LinkTarget::Uri(uri) => Target::Action(krilla::action::LinkAction::new(uri.clone()).into()),
         LinkTarget::Internal(x, y) => {
-            let i = pages.iter().position(|p| *y >= p.y0 && *y < p.y1)?;
+            // A target in a margin dropped at a cut is at the next page's top.
+            let i = pages.iter().position(|p| *y < p.y1)?;
             let px = (x - pages[i].x0).max(0.0) * content_scale + offset.0;
-            let py = (y - pages[i].y0) * content_scale + offset.1;
+            let py = (y - pages[i].y0).max(0.0) * content_scale + offset.1;
             let dest = krilla::destination::XyzDestination::new(i, KPoint::from_xy(px as f32, py as f32));
             Target::Destination(krilla::destination::Destination::Xyz(dest))
         }
@@ -438,6 +453,8 @@ struct Pending {
     layer: Layer,
     /// Surface pushes made for it (`None`: not pushed yet).
     pushed: Option<u32>,
+    /// What this and the layers under it let through.
+    clip: Rect,
 }
 
 struct Replay<'a, 'b> {
@@ -492,10 +509,14 @@ impl Replay<'_, '_> {
                 }
             }
             match cmd {
-                RenderCommand::PushClipLayer(c) => self.layers.push(Pending {
-                    layer: Layer::Clip { path: to_path(&c.clip, c.transform), rule: rule(c.fill) },
-                    pushed: None,
-                }),
+                RenderCommand::PushClipLayer(c) => {
+                    let clip = self.clip_with(c.transform.transform_rect_bbox(c.clip.bounding_box()));
+                    self.layers.push(Pending {
+                        layer: Layer::Clip { path: to_path(&c.clip, c.transform), rule: rule(c.fill) },
+                        pushed: None,
+                        clip,
+                    })
+                }
                 RenderCommand::PushLayer(c) => {
                     if c.filter.is_some() || c.backdrop_filter.is_some() {
                         self.stats.filters_skipped += 1;
@@ -503,7 +524,9 @@ impl Replay<'_, '_> {
                     if c.blend.compose != peniko::Compose::SrcOver {
                         self.stats.compose_skipped += 1;
                     }
+                    let clip = self.clip_with(c.transform.transform_rect_bbox(c.clip.bounding_box()));
                     self.layers.push(Pending {
+                        clip,
                         layer: Layer::Group {
                             path: to_path(&c.clip, c.transform),
                             rule: rule(c.fill),
@@ -644,6 +667,63 @@ impl Replay<'_, '_> {
         self.stats.box_shadows += 1;
         self.flush();
         self.with_transform(c.transform * Affine::translate((area.x0, area.y0)), |s| s.draw_image(image, size));
+    }
+
+    /// What the current layers let through, also clipped by `bounds`.
+    fn clip_with(&self, bounds: Rect) -> Rect {
+        self.layers.last().map_or(bounds, |l| l.clip.intersect(bounds))
+    }
+
+    /// Whether no glyph of a run can be clipped, which most runs show at the cost
+    /// of one rectangle instead of one per glyph.
+    fn run_all_shown(&self, c: &anyrender::recording::GlyphRunCommand) -> bool {
+        let size = c.font_size as f64;
+        let (mut x0, mut y0, mut x1, mut y1) = (f64::MAX, f64::MAX, f64::MIN, f64::MIN);
+        for g in &c.glyphs {
+            x0 = x0.min(g.x as f64);
+            x1 = x1.max(g.x as f64);
+            y0 = y0.min(g.y as f64);
+            y1 = y1.max(g.y as f64);
+        }
+        let run = c.transform.transform_rect_bbox(Rect::new(x0, y0 - size, x1 + size, y1 + size * 0.3));
+        run.x0 >= self.page.x0
+            && run.x1 <= self.page.x1
+            && self.layers.last().is_none_or(|l| {
+                run.x0 >= l.clip.x0 && run.x1 <= l.clip.x1 && run.y0 >= l.clip.y0 && run.y1 <= l.clip.y1
+            })
+    }
+
+    /// The glyphs of a run a paper-cut page writes. Chrome's PDF has no clipped
+    /// text: Skia's PDF device skips a glyph outside the clip's bounds (the page's
+    /// sides or an overflow clip), so it is not extracted either. The page's top
+    /// and bottom are not looked at: a line's place on a page is decided for the
+    /// whole run.
+    fn glyphs_shown(&self, c: &anyrender::recording::GlyphRunCommand) -> Vec<usize> {
+        let size = c.font_size as f64;
+        let clip = self.layers.last().map(|l| l.clip);
+        let (left, right) = clip.map_or((self.page.x0, self.page.x1), |l| {
+            (self.page.x0.max(l.x0), self.page.x1.min(l.x1))
+        });
+        let (top, bottom) = clip.map_or((f64::MIN, f64::MAX), |l| (l.y0, l.y1));
+        let inside = |glyph: Rect| glyph.x0 < right && left < glyph.x1 && glyph.y0 < bottom && top < glyph.y1;
+        let edges = |i: usize| {
+            let g = &c.glyphs[i];
+            let (x, y) = (g.x as f64, g.y as f64);
+            let end = c.glyphs.get(i + 1).map_or(x + size * 0.6, |n| (n.x as f64).max(x));
+            Rect::new(x, y - size, end, y + size * 0.3)
+        };
+        let all = 0..c.glyphs.len();
+        let [a, b, skew, d, e, f] = c.transform.as_coeffs();
+        // Text is hardly ever rotated: no corners to work out per glyph.
+        if b == 0.0 && skew == 0.0 && a > 0.0 && d > 0.0 {
+            all.filter(|&i| {
+                let r = edges(i);
+                inside(Rect::new(a * r.x0 + e, d * r.y0 + f, a * r.x1 + e, d * r.y1 + f))
+            })
+            .collect()
+        } else {
+            all.filter(|&i| inside(c.transform.transform_rect_bbox(edges(i)))).collect()
+        }
     }
 
     fn visible(&mut self, bounds: Rect) -> bool {
@@ -791,6 +871,14 @@ impl Replay<'_, '_> {
         if c.embolden != kurbo::Vec2::ZERO {
             self.stats.embolden_skipped += 1;
         }
+        // Only a paper-cut page: `.pz-page` documents keep what they had.
+        let paper_cut = self.extras.is_some();
+        let shown: Vec<usize> = if paper_cut && !self.run_all_shown(c) {
+            self.glyphs_shown(c)
+        } else {
+            (0..c.glyphs.len()).collect()
+        };
+        let Some(&first) = shown.first() else { return };
         let Some((paint, opacity)) = self.paint(&c.brush, None) else { return };
         let opacity = norm(opacity.get() * c.brush_alpha);
         let Some(entry) = self.cache.font(&c.font_data) else {
@@ -798,10 +886,14 @@ impl Replay<'_, '_> {
             return;
         };
         let font = entry.font.clone();
+        // Chrome draws bullets (disc, circle, square, disclosure) as shapes,
+        // which are not text in the PDF. Here they are glyphs of the marker
+        // font, drawn as outlines.
+        let outlined = paper_cut && entry.marker;
         let size = c.font_size;
         let mut text = String::new();
-        let mut glyphs = Vec::with_capacity(c.glyphs.len());
-        let (gx, gy) = (c.glyphs[0].x, c.glyphs[0].y);
+        let mut glyphs = Vec::with_capacity(shown.len());
+        let (gx, gy) = (c.glyphs[first].x, c.glyphs[first].y);
         // The run's source text when it was recorded: each glyph stands for
         // its cluster's characters (all of them for a ligature).
         let ex = self.extras;
@@ -810,7 +902,8 @@ impl Replay<'_, '_> {
             text.push_str(&r.text);
             self.stats.runs_with_source += 1;
         }
-        for (i, g) in c.glyphs.iter().enumerate() {
+        for (at, &i) in shown.iter().enumerate() {
+            let g = &c.glyphs[i];
             let range = match recorded {
                 Some(r) => r.glyph_text[i].start as usize..r.glyph_text[i].end as usize,
                 None => {
@@ -824,7 +917,7 @@ impl Replay<'_, '_> {
             if range.is_empty() {
                 self.stats.glyphs_without_text += 1;
             }
-            let advance = c.glyphs.get(i + 1).map_or(0.0, |n| n.x - g.x);
+            let advance = shown.get(at + 1).map_or(0.0, |&n| c.glyphs[n].x - g.x);
             glyphs.push(KrillaGlyph::new(
                 GlyphId::new(g.id),
                 advance / size,
@@ -858,14 +951,15 @@ impl Replay<'_, '_> {
             match glyph_transform {
                 // Per-glyph transform (synthetic italic): one glyph at a time.
                 Some(gt) => {
-                    for (g, kg) in c.glyphs.iter().zip(&glyphs) {
+                    for (&i, kg) in shown.iter().zip(&glyphs) {
+                        let g = &c.glyphs[i];
                         s.push_transform(&transform(Affine::translate((g.x as f64, g.y as f64)) * gt));
                         let one = KrillaGlyph { y_offset: 0.0, ..kg.clone() };
-                        s.draw_glyphs(KPoint::from_xy(0.0, 0.0), &[one], font.clone(), &text, size, false);
+                        s.draw_glyphs(KPoint::from_xy(0.0, 0.0), &[one], font.clone(), &text, size, outlined);
                         s.pop();
                     }
                 }
-                None => s.draw_glyphs(KPoint::from_xy(gx, gy), &glyphs, font, &text, size, false),
+                None => s.draw_glyphs(KPoint::from_xy(gx, gy), &glyphs, font, &text, size, outlined),
             }
             s.set_stroke(None);
             if let Some((leaves, id)) = tag {

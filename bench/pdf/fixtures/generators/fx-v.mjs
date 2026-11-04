@@ -1,0 +1,23 @@
+// vertical boxes in horizontal flow: monolithic, painted vertically
+const L=(p,n,from=1)=>Array.from({length:n},(_,i)=>p+(i+from)).join('<br>');
+const doc=(b,st='')=>`<!doctype html><body style="margin:0;font:16px/20px Arial;${st}">${b}`;
+const sp=h=>`<div style="height:${h}px"></div>`;
+const V=(h,b,st='')=>`<div style="writing-mode:vertical-rl;height:${h}px;width:100px;${st}">${b}</div>`;
+const C={};
+C.v200=doc(sp(300)+V(200,L('a',3))+'<div>c1</div>');
+C.v500=doc(sp(300)+V(500,L('a',3))+'<div>c1</div>');
+C.vtop500=doc(V(500,L('a',3))+'<div>c1</div>');
+C.vfit=doc(sp(100)+V(200,L('a',3))+'<div>c1</div>');
+C.vlr=doc(sp(300)+V(200,L('a',3),'writing-mode:vertical-lr')+'<div>c1</div>');
+C.vside=doc(sp(300)+V(200,L('a',3),'writing-mode:sideways-rl')+'<div>c1</div>');
+C.vin=doc(sp(300)+`<div style="height:200px">${V(150,'a1')}</div><div>c1</div>`);
+C.vav=doc(sp(300)+`<div style="break-after:avoid">z1</div>`+V(200,'a1')+'<div>c1</div>');
+C.vbr=doc(sp(100)+V(200,`<div style="break-before:page">a1</div><div>b1</div>`)+'<div>c1</div>');
+C.vinline=doc(sp(300)+`x1 <span style="writing-mode:vertical-rl;display:inline-block;height:100px">a1</span>`+'<div>c1</div>');
+C.vspan=doc(sp(340)+`<div>x1 <span style="writing-mode:vertical-rl">a1</span></div><div>c1</div>`);
+C.hin=doc(V(200,`<div style="writing-mode:horizontal-tb;width:50px">a1</div>`)+'<div>c1</div>');
+C.root=`<!doctype html><html style="writing-mode:vertical-rl"><body style="margin:0;font:16px/20px Arial;width:300px">${L('a',3)}<div style="width:800px">b1</div>`;
+C.body=`<!doctype html><body style="margin:0;font:16px/20px Arial;writing-mode:vertical-rl;height:200px">${L('a',3)}`;
+C.wide=doc(V(100,'a1','width:900px')+'<div>c1</div>');
+C.tall=doc(sp(100)+V(1000,'a1','width:100px')+'<div>c1</div>');
+export const cases=Object.entries(C).map(([name,html])=>({name,html}));

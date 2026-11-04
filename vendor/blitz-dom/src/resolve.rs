@@ -114,6 +114,7 @@ impl BaseDocument {
             return;
         }
 
+        phase_profile::resolved();
         self.resolve_scroll_animation();
 
         // Drop scrollbar-activity entries whose fade-out has finished (also
@@ -330,7 +331,7 @@ impl BaseDocument {
                 transform *= *t
             }
 
-            let overflow = overflow_contribution(node, *node.scrollable_overflow(), layout.size, scale);
+            let overflow = self.overflow_contribution(node_id, *node.scrollable_overflow(), layout.size, scale);
             return transform.transform_rect_bbox(overflow);
         }
 
@@ -359,16 +360,25 @@ impl BaseDocument {
                     continue;
                 }
                 let child_rect_in_self = self.resolve_transforms(child_id);
-                overflow = overflow.union(child_rect_in_self);
+                overflow = unite_overflow(overflow, child_rect_in_self);
             }
         }
         let hoisted_children = std::mem::take(&mut *self.nodes[node_id].hoisted_children.borrow_mut());
+        let viewport_contains_fixed = node_id == self.root_element().id;
         for &child_id in &hoisted_children {
             if !self.nodes.contains_key(child_id) {
                 continue;
             }
             let child_rect_in_self = self.resolve_transforms(child_id);
-            overflow = overflow.union(child_rect_in_self);
+            // lightningpanda: a box fixed to the viewport is not in the
+            // document's scrollable overflow, whatever it reaches.
+            let fixed = self.nodes[child_id]
+                .primary_styles()
+                .is_some_and(|s| s.clone_position() == style::computed_values::position::T::Fixed);
+            if viewport_contains_fixed && fixed {
+                continue;
+            }
+            overflow = unite_overflow(overflow, child_rect_in_self);
         }
         *self.nodes[node_id].hoisted_children.borrow_mut() = hoisted_children;
         for pseudo in [self.nodes[node_id].before(), self.nodes[node_id].after()] {
@@ -377,7 +387,7 @@ impl BaseDocument {
                 continue;
             }
             let child_rect_in_self = self.resolve_transforms(pseudo);
-            overflow = overflow.union(child_rect_in_self);
+            overflow = unite_overflow(overflow, child_rect_in_self);
         }
 
         // lightningpanda: the lines of an inline formatting context are
@@ -418,7 +428,22 @@ impl BaseDocument {
                 } else {
                     (0.0, 0.0)
                 };
-                overflow = overflow.union(Rect::new(x0, y0, x0 + width + end_x, y0 + height + end_y));
+                // The lines of a vertical writing mode are logical: `width` runs along y, `height` along x.
+                let lines = match self.nodes[node_id].vertical_block_axis() {
+                    None => Rect::new(x0, y0, x0 + width + end_x, y0 + height + end_y),
+                    Some(block_lr) => {
+                        let offset = block_offset as f64 * scale;
+                        let top = y0 - offset;
+                        let (b0, b1) = if block_lr {
+                            (x0 + offset, x0 + offset + height + end_x)
+                        } else {
+                            let start = (l.size.width - l.border.right - l.padding.right) as f64 * scale - offset;
+                            (start - height - end_x, start)
+                        };
+                        Rect::new(b0, top, b1, top + width + end_y)
+                    }
+                };
+                overflow = overflow.union(lines);
             }
         }
 
@@ -434,8 +459,54 @@ impl BaseDocument {
             Affine::translate((scaled_x, scaled_y))
         };
 
-        let contribution = overflow_contribution(&self.nodes[node_id], overflow, layout.size, scale);
+        let contribution = self.overflow_contribution(node_id, overflow, layout.size, scale);
         full.transform_rect_bbox(contribution)
+    }
+
+    /// lightningpanda: what a box adds to its parent's scrollable overflow
+    /// (its own coordinates): its border box, plus its own scrollable overflow
+    /// on the axes it does not clip. A scroll container keeps its content's
+    /// overflow to itself.
+    fn overflow_contribution(&self, node_id: NodeId, overflow: Rect, size: taffy::Size<f32>, scale: f64) -> Rect {
+        use style::values::computed::Overflow;
+        let node = &self.nodes[node_id];
+        let border_box = Rect::new(0.0, 0.0, size.width as f64 * scale, size.height as f64 * scale);
+        let mut out = overflow.union(border_box);
+        if let Some(style) = node.primary_styles() {
+            let (x, y) = (style.clone_overflow_x(), style.clone_overflow_y());
+            if (x != Overflow::Visible || y != Overflow::Visible) && !self.body_overflow_goes_to_viewport(node_id) {
+                if x != Overflow::Visible {
+                    (out.x0, out.x1) = (border_box.x0, border_box.x1);
+                }
+                if y != Overflow::Visible {
+                    (out.y0, out.y1) = (border_box.y0, border_box.y1);
+                }
+            }
+        }
+        out
+    }
+
+    /// lightningpanda: whether `node_id` is a `body` whose `overflow` applies
+    /// to the viewport instead of to it (CSS Overflow 3 3.3): the root's is
+    /// `visible`, and neither has containment.
+    pub fn body_overflow_goes_to_viewport(&self, node_id: NodeId) -> bool {
+        use style::values::computed::Overflow;
+        use style::values::specified::box_::Contain;
+        let node = &self.nodes[node_id];
+        if !node.data.is_element_with_tag_name(&crate::local_name!("body")) {
+            return false;
+        }
+        let root = self.root_element();
+        if node.parent != Some(root.id) {
+            return false;
+        }
+        let (Some(body), Some(html)) = (node.primary_styles(), root.primary_styles()) else {
+            return false;
+        };
+        html.clone_overflow_x() == Overflow::Visible
+            && html.clone_overflow_y() == Overflow::Visible
+            && body.clone_contain() == Contain::empty()
+            && html.clone_contain() == Contain::empty()
     }
 
     /// Ensure that the layout_children field is populated for all nodes
@@ -627,10 +698,27 @@ impl BaseDocument {
     pub fn resolve_layout(&mut self) {
         let size = self.stylist.device().au_viewport_size();
 
-        let available_space = taffy::Size {
+        let initial_containing_block = taffy::Size {
             width: AvailableSpace::Definite(size.width.to_f32_px()),
             height: AvailableSpace::Definite(size.height.to_f32_px()),
         };
+        let available_space = match self.layout_available {
+            Some((width, height)) => {
+                taffy::Size { width: AvailableSpace::Definite(width), height: AvailableSpace::Definite(height) }
+            }
+            None => initial_containing_block,
+        };
+
+        // lightningpanda: same viewport and nothing damaged, so the last pass's layout stands.
+        let root = self.root_element();
+        if self.last_layout_space == Some(available_space)
+            && !root.has_damaged_descendants()
+            && root.damage().is_some_and(|damage| damage.is_empty())
+        {
+            return;
+        }
+        self.last_layout_space = Some(available_space);
+        phase_profile::laid_out();
 
         let root_element_id = crate::taffy_node_id(self.root_element().id);
 
@@ -638,15 +726,15 @@ impl BaseDocument {
 
         let mut state = LayoutPassState::new(self);
         #[cfg(feature = "writing-mode")]
-        let available_space = {
+        let (available_space, initial_containing_block) = {
             state.layout_wm = state.layout_wm_of(crate::dom_node_id(root_element_id));
             if state.layout_wm.is_vertical() {
-                available_space.transpose()
+                (available_space.transpose(), initial_containing_block.transpose())
             } else {
-                available_space
+                (available_space, initial_containing_block)
             }
         };
-        taffy::compute_root_layout(&mut state, root_element_id, available_space);
+        taffy::compute_root_layout_in(&mut state, root_element_id, available_space, initial_containing_block);
         #[cfg(feature = "writing-mode")]
         state.physicalise_and_round_layout(root_element_id);
         #[cfg(not(feature = "writing-mode"))]
@@ -657,23 +745,15 @@ impl BaseDocument {
     }
 }
 
-/// lightningpanda: what a box adds to its parent's scrollable overflow
-/// (its own coordinates): its border box, plus its own scrollable overflow
-/// on the axes it does not clip. A scroll container keeps its content's
-/// overflow to itself.
-fn overflow_contribution(node: &crate::Node, overflow: Rect, size: taffy::Size<f32>, scale: f64) -> Rect {
-    use style::values::computed::Overflow;
-    let border_box = Rect::new(0.0, 0.0, size.width as f64 * scale, size.height as f64 * scale);
-    let mut out = overflow.union(border_box);
-    if let Some(style) = node.primary_styles() {
-        if style.clone_overflow_x() != Overflow::Visible {
-            (out.x0, out.x1) = (border_box.x0, border_box.x1);
-        }
-        if style.clone_overflow_y() != Overflow::Visible {
-            (out.y0, out.y1) = (border_box.y0, border_box.y1);
-        }
+/// lightningpanda: `overflow` with what a child adds to it. An empty rect (a
+/// box of no width or no height, with nothing reaching out of it) adds nothing,
+/// wherever it is: a 2000 x 0 px box does not make a page scroll.
+fn unite_overflow(overflow: Rect, child: Rect) -> Rect {
+    if child.width() > 0.0 && child.height() > 0.0 {
+        overflow.union(child)
+    } else {
+        overflow
     }
-    out
 }
 
 /// lightningpanda: cumulative time per `resolve` phase (style, damage,
@@ -737,6 +817,30 @@ pub mod phase_profile {
     /// Elements styled, matched, shared and reused on this thread so far.
     pub fn style_stats_peek() -> [u64; 4] {
         STYLE_STATS.with(|s| s.get())
+    }
+    std::thread_local! {
+        static PASSES: Cell<(u64, u64)> = const { Cell::new((0, 0)) };
+    }
+    pub(crate) fn resolved() {
+        PASSES.with(|p| p.set((p.get().0 + 1, p.get().1)));
+    }
+    pub(crate) fn laid_out() {
+        PASSES.with(|p| p.set((p.get().0, p.get().1 + 1)));
+    }
+    /// `resolve` calls on this thread so far, and how many of their layout passes ran Taffy.
+    pub fn passes() -> (u64, u64) {
+        PASSES.with(|p| p.get())
+    }
+    std::thread_local! {
+        static ROUNDING: Cell<(u64, u64)> = const { Cell::new((0, 0)) };
+    }
+    pub(crate) fn rounded((visited, skipped): (u64, u64)) {
+        ROUNDING.with(|r| r.set((r.get().0 + visited, r.get().1 + skipped)));
+    }
+    /// Layout nodes rounding reached on this thread so far, and subtrees it skipped (each
+    /// reached, the nodes under it not).
+    pub fn rounding() -> (u64, u64) {
+        ROUNDING.with(|r| r.get())
     }
     /// Milliseconds per phase on this thread so far.
     pub fn peek() -> [f64; 9] {

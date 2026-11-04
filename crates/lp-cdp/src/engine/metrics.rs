@@ -48,7 +48,11 @@ struct Metrics {
     width: u32,
     height: u32,
     device_scale_factor: f64,
-    mobile: bool,
+    // Accepted without a separate layout viewport: `width` is the layout width
+    // whatever the page's `<meta name=viewport>` says, as for
+    // `width=device-width, initial-scale=1`.
+    #[serde(rename = "mobile")]
+    _mobile: bool,
     screen_width: Option<u32>,
     screen_height: Option<u32>,
     screen_orientation: Option<Orientation>,
@@ -124,9 +128,6 @@ impl EngineHost {
                 || p.device_scale_factor < 0.0
             {
                 return Err(CdpError::invalid_params("Invalid device dimensions or scale factor"));
-            }
-            if p.mobile {
-                return Err(CdpError::unsupported("Emulation mobile layout"));
             }
             if let Some(option) = p.unsupported.keys().next() {
                 return Err(CdpError::unsupported(&format!("Emulation device metrics option '{option}'")));

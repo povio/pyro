@@ -148,11 +148,10 @@ fn xhr_binary_json_and_invalid_state_contracts() {
             r#"(()=>{const x=new XMLHttpRequest();let errors=[];
         for(const f of [()=>x.send(),()=>x.setRequestHeader('a','b')]){try{f()}catch(e){errors.push(e.name)}}
         try{x.open('TRACE','/json')}catch(e){errors.push(e.name)}
-        try{x.open('GET','/json',false)}catch(e){errors.push(e.name)}
         x.open('GET','/json');try{x.setRequestHeader('bad name','v')}catch(e){errors.push(e.name)}
         return errors.join(',')})()"#
         ),
-        "InvalidStateError,InvalidStateError,SecurityError,NotSupportedError,SyntaxError"
+        "InvalidStateError,InvalidStateError,SecurityError,SyntaxError"
     );
     env.eval(r#"globalThis.result='pending';globalThis.x=new XMLHttpRequest();let phase=0;
         x.onload=()=>{
@@ -456,4 +455,100 @@ fn xhr_upload_hears_errors_and_aborts_before_the_request_object() {
     env.eval("log.length=0;globalThis.x=new XMLHttpRequest();for(const t of ['abort','loadend'])x.addEventListener(t,rec('x'));x.onreadystatechange=()=>log.push('rs'+x.readyState);x.open('POST','/gated');for(const t of ['abort','loadend'])x.upload.addEventListener(t,rec('u'));x.send('abcd');x.abort()");
     assert_eq!(env.eval("log.join(' ')"), "rs1 rs4 u:abort(0/0,false) u:loadend(0/0,false) x:abort x:loadend");
     server.release.send(()).unwrap();
+}
+
+/// Never answers: the decision would be read by the blocked browser thread.
+struct SilentInterceptor;
+impl lp_net::Interceptor for SilentInterceptor {
+    fn paused(&self, request: lp_net::PausedRequest, reply: tokio::sync::oneshot::Sender<lp_net::InterceptDecision>) {
+        std::mem::forget((request, reply));
+    }
+}
+
+#[test]
+fn xhr_sync_blocks_script_and_keeps_the_network_running() {
+    let server = Server::new();
+    let env = Env::new(&server.url);
+    assert_eq!(
+        env.eval(
+            r#"(()=>{const log=[];globalThis.x=new XMLHttpRequest();globalThis.later=false;setTimeout(()=>later=true);
+            x.onreadystatechange=()=>log.push('state'+x.readyState);x.onloadstart=()=>log.push('start');
+            x.onprogress=()=>log.push('progress');x.onload=()=>log.push('load:'+later);x.onloadend=()=>log.push('end');
+            x.open('GET','/redirect',false);x.send();log.push(later,x.status,x.responseText,x.responseURL.endsWith('/json'));
+            return log.join()})()"#
+        ),
+        r#"state1,state4,load:false,end,false,200,{"answer":42},true"#
+    );
+    // POST bodies and a following asynchronous request on the same object.
+    assert_eq!(
+        env.eval(
+            "x.onreadystatechange=x.onload=x.onloadend=null;x.open('POST','/echo',false);x.send('sent');x.responseText"
+        ),
+        "sent"
+    );
+    env.eval("globalThis.result='pending';x.onload=()=>result=x.response;x.open('GET','/empty');x.send()");
+    env.until("result!=='pending'");
+    // Not parked on an interceptor only the browser thread could answer.
+    env.page.net.borrow().as_ref().unwrap().set_interceptor(Some(std::sync::Arc::new(SilentInterceptor)));
+    assert_eq!(env.eval("x.open('GET','/json',false);x.send();x.status"), "200");
+    env.page.net.borrow().as_ref().unwrap().set_interceptor(None);
+    assert_eq!(env.page.xhr_usage().0, 0);
+}
+
+#[test]
+fn xhr_sync_failures_throw_and_window_restrictions_apply() {
+    let server = Server::new();
+    let env = Env::new(&server.url);
+    assert_eq!(
+        env.eval(
+            r#"(()=>{const log=[];const x=new XMLHttpRequest();x.onerror=()=>log.push('error');x.onloadend=()=>log.push('end');
+            x.open('GET','http://127.0.0.1:1/refused',false);try{x.send()}catch(e){log.push(e.name,x.readyState,x.status,x.responseText)}
+            const name=f=>{try{f();return 'none'}catch(e){return e.name}};
+            x.open('GET','/json',false);log.push(name(()=>x.responseType='json'),name(()=>x.timeout=5));
+            const y=new XMLHttpRequest();y.responseType='json';log.push(name(()=>y.open('GET','/json',false)));
+            const z=new XMLHttpRequest();z.timeout=5;log.push(name(()=>z.open('GET','/json',false)));
+            return log.join()})()"#
+        ),
+        "NetworkError,4,0,,InvalidAccessError,InvalidAccessError,InvalidAccessError,InvalidAccessError"
+    );
+    assert_eq!(
+        env.eval("(()=>{const x=new XMLHttpRequest();x.open('GET','/missing',false);x.send();return [x.status,x.responseText].join()})()"),
+        "404,missing"
+    );
+}
+
+#[test]
+fn xhr_document_responses_and_response_xml() {
+    let server = Server::new();
+    let env = Env::new(&server.url);
+    // Synchronous responseXML: XML MIME types parse, others are null.
+    assert_eq!(
+        env.eval(
+            r#"(()=>{const get=(url,mime)=>{const x=new XMLHttpRequest();x.open('GET',url,false);if(mime)x.overrideMimeType(mime);x.send();return x};
+            const x=get('/xml');const d=x.responseXML;
+            return [d instanceof Document,d===x.responseXML,d.contentType,d.documentElement.namespaceURI,d.documentElement.firstChild.textContent,d.URL.endsWith('/xml'),
+              x.response===x.responseText,get('/bad-xml').responseXML,get('/html').responseXML,get('/echo').responseXML,
+              get('/json','text/xml').responseXML,get('/latin1-xml').responseXML.documentElement.textContent,
+              get('/bad-xml','application/xml;charset=utf-8').responseText].join('|')})()"#
+        ),
+        "true|true|application/atom+xml|urn:x|t|true|true|||||é|<a><b></a>"
+    );
+    env.eval(r#"globalThis.result='pending';globalThis.x=new XMLHttpRequest();globalThis.seen=[];
+        x.onreadystatechange=()=>{if(x.readyState===3)seen.push(x.response)};
+        x.onload=()=>{const d=x.response;result=[d===x.response,d===x.responseXML,d.contentType,d.querySelector('#p').textContent,d.title,
+            d.defaultView,typeof ran,d instanceof Document].join('|')};
+        x.open('GET','/html');x.responseType='document';x.send();"#);
+    env.until("result!=='pending'");
+    assert_eq!(env.eval("result"), "true|true|text/html|x|t||undefined|true");
+    assert_eq!(env.eval("seen.every(v=>v===null)"), "true");
+    assert_eq!(
+        env.eval("(()=>{const x=new XMLHttpRequest();x.responseType='json';try{x.responseXML;return 'none'}catch(e){return e.name}})()"),
+        "InvalidStateError"
+    );
+    env.eval(
+        r#"globalThis.result='pending';globalThis.x=new XMLHttpRequest();x.onload=()=>result=String(x.response);
+        x.open('GET','/bad-xml');x.responseType='document';x.send();"#,
+    );
+    env.until("result!=='pending'");
+    assert_eq!(env.eval("result"), "null");
 }

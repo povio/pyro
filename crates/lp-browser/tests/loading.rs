@@ -69,6 +69,53 @@ fn files() -> Vec<(&'static str, &'static str, &'static str, u64)> {
     ]
 }
 
+const IMPORT_MAP_PAGE: &str = r#"<!doctype html><html><head>
+<script type="importmap">{"imports":{"react":"./vendor/react.js","pkg/":"/pkg/","":"/x.js","bad":"bare"}}</script>
+<script type="importmap">{nope}</script>
+<script type="module">
+import { v } from 'react';
+import { w } from 'pkg/w.js';
+console.log('mapped', v, w, import.meta.resolve('react'));
+</script>
+<script>import('react').then(m => console.log('classic-dynamic', m.v))</script>
+<script type="module" src="/entry.js"></script>
+</head><body></body></html>"#;
+
+#[test]
+fn import_maps_map_bare_specifiers() {
+    if unsafe { lp_js::sys::modules::lp_jsc_import_maps_available() } != 1 {
+        eprintln!("import maps need the patched JavaScriptCore; skipping");
+        return;
+    }
+    let mut thread = crate::browser_thread().unwrap();
+    let rec = Rc::new(Recorder::default());
+    thread.browser.set_observer(Some(rec.clone()));
+    thread.browser.set_engine_hooks(Some(rec.clone()));
+    let loader = Rc::new(StaticLoader::default());
+    for (path, body) in [
+        ("/", IMPORT_MAP_PAGE),
+        ("/vendor/react.js", "export const v = 'react';"),
+        ("/pkg/w.js", "export const w = 'pkg';"),
+        ("/entry.js", "import { v } from 'react'; console.log('entry', v)"),
+    ] {
+        let mime = if path == "/" { "text/html" } else { "text/javascript" };
+        loader.insert(&format!("http://site.test{path}"), mime, body, Duration::ZERO);
+    }
+    thread.browser.set_loader(Some(loader.clone()));
+    let page = thread.browser.create_page().unwrap();
+    rec.log.borrow_mut().clear();
+    thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    run(&mut thread, &rec);
+    let log = rec.log.borrow();
+    for line in ["mapped react pkg http://site.test/vendor/react.js", "classic-dynamic react", "entry react"] {
+        assert!(log.iter().any(|l| l == line), "missing {line:?} in {log:?}");
+    }
+    assert!(log.iter().any(|l| l.starts_with("Import map: ")), "invalid entries warn: {log:?}");
+    let errors: Vec<_> = log.iter().filter(|l| l.starts_with("exception")).collect();
+    assert_eq!(errors.len(), 1, "only the invalid map reports an error: {log:?}");
+    assert!(errors[0].contains("Invalid import map"), "{log:?}");
+}
+
 fn run(thread: &mut BrowserThread, rec: &Recorder) {
     let r = thread.run_until(Some(Instant::now() + Duration::from_secs(10)), |_| {
         rec.log.borrow().iter().any(|l| l == "event:load")

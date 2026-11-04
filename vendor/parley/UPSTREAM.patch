@@ -1,3 +1,6 @@
+diff --git a/src/build_cache.rs b/src/build_cache.rs
+new file mode 100644
+index 0000000..ccc79cb
 --- /dev/null
 +++ b/src/build_cache.rs
 @@ -0,0 +1,146 @@
@@ -147,13 +150,14 @@
 +        self.len = 0;
 +    }
 +}
+diff --git a/src/builder.rs b/src/builder.rs
+index 4d5dcf2..dbb6a96 100644
 --- a/src/builder.rs
 +++ b/src/builder.rs
-@@ -354,6 +354,24 @@
-         !lcx.style_runs.is_empty(),
+@@ -355,6 +355,24 @@ fn build_into_layout<B: Brush>(
          "at least one style run is required"
      );
-+
+ 
 +    // A layout built before from the same text and styles (cloned content,
 +    // the same paragraph built again) is reused: only the styles' brushes,
 +    // which nothing before line breaking depends on, are its own.
@@ -171,10 +175,11 @@
 +        layout.data.inline_boxes.clear();
 +        return;
 +    }
- 
++
      crate::analysis::analyze_text(
          lcx,
-@@ -422,6 +440,10 @@
+         text,
+@@ -422,6 +440,10 @@ fn build_into_layout<B: Brush>(
      // Move inline boxes into the layout
      layout.data.inline_boxes.clear();
      core::mem::swap(&mut layout.data.inline_boxes, &mut lcx.inline_boxes);
@@ -185,9 +190,11 @@
  }
  
  fn resolve_range(range: impl RangeBounds<usize>, len: usize) -> Range<usize> {
+diff --git a/src/context.rs b/src/context.rs
+index 9aa2c89..ee1f6e0 100644
 --- a/src/context.rs
 +++ b/src/context.rs
-@@ -43,6 +43,9 @@
+@@ -43,6 +43,9 @@ pub struct LayoutContext<B: Brush = [u8; 4]> {
  
      // Unicode analysis data sources (provided by icu)
      pub(crate) analysis_data_sources: AnalysisDataSources,
@@ -197,7 +204,7 @@
  }
  
  impl<B: Brush> LayoutContext<B> {
-@@ -61,9 +64,16 @@
+@@ -61,9 +64,16 @@ impl<B: Brush> LayoutContext<B> {
              char_style_indices: vec![],
              analysis_data_sources: AnalysisDataSources::new(),
              scx: Shaper::default(),
@@ -214,47 +221,24 @@
      fn resolve_style_set(
          &mut self,
          font_ctx: &mut FontContext,
---- a/src/layout/line_break.rs
-+++ b/src/layout/line_break.rs
-@@ -1103,15 +1103,15 @@
-                         if self.state.line.text_wrap_mode == TextWrapMode::Wrap {
-                             self.state.mark_line_break_opportunity();
-                         }
-+                    } else if self.state.line.x == 0.0 {
-+                        // lightningpanda: at the start of the line this box will never fit, so
-+                        // consume it, accept the overflow and mark the soft wrap opportunity after
-+                        // it: content that follows breaks there, and a box ending the paragraph
-+                        // ends its last line (Chromium) rather than leaving an empty line behind.
-+                        self.append_layout_inline_box(item.index, next_x);
-+                        self.state.mark_line_break_opportunity();
-                     } else {
--                        // If we're at the start of the line, this box will never fit, so consume it and accept the overflow.
--                        let reason = if self.state.line.x == 0.0 {
--                            self.append_layout_inline_box(item.index, next_x);
--                            BreakReason::Emergency
--                        } else {
--                            BreakReason::Regular
--                        };
--                        return self.start_new_line(reason, max_advance, line_indent);
-+                        return self.start_new_line(BreakReason::Regular, max_advance, line_indent);
-                     }
-                 }
-                 LayoutItemKind::TextRun => {
---- a/src/lib.rs
-+++ b/src/lib.rs
-@@ -109,6 +109,7 @@
- pub use fontique;
- 
- mod analysis;
-+mod build_cache;
- mod builder;
- mod context;
- mod font;
 diff --git a/src/layout/line.rs b/src/layout/line.rs
-index 1569071..e41a749 100644
+index 1569071..c3b1e35 100644
 --- a/src/layout/line.rs
 +++ b/src/layout/line.rs
-@@ -299,6 +299,28 @@ impl<'a, B: Brush> GlyphRun<'a, B> {
+@@ -213,6 +213,12 @@ pub struct LineMetrics {
+     /// For horizontal text, this is the bottom of the line box.
+     pub block_max_coord: f32,
+ 
++    /// [`Self::block_min_coord`] before quantization.
++    pub unquantized_block_min_coord: f32,
++
++    /// [`Self::block_max_coord`] before quantization.
++    pub unquantized_block_max_coord: f32,
++
+     /// The minimum block-axis coordinate of the line's content.
+     ///
+     /// This covers, roughly, the line's glyphs and inline boxes. This does not take into account
+@@ -299,6 +305,28 @@ impl<'a, B: Brush> GlyphRun<'a, B> {
          &self.run
      }
  
@@ -283,3 +267,99 @@ index 1569071..e41a749 100644
      /// Returns the associated style.
      ///
      /// See also [`Self::style_index`].
+diff --git a/src/layout/line_break.rs b/src/layout/line_break.rs
+index 3c3798c..1bde9f7 100644
+--- a/src/layout/line_break.rs
++++ b/src/layout/line_break.rs
+@@ -31,6 +31,11 @@ use parley_engine::Atom;
+ use parley_engine::shape::{Character, Whitespace};
+ use smallvec::SmallVec;
+ 
++/// How far past the line's end an atom still fits (device px). Blitz rounds a shrink-to-fit box's
++/// width to a layout unit, leaving out float noise under 1/100 of a unit: text that wide must not wrap
++/// in the box measured for it.
++const FIT_TOLERANCE: f32 = 0.0005;
++
+ #[derive(Default)]
+ struct LineLayout {
+     lines: Vec<LineData>,
+@@ -1103,15 +1108,15 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+                         if self.state.line.text_wrap_mode == TextWrapMode::Wrap {
+                             self.state.mark_line_break_opportunity();
+                         }
++                    } else if self.state.line.x == 0.0 {
++                        // lightningpanda: at the start of the line this box will never fit, so
++                        // consume it, accept the overflow and mark the soft wrap opportunity after
++                        // it: content that follows breaks there, and a box ending the paragraph
++                        // ends its last line (Chromium) rather than leaving an empty line behind.
++                        self.append_layout_inline_box(item.index, next_x);
++                        self.state.mark_line_break_opportunity();
+                     } else {
+-                        // If we're at the start of the line, this box will never fit, so consume it and accept the overflow.
+-                        let reason = if self.state.line.x == 0.0 {
+-                            self.append_layout_inline_box(item.index, next_x);
+-                            BreakReason::Emergency
+-                        } else {
+-                            BreakReason::Regular
+-                        };
+-                        return self.start_new_line(reason, max_advance, line_indent);
++                        return self.start_new_line(BreakReason::Regular, max_advance, line_indent);
+                     }
+                 }
+                 LayoutItemKind::TextRun => {
+@@ -1188,7 +1193,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+                         // If the content fits (the x position does NOT exceed max_advance)
+                         //
+                         // We simply append the atom to the current line
+-                        if next_x <= max_advance {
++                        if next_x <= max_advance + FIT_TOLERANCE {
+                             if max_height_exceeded {
+                                 return self.max_height_break_data(line_height);
+                             }
+@@ -1216,7 +1221,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+                                 spacing,
+                                 item.bidi_level.is_rtl(),
+                             );
+-                            if all_hang || next_x - hanging <= max_advance {
++                            if all_hang || next_x - hanging <= max_advance + FIT_TOLERANCE {
+                                 if max_height_exceeded {
+                                     return self.max_height_break_data(line_height);
+                                 }
+@@ -1617,6 +1622,9 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+         } else {
+             line.metrics.baseline + line_box_extents.under
+         };
++        line.metrics.unquantized_block_min_coord = self.state.line_y as f32;
++        line.metrics.unquantized_block_max_coord =
++            self.state.line_y as f32 + line_box_extents.over + line_box_extents.under;
+         line.metrics.content_block_min_coord = line.metrics.baseline - content_box_extents.over;
+         line.metrics.content_block_max_coord = line.metrics.baseline + content_box_extents.under;
+ 
+diff --git a/src/layout/style_metrics.rs b/src/layout/style_metrics.rs
+index 7b7b147..c00b359 100644
+--- a/src/layout/style_metrics.rs
++++ b/src/layout/style_metrics.rs
+@@ -231,7 +231,10 @@ impl BoxMetrics {
+         };
+         let half_leading = (line_height - (ascent + descent)) / 2.;
+         let over = if quantize {
+-            ascent + half_leading.floor()
++            // In Chromium's layout units (1/64 px), whose division truncates: a line height one
++            // unit short of the content area leaves no half-leading, not a whole pixel of it.
++            let leading = ((line_height - (ascent + descent)) * 64.).round();
++            ascent + ((leading / 2.).trunc() / 64.).floor()
+         } else {
+             ascent + half_leading
+         };
+diff --git a/src/lib.rs b/src/lib.rs
+index e967f50..ae51e02 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -109,6 +109,7 @@ extern crate std;
+ pub use fontique;
+ 
+ mod analysis;
++mod build_cache;
+ mod builder;
+ mod context;
+ mod font;

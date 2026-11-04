@@ -64,6 +64,21 @@ int lp_jsc_modules_available(void) {
     }
 }
 
+// Import maps need the resolve hook of the source-built JavaScriptCore; the system
+// framework's loader rejects bare specifiers before asking the delegate.
+int lp_jsc_import_maps_available(void) { return 0; }
+
+int lp_jsc_import_map_add(JSGlobalContextRef ctx, const char *src, size_t src_len, const char *base, size_t base_len,
+                          JSStringRef *messages) {
+    (void)ctx;
+    (void)src;
+    (void)src_len;
+    (void)base;
+    (void)base_len;
+    *messages = NULL;
+    return 0;
+}
+
 static NSString *lp_nsstring(const char *utf8, size_t len) {
     return [[NSString alloc] initWithBytes:utf8 length:len encoding:NSUTF8StringEncoding];
 }
@@ -71,7 +86,11 @@ static NSString *lp_nsstring(const char *utf8, size_t len) {
 // Installs the loader. Returns an owned handle (release with lp_jsc_module_loader_release)
 // that keeps both the delegate and the ObjC JSContext wrapper alive: the context
 // holds its delegate weakly and the wrapper is otherwise only weakly cached.
-void *lp_jsc_module_loader_install(JSGlobalContextRef ctx, lp_module_fetch_cb cb, void *userdata) {
+// `base_url` is unused: the system framework has no resolve hook (see
+// lp_jsc_import_maps_available).
+void *lp_jsc_module_loader_install(JSGlobalContextRef ctx, lp_module_fetch_cb cb, JSStringRef (*base_url)(JSGlobalContextRef),
+                                   void *userdata) {
+    (void)base_url;
     @autoreleasepool {
         LPModuleLoader *loader = [LPModuleLoader new];
         loader.context = [JSContext contextWithJSGlobalContextRef:ctx];

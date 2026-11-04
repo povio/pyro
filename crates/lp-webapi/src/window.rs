@@ -15,6 +15,48 @@ pub trait WindowHost {
     fn event_target(&self) -> &EventTargetData;
 }
 
+/// Named access on the Window object: the names of the document's tree, behind
+/// the global's own properties.
+pub(crate) struct WindowNamedProperties(pub(crate) Rc<PageDom>);
+
+impl lp_js::NamedProperties for WindowNamedProperties {
+    fn may_resolve(&self, name: lp_js::NameUnits<'_>) -> bool {
+        let page = &self.0;
+        let hash = match name {
+            lp_js::NameUnits::Latin1(n) => lp_dom::window_name_hash(n.iter().map(|&u| u16::from(u))),
+            lp_js::NameUnits::Utf16(n) => lp_dom::window_name_hash(n.iter().copied()),
+        };
+        page.dom.try_borrow().is_ok_and(|dom| dom.window_name_may_exist(page.document(), hash))
+    }
+
+    fn resolve<'s>(&self, s: &Scope<'s>, name: &str) -> JsResult<Option<Value<'s>>> {
+        let page = &self.0;
+        let doc = page.document();
+        // Iframes by `name` stand for their child window, not for themselves.
+        let (frames, found) = {
+            let dom = page.dom.borrow();
+            let (frames, found): (Vec<_>, Vec<_>) =
+                dom.window_named_elements(doc, name).js()?.into_iter().partition(|&el| {
+                    dom.element(el).is_ok_and(|e| &*e.name.local == "iframe" && e.is_html() && e.id() != Some(name))
+                });
+            (frames, found)
+        };
+        for frame in frames {
+            if let Some(window) = page.frame_window(s, frame)? {
+                return Ok(Some(window));
+            }
+        }
+        match found[..] {
+            [] => Ok(None),
+            [el] => Ok(Some(crate::node::wrap_node(s, page, el)?.value())),
+            _ => {
+                let kind = crate::collections::CollectionKind::WindowNamed(name.to_owned());
+                Ok(Some(crate::collections::collection(s, page, doc, kind)?.value()))
+            }
+        }
+    }
+}
+
 fn scroll_xy(a: &lp_js::Args<'_>) -> JsResult<(Option<i32>, Option<i32>)> {
     if let Some(o) = a.get(0).as_object() {
         let l = o.get("left")?;
@@ -47,6 +89,27 @@ fn window_scroll(page: &Rc<PageDom>, a: &lp_js::Args<'_>, by: bool) -> JsResult<
     Ok(())
 }
 
+/// Setter of a [Replaceable] Window attribute: assignment shadows it with an
+/// own data property.
+pub fn replace_window_attribute<'s>(
+    s: &lp_js::Scope<'s>,
+    page: &crate::page::PageDom,
+    name: &str,
+    value: lp_js::Value<'s>,
+) -> lp_js::JsResult<()> {
+    let define = page.define_properties.borrow().get(&s.realm_id()).map(|p| p.get(s));
+    let define = define
+        .and_then(|v| v.as_object())
+        .ok_or_else(|| lp_js::JsError::Type(format!("window.{name} cannot be replaced in this realm")))?;
+    let desc = s.object();
+    desc.set("value", value)?;
+    for k in ["writable", "enumerable", "configurable"] {
+        desc.set(k, s.boolean(true))?;
+    }
+    define.call(None, &[s.global().value(), s.string(name), desc.value()])?;
+    Ok(())
+}
+
 /// Adds lp-webapi's Window members to lp-browser's `Window` class.
 pub fn define_members<W>(def: &mut ClassDef<W>)
 where
@@ -60,19 +123,7 @@ where
     def.accessor(
         "event",
         |s, _w| crate::target::current_event(s),
-        |s, w, value| {
-            let define = w.page().define_properties.borrow().get(&s.realm_id()).map(|p| p.get(s));
-            let define = define
-                .and_then(|v| v.as_object())
-                .ok_or_else(|| lp_js::JsError::Type("window.event cannot be replaced in this realm".into()))?;
-            let desc = s.object();
-            desc.set("value", value)?;
-            for k in ["writable", "enumerable", "configurable"] {
-                desc.set(k, s.boolean(true))?;
-            }
-            define.call(None, &[s.global().value(), s.string("event"), desc.value()])?;
-            Ok(())
-        },
+        |s, w, value| replace_window_attribute(s, w.page(), "event", value),
     );
     def.getter("indexedDB", |s, w| crate::indexeddb::window_factory(s, w.page()));
     def.getter("localStorage", |s, w| crate::storage::window_storage(s, w.page(), false));
@@ -82,6 +133,7 @@ where
     def.getter("crypto", |s, _w| crate::crypto::crypto_value(s));
     def.getter("clientInformation", |s, w| navigator(s, w.page()));
     def.getter("ClipboardItem", |s, w| crate::navigator_extras::member(s, w.page(), "ClipboardItem"));
+    crate::streams::define_globals(def);
     def.getter("screen", |s, w| {
         let key = lp_js::IdentityKey(w.page().id() | (1 << 57), 1);
         same_object(s, w.page(), key, || s.wrap::<Screen>(w.page().clone(), Some(key)))
@@ -275,13 +327,23 @@ impl JsClass for Navigator {
         def.getter("hardwareConcurrency", |s, _p| Ok(s.number(4.0)));
         def.getter("maxTouchPoints", |s, p| Ok(s.number(p.max_touch_points() as f64)));
         def.getter("userAgentData", |s, p| crate::navigator_extras::member(s, p, "userAgentData"));
+        def.getter("geolocation", |s, p| crate::navigator_extras::member(s, p, "geolocation"));
         def.getter("permissions", |s, p| crate::navigator_extras::member(s, p, "permissions"));
         def.getter("clipboard", |s, p| crate::navigator_extras::member(s, p, "clipboard"));
         def.getter("webdriver", |s, _p| Ok(s.boolean(true)));
         def.getter("doNotTrack", |s, _p| Ok(s.null()));
         def.getter("pdfViewerEnabled", |s, _p| Ok(s.boolean(false)));
         def.method("javaEnabled", 0, |s, _p, _a| Ok(s.boolean(false)));
-        def.method("sendBeacon", 1, |s, _p, _a| Ok(s.boolean(true)));
+        // Queues nothing: only the URL checks are observable.
+        def.method("sendBeacon", 1, |s, p, a| {
+            a.require(1, "Navigator.sendBeacon")?;
+            let url = crate::util::dom_string(a.get(0))?;
+            let url = crate::html::resolve_url(&p.dom.borrow(), p.document(), &url);
+            if !lp_net::Url::parse(&url).is_ok_and(|u| matches!(u.scheme(), "http" | "https")) {
+                return Err(JsError::Type(format!("Failed to execute 'sendBeacon': invalid URL '{url}'.")));
+            }
+            Ok(s.boolean(true))
+        });
         def.method("vibrate", 0, |s, _p, _a| Ok(s.boolean(false)));
     }
 }
@@ -490,6 +552,13 @@ fn screen(p: &PageDom) -> (u32, u32) {
 pub fn css_namespace<'s>(s: &Scope<'s>) -> JsResult<Value<'s>> {
     let o = s.object();
     let supports = s.function("supports", |s, _this, a| {
+        if a.len() == 1 {
+            let text = dom_string(a.get(0))?;
+            let selector = text.trim().strip_prefix("selector(").and_then(|t| t.strip_suffix(')'));
+            if let Some(selector) = selector {
+                return Ok(s.boolean(lp_dom::cssom::normalize_selector(selector, &Vec::new()).is_some()));
+            }
+        }
         // Syntax-level check only: property names and values are accepted.
         let ok = if a.len() >= 2 {
             !dom_string(a.get(0))?.is_empty()
@@ -519,10 +588,9 @@ pub(crate) fn register(engine: &lp_js::Engine) {
 
 /// `window.open(url, target, features)`. A new browsing context opens as a
 /// popup page in the same browser context (the CDP layer announces it with
-/// its opener). With `noopener`/`noreferrer` it returns null, as browsers do.
-/// A popup the page could script (opener access) needs a cross-page
-/// WindowProxy, which this engine does not have: that case throws instead of
-/// returning a stand-in window. `_self`/`_top`/`_parent` navigate this page.
+/// its opener). With `noopener`/`noreferrer` it returns null, as browsers do;
+/// otherwise it returns the minimal [`crate::popup::PopupWindow`], since there
+/// is no cross-page WindowProxy. `_self`/`_top`/`_parent` navigate this page.
 fn window_open<'s>(s: &Scope<'s>, page: &Rc<PageDom>, a: &lp_js::Args<'s>) -> JsResult<Value<'s>> {
     let url = crate::util::opt_dom_string(a.get(0))?.unwrap_or_default();
     let target = crate::util::opt_dom_string(a.get(1))?.filter(|t| !t.is_empty()).unwrap_or_else(|| "_blank".into());
@@ -535,23 +603,37 @@ fn window_open<'s>(s: &Scope<'s>, page: &Rc<PageDom>, a: &lp_js::Args<'s>) -> Js
         "about:blank".to_owned()
     } else {
         let dom = page.dom.borrow();
-        crate::html::resolve_url(&dom, page.document(), &url)
+        let url = crate::html::resolve_url(&dom, page.document(), &url);
+        if lp_net::Url::parse(&url).is_err() {
+            return Err(JsError::dom("SyntaxError", format!("'{url}' is not a valid URL.")));
+        }
+        url
     };
-    let same_context = matches!(target.to_ascii_lowercase().as_str(), "_self" | "_top" | "_parent");
-    if !same_context && !no_opener {
-        return Err(JsError::Unsupported("window.open with opener access (a scriptable popup window)"));
+    if lp_net::Url::parse(&url).is_err() {
+        return Err(JsError::dom("SyntaxError", format!("'{url}' is not a valid URL.")));
     }
+    let same_context = matches!(target.to_ascii_lowercase().as_str(), "_self" | "_top" | "_parent");
+    let (ticket, popup) = if same_context || no_opener {
+        (None, None)
+    } else {
+        let (ticket, popup) = crate::popup::PopupTicket::new();
+        (Some(ticket), Some(popup))
+    };
+    let opener = ticket.is_some();
     page.navigate(crate::page::NavigationRequest {
         url,
         target: Some(target),
         method: "GET".into(),
         body: None,
         content_type: None,
-        opener: false,
+        opener,
+        popup: ticket,
     });
-    if same_context {
-        Ok(s.global().value())
-    } else {
-        Ok(s.null())
+    match popup {
+        Some(popup) => {
+            Ok(s.wrap::<crate::popup::PopupWindow>(crate::popup::PopupData::new(page, popup), None)?.value())
+        }
+        None if same_context => Ok(s.global().value()),
+        None => Ok(s.null()),
     }
 }

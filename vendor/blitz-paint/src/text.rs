@@ -13,6 +13,96 @@ use style::values::generics::text::{GenericTextDecorationInset, GenericTextDecor
 use crate::color::{Color, ToColorColor as _};
 use crate::{FONT_EMBOLDEN_ENABLED, SELECTION_COLOR};
 
+/// How the runs of one line of a vertical writing mode sit in it. The line is drawn turned a quarter
+/// clockwise (see `ElementCx::draw_vertical_inline_layout`), so a run's block offset moves it across the line.
+#[derive(Clone, Copy)]
+pub(crate) struct VerticalLine {
+    /// The line's central baseline, which `text-orientation: mixed` and `upright` align runs to; `sideways`
+    /// keeps the alphabetic baseline.
+    central: Option<f32>,
+    /// `text-orientation: upright`: every glyph stands upright.
+    all_upright: bool,
+}
+
+impl VerticalLine {
+    pub(crate) fn new(line: &Line<'_, TextBrush>, sideways: bool, all_upright: bool) -> Self {
+        // A fragment's box is its whole-pixel ascent and descent, around the middle of which the
+        // tallest fragment in the line (the one that sets its height) has the central baseline.
+        let central = (!sideways)
+            .then(|| {
+                line.items()
+                    .filter_map(|item| match item {
+                        PositionedLayoutItem::GlyphRun(run) => Some(run),
+                        _ => None,
+                    })
+                    .max_by_key(|run| {
+                        let metrics = run.run().font_metrics();
+                        (metrics.ascent.round() + metrics.descent.round()) as i64
+                    })
+                    .map(|run| {
+                        let metrics = run.run().font_metrics();
+                        run.baseline() - (metrics.ascent.round() - metrics.descent.round()) / 2.0
+                    })
+            })
+            .flatten();
+        Self { central, all_upright }
+    }
+
+    /// Moves a run's fragment box from the alphabetic baseline to the central one.
+    fn fragment_shift(self, run: &parley::GlyphRun<'_, TextBrush>) -> Affine {
+        let Some(central) = self.central else {
+            return Affine::IDENTITY;
+        };
+        let metrics = run.run().font_metrics();
+        let at = run.baseline() - (metrics.ascent.round() - metrics.descent.round()) / 2.0;
+        Affine::translate((0.0, (central - at) as f64))
+    }
+
+    /// Where a run's glyphs go: the shift of the run, and for one standing upright each glyph's
+    /// transform. An upright glyph is turned back around the middle of its em box. Its advance is the one shaped horizontally: right for the full-width glyphs of CJK text,
+    /// not for Latin (which in Chromium advances by the font's height), and glyphs have no `vert` forms.
+    fn run_placement(
+        self,
+        run: &parley::GlyphRun<'_, TextBrush>,
+        source: Option<&str>,
+    ) -> (Affine, Option<Affine>) {
+        let Some(central) = self.central else {
+            return (Affine::IDENTITY, None);
+        };
+        let metrics = run.run().font_metrics();
+        let upright = self.all_upright
+            || source
+                .and_then(|text| text.get(run.run().text_range())?.chars().next())
+                .is_some_and(is_upright_char);
+        if !upright {
+            return (self.fragment_shift(run), None);
+        }
+        let em = run.run().font_size();
+        let height = (metrics.ascent + metrics.descent).max(1.0);
+        let ascent = (em * metrics.ascent / height) as f64;
+        (
+            Affine::translate((0.0, (central + em / 2.0 - run.baseline()) as f64)),
+            Some(Affine::new([0.0, -1.0, 1.0, 0.0, ascent, 0.0])),
+        )
+    }
+}
+
+/// Whether `text-orientation: mixed` stands a character upright (UTR #50's `Vertical_Orientation`
+/// other than R, by block).
+fn is_upright_char(c: char) -> bool {
+    matches!(c as u32,
+        0x1100..=0x11FF
+        | 0x2E80..=0x4DBF
+        | 0x4E00..=0xA4CF
+        | 0xAC00..=0xD7FF
+        | 0xF900..=0xFAFF
+        | 0xFE30..=0xFE4F
+        | 0xFF00..=0xFF60
+        | 0xFFE0..=0xFFE6
+        | 0x1F000..=0x1FAFF
+        | 0x20000..=0x3FFFF)
+}
+
 /// Draw the backgrounds of inline elements (e.g. `<span style="background: ...">`).
 ///
 /// Each glyph run carries the node id of the innermost inline element it belongs to
@@ -28,11 +118,16 @@ pub(crate) fn draw_inline_backgrounds<'a>(
     doc: &BaseDocument,
     transform: Affine,
     inline_root_id: NodeId,
+    vertical: Option<VerticalLine>,
 ) {
     for line in lines {
         for item in line.items() {
             let PositionedLayoutItem::GlyphRun(glyph_run) = item else {
                 continue;
+            };
+            let transform = match vertical {
+                Some(vertical) => transform * vertical.fragment_shift(&glyph_run),
+                None => transform,
             };
 
             let node_id = glyph_run.style().brush.id;
@@ -277,6 +372,8 @@ pub(crate) struct DrawTextContext {
     win_ascent_ratios: WinAscentCache,
     /// The glyph runs drawn, when recording ([`crate::paint_scene_recording_text`]).
     pub(crate) runs: Option<Vec<crate::TextRun>>,
+    /// How far the next `stroke_text` moves its text along x (device px; 0 unless printing).
+    pub(crate) text_shift: f64,
 }
 
 /// Resolve the CSS `text-decoration-thickness` to a device-pixel size.
@@ -590,6 +687,15 @@ fn flush_line_decorations(
     }
 }
 
+/// `transform` with its content moved `shift` along the x axis of the text.
+fn shifted(transform: Affine, shift: f64) -> Affine {
+    if shift == 0.0 {
+        transform
+    } else {
+        transform * Affine::translate((shift, 0.0))
+    }
+}
+
 pub(crate) fn stroke_text<'a>(
     scene: &mut impl PaintScene,
     lines: impl Iterator<Item = Line<'a, TextBrush>>,
@@ -599,6 +705,7 @@ pub(crate) fn stroke_text<'a>(
     inline_root_id: NodeId,
     source: Option<&str>,
     context: &mut DrawTextContext,
+    vertical: Option<VerticalLine>,
 ) {
     let DrawTextContext {
         stack,
@@ -606,7 +713,9 @@ pub(crate) fn stroke_text<'a>(
         deco_boxes,
         win_ascent_ratios,
         runs,
+        text_shift,
     } = context;
+    let shift = *text_shift;
     stack.clear();
     path_scratch.clear();
     deco_boxes.clear();
@@ -636,6 +745,18 @@ pub(crate) fn stroke_text<'a>(
                 let glyph_xform = synthesis
                     .skew()
                     .map(|angle| Affine::skew(angle.to_radians().tan() as f64, 0.0));
+                let (transform, glyph_xform) = match vertical {
+                    Some(vertical) => {
+                        let (shift, upright) = vertical.run_placement(&glyph_run, source);
+                        let glyph_xform = match (upright, glyph_xform) {
+                            (Some(upright), Some(skew)) => Some(upright * skew),
+                            (Some(upright), None) => Some(upright),
+                            (None, skew) => skew,
+                        };
+                        (transform * shift, glyph_xform)
+                    }
+                    None => (transform, glyph_xform),
+                };
 
                 let css_font_size = font_size as f64 / scale;
 
@@ -678,6 +799,7 @@ pub(crate) fn stroke_text<'a>(
                 if let Some(runs) = runs.as_mut() {
                     runs.push(crate::TextRun::new(&glyph_run, source, transform));
                 }
+                let transform = shifted(transform, shift);
                 scene.draw_glyphs(
                     font,
                     font_size,
@@ -750,7 +872,7 @@ pub(crate) fn stroke_text<'a>(
 
         flush_line_decorations(
             scene,
-            transform,
+            shifted(transform, shift),
             scale,
             deco_boxes,
             win_ascent_ratios,
@@ -765,7 +887,7 @@ pub(crate) fn stroke_text<'a>(
 pub(crate) fn draw_text_selection(
     scene: &mut impl PaintScene,
     layout: &Layout<TextBrush>,
-    transform: Affine,
+    line_transform: impl Fn(usize) -> Affine,
     selection_start: usize,
     selection_end: usize,
 ) {
@@ -773,8 +895,8 @@ pub(crate) fn draw_text_selection(
     let focus = Cursor::from_byte_index(layout, selection_end, Affinity::Downstream);
     let selection = Selection::new(anchor, focus);
 
-    selection.geometry_with(layout, |rect, _line_idx| {
+    selection.geometry_with(layout, |rect, line_idx| {
         let rect = kurbo::Rect::new(rect.x0, rect.y0, rect.x1, rect.y1);
-        scene.fill(Fill::NonZero, transform, SELECTION_COLOR, None, &rect);
+        scene.fill(Fill::NonZero, line_transform(line_idx), SELECTION_COLOR, None, &rect);
     });
 }

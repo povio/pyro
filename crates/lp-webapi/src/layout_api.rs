@@ -378,6 +378,11 @@ pub(crate) fn set_inner_text(_s: &Scope<'_>, n: &NodeData, v: Value<'_>) -> JsRe
     n.page().dom.borrow_mut().set_inner_text(n.id, &text).js()
 }
 
+pub(crate) fn set_outer_text(_s: &Scope<'_>, n: &NodeData, v: Value<'_>) -> JsResult<()> {
+    let text = null_to_empty(v)?;
+    n.page().dom.borrow_mut().set_outer_text(n.id, &text).js()
+}
+
 /// Element hit-testing for CDP input (top-most element at the point).
 pub fn hit_test(page: &PageDom, x: f64, y: f64) -> Option<NodeId> {
     page.layout().element_from_point(&page.dom.borrow(), x, y)

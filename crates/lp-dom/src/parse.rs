@@ -17,7 +17,9 @@ use markup5ever::{local_name, ns, TokenizerResult};
 
 use crate::dom::Dom;
 use crate::error::{DomError, DomResult};
-use crate::node::{element_flags, ElementData, FragmentData, NodeId, NodeKind, QuirksMode, NIL};
+use crate::node::{
+    element_flags, shadow_flags, ElementData, FragmentData, NodeId, NodeKind, QuirksMode, ShadowRootMode, NIL,
+};
 
 /// Shared handle to a page's DOM store.
 pub type DomRef = Rc<RefCell<Dom>>;
@@ -47,6 +49,10 @@ struct Sink<A: DomAccess> {
     first_created: Cell<u32>,
     // html5ever keeps raw handles across script pauses, including detached elements.
     pins: RefCell<Vec<NodeId>>,
+    /// Open `<template shadowrootmode>` elements and the shadow roots their
+    /// contents go to. Such a template stays out of the tree and keeps its
+    /// own fragment, so collecting it never takes the host's root along.
+    declarative: RefCell<Vec<(u32, u32)>>,
 }
 
 impl<A: DomAccess> Sink<A> {
@@ -63,6 +69,7 @@ impl<A: DomAccess> Sink<A> {
             quirks: Cell::new(None),
             first_created: Cell::new(NIL),
             pins: RefCell::new(vec![id]),
+            declarative: RefCell::new(Vec::new()),
         }
     }
 
@@ -142,6 +149,7 @@ impl<A: DomAccess> TreeSink for Sink<A> {
     fn create_element(&self, name: QualName, attrs: Vec<Attribute>, flags: ElementFlags) -> u32 {
         let created = self.dom.with(|d| {
             let owner = self.doc_owner(d);
+            d.base_seen |= name.local == local_name!("base");
             let mut el = ElementData::new(name);
             el.attrs =
                 attrs.into_iter().map(|a| crate::node::Attr { name: a.name, value: (&*a.value).into() }).collect();
@@ -149,9 +157,10 @@ impl<A: DomAccess> TreeSink for Sink<A> {
             let i = d.alloc_raw(NodeKind::Element(Box::new(el)), owner);
             if flags.template {
                 let inert = d.inert_doc_for_pub(owner);
-                let frag = d.alloc_raw(NodeKind::Fragment(FragmentData { host: i, shadow: None }), inert);
+                let frag = d.alloc_raw(NodeKind::Fragment(FragmentData { host: i, shadow: None, flags: 0 }), inert);
                 d.n_mut(i).element_mut().unwrap().template_contents = frag;
             }
+            d.note_inline_handlers(i);
             let id = d.id_of(i);
             d.add_ref(id).expect("new parser element");
             self.pins.borrow_mut().push(id);
@@ -211,9 +220,18 @@ impl<A: DomAccess> TreeSink for Sink<A> {
         });
     }
     fn pop(&self, node: &u32) {
+        {
+            let mut declarative = self.declarative.borrow_mut();
+            if declarative.last().is_some_and(|d| d.0 == *node) {
+                declarative.pop();
+            }
+        }
         self.dom.with(|d| d.resources_element_popped(*node));
     }
     fn get_template_contents(&self, target: &u32) -> u32 {
+        if let Some(d) = self.declarative.borrow().iter().rev().find(|d| d.0 == *target) {
+            return d.1;
+        }
         self.dom.with(|d| d.n(*target).element().map(|e| e.template_contents).unwrap_or(NIL))
     }
     fn same_node(&self, x: &u32, y: &u32) -> bool {
@@ -253,6 +271,7 @@ impl<A: DomAccess> TreeSink for Sink<A> {
                     d.note(change);
                 }
             }
+            d.note_inline_handlers(*target);
         });
     }
     fn associate_with_form(&self, _target: &u32, _form: &u32, _nodes: (&u32, Option<&u32>)) {}
@@ -271,6 +290,28 @@ impl<A: DomAccess> TreeSink for Sink<A> {
                 d.link_raw(k, *new_parent, NIL);
             }
         });
+    }
+    fn allow_declarative_shadow_roots(&self, _intended_parent: &u32) -> bool {
+        self.dom.with(|d| d.allows_declarative_shadow_roots(self.doc))
+    }
+    fn attach_declarative_shadow(&self, host: &u32, template: &u32, attrs: &[Attribute]) -> bool {
+        let mut mode = ShadowRootMode::Open;
+        let mut flags = 0;
+        for a in attrs {
+            match &*a.name.local {
+                "shadowrootmode" if a.value.eq_ignore_ascii_case("closed") => mode = ShadowRootMode::Closed,
+                "shadowrootclonable" => flags |= shadow_flags::CLONABLE,
+                "shadowrootserializable" => flags |= shadow_flags::SERIALIZABLE,
+                "shadowrootdelegatesfocus" => flags |= shadow_flags::DELEGATES_FOCUS,
+                "shadowrootslotassignment" if a.value.eq_ignore_ascii_case("manual") => {
+                    flags |= shadow_flags::MANUAL_SLOTS
+                }
+                _ => {}
+            }
+        }
+        let Some(root) = self.dom.with(|d| d.attach_declarative_shadow(*host, mode, flags)) else { return false };
+        self.declarative.borrow_mut().push((*template, root));
+        true
     }
     fn is_mathml_annotation_xml_integration_point(&self, handle: &u32) -> bool {
         self.dom.with(|d| {
@@ -314,7 +355,7 @@ pub struct DocumentParser {
     decoded: String,
     /// Bytes held back until 1024 bytes (or EOF) are available for prescan.
     sniff: Vec<u8>,
-    /// Outer input set aside by `begin_nested` (innermost last).
+    /// Outer input set aside by `open_insertion_point` (innermost last).
     saved: Vec<BufferQueue>,
 }
 
@@ -483,26 +524,19 @@ impl DocumentParser {
         self.resume()
     }
 
-    /// `document.write` from a script this parser yielded for: the markup is
-    /// parsed at the insertion point, ahead of the remaining input, which is
-    /// set aside until `end_nested`. Resume on `Script` as usual; once
-    /// `resume` returns `NeedInput`, call `end_nested`.
-    pub fn begin_nested(&mut self, chunk: &str) -> ParseStep {
-        if self.ended {
-            return ParseStep::NeedInput;
-        }
+    /// A script this parser yielded for is about to run: its
+    /// `document.write`s go to an insertion point ahead of the remaining
+    /// input, which is set aside until `close_insertion_point`.
+    pub fn open_insertion_point(&mut self) {
         let nested = BufferQueue::default();
-        if !chunk.is_empty() {
-            nested.push_back(StrTendril::from_slice(chunk));
-        }
         self.input.swap_with(&nested);
         self.saved.push(nested);
-        self.resume()
     }
 
-    /// Restores the input set aside by the matching `begin_nested`; nested
-    /// input the tokenizer did not consume stays in front of it.
-    pub fn end_nested(&mut self) {
+    /// The script finished: restores the input set aside by the matching
+    /// `open_insertion_point`; written input the tokenizer did not consume
+    /// (a written blocking script stopped it) stays in front of it.
+    pub fn close_insertion_point(&mut self) {
         let Some(outer) = self.saved.pop() else { return };
         let mut rest = Vec::new();
         while let Some(chunk) = self.input.pop_front() {
@@ -511,6 +545,13 @@ impl DocumentParser {
         self.input.swap_with(&outer);
         for chunk in rest.into_iter().rev() {
             self.input.push_front(chunk);
+        }
+    }
+
+    /// Queues input without tokenizing: a written blocking script is pending.
+    pub fn push_input(&mut self, chunk: &str) {
+        if !self.ended && !chunk.is_empty() {
+            self.input.push_back(StrTendril::from_slice(chunk));
         }
     }
 
@@ -543,7 +584,21 @@ impl DocumentParser {
 
 /// Parses a complete HTML document (no script execution).
 pub fn parse_document(dom: &DomRef, url: &str, html: &str) -> NodeId {
-    let doc = dom.borrow_mut().create_document(crate::node::DocumentKind::Html, url);
+    parse_document_with(dom, url, html, false)
+}
+
+/// `Document.parseHTMLUnsafe`: as `parse_document`, with declarative shadow roots.
+pub fn parse_html_unsafe(dom: &DomRef, html: &str) -> NodeId {
+    parse_document_with(dom, "about:blank", html, true)
+}
+
+fn parse_document_with(dom: &DomRef, url: &str, html: &str, allow_declarative_shadow_roots: bool) -> NodeId {
+    let doc = {
+        let mut d = dom.borrow_mut();
+        let doc = d.create_document(crate::node::DocumentKind::Html, url);
+        d.set_allow_declarative_shadow_roots(doc, allow_declarative_shadow_roots).expect("fresh document");
+        doc
+    };
     let mut p = DocumentParser::new(dom.clone(), doc, false).expect("fresh document");
     // Scripts are not executed here; html5ever still yields after each
     // </script>, so keep resuming until the input is drained.
@@ -555,10 +610,37 @@ pub fn parse_document(dom: &DomRef, url: &str, html: &str) -> NodeId {
     doc
 }
 
+/// Parses response bytes into a new HTML document (no script execution), with
+/// the usual encoding sniffing after the transport `charset`.
+pub fn parse_document_bytes(dom: &DomRef, url: &str, bytes: &[u8], charset: Option<&str>) -> NodeId {
+    let doc = dom.borrow_mut().create_document(crate::node::DocumentKind::Html, url);
+    let mut p = DocumentParser::new(dom.clone(), doc, false).expect("fresh document");
+    p.set_transport_charset(charset);
+    let mut step = p.feed_bytes(bytes);
+    while let ParseStep::Script(_) = step {
+        step = p.resume();
+    }
+    step = p.finish_bytes();
+    while let ParseStep::Script(_) = step {
+        step = p.resume();
+    }
+    p.end();
+    doc
+}
+
 /// HTML fragment parsing algorithm (innerHTML / insertAdjacentHTML /
 /// createContextualFragment). Returns a new DocumentFragment owned by the
 /// context element's node document.
 pub fn parse_fragment(dom: &mut Dom, context: NodeId, html: &str) -> DomResult<NodeId> {
+    parse_fragment_with(dom, context, html, false)
+}
+
+fn parse_fragment_with(
+    dom: &mut Dom,
+    context: NodeId,
+    html: &str,
+    allow_declarative_shadow_roots: bool,
+) -> DomResult<NodeId> {
     let ctx = dom.check(context)?;
     let (ctx_name, ctx_attrs) = match &dom.n(ctx).kind {
         NodeKind::Element(e) => (
@@ -573,7 +655,9 @@ pub fn parse_fragment(dom: &mut Dom, context: NodeId, html: &str) -> DomResult<N
     let owner = dom.n(ctx).owner_doc;
     let owner_id = dom.id_of(owner);
     // Temporary document for the parser; nodes are adopted into `owner`.
-    let tmp = dom.create_document(crate::node::DocumentKind::Html, "about:blank").idx;
+    let tmp_id = dom.create_document(crate::node::DocumentKind::Html, "about:blank");
+    dom.set_allow_declarative_shadow_roots(tmp_id, allow_declarative_shadow_roots)?;
+    let tmp = tmp_id.idx;
     let flags = element_flags::FRAGMENT_PARSED | element_flags::SCRIPT_ALREADY_STARTED;
 
     let context_copy;
@@ -622,4 +706,19 @@ pub fn set_inner_html(dom: &mut Dom, element: NodeId, html: &str) -> DomResult<(
     };
     let frag = parse_fragment(dom, ctx, html)?;
     dom.replace_all(target, Some(frag))
+}
+
+/// `Element.setHTMLUnsafe` / `ShadowRoot.setHTMLUnsafe`: as `innerHTML`, with
+/// declarative shadow roots. `target` is the context element, or a shadow
+/// root (parsed in its host's context).
+pub fn set_html_unsafe(dom: &mut Dom, target: NodeId, html: &str) -> DomResult<()> {
+    let i = dom.check(target)?;
+    let (ctx, into) = match &dom.n(i).kind {
+        NodeKind::Fragment(f) if f.shadow.is_some() => (dom.id_of(f.host), target),
+        NodeKind::Element(e) if e.template_contents != NIL => (target, dom.id_of(e.template_contents)),
+        NodeKind::Element(_) => (target, target),
+        _ => return Err(DomError::Type("setHTMLUnsafe context must be an element")),
+    };
+    let frag = parse_fragment_with(dom, ctx, html, true)?;
+    dom.replace_all(into, Some(frag))
 }

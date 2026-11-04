@@ -38,6 +38,7 @@ path = "tests/payload_cycles.rs"
 # Geometry for the layout tests (Blitz).
 lp-layout = { workspace = true }
 lp-render = { workspace = true }
+tokio = { version = "1", features = ["sync"] }
 
 [lints]
 workspace = true

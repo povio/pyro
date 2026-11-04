@@ -1,7 +1,8 @@
-//! macOS RSS sampler: `proc_pid_rusage(RUSAGE_INFO_V2)` every N ms.
+//! macOS RSS sampler: `proc_pid_rusage(RUSAGE_INFO_V4)` every N ms.
 //!
-//! Usage: `rss-sampler <pid> <outfile|-> [interval_ms=20|--once]`
-//! Output: epoch_ms resident_kib footprint_kib user_ns system_ns monotonic_ns;
+//! Usage: `rss-sampler <pid> <outfile|-> [interval_ms=20|--once] [--instructions]`
+//! Output: epoch_ms resident_kib footprint_kib user_ns system_ns monotonic_ns, and with
+//! `--instructions` instructions retired as a seventh column;
 //! the first three columns remain compatible with existing readers. Stops when
 //! the pid disappears (or on SIGTERM).
 //!
@@ -13,18 +14,19 @@
 use std::io::Write;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// `struct rusage_info_v2` from `<sys/resource.h>`: a 16-byte UUID followed by
-/// 18 `uint64_t` fields (`ri_user_time` .. `ri_diskio_byteswritten`).
+/// `struct rusage_info_v4` from `<sys/resource.h>`: a 16-byte UUID followed by
+/// 35 `uint64_t` fields (`ri_user_time` .. `ri_runnable_time`).
 #[repr(C)]
-struct RusageInfoV2 {
+struct RusageInfoV4 {
     uuid: [u8; 16],
-    fields: [u64; 18],
+    fields: [u64; 35],
 }
 const RI_RESIDENT_SIZE: usize = 6;
 const RI_PHYS_FOOTPRINT: usize = 7;
 const RI_USER_TIME: usize = 0;
 const RI_SYSTEM_TIME: usize = 1;
-const RUSAGE_INFO_V2: i32 = 2;
+const RI_INSTRUCTIONS: usize = 29;
+const RUSAGE_INFO_V4: i32 = 4;
 
 #[repr(C)]
 struct Timebase {
@@ -52,7 +54,7 @@ const EV_ENABLE: u16 = 0x4;
 const NOTE_CRITICAL: u32 = 0x20;
 
 unsafe extern "C" {
-    fn proc_pid_rusage(pid: i32, flavor: i32, buffer: *mut RusageInfoV2) -> i32;
+    fn proc_pid_rusage(pid: i32, flavor: i32, buffer: *mut RusageInfoV4) -> i32;
     fn mach_timebase_info(info: *mut Timebase) -> i32;
     fn mach_absolute_time() -> u64;
     fn kqueue() -> i32;
@@ -75,6 +77,7 @@ fn main() {
     let pid: i32 = args[1].parse().expect("pid must be an integer");
     assert!(pid > 0, "pid must be positive");
     let once = args.get(3).is_some_and(|s| s == "--once");
+    let with_instructions = args.iter().any(|s| s == "--instructions");
     let interval_ms: isize =
         if once { 20 } else { args.get(3).map_or(20, |s| s.parse().expect("interval must be an integer")) };
     assert!(interval_ms > 0, "interval must be positive");
@@ -106,9 +109,9 @@ fn main() {
     assert!(rc >= 0, "kevent(register) failed: {}", std::io::Error::last_os_error());
 
     loop {
-        let mut info = RusageInfoV2 { uuid: [0; 16], fields: [0; 18] };
-        // SAFETY: `info` is a writable rusage_info_v2-sized buffer, as RUSAGE_INFO_V2 requires.
-        if unsafe { proc_pid_rusage(pid, RUSAGE_INFO_V2, &mut info) } != 0 {
+        let mut info = RusageInfoV4 { uuid: [0; 16], fields: [0; 35] };
+        // SAFETY: `info` is a writable rusage_info_v4-sized buffer, as RUSAGE_INFO_V4 requires.
+        if unsafe { proc_pid_rusage(pid, RUSAGE_INFO_V4, &mut info) } != 0 {
             if once {
                 panic!("proc_pid_rusage failed: {}", std::io::Error::last_os_error());
             }
@@ -118,11 +121,12 @@ fn main() {
         // SAFETY: monotonic clock read without pointer arguments.
         let monotonic = nanoseconds(unsafe { mach_absolute_time() }, &timebase);
         let line = format!(
-            "{now} {} {} {} {} {monotonic}\n",
+            "{now} {} {} {} {} {monotonic}{}\n",
             info.fields[RI_RESIDENT_SIZE] / 1024,
             info.fields[RI_PHYS_FOOTPRINT] / 1024,
             nanoseconds(info.fields[RI_USER_TIME], &timebase),
-            nanoseconds(info.fields[RI_SYSTEM_TIME], &timebase)
+            nanoseconds(info.fields[RI_SYSTEM_TIME], &timebase),
+            if with_instructions { format!(" {}", info.fields[RI_INSTRUCTIONS]) } else { String::new() }
         );
         if out.write_all(line.as_bytes()).is_err() {
             break;

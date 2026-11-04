@@ -137,7 +137,7 @@ impl Geometry {
         };
         let fixed = in_fixed
             || node.primary_styles().is_some_and(|s| s.clone_position() == style::computed_values::position::T::Fixed);
-        let location = node.unrounded_layout().location;
+        let location = doc.physical_unrounded_layout(id).location;
         // Blitz keeps the CSS transform's translation in device px
         // (`Node::set_transform`); this chain is in CSS px.
         let own = node.transform().as_deref().copied().map_or(Affine::IDENTITY, |t| {
@@ -160,7 +160,7 @@ impl Geometry {
             return Some(LayoutBox { fixed, ..LayoutBox::default() });
         }
         let (t, fixed) = self.transform(doc, id)?;
-        let l = node.unrounded_layout();
+        let l = doc.physical_unrounded_layout(id);
         let rect = t.transform_rect_bbox(Rect::new(0.0, 0.0, l.size.width as f64, l.size.height as f64));
         let client_width = (l.size.width - l.border.left - l.border.right - l.scrollbar_size.width).max(0.0) as f64;
         let client_height = (l.size.height - l.border.top - l.border.bottom - l.scrollbar_size.height).max(0.0) as f64;
@@ -429,11 +429,7 @@ impl Geometry {
         let root = doc.get_node(root_id)?;
         let text = root.element_data()?.inline_layout_data.as_ref()?;
         let (t, _) = self.transform(doc, root_id)?;
-        let l = root.unrounded_layout();
-        let origin = t * Affine::translate((
-            (l.border.left + l.padding.left) as f64,
-            (l.border.top + l.padding.top) as f64 + text.block_offset as f64,
-        ));
+        let origin = t * line_box_origin(doc, root_id, text);
         let scale = text.layout.scale() as f64;
         // Whether `start` is `id` or inside it (below the root).
         let within = |start: Option<NodeId>| {
@@ -450,6 +446,7 @@ impl Geometry {
             false
         };
         for (index, line) in text.layout.lines().enumerate() {
+            let origin = origin * line_slot(doc, root_id, &line.metrics(), scale);
             for item in line.items() {
                 let (start, r) = match item {
                     parley::PositionedLayoutItem::GlyphRun(run) => {
@@ -557,7 +554,7 @@ impl Geometry {
                 fixed,
             });
         }
-        let l = node.unrounded_layout();
+        let l = doc.physical_unrounded_layout(id);
         let margin = [l.margin.top, l.margin.right, l.margin.bottom, l.margin.left].map(f64::from);
         let (t, fixed) = self.transform(doc, id)?;
         let [a, b, c, d, _, _] = t.as_coeffs();
@@ -611,6 +608,31 @@ pub struct BoxQuads {
 }
 
 /// `r`'s corners through `t`, clockwise from the top-left one.
+/// The inline root's line coordinates (x inline, y block, in CSS px from the first line box) in
+/// its border box. A vertical writing mode turns them a quarter clockwise; lines of `vertical-lr`
+/// are then each rotated within their slot (see [`line_slot`]).
+fn line_box_origin(doc: &BaseDocument, id: NodeId, text: &blitz_dom::node::TextLayout) -> Affine {
+    let l = doc.physical_unrounded_layout(id);
+    let (left, top) = ((l.border.left + l.padding.left) as f64, (l.border.top + l.padding.top) as f64);
+    let block_offset = text.block_offset as f64;
+    match doc.get_node(id).and_then(|n| n.vertical_block_axis()) {
+        None => Affine::translate((left, top + block_offset)),
+        Some(true) => Affine::new([0.0, 1.0, -1.0, 0.0, left + block_offset, top]),
+        Some(false) => {
+            let right = (l.size.width - l.border.right - l.padding.right) as f64;
+            Affine::new([0.0, 1.0, -1.0, 0.0, right - block_offset, top])
+        }
+    }
+}
+
+/// What moves a line (CSS px) to its slot in [`line_box_origin`]'s coordinates.
+fn line_slot(doc: &BaseDocument, id: NodeId, metrics: &parley::layout::LineMetrics, scale: f64) -> Affine {
+    match doc.get_node(id).and_then(|n| n.vertical_block_axis()) {
+        Some(true) => Affine::translate((0.0, -((metrics.block_min_coord + metrics.block_max_coord) as f64) / scale)),
+        _ => Affine::IDENTITY,
+    }
+}
+
 fn quad(t: Affine, r: Rect) -> [f64; 8] {
     let p = [(r.x0, r.y0), (r.x1, r.y0), (r.x1, r.y1), (r.x0, r.y1)].map(|(x, y)| t * kurbo::Point::new(x, y));
     [p[0].x, p[0].y, p[1].x, p[1].y, p[2].x, p[2].y, p[3].x, p[3].y]
@@ -650,11 +672,7 @@ impl Geometry {
                 continue;
             }
             let Some((t, fixed)) = self.transform(doc, id) else { continue };
-            let l = node.unrounded_layout();
-            let origin = t * Affine::translate((
-                (l.border.left + l.padding.left) as f64,
-                (l.border.top + l.padding.top) as f64 + text.block_offset as f64,
-            ));
+            let origin = t * line_box_origin(doc, id, text);
             let scale = text.layout.scale() as f64;
             // Per text node: the UTF-16 offset of each byte of its laid-out text.
             let offsets: Vec<Vec<u32>> = text
@@ -671,6 +689,7 @@ impl Geometry {
             };
             for line in text.layout.lines() {
                 let m = line.metrics();
+                let origin = origin * line_slot(doc, id, m, scale);
                 let (line_top, line_height) =
                     (m.block_min_coord as f64 / scale, (m.block_max_coord - m.block_min_coord) as f64 / scale);
                 for item in line.items() {
@@ -679,7 +698,8 @@ impl Geometry {
                     // Chromium's text box: whole-pixel ascent and descent,
                     // the half-leading floored (CSS px, back to layout units).
                     let (a, d) = (metrics.ascent as f64 / scale, metrics.descent as f64 / scale);
-                    let top = line_top + ((line_height - a.round() - d.round()) / 2.0).floor();
+                    let leading = ((line_height - a.round() - d.round()) * 64.0).round();
+                    let top = line_top + ((leading / 2.0).trunc() / 64.0).floor();
                     let (top, bottom) = (top * scale, (top + a.round() + d.round()) * scale);
                     let mut x = run.offset() as f64;
                     let mut word: Option<(usize, Vec<(u32, f64)>)> = None;

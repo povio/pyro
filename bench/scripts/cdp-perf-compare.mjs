@@ -93,7 +93,7 @@ for (const hs of head.report.scenarios) {
   const ratio = hm / bm;
   const { p } = mannWhitney(b.roundMedians, h.roundMedians);
   const rounds = Math.min(b.roundMedians.length, h.roundMedians.length);
-  Object.assign(row, { base: bm, head: hm, ratio, p, rounds, cpuBase: b.cpuMsPerOp, cpuHead: h.cpuMsPerOp });
+  Object.assign(row, { base: bm, head: hm, ratio, p, rounds, cpuBase: b.cpuMsPerOp, cpuHead: h.cpuMsPerOp, insBase: b.instructionsPerOp, insHead: h.instructionsPerOp });
   const big = Math.abs(Math.log(ratio)) >= Math.log(1 + THRESHOLD);
   if (big && p < ALPHA) row.verdict = ratio > 1 ? 'REGRESSION' : 'improvement';
   else if (big) row.verdict = 'unclear';
@@ -118,15 +118,17 @@ if (base.report !== head.report) {
 }
 lines.push(
   '',
-  '| scenario | verdict | base ms | head ms | change | p | rounds | cpu/op base → head |',
-  '|---|---|---:|---:|---:|---:|---:|---:|',
+  '| scenario | verdict | base ms | head ms | change | p | rounds | cpu/op base → head | instructions/op base → head (informational) |',
+  '|---|---|---:|---:|---:|---:|---:|---:|---:|',
 );
 for (const r of rows) {
   const change = r.ratio ? pct(r.ratio - 1) : '';
   const cpu = r.cpuBase != null && r.cpuHead != null ? `${fmt(r.cpuBase)} → ${fmt(r.cpuHead)} (${pct(r.cpuHead / r.cpuBase - 1)})` : '';
+  const mega = (x) => `${(median(x) / 1e6).toFixed(2)}M`;
+  const ins = r.insBase?.length && r.insHead?.length ? `${mega(r.insBase)} → ${mega(r.insHead)} (${pct(median(r.insHead) / median(r.insBase) - 1)})` : '';
   const verdict = r.verdict === 'REGRESSION' || r.verdict === 'FAILED' ? `**${r.verdict}**` : r.verdict;
   lines.push(
-    `| ${r.name} | ${verdict}${r.note ? ` (${r.note})` : ''} | ${fmt(r.base)} | ${fmt(r.head)} | ${change} | ${r.p == null ? '' : r.p < 1e-4 ? '<1e-4' : r.p.toFixed(4)} | ${r.rounds ?? ''} | ${cpu} |`,
+    `| ${r.name} | ${verdict}${r.note ? ` (${r.note})` : ''} | ${fmt(r.base)} | ${fmt(r.head)} | ${change} | ${r.p == null ? '' : r.p < 1e-4 ? '<1e-4' : r.p.toFixed(4)} | ${r.rounds ?? ''} | ${cpu} | ${ins} |`,
   );
 }
 const count = (v) => rows.filter((r) => r.verdict === v).length;

@@ -47,7 +47,7 @@ fn response_json(head: &ResponseHead, encoded_len: u64) -> Value {
         "securityState": if head.url.scheme() == "https" { "secure" } else { "neutral" },
         "fromDiskCache": head.from_cache,
         "fromServiceWorker": false,
-        "protocol": "http/1.1",
+        "protocol": if head.protocol == lp_net::http::Version::HTTP_2 { "h2" } else { "http/1.1" },
     });
     if let Some(charset) = &head.charset {
         response["charset"] = json!(charset);
@@ -576,6 +576,7 @@ mod tests {
                 from_cache: false,
                 kind: ResponseKind::Basic,
                 remote_addr: Some("127.0.0.1:8080".into()),
+                protocol: lp_net::http::Version::HTTP_11,
             }),
             destination: Destination::Fetch,
             frame_id: Some("F".into()),
