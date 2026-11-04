@@ -822,3 +822,56 @@ fn textarea_attribute_deltas_match_whole_tree_value_geometry_and_paint() {
         );
     }
 }
+
+/// `set_interaction` runs on every geometry read. Blitz's key-event focus falls back to the root
+/// element, which once made it report a change, and a whole pass, with nothing focused.
+#[test]
+fn set_interaction_passes_only_for_a_change() {
+    let page = Page::new(PAGE);
+    let mut r = Renderer::new();
+    check(&mut r, &page, "the first render");
+    let key = lp_dom::snapshot::render_key(page.find("#name"));
+    let root = lp_dom::snapshot::render_key(page.find("html"));
+
+    for style_only in [false, true] {
+        let before = blitz_passes();
+        r.set_interaction(1, None, None, style_only);
+        assert_eq!(blitz_passes(), before, "nothing focused or hovered (style_only {style_only})");
+    }
+
+    let before = blitz_passes();
+    r.set_interaction(1, None, Some(key), false);
+    assert!(blitz_passes().0 > before.0, "focusing an input");
+    let before = blitz_passes();
+    r.set_interaction(1, None, Some(key), false);
+    assert_eq!(blitz_passes(), before, "the same focus");
+    r.set_interaction(1, None, None, false);
+    assert!(blitz_passes().0 > before.0, "blurring it");
+
+    // The root element can hold focus itself: not the same as nothing focused.
+    let before = blitz_passes();
+    r.set_interaction(1, None, Some(root), false);
+    assert!(blitz_passes().0 > before.0, "focusing the root element");
+    let before = blitz_passes();
+    r.set_interaction(1, None, None, false);
+    assert!(blitz_passes().0 > before.0, "blurring the root element");
+    check(&mut r, &page, "interaction cleared");
+}
+
+/// A pass with nothing damaged and the same viewport leaves layout alone; any damage runs it.
+#[test]
+fn a_pass_without_damage_runs_no_layout() {
+    let page = Page::new(PAGE);
+    let mut r = Renderer::new();
+    check(&mut r, &page, "the first render");
+    let before = blitz_passes();
+    r.sync_delta(1, &[], (640, 480, 1f64, false, false), false).unwrap();
+    let after = blitz_passes();
+    assert!(after.0 > before.0, "the sync resolves");
+    assert_eq!(after.1, before.1, "with nothing to lay out");
+
+    let n = page.find("#list");
+    page.dom.borrow_mut().set_attribute(n, "style", "padding: 13px").unwrap();
+    check(&mut r, &page, "a damaging mutation");
+    assert!(blitz_passes().1 > after.1, "damage runs layout");
+}

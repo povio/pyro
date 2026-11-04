@@ -94,6 +94,11 @@ pub fn blitz_style_stats() -> [u64; 4] {
     blitz_dom::phase_profile::style_stats_peek()
 }
 
+/// `resolve` calls Blitz made on this thread, and how many of their layout passes ran Taffy.
+pub fn blitz_passes() -> (u64, u64) {
+    blitz_dom::phase_profile::passes()
+}
+
 pub fn blitz_phases() -> [f64; 9] {
     blitz_dom::phase_profile::peek()
 }
@@ -928,6 +933,8 @@ impl Renderer {
     pub fn set_interaction(&mut self, page: u64, hovered: Option<u64>, focused: Option<u64>, style_only: bool) {
         let changed = self.mark_interaction(page, hovered, focused);
         let Some(m) = self.mirrors.get_mut(&page) else { return };
+        // Called on every geometry read: without news a pass would change nothing.
+        let changed = changed || m.doc.needs_resolve();
         if changed && style_only {
             let generation = m.doc.root_node().tree().geometry_generation();
             m.doc.resolve_style(0.0);
@@ -946,7 +953,7 @@ impl Renderer {
         let hover = hovered.and_then(|k| m.node(k));
         let focus = focused.and_then(|k| m.node(k));
         let mut changed = m.doc.set_hover_node(hover);
-        if m.doc.get_focussed_node_id() != focus {
+        if m.doc.focused_node() != focus {
             match focus {
                 Some(id) => {
                     m.doc.set_focus_to(id);

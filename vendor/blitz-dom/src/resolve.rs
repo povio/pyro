@@ -114,6 +114,7 @@ impl BaseDocument {
             return;
         }
 
+        phase_profile::resolved();
         self.resolve_scroll_animation();
 
         // Drop scrollbar-activity entries whose fade-out has finished (also
@@ -632,6 +633,17 @@ impl BaseDocument {
             height: AvailableSpace::Definite(size.height.to_f32_px()),
         };
 
+        // lightningpanda: same viewport and nothing damaged, so the last pass's layout stands.
+        let root = self.root_element();
+        if self.last_layout_space == Some(available_space)
+            && !root.has_damaged_descendants()
+            && root.damage().is_some_and(|damage| damage.is_empty())
+        {
+            return;
+        }
+        self.last_layout_space = Some(available_space);
+        phase_profile::laid_out();
+
         let root_element_id = crate::taffy_node_id(self.root_element().id);
 
         // println!("\n\nRESOLVE LAYOUT\n===========\n");
@@ -737,6 +749,19 @@ pub mod phase_profile {
     /// Elements styled, matched, shared and reused on this thread so far.
     pub fn style_stats_peek() -> [u64; 4] {
         STYLE_STATS.with(|s| s.get())
+    }
+    std::thread_local! {
+        static PASSES: Cell<(u64, u64)> = const { Cell::new((0, 0)) };
+    }
+    pub(crate) fn resolved() {
+        PASSES.with(|p| p.set((p.get().0 + 1, p.get().1)));
+    }
+    pub(crate) fn laid_out() {
+        PASSES.with(|p| p.set((p.get().0, p.get().1 + 1)));
+    }
+    /// `resolve` calls on this thread so far, and how many of their layout passes ran Taffy.
+    pub fn passes() -> (u64, u64) {
+        PASSES.with(|p| p.get())
     }
     /// Milliseconds per phase on this thread so far.
     pub fn peek() -> [f64; 9] {

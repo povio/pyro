@@ -839,6 +839,7 @@ impl EngineHost {
                 let phases = lp_render::blitz_phases();
                 let (inline_rebuilds, inline_bytes) = lp_render::blitz_rebuilds();
                 let style_stats = lp_render::blitz_style_stats();
+                let (resolves, layout_passes) = lp_render::blitz_passes();
                 Ok(Some(serde_json::json!({
                     "processId": std::process::id(),
                     "layouts": layouts, "deltas": deltas, "snapshotMs": snapshot_ms, "layoutMs": layout_ms, "readMs": read_ms,
@@ -851,6 +852,7 @@ impl EngineHost {
                         },
                         "inlineRebuilds": inline_rebuilds, "inlineBytes": inline_bytes,
                         "restyledNodes": lp_render::blitz_restyles(),
+                        "resolves": resolves, "layoutPasses": layout_passes,
                         "styleStats": {
                             "styled": style_stats[0], "matched": style_stats[1],
                             "shared": style_stats[2], "reused": style_stats[3],
