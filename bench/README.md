@@ -270,6 +270,8 @@ python3 width-check.py chrome-156/width-x.json <probe of fx-width>   # what pape
 
 `pdf-resample.mjs` compares a page's error against Chrome at 150 dpi as poppler rasterizes it and box-averaged from a higher resolution, to tell a real move from a sampling effect.
 
+`bun table-collapse.mjs chrome|/abs/lightningpanda out.json` measures cell boxes of collapsed-border tables (`chrome-156/table-collapse.json`).
+
 `chrome-156/tos-deltas.json` holds the 44 ToS cases before and after (median, p95, max of per-tile deltas in pt; the search stops at 2.4 pt, and
 tiles match by ink profiles, so regular text can alias: read medians and p95 first). `text-x-before.json` and `text-x-after.json` hold the text-x set, `text-x-width.json` the same on the paper-cut layout width.
 

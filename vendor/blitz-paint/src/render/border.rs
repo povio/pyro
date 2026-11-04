@@ -617,11 +617,17 @@ impl ElementCx<'_, '_> {
         if xs.len() != edges.columns + 1 || ys.len() != edges.rows + 1 {
             return;
         }
+        let position = self.context.dom.physical_unrounded_geometry(self.node.id).0;
+        let (ax, ay) = (position.x as f64, position.y as f64);
+        // A rule is snapped to whole pixels of the page, as Chromium paints it: it starts at the floor of
+        // its centered position, and is its width wide.
+        let snap_x = |x: f64| (ax + x).floor() - ax.round();
+        let snap_y = |y: f64| (ay + y).floor() - ay.round();
         let mut fill = |x0: f64, y0: f64, x1: f64, y1: f64, color: style::color::AbsoluteColor| {
             let shape = Rect::new(x0, y0, x1, y1).scale_from_origin(self.scale);
             scene.fill(Fill::NonZero, self.transform, color.as_srgb_color(), None, &shape);
         };
-        // A rule starts and ends on the middle of the rules across it.
+        // A rule starts and ends on the outer sides of the rules across it.
         for line in 0..=edges.rows {
             let mut c = 0;
             while c < edges.columns {
@@ -631,13 +637,17 @@ impl ElementCx<'_, '_> {
                     end += 1;
                 }
                 if edge.width > 0.0 {
-                    let half = edge.width as f64 / 2.0;
+                    let width = edge.width as f64;
                     let across = |col: usize| {
                         let up = line.checked_sub(1).map_or(0.0, |r| edges.vertical_at(r, col).width);
                         let down = (line < edges.rows).then(|| edges.vertical_at(line, col).width).unwrap_or(0.0);
-                        up.max(down) as f64 / 2.0
+                        up.max(down) as f64
                     };
-                    fill(xs[c] - across(c), ys[line] - half, xs[end] + across(end), ys[line] + half, edge.color);
+                    let (a, b) = (across(c), across(end));
+                    let x0 = snap_x(xs[c] - a / 2.0);
+                    let x1 = snap_x(xs[end] - b / 2.0) + b;
+                    let y0 = snap_y(ys[line] - width / 2.0);
+                    fill(x0, y0, x1, y0 + width, edge.color);
                 }
                 c = end;
             }
@@ -651,8 +661,9 @@ impl ElementCx<'_, '_> {
                     end += 1;
                 }
                 if edge.width > 0.0 {
-                    let half = edge.width as f64 / 2.0;
-                    fill(xs[line] - half, ys[r], xs[line] + half, ys[end], edge.color);
+                    let width = edge.width as f64;
+                    let x0 = snap_x(xs[line] - width / 2.0);
+                    fill(x0, snap_y(ys[r]), x0 + width, snap_y(ys[end]), edge.color);
                 }
                 r = end;
             }
