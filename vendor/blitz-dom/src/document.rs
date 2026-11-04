@@ -246,6 +246,8 @@ pub struct BaseDocument {
     /// last [`resolve`](Self::resolve), to be applied (coalesced into a single
     /// device rebuild) at the start of the next resolve.
     pub(crate) pending_device_changes: DeviceChanges,
+    /// lightningpanda: the root's available space in the last layout pass.
+    pub(crate) last_layout_space: Option<taffy::Size<taffy::AvailableSpace>>,
     /// See [`BaseDocument::set_layout_size`].
     layout_size: Option<(f32, f32)>,
     /// Strategy for Stylo's style traversal during `resolve`.
@@ -507,6 +509,7 @@ impl BaseDocument {
             media_type,
             svg_sprites: HashMap::new(),
             pending_device_changes: DeviceChanges::empty(),
+            last_layout_space: None,
             layout_size: None,
             style_threading: config.style_threading,
             incremental_layout: config.incremental.unwrap_or(true),
@@ -662,6 +665,12 @@ impl BaseDocument {
     pub fn get_focussed_node_id(&self) -> Option<NodeId> {
         self.focus_node_id
             .or(self.try_root_element().map(|el| el.id))
+    }
+
+    /// The node holding focus. Unlike [`Self::get_focussed_node_id`] (the node key events
+    /// go to), `None` when nothing does.
+    pub fn focused_node(&self) -> Option<NodeId> {
+        self.focus_node_id
     }
 
     pub fn mutate<'doc>(&'doc mut self) -> DocumentMutator<'doc> {
@@ -1321,6 +1330,37 @@ impl BaseDocument {
             DocumentEvent::ResourceLoad(resource) => self.load_resource(resource),
             DocumentEvent::NavigateIframe { node_id, url } => self.navigate_iframe(node_id, url),
         }
+    }
+
+    /// lightningpanda: whether a `resolve` could change anything: a resource arrived (it is
+    /// taken in now), something awaits restyle or layout here or in a subdocument, or an
+    /// animation runs. The last pass's `refresh_hover` can leave a restyle behind.
+    pub fn needs_resolve(&mut self) -> bool {
+        let rx = self.rx.take().unwrap();
+        let mut arrived = false;
+        while let Ok(msg) = rx.try_recv() {
+            self.handle_message(msg);
+            arrived = true;
+        }
+        self.rx = Some(rx);
+        if arrived || !self.pending_device_changes.is_empty() || self.is_animating() {
+            return true;
+        }
+        let root_is_clean = self.try_root_element().is_some_and(|root| {
+            !root.has_dirty_descendants()
+                && !root.has_damaged_descendants()
+                && !root.has_snapshot()
+                && root.damage().is_some_and(|damage| damage.is_empty())
+        });
+        if !root_is_clean {
+            return true;
+        }
+        let sub_documents: Vec<NodeId> = self.sub_document_nodes.iter().copied().collect();
+        sub_documents.into_iter().any(|node_id| {
+            self.nodes[node_id]
+                .subdoc_mut()
+                .is_some_and(|doc| doc.inner_mut().needs_resolve())
+        })
     }
 
     /// Whether the Document has pending requests for "critical" resources (that should block rendering)
