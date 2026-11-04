@@ -24,6 +24,7 @@ mod geometry;
 mod hash;
 mod mirror;
 mod net;
+mod page_box;
 pub mod pdf;
 mod svg_use;
 pub mod worker;
@@ -199,7 +200,8 @@ pub struct LayoutBoxes {
 ///   The content box is what is left of those, in points (0.4 in on Letter:
 ///   612 - 28 - 28 = 556 pt = 741.33 px).
 /// - The written page size is that paper on a 300 dpi grid (A4's 596 x 842 pt
-///   gives 2483 x 3508 dots, a 595.92 x 841.92 pt MediaBox).
+///   gives 2483 x 3508 dots, a 595.92 x 841.92 pt MediaBox, and 596 x 843 pt, Playwright's A4,
+///   2483 x 3512).
 /// - The content box's origin is the top and left margin in whole CSS px, rounded
 ///   (28 pt = 37.33 px starts at 37 px, 29 pt = 38.67 px at 39 px).
 ///
@@ -214,7 +216,11 @@ pub fn chrome_page_geometry(paper_in: (f64, f64), margins_in: [f64; 4]) -> Optio
         return None;
     }
     let to_px = |pt: f64| pt / pdf::PX_TO_PT;
-    let page_px = |pt: f64| to_px((pt / PT_PER_DOT).round() * PT_PER_DOT);
+    // In single precision: 843 pt, 3512.5 dots exactly, is 3512 and 1191 pt, 4962.5, is 4963.
+    let page_px = |pt: f64| {
+        let dots = pt as f32 * (1.0 / PT_PER_DOT) as f32;
+        to_px((dots as f64 + 0.5).floor() * PT_PER_DOT)
+    };
     let paper = (page_px(paper_pt.0), page_px(paper_pt.1));
     let (origin_top, origin_left) = (to_px(top).round(), to_px(left).round());
     let margins = [
@@ -314,6 +320,9 @@ pub struct PdfOptions {
     pub print_background: bool,
     /// Pages to keep, 1-based inclusive ranges in order; empty keeps all.
     pub page_ranges: Vec<(usize, usize)>,
+    /// `page_selector` pages go on `paper` as Chrome places them ([`page_box`]), rather than
+    /// each being a page of its own size.
+    pub place_on_paper: bool,
     /// Write a tag tree (headings, paragraphs, links) when no element
     /// matches (`generateTaggedPDF`, Chrome's default).
     pub tagged: bool,
@@ -331,6 +340,7 @@ impl PdfOptions {
             scale: 1.0,
             print_background: true,
             page_ranges: Vec::new(),
+            place_on_paper: false,
             tagged: true,
         }
     }
@@ -347,6 +357,8 @@ pub struct PdfPage {
     pub overflow_bottom: f64,
     /// The box reaching furthest past the page (`<tag class>` x,y wxh), when one does.
     pub culprit: Option<String>,
+    /// Where the page goes on paper; without one the page is its rectangle's size.
+    pub placement: Option<pdf::Placement>,
 }
 
 /// A document's PDF pages painted but not written yet
@@ -358,7 +370,6 @@ pub struct PdfPaint {
     by_selector: bool,
     /// Device px to points.
     scale: f64,
-    placement: Option<pdf::Placement>,
     /// Paper cuts: text runs, links and structure ([`pdf::Extras`]).
     extras: Option<Box<pdf::Extras>>,
     /// The document was laid out again at the paper's width (and back).
@@ -1292,7 +1303,9 @@ fn paint_document(
     let t = Instant::now();
     doc.set_viewport_scroll(blitz_dom::Point { x: 0.0, y: 0.0 });
     let mut pages = Vec::new();
-    for id in doc.query_selector_all(&opts.page_selector).unwrap_or_default() {
+    let page_ids = doc.query_selector_all(&opts.page_selector).unwrap_or_default();
+    let style_sheets = if opts.place_on_paper && !page_ids.is_empty() { style_texts(doc) } else { Vec::new() };
+    for id in page_ids {
         let Some(rect) = element_bounds(doc, id, dpr) else { continue };
         // Off-screen boxes (Paprize's measuring page sits at -9999px) are
         // not printed, as in Chromium.
@@ -1306,6 +1319,12 @@ fn paint_document(
             overflow_right: (right - node_size.width as f64).max(0.0),
             overflow_bottom: (bottom - node_size.height as f64).max(0.0),
             culprit,
+            placement: opts.place_on_paper.then(|| {
+                let source = page_box::fixed_page_size(style_sheets.iter().map(String::as_str), inline_page_name(doc, id));
+                let placement = page_box::placement(opts.paper, source);
+                // Above 100% Chrome lays out at a smaller page, which this path does not do.
+                pdf::Placement { scale: placement.scale * opts.scale.min(1.0), ..placement }
+            }),
         });
     }
     if pages.is_empty() {
@@ -1327,11 +1346,28 @@ fn paint_document(
         pages,
         by_selector: true,
         scale: pdf::PX_TO_PT / dpr,
-        placement: None,
         extras: None,
         relaid: false,
         timings,
     })
+}
+
+/// The text of the document's `<style>` elements.
+fn style_texts(doc: &blitz_dom::BaseDocument) -> Vec<String> {
+    let styles = doc.query_selector_all("style").unwrap_or_default();
+    styles.into_iter().filter_map(|id| Some(doc.get_node(id)?.text_content())).filter(|css| css.contains("@page")).collect()
+}
+
+/// The `page` of the nearest `style` attribute that has one, on `id` or an ancestor.
+fn inline_page_name(doc: &blitz_dom::BaseDocument, id: blitz_dom::NodeId) -> Option<&str> {
+    let mut current = doc.get_node(id);
+    while let Some(node) = current {
+        if let Some(name) = node.attr(blitz_dom::local_name!("style")).and_then(page_box::page_name) {
+            return Some(name);
+        }
+        current = node.parent.and_then(|parent| doc.get_node(parent));
+    }
+    None
 }
 
 /// `pages` restricted to `ranges` (1-based, inclusive; empty keeps all).
@@ -1415,10 +1451,11 @@ fn paint_paper(
             overflow_right: 0.0,
             overflow_bottom: 0.0,
             culprit: None,
+            placement: None,
         });
         y = breaks.next_page_start(end, restart, doc_h);
     }
-    let pages = match keep_ranges(pages, &opts.page_ranges) {
+    let mut pages = match keep_ranges(pages, &opts.page_ranges) {
         Ok(pages) => pages,
         Err(e) => {
             // The screen layout comes back whatever happens to the print.
@@ -1454,12 +1491,14 @@ fn paint_paper(
         offset: (left * pdf::PX_TO_PT, top * pdf::PX_TO_PT),
         scale: scale * shrink,
     };
+    for page in &mut pages {
+        page.placement = Some(placement);
+    }
     Ok(PdfPaint {
         scene,
         pages,
         by_selector: false,
         scale: pdf::PX_TO_PT / dpr,
-        placement: Some(placement),
         extras: Some(Box::new(extras)),
         relaid,
         timings,
@@ -2140,11 +2179,10 @@ fn pdf_extras(doc: &blitz_dom::BaseDocument, runs: Vec<blitz_paint::TextRun>, dp
 
 /// The PDF of painted pages.
 fn write_pdf(paint: PdfPaint, cache: &mut pdf::PdfCache) -> Result<PdfOutput, RenderError> {
-    let PdfPaint { scene, pages, by_selector, scale, placement, extras, mut timings, .. } = paint;
+    let PdfPaint { scene, pages, by_selector, scale, extras, mut timings, .. } = paint;
     let t = Instant::now();
-    let rects: Vec<Rect> = pages.iter().map(|p| p.rect).collect();
-    let (bytes, stats) =
-        pdf::write(&scene, &rects, scale, placement, extras.as_deref(), cache).map_err(RenderError::Resource)?;
+    let placed: Vec<(Rect, Option<pdf::Placement>)> = pages.iter().map(|p| (p.rect, p.placement)).collect();
+    let (bytes, stats) = pdf::write(&scene, &placed, scale, extras.as_deref(), cache).map_err(RenderError::Resource)?;
     timings.raster = t.elapsed();
     Ok(PdfOutput { bytes, pages, by_selector, stats, commands: scene.commands.len(), timings })
 }
@@ -2290,6 +2328,9 @@ mod settle_resolution_tests {
             ((8.27, 11.69), [0.4; 4], (595.92, 841.92), (37.0, 37.0), (540.0, 786.0)),
             ((8.2677165, 11.6929134), [0.0; 4], (595.92, 841.92), (0.0, 0.0), (596.0, 842.0)),
             ((8.27, 11.69), [0.77, 0.13, 0.21, 0.55], (595.92, 841.92), (73.0, 52.0), (548.0, 772.0)),
+            // Playwright's A4: 843 pt is 3512.5 dots, which lands on 3512 (and 1191 pt, 4962.5, on 4963).
+            ((8.27, 11.7), [0.0; 4], (595.92, 842.88), (0.0, 0.0), (596.0, 843.0)),
+            ((11.7, 16.54), [0.0; 4], (842.88, 1191.12), (0.0, 0.0), (843.0, 1191.0)),
             // 289 x 363 pt.
             ((4.01, 5.03), [0.4; 4], (288.96, 363.12), (37.0, 37.0), (233.0, 307.0)),
         ] {

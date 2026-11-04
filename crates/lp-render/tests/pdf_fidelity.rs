@@ -273,6 +273,39 @@ fn vertical_text_is_rotated_and_its_link_areas_land_where_chrome_puts_them() {
     assert!(matrices.iter().all(|m| m[0].abs() < 1e-6 && m[3].abs() < 1e-6), "{matrices:?}");
 }
 
+/// Measured on Chrome 156 with Playwright's A4 (8.27 x 11.7 in, a 595.92 x 842.88 pt page): a page of a
+/// fixed `@page` size is centered on the paper in whole CSS px, here 1 px down; without one the
+/// page stays in the paper's corner.
+#[test]
+fn page_boxes_go_on_the_paper_as_in_chrome() {
+    let doc = |rule: &str, style: &str| {
+        format!(
+            r#"<!doctype html><style>html,body{{margin:0}}{rule}</style><section style="{style}"><div class=pz-page style="width:210mm;height:297mm;background:#f00"></div></section>"#
+        )
+    };
+    let (paper, margins) = lp_render::chrome_page_geometry((8.27, 11.7), [0.0; 4]).unwrap();
+    let print = |html: String| {
+        let out = print_with(&html, |o| {
+            o.paper = paper;
+            o.margins = margins;
+            o.place_on_paper = true;
+        });
+        inflated(&out.bytes)
+    };
+    for (html, top) in [
+        (doc("@page{margin:0;size:210mm 297mm}", ""), "842.13"),
+        (doc("@page{margin:0;size:auto!important}@page s{margin:0;size:210mm 297mm}", "page: s"), "842.13"),
+        (doc("@page{margin:0;size:auto!important}@page s{margin:0;size:210mm 297mm}", ""), "842.88"),
+        (doc("@page{margin:0}", ""), "842.88"),
+    ] {
+        let pdf = print(html.clone());
+        let pdf = pdf.as_str();
+        assert!(pdf.contains("/MediaBox[0 0 595.92 842.88]"), "{html}");
+        let placed = format!("0.75 0 0 -0.75 0 {top} cm");
+        assert!(pdf.contains(&placed), "{html}: {:?}", pdf.match_indices(" cm").next().and_then(|(i, _)| pdf.get(i.saturating_sub(40)..i + 3)));
+    }
+}
+
 #[test]
 fn inline_link_areas_are_whole_css_pixels() {
     let html = r#"<!doctype html><body style="margin:0;font:20px/30px sans-serif"><a href="https://example.com/a">example text</a>"#;
