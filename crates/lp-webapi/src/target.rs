@@ -361,12 +361,26 @@ pub(crate) fn reconcile_pins(page: &PageDom, dom: &mut Dom) {
     }
     let reconnected = dom.take_reconnected_listener_nodes();
     // Pins only become stale when a node is removed somewhere.
-    if page.last_removals.replace(dom.removal_count()) != dom.removal_count() {
+    let last = page.last_removals.replace(dom.removal_count());
+    if last != dom.removal_count() && !page.pinned.borrow().is_empty() {
         let mut pinned = page.pinned.borrow_mut();
-        pinned.retain(|(_, key), _| match key {
-            TargetKey::Node(_) => dom.key_node(*key).is_some_and(|id| dom.is_in_active_document(id)),
-            TargetKey::Other(_) => true,
-        });
+        match dom.nodes_removed_since(last) {
+            Some(nodes) => {
+                let realms: Vec<RealmId> = page.realms.borrow().keys().copied().collect();
+                for id in nodes {
+                    let key = TargetKey::Node(id.index());
+                    if realms.iter().any(|&r| pinned.contains_key(&(r, key))) && !dom.is_in_active_document(id) {
+                        for &r in &realms {
+                            pinned.remove(&(r, key));
+                        }
+                    }
+                }
+            }
+            None => pinned.retain(|(_, key), _| match key {
+                TargetKey::Node(_) => dom.key_node(*key).is_some_and(|id| dom.is_in_active_document(id)),
+                TargetKey::Other(_) => true,
+            }),
+        }
     }
     if reconnected.is_empty() {
         return;

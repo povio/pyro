@@ -6576,9 +6576,9 @@ fn expando_pins_follow_the_node_in_and_out_of_the_document() {
 fn gc_reclaims_removed_rows_with_expandos() {
     let e = env("<body><ul id=list></ul></body>");
     let r = &e.main;
-    eval(r, "globalThis.list = document.getElementById('list'); for (let i = 0; i < 2000; i++) { const li = document.createElement('li'); li.row = i; list.append(li); } 'ok'");
+    eval(r, "globalThis.list = document.getElementById('list'); for (let i = 0; i < 5000; i++) { const li = document.createElement('li'); li.row = i; list.append(li); } 'ok'");
     e.page.after_task();
-    assert_eq!(e.page.pinned_count(), 2000);
+    assert_eq!(e.page.pinned_count(), 5000);
     let before = e.page.dom.borrow().live_nodes();
     eval(r, "while (list.firstChild) list.firstChild.remove(); 'ok'");
     e.page.after_task();
@@ -6586,4 +6586,16 @@ fn gc_reclaims_removed_rows_with_expandos() {
     collect(&e);
     let after = e.page.dom.borrow().live_nodes();
     assert!(after + 1900 < before, "removed rows reclaimed: before={before} after={after}");
+}
+
+#[test]
+fn removing_one_of_many_expando_rows_unpins_only_its_subtree() {
+    let e = env("<body><ul id=list></ul></body>");
+    let r = &e.main;
+    eval(r, "globalThis.list = document.getElementById('list'); for (let i = 0; i < 100; i++) { const li = document.createElement('li'); const b = document.createElement('b'); li.append(b); li.row = i; b.row = i; list.append(li); } 'ok'");
+    e.page.after_task();
+    assert_eq!(e.page.pinned_count(), 200);
+    eval(r, "globalThis.moved = list.lastChild; moved.remove(); list.prepend(moved); list.children[1].remove(); 'ok'");
+    e.page.after_task();
+    assert_eq!(e.page.pinned_count(), 198, "the moved row stays pinned, the removed one does not");
 }

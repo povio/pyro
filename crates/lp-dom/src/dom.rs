@@ -32,6 +32,7 @@ pub(crate) struct StyleSnapshots {
 
 /// Attribute writes kept between two style reads at most.
 const STYLE_LOG_CAP: usize = 1 << 16;
+const REMOVAL_LOG_LEN: usize = 1 << 12;
 
 /// One journaled DOM mutation (node indices in this DOM).
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -136,6 +137,8 @@ pub struct Dom {
     live: u32,
     /// Bumped whenever a node is removed from its parent.
     removals: u64,
+    /// The latest removals, oldest first: the removed subtree's root, or NIL for a deactivated document.
+    removal_log: VecDeque<u32>,
     /// What each `version` bump changed, for caches that can update
     /// selectively (style invalidation). Bounded: see `changes_since`.
     journal: Vec<(u64, Change)>,
@@ -198,6 +201,7 @@ impl Dom {
             candidates: Vec::new(),
             live: 0,
             removals: 0,
+            removal_log: VecDeque::new(),
             journal: Vec::new(),
             journal_floor: 0,
             style_snapshots: Default::default(),
@@ -471,6 +475,45 @@ impl Dom {
     pub fn removal_count(&self) -> u64 {
         self.removals
     }
+
+    fn note_removal(&mut self, root: u32) {
+        self.removals = self.removals.wrapping_add(1);
+        if self.removal_log.len() == REMOVAL_LOG_LEN {
+            self.removal_log.pop_front();
+        }
+        self.removal_log.push_back(root);
+    }
+
+    /// Slots of the nodes in subtrees removed after `removal_count` was `since`, as they are now.
+    /// A slot may have been reused, and a node may be back in a document. `None` when the log
+    /// doesn't go back that far or a document was deactivated: any node may have left.
+    pub fn nodes_removed_since(&self, since: u64) -> Option<Vec<NodeId>> {
+        let count = self.removals.wrapping_sub(since);
+        if count > self.removal_log.len() as u64 {
+            return None;
+        }
+        let mut nodes = Vec::new();
+        let mut stack: Vec<u32> = Vec::new();
+        for &root in self.removal_log.iter().skip(self.removal_log.len() - count as usize) {
+            if root == NIL {
+                return None;
+            }
+            stack.push(root);
+            while let Some(i) = stack.pop() {
+                if !self.slot_live(i) {
+                    continue;
+                }
+                nodes.push(self.id_of(i));
+                stack.extend(self.child_idx_iter(i));
+                if let Some(e) = self.n(i).element() {
+                    if e.shadow_root != NIL {
+                        stack.push(e.shadow_root);
+                    }
+                }
+            }
+        }
+        Some(nodes)
+    }
     /// Whether `collect_garbage` has anything to examine.
     pub fn has_gc_candidates(&self) -> bool {
         !self.candidates.is_empty()
@@ -591,7 +634,7 @@ impl Dom {
             self.candidates.push(i);
             // Nodes of a deactivated document stop counting as "live in a
             // browsing context" for pin reconciliation.
-            self.removals = self.removals.wrapping_add(1);
+            self.note_removal(NIL);
         }
         Ok(())
     }
@@ -1605,7 +1648,7 @@ impl Dom {
         let prev = self.n(node).prev;
         let next = self.n(node).next;
         self.resources_before_remove(node);
-        self.removals = self.removals.wrapping_add(1);
+        self.note_removal(node);
         self.add_transient_observers(parent, node);
         if !self.live_ranges.is_empty() {
             self.ranges_before_remove(node);
