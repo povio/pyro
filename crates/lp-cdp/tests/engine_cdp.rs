@@ -392,7 +392,7 @@ fn unsupported_commands_fail_explicitly() {
 }
 
 #[test]
-fn locale_and_timezone_overrides_are_recorded_and_locale_sets_languages() {
+fn locale_override_sets_languages() {
     let mut h = Harness::new();
     let langs = |h: &mut Harness| {
         let r = h.page("Runtime.evaluate", json!({"expression":"navigator.languages.join()","returnByValue":true}));
@@ -412,15 +412,79 @@ fn locale_and_timezone_overrides_are_recorded_and_locale_sets_languages() {
     assert_eq!(langs(&mut h), default, "absent locale resets");
     let r = h.page("Emulation.setLocaleOverride", json!({"locale":"de DE"}));
     assert_eq!(r["error"]["code"], -32602, "{r}");
+}
 
-    for id in ["Europe/Ljubljana", "America/Argentina/Buenos_Aires", "Etc/GMT+5", "UTC", ""] {
+#[test]
+fn timezone_override_applies_to_date_intl_and_the_whole_connection() {
+    let mut h = Harness::new();
+    if !lp_js::sys::SOURCE_BUILD {
+        // The system JavaScriptCore has no per-VM zone: refused, not faked.
+        let r = h.page("Emulation.setTimezoneOverride", json!({"timezoneId":"Asia/Tokyo"}));
+        assert_eq!(r["error"]["code"], -32000, "{r}");
+        assert_eq!(h.page("Emulation.setTimezoneOverride", json!({"timezoneId":""}))["result"], json!({}));
+        return;
+    }
+    let zone = |h: &mut Harness| eval_value(h, "Intl.DateTimeFormat().resolvedOptions().timeZone");
+    let offset = |h: &mut Harness, when: &str| eval_value(h, &format!("new Date('{when}').getTimezoneOffset()"));
+    let host = zone(&mut h);
+
+    // An old Date object, with its local time and the default formats already cached.
+    eval_value(&mut h, "globalThis.old = new Date(Date.UTC(2024, 0, 15, 12)); old.getHours(); old.toLocaleString(); 0");
+    for (id, winter, summer, hours) in [
+        ("Asia/Tokyo", -540, -540, 21),
+        ("Europe/Ljubljana", -60, -120, 13),
+        ("America/New_York", 300, 240, 7),
+        ("UTC", 0, 0, 12),
+    ] {
         let r = h.page("Emulation.setTimezoneOverride", json!({"timezoneId": id}));
         assert_eq!(r["result"], json!({}), "{id}: {r}");
+        assert_eq!(zone(&mut h), json!(id));
+        assert_eq!(offset(&mut h, "2024-01-15T12:00:00Z"), json!(winter), "{id}");
+        assert_eq!(offset(&mut h, "2024-07-15T12:00:00Z"), json!(summer), "{id}");
+        assert_eq!(eval_value(&mut h, "old.getHours()"), json!(hours), "{id}: a cached local time goes stale");
+        assert_eq!(
+            eval_value(&mut h, "old.toLocaleString() === new Intl.DateTimeFormat(undefined, {year:'numeric', month:'numeric', day:'numeric', hour:'numeric', minute:'numeric', second:'numeric'}).format(old)"),
+            json!(true),
+            "{id}: the default format follows"
+        );
+        assert_eq!(
+            eval_value(&mut h, "old.toLocaleTimeString('en-US', {hour:'numeric', hour12:false})"),
+            json!(format!("{hours:02}")),
+            "{id}"
+        );
     }
-    for id in ["Europe//Paris", "../etc", "Europe/", " UTC"] {
+
+    // IDs are checked against the zones Intl knows, and a bad one changes nothing.
+    for id in ["Europe/Atlantis", "Europe//Paris", "../etc", "Europe/", " UTC", "UTC\u{0}x", "Ljubljana"] {
         let r = h.page("Emulation.setTimezoneOverride", json!({"timezoneId": id}));
-        assert!(r["error"]["message"].as_str().unwrap().starts_with("Invalid timezone"), "{id}: {r}");
+        assert_eq!(r["error"]["code"], -32602, "{id}: {r}");
+        assert!(r["error"]["message"].as_str().unwrap().starts_with("Invalid timezone id"), "{id}: {r}");
+        assert_eq!(zone(&mut h), json!("UTC"));
     }
+
+    // Reset; then the zone holds across a new page and against a different one.
+    assert_eq!(h.page("Emulation.setTimezoneOverride", json!({"timezoneId":""}))["result"], json!({}));
+    assert_eq!(zone(&mut h), host);
+    assert_eq!(h.page("Emulation.setTimezoneOverride", json!({"timezoneId":"Asia/Tokyo"}))["result"], json!({}));
+    let first = h.session.clone();
+    let id = h.send(None, "Target.createTarget", json!({"url": "about:blank"}));
+    let attached = h.until_response(id).into_iter().find(|m| m["method"] == "Target.attachedToTarget").unwrap();
+    let target = attached["params"]["targetInfo"]["targetId"].as_str().unwrap().to_owned();
+    h.session = attached["params"]["sessionId"].as_str().unwrap().to_owned();
+    assert_eq!(zone(&mut h), json!("Asia/Tokyo"), "one VM, one zone");
+    let r = h.page("Emulation.setTimezoneOverride", json!({"timezoneId":"Europe/Paris"}));
+    assert_eq!(r["error"]["code"], -32000, "{r}");
+    assert!(r["error"]["message"].as_str().unwrap().starts_with("Cannot set timezone Europe/Paris"), "{r}");
+    assert_eq!(h.page("Emulation.setTimezoneOverride", json!({"timezoneId":"Asia/Tokyo"}))["result"], json!({}));
+
+    // The zone stays while one page holds it, and goes with the last.
+    h.session = first;
+    assert_eq!(h.page("Emulation.setTimezoneOverride", json!({"timezoneId":""}))["result"], json!({}));
+    assert_eq!(zone(&mut h), json!("Asia/Tokyo"));
+    h.call(None, "Target.closeTarget", json!({"targetId": target}));
+    assert_eq!(zone(&mut h), host);
+    assert_eq!(h.page("Emulation.setTimezoneOverride", json!({"timezoneId":"Europe/Paris"}))["result"], json!({}));
+    assert_eq!(zone(&mut h), json!("Europe/Paris"));
 }
 
 #[test]

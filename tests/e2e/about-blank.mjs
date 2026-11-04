@@ -1035,6 +1035,48 @@ await check('second context is independent', async () => {
   assert.equal(await page.evaluate(() => typeof globalThis.marker), 'undefined');
   await other.close();
 });
+await check('timezoneId applies to Date and Intl, one zone per connection', async () => {
+  const facts = (p) => p.evaluate(() => ({
+    zone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    winter: new Date('2024-01-15T12:00:00Z').getTimezoneOffset(),
+    summer: new Date('2024-07-15T12:00:00Z').getTimezoneOffset(),
+    hour: new Date('2024-01-15T12:00:00Z').getHours(),
+    text: new Date('2024-01-15T12:00:00Z').toString(),
+    local: new Date(2024, 0, 15, 12).toISOString(),
+    locale: new Date('2024-01-15T12:00:00Z').toLocaleTimeString('en-US', { hour: 'numeric', hour12: false }),
+  }));
+  const host = (await facts(page)).zone;
+  const tokyo = await browser.newContext({ timezoneId: 'Asia/Tokyo' });
+  try {
+    const p = await tokyo.newPage();
+    assert.deepEqual(await facts(p), {
+      zone: 'Asia/Tokyo', winter: -540, summer: -540, hour: 21,
+      text: 'Mon Jan 15 2024 21:00:00 GMT+0900 (Japan Standard Time)',
+      local: '2024-01-15T03:00:00.000Z', locale: '21',
+    });
+    // Another context on this connection cannot have another zone: it fails, and
+    // does not silently get the wrong one.
+    const paris = await browser.newContext({ timezoneId: 'Europe/Paris' });
+    try {
+      await assert.rejects(paris.newPage(), /Cannot set timezone Europe\/Paris/);
+    } finally { await paris.close(); }
+    assert.equal((await facts(p)).zone, 'Asia/Tokyo');
+  } finally { await tokyo.close(); }
+  assert.equal((await facts(page)).zone, host, 'the last page with a zone gives it back');
+
+  // Closed contexts leave no claim, and daylight saving time follows the zone.
+  const ljubljana = await browser.newContext({ timezoneId: 'Europe/Ljubljana' });
+  try {
+    const p = await ljubljana.newPage();
+    const f = await facts(p);
+    assert.deepEqual([f.zone, f.winter, f.summer, f.hour], ['Europe/Ljubljana', -60, -120, 13]);
+  } finally { await ljubljana.close(); }
+
+  const invalid = await browser.newContext({ timezoneId: 'Mars/Olympus_Mons' });
+  try {
+    await assert.rejects(invalid.newPage(), /Invalid timezone/);
+  } finally { await invalid.close(); }
+});
 await check('close', async () => {
   await page.close();
   await context.close();

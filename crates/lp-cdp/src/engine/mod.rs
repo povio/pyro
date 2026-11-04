@@ -306,9 +306,10 @@ pub(crate) struct PageState {
     /// Emulation.setUserAgentOverride as sent (the locale override fills in
     /// its Accept-Language when it has none).
     user_agent_override: Option<lp_webapi::UserAgentOverride>,
-    /// Emulation.setLocaleOverride / setTimezoneOverride. Recorded only:
-    /// JavaScriptCore's Intl and Date use the process locale and time zone.
+    /// Emulation.setLocaleOverride. Intl and Date keep the process locale.
     pub(crate) locale_override: Option<String>,
+    /// Emulation.setTimezoneOverride. It applies to the connection's whole VM
+    /// (`EngineHost::timezone`), so all pages that set one agree.
     pub(crate) timezone_override: Option<String>,
     /// Emulation.setDefaultBackgroundColorOverride (RGBA), for screenshots.
     pub(crate) background_override: Option<[u8; 4]>,
@@ -400,6 +401,9 @@ pub struct EngineHost {
     /// Emulation.setVirtualTimePolicy (none until a page sets one).
     virtual_time: Option<virtual_time::VirtualTime>,
     virtual_ticks_base: f64,
+    /// The time zone in effect in this connection's VM: that of the pages
+    /// which set one (None: the host's).
+    timezone: Option<String>,
 }
 
 /// A page booted on a thread before any connection, with its context.
@@ -572,6 +576,7 @@ impl EngineHost {
             body_budget,
             network_wake: network::NetworkWake::default(),
             renders: screenshot::Renders::default(),
+            timezone: None,
             pages: HashMap::new(),
             sessions: HashMap::new(),
             next_exception_id: 1,
@@ -1108,19 +1113,25 @@ impl EngineHost {
                     timezone_id: String,
                 }
                 let p: P = cmd.command.params()?;
-                // Without a time zone database only obviously malformed IDs
-                // are rejected (Chrome checks the ID against ICU).
-                let valid = |id: &str| {
-                    id.starts_with(|c: char| c.is_ascii_alphabetic())
-                        && id.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '_' | '-' | '+'))
-                        && !id.contains("//")
-                        && !id.ends_with('/')
-                };
-                if !p.timezone_id.is_empty() && !valid(&p.timezone_id) {
-                    return Err(CdpError::invalid_params(format!("Invalid timezone id: {}", p.timezone_id)));
+                let requested = Some(p.timezone_id).filter(|t| !t.is_empty());
+                self.pages.get(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?;
+                // One VM per connection has one time zone. Not Chrome's "Timezone
+                // override is already in effect": Playwright ignores that text, and
+                // the page would silently run in the other page's zone.
+                let others = self.pages.iter().filter(|(key, _)| **key != cmd.page);
+                let other = others.filter_map(|(_, s)| s.timezone_override.clone()).next();
+                if let (Some(id), Some(other)) = (&requested, &other) {
+                    if id != other {
+                        return Err(CdpError::server(format!(
+                            "Cannot set timezone {id}: another page of this connection set {other}, \
+                             and the time zone applies to the whole connection"
+                        )));
+                    }
                 }
+                let effective = requested.clone().or(other);
+                self.apply_timezone(effective)?;
                 let state = self.pages.get_mut(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?;
-                state.timezone_override = Some(p.timezone_id).filter(|t| !t.is_empty());
+                state.timezone_override = requested;
                 Ok(Some(serde_json::json!({})))
             }
             _ => Err(CdpError::unsupported(&cmd.command.method)),
@@ -1129,6 +1140,21 @@ impl EngineHost {
 }
 
 impl EngineHost {
+    /// Makes `id` the VM's time zone unless it already is: a change flushes
+    /// JavaScriptCore's date caches and walks the heap's Date objects.
+    fn apply_timezone(&mut self, id: Option<String>) -> CdpResult<()> {
+        if self.timezone == id {
+            return Ok(());
+        }
+        let known =
+            self.thread.browser.engine.set_time_zone(id.as_deref()).map_err(|e| CdpError::server(e.to_string()))?;
+        if !known {
+            return Err(CdpError::invalid_params(format!("Invalid timezone id: {}", id.unwrap_or_default())));
+        }
+        self.timezone = id;
+        Ok(())
+    }
+
     /// Hands lp-browser the page's navigator identity: the user agent
     /// override, with the locale override as Accept-Language when the
     /// override has none.
@@ -1232,6 +1258,10 @@ impl Host for EngineHost {
 
     fn close_page(&mut self, page: PageKey) {
         let Some(state) = self.pages.remove(&page) else { return };
+        // The last page with an override gives the VM back its host zone.
+        if state.timezone_override.is_some() && !self.pages.values().any(|s| s.timezone_override.is_some()) {
+            let _ = self.apply_timezone(None);
+        }
         for session in &state.sessions {
             self.pending.cancel_session(session);
             if let Some(session) = self.sessions.remove(session) {
