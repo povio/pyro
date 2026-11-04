@@ -33,7 +33,7 @@ use std::collections::HashMap;
 
 use bytes::Bytes;
 use http::header::{self, HeaderMap, HeaderName, HeaderValue};
-use http::StatusCode;
+use http::{StatusCode, Version};
 use url::Url;
 
 use crate::CacheMode;
@@ -107,6 +107,7 @@ pub(crate) struct Cached {
     pub status: StatusCode,
     pub headers: HeaderMap,
     pub body: Bytes,
+    pub protocol: Version,
 }
 
 impl Cached {
@@ -140,6 +141,7 @@ struct Entry {
     /// Wall-clock seconds (RFC 9111 §4.2.3 request_time / response_time).
     request_time: f64,
     response_time: f64,
+    protocol: Version,
     used: u64,
     size: usize,
 }
@@ -191,7 +193,7 @@ impl Entry {
         if let Ok(v) = HeaderValue::from_str(&(age.floor() as u64).to_string()) {
             headers.insert(header::AGE, v);
         }
-        Cached { id: self.id, status: self.status, headers, body: self.body.clone() }
+        Cached { id: self.id, status: self.status, headers, body: self.body.clone(), protocol: self.protocol }
     }
 }
 
@@ -311,6 +313,7 @@ impl HttpCache {
         body: Bytes,
         request_time: f64,
         response_time: f64,
+        protocol: Version,
     ) {
         let Some(names) = vary_names(response) else { return };
         if body.len() > self.max_entry_bytes {
@@ -325,8 +328,9 @@ impl HttpCache {
         }
         self.tick += 1;
         self.next_id += 1;
-        let entry =
-            Entry { id: self.next_id, vary, status, headers, body, request_time, response_time, used: self.tick, size };
+        let id = self.next_id;
+        let used = self.tick;
+        let entry = Entry { id, vary, status, headers, body, request_time, response_time, protocol, used, size };
         let variants = self.entries.entry(k).or_default();
         if let Some(i) = variants.iter().position(|e| e.vary == entry.vary) {
             self.bytes -= variants.remove(i).size;
@@ -704,6 +708,7 @@ mod tests {
             Bytes::from_static(b"x"),
             T0 + 1.0,
             T0 + 2.0,
+            Version::HTTP_11,
         );
         // corrected initial age = max(2, 10 + 1) = 11; at T0 + 2 + 88 the age is 99 < 100: fresh.
         assert!(
@@ -720,6 +725,7 @@ mod tests {
             Bytes::new(),
             T0,
             T0,
+            Version::HTTP_11,
         );
         assert!(matches!(c.lookup(&url("/e"), &req, CacheMode::Default, T0 + 59.0), Lookup::Hit(_)));
         assert!(matches!(c.lookup(&url("/e"), &req, CacheMode::Default, T0 + 61.0), Lookup::Revalidate(_)));
@@ -731,6 +737,7 @@ mod tests {
             Bytes::new(),
             T0,
             T0,
+            Version::HTTP_11,
         );
         assert!(matches!(c.lookup(&url("/z"), &req, CacheMode::Default, T0), Lookup::Revalidate(_)));
         // Request max-age / min-fresh constrain a fresh entry.
@@ -793,9 +800,9 @@ mod tests {
         ]);
         let en = h(&[("accept-language", "en")]);
         let de = h(&[("accept-language", "de")]);
-        c.insert(&url("/v"), &en, StatusCode::OK, &resp, Bytes::from_static(b"en"), T0, T0);
+        c.insert(&url("/v"), &en, StatusCode::OK, &resp, Bytes::from_static(b"en"), T0, T0, Version::HTTP_11);
         assert!(matches!(c.lookup(&url("/v"), &de, CacheMode::Default, T0), Lookup::Miss));
-        c.insert(&url("/v"), &de, StatusCode::OK, &resp, Bytes::from_static(b"de"), T0, T0);
+        c.insert(&url("/v"), &de, StatusCode::OK, &resp, Bytes::from_static(b"de"), T0, T0, Version::HTTP_11);
         let Lookup::Hit(hit) = c.lookup(&url("/v#frag"), &en, CacheMode::Default, T0) else { panic!() };
         assert_eq!(hit.body, "en");
         assert!(
@@ -830,14 +837,14 @@ mod tests {
         let fresh = h(&[("cache-control", "max-age=60")]);
         let none = HeaderMap::new();
         let mut c = HttpCache::new(3000, 1500);
-        c.insert(&url("/1"), &none, StatusCode::OK, &fresh, body.clone(), T0, T0);
-        c.insert(&url("/2"), &none, StatusCode::OK, &fresh, body.clone(), T0, T0);
+        c.insert(&url("/1"), &none, StatusCode::OK, &fresh, body.clone(), T0, T0, Version::HTTP_11);
+        c.insert(&url("/2"), &none, StatusCode::OK, &fresh, body.clone(), T0, T0, Version::HTTP_11);
         assert!(matches!(c.lookup(&url("/1"), &none, CacheMode::Default, T0), Lookup::Hit(_))); // /1 now more recent
-        c.insert(&url("/3"), &none, StatusCode::OK, &fresh, body.clone(), T0, T0);
+        c.insert(&url("/3"), &none, StatusCode::OK, &fresh, body.clone(), T0, T0, Version::HTTP_11);
         assert!(c.usage().1 <= 3000);
         assert!(matches!(c.lookup(&url("/2"), &none, CacheMode::Default, T0), Lookup::Miss), "LRU evicted");
         assert!(matches!(c.lookup(&url("/1"), &none, CacheMode::Default, T0), Lookup::Hit(_)));
-        c.insert(&url("/big"), &none, StatusCode::OK, &fresh, Bytes::from(vec![0u8; 2000]), T0, T0);
+        c.insert(&url("/big"), &none, StatusCode::OK, &fresh, Bytes::from(vec![0u8; 2000]), T0, T0, Version::HTTP_11);
         assert!(
             matches!(c.lookup(&url("/big"), &none, CacheMode::Default, T0), Lookup::Miss),
             "over the per-entry cap"

@@ -8,6 +8,10 @@ import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
 import net from 'node:net';
 import http from 'node:http';
+import https from 'node:https';
+import http2 from 'node:http2';
+import { X509Certificate, createPrivateKey } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
@@ -1234,6 +1238,114 @@ await check('streams: ReadableStream, pipeThrough and Response bodies', async ()
   });
   assert.equal(text, 'stream');
 });
+// A local forward proxy: absolute-form requests answered here, CONNECT tunnelled
+// to a local TLS server whatever the host asked for.
+{
+  const data = path.join(here, '..', '..', 'crates', 'lp-net', 'tests', 'data');
+  const certificate = {
+    cert: new X509Certificate(readFileSync(path.join(data, 'self-signed.der'))).toString(),
+    key: createPrivateKey({ key: readFileSync(path.join(data, 'self-signed.key.der')), format: 'der', type: 'pkcs8' })
+      .export({ format: 'pem', type: 'pkcs8' }),
+  };
+  const h2 = http2.createSecureServer(certificate, (req, res) => {
+    res.setHeader('content-type', 'text/html');
+    res.end(`<title>${req.httpVersion}</title>`);
+  });
+  await new Promise(resolve => h2.listen(0, '127.0.0.1', resolve));
+  const tls = https.createServer(certificate, (req, res) => {
+    res.setHeader('content-type', 'text/html');
+    res.end(`<title>tunnelled ${req.headers.host}</title>`);
+  });
+  await new Promise(resolve => tls.listen(0, '127.0.0.1', resolve));
+  const seen = [];
+  const allowed = (header) => header === `Basic ${Buffer.from('user:pass').toString('base64')}`;
+  const proxy = (auth) => {
+    const server = http.createServer((req, res) => {
+      seen.push(`${req.method} ${req.url}`);
+      if (auth && !allowed(req.headers['proxy-authorization'])) {
+        res.writeHead(407, { 'proxy-authenticate': 'Basic realm="e2e"' }).end();
+        return;
+      }
+      res.setHeader('content-type', 'text/html');
+      res.end(`<title>proxied ${req.url}</title>`);
+    });
+    server.on('connect', (req, client) => {
+      seen.push(`CONNECT ${req.url}`);
+      if (auth && !allowed(req.headers['proxy-authorization'])) {
+        client.end('HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm="e2e"\r\n\r\n');
+        return;
+      }
+      const upstream = net.connect(tls.address().port, '127.0.0.1', () => {
+        client.write('HTTP/1.1 200 Connection established\r\n\r\n');
+        upstream.pipe(client);
+        client.pipe(upstream);
+      });
+      upstream.on('error', () => client.destroy());
+      client.on('error', () => upstream.destroy());
+    });
+    return new Promise(resolve => server.listen(0, '127.0.0.1', () => resolve(server)));
+  };
+  const open = await proxy(false);
+  const guarded = await proxy(true);
+  const address = (s) => `http://127.0.0.1:${s.address().port}`;
+  const titleVia = async (options, url) => {
+    const c = await browser.newContext(options);
+    try {
+      const p = await c.newPage();
+      await p.goto(url);
+      return await p.title();
+    } finally { await c.close(); }
+  };
+  try {
+    await check('newContext proxy: http goes absolute-form through it', async () => {
+      assert.equal(await titleVia({ proxy: { server: address(open) } }, 'http://site.invalid/x?y=1'),
+        'proxied http://site.invalid/x?y=1');
+      assert.ok(seen.includes('GET http://site.invalid/x?y=1'), seen.join());
+    });
+    await check('newContext proxy: https goes through a CONNECT tunnel', async () => {
+      assert.equal(await titleVia({ proxy: { server: address(open) }, ignoreHTTPSErrors: true },
+        'https://site.invalid/'), 'tunnelled site.invalid');
+      assert.ok(seen.includes('CONNECT site.invalid:443'), seen.join());
+    });
+    await check('newContext proxy: username and password answer both kinds of 407', async () => {
+      const options = { proxy: { server: address(guarded), username: 'user', password: 'pass' }, ignoreHTTPSErrors: true };
+      assert.equal(await titleVia(options, 'http://auth.invalid/'), 'proxied http://auth.invalid/');
+      assert.equal(await titleVia(options, 'https://auth.invalid/'), 'tunnelled auth.invalid');
+    });
+    await check('newContext proxy: bypass goes direct, failures name the proxy', async () => {
+      const before = seen.length;
+      await assert.rejects(titleVia({ proxy: { server: address(open), bypass: '*.invalid' } }, 'http://site.invalid/'),
+        /ERR_NAME_NOT_RESOLVED/);
+      assert.equal(seen.length, before);
+      await assert.rejects(titleVia({ proxy: { server: address(guarded) } }, 'https://auth.invalid/'),
+        /ERR_TUNNEL_CONNECTION_FAILED/);
+      await assert.rejects(titleVia({ proxy: { server: 'http://127.0.0.1:9' } }, 'http://site.invalid/'),
+        /ERR_PROXY_CONNECTION_FAILED/);
+    });
+    await check('https negotiates HTTP/2 and reports it in Network', async () => {
+      const c = await browser.newContext({ ignoreHTTPSErrors: true });
+      try {
+        const p = await c.newPage();
+        const session = await c.newCDPSession(p);
+        await session.send('Network.enable');
+        const received = new Promise(resolve => session.once('Network.responseReceived', e => resolve(e.response)));
+        const response = await p.goto(`https://127.0.0.1:${h2.address().port}/`);
+        assert.equal(await p.title(), '2.0');
+        assert.equal(response.statusText(), '');
+        assert.equal((await received).protocol, 'h2');
+      } finally { await c.close(); }
+    });
+    await check('newContext proxy: SOCKS is refused explicitly', async () => {
+      await assert.rejects(browser.newContext({ proxy: { server: 'socks5://127.0.0.1:1' } }), /SOCKS proxies are not supported/);
+    });
+  } finally {
+    for (const s of [open, guarded, tls]) {
+      s.closeAllConnections();
+      s.close();
+    }
+    h2.close();
+  }
+}
 await check('second context is independent', async () => {
   const other = await browser.newContext();
   const p2 = await other.newPage();

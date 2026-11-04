@@ -759,6 +759,16 @@ impl Browser {
 
     /// Creates an isolated browser context with its own network state.
     pub fn create_context(&mut self) -> std::io::Result<ContextId> {
+        self.create_context_inner(None)
+    }
+
+    /// `create_context` with its own proxy setting (`None`: no proxy) instead
+    /// of the browser's.
+    pub fn create_context_with_proxy(&mut self, proxy: Option<lp_net::ProxyConfig>) -> std::io::Result<ContextId> {
+        self.create_context_inner(Some(proxy))
+    }
+
+    fn create_context_inner(&mut self, proxy: Option<Option<lp_net::ProxyConfig>>) -> std::io::Result<ContextId> {
         let id = ContextId(self.next() as u32);
         let local_storage = lp_webapi::StorageNamespace::seeded(&self.local_storage_seed);
         self.contexts.push(ContextState {
@@ -770,13 +780,24 @@ impl Browser {
             init_scripts: Vec::new(),
         });
         if self.net_config.is_some() {
-            self.attach_network(id)?;
+            self.attach_network_with(id, proxy)?;
         }
         Ok(id)
     }
 
     fn attach_network(&mut self, id: ContextId) -> std::io::Result<()> {
-        let config = self.net_config.clone().unwrap_or_default();
+        self.attach_network_with(id, None)
+    }
+
+    fn attach_network_with(
+        &mut self,
+        id: ContextId,
+        proxy: Option<Option<lp_net::ProxyConfig>>,
+    ) -> std::io::Result<()> {
+        let mut config = self.net_config.clone().unwrap_or_default();
+        if let Some(proxy) = proxy {
+            config.proxy = proxy;
+        }
         let client = lp_net::NetClient::new(config)?;
         client.set_ignore_certificate_errors(self.ignore_certificate_errors);
         if let Some(c) = self.contexts.iter_mut().find(|c| c.id == id) {

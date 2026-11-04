@@ -185,7 +185,10 @@ fn url(s: &Server, path: &str) -> Url {
     Url::parse(&format!("http://127.0.0.1:{}{}", s.port, path)).unwrap()
 }
 
-fn collect(client: &NetClient, req: Request) -> (Vec<String>, Option<ResponseHead>, Vec<u8>, Option<NetError>) {
+pub(crate) fn collect(
+    client: &NetClient,
+    req: Request,
+) -> (Vec<String>, Option<ResponseHead>, Vec<u8>, Option<NetError>) {
     let (tx, rx) = mpsc::channel();
     client.fetch(req, Box::new(move |ev| tx.send(ev).unwrap()));
     let mut kinds = Vec::new();
@@ -630,7 +633,7 @@ fn event_stream_activity_is_separate_and_cancellation_clears_both_counts() {
 
 /// HTTPS server with a self-signed certificate for `127.0.0.1` (checked in
 /// under tests/data, valid until 2126), answering every request with "secure".
-fn start_tls_server() -> u16 {
+pub(crate) fn start_tls_server() -> u16 {
     use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
     let cert = CertificateDer::from(include_bytes!("data/self-signed.der").to_vec());
     let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(include_bytes!("data/self-signed.key.der").to_vec()));
