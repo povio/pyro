@@ -31,10 +31,21 @@ noise of a unit wrapped its last word in the box measured for it (`16 - 18 + 20 
 writing mode). Alignment still uses the exact width. Covered by `shrink_to_fit_text_never_wraps` in
 `crates/lp-render/tests/vertical_writing_mode.rs`.
 
+`layout/style_metrics.rs`, `from_font`: the half-leading of a quantized line is computed in layout units with a
+truncating division, as in Chromium. A line height one unit short of the content area (`line-height: 1.2` of 13.33px
+Inter, 16 px of ascent and descent) lost a whole pixel above the baseline, in any writing mode. Covered by
+`a_line_a_layout_unit_short_keeps_its_baseline` in `crates/lp-render/tests/vertical_writing_mode.rs`.
+
 Pagination scripts clone rows and paragraphs into pages, so the same text is built again and again
 under new elements. On the `cmr-overflow` PDF case Blitz's inline construction went from 222 to 107
 ms and pagination from about 597 to 485 ms per run; the PDF is byte-identical. lp-render's
 `identical_text_keeps_each_elements_colour` covers the brush swap.
+
+`LineMetrics::unquantized_block_min_coord` and `unquantized_block_max_coord` (`src/layout/line.rs`,
+`layout/line_break.rs`) keep a line box's position before quantization: lp-render decides page cuts on
+it, as Chrome does, while painting stays on the quantized coordinates. Quantized line boxes overlap by
+up to 1 px, and rounding their tops loses what decides whether a line fits. Covered by
+`fractional_line_heights_break_as_in_chrome` in `crates/lp-render/tests/pdf_fidelity.rs`.
 
 `GlyphRun::atom_texts` (`src/layout/line.rs`) gives each atom's source text range and glyph count
 in glyph order, so PDF output can map a ligature glyph to all the characters it stands for.

@@ -539,3 +539,26 @@ fn navigating_away_ends_a_documents_workers() {
     assert!(lp_webapi::join_stopped(Duration::from_secs(5)), "worker threads end");
     t.browser.close_all();
 }
+
+#[test]
+fn a_closed_page_is_released_whether_or_not_close_collected_it() {
+    let (mut t, _rec, page) = setup();
+    eval(
+        &t,
+        page,
+        "for (let i = 0; i < 2000; i++) document.body.appendChild(document.createElement('div')).id = 'n' + i;",
+    );
+    assert!(t.browser.close_page(page));
+    t.browser.checkpoint();
+    // A small page waits for a later collection (serve's loop runs one when idle). One that
+    // grew the process past the threshold, say with other tests running, was collected already.
+    if t.browser.engine.release_pending() {
+        for _ in 0..8 {
+            t.browser.engine.collect_garbage_now();
+            t.browser.checkpoint();
+        }
+        assert!(*t.browser.released_payloads.borrow() > 0, "closed page's wrappers were not finalized");
+    }
+    t.browser.engine.settle();
+    assert!(!t.browser.engine.release_pending());
+}

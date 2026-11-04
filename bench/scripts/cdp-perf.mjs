@@ -4,7 +4,7 @@
 // Usage:
 //   node cdp-perf.mjs --bin [label=]/abs/lightningpanda [--bin base=/abs/other] --out /abs/result.json
 //                     [--rounds 5] [--scale 1] [--quick] [--filter REGEX] [--list]
-//                     [--sampler /abs/rss-sampler] [--playwright] [--perf-trace]
+//                     [--sampler /abs/rss-sampler] [--playwright] [--perf-trace] [--fork]
 //
 // Run it with `bun` to include the Bun.WebView scenarios (its Chrome backend attached to the endpoint);
 // `node` runs the raw CDP scenarios only. --playwright adds the Playwright scenarios (playwright-core).
@@ -46,7 +46,7 @@ const opt = (k, d) => {
 const many = (k) => argv.flatMap((a, i) => (a === k ? [argv[i + 1]] : []));
 const usage = () => {
   console.error('usage: node cdp-perf.mjs --bin [label=]/abs/binary [--bin ...] --out /abs/result.json');
-  console.error('       [--rounds N] [--scale X] [--quick] [--filter REGEX] [--list] [--sampler PATH] [--playwright] [--perf-trace]');
+  console.error('       [--rounds N] [--scale X] [--quick] [--filter REGEX] [--list] [--sampler PATH] [--playwright] [--perf-trace] [--fork]');
   process.exit(2);
 };
 
@@ -56,6 +56,8 @@ const SCALE = Number(opt('--scale', QUICK ? 0.2 : 1));
 const FILTER = opt('--filter') ? new RegExp(opt('--filter')) : null;
 const OUT = opt('--out');
 const PERF_TRACE = flag('--perf-trace');
+// serve --fork: connections run in forked children, so CPU is read from the descendants of serve.
+const FORK = flag('--fork');
 const BINS = many('--bin').map((spec, i) => {
   const eq = spec.indexOf('=');
   const label = eq > 0 ? spec.slice(0, eq) : i === 0 ? 'current' : `bin${i}`;
@@ -257,6 +259,56 @@ async function objectId(cdp, sessionId, expression) {
 const BIG_FN = `function(a) { ${Array.from({ length: 2000 }, (_, i) => `const v${i} = ${i};`).join('\n')} return a + 1; }`;
 
 // ---------- scenarios ----------
+// Page.printToPDF cuts a document without `.pz-page` elements into pages (`paint_paper` in lp-render): layout at
+// the paper's width, shrink to fit, `Breaks::of`, one cut per page. bench/pdf's ToS documents have `.pz-page` and
+// never get here. The content is set once per scenario; the sample is the print alone, and checks the page count roughly.
+const PAPER_CUT_WORDS = (n) => Array.from({ length: n }, (_, i) => `word${i}`).join(' ');
+const PAPER_CUT_BOX = (i) => `<div style="break-inside:avoid;height:${60 + (i % 7) * 37}px;margin-bottom:12px">box ${i}<br>${PAPER_CUT_WORDS(12)}</div>`;
+const PAPER_CUT = {
+  text: {
+    what: 'paper-cut print of about 20 Letter pages of plain lines: every line a span for the widows and orphans check',
+    html: `<div style="width:400px">${PAPER_CUT_WORDS(4950)}</div>`,
+    pages: 20,
+  },
+  avoid: {
+    what: 'paper-cut print of about 20 Letter pages of break-inside:avoid boxes of mixed height',
+    html: Array.from({ length: 94 }, (_, i) => PAPER_CUT_BOX(i)).join(''),
+    pages: 20,
+  },
+  shrink: {
+    what: 'paper-cut print of about 11 Letter pages of a 1200 px wide document: overflow at the paper width, so one more layout, shrunk to 2/3',
+    html: `<div style="width:1200px">${PAPER_CUT_WORDS(9750)}</div>`,
+    pages: 11,
+  },
+};
+const paperCutScenario = ([key, { what, html, pages }]) => ({
+  name: `pdf.paginate.${key}`,
+  group: 'pdf',
+  what,
+  iterations: 12,
+  setup: async (env) => {
+    const page = await newPage(env.cdp);
+    const sid = page.sessionId;
+    const { frameTree } = await env.cdp.send('Page.getFrameTree', {}, sid);
+    await env.cdp.send(
+      'Page.setDocumentContent',
+      { frameId: frameTree.frame.id, html: `<!doctype html><body style="margin:0;font:16px/20px Arial">${html}` },
+      sid,
+    );
+    return { page };
+  },
+  run: async (s, i, env) => {
+    const { data } = await env.cdp.send(
+      'Page.printToPDF',
+      { paperWidth: 8.5, paperHeight: 11, marginTop: 0.4, marginBottom: 0.4, marginLeft: 0.4, marginRight: 0.4 },
+      s.page.sessionId,
+    );
+    const got = Buffer.from(data, 'base64').toString('latin1').match(/\/Type\s*\/Page\b/g)?.length;
+    // Not exact: comparing versions is the point, and pagination rules change the count.
+    assert(Math.abs(got - pages) <= 2, `${got} pages, not about ${pages}`);
+  },
+});
+
 // Each scenario: name, group, what it measures, iterations (before --scale), optional opsPerSample,
 // setup(env) -> state, run(state, i) -> optional phase timings, check(state) after all iterations.
 // env = { wsUrl, site, cdp (one browser-level connection, raw-CDP scenarios only), playwright, WebView }.
@@ -596,6 +648,7 @@ const SCENARIOS = [
       assert(len === s.n, `typed ${len} != ${s.n}`);
     },
   },
+  ...Object.entries(PAPER_CUT).map(paperCutScenario),
 
   // ---- Bun.WebView (Chrome backend over CDP; needs `bun`, which this script then runs under) ----
   {
@@ -1053,6 +1106,32 @@ const SCENARIOS = [
     teardown: pwClose,
   },
   {
+    name: 'pw.locator.textContent.mixed',
+    group: 'playwright',
+    what: 'the same locator with forms, selects and many element classes in the page: named getters reach the shared lookup sites',
+    iterations: 100,
+    playwright: true,
+    setup: async (env) => {
+      const s = await pwPage(env);
+      await s.page.goto(`${env.site}/dom?n=2000`);
+      await s.page.evaluate(() => {
+        const tags = ['form', 'select', 'a', 'img', 'input', 'table', 'ul', 'li', 'h1', 'p', 'pre', 'button', 'label', 'textarea', 'section'];
+        for (let i = 0; i < 300; i++) {
+          const e = document.createElement(tags[i % tags.length]);
+          if (e.tagName === 'FORM') e.innerHTML = '<input name="x">';
+          if (e.tagName === 'SELECT') e.innerHTML = '<option>o</option>';
+          document.body.append(e);
+        }
+      });
+      return s;
+    },
+    run: async (s, i) => {
+      const k = wrap(i * 37, 2000);
+      assert((await s.page.locator(`#i${k} span`).textContent()) === `row ${k}`, 'textContent');
+    },
+    teardown: pwClose,
+  },
+  {
     name: 'pw.fill+click+response',
     group: 'playwright',
     what: 'locator.fill, click submit, wait for the fetch response and the DOM update',
@@ -1361,7 +1440,7 @@ async function startSite() {
 async function startBrowser(bin) {
   const port = await freePort();
   const t = now();
-  const cp = track(spawn(bin.path, ['serve', '--host', '127.0.0.1', '--port', String(port), ...LP_FLAGS], { stdio: ['ignore', 'ignore', 'pipe'], env: LP_ENV, detached: true }));
+  const cp = track(spawn(bin.path, ['serve', '--host', '127.0.0.1', '--port', String(port), ...(FORK ? ['--fork'] : []), ...LP_FLAGS], { stdio: ['ignore', 'ignore', 'pipe'], env: LP_ENV, detached: true }));
   let stderr = '';
   cp.stderr.on('data', (d) => {
     stderr = (stderr + d).slice(-4000);
@@ -1409,6 +1488,20 @@ function cpuSnapshot(pid) {
   );
 }
 
+async function browserSnapshot(pid) {
+  if (!FORK) return cpuSnapshot(pid);
+  // serve -> template -> one child per connection.
+  const childrenOf = (p) => new Promise((res) => execFile('pgrep', ['-P', String(p)], (_, out) => res(String(out).trim().split(/\s+/).filter(Boolean))));
+  const pids = [];
+  for (let level = [pid]; level.length; ) {
+    level = (await Promise.all(level.map(childrenOf))).flat();
+    pids.push(...level);
+  }
+  const all = (await Promise.all(pids.map(cpuSnapshot))).filter(Boolean);
+  if (!all.length) return null;
+  return all.reduce((a, c) => ({ cpuMs: a.cpuMs + c.cpuMs, rssKiB: a.rssKiB + c.rssKiB, instructions: a.instructions + c.instructions }));
+}
+
 // ---------- one scenario on one binary ----------
 async function runScenario(sc, bin, site, playwright) {
   const iterations = Math.max(3, Math.round(sc.iterations * SCALE));
@@ -1431,7 +1524,7 @@ async function runScenario(sc, bin, site, playwright) {
         // Stage timers are process-wide, so one control connection sees every client's commands.
         const control = PERF_TRACE ? (cdp ?? (perfCdp = await Cdp.open(b.wsUrl))) : null;
         if (control) await control.send('LP.perfReset');
-        const before = await cpuSnapshot(b.cp.pid);
+        const before = await browserSnapshot(b.cp.pid);
         const t0 = now();
         for (let i = 0; i < iterations; i++) {
           // Untimed per-sample preparation (e.g. waiting for a pre-booted page).
@@ -1442,7 +1535,7 @@ async function runScenario(sc, bin, site, playwright) {
           for (const [k, v] of Object.entries(phases ?? {})) (result.phases[k] ??= []).push(v);
         }
         result.wallMs = now() - t0;
-        const after = await cpuSnapshot(b.cp.pid);
+        const after = await browserSnapshot(b.cp.pid);
         if (control) result.perf = await control.send('LP.perfStats');
         if (before && after) {
           result.cpuMsPerOp = (after.cpuMs - before.cpuMs) / (iterations * (sc.opsPerSample ?? 1));

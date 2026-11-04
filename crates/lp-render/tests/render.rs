@@ -540,3 +540,40 @@ fn print_pdf_skips_degenerate_fills() {
     );
     assert!(out.stats.degenerate_skipped > 0, "{:?}", out.stats);
 }
+
+/// `overflow` on `body` is the viewport's unless the root has its own or `body` contains its paint. A 600 px red box
+/// in a 300 px `body` on an 800 x 600 viewport, the pixel at 500,20 of Chrome 156's screenshot.
+#[test]
+fn overflow_on_body_is_the_viewports() {
+    const RED: [u8; 4] = [255, 0, 0, 255];
+    const WHITE: [u8; 4] = [255, 255, 255, 255];
+    let wide = r#"<div style="width:600px;height:50px;background:#f00"></div>"#;
+    for (html, body, chrome) in [
+        ("", "overflow:hidden", RED),
+        ("overflow:hidden", "overflow:hidden", WHITE),
+        ("", "overflow:hidden;contain:paint", WHITE),
+    ] {
+        let page = format!(r#"<!doctype html><html style="{html}"><body style="margin:0;width:300px;{body}">{wide}"#);
+        let snapshot = Snapshot { width: 800, height: 600, ..snap(&page) };
+        let (img, _, _) = Renderer::new().render(&snapshot, Area::Viewport, Backend::Cpu, &fetcher()).unwrap();
+        assert_eq!(pixel(&img, 500, 20), chrome, "html {html:?} body {body:?}");
+    }
+    // Any other box clips.
+    let page =
+        format!(r#"<!doctype html><body style="margin:0"><div style="overflow:hidden;width:300px">{wide}</div>"#);
+    let snapshot = Snapshot { width: 800, height: 600, ..snap(&page) };
+    let (img, _, _) = Renderer::new().render(&snapshot, Area::Viewport, Backend::Cpu, &fetcher()).unwrap();
+    assert_eq!(pixel(&img, 500, 20), WHITE);
+}
+
+/// Text in screenshots stays at its box's whole-pixel x; only PDF output moves it.
+#[test]
+fn screenshot_text_keeps_the_box_x() {
+    let page = |padding: &str| {
+        format!("<!doctype html><body style='margin:0;font:16px sans-serif'><div style='padding-left:{padding}'>Whole pixels</div>")
+    };
+    let mut r = Renderer::new();
+    let (a, _, _) = r.render(&snap(&page("37.7953px")), Area::Viewport, Backend::Cpu, &fetcher()).unwrap();
+    let (b, _, _) = r.render(&snap(&page("38px")), Area::Viewport, Backend::Cpu, &fetcher()).unwrap();
+    assert!(compare(&a, &b, 0, None).equal);
+}

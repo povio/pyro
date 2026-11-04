@@ -212,9 +212,9 @@ worktree_state() {
 }
 
 # classify_paths: changed paths on stdin -> the scenario groups they can affect, space-separated. No output = none
-# can reach the binary. "pdf" marks a change to printing, which cdp-perf does not measure.
+# can reach the binary.
 classify_paths() {
-  local path full='rtt throughput runtime dom page target network lp tos' groups=
+  local path full='rtt throughput runtime dom page target network lp tos pdf' groups=
   while IFS= read -r path; do
     case $path in
       *.md | docs/*) ;;                                      # documentation
@@ -230,7 +230,7 @@ classify_paths() {
 # filter_for GROUPS -> regex for cdp-perf --filter, or nothing when no scenario group is named.
 filter_for() {
   local group alternatives=
-  for group in rtt throughput runtime dom page target network lp tos; do
+  for group in rtt throughput runtime dom page target network lp tos pdf; do
     if [[ " $1 " == *" $group "* ]]; then
       alternatives+="${alternatives:+|}$group"
     fi
@@ -248,7 +248,7 @@ if [[ $auto_filter == 1 ]]; then
   fi
   note "--auto-filter: --filter '$filter'"
   if [[ " $groups " == *" pdf "* ]]; then
-    note "--auto-filter: reminder: printing or screenshots changed, and cdp-perf does not measure them; also run bench/pdf/run.mjs"
+    note "--auto-filter: reminder: printing or screenshots changed; cdp-perf measures paper-cut printing only, so also run bench/pdf/run.mjs for .pz-page documents"
   fi
   perf_args+=(--filter "$filter")
 fi
@@ -450,7 +450,7 @@ bench_load=$stage_load
 note "results in $out"
 
 status=0
-node "$root/bench/scripts/cdp-perf-compare.mjs" "$out/run.json" --base base --head head --md "$out/compare.md" || status=$?
+bun "$root/bench/scripts/cdp-perf-compare.mjs" "$out/run.json" --base base --head head --md "$out/compare.md" || status=$?
 
 printf '%s' "$stage_log" >"$out/stages.txt"
 note "profile $profile; time per stage:"

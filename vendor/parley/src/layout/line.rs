@@ -213,6 +213,12 @@ pub struct LineMetrics {
     /// For horizontal text, this is the bottom of the line box.
     pub block_max_coord: f32,
 
+    /// [`Self::block_min_coord`] before quantization.
+    pub unquantized_block_min_coord: f32,
+
+    /// [`Self::block_max_coord`] before quantization.
+    pub unquantized_block_max_coord: f32,
+
     /// The minimum block-axis coordinate of the line's content.
     ///
     /// This covers, roughly, the line's glyphs and inline boxes. This does not take into account

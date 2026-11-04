@@ -1,0 +1,2 @@
+<!doctype html><body><form action="/upload" method="post" enctype="multipart/form-data"><input type="file" name="f" id="file"><button>Upload</button></form>
+<p id="sel"></p><script>const f=document.getElementById('file');f.addEventListener('change',()=>{document.getElementById('sel').textContent=f.files[0].name+':'+f.files[0].size})</script></body>

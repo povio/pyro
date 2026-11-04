@@ -1622,6 +1622,9 @@ impl<'a, B: Brush> BreakLines<'a, B> {
         } else {
             line.metrics.baseline + line_box_extents.under
         };
+        line.metrics.unquantized_block_min_coord = self.state.line_y as f32;
+        line.metrics.unquantized_block_max_coord =
+            self.state.line_y as f32 + line_box_extents.over + line_box_extents.under;
         line.metrics.content_block_min_coord = line.metrics.baseline - content_box_extents.over;
         line.metrics.content_block_max_coord = line.metrics.baseline + content_box_extents.under;
 

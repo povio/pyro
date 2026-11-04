@@ -126,6 +126,9 @@ pub struct BlitzDomPainter<'dom, 'a> {
     pub(crate) selection_ranges: HashMap<NodeId, (usize, usize)>,
     /// Paint background colors and images (false: printing without them).
     pub backgrounds: bool,
+    /// Print: text at its layout-unit x, not its box's whole-pixel x (Chromium keeps the fraction in the
+    /// inline axis). Screenshots keep the box's x.
+    pub fractional_text_x: bool,
 
     // Pre-computed `Scene`s for each CustomWidget
     pub(crate) custom_widget_scenes: &'a CustomWidgetSceneMap,
@@ -167,6 +170,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             draw_text_context: RefCell::new(DrawTextContext::default()),
             selection_ranges,
             backgrounds: true,
+            fractional_text_x: false,
             custom_widget_scenes,
         }
     }
@@ -353,13 +357,12 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         // The root element's overflow is propagated to the viewport (which is clipped by the
         // window/surface bounds), so the root element must not clip its own overflow.
         let is_root_element = self.root_element_id == Some(node_id);
+        // lightningpanda: `overflow` on `body` is the viewport's, not body's.
+        let clips_overflow = (!matches!(overflow_x, Overflow::Visible)
+            || !matches!(overflow_y, Overflow::Visible))
+            && !self.dom.as_ref().body_overflow_goes_to_viewport(node_id);
         let should_clip = !is_root_element
-            && (is_image
-                || is_sub_doc
-                || is_text_input
-                || contain_paint
-                || !matches!(overflow_x, Overflow::Visible)
-                || !matches!(overflow_y, Overflow::Visible));
+            && (is_image || is_sub_doc || is_text_input || contain_paint || clips_overflow);
 
         // Apply padding/border offset to inline root
         let taffy::Layout {
@@ -902,6 +905,7 @@ impl ElementCx<'_, '_> {
 
             // Render text
             let mut draw_text_context = self.context.draw_text_context.borrow_mut();
+            draw_text_context.text_shift = self.fractional_text_x_of_node();
             crate::text::stroke_text(
                 scene,
                 text_layout.layout.lines(),
@@ -913,7 +917,20 @@ impl ElementCx<'_, '_> {
                 &mut draw_text_context,
                 None,
             );
+            draw_text_context.text_shift = 0.0;
         }
+    }
+
+    /// What moves this inline root's text from its box's whole-pixel x to its layout-unit x (device px).
+    fn fractional_text_x_of_node(&self) -> f64 {
+        if !self.context.fractional_text_x {
+            return 0.0;
+        }
+        let (position, layout) = self.context.dom.physical_unrounded_geometry(self.node.id);
+        let start = position.x as f64 + (layout.border.left + layout.padding.left) as f64;
+        let painted = self.node.final_layout();
+        let painted = (position.x as f64).round() + (painted.border.left + painted.padding.left) as f64;
+        ((start * 64.0).floor() / 64.0 - painted) * self.scale
     }
 
     /// Paint an inline layout of a vertical writing mode. The layout's lines are logical: x is the

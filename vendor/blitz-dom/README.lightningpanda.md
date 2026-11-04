@@ -102,6 +102,8 @@ lp-render's mirror tests (incremental documents against fresh builds after rando
   as text inputs already did (CSS Sizing 3 §5.2.2, compressible): in a flex-wrap row it shrinks into the
   space left on the line instead of wrapping below.
 
+`src/resolve.rs`: scrollable overflow as in Blink: an empty rect adds nothing, a box fixed to the viewport is left out, and `overflow` on `body` is the viewport's (`BaseDocument::body_overflow_goes_to_viewport`). `src/layout/list.rs`: `decimal-leading-zero`, `lower-roman`, `upper-roman`, `lower-latin` and `upper-latin` markers.
+
 `BaseDocument::set_layout_size` lays out at a fractional CSS size instead of the viewport's whole pixels (`make_device`); printing uses it for the paper's content box.
 
 ## Inline layouts in vertical writing modes
@@ -115,3 +117,9 @@ way its block axis runs; paint turns the lines, and these read them physically:
   the writing mode of the box that placed the node); `physical_unrounded_geometry` is public for paint.
 
 `Node::text_offset_at_point` (hit testing) still takes logical coordinates.
+
+## `@page` rules of linked sheets
+
+`src/net.rs`, `src/document.rs` (`linked_page_css`): a `<link>` sheet with `@page` rules keeps its text, for
+printing. The servo build of Stylo parses neither `size` nor `page`, so the parsed rule does not have them. lp-render's
+`page_box` reads them.

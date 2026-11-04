@@ -1,0 +1,14 @@
+<!doctype html><html><head><title>Home</title><link rel="stylesheet" href="style.css"></head><body>
+<h1>Welcome</h1><nav><a href="/form.html">Go to form</a></nav>
+<button id="hov">Hover me</button>
+<button id="clk">Click me</button>
+<p id="out"></p>
+<div id="kbd" tabindex="0"></div>
+<script>
+const $ = (i) => document.getElementById(i);
+$('hov').addEventListener('mouseover', () => { $('hov').textContent = 'hovered'; });
+$('clk').addEventListener('click', () => { $('out').textContent = 'clicked'; });
+document.addEventListener('keydown', e => { $('kbd').textContent += e.key; });
+document.addEventListener('mousedown', e => { window.lastDown = [e.clientX|0, e.clientY|0]; });
+console.log('hello from page');
+</script></body></html>

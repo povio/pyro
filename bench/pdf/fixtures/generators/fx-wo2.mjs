@@ -1,0 +1,27 @@
+const L=(p,n,from=1)=>Array.from({length:n},(_,i)=>p+(i+from)).join('<br>');
+const doc=(b,st='')=>`<!doctype html><body style="margin:0;font:16px/20px Arial;${st}">${b}`;
+const sp=h=>`<div style="height:${h}px"></div>`;
+const d=(b,st='')=>`<div style="${st}">${b}</div>`;
+const C={};
+const os=(o,w)=>`orphans:${o};widows:${w}`;
+C.a=doc(d(L('a',40),os(12,12)));C.b=doc(d(L('a',55),os(2,25)));C.c=doc(d(L('a',45),os(12,12)));C.d=doc(d(L('a',50),os(2,12)));C.e=doc(d(L('a',44),os(10,5)));
+C.f=doc(d(L('a',23),os(2,12)));C.g=doc(d(L('a',30),os(2,18)));C.h=doc(d(L('a',38),os(2,18)));C.i=doc(d(L('a',39),os(2,18)));C.j=doc(d(L('a',25),os(2,19)));C.k=doc(d(L('a',25),os(2,20)));
+C.l=doc(d(L('a',25),os(2,6)));C.m=doc(d(L('a',25),os(2,7)));C.n=doc(d(L('a',21),os(1,20)));C.o=doc(d(L('a',21),os(1,30)));
+C.p=doc(sp(300)+d(L('a',6),os(4,4)));C.q=doc(sp(300)+d(L('a',7),os(4,4)));C.r=doc(sp(320)+d(L('a',6),os(4,4)));C.s=doc(sp(320)+d(L('a',6),os(3,4)));
+C.t=doc(d(L('z',18))+d(L('a',5),os(2,2)));C.u=doc(d(L('z',17))+d(L('a',5),os(3,2)));
+// forced break margins
+C.f1=doc(d('a1')+d('b1','break-before:page;margin-top:30px'));
+C.f2=doc(d('a1','break-after:page;margin-bottom:40px')+d('b1','margin-top:30px'));
+C.f3=doc(d(d('b1','margin-top:30px'),'break-before:page'));
+C.f4=doc(d('a1','break-after:page')+d('b1'));
+C.f5=doc(d('a1')+d('','height:100px;break-before:page')+d('b1'));
+C.f6=doc(`<h1 style="margin:21px 0">a1</h1><h2 style="break-before:page;margin:19px 0">b1</h2>`);
+C.g1=doc(sp(370)+d('',"height:10px;margin-bottom:30px")+d('b1'));
+C.g2=doc(sp(380)+d('b1','margin-top:30px')+d('b2'));
+C.g3=doc(sp(370)+d(d('b1','margin-top:30px'),'margin-top:40px')+d('b2'));
+C.g4=doc(sp(380)+d('b1','padding-top:30px')+d('b2'));
+C.g5=doc(sp(380)+d('b1','border-top:30px solid')+d('b2'));
+C.g6=doc(sp(370)+d('',"margin-bottom:60px")+d('b1')+d('b2'));
+C.g7=doc(sp(100)+d(L('a',14),'margin-bottom:100px')+d(L('b',5)));
+C.g8=doc(d(L('a',19))+`<p style="margin:16px 0">b1</p><p style="margin:16px 0">b2</p>`);
+export const cases=Object.entries(C).map(([name,html])=>({name,html}));

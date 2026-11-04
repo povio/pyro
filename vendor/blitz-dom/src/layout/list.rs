@@ -128,6 +128,19 @@ fn marker_for_style(list_style_type: ListStyleType, index: usize) -> Option<Mark
                 Marker::String(format!("{}. ", marker.to_ascii_uppercase()))
             }
             "decimal" => Marker::String(format!("{}. ", index + 1)),
+            "decimal-leading-zero" => Marker::String(format!("{:02}. ", index + 1)),
+            "lower-roman" => Marker::String(format!("{}. ", roman(index + 1).to_ascii_lowercase())),
+            "upper-roman" => Marker::String(format!("{}. ", roman(index + 1))),
+            "lower-latin" => {
+                let mut marker = String::new();
+                build_alpha_marker(index, &mut marker);
+                Marker::String(format!("{marker}. "))
+            }
+            "upper-latin" => {
+                let mut marker = String::new();
+                build_alpha_marker(index, &mut marker);
+                Marker::String(format!("{}. ", marker.to_ascii_uppercase()))
+            }
             "disc" => Marker::Char('•'),
             "circle" => Marker::Char('◦'),
             "square" => Marker::Char('▪'),
@@ -164,6 +177,36 @@ fn font_for_bullet_style(list_style_type: ListStyleType) -> Option<FontFamily<'s
     }
 
     None
+}
+
+// A roman numeral (the `upper-roman` counter style, 1 to 3999, then decimal).
+fn roman(n: usize) -> String {
+    if n >= 4000 {
+        return n.to_string();
+    }
+    const DIGITS: [(usize, &str); 13] = [
+        (1000, "M"),
+        (900, "CM"),
+        (500, "D"),
+        (400, "CD"),
+        (100, "C"),
+        (90, "XC"),
+        (50, "L"),
+        (40, "XL"),
+        (10, "X"),
+        (9, "IX"),
+        (5, "V"),
+        (4, "IV"),
+        (1, "I"),
+    ];
+    let (mut n, mut out) = (n, String::new());
+    for (value, digits) in DIGITS {
+        while n >= value {
+            out.push_str(digits);
+            n -= value;
+        }
+    }
+    out
 }
 
 const ALPHABET: [char; 26] = [

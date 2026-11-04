@@ -50,3 +50,21 @@ fn timeout_terminates_a_jit_compiled_loop() {
     };
     assert_eq!(status.code(), Some(124));
 }
+
+/// `lp_js::configure_process` lowers JSC's heap growth, and a value the user set wins.
+#[test]
+fn heap_growth_default_yields_to_the_environment() {
+    let growth = |value: Option<&str>| {
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_lightningpanda"));
+        cmd.args(["eval", "-e", "1"]).env("JSC_dumpOptions", "2").env_remove("JSC_heapGrowthMaxIncrease");
+        if let Some(value) = value {
+            cmd.env("JSC_heapGrowthMaxIncrease", value);
+        }
+        let out = cmd.output().expect("run lightningpanda");
+        let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+        let option = text.split_whitespace().find(|word| word.starts_with("heapGrowthMaxIncrease="));
+        option.expect("option in the dump").to_owned()
+    };
+    assert_eq!(growth(None), "heapGrowthMaxIncrease=1");
+    assert_eq!(growth(Some("3")), "heapGrowthMaxIncrease=3");
+}

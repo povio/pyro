@@ -82,10 +82,11 @@ node bench/scripts/cdp-perf-compare.mjs old.json new.json    # two separate runs
   `allow-jit`, and the run is refused when base and head are identical (SHA-256, or `__text` and both `__const`
   sections on macOS) although files the build reads differ. Integration tests and Markdown do not count as such files.
 - **`--auto-filter`** picks the scenarios from the changed paths, taking the union: `lp-render` and `screenshot.rs`
-  select `page` and `lp` (and remind you to run `bench/pdf/run.mjs`, since cdp-perf does not measure printing);
+  select `page`, `lp` and `pdf` (and remind you to run `bench/pdf/run.mjs`, since cdp-perf measures only paper-cut
+  printing);
   `lp-webapi`, `lp-js` and `lp-jsc-sys` select `runtime`, `dom` and `lp`; `lp-net` selects `network` and
   `throughput`; anything else, including the `lp-cdp` engine and `vendor/`, selects
-  `^(rtt|throughput|runtime|dom|page|target|network|lp|tos)\.`. Documentation and integration tests alone skip the run.
+  `^(rtt|throughput|runtime|dom|page|target|network|lp|tos|pdf)\.`. Documentation and integration tests alone skip the run.
 - **Shared machine.** It refuses to start while any cargo build is running and lists each with its owner (this
   repository or another project) and directory; `--force` overrides. It then waits for `/tmp/lp-bench.lock`, held
   until it exits. If a run was killed outright, `rmdir` the lock by hand.
@@ -135,6 +136,11 @@ harness only):
 - **targets**: context + target create, attach, `Page`/`Runtime.enable`, close, dispose, with per-step laps.
 - **network**: 20 parallel `fetch()` with `Network.enable`; one `Fetch.requestPaused` → `fulfillRequest`.
 - **input**: `Input.dispatchMouseEvent` clicks and `Input.dispatchKeyEvent` typing, verified in the page.
+- **pdf**: `Page.printToPDF` of a document without `.pz-page` elements, which is cut into pages. `pdf.paginate.text`
+  is about 20 Letter pages of plain lines, `pdf.paginate.avoid` about 20 pages of `break-inside: avoid` boxes, and
+  `pdf.paginate.shrink` a 1200 px wide document that takes a second layout to shrink to fit. The content is set once;
+  a sample is one print, checked by its page count (within 2, so versions with other pagination rules compare). `bench/pdf/run.mjs` measures the other path: its ToS documents
+  have `.pz-page`, which skips pagination altogether.
 - **webview** (`Bun.WebView`, needs `bun`): open + navigate + close, `navigate` of each fixture page,
   `evaluate`, raw `view.cdp()`, selector `click` (with its actionability checks), `type`, and a whole form
   test flow with laps.
@@ -167,6 +173,9 @@ add `--perf-trace`. The browser then times each stage of every command (`io.ws_r
 lists every stage costing at least 10 ns per operation, with the timer floor measured on that host. Stages
 are inclusive and timing adds a few tens of ns per stage, so compare traced builds only with traced builds.
 Normal builds compile the timers out (`crates/lp-cdp-protocol/src/perf.rs`).
+
+`--fork` starts `serve --fork` and reads CPU from every descendant of `serve`, since connections run in forked
+children. Without it, setting `LIGHTNINGPANDA_FORK=1` still runs fork mode, but CPU reads as about zero.
 
 Reading it for optimization: compare `rtt.Browser.getVersion` (protocol floor) with the other `rtt`/`runtime`
 rows to see the cost of the browser-thread hop and JS work; the navigation milestones show whether time goes
@@ -223,3 +232,89 @@ Any failed behavioral assertion makes the run fail and keeps its evidence; do no
 The sampler's six columns are epoch milliseconds, resident KiB, physical footprint KiB, cumulative user
 nanoseconds, cumulative system nanoseconds and monotonic nanoseconds. Existing memory readers use the first
 three columns. `rss-sampler PID - --once` emits one snapshot and fails explicitly if the PID cannot be sampled.
+
+## Web Platform Tests
+
+`bench/wpt/` runs a WPT subset over CDP with Playwright and reports passing subtests per directory. The same
+runner works for any binary with a `serve --host --port` command line (lightningpanda, upstream Lightpanda, or a
+shim around Chrome).
+
+```sh
+(cd bench && bun install)
+git clone -b fork --depth=1 https://github.com/lightpanda-io/wpt.git /abs/wpt   # testharnessreport.js exposes window.report
+bun bench/wpt/serve.mjs /abs/wpt 9415 &
+bun bench/wpt/run.mjs --wpt /abs/wpt --bin lp=$PWD/target/release/lightningpanda --sample-encoding 10 --out /tmp/lp.json
+bun bench/wpt/aggregate.mjs /tmp/lp.json [/tmp/other.json ...]                 # markdown table
+```
+
+`--list` prints what would run. The default directories are dom, html/dom, encoding, url, fetch/api/basic, xhr,
+css/selectors, uievents, shadow-dom and webstorage. encoding/ has 1,257 pages, most of them long:
+`--sample-encoding 10` keeps every 10th, so scale its subtests by about 10.
+
+`serve.mjs` is a static server, not wptserve: it generates `.any.html`/`.window.html` wrappers and applies `.headers`
+files. Tests that need Python handlers, testdriver, `.sub`/`.https`/`.h2` or a non-window global are excluded for every
+binary (577 files), and cross-origin hosts do not resolve. Compare binaries within one setup, not against published
+WPT numbers. The denominator per page is the largest subtest count any binary reported, so a crashed page counts its
+subtests as failures.
+
+## Playwright feature suite
+
+`bench/playwright-suite/` has 38 tests, one per Playwright feature a typical app E2E suite uses, against local
+fixture pages. It connects with `connectOverCDP`, so any binary with a `serve --host --port` command line works.
+
+```bash
+cd bench/playwright-suite && bun install
+TARGET=lp BIN=$PWD/../../target/release/lightningpanda bunx playwright test
+LIGHTNINGPANDA_FORK=1 TARGET=lp BIN=... bunx playwright test    # fork template mode
+TARGET=chrome bunx playwright test                              # Playwright's headless shell over CDP (macOS arm64 path, or set CHROME_BIN)
+```
+
+Results go to `results/$TARGET.json` (or `$OUT/$TARGET.json`). `baseline/visual.png` is the `toHaveScreenshot`
+reference, taken with `TARGET=chrome-launch bunx playwright test --update-snapshots` on macOS.
+
+## Page-break fixtures against Chrome (`pdf/fixtures/`)
+
+Reproducible sets for how paper-cut `Page.printToPDF` documents break, with Chrome 156's results. `generators/` holds
+one module per set, each exporting `cases` (name, HTML, print options); `chrome-156/` the measured summaries (per page:
+word count, a hash of its sorted words, first and last word, distinct y), no PDFs. Names are `group|...`.
+
+```sh
+cd bench/pdf/fixtures                                  # needs pdftotext and Chrome at its default path
+bun probe.mjs generators/fx-fr.mjs chrome out.json    # or a binary instead of chrome
+python3 compare.py chrome-156/fr.json out.json [-v]    # per group: words on the same pages, page counts, positions
+bun print-72.mjs /abs/lightningpanda                  # the 72: pages, lines and link rects, Chrome measured live
+./run.sh /abs/lightningpanda /tmp/out [fr sub ...]     # every set (or those named), against chrome-156/
+bun geometry.mjs /abs/lightningpanda out.json         # the 152 geometry matrix
+python3 compare.py --geometry chrome-156/geometry.json out.json
+```
+
+| Sets | Generators | Cases | What varies |
+|---|---|---|---|
+| fractional spacers | `fx-fr` | 342 | a position's fraction before 20 px lines, 9 paper setups |
+| sub-pixel groups | `fx-sub` | 1656 | line heights, accumulated fractions, nested margins, later pages, under 0.5 px overflow, forced breaks, floats |
+| whole-px analogues | `fx-sub2`, `fx-sub3` | 86 | the same shapes in whole px, also parallel columns and tables |
+| vertical writing | `fx-vert` | 24 | vertical blocks and documents |
+| tall monolithic boxes | `fx-mt` | 512 | margin, border and padding above images, size containment, vertical boxes |
+| page geometry | `fx-72` | 120 | paper, margin and scale on links, text, breaks, shrink to fit |
+| orphans, widows | `fx-wo`, `fx-wo2`, `fx-wo3` | 125 | `orphans` and `widows` around cuts |
+| avoid, shrink, sizes | `fx-av`, `fx-sh`, `fx-sr`, `fx-tw`, `fx-engine` | 381 | `break-inside: avoid`, overflowing documents, page sizes |
+| gaps closed by #251 | `fx-b`, `fx-b2`, `fx-b3`, `fx-f`, `fx-h`, `fx-h1`, `fx-k`, `fx-m`, `fx-s`, `fx-v` | 1706 | monolithic boxes, `break-*: avoid`, forced breaks, line and box positions at a cut |
+
+Page placement and text x of whole PDFs against Chrome:
+
+```sh
+bun page-placement.mjs <work dir> chrome-156/page-placement.json [/abs/lightningpanda]   # documents x papers x options, and the 300 dpi page size
+bun pdf-deltas.mjs <chrome pdf dir> <lp pdf dir> out.json        # per PDF of a run.mjs run: x and y delta of 30 pt tiles at 600 dpi, pixel diff at 150 dpi
+python3 page-stream-diff.py; python3 page-shift-check.py         # two lp-fixed runs (r-base, r-head): how each stream changed; pixels after undoing a page shift
+bun text-x.mjs <work dir> chrome; bun text-x.mjs <work dir> /abs/lightningpanda   # fractional text x: paper-cut and `.pz-page`, with screenshots
+python3 width-check.py chrome-156/width-x.json <probe of fx-width>   # what paper-cut print lays out in: marker x and link rects
+```
+
+`pdf-resample.mjs` compares a page's error against Chrome at 150 dpi as poppler rasterizes it and box-averaged from a higher resolution, to tell a real move from a sampling effect.
+
+`chrome-156/tos-deltas.json` holds the 44 ToS cases before and after (median, p95, max of per-tile deltas in pt; the search stops at 2.4 pt, and
+tiles match by ink profiles, so regular text can alias: read medians and p95 first). `text-x-before.json` and `text-x-after.json` hold the text-x set, `text-x-width.json` the same on the paper-cut layout width.
+
+Compare only runs from one Chrome version: the summaries say what 156 did on the machine that measured them (macOS,
+its Arial). Word assignment is what the sets pin; a page's y differs by a constant between engines, because pdftotext
+reads a different ascent from each PDF's font.
