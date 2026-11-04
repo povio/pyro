@@ -496,6 +496,24 @@ spec = "https://drafts.csswg.org/css-break/#propdef-break-inside"
 animation_type = "discrete"
 affects = "layout"
 
+[orphans]
+type = "PositiveInteger"
+initial = "From::from(2)"
+struct = "inherited_text"
+spec = "https://drafts.csswg.org/css-break/#propdef-orphans"
+animation_type = "discrete"
+servo_restyle_damage = "repaint"
+affects = "layout"
+
+[widows]
+type = "PositiveInteger"
+initial = "From::from(2)"
+struct = "inherited_text"
+spec = "https://drafts.csswg.org/css-break/#propdef-widows"
+animation_type = "discrete"
+servo_restyle_damage = "repaint"
+affects = "layout"
+
 [caption-side]
 type = "table::CaptionSide"
 initial = "computed::table::CaptionSide::Top"

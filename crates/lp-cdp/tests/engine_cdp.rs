@@ -5816,6 +5816,64 @@ mod screenshot {
         assert_eq!(r["error"]["message"], "invalid print parameters: content area is empty", "{r}");
     }
 
+    /// Pagination of one document mixing what moves cuts: the page count and every link area are Chrome 156's on A4
+    /// without margins. Its 900 px width shrinks it, avoided boxes move (the 1200 px one, taller than a page, too),
+    /// `widows` holds lines back and the forced break keeps its margin.
+    #[test]
+    fn print_to_pdf_paginates_a_mixed_document_as_chrome() {
+        let mut h = Harness::new();
+        let link = |id: String| format!(r#"<a href="https://example.com/{id}">x</a>"#);
+        let lines = |p: &str, n: usize| (0..n).map(|i| link(format!("{p}{i}"))).collect::<Vec<_>>().join("<br>");
+        let block = |id: &str, h: u32, style: &str| {
+            format!(r#"<a href="https://example.com/{id}" style="display:block;height:{h}px;{style}"></a>"#)
+        };
+        let html = format!(
+            r#"<!doctype html><body style="margin:0;font:16px/20px Arial"><div style="height:900px"></div><div>{}</div><div style="height:10px"></div>{}<div style="height:600px"></div>{}<div style="widows:3">{}</div><div style="break-before:page;margin-top:30px">{}</div><div style="width:900px">{}</div>"#,
+            lines("a", 3),
+            block("b", 300, "break-inside:avoid"),
+            block("c", 1200, "break-inside:avoid;margin-top:20px"),
+            lines("d", 4),
+            lines("e", 1),
+            lines("f", 2),
+        );
+        load_html(&mut h, &html);
+        let r = h.page(
+            "Page.printToPDF",
+            json!({"paperWidth": 8.27, "paperHeight": 11.69, "marginTop": 0, "marginBottom": 0, "marginLeft": 0, "marginRight": 0}),
+        );
+        let pdf = lp_cdp::fetch_protocol::base64_decode(r["result"]["data"].as_str().unwrap_or_else(|| panic!("{r}")))
+            .unwrap();
+        let pdf = String::from_utf8_lossy(&pdf).into_owned();
+        assert_eq!(pdf.matches("/MediaBox[").count(), 5, "pages");
+        let mut got: Vec<Vec<f64>> = pdf
+            .split("/Rect[")
+            .skip(1)
+            .filter_map(|r| r.split(']').next())
+            .map(|r| r.split_whitespace().filter_map(|v| v.parse().ok()).collect())
+            .collect();
+        got.sort_by(|a, b| a[1].total_cmp(&b[1]));
+        // Bottom edges and heights (pt), sorted: page by page they say which line is where.
+        let chrome = [
+            (0.54, 198.75),
+            (21.74, 11.27),
+            (34.99, 11.27),
+            (46.92, 795.0),
+            (207.25, 11.26),
+            (220.49, 11.27),
+            (233.75, 11.26),
+            (783.62, 11.26),
+            (796.87, 11.26),
+            (810.12, 11.26),
+            (816.74, 11.27),
+            (830.0, 11.26),
+        ];
+        assert_eq!(got.len(), chrome.len(), "{got:?}");
+        for (rect, (bottom, height)) in got.iter().zip(chrome) {
+            let close = (rect[1] - bottom).abs() < 0.05 && ((rect[3] - rect[1]) - height).abs() < 0.05;
+            assert!(close, "{rect:?}, Chrome bottom {bottom} height {height}: {got:?}");
+        }
+    }
+
     /// A layout sub-resource still downloading delays the PDF, not the
     /// browser thread: commands sent after printToPDF answer first.
     #[test]

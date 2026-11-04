@@ -293,3 +293,234 @@ fn a_full_width_link_ends_at_the_fractional_content_width() {
         assert!((found[0][2] - chrome_x1).abs() < 0.1, "scale {scale}: {found:?}");
     }
 }
+
+/// Where each page starts on a 576 x 384 px paper of 19 lines of 20 px, 4 px to spare.
+fn page_tops(body: &str) -> Vec<f64> {
+    let html = format!(r#"<!doctype html><body style="margin:0;font:16px/20px sans-serif">{body}"#);
+    print_with(&html, |o| o.paper = (576.0, 384.0)).pages.iter().map(|p| p.rect.y0).collect()
+}
+
+/// `n` lines of 20 px with these declarations.
+fn lines(n: usize, style: &str) -> String {
+    format!(r#"<div style="{style}">{}</div>"#, vec!["x"; n].join("<br>"))
+}
+
+fn spacer(height: u32) -> String {
+    format!(r#"<div style="height:{height}px"></div>"#)
+}
+
+/// The expectations in the tests below are Chrome 156's, read off the lines of each page of the same fixtures.
+#[test]
+fn a_block_keeps_two_lines_on_each_side_of_a_cut() {
+    // 20 lines: 18 + 2. 21: 19 + 2. 39: 19 + 18 + 2.
+    assert_eq!(page_tops(&lines(20, "")), [0.0, 360.0]);
+    assert_eq!(page_tops(&lines(21, "")), [0.0, 380.0]);
+    assert_eq!(page_tops(&lines(39, "")), [0.0, 380.0, 740.0]);
+    // One line fits: the block moves. Two fit, three lines long: orphans win, 2 + 1.
+    assert_eq!(page_tops(&(spacer(360) + &lines(5, ""))), [0.0, 360.0]);
+    assert_eq!(page_tops(&(spacer(340) + &lines(3, ""))), [0.0, 380.0]);
+    // Each block container has its own lines: 10 + a block + 9 lines, 8 of them fit, 7 + 2.
+    let anonymous = format!("<div>{0}<div>x</div>{1}</div>", vec!["x"; 10].join("<br>"), vec!["x"; 9].join("<br>"));
+    assert_eq!(page_tops(&anonymous), [0.0, 360.0]);
+}
+
+#[test]
+fn orphans_and_widows_are_honoured_and_orphans_win() {
+    assert_eq!(page_tops(&lines(20, "widows:1")), [0.0, 380.0]);
+    assert_eq!(page_tops(&(spacer(360) + &lines(5, "orphans:1"))), [0.0, 380.0]);
+    // Both inherit; 0 is invalid and leaves the default.
+    let html =
+        r#"<!doctype html><body style="margin:0;font:16px/20px sans-serif;widows:1">"#.to_owned() + &lines(20, "");
+    assert_eq!(print_with(&html, |o| o.paper = (576.0, 384.0)).pages[1].rect.y0, 380.0);
+    assert_eq!(page_tops(&lines(20, "widows:0")), [0.0, 360.0]);
+    // 5 lines, 4 fit, 3 + 3 wanted: 3 + 2.
+    assert_eq!(page_tops(&(spacer(300) + &lines(5, "orphans:3;widows:3"))), [0.0, 360.0]);
+    // 3 fit, 4 wanted: the block moves, although widows would be fine.
+    assert_eq!(page_tops(&(spacer(320) + &lines(8, "orphans:4;widows:1"))), [0.0, 320.0]);
+    // 23 lines, 12 + 12 wanted: 12 + 11, at the top of a page and below one.
+    assert_eq!(page_tops(&lines(23, "orphans:12;widows:12")), [0.0, 240.0]);
+    assert_eq!(page_tops(&(spacer(100) + &lines(23, "orphans:12;widows:12"))), [0.0, 340.0]);
+    // Past the first part orphans still count: 40 lines, 12 + 12: 19 + 12 + 9.
+    assert_eq!(page_tops(&lines(40, "orphans:12;widows:12")), [0.0, 380.0, 620.0]);
+    // Orphans over a page: as much as fits, moved first when not at the top.
+    assert_eq!(page_tops(&lines(30, "orphans:25")), [0.0, 380.0]);
+    assert_eq!(page_tops(&(spacer(100) + &lines(30, "orphans:25"))), [0.0, 100.0, 480.0]);
+    // Widows over a page: honoured for the first part only. 30 lines, 25: 5 + 19 + 6.
+    assert_eq!(page_tops(&lines(30, "widows:25")), [0.0, 100.0, 480.0]);
+    // ... where 19 still fit on a page, later parts honour them too: 60 lines: 19 + 19 + 3 + 19.
+    assert_eq!(page_tops(&lines(60, "widows:19")), [0.0, 380.0, 760.0, 820.0]);
+    // 20 don't: 60 lines: 19 + 19 + 19 + 3.
+    assert_eq!(page_tops(&lines(60, "widows:20")), [0.0, 380.0, 760.0, 1140.0]);
+}
+
+#[test]
+fn avoided_boxes_move_whole_unless_at_the_top_of_a_page() {
+    let avoid = "break-inside:avoid";
+    // Fits a page, not what is left.
+    assert_eq!(page_tops(&(spacer(300) + &lines(10, avoid))), [0.0, 300.0]);
+    // Taller than a page, not at the top: moved, then cut, also as avoid-page.
+    assert_eq!(page_tops(&(spacer(300) + &lines(25, avoid))), [0.0, 300.0, 680.0]);
+    assert_eq!(page_tops(&(spacer(300) + &lines(25, "break-inside:avoid-page"))), [0.0, 300.0, 680.0]);
+    // At the top: cut; its lines keep their widows.
+    assert_eq!(page_tops(&lines(25, avoid)), [0.0, 380.0]);
+    assert_eq!(page_tops(&lines(20, avoid)), [0.0, 360.0]);
+    // Margins, borders and padding are not content; a box of any height is.
+    let at_top = |style: &str, tops: &[f64]| {
+        let html = format!(r#"<div style="{style}">{}</div>"#, lines(25, avoid));
+        assert_eq!(page_tops(&html), tops, "{style}");
+    };
+    at_top("margin-top:30px", &[0.0, 370.0]);
+    at_top("padding-top:10px", &[0.0, 370.0]);
+    at_top("border-top:10px solid", &[0.0, 370.0]);
+    assert_eq!(page_tops(&(spacer(1) + &lines(25, avoid))), [0.0, 1.0, 381.0]);
+    // Nested: when the outer one is cut, the inner ones still hold.
+    let three = lines(10, avoid).repeat(3);
+    assert_eq!(page_tops(&format!(r#"<div style="{avoid}">{three}</div>"#)), [0.0, 200.0, 400.0]);
+    let five = lines(5, avoid).repeat(5);
+    assert_eq!(page_tops(&(spacer(300) + &format!(r#"<div style="{avoid}">{five}</div>"#))), [0.0, 300.0, 600.0]);
+    // An inner one taller than a page moves from below other content of the outer one.
+    let outer = format!(r#"<div style="{avoid}">x{}</div>"#, lines(25, avoid));
+    assert_eq!(page_tops(&(spacer(300) + &outer)), [0.0, 300.0, 320.0, 700.0]);
+}
+
+#[test]
+fn replaced_elements_taller_than_a_page_move_and_run_over() {
+    let img = |h: u32| format!(r#"<img style="display:block;width:100px;height:{h}px">"#);
+    // Moved; what follows comes after it, 116 px down page 3.
+    assert_eq!(page_tops(&(spacer(300) + &img(500) + "x")), [0.0, 300.0, 684.0]);
+    assert_eq!(page_tops(&(img(1000) + "x")), [0.0, 384.0, 768.0]);
+    assert_eq!(page_tops(&(spacer(300) + &img(385) + "x")), [0.0, 300.0, 684.0]);
+}
+
+#[test]
+fn a_cut_drops_margins_and_a_forced_break_keeps_them() {
+    // The cut falls in the margin: the next page starts at the content.
+    assert_eq!(page_tops(&(spacer(380) + &lines(2, "margin-top:30px"))), [0.0, 410.0]);
+    assert_eq!(page_tops(&(lines(19, "") + &lines(3, "margin-top:30px"))), [0.0, 410.0]);
+    // Padding stays with what it is above.
+    assert_eq!(page_tops(&(spacer(380) + &lines(2, "padding-top:30px"))), [0.0, 380.0]);
+    // A forced break keeps the margin below it (the line starts 30 px down page 2).
+    assert_eq!(page_tops(&(lines(1, "") + &lines(1, "break-before:page;margin-top:30px"))), [0.0, 20.0]);
+    // Above the first content it does nothing.
+    assert_eq!(page_tops(&lines(1, "break-before:page;margin-top:30px")), [0.0]);
+    let html = r#"<!doctype html><body style="margin:8px"><div style="break-before:page">x</div>"#;
+    assert_eq!(print_with(html, |o| o.paper = (576.0, 384.0)).pages.len(), 1);
+}
+
+/// What a page holds, whole CSS px, and overflowing documents, measured on Chrome 156 by 1 px rows: the rows of
+/// page 1 are its height, and their written height the scale.
+#[test]
+fn pages_hold_whole_css_pixels() {
+    for (paper, margin, scale, chrome_rows) in [
+        ((8.5, 11.0), 0.0, 1.0, 1056.0),
+        ((8.5, 11.0), 0.4, 1.0, 982.0),
+        ((8.5, 11.0), 0.4, 1.5, 655.0),
+        ((8.27, 11.69), 0.0, 1.0, 1123.0),
+        ((8.27, 11.69), 0.4, 1.0, 1049.0),
+        ((8.27, 11.69), 0.1, 1.0, 1105.0),
+        ((8.27, 11.69), 0.5, 1.0, 1027.0),
+        ((8.27, 11.69), 0.0, 1.5, 749.0),
+    ] {
+        let (paper_px, margins) = chrome_page_geometry(paper, [margin; 4]).unwrap();
+        let out = print_with(r#"<!doctype html><body style="margin:0"><div style="height:5000px"></div>"#, |o| {
+            o.paper = paper_px;
+            o.margins = margins;
+            o.page_area = Some(chrome_page_area(paper, [margin; 4]));
+            o.scale = scale;
+        });
+        assert_eq!(out.pages[0].rect.height(), chrome_rows, "{paper:?} margin {margin} scale {scale}");
+    }
+}
+
+#[test]
+fn a_line_ending_at_the_rounded_up_page_end_fits() {
+    // A4 without margins: 1122.67 px rounds up to 1123.
+    let (paper, margins) = chrome_page_geometry((8.27, 11.69), [0.0; 4]).unwrap();
+    let print = |top: u32| {
+        let html = format!(
+            r#"<!doctype html><body style="margin:0;font:16px/20px sans-serif">{}<div>x</div><div>y</div>"#,
+            spacer(top)
+        );
+        print_with(&html, |o| {
+            o.paper = paper;
+            o.margins = margins;
+            o.page_area = Some(chrome_page_area((8.27, 11.69), [0.0; 4]));
+        })
+    };
+    assert_eq!(print(1103).pages[0].rect.y1, 1123.0);
+    assert_eq!(print(1104).pages[0].rect.y1, 1104.0);
+}
+
+#[test]
+fn overflowing_documents_shrink_to_fit_up_to_a_limit() {
+    let html = |width: f64| {
+        format!(
+            r#"<!doctype html><body style="margin:0"><div style="width:{width}px;height:1px;margin-bottom:-1px"></div><a href="https://example.com/r" style="display:block;height:1px"></a><div style="height:5000px"></div>"#
+        )
+    };
+    let print = |paper: (f64, f64), margin: f64, scale: f64, width: f64| {
+        let (paper_px, margins) = chrome_page_geometry(paper, [margin; 4]).unwrap();
+        print_with(&html(width), |o| {
+            o.paper = paper_px;
+            o.margins = margins;
+            o.page_area = Some(chrome_page_area(paper, [margin; 4]));
+            o.scale = scale;
+        })
+    };
+    let (letter, a4) = ((8.5, 11.0), (8.27, 11.69));
+    // Rows of page 1, written height of a row (pt).
+    for (paper, margin, scale, width, rows, row_pt) in [
+        // 494.22 px of content rounds up to 495: nothing happens to 495 px.
+        (letter, 0.4, 1.5, 495.0, 655.0, 1.125),
+        (letter, 0.4, 1.5, 495.25, 655.0, 1.1245),
+        (letter, 0.4, 1.5, 496.0, 656.0, 1.1227),
+        (letter, 0.4, 1.5, 500.0, 661.0, 1.1138),
+        (letter, 0.4, 1.5, 700.0, 926.0, 0.7955),
+        // At most by 1.5.
+        (letter, 0.4, 1.5, 742.5, 982.0, 0.75),
+        (letter, 0.4, 1.5, 2000.0, 982.0, 0.75),
+        (letter, 0.4, 1.0, 743.0, 983.0, 0.749),
+        (letter, 0.4, 1.0, 1200.0, 1472.0, 0.5),
+        (letter, 0.0, 1.0, 817.0, 1058.0, 0.7491),
+        // A4's 720 px with 0.4 in margins counts as 721.
+        (a4, 0.4, 1.0, 721.0, 1049.0, 0.75),
+        (a4, 0.4, 1.0, 722.0, 1050.0, 0.749),
+    ] {
+        let out = print(paper, margin, scale, width);
+        let at = format!("{paper:?} margin {margin} scale {scale} width {width}");
+        assert_eq!(out.pages[0].rect.height(), rows, "{at}");
+        let found = rects(&inflated(&out.bytes));
+        let height = found[0][3] - found[0][1];
+        assert!((height - row_pt).abs() < 0.002, "{at}: {found:?}");
+    }
+}
+
+#[test]
+fn what_does_not_overflow_or_is_clipped_does_not_shrink() {
+    let at_scale = |body: &str| {
+        let html = format!(
+            r#"<!doctype html><body style="margin:0"><a href="https://example.com/r" style="display:block;height:10px"></a>{body}"#
+        );
+        let (paper, margins) = chrome_page_geometry((8.5, 11.0), [0.4; 4]).unwrap();
+        let out = print_with(&html, |o| {
+            o.paper = paper;
+            o.margins = margins;
+            o.page_area = Some(chrome_page_area((8.5, 11.0), [0.4; 4]));
+            o.scale = 1.5;
+        });
+        let found = rects(&inflated(&out.bytes));
+        (found[0][3] - found[0][1]) / 11.25
+    };
+    let clipped = r#"<div style="overflow:hidden;width:400px"><div style="width:1000px;height:10px"></div></div>"#;
+    assert!((at_scale(clipped) - 1.0).abs() < 0.001);
+    assert!((at_scale(r#"<div style="width:400px;margin-left:-200px;height:1px"></div>"#) - 1.0).abs() < 0.001);
+    assert!((at_scale(r#"<div style="width:450px;margin-right:100px;height:1px"></div>"#) - 1.0).abs() < 0.001);
+    // These do: 550, 700, 700, 600 px on a 495 px limit.
+    assert!((at_scale(r#"<div style="width:450px;margin-left:100px;height:1px"></div>"#) - 0.9).abs() < 0.001);
+    let absolute = r#"<div style="position:absolute;left:600px;width:100px;height:1px"></div>"#;
+    assert!((at_scale(absolute) - 495.0 / 700.0).abs() < 0.001);
+    let transformed = r#"<div style="transform:translateX(600px);width:100px;height:1px"></div>"#;
+    assert!((at_scale(transformed) - 495.0 / 700.0).abs() < 0.001);
+    let padded = r#"<div style="width:500px;padding-right:100px;height:1px"></div>"#;
+    assert!((at_scale(padded) - 0.825).abs() < 0.001);
+}
