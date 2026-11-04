@@ -238,10 +238,12 @@ word count, a hash of its sorted words, first and last word, distinct y), no PDF
 
 ```sh
 cd bench/pdf/fixtures                                  # needs pdftotext and Chrome at its default path
-node probe.mjs generators/fx-fr.mjs chrome out.json    # or a binary instead of chrome
+bun probe.mjs generators/fx-fr.mjs chrome out.json    # or a binary instead of chrome
 python3 compare.py chrome-156/fr.json out.json [-v]    # per group: words on the same pages, page counts, positions
-node print-72.mjs /abs/lightningpanda                  # the 72: pages, lines and link rects, Chrome measured live
-node geometry.mjs /abs/lightningpanda out.json         # the 152 geometry matrix; compare with chrome-156/geometry.json
+bun print-72.mjs /abs/lightningpanda                  # the 72: pages, lines and link rects, Chrome measured live
+./run.sh /abs/lightningpanda /tmp/out [fr sub ...]     # every set (or those named), against chrome-156/
+bun geometry.mjs /abs/lightningpanda out.json         # the 152 geometry matrix
+python3 compare.py --geometry chrome-156/geometry.json out.json
 ```
 
 | Sets | Generators | Cases | What varies |
@@ -250,6 +252,7 @@ node geometry.mjs /abs/lightningpanda out.json         # the 152 geometry matrix
 | sub-pixel groups | `fx-sub` | 1656 | line heights, accumulated fractions, nested margins, later pages, under 0.5 px overflow, forced breaks, floats |
 | whole-px analogues | `fx-sub2`, `fx-sub3` | 86 | the same shapes in whole px, also parallel columns and tables |
 | vertical writing | `fx-vert` | 24 | vertical blocks and documents |
+| tall monolithic boxes | `fx-mt` | 512 | margin, border and padding above images, size containment, vertical boxes |
 | page geometry | `fx-72` | 120 | paper, margin and scale on links, text, breaks, shrink to fit |
 | orphans, widows | `fx-wo`, `fx-wo2`, `fx-wo3` | 125 | `orphans` and `widows` around cuts |
 | avoid, shrink, sizes | `fx-av`, `fx-sh`, `fx-sr`, `fx-tw`, `fx-engine` | 381 | `break-inside: avoid`, overflowing documents, page sizes |

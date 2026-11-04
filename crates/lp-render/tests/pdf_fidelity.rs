@@ -528,6 +528,28 @@ fn a_vertical_document_pages_on_snapped_positions() {
     assert_eq!(tops, [0.0, 401.0, 802.0]);
 }
 
+#[test]
+fn a_tall_monolithic_box_below_the_top_of_a_page_moves() {
+    let monolithic = "contain:size;height:500px;width:100px";
+    let body = |style: &str| format!(r#"<div style="{style}">k</div><div>z</div>"#);
+    // Chrome's words per page: 1 + 1 at the top; below it, by any margin, 0 + 1 + 1.
+    assert_eq!(page_tops(&body(monolithic)).len(), 2);
+    for margin in [0.1, 0.3, 0.5, 0.8, 1.0, 5.0, 20.0] {
+        let tops = page_tops(&body(&format!("{monolithic};margin-top:{margin}px")));
+        assert_eq!(tops.len(), 3, "margin {margin}");
+    }
+    assert_eq!(page_tops(&format!(r#"<div style="padding-top:5px">{}</div>"#, body(monolithic))).len(), 3);
+    // Its own border and padding are part of it.
+    assert_eq!(page_tops(&body(&format!("{monolithic};border-top:5px solid"))).len(), 2);
+    assert_eq!(page_tops(&body(&format!("{monolithic};padding-top:5px"))).len(), 2);
+    // A vertical box is monolithic in a horizontal document.
+    let vertical = "writing-mode:vertical-rl;height:500px;width:100px";
+    assert_eq!(page_tops(&body(vertical)).len(), 2);
+    assert_eq!(page_tops(&body(&format!("{vertical};margin-top:0.3px"))).len(), 3);
+    // A `break-inside: avoid` box can be split, and stays.
+    assert_eq!(page_tops(&body("height:500px;break-inside:avoid;margin-top:20px")).len(), 2);
+}
+
 /// What a page holds, whole CSS px, and overflowing documents, measured on Chrome 156 by 1 px rows: the rows of
 /// page 1 are its height, and their written height the scale.
 #[test]
