@@ -272,6 +272,12 @@ physical footprint is 32 MB or 25%, whichever is larger, above its lowest readin
 1 s without a command. `LIGHTNINGPANDA_RELEASE_GROWTH=<MB>[:<percent>]` overrides the thresholds (`0`
 collects every time) and `LIGHTNINGPANDA_RELEASE_ON_CLOSE=0` turns it off, for benchmarks.
 
+`lp_js::configure_process` defaults `JSC_heapGrowthMaxIncrease` to 1 (JSC's default is 3, used on machines with at least
+16 GB), so the heap grows to about 2x its live size between collections rather than 4x. Peak footprint with a large SPA
+loaded went from 242 MB to 202 MB for about 5% more CPU on that SPA; small pages see no CPU change. An allocation-heavy
+page with a large live set is the worst case measured: 18% more CPU, 39% lower peak. 0.5 is not worth it: on that page
+it costs 5.6x the CPU. A value set in the environment wins.
+
 To change JSC: edit the checkout in `~/Library/Caches/lightningpanda/webkit-src`, `ninja -C ../webkit-build
 JavaScriptCore` to iterate, then regenerate the patch with `git diff` (use `git add -N` for new files) and rerun
 `scripts/jsc/build.sh`, which resets the checkout and applies `patches/` from scratch.
