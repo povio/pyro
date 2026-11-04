@@ -490,6 +490,13 @@ fn screen(p: &PageDom) -> (u32, u32) {
 pub fn css_namespace<'s>(s: &Scope<'s>) -> JsResult<Value<'s>> {
     let o = s.object();
     let supports = s.function("supports", |s, _this, a| {
+        if a.len() == 1 {
+            let text = dom_string(a.get(0))?;
+            let selector = text.trim().strip_prefix("selector(").and_then(|t| t.strip_suffix(')'));
+            if let Some(selector) = selector {
+                return Ok(s.boolean(lp_dom::cssom::normalize_selector(selector, &Vec::new()).is_some()));
+            }
+        }
         // Syntax-level check only: property names and values are accepted.
         let ok = if a.len() >= 2 {
             !dom_string(a.get(0))?.is_empty()

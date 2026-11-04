@@ -1,12 +1,16 @@
 //! `CSSStyleDeclaration` for inline styles (`element.style`) backed by the
-//! `style` attribute, and a minimal `CSSStyleSheet` for `<style>`/`<link>`.
+//! `style` attribute, and `CSSStyleSheet` for `<style>`/`<link>`, whose rules
+//! are parsed from the sheet text when a script first asks for them.
 //!
 //! Shorthand expansion (e.g. `margin` -> `margin-top`) is not modelled:
 //! declarations are kept as written. Computed styles come from lp-dom's style
 //! engine via `getComputedStyle`.
 
-use std::rc::Rc;
+use std::cell::{Cell, RefCell};
+use std::rc::{Rc, Weak};
+use std::sync::atomic::{AtomicU64, Ordering};
 
+use lp_dom::cssom::{normalize_selector, parse_rules, Namespaces, ParsedRule};
 use lp_dom::NodeId;
 use lp_js::{ClassDef, IdentityKey, JsClass, JsError, JsResult, NoParent, Object, Scope, Value};
 
@@ -256,6 +260,357 @@ pub fn inline_style<'s>(s: &Scope<'s>, page: &PageDom, id: NodeId) -> JsResult<O
 
 // ----- stylesheets ------------------------------------------------------------
 
+/// A sheet's CSSOM rules, parsed from its text on first use. Holds no JS
+/// references. `source` is the text the rules came from: a `<style>` whose text
+/// no longer matches is reparsed, which drops any CSSOM edits, as HTML does.
+pub struct SheetModel {
+    source: RefCell<String>,
+    edited: Cell<bool>,
+    list: RuleList,
+    namespaces: RefCell<Namespaces>,
+    /// `Dom::version` at the last source check: unchanged means nothing to compare.
+    checked: Cell<u64>,
+}
+
+impl SheetModel {
+    /// CSSOM edits replaced the text the style engine reads for this sheet.
+    pub(crate) fn edited(&self) -> bool {
+        self.edited.get()
+    }
+}
+
+#[derive(Default)]
+struct RuleList {
+    rules: RefCell<Vec<Rc<RuleNode>>>,
+    /// Bumped on every change; the JS array is rebuilt when it differs.
+    generation: Cell<u32>,
+}
+
+impl RuleList {
+    fn replace(&self, rules: Vec<Rc<RuleNode>>) {
+        *self.rules.borrow_mut() = rules;
+        self.generation.set(self.generation.get().wrapping_add(1));
+    }
+}
+
+enum RuleKind {
+    Style { selector: RefCell<String>, block: String },
+    Group { name: String, condition: String, list: RuleList },
+    Other { rule_type: u16, text: String },
+}
+
+struct RuleNode {
+    identity: IdentityKey,
+    kind: RuleKind,
+    parent: Weak<RuleNode>,
+}
+
+impl RuleNode {
+    fn new(parsed: ParsedRule, parent: Weak<RuleNode>) -> Rc<RuleNode> {
+        static NEXT_RULE: AtomicU64 = AtomicU64::new(1);
+        let identity = IdentityKey(1 << 56, NEXT_RULE.fetch_add(1, Ordering::Relaxed));
+        Rc::new_cyclic(|me| {
+            let kind = match parsed {
+                ParsedRule::Style { selector, block } => RuleKind::Style { selector: RefCell::new(selector), block },
+                ParsedRule::Group { name, condition, rules } => {
+                    let list = RuleList::default();
+                    list.replace(rules.into_iter().map(|r| RuleNode::new(r, me.clone())).collect());
+                    RuleKind::Group { name, condition, list }
+                }
+                ParsedRule::Other { rule_type, text } => RuleKind::Other { rule_type, text },
+            };
+            RuleNode { identity, kind, parent }
+        })
+    }
+
+    /// The text given to the style engine: blocks stay as written.
+    fn source_text(&self) -> String {
+        match &self.kind {
+            RuleKind::Style { selector, block } => format!("{} {{{block}}}", selector.borrow()),
+            RuleKind::Group { name, condition, list } => {
+                let body = list.rules.borrow().iter().map(|r| r.source_text()).collect::<Vec<_>>().join("\n");
+                format!("@{name} {condition} {{\n{body}\n}}")
+            }
+            RuleKind::Other { text, .. } => text.clone(),
+        }
+    }
+
+    fn css_text(&self) -> String {
+        match &self.kind {
+            RuleKind::Style { selector, block } => {
+                let decls = serialize_declarations(&parse_declarations(block));
+                if decls.is_empty() {
+                    format!("{} {{ }}", selector.borrow())
+                } else {
+                    format!("{} {{ {decls} }}", selector.borrow())
+                }
+            }
+            RuleKind::Group { name, condition, list } => {
+                let mut out = format!("@{name} {condition} {{\n");
+                for rule in list.rules.borrow().iter() {
+                    out.push_str("  ");
+                    out.push_str(&rule.css_text());
+                    out.push('\n');
+                }
+                out.push('}');
+                out
+            }
+            RuleKind::Other { text, .. } => text.clone(),
+        }
+    }
+}
+
+fn sheet_source(page: &PageDom, owner: NodeId) -> String {
+    let dom = page.dom.borrow();
+    if dom.element(owner).is_ok_and(|e| *e.local_name() == *"style") {
+        return dom.text_content(owner).ok().flatten().unwrap_or_default();
+    }
+    page.layout().style().sheet_text(owner).unwrap_or_default().to_owned()
+}
+
+fn parsed_nodes(text: &str, namespaces: &mut Namespaces) -> Vec<Rc<RuleNode>> {
+    parse_rules(text, namespaces).into_iter().map(|r| RuleNode::new(r, Weak::new())).collect()
+}
+
+/// The sheet's rules, parsed or reparsed if its text changed.
+fn sheet_model(page: &PageDom, owner: NodeId) -> Rc<SheetModel> {
+    let version = page.dom.borrow().version();
+    let existing = page.sheet_models.borrow().get(&owner).cloned();
+    if let Some(model) = existing.as_ref().filter(|m| m.checked.get() == version) {
+        return model.clone();
+    }
+    let source = sheet_source(page, owner);
+    let model = existing.unwrap_or_else(|| {
+        let model = Rc::new(SheetModel {
+            // Never equal to a real source, so the first use parses.
+            source: RefCell::new("\0".into()),
+            edited: Cell::new(false),
+            list: RuleList::default(),
+            namespaces: RefCell::default(),
+            checked: Cell::new(version),
+        });
+        page.sheet_models.borrow_mut().insert(owner, model.clone());
+        model
+    });
+    model.checked.set(version);
+    if *model.source.borrow() != source {
+        let mut namespaces = Vec::new();
+        model.list.replace(parsed_nodes(&source, &mut namespaces));
+        *model.namespaces.borrow_mut() = namespaces;
+        if model.edited.replace(false) {
+            page.set_style_element_sheet(owner);
+        }
+        *model.source.borrow_mut() = source;
+    }
+    model
+}
+
+/// A CSSOM edit: the style engine reads the rules' text from now on.
+fn commit_edit(page: &PageDom, owner: NodeId, model: &SheetModel) {
+    let text = model.list.rules.borrow().iter().map(|r| r.source_text()).collect::<Vec<_>>().join("\n");
+    page.set_stylesheet_text(owner, &text);
+    model.edited.set(true);
+    if !page.dom.borrow().element(owner).is_ok_and(|e| *e.local_name() == *"style") {
+        *model.source.borrow_mut() = text;
+    }
+}
+
+fn insert_into(
+    list: &RuleList,
+    namespaces: &Namespaces,
+    parent: Weak<RuleNode>,
+    rule: &str,
+    index: usize,
+) -> JsResult<()> {
+    let mut scoped = namespaces.clone();
+    let mut parsed = parse_rules(rule, &mut scoped);
+    let invalid = || JsError::dom("SyntaxError", format!("Failed to parse the rule '{rule}'."));
+    if parsed.len() != 1 {
+        return Err(invalid());
+    }
+    if index > list.rules.borrow().len() {
+        return Err(JsError::dom("IndexSizeError", "The index provided is larger than the number of rules."));
+    }
+    let node = RuleNode::new(parsed.pop().ok_or_else(invalid)?, parent);
+    let mut rules = list.rules.borrow().clone();
+    rules.insert(index, node);
+    list.replace(rules);
+    Ok(())
+}
+
+fn delete_from(list: &RuleList, index: usize) -> JsResult<()> {
+    let mut rules = list.rules.borrow().clone();
+    if index >= rules.len() {
+        return Err(JsError::dom("IndexSizeError", "The index provided is outside the rule list."));
+    }
+    rules.remove(index);
+    list.replace(rules);
+    Ok(())
+}
+
+const RULES: &str = "__lpCssRules";
+const GENERATION: &str = "__lpCssRulesGeneration";
+
+/// The list as a JS array kept on its holder, so `cssRules` stays the same live
+/// object and rules keep their identity. Rebuilt only after a change.
+fn rules_array<'s>(
+    s: &Scope<'s>,
+    holder: Option<Object<'s>>,
+    list: &RuleList,
+    owner: &NodeHold,
+) -> JsResult<Value<'s>> {
+    let generation = list.generation.get();
+    let mut array = None;
+    if let Some(holder) = holder {
+        array = s.get_hidden(holder, RULES)?.and_then(|v| v.as_object());
+        if array.is_some() {
+            let current = s.get_hidden(holder, GENERATION)?.and_then(|v| v.to_number().ok());
+            if current == Some(generation as f64) {
+                return Ok(array.map_or(s.undefined(), |a| a.value()));
+            }
+        }
+    }
+    let array = match array {
+        Some(array) => array,
+        None => s.array(&[])?,
+    };
+    if let Some(holder) = holder {
+        s.set_hidden(holder, RULES, array.value())?;
+        s.set_hidden(holder, GENERATION, s.number(generation as f64))?;
+    }
+    let rules = list.rules.borrow().clone();
+    array.set("length", s.number(0.0))?;
+    for (i, rule) in rules.iter().enumerate() {
+        let wrapper = rule_wrapper(s, rule, owner)?;
+        array.set_index(i as u32, wrapper.value())?;
+    }
+    Ok(array.value())
+}
+
+/// Keeps a list a script already holds current after an edit.
+fn sync_rules(s: &Scope<'_>, key: IdentityKey, list: &RuleList, owner: &NodeHold) -> JsResult<()> {
+    let Some(holder) = s.lookup_identity(key) else { return Ok(()) };
+    if s.get_hidden(holder, RULES)?.is_some() {
+        rules_array(s, Some(holder), list, owner)?;
+    }
+    Ok(())
+}
+
+fn rule_wrapper<'s>(s: &Scope<'s>, rule: &Rc<RuleNode>, owner: &NodeHold) -> JsResult<Object<'s>> {
+    if let Some(o) = s.lookup_identity(rule.identity) {
+        return Ok(o);
+    }
+    let page = owner.page.clone();
+    let data = RuleData { owner: NodeHold::new(&page, owner.id)?, node: rule.clone() };
+    match rule.kind {
+        RuleKind::Style { .. } => s.wrap::<CssStyleRule>(data, Some(rule.identity)),
+        RuleKind::Group { .. } => s.wrap::<CssGroupRule>(data, Some(rule.identity)),
+        RuleKind::Other { .. } => s.wrap::<CssOtherRule>(data, Some(rule.identity)),
+    }
+}
+
+fn sheet_key(page: &PageDom, owner: NodeId) -> IdentityKey {
+    let base = page.node_identity(owner);
+    IdentityKey(base.0 | (1 << 61) | (23 << 48), base.1)
+}
+
+pub struct RuleData {
+    owner: NodeHold,
+    node: Rc<RuleNode>,
+}
+
+fn define_rule<C: JsClass<Data = RuleData>>(def: &mut ClassDef<C>) {
+    def.getter("type", |s, r| {
+        Ok(s.number(match &r.node.kind {
+            RuleKind::Style { .. } => 1.0,
+            RuleKind::Group { name, .. } if name == "media" => 4.0,
+            RuleKind::Group { .. } => 12.0,
+            RuleKind::Other { rule_type, .. } => f64::from(*rule_type),
+        }))
+    });
+    def.getter("cssText", |s, r| Ok(s.string(&r.node.css_text())));
+    def.getter("parentRule", |s, r| match r.node.parent.upgrade() {
+        Some(parent) => Ok(rule_wrapper(s, &parent, &r.owner)?.value()),
+        None => Ok(s.null()),
+    });
+    def.getter("parentStyleSheet", |s, r| Ok(sheet_wrapper(s, &r.owner.page, r.owner.id)?.value()));
+}
+
+pub struct CssStyleRule;
+impl JsClass for CssStyleRule {
+    const NAME: &'static str = "CSSStyleRule";
+    type Data = RuleData;
+    type Parent = NoParent;
+    fn define(def: &mut ClassDef<Self>) {
+        define_rule(def);
+        def.accessor(
+            "selectorText",
+            |s, r| match &r.node.kind {
+                RuleKind::Style { selector, .. } => Ok(s.string(&selector.borrow())),
+                _ => Ok(s.undefined()),
+            },
+            |_s, r, v| {
+                let text = dom_string(v)?;
+                let model = sheet_model(&r.owner.page, r.owner.id);
+                let normalized = normalize_selector(&text, &model.namespaces.borrow());
+                // An invalid selector leaves the rule unchanged.
+                if let (Some(normalized), RuleKind::Style { selector, .. }) = (normalized, &r.node.kind) {
+                    *selector.borrow_mut() = normalized;
+                    commit_edit(&r.owner.page, r.owner.id, &model);
+                }
+                Ok(())
+            },
+        );
+    }
+}
+
+pub struct CssGroupRule;
+impl JsClass for CssGroupRule {
+    const NAME: &'static str = "CSSGroupingRule";
+    type Data = RuleData;
+    type Parent = NoParent;
+    fn define(def: &mut ClassDef<Self>) {
+        define_rule(def);
+        def.getter("conditionText", |s, r| match &r.node.kind {
+            RuleKind::Group { condition, .. } => Ok(s.string(condition)),
+            _ => Ok(s.undefined()),
+        });
+        def.getter("cssRules", |s, r| {
+            let RuleKind::Group { list, .. } = &r.node.kind else { return Ok(s.undefined()) };
+            rules_array(s, s.lookup_identity(r.node.identity), list, &r.owner)
+        });
+        def.method("insertRule", 1, |s, r, a| {
+            let rule = arg_string(&a, 0, "CSSGroupingRule.insertRule")?;
+            let index = if a.get(1).is_undefined() { 0 } else { to_u32(a.get(1))? as usize };
+            let RuleKind::Group { list, .. } = &r.node.kind else { return Ok(s.undefined()) };
+            let model = sheet_model(&r.owner.page, r.owner.id);
+            let namespaces = model.namespaces.borrow().clone();
+            insert_into(list, &namespaces, Rc::downgrade(&r.node), &rule, index)?;
+            commit_edit(&r.owner.page, r.owner.id, &model);
+            sync_rules(s, r.node.identity, list, &r.owner)?;
+            Ok(s.number(index as f64))
+        });
+        def.method("deleteRule", 1, |s, r, a| {
+            let index = to_u32(a.get(0))? as usize;
+            let RuleKind::Group { list, .. } = &r.node.kind else { return Ok(s.undefined()) };
+            delete_from(list, index)?;
+            commit_edit(&r.owner.page, r.owner.id, &sheet_model(&r.owner.page, r.owner.id));
+            sync_rules(s, r.node.identity, list, &r.owner)?;
+            Ok(s.undefined())
+        });
+    }
+}
+
+pub struct CssOtherRule;
+impl JsClass for CssOtherRule {
+    const NAME: &'static str = "CSSRule";
+    type Data = RuleData;
+    type Parent = NoParent;
+    fn define(def: &mut ClassDef<Self>) {
+        define_rule(def);
+    }
+}
+
 pub struct SheetData {
     owner: NodeHold,
 }
@@ -281,45 +636,46 @@ impl JsClass for CssStyleSheet {
         def.method("insertRule", 1, |s, sh, a| {
             let rule = arg_string(&a, 0, "CSSStyleSheet.insertRule")?;
             let index = if a.get(1).is_undefined() { 0 } else { to_u32(a.get(1))? as usize };
-            let mut rules = sh.owner.page.sheet_rules(sh.owner.id);
-            if index > rules.len() {
-                return Err(JsError::dom("IndexSizeError", "The index provided is larger than the number of rules."));
-            }
-            if !rule.contains('{') && !rule.trim_start().starts_with('@') {
-                return Err(JsError::dom("SyntaxError", format!("Failed to parse the rule '{rule}'.")));
-            }
-            rules.insert(index, rule);
-            sh.owner.page.set_sheet_rules(sh.owner.id, rules);
+            let model = sheet_model(&sh.owner.page, sh.owner.id);
+            let namespaces = model.namespaces.borrow().clone();
+            insert_into(&model.list, &namespaces, Weak::new(), &rule, index)?;
+            commit_edit(&sh.owner.page, sh.owner.id, &model);
+            sync_rules(s, sheet_key(&sh.owner.page, sh.owner.id), &model.list, &sh.owner)?;
             Ok(s.number(index as f64))
         });
         def.method("deleteRule", 1, |s, sh, a| {
             let index = to_u32(a.get(0))? as usize;
-            let mut rules = sh.owner.page.sheet_rules(sh.owner.id);
-            if index >= rules.len() {
-                return Err(JsError::dom("IndexSizeError", "The index provided is outside the rule list."));
-            }
-            rules.remove(index);
-            sh.owner.page.set_sheet_rules(sh.owner.id, rules);
+            let model = sheet_model(&sh.owner.page, sh.owner.id);
+            delete_from(&model.list, index)?;
+            commit_edit(&sh.owner.page, sh.owner.id, &model);
+            sync_rules(s, sheet_key(&sh.owner.page, sh.owner.id), &model.list, &sh.owner)?;
             Ok(s.undefined())
         });
         def.method("replaceSync", 1, |s, sh, a| {
             let text = arg_string(&a, 0, "CSSStyleSheet.replaceSync")?;
-            sh.owner.page.set_sheet_rules(sh.owner.id, vec![text]);
+            let model = sheet_model(&sh.owner.page, sh.owner.id);
+            let mut namespaces = Vec::new();
+            model.list.replace(parsed_nodes(&text, &mut namespaces));
+            *model.namespaces.borrow_mut() = namespaces;
+            commit_edit(&sh.owner.page, sh.owner.id, &model);
+            sync_rules(s, sheet_key(&sh.owner.page, sh.owner.id), &model.list, &sh.owner)?;
             Ok(s.undefined())
         });
     }
 }
 
 fn rules_value<'s>(s: &Scope<'s>, sh: &SheetData) -> JsResult<Value<'s>> {
-    let rules = sh.owner.page.sheet_rules(sh.owner.id);
-    let mut vals = lp_js::RootedVec::new();
-    for r in &rules {
-        let o = s.object();
-        o.set("cssText", s.string(r))?;
-        o.set("type", s.number(1.0))?;
-        vals.push(s, o.value());
+    let model = sheet_model(&sh.owner.page, sh.owner.id);
+    let key = sheet_key(&sh.owner.page, sh.owner.id);
+    rules_array(s, s.lookup_identity(key), &model.list, &sh.owner)
+}
+
+fn sheet_wrapper<'s>(s: &Scope<'s>, page: &Rc<PageDom>, owner: NodeId) -> JsResult<Object<'s>> {
+    let key = sheet_key(page, owner);
+    if let Some(o) = s.lookup_identity(key) {
+        return Ok(o);
     }
-    Ok(s.array(&vals.iter(s).collect::<Vec<_>>())?.value())
+    s.wrap::<CssStyleSheet>(SheetData { owner: NodeHold::new(page, owner)? }, Some(key))
 }
 
 pub(crate) fn element_sheet<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
@@ -339,6 +695,9 @@ pub(crate) fn element_sheet<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'
 pub(crate) fn register(engine: &lp_js::Engine) {
     engine.register::<CssStyleDeclaration>();
     engine.register::<CssStyleSheet>();
+    engine.register::<CssStyleRule>();
+    engine.register::<CssGroupRule>();
+    engine.register::<CssOtherRule>();
 }
 
 #[cfg(test)]
