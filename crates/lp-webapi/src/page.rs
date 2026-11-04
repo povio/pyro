@@ -149,7 +149,7 @@ pub struct PageDom {
     /// `nonce` IDL values, keyed with the content attribute they were set
     /// over: a later attribute change wins, as it updates the internal slot.
     nonces: RefCell<FxHashMap<NodeId, (Option<String>, String)>>,
-    sheet_rules: RefCell<FxHashMap<NodeId, Vec<String>>>,
+    pub(crate) sheet_models: RefCell<FxHashMap<NodeId, Rc<crate::css::SheetModel>>>,
     /// Files selected into `<input type=file>` (CDP DOM.setFileInputFiles).
     pub(crate) files: RefCell<FxHashMap<NodeId, Vec<crate::file::FileEntry>>>,
     /// Faux layout + style engine of the displayed document. Read it with
@@ -423,7 +423,7 @@ impl PageDom {
             space_target: Cell::new(None),
             dialog_returns: RefCell::new(FxHashMap::default()),
             nonces: RefCell::new(FxHashMap::default()),
-            sheet_rules: RefCell::new(FxHashMap::default()),
+            sheet_models: RefCell::new(FxHashMap::default()),
             files: RefCell::new(FxHashMap::default()),
             layout: RefCell::new(lp_dom::layout::Layout::new(document)),
             frame_viewport: RefCell::new(None),
@@ -756,7 +756,7 @@ impl PageDom {
             (ResourceKind::StyleText | ResourceKind::Stylesheet, ResourceReason::Removed) => {
                 style.remove_sheet(ev.node);
             }
-            (ResourceKind::StyleText, _) if !self.sheet_rules.borrow().contains_key(&ev.node) => {
+            (ResourceKind::StyleText, _) if !self.sheet_models.borrow().get(&ev.node).is_some_and(|m| m.edited()) => {
                 style.add_sheet(ev.node, lp_dom::style::SheetSource::StyleElement);
             }
             _ => {}
@@ -1116,14 +1116,9 @@ impl PageDom {
         self.nonces.borrow_mut().insert(el, (attr.map(str::to_owned), value));
     }
 
-    /// CSSOM rules inserted via `insertRule` for a `<style>`/`<link>` owner.
-    pub fn sheet_rules(&self, owner: NodeId) -> Vec<String> {
-        self.sheet_rules.borrow().get(&owner).cloned().unwrap_or_default()
-    }
-    pub(crate) fn set_sheet_rules(&self, owner: NodeId, rules: Vec<String>) {
-        // CSSOM edits replace the sheet text (as upstream does).
-        self.layout.borrow_mut().style_mut().set_sheet_text(owner, &rules.join("\n"));
-        self.sheet_rules.borrow_mut().insert(owner, rules);
+    /// A `<style>` element's sheet is read from the DOM again, after CSSOM edits.
+    pub(crate) fn set_style_element_sheet(&self, owner: NodeId) {
+        self.layout.borrow_mut().style_mut().add_sheet(owner, lp_dom::style::SheetSource::StyleElement);
     }
 
     /// `document.title`: the first `<title>`'s text, whitespace collapsed.

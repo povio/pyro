@@ -184,12 +184,19 @@ impl selectors::parser::SelectorImpl for Impl {
     type PseudoElement = PseudoElement;
 }
 
-struct SelParser;
+/// Holds the `@namespace` declarations in scope; none outside a stylesheet.
+struct SelParser<'n>(&'n [(String, String)]);
 
-impl<'i> selectors::parser::Parser<'i> for SelParser {
+impl<'i> selectors::parser::Parser<'i> for SelParser<'_> {
     type Impl = Impl;
     type Error = SelectorParseErrorKind;
 
+    fn default_namespace(&self) -> Option<CssNamespace> {
+        self.0.iter().rev().find(|(p, _)| p.is_empty()).map(|(_, url)| CssNamespace::from(url.as_str()))
+    }
+    fn namespace_for_prefix(&self, prefix: &CssLocalName) -> Option<CssNamespace> {
+        self.0.iter().rev().find(|(p, _)| **p == *prefix.0).map(|(_, url)| CssNamespace::from(url.as_str()))
+    }
     fn parse_is_and_where(&self) -> bool {
         true
     }
@@ -252,8 +259,13 @@ pub type Selectors = SelectorList<Impl>;
 
 /// Parses a selector list; invalid syntax maps to a `SyntaxError` DOMException.
 pub fn parse_selectors(text: &str) -> DomResult<Selectors> {
+    parse_selectors_in(text, &[])
+}
+
+/// [`parse_selectors`] with the `@namespace` declarations of a stylesheet.
+pub fn parse_selectors_in(text: &str, namespaces: &[(String, String)]) -> DomResult<Selectors> {
     let mut parser = CssParser::new(text);
-    SelectorList::parse(&SelParser, &mut parser, ParseRelative::No)
+    SelectorList::parse(&SelParser(namespaces), &mut parser, ParseRelative::No)
         .map_err(|_| DomError::new(DomErrorKind::Syntax, "is not a valid selector"))
 }
 
