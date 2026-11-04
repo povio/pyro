@@ -25,11 +25,25 @@ jobs:
         with:
           node-version: '24'
           package-manager-cache: false
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal --no-self-update
       - run: node --test scripts/npm/release.test.mjs
-      - id: release
+      - name: Stamp release versions from the Git tag
+        id: release
         env:
           RELEASE_TAG: ${{ github.ref_name }}
-        run: node scripts/npm/release.mjs "$RELEASE_TAG"
+        run: node scripts/npm/release.mjs "$RELEASE_TAG" --write
+      - name: Update workspace versions in the Rust lockfile
+        run: cargo +stable update --workspace
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-manifests
+          path: |
+            Cargo.toml
+            Cargo.lock
+            packages/lightning-panda/package.json
+          if-no-files-found: error
+          retention-days: 7
 
   build:
     needs: release
@@ -50,6 +64,10 @@ jobs:
       MACOSX_DEPLOYMENT_TARGET: '14.0'
     steps:
       - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-manifests
+          path: .
       - name: Install Rust
         run: rustup toolchain install stable --profile minimal --no-self-update
       - name: Build browser with rendering
@@ -82,6 +100,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-manifests
+          path: .
       - uses: actions/setup-node@v6
         with:
           node-version: '24'
@@ -102,7 +124,7 @@ jobs:
         run: |
           mkdir -p ../../npm-package
           npm pack --pack-destination ../../npm-package
-          bun run test:package
+          bun test test/binary.test.ts
       - name: Verify client import on Linux
         run: |
           mkdir "$RUNNER_TEMP/npm-client"

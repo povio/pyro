@@ -72,28 +72,40 @@ Tags must include `v`. Other prerelease labels, build metadata and malformed tag
 fail validation before any browser build or publication. Publishing a stable
 version does not move `next`; that tag continues pointing at the last RC.
 
-1. Set the **same complete version**, including any `-rc.N` suffix, in the
-   root `Cargo.toml` (`workspace.package.version`) and
-   `packages/lightning-panda/package.json`.
-2. Run `cargo check -p lightningpanda` from the repository root to update
-   workspace package versions in `Cargo.lock`; commit the lockfile with both
-   manifests. The workflow builds with `--locked`.
-3. Validate locally, for example:
-   `node scripts/npm/release.mjs v0.0.18-rc.1`.
-4. Commit and push the release changes, then create and push that tag:
+The Git tag is the source of truth. **No version edits are needed** in
+`package.json`, `Cargo.toml`, or `Cargo.lock` before a GitHub release.
+Commit and push the code you want to release, then create and push the tag:
 
-   ```sh
-   git tag v0.0.18-rc.1
-   git push origin v0.0.18-rc.1
-   ```
+```sh
+git tag v0.0.18-rc.1
+git push origin v0.0.18-rc.1
+```
 
-Pushing the tag starts the publishing workflow. The tag, npm manifest and Cargo
-manifest must match exactly; the workflow does not silently rewrite versions.
+Pushing the tag starts the publishing workflow. CI writes the version (without
+the leading `v`, including any RC suffix) into the npm manifest and Cargo
+workspace manifest, then runs `cargo update --workspace` to refresh workspace
+versions in `Cargo.lock` while preserving locked external dependencies. Both
+native builds and npm packaging use the same generated manifests. Native builds
+still run with `--locked`, and the browser's reported version is checked against
+the tag. These version edits stay in CI; they are not committed back to the branch.
+
 Use a new version for each publication: npm versions cannot be reused.
 If a job fails before publication, re-run the failed workflow jobs after fixing
 external configuration, or create a new version/tag for source changes.
 
 ## Local package checks
+
+Local `npm publish` uses the version in the local manifest; it does not infer a
+Git tag. To prepare a different version locally without editing manifests by
+hand, run from the repository root **before rebuilding the native binaries**:
+
+```sh
+node scripts/npm/release.mjs v0.0.18-rc.1 --write
+cargo update --workspace
+```
+
+Without `--write`, the release script only validates the tag and prints its
+version and npm dist-tag. It does not change any files.
 
 ```sh
 cd packages/lightning-panda

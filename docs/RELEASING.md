@@ -1,8 +1,11 @@
 # Release packaging
 
 Release assets contain a render-enabled `lightningpanda`, the matching
-`lp-snapshot-compare`, and one identical `lightning-panda` payload. Bump the
-workspace and client versions together before building. Record the source commit,
+`lp-snapshot-compare`, and one identical `lightning-panda` payload. For npm
+releases, the [tag-triggered workflow](NPM_PUBLISHING.md#release-tags) sets all
+versions automatically. For manual archive builds, run
+`node scripts/npm/release.mjs vX.Y.Z --write` and `cargo update --workspace`
+before building. Record the source commit,
 input hashes and validation results; packaging alone is not functional testing.
 
 Publish these six assets for a release version `X.Y.Z`:
