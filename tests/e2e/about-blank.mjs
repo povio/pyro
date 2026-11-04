@@ -280,6 +280,19 @@ const fixture = http.createServer((req, res) => {
       '<iframe name="inline" srcdoc="&lt;p&gt;inline child&lt;/p&gt;"></iframe>');
     return;
   }
+  if (req.url === '/doc-write') {
+    res.writeHead(200, { 'content-type': 'text/html' });
+    res.end('<!doctype html><title>write</title><body><p id=a></p><script>' +
+      'window.seen = []; document.write(\'<p id=b></p><script src="/doc-write.js"><\\/script><p id=c></p>\'); ' +
+      'seen.push("sync:" + !!document.getElementById("b") + !!document.getElementById("ext")); ' +
+      'document.write(\'<p id=d></p>\');</script><p id=e></p>');
+    return;
+  }
+  if (req.url === '/doc-write.js') {
+    res.writeHead(200, { 'content-type': 'text/javascript' });
+    res.end('seen.push("ext"); document.write(\'<p id=ext></p>\'); seen.push("ext:" + !!document.getElementById("ext"));');
+    return;
+  }
   if (req.url === '/checkpoint.css') {
     res.writeHead(200, { 'content-type': 'text/css' });
     res.end('#message { display: none }');
@@ -1022,6 +1035,17 @@ try {
       await old.dispose();
       assert.equal(await sibling.evaluate(() => marker), 23);
       assert.equal(p.frames().length, 2);
+    } finally { await p.close(); }
+  });
+  await check('document.write during parsing and with external scripts', async () => {
+    const p = await context.newPage();
+    try {
+      await p.goto(`${fixtureOrigin}/doc-write`, { timeout: 5000 });
+      assert.deepEqual(await p.evaluate(() => [...document.querySelectorAll('p')].map(el => el.id).join('')), 'abextcde');
+      assert.deepEqual(await p.evaluate(() => seen), ['sync:truefalse', 'ext', 'ext:true']);
+      // setContent writes through document.write: its external scripts run too.
+      await p.setContent(`<script>window.seen = []</script><script src="${fixtureOrigin}/doc-write.js"></script><p id=y></p>`);
+      assert.equal(await p.evaluate(() => [...document.querySelectorAll('p')].map(el => el.id).join('')), 'exty');
     } finally { await p.close(); }
   });
 } finally {

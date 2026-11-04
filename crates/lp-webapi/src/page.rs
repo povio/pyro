@@ -143,6 +143,17 @@ pub struct PageDom {
     pub(crate) script_parser_active: Cell<bool>,
     pub(crate) script_parser_close: Cell<bool>,
     pub(crate) script_nesting: Cell<u32>,
+    /// The network parser, lent by the loader while a script it reached runs:
+    /// that script's `document.write`s parse at its insertion point.
+    pub(crate) network_parser: RefCell<Option<lp_dom::parse::DocumentParser>>,
+    pub(crate) network_parser_lent: Cell<bool>,
+    /// External and module scripts reached in written markup, for the embedder
+    /// to fetch, and the written parser-blocking one tokenizing waits for.
+    pub(crate) written_scripts: RefCell<Vec<NodeId>>,
+    pub(crate) written_pending: Cell<Option<NodeId>>,
+    /// HTML "ignore-destructive-writes counter": a script that is external or
+    /// a module runs, so a write with no insertion point is ignored.
+    pub(crate) ignore_destructive_writes: Cell<u32>,
     /// Control activated by a Space keydown, clicked on the matching keyup.
     pub(crate) space_target: Cell<Option<NodeId>>,
     dialog_returns: RefCell<FxHashMap<NodeId, String>>,
@@ -312,6 +323,14 @@ pub trait PageHooks {
     fn document_closed(&self) -> bool {
         false
     }
+    /// An external or module script was reached in markup written to a
+    /// script-created parser: schedule `PageDom::take_written_scripts` for the
+    /// loader (a blocking one reports through
+    /// `lifecycle::written_script_fetched`). False when the embedder cannot
+    /// load scripts; the write then reports them as unsupported.
+    fn written_script_queued(&self) -> bool {
+        false
+    }
     /// Called without DOM/hook borrows before the inserting native call returns.
     fn iframe_connected(&self, _iframe: NodeId) {}
     /// Removed iframe owners, descendants before ancestors.
@@ -412,6 +431,11 @@ impl PageDom {
             script_parser_active: Cell::new(false),
             script_parser_close: Cell::new(false),
             script_nesting: Cell::new(0),
+            network_parser: RefCell::new(None),
+            network_parser_lent: Cell::new(false),
+            written_scripts: RefCell::new(Vec::new()),
+            written_pending: Cell::new(None),
+            ignore_destructive_writes: Cell::new(0),
             space_target: Cell::new(None),
             dialog_returns: RefCell::new(FxHashMap::default()),
             sheet_rules: RefCell::new(FxHashMap::default()),
@@ -753,6 +777,45 @@ impl PageDom {
     }
     pub fn set_current_script(&self, script: Option<NodeId>) {
         self.current_script.set(script);
+    }
+
+    /// Lends the network parser for one script it reached: the script's
+    /// `document.write`s parse at the insertion point.
+    pub fn lend_network_parser(&self, mut parser: lp_dom::parse::DocumentParser) {
+        parser.open_insertion_point();
+        *self.network_parser.borrow_mut() = Some(parser);
+        self.network_parser_lent.set(true);
+        self.script_nesting.set(self.script_nesting.get() + 1);
+    }
+
+    /// Ends `lend_network_parser` after the script. Once the parser is back
+    /// the loader blocks on written scripts itself (`take_written_scripts`).
+    pub fn reclaim_network_parser(&self) -> Option<lp_dom::parse::DocumentParser> {
+        self.script_nesting.set(self.script_nesting.get() - 1);
+        self.network_parser_lent.set(false);
+        self.written_pending.set(None);
+        let mut parser = self.network_parser.borrow_mut().take()?;
+        parser.close_insertion_point();
+        Some(parser)
+    }
+
+    /// The written parser-blocking script tokenizing waits for.
+    pub fn written_script_pending(&self) -> Option<NodeId> {
+        self.written_pending.get()
+    }
+
+    /// External and module scripts reached in written markup, in order.
+    pub fn take_written_scripts(&self) -> Vec<NodeId> {
+        std::mem::take(&mut *self.written_scripts.borrow_mut())
+    }
+
+    /// Runs `f` as an external or module script: `document.write` without an
+    /// insertion point is ignored meanwhile.
+    pub fn with_destructive_writes_ignored<R>(&self, f: impl FnOnce() -> R) -> R {
+        self.ignore_destructive_writes.set(self.ignore_destructive_writes.get() + 1);
+        let result = f();
+        self.ignore_destructive_writes.set(self.ignore_destructive_writes.get() - 1);
+        result
     }
 
     /// Allocates the Window event-target key for `document`.

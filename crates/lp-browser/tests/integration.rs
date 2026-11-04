@@ -6,6 +6,7 @@ mod bindings;
 mod cache_disabled;
 mod child_frame_network;
 mod child_frames;
+mod document_write;
 mod extra_headers;
 mod fetch;
 mod frame_focus;

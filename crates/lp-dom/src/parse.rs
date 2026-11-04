@@ -314,7 +314,7 @@ pub struct DocumentParser {
     decoded: String,
     /// Bytes held back until 1024 bytes (or EOF) are available for prescan.
     sniff: Vec<u8>,
-    /// Outer input set aside by `begin_nested` (innermost last).
+    /// Outer input set aside by `open_insertion_point` (innermost last).
     saved: Vec<BufferQueue>,
 }
 
@@ -483,26 +483,19 @@ impl DocumentParser {
         self.resume()
     }
 
-    /// `document.write` from a script this parser yielded for: the markup is
-    /// parsed at the insertion point, ahead of the remaining input, which is
-    /// set aside until `end_nested`. Resume on `Script` as usual; once
-    /// `resume` returns `NeedInput`, call `end_nested`.
-    pub fn begin_nested(&mut self, chunk: &str) -> ParseStep {
-        if self.ended {
-            return ParseStep::NeedInput;
-        }
+    /// A script this parser yielded for is about to run: its
+    /// `document.write`s go to an insertion point ahead of the remaining
+    /// input, which is set aside until `close_insertion_point`.
+    pub fn open_insertion_point(&mut self) {
         let nested = BufferQueue::default();
-        if !chunk.is_empty() {
-            nested.push_back(StrTendril::from_slice(chunk));
-        }
         self.input.swap_with(&nested);
         self.saved.push(nested);
-        self.resume()
     }
 
-    /// Restores the input set aside by the matching `begin_nested`; nested
-    /// input the tokenizer did not consume stays in front of it.
-    pub fn end_nested(&mut self) {
+    /// The script finished: restores the input set aside by the matching
+    /// `open_insertion_point`; written input the tokenizer did not consume
+    /// (a written blocking script stopped it) stays in front of it.
+    pub fn close_insertion_point(&mut self) {
         let Some(outer) = self.saved.pop() else { return };
         let mut rest = Vec::new();
         while let Some(chunk) = self.input.pop_front() {
@@ -511,6 +504,13 @@ impl DocumentParser {
         self.input.swap_with(&outer);
         for chunk in rest.into_iter().rev() {
             self.input.push_front(chunk);
+        }
+    }
+
+    /// Queues input without tokenizing: a written blocking script is pending.
+    pub fn push_input(&mut self, chunk: &str) {
+        if !self.ended && !chunk.is_empty() {
+            self.input.push_back(StrTendril::from_slice(chunk));
         }
     }
 
