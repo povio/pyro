@@ -1,0 +1,16 @@
+diff --git a/Source/WTF/wtf/RedBlackTree.h b/Source/WTF/wtf/RedBlackTree.h
+--- a/Source/WTF/wtf/RedBlackTree.h
++++ b/Source/WTF/wtf/RedBlackTree.h
+@@ -286,6 +286,12 @@
+         } else if (y->color() == Black)
+             removeFixup(x, xParent);
+ 
++        // Drop the CheckedPtrs to z's former children. z can outlive them: a timer's
++        // ScheduledTask lives on while another thread holds the timer. Deleting a node that
++        // a stale CheckedPtr still counts scribbles and leaks it, and destroying z then
++        // crashes on the scribbled count.
++        z->reset();
++
+         return z;
+     }
+     
