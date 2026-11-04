@@ -79,7 +79,8 @@ Bodies as streams are described in [Streams](STREAMS.md).
 
 Not implemented: the Request constructor,
 the "response" header guard after construction (later
-`headers.set('set-cookie')` is not filtered), `<base>` URL selection, full MIME parsing for
+`headers.set('set-cookie')` is not filtered), multipart `Response.formData()`
+(urlencoded bodies are parsed; other types reject with TypeError), full MIME parsing for
 response Blob types, service workers and integrity/referrer policy.
 Nonempty integrity/referrer/referrerPolicy and keepalive are explicitly rejected.
 

@@ -130,6 +130,7 @@ pub(crate) enum ReadKind {
     ArrayBuffer,
     Bytes,
     Blob,
+    FormData,
 }
 pub(crate) struct Body {
     wire: Arc<Mutex<Wire>>,
@@ -766,6 +767,15 @@ impl Body {
                     None,
                 )
                 .map(|o| o.value()),
+            ReadKind::FormData => {
+                let mime = self.mime.borrow();
+                let essence = mime.split(';').next().unwrap_or("").trim();
+                if essence.eq_ignore_ascii_case("application/x-www-form-urlencoded") {
+                    crate::form_data::from_urlencoded(s, &bytes)
+                } else {
+                    Err(JsError::Type(format!("Cannot parse a '{essence}' body as FormData")))
+                }
+            }
         };
         match result {
             Ok(value) => {

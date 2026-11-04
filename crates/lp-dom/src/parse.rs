@@ -149,6 +149,7 @@ impl<A: DomAccess> TreeSink for Sink<A> {
     fn create_element(&self, name: QualName, attrs: Vec<Attribute>, flags: ElementFlags) -> u32 {
         let created = self.dom.with(|d| {
             let owner = self.doc_owner(d);
+            d.base_seen |= name.local == local_name!("base");
             let mut el = ElementData::new(name);
             el.attrs =
                 attrs.into_iter().map(|a| crate::node::Attr { name: a.name, value: (&*a.value).into() }).collect();
