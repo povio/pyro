@@ -5867,3 +5867,30 @@ fn resize_observer_input_update_preserves_queued_and_reentrant_callbacks() {
     assert_eq!(eval(&e.main, "seen.join()"), "10,20,30", "a clean input checkpoint must not duplicate delivery");
     e.page.dispose();
 }
+
+#[test]
+fn form_named_access_returns_controls_and_overrides_builtins() {
+    let e = env("<form id=f><input name=n value=1><input id=byid><input name=submit><input type=image name=pic><img name=photo><input type=radio name=r value=a><input type=radio name=r value=b checked></form><input name=outer form=f><input name=other>");
+    let r = &e.main;
+    eval(r, "globalThis.f=document.getElementById('f')");
+    assert_eq!(eval(r, "typeof f.n+':'+f.n.value+':'+(f.byid===document.getElementById('byid'))"), "object:1:true");
+    // Named properties win over builtins, and appear only while a control does.
+    assert_eq!(eval(r, "f.submit.tagName+':'+typeof HTMLFormElement.prototype.submit"), "INPUT:function");
+    assert_eq!(
+        eval(r, "f.outer.name+':'+typeof f.other+':'+typeof f.pic+':'+f.photo.tagName"),
+        "outer:undefined:undefined:IMG"
+    );
+    assert_eq!(eval(r, "'n' in f"), "true");
+    assert_eq!(eval(r, "Object.keys(f).includes('n')"), "false");
+    assert_eq!(eval(r, "f.n.remove();typeof f.n"), "undefined");
+    // Several controls: a live RadioNodeList, one object per name.
+    assert_eq!(
+        eval(r, "f.r instanceof RadioNodeList && f.r instanceof NodeList && f.r===f.r && f.r.length===2"),
+        "true"
+    );
+    assert_eq!(eval(r, "f.r.value"), "b");
+    assert_eq!(eval(r, "f.r.value='a';f.querySelector('[value=a]').checked+':'+f.r.value"), "true:a");
+    assert_eq!(eval(r, "globalThis.rs=f.r;f.r[1].remove();rs.length+':'+(f.r.tagName)"), "1:INPUT");
+    // The same lookup a handler's scope chain performs.
+    assert_eq!(eval(r, "with(f){typeof n+':'+byid.tagName+':'+method}"), "undefined:INPUT:get");
+}

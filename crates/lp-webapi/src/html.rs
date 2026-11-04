@@ -1256,6 +1256,8 @@ simple_class!(HtmlFormElement, "HTMLFormElement", HtmlElement, |def| {
         let v = c.get_index(i)?;
         Ok(if v.is_undefined() { None } else { Some(v) })
     });
+    // [LegacyOverrideBuiltIns]: a control named "submit" shadows the method.
+    def.named(true, |s, n, name| collections::form_named(s, n.page(), n.id, name));
     def.method("submit", 0, |s, n, _a| {
         crate::input::submit_form(n.page(), n.id, None, false);
         Ok(s.undefined())
