@@ -547,6 +547,39 @@ impl FrameHost {
             a.origin == b.origin
         }
     }
+    /// The iframe a navigation `target` from `source` names, if `source` may
+    /// navigate it: its own subtree first, then same-origin frames of the page
+    /// (a simplified "find a navigable by target name").
+    pub fn named_frame(&self, source: FrameKey, name: &str) -> Option<FrameKey> {
+        if ["", "_blank", "_self", "_parent", "_top"].iter().any(|k| name.eq_ignore_ascii_case(k)) {
+            return None;
+        }
+        let named: Vec<_> = self
+            .children
+            .borrow()
+            .iter()
+            .filter(|(_, d)| d.main_frame.name == name)
+            .map(|(id, _)| FrameKey { page: self.page, child: Some(*id) })
+            .collect();
+        let in_subtree = |key: FrameKey| {
+            let mut current = key;
+            loop {
+                if current == source {
+                    return true;
+                }
+                let parent = self.parent_key(current);
+                if parent == current {
+                    return false;
+                }
+                current = parent;
+            }
+        };
+        named
+            .iter()
+            .find(|&&key| in_subtree(key))
+            .or_else(|| named.iter().find(|&&key| self.same_origin(source, key)))
+            .copied()
+    }
     fn parent_key(&self, key: FrameKey) -> FrameKey {
         self.frame(key).and_then(|f| f.parent).and_then(|id| self.key(&id)).unwrap_or(key)
     }

@@ -17,5 +17,11 @@
 - As a `fetch`/`Response`/`XMLHttpRequest.send` body it is serialized as
   `multipart/form-data` with a generated boundary in the Content-Type.
 
+Form submission encodes in the form's encoding: the first usable
+`accept-charset` label, else the document's encoding, with UTF-16 and
+`replacement` mapped to UTF-8. Characters the encoding cannot represent are sent
+as `&#NNN;` and a hidden `_charset_` control reports the encoding's name.
+`FormData` bodies passed to `fetch`/XHR stay UTF-8.
+
 Not implemented: the `formdata` event on form construction and
 `File`-name/Content-Type escaping beyond quoting `"`, CR and LF.
