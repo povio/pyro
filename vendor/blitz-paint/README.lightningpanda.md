@@ -17,6 +17,7 @@ This is the published MIT/Apache-2.0 `blitz-paint` crate from upstream commit
   uses it for source text (ligatures), link areas and tags. `paint_scene`/`paint_scene_with`
   record nothing.
 
+- `src/render.rs`: `overflow` on `body` does not clip when it is the viewport's.
 - `src/render.rs`, `src/text.rs`: vertical writing modes. The inline layout stays logical (x inline,
   y block), and each of its lines is painted through a quarter turn (`draw_vertical_inline_layout`):
   backgrounds, decorations and selection go through the same transform, so `TextRun` bounds, link

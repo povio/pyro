@@ -82,10 +82,11 @@ node bench/scripts/cdp-perf-compare.mjs old.json new.json    # two separate runs
   `allow-jit`, and the run is refused when base and head are identical (SHA-256, or `__text` and both `__const`
   sections on macOS) although files the build reads differ. Integration tests and Markdown do not count as such files.
 - **`--auto-filter`** picks the scenarios from the changed paths, taking the union: `lp-render` and `screenshot.rs`
-  select `page` and `lp` (and remind you to run `bench/pdf/run.mjs`, since cdp-perf does not measure printing);
+  select `page`, `lp` and `pdf` (and remind you to run `bench/pdf/run.mjs`, since cdp-perf measures only paper-cut
+  printing);
   `lp-webapi`, `lp-js` and `lp-jsc-sys` select `runtime`, `dom` and `lp`; `lp-net` selects `network` and
   `throughput`; anything else, including the `lp-cdp` engine and `vendor/`, selects
-  `^(rtt|throughput|runtime|dom|page|target|network|lp|tos)\.`. Documentation and integration tests alone skip the run.
+  `^(rtt|throughput|runtime|dom|page|target|network|lp|tos|pdf)\.`. Documentation and integration tests alone skip the run.
 - **Shared machine.** It refuses to start while any cargo build is running and lists each with its owner (this
   repository or another project) and directory; `--force` overrides. It then waits for `/tmp/lp-bench.lock`, held
   until it exits. If a run was killed outright, `rmdir` the lock by hand.
@@ -135,6 +136,11 @@ harness only):
 - **targets**: context + target create, attach, `Page`/`Runtime.enable`, close, dispose, with per-step laps.
 - **network**: 20 parallel `fetch()` with `Network.enable`; one `Fetch.requestPaused` → `fulfillRequest`.
 - **input**: `Input.dispatchMouseEvent` clicks and `Input.dispatchKeyEvent` typing, verified in the page.
+- **pdf**: `Page.printToPDF` of a document without `.pz-page` elements, which is cut into pages. `pdf.paginate.text`
+  is about 20 Letter pages of plain lines, `pdf.paginate.avoid` about 20 pages of `break-inside: avoid` boxes, and
+  `pdf.paginate.shrink` a 1200 px wide document that takes a second layout to shrink to fit. The content is set once;
+  a sample is one print, checked by its page count (within 2, so versions with other pagination rules compare). `bench/pdf/run.mjs` measures the other path: its ToS documents
+  have `.pz-page`, which skips pagination altogether.
 - **webview** (`Bun.WebView`, needs `bun`): open + navigate + close, `navigate` of each fixture page,
   `evaluate`, raw `view.cdp()`, selector `click` (with its actionability checks), `type`, and a whole form
   test flow with laps.

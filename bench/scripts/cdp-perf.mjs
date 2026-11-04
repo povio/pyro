@@ -257,6 +257,56 @@ async function objectId(cdp, sessionId, expression) {
 const BIG_FN = `function(a) { ${Array.from({ length: 2000 }, (_, i) => `const v${i} = ${i};`).join('\n')} return a + 1; }`;
 
 // ---------- scenarios ----------
+// Page.printToPDF cuts a document without `.pz-page` elements into pages (`paint_paper` in lp-render): layout at
+// the paper's width, shrink to fit, `Breaks::of`, one cut per page. bench/pdf's ToS documents have `.pz-page` and
+// never get here. The content is set once per scenario; the sample is the print alone, and checks the page count roughly.
+const PAPER_CUT_WORDS = (n) => Array.from({ length: n }, (_, i) => `word${i}`).join(' ');
+const PAPER_CUT_BOX = (i) => `<div style="break-inside:avoid;height:${60 + (i % 7) * 37}px;margin-bottom:12px">box ${i}<br>${PAPER_CUT_WORDS(12)}</div>`;
+const PAPER_CUT = {
+  text: {
+    what: 'paper-cut print of about 20 Letter pages of plain lines: every line a span for the widows and orphans check',
+    html: `<div style="width:400px">${PAPER_CUT_WORDS(4950)}</div>`,
+    pages: 20,
+  },
+  avoid: {
+    what: 'paper-cut print of about 20 Letter pages of break-inside:avoid boxes of mixed height',
+    html: Array.from({ length: 94 }, (_, i) => PAPER_CUT_BOX(i)).join(''),
+    pages: 20,
+  },
+  shrink: {
+    what: 'paper-cut print of about 11 Letter pages of a 1200 px wide document: overflow at the paper width, so one more layout, shrunk to 2/3',
+    html: `<div style="width:1200px">${PAPER_CUT_WORDS(9750)}</div>`,
+    pages: 11,
+  },
+};
+const paperCutScenario = ([key, { what, html, pages }]) => ({
+  name: `pdf.paginate.${key}`,
+  group: 'pdf',
+  what,
+  iterations: 12,
+  setup: async (env) => {
+    const page = await newPage(env.cdp);
+    const sid = page.sessionId;
+    const { frameTree } = await env.cdp.send('Page.getFrameTree', {}, sid);
+    await env.cdp.send(
+      'Page.setDocumentContent',
+      { frameId: frameTree.frame.id, html: `<!doctype html><body style="margin:0;font:16px/20px Arial">${html}` },
+      sid,
+    );
+    return { page };
+  },
+  run: async (s, i, env) => {
+    const { data } = await env.cdp.send(
+      'Page.printToPDF',
+      { paperWidth: 8.5, paperHeight: 11, marginTop: 0.4, marginBottom: 0.4, marginLeft: 0.4, marginRight: 0.4 },
+      s.page.sessionId,
+    );
+    const got = Buffer.from(data, 'base64').toString('latin1').match(/\/Type\s*\/Page\b/g)?.length;
+    // Not exact: comparing versions is the point, and pagination rules change the count.
+    assert(Math.abs(got - pages) <= 2, `${got} pages, not about ${pages}`);
+  },
+});
+
 // Each scenario: name, group, what it measures, iterations (before --scale), optional opsPerSample,
 // setup(env) -> state, run(state, i) -> optional phase timings, check(state) after all iterations.
 // env = { wsUrl, site, cdp (one browser-level connection, raw-CDP scenarios only), playwright, WebView }.
@@ -596,6 +646,7 @@ const SCENARIOS = [
       assert(len === s.n, `typed ${len} != ${s.n}`);
     },
   },
+  ...Object.entries(PAPER_CUT).map(paperCutScenario),
 
   // ---- Bun.WebView (Chrome backend over CDP; needs `bun`, which this script then runs under) ----
   {

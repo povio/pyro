@@ -226,20 +226,74 @@ pub fn chrome_page_geometry(paper_in: (f64, f64), margins_in: [f64; 4]) -> Optio
     Some((paper, margins))
 }
 
-/// The content box [`chrome_page_geometry`] leaves (CSS px), through dots at
-/// 300 dpi. Pages and the width overflow is measured against are this divided
-/// by the scale and rounded up to whole CSS px. Measured on Chrome 156: Letter
-/// with 0.25 in margins, 756 pt of height (1008 px), holds 1008 px, but A4 with
-/// 0.4 in, 786 pt (1048 px), holds 1049: its 842 pt is not a whole number of
-/// dots, and what the subtraction leaves of a whole number rounds up. This
-/// arithmetic is an inference: it gives Chrome's size in 381 of 396 measured
-/// combinations of paper, margin and scale; the other 15 are whole numbers at
-/// scale 0.8 or 1.5 that it takes 1 px too far.
-pub fn chrome_page_area(paper_in: (f64, f64), margins_in: [f64; 4]) -> (f64, f64) {
-    let dots = |pt: f64| pt * 300.0 / 72.0;
-    let [top, right, bottom, left] = margins_in.map(|m| (m * 72.0).floor());
-    let area = |paper: f64, a: f64, b: f64| (dots((paper * 72.0).ceil()) - dots(a) - dots(b)) * 96.0 / 300.0;
-    (area(paper_in.0, left, right), area(paper_in.1, top, bottom))
+/// Blink's layout units per CSS px.
+const UNITS_PER_PX: f64 = 64.0;
+
+fn whole_px_up(units: i64) -> f64 {
+    (units as f64 / UNITS_PER_PX).ceil()
+}
+
+/// Paper and margins as Chrome's print settings hold them, whole points, for
+/// [`PageArea::holds`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PageArea {
+    paper: (f32, f32),
+    /// Top, right, bottom, left.
+    margins: [f32; 4],
+}
+
+/// The [`PageArea`] of a paper and margins in inches.
+pub fn chrome_page_area(paper_in: (f64, f64), margins_in: [f64; 4]) -> PageArea {
+    PageArea {
+        paper: ((paper_in.0 * 72.0).ceil() as f32, (paper_in.1 * 72.0).ceil() as f32),
+        margins: margins_in.map(|m| (m * 72.0).floor() as f32),
+    }
+}
+
+impl PageArea {
+    /// The whole CSS px a page holds, wide and tall, when layout is scaled up
+    /// by `factor` (1 / scale, times any shrink to fit). As Blink computes it
+    /// (`PageBoxDefaultSize`, `ResolvePageBoxGeometry`,
+    /// `CreateConstraintSpaceForPageArea`), in `f32` and layout units of 1/64 px:
+    /// the paper in CSS px rounds to a unit, then the paper and each margin are
+    /// scaled and truncate to a unit, and what the margins leave rounds up.
+    ///
+    /// A4 with 0.4 in margins is 1048 px by the numbers, but 842 pt is 1122.671875
+    /// in units and 28 pt is 37.328125, which leave 1048.015625: a page holds
+    /// 1049 px. Measured on Chrome 156 by what fits in a page: 400 of 400 sizes
+    /// (5 papers, 10 margins, 8 scales), and 198 of 198 overflow widths.
+    fn holds(&self, factor: f32) -> (f64, f64) {
+        let (w, h) = self.units(factor);
+        (whole_px_up(w), whole_px_up(h))
+    }
+
+    /// How far down a page shows, before [`PageArea::holds`] rounds up (CSS px).
+    /// Less than a unit on paper shows nothing, and a link in it has no
+    /// annotation: measured 1 row in 1310.015625 px at scale 0.8 (0.0125 px on
+    /// paper) is dropped, in 1048.015625 at scale 1 (0.015625) it is kept.
+    fn shown_height(&self, factor: f32) -> f64 {
+        let (_, units) = self.units(factor);
+        let px = units as f64 / UNITS_PER_PX;
+        let on_paper = px.fract() / factor as f64;
+        if on_paper > 0.0 && on_paper * UNITS_PER_PX < 1.0 - 1e-3 {
+            px.floor()
+        } else {
+            px
+        }
+    }
+
+    /// The page area's size in layout units.
+    fn units(&self, factor: f32) -> (i64, i64) {
+        const UNITS: f32 = UNITS_PER_PX as f32;
+        let px = |pt: f32| pt * 96.0 / 72.0;
+        let scaled = |v: f32| (v * factor * UNITS) as i64;
+        let side = |paper: f32, a: f32, b: f32| {
+            let paper = (px(paper) * UNITS).round() / UNITS;
+            scaled(paper) - scaled(px(a)) - scaled(px(b))
+        };
+        let [top, right, bottom, left] = self.margins;
+        (side(self.paper.0, left, right), side(self.paper.1, top, bottom))
+    }
 }
 
 /// `Page.printToPDF` options.
@@ -253,7 +307,7 @@ pub struct PdfOptions {
     /// left): the document is cut into the content box's height.
     pub margins: [f64; 4],
     /// [`chrome_page_area`] of `paper` and `margins`; `None`: their difference.
-    pub page_area: Option<(f64, f64)>,
+    pub page_area: Option<PageArea>,
     /// Content scale when no element matches (1 = 100%).
     pub scale: f64,
     /// Paint background colors and images.
@@ -1327,12 +1381,20 @@ fn paint_paper(
     if (cw - viewport.0 as f64).abs() > 1.0 / 64.0 {
         relayout(doc, &mut saved, cw, ch);
     }
-    let area = opts.page_area.unwrap_or(content);
-    let shrink = shrink_to_fit(document_width(doc), (area.0 / scale).ceil());
+    let factor = 1.0 / scale as f32;
+    let holds = |factor: f32| match opts.page_area {
+        Some(area) => area.holds(factor),
+        None => ((content.0 * factor as f64).ceil(), (content.1 * factor as f64).ceil()),
+    };
+    let (holds_w, holds_h) = holds(factor);
+    let width = document_width(doc);
+    let shrink = shrink_to_fit(width, holds_w);
     if shrink < 1.0 {
         relayout(doc, &mut saved, cw / shrink, ch / shrink);
     }
     let (cw, ch) = (cw / shrink, ch / shrink);
+    // The scale Blink lays out at: in `f32`, as a page's size depends on it.
+    let shrunk_factor = factor * (width.min(holds_w * MAX_SHRINK) as f32 / holds_w as f32);
     let width = if saved.is_some() { cw } else { viewport.0 as f64 };
     let root = doc.root_element();
     let (size, overflow) = (root.final_layout().size, *root.scrollable_overflow());
@@ -1341,25 +1403,20 @@ fn paint_paper(
     // smaller than the viewport is one page, as in Chrome.
     let doc_h = (size.height as f64).max(overflow.y1) * dpr;
     // A page holds whole CSS px, more than the content box shows.
-    let page_h = if shrink < 1.0 {
-        // In Blink's layout units (1/64 px): 981.33 px at 1.5 is 1472, not more.
-        ((ch * 64.0).round() / 64.0).ceil()
-    } else {
-        (area.1 / scale).ceil()
-    };
+    let page_h = if shrink < 1.0 { holds(shrunk_factor).1 } else { holds_h };
     let (pw, ph) = (cw * dpr, page_h * dpr);
     let breaks = Breaks::of(doc, dpr);
     let mut pages = Vec::new();
     let mut y = 0.0;
     while y < doc_h - 0.5 || pages.is_empty() {
-        let (end, forced) = breaks.page_end(y, ph, doc_h);
+        let (end, restart) = breaks.page_end(y, ph, doc_h);
         pages.push(PdfPage {
             rect: Rect::new(0.0, y, pw, end),
             overflow_right: 0.0,
             overflow_bottom: 0.0,
             culprit: None,
         });
-        y = breaks.next_page_start(end, forced, doc_h);
+        y = breaks.next_page_start(end, restart, doc_h);
     }
     let pages = match keep_ranges(pages, &opts.page_ranges) {
         Ok(pages) => pages,
@@ -1380,7 +1437,10 @@ fn paint_paper(
     let runs = blitz_paint::paint_scene_recording_text(&mut scene, doc, dpr, w, h, 0, 0, opts.print_background);
     let mut extras = pdf_extras(doc, runs, dpr, opts.tagged);
     extras.slice_height = ph;
-    extras.shown_height = ch * dpr;
+    extras.shown_height = match opts.page_area {
+        Some(area) => area.shown_height(if shrink < 1.0 { shrunk_factor } else { factor }) * dpr,
+        None => ch * dpr,
+    };
     extras.canvas = if opts.print_background { canvas_color(doc) } else { None };
     let relaid = saved.is_some();
     if let Some(v) = saved {
@@ -1406,13 +1466,15 @@ fn paint_paper(
     })
 }
 
+/// Blink's `printingMaximumShrinkFactor`.
+const MAX_SHRINK: f64 = 1.5;
+
 /// How far down a print layout goes to take in the document's overflow, as a
 /// scale: the document's width (CSS px) past `limit`, the whole CSS px the
 /// page's content box rounds up to, is laid out in and scaled down from, at
 /// most by 1.5. Measured on Chrome 156: a 500 px document on a 495 px limit
 /// scales by 0.99, a 2000 px one by 2/3.
 fn shrink_to_fit(width: f64, limit: f64) -> f64 {
-    const MAX_SHRINK: f64 = 1.5;
     if width > limit {
         limit / width.min(limit * MAX_SHRINK)
     } else {
@@ -1435,6 +1497,19 @@ struct Unbroken {
     /// A line box: its inline formatting context in [`Breaks::contexts`] and
     /// its index there.
     line: Option<(u32, u32)>,
+    /// Only a `break-inside: avoid`: it can be broken as a last resort.
+    avoid_only: bool,
+}
+
+/// A break between two boxes that `break-*: avoid` is on.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Avoided {
+    /// The end of the box before and the content of the box after.
+    from: f64,
+    to: f64,
+    /// The top of the box before: a page that starts below it cannot go back
+    /// into it (measured).
+    before_top: f64,
 }
 
 /// An inline formatting context's line boxes in [`Breaks::lines`].
@@ -1461,16 +1536,35 @@ struct LineContext {
 ///   the whole context to the next page (unless at the top), and the rest gets
 ///   what is left. Past the first part, `widows` taller than a page is given up.
 /// - A margin that a cut falls in is dropped, and the next page starts at the
-///   content after it. Forced breaks keep the margin of what follows them, and
-///   have no effect above the first content of a page.
+///   content after it. Forced breaks keep the margin of what follows them
+///   (the margin above a `break-after` is dropped, however the two collapsed),
+///   and have no effect above the first content of a page.
+/// - Monolithic boxes hold no break at all, nor what they hold (Blink's
+///   `LayoutBox::IsMonolithic`): replaced elements and form controls,
+///   inline-level blocks, size containment and a writing mode other than the
+///   parent's. `overflow` does not make a box monolithic when printing.
+/// - A cut that lands between two boxes with `break-after` or `break-before:
+///   avoid` (or `avoid-page`) on the box before, its last children, the box
+///   after or its first children goes up to the last break above with nothing
+///   wrong with it. If there is none, to the last that only breaks `orphans`
+///   or `widows`; if there is none of those either, it stays.
 #[derive(Debug, Default, PartialEq)]
 struct Breaks {
     /// Sorted by top.
     unbroken: Vec<Unbroken>,
     lines: Vec<(f64, f64)>,
     contexts: Vec<LineContext>,
-    /// Forced breaks, sorted.
-    forced: Vec<f64>,
+    /// Forced breaks, sorted, and where the page after each starts.
+    forced: Vec<(f64, f64)>,
+    /// `break-after` positions while walking, to fill into `forced`.
+    forced_after: Vec<f64>,
+    /// Top margins of in-flow boxes (their top, margin), sorted.
+    margin_tops: Vec<(f64, f64)>,
+    /// Between which positions a cut breaks a `break-*: avoid`, sorted: from the
+    /// end of the box before to the content of the box after.
+    avoided: Vec<Avoided>,
+    /// Tops of in-flow boxes, sorted. Empty without `avoided`.
+    tops: Vec<f64>,
     /// Margins between block boxes, merged and sorted.
     margins: Vec<(f64, f64)>,
     /// What comes above the content of block boxes (their top margin, border
@@ -1480,10 +1574,8 @@ struct Breaks {
 
 impl Breaks {
     fn of(doc: &blitz_dom::BaseDocument, dpr: f64) -> Self {
-        use style::computed_values::float::T as Float;
-        use style::computed_values::position::T as Position;
         use style::values::computed::{BreakBetween, BreakWithin};
-        use style::values::specified::box_::DisplayInside;
+        use style::values::specified::box_::{Contain, ContainerType, DisplayInside, DisplayOutside};
         let forces = |b: BreakBetween| {
             matches!(b, BreakBetween::Page | BreakBetween::Always | BreakBetween::Left | BreakBetween::Right)
         };
@@ -1497,19 +1589,19 @@ impl Breaks {
             let y = parent_y + l.location.y as f64;
             let (top, bottom) = (y * dpr, (y + l.size.height as f64) * dpr);
             let styles = node.primary_styles();
-            let in_flow = flow
-                && styles.as_ref().is_none_or(|s| {
-                    !matches!(s.clone_position(), Position::Absolute | Position::Fixed)
-                        && s.clone_float() == Float::None
-                });
+            let in_flow = flow && in_block_flow(node);
             let (margin_top, margin_bottom) =
                 ((l.margin.top as f64).max(0.0) * dpr, (l.margin.bottom as f64).max(0.0) * dpr);
             let children = node.layout_children.borrow();
             let parent = children.as_ref().is_some_and(|c| !c.is_empty());
             let inline = node.flags.is_inline_root();
             if in_flow {
+                if bottom > top {
+                    out.tops.push(top);
+                }
                 if margin_top > 0.0 && bottom > top {
                     out.margins.push((top - margin_top, top));
+                    out.margin_tops.push((top, margin_top));
                 }
                 // The margins of an empty box collapse through it: its place
                 // says nothing about them.
@@ -1523,21 +1615,54 @@ impl Breaks {
                     }
                 }
             }
+            let mut monolithic = false;
             if let Some(styles) = &styles {
                 let b = styles.get_box();
-                if forces(b.clone_break_before()) {
-                    out.forced.push(top - if in_flow { margin_top } else { 0.0 });
-                }
-                if forces(b.clone_break_after()) {
-                    out.forced.push(bottom);
+                let display = styles.clone_display();
+                let atomic_inline =
+                    display.outside() == DisplayOutside::Inline && display.inside() != DisplayInside::Flow;
+                if !atomic_inline {
+                    if forces(b.clone_break_before()) {
+                        let at = top - if in_flow { margin_top } else { 0.0 };
+                        out.forced.push((at, at));
+                    }
+                    if forces(b.clone_break_after()) {
+                        out.forced_after.push(bottom);
+                    }
                 }
                 let avoids = matches!(b.clone_break_inside(), BreakWithin::Avoid | BreakWithin::AvoidPage);
-                let replaced = node
-                    .element_data()
-                    .is_some_and(|e| matches!(&*e.name.local, "img" | "svg" | "canvas" | "video" | "iframe"));
-                if avoids || replaced {
-                    out.unbroken.push(Unbroken { top, bottom, line: None });
+                let replaced = node.element_data().is_some_and(|e| {
+                    matches!(
+                        &*e.name.local,
+                        "img"
+                            | "svg"
+                            | "canvas"
+                            | "video"
+                            | "iframe"
+                            | "object"
+                            | "input"
+                            | "textarea"
+                            | "select"
+                            | "button"
+                    )
+                });
+                let writes_otherwise = node
+                    .parent
+                    .and_then(|p| doc.get_node(p))
+                    .and_then(|p| p.primary_styles())
+                    .is_some_and(|p| p.writing_mode != styles.writing_mode);
+                monolithic = replaced
+                    || atomic_inline
+                    || writes_otherwise
+                    || b.clone_contain().contains(Contain::SIZE)
+                    || b.clone_container_type().contains(ContainerType::SIZE);
+                // An inline-level box is in a line, which already holds it.
+                if avoids || (monolithic && !atomic_inline) {
+                    out.unbroken.push(Unbroken { top, bottom, line: None, avoid_only: !monolithic });
                 }
+            }
+            if monolithic {
+                continue;
             }
             let text = node.element_data().and_then(|e| e.inline_layout_data.as_ref());
             // The lines of vertical text run across the page, and are not what a page cut splits.
@@ -1551,7 +1676,7 @@ impl Breaks {
                     let b = (origin + m.block_max_coord as f64 / scale) * dpr;
                     if b > a {
                         let at = (out.contexts.len() as u32, (out.lines.len() - first) as u32);
-                        out.unbroken.push(Unbroken { top: a, bottom: b, line: Some(at) });
+                        out.unbroken.push(Unbroken { top: a, bottom: b, line: Some(at), avoid_only: false });
                         out.lines.push((a, b));
                     }
                 }
@@ -1572,10 +1697,47 @@ impl Breaks {
                 for &c in children.iter() {
                     stack.push((c, y, block_flow));
                 }
+                if block_flow && !inline {
+                    out.avoided_between_children(doc, children, y, dpr);
+                }
             }
         }
         out.finish();
         out
+    }
+
+    /// Notes the `break-*: avoid` between neighbours of a block flow.
+    fn avoided_between_children(
+        &mut self,
+        doc: &blitz_dom::BaseDocument,
+        children: &[blitz_dom::NodeId],
+        y: f64,
+        dpr: f64,
+    ) {
+        let mut before = None;
+        for &c in children {
+            let Some(node) = doc.get_node(c) else { continue };
+            if !in_block_flow(node) {
+                continue;
+            }
+            // A break before an empty box and one after it are in one place,
+            // and one of them has nothing to avoid.
+            if node.final_layout().size.height == 0.0 {
+                before = None;
+                continue;
+            }
+            if let Some(before) = before.and_then(|b| doc.get_node(b)) {
+                if avoids_break(doc, before, Edge::After) || avoids_break(doc, node, Edge::Before) {
+                    let (above, below) = (before.final_layout(), node.final_layout());
+                    self.avoided.push(Avoided {
+                        from: (y + above.location.y as f64 + above.size.height as f64) * dpr,
+                        to: (y + below.location.y as f64) * dpr,
+                        before_top: (y + above.location.y as f64) * dpr,
+                    });
+                }
+            }
+            before = Some(c);
+        }
     }
 
     /// Sorts and merges what the walk collected.
@@ -1592,9 +1754,32 @@ impl Breaks {
             *spans = out;
         }
         self.unbroken.sort_by(|a, b| a.top.total_cmp(&b.top));
-        self.forced.sort_by(f64::total_cmp);
         merged(&mut self.margins);
         merged(&mut self.heads);
+        self.margin_tops.sort_by(|a, b| a.0.total_cmp(&b.0));
+        // The page after a `break-after` starts at what follows less that
+        // box's own margin (the largest of the boxes starting there, which
+        // collapse). The margin above the break is gone.
+        for at in std::mem::take(&mut self.forced_after) {
+            let content = Self::past(&self.margins, at);
+            let from = self.margin_tops.partition_point(|m| m.0 < content - TOUCHING);
+            let own = self.margin_tops[from..]
+                .iter()
+                .take_while(|m| m.0 <= content + TOUCHING)
+                .map(|m| m.1)
+                .fold(0.0, f64::max);
+            self.forced.push((at, content - own));
+        }
+        self.forced.sort_by(|a, b| a.0.total_cmp(&b.0));
+        if self.avoided.is_empty() {
+            self.tops = Vec::new();
+        } else {
+            for span in &mut self.avoided {
+                span.to = Self::past(&self.heads, span.to);
+            }
+            self.avoided.sort_by(|a, b| a.from.total_cmp(&b.from));
+            self.tops.sort_by(f64::total_cmp);
+        }
     }
 
     /// The end of the span of `spans` (merged and sorted) `y` is in, else `y`.
@@ -1607,42 +1792,39 @@ impl Breaks {
     }
 
     /// Where the page after a cut at `end` starts: past a margin the cut fell
-    /// in (a negative margin can bring content into it), unless the cut was
-    /// forced. `doc_h` when only margins are left.
-    fn next_page_start(&self, end: f64, forced: bool, doc_h: f64) -> f64 {
+    /// in (a negative margin can bring content into it), or where a forced
+    /// break says. `doc_h` when only margins are left.
+    fn next_page_start(&self, end: f64, forced: Option<f64>, doc_h: f64) -> f64 {
         let next = self.unbroken.partition_point(|u| u.top < end);
         let start = Self::past(&self.margins, end).min(self.unbroken.get(next).map_or(f64::MAX, |u| u.top));
         if start >= doc_h - 0.5 {
             return doc_h;
         }
-        if forced {
-            end
-        } else {
-            start
-        }
+        forced.unwrap_or(start)
     }
 
-    /// Where the page starting at `y` ends with `ph` of room, and whether a
-    /// forced break ends it.
-    fn page_end(&self, y: f64, ph: f64, doc_h: f64) -> (f64, bool) {
+    /// Where the page starting at `y` ends with `ph` of room, and where the
+    /// next starts when a forced break ends it.
+    fn page_end(&self, y: f64, ph: f64, doc_h: f64) -> (f64, Option<f64>) {
         // Below this a box is at the top of the page.
         let first_content = Self::past(&self.heads, y);
         let mut end = y + ph;
-        let next_forced = self.forced.partition_point(|&f| f <= first_content + TOUCHING);
-        if let Some(&f) = self.forced.get(next_forced).filter(|&&f| f < end) {
-            return (f, true);
+        let next_forced = self.forced.partition_point(|f| f.0 <= first_content + TOUCHING);
+        if let Some(&(at, restart)) = self.forced.get(next_forced).filter(|f| f.0 < end) {
+            return (at, Some(restart));
         }
         if end >= doc_h {
-            return (end, false);
+            return (end, None);
         }
         // Only what starts on this page can move the cut. Each round moves it
         // up, and few do, so all pages together look at each span a few times.
         let from = self.unbroken.partition_point(|u| u.top < y);
+        let mut last_resort = false;
         loop {
             let upto = from + self.unbroken[from..].partition_point(|u| u.top < end);
             let mut cut = end;
             for u in &self.unbroken[from..upto] {
-                if u.bottom > end + TOUCHING && u.top > first_content + TOUCHING {
+                if u.bottom > end + TOUCHING && u.top > first_content + TOUCHING && !(last_resort && u.avoid_only) {
                     cut = cut.min(u.top);
                 }
                 if let Some((context, index)) = u.line.filter(|_| u.bottom <= end + TOUCHING) {
@@ -1658,10 +1840,69 @@ impl Breaks {
                 }
             }
             if cut >= end {
-                return (end, false);
+                if self.avoided_at(end).is_none() {
+                    return (end, None);
+                }
+                if let Some(better) = self.better_than_avoided(end, y, first_content, from) {
+                    end = better;
+                    continue;
+                }
+                // Every break here breaks an `avoid`: the last one. That may
+                // be inside a `break-inside: avoid` further down.
+                if last_resort {
+                    return (end, None);
+                }
+                last_resort = true;
+                end = y + ph;
+                continue;
             }
             end = cut;
         }
+    }
+
+    /// The break of `avoided` a cut at `at` is.
+    fn avoided_at(&self, at: f64) -> Option<Avoided> {
+        let i = self.avoided.partition_point(|s| s.from <= at + TOUCHING);
+        i.checked_sub(1).map(|i| self.avoided[i]).filter(|s| at <= s.to + TOUCHING)
+    }
+
+    /// When a cut at `end` breaks an `avoid`, the last break above it on the
+    /// page (starting at `y`) that does not: first without breaking `orphans`
+    /// or `widows`, then breaking them. Blink's `EarlyBreak`: the last break of
+    /// the best `BreakAppeal`.
+    fn better_than_avoided(&self, end: f64, y: f64, first_content: f64, from: usize) -> Option<f64> {
+        let avoided = self.avoided_at(end)?;
+        let above = avoided.from;
+        if above <= first_content + TOUCHING || avoided.before_top < y - TOUCHING {
+            return None;
+        }
+        // Lines, and whether a break above them keeps `orphans` and `widows`.
+        let upto = from + self.unbroken[from..].partition_point(|u| u.top < above);
+        let lines = self.unbroken[from..upto].iter().filter_map(|u| {
+            let (context, index) = u.line?;
+            let context = self.contexts[context as usize];
+            let lines = &self.lines[context.first as usize..(context.first + context.count) as usize];
+            let index = index as usize;
+            // A context that began on an earlier page is not gone back into.
+            if lines[0].0 < y {
+                return None;
+            }
+            let fine = index >= context.orphans as usize && lines.len() - index >= context.widows as usize;
+            Some((u.top, fine))
+        });
+        let mut breaks: Vec<(f64, bool)> = lines.collect();
+        let tops = self.tops.partition_point(|&t| t < y)..self.tops.partition_point(|&t| t < above);
+        breaks.extend(self.tops[tops].iter().map(|&t| (t, true)));
+        breaks.sort_by(|a, b| b.0.total_cmp(&a.0));
+        let allowed = |at: f64| {
+            at > first_content + TOUCHING
+                && self.avoided_at(at).is_none()
+                && !self.unbroken[from..upto]
+                    .iter()
+                    .any(|u| u.line.is_none() && u.top > first_content + TOUCHING && u.top < at && at < u.bottom)
+        };
+        let best = |want_fine: bool| breaks.iter().find(|b| (b.1 || !want_fine) && allowed(b.0)).map(|b| b.0);
+        best(true).or_else(|| best(false))
     }
 
     /// Where a page ending at `end` cuts `context`, given that its line
@@ -1690,6 +1931,59 @@ impl Breaks {
         } else {
             end
         }
+    }
+}
+
+/// Which edge of a box a break is at.
+#[derive(Clone, Copy)]
+enum Edge {
+    Before,
+    After,
+}
+
+/// Whether a box takes part in its parent's block flow.
+fn in_block_flow(node: &blitz_dom::Node) -> bool {
+    use style::computed_values::float::T as Float;
+    use style::computed_values::position::T as Position;
+    node.primary_styles().is_none_or(|s| {
+        !matches!(s.clone_position(), Position::Absolute | Position::Fixed) && s.clone_float() == Float::None
+    })
+}
+
+/// Whether a box, or at that edge what it holds in its block flow, says
+/// `break-*: avoid` for page breaks. Each box is on at most one chain of last
+/// children and one of first children, so all the calls together stay linear.
+fn avoids_break(doc: &blitz_dom::BaseDocument, node: &blitz_dom::Node, edge: Edge) -> bool {
+    use style::values::computed::BreakBetween;
+    use style::values::specified::box_::DisplayInside;
+    let mut node = node;
+    loop {
+        let Some(styles) = node.primary_styles() else { return false };
+        let b = styles.get_box();
+        let value = match edge {
+            Edge::Before => b.clone_break_before(),
+            Edge::After => b.clone_break_after(),
+        };
+        if matches!(value, BreakBetween::Avoid | BreakBetween::AvoidPage) {
+            return true;
+        }
+        if node.flags.is_inline_root()
+            || !matches!(
+                styles.clone_display().inside(),
+                DisplayInside::Flow | DisplayInside::FlowRoot | DisplayInside::Flex
+            )
+        {
+            return false;
+        }
+        let children = node.layout_children.borrow();
+        let Some(children) = children.as_ref() else { return false };
+        let in_flow = |id: &&blitz_dom::NodeId| doc.get_node(**id).is_some_and(in_block_flow);
+        let next = match edge {
+            Edge::Before => children.iter().find(in_flow),
+            Edge::After => children.iter().rev().find(in_flow),
+        };
+        let Some(next) = next.and_then(|&id| doc.get_node(id)) else { return false };
+        node = next;
     }
 }
 

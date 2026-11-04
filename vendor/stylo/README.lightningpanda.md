@@ -22,6 +22,10 @@ crate (`diff -ruN`).
   (upstream: gecko only). lp-render's PDF output reads them to place page cuts of paper-cut
   documents. Nothing else reads them; computed values of other properties are unchanged.
 
+- `values/specified/box.rs`: `break-before` and `break-after` also take `avoid-page` and
+  `avoid-column`, as the spec has them (upstream has only `avoid`, and drops the declaration).
+  `page-break-*` still rejects them.
+
 - `properties/longhands.toml`, `properties/counted_unknown_properties.py`: `orphans` and `widows`
   are added (upstream has neither; both were counted unknown properties), inherited, in
   `inherited_text`. lp-render's PDF output reads them to place page cuts of paper-cut documents.
