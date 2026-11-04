@@ -418,7 +418,22 @@ impl BaseDocument {
                 } else {
                     (0.0, 0.0)
                 };
-                overflow = overflow.union(Rect::new(x0, y0, x0 + width + end_x, y0 + height + end_y));
+                // The lines of a vertical writing mode are logical: `width` runs along y, `height` along x.
+                let lines = match self.nodes[node_id].vertical_block_axis() {
+                    None => Rect::new(x0, y0, x0 + width + end_x, y0 + height + end_y),
+                    Some(block_lr) => {
+                        let offset = block_offset as f64 * scale;
+                        let top = y0 - offset;
+                        let (b0, b1) = if block_lr {
+                            (x0 + offset, x0 + offset + height + end_x)
+                        } else {
+                            let start = (l.size.width - l.border.right - l.padding.right) as f64 * scale - offset;
+                            (start - height - end_x, start)
+                        };
+                        Rect::new(b0, top, b1, top + width + end_y)
+                    }
+                };
+                overflow = overflow.union(lines);
             }
         }
 

@@ -100,3 +100,15 @@ lp-render's mirror tests (incremental documents against fresh builds after rando
   space left on the line instead of wrapping below.
 
 `BaseDocument::set_layout_size` lays out at a fractional CSS size instead of the viewport's whole pixels (`make_device`); printing uses it for the paper's content box.
+
+## Inline layouts in vertical writing modes
+
+Layout keeps a vertical inline root's lines logical (x inline, y block). `Node::vertical_block_axis` says which
+way its block axis runs; paint turns the lines, and these read them physically:
+
+- `src/resolve.rs` (`resolve_transforms`): the lines' scrollable overflow.
+- `src/node/node.rs` (`inline_fragment_boxes`): inline boxes' rects and `offsetLeft`/`offsetTop`.
+- `src/layout/writing_mode.rs`: `physical_unrounded_layout` for callers outside this crate (`unrounded_layout` is in
+  the writing mode of the box that placed the node); `physical_unrounded_geometry` is public for paint.
+
+`Node::text_offset_at_point` (hit testing) still takes logical coordinates.

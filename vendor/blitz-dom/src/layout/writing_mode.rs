@@ -368,11 +368,23 @@ fn physical_layout(logical: Layout, placer_wm: WritingMode, placer_size: Size<f3
 }
 
 impl BaseDocument {
+    /// `node_id`'s unrounded layout in physical coordinates (`unrounded_layout` is in the writing
+    /// mode of the box that placed it).
+    pub fn physical_unrounded_layout(&self, node_id: crate::NodeId) -> Layout {
+        let node = &self.nodes[node_id];
+        let vertical = |node: &Node| node.layout_data().writing_mode.is_vertical();
+        if vertical(node) || node.containing_block().is_some_and(|parent| vertical(&self.nodes[parent])) {
+            self.physical_unrounded_geometry(node_id).1
+        } else {
+            *node.unrounded_layout()
+        }
+    }
+
     /// `node_id`'s document-relative position and unrounded layout in physical coordinates, for
     /// CSSOM geometry. `unrounded_layout` itself is left in the placing algorithm's writing mode (see
     /// [`LayoutPassState::physicalise_and_round_layout`]), so the containing-block chain is
     /// physicalised root-down in a single descent, each box in its placer's writing mode and size.
-    pub(crate) fn physical_unrounded_geometry(
+    pub fn physical_unrounded_geometry(
         &self,
         node_id: crate::NodeId,
     ) -> (crate::util::Point<f32>, Layout) {
