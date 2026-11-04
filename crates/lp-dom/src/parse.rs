@@ -152,6 +152,7 @@ impl<A: DomAccess> TreeSink for Sink<A> {
                 let frag = d.alloc_raw(NodeKind::Fragment(FragmentData { host: i, shadow: None }), inert);
                 d.n_mut(i).element_mut().unwrap().template_contents = frag;
             }
+            d.note_inline_handlers(i);
             let id = d.id_of(i);
             d.add_ref(id).expect("new parser element");
             self.pins.borrow_mut().push(id);
@@ -253,6 +254,7 @@ impl<A: DomAccess> TreeSink for Sink<A> {
                     d.note(change);
                 }
             }
+            d.note_inline_handlers(*target);
         });
     }
     fn associate_with_form(&self, _target: &u32, _form: &u32, _nodes: (&u32, Option<&u32>)) {}

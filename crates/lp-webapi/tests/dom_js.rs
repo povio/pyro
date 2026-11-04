@@ -5890,3 +5890,43 @@ fn xml_serializer_doctype_html_and_namespaces() {
     );
     assert_eq!(eval(r, "try{new XMLSerializer().serializeToString('x')}catch(e){e.name}"), "TypeError");
 }
+
+#[test]
+fn inline_handler_attributes_from_parser_innerhtml_and_clone() {
+    let e = env(
+        "<form id=f><input name=n value=v><button id=b type=button onclick=\"window.got=[this.id,event.type,elements.n.value,typeof getElementById].join()\">x</button></form>\
+         <a id=l href=#x onclick=\"return false\">l</a><div id=host></div><div id=bad onclick=\"(\">z</div>",
+    );
+    let r = &e.main;
+    assert_eq!(eval(r, "document.getElementById('b').click(); window.got"), "b,click,v,function");
+    // A false return value cancels, and the handler is readable as a function.
+    assert_eq!(
+        eval(r, "var ev=new MouseEvent('click',{cancelable:true}); document.getElementById('l').dispatchEvent(ev); [ev.defaultPrevented, typeof document.getElementById('l').onclick].join()"),
+        "true,function"
+    );
+    // innerHTML, cloning, and replacing through the IDL attribute.
+    assert_eq!(
+        eval(r, "var h=document.getElementById('host'); h.innerHTML='<i id=i onclick=\"window.c=(window.c||0)+1\"></i>'; var i=document.getElementById('i'); i.click(); var k=i.cloneNode(); h.append(k); k.click(); i.onclick=()=>{window.c=100}; i.click(); window.c"),
+        "100"
+    );
+    // A handler that does not compile leaves the attribute inert.
+    assert_eq!(eval(r, "document.getElementById('bad').click(); document.getElementById('bad').onclick"), "null");
+    // Inert documents never run handlers.
+    assert_eq!(
+        eval(r, "new DOMParser().parseFromString('<b onclick=\"window.inert=1\">','text/html').querySelector('b').click(); String(window.inert)"),
+        "undefined"
+    );
+}
+
+#[test]
+fn inline_handler_runs_before_a_later_listener() {
+    let e = env("<button id=b onclick=\"window.o=(window.o||'')+'a'\">x</button>");
+    let r = &e.main;
+    assert_eq!(
+        eval(
+            r,
+            "var b=document.getElementById('b'); b.addEventListener('click',()=>{window.o+='l'}); b.click(); window.o"
+        ),
+        "al"
+    );
+}

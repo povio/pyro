@@ -165,16 +165,31 @@ impl NodeArgs {
 
 /// Keeps `on*` IDL handlers in sync with `setAttribute`/`removeAttribute`
 /// on HTML and SVG elements.
-fn handler_attribute_changed(s: &Scope<'_>, n: &NodeData, name: &str, value: Option<&str>) -> JsResult<()> {
+pub(crate) fn handler_attribute_changed(s: &Scope<'_>, n: &NodeData, name: &str, value: Option<&str>) -> JsResult<()> {
     let Some(ty) = crate::handlers::is_handler_attribute(&name.to_ascii_lowercase()) else { return Ok(()) };
-    let eligible = {
+    let (eligible, reflecting) = {
         let dom = n.page().dom.borrow();
-        dom.element(n.id).is_ok_and(|e| e.is_html() || e.namespace() == &markup5ever::ns!(svg))
+        match dom.element(n.id) {
+            Ok(e) => (
+                e.is_html() || e.namespace() == &markup5ever::ns!(svg),
+                e.is_html()
+                    && matches!(&*e.name.local, "body" | "frameset")
+                    && crate::handlers::reflects_to_window(ty)
+                    && dom.node_document(n.id).ok() == Some(n.page().document()),
+            ),
+            Err(_) => (false, false),
+        }
     };
-    if eligible {
-        crate::handlers::content_attribute_changed(s, &n.target, ty, value)?;
+    if !eligible {
+        return Ok(());
     }
-    Ok(())
+    match n.page().window_target().filter(|_| reflecting) {
+        Some(window) => {
+            let target = crate::target::EventTargetData::window(n.page(), window);
+            crate::handlers::content_attribute_changed(s, &target, ty, value)
+        }
+        None => crate::handlers::content_attribute_changed(s, &n.target, ty, value),
+    }
 }
 
 pub struct Node;

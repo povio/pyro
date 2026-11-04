@@ -145,6 +145,9 @@ pub struct Dom {
     /// Shadow roots ever attached (selective style invalidation does not
     /// model slot assignment, so consumers fall back to full invalidation).
     shadow_roots: u32,
+    /// Elements created by the parser or cloned with `on*` attributes whose
+    /// handlers the bindings have not compiled yet.
+    pending_inline_handlers: Vec<NodeId>,
     pub(crate) mutation: MutationState,
     pub(crate) events: crate::events::ListenerStore,
     pub(crate) resources: crate::script::ResourceQueue,
@@ -189,6 +192,7 @@ impl Dom {
             journal_floor: 0,
             style_snapshots: Default::default(),
             shadow_roots: 0,
+            pending_inline_handlers: Vec::new(),
             mutation: MutationState::default(),
             events: Default::default(),
             resources: Default::default(),
@@ -1445,6 +1449,21 @@ impl Dom {
 
     /// `node.cloneNode(deep)` / `document.importNode`. `doc` overrides the
     /// node document of the clone.
+    /// Records `i` when it has an `on*` attribute (see `pending_inline_handlers`).
+    pub(crate) fn note_inline_handlers(&mut self, i: u32) {
+        let has = self.n(i).element().is_some_and(|e| e.attrs.iter().any(|a| a.name.local.starts_with("on")));
+        if has {
+            let id = self.id_of(i);
+            self.pending_inline_handlers.push(id);
+        }
+    }
+    pub fn has_pending_inline_handlers(&self) -> bool {
+        !self.pending_inline_handlers.is_empty()
+    }
+    pub fn take_pending_inline_handlers(&mut self) -> Vec<NodeId> {
+        std::mem::take(&mut self.pending_inline_handlers)
+    }
+
     pub fn clone_node(&mut self, node: NodeId, deep: bool, doc: Option<NodeId>) -> DomResult<NodeId> {
         let n = self.check(node)?;
         let d = match doc {
@@ -1480,6 +1499,7 @@ impl Dom {
                 let el = self.n_mut(id.idx).element_mut().unwrap();
                 el.attrs = attrs;
                 el.control = control;
+                self.note_inline_handlers(id.idx);
                 id.idx
             }
             NodeKind::Text(s) => {
