@@ -24,6 +24,8 @@ bool JSGlobalContextSetModuleLoader(JSGlobalContextRef ctx, JSModuleLoaderFetchC
 JSValueRef JSModuleSourceCreate(JSContextRef ctx, JSStringRef source, JSStringRef url, JSValueRef *exception);
 JSObjectRef JSLoadAndEvaluateModule(JSContextRef ctx, JSStringRef url, JSValueRef *exception);
 bool JSGlobalContextAddImportMap(JSGlobalContextRef ctx, JSStringRef source, JSStringRef baseURL, JSStringRef *messages);
+typedef JSStringRef (*lp_module_base_url_cb)(JSGlobalContextRef ctx);
+bool JSGlobalContextSetModuleBaseURLCallback(JSGlobalContextRef ctx, lp_module_base_url_cb callback);
 
 typedef void (*lp_module_fetch_cb)(void *userdata, JSGlobalContextRef ctx, JSStringRef identifier, JSObjectRef resolve,
                                    JSObjectRef reject);
@@ -43,18 +45,21 @@ static void lp_fetch(JSGlobalContextRef ctx, JSStringRef identifier, JSObjectRef
     loader->callback(loader->userdata, ctx, identifier, resolve, reject);
 }
 
-void *lp_jsc_module_loader_install(JSGlobalContextRef ctx, lp_module_fetch_cb cb, void *userdata) {
+void *lp_jsc_module_loader_install(JSGlobalContextRef ctx, lp_module_fetch_cb cb, lp_module_base_url_cb base_url,
+                                   void *userdata) {
     struct lp_module_loader *loader = malloc(sizeof *loader);
     loader->ctx = ctx;
     loader->callback = cb;
     loader->userdata = userdata;
     JSGlobalContextSetModuleLoader(ctx, lp_fetch, loader);
+    JSGlobalContextSetModuleBaseURLCallback(ctx, base_url);
     return loader;
 }
 
 void lp_jsc_module_loader_release(void *handle) {
     struct lp_module_loader *loader = handle;
     JSGlobalContextSetModuleLoader(loader->ctx, NULL, NULL);
+    JSGlobalContextSetModuleBaseURLCallback(loader->ctx, NULL);
     free(loader);
 }
 

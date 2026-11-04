@@ -34,7 +34,7 @@ diff --git a/Source/JavaScriptCore/API/JSAPIGlobalObject.cpp b/Source/JavaScript
          absoluteURL = URL(URL("file://"_s), specifier);
          if (absoluteURL.isValid())
              return absoluteURL;
-@@ -119,6 +127,33 @@
+@@ -119,6 +127,45 @@
      return makeUnexpected(makeString("Could not form valid URL from identifier and base. Tried:"_s, absoluteURL.string()));
  }
  
@@ -43,6 +43,18 @@ diff --git a/Source/JavaScriptCore/API/JSAPIGlobalObject.cpp b/Source/JavaScript
 +    URL base;
 +    if (!referrer.isNull())
 +        base = URL { { }, referrer };
++    // A script without a URL to resolve against (CDP evaluate, an init script)
++    // uses the document base URL, so it gets the same module as the document's
++    // scripts. blob: and data: modules keep their own URL as the base.
++    bool usableBase = base.isValid() && (!base.hasOpaquePath() || base.protocolIsBlob() || base.protocolIsData());
++    if (!usableBase && m_moduleBaseURLCallback && (m_hasImportMap || !URL(specifier).isValid())) {
++        auto callback = reinterpret_cast<JSModuleLoaderBaseURLCallback>(m_moduleBaseURLCallback);
++        if (RefPtr documentBase = adoptRef(callback(toGlobalRef(this)))) {
++            URL url { { }, documentBase->string() };
++            if (url.isValid() && !url.hasOpaquePath())
++                base = WTF::move(url);
++        }
++    }
 +    auto resolveWithoutMap = [&] () -> std::expected<String, String> {
 +        auto result = computeValidImportSpecifier(base, specifier);
 +        if (!result)
@@ -68,7 +80,7 @@ diff --git a/Source/JavaScriptCore/API/JSAPIGlobalObject.cpp b/Source/JavaScript
  Identifier JSAPIGlobalObject::moduleLoaderResolve(JSGlobalObject* globalObject, JSModuleLoader*, JSValue key, JSValue referrer, RefPtr<ScriptFetcher>, bool)
  {
      VM& vm = globalObject->vm();
-@@ -126,18 +161,17 @@
+@@ -126,18 +173,17 @@
      String name = key.toWTFString(globalObject);
      RETURN_IF_EXCEPTION(scope, { });
  
@@ -92,7 +104,7 @@ diff --git a/Source/JavaScriptCore/API/JSAPIGlobalObject.cpp b/Source/JavaScript
      return { };
  }
  
-@@ -219,6 +253,23 @@
+@@ -219,6 +265,23 @@
      metaProperties->putDirect(vm, Identifier::fromString(vm, "url"_s), key);
      RETURN_IF_EXCEPTION(scope, nullptr);
  
@@ -116,12 +128,10 @@ diff --git a/Source/JavaScriptCore/API/JSAPIGlobalObject.cpp b/Source/JavaScript
      return metaProperties;
  }
  
-@@ -271,6 +322,49 @@
-         return false;
-     apiGlobalObject->setModuleLoader(reinterpret_cast<void*>(callback), info);
+@@ -273,6 +336,60 @@
      return true;
-+}
-+
+ }
+ 
 +namespace {
 +
 +class ImportMapMessages final : public ImportMap::Reporter {
@@ -140,6 +150,17 @@ diff --git a/Source/JavaScriptCore/API/JSAPIGlobalObject.cpp b/Source/JavaScript
 +    mutable StringBuilder m_messages;
 +};
 +
++}
++
++bool JSGlobalContextSetModuleBaseURLCallback(JSGlobalContextRef ctx, JSModuleLoaderBaseURLCallback callback)
++{
++    JSGlobalObject* globalObject = toJS(ctx);
++    JSLockHolder locker(globalObject->vm());
++    auto* apiGlobalObject = dynamicDowncast<JSAPIGlobalObject>(globalObject);
++    if (!apiGlobalObject)
++        return false;
++    apiGlobalObject->setModuleBaseURLCallback(reinterpret_cast<void*>(callback));
++    return true;
 +}
 +
 +bool JSGlobalContextAddImportMap(JSGlobalContextRef ctx, JSStringRef source, JSStringRef baseURL, JSStringRef* messages)
@@ -163,9 +184,11 @@ diff --git a/Source/JavaScriptCore/API/JSAPIGlobalObject.cpp b/Source/JavaScript
 +        *messages = joined.isEmpty() ? nullptr : OpaqueJSString::tryCreate(joined).leakRef();
 +    }
 +    return !!parsed;
- }
- 
++}
++
  JSValueRef JSModuleSourceCreate(JSContextRef ctx, JSStringRef source, JSStringRef url, JSValueRef* exception)
+ {
+     JSGlobalObject* globalObject = toJS(ctx);
 diff --git a/Source/JavaScriptCore/API/JSAPIGlobalObject.h b/Source/JavaScriptCore/API/JSAPIGlobalObject.h
 --- a/Source/JavaScriptCore/API/JSAPIGlobalObject.h
 +++ b/Source/JavaScriptCore/API/JSAPIGlobalObject.h
@@ -177,20 +200,23 @@ diff --git a/Source/JavaScriptCore/API/JSAPIGlobalObject.h b/Source/JavaScriptCo
  #include <wtf/RefPtr.h>
  
  OBJC_CLASS JSScript;
-@@ -63,6 +64,9 @@
+@@ -63,6 +64,11 @@
          m_moduleLoaderInfo = info;
      }
      JSValue loadAndEvaluateModule(const JSLockHolder&, const String& url);
++    // The callback is a JSModuleLoaderBaseURLCallback.
++    void setModuleBaseURLCallback(void* callback) { m_moduleBaseURLCallback = callback; }
 +    // From the first import map on, specifiers resolve through importMap().
 +    void didAddImportMap() { m_hasImportMap = true; }
 +    std::expected<String, String> resolveModuleSpecifier(const String& specifier, const String& referrer);
  #endif
  
  private:
-@@ -78,6 +82,7 @@
+@@ -78,6 +84,8 @@
  #if !JSC_OBJC_API_ENABLED
      void* m_moduleLoaderCallback { nullptr };
      void* m_moduleLoaderInfo { nullptr };
++    void* m_moduleBaseURLCallback { nullptr };
 +    bool m_hasImportMap { false };
  #endif
  };
@@ -198,10 +224,16 @@ diff --git a/Source/JavaScriptCore/API/JSAPIGlobalObject.h b/Source/JavaScriptCo
 diff --git a/Source/JavaScriptCore/API/JSModuleLoaderRefPrivate.h b/Source/JavaScriptCore/API/JSModuleLoaderRefPrivate.h
 --- a/Source/JavaScriptCore/API/JSModuleLoaderRefPrivate.h
 +++ b/Source/JavaScriptCore/API/JSModuleLoaderRefPrivate.h
-@@ -25,6 +25,13 @@
+@@ -25,6 +25,19 @@
     when the context does not support module loading. */
  JS_EXPORT bool JSGlobalContextSetModuleLoader(JSGlobalContextRef ctx, JSModuleLoaderFetchCallback callback, void* info);
  
++/* Supplies the document base URL for specifiers whose script has no URL to
++   resolve against. Returns a string the caller owns, or NULL. It runs during
++   module resolution and must not run script. */
++typedef JSStringRef (*JSModuleLoaderBaseURLCallback)(JSGlobalContextRef ctx);
++JS_EXPORT bool JSGlobalContextSetModuleBaseURLCallback(JSGlobalContextRef ctx, JSModuleLoaderBaseURLCallback callback);
++
 +/* Parses `source` as an import map with the given base URL and merges it into
 +   the context's map (HTML "merge existing and new import maps"). Returns false
 +   when the map is invalid (nothing is merged). `*messages`, when not NULL

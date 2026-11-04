@@ -46,6 +46,12 @@ pub struct RealmOptions {
 pub trait ModuleFetcher {
     /// Fetch `url` (absolute) and complete `request`, now or later on the loop.
     fn fetch(&self, realm: &Realm, url: String, request: ModuleRequest);
+
+    /// The document base URL, which specifiers resolve against when their
+    /// script has no URL of its own (CDP evaluate, init scripts).
+    fn document_base_url(&self, _realm: &Realm) -> Option<String> {
+        None
+    }
 }
 
 /// A pending module fetch; complete exactly once (drop = reject).
@@ -1220,7 +1226,9 @@ pub(crate) fn create(engine: &Rc<EngineInner>, options: RealmOptions) -> JsResul
         install_console(&scope)?;
         install_rejection_tracking(&scope)?;
         if engine.caps.modules {
-            let h = unsafe { sys::modules::lp_jsc_module_loader_install(ctx, module_fetch, ptr::null_mut()) };
+            let h = unsafe {
+                sys::modules::lp_jsc_module_loader_install(ctx, module_fetch, module_base_url, ptr::null_mut())
+            };
             realm.inner.module_loader.set(h);
         }
     }
@@ -1708,6 +1716,19 @@ unsafe extern "C" fn module_fetch(
                 None => request.reject(scope, &JsError::Type("module loading is not configured for this realm".into())),
             }
         })
+    }
+}
+
+unsafe extern "C" fn module_base_url(ctx: sys::JSGlobalContextRef) -> sys::JSStringRef {
+    let mut url = None;
+    unsafe {
+        class::guard(ctx as sys::JSContextRef, ptr::null_mut(), (), |scope| {
+            let fetcher = scope.realm.module_fetcher.borrow().clone();
+            url = fetcher.and_then(|f| f.document_base_url(&scope.realm()));
+            Ok(())
+        });
+        // Retained for the caller; `JsString` releases its own reference.
+        url.map_or(ptr::null_mut(), |url| sys::JSStringRetain(JsString::new(&url).as_raw()))
     }
 }
 

@@ -532,6 +532,56 @@ fn import_meta_url_is_set_for_entry_and_fetched_modules() {
     assert_eq!(eval_str(&r, "metaUrls[1]"), "http://site.test/dep.js");
 }
 
+/// A script without a URL to resolve against (CDP evaluate, an init script)
+/// uses the document base URL, so it reaches the document's module instance.
+#[test]
+fn imports_without_a_script_url_resolve_against_the_document_base() {
+    let e = engine();
+    if !e.capabilities().import_maps {
+        eprintln!("needs the resolve hook of the patched JavaScriptCore; skipping");
+        return;
+    }
+    struct Fetcher;
+    impl ModuleFetcher for Fetcher {
+        fn fetch(&self, realm: &Realm, url: String, request: ModuleRequest) {
+            let s = realm.scope().unwrap();
+            match url.as_str() {
+                "http://site.test/app/c.js" | "http://site.test/c.js" => request
+                    .resolve(&s, "globalThis.evals = (globalThis.evals || 0) + 1; export const url = import.meta.url;")
+                    .unwrap(),
+                _ => request.reject(&s, &JsError::Type(format!("unexpected module {url}"))).unwrap(),
+            }
+        }
+        fn document_base_url(&self, _realm: &Realm) -> Option<String> {
+            Some("http://site.test/app/page.html".into())
+        }
+    }
+    let r = e.create_realm(RealmOptions { origin: Some("http://site.test".into()), ..Default::default() }).unwrap();
+    r.set_module_fetcher(Some(Rc::new(Fetcher)));
+    let s = r.scope().unwrap();
+    s.eval(
+        "globalThis.urls = []; const add = m => urls.push(m.url); \
+         import('/c.js').then(add); import('./c.js').then(add);",
+        Some("http://site.test/app/page.html"),
+        1,
+    )
+    .unwrap();
+    s.eval("import('/c.js').then(add); import('./c.js').then(add);", None, 1).unwrap();
+    s.eval("import('./c.js').then(add);", Some("init-script:1"), 1).unwrap();
+    assert_eq!(
+        eval_str(&r, "urls.sort().join()"),
+        [
+            "http://site.test/app/c.js",
+            "http://site.test/app/c.js",
+            "http://site.test/app/c.js",
+            "http://site.test/c.js",
+            "http://site.test/c.js",
+        ]
+        .join(",")
+    );
+    assert_eq!(eval_str(&r, "evals"), "2");
+}
+
 #[test]
 fn import_maps_resolve_specifiers_like_the_html_spec() {
     let e = engine();

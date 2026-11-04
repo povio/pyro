@@ -620,12 +620,16 @@ pub mod modules {
         reject: JSObjectRef,
     );
 
+    /// The document base URL as an owned string, or null.
+    pub type lp_module_base_url_cb = unsafe extern "C" fn(ctx: JSGlobalContextRef) -> JSStringRef;
+
     unsafe extern "C" {
         /// 1 when the module SPI is present (always check before other calls).
         pub fn lp_jsc_modules_available() -> c_int;
         pub fn lp_jsc_module_loader_install(
             ctx: JSGlobalContextRef,
             cb: lp_module_fetch_cb,
+            base_url: lp_module_base_url_cb,
             userdata: *mut c_void,
         ) -> *mut c_void;
         pub fn lp_jsc_module_loader_release(handle: *mut c_void);

@@ -390,6 +390,12 @@ struct PageModuleFetcher {
 }
 
 impl ModuleFetcher for PageModuleFetcher {
+    fn document_base_url(&self, realm: &Realm) -> Option<String> {
+        let page = lp_webapi::target::page_of(&realm.scope().ok()?).ok()?;
+        let dom = page.dom.try_borrow().ok()?;
+        dom.document_base_url(page.document()).ok().map(str::to_owned)
+    }
+
     fn fetch(&self, realm: &Realm, url: String, request: ModuleRequest) {
         // Called from inside JS: defer the network request to a task, where
         // `&mut Browser` is available.

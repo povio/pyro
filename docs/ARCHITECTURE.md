@@ -192,6 +192,9 @@ Optional extras: `JSReportExtraMemoryCost` and `JSSynchronousGarbageCollectForDe
 - **How fetching works:** module fetching calls `ModuleFetcher::fetch(realm, url, ModuleRequest)`, which resolves or
   rejects asynchronously.
 - **Measured caveats:**
+  - **Script without a URL (patched JSC):** a specifier whose script has no URL to resolve against (CDP evaluate, an
+    init script) resolves against the document base URL, read through `ModuleFetcher::document_base_url` when needed.
+    It therefore gets the same module instance as the document's own scripts.
   - **Root-relative specifiers (system framework; the patched JSC resolves them against the referrer):** JSC resolves
     `"/x.js"` against `file:///`. The runtime fetches the document-origin
     URL, but the module is registered under `file:///x.js`, so that module's `import.meta.url` reads `file:///x.js`.
