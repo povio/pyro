@@ -28,6 +28,11 @@ This is the published MIT/Apache-2.0 `blitz-paint` crate from upstream commit
   vertical direction, so `vert` forms (CJK punctuation) are missing and upright Latin keeps its
   horizontal advance. Covered by `crates/lp-render/tests/vertical_writing_mode.rs`.
 
+- `src/lib.rs`, `src/render.rs`, `src/text.rs`: `paint_scene_for_print` and `paint_scene_recording_text` (PDF) draw an
+  inline root's text at its layout-unit x; boxes stay on whole pixels, and so do link areas (`TextRun::bounds`). Chromium
+  keeps the fraction in the inline axis (37.781 px of padding: its text at 37.781, ours was at 38). Screenshots
+  (`paint_scene`) are unchanged: `text_shift` stays 0 there.
+
 The linked blitz-dom patch supplies `Node::is_root_element`. Rendering regressions
 are covered in `crates/lp-render/tests/render.rs`; persistent-tree behavior is
 covered by `crates/lp-render/tests/mirror.rs`.
