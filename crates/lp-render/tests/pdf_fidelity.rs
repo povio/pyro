@@ -485,13 +485,13 @@ fn a_forced_break_at_a_fraction_is_below_the_first_content() {
     assert_eq!(page_tops(&(fractional_box(0.25, "") + &lines(1, "break-before:page"))).len(), 2);
 }
 
-/// `unrounded_layout` is in the placer's writing mode, so under a vertical box cuts stay on the painted positions:
-/// the avoided box is 350 px down the page (its inline offset), not 200.5 (its block offset). Not Chrome's paging of
-/// vertical flows, which is not implemented: this is what the snapped walk gives.
+/// `unrounded_layout` is in the placer's writing mode, so a vertical document stays on its snapped positions. These
+/// are the pages it had before cuts read fractional positions, not Chrome's: vertical documents do not page as Chrome's.
 #[test]
-fn cuts_under_a_vertical_box_use_physical_positions() {
-    let body = r#"<div style="writing-mode:vertical-lr;width:400.5px;height:1000px"><div style="margin-inline-start:350px;margin-block-start:200.5px;inline-size:100px;block-size:50.25px;break-inside:avoid"></div></div>"#;
-    assert_eq!(page_tops(body)[..2], [0.0, 350.0]);
+fn a_vertical_document_pages_on_snapped_positions() {
+    let html = r#"<!doctype html><html style="writing-mode:vertical-lr"><body style="margin:0;width:400.5px;height:1000px"><div style="margin-inline-start:350px;margin-block-start:200.5px;inline-size:100px;block-size:50.25px;break-inside:avoid"></div>"#;
+    let tops: Vec<f64> = print_with(html, |o| o.paper = (576.0, 384.0)).pages.iter().map(|p| p.rect.y0).collect();
+    assert_eq!(tops, [0.0, 401.0, 802.0]);
 }
 
 /// What a page holds, whole CSS px, and overflowing documents, measured on Chrome 156 by 1 px rows: the rows of
