@@ -1540,7 +1540,8 @@ impl Breaks {
                 }
             }
             let text = node.element_data().and_then(|e| e.inline_layout_data.as_ref());
-            if let Some(text) = text.filter(|_| inline) {
+            // The lines of vertical text run across the page, and are not what a page cut splits.
+            if let Some(text) = text.filter(|_| inline && node.vertical_block_axis().is_none()) {
                 let origin = y + (l.border.top + l.padding.top) as f64 + text.block_offset as f64;
                 let scale = text.layout.scale() as f64;
                 let first = out.lines.len();
@@ -1914,7 +1915,7 @@ fn unrounded_bounds(doc: &blitz_dom::BaseDocument, id: blitz_dom::NodeId, dpr: f
 }
 
 fn bounds_of(doc: &blitz_dom::BaseDocument, id: blitz_dom::NodeId, dpr: f64, snapped: bool) -> Option<Rect> {
-    let layout = |n: &blitz_dom::Node| if snapped { *n.final_layout() } else { *n.unrounded_layout() };
+    let layout = |n: &blitz_dom::Node| if snapped { *n.final_layout() } else { doc.physical_unrounded_layout(n.id) };
     let size = layout(doc.get_node(id)?).size;
     let mut chain = Vec::new();
     let mut current = Some(id);

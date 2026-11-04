@@ -31,6 +31,11 @@ use parley_engine::Atom;
 use parley_engine::shape::{Character, Whitespace};
 use smallvec::SmallVec;
 
+/// How far past the line's end an atom still fits (device px). Blitz rounds a shrink-to-fit box's
+/// width to a layout unit, leaving out float noise under 1/100 of a unit: text that wide must not wrap
+/// in the box measured for it.
+const FIT_TOLERANCE: f32 = 0.0005;
+
 #[derive(Default)]
 struct LineLayout {
     lines: Vec<LineData>,
@@ -1188,7 +1193,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                         // If the content fits (the x position does NOT exceed max_advance)
                         //
                         // We simply append the atom to the current line
-                        if next_x <= max_advance {
+                        if next_x <= max_advance + FIT_TOLERANCE {
                             if max_height_exceeded {
                                 return self.max_height_break_data(line_height);
                             }
@@ -1216,7 +1221,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                                 spacing,
                                 item.bidi_level.is_rtl(),
                             );
-                            if all_hang || next_x - hanging <= max_advance {
+                            if all_hang || next_x - hanging <= max_advance + FIT_TOLERANCE {
                                 if max_height_exceeded {
                                     return self.max_height_break_data(line_height);
                                 }

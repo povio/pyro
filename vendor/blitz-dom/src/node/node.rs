@@ -1216,6 +1216,19 @@ impl Node {
             .unwrap_or(stylo_taffy::WritingMode::empty())
     }
 
+    /// Whether the node's layout algorithm ran in a vertical writing mode: `None` if not, else whether
+    /// its block axis runs left to right.
+    #[inline]
+    pub fn vertical_block_axis(&self) -> Option<bool> {
+        #[cfg(feature = "writing-mode")]
+        {
+            let wm = self.layout_data().writing_mode;
+            wm.is_vertical().then(|| wm.is_vertical_lr())
+        }
+        #[cfg(not(feature = "writing-mode"))]
+        None
+    }
+
     /// The node's `display` as a [`taffy::Display`]. Returns [`taffy::Display::Block`]
     /// for nodes without computed styles (e.g. text nodes).
     pub fn taffy_display(&self) -> taffy::Display {
@@ -1755,8 +1768,21 @@ impl Node {
 
         let root_layout = inline_root.unrounded_layout();
         let content_box_inset = root_layout.padding + root_layout.border;
-        let origin_x = content_box_inset.left;
-        let origin_y = content_box_inset.top + inline_layout.block_offset;
+        let vertical = inline_root.vertical_block_axis();
+        let (origin_x, origin_y) = match vertical {
+            None => (content_box_inset.left, content_box_inset.top + inline_layout.block_offset),
+            Some(block_lr) => {
+                // Physical: `unrounded_layout` is in the writing mode of the box that placed the root.
+                let root_layout = inline_root.final_layout();
+                let inset = root_layout.padding + root_layout.border;
+                let block_start = if block_lr {
+                    inset.left + inline_layout.block_offset
+                } else {
+                    root_layout.size.width - inset.right - inline_layout.block_offset
+                };
+                (block_start, inset.top)
+            }
+        };
 
         fn union(acc: &mut Option<taffy::Rect<f32>>, left: f32, top: f32, right: f32, bottom: f32) {
             *acc = Some(match *acc {
@@ -1814,11 +1840,28 @@ impl Node {
                 }
             }
 
-            line_rect.map(|rect| taffy::Rect {
-                left: origin_x + rect.left / scale,
-                top: origin_y + rect.top / scale,
-                right: origin_x + rect.right / scale,
-                bottom: origin_y + rect.bottom / scale,
+            line_rect.map(|rect| {
+                // The lines of a vertical writing mode are logical: x inline, y block.
+                if let Some(block_lr) = vertical {
+                    let (min, max) = (line_metrics.block_min_coord, line_metrics.block_max_coord);
+                    let (b0, b1) = if block_lr {
+                        (min + max - rect.bottom, min + max - rect.top)
+                    } else {
+                        (-rect.bottom, -rect.top)
+                    };
+                    return taffy::Rect {
+                        left: origin_x + b0 / scale,
+                        top: origin_y + rect.left / scale,
+                        right: origin_x + b1 / scale,
+                        bottom: origin_y + rect.right / scale,
+                    };
+                }
+                taffy::Rect {
+                    left: origin_x + rect.left / scale,
+                    top: origin_y + rect.top / scale,
+                    right: origin_x + rect.right / scale,
+                    bottom: origin_y + rect.bottom / scale,
+                }
             })
         }))
     }
