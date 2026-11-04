@@ -8,7 +8,8 @@
 //! is not moved. A box of the other orientation turns the paper.
 //!
 //! Stylo's servo build has neither `size` nor `page`, so the rules are read from the text of the
-//! `<style>` elements and the name from a `style` attribute. Page rules in linked sheets are not seen.
+//! `<style>` elements and `<link>` sheets (`@import`ed sheets are not seen), and the name from a `style`
+//! attribute.
 
 use crate::pdf;
 
