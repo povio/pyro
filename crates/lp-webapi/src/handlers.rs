@@ -200,3 +200,31 @@ pub(crate) fn drain_inline(page: &crate::page::PageDom) {
         }
     }
 }
+
+/// `ontouch*` on the Window of a page with touch emulation, the way scripts
+/// detect a touch device (`'ontouchstart' in window`). Desktop pages keep
+/// Chrome's desktop shape, without them.
+pub(crate) fn define_touch_handlers(s: &Scope<'_>) -> JsResult<()> {
+    fn window_target(s: &Scope<'_>) -> JsResult<crate::target::EventTargetData> {
+        let page = crate::target::page_of(s)?;
+        let key = page.window_target().ok_or_else(|| lp_js::JsError::Type("Illegal invocation".into()))?;
+        Ok(crate::target::EventTargetData::window(&page, key))
+    }
+    let define = s.global().get("Object")?.as_object().map(|o| o.get("defineProperty")).transpose()?;
+    let define =
+        define.and_then(|d| d.as_object()).ok_or_else(|| lp_js::JsError::Type("Object.defineProperty".into()))?;
+    for ty in ["touchstart", "touchend", "touchmove", "touchcancel"] {
+        let desc = s.object();
+        let get = s.function("get", move |s, _, _| event_handler(s, &window_target(s)?, ty))?;
+        let set = s.function("set", move |s, _, a| {
+            set_event_handler(s, &window_target(s)?, ty, a.get(0))?;
+            Ok(s.undefined())
+        })?;
+        desc.set("get", get.value())?;
+        desc.set("set", set.value())?;
+        desc.set("enumerable", s.boolean(true))?;
+        desc.set("configurable", s.boolean(true))?;
+        define.call(None, &[s.global().value(), s.string(&format!("on{ty}")), desc.value()])?;
+    }
+    Ok(())
+}

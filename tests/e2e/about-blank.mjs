@@ -1054,6 +1054,14 @@ try {
       assert.match(multi.body, /filename="x.txt"[\s\S]*hello/);
     } finally { await p.close(); server.close(); }
   });
+  await check('mobile device context: isMobile, hasTouch and deviceScaleFactor', async () => {
+    const mobile = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true });
+    try {
+      const p = await mobile.newPage();
+      await p.setContent('<!doctype html><meta name=viewport content="width=device-width"><p>x</p>');
+      assert.deepEqual(await p.evaluate(() => [innerWidth, innerHeight, devicePixelRatio, navigator.maxTouchPoints > 0, matchMedia('(pointer: coarse)').matches, 'ontouchstart' in window]), [390, 844, 3, true, true, true]);
+    } finally { await mobile.close(); }
+  });
   await check('page.exposeFunction and exposeBinding survive navigation (Runtime.addBinding)', async () => {
     const p = await context.newPage();
     try {

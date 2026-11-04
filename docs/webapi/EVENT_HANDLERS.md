@@ -3,7 +3,9 @@
 `on*` IDL attributes from GlobalEventHandlers are defined on `HTMLElement`,
 `SVGElement`, `Document` (plus `onreadystatechange`/`onvisibilitychange`) and
 `Window` (plus WindowEventHandlers such as `onpopstate`, `onhashchange`,
-`onmessage`, `onpageshow`). Touch handlers are not exposed (desktop UA).
+`onmessage`, `onpageshow`). Touch handlers are only on the Window of documents under touch emulation
+(`'ontouchstart' in window`), not on elements or Document, and stay until the next
+navigation after emulation is turned off.
 
 - Setting a function installs it in an ordinary listener slot, so it runs in
   registration order with `addEventListener` listeners; replacing it keeps the
