@@ -4,6 +4,8 @@
 //! teardown, see browser/src/RecyclingAllocator.zig:19-25), detached trees are
 //! reclaimed by `collect_garbage` once no external reference remains.
 
+use std::collections::VecDeque;
+
 use markup5ever::{local_name, ns, LocalName, Namespace, Prefix, QualName};
 use rustc_hash::FxHashSet;
 
