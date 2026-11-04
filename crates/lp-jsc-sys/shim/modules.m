@@ -70,6 +70,11 @@ int lp_jsc_import_maps_available(void) { return 0; }
 
 int lp_jsc_import_map_add(JSGlobalContextRef ctx, const char *src, size_t src_len, const char *base, size_t base_len,
                           JSStringRef *messages) {
+    (void)ctx;
+    (void)src;
+    (void)src_len;
+    (void)base;
+    (void)base_len;
     *messages = NULL;
     return 0;
 }
