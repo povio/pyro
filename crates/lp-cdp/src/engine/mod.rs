@@ -948,6 +948,7 @@ impl EngineHost {
         match action {
             // Headless pages always behave as focused; there is no window focus to emulate.
             "setFocusEmulationEnabled" => Ok(Some(serde_json::json!({}))),
+            "setGeolocationOverride" | "clearGeolocationOverride" => self.geolocation_override(action, cmd),
             "setVirtualTimePolicy" => self.set_virtual_time_policy(cmd),
             // Touch input (Input.dispatchTouchEvent) is always accepted, as in
             // Chrome; this sets `navigator.maxTouchPoints` (default 1) and,

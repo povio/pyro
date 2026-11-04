@@ -997,6 +997,22 @@ try {
       assert.equal(await p.locator('button').textContent(), 'done');
     } finally { await p.close(); }
   });
+  await check('geolocation: override with permission, denied without, unavailable when cleared', async () => {
+    const position = () => new Promise((res) => navigator.geolocation.getCurrentPosition(
+      (p) => res([p.coords.latitude, p.coords.longitude, p.coords.accuracy, p.coords.speed]), (e) => res(e.code)));
+    const denied = await browser.newContext({ geolocation: { latitude: 1, longitude: 2 } });
+    const allowed = await browser.newContext({ geolocation: { latitude: 46.05, longitude: 14.5, accuracy: 3 }, permissions: ['geolocation'] });
+    try {
+      const d = await denied.newPage();
+      assert.equal(await d.evaluate(position), 1);
+      const a = await allowed.newPage();
+      assert.deepEqual(await a.evaluate(position), [46.05, 14.5, 3, null]);
+      await allowed.setGeolocation({ latitude: 10, longitude: 20 });
+      assert.deepEqual(await a.evaluate(position), [10, 20, 0, null]);
+      await allowed.setGeolocation(null);
+      assert.equal(await a.evaluate(position), 2);
+    } finally { await denied.close(); await allowed.close(); }
+  });
   await check('page.exposeFunction and exposeBinding survive navigation (Runtime.addBinding)', async () => {
     const p = await context.newPage();
     try {

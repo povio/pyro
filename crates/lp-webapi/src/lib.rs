@@ -69,7 +69,7 @@ pub use event::{EventCore, EventData, EventInterface};
 pub use fetch::{FetchLimits, RequestContext};
 pub use file_reader::FileReaderLimits;
 pub use identity::UserAgentOverride;
-pub use navigator_extras::{ContextServices, PermissionSetting, UserAgentMetadata};
+pub use navigator_extras::{ContextServices, GeolocationFix, PermissionSetting, UserAgentMetadata};
 pub use node::{wrap_node, NodeData};
 pub use page::{
     DialogAnswer, DownloadRequest, FocusTarget, FocusTransition, FrameViewportSource, IframeAttribute,
