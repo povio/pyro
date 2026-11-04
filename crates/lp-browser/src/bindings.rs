@@ -73,11 +73,17 @@ impl PageHooks for Hooks {
                 .is_some_and(|t| !matches!(t.to_ascii_lowercase().as_str(), "" | "_self" | "_top" | "_parent"));
             // `_blank` (and, until named browsing contexts exist, any other
             // name) opens a popup page; the embedder creates and navigates it.
-            if new_context && request.method == "GET" && page.child.is_none() {
-                if let Some(frame_id) = b.doc(page).map(|p| p.main_frame.id.clone()) {
+            if new_context && request.method == "GET" {
+                let frame = b.doc(page).map(|p| (p.main_frame.id.clone(), p.main_frame.sandbox.popups_blocked));
+                if let Some((frame_id, false)) = frame {
                     b.emit(
                         page.page,
-                        crate::PageEvent::PopupRequested { frame_id, url: request.url, opener: request.opener },
+                        crate::PageEvent::PopupRequested {
+                            frame_id,
+                            url: request.url,
+                            opener: request.opener,
+                            ticket: request.popup,
+                        },
                     );
                 }
                 return;
@@ -107,6 +113,14 @@ impl PageHooks for Hooks {
                     }
                 }
             }
+        });
+    }
+
+    fn popup_command(&self, popup: std::rc::Rc<lp_webapi::PopupState>, command: lp_webapi::PopupCommand) {
+        let page = self.page;
+        // The queue `navigate` uses, so this follows the popup's request.
+        self.sched.post(TaskSource::Navigation, move |b| {
+            b.emit(page.page, crate::PageEvent::PopupCommand { popup, command });
         });
     }
 

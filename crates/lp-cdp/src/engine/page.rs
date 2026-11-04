@@ -364,6 +364,13 @@ impl EngineHost {
         Ok(None)
     }
 
+    /// Keeps the opener's `popup.location.href` current.
+    fn popup_url_committed(&self, page: PageKey, url: &str) {
+        if let Some(ticket) = self.pages.get(&page).and_then(|state| state.popup_ticket.as_ref()) {
+            ticket.set_url(url);
+        }
+    }
+
     fn main_frame(&self, page: PageKey) -> CdpResult<(String, String, String)> {
         let state = self.pages.get(&page).ok_or_else(|| CdpError::server("page is gone"))?;
         let p = self.thread.browser.page(state.id).ok_or_else(|| CdpError::server("page is gone"))?;
@@ -554,6 +561,7 @@ impl EngineHost {
             }
             PageEvent::FrameNavigated { frame_id, loader_id, url, reason, cdp_request_id, timestamp } => {
                 if root.as_ref() == Some(&frame_id) {
+                    self.popup_url_committed(page, &url);
                     for session in self.sessions_of(page, |s| s.dom_enabled) {
                         self.event("DOM.documentUpdated", &json!({}), &session);
                     }
@@ -667,6 +675,9 @@ impl EngineHost {
                 }
             }
             PageEvent::FrameNavigatedWithinDocument { frame_id, url, .. } => {
+                if root.as_ref() == Some(&frame_id) {
+                    self.popup_url_committed(page, &url);
+                }
                 for s in &all {
                     self.event("Page.navigatedWithinDocument", &json!({ "frameId": frame_id.0, "url": url }), s);
                 }
@@ -707,8 +718,16 @@ impl EngineHost {
                     self.event("Page.frameDetached", &json!({ "frameId": frame_id.0, "reason": "remove" }), s);
                 }
             }
-            PageEvent::PopupRequested { url, opener, .. } => {
-                self.popup_requests.push(crate::target::PopupRequest { opener: page, url, opener_access: opener });
+            PageEvent::PopupRequested { url, opener, ticket, .. } => {
+                self.popup_requests.push(crate::target::PopupRequest {
+                    opener: page,
+                    url,
+                    opener_access: opener,
+                    handle: ticket.map(|t| t as std::rc::Rc<dyn std::any::Any>),
+                });
+            }
+            PageEvent::PopupCommand { popup, command } => {
+                self.popup_commands.push((popup, command));
             }
             PageEvent::FileChooserOpened { frame_id, input, multiple } => {
                 self.file_chooser_opened(page, &frame_id, input, multiple);

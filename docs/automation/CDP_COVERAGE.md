@@ -138,7 +138,7 @@ Methods: 122 (Playwright 1.59.1's static list plus the session methods it sends 
 | `Target.attachToTarget` | yes | engine |  |
 | `Target.closeTarget` | yes | engine |  |
 | `Target.createBrowserContext` | yes | engine | `proxyServer` is refused |
-| `Target.createTarget` | yes | engine | engine-opened popups (`target=_blank`/named links, `window.open` with `noopener`) become targets in the opener's context with `openerId`, paused (`waitingForDebugger`) under auto-attach; `window.open` with opener access throws (no cross-page WindowProxy); named targets always open a new page |
+| `Target.createTarget` | yes | engine | engine-opened popups (`target=_blank`/named links, `window.open`, also from child frames unless sandboxed without `allow-popups`) become targets in the opener's context with `openerId`, paused (`waitingForDebugger`) under auto-attach; there is no cross-page WindowProxy: `window.open` without `noopener` reports `canAccessOpener: true` and returns a minimal object (`closed`, `close()`, `focus()`, `blur()`, `location` navigation; anything else undefined), and the popup's `window.opener` stays null; named targets always open a new page |
 | `Target.detachFromTarget` | yes | engine |  |
 | `Target.disposeBrowserContext` | yes | engine |  |
 | `Target.getTargetInfo` | yes | engine |  |

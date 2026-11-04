@@ -3282,7 +3282,7 @@ fn links_and_window_open_targeting_blank_open_paused_popups() {
     };
     assert_eq!(navigated["params"]["frame"]["url"], json!("data:text/html,<title>popped</title>"));
 
-    // window.open with noopener opens a popup and returns null; opener access is refused explicitly.
+    // window.open with noopener opens a popup and returns null.
     let r = h.page(
         "Runtime.evaluate",
         json!({"expression":"String(window.open('data:text/html,second', '_blank', 'noopener'))","returnByValue":true}),
@@ -3294,8 +3294,117 @@ fn links_and_window_open_targeting_blank_open_paused_popups() {
             && m["params"]["sessionId"] != json!(popup)
     });
     assert_eq!(second["params"]["targetInfo"]["openerId"], json!(opener));
-    let r = h.page("Runtime.evaluate", json!({"expression":"window.open('data:text/html,x')"}));
-    assert!(r["result"]["exceptionDetails"].is_object(), "scriptable popups are unsupported: {r}");
+}
+
+#[test]
+fn window_open_returns_a_minimal_popup_object() {
+    let mut h = Harness::new();
+    let opener = h.frame_id.clone();
+    let value = |h: &mut Harness, expression: &str| {
+        let r = h.page("Runtime.evaluate", json!({ "expression": expression, "returnByValue": true }));
+        r["result"]["result"]["value"].clone()
+    };
+    let attached_popup = |h: &mut Harness, seen: &mut Vec<String>| {
+        let known = seen.clone();
+        let opener = opener.clone();
+        let attached = h.until_event(move |m| {
+            m["method"] == "Target.attachedToTarget"
+                && m["params"]["targetInfo"]["targetId"] != json!(opener)
+                && !known.iter().any(|s| m["params"]["sessionId"] == json!(s))
+        });
+        seen.push(attached["params"]["sessionId"].as_str().unwrap().to_owned());
+        attached
+    };
+    let mut seen = Vec::new();
+
+    let expr = "globalThis.w = window.open('data:text/html,<title>first</title>'); [typeof w, w.closed, typeof w.document, typeof w.opener, w.location.href, typeof PopupWindow].join()";
+    assert_eq!(value(&mut h, expr), json!("object,false,undefined,undefined,about:blank,undefined"));
+    let attached = attached_popup(&mut h, &mut seen);
+    assert_eq!(attached["params"]["targetInfo"]["openerId"], json!(opener));
+    assert_eq!(attached["params"]["targetInfo"]["canAccessOpener"], json!(true));
+    assert_eq!(attached["params"]["waitingForDebugger"], json!(true));
+    let popup = attached["params"]["sessionId"].as_str().unwrap().to_owned();
+    let target = attached["params"]["targetInfo"]["targetId"].clone();
+
+    // Navigating a popup still paused replaces what it loads when resumed.
+    assert_eq!(value(&mut h, "w.location === w.location && (w.location.href = 'data:text/html,<title>second</title>', w.focus(), w.blur(), 1)"), json!(1));
+    h.call(Some(&popup), "Page.enable", json!({}));
+    let id = h.send(Some(&popup), "Runtime.runIfWaitingForDebugger", json!({}));
+    let mut events = h.until_response(id);
+    let is_navigated = |m: &Value| m["method"] == "Page.frameNavigated" && m["sessionId"] == json!(popup);
+    let navigated = match events.iter().position(is_navigated) {
+        Some(i) => events.swap_remove(i),
+        None => h.until_event(is_navigated),
+    };
+    assert_eq!(navigated["params"]["frame"]["url"], json!("data:text/html,<title>second</title>"));
+
+    // An unparseable URL throws and opens nothing.
+    let invalid = "(() => { try { window.open('http://[') } catch (e) { return e.name } })()";
+    assert_eq!(value(&mut h, invalid), json!("SyntaxError"));
+
+    // Its document is now cross-origin: href reads throw, writes still navigate.
+    let thrown = "(() => { try { return w.location.href } catch (e) { return e.name } })()";
+    assert_eq!(value(&mut h, thrown), json!("SecurityError"));
+    assert_eq!(
+        value(&mut h, "(() => { try { w.location = 'http://[' } catch (e) { return e.name } })()"),
+        json!("SyntaxError")
+    );
+    value(&mut h, "w.location.assign('data:text/html,<title>third</title>'); 1");
+    h.until_event(|m| {
+        m["method"] == "Page.frameNavigated"
+            && m["params"]["frame"]["url"] == json!("data:text/html,<title>third</title>")
+    });
+
+    // close() closes the target; closed reads true at once.
+    assert_eq!(value(&mut h, "w.close(); w.closed"), json!(true));
+    h.until_event(|m| m["method"] == "Target.detachedFromTarget" && m["params"]["targetId"] == target);
+
+    // The client closing the popup reads as closed too.
+    assert_eq!(value(&mut h, "globalThis.x = window.open(); x.closed"), json!(false));
+    let attached = attached_popup(&mut h, &mut seen);
+    let target = attached["params"]["targetInfo"]["targetId"].clone();
+    // A popup with no URL still commits about:blank when resumed; Playwright's
+    // `popup` event waits for that commit.
+    let blank = attached["params"]["sessionId"].as_str().unwrap().to_owned();
+    h.call(Some(&blank), "Page.enable", json!({}));
+    let id = h.send(Some(&blank), "Runtime.runIfWaitingForDebugger", json!({}));
+    let mut events = h.until_response(id);
+    let is_navigated = |m: &Value| m["method"] == "Page.frameNavigated" && m["sessionId"] == json!(blank);
+    let navigated = match events.iter().position(is_navigated) {
+        Some(i) => events.swap_remove(i),
+        None => h.until_event(is_navigated),
+    };
+    assert_eq!(navigated["params"]["frame"]["url"], json!("about:blank"));
+    h.call(None, "Target.closeTarget", json!({ "targetId": target }));
+    assert_eq!(value(&mut h, "x.closed"), json!(true));
+
+    // close() in the same task as open(): the popup opens and closes in order.
+    assert_eq!(value(&mut h, "globalThis.y = window.open(); y.close(); y.closed"), json!(true));
+    let attached = attached_popup(&mut h, &mut seen);
+    let target = attached["params"]["targetInfo"]["targetId"].clone();
+    h.until_event(|m| m["method"] == "Target.detachedFromTarget" && m["params"]["targetId"] == target);
+}
+
+#[test]
+fn child_frames_open_popups_unless_sandboxed() {
+    let mut h = Harness::new();
+    let opener = h.frame_id.clone();
+    h.page("Page.enable", json!({}));
+    let page = "data:text/html,<iframe id=f></iframe><iframe id=s sandbox='allow-same-origin allow-scripts'></iframe>";
+    let seen = h.page_with_events("Page.navigate", json!({ "url": page }));
+    if !seen.iter().any(|m| m["method"] == "Page.loadEventFired") {
+        h.until_event(|m| m["method"] == "Page.loadEventFired");
+    }
+    let expr = "globalThis.blocked = document.getElementById('s').contentWindow.open('about:blank'); new Promise(r => setTimeout(r, 0)).then(() => blocked.closed)";
+    let r = h.page("Runtime.evaluate", json!({ "expression": expr, "awaitPromise": true, "returnByValue": true }));
+    assert_eq!(r["result"]["result"]["value"], json!(true), "no allow-popups: {r}");
+    h.page(
+        "Runtime.evaluate",
+        json!({ "expression": "globalThis.open1 = document.getElementById('f').contentWindow.open('about:blank'); 1" }),
+    );
+    let attached =
+        h.until_event(|m| m["method"] == "Target.attachedToTarget" && m["params"]["targetInfo"]["targetId"] != opener);
+    assert_eq!(attached["params"]["targetInfo"]["openerId"], json!(opener));
 }
 
 #[test]
