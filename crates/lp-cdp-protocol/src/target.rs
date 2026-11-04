@@ -57,9 +57,20 @@ pub struct PageCommand<'a, 'c> {
 /// host that answers later (awaited promises, navigation commits, events)
 /// must hold its own clone of the same channel ([`crate::outbox::Outbox`]),
 /// never a different destination, so that ordering is preserved.
+/// `Target.createBrowserContext` `proxyServer` and `proxyBypassList`.
+#[derive(Clone, Copy, Debug)]
+pub struct ContextProxy<'a> {
+    pub server: &'a str,
+    pub bypass_list: Option<&'a str>,
+}
+
 pub trait Host {
     /// Creates an isolated browser context (cookies, storage, cache).
     fn create_context(&mut self) -> CdpResult<ContextKey>;
+    /// `create_context` with its own proxy (`Target.createBrowserContext`).
+    fn create_proxied_context(&mut self, _proxy: ContextProxy<'_>) -> CdpResult<ContextKey> {
+        Err(CdpError::unsupported("Target.createBrowserContext proxyServer"))
+    }
     fn dispose_context(&mut self, context: ContextKey);
     /// Creates an `about:blank` page. Returns its key and target id; the target
     /// id is the main frame id, as in Chrome and upstream.
@@ -1133,12 +1144,16 @@ impl<H: Host> Browser<H> {
                 #[serde(rename_all = "camelCase")]
                 struct P {
                     proxy_server: Option<String>,
+                    proxy_bypass_list: Option<String>,
                 }
                 let params: P = cmd.params()?;
-                if params.proxy_server.is_some() {
-                    return Err(CdpError::unsupported("Target.createBrowserContext proxyServer"));
-                }
-                let context_id = self.new_context(false)?;
+                let context_id = match &params.proxy_server {
+                    Some(server) => {
+                        let proxy = ContextProxy { server, bypass_list: params.proxy_bypass_list.as_deref() };
+                        self.new_context_from(|host| host.create_proxied_context(proxy), false, false)?
+                    }
+                    None => self.new_context(false)?,
+                };
                 out.send(msg::result_frame(
                     id,
                     &serde_json::json!({ "browserContextId": context_id }),
@@ -1297,10 +1312,19 @@ impl<H: Host> Browser<H> {
     }
 
     fn new_context_with(&mut self, is_default: bool, hidden: bool) -> CdpResult<String> {
+        self.new_context_from(|host| host.create_context(), is_default, hidden)
+    }
+
+    fn new_context_from(
+        &mut self,
+        create: impl FnOnce(&mut H) -> CdpResult<ContextKey>,
+        is_default: bool,
+        hidden: bool,
+    ) -> CdpResult<String> {
         if self.contexts.len() >= MAX_CONTEXTS {
             return Err(CdpError::server("Too many browser contexts"));
         }
-        let key = self.host.create_context()?;
+        let key = create(&mut self.host)?;
         let id = self.mint("");
         self.host.context_named(key, &id);
         self.contexts.push(ContextEntry { id: id.clone(), key, is_default, hidden });

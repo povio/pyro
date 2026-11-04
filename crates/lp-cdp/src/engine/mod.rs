@@ -1159,6 +1159,14 @@ impl Host for EngineHost {
         Ok(key)
     }
 
+    fn create_proxied_context(&mut self, proxy: crate::target::ContextProxy<'_>) -> CdpResult<ContextKey> {
+        let config = lp_net::ProxyConfig::parse(proxy.server, proxy.bypass_list).map_err(CdpError::server)?;
+        let id = self.thread.browser.create_context_with_proxy(config).map_err(|e| CdpError::server(e.to_string()))?;
+        let key = u64::from(id.0);
+        self.contexts.insert(key, network::NetworkContext::new(id));
+        Ok(key)
+    }
+
     fn dispose_context(&mut self, context: ContextKey) {
         let pages: Vec<PageKey> = self.pages.iter().filter(|(_, p)| p.context == context).map(|(k, _)| *k).collect();
         for page in pages {
