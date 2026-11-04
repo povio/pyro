@@ -129,6 +129,10 @@ pub struct Dom {
     tree_version: u64,
     /// Roots of trees that may have become unreachable.
     candidates: Vec<u32>,
+    /// A `<base>` element was created; until then no document walks for one.
+    pub(crate) base_seen: bool,
+    /// Documents with a computed `html_base`, reset on the next mutation.
+    html_base_docs: std::cell::RefCell<Vec<NodeId>>,
     live: u32,
     /// Bumped whenever a node is removed from its parent.
     removals: u64,
@@ -142,10 +146,17 @@ pub struct Dom {
     /// snapshots). `None` until a cascade asks for them, so a page that
     /// never reads styles pays nothing.
     style_snapshots: std::cell::RefCell<Option<StyleSnapshots>>,
+    /// Custom element names whose definitions disable shadow roots.
+    shadow_disabled: Vec<Box<str>>,
     /// Shadow roots ever attached (selective style invalidation does not
     /// model slot assignment, so consumers fall back to full invalidation).
     shadow_roots: u32,
+    /// Elements created by the parser or cloned with `on*` attributes whose
+    /// handlers the bindings have not compiled yet.
+    pending_inline_handlers: Vec<NodeId>,
     pub(crate) mutation: MutationState,
+    /// Ranges to adjust on mutation (`crate::live_range`); empty when none exists.
+    pub(crate) live_ranges: Vec<std::rc::Weak<crate::live_range::LiveRange>>,
     pub(crate) events: crate::events::ListenerStore,
     pub(crate) resources: crate::script::ResourceQueue,
     pub(crate) iframes: crate::iframe::IframeQueue,
@@ -153,6 +164,8 @@ pub struct Dom {
     natural_sizes: rustc_hash::FxHashMap<NodeId, (f64, f64)>,
     /// `getElementById` index (see `get_element_by_id`).
     id_index: std::cell::RefCell<IdIndex>,
+    /// Named access on the Window, per document (see `window_names`).
+    pub(crate) window_names: std::cell::RefCell<rustc_hash::FxHashMap<u32, crate::window_names::WindowNames>>,
     #[cfg(test)]
     id_index_builds: std::cell::Cell<u64>,
 }
@@ -188,13 +201,19 @@ impl Dom {
             journal: Vec::new(),
             journal_floor: 0,
             style_snapshots: Default::default(),
+            shadow_disabled: Vec::new(),
             shadow_roots: 0,
+            pending_inline_handlers: Vec::new(),
+            base_seen: false,
+            html_base_docs: Default::default(),
             mutation: MutationState::default(),
+            live_ranges: Vec::new(),
             events: Default::default(),
             resources: Default::default(),
             iframes: Default::default(),
             natural_sizes: Default::default(),
             id_index: Default::default(),
+            window_names: Default::default(),
             #[cfg(test)]
             id_index_builds: Default::default(),
         }
@@ -229,6 +248,10 @@ impl Dom {
     pub(crate) fn generation_at(&self, idx: u32) -> u32 {
         self.slots.get(idx as usize).map_or(0, |s| s.gen)
     }
+    pub(crate) fn slot_gen(&self, idx: u32) -> u32 {
+        self.slots[idx as usize].gen
+    }
+
     pub(crate) fn slot_live(&self, idx: u32) -> bool {
         self.slots.get(idx as usize).is_some_and(|s| s.node.is_some())
     }
@@ -270,6 +293,9 @@ impl Dom {
     #[track_caller]
     pub(crate) fn bump(&mut self) {
         self.version = self.version.wrapping_add(1);
+        if self.base_seen {
+            self.reset_html_bases();
+        }
         // Unknown until a precise `note` refines it: an un-annotated bump
         // (forms, parser, script state) makes consumers invalidate fully.
         self.push_change(Change::Unknown(std::panic::Location::caller()));
@@ -476,6 +502,9 @@ impl Dom {
         self.alloc(kind, owner_doc)
     }
     pub(crate) fn link_raw(&mut self, node: u32, parent: u32, before: u32) {
+        if before != NIL && !self.live_ranges.is_empty() {
+            self.ranges_before_insert(parent, before, 1);
+        }
         self.link(node, parent, before);
         self.bump_tree();
         self.note(Change::Inserted(parent, node));
@@ -483,6 +512,9 @@ impl Dom {
     pub(crate) fn unlink_raw(&mut self, node: u32) {
         let parent = self.n(node).parent;
         let next = self.n(node).next;
+        if parent != NIL && !self.live_ranges.is_empty() {
+            self.ranges_before_remove(node);
+        }
         self.unlink(node);
         self.bump_tree();
         if parent != NIL {
@@ -532,9 +564,11 @@ impl Dom {
             charset: "UTF-8",
             url: url.into(),
             base_url: None,
+            html_base: Default::default(),
             inert_doc: NIL,
             owned: 0,
             active: false,
+            allow_declarative_shadow_roots: false,
             focused: NIL,
             hovered: NIL,
         };
@@ -574,7 +608,17 @@ impl Dom {
             NodeKind::Document(d) => d.url = url.into(),
             _ => return Err(DomError::Type("not a document")),
         }
+        self.reset_html_bases();
         Ok(())
+    }
+    fn reset_html_bases(&mut self) {
+        for doc in std::mem::take(self.html_base_docs.get_mut()) {
+            if let Ok(i) = self.check(doc) {
+                if let NodeKind::Document(d) = &mut self.n_mut(i).kind {
+                    d.html_base = Default::default();
+                }
+            }
+        }
     }
     /// Sets an inherited, already-resolved base URL without changing URL/origin.
     /// None restores resolution against the document's current URL.
@@ -584,11 +628,37 @@ impl Dom {
             NodeKind::Document(d) => d.base_url = base.map(Into::into),
             _ => return Err(DomError::Type("not a document")),
         }
+        self.reset_html_bases();
         Ok(())
     }
+    /// The document base URL: its first `<base href>`, else the fallback.
     pub fn document_base_url(&self, doc: NodeId) -> DomResult<&str> {
         let d = self.document_data(doc)?;
+        if self.base_seen {
+            let html_base = d.html_base.get_or_init(|| {
+                self.html_base_docs.borrow_mut().push(doc);
+                self.first_base_href(doc)
+            });
+            if let Some(base) = html_base {
+                return Ok(base);
+            }
+        }
+        self.document_fallback_base_url(doc)
+    }
+    /// The base URL ignoring `<base>`, which resolves `<base href>` itself.
+    pub fn document_fallback_base_url(&self, doc: NodeId) -> DomResult<&str> {
+        let d = self.document_data(doc)?;
         Ok(d.base_url.as_deref().unwrap_or(&d.url))
+    }
+    fn first_base_href(&self, doc: NodeId) -> Option<Box<str>> {
+        let href = self.descendants(doc).ok()?.find_map(|id| {
+            let e = self.element(id).ok()?;
+            (e.is_html() && *e.local_name() == *"base").then(|| self.get_attribute(id, "href").ok().flatten())?
+        })?;
+        let fallback = url::Url::parse(self.document_fallback_base_url(doc).ok()?).ok();
+        let url = url::Url::options().base_url(fallback.as_ref()).parse(href).ok()?;
+        // HTML: a data: or javascript: <base> is ignored.
+        (!matches!(url.scheme(), "data" | "javascript")).then(|| url.as_str().into())
     }
     pub fn set_quirks_mode(&mut self, doc: NodeId, q: QuirksMode) -> DomResult<()> {
         let i = self.check(doc)?;
@@ -610,10 +680,11 @@ impl Dom {
     pub fn create_element_raw(&mut self, doc: NodeId, name: QualName) -> DomResult<NodeId> {
         let owner = self.owner_for(doc)?;
         let is_template = name.ns == ns!(html) && name.local == local_name!("template");
+        self.base_seen |= name.local == local_name!("base");
         let idx = self.alloc_raw(NodeKind::Element(Box::new(ElementData::new(name))), owner);
         if is_template {
             let inert = self.inert_doc_for(owner);
-            let frag = self.alloc(NodeKind::Fragment(FragmentData { host: idx, shadow: None }), inert);
+            let frag = self.alloc(NodeKind::Fragment(FragmentData { host: idx, shadow: None, flags: 0 }), inert);
             self.n_mut(idx).element_mut().unwrap().template_contents = frag;
         }
         self.candidates.push(idx);
@@ -673,7 +744,7 @@ impl Dom {
     }
     pub fn create_fragment(&mut self, doc: NodeId) -> DomResult<NodeId> {
         let owner = self.owner_for(doc)?;
-        Ok(self.alloc_id(NodeKind::Fragment(FragmentData { host: NIL, shadow: None }), owner))
+        Ok(self.alloc_id(NodeKind::Fragment(FragmentData { host: NIL, shadow: None, flags: 0 }), owner))
     }
     pub fn create_doctype(&mut self, doc: NodeId, name: &str, public_id: &str, system_id: &str) -> DomResult<NodeId> {
         let owner = self.owner_for(doc)?;
@@ -709,6 +780,12 @@ impl Dom {
 
     /// `Element.attachShadow({mode})`.
     pub fn attach_shadow(&mut self, host: NodeId, mode: ShadowRootMode) -> DomResult<NodeId> {
+        self.attach_shadow_with(host, mode, 0)
+    }
+
+    /// DOM "attach a shadow root"; `flags` are `shadow_flags`. A declarative
+    /// root of the same mode is emptied and handed over instead.
+    pub fn attach_shadow_with(&mut self, host: NodeId, mode: ShadowRootMode, flags: u8) -> DomResult<NodeId> {
         let h = self.check(host)?;
         let el = self.n(h).element().ok_or(DomError::Type("not an element"))?;
         let valid_host = el.is_html()
@@ -732,23 +809,179 @@ impl Dom {
                     | "p"
                     | "section"
                     | "span"
-            ) || el.name.local.contains('-'));
+            ) || (el.name.local.contains('-')
+                && !matches!(
+                    &*el.name.local,
+                    "annotation-xml"
+                        | "color-profile"
+                        | "font-face"
+                        | "font-face-src"
+                        | "font-face-uri"
+                        | "font-face-format"
+                        | "font-face-name"
+                        | "missing-glyph"
+                )));
         if !valid_host {
             return Err(DomError::new(DomErrorKind::NotSupported, "This element does not support attachShadow"));
         }
-        if el.shadow_root != NIL {
+        if self.shadow_disabled.iter().any(|name| **name == *el.name.local) {
             return Err(DomError::new(
                 DomErrorKind::NotSupported,
-                "Shadow root cannot be created on a host which already hosts a shadow tree",
+                "attachShadow() is disabled by disabledFeatures static field",
             ));
         }
+        if el.shadow_root != NIL {
+            let sr = el.shadow_root;
+            let claimable = matches!(
+                &self.n(sr).kind,
+                NodeKind::Fragment(f) if f.shadow == Some(mode) && f.flags & shadow_flags::DECLARATIVE != 0
+            );
+            if !claimable {
+                return Err(DomError::new(
+                    DomErrorKind::NotSupported,
+                    "Shadow root cannot be created on a host which already hosts a shadow tree",
+                ));
+            }
+            let id = self.id_of(sr);
+            self.replace_all(id, None)?;
+            if let NodeKind::Fragment(f) = &mut self.n_mut(sr).kind {
+                f.flags &= !shadow_flags::DECLARATIVE;
+            }
+            return Ok(id);
+        }
+        let sr = self.new_shadow_root(h, mode, flags);
+        Ok(self.id_of(sr))
+    }
+
+    fn new_shadow_root(&mut self, h: u32, mode: ShadowRootMode, flags: u8) -> u32 {
         let owner = self.n(h).owner_doc;
-        let sr = self.alloc(NodeKind::Fragment(FragmentData { host: h, shadow: Some(mode) }), owner);
+        let sr = self.alloc(NodeKind::Fragment(FragmentData { host: h, shadow: Some(mode), flags }), owner);
         self.n_mut(h).element_mut().unwrap().shadow_root = sr;
         self.shadow_roots = self.shadow_roots.saturating_add(1);
         self.bump();
-        Ok(self.id_of(sr))
+        sr
     }
+
+    /// The parser's `<template shadowrootmode>`: `None` leaves an ordinary
+    /// template (not a valid host, or already a shadow host of any kind).
+    pub(crate) fn attach_declarative_shadow(&mut self, h: u32, mode: ShadowRootMode, flags: u8) -> Option<u32> {
+        if self.n(h).element()?.shadow_root != NIL {
+            return None;
+        }
+        let id = self.id_of(h);
+        self.attach_shadow_with(id, mode, flags | shadow_flags::DECLARATIVE).ok().map(|sr| sr.idx)
+    }
+
+    /// `shadow_flags` of a shadow root (0 for anything else).
+    pub fn shadow_root_flags(&self, id: NodeId) -> DomResult<u8> {
+        let i = self.check(id)?;
+        Ok(match &self.n(i).kind {
+            NodeKind::Fragment(f) => f.flags,
+            _ => 0,
+        })
+    }
+
+    /// A custom element name defined with `disabledFeatures: ["shadow"]`.
+    pub fn disable_shadow_for(&mut self, name: &str) {
+        self.shadow_disabled.push(name.into());
+    }
+
+    pub fn set_allow_declarative_shadow_roots(&mut self, doc: NodeId, allow: bool) -> DomResult<()> {
+        let d = self.owner_for(doc)?;
+        self.doc_data_mut(d).allow_declarative_shadow_roots = allow;
+        Ok(())
+    }
+    pub(crate) fn allows_declarative_shadow_roots(&self, doc: u32) -> bool {
+        self.doc_data(doc).allow_declarative_shadow_roots
+    }
+
+    // ----- slots -------------------------------------------------------
+
+    fn is_slot(&self, i: u32) -> bool {
+        self.n(i).element().is_some_and(|e| e.is_html() && &*e.name.local == "slot")
+    }
+
+    fn in_shadow_tree(&self, i: u32) -> bool {
+        matches!(&self.n(self.root_idx(i)).kind, NodeKind::Fragment(f) if f.shadow.is_some())
+    }
+
+    /// DOM "find a slot" (named assignment; manual slots hold no state yet).
+    fn find_slot(&self, i: u32, open_only: bool) -> Option<u32> {
+        if !matches!(self.n(i).kind, NodeKind::Element(_) | NodeKind::Text(_)) {
+            return None;
+        }
+        let parent = self.n(i).parent;
+        if parent == NIL {
+            return None;
+        }
+        let sr = self.n(parent).element().map_or(NIL, |e| e.shadow_root);
+        if sr == NIL {
+            return None;
+        }
+        let NodeKind::Fragment(f) = &self.n(sr).kind else { return None };
+        if f.flags & shadow_flags::MANUAL_SLOTS != 0 || (open_only && f.shadow == Some(ShadowRootMode::Closed)) {
+            return None;
+        }
+        let name = self.n(i).element().and_then(|e| e.attr("slot")).unwrap_or("");
+        let mut cur = self.n(sr).first_child;
+        while cur != NIL {
+            if self.is_slot(cur) && self.n(cur).element().and_then(|e| e.attr("name")).unwrap_or("") == name {
+                return Some(cur);
+            }
+            cur = self.following_in(cur, sr);
+        }
+        None
+    }
+
+    /// `Slottable.assignedSlot`.
+    pub fn assigned_slot(&self, node: NodeId) -> DomResult<Option<NodeId>> {
+        let i = self.check(node)?;
+        Ok(self.find_slot(i, true).map(|s| self.id_of(s)))
+    }
+
+    fn slot_assigned(&self, slot: u32) -> Vec<u32> {
+        let host = match &self.n(self.root_idx(slot)).kind {
+            NodeKind::Fragment(f) if f.shadow.is_some() => f.host,
+            _ => return Vec::new(),
+        };
+        self.child_idx_iter(host).filter(|&c| self.find_slot(c, false) == Some(slot)).collect()
+    }
+
+    /// DOM "find flattened slottables".
+    fn flatten_slot(&self, slot: u32, out: &mut Vec<u32>) {
+        if !self.in_shadow_tree(slot) {
+            return;
+        }
+        let assigned = self.slot_assigned(slot);
+        let items: Vec<u32> = if assigned.is_empty() {
+            self.child_idx_iter(slot)
+                .filter(|&c| matches!(self.n(c).kind, NodeKind::Element(_) | NodeKind::Text(_)))
+                .collect()
+        } else {
+            assigned
+        };
+        for c in items {
+            if self.is_slot(c) && self.in_shadow_tree(c) {
+                self.flatten_slot(c, out);
+            } else {
+                out.push(c);
+            }
+        }
+    }
+
+    /// `HTMLSlotElement.assignedNodes({flatten})`.
+    pub fn assigned_nodes(&self, slot: NodeId, flatten: bool) -> DomResult<Vec<NodeId>> {
+        let i = self.check(slot)?;
+        let nodes = if flatten {
+            let mut out = Vec::new();
+            self.flatten_slot(i, &mut out);
+            out
+        } else {
+            self.slot_assigned(i)
+        };
+        Ok(nodes.into_iter().map(|n| self.id_of(n)).collect())
+    }
+
     pub fn shadow_root(&self, host: NodeId) -> DomResult<Option<NodeId>> {
         let h = self.check(host)?;
         Ok(self.n(h).element().and_then(|e| self.opt_id(e.shadow_root)))
@@ -921,7 +1154,7 @@ impl Dom {
         loop {
             i = self.root_idx(i);
             if composed {
-                if let NodeKind::Fragment(FragmentData { host, shadow: Some(_) }) = &self.n(i).kind {
+                if let NodeKind::Fragment(FragmentData { host, shadow: Some(_), .. }) = &self.n(i).kind {
                     i = *host;
                     continue;
                 }
@@ -934,7 +1167,7 @@ impl Dom {
             i = self.root_idx(i);
             match &self.n(i).kind {
                 NodeKind::Document(_) => return true,
-                NodeKind::Fragment(FragmentData { host, shadow: Some(_) }) => i = *host,
+                NodeKind::Fragment(FragmentData { host, shadow: Some(_), .. }) => i = *host,
                 _ => return false,
             }
         }
@@ -947,7 +1180,7 @@ impl Dom {
             i = self.root_idx(i);
             match &self.n(i).kind {
                 NodeKind::Document(d) => return d.active,
-                NodeKind::Fragment(FragmentData { host, shadow: Some(_) }) => i = *host,
+                NodeKind::Fragment(FragmentData { host, shadow: Some(_), .. }) => i = *host,
                 _ => return false,
             }
         }
@@ -1146,6 +1379,15 @@ impl Dom {
         Ok(())
     }
 
+    /// "Ensure pre-insert validity" alone (`Range.insertNode` checks before it splits).
+    pub fn check_pre_insert(&self, parent: NodeId, node: NodeId, child: Option<NodeId>) -> DomResult<()> {
+        let c = match child {
+            Some(c) => self.check(c)?,
+            None => NIL,
+        };
+        self.ensure_pre_insert_validity(self.check(node)?, self.check(parent)?, c)
+    }
+
     /// `parent.insertBefore(node, child)`.
     pub fn insert_before(&mut self, parent: NodeId, node: NodeId, child: Option<NodeId>) -> DomResult<NodeId> {
         let p = self.check(parent)?;
@@ -1288,6 +1530,9 @@ impl Dom {
         if nodes.is_empty() {
             return;
         }
+        if child != NIL && !self.live_ranges.is_empty() {
+            self.ranges_before_insert(parent, child, nodes.len() as u32);
+        }
         let prev = if child == NIL { self.n(parent).last_child } else { self.n(child).prev };
         let doc = self.n(parent).owner_doc;
         for &k in &nodes {
@@ -1362,6 +1607,9 @@ impl Dom {
         self.resources_before_remove(node);
         self.removals = self.removals.wrapping_add(1);
         self.add_transient_observers(parent, node);
+        if !self.live_ranges.is_empty() {
+            self.ranges_before_remove(node);
+        }
         self.unlink(node);
         self.unfocus_removed(node);
         self.bump_tree();
@@ -1445,6 +1693,21 @@ impl Dom {
 
     /// `node.cloneNode(deep)` / `document.importNode`. `doc` overrides the
     /// node document of the clone.
+    /// Records `i` when it has an `on*` attribute (see `pending_inline_handlers`).
+    pub(crate) fn note_inline_handlers(&mut self, i: u32) {
+        let has = self.n(i).element().is_some_and(|e| e.attrs.iter().any(|a| a.name.local.starts_with("on")));
+        if has {
+            let id = self.id_of(i);
+            self.pending_inline_handlers.push(id);
+        }
+    }
+    pub fn has_pending_inline_handlers(&self) -> bool {
+        !self.pending_inline_handlers.is_empty()
+    }
+    pub fn take_pending_inline_handlers(&mut self) -> Vec<NodeId> {
+        std::mem::take(&mut self.pending_inline_handlers)
+    }
+
     pub fn clone_node(&mut self, node: NodeId, deep: bool, doc: Option<NodeId>) -> DomResult<NodeId> {
         let n = self.check(node)?;
         let d = match doc {
@@ -1454,6 +1717,9 @@ impl Dom {
         if let (Some(_), NodeKind::Document(_)) = (doc, &self.n(n).kind) {
             return Err(DomError::new(DomErrorKind::NotSupported, "cannot import a document"));
         }
+        if matches!(&self.n(n).kind, NodeKind::Fragment(f) if f.shadow.is_some()) {
+            return Err(DomError::new(DomErrorKind::NotSupported, "ShadowRoot nodes are not clonable."));
+        }
         let c = self.clone_idx(n, d, deep)?;
         Ok(self.id_of(c))
     }
@@ -1462,10 +1728,12 @@ impl Dom {
         let copy = match &self.n(n).kind {
             NodeKind::Document(d) => {
                 let (kind, url, ct, q) = (d.kind, d.url.clone(), d.content_type.clone(), d.quirks);
+                let allow_dsd = d.allow_declarative_shadow_roots;
                 let nd = self.create_document(kind, &url).idx;
                 if let NodeKind::Document(dd) = &mut self.n_mut(nd).kind {
                     dd.content_type = ct;
                     dd.quirks = q;
+                    dd.allow_declarative_shadow_roots = allow_dsd;
                 }
                 nd
             }
@@ -1480,6 +1748,7 @@ impl Dom {
                 let el = self.n_mut(id.idx).element_mut().unwrap();
                 el.attrs = attrs;
                 el.control = control;
+                self.note_inline_handlers(id.idx);
                 id.idx
             }
             NodeKind::Text(s) => {
@@ -1506,7 +1775,9 @@ impl Dom {
                 };
                 self.alloc(NodeKind::Doctype(Box::new(d)), doc)
             }
-            NodeKind::Fragment(_) => self.alloc(NodeKind::Fragment(FragmentData { host: NIL, shadow: None }), doc),
+            NodeKind::Fragment(_) => {
+                self.alloc(NodeKind::Fragment(FragmentData { host: NIL, shadow: None, flags: 0 }), doc)
+            }
         };
         // Cloned documents own their own clones.
         let child_doc = if matches!(self.n(copy).kind, NodeKind::Document(_)) { copy } else { doc };
@@ -1525,6 +1796,20 @@ impl Dom {
                 for k in kids {
                     let kc = self.clone_idx(k, inert, true)?;
                     self.link(kc, dst_tc, NIL);
+                }
+            }
+        }
+        // A clonable shadow tree comes along, even in a shallow clone.
+        let src_sr = self.n(n).element().map_or(NIL, |e| e.shadow_root);
+        if src_sr != NIL {
+            if let NodeKind::Fragment(FragmentData { shadow: Some(mode), flags, .. }) = self.n(src_sr).kind {
+                if flags & shadow_flags::CLONABLE != 0 {
+                    let dst_sr = self.new_shadow_root(copy, mode, flags);
+                    let kids: Vec<u32> = self.child_idx_iter(src_sr).collect();
+                    for k in kids {
+                        let kc = self.clone_idx(k, doc, true)?;
+                        self.link(kc, dst_sr, NIL);
+                    }
                 }
             }
         }
@@ -1814,6 +2099,10 @@ impl Dom {
             self.bump_tree();
             self.note(Change::Text(i));
         }
+        if !self.live_ranges.is_empty() {
+            let count = count.min(utf16_len(&old) - offset);
+            self.ranges_after_replace_data(i, offset, count, utf16_len(data));
+        }
         self.queue_character_data(i, &old);
         self.resources_after_text(i);
         Ok(())
@@ -1842,6 +2131,9 @@ impl Dom {
         if parent != NIL {
             let next = self.n(i).next;
             self.insert(new, parent, next, false);
+            if !self.live_ranges.is_empty() {
+                self.ranges_after_split(i, new, offset);
+            }
         } else {
             self.candidates.push(new);
         }
@@ -1873,6 +2165,15 @@ impl Dom {
                 if !data.is_empty() {
                     let cur_id = self.id_of(cur);
                     self.replace_data(cur_id, len, 0, &data)?;
+                }
+                if !self.live_ranges.is_empty() {
+                    let mut base_len = len;
+                    let mut sib = self.n(cur).next;
+                    while sib != NIL && matches!(self.n(sib).kind, NodeKind::Text(_)) {
+                        self.ranges_merge_text(cur, sib, base_len);
+                        base_len += utf16_len(self.n(sib).kind.char_data().unwrap());
+                        sib = self.n(sib).next;
+                    }
                 }
                 let mut sib = self.n(cur).next;
                 while sib != NIL && matches!(self.n(sib).kind, NodeKind::Text(_)) {

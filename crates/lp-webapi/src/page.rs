@@ -143,10 +143,24 @@ pub struct PageDom {
     pub(crate) script_parser_active: Cell<bool>,
     pub(crate) script_parser_close: Cell<bool>,
     pub(crate) script_nesting: Cell<u32>,
+    /// The network parser, lent by the loader while a script it reached runs:
+    /// that script's `document.write`s parse at its insertion point.
+    pub(crate) network_parser: RefCell<Option<lp_dom::parse::DocumentParser>>,
+    pub(crate) network_parser_lent: Cell<bool>,
+    /// External and module scripts reached in written markup, for the embedder
+    /// to fetch, and the written parser-blocking one tokenizing waits for.
+    pub(crate) written_scripts: RefCell<Vec<NodeId>>,
+    pub(crate) written_pending: Cell<Option<NodeId>>,
+    /// HTML "ignore-destructive-writes counter": a script that is external or
+    /// a module runs, so a write with no insertion point is ignored.
+    pub(crate) ignore_destructive_writes: Cell<u32>,
     /// Control activated by a Space keydown, clicked on the matching keyup.
     pub(crate) space_target: Cell<Option<NodeId>>,
     dialog_returns: RefCell<FxHashMap<NodeId, String>>,
-    sheet_rules: RefCell<FxHashMap<NodeId, Vec<String>>>,
+    /// `nonce` IDL values, keyed with the content attribute they were set
+    /// over: a later attribute change wins, as it updates the internal slot.
+    nonces: RefCell<FxHashMap<NodeId, (Option<String>, String)>>,
+    pub(crate) sheet_models: RefCell<FxHashMap<NodeId, Rc<crate::css::SheetModel>>>,
     /// Files selected into `<input type=file>` (CDP DOM.setFileInputFiles).
     pub(crate) files: RefCell<FxHashMap<NodeId, Vec<crate::file::FileEntry>>>,
     /// Faux layout + style engine of the displayed document. Read it with
@@ -182,6 +196,8 @@ pub struct NavigationRequest {
     /// A new browsing context (popup) keeps its opener (`window.opener`):
     /// `window.open` without `noopener`, or a link with `rel=opener`.
     pub opener: bool,
+    /// `window.open`'s returned object watches this popup.
+    pub popup: Option<Rc<crate::popup::PopupTicket>>,
 }
 
 /// How a blocking `alert`/`confirm`/`prompt` was answered.
@@ -275,6 +291,9 @@ pub trait PageHooks {
     }
     /// Starts a navigation of the frame showing the document.
     fn navigate(&self, request: NavigationRequest);
+    /// The document's `window.open` result asked something of its popup,
+    /// after (and in order with) the navigation that requested the popup.
+    fn popup_command(&self, _popup: Rc<crate::popup::PopupState>, _command: crate::popup::PopupCommand) {}
     /// Thread-safe poster that runs a closure as a task on the page's
     /// browser thread (lp-net sinks run on the I/O thread). `None` when the
     /// embedder cannot post across threads (network APIs then fail).
@@ -312,6 +331,14 @@ pub trait PageHooks {
     fn document_closed(&self) -> bool {
         false
     }
+    /// An external or module script was reached in markup written to a
+    /// script-created parser: schedule `PageDom::take_written_scripts` for the
+    /// loader (a blocking one reports through
+    /// `lifecycle::written_script_fetched`). False when the embedder cannot
+    /// load scripts; the write then reports them as unsupported.
+    fn written_script_queued(&self) -> bool {
+        false
+    }
     /// Called without DOM/hook borrows before the inserting native call returns.
     fn iframe_connected(&self, _iframe: NodeId) {}
     /// Removed iframe owners, descendants before ancestors.
@@ -325,6 +352,11 @@ pub trait PageHooks {
         _iframe: NodeId,
     ) -> lp_js::JsResult<Option<lp_js::Value<'s>>> {
         Ok(None)
+    }
+    /// Live realms of `scope`'s script world in the other documents that share
+    /// this page's `Dom`, so a node or event keeps one wrapper across them.
+    fn sibling_realms(&self, _scope: &lp_js::Scope<'_>) -> Vec<lp_js::Realm> {
+        Vec::new()
     }
     /// Legacy document lookup for embedders sharing the parent's binding state.
     fn frame_document(&self, _iframe: NodeId) -> Option<NodeId> {
@@ -412,9 +444,15 @@ impl PageDom {
             script_parser_active: Cell::new(false),
             script_parser_close: Cell::new(false),
             script_nesting: Cell::new(0),
+            network_parser: RefCell::new(None),
+            network_parser_lent: Cell::new(false),
+            written_scripts: RefCell::new(Vec::new()),
+            written_pending: Cell::new(None),
+            ignore_destructive_writes: Cell::new(0),
             space_target: Cell::new(None),
             dialog_returns: RefCell::new(FxHashMap::default()),
-            sheet_rules: RefCell::new(FxHashMap::default()),
+            nonces: RefCell::new(FxHashMap::default()),
+            sheet_models: RefCell::new(FxHashMap::default()),
             files: RefCell::new(FxHashMap::default()),
             layout: RefCell::new(lp_dom::layout::Layout::new(document)),
             frame_viewport: RefCell::new(None),
@@ -446,6 +484,16 @@ impl PageDom {
     /// emulated (`Emulation.setTouchEmulationEnabled`).
     pub fn set_max_touch_points(&self, points: u32) {
         self.max_touch_points.set(points);
+        if points > 0 {
+            let realms: Vec<_> = self.realms.borrow().values().filter_map(|r| r.upgrade()).collect();
+            for realm in realms {
+                if let Ok(s) = realm.scope() {
+                    if let Err(e) = crate::handlers::define_touch_handlers(&s) {
+                        s.report_exception(&e);
+                    }
+                }
+            }
+        }
     }
     pub fn max_touch_points(&self) -> u32 {
         self.max_touch_points.get()
@@ -737,7 +785,7 @@ impl PageDom {
             (ResourceKind::StyleText | ResourceKind::Stylesheet, ResourceReason::Removed) => {
                 style.remove_sheet(ev.node);
             }
-            (ResourceKind::StyleText, _) if !self.sheet_rules.borrow().contains_key(&ev.node) => {
+            (ResourceKind::StyleText, _) if !self.sheet_models.borrow().get(&ev.node).is_some_and(|m| m.edited()) => {
                 style.add_sheet(ev.node, lp_dom::style::SheetSource::StyleElement);
             }
             _ => {}
@@ -753,6 +801,45 @@ impl PageDom {
     }
     pub fn set_current_script(&self, script: Option<NodeId>) {
         self.current_script.set(script);
+    }
+
+    /// Lends the network parser for one script it reached: the script's
+    /// `document.write`s parse at the insertion point.
+    pub fn lend_network_parser(&self, mut parser: lp_dom::parse::DocumentParser) {
+        parser.open_insertion_point();
+        *self.network_parser.borrow_mut() = Some(parser);
+        self.network_parser_lent.set(true);
+        self.script_nesting.set(self.script_nesting.get() + 1);
+    }
+
+    /// Ends `lend_network_parser` after the script. Once the parser is back
+    /// the loader blocks on written scripts itself (`take_written_scripts`).
+    pub fn reclaim_network_parser(&self) -> Option<lp_dom::parse::DocumentParser> {
+        self.script_nesting.set(self.script_nesting.get() - 1);
+        self.network_parser_lent.set(false);
+        self.written_pending.set(None);
+        let mut parser = self.network_parser.borrow_mut().take()?;
+        parser.close_insertion_point();
+        Some(parser)
+    }
+
+    /// The written parser-blocking script tokenizing waits for.
+    pub fn written_script_pending(&self) -> Option<NodeId> {
+        self.written_pending.get()
+    }
+
+    /// External and module scripts reached in written markup, in order.
+    pub fn take_written_scripts(&self) -> Vec<NodeId> {
+        std::mem::take(&mut *self.written_scripts.borrow_mut())
+    }
+
+    /// Runs `f` as an external or module script: `document.write` without an
+    /// insertion point is ignored meanwhile.
+    pub fn with_destructive_writes_ignored<R>(&self, f: impl FnOnce() -> R) -> R {
+        self.ignore_destructive_writes.set(self.ignore_destructive_writes.get() + 1);
+        let result = f();
+        self.ignore_destructive_writes.set(self.ignore_destructive_writes.get() - 1);
+        result
     }
 
     /// Allocates the Window event-target key for `document`.
@@ -966,6 +1053,11 @@ impl PageDom {
             h.navigate(req);
         }
     }
+    pub(crate) fn popup_command(&self, popup: Rc<crate::popup::PopupState>, command: crate::popup::PopupCommand) {
+        if let Some(h) = self.hooks() {
+            h.popup_command(popup, command);
+        }
+    }
     pub(crate) fn network_delivery(&self, id: lp_net::RequestId, frontier: lp_net::NetworkDelivery) {
         if !self.is_disposed() {
             let hooks = self.hooks();
@@ -979,6 +1071,26 @@ impl PageDom {
     }
     pub(crate) fn frame_document(&self, iframe: NodeId) -> Option<NodeId> {
         self.hooks().and_then(|h| h.frame_document(iframe))
+    }
+    pub(crate) fn sibling_realms(&self, s: &lp_js::Scope<'_>) -> Vec<lp_js::Realm> {
+        self.hooks().map(|h| h.sibling_realms(s)).unwrap_or_default()
+    }
+    /// The wrapper of `id` in a sibling realm of `s`, if one is alive.
+    pub(crate) fn sibling_wrapper<'s>(&self, s: &lp_js::Scope<'s>, id: NodeId) -> Option<lp_js::Object<'s>> {
+        self.sibling_realms(s).iter().find_map(|realm| {
+            let scope = realm.scope().ok()?;
+            let owner = crate::target::page_of(&scope).ok()?;
+            let wrapper = scope.lookup_identity(owner.node_identity(id))?;
+            lp_js::Persistent::new(&scope, wrapper.value()).get(s).as_object()
+        })
+    }
+    /// A realm that may hold listeners of a target of this page: its own, or a
+    /// sibling document's when the target's wrapper was made there.
+    pub(crate) fn listener_realm(&self, id: lp_js::RealmId) -> Option<lp_js::Realm> {
+        if self.is_disposed() {
+            return None;
+        }
+        self.realms.borrow().get(&id).and_then(|w| w.upgrade()).or_else(|| lp_js::Realm::by_id(id))
     }
     pub(crate) fn frame_document_value<'s>(
         &self,
@@ -1084,14 +1196,17 @@ impl PageDom {
         self.dialog_returns.borrow_mut().insert(el, v);
     }
 
-    /// CSSOM rules inserted via `insertRule` for a `<style>`/`<link>` owner.
-    pub fn sheet_rules(&self, owner: NodeId) -> Vec<String> {
-        self.sheet_rules.borrow().get(&owner).cloned().unwrap_or_default()
+    pub(crate) fn nonce(&self, el: NodeId, attr: Option<&str>) -> Option<String> {
+        let nonces = self.nonces.borrow();
+        nonces.get(&el).filter(|(over, _)| over.as_deref() == attr).map(|(_, value)| value.clone())
     }
-    pub(crate) fn set_sheet_rules(&self, owner: NodeId, rules: Vec<String>) {
-        // CSSOM edits replace the sheet text (as upstream does).
-        self.layout.borrow_mut().style_mut().set_sheet_text(owner, &rules.join("\n"));
-        self.sheet_rules.borrow_mut().insert(owner, rules);
+    pub(crate) fn set_nonce(&self, el: NodeId, attr: Option<&str>, value: String) {
+        self.nonces.borrow_mut().insert(el, (attr.map(str::to_owned), value));
+    }
+
+    /// A `<style>` element's sheet is read from the DOM again, after CSSOM edits.
+    pub(crate) fn set_style_element_sheet(&self, owner: NodeId) {
+        self.layout.borrow_mut().style_mut().add_sheet(owner, lp_dom::style::SheetSource::StyleElement);
     }
 
     /// `document.title`: the first `<title>`'s text, whitespace collapsed.

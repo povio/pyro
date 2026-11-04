@@ -34,9 +34,7 @@ does not reinterpret their bytes. Lone JS UTF-16 surrogates retain the existing
 Rust-string conversion limitation.
 
 This increment targets the DOMParser path used by docx-preview 0.3.7. It does not
-add XML document navigation, XHR responseXML, XMLSerializer, XML innerHTML parsing,
-or a complete XML serializer; the existing HTML-oriented serialization path is
-unchanged. It does not establish a passing DOCX preview or new TOS coverage.
+add XML document navigation, XHR responseXML XMLSerializer, XML innerHTML parsing,or XML innerHTML parsing; the existingHTML-oriented serialization path is unchanged. `XMLSerializer` (which Playwright's`page.content()` calls for the doctype) writes declarations where the in-scope ones donot cover a name but does not generate prefixes (`ns1`) or check well-formedness. It does not establish a passing DOCX preview or new TOS coverage.
 
 Implementation: `lp-dom/src/xml.rs` uses the
 [quick-xml event reader](https://docs.rs/quick-xml/0.42.0/quick_xml/reader/struct.Reader.html)

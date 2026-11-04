@@ -45,11 +45,13 @@ pub mod mutation_observer;
 pub mod navigator_extras;
 pub mod node;
 pub mod page;
+mod popup;
 pub mod range;
 pub mod render_snapshot;
 pub mod resize_observer;
 pub mod response;
 pub mod storage;
+mod streams;
 mod structured_clone;
 pub mod target;
 pub mod traversal;
@@ -69,12 +71,13 @@ pub use event::{EventCore, EventData, EventInterface};
 pub use fetch::{FetchLimits, RequestContext};
 pub use file_reader::FileReaderLimits;
 pub use identity::UserAgentOverride;
-pub use navigator_extras::{ContextServices, PermissionSetting, UserAgentMetadata};
+pub use navigator_extras::{ContextServices, GeolocationFix, PermissionSetting, UserAgentMetadata};
 pub use node::{wrap_node, NodeData};
 pub use page::{
     DialogAnswer, DownloadRequest, FocusTarget, FocusTransition, FrameViewportSource, IframeAttribute,
     NavigationRequest, PageDom, PageHooks, RemotePoster,
 };
+pub use popup::{PopupCommand, PopupState, PopupTicket};
 pub use storage::{StorageNamespace, StorageSeed};
 pub use target::{EventTarget, EventTargetData};
 pub use window::{define_members, WindowHost};
@@ -84,6 +87,7 @@ pub use xhr::XhrLimits;
 pub fn register(engine: &lp_js::Engine) {
     engine.register::<target::EventTarget>();
     event::register(engine);
+    popup::register(engine);
     node::register(engine);
     html::register(engine);
     collections::register(engine);
@@ -115,7 +119,7 @@ pub fn register(engine: &lp_js::Engine) {
     engine.register::<url_search_params::URLSearchParams>();
     engine.register::<url_search_params::ParamsIterator>();
     engine.register::<response::Response>();
-    response::register_streams(engine);
+    engine.register::<response::BodySource>();
     engine.register::<xhr::XMLHttpRequest>();
     engine.register::<xhr::XMLHttpRequestUpload>();
 }
@@ -129,6 +133,7 @@ pub fn install(scope: &Scope<'_>, page: Rc<PageDom>) -> JsResult<()> {
     page.realms.borrow_mut().insert(realm.id(), realm.downgrade());
     xhr::install(scope, &page)?;
     realm.set_embedder(page.clone());
+    realm.set_named_properties(Rc::new(window::WindowNamedProperties(page.clone())));
     realm.set_unhandled_rejection_handler(event::dispatch_unhandled_rejection);
     mutation_observer::install(scope, &page)?;
     intersection_observer::install(scope, &page)?;
@@ -140,6 +145,9 @@ pub fn install(scope: &Scope<'_>, page: Rc<PageDom>) -> JsResult<()> {
     structured_clone::install(scope, &page)?;
     if let Some(define) = scope.global().get("Object")?.as_object().map(|o| o.get("defineProperty")).transpose()? {
         page.define_properties.borrow_mut().insert(scope.realm_id(), lp_js::Persistent::new(scope, define));
+    }
+    if page.max_touch_points() > 0 {
+        handlers::define_touch_handlers(scope)?;
     }
     let global = scope.global();
     global.set("CSS", window::css_namespace(scope)?)?;

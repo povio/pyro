@@ -1,0 +1,148 @@
+diff --git a/Source/JavaScriptCore/API/JSFork.cpp b/Source/JavaScriptCore/API/JSFork.cpp
+--- a/Source/JavaScriptCore/API/JSFork.cpp
++++ b/Source/JavaScriptCore/API/JSFork.cpp
+@@ -8,8 +8,10 @@
+ #include "APICast.h"
+ #include "Heap.h"
+ #include "JITWorklist.h"
++#include "JSCInlines.h"
+ #include "JSGlobalObject.h"
+ #include "JSLock.h"
++#include "OpaqueJSString.h"
+ #include "VM.h"
+ #include "VMTraps.h"
+ #include <wtf/CryptographicallyRandomNumber.h>
+@@ -88,3 +90,102 @@
+     UNUSED_PARAM(wait);
+ #endif
+ }
++
++// A window's named properties object, as WebCore's JSDOMWindowProperties: an object
++// in the global's prototype chain whose names come from the embedder. A name is
++// looked up only when the global lacks it. It has no put hook, so assignments create
++// own properties of the global through the ordinary path, and absence stays uncached
++// while hits further up the chain (Object.prototype, which wins over names) still cache.
++namespace {
++
++class JSNamedPropertiesObject final : public JSNonFinalObject {
++public:
++    using Base = JSNonFinalObject;
++    static constexpr unsigned StructureFlags = Base::StructureFlags | OverridesGetOwnPropertySlot | GetOwnPropertySlotIsImpureForPropertyAbsence | InterceptsGetOwnPropertySlotByIndexEvenWhenLengthIsNotZero | IsImmutablePrototypeExoticObject;
++
++    template<typename CellType, SubspaceAccess>
++    static GCClient::IsoSubspace* subspaceFor(VM& vm)
++    {
++        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSNamedPropertiesObject, Base);
++        return &vm.plainObjectSpace();
++    }
++
++    DECLARE_INFO;
++
++    static JSNamedPropertiesObject* create(VM& vm, JSGlobalObject* globalObject)
++    {
++        Structure* structure = Structure::create(vm, globalObject, globalObject->objectPrototype(), TypeInfo(ObjectType, StructureFlags), info());
++        auto* object = new (NotNull, allocateCell<JSNamedPropertiesObject>(vm)) JSNamedPropertiesObject(vm, structure);
++        object->finishCreation(vm);
++        object->putDirectWithoutTransition(vm, vm.propertyNames->toStringTagSymbol, jsNontrivialString(vm, "WindowProperties"_s), PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly);
++        return object;
++    }
++
++    static bool getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)
++    {
++        if (Base::getOwnPropertySlot(object, globalObject, propertyName, slot))
++            return true;
++        StringImpl* name = propertyName.uid();
++        if (!name || name->isSymbol())
++            return false;
++        if (slot.isVMInquiry()) {
++            slot.disableCaching();
++            return false;
++        }
++        // The window's own realm answers, whichever realm is asking.
++        JSGlobalObject* owner = object->realm();
++        JSContextRef ctx = toRef(owner);
++        bool candidate = name->is8Bit()
++            ? s_filter(ctx, name->span8().data(), name->length(), true)
++            : s_filter(ctx, name->span16().data(), name->length(), false);
++        if (!candidate)
++            return false;
++
++        VM& vm = getVM(globalObject);
++        auto scope = DECLARE_THROW_SCOPE(vm);
++        auto nameRef = OpaqueJSString::tryCreate(name);
++        JSValueRef exception = nullptr;
++        JSValueRef value;
++        {
++            JSLock::DropAllLocks dropAllLocks(owner);
++            value = s_getter(ctx, toRef(object), nameRef.get(), &exception);
++        }
++        if (exception) {
++            throwException(globalObject, scope, toJS(owner, exception));
++            return false;
++        }
++        if (!value)
++            return false;
++        slot.setValue(object, static_cast<unsigned>(PropertyAttribute::DontEnum), toJS(owner, value));
++        return true;
++    }
++
++    static bool getOwnPropertySlotByIndex(JSObject* object, JSGlobalObject* globalObject, unsigned index, PropertySlot& slot)
++    {
++        VM& vm = getVM(globalObject);
++        return getOwnPropertySlot(object, globalObject, Identifier::from(vm, index), slot);
++    }
++
++    static inline JSNamedPropertyFilter s_filter { nullptr };
++    static inline JSObjectGetPropertyCallback s_getter { nullptr };
++
++private:
++    JSNamedPropertiesObject(VM& vm, Structure* structure)
++        : Base(vm, structure)
++    {
++    }
++};
++
++const ClassInfo JSNamedPropertiesObject::s_info = { "WindowProperties"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSNamedPropertiesObject) };
++
++} // namespace
++
++void JSGlobalContextInstallNamedProperties(JSGlobalContextRef ctx, JSNamedPropertyFilter filter, JSObjectGetPropertyCallback getter)
++{
++    JSGlobalObject* globalObject = toJS(ctx);
++    VM& vm = globalObject->vm();
++    JSLockHolder locker(vm);
++    JSNamedPropertiesObject::s_filter = filter;
++    JSNamedPropertiesObject::s_getter = getter;
++    globalObject->resetPrototype(vm, JSNamedPropertiesObject::create(vm, globalObject));
++}
+diff --git a/Source/JavaScriptCore/API/JSForkPrivate.h b/Source/JavaScriptCore/API/JSForkPrivate.h
+--- a/Source/JavaScriptCore/API/JSForkPrivate.h
++++ b/Source/JavaScriptCore/API/JSForkPrivate.h
+@@ -13,6 +13,7 @@
+ #define JSForkPrivate_h
+ 
+ #include <JavaScriptCore/JSBase.h>
++#include <JavaScriptCore/JSObjectRef.h>
+ #include <stdbool.h>
+ 
+ #ifdef __cplusplus
+@@ -44,6 +45,19 @@
+    realms; with no other thread running JavaScript in `group`. */
+ JS_EXPORT void JSCompleteJITPlans(JSContextGroupRef group, bool wait);
+ 
++/* Whether a name, in Latin-1 or UTF-16 code units, may be a named property of the
++   global of `ctx`. Runs on every lookup that misses the global: it must be cheap, and
++   must not call into JavaScriptCore. */
++typedef bool (*JSNamedPropertyFilter)(JSContextRef ctx, const void* characters, size_t length, bool is8Bit);
++
++/* Inserts a named properties object between the global object of `ctx` and
++   Object.prototype, which JavaScript and JSObjectSetPrototype cannot do (immutable
++   prototype exotic object). `getter` runs for names `filter` lets through, with `ctx`
++   the object's own global; it returns null for no such property. The callbacks are
++   process-wide. This replaces the global proxy, so call it on a new context, before
++   anything holds `globalThis`; JSContextGetGlobalObject returns the new proxy. */
++JS_EXPORT void JSGlobalContextInstallNamedProperties(JSGlobalContextRef ctx, JSNamedPropertyFilter filter, JSObjectGetPropertyCallback getter);
++
+ #ifdef __cplusplus
+ }
+ #endif

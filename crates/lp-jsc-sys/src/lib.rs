@@ -527,6 +527,16 @@ pub mod spi {
     pub type JSGlobalContextReseedRandomFn = unsafe extern "C" fn(ctx: JSGlobalContextRef);
     /// Patched JavaScriptCore only (`webkit/patches/0003-complete-jit-plans.patch`).
     pub type JSCompleteJITPlansFn = unsafe extern "C" fn(group: JSContextGroupRef, wait: bool);
+    /// Patched JavaScriptCore only (`webkit/patches/0006-vm-time-zone.patch`).
+    pub type JSContextGroupSetTimeZoneFn = unsafe extern "C" fn(group: JSContextGroupRef, id: *const c_char) -> bool;
+    pub type JSNamedPropertyFilter =
+        unsafe extern "C" fn(ctx: JSContextRef, characters: *const c_void, length: usize, is_8bit: bool) -> bool;
+    /// Patched JavaScriptCore only (`webkit/patches/0004-named-properties-object.patch`).
+    pub type JSGlobalContextInstallNamedPropertiesFn = unsafe extern "C" fn(
+        ctx: JSGlobalContextRef,
+        filter: JSNamedPropertyFilter,
+        getter: JSObjectGetPropertyCallback,
+    );
 
     /// Runtime-resolved SPI table. Each entry is `None` when the running
     /// JavaScriptCore does not export the symbol.
@@ -549,6 +559,8 @@ pub mod spi {
         pub did_fork: Option<JSDidForkFn>,
         pub reseed_random: Option<JSGlobalContextReseedRandomFn>,
         pub complete_jit_plans: Option<JSCompleteJITPlansFn>,
+        pub set_time_zone: Option<JSContextGroupSetTimeZoneFn>,
+        pub install_named_properties: Option<JSGlobalContextInstallNamedPropertiesFn>,
     }
 
     impl Spi {
@@ -604,6 +616,8 @@ pub mod spi {
             did_fork: resolve!("JSDidFork"),
             reseed_random: resolve!("JSGlobalContextReseedRandom"),
             complete_jit_plans: resolve!("JSCompleteJITPlans"),
+            set_time_zone: resolve!("JSContextGroupSetTimeZone"),
+            install_named_properties: resolve!("JSGlobalContextInstallNamedProperties"),
         })
     }
 }
@@ -620,15 +634,29 @@ pub mod modules {
         reject: JSObjectRef,
     );
 
+    /// The document base URL as an owned string, or null.
+    pub type lp_module_base_url_cb = unsafe extern "C" fn(ctx: JSGlobalContextRef) -> JSStringRef;
+
     unsafe extern "C" {
         /// 1 when the module SPI is present (always check before other calls).
         pub fn lp_jsc_modules_available() -> c_int;
         pub fn lp_jsc_module_loader_install(
             ctx: JSGlobalContextRef,
             cb: lp_module_fetch_cb,
+            base_url: lp_module_base_url_cb,
             userdata: *mut c_void,
         ) -> *mut c_void;
         pub fn lp_jsc_module_loader_release(handle: *mut c_void);
+        /// 1 when `lp_jsc_import_map_add` works (source-built JavaScriptCore).
+        pub fn lp_jsc_import_maps_available() -> c_int;
+        pub fn lp_jsc_import_map_add(
+            ctx: JSGlobalContextRef,
+            src: *const c_char,
+            src_len: usize,
+            base: *const c_char,
+            base_len: usize,
+            messages: *mut JSStringRef,
+        ) -> c_int;
         pub fn lp_jsc_module_script_create(
             ctx: JSGlobalContextRef,
             src: *const c_char,

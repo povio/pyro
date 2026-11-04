@@ -242,6 +242,37 @@ fn link_rects_land_where_chrome_puts_them() {
     }
 }
 
+/// The matrices glyphs are drawn through, in content order.
+fn text_matrices(pdf: &str) -> Vec<[f64; 6]> {
+    let mut out = Vec::new();
+    for (i, _) in pdf.match_indices(" cm") {
+        let head = &pdf[pdf[..i].rfind(['q', '\n']).unwrap_or(0)..i];
+        let n: Vec<f64> = head.split_whitespace().filter_map(|v| v.parse().ok()).collect();
+        if n.len() == 6 && pdf[i..].trim_start_matches(" cm").trim_start().contains("BT") {
+            out.push([n[0], n[1], n[2], n[3], n[4], n[5]]);
+        }
+    }
+    out
+}
+
+/// Rects measured on Chrome 156 (600 x 375.12 pt).
+#[test]
+fn vertical_text_is_rotated_and_its_link_areas_land_where_chrome_puts_them() {
+    let html = r#"<!doctype html><body style="margin:0;font:20px/30px Helvetica">
+        <div style="position:absolute;left:100px;top:50px;writing-mode:vertical-rl;height:300px;width:100px"><a href="https://example.com/a">example text</a></div>
+        <div style="position:absolute;left:300px;top:50px;writing-mode:vertical-lr;height:300px;width:100px">x x <a href="https://example.com/b">lr link</a></div>"#;
+    let out = print_with(html, |o| o.paper = (800.0, 500.16));
+    let content = inflated(&out.bytes);
+    let found = rects(&content);
+    assert_eq!(found.len(), 2, "{found:?}");
+    assert!(close(&found[0], &[130.5, 252.87, 147.75, 337.62]) || cfg!(not(target_os = "macos")), "{found:?}");
+    assert!(close(&found[1], &[228.0, 279.12, 245.25, 314.37]) || cfg!(not(target_os = "macos")), "{found:?}");
+    let matrices = text_matrices(&content);
+    assert!(!matrices.is_empty());
+    // A quarter turn clockwise: in a PDF's y-up page, (0 -1 -1 0) once its own y flip is applied.
+    assert!(matrices.iter().all(|m| m[0].abs() < 1e-6 && m[3].abs() < 1e-6), "{matrices:?}");
+}
+
 #[test]
 fn inline_link_areas_are_whole_css_pixels() {
     let html = r#"<!doctype html><body style="margin:0;font:20px/30px sans-serif"><a href="https://example.com/a">example text</a>"#;

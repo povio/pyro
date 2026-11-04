@@ -7,8 +7,8 @@
 //! * external classic `defer`, and non-async module scripts: run in document
 //!   order after parsing, before `DOMContentLoaded`;
 //! * `async` (classic or module): run when ready, before `load`;
-//! * `nomodule` classic scripts, import maps and data blocks: not executed
-//!   (import maps are unsupported, see docs/PARITY.md).
+//! * import maps: merged into the realm's map when reached;
+//! * `nomodule` classic scripts and data blocks: not executed.
 //!
 //! Deviation: a deferred module's evaluation promise (including top-level
 //! await) is awaited before the next deferred script/`DOMContentLoaded`,
@@ -67,6 +67,8 @@ pub enum ResourceKind {
 
 #[derive(Debug, Clone)]
 pub struct FetchRequest {
+    /// Body and content type of a form POST (`None`: GET).
+    pub post: Option<(Vec<u8>, String)>,
     pub url: String,
     pub kind: ResourceKind,
     pub page: PageId,
@@ -226,6 +228,18 @@ impl ResourceLoader for NetLoader {
                 req.credentials = lp_net::Credentials::Include;
             }
             req.max_body = Some(crate::stylesheets::MAX_SHEET_BYTES.min(self.client.config().max_body));
+        }
+        if let Some((body, content_type)) = request.post {
+            req.method = lp_net::http::Method::POST;
+            req.body = Some(body.into());
+            if let Ok(value) = lp_net::http::HeaderValue::from_str(&content_type) {
+                req.headers.insert(lp_net::http::header::CONTENT_TYPE, value);
+            }
+            req.origin = request
+                .frame_id
+                .as_ref()
+                .and_then(|id| browser.frame(request.page, &crate::FrameId(id.clone())))
+                .map(|f| f.origin);
         }
         req.referrer = request.referrer.as_deref().and_then(|r| url::Url::parse(r).ok());
         req.frame_id = request.frame_id;
@@ -390,6 +404,12 @@ struct PageModuleFetcher {
 }
 
 impl ModuleFetcher for PageModuleFetcher {
+    fn document_base_url(&self, realm: &Realm) -> Option<String> {
+        let page = lp_webapi::target::page_of(&realm.scope().ok()?).ok()?;
+        let dom = page.dom.try_borrow().ok()?;
+        dom.document_base_url(page.document()).ok().map(str::to_owned)
+    }
+
     fn fetch(&self, realm: &Realm, url: String, request: ModuleRequest) {
         // Called from inside JS: defer the network request to a task, where
         // `&mut Browser` is available.
@@ -490,6 +510,7 @@ impl Browser {
             p.pending_loader = Some(loader_id.clone());
         }
         let req = FetchRequest {
+            post: opts.post.clone(),
             url: opts.url.clone(),
             kind: if page.child.is_some() { ResourceKind::Iframe } else { ResourceKind::Document },
             page: page.page,
@@ -674,23 +695,7 @@ impl Browser {
             };
             self.drain_dom_resources(page);
             match step {
-                ParseStep::Script(node) => {
-                    let blocks = self
-                        .doc(page)
-                        .and_then(|p| p.main_frame.page_dom.clone())
-                        .and_then(|p| p.dom.borrow().script_info(node).ok())
-                        .is_some_and(|s| s.kind == ScriptKind::Classic && (s.src.is_none() || (!s.async_ && !s.defer)));
-                    if blocks && self.stylesheets_block_scripts(page) {
-                        let mut load = self.load_mut(page).expect("load");
-                        if load.dom.borrow_mut().add_ref(node).is_ok() {
-                            load.stylesheet_blocked_script =
-                                Some(Rc::new(ResourceNode { dom: load.dom.clone(), node }));
-                            load.blocked = true;
-                            return;
-                        }
-                    }
-                    self.prepare_script(page, node);
-                }
+                ParseStep::Script(node) => self.parser_reached_script(page, node),
                 ParseStep::NeedInput => {
                     let mut load = self.load_mut(page).expect("load");
                     match load.phase {
@@ -714,6 +719,25 @@ impl Browser {
         }
     }
 
+    /// A script end tag, in the document or in markup one of its scripts
+    /// wrote: it waits for blocking stylesheets, or is prepared.
+    fn parser_reached_script(&mut self, page: FrameKey, node: NodeId) {
+        let blocks = self
+            .doc(page)
+            .and_then(|p| p.main_frame.page_dom.clone())
+            .and_then(|p| p.dom.borrow().script_info(node).ok())
+            .is_some_and(|s| s.kind == ScriptKind::Classic && (s.src.is_none() || (!s.async_ && !s.defer)));
+        if blocks && self.stylesheets_block_scripts(page) {
+            let mut load = self.load_mut(page).expect("load");
+            if load.dom.borrow_mut().add_ref(node).is_ok() {
+                load.stylesheet_blocked_script = Some(Rc::new(ResourceNode { dom: load.dom.clone(), node }));
+                load.blocked = true;
+                return;
+            }
+        }
+        self.prepare_script(page, node);
+    }
+
     /// "Prepare the script element" for a parser-inserted script.
     fn prepare_script(&mut self, page: FrameKey, node: NodeId) {
         let Some(load) = self.doc(page).and_then(|p| p.filter_map(|p| p.load.as_ref())) else { return };
@@ -732,6 +756,14 @@ impl Browser {
             let _ = d.mark_script_started(node);
             info
         };
+        if info.kind == ScriptKind::ImportMap {
+            let map_base = {
+                let d = dom.borrow();
+                d.node_document(node).ok().and_then(|doc| d.document_base_url(doc).ok().map(str::to_owned))
+            };
+            self.add_import_map(page, &info, map_base.as_deref().unwrap_or(&base));
+            return;
+        }
         if dom.borrow_mut().add_ref(node).is_err() {
             return;
         }
@@ -739,7 +771,7 @@ impl Browser {
         let ty = match info.kind {
             ScriptKind::Classic if !info.nomodule => ScriptType::Classic,
             ScriptKind::Module => ScriptType::Module,
-            // nomodule classic, import maps (unsupported) and data blocks.
+            // nomodule classic and data blocks.
             _ => return,
         };
         let src_url = match info.src.as_deref() {
@@ -750,7 +782,7 @@ impl Browser {
             None => None,
         };
         match (ty, src_url) {
-            (ScriptType::Classic, None) => self.execute_classic(page, &info.inline_text, &base, &element),
+            (ScriptType::Classic, None) => self.execute_at_insertion_point(page, &info.inline_text, &base, &element),
             (ScriptType::Classic, Some(url)) if info.async_ => self.fetch_async(page, ty, url, element),
             (ScriptType::Classic, Some(url)) if info.defer => self.fetch_deferred(page, ty, url, element),
             (ScriptType::Classic, Some(url)) => {
@@ -764,12 +796,12 @@ impl Browser {
                     if b.current_loader(page) != loader_id {
                         return;
                     }
-                    match res {
-                        Ok(text) => b.execute_classic(page, &text, &u, &element),
-                        Err(e) => b.report_load_error(page, &e),
-                    }
                     if let Some(mut l) = b.load_mut(page) {
                         l.blocked = false;
+                    }
+                    match res {
+                        Ok(text) => b.execute_at_insertion_point(page, &text, &u, &element),
+                        Err(e) => b.report_load_error(page, &e),
                     }
                     b.continue_parsing(page);
                 });
@@ -809,7 +841,8 @@ impl Browser {
         let frame_id = self.doc(page).map(|p| p.main_frame.id.0.clone());
         // Subresources carry the document's loader id (CDP Network.* routing).
         let loader_id = self.doc(page).map(|p| p.main_frame.loader_id.0.clone());
-        let req = FetchRequest { url, kind, page: page.page, referrer, frame_id, loader_id, crossorigin: None };
+        let req =
+            FetchRequest { post: None, url, kind, page: page.page, referrer, frame_id, loader_id, crossorigin: None };
         loader.fetch(
             self,
             req,
@@ -851,7 +884,7 @@ impl Browser {
                 return;
             }
             match res {
-                Ok(text) if ty == ScriptType::Classic => b.execute_classic(page, &text, &u, &element),
+                Ok(text) if ty == ScriptType::Classic => b.execute_external(page, &text, &u, &element),
                 Ok(text) => {
                     b.execute_module(page, &text, &u, false);
                 }
@@ -887,7 +920,7 @@ impl Browser {
                 (n.ty, n.url.clone(), n.element.clone())
             };
             match source {
-                Ok(text) if ty == ScriptType::Classic => self.execute_classic(page, &text, &url, &element),
+                Ok(text) if ty == ScriptType::Classic => self.execute_external(page, &text, &url, &element),
                 Ok(text) => {
                     if self.execute_module(page, &text, &url, true) {
                         return; // resumes when the module's promise settles
@@ -920,6 +953,7 @@ impl Browser {
                 let referrer = self.doc(page).map(|p| p.main_frame.url.clone());
                 let loader_id = self.doc(page).map(|p| p.main_frame.loader_id.0.clone());
                 let req = FetchRequest {
+                    post: None,
                     url: url.clone(),
                     kind: ResourceKind::Download,
                     page: page.page,
@@ -1107,12 +1141,133 @@ impl Browser {
         }
     }
 
+    /// Registers an import map; its problems go to the console or `error`
+    /// reporting and leave the rest of the page unaffected.
+    fn add_import_map(&mut self, page: FrameKey, info: &lp_dom::script::ScriptInfo, base: &str) {
+        let Some(realm) = self.main_realm(page) else { return };
+        let Ok(scope) = realm.scope() else { return };
+        // Spec: an external import map is an error event; there is no fetch.
+        if info.src.is_some() {
+            scope.console_warn("External import maps are not supported: <script type=\"importmap\"> ignored its src.");
+            return;
+        }
+        match scope.add_import_map(&info.inline_text, base) {
+            Ok(warnings) => warnings.iter().for_each(|w| scope.console_warn(&format!("Import map: {w}"))),
+            Err(JsError::Unsupported(what)) => {
+                scope.console_warn(&format!("Ignored <script type=\"importmap\">: {what}"))
+            }
+            Err(e) => scope.report_exception(&e),
+        }
+    }
+
+    /// Runs a script the network parser reached with the parser lent to the
+    /// page, so `document.write` parses at the insertion point, then prepares
+    /// the external and module scripts that markup contained.
+    fn execute_at_insertion_point(&mut self, page: FrameKey, text: &str, url: &str, element: &ResourceNode) {
+        let bindings = self.doc(page).and_then(|p| p.main_frame.page_dom.clone());
+        let lent = self.load_mut(page).and_then(|mut l| {
+            let parser = l.parser.take()?;
+            Some((parser, l.loader_id.clone()))
+        });
+        let (Some(bindings), Some((parser, loader_id))) = (bindings, lent) else {
+            self.execute_classic(page, text, url, element);
+            return;
+        };
+        bindings.lend_network_parser(parser);
+        self.execute_classic(page, text, url, element);
+        let parser = bindings.reclaim_network_parser();
+        // The script may have started another document's load.
+        match self.load_mut(page) {
+            Some(mut load) if load.loader_id == loader_id => load.parser = parser,
+            _ => return,
+        }
+        for node in bindings.take_written_scripts() {
+            self.parser_reached_script(page, node);
+        }
+    }
+
+    /// Runs an external classic script outside the parser: it has no insertion
+    /// point, so its `document.write`s are ignored.
+    fn execute_external(&mut self, page: FrameKey, text: &str, url: &str, element: &ResourceNode) {
+        match self.doc(page).and_then(|p| p.main_frame.page_dom.clone()) {
+            Some(bindings) => {
+                bindings.with_destructive_writes_ignored(|| self.execute_classic(page, text, url, element))
+            }
+            None => self.execute_classic(page, text, url, element),
+        }
+    }
+
+    /// External and module scripts reached in markup written to the
+    /// script-created parser (`PageHooks::written_script_queued`). There may
+    /// be no `DocumentLoad`: about:blank has none.
+    pub(crate) fn prepare_written_scripts(&mut self, page: FrameKey) {
+        let Some(bindings) = self.doc(page).and_then(|p| p.main_frame.page_dom.clone()) else { return };
+        for node in bindings.take_written_scripts() {
+            self.prepare_written_script(page, &bindings, node);
+        }
+    }
+
+    fn prepare_written_script(&mut self, page: FrameKey, bindings: &Rc<lp_webapi::PageDom>, node: NodeId) {
+        let dom = bindings.dom.clone();
+        let info = {
+            let mut d = dom.borrow_mut();
+            let Ok(info) = d.script_info(node) else { return };
+            let _ = d.mark_script_started(node);
+            info
+        };
+        let base = self.doc(page).map(|p| p.main_frame.base_url.clone()).unwrap_or_default();
+        let src_url = info.src.as_deref().and_then(|s| resolve_url(&base, s));
+        let blocking = bindings.written_script_pending() == Some(node);
+        let Some(url) = src_url else {
+            if blocking {
+                lp_webapi::lifecycle::written_script_fetched(bindings, node, "", Err("invalid URL".into()));
+            } else if info.src.is_none() && info.kind == ScriptKind::Module {
+                let url = format!("{}#inline-module-{}", base.split('#').next().unwrap_or(&base), node.index());
+                self.execute_module(page, &info.inline_text, &url, false);
+            }
+            return;
+        };
+        if blocking {
+            let bindings = bindings.clone();
+            let u = url.clone();
+            self.fetch_text(page, url, ResourceKind::Script, move |_, res| {
+                lp_webapi::lifecycle::written_script_fetched(&bindings, node, &u, res);
+            });
+            return;
+        }
+        if dom.borrow_mut().add_ref(node).is_err() {
+            return;
+        }
+        let element = ResourceNode { dom, node };
+        let module = info.kind == ScriptKind::Module;
+        let kind = if module { ResourceKind::ModuleScript } else { ResourceKind::Script };
+        let u = url.clone();
+        let current = bindings.clone();
+        self.fetch_text(page, url, kind, move |b, res| {
+            if !b.doc(page).and_then(|p| p.main_frame.page_dom.clone()).is_some_and(|d| Rc::ptr_eq(&d, &current)) {
+                return;
+            }
+            match res {
+                Ok(text) if module => {
+                    b.execute_module(page, &text, &u, false);
+                }
+                Ok(text) => b.execute_external(page, &text, &u, &element),
+                Err(e) => b.report_load_error(page, &e),
+            }
+        });
+    }
+
     /// Starts a module; with `deferred`, parsing-completion work waits for its
     /// evaluation promise. Returns whether such a wait was set up.
     fn execute_module(&mut self, page: FrameKey, text: &str, url: &str, deferred: bool) -> bool {
         let Some(realm) = self.main_realm(page) else { return false };
         let Ok(scope) = realm.scope() else { return false };
-        let promise = match scope.eval_module(text, url) {
+        let bindings = self.doc(page).and_then(|p| p.main_frame.page_dom.clone());
+        let evaluated = match &bindings {
+            Some(dom) => dom.with_destructive_writes_ignored(|| scope.eval_module(text, url)),
+            None => scope.eval_module(text, url),
+        };
+        let promise = match evaluated {
             Ok(p) => p,
             Err(e) => {
                 scope.report_exception(&e);

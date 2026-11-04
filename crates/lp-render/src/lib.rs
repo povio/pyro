@@ -94,6 +94,16 @@ pub fn blitz_style_stats() -> [u64; 4] {
     blitz_dom::phase_profile::style_stats_peek()
 }
 
+/// `resolve` calls Blitz made on this thread, and how many of their layout passes ran Taffy.
+pub fn blitz_passes() -> (u64, u64) {
+    blitz_dom::phase_profile::passes()
+}
+
+/// Layout nodes Blitz's rounding reached on this thread, and subtrees it skipped.
+pub fn blitz_rounding() -> (u64, u64) {
+    blitz_dom::phase_profile::rounding()
+}
+
 pub fn blitz_phases() -> [f64; 9] {
     blitz_dom::phase_profile::peek()
 }
@@ -982,6 +992,8 @@ impl Renderer {
     pub fn set_interaction(&mut self, page: u64, hovered: Option<u64>, focused: Option<u64>, style_only: bool) {
         let changed = self.mark_interaction(page, hovered, focused);
         let Some(m) = self.mirrors.get_mut(&page) else { return };
+        // Called on every geometry read: without news a pass would change nothing.
+        let changed = changed || m.doc.needs_resolve();
         if changed && style_only {
             let generation = m.doc.root_node().tree().geometry_generation();
             m.doc.resolve_style(0.0);
@@ -1000,7 +1012,7 @@ impl Renderer {
         let hover = hovered.and_then(|k| m.node(k));
         let focus = focused.and_then(|k| m.node(k));
         let mut changed = m.doc.set_hover_node(hover);
-        if m.doc.get_focussed_node_id() != focus {
+        if m.doc.focused_node() != focus {
             match focus {
                 Some(id) => {
                     m.doc.set_focus_to(id);
@@ -1653,7 +1665,8 @@ impl Breaks {
                 continue;
             }
             let text = node.element_data().and_then(|e| e.inline_layout_data.as_ref());
-            if let Some(text) = text.filter(|_| inline) {
+            // The lines of vertical text run across the page, and are not what a page cut splits.
+            if let Some(text) = text.filter(|_| inline && node.vertical_block_axis().is_none()) {
                 let origin = y + (l.border.top + l.padding.top) as f64 + text.block_offset as f64;
                 let scale = text.layout.scale() as f64;
                 let first = out.lines.len();
@@ -2196,7 +2209,7 @@ fn unrounded_bounds(doc: &blitz_dom::BaseDocument, id: blitz_dom::NodeId, dpr: f
 }
 
 fn bounds_of(doc: &blitz_dom::BaseDocument, id: blitz_dom::NodeId, dpr: f64, snapped: bool) -> Option<Rect> {
-    let layout = |n: &blitz_dom::Node| if snapped { *n.final_layout() } else { *n.unrounded_layout() };
+    let layout = |n: &blitz_dom::Node| if snapped { *n.final_layout() } else { doc.physical_unrounded_layout(n.id) };
     let size = layout(doc.get_node(id)?).size;
     let mut chain = Vec::new();
     let mut current = Some(id);

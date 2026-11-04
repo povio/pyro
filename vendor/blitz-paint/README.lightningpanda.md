@@ -17,7 +17,16 @@ This is the published MIT/Apache-2.0 `blitz-paint` crate from upstream commit
   uses it for source text (ligatures), link areas and tags. `paint_scene`/`paint_scene_with`
   record nothing.
 
-`overflow` on `body` does not clip when it is the viewport's.
+- `src/render.rs`: `overflow` on `body` does not clip when it is the viewport's.
+- `src/render.rs`, `src/text.rs`: vertical writing modes. The inline layout stays logical (x inline,
+  y block), and each of its lines is painted through a quarter turn (`draw_vertical_inline_layout`):
+  backgrounds, decorations and selection go through the same transform, so `TextRun` bounds, link
+  areas and PDF glyph runs need nothing else. A line starts at its unrounded inline position; the box
+  is at whole pixels (Chromium rounds text only in the block axis). `VerticalLine` centers the runs of
+  `mixed`/`upright` text on the line's central baseline (`sideways` keeps the alphabetic one) and stands
+  CJK and `upright` runs upright, one glyph at a time around its em box. Not done: shaping in the
+  vertical direction, so `vert` forms (CJK punctuation) are missing and upright Latin keeps its
+  horizontal advance. Covered by `crates/lp-render/tests/vertical_writing_mode.rs`.
 
 The linked blitz-dom patch supplies `Node::is_root_element`. Rendering regressions
 are covered in `crates/lp-render/tests/render.rs`; persistent-tree behavior is

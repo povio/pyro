@@ -55,10 +55,13 @@ these additional local changes are covered by lp-render's rendering tests.
 - `src/resolve.rs` (`resolve_transforms`): a node's cached scrollable overflow is reused only when it and
   its subtree are undamaged (a descendant's relayout reaches ancestors as damage, not as
   `RECALCULATE_OVERFLOW`).
-- `src/layout/mod.rs`, `src/node/element.rs`: incremental rounding (taffy's `RoundTree::rounded_unchanged`,
-  vendored taffy), keyed by `LayoutData::rounded_from`.
+- `src/layout/writing_mode.rs`, `src/layout/mod.rs`, `src/node/element.rs`: incremental rounding, keyed by
+  `LayoutData::rounded_from` (see "Incremental rounding" in `vendor/taffy/README.lightningpanda.md`).
+  `Node::update_unrounded_layout` is the only writer of unrounded layouts, and marks changes as damage.
+- `src/resolve.rs` (`resolve_layout`): no Taffy pass or rounding with nothing damaged and the same viewport.
+  `BaseDocument::needs_resolve` tells a caller whether a `resolve` could change anything.
 
-lp-render's mirror tests (incremental documents against fresh builds after random mutations) cover both.
+lp-render's mirror tests (incremental documents against fresh builds after random mutations) cover them.
 - `assets/default.css`: text inputs take Chromium's UA box (`border: 2px inset`, `padding: 1px 2px`; a
   40x30 input is 48x36), textareas keep `1px solid` / `2px` and wrap like Chromium's
   (`white-space: pre-wrap; overflow-wrap: break-word`: a word longer than the box breaks).
@@ -102,3 +105,15 @@ lp-render's mirror tests (incremental documents against fresh builds after rando
 `src/resolve.rs`: scrollable overflow as in Blink: an empty rect adds nothing, a box fixed to the viewport is left out, and `overflow` on `body` is the viewport's (`BaseDocument::body_overflow_goes_to_viewport`). `src/layout/list.rs`: `decimal-leading-zero`, `lower-roman`, `upper-roman`, `lower-latin` and `upper-latin` markers.
 
 `BaseDocument::set_layout_size` lays out at a fractional CSS size instead of the viewport's whole pixels (`make_device`); printing uses it for the paper's content box.
+
+## Inline layouts in vertical writing modes
+
+Layout keeps a vertical inline root's lines logical (x inline, y block). `Node::vertical_block_axis` says which
+way its block axis runs; paint turns the lines, and these read them physically:
+
+- `src/resolve.rs` (`resolve_transforms`): the lines' scrollable overflow.
+- `src/node/node.rs` (`inline_fragment_boxes`): inline boxes' rects and `offsetLeft`/`offsetTop`.
+- `src/layout/writing_mode.rs`: `physical_unrounded_layout` for callers outside this crate (`unrounded_layout` is in
+  the writing mode of the box that placed the node); `physical_unrounded_geometry` is public for paint.
+
+`Node::text_offset_at_point` (hit testing) still takes logical coordinates.

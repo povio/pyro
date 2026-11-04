@@ -31,6 +31,12 @@ existing native fetch/XHR BodyInit snapshot and Content-Type semantics.
   same-origin URL do not navigate. Cross-origin download links navigate, since
   browsers ignore the attribute there.
 
+Hosts: ASCII hosts with invalid `xn--` labels pass through as in browsers, through
+the patched `vendor/idna`. `<a>`/`<area>` read and write URL components with the
+same setters as `URL`, against the `<base>`-aware document base; an unparseable
+`href` reads as itself with protocol `:` and ignores component writes.
+`navigator.sendBeacon` validates the URL and sends nothing.
+
 Gaps:
 - The download itself is not performed, and no CDP download events are emitted.
 - `fetch`, XHR and navigation of `blob:` URLs are not implemented (upstream

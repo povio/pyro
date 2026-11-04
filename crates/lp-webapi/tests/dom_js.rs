@@ -105,6 +105,100 @@ fn eval(realm: &Realm, src: &str) -> String {
 }
 
 #[test]
+fn attribute_reflection_kinds() {
+    let e = env("<!doctype html><html><body><p>x</p></body></html>");
+    let r = &e.main;
+    // Enumerated, limited to known values: canonical case, invalid and missing
+    // defaults, and the content attribute keeps the string that was set.
+    assert_eq!(eval(r, "const a = document.createElement('a'); a.dir"), "");
+    assert_eq!(eval(r, "a.dir = 'RTL'; a.dir + ':' + a.getAttribute('dir')"), "rtl:RTL");
+    assert_eq!(eval(r, "a.dir = 'nope'; a.dir + ':' + a.getAttribute('dir')"), ":nope");
+    assert_eq!(eval(r, "a.setAttribute('dir', 'r\\u017Ftl'); a.dir"), "");
+    assert_eq!(
+        eval(r, "const t = document.createElement('track'); t.kind + ':' + (t.kind = 'x', t.kind)"),
+        "subtitles:metadata"
+    );
+    assert_eq!(
+        eval(r, "const f = document.createElement('form'); f.enctype === f.encoding && f.method + f.autocomplete"),
+        "geton"
+    );
+    assert_eq!(
+        eval(r, "const b = document.createElement('button'); b.formMethod + ':' + (b.formMethod = 'x', b.formMethod)"),
+        ":get"
+    );
+    // Nullable CORS settings.
+    assert_eq!(eval(r, "const i = document.createElement('img'); String(i.crossOrigin)"), "null");
+    assert_eq!(eval(r, "i.crossOrigin = ''; i.crossOrigin + ':' + i.getAttribute('crossorigin')"), "anonymous:");
+    assert_eq!(eval(r, "i.crossOrigin = 'USE-credentials'; i.crossOrigin"), "use-credentials");
+    assert_eq!(eval(r, "i.crossOrigin = null; String(i.crossOrigin) + i.hasAttribute('crossorigin')"), "nullfalse");
+    // Integers parse with the HTML rules, not Rust's.
+    assert_eq!(eval(r, "const o = document.createElement('ol'); o.start"), "1");
+    assert_eq!(eval(r, "o.setAttribute('start', ' \\t-5x'); o.start"), "-5");
+    assert_eq!(eval(r, "o.setAttribute('start', '\\u00A07'); o.start"), "1");
+    assert_eq!(eval(r, "o.setAttribute('start', '2147483648'); o.start"), "1");
+    assert_eq!(eval(r, "i.hspace = 2147483648; i.hspace + ':' + i.getAttribute('hspace')"), "0:0");
+    assert_eq!(eval(r, "i.setAttribute('hspace', '-1'); i.hspace"), "0");
+    assert_eq!(eval(r, "const n = document.createElement('input'); n.maxLength + ':' + n.size"), "-1:20");
+    assert_eq!(eval(r, "try { n.maxLength = -1 } catch (x) { x.name }"), "IndexSizeError");
+    assert_eq!(eval(r, "try { n.size = 0 } catch (x) { x.name }"), "IndexSizeError");
+    assert_eq!(
+        eval(r, "const ta = document.createElement('textarea'); ta.cols = 0; ta.cols + ':' + ta.getAttribute('cols')"),
+        "20:20"
+    );
+    // Clamped ranges.
+    assert_eq!(eval(r, "const c = document.createElement('td'); c.setAttribute('colspan', '5000'); c.colSpan"), "1000");
+    assert_eq!(eval(r, "c.setAttribute('colspan', '0'); c.colSpan"), "1");
+    assert_eq!(eval(r, "c.setAttribute('colspan', '-3'); c.colSpan"), "1");
+    assert_eq!(eval(r, "c.setAttribute('rowspan', '0'); c.rowSpan"), "0");
+    // Doubles.
+    assert_eq!(eval(r, "const p = document.createElement('progress'); p.max"), "1");
+    assert_eq!(eval(r, "p.setAttribute('max', '1.e2x'); p.max"), "100");
+    assert_eq!(eval(r, "p.setAttribute('max', '1e999'); p.max"), "1");
+    assert_eq!(eval(r, "p.setAttribute('max', '3'); p.max = -1; p.getAttribute('max')"), "3");
+    assert_eq!(eval(r, "p.max = 1e25; p.getAttribute('max')"), "1e+25");
+    assert_eq!(eval(r, "try { p.max = NaN } catch (x) { x.name }"), "TypeError");
+    assert_eq!(
+        eval(r, "const m = document.createElement('meter'); m.setAttribute('min', '2'); m.setAttribute('value', '1'); [m.min, m.max, m.value, m.low, m.high, m.optimum].join()"),
+        "2,2,2,2,2,2"
+    );
+    // URLs, formAction and null-to-empty strings.
+    assert_eq!(eval(r, "const n2 = document.createElement('input'); n2.formAction"), "http://localhost:5173/app");
+    assert_eq!(eval(r, "n2.formAction = 'x'; n2.formAction"), "http://localhost:5173/x");
+    assert_eq!(
+        eval(r, "const fr = document.createElement('frame'); fr.marginWidth = null; fr.getAttribute('marginwidth')"),
+        ""
+    );
+    // The elements that gained their own interface.
+    for (tag, iface) in [
+        ("marquee", "HTMLMarqueeElement"),
+        ("frameset", "HTMLFrameSetElement"),
+        ("frame", "HTMLFrameElement"),
+        ("font", "HTMLFontElement"),
+        ("dir", "HTMLDirectoryElement"),
+        ("param", "HTMLParamElement"),
+        ("track", "HTMLTrackElement"),
+    ] {
+        assert_eq!(eval(r, &format!("document.createElement('{tag}') instanceof {iface}")), "true", "{tag}");
+    }
+    // inputMode is global, nonce never reaches the content attribute.
+    assert_eq!(eval(r, "const u = document.createElement('foo'); u.inputMode = 'TEL'; u.inputMode"), "tel");
+    assert_eq!(eval(r, "u.nonce = 'a'; u.nonce + ':' + u.getAttribute('nonce')"), "a:null");
+    assert_eq!(eval(r, "u.setAttribute('nonce', 'b'); u.nonce"), "b");
+    assert_eq!(eval(r, "u.nonce = 'c'; u.nonce + ':' + u.getAttribute('nonce')"), "c:b");
+    // Document color attributes and dir reflect the body and root element.
+    assert_eq!(
+        eval(r, "document.fgColor = 'red'; document.body.getAttribute('text') + ':' + document.body.text"),
+        "red:red"
+    );
+    assert_eq!(eval(r, "document.bgColor = null; document.body.getAttribute('bgcolor')"), "");
+    assert_eq!(
+        eval(r, "document.dir = 'RTL'; document.dir + ':' + document.documentElement.getAttribute('dir')"),
+        "rtl:RTL"
+    );
+    e.page.dispose();
+}
+
+#[test]
 fn document_tree_and_identity() {
     let e = env("<!doctype html><html><head><title> Hi  there </title></head><body><div id=app class='a b'><p>one</p><p>two</p></div></body></html>");
     let r = &e.main;
@@ -522,10 +616,10 @@ fn css_rule_values_survive_reentrant_gc() {
             r#"
       const sh=document.getElementById('s').sheet;
       for(let i=0;i<200;i++)sh.insertRule('.r'+i+'{}',i);
-      window.before=sh.cssRules.every((r,i)=>r.cssText==='.r'+i+'{}');
+      window.before=sh.cssRules.every((r,i)=>r.cssText==='.r'+i+' { }');
       Object.defineProperty(Object.prototype,'cssText',{set(v){reviewGC(); Object.defineProperty(this,'cssText',{value:v});}, configurable:true});
       const rr=sh.cssRules; delete Object.prototype.cssText;
-      before && rr.length === 200 && rr.every((r,i)=>r.cssText==='.r'+i+'{}')
+      before && rr.length === 200 && rr.every((r,i)=>r.cssText==='.r'+i+' { }')
     "#
         ),
         "true"
@@ -536,6 +630,18 @@ fn css_rule_values_survive_reentrant_gc() {
 fn regression_typed_array_subview() {
     let e = env("<body>");
     assert_eq!(eval(&e.main, "new TextDecoder().decode(new Uint8Array([65,66,67]).subarray(1,2))"), "B");
+    // A multi-byte sequence split across streaming calls, then flushed.
+    assert_eq!(
+        eval(
+            &e.main,
+            "{ const d = new TextDecoder(); const b = (...x) => new Uint8Array(x);
+               d.decode(b(0xe2, 0x82), {stream: true}) + d.decode(b(0xac), {stream: true}) + '|' + d.decode(b(0xe2)) + '|' + d.decode(b(65)) }"
+        ),
+        "\u{20ac}|\u{fffd}|A"
+    );
+    // The label's own BOM is dropped; another encoding's BOM does not switch it.
+    assert_eq!(eval(&e.main, "new TextDecoder('utf-16le').decode(new Uint8Array([0xff,0xfe,0x41,0])).length"), "1");
+    assert_eq!(eval(&e.main, "new TextDecoder('windows-1252').decode(new Uint8Array([0xef,0xbb,0xbf])).length"), "3");
 }
 #[test]
 fn regression_reentrant_string_coercion() {
@@ -645,6 +751,79 @@ fn dataview_brand_check_ignores_script_properties() {
         "TypeError"
     );
     assert_eq!(eval(&e.main, "new TextDecoder().decode(new DataView(new ArrayBuffer(0)))"), "");
+}
+
+#[test]
+fn range_comparison_errors_follow_the_spec() {
+    let e = env("<!doctype html><body><p id=x>abc</p></body>");
+    let name = "(f) => { try { return String(f()); } catch (e) { return e.name; } }";
+    eval(&e.main, &format!("var t = {name}; var x = document.getElementById('x'); var r = new Range(); r.selectNode(x); var d = document.createElement('div'); 1"));
+    assert_eq!(eval(&e.main, "t(() => r.comparePoint(d, 0))"), "WrongDocumentError");
+    assert_eq!(eval(&e.main, "t(() => r.comparePoint(x, 9))"), "IndexSizeError");
+    assert_eq!(eval(&e.main, "t(() => r.comparePoint(document.doctype, 0))"), "InvalidNodeTypeError");
+    assert_eq!(eval(&e.main, "t(() => r.isPointInRange(d, 9))"), "false");
+    assert_eq!(eval(&e.main, "t(() => r.isPointInRange(x, 9))"), "IndexSizeError");
+    assert_eq!(eval(&e.main, "t(() => r.intersectsNode(d))"), "false");
+    assert_eq!(eval(&e.main, "t(() => r.compareBoundaryPoints(7, r))"), "NotSupportedError");
+    assert_eq!(eval(&e.main, "t(() => r.compareBoundaryPoints(65536, r))"), "0");
+    assert_eq!(
+        eval(&e.main, "var o = new Range(); o.selectNode(d.appendChild(document.createElement('i'))); t(() => r.compareBoundaryPoints(0, o))"),
+        "WrongDocumentError"
+    );
+    // A boundary point in another tree collapses the range onto it.
+    assert_eq!(eval(&e.main, "r.setEnd(d, 0); [r.startContainer === d, r.collapsed].join()"), "true,true");
+}
+
+#[test]
+fn range_content_methods() {
+    let e = env("<body><div id=x><b>abc</b>mid<i>def</i></div></body>");
+    eval(&e.main, "var x = document.getElementById('x'); var r = new Range(); var html = (f) => { const d = document.createElement('div'); d.append(f); return d.innerHTML; }; r.setStart(x.firstChild.firstChild, 1); r.setEnd(x.lastChild.firstChild, 2); 1");
+    assert_eq!(eval(&e.main, "html(r.cloneContents())"), "<b>bc</b>mid<i>de</i>");
+    assert_eq!(eval(&e.main, "x.innerHTML"), "<b>abc</b>mid<i>def</i>");
+    assert_eq!(eval(&e.main, "html(r.extractContents())"), "<b>bc</b>mid<i>de</i>");
+    assert_eq!(eval(&e.main, "x.innerHTML"), "<b>a</b><i>f</i>");
+    assert_eq!(eval(&e.main, "[r.startContainer === x, r.startOffset, r.collapsed].join()"), "true,1,true");
+    assert_eq!(
+        eval(&e.main, "r.insertNode(document.createElement('u')); [x.innerHTML, r.startOffset, r.endOffset].join()"),
+        "<b>a</b><u></u><i>f</i>,1,2"
+    );
+    assert_eq!(eval(&e.main, "r.deleteContents(); [x.innerHTML, r.collapsed].join()"), "<b>a</b><i>f</i>,true");
+    assert_eq!(eval(&e.main, "r.selectNode(x.firstChild); r.surroundContents(document.createElement('s')); [x.innerHTML, r.startOffset, r.endOffset].join()"), "<s><b>a</b></s><i>f</i>,0,1");
+    assert_eq!(eval(&e.main, "r.setStart(x.firstChild.firstChild, 0); r.setEnd(x, 2); try { r.surroundContents(document.createElement('s')); } catch (err) { err.name }"), "InvalidStateError");
+    // insertNode into text splits it.
+    assert_eq!(eval(&e.main, "x.textContent = 'hello'; r.setStart(x.firstChild, 2); r.collapse(true); r.insertNode(document.createElement('b')); [x.innerHTML, r.endContainer === x, r.endOffset].join()"), "he<b></b>llo,true,2");
+}
+
+#[test]
+fn range_boundaries_follow_mutations() {
+    let e = env("<body><div id=x>abcdef</div><div id=y><a></a><b></b><i></i></div></body>");
+    let pts = "var pts = () => [r.startContainer === t ? 't' : r.startContainer.nodeName, r.startOffset, r.endContainer === t ? 't' : r.endContainer.nodeName, r.endOffset].join();";
+    eval(&e.main, &format!("var x = document.getElementById('x'), y = document.getElementById('y'), t = x.firstChild, r = new Range(); {pts} r.setStart(t, 2); r.setEnd(t, 5); 1"));
+    assert_eq!(eval(&e.main, "t.deleteData(0, 1); pts()"), "t,1,t,4");
+    assert_eq!(eval(&e.main, "t.insertData(0, 'zz'); pts()"), "t,3,t,6");
+    assert_eq!(eval(&e.main, "t.replaceData(1, 4, 'q'); pts()"), "t,1,t,3");
+    assert_eq!(eval(&e.main, "t.data = 'abcdef'; pts()"), "t,0,t,0");
+    assert_eq!(
+        eval(&e.main, "r.setEnd(t, 4); var u = t.splitText(2); [r.endContainer === u, r.endOffset].join()"),
+        "true,2"
+    );
+    assert_eq!(eval(&e.main, "x.normalize(); pts()"), "t,0,t,4");
+    assert_eq!(eval(&e.main, "x.remove(); document.body.append(x); pts()"), "BODY,0,BODY,0");
+    assert_eq!(
+        eval(&e.main, "r.setStart(y, 2); r.setEnd(y, 3); y.prepend(document.createElement('u')); pts()"),
+        "DIV,3,DIV,4"
+    );
+    assert_eq!(eval(&e.main, "y.firstChild.remove(); pts()"), "DIV,2,DIV,3");
+    assert_eq!(eval(&e.main, "y.children[1].remove(); pts()"), "DIV,1,DIV,2");
+    assert_eq!(eval(&e.main, "y.innerHTML = ''; pts()"), "DIV,0,DIV,0");
+}
+
+#[test]
+fn static_range_keeps_its_points_as_given() {
+    let e = env("<body><div id=x>abc</div></body>");
+    let init = "{startContainer: x, startOffset: 5, endContainer: x.firstChild, endOffset: 1}";
+    assert_eq!(eval(&e.main, &format!("var x = document.getElementById('x'); var r = new StaticRange({init}); x.remove(); [r.startContainer === x, r.startOffset, r.endOffset, r.collapsed].join()")), "true,5,1,false");
+    assert_eq!(eval(&e.main, "try { new StaticRange({startContainer: x}) } catch (err) { err.name }"), "TypeError");
 }
 
 #[test]
@@ -5866,4 +6045,297 @@ fn resize_observer_input_update_preserves_queued_and_reentrant_callbacks() {
     tasks.drain_ready();
     assert_eq!(eval(&e.main, "seen.join()"), "10,20,30", "a clean input checkpoint must not duplicate delivery");
     e.page.dispose();
+}
+
+#[test]
+fn xml_serializer_doctype_html_and_namespaces() {
+    let e = env("<!doctype html><p id=a title='x\"y'>t&amp;<br><span></span></p><!--c-->");
+    let r = &e.main;
+    let ser = "var ser=new XMLSerializer();";
+    assert_eq!(eval(r, &format!("{ser} ser.serializeToString(document.doctype)")), "<!DOCTYPE html>");
+    assert_eq!(
+        eval(r, &format!("{ser} ser.serializeToString(document.querySelector('p'))")),
+        r#"<p xmlns="http://www.w3.org/1999/xhtml" id="a" title="x&quot;y">t&amp;<br /><span></span></p>"#
+    );
+    assert_eq!(eval(r, &format!("{ser} ser.serializeToString(document.createComment('c'))")), "<!--c-->");
+    assert_eq!(eval(r, &format!("{ser} ser.serializeToString(document.createTextNode('a<b'))")), "a&lt;b");
+    assert_eq!(
+        eval(r, &format!("{ser} ser.serializeToString(document.implementation.createDocumentType('a','p','s'))")),
+        r#"<!DOCTYPE a PUBLIC "p" "s">"#
+    );
+    assert_eq!(
+        eval(r, &format!("{ser} ser.serializeToString(new DOMParser().parseFromString('<w:d xmlns:w=\"urn:w\"><w:e a=\"1\"/><f/></w:d>','application/xml'))")),
+        r#"<w:d xmlns:w="urn:w"><w:e a="1"/><f/></w:d>"#
+    );
+    assert_eq!(eval(r, "try{new XMLSerializer().serializeToString('x')}catch(e){e.name}"), "TypeError");
+}
+
+#[test]
+fn inline_handler_attributes_from_parser_innerhtml_and_clone() {
+    let e = env(
+        "<form id=f><input name=n value=v><button id=b type=button onclick=\"window.got=[this.id,event.type,elements.n.value,typeof getElementById].join()\">x</button></form>\
+         <a id=l href=#x onclick=\"return false\">l</a><div id=host></div><div id=bad onclick=\"(\">z</div>",
+    );
+    let r = &e.main;
+    assert_eq!(eval(r, "document.getElementById('b').click(); window.got"), "b,click,v,function");
+    // A false return value cancels, and the handler is readable as a function.
+    assert_eq!(
+        eval(r, "var ev=new MouseEvent('click',{cancelable:true}); document.getElementById('l').dispatchEvent(ev); [ev.defaultPrevented, typeof document.getElementById('l').onclick].join()"),
+        "true,function"
+    );
+    // innerHTML, cloning, and replacing through the IDL attribute.
+    assert_eq!(
+        eval(r, "var h=document.getElementById('host'); h.innerHTML='<i id=i onclick=\"window.c=(window.c||0)+1\"></i>'; var i=document.getElementById('i'); i.click(); var k=i.cloneNode(); h.append(k); k.click(); i.onclick=()=>{window.c=100}; i.click(); window.c"),
+        "100"
+    );
+    // A handler that does not compile leaves the attribute inert.
+    assert_eq!(eval(r, "document.getElementById('bad').click(); document.getElementById('bad').onclick"), "null");
+    // Inert documents never run handlers.
+    assert_eq!(
+        eval(r, "new DOMParser().parseFromString('<b onclick=\"window.inert=1\">','text/html').querySelector('b').click(); String(window.inert)"),
+        "undefined"
+    );
+}
+
+#[test]
+fn inline_handler_runs_before_a_later_listener() {
+    let e = env("<button id=b onclick=\"window.o=(window.o||'')+'a'\">x</button>");
+    let r = &e.main;
+    assert_eq!(
+        eval(
+            r,
+            "var b=document.getElementById('b'); b.addEventListener('click',()=>{window.o+='l'}); b.click(); window.o"
+        ),
+        "al"
+    );
+}
+
+#[test]
+fn declarative_shadow_dom_apis() {
+    let e = env("<!doctype html><body>");
+    assert_eq!(
+        eval(
+            &e.main,
+            "const h=document.createElement('div');
+             const r=h.attachShadow({mode:'open',clonable:true,serializable:true,delegatesFocus:true,slotAssignment:'named'});
+             r.innerHTML='<slot></slot>'; h.innerHTML='<i>l</i>';
+             [r.clonable,r.serializable,r.delegatesFocus,r.slotAssignment,h.getHTML({serializableShadowRoots:true}),h.getHTML()].join('|')"
+        ),
+        "true|true|true|named|<template shadowrootmode=\"open\" shadowrootdelegatesfocus=\"\" shadowrootserializable=\"\" shadowrootclonable=\"\"><slot></slot></template><i>l</i>|<i>l</i>"
+    );
+    assert_eq!(
+        eval(
+            &e.main,
+            "const w=document.createElement('div');
+             w.setHTMLUnsafe('<div id=host><template shadowrootmode=open><slot name=a id=s></slot></template><b slot=a>x</b>tail</div>');
+             const host=w.firstChild, b=host.querySelector('b'), s=host.shadowRoot.getElementById('s');
+             [host.children.length, b.assignedSlot===s, s.assignedNodes().length, s.assignedElements()[0]===b, host.lastChild.assignedSlot].join('|')"
+        ),
+        "1|true|1|true|"
+    );
+    assert_eq!(
+        eval(
+            &e.main,
+            "const d=Document.parseHTMLUnsafe('<div id=x><template shadowrootmode=open>y</template></div>');
+             const t=document.createElement('template'); t.shadowRootMode='CLOSED'; t.shadowRootClonable=true;
+             [d.getElementById('x').shadowRoot.textContent, t.shadowRootMode, t.outerHTML].join('|')"
+        ),
+        "y|closed|<template shadowrootmode=\"CLOSED\" shadowrootclonable=\"\"></template>"
+    );
+}
+
+#[test]
+fn base_element_sets_the_document_base_and_hyperlink_setters_rewrite_href() {
+    let e = env("<head><base id=b href='http://example.org/foo/bar'><body><a id=a href='x'></a><area id=r href='y'>");
+    let doc = e.page.document();
+    e.page.dom.borrow_mut().set_document_url(doc, "http://page.test/dir/index.html").unwrap();
+    eval(&e.main, "for(const id of ['a','b','r'])globalThis[id]=document.getElementById(id);0");
+    assert_eq!(
+        eval(&e.main, "[document.baseURI,b.href,a.href,r.href,a.origin].join('|')"),
+        "http://example.org/foo/bar|http://example.org/foo/bar|http://example.org/foo/x|http://example.org/foo/y|http://example.org"
+    );
+    // The base is live, and a relative <base href> resolves against the fallback base only.
+    assert_eq!(
+        eval(&e.main, "b.href='sub/';[document.baseURI,b.href,a.href].join('|')"),
+        "http://page.test/dir/sub/|http://page.test/dir/sub/|http://page.test/dir/sub/x"
+    );
+    assert_eq!(eval(&e.main, "b.href='data:text/plain,x';document.baseURI"), "http://page.test/dir/index.html");
+    assert_eq!(eval(&e.main, "b.remove();document.baseURI"), "http://page.test/dir/index.html");
+    assert_eq!(eval(&e.main, "a.href"), "http://page.test/dir/x");
+    assert_eq!(
+        eval(&e.main, "let n=document.createElement('base');n.href='http://two.test/';document.head.append(n);a.href"),
+        "http://two.test/x"
+    );
+
+    assert_eq!(
+        eval(&e.main, "a.href='http://u:p@h.test:8/p?q#f';a.protocol='https:';a.host='i.test:9';a.pathname='/r';a.search='s';a.hash='g';a.username='v';a.password='w';[a.getAttribute('href'),a.hostname,a.port].join('|')"),
+        "https://v:w@i.test:9/r?s#g|i.test|9"
+    );
+    // A URL that does not parse keeps the input as href and ignores writes.
+    assert_eq!(
+        eval(&e.main, "a.href='http://f:b/c';a.pathname='/x';[a.href,a.protocol,a.host,a.pathname,a.origin].join('|')"),
+        "http://f:b/c|:|||"
+    );
+    assert_eq!(eval(&e.main, "a.removeAttribute('href');[a.href,a.protocol].join('|')"), "|:");
+    e.page.dispose();
+}
+
+#[test]
+fn url_hosts_with_invalid_punycode_parse_when_ascii() {
+    let e = env("<body>");
+    assert_eq!(
+        eval(&e.main, "['xn--ab-j1t','XN--0.pt','xn--a.xn--zca','a.b.c.xn--pokxncvks','xn--'].map(h=>new URL(`https://${h}/x`).host).join('|')"),
+        "xn--ab-j1t|xn--0.pt|xn--a.xn--zca|a.b.c.xn--pokxncvks|xn--"
+    );
+    for host in ["xn--a.\u{df}", "xn--te\u{161}la", "xn--a b", "a\u{200d}.example", "xn--a%"] {
+        assert_eq!(eval(&e.main, &format!("URL.canParse('https://{host}/x')")), "false", "{host}");
+    }
+    e.page.dispose();
+}
+
+#[test]
+fn invalid_urls_throw_from_send_beacon_and_window_open_and_response_form_data_parses() {
+    let e = env("<body>");
+    let doc = e.page.document();
+    e.page.dom.borrow_mut().set_document_url(doc, "http://page.test/").unwrap();
+    let thrown =
+        |call: &str| eval(&e.main, &format!("(()=>{{try{{{call};return 'none'}}catch(x){{return x.name}}}})()"));
+    assert_eq!(thrown("navigator.sendBeacon('http://f:b/')"), "TypeError");
+    assert_eq!(thrown("navigator.sendBeacon('data:text/plain,x')"), "TypeError");
+    assert_eq!(thrown("navigator.sendBeacon('/ok')"), "none");
+    assert_eq!(thrown("open('http://f:b/')"), "SyntaxError");
+
+    eval(&e.main, "globalThis.got='';new Response('a=1&b=%F0%9F%90%BC+c&a',{headers:{'Content-Type':'application/x-www-form-urlencoded;charset=shift_jis'}}).formData().then(f=>{got=[...f].join('|')+'|'+(f instanceof FormData)});new Response('a=1').formData().catch(x=>{got2=x.name})");
+    assert_eq!(eval(&e.main, "got"), "a,1|b,\u{1F43C} c|a,|true");
+    assert_eq!(eval(&e.main, "got2"), "TypeError");
+    e.page.dispose();
+}
+
+#[test]
+fn css_rules_parse_lazily_from_the_sheet_and_stay_live() {
+    let e = env("<style id=s>a{color:red} b,,{} @media all { c{top:1px} }</style><div id=d></div>");
+    eval(&e.main, "globalThis.st=document.getElementById('s');globalThis.sh=st.sheet;globalThis.rs=sh.cssRules;0");
+    assert_eq!(
+        eval(&e.main, "[rs.length,rs[0].type,rs[0].selectorText,rs[0].cssText,rs[1].type,rs[1].conditionText,rs[1].cssRules[0].selectorText,rs[1].cssRules[0].parentRule===rs[1],rs[0].parentStyleSheet===sh,rs[0]===sh.cssRules[0]].join('|')"),
+        "2|1|a|a { color: red; }|4|all|c|true|true|true"
+    );
+
+    // Same list object across edits, and invalid rules throw.
+    assert_eq!(
+        eval(
+            &e.main,
+            "sh.insertRule(\"[foo='bar' I] { top: 2px }\");[rs.length,rs===sh.cssRules,rs[0].selectorText].join('|')"
+        ),
+        "3|true|[foo=\"bar\" i]"
+    );
+    for rule in ["", "a", "b,,{}", "x{} y{}", "@nonsense;"] {
+        let threw = eval(
+            &e.main,
+            &format!("(()=>{{try{{sh.insertRule('{rule}');return 'none'}}catch(x){{return x.name}}}})()"),
+        );
+        assert_eq!(threw, "SyntaxError", "{rule}");
+    }
+    assert_eq!(eval(&e.main, "sh.deleteRule(0);rs.length"), "2");
+
+    // CSSOM edits keep the rules of the text, and reach the cascade.
+    eval(&e.main, "globalThis.d=document.getElementById('d');0");
+    assert_eq!(
+        eval(&e.main, "sh.insertRule('.hit{visibility:hidden}',2);d.className='hit';globalThis.hidden=getComputedStyle(d).visibility;rs[2].selectorText='.other';rs[2].selectorText='!!';[hidden,getComputedStyle(d).visibility,rs[2].selectorText,rs[0].selectorText].join('|')"),
+        "hidden|visible|.other|a"
+    );
+
+    // Rules nested in a group edit the group.
+    assert_eq!(
+        eval(&e.main, "globalThis.m=rs[1];m.insertRule('.in{visibility:hidden}',1);d.className='in';hidden=getComputedStyle(d).visibility;m.deleteRule(1);[hidden,getComputedStyle(d).visibility,m.cssRules.length].join('|')"),
+        "hidden|visible|1"
+    );
+
+    // New text replaces the sheet, edits included.
+    assert_eq!(
+        eval(
+            &e.main,
+            "st.textContent=':nth-child(1n+0){}';[sh.cssRules.length,rs.length,rs[0].selectorText].join('|')"
+        ),
+        "1|1|:nth-child(n)"
+    );
+    assert_eq!(eval(&e.main, "st.textContent='[x y]{}';sh.cssRules.length"), "0");
+    assert_eq!(
+        eval(&e.main, "st.textContent=\"@namespace x 'a'; [x|foo=''  i]{}\";[...sh.cssRules].map(r=>r.type).join()"),
+        "10,1"
+    );
+
+    // A removed style element keeps a working sheet.
+    assert_eq!(
+        eval(&e.main, "globalThis.n=document.createElement('style');document.head.append(n);globalThis.k=n.sheet;n.remove();globalThis.l=k.cssRules;k.insertRule('a{}');globalThis.one=l.length;k.deleteRule(0);[one,l.length].join('|')"),
+        "1|0"
+    );
+    assert_eq!(
+        eval(&e.main, "[CSS.supports('selector(a > b)'),CSS.supports('selector(a >)')].join('|')"),
+        "true|false"
+    );
+    e.page.dispose();
+}
+
+#[test]
+fn inner_text_follows_computed_white_space() {
+    let e = env("<div id=t></div><ul><li id=l>A <span id=o>B</span> C</li></ul>");
+    let text = |html: &str| {
+        eval(&e.main, &format!("(()=>{{const t=document.getElementById('t');t.innerHTML={html:?};return JSON.stringify(t.innerText)}})()"))
+    };
+    for (html, expected) in [
+        ("<div style='white-space:pre'> a  b\nc\td </div>", r#"" a  b\nc\td ""#),
+        ("<span style='white-space:pre-wrap'> a\rb</span>", r#"" a\nb""#),
+        ("<div style='white-space:break-spaces'> a </div>", r#"" a ""#),
+        ("<pre> a  b</pre>", r#"" a  b""#),
+        ("<pre style='white-space:normal'> a  b</pre>", r#""a b""#),
+        ("<div style='white-space:pre'><span style='white-space:normal'> a  b</span> c</div>", r#""a b c""#),
+        ("<div style='white-space:pre-line'> a  b \n\t c\t</div>", r#""a b\nc""#),
+        ("<div style='white-space:pre-line'>\n\na\r\n</div>", r#""\n\na\n""#),
+        ("<div style='white-space:pre-line'>a\tb</div>", r#""a b""#),
+        ("a <span style='white-space:pre'>b</span>", r#""a b""#),
+        ("<span>a </span><span style='white-space:pre'></span> b", r#""a b""#),
+        ("<div> a  b </div>", r#""a b""#),
+        ("<x>a </x> <x> b</x>", r#""a b""#),
+        ("<x>a</x> <x> b</x>", r#""a b""#),
+        ("<table style='white-space:pre'>  <td>a</td>  </table>", r#""a""#),
+    ] {
+        assert_eq!(text(html), expected, "{html}");
+    }
+    // The element itself can carry the style.
+    assert_eq!(
+        eval(&e.main, "(()=>{const t=document.getElementById('t');t.style.whiteSpace='pre';t.textContent=' x ';const v=t.innerText;t.style.whiteSpace='';return JSON.stringify(v)})()"),
+        r#"" x ""#
+    );
+    assert_eq!(
+        eval(&e.main, "document.getElementById('o').outerText='R';const li=document.getElementById('l');[li.innerHTML,li.childNodes.length].join('|')"),
+        "A R C|1"
+    );
+    e.page.dispose();
+}
+
+#[test]
+fn form_named_access_returns_controls_and_overrides_builtins() {
+    let e = env("<form id=f><input name=n value=1><input id=byid><input name=submit><input type=image name=pic><img name=photo><input type=radio name=r value=a><input type=radio name=r value=b checked></form><input name=outer form=f><input name=other>");
+    let r = &e.main;
+    eval(r, "globalThis.f=document.getElementById('f')");
+    assert_eq!(eval(r, "typeof f.n+':'+f.n.value+':'+(f.byid===document.getElementById('byid'))"), "object:1:true");
+    // Named properties win over builtins, and appear only while a control does.
+    assert_eq!(eval(r, "f.submit.tagName+':'+typeof HTMLFormElement.prototype.submit"), "INPUT:function");
+    assert_eq!(
+        eval(r, "f.outer.name+':'+typeof f.other+':'+typeof f.pic+':'+f.photo.tagName"),
+        "outer:undefined:undefined:IMG"
+    );
+    assert_eq!(eval(r, "'n' in f"), "true");
+    assert_eq!(eval(r, "Object.keys(f).includes('n')"), "false");
+    assert_eq!(eval(r, "f.n.remove();typeof f.n"), "undefined");
+    // Several controls: a live RadioNodeList, one object per name.
+    assert_eq!(
+        eval(r, "f.r instanceof RadioNodeList && f.r instanceof NodeList && f.r===f.r && f.r.length===2"),
+        "true"
+    );
+    assert_eq!(eval(r, "f.r.value"), "b");
+    assert_eq!(eval(r, "f.r.value='a';f.querySelector('[value=a]').checked+':'+f.r.value"), "true:a");
+    assert_eq!(eval(r, "globalThis.rs=f.r;f.r[1].remove();rs.length+':'+(f.r.tagName)"), "1:INPUT");
+    // The same lookup a handler's scope chain performs.
+    assert_eq!(eval(r, "with(f){typeof n+':'+byid.tagName+':'+method}"), "undefined:INPUT:get");
 }

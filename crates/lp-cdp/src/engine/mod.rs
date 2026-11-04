@@ -306,15 +306,19 @@ pub(crate) struct PageState {
     /// Emulation.setUserAgentOverride as sent (the locale override fills in
     /// its Accept-Language when it has none).
     user_agent_override: Option<lp_webapi::UserAgentOverride>,
-    /// Emulation.setLocaleOverride / setTimezoneOverride. Recorded only:
-    /// JavaScriptCore's Intl and Date use the process locale and time zone.
+    /// Emulation.setLocaleOverride. Intl and Date keep the process locale.
     pub(crate) locale_override: Option<String>,
+    /// Emulation.setTimezoneOverride. It applies to the connection's whole VM
+    /// (`EngineHost::timezone`), so all pages that set one agree.
     pub(crate) timezone_override: Option<String>,
     /// Emulation.setDefaultBackgroundColorOverride (RGBA), for screenshots.
     pub(crate) background_override: Option<[u8; 4]>,
     pub(crate) next_script_id: u64,
     /// Paused popup before its first navigation (`Page.getFrameTree` url ":").
     pub(crate) initial_popup: bool,
+    /// This page is a `window.open` popup; dropped with the page, which tells
+    /// the opener's object it closed.
+    pub(crate) popup_ticket: Option<std::rc::Rc<lp_webapi::PopupTicket>>,
     /// A raw keydown which changes documents suppresses one following char.
     /// Keyboard input is page-scoped, including across attached sessions.
     pub(crate) suppress_next_char: bool,
@@ -385,6 +389,9 @@ pub struct EngineHost {
     pub(crate) pending: runtime::PendingReplies,
     /// Popups requested by pages, taken by the protocol layer after `flush`.
     pub(crate) popup_requests: Vec<crate::target::PopupRequest>,
+    /// Commands from `window.open`'s returned objects, resolved to pages when
+    /// the protocol layer takes them (after adopting the popups they name).
+    pub(crate) popup_commands: Vec<(std::rc::Rc<lp_webapi::PopupState>, lp_webapi::PopupCommand)>,
     /// Pages `Page.close` closes, taken by the protocol layer after `flush`.
     pub(crate) close_requests: Vec<PageKey>,
     /// `browserContextId`s of the contexts (a dialog's context disposed
@@ -400,6 +407,9 @@ pub struct EngineHost {
     /// Emulation.setVirtualTimePolicy (none until a page sets one).
     virtual_time: Option<virtual_time::VirtualTime>,
     virtual_ticks_base: f64,
+    /// The time zone in effect in this connection's VM: that of the pages
+    /// which set one (None: the host's).
+    timezone: Option<String>,
 }
 
 /// A page booted on a thread before any connection, with its context.
@@ -544,6 +554,7 @@ impl EngineHost {
                 background_override: None,
                 next_script_id: 1,
                 initial_popup: false,
+                popup_ticket: None,
                 suppress_next_char: false,
                 intercept_drags: false,
                 touches: Default::default(),
@@ -572,6 +583,7 @@ impl EngineHost {
             body_budget,
             network_wake: network::NetworkWake::default(),
             renders: screenshot::Renders::default(),
+            timezone: None,
             pages: HashMap::new(),
             sessions: HashMap::new(),
             next_exception_id: 1,
@@ -579,6 +591,7 @@ impl EngineHost {
             next_backend_node: 1,
             pending: runtime::PendingReplies::default(),
             popup_requests: Vec::new(),
+            popup_commands: Vec::new(),
             close_requests: Vec::new(),
             context_names: HashMap::new(),
             prebooted: Vec::new(),
@@ -839,6 +852,8 @@ impl EngineHost {
                 let phases = lp_render::blitz_phases();
                 let (inline_rebuilds, inline_bytes) = lp_render::blitz_rebuilds();
                 let style_stats = lp_render::blitz_style_stats();
+                let (resolves, layout_passes) = lp_render::blitz_passes();
+                let (rounded_nodes, rounding_skips) = lp_render::blitz_rounding();
                 Ok(Some(serde_json::json!({
                     "processId": std::process::id(),
                     "layouts": layouts, "deltas": deltas, "snapshotMs": snapshot_ms, "layoutMs": layout_ms, "readMs": read_ms,
@@ -851,6 +866,8 @@ impl EngineHost {
                         },
                         "inlineRebuilds": inline_rebuilds, "inlineBytes": inline_bytes,
                         "restyledNodes": lp_render::blitz_restyles(),
+                        "resolves": resolves, "layoutPasses": layout_passes,
+                        "roundedNodes": rounded_nodes, "roundingSkips": rounding_skips,
                         "styleStats": {
                             "styled": style_stats[0], "matched": style_stats[1],
                             "shared": style_stats[2], "reused": style_stats[3],
@@ -948,6 +965,7 @@ impl EngineHost {
         match action {
             // Headless pages always behave as focused; there is no window focus to emulate.
             "setFocusEmulationEnabled" => Ok(Some(serde_json::json!({}))),
+            "setGeolocationOverride" | "clearGeolocationOverride" => self.geolocation_override(action, cmd),
             "setVirtualTimePolicy" => self.set_virtual_time_policy(cmd),
             // Touch input (Input.dispatchTouchEvent) is always accepted, as in
             // Chrome; this sets `navigator.maxTouchPoints` (default 1) and,
@@ -1108,19 +1126,25 @@ impl EngineHost {
                     timezone_id: String,
                 }
                 let p: P = cmd.command.params()?;
-                // Without a time zone database only obviously malformed IDs
-                // are rejected (Chrome checks the ID against ICU).
-                let valid = |id: &str| {
-                    id.starts_with(|c: char| c.is_ascii_alphabetic())
-                        && id.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '_' | '-' | '+'))
-                        && !id.contains("//")
-                        && !id.ends_with('/')
-                };
-                if !p.timezone_id.is_empty() && !valid(&p.timezone_id) {
-                    return Err(CdpError::invalid_params(format!("Invalid timezone id: {}", p.timezone_id)));
+                let requested = Some(p.timezone_id).filter(|t| !t.is_empty());
+                self.pages.get(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?;
+                // One VM per connection has one time zone. Not Chrome's "Timezone
+                // override is already in effect": Playwright ignores that text, and
+                // the page would silently run in the other page's zone.
+                let others = self.pages.iter().filter(|(key, _)| **key != cmd.page);
+                let other = others.filter_map(|(_, s)| s.timezone_override.clone()).next();
+                if let (Some(id), Some(other)) = (&requested, &other) {
+                    if id != other {
+                        return Err(CdpError::server(format!(
+                            "Cannot set timezone {id}: another page of this connection set {other}, \
+                             and the time zone applies to the whole connection"
+                        )));
+                    }
                 }
+                let effective = requested.clone().or(other);
+                self.apply_timezone(effective)?;
                 let state = self.pages.get_mut(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?;
-                state.timezone_override = Some(p.timezone_id).filter(|t| !t.is_empty());
+                state.timezone_override = requested;
                 Ok(Some(serde_json::json!({})))
             }
             _ => Err(CdpError::unsupported(&cmd.command.method)),
@@ -1129,6 +1153,21 @@ impl EngineHost {
 }
 
 impl EngineHost {
+    /// Makes `id` the VM's time zone unless it already is: a change flushes
+    /// JavaScriptCore's date caches and walks the heap's Date objects.
+    fn apply_timezone(&mut self, id: Option<String>) -> CdpResult<()> {
+        if self.timezone == id {
+            return Ok(());
+        }
+        let known =
+            self.thread.browser.engine.set_time_zone(id.as_deref()).map_err(|e| CdpError::server(e.to_string()))?;
+        if !known {
+            return Err(CdpError::invalid_params(format!("Invalid timezone id: {}", id.unwrap_or_default())));
+        }
+        self.timezone = id;
+        Ok(())
+    }
+
     /// Hands lp-browser the page's navigator identity: the user agent
     /// override, with the locale override as Accept-Language when the
     /// override has none.
@@ -1159,6 +1198,14 @@ impl Host for EngineHost {
         Ok(key)
     }
 
+    fn create_proxied_context(&mut self, proxy: crate::target::ContextProxy<'_>) -> CdpResult<ContextKey> {
+        let config = lp_net::ProxyConfig::parse(proxy.server, proxy.bypass_list).map_err(CdpError::server)?;
+        let id = self.thread.browser.create_context_with_proxy(config).map_err(|e| CdpError::server(e.to_string()))?;
+        let key = u64::from(id.0);
+        self.contexts.insert(key, network::NetworkContext::new(id));
+        Ok(key)
+    }
+
     fn dispose_context(&mut self, context: ContextKey) {
         let pages: Vec<PageKey> = self.pages.iter().filter(|(_, p)| p.context == context).map(|(k, _)| *k).collect();
         for page in pages {
@@ -1183,11 +1230,38 @@ impl Host for EngineHost {
         std::mem::take(&mut self.close_requests)
     }
 
+    fn take_popup_actions(&mut self) -> Vec<crate::target::PopupAction> {
+        use crate::target::PopupAction;
+        let commands = std::mem::take(&mut self.popup_commands);
+        commands
+            .into_iter()
+            .filter_map(|(popup, command)| {
+                let (&page, _) = self
+                    .pages
+                    .iter()
+                    .find(|(_, state)| state.popup_ticket.as_ref().is_some_and(|t| t.is_for(&popup)))?;
+                Some(match command {
+                    lp_webapi::PopupCommand::Close => PopupAction::Close(page),
+                    lp_webapi::PopupCommand::Navigate(url) => PopupAction::Navigate(page, url),
+                })
+            })
+            .collect()
+    }
+
     fn context_named(&mut self, key: ContextKey, id: &str) {
         self.context_names.insert(key, id.to_owned());
     }
 
-    fn popup_opened(&mut self, opener: PageKey, page: PageKey, target_id: &str) {
+    fn popup_opened(
+        &mut self,
+        opener: PageKey,
+        page: PageKey,
+        target_id: &str,
+        handle: Option<std::rc::Rc<dyn std::any::Any>>,
+    ) {
+        if let Some(state) = self.pages.get_mut(&page) {
+            state.popup_ticket = handle.and_then(|h| h.downcast().ok());
+        }
         if self.pages.get(&opener).is_some_and(|state| state.network.log.is_some()) {
             if let Some(state) = self.pages.get_mut(&page) {
                 state.network.log.get_or_insert_with(Default::default);
@@ -1232,6 +1306,10 @@ impl Host for EngineHost {
 
     fn close_page(&mut self, page: PageKey) {
         let Some(state) = self.pages.remove(&page) else { return };
+        // The last page with an override gives the VM back its host zone.
+        if state.timezone_override.is_some() && !self.pages.values().any(|s| s.timezone_override.is_some()) {
+            let _ = self.apply_timezone(None);
+        }
         for session in &state.sessions {
             self.pending.cancel_session(session);
             if let Some(session) = self.sessions.remove(session) {

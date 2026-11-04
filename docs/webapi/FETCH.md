@@ -5,6 +5,8 @@ interface. This is an implemented subset, not full Fetch or TOS compatibility.
 The binding uses the existing `lp-net` HTTP/CORS/cookie/interception path and
 JavaScriptCore promises. No browser/runtime wiring is added by this change.
 
+Over HTTP/2 `Response.statusText` is empty, as the protocol has no reason phrase.
+
 Before fetching, the embedder must provide:
 
 - `page.net`: the context's `NetClient`.
@@ -73,9 +75,12 @@ URL parsing for fetch inputs uses the [URL binding](URL.md).
 FormData request/response bodies are serialized as multipart/form-data
 (see [FormData](FORM_DATA.md)).
 
-Not implemented: the Request constructor, ReadableStream/body streaming,
+Bodies as streams are described in [Streams](STREAMS.md).
+
+Not implemented: the Request constructor,
 the "response" header guard after construction (later
-`headers.set('set-cookie')` is not filtered), `<base>` URL selection, full MIME parsing for
+`headers.set('set-cookie')` is not filtered), multipart `Response.formData()`
+(urlencoded bodies are parsed; other types reject with TypeError), full MIME parsing for
 response Blob types, service workers and integrity/referrer policy.
 Nonempty integrity/referrer/referrerPolicy and keepalive are explicitly rejected.
 

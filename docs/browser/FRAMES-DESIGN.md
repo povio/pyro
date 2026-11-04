@@ -128,7 +128,8 @@ self-removal, parent-load ordering, failed/cancelled loads, stale completions an
 inherited base resolution, frame network idle and activity cleanup. `lp-js/tests/nested_realm.rs` exercises
 safe realm creation from a native callback and rejects calls without a live owning engine.
 
-Same-origin window access deliberately returns the other realm's global, as agreed for this phase. It does
+Same-origin nodes are wrapped in their own frame's realm and work from the parent; see
+[iframe hooks](../webapi/IFRAME_HOOKS.md). Same-origin window access deliberately returns the other realm's global, as agreed for this phase. It does
 not provide stable WindowProxy identity across document replacement. The cross-origin object provides only
 the documented allow-list; it does not expose the other document. Frame name metadata is supported, while
 named window-property lookup is not implemented. HTTP error response bodies still commit; transport failures

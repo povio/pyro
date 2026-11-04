@@ -622,6 +622,7 @@ fn follow_hyperlink(page: &Rc<PageDom>, el: NodeId) {
         body: None,
         content_type: None,
         opener,
+        popup: None,
     });
 }
 

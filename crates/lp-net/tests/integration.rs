@@ -5,6 +5,8 @@
 mod auth;
 mod cache;
 mod client;
+mod h2;
+mod proxy;
 mod static_files;
 
 /// `autotests = false` means a file in tests/ that is neither a module here nor

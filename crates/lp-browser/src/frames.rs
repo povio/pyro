@@ -341,6 +341,7 @@ impl FrameHost {
         };
         sandbox.opaque |= ancestor.sandbox.opaque;
         sandbox.scripts_disabled |= ancestor.sandbox.scripts_disabled;
+        sandbox.popups_blocked |= ancestor.sandbox.popups_blocked;
         if self.children.borrow().len() >= 128 {
             return Err(JsError::Range("child frame limit reached".into()));
         }
@@ -508,6 +509,7 @@ impl FrameHost {
 pub(crate) struct Sandbox {
     pub opaque: bool,
     pub scripts_disabled: bool,
+    pub popups_blocked: bool,
 }
 impl Sandbox {
     pub fn parse(value: Option<&str>) -> Self {
@@ -516,6 +518,7 @@ impl Sandbox {
         Self {
             opaque: !tokens.iter().any(|t| t.eq_ignore_ascii_case("allow-same-origin")),
             scripts_disabled: !tokens.iter().any(|t| t.eq_ignore_ascii_case("allow-scripts")),
+            popups_blocked: !tokens.iter().any(|t| t.eq_ignore_ascii_case("allow-popups")),
         }
     }
 }
@@ -546,6 +549,39 @@ impl FrameHost {
         } else {
             a.origin == b.origin
         }
+    }
+    /// The iframe a navigation `target` from `source` names, if `source` may
+    /// navigate it: its own subtree first, then same-origin frames of the page
+    /// (a simplified "find a navigable by target name").
+    pub fn named_frame(&self, source: FrameKey, name: &str) -> Option<FrameKey> {
+        if ["", "_blank", "_self", "_parent", "_top"].iter().any(|k| name.eq_ignore_ascii_case(k)) {
+            return None;
+        }
+        let named: Vec<_> = self
+            .children
+            .borrow()
+            .iter()
+            .filter(|(_, d)| d.main_frame.name == name)
+            .map(|(id, _)| FrameKey { page: self.page, child: Some(*id) })
+            .collect();
+        let in_subtree = |key: FrameKey| {
+            let mut current = key;
+            loop {
+                if current == source {
+                    return true;
+                }
+                let parent = self.parent_key(current);
+                if parent == current {
+                    return false;
+                }
+                current = parent;
+            }
+        };
+        named
+            .iter()
+            .find(|&&key| in_subtree(key))
+            .or_else(|| named.iter().find(|&&key| self.same_origin(source, key)))
+            .copied()
     }
     fn parent_key(&self, key: FrameKey) -> FrameKey {
         self.frame(key).and_then(|f| f.parent).and_then(|id| self.key(&id)).unwrap_or(key)
@@ -578,6 +614,21 @@ impl FrameHost {
             .and_then(|f| f.realms.into_iter().find(|r| r.realm.id() == realm))
             .map(|r| r.world)
             .ok_or(JsError::ContextDestroyed)
+    }
+    /// Realms of `realm`'s world in the frames of this tree other than `source`.
+    pub fn sibling_realms(&self, source: FrameKey, realm: lp_js::RealmId) -> Vec<Realm> {
+        let Ok(world) = self.world_of(source, realm) else { return Vec::new() };
+        let of = |frame: &Frame| frame.realms.iter().find(|r| r.world == world).map(|r| r.realm.clone());
+        let mut realms = Vec::new();
+        if source.child.is_some() {
+            realms.extend(of(&self.root.borrow()));
+        }
+        for (id, doc) in self.children.borrow().iter() {
+            if source.child != Some(*id) {
+                realms.extend(of(&doc.main_frame));
+            }
+        }
+        realms
     }
     pub fn document_value<'s>(
         self: &Rc<Self>,
@@ -806,6 +857,7 @@ impl Browser {
         let result = if let Some(html) = srcdoc {
             let loader = LoaderId(format!("{:032X}", self.next()));
             let opts = NavigateOpts {
+                post: None,
                 url: "about:srcdoc".into(),
                 reason: NavigationReason::InitialFrameNavigation,
                 cdp_request_id: None,
@@ -852,6 +904,7 @@ impl Browser {
                 self.navigate_frame_with_handling(
                     key,
                     NavigateOpts {
+                        post: None,
                         url,
                         reason: NavigationReason::InitialFrameNavigation,
                         cdp_request_id: None,

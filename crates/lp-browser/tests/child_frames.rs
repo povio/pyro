@@ -357,3 +357,206 @@ fn init_script_worlds_exist_in_initial_and_replacement_child_documents() {
         assert_eq!(eval(&world.realm, "initWorld"), world.world.as_deref().unwrap_or("main"));
     }
 }
+
+#[test]
+fn document_encoding_reaches_urls_and_forms_submitted_into_named_frames() {
+    let mut t = crate::browser_thread().unwrap();
+    let loader = Rc::new(StaticLoader::default());
+    let log = loader.clone();
+    loader.insert(
+        "https://example.test/main",
+        "text/html",
+        "<meta charset=euc-jp><iframe name=t></iframe><iframe name=other></iframe>\
+         <form id=f action=/r target=t><input type=hidden name=_charset_><input name=q></form>",
+        Duration::ZERO,
+    );
+    // U+3042 is A4 A2 in EUC-JP; U+AC00 has no EUC-JP mapping.
+    let submitted = "https://example.test/r?_charset_=EUC-JP&q=%A4%A2%2C%26%2344032%3B";
+    let utf8 = "https://example.test/r?_charset_=UTF-8&q=%E3%81%82%2C%EA%B0%80";
+    loader.insert(submitted, "text/html", "<p>euc</p>", Duration::ZERO);
+    loader.insert(utf8, "text/html", "<p>utf8</p>", Duration::ZERO);
+    t.browser.set_loader(Some(loader));
+    let page = t.browser.create_page().unwrap();
+    t.browser.navigate(page, NavigateOpts::address_bar("https://example.test/main")).unwrap();
+    settle(&mut t);
+    let root = main_realm(&t, page);
+    assert_eq!(eval(&root, "document.characterSet"), "EUC-JP");
+    // [Replaceable]: a script's `frames` global shadows the Window attribute.
+    assert_eq!(
+        eval(&root, "var frames = null; frames = [1]; [frames[0], self === window, parent === window].join()"),
+        "1,true,true"
+    );
+    assert_eq!(
+        eval(&root, "globalThis.a=document.createElement('a');a.href='/x?\\u3042\\uac00#\\u3042';a.href"),
+        "https://example.test/x?%A4%A2%26%2344032%3B#%E3%81%82"
+    );
+    assert_eq!(eval(&root, "a.search"), "?%A4%A2%26%2344032%3B");
+    // Only ASCII whitespace is stripped, not U+3000.
+    assert_eq!(eval(&root, "a.href='/x?\\u3000';a.search"), "?%A1%A1");
+    // `new URL` stays UTF-8 whatever the document's encoding.
+    assert_eq!(eval(&root, "new URL('https://example.test/?\\u3042').search"), "?%E3%81%82");
+
+    eval(&root, "globalThis.f=document.getElementById('f');f.elements.q.value='\\u3042,\\uac00';f.submit()");
+    settle(&mut t);
+    let urls = |t: &BrowserThread| -> Vec<String> {
+        t.browser.frames(page).into_iter().filter(|f| f.parent.is_some()).map(|f| f.url).collect()
+    };
+    assert_eq!(urls(&t), vec![submitted.to_owned(), "about:blank".to_owned()]);
+    assert_eq!(t.browser.frames(page).iter().filter(|f| f.parent.is_none()).count(), 1);
+
+    // accept-charset beats the document's encoding.
+    eval(&root, "f.acceptCharset='bogus utf-8';f.target='other';f.submit()");
+    settle(&mut t);
+    assert_eq!(urls(&t), vec![submitted.to_owned(), utf8.to_owned()]);
+    assert!(log.log.borrow().iter().any(|u| u == utf8));
+}
+
+#[test]
+fn named_targets_do_not_reach_cross_origin_siblings() {
+    let mut t = crate::browser_thread().unwrap();
+    let loader = Rc::new(StaticLoader::default());
+    let log = loader.clone();
+    loader.insert("https://example.test/main", "text/html", "<p>main</p>", Duration::ZERO);
+    loader.insert("https://example.test/x?", "text/html", "<p>x</p>", Duration::ZERO);
+    t.browser.set_loader(Some(loader));
+    let page = t.browser.create_page().unwrap();
+    t.browser.navigate(page, NavigateOpts::address_bar("https://example.test/main")).unwrap();
+    settle(&mut t);
+    let root = main_realm(&t, page);
+    eval(
+        &root,
+        "for (const n of ['a','b']) { const f=document.createElement('iframe');f.name=n;\
+         if (n==='a') f.setAttribute('sandbox','allow-scripts');document.body.appendChild(f) }",
+    );
+    settle(&mut t);
+    let frames: Vec<_> = t.browser.frames(page).into_iter().filter(|f| f.parent.is_some()).collect();
+    let sandboxed = t.browser.frame(page, &frames[0].id).unwrap();
+    let submit = "{ const f=document.createElement('form');f.action='https://example.test/x';f.target='b';\
+         document.body.appendChild(f);f.submit() }";
+    // Opaque origin: sibling `b` is neither in its subtree nor same-origin.
+    eval(sandboxed.main_realm().unwrap(), submit);
+    settle(&mut t);
+    assert!(!log.log.borrow().iter().any(|u| u.starts_with("https://example.test/x")));
+    // The same-origin parent reaches it.
+    eval(&root, submit);
+    settle(&mut t);
+    let after: Vec<_> = t.browser.frames(page).into_iter().filter(|f| f.parent.is_some()).collect();
+    assert_eq!(after[1].url, "https://example.test/x?");
+}
+
+fn cross_document_page() -> (BrowserThread, PageId, Realm) {
+    let mut t = crate::browser_thread().unwrap();
+    let page = t.browser.create_page().unwrap();
+    let root = main_realm(&t, page);
+    eval(&root, "globalThis.f=document.createElement('iframe');f.srcdoc=\"<span id=a data-x=1 style='color:red'>one</span><span>two</span><form><input name=n></form>\";document.body.appendChild(f)");
+    settle(&mut t);
+    eval(&root, "globalThis.d=f.contentDocument;globalThis.nodes=d.querySelectorAll('span')");
+    (t, page, root)
+}
+
+#[test]
+fn parent_reads_child_nodes_through_collections_and_named_hooks() {
+    let (_t, _page, root) = cross_document_page();
+    // Indexed and named hooks are called in the caller's realm by JSC.
+    assert_eq!(eval(&root, "nodes.length+':'+nodes[0].dataset.x+':'+nodes[1].textContent"), "2:1:two");
+    assert_eq!(eval(&root, "nodes[0]===d.getElementById('a') && nodes[0]===nodes.item(0)"), "true");
+    assert_eq!(
+        eval(
+            &root,
+            "d.forms[0]===d.querySelector('form') && d.body.children[0]===nodes[0] && d.body.children.a===nodes[0]"
+        ),
+        "true"
+    );
+    assert_eq!(
+        eval(&root, "nodes[0].attributes.id.value+':'+nodes[0].attributes[0].name+':'+nodes[0].style.color"),
+        "a:id:red"
+    );
+    assert_eq!(eval(&root, "[...nodes].map(n=>n.tagName).join()+':'+Object.keys(nodes).join()"), "SPAN,SPAN:0,1");
+    assert_eq!(eval(&root, "nodes[0].dataset.y='2';nodes[0].getAttribute('data-y')+':'+delete nodes[0].dataset.y+':'+nodes[0].hasAttribute('data-y')"), "2:true:false");
+    // Wrappers belong to the node document's realm, as in other browsers.
+    assert_eq!(
+        eval(&root, "nodes[0] instanceof f.contentWindow.HTMLSpanElement && !(nodes[0] instanceof HTMLSpanElement)"),
+        "true"
+    );
+    // An expando is seen from both realms, so there is one wrapper.
+    eval(&root, "nodes[0].mark=7");
+    assert_eq!(eval(&root, "f.contentWindow.eval(\"document.getElementById('a').mark\")"), "7");
+}
+
+#[test]
+fn members_of_one_realm_called_on_nodes_of_another_run_in_the_receiver_realm() {
+    let (_t, _page, root) = cross_document_page();
+    assert_eq!(eval(&root, "Element.prototype.querySelector.call(d.body,'span')===nodes[0]"), "true");
+    assert_eq!(
+        eval(&root, "Object.getOwnPropertyDescriptor(Node.prototype,'firstChild').get.call(d.body)===nodes[0]"),
+        "true"
+    );
+    assert_eq!(eval(&root, "Document.prototype.createElement.call(d,'b').ownerDocument===d"), "true");
+    assert_eq!(eval(&root, "try{Document.prototype.createElement.call(d,'1')}catch(e){String(e instanceof f.contentWindow.DOMException)+':'+e.name}"), "true:InvalidCharacterError");
+}
+
+#[test]
+fn a_node_keeps_one_wrapper_when_it_moves_between_documents() {
+    let (_t, _page, root) = cross_document_page();
+    eval(&root, "globalThis.p=document.createElement('p');d.body.append(p)");
+    assert_eq!(eval(&root, "d.body.lastChild===p && p.ownerDocument===d && d.querySelector('p')===p"), "true");
+    eval(&root, "globalThis.i=d.createElement('i');document.body.append(i)");
+    assert_eq!(eval(&root, "document.body.lastChild===i && i.ownerDocument===document && document.querySelector('i')===i && document.adoptNode(i)===i"), "true");
+    assert_eq!(
+        eval(&root, "globalThis.r=document.createRange();r.selectNodeContents(nodes[0]);r.startContainer===nodes[0]"),
+        "true"
+    );
+}
+
+#[test]
+fn listeners_run_across_documents_with_one_event_object() {
+    let (_t, _page, root) = cross_document_page();
+    eval(&root, "globalThis.seen=[];nodes[0].addEventListener('x',e=>seen.push(e));globalThis.ev=new Event('x',{bubbles:true});nodes[0].dispatchEvent(ev)");
+    assert_eq!(eval(&root, "seen.length===1 && seen[0]===ev && ev.target===nodes[0]"), "true");
+    // Window of the child, event of the parent.
+    eval(&root, "globalThis.wseen=[];f.contentWindow.addEventListener('y',e=>wseen.push(e));globalThis.wev=new Event('y');f.contentWindow.dispatchEvent(wev)");
+    assert_eq!(eval(&root, "wseen[0]===wev && wev.target===f.contentWindow"), "true");
+    // A parent wrapper moved into the child: child dispatch reaches both realms.
+    eval(&root, "globalThis.log=[];globalThis.p=document.createElement('p');p.addEventListener('click',()=>log.push('p'));d.body.append(p);d.body.addEventListener('click',()=>log.push('body'))");
+    eval(&root, "f.contentWindow.eval(\"document.querySelector('p').click()\")");
+    assert_eq!(eval(&root, "log.join()"), "p,body");
+    // A child wrapper moved into the parent: bubbles to the parent's listeners.
+    eval(&root, "globalThis.log2=[];document.body.addEventListener('click',()=>log2.push('parent'),{once:true});globalThis.i=d.createElement('i');i.addEventListener('click',()=>log2.push('i'),{once:true});document.body.append(i);i.click();i.click()");
+    assert_eq!(eval(&root, "log2.join()"), "i,parent");
+}
+
+#[test]
+fn cross_document_wrappers_survive_gc_and_throw_after_the_child_navigates() {
+    let (mut t, page, root) = cross_document_page();
+    eval(&root, "nodes[0].mark=7;nodes[0].addEventListener('x',()=>globalThis.fired=true)");
+    eval(&root, "globalThis.first=nodes[0];globalThis.stale=nodes;globalThis.staleDoc=d;delete globalThis.nodes");
+    t.browser.engine.collect_garbage_now();
+    assert_eq!(eval(&root, "stale[0].mark+':'+(stale[0]===first)"), "7:true");
+    let child = t.browser.frames(page).into_iter().find(|f| f.parent.is_some()).unwrap();
+    t.browser.navigate_frame(page, &child.id, NavigateOpts::address_bar("about:blank")).unwrap();
+    settle(&mut t);
+    let destroyed = "Execution context was destroyed";
+    for expr in ["stale[0]", "stale.length", "staleDoc.querySelector('span')", "first.dataset.x"] {
+        let message = eval(&root, &format!("try{{{expr};'no throw'}}catch(e){{String(e.message||e)}}"));
+        assert!(message.contains(destroyed), "{expr}: {message}");
+    }
+    assert_eq!(eval(&root, "f.contentDocument!==staleDoc && f.contentDocument.URL"), "about:blank");
+    t.browser.engine.collect_garbage_now();
+}
+
+#[test]
+fn sibling_wrappers_stay_inside_their_script_world_and_origin() {
+    let (mut t, page, root) = cross_document_page();
+    eval(&root, "nodes[0].mark='main'");
+    let child = t.browser.frames(page).into_iter().find(|f| f.parent.is_some()).unwrap();
+    let root_id = t.browser.frames(page).into_iter().find(|f| f.parent.is_none()).unwrap().id;
+    let utility = t.browser.isolated_world_in_frame(page, &root_id, "utility").unwrap();
+    let inner = t.browser.isolated_world_in_frame(page, &child.id, "utility").unwrap();
+    assert_eq!(
+        eval(&utility, "globalThis.u=document.querySelector('iframe').contentDocument.querySelectorAll('span')[0];typeof u.mark+':'+u.dataset.x"),
+        "undefined:1"
+    );
+    eval(&utility, "u.mark='utility'");
+    assert_eq!(eval(&inner, "document.getElementById('a').mark"), "utility");
+    assert_eq!(eval(&root, "nodes[0].mark"), "main");
+}

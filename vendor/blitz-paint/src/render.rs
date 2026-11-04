@@ -26,6 +26,7 @@ use blitz_dom::node::{
 use blitz_dom::{BaseDocument, ElementData, Node, NodeId, local_name};
 use blitz_traits::devtools::DevtoolSettings;
 
+use style::logical_geometry::WritingMode;
 use style::values::computed::{BorderCornerRadius, ColorOrAuto};
 use style::{
     dom::TElement,
@@ -862,6 +863,11 @@ impl ElementCx<'_, '_> {
                     panic!("Tried to render node marked as inline root that does not have an inline layout: {:?}", self.node);
                 });
 
+            if let Some(block_lr) = self.node.vertical_block_axis() {
+                self.draw_vertical_inline_layout(scene, text_layout, pos, block_lr);
+                return;
+            }
+
             let pos = Point {
                 x: pos.x,
                 y: pos.y + text_layout.block_offset as f64,
@@ -878,6 +884,7 @@ impl ElementCx<'_, '_> {
                     self.context.dom,
                     transform,
                     self.node.id,
+                    None,
                 );
             }
 
@@ -886,7 +893,7 @@ impl ElementCx<'_, '_> {
                 crate::text::draw_text_selection(
                     scene,
                     &text_layout.layout,
-                    transform,
+                    |_| transform,
                     sel_start,
                     sel_end,
                 );
@@ -903,6 +910,91 @@ impl ElementCx<'_, '_> {
                 self.node.id,
                 Some(&text_layout.text),
                 &mut draw_text_context,
+                None,
+            );
+        }
+    }
+
+    /// Paint an inline layout of a vertical writing mode. The layout's lines are logical: x is the
+    /// inline axis and y the block axis, running from the content box's top and its block-start edge.
+    /// Each line is drawn rotated a quarter turn clockwise (`vertical-*`'s sideways glyphs have their
+    /// tops to the right), which takes y to -x. In `vertical-rl` that also runs the lines the right
+    /// way. In `vertical-lr` they run the other way, so a line's slot is found first and the line is
+    /// rotated within it.
+    fn draw_vertical_inline_layout(
+        &self,
+        scene: &mut impl PaintScene,
+        text_layout: &blitz_dom::node::TextLayout,
+        pos: Point,
+        block_lr: bool,
+    ) {
+        let block_offset = text_layout.block_offset as f64;
+        let layout = self.node.final_layout();
+        let content_width = (layout.size.width
+            - layout.border.left
+            - layout.border.right
+            - layout.padding.left
+            - layout.padding.right) as f64;
+        let origin = if block_lr { pos.x + block_offset } else { pos.x + content_width - block_offset };
+        // Boxes are painted at whole pixels. Chromium rounds text only in the block axis, so a
+        // line starts where it was laid out in the inline axis.
+        let inline_start = self.context.dom.physical_unrounded_geometry(self.node.id).0.y as f64;
+        let top = pos.y + inline_start - inline_start.round();
+        let line_transform = |index: usize| {
+            let flip = if block_lr {
+                text_layout.layout.get(index).map_or(0.0, |line| {
+                    let metrics = line.metrics();
+                    (metrics.block_min_coord + metrics.block_max_coord) as f64
+                })
+            } else {
+                0.0
+            };
+            self.transform
+                * Affine::new([0.0, 1.0, -1.0, 0.0, origin * self.scale + flip, top * self.scale])
+        };
+
+        let wm = self.style.writing_mode;
+        let sideways = wm.intersects(WritingMode::TEXT_SIDEWAYS | WritingMode::VERTICAL_SIDEWAYS);
+        let all_upright = wm.contains(WritingMode::UPRIGHT);
+        let vertical = |line: &parley::Line<'_, blitz_dom::node::TextBrush>| {
+            Some(crate::text::VerticalLine::new(line, sideways, all_upright))
+        };
+
+        if self.context.backgrounds {
+            for (index, line) in text_layout.layout.lines().enumerate() {
+                let vertical = vertical(&line);
+                crate::text::draw_inline_backgrounds(
+                    scene,
+                    std::iter::once(line),
+                    self.context.dom,
+                    line_transform(index),
+                    self.node.id,
+                    vertical,
+                );
+            }
+        }
+        if let Some(&(sel_start, sel_end)) = self.context.selection_ranges.get(&self.node.id) {
+            crate::text::draw_text_selection(
+                scene,
+                &text_layout.layout,
+                line_transform,
+                sel_start,
+                sel_end,
+            );
+        }
+        let mut draw_text_context = self.context.draw_text_context.borrow_mut();
+        for (index, line) in text_layout.layout.lines().enumerate() {
+            let vertical = vertical(&line);
+            crate::text::stroke_text(
+                scene,
+                std::iter::once(line),
+                self.context.dom,
+                line_transform(index),
+                self.scale,
+                self.node.id,
+                Some(&text_layout.text),
+                &mut draw_text_context,
+                vertical,
             );
         }
     }
@@ -970,6 +1062,7 @@ impl ElementCx<'_, '_> {
                 self.node.id,
                 None,
                 &mut draw_text_context,
+                None,
             );
         }
     }
@@ -1026,6 +1119,7 @@ impl ElementCx<'_, '_> {
                 self.node.id,
                 None,
                 &mut draw_text_context,
+                None,
             );
         }
     }

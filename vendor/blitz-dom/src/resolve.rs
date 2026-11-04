@@ -114,6 +114,7 @@ impl BaseDocument {
             return;
         }
 
+        phase_profile::resolved();
         self.resolve_scroll_animation();
 
         // Drop scrollbar-activity entries whose fade-out has finished (also
@@ -427,7 +428,22 @@ impl BaseDocument {
                 } else {
                     (0.0, 0.0)
                 };
-                overflow = overflow.union(Rect::new(x0, y0, x0 + width + end_x, y0 + height + end_y));
+                // The lines of a vertical writing mode are logical: `width` runs along y, `height` along x.
+                let lines = match self.nodes[node_id].vertical_block_axis() {
+                    None => Rect::new(x0, y0, x0 + width + end_x, y0 + height + end_y),
+                    Some(block_lr) => {
+                        let offset = block_offset as f64 * scale;
+                        let top = y0 - offset;
+                        let (b0, b1) = if block_lr {
+                            (x0 + offset, x0 + offset + height + end_x)
+                        } else {
+                            let start = (l.size.width - l.border.right - l.padding.right) as f64 * scale - offset;
+                            (start - height - end_x, start)
+                        };
+                        Rect::new(b0, top, b1, top + width + end_y)
+                    }
+                };
+                overflow = overflow.union(lines);
             }
         }
 
@@ -687,6 +703,17 @@ impl BaseDocument {
             height: AvailableSpace::Definite(size.height.to_f32_px()),
         };
 
+        // lightningpanda: same viewport and nothing damaged, so the last pass's layout stands.
+        let root = self.root_element();
+        if self.last_layout_space == Some(available_space)
+            && !root.has_damaged_descendants()
+            && root.damage().is_some_and(|damage| damage.is_empty())
+        {
+            return;
+        }
+        self.last_layout_space = Some(available_space);
+        phase_profile::laid_out();
+
         let root_element_id = crate::taffy_node_id(self.root_element().id);
 
         // println!("\n\nRESOLVE LAYOUT\n===========\n");
@@ -784,6 +811,30 @@ pub mod phase_profile {
     /// Elements styled, matched, shared and reused on this thread so far.
     pub fn style_stats_peek() -> [u64; 4] {
         STYLE_STATS.with(|s| s.get())
+    }
+    std::thread_local! {
+        static PASSES: Cell<(u64, u64)> = const { Cell::new((0, 0)) };
+    }
+    pub(crate) fn resolved() {
+        PASSES.with(|p| p.set((p.get().0 + 1, p.get().1)));
+    }
+    pub(crate) fn laid_out() {
+        PASSES.with(|p| p.set((p.get().0, p.get().1 + 1)));
+    }
+    /// `resolve` calls on this thread so far, and how many of their layout passes ran Taffy.
+    pub fn passes() -> (u64, u64) {
+        PASSES.with(|p| p.get())
+    }
+    std::thread_local! {
+        static ROUNDING: Cell<(u64, u64)> = const { Cell::new((0, 0)) };
+    }
+    pub(crate) fn rounded((visited, skipped): (u64, u64)) {
+        ROUNDING.with(|r| r.set((r.get().0 + visited, r.get().1 + skipped)));
+    }
+    /// Layout nodes rounding reached on this thread so far, and subtrees it skipped (each
+    /// reached, the nodes under it not).
+    pub fn rounding() -> (u64, u64) {
+        ROUNDING.with(|r| r.get())
     }
     /// Milliseconds per phase on this thread so far.
     pub fn peek() -> [f64; 9] {
