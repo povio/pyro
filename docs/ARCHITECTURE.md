@@ -263,13 +263,7 @@ copy-on-write page snapshots: load an app's JS once, then start each test from t
   order or stack noise. `Engine::settle` (page close, boot) installs finished plans before collecting without waiting
   for running ones; `Engine::collect_garbage_now` (tests) also waits, so retention checks depend on reachability alone.
 
-- Patch `0006` adds `JSContextGroupSetTimeZone(group, id)`, behind `Emulation.setTimezoneOverride`. `DateCache` is per
-  VM, and `Intl` and `Temporal` read their default zone from it, so one override field there covers them; setting it
-  marks the cache stale, and JSC's own host-zone-change path applies it at the next outermost entry (date caches
-  flushed, cached local times in `Date` objects dropped). The default formats a global object keeps are bypassed while
-  an override is set. The scope is one VM, so one connection: a per-context zone would mean moving this state from the
-  VM to the global object, through every `vm.dateCache` user including the DFG.
-
+- Patch `0006` adds `JSContextGroupSetTimeZone(group, id)`, behind `Emulation.setTimezoneOverride`. `DateCache` is per  VM, and `Intl` and `Temporal` read their default zone from it, so one override field there covers them; setting it  marks the cache stale, and JSC's own host-zone-change path applies it at the next outermost entry (date caches  flushed, cached local times in `Date` objects dropped). The default formats a global object keeps are bypassed while  an override is set. The scope is one VM, so one connection: a per-context zone would mean moving this state from the  VM to the global object, through every `vm.dateCache` user including the DFG.`0004` adds `JSGlobalContextInstallNamedProperties(ctx, filter, getter)`, for named access on the Window object.  The global's prototype is immutable to JavaScript and to `JSObjectSetPrototype`, so a page realm gets the object  when its context is created (`resetPrototype` replaces the global proxy, so nothing may hold it yet). A `JSClass`  object was measured first and made misses and new globals much slower (OpaqueJSString per lookup, dropped locks, a  put hook that sends every new global down the receiver path), so it is a native object like WebCore's  `JSDOMWindowProperties`: the global's own properties never reach it and stay inline cached; a name the global lacks  costs one call to `filter`, which `Dom::window_name_may_exist` answers from a hash set kept current from the change  journal, so a miss does not walk the tree after each mutation.
 To change JSC: edit the checkout in `~/Library/Caches/lightningpanda/webkit-src`, `ninja -C ../webkit-build
 JavaScriptCore` to iterate, then regenerate the patch with `git diff` (use `git add -N` for new files) and rerun
 `scripts/jsc/build.sh`, which resets the checkout and applies `patches/` from scratch.

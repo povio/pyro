@@ -15,6 +15,48 @@ pub trait WindowHost {
     fn event_target(&self) -> &EventTargetData;
 }
 
+/// Named access on the Window object: the names of the document's tree, behind
+/// the global's own properties.
+pub(crate) struct WindowNamedProperties(pub(crate) Rc<PageDom>);
+
+impl lp_js::NamedProperties for WindowNamedProperties {
+    fn may_resolve(&self, name: lp_js::NameUnits<'_>) -> bool {
+        let page = &self.0;
+        let hash = match name {
+            lp_js::NameUnits::Latin1(n) => lp_dom::window_name_hash(n.iter().map(|&u| u16::from(u))),
+            lp_js::NameUnits::Utf16(n) => lp_dom::window_name_hash(n.iter().copied()),
+        };
+        page.dom.try_borrow().is_ok_and(|dom| dom.window_name_may_exist(page.document(), hash))
+    }
+
+    fn resolve<'s>(&self, s: &Scope<'s>, name: &str) -> JsResult<Option<Value<'s>>> {
+        let page = &self.0;
+        let doc = page.document();
+        // Iframes by `name` stand for their child window, not for themselves.
+        let (frames, found) = {
+            let dom = page.dom.borrow();
+            let (frames, found): (Vec<_>, Vec<_>) =
+                dom.window_named_elements(doc, name).js()?.into_iter().partition(|&el| {
+                    dom.element(el).is_ok_and(|e| &*e.name.local == "iframe" && e.is_html() && e.id() != Some(name))
+                });
+            (frames, found)
+        };
+        for frame in frames {
+            if let Some(window) = page.frame_window(s, frame)? {
+                return Ok(Some(window));
+            }
+        }
+        match found[..] {
+            [] => Ok(None),
+            [el] => Ok(Some(crate::node::wrap_node(s, page, el)?.value())),
+            _ => {
+                let kind = crate::collections::CollectionKind::WindowNamed(name.to_owned());
+                Ok(Some(crate::collections::collection(s, page, doc, kind)?.value()))
+            }
+        }
+    }
+}
+
 fn scroll_xy(a: &lp_js::Args<'_>) -> JsResult<(Option<i32>, Option<i32>)> {
     if let Some(o) = a.get(0).as_object() {
         let l = o.get("left")?;

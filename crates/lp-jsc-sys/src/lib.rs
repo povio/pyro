@@ -529,6 +529,14 @@ pub mod spi {
     pub type JSCompleteJITPlansFn = unsafe extern "C" fn(group: JSContextGroupRef, wait: bool);
     /// Patched JavaScriptCore only (`webkit/patches/0006-vm-time-zone.patch`).
     pub type JSContextGroupSetTimeZoneFn = unsafe extern "C" fn(group: JSContextGroupRef, id: *const c_char) -> bool;
+    pub type JSNamedPropertyFilter =
+        unsafe extern "C" fn(ctx: JSContextRef, characters: *const c_void, length: usize, is_8bit: bool) -> bool;
+    /// Patched JavaScriptCore only (`webkit/patches/0004-named-properties-object.patch`).
+    pub type JSGlobalContextInstallNamedPropertiesFn = unsafe extern "C" fn(
+        ctx: JSGlobalContextRef,
+        filter: JSNamedPropertyFilter,
+        getter: JSObjectGetPropertyCallback,
+    );
 
     /// Runtime-resolved SPI table. Each entry is `None` when the running
     /// JavaScriptCore does not export the symbol.
@@ -552,6 +560,7 @@ pub mod spi {
         pub reseed_random: Option<JSGlobalContextReseedRandomFn>,
         pub complete_jit_plans: Option<JSCompleteJITPlansFn>,
         pub set_time_zone: Option<JSContextGroupSetTimeZoneFn>,
+        pub install_named_properties: Option<JSGlobalContextInstallNamedPropertiesFn>,
     }
 
     impl Spi {
@@ -608,6 +617,7 @@ pub mod spi {
             reseed_random: resolve!("JSGlobalContextReseedRandom"),
             complete_jit_plans: resolve!("JSCompleteJITPlans"),
             set_time_zone: resolve!("JSContextGroupSetTimeZone"),
+            install_named_properties: resolve!("JSGlobalContextInstallNamedProperties"),
         })
     }
 }
