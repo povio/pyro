@@ -241,10 +241,12 @@ word count, a hash of its sorted words, first and last word, distinct y), no PDF
 
 ```sh
 cd bench/pdf/fixtures                                  # needs pdftotext and Chrome at its default path
-node probe.mjs generators/fx-fr.mjs chrome out.json    # or a binary instead of chrome
+bun probe.mjs generators/fx-fr.mjs chrome out.json    # or a binary instead of chrome
 python3 compare.py chrome-156/fr.json out.json [-v]    # per group: words on the same pages, page counts, positions
-node print-72.mjs /abs/lightningpanda                  # the 72: pages, lines and link rects, Chrome measured live
-node geometry.mjs /abs/lightningpanda out.json         # the 152 geometry matrix; compare with chrome-156/geometry.json
+bun print-72.mjs /abs/lightningpanda                  # the 72: pages, lines and link rects, Chrome measured live
+./run.sh /abs/lightningpanda /tmp/out [fr sub ...]     # every set (or those named), against chrome-156/
+bun geometry.mjs /abs/lightningpanda out.json         # the 152 geometry matrix
+python3 compare.py --geometry chrome-156/geometry.json out.json
 ```
 
 | Sets | Generators | Cases | What varies |
@@ -253,10 +255,26 @@ node geometry.mjs /abs/lightningpanda out.json         # the 152 geometry matrix
 | sub-pixel groups | `fx-sub` | 1656 | line heights, accumulated fractions, nested margins, later pages, under 0.5 px overflow, forced breaks, floats |
 | whole-px analogues | `fx-sub2`, `fx-sub3` | 86 | the same shapes in whole px, also parallel columns and tables |
 | vertical writing | `fx-vert` | 24 | vertical blocks and documents |
+| tall monolithic boxes | `fx-mt` | 512 | margin, border and padding above images, size containment, vertical boxes |
 | page geometry | `fx-72` | 120 | paper, margin and scale on links, text, breaks, shrink to fit |
 | orphans, widows | `fx-wo`, `fx-wo2`, `fx-wo3` | 125 | `orphans` and `widows` around cuts |
 | avoid, shrink, sizes | `fx-av`, `fx-sh`, `fx-sr`, `fx-tw`, `fx-engine` | 381 | `break-inside: avoid`, overflowing documents, page sizes |
 | gaps closed by #251 | `fx-b`, `fx-b2`, `fx-b3`, `fx-f`, `fx-h`, `fx-h1`, `fx-k`, `fx-m`, `fx-s`, `fx-v` | 1706 | monolithic boxes, `break-*: avoid`, forced breaks, line and box positions at a cut |
+
+Page placement and text x of whole PDFs against Chrome:
+
+```sh
+bun page-placement.mjs <work dir> chrome-156/page-placement.json [/abs/lightningpanda]   # documents x papers x options, and the 300 dpi page size
+bun pdf-deltas.mjs <chrome pdf dir> <lp pdf dir> out.json        # per PDF of a run.mjs run: x and y delta of 30 pt tiles at 600 dpi, pixel diff at 150 dpi
+python3 page-stream-diff.py; python3 page-shift-check.py         # two lp-fixed runs (r-base, r-head): how each stream changed; pixels after undoing a page shift
+bun text-x.mjs <work dir> chrome; bun text-x.mjs <work dir> /abs/lightningpanda   # fractional text x: paper-cut and `.pz-page`, with screenshots
+python3 width-check.py chrome-156/width-x.json <probe of fx-width>   # what paper-cut print lays out in: marker x and link rects
+```
+
+`pdf-resample.mjs` compares a page's error against Chrome at 150 dpi as poppler rasterizes it and box-averaged from a higher resolution, to tell a real move from a sampling effect.
+
+`chrome-156/tos-deltas.json` holds the 44 ToS cases before and after (median, p95, max of per-tile deltas in pt; the search stops at 2.4 pt, and
+tiles match by ink profiles, so regular text can alias: read medians and p95 first). `text-x-before.json` and `text-x-after.json` hold the text-x set, `text-x-width.json` the same on the paper-cut layout width.
 
 Compare only runs from one Chrome version: the summaries say what 156 did on the machine that measured them (macOS,
 its Arial). Word assignment is what the sets pin; a page's y differs by a constant between engines, because pdftotext

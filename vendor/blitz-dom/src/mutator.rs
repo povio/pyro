@@ -1246,6 +1246,7 @@ impl<'doc> DocumentMutator<'doc> {
             .force_stylesheet_origins_dirty(OriginSet::all());
 
         self.doc.nodes_to_stylesheet.remove(&node_id);
+        self.doc.linked_page_css.remove(&node_id);
         self.doc.stylesheet_generation += 1;
     }
 

@@ -273,6 +273,84 @@ fn vertical_text_is_rotated_and_its_link_areas_land_where_chrome_puts_them() {
     assert!(matrices.iter().all(|m| m[0].abs() < 1e-6 && m[3].abs() < 1e-6), "{matrices:?}");
 }
 
+/// Measured on Chrome 156 with Playwright's A4 (8.27 x 11.7 in, a 595.92 x 842.88 pt page): a page of a
+/// fixed `@page` size is centered on the paper in whole CSS px, here 1 px down; without one the
+/// page stays in the paper's corner.
+#[test]
+fn page_boxes_go_on_the_paper_as_in_chrome() {
+    let doc = |rule: &str, style: &str| {
+        format!(
+            r#"<!doctype html><style>html,body{{margin:0}}{rule}</style><section style="{style}"><div class=pz-page style="width:210mm;height:297mm;background:#f00"></div></section>"#
+        )
+    };
+    let (paper, margins) = lp_render::chrome_page_geometry((8.27, 11.7), [0.0; 4]).unwrap();
+    let print = |html: String| {
+        let out = print_with(&html, |o| {
+            o.paper = paper;
+            o.margins = margins;
+            o.place_on_paper = true;
+        });
+        inflated(&out.bytes)
+    };
+    for (html, top) in [
+        (doc("@page{margin:0;size:210mm 297mm}", ""), "842.13"),
+        (doc("@media screen{@page{margin:0;size:auto!important}}@page s{margin:0;size:210mm 297mm}", "page: s"), "842.13"),
+        (doc("@page{margin:0;size:auto!important}@page s{margin:0;size:210mm 297mm}", "page: s"), "842.88"),
+        (doc("@page s{margin:0;size:210mm 297mm}", ""), "842.88"),
+        (doc("@page{margin:0}", ""), "842.88"),
+    ] {
+        let pdf = print(html.clone());
+        let pdf = pdf.as_str();
+        assert!(pdf.contains("/MediaBox[0 0 595.92 842.88]"), "{html}");
+        let placed = format!("0.75 0 0 -0.75 0 {top} cm");
+        assert!(pdf.contains(&placed), "{html}: {:?}", pdf.match_indices(" cm").next().and_then(|(i, _)| pdf.get(i.saturating_sub(40)..i + 3)));
+    }
+}
+
+/// Measured on Chrome 156 under an emulated screen, A4: a `<link>` sheet's `@page` size places the page as
+/// a `<style>` does, and `media` on the link decides whether it applies.
+#[test]
+fn page_boxes_read_linked_sheets() {
+    let print = |link: &str, sheet: &str, box_css: &str, attrs: &str| {
+        let mut s = snap(&format!(
+            r#"<!doctype html><link rel=stylesheet href=p.css {link}><style>html,body{{margin:0}}</style><section {attrs}><div class=pz-page style="{box_css};background:#f00"></div></section>"#
+        ));
+        s.sheets.insert("http://test/dir/p.css".to_owned(), sheet.to_owned());
+        let (paper, margins) = lp_render::chrome_page_geometry((8.27, 11.7), [0.0; 4]).unwrap();
+        let mut opts = PdfOptions::new(".pz-page", paper);
+        opts.margins = margins;
+        opts.place_on_paper = true;
+        opts.print_media = false;
+        let fetcher: Arc<dyn Fetcher> = Arc::new(NoFetch);
+        inflated(&Renderer::new().print_pdf(&s, &fetcher, &opts).unwrap().bytes)
+    };
+    let page_500 = "width:500px;height:700px";
+    let size_500 = "@page{margin:0;size:500px 700px}";
+    // 147 and 212 CSS px.
+    assert!(print("", size_500, page_500, "").contains("0.75 0 0 -0.75 110.25 683.88 cm"));
+    assert!(print("media=screen", size_500, page_500, "").contains("0.75 0 0 -0.75 110.25 683.88 cm"));
+    assert!(print("media=print", size_500, page_500, "").contains("0.75 0 0 -0.75 0 842.88 cm"));
+    let named = "@media print{@page{size:auto!important}}@page s{margin:0;size:210mm 297mm}";
+    assert!(print("", named, "width:210mm;height:297mm", r#"style="page: s""#).contains("0.75 0 0 -0.75 0 842.13 cm"));
+}
+
+/// Chrome 156 writes this text at 37.78125 CSS px (37.7953 px in layout units); the background of its box stays
+/// on whole pixels, as does its link's area.
+#[test]
+fn text_sits_at_its_layout_unit_x() {
+    let html = |selector: &str| {
+        format!(
+            r#"<!doctype html><style>html,body{{margin:0;font:16px/20px Arial}}</style><div class="{selector}" style="width:600px;height:700px;box-sizing:border-box;padding-left:37.7953px;background:#eee">Text</div>"#
+        )
+    };
+    for class in ["pz-page", "plain"] {
+        let pdf = inflated(&print(&html(class)).bytes);
+        // 37.78125 px = 28.3359 pt; the page's other `cm`s are whole pixels.
+        let cms: Vec<&str> = pdf.split(" cm").map(|s| s.rsplit('q').next().unwrap_or("")).collect();
+        assert!(cms.iter().any(|c| c.contains(" 28.3359")), "{class}: {cms:?}");
+    }
+}
+
 #[test]
 fn inline_link_areas_are_whole_css_pixels() {
     let html = r#"<!doctype html><body style="margin:0;font:20px/30px sans-serif"><a href="https://example.com/a">example text</a>"#;
@@ -492,6 +570,28 @@ fn a_vertical_document_pages_on_snapped_positions() {
     let html = r#"<!doctype html><html style="writing-mode:vertical-lr"><body style="margin:0;width:400.5px;height:1000px"><div style="margin-inline-start:350px;margin-block-start:200.5px;inline-size:100px;block-size:50.25px;break-inside:avoid"></div>"#;
     let tops: Vec<f64> = print_with(html, |o| o.paper = (576.0, 384.0)).pages.iter().map(|p| p.rect.y0).collect();
     assert_eq!(tops, [0.0, 401.0, 802.0]);
+}
+
+#[test]
+fn a_tall_monolithic_box_below_the_top_of_a_page_moves() {
+    let monolithic = "contain:size;height:500px;width:100px";
+    let body = |style: &str| format!(r#"<div style="{style}">k</div><div>z</div>"#);
+    // Chrome's words per page: 1 + 1 at the top; below it, by any margin, 0 + 1 + 1.
+    assert_eq!(page_tops(&body(monolithic)).len(), 2);
+    for margin in [0.1, 0.3, 0.5, 0.8, 1.0, 5.0, 20.0] {
+        let tops = page_tops(&body(&format!("{monolithic};margin-top:{margin}px")));
+        assert_eq!(tops.len(), 3, "margin {margin}");
+    }
+    assert_eq!(page_tops(&format!(r#"<div style="padding-top:5px">{}</div>"#, body(monolithic))).len(), 3);
+    // Its own border and padding are part of it.
+    assert_eq!(page_tops(&body(&format!("{monolithic};border-top:5px solid"))).len(), 2);
+    assert_eq!(page_tops(&body(&format!("{monolithic};padding-top:5px"))).len(), 2);
+    // A vertical box is monolithic in a horizontal document.
+    let vertical = "writing-mode:vertical-rl;height:500px;width:100px";
+    assert_eq!(page_tops(&body(vertical)).len(), 2);
+    assert_eq!(page_tops(&body(&format!("{vertical};margin-top:0.3px"))).len(), 3);
+    // A `break-inside: avoid` box can be split, and stays.
+    assert_eq!(page_tops(&body("height:500px;break-inside:avoid;margin-top:20px")).len(), 2);
 }
 
 /// What a page holds, whole CSS px, and overflowing documents, measured on Chrome 156 by 1 px rows: the rows of
@@ -839,4 +939,39 @@ fn bullets_are_not_text_and_clipped_glyphs_are_not_written() {
         |o| o.paper = (576.0, 384.0),
     );
     assert!(clipped.bytes.len() < full.bytes.len());
+}
+
+/// A link's rect on the paper: at 50% of the content, of the initial containing block and of the viewport. Chrome 156:
+/// content fills the page area rounded up and the others see it rounded down, then the box edge snaps to a whole px.
+#[test]
+fn content_fills_the_page_area_rounded_up_and_viewport_units_see_it_rounded_down() {
+    let lefts = |paper: (f64, f64), margin: f64, scale: f64, style: &str| {
+        let (paper_px, margins) = chrome_page_geometry(paper, [margin; 4]).unwrap();
+        let html = format!(
+            r#"<!doctype html><body style="margin:0"><a href="https://x.test/l" style="display:block;height:10px;{style}"></a>"#
+        );
+        let out = print_with(&html, |o| {
+            o.paper = paper_px;
+            o.margins = margins;
+            o.page_area = Some(chrome_page_area(paper, [margin; 4]));
+            o.scale = scale;
+        });
+        rects(&inflated(&out.bytes))[0][0]
+    };
+    const A4: (f64, f64) = (8.27, 11.69);
+    const LETTER: (f64, f64) = (8.5, 11.0);
+    // (paper, margin, scale, block at 50%, absolute at 50%, 50vw), left edges in pt.
+    for (paper, margin, scale, block, absolute, vw) in [
+        (A4, 0.0, 1.0, 298.5, 297.75, 297.75),
+        (A4, 0.4, 1.0, 298.5, 297.75, 297.75),
+        (LETTER, 0.4, 1.0, 306.0, 306.0, 306.0),
+        (LETTER, 0.4, 0.8, 306.15, 305.55, 305.55),
+        (A4, 0.0, 1.5, 298.125, 298.125, 298.125),
+    ] {
+        let at = |style| lefts(paper, margin, scale, style);
+        let context = format!("{paper:?} margin {margin} scale {scale}");
+        assert!((at("margin-left:50%") - block).abs() < 0.01, "block {context}");
+        assert!((at("position:absolute;left:50%;width:10px") - absolute).abs() < 0.01, "absolute {context}");
+        assert!((at("margin-left:50vw") - vw).abs() < 0.01, "vw {context}");
+    }
 }

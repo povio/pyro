@@ -450,7 +450,7 @@ bench_load=$stage_load
 note "results in $out"
 
 status=0
-node "$root/bench/scripts/cdp-perf-compare.mjs" "$out/run.json" --base base --head head --md "$out/compare.md" || status=$?
+bun "$root/bench/scripts/cdp-perf-compare.mjs" "$out/run.json" --base base --head head --md "$out/compare.md" || status=$?
 
 printf '%s' "$stage_log" >"$out/stages.txt"
 note "profile $profile; time per stage:"
