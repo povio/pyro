@@ -168,6 +168,7 @@ pub(crate) struct RealmInner {
     /// entry module itself through the fetch hook.
     inline_modules: RefCell<HashMap<String, String>>,
     embedder: RefCell<Option<Rc<dyn Any>>>,
+    named_properties: RefCell<Option<Rc<dyn NamedProperties>>>,
     global_class: Option<ClassId>,
     /// Payload of the global object (set once; freed when the realm is dropped,
     /// never while a callback can still borrow it).
@@ -178,6 +179,10 @@ pub(crate) struct RealmInner {
 }
 
 impl RealmInner {
+    pub(crate) fn named_properties(&self) -> Option<Rc<dyn NamedProperties>> {
+        self.named_properties.borrow().clone()
+    }
+
     pub(crate) fn native_callback_hook(&self) -> Option<NativeCallbackHook> {
         if self.ctx.get().is_null() || self.native_callback_hook_active.get() {
             return None;
@@ -276,6 +281,7 @@ impl RealmInner {
             }
         }
         self.embedder.borrow_mut().take();
+        self.named_properties.borrow_mut().take();
         // SAFETY: we owned one retain on the global context.
         unsafe { sys::JSGlobalContextRelease(ctx) };
         if let Some(h) = self.engine.hooks() {
@@ -376,6 +382,12 @@ impl Realm {
         *self.inner.embedder.borrow_mut() = Some(data);
     }
 
+    /// Answers the names the global lacks, through the named properties object
+    /// in a window realm's prototype chain. Needs the patched JavaScriptCore.
+    pub fn set_named_properties(&self, named: Rc<dyn NamedProperties>) {
+        *self.inner.named_properties.borrow_mut() = Some(named);
+    }
+
     /// Installs a scheduling hook after native callback bodies return and before
     /// JavaScript resumes, including normal error returns. Returned values stay
     /// rooted while it runs. Termination and destroyed realms skip the hook.
@@ -437,6 +449,23 @@ impl std::fmt::Debug for Realm {
 pub struct Scope<'s> {
     pub(crate) ctx: sys::JSContextRef,
     pub(crate) realm: &'s Rc<RealmInner>,
+}
+
+/// A property name as JavaScriptCore holds it.
+#[derive(Clone, Copy)]
+pub enum NameUnits<'a> {
+    Latin1(&'a [u8]),
+    Utf16(&'a [u16]),
+}
+
+/// The names of a window's named properties object (see
+/// [`Realm::set_named_properties`]). Consulted only for names the global lacks;
+/// members of `Object.prototype` win over it.
+pub trait NamedProperties {
+    /// False if `resolve` would find nothing. Runs on every global miss, outside
+    /// the native callback machinery, so it must be cheap and call no JavaScript API.
+    fn may_resolve(&self, name: NameUnits<'_>) -> bool;
+    fn resolve<'s>(&self, scope: &Scope<'s>, name: &str) -> JsResult<Option<Value<'s>>>;
 }
 
 pub(crate) fn realm_for_ctx(ctx: sys::JSContextRef) -> Option<Rc<RealmInner>> {
@@ -1139,6 +1168,15 @@ pub(crate) fn create(engine: &Rc<EngineInner>, options: RealmOptions) -> JsResul
     // global class is emulated by copying its members onto the global
     // (WebIDL puts [Global] interface members on the instance anyway).
     let ctx = unsafe { sys::JSGlobalContextCreateInGroup(engine.group(), ptr::null()) };
+    // A window's chain gets a named properties object, as in the standard: own
+    // members and `var`s are found (and cached) first, and only a name the global
+    // lacks reaches it. The public API cannot change the global's prototype.
+    if options.global_class.is_some() {
+        if let Some(install) = sys::spi::get().install_named_properties {
+            // SAFETY: fresh context; nothing holds its global proxy yet.
+            unsafe { install(ctx, crate::class::named_properties_filter, Some(crate::class::named_properties_get)) };
+        }
+    }
     let id = RealmId(engine.next_realm_id.get());
     engine.next_realm_id.set(id.0 + 1);
     let inner = Rc::new(RealmInner {
@@ -1165,6 +1203,7 @@ pub(crate) fn create(engine: &Rc<EngineInner>, options: RealmOptions) -> JsResul
         native_callback_hook_active: Cell::new(false),
         inline_modules: RefCell::new(HashMap::new()),
         embedder: RefCell::new(None),
+        named_properties: RefCell::new(None),
         global_class: options.global_class,
         global_payload: Cell::new(ptr::null_mut()),
         // SAFETY: fresh, retained global context.

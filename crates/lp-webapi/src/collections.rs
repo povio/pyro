@@ -174,6 +174,9 @@ pub enum CollectionKind {
     TagNameNs(String, String),
     ClassName(String),
     Name(String),
+    /// The elements a Window property of this name collects (not iframes by
+    /// name: their child window answers instead).
+    WindowNamed(String),
     Links,
     /// `select.options` / `datalist.options`.
     Options,
@@ -220,6 +223,7 @@ fn watch(kind: &CollectionKind) -> Option<CollectionWatch> {
         CollectionKind::TagName(_) | CollectionKind::TagNameNs(..) => subtree(&[]),
         CollectionKind::ClassName(_) => subtree(&["class"]),
         CollectionKind::Name(_) => subtree(&["name"]),
+        CollectionKind::WindowNamed(_) => subtree(&["id", "name"]),
         CollectionKind::Links => subtree(&["href"]),
         _ => return None,
     })
@@ -266,6 +270,10 @@ fn matches_kind(dom: &Dom, root: NodeId, id: NodeId, kind: &CollectionKind) -> b
                 })
         }
         CollectionKind::Name(n) => e.attr("name") == Some(n.as_str()),
+        CollectionKind::WindowNamed(n) => {
+            e.id() == Some(n.as_str())
+                || (html && matches!(local, "embed" | "form" | "img" | "object") && e.attr("name") == Some(n.as_str()))
+        }
         CollectionKind::Links => html && matches!(local, "a" | "area") && e.attr("href").is_some(),
         CollectionKind::FormElements => {
             html && matches!(local, "button" | "fieldset" | "input" | "object" | "output" | "select" | "textarea")

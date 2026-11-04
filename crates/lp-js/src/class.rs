@@ -1102,6 +1102,52 @@ unsafe extern "C" fn get_property_hook(
     }
 }
 
+/// Whether a window's named properties object may have a name. Runs for every
+/// name the global lacks, so it stays out of `guard`.
+pub(crate) unsafe extern "C" fn named_properties_filter(
+    ctx: sys::JSContextRef,
+    characters: *const std::ffi::c_void,
+    length: usize,
+    is_8bit: bool,
+) -> bool {
+    let name = unsafe {
+        if is_8bit {
+            crate::realm::NameUnits::Latin1(std::slice::from_raw_parts(characters.cast(), length))
+        } else {
+            crate::realm::NameUnits::Utf16(std::slice::from_raw_parts(characters.cast(), length))
+        }
+    };
+    catch_unwind(AssertUnwindSafe(|| {
+        let realm = crate::realm::realm_for_ctx(ctx)?;
+        let named = realm.named_properties()?;
+        Some(named.may_resolve(name))
+    }))
+    .ok()
+    .flatten()
+    .unwrap_or(false)
+}
+
+/// `[[Get]]` of a window's named properties object, for names the filter let
+/// through. `ctx` is the window's own, whichever realm is asking.
+pub(crate) unsafe extern "C" fn named_properties_get(
+    ctx: sys::JSContextRef,
+    object: sys::JSObjectRef,
+    name: sys::JSStringRef,
+    exc: *mut sys::JSValueRef,
+) -> sys::JSValueRef {
+    unsafe {
+        guard(ctx, exc, ptr::null(), |scope| {
+            // The named property visibility algorithm: Object.prototype wins.
+            let Some(named) = scope.realm.named_properties() else { return Ok(ptr::null()) };
+            if on_prototype_chain(ctx, object, name) {
+                return Ok(ptr::null());
+            }
+            let value = named.resolve(scope, &String::from_utf16_lossy(utf16_of(name)))?;
+            Ok(value.map_or(ptr::null(), |v| v.raw))
+        })
+    }
+}
+
 unsafe extern "C" fn set_property_hook(
     ctx: sys::JSContextRef,
     object: sys::JSObjectRef,

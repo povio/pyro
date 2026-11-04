@@ -527,6 +527,14 @@ pub mod spi {
     pub type JSGlobalContextReseedRandomFn = unsafe extern "C" fn(ctx: JSGlobalContextRef);
     /// Patched JavaScriptCore only (`webkit/patches/0003-complete-jit-plans.patch`).
     pub type JSCompleteJITPlansFn = unsafe extern "C" fn(group: JSContextGroupRef, wait: bool);
+    pub type JSNamedPropertyFilter =
+        unsafe extern "C" fn(ctx: JSContextRef, characters: *const c_void, length: usize, is_8bit: bool) -> bool;
+    /// Patched JavaScriptCore only (`webkit/patches/0004-named-properties-object.patch`).
+    pub type JSGlobalContextInstallNamedPropertiesFn = unsafe extern "C" fn(
+        ctx: JSGlobalContextRef,
+        filter: JSNamedPropertyFilter,
+        getter: JSObjectGetPropertyCallback,
+    );
 
     /// Runtime-resolved SPI table. Each entry is `None` when the running
     /// JavaScriptCore does not export the symbol.
@@ -549,6 +557,7 @@ pub mod spi {
         pub did_fork: Option<JSDidForkFn>,
         pub reseed_random: Option<JSGlobalContextReseedRandomFn>,
         pub complete_jit_plans: Option<JSCompleteJITPlansFn>,
+        pub install_named_properties: Option<JSGlobalContextInstallNamedPropertiesFn>,
     }
 
     impl Spi {
@@ -604,6 +613,7 @@ pub mod spi {
             did_fork: resolve!("JSDidFork"),
             reseed_random: resolve!("JSGlobalContextReseedRandom"),
             complete_jit_plans: resolve!("JSCompleteJITPlans"),
+            install_named_properties: resolve!("JSGlobalContextInstallNamedProperties"),
         })
     }
 }

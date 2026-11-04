@@ -153,6 +153,8 @@ pub struct Dom {
     natural_sizes: rustc_hash::FxHashMap<NodeId, (f64, f64)>,
     /// `getElementById` index (see `get_element_by_id`).
     id_index: std::cell::RefCell<IdIndex>,
+    /// Named access on the Window, per document (see `window_names`).
+    pub(crate) window_names: std::cell::RefCell<rustc_hash::FxHashMap<u32, crate::window_names::WindowNames>>,
     #[cfg(test)]
     id_index_builds: std::cell::Cell<u64>,
 }
@@ -195,6 +197,7 @@ impl Dom {
             iframes: Default::default(),
             natural_sizes: Default::default(),
             id_index: Default::default(),
+            window_names: Default::default(),
             #[cfg(test)]
             id_index_builds: Default::default(),
         }
@@ -229,6 +232,10 @@ impl Dom {
     pub(crate) fn generation_at(&self, idx: u32) -> u32 {
         self.slots.get(idx as usize).map_or(0, |s| s.gen)
     }
+    pub(crate) fn slot_gen(&self, idx: u32) -> u32 {
+        self.slots[idx as usize].gen
+    }
+
     pub(crate) fn slot_live(&self, idx: u32) -> bool {
         self.slots.get(idx as usize).is_some_and(|s| s.node.is_some())
     }

@@ -13,6 +13,7 @@ mod history_rewrite;
 mod images;
 mod loading;
 mod microtask_species;
+mod named_access;
 mod navigation_supersession;
 mod navigation_tasks;
 mod network_delivery;

@@ -129,6 +129,7 @@ pub fn install(scope: &Scope<'_>, page: Rc<PageDom>) -> JsResult<()> {
     page.realms.borrow_mut().insert(realm.id(), realm.downgrade());
     xhr::install(scope, &page)?;
     realm.set_embedder(page.clone());
+    realm.set_named_properties(Rc::new(window::WindowNamedProperties(page.clone())));
     realm.set_unhandled_rejection_handler(event::dispatch_unhandled_rejection);
     mutation_observer::install(scope, &page)?;
     intersection_observer::install(scope, &page)?;
