@@ -420,8 +420,13 @@ impl EngineHost {
             request: cmd.command.id,
             session: cmd.session_id.to_owned(),
         });
-        let opts =
-            NavigateOpts { url, reason: NavigationReason::AddressBar, cdp_request_id: Some(cmd.command.id), referrer };
+        let opts = NavigateOpts {
+            post: None,
+            url,
+            reason: NavigationReason::AddressBar,
+            cdp_request_id: Some(cmd.command.id),
+            referrer,
+        };
         let result = if native.parent.is_some() {
             self.thread.browser.navigate_frame(page_id, &frame, opts)
         } else {

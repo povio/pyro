@@ -977,6 +977,47 @@ try {
       await cdp.detach();
     } finally { await p.close(); }
   });
+  await check('form POST navigates: urlencoded and multipart, redirect to GET, request visible', async () => {
+    const seen = [];
+    const server = http.createServer((req, res) => {
+      const chunks = [];
+      req.on('data', (d) => chunks.push(d));
+      req.on('end', () => {
+        const body = Buffer.concat(chunks).toString();
+        seen.push({ method: req.method, type: req.headers['content-type'] ?? '', origin: req.headers.origin ?? '', body });
+        if (req.url === '/redirect') { res.writeHead(303, { location: '/done' }); res.end(); return; }
+        res.writeHead(200, { 'content-type': 'text/html' });
+        if (req.url === '/form' || req.url === '/multi') {
+          const attrs = req.url === '/form' ? 'action="/post"' : 'action="/redirect" enctype="multipart/form-data"';
+          res.end(`<!doctype html><form method="post" ${attrs}><input name="a" value="1"><input type="file" name="f"><button>go</button></form>`);
+        } else res.end(`<!doctype html><p id="r">${req.method} ${req.url}</p>`);
+      });
+    });
+    await new Promise((r) => server.listen(0, '127.0.0.1', r));
+    const origin = `http://127.0.0.1:${server.address().port}`;
+    const p = await context.newPage();
+    try {
+      await p.goto(`${origin}/form`);
+      const [request] = await Promise.all([p.waitForRequest('**/post'), p.locator('button').click()]);
+      assert.equal(request.method(), 'POST');
+      assert.equal(request.postData(), 'a=1&f=');
+      await p.waitForSelector('#r');
+      assert.equal(await p.locator('#r').textContent(), 'POST /post');
+      assert.equal(p.url(), `${origin}/post`);
+      const post = seen.find((s) => s.method === 'POST');
+      assert.equal(post.type, 'application/x-www-form-urlencoded');
+      assert.equal(post.origin, origin);
+      assert.equal(post.body, 'a=1&f=');
+      await p.goto(`${origin}/multi`);
+      await p.locator('input[type=file]').setInputFiles({ name: 'x.txt', mimeType: 'text/plain', buffer: Buffer.from('hello') });
+      await p.locator('button').click();
+      await p.waitForSelector('#r');
+      assert.equal(await p.locator('#r').textContent(), 'GET /done');
+      const multi = seen.filter((s) => s.method === 'POST').at(-1);
+      assert.match(multi.type, /^multipart\/form-data; boundary=/);
+      assert.match(multi.body, /filename="x.txt"[\s\S]*hello/);
+    } finally { await p.close(); server.close(); }
+  });
   await check('page.exposeFunction and exposeBinding survive navigation (Runtime.addBinding)', async () => {
     const p = await context.newPage();
     try {
