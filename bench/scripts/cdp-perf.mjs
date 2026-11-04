@@ -1106,6 +1106,32 @@ const SCENARIOS = [
     teardown: pwClose,
   },
   {
+    name: 'pw.locator.textContent.mixed',
+    group: 'playwright',
+    what: 'the same locator with forms, selects and many element classes in the page: named getters reach the shared lookup sites',
+    iterations: 100,
+    playwright: true,
+    setup: async (env) => {
+      const s = await pwPage(env);
+      await s.page.goto(`${env.site}/dom?n=2000`);
+      await s.page.evaluate(() => {
+        const tags = ['form', 'select', 'a', 'img', 'input', 'table', 'ul', 'li', 'h1', 'p', 'pre', 'button', 'label', 'textarea', 'section'];
+        for (let i = 0; i < 300; i++) {
+          const e = document.createElement(tags[i % tags.length]);
+          if (e.tagName === 'FORM') e.innerHTML = '<input name="x">';
+          if (e.tagName === 'SELECT') e.innerHTML = '<option>o</option>';
+          document.body.append(e);
+        }
+      });
+      return s;
+    },
+    run: async (s, i) => {
+      const k = wrap(i * 37, 2000);
+      assert((await s.page.locator(`#i${k} span`).textContent()) === `row ${k}`, 'textContent');
+    },
+    teardown: pwClose,
+  },
+  {
     name: 'pw.fill+click+response',
     group: 'playwright',
     what: 'locator.fill, click submit, wait for the fetch response and the DOM update',

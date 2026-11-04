@@ -281,6 +281,12 @@ it costs 5.6x the CPU. A value set in the environment wins.
 Patch `0009` keeps the JS lock held across C API callbacks, because a VM stays on one thread: stock JSC drops and
 retakes it around every callback. `JSC_dropLocksInAPICallbacks=true` restores the stock behavior.
 
+Patch `0010` gives wrappers of classes without property hooks their own root structure, without
+`ProhibitsPropertyCaching`, `OverridesGetOwnPropertySlot` and `OverridesPut`, so inline caches remember their lookups.
+Classes with named getters, callable objects and the global stay on the stock structure. These wrappers also have no own
+`Symbol.toStringTag`: it is found on the prototype, as in browsers. `JSC_cacheCallbackObjectLookups=false` restores the stock
+structure for new wrappers.
+
 To change JSC: edit the checkout in `~/Library/Caches/lightningpanda/webkit-src`, `ninja -C ../webkit-build
 JavaScriptCore` to iterate, then regenerate the patch with `git diff` (use `git add -N` for new files) and rerun
 `scripts/jsc/build.sh`, which resets the checkout and applies `patches/` from scratch.
