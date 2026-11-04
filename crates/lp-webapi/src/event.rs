@@ -1068,6 +1068,16 @@ impl JsClass for MessageEvent {
 }
 
 /// Registers all event classes on the engine.
+/// The events a worker's realm exposes.
+pub(crate) fn register_for_worker(engine: &lp_js::Engine) {
+    engine.register::<Event>();
+    engine.register::<CustomEvent>();
+    engine.register::<ProgressEvent>();
+    engine.register::<ErrorEvent>();
+    engine.register::<PromiseRejectionEvent>();
+    engine.register::<MessageEvent>();
+}
+
 pub(crate) fn register(engine: &lp_js::Engine) {
     engine.register::<Event>();
     engine.register::<CustomEvent>();

@@ -142,7 +142,7 @@ Methods: 122 (Playwright 1.59.1's static list plus the session methods it sends 
 | `Target.detachFromTarget` | yes | engine |  |
 | `Target.disposeBrowserContext` | yes | engine |  |
 | `Target.getTargetInfo` | yes | engine |  |
-| `Target.setAutoAttach` | yes | engine |  |
+| `Target.setAutoAttach` | yes | engine | on a page session it also attaches the page's dedicated workers (`type: "worker"`), which never wait for the debugger; their sessions take a `Runtime` subset, see [WORKER](../webapi/WORKER.md) |
 | `Tracing.end` | **no** | pending |  |
 | `Tracing.start` | **no** | pending |  |
 

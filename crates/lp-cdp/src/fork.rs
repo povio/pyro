@@ -310,6 +310,8 @@ pub fn template_main(options: &ServeOptions, socket: &Path) -> ExitCode {
 }
 
 fn run_template(options: &ServeOptions, socket: &Path) -> Result<(), String> {
+    // A fork needs every other thread gone: a page's workers wait for the child.
+    lp_webapi::hold_for_fork();
     // Before profile preload, VM and network threads, and every template fork.
     lp_js::prepare_process_for_fork();
     let profile = crate::serve::browser_profile(options)?;
@@ -769,6 +771,7 @@ impl TemplateProcess {
         browser.set_fork_child(Box::new(move |p: &PreparedProfile| register_with(&root, p)));
         browser
             .set_fork_unregister(Box::new(move |id| retire_with(&retire_root, Message::Unregister { profile_id: id })));
+        lp_webapi::release_after_fork();
         crate::serve::serve_browser(browser, outbox, outbound, socket, &buffered, config.clone());
         drop(finished);
         0

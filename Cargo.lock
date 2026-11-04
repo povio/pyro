@@ -1754,6 +1754,7 @@ dependencies = [
  "lp-layout",
  "lp-net",
  "lp-render",
+ "lp-runtime",
  "markup5ever",
  "percent-encoding",
  "rustc-hash 2.1.3",

@@ -206,6 +206,13 @@ impl PageHooks for Hooks {
         }
     }
 
+    fn worker_event(&self, event: lp_webapi::WorkerEvent) {
+        let observer = self.observer.borrow().clone();
+        if let Some(observer) = observer {
+            observer.on_worker_event(self.page.page, event);
+        }
+    }
+
     fn iframe_connected(&self, node: lp_dom::NodeId) {
         if let Some(host) = self.frames.upgrade() {
             if let Err(e) = host.connected(self.page, &self.loader, node) {
