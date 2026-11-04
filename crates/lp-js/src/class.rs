@@ -822,9 +822,55 @@ unsafe fn throw_message_value(ctx: sys::JSContextRef, msg: &str, exc: *mut sys::
     }
 }
 
-/// Resolves `this` to class `C`'s data: wrappers of `C` or a subclass, or the
-/// realm's global object (also for `undefined`/`null` receivers).
-unsafe fn this_data<'a, C: JsClass>(scope: &Scope<'_>, this: sys::JSObjectRef) -> JsResult<&'a C::Data> {
+/// Runs a member or property hook in `realm`, the realm of its receiver, when
+/// that is not the realm JSC called it in: property hooks get the caller's
+/// global, and `Node.prototype.x.call(otherRealmNode)` the callee's. A closed
+/// receiver realm throws as a direct call into it would. Errors become values
+/// here so a DOMException comes from the receiver's realm.
+#[cold]
+#[inline(never)]
+fn in_receiver_realm<R: CallbackResult>(
+    scope: &Scope<'_>,
+    realm: RealmId,
+    body: impl FnOnce(&Scope<'_>) -> JsResult<R>,
+) -> JsResult<R> {
+    let inner = scope.engine_inner().realm_by_id(realm).ok_or(JsError::ContextDestroyed)?;
+    let ctx = inner.global_ctx()?;
+    let receiver = Scope::new(ctx, &inner);
+    let result = body(&receiver);
+    let hook = if crate::engine::TERMINATING.with(|t| t.get()) { None } else { inner.native_callback_hook() };
+    let _return_root = match (&hook, &result) {
+        (Some(_), Ok(v)) => v.root(&receiver),
+        _ => None,
+    };
+    if let Some(hook) = hook {
+        inner.run_native_callback_hook(&receiver, hook);
+    }
+    result.map_err(|e| match e {
+        JsError::Thrown(_) | JsError::Terminated | JsError::ContextDestroyed => e,
+        e => JsError::Thrown(crate::Persistent::new(&receiver, e.to_value(&receiver))),
+    })
+}
+
+/// [`in_receiver_realm`] for members, whose function is alive in `scope`'s realm:
+/// a live realm's method keeps working on a closed realm's object where it can.
+#[cold]
+#[inline(never)]
+fn member_in_receiver_realm<R: CallbackResult>(
+    scope: &Scope<'_>,
+    realm: RealmId,
+    body: impl FnOnce(&Scope<'_>) -> JsResult<R>,
+) -> JsResult<R> {
+    match scope.engine_inner().realm_by_id(realm) {
+        Some(inner) if inner.global_ctx().is_ok() => in_receiver_realm(scope, realm, body),
+        _ => body(scope),
+    }
+}
+
+/// Resolves `this` to class `C`'s data and the realm it belongs to: wrappers of
+/// `C` or a subclass, or the realm's global object (also for `undefined`/`null`
+/// receivers).
+unsafe fn this_data<'a, C: JsClass>(scope: &Scope<'_>, this: sys::JSObjectRef) -> JsResult<(&'a C::Data, RealmId)> {
     let h = unsafe { scope.header_of_receiver(this) };
     let reg = scope.engine_inner().classes.borrow();
     let want = reg.id_of::<C>().expect("class registered");
@@ -837,7 +883,8 @@ unsafe fn this_data<'a, C: JsClass>(scope: &Scope<'_>, this: sys::JSObjectRef) -
         }
     });
     if let Some(d) = direct {
-        return Ok(d);
+        // SAFETY: as above.
+        return Ok((d, unsafe { (*h.expect("direct data has a header")).realm }));
     }
     let fallback = reg.classes[want as usize].global_receiver;
     drop(reg);
@@ -848,7 +895,7 @@ unsafe fn this_data<'a, C: JsClass>(scope: &Scope<'_>, this: sys::JSObjectRef) -
             if let Some(p) = unsafe { f(scope) } {
                 // SAFETY: the pointer refers to C::Data owned by the realm's
                 // global payload, which outlives this callback.
-                return Ok(unsafe { &*(p as *const C::Data) });
+                return Ok((unsafe { &*(p as *const C::Data) }, scope.realm_id()));
             }
         }
     }
@@ -901,9 +948,13 @@ unsafe fn method_invoke<C: JsClass>(
     args: Args<'_>,
     f: *const (),
 ) -> JsResult<sys::JSValueRef> {
-    let data = unsafe { this_data::<C>(scope, this) }?;
+    let (data, realm) = unsafe { this_data::<C>(scope, this) }?;
     // SAFETY: stored by `ClassDef::method` from exactly this fn-pointer type.
     let f: MethodFn<C> = unsafe { std::mem::transmute(f) };
+    if realm != scope.realm_id() {
+        let raw = args.raw;
+        return member_in_receiver_realm(scope, realm, |s| f(s, data, Args { ctx: s.ctx, raw }).map(|v| v.raw));
+    }
     f(scope, data, args).map(|v| v.raw)
 }
 
@@ -913,9 +964,12 @@ unsafe fn getter_invoke<C: JsClass>(
     _args: Args<'_>,
     f: *const (),
 ) -> JsResult<sys::JSValueRef> {
-    let data = unsafe { this_data::<C>(scope, this) }?;
+    let (data, realm) = unsafe { this_data::<C>(scope, this) }?;
     // SAFETY: stored by `ClassDef::getter`/`accessor` from this fn-pointer type.
     let f: GetterFn<C> = unsafe { std::mem::transmute(f) };
+    if realm != scope.realm_id() {
+        return member_in_receiver_realm(scope, realm, |s| f(s, data).map(|v| v.raw));
+    }
     f(scope, data).map(|v| v.raw)
 }
 
@@ -925,9 +979,16 @@ unsafe fn setter_invoke<C: JsClass>(
     args: Args<'_>,
     f: *const (),
 ) -> JsResult<sys::JSValueRef> {
-    let data = unsafe { this_data::<C>(scope, this) }?;
+    let (data, realm) = unsafe { this_data::<C>(scope, this) }?;
     // SAFETY: stored by `ClassDef::accessor` from this fn-pointer type.
     let f: SetterFn<C> = unsafe { std::mem::transmute(f) };
+    if realm != scope.realm_id() {
+        let value = args.get(0).raw;
+        return member_in_receiver_realm(scope, realm, |s| {
+            f(s, data, unsafe { Value::from_raw(s.ctx, value) })?;
+            Ok(unsafe { sys::JSValueMakeUndefined(s.ctx) })
+        });
+    }
     f(scope, data, args.get(0))?;
     Ok(unsafe { sys::JSValueMakeUndefined(scope.ctx) })
 }
@@ -1040,6 +1101,7 @@ fn array_index(name: &[u16]) -> Option<u32> {
 /// class's hooks (copied out so no registry borrow is held during callbacks).
 struct HookCtx {
     header: *mut Header,
+    realm: RealmId,
     indexed: Option<IndexedFn>,
     named: Option<NamedFn>,
     override_builtins: bool,
@@ -1057,6 +1119,7 @@ unsafe fn hook_ctx(scope: &Scope<'_>, object: sys::JSObjectRef) -> Option<HookCt
     let hooks = reg.hooks_of(unsafe { (*h).class })?;
     Some(HookCtx {
         header: h,
+        realm: unsafe { (*h).realm },
         indexed: hooks.indexed,
         named: hooks.named,
         override_builtins: hooks.override_builtins,
@@ -1085,19 +1148,29 @@ unsafe extern "C" fn get_property_hook(
         guard(ctx, exc, ptr::null(), |scope| {
             let Some(hc) = hook_ctx(scope, object) else { return Ok(ptr::null()) };
             let units = utf16_of(name);
-            if let Some(idx) = array_index(units) {
-                if let Some(f) = hc.indexed {
-                    return Ok(f(scope, hc.header, idx)?.unwrap_or(ptr::null()));
+            let get = |scope: &Scope<'_>| -> JsResult<sys::JSValueRef> {
+                if let Some(idx) = array_index(units) {
+                    if let Some(f) = hc.indexed {
+                        return Ok(f(scope, hc.header, idx)?.unwrap_or(ptr::null()));
+                    }
                 }
-            }
-            if let Some(f) = hc.named {
-                if !hc.override_builtins && on_prototype_chain(ctx, object, name) {
-                    return Ok(ptr::null());
+                if let Some(f) = hc.named {
+                    if !hc.override_builtins && on_prototype_chain(scope.ctx, object, name) {
+                        return Ok(ptr::null());
+                    }
+                    let n = String::from_utf16_lossy(units);
+                    return Ok(f(scope, hc.header, &n)?.unwrap_or(ptr::null()));
                 }
-                let n = String::from_utf16_lossy(units);
-                return Ok(f(scope, hc.header, &n)?.unwrap_or(ptr::null()));
+                Ok(ptr::null())
+            };
+            if hc.realm != scope.realm_id() {
+                return match in_receiver_realm(scope, hc.realm, get) {
+                    // A closed realm's members stay readable; calling them throws.
+                    Err(JsError::ContextDestroyed) if on_prototype_chain(ctx, object, name) => Ok(ptr::null()),
+                    result => result,
+                };
             }
-            Ok(ptr::null())
+            get(scope)
         })
     }
 }
@@ -1117,13 +1190,19 @@ unsafe extern "C" fn set_property_hook(
                 // Indexed properties without a setter are read-only: ignore (sloppy) writes.
                 return Ok(true);
             }
-            if let Some(f) = hc.named_set {
-                if !hc.override_builtins && on_prototype_chain(ctx, object, name) {
-                    return Ok(false);
+            let set = |scope: &Scope<'_>| -> JsResult<bool> {
+                if let Some(f) = hc.named_set {
+                    if !hc.override_builtins && on_prototype_chain(scope.ctx, object, name) {
+                        return Ok(false);
+                    }
+                    return f(scope, hc.header, &String::from_utf16_lossy(units), value);
                 }
-                return f(scope, hc.header, &String::from_utf16_lossy(units), value);
+                Ok(false)
+            };
+            if hc.realm != scope.realm_id() {
+                return in_receiver_realm(scope, hc.realm, set);
             }
-            Ok(false)
+            set(scope)
         })
     }
 }
@@ -1137,10 +1216,12 @@ unsafe extern "C" fn delete_property_hook(
     unsafe {
         guard(ctx, exc, false, |scope| {
             let Some(hc) = hook_ctx(scope, object) else { return Ok(false) };
-            match hc.named_delete {
-                Some(f) => f(scope, hc.header, &String::from_utf16_lossy(utf16_of(name))),
-                None => Ok(false),
+            let Some(f) = hc.named_delete else { return Ok(false) };
+            let name = String::from_utf16_lossy(utf16_of(name));
+            if hc.realm != scope.realm_id() {
+                return in_receiver_realm(scope, hc.realm, |s| f(s, hc.header, &name));
             }
+            f(scope, hc.header, &name)
         })
     }
 }
@@ -1162,7 +1243,17 @@ unsafe extern "C" fn property_names_hook(
                 }
             }
             if let Some(f) = hc.names {
-                for n in f(scope, hc.header)? {
+                let names = if hc.realm != scope.realm_id() {
+                    let mut names = Vec::new();
+                    in_receiver_realm(scope, hc.realm, |s| {
+                        names = f(s, hc.header)?;
+                        Ok(())
+                    })?;
+                    names
+                } else {
+                    f(scope, hc.header)?
+                };
+                for n in names {
                     sys::JSPropertyNameAccumulatorAddName(acc, JsString::new(&n).as_raw());
                 }
             }

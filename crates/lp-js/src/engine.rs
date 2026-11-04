@@ -150,6 +150,11 @@ impl EngineInner {
         self.realms.borrow().iter().find(|(g, _)| *g == global).and_then(|(_, r)| r.upgrade())
     }
 
+    /// Finds a live realm by id (cross-realm paths only: this walks the list).
+    pub(crate) fn realm_by_id(&self, id: crate::RealmId) -> Option<Rc<RealmInner>> {
+        self.realms.borrow().iter().filter_map(|(_, r)| r.upgrade()).find(|r| r.id == id)
+    }
+
     /// Disposes every realm, destroys the VM (running all remaining finalizers)
     /// and drops their payloads. Payload-owned `Persistent`s may keep this
     /// struct alive, but never the VM: after shutdown they are inert.
