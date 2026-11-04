@@ -102,10 +102,13 @@ impl JsClass for Node {
 }
 ```
 
-- Callbacks are plain fn pointers (non-capturing closures coerce). Each member is a callable object whose private
-  data holds its fn pointer plus a per-class invoker (`lp-js` `MemberCall`): one `extern "C"` entry for all members,
-  one invoker per class and member kind. A call reads the pointer from the object and looks nothing else up. One
-  trampoline per member was the earlier design; it made lp-webapi's codegen serial and the binary 6 MB larger.
+- Callbacks are plain fn pointers (non-capturing closures coerce). Each member carries its fn pointer plus a per-class
+  invoker (`lp-js` `MemberCall`): one `extern "C"` entry for all members, one invoker per class and member kind. A
+  call reads the pointer from the function's data and looks nothing else up. With the patched JSC an operation is an
+  internal function made by `JSObjectMakeFunctionWithCallbackAndData` and an attribute a custom accessor with a
+  trampoline per (class, attribute) (see "JavaScriptCore source build", patch `0012`); with the system framework they
+  are callback objects, as before. One full trampoline per member was the earlier design; it made lp-webapi's codegen
+  serial and the binary 6 MB larger.
 - Panics are caught at the boundary and become `Error("Internal error: …")`.
 - The interface shape follows WebIDL:
   - accessors live on the prototype, so `Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')` works as React needs;
@@ -272,9 +275,17 @@ copy-on-write page snapshots: load an app's JS once, then start each test from t
   each realm otherwise compiled `makeInterface`, `lazyInterface` and `accessor` in the DFG again.
 
 Navigating or closing a page no longer always collects: `Engine::release_closed` runs `settle` only once the process's
-physical footprint is 32 MB or 25%, whichever is larger, above its lowest reading. `serve` collects what is left after
-1 s without a command. `LIGHTNINGPANDA_RELEASE_GROWTH=<MB>[:<percent>]` overrides the thresholds (`0`
-collects every time) and `LIGHTNINGPANDA_RELEASE_ON_CLOSE=0` turns it off, for benchmarks.
+physical footprint is 32 MB or 25%, whichever is larger, above its lowest reading. That collection runs inside the
+command that closed the page, with the closing code on the stack (scanned conservatively) and perhaps a compilation
+still running, so it can miss the closed page's heap; it therefore also arms the idle collection. `serve` collects what
+is left after 1 s without a command, with `Engine::settle_idle`: every compiled and unlinked code is dropped first
+(the bytecode cache included, so the next page re-parses its scripts; a running suite's gaps are shorter than 1 s and
+keep theirs), then the heap is collected and the allocator's free pages are returned. Measured after closing a React
+app: 97 MB footprint before, 39 MB after (upstream Lightpanda: 34 MB). `LIGHTNINGPANDA_RELEASE_GROWTH=<MB>[:<percent>]`
+overrides the thresholds (`0` collects every time) and `LIGHTNINGPANDA_RELEASE_ON_CLOSE=0` turns it off, for benchmarks.
+
+`JsString::new` keeps an all-ASCII string of any length as 8-bit characters in JSC (a script source was converted to
+UTF-16 before, twice its size, and lexed as such).
 
 `lp_js::configure_process` defaults `JSC_heapGrowthMaxIncrease` to 1 (JSC's default is 3, used on machines with at least
 16 GB), so the heap grows to about 2x its live size between collections rather than 4x. Peak footprint with a large SPA
@@ -290,6 +301,20 @@ Patch `0010` gives wrappers of classes without property hooks their own root str
 Classes with named getters, callable objects and the global stay on the stock structure. These wrappers also have no own
 `Symbol.toStringTag`: it is found on the prototype, as in browsers. `JSC_cacheCallbackObjectLookups=false` restores the stock
 structure for new wrappers.
+
+Patch `0012` gives host-object members the paths WebCore's bindings have, since the C API's `JSCallbackObject` can
+neither be inline-cached for a property it answers nor linked by a call site. `JSObjectSetCustomAccessor` installs an
+attribute as a JSC `CustomGetterSetter`: an inline cache calls the getter's C function directly with the receiver, no
+call frame, and `Object.getOwnPropertyDescriptor` still reifies `{get, set}` functions. JSC passes a custom getter no
+data, so `lp-js` gives each (class, attribute) a trampoline of its own (`build.rs` generates 1,024 of them;
+`src/accessors.rs` dispatches). `JSObjectMakeFunctionWithCallbackAndData` makes an operation an ordinary internal
+function carrying its `MemberCall`, which call inline caches link to. `JSClassSetIndexedCallbacks` takes `list[i]` to an
+indexed callback with the index as a number (stock JSC turns it into an atom string and runs the named hook), also for
+`"3"` keys through `hasOwnProperty` and friends, so a class with only indexed hooks keeps cacheable wrappers and
+`list.length` is an inline-cached prototype read. `JSObjectGetPrivate` checks the plain-wrapper class first.
+`JSContextGroupReleaseFreeMemory` (the libpas scavenger, run now) and `JSContextGroupDeleteAllCode` back
+`Engine::settle` and `Engine::settle_idle`. Measured on Playwright's `locator.textContent` over a 2,000-row page
+(about 44,000 DOM calls per locator): 11.1 ms to 5.4 ms, browser CPU 12.2 ms to 6.6 ms; `dom.mutate.1k` 2.3 to 1.9 ms.
 
 To change JSC: edit the checkout in `~/Library/Caches/lightningpanda/webkit-src`, `ninja -C ../webkit-build
 JavaScriptCore` to iterate, then regenerate the patch with `git diff` (use `git add -N` for new files) and rerun
