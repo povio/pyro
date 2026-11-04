@@ -55,10 +55,13 @@ these additional local changes are covered by lp-render's rendering tests.
 - `src/resolve.rs` (`resolve_transforms`): a node's cached scrollable overflow is reused only when it and
   its subtree are undamaged (a descendant's relayout reaches ancestors as damage, not as
   `RECALCULATE_OVERFLOW`).
-- `src/layout/mod.rs`, `src/node/element.rs`: incremental rounding (taffy's `RoundTree::rounded_unchanged`,
-  vendored taffy), keyed by `LayoutData::rounded_from`.
+- `src/layout/writing_mode.rs`, `src/layout/mod.rs`, `src/node/element.rs`: incremental rounding, keyed by
+  `LayoutData::rounded_from` (see "Incremental rounding" in `vendor/taffy/README.lightningpanda.md`).
+  `Node::update_unrounded_layout` is the only writer of unrounded layouts, and marks changes as damage.
+- `src/resolve.rs` (`resolve_layout`): no Taffy pass or rounding with nothing damaged and the same viewport.
+  `BaseDocument::needs_resolve` tells a caller whether a `resolve` could change anything.
 
-lp-render's mirror tests (incremental documents against fresh builds after random mutations) cover both.
+lp-render's mirror tests (incremental documents against fresh builds after random mutations) cover them.
 - `assets/default.css`: text inputs take Chromium's UA box (`border: 2px inset`, `padding: 1px 2px`; a
   40x30 input is 48x36), textareas keep `1px solid` / `2px` and wrap like Chromium's
   (`white-space: pre-wrap; overflow-wrap: break-word`: a word longer than the box breaks).
