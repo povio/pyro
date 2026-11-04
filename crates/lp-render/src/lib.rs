@@ -1402,21 +1402,22 @@ fn paint_paper(
     // The content's height, not the viewport's: a short document on a page
     // smaller than the viewport is one page, as in Chrome.
     let doc_h = (size.height as f64).max(overflow.y1) * dpr;
+    let breaks_h = unrounded_document_height(root, doc_h, dpr);
     // A page holds whole CSS px, more than the content box shows.
     let page_h = if shrink < 1.0 { holds(shrunk_factor).1 } else { holds_h };
     let (pw, ph) = (cw * dpr, page_h * dpr);
     let breaks = Breaks::of(doc, dpr);
     let mut pages = Vec::new();
     let mut y = 0.0;
-    while y < doc_h - 0.5 || pages.is_empty() {
-        let (end, restart) = breaks.page_end(y, ph, doc_h);
+    while y < breaks_h - TOUCHING || pages.is_empty() {
+        let (end, restart) = breaks.page_end(y, ph, breaks_h);
         pages.push(PdfPage {
-            rect: Rect::new(0.0, y, pw, end),
+            rect: Rect::new(0.0, breaks.painted(y), pw, breaks.painted(end)),
             overflow_right: 0.0,
             overflow_bottom: 0.0,
             culprit: None,
         });
-        y = breaks.next_page_start(end, restart, doc_h);
+        y = breaks.next_page_start(end, restart, breaks_h);
     }
     let pages = match keep_ranges(pages, &opts.page_ranges) {
         Ok(pages) => pages,
@@ -1469,6 +1470,23 @@ fn paint_paper(
 /// Blink's `printingMaximumShrinkFactor`.
 const MAX_SHRINK: f64 = 1.5;
 
+/// The height pages are cut against: `doc_h`, the painted document's height,
+/// before pixel snapping, as a box or margin reaching a fraction of a px into a
+/// page gets that page in Chrome. Overflow that is only known snapped counts
+/// when it reaches past the rest.
+fn unrounded_document_height(root: &blitz_dom::Node, doc_h: f64, dpr: f64) -> f64 {
+    if root.layout_data().writing_mode.is_vertical() {
+        return doc_h;
+    }
+    let l = root.unrounded_layout();
+    let h = (l.size.height as f64).max(l.scrollable_overflow_rect.bottom as f64) * dpr;
+    if doc_h > (h / dpr).round() * dpr {
+        doc_h
+    } else {
+        h
+    }
+}
+
 /// How far down a print layout goes to take in the document's overflow, as a
 /// scale: the document's width (CSS px) past `limit`, the whole CSS px the
 /// page's content box rounds up to, is laid out in and scaled down from, at
@@ -1494,6 +1512,8 @@ fn document_width(doc: &blitz_dom::BaseDocument) -> f64 {
 struct Unbroken {
     top: f64,
     bottom: f64,
+    /// Where `top` is painted.
+    painted: f64,
     /// A line box: its inline formatting context in [`Breaks::contexts`] and
     /// its index there.
     line: Option<(u32, u32)>,
@@ -1521,8 +1541,11 @@ struct LineContext {
     widows: u32,
 }
 
-/// Where paged content may be cut, from one walk of the final layout tree
-/// (device px down the document). Measured on Chrome 156:
+/// Where paged content may be cut, from one walk of the layout tree (device px
+/// down the document), before pixel snapping: whether a line fits is decided
+/// by its fractional position, and [`Breaks::painted`] gives the position a
+/// decision is painted at. Vertical writing modes keep their snapped positions.
+/// Measured on Chrome 156:
 ///
 /// - A box that does not fit what is left of a page moves to the next one
 ///   whole when it is a line box, a replaced element or `break-inside: avoid`,
@@ -1570,6 +1593,7 @@ struct Breaks {
     /// What comes above the content of block boxes (their top margin, border
     /// and padding), merged and sorted.
     heads: Vec<(f64, f64)>,
+    dpr: f64,
 }
 
 impl Breaks {
@@ -1579,14 +1603,17 @@ impl Breaks {
         let forces = |b: BreakBetween| {
             matches!(b, BreakBetween::Page | BreakBetween::Always | BreakBetween::Left | BreakBetween::Right)
         };
-        let mut out = Breaks::default();
-        // Node, its parent's top and whether it takes part in its parent's
-        // block flow.
-        let mut stack = vec![(doc.root_element().id, 0.0f64, true)];
-        while let Some((id, parent_y, flow)) = stack.pop() {
+        let mut out = Breaks { dpr, ..Breaks::default() };
+        // Node, its parent's top (unrounded and painted), whether it takes
+        // part in its parent's block flow and whether its parent's axes are
+        // physical (`unrounded_layout` is in the placer's writing mode).
+        let root = doc.root_element();
+        let mut stack = vec![(root.id, 0.0f64, 0.0f64, true, !root.layout_data().writing_mode.is_vertical())];
+        while let Some((id, parent_y, parent_painted, flow, physical)) = stack.pop() {
             let Some(node) = doc.get_node(id) else { continue };
-            let l = node.final_layout();
-            let y = parent_y + l.location.y as f64;
+            let painted = parent_painted + node.final_layout().location.y as f64;
+            let l = if physical { node.unrounded_layout() } else { node.final_layout() };
+            let y = if physical { parent_y + l.location.y as f64 } else { painted };
             let (top, bottom) = (y * dpr, (y + l.size.height as f64) * dpr);
             let styles = node.primary_styles();
             let in_flow = flow && in_block_flow(node);
@@ -1658,7 +1685,13 @@ impl Breaks {
                     || b.clone_container_type().contains(ContainerType::SIZE);
                 // An inline-level box is in a line, which already holds it.
                 if avoids || (monolithic && !atomic_inline) {
-                    out.unbroken.push(Unbroken { top, bottom, line: None, avoid_only: !monolithic });
+                    out.unbroken.push(Unbroken {
+                        top,
+                        bottom,
+                        painted: painted * dpr,
+                        line: None,
+                        avoid_only: !monolithic,
+                    });
                 }
             }
             if monolithic {
@@ -1668,15 +1701,24 @@ impl Breaks {
             // The lines of vertical text run across the page, and are not what a page cut splits.
             if let Some(text) = text.filter(|_| inline && node.vertical_block_axis().is_none()) {
                 let origin = y + (l.border.top + l.padding.top) as f64 + text.block_offset as f64;
+                let snapped = node.final_layout();
+                let painted_origin =
+                    painted + (snapped.border.top + snapped.padding.top) as f64 + text.block_offset as f64;
                 let scale = text.layout.scale() as f64;
                 let first = out.lines.len();
                 for line in text.layout.lines() {
                     let m = line.metrics();
-                    let a = (origin + m.block_min_coord as f64 / scale) * dpr;
-                    let b = (origin + m.block_max_coord as f64 / scale) * dpr;
+                    let (min, max) = if physical && !node.layout_data().writing_mode.is_vertical() {
+                        (m.unquantized_block_min_coord, m.unquantized_block_max_coord)
+                    } else {
+                        (m.block_min_coord, m.block_max_coord)
+                    };
+                    let a = (origin + min as f64 / scale) * dpr;
+                    let b = (origin + max as f64 / scale) * dpr;
                     if b > a {
                         let at = (out.contexts.len() as u32, (out.lines.len() - first) as u32);
-                        out.unbroken.push(Unbroken { top: a, bottom: b, line: Some(at), avoid_only: false });
+                        let painted = (painted_origin + m.block_min_coord as f64 / scale) * dpr;
+                        out.unbroken.push(Unbroken { top: a, bottom: b, painted, line: Some(at), avoid_only: false });
                         out.lines.push((a, b));
                     }
                 }
@@ -1694,11 +1736,12 @@ impl Breaks {
                     && styles.as_ref().is_some_and(|s| {
                         matches!(s.clone_display().inside(), DisplayInside::Flow | DisplayInside::FlowRoot)
                     });
+                let physical = physical && !node.layout_data().writing_mode.is_vertical();
                 for &c in children.iter() {
-                    stack.push((c, y, block_flow));
+                    stack.push((c, y, painted, block_flow, physical));
                 }
                 if block_flow && !inline {
-                    out.avoided_between_children(doc, children, y, dpr);
+                    out.avoided_between_children(doc, children, y, physical, dpr);
                 }
             }
         }
@@ -1712,8 +1755,10 @@ impl Breaks {
         doc: &blitz_dom::BaseDocument,
         children: &[blitz_dom::NodeId],
         y: f64,
+        physical: bool,
         dpr: f64,
     ) {
+        let layout = |n: &'_ blitz_dom::Node| if physical { *n.unrounded_layout() } else { *n.final_layout() };
         let mut before = None;
         for &c in children {
             let Some(node) = doc.get_node(c) else { continue };
@@ -1722,13 +1767,13 @@ impl Breaks {
             }
             // A break before an empty box and one after it are in one place,
             // and one of them has nothing to avoid.
-            if node.final_layout().size.height == 0.0 {
+            if layout(node).size.height == 0.0 {
                 before = None;
                 continue;
             }
             if let Some(before) = before.and_then(|b| doc.get_node(b)) {
                 if avoids_break(doc, before, Edge::After) || avoids_break(doc, node, Edge::Before) {
-                    let (above, below) = (before.final_layout(), node.final_layout());
+                    let (above, below) = (layout(before), layout(node));
                     self.avoided.push(Avoided {
                         from: (y + above.location.y as f64 + above.size.height as f64) * dpr,
                         to: (y + below.location.y as f64) * dpr,
@@ -1753,7 +1798,7 @@ impl Breaks {
             }
             *spans = out;
         }
-        self.unbroken.sort_by(|a, b| a.top.total_cmp(&b.top));
+        self.unbroken.sort_by(|a, b| a.top.total_cmp(&b.top).then(a.painted.total_cmp(&b.painted)));
         merged(&mut self.margins);
         merged(&mut self.heads);
         self.margin_tops.sort_by(|a, b| a.0.total_cmp(&b.0));
@@ -1791,13 +1836,22 @@ impl Breaks {
         }
     }
 
+    /// Where a cut at `at` falls on the painted document: the highest painted
+    /// top of what starts there, else `at` snapped as boxes are.
+    fn painted(&self, at: f64) -> f64 {
+        match self.unbroken.get(self.unbroken.partition_point(|u| u.top < at)) {
+            Some(u) if u.top == at => u.painted,
+            _ => (at / self.dpr).round() * self.dpr,
+        }
+    }
+
     /// Where the page after a cut at `end` starts: past a margin the cut fell
     /// in (a negative margin can bring content into it), or where a forced
     /// break says. `doc_h` when only margins are left.
     fn next_page_start(&self, end: f64, forced: Option<f64>, doc_h: f64) -> f64 {
         let next = self.unbroken.partition_point(|u| u.top < end);
         let start = Self::past(&self.margins, end).min(self.unbroken.get(next).map_or(f64::MAX, |u| u.top));
-        if start >= doc_h - 0.5 {
+        if start >= doc_h - TOUCHING {
             return doc_h;
         }
         forced.unwrap_or(start)
@@ -1824,7 +1878,10 @@ impl Breaks {
             let upto = from + self.unbroken[from..].partition_point(|u| u.top < end);
             let mut cut = end;
             for u in &self.unbroken[from..upto] {
-                if u.bottom > end + TOUCHING && u.top > first_content + TOUCHING && !(last_resort && u.avoid_only) {
+                // A line less than a px over a cut that moved up overflows a
+                // box a fraction shorter than it, and stays above the cut.
+                let reach = if u.line.is_some() && end < y + ph { self.dpr } else { TOUCHING };
+                if u.bottom > end + reach && u.top > first_content + TOUCHING && !(last_resort && u.avoid_only) {
                     cut = cut.min(u.top);
                 }
                 if let Some((context, index)) = u.line.filter(|_| u.bottom <= end + TOUCHING) {
