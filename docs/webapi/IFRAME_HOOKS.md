@@ -52,8 +52,10 @@ sets a browser-validated inherited base independently of the document URL.
 `document_base_url`, `Node.baseURI`, URL attributes, link/form resolution,
 fetch/XHR and Response.redirect use that base; `None` resets it to the
 current document URL. Empty form actions still use the document URL. The setter
-does not change origin, cookie scope or storage scope and does not implement
-HTML `<base>` processing. Browser resource loaders must use the same inherited
+does not change origin, cookie scope or storage scope. `<base href>` takes
+precedence over it and over the document URL (`document_fallback_base_url` skips
+it); the result is recomputed after a DOM mutation, and only in a DOM that has
+created a `<base>` element. Browser resource loaders must use the same inherited
 base and explicitly supply the inherited or opaque RealmOptions origin.
 
 An explicit realm origin of `"null"` makes document.cookie reads/writes throw

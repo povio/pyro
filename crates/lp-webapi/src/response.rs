@@ -163,6 +163,7 @@ impl JsClass for Response {
         def.method("arrayBuffer", 0, |s, d, _| consume(s, d, ReadKind::ArrayBuffer));
         def.method("bytes", 0, |s, d, _| consume(s, d, ReadKind::Bytes));
         def.method("blob", 0, |s, d, _| consume(s, d, ReadKind::Blob));
+        def.method("formData", 0, |s, d, _| consume(s, d, ReadKind::FormData));
         def.method("clone", 0, |s, d, _| {
             let (locked, disturbed) = stream_state(s, d)?;
             if d.used.get() || locked || disturbed {
@@ -353,6 +354,9 @@ fn consume<'s>(s: &Scope<'s>, data: &ResponseData, kind: ReadKind) -> JsResult<V
     if data.script_stream.get() {
         let page = crate::target::page_of(s)?;
         let name = match kind {
+            ReadKind::FormData => {
+                return Err(JsError::Type("formData() is not supported on a stream body".into()));
+            }
             ReadKind::Text => "text",
             ReadKind::Json => "json",
             ReadKind::ArrayBuffer => "arrayBuffer",

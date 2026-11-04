@@ -62,6 +62,8 @@ pub struct DocumentData {
     pub url: Box<str>,
     /// Embedder-supplied inherited base for initial blank/srcdoc documents.
     pub(crate) base_url: Option<Box<str>>,
+    /// Resolved first `<base href>`, computed on demand; see `Dom::bump`.
+    pub(crate) html_base: std::cell::OnceCell<Option<Box<str>>>,
     /// Owner of `<template>` contents created while parsing this document.
     pub(crate) inert_doc: u32,
     /// Number of live nodes (including itself) whose owner document is this.

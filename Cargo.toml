@@ -163,3 +163,5 @@ parley_engine = { path = "vendor/parley_engine" }
 parley = { path = "vendor/parley" }
 # Style sharing; see vendor/stylo/README.lightningpanda.md.
 stylo = { path = "vendor/stylo" }
+# ASCII hosts with invalid xn-- labels pass through; see vendor/idna/README.lightningpanda.md.
+idna = { path = "vendor/idna" }
