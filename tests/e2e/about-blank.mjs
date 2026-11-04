@@ -110,6 +110,21 @@ await check('pageerror from a timer', async () => {
 await check('evaluate exception', async () => {
   await assert.rejects(page.evaluate(() => { throw new RangeError('bad range'); }), /RangeError: bad range/);
 });
+await check('Range content methods and live boundary points', async () => {
+  assert.deepEqual(await page.evaluate(() => {
+    const host = document.createElement('div');
+    host.innerHTML = '<b>abc</b>def';
+    const range = new Range();
+    range.setStart(host.firstChild.firstChild, 1);
+    range.setEnd(host.lastChild, 2);
+    const box = document.createElement('div');
+    box.append(range.extractContents());
+    const left = host.innerHTML;
+    range.setStart(host.lastChild, 1);
+    host.lastChild.deleteData(0, 1);
+    return [box.innerHTML, left, range.startOffset];
+  }), ['<b>bc</b>de', '<b>a</b>f', 0]);
+});
 await check('goto about:blank', async () => {
   await page.goto('about:blank');
   assert.equal(await page.evaluate(() => typeof window), 'object');
