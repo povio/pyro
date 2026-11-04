@@ -65,6 +65,36 @@ pub fn paint_scene_with(
     y_offset: u32,
     backgrounds: bool,
 ) {
+    paint_scene_inner(scene, doc, scale, width, height, x_offset, y_offset, backgrounds, false)
+}
+
+/// [`paint_scene_with`] for print: text at its layout-unit x.
+#[allow(clippy::too_many_arguments)]
+pub fn paint_scene_for_print(
+    scene: &mut impl PaintScene,
+    doc: &mut BaseDocument,
+    scale: f64,
+    width: u32,
+    height: u32,
+    x_offset: u32,
+    y_offset: u32,
+    backgrounds: bool,
+) {
+    paint_scene_inner(scene, doc, scale, width, height, x_offset, y_offset, backgrounds, true)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn paint_scene_inner(
+    scene: &mut impl PaintScene,
+    doc: &mut BaseDocument,
+    scale: f64,
+    width: u32,
+    height: u32,
+    x_offset: u32,
+    y_offset: u32,
+    backgrounds: bool,
+    fractional_text_x: bool,
+) {
     // Run `.paint()` on every custom widget in the document (and all subdocuments) ahead of time.
     // This helps us avoid borrow-checker issues as we recurse down the tree (`.paint()` require `&mut self`).
     //
@@ -84,6 +114,7 @@ pub fn paint_scene_with(
         &custom_widget_scenes,
     );
     generator.backgrounds = backgrounds;
+    generator.fractional_text_x = fractional_text_x;
     generator.paint_scene(scene);
 
     // println!(
@@ -184,6 +215,7 @@ pub fn paint_scene_recording_text(
         &custom_widget_scenes,
     );
     generator.backgrounds = backgrounds;
+    generator.fractional_text_x = true;
     generator.draw_text_context.borrow_mut().runs = Some(Vec::new());
     generator.paint_scene(scene);
     let runs = generator.draw_text_context.borrow_mut().runs.take();

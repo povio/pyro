@@ -126,6 +126,9 @@ pub struct BlitzDomPainter<'dom, 'a> {
     pub(crate) selection_ranges: HashMap<NodeId, (usize, usize)>,
     /// Paint background colors and images (false: printing without them).
     pub backgrounds: bool,
+    /// Print: text at its layout-unit x, not its box's whole-pixel x (Chromium keeps the fraction in the
+    /// inline axis). Screenshots keep the box's x.
+    pub fractional_text_x: bool,
 
     // Pre-computed `Scene`s for each CustomWidget
     pub(crate) custom_widget_scenes: &'a CustomWidgetSceneMap,
@@ -167,6 +170,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             draw_text_context: RefCell::new(DrawTextContext::default()),
             selection_ranges,
             backgrounds: true,
+            fractional_text_x: false,
             custom_widget_scenes,
         }
     }
@@ -901,6 +905,7 @@ impl ElementCx<'_, '_> {
 
             // Render text
             let mut draw_text_context = self.context.draw_text_context.borrow_mut();
+            draw_text_context.text_shift = self.fractional_text_x_of_node();
             crate::text::stroke_text(
                 scene,
                 text_layout.layout.lines(),
@@ -913,6 +918,18 @@ impl ElementCx<'_, '_> {
                 None,
             );
         }
+    }
+
+    /// What moves this inline root's text from its box's whole-pixel x to its layout-unit x (device px).
+    fn fractional_text_x_of_node(&self) -> f64 {
+        if !self.context.fractional_text_x {
+            return 0.0;
+        }
+        let (position, layout) = self.context.dom.physical_unrounded_geometry(self.node.id);
+        let start = position.x as f64 + (layout.border.left + layout.padding.left) as f64;
+        let painted = self.node.final_layout();
+        let painted = (position.x as f64).round() + (painted.border.left + painted.padding.left) as f64;
+        ((start * 64.0).floor() / 64.0 - painted) * self.scale
     }
 
     /// Paint an inline layout of a vertical writing mode. The layout's lines are logical: x is the

@@ -372,6 +372,8 @@ pub(crate) struct DrawTextContext {
     win_ascent_ratios: WinAscentCache,
     /// The glyph runs drawn, when recording ([`crate::paint_scene_recording_text`]).
     pub(crate) runs: Option<Vec<crate::TextRun>>,
+    /// How far the next `stroke_text` moves its text along x (device px; 0 unless printing).
+    pub(crate) text_shift: f64,
 }
 
 /// Resolve the CSS `text-decoration-thickness` to a device-pixel size.
@@ -685,6 +687,15 @@ fn flush_line_decorations(
     }
 }
 
+/// `transform` with its content moved `shift` along the x axis of the text.
+fn shifted(transform: Affine, shift: f64) -> Affine {
+    if shift == 0.0 {
+        transform
+    } else {
+        transform * Affine::translate((shift, 0.0))
+    }
+}
+
 pub(crate) fn stroke_text<'a>(
     scene: &mut impl PaintScene,
     lines: impl Iterator<Item = Line<'a, TextBrush>>,
@@ -702,7 +713,9 @@ pub(crate) fn stroke_text<'a>(
         deco_boxes,
         win_ascent_ratios,
         runs,
+        text_shift,
     } = context;
+    let shift = *text_shift;
     stack.clear();
     path_scratch.clear();
     deco_boxes.clear();
@@ -786,6 +799,7 @@ pub(crate) fn stroke_text<'a>(
                 if let Some(runs) = runs.as_mut() {
                     runs.push(crate::TextRun::new(&glyph_run, source, transform));
                 }
+                let transform = shifted(transform, shift);
                 scene.draw_glyphs(
                     font,
                     font_size,
@@ -858,7 +872,7 @@ pub(crate) fn stroke_text<'a>(
 
         flush_line_decorations(
             scene,
-            transform,
+            shifted(transform, shift),
             scale,
             deco_boxes,
             win_ascent_ratios,

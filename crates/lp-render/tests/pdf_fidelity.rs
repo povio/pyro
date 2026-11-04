@@ -334,6 +334,23 @@ fn page_boxes_read_linked_sheets() {
     assert!(print("", named, "width:210mm;height:297mm", r#"style="page: s""#).contains("0.75 0 0 -0.75 0 842.13 cm"));
 }
 
+/// Chrome 156 writes this text at 37.78125 CSS px (37.7953 px in layout units); the background of its box stays
+/// on whole pixels, as does its link's area.
+#[test]
+fn text_sits_at_its_layout_unit_x() {
+    let html = |selector: &str| {
+        format!(
+            r#"<!doctype html><style>html,body{{margin:0;font:16px/20px Arial}}</style><div class="{selector}" style="width:600px;height:700px;box-sizing:border-box;padding-left:37.7953px;background:#eee">Text</div>"#
+        )
+    };
+    for class in ["pz-page", "plain"] {
+        let pdf = inflated(&print(&html(class)).bytes);
+        // 37.78125 px = 28.3359 pt; the page's other `cm`s are whole pixels.
+        let cms: Vec<&str> = pdf.split(" cm").map(|s| s.rsplit('q').next().unwrap_or("")).collect();
+        assert!(cms.iter().any(|c| c.contains(" 28.3359")), "{class}: {cms:?}");
+    }
+}
+
 #[test]
 fn inline_link_areas_are_whole_css_pixels() {
     let html = r#"<!doctype html><body style="margin:0;font:20px/30px sans-serif"><a href="https://example.com/a">example text</a>"#;

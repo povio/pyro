@@ -1346,7 +1346,7 @@ fn paint_document(
     let extent_w = pages.iter().map(|p| p.rect.x1).fold(doc_w, f64::max);
     let mut scene = Scene::new();
     let (w, h) = (extent_w.ceil() as u32, extent_h.ceil() as u32);
-    blitz_paint::paint_scene_with(&mut scene, doc, dpr, w, h, 0, 0, opts.print_background);
+    blitz_paint::paint_scene_for_print(&mut scene, doc, dpr, w, h, 0, 0, opts.print_background);
     timings.scene = t.elapsed();
     Ok(PdfPaint {
         scene,
