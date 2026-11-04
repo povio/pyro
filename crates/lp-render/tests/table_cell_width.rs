@@ -106,3 +106,46 @@ fn vertical_hinted_table_keeps_existing_logical_axis_grid_fallback() {
     assert!((height("#a") - 25.0).abs() < 0.1, "vertical hints retain the original grid allocation");
     assert!((height("#b") - 25.0).abs() < 0.1, "horizontal surplus allocation must not be applied to vertical tracks");
 }
+
+/// Column widths of a 576 px wide auto table, from where Chrome 156 prints each cell's text
+/// (`bench/pdf/fixtures/chrome-156/tcell-x.json`): a percentage is a share of the table, even of an empty cell.
+#[test]
+fn percentage_cells_of_auto_tables_take_their_share() {
+    let td = |width: &str, text: &str| format!(r#"<td style="padding:0;width:{width}">{text}</td>"#);
+    for (cells, chrome) in [
+        (td("50%", "") + &td("auto", "a1"), &[288.0, 288.0][..]),
+        (td("50%", " ") + &td("auto", "a1"), &[288.0, 288.0][..]),
+        (td("50%", "a1") + &td("auto", "b1"), &[288.0, 288.0][..]),
+        (td("30%", "a1") + &td("20%", "b1") + &td("auto", "c1"), &[172.8, 115.2, 288.0][..]),
+        (td("50%", "a1") + &td("100px", "b1") + &td("auto", "c1"), &[288.0, 100.0, 188.0][..]),
+    ] {
+        let html = format!(
+            r#"<!doctype html><body style="margin:0;font:12px/16px Arial"><table style="width:576px;border-spacing:0"><tr>{cells}</tr></table>"#
+        );
+        let mut doc = HtmlDocument::from_html(&html, DocumentConfig::default());
+        doc.viewport_mut().window_size = (800, 600);
+        doc.resolve(0.0);
+        let widths: Vec<f32> = doc
+            .query_selector_all("td")
+            .unwrap()
+            .iter()
+            .map(|&id| doc.get_node(id).unwrap().unrounded_layout().size.width)
+            .collect();
+        assert_eq!(widths.len(), chrome.len(), "{cells}");
+        for (got, want) in widths.iter().zip(chrome) {
+            assert!((got - want).abs() < 0.2, "{cells}: {widths:?}, Chrome {chrome:?}");
+        }
+    }
+}
+
+/// A flex item's nowrap label beside a `width: 100%` value, as in the ToS invoice's header: the table keeps its flex share.
+#[test]
+fn a_full_width_cell_does_not_widen_a_table_that_is_a_flex_item() {
+    let html = r#"<!doctype html><body style="margin:0;font:12px/16px Arial"><div style="display:flex;width:600px"><div style="flex:1">left</div><table id=t style="flex:1;align-self:flex-start;border-collapse:collapse"><tr><td id=l style="padding:0 22px 0 0;white-space:nowrap">Datum</td><td id=v style="padding:0;width:100%">value</td></tr></table></div>"#;
+    let mut doc = HtmlDocument::from_html(html, DocumentConfig::default());
+    doc.viewport_mut().window_size = (800, 600);
+    doc.resolve(0.0);
+    let width = |s: &str| doc.get_node(doc.query_selector(s).unwrap().unwrap()).unwrap().unrounded_layout().size.width;
+    assert!((width("#t") - 300.0).abs() < 0.5, "table {}", width("#t"));
+    assert!(width("#l") < 80.0, "label {}", width("#l"));
+}

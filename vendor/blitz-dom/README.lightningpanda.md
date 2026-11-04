@@ -104,6 +104,8 @@ lp-render's mirror tests (incremental documents against fresh builds after rando
 
 `src/resolve.rs`: scrollable overflow as in Blink: an empty rect adds nothing, a box fixed to the viewport is left out, and `overflow` on `body` is the viewport's (`BaseDocument::body_overflow_goes_to_viewport`). `src/layout/list.rs`: `decimal-leading-zero`, `lower-roman`, `upper-roman`, `lower-latin` and `upper-latin` markers.
 
+`src/layout/table.rs`: auto tables with percentage cells or `<col>`s distribute widths as css-tables and Blink do (`TableTreeWrapper::percent_column_widths`).
+
 `BaseDocument::set_layout_size` lays out at a fractional CSS size instead of the viewport's whole pixels (`make_device`); printing uses it for the paper's content box.
 
 ## Inline layouts in vertical writing modes
