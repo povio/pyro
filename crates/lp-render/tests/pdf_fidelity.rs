@@ -307,6 +307,33 @@ fn page_boxes_go_on_the_paper_as_in_chrome() {
     }
 }
 
+/// Measured on Chrome 156 under an emulated screen, A4: a `<link>` sheet's `@page` size places the page as
+/// a `<style>` does, and `media` on the link decides whether it applies.
+#[test]
+fn page_boxes_read_linked_sheets() {
+    let print = |link: &str, sheet: &str, box_css: &str, attrs: &str| {
+        let mut s = snap(&format!(
+            r#"<!doctype html><link rel=stylesheet href=p.css {link}><style>html,body{{margin:0}}</style><section {attrs}><div class=pz-page style="{box_css};background:#f00"></div></section>"#
+        ));
+        s.sheets.insert("http://test/dir/p.css".to_owned(), sheet.to_owned());
+        let (paper, margins) = lp_render::chrome_page_geometry((8.27, 11.7), [0.0; 4]).unwrap();
+        let mut opts = PdfOptions::new(".pz-page", paper);
+        opts.margins = margins;
+        opts.place_on_paper = true;
+        opts.print_media = false;
+        let fetcher: Arc<dyn Fetcher> = Arc::new(NoFetch);
+        inflated(&Renderer::new().print_pdf(&s, &fetcher, &opts).unwrap().bytes)
+    };
+    let page_500 = "width:500px;height:700px";
+    let size_500 = "@page{margin:0;size:500px 700px}";
+    // 147 and 212 CSS px.
+    assert!(print("", size_500, page_500, "").contains("0.75 0 0 -0.75 110.25 683.88 cm"));
+    assert!(print("media=screen", size_500, page_500, "").contains("0.75 0 0 -0.75 110.25 683.88 cm"));
+    assert!(print("media=print", size_500, page_500, "").contains("0.75 0 0 -0.75 0 842.88 cm"));
+    let named = "@media print{@page{size:auto!important}}@page s{margin:0;size:210mm 297mm}";
+    assert!(print("", named, "width:210mm;height:297mm", r#"style="page: s""#).contains("0.75 0 0 -0.75 0 842.13 cm"));
+}
+
 #[test]
 fn inline_link_areas_are_whole_css_pixels() {
     let html = r#"<!doctype html><body style="margin:0;font:20px/30px sans-serif"><a href="https://example.com/a">example text</a>"#;

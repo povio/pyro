@@ -1307,7 +1307,7 @@ fn paint_document(
     doc.set_viewport_scroll(blitz_dom::Point { x: 0.0, y: 0.0 });
     let mut pages = Vec::new();
     let page_ids = doc.query_selector_all(&opts.page_selector).unwrap_or_default();
-    let style_sheets = if opts.place_on_paper && !page_ids.is_empty() { style_texts(doc) } else { Vec::new() };
+    let style_sheets = if opts.place_on_paper && !page_ids.is_empty() { page_rule_texts(doc) } else { Vec::new() };
     for id in page_ids {
         let Some(rect) = element_bounds(doc, id, dpr) else { continue };
         // Off-screen boxes (Paprize's measuring page sits at -9999px) are
@@ -1359,10 +1359,22 @@ fn paint_document(
     })
 }
 
-/// The text of the document's `<style>` elements.
-fn style_texts(doc: &blitz_dom::BaseDocument) -> Vec<String> {
-    let styles = doc.query_selector_all("style").unwrap_or_default();
-    styles.into_iter().filter_map(|id| Some(doc.get_node(id)?.text_content())).filter(|css| css.contains("@page")).collect()
+/// The CSS text with `@page` rules of the document's `<style>` elements and `<link>` sheets, in
+/// tree order. A `<link media>` wraps its text in that `@media`.
+fn page_rule_texts(doc: &blitz_dom::BaseDocument) -> Vec<String> {
+    let sheets = doc.query_selector_all("style, link").unwrap_or_default();
+    sheets
+        .into_iter()
+        .filter_map(|id| {
+            if let Some(css) = doc.linked_page_css(id) {
+                let media = doc.get_node(id)?.attr(blitz_dom::local_name!("media"));
+                return Some(media.map_or_else(|| css.to_owned(), |media| format!("@media {media}{{{css}}}")));
+            }
+            let node = doc.get_node(id)?;
+            let is_style = node.element_data().is_some_and(|e| &*e.name.local == "style");
+            is_style.then(|| node.text_content()).filter(|css| css.contains("@page"))
+        })
+        .collect()
 }
 
 /// The `page` of the nearest `style` attribute that has one, on `id` or an ancestor.
