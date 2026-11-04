@@ -197,9 +197,8 @@ impl LayoutPassState<'_> {
     }
 
     /// Convert every `unrounded_layout` (written in the writing mode of the box that placed it) to
-    /// physical coordinates and round it into `final_layout`. Mirrors `taffy::round_layout`,
-    /// which it replaces: rounding is applied to cumulative physical positions so that adjacent
-    /// boxes never gain gaps or overlaps.
+    /// physical coordinates and round it into `final_layout`, replacing `taffy::round_layout`.
+    /// Subtrees whose rounding cannot have changed are skipped (see [`RoundTree::rounded_unchanged`]).
     pub(crate) fn physicalise_and_round_layout(&mut self, root: NodeId) {
         let viewport = self.stylist.device().au_viewport_size();
         let viewport = Size {
@@ -207,7 +206,11 @@ impl LayoutPassState<'_> {
             height: viewport.height.to_f32_px(),
         };
         let root_wm = self.layout_wm_of(dom_node_id(root));
+        self.round_counts = (0, 0);
         self.physicalise_and_round_inner(root, root_wm, viewport, Point::ZERO, Point::ZERO);
+        crate::resolve::phase_profile::rounded(self.round_counts);
+        #[cfg(debug_assertions)]
+        self.assert_rounding_is_current(root, root_wm, viewport, Point::ZERO, Point::ZERO);
     }
 
     fn physicalise_and_round_inner(
@@ -219,56 +222,19 @@ impl LayoutPassState<'_> {
         rounded_parent_pos: Point<f32>,
     ) {
         let unrounded = physical_layout(self.get_unrounded_layout(node_id), placer_wm, placer_size);
+        self.round_counts.0 += 1;
 
-        let pos = Point {
-            x: parent_pos.x + unrounded.location.x,
-            y: parent_pos.y + unrounded.location.y,
-        };
+        // Keyed on the physical layout: a `*-rl` box's x depends on its placer's size. That, the offset
+        // (`rounded_parent_pos` is `parent_pos` rounded) and the subtree's unrounded layouts, whose
+        // changes are damage, are all the rounding below reads.
+        if self.rounded_unchanged(node_id, &unrounded, parent_pos.x, parent_pos.y) {
+            self.round_counts.1 += 1;
+            return;
+        }
+        self.record_rounded(node_id, &unrounded, parent_pos.x, parent_pos.y);
+
+        let (layout, pos, rounded_pos) = rounded_layout(unrounded, parent_pos, rounded_parent_pos);
         let size = unrounded.size;
-        // As in `taffy::round_layout`: the box's outer edges are rounded in absolute coordinates and
-        // every inner edge is rounded relative to them, so adjacent boxes never overlap or gap.
-        let rounded_pos = Point {
-            x: pos.x.round(),
-            y: pos.y.round(),
-        };
-        let rounded_end = Point {
-            x: (pos.x + size.width).round(),
-            y: (pos.y + size.height).round(),
-        };
-        let from_left = |v: f32| (pos.x + v).round() - rounded_pos.x;
-        let from_top = |v: f32| (pos.y + v).round() - rounded_pos.y;
-        let from_right = |v: f32| rounded_end.x - (pos.x + size.width - v).round();
-        let from_bottom = |v: f32| rounded_end.y - (pos.y + size.height - v).round();
-
-        let mut layout = unrounded;
-        layout.location = Point {
-            x: rounded_pos.x - rounded_parent_pos.x,
-            y: rounded_pos.y - rounded_parent_pos.y,
-        };
-        layout.size = Size {
-            width: rounded_end.x - rounded_pos.x,
-            height: rounded_end.y - rounded_pos.y,
-        };
-        layout.scrollbar_size = unrounded.scrollbar_size.map(f32::round);
-        layout.border = taffy::Rect {
-            left: from_left(unrounded.border.left),
-            right: from_right(unrounded.border.right),
-            top: from_top(unrounded.border.top),
-            bottom: from_bottom(unrounded.border.bottom),
-        };
-        layout.padding = taffy::Rect {
-            left: from_left(unrounded.padding.left),
-            right: from_right(unrounded.padding.right),
-            top: from_top(unrounded.padding.top),
-            bottom: from_bottom(unrounded.padding.bottom),
-        };
-        let overflow = unrounded.scrollable_overflow_rect;
-        layout.scrollable_overflow_rect = taffy::Rect {
-            left: from_left(overflow.left),
-            right: from_left(overflow.right),
-            top: from_top(overflow.top),
-            bottom: from_top(overflow.bottom),
-        };
 
         // `unrounded_layout` is left in the placer's writing mode: Taffy's cache may skip re-placing
         // this node on a later layout, and only `final_layout` is read downstream.
@@ -289,6 +255,100 @@ impl LayoutPassState<'_> {
             self.physicalise_and_round_inner(child, wm, size, pos, rounded_pos);
         }
     }
+
+    /// Rounds the whole tree without the skip and without writing: what the skip left in place must
+    /// be what this computes. Geometry that goes stale silently is the failure this guards against.
+    #[cfg(debug_assertions)]
+    fn assert_rounding_is_current(
+        &self,
+        node_id: NodeId,
+        placer_wm: WritingMode,
+        placer_size: Size<f32>,
+        parent_pos: Point<f32>,
+        rounded_parent_pos: Point<f32>,
+    ) {
+        let unrounded = physical_layout(self.get_unrounded_layout(node_id), placer_wm, placer_size);
+        let (layout, pos, rounded_pos) = rounded_layout(unrounded, parent_pos, rounded_parent_pos);
+        let node = self.node_from_id(node_id);
+        // Formatted, as NaNs (never equal) must not fail this.
+        let current = node.final_layout();
+        assert!(
+            *current == layout || format!("{current:?}") == format!("{layout:?}"),
+            "incremental rounding left a stale layout on {:?} ({:?}): {current:?}, should be {layout:?}",
+            node.id,
+            node.data.downcast_element().map(|el| &el.name.local),
+        );
+        let wm = self.layout_wm_of(dom_node_id(node_id));
+        assert_eq!(node.layout_data().writing_mode, wm, "stale writing mode on {:?}", node.id);
+        for index in 0..self.child_count(node_id) {
+            let child = self.get_child_id(node_id, index);
+            if !self.is_out_of_flow(child) {
+                self.assert_rounding_is_current(child, wm, unrounded.size, pos, rounded_pos);
+            }
+        }
+        for index in 0..self.hoisted_child_count(node_id) {
+            let child = self.get_hoisted_child_id(node_id, index);
+            self.assert_rounding_is_current(child, wm, unrounded.size, pos, rounded_pos);
+        }
+    }
+}
+
+/// `unrounded` (physical) rounded, as in `taffy::round_layout`: the box's outer edges are rounded in
+/// absolute coordinates and every inner edge is rounded relative to them, so adjacent boxes never
+/// overlap or gap. Also returns its absolute position, unrounded and rounded.
+fn rounded_layout(
+    unrounded: Layout,
+    parent_pos: Point<f32>,
+    rounded_parent_pos: Point<f32>,
+) -> (Layout, Point<f32>, Point<f32>) {
+    let pos = Point {
+        x: parent_pos.x + unrounded.location.x,
+        y: parent_pos.y + unrounded.location.y,
+    };
+    let size = unrounded.size;
+    let rounded_pos = Point {
+        x: pos.x.round(),
+        y: pos.y.round(),
+    };
+    let rounded_end = Point {
+        x: (pos.x + size.width).round(),
+        y: (pos.y + size.height).round(),
+    };
+    let from_left = |v: f32| (pos.x + v).round() - rounded_pos.x;
+    let from_top = |v: f32| (pos.y + v).round() - rounded_pos.y;
+    let from_right = |v: f32| rounded_end.x - (pos.x + size.width - v).round();
+    let from_bottom = |v: f32| rounded_end.y - (pos.y + size.height - v).round();
+
+    let mut layout = unrounded;
+    layout.location = Point {
+        x: rounded_pos.x - rounded_parent_pos.x,
+        y: rounded_pos.y - rounded_parent_pos.y,
+    };
+    layout.size = Size {
+        width: rounded_end.x - rounded_pos.x,
+        height: rounded_end.y - rounded_pos.y,
+    };
+    layout.scrollbar_size = unrounded.scrollbar_size.map(f32::round);
+    layout.border = taffy::Rect {
+        left: from_left(unrounded.border.left),
+        right: from_right(unrounded.border.right),
+        top: from_top(unrounded.border.top),
+        bottom: from_bottom(unrounded.border.bottom),
+    };
+    layout.padding = taffy::Rect {
+        left: from_left(unrounded.padding.left),
+        right: from_right(unrounded.padding.right),
+        top: from_top(unrounded.padding.top),
+        bottom: from_bottom(unrounded.padding.bottom),
+    };
+    let overflow = unrounded.scrollable_overflow_rect;
+    layout.scrollable_overflow_rect = taffy::Rect {
+        left: from_left(overflow.left),
+        right: from_left(overflow.right),
+        top: from_top(overflow.top),
+        bottom: from_top(overflow.bottom),
+    };
+    (layout, pos, rounded_pos)
 }
 
 /// Map the static positions of `output`'s out-of-flow candidates (relative to the border box of a

@@ -763,6 +763,17 @@ pub mod phase_profile {
     pub fn passes() -> (u64, u64) {
         PASSES.with(|p| p.get())
     }
+    std::thread_local! {
+        static ROUNDING: Cell<(u64, u64)> = const { Cell::new((0, 0)) };
+    }
+    pub(crate) fn rounded((visited, skipped): (u64, u64)) {
+        ROUNDING.with(|r| r.set((r.get().0 + visited, r.get().1 + skipped)));
+    }
+    /// Layout nodes rounding reached on this thread so far, and subtrees it skipped (each
+    /// reached, the nodes under it not).
+    pub fn rounding() -> (u64, u64) {
+        ROUNDING.with(|r| r.get())
+    }
     /// Milliseconds per phase on this thread so far.
     pub fn peek() -> [f64; 9] {
         NS.with(|ns| ns.get().map(|n| n as f64 / 1e6))

@@ -259,9 +259,16 @@ impl Node {
         &self.layout_data().unrounded_layout
     }
 
-    #[inline]
-    pub fn unrounded_layout_mut(&mut self) -> &mut Layout {
-        &mut self.layout_data_mut().unrounded_layout
+    /// Writes this node's unrounded layout, the only way to. A change is marked on the node and
+    /// its ancestors: their rounding (`RoundTree::rounded_unchanged`) and cached scrollable overflow
+    /// read those flags, and a relayout can move a box that no style change touched.
+    pub fn update_unrounded_layout(&mut self, update: impl FnOnce(&mut Layout)) {
+        let layout = &mut self.layout_data_mut().unrounded_layout;
+        let before = *layout;
+        update(layout);
+        if *layout != before {
+            self.mark_layout_changed();
+        }
     }
 
     #[inline]
@@ -642,6 +649,19 @@ impl Node {
                 }
             }
             current_id = parent.parent;
+        }
+    }
+
+    /// [`Self::mark_damaged`], all the way up: a flag can outlast its ancestors' (a node moved
+    /// while flagged), and rounding must never miss a change.
+    fn mark_layout_changed(&self) {
+        let mut current = Some(self.id);
+        while let Some(id) = current {
+            let node = &self.tree()[id];
+            if let Some(flag) = node.damaged_descendants_flag() {
+                flag.store(true, Ordering::Relaxed);
+            }
+            current = node.parent;
         }
     }
 

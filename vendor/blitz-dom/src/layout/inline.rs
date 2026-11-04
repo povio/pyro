@@ -721,10 +721,12 @@ impl LayoutPassState<'_> {
                         x: pos.x + margin.left + container_pb.left,
                         y: pos.y + margin.top + container_pb.top,
                     };
-                    let layout = self.nodes[node_id].unrounded_layout_mut();
-                    layout.size = output.size;
-                    layout.location = location;
-                    layout.margin = margin;
+                    let size = output.size;
+                    self.nodes[node_id].update_unrounded_layout(|layout| {
+                        layout.size = size;
+                        layout.location = location;
+                        layout.margin = margin;
+                    });
 
                     // Translate anchors from item-relative to container-relative
                     // coordinates and collect candidates bubbled from the float's subtree
@@ -1117,10 +1119,11 @@ impl LayoutPassState<'_> {
                             },
                         });
                     } else if is_floated {
-                        let layout = self.nodes[NodeId::from_u64(ibox.id)].unrounded_layout_mut();
-                        layout.padding = padding; //.map(|p| p / scale);
-                        layout.border = border; //.map(|p| p / scale);
-                        layout.margin = margin;
+                        self.nodes[NodeId::from_u64(ibox.id)].update_unrounded_layout(|layout| {
+                            layout.padding = padding; //.map(|p| p / scale);
+                            layout.border = border; //.map(|p| p / scale);
+                            layout.margin = margin;
+                        });
                     } else {
                         // Re-measure the box to get its border-box size (this hits the layout
                         // cache). The size cannot be recovered from `ibox` dimensions as the
@@ -1144,23 +1147,25 @@ impl LayoutPassState<'_> {
                             taffy::Point::ZERO
                         };
 
-                        let layout = node.unrounded_layout_mut();
-                        layout.size = size;
-                        layout.scrollable_overflow_rect = output.scrollable_overflow_rect;
-                        layout.location.x =
-                            (ibox.x / scale) + margin.left + container_pb.left + inset_offset.x;
-                        // Parley positions the margin box; offset to the border box even
-                        // when a negative top margin makes it extend above the margin box.
-                        layout.location.y =
-                            (ibox.y / scale) + margin.top + line_box_top + inset_offset.y;
-                        layout.padding = padding; //.map(|p| p / scale);
-                        layout.border = border; //.map(|p| p / scale);
-                        layout.margin = margin;
+                        let overflow = output.scrollable_overflow_rect;
+                        let location = taffy::Point {
+                            x: (ibox.x / scale) + margin.left + container_pb.left + inset_offset.x,
+                            // Parley positions the margin box; offset to the border box even
+                            // when a negative top margin makes it extend above the margin box.
+                            y: (ibox.y / scale) + margin.top + line_box_top + inset_offset.y,
+                        };
+                        node.update_unrounded_layout(|layout| {
+                            layout.size = size;
+                            layout.scrollable_overflow_rect = overflow;
+                            layout.location = location;
+                            layout.padding = padding; //.map(|p| p / scale);
+                            layout.border = border; //.map(|p| p / scale);
+                            layout.margin = margin;
+                        });
 
                         // Translate anchors from item-relative to container-relative
                         // coordinates and collect candidates bubbled from the box's subtree
                         if !output.oof_candidates.is_empty() {
-                            let location = layout.location;
                             output.oof_candidates.translate(location);
                             oof_candidates.append(&mut output.oof_candidates);
                         }

@@ -100,6 +100,9 @@ pub(crate) struct LayoutPassState<'doc> {
     /// size, against which its percentage padding resolves (see `layout::writing_mode`).
     #[cfg(feature = "writing-mode")]
     pub(crate) orthogonal_percent_basis: Option<(crate::NodeId, f32)>,
+    /// This rounding pass's nodes reached and subtrees skipped (see `layout::writing_mode`).
+    #[cfg(feature = "writing-mode")]
+    pub(crate) round_counts: (u64, u64),
 }
 
 impl<'doc> LayoutPassState<'doc> {
@@ -137,6 +140,8 @@ impl<'doc> LayoutPassState<'doc> {
             current_align_axis_is_inline: false,
             #[cfg(feature = "writing-mode")]
             orthogonal_percent_basis: None,
+            #[cfg(feature = "writing-mode")]
+            round_counts: (0, 0),
         }
     }
 }
@@ -827,16 +832,11 @@ impl LayoutPartialTree for LayoutPassState<'_> {
     }
 
     fn set_unrounded_layout(&mut self, node_id: NodeId, layout: &Layout) {
-        let node = self.node_from_id_mut(node_id);
-        if node.unrounded_layout() != layout {
-            *node.unrounded_layout_mut() = *layout;
-            // A parent's resize can relayout an otherwise style-clean child.
-            // Its cached scrollable overflow (and its ancestors' contribution)
-            // is no longer valid. Mark only the existing damage traversal flags:
-            // no restyle/reconstruction damage is introduced, and unchanged
-            // layouts continue to reuse their cached overflow.
-            node.mark_damaged();
-        }
+        // A parent's resize can relayout an otherwise style-clean child: this marks the existing
+        // damage traversal flags (no restyle/reconstruction damage), so unchanged layouts continue to
+        // reuse their cached overflow and rounding.
+        self.node_from_id_mut(node_id)
+            .update_unrounded_layout(|unrounded| *unrounded = *layout);
     }
 
     fn resolve_calc_value(&self, calc_ptr: *const (), parent_size: f32) -> f32 {
@@ -1075,14 +1075,16 @@ impl RoundTree for LayoutPassState<'_> {
     }
 
     // Incremental rounding: an undamaged subtree reached with the same
-    // unrounded layout at the same offset rounds as it did last time.
-    // Anonymous boxes are always rounded (damage marking walks the DOM parent
-    // chain, so their descendant flags are not maintained).
+    // unrounded layout at the same offset rounds as it did last time. A subtree
+    // is undamaged only if no unrounded layout in it changed
+    // (`Node::update_unrounded_layout`). Anonymous boxes are always rounded
+    // (damage marking walks the DOM parent chain, so their descendant flags are
+    // not maintained), and so are nodes without style data, which have no damage.
     fn rounded_unchanged(&self, node_id: NodeId, unrounded: &Layout, absolute_x: f32, absolute_y: f32) -> bool {
         let node = self.node_from_id(node_id);
         !node.is_anonymous()
             && !node.has_damaged_descendants()
-            && node.damage().is_none_or(|d| d.is_empty())
+            && node.damage().is_some_and(|d| d.is_empty())
             && node.layout_data().rounded_from == Some((*unrounded, absolute_x, absolute_y))
     }
 

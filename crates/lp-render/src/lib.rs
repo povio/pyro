@@ -99,6 +99,11 @@ pub fn blitz_passes() -> (u64, u64) {
     blitz_dom::phase_profile::passes()
 }
 
+/// Layout nodes Blitz's rounding reached on this thread, and subtrees it skipped.
+pub fn blitz_rounding() -> (u64, u64) {
+    blitz_dom::phase_profile::rounding()
+}
+
 pub fn blitz_phases() -> [f64; 9] {
     blitz_dom::phase_profile::peek()
 }
