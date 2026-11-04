@@ -616,10 +616,10 @@ fn css_rule_values_survive_reentrant_gc() {
             r#"
       const sh=document.getElementById('s').sheet;
       for(let i=0;i<200;i++)sh.insertRule('.r'+i+'{}',i);
-      window.before=sh.cssRules.every((r,i)=>r.cssText==='.r'+i+'{}');
+      window.before=sh.cssRules.every((r,i)=>r.cssText==='.r'+i+' { }');
       Object.defineProperty(Object.prototype,'cssText',{set(v){reviewGC(); Object.defineProperty(this,'cssText',{value:v});}, configurable:true});
       const rr=sh.cssRules; delete Object.prototype.cssText;
-      before && rr.length === 200 && rr.every((r,i)=>r.cssText==='.r'+i+'{}')
+      before && rr.length === 200 && rr.every((r,i)=>r.cssText==='.r'+i+' { }')
     "#
         ),
         "true"
@@ -6208,5 +6208,70 @@ fn invalid_urls_throw_from_send_beacon_and_window_open_and_response_form_data_pa
     eval(&e.main, "globalThis.got='';new Response('a=1&b=%F0%9F%90%BC+c&a',{headers:{'Content-Type':'application/x-www-form-urlencoded;charset=shift_jis'}}).formData().then(f=>{got=[...f].join('|')+'|'+(f instanceof FormData)});new Response('a=1').formData().catch(x=>{got2=x.name})");
     assert_eq!(eval(&e.main, "got"), "a,1|b,\u{1F43C} c|a,|true");
     assert_eq!(eval(&e.main, "got2"), "TypeError");
+    e.page.dispose();
+}
+
+#[test]
+fn css_rules_parse_lazily_from_the_sheet_and_stay_live() {
+    let e = env("<style id=s>a{color:red} b,,{} @media all { c{top:1px} }</style><div id=d></div>");
+    eval(&e.main, "globalThis.st=document.getElementById('s');globalThis.sh=st.sheet;globalThis.rs=sh.cssRules;0");
+    assert_eq!(
+        eval(&e.main, "[rs.length,rs[0].type,rs[0].selectorText,rs[0].cssText,rs[1].type,rs[1].conditionText,rs[1].cssRules[0].selectorText,rs[1].cssRules[0].parentRule===rs[1],rs[0].parentStyleSheet===sh,rs[0]===sh.cssRules[0]].join('|')"),
+        "2|1|a|a { color: red; }|4|all|c|true|true|true"
+    );
+
+    // Same list object across edits, and invalid rules throw.
+    assert_eq!(
+        eval(
+            &e.main,
+            "sh.insertRule(\"[foo='bar' I] { top: 2px }\");[rs.length,rs===sh.cssRules,rs[0].selectorText].join('|')"
+        ),
+        "3|true|[foo=\"bar\" i]"
+    );
+    for rule in ["", "a", "b,,{}", "x{} y{}", "@nonsense;"] {
+        let threw = eval(
+            &e.main,
+            &format!("(()=>{{try{{sh.insertRule('{rule}');return 'none'}}catch(x){{return x.name}}}})()"),
+        );
+        assert_eq!(threw, "SyntaxError", "{rule}");
+    }
+    assert_eq!(eval(&e.main, "sh.deleteRule(0);rs.length"), "2");
+
+    // CSSOM edits keep the rules of the text, and reach the cascade.
+    eval(&e.main, "globalThis.d=document.getElementById('d');0");
+    assert_eq!(
+        eval(&e.main, "sh.insertRule('.hit{visibility:hidden}',2);d.className='hit';globalThis.hidden=getComputedStyle(d).visibility;rs[2].selectorText='.other';rs[2].selectorText='!!';[hidden,getComputedStyle(d).visibility,rs[2].selectorText,rs[0].selectorText].join('|')"),
+        "hidden|visible|.other|a"
+    );
+
+    // Rules nested in a group edit the group.
+    assert_eq!(
+        eval(&e.main, "globalThis.m=rs[1];m.insertRule('.in{visibility:hidden}',1);d.className='in';hidden=getComputedStyle(d).visibility;m.deleteRule(1);[hidden,getComputedStyle(d).visibility,m.cssRules.length].join('|')"),
+        "hidden|visible|1"
+    );
+
+    // New text replaces the sheet, edits included.
+    assert_eq!(
+        eval(
+            &e.main,
+            "st.textContent=':nth-child(1n+0){}';[sh.cssRules.length,rs.length,rs[0].selectorText].join('|')"
+        ),
+        "1|1|:nth-child(n)"
+    );
+    assert_eq!(eval(&e.main, "st.textContent='[x y]{}';sh.cssRules.length"), "0");
+    assert_eq!(
+        eval(&e.main, "st.textContent=\"@namespace x 'a'; [x|foo=''  i]{}\";[...sh.cssRules].map(r=>r.type).join()"),
+        "10,1"
+    );
+
+    // A removed style element keeps a working sheet.
+    assert_eq!(
+        eval(&e.main, "globalThis.n=document.createElement('style');document.head.append(n);globalThis.k=n.sheet;n.remove();globalThis.l=k.cssRules;k.insertRule('a{}');globalThis.one=l.length;k.deleteRule(0);[one,l.length].join('|')"),
+        "1|0"
+    );
+    assert_eq!(
+        eval(&e.main, "[CSS.supports('selector(a > b)'),CSS.supports('selector(a >)')].join('|')"),
+        "true|false"
+    );
     e.page.dispose();
 }

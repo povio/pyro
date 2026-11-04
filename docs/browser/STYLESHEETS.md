@@ -17,7 +17,7 @@ Requests carry the document frame/loader IDs. `crossorigin` selects CORS and ano
 semantics with the document origin. Native HTTP tests verify allow/deny behavior. Integrity metadata is
 explicitly unsupported and produces `error` without fetching. `<base>` resolution, CSS imports and
 critical CSS subresources, alternate stylesheet selection, and browser-native HTTPS remain unsupported.
-Media/disabled CSSOM behavior and fetched cssRules synchronization are separate binding work. The loader
+`cssRules` parses the sheet's text on first access and reparses when the text changes: style rules, `@media`/`@supports` groups and other known at-rules, with invalid rules dropped as browsers do. Style matching does not use this parse. Missing: `CSSStyleRule.style`, the `media` and `disabled` CSSOM APIs, and a real `CSSRuleList` (`cssRules` is a live array). The loader
 honors the disabled HTML attribute at resource boundaries; it does not claim a complete disabled IDL API.
 
 Href/rel/type/disabled changes and removal are inspected using the final DOM state of a task. Replacing,

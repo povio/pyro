@@ -12,6 +12,7 @@ pub(crate) mod gecko_only;
 pub mod geometry;
 pub mod iframe;
 pub mod image;
+pub mod cssom;
 pub mod inner_text;
 pub mod layout;
 pub mod live_range;
