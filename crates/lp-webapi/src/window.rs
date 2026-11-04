@@ -82,6 +82,7 @@ where
     def.getter("crypto", |s, _w| crate::crypto::crypto_value(s));
     def.getter("clientInformation", |s, w| navigator(s, w.page()));
     def.getter("ClipboardItem", |s, w| crate::navigator_extras::member(s, w.page(), "ClipboardItem"));
+    crate::streams::define_globals(def);
     def.getter("screen", |s, w| {
         let key = lp_js::IdentityKey(w.page().id() | (1 << 57), 1);
         same_object(s, w.page(), key, || s.wrap::<Screen>(w.page().clone(), Some(key)))

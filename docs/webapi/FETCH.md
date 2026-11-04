@@ -73,7 +73,9 @@ URL parsing for fetch inputs uses the [URL binding](URL.md).
 FormData request/response bodies are serialized as multipart/form-data
 (see [FormData](FORM_DATA.md)).
 
-Not implemented: the Request constructor, ReadableStream/body streaming,
+Bodies as streams are described in [Streams](STREAMS.md).
+
+Not implemented: the Request constructor,
 the "response" header guard after construction (later
 `headers.set('set-cookie')` is not filtered), `<base>` URL selection, full MIME parsing for
 response Blob types, service workers and integrity/referrer policy.

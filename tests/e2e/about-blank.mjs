@@ -1028,6 +1028,16 @@ try {
   fixture.closeAllConnections();
   await new Promise(resolve => fixture.close(resolve));
 }
+await check('streams: ReadableStream, pipeThrough and Response bodies', async () => {
+  const text = await page.evaluate(async () => {
+    const source = new ReadableStream({
+      start(c) { c.enqueue('st'); c.enqueue('ream'); c.close(); },
+    });
+    const body = source.pipeThrough(new TextEncoderStream());
+    return new Response(body).text();
+  });
+  assert.equal(text, 'stream');
+});
 await check('second context is independent', async () => {
   const other = await browser.newContext();
   const p2 = await other.newPage();

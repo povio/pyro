@@ -4,6 +4,7 @@
 //! obtained from JSC is used immediately, before any call that could run JS
 //! or allocate on the JS heap (which might move or detach the buffer).
 
+use std::cell::RefCell;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use base64::Engine;
@@ -180,6 +181,8 @@ pub struct DecoderData {
     encoding: &'static encoding_rs::Encoding,
     fatal: bool,
     ignore_bom: bool,
+    /// The decoder of an unfinished `stream: true` sequence.
+    pending: RefCell<Option<encoding_rs::Decoder>>,
 }
 
 pub struct TextDecoder;
@@ -196,7 +199,11 @@ impl JsClass for TextDecoder {
                 Some(o) => (o.get("fatal")?.to_bool(), o.get("ignoreBOM")?.to_bool()),
                 None => (false, false),
             };
-            s.wrap_new::<TextDecoder>(DecoderData { encoding, fatal, ignore_bom }, nt, None)
+            s.wrap_new::<TextDecoder>(
+                DecoderData { encoding, fatal, ignore_bom, pending: RefCell::new(None) },
+                nt,
+                None,
+            )
         });
         def.getter("encoding", |s, d| Ok(s.string(&d.encoding.name().to_ascii_lowercase())));
         def.getter("fatal", |s, d| Ok(s.boolean(d.fatal)));
@@ -209,14 +216,32 @@ impl JsClass for TextDecoder {
                     JsError::Type("The provided value is not of type '(ArrayBuffer or ArrayBufferView)'.".into())
                 })?
             };
-            let (text, had_errors) = if d.ignore_bom {
-                d.encoding.decode_without_bom_handling(&bytes)
-            } else {
-                let (t, _, e) = d.encoding.decode(&bytes);
-                (t, e)
+            let stream = match a.get(1).as_object() {
+                Some(o) => o.get("stream")?.to_bool(),
+                None => false,
             };
-            if had_errors && d.fatal {
-                return Err(JsError::Type("The encoded data was not valid.".into()));
+            // A decoder lives across `stream: true` calls, holding the bytes of
+            // a split character.
+            let mut decoder = d.pending.borrow_mut().take().unwrap_or_else(|| {
+                if d.ignore_bom {
+                    d.encoding.new_decoder_without_bom_handling()
+                } else {
+                    d.encoding.new_decoder_with_bom_removal()
+                }
+            });
+            let capacity =
+                decoder.max_utf8_buffer_length(bytes.len()).ok_or_else(|| JsError::Range("Input too large".into()))?;
+            let mut text = String::with_capacity(capacity);
+            if d.fatal {
+                let (result, _) = decoder.decode_to_string_without_replacement(&bytes, &mut text, !stream);
+                if !matches!(result, encoding_rs::DecoderResult::InputEmpty) {
+                    return Err(JsError::Type("The encoded data was not valid.".into()));
+                }
+            } else {
+                let _ = decoder.decode_to_string(&bytes, &mut text, !stream);
+            }
+            if stream {
+                *d.pending.borrow_mut() = Some(decoder);
             }
             Ok(s.string(&text))
         });

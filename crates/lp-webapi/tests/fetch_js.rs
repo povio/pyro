@@ -773,7 +773,7 @@ fn fetch_body_stream_delivers_chunks_as_they_arrive() {
           const body=r.body;
           if (body!==r.body || body.locked || r.bodyUsed) throw Error('fresh stream');
           const reader=body.getReader();
-          if (!body.locked || !r.bodyUsed) throw Error('locked');
+          if (!body.locked || r.bodyUsed) throw Error('locked');
           try { body.getReader(); throw Error('second reader') } catch(e) { if (!(e instanceof TypeError)) throw e; }
           try { await r.text(); throw Error('text after reader') } catch(e) { if (!(e instanceof TypeError)) throw e; }
           const decoder=new TextDecoder(); let buffer='';
@@ -823,15 +823,93 @@ fn fetch_body_stream_cancel_release_and_script_bodies() {
           const c=await fetch('/sse'); const reader=c.body.getReader(); await reader.read();
           const pending=reader.read(); await reader.cancel();
           out.push((await pending).done+':'+(await reader.read()).done);
-          // The interface objects are not exposed (no constructor support).
-          out.push(typeof ReadableStream);
+          out.push(c.body instanceof ReadableStream);
           state=out.join('|');
         })().catch(e=>state='ERROR '+e);"#,
     );
     env.until("state!=='pending'");
-    assert_eq!(env.eval("state"), "abc:false:true:undefined|null|false:13|released|true:true|undefined");
+    assert_eq!(env.eval("state"), "abc:false:true:undefined|null|false:13|released|true:true|true");
     env.finish_network_tasks();
     assert_eq!(env.page.fetch_usage(), (0, 0));
+}
+
+#[test]
+fn streams_are_lazy_globals_and_compose() {
+    let server = Server::new();
+    let env = Env::new(&server.url);
+    // Names exist without making the classes; assignment replaces them.
+    assert_eq!(env.eval("typeof Object.getOwnPropertyDescriptor(globalThis,'ReadableStream').get"), "function");
+    assert_eq!(env.eval("CountQueuingStrategy=1; typeof CountQueuingStrategy"), "number");
+    env.eval(
+        r#"globalThis.state='pending';
+        (async()=>{
+          const out=[];
+          const descriptor=Object.getOwnPropertyDescriptor(globalThis,'ReadableStream');
+          out.push(typeof ReadableStream);
+          out.push('value' in Object.getOwnPropertyDescriptor(globalThis,'ReadableStream') && !!descriptor.get);
+          // start/pull/cancel, default reader, desiredSize.
+          let pulls=0, canceled;
+          const s=new ReadableStream({start(c){c.enqueue('a')},pull(c){if(++pulls==2)c.close();else c.enqueue('b')},cancel(r){canceled=r}});
+          const reader=s.getReader();
+          out.push([(await reader.read()).value,(await reader.read()).value,(await reader.read()).done].join());
+          await reader.closed;
+          reader.releaseLock();
+          // tee, async iteration, cancel reason.
+          const [t1,t2]=new ReadableStream({start(c){c.enqueue(1);c.enqueue(2);c.close()}}).tee();
+          const seen=[]; for await (const v of t1) seen.push(v);
+          out.push(seen.join()+':'+(await t2.getReader().read()).value);
+          const cs=new ReadableStream({cancel(r){canceled=r}}); await cs.cancel('why'); out.push(canceled);
+          // pipeThrough/TransformStream/WritableStream.
+          const collected=[];
+          await new ReadableStream({start(c){c.enqueue('x');c.enqueue('y');c.close()}})
+            .pipeThrough(new TransformStream({transform(ch,c){c.enqueue(ch+ch)}}))
+            .pipeTo(new WritableStream({write(ch){collected.push(ch)}}));
+          out.push(collected.join());
+          // Text streams hold split characters across chunks.
+          const euro=new TextEncoder().encode('\u20ac');
+          const dec=new ReadableStream({start(c){c.enqueue(euro.slice(0,1));c.enqueue(euro.slice(1));c.close()}})
+            .pipeThrough(new TextDecoderStream());
+          out.push((await dec.getReader().read()).value);
+          // new Response(stream), body identity, clone, Blob.stream, BYOB.
+          const body=new ReadableStream({start(c){c.enqueue(new TextEncoder().encode('hi'));c.close()}});
+          const made=new Response(body,{headers:{'content-type':'text/x'}});
+          out.push(made.body===body);
+          const copy=made.clone();
+          out.push(await made.text()+await copy.text()+made.bodyUsed);
+          const blobReader=new Blob(['blob']).stream().getReader({mode:'byob'});
+          const {value}=await blobReader.read(new Uint8Array(2));
+          out.push(value.length+':'+String.fromCharCode(value[0]));
+          // A network response is a byte stream too.
+          const net=await fetch('/json');
+          let text=''; for await (const c of net.body.pipeThrough(new TransformStream())) text+=new TextDecoder().decode(c);
+          out.push(text.length+':'+net.bodyUsed);
+          // A stream as a request body is sent once it ended; duplex is required.
+          const send=()=>new ReadableStream({start(c){c.enqueue(new TextEncoder().encode('up'));c.close()}});
+          out.push(await fetch('/json',{method:'POST',body:send()}).then(()=>'sent',e=>e.name));
+          out.push(await fetch('/json',{method:'POST',body:send(),duplex:'half'}).then(r=>r.status));
+          state=out.join('|');
+        })().catch(e=>state='ERROR '+e+' '+e.stack);"#,
+    );
+    env.until("state!=='pending'");
+    assert_eq!(
+        env.eval("state"),
+        "function|true|a,b,true|1,2:1|why|xx,yy|\u{20ac}|true|hihitrue|2:b|13:true|TypeError|200"
+    );
+    env.finish_network_tasks();
+}
+
+#[test]
+fn text_decoder_streams_split_characters() {
+    let server = Server::new();
+    let env = Env::new(&server.url);
+    assert_eq!(
+        env.eval(
+            "const b=new Uint8Array([0xef,0xbb,0xbf,0xe2,0x82,0xac]);const d=new TextDecoder();\
+             [d.decode(b.slice(0,4),{stream:true}),d.decode(b.slice(4),{stream:true}),d.decode()].join('|')+\
+             '|'+new TextDecoder().decode(b.slice(3,4)).length"
+        ),
+        "|\u{20ac}||1"
+    );
 }
 
 #[test]

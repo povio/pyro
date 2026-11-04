@@ -1,13 +1,14 @@
 //! Fetch `Response`: network responses created by `fetch`, and script-created
 //! responses (`new Response`, `Response.error/redirect/json`) with complete
-//! in-memory bodies. `response.body` is a byte ReadableStream (see
-//! [`ReadableStream`]).
+//! in-memory bodies. `response.body` is a byte ReadableStream (streams.js)
+//! over the fetch body, delivering bytes as they arrive (see [`BodySource`]).
+//! A body given as a ReadableStream stays one; consuming it drains it in JS.
 use crate::{
     fetch::{Body, ReadKind},
     headers::{Headers, HeadersData},
 };
 use bytes::Bytes;
-use lp_js::{ClassDef, IdentityKey, JsClass, JsError, JsResult, NoParent, Scope, Value, WeakRealm};
+use lp_js::{ClassDef, IdentityKey, JsClass, JsError, JsResult, NoParent, Object, Scope, Value, WeakRealm};
 use lp_net::{Credentials, ResponseHead, ResponseKind};
 use std::cell::Cell;
 use std::rc::Rc;
@@ -35,10 +36,15 @@ pub struct ResponseData {
     used: Rc<Cell<bool>>,
     head: ResponseHead,
     credentials: Credentials,
+    /// The body is a script's ReadableStream, kept in the STREAM property.
+    script_stream: Cell<bool>,
+    /// `body` was read: its source holds this Response's body consumer, since
+    /// the stream can outlive the Response.
+    source_made: Cell<bool>,
 }
 impl Drop for ResponseData {
     fn drop(&mut self) {
-        if !self.used.get() {
+        if !self.used.get() && !self.source_made.get() {
             self.body.release_consumer();
         }
     }
@@ -56,6 +62,16 @@ impl JsClass for Response {
             let body = if body.is_null() || body.is_undefined() { None } else { Some(body) };
             if body.is_some() && is_null_body_status(status) {
                 return Err(JsError::Type(format!("Response with null body status {status} cannot have a body")));
+            }
+            if let Some(stream) = body.filter(|b| crate::streams::is_stream(s, *b).unwrap_or(false)) {
+                let page = crate::target::page_of(s)?;
+                if crate::streams::helper(s, &page, "isLocked", &[stream])?.to_bool()
+                    || crate::streams::helper(s, &page, "isDisturbed", &[stream])?.to_bool()
+                {
+                    return Err(JsError::Type("Response body object should not be disturbed or locked".into()));
+                }
+                let v = construct(s, Some(nt), Origin::Script, status, status_text, headers, Some(Bytes::new()))?;
+                return adopt_stream(s, v, stream);
             }
             let (bytes, mime) = match body {
                 Some(b) => {
@@ -125,31 +141,46 @@ impl JsClass for Response {
             if !existing.is_undefined() {
                 return Ok(existing);
             }
-            let stream = s.wrap::<ReadableStream>(
-                StreamData {
-                    body: d.body.clone(),
-                    used: d.used.clone(),
-                    locked: Rc::new(Cell::new(false)),
-                    opened: Cell::new(false),
-                },
+            let page = crate::target::page_of(s)?;
+            let source = s.wrap::<BodySource>(
+                StreamData { body: d.body.clone(), used: d.used.clone(), opened: Cell::new(false) },
                 None,
             )?;
+            d.source_made.set(true);
+            let read = source.get("read")?;
+            let cancel = source.get("cancel")?;
+            let stream = crate::streams::helper(s, &page, "fromBody", &[source.value(), read, cancel])?;
             let realm = d.realm.upgrade().ok_or(JsError::ContextDestroyed)?;
             let owner = realm.scope()?;
             let wrapper = owner.lookup_identity(d.id).ok_or(JsError::ContextDestroyed)?;
-            s.set_hidden(wrapper, STREAM, stream.value())?;
-            Ok(stream.value())
+            s.set_hidden(wrapper, STREAM, stream)?;
+            Ok(stream)
         });
         def.getter("headers", |s, d| hidden(s, d, HEADERS));
-        def.getter("bodyUsed", |s, d| Ok(s.boolean(d.used.get())));
+        def.getter("bodyUsed", |s, d| Ok(s.boolean(d.used.get() || stream_state(s, d)?.1)));
         def.method("text", 0, |s, d, _| consume(s, d, ReadKind::Text));
         def.method("json", 0, |s, d, _| consume(s, d, ReadKind::Json));
         def.method("arrayBuffer", 0, |s, d, _| consume(s, d, ReadKind::ArrayBuffer));
         def.method("bytes", 0, |s, d, _| consume(s, d, ReadKind::Bytes));
         def.method("blob", 0, |s, d, _| consume(s, d, ReadKind::Blob));
         def.method("clone", 0, |s, d, _| {
-            if d.used.get() {
+            let (locked, disturbed) = stream_state(s, d)?;
+            if d.used.get() || locked || disturbed {
                 return Err(JsError::Type("Response body has already been consumed".into()));
+            }
+            if d.script_stream.get() {
+                let page = crate::target::page_of(s)?;
+                let pair = crate::streams::helper(s, &page, "tee", &[hidden(s, d, STREAM)?])?;
+                let pair = pair.as_object().ok_or_else(|| JsError::Type("tee".into()))?;
+                let realm = d.realm.upgrade().ok_or(JsError::ContextDestroyed)?;
+                let owner = realm.scope()?;
+                let wrapper = owner.lookup_identity(d.id).ok_or(JsError::ContextDestroyed)?;
+                s.set_hidden(wrapper, STREAM, pair.get_index(0)?)?;
+                let current = hidden(s, d, HEADERS)?;
+                let pairs = s.unwrap::<Headers>(current).map(|h| h.pairs()).unwrap_or_default();
+                let headers = HeadersData::from_pairs(pairs, false);
+                let clone = wrap_script(s, None, d.origin, d.head.clone(), d.body.clone(), headers)?;
+                return adopt_stream(s, clone, pair.get_index(1)?).map(|o| o.value());
             }
             if d.origin != Origin::Network {
                 // Script responses own mutable headers: the clone copies them.
@@ -265,6 +296,8 @@ fn wrap_script<'s>(
         used: Rc::new(Cell::new(false)),
         head,
         credentials: Credentials::SameOrigin,
+        script_stream: Cell::new(false),
+        source_made: Cell::new(false),
     };
     let wrapper = match new_target {
         Some(nt) => s.wrap_new::<Response>(data, nt, Some(id))?,
@@ -286,7 +319,49 @@ fn hidden<'s>(s: &Scope<'s>, data: &ResponseData, key: &str) -> JsResult<Value<'
     let wrapper = owner.lookup_identity(data.id).ok_or(JsError::ContextDestroyed)?;
     Ok(s.get_hidden(wrapper, key)?.unwrap_or(s.undefined()))
 }
+/// Marks a just constructed Response as having the script stream as its body.
+fn adopt_stream<'s>(s: &Scope<'s>, response: Value<'s>, stream: Value<'s>) -> JsResult<Object<'s>> {
+    let wrapper = response.as_object().expect("wrapper object");
+    let data = s.unwrap::<Response>(response).expect("Response wrapper");
+    data.script_stream.set(true);
+    s.set_hidden(wrapper, STREAM, stream)?;
+    Ok(wrapper)
+}
+/// (locked, disturbed) of the body stream a script has seen, if any.
+fn stream_state(s: &Scope<'_>, data: &ResponseData) -> JsResult<(bool, bool)> {
+    // A Response of a closed realm has no wrapper to ask; its native reads
+    // report that themselves.
+    let Ok(stream) = hidden(s, data, STREAM) else { return Ok((false, false)) };
+    if stream.is_undefined() {
+        return Ok((false, false));
+    }
+    let page = crate::target::page_of(s)?;
+    Ok((
+        crate::streams::helper(s, &page, "isLocked", &[stream])?.to_bool(),
+        crate::streams::helper(s, &page, "isDisturbed", &[stream])?.to_bool(),
+    ))
+}
 fn consume<'s>(s: &Scope<'s>, data: &ResponseData, kind: ReadKind) -> JsResult<Value<'s>> {
+    let (locked, disturbed) = stream_state(s, data)?;
+    if locked || disturbed {
+        let deferred = s.deferred()?;
+        let promise = deferred.promise.get(s);
+        deferred.reject(s, JsError::Type("Response body has already been consumed".into()).to_value(s))?;
+        return Ok(promise);
+    }
+    if data.script_stream.get() {
+        let page = crate::target::page_of(s)?;
+        let name = match kind {
+            ReadKind::Text => "text",
+            ReadKind::Json => "json",
+            ReadKind::ArrayBuffer => "arrayBuffer",
+            ReadKind::Bytes => "bytes",
+            ReadKind::Blob => "blob",
+        };
+        data.used.set(true);
+        let args = [hidden(s, data, STREAM)?, s.string(name), s.string(&data.body.mime.borrow())];
+        return crate::streams::helper(s, &page, "consume", &args);
+    }
     let used = if data.body.is_null() { false } else { data.used.replace(true) };
     data.body.read(s, kind, used)
 }
@@ -307,6 +382,8 @@ pub(crate) fn wrap<'s>(
         used: Rc::new(Cell::new(false)),
         head: head.clone(),
         credentials,
+        script_stream: Cell::new(false),
+        source_made: Cell::new(false),
     };
     let wrapper = s.wrap::<Response>(data, Some(id))?;
     let headers = s.wrap::<Headers>(filtered_headers(head, credentials), None)?;
@@ -353,104 +430,56 @@ pub(crate) fn filtered_headers(head: &ResponseHead, credentials: Credentials) ->
     HeadersData::from_pairs(pairs, true)
 }
 
-fn resolved<'s>(s: &Scope<'s>) -> JsResult<Value<'s>> {
-    let deferred = s.deferred()?;
-    deferred.resolve(s, s.undefined())?;
-    Ok(deferred.promise.get(s))
-}
-
-/// `response.body`: a byte stream over the fetch body. Reads resolve with
-/// the bytes received since the previous read (`Uint8Array`), then `done`.
-/// Supported: `locked`, `getReader()` (default reader only), `cancel()`.
-/// Not supported: BYOB readers, `tee`, `pipeTo`/`pipeThrough`, async
-/// iteration, `new ReadableStream(...)` (no global interface object) and
-/// request body streams.
+/// The native side of `response.body`: streams.js wraps it in a byte
+/// ReadableStream, pulling on each read. Never exposed to pages. The body
+/// counts as used from the first read or cancel on.
 pub struct StreamData {
     body: Rc<Body>,
     used: Rc<Cell<bool>>,
-    locked: Rc<Cell<bool>>,
-    /// The stream owns the body consumer from the first reader on.
+    /// The stream owns the body consumer from the first read on.
     opened: Cell<bool>,
 }
 impl StreamData {
-    fn open(&self) {
-        if !self.opened.replace(true) {
-            self.used.set(true);
-            self.body.open_stream();
+    /// False when `text()` and the like already took the body.
+    fn open(&self) -> bool {
+        if self.opened.get() {
+            return true;
+        }
+        if self.used.get() {
+            return false;
+        }
+        self.opened.set(true);
+        self.used.set(true);
+        self.body.open_stream();
+        true
+    }
+}
+impl Drop for StreamData {
+    fn drop(&mut self) {
+        // Never read nor consumed: nothing else releases the consumer.
+        if !self.used.get() {
+            self.body.release_consumer();
         }
     }
 }
-pub struct ReadableStream;
-impl JsClass for ReadableStream {
-    const NAME: &'static str = "ReadableStream";
+pub struct BodySource;
+impl JsClass for BodySource {
+    const NAME: &'static str = "ResponseBodySource";
     type Data = StreamData;
-    type Parent = NoParent;
-    fn define(def: &mut ClassDef<Self>) {
-        // No global constructor: pages feature-detecting `ReadableStream`
-        // keep their fallbacks, since `new ReadableStream()` is unsupported.
-        def.not_exposed();
-        def.getter("locked", |s, d| Ok(s.boolean(d.locked.get())));
-        def.method("getReader", 0, |s, d, a| {
-            let mode = a.get(0).as_object().map(|o| o.get("mode")).transpose()?;
-            if mode.is_some_and(|m| !m.is_undefined()) {
-                return Err(JsError::Type("BYOB readers are not supported".into()));
-            }
-            if d.locked.get() || (d.used.get() && !d.opened.get()) {
-                return Err(JsError::Type("ReadableStream is locked or its body was already read".into()));
-            }
-            d.open();
-            d.locked.set(true);
-            let reader = s.wrap::<ReadableStreamDefaultReader>(
-                ReaderData { body: d.body.clone(), locked: d.locked.clone(), released: Cell::new(false) },
-                None,
-            )?;
-            Ok(reader.value())
-        });
-        def.method("cancel", 0, |s, d, _a| {
-            if d.locked.get() {
-                return Err(JsError::Type("Cannot cancel a locked ReadableStream".into()));
-            }
-            d.open();
-            d.body.cancel_stream();
-            resolved(s)
-        });
-    }
-}
-
-pub struct ReaderData {
-    body: Rc<Body>,
-    locked: Rc<Cell<bool>>,
-    released: Cell<bool>,
-}
-pub struct ReadableStreamDefaultReader;
-impl JsClass for ReadableStreamDefaultReader {
-    const NAME: &'static str = "ReadableStreamDefaultReader";
-    type Data = ReaderData;
     type Parent = NoParent;
     fn define(def: &mut ClassDef<Self>) {
         def.not_exposed();
         def.method("read", 0, |s, d, _a| {
-            if d.released.get() {
-                return Err(JsError::Type("The reader's lock was released".into()));
-            }
+            d.open();
             d.body.stream_read(s)
         });
-        def.method("releaseLock", 0, |s, d, _a| {
-            if !d.released.replace(true) {
-                d.locked.set(false);
-            }
-            Ok(s.undefined())
-        });
         def.method("cancel", 0, |s, d, _a| {
-            if !d.released.get() {
+            if d.open() {
                 d.body.cancel_stream();
             }
-            resolved(s)
+            let deferred = s.deferred()?;
+            deferred.resolve(s, s.undefined())?;
+            Ok(deferred.promise.get(s))
         });
     }
-}
-
-pub(crate) fn register_streams(engine: &lp_js::Engine) {
-    engine.register::<ReadableStream>();
-    engine.register::<ReadableStreamDefaultReader>();
 }
