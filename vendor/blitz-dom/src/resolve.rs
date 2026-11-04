@@ -698,9 +698,15 @@ impl BaseDocument {
     pub fn resolve_layout(&mut self) {
         let size = self.stylist.device().au_viewport_size();
 
-        let available_space = taffy::Size {
+        let initial_containing_block = taffy::Size {
             width: AvailableSpace::Definite(size.width.to_f32_px()),
             height: AvailableSpace::Definite(size.height.to_f32_px()),
+        };
+        let available_space = match self.layout_available {
+            Some((width, height)) => {
+                taffy::Size { width: AvailableSpace::Definite(width), height: AvailableSpace::Definite(height) }
+            }
+            None => initial_containing_block,
         };
 
         // lightningpanda: same viewport and nothing damaged, so the last pass's layout stands.
@@ -720,15 +726,15 @@ impl BaseDocument {
 
         let mut state = LayoutPassState::new(self);
         #[cfg(feature = "writing-mode")]
-        let available_space = {
+        let (available_space, initial_containing_block) = {
             state.layout_wm = state.layout_wm_of(crate::dom_node_id(root_element_id));
             if state.layout_wm.is_vertical() {
-                available_space.transpose()
+                (available_space.transpose(), initial_containing_block.transpose())
             } else {
-                available_space
+                (available_space, initial_containing_block)
             }
         };
-        taffy::compute_root_layout(&mut state, root_element_id, available_space);
+        taffy::compute_root_layout_in(&mut state, root_element_id, available_space, initial_containing_block);
         #[cfg(feature = "writing-mode")]
         state.physicalise_and_round_layout(root_element_id);
         #[cfg(not(feature = "writing-mode"))]

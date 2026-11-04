@@ -273,6 +273,20 @@ impl PageArea {
         (whole_px_up(w), whole_px_up(h))
     }
 
+    /// What layout gets at `factor` (CSS px): the page area rounded up
+    /// ([`PageArea::holds`]), which block-level content fills and percentages of it
+    /// resolve against, and rounded down, which viewport units and what the initial
+    /// containing block holds see (`LayoutView::GetLayoutSize`). Measured on Chrome 156
+    /// by markers at 50% of each, on 192 papers, margins, scales and shrinks: A4 with
+    /// no margins is 794.67 px, so 795 and 794; with 0.4 in margins 720.02, so 721
+    /// and 720. A full-width link still ends at the page's 741.33 px on Letter with
+    /// 0.4 in margins: it is 742 px wide, and clipped at what the page shows.
+    fn layout_sizes(&self, factor: f32) -> ((f64, f64), (f64, f64)) {
+        let (w, h) = self.units(factor);
+        let down = |units: i64| (units as f64 / UNITS_PER_PX).floor();
+        ((whole_px_up(w), whole_px_up(h)), (down(w), down(h)))
+    }
+
     /// How far down a page shows, before [`PageArea::holds`] rounds up (CSS px).
     /// Less than a unit on paper shows nothing, and a link in it has no
     /// annotation: measured 1 row in 1310.015625 px at scale 0.8 (0.0125 px on
@@ -1348,21 +1362,17 @@ fn paint_document(
     let (w, h) = (extent_w.ceil() as u32, extent_h.ceil() as u32);
     blitz_paint::paint_scene_with(&mut scene, doc, dpr, w, h, 0, 0, opts.print_background);
     timings.scene = t.elapsed();
-    Ok(PdfPaint {
-        scene,
-        pages,
-        by_selector: true,
-        scale: pdf::PX_TO_PT / dpr,
-        extras: None,
-        relaid: false,
-        timings,
-    })
+    Ok(PdfPaint { scene, pages, by_selector: true, scale: pdf::PX_TO_PT / dpr, extras: None, relaid: false, timings })
 }
 
 /// The text of the document's `<style>` elements.
 fn style_texts(doc: &blitz_dom::BaseDocument) -> Vec<String> {
     let styles = doc.query_selector_all("style").unwrap_or_default();
-    styles.into_iter().filter_map(|id| Some(doc.get_node(id)?.text_content())).filter(|css| css.contains("@page")).collect()
+    styles
+        .into_iter()
+        .filter_map(|id| Some(doc.get_node(id)?.text_content()))
+        .filter(|css| css.contains("@page"))
+        .collect()
 }
 
 /// The `page` of the nearest `style` attribute that has one, on `id` or an ancestor.
@@ -1413,31 +1423,40 @@ fn paint_paper(
     // The print layout's viewport (CSS px).
     let (cw, ch) = (content.0 / scale, content.1 / scale);
     let mut saved = None;
-    let relayout = |doc: &mut blitz_dom::BaseDocument, saved: &mut Option<BlitzViewport>, w: f64, h: f64| {
+    // What layout gets at a scale: the content fills the page area rounded up, and
+    // viewport units and the initial containing block see it rounded down.
+    let sizes = |factor: f32| match opts.page_area {
+        Some(area) => area.layout_sizes(factor),
+        None => {
+            let (w, h) = (content.0 * factor as f64, content.1 * factor as f64);
+            ((w.ceil(), h.ceil()), (w.floor(), h.floor()))
+        }
+    };
+    let relayout = |doc: &mut blitz_dom::BaseDocument,
+                    saved: &mut Option<BlitzViewport>,
+                    (available, initial): ((f64, f64), (f64, f64))| {
         let screen = saved.get_or_insert_with(|| doc.viewport().clone());
         let mut print = screen.clone();
-        print.window_size = ((w * dpr).round().max(1.0) as u32, (h * dpr).round().max(1.0) as u32);
+        print.window_size = ((initial.0 * dpr).round().max(1.0) as u32, (initial.1 * dpr).round().max(1.0) as u32);
         doc.set_viewport(print);
-        doc.set_layout_size(Some((w as f32, h as f32)));
+        let pair = |s: (f64, f64)| (s.0 as f32, s.1 as f32);
+        doc.set_layout_size(Some((pair(initial), pair(available))));
         doc.resolve(0.0);
     };
-    if (cw - viewport.0 as f64).abs() > 1.0 / 64.0 {
-        relayout(doc, &mut saved, cw, ch);
-    }
     let factor = 1.0 / scale as f32;
-    let holds = |factor: f32| match opts.page_area {
-        Some(area) => area.holds(factor),
-        None => ((content.0 * factor as f64).ceil(), (content.1 * factor as f64).ceil()),
-    };
-    let (holds_w, holds_h) = holds(factor);
+    let (holds, initial) = sizes(factor);
+    let (holds_w, holds_h) = holds;
+    if holds_w != viewport.0 as f64 || initial.0 != viewport.0 as f64 {
+        relayout(doc, &mut saved, (holds, initial));
+    }
     let width = document_width(doc);
     let shrink = shrink_to_fit(width, holds_w);
-    if shrink < 1.0 {
-        relayout(doc, &mut saved, cw / shrink, ch / shrink);
-    }
-    let (cw, ch) = (cw / shrink, ch / shrink);
     // The scale Blink lays out at: in `f32`, as a page's size depends on it.
     let shrunk_factor = factor * (width.min(holds_w * MAX_SHRINK) as f32 / holds_w as f32);
+    if shrink < 1.0 {
+        relayout(doc, &mut saved, sizes(shrunk_factor));
+    }
+    let (cw, ch) = (cw / shrink, ch / shrink);
     let width = if saved.is_some() { cw } else { viewport.0 as f64 };
     let root = doc.root_element();
     let (size, overflow) = (root.final_layout().size, *root.scrollable_overflow());
@@ -1447,7 +1466,7 @@ fn paint_paper(
     let doc_h = (size.height as f64).max(overflow.y1) * dpr;
     let breaks_h = unrounded_document_height(root, doc_h, dpr);
     // A page holds whole CSS px, more than the content box shows.
-    let page_h = if shrink < 1.0 { holds(shrunk_factor).1 } else { holds_h };
+    let page_h = if shrink < 1.0 { sizes(shrunk_factor).0 .1 } else { holds_h };
     let (pw, ph) = (cw * dpr, page_h * dpr);
     let breaks = Breaks::of(doc, dpr);
     let mut pages = Vec::new();

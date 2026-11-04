@@ -79,12 +79,23 @@ pub fn compute_root_layout(
     root: NodeId,
     available_space: Size<AvailableSpace>,
 ) {
+    compute_root_layout_in(tree, root, available_space, available_space)
+}
+
+/// lightningpanda: [`compute_root_layout`] with an initial containing block of another size than the
+/// space the root is laid out in: Blink's print layout has one rounded down and one rounded up.
+pub fn compute_root_layout_in(
+    tree: &mut (impl crate::tree::LayoutContainingBlock + CacheTree),
+    root: NodeId,
+    available_space: Size<AvailableSpace>,
+    initial_containing_block: Size<AvailableSpace>,
+) {
     let style = tree.get_core_container_style(root);
     let position = style.position();
     let direction = style.direction();
     drop(style);
 
-    let icb_size = available_space.into_options();
+    let icb_size = initial_containing_block.into_options();
     let oof_root_area = match (position.is_out_of_flow(), icb_size.width, icb_size.height) {
         (true, Some(width), Some(height)) => Some(Size { width, height }),
         _ => None,
