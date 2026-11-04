@@ -1362,7 +1362,15 @@ fn paint_document(
     let (w, h) = (extent_w.ceil() as u32, extent_h.ceil() as u32);
     blitz_paint::paint_scene_for_print(&mut scene, doc, dpr, w, h, 0, 0, opts.print_background);
     timings.scene = t.elapsed();
-    Ok(PdfPaint { scene, pages, by_selector: true, scale: pdf::PX_TO_PT / dpr, extras: None, relaid: false, timings })
+    Ok(PdfPaint {
+        scene,
+        pages,
+        by_selector: true,
+        scale: pdf::PX_TO_PT / dpr,
+        extras: None,
+        relaid: false,
+        timings,
+    })
 }
 
 /// The CSS text with `@page` rules of the document's `<style>` elements and `<link>` sheets, in
@@ -2263,9 +2271,11 @@ fn pdf_extras(doc: &blitz_dom::BaseDocument, runs: Vec<blitz_paint::TextRun>, dp
             }
         }
     }
-    // Chrome writes the area of an inline link in whole CSS px (boxes keep theirs).
+    // Chrome writes a link's area in whole CSS px, boxes too: a box at 397.5 px starts at 398. Only
+    // what the page shows clips it, which is why a full-width link ends at 741.33 px on Letter
+    // with 0.4 in margins.
     let snap = |v: f64| (v / dpr).round() * dpr;
-    for rect in ex.links.iter_mut().filter(|l| !l.boxed).flat_map(|l| l.rects.iter_mut()) {
+    for rect in ex.links.iter_mut().flat_map(|l| l.rects.iter_mut()) {
         *rect = Rect::new(snap(rect.x0), snap(rect.y0), snap(rect.x1), snap(rect.y1));
     }
     ex.links.retain(|l| !l.rects.is_empty());

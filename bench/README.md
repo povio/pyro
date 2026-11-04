@@ -265,6 +265,7 @@ bun page-placement.mjs <work dir> chrome-156/page-placement.json [/abs/lightning
 bun pdf-deltas.mjs <chrome pdf dir> <lp pdf dir> out.json        # per PDF of a run.mjs run: x and y delta of 30 pt tiles at 600 dpi, pixel diff at 150 dpi
 python3 page-stream-diff.py; python3 page-shift-check.py         # two lp-fixed runs (r-base, r-head): how each stream changed; pixels after undoing a page shift
 bun text-x.mjs <work dir> chrome; bun text-x.mjs <work dir> /abs/lightningpanda   # fractional text x: paper-cut and `.pz-page`, with screenshots
+python3 width-check.py chrome-156/width-x.json <probe of fx-width>   # what paper-cut print lays out in: marker x and link rects
 ```
 
 `pdf-resample.mjs` compares a page's error against Chrome at 150 dpi as poppler rasterizes it and box-averaged from a higher resolution, to tell a real move from a sampling effect.

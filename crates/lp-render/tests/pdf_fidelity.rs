@@ -940,3 +940,38 @@ fn bullets_are_not_text_and_clipped_glyphs_are_not_written() {
     );
     assert!(clipped.bytes.len() < full.bytes.len());
 }
+
+/// A link's rect on the paper: at 50% of the content, of the initial containing block and of the viewport. Chrome 156:
+/// content fills the page area rounded up and the others see it rounded down, then the box edge snaps to a whole px.
+#[test]
+fn content_fills_the_page_area_rounded_up_and_viewport_units_see_it_rounded_down() {
+    let lefts = |paper: (f64, f64), margin: f64, scale: f64, style: &str| {
+        let (paper_px, margins) = chrome_page_geometry(paper, [margin; 4]).unwrap();
+        let html = format!(
+            r#"<!doctype html><body style="margin:0"><a href="https://x.test/l" style="display:block;height:10px;{style}"></a>"#
+        );
+        let out = print_with(&html, |o| {
+            o.paper = paper_px;
+            o.margins = margins;
+            o.page_area = Some(chrome_page_area(paper, [margin; 4]));
+            o.scale = scale;
+        });
+        rects(&inflated(&out.bytes))[0][0]
+    };
+    const A4: (f64, f64) = (8.27, 11.69);
+    const LETTER: (f64, f64) = (8.5, 11.0);
+    // (paper, margin, scale, block at 50%, absolute at 50%, 50vw), left edges in pt.
+    for (paper, margin, scale, block, absolute, vw) in [
+        (A4, 0.0, 1.0, 298.5, 297.75, 297.75),
+        (A4, 0.4, 1.0, 298.5, 297.75, 297.75),
+        (LETTER, 0.4, 1.0, 306.0, 306.0, 306.0),
+        (LETTER, 0.4, 0.8, 306.15, 305.55, 305.55),
+        (A4, 0.0, 1.5, 298.125, 298.125, 298.125),
+    ] {
+        let at = |style| lefts(paper, margin, scale, style);
+        let context = format!("{paper:?} margin {margin} scale {scale}");
+        assert!((at("margin-left:50%") - block).abs() < 0.01, "block {context}");
+        assert!((at("position:absolute;left:50%;width:10px") - absolute).abs() < 0.01, "absolute {context}");
+        assert!((at("margin-left:50vw") - vw).abs() < 0.01, "vw {context}");
+    }
+}
