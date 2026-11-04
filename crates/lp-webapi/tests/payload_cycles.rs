@@ -123,8 +123,15 @@ struct Lab {
 
 impl Lab {
     fn new() -> Lab {
+        Lab::with_classes_first(|_| {})
+    }
+
+    /// A lab whose engine registers `first` before the regular class list, which moves every
+    /// class id and the order the realm's interfaces are built in.
+    fn with_classes_first(first: impl FnOnce(&Engine)) -> Lab {
         let serial = SERIAL.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let engine = Engine::new().expect("engine");
+        first(&engine);
         register(&engine);
         let window_class = engine.register::<TestWindow>();
         engine.register::<Sentinel>();
@@ -340,6 +347,74 @@ fn negative_control_a_payload_persistent_retains_the_closed_realm() {
         0,
         "negative control did not retain the realm: the sentinel test cannot detect a cycle"
     );
+}
+
+/// Same check as [`closed_realm_drops`], in a lab that registers `first` before the class list.
+fn closed_realm_drops_with(first: fn(&Engine), script: &str) -> u32 {
+    let lab = Lab::with_classes_first(first);
+    let drops = Rc::new(Cell::new(0u32));
+    open_run_close(&lab, &drops, script);
+    lab.settle(|| drops.get() == 1);
+    drops.get()
+}
+
+macro_rules! padding_class {
+    ($class:ident) => {
+        struct $class;
+        impl JsClass for $class {
+            const NAME: &'static str = stringify!($class);
+            type Data = ();
+            type Parent = NoParent;
+            fn define(_def: &mut ClassDef<Self>) {}
+        }
+    };
+}
+padding_class!(PaddingA);
+padding_class!(PaddingB);
+padding_class!(PaddingC);
+
+/// Class lists that used to decide whether a closed realm was retained: moving `Touch` and
+/// `TouchEvent` changed which helper tiered up last before the close (a finished JIT plan nobody
+/// picked up pins its realm, see `Engine::complete_jit_plans`).
+#[test]
+fn retention_does_not_depend_on_class_registration_order() {
+    let orders: [(&str, fn(&Engine)); 4] = [
+        ("regular", |_| {}),
+        ("shifted by one", |e| {
+            e.register::<PaddingA>();
+        }),
+        ("shifted by three", |e| {
+            e.register::<PaddingA>();
+            e.register::<PaddingB>();
+            e.register::<PaddingC>();
+        }),
+        ("touch and file classes first, reversed", |e| {
+            e.register::<event::TouchEvent>();
+            e.register::<event::Touch>();
+            e.register::<data_transfer::DataTransfer>();
+            e.register::<file::FileList>();
+            e.register::<file::File>();
+        }),
+    ];
+    for (name, first) in orders {
+        for script in std::iter::once(KEEP_FILELIST).chain(FD_RETENTION.iter().map(|(_, script)| *script)) {
+            assert_eq!(closed_realm_drops_with(first, script), 1, "closed realm retained, class order: {name}");
+        }
+    }
+}
+
+/// A function that reaches its first JIT tier just before the page closes: nothing runs afterwards
+/// to pick up the finished compilation, which must not keep the realm alive.
+#[test]
+fn a_function_tiering_up_just_before_close_does_not_retain_the_realm() {
+    for calls in [60, 120, 200, 300, 400, 500, 700, 1000] {
+        let script = format!(
+            "(function () {{ function hot(a) {{ return a + 1; }} let n = 0; \
+             const step = () => {{ n = hot(n); }}; for (let i = 0; i < {calls}; i++) step(); \
+             globalThis.__hot = hot; }})()"
+        );
+        assert_eq!(closed_realm_drops(&script), 1, "closed realm retained after {calls} calls");
+    }
 }
 
 #[inline(never)]

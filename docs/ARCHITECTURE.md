@@ -251,6 +251,11 @@ copy-on-write page snapshots: load an app's JS once, then start each test from t
   `JSDidFork(child)` resumes them; in the child it also refreshes the thread's mach port, marks the allocator
   caches of threads that did not survive as orphans, restirs WTF's random generator and restarts the VMTraps
   queue. `JSGlobalContextReseedRandom` gives a context a new `Math.random()` seed.
+- Patch `0003` adds `JSCompleteJITPlans(group, wait)`. A finished concurrent JIT plan stays on the worklist until the
+  next tier-up check in the VM, and the GC marks its CodeBlock, so a function that tiered up just before its page
+  closed kept that closed realm through every collection until then, an effect that looked like class-registration
+  order or stack noise. `Engine::settle` (page close, boot) installs finished plans before collecting without waiting
+  for running ones; `Engine::collect_garbage_now` (tests) also waits, so retention checks depend on reachability alone.
 
 To change JSC: edit the checkout in `~/Library/Caches/lightningpanda/webkit-src`, `ninja -C ../webkit-build
 JavaScriptCore` to iterate, then regenerate the patch with `git diff` (use `git add -N` for new files) and rerun
