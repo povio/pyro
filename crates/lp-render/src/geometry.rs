@@ -698,7 +698,8 @@ impl Geometry {
                     // Chromium's text box: whole-pixel ascent and descent,
                     // the half-leading floored (CSS px, back to layout units).
                     let (a, d) = (metrics.ascent as f64 / scale, metrics.descent as f64 / scale);
-                    let top = line_top + ((line_height - a.round() - d.round()) / 2.0).floor();
+                    let leading = ((line_height - a.round() - d.round()) * 64.0).round();
+                    let top = line_top + ((leading / 2.0).trunc() / 64.0).floor();
                     let (top, bottom) = (top * scale, (top + a.round() + d.round()) * scale);
                     let mut x = run.offset() as f64;
                     let mut word: Option<(usize, Vec<(u32, f64)>)> = None;
