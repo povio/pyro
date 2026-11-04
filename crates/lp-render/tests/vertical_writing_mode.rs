@@ -161,3 +161,17 @@ fn shrink_to_fit_text_never_wraps() {
         assert!((b[3] - b[1] - 20.0).abs() < 0.01, "{id}: {b:?}");
     }
 }
+
+/// Chrome's first line of `font:16px Arial` (17 px of ascent and descent): one layout unit short of
+/// it leaves no half-leading (Chromium's division truncates), two take a whole pixel off.
+#[cfg(target_os = "macos")]
+#[test]
+fn a_line_a_layout_unit_short_keeps_its_baseline() {
+    let top = |line_height: f64| {
+        ink(&format!(
+            "<!doctype html><body style='margin:0;font:16px/{line_height}px Arial'><div style='position:absolute;top:20px'>H</div>"
+        ))[1]
+    };
+    assert_eq!(top(16.98), top(17.0));
+    assert_eq!(top(16.97), top(17.0) - 1);
+}

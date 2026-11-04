@@ -231,7 +231,10 @@ impl BoxMetrics {
         };
         let half_leading = (line_height - (ascent + descent)) / 2.;
         let over = if quantize {
-            ascent + half_leading.floor()
+            // In Chromium's layout units (1/64 px), whose division truncates: a line height one
+            // unit short of the content area leaves no half-leading, not a whole pixel of it.
+            let leading = ((line_height - (ascent + descent)) * 64.).round();
+            ascent + ((leading / 2.).trunc() / 64.).floor()
         } else {
             ascent + half_leading
         };
