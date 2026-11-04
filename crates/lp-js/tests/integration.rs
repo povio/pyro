@@ -3,6 +3,7 @@
 //! mostly link time. Add new test files as modules here.
 
 mod callback_hook;
+mod callback_lock;
 mod class_lengths;
 mod lazy_interfaces;
 mod nested_realm;
