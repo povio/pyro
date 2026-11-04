@@ -141,6 +141,9 @@ pub fn install(scope: &Scope<'_>, page: Rc<PageDom>) -> JsResult<()> {
     if let Some(define) = scope.global().get("Object")?.as_object().map(|o| o.get("defineProperty")).transpose()? {
         page.define_properties.borrow_mut().insert(scope.realm_id(), lp_js::Persistent::new(scope, define));
     }
+    if page.max_touch_points() > 0 {
+        handlers::define_touch_handlers(scope)?;
+    }
     let global = scope.global();
     global.set("CSS", window::css_namespace(scope)?)?;
     Ok(())
