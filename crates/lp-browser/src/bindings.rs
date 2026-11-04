@@ -82,17 +82,21 @@ impl PageHooks for Hooks {
                 }
                 return;
             }
-            let result = if request.method != "GET"
-                || new_context
+            let result = if new_context
                 || (page.child.is_some() && request.target.as_deref().is_some_and(|t| matches!(t, "_top" | "_parent")))
             {
-                Err(JsError::Unsupported("form POST and cross-frame navigation targets"))
+                Err(JsError::Unsupported("form POST to a new window and cross-frame navigation targets"))
             } else {
                 b.navigate_frame_with_handling(
                     page,
                     NavigateOpts {
+                        post: request.body.map(|body| (body, request.content_type.unwrap_or_default())),
                         url: request.url,
-                        reason: NavigationReason::Anchor,
+                        reason: if request.method == "POST" {
+                            NavigationReason::FormPost
+                        } else {
+                            NavigationReason::Anchor
+                        },
                         cdp_request_id: None,
                         referrer: b.doc(page).map(|p| p.main_frame.url.clone()),
                     },

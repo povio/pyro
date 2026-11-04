@@ -94,6 +94,8 @@ pub enum HistoryHandling {
 
 #[derive(Debug, Clone)]
 pub struct NavigateOpts {
+    /// Body and content type of a form POST (`None`: GET).
+    pub post: Option<(Vec<u8>, String)>,
     pub url: String,
     pub reason: NavigationReason,
     /// CDP request id of `Page.navigate`, so the response can be ordered after
@@ -104,7 +106,13 @@ pub struct NavigateOpts {
 
 impl NavigateOpts {
     pub fn address_bar(url: impl Into<String>) -> Self {
-        NavigateOpts { url: url.into(), reason: NavigationReason::AddressBar, cdp_request_id: None, referrer: None }
+        NavigateOpts {
+            post: None,
+            url: url.into(),
+            reason: NavigationReason::AddressBar,
+            cdp_request_id: None,
+            referrer: None,
+        }
     }
 }
 
@@ -819,6 +827,7 @@ impl Browser {
             return;
         };
         let request = FetchRequest {
+            post: None,
             url,
             kind,
             page,
@@ -890,6 +899,7 @@ impl Browser {
         self.navigate(
             id,
             NavigateOpts {
+                post: None,
                 url: "about:blank".into(),
                 reason: NavigationReason::InitialFrameNavigation,
                 cdp_request_id: None,

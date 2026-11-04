@@ -162,6 +162,7 @@ impl Browser {
         };
         let frame = self.doc(page).expect("page").main_frame.clone();
         let request = FetchRequest {
+            post: None,
             url,
             kind: ResourceKind::Image,
             page: page.page,
