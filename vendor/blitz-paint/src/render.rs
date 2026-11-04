@@ -352,13 +352,12 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         // The root element's overflow is propagated to the viewport (which is clipped by the
         // window/surface bounds), so the root element must not clip its own overflow.
         let is_root_element = self.root_element_id == Some(node_id);
+        // lightningpanda: `overflow` on `body` is the viewport's, not body's.
+        let clips_overflow = (!matches!(overflow_x, Overflow::Visible)
+            || !matches!(overflow_y, Overflow::Visible))
+            && !self.dom.as_ref().body_overflow_goes_to_viewport(node_id);
         let should_clip = !is_root_element
-            && (is_image
-                || is_sub_doc
-                || is_text_input
-                || contain_paint
-                || !matches!(overflow_x, Overflow::Visible)
-                || !matches!(overflow_y, Overflow::Visible));
+            && (is_image || is_sub_doc || is_text_input || contain_paint || clips_overflow);
 
         // Apply padding/border offset to inline root
         let taffy::Layout {

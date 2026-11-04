@@ -524,3 +524,232 @@ fn what_does_not_overflow_or_is_clipped_does_not_shrink() {
     let padded = r#"<div style="width:500px;padding-right:100px;height:1px"></div>"#;
     assert!((at_scale(padded) - 0.825).abs() < 0.001);
 }
+
+/// A box of `height` px with one line.
+fn tall(height: u32, style: &str) -> String {
+    format!(r#"<div style="height:{height}px;{style}">x</div>"#)
+}
+
+#[test]
+fn a_cut_between_boxes_that_avoid_it_goes_to_the_last_clean_break() {
+    let (after, before) = ("break-after:avoid", "break-before:avoid");
+    // The box after does not fit: the box before goes with it, page 2 starts at its top.
+    let a = spacer(300) + &tall(80, after);
+    assert_eq!(page_tops(&(a.clone() + &tall(60, ""))), [0.0, 300.0]);
+    assert_eq!(page_tops(&(spacer(300) + &tall(80, "") + &tall(60, before))), [0.0, 300.0]);
+    assert_eq!(page_tops(&(spacer(300) + &tall(80, "break-after:avoid-page") + &tall(60, ""))), [0.0, 300.0]);
+    assert_eq!(page_tops(&(spacer(300) + &tall(80, "") + &tall(60, "page-break-before:avoid"))), [0.0, 300.0]);
+    // avoid-column is not about pages.
+    assert_eq!(page_tops(&(spacer(300) + &tall(80, "break-after:avoid-column") + &tall(60, ""))), [0.0, 380.0]);
+    // Chains move together.
+    let chain = spacer(200) + &tall(60, after) + &tall(60, after) + &tall(60, after) + &tall(60, "");
+    assert_eq!(page_tops(&chain), [0.0, 200.0]);
+    // From a box's last child, and to a box's first child, through blocks, flow roots and flex.
+    for wrap in ["", "overflow:hidden", "display:flow-root", "display:flex"] {
+        let wrapped = format!(r#"<div style="{wrap}">{}</div>"#, tall(80, after));
+        assert_eq!(page_tops(&(spacer(300) + &wrapped + &tall(60, ""))), [0.0, 300.0], "{wrap}");
+    }
+    let first = format!(r#"<div style="margin-top:2px">{}</div>"#, tall(60, before));
+    assert_eq!(page_tops(&(spacer(300) + &tall(80, "") + &first)), [0.0, 300.0]);
+    // Where something can be cut clean, it is: the lines above keep their widows.
+    assert_eq!(page_tops(&(lines(19, after) + "x")), [0.0, 340.0]);
+    assert_eq!(page_tops(&(lines(19, "") + &lines(1, before))), [0.0, 340.0]);
+    assert_eq!(page_tops(&(spacer(300) + &lines(4, after) + &lines(3, ""))), [0.0, 340.0]);
+    // Fewer lines than orphans and widows take: all of them move.
+    assert_eq!(page_tops(&(spacer(320) + &lines(3, after) + &lines(3, ""))), [0.0, 320.0]);
+    // A break before an empty box and one after it are in one place, and one has nothing to avoid.
+    for empty in [
+        format!("{}<div></div>{}", tall(80, after), tall(60, "")),
+        format!(r#"{}<div style="height:0;{after}"></div>{}"#, tall(80, ""), tall(60, "")),
+    ] {
+        assert_eq!(page_tops(&(spacer(300) + &empty)), [0.0, 380.0]);
+    }
+}
+
+#[test]
+fn when_every_break_breaks_an_avoid_the_last_is_taken() {
+    let (after, avoid) = ("break-after:avoid", "break-inside:avoid");
+    // First box at the top of the page: the cut stays between the boxes.
+    assert_eq!(page_tops(&(tall(370, after) + &tall(370, after) + &tall(370, ""))), [0.0, 370.0, 740.0]);
+    // Only `widows` is left to break, which beats breaking the avoid.
+    assert_eq!(page_tops(&(lines(3, after) + &tall(380, avoid))), [0.0, 40.0, 424.0]);
+    assert_eq!(page_tops(&(lines(2, after) + &tall(380, avoid))), [0.0, 20.0, 404.0]);
+    // Nothing else: the cut goes inside the `break-inside: avoid` further down.
+    assert_eq!(page_tops(&(tall(20, after) + &tall(20, after) + &tall(380, avoid))), [0.0, 384.0]);
+    // A page does not go back into a box that began on an earlier page.
+    let resumed = format!("<div>{}{}{}</div>", tall(380, ""), tall(360, ""), tall(20, after));
+    assert_eq!(page_tops(&(resumed + &tall(40, avoid))), [0.0, 380.0, 760.0]);
+    assert_eq!(page_tops(&(lines(38, after) + &tall(40, avoid))), [0.0, 380.0, 760.0]);
+    // Forced breaks win.
+    assert_eq!(page_tops(&(spacer(300) + &tall(60, after) + &tall(60, "break-before:page"))), [0.0, 360.0]);
+}
+
+#[test]
+fn monolithic_boxes_move_whole_and_hold_no_breaks() {
+    // What Chrome moved as one, 200 px at 300 px of a 384 px page.
+    for (open, close) in [
+        (r#"<div style="contain:size;height:200px">"#, "</div>"),
+        (r#"<div style="contain:strict;height:200px">"#, "</div>"),
+        (r#"<div style="container-type:size;height:200px">"#, "</div>"),
+        (r#"<div style="writing-mode:vertical-rl;height:200px;width:100px">"#, "</div>"),
+        (r#"<button style="display:block;height:200px;margin:0">"#, "</button>"),
+        (r#"<div style="display:inline-block;width:200px;height:200px;vertical-align:top">"#, "</div>"),
+        (r#"<div style="display:inline-flex;width:200px;height:200px;vertical-align:top">"#, "</div>"),
+    ] {
+        assert_eq!(page_tops(&format!("{}{open}x{close}<div>y</div>", spacer(300))), [0.0, 300.0], "{open}");
+    }
+    for element in [
+        r#"<canvas width=100 height=200 style="display:block"></canvas>"#,
+        r#"<textarea style="display:block;height:200px;margin:0"></textarea>"#,
+        r#"<input style="display:block;height:200px;margin:0">"#,
+        r#"<select size=5 style="display:block;height:200px;margin:0"></select>"#,
+        r#"<object style="display:block;width:100px;height:200px"></object>"#,
+    ] {
+        assert_eq!(page_tops(&format!("{}{element}<div>y</div>", spacer(300))), [0.0, 300.0], "{element}");
+    }
+    // What it did not.
+    for style in [
+        "contain:paint",
+        "contain:layout",
+        "contain:content",
+        "contain:inline-size",
+        "container-type:inline-size",
+        "overflow:hidden",
+        "overflow:auto",
+        "overflow:scroll",
+        "overflow:clip",
+    ] {
+        let html = format!(r#"{}<div style="height:200px;{style}">{}</div><div>y</div>"#, spacer(300), lines(10, ""));
+        assert_eq!(page_tops(&html), [0.0, 380.0], "{style}");
+    }
+    // Its lines do not move a cut: it runs across pages at whole page heights.
+    let tall_box = format!(r#"<div style="contain:size;height:600px">{}</div>"#, lines(30, ""));
+    assert_eq!(page_tops(&(spacer(300) + &tall_box)), [0.0, 300.0, 684.0]);
+    // Forced breaks inside are ignored, and on an inline-block too.
+    let inside = r#"<div style="display:inline-block;width:200px"><div style="break-before:page">x</div><div style="break-before:page">y</div></div>"#;
+    assert_eq!(page_tops(inside), [0.0]);
+    let forced = r#"x<div style="display:inline-block;width:200px;break-before:page">y</div>"#;
+    assert_eq!(page_tops(forced), [0.0]);
+}
+
+#[test]
+fn the_page_after_a_break_after_starts_with_the_margin_of_what_follows() {
+    let (at, chrome) = ("break-after:page;margin-bottom:40px", "margin-top:30px");
+    // 20 px of a box, then margins of 40 and 30, which collapse. Chrome: the next box 30 px down page 2.
+    let tops = |body: &str| page_tops(body);
+    assert_eq!(tops(&(lines(1, at) + &lines(1, chrome))), [0.0, 30.0]);
+    // Its own margin is what stays, however the two collapsed.
+    assert_eq!(tops(&(lines(1, "break-after:page;margin-bottom:30px") + &lines(1, "margin-top:40px"))), [0.0, 20.0]);
+    assert_eq!(tops(&(lines(1, at) + &lines(1, ""))), [0.0, 60.0]);
+    assert_eq!(tops(&(lines(1, at) + "x")), [0.0, 60.0]);
+    // Larger than a page, gone just the same.
+    assert_eq!(tops(&(lines(1, "break-after:page;margin-bottom:400px") + &lines(1, chrome))), [0.0, 390.0]);
+    // From a parent's margin, and collapsed with a child's.
+    let parent = format!(r#"<div style="margin-bottom:50px">{}</div>"#, lines(1, "break-after:page"));
+    assert_eq!(tops(&(parent + &lines(1, chrome))), [0.0, 40.0]);
+    let child = format!(r#"<div style="margin-top:10px">{}</div>"#, lines(1, chrome));
+    assert_eq!(tops(&(lines(1, at) + &child)), [0.0, 30.0]);
+    // Padding stops the collapse: the box's own margin is none, the child stays 40 px down.
+    let padded = format!(r#"<div style="padding-top:10px">{}</div>"#, lines(1, chrome));
+    assert_eq!(tops(&(lines(1, at) + &padded)), [0.0, 60.0]);
+}
+
+/// Letter, 0.4 in margins, scale 1.5 (a 495 px limit) and a 400 px box of text; the rows of page 1 say the scale.
+fn shrink_of(html: &str) -> f64 {
+    let (paper, margins) = chrome_page_geometry((8.5, 11.0), [0.4; 4]).unwrap();
+    let out = print_with(html, |o| {
+        o.paper = paper;
+        o.margins = margins;
+        o.page_area = Some(chrome_page_area((8.5, 11.0), [0.4; 4]));
+        o.scale = 1.5;
+    });
+    let found = rects(&inflated(&out.bytes));
+    (found[0][3] - found[0][1]) / 11.25
+}
+
+#[test]
+fn shrink_to_fit_leaves_out_fixed_and_empty_boxes_and_body_clips_nothing() {
+    let link = r#"<a href="https://example.com/r" style="display:block;height:10px"></a>"#;
+    let doc =
+        |body_style: &str, body: &str| format!(r#"<!doctype html><body style="margin:0;{body_style}">{link}{body}"#);
+    // Fixed boxes and their content do not count.
+    let fixed = r#"<div style="position:fixed;left:600px;top:0;width:100px;height:10px"></div>"#;
+    assert!((shrink_of(&doc("", fixed)) - 1.0).abs() < 0.001);
+    let inside = r#"<div style="position:fixed;left:0;top:0;width:100px;height:10px"><div style="width:800px;height:10px"></div></div>"#;
+    assert!((shrink_of(&doc("", inside)) - 1.0).abs() < 0.001);
+    // An empty box counts for nothing, wherever it is, but a border or what is in it does.
+    for empty in [
+        r#"<div style="width:800px;height:0"></div>"#,
+        r#"<div style="width:800px;height:0;float:left"></div>"#,
+        r#"<div style="width:800px;height:0;position:absolute"></div>"#,
+        r#"<div style="width:0;height:100px;margin-left:800px"></div>"#,
+    ] {
+        assert!((shrink_of(&doc("", empty)) - 1.0).abs() < 0.001, "{empty}");
+    }
+    let bordered = r#"<div style="width:800px;height:0;border-top:1px solid"></div>"#;
+    assert!((shrink_of(&doc("", bordered)) - 495.0 / 742.5).abs() < 0.001);
+    let child = r#"<div style="width:800px;height:0"><div style="width:600px;height:10px"></div></div>"#;
+    assert!((shrink_of(&doc("", child)) - 495.0 / 742.5).abs() < 0.001);
+    // `overflow` on body is the viewport's: what is in it counts, 600 px on a 495 px limit.
+    let wide = r#"<div style="width:600px;height:10px"></div>"#;
+    for style in
+        ["overflow:hidden", "overflow:clip", "overflow:auto", "overflow-x:hidden", "overflow:hidden;width:300px"]
+    {
+        assert!((shrink_of(&doc(style, wide)) - 0.825).abs() < 0.001, "{style}");
+    }
+    // Not when the root has its own, or body contains its paint.
+    let root_too =
+        format!(r#"<!doctype html><html style="overflow:hidden"><body style="margin:0;overflow:hidden">{link}{wide}"#);
+    assert!((shrink_of(&root_too) - 1.0).abs() < 0.001);
+    assert!((shrink_of(&doc("overflow:hidden;contain:paint", wide)) - 1.0).abs() < 0.001);
+}
+
+#[test]
+fn page_area_is_in_layout_units() {
+    // (paper, margin, scale, rows Chrome's page holds), read off where a line stops fitting.
+    for (paper, margin, scale, holds) in [
+        ((8.27, 11.69), 0.4, 1.0, 1049.0),
+        ((8.27, 11.69), 0.4, 0.8, 1311.0),
+        ((8.27, 11.69), 0.4, 0.5, 2097.0),
+        ((8.27, 11.69), 0.4, 2.0, 525.0),
+        ((8.27, 11.69), 0.1, 1.5, 736.0),
+        ((8.27, 11.69), 0.1, 0.75, 1473.0),
+        ((8.5, 11.0), 0.25, 1.0, 1008.0),
+        ((8.5, 11.0), 0.1, 1.1, 944.0),
+        ((8.5, 11.0), 0.0, 1.1, 960.0),
+    ] {
+        let (paper_px, margins) = chrome_page_geometry(paper, [margin; 4]).unwrap();
+        let out = print_with(r#"<!doctype html><body style="margin:0"><div style="height:9000px"></div>"#, |o| {
+            o.paper = paper_px;
+            o.margins = margins;
+            o.page_area = Some(chrome_page_area(paper, [margin; 4]));
+            o.scale = scale;
+        });
+        assert_eq!(out.pages[0].rect.height(), holds, "{paper:?} margin {margin} scale {scale}");
+    }
+}
+
+#[test]
+fn bullets_are_not_text_and_clipped_glyphs_are_not_written() {
+    let doc = |body: &str| format!(r#"<!doctype html><body style="margin:0;font:16px/20px sans-serif">{body}"#);
+    let text_of = |html: &str| {
+        let out = print_with(html, |o| o.paper = (576.0, 384.0));
+        inflated(&out.bytes)
+    };
+    // A marker's char is not mapped back to text: no ToUnicode for the marker font.
+    let list = text_of(&doc(r#"<ul><li>one</li></ul>"#));
+    assert!(!list.contains("2022"), "disc written as text");
+    let numbered = text_of(&doc(r#"<ol style="list-style-type:upper-roman"><li>a</li><li>b</li></ol>"#));
+    assert!(numbered.contains("0049"), "roman numeral is text");
+    // Text past an overflow clip: a font's subset holds only the glyphs written.
+    let full = print_with(&doc(r#"<div style="white-space:nowrap">abcdefghijklmnopqrstuvwxyz</div>"#), |o| {
+        o.paper = (576.0, 384.0)
+    });
+    let clipped = print_with(
+        &doc(
+            r#"<div style="overflow:hidden;width:40px"><div style="white-space:nowrap">abcdefghijklmnopqrstuvwxyz</div></div>"#,
+        ),
+        |o| o.paper = (576.0, 384.0),
+    );
+    assert!(clipped.bytes.len() < full.bytes.len());
+}

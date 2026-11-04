@@ -17,6 +17,8 @@ This is the published MIT/Apache-2.0 `blitz-paint` crate from upstream commit
   uses it for source text (ligatures), link areas and tags. `paint_scene`/`paint_scene_with`
   record nothing.
 
+`overflow` on `body` does not clip when it is the viewport's.
+
 The linked blitz-dom patch supplies `Node::is_root_element`. Rendering regressions
 are covered in `crates/lp-render/tests/render.rs`; persistent-tree behavior is
 covered by `crates/lp-render/tests/mirror.rs`.

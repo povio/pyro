@@ -330,7 +330,7 @@ impl BaseDocument {
                 transform *= *t
             }
 
-            let overflow = overflow_contribution(node, *node.scrollable_overflow(), layout.size, scale);
+            let overflow = self.overflow_contribution(node_id, *node.scrollable_overflow(), layout.size, scale);
             return transform.transform_rect_bbox(overflow);
         }
 
@@ -359,16 +359,25 @@ impl BaseDocument {
                     continue;
                 }
                 let child_rect_in_self = self.resolve_transforms(child_id);
-                overflow = overflow.union(child_rect_in_self);
+                overflow = unite_overflow(overflow, child_rect_in_self);
             }
         }
         let hoisted_children = std::mem::take(&mut *self.nodes[node_id].hoisted_children.borrow_mut());
+        let viewport_contains_fixed = node_id == self.root_element().id;
         for &child_id in &hoisted_children {
             if !self.nodes.contains_key(child_id) {
                 continue;
             }
             let child_rect_in_self = self.resolve_transforms(child_id);
-            overflow = overflow.union(child_rect_in_self);
+            // lightningpanda: a box fixed to the viewport is not in the
+            // document's scrollable overflow, whatever it reaches.
+            let fixed = self.nodes[child_id]
+                .primary_styles()
+                .is_some_and(|s| s.clone_position() == style::computed_values::position::T::Fixed);
+            if viewport_contains_fixed && fixed {
+                continue;
+            }
+            overflow = unite_overflow(overflow, child_rect_in_self);
         }
         *self.nodes[node_id].hoisted_children.borrow_mut() = hoisted_children;
         for pseudo in [self.nodes[node_id].before(), self.nodes[node_id].after()] {
@@ -377,7 +386,7 @@ impl BaseDocument {
                 continue;
             }
             let child_rect_in_self = self.resolve_transforms(pseudo);
-            overflow = overflow.union(child_rect_in_self);
+            overflow = unite_overflow(overflow, child_rect_in_self);
         }
 
         // lightningpanda: the lines of an inline formatting context are
@@ -434,8 +443,54 @@ impl BaseDocument {
             Affine::translate((scaled_x, scaled_y))
         };
 
-        let contribution = overflow_contribution(&self.nodes[node_id], overflow, layout.size, scale);
+        let contribution = self.overflow_contribution(node_id, overflow, layout.size, scale);
         full.transform_rect_bbox(contribution)
+    }
+
+    /// lightningpanda: what a box adds to its parent's scrollable overflow
+    /// (its own coordinates): its border box, plus its own scrollable overflow
+    /// on the axes it does not clip. A scroll container keeps its content's
+    /// overflow to itself.
+    fn overflow_contribution(&self, node_id: NodeId, overflow: Rect, size: taffy::Size<f32>, scale: f64) -> Rect {
+        use style::values::computed::Overflow;
+        let node = &self.nodes[node_id];
+        let border_box = Rect::new(0.0, 0.0, size.width as f64 * scale, size.height as f64 * scale);
+        let mut out = overflow.union(border_box);
+        if let Some(style) = node.primary_styles() {
+            let (x, y) = (style.clone_overflow_x(), style.clone_overflow_y());
+            if (x != Overflow::Visible || y != Overflow::Visible) && !self.body_overflow_goes_to_viewport(node_id) {
+                if x != Overflow::Visible {
+                    (out.x0, out.x1) = (border_box.x0, border_box.x1);
+                }
+                if y != Overflow::Visible {
+                    (out.y0, out.y1) = (border_box.y0, border_box.y1);
+                }
+            }
+        }
+        out
+    }
+
+    /// lightningpanda: whether `node_id` is a `body` whose `overflow` applies
+    /// to the viewport instead of to it (CSS Overflow 3 3.3): the root's is
+    /// `visible`, and neither has containment.
+    pub fn body_overflow_goes_to_viewport(&self, node_id: NodeId) -> bool {
+        use style::values::computed::Overflow;
+        use style::values::specified::box_::Contain;
+        let node = &self.nodes[node_id];
+        if !node.data.is_element_with_tag_name(&crate::local_name!("body")) {
+            return false;
+        }
+        let root = self.root_element();
+        if node.parent != Some(root.id) {
+            return false;
+        }
+        let (Some(body), Some(html)) = (node.primary_styles(), root.primary_styles()) else {
+            return false;
+        };
+        html.clone_overflow_x() == Overflow::Visible
+            && html.clone_overflow_y() == Overflow::Visible
+            && body.clone_contain() == Contain::empty()
+            && html.clone_contain() == Contain::empty()
     }
 
     /// Ensure that the layout_children field is populated for all nodes
@@ -657,23 +712,15 @@ impl BaseDocument {
     }
 }
 
-/// lightningpanda: what a box adds to its parent's scrollable overflow
-/// (its own coordinates): its border box, plus its own scrollable overflow
-/// on the axes it does not clip. A scroll container keeps its content's
-/// overflow to itself.
-fn overflow_contribution(node: &crate::Node, overflow: Rect, size: taffy::Size<f32>, scale: f64) -> Rect {
-    use style::values::computed::Overflow;
-    let border_box = Rect::new(0.0, 0.0, size.width as f64 * scale, size.height as f64 * scale);
-    let mut out = overflow.union(border_box);
-    if let Some(style) = node.primary_styles() {
-        if style.clone_overflow_x() != Overflow::Visible {
-            (out.x0, out.x1) = (border_box.x0, border_box.x1);
-        }
-        if style.clone_overflow_y() != Overflow::Visible {
-            (out.y0, out.y1) = (border_box.y0, border_box.y1);
-        }
+/// lightningpanda: `overflow` with what a child adds to it. An empty rect (a
+/// box of no width or no height, with nothing reaching out of it) adds nothing,
+/// wherever it is: a 2000 x 0 px box does not make a page scroll.
+fn unite_overflow(overflow: Rect, child: Rect) -> Rect {
+    if child.width() > 0.0 && child.height() > 0.0 {
+        overflow.union(child)
+    } else {
+        overflow
     }
-    out
 }
 
 /// lightningpanda: cumulative time per `resolve` phase (style, damage,

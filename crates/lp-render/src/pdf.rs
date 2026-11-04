@@ -82,6 +82,8 @@ struct FontEntry {
     font: Font,
     /// Glyph id to the character it maps from (the lowest code point).
     chars: HashMap<u32, char>,
+    /// The bundled font list bullets are drawn with.
+    marker: bool,
 }
 
 /// Fonts and images converted for krilla, kept across documents.
@@ -108,7 +110,8 @@ impl PdfCache {
                         }
                     }
                 }
-                Some(FontEntry { font, chars })
+                let marker = data.data.as_ref() == blitz_dom::BULLET_FONT;
+                Some(FontEntry { font, chars, marker })
             })
             .as_ref()
     }
@@ -449,6 +452,8 @@ struct Pending {
     layer: Layer,
     /// Surface pushes made for it (`None`: not pushed yet).
     pushed: Option<u32>,
+    /// What this and the layers under it let through.
+    clip: Rect,
 }
 
 struct Replay<'a, 'b> {
@@ -503,10 +508,14 @@ impl Replay<'_, '_> {
                 }
             }
             match cmd {
-                RenderCommand::PushClipLayer(c) => self.layers.push(Pending {
-                    layer: Layer::Clip { path: to_path(&c.clip, c.transform), rule: rule(c.fill) },
-                    pushed: None,
-                }),
+                RenderCommand::PushClipLayer(c) => {
+                    let clip = self.clip_with(c.transform.transform_rect_bbox(c.clip.bounding_box()));
+                    self.layers.push(Pending {
+                        layer: Layer::Clip { path: to_path(&c.clip, c.transform), rule: rule(c.fill) },
+                        pushed: None,
+                        clip,
+                    })
+                }
                 RenderCommand::PushLayer(c) => {
                     if c.filter.is_some() || c.backdrop_filter.is_some() {
                         self.stats.filters_skipped += 1;
@@ -514,7 +523,9 @@ impl Replay<'_, '_> {
                     if c.blend.compose != peniko::Compose::SrcOver {
                         self.stats.compose_skipped += 1;
                     }
+                    let clip = self.clip_with(c.transform.transform_rect_bbox(c.clip.bounding_box()));
                     self.layers.push(Pending {
+                        clip,
                         layer: Layer::Group {
                             path: to_path(&c.clip, c.transform),
                             rule: rule(c.fill),
@@ -655,6 +666,28 @@ impl Replay<'_, '_> {
         self.stats.box_shadows += 1;
         self.flush();
         self.with_transform(c.transform * Affine::translate((area.x0, area.y0)), |s| s.draw_image(image, size));
+    }
+
+    /// What the current layers let through, also clipped by `bounds`.
+    fn clip_with(&self, bounds: Rect) -> Rect {
+        self.layers.last().map_or(bounds, |l| l.clip.intersect(bounds))
+    }
+
+    /// Whether a paper-cut page writes glyph `i` of a run. Chrome's PDF has no
+    /// clipped text: Skia's PDF device skips a glyph outside the clip's bounds
+    /// (the page's sides or an overflow clip), so it is not extracted either.
+    /// The page's top and bottom are not looked at: a line's place on a page is
+    /// decided for the whole run.
+    fn glyph_shown(&self, c: &anyrender::recording::GlyphRunCommand, i: usize) -> bool {
+        let g = &c.glyphs[i];
+        let size = c.font_size as f64;
+        let (x, y) = (g.x as f64, g.y as f64);
+        let right = c.glyphs.get(i + 1).map_or(x + size * 0.6, |n| (n.x as f64).max(x));
+        let glyph = c.transform.transform_rect_bbox(Rect::new(x, y - size, right, y + size * 0.3));
+        let clip = self.layers.last().map(|l| l.clip);
+        let inside = |lo0: f64, hi0: f64, lo1: f64, hi1: f64| lo0 < hi1 && lo1 < hi0;
+        inside(glyph.x0, glyph.x1, self.page.x0, self.page.x1)
+            && clip.is_none_or(|l| inside(glyph.x0, glyph.x1, l.x0, l.x1) && inside(glyph.y0, glyph.y1, l.y0, l.y1))
     }
 
     fn visible(&mut self, bounds: Rect) -> bool {
@@ -802,6 +835,14 @@ impl Replay<'_, '_> {
         if c.embolden != kurbo::Vec2::ZERO {
             self.stats.embolden_skipped += 1;
         }
+        // Only a paper-cut page: `.pz-page` documents keep what they had.
+        let paper_cut = self.extras.is_some();
+        let shown: Vec<usize> = if paper_cut {
+            (0..c.glyphs.len()).filter(|&i| self.glyph_shown(c, i)).collect()
+        } else {
+            (0..c.glyphs.len()).collect()
+        };
+        let Some(&first) = shown.first() else { return };
         let Some((paint, opacity)) = self.paint(&c.brush, None) else { return };
         let opacity = norm(opacity.get() * c.brush_alpha);
         let Some(entry) = self.cache.font(&c.font_data) else {
@@ -809,10 +850,14 @@ impl Replay<'_, '_> {
             return;
         };
         let font = entry.font.clone();
+        // Chrome draws bullets (disc, circle, square, disclosure) as shapes,
+        // which are not text in the PDF. Here they are glyphs of the marker
+        // font, drawn as outlines.
+        let outlined = paper_cut && entry.marker;
         let size = c.font_size;
         let mut text = String::new();
-        let mut glyphs = Vec::with_capacity(c.glyphs.len());
-        let (gx, gy) = (c.glyphs[0].x, c.glyphs[0].y);
+        let mut glyphs = Vec::with_capacity(shown.len());
+        let (gx, gy) = (c.glyphs[first].x, c.glyphs[first].y);
         // The run's source text when it was recorded: each glyph stands for
         // its cluster's characters (all of them for a ligature).
         let ex = self.extras;
@@ -821,7 +866,8 @@ impl Replay<'_, '_> {
             text.push_str(&r.text);
             self.stats.runs_with_source += 1;
         }
-        for (i, g) in c.glyphs.iter().enumerate() {
+        for (at, &i) in shown.iter().enumerate() {
+            let g = &c.glyphs[i];
             let range = match recorded {
                 Some(r) => r.glyph_text[i].start as usize..r.glyph_text[i].end as usize,
                 None => {
@@ -835,7 +881,7 @@ impl Replay<'_, '_> {
             if range.is_empty() {
                 self.stats.glyphs_without_text += 1;
             }
-            let advance = c.glyphs.get(i + 1).map_or(0.0, |n| n.x - g.x);
+            let advance = shown.get(at + 1).map_or(0.0, |&n| c.glyphs[n].x - g.x);
             glyphs.push(KrillaGlyph::new(
                 GlyphId::new(g.id),
                 advance / size,
@@ -869,14 +915,15 @@ impl Replay<'_, '_> {
             match glyph_transform {
                 // Per-glyph transform (synthetic italic): one glyph at a time.
                 Some(gt) => {
-                    for (g, kg) in c.glyphs.iter().zip(&glyphs) {
+                    for (&i, kg) in shown.iter().zip(&glyphs) {
+                        let g = &c.glyphs[i];
                         s.push_transform(&transform(Affine::translate((g.x as f64, g.y as f64)) * gt));
                         let one = KrillaGlyph { y_offset: 0.0, ..kg.clone() };
-                        s.draw_glyphs(KPoint::from_xy(0.0, 0.0), &[one], font.clone(), &text, size, false);
+                        s.draw_glyphs(KPoint::from_xy(0.0, 0.0), &[one], font.clone(), &text, size, outlined);
                         s.pop();
                     }
                 }
-                None => s.draw_glyphs(KPoint::from_xy(gx, gy), &glyphs, font, &text, size, false),
+                None => s.draw_glyphs(KPoint::from_xy(gx, gy), &glyphs, font, &text, size, outlined),
             }
             s.set_stroke(None);
             if let Some((leaves, id)) = tag {
