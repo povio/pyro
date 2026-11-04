@@ -1,0 +1,22 @@
+const L=(p,n,from=1)=>Array.from({length:n},(_,i)=>p+(i+from)).join('<br>');
+const doc=(b,st='')=>`<!doctype html><body style="margin:0;font:16px/20px Arial;${st}">${b}`;
+const sp=h=>`<div style="height:${h}px"></div>`;
+const d=(b,st='')=>`<div style="${st}">${b}</div>`;
+const box=(n,h,st='')=>`<div style="height:${h}px;${st}">${n}1</div>`;
+const BA='break-after:avoid';
+const C={};
+// resumed parent with block children: does the walk go back into it?
+C.r1=doc(d(box('z',380)+box('q',20)+box('p',340)+box('a',20,BA),'')+box('b',40,'break-inside:avoid'));
+C.r2=doc(d(box('z',380)+box('q',20)+box('p',330)+box('a',20,BA),'')+box('b',40,'break-inside:avoid'));
+C.r3=doc(d(d(L('z',20))+box('p',320)+box('a',20,BA))+box('b',40,'break-inside:avoid'));
+C.r4=doc(box('z',500)+box('p',230)+box('a',20,BA)+box('b',40,'break-inside:avoid'));
+C.r5=doc(d(L('z',38)+'<div style="break-after:avoid">a1</div>')+box('b',40,'break-inside:avoid'));
+C.r6=doc(`<div style="height:800px;${BA}">${L('a',38)}</div>`+box('b',40,'break-inside:avoid'));
+C.r7=doc(d(L('z',22))+d(L('c',18),BA)+box('b',40,'break-inside:avoid'));
+C.r8=doc(d(L('z',22))+d(L('c',15),BA)+box('b',40,'break-inside:avoid'));
+C.r9=doc(d(L('c',35),BA)+box('b',40,'break-inside:avoid'));
+C.r10=doc(d(L('c',36),BA)+box('b',40,'break-inside:avoid'));
+C.r11=doc(d(L('c',37),BA)+box('b',40,'break-inside:avoid'));
+C.r12=doc(sp(100)+d(L('c',20),BA)+box('b',40,'break-inside:avoid'));
+C.r13=doc(sp(100)+d(L('c',32),BA)+box('b',40,'break-inside:avoid'));
+export const cases=Object.entries(C).map(([name,html])=>({name,html}));

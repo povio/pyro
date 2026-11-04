@@ -229,3 +229,32 @@ Any failed behavioral assertion makes the run fail and keeps its evidence; do no
 The sampler's six columns are epoch milliseconds, resident KiB, physical footprint KiB, cumulative user
 nanoseconds, cumulative system nanoseconds and monotonic nanoseconds. Existing memory readers use the first
 three columns. `rss-sampler PID - --once` emits one snapshot and fails explicitly if the PID cannot be sampled.
+
+## Page-break fixtures against Chrome (`pdf/fixtures/`)
+
+Reproducible sets for how paper-cut `Page.printToPDF` documents break, with Chrome 156's results. `generators/` holds
+one module per set, each exporting `cases` (name, HTML, print options); `chrome-156/` the measured summaries (per page:
+word count, a hash of its sorted words, first and last word, distinct y), no PDFs. Names are `group|...`.
+
+```sh
+cd bench/pdf/fixtures                                  # needs pdftotext and Chrome at its default path
+node probe.mjs generators/fx-fr.mjs chrome out.json    # or a binary instead of chrome
+python3 compare.py chrome-156/fr.json out.json [-v]    # per group: words on the same pages, page counts, positions
+node print-72.mjs /abs/lightningpanda                  # the 72: pages, lines and link rects, Chrome measured live
+node geometry.mjs /abs/lightningpanda out.json         # the 152 geometry matrix; compare with chrome-156/geometry.json
+```
+
+| Sets | Generators | Cases | What varies |
+|---|---|---|---|
+| fractional spacers | `fx-fr` | 342 | a position's fraction before 20 px lines, 9 paper setups |
+| sub-pixel groups | `fx-sub` | 1656 | line heights, accumulated fractions, nested margins, later pages, under 0.5 px overflow, forced breaks, floats |
+| whole-px analogues | `fx-sub2`, `fx-sub3` | 86 | the same shapes in whole px, also parallel columns and tables |
+| vertical writing | `fx-vert` | 24 | vertical blocks and documents |
+| page geometry | `fx-72` | 120 | paper, margin and scale on links, text, breaks, shrink to fit |
+| orphans, widows | `fx-wo`, `fx-wo2`, `fx-wo3` | 125 | `orphans` and `widows` around cuts |
+| avoid, shrink, sizes | `fx-av`, `fx-sh`, `fx-sr`, `fx-tw`, `fx-engine` | 381 | `break-inside: avoid`, overflowing documents, page sizes |
+| gaps closed by #251 | `fx-b`, `fx-b2`, `fx-b3`, `fx-f`, `fx-h`, `fx-h1`, `fx-k`, `fx-m`, `fx-s`, `fx-v` | 1706 | monolithic boxes, `break-*: avoid`, forced breaks, line and box positions at a cut |
+
+Compare only runs from one Chrome version: the summaries say what 156 did on the machine that measured them (macOS,
+its Arial). Word assignment is what the sets pin; a page's y differs by a constant between engines, because pdftotext
+reads a different ascent from each PDF's font.

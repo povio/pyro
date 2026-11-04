@@ -1,0 +1,10 @@
+const rows=(W)=>`<!doctype html><style>html,body{margin:0;padding:0}a{display:block;height:1px;background:#000}</style><div style="width:${W}px;height:0"></div>`+Array.from({length:3000},(_,i)=>`<a href="https://x.test/${i}"></a>`).join('');
+const L4={paperWidth:8.5,paperHeight:11,marginTop:.4,marginBottom:.4,marginLeft:.4,marginRight:.4};
+const A4={paperWidth:8.27,paperHeight:11.69,marginTop:.4,marginBottom:.4,marginLeft:.4,marginRight:.4};
+export const cases=[];
+const add=(n,o,c)=>{for(const w of c)cases.push({name:`${n}|${w}`,html:rows(w),opts:o});};
+add('Ls15',{...L4,scale:1.5},[100,495,495.25,496,500,550,600,700,740,742,742.5,743,800,1000,2000]);
+add('Ls1',{...L4,scale:1},[742,743,800,1000,1113,1200]);
+add('As1',{...A4,scale:1},[721,722,1000,1081,1082,1500]);
+add('Ls8',{...L4,scale:.8},[927,928,1000,1391,1500]);
+add('L0',{paperWidth:8.5,paperHeight:11},[816,817,900,1224,1300]);
