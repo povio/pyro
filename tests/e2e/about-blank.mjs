@@ -261,6 +261,11 @@ const fixture = http.createServer((req, res) => {
     res.end('1;');
     return;
   }
+  if (req.url === '/euc-jp') {
+    res.writeHead(200, { 'content-type': 'text/html' });
+    res.end('<!doctype html><meta charset=euc-jp><iframe name=result></iframe><form action=/form-result target=result><input name=q></form>');
+    return;
+  }
   if (req.url === '/extra-headers') {
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ extra: req.headers['x-extra'] ?? null, cache: req.headers['cache-control'] ?? null }));
@@ -1022,6 +1027,18 @@ try {
       await old.dispose();
       assert.equal(await sibling.evaluate(() => marker), 23);
       assert.equal(p.frames().length, 2);
+    } finally { await p.close(); }
+  });
+  await check('legacy document encoding reaches URLs and forms submitted into a named iframe', async () => {
+    const p = await context.newPage();
+    try {
+      await p.goto(`${fixtureOrigin}/euc-jp`, { timeout: 5000 });
+      assert.equal(await p.evaluate(() => document.characterSet), 'EUC-JP');
+      assert.equal(await p.evaluate(() => { const a = document.createElement('a'); a.href = '/?\u3042\uac00'; return a.search; }), '?%A4%A2%26%2344032%3B');
+      const committed = p.waitForEvent('framenavigated', { predicate: f => f.name() === 'result', timeout: 5000 });
+      await p.evaluate(() => { const f = document.forms[0]; f.elements.q.value = '\u3042\uac00'; f.submit(); });
+      await committed;
+      assert.equal(p.frame({ name: 'result' }).url(), `${fixtureOrigin}/form-result?q=%A4%A2%26%2344032%3B`);
     } finally { await p.close(); }
   });
 } finally {

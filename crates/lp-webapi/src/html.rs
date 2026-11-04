@@ -98,18 +98,45 @@ macro_rules! simple_class {
     };
 }
 
-/// Resolves a URL attribute against the node document's inherited base or URL.
+/// Resolves a URL attribute against the node document's inherited base or URL,
+/// encoding the query in the document's encoding ("encoding-parse a URL").
 pub fn resolve_url(dom: &Dom, node: NodeId, value: &str) -> String {
     let base = dom.node_document(node).ok().and_then(|d| dom.document_base_url(d).ok());
     let parsed = base.and_then(|b| lp_net::Url::parse(b).ok());
-    resolve_against(parsed.as_ref(), value)
+    resolve_against(parsed.as_ref(), value, document_output_encoding(dom, node))
 }
 
-fn resolve_against(base: Option<&lp_net::Url>, value: &str) -> String {
-    match base {
-        Some(b) => b.join(value.trim()).map(|u| u.to_string()).unwrap_or_else(|_| value.to_owned()),
-        None => value.to_owned(),
-    }
+/// `resolve_url` with a UTF-8 query, for APIs specified to ignore the document
+/// encoding (`fetch`).
+pub fn resolve_url_utf8(dom: &Dom, node: NodeId, value: &str) -> String {
+    let base = dom.node_document(node).ok().and_then(|d| dom.document_base_url(d).ok());
+    let parsed = base.and_then(|b| lp_net::Url::parse(b).ok());
+    resolve_against(parsed.as_ref(), value, encoding_rs::UTF_8)
+}
+
+/// The output encoding of `node`'s document: UTF-8 stands in for UTF-16 and
+/// `replacement` (Encoding "get an output encoding").
+pub(crate) fn document_output_encoding(dom: &Dom, node: NodeId) -> &'static encoding_rs::Encoding {
+    dom.node_document(node)
+        .ok()
+        .and_then(|d| dom.document_data(d).ok())
+        .filter(|d| d.charset != "UTF-8")
+        .and_then(|d| encoding_rs::Encoding::for_label(d.charset.as_bytes()))
+        .map_or(encoding_rs::UTF_8, |e| e.output_encoding())
+}
+
+fn resolve_against(base: Option<&lp_net::Url>, value: &str, enc: &'static encoding_rs::Encoding) -> String {
+    let Some(b) = base else { return value.to_owned() };
+    let joined = if enc == encoding_rs::UTF_8 {
+        b.join(value)
+    } else {
+        // The query percent-encode set keeps `%`, so the escaped reference
+        // for an unmappable character survives the parser untouched.
+        let encode: &dyn Fn(&str) -> std::borrow::Cow<'_, [u8]> =
+            &|q| std::borrow::Cow::Owned(crate::encoding::encode_with_ncr(enc, q, "%26%23", "%3B"));
+        lp_net::Url::options().base_url(Some(b)).encoding_override(Some(encode)).parse(value)
+    };
+    joined.map(|u| u.to_string()).unwrap_or_else(|_| value.to_owned())
 }
 
 /// One bounded entry, with no node or JavaScript references. The actual base
@@ -134,11 +161,11 @@ fn resolve_reflected_url(page: &PageDom, dom: &Dom, node: NodeId, value: &str) -
         // Canonicalization can expand non-ASCII input. Oversized bases remain
         // fully supported, but neither source nor parsed strings are retained.
         if parsed.as_ref().is_some_and(|url| url.as_str().len() > MAX_BASE_BYTES) {
-            return resolve_against(parsed.as_ref(), value);
+            return resolve_against(parsed.as_ref(), value, document_output_encoding(dom, node));
         }
         *cache = Some(ReflectedUrlBase { source: base.to_owned(), parsed });
     }
-    resolve_against(cache.as_ref().and_then(|entry| entry.parsed.as_ref()), value)
+    resolve_against(cache.as_ref().and_then(|entry| entry.parsed.as_ref()), value, document_output_encoding(dom, node))
 }
 
 // ----- class selection --------------------------------------------------------

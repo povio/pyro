@@ -67,12 +67,14 @@ impl PageHooks for Hooks {
             if !b.doc(page).is_some_and(|p| p.main_frame.loader_id == loader) {
                 return;
             }
-            let new_context = request
-                .target
-                .as_deref()
-                .is_some_and(|t| !matches!(t.to_ascii_lowercase().as_str(), "" | "_self" | "_top" | "_parent"));
-            // `_blank` (and, until named browsing contexts exist, any other
-            // name) opens a popup page; the embedder creates and navigates it.
+            let named = request.target.as_deref().and_then(|t| b.page(page.page)?.frames.named_frame(page, t));
+            let new_context = named.is_none()
+                && request
+                    .target
+                    .as_deref()
+                    .is_some_and(|t| !matches!(t.to_ascii_lowercase().as_str(), "" | "_self" | "_top" | "_parent"));
+            // `_blank` (and any name that is not a frame of this page) opens a
+            // popup page; the embedder creates and navigates it.
             if new_context && request.method == "GET" && page.child.is_none() {
                 if let Some(frame_id) = b.doc(page).map(|p| p.main_frame.id.clone()) {
                     b.emit(
@@ -89,7 +91,7 @@ impl PageHooks for Hooks {
                 Err(JsError::Unsupported("form POST and cross-frame navigation targets"))
             } else {
                 b.navigate_frame_with_handling(
-                    page,
+                    named.unwrap_or(page),
                     NavigateOpts {
                         url: request.url,
                         reason: NavigationReason::Anchor,

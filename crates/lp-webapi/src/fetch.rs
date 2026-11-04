@@ -234,7 +234,7 @@ fn parse_request<'s>(
     init: Value<'s>,
 ) -> JsResult<(Request, Option<Persistent>)> {
     let input = dom_string(input)?;
-    let resolved = crate::html::resolve_url(&page.dom.borrow(), page.document(), &input);
+    let resolved = crate::html::resolve_url_utf8(&page.dom.borrow(), page.document(), &input);
     let mut url = lp_net::Url::parse(&resolved).map_err(|_| JsError::Type("Invalid fetch URL".into()))?;
     if !url.username().is_empty() || url.password().is_some() {
         return Err(JsError::Type("Fetch URL contains credentials".into()));

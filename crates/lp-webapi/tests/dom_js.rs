@@ -536,6 +536,18 @@ fn css_rule_values_survive_reentrant_gc() {
 fn regression_typed_array_subview() {
     let e = env("<body>");
     assert_eq!(eval(&e.main, "new TextDecoder().decode(new Uint8Array([65,66,67]).subarray(1,2))"), "B");
+    // A multi-byte sequence split across streaming calls, then flushed.
+    assert_eq!(
+        eval(
+            &e.main,
+            "{ const d = new TextDecoder(); const b = (...x) => new Uint8Array(x);
+               d.decode(b(0xe2, 0x82), {stream: true}) + d.decode(b(0xac), {stream: true}) + '|' + d.decode(b(0xe2)) + '|' + d.decode(b(65)) }"
+        ),
+        "\u{20ac}|\u{fffd}|A"
+    );
+    // The label's own BOM is dropped; another encoding's BOM does not switch it.
+    assert_eq!(eval(&e.main, "new TextDecoder('utf-16le').decode(new Uint8Array([0xff,0xfe,0x41,0])).length"), "1");
+    assert_eq!(eval(&e.main, "new TextDecoder('windows-1252').decode(new Uint8Array([0xef,0xbb,0xbf])).length"), "3");
 }
 #[test]
 fn regression_reentrant_string_coercion() {

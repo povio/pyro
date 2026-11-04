@@ -353,7 +353,7 @@ pub(crate) fn install(s: &Scope<'_>) -> JsResult<()> {
 pub(crate) fn multipart_body(s: &Scope<'_>, v: Value<'_>) -> JsResult<Option<(Bytes, String)>> {
     let Some(data) = s.unwrap::<FormData>(v) else { return Ok(None) };
     let entries = data.entry_values(s, v)?;
-    let (ct, body) = crate::formdata::multipart(&entries);
+    let (ct, body) = crate::formdata::multipart(&entries, encoding_rs::UTF_8);
     Ok(Some((Bytes::from(body), ct)))
 }
 

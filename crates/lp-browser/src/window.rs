@@ -218,20 +218,28 @@ impl JsClass for Window {
             (Some(host), Some(key)) => host.relation(s, key, true),
             _ => Ok(s.global().value()),
         });
-        def.getter("parent", |s, w| match (w.frames.upgrade(), w.frame) {
-            (Some(host), Some(key)) => host.relation(s, key, false),
-            _ => Ok(s.global().value()),
-        });
+        def.accessor(
+            "parent",
+            |s, w| match (w.frames.upgrade(), w.frame) {
+                (Some(host), Some(key)) => host.relation(s, key, false),
+                _ => Ok(s.global().value()),
+            },
+            |s, w, v| lp_webapi::window::replace_window_attribute(s, &w.target.page, "parent", v),
+        );
         def.getter("frameElement", |s, w| match (w.frames.upgrade(), w.frame) {
             (Some(host), Some(key)) => host.frame_element(s, key),
             _ => Ok(s.null()),
         });
-        def.getter("length", |s, w| {
-            Ok(s.number(match (w.frames.upgrade(), w.frame) {
-                (Some(host), Some(key)) => host.child_keys(key).len() as f64,
-                _ => 0.0,
-            }))
-        });
+        def.accessor(
+            "length",
+            |s, w| {
+                Ok(s.number(match (w.frames.upgrade(), w.frame) {
+                    (Some(host), Some(key)) => host.child_keys(key).len() as f64,
+                    _ => 0.0,
+                }))
+            },
+            |s, w, v| lp_webapi::window::replace_window_attribute(s, &w.target.page, "length", v),
+        );
         def.getter("origin", |s, _| Ok(s.string(s.realm().origin().as_deref().unwrap_or("null"))));
         def.indexed(|s, w, index| match (w.frames.upgrade(), w.frame) {
             (Some(host), Some(key)) => {
@@ -240,8 +248,16 @@ impl JsClass for Window {
             _ => Ok(None),
         });
         def.getter("window", |s, _w| Ok(s.global().value()));
-        def.getter("self", |s, _w| Ok(s.global().value()));
-        def.getter("frames", |s, _w| Ok(s.global().value()));
+        def.accessor(
+            "self",
+            |s, _w| Ok(s.global().value()),
+            |s, w, v| lp_webapi::window::replace_window_attribute(s, &w.target.page, "self", v),
+        );
+        def.accessor(
+            "frames",
+            |s, _w| Ok(s.global().value()),
+            |s, w, v| lp_webapi::window::replace_window_attribute(s, &w.target.page, "frames", v),
+        );
         def.getter("isSecureContext", |s, w| {
             let u = w.url();
             Ok(s.boolean(
