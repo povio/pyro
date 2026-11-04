@@ -217,13 +217,12 @@ pub struct Extras {
 type Leaves = Vec<(krilla::tagging::Identifier, Option<u32>)>;
 
 /// Writes `scene` (device px, document coordinates) as a PDF with one page
-/// per rectangle of `pages`; `scale` converts device px to points. Without
-/// a `placement` each page is its rectangle's size.
+/// per rectangle of `placed`; `scale` converts device px to points. Without
+/// a placement a page is its rectangle's size.
 pub fn write(
     scene: &Scene,
-    pages: &[Rect],
+    placed: &[(Rect, Option<Placement>)],
     scale: f64,
-    placement: Option<Placement>,
     extras: Option<&Extras>,
     cache: &mut PdfCache,
 ) -> Result<(Vec<u8>, PdfStats), String> {
@@ -237,7 +236,9 @@ pub fn write(
     };
     let dpr = PX_TO_PT / scale;
     let mut leaves: Leaves = Vec::new();
-    for page in pages {
+    let pages: Vec<Rect> = placed.iter().map(|&(page, _)| page).collect();
+    for (page, placement) in placed {
+        let placement = *placement;
         let (w, h) = match placement {
             Some(p) => (p.paper.0 as f32, p.paper.1 as f32),
             None => ((page.width() * scale) as f32, (page.height() * scale) as f32),
@@ -288,7 +289,7 @@ pub fn write(
             // `scale` already includes the placement's scale.
             let offset = placement.map_or((0.0, 0.0), |p| p.offset);
             for link in &ex.links {
-                let Some(annotation) = link_annotation(link, *page, shown, pages, offset, scale) else { continue };
+                let Some(annotation) = link_annotation(link, *page, shown, &pages, offset, scale) else { continue };
                 stats.links += 1;
                 if tagged {
                     leaves.push((p.add_tagged_annotation(annotation), Some(link.structure)));
