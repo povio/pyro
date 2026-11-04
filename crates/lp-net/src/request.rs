@@ -179,6 +179,19 @@ pub struct ResponseHead {
     pub kind: ResponseKind,
     /// Remote address "ip:port" when known (CDP remoteIPAddress).
     pub remote_addr: Option<String>,
+    /// HTTP version of the response (CDP `protocol`).
+    pub protocol: http::Version,
+}
+
+impl ResponseHead {
+    /// This head as sent over `protocol`. HTTP/2 has no reason phrase.
+    pub(crate) fn over(mut self, protocol: http::Version) -> Self {
+        self.protocol = protocol;
+        if protocol == http::Version::HTTP_2 {
+            self.status_text.clear();
+        }
+        self
+    }
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -208,6 +221,9 @@ pub enum NetError {
     Blocked(String),
     /// The server certificate did not verify; message is diagnostic only.
     Certificate(String),
+    /// The proxy failed: its CDP errorText (net::ERR_PROXY_CONNECTION_FAILED,
+    /// net::ERR_TUNNEL_CONNECTION_FAILED).
+    Proxy(&'static str),
     Other(String),
 }
 
@@ -228,6 +244,7 @@ impl NetError {
             NetError::Decode(_) => "net::ERR_CONTENT_DECODING_FAILED",
             NetError::Blocked(r) => r,
             NetError::Certificate(_) => "net::ERR_CERT_AUTHORITY_INVALID",
+            NetError::Proxy(text) => text,
             NetError::Other(_) => "net::ERR_FAILED",
         }
     }
