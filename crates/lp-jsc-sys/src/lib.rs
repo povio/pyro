@@ -525,6 +525,8 @@ pub mod spi {
     pub type JSPrepareForForkFn = unsafe extern "C" fn(group: JSContextGroupRef, timeout_seconds: c_double) -> bool;
     pub type JSDidForkFn = unsafe extern "C" fn(is_child: bool);
     pub type JSGlobalContextReseedRandomFn = unsafe extern "C" fn(ctx: JSGlobalContextRef);
+    /// Patched JavaScriptCore only (`webkit/patches/0003-complete-jit-plans.patch`).
+    pub type JSCompleteJITPlansFn = unsafe extern "C" fn(group: JSContextGroupRef, wait: bool);
 
     /// Runtime-resolved SPI table. Each entry is `None` when the running
     /// JavaScriptCore does not export the symbol.
@@ -546,6 +548,7 @@ pub mod spi {
         pub prepare_for_fork: Option<JSPrepareForForkFn>,
         pub did_fork: Option<JSDidForkFn>,
         pub reseed_random: Option<JSGlobalContextReseedRandomFn>,
+        pub complete_jit_plans: Option<JSCompleteJITPlansFn>,
     }
 
     impl Spi {
@@ -600,6 +603,7 @@ pub mod spi {
             prepare_for_fork: resolve!("JSPrepareForFork"),
             did_fork: resolve!("JSDidFork"),
             reseed_random: resolve!("JSGlobalContextReseedRandom"),
+            complete_jit_plans: resolve!("JSCompleteJITPlans"),
         })
     }
 }

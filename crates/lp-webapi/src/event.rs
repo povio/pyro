@@ -1090,10 +1090,6 @@ pub(crate) fn register(engine: &lp_js::Engine) {
     engine.register::<MessageEvent>();
     engine.register::<StorageEvent>();
     engine.register::<MediaQueryListEvent>();
-}
-
-/// `Touch` and `TouchEvent`, registered after every other class.
-pub(crate) fn register_touch(engine: &lp_js::Engine) {
     engine.register::<Touch>();
     engine.register::<TouchEvent>();
 }

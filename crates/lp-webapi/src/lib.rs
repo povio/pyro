@@ -72,9 +72,8 @@ pub use identity::UserAgentOverride;
 pub use navigator_extras::{ContextServices, PermissionSetting, UserAgentMetadata};
 pub use node::{wrap_node, NodeData};
 pub use page::{
-    DialogAnswer, DownloadRequest, FocusTarget, FocusTransition, FrameViewportSource, IframeAttribute, NavigationRequest,
-    PageDom,
-    PageHooks, RemotePoster,
+    DialogAnswer, DownloadRequest, FocusTarget, FocusTransition, FrameViewportSource, IframeAttribute,
+    NavigationRequest, PageDom, PageHooks, RemotePoster,
 };
 pub use storage::{StorageNamespace, StorageSeed};
 pub use target::{EventTarget, EventTargetData};
@@ -119,7 +118,6 @@ pub fn register(engine: &lp_js::Engine) {
     response::register_streams(engine);
     engine.register::<xhr::XMLHttpRequest>();
     engine.register::<xhr::XMLHttpRequestUpload>();
-    event::register_touch(engine);
 }
 
 /// Installs the page's bindings into a freshly created realm.

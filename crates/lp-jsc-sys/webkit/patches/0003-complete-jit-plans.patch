@@ -1,0 +1,43 @@
+diff --git a/Source/JavaScriptCore/API/JSFork.cpp b/Source/JavaScriptCore/API/JSFork.cpp
+--- a/Source/JavaScriptCore/API/JSFork.cpp
++++ b/Source/JavaScriptCore/API/JSFork.cpp
+@@ -70,3 +70,21 @@ void JSGlobalContextReseedRandom(JSGlobalContextRef ctx)
+     JSLockHolder locker(globalObject->vm());
+     globalObject->weakRandom().setSeed(cryptographicallyRandomNumber<uint32_t>());
+ }
++
++void JSCompleteJITPlans(JSContextGroupRef group, bool wait)
++{
++#if ENABLE(JIT)
++    VM& vm = *toJS(group);
++    JSLockHolder locker(vm);
++    auto* worklist = JITWorklist::existingGlobalWorklistOrNull();
++    if (!worklist || !vm.numberOfActiveJITPlans())
++        return;
++    if (wait)
++        worklist->completeAllPlansForVM(vm);
++    else
++        worklist->completeAllReadyPlansForVM(vm);
++#else
++    UNUSED_PARAM(group);
++    UNUSED_PARAM(wait);
++#endif
++}
+diff --git a/Source/JavaScriptCore/API/JSForkPrivate.h b/Source/JavaScriptCore/API/JSForkPrivate.h
+--- a/Source/JavaScriptCore/API/JSForkPrivate.h
++++ b/Source/JavaScriptCore/API/JSForkPrivate.h
+@@ -35,6 +35,14 @@ JS_EXPORT void JSDidFork(bool isChild);
+    parent's (and every sibling's) sequence. */
+ JS_EXPORT void JSGlobalContextReseedRandom(JSGlobalContextRef ctx);
+ 
++/* Installs the finished JIT compilations of `group` (also those still running
++   when `wait`). A finished plan stays on the worklist until the next tier-up
++   check somewhere in the VM, and the GC marks its CodeBlock as a compiling one:
++   that CodeBlock's global object, and so a closed page's whole realm, survives
++   every collection until then. Call before a collection that should free closed
++   realms; with no other thread running JavaScript in `group`. */
++JS_EXPORT void JSCompleteJITPlans(JSContextGroupRef group, bool wait);
++
+ #ifdef __cplusplus
+ }
+ #endif

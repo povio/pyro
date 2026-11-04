@@ -368,7 +368,10 @@ impl Engine {
     /// pages returned to the OS: a page that just finished booting, or a
     /// closed one, costs its live size instead of the heap's growth peak.
     pub fn settle(&self) {
-        self.collect_garbage_now();
+        // Finished compilations only: a page close must not wait for an FTL
+        // compile. One still running holds its realm until the next settle.
+        self.complete_jit_plans(false);
+        self.synchronous_gc();
         self.drain_finalized();
         release_memory();
     }
@@ -378,8 +381,27 @@ impl Engine {
         unsafe { sys::JSGarbageCollect(self.inner.root_ctx()) }
     }
 
-    /// Synchronous full collection when the SPI is available (tests/benchmarks).
+    /// Synchronous full collection when the SPI is available (tests/benchmarks),
+    /// after every JIT compilation has finished, so that what it finds depends
+    /// on reachability alone.
     pub fn collect_garbage_now(&self) -> bool {
+        self.complete_jit_plans(true);
+        self.synchronous_gc()
+    }
+
+    /// Installs finished JIT compilations (also running ones when `wait`). The
+    /// worklist holds a finished plan until the next tier-up check in the VM, and
+    /// the GC marks its CodeBlock, which reaches that code's global object: a
+    /// helper that tiered up shortly before its page closed keeps the closed realm
+    /// alive through every collection in between. No-op on the system framework.
+    fn complete_jit_plans(&self, wait: bool) {
+        if let Some(f) = sys::spi::get().complete_jit_plans {
+            // SAFETY: the group is alive and used by this thread only.
+            unsafe { f(self.inner.group, wait) };
+        }
+    }
+
+    fn synchronous_gc(&self) -> bool {
         match sys::spi::get().synchronous_gc_for_debugging {
             Some(f) => {
                 unsafe { f(self.inner.root_ctx()) };
