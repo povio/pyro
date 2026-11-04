@@ -206,6 +206,9 @@ pub struct Extras {
     /// cut short (at a break) are filled with it to the slice's height.
     pub slice_height: f64,
     pub canvas: Option<[u8; 4]>,
+    /// How much of a page's slice the paper's content box shows (device px).
+    /// A page holds whole CSS px, so its last row can be cut by this.
+    pub shown_height: f64,
 }
 
 type Leaves = Vec<(krilla::tagging::Identifier, Option<u32>)>;
@@ -251,7 +254,12 @@ pub fn write(
         if let Some(ex) = extras {
             fill_short_page(&mut s, *page, ex);
         }
-        if let Some(clip) = rect_path(*page) {
+        // What the paper's content box shows of the page.
+        let shown = match extras {
+            Some(ex) => Rect::new(page.x0, page.y0, page.x1, page.y1.min(page.y0 + ex.shown_height)),
+            None => *page,
+        };
+        if let Some(clip) = rect_path(shown) {
             s.push_clip_path(&clip, &FillRule::NonZero);
         }
         Replay {
@@ -277,7 +285,7 @@ pub fn write(
             // `scale` already includes the placement's scale.
             let offset = placement.map_or((0.0, 0.0), |p| p.offset);
             for link in &ex.links {
-                let Some(annotation) = link_annotation(link, *page, pages, offset, scale) else { continue };
+                let Some(annotation) = link_annotation(link, *page, shown, pages, offset, scale) else { continue };
                 stats.links += 1;
                 if tagged {
                     leaves.push((p.add_tagged_annotation(annotation), Some(link.structure)));
@@ -311,11 +319,13 @@ fn fill_short_page(s: &mut Surface<'_>, page: Rect, ex: &Extras) {
     s.draw_path(&rest);
 }
 
-/// `link`'s annotation on `page` (`None`: it is not on it). `offset` and
-/// `content_scale` place the page's content on paper (pt).
+/// `link`'s annotation on `page`, of what `shown` shows of it (`None`: it is
+/// not on it). `offset` and `content_scale` place the page's content on paper
+/// (pt).
 fn link_annotation(
     link: &Link,
     page: Rect,
+    shown: Rect,
     pages: &[Rect],
     offset: (f64, f64),
     content_scale: f64,
@@ -325,7 +335,7 @@ fn link_annotation(
         .rects
         .iter()
         .filter_map(|r| {
-            let r = r.intersect(page);
+            let r = r.intersect(shown);
             if r.width() <= 0.0 || r.height() <= 0.0 {
                 return None;
             }
@@ -340,9 +350,10 @@ fn link_annotation(
     let target = match &link.target {
         LinkTarget::Uri(uri) => Target::Action(krilla::action::LinkAction::new(uri.clone()).into()),
         LinkTarget::Internal(x, y) => {
-            let i = pages.iter().position(|p| *y >= p.y0 && *y < p.y1)?;
+            // A target in a margin dropped at a cut is at the next page's top.
+            let i = pages.iter().position(|p| *y < p.y1)?;
             let px = (x - pages[i].x0).max(0.0) * content_scale + offset.0;
-            let py = (y - pages[i].y0) * content_scale + offset.1;
+            let py = (y - pages[i].y0).max(0.0) * content_scale + offset.1;
             let dest = krilla::destination::XyzDestination::new(i, KPoint::from_xy(px as f32, py as f32));
             Target::Destination(krilla::destination::Destination::Xyz(dest))
         }

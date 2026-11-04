@@ -433,6 +433,7 @@ impl EngineHost {
             }
             margins[i] = v;
         }
+        let page_area = lp_render::chrome_page_area((w, h), margins);
         let Some((paper, margins)) = lp_render::chrome_page_geometry((w, h), margins) else {
             return Err(CdpError::invalid_params("invalid print parameters: content area is empty"));
         };
@@ -446,6 +447,7 @@ impl EngineHost {
             page_selector: ".pz-page".into(),
             paper,
             margins,
+            page_area: Some(page_area),
             scale,
             print_background: p.print_background,
             page_ranges,

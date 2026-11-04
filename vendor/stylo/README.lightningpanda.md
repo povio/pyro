@@ -22,6 +22,10 @@ crate (`diff -ruN`).
   (upstream: gecko only). lp-render's PDF output reads them to place page cuts of paper-cut
   documents. Nothing else reads them; computed values of other properties are unchanged.
 
+- `properties/longhands.toml`, `properties/counted_unknown_properties.py`: `orphans` and `widows`
+  are added (upstream has neither; both were counted unknown properties), inherited, in
+  `inherited_text`. lp-render's PDF output reads them to place page cuts of paper-cut documents.
+
 ## Updating or dropping the patch
 
 - When upstream has the change: delete this directory and the `[patch.crates-io]` entry.
