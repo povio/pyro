@@ -647,8 +647,21 @@ pub struct ComputedStyle {
     pub pan_y_blocked: bool,
     /// Own cascaded text-transform (`Inherit` takes the parent's).
     pub text_transform: TextTransform,
+    pub white_space: WhiteSpace,
     pub absolutely_positioned: bool,
     pub floated: bool,
+}
+
+/// What computed `white-space-collapse` does to rendered text.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum WhiteSpace {
+    /// Spaces and newlines collapse.
+    #[default]
+    Collapse,
+    /// `pre-line`: spaces collapse, newlines stay.
+    PreserveBreaks,
+    /// `pre`, `pre-wrap`, `break-spaces`.
+    Preserve,
 }
 
 impl ComputedStyle {
@@ -883,6 +896,11 @@ impl StyleEngine {
                 *TEXT_TRANSFORM_NONE
             } else {
                 TextTransform::parse(&get("text-transform")).unwrap_or_default()
+            },
+            white_space: match style.get_inherited_text().clone_white_space_collapse() {
+                style::computed_values::white_space_collapse::T::Collapse => WhiteSpace::Collapse,
+                style::computed_values::white_space_collapse::T::PreserveBreaks => WhiteSpace::PreserveBreaks,
+                _ => WhiteSpace::Preserve,
             },
             absolutely_positioned: matches!(
                 style.get_box().position,

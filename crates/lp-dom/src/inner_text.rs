@@ -14,15 +14,15 @@
 //!
 //! Display decisions come from [`StyleEngine`]: an element's own
 //! display:none, inherited `visibility: hidden`, own `text-transform`. As
-//! upstream, `capitalize` is reported by getComputedStyle but not applied,
-//! and `white-space` is only honored through `<pre>`.
+//! upstream, `capitalize` is reported by getComputedStyle but not applied.
+//! `white-space` comes from the computed style of each element.
 
 use markup5ever::ns;
 
 use crate::dom::Dom;
 use crate::error::{DomError, DomErrorKind, DomResult};
 use crate::node::{NodeId, NodeKind, NIL};
-use crate::style::{CheckVisibilityOptions, StyleEngine, TextTransform};
+use crate::style::{CheckVisibilityOptions, StyleEngine, TextTransform, WhiteSpace};
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum TextDisplay {
@@ -111,8 +111,8 @@ struct State<'a> {
     pre_w: bool,
     /// Trim leading whitespace of the next text run.
     trim_left: bool,
-    /// `<pre>` subtree: whitespace preserved.
-    preserve: bool,
+    /// Computed white-space of the element whose text is being written.
+    white_space: WhiteSpace,
     transform: TextTransform,
 }
 
@@ -281,7 +281,7 @@ impl Dom {
             wrote_any: false,
             pre_w: false,
             trim_left: true,
-            preserve: tag == "pre",
+            white_space: style.computed(self, el).map_or(WhiteSpace::Collapse, |c| c.white_space),
             transform: style.text_transform(self, el),
         };
         self.collect_inner_text(idx, &mut state);
@@ -375,23 +375,19 @@ impl Dom {
         }
         // text-transform inherits, so a child's own value covers its subtree only.
         let parent_transform = state.transform;
-        let own = state.style.computed(self, id).map_or(TextTransform::Inherit, |c| c.text_transform);
+        let parent_white_space = state.white_space;
+        let computed = state.style.computed(self, id);
+        let own = computed.map_or(TextTransform::Inherit, |c| c.text_transform);
         if own != TextTransform::Inherit {
             state.transform = own;
         }
+        state.white_space = computed.map_or(parent_white_space, |c| c.white_space);
         match display {
             TextDisplay::Skip | TextDisplay::Replaced => unreachable!(),
             TextDisplay::Inline | TextDisplay::Transparent => self.collect_inner_text(idx, state),
             TextDisplay::Block => {
                 state.require_breaks(1);
-                // enterBlock (Html.zig:884-891)
-                if tag == "pre" && !state.preserve {
-                    state.preserve = true;
-                    self.collect_inner_text(idx, state);
-                    state.preserve = false;
-                } else {
-                    self.collect_inner_text(idx, state);
-                }
+                self.collect_inner_text(idx, state);
                 state.require_breaks(1);
             }
             TextDisplay::BlockP => {
@@ -415,6 +411,7 @@ impl Dom {
             }
         }
         state.transform = parent_transform;
+        state.white_space = parent_white_space;
     }
 
     /// renderedTextFragment (Html.zig:1074-1096): a fragment of Text nodes
@@ -517,11 +514,32 @@ fn write_text(s: &str, state: &mut State<'_>) {
 
 /// writeRenderedText (Html.zig:958-998).
 fn write_rendered_text(s: &str, state: &mut State<'_>) {
-    if state.preserve {
+    if state.white_space == WhiteSpace::PreserveBreaks && s.contains(['\n', '\r']) {
+        // Each line collapses on its own; spaces around a newline are dropped.
+        let normalized = s.replace("\r\n", "\n").replace('\r', "\n");
+        for (i, line) in normalized.split('\n').enumerate() {
+            if i > 0 {
+                state.flush_breaks();
+                state.out.push('\n');
+                state.wrote_any = true;
+                state.pre_w = false;
+                state.trim_left = true;
+            }
+            if !line.is_empty() {
+                write_collapsed(line, state);
+            }
+        }
+        return;
+    }
+    if state.white_space == WhiteSpace::Preserve {
         if s.is_empty() {
             return;
         }
         state.flush_breaks();
+        // A collapsible space from a previous run still renders before this one.
+        if state.pre_w {
+            state.out.push(' ');
+        }
         // Preserve whitespace verbatim, normalising CR / CRLF to LF.
         let mut chars = s.chars().peekable();
         while let Some(ch) = chars.next() {
@@ -539,15 +557,22 @@ fn write_rendered_text(s: &str, state: &mut State<'_>) {
         state.trim_left = false;
         return;
     }
+    write_collapsed(s, state);
+}
+
+fn write_collapsed(s: &str, state: &mut State<'_>) {
     if is_all_ascii_whitespace(s) {
-        state.pre_w = state.wrote_any && !state.trim_left;
+        // A pending space stays pending across whitespace-only runs.
+        state.pre_w |= state.wrote_any && !state.trim_left;
         return;
     }
     state.flush_breaks();
+    // The pending space and this run's leading whitespace collapse into one.
+    let trim_left = state.trim_left || state.pre_w;
     if state.pre_w {
         state.out.push(' ');
     }
-    state.pre_w = render_collapsed(s, state.trim_left, &mut state.out);
+    state.pre_w = render_collapsed(s, trim_left, &mut state.out);
     state.wrote_any = true;
     state.trim_left = state.pre_w;
 }
