@@ -129,6 +129,100 @@ pub(crate) struct EngineInner {
     /// The owning `Engine` handle was dropped: callbacks no longer resolve to
     /// this engine and a new engine may be created on the thread.
     owner_dropped: Cell<bool>,
+    /// When [`Engine::release_closed`] actually collects.
+    release_gate: ReleaseGate,
+}
+
+/// Decides when a closed page's garbage is worth a full collection: once the
+/// process's footprint is past `RELEASE_GROWTH_MIN` or `RELEASE_GROWTH_PERCENT`
+/// above its lowest reading. The footprint covers the engine's heap and the
+/// native memory of closed pages alike, and costs one system call.
+///
+/// The reference is never raised, not even by a collection: JavaScriptCore
+/// returns freed pages some time later, so a reading right after one is close
+/// to the peak, and measuring from it let an app's process grow from 272 MB to
+/// 726 MB over 25 navigations. A process that holds more than the threshold
+/// alive collects on every close, which is what it would do without the gate.
+///
+/// Serving connections on several engines in one process, each sees the
+/// others' growth too: that collects more often, never less.
+struct ReleaseGate {
+    low: Cell<u64>,
+    /// A closed page has not been collected yet.
+    pending: Cell<bool>,
+    /// (minimum growth in bytes, percent of the footprint).
+    growth: (u64, u64),
+}
+
+/// A loop of small pages levels off about 20 MB above its first reading under
+/// JavaScriptCore's own collections. A lower threshold sits under that level
+/// and collects on nearly every close: at 16 MB `page.navigate.simple` took
+/// 4.5 ms of CPU per navigation, at 32 MB 2.6 ms, and collecting always 4.9 ms.
+const RELEASE_GROWTH_MIN: u64 = 32 << 20;
+const RELEASE_GROWTH_PERCENT: u64 = 25;
+
+impl ReleaseGate {
+    fn new(growth: (u64, u64)) -> ReleaseGate {
+        ReleaseGate { low: Cell::new(u64::MAX), pending: Cell::new(false), growth }
+    }
+
+    /// `LIGHTNINGPANDA_RELEASE_GROWTH=<MB>[:<percent>]` overrides the
+    /// thresholds (benchmark comparison); `0` collects on every close.
+    fn growth_from_env() -> (u64, u64) {
+        let default = (RELEASE_GROWTH_MIN, RELEASE_GROWTH_PERCENT);
+        let Ok(value) = std::env::var("LIGHTNINGPANDA_RELEASE_GROWTH") else { return default };
+        let (mb, percent) = value.split_once(':').unwrap_or((&value, "0"));
+        match (mb.parse::<u64>(), percent.parse::<u64>()) {
+            (Ok(mb), Ok(percent)) => (mb << 20, percent),
+            _ => default,
+        }
+    }
+
+    /// Whether a page that was just closed should be collected now.
+    fn should_collect(&self, footprint: Option<u64>) -> bool {
+        let Some(now) = footprint else { return true };
+        let low = self.low.get().min(now);
+        self.low.set(low);
+        let (min, percent) = self.growth;
+        let due = now - low >= min.max(low / 100 * percent);
+        self.pending.set(!due);
+        due
+    }
+
+    /// The process's pages are another's now: the next reading is the first.
+    fn forked(&self) {
+        self.low.set(u64::MAX);
+        self.pending.set(false);
+    }
+}
+
+/// The process's physical footprint in bytes: what the system charges it for,
+/// without the reclaimable pages that resident size still counts.
+fn process_footprint() -> Option<u64> {
+    #[cfg(target_os = "macos")]
+    {
+        /// `struct rusage_info_v0` from `<sys/resource.h>`: a 16-byte UUID,
+        /// then `ri_user_time` .. `ri_proc_exit_abstime`.
+        #[repr(C)]
+        struct RusageInfoV0 {
+            uuid: [u8; 16],
+            fields: [u64; 10],
+        }
+        const RI_PHYS_FOOTPRINT: usize = 7;
+        const RUSAGE_INFO_V0: i32 = 0;
+        unsafe extern "C" {
+            fn proc_pid_rusage(pid: i32, flavor: i32, buffer: *mut RusageInfoV0) -> i32;
+        }
+        let mut info = std::mem::MaybeUninit::<RusageInfoV0>::uninit();
+        // SAFETY: the buffer has the layout the flavor writes, for our own pid.
+        let done = unsafe { proc_pid_rusage(std::process::id() as i32, RUSAGE_INFO_V0, info.as_mut_ptr()) };
+        // SAFETY: filled in when the call succeeds.
+        (done == 0).then(|| unsafe { info.assume_init() }.fields[RI_PHYS_FOOTPRINT])
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        None
+    }
 }
 
 impl EngineInner {
@@ -288,6 +382,7 @@ impl Engine {
             finalized: Arc::new(class::FinalizeQueue::default()),
             shut_down: Cell::new(false),
             owner_dropped: Cell::new(false),
+            release_gate: ReleaseGate::new(ReleaseGate::growth_from_env()),
         });
         if caps.termination {
             // Poll the termination flag every 50 ms of continuous JS execution.
@@ -357,11 +452,13 @@ impl Engine {
         class::drain_finalized(&self.inner)
     }
 
-    /// Frees what a closed page (or a navigated-away document) left behind: a collection of the engine's
-    /// heap, then the allocator's retained free pages are returned to the OS
-    /// (`release_memory`). A closed page's wrappers and DOM are otherwise
-    /// kept until the next collection, which an idle test process may never
-    /// run.
+    /// Frees what a closed page (or a navigated-away document) left behind,
+    /// once there is enough of it ([`ReleaseGate`]): a collection of the
+    /// engine's heap, then the allocator's retained free pages are returned
+    /// to the OS (`release_memory`). A closed page's wrappers and DOM are
+    /// otherwise kept until the next collection, which an idle test process
+    /// may never run: a caller with an idle moment checks
+    /// [`Engine::release_pending`].
     ///
     /// Measured on 20 open/boot/close cycles of a 2 MB app: the process
     /// plateaus at 270 MB instead of 339 MB. `LIGHTNINGPANDA_RELEASE_ON_CLOSE=0`
@@ -370,7 +467,15 @@ impl Engine {
         if std::env::var("LIGHTNINGPANDA_RELEASE_ON_CLOSE").is_ok_and(|v| v == "0") {
             return;
         }
-        self.settle();
+        if self.inner.release_gate.should_collect(process_footprint()) {
+            self.settle();
+        }
+    }
+
+    /// Whether a closed page is still waiting for the collection
+    /// [`Engine::release_closed`] put off. [`Engine::settle`] runs it.
+    pub fn release_pending(&self) -> bool {
+        self.inner.release_gate.pending.get()
     }
 
     /// A full synchronous collection, finalized wrappers released, free
@@ -383,6 +488,7 @@ impl Engine {
         self.synchronous_gc();
         self.drain_finalized();
         release_memory();
+        self.inner.release_gate.pending.set(false);
     }
 
     /// Requests a full garbage collection (asynchronous in JSC).
@@ -461,6 +567,7 @@ impl Engine {
         unsafe {
             did_fork(child);
             if child {
+                self.inner.release_gate.forked();
                 reseed(self.inner.root);
                 for (global, realm) in self.inner.realms.borrow().iter() {
                     if realm.strong_count() > 0 {
@@ -663,6 +770,71 @@ pub fn release_memory() {
         // SAFETY: glibc's malloc_trim has no preconditions.
         unsafe {
             malloc_trim(0);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const MB: u64 = 1 << 20;
+
+    #[test]
+    fn release_gate_collects_on_growth_only() {
+        let gate = ReleaseGate::new((16 * MB, 25));
+        assert!(!gate.should_collect(Some(40 * MB)), "the first reading is the reference");
+        assert!(!gate.should_collect(Some(50 * MB)));
+        assert!(gate.pending.get());
+        assert!(gate.should_collect(Some(56 * MB)));
+        assert!(!gate.pending.get());
+    }
+
+    #[test]
+    fn release_gate_scales_with_the_footprint() {
+        let gate = ReleaseGate::new((16 * MB, 25));
+        assert!(!gate.should_collect(Some(400 * MB)));
+        assert!(!gate.should_collect(Some(480 * MB)), "under 25%");
+        assert!(gate.should_collect(Some(500 * MB)));
+    }
+
+    #[test]
+    fn release_gate_measures_from_the_low_point() {
+        let gate = ReleaseGate::new((16 * MB, 25));
+        assert!(!gate.should_collect(Some(100 * MB)));
+        assert!(!gate.should_collect(Some(60 * MB)));
+        assert!(gate.should_collect(Some(76 * MB)));
+    }
+
+    #[test]
+    fn release_gate_is_not_raised_by_a_collection_that_returned_nothing_yet() {
+        let gate = ReleaseGate::new((16 * MB, 25));
+        assert!(!gate.should_collect(Some(100 * MB)));
+        assert!(gate.should_collect(Some(130 * MB)));
+        // Still 130 MB: the freed pages have not gone back to the system.
+        assert!(gate.should_collect(Some(130 * MB)));
+    }
+
+    #[test]
+    fn release_gate_without_a_threshold_or_a_footprint_always_collects() {
+        assert!(ReleaseGate::new((0, 0)).should_collect(Some(100 * MB)));
+        assert!(ReleaseGate::new((16 * MB, 25)).should_collect(None));
+    }
+
+    #[test]
+    fn release_gate_after_a_fork_starts_from_the_next_reading() {
+        let gate = ReleaseGate::new((16 * MB, 25));
+        assert!(!gate.should_collect(Some(400 * MB)));
+        gate.forked();
+        assert!(!gate.should_collect(Some(500 * MB)));
+        assert!(!gate.should_collect(Some(5 * MB)));
+        assert!(gate.should_collect(Some(21 * MB)));
+    }
+
+    #[test]
+    fn process_footprint_reads_something_on_macos() {
+        if cfg!(target_os = "macos") {
+            assert!(process_footprint().is_some_and(|f| f > MB));
         }
     }
 }
