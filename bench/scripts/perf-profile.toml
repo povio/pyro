@@ -1,0 +1,38 @@
+# Cargo profile for bench/scripts/cdp-perf-ab.sh, passed with `cargo --config`.
+#
+# It lives here rather than in the workspace Cargo.toml because the script builds other commits: a commit older
+# than the profile could not be built with `--profile perf` if each checkout had to define it itself, and two
+# sides of a comparison must use the same settings. Cargo's built-in names (`bench`, `test`, `dev`, `release`,
+# `doc`) stay untouched.
+#
+# Fast to rebuild, not the shipped code: no cross-crate LTO, so absolute numbers differ from `release`. Use
+# `cdp-perf-ab.sh --shipping-profile` for sign-off.
+[profile.perf]
+inherits = "release"
+lto = false
+codegen-units = 16
+incremental = true
+debug = false
+# Explicit: with debug = false Cargo would otherwise strip after the linker wrapper signs, losing allow-jit.
+strip = "none"
+
+# sccache cannot cache incremental compilations, and Cargo makes path dependencies incremental too, so this keeps
+# vendor/ shared between the slots; only workspace members stay incremental. Listed by name because
+# `package."*"` also reaches proc macros and build scripts, and with it their dylibs failed to load
+# (E0463, "can't find crate for `rustversion`").
+[profile.perf.package.blitz-dom]
+incremental = false
+[profile.perf.package.blitz-paint]
+incremental = false
+[profile.perf.package.parley]
+incremental = false
+[profile.perf.package.parley_engine]
+incremental = false
+[profile.perf.package.stylo]
+incremental = false
+[profile.perf.package.taffy]
+incremental = false
+
+# As in [profile.release]: lp-webapi's many small modules are the slowest crate to generate code for.
+[profile.perf.package.lp-webapi]
+codegen-units = 64

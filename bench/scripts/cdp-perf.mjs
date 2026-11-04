@@ -13,7 +13,8 @@
 // alternates every round (AB, BA, ...), so host drift hits each binary equally; that is the only fair way to
 // compare on a busy machine. Timings are wall-clock milliseconds measured by this harness (Node + `ws`), so
 // they include the WebSocket hop. Browser CPU per operation comes from the native sampler (macOS) or /proc
-// (Linux) and excludes the harness.
+// (Linux) and excludes the harness. The macOS sampler also reads instructions retired, which unlike wall clock
+// and CPU time barely move with host load: on a machine that cannot go quiet, compare those.
 //
 // --perf-trace needs binaries built with `--features perf-trace`: it resets the browser's stage timers after
 // warmup and reads them (LP.perfStats) after the measured loop, attributing inner CDP costs per scenario.
@@ -1400,10 +1401,10 @@ function cpuSnapshot(pid) {
   }
   if (!SAMPLER) return Promise.resolve(null);
   return new Promise((res) =>
-    execFile(SAMPLER, [String(pid), '-', '--once'], (err, out) => {
+    execFile(SAMPLER, [String(pid), '-', '--once', '--instructions'], (err, out) => {
       if (err) return res(null);
       const c = out.trim().split(/\s+/).map(Number);
-      res({ cpuMs: (c[3] + c[4]) / 1e6, rssKiB: c[1] });
+      res({ cpuMs: (c[3] + c[4]) / 1e6, rssKiB: c[1], instructions: c[6] });
     }),
   );
 }
@@ -1446,6 +1447,7 @@ async function runScenario(sc, bin, site, playwright) {
         if (before && after) {
           result.cpuMsPerOp = (after.cpuMs - before.cpuMs) / (iterations * (sc.opsPerSample ?? 1));
           result.rssKiB = after.rssKiB;
+          if (after.instructions > 0) result.instructionsPerOp = (after.instructions - before.instructions) / (iterations * (sc.opsPerSample ?? 1));
         }
         if (sc.check) await sc.check(state, env);
       })(),
@@ -1632,6 +1634,7 @@ async function main() {
               stats: summarize(samples),
               roundMedians: slot.rounds.map((r) => +median(r.samples).toFixed(4)),
               cpuMsPerOp: cpu.length ? +median(cpu).toFixed(4) : null,
+              instructionsPerOp: slot.rounds.map((r) => r.instructionsPerOp).filter((x) => x != null).map(Math.round),
               rssKiB: slot.rounds.map((r) => r.rssKiB).filter((x) => x != null),
               phases: Object.fromEntries(phaseNames.map((k) => [k, summarize(slot.rounds.flatMap((r) => r.phases[k] ?? []))])),
               stages: perfStages(slot.rounds, ops),

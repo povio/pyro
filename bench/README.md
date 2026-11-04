@@ -60,10 +60,64 @@ cargo build --release                                        # from the reposito
 (cd bench && bun install && (cd rss-sampler && cargo build --release))
 bun bench/scripts/cdp-perf.mjs --list                        # scenarios
 bun bench/scripts/cdp-perf.mjs --bin $PWD/target/release/lightningpanda --out /tmp/cdp-perf/now.json
-bench/scripts/cdp-perf-ab.sh origin/main                     # main vs. the working tree, interleaved
+bench/scripts/cdp-perf-ab.sh origin/main                     # main vs. the working tree, interleaved (see below)
 node bench/scripts/cdp-perf-compare.mjs run.json --base base --head head
 node bench/scripts/cdp-perf-compare.mjs old.json new.json    # two separate runs (less reliable)
 ```
+
+### A/B comparison (`cdp-perf-ab.sh`)
+
+`bench/scripts/cdp-perf-ab.sh BASE [HEAD] [-- cdp-perf options]` builds both sides and runs them interleaved.
+
+- **Profile.** By default it builds with `perf` (`bench/scripts/perf-profile.toml`: release without LTO, 16 codegen
+  units, incremental, no debug info), passed with `cargo --config` so that any commit can be built with the same
+  settings. It is not the shipped code, so compare its base with its head and never with release numbers.
+  `--shipping-profile` builds the real release profile, in a target directory per SHA; use it for final sign-off.
+- **Reuse.** The `perf` profile has one reused checkout and target directory per side
+  (`$LP_PERF_WORK/slot-a`, `slot-b`). Finished binaries are kept in `$LP_PERF_WORK/bin-<profile>-<sha>/`, and a
+  commit with a matching binary is not rebuilt.
+- **Provenance.** A shared target directory has silently produced identical binaries before
+  (`results/build-provenance-audit`), so the checkout must be clean and at the SHA right before and after cargo, a
+  crate whose sources changed since the slot's last build must not be reported fresh, the binary must carry
+  `allow-jit`, and the run is refused when base and head are identical (SHA-256, or `__text` and both `__const`
+  sections on macOS) although files the build reads differ. Integration tests and Markdown do not count as such files.
+- **`--auto-filter`** picks the scenarios from the changed paths, taking the union: `lp-render` and `screenshot.rs`
+  select `page` and `lp` (and remind you to run `bench/pdf/run.mjs`, since cdp-perf does not measure printing);
+  `lp-webapi`, `lp-js` and `lp-jsc-sys` select `runtime`, `dom` and `lp`; `lp-net` selects `network` and
+  `throughput`; anything else, including the `lp-cdp` engine and `vendor/`, selects
+  `^(rtt|throughput|runtime|dom|page|target|network|lp|tos)\.`. Documentation and integration tests alone skip the run.
+- **Shared machine.** It refuses to start while any cargo build is running and lists each with its owner (this
+  repository or another project) and directory; `--force` overrides. It then waits for `/tmp/lp-bench.lock`, held
+  until it exits. If a run was killed outright, `rmdir` the lock by hand.
+- **Output.** `stages.txt` in the results directory records the time and load average of each stage. A load average
+  above the CPU count prints a warning: do not trust wall-clock verdicts from such a run.
+- **Instructions retired.** The `instructions/op` column (macOS; the script builds `rss-sampler`) counts what the
+  browser process executed, so load barely moves it. It is informational and does not set the verdict. It misses
+  whatever changes speed without changing the instruction count, such as code layout and cache behaviour.
+
+Measured on d667459d vs 430345ba on an M1 Max with other builds running. Each build time is one sample, and the
+load average differs between them, so read these as orders of magnitude:
+
+| stage | old flow (release, target per SHA) | `perf` profile | load average |
+|---|---|---:|---:|
+| first build, empty cache | 3:25-5:23 per side | not faster: 10:07, 8:28 (before `vendor/` became cacheable) | 270-160 |
+| cold build, warm sccache | | 4:24, 4:55 | 55-157 |
+| rebuild, 430345ba and d667459d swapped between slots | 2:59, 2:47 (`--shipping-profile`, release rebuild of the workspace crates) | 0:47, 0:49 | 105-160 |
+| rebuild, unused function added to `lp-cdp` | | 0:03 | 118 |
+| binary already built | | 0:00 | 108 |
+| dirty working tree, first build then next edit | | 9:40, 0:22 | 158-90 |
+
+In one interleaved 9-round run of `^(page\.|lp\.)` with all four binaries (load average 148 falling to 97):
+
+- **Absolute numbers:** `perf` against `release` was 0.91-1.34x in wall clock (mostly noise), and within 0.98-1.10x in
+  instructions. The largest gap is `page.navigate.about:blank` (+7-10%); the `lp.*` flows are within 1%.
+- **Instructions, head against base:** the two profiles agree that nothing changed: at most 2.1% on any scenario,
+  and the spread between rounds was 1-2% on most `lp.*` rows, up to 17% on `page.navigate.*`.
+- **Wall-clock verdicts:** no regression on either profile, but they agreed on only 4 of 8 scenarios. Every
+  disagreement is an `unclear` with p > 0.38, on different scenarios per profile. That is load, not the profile.
+
+Under this load use instructions to look for a change, and confirm a wall-clock claim with `--shipping-profile` on a
+quiet machine.
 
 Scenarios (`--filter REGEX` matches names or groups; `--quick` = 1 round at 20% iterations, for checking the
 harness only):
