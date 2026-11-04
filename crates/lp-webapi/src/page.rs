@@ -446,6 +446,16 @@ impl PageDom {
     /// emulated (`Emulation.setTouchEmulationEnabled`).
     pub fn set_max_touch_points(&self, points: u32) {
         self.max_touch_points.set(points);
+        if points > 0 {
+            let realms: Vec<_> = self.realms.borrow().values().filter_map(|r| r.upgrade()).collect();
+            for realm in realms {
+                if let Ok(s) = realm.scope() {
+                    if let Err(e) = crate::handlers::define_touch_handlers(&s) {
+                        s.report_exception(&e);
+                    }
+                }
+            }
+        }
     }
     pub fn max_touch_points(&self) -> u32 {
         self.max_touch_points.get()

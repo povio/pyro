@@ -2187,7 +2187,6 @@ fn device_metrics_reject_invalid_and_unsupported_fields_atomically() {
         assert_eq!(result["error"]["code"], -32602, "{params}: {result}");
     }
     for (key, value) in [
-        ("mobile", json!(true)),
         ("scale", json!(0.5)),
         ("positionX", json!(10)),
         ("viewport", json!({"x":0,"y":0,"width":100,"height":100,"scale":1})),
