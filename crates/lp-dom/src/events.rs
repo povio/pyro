@@ -8,7 +8,7 @@
 use std::cell::RefCell;
 
 use markup5ever::LocalName;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::dom::Dom;
 use crate::node::{NodeId, NodeKind, NIL};
@@ -45,6 +45,8 @@ pub struct ListenerStore {
     released: Vec<(TargetKey, ListenerHandle)>,
     /// Nodes holding listeners that were (re)connected since the last drain.
     reconnected: Vec<u32>,
+    /// Nodes whose wrapper script added properties to, also reported when (re)connected.
+    pin_on_connect: FxHashSet<u32>,
     /// Document -> Window key for event paths.
     windows: FxHashMap<u32, u64>,
 }
@@ -63,6 +65,7 @@ impl ListenerStore {
         }
         if let TargetKey::Node(i) = key {
             self.windows.remove(&i);
+            self.pin_on_connect.remove(&i);
         }
     }
 }
@@ -247,14 +250,26 @@ impl Dom {
         v.into_iter().filter(|&i| self.slot_live(i)).map(|i| self.id_of(i)).collect()
     }
 
+    /// Reports `id` from [`Dom::take_reconnected_listener_nodes`] whenever it connects, as if
+    /// it held a listener: its wrapper has state that must outlive the wrapper's references.
+    pub fn mark_pin_on_connect(&mut self, id: NodeId) {
+        if self.slot_live(id.index()) {
+            self.events.pin_on_connect.insert(id.index());
+        }
+    }
+
+    pub fn has_pin_on_connect(&self, id: NodeId) -> bool {
+        self.events.pin_on_connect.contains(&id.index())
+    }
+
     /// Records listener-bearing nodes in a newly connected subtree.
     pub(crate) fn note_connected_listeners(&mut self, root: u32) {
-        if self.events.map.is_empty() {
+        if self.events.map.is_empty() && self.events.pin_on_connect.is_empty() {
             return;
         }
         let mut stack = vec![root];
         while let Some(i) = stack.pop() {
-            if self.events.map.contains_key(&TargetKey::Node(i)) {
+            if self.events.map.contains_key(&TargetKey::Node(i)) || self.events.pin_on_connect.contains(&i) {
                 self.events.reconnected.push(i);
             }
             stack.extend(self.child_idx_iter(i));

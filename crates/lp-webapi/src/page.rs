@@ -45,6 +45,9 @@ pub struct PageDom {
     /// Wrappers kept alive because they hold listeners for a connected
     /// node (or an active non-node target): (realm, target) -> wrapper.
     pub(crate) pinned: RefCell<FxHashMap<(RealmId, TargetKey), Persistent>>,
+    /// Node wrappers pinned since the last task because script added a property to them, to
+    /// unpin if the node is not connected and to mark for re-pinning when it connects.
+    pub(crate) new_property_pins: RefCell<Vec<(RealmId, NodeId)>>,
     /// Window event-target keys (document -> window parent in event paths).
     /// (document, Window event-target key) pairs.
     pub(crate) window_keys: RefCell<Vec<(NodeId, TargetKey)>>,
@@ -400,6 +403,7 @@ impl PageDom {
             header_helpers: RefCell::new(FxHashMap::default()),
             url_params_helpers: RefCell::new(FxHashMap::default()),
             pinned: RefCell::new(FxHashMap::default()),
+            new_property_pins: RefCell::new(Vec::new()),
             window_keys: RefCell::new(Vec::new()),
             window_holders: RefCell::new(FxHashMap::default()),
             same_objects: RefCell::new(FxHashMap::default()),
@@ -1012,6 +1016,7 @@ impl PageDom {
             && self.mutations.pending_drops_is_empty()
             && self.pending_release.borrow().is_empty()
             && self.pending_port_reconcile.borrow().is_empty()
+            && self.new_property_pins.borrow().is_empty()
             && !self.intersections.has_observers()
             && !self.resizes.has_observers()
     }

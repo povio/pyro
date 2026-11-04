@@ -336,8 +336,29 @@ pub fn unpin_target(s: &Scope<'_>, page: &PageDom, key: TargetKey) {
     page.pinned.borrow_mut().remove(&(s.realm_id(), key));
 }
 
+/// Script added a property to a node's wrapper. An unreferenced wrapper can be collected and made
+/// again without script noticing, unless it holds such state, so keep this one while the node is
+/// connected. It is pinned before its node is checked: the DOM may be borrowed here, and the next
+/// safe point, which may follow a collection, sorts that out.
+pub(crate) fn pin_wrapper_with_properties(s: &Scope<'_>, object: Object<'_>) {
+    let Some(node) = s.unwrap::<crate::node::Node>(object.value()) else { return };
+    let page = &node.target.page;
+    let key = (s.realm_id(), TargetKey::Node(node.id.index()));
+    let mut pinned = page.pinned.borrow_mut();
+    if !pinned.contains_key(&key) {
+        pinned.insert(key, Persistent::new(s, object.value()));
+        page.new_property_pins.borrow_mut().push((key.0, node.id));
+    }
+}
+
 /// Safe-point maintenance (see `PageDom::after_task`).
 pub(crate) fn reconcile_pins(page: &PageDom, dom: &mut Dom) {
+    for (realm, id) in page.new_property_pins.take() {
+        dom.mark_pin_on_connect(id);
+        if !dom.is_in_active_document(id) {
+            page.pinned.borrow_mut().remove(&(realm, TargetKey::Node(id.index())));
+        }
+    }
     let reconnected = dom.take_reconnected_listener_nodes();
     // Pins only become stale when a node is removed somewhere.
     if page.last_removals.replace(dom.removal_count()) != dom.removal_count() {
@@ -358,7 +379,7 @@ pub(crate) fn reconcile_pins(page: &PageDom, dom: &mut Dom) {
                 continue;
             }
             if let Some(obj) = s.lookup_identity(page.node_identity(id)) {
-                if matches!(s.get_hidden(obj, LISTENERS), Ok(Some(_))) {
+                if dom.has_pin_on_connect(id) || matches!(s.get_hidden(obj, LISTENERS), Ok(Some(_))) {
                     let key = TargetKey::Node(id.index());
                     page.pinned
                         .borrow_mut()

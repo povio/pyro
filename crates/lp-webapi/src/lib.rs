@@ -91,6 +91,7 @@ pub use xhr::XhrLimits;
 
 /// Registers every host class with the engine (call before creating realms).
 pub fn register(engine: &lp_js::Engine) {
+    engine.set_wrapper_property_hook(target::pin_wrapper_with_properties);
     engine.register::<target::EventTarget>();
     event::register(engine);
     popup::register(engine);

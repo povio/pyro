@@ -3424,7 +3424,10 @@ fn worker_past_the_document_cap_fails_like_a_failed_load() {
     e.page.set_hooks(Some(tasks.clone()));
     let r = &e.main;
     let more = MAX_WORKERS_PER_DOCUMENT + 4;
-    eval(r, &format!("window.errors = 0; for (let i = 0; i < {more}; ++i) new Worker('/w.js').onerror = () => errors++;"));
+    eval(
+        r,
+        &format!("window.errors = 0; for (let i = 0; i < {more}; ++i) new Worker('/w.js').onerror = () => errors++;"),
+    );
     tasks.drain();
     assert_eq!(eval(r, "errors"), more.to_string());
     assert_eq!(e.page.pinned_count(), 0);
@@ -6519,4 +6522,68 @@ fn cached_wrapper_lookup_sites_stay_separate_per_world() {
     let class = e.engine.register::<TestWindow>();
     let iso = new_realm(&e.engine, class, &e.page, "__playwright_utility_world_page@1");
     assert_eq!(eval(&iso, src), "DIV:undefined");
+}
+
+fn collect(e: &Env) {
+    for _ in 0..3 {
+        e.engine.collect_garbage_now();
+        e.engine.drain_finalized();
+        e.page.after_task();
+    }
+}
+
+#[test]
+fn expandos_on_connected_nodes_outlive_unreferenced_wrappers() {
+    let e = env("<body><div id=d><span id=s></span></div><p id=p></p><i id=i></i></body>");
+    let r = &e.main;
+    eval(
+        r,
+        "document.getElementById('s').mark = 'kept';
+         Object.defineProperty(document.getElementById('p'), 'defined', { value: 'kept' });
+         const fresh = document.createElement('b'); fresh.id = 'fresh'; fresh.mark = 'kept'; document.body.append(fresh);
+         document.getElementById('i').firstChild; 'ok'",
+    );
+    e.page.after_task();
+    collect(&e);
+    assert_eq!(
+        eval(
+            r,
+            "[document.getElementById('s').mark, document.getElementById('p').defined, document.getElementById('fresh').mark].join()"
+        ),
+        "kept,kept,kept"
+    );
+    assert_eq!(e.page.pinned_count(), 3, "only the wrappers holding properties");
+}
+
+#[test]
+fn expando_pins_follow_the_node_in_and_out_of_the_document() {
+    let e = env("<body><div id=d><span id=s></span></div></body>");
+    let r = &e.main;
+    eval(r, "document.getElementById('s').mark = 'kept'; globalThis.d = document.getElementById('d'); 'ok'");
+    e.page.after_task();
+    assert_eq!(e.page.pinned_count(), 1);
+    eval(r, "d.remove(); 'ok'");
+    e.page.after_task();
+    assert_eq!(e.page.pinned_count(), 0, "disconnected: nothing pins it");
+    eval(r, "document.body.append(d); 'ok'");
+    e.page.after_task();
+    assert_eq!(e.page.pinned_count(), 1, "pinned again");
+    collect(&e);
+    assert_eq!(eval(r, "document.getElementById('s').mark"), "kept");
+}
+
+#[test]
+fn gc_reclaims_removed_rows_with_expandos() {
+    let e = env("<body><ul id=list></ul></body>");
+    let r = &e.main;
+    eval(r, "globalThis.list = document.getElementById('list'); for (let i = 0; i < 2000; i++) { const li = document.createElement('li'); li.row = i; list.append(li); } 'ok'");
+    e.page.after_task();
+    assert_eq!(e.page.pinned_count(), 2000);
+    let before = e.page.dom.borrow().live_nodes();
+    eval(r, "while (list.firstChild) list.firstChild.remove(); 'ok'");
+    e.page.after_task();
+    assert_eq!(e.page.pinned_count(), 0);
+    collect(&e);
+    let after = e.page.dom.borrow().live_nodes();
+    assert!(after + 1900 < before, "removed rows reclaimed: before={before} after={after}");
 }

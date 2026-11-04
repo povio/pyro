@@ -2,8 +2,8 @@
 
 use crate::class::{self, ClassRegistry};
 use crate::error::{JsError, JsException};
-use crate::realm::{Realm, RealmId, RealmInner, RealmOptions};
-use crate::value::Value;
+use crate::realm::{Realm, RealmId, RealmInner, RealmOptions, Scope};
+use crate::value::{Object, Value};
 use lp_jsc_sys as sys;
 use std::cell::{Cell, RefCell};
 use std::os::raw::c_void;
@@ -578,6 +578,16 @@ impl Engine {
         }
     }
 
+    /// Calls `hook` after script adds a property to a wrapper on this thread, by assignment or
+    /// `defineProperty`. It must not run JavaScript. Does nothing on unpatched JavaScriptCore.
+    pub fn set_wrapper_property_hook(&self, hook: WrapperPropertyHook) {
+        WRAPPER_PROPERTY_HOOK.set(Some(hook));
+        if let Some(set) = sys::spi::get().set_wrapper_property_added {
+            // SAFETY: a process-wide function pointer, to a function that looks up this thread's hook.
+            unsafe { set(Some(wrapper_property_added)) };
+        }
+    }
+
     /// Sets the time zone of `Date`, `Intl` and `Temporal` in this engine's VM,
     /// which covers all of its realms and no other engine. `None` returns to
     /// the host's zone. `Ok(false)`, changing nothing, for an ID `Intl` does not
@@ -851,5 +861,22 @@ mod tests {
         if cfg!(target_os = "macos") {
             assert!(process_footprint().is_some_and(|f| f > MB));
         }
+    }
+}
+
+pub type WrapperPropertyHook = for<'a, 'b> fn(&'a Scope<'b>, Object<'b>);
+
+thread_local! {
+    static WRAPPER_PROPERTY_HOOK: Cell<Option<WrapperPropertyHook>> = const { Cell::new(None) };
+}
+
+unsafe extern "C" fn wrapper_property_added(ctx: sys::JSContextRef, object: sys::JSObjectRef) {
+    let Some(hook) = WRAPPER_PROPERTY_HOOK.get() else { return };
+    // SAFETY: called by JSC on the VM's thread, with live arguments and the lock held.
+    unsafe {
+        crate::class::guard(ctx, std::ptr::null_mut(), (), |scope| {
+            hook(scope, Object::from_raw(ctx, object));
+            Ok(())
+        })
     }
 }
