@@ -129,9 +129,20 @@ pub(crate) fn target_object<'s>(s: &Scope<'s>, page: &PageDom, key: TargetKey) -
             // identity ([SameObject]); this realm's wrapper must own `key`.
             // `MediaQueryList`s are kept per realm and query text.
             None => Ok(crate::window::viewport_target_object(s, page, key)
-                .or_else(|| crate::layout_api::media_query_object(s, page, key))),
+                .or_else(|| crate::layout_api::media_query_object(s, page, key))
+                .or_else(|| sibling_window(s, page, key))),
         },
     }
+}
+
+/// The window of a sibling document, for an event of one document dispatched
+/// at another document's window.
+fn sibling_window<'s>(s: &Scope<'s>, page: &PageDom, key: TargetKey) -> Option<Object<'s>> {
+    page.sibling_realms(s).iter().find_map(|realm| {
+        let scope = realm.scope().ok()?;
+        page_of(&scope).ok()?.is_window_key(key).then(|| ())?;
+        Persistent::new(&scope, scope.global().value()).get(s).as_object()
+    })
 }
 
 pub(crate) fn target_value<'s>(s: &Scope<'s>, page: &PageDom, key: Option<TargetKey>) -> JsResult<Value<'s>> {
@@ -363,13 +374,12 @@ pub(crate) fn release_listener_slots(page: &PageDom, released: Vec<(TargetKey, L
     if released.is_empty() {
         return;
     }
-    let realms = page.realms.borrow().clone();
     for (key, handle) in released {
         if page.dom.borrow().handle_in_use(key, handle) {
             continue;
         }
         let realm_id = RealmId((handle.0 >> 32) as u32);
-        let Some(realm) = realms.get(&realm_id).and_then(|w| w.upgrade()) else { continue };
+        let Some(realm) = page.listener_realm(realm_id) else { continue };
         let Ok(s) = realm.scope() else { continue };
         let Ok(Some(obj)) = target_object(&s, page, key) else { continue };
         if let Ok(Some(arr)) = listener_array(&s, obj, false) {
@@ -390,8 +400,7 @@ impl ListenerInvoker for Invoker<'_> {
         }
         let realm_id = RealmId((callback.0 >> 32) as u32);
         let slot = callback.0 as u32;
-        let realm = self.page.realms.borrow().get(&realm_id).and_then(|w| w.upgrade());
-        let Some(realm) = realm else { return };
+        let Some(realm) = self.page.listener_realm(realm_id) else { return };
         if realm.is_disposed() {
             return;
         }

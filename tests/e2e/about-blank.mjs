@@ -803,6 +803,22 @@ try {
       assert.equal(await p.frameLocator('iframe[name="parsed"]').locator('#message').textContent(), 'native DOM');
     } finally { await p.close(); }
   });
+  await check('parent script reads and moves nodes of a same-origin frame', async () => {
+    const p = await context.newPage();
+    p.setDefaultTimeout(5000);
+    try {
+      await p.goto(`${fixtureOrigin}/frames-parsed`, { timeout: 5000 });
+      await p.frameLocator('iframe[name="inline"]').locator('p').textContent();
+      const r = await p.evaluate(() => {
+        const d = document.querySelector('iframe[name="inline"]').contentDocument;
+        const nodes = d.querySelectorAll('p');
+        const moved = document.createElement('b');
+        d.body.append(moved);
+        return [nodes.length, nodes[0].textContent, nodes[0] === d.querySelector('p'), d.body.lastChild === moved];
+      });
+      assert.deepEqual(r, [1, 'inline child', true, true]);
+    } finally { await p.close(); }
+  });
   await check('sandbox srcdoc frameLocator uses real child worlds and native owner identity', async () => {
     const p = await context.newPage();
     p.setDefaultTimeout(5000);

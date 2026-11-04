@@ -326,6 +326,11 @@ pub trait PageHooks {
     ) -> lp_js::JsResult<Option<lp_js::Value<'s>>> {
         Ok(None)
     }
+    /// Live realms of `scope`'s script world in the other documents that share
+    /// this page's `Dom`, so a node or event keeps one wrapper across them.
+    fn sibling_realms(&self, _scope: &lp_js::Scope<'_>) -> Vec<lp_js::Realm> {
+        Vec::new()
+    }
     /// Legacy document lookup for embedders sharing the parent's binding state.
     fn frame_document(&self, _iframe: NodeId) -> Option<NodeId> {
         None
@@ -979,6 +984,26 @@ impl PageDom {
     }
     pub(crate) fn frame_document(&self, iframe: NodeId) -> Option<NodeId> {
         self.hooks().and_then(|h| h.frame_document(iframe))
+    }
+    pub(crate) fn sibling_realms(&self, s: &lp_js::Scope<'_>) -> Vec<lp_js::Realm> {
+        self.hooks().map(|h| h.sibling_realms(s)).unwrap_or_default()
+    }
+    /// The wrapper of `id` in a sibling realm of `s`, if one is alive.
+    pub(crate) fn sibling_wrapper<'s>(&self, s: &lp_js::Scope<'s>, id: NodeId) -> Option<lp_js::Object<'s>> {
+        self.sibling_realms(s).iter().find_map(|realm| {
+            let scope = realm.scope().ok()?;
+            let owner = crate::target::page_of(&scope).ok()?;
+            let wrapper = scope.lookup_identity(owner.node_identity(id))?;
+            lp_js::Persistent::new(&scope, wrapper.value()).get(s).as_object()
+        })
+    }
+    /// A realm that may hold listeners of a target of this page: its own, or a
+    /// sibling document's when the target's wrapper was made there.
+    pub(crate) fn listener_realm(&self, id: lp_js::RealmId) -> Option<lp_js::Realm> {
+        if self.is_disposed() {
+            return None;
+        }
+        self.realms.borrow().get(&id).and_then(|w| w.upgrade()).or_else(|| lp_js::Realm::by_id(id))
     }
     pub(crate) fn frame_document_value<'s>(
         &self,

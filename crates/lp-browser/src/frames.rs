@@ -579,6 +579,21 @@ impl FrameHost {
             .map(|r| r.world)
             .ok_or(JsError::ContextDestroyed)
     }
+    /// Realms of `realm`'s world in the frames of this tree other than `source`.
+    pub fn sibling_realms(&self, source: FrameKey, realm: lp_js::RealmId) -> Vec<Realm> {
+        let Ok(world) = self.world_of(source, realm) else { return Vec::new() };
+        let of = |frame: &Frame| frame.realms.iter().find(|r| r.world == world).map(|r| r.realm.clone());
+        let mut realms = Vec::new();
+        if source.child.is_some() {
+            realms.extend(of(&self.root.borrow()));
+        }
+        for (id, doc) in self.children.borrow().iter() {
+            if source.child != Some(*id) {
+                realms.extend(of(&doc.main_frame));
+            }
+        }
+        realms
+    }
     pub fn document_value<'s>(
         self: &Rc<Self>,
         s: &lp_js::Scope<'s>,

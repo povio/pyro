@@ -304,6 +304,12 @@ pub struct Realm {
 }
 
 impl Realm {
+    /// The live realm `id` of this thread's engine.
+    pub fn by_id(id: RealmId) -> Option<Realm> {
+        let inner = crate::engine::current_inner()?.realm_by_id(id)?;
+        (!inner.ctx.get().is_null()).then_some(Realm { inner })
+    }
+
     pub fn set_unhandled_rejection_handler(&self, handler: UnhandledRejectionHandler) {
         self.inner.unhandled_rejection_handler.set(Some(handler));
     }

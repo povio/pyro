@@ -254,6 +254,10 @@ impl PageHooks for Hooks {
         let Some(key) = host.owner(node) else { return Ok(Some(scope.null())) };
         host.document_value(scope, self.page, key).map(Some)
     }
+    fn sibling_realms(&self, scope: &lp_js::Scope<'_>) -> Vec<lp_js::Realm> {
+        let Some(host) = self.frames.upgrade().filter(|h| h.has_children()) else { return Vec::new() };
+        host.sibling_realms(self.page, scope.realm_id())
+    }
     fn frame_window<'s>(&self, scope: &lp_js::Scope<'s>, node: lp_dom::NodeId) -> Option<lp_js::Value<'s>> {
         let host = self.frames.upgrade()?;
         if !host.matches(self.page, &self.loader) {

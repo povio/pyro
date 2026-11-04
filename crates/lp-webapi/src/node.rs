@@ -33,7 +33,9 @@ impl Drop for NodeData {
     }
 }
 
-/// Wraps `id` in `s`'s realm (one wrapper per node per realm).
+/// Wrapper of `id` for script in `s`'s realm: one per node per script world. A
+/// frame tree shares one `Dom`, so a node that moved between its documents may
+/// already have a wrapper in a sibling realm; a new one is made in `s`'s realm.
 pub fn wrap_node<'s>(s: &Scope<'s>, page: &PageDom, id: NodeId) -> JsResult<Object<'s>> {
     let key = page.node_identity(id);
     if let Some(o) = s.lookup_identity(key) {
@@ -41,7 +43,13 @@ pub fn wrap_node<'s>(s: &Scope<'s>, page: &PageDom, id: NodeId) -> JsResult<Obje
     }
     let page_rc = page_of(s)?;
     if page_rc.id() != page.id() {
-        return Err(JsError::Type("node belongs to another page".into()));
+        if !Rc::ptr_eq(&page_rc.dom, &page.dom) {
+            return Err(JsError::Type("node belongs to another page".into()));
+        }
+        return wrap_node(s, &page_rc, id);
+    }
+    if let Some(o) = page.sibling_wrapper(s, id) {
+        return Ok(o);
     }
     let (ty, class) = {
         let mut dom = page.dom.borrow_mut();

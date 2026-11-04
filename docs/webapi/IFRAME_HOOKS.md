@@ -47,6 +47,23 @@ state and is only suitable for legacy embedders sharing that state. The browser
 must enforce origin access before returning a child document. `frame_window`
 continues to supply the browser-owned WindowProxy.
 
+Nodes of a same-origin child are usable from the parent. A frame tree shares one
+`Dom`, and a wrapper belongs to one realm and PageDom. `lp-js` runs a host member
+or property hook in its receiver's realm: JSC calls property hooks in the caller's
+realm and `Node.prototype.x.call(childNode)` in the callee's, so results, errors
+and listeners stay with the receiver. This costs one realm-id comparison per call.
+A node that moved between documents keeps its wrapper within a script world:
+`PageHooks::sibling_realms` lists that world's realms in the other frames, searched
+only when a realm has no wrapper yet, and empty for a page without child frames.
+An Event keeps its object the same way, and dispatch runs listeners in any realm of
+the tree. After a child navigates, its old indexed and named properties, and direct
+calls through its old prototypes, throw `Execution context was destroyed`.
+
+Known gaps: a node adopted out of a child stays bound to the child's realm, so it
+throws once that child navigates, although it lives on in the parent. Windows from
+`window.open` have their own `Dom` and passing their nodes as arguments is not
+supported. Observers on another document's nodes have no dedicated coverage.
+
 For srcdoc/initial blank documents, `Dom::set_document_base_url(doc, Some(base))`
 sets a browser-validated inherited base independently of the document URL.
 `document_base_url`, `Node.baseURI`, URL attributes, link/form resolution,
