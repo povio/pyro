@@ -917,6 +917,7 @@ impl ElementCx<'_, '_> {
                 &mut draw_text_context,
                 None,
             );
+            draw_text_context.text_shift = 0.0;
         }
     }
 
