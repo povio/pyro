@@ -652,6 +652,13 @@ pub fn prepare_process_for_fork() {
         // and only touches Foundation's thread-safe immutable number classes.
         let valid = unsafe { sys::foundation::lp_foundation_initialize_numbers() };
         assert_eq!(valid, 1, "Foundation number initialization failed before fork");
+        // Mach ports do not survive a fork, so in a child JSC's exception port is
+        // gone, and a thread entering a VM there (a dedicated worker) crashes
+        // registering with it. Signal handlers are inherited. JSC reads this when
+        // it initializes, at the first VM, which this function must precede.
+        if std::env::var_os("JSC_useMachForExceptions").is_none() {
+            std::env::set_var("JSC_useMachForExceptions", "false");
+        }
     });
 }
 

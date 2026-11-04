@@ -65,6 +65,10 @@ pub struct PageDom {
     pub(crate) media_queries: RefCell<Vec<crate::layout_api::MediaQueryEntry>>,
     /// Each realm's original `structuredClone` (MessagePort cloning).
     pub(crate) structured_clones: RefCell<FxHashMap<RealmId, Persistent>>,
+    /// Each realm's message encoder and decoder for workers, once it has used one.
+    pub(crate) worker_wire: RefCell<FxHashMap<RealmId, Persistent>>,
+    /// Workers this document started that have not ended (`crate::worker`).
+    pub(crate) workers: RefCell<Vec<Rc<crate::worker::WorkerInner>>>,
     /// Each realm's original `Object.defineProperty` ([Replaceable] setters).
     pub(crate) define_properties: RefCell<FxHashMap<RealmId, Persistent>>,
     /// MessagePorts whose peer was collected; their pins are reconciled at
@@ -304,6 +308,8 @@ pub trait PageHooks {
     /// Called after the delivery snapshot and before any resulting JS, with
     /// binding locks/borrows released. Default embedders need no observer.
     fn network_delivery(&self, _id: lp_net::RequestId, _frontier: lp_net::NetworkDelivery) {}
+    /// A dedicated worker of this document started or ended.
+    fn worker_event(&self, _event: crate::worker::WorkerEvent) {}
     /// A hyperlink download. The default embedder performs none.
     fn download(&self, _request: DownloadRequest) {}
     /// An `<input type=file>` was activated: the embedder may report a file
@@ -400,6 +406,8 @@ impl PageDom {
             viewport_targets: RefCell::new(Vec::new()),
             media_queries: RefCell::new(Vec::new()),
             structured_clones: RefCell::new(FxHashMap::default()),
+            worker_wire: RefCell::new(FxHashMap::default()),
+            workers: RefCell::new(Vec::new()),
             define_properties: RefCell::new(FxHashMap::default()),
             pending_port_reconcile: RefCell::new(Vec::new()),
             last_removals: Cell::new(u64::MAX),
@@ -533,6 +541,7 @@ impl PageDom {
         crate::mutation_observer::dispose(self);
         crate::intersection_observer::dispose(self);
         crate::resize_observer::dispose(self);
+        crate::worker::dispose(self);
         self.realms.borrow_mut().clear();
         // Drop roots and embedder hooks outside RefCell borrows: destructors
         // can release wrappers or other resources owned by this page.
@@ -543,6 +552,7 @@ impl PageDom {
         drop(self.same_objects.take());
         drop(self.permission_watchers.take());
         drop(self.structured_clones.take());
+        drop(self.worker_wire.take());
         drop(self.define_properties.take());
         drop(self.pending_port_reconcile.take());
         drop(self.data_view_readers.take());
