@@ -876,6 +876,13 @@ fn table_gutters(doc: &BaseDocument, table: NodeId, row: Option<NodeId>) -> Opti
     if styles.clone_border_collapse() != style::computed_values::border_collapse::T::Collapse {
         return None;
     }
+    // Without uniform borders the cell boxes already hold them.
+    if matches!(
+        doc.get_node(table)?.element_data()?.special_data,
+        blitz_dom::node::SpecialElementData::TableRoot(ref context) if context.collapsed_edges.is_some()
+    ) {
+        return None;
+    }
     let cell = doc.get_node(first_cell(doc, table)?)?.primary_styles()?;
     let b = cell.get_border();
     let gx =

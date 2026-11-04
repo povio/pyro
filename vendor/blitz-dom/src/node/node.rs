@@ -1144,7 +1144,7 @@ impl Node {
             .try_stylo_element_data()
             .and_then(|stylo| stylo.computed_styles())
             .expect("layout_style() called on a node without computed styles")
-            .for_table_cell_layout();
+            .for_table_cell_layout(self.collapsed_border());
 
         let mut flags = stylo_taffy::StyleFlags::empty();
         if let Some(el) = self.data.downcast_element() {
@@ -1171,6 +1171,14 @@ impl Node {
         #[cfg(not(feature = "writing-mode"))]
         {
             stylo_taffy::TaffyStyloStyle::new(styles, flags)
+        }
+    }
+
+    /// The half collapsed borders of a cell in a table without uniform ones.
+    fn collapsed_border(&self) -> Option<[f32; 4]> {
+        match &self.data {
+            NodeData::Element(data) | NodeData::AnonymousBlock(data) => data.layout_data().collapsed_border,
+            _ => None,
         }
     }
 

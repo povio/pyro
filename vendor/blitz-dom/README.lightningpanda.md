@@ -125,3 +125,11 @@ way its block axis runs; paint turns the lines, and these read them physically:
 `src/net.rs`, `src/document.rs` (`linked_page_css`): a `<link>` sheet with `@page` rules keeps its text, for
 printing. The servo build of Stylo parses neither `size` nor `page`, so the parsed rule does not have them. lp-render's
 `page_box` reads them.
+
+## Collapsed tables without uniform borders
+
+`src/layout/table.rs` (`CollapsedEdges`), `src/node/stylo_data.rs`, `src/node/element.rs`: upstream has one gutter, from the
+first cell's borders. A table whose collapsed borders are not one uniform grid now resolves them by the spec's conflict
+rules: each cell keeps half of the borders around it (`LayoutData::collapsed_border`, read through
+`for_table_cell_layout`) and the table half of its outer ones, as Chromium's boxes do. Uniform tables keep the gutter.
+Values in `bench/pdf/fixtures/chrome-156/table-collapse.json`, tests in `crates/lp-render/tests/table_collapsed_borders.rs`.

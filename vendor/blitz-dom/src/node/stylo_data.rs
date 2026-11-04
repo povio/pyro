@@ -138,7 +138,7 @@ pub struct ComputedStyleRef<'a> {
 }
 
 impl ComputedStyleRef<'_> {
-    pub(crate) fn for_table_cell_layout(mut self) -> Self {
+    pub(crate) fn for_table_cell_layout(mut self, collapsed_border: Option<[f32; 4]>) -> Self {
         use style::computed_values::border_collapse::T as BorderCollapse;
         use style::values::specified::box_::DisplayInside;
         if self.clone_display().inside() != DisplayInside::TableCell {
@@ -159,10 +159,21 @@ impl ComputedStyleRef<'_> {
         // also consume space inside the cell's own formatting context.
         if collapsed {
             let border = derived.mutate_border();
-            border.border_top_width.0 = app_units::Au(0);
-            border.border_right_width.0 = app_units::Au(0);
-            border.border_bottom_width.0 = app_units::Au(0);
-            border.border_left_width.0 = app_units::Au(0);
+            // In a table without uniform borders a cell keeps half of the ones around it.
+            let [top, right, bottom, left] = collapsed_border.unwrap_or_default();
+            let au = app_units::Au::from_f32_px;
+            border.border_top_width.0 = au(top);
+            border.border_right_width.0 = au(right);
+            border.border_bottom_width.0 = au(bottom);
+            border.border_left_width.0 = au(left);
+            // Stylo's widths mean nothing without a style.
+            if collapsed_border.is_some() {
+                use style::values::computed::BorderStyle;
+                border.border_top_style = BorderStyle::Solid;
+                border.border_right_style = BorderStyle::Solid;
+                border.border_bottom_style = BorderStyle::Solid;
+                border.border_left_style = BorderStyle::Solid;
+            }
         }
         self.layout = Some(derived);
         self
