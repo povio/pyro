@@ -98,7 +98,7 @@ fn local_node(s: &Scope<'_>, page: &PageDom, v: Value<'_>, what: &str) -> JsResu
     let n = s
         .unwrap::<Node>(v)
         .ok_or_else(|| JsError::Type(format!("Failed to execute '{what}': parameter is not of type 'Node'.")))?;
-    Ok((n.page().id() == page.id()).then_some(n.id))
+    Ok(Rc::ptr_eq(&n.page().dom, &page.dom).then_some(n.id))
 }
 
 fn boundary_node(s: &Scope<'_>, page: &PageDom, v: Value<'_>, what: &str) -> JsResult<NodeId> {
