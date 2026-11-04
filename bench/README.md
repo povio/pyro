@@ -174,6 +174,9 @@ lists every stage costing at least 10 ns per operation, with the timer floor mea
 are inclusive and timing adds a few tens of ns per stage, so compare traced builds only with traced builds.
 Normal builds compile the timers out (`crates/lp-cdp-protocol/src/perf.rs`).
 
+`--fork` starts `serve --fork` and reads CPU from every descendant of `serve`, since connections run in forked
+children. Without it, setting `LIGHTNINGPANDA_FORK=1` still runs fork mode, but CPU reads as about zero.
+
 Reading it for optimization: compare `rtt.Browser.getVersion` (protocol floor) with the other `rtt`/`runtime`
 rows to see the cost of the browser-thread hop and JS work; the navigation milestones show whether time goes
 to fetching/committing (navigate reply), parsing (DOMContentLoaded) or subresources (load); `target.lifecycle`
@@ -229,6 +232,45 @@ Any failed behavioral assertion makes the run fail and keeps its evidence; do no
 The sampler's six columns are epoch milliseconds, resident KiB, physical footprint KiB, cumulative user
 nanoseconds, cumulative system nanoseconds and monotonic nanoseconds. Existing memory readers use the first
 three columns. `rss-sampler PID - --once` emits one snapshot and fails explicitly if the PID cannot be sampled.
+
+## Web Platform Tests
+
+`bench/wpt/` runs a WPT subset over CDP with Playwright and reports passing subtests per directory. The same
+runner works for any binary with a `serve --host --port` command line (lightningpanda, upstream Lightpanda, or a
+shim around Chrome).
+
+```sh
+(cd bench && bun install)
+git clone -b fork --depth=1 https://github.com/lightpanda-io/wpt.git /abs/wpt   # testharnessreport.js exposes window.report
+bun bench/wpt/serve.mjs /abs/wpt 9415 &
+bun bench/wpt/run.mjs --wpt /abs/wpt --bin lp=$PWD/target/release/lightningpanda --sample-encoding 10 --out /tmp/lp.json
+bun bench/wpt/aggregate.mjs /tmp/lp.json [/tmp/other.json ...]                 # markdown table
+```
+
+`--list` prints what would run. The default directories are dom, html/dom, encoding, url, fetch/api/basic, xhr,
+css/selectors, uievents, shadow-dom and webstorage. encoding/ has 1,257 pages, most of them long:
+`--sample-encoding 10` keeps every 10th, so scale its subtests by about 10.
+
+`serve.mjs` is a static server, not wptserve: it generates `.any.html`/`.window.html` wrappers and applies `.headers`
+files. Tests that need Python handlers, testdriver, `.sub`/`.https`/`.h2` or a non-window global are excluded for every
+binary (577 files), and cross-origin hosts do not resolve. Compare binaries within one setup, not against published
+WPT numbers. The denominator per page is the largest subtest count any binary reported, so a crashed page counts its
+subtests as failures.
+
+## Playwright feature suite
+
+`bench/playwright-suite/` has 38 tests, one per Playwright feature a typical app E2E suite uses, against local
+fixture pages. It connects with `connectOverCDP`, so any binary with a `serve --host --port` command line works.
+
+```bash
+cd bench/playwright-suite && bun install
+TARGET=lp BIN=$PWD/../../target/release/lightningpanda bunx playwright test
+LIGHTNINGPANDA_FORK=1 TARGET=lp BIN=... bunx playwright test    # fork template mode
+TARGET=chrome bunx playwright test                              # Playwright's headless shell over CDP (macOS arm64 path, or set CHROME_BIN)
+```
+
+Results go to `results/$TARGET.json` (or `$OUT/$TARGET.json`). `baseline/visual.png` is the `toHaveScreenshot`
+reference, taken with `TARGET=chrome-launch bunx playwright test --update-snapshots` on macOS.
 
 ## Page-break fixtures against Chrome (`pdf/fixtures/`)
 

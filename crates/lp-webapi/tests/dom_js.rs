@@ -3368,6 +3368,69 @@ fn object_urls_register_revoke_and_download_links_do_not_navigate() {
 }
 
 #[test]
+fn worker_constructor_checks_and_load_failure_without_a_network() {
+    let e = env("<body>");
+    let tasks = Rc::new(ObserverTasks::default());
+    e.page.set_hooks(Some(tasks.clone()));
+    let r = &e.main;
+    let base = e.page.pinned_count();
+    // These fail before a worker exists; `SharedWorker` and `ServiceWorker` stay absent.
+    assert_eq!(
+        eval(
+            r,
+            "const err = (f) => { try { f(); return 'ok'; } catch (e) { return e.name; } };
+             [err(() => new Worker('http://[')), err(() => new Worker()), err(() => Worker('w.js')),
+              err(() => new Worker('w.js', {type: 'module'})), err(() => new Worker('w.js', {type: 'other'})),
+              err(() => new Worker('https://example.test/w.js')), typeof SharedWorker, typeof ServiceWorker].join()",
+        ),
+        "SyntaxError,TypeError,TypeError,NotSupportedError,TypeError,SecurityError,undefined,undefined"
+    );
+    assert_eq!(e.page.pinned_count(), base, "a rejected construction leaves nothing behind");
+    // This embedder has no network: the error comes in a later task, as a plain trusted Event.
+    assert_eq!(
+        eval(
+            r,
+            "window.log = []; window.w = new Worker('/w.js', {type: 'classic', name: 'n'});
+             w.onmessage = () => log.push('message'); w.onmessageerror = () => log.push('messageerror');
+             w.onerror = (ev) => log.push(['onerror', ev.type, ev.isTrusted, ev.bubbles, ev.cancelable, ev.constructor.name, ev.target === w, ev.message === undefined].join(':'));
+             w.addEventListener('error', () => log.push('listener'));
+             w.postMessage({a: 1}); const b = new ArrayBuffer(1); w.postMessage(b, [b]);
+             Promise.resolve().then(() => log.push('microtask'));
+             [w instanceof Worker, w instanceof EventTarget, typeof w.onerror, err(() => w.postMessage()),
+              err(() => w.postMessage(() => 1)), err(() => w.postMessage(1, [{}])), b.byteLength, log.length].join()",
+        ),
+        "true,true,function,TypeError,DataCloneError,NotSupportedError,0,0"
+    );
+    assert_eq!(e.page.pinned_count(), base + 1);
+    tasks.drain();
+    assert_eq!(eval(r, "log.join('|')"), "microtask|onerror:error:true:false:false:Event:true:true|listener");
+    assert_eq!(e.page.pinned_count(), base, "unpinned once the failure is reported");
+    // Calls after the failure stay harmless.
+    eval(r, "w.postMessage(1); w.terminate(); w.onerror = null;");
+    tasks.drain();
+    assert_eq!(eval(r, "log.length + ':' + w.onerror"), "3:null");
+
+    // terminate() before the failure task cancels the event and the pin.
+    eval(r, "window.t = []; window.gone = new Worker('/w.js'); gone.onerror = () => t.push('error'); gone.terminate(); gone.terminate();");
+    assert_eq!(e.page.pinned_count(), base);
+    tasks.drain();
+    assert_eq!(eval(r, "t.length"), "0");
+}
+
+#[test]
+fn worker_past_the_document_cap_fails_like_a_failed_load() {
+    let e = env("<body>");
+    let tasks = Rc::new(ObserverTasks::default());
+    e.page.set_hooks(Some(tasks.clone()));
+    let r = &e.main;
+    let more = MAX_WORKERS_PER_DOCUMENT + 4;
+    eval(r, &format!("window.errors = 0; for (let i = 0; i < {more}; ++i) new Worker('/w.js').onerror = () => errors++;"));
+    tasks.drain();
+    assert_eq!(eval(r, "errors"), more.to_string());
+    assert_eq!(e.page.pinned_count(), 0);
+}
+
+#[test]
 fn message_channel_delivers_cloned_messages_fifo_as_tasks() {
     let e = env("<body>");
     let tasks = Rc::new(ObserverTasks::default());
@@ -6338,4 +6401,122 @@ fn form_named_access_returns_controls_and_overrides_builtins() {
     assert_eq!(eval(r, "globalThis.rs=f.r;f.r[1].remove();rs.length+':'+(f.r.tagName)"), "1:INPUT");
     // The same lookup a handler's scope chain performs.
     assert_eq!(eval(r, "with(f){typeof n+':'+byid.tagName+':'+method}"), "undefined:INPUT:get");
+}
+
+// Inline caches on wrappers of classes without property hooks: each test warms a shared call site
+// past the baseline JIT threshold, then changes what the site must see.
+const WARM: &str = "const warm = (f, ...a) => { let r; for (let i = 0; i < 3000; i++) r = f(...a); return r; };";
+
+#[test]
+fn cached_wrapper_lookup_site_still_sees_named_getters() {
+    let e = env("<body><form id=f><input name=x></form><div id=d></div>");
+    let got = eval(
+        &e.main,
+        &format!(
+            "{WARM}
+            const x = o => o.x; const f = document.getElementById('f'), d = document.getElementById('d');
+            const before = warm(x, d);
+            const onForm = x(f).tagName;
+            const viaProto = x(Object.create(f)).tagName;
+            Object.setPrototypeOf(d, Object.getPrototypeOf(f));
+            const moved = String(x(d));
+            [String(before), onForm, viaProto, moved, warm(x, f).tagName].join()"
+        ),
+    );
+    assert_eq!(got, "undefined,INPUT,INPUT,undefined,INPUT");
+}
+
+#[test]
+fn cached_wrapper_lookup_site_sees_prototype_changes() {
+    let e = env("<body><div id=d></div>");
+    let got = eval(
+        &e.main,
+        "const WARM = (f, a) => { let r; for (let i = 0; i < 3000; i++) r = f(a); return r; };
+        const n = o => o.nodeType; const d = document.getElementById('d');
+        const log = [WARM(n, d)];
+        const original = Object.getOwnPropertyDescriptor(Node.prototype, 'nodeType');
+        Object.defineProperty(Node.prototype, 'nodeType', { get() { return 99; }, configurable: true });
+        log.push(n(d), WARM(n, d));
+        delete Node.prototype.nodeType;
+        log.push(String(n(d)));
+        Object.defineProperty(Node.prototype, 'nodeType', original);
+        log.push(WARM(n, d));
+        const own = o => o.nodeName;
+        log.push(WARM(own, d));
+        Object.defineProperty(d, 'nodeName', { value: 'MINE' });
+        log.push(own(d), own(document.createElement('p')));
+        log.join()",
+    );
+    assert_eq!(got, "1,99,99,undefined,1,DIV,MINE,P");
+}
+
+#[test]
+fn cached_wrapper_lookup_site_goes_through_a_page_inserted_proxy() {
+    let e = env("<body><div id=d></div><div id=other></div>");
+    let got = eval(
+        &e.main,
+        &format!(
+            "{WARM}
+            const m = o => o.marker; const d = document.getElementById('d');
+            const first = String(warm(m, d));
+            Object.setPrototypeOf(d, new Proxy(Object.getPrototypeOf(d), {{
+              get(t, k, r) {{ return k === 'marker' ? 'proxied' : Reflect.get(t, k); }},
+            }}));
+            [first, m(d), warm(m, d), String(m(document.getElementById('other')))].join()"
+        ),
+    );
+    assert_eq!(got, "undefined,proxied,proxied,undefined");
+}
+
+#[test]
+fn cached_wrappers_keep_identity_and_expandos_across_gc() {
+    let e = env("<body><div id=d><span id=s></span></div>");
+    eval(
+        &e.main,
+        &format!(
+            "{WARM}
+            globalThis.first = o => o.firstChild;
+            const d = document.getElementById('d');
+            warm(first, d);
+            first(d).expando = 'kept';
+            d.own = 1;
+            globalThis.d = d;
+            globalThis.span = first(d);
+            'ok'"
+        ),
+    );
+    for _ in 0..3 {
+        e.engine.collect_garbage_now();
+        e.engine.drain_finalized();
+        e.page.after_task();
+    }
+    assert_eq!(eval(&e.main, "[d.own, first(d) === first(d), first(d).expando, first(d).id].join()"), "1,true,kept,s");
+}
+
+#[test]
+fn wrapper_to_string_tag_is_on_the_prototype_only() {
+    let e = env("<body><div id=d></div>");
+    let got = eval(
+        &e.main,
+        "const d = document.getElementById('d');
+        const log = [Object.prototype.toString.call(d), d[Symbol.toStringTag],
+          String(Object.getOwnPropertyDescriptor(d, Symbol.toStringTag)),
+          Object.hasOwn(d, Symbol.toStringTag),
+          Object.getOwnPropertySymbols(d).length];
+        Object.defineProperty(d, Symbol.toStringTag, { value: 'Mine' });
+        log.push(Object.prototype.toString.call(d), d[Symbol.toStringTag]);
+        log.join()",
+    );
+    assert_eq!(got, "[object HTMLDivElement],HTMLDivElement,undefined,false,0,[object Mine],Mine");
+}
+
+#[test]
+fn cached_wrapper_lookup_sites_stay_separate_per_world() {
+    let e = env("<body><div id=d></div>");
+    let src = "(() => { const d = document.getElementById('d'); let r; for (let i = 0; i < 3000; i++) r = d.tagName; return r + ':' + String(d.onlyHere); })()";
+    assert_eq!(eval(&e.main, "document.getElementById('d').onlyHere = 'main'; 'set'"), "set");
+    assert_eq!(eval(&e.main, src), "DIV:main");
+    let class = e.engine.register::<TestWindow>();
+    let iso = new_realm(&e.engine, class, &e.page, "__playwright_utility_world_page@1");
+    assert_eq!(eval(&iso, src), "DIV:undefined");
 }

@@ -116,6 +116,9 @@ const PREBOOT_LIMIT: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// No command for this long after a prepared page was taken: boot the next.
 const REFILL_QUIET: std::time::Duration = std::time::Duration::from_millis(15);
+/// With no command for this long, a closed page whose collection was put off
+/// (`Engine::release_closed`) is collected: the client may stay idle for good.
+const RELEASE_QUIET: std::time::Duration = std::time::Duration::from_secs(1);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServeOptions {
@@ -685,6 +688,15 @@ pub(crate) fn serve_browser(
             browser.refill_prepared();
             continue;
         }
+        let release_at = browser.host().thread.browser.engine.release_pending().then(|| quiet_since + RELEASE_QUIET);
+        if release_at.is_some_and(|at| std::time::Instant::now() >= at) && inbox.is_empty() {
+            browser.host().thread.browser.engine.settle();
+            continue;
+        }
+        let quiet_at = match (quiet_at, release_at) {
+            (Some(q), Some(r)) => Some(q.min(r)),
+            (q, r) => q.or(r),
+        };
         let deadline = match (conn.borrow().next_deadline(), quiet_at) {
             (Some(d), Some(q)) => Some(d.min(q)),
             (d, q) => d.or(q),
@@ -738,6 +750,7 @@ pub(crate) fn serve_browser(
     browser.host_mut().thread.event_loop.watch_fd(None);
     browser.shutdown();
     browser.host_mut().close_all();
+    lp_webapi::join_stopped(std::time::Duration::from_secs(1));
     drop(sink);
     match Rc::try_unwrap(conn) {
         Ok(conn) => conn.into_inner().finish(),

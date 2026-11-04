@@ -1,0 +1,7 @@
+<!doctype html><body><button id="a">Alert</button><button id="cf">Confirm</button><button id="pr">Prompt</button>
+<p id="c"></p><p id="p"></p><script>
+const $ = (i) => document.getElementById(i);
+$('a').addEventListener('click', () => alert('hi'));
+$('cf').addEventListener('click', () => { $('c').textContent = confirm('sure?'); });
+$('pr').addEventListener('click', () => { $('p').textContent = prompt('name?', 'x'); });
+</script></body>

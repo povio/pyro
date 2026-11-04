@@ -44,3 +44,79 @@ pub(crate) fn clone_value<'s>(
         .ok_or_else(|| JsError::dom("NotSupportedError", "structured clone is unavailable in this realm"))?;
     clone.call(None, &[value, options])
 }
+
+/// A message on its way to another VM (`worker_wire.js`).
+pub(crate) struct WireMessage {
+    text: String,
+    buffers: Vec<Vec<u8>>,
+}
+
+impl WireMessage {
+    /// What the message holds in memory while queued.
+    pub(crate) fn size(&self) -> usize {
+        self.text.len() + self.buffers.iter().map(Vec::len).sum::<usize>() + 64
+    }
+}
+
+/// The realm's `[encode, decode]`, compiled on its first use.
+fn wire_functions<'s>(s: &Scope<'s>) -> JsResult<(lp_js::Object<'s>, lp_js::Object<'s>)> {
+    let page = crate::target::page_of(s)?;
+    let cached = page.worker_wire.borrow().get(&s.realm_id()).map(|p| p.get(s));
+    let pair = match cached {
+        Some(pair) => pair,
+        None => {
+            let fail = s.function("wireFailure", |_, _, args| {
+                let name = if args.get(1).to_bool() { "NotSupportedError" } else { "DataCloneError" };
+                Err(JsError::dom(name, args.get(0).to_string()?))
+            })?;
+            let fail_root = Persistent::new(s, fail.value());
+            let factory =
+                s.eval(include_str!("worker_wire.js"), Some("lightningpanda://internal/worker-wire.js"), 1)?;
+            let pair = factory.as_object().expect("wire factory").call(None, &[fail_root.get(s)])?;
+            page.worker_wire.borrow_mut().insert(s.realm_id(), Persistent::new(s, pair));
+            pair
+        }
+    };
+    let pair = pair.as_object().expect("wire pair");
+    Ok((pair.get_index(0)?.as_object().expect("encode"), pair.get_index(1)?.as_object().expect("decode")))
+}
+
+/// Compiles the realm's message functions now, if it has none yet.
+pub(crate) fn prepare_wire(s: &Scope<'_>) -> JsResult<()> {
+    wire_functions(s).map(|_| ())
+}
+
+/// StructuredSerialize for another VM. `options` is `postMessage`'s second
+/// argument (a transfer list or `{transfer}`); listed ArrayBuffers are detached.
+pub(crate) fn encode_message<'s>(
+    s: &Scope<'s>,
+    value: lp_js::Value<'s>,
+    options: lp_js::Value<'s>,
+) -> JsResult<WireMessage> {
+    let page = crate::target::page_of(s)?;
+    let clone = page.structured_clones.borrow().get(&s.realm_id()).map(|p| p.get(s));
+    let clone = clone.ok_or_else(|| JsError::dom("NotSupportedError", "structured clone is unavailable"))?;
+    let (encode, _) = wire_functions(s)?;
+    let pair = encode.call(None, &[clone, value, options])?;
+    let pair = pair.as_object().expect("encoded pair");
+    let text = pair.get_index(0)?.to_string()?;
+    let list = pair.get_index(1)?;
+    let list = list.as_object().expect("buffer list");
+    let count = list.get("length")?.to_number()? as u32;
+    let mut buffers = Vec::with_capacity(count as usize);
+    for i in 0..count {
+        let bytes = crate::encoding::buffer_source_bytes(s, list.get_index(i)?)?;
+        buffers.push(bytes.ok_or_else(|| JsError::dom("DataCloneError", "Detached ArrayBuffer"))?);
+    }
+    Ok(WireMessage { text, buffers })
+}
+
+/// StructuredDeserialize into `s`'s realm.
+pub(crate) fn decode_message<'s>(s: &Scope<'s>, message: &WireMessage) -> JsResult<lp_js::Value<'s>> {
+    let (_, decode) = wire_functions(s)?;
+    let list = s.array(&[])?;
+    for (i, bytes) in message.buffers.iter().enumerate() {
+        list.set_index(i as u32, crate::encoding::array_buffer(s, bytes)?)?;
+    }
+    decode.call(None, &[s.string(&message.text), list.value()])
+}

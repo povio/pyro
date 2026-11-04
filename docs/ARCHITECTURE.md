@@ -51,6 +51,8 @@ in their own crate manifests. W1 reconciles the lockfile on integration.
   `LoopHandle::post(Box<dyn FnOnce(&mut Browser) + Send>)`. The loop processes posted work in arrival order and
   writes its wake pipe only while asleep. `post` returns `Err(LoopClosed)` once the browser thread has exited.
 - **At most one `Engine` per thread** (enforced). Callbacks find their engine and realm through thread-local state.
+- **A dedicated worker is a thread of its own**, with its own `Engine` and event loop; it shares no JS or DOM state
+  with its page, and messages cross as serialized tasks (`docs/webapi/WORKER.md`).
 - On connection close the browser thread runs `Browser::close_all()`, which disposes the realms and cancels the
   timers, then writes what is still queued and a close frame within the close timeout, and shuts the socket.
 
@@ -264,6 +266,29 @@ copy-on-write page snapshots: load an app's JS once, then start each test from t
   for running ones; `Engine::collect_garbage_now` (tests) also waits, so retention checks depend on reachability alone.
 
 - Patch `0006` adds `JSContextGroupSetTimeZone(group, id)`, behind `Emulation.setTimezoneOverride`. `DateCache` is per  VM, and `Intl` and `Temporal` read their default zone from it, so one override field there covers them; setting it  marks the cache stale, and JSC's own host-zone-change path applies it at the next outermost entry (date caches  flushed, cached local times in `Date` objects dropped). The default formats a global object keeps are bypassed while  an override is set. The scope is one VM, so one connection: a per-context zone would mean moving this state from the  VM to the global object, through every `vm.dateCache` user including the DFG.`0004` adds `JSGlobalContextInstallNamedProperties(ctx, filter, getter)`, for named access on the Window object.  The global's prototype is immutable to JavaScript and to `JSObjectSetPrototype`, so a page realm gets the object  when its context is created (`resetPrototype` replaces the global proxy, so nothing may hold it yet). A `JSClass`  object was measured first and made misses and new globals much slower (OpaqueJSString per lookup, dropped locks, a  put hook that sends every new global down the receiver path), so it is a native object like WebCore's  `JSDOMWindowProperties`: the global's own properties never reach it and stay inline cached; a name the global lacks  costs one call to `filter`, which `Dom::window_name_may_exist` answers from a hash set kept current from the change  journal, so a miss does not walk the tree after each mutation.
+- Patch `0008` marks code from `lightpanda://internal/` (`helpers.js`) as never optimized. It runs at realm setup, and
+  each realm otherwise compiled `makeInterface`, `lazyInterface` and `accessor` in the DFG again.
+
+Navigating or closing a page no longer always collects: `Engine::release_closed` runs `settle` only once the process's
+physical footprint is 32 MB or 25%, whichever is larger, above its lowest reading. `serve` collects what is left after
+1 s without a command. `LIGHTNINGPANDA_RELEASE_GROWTH=<MB>[:<percent>]` overrides the thresholds (`0`
+collects every time) and `LIGHTNINGPANDA_RELEASE_ON_CLOSE=0` turns it off, for benchmarks.
+
+`lp_js::configure_process` defaults `JSC_heapGrowthMaxIncrease` to 1 (JSC's default is 3, used on machines with at least
+16 GB), so the heap grows to about 2x its live size between collections rather than 4x. Peak footprint with a large SPA
+loaded went from 242 MB to 202 MB for about 5% more CPU on that SPA; small pages see no CPU change. An allocation-heavy
+page with a large live set is the worst case measured: 18% more CPU, 39% lower peak. 0.5 is not worth it: on that page
+it costs 5.6x the CPU. A value set in the environment wins.
+
+Patch `0009` keeps the JS lock held across C API callbacks, because a VM stays on one thread: stock JSC drops and
+retakes it around every callback. `JSC_dropLocksInAPICallbacks=true` restores the stock behavior.
+
+Patch `0010` gives wrappers of classes without property hooks their own root structure, without
+`ProhibitsPropertyCaching`, `OverridesGetOwnPropertySlot` and `OverridesPut`, so inline caches remember their lookups.
+Classes with named getters, callable objects and the global stay on the stock structure. These wrappers also have no own
+`Symbol.toStringTag`: it is found on the prototype, as in browsers. `JSC_cacheCallbackObjectLookups=false` restores the stock
+structure for new wrappers.
+
 To change JSC: edit the checkout in `~/Library/Caches/lightningpanda/webkit-src`, `ninja -C ../webkit-build
 JavaScriptCore` to iterate, then regenerate the patch with `git diff` (use `git add -N` for new files) and rerun
 `scripts/jsc/build.sh`, which resets the checkout and applies `patches/` from scratch.
@@ -297,6 +322,10 @@ Copy-on-write page snapshots: an app's startup (parsing and running its JavaScri
   spares (their pages are out of date). Measured on the 8 MB test app: 3.6 ms from connect to an evaluated
   expression in a booted page.
 - The template stops when the server does: its stdin is a pipe only the server writes to.
+- Dedicated workers are threads, so a template holds them: they start in the child that takes a connection
+  (`lp_webapi::hold_for_fork`, `release_after_fork`). A thread entering a VM in a child cannot register with JSC's
+  mach exception port, which a fork does not inherit, so a template runs with `JSC_useMachForExceptions=false`: faults
+  go through POSIX signal handlers, which a fork does inherit.
 - The source JavaScriptCore's timers run on WTF's run loop, so the CoreFoundation run-loop service
   (`enable_native_runloop_service`) is off with it; CoreFoundation must not be used in a fork child.
 - Measured on an M1 Max with a release build: an app whose startup runs 0.8 s of JavaScript is handed to a new

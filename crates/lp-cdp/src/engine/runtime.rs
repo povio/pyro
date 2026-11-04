@@ -776,7 +776,7 @@ fn terminated() -> CdpError {
 /// `Runtime.StackTrace` of a console call from the stack captured inside
 /// it (helpers.js `stack`): the frames above the console method's own
 /// native frame (the capturing helper's and the method's are dropped).
-fn console_stack(stack: &str) -> crate::runtime_protocol::StackTrace {
+pub(super) fn console_stack(stack: &str) -> crate::runtime_protocol::StackTrace {
     // The helper's frame, then the console method's native one; matched by
     // location, never by function name.
     let lines: Vec<&str> = stack.lines().filter(|l| !l.trim().is_empty()).collect();

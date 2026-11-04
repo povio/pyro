@@ -1,0 +1,8 @@
+<!doctype html><html><head><title>SPA</title></head><body><div id="app">Loading…</div>
+<script>
+function render(){ const r=location.hash.slice(1)||'home'; document.getElementById('app').innerHTML = r==='home'
+ ? '<h2>Home view</h2><a href="#about">About</a><button id="load">Load data</button><ul id="list"></ul>'
+ : '<h2>About view</h2><a href="#home">Back</a>';
+ const b=document.getElementById('load'); if(b) b.onclick=async()=>{const j=await (await fetch('/api/slow')).json(); document.getElementById('list').innerHTML='<li>Item '+j.slow+'</li>';};}
+addEventListener('hashchange',render); setTimeout(render,50);
+</script></body></html>

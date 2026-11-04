@@ -4,7 +4,7 @@
 // Usage:
 //   node cdp-perf.mjs --bin [label=]/abs/lightningpanda [--bin base=/abs/other] --out /abs/result.json
 //                     [--rounds 5] [--scale 1] [--quick] [--filter REGEX] [--list]
-//                     [--sampler /abs/rss-sampler] [--playwright] [--perf-trace]
+//                     [--sampler /abs/rss-sampler] [--playwright] [--perf-trace] [--fork]
 //
 // Run it with `bun` to include the Bun.WebView scenarios (its Chrome backend attached to the endpoint);
 // `node` runs the raw CDP scenarios only. --playwright adds the Playwright scenarios (playwright-core).
@@ -46,7 +46,7 @@ const opt = (k, d) => {
 const many = (k) => argv.flatMap((a, i) => (a === k ? [argv[i + 1]] : []));
 const usage = () => {
   console.error('usage: node cdp-perf.mjs --bin [label=]/abs/binary [--bin ...] --out /abs/result.json');
-  console.error('       [--rounds N] [--scale X] [--quick] [--filter REGEX] [--list] [--sampler PATH] [--playwright] [--perf-trace]');
+  console.error('       [--rounds N] [--scale X] [--quick] [--filter REGEX] [--list] [--sampler PATH] [--playwright] [--perf-trace] [--fork]');
   process.exit(2);
 };
 
@@ -56,6 +56,8 @@ const SCALE = Number(opt('--scale', QUICK ? 0.2 : 1));
 const FILTER = opt('--filter') ? new RegExp(opt('--filter')) : null;
 const OUT = opt('--out');
 const PERF_TRACE = flag('--perf-trace');
+// serve --fork: connections run in forked children, so CPU is read from the descendants of serve.
+const FORK = flag('--fork');
 const BINS = many('--bin').map((spec, i) => {
   const eq = spec.indexOf('=');
   const label = eq > 0 ? spec.slice(0, eq) : i === 0 ? 'current' : `bin${i}`;
@@ -1104,6 +1106,32 @@ const SCENARIOS = [
     teardown: pwClose,
   },
   {
+    name: 'pw.locator.textContent.mixed',
+    group: 'playwright',
+    what: 'the same locator with forms, selects and many element classes in the page: named getters reach the shared lookup sites',
+    iterations: 100,
+    playwright: true,
+    setup: async (env) => {
+      const s = await pwPage(env);
+      await s.page.goto(`${env.site}/dom?n=2000`);
+      await s.page.evaluate(() => {
+        const tags = ['form', 'select', 'a', 'img', 'input', 'table', 'ul', 'li', 'h1', 'p', 'pre', 'button', 'label', 'textarea', 'section'];
+        for (let i = 0; i < 300; i++) {
+          const e = document.createElement(tags[i % tags.length]);
+          if (e.tagName === 'FORM') e.innerHTML = '<input name="x">';
+          if (e.tagName === 'SELECT') e.innerHTML = '<option>o</option>';
+          document.body.append(e);
+        }
+      });
+      return s;
+    },
+    run: async (s, i) => {
+      const k = wrap(i * 37, 2000);
+      assert((await s.page.locator(`#i${k} span`).textContent()) === `row ${k}`, 'textContent');
+    },
+    teardown: pwClose,
+  },
+  {
     name: 'pw.fill+click+response',
     group: 'playwright',
     what: 'locator.fill, click submit, wait for the fetch response and the DOM update',
@@ -1412,7 +1440,7 @@ async function startSite() {
 async function startBrowser(bin) {
   const port = await freePort();
   const t = now();
-  const cp = track(spawn(bin.path, ['serve', '--host', '127.0.0.1', '--port', String(port), ...LP_FLAGS], { stdio: ['ignore', 'ignore', 'pipe'], env: LP_ENV, detached: true }));
+  const cp = track(spawn(bin.path, ['serve', '--host', '127.0.0.1', '--port', String(port), ...(FORK ? ['--fork'] : []), ...LP_FLAGS], { stdio: ['ignore', 'ignore', 'pipe'], env: LP_ENV, detached: true }));
   let stderr = '';
   cp.stderr.on('data', (d) => {
     stderr = (stderr + d).slice(-4000);
@@ -1460,6 +1488,20 @@ function cpuSnapshot(pid) {
   );
 }
 
+async function browserSnapshot(pid) {
+  if (!FORK) return cpuSnapshot(pid);
+  // serve -> template -> one child per connection.
+  const childrenOf = (p) => new Promise((res) => execFile('pgrep', ['-P', String(p)], (_, out) => res(String(out).trim().split(/\s+/).filter(Boolean))));
+  const pids = [];
+  for (let level = [pid]; level.length; ) {
+    level = (await Promise.all(level.map(childrenOf))).flat();
+    pids.push(...level);
+  }
+  const all = (await Promise.all(pids.map(cpuSnapshot))).filter(Boolean);
+  if (!all.length) return null;
+  return all.reduce((a, c) => ({ cpuMs: a.cpuMs + c.cpuMs, rssKiB: a.rssKiB + c.rssKiB, instructions: a.instructions + c.instructions }));
+}
+
 // ---------- one scenario on one binary ----------
 async function runScenario(sc, bin, site, playwright) {
   const iterations = Math.max(3, Math.round(sc.iterations * SCALE));
@@ -1482,7 +1524,7 @@ async function runScenario(sc, bin, site, playwright) {
         // Stage timers are process-wide, so one control connection sees every client's commands.
         const control = PERF_TRACE ? (cdp ?? (perfCdp = await Cdp.open(b.wsUrl))) : null;
         if (control) await control.send('LP.perfReset');
-        const before = await cpuSnapshot(b.cp.pid);
+        const before = await browserSnapshot(b.cp.pid);
         const t0 = now();
         for (let i = 0; i < iterations; i++) {
           // Untimed per-sample preparation (e.g. waiting for a pre-booted page).
@@ -1493,7 +1535,7 @@ async function runScenario(sc, bin, site, playwright) {
           for (const [k, v] of Object.entries(phases ?? {})) (result.phases[k] ??= []).push(v);
         }
         result.wallMs = now() - t0;
-        const after = await cpuSnapshot(b.cp.pid);
+        const after = await browserSnapshot(b.cp.pid);
         if (control) result.perf = await control.send('LP.perfStats');
         if (before && after) {
           result.cpuMsPerOp = (after.cpuMs - before.cpuMs) / (iterations * (sc.opsPerSample ?? 1));
