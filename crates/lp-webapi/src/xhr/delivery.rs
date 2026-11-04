@@ -1,6 +1,8 @@
 //! Network-thread buffering; only IDs cross into queued browser tasks.
 use super::*;
 
+pub(super) type Snapshot = (Option<ResponseHead>, usize, Option<Result<(), NetError>>, usize, NetworkDelivery);
+
 pub(super) struct Delivery {
     frontier: NetworkDelivery,
     pub head: Option<ResponseHead>,
@@ -30,6 +32,11 @@ impl Delivery {
         self.budget.fetch_sub(self.bytes, Ordering::AcqRel);
         self.bytes = 0;
         self.chunks = Vec::new();
+    }
+    /// What the owner may see now; later I/O schedules a new wake.
+    pub fn snapshot(&mut self) -> Snapshot {
+        self.scheduled = false;
+        (self.head.take(), self.bytes, self.terminal.clone(), self.chunks.len(), self.frontier)
     }
     pub fn close(&mut self) {
         self.closed = true;
@@ -133,11 +140,7 @@ fn pump(page_id: u64, id: RequestId) {
         return;
     };
     let Some(wire) = xhr.wire.borrow().clone() else { return };
-    let (head, bytes, terminal, chunks, frontier) = {
-        let mut wire = wire.lock().unwrap();
-        wire.scheduled = false;
-        (wire.head.take(), wire.bytes, wire.terminal.clone(), wire.chunks.len(), wire.frontier)
-    };
+    let (head, bytes, terminal, chunks, frontier) = wire.lock().unwrap().snapshot();
     xhr.visible_chunks.set(chunks);
     page.network_delivery(id, frontier);
     if !xhr.current(generation, id) {

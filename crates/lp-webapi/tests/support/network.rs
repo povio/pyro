@@ -322,6 +322,22 @@ impl Server {
                         let _=stream.flush();let _=gate.recv_timeout(Duration::from_secs(5));let _=stream.write_all(b"\xac");continue;
                     }
                     "/latin1" => ("200 OK", "Content-Type: text/plain; charset=windows-1252\r\n".into(), vec![0xe9]),
+                    "/xml" => (
+                        "200 OK",
+                        "Content-Type: application/atom+xml\r\n".into(),
+                        b"<?xml version=\"1.0\"?><a xmlns=\"urn:x\"><b>t</b></a>".to_vec(),
+                    ),
+                    "/bad-xml" => ("200 OK", "Content-Type: text/xml\r\n".into(), b"<a><b></a>".to_vec()),
+                    "/latin1-xml" => (
+                        "200 OK",
+                        "Content-Type: text/xml\r\n".into(),
+                        b"<?xml version=\"1.0\" encoding=\"iso-8859-1\"?><a>\xe9</a>".to_vec(),
+                    ),
+                    "/html" => (
+                        "200 OK",
+                        "Content-Type: text/html\r\n".into(),
+                        b"<!doctype html><title>t</title><p id=p>x</p><script>globalThis.ran=true</script>".to_vec(),
+                    ),
                     "/bad-json" => ("200 OK", String::new(), b"not-json".to_vec()),
                     "/missing" => ("404 Not Found", String::new(), b"missing".to_vec()),
                     _ => ("200 OK", "Content-Type: application/json\r\nSet-Cookie: hidden=1\r\n".into(), b"{\"answer\":42}".to_vec()),

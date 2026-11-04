@@ -1151,7 +1151,8 @@ impl Io {
             }
 
             // CDP Fetch interception (request stage).
-            let interceptor = self.shared.interceptor.lock().unwrap().clone();
+            let interceptor =
+                if req.skip_interception { None } else { self.shared.interceptor.lock().unwrap().clone() };
             let (mut method, mut url, mut headers, mut body) =
                 (req.method.clone(), req.url.clone(), headers, req.body.clone());
             if let Some(i) = &interceptor {

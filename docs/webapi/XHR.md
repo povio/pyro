@@ -1,4 +1,4 @@
-# Asynchronous XMLHttpRequest
+# XMLHttpRequest
 
 `lp-webapi::register` registers `XMLHttpRequest`; installed realms expose the
 native EventTarget subclass. Request configuration and lifecycle state remain
@@ -71,10 +71,26 @@ illegal constructor, the seven `on*` handlers). It follows the XHR flags.
 - The native transport sends a body in one piece, so there is one upload
   `progress` event rather than intermediate ones.
 
-Explicit gaps: synchronous XHR, URL username/password authentication,
-responseXML/document responses, and Document request serialization (FormData
-bodies are sent as multipart/form-data). The first three are rejected with
-NotSupportedError.
+Synchronous requests (`open(method, url, false)`): `send()` parks the browser
+thread on the I/O thread's delivery callbacks until the terminal event. No task,
+timer or CDP command runs meanwhile, on any page of that thread, which adds no
+cost to the task loop. There are no events before the end, then
+`readystatechange`, `load`, `loadend`; a failure throws NetworkError. As in a
+Window, `timeout` and `responseType` throw InvalidAccessError with the
+synchronous flag. Deviations: such a request skips CDP Fetch interception
+(`page.route`), because the browser thread that reads the decision is the one
+parked, and it fails with NetworkError after 60 seconds instead of waiting
+forever. Network observation still reports it.
+
+Document responses: `responseType = 'document'` and `responseXML` parse the
+final body once into an inert document. Any `*/xml` or `*+xml` MIME type (and a
+missing Content-Type) parses as XML with `lp_dom::xml` under its limits;
+malformed XML is null. `text/html` parses only for `responseType = 'document'`,
+with scripting disabled. Others are null.
+
+Explicit gaps: URL username/password authentication (rejected with
+NotSupportedError) and Document request serialization (FormData bodies are sent
+as multipart/form-data).
 Full MIME/XML sniffing, compressed transfer progress accounting and complete
 XMLHttpRequest compatibility are not claimed. Native HTTPS and the existing
 URL/CORS/string-model limitations still apply. Ordinary response readers are
