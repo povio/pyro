@@ -341,6 +341,7 @@ impl FrameHost {
         };
         sandbox.opaque |= ancestor.sandbox.opaque;
         sandbox.scripts_disabled |= ancestor.sandbox.scripts_disabled;
+        sandbox.popups_blocked |= ancestor.sandbox.popups_blocked;
         if self.children.borrow().len() >= 128 {
             return Err(JsError::Range("child frame limit reached".into()));
         }
@@ -508,6 +509,7 @@ impl FrameHost {
 pub(crate) struct Sandbox {
     pub opaque: bool,
     pub scripts_disabled: bool,
+    pub popups_blocked: bool,
 }
 impl Sandbox {
     pub fn parse(value: Option<&str>) -> Self {
@@ -516,6 +518,7 @@ impl Sandbox {
         Self {
             opaque: !tokens.iter().any(|t| t.eq_ignore_ascii_case("allow-same-origin")),
             scripts_disabled: !tokens.iter().any(|t| t.eq_ignore_ascii_case("allow-scripts")),
+            popups_blocked: !tokens.iter().any(|t| t.eq_ignore_ascii_case("allow-popups")),
         }
     }
 }

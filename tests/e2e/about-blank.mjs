@@ -1198,6 +1198,32 @@ await check('attribute reflection follows the HTML rules', async () => {
   });
   assert.deepEqual(seen, { dir: '', size: 20, colSpan: 1000, crossOrigin: null, marquee: true });
 });
+await check('popup event from window.open and a target=_blank link', async () => {
+  const p = await context.newPage();
+  try {
+    await p.setContent(`<a href="data:text/html,<title>Linked</title>" target="_blank">tab</a>
+      <button>open</button>
+      <script>document.querySelector('button').addEventListener('click', () => { globalThis.w = window.open('data:text/html,<title>Opened</title>'); });</script>`);
+    const [popup] = await Promise.all([p.waitForEvent('popup'), p.click('button')]);
+    await popup.waitForLoadState();
+    assert.equal(await popup.title(), 'Opened');
+    assert.equal(await popup.opener(), p);
+    assert.deepEqual(await p.evaluate(() => [typeof w.close, w.closed, typeof w.document]), ['function', false, 'undefined']);
+    const closed = popup.waitForEvent('close');
+    await p.evaluate(() => w.close());
+    await closed;
+    assert.equal(await p.evaluate(() => w.closed), true);
+    const [tab] = await Promise.all([context.waitForEvent('page'), p.click('a')]);
+    await tab.waitForLoadState();
+    assert.equal(await tab.title(), 'Linked');
+    await tab.close();
+    const [blank] = await Promise.all([p.waitForEvent('popup'), p.evaluate(() => { globalThis.b = window.open(); })]);
+    await blank.waitForLoadState();
+    assert.equal(blank.url(), 'about:blank');
+    await blank.close();
+    assert.equal(await p.evaluate(() => b.closed), true);
+  } finally { await p.close(); }
+});
 await check('second context is independent', async () => {
   const other = await browser.newContext();
   const p2 = await other.newPage();

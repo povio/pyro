@@ -185,6 +185,8 @@ pub struct NavigationRequest {
     /// A new browsing context (popup) keeps its opener (`window.opener`):
     /// `window.open` without `noopener`, or a link with `rel=opener`.
     pub opener: bool,
+    /// `window.open`'s returned object watches this popup.
+    pub popup: Option<Rc<crate::popup::PopupTicket>>,
 }
 
 /// How a blocking `alert`/`confirm`/`prompt` was answered.
@@ -278,6 +280,9 @@ pub trait PageHooks {
     }
     /// Starts a navigation of the frame showing the document.
     fn navigate(&self, request: NavigationRequest);
+    /// The document's `window.open` result asked something of its popup,
+    /// after (and in order with) the navigation that requested the popup.
+    fn popup_command(&self, _popup: Rc<crate::popup::PopupState>, _command: crate::popup::PopupCommand) {}
     /// Thread-safe poster that runs a closure as a task on the page's
     /// browser thread (lp-net sinks run on the I/O thread). `None` when the
     /// embedder cannot post across threads (network APIs then fail).
@@ -978,6 +983,11 @@ impl PageDom {
         }
         if let Some(h) = self.hooks() {
             h.navigate(req);
+        }
+    }
+    pub(crate) fn popup_command(&self, popup: Rc<crate::popup::PopupState>, command: crate::popup::PopupCommand) {
+        if let Some(h) = self.hooks() {
+            h.popup_command(popup, command);
         }
     }
     pub(crate) fn network_delivery(&self, id: lp_net::RequestId, frontier: lp_net::NetworkDelivery) {
