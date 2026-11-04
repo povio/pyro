@@ -977,6 +977,13 @@ try {
       await cdp.detach();
     } finally { await p.close(); }
   });
+  await check('page.content() returns the doctype and the document (XMLSerializer)', async () => {
+    const p = await context.newPage();
+    try {
+      await p.setContent('<!doctype html><title>t</title><p>x</p>');
+      assert.equal(await p.content(), '<!DOCTYPE html><html><head><title>t</title></head><body><p>x</p></body></html>');
+    } finally { await p.close(); }
+  });
   await check('page.exposeFunction and exposeBinding survive navigation (Runtime.addBinding)', async () => {
     const p = await context.newPage();
     try {

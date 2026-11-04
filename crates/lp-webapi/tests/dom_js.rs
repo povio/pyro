@@ -5867,3 +5867,26 @@ fn resize_observer_input_update_preserves_queued_and_reentrant_callbacks() {
     assert_eq!(eval(&e.main, "seen.join()"), "10,20,30", "a clean input checkpoint must not duplicate delivery");
     e.page.dispose();
 }
+
+#[test]
+fn xml_serializer_doctype_html_and_namespaces() {
+    let e = env("<!doctype html><p id=a title='x\"y'>t&amp;<br><span></span></p><!--c-->");
+    let r = &e.main;
+    let ser = "var ser=new XMLSerializer();";
+    assert_eq!(eval(r, &format!("{ser} ser.serializeToString(document.doctype)")), "<!DOCTYPE html>");
+    assert_eq!(
+        eval(r, &format!("{ser} ser.serializeToString(document.querySelector('p'))")),
+        r#"<p xmlns="http://www.w3.org/1999/xhtml" id="a" title="x&quot;y">t&amp;<br /><span></span></p>"#
+    );
+    assert_eq!(eval(r, &format!("{ser} ser.serializeToString(document.createComment('c'))")), "<!--c-->");
+    assert_eq!(eval(r, &format!("{ser} ser.serializeToString(document.createTextNode('a<b'))")), "a&lt;b");
+    assert_eq!(
+        eval(r, &format!("{ser} ser.serializeToString(document.implementation.createDocumentType('a','p','s'))")),
+        r#"<!DOCTYPE a PUBLIC "p" "s">"#
+    );
+    assert_eq!(
+        eval(r, &format!("{ser} ser.serializeToString(new DOMParser().parseFromString('<w:d xmlns:w=\"urn:w\"><w:e a=\"1\"/><f/></w:d>','application/xml'))")),
+        r#"<w:d xmlns:w="urn:w"><w:e a="1"/><f/></w:d>"#
+    );
+    assert_eq!(eval(r, "try{new XMLSerializer().serializeToString('x')}catch(e){e.name}"), "TypeError");
+}
