@@ -230,6 +230,12 @@ impl Dom {
     pub fn has_pending_mutations(&self) -> bool {
         !self.mutation.pending.is_empty()
     }
+    /// Whether any observer was queued after the first `start` entries
+    /// (what [`Dom::pending_observers_from`] would return), without building
+    /// the list. Runs after every native callback, so it must stay O(1).
+    pub fn has_pending_observers_from(&self, start: usize) -> bool {
+        self.mutation.pending.len() > start
+    }
 
     /// Removes the transient registrations of `obs` (notify step 3.2).
     pub fn clear_transient(&mut self, obs: ObserverId) {

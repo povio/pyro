@@ -430,7 +430,7 @@ fn hook_pending(page: &PageDom) -> bool {
     let m = &page.mutations;
     dom.has_iframe_events()
         || !m.pending_drops.borrow().is_empty()
-        || !dom.pending_observers_from(m.rooted.get()).is_empty()
+        || dom.has_pending_observers_from(m.rooted.get())
         || (!m.pending_roots.borrow().is_empty() && m.queued.get().is_none())
         // The reconcile pass of `checkpoint` only acts on observers or pins;
         // it is idempotent, so a version it skipped is reconciled later.
