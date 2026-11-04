@@ -399,3 +399,62 @@ fn get_element_by_id_index_tracks_mutations_in_tree_order() {
     dom.remove_attribute(b, "id").unwrap();
     assert_eq!(by(&dom, "b"), None);
 }
+
+#[test]
+fn declarative_shadow_roots_are_parser_only_and_outlive_their_template() {
+    let (dom, d) = doc("<!doctype html><body><div id=w></div>");
+    let mut dm = dom.borrow_mut();
+    let w = dm.get_element_by_id(d, "w").unwrap().unwrap();
+    let markup = "<div id=h><template shadowrootmode=closed shadowrootclonable shadowrootserializable><b>in</b></template><i>light</i></div>";
+
+    set_inner_html(&mut dm, w, markup).unwrap();
+    let h = dm.first_child(w).unwrap().unwrap();
+    assert_eq!(dm.shadow_root(h).unwrap(), None, "innerHTML leaves a template");
+    assert!(dm.inner_html(h).unwrap().starts_with("<template "));
+
+    lp_dom::parse::set_html_unsafe(&mut dm, w, markup).unwrap();
+    dm.collect_garbage();
+    let h = dm.first_child(w).unwrap().unwrap();
+    assert_eq!(dm.inner_html(h).unwrap(), "<i>light</i>");
+    let sr = dm.shadow_root(h).unwrap().expect("declarative root");
+    assert_eq!(dm.shadow_root_mode(sr).unwrap(), Some(ShadowRootMode::Closed));
+    assert_eq!(dm.inner_html(sr).unwrap(), "<b>in</b>", "contents survive the template's collection");
+    assert_eq!(dm.get_html(h, false, &[]).unwrap(), "<i>light</i>");
+    let serialized =
+        "<template shadowrootmode=\"closed\" shadowrootserializable=\"\" shadowrootclonable=\"\"><b>in</b></template><i>light</i>";
+    assert_eq!(dm.get_html(h, true, &[]).unwrap(), serialized);
+    assert_eq!(dm.get_html(h, false, &[sr]).unwrap(), serialized);
+
+    // attachShadow claims a declarative root of its mode once, emptied.
+    assert!(dm.attach_shadow(h, ShadowRootMode::Open).is_err());
+    assert_eq!(dm.attach_shadow(h, ShadowRootMode::Closed).unwrap(), sr);
+    assert_eq!(dm.inner_html(sr).unwrap(), "");
+    assert!(dm.attach_shadow(h, ShadowRootMode::Closed).is_err());
+    let copy = dm.clone_node(h, false, None).unwrap();
+    assert!(dm.shadow_root(copy).unwrap().is_some(), "clonable root comes along in a shallow clone");
+    assert!(dm.clone_node(sr, true, None).is_err(), "a shadow root itself is not clonable");
+
+    // Everything a parse makes is collected with the tree it replaced.
+    lp_dom::parse::set_html_unsafe(&mut dm, w, markup).unwrap();
+    dm.collect_garbage();
+    let first = dm.live_nodes();
+    for _ in 0..3 {
+        lp_dom::parse::set_html_unsafe(&mut dm, w, markup).unwrap();
+        dm.collect_garbage();
+    }
+    assert_eq!(dm.live_nodes(), first);
+}
+
+#[test]
+fn declarative_shadow_roots_follow_the_document_opt_in() {
+    let dom: DomRef = Rc::new(RefCell::new(Dom::new()));
+    let html = "<!doctype html><body><div id=h><template shadowrootmode=open><b>x</b></template></div>";
+    let plain = parse_document(&dom, "http://test/", html);
+    let safe = lp_dom::parse::parse_html_unsafe(&dom, html);
+    let dm = dom.borrow();
+    let h = dm.get_element_by_id(plain, "h").unwrap().unwrap();
+    assert_eq!(dm.shadow_root(h).unwrap(), None);
+    let h = dm.get_element_by_id(safe, "h").unwrap().unwrap();
+    let sr = dm.shadow_root(h).unwrap().unwrap();
+    assert_eq!(dm.inner_html(sr).unwrap(), "<b>x</b>");
+}
