@@ -629,6 +629,16 @@ pub mod modules {
             userdata: *mut c_void,
         ) -> *mut c_void;
         pub fn lp_jsc_module_loader_release(handle: *mut c_void);
+        /// 1 when `lp_jsc_import_map_add` works (source-built JavaScriptCore).
+        pub fn lp_jsc_import_maps_available() -> c_int;
+        pub fn lp_jsc_import_map_add(
+            ctx: JSGlobalContextRef,
+            src: *const c_char,
+            src_len: usize,
+            base: *const c_char,
+            base_len: usize,
+            messages: *mut JSStringRef,
+        ) -> c_int;
         pub fn lp_jsc_module_script_create(
             ctx: JSGlobalContextRef,
             src: *const c_char,

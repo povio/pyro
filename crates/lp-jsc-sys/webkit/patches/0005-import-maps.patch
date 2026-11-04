@@ -1,0 +1,214 @@
+diff --git a/Source/JavaScriptCore/API/JSAPIGlobalObject.cpp b/Source/JavaScriptCore/API/JSAPIGlobalObject.cpp
+--- a/Source/JavaScriptCore/API/JSAPIGlobalObject.cpp
++++ b/Source/JavaScriptCore/API/JSAPIGlobalObject.cpp
+@@ -36,6 +36,7 @@
+ #include "Error.h"
+ #include "Exception.h"
+ #include "IdentifierInlines.h"
++#include "ImportMap.h"
+ #include "JSModuleLoader.h"
+ #include "JSModuleLoaderRefPrivate.h"
+ #include "JSNativeStdFunction.h"
+@@ -44,10 +45,12 @@
+ #include "JSSourceCode.h"
+ #include "ObjectConstructor.h"
+ #include "OpaqueJSString.h"
++#include "SourceCode.h"
+ #include "SourceOrigin.h"
+ #include "TopExceptionScope.h"
+ #include <wtf/URL.h>
+ #include <wtf/text/MakeString.h>
++#include <wtf/text/StringBuilder.h>
+ #endif
+ 
+ namespace JSC {
+@@ -102,6 +105,11 @@
+         return makeUnexpected(makeString("Module specifier: "_s, specifier, " does not start with \"/\", \"./\", or \"../\". Referenced from: "_s, base.string()));
+ 
+     if (specifier.startsWith('/')) {
++        // Against the referrer's origin; file:// is only the fallback for
++        // referrers that cannot be a base (the embedder maps it to its origin).
++        absoluteURL = URL(base, specifier);
++        if (base.isValid() && !base.protocolIsFile() && absoluteURL.isValid())
++            return absoluteURL;
+         absoluteURL = URL(URL("file://"_s), specifier);
+         if (absoluteURL.isValid())
+             return absoluteURL;
+@@ -119,6 +127,33 @@
+     return makeUnexpected(makeString("Could not form valid URL from identifier and base. Tried:"_s, absoluteURL.string()));
+ }
+ 
++std::expected<String, String> JSAPIGlobalObject::resolveModuleSpecifier(const String& specifier, const String& referrer)
++{
++    URL base;
++    if (!referrer.isNull())
++        base = URL { { }, referrer };
++    auto resolveWithoutMap = [&] () -> std::expected<String, String> {
++        auto result = computeValidImportSpecifier(base, specifier);
++        if (!result)
++            return makeUnexpected(result.error());
++        return result.value().string();
++    };
++    // Without a referrer an absolute URL is an entry point, which import maps
++    // do not apply to.
++    if (!m_hasImportMap || (referrer.isEmpty() && URL(specifier).isValid()))
++        return resolveWithoutMap();
++    // An inline module's referrer is `<document URL>#inline-module-N`; scopes
++    // match the document URL.
++    if (base.string().contains("#inline-module-"_s))
++        base.removeFragmentIdentifier();
++    URL resolved = importMap().resolve(specifier, base);
++    if (resolved.isValid())
++        return resolved.string();
++    if (!base.isValid())
++        return resolveWithoutMap();
++    return makeUnexpected(makeString("Failed to resolve module specifier \""_s, specifier, "\": the import map blocks or does not map it, and it is not a URL or a path starting with \"/\", \"./\", or \"../\". Referenced from: "_s, base.string()));
++}
++
+ Identifier JSAPIGlobalObject::moduleLoaderResolve(JSGlobalObject* globalObject, JSModuleLoader*, JSValue key, JSValue referrer, RefPtr<ScriptFetcher>, bool)
+ {
+     VM& vm = globalObject->vm();
+@@ -126,18 +161,17 @@
+     String name = key.toWTFString(globalObject);
+     RETURN_IF_EXCEPTION(scope, { });
+ 
+-    URL base;
++    String referrerURL;
+     if (JSString* referrerString = dynamicDowncast<JSString>(referrer)) {
+-        String value = referrerString->value(globalObject);
++        referrerURL = referrerString->value(globalObject);
+         RETURN_IF_EXCEPTION(scope, { });
+-        base = URL { { }, value };
+     }
+ 
+-    auto result = computeValidImportSpecifier(base, name);
++    auto result = uncheckedDowncast<JSAPIGlobalObject>(globalObject)->resolveModuleSpecifier(name, referrerURL);
+     if (result)
+-        return Identifier::fromString(vm, result.value().string());
++        return Identifier::fromString(vm, result.value());
+ 
+-    throwVMError(globalObject, scope, createError(globalObject, result.error()));
++    throwVMError(globalObject, scope, createTypeError(globalObject, result.error()));
+     return { };
+ }
+ 
+@@ -219,6 +253,23 @@
+     metaProperties->putDirect(vm, Identifier::fromString(vm, "url"_s), key);
+     RETURN_IF_EXCEPTION(scope, nullptr);
+ 
++    String moduleURL = key.toWTFString(globalObject);
++    RETURN_IF_EXCEPTION(scope, nullptr);
++    auto* resolve = JSNativeStdFunction::create(vm, globalObject, 1, "resolve"_s, [moduleURL = WTF::move(moduleURL)] (JSGlobalObject* globalObject, CallFrame* callFrame) -> EncodedJSValue {
++        VM& vm = globalObject->vm();
++        auto scope = DECLARE_THROW_SCOPE(vm);
++        String specifier = callFrame->argument(0).toWTFString(globalObject);
++        RETURN_IF_EXCEPTION(scope, { });
++        auto result = uncheckedDowncast<JSAPIGlobalObject>(globalObject)->resolveModuleSpecifier(specifier, moduleURL);
++        if (!result) {
++            throwVMError(globalObject, scope, createTypeError(globalObject, result.error()));
++            return { };
++        }
++        return JSValue::encode(jsString(vm, result.value()));
++    });
++    metaProperties->putDirect(vm, Identifier::fromString(vm, "resolve"_s), resolve);
++    RETURN_IF_EXCEPTION(scope, nullptr);
++
+     return metaProperties;
+ }
+ 
+@@ -271,6 +322,49 @@
+         return false;
+     apiGlobalObject->setModuleLoader(reinterpret_cast<void*>(callback), info);
+     return true;
++}
++
++namespace {
++
++class ImportMapMessages final : public ImportMap::Reporter {
++public:
++    void reportWarning(const String& message) const final { add(message); }
++    void reportError(const String& message) const final { add(message); }
++    String joined() const { return m_messages.toString(); }
++
++private:
++    void add(const String& message) const
++    {
++        if (!m_messages.isEmpty())
++            m_messages.append('\n');
++        m_messages.append(message);
++    }
++    mutable StringBuilder m_messages;
++};
++
++}
++
++bool JSGlobalContextAddImportMap(JSGlobalContextRef ctx, JSStringRef source, JSStringRef baseURL, JSStringRef* messages)
++{
++    JSGlobalObject* globalObject = toJS(ctx);
++    JSLockHolder locker(globalObject->vm());
++    auto* apiGlobalObject = dynamicDowncast<JSAPIGlobalObject>(globalObject);
++    if (!apiGlobalObject)
++        return false;
++
++    ImportMapMessages reporter;
++    URL base { { }, baseURL->string() };
++    auto sourceCode = makeSource(source->string(), SourceOrigin { base }, SourceTaintedOrigin::Untainted);
++    auto parsed = ImportMap::parseImportMapString(sourceCode, base, reporter);
++    if (parsed) {
++        apiGlobalObject->importMap().mergeExistingAndNewImportMaps(WTF::move(*parsed), reporter);
++        apiGlobalObject->didAddImportMap();
++    }
++    if (messages) {
++        String joined = reporter.joined();
++        *messages = joined.isEmpty() ? nullptr : OpaqueJSString::tryCreate(joined).leakRef();
++    }
++    return !!parsed;
+ }
+ 
+ JSValueRef JSModuleSourceCreate(JSContextRef ctx, JSStringRef source, JSStringRef url, JSValueRef* exception)
+diff --git a/Source/JavaScriptCore/API/JSAPIGlobalObject.h b/Source/JavaScriptCore/API/JSAPIGlobalObject.h
+--- a/Source/JavaScriptCore/API/JSAPIGlobalObject.h
++++ b/Source/JavaScriptCore/API/JSAPIGlobalObject.h
+@@ -27,6 +27,7 @@
+ 
+ #include "JSGlobalObject.h"
+ #include "ScriptFetchParameters.h"
++#include <expected>
+ #include <wtf/RefPtr.h>
+ 
+ OBJC_CLASS JSScript;
+@@ -63,6 +64,9 @@
+         m_moduleLoaderInfo = info;
+     }
+     JSValue loadAndEvaluateModule(const JSLockHolder&, const String& url);
++    // From the first import map on, specifiers resolve through importMap().
++    void didAddImportMap() { m_hasImportMap = true; }
++    std::expected<String, String> resolveModuleSpecifier(const String& specifier, const String& referrer);
+ #endif
+ 
+ private:
+@@ -78,6 +82,7 @@
+ #if !JSC_OBJC_API_ENABLED
+     void* m_moduleLoaderCallback { nullptr };
+     void* m_moduleLoaderInfo { nullptr };
++    bool m_hasImportMap { false };
+ #endif
+ };
+ 
+diff --git a/Source/JavaScriptCore/API/JSModuleLoaderRefPrivate.h b/Source/JavaScriptCore/API/JSModuleLoaderRefPrivate.h
+--- a/Source/JavaScriptCore/API/JSModuleLoaderRefPrivate.h
++++ b/Source/JavaScriptCore/API/JSModuleLoaderRefPrivate.h
+@@ -25,6 +25,13 @@
+    when the context does not support module loading. */
+ JS_EXPORT bool JSGlobalContextSetModuleLoader(JSGlobalContextRef ctx, JSModuleLoaderFetchCallback callback, void* info);
+ 
++/* Parses `source` as an import map with the given base URL and merges it into
++   the context's map (HTML "merge existing and new import maps"). Returns false
++   when the map is invalid (nothing is merged). `*messages`, when not NULL
++   afterwards, holds newline-separated warnings or the error and is owned by the
++   caller. Contexts without a map never consult one when resolving. */
++JS_EXPORT bool JSGlobalContextAddImportMap(JSGlobalContextRef ctx, JSStringRef source, JSStringRef baseURL, JSStringRef* messages);
++
+ /* Creates the module source value passed to a fetch `resolve` function. */
+ JS_EXPORT JSValueRef JSModuleSourceCreate(JSContextRef ctx, JSStringRef source, JSStringRef url, JSValueRef* exception);
+ 

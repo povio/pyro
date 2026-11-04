@@ -64,6 +64,16 @@ int lp_jsc_modules_available(void) {
     }
 }
 
+// Import maps need the resolve hook of the source-built JavaScriptCore; the system
+// framework's loader rejects bare specifiers before asking the delegate.
+int lp_jsc_import_maps_available(void) { return 0; }
+
+int lp_jsc_import_map_add(JSGlobalContextRef ctx, const char *src, size_t src_len, const char *base, size_t base_len,
+                          JSStringRef *messages) {
+    *messages = NULL;
+    return 0;
+}
+
 static NSString *lp_nsstring(const char *utf8, size_t len) {
     return [[NSString alloc] initWithBytes:utf8 length:len encoding:NSUTF8StringEncoding];
 }

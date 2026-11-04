@@ -192,11 +192,14 @@ Optional extras: `JSReportExtraMemoryCost` and `JSSynchronousGarbageCollectForDe
 - **How fetching works:** module fetching calls `ModuleFetcher::fetch(realm, url, ModuleRequest)`, which resolves or
   rejects asynchronously.
 - **Measured caveats:**
-  - **Root-relative specifiers:** JSC resolves `"/x.js"` against `file:///`. The runtime fetches the document-origin
+  - **Root-relative specifiers (system framework; the patched JSC resolves them against the referrer):** JSC resolves
+    `"/x.js"` against `file:///`. The runtime fetches the document-origin
     URL, but the module is registered under `file:///x.js`, so that module's `import.meta.url` reads `file:///x.js`.
     Only `file:///…` (empty authority) is remapped; `file://host/…` stays unchanged. An explicit `import("file:///x")`
     from an http page is therefore also fetched from the page origin.
-  - **Bare specifiers and import maps:** not supported.
+  - **Bare specifiers and import maps:** `webkit/patches/0005-import-maps.patch` adds `JSGlobalContextAddImportMap`, which
+    feeds JSC's own `ImportMap` (HTML parse, resolve and merge), and consults it in `moduleLoaderResolve` once a context
+    has a map. It also adds `import.meta.resolve`. The system framework has no such hook: there these stay unsupported.
   - **Inline modules:** the registry is keyed by URL, so each inline module script needs a distinct URL. The browser
     appends a fragment.
   - **Linux:** WebKitGTK's JSC has no module loader, so **ESM on Linux is unsupported** until a tested alternative

@@ -7,8 +7,8 @@
 //! * external classic `defer`, and non-async module scripts: run in document
 //!   order after parsing, before `DOMContentLoaded`;
 //! * `async` (classic or module): run when ready, before `load`;
-//! * `nomodule` classic scripts, import maps and data blocks: not executed
-//!   (import maps are unsupported, see docs/PARITY.md).
+//! * import maps: merged into the realm's map when reached;
+//! * `nomodule` classic scripts and data blocks: not executed.
 //!
 //! Deviation: a deferred module's evaluation promise (including top-level
 //! await) is awaited before the next deferred script/`DOMContentLoaded`,
@@ -732,6 +732,14 @@ impl Browser {
             let _ = d.mark_script_started(node);
             info
         };
+        if info.kind == ScriptKind::ImportMap {
+            let map_base = {
+                let d = dom.borrow();
+                d.node_document(node).ok().and_then(|doc| d.document_base_url(doc).ok().map(str::to_owned))
+            };
+            self.add_import_map(page, &info, map_base.as_deref().unwrap_or(&base));
+            return;
+        }
         if dom.borrow_mut().add_ref(node).is_err() {
             return;
         }
@@ -739,7 +747,7 @@ impl Browser {
         let ty = match info.kind {
             ScriptKind::Classic if !info.nomodule => ScriptType::Classic,
             ScriptKind::Module => ScriptType::Module,
-            // nomodule classic, import maps (unsupported) and data blocks.
+            // nomodule classic and data blocks.
             _ => return,
         };
         let src_url = match info.src.as_deref() {
@@ -1104,6 +1112,25 @@ impl Browser {
         }
         if let Some(dom) = &bindings {
             dom.set_current_script(None);
+        }
+    }
+
+    /// Registers an import map; its problems go to the console or `error`
+    /// reporting and leave the rest of the page unaffected.
+    fn add_import_map(&mut self, page: FrameKey, info: &lp_dom::script::ScriptInfo, base: &str) {
+        let Some(realm) = self.main_realm(page) else { return };
+        let Ok(scope) = realm.scope() else { return };
+        // Spec: an external import map is an error event; there is no fetch.
+        if info.src.is_some() {
+            scope.console_warn("External import maps are not supported: <script type=\"importmap\"> ignored its src.");
+            return;
+        }
+        match scope.add_import_map(&info.inline_text, base) {
+            Ok(warnings) => warnings.iter().for_each(|w| scope.console_warn(&format!("Import map: {w}"))),
+            Err(JsError::Unsupported(what)) => {
+                scope.console_warn(&format!("Ignored <script type=\"importmap\">: {what}"))
+            }
+            Err(e) => scope.report_exception(&e),
         }
     }
 

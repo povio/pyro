@@ -23,6 +23,7 @@ typedef void (*JSModuleLoaderFetchCallback)(JSGlobalContextRef ctx, JSStringRef 
 bool JSGlobalContextSetModuleLoader(JSGlobalContextRef ctx, JSModuleLoaderFetchCallback callback, void *info);
 JSValueRef JSModuleSourceCreate(JSContextRef ctx, JSStringRef source, JSStringRef url, JSValueRef *exception);
 JSObjectRef JSLoadAndEvaluateModule(JSContextRef ctx, JSStringRef url, JSValueRef *exception);
+bool JSGlobalContextAddImportMap(JSGlobalContextRef ctx, JSStringRef source, JSStringRef baseURL, JSStringRef *messages);
 
 typedef void (*lp_module_fetch_cb)(void *userdata, JSGlobalContextRef ctx, JSStringRef identifier, JSObjectRef resolve,
                                    JSObjectRef reject);
@@ -34,6 +35,7 @@ struct lp_module_loader {
 };
 
 int lp_jsc_modules_available(void) { return 1; }
+int lp_jsc_import_maps_available(void) { return 1; }
 
 static void lp_fetch(JSGlobalContextRef ctx, JSStringRef identifier, JSObjectRef resolve, JSObjectRef reject,
                      void *info) {
@@ -69,6 +71,18 @@ static JSStringRef lp_string(const char *utf8, size_t len) {
 static JSStringRef lp_error(JSGlobalContextRef ctx, JSValueRef exception, const char *fallback) {
     JSStringRef s = exception ? JSValueToStringCopy(ctx, exception, NULL) : NULL;
     return s ? s : JSStringCreateWithUTF8CString(fallback);
+}
+
+// Returns 1 when the map was merged. `*messages` is an owned newline-separated
+// list of warnings or the error, or NULL.
+int lp_jsc_import_map_add(JSGlobalContextRef ctx, const char *src, size_t src_len, const char *base, size_t base_len,
+                          JSStringRef *messages) {
+    JSStringRef source = lp_string(src, src_len);
+    JSStringRef baseURL = lp_string(base, base_len);
+    bool merged = JSGlobalContextAddImportMap(ctx, source, baseURL, messages);
+    JSStringRelease(source);
+    JSStringRelease(baseURL);
+    return merged;
 }
 
 JSValueRef lp_jsc_module_script_create(JSGlobalContextRef ctx, const char *src, size_t src_len, const char *url,
