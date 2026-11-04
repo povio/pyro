@@ -1,0 +1,1762 @@
+{
+"bl-instructions-cargo-alignment-final": {
+"pages": [
+1,
+1
+],
+"size": {
+"chrome": "595.92 x 842.88",
+"before": "596.25 x 842.25",
+"after": "595.92 x 842.88"
+},
+"dx": {
+"before": {
+"med": 0.137,
+"p95": 0.344,
+"max": 0.949
+},
+"after": {
+"med": 0.138,
+"p95": 0.339,
+"max": 0.949
+}
+},
+"dy": {
+"before": {
+"med": -0.72,
+"p95": 0.733,
+"max": 2.219
+},
+"after": {
+"med": 0.002,
+"p95": 2.282,
+"max": 2.4
+}
+},
+"diffPx150dpi": {
+"before": 72204,
+"after": 35140,
+"of": 2180952
+}
+},
+"bl-instructions-cargo-alignment-preview": {
+"pages": [
+1,
+1
+],
+"size": {
+"chrome": "595.92 x 842.88",
+"before": "596.25 x 842.25",
+"after": "595.92 x 842.88"
+},
+"dx": {
+"before": {
+"med": 0.134,
+"p95": 0.334,
+"max": 0.949
+},
+"after": {
+"med": 0.138,
+"p95": 0.334,
+"max": 0.949
+}
+},
+"dy": {
+"before": {
+"med": -0.72,
+"p95": 0.733,
+"max": 2.219
+},
+"after": {
+"med": 0.002,
+"p95": 2.282,
+"max": 2.4
+}
+},
+"diffPx150dpi": {
+"before": 72208,
+"after": 35334,
+"of": 2180952
+}
+},
+"bmd-report": {
+"pages": [
+1,
+1
+],
+"size": {
+"chrome": "842.88 x 595.92",
+"before": "842.25 x 596.25",
+"after": "842.88 x 595.92"
+},
+"dx": {
+"before": {
+"med": -0.602,
+"p95": 1.097,
+"max": 2.4
+},
+"after": {
+"med": 0.155,
+"p95": 0.357,
+"max": 2.4
+}
+},
+"dy": {
+"before": {
+"med": 0.06,
+"p95": 0.717,
+"max": 0.724
+},
+"after": {
+"med": 0,
+"p95": 0.72,
+"max": 0.72
+}
+},
+"diffPx150dpi": {
+"before": 12199,
+"after": 10392,
+"of": 2180952
+}
+},
+"booking-confirmation-final": {
+"pages": [
+1,
+1
+],
+"size": {
+"chrome": "595.92 x 842.88",
+"before": "596.25 x 842.25",
+"after": "595.92 x 842.88"
+},
+"dx": {
+"before": {
+"med": 0.15,
+"p95": 2.4,
+"max": 2.4
+},
+"after": {
+"med": 0.15,
+"p95": 2.4,
+"max": 2.4
+}
+},
+"dy": {
+"before": {
+"med": -0.72,
+"p95": 0.74,
+"max": 2.4
+},
+"after": {
+"med": 0,
+"p95": 2.132,
+"max": 2.281
+}
+},
+"diffPx150dpi": {
+"before": 91071,
+"after": 40170,
+"of": 2180952
+}
+},
+"booking-confirmation-overflow": {
+"pages": [
+10,
+10
+],
+"size": {
+"chrome": "595.92 x 842.88",
+"before": "596.25 x 842.25",
+"after": "595.92 x 842.88"
+},
+"dx": {
+"before": {
+"med": 0.158,
+"p95": 0.415,
+"max": 2.4
+},
+"after": {
+"med": 0.157,
+"p95": 0.436,
+"max": 2.4
+}
+},
+"dy": {
+"before": {
+"med": -0.72,
+"p95": 2.273,
+"max": 2.4
+},
+"after": {
+"med": -0.001,
+"p95": 2.186,
+"max": 2.4
+}
+},
+"diffPx150dpi": {
+"before": 926316,
+"after": 794652,
+"of": 21809520
+}
+},
+"booking-confirmation-preview": {
+"pages": [
+1,
+1
+],
+"size": {
+"chrome": "595.92 x 842.88",
+"before": "596.25 x 842.25",
+"after": "595.92 x 842.88"
+},
+"dx": {
+"before": {
+"med": 0.15,
+"p95": 2.4,
+"max": 2.4
+},
+"after": {
+"med": 0.15,
+"p95": 2.4,
+"max": 2.4
+}
+},
+"dy": {
+"before": {
+"med": -0.72,
+"p95": 0.74,
+"max": 2.4
+},
+"after": {
+"med": 0,
+"p95": 2.132,
+"max": 2.281
+}
+},
+"diffPx150dpi": {
+"before": 91071,
+"after": 40170,
+"of": 2180952
+}
+},
+"booking-confirmation-sparse": {
+"pages": [
+1,
+1
+],
+"size": {
+"chrome": "595.92 x 842.88",
+"before": "596.25 x 842.25",
+"after": "595.92 x 842.88"
+},
+"dx": {
+"before": {
+"med": 0.155,
+"p95": 0.212,
+"max": 0.358
+},
+"after": {
+"med": 0.159,
+"p95": 0.34,
+"max": 0.359
+}
+},
+"dy": {
+"before": {
+"med": -0.72,
+"p95": 0.721,
+"max": 0.73
+},
+"after": {
+"med": 0.02,
+"p95": 0.091,
+"max": 0.096
+}
+},
+"diffPx150dpi": {
+"before": 42987,
+"after": 6194,
+"of": 2180952
+}
+},
+"booking-request-final": {
+"pages": [
+1,
+1
+],
+"size": {
+"chrome": "595.92 x 842.88",
+"before": "596.25 x 842.25",
+"after": "595.92 x 842.88"
+},
+"dx": {
+"before": {
+"med": 0.164,
+"p95": 0.485,
+"max": 1.462
+},
+"after": {
+"med": 0.157,
+"p95": 0.468,
+"max": 1.408
+}
+},
+"dy": {
+"before": {
+"med": -0.72,
+"p95": 2.279,
+"max": 2.4
+},
+"after": {
+"med": 0.006,
+"p95": 2.279,
+"max": 2.297
+}
+},
+"diffPx150dpi": {
+"before": 91938,
+"after": 41802,
+"of": 2180952
+}
+},
+"booking-request-overflow": {
+"pages": [
+10,
+10
+],
+"size": {
+"chrome": "595.92 x 842.88",
+"before": "596.25 x 842.25",
+"after": "595.92 x 842.88"
+},
+"dx": {
+"before": {
+"med": 0.159,
+"p95": 0.415,
+"max": 1.462
+},
+"after": {
+"med": 0.157,
+"p95": 0.436,
+"max": 1.412
+}
+},
+"dy": {
+"before": {
+"med": -0.72,
+"p95": 2.276,
+"max": 2.4
+},
+"after": {
+"med": -0.001,
+"p95": 2.188,
+"max": 2.4
+}
+},
+"diffPx150dpi": {
+"before": 925527,
+"after": 797557,
+"of": 21809520
+}
+},
+"booking-request-preview": {
+"pages": [
+1,
+1
+],
+"size": {
+"chrome": "595.92 x 842.88",
+"before": "596.25 x 842.25",
+"after": "595.92 x 842.88"
+},
+"dx": {
+"before": {
+"med": 0.164,
+"p95": 0.485,
+"max": 1.462
+},
+"after": {
+"med": 0.157,
+"p95": 0.468,
+"max": 1.408
+}
+},
+"dy": {
+"before": {
+"med": -0.72,
+"p95": 2.279,
+"max": 2.4
+},
+"after": {
+"med": 0.006,
+"p95": 2.279,
+"max": 2.297
+}
+},
+"diffPx150dpi": {
+"before": 91938,
+"after": 41802,
+"of": 2180952
+}
+},
+"booking-request-sparse": {
+"pages": [
+1,
+1
+],
+"size": {
+"chrome": "595.92 x 842.88",
+"before": "596.25 x 842.25",
+"after": "595.92 x 842.88"
+},
+"dx": {
+"before": {
+"med": 0.148,
+"p95": 0.212,
+"max": 0.358
+},
+"after": {
+"med": 0.156,
+"p95": 0.34,
+"max": 0.359
+}
+},
+"dy": {
+"before": {
+"med": -0.72,
+"p95": 0.721,
+"max": 0.73
+},
+"after": {
+"med": 0.027,
+"p95": 0.081,
+"max": 0.097
+}
+},
+"diffPx150dpi": {
+"before": 42373,
+"after": 5900,
+"of": 2180952
+}
+},
+"cmr-long-address": {
+"pages": [
+1,
+1
+],
+"size": {
+"chrome": "595.92 x 842.88",
+"before": "595.5 x 842.25",
+"after": "595.92 x 842.88"
+},
+"dx": {
+"before": {
+"med": 0.045,
+"p95": 0.422,
+"max": 0.525
+},
+"after": {
+"med": 0.048,
+"p95": 0.412,
+"max": 0.525
+}
+},
+"dy": {
+"before": {
+"med": -0.721,
+"p95": 0.765,
+"max": 1.462
+},
+"after": {
+"med": 0.02,
+"p95": 0.682,
+"max": 0.814
+}
+},
+"diffPx150dpi": {
+"before": 83461,
+"after": 32765,
+"of": 2180952
+}
+},
+"cmr-overflow": {
+"pages": [
+14,
+14
+],
+"size": {
+"chrome": "595.92 x 842.88",
+"before": "595.5 x 842.25",
+"after": "595.92 x 842.88"
+},
+"dx": {
+"before": {
+"med": 0,
+"p95": 0.364,
+"max": 0.78
+},
+"after": {
+"med": 0,
+"p95": 0.365,
+"max": 0.78
+}
+},
+"dy": {
+"before": {
+"med": -0.72,
+"p95": 1.56,
+"max": 2.4
+},
+"after": {
+"med": 0.041,
+"p95": 0.827,
+"max": 2.4
+}
+},
+"diffPx150dpi": {
+"before": 602359,
+"after": 518934,
+"of": 30533328
+}
+},
+"cmr-populated": {
+"pages": [
+1,
+1
+],
+"size": {
+"chrome": "595.92 x 842.88",
+"before": "595.5 x 842.25",
+"after": "595.92 x 842.88"
+},
+"dx": {
+"before": {
+"med": 0.031,
+"p95": 0.422,
+"max": 0.537
+},
+"after": {
+"med": 0.03,
+"p95": 0.401,
+"max": 0.537
+}
+},
+"dy": {
+"before": {
+"med": -0.721,
+"p95": 0.765,
+"max": 2.4
+},
+"after": {
+"med": 0.013,
+"p95": 0.752,
+"max": 2.4
+}
+},
+"diffPx150dpi": {
+"before": 80453,
+"after": 33133,
+"of": 2180952
+}
+},
+"cmr-reference": {
+"pages": [
+1,
+1
+],
+"size": {
+"chrome": "595.92 x 842.88",
+"before": "595.5 x 842.25",
+"after": "595.92 x 842.88"
+},
+"dx": {
+"before": {
+"med": 0.001,
+"p95": 0.396,
+"max": 0.545
+},
+"after": {
+"med": 0,
+"p95": 0.402,
+"max": 0.542
+}
+},
+"dy": {
+"before": {
+"med": -0.721,
+"p95": 0.747,
+"max": 1.477
+},
+"after": {
+"med": 0.018,
+"p95": 0.685,
+"max": 0.78
+}
+},
+"diffPx150dpi": {
+"before": 85659,
+"after": 38777,
+"of": 2180952
+}
+},
+"house-bl-final-copy-historical-b": {
+"pages": [
+2,
+2
+],
+"size": {
+"chrome": "595.92 x 842.88",
+"before": "596.25 x 842.25",
+"after": "595.92 x 842.88"
+},
+"dx": {
+"before": {
+"med": 0.091,
+"p95": 0.28,
+"max": 2.4
+},
+"after": {
+"med": 0.095,
+"p95": 0.277,
+"max": 0.949
+}
+},
+"dy": {
+"before": {
+"med": -0.72,
+"p95": 1.454,
+"max": 2.219
+},
+"after": {
+"med": 0,
+"p95": 2.244,
+"max": 2.4
+}
+},
+"diffPx150dpi": {
+"before": 116648,
+"after": 50271,
+"of": 4361904
+}
+},
+"house-bl-final-historical-b": {
+"pages": [
+2,
+2
+],
+"size": {
+"chrome": "595.92 x 842.88",
+"before": "596.25 x 842.25",
+"after": "595.92 x 842.88"
+},
+"dx": {
+"before": {
+"med": 0.123,
+"p95": 0.346,
+"max": 2.4
+},
+"after": {
+"med": 0.123,
+"p95": 0.339,
+"max": 0.949
+}
+},
+"dy": {
+"before": {
+"med": -0.72,
+"p95": 0.733,
+"max": 2.219
+},
+"after": {
+"med": 0,
+"p95": 1.44,
+"max": 2.4
+}
+},
+"diffPx150dpi": {
+"before": 116012,
+"after": 50008,
+"of": 4361904
+}
+},
+"house-bl-final-overflowing-table": {
+"pages": [
+4,
+4
+],
+"size": {
+"chrome": "595.92 x 842.88",
+"before": "596.25 x 842.25",
+"after": "595.92 x 842.88"
+},
+"dx": {
+"before": {
+"med": 0.12,
+"p95": 0.239,
+"max": 2.4
+},
+"after": {
+"med": 0.122,
+"p95": 0.239,
+"max": 0.949
+}
+},
+"dy": {
+"before": {
+"med": -0.72,
+"p95": 0.733,
+"max": 2.4
+},
+"after": {
+"med": 0,
+"p95": 2.28,
+"max": 2.4
+}
+},
+"diffPx150dpi": {
+"before": 323086,
+"after": 196165,
+"of": 8723808
+}
+},
+"invoice-bank-footer-tos-budapest-english-bank-main": {
+"pages": [
+1,
+1
+],
+"size": {
+"chrome": "595.92 x 842.88",
+"before": "596.25 x 842.25",
+"after": "595.92 x 842.88"
+},
+"dx": {
+"before": {
+"med": 0.115,
+"p95": 0.455,
+"max": 1.241
+},
+"after": {
+"med": 0.122,
+"p95": 0.367,
+"max": 0.719
+}
+},
+"dy": {
+"before": {
+"med": -0.721,
+"p95": 1.562,
+"max": 2.183
+},
+"after": {
+"med": -0.001,
+"p95": 0.722,
+"max": 1.463
+}
+},
+"diffPx150dpi": {
+"before": 66851,
+"after": 38511,
+"of": 2180952
+}
+},
+"invoice-bank-footer-tos-budapest-hungarian-bank-huf": {
+"pages": [
+1,
+1
+],
+"size": {
+"chrome": "595.92 x 842.88",
+"before": "596.25 x 842.25",
+"after": "595.92 x 842.88"
+},
+"dx": {
+"before": {
+"med": 0.124,
+"p95": 0.473,
+"max": 2.4
+},
+"after": {
+"med": 0.126,
+"p95": 0.367,
+"max": 2.4
+}
+},
+"dy": {
+"before": {
+"med": -0.721,
+"p95": 1.562,
+"max": 2.172
+},
+"after": {
+"med": 0,
+"p95": 0.722,
+"max": 1.452
+}
+},
+"diffPx150dpi": {
+"before": 69477,
+"after": 40656,
+"of": 2180952
+}
+},
+"invoice-bank-footer-tos-vienna-english-bank-factoring": {
+"pages": [
+1,
+1
+],
+"size": {
+"chrome": "595.92 x 842.88",
+"before": "596.25 x 842.25",
+"after": "595.92 x 842.88"
+},
+"dx": {
+"before": {
+"med": 0.134,
+"p95": 0.455,
+"max": 1.241
+},
+"after": {
+"med": 0.136,
+"p95": 0.367,
+"max": 0.719
+}
+},
+"dy": {
+"before": {
+"med": -0.721,
+"p95": 1.562,
+"max": 2.183
+},
+"after": {
+"med": 0,
+"p95": 0.722,
+"max": 1.463
+}
+},
+"diffPx150dpi": {
+"before": 70897,
+"after": 41651,
+"of": 2180952
+}
+},
+"invoice-bank-footer-tos-vienna-english-bank-regular": {
+"pages": [
+1,
+1
+],
+"size": {
+"chrome": "595.92 x 842.88",
+"before": "596.25 x 842.25",
+"after": "595.92 x 842.88"
+},
+"dx": {
+"before": {
+"med": 0.135,
+"p95": 0.455,
+"max": 1.241
+},
+"after": {
+"med": 0.138,
+"p95": 0.367,
+"max": 0.719
+}
+},
+"dy": {
+"before": {
+"med": -0.721,
+"p95": 1.562,
+"max": 2.183
+},
+"after": {
+"med": -0.001,
+"p95": 0.722,
+"max": 1.463
+}
+},
+"diffPx150dpi": {
+"before": 68818,
+"after": 41040,
+"of": 2180952
+}
+},
+"invoice-final": {
+"pages": [
+1,
+1
+],
+"size": {
+"chrome": "595.92 x 842.88",
+"before": "596.25 x 842.25",
+"after": "595.92 x 842.88"
+},
+"dx": {
+"before": {
+"med": -0.298,
+"p95": 0.719,
+"max": 2.4
+},
+"after": {
+"med": -0.297,
+"p95": 0.466,
+"max": 2.4
+}
+},
+"dy": {
+"before": {
+"med": -0.72,
+"p95": 1.544,
+"max": 1.555
+},
+"after": {
+"med": 0.004,
+"p95": 2.264,
+"max": 2.275
+}
+},
+"diffPx150dpi": {
+"before": 69065,
+"after": 56761,
+"of": 2180952
+}
+},
+"invoice-final-copy": {
+"pages": [
+1,
+1
+],
+"size": {
+"chrome": "595.92 x 842.88",
+"before": "596.25 x 842.25",
+"after": "595.92 x 842.88"
+},
+"dx": {
+"before": {
+"med": -0.298,
+"p95": 0.719,
+"max": 2.4
+},
+"after": {
+"med": -0.297,
+"p95": 0.466,
+"max": 2.4
+}
+},
+"dy": {
+"before": {
+"med": -0.72,
+"p95": 1.544,
+"max": 1.555
+},
+"after": {
+"med": 0.004,
+"p95": 2.264,
+"max": 2.275
+}
+},
+"diffPx150dpi": {
+"before": 69065,
+"after": 56761,
+"of": 2180952
+}
+},
+"invoice-office-kombi-kargo-english": {
+"pages": [
+1,
+1
+],
+"size": {
+"chrome": "595.92 x 842.88",
+"before": "596.25 x 842.25",
+"after": "595.92 x 842.88"
+},
+"dx": {
+"before": {
+"med": 0.157,
+"p95": 0.358,
+"max": 2.4
+},
+"after": {
+"med": 0.159,
+"p95": 0.335,
+"max": 0.363
+}
+},
+"dy": {
+"before": {
+"med": -0.721,
+"p95": 1.561,
+"max": 1.562
+},
+"after": {
+"med": -0.001,
+"p95": 0.722,
+"max": 0.727
+}
+},
+"diffPx150dpi": {
+"before": 65256,
+"after": 43013,
+"of": 2180952
+}
+},
+"invoice-office-kombi-kargo-german": {
+"pages": [
+1,
+1
+],
+"size": {
+"chrome": "595.92 x 842.88",
+"before": "596.25 x 842.25",
+"after": "595.92 x 842.88"
+},
+"dx": {
+"before": {
+"med": 0.141,
+"p95": 0.239,
+"max": 2.4
+},
+"after": {
+"med": 0.141,
+"p95": 0.239,
+"max": 0.322
+}
+},
+"dy": {
+"before": {
+"med": -0.722,
+"p95": 1.561,
+"max": 1.562
+},
+"after": {
+"med": -0.001,
+"p95": 0.722,
+"max": 0.727
+}
+},
+"diffPx150dpi": {
+"before": 65557,
+"after": 43125,
+"of": 2180952
+}
+},
+"invoice-office-ole-hamburg-english": {
+"pages": [
+1,
+1
+],
+"size": {
+"chrome": "595.92 x 842.88",
+"before": "596.25 x 842.25",
+"after": "595.92 x 842.88"
+},
+"dx": {
+"before": {
+"med": 0.14,
+"p95": 0.353,
+"max": 2.4
+},
+"after": {
+"med": 0.141,
+"p95": 0.346,
+"max": 0.359
+}
+},
+"dy": {
+"before": {
+"med": -0.721,
+"p95": 1.56,
+"max": 1.562
+},
+"after": {
+"med": 0,
+"p95": 0.722,
+"max": 0.727
+}
+},
+"diffPx150dpi": {
+"before": 71506,
+"after": 43352,
+"of": 2180952
+}
+},
+"invoice-office-ole-hamburg-german": {
+"pages": [
+1,
+1
+],
+"size": {
+"chrome": "595.92 x 842.88",
+"before": "596.25 x 842.25",
+"after": "595.92 x 842.88"
+},
+"dx": {
+"before": {
+"med": 0.185,
+"p95": 0.365,
+"max": 2.4
+},
+"after": {
+"med": 0.185,
+"p95": 0.362,
+"max": 0.446
+}
+},
+"dy": {
+"before": {
+"med": -0.72,
+"p95": 1.56,
+"max": 1.562
+},
+"after": {
+"med": 0,
+"p95": 0.722,
+"max": 0.727
+}
+},
+"diffPx150dpi": {
+"before": 75860,
+"after": 51887,
+"of": 2180952
+}
+},
+"invoice-office-tos-budapest-english": {
+"pages": [
+1,
+1
+],
+"size": {
+"chrome": "595.92 x 842.88",
+"before": "596.25 x 842.25",
+"after": "595.92 x 842.88"
+},
+"dx": {
+"before": {
+"med": 0.131,
+"p95": 0.583,
+"max": 1.241
+},
+"after": {
+"med": 0.135,
+"p95": 0.466,
+"max": 0.719
+}
+},
+"dy": {
+"before": {
+"med": -0.721,
+"p95": 1.562,
+"max": 2.183
+},
+"after": {
+"med": 0,
+"p95": 0.722,
+"max": 1.463
+}
+},
+"diffPx150dpi": {
+"before": 76907,
+"after": 59546,
+"of": 2180952
+}
+},
+"invoice-office-tos-budapest-hungarian": {
+"pages": [
+1,
+1
+],
+"size": {
+"chrome": "595.92 x 842.88",
+"before": "596.25 x 842.25",
+"after": "595.92 x 842.88"
+},
+"dx": {
+"before": {
+"med": 0.137,
+"p95": 0.583,
+"max": 2.4
+},
+"after": {
+"med": 0.137,
+"p95": 0.466,
+"max": 2.4
+}
+},
+"dy": {
+"before": {
+"med": -0.721,
+"p95": 1.562,
+"max": 2.172
+},
+"after": {
+"med": 0,
+"p95": 0.724,
+"max": 1.452
+}
+},
+"diffPx150dpi": {
+"before": 79412,
+"after": 61650,
+"of": 2180952
+}
+},
+"invoice-office-tos-houston-english": {
+"pages": [
+1,
+1
+],
+"size": {
+"chrome": "595.92 x 842.88",
+"before": "596.25 x 842.25",
+"after": "595.92 x 842.88"
+},
+"dx": {
+"before": {
+"med": 0.128,
+"p95": 0.473,
+"max": 1.241
+},
+"after": {
+"med": 0.131,
+"p95": 0.369,
+"max": 0.719
+}
+},
+"dy": {
+"before": {
+"med": -0.721,
+"p95": 1.562,
+"max": 2.183
+},
+"after": {
+"med": 0,
+"p95": 0.722,
+"max": 1.463
+}
+},
+"diffPx150dpi": {
+"before": 60324,
+"after": 38228,
+"of": 2180952
+}
+},
+"invoice-office-tos-koper-english": {
+"pages": [
+1,
+1
+],
+"size": {
+"chrome": "595.92 x 842.88",
+"before": "596.25 x 842.25",
+"after": "595.92 x 842.88"
+},
+"dx": {
+"before": {
+"med": 0.154,
+"p95": 0.473,
+"max": 1.241
+},
+"after": {
+"med": 0.156,
+"p95": 0.37,
+"max": 0.719
+}
+},
+"dy": {
+"before": {
+"med": -0.72,
+"p95": 1.562,
+"max": 2.183
+},
+"after": {
+"med": 0,
+"p95": 0.722,
+"max": 1.463
+}
+},
+"diffPx150dpi": {
+"before": 63742,
+"after": 40395,
+"of": 2180952
+}
+},
+"invoice-office-tos-prague-czech": {
+"pages": [
+1,
+1
+],
+"size": {
+"chrome": "595.92 x 842.88",
+"before": "596.25 x 842.25",
+"after": "595.92 x 842.88"
+},
+"dx": {
+"before": {
+"med": 0.005,
+"p95": 0.371,
+"max": 1.241
+},
+"after": {
+"med": 0.005,
+"p95": 0.36,
+"max": 0.719
+}
+},
+"dy": {
+"before": {
+"med": -0.72,
+"p95": 1.562,
+"max": 2.191
+},
+"after": {
+"med": 0,
+"p95": 0.722,
+"max": 1.471
+}
+},
+"diffPx150dpi": {
+"before": 72854,
+"after": 40536,
+"of": 2180952
+}
+},
+"invoice-office-tos-prague-english": {
+"pages": [
+1,
+1
+],
+"size": {
+"chrome": "595.92 x 842.88",
+"before": "596.25 x 842.25",
+"after": "595.92 x 842.88"
+},
+"dx": {
+"before": {
+"med": 0.142,
+"p95": 0.371,
+"max": 1.241
+},
+"after": {
+"med": 0.142,
+"p95": 0.36,
+"max": 0.719
+}
+},
+"dy": {
+"before": {
+"med": -0.721,
+"p95": 1.562,
+"max": 2.183
+},
+"after": {
+"med": 0,
+"p95": 0.722,
+"max": 1.463
+}
+},
+"diffPx150dpi": {
+"before": 72329,
+"after": 44223,
+"of": 2180952
+}
+},
+"invoice-office-tos-vienna-english": {
+"pages": [
+1,
+1
+],
+"size": {
+"chrome": "595.92 x 842.88",
+"before": "596.25 x 842.25",
+"after": "595.92 x 842.88"
+},
+"dx": {
+"before": {
+"med": 0.122,
+"p95": 0.455,
+"max": 1.241
+},
+"after": {
+"med": 0.125,
+"p95": 0.367,
+"max": 0.719
+}
+},
+"dy": {
+"before": {
+"med": -0.721,
+"p95": 1.562,
+"max": 2.183
+},
+"after": {
+"med": -0.001,
+"p95": 0.722,
+"max": 1.463
+}
+},
+"diffPx150dpi": {
+"before": 68328,
+"after": 40678,
+"of": 2180952
+}
+},
+"invoice-office-tos-vienna-german": {
+"pages": [
+1,
+1
+],
+"size": {
+"chrome": "595.92 x 842.88",
+"before": "596.25 x 842.25",
+"after": "595.92 x 842.88"
+},
+"dx": {
+"before": {
+"med": 0.122,
+"p95": 0.455,
+"max": 1.241
+},
+"after": {
+"med": 0.125,
+"p95": 0.367,
+"max": 0.719
+}
+},
+"dy": {
+"before": {
+"med": -0.721,
+"p95": 1.562,
+"max": 2.176
+},
+"after": {
+"med": 0,
+"p95": 0.722,
+"max": 1.456
+}
+},
+"diffPx150dpi": {
+"before": 69095,
+"after": 41064,
+"of": 2180952
+}
+},
+"invoice-preview": {
+"pages": [
+1,
+1
+],
+"size": {
+"chrome": "595.92 x 842.88",
+"before": "596.25 x 842.25",
+"after": "595.92 x 842.88"
+},
+"dx": {
+"before": {
+"med": -0.298,
+"p95": 0.719,
+"max": 2.4
+},
+"after": {
+"med": -0.297,
+"p95": 0.466,
+"max": 2.4
+}
+},
+"dy": {
+"before": {
+"med": -0.72,
+"p95": 1.544,
+"max": 1.555
+},
+"after": {
+"med": 0.004,
+"p95": 2.264,
+"max": 2.275
+}
+},
+"diffPx150dpi": {
+"before": 69065,
+"after": 56761,
+"of": 2180952
+}
+},
+"quote-document": {
+"pages": [
+2,
+2
+],
+"size": {
+"chrome": "595.92 x 842.88",
+"before": "596.25 x 842.25",
+"after": "595.92 x 842.88"
+},
+"dx": {
+"before": {
+"med": 0.129,
+"p95": 0.588,
+"max": 2.4
+},
+"after": {
+"med": 0.131,
+"p95": 0.466,
+"max": 2.4
+}
+},
+"dy": {
+"before": {
+"med": -0.721,
+"p95": 2.281,
+"max": 2.4
+},
+"after": {
+"med": 0,
+"p95": 2.28,
+"max": 2.4
+}
+},
+"diffPx150dpi": {
+"before": 148022,
+"after": 111432,
+"of": 4361904
+}
+},
+"templated-document-cargo-alignment-final": {
+"pages": [
+1,
+1
+],
+"size": {
+"chrome": "595.92 x 842.88",
+"before": "596.25 x 842.25",
+"after": "595.92 x 842.88"
+},
+"dx": {
+"before": {
+"med": 0.143,
+"p95": 0.334,
+"max": 0.353
+},
+"after": {
+"med": 0.141,
+"p95": 0.343,
+"max": 0.362
+}
+},
+"dy": {
+"before": {
+"med": -0.726,
+"p95": 2.282,
+"max": 2.4
+},
+"after": {
+"med": -0.005,
+"p95": 1.502,
+"max": 2.131
+}
+},
+"diffPx150dpi": {
+"before": 32800,
+"after": 22178,
+"of": 2180952
+}
+},
+"templated-document-cargo-alignment-preview": {
+"pages": [
+1,
+1
+],
+"size": {
+"chrome": "595.92 x 842.88",
+"before": "596.25 x 842.25",
+"after": "595.92 x 842.88"
+},
+"dx": {
+"before": {
+"med": 0.139,
+"p95": 0.285,
+"max": 0.362
+},
+"after": {
+"med": 0.138,
+"p95": 0.313,
+"max": 0.363
+}
+},
+"dy": {
+"before": {
+"med": -0.725,
+"p95": 2.28,
+"max": 2.284
+},
+"after": {
+"med": -0.003,
+"p95": 1.49,
+"max": 2.128
+}
+},
+"diffPx150dpi": {
+"before": 32889,
+"after": 22440,
+"of": 2180952
+}
+},
+"vermas-final": {
+"pages": [
+1,
+1
+],
+"size": {
+"chrome": "595.92 x 842.88",
+"before": "596.25 x 842.25",
+"after": "595.92 x 842.88"
+},
+"dx": {
+"before": {
+"med": 0.151,
+"p95": 0.833,
+"max": 1.462
+},
+"after": {
+"med": 0.154,
+"p95": 0.815,
+"max": 1.408
+}
+},
+"dy": {
+"before": {
+"med": -0.72,
+"p95": 2.215,
+"max": 2.314
+},
+"after": {
+"med": 0.002,
+"p95": 1.495,
+"max": 1.594
+}
+},
+"diffPx150dpi": {
+"before": 45640,
+"after": 19103,
+"of": 2180952
+}
+},
+"vermas-overflow": {
+"pages": [
+2,
+2
+],
+"size": {
+"chrome": "595.92 x 842.88",
+"before": "596.25 x 842.25",
+"after": "595.92 x 842.88"
+},
+"dx": {
+"before": {
+"med": 0.136,
+"p95": 0.755,
+"max": 1.462
+},
+"after": {
+"med": 0.128,
+"p95": 0.586,
+"max": 1.408
+}
+},
+"dy": {
+"before": {
+"med": -0.72,
+"p95": 2.15,
+"max": 2.311
+},
+"after": {
+"med": 0,
+"p95": 2.177,
+"max": 2.4
+}
+},
+"diffPx150dpi": {
+"before": 147456,
+"after": 116745,
+"of": 4361904
+}
+},
+"vermas-preview": {
+"pages": [
+1,
+1
+],
+"size": {
+"chrome": "595.92 x 842.88",
+"before": "596.25 x 842.25",
+"after": "595.92 x 842.88"
+},
+"dx": {
+"before": {
+"med": 0.151,
+"p95": 0.833,
+"max": 1.462
+},
+"after": {
+"med": 0.154,
+"p95": 0.815,
+"max": 1.408
+}
+},
+"dy": {
+"before": {
+"med": -0.72,
+"p95": 2.215,
+"max": 2.314
+},
+"after": {
+"med": 0.002,
+"p95": 1.495,
+"max": 1.594
+}
+},
+"diffPx150dpi": {
+"before": 45640,
+"after": 19103,
+"of": 2180952
+}
+},
+"vermas-sparse": {
+"pages": [
+1,
+1
+],
+"size": {
+"chrome": "595.92 x 842.88",
+"before": "596.25 x 842.25",
+"after": "595.92 x 842.88"
+},
+"dx": {
+"before": {
+"med": 0.121,
+"p95": 0.357,
+"max": 0.358
+},
+"after": {
+"med": 0.147,
+"p95": 0.357,
+"max": 0.359
+}
+},
+"dy": {
+"before": {
+"med": -0.72,
+"p95": 2.28,
+"max": 2.28
+},
+"after": {
+"med": 0,
+"p95": 1.5,
+"max": 1.5
+}
+},
+"diffPx150dpi": {
+"before": 22952,
+"after": 6943,
+"of": 2180952
+}
+}
+}
