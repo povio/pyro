@@ -6339,3 +6339,121 @@ fn form_named_access_returns_controls_and_overrides_builtins() {
     // The same lookup a handler's scope chain performs.
     assert_eq!(eval(r, "with(f){typeof n+':'+byid.tagName+':'+method}"), "undefined:INPUT:get");
 }
+
+// Inline caches on wrappers of classes without property hooks: each test warms a shared call site
+// past the baseline JIT threshold, then changes what the site must see.
+const WARM: &str = "const warm = (f, ...a) => { let r; for (let i = 0; i < 3000; i++) r = f(...a); return r; };";
+
+#[test]
+fn cached_wrapper_lookup_site_still_sees_named_getters() {
+    let e = env("<body><form id=f><input name=x></form><div id=d></div>");
+    let got = eval(
+        &e.main,
+        &format!(
+            "{WARM}
+            const x = o => o.x; const f = document.getElementById('f'), d = document.getElementById('d');
+            const before = warm(x, d);
+            const onForm = x(f).tagName;
+            const viaProto = x(Object.create(f)).tagName;
+            Object.setPrototypeOf(d, Object.getPrototypeOf(f));
+            const moved = String(x(d));
+            [String(before), onForm, viaProto, moved, warm(x, f).tagName].join()"
+        ),
+    );
+    assert_eq!(got, "undefined,INPUT,INPUT,undefined,INPUT");
+}
+
+#[test]
+fn cached_wrapper_lookup_site_sees_prototype_changes() {
+    let e = env("<body><div id=d></div>");
+    let got = eval(
+        &e.main,
+        "const WARM = (f, a) => { let r; for (let i = 0; i < 3000; i++) r = f(a); return r; };
+        const n = o => o.nodeType; const d = document.getElementById('d');
+        const log = [WARM(n, d)];
+        const original = Object.getOwnPropertyDescriptor(Node.prototype, 'nodeType');
+        Object.defineProperty(Node.prototype, 'nodeType', { get() { return 99; }, configurable: true });
+        log.push(n(d), WARM(n, d));
+        delete Node.prototype.nodeType;
+        log.push(String(n(d)));
+        Object.defineProperty(Node.prototype, 'nodeType', original);
+        log.push(WARM(n, d));
+        const own = o => o.nodeName;
+        log.push(WARM(own, d));
+        Object.defineProperty(d, 'nodeName', { value: 'MINE' });
+        log.push(own(d), own(document.createElement('p')));
+        log.join()",
+    );
+    assert_eq!(got, "1,99,99,undefined,1,DIV,MINE,P");
+}
+
+#[test]
+fn cached_wrapper_lookup_site_goes_through_a_page_inserted_proxy() {
+    let e = env("<body><div id=d></div><div id=other></div>");
+    let got = eval(
+        &e.main,
+        &format!(
+            "{WARM}
+            const m = o => o.marker; const d = document.getElementById('d');
+            const first = String(warm(m, d));
+            Object.setPrototypeOf(d, new Proxy(Object.getPrototypeOf(d), {{
+              get(t, k, r) {{ return k === 'marker' ? 'proxied' : Reflect.get(t, k); }},
+            }}));
+            [first, m(d), warm(m, d), String(m(document.getElementById('other')))].join()"
+        ),
+    );
+    assert_eq!(got, "undefined,proxied,proxied,undefined");
+}
+
+#[test]
+fn cached_wrappers_keep_identity_and_expandos_across_gc() {
+    let e = env("<body><div id=d><span id=s></span></div>");
+    eval(
+        &e.main,
+        &format!(
+            "{WARM}
+            globalThis.first = o => o.firstChild;
+            const d = document.getElementById('d');
+            warm(first, d);
+            first(d).expando = 'kept';
+            d.own = 1;
+            globalThis.d = d;
+            globalThis.span = first(d);
+            'ok'"
+        ),
+    );
+    for _ in 0..3 {
+        e.engine.collect_garbage_now();
+        e.engine.drain_finalized();
+        e.page.after_task();
+    }
+    assert_eq!(eval(&e.main, "[d.own, first(d) === first(d), first(d).expando, first(d).id].join()"), "1,true,kept,s");
+}
+
+#[test]
+fn wrapper_to_string_tag_is_on_the_prototype_only() {
+    let e = env("<body><div id=d></div>");
+    let got = eval(
+        &e.main,
+        "const d = document.getElementById('d');
+        const log = [Object.prototype.toString.call(d), d[Symbol.toStringTag],
+          String(Object.getOwnPropertyDescriptor(d, Symbol.toStringTag)),
+          Object.hasOwn(d, Symbol.toStringTag),
+          Object.getOwnPropertySymbols(d).length];
+        Object.defineProperty(d, Symbol.toStringTag, { value: 'Mine' });
+        log.push(Object.prototype.toString.call(d), d[Symbol.toStringTag]);
+        log.join()",
+    );
+    assert_eq!(got, "[object HTMLDivElement],HTMLDivElement,undefined,false,0,[object Mine],Mine");
+}
+
+#[test]
+fn cached_wrapper_lookup_sites_stay_separate_per_world() {
+    let e = env("<body><div id=d></div>");
+    let src = "(() => { const d = document.getElementById('d'); let r; for (let i = 0; i < 3000; i++) r = d.tagName; return r + ':' + String(d.onlyHere); })()";
+    assert_eq!(eval(&e.main, "document.getElementById('d').onlyHere = 'main'; 'set'"), "set");
+    assert_eq!(eval(&e.main, src), "DIV:main");
+    let class = e.engine.register::<TestWindow>();
+    let iso = new_realm(&e.engine, class, &e.page, "__playwright_utility_world_page@1");
+    assert_eq!(eval(&iso, src), "DIV:undefined");
+}
