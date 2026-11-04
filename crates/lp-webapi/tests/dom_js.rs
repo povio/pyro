@@ -5867,3 +5867,40 @@ fn resize_observer_input_update_preserves_queued_and_reentrant_callbacks() {
     assert_eq!(eval(&e.main, "seen.join()"), "10,20,30", "a clean input checkpoint must not duplicate delivery");
     e.page.dispose();
 }
+
+#[test]
+fn inner_text_follows_computed_white_space() {
+    let e = env("<div id=t></div><ul><li id=l>A <span id=o>B</span> C</li></ul>");
+    let text = |html: &str| {
+        eval(&e.main, &format!("(()=>{{const t=document.getElementById('t');t.innerHTML={html:?};return JSON.stringify(t.innerText)}})()"))
+    };
+    for (html, expected) in [
+        ("<div style='white-space:pre'> a  b\nc\td </div>", r#"" a  b\nc\td ""#),
+        ("<span style='white-space:pre-wrap'> a\rb</span>", r#"" a\nb""#),
+        ("<div style='white-space:break-spaces'> a </div>", r#"" a ""#),
+        ("<pre> a  b</pre>", r#"" a  b""#),
+        ("<pre style='white-space:normal'> a  b</pre>", r#""a b""#),
+        ("<div style='white-space:pre'><span style='white-space:normal'> a  b</span> c</div>", r#""a b c""#),
+        ("<div style='white-space:pre-line'> a  b \n\t c\t</div>", r#""a b\nc""#),
+        ("<div style='white-space:pre-line'>\n\na\r\n</div>", r#""\n\na\n""#),
+        ("<div style='white-space:pre-line'>a\tb</div>", r#""a b""#),
+        ("a <span style='white-space:pre'>b</span>", r#""a b""#),
+        ("<span>a </span><span style='white-space:pre'></span> b", r#""a b""#),
+        ("<div> a  b </div>", r#""a b""#),
+        ("<x>a </x> <x> b</x>", r#""a b""#),
+        ("<x>a</x> <x> b</x>", r#""a b""#),
+        ("<table style='white-space:pre'>  <td>a</td>  </table>", r#""a""#),
+    ] {
+        assert_eq!(text(html), expected, "{html}");
+    }
+    // The element itself can carry the style.
+    assert_eq!(
+        eval(&e.main, "(()=>{const t=document.getElementById('t');t.style.whiteSpace='pre';t.textContent=' x ';const v=t.innerText;t.style.whiteSpace='';return JSON.stringify(v)})()"),
+        r#"" x ""#
+    );
+    assert_eq!(
+        eval(&e.main, "document.getElementById('o').outerText='R';const li=document.getElementById('l');[li.innerHTML,li.childNodes.length].join('|')"),
+        "A R C|1"
+    );
+    e.page.dispose();
+}

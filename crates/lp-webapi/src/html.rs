@@ -554,7 +554,7 @@ impl JsClass for HtmlElement {
             |_s, n, v| crate::css::set_inline_style(n.page(), n.id, v),
         );
         def.accessor("innerText", crate::layout_api::inner_text, crate::layout_api::set_inner_text);
-        def.accessor("outerText", crate::layout_api::inner_text, crate::layout_api::set_inner_text);
+        def.accessor("outerText", crate::layout_api::inner_text, crate::layout_api::set_outer_text);
         def.getter("offsetParent", crate::layout_api::offset_parent);
         def.getter("offsetTop", |s, n| crate::layout_api::metric(s, n, "offsetTop"));
         def.getter("offsetLeft", |s, n| crate::layout_api::metric(s, n, "offsetLeft"));
