@@ -59,6 +59,9 @@ impl TableTreeWrapper<'_, '_> {
             matches!(c, taffy::GridTemplateComponent::Single(t)
                 if t.min.is_min_content() && t.max.into_raw().tag() == taffy::CompactLength::FIT_CONTENT_PX_TAG)
         });
+        if !ctx.is_fixed && n > 0 && self.has_percent_cell(&ctx) {
+            return self.percent_column_widths(inputs, &ctx);
+        }
         if ctx.is_fixed || n == 0 || !(all_auto || all_hinted) {
             return None;
         }
@@ -191,6 +194,279 @@ impl TableTreeWrapper<'_, '_> {
     }
 }
 
+impl TableTreeWrapper<'_, '_> {
+    /// The cell's computed `width`.
+    fn cell_width(&self, cell: &TableCell) -> Option<taffy::Dimension> {
+        let style = self.doc.nodes[cell.node_id].primary_styles()?;
+        Some(stylo_taffy::convert::dimension(&style.clone_width()))
+    }
+
+    /// Whether the table is in a table cell.
+    fn is_inside_a_cell(&self, ctx: &TableContext) -> bool {
+        use style::values::specified::box_::DisplayInside;
+        let Some(cell) = ctx.cells.first() else { return false };
+        let mut at = self.doc.nodes[cell.node_id].parent;
+        while let Some(id) = at {
+            let node = &self.doc.nodes[id];
+            if node.primary_styles().is_some_and(|s| s.clone_display().inside() == DisplayInside::TableCell) {
+                return true;
+            }
+            at = node.parent;
+        }
+        false
+    }
+
+    /// Whether a cell or `<col>` of an auto table has a percentage `width`.
+    fn has_percent_cell(&self, ctx: &TableContext) -> bool {
+        ctx.column_percents.iter().any(Option::is_some)
+            || ctx.cells.iter().any(|cell| {
+                self.cell_width(cell).is_some_and(|width| width.tag() == taffy::CompactLength::PERCENT_TAG)
+            })
+    }
+
+    /// The column widths of an auto table with percentage columns, as Blink
+    /// (`DistributeInlineSizeToComputedInlineSizeAuto`, css-tables-3's width
+    /// distribution): a percentage takes its share of the table, whatever its
+    /// content, and only its content's min-content width limits it. The guesses
+    /// go min-content, then percentages, then fixed widths, then auto columns'
+    /// max-content, and the table's width falls between two of them; above the
+    /// last, auto columns take the rest, else fixed, else percentage ones.
+    fn percent_column_widths(
+        &mut self,
+        inputs: &taffy::tree::LayoutInput,
+        ctx: &TableContext,
+    ) -> Option<taffy::Style<Atom>> {
+        use taffy::MaybeResolve as _;
+        let style = &ctx.style;
+        let n = style.grid_template_columns.len();
+        #[cfg(feature = "writing-mode")]
+        if self.doc.layout_wm.is_vertical() {
+            return None;
+        }
+        let parent = inputs.parent_size.width;
+        let padding = style.padding.resolve_or_zero(parent, resolve_calc_value);
+        let border = style.border.resolve_or_zero(parent, resolve_calc_value);
+        let extra = padding.left + padding.right + border.left + border.right;
+        let gap = style.gap.width.resolve_or_zero(parent, resolve_calc_value);
+        let spacing = extra + gap * (n - 1) as f32;
+        let mut min = vec![0.0f32; n];
+        let mut max = vec![0.0f32; n];
+        let mut percent: Vec<Option<f32>> = (0..n).map(|c| ctx.column_percents.get(c).copied().flatten()).collect();
+        let mut fixed = vec![false; n];
+        // `<col>` and first-row lengths.
+        for (c, track) in style.grid_template_columns.iter().enumerate() {
+            if let taffy::GridTemplateComponent::Single(track) = track {
+                if track.max.into_raw().tag() == taffy::CompactLength::LENGTH_TAG {
+                    let len = track.max.into_raw().value();
+                    max[c] = len;
+                    fixed[c] = len > 0.0;
+                }
+            }
+        }
+        let measure = |this: &mut Self, idx: usize, space: taffy::AvailableSpace| {
+            let input = taffy::tree::LayoutInput {
+                run_mode: taffy::RunMode::ComputeSize,
+                // The cell's `width` is not its content: read apart below.
+                sizing_mode: taffy::SizingMode::ContentSize,
+                axis: taffy::RequestedAxis::Horizontal,
+                known_dimensions: taffy::Size::NONE,
+                known_dimensions_are_definite: taffy::Size { width: true, height: true },
+                parent_size: taffy::Size::NONE,
+                available_space: taffy::Size { width: space, height: taffy::AvailableSpace::MaxContent },
+                vertical_margins_are_collapsible: taffy::Line::FALSE,
+            };
+            let cell = crate::taffy_node_id(this.ctx.cells[idx].node_id);
+            this.doc.compute_child_layout(cell, input).size.width
+        };
+        let mut spanning = Vec::new();
+        for (idx, cell) in ctx.cells.iter().enumerate() {
+            let column = cell.column as usize;
+            let lo = measure(self, idx, taffy::AvailableSpace::MinContent);
+            let hi = measure(self, idx, taffy::AvailableSpace::MaxContent).max(lo);
+            if cell.colspan > 1 || column >= n {
+                spanning.push((column, (cell.colspan as usize).max(1), lo, hi));
+                continue;
+            }
+            min[column] = min[column].max(lo);
+            let Some(width) = self.cell_width(cell) else { continue };
+            match width.tag() {
+                taffy::CompactLength::PERCENT_TAG => {
+                    // A percentage cell's width is its share, of the table.
+                    let share = width.value();
+                    percent[column] = Some(percent[column].unwrap_or(0.0).max(share));
+                    max[column] = max[column].max(hi);
+                }
+                taffy::CompactLength::LENGTH_TAG => {
+                    let box_extra = match cell.style.box_sizing {
+                        taffy::BoxSizing::ContentBox => {
+                            let p = cell.style.padding.resolve_or_zero(None, resolve_calc_value);
+                            let b = cell.style.border.resolve_or_zero(None, resolve_calc_value);
+                            (p + b).horizontal_axis_sum()
+                        }
+                        taffy::BoxSizing::BorderBox => 0.0,
+                    };
+                    fixed[column] = true;
+                    max[column] = max[column].max(width.value() + box_extra);
+                }
+                taffy::CompactLength::AUTO_TAG => max[column] = max[column].max(hi),
+                _ => return None,
+            }
+        }
+        for c in 0..n {
+            max[c] = max[c].max(min[c]);
+        }
+        // A spanning cell wider than the columns it spans widens those without a percentage,
+        // in proportion to their max-content widths (all of them when each has one).
+        for (column, span, lo, hi) in spanning {
+            let end = (column + span).min(n);
+            let columns = column.min(end)..end;
+            let spacing = gap * columns.len().saturating_sub(1) as f32;
+            let free: Vec<usize> = columns.clone().filter(|&c| percent[c].is_none()).collect();
+            let group = if free.is_empty() { columns.collect() } else { free };
+            let total: f32 = group.iter().map(|&c| max[c]).sum();
+            let snapshot = max.clone();
+            let max_share = |c: usize, total: f32| snapshot[c] / total;
+            for (want, sizes) in [(lo, &mut min), (hi, &mut max)] {
+                let have = (column.min(end)..end).map(|c| sizes[c]).sum::<f32>() + spacing;
+                if want > have {
+                    for &c in &group {
+                        let part = if total > 0.0 { max_share(c, total) } else { 1.0 / group.len() as f32 };
+                        sizes[c] += (want - have) * part;
+                    }
+                }
+            }
+        }
+        for c in 0..n {
+            max[c] = max[c].max(min[c]);
+        }
+        // Percentages add up to 100 at most, left to right; 0% is none.
+        let mut total = 0.0;
+        for p in percent.iter_mut() {
+            if let Some(v) = *p {
+                let v = v.min(1.0 - total);
+                total += v;
+                *p = (v > 0.0).then_some(v);
+            }
+        }
+        let sum_min: f32 = min.iter().sum();
+        // `ComputeGridInlineMinMax`: what percentages ask of the table's width.
+        // (Not while measuring a table in a cell: `TableNode::AllowColumnPercentages`.)
+        let measuring_in_cell = !matches!(inputs.available_space.width, taffy::AvailableSpace::Definite(_))
+            && self.is_inside_a_cell(ctx);
+        let grid_max = {
+            let mut grid_max: f32 = max.iter().sum();
+            let mut estimate = 0.0f32;
+            let mut others = 0.0f32;
+            for c in 0..n {
+                match percent[c] {
+                    Some(p) => estimate = estimate.max(max[c] / p),
+                    None => others += max[c],
+                }
+            }
+            let total: f32 = percent.iter().flatten().sum();
+            if total > 0.0 && !measuring_in_cell {
+                if others > 0.0 {
+                    grid_max = grid_max.max(if total >= 0.9999 { f32::MAX / 4.0 } else { others / (1.0 - total) });
+                }
+                grid_max = grid_max.max(estimate);
+            }
+            grid_max.max(sum_min)
+        };
+        let border_box = |w: Option<f32>| {
+            w.map(|w| match style.box_sizing {
+                taffy::BoxSizing::ContentBox => w + extra,
+                taffy::BoxSizing::BorderBox => w.max(extra),
+            })
+        };
+        let min_width = border_box(style.min_size.width.maybe_resolve(parent, resolve_calc_value)).unwrap_or(0.0);
+        let inner = match inputs.known_dimensions.width {
+            Some(w) => w - spacing,
+            None => match border_box(style.size.width.maybe_resolve(parent, resolve_calc_value)) {
+                Some(w) => w.max(min_width) - spacing,
+                None => match inputs.available_space.width {
+                    // A table shrinks to fit its columns.
+                    taffy::AvailableSpace::Definite(a) => {
+                        (a.max(min_width) - spacing).min(grid_max.max(min_width - spacing))
+                    }
+                    taffy::AvailableSpace::MinContent => sum_min.max(min_width - spacing),
+                    taffy::AvailableSpace::MaxContent => grid_max.max(min_width - spacing),
+                },
+            },
+        };
+        let target = inner.max(sum_min);
+        let share = |c: usize| percent[c].map(|p| min[c].max(p * target));
+        // Guesses: min-content, percentages, fixed, max-content.
+        let guess_percent: f32 = (0..n).map(|c| share(c).unwrap_or(min[c])).sum();
+        let guess_fixed: f32 = (0..n).map(|c| share(c).unwrap_or(if fixed[c] { max[c] } else { min[c] })).sum();
+        let guess_max: f32 = (0..n).map(|c| share(c).unwrap_or(max[c])).sum();
+        let grown = |base: &[f32], top: &[f32], left: f32| -> Vec<f32> {
+            let room: f32 = (0..n).map(|c| top[c] - base[c]).sum();
+            let growing = (0..n).filter(|&c| top[c] != base[c]).count().max(1);
+            (0..n)
+                .map(|c| {
+                    let part = if room > 0.0 {
+                        (top[c] - base[c]) / room
+                    } else {
+                        1.0 / growing as f32
+                    };
+                    base[c] + left * part
+                })
+                .collect()
+        };
+        let at_percent: Vec<f32> = (0..n).map(|c| share(c).unwrap_or(min[c])).collect();
+        let at_fixed: Vec<f32> = (0..n).map(|c| share(c).unwrap_or(if fixed[c] { max[c] } else { min[c] })).collect();
+        let at_max: Vec<f32> = (0..n).map(|c| share(c).unwrap_or(max[c])).collect();
+        let widths: Vec<f32> = if target <= sum_min {
+            min.clone()
+        } else if target <= guess_percent {
+            grown(&min, &at_percent, target - sum_min)
+        } else if target <= guess_fixed {
+            grown(&at_percent, &at_fixed, target - guess_percent)
+        } else if target == guess_max {
+            at_max
+        } else if target < guess_max {
+            grown(&at_fixed, &at_max, target - guess_fixed)
+        } else {
+            let left = target - guess_max;
+            let auto: Vec<usize> = (0..n).filter(|&c| percent[c].is_none() && !fixed[c]).collect();
+            let fixed_columns: Vec<usize> = (0..n).filter(|&c| percent[c].is_none() && fixed[c]).collect();
+            let mut out = at_max;
+            let group = if !auto.is_empty() { auto } else { fixed_columns };
+            if !group.is_empty() {
+                let sum: f32 = group.iter().map(|&c| max[c]).sum();
+                for &c in &group {
+                    out[c] += if sum > 0.0 { left * max[c] / sum } else { left / group.len() as f32 };
+                }
+            } else {
+                let total: f32 = percent.iter().flatten().sum();
+                for c in 0..n {
+                    if let Some(p) = percent[c] {
+                        out[c] += left * p / total;
+                    }
+                }
+            }
+            out
+        };
+        let mut style = style.clone();
+        if inner < sum_min {
+            let content = sum_min + gap * (n - 1) as f32;
+            let grown = match style.box_sizing {
+                taffy::BoxSizing::ContentBox => content,
+                taffy::BoxSizing::BorderBox => content + extra,
+            };
+            style.min_size.width = style_helpers::length(grown);
+        }
+        style.grid_template_columns = widths
+            .into_iter()
+            .map(|w| {
+                let track: TrackSizingFunction = style_helpers::length(w);
+                track.into()
+            })
+            .collect();
+        Some(style)
+    }
+}
+
 // Deliberately not `Clone`: `style` may hold raw pointers into `calc_values`.
 #[derive(Debug)]
 pub struct TableContext {
@@ -201,6 +477,8 @@ pub struct TableContext {
     pub oof_children: Vec<(NodeId, taffy::Position)>,
     pub rows: Vec<TableRow>,
     pub columns: Vec<TableColumn>,
+    /// The percentage of each `<col>` of an auto table (0 to 1), in the columns' order.
+    pub column_percents: Vec<Option<f32>>,
     pub computed_grid_info: AtomicRefCell<Option<DetailedGridInfo<Atom>>>,
     pub border_style: Option<ServoArc<Border>>,
     pub border_collapse: BorderCollapse,
@@ -413,10 +691,13 @@ pub(crate) fn build_table_context(
     for child_id in children.iter().copied() {
         collect_columns(doc, child_id, wm, &mut columns, &mut column_sizes);
     }
-    // Percentage column widths only take effect in the fixed table layout algorithm
+    // In the automatic table layout algorithm percentage column widths are not grid tracks
+    // (`TableTreeWrapper::percent_column_widths`).
+    let mut column_percents: Vec<Option<f32>> = vec![None; column_sizes.len()];
     if !is_fixed {
-        for column in column_sizes.iter_mut() {
+        for (column, percent) in column_sizes.iter_mut().zip(column_percents.iter_mut()) {
             if column.max.into_raw().tag() == taffy::CompactLength::PERCENT_TAG {
+                *percent = Some(column.max.into_raw().value());
                 *column = style_helpers::auto();
             }
         }
@@ -650,7 +931,8 @@ pub(crate) fn build_table_context(
             oof_children,
             rows,
             columns,
-            computed_grid_info: AtomicRefCell::new(None),
+            column_percents,
+        computed_grid_info: AtomicRefCell::new(None),
             border_collapse,
             border_style: first_cell_border,
             is_fixed,
