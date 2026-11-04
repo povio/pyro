@@ -174,6 +174,9 @@ lists every stage costing at least 10 ns per operation, with the timer floor mea
 are inclusive and timing adds a few tens of ns per stage, so compare traced builds only with traced builds.
 Normal builds compile the timers out (`crates/lp-cdp-protocol/src/perf.rs`).
 
+`--fork` starts `serve --fork` and reads CPU from every descendant of `serve`, since connections run in forked
+children. Without it, setting `LIGHTNINGPANDA_FORK=1` still runs fork mode, but CPU reads as about zero.
+
 Reading it for optimization: compare `rtt.Browser.getVersion` (protocol floor) with the other `rtt`/`runtime`
 rows to see the cost of the browser-thread hop and JS work; the navigation milestones show whether time goes
 to fetching/committing (navigate reply), parsing (DOMContentLoaded) or subresources (load); `target.lifecycle`
