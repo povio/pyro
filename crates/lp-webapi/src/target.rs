@@ -218,6 +218,7 @@ fn handle_for(realm: RealmId, slot: u32) -> ListenerHandle {
 
 fn add_listener<'s>(s: &Scope<'s>, t: &EventTargetData, a: Args<'s>) -> JsResult<()> {
     a.require(2, "EventTarget.addEventListener")?;
+    crate::handlers::drain_inline(&t.page);
     let ty = dom_string(a.get(0))?;
     let cb = a.get(1);
     let Some(cb_obj) = cb.as_object() else { return Ok(()) };
@@ -455,6 +456,7 @@ pub(crate) fn current_event<'s>(s: &Scope<'s>) -> JsResult<Value<'s>> {
 
 /// Dispatches `event` at `target` (DOM "dispatch"). Returns false if canceled.
 pub fn fire(page: &PageDom, target: TargetKey, event: &EventData) -> bool {
+    crate::handlers::drain_inline(page);
     event.state.borrow_mut().target = Some(target);
     event.refresh_wrappers();
     // A callback can detach ancestors and run GC during dispatch.
@@ -496,6 +498,7 @@ fn handler_set(s: &Scope<'_>, object: Object<'_>, key: &str, value: Value<'_>) -
 /// IDL event handlers use an ordinary listener slot and a traced hidden value.
 /// Replacing a non-null handler preserves its position among other listeners.
 pub(crate) fn event_handler<'s>(s: &Scope<'s>, target: &EventTargetData, ty: &str) -> JsResult<Value<'s>> {
+    crate::handlers::drain_inline(&target.page);
     let object =
         target_object(s, &target.page, target.key)?.ok_or_else(|| JsError::Type("Illegal invocation".into()))?;
     if handler_slot(s, target, object, ty)?.is_none() {
@@ -522,6 +525,7 @@ pub(crate) fn set_event_handler(
     ty: &'static str,
     value: Value<'_>,
 ) -> JsResult<()> {
+    crate::handlers::drain_inline(&target.page);
     let object =
         target_object(s, &target.page, target.key)?.ok_or_else(|| JsError::Type("Illegal invocation".into()))?;
     let value_key = format!("__lpHandler_{ty}");
