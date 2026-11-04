@@ -250,6 +250,8 @@ pub struct BaseDocument {
     pub(crate) last_layout_space: Option<taffy::Size<taffy::AvailableSpace>>,
     /// See [`BaseDocument::set_layout_size`].
     layout_size: Option<(f32, f32)>,
+    /// See [`BaseDocument::set_layout_size`].
+    pub(crate) layout_available: Option<(f32, f32)>,
     /// Strategy for Stylo's style traversal during `resolve`.
     pub(crate) style_threading: StyleThreading,
     /// Whether incremental layout is enabled for this document. When disabled,
@@ -514,6 +516,7 @@ impl BaseDocument {
             pending_device_changes: DeviceChanges::empty(),
             last_layout_space: None,
             layout_size: None,
+            layout_available: None,
             style_threading: config.style_threading,
             incremental_layout: config.incremental.unwrap_or(true),
             subdocument_depth: config.subdocument_depth,
@@ -2169,11 +2172,15 @@ impl BaseDocument {
         self.mousedown_node_id
     }
 
-    /// Lays out at this size (CSS px) instead of the viewport's whole pixels:
-    /// print lays out at the paper's fractional content box. `None` goes back.
-    pub fn set_layout_size(&mut self, size: Option<(f32, f32)>) {
-        if self.layout_size != size {
-            self.layout_size = size;
+    /// Lays out at this size (CSS px) instead of the viewport's: `viewport` is
+    /// what viewport units and media queries see, `available` what the root
+    /// element fills. Print has both: Blink's page area rounds up for the
+    /// content and its initial containing block rounds down. `None` goes back.
+    pub fn set_layout_size(&mut self, size: Option<((f32, f32), (f32, f32))>) {
+        let viewport = size.map(|s| s.0);
+        self.layout_available = size.map(|s| s.1);
+        if self.layout_size != viewport {
+            self.layout_size = viewport;
             self.queue_device_changes(DeviceChanges::VIEWPORT_SIZE);
         }
     }
