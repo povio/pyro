@@ -977,6 +977,19 @@ try {
       await cdp.detach();
     } finally { await p.close(); }
   });
+  await check('inline on* handler attributes: click and body onload', async () => {
+    const p = await context.newPage();
+    try {
+      await p.route('http://inline.test/', (r) => r.fulfill({
+        contentType: 'text/html',
+        body: '<!doctype html><body onload="document.title=\'loaded\'"><button onclick="this.textContent=\'done\'">go</button>',
+      }));
+      await p.goto('http://inline.test/');
+      assert.equal(await p.title(), 'loaded');
+      await p.locator('button').click();
+      assert.equal(await p.locator('button').textContent(), 'done');
+    } finally { await p.close(); }
+  });
   await check('page.exposeFunction and exposeBinding survive navigation (Runtime.addBinding)', async () => {
     const p = await context.newPage();
     try {

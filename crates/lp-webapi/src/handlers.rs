@@ -8,12 +8,14 @@
 //! `mouseover`/`error` per HTML "process the event handler return value").
 //!
 //! Content attributes: `setAttribute('onx', body)` compiles `body` as
-//! `function (event) { body }` in the calling realm and installs it as the
-//! IDL handler; `removeAttribute` clears it. Gaps (documented): inline
-//! handler attributes created by the HTML parser or `innerHTML` are not
-//! compiled; the special `window.onerror` 5-argument signature and
-//! `onbeforeunload` return semantics are not implemented; compiled handlers
-//! do not get the element/form/document scope chain.
+//! `function (event) { body }` in the calling realm, with the document, form
+//! owner and element on its scope chain, and installs it as the IDL handler;
+//! `removeAttribute` clears it. Attributes from the HTML parser, `innerHTML`
+//! and cloning are compiled in the main world before the next event dispatch,
+//! listener registration or handler access (`drain_inline`), so pages without
+//! them pay one emptiness check. Gaps (documented): the special
+//! `window.onerror` 5-argument signature and `onbeforeunload` return
+//! semantics are not implemented.
 
 use lp_js::{ClassDef, JsClass, JsResult, Scope, Value};
 
@@ -147,10 +149,54 @@ pub(crate) fn content_attribute_changed(
     let handler: Value<'_> = match body {
         Some(body) => {
             let ctor = s.global().get("Function")?;
-            let f = ctor.as_object().expect("Function constructor").construct(&[s.string("event"), s.string(body)])?;
+            // HTML "getting the current value of the event handler": the
+            // document, form owner and element are on the scope chain.
+            let scoped =
+                format!("with(this.ownerDocument||document){{with(this.form||{{}}){{with(this){{{body}\n}}}}}}");
+            let f =
+                ctor.as_object().expect("Function constructor").construct(&[s.string("event"), s.string(&scoped)])?;
             f.value()
         }
         None => s.null(),
     };
     set_event_handler(s, target, ty, handler)
+}
+
+/// Whether `ty` on `<body>`/`<frameset>` targets the Window (HTML "Window-
+/// reflecting body element event handler set").
+pub(crate) fn reflects_to_window(ty: &str) -> bool {
+    matches!(ty, "blur" | "error" | "focus" | "load" | "resize" | "scroll") || WINDOW.contains(&ty)
+}
+
+/// Compiles `on*` attributes of elements the parser created or cloning made,
+/// in the main world. Elements outside the page's document (templates,
+/// DOMParser documents) are skipped: they have no scripting.
+pub(crate) fn drain_inline(page: &crate::page::PageDom) {
+    if !page.dom.borrow().has_pending_inline_handlers() {
+        return;
+    }
+    let Some(realm) = page.main_world_realm() else { return };
+    let Ok(s) = realm.scope() else { return };
+    let pending = page.dom.borrow_mut().take_pending_inline_handlers();
+    for id in pending {
+        let attrs: Vec<(String, String)> = {
+            let dom = page.dom.borrow();
+            if dom.node_document(id).ok() != Some(page.document()) {
+                continue;
+            }
+            let Ok(attrs) = dom.attributes(id) else { continue };
+            attrs
+                .iter()
+                .filter(|a| a.name.local.starts_with("on") && a.name.ns == markup5ever::ns!())
+                .map(|a| (a.name.local.to_string(), a.value.to_string()))
+                .collect()
+        };
+        let Ok(wrapper) = crate::node::wrap_node(&s, page, id) else { continue };
+        let Some(node) = s.unwrap::<crate::node::Node>(wrapper.value()) else { continue };
+        for (name, value) in attrs {
+            if let Err(e) = crate::node::handler_attribute_changed(&s, &node, &name, Some(&value)) {
+                s.report_exception(&e);
+            }
+        }
+    }
 }
