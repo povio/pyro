@@ -26,6 +26,7 @@ mod mirror;
 mod net;
 mod page_box;
 pub mod pdf;
+mod snapshot;
 mod svg_use;
 pub mod worker;
 
@@ -49,6 +50,7 @@ pub use geometry::{BoxPosition, BoxQuads, LayoutBox, StickyBox, TextWord};
 pub use hash::scene_hash;
 pub use mirror::{DeltaOp, MirrorStats, Rebuild, Tree, TreeKind, TreeNode, TOP};
 pub use net::Fetcher;
+pub use snapshot::{LayoutSnapshot, SnapshotKind, SnapshotLine, SnapshotNode, SnapshotText};
 
 /// Where document syncs spend their time (diagnostics, `LP.geometryStats`).
 pub mod sync_profile {
@@ -1140,6 +1142,13 @@ impl Renderer {
             document_height,
             timings: Timings { scene: t.elapsed(), ..Timings::default() },
         })
+    }
+
+    /// `page`'s whole layout as last synced (`DOMSnapshot.captureSnapshot`).
+    pub fn layout_snapshot(&self, page: u64) -> Option<LayoutSnapshot> {
+        let m = self.mirrors.get(&page)?;
+        let size = self.document_size(page)?;
+        Some(self.geometry.get(&page)?.layout_snapshot(&m.doc, size))
     }
 
     /// `page`'s document scroll size (at least the viewport), as last synced.

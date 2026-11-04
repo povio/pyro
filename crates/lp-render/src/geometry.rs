@@ -122,7 +122,7 @@ impl Geometry {
     }
 
     /// `id`'s border box to the document and whether it is in a fixed box.
-    fn transform(&self, doc: &BaseDocument, id: NodeId) -> Option<(Affine, bool)> {
+    pub(crate) fn transform(&self, doc: &BaseDocument, id: NodeId) -> Option<(Affine, bool)> {
         if let Some(t) = self.transforms.borrow().get(&id) {
             return Some(*t);
         }
@@ -278,7 +278,7 @@ impl Geometry {
         StickyBox { insets, limit }
     }
 
-    fn adjusted_box(&self, doc: &BaseDocument, id: NodeId) -> Option<LayoutBox> {
+    pub(crate) fn adjusted_box(&self, doc: &BaseDocument, id: NodeId) -> Option<LayoutBox> {
         let mut b = self.laid_out(doc, id)?;
         if is_cell(doc, id) {
             if let Some((gx, top, bottom)) = cell_gutters(doc, id) {
@@ -611,7 +611,7 @@ pub struct BoxQuads {
 /// The inline root's line coordinates (x inline, y block, in CSS px from the first line box) in
 /// its border box. A vertical writing mode turns them a quarter clockwise; lines of `vertical-lr`
 /// are then each rotated within their slot (see [`line_slot`]).
-fn line_box_origin(doc: &BaseDocument, id: NodeId, text: &blitz_dom::node::TextLayout) -> Affine {
+pub(crate) fn line_box_origin(doc: &BaseDocument, id: NodeId, text: &blitz_dom::node::TextLayout) -> Affine {
     let l = doc.physical_unrounded_layout(id);
     let (left, top) = ((l.border.left + l.padding.left) as f64, (l.border.top + l.padding.top) as f64);
     let block_offset = text.block_offset as f64;
@@ -626,7 +626,7 @@ fn line_box_origin(doc: &BaseDocument, id: NodeId, text: &blitz_dom::node::TextL
 }
 
 /// What moves a line (CSS px) to its slot in [`line_box_origin`]'s coordinates.
-fn line_slot(doc: &BaseDocument, id: NodeId, metrics: &parley::layout::LineMetrics, scale: f64) -> Affine {
+pub(crate) fn line_slot(doc: &BaseDocument, id: NodeId, metrics: &parley::layout::LineMetrics, scale: f64) -> Affine {
     match doc.get_node(id).and_then(|n| n.vertical_block_axis()) {
         Some(true) => Affine::translate((0.0, -((metrics.block_min_coord + metrics.block_max_coord) as f64) / scale)),
         _ => Affine::IDENTITY,
@@ -755,7 +755,7 @@ impl Geometry {
 /// The UTF-16 offset into `source` (a text node's data) of each byte of
 /// `laid` (what it became in the layout: white space collapsed, case
 /// transformed), plus one past the end.
-fn utf16_offsets(source: &str, laid: &str) -> Vec<u32> {
+pub(crate) fn utf16_offsets(source: &str, laid: &str) -> Vec<u32> {
     let mut map = vec![0u32; laid.len() + 1];
     let mut src = source.chars().peekable();
     let mut at = 0u32;
@@ -780,7 +780,7 @@ fn utf16_offsets(source: &str, laid: &str) -> Vec<u32> {
 
 /// Whether `id` is a box of the current layout: the root element, or a
 /// layout child of its layout parent.
-fn in_layout_tree(doc: &BaseDocument, id: NodeId) -> bool {
+pub(crate) fn in_layout_tree(doc: &BaseDocument, id: NodeId) -> bool {
     if doc.root_element().id == id {
         return true;
     }

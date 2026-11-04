@@ -578,6 +578,14 @@ pub fn print_pdf(
     })
 }
 
+/// The page document's whole layout, brought up to date: only for
+/// `DOMSnapshot.captureSnapshot`. `None`: the document has no Blitz geometry.
+pub fn layout_snapshot(dom: &Dom, layout: &Layout) -> Option<lp_render::LayoutSnapshot> {
+    let source = layout.synced_geometry_source(dom)?;
+    let page = source.as_any().downcast_ref::<BlitzGeometry>()?.page;
+    RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.layout_snapshot(page))
+}
+
 /// [`print_pdf`] up to the PDF writing ([`lp_render::Renderer::write_pdf`],
 /// which another thread can do).
 pub fn paint_pdf(

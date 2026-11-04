@@ -10,6 +10,8 @@
 mod accessibility;
 mod blitz_geometry;
 #[cfg(feature = "render")]
+mod dom_snapshot;
+#[cfg(feature = "render")]
 pub(crate) use blitz_geometry::set_fork_template;
 mod dialog;
 mod dom;
@@ -857,6 +859,8 @@ impl EngineHost {
             "Input" => self.input_domain(action, cmd),
             "Security" => self.security_domain(action, cmd),
             "Accessibility" => self.accessibility_domain(action, cmd),
+            #[cfg(feature = "render")]
+            "DOMSnapshot" => self.dom_snapshot_domain(action, cmd),
             // Blitz-backed layout queries since the last call.
             #[cfg(feature = "render")]
             "LP" if action == "geometryStats" => {
