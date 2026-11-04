@@ -315,6 +315,9 @@ pub(crate) struct PageState {
     pub(crate) next_script_id: u64,
     /// Paused popup before its first navigation (`Page.getFrameTree` url ":").
     pub(crate) initial_popup: bool,
+    /// This page is a `window.open` popup; dropped with the page, which tells
+    /// the opener's object it closed.
+    pub(crate) popup_ticket: Option<std::rc::Rc<lp_webapi::PopupTicket>>,
     /// A raw keydown which changes documents suppresses one following char.
     /// Keyboard input is page-scoped, including across attached sessions.
     pub(crate) suppress_next_char: bool,
@@ -385,6 +388,9 @@ pub struct EngineHost {
     pub(crate) pending: runtime::PendingReplies,
     /// Popups requested by pages, taken by the protocol layer after `flush`.
     pub(crate) popup_requests: Vec<crate::target::PopupRequest>,
+    /// Commands from `window.open`'s returned objects, resolved to pages when
+    /// the protocol layer takes them (after adopting the popups they name).
+    pub(crate) popup_commands: Vec<(std::rc::Rc<lp_webapi::PopupState>, lp_webapi::PopupCommand)>,
     /// Pages `Page.close` closes, taken by the protocol layer after `flush`.
     pub(crate) close_requests: Vec<PageKey>,
     /// `browserContextId`s of the contexts (a dialog's context disposed
@@ -544,6 +550,7 @@ impl EngineHost {
                 background_override: None,
                 next_script_id: 1,
                 initial_popup: false,
+                popup_ticket: None,
                 suppress_next_char: false,
                 intercept_drags: false,
                 touches: Default::default(),
@@ -579,6 +586,7 @@ impl EngineHost {
             next_backend_node: 1,
             pending: runtime::PendingReplies::default(),
             popup_requests: Vec::new(),
+            popup_commands: Vec::new(),
             close_requests: Vec::new(),
             context_names: HashMap::new(),
             prebooted: Vec::new(),
@@ -1184,11 +1192,38 @@ impl Host for EngineHost {
         std::mem::take(&mut self.close_requests)
     }
 
+    fn take_popup_actions(&mut self) -> Vec<crate::target::PopupAction> {
+        use crate::target::PopupAction;
+        let commands = std::mem::take(&mut self.popup_commands);
+        commands
+            .into_iter()
+            .filter_map(|(popup, command)| {
+                let (&page, _) = self
+                    .pages
+                    .iter()
+                    .find(|(_, state)| state.popup_ticket.as_ref().is_some_and(|t| t.is_for(&popup)))?;
+                Some(match command {
+                    lp_webapi::PopupCommand::Close => PopupAction::Close(page),
+                    lp_webapi::PopupCommand::Navigate(url) => PopupAction::Navigate(page, url),
+                })
+            })
+            .collect()
+    }
+
     fn context_named(&mut self, key: ContextKey, id: &str) {
         self.context_names.insert(key, id.to_owned());
     }
 
-    fn popup_opened(&mut self, opener: PageKey, page: PageKey, target_id: &str) {
+    fn popup_opened(
+        &mut self,
+        opener: PageKey,
+        page: PageKey,
+        target_id: &str,
+        handle: Option<std::rc::Rc<dyn std::any::Any>>,
+    ) {
+        if let Some(state) = self.pages.get_mut(&page) {
+            state.popup_ticket = handle.and_then(|h| h.downcast().ok());
+        }
         if self.pages.get(&opener).is_some_and(|state| state.network.log.is_some()) {
             if let Some(state) = self.pages.get_mut(&page) {
                 state.network.log.get_or_insert_with(Default::default);

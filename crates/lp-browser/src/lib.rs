@@ -213,11 +213,20 @@ pub enum PageEvent {
     },
     /// A link or `window.open` targets a new browsing context: the embedder
     /// opens `url` in a new page of the same browser context (no engine page
-    /// exists yet). `opener` is whether the popup keeps its opener.
+    /// exists yet). `opener` is whether the popup keeps its opener; `ticket`
+    /// is set for `window.open`, and the embedder holds it as long as the
+    /// popup page lives.
     PopupRequested {
         frame_id: FrameId,
         url: String,
         opener: bool,
+        ticket: Option<std::rc::Rc<lp_webapi::PopupTicket>>,
+    },
+    /// The object `window.open` returned asked something of its popup. Comes
+    /// after that popup's `PopupRequested`.
+    PopupCommand {
+        popup: std::rc::Rc<lp_webapi::PopupState>,
+        command: lp_webapi::PopupCommand,
     },
     /// A native download was initiated, before its bytes finish fetching.
     DownloadStarted,
@@ -1166,6 +1175,7 @@ impl Browser {
             if let Some(parent) = &inherited {
                 flags.opaque |= parent.sandbox.opaque;
                 flags.scripts_disabled |= parent.sandbox.scripts_disabled;
+                flags.popups_blocked |= parent.sandbox.popups_blocked;
             }
             flags
         } else {

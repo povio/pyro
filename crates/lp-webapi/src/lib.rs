@@ -45,6 +45,7 @@ pub mod mutation_observer;
 pub mod navigator_extras;
 pub mod node;
 pub mod page;
+mod popup;
 pub mod range;
 pub mod render_snapshot;
 pub mod resize_observer;
@@ -75,6 +76,7 @@ pub use page::{
     DialogAnswer, DownloadRequest, FocusTarget, FocusTransition, FrameViewportSource, IframeAttribute,
     NavigationRequest, PageDom, PageHooks, RemotePoster,
 };
+pub use popup::{PopupCommand, PopupState, PopupTicket};
 pub use storage::{StorageNamespace, StorageSeed};
 pub use target::{EventTarget, EventTargetData};
 pub use window::{define_members, WindowHost};
@@ -84,6 +86,7 @@ pub use xhr::XhrLimits;
 pub fn register(engine: &lp_js::Engine) {
     engine.register::<target::EventTarget>();
     event::register(engine);
+    popup::register(engine);
     node::register(engine);
     html::register(engine);
     collections::register(engine);

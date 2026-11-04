@@ -81,6 +81,11 @@ pub trait Host {
     fn take_close_requests(&mut self) -> Vec<PageKey> {
         Vec::new()
     }
+    /// Popup actions the engine collected, oldest first. Taken after the popup
+    /// requests, so the popups they name are open.
+    fn take_popup_actions(&mut self) -> Vec<PopupAction> {
+        Vec::new()
+    }
     /// The `browserContextId` the protocol gave the host's context `key`.
     fn context_named(&mut self, _key: ContextKey, _id: &str) {}
     /// Marks a paused popup that has not started its first navigation.
@@ -88,7 +93,14 @@ pub trait Host {
     /// is how clients know to wait for the first real navigation.
     fn set_initial_popup(&mut self, _page: PageKey, _initial: bool) {}
     /// A popup the engine requested is now a target (`LP.run` `popup` steps).
-    fn popup_opened(&mut self, _opener: PageKey, _page: PageKey, _target_id: &str) {}
+    fn popup_opened(
+        &mut self,
+        _opener: PageKey,
+        _page: PageKey,
+        _target_id: &str,
+        _handle: Option<std::rc::Rc<dyn std::any::Any>>,
+    ) {
+    }
     /// A session detached; the host must stop emitting events for it and drop
     /// per-session state (enabled domains, object handles, interception).
     fn session_detached(&mut self, page: PageKey, session_id: &str);
@@ -216,6 +228,16 @@ pub struct PopupRequest {
     pub url: String,
     /// Whether the popup may script its opener (`canAccessOpener`).
     pub opener_access: bool,
+    /// Opaque to this layer: goes back to the host with `popup_opened`, and
+    /// dropping it says the popup was refused.
+    pub handle: Option<std::rc::Rc<dyn std::any::Any>>,
+}
+
+/// What a page asked of a popup it opened.
+#[derive(Debug, Clone)]
+pub enum PopupAction {
+    Close(PageKey),
+    Navigate(PageKey, String),
 }
 
 struct TargetEntry {
@@ -1502,7 +1524,7 @@ impl<H: Host> Browser<H> {
             if self.discover || self.discover_tabs {
                 self.send_target_created(self.targets.len() - 1, out);
             }
-            self.host.popup_opened(request.opener, page, &target_id);
+            self.host.popup_opened(request.opener, page, &target_id, request.handle);
             if paused {
                 self.host.set_initial_popup(page, true);
                 if self.auto_attach_new(&target_id, true, out).is_err() {
@@ -1510,6 +1532,25 @@ impl<H: Host> Browser<H> {
                 }
             } else if self.host.navigate(page, &request.url).is_err() {
                 self.close_target(&target_id, out);
+            }
+        }
+        for action in self.host.take_popup_actions() {
+            match action {
+                PopupAction::Close(page) => {
+                    if let Some(id) = self.targets.iter().find(|t| t.page == page).map(|t| t.id.clone()) {
+                        self.close_target(&id, out);
+                    }
+                }
+                PopupAction::Navigate(page, url) => {
+                    let Some(target) = self.targets.iter_mut().find(|t| t.page == page) else { continue };
+                    // A paused popup has not started: this replaces what it will load.
+                    match target.pending_url.as_mut() {
+                        Some(pending) => *pending = url,
+                        None => {
+                            let _ = self.host.navigate(page, &url);
+                        }
+                    }
+                }
             }
         }
     }
@@ -1520,7 +1561,8 @@ impl<H: Host> Browser<H> {
         let Some(url) = target.pending_url.take() else { return };
         let page = target.page;
         self.host.set_initial_popup(page, false);
-        if url != "about:blank" && self.host.navigate(page, &url).is_err() {
+        // about:blank too: clients wait for the commit that replaces the ":" initial document.
+        if self.host.navigate(page, &url).is_err() {
             self.close_target(target_id, out);
         }
     }

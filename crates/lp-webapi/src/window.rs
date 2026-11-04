@@ -529,10 +529,9 @@ pub(crate) fn register(engine: &lp_js::Engine) {
 
 /// `window.open(url, target, features)`. A new browsing context opens as a
 /// popup page in the same browser context (the CDP layer announces it with
-/// its opener). With `noopener`/`noreferrer` it returns null, as browsers do.
-/// A popup the page could script (opener access) needs a cross-page
-/// WindowProxy, which this engine does not have: that case throws instead of
-/// returning a stand-in window. `_self`/`_top`/`_parent` navigate this page.
+/// its opener). With `noopener`/`noreferrer` it returns null, as browsers do;
+/// otherwise it returns the minimal [`crate::popup::PopupWindow`], since there
+/// is no cross-page WindowProxy. `_self`/`_top`/`_parent` navigate this page.
 fn window_open<'s>(s: &Scope<'s>, page: &Rc<PageDom>, a: &lp_js::Args<'s>) -> JsResult<Value<'s>> {
     let url = crate::util::opt_dom_string(a.get(0))?.unwrap_or_default();
     let target = crate::util::opt_dom_string(a.get(1))?.filter(|t| !t.is_empty()).unwrap_or_else(|| "_blank".into());
@@ -547,21 +546,31 @@ fn window_open<'s>(s: &Scope<'s>, page: &Rc<PageDom>, a: &lp_js::Args<'s>) -> Js
         let dom = page.dom.borrow();
         crate::html::resolve_url(&dom, page.document(), &url)
     };
-    let same_context = matches!(target.to_ascii_lowercase().as_str(), "_self" | "_top" | "_parent");
-    if !same_context && !no_opener {
-        return Err(JsError::Unsupported("window.open with opener access (a scriptable popup window)"));
+    if lp_net::Url::parse(&url).is_err() {
+        return Err(JsError::dom("SyntaxError", format!("'{url}' is not a valid URL.")));
     }
+    let same_context = matches!(target.to_ascii_lowercase().as_str(), "_self" | "_top" | "_parent");
+    let (ticket, popup) = if same_context || no_opener {
+        (None, None)
+    } else {
+        let (ticket, popup) = crate::popup::PopupTicket::new();
+        (Some(ticket), Some(popup))
+    };
+    let opener = ticket.is_some();
     page.navigate(crate::page::NavigationRequest {
         url,
         target: Some(target),
         method: "GET".into(),
         body: None,
         content_type: None,
-        opener: false,
+        opener,
+        popup: ticket,
     });
-    if same_context {
-        Ok(s.global().value())
-    } else {
-        Ok(s.null())
+    match popup {
+        Some(popup) => {
+            Ok(s.wrap::<crate::popup::PopupWindow>(crate::popup::PopupData::new(page, popup), None)?.value())
+        }
+        None if same_context => Ok(s.global().value()),
+        None => Ok(s.null()),
     }
 }
