@@ -55,7 +55,7 @@ Methods: 122 (Playwright 1.59.1's static list plus the session methods it sends 
 | `Emulation.setDeviceMetricsOverride` | yes | engine | persistent native width/height/DPR/screen and resize; mobile, transforms and non-native orientation explicitly unsupported |
 | `Emulation.setEmulatedMedia` | yes | engine | each call replaces the emulation: `print` media type and `prefers-color-scheme`/`prefers-reduced-motion` drive matchMedia, @media in the style engine, Blitz layout and screenshots/PDFs; other features are accepted and not evaluated |
 | `Emulation.setFocusEmulationEnabled` | yes | accepted, recorded only | headless pages always behave as focused |
-| `Emulation.setGeolocationOverride` | yes | pending |  |
+| `Emulation.setGeolocationOverride` | yes | engine | `navigator.geolocation` reports it when the geolocation permission is granted; held per browser context, so a page's override applies to its whole context; coordinates left out mean position unavailable; `watchPosition` reports once and does not follow later overrides |
 | `Emulation.setLocaleOverride` | yes | accepted, recorded only | stored per page; navigator.language(s) and Accept-Language follow the locale unless an explicit acceptLanguage override is active; Intl and Date keep the process locale (JavaScriptCore is process-wide); empty or absent resets; a malformed tag is invalid params |
 | `Emulation.setScriptExecutionDisabled` | yes | pending |  |
 | `Emulation.setTimezoneOverride` | yes | accepted, recorded only | stored per page; Date and Intl keep the process time zone (JavaScriptCore is process-wide); empty resets; an obviously malformed id fails with "Invalid timezone id" (no tz database check) |
