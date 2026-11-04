@@ -452,6 +452,9 @@ impl EngineHost {
             page_ranges,
             // `preferCSSPageSize` writes pages of the box's own size (close to Chrome's @page size).
             place_on_paper: p.prefer_css_page_size != Some(true),
+            print_media: self.pages.get(&cmd.page).and_then(|state| state.emulated_media.as_ref()).is_none_or(|raw| {
+                !matches!(raw.get("media").and_then(|m| m.as_str()).map(str::trim), Some("screen"))
+            }),
             // Chrome's default: tagged.
             tagged: p.generate_tagged_pdf.unwrap_or(true),
         };
