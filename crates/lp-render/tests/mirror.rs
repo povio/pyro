@@ -822,3 +822,329 @@ fn textarea_attribute_deltas_match_whole_tree_value_geometry_and_paint() {
         );
     }
 }
+
+/// `set_interaction` runs on every geometry read. Blitz's key-event focus falls back to the root
+/// element, which once made it report a change, and a whole pass, with nothing focused.
+#[test]
+fn set_interaction_passes_only_for_a_change() {
+    let page = Page::new(PAGE);
+    let mut r = Renderer::new();
+    check(&mut r, &page, "the first render");
+    let key = lp_dom::snapshot::render_key(page.find("#name"));
+    let root = lp_dom::snapshot::render_key(page.find("html"));
+
+    for style_only in [false, true] {
+        let before = blitz_passes();
+        r.set_interaction(1, None, None, style_only);
+        assert_eq!(blitz_passes(), before, "nothing focused or hovered (style_only {style_only})");
+    }
+
+    let before = blitz_passes();
+    r.set_interaction(1, None, Some(key), false);
+    assert!(blitz_passes().0 > before.0, "focusing an input");
+    let before = blitz_passes();
+    r.set_interaction(1, None, Some(key), false);
+    assert_eq!(blitz_passes(), before, "the same focus");
+    r.set_interaction(1, None, None, false);
+    assert!(blitz_passes().0 > before.0, "blurring it");
+
+    // The root element can hold focus itself: not the same as nothing focused.
+    let before = blitz_passes();
+    r.set_interaction(1, None, Some(root), false);
+    assert!(blitz_passes().0 > before.0, "focusing the root element");
+    let before = blitz_passes();
+    r.set_interaction(1, None, None, false);
+    assert!(blitz_passes().0 > before.0, "blurring the root element");
+    check(&mut r, &page, "interaction cleared");
+}
+
+/// A pass with nothing damaged and the same viewport leaves layout alone; any damage runs it.
+#[test]
+fn a_pass_without_damage_runs_no_layout() {
+    let page = Page::new(PAGE);
+    let mut r = Renderer::new();
+    check(&mut r, &page, "the first render");
+    let before = blitz_passes();
+    r.sync_delta(1, &[], (640, 480, 1f64, false, false), false).unwrap();
+    let after = blitz_passes();
+    assert!(after.0 > before.0, "the sync resolves");
+    assert_eq!(after.1, before.1, "with nothing to lay out");
+
+    let n = page.find("#list");
+    page.dom.borrow_mut().set_attribute(n, "style", "padding: 13px").unwrap();
+    check(&mut r, &page, "a damaging mutation");
+    assert!(blitz_passes().1 > after.1, "damage runs layout");
+}
+
+// Incremental rounding: a persistent document must round as a fresh build does, whatever a
+// relayout moved. Every box paints, and sizes are fractional so that rounding shows.
+
+const PAINT_BOXES: &str =
+    "<!doctype html><html><head><style>* { background: rgba(0, 0, 128, .2) }</style></head><body>";
+
+type Mutate = Box<dyn Fn(&Page)>;
+
+fn style(selector: &'static str, value: &'static str) -> (String, Mutate) {
+    (
+        format!("{selector} {{ {value} }}"),
+        Box::new(move |p| {
+            let n = p.find(selector);
+            p.dom.borrow_mut().set_attribute(n, "style", value).unwrap();
+        }),
+    )
+}
+
+#[track_caller]
+fn rounds_as_a_fresh_build(body: &str, steps: Vec<(String, Mutate)>) {
+    let page = Page::new(&format!("{PAINT_BOXES}{body}</body></html>"));
+    let mut r = Renderer::new();
+    check(&mut r, &page, "the first render");
+    for (what, mutate) in steps {
+        mutate(&page);
+        check(&mut r, &page, &what);
+    }
+}
+
+/// An undamaged block keeps its box beside a float that resizes, while the inline-block inside it
+/// moves (x 31 to 50, then 71): inline layout placed it without marking the change.
+#[test]
+fn rounding_follows_a_float_resizing_beside_an_undamaged_block() {
+    rounds_as_a_fresh_build(
+        r#"<div id=wrap style="width:300px"><div id=fl style="float:left;width:30.5px;height:60.5px"></div><div id=n><div id=inner style="float:left;width:10.5px;height:5.5px"></div><span id=ib style="display:inline-block;width:8.5px;height:4px"></span>text<div id=deep><span style="display:inline-block;width:6.5px;height:3px"></span></div></div></div>"#,
+        vec![
+            style("#fl", "float:left;width:50.25px;height:60.5px"),
+            style("#fl", "float:left;width:70.75px;height:60.5px"),
+            style("#fl", "float:right;width:70.75px;height:60.5px"),
+            style("#fl", "float:right;width:70.75px;height:60.5px;display:none"),
+            style("#fl", "float:right;width:70.75px;height:60.5px;display:block"),
+        ],
+    );
+}
+
+#[test]
+fn rounding_follows_margin_collapsing_through_an_undamaged_block() {
+    rounds_as_a_fresh_build(
+        r#"<div id=s style="height:10px"></div><div id=n2><div id=c style="margin-top:7.5px;height:5px"><b style="display:block;height:1.5px"></b></div></div><div id=after style="height:3px"><i style="display:block;height:1px"></i></div>"#,
+        vec![style("#s", "height:10px;margin-bottom:12.25px"), style("#c", "margin-top:9.25px;height:5px")],
+    );
+}
+
+#[test]
+fn rounding_follows_a_flex_line_resized_by_a_sibling() {
+    rounds_as_a_fresh_build(
+        r#"<div style="display:flex;align-items:center;width:300px"><div id=tall style="height:40.5px;width:50px"></div><div id=mid style="width:50px"><div style="height:3.5px"><u style="display:block;height:1px"></u></div></div></div>"#,
+        vec![style("#tall", "height:50.25px;width:50px"), style("#tall", "height:60.75px;width:50px")],
+    );
+}
+
+#[test]
+fn rounding_follows_floats_flex_grid_and_tables() {
+    rounds_as_a_fresh_build(
+        r#"<div id=f style="display:flex;width:300.5px"><div id=f1 style="flex:1"><div style="width:50%;height:7.5px"><span>x</span></div></div><div id=f2 style="width:40.3px;order:0">y</div></div><div id=g style="display:grid;grid-template-columns:1fr 2fr;width:200.5px"><div id=g1><div style="height:50px"></div></div><div>b</div></div><table id=t style="width:200.5px"><tr><td id=c1 rowspan=2>a</td><td>b</td></tr><tr><td id=c2>c<br>d</td></tr></table><div id=fl style="float:left;width:30.5px;height:30.5px"></div><p id=pf>beside the float beside the float</p><div id=mh style="min-height:50px;width:30%"><div style="height:100%;width:50%"></div></div>"#,
+        vec![
+            style("#f2", "width:70.7px;order:0"),
+            style("#f2", "width:70.7px;order:-1"),
+            style("#f", "display:flex;width:250.25px"),
+            style("#g", "display:grid;grid-template-columns:1fr 2fr;width:150.75px"),
+            (
+                "a longer table cell".into(),
+                Box::new(|p| {
+                    let n = p.find("#c2");
+                    p.dom.borrow_mut().set_text_content(n, "longer long").unwrap();
+                }),
+            ),
+            style("#fl", "float:left;width:60.25px;height:30.5px"),
+            style("#fl", "float:left;width:60.25px;height:30.5px;display:none"),
+            style("#fl", "float:left;width:60.25px;height:30.5px;display:block"),
+            style("#pf", "clear:both"),
+        ],
+    );
+}
+
+#[test]
+fn rounding_follows_out_of_flow_boxes() {
+    rounds_as_a_fresh_build(
+        r#"<div style="position:relative" id=cb><div id=s style="height:10.5px"></div><div id=w><div id=abs style="position:absolute;width:5.5px;height:5.5px"><b style="display:block;height:1.5px"></b></div></div><div id=fix style="position:fixed;bottom:1.5px;right:2.5px;width:10px;height:10px"><div style="height:50%"></div></div></div><div id=rel style="width:100px"><div id=far style="position:absolute;right:0;top:0;width:10%"><div style="height:3.5px"></div></div></div>"#,
+        vec![
+            style("#s", "height:20.25px"),
+            style("#w", "padding-top:3.3px"),
+            style("#cb", "position:static"),
+            style("#cb", "position:relative"),
+            style("#rel", "width:100px;position:relative"),
+            style("#rel", "width:210.5px;position:relative"),
+            style("#rel", "width:210.5px;position:static"),
+        ],
+    );
+}
+
+#[test]
+fn rounding_follows_anonymous_boxes() {
+    rounds_as_a_fresh_build(
+        r#"<div id=m>text<div id=d style="height:12.5px">block</div>more<span id=sp>inline</span><div id=e>b2</div>tail</div>"#,
+        vec![
+            style("#d", "height:14.25px"),
+            (
+                "inline text grows".into(),
+                Box::new(|p| {
+                    let n = p.find("#sp");
+                    p.dom.borrow_mut().set_text_content(n, "inline inline inline").unwrap();
+                }),
+            ),
+            (
+                "a block leaves".into(),
+                Box::new(|p| {
+                    let n = p.find("#d");
+                    let parent = p.find("#m");
+                    p.dom.borrow_mut().remove_child(parent, n).unwrap();
+                }),
+            ),
+            (
+                "a block arrives".into(),
+                Box::new(|p| {
+                    let mut d = p.dom.borrow_mut();
+                    let e = d.create_element(p.doc, "div").unwrap();
+                    let t = d.create_text(p.doc, "new").unwrap();
+                    d.append_child(e, t).unwrap();
+                    drop(d);
+                    let (parent, before) = (p.find("#m"), p.find("#sp"));
+                    p.dom.borrow_mut().insert_before(parent, e, Some(before)).unwrap();
+                }),
+            ),
+            style("#m", "width:30px"),
+        ],
+    );
+}
+
+#[test]
+fn rounding_follows_relative_sizes_under_a_clamped_box() {
+    rounds_as_a_fresh_build(
+        r#"<div id=outer style="width:400.5px"><div id=cl style="max-width:100.5px;height:50px"><div style="width:50%;height:50%"><div style="position:absolute;width:25%">x</div></div></div></div><div id=vw style="width:50vw;height:10vh"><div style="width:50%">k</div></div><div id=cq style="container-type:inline-size;width:300px"><div style="width:10cqw;height:3px"><u>z</u></div></div>"#,
+        vec![
+            style("#outer", "width:300.25px"),
+            style("#outer", "width:90.25px"),
+            style("#cq", "container-type:inline-size;width:220.5px"),
+        ],
+    );
+}
+
+/// A `vertical-rl` box's x is measured from its placer's width, which the logical layout does not
+/// show: the skip's key is the physical layout.
+#[test]
+fn rounding_follows_vertical_writing() {
+    rounds_as_a_fresh_build(
+        r#"<div id=v style="writing-mode:vertical-rl;height:200.5px;width:300.3px"><div id=a style="width:20.4px">a<span>x</span></div><div id=b style="width:30.3px"><div style="width:10.7px;height:50%"><p>t</p></div></div><div id=c style="width:15px;position:relative"><i style="position:absolute;top:3.3px;right:1.1px">abs</i></div></div>"#,
+        vec![
+            style("#a", "width:25.9px"),
+            style("#v", "writing-mode:vertical-rl;height:200.5px;width:333.7px"),
+            style("#v", "writing-mode:vertical-rl;height:150.25px;width:333.7px"),
+            style("#b", "width:44px"),
+            style("#v", "writing-mode:vertical-lr;height:150.25px;width:333.7px"),
+            style("#v", "writing-mode:horizontal-tb;height:150.25px;width:333.7px"),
+            style("#v", "writing-mode:vertical-rl;height:150.25px;width:333.7px"),
+        ],
+    );
+}
+
+#[test]
+fn rounding_follows_a_vertical_root_and_orthogonal_flows() {
+    rounds_as_a_fresh_build(
+        r#"<div id=a style="height:30px;width:40.5px">a</div><div id=b style="width:20px"><div style="width:7.5px">x</div></div>"#,
+        vec![
+            style("body", "writing-mode:vertical-rl"),
+            style("#a", "height:30px;width:60.5px"),
+            style("body", "writing-mode:horizontal-tb"),
+        ],
+    );
+    rounds_as_a_fresh_build(
+        r#"<div id=o style="width:200.5px"><div id=p style="writing-mode:vertical-lr;height:80.5px"><div style="writing-mode:horizontal-tb;width:33.3px"><span>inner</span><div style="height:9.5px"></div></div></div><div id=q style="height:10.5px"></div></div>"#,
+        vec![
+            style("#q", "height:11.25px"),
+            style("#o", "width:150.25px"),
+            style("#p", "writing-mode:vertical-lr;height:90.75px"),
+        ],
+    );
+}
+
+/// A viewport change moves `*-rl` boxes and resizes what depends on it, damaged or not.
+#[test]
+fn rounding_follows_the_viewport() {
+    for body in [
+        r#"<div id=vw style="width:50vw;height:10vh"><div style="width:50%">k</div></div><div style="width:33%"><span style="display:inline-block;width:7.5px;height:7.5px"></span></div>"#,
+        r#"<div style="writing-mode:vertical-rl;width:50.5%;height:40.5vh"><div style="width:20.5px"><p>x</p></div></div>"#,
+    ] {
+        let page = Page::new(&format!("{PAINT_BOXES}{body}</body></html>"));
+        let mut r = Renderer::new();
+        let tree = page.tree();
+        for width in [640, 777, 1000, 333] {
+            let s = Snapshot { width, ..page.snapshot(1, tree.clone()) };
+            let fresh = Renderer::new().paint(&s, Area::Viewport, &fetcher()).unwrap().hash;
+            assert_eq!(r.paint(&s, Area::Viewport, &fetcher()).unwrap().hash, fresh, "width {width}");
+        }
+    }
+}
+
+const LATO: &[u8] = include_bytes!("../../../bench/screenshot/fixtures/fonts/Lato-Regular.ttf");
+
+/// Serves Lato after a delay, on another thread (as the page's loader does).
+struct SlowFont(std::time::Duration);
+impl Fetcher for SlowFont {
+    fn fetch(&self, url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
+        let delay = self.0;
+        std::thread::spawn(move || {
+            std::thread::sleep(delay);
+            done(if url.ends_with("lato.ttf") { Ok(LATO.to_vec()) } else { Err("404".into()) })
+        });
+    }
+}
+
+/// A web font arriving after the first layout re-flows text with no style change: inline-blocks
+/// and floats move inside boxes the first pass already rounded.
+#[test]
+fn rounding_follows_a_web_font_arriving() {
+    let body = r#"<div style="width:311.5px;font:17px Lato, serif">some words <span style="display:inline-block;width:9.5px;height:9.5px"></span> more words that wrap at some point or other <b style="float:right;width:7.5px;height:7.5px"></b> and go on for a while, <u style="position:absolute;width:3px;height:3px"></u>further</div>"#;
+    let page = Page::new(&format!("{PAINT_BOXES}{body}</body></html>"));
+    let slow: Arc<dyn Fetcher> = Arc::new(SlowFont(std::time::Duration::from_millis(300)));
+
+    let mut r = Renderer::new();
+    r.first_layout_wait = std::time::Duration::from_millis(20);
+    let before = r.paint(&page.snapshot(1, page.tree()), Area::Viewport, &slow).unwrap();
+
+    let sheet = page.find("style");
+    let text = "@font-face { font-family: Lato; src: url(lato.ttf); } * { background: rgba(0, 0, 128, .2) }";
+    page.dom.borrow_mut().set_text_content(sheet, text).unwrap();
+    let live = r.paint(&page.snapshot(1, page.tree()), Area::Viewport, &slow).unwrap();
+    assert_eq!(live.timings.layout_passes, 2, "laid out with the fallback font, then with Lato");
+    assert_ne!(live.hash, before.hash, "Lato changes the layout");
+
+    let mut fresh = Renderer::new();
+    let fresh = fresh.paint(&page.snapshot(1, page.tree()), Area::Viewport, &slow).unwrap();
+    assert_eq!(fresh.timings.layout_passes, 1);
+    assert_eq!(live.hash, fresh.hash);
+}
+
+/// The skip disappeared unnoticed once (see vendor/taffy/README.lightningpanda.md): a local change
+/// must leave most of the tree unvisited.
+#[test]
+fn rounding_skips_what_a_change_did_not_touch() {
+    let rows: String = (0..200).map(|i| format!("<div class=row id=r{i}><span>row {i}</span><p>x</p></div>")).collect();
+    let page = Page::new(&format!("{PAINT_BOXES}{rows}</body></html>"));
+    let mut r = Renderer::new();
+
+    let start = blitz_rounding();
+    check(&mut r, &page, "the first render");
+    let first = blitz_rounding();
+    // `check`'s fresh build rounds the same tree, as a first pass.
+    let whole = (first.0 - start.0) / 2;
+    assert!(whole > 400, "{whole} nodes");
+    assert_eq!(first.1, start.1, "a first pass has nothing to skip");
+
+    let last = page.find("#r199");
+    page.dom.borrow_mut().set_attribute(last, "style", "height: 33.5px").unwrap();
+    let tree = page.tree();
+    let before = blitz_rounding();
+    let painted = paint(&mut r, &page.snapshot(1, tree.clone()));
+    let after = blitz_rounding();
+    assert_eq!(painted.hash, Renderer::new().paint(&page.snapshot(1, tree), Area::Viewport, &fetcher()).unwrap().hash);
+    assert!(after.1 - before.1 >= 190, "skipped {} subtrees", after.1 - before.1);
+    assert!(after.0 - before.0 < whole / 2, "reached {} of {whole} nodes", after.0 - before.0);
+}
