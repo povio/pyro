@@ -390,18 +390,6 @@ impl ClassRegistry {
         self.by_type.get(&TypeId::of::<C>()).copied()
     }
 
-    pub fn is_subclass(&self, mut class: ClassId, ancestor: ClassId) -> bool {
-        loop {
-            if class == ancestor {
-                return true;
-            }
-            match self.classes.get(class as usize).and_then(|c| c.parent) {
-                Some(p) => class = p,
-                None => return false,
-            }
-        }
-    }
-
     /// Effective property hooks of `class` (each kind inherited separately).
     pub fn hooks_of(&self, class: ClassId) -> Option<&PropertyHooks> {
         let h = &self.classes.get(class as usize)?.def.hooks;

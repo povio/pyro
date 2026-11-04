@@ -695,6 +695,15 @@ pub fn configure_process() {
                 std::env::set_var(name, value);
             }
         }
+        // Freed pages leave the resident set (patched JSC): macOS keeps
+        // `madvise`d pages resident until it needs them, so a process that
+        // closed a page kept reporting its memory as in use.
+        // `LIGHTNINGPANDA_DECOMMIT=madvise` keeps the stock behaviour.
+        if std::env::var("LIGHTNINGPANDA_DECOMMIT").map_or(true, |v| v != "madvise") {
+            if let Some(f) = sys::spi::get().set_decommit_replaces_pages {
+                unsafe { f(true) };
+            }
+        }
     });
 }
 

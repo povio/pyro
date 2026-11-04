@@ -318,7 +318,7 @@ index a8ceed7272..124070deae 100644
  
  private:
 diff --git a/Source/JavaScriptCore/API/JSFork.cpp b/Source/JavaScriptCore/API/JSFork.cpp
-index fba6f82286..dca16a41ec 100644
+index fba6f82286..79c3f43e1a 100644
 --- a/Source/JavaScriptCore/API/JSFork.cpp
 +++ b/Source/JavaScriptCore/API/JSFork.cpp
 @@ -10,7 +10,11 @@
@@ -333,7 +333,15 @@ index fba6f82286..dca16a41ec 100644
  #include "JSGlobalObject.h"
  #include "JSLock.h"
  #include "OpaqueJSString.h"
-@@ -98,6 +102,87 @@ void JSSetWrapperPropertyAddedCallback(void (*callback)(JSContextRef, JSObjectRe
+@@ -24,6 +28,7 @@
+ WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
+ #if BUSE(LIBPAS)
+ #include <bmalloc/bmalloc_prefault_supply.h>
++#include <bmalloc/pas_page_malloc.h>
+ #include <bmalloc/pas_scavenger.h>
+ #include <bmalloc/pas_thread_local_cache.h>
+ #endif
+@@ -98,6 +103,117 @@ void JSSetWrapperPropertyAddedCallback(void (*callback)(JSContextRef, JSObjectRe
      JSC::wrapperPropertyAddedCallback = callback;
  }
  
@@ -409,6 +417,36 @@ index fba6f82286..dca16a41ec 100644
 +    WTF::releaseFastMallocFreeMemory();
 +}
 +
++void JSSetDecommitReplacesPages(bool enable)
++{
++    pas_page_malloc_decommit_remap = enable;
++}
++
++const void* JSValueGetStringCharacters(JSContextRef ctx, JSValueRef value, size_t* length, bool* is8Bit)
++{
++    if (!ctx || !value)
++        return nullptr;
++    JSGlobalObject* globalObject = toJS(ctx);
++    JSValue v = toJS(globalObject, value);
++    if (!v.isString())
++        return nullptr;
++    VM& vm = globalObject->vm();
++    auto scope = DECLARE_THROW_SCOPE(vm);
++    // Resolves a rope once; the flat string stays cached in the cell.
++    const String& string = asString(v)->value(globalObject);
++    RETURN_IF_EXCEPTION(scope, nullptr);
++    if (string.isNull())
++        return nullptr;
++    StringImpl* impl = string.impl();
++    if (length)
++        *length = impl->length();
++    if (is8Bit)
++        *is8Bit = impl->is8Bit();
++    if (impl->is8Bit())
++        return impl->span8().data();
++    return impl->span16().data();
++}
++
 +void JSContextGroupDeleteAllCode(JSContextGroupRef group)
 +{
 +    if (!group)
@@ -422,10 +460,10 @@ index fba6f82286..dca16a41ec 100644
  {
      VM& vm = *toJS(group);
 diff --git a/Source/JavaScriptCore/API/JSForkPrivate.h b/Source/JavaScriptCore/API/JSForkPrivate.h
-index 0dcdf0ef89..5afa49079c 100644
+index 0dcdf0ef89..24ae910204 100644
 --- a/Source/JavaScriptCore/API/JSForkPrivate.h
 +++ b/Source/JavaScriptCore/API/JSForkPrivate.h
-@@ -72,6 +72,61 @@ JS_EXPORT bool JSContextGroupSetTimeZone(JSContextGroupRef group, const char* ti
+@@ -72,6 +72,72 @@ JS_EXPORT bool JSContextGroupSetTimeZone(JSContextGroupRef group, const char* ti
  */
  JS_EXPORT void JSSetWrapperPropertyAddedCallback(void (*callback)(JSContextRef, JSObjectRef));
  
@@ -484,6 +522,17 @@ index 0dcdf0ef89..5afa49079c 100644
 +   collection and JSContextGroupReleaseFreeMemory to shrink an idle process. */
 +JS_EXPORT void JSContextGroupDeleteAllCode(JSContextGroupRef group);
 +
++/* How the allocator gives freed pages back on Darwin: by default madvise(MADV_FREE_REUSABLE),
++   which lowers the physical footprint but leaves the pages in the resident set until the
++   kernel reclaims them; with `enable`, by mapping fresh pages over them, so the resident set
++   drops at once (what `ps` and most monitors report). Process wide. */
++JS_EXPORT void JSSetDecommitReplacesPages(bool enable);
++
++/* The characters of a string value, without a copy: `length` code units, 8-bit (Latin-1)
++   when `is8Bit`, else UTF-16. Valid while `value` is reachable and no JavaScript runs. NULL
++   for a non-string value, or a rope that cannot be resolved (an exception is then pending). */
++JS_EXPORT const void* JSValueGetStringCharacters(JSContextRef ctx, JSValueRef value, size_t* length, bool* is8Bit);
++
  #ifdef __cplusplus
  }
  #endif
@@ -515,3 +564,42 @@ index b363cbc9c3..556a7a39b1 100644
      
      // Get wrapped object if proxied
      if (classInfo->isSubClassOf(JSGlobalProxy::info())) {
+diff --git a/Source/bmalloc/libpas/src/libpas/pas_page_malloc.c b/Source/bmalloc/libpas/src/libpas/pas_page_malloc.c
+index ee1c884e46..905073b85e 100644
+--- a/Source/bmalloc/libpas/src/libpas/pas_page_malloc.c
++++ b/Source/bmalloc/libpas/src/libpas/pas_page_malloc.c
+@@ -62,6 +62,7 @@ size_t pas_page_malloc_cached_alignment_shift;
+ 
+ #if PAS_OS(DARWIN)
+ bool pas_page_malloc_decommit_zero_fill = false;
++bool pas_page_malloc_decommit_remap = false;
+ #endif /* PAS_OS(DARWIN) */
+ 
+ void pas_page_malloc_populate(void* base, size_t size)
+@@ -537,7 +538,10 @@ static void decommit_impl(void* ptr, size_t size,
+ 
+ #if PAS_OS(DARWIN)
+     PAS_ASSERT(!is_symmetric);
+-    if (pas_page_malloc_decommit_zero_fill && !client_owns_permissions)
++    if (pas_page_malloc_decommit_remap && !client_owns_permissions) {
++        void* remapped = mmap(ptr, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON | MAP_FIXED | PAS_NORESERVE, PAS_VM_TAG, 0);
++        PAS_ASSERT(remapped == ptr, (uintptr_t)remapped, (uintptr_t)ptr);
++    } else if (pas_page_malloc_decommit_zero_fill && !client_owns_permissions)
+         pas_page_malloc_zero_fill(ptr, size, flavor);
+     else
+         PAS_SYSCALL(madvise(ptr, size, MADV_FREE_REUSABLE));
+diff --git a/Source/bmalloc/libpas/src/libpas/pas_page_malloc.h b/Source/bmalloc/libpas/src/libpas/pas_page_malloc.h
+index 185a9a3495..ca83553076 100644
+--- a/Source/bmalloc/libpas/src/libpas/pas_page_malloc.h
++++ b/Source/bmalloc/libpas/src/libpas/pas_page_malloc.h
+@@ -38,6 +38,10 @@ PAS_API extern size_t pas_page_malloc_cached_alignment;
+ PAS_API extern size_t pas_page_malloc_cached_alignment_shift;
+ #if PAS_OS(DARWIN)
+ PAS_API extern bool pas_page_malloc_decommit_zero_fill;
++/* Lightningpanda: decommit by mapping fresh pages over the range instead of madvise, so the
++   pages leave the resident set at once (Darwin keeps madvised pages resident until it needs
++   them, and the zero-fill path uses MADV_ZERO where supported, which keeps them too). */
++PAS_API extern bool pas_page_malloc_decommit_remap;
+ #endif /* PAS_OS(DARWIN) */
+ 
+ /* Writes one byte per page so that the physical memory is in place before anyone reads or writes

@@ -30,7 +30,7 @@ pub use realm::{
     RealmId, RealmOptions, Scope, UnhandledRejectionHandler, ValueDescription, WeakRealm,
 };
 pub use string::{atom, JsString};
-pub use value::{Args, JsType, Object, Value};
+pub use value::{Args, JsType, Object, StringUnits, Value};
 
 /// Raw FFI, for code that needs an entry point not wrapped here.
 pub use lp_jsc_sys as sys;

@@ -596,6 +596,18 @@ pub mod spi {
     pub type JSObjectGetFunctionDataFn = unsafe extern "C" fn(object: JSObjectRef) -> *mut c_void;
     pub type JSContextGroupReleaseFreeMemoryFn = unsafe extern "C" fn(group: JSContextGroupRef);
     pub type JSContextGroupDeleteAllCodeFn = unsafe extern "C" fn(group: JSContextGroupRef);
+    /// Freed allocator pages are replaced by fresh mappings (they leave the
+    /// resident set at once) instead of being `madvise`d.
+    pub type JSSetDecommitReplacesPagesFn = unsafe extern "C" fn(enable: bool);
+    /// A string value's characters without a copy: `length` units, Latin-1
+    /// bytes when `is_8bit`, else UTF-16. Valid while the value is reachable
+    /// and no JavaScript runs; null for a non-string.
+    pub type JSValueGetStringCharactersFn = unsafe extern "C" fn(
+        ctx: JSContextRef,
+        value: JSValueRef,
+        length: *mut usize,
+        is_8bit: *mut bool,
+    ) -> *const c_void;
 
     /// Runtime-resolved SPI table. Each entry is `None` when the running
     /// JavaScriptCore does not export the symbol.
@@ -628,6 +640,8 @@ pub mod spi {
         pub get_function_data: Option<JSObjectGetFunctionDataFn>,
         pub release_free_memory: Option<JSContextGroupReleaseFreeMemoryFn>,
         pub delete_all_code: Option<JSContextGroupDeleteAllCodeFn>,
+        pub set_decommit_replaces_pages: Option<JSSetDecommitReplacesPagesFn>,
+        pub value_string_characters: Option<JSValueGetStringCharactersFn>,
     }
 
     impl Spi {
@@ -693,6 +707,8 @@ pub mod spi {
             get_function_data: resolve!("JSObjectGetFunctionData"),
             release_free_memory: resolve!("JSContextGroupReleaseFreeMemory"),
             delete_all_code: resolve!("JSContextGroupDeleteAllCode"),
+            set_decommit_replaces_pages: resolve!("JSSetDecommitReplacesPages"),
+            value_string_characters: resolve!("JSValueGetStringCharacters"),
         })
     }
 }

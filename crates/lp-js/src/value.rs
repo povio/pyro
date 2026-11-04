@@ -94,6 +94,27 @@ impl<'s> Value<'s> {
     pub fn is_string(&self) -> bool {
         unsafe { sys::JSValueIsString(self.ctx, self.raw) }
     }
+
+    /// The characters of a string value, without a copy (patched JSC;
+    /// `None` otherwise, or for a non-string): `Latin1` bytes or UTF-16
+    /// units, borrowed for as long as this value is. Callers that want a
+    /// `String` for anything but a lookup should use `to_string`.
+    pub fn string_units(&self) -> Option<StringUnits<'_>> {
+        let f = sys::spi::get().value_string_characters?;
+        let mut len = 0usize;
+        let mut is_8bit = false;
+        // SAFETY: a live value on its thread; the pointer refers to the
+        // string cell's own buffer, which outlives this borrow of the value.
+        let p = unsafe { f(self.ctx, self.raw, &mut len, &mut is_8bit) };
+        if p.is_null() {
+            return None;
+        }
+        Some(if is_8bit {
+            StringUnits::Latin1(unsafe { std::slice::from_raw_parts(p.cast::<u8>(), len) })
+        } else {
+            StringUnits::Utf16(unsafe { std::slice::from_raw_parts(p.cast::<u16>(), len) })
+        })
+    }
     pub fn is_symbol(&self) -> bool {
         unsafe { sys::JSValueIsSymbol(self.ctx, self.raw) }
     }
@@ -406,6 +427,47 @@ pub(crate) fn check(ctx: sys::JSContextRef, exc: sys::JSValueRef) -> JsResult<()
 }
 
 /// Arguments of a native callback.
+/// A JavaScript string's characters as JSC keeps them ([`Value::string_units`]).
+#[derive(Clone, Copy, Debug)]
+pub enum StringUnits<'a> {
+    Latin1(&'a [u8]),
+    Utf16(&'a [u16]),
+}
+
+impl StringUnits<'_> {
+    /// FxHash of the code units, the same for either representation.
+    pub fn fx_hash(&self) -> u64 {
+        use std::hash::Hasher;
+        let mut h = rustc_hash::FxHasher::default();
+        match self {
+            StringUnits::Latin1(b) => b.iter().for_each(|&c| h.write_u16(u16::from(c))),
+            StringUnits::Utf16(u) => u.iter().for_each(|&c| h.write_u16(c)),
+        }
+        h.finish()
+    }
+
+    pub fn eq_units(&self, units: &[u16]) -> bool {
+        match self {
+            StringUnits::Latin1(b) => b.len() == units.len() && b.iter().zip(units).all(|(&c, &u)| u16::from(c) == u),
+            StringUnits::Utf16(u) => *u == units,
+        }
+    }
+
+    pub fn to_units(&self) -> Box<[u16]> {
+        match self {
+            StringUnits::Latin1(b) => b.iter().map(|&c| u16::from(c)).collect(),
+            StringUnits::Utf16(u) => (*u).into(),
+        }
+    }
+
+    pub fn to_string_lossy(&self) -> String {
+        match self {
+            StringUnits::Latin1(b) => b.iter().map(|&c| char::from(c)).collect(),
+            StringUnits::Utf16(u) => String::from_utf16_lossy(u),
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 pub struct Args<'s> {
     pub(crate) ctx: sys::JSContextRef,

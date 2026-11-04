@@ -434,16 +434,14 @@ fn define_parent_node<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
         Ok(s.undefined())
     });
     def.method("querySelector", 1, |s, n, a| {
-        let sel = arg_string(&a, 0, "querySelector")?;
         let page = n.page();
-        let list = page.selectors.borrow_mut().get(&sel).js()?;
+        let list = arg_selector(&a, 0, "querySelector", page)?;
         let r = page.dom.borrow().query_first(n.id, &list).js()?;
         node_value(s, page, r)
     });
     def.method("querySelectorAll", 1, |s, n, a| {
-        let sel = arg_string(&a, 0, "querySelectorAll")?;
         let page = n.page();
-        let list = page.selectors.borrow_mut().get(&sel).js()?;
+        let list = arg_selector(&a, 0, "querySelectorAll", page)?;
         let r = page.dom.borrow().query_all(n.id, &list).js()?;
         Ok(collections::static_node_list(s, page, r)?.value())
     });
@@ -954,9 +952,8 @@ impl JsClass for Element {
         def.method("matches", 1, element_matches);
         def.method("webkitMatchesSelector", 1, element_matches);
         def.method("closest", 1, |s, n, a| {
-            let sel = arg_string(&a, 0, "Element.closest")?;
             let page = n.page();
-            let list = page.selectors.borrow_mut().get(&sel).js()?;
+            let list = arg_selector(&a, 0, "Element.closest", page)?;
             let r = page.dom.borrow().element_closest(n.id, &list).js()?;
             node_value(s, page, r)
         });
@@ -1113,9 +1110,8 @@ fn assigned_slot<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
 }
 
 fn element_matches<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value<'s>> {
-    let sel = arg_string(&a, 0, "Element.matches")?;
     let page = n.page();
-    let list = page.selectors.borrow_mut().get(&sel).js()?;
+    let list = arg_selector(&a, 0, "Element.matches", page)?;
     Ok(s.boolean(page.dom.borrow().element_matches(n.id, &list).js()?))
 }
 

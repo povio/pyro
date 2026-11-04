@@ -72,6 +72,28 @@ pub fn arg_string(a: &Args<'_>, i: usize, what: &str) -> JsResult<String> {
     dom_string(a.get(i))
 }
 
+/// The parsed selector list of argument `i`, from the page's cache. A string
+/// argument is looked up by its characters, without making a `String`
+/// (patched JSC); anything else is converted as `arg_string` does.
+pub fn arg_selector(
+    a: &Args<'_>,
+    i: usize,
+    what: &str,
+    page: &crate::page::PageDom,
+) -> JsResult<lp_dom::select::Query> {
+    a.require(i + 1, what)?;
+    let v = a.get(i);
+    if let Some(units) = v.string_units() {
+        return page
+            .selectors
+            .borrow_mut()
+            .get_units(units.fx_hash(), |key| units.eq_units(key), || units.to_units(), || units.to_string_lossy())
+            .js();
+    }
+    let sel = dom_string(v)?;
+    page.selectors.borrow_mut().get(&sel).js()
+}
+
 /// `[LegacyNullToEmptyString]` (innerHTML, textContent setter semantics).
 pub fn null_to_empty(v: Value<'_>) -> JsResult<String> {
     if v.is_null() {
