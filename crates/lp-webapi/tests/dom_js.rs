@@ -5867,3 +5867,37 @@ fn resize_observer_input_update_preserves_queued_and_reentrant_callbacks() {
     assert_eq!(eval(&e.main, "seen.join()"), "10,20,30", "a clean input checkpoint must not duplicate delivery");
     e.page.dispose();
 }
+
+#[test]
+fn declarative_shadow_dom_apis() {
+    let e = env("<!doctype html><body>");
+    assert_eq!(
+        eval(
+            &e.main,
+            "const h=document.createElement('div');
+             const r=h.attachShadow({mode:'open',clonable:true,serializable:true,delegatesFocus:true,slotAssignment:'named'});
+             r.innerHTML='<slot></slot>'; h.innerHTML='<i>l</i>';
+             [r.clonable,r.serializable,r.delegatesFocus,r.slotAssignment,h.getHTML({serializableShadowRoots:true}),h.getHTML()].join('|')"
+        ),
+        "true|true|true|named|<template shadowrootmode=\"open\" shadowrootdelegatesfocus=\"\" shadowrootserializable=\"\" shadowrootclonable=\"\"><slot></slot></template><i>l</i>|<i>l</i>"
+    );
+    assert_eq!(
+        eval(
+            &e.main,
+            "const w=document.createElement('div');
+             w.setHTMLUnsafe('<div id=host><template shadowrootmode=open><slot name=a id=s></slot></template><b slot=a>x</b>tail</div>');
+             const host=w.firstChild, b=host.querySelector('b'), s=host.shadowRoot.getElementById('s');
+             [host.children.length, b.assignedSlot===s, s.assignedNodes().length, s.assignedElements()[0]===b, host.lastChild.assignedSlot].join('|')"
+        ),
+        "1|true|1|true|"
+    );
+    assert_eq!(
+        eval(
+            &e.main,
+            "const d=Document.parseHTMLUnsafe('<div id=x><template shadowrootmode=open>y</template></div>');
+             const t=document.createElement('template'); t.shadowRootMode='CLOSED'; t.shadowRootClonable=true;
+             [d.getElementById('x').shadowRoot.textContent, t.shadowRootMode, t.outerHTML].join('|')"
+        ),
+        "y|closed|<template shadowrootmode=\"CLOSED\" shadowrootclonable=\"\"></template>"
+    );
+}

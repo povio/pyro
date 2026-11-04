@@ -569,7 +569,16 @@ impl JsClass for HtmlElement {
             crate::input::blur_element(n.page(), n.id);
             Ok(s.undefined())
         });
-        def.method("attachInternals", 0, |s, _n, _a| s.eval("({setFormValue(){}, setValidity(){}, states: new Set(), form: null, labels: [], willValidate: false, checkValidity(){return true}, reportValidity(){return true}})", None, 1));
+        def.method("attachInternals", 0, |s, n, _a| {
+            let id = n.id;
+            let root = s.function("shadowRoot", move |s, _this, _a| {
+                let page = crate::target::page_of(s)?;
+                let root = page.dom.borrow().shadow_root(id).unwrap_or(None);
+                node_value(s, &page, root)
+            })?;
+            let make = s.eval("(function(root){return {get shadowRoot(){return root()}, setFormValue(){}, setValidity(){}, states: new Set(), form: null, labels: [], willValidate: false, checkValidity(){return true}, reportValidity(){return true}}})", None, 1)?;
+            make.as_object().ok_or_else(|| JsError::Type("attachInternals".into()))?.call(None, &[root.value()])
+        });
         def.method("showPopover", 0, |s, _n, _a| Ok(s.undefined()));
         def.method("hidePopover", 0, |s, _n, _a| Ok(s.undefined()));
         def.method("togglePopover", 0, |s, _n, _a| Ok(s.boolean(false)));
@@ -1470,11 +1479,59 @@ simple_class!(HtmlTemplateElement, "HTMLTemplateElement", HtmlElement, |def| {
         let c = n.page().dom.borrow().template_contents(n.id).js()?;
         node_value(s, n.page(), c)
     });
+    def.accessor(
+        "shadowRootMode",
+        |s, n| {
+            let dom = n.page().dom.borrow();
+            let value = dom.get_attribute(n.id, "shadowrootmode").js()?.unwrap_or("");
+            Ok(s.string(if value.eq_ignore_ascii_case("open") {
+                "open"
+            } else if value.eq_ignore_ascii_case("closed") {
+                "closed"
+            } else {
+                ""
+            }))
+        },
+        |_s, n, v| {
+            let value = dom_string(v)?;
+            n.page().dom.borrow_mut().set_attribute(n.id, "shadowrootmode", &value).js()
+        },
+    );
+    def.accessor(
+        "shadowRootSlotAssignment",
+        |s, n| {
+            let dom = n.page().dom.borrow();
+            let value = dom.get_attribute(n.id, "shadowrootslotassignment").js()?.unwrap_or("");
+            Ok(s.string(if value.eq_ignore_ascii_case("manual") { "manual" } else { "named" }))
+        },
+        |_s, n, v| {
+            let value = dom_string(v)?;
+            n.page().dom.borrow_mut().set_attribute(n.id, "shadowrootslotassignment", &value).js()
+        },
+    );
+    reflect_bool!(def, "shadowRootDelegatesFocus", "shadowrootdelegatesfocus");
+    reflect_bool!(def, "shadowRootClonable", "shadowrootclonable");
+    reflect_bool!(def, "shadowRootSerializable", "shadowrootserializable");
 });
+
+fn slot_assigned<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>, elements_only: bool) -> JsResult<Value<'s>> {
+    let flatten = match a.get(0).as_object() {
+        Some(o) => o.get("flatten")?.to_bool(),
+        None => false,
+    };
+    let nodes = n.page().dom.borrow().assigned_nodes(n.id, flatten).js()?;
+    let mut items = Vec::with_capacity(nodes.len());
+    for node in nodes {
+        if !elements_only || n.page().dom.borrow().node_type(node).js()? == lp_dom::NodeType::Element {
+            items.push(wrap_node(s, n.page(), node)?.value());
+        }
+    }
+    Ok(s.array(&items)?.value())
+}
 simple_class!(HtmlSlotElement, "HTMLSlotElement", HtmlElement, |def| {
     reflect_str!(def, "name", "name");
-    def.method("assignedNodes", 0, |s, _n, _a| Ok(s.array(&[])?.value()));
-    def.method("assignedElements", 0, |s, _n, _a| Ok(s.array(&[])?.value()));
+    def.method("assignedNodes", 0, |s, n, a| slot_assigned(s, n, a, false));
+    def.method("assignedElements", 0, |s, n, a| slot_assigned(s, n, a, true));
 });
 simple_class!(HtmlCanvasElement, "HTMLCanvasElement", HtmlElement, |def| {
     reflect_long!(def, "width", "width", 300);

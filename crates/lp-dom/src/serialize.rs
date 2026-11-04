@@ -5,7 +5,21 @@ use markup5ever::{local_name, ns};
 
 use crate::dom::Dom;
 use crate::error::DomResult;
-use crate::node::{NodeId, NodeKind, NIL};
+use crate::node::{shadow_flags, ElementData, NodeId, NodeKind, ShadowRootMode, NIL};
+
+/// Which shadow trees `getHTML` includes.
+struct ShadowRoots<'a> {
+    serializable: bool,
+    roots: &'a [u32],
+}
+
+// Iterative pre/post-order walk so deep trees cannot overflow the stack.
+enum Step {
+    Enter(u32),
+    Close(u32),
+    Shadow(u32),
+    ShadowClose,
+}
 
 pub(crate) fn is_void(local: &str) -> bool {
     matches!(
@@ -70,6 +84,43 @@ impl Dom {
         Ok(out)
     }
 
+    /// `getHTML({serializableShadowRoots, shadowRoots})` on an element or
+    /// shadow root.
+    pub fn get_html(&self, id: NodeId, serializable: bool, roots: &[NodeId]) -> DomResult<String> {
+        let i = self.check(id)?;
+        let mut roots_idx = Vec::with_capacity(roots.len());
+        for r in roots {
+            roots_idx.push(self.check(*r)?);
+        }
+        let opts = ShadowRoots { serializable, roots: &roots_idx };
+        let mut out = String::new();
+        let mut src = i;
+        let mut shadow = None;
+        if let Some(e) = self.n(i).element() {
+            if e.is_html() && is_void(&e.name.local) {
+                return Ok(out);
+            }
+            if e.template_contents != NIL {
+                src = e.template_contents;
+            }
+            shadow = self.included_shadow(e, &opts);
+        }
+        let kids: Vec<u32> = self.child_idx_iter(src).collect();
+        let mut stack: Vec<Step> = kids.into_iter().rev().map(Step::Enter).collect();
+        stack.extend(shadow.map(Step::Shadow));
+        self.serialize_steps(stack, &mut out, Some(&opts));
+        Ok(out)
+    }
+
+    fn included_shadow(&self, e: &ElementData, opts: &ShadowRoots<'_>) -> Option<u32> {
+        let sr = e.shadow_root;
+        if sr == NIL {
+            return None;
+        }
+        let NodeKind::Fragment(f) = &self.n(sr).kind else { return None };
+        ((opts.serializable && f.flags & shadow_flags::SERIALIZABLE != 0) || opts.roots.contains(&sr)).then_some(sr)
+    }
+
     fn serialize_children(&self, parent: u32, out: &mut String) {
         for c in self.child_idx_iter(parent) {
             self.serialize_node(c, out);
@@ -77,14 +128,37 @@ impl Dom {
     }
 
     fn serialize_node(&self, i: u32, out: &mut String) {
-        // Iterative pre/post-order walk so deep trees cannot overflow the stack.
-        enum Step {
-            Enter(u32),
-            Close(u32),
-        }
-        let mut stack = vec![Step::Enter(i)];
+        self.serialize_steps(vec![Step::Enter(i)], out, None);
+    }
+
+    fn serialize_steps(&self, mut stack: Vec<Step>, out: &mut String, shadow: Option<&ShadowRoots<'_>>) {
         while let Some(step) = stack.pop() {
             match step {
+                Step::ShadowClose => out.push_str("</template>"),
+                Step::Shadow(sr) => {
+                    let NodeKind::Fragment(f) = &self.n(sr).kind else { continue };
+                    out.push_str(if f.shadow == Some(ShadowRootMode::Closed) {
+                        "<template shadowrootmode=\"closed\""
+                    } else {
+                        "<template shadowrootmode=\"open\""
+                    });
+                    if f.flags & shadow_flags::DELEGATES_FOCUS != 0 {
+                        out.push_str(" shadowrootdelegatesfocus=\"\"");
+                    }
+                    if f.flags & shadow_flags::SERIALIZABLE != 0 {
+                        out.push_str(" shadowrootserializable=\"\"");
+                    }
+                    if f.flags & shadow_flags::MANUAL_SLOTS != 0 {
+                        out.push_str(" shadowrootslotassignment=\"manual\"");
+                    }
+                    if f.flags & shadow_flags::CLONABLE != 0 {
+                        out.push_str(" shadowrootclonable=\"\"");
+                    }
+                    out.push('>');
+                    stack.push(Step::ShadowClose);
+                    let kids: Vec<u32> = self.child_idx_iter(sr).collect();
+                    stack.extend(kids.into_iter().rev().map(Step::Enter));
+                }
                 Step::Close(e) => {
                     out.push_str("</");
                     out.push_str(&self.serialized_tag(e));
@@ -127,6 +201,9 @@ impl Dom {
                         let kids: Vec<u32> = self.child_idx_iter(src).collect();
                         for k in kids.into_iter().rev() {
                             stack.push(Step::Enter(k));
+                        }
+                        if let Some(sr) = shadow.and_then(|o| self.included_shadow(e, o)) {
+                            stack.push(Step::Shadow(sr));
                         }
                     }
                     NodeKind::Text(s) | NodeKind::CData(s) => {

@@ -1028,6 +1028,14 @@ try {
   fixture.closeAllConnections();
   await new Promise(resolve => fixture.close(resolve));
 }
+await check('declarative shadow roots parse from markup and locators pierce them', async () => {
+  await page.setContent('<div id=dsd-host><template shadowrootmode=open shadowrootserializable><button>inside</button><slot></slot></template><span>light</span></div>');
+  assert.equal(await page.locator('#dsd-host button').textContent(), 'inside');
+  assert.equal(await page.locator('#dsd-host').evaluate((host) => host.getHTML({ serializableShadowRoots: true })),
+    '<template shadowrootmode="open" shadowrootserializable=""><button>inside</button><slot></slot></template><span>light</span>');
+  assert.equal(await page.locator('#dsd-host span').evaluate((span) => span.assignedSlot?.localName), 'slot');
+  assert.equal(await page.evaluate(() => { const d = document.createElement('div'); d.innerHTML = '<div><template shadowrootmode=open></template></div>'; return d.querySelectorAll('template').length; }), 1);
+});
 await check('second context is independent', async () => {
   const other = await browser.newContext();
   const p2 = await other.newPage();
