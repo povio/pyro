@@ -3368,6 +3368,69 @@ fn object_urls_register_revoke_and_download_links_do_not_navigate() {
 }
 
 #[test]
+fn worker_constructor_checks_and_load_failure_without_a_network() {
+    let e = env("<body>");
+    let tasks = Rc::new(ObserverTasks::default());
+    e.page.set_hooks(Some(tasks.clone()));
+    let r = &e.main;
+    let base = e.page.pinned_count();
+    // These fail before a worker exists; `SharedWorker` and `ServiceWorker` stay absent.
+    assert_eq!(
+        eval(
+            r,
+            "const err = (f) => { try { f(); return 'ok'; } catch (e) { return e.name; } };
+             [err(() => new Worker('http://[')), err(() => new Worker()), err(() => Worker('w.js')),
+              err(() => new Worker('w.js', {type: 'module'})), err(() => new Worker('w.js', {type: 'other'})),
+              err(() => new Worker('https://example.test/w.js')), typeof SharedWorker, typeof ServiceWorker].join()",
+        ),
+        "SyntaxError,TypeError,TypeError,NotSupportedError,TypeError,SecurityError,undefined,undefined"
+    );
+    assert_eq!(e.page.pinned_count(), base, "a rejected construction leaves nothing behind");
+    // This embedder has no network: the error comes in a later task, as a plain trusted Event.
+    assert_eq!(
+        eval(
+            r,
+            "window.log = []; window.w = new Worker('/w.js', {type: 'classic', name: 'n'});
+             w.onmessage = () => log.push('message'); w.onmessageerror = () => log.push('messageerror');
+             w.onerror = (ev) => log.push(['onerror', ev.type, ev.isTrusted, ev.bubbles, ev.cancelable, ev.constructor.name, ev.target === w, ev.message === undefined].join(':'));
+             w.addEventListener('error', () => log.push('listener'));
+             w.postMessage({a: 1}); const b = new ArrayBuffer(1); w.postMessage(b, [b]);
+             Promise.resolve().then(() => log.push('microtask'));
+             [w instanceof Worker, w instanceof EventTarget, typeof w.onerror, err(() => w.postMessage()),
+              err(() => w.postMessage(() => 1)), err(() => w.postMessage(1, [{}])), b.byteLength, log.length].join()",
+        ),
+        "true,true,function,TypeError,DataCloneError,NotSupportedError,0,0"
+    );
+    assert_eq!(e.page.pinned_count(), base + 1);
+    tasks.drain();
+    assert_eq!(eval(r, "log.join('|')"), "microtask|onerror:error:true:false:false:Event:true:true|listener");
+    assert_eq!(e.page.pinned_count(), base, "unpinned once the failure is reported");
+    // Calls after the failure stay harmless.
+    eval(r, "w.postMessage(1); w.terminate(); w.onerror = null;");
+    tasks.drain();
+    assert_eq!(eval(r, "log.length + ':' + w.onerror"), "3:null");
+
+    // terminate() before the failure task cancels the event and the pin.
+    eval(r, "window.t = []; window.gone = new Worker('/w.js'); gone.onerror = () => t.push('error'); gone.terminate(); gone.terminate();");
+    assert_eq!(e.page.pinned_count(), base);
+    tasks.drain();
+    assert_eq!(eval(r, "t.length"), "0");
+}
+
+#[test]
+fn worker_past_the_document_cap_fails_like_a_failed_load() {
+    let e = env("<body>");
+    let tasks = Rc::new(ObserverTasks::default());
+    e.page.set_hooks(Some(tasks.clone()));
+    let r = &e.main;
+    let more = MAX_WORKERS_PER_DOCUMENT + 4;
+    eval(r, &format!("window.errors = 0; for (let i = 0; i < {more}; ++i) new Worker('/w.js').onerror = () => errors++;"));
+    tasks.drain();
+    assert_eq!(eval(r, "errors"), more.to_string());
+    assert_eq!(e.page.pinned_count(), 0);
+}
+
+#[test]
 fn message_channel_delivers_cloned_messages_fifo_as_tasks() {
     let e = env("<body>");
     let tasks = Rc::new(ObserverTasks::default());

@@ -60,6 +60,8 @@ pub mod url_search_params;
 pub mod util;
 pub mod validity;
 pub mod window;
+pub mod worker;
+mod worker_scope;
 pub mod xhr;
 pub mod xpath;
 
@@ -81,6 +83,10 @@ pub use popup::{PopupCommand, PopupState, PopupTicket};
 pub use storage::{StorageNamespace, StorageSeed};
 pub use target::{EventTarget, EventTargetData};
 pub use window::{define_members, WindowHost};
+pub use worker::{
+    hold_for_fork, join_stopped, release_after_fork, InspectTask, WorkerEvent, WorkerHandle, MAX_WORKERS_PER_DOCUMENT,
+};
+pub use worker_scope::{BufferedEvent, WorkerContext, WorkerEvents};
 pub use xhr::XhrLimits;
 
 /// Registers every host class with the engine (call before creating realms).
@@ -98,6 +104,7 @@ pub fn register(engine: &lp_js::Engine) {
     range::register(engine);
     abort::register(engine);
     message_channel::register(engine);
+    worker::register(engine);
     custom::register(engine);
     file::register(engine);
     engine.register::<file_reader::FileReader>();

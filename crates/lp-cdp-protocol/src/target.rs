@@ -30,6 +30,15 @@ pub type ContextKey = u64;
 /// Engine handle for a page (top-level frame tree), chosen by the host.
 pub type PageKey = u64;
 
+/// Engine handle for a dedicated worker, chosen by the host.
+pub type WorkerKey = u64;
+
+/// A dedicated worker started or ended ([`Host::take_worker_changes`]).
+pub enum WorkerChange {
+    Started { worker: WorkerKey, page: PageKey, url: String },
+    Stopped { worker: WorkerKey },
+}
+
 /// Receives encoded protocol messages in emission order.
 pub trait Sink {
     fn send(&mut self, frame: OutFrame);
@@ -112,6 +121,17 @@ pub trait Host {
         _handle: Option<std::rc::Rc<dyn std::any::Any>>,
     ) {
     }
+    /// Workers that started or ended since the last call, oldest first.
+    fn take_worker_changes(&mut self) -> Vec<WorkerChange> {
+        Vec::new()
+    }
+    /// A command on a worker's session (`Runtime.*`). Must send exactly one
+    /// response, now or later, unless the session detaches first.
+    fn worker_command(&mut self, _worker: WorkerKey, session_id: &str, command: &Command<'_>, out: &mut dyn Sink) {
+        out.send(msg::error_frame(Some(command.id), &CdpError::unsupported(&command.method), Some(session_id)));
+    }
+    /// A worker's session detached.
+    fn worker_session_detached(&mut self, _worker: WorkerKey, _session_id: &str) {}
     /// A session detached; the host must stop emitting events for it and drop
     /// per-session state (enabled domains, object handles, interception).
     fn session_detached(&mut self, page: PageKey, session_id: &str);
@@ -271,6 +291,19 @@ struct SessionEntry {
     auto_attached: bool,
     /// A session on the page's tab target (`target_id` is the page's).
     tab: bool,
+    /// A session on a dedicated worker (`target_id` is the worker's).
+    worker: Option<WorkerKey>,
+    /// A page session that asked for its workers (`Target.setAutoAttach`).
+    auto_attach_workers: bool,
+}
+
+/// A live dedicated worker. A worker target has no entry in `targets`: it is
+/// not a page and only exists for clients through its page's sessions.
+struct WorkerEntry {
+    key: WorkerKey,
+    page: PageKey,
+    target_id: String,
+    url: String,
 }
 
 /// Per-connection browser protocol state.
@@ -287,6 +320,7 @@ pub struct Browser<H: Host> {
     discover_tabs: bool,
     contexts: Vec<ContextEntry>,
     targets: Vec<TargetEntry>,
+    workers: Vec<WorkerEntry>,
     sessions: HashMap<String, SessionEntry>,
     browser_sessions: HashSet<String>,
     next_id: u64,
@@ -331,6 +365,7 @@ impl<H: Host> Browser<H> {
             discover_tabs: false,
             contexts: Vec::new(),
             targets: Vec::new(),
+            workers: Vec::new(),
             sessions: HashMap::new(),
             browser_sessions: HashSet::new(),
             next_id: 1,
@@ -873,6 +908,9 @@ impl<H: Host> Browser<H> {
     fn dispatch_session(&mut self, session_id: &str, cmd: &Command<'_>, out: &mut dyn Sink) -> CdpResult<()> {
         let session =
             self.sessions.get(session_id).ok_or_else(|| CdpError::new(-32001, "Session with given id not found."))?;
+        if let Some(worker) = session.worker {
+            return self.worker_session_command(session_id, worker, cmd, out);
+        }
         let target = self
             .targets
             .iter()
@@ -886,10 +924,21 @@ impl<H: Host> Browser<H> {
             "Target.getTargets" => self.target_command("getTargets", cmd, out)?,
             // Session-scoped Target commands Playwright sends on page sessions.
             "Target.setAutoAttach" => {
-                // Child targets (OOPIFs, workers) are not separate targets here:
-                // iframes are same-process frames reported through Page events.
-                let _: AutoAttachParams = cmd.params()?;
+                // OOPIFs are not separate targets here: iframes are same-process
+                // frames reported through Page events. Workers are.
+                let params: AutoAttachParams = cmd.params()?;
                 out.send(msg::result_frame(cmd.id, &Empty {}, Some(session_id)));
+                let wanted = params.auto_attach && includes(params.filter.as_deref(), "worker", true);
+                if let Some(session) = self.sessions.get_mut(session_id) {
+                    session.auto_attach_workers = wanted;
+                }
+                if wanted {
+                    let existing: Vec<usize> =
+                        (0..self.workers.len()).filter(|i| self.workers[*i].page == page).collect();
+                    for index in existing {
+                        self.attach_worker(index, session_id, out);
+                    }
+                }
             }
             "Target.getTargetInfo" => {
                 let url = self.host.page_url(page);
@@ -1009,7 +1058,14 @@ impl<H: Host> Browser<H> {
         let session_id = self.mint("");
         self.sessions.insert(
             session_id.clone(),
-            SessionEntry { target_id: target_id.to_owned(), parent: None, auto_attached: true, tab: true },
+            SessionEntry {
+                target_id: target_id.to_owned(),
+                parent: None,
+                auto_attached: true,
+                tab: true,
+                worker: None,
+                auto_attach_workers: false,
+            },
         );
         let target = self.target(target_id)?;
         let (url, title) = (self.host.page_url(target.page), self.host.page_title(target.page));
@@ -1382,6 +1438,8 @@ impl<H: Host> Browser<H> {
                 parent: parent.map(str::to_owned),
                 auto_attached,
                 tab: false,
+                worker: None,
+                auto_attach_workers: false,
             },
         );
         let target = self.target(target_id)?;
@@ -1431,8 +1489,13 @@ impl<H: Host> Browser<H> {
             for child in children {
                 self.detach_session(&child, out);
             }
+        } else {
+            self.detach_worker_sessions(session_id, out);
         }
         let Some(session) = self.sessions.remove(session_id) else { return };
+        if let Some(worker) = session.worker {
+            self.host.worker_session_detached(worker, session_id);
+        }
         if session.tab {
             out.send(msg::event_frame(
                 "Target.detachedFromTarget",
@@ -1457,6 +1520,9 @@ impl<H: Host> Browser<H> {
             self.sessions.iter().filter(|(_, s)| s.target_id == target_id).map(|(k, s)| (s.tab, k.clone())).collect();
         sessions.sort();
         for (tab, session_id) in &sessions {
+            if !*tab {
+                self.detach_worker_sessions(session_id, out);
+            }
             if *tab {
                 if self.sessions.remove(session_id).is_some() {
                     out.send(msg::event_frame(
@@ -1519,6 +1585,9 @@ impl<H: Host> Browser<H> {
     /// `Runtime.runIfWaitingForDebugger`, as Chrome does; otherwise it
     /// navigates immediately. Requests from closed openers are dropped.
     pub fn adopt_popups(&mut self, out: &mut dyn Sink) {
+        for change in self.host.take_worker_changes() {
+            self.worker_changed(change, out);
+        }
         for page in self.host.take_close_requests() {
             if let Some(id) = self.targets.iter().find(|t| t.page == page).map(|t| t.id.clone()) {
                 self.close_target(&id, out);
@@ -1577,6 +1646,121 @@ impl<H: Host> Browser<H> {
                 }
             }
         }
+    }
+
+    fn worker_changed(&mut self, change: WorkerChange, out: &mut dyn Sink) {
+        match change {
+            WorkerChange::Started { worker, page, url } => {
+                let target_id = self.mint("");
+                self.workers.push(WorkerEntry { key: worker, page, target_id, url });
+                let index = self.workers.len() - 1;
+                if self.discover {
+                    let params = serde_json::json!({ "targetInfo": self.worker_info(index, false) });
+                    out.send(msg::event_frame("Target.targetCreated", &params, None));
+                }
+                let Some(target_id) = self.targets.iter().find(|t| t.page == page).map(|t| t.id.clone()) else {
+                    return;
+                };
+                let parents: Vec<String> = self
+                    .sessions
+                    .iter()
+                    .filter(|(_, s)| s.target_id == target_id && s.auto_attach_workers)
+                    .map(|(id, _)| id.clone())
+                    .collect();
+                for parent in parents {
+                    self.attach_worker(index, &parent, out);
+                }
+            }
+            WorkerChange::Stopped { worker } => {
+                let Some(pos) = self.workers.iter().position(|w| w.key == worker) else { return };
+                let entry = self.workers.remove(pos);
+                let sessions: Vec<String> =
+                    self.sessions.iter().filter(|(_, s)| s.worker == Some(worker)).map(|(id, _)| id.clone()).collect();
+                for session in sessions {
+                    self.detach_session(&session, out);
+                }
+                if self.discover {
+                    let params = serde_json::json!({ "targetId": entry.target_id });
+                    out.send(msg::event_frame("Target.targetDestroyed", &params, None));
+                }
+            }
+        }
+    }
+
+    fn worker_info(&self, index: usize, attached: bool) -> serde_json::Value {
+        let worker = &self.workers[index];
+        let context = self.targets.iter().find(|t| t.page == worker.page).map(|t| t.context_id.as_str());
+        serde_json::json!({
+            "targetId": worker.target_id, "type": "worker", "title": "", "url": worker.url,
+            "attached": attached, "canAccessOpener": false, "browserContextId": context,
+        })
+    }
+
+    /// Attaches `parent`, a session of the worker's page, once. Past the session
+    /// limit the worker simply has no session there.
+    fn attach_worker(&mut self, index: usize, parent: &str, out: &mut dyn Sink) {
+        let worker = self.workers[index].key;
+        if self.sessions.values().any(|s| s.worker == Some(worker) && s.parent.as_deref() == Some(parent))
+            || self.sessions.len() + self.browser_sessions.len() >= MAX_SESSIONS
+        {
+            return;
+        }
+        let session_id = self.mint("");
+        self.sessions.insert(
+            session_id.clone(),
+            SessionEntry {
+                target_id: self.workers[index].target_id.clone(),
+                parent: Some(parent.to_owned()),
+                auto_attached: true,
+                tab: false,
+                worker: Some(worker),
+                auto_attach_workers: false,
+            },
+        );
+        // A worker never waits for the debugger: its console calls and exceptions
+        // are replayed by `Runtime.enable` instead.
+        let params = serde_json::json!({
+            "sessionId": session_id, "targetInfo": self.worker_info(index, true), "waitingForDebugger": false,
+        });
+        out.send(msg::event_frame("Target.attachedToTarget", &params, Some(parent)));
+    }
+
+    fn detach_worker_sessions(&mut self, parent: &str, out: &mut dyn Sink) {
+        let children: Vec<String> = self
+            .sessions
+            .iter()
+            .filter(|(_, s)| s.worker.is_some() && s.parent.as_deref() == Some(parent))
+            .map(|(id, _)| id.clone())
+            .collect();
+        for child in children {
+            self.detach_session(&child, out);
+        }
+    }
+
+    fn worker_session_command(
+        &mut self,
+        session_id: &str,
+        worker: WorkerKey,
+        cmd: &Command<'_>,
+        out: &mut dyn Sink,
+    ) -> CdpResult<()> {
+        match cmd.method.as_ref() {
+            // No targets below a worker, and it does not wait for the debugger.
+            "Target.setAutoAttach" | "Runtime.runIfWaitingForDebugger" => {
+                out.send(msg::result_frame(cmd.id, &Empty {}, Some(session_id)));
+            }
+            "Target.getTargetInfo" => {
+                let index = self
+                    .workers
+                    .iter()
+                    .position(|w| w.key == worker)
+                    .ok_or_else(|| CdpError::server("The worker is gone"))?;
+                let info = self.worker_info(index, true);
+                out.send(msg::result_frame(cmd.id, &serde_json::json!({ "targetInfo": info }), Some(session_id)));
+            }
+            _ => self.host.worker_command(worker, session_id, cmd, out),
+        }
+        Ok(())
     }
 
     /// Starts a paused popup's navigation (once).

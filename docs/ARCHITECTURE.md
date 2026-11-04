@@ -51,6 +51,8 @@ in their own crate manifests. W1 reconciles the lockfile on integration.
   `LoopHandle::post(Box<dyn FnOnce(&mut Browser) + Send>)`. The loop processes posted work in arrival order and
   writes its wake pipe only while asleep. `post` returns `Err(LoopClosed)` once the browser thread has exited.
 - **At most one `Engine` per thread** (enforced). Callbacks find their engine and realm through thread-local state.
+- **A dedicated worker is a thread of its own**, with its own `Engine` and event loop; it shares no JS or DOM state
+  with its page, and messages cross as serialized tasks (`docs/webapi/WORKER.md`).
 - On connection close the browser thread runs `Browser::close_all()`, which disposes the realms and cancels the
   timers, then writes what is still queued and a close frame within the close timeout, and shuts the socket.
 
@@ -320,6 +322,10 @@ Copy-on-write page snapshots: an app's startup (parsing and running its JavaScri
   spares (their pages are out of date). Measured on the 8 MB test app: 3.6 ms from connect to an evaluated
   expression in a booted page.
 - The template stops when the server does: its stdin is a pipe only the server writes to.
+- Dedicated workers are threads, so a template holds them: they start in the child that takes a connection
+  (`lp_webapi::hold_for_fork`, `release_after_fork`). A thread entering a VM in a child cannot register with JSC's
+  mach exception port, which a fork does not inherit, so a template runs with `JSC_useMachForExceptions=false`: faults
+  go through POSIX signal handlers, which a fork does inherit.
 - The source JavaScriptCore's timers run on WTF's run loop, so the CoreFoundation run-loop service
   (`enable_native_runloop_service`) is off with it; CoreFoundation must not be used in a fork child.
 - Measured on an M1 Max with a release build: an app whose startup runs 0.8 s of JavaScript is handed to a new
