@@ -1153,6 +1153,24 @@ await check('declarative shadow roots parse from markup and locators pierce them
   assert.equal(await page.locator('#dsd-host span').evaluate((span) => span.assignedSlot?.localName), 'slot');
   assert.equal(await page.evaluate(() => { const d = document.createElement('div'); d.innerHTML = '<div><template shadowrootmode=open></template></div>'; return d.querySelectorAll('template').length; }), 1);
 });
+await check('attribute reflection follows the HTML rules', async () => {
+  const seen = await page.evaluate(() => {
+    const input = document.createElement('input');
+    const cell = document.createElement('td');
+    cell.setAttribute('colspan', '5000');
+    const img = document.createElement('img');
+    const anchor = document.createElement('a');
+    anchor.setAttribute('dir', 'bogus');
+    return {
+      dir: anchor.dir,
+      size: input.size,
+      colSpan: cell.colSpan,
+      crossOrigin: img.crossOrigin,
+      marquee: document.createElement('marquee') instanceof HTMLMarqueeElement,
+    };
+  });
+  assert.deepEqual(seen, { dir: '', size: 20, colSpan: 1000, crossOrigin: null, marquee: true });
+});
 await check('second context is independent', async () => {
   const other = await browser.newContext();
   const p2 = await other.newPage();
