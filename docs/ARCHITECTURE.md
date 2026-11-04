@@ -278,6 +278,9 @@ loaded went from 242 MB to 202 MB for about 5% more CPU on that SPA; small pages
 page with a large live set is the worst case measured: 18% more CPU, 39% lower peak. 0.5 is not worth it: on that page
 it costs 5.6x the CPU. A value set in the environment wins.
 
+Patch `0009` keeps the JS lock held across C API callbacks, because a VM stays on one thread: stock JSC drops and
+retakes it around every callback. `JSC_dropLocksInAPICallbacks=true` restores the stock behavior.
+
 To change JSC: edit the checkout in `~/Library/Caches/lightningpanda/webkit-src`, `ninja -C ../webkit-build
 JavaScriptCore` to iterate, then regenerate the patch with `git diff` (use `git add -N` for new files) and rerun
 `scripts/jsc/build.sh`, which resets the checkout and applies `patches/` from scratch.
