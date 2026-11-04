@@ -977,6 +977,22 @@ try {
       await cdp.detach();
     } finally { await p.close(); }
   });
+  await check('Worker stub reports a load failure and never delivers a message', async () => {
+    const p = await context.newPage();
+    try {
+      await p.goto(`${fixtureOrigin}/document`, { timeout: 5000 });
+      const result = await p.evaluate(() => new Promise((resolve) => {
+        let invalid = 'no throw';
+        try { new Worker('http://['); } catch (e) { invalid = e.name; }
+        const w = new Worker('/missing-worker.js');
+        const log = [];
+        w.onmessage = () => log.push('message');
+        w.postMessage('ping');
+        w.onerror = (ev) => { log.push(ev.type); setTimeout(() => resolve({ invalid, log }), 20); };
+      }));
+      assert.deepEqual(result, { invalid: 'SyntaxError', log: ['error'] });
+    } finally { await p.close(); }
+  });
   await check('page.exposeFunction and exposeBinding survive navigation (Runtime.addBinding)', async () => {
     const p = await context.newPage();
     try {

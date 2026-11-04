@@ -3189,6 +3189,75 @@ fn object_urls_register_revoke_and_download_links_do_not_navigate() {
 }
 
 #[test]
+fn worker_stub_validates_its_url_and_reports_a_load_failure_without_running() {
+    let e = env("<body>");
+    let tasks = Rc::new(ObserverTasks::default());
+    e.page.set_hooks(Some(tasks.clone()));
+    let r = &e.main;
+    let base = e.page.pinned_count();
+    // Invalid URLs throw SyntaxError; a missing argument or `new`-less call is a TypeError.
+    assert_eq!(
+        eval(
+            r,
+            "const err = (f) => { try { f(); return 'ok'; } catch (e) { return e.name; } };
+             [err(() => new Worker('http://[')), err(() => new Worker()), err(() => Worker('w.js')), typeof SharedWorker].join()",
+        ),
+        "SyntaxError,TypeError,TypeError,undefined"
+    );
+    assert_eq!(e.page.pinned_count(), base, "a rejected URL leaves nothing behind");
+    // The error comes in a later task, once per listener, as a plain trusted Event.
+    assert_eq!(
+        eval(
+            r,
+            "window.log = []; window.w = new Worker('https://example.test/w.js', {type: 'module'});
+             w.onmessage = () => log.push('message'); w.onmessageerror = () => log.push('messageerror');
+             w.onerror = (ev) => log.push(['onerror', ev.type, ev.isTrusted, ev.bubbles, ev.cancelable, ev.constructor.name, ev.target === w, ev.message === undefined].join(':'));
+             w.addEventListener('error', () => log.push('listener'));
+             w.postMessage({a: 1}); const b = new ArrayBuffer(1); w.postMessage(b, [b]); w.postMessage(() => 1);
+             Promise.resolve().then(() => log.push('microtask'));
+             [w instanceof Worker, w instanceof EventTarget, typeof w.onerror, err(() => w.postMessage()), log.length].join()",
+        ),
+        "true,true,function,TypeError,0"
+    );
+    assert_eq!(e.page.pinned_count(), base + 1);
+    tasks.drain();
+    assert_eq!(eval(r, "log.join('|')"), "microtask|onerror:error:true:false:false:Event:true:true|listener");
+    assert_eq!(e.page.pinned_count(), base, "unpinned once the failure is reported");
+    // No message ever arrives, and calls after the failure stay harmless.
+    eval(r, "w.postMessage(1); w.terminate(); w.onerror = null;");
+    tasks.drain();
+    assert_eq!(eval(r, "log.length + ':' + w.onerror"), "3:null");
+
+    // terminate() before the failure task cancels the event and the pin.
+    eval(r, "window.t = []; window.gone = new Worker('https://example.test/w.js'); gone.onerror = () => t.push('error'); gone.terminate(); gone.terminate();");
+    assert_eq!(e.page.pinned_count(), base);
+    tasks.drain();
+    assert_eq!(eval(r, "t.length"), "0");
+}
+
+#[test]
+fn worker_stub_reports_without_a_reference_and_is_then_collectable() {
+    let e = env("<body>");
+    let tasks = Rc::new(ObserverTasks::default());
+    e.page.set_hooks(Some(tasks.clone()));
+    let r = &e.main;
+    let base = e.page.pinned_count();
+    eval(r, "window.got = []; window.ref = (() => { const w = new Worker('https://example.test/w.js'); w.onerror = () => got.push('error'); return new WeakRef(w); })(); 1");
+    for _ in 0..3 {
+        e.engine.collect_garbage_now();
+        e.engine.drain_finalized();
+    }
+    tasks.drain();
+    assert_eq!(eval(r, "got.join()"), "error", "pinned until the failure is reported");
+    assert_eq!(e.page.pinned_count(), base);
+    for _ in 0..4 {
+        e.engine.collect_garbage_now();
+        e.engine.drain_finalized();
+    }
+    assert_eq!(eval(r, "ref.deref() === undefined"), "true");
+}
+
+#[test]
 fn message_channel_delivers_cloned_messages_fifo_as_tasks() {
     let e = env("<body>");
     let tasks = Rc::new(ObserverTasks::default());

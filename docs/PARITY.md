@@ -40,7 +40,7 @@ Status values:
 | Console | `webapi/Console.zig` | Partial | Levels are forwarded to hooks. `count`/`time` bookkeeping and format specifiers (`%s`) are not implemented. |
 | Page lifecycle | `Browser/Session/Page/Frame.zig` | Partial | HTTP document loading, parser-blocking/deferred/async scripts, shared DOM in isolated worlds, init scripts, DOM lifecycle and disposal are wired. Contexts isolate network/storage; local storage survives same-origin navigation and session storage is page-local. Location/history support a subset (same-document traversal fires popstate, fragment changes fire hashchange; the initial about:blank entry is not replaced by the first navigation). Linked stylesheets load with bounded source retention, link load/error events and parser/deferred-script/load blocking. Missing: child frames, image and script-inserted script resource loading, script load/error events, full structured history state, popups and dialogs. |
 | CLI | `cli.zig`, `Config.zig` | Partial | `version`, `eval`, `serve` and HTTP `fetch` with script execution/DOM dump work. `eval` and `fetch` enforce JavaScript deadlines. `mcp`, `agent` and `run` are missing, as are most upstream flags. |
-| Workers (Dedicated/Shared/Service) | yes | Not started | |
+| Workers (Dedicated/Shared/Service) | yes | Not started | No worker ever runs. `Worker` is a stub so pages that construct one at startup survive: it validates the URL, then fires `error` as a failed load; `postMessage` is dropped and no message ever arrives. `SharedWorker` and `ServiceWorker` are undefined. See [WORKER](webapi/WORKER.md). |
 | Platforms | Linux, macOS | Partial | macOS only. |
 
 ## DOM / WebAPI / network (W2)
