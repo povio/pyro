@@ -16,6 +16,7 @@ getrandom = "0.3"
 lp-dom = { workspace = true }
 lp-js = { workspace = true }
 lp-net = { workspace = true }
+lp-runtime = { workspace = true }
 markup5ever = "0.40"
 percent-encoding = "2.3.2"
 rustc-hash = "2"

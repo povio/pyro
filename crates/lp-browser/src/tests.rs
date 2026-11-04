@@ -359,3 +359,183 @@ fn preventing_unhandled_rejection_suppresses_default_reporting() {
     t.run_until_idle(Some(Instant::now() + Duration::from_secs(2)));
     assert_eq!(count.0.get(), 1);
 }
+
+/// A page that can start workers (`data:` URLs need the network client only).
+fn worker_setup() -> (BrowserThread, Rc<Recorder>, PageId) {
+    let (mut t, rec, page) = setup();
+    t.enable_network(lp_net::NetConfig::default()).unwrap();
+    t.browser.navigate(page, NavigateOpts::address_bar("about:blank")).unwrap();
+    until_network_idle(&mut t, &rec);
+    (t, rec, page)
+}
+
+fn until_console(t: &mut BrowserThread, rec: &Recorder, want: &str) {
+    let want = format!("log:{want}");
+    let r = t.run_until(Some(Instant::now() + Duration::from_secs(10)), |_| {
+        rec.console.borrow().iter().any(|c| c.starts_with(&want))
+    });
+    assert_eq!(r, lp_runtime::RunOutcome::Done, "{want}: {:?} {:?}", rec.console.borrow(), rec.errors.borrow());
+}
+
+fn data_url(script: &str) -> String {
+    let encoded: String = percent_encoding::utf8_percent_encode(script, percent_encoding::NON_ALPHANUMERIC).to_string();
+    format!("data:text/javascript,{encoded}")
+}
+
+#[test]
+fn worker_runs_off_the_page_thread_and_messages_structured_clones_both_ways() {
+    let (mut t, rec, page) = worker_setup();
+    let script = data_url(
+        "const cycle = {}; cycle.self = cycle;
+         postMessage({ready: [typeof document, typeof window, typeof Worker, self instanceof DedicatedWorkerGlobalScope,
+           self instanceof WorkerGlobalScope, self instanceof EventTarget, self === globalThis, name,
+           location.protocol, atob(btoa('x')), new TextDecoder().decode(new TextEncoder().encode('é')),
+           new URL('a', 'http://h/').href, typeof fetch, typeof structuredClone, typeof performance.now(),
+           typeof navigator.userAgent].join()});
+         let first = true;
+         onmessage = (e) => {
+           if (e.data === 'stop') return close();
+           const d = e.data;
+           const shape = [e.isTrusted, e.constructor.name, e.origin === '', d.m instanceof Map && d.m.get('k'), d.s.has(2),
+             d.d.getTime(), d.r.flags, d.n, Object.is(d.z, -0), d.u === undefined, 'u' in d, d.b, d.t[1], d.t.constructor.name,
+             d.t.buffer === d.same.buffer, d.c.self === d.c, d.l.charCodeAt(0), Object.getPrototypeOf(d) === Object.prototype,
+             d.arr.length, 1 in d.arr, d.big].join();
+           const back = new Uint8Array([7, 8, 9]).buffer;
+           postMessage({shape, cycle, back}, [back]);
+           postMessage(back.byteLength);
+           setTimeout((x) => postMessage('timer:' + x), 1, 'arg');
+           const id = setInterval(() => { clearInterval(id); postMessage('interval'); }, 1);
+         };",
+    );
+    eval(
+        &t,
+        page,
+        &format!(
+            r#"const script = {script:?};
+            const w = new Worker(script, {{name: 'wn'}});
+            globalThis.w = w;
+            const got = [];
+            w.onmessage = (e) => {{
+                const d = e.data;
+                if (d && d.ready) console.log('ready:' + d.ready);
+                else if (d && d.shape) {{
+                    console.log('shape:' + d.shape);
+                    console.log('reply:' + [d.cycle.self === d.cycle, new Uint8Array(d.back).join('-'), d.back.byteLength].join());
+                }}
+                else {{
+                    got.push(d);
+                    if (got.length === 3) {{
+                        console.log('rest:' + got.join());
+                        w.postMessage('stop');
+                    }}
+                }}
+            }};
+            w.onerror = (e) => console.log('error:' + e.message);
+            const c = {{}}; c.self = c;
+            const t = new Uint16Array([1, 2]);
+            const held = new ArrayBuffer(4);
+            const big = new Uint8Array(70000).fill(1);
+            w.postMessage({{m: new Map([['k', 'v']]), s: new Set([2]), d: new Date(5), r: /a/gi, n: NaN, z: -0, u: undefined,
+              b: 12345678901234567890n, t, same: t, c, l: '\ud800', arr: [1, , 3], big: big.length, held}}, {{transfer: [held]}});
+            console.log('detached:' + held.byteLength);
+            try {{ w.postMessage(() => 1); }} catch (e) {{ console.log('clone-error:' + e.name); }}"#
+        ),
+    );
+    until_console(&mut t, &rec, "ready:");
+    until_console(&mut t, &rec, "rest:");
+    let console = rec.console.borrow().join("\n");
+    assert!(console.contains("log:detached:0"), "{console}");
+    assert!(console.contains("log:clone-error:DataCloneError"), "{console}");
+    assert!(
+        console.contains(
+            "log:ready:undefined,undefined,undefined,true,true,true,true,wn,data:,x,é,http://h/a,function,function,number,string"
+        ),
+        "{console}"
+    );
+    assert!(
+        console.contains(
+            "log:shape:true,MessageEvent,true,v,true,5,gi,NaN,true,true,true,12345678901234567890,2,Uint16Array,true,true,55296,true,3,false,70000"
+        ),
+        "{console}"
+    );
+    assert!(console.contains("log:reply:true,7-8-9,3"), "{console}");
+    assert!(console.contains("log:rest:0,timer:arg,interval"), "{console}");
+    drop(console);
+    assert!(rec.errors.borrow().is_empty(), "{:?}", rec.errors.borrow());
+    t.browser.close_all();
+    assert!(lp_webapi::join_stopped(Duration::from_secs(5)), "worker threads end");
+}
+
+#[test]
+fn worker_terminate_stops_a_busy_script_and_errors_reach_the_page() {
+    let (mut t, rec, page) = worker_setup();
+    let busy = data_url("postMessage('busy'); while (true) {}");
+    let thrower = data_url(
+        "addEventListener('error', (e) => { postMessage('self-error:' + e.message + ':' + e.lineno); });
+         onmessage = () => { throw new Error('in handler'); };
+         throw new TypeError('at load');",
+    );
+    let imports = data_url(&format!(
+        "importScripts({:?}); postMessage('imported:' + globalThis.fromImport);
+         try {{ importScripts('http://['); }} catch (e) {{ postMessage('bad-url:' + e.name); }}
+         try {{ importScripts('http://127.0.0.1:1/x.js'); }} catch (e) {{ postMessage('network:' + e.name); }}",
+        data_url("globalThis.fromImport = 41 + 1;")
+    ));
+    eval(
+        &t,
+        page,
+        &format!(
+            r#"const busy = new Worker({busy:?});
+            busy.onmessage = () => {{ busy.terminate(); busy.onmessage = () => console.log('after-terminate'); console.log('terminated'); }};
+            const thrower = new Worker({thrower:?});
+            thrower.onmessage = (e) => console.log(e.data);
+            let errors = 0;
+            thrower.onerror = (e) => {{
+                console.log('page-error:' + e.constructor.name + ':' + e.message + ':' + e.cancelable);
+                if (!errors++) thrower.postMessage(1);
+            }};
+            const imports = new Worker({imports:?});
+            imports.onmessage = (e) => console.log(e.data);
+            const missing = new Worker('data:,throw new Error("x")');
+            missing.onerror = (e) => console.log('syntaxless:' + e.message);
+            const revoked = URL.createObjectURL(new Blob(['postMessage("from-blob")']));
+            const fromBlob = new Worker(revoked);
+            URL.revokeObjectURL(revoked);
+            fromBlob.onmessage = (e) => console.log(e.data);
+            const gone = new Worker('blob:http://h/none');
+            gone.onerror = (e) => console.log('gone:' + e.constructor.name);"#
+        ),
+    );
+    until_console(&mut t, &rec, "terminated");
+    until_console(&mut t, &rec, "self-error:Uncaught TypeError: at load:3");
+    until_console(&mut t, &rec, "page-error:ErrorEvent:Uncaught TypeError: at load:true");
+    until_console(&mut t, &rec, "page-error:ErrorEvent:Uncaught Error: in handler:true");
+    until_console(&mut t, &rec, "imported:42");
+    until_console(&mut t, &rec, "bad-url:SyntaxError");
+    until_console(&mut t, &rec, "network:NetworkError");
+    until_console(&mut t, &rec, "syntaxless:Uncaught Error: x");
+    until_console(&mut t, &rec, "from-blob");
+    until_console(&mut t, &rec, "gone:Event");
+    assert!(!rec.console.borrow().iter().any(|c| c.contains("after-terminate")));
+    t.browser.close_all();
+    assert!(lp_webapi::join_stopped(Duration::from_secs(5)), "worker threads end");
+}
+
+#[test]
+fn navigating_away_ends_a_documents_workers() {
+    let (mut t, rec, page) = worker_setup();
+    let script = data_url("postMessage('up'); setInterval(() => postMessage('tick'), 1);");
+    eval(
+        &t,
+        page,
+        &format!(
+            "const w = new Worker({script:?}); w.onmessage = (e) => {{ if (e.data === 'up') console.log('up'); }};"
+        ),
+    );
+    until_console(&mut t, &rec, "up");
+    t.browser.navigate(page, NavigateOpts::address_bar("about:blank")).unwrap();
+    t.run_until_idle(Some(Instant::now() + Duration::from_millis(200)));
+    // The thread ended with the document.
+    assert!(lp_webapi::join_stopped(Duration::from_secs(5)), "worker threads end");
+    t.browser.close_all();
+}

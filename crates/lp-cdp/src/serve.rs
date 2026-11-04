@@ -738,6 +738,7 @@ pub(crate) fn serve_browser(
     browser.host_mut().thread.event_loop.watch_fd(None);
     browser.shutdown();
     browser.host_mut().close_all();
+    lp_webapi::join_stopped(std::time::Duration::from_secs(1));
     drop(sink);
     match Rc::try_unwrap(conn) {
         Ok(conn) => conn.into_inner().finish(),

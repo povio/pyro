@@ -273,6 +273,16 @@ await check('context cookies reach HTTP and stay isolated', async () => {
 const identityHeaders = [];
 const cacheableHits = [];
 const fixture = http.createServer((req, res) => {
+  if (req.url === '/compat-worker.js') {
+    res.writeHead(200, { 'content-type': 'text/javascript' });
+    res.end("console.log('from worker', 7); onmessage = async (e) => postMessage({ doubled: e.data.value * 2, size: e.data.list.size, fetched: (await fetch('/document')).ok });");
+    return;
+  }
+  if (req.url === '/missing-worker.js') {
+    res.writeHead(404);
+    res.end();
+    return;
+  }
   identityHeaders.push({ url: req.url, agent: req.headers['user-agent'], language: req.headers['accept-language'], extra: req.headers['x-extra'] ?? null, chUa: req.headers['sec-ch-ua'] ?? null, chMobile: req.headers['sec-ch-ua-mobile'] ?? null, chPlatform: req.headers['sec-ch-ua-platform'] ?? null });
   if (req.url.startsWith('/cacheable')) {
     cacheableHits.push(req.url);
@@ -1186,6 +1196,43 @@ try {
         w.onerror = (ev) => { log.push(ev.type); setTimeout(() => resolve({ invalid, log }), 20); };
       }));
       assert.deepEqual(result, { invalid: 'SyntaxError', log: ['error'] });
+    } finally { await p.close(); }
+  });
+  await check('dedicated Worker: messages, page.on(worker), worker.evaluate, console, terminate', async () => {
+    const p = await context.newPage();
+    try {
+      await p.goto(`${fixtureOrigin}/document`, { timeout: 5000 });
+      const invalid = await p.evaluate(() => {
+        const failure = (f) => { try { f(); return 'no throw'; } catch (e) { return e.name; } };
+        return [failure(() => new Worker('http://[')), failure(() => new Worker('/x.js', { type: 'module' }))];
+      });
+      assert.deepEqual(invalid, ['SyntaxError', 'NotSupportedError']);
+      const missing = await p.evaluate(() => new Promise((resolve) => {
+        const w = new Worker('/missing-worker.js');
+        w.onerror = (ev) => resolve(ev.type);
+      }));
+      assert.equal(missing, 'error');
+      const logged = p.waitForEvent('console', { predicate: (m) => m.text().startsWith('from worker'), timeout: 5000 });
+      const started = p.waitForEvent('worker', { timeout: 5000 });
+      const reply = await p.evaluate(() => new Promise((resolve) => {
+        globalThis.w = new Worker('/compat-worker.js');
+        w.onmessage = (e) => resolve(e.data);
+        w.postMessage({ value: 21, list: new Map([[1, 2]]) });
+      }));
+      assert.deepEqual(reply, { doubled: 42, size: 1, fetched: true });
+      const worker = await started;
+      assert.ok(worker.url().endsWith('/compat-worker.js'), worker.url());
+      assert.deepEqual(p.workers().map((x) => x.url()), [worker.url()]);
+      assert.equal((await logged).text(), 'from worker 7');
+      assert.equal(await worker.evaluate(() => self.constructor.name + ':' + (40 + 2)), 'DedicatedWorkerGlobalScope:42');
+      assert.equal(await worker.evaluate(async (x) => (await Promise.resolve(x)) + 1, 1), 2);
+      const handle = await worker.evaluateHandle(() => ({ a: 5 }));
+      assert.equal(await handle.evaluate((o) => o.a), 5);
+      await assert.rejects(() => worker.evaluate(() => { throw new Error('inside'); }), /inside/);
+      const closed = new Promise((resolve) => worker.once('close', resolve));
+      await p.evaluate(() => w.terminate());
+      await closed;
+      assert.deepEqual(p.workers(), []);
     } finally { await p.close(); }
   });
   await check('page.exposeFunction and exposeBinding survive navigation (Runtime.addBinding)', async () => {

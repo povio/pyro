@@ -27,6 +27,7 @@ mod runtime;
 #[cfg(feature = "render")]
 mod screenshot;
 mod virtual_time;
+mod worker;
 #[cfg(not(feature = "render"))]
 mod screenshot {
     //! Built without the `render` feature: screenshots are refused.
@@ -100,6 +101,7 @@ pub(crate) enum Queued {
     },
     /// A request announcement or response delivered on the browser thread.
     Network(ContextKey, network_delivery::Observed),
+    Worker(PageId, lp_webapi::WorkerEvent),
 }
 
 /// Most engine notifications queued between flushes. A page producing more
@@ -200,6 +202,10 @@ fn epoch_ms() -> f64 {
 impl PageObserver for Collector {
     fn on_page_event(&self, page: PageId, event: &PageEvent) {
         self.push(Queued::Page(page, event.clone()));
+    }
+
+    fn on_worker_event(&self, page: PageId, event: lp_webapi::WorkerEvent) {
+        self.push(Queued::Worker(page, event));
     }
 
     /// A fetch/XHR consumer is about to let script observe `frontier` of
@@ -392,6 +398,9 @@ pub struct EngineHost {
     /// Commands from `window.open`'s returned objects, resolved to pages when
     /// the protocol layer takes them (after adopting the popups they name).
     pub(crate) popup_commands: Vec<(std::rc::Rc<lp_webapi::PopupState>, lp_webapi::PopupCommand)>,
+    /// Live dedicated workers and what the target layer has not heard yet (`worker.rs`).
+    workers: HashMap<crate::target::WorkerKey, lp_webapi::WorkerHandle>,
+    worker_changes: Vec<crate::target::WorkerChange>,
     /// Pages `Page.close` closes, taken by the protocol layer after `flush`.
     pub(crate) close_requests: Vec<PageKey>,
     /// `browserContextId`s of the contexts (a dialog's context disposed
@@ -592,6 +601,8 @@ impl EngineHost {
             pending: runtime::PendingReplies::default(),
             popup_requests: Vec::new(),
             popup_commands: Vec::new(),
+            workers: HashMap::new(),
+            worker_changes: Vec::new(),
             close_requests: Vec::new(),
             context_names: HashMap::new(),
             prebooted: Vec::new(),
@@ -813,6 +824,10 @@ impl EngineHost {
                 }
                 Queued::Exception { realm, exception, timestamp } => self.on_exception(realm, exception, timestamp),
                 Queued::BindingCalled { realm, name, payload } => self.on_binding_called(realm, name, payload),
+                Queued::Worker(page, event) => {
+                    let key = self.page_key(page);
+                    self.on_worker_event(key, event);
+                }
             }
         }
     }
@@ -1242,6 +1257,24 @@ impl Host for EngineHost {
                 })
             })
             .collect()
+    }
+
+    fn take_worker_changes(&mut self) -> Vec<crate::target::WorkerChange> {
+        std::mem::take(&mut self.worker_changes)
+    }
+
+    fn worker_command(
+        &mut self,
+        worker: crate::target::WorkerKey,
+        session_id: &str,
+        command: &Command<'_>,
+        _out: &mut dyn Sink,
+    ) {
+        self.worker_session_command(worker, session_id, command);
+    }
+
+    fn worker_session_detached(&mut self, worker: crate::target::WorkerKey, session_id: &str) {
+        self.worker_session_gone(worker, session_id);
     }
 
     fn context_named(&mut self, key: ContextKey, id: &str) {

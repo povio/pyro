@@ -266,6 +266,10 @@ pub trait PageObserver {
     ) {
     }
 
+    /// A document of `page` started or ended a dedicated worker. May be called
+    /// with script on the stack or while the page is being disposed: only record.
+    fn on_worker_event(&self, _page: PageId, _event: lp_webapi::WorkerEvent) {}
+
     /// Page JavaScript in frame `frame` (document `url`) opened an `alert`,
     /// `confirm` or `prompt` dialog (`kind`). Called synchronously with the
     /// script on the stack, so like the other callbacks it must not run
