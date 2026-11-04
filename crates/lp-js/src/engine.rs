@@ -466,6 +466,28 @@ impl Engine {
         }
     }
 
+    /// Sets the time zone of `Date`, `Intl` and `Temporal` in this engine's VM,
+    /// which covers all of its realms and no other engine. `None` returns to
+    /// the host's zone. `Ok(false)`, changing nothing, for an ID `Intl` does not
+    /// know. Needs the patched JavaScriptCore.
+    pub fn set_time_zone(&self, id: Option<&str>) -> Result<bool, JsError> {
+        let Some(set) = sys::spi::get().set_time_zone else {
+            return if id.is_none() {
+                Ok(true)
+            } else {
+                Err(JsError::Unsupported("time zone override (patched JavaScriptCore)"))
+            };
+        };
+        let id = match id.map(std::ffi::CString::new) {
+            Some(Ok(id)) => Some(id),
+            Some(Err(_)) => return Ok(false),
+            None => None,
+        };
+        // SAFETY: the group is alive and used by this thread only; the string
+        // is NUL-terminated and read during the call.
+        Ok(unsafe { set(self.inner.group, id.as_ref().map_or(std::ptr::null(), |id| id.as_ptr())) })
+    }
+
     /// Live realms of this engine.
     pub fn realms(&self) -> Vec<Realm> {
         self.inner.realms.borrow().iter().filter_map(|(_, r)| r.upgrade()).map(|inner| Realm { inner }).collect()

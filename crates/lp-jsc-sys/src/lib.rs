@@ -527,6 +527,8 @@ pub mod spi {
     pub type JSGlobalContextReseedRandomFn = unsafe extern "C" fn(ctx: JSGlobalContextRef);
     /// Patched JavaScriptCore only (`webkit/patches/0003-complete-jit-plans.patch`).
     pub type JSCompleteJITPlansFn = unsafe extern "C" fn(group: JSContextGroupRef, wait: bool);
+    /// Patched JavaScriptCore only (`webkit/patches/0006-vm-time-zone.patch`).
+    pub type JSContextGroupSetTimeZoneFn = unsafe extern "C" fn(group: JSContextGroupRef, id: *const c_char) -> bool;
 
     /// Runtime-resolved SPI table. Each entry is `None` when the running
     /// JavaScriptCore does not export the symbol.
@@ -549,6 +551,7 @@ pub mod spi {
         pub did_fork: Option<JSDidForkFn>,
         pub reseed_random: Option<JSGlobalContextReseedRandomFn>,
         pub complete_jit_plans: Option<JSCompleteJITPlansFn>,
+        pub set_time_zone: Option<JSContextGroupSetTimeZoneFn>,
     }
 
     impl Spi {
@@ -604,6 +607,7 @@ pub mod spi {
             did_fork: resolve!("JSDidFork"),
             reseed_random: resolve!("JSGlobalContextReseedRandom"),
             complete_jit_plans: resolve!("JSCompleteJITPlans"),
+            set_time_zone: resolve!("JSContextGroupSetTimeZone"),
         })
     }
 }
