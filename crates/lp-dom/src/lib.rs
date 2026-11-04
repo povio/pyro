@@ -14,6 +14,7 @@ pub mod iframe;
 pub mod image;
 pub mod inner_text;
 pub mod layout;
+pub mod live_range;
 pub mod media;
 pub mod mutation;
 pub mod node;

@@ -660,6 +660,79 @@ fn dataview_brand_check_ignores_script_properties() {
 }
 
 #[test]
+fn range_comparison_errors_follow_the_spec() {
+    let e = env("<!doctype html><body><p id=x>abc</p></body>");
+    let name = "(f) => { try { return String(f()); } catch (e) { return e.name; } }";
+    eval(&e.main, &format!("var t = {name}; var x = document.getElementById('x'); var r = new Range(); r.selectNode(x); var d = document.createElement('div'); 1"));
+    assert_eq!(eval(&e.main, "t(() => r.comparePoint(d, 0))"), "WrongDocumentError");
+    assert_eq!(eval(&e.main, "t(() => r.comparePoint(x, 9))"), "IndexSizeError");
+    assert_eq!(eval(&e.main, "t(() => r.comparePoint(document.doctype, 0))"), "InvalidNodeTypeError");
+    assert_eq!(eval(&e.main, "t(() => r.isPointInRange(d, 9))"), "false");
+    assert_eq!(eval(&e.main, "t(() => r.isPointInRange(x, 9))"), "IndexSizeError");
+    assert_eq!(eval(&e.main, "t(() => r.intersectsNode(d))"), "false");
+    assert_eq!(eval(&e.main, "t(() => r.compareBoundaryPoints(7, r))"), "NotSupportedError");
+    assert_eq!(eval(&e.main, "t(() => r.compareBoundaryPoints(65536, r))"), "0");
+    assert_eq!(
+        eval(&e.main, "var o = new Range(); o.selectNode(d.appendChild(document.createElement('i'))); t(() => r.compareBoundaryPoints(0, o))"),
+        "WrongDocumentError"
+    );
+    // A boundary point in another tree collapses the range onto it.
+    assert_eq!(eval(&e.main, "r.setEnd(d, 0); [r.startContainer === d, r.collapsed].join()"), "true,true");
+}
+
+#[test]
+fn range_content_methods() {
+    let e = env("<body><div id=x><b>abc</b>mid<i>def</i></div></body>");
+    eval(&e.main, "var x = document.getElementById('x'); var r = new Range(); var html = (f) => { const d = document.createElement('div'); d.append(f); return d.innerHTML; }; r.setStart(x.firstChild.firstChild, 1); r.setEnd(x.lastChild.firstChild, 2); 1");
+    assert_eq!(eval(&e.main, "html(r.cloneContents())"), "<b>bc</b>mid<i>de</i>");
+    assert_eq!(eval(&e.main, "x.innerHTML"), "<b>abc</b>mid<i>def</i>");
+    assert_eq!(eval(&e.main, "html(r.extractContents())"), "<b>bc</b>mid<i>de</i>");
+    assert_eq!(eval(&e.main, "x.innerHTML"), "<b>a</b><i>f</i>");
+    assert_eq!(eval(&e.main, "[r.startContainer === x, r.startOffset, r.collapsed].join()"), "true,1,true");
+    assert_eq!(
+        eval(&e.main, "r.insertNode(document.createElement('u')); [x.innerHTML, r.startOffset, r.endOffset].join()"),
+        "<b>a</b><u></u><i>f</i>,1,2"
+    );
+    assert_eq!(eval(&e.main, "r.deleteContents(); [x.innerHTML, r.collapsed].join()"), "<b>a</b><i>f</i>,true");
+    assert_eq!(eval(&e.main, "r.selectNode(x.firstChild); r.surroundContents(document.createElement('s')); [x.innerHTML, r.startOffset, r.endOffset].join()"), "<s><b>a</b></s><i>f</i>,0,1");
+    assert_eq!(eval(&e.main, "r.setStart(x.firstChild.firstChild, 0); r.setEnd(x, 2); try { r.surroundContents(document.createElement('s')); } catch (err) { err.name }"), "InvalidStateError");
+    // insertNode into text splits it.
+    assert_eq!(eval(&e.main, "x.textContent = 'hello'; r.setStart(x.firstChild, 2); r.collapse(true); r.insertNode(document.createElement('b')); [x.innerHTML, r.endContainer === x, r.endOffset].join()"), "he<b></b>llo,true,2");
+}
+
+#[test]
+fn range_boundaries_follow_mutations() {
+    let e = env("<body><div id=x>abcdef</div><div id=y><a></a><b></b><i></i></div></body>");
+    let pts = "var pts = () => [r.startContainer === t ? 't' : r.startContainer.nodeName, r.startOffset, r.endContainer === t ? 't' : r.endContainer.nodeName, r.endOffset].join();";
+    eval(&e.main, &format!("var x = document.getElementById('x'), y = document.getElementById('y'), t = x.firstChild, r = new Range(); {pts} r.setStart(t, 2); r.setEnd(t, 5); 1"));
+    assert_eq!(eval(&e.main, "t.deleteData(0, 1); pts()"), "t,1,t,4");
+    assert_eq!(eval(&e.main, "t.insertData(0, 'zz'); pts()"), "t,3,t,6");
+    assert_eq!(eval(&e.main, "t.replaceData(1, 4, 'q'); pts()"), "t,1,t,3");
+    assert_eq!(eval(&e.main, "t.data = 'abcdef'; pts()"), "t,0,t,0");
+    assert_eq!(
+        eval(&e.main, "r.setEnd(t, 4); var u = t.splitText(2); [r.endContainer === u, r.endOffset].join()"),
+        "true,2"
+    );
+    assert_eq!(eval(&e.main, "x.normalize(); pts()"), "t,0,t,4");
+    assert_eq!(eval(&e.main, "x.remove(); document.body.append(x); pts()"), "BODY,0,BODY,0");
+    assert_eq!(
+        eval(&e.main, "r.setStart(y, 2); r.setEnd(y, 3); y.prepend(document.createElement('u')); pts()"),
+        "DIV,3,DIV,4"
+    );
+    assert_eq!(eval(&e.main, "y.firstChild.remove(); pts()"), "DIV,2,DIV,3");
+    assert_eq!(eval(&e.main, "y.children[1].remove(); pts()"), "DIV,1,DIV,2");
+    assert_eq!(eval(&e.main, "y.innerHTML = ''; pts()"), "DIV,0,DIV,0");
+}
+
+#[test]
+fn static_range_keeps_its_points_as_given() {
+    let e = env("<body><div id=x>abc</div></body>");
+    let init = "{startContainer: x, startOffset: 5, endContainer: x.firstChild, endOffset: 1}";
+    assert_eq!(eval(&e.main, &format!("var x = document.getElementById('x'); var r = new StaticRange({init}); x.remove(); [r.startContainer === x, r.startOffset, r.endOffset, r.collapsed].join()")), "true,5,1,false");
+    assert_eq!(eval(&e.main, "try { new StaticRange({startContainer: x}) } catch (err) { err.name }"), "TypeError");
+}
+
+#[test]
 fn range_text_respects_nested_container_boundaries() {
     let e = env("<body><p id=x><b>abc</b><i>def</i><span>ghi</span></p><p>outside</p></body>");
     assert_eq!(eval(&e.main, "const r=document.createRange(), x=document.getElementById('x'); r.setStart(x,0); r.setEnd(x,1); r.toString()"), "abc");

@@ -151,6 +151,8 @@ pub struct Dom {
     /// handlers the bindings have not compiled yet.
     pending_inline_handlers: Vec<NodeId>,
     pub(crate) mutation: MutationState,
+    /// Ranges to adjust on mutation (`crate::live_range`); empty when none exists.
+    pub(crate) live_ranges: Vec<std::rc::Weak<crate::live_range::LiveRange>>,
     pub(crate) events: crate::events::ListenerStore,
     pub(crate) resources: crate::script::ResourceQueue,
     pub(crate) iframes: crate::iframe::IframeQueue,
@@ -197,6 +199,7 @@ impl Dom {
             shadow_roots: 0,
             pending_inline_handlers: Vec::new(),
             mutation: MutationState::default(),
+            live_ranges: Vec::new(),
             events: Default::default(),
             resources: Default::default(),
             iframes: Default::default(),
@@ -483,6 +486,9 @@ impl Dom {
         self.alloc(kind, owner_doc)
     }
     pub(crate) fn link_raw(&mut self, node: u32, parent: u32, before: u32) {
+        if before != NIL && !self.live_ranges.is_empty() {
+            self.ranges_before_insert(parent, before, 1);
+        }
         self.link(node, parent, before);
         self.bump_tree();
         self.note(Change::Inserted(parent, node));
@@ -490,6 +496,9 @@ impl Dom {
     pub(crate) fn unlink_raw(&mut self, node: u32) {
         let parent = self.n(node).parent;
         let next = self.n(node).next;
+        if parent != NIL && !self.live_ranges.is_empty() {
+            self.ranges_before_remove(node);
+        }
         self.unlink(node);
         self.bump_tree();
         if parent != NIL {
@@ -1316,6 +1325,15 @@ impl Dom {
         Ok(())
     }
 
+    /// "Ensure pre-insert validity" alone (`Range.insertNode` checks before it splits).
+    pub fn check_pre_insert(&self, parent: NodeId, node: NodeId, child: Option<NodeId>) -> DomResult<()> {
+        let c = match child {
+            Some(c) => self.check(c)?,
+            None => NIL,
+        };
+        self.ensure_pre_insert_validity(self.check(node)?, self.check(parent)?, c)
+    }
+
     /// `parent.insertBefore(node, child)`.
     pub fn insert_before(&mut self, parent: NodeId, node: NodeId, child: Option<NodeId>) -> DomResult<NodeId> {
         let p = self.check(parent)?;
@@ -1458,6 +1476,9 @@ impl Dom {
         if nodes.is_empty() {
             return;
         }
+        if child != NIL && !self.live_ranges.is_empty() {
+            self.ranges_before_insert(parent, child, nodes.len() as u32);
+        }
         let prev = if child == NIL { self.n(parent).last_child } else { self.n(child).prev };
         let doc = self.n(parent).owner_doc;
         for &k in &nodes {
@@ -1532,6 +1553,9 @@ impl Dom {
         self.resources_before_remove(node);
         self.removals = self.removals.wrapping_add(1);
         self.add_transient_observers(parent, node);
+        if !self.live_ranges.is_empty() {
+            self.ranges_before_remove(node);
+        }
         self.unlink(node);
         self.unfocus_removed(node);
         self.bump_tree();
@@ -2021,6 +2045,10 @@ impl Dom {
             self.bump_tree();
             self.note(Change::Text(i));
         }
+        if !self.live_ranges.is_empty() {
+            let count = count.min(utf16_len(&old) - offset);
+            self.ranges_after_replace_data(i, offset, count, utf16_len(data));
+        }
         self.queue_character_data(i, &old);
         self.resources_after_text(i);
         Ok(())
@@ -2049,6 +2077,9 @@ impl Dom {
         if parent != NIL {
             let next = self.n(i).next;
             self.insert(new, parent, next, false);
+            if !self.live_ranges.is_empty() {
+                self.ranges_after_split(i, new, offset);
+            }
         } else {
             self.candidates.push(new);
         }
@@ -2080,6 +2111,15 @@ impl Dom {
                 if !data.is_empty() {
                     let cur_id = self.id_of(cur);
                     self.replace_data(cur_id, len, 0, &data)?;
+                }
+                if !self.live_ranges.is_empty() {
+                    let mut base_len = len;
+                    let mut sib = self.n(cur).next;
+                    while sib != NIL && matches!(self.n(sib).kind, NodeKind::Text(_)) {
+                        self.ranges_merge_text(cur, sib, base_len);
+                        base_len += utf16_len(self.n(sib).kind.char_data().unwrap());
+                        sib = self.n(sib).next;
+                    }
                 }
                 let mut sib = self.n(cur).next;
                 while sib != NIL && matches!(self.n(sib).kind, NodeKind::Text(_)) {
