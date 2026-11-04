@@ -5867,3 +5867,70 @@ fn resize_observer_input_update_preserves_queued_and_reentrant_callbacks() {
     assert_eq!(eval(&e.main, "seen.join()"), "10,20,30", "a clean input checkpoint must not duplicate delivery");
     e.page.dispose();
 }
+
+#[test]
+fn base_element_sets_the_document_base_and_hyperlink_setters_rewrite_href() {
+    let e = env("<head><base id=b href='http://example.org/foo/bar'><body><a id=a href='x'></a><area id=r href='y'>");
+    let doc = e.page.document();
+    e.page.dom.borrow_mut().set_document_url(doc, "http://page.test/dir/index.html").unwrap();
+    eval(&e.main, "for(const id of ['a','b','r'])globalThis[id]=document.getElementById(id);0");
+    assert_eq!(
+        eval(&e.main, "[document.baseURI,b.href,a.href,r.href,a.origin].join('|')"),
+        "http://example.org/foo/bar|http://example.org/foo/bar|http://example.org/foo/x|http://example.org/foo/y|http://example.org"
+    );
+    // The base is live, and a relative <base href> resolves against the fallback base only.
+    assert_eq!(
+        eval(&e.main, "b.href='sub/';[document.baseURI,b.href,a.href].join('|')"),
+        "http://page.test/dir/sub/|http://page.test/dir/sub/|http://page.test/dir/sub/x"
+    );
+    assert_eq!(eval(&e.main, "b.href='data:text/plain,x';document.baseURI"), "http://page.test/dir/index.html");
+    assert_eq!(eval(&e.main, "b.remove();document.baseURI"), "http://page.test/dir/index.html");
+    assert_eq!(eval(&e.main, "a.href"), "http://page.test/dir/x");
+    assert_eq!(
+        eval(&e.main, "let n=document.createElement('base');n.href='http://two.test/';document.head.append(n);a.href"),
+        "http://two.test/x"
+    );
+
+    assert_eq!(
+        eval(&e.main, "a.href='http://u:p@h.test:8/p?q#f';a.protocol='https:';a.host='i.test:9';a.pathname='/r';a.search='s';a.hash='g';a.username='v';a.password='w';[a.getAttribute('href'),a.hostname,a.port].join('|')"),
+        "https://v:w@i.test:9/r?s#g|i.test|9"
+    );
+    // A URL that does not parse keeps the input as href and ignores writes.
+    assert_eq!(
+        eval(&e.main, "a.href='http://f:b/c';a.pathname='/x';[a.href,a.protocol,a.host,a.pathname,a.origin].join('|')"),
+        "http://f:b/c|:|||"
+    );
+    assert_eq!(eval(&e.main, "a.removeAttribute('href');[a.href,a.protocol].join('|')"), "|:");
+    e.page.dispose();
+}
+
+#[test]
+fn url_hosts_with_invalid_punycode_parse_when_ascii() {
+    let e = env("<body>");
+    assert_eq!(
+        eval(&e.main, "['xn--ab-j1t','XN--0.pt','xn--a.xn--zca','a.b.c.xn--pokxncvks','xn--'].map(h=>new URL(`https://${h}/x`).host).join('|')"),
+        "xn--ab-j1t|xn--0.pt|xn--a.xn--zca|a.b.c.xn--pokxncvks|xn--"
+    );
+    for host in ["xn--a.\u{df}", "xn--te\u{161}la", "xn--a b", "a\u{200d}.example", "xn--a%"] {
+        assert_eq!(eval(&e.main, &format!("URL.canParse('https://{host}/x')")), "false", "{host}");
+    }
+    e.page.dispose();
+}
+
+#[test]
+fn invalid_urls_throw_from_send_beacon_and_window_open_and_response_form_data_parses() {
+    let e = env("<body>");
+    let doc = e.page.document();
+    e.page.dom.borrow_mut().set_document_url(doc, "http://page.test/").unwrap();
+    let thrown =
+        |call: &str| eval(&e.main, &format!("(()=>{{try{{{call};return 'none'}}catch(x){{return x.name}}}})()"));
+    assert_eq!(thrown("navigator.sendBeacon('http://f:b/')"), "TypeError");
+    assert_eq!(thrown("navigator.sendBeacon('data:text/plain,x')"), "TypeError");
+    assert_eq!(thrown("navigator.sendBeacon('/ok')"), "none");
+    assert_eq!(thrown("open('http://f:b/')"), "SyntaxError");
+
+    eval(&e.main, "globalThis.got='';new Response('a=1&b=%F0%9F%90%BC+c&a',{headers:{'Content-Type':'application/x-www-form-urlencoded;charset=shift_jis'}}).formData().then(f=>{got=[...f].join('|')+'|'+(f instanceof FormData)});new Response('a=1').formData().catch(x=>{got2=x.name})");
+    assert_eq!(eval(&e.main, "got"), "a,1|b,\u{1F43C} c|a,|true");
+    assert_eq!(eval(&e.main, "got2"), "TypeError");
+    e.page.dispose();
+}

@@ -129,6 +129,10 @@ pub struct Dom {
     tree_version: u64,
     /// Roots of trees that may have become unreachable.
     candidates: Vec<u32>,
+    /// A `<base>` element was created; until then no document walks for one.
+    pub(crate) base_seen: bool,
+    /// Documents with a computed `html_base`, reset on the next mutation.
+    html_base_docs: std::cell::RefCell<Vec<NodeId>>,
     live: u32,
     /// Bumped whenever a node is removed from its parent.
     removals: u64,
@@ -189,6 +193,8 @@ impl Dom {
             journal_floor: 0,
             style_snapshots: Default::default(),
             shadow_roots: 0,
+            base_seen: false,
+            html_base_docs: Default::default(),
             mutation: MutationState::default(),
             events: Default::default(),
             resources: Default::default(),
@@ -270,6 +276,9 @@ impl Dom {
     #[track_caller]
     pub(crate) fn bump(&mut self) {
         self.version = self.version.wrapping_add(1);
+        if self.base_seen {
+            self.reset_html_bases();
+        }
         // Unknown until a precise `note` refines it: an un-annotated bump
         // (forms, parser, script state) makes consumers invalidate fully.
         self.push_change(Change::Unknown(std::panic::Location::caller()));
@@ -532,6 +541,7 @@ impl Dom {
             charset: "UTF-8",
             url: url.into(),
             base_url: None,
+            html_base: Default::default(),
             inert_doc: NIL,
             owned: 0,
             active: false,
@@ -574,7 +584,17 @@ impl Dom {
             NodeKind::Document(d) => d.url = url.into(),
             _ => return Err(DomError::Type("not a document")),
         }
+        self.reset_html_bases();
         Ok(())
+    }
+    fn reset_html_bases(&mut self) {
+        for doc in std::mem::take(self.html_base_docs.get_mut()) {
+            if let Ok(i) = self.check(doc) {
+                if let NodeKind::Document(d) = &mut self.n_mut(i).kind {
+                    d.html_base = Default::default();
+                }
+            }
+        }
     }
     /// Sets an inherited, already-resolved base URL without changing URL/origin.
     /// None restores resolution against the document's current URL.
@@ -584,11 +604,37 @@ impl Dom {
             NodeKind::Document(d) => d.base_url = base.map(Into::into),
             _ => return Err(DomError::Type("not a document")),
         }
+        self.reset_html_bases();
         Ok(())
     }
+    /// The document base URL: its first `<base href>`, else the fallback.
     pub fn document_base_url(&self, doc: NodeId) -> DomResult<&str> {
         let d = self.document_data(doc)?;
+        if self.base_seen {
+            let html_base = d.html_base.get_or_init(|| {
+                self.html_base_docs.borrow_mut().push(doc);
+                self.first_base_href(doc)
+            });
+            if let Some(base) = html_base {
+                return Ok(base);
+            }
+        }
+        self.document_fallback_base_url(doc)
+    }
+    /// The base URL ignoring `<base>`, which resolves `<base href>` itself.
+    pub fn document_fallback_base_url(&self, doc: NodeId) -> DomResult<&str> {
+        let d = self.document_data(doc)?;
         Ok(d.base_url.as_deref().unwrap_or(&d.url))
+    }
+    fn first_base_href(&self, doc: NodeId) -> Option<Box<str>> {
+        let href = self.descendants(doc).ok()?.find_map(|id| {
+            let e = self.element(id).ok()?;
+            (e.is_html() && *e.local_name() == *"base").then(|| self.get_attribute(id, "href").ok().flatten())?
+        })?;
+        let fallback = url::Url::parse(self.document_fallback_base_url(doc).ok()?).ok();
+        let url = url::Url::options().base_url(fallback.as_ref()).parse(href).ok()?;
+        // HTML: a data: or javascript: <base> is ignored.
+        (!matches!(url.scheme(), "data" | "javascript")).then(|| url.as_str().into())
     }
     pub fn set_quirks_mode(&mut self, doc: NodeId, q: QuirksMode) -> DomResult<()> {
         let i = self.check(doc)?;
@@ -610,6 +656,7 @@ impl Dom {
     pub fn create_element_raw(&mut self, doc: NodeId, name: QualName) -> DomResult<NodeId> {
         let owner = self.owner_for(doc)?;
         let is_template = name.ns == ns!(html) && name.local == local_name!("template");
+        self.base_seen |= name.local == local_name!("base");
         let idx = self.alloc_raw(NodeKind::Element(Box::new(ElementData::new(name))), owner);
         if is_template {
             let inert = self.inert_doc_for(owner);

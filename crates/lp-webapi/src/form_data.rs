@@ -330,6 +330,20 @@ impl JsClass for FormData {
     }
 }
 
+/// A new FormData holding a parsed `application/x-www-form-urlencoded` body.
+pub(crate) fn from_urlencoded<'s>(s: &Scope<'s>, bytes: &[u8]) -> JsResult<Value<'s>> {
+    let page = crate::target::page_of(s)?;
+    let identity = page.event_identity(page.next_event_id());
+    let data = FormDataData::new(WrapperRef::new(s, identity));
+    *data.entries.borrow_mut() =
+        url::form_urlencoded::parse(bytes).map(|(n, v)| (n.into_owned(), Entry::Text(v.into_owned()))).collect();
+    let files = s.array(&[])?;
+    files.set_prototype(s.null());
+    let fd = s.wrap::<FormData>(data, Some(identity))?;
+    s.set_hidden(fd, FILES, files.value())?;
+    Ok(fd.value())
+}
+
 /// Installs `@@iterator` and `forEach` on `FormData.prototype`.
 pub(crate) fn install(s: &Scope<'_>) -> JsResult<()> {
     s.eval(

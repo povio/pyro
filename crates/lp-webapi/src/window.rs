@@ -281,7 +281,16 @@ impl JsClass for Navigator {
         def.getter("doNotTrack", |s, _p| Ok(s.null()));
         def.getter("pdfViewerEnabled", |s, _p| Ok(s.boolean(false)));
         def.method("javaEnabled", 0, |s, _p, _a| Ok(s.boolean(false)));
-        def.method("sendBeacon", 1, |s, _p, _a| Ok(s.boolean(true)));
+        // Queues nothing: only the URL checks are observable.
+        def.method("sendBeacon", 1, |s, p, a| {
+            a.require(1, "Navigator.sendBeacon")?;
+            let url = crate::util::dom_string(a.get(0))?;
+            let url = crate::html::resolve_url(&p.dom.borrow(), p.document(), &url);
+            if !lp_net::Url::parse(&url).is_ok_and(|u| matches!(u.scheme(), "http" | "https")) {
+                return Err(JsError::Type(format!("Failed to execute 'sendBeacon': invalid URL '{url}'.")));
+            }
+            Ok(s.boolean(true))
+        });
         def.method("vibrate", 0, |s, _p, _a| Ok(s.boolean(false)));
     }
 }
@@ -535,7 +544,11 @@ fn window_open<'s>(s: &Scope<'s>, page: &Rc<PageDom>, a: &lp_js::Args<'s>) -> Js
         "about:blank".to_owned()
     } else {
         let dom = page.dom.borrow();
-        crate::html::resolve_url(&dom, page.document(), &url)
+        let url = crate::html::resolve_url(&dom, page.document(), &url);
+        if lp_net::Url::parse(&url).is_err() {
+            return Err(JsError::dom("SyntaxError", format!("'{url}' is not a valid URL.")));
+        }
+        url
     };
     let same_context = matches!(target.to_ascii_lowercase().as_str(), "_self" | "_top" | "_parent");
     if !same_context && !no_opener {

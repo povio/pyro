@@ -1,5 +1,6 @@
 //! HTML element interfaces, attribute reflection and document helpers.
 
+use ::url::quirks;
 use std::rc::Rc;
 
 use lp_dom::events::TargetKey;
@@ -107,7 +108,7 @@ pub fn resolve_url(dom: &Dom, node: NodeId, value: &str) -> String {
 
 fn resolve_against(base: Option<&lp_net::Url>, value: &str) -> String {
     match base {
-        Some(b) => b.join(value.trim()).map(|u| u.to_string()).unwrap_or_else(|_| value.to_owned()),
+        Some(b) => b.join(value).map(|u| u.to_string()).unwrap_or_else(|_| value.to_owned()),
         None => value.to_owned(),
     }
 }
@@ -676,30 +677,42 @@ fn define_hyperlink<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
         let dom = n.page().dom.borrow();
         Ok(s.string(&dom.get_attribute(n.id, "href").js()?.map(|h| resolve_url(&dom, n.id, h)).unwrap_or_default()))
     });
+    fn link_url(dom: &Dom, n: &NodeData) -> JsResult<Option<lp_net::Url>> {
+        let href = dom.get_attribute(n.id, "href").js()?.map(|h| resolve_url(dom, n.id, h));
+        Ok(href.and_then(|h| lp_net::Url::parse(&h).ok()))
+    }
+    def.getter("origin", |s, n| {
+        let url = link_url(&n.page().dom.borrow(), n)?;
+        Ok(s.string(&url.map(|u| quirks::origin(&u)).unwrap_or_default()))
+    });
+    // A null URL reads as ":" for protocol and "" otherwise, and ignores writes.
     macro_rules! part {
-        ($prop:literal, $f:expr) => {
-            def.getter($prop, |s, n| {
-                let dom = n.page().dom.borrow();
-                let href = dom.get_attribute(n.id, "href").js()?.map(|h| resolve_url(&dom, n.id, h));
-                let url = href.and_then(|h| lp_net::Url::parse(&h).ok());
-                let f: fn(&lp_net::Url) -> String = $f;
-                Ok(s.string(&url.as_ref().map(f).unwrap_or_default()))
-            });
+        ($prop:literal, $get:ident, $set:ident, $null:literal) => {
+            def.accessor(
+                $prop,
+                |s, n| {
+                    let url = link_url(&n.page().dom.borrow(), n)?;
+                    Ok(s.string(url.as_ref().map_or($null, |u| quirks::$get(u))))
+                },
+                |_s, n, v| {
+                    let value = dom_string(v)?;
+                    let mut dom = n.page().dom.borrow_mut();
+                    let Some(mut url) = link_url(&dom, n)? else { return Ok(()) };
+                    let _ = quirks::$set(&mut url, &value);
+                    dom.set_attribute(n.id, "href", url.as_str()).js()
+                },
+            );
         };
     }
-    part!("origin", |u| u.origin().ascii_serialization());
-    part!("protocol", |u| format!("{}:", u.scheme()));
-    part!("host", |u| match u.port() {
-        Some(p) => format!("{}:{p}", u.host_str().unwrap_or("")),
-        None => u.host_str().unwrap_or("").to_owned(),
-    });
-    part!("hostname", |u| u.host_str().unwrap_or("").to_owned());
-    part!("port", |u| u.port().map(|p| p.to_string()).unwrap_or_default());
-    part!("pathname", |u| u.path().to_owned());
-    part!("search", |u| u.query().filter(|q| !q.is_empty()).map(|q| format!("?{q}")).unwrap_or_default());
-    part!("hash", |u| u.fragment().filter(|f| !f.is_empty()).map(|f| format!("#{f}")).unwrap_or_default());
-    part!("username", |u| u.username().to_owned());
-    part!("password", |u| u.password().unwrap_or("").to_owned());
+    part!("protocol", protocol, set_protocol, ":");
+    part!("host", host, set_host, "");
+    part!("hostname", hostname, set_hostname, "");
+    part!("port", port, set_port, "");
+    part!("pathname", pathname, set_pathname, "");
+    part!("search", search, set_search, "");
+    part!("hash", hash, set_hash, "");
+    part!("username", username, set_username, "");
+    part!("password", password, set_password, "");
 }
 
 simple_class!(HtmlAnchorElement, "HTMLAnchorElement", HtmlElement, |def| {
@@ -1602,7 +1615,21 @@ simple_class!(HtmlDataElement, "HTMLDataElement", HtmlElement, |def| {
     reflect_str!(def, "value", "value");
 });
 simple_class!(HtmlBaseElement, "HTMLBaseElement", HtmlElement, |def| {
-    reflect_url!(def, "href", "href");
+    // Resolved against the fallback base: this element may be the document's base.
+    def.accessor(
+        "href",
+        |s, n| {
+            let dom = n.page().dom.borrow();
+            let href = dom.get_attribute(n.id, "href").js()?.unwrap_or("");
+            let doc = dom.node_document(n.id).js()?;
+            let base = lp_net::Url::parse(dom.document_fallback_base_url(doc).js()?).ok();
+            Ok(s.string(&resolve_against(base.as_ref(), href)))
+        },
+        |_s, n, v| {
+            let arg0 = dom_string(v)?;
+            n.page().dom.borrow_mut().set_attribute(n.id, "href", &arg0).js()
+        },
+    );
     reflect_str!(def, "target", "target");
 });
 simple_class!(HtmlObjectElement, "HTMLObjectElement", HtmlElement, |def| {

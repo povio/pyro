@@ -147,6 +147,7 @@ impl JsClass for Response {
         def.method("arrayBuffer", 0, |s, d, _| consume(s, d, ReadKind::ArrayBuffer));
         def.method("bytes", 0, |s, d, _| consume(s, d, ReadKind::Bytes));
         def.method("blob", 0, |s, d, _| consume(s, d, ReadKind::Blob));
+        def.method("formData", 0, |s, d, _| consume(s, d, ReadKind::FormData));
         def.method("clone", 0, |s, d, _| {
             if d.used.get() {
                 return Err(JsError::Type("Response body has already been consumed".into()));
