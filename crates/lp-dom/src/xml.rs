@@ -254,26 +254,70 @@ fn prepare(source: &str) -> Result<Vec<Prepared>> {
     Ok(nodes)
 }
 
+/// `encoding="..."` of a leading XML declaration.
+fn declared_encoding(bytes: &[u8]) -> Option<&'static encoding_rs::Encoding> {
+    let head = bytes.strip_prefix(b"<?xml")?;
+    let declaration = &head[..head.iter().position(|&b| b == b'>')?];
+    let at = declaration.windows(8).position(|w| w == b"encoding")?;
+    let value = &declaration[at + 8..];
+    let open = value.iter().position(|&b| b == b'"' || b == b'\'')?;
+    let rest = &value[open + 1..];
+    let close = rest.iter().position(|&b| b == value[open])?;
+    encoding_rs::Encoding::for_label(&rest[..close])
+}
+
+/// Parses response bytes (XHR "XML response"): BOM, then the transport charset,
+/// then the XML declaration, then UTF-8. `None` for a document that is not
+/// well-formed, which includes undecodable bytes.
+pub fn parse_bytes(
+    dom: &mut Dom,
+    url: &str,
+    bytes: &[u8],
+    charset: Option<&str>,
+    content_type: &str,
+) -> Option<NodeId> {
+    let encoding = encoding_rs::Encoding::for_bom(bytes)
+        .map(|(encoding, _)| encoding)
+        .or_else(|| charset.and_then(|label| encoding_rs::Encoding::for_label(label.as_bytes())))
+        .or_else(|| declared_encoding(bytes))
+        .unwrap_or(encoding_rs::UTF_8);
+    let (source, _, had_errors) = encoding.decode(bytes);
+    if had_errors {
+        return None;
+    }
+    let nodes = prepare(&source).ok()?;
+    let document = new_document(dom, url, content_type);
+    attach(dom, document, nodes);
+    Some(document)
+}
+
+fn new_document(dom: &mut Dom, url: &str, content_type: &str) -> NodeId {
+    let document = dom.create_document(DocumentKind::Xml, url);
+    if let NodeKind::Document(data) = &mut dom.n_mut(document.index()).kind {
+        data.content_type = content_type.into();
+    }
+    document
+}
+
+fn attach(dom: &mut Dom, document: NodeId, nodes: Vec<Prepared>) {
+    let owner = document.index();
+    let mut ids = Vec::with_capacity(nodes.len());
+    for node in nodes {
+        let parent = node.parent.map_or(owner, |index| ids[index]);
+        let id = dom.alloc_raw(node.kind, owner);
+        dom.link_raw(id, parent, NIL);
+        ids.push(id);
+    }
+}
+
 /// Returns an inert XML document, or a parsererror document on malformed input
 /// or an explicit parser limit. Validation finishes before allocating DOM nodes,
 /// so failed parses retain no partial arena trees. Never performs I/O.
 pub fn parse_document(dom: &mut Dom, url: &str, source: &str, content_type: &str) -> NodeId {
     let prepared = prepare(source);
-    let document = dom.create_document(DocumentKind::Xml, url);
-    let owner = document.index();
-    if let NodeKind::Document(data) = &mut dom.n_mut(owner).kind {
-        data.content_type = content_type.into();
-    }
+    let document = new_document(dom, url, content_type);
     match prepared {
-        Ok(nodes) => {
-            let mut ids = Vec::with_capacity(nodes.len());
-            for node in nodes {
-                let parent = node.parent.map_or(owner, |index| ids[index]);
-                let id = dom.alloc_raw(node.kind, owner);
-                dom.link_raw(id, parent, NIL);
-                ids.push(id);
-            }
-        }
+        Ok(nodes) => attach(dom, document, nodes),
         Err(message) => {
             let error =
                 dom.create_element_ns(document, Some(PARSERERROR), "parsererror").expect("fixed parsererror name");

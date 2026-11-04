@@ -555,6 +555,24 @@ pub fn parse_document(dom: &DomRef, url: &str, html: &str) -> NodeId {
     doc
 }
 
+/// Parses response bytes into a new HTML document (no script execution), with
+/// the usual encoding sniffing after the transport `charset`.
+pub fn parse_document_bytes(dom: &DomRef, url: &str, bytes: &[u8], charset: Option<&str>) -> NodeId {
+    let doc = dom.borrow_mut().create_document(crate::node::DocumentKind::Html, url);
+    let mut p = DocumentParser::new(dom.clone(), doc, false).expect("fresh document");
+    p.set_transport_charset(charset);
+    let mut step = p.feed_bytes(bytes);
+    while let ParseStep::Script(_) = step {
+        step = p.resume();
+    }
+    step = p.finish_bytes();
+    while let ParseStep::Script(_) = step {
+        step = p.resume();
+    }
+    p.end();
+    doc
+}
+
 /// HTML fragment parsing algorithm (innerHTML / insertAdjacentHTML /
 /// createContextualFragment). Returns a new DocumentFragment owned by the
 /// context element's node document.

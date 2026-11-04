@@ -280,6 +280,11 @@ const fixture = http.createServer((req, res) => {
       '<iframe name="inline" srcdoc="&lt;p&gt;inline child&lt;/p&gt;"></iframe>');
     return;
   }
+  if (req.url === '/feed.xml') {
+    res.writeHead(200, { 'content-type': 'application/xml' });
+    res.end('<feed><item>one</item></feed>');
+    return;
+  }
   if (req.url === '/checkpoint.css') {
     res.writeHead(200, { 'content-type': 'text/css' });
     res.end('#message { display: none }');
@@ -1022,6 +1027,35 @@ try {
       await old.dispose();
       assert.equal(await sibling.evaluate(() => marker), 23);
       assert.equal(p.frames().length, 2);
+    } finally { await p.close(); }
+  });
+  await check('synchronous XHR and document responses', async () => {
+    const p = await context.newPage();
+    try {
+      await p.goto(`${fixtureOrigin}/`, { timeout: 5000 });
+      assert.deepEqual(await p.evaluate(async () => {
+        const sync = new XMLHttpRequest();
+        const order = [];
+        sync.onload = () => order.push('load');
+        setTimeout(() => order.push('timer'));
+        sync.open('GET', '/feed.xml', false);
+        sync.send();
+        order.push('sent');
+        const asyncDoc = await new Promise((resolve, reject) => {
+          const x = new XMLHttpRequest();
+          x.onload = () => resolve(x.response.querySelector('#message').textContent);
+          x.onerror = () => reject(new Error('XHR failed'));
+          x.open('GET', '/');
+          x.responseType = 'document';
+          x.send();
+        });
+        return [order.slice(0, 2).join(), sync.status, sync.responseXML.querySelector('item').textContent, asyncDoc];
+      }), ['load,sent', 200, 'one', 'native DOM']);
+      // Fetch interception is not offered the request: the page cannot deadlock.
+      await p.route('**/feed.xml', route => route.abort());
+      assert.equal(await p.evaluate(() => {
+        const x = new XMLHttpRequest(); x.open('GET', '/feed.xml', false); x.send(); return x.status;
+      }), 200);
     } finally { await p.close(); }
   });
 } finally {

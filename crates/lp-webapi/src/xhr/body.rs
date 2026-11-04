@@ -6,6 +6,13 @@ pub(super) struct Text {
     done: bool,
     value: String,
 }
+fn mime_charset(mime: &str) -> Option<&str> {
+    mime.split(';')
+        .skip(1)
+        .filter_map(|part| part.trim().split_once('='))
+        .find(|(k, _)| k.eq_ignore_ascii_case("charset"))
+        .map(|(_, v)| v.trim().trim_matches('"'))
+}
 impl Xhr {
     pub(super) fn mime(&self) -> String {
         self.override_mime
@@ -29,14 +36,9 @@ impl Xhr {
         let mut cache = self.text.borrow_mut();
         let text = cache.get_or_insert_with(|| {
             let mime = self.mime();
-            let charset = mime
-                .split(';')
-                .skip(1)
-                .filter_map(|part| part.trim().split_once('='))
-                .find(|(k, _)| k.eq_ignore_ascii_case("charset"))
-                .map(|(_, v)| v.trim().trim_matches('"'));
-            let encoding =
-                charset.and_then(|v| encoding_rs::Encoding::for_label(v.as_bytes())).unwrap_or(encoding_rs::UTF_8);
+            let encoding = mime_charset(&mime)
+                .and_then(|v| encoding_rs::Encoding::for_label(v.as_bytes()))
+                .unwrap_or(encoding_rs::UTF_8);
             Text { decoder: encoding.new_decoder_with_bom_removal(), chunks: 0, done: false, value: String::new() }
         });
         let wire = wire.lock().unwrap();
@@ -64,10 +66,62 @@ impl Xhr {
         }
         self.text(s)
     }
+    fn body_bytes(&self) -> Option<Vec<u8>> {
+        let wire = self.wire.borrow();
+        let wire = wire.as_ref()?.lock().unwrap();
+        let mut out = Vec::with_capacity(wire.bytes);
+        for c in &wire.chunks {
+            out.extend_from_slice(c);
+        }
+        Some(out)
+    }
+    pub(super) fn response_xml<'s>(&self, s: &Scope<'s>) -> JsResult<Value<'s>> {
+        if !matches!(self.response_type.borrow().as_str(), "" | "document") {
+            return Err(invalid("responseXML requires an empty or document responseType"));
+        }
+        self.document_response(s)
+    }
+    /// XHR "set a document response": HTML only for responseType "document",
+    /// XML for any XML MIME type, null otherwise and for malformed XML. The
+    /// document is inert (no scripts, no subresources) and parsed once.
+    fn document_response<'s>(&self, s: &Scope<'s>) -> JsResult<Value<'s>> {
+        if self.ready.get() != 4 || self.head.borrow().is_none() {
+            return Ok(s.null());
+        }
+        let wrapper = self.wrapper(s)?;
+        if let Some(value) = s.get_hidden(wrapper, RESPONSE)?.filter(|v| !v.is_undefined()) {
+            return Ok(value);
+        }
+        let Some(bytes) = self.body_bytes() else { return Ok(s.null()) };
+        let mime = self.mime();
+        let essence = mime.split(';').next().unwrap_or_default().trim().to_ascii_lowercase();
+        // A missing or invalid Content-Type is text/xml.
+        let essence = if essence.contains('/') { essence } else { "text/xml".to_owned() };
+        let charset = mime_charset(&mime);
+        let url = self.head.borrow().as_ref().map_or(String::new(), |h| h.url.to_string());
+        let page = self.page()?;
+        let document = if essence == "text/html" {
+            (self.response_type.borrow().as_str() == "document")
+                .then(|| lp_dom::parse::parse_document_bytes(&page.dom, &url, &bytes, charset))
+        } else if essence.ends_with("/xml") || essence.ends_with("+xml") {
+            lp_dom::xml::parse_bytes(&mut page.dom.borrow_mut(), &url, &bytes, charset, &essence)
+        } else {
+            None
+        };
+        let value = match document {
+            Some(document) => crate::node::wrap_node(s, &page, document)?.value(),
+            None => s.null(),
+        };
+        s.set_hidden(wrapper, RESPONSE, value)?;
+        Ok(value)
+    }
     pub(super) fn response<'s>(&self, s: &Scope<'s>) -> JsResult<Value<'s>> {
         let kind = self.response_type.borrow().clone();
         if matches!(kind.as_str(), "" | "text") {
             return self.text(s);
+        }
+        if kind == "document" {
+            return self.document_response(s);
         }
         if self.ready.get() != 4 || self.head.borrow().is_none() {
             return Ok(s.null());
@@ -76,16 +130,7 @@ impl Xhr {
         if let Some(value) = s.get_hidden(wrapper, RESPONSE)?.filter(|v| !v.is_undefined()) {
             return Ok(value);
         }
-        let bytes = {
-            let wire = self.wire.borrow();
-            let Some(wire) = wire.as_ref() else { return Ok(s.null()) };
-            let wire = wire.lock().unwrap();
-            let mut out = Vec::with_capacity(wire.bytes);
-            for c in &wire.chunks {
-                out.extend_from_slice(c);
-            }
-            out
-        };
+        let Some(bytes) = self.body_bytes() else { return Ok(s.null()) };
         let value = match kind.as_str() {
             "arraybuffer" => crate::encoding::array_buffer(s, &bytes)?,
             "blob" => s

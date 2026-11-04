@@ -1,5 +1,6 @@
-//! Asynchronous XMLHttpRequest. Native state is browser-thread confined;
-//! delivery buffers are bounded and I/O callbacks queue only routing IDs.
+//! XMLHttpRequest. Native state is browser-thread confined; delivery buffers
+//! are bounded and I/O callbacks queue only routing IDs. A synchronous request
+//! parks the browser thread on those same callbacks; nothing else waits on it.
 mod body;
 mod delivery;
 use crate::{
@@ -30,6 +31,9 @@ use std::{
 /// Independent XHR limits, with the same shape/defaults as fetch limits.
 pub type XhrLimits = crate::fetch::FetchLimits;
 const RESPONSE: &str = "__lpXhrResponse";
+/// A synchronous request parks the browser thread, so one that never settles
+/// must not wedge the connection: it fails with NetworkError after this long.
+const SYNC_WAIT: Duration = Duration::from_secs(60);
 
 pub(crate) struct XhrState {
     limits: Cell<XhrLimits>,
@@ -83,6 +87,7 @@ struct Xhr {
     instance: u64,
     ready: Cell<u8>,
     sent: Cell<bool>,
+    synchronous: Cell<bool>,
     generation: Cell<u64>,
     active: Cell<Option<RequestId>>,
     request: RefCell<Option<Request>>,
@@ -119,6 +124,9 @@ fn invalid(message: &str) -> JsError {
 fn unsupported(message: &str) -> JsError {
     JsError::dom("NotSupportedError", message)
 }
+fn sync_access(message: &str) -> JsError {
+    JsError::dom("InvalidAccessError", message)
+}
 
 pub struct XMLHttpRequest;
 impl JsClass for XMLHttpRequest {
@@ -144,6 +152,7 @@ impl JsClass for XMLHttpRequest {
                 instance,
                 ready: Cell::new(0),
                 sent: Cell::new(false),
+                synchronous: Cell::new(false),
                 generation: Cell::new(0),
                 active: Cell::new(None),
                 request: RefCell::new(None),
@@ -253,7 +262,7 @@ impl JsClass for XMLHttpRequest {
         });
         def.getter("responseText", |s, d| d.state.response_text(s));
         def.getter("response", |s, d| d.state.response(s));
-        def.getter("responseXML", |_s, _d| Err(unsupported("XML response parsing is not implemented")));
+        def.getter("responseXML", |s, d| d.state.response_xml(s));
         def.getter("upload", |s, d| upload_object(s, &d.state));
         def.accessor(
             "responseType",
@@ -263,10 +272,10 @@ impl JsClass for XMLHttpRequest {
                 if d.state.ready.get() >= 3 {
                     return Err(invalid("responseType cannot change after loading"));
                 }
-                if kind == "document" {
-                    return Err(unsupported("Document responseType is not implemented"));
+                if d.state.synchronous.get() {
+                    return Err(sync_access("responseType cannot be set for a synchronous request"));
                 }
-                if matches!(kind.as_str(), "" | "text" | "json" | "arraybuffer" | "blob") {
+                if matches!(kind.as_str(), "" | "text" | "json" | "arraybuffer" | "blob" | "document") {
                     *d.state.response_type.borrow_mut() = kind;
                 }
                 Ok(())
@@ -288,6 +297,9 @@ impl JsClass for XMLHttpRequest {
             |s, d| Ok(s.number(d.state.timeout.get() as f64)),
             |s, d, value| {
                 let timeout = to_u32(value)?;
+                if d.state.synchronous.get() {
+                    return Err(sync_access("timeout cannot be set for a synchronous request"));
+                }
                 d.state.timeout.set(timeout);
                 if d.state.sent.get() {
                     d.state.schedule_timer(s)?;
@@ -449,8 +461,8 @@ impl Xhr {
         let resolved = crate::html::resolve_url(&page.dom.borrow(), page.document(), &url);
         let mut url = lp_net::Url::parse(&resolved).map_err(|_| JsError::dom("SyntaxError", "Invalid URL"))?;
         url.set_fragment(None);
-        if !asynchronous {
-            return Err(unsupported("Synchronous XHR is not implemented"));
+        if !asynchronous && (self.timeout.get() != 0 || !self.response_type.borrow().is_empty()) {
+            return Err(sync_access("A synchronous request cannot have a timeout or a responseType"));
         }
         if !username.is_empty() || !password.is_empty() || !url.username().is_empty() || url.password().is_some() {
             return Err(unsupported("XHR URL credentials are not implemented"));
@@ -458,6 +470,7 @@ impl Xhr {
         self.generation.set(self.generation.get().checked_add(1).expect("XHR generation exhausted"));
         self.stop();
         self.clear_response(s)?;
+        self.synchronous.set(!asynchronous);
         self.upload_listeners.set(false);
         self.upload_complete.set(true);
         self.upload_total.set(0);
@@ -536,6 +549,9 @@ impl Xhr {
         self.active.set(Some(id));
         self.sent.set(true);
         self.started.set(Some(Instant::now()));
+        if self.synchronous.get() {
+            return self.send_sync(&page, &net, request, id, wire, limits);
+        }
         page.xhr_state
             .jobs
             .borrow_mut()
@@ -565,6 +581,85 @@ impl Xhr {
             request,
             Box::new(move |event| delivery::receive(&wire, page_id, id, &poster, limits, event)),
         );
+        Ok(())
+    }
+    /// The synchronous flag of `send()`: parks this thread until the I/O thread
+    /// reports the terminal event, with no events before it and an exception on
+    /// failure. Tasks and CDP commands wait, as for a dialog, but the transport
+    /// needs nothing from this thread unless the request is intercepted: the
+    /// decision would be read here, so it skips interception.
+    fn send_sync(
+        &self,
+        page: &Rc<PageDom>,
+        net: &lp_net::NetClient,
+        mut request: Request,
+        id: RequestId,
+        wire: Arc<Mutex<Delivery>>,
+        limits: XhrLimits,
+    ) -> JsResult<()> {
+        request.skip_interception = true;
+        let generation = self.generation.get();
+        let (wake, woken) = std::sync::mpsc::channel::<()>();
+        let poster: RemotePoster = Arc::new(move |_| {
+            let _ = wake.send(());
+        });
+        let sink = wire.clone();
+        let page_id = page.id();
+        net.fetch_with_id(
+            id,
+            request,
+            Box::new(move |event| delivery::receive(&sink, page_id, id, &poster, limits, event)),
+        );
+        let deadline = Instant::now() + SYNC_WAIT;
+        let (head, bytes, terminal, chunks, frontier) = loop {
+            let snapshot = wire.lock().unwrap().snapshot();
+            if snapshot.2.is_some() {
+                break snapshot;
+            }
+            if let Some(head) = snapshot.0 {
+                *self.head.borrow_mut() = Some(head);
+            }
+            match woken.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+                Ok(()) => {}
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => break (None, 0, None, 0, snapshot.4),
+                // The sink is gone: its terminal event, if any, is in the wire.
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                    let last = wire.lock().unwrap().snapshot();
+                    if last.2.is_some() {
+                        break last;
+                    }
+                    break (None, 0, None, 0, last.4);
+                }
+            }
+        };
+        self.visible_chunks.set(chunks);
+        page.network_delivery(id, frontier);
+        if let Some(head) = head {
+            *self.head.borrow_mut() = Some(head);
+        }
+        if !matches!(terminal, Some(Ok(()))) || self.head.borrow().is_none() {
+            let reason = match terminal {
+                Some(Err(error)) => error.to_string(),
+                _ => "synchronous request did not complete".to_owned(),
+            };
+            self.stop();
+            self.head.take();
+            self.text.take();
+            self.ready.set(4);
+            return Err(JsError::dom("NetworkError", format!("Failed to execute 'send': {reason}")));
+        }
+        self.active.set(None);
+        self.sent.set(false);
+        self.ready.set(4);
+        self.fire("readystatechange", false, bytes);
+        if self.generation.get() != generation {
+            return Ok(());
+        }
+        self.fire("load", true, bytes);
+        if self.generation.get() != generation {
+            return Ok(());
+        }
+        self.fire("loadend", true, bytes);
         Ok(())
     }
     /// XHR "process request end-of-body": the body was fully transmitted. lp-net

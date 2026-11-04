@@ -34,7 +34,7 @@ does not reinterpret their bytes. Lone JS UTF-16 surrogates retain the existing
 Rust-string conversion limitation.
 
 This increment targets the DOMParser path used by docx-preview 0.3.7. It does not
-add XML document navigation, XHR responseXML, XMLSerializer, XML innerHTML parsing,
+add XML document navigation, XMLSerializer, XML innerHTML parsing,
 or a complete XML serializer; the existing HTML-oriented serialization path is
 unchanged. It does not establish a passing DOCX preview or new TOS coverage.
 
