@@ -623,11 +623,19 @@ const WATCHDOG_INTERVAL_SECS: f64 = 0.05;
 /// default signal-based traps never deliver the watchdog to JIT-compiled
 /// loops, so termination and `JSContextGroupSetExecutionTimeLimit` would not
 /// fire; polling traps check in generated code instead.
+///
+/// `JSC_heapGrowthMaxIncrease=1` (unless the variable is already set): on a
+/// machine with at least 16 GB, JSC otherwise lets the heap reach about 4x its
+/// live size before the next collection. 1 makes that about 2x, which lowers
+/// the peak on pages with a large heap for a few percent more CPU on them. See
+/// docs/ARCHITECTURE.md for the measured trade-off.
 pub fn configure_process() {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {
-        if std::env::var_os("JSC_usePollingTraps").is_none() {
-            std::env::set_var("JSC_usePollingTraps", "true");
+        for (name, value) in [("JSC_usePollingTraps", "true"), ("JSC_heapGrowthMaxIncrease", "1")] {
+            if std::env::var_os(name).is_none() {
+                std::env::set_var(name, value);
+            }
         }
     });
 }
