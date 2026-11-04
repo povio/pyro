@@ -323,6 +323,8 @@ pub struct PdfOptions {
     /// `page_selector` pages go on `paper` as Chrome places them ([`page_box`]), rather than
     /// each being a page of its own size.
     pub place_on_paper: bool,
+    /// The document prints in `print` media: not under an emulated `screen`.
+    pub print_media: bool,
     /// Write a tag tree (headings, paragraphs, links) when no element
     /// matches (`generateTaggedPDF`, Chrome's default).
     pub tagged: bool,
@@ -341,6 +343,7 @@ impl PdfOptions {
             print_background: true,
             page_ranges: Vec::new(),
             place_on_paper: false,
+            print_media: true,
             tagged: true,
         }
     }
@@ -1320,7 +1323,11 @@ fn paint_document(
             overflow_bottom: (bottom - node_size.height as f64).max(0.0),
             culprit,
             placement: opts.place_on_paper.then(|| {
-                let source = page_box::fixed_page_size(style_sheets.iter().map(String::as_str), inline_page_name(doc, id));
+                let source = page_box::fixed_page_size(
+                    style_sheets.iter().map(String::as_str),
+                    inline_page_name(doc, id),
+                    opts.print_media,
+                );
                 let placement = page_box::placement(opts.paper, source);
                 // Above 100% Chrome lays out at a smaller page, which this path does not do.
                 pdf::Placement { scale: placement.scale * opts.scale.min(1.0), ..placement }

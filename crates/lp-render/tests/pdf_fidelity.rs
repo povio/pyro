@@ -294,8 +294,9 @@ fn page_boxes_go_on_the_paper_as_in_chrome() {
     };
     for (html, top) in [
         (doc("@page{margin:0;size:210mm 297mm}", ""), "842.13"),
-        (doc("@page{margin:0;size:auto!important}@page s{margin:0;size:210mm 297mm}", "page: s"), "842.13"),
-        (doc("@page{margin:0;size:auto!important}@page s{margin:0;size:210mm 297mm}", ""), "842.88"),
+        (doc("@media screen{@page{margin:0;size:auto!important}}@page s{margin:0;size:210mm 297mm}", "page: s"), "842.13"),
+        (doc("@page{margin:0;size:auto!important}@page s{margin:0;size:210mm 297mm}", "page: s"), "842.88"),
+        (doc("@page s{margin:0;size:210mm 297mm}", ""), "842.88"),
         (doc("@page{margin:0}", ""), "842.88"),
     ] {
         let pdf = print(html.clone());

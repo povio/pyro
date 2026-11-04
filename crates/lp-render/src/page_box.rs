@@ -12,41 +12,105 @@
 
 use crate::pdf;
 
-/// The `@page` size (CSS px) of a page named `name`, from CSS text: the last named rule with a
-/// fixed size, else the last unnamed one. `size: auto` does not override a fixed size: Chrome 156 applies
-/// a named rule's size over an unnamed `size: auto !important` (Paprize's documents).
-pub(crate) fn fixed_page_size<'a>(sheets: impl Iterator<Item = &'a str>, name: Option<&str>) -> Option<(f64, f64)> {
-    let (mut named, mut unnamed) = (None, None);
+/// The fixed `@page` size (CSS px) of a page named `name`, from CSS text in `media` (`print`, unless
+/// emulated otherwise). Important declarations win, then named rules, then the later rule, as Chrome 156
+/// resolves them: `@media print{@page{size:auto!important}}` overrides a named size in print media and is
+/// ignored under an emulated screen, where Paprize's documents print.
+pub(crate) fn fixed_page_size<'a>(
+    sheets: impl Iterator<Item = &'a str>,
+    name: Option<&str>,
+    print_media: bool,
+) -> Option<(f64, f64)> {
+    let mut winner: Option<((bool, bool), Option<(f64, f64)>)> = None;
     for css in sheets {
-        let mut rest = css;
-        while let Some(at) = rest.find("@page") {
-            rest = &rest[at + 5..];
-            let Some(open) = rest.find('{') else { break };
-            let selector = rest[..open].trim();
-            let Some(close) = rest[open..].find('}') else { break };
-            let block = &rest[open + 1..open + close];
-            rest = &rest[open + close..];
-            let Some(size) = block.split(';').find_map(size_declaration) else { continue };
-            if selector.is_empty() {
-                unnamed = Some(size);
-            } else if Some(selector) == name {
-                named = Some(size);
+        each_page_rule(css, print_media, &mut |selector, block| {
+            let named = !selector.is_empty();
+            if named && Some(selector) != name {
+                return;
             }
-        }
+            for (size, important) in block.split(';').filter_map(size_declaration) {
+                if winner.is_none_or(|(rank, _)| (important, named) >= rank) {
+                    winner = Some(((important, named), size));
+                }
+            }
+        });
     }
-    named.or(unnamed)
+    winner.and_then(|(_, size)| size)
 }
 
-fn size_declaration(declaration: &str) -> Option<(f64, f64)> {
+/// Calls `f` with the selector and block of every `@page` rule of `css` whose enclosing `@media` rules
+/// apply. Only the media type decides: `@media print` and `@media screen` by name, anything else applies.
+fn each_page_rule(css: &str, print_media: bool, f: &mut impl FnMut(&str, &str)) {
+    let applies = |query: &str| {
+        let query = query.to_ascii_lowercase();
+        query.split(',').any(|part| {
+            let (print, screen) = (part.contains("print"), part.contains("screen"));
+            let negated = part.contains("not ");
+            match (print, screen) {
+                (true, false) => print_media != negated,
+                (false, true) => print_media == negated,
+                _ => true,
+            }
+        })
+    };
+    // An `@media` we are in: skip its block when it does not apply.
+    let mut rest = css;
+    while let Some(at) = rest.find('@') {
+        rest = &rest[at..];
+        let Some(open) = rest.find('{') else { return };
+        if let Some(query) = rest.strip_prefix("@media") {
+            let query = &query[..open - "@media".len()];
+            if applies(query) {
+                rest = &rest[open + 1..];
+            } else {
+                rest = skip_block(&rest[open..]);
+            }
+        } else if let Some(selector) = rest.strip_prefix("@page") {
+            let selector = selector[..open - "@page".len()].trim();
+            let Some(close) = rest[open..].find('}') else { return };
+            f(selector, &rest[open + 1..open + close]);
+            rest = &rest[open + close + 1..];
+        } else {
+            rest = &rest[1..];
+        }
+    }
+}
+
+/// What follows the block `css` starts with.
+fn skip_block(css: &str) -> &str {
+    let mut depth = 0;
+    for (i, c) in css.char_indices() {
+        match c {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return &css[i + 1..];
+                }
+            }
+            _ => {}
+        }
+    }
+    ""
+}
+
+/// A `size` declaration: its fixed size (`None`: `auto`, or an orientation) and whether it is important.
+fn size_declaration(declaration: &str) -> Option<(Option<(f64, f64)>, bool)> {
     let (property, value) = declaration.split_once(':')?;
     if property.trim() != "size" {
         return None;
     }
-    let value = value.trim().trim_end_matches("!important").trim();
+    let value = value.trim();
+    let (value, important) = match value.strip_suffix("!important") {
+        Some(value) => (value.trim(), true),
+        None => (value, false),
+    };
     let mut parts = value.split_whitespace();
-    let width = length(parts.next()?)?;
-    let height = parts.next().map_or(Some(width), length)?;
-    parts.next().is_none().then_some((width, height))
+    let size = parts.next().and_then(length).and_then(|width| {
+        let height = parts.next().map_or(Some(width), length)?;
+        parts.next().is_none().then_some((width, height))
+    });
+    Some((size, important))
 }
 
 fn length(token: &str) -> Option<f64> {
@@ -146,15 +210,20 @@ mod tests {
     }
 
     #[test]
-    fn named_rules_win_and_auto_is_not_a_size() {
-        let css =
-            "@media print{@page{margin:0;size:auto!important}} @page section-1{margin:0;size:210mm 297mm;width:210mm}";
-        let size = fixed_page_size([css].into_iter(), Some("section-1")).unwrap();
-        assert!((size.0 - 793.700787).abs() < 1e-3 && (size.1 - 1122.519685).abs() < 1e-3);
-        assert_eq!(fixed_page_size([css].into_iter(), None), None);
-        assert_eq!(fixed_page_size(["@page{size:500px 700px}"].into_iter(), None), Some((500.0, 700.0)));
-        assert_eq!(fixed_page_size(["@page{size:500px}"].into_iter(), Some("x")), Some((500.0, 500.0)));
-        assert_eq!(fixed_page_size(["@page{margin:0}"].into_iter(), None), None);
+    fn page_rules_cascade_as_in_chrome() {
+        let size = |css: &str, name: Option<&str>, print: bool| fixed_page_size([css].into_iter(), name, print);
+        let paprize = "@media print{@page{margin:0;size:auto!important}.a{b:c}} .x{y:z} @page s{margin:0;size:210mm 297mm;width:210mm}";
+        // Printed under an emulated screen, as ToS does.
+        let got = size(paprize, Some("s"), false).unwrap();
+        assert!((got.0 - 793.700787).abs() < 1e-3 && (got.1 - 1122.519685).abs() < 1e-3);
+        assert_eq!(size(paprize, Some("s"), true), None);
+        assert_eq!(size(paprize, None, false), None);
+        assert_eq!(size("@page{size:auto!important}@page s{size:500px 700px}", Some("s"), false), None);
+        assert_eq!(size("@page{size:500px 700px}", None, true), Some((500.0, 700.0)));
+        assert_eq!(size("@page{size:500px}", Some("x"), true), Some((500.0, 500.0)));
+        assert_eq!(size("@page{margin:0}", None, true), None);
+        assert_eq!(size("@media screen{@page{size:1px 2px}}", None, true), None);
+        assert_eq!(size("@media screen{@page{size:1px 2px}}", None, false), Some((1.0, 2.0)));
     }
 
     #[test]
