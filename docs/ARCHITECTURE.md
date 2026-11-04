@@ -142,6 +142,8 @@ impl JsClass for Node {
    Wrapper payloads may therefore safely own `Persistent`s.
 3. **Identity maps** are per realm: `IdentityKey -> JSWeak`. `JSWeakGetObject` returns null once the GC has found the
    object dead, so a dead wrapper is never handed out again.
+   A node wrapper is pinned while its node is connected if it holds listeners or if script added a property to it
+   (patch `0011` reports those). Any other wrapper can be collected and made again without script noticing.
 4. **Prefer hidden properties to `Persistent`** for state a wrapper owns (event listeners, expandos the DOM needs).
    `Persistent` roots are invisible to cycle collection.
 5. **`Realm::dispose()`** (navigation) releases the global and the prototypes, empties the identity map, and

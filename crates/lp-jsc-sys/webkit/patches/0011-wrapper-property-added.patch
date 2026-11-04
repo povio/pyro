@@ -1,0 +1,139 @@
+diff --git a/Source/JavaScriptCore/API/JSCallbackObject.cpp b/Source/JavaScriptCore/API/JSCallbackObject.cpp
+index bd362ab..2c710bc 100644
+--- a/Source/JavaScriptCore/API/JSCallbackObject.cpp
++++ b/Source/JavaScriptCore/API/JSCallbackObject.cpp
+@@ -113,10 +113,12 @@ Structure* JSCallbackObject<JSNonFinalObject>::createStructure(VM& vm, JSGlobalO
+     return Structure::create(vm, globalObject, proto, TypeInfo(ObjectType, StructureFlags), info()); 
+ }
+     
++void (*wrapperPropertyAddedCallback)(JSContextRef, JSObjectRef);
++
+ template <>
+ Structure* JSCallbackObject<JSNonFinalObject>::createCacheableStructure(VM& vm, JSGlobalObject* globalObject, JSValue proto)
+ {
+-    return Structure::create(vm, globalObject, proto, TypeInfo(ObjectType, StructureFlags & ~(OverridesGetOwnPropertySlot | OverridesPut | ProhibitsPropertyCaching)), info());
++    return Structure::create(vm, globalObject, proto, TypeInfo(ObjectType, StructureFlags & ~(OverridesGetOwnPropertySlot | ProhibitsPropertyCaching)), info());
+ }
+ 
+ template <>
+diff --git a/Source/JavaScriptCore/API/JSCallbackObject.h b/Source/JavaScriptCore/API/JSCallbackObject.h
+index 058598c..0d2176e 100644
+--- a/Source/JavaScriptCore/API/JSCallbackObject.h
++++ b/Source/JavaScriptCore/API/JSCallbackObject.h
+@@ -134,6 +134,9 @@ public:
+ };
+ 
+     
++// Tells the embedder that page script added a property to a wrapper. May not run JavaScript.
++extern void (*wrapperPropertyAddedCallback)(JSContextRef, JSObjectRef);
++
+ template <class Parent>
+ class JSCallbackObject final : public Parent {
+ public:
+@@ -175,7 +178,8 @@ public:
+ 
+     static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
+     // For wrappers of a class with wrappersAreCacheable. Same cell and ClassInfo, but lookups skip
+-    // the C++ getOwnPropertySlot and put, and inline caches accept the structure.
++    // the C++ getOwnPropertySlot and inline caches accept the structure. put stays overridden, so
++    // the embedder hears of each property added to a wrapper.
+     static Structure* createCacheableStructure(VM&, JSGlobalObject*, JSValue);
+     
+     JSValue getPrivateProperty(const Identifier& propertyName) const
+@@ -216,6 +220,8 @@ private:
+     static bool getOwnPropertySlotByIndex(JSObject*, JSGlobalObject*, unsigned propertyName, PropertySlot&);
+     
+     static bool put(JSCell*, JSGlobalObject*, PropertyName, JSValue, PutPropertySlot&);
++    static bool defineOwnProperty(JSObject*, JSGlobalObject*, PropertyName, const PropertyDescriptor&, bool shouldThrow);
++    void notifyPropertyAdded(JSGlobalObject*);
+     static bool putByIndex(JSCell*, JSGlobalObject*, unsigned, JSValue, bool shouldThrow);
+ 
+     static bool deleteProperty(JSCell*, JSGlobalObject*, PropertyName, DeletePropertySlot&);
+diff --git a/Source/JavaScriptCore/API/JSCallbackObjectFunctions.h b/Source/JavaScriptCore/API/JSCallbackObjectFunctions.h
+index 5055eca..eba5133 100644
+--- a/Source/JavaScriptCore/API/JSCallbackObjectFunctions.h
++++ b/Source/JavaScriptCore/API/JSCallbackObjectFunctions.h
+@@ -331,7 +331,40 @@ bool JSCallbackObject<Parent>::put(JSCell* cell, JSGlobalObject* globalObject, P
+         }
+     }
+ 
+-    RELEASE_AND_RETURN(scope, Parent::put(thisObject, globalObject, propertyName, value, slot));
++    Structure* before = thisObject->structure();
++    bool result = Parent::put(thisObject, globalObject, propertyName, value, slot);
++    RETURN_IF_EXCEPTION(scope, false);
++    if (thisObject->structure() != before) {
++        // An inline cache of this transition would skip put from now on.
++        slot.disableCaching();
++        thisObject->notifyPropertyAdded(globalObject);
++    }
++    return result;
++}
++
++template <class Parent>
++bool JSCallbackObject<Parent>::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, const PropertyDescriptor& descriptor, bool shouldThrow)
++{
++    VM& vm = getVM(globalObject);
++    auto scope = DECLARE_THROW_SCOPE(vm);
++    JSCallbackObject* thisObject = uncheckedDowncast<JSCallbackObject>(object);
++    Structure* before = thisObject->structure();
++    bool result = Parent::defineOwnProperty(object, globalObject, propertyName, descriptor, shouldThrow);
++    RETURN_IF_EXCEPTION(scope, false);
++    if (thisObject->structure() != before)
++        thisObject->notifyPropertyAdded(globalObject);
++    return result;
++}
++
++template <class Parent>
++void JSCallbackObject<Parent>::notifyPropertyAdded(JSGlobalObject* globalObject)
++{
++    if constexpr (std::is_same_v<Parent, JSNonFinalObject>) {
++        if (auto callback = wrapperPropertyAddedCallback) {
++            JSLock::APICallbackScope callbackScope(globalObject);
++            callback(toRef(globalObject), toRef(static_cast<JSObject*>(this)));
++        }
++    }
+ }
+ 
+ template <class Parent>
+diff --git a/Source/JavaScriptCore/API/JSFork.cpp b/Source/JavaScriptCore/API/JSFork.cpp
+index 0eb2942..fba6f82 100644
+--- a/Source/JavaScriptCore/API/JSFork.cpp
++++ b/Source/JavaScriptCore/API/JSFork.cpp
+@@ -10,6 +10,7 @@
+ #include "IntlObject.h"
+ #include "JITWorklist.h"
+ #include "JSCInlines.h"
++#include "JSCallbackObject.h"
+ #include "JSGlobalObject.h"
+ #include "JSLock.h"
+ #include "OpaqueJSString.h"
+@@ -92,6 +93,11 @@ void JSCompleteJITPlans(JSContextGroupRef group, bool wait)
+ #endif
+ }
+ 
++void JSSetWrapperPropertyAddedCallback(void (*callback)(JSContextRef, JSObjectRef))
++{
++    JSC::wrapperPropertyAddedCallback = callback;
++}
++
+ bool JSContextGroupSetTimeZone(JSContextGroupRef group, const char* timeZoneID)
+ {
+     VM& vm = *toJS(group);
+diff --git a/Source/JavaScriptCore/API/JSForkPrivate.h b/Source/JavaScriptCore/API/JSForkPrivate.h
+index 068cd5b..0dcdf0e 100644
+--- a/Source/JavaScriptCore/API/JSForkPrivate.h
++++ b/Source/JavaScriptCore/API/JSForkPrivate.h
+@@ -65,6 +65,13 @@ JS_EXPORT void JSGlobalContextInstallNamedProperties(JSGlobalContextRef ctx, JSN
+    used: the check is on the path that rebuilds the zone cache. */
+ JS_EXPORT bool JSContextGroupSetTimeZone(JSContextGroupRef group, const char* timeZoneID);
+ 
++/*!
++@function
++@abstract Sets the callback called after script adds a property to an object made by JSObjectMake, through assignment or defineProperty. Field definitions are not reported.
++@param callback The callback, process wide. It must not run JavaScript.
++*/
++JS_EXPORT void JSSetWrapperPropertyAddedCallback(void (*callback)(JSContextRef, JSObjectRef));
++
+ #ifdef __cplusplus
+ }
+ #endif

@@ -528,6 +528,8 @@ pub mod spi {
     /// Patched JavaScriptCore only (`webkit/patches/0003-complete-jit-plans.patch`).
     pub type JSCompleteJITPlansFn = unsafe extern "C" fn(group: JSContextGroupRef, wait: bool);
     /// Patched JavaScriptCore only (`webkit/patches/0006-vm-time-zone.patch`).
+    pub type JSSetWrapperPropertyAddedCallbackFn =
+        unsafe extern "C" fn(callback: Option<unsafe extern "C" fn(JSContextRef, JSObjectRef)>);
     pub type JSContextGroupSetTimeZoneFn = unsafe extern "C" fn(group: JSContextGroupRef, id: *const c_char) -> bool;
     pub type JSNamedPropertyFilter =
         unsafe extern "C" fn(ctx: JSContextRef, characters: *const c_void, length: usize, is_8bit: bool) -> bool;
@@ -560,6 +562,7 @@ pub mod spi {
         pub reseed_random: Option<JSGlobalContextReseedRandomFn>,
         pub complete_jit_plans: Option<JSCompleteJITPlansFn>,
         pub set_time_zone: Option<JSContextGroupSetTimeZoneFn>,
+        pub set_wrapper_property_added: Option<JSSetWrapperPropertyAddedCallbackFn>,
         pub install_named_properties: Option<JSGlobalContextInstallNamedPropertiesFn>,
     }
 
@@ -617,6 +620,7 @@ pub mod spi {
             reseed_random: resolve!("JSGlobalContextReseedRandom"),
             complete_jit_plans: resolve!("JSCompleteJITPlans"),
             set_time_zone: resolve!("JSContextGroupSetTimeZone"),
+            set_wrapper_property_added: resolve!("JSSetWrapperPropertyAddedCallback"),
             install_named_properties: resolve!("JSGlobalContextInstallNamedProperties"),
         })
     }
