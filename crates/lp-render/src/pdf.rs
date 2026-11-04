@@ -673,6 +673,25 @@ impl Replay<'_, '_> {
         self.layers.last().map_or(bounds, |l| l.clip.intersect(bounds))
     }
 
+    /// Whether no glyph of a run can be clipped, which most runs show at the cost
+    /// of one rectangle instead of one per glyph.
+    fn run_all_shown(&self, c: &anyrender::recording::GlyphRunCommand) -> bool {
+        let size = c.font_size as f64;
+        let (mut x0, mut y0, mut x1, mut y1) = (f64::MAX, f64::MAX, f64::MIN, f64::MIN);
+        for g in &c.glyphs {
+            x0 = x0.min(g.x as f64);
+            x1 = x1.max(g.x as f64);
+            y0 = y0.min(g.y as f64);
+            y1 = y1.max(g.y as f64);
+        }
+        let run = c.transform.transform_rect_bbox(Rect::new(x0, y0 - size, x1 + size, y1 + size * 0.3));
+        run.x0 >= self.page.x0
+            && run.x1 <= self.page.x1
+            && self.layers.last().is_none_or(|l| {
+                run.x0 >= l.clip.x0 && run.x1 <= l.clip.x1 && run.y0 >= l.clip.y0 && run.y1 <= l.clip.y1
+            })
+    }
+
     /// Whether a paper-cut page writes glyph `i` of a run. Chrome's PDF has no
     /// clipped text: Skia's PDF device skips a glyph outside the clip's bounds
     /// (the page's sides or an overflow clip), so it is not extracted either.
@@ -837,7 +856,7 @@ impl Replay<'_, '_> {
         }
         // Only a paper-cut page: `.pz-page` documents keep what they had.
         let paper_cut = self.extras.is_some();
-        let shown: Vec<usize> = if paper_cut {
+        let shown: Vec<usize> = if paper_cut && !self.run_all_shown(c) {
             (0..c.glyphs.len()).filter(|&i| self.glyph_shown(c, i)).collect()
         } else {
             (0..c.glyphs.len()).collect()
