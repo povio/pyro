@@ -488,8 +488,10 @@ fn es_modules_through_fetcher() {
     assert!(p.is_object());
     assert_eq!(eval_str(&r, "out"), "2:http://site.test/main.js");
     assert_eq!(eval_str(&r, "dyn"), "42");
-    // Known limit (docs/COMPATIBILITY.md #3): root-relative modules keep JSC's file:/// key.
-    assert_eq!(eval_str(&r, "dynMeta"), "file:///c.js");
+    // Known limit of the system framework (docs/COMPATIBILITY.md #3): root-relative
+    // modules keep its file:/// key.
+    let root_relative = if e.capabilities().import_maps { "http://site.test/c.js" } else { "file:///c.js" };
+    assert_eq!(eval_str(&r, "dynMeta"), root_relative);
     assert!(eval_str(&r, "missing").contains("404 http://site.test/missing.js"), "{}", eval_str(&r, "missing"));
     assert_eq!(
         *fetcher.requested.borrow(),
@@ -528,6 +530,166 @@ fn import_meta_url_is_set_for_entry_and_fetched_modules() {
 
     assert_eq!(eval_str(&r, "metaUrls[0]"), "http://site.test/main.js");
     assert_eq!(eval_str(&r, "metaUrls[1]"), "http://site.test/dep.js");
+}
+
+/// A script without a URL to resolve against (CDP evaluate, an init script)
+/// uses the document base URL, so it reaches the document's module instance.
+#[test]
+fn imports_without_a_script_url_resolve_against_the_document_base() {
+    let e = engine();
+    if !e.capabilities().import_maps {
+        eprintln!("needs the resolve hook of the patched JavaScriptCore; skipping");
+        return;
+    }
+    struct Fetcher;
+    impl ModuleFetcher for Fetcher {
+        fn fetch(&self, realm: &Realm, url: String, request: ModuleRequest) {
+            let s = realm.scope().unwrap();
+            match url.as_str() {
+                "http://site.test/app/c.js" | "http://site.test/c.js" => request
+                    .resolve(&s, "globalThis.evals = (globalThis.evals || 0) + 1; export const url = import.meta.url;")
+                    .unwrap(),
+                _ => request.reject(&s, &JsError::Type(format!("unexpected module {url}"))).unwrap(),
+            }
+        }
+        fn document_base_url(&self, _realm: &Realm) -> Option<String> {
+            Some("http://site.test/app/page.html".into())
+        }
+    }
+    let r = e.create_realm(RealmOptions { origin: Some("http://site.test".into()), ..Default::default() }).unwrap();
+    r.set_module_fetcher(Some(Rc::new(Fetcher)));
+    let s = r.scope().unwrap();
+    s.eval(
+        "globalThis.urls = []; const add = m => urls.push(m.url); \
+         import('/c.js').then(add); import('./c.js').then(add);",
+        Some("http://site.test/app/page.html"),
+        1,
+    )
+    .unwrap();
+    s.eval("import('/c.js').then(add); import('./c.js').then(add);", None, 1).unwrap();
+    s.eval("import('./c.js').then(add);", Some("init-script:1"), 1).unwrap();
+    assert_eq!(
+        eval_str(&r, "urls.sort().join()"),
+        [
+            "http://site.test/app/c.js",
+            "http://site.test/app/c.js",
+            "http://site.test/app/c.js",
+            "http://site.test/c.js",
+            "http://site.test/c.js",
+        ]
+        .join(",")
+    );
+    assert_eq!(eval_str(&r, "evals"), "2");
+}
+
+#[test]
+fn import_maps_resolve_specifiers_like_the_html_spec() {
+    let e = engine();
+    if !e.capabilities().import_maps {
+        eprintln!("import maps need the patched JavaScriptCore; skipping");
+        return;
+    }
+    struct Fetcher;
+    impl ModuleFetcher for Fetcher {
+        fn fetch(&self, realm: &Realm, url: String, request: ModuleRequest) {
+            let s = realm.scope().unwrap();
+            // Every module exports its URL; those under /scoped/ also what `dep` means there.
+            let source = if url.starts_with("http://cdn.test/scoped/") {
+                "import { url as dep } from 'dep'; export const url = import.meta.url; export { dep };"
+            } else {
+                "export const url = import.meta.url;"
+            };
+            request.resolve(&s, source).unwrap();
+        }
+    }
+    let r = e.create_realm(RealmOptions { origin: Some("http://site.test".into()), ..Default::default() }).unwrap();
+    r.set_module_fetcher(Some(Rc::new(Fetcher)));
+    let s = r.scope().unwrap();
+
+    // Without a map a bare specifier is an error and a URL resolves as usual.
+    s.eval_module(
+        "globalThis.noMap = import.meta.resolve('./x.js'); \
+         try { import.meta.resolve('react') } catch (e) { globalThis.noMapError = e.name }",
+        "http://site.test/nomap.js",
+    )
+    .unwrap();
+    assert_eq!(eval_str(&r, "noMap"), "http://site.test/x.js");
+    assert_eq!(eval_str(&r, "noMapError"), "TypeError");
+
+    let warnings = s
+        .add_import_map(
+            r#"{
+              "imports": {
+                "react": "http://cdn.test/react.js",
+                "lib/": "http://cdn.test/lib/",
+                "lib/deep/": "http://cdn.test/deep/",
+                "./local.js": "http://cdn.test/local.js",
+                "blocked": null,
+                "not-a-url": "bare-address",
+                "pkg/": "http://cdn.test/no-trailing-slash",
+                "": "http://cdn.test/empty.js",
+                "dep": "http://cdn.test/dep-top.js",
+                "scoped": "http://cdn.test/scoped/entry.js",
+                "escape/": "http://cdn.test/escape/"
+              },
+              "scopes": {
+                "http://cdn.test/scoped/": { "dep": "http://cdn.test/dep-scoped.js" }
+              }
+            }"#,
+            "http://site.test/dir/page.html",
+        )
+        .unwrap();
+    assert!(warnings.len() >= 3, "invalid entries warn: {warnings:?}");
+
+    // A later map merges; a rule for an existing specifier loses.
+    s.add_import_map(
+        r#"{"imports": {"react": "http://cdn.test/other.js", "late": "http://cdn.test/late.js"}}"#,
+        "http://site.test/dir/page.html",
+    )
+    .unwrap();
+    // Maps invalid as a whole are rejected and change nothing.
+    for bad in ["{", "[]", r#"{"imports": []}"#, r#"{"scopes": {"x": 1}}"#] {
+        assert!(s.add_import_map(bad, "http://site.test/").is_err(), "{bad}");
+    }
+
+    s.eval_module(
+        "import { url as react } from 'react'; \
+         import { url as lib } from 'lib/a.js'; \
+         import { url as deep } from 'lib/deep/b.js'; \
+         import { url as late } from 'late'; \
+         import { dep as scoped } from 'scoped'; \
+         import { url as top } from 'dep'; \
+         const r = (x) => { try { return import.meta.resolve(x) } catch (e) { return e.name } }; \
+         globalThis.resolved = [react, lib, deep, late, scoped, top, r('./local.js'), \
+           r('blocked'), r('not-a-url'), r('pkg/x'), r('escape/../../up.js'), r('unmapped'), r('/root.js'), \
+           r('http://site.test/other.js')].join(' '); \
+         globalThis.dynamic = (await import('react')).url; \
+         globalThis.dynamicBlocked = await import('blocked').then(() => 'loaded', (e) => e.name);",
+        "http://site.test/main.js",
+    )
+    .unwrap();
+    assert_eq!(
+        eval_str(&r, "resolved").split(' ').collect::<Vec<_>>(),
+        [
+            "http://cdn.test/react.js",
+            "http://cdn.test/lib/a.js",
+            "http://cdn.test/deep/b.js",
+            "http://cdn.test/late.js",
+            "http://cdn.test/dep-scoped.js",
+            "http://cdn.test/dep-top.js",
+            // The key "./local.js" normalized against the map's base, not this module's.
+            "http://site.test/local.js",
+            "TypeError",
+            "TypeError",
+            "TypeError",
+            "TypeError",
+            "TypeError",
+            "http://site.test/root.js",
+            "http://site.test/other.js",
+        ]
+    );
+    assert_eq!(eval_str(&r, "dynamic"), "http://cdn.test/react.js");
+    assert_eq!(eval_str(&r, "dynamicBlocked"), "TypeError");
 }
 
 #[test]

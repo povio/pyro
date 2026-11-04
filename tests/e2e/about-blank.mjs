@@ -294,6 +294,18 @@ const fixture = http.createServer((req, res) => {
       'addEventListener("popstate", render); globalThis.go = path => { history.pushState({ path }, "", path); render(); }; render();</script>');
     return;
   }
+  if (req.url === '/import-map') {
+    res.writeHead(200, { 'content-type': 'text/html' });
+    res.end('<!doctype html><script type="importmap">{"imports":{"lib":"/modules/lib.js","pkg/":"/modules/","bad":"bare"}}</script>' +
+      '<script type="module">import { v } from "lib"; import { w } from "pkg/w.js";' +
+      'globalThis.mapped = [v, w, import.meta.resolve("pkg/x.js")]; globalThis.unmapped = await import("nope").catch(e => e.name);</script>');
+    return;
+  }
+  if (req.url.startsWith('/modules/')) {
+    res.writeHead(200, { 'content-type': 'text/javascript' });
+    res.end(req.url === '/modules/lib.js' ? 'export const v = "lib";' : 'export const w = "pkg";');
+    return;
+  }
   if (req.url === '/frames-parsed') {
     res.writeHead(200, { 'content-type': 'text/html' });
     res.end('<!doctype html><iframe name="parsed" src="/frame-inner"></iframe>' +
@@ -333,6 +345,21 @@ const fixture = http.createServer((req, res) => {
 });
 await new Promise((resolve, reject) => { fixture.once('error', reject); fixture.listen(0, '127.0.0.1', resolve); });
 const fixtureOrigin = `http://127.0.0.1:${fixture.address().port}`;
+await check('import map resolves bare module specifiers', async () => {
+  const warnings = [];
+  const onConsole = message => { if (message.type() === 'warning') warnings.push(message.text()); };
+  page.on('console', onConsole);
+  try {
+    await page.goto(`${fixtureOrigin}/import-map`, { timeout: 5000 });
+    await page.waitForFunction(() => globalThis.unmapped !== undefined, null, { timeout: 5000 });
+    assert.deepEqual(await page.evaluate(() => globalThis.mapped), ['lib', 'pkg', `${fixtureOrigin}/modules/x.js`]);
+    assert.equal(await page.evaluate(() => globalThis.unmapped), 'TypeError');
+    assert.ok(warnings.some(w => w.startsWith('Import map: ')), JSON.stringify(warnings));
+    assert.equal(await page.evaluate(() => import('lib').then(m => m.v)), 'lib');
+  } finally {
+    page.off('console', onConsole);
+  }
+});
 try {
   await check('DOM installed before init scripts and shared across isolated worlds', async () => {
     await page.addInitScript(() => { globalThis.initBindingTypes = [typeof document, typeof fetch, typeof localStorage]; });

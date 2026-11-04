@@ -46,6 +46,12 @@ pub struct RealmOptions {
 pub trait ModuleFetcher {
     /// Fetch `url` (absolute) and complete `request`, now or later on the loop.
     fn fetch(&self, realm: &Realm, url: String, request: ModuleRequest);
+
+    /// The document base URL, which specifiers resolve against when their
+    /// script has no URL of its own (CDP evaluate, init scripts).
+    fn document_base_url(&self, _realm: &Realm) -> Option<String> {
+        None
+    }
 }
 
 /// A pending module fetch; complete exactly once (drop = reject).
@@ -516,6 +522,41 @@ impl<'s> Scope<'s> {
             )
         };
         check(self.ctx, exc)
+    }
+
+    /// Merges an import map (`<script type="importmap">` text) into the realm's
+    /// map; `base` is the document base URL. Returns the warnings about ignored
+    /// entries, or an error for a map that is invalid as a whole. Realms that
+    /// never add one resolve specifiers without consulting a map.
+    pub fn add_import_map(&self, source: &str, base: &str) -> JsResult<Vec<String>> {
+        if !self.realm.engine.caps.import_maps {
+            return Err(JsError::Unsupported("import maps (patched JavaScriptCore)"));
+        }
+        let mut messages: sys::JSStringRef = ptr::null();
+        // SAFETY: the slices outlive the call, which copies them; `messages` comes back owned.
+        let merged = unsafe {
+            sys::modules::lp_jsc_import_map_add(
+                self.realm.global_ctx()?,
+                source.as_ptr().cast(),
+                source.len(),
+                base.as_ptr().cast(),
+                base.len(),
+                &mut messages,
+            )
+        } == 1;
+        let messages =
+            if messages.is_null() { String::new() } else { unsafe { JsString::from_raw_owned(messages) }.to_string() };
+        if !merged {
+            return Err(JsError::Type(format!("Invalid import map: {messages}")));
+        }
+        Ok(messages.lines().map(str::to_owned).collect())
+    }
+
+    /// Reports `message` as `console.warn` would, without running page code.
+    pub fn console_warn(&self, message: &str) {
+        if let Some(h) = self.realm.engine.hooks() {
+            h.console_api(&self.realm(), ConsoleLevel::Warning, &[self.string(message)]);
+        }
     }
 
     /// Evaluates a module script; returns its evaluation promise. Imports go
@@ -1185,7 +1226,9 @@ pub(crate) fn create(engine: &Rc<EngineInner>, options: RealmOptions) -> JsResul
         install_console(&scope)?;
         install_rejection_tracking(&scope)?;
         if engine.caps.modules {
-            let h = unsafe { sys::modules::lp_jsc_module_loader_install(ctx, module_fetch, ptr::null_mut()) };
+            let h = unsafe {
+                sys::modules::lp_jsc_module_loader_install(ctx, module_fetch, module_base_url, ptr::null_mut())
+            };
             realm.inner.module_loader.set(h);
         }
     }
@@ -1673,6 +1716,19 @@ unsafe extern "C" fn module_fetch(
                 None => request.reject(scope, &JsError::Type("module loading is not configured for this realm".into())),
             }
         })
+    }
+}
+
+unsafe extern "C" fn module_base_url(ctx: sys::JSGlobalContextRef) -> sys::JSStringRef {
+    let mut url = None;
+    unsafe {
+        class::guard(ctx as sys::JSContextRef, ptr::null_mut(), (), |scope| {
+            let fetcher = scope.realm.module_fetcher.borrow().clone();
+            url = fetcher.and_then(|f| f.document_base_url(&scope.realm()));
+            Ok(())
+        });
+        // Retained for the caller; `JsString` releases its own reference.
+        url.map_or(ptr::null_mut(), |url| sys::JSStringRetain(JsString::new(&url).as_raw()))
     }
 }
 
