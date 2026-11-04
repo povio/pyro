@@ -543,6 +543,31 @@ try {
     await page.locator('#dom-button').click({ timeout: 5000 });
     assert.equal(await page.evaluate(() => domClicks), 1);
   });
+  await check('named access on the window, also with injected scripts and the utility world', async () => {
+    const p = await context.newPage();
+    try {
+      // Names that collide with what Playwright's injected scripts might read.
+      await p.setContent('<div id="named-one">x</div><form name="named-form"></form><div id="builtins"></div>' +
+        '<div id="__playwright__binding__"></div><div id="Node"></div><button id="named-button">go</button>' +
+        '<script>window.sawBare = typeof window["named-one"] === "object" && document.forms[0] === window["named-form"];</script>');
+      assert.equal(await p.evaluate(() => sawBare), true);
+      assert.equal(await p.evaluate(() => Node.ELEMENT_NODE), 1);
+      assert.equal(await p.evaluate(() => window['named-form'].tagName), 'FORM');
+      // A handle's evaluate and these locators go through the utility world.
+      assert.equal(await p.locator('#named-one').textContent(), 'x');
+      await p.getByRole('button', { name: 'go' }).click({ timeout: 5000 });
+      const session = await context.newCDPSession(p);
+      try {
+        const { frameTree } = await session.send('Page.getFrameTree');
+        const { executionContextId } = await session.send('Page.createIsolatedWorld', { frameId: frameTree.frame.id, worldName: 'named-check' });
+        const { result } = await session.send('Runtime.evaluate', {
+          contextId: executionContextId, returnByValue: true,
+          expression: 'globalThis["named-form"].tagName + typeof sawBare',
+        });
+        assert.equal(result.value, 'FORMundefined');
+      } finally { await session.detach(); }
+    } finally { await p.close(); }
+  });
   await check('Accessibility AX trees over CDP agree with getByRole', async () => {
     await page.setContent('<title>AX</title><nav aria-label="Main"><a href="#a">Home</a></nav><h2>Title <b>here</b></h2><label for="ax-n">Name</label><input id="ax-n" value="v"><button aria-hidden="true">Hidden</button><button>Save</button>');
     const session = await context.newCDPSession(page);
