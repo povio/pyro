@@ -12,6 +12,7 @@
 
 import { execFileSync, spawn } from 'node:child_process';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import net from 'node:net';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { chromium } from 'playwright-core';
@@ -99,7 +100,26 @@ const waitCdp = async (port) => {
   throw new Error(`no CDP endpoint on ${port}`);
 };
 
+// Fixed ports let a run silently measure another run's server, so ports are free ones by default
+// and a port someone else is listening on is an error.
+const freePort = () =>
+  new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.on('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      const { port } = server.address();
+      server.close(() => resolve(port));
+    });
+  });
+const assertPortFree = (port) =>
+  new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.on('error', () => reject(new Error(`port ${port} is in use: another browser would answer this run`)));
+    server.listen(port, '127.0.0.1', () => server.close(resolve));
+  });
+
 const startEngine = async (name, build, cmd, cmdArgs, port, env = {}) => {
+  await assertPortFree(port);
   const proc = spawn(cmd, cmdArgs, { stdio: ['ignore', 'ignore', 'pipe'], env: { ...process.env, ...env } });
   let err = '';
   let partial = '';
@@ -114,6 +134,7 @@ const startEngine = async (name, build, cmd, cmdArgs, port, env = {}) => {
   let exit;
   proc.on('exit', (code, signal) => (exit = { code, signal }));
   await waitCdp(port);
+  if (exit) throw new Error(`${name} exited (${exit.code ?? exit.signal}) yet port ${port} answers: ${err}`);
   const connect = () => chromium.connectOverCDP(`http://127.0.0.1:${port}`);
   const browser = await connect();
   return { name, build, browser, pid: proc.pid, proc, connect, stderr: () => err, exit: () => exit };
@@ -211,12 +232,12 @@ const builds = [
 await mkdir(out, { recursive: true });
 const engines = [];
 if (!args.skipChrome) {
-  engines.push(await launchChrome(builds[0], 9431));
-  engines.push(await launchChrome(builds[1], 9432));
+  engines.push(await launchChrome(builds[0], await freePort()));
+  engines.push(await launchChrome(builds[1], await freePort()));
 }
-if (args.lp && !args.skipFlow) engines.push(await launchLp(builds[1], Number(args.port ?? 9433)));
+if (args.lp && !args.skipFlow) engines.push(await launchLp(builds[1], args.port ? Number(args.port) : await freePort()));
 // --blitz: the same binary with Blitz-backed layout queries.
-if (args.lp && args.blitz) engines.push(await launchLp(builds[1], 9434, 'blitz'));
+if (args.lp && args.blitz) engines.push(await launchLp(builds[1], await freePort(), 'blitz'));
 
 for (const e of engines) {
   e.page = await newPage(e.browser);
