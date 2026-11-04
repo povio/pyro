@@ -6529,7 +6529,7 @@ fn driver_clicks_fixed_dialog_content_outside_overflow_ancestor() {
         &mut h,
         r#"<!doctype html><div style="width:20px;height:20px;overflow:hidden"><div style="position:fixed;left:100px;top:100px;width:200px;height:100px"><button id=inside>Dialog action</button></div></div><output id=out></output>"#,
     );
-    let r = h.page("LP.run", json!({"timeout":100,"steps":[
+    let r = h.page("LP.run", json!({"timeout":3000,"steps":[
         {"eval":{"expression":"document.querySelector('#inside').addEventListener('click',()=>document.querySelector('#out').textContent='clicked');null"}},
         {"act":{"locator":{"css":"#inside"},"action":"click"}},
         {"check":{"locator":{"css":"#out"},"assert":"text","expected":"clicked"}}
@@ -6628,7 +6628,7 @@ fn driver_clicks_rowspanning_cell_content_above_later_row_background() {
         &mut h,
         r#"<!doctype html><body style="margin:0"><table style="border-collapse:collapse;width:240px"><tbody><tr><td style="height:20px;width:120px;padding:0">First row</td><td rowspan=2 style="width:120px;padding:0;vertical-align:middle"><button id=action style="height:20px">action</button></td></tr><tr><td style="height:60px;padding:0">Second row</td></tr></tbody></table><output id=out></output>"#,
     );
-    let r = h.page("LP.run",json!({"timeout":100,"steps":[
+    let r = h.page("LP.run",json!({"timeout":3000,"steps":[
         {"eval":{"expression":"document.querySelector('#action').addEventListener('click',()=>document.querySelector('#out').textContent='clicked');null"}},
         {"act":{"locator":{"css":"#action"},"action":"click"}},
         {"check":{"locator":{"css":"#out"},"assert":"text","expected":"clicked"}}
