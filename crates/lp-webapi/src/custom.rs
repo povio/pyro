@@ -132,6 +132,15 @@ impl JsClass for CustomElementRegistry {
             if exists {
                 return Err(JsError::dom("NotSupportedError", format!("Failed to execute 'define' on 'CustomElementRegistry': the name \"{name}\" has already been used with this registry")));
             }
+            let disabled = ctor.as_object().expect("constructor").get("disabledFeatures")?;
+            if let Some(list) = disabled.as_object() {
+                let len = list.get("length")?.to_number()? as u32;
+                for i in 0..len {
+                    if dom_string(list.get_index(i)?)? == "shadow" {
+                        page.dom.borrow_mut().disable_shadow_for(&name);
+                    }
+                }
+            }
             with_registry(page, |r| r.defs.insert(key.clone(), Persistent::new(s, ctor)));
             // Upgrade existing elements of the document, in tree order.
             let existing: Vec<NodeId> = {

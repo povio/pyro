@@ -389,6 +389,7 @@ pub(crate) fn create(
         dom.borrow_mut().create_document(lp_dom::DocumentKind::Html, url)
     };
     dom.borrow_mut().set_document_active(doc, true).map_err(|e| JsError::Type(format!("{e:?}")))?;
+    dom.borrow_mut().set_allow_declarative_shadow_roots(doc, true).map_err(|e| JsError::Type(format!("{e:?}")))?;
     dom.borrow_mut().set_resource_tracking(true);
     dom.borrow_mut()
         .set_document_base_url(doc, matches!(url, "about:blank" | "about:srcdoc").then_some(frame.base_url.as_str()))

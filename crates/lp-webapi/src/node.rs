@@ -598,6 +598,7 @@ impl JsClass for Text {
             let id = page.dom.borrow_mut().create_text(page.document(), &data).js()?;
             wrap_new_node::<Text>(s, &page, id, nt)
         });
+        def.getter("assignedSlot", assigned_slot);
         def.method("splitText", 1, |s, n, a| {
             let off = to_u32(a.get(0))?;
             let t = n.page().dom.borrow_mut().split_text(n.id, off).js()?;
@@ -624,7 +625,9 @@ impl JsClass for Text {
             }
             Ok(s.string(&out))
         });
-        def.getter("assignedSlot", |s, _n| Ok(s.null()));
+        def.getter("assignedSlot", assigned_slot);
+        def.method("getHTML", 0, get_html);
+        def.method("setHTMLUnsafe", 1, set_html_unsafe);
     }
 }
 
@@ -720,6 +723,51 @@ impl JsClass for DocumentFragment {
     }
 }
 
+fn shadow_flag<'s>(s: &Scope<'s>, n: &NodeData, flag: u8) -> JsResult<Value<'s>> {
+    Ok(s.boolean(n.page().dom.borrow().shadow_root_flags(n.id).js()? & flag != 0))
+}
+
+/// `getHTML(options)` on `Element` and `ShadowRoot`.
+fn get_html<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value<'s>> {
+    let mut serializable = false;
+    let mut roots = Vec::new();
+    let options = a.get(0);
+    if !options.is_undefined() && !options.is_null() {
+        let o = options.as_object().ok_or_else(|| {
+            JsError::Type("Failed to execute 'getHTML': The provided value is not of type 'GetHTMLOptions'.".into())
+        })?;
+        serializable = o.get("serializableShadowRoots")?.to_bool();
+        let list = o.get("shadowRoots")?;
+        if !list.is_undefined() {
+            let list = list.as_object().ok_or_else(|| {
+                JsError::Type(
+                    "Failed to execute 'getHTML': The provided value cannot be converted to a sequence.".into(),
+                )
+            })?;
+            let len = list.get("length")?.to_number()? as u32;
+            for i in 0..len {
+                let root = node_arg(s, list.get_index(i)?, "getHTML")?;
+                if !n.page().dom.borrow().is_shadow_root(root).js()? {
+                    return Err(JsError::Type(
+                        "Failed to execute 'getHTML': The provided value is not of type 'ShadowRoot'.".into(),
+                    ));
+                }
+                roots.push(root);
+            }
+        }
+    }
+    Ok(s.string(&n.page().dom.borrow().get_html(n.id, serializable, &roots).js()?))
+}
+
+/// `setHTMLUnsafe(html)` on `Element` and `ShadowRoot`.
+fn set_html_unsafe<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value<'s>> {
+    a.require(1, "setHTMLUnsafe")?;
+    let html = dom_string(a.get(0))?;
+    crate::input::blur_before_removal(n.page(), n.id, true);
+    lp_dom::parse::set_html_unsafe(&mut n.page().dom.borrow_mut(), n.id, &html).js()?;
+    Ok(s.undefined())
+}
+
 pub struct ShadowRoot;
 impl JsClass for ShadowRoot {
     const NAME: &'static str = "ShadowRoot";
@@ -744,7 +792,15 @@ impl JsClass for ShadowRoot {
                 _ => "open",
             }))
         });
-        def.getter("delegatesFocus", |s, _n| Ok(s.boolean(false)));
+        def.getter("delegatesFocus", |s, n| shadow_flag(s, n, lp_dom::shadow_flags::DELEGATES_FOCUS));
+        def.getter("clonable", |s, n| shadow_flag(s, n, lp_dom::shadow_flags::CLONABLE));
+        def.getter("serializable", |s, n| shadow_flag(s, n, lp_dom::shadow_flags::SERIALIZABLE));
+        def.getter("slotAssignment", |s, n| {
+            let flags = n.page().dom.borrow().shadow_root_flags(n.id).js()?;
+            Ok(s.string(if flags & lp_dom::shadow_flags::MANUAL_SLOTS != 0 { "manual" } else { "named" }))
+        });
+        def.method("getHTML", 0, get_html);
+        def.method("setHTMLUnsafe", 1, set_html_unsafe);
         def.getter("activeElement", |s, _n| Ok(s.null()));
         def.accessor(
             "innerHTML",
@@ -988,15 +1044,20 @@ impl JsClass for Element {
             Ok(s.undefined())
         });
         def.method("attachShadow", 1, |s, n, a| {
-            let mode = match a.get(0).as_object() {
-                Some(o) => dom_string(o.get("mode")?)?,
-                None => {
-                    return Err(JsError::Type(
-                        "Failed to execute 'attachShadow' on 'Element': 1 argument required, but only 0 present."
-                            .into(),
-                    ))
-                }
+            let Some(o) = a.get(0).as_object() else {
+                return Err(JsError::Type(
+                    "Failed to execute 'attachShadow' on 'Element': 1 argument required, but only 0 present.".into(),
+                ));
             };
+            // Dictionary members convert in lexicographical order.
+            let mut flags = 0;
+            if o.get("clonable")?.to_bool() {
+                flags |= lp_dom::shadow_flags::CLONABLE;
+            }
+            if o.get("delegatesFocus")?.to_bool() {
+                flags |= lp_dom::shadow_flags::DELEGATES_FOCUS;
+            }
+            let mode = dom_string(o.get("mode")?)?;
             let mode = match mode.as_str() {
                 "open" => ShadowRootMode::Open,
                 "closed" => ShadowRootMode::Closed,
@@ -1006,7 +1067,22 @@ impl JsClass for Element {
                     )))
                 }
             };
-            let sr = n.page().dom.borrow_mut().attach_shadow(n.id, mode).js()?;
+            if o.get("serializable")?.to_bool() {
+                flags |= lp_dom::shadow_flags::SERIALIZABLE;
+            }
+            let slots = o.get("slotAssignment")?;
+            if !slots.is_undefined() {
+                match dom_string(slots)?.as_str() {
+                    "named" => {}
+                    "manual" => flags |= lp_dom::shadow_flags::MANUAL_SLOTS,
+                    other => {
+                        return Err(JsError::Type(format!(
+                            "The provided value '{other}' is not a valid enum value of type SlotAssignmentMode."
+                        )))
+                    }
+                }
+            }
+            let sr = n.page().dom.borrow_mut().attach_shadow_with(n.id, mode, flags).js()?;
             Ok(wrap_node(s, n.page(), sr)?.value())
         });
         def.getter("shadowRoot", |s, n| {
@@ -1016,9 +1092,16 @@ impl JsClass for Element {
             drop(dom);
             node_value(s, n.page(), if open { sr } else { None })
         });
-        def.getter("assignedSlot", |s, _n| Ok(s.null()));
+        def.getter("assignedSlot", assigned_slot);
+        def.method("getHTML", 0, get_html);
+        def.method("setHTMLUnsafe", 1, set_html_unsafe);
         crate::html::define_element_extras(def);
     }
+}
+
+fn assigned_slot<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
+    let slot = n.page().dom.borrow().assigned_slot(n.id).js()?;
+    node_value(s, n.page(), slot)
 }
 
 fn element_matches<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value<'s>> {
@@ -1068,6 +1151,13 @@ impl JsClass for Document {
             let page = page_of(s)?;
             let id = page.dom.borrow_mut().create_document(DocumentKind::Xml, "about:blank");
             wrap_new_node::<Document>(s, &page, id, nt)
+        });
+        def.static_method("parseHTMLUnsafe", 1, |s, a| {
+            a.require(1, "Document.parseHTMLUnsafe")?;
+            let html = dom_string(a.get(0))?;
+            let page = page_of(s)?;
+            let doc = lp_dom::parse::parse_html_unsafe(&page.dom, &html);
+            Ok(wrap_node(s, &page, doc)?.value())
         });
         def.getter("documentElement", |s, n| {
             let e = n.page().dom.borrow().document_element(n.id).js()?;

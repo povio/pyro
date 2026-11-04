@@ -31,6 +31,8 @@ pub mod xpath;
 
 pub use dom::{attr_name_hash, position, CollectionWatch, Dom};
 pub use error::{DomError, DomErrorKind, DomResult};
-pub use node::{Attr, ControlState, DocumentKind, NodeId, NodeKind, NodeType, QuirksMode, ShadowRootMode};
+pub use node::{
+    shadow_flags, Attr, ControlState, DocumentKind, NodeId, NodeKind, NodeType, QuirksMode, ShadowRootMode,
+};
 
 pub use markup5ever::{LocalName, Namespace, Prefix, QualName};

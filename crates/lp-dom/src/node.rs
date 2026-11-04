@@ -69,6 +69,9 @@ pub struct DocumentData {
     /// Set while a browsing context (window) displays this document. Such a
     /// document and its tree are never collected.
     pub(crate) active: bool,
+    /// HTML "allow declarative shadow roots": documents displayed in a
+    /// browsing context and `parseHTMLUnsafe`, not DOMParser or XHR.
+    pub(crate) allow_declarative_shadow_roots: bool,
     /// Focused element (NIL = none, i.e. body is the active element).
     pub(crate) focused: u32,
     /// Element under the (virtual) pointer for :hover.
@@ -115,6 +118,20 @@ pub struct FragmentData {
     /// Template element (for template contents) or shadow host; NIL otherwise.
     pub(crate) host: u32,
     pub(crate) shadow: Option<ShadowRootMode>,
+    /// `shadow_flags` of a shadow root.
+    pub(crate) flags: u8,
+}
+
+/// Shadow root state (`attachShadow` init dictionary, HTML `shadowroot*`
+/// attributes and DOM's "declarative").
+pub mod shadow_flags {
+    pub const CLONABLE: u8 = 1;
+    pub const SERIALIZABLE: u8 = 2;
+    pub const DELEGATES_FOCUS: u8 = 4;
+    /// `slotAssignment: "manual"`.
+    pub const MANUAL_SLOTS: u8 = 8;
+    /// Made by the parser and not yet claimed by `attachShadow`.
+    pub const DECLARATIVE: u8 = 16;
 }
 
 /// Mutable form-control state that is not reflected in attributes.
