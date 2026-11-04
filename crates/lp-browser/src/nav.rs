@@ -247,7 +247,13 @@ impl PageNav {
             if !b.doc(page).is_some_and(|p| p.nav.state.borrow().doc_seq == document) {
                 return;
             }
-            let opts = NavigateOpts { url, reason: NavigationReason::Script, cdp_request_id: None, referrer: None };
+            let opts = NavigateOpts {
+                post: None,
+                url,
+                reason: NavigationReason::Script,
+                cdp_request_id: None,
+                referrer: None,
+            };
             if let Err(e) = b.navigate_frame_with_handling(page, opts, history) {
                 b.report_navigation_error(page, &e);
             }
@@ -297,6 +303,7 @@ impl PageNav {
                 b.fire_popstate(page, entry.state.as_deref(), &old_url, &entry.url);
             } else {
                 let opts = NavigateOpts {
+                    post: None,
                     url: entry.url.clone(),
                     reason: NavigationReason::History,
                     cdp_request_id: None,

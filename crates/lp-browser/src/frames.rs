@@ -806,6 +806,7 @@ impl Browser {
         let result = if let Some(html) = srcdoc {
             let loader = LoaderId(format!("{:032X}", self.next()));
             let opts = NavigateOpts {
+                post: None,
                 url: "about:srcdoc".into(),
                 reason: NavigationReason::InitialFrameNavigation,
                 cdp_request_id: None,
@@ -852,6 +853,7 @@ impl Browser {
                 self.navigate_frame_with_handling(
                     key,
                     NavigateOpts {
+                        post: None,
                         url,
                         reason: NavigationReason::InitialFrameNavigation,
                         cdp_request_id: None,

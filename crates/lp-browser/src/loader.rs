@@ -67,6 +67,8 @@ pub enum ResourceKind {
 
 #[derive(Debug, Clone)]
 pub struct FetchRequest {
+    /// Body and content type of a form POST (`None`: GET).
+    pub post: Option<(Vec<u8>, String)>,
     pub url: String,
     pub kind: ResourceKind,
     pub page: PageId,
@@ -226,6 +228,18 @@ impl ResourceLoader for NetLoader {
                 req.credentials = lp_net::Credentials::Include;
             }
             req.max_body = Some(crate::stylesheets::MAX_SHEET_BYTES.min(self.client.config().max_body));
+        }
+        if let Some((body, content_type)) = request.post {
+            req.method = lp_net::http::Method::POST;
+            req.body = Some(body.into());
+            if let Ok(value) = lp_net::http::HeaderValue::from_str(&content_type) {
+                req.headers.insert(lp_net::http::header::CONTENT_TYPE, value);
+            }
+            req.origin = request
+                .frame_id
+                .as_ref()
+                .and_then(|id| browser.frame(request.page, &crate::FrameId(id.clone())))
+                .map(|f| f.origin);
         }
         req.referrer = request.referrer.as_deref().and_then(|r| url::Url::parse(r).ok());
         req.frame_id = request.frame_id;
@@ -490,6 +504,7 @@ impl Browser {
             p.pending_loader = Some(loader_id.clone());
         }
         let req = FetchRequest {
+            post: opts.post.clone(),
             url: opts.url.clone(),
             kind: if page.child.is_some() { ResourceKind::Iframe } else { ResourceKind::Document },
             page: page.page,
@@ -809,7 +824,8 @@ impl Browser {
         let frame_id = self.doc(page).map(|p| p.main_frame.id.0.clone());
         // Subresources carry the document's loader id (CDP Network.* routing).
         let loader_id = self.doc(page).map(|p| p.main_frame.loader_id.0.clone());
-        let req = FetchRequest { url, kind, page: page.page, referrer, frame_id, loader_id, crossorigin: None };
+        let req =
+            FetchRequest { post: None, url, kind, page: page.page, referrer, frame_id, loader_id, crossorigin: None };
         loader.fetch(
             self,
             req,
@@ -920,6 +936,7 @@ impl Browser {
                 let referrer = self.doc(page).map(|p| p.main_frame.url.clone());
                 let loader_id = self.doc(page).map(|p| p.main_frame.loader_id.0.clone());
                 let req = FetchRequest {
+                    post: None,
                     url: url.clone(),
                     kind: ResourceKind::Download,
                     page: page.page,
