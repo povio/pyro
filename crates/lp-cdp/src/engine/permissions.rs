@@ -1,11 +1,12 @@
 //! Browser.grantPermissions / resetPermissions / setPermission: the
 //! context's permission table (lp_webapi::ContextServices), which
-//! `navigator.permissions.query` and the clipboard read.
+//! `navigator.permissions.query`, the clipboard and `navigator.geolocation`
+//! read, and the context's geolocation override.
 
 use lp_net::Url;
 use serde::Deserialize;
 
-use super::EngineHost;
+use super::{EngineHost, PageCommand};
 use crate::msg::{CdpError, CdpResult, Command};
 use crate::target::ContextKey;
 
@@ -67,6 +68,60 @@ fn origin(raw: Option<String>) -> CdpResult<Option<String>> {
 }
 
 impl EngineHost {
+    /// `Emulation.setGeolocationOverride` / `clearGeolocationOverride`. Held by
+    /// the browser context: a page's override applies to its whole context,
+    /// which is how Playwright uses it. Without coordinates the position is
+    /// unavailable, as in Chrome.
+    pub(super) fn geolocation_override(
+        &self,
+        action: &str,
+        cmd: &PageCommand<'_, '_>,
+    ) -> CdpResult<Option<serde_json::Value>> {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct P {
+            latitude: Option<f64>,
+            longitude: Option<f64>,
+            accuracy: Option<f64>,
+            altitude: Option<f64>,
+            altitude_accuracy: Option<f64>,
+            heading: Option<f64>,
+            speed: Option<f64>,
+        }
+        let id = self.pages.get(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?.id;
+        let context = self.thread.browser.page(id).ok_or_else(|| CdpError::server("page is gone"))?.context;
+        let services = self.thread.browser.context_services(context).ok_or_else(|| CdpError::server("page is gone"))?;
+        let fix = if action == "clearGeolocationOverride" {
+            None
+        } else {
+            let p: P = cmd.command.params()?;
+            let in_range = |v: Option<f64>, max: f64| v.is_none_or(|v| v.abs() <= max);
+            if !in_range(p.latitude, 90.0) {
+                return Err(CdpError::invalid_params("Invalid latitude"));
+            }
+            if !in_range(p.longitude, 180.0) {
+                return Err(CdpError::invalid_params("Invalid longitude"));
+            }
+            if p.accuracy.is_some_and(|a| a < 0.0) {
+                return Err(CdpError::invalid_params("Invalid accuracy"));
+            }
+            Some(match (p.latitude, p.longitude, p.accuracy) {
+                (Some(latitude), Some(longitude), Some(accuracy)) => Some(lp_webapi::GeolocationFix {
+                    latitude,
+                    longitude,
+                    accuracy,
+                    altitude: p.altitude,
+                    altitude_accuracy: p.altitude_accuracy,
+                    heading: p.heading,
+                    speed: p.speed,
+                }),
+                _ => None,
+            })
+        };
+        services.set_geolocation(fix);
+        Ok(Some(serde_json::json!({})))
+    }
+
     pub(super) fn permissions_command(&self, command: &Command<'_>, context: Option<ContextKey>) -> CdpResult<()> {
         let context = context
             .and_then(|key| self.contexts.get(&key))

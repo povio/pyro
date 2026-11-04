@@ -275,6 +275,7 @@ impl JsClass for Navigator {
         def.getter("hardwareConcurrency", |s, _p| Ok(s.number(4.0)));
         def.getter("maxTouchPoints", |s, p| Ok(s.number(p.max_touch_points() as f64)));
         def.getter("userAgentData", |s, p| crate::navigator_extras::member(s, p, "userAgentData"));
+        def.getter("geolocation", |s, p| crate::navigator_extras::member(s, p, "geolocation"));
         def.getter("permissions", |s, p| crate::navigator_extras::member(s, p, "permissions"));
         def.getter("clipboard", |s, p| crate::navigator_extras::member(s, p, "clipboard"));
         def.getter("webdriver", |s, _p| Ok(s.boolean(true)));
