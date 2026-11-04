@@ -3,7 +3,7 @@
 `Emulation.setDeviceMetricsOverride` previously acknowledged requests without changing native
 window metrics and accepted negative dimensions. The retained regressions reproduce both defects.
 The command now validates first, applies the browser's persistent page viewport, and reports
-unsupported mobile, transform and orientation options without mutation. Clear/zero disables
+unsupported transform and orientation options without mutation (`mobile: true` is accepted; see CDP_COVERAGE.md). Clear/zero disables
 metrics overrides while preserving unrelated media/input preferences.
 
 The implementation consumes exact browser viewport dependency

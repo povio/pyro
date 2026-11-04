@@ -1,0 +1,139 @@
+diff --git a/Source/JavaScriptCore/API/JSFork.cpp b/Source/JavaScriptCore/API/JSFork.cpp
+index aec15e0197..8899a06cfc 100644
+--- a/Source/JavaScriptCore/API/JSFork.cpp
++++ b/Source/JavaScriptCore/API/JSFork.cpp
+@@ -7,6 +7,7 @@
+ 
+ #include "APICast.h"
+ #include "Heap.h"
++#include "IntlObject.h"
+ #include "JITWorklist.h"
+ #include "JSCInlines.h"
+ #include "JSGlobalObject.h"
+@@ -91,6 +92,21 @@ void JSCompleteJITPlans(JSContextGroupRef group, bool wait)
+ #endif
+ }
+ 
++bool JSContextGroupSetTimeZone(JSContextGroupRef group, const char* timeZoneID)
++{
++    VM& vm = *toJS(group);
++    JSLockHolder locker(vm);
++    if (!timeZoneID || !*timeZoneID) {
++        vm.dateCache.setTimeZoneOverride(std::nullopt);
++        return true;
++    }
++    auto resolved = intlAvailableNamedTimeZone(StringView::fromLatin1(timeZoneID));
++    if (!resolved)
++        return false;
++    vm.dateCache.setTimeZoneOverride(TimeZone::fromID(resolved->id));
++    return true;
++}
++
+ // A window's named properties object, as WebCore's JSDOMWindowProperties: an object
+ // in the global's prototype chain whose names come from the embedder. A name is
+ // looked up only when the global lacks it. It has no put hook, so assignments create
+diff --git a/Source/JavaScriptCore/API/JSForkPrivate.h b/Source/JavaScriptCore/API/JSForkPrivate.h
+index dcb1128ef1..068cd5b673 100644
+--- a/Source/JavaScriptCore/API/JSForkPrivate.h
++++ b/Source/JavaScriptCore/API/JSForkPrivate.h
+@@ -58,6 +58,13 @@ typedef bool (*JSNamedPropertyFilter)(JSContextRef ctx, const void* characters,
+    anything holds `globalThis`; JSContextGetGlobalObject returns the new proxy. */
+ JS_EXPORT void JSGlobalContextInstallNamedProperties(JSGlobalContextRef ctx, JSNamedPropertyFilter filter, JSObjectGetPropertyCallback getter);
+ 
++/* Makes `timeZoneID` the time zone of Date, Intl and Temporal in the VM of `group`
++   alone, from its next outermost entry on; other VMs in the process keep theirs.
++   NULL or "" returns to the host's zone. Returns false, changing nothing, for an ID
++   that Intl.DateTimeFormat's timeZone option would reject. Costs nothing unless
++   used: the check is on the path that rebuilds the zone cache. */
++JS_EXPORT bool JSContextGroupSetTimeZone(JSContextGroupRef group, const char* timeZoneID);
++
+ #ifdef __cplusplus
+ }
+ #endif
+diff --git a/Source/JavaScriptCore/runtime/DatePrototype.cpp b/Source/JavaScriptCore/runtime/DatePrototype.cpp
+index 683170f9be..415529ff0c 100644
+--- a/Source/JavaScriptCore/runtime/DatePrototype.cpp
++++ b/Source/JavaScriptCore/runtime/DatePrototype.cpp
+@@ -994,7 +994,7 @@ JSC_DEFINE_HOST_FUNCTION(dateProtoFuncToLocaleString, (JSGlobalObject* globalObj
+     JSValue locales = callFrame->argument(0);
+     JSValue options = callFrame->argument(1);
+     IntlDateTimeFormat* dateTimeFormat;
+-    if (locales.isUndefined() && options.isUndefined())
++    if (locales.isUndefined() && options.isUndefined() && !vm.dateCache.hasTimeZoneOverride())
+         dateTimeFormat = globalObject->defaultDateTimeFormat();
+     else {
+         dateTimeFormat = IntlDateTimeFormat::create(vm, globalObject->dateTimeFormatStructure());
+@@ -1020,7 +1020,7 @@ JSC_DEFINE_HOST_FUNCTION(dateProtoFuncToLocaleDateString, (JSGlobalObject* globa
+     JSValue locales = callFrame->argument(0);
+     JSValue options = callFrame->argument(1);
+     IntlDateTimeFormat* dateTimeFormat;
+-    if (locales.isUndefined() && options.isUndefined())
++    if (locales.isUndefined() && options.isUndefined() && !vm.dateCache.hasTimeZoneOverride())
+         dateTimeFormat = globalObject->defaultDateFormat();
+     else {
+         dateTimeFormat = IntlDateTimeFormat::create(vm, globalObject->dateTimeFormatStructure());
+@@ -1046,7 +1046,7 @@ JSC_DEFINE_HOST_FUNCTION(dateProtoFuncToLocaleTimeString, (JSGlobalObject* globa
+     JSValue locales = callFrame->argument(0);
+     JSValue options = callFrame->argument(1);
+     IntlDateTimeFormat* dateTimeFormat;
+-    if (locales.isUndefined() && options.isUndefined())
++    if (locales.isUndefined() && options.isUndefined() && !vm.dateCache.hasTimeZoneOverride())
+         dateTimeFormat = globalObject->defaultTimeFormat();
+     else {
+         dateTimeFormat = IntlDateTimeFormat::create(vm, globalObject->dateTimeFormatStructure());
+diff --git a/Source/JavaScriptCore/runtime/JSDateMath.cpp b/Source/JavaScriptCore/runtime/JSDateMath.cpp
+index 91c28b033f..3f144ba30a 100644
+--- a/Source/JavaScriptCore/runtime/JSDateMath.cpp
++++ b/Source/JavaScriptCore/runtime/JSDateMath.cpp
+@@ -538,7 +538,7 @@ ALWAYS_INLINE LocalTimeOffset DateCache::localTimeOffset(int64_t millisecondsFro
+ void DateCache::timeZoneCacheSlow()
+ {
+     ASSERT(!m_timeZoneCache);
+-    TimeZone canonical = retrieveTimeZoneInformation();
++    TimeZone canonical = m_timeZoneOverride ? *m_timeZoneOverride : retrieveTimeZoneInformation();
+     String timeZoneForICU = canonical.toICUString();
+     StringView timeZoneView(timeZoneForICU);
+     auto upconverted = timeZoneView.upconvertedCharacters();
+diff --git a/Source/JavaScriptCore/runtime/JSDateMath.h b/Source/JavaScriptCore/runtime/JSDateMath.h
+index d58629d80b..212e234c6d 100644
+--- a/Source/JavaScriptCore/runtime/JSDateMath.h
++++ b/Source/JavaScriptCore/runtime/JSDateMath.h
+@@ -100,6 +100,17 @@ public:
+ 
+     JS_EXPORT_PRIVATE void clearForTimeZoneChange();
+ 
++    // Lightningpanda: a time zone for this VM instead of the host's (std::nullopt: the host's).
++    // It takes effect at the next outermost VM entry, like a host time zone change.
++    void setTimeZoneOverride(std::optional<TimeZone> timeZone)
++    {
++        m_timeZoneOverride = timeZone;
++        m_cachedTimeZoneID = 0;
++    }
++    // A global object's default Intl formats keep the zone they were created in, so they are
++    // bypassed under an override and only ever hold the host's zone.
++    bool hasTimeZoneOverride() const { return m_timeZoneOverride.has_value(); }
++
+     // A DateInstance's cached local-time breakdown is only valid for the zone it was computed in,
+     // and nothing tracks which instances hold one, so a zone change has to sweep the heap. Skip
+     // that walk entirely while no instance has decomposed a local time.
+@@ -219,6 +230,7 @@ private:
+     double m_cachedDateStringValue;
+     std::array<BrokenDownDateCache, 2> m_brokenDownDateCaches;
+     uint64_t m_cachedTimeZoneID { 0 };
++    std::optional<TimeZone> m_timeZoneOverride;
+     bool m_mayHaveCachedLocalGregorianDateTime { false };
+     String m_timeZoneStandardDisplayNameCache;
+     String m_timeZoneDSTDisplayNameCache;
+diff --git a/Source/JavaScriptCore/runtime/TemporalInstantPrototype.cpp b/Source/JavaScriptCore/runtime/TemporalInstantPrototype.cpp
+index 9ac356dc99..b145f95522 100644
+--- a/Source/JavaScriptCore/runtime/TemporalInstantPrototype.cpp
++++ b/Source/JavaScriptCore/runtime/TemporalInstantPrototype.cpp
+@@ -447,7 +447,7 @@ JSC_DEFINE_HOST_FUNCTION(temporalInstantPrototypeFuncToLocaleString, (JSGlobalOb
+     JSValue locales = callFrame->argument(0);
+     JSValue options = callFrame->argument(1);
+     IntlDateTimeFormat* formatter;
+-    if (locales.isUndefined() && options.isUndefined())
++    if (locales.isUndefined() && options.isUndefined() && !vm.dateCache.hasTimeZoneOverride())
+         formatter = globalObject->defaultDateTimeFormat();
+     else {
+         formatter = IntlDateTimeFormat::create(vm, globalObject->dateTimeFormatStructure());

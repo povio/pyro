@@ -130,6 +130,7 @@ pub(crate) enum ReadKind {
     ArrayBuffer,
     Bytes,
     Blob,
+    FormData,
 }
 pub(crate) struct Body {
     wire: Arc<Mutex<Wire>>,
@@ -234,7 +235,7 @@ fn parse_request<'s>(
     init: Value<'s>,
 ) -> JsResult<(Request, Option<Persistent>)> {
     let input = dom_string(input)?;
-    let resolved = crate::html::resolve_url(&page.dom.borrow(), page.document(), &input);
+    let resolved = crate::html::resolve_url_utf8(&page.dom.borrow(), page.document(), &input);
     let mut url = lp_net::Url::parse(&resolved).map_err(|_| JsError::Type("Invalid fetch URL".into()))?;
     if !url.username().is_empty() || url.password().is_some() {
         return Err(JsError::Type("Fetch URL contains credentials".into()));
@@ -353,9 +354,9 @@ fn parse_request<'s>(
 /// Fetch "extract a body" for the supported BodyInit types: FormData
 /// (multipart/form-data with a generated boundary), Blob, URLSearchParams,
 /// BufferSource, else ToString. Returns (bytes, Content-Type or "" when the
-/// type sets none). ReadableStream bodies are not supported by this
-/// implementation; other objects are stringified as the Web IDL union's last
-/// member, USVString.
+/// type sets none). ReadableStream bodies are handled by the callers, which
+/// drain them first (`Response` constructor, `fetch`); other objects are
+/// stringified as the Web IDL union's last member, USVString.
 pub(crate) fn extract_body(s: &Scope<'_>, body: Value<'_>) -> JsResult<(Bytes, String)> {
     if let Some((bytes, mime)) = crate::form_data::multipart_body(s, body)? {
         return Ok((bytes, mime));
@@ -375,6 +376,17 @@ pub(crate) fn install(s: &Scope<'_>) -> JsResult<()> {
     let function = s.function("fetch", |s, _this, args| {
         let deferred = s.deferred()?;
         let promise = deferred.promise.get(s);
+        match crate::streams::fetch_stream_body(s, args.get(0), args.get(1)) {
+            Ok(Some(sent)) => {
+                deferred.resolve(s, sent)?;
+                return Ok(promise);
+            }
+            Ok(None) => {}
+            Err(error) => {
+                deferred.reject(s, error.to_value(s))?;
+                return Ok(promise);
+            }
+        }
         let result = (|| {
             args.require(1, "fetch")?;
             let page = page_of(s)?;
@@ -755,6 +767,15 @@ impl Body {
                     None,
                 )
                 .map(|o| o.value()),
+            ReadKind::FormData => {
+                let mime = self.mime.borrow();
+                let essence = mime.split(';').next().unwrap_or("").trim();
+                if essence.eq_ignore_ascii_case("application/x-www-form-urlencoded") {
+                    crate::form_data::from_urlencoded(s, &bytes)
+                } else {
+                    Err(JsError::Type(format!("Cannot parse a '{essence}' body as FormData")))
+                }
+            }
         };
         match result {
             Ok(value) => {

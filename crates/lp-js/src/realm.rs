@@ -46,6 +46,12 @@ pub struct RealmOptions {
 pub trait ModuleFetcher {
     /// Fetch `url` (absolute) and complete `request`, now or later on the loop.
     fn fetch(&self, realm: &Realm, url: String, request: ModuleRequest);
+
+    /// The document base URL, which specifiers resolve against when their
+    /// script has no URL of its own (CDP evaluate, init scripts).
+    fn document_base_url(&self, _realm: &Realm) -> Option<String> {
+        None
+    }
 }
 
 /// A pending module fetch; complete exactly once (drop = reject).
@@ -168,6 +174,7 @@ pub(crate) struct RealmInner {
     /// entry module itself through the fetch hook.
     inline_modules: RefCell<HashMap<String, String>>,
     embedder: RefCell<Option<Rc<dyn Any>>>,
+    named_properties: RefCell<Option<Rc<dyn NamedProperties>>>,
     global_class: Option<ClassId>,
     /// Payload of the global object (set once; freed when the realm is dropped,
     /// never while a callback can still borrow it).
@@ -178,6 +185,10 @@ pub(crate) struct RealmInner {
 }
 
 impl RealmInner {
+    pub(crate) fn named_properties(&self) -> Option<Rc<dyn NamedProperties>> {
+        self.named_properties.borrow().clone()
+    }
+
     pub(crate) fn native_callback_hook(&self) -> Option<NativeCallbackHook> {
         if self.ctx.get().is_null() || self.native_callback_hook_active.get() {
             return None;
@@ -276,6 +287,7 @@ impl RealmInner {
             }
         }
         self.embedder.borrow_mut().take();
+        self.named_properties.borrow_mut().take();
         // SAFETY: we owned one retain on the global context.
         unsafe { sys::JSGlobalContextRelease(ctx) };
         if let Some(h) = self.engine.hooks() {
@@ -304,6 +316,12 @@ pub struct Realm {
 }
 
 impl Realm {
+    /// The live realm `id` of this thread's engine.
+    pub fn by_id(id: RealmId) -> Option<Realm> {
+        let inner = crate::engine::current_inner()?.realm_by_id(id)?;
+        (!inner.ctx.get().is_null()).then_some(Realm { inner })
+    }
+
     pub fn set_unhandled_rejection_handler(&self, handler: UnhandledRejectionHandler) {
         self.inner.unhandled_rejection_handler.set(Some(handler));
     }
@@ -376,6 +394,12 @@ impl Realm {
         *self.inner.embedder.borrow_mut() = Some(data);
     }
 
+    /// Answers the names the global lacks, through the named properties object
+    /// in a window realm's prototype chain. Needs the patched JavaScriptCore.
+    pub fn set_named_properties(&self, named: Rc<dyn NamedProperties>) {
+        *self.inner.named_properties.borrow_mut() = Some(named);
+    }
+
     /// Installs a scheduling hook after native callback bodies return and before
     /// JavaScript resumes, including normal error returns. Returned values stay
     /// rooted while it runs. Termination and destroyed realms skip the hook.
@@ -437,6 +461,23 @@ impl std::fmt::Debug for Realm {
 pub struct Scope<'s> {
     pub(crate) ctx: sys::JSContextRef,
     pub(crate) realm: &'s Rc<RealmInner>,
+}
+
+/// A property name as JavaScriptCore holds it.
+#[derive(Clone, Copy)]
+pub enum NameUnits<'a> {
+    Latin1(&'a [u8]),
+    Utf16(&'a [u16]),
+}
+
+/// The names of a window's named properties object (see
+/// [`Realm::set_named_properties`]). Consulted only for names the global lacks;
+/// members of `Object.prototype` win over it.
+pub trait NamedProperties {
+    /// False if `resolve` would find nothing. Runs on every global miss, outside
+    /// the native callback machinery, so it must be cheap and call no JavaScript API.
+    fn may_resolve(&self, name: NameUnits<'_>) -> bool;
+    fn resolve<'s>(&self, scope: &Scope<'s>, name: &str) -> JsResult<Option<Value<'s>>>;
 }
 
 pub(crate) fn realm_for_ctx(ctx: sys::JSContextRef) -> Option<Rc<RealmInner>> {
@@ -516,6 +557,41 @@ impl<'s> Scope<'s> {
             )
         };
         check(self.ctx, exc)
+    }
+
+    /// Merges an import map (`<script type="importmap">` text) into the realm's
+    /// map; `base` is the document base URL. Returns the warnings about ignored
+    /// entries, or an error for a map that is invalid as a whole. Realms that
+    /// never add one resolve specifiers without consulting a map.
+    pub fn add_import_map(&self, source: &str, base: &str) -> JsResult<Vec<String>> {
+        if !self.realm.engine.caps.import_maps {
+            return Err(JsError::Unsupported("import maps (patched JavaScriptCore)"));
+        }
+        let mut messages: sys::JSStringRef = ptr::null();
+        // SAFETY: the slices outlive the call, which copies them; `messages` comes back owned.
+        let merged = unsafe {
+            sys::modules::lp_jsc_import_map_add(
+                self.realm.global_ctx()?,
+                source.as_ptr().cast(),
+                source.len(),
+                base.as_ptr().cast(),
+                base.len(),
+                &mut messages,
+            )
+        } == 1;
+        let messages =
+            if messages.is_null() { String::new() } else { unsafe { JsString::from_raw_owned(messages) }.to_string() };
+        if !merged {
+            return Err(JsError::Type(format!("Invalid import map: {messages}")));
+        }
+        Ok(messages.lines().map(str::to_owned).collect())
+    }
+
+    /// Reports `message` as `console.warn` would, without running page code.
+    pub fn console_warn(&self, message: &str) {
+        if let Some(h) = self.realm.engine.hooks() {
+            h.console_api(&self.realm(), ConsoleLevel::Warning, &[self.string(message)]);
+        }
     }
 
     /// Evaluates a module script; returns its evaluation promise. Imports go
@@ -1139,6 +1215,15 @@ pub(crate) fn create(engine: &Rc<EngineInner>, options: RealmOptions) -> JsResul
     // global class is emulated by copying its members onto the global
     // (WebIDL puts [Global] interface members on the instance anyway).
     let ctx = unsafe { sys::JSGlobalContextCreateInGroup(engine.group(), ptr::null()) };
+    // A window's chain gets a named properties object, as in the standard: own
+    // members and `var`s are found (and cached) first, and only a name the global
+    // lacks reaches it. The public API cannot change the global's prototype.
+    if options.global_class.is_some() {
+        if let Some(install) = sys::spi::get().install_named_properties {
+            // SAFETY: fresh context; nothing holds its global proxy yet.
+            unsafe { install(ctx, crate::class::named_properties_filter, Some(crate::class::named_properties_get)) };
+        }
+    }
     let id = RealmId(engine.next_realm_id.get());
     engine.next_realm_id.set(id.0 + 1);
     let inner = Rc::new(RealmInner {
@@ -1165,6 +1250,7 @@ pub(crate) fn create(engine: &Rc<EngineInner>, options: RealmOptions) -> JsResul
         native_callback_hook_active: Cell::new(false),
         inline_modules: RefCell::new(HashMap::new()),
         embedder: RefCell::new(None),
+        named_properties: RefCell::new(None),
         global_class: options.global_class,
         global_payload: Cell::new(ptr::null_mut()),
         // SAFETY: fresh, retained global context.
@@ -1185,7 +1271,9 @@ pub(crate) fn create(engine: &Rc<EngineInner>, options: RealmOptions) -> JsResul
         install_console(&scope)?;
         install_rejection_tracking(&scope)?;
         if engine.caps.modules {
-            let h = unsafe { sys::modules::lp_jsc_module_loader_install(ctx, module_fetch, ptr::null_mut()) };
+            let h = unsafe {
+                sys::modules::lp_jsc_module_loader_install(ctx, module_fetch, module_base_url, ptr::null_mut())
+            };
             realm.inner.module_loader.set(h);
         }
     }
@@ -1673,6 +1761,19 @@ unsafe extern "C" fn module_fetch(
                 None => request.reject(scope, &JsError::Type("module loading is not configured for this realm".into())),
             }
         })
+    }
+}
+
+unsafe extern "C" fn module_base_url(ctx: sys::JSGlobalContextRef) -> sys::JSStringRef {
+    let mut url = None;
+    unsafe {
+        class::guard(ctx as sys::JSContextRef, ptr::null_mut(), (), |scope| {
+            let fetcher = scope.realm.module_fetcher.borrow().clone();
+            url = fetcher.and_then(|f| f.document_base_url(&scope.realm()));
+            Ok(())
+        });
+        // Retained for the caller; `JsString` releases its own reference.
+        url.map_or(ptr::null_mut(), |url| sys::JSStringRetain(JsString::new(&url).as_raw()))
     }
 }
 

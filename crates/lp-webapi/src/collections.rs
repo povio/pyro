@@ -55,6 +55,8 @@ pub enum NodeListSource {
     Static(Vec<NodeHold>),
     /// Live `childNodes` of the held node.
     Children(NodeHold),
+    /// Live controls of the held form with this id or name (`RadioNodeList`).
+    FormNamed(NodeHold, String),
 }
 
 pub struct NodeListData {
@@ -83,12 +85,14 @@ impl NodeListData {
                 }
                 c.1.clone()
             }
+            NodeListSource::FormNamed(h, name) => form_candidates(&h.page, dom, h.id, name),
         }
     }
     fn len(&self) -> usize {
         match &self.source {
             NodeListSource::Static(v) => v.len(),
             NodeListSource::Children(h) => h.page.dom.borrow().child_count(h.id).unwrap_or(0) as usize,
+            NodeListSource::FormNamed(h, _) => self.items(&h.page.dom.borrow()).len(),
         }
     }
     fn get(&self, i: usize) -> Option<(Rc<PageDom>, NodeId)> {
@@ -104,6 +108,10 @@ impl NodeListData {
                 }
                 self.items(&dom);
                 self.cache.borrow().1.get(i).map(|&id| (h.page.clone(), id))
+            }
+            NodeListSource::FormNamed(h, _) => {
+                let items = self.items(&h.page.dom.borrow());
+                items.get(i).map(|&id| (h.page.clone(), id))
             }
         }
     }
@@ -128,6 +136,87 @@ impl JsClass for NodeList {
             None => Ok(None),
         });
         def.indexed_iterable();
+    }
+}
+
+/// `form.name` when several controls share the name.
+pub struct RadioNodeList;
+impl JsClass for RadioNodeList {
+    const NAME: &'static str = "RadioNodeList";
+    type Data = NodeListData;
+    type Parent = NodeList;
+    fn define(def: &mut ClassDef<Self>) {
+        def.accessor(
+            "value",
+            |s, l| {
+                let NodeListSource::FormNamed(h, _) = &l.source else { return Ok(s.string("")) };
+                let dom = h.page.dom.borrow();
+                let checked = l.items(&dom).into_iter().find(|&n| is_radio(&dom, n) && dom.checked(n).unwrap_or(false));
+                Ok(s.string(match checked {
+                    Some(n) => dom.get_attribute(n, "value").js()?.unwrap_or("on"),
+                    None => "",
+                }))
+            },
+            |_s, l, v| {
+                let value = dom_string(v)?;
+                let NodeListSource::FormNamed(h, _) = &l.source else { return Ok(()) };
+                let mut dom = h.page.dom.borrow_mut();
+                let radio = l.items(&dom).into_iter().find(|&n| {
+                    is_radio(&dom, n) && dom.get_attribute(n, "value").ok().flatten().unwrap_or("on") == value
+                });
+                match radio {
+                    Some(n) => dom.set_checked(n, true).js(),
+                    None => Ok(()),
+                }
+            },
+        );
+    }
+}
+
+fn is_radio(dom: &Dom, id: NodeId) -> bool {
+    dom.element(id).is_ok_and(|e| {
+        e.is_html() && &*e.name.local == "input" && e.attr("type").is_some_and(|t| t.eq_ignore_ascii_case("radio"))
+    })
+}
+
+/// HTML "named elements" of a form: listed controls with this id or name, else
+/// `<img>`s. Reuses the page's member lists, since a named getter that overrides
+/// builtins runs on every property read of a form.
+fn form_candidates(page: &PageDom, dom: &Dom, form: NodeId, name: &str) -> Vec<NodeId> {
+    let named = |n: &NodeId| {
+        dom.element(*n).is_ok_and(|e| e.id() == Some(name) || (e.is_html() && e.attr("name") == Some(name)))
+    };
+    let listed: Vec<NodeId> =
+        shared_members(page, dom, form, &CollectionKind::FormElements).iter().copied().filter(named).collect();
+    if !listed.is_empty() {
+        return listed;
+    }
+    let images = shared_members(page, dom, form, &CollectionKind::TagName("img".to_owned()));
+    images.iter().copied().filter(|n| dom.element(*n).is_ok_and(|e| e.is_html()) && named(n)).collect()
+}
+
+/// `HTMLFormElement`'s named getter: nothing, the one element, or a live
+/// `RadioNodeList` (one object per form and name while it is alive).
+pub(crate) fn form_named<'s>(s: &Scope<'s>, page: &PageDom, form: NodeId, name: &str) -> JsResult<Option<Value<'s>>> {
+    if name.is_empty() {
+        return Ok(None);
+    }
+    let candidates = form_candidates(page, &page.dom.borrow(), form, name);
+    match candidates[..] {
+        [] => Ok(None),
+        [one] => Ok(Some(wrap_node(s, page, one)?.value())),
+        _ => {
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            std::hash::Hash::hash(name, &mut hasher);
+            let base = coll_identity(page, 12, form);
+            let key = IdentityKey(base.0, base.1 ^ std::hash::Hasher::finish(&hasher));
+            if let Some(o) = s.lookup_identity(key) {
+                return Ok(Some(o.value()));
+            }
+            let source = NodeListSource::FormNamed(NodeHold::new(&page_rc(s)?, form)?, name.to_owned());
+            let data = NodeListData { source, cache: RefCell::new((u64::MAX, Vec::new())) };
+            Ok(Some(s.wrap::<RadioNodeList>(data, Some(key))?.value()))
+        }
     }
 }
 
@@ -174,6 +263,9 @@ pub enum CollectionKind {
     TagNameNs(String, String),
     ClassName(String),
     Name(String),
+    /// The elements a Window property of this name collects (not iframes by
+    /// name: their child window answers instead).
+    WindowNamed(String),
     Links,
     /// `select.options` / `datalist.options`.
     Options,
@@ -220,6 +312,7 @@ fn watch(kind: &CollectionKind) -> Option<CollectionWatch> {
         CollectionKind::TagName(_) | CollectionKind::TagNameNs(..) => subtree(&[]),
         CollectionKind::ClassName(_) => subtree(&["class"]),
         CollectionKind::Name(_) => subtree(&["name"]),
+        CollectionKind::WindowNamed(_) => subtree(&["id", "name"]),
         CollectionKind::Links => subtree(&["href"]),
         _ => return None,
     })
@@ -266,6 +359,10 @@ fn matches_kind(dom: &Dom, root: NodeId, id: NodeId, kind: &CollectionKind) -> b
                 })
         }
         CollectionKind::Name(n) => e.attr("name") == Some(n.as_str()),
+        CollectionKind::WindowNamed(n) => {
+            e.id() == Some(n.as_str())
+                || (html && matches!(local, "embed" | "form" | "img" | "object") && e.attr("name") == Some(n.as_str()))
+        }
         CollectionKind::Links => html && matches!(local, "a" | "area") && e.attr("href").is_some(),
         CollectionKind::FormElements => {
             html && matches!(local, "button" | "fieldset" | "input" | "object" | "output" | "select" | "textarea")
@@ -301,6 +398,31 @@ fn compute(dom: &Dom, root: NodeId, kind: &CollectionKind) -> Vec<NodeId> {
     }
 }
 
+/// The page's shared member list for (root, kind) at the DOM's version.
+fn shared_members(page: &PageDom, dom: &Dom, root: NodeId, kind: &CollectionKind) -> Rc<Vec<NodeId>> {
+    let version = dom.version();
+    let watch = watch(kind);
+    let still = |since: u64| {
+        since != u64::MAX && watch.as_ref().is_some_and(|w| dom.collection_unchanged_since(root, since, w))
+    };
+    let mut shared = page.collection_members.borrow_mut();
+    let key = (root, kind.clone());
+    match shared.0.get_mut(&key) {
+        Some(entry) if entry.0 == version || still(entry.0) => {
+            entry.0 = version;
+            entry.1.clone()
+        }
+        _ => {
+            let members = Rc::new(compute(dom, root, kind));
+            if shared.0.len() >= MEMBER_CACHE_SIZE {
+                shared.0.clear();
+            }
+            shared.0.insert(key, (version, members.clone()));
+            members
+        }
+    }
+}
+
 impl CollectionData {
     /// Brings the cached members up to the DOM's version: kept when the
     /// journal shows no change that can affect them, else taken from the
@@ -319,23 +441,7 @@ impl CollectionData {
             c.0 = version;
             return;
         }
-        let mut shared = self.root.page.collection_members.borrow_mut();
-        let key = (self.root.id, self.kind.clone());
-        let members = match shared.0.get_mut(&key) {
-            Some(entry) if entry.0 == version || still(entry.0) => {
-                entry.0 = version;
-                entry.1.clone()
-            }
-            _ => {
-                let members = Rc::new(compute(dom, self.root.id, &self.kind));
-                if shared.0.len() >= MEMBER_CACHE_SIZE {
-                    shared.0.clear();
-                }
-                shared.0.insert(key, (version, members.clone()));
-                members
-            }
-        };
-        *c = (version, members);
+        *c = (version, shared_members(&self.root.page, dom, self.root.id, &self.kind));
     }
     fn items(&self) -> Vec<NodeId> {
         let dom = self.root.page.dom.borrow();
@@ -880,6 +986,7 @@ pub fn dataset<'s>(s: &Scope<'s>, page: &PageDom, id: NodeId) -> JsResult<Object
 
 pub(crate) fn register(engine: &lp_js::Engine) {
     engine.register::<NodeList>();
+    engine.register::<RadioNodeList>();
     engine.register::<HtmlCollection>();
     engine.register::<HtmlOptionsCollection>();
     engine.register::<DomTokenList>();

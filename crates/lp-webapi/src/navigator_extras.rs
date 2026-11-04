@@ -1,5 +1,5 @@
-//! `navigator.userAgentData`, `navigator.permissions`, `navigator.clipboard`
-//! and `ClipboardItem`. Their classes are made in JS (navigator_extras.js) on
+//! `navigator.userAgentData`, `navigator.permissions`, `navigator.clipboard`,
+//! `navigator.geolocation` and `ClipboardItem`. Their classes are made in JS (navigator_extras.js) on
 //! a realm's first use of any of them, so realms that never touch them pay
 //! nothing. Permissions and the clipboard belong to the browser context
 //! ([`ContextServices`], shared by its pages); client hints come from the
@@ -209,6 +209,21 @@ pub struct ContextServices {
     clipboard: RefCell<Vec<ClipboardEntry>>,
     /// Documents with PermissionStatus change listeners.
     watchers: RefCell<Vec<std::rc::Weak<PageDom>>>,
+    /// `Emulation.setGeolocationOverride`. Outer `None`: no override.
+    geolocation: RefCell<Option<Option<GeolocationFix>>>,
+}
+
+/// A position `navigator.geolocation` reports. CDP's optional coordinates are
+/// `None` when the override leaves them out.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GeolocationFix {
+    pub latitude: f64,
+    pub longitude: f64,
+    pub accuracy: f64,
+    pub altitude: Option<f64>,
+    pub altitude_accuracy: Option<f64>,
+    pub heading: Option<f64>,
+    pub speed: Option<f64>,
 }
 
 impl ContextServices {
@@ -287,13 +302,19 @@ impl ContextServices {
         }
     }
 
+    /// `Emulation.setGeolocationOverride`: `Some(None)` makes the position
+    /// unavailable, `None` clears the override.
+    pub fn set_geolocation(&self, fix: Option<Option<GeolocationFix>>) {
+        *self.geolocation.borrow_mut() = fix;
+    }
+
     /// The clipboard's `text/plain` entry (CDP-side inspection and tests).
     pub fn clipboard_text(&self) -> Option<String> {
         self.clipboard.borrow().iter().find(|e| e.0 == "text/plain").map(|e| e.1.clone())
     }
 }
 
-/// Member `name` (`userAgentData`, `permissions`, `clipboard` or
+/// Member `name` (`userAgentData`, `permissions`, `clipboard`, `geolocation` or
 /// `ClipboardItem`) of this realm's extras, made on first use.
 /// They live on the realm's `navigator` (a hidden property), which is
 /// itself kept per realm.
@@ -372,6 +393,23 @@ fn make<'s>(s: &Scope<'s>) -> JsResult<lp_js::Object<'s>> {
         Ok(s.undefined())
     })?;
     native.set("clipboardWrite", write.value())?;
+    let position = s.function("geolocationPosition", |s, _, _| {
+        let page = crate::target::page_of(s)?;
+        let services = page.context_services();
+        let fix = services.geolocation.borrow();
+        let Some(Some(fix)) = fix.as_ref() else { return Ok(s.null()) };
+        let result = s.object();
+        result.set("latitude", s.number(fix.latitude))?;
+        result.set("longitude", s.number(fix.longitude))?;
+        result.set("accuracy", s.number(fix.accuracy))?;
+        let optional = |v: Option<f64>| v.map_or(s.null(), |v| s.number(v));
+        result.set("altitude", optional(fix.altitude))?;
+        result.set("altitudeAccuracy", optional(fix.altitude_accuracy))?;
+        result.set("heading", optional(fix.heading))?;
+        result.set("speed", optional(fix.speed))?;
+        Ok(result.value())
+    })?;
+    native.set("geolocationPosition", position.value())?;
     // Rooted while the factory runs (the functions are only referenced by
     // `native`, itself an argument).
     let root = Persistent::new(s, native.value());

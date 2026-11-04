@@ -8,6 +8,7 @@
 //   clipboardRead() -> JSON [[type, data, binary]] or null (not granted)
 //   clipboardWritable() -> false when writing is denied
 //   clipboardWrite(json) stores [[type, data, binary]]
+//   geolocationPosition() -> the override's coordinates, or null
 // Binary data travels as a string of byte-valued characters. Shapes, order
 // and messages follow Chrome 156.
 (function (native) {
@@ -19,6 +20,7 @@
   const parse = JSON.parse;
   const stringify = JSON.stringify;
   const PromiseC = Promise;
+  const DateC = Date;
   const resolved = (v) => PromiseC.resolve(v);
   const rejected = (e) => PromiseC.reject(e);
   const DOMExceptionC = DOMException;
@@ -292,7 +294,76 @@
   }
   tag(Clipboard, 'Clipboard');
 
+  // No location source of its own: without a granted permission the request
+  // fails as a declined prompt would, without an override as unavailable.
+  class GeolocationCoordinates {
+    constructor(t, c) {
+      if (t !== token) throw illegal('GeolocationCoordinates');
+      for (const k of ['latitude', 'longitude', 'accuracy', 'altitude', 'altitudeAccuracy', 'heading', 'speed']) {
+        defineProperty(this, k, { value: c[k], enumerable: true });
+      }
+    }
+  }
+  tag(GeolocationCoordinates, 'GeolocationCoordinates');
+  class GeolocationPosition {
+    constructor(t, coords) {
+      if (t !== token) throw illegal('GeolocationPosition');
+      defineProperty(this, 'coords', { value: coords, enumerable: true });
+      defineProperty(this, 'timestamp', { value: DateC.now(), enumerable: true });
+    }
+  }
+  tag(GeolocationPosition, 'GeolocationPosition');
+  class GeolocationPositionError {
+    constructor(t, code, message) {
+      if (t !== token) throw illegal('GeolocationPositionError');
+      defineProperty(this, 'code', { value: code, enumerable: true });
+      defineProperty(this, 'message', { value: message, enumerable: true });
+    }
+  }
+  for (const [i, name] of ['PERMISSION_DENIED', 'POSITION_UNAVAILABLE', 'TIMEOUT'].entries()) {
+    defineProperty(GeolocationPositionError, name, { value: i + 1, enumerable: true });
+    defineProperty(GeolocationPositionError.prototype, name, { value: i + 1, enumerable: true });
+  }
+  tag(GeolocationPositionError, 'GeolocationPositionError');
+  class Geolocation {
+    #next = 1;
+    #watches = new Set();
+    constructor(t) {
+      if (t !== token) throw illegal('Geolocation');
+    }
+    #request(success, error, stillWanted) {
+      if (typeof success !== 'function') {
+        throw new TypeErrorC("Failed to execute 'getCurrentPosition' on 'Geolocation': parameter 1 is not a function.");
+      }
+      resolved().then(() => {
+        if (!stillWanted()) return;
+        const fail = (code, message) => {
+          if (typeof error === 'function') error(new GeolocationPositionError(token, code, message));
+        };
+        if (native.permissionState('geolocation') !== 'granted') return fail(1, 'User denied Geolocation');
+        const position = native.geolocationPosition();
+        if (position === null) return fail(2, 'Position update is unavailable');
+        success(new GeolocationPosition(token, new GeolocationCoordinates(token, position)));
+      });
+    }
+    getCurrentPosition(success, error) {
+      this.#request(success, error, () => true);
+    }
+    // One report per watch: an override changing later does not call back.
+    watchPosition(success, error) {
+      const id = this.#next++;
+      this.#watches.add(id);
+      this.#request(success, error, () => this.#watches.has(id));
+      return id;
+    }
+    clearWatch(id) {
+      this.#watches.delete(id);
+    }
+  }
+  tag(Geolocation, 'Geolocation');
+
   return {
+    geolocation: new Geolocation(token),
     userAgentData: new NavigatorUAData(token),
     permissions: new Permissions(token),
     clipboard: new Clipboard(token),

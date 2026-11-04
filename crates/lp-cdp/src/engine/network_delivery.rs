@@ -310,6 +310,7 @@ mod tests {
                 from_cache: false,
                 kind: ResponseKind::Basic,
                 remote_addr: None,
+                protocol: lp_net::http::Version::HTTP_11,
             }),
             destination: Destination::Fetch,
             frame_id: Some("F".into()),

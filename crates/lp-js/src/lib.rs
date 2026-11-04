@@ -24,7 +24,8 @@ pub use engine::{
 pub use error::{JsError, JsException, JsResult};
 pub use persistent::{Persistent, RootedVec};
 pub use realm::{
-    Deferred, IdentityKey, ModuleFetcher, ModuleRequest, NativeCallbackHook, Realm, RealmId, RealmOptions, Scope,
+    Deferred, IdentityKey, ModuleFetcher, ModuleRequest, NameUnits, NamedProperties, NativeCallbackHook, Realm, RealmId,
+    RealmOptions, Scope,
     UnhandledRejectionHandler, ValueDescription, WeakRealm,
 };
 pub use string::{atom, JsString};

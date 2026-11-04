@@ -261,6 +261,18 @@ pub fn wrap_event<'s>(s: &Scope<'s>, core: &EventData) -> JsResult<Object<'s>> {
         core.trace_targets(s, o)?;
         return Ok(o);
     }
+    // An event keeps its object when dispatched into a sibling document.
+    if let Some(page) = crate::target::page_of(s).ok().filter(|p| !Rc::ptr_eq(p, &core.page)) {
+        for realm in page.sibling_realms(s) {
+            let Ok(owner) = realm.scope() else { continue };
+            if let Some(o) = owner.lookup_identity(key) {
+                core.trace_targets(&owner, o)?;
+                if let Some(o) = lp_js::Persistent::new(&owner, o.value()).get(s).as_object() {
+                    return Ok(o);
+                }
+            }
+        }
+    }
     let d = core.clone();
     let wrapper = match core.iface {
         EventInterface::Event => s.wrap::<Event>(d, Some(key)),

@@ -171,6 +171,7 @@ impl Browser {
             return;
         };
         let request = FetchRequest {
+            post: None,
             url,
             kind,
             page: page.page,

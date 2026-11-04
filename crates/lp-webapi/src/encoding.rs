@@ -16,6 +16,28 @@ pub fn now_ms() -> f64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs_f64() * 1000.0).unwrap_or(0.0)
 }
 
+/// Encodes `input` for a URL query or form submission, writing each character
+/// `enc` cannot represent as `prefix`, its decimal code point, then `suffix`
+/// (URL spec "percent-encode after encoding"; HTML's `&#NNN;` error mode).
+pub(crate) fn encode_with_ncr(enc: &'static encoding_rs::Encoding, input: &str, prefix: &str, suffix: &str) -> Vec<u8> {
+    let mut encoder = enc.new_encoder();
+    let mut out = Vec::new();
+    let mut rest = input;
+    loop {
+        let needed = encoder.max_buffer_length_from_utf8_without_replacement(rest.len()).unwrap_or(rest.len() * 4 + 8);
+        out.reserve(needed);
+        let (result, read) = encoder.encode_from_utf8_to_vec_without_replacement(rest, &mut out, true);
+        rest = &rest[read..];
+        match result {
+            encoding_rs::EncoderResult::InputEmpty => return out,
+            encoding_rs::EncoderResult::OutputFull => {}
+            encoding_rs::EncoderResult::Unmappable(c) => {
+                out.extend_from_slice(format!("{prefix}{}{suffix}", c as u32).as_bytes());
+            }
+        }
+    }
+}
+
 fn check_exc(s: &Scope<'_>, exc: sys::JSValueRef) -> JsResult<()> {
     if exc.is_null() {
         return Ok(());
@@ -180,6 +202,8 @@ pub struct DecoderData {
     encoding: &'static encoding_rs::Encoding,
     fatal: bool,
     ignore_bom: bool,
+    /// Held between `decode(..., {stream: true})` calls; None starts afresh.
+    decoder: std::cell::RefCell<Option<encoding_rs::Decoder>>,
 }
 
 pub struct TextDecoder;
@@ -196,7 +220,11 @@ impl JsClass for TextDecoder {
                 Some(o) => (o.get("fatal")?.to_bool(), o.get("ignoreBOM")?.to_bool()),
                 None => (false, false),
             };
-            s.wrap_new::<TextDecoder>(DecoderData { encoding, fatal, ignore_bom }, nt, None)
+            s.wrap_new::<TextDecoder>(
+                DecoderData { encoding, fatal, ignore_bom, decoder: Default::default() },
+                nt,
+                None,
+            )
         });
         def.getter("encoding", |s, d| Ok(s.string(&d.encoding.name().to_ascii_lowercase())));
         def.getter("fatal", |s, d| Ok(s.boolean(d.fatal)));
@@ -209,13 +237,32 @@ impl JsClass for TextDecoder {
                     JsError::Type("The provided value is not of type '(ArrayBuffer or ArrayBufferView)'.".into())
                 })?
             };
-            let (text, had_errors) = if d.ignore_bom {
-                d.encoding.decode_without_bom_handling(&bytes)
-            } else {
-                let (t, _, e) = d.encoding.decode(&bytes);
-                (t, e)
+            let last = match a.get(1).as_object() {
+                Some(o) => !o.get("stream")?.to_bool(),
+                None => true,
             };
-            if had_errors && d.fatal {
+            let mut slot = d.decoder.borrow_mut();
+            let decoder = slot.get_or_insert_with(|| {
+                if d.ignore_bom {
+                    d.encoding.new_decoder_without_bom_handling()
+                } else {
+                    // Only the encoding's own BOM is dropped; it never switches encoding.
+                    d.encoding.new_decoder_with_bom_removal()
+                }
+            });
+            let capacity = decoder.max_utf8_buffer_length(bytes.len()).unwrap_or(bytes.len());
+            let mut text = String::with_capacity(capacity);
+            let malformed = if d.fatal {
+                let (result, _) = decoder.decode_to_string_without_replacement(&bytes, &mut text, last);
+                matches!(result, encoding_rs::DecoderResult::Malformed(..))
+            } else {
+                let _ = decoder.decode_to_string(&bytes, &mut text, last);
+                false
+            };
+            if last || malformed {
+                *slot = None;
+            }
+            if malformed {
                 return Err(JsError::Type("The encoded data was not valid.".into()));
             }
             Ok(s.string(&text))

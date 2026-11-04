@@ -19,6 +19,8 @@ pub struct Capabilities {
     pub weak_refs: bool,
     /// `JSScript` module SPI: ES modules and dynamic `import()`.
     pub modules: bool,
+    /// Import maps, bare specifiers and `import.meta.resolve` (patched JavaScriptCore).
+    pub import_maps: bool,
     /// `JSGlobalContextSetUnhandledRejectionCallback`.
     pub unhandled_rejections: bool,
     /// `JSContextGroupSetExecutionTimeLimit`: termination of running scripts.
@@ -40,6 +42,8 @@ impl Capabilities {
             weak_refs: spi.weak().is_some(),
             // SAFETY: plain capability probe without arguments.
             modules: unsafe { sys::modules::lp_jsc_modules_available() } == 1,
+            // SAFETY: plain capability probe without arguments.
+            import_maps: unsafe { sys::modules::lp_jsc_import_maps_available() } == 1,
             unhandled_rejections: spi.set_unhandled_rejection_callback.is_some(),
             termination: spi.set_execution_time_limit.is_some() && spi.clear_execution_time_limit.is_some(),
             hidden_properties: spi.get_private_property.is_some() && spi.set_private_property.is_some(),
@@ -144,6 +148,11 @@ impl EngineInner {
     /// Finds the realm owning global context `global`.
     pub(crate) fn realm_for_global(&self, global: sys::JSGlobalContextRef) -> Option<Rc<RealmInner>> {
         self.realms.borrow().iter().find(|(g, _)| *g == global).and_then(|(_, r)| r.upgrade())
+    }
+
+    /// Finds a live realm by id (cross-realm paths only: this walks the list).
+    pub(crate) fn realm_by_id(&self, id: crate::RealmId) -> Option<Rc<RealmInner>> {
+        self.realms.borrow().iter().filter_map(|(_, r)| r.upgrade()).find(|r| r.id == id)
     }
 
     /// Disposes every realm, destroys the VM (running all remaining finalizers)
@@ -460,6 +469,28 @@ impl Engine {
                 }
             }
         }
+    }
+
+    /// Sets the time zone of `Date`, `Intl` and `Temporal` in this engine's VM,
+    /// which covers all of its realms and no other engine. `None` returns to
+    /// the host's zone. `Ok(false)`, changing nothing, for an ID `Intl` does not
+    /// know. Needs the patched JavaScriptCore.
+    pub fn set_time_zone(&self, id: Option<&str>) -> Result<bool, JsError> {
+        let Some(set) = sys::spi::get().set_time_zone else {
+            return if id.is_none() {
+                Ok(true)
+            } else {
+                Err(JsError::Unsupported("time zone override (patched JavaScriptCore)"))
+            };
+        };
+        let id = match id.map(std::ffi::CString::new) {
+            Some(Ok(id)) => Some(id),
+            Some(Err(_)) => return Ok(false),
+            None => None,
+        };
+        // SAFETY: the group is alive and used by this thread only; the string
+        // is NUL-terminated and read during the call.
+        Ok(unsafe { set(self.inner.group, id.as_ref().map_or(std::ptr::null(), |id| id.as_ptr())) })
     }
 
     /// Live realms of this engine.

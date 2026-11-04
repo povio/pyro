@@ -33,8 +33,9 @@ TLA, before DCL (a documented JSC integration deviation).
 Linked stylesheets now load through the context client; see [stylesheet behavior and limits](STYLESHEETS.md).
 This increment does not load images, iframes or script-inserted script resources,
 and does not dispatch script-element load/error events. Inline style resource events are applied.
-History state is JSON rather than structured clone; popstate/hashchange remain absent. Form POST and
-named browsing targets fail explicitly. Native HTTPS remains unsupported. See [parity](../PARITY.md)
+History state is JSON rather than structured clone; popstate/hashchange remain absent. Form POST
+navigates the frame; POST to a new window and named browsing targets fail explicitly. Native HTTPS
+remains unsupported. See [parity](../PARITY.md)
 and [runtime limits](../COMPATIBILITY.md). No TOS compatibility or matched TOS performance result is
 claimed by these local HTTP and synthetic-loader tests.
 

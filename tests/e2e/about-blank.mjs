@@ -8,6 +8,10 @@ import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
 import net from 'node:net';
 import http from 'node:http';
+import https from 'node:https';
+import http2 from 'node:http2';
+import { X509Certificate, createPrivateKey } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
@@ -109,6 +113,21 @@ await check('pageerror from a timer', async () => {
 });
 await check('evaluate exception', async () => {
   await assert.rejects(page.evaluate(() => { throw new RangeError('bad range'); }), /RangeError: bad range/);
+});
+await check('Range content methods and live boundary points', async () => {
+  assert.deepEqual(await page.evaluate(() => {
+    const host = document.createElement('div');
+    host.innerHTML = '<b>abc</b>def';
+    const range = new Range();
+    range.setStart(host.firstChild.firstChild, 1);
+    range.setEnd(host.lastChild, 2);
+    const box = document.createElement('div');
+    box.append(range.extractContents());
+    const left = host.innerHTML;
+    range.setStart(host.lastChild, 1);
+    host.lastChild.deleteData(0, 1);
+    return [box.innerHTML, left, range.startOffset];
+  }), ['<b>bc</b>de', '<b>a</b>f', 0]);
 });
 await check('goto about:blank', async () => {
   await page.goto('about:blank');
@@ -261,6 +280,11 @@ const fixture = http.createServer((req, res) => {
     res.end('1;');
     return;
   }
+  if (req.url === '/euc-jp') {
+    res.writeHead(200, { 'content-type': 'text/html' });
+    res.end('<!doctype html><meta charset=euc-jp><iframe name=result></iframe><form action=/form-result target=result><input name=q></form>');
+    return;
+  }
   if (req.url === '/extra-headers') {
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ extra: req.headers['x-extra'] ?? null, cache: req.headers['cache-control'] ?? null }));
@@ -274,10 +298,40 @@ const fixture = http.createServer((req, res) => {
       'addEventListener("popstate", render); globalThis.go = path => { history.pushState({ path }, "", path); render(); }; render();</script>');
     return;
   }
+  if (req.url === '/import-map') {
+    res.writeHead(200, { 'content-type': 'text/html' });
+    res.end('<!doctype html><script type="importmap">{"imports":{"lib":"/modules/lib.js","pkg/":"/modules/","bad":"bare"}}</script>' +
+      '<script type="module">import { v } from "lib"; import { w } from "pkg/w.js";' +
+      'globalThis.mapped = [v, w, import.meta.resolve("pkg/x.js")]; globalThis.unmapped = await import("nope").catch(e => e.name);</script>');
+    return;
+  }
+  if (req.url.startsWith('/modules/')) {
+    res.writeHead(200, { 'content-type': 'text/javascript' });
+    res.end(req.url === '/modules/lib.js' ? 'export const v = "lib";' : 'export const w = "pkg";');
+    return;
+  }
   if (req.url === '/frames-parsed') {
     res.writeHead(200, { 'content-type': 'text/html' });
     res.end('<!doctype html><iframe name="parsed" src="/frame-inner"></iframe>' +
       '<iframe name="inline" srcdoc="&lt;p&gt;inline child&lt;/p&gt;"></iframe>');
+    return;
+  }
+  if (req.url === '/doc-write') {
+    res.writeHead(200, { 'content-type': 'text/html' });
+    res.end('<!doctype html><title>write</title><body><p id=a></p><script>' +
+      'window.seen = []; document.write(\'<p id=b></p><script src="/doc-write.js"><\\/script><p id=c></p>\'); ' +
+      'seen.push("sync:" + !!document.getElementById("b") + !!document.getElementById("ext")); ' +
+      'document.write(\'<p id=d></p>\');</script><p id=e></p>');
+    return;
+  }
+  if (req.url === '/doc-write.js') {
+    res.writeHead(200, { 'content-type': 'text/javascript' });
+    res.end('seen.push("ext"); document.write(\'<p id=ext></p>\'); seen.push("ext:" + !!document.getElementById("ext"));');
+    return;
+  }
+  if (req.url === '/feed.xml') {
+    res.writeHead(200, { 'content-type': 'application/xml' });
+    res.end('<feed><item>one</item></feed>');
     return;
   }
   if (req.url === '/checkpoint.css') {
@@ -313,6 +367,21 @@ const fixture = http.createServer((req, res) => {
 });
 await new Promise((resolve, reject) => { fixture.once('error', reject); fixture.listen(0, '127.0.0.1', resolve); });
 const fixtureOrigin = `http://127.0.0.1:${fixture.address().port}`;
+await check('import map resolves bare module specifiers', async () => {
+  const warnings = [];
+  const onConsole = message => { if (message.type() === 'warning') warnings.push(message.text()); };
+  page.on('console', onConsole);
+  try {
+    await page.goto(`${fixtureOrigin}/import-map`, { timeout: 5000 });
+    await page.waitForFunction(() => globalThis.unmapped !== undefined, null, { timeout: 5000 });
+    assert.deepEqual(await page.evaluate(() => globalThis.mapped), ['lib', 'pkg', `${fixtureOrigin}/modules/x.js`]);
+    assert.equal(await page.evaluate(() => globalThis.unmapped), 'TypeError');
+    assert.ok(warnings.some(w => w.startsWith('Import map: ')), JSON.stringify(warnings));
+    assert.equal(await page.evaluate(() => import('lib').then(m => m.v)), 'lib');
+  } finally {
+    page.off('console', onConsole);
+  }
+});
 try {
   await check('DOM installed before init scripts and shared across isolated worlds', async () => {
     await page.addInitScript(() => { globalThis.initBindingTypes = [typeof document, typeof fetch, typeof localStorage]; });
@@ -473,6 +542,31 @@ try {
     assert.equal(await page.locator('#dom-field').inputValue(), 'typed through locator');
     await page.locator('#dom-button').click({ timeout: 5000 });
     assert.equal(await page.evaluate(() => domClicks), 1);
+  });
+  await check('named access on the window, also with injected scripts and the utility world', async () => {
+    const p = await context.newPage();
+    try {
+      // Names that collide with what Playwright's injected scripts might read.
+      await p.setContent('<div id="named-one">x</div><form name="named-form"></form><div id="builtins"></div>' +
+        '<div id="__playwright__binding__"></div><div id="Node"></div><button id="named-button">go</button>' +
+        '<script>window.sawBare = typeof window["named-one"] === "object" && document.forms[0] === window["named-form"];</script>');
+      assert.equal(await p.evaluate(() => sawBare), true);
+      assert.equal(await p.evaluate(() => Node.ELEMENT_NODE), 1);
+      assert.equal(await p.evaluate(() => window['named-form'].tagName), 'FORM');
+      // A handle's evaluate and these locators go through the utility world.
+      assert.equal(await p.locator('#named-one').textContent(), 'x');
+      await p.getByRole('button', { name: 'go' }).click({ timeout: 5000 });
+      const session = await context.newCDPSession(p);
+      try {
+        const { frameTree } = await session.send('Page.getFrameTree');
+        const { executionContextId } = await session.send('Page.createIsolatedWorld', { frameId: frameTree.frame.id, worldName: 'named-check' });
+        const { result } = await session.send('Runtime.evaluate', {
+          contextId: executionContextId, returnByValue: true,
+          expression: 'globalThis["named-form"].tagName + typeof sawBare',
+        });
+        assert.equal(result.value, 'FORMundefined');
+      } finally { await session.detach(); }
+    } finally { await p.close(); }
   });
   await check('Accessibility AX trees over CDP agree with getByRole', async () => {
     await page.setContent('<title>AX</title><nav aria-label="Main"><a href="#a">Home</a></nav><h2>Title <b>here</b></h2><label for="ax-n">Name</label><input id="ax-n" value="v"><button aria-hidden="true">Hidden</button><button>Save</button>');
@@ -803,6 +897,22 @@ try {
       assert.equal(await p.frameLocator('iframe[name="parsed"]').locator('#message').textContent(), 'native DOM');
     } finally { await p.close(); }
   });
+  await check('parent script reads and moves nodes of a same-origin frame', async () => {
+    const p = await context.newPage();
+    p.setDefaultTimeout(5000);
+    try {
+      await p.goto(`${fixtureOrigin}/frames-parsed`, { timeout: 5000 });
+      await p.frameLocator('iframe[name="inline"]').locator('p').textContent();
+      const r = await p.evaluate(() => {
+        const d = document.querySelector('iframe[name="inline"]').contentDocument;
+        const nodes = d.querySelectorAll('p');
+        const moved = document.createElement('b');
+        d.body.append(moved);
+        return [nodes.length, nodes[0].textContent, nodes[0] === d.querySelector('p'), d.body.lastChild === moved];
+      });
+      assert.deepEqual(r, [1, 'inline child', true, true]);
+    } finally { await p.close(); }
+  });
   await check('sandbox srcdoc frameLocator uses real child worlds and native owner identity', async () => {
     const p = await context.newPage();
     p.setDefaultTimeout(5000);
@@ -977,6 +1087,91 @@ try {
       await cdp.detach();
     } finally { await p.close(); }
   });
+  await check('page.content() returns the doctype and the document (XMLSerializer)', async () => {
+    const p = await context.newPage();
+    try {
+      await p.setContent('<!doctype html><title>t</title><p>x</p>');
+      assert.equal(await p.content(), '<!DOCTYPE html><html><head><title>t</title></head><body><p>x</p></body></html>');
+    } finally { await p.close(); }
+  });
+  await check('inline on* handler attributes: click and body onload', async () => {
+    const p = await context.newPage();
+    try {
+      await p.route('http://inline.test/', (r) => r.fulfill({
+        contentType: 'text/html',
+        body: '<!doctype html><body onload="document.title=\'loaded\'"><button onclick="this.textContent=\'done\'">go</button>',
+      }));
+      await p.goto('http://inline.test/');
+      assert.equal(await p.title(), 'loaded');
+      await p.locator('button').click();
+      assert.equal(await p.locator('button').textContent(), 'done');
+    } finally { await p.close(); }
+  });
+  await check('geolocation: override with permission, denied without, unavailable when cleared', async () => {
+    const position = () => new Promise((res) => navigator.geolocation.getCurrentPosition(
+      (p) => res([p.coords.latitude, p.coords.longitude, p.coords.accuracy, p.coords.speed]), (e) => res(e.code)));
+    const denied = await browser.newContext({ geolocation: { latitude: 1, longitude: 2 } });
+    const allowed = await browser.newContext({ geolocation: { latitude: 46.05, longitude: 14.5, accuracy: 3 }, permissions: ['geolocation'] });
+    try {
+      const d = await denied.newPage();
+      assert.equal(await d.evaluate(position), 1);
+      const a = await allowed.newPage();
+      assert.deepEqual(await a.evaluate(position), [46.05, 14.5, 3, null]);
+      await allowed.setGeolocation({ latitude: 10, longitude: 20 });
+      assert.deepEqual(await a.evaluate(position), [10, 20, 0, null]);
+      await allowed.setGeolocation(null);
+      assert.equal(await a.evaluate(position), 2);
+    } finally { await denied.close(); await allowed.close(); }
+  });
+  await check('form POST navigates: urlencoded and multipart, redirect to GET, request visible', async () => {
+    const seen = [];
+    const server = http.createServer((req, res) => {
+      const chunks = [];
+      req.on('data', (d) => chunks.push(d));
+      req.on('end', () => {
+        const body = Buffer.concat(chunks).toString();
+        seen.push({ method: req.method, type: req.headers['content-type'] ?? '', origin: req.headers.origin ?? '', body });
+        if (req.url === '/redirect') { res.writeHead(303, { location: '/done' }); res.end(); return; }
+        res.writeHead(200, { 'content-type': 'text/html' });
+        if (req.url === '/form' || req.url === '/multi') {
+          const attrs = req.url === '/form' ? 'action="/post"' : 'action="/redirect" enctype="multipart/form-data"';
+          res.end(`<!doctype html><form method="post" ${attrs}><input name="a" value="1"><input type="file" name="f"><button>go</button></form>`);
+        } else res.end(`<!doctype html><p id="r">${req.method} ${req.url}</p>`);
+      });
+    });
+    await new Promise((r) => server.listen(0, '127.0.0.1', r));
+    const origin = `http://127.0.0.1:${server.address().port}`;
+    const p = await context.newPage();
+    try {
+      await p.goto(`${origin}/form`);
+      const [request] = await Promise.all([p.waitForRequest('**/post'), p.locator('button').click()]);
+      assert.equal(request.method(), 'POST');
+      assert.equal(request.postData(), 'a=1&f=');
+      await p.waitForSelector('#r');
+      assert.equal(await p.locator('#r').textContent(), 'POST /post');
+      assert.equal(p.url(), `${origin}/post`);
+      const post = seen.find((s) => s.method === 'POST');
+      assert.equal(post.type, 'application/x-www-form-urlencoded');
+      assert.equal(post.origin, origin);
+      assert.equal(post.body, 'a=1&f=');
+      await p.goto(`${origin}/multi`);
+      await p.locator('input[type=file]').setInputFiles({ name: 'x.txt', mimeType: 'text/plain', buffer: Buffer.from('hello') });
+      await p.locator('button').click();
+      await p.waitForSelector('#r');
+      assert.equal(await p.locator('#r').textContent(), 'GET /done');
+      const multi = seen.filter((s) => s.method === 'POST').at(-1);
+      assert.match(multi.type, /^multipart\/form-data; boundary=/);
+      assert.match(multi.body, /filename="x.txt"[\s\S]*hello/);
+    } finally { await p.close(); server.close(); }
+  });
+  await check('mobile device context: isMobile, hasTouch and deviceScaleFactor', async () => {
+    const mobile = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true });
+    try {
+      const p = await mobile.newPage();
+      await p.setContent('<!doctype html><meta name=viewport content="width=device-width"><p>x</p>');
+      assert.deepEqual(await p.evaluate(() => [innerWidth, innerHeight, devicePixelRatio, navigator.maxTouchPoints > 0, matchMedia('(pointer: coarse)').matches, 'ontouchstart' in window]), [390, 844, 3, true, true, true]);
+    } finally { await mobile.close(); }
+  });
   await check('page.exposeFunction and exposeBinding survive navigation (Runtime.addBinding)', async () => {
     const p = await context.newPage();
     try {
@@ -1024,9 +1219,231 @@ try {
       assert.equal(p.frames().length, 2);
     } finally { await p.close(); }
   });
+  await check('legacy document encoding reaches URLs and forms submitted into a named iframe', async () => {
+    const p = await context.newPage();
+    try {
+      await p.goto(`${fixtureOrigin}/euc-jp`, { timeout: 5000 });
+      assert.equal(await p.evaluate(() => document.characterSet), 'EUC-JP');
+      assert.equal(await p.evaluate(() => { const a = document.createElement('a'); a.href = '/?\u3042\uac00'; return a.search; }), '?%A4%A2%26%2344032%3B');
+      const committed = p.waitForEvent('framenavigated', { predicate: f => f.name() === 'result', timeout: 5000 });
+      await p.evaluate(() => { const f = document.forms[0]; f.elements.q.value = '\u3042\uac00'; f.submit(); });
+      await committed;
+      assert.equal(p.frame({ name: 'result' }).url(), `${fixtureOrigin}/form-result?q=%A4%A2%26%2344032%3B`);
+    } finally { await p.close(); }
+  });
+  await check('document.write during parsing and with external scripts', async () => {
+    const p = await context.newPage();
+    try {
+      await p.goto(`${fixtureOrigin}/doc-write`, { timeout: 5000 });
+      assert.deepEqual(await p.evaluate(() => [...document.querySelectorAll('p')].map(el => el.id).join('')), 'abextcde');
+      assert.deepEqual(await p.evaluate(() => seen), ['sync:truefalse', 'ext', 'ext:true']);
+      // setContent writes through document.write: its external scripts run too.
+      await p.setContent(`<script>window.seen = []</script><script src="${fixtureOrigin}/doc-write.js"></script><p id=y></p>`);
+      assert.equal(await p.evaluate(() => [...document.querySelectorAll('p')].map(el => el.id).join('')), 'exty');
+    } finally { await p.close(); }
+  });
+  await check('synchronous XHR and document responses', async () => {
+    const p = await context.newPage();
+    try {
+      await p.goto(`${fixtureOrigin}/`, { timeout: 5000 });
+      assert.deepEqual(await p.evaluate(async () => {
+        const sync = new XMLHttpRequest();
+        const order = [];
+        sync.onload = () => order.push('load');
+        setTimeout(() => order.push('timer'));
+        sync.open('GET', '/feed.xml', false);
+        sync.send();
+        order.push('sent');
+        const asyncDoc = await new Promise((resolve, reject) => {
+          const x = new XMLHttpRequest();
+          x.onload = () => resolve(x.response.querySelector('#message').textContent);
+          x.onerror = () => reject(new Error('XHR failed'));
+          x.open('GET', '/');
+          x.responseType = 'document';
+          x.send();
+        });
+        return [order.slice(0, 2).join(), sync.status, sync.responseXML.querySelector('item').textContent, asyncDoc];
+      }), ['load,sent', 200, 'one', 'native DOM']);
+      // Fetch interception is not offered the request: the page cannot deadlock.
+      await p.route('**/feed.xml', route => route.abort());
+      assert.equal(await p.evaluate(() => {
+        const x = new XMLHttpRequest(); x.open('GET', '/feed.xml', false); x.send(); return x.status;
+      }), 200);
+    } finally { await p.close(); }
+  });
 } finally {
   fixture.closeAllConnections();
   await new Promise(resolve => fixture.close(resolve));
+}
+await check('declarative shadow roots parse from markup and locators pierce them', async () => {
+  await page.setContent('<div id=dsd-host><template shadowrootmode=open shadowrootserializable><button>inside</button><slot></slot></template><span>light</span></div>');
+  assert.equal(await page.locator('#dsd-host button').textContent(), 'inside');
+  assert.equal(await page.locator('#dsd-host').evaluate((host) => host.getHTML({ serializableShadowRoots: true })),
+    '<template shadowrootmode="open" shadowrootserializable=""><button>inside</button><slot></slot></template><span>light</span>');
+  assert.equal(await page.locator('#dsd-host span').evaluate((span) => span.assignedSlot?.localName), 'slot');
+  assert.equal(await page.evaluate(() => { const d = document.createElement('div'); d.innerHTML = '<div><template shadowrootmode=open></template></div>'; return d.querySelectorAll('template').length; }), 1);
+});
+await check('attribute reflection follows the HTML rules', async () => {
+  const seen = await page.evaluate(() => {
+    const input = document.createElement('input');
+    const cell = document.createElement('td');
+    cell.setAttribute('colspan', '5000');
+    const img = document.createElement('img');
+    const anchor = document.createElement('a');
+    anchor.setAttribute('dir', 'bogus');
+    return {
+      dir: anchor.dir,
+      size: input.size,
+      colSpan: cell.colSpan,
+      crossOrigin: img.crossOrigin,
+      marquee: document.createElement('marquee') instanceof HTMLMarqueeElement,
+    };
+  });
+  assert.deepEqual(seen, { dir: '', size: 20, colSpan: 1000, crossOrigin: null, marquee: true });
+});
+await check('popup event from window.open and a target=_blank link', async () => {
+  const p = await context.newPage();
+  try {
+    await p.setContent(`<a href="data:text/html,<title>Linked</title>" target="_blank">tab</a>
+      <button>open</button>
+      <script>document.querySelector('button').addEventListener('click', () => { globalThis.w = window.open('data:text/html,<title>Opened</title>'); });</script>`);
+    const [popup] = await Promise.all([p.waitForEvent('popup'), p.click('button')]);
+    await popup.waitForLoadState();
+    assert.equal(await popup.title(), 'Opened');
+    assert.equal(await popup.opener(), p);
+    assert.deepEqual(await p.evaluate(() => [typeof w.close, w.closed, typeof w.document]), ['function', false, 'undefined']);
+    const closed = popup.waitForEvent('close');
+    await p.evaluate(() => w.close());
+    await closed;
+    assert.equal(await p.evaluate(() => w.closed), true);
+    const [tab] = await Promise.all([context.waitForEvent('page'), p.click('a')]);
+    await tab.waitForLoadState();
+    assert.equal(await tab.title(), 'Linked');
+    await tab.close();
+    const [blank] = await Promise.all([p.waitForEvent('popup'), p.evaluate(() => { globalThis.b = window.open(); })]);
+    await blank.waitForLoadState();
+    assert.equal(blank.url(), 'about:blank');
+    await blank.close();
+    assert.equal(await p.evaluate(() => b.closed), true);
+  } finally { await p.close(); }
+});
+await check('streams: ReadableStream, pipeThrough and Response bodies', async () => {
+  const text = await page.evaluate(async () => {
+    const source = new ReadableStream({
+      start(c) { c.enqueue('st'); c.enqueue('ream'); c.close(); },
+    });
+    const body = source.pipeThrough(new TextEncoderStream());
+    return new Response(body).text();
+  });
+  assert.equal(text, 'stream');
+});
+// A local forward proxy: absolute-form requests answered here, CONNECT tunnelled
+// to a local TLS server whatever the host asked for.
+{
+  const data = path.join(here, '..', '..', 'crates', 'lp-net', 'tests', 'data');
+  const certificate = {
+    cert: new X509Certificate(readFileSync(path.join(data, 'self-signed.der'))).toString(),
+    key: createPrivateKey({ key: readFileSync(path.join(data, 'self-signed.key.der')), format: 'der', type: 'pkcs8' })
+      .export({ format: 'pem', type: 'pkcs8' }),
+  };
+  const h2 = http2.createSecureServer(certificate, (req, res) => {
+    res.setHeader('content-type', 'text/html');
+    res.end(`<title>${req.httpVersion}</title>`);
+  });
+  await new Promise(resolve => h2.listen(0, '127.0.0.1', resolve));
+  const tls = https.createServer(certificate, (req, res) => {
+    res.setHeader('content-type', 'text/html');
+    res.end(`<title>tunnelled ${req.headers.host}</title>`);
+  });
+  await new Promise(resolve => tls.listen(0, '127.0.0.1', resolve));
+  const seen = [];
+  const allowed = (header) => header === `Basic ${Buffer.from('user:pass').toString('base64')}`;
+  const proxy = (auth) => {
+    const server = http.createServer((req, res) => {
+      seen.push(`${req.method} ${req.url}`);
+      if (auth && !allowed(req.headers['proxy-authorization'])) {
+        res.writeHead(407, { 'proxy-authenticate': 'Basic realm="e2e"' }).end();
+        return;
+      }
+      res.setHeader('content-type', 'text/html');
+      res.end(`<title>proxied ${req.url}</title>`);
+    });
+    server.on('connect', (req, client) => {
+      seen.push(`CONNECT ${req.url}`);
+      if (auth && !allowed(req.headers['proxy-authorization'])) {
+        client.end('HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm="e2e"\r\n\r\n');
+        return;
+      }
+      const upstream = net.connect(tls.address().port, '127.0.0.1', () => {
+        client.write('HTTP/1.1 200 Connection established\r\n\r\n');
+        upstream.pipe(client);
+        client.pipe(upstream);
+      });
+      upstream.on('error', () => client.destroy());
+      client.on('error', () => upstream.destroy());
+    });
+    return new Promise(resolve => server.listen(0, '127.0.0.1', () => resolve(server)));
+  };
+  const open = await proxy(false);
+  const guarded = await proxy(true);
+  const address = (s) => `http://127.0.0.1:${s.address().port}`;
+  const titleVia = async (options, url) => {
+    const c = await browser.newContext(options);
+    try {
+      const p = await c.newPage();
+      await p.goto(url);
+      return await p.title();
+    } finally { await c.close(); }
+  };
+  try {
+    await check('newContext proxy: http goes absolute-form through it', async () => {
+      assert.equal(await titleVia({ proxy: { server: address(open) } }, 'http://site.invalid/x?y=1'),
+        'proxied http://site.invalid/x?y=1');
+      assert.ok(seen.includes('GET http://site.invalid/x?y=1'), seen.join());
+    });
+    await check('newContext proxy: https goes through a CONNECT tunnel', async () => {
+      assert.equal(await titleVia({ proxy: { server: address(open) }, ignoreHTTPSErrors: true },
+        'https://site.invalid/'), 'tunnelled site.invalid');
+      assert.ok(seen.includes('CONNECT site.invalid:443'), seen.join());
+    });
+    await check('newContext proxy: username and password answer both kinds of 407', async () => {
+      const options = { proxy: { server: address(guarded), username: 'user', password: 'pass' }, ignoreHTTPSErrors: true };
+      assert.equal(await titleVia(options, 'http://auth.invalid/'), 'proxied http://auth.invalid/');
+      assert.equal(await titleVia(options, 'https://auth.invalid/'), 'tunnelled auth.invalid');
+    });
+    await check('newContext proxy: bypass goes direct, failures name the proxy', async () => {
+      const before = seen.length;
+      await assert.rejects(titleVia({ proxy: { server: address(open), bypass: '*.invalid' } }, 'http://site.invalid/'),
+        /ERR_NAME_NOT_RESOLVED/);
+      assert.equal(seen.length, before);
+      await assert.rejects(titleVia({ proxy: { server: address(guarded) } }, 'https://auth.invalid/'),
+        /ERR_TUNNEL_CONNECTION_FAILED/);
+      await assert.rejects(titleVia({ proxy: { server: 'http://127.0.0.1:9' } }, 'http://site.invalid/'),
+        /ERR_PROXY_CONNECTION_FAILED/);
+    });
+    await check('https negotiates HTTP/2 and reports it in Network', async () => {
+      const c = await browser.newContext({ ignoreHTTPSErrors: true });
+      try {
+        const p = await c.newPage();
+        const session = await c.newCDPSession(p);
+        await session.send('Network.enable');
+        const received = new Promise(resolve => session.once('Network.responseReceived', e => resolve(e.response)));
+        const response = await p.goto(`https://127.0.0.1:${h2.address().port}/`);
+        assert.equal(await p.title(), '2.0');
+        assert.equal(response.statusText(), '');
+        assert.equal((await received).protocol, 'h2');
+      } finally { await c.close(); }
+    });
+    await check('newContext proxy: SOCKS is refused explicitly', async () => {
+      await assert.rejects(browser.newContext({ proxy: { server: 'socks5://127.0.0.1:1' } }), /SOCKS proxies are not supported/);
+    });
+  } finally {
+    for (const s of [open, guarded, tls]) {
+      s.closeAllConnections();
+      s.close();
+    }
+    h2.close();
+  }
 }
 await check('second context is independent', async () => {
   const other = await browser.newContext();
@@ -1034,6 +1451,48 @@ await check('second context is independent', async () => {
   await p2.evaluate(() => { globalThis.marker = 'second'; });
   assert.equal(await page.evaluate(() => typeof globalThis.marker), 'undefined');
   await other.close();
+});
+await check('timezoneId applies to Date and Intl, one zone per connection', async () => {
+  const facts = (p) => p.evaluate(() => ({
+    zone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    winter: new Date('2024-01-15T12:00:00Z').getTimezoneOffset(),
+    summer: new Date('2024-07-15T12:00:00Z').getTimezoneOffset(),
+    hour: new Date('2024-01-15T12:00:00Z').getHours(),
+    text: new Date('2024-01-15T12:00:00Z').toString(),
+    local: new Date(2024, 0, 15, 12).toISOString(),
+    locale: new Date('2024-01-15T12:00:00Z').toLocaleTimeString('en-US', { hour: 'numeric', hour12: false }),
+  }));
+  const host = (await facts(page)).zone;
+  const tokyo = await browser.newContext({ timezoneId: 'Asia/Tokyo' });
+  try {
+    const p = await tokyo.newPage();
+    assert.deepEqual(await facts(p), {
+      zone: 'Asia/Tokyo', winter: -540, summer: -540, hour: 21,
+      text: 'Mon Jan 15 2024 21:00:00 GMT+0900 (Japan Standard Time)',
+      local: '2024-01-15T03:00:00.000Z', locale: '21',
+    });
+    // Another context on this connection cannot have another zone: it fails, and
+    // does not silently get the wrong one.
+    const paris = await browser.newContext({ timezoneId: 'Europe/Paris' });
+    try {
+      await assert.rejects(paris.newPage(), /Cannot set timezone Europe\/Paris/);
+    } finally { await paris.close(); }
+    assert.equal((await facts(p)).zone, 'Asia/Tokyo');
+  } finally { await tokyo.close(); }
+  assert.equal((await facts(page)).zone, host, 'the last page with a zone gives it back');
+
+  // Closed contexts leave no claim, and daylight saving time follows the zone.
+  const ljubljana = await browser.newContext({ timezoneId: 'Europe/Ljubljana' });
+  try {
+    const p = await ljubljana.newPage();
+    const f = await facts(p);
+    assert.deepEqual([f.zone, f.winter, f.summer, f.hour], ['Europe/Ljubljana', -60, -120, 13]);
+  } finally { await ljubljana.close(); }
+
+  const invalid = await browser.newContext({ timezoneId: 'Mars/Olympus_Mons' });
+  try {
+    await assert.rejects(invalid.newPage(), /Invalid timezone/);
+  } finally { await invalid.close(); }
 });
 await check('close', async () => {
   await page.close();

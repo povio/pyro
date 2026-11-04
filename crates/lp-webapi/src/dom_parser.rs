@@ -1,4 +1,5 @@
-//! `DOMParser` (HTML §8.5.1; upstream src/browser/webapi/DOMParser.zig).
+//! `DOMParser` (HTML §8.5.1; upstream src/browser/webapi/DOMParser.zig) and
+//! `XMLSerializer` (DOM Parsing §2).
 //!
 //! HTML uses html5ever; XML types use the bounded inert XML 1.0 parser.
 //! Malformed XML and unsupported DTDs return a parsererror document.
@@ -39,6 +40,23 @@ impl JsClass for DomParser {
     }
 }
 
+pub struct XmlSerializer;
+impl JsClass for XmlSerializer {
+    const NAME: &'static str = "XMLSerializer";
+    type Data = ();
+    type Parent = NoParent;
+    fn define(def: &mut ClassDef<Self>) {
+        def.constructor(0, |s, nt, _a| s.wrap_new::<XmlSerializer>((), nt, None));
+        def.method("serializeToString", 1, |s, _d, a| {
+            let node = crate::node::node_arg(s, a.get(0), "XMLSerializer.serializeToString")?;
+            let page = page_of(s)?;
+            let xml = page.dom.borrow().xml_serialize(node).js()?;
+            Ok(s.string(&xml))
+        });
+    }
+}
+
 pub(crate) fn register(engine: &lp_js::Engine) {
     engine.register::<DomParser>();
+    engine.register::<XmlSerializer>();
 }

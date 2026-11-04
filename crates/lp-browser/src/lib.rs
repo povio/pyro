@@ -94,6 +94,8 @@ pub enum HistoryHandling {
 
 #[derive(Debug, Clone)]
 pub struct NavigateOpts {
+    /// Body and content type of a form POST (`None`: GET).
+    pub post: Option<(Vec<u8>, String)>,
     pub url: String,
     pub reason: NavigationReason,
     /// CDP request id of `Page.navigate`, so the response can be ordered after
@@ -104,7 +106,13 @@ pub struct NavigateOpts {
 
 impl NavigateOpts {
     pub fn address_bar(url: impl Into<String>) -> Self {
-        NavigateOpts { url: url.into(), reason: NavigationReason::AddressBar, cdp_request_id: None, referrer: None }
+        NavigateOpts {
+            post: None,
+            url: url.into(),
+            reason: NavigationReason::AddressBar,
+            cdp_request_id: None,
+            referrer: None,
+        }
     }
 }
 
@@ -205,11 +213,20 @@ pub enum PageEvent {
     },
     /// A link or `window.open` targets a new browsing context: the embedder
     /// opens `url` in a new page of the same browser context (no engine page
-    /// exists yet). `opener` is whether the popup keeps its opener.
+    /// exists yet). `opener` is whether the popup keeps its opener; `ticket`
+    /// is set for `window.open`, and the embedder holds it as long as the
+    /// popup page lives.
     PopupRequested {
         frame_id: FrameId,
         url: String,
         opener: bool,
+        ticket: Option<std::rc::Rc<lp_webapi::PopupTicket>>,
+    },
+    /// The object `window.open` returned asked something of its popup. Comes
+    /// after that popup's `PopupRequested`.
+    PopupCommand {
+        popup: std::rc::Rc<lp_webapi::PopupState>,
+        command: lp_webapi::PopupCommand,
     },
     /// A native download was initiated, before its bytes finish fetching.
     DownloadStarted,
@@ -742,6 +759,16 @@ impl Browser {
 
     /// Creates an isolated browser context with its own network state.
     pub fn create_context(&mut self) -> std::io::Result<ContextId> {
+        self.create_context_inner(None)
+    }
+
+    /// `create_context` with its own proxy setting (`None`: no proxy) instead
+    /// of the browser's.
+    pub fn create_context_with_proxy(&mut self, proxy: Option<lp_net::ProxyConfig>) -> std::io::Result<ContextId> {
+        self.create_context_inner(Some(proxy))
+    }
+
+    fn create_context_inner(&mut self, proxy: Option<Option<lp_net::ProxyConfig>>) -> std::io::Result<ContextId> {
         let id = ContextId(self.next() as u32);
         let local_storage = lp_webapi::StorageNamespace::seeded(&self.local_storage_seed);
         self.contexts.push(ContextState {
@@ -753,13 +780,24 @@ impl Browser {
             init_scripts: Vec::new(),
         });
         if self.net_config.is_some() {
-            self.attach_network(id)?;
+            self.attach_network_with(id, proxy)?;
         }
         Ok(id)
     }
 
     fn attach_network(&mut self, id: ContextId) -> std::io::Result<()> {
-        let config = self.net_config.clone().unwrap_or_default();
+        self.attach_network_with(id, None)
+    }
+
+    fn attach_network_with(
+        &mut self,
+        id: ContextId,
+        proxy: Option<Option<lp_net::ProxyConfig>>,
+    ) -> std::io::Result<()> {
+        let mut config = self.net_config.clone().unwrap_or_default();
+        if let Some(proxy) = proxy {
+            config.proxy = proxy;
+        }
         let client = lp_net::NetClient::new(config)?;
         client.set_ignore_certificate_errors(self.ignore_certificate_errors);
         if let Some(c) = self.contexts.iter_mut().find(|c| c.id == id) {
@@ -819,6 +857,7 @@ impl Browser {
             return;
         };
         let request = FetchRequest {
+            post: None,
             url,
             kind,
             page,
@@ -890,6 +929,7 @@ impl Browser {
         self.navigate(
             id,
             NavigateOpts {
+                post: None,
                 url: "about:blank".into(),
                 reason: NavigationReason::InitialFrameNavigation,
                 cdp_request_id: None,
@@ -1156,6 +1196,7 @@ impl Browser {
             if let Some(parent) = &inherited {
                 flags.opaque |= parent.sandbox.opaque;
                 flags.scripts_disabled |= parent.sandbox.scripts_disabled;
+                flags.popups_blocked |= parent.sandbox.popups_blocked;
             }
             flags
         } else {
