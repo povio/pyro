@@ -692,21 +692,37 @@ impl Replay<'_, '_> {
             })
     }
 
-    /// Whether a paper-cut page writes glyph `i` of a run. Chrome's PDF has no
-    /// clipped text: Skia's PDF device skips a glyph outside the clip's bounds
-    /// (the page's sides or an overflow clip), so it is not extracted either.
-    /// The page's top and bottom are not looked at: a line's place on a page is
-    /// decided for the whole run.
-    fn glyph_shown(&self, c: &anyrender::recording::GlyphRunCommand, i: usize) -> bool {
-        let g = &c.glyphs[i];
+    /// The glyphs of a run a paper-cut page writes. Chrome's PDF has no clipped
+    /// text: Skia's PDF device skips a glyph outside the clip's bounds (the page's
+    /// sides or an overflow clip), so it is not extracted either. The page's top
+    /// and bottom are not looked at: a line's place on a page is decided for the
+    /// whole run.
+    fn glyphs_shown(&self, c: &anyrender::recording::GlyphRunCommand) -> Vec<usize> {
         let size = c.font_size as f64;
-        let (x, y) = (g.x as f64, g.y as f64);
-        let right = c.glyphs.get(i + 1).map_or(x + size * 0.6, |n| (n.x as f64).max(x));
-        let glyph = c.transform.transform_rect_bbox(Rect::new(x, y - size, right, y + size * 0.3));
         let clip = self.layers.last().map(|l| l.clip);
-        let inside = |lo0: f64, hi0: f64, lo1: f64, hi1: f64| lo0 < hi1 && lo1 < hi0;
-        inside(glyph.x0, glyph.x1, self.page.x0, self.page.x1)
-            && clip.is_none_or(|l| inside(glyph.x0, glyph.x1, l.x0, l.x1) && inside(glyph.y0, glyph.y1, l.y0, l.y1))
+        let (left, right) = clip.map_or((self.page.x0, self.page.x1), |l| {
+            (self.page.x0.max(l.x0), self.page.x1.min(l.x1))
+        });
+        let (top, bottom) = clip.map_or((f64::MIN, f64::MAX), |l| (l.y0, l.y1));
+        let inside = |glyph: Rect| glyph.x0 < right && left < glyph.x1 && glyph.y0 < bottom && top < glyph.y1;
+        let edges = |i: usize| {
+            let g = &c.glyphs[i];
+            let (x, y) = (g.x as f64, g.y as f64);
+            let end = c.glyphs.get(i + 1).map_or(x + size * 0.6, |n| (n.x as f64).max(x));
+            Rect::new(x, y - size, end, y + size * 0.3)
+        };
+        let all = 0..c.glyphs.len();
+        let [a, b, skew, d, e, f] = c.transform.as_coeffs();
+        // Text is hardly ever rotated: no corners to work out per glyph.
+        if b == 0.0 && skew == 0.0 && a > 0.0 && d > 0.0 {
+            all.filter(|&i| {
+                let r = edges(i);
+                inside(Rect::new(a * r.x0 + e, d * r.y0 + f, a * r.x1 + e, d * r.y1 + f))
+            })
+            .collect()
+        } else {
+            all.filter(|&i| inside(c.transform.transform_rect_bbox(edges(i)))).collect()
+        }
     }
 
     fn visible(&mut self, bounds: Rect) -> bool {
@@ -857,7 +873,7 @@ impl Replay<'_, '_> {
         // Only a paper-cut page: `.pz-page` documents keep what they had.
         let paper_cut = self.extras.is_some();
         let shown: Vec<usize> = if paper_cut && !self.run_all_shown(c) {
-            (0..c.glyphs.len()).filter(|&i| self.glyph_shown(c, i)).collect()
+            self.glyphs_shown(c)
         } else {
             (0..c.glyphs.len()).collect()
         };
