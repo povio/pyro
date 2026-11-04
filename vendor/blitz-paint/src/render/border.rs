@@ -619,10 +619,10 @@ impl ElementCx<'_, '_> {
         }
         let position = self.context.dom.physical_unrounded_geometry(self.node.id).0;
         let (ax, ay) = (position.x as f64, position.y as f64);
-        // A rule is snapped to whole pixels of the page, as Chromium paints it: it starts at the floor of
-        // its centered position, and is its width wide.
-        let snap_x = |x: f64| (ax + x).floor() - ax.round();
-        let snap_y = |y: f64| (ay + y).floor() - ay.round();
+        // A rule is snapped to whole pixels of the page, as Chromium paints it: it starts at its centered
+        // position, rounded, and is its width wide.
+        let snap_x = |x: f64| (ax + x).round() - ax.round();
+        let snap_y = |y: f64| (ay + y).round() - ay.round();
         let mut fill = |x0: f64, y0: f64, x1: f64, y1: f64, color: style::color::AbsoluteColor| {
             let shape = Rect::new(x0, y0, x1, y1).scale_from_origin(self.scale);
             scene.fill(Fill::NonZero, self.transform, color.as_srgb_color(), None, &shape);
