@@ -267,6 +267,8 @@ python3 page-stream-diff.py; python3 page-shift-check.py         # two lp-fixed 
 bun text-x.mjs <work dir> chrome; bun text-x.mjs <work dir> /abs/lightningpanda   # fractional text x: paper-cut and `.pz-page`, with screenshots
 ```
 
+`pdf-resample.mjs` compares a page's error against Chrome at 150 dpi as poppler rasterizes it and box-averaged from a higher resolution, to tell a real move from a sampling effect.
+
 `chrome-156/tos-deltas.json` holds the 44 ToS cases before and after (median, p95, max of per-tile deltas in pt; the search stops at 2.4 pt, and
 tiles match by ink profiles, so regular text can alias: read medians and p95 first). `text-x-before.json` and `text-x-after.json` hold the text-x set.
 
