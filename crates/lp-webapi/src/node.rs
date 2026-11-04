@@ -1049,6 +1049,7 @@ impl JsClass for Document {
         define_parent_node(def);
         crate::handlers::define_global(def);
         crate::handlers::define_document(def);
+        crate::html::define_document_reflection(def);
         def.constructor(0, |s, nt, _a| {
             let page = page_of(s)?;
             let id = page.dom.borrow_mut().create_document(DocumentKind::Xml, "about:blank");

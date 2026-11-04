@@ -146,6 +146,9 @@ pub struct PageDom {
     /// Control activated by a Space keydown, clicked on the matching keyup.
     pub(crate) space_target: Cell<Option<NodeId>>,
     dialog_returns: RefCell<FxHashMap<NodeId, String>>,
+    /// `nonce` IDL values, keyed with the content attribute they were set
+    /// over: a later attribute change wins, as it updates the internal slot.
+    nonces: RefCell<FxHashMap<NodeId, (Option<String>, String)>>,
     sheet_rules: RefCell<FxHashMap<NodeId, Vec<String>>>,
     /// Files selected into `<input type=file>` (CDP DOM.setFileInputFiles).
     pub(crate) files: RefCell<FxHashMap<NodeId, Vec<crate::file::FileEntry>>>,
@@ -414,6 +417,7 @@ impl PageDom {
             script_nesting: Cell::new(0),
             space_target: Cell::new(None),
             dialog_returns: RefCell::new(FxHashMap::default()),
+            nonces: RefCell::new(FxHashMap::default()),
             sheet_rules: RefCell::new(FxHashMap::default()),
             files: RefCell::new(FxHashMap::default()),
             layout: RefCell::new(lp_dom::layout::Layout::new(document)),
@@ -1082,6 +1086,14 @@ impl PageDom {
     }
     pub(crate) fn set_dialog_return(&self, el: NodeId, v: String) {
         self.dialog_returns.borrow_mut().insert(el, v);
+    }
+
+    pub(crate) fn nonce(&self, el: NodeId, attr: Option<&str>) -> Option<String> {
+        let nonces = self.nonces.borrow();
+        nonces.get(&el).filter(|(over, _)| over.as_deref() == attr).map(|(_, value)| value.clone())
+    }
+    pub(crate) fn set_nonce(&self, el: NodeId, attr: Option<&str>, value: String) {
+        self.nonces.borrow_mut().insert(el, (attr.map(str::to_owned), value));
     }
 
     /// CSSOM rules inserted via `insertRule` for a `<style>`/`<link>` owner.

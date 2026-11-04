@@ -105,6 +105,100 @@ fn eval(realm: &Realm, src: &str) -> String {
 }
 
 #[test]
+fn attribute_reflection_kinds() {
+    let e = env("<!doctype html><html><body><p>x</p></body></html>");
+    let r = &e.main;
+    // Enumerated, limited to known values: canonical case, invalid and missing
+    // defaults, and the content attribute keeps the string that was set.
+    assert_eq!(eval(r, "const a = document.createElement('a'); a.dir"), "");
+    assert_eq!(eval(r, "a.dir = 'RTL'; a.dir + ':' + a.getAttribute('dir')"), "rtl:RTL");
+    assert_eq!(eval(r, "a.dir = 'nope'; a.dir + ':' + a.getAttribute('dir')"), ":nope");
+    assert_eq!(eval(r, "a.setAttribute('dir', 'r\\u017Ftl'); a.dir"), "");
+    assert_eq!(
+        eval(r, "const t = document.createElement('track'); t.kind + ':' + (t.kind = 'x', t.kind)"),
+        "subtitles:metadata"
+    );
+    assert_eq!(
+        eval(r, "const f = document.createElement('form'); f.enctype === f.encoding && f.method + f.autocomplete"),
+        "geton"
+    );
+    assert_eq!(
+        eval(r, "const b = document.createElement('button'); b.formMethod + ':' + (b.formMethod = 'x', b.formMethod)"),
+        ":get"
+    );
+    // Nullable CORS settings.
+    assert_eq!(eval(r, "const i = document.createElement('img'); String(i.crossOrigin)"), "null");
+    assert_eq!(eval(r, "i.crossOrigin = ''; i.crossOrigin + ':' + i.getAttribute('crossorigin')"), "anonymous:");
+    assert_eq!(eval(r, "i.crossOrigin = 'USE-credentials'; i.crossOrigin"), "use-credentials");
+    assert_eq!(eval(r, "i.crossOrigin = null; String(i.crossOrigin) + i.hasAttribute('crossorigin')"), "nullfalse");
+    // Integers parse with the HTML rules, not Rust's.
+    assert_eq!(eval(r, "const o = document.createElement('ol'); o.start"), "1");
+    assert_eq!(eval(r, "o.setAttribute('start', ' \\t-5x'); o.start"), "-5");
+    assert_eq!(eval(r, "o.setAttribute('start', '\\u00A07'); o.start"), "1");
+    assert_eq!(eval(r, "o.setAttribute('start', '2147483648'); o.start"), "1");
+    assert_eq!(eval(r, "i.hspace = 2147483648; i.hspace + ':' + i.getAttribute('hspace')"), "0:0");
+    assert_eq!(eval(r, "i.setAttribute('hspace', '-1'); i.hspace"), "0");
+    assert_eq!(eval(r, "const n = document.createElement('input'); n.maxLength + ':' + n.size"), "-1:20");
+    assert_eq!(eval(r, "try { n.maxLength = -1 } catch (x) { x.name }"), "IndexSizeError");
+    assert_eq!(eval(r, "try { n.size = 0 } catch (x) { x.name }"), "IndexSizeError");
+    assert_eq!(
+        eval(r, "const ta = document.createElement('textarea'); ta.cols = 0; ta.cols + ':' + ta.getAttribute('cols')"),
+        "20:20"
+    );
+    // Clamped ranges.
+    assert_eq!(eval(r, "const c = document.createElement('td'); c.setAttribute('colspan', '5000'); c.colSpan"), "1000");
+    assert_eq!(eval(r, "c.setAttribute('colspan', '0'); c.colSpan"), "1");
+    assert_eq!(eval(r, "c.setAttribute('colspan', '-3'); c.colSpan"), "1");
+    assert_eq!(eval(r, "c.setAttribute('rowspan', '0'); c.rowSpan"), "0");
+    // Doubles.
+    assert_eq!(eval(r, "const p = document.createElement('progress'); p.max"), "1");
+    assert_eq!(eval(r, "p.setAttribute('max', '1.e2x'); p.max"), "100");
+    assert_eq!(eval(r, "p.setAttribute('max', '1e999'); p.max"), "1");
+    assert_eq!(eval(r, "p.setAttribute('max', '3'); p.max = -1; p.getAttribute('max')"), "3");
+    assert_eq!(eval(r, "p.max = 1e25; p.getAttribute('max')"), "1e+25");
+    assert_eq!(eval(r, "try { p.max = NaN } catch (x) { x.name }"), "TypeError");
+    assert_eq!(
+        eval(r, "const m = document.createElement('meter'); m.setAttribute('min', '2'); m.setAttribute('value', '1'); [m.min, m.max, m.value, m.low, m.high, m.optimum].join()"),
+        "2,2,2,2,2,2"
+    );
+    // URLs, formAction and null-to-empty strings.
+    assert_eq!(eval(r, "const n2 = document.createElement('input'); n2.formAction"), "http://localhost:5173/app");
+    assert_eq!(eval(r, "n2.formAction = 'x'; n2.formAction"), "http://localhost:5173/x");
+    assert_eq!(
+        eval(r, "const fr = document.createElement('frame'); fr.marginWidth = null; fr.getAttribute('marginwidth')"),
+        ""
+    );
+    // The elements that gained their own interface.
+    for (tag, iface) in [
+        ("marquee", "HTMLMarqueeElement"),
+        ("frameset", "HTMLFrameSetElement"),
+        ("frame", "HTMLFrameElement"),
+        ("font", "HTMLFontElement"),
+        ("dir", "HTMLDirectoryElement"),
+        ("param", "HTMLParamElement"),
+        ("track", "HTMLTrackElement"),
+    ] {
+        assert_eq!(eval(r, &format!("document.createElement('{tag}') instanceof {iface}")), "true", "{tag}");
+    }
+    // inputMode is global, nonce never reaches the content attribute.
+    assert_eq!(eval(r, "const u = document.createElement('foo'); u.inputMode = 'TEL'; u.inputMode"), "tel");
+    assert_eq!(eval(r, "u.nonce = 'a'; u.nonce + ':' + u.getAttribute('nonce')"), "a:null");
+    assert_eq!(eval(r, "u.setAttribute('nonce', 'b'); u.nonce"), "b");
+    assert_eq!(eval(r, "u.nonce = 'c'; u.nonce + ':' + u.getAttribute('nonce')"), "c:b");
+    // Document color attributes and dir reflect the body and root element.
+    assert_eq!(
+        eval(r, "document.fgColor = 'red'; document.body.getAttribute('text') + ':' + document.body.text"),
+        "red:red"
+    );
+    assert_eq!(eval(r, "document.bgColor = null; document.body.getAttribute('bgcolor')"), "");
+    assert_eq!(
+        eval(r, "document.dir = 'RTL'; document.dir + ':' + document.documentElement.getAttribute('dir')"),
+        "rtl:RTL"
+    );
+    e.page.dispose();
+}
+
+#[test]
 fn document_tree_and_identity() {
     let e = env("<!doctype html><html><head><title> Hi  there </title></head><body><div id=app class='a b'><p>one</p><p>two</p></div></body></html>");
     let r = &e.main;
