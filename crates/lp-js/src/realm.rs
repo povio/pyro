@@ -18,7 +18,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::os::raw::c_void;
 use std::ptr;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 /// Stable identifier of a realm within its engine (CDP `executionContextId`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -153,7 +153,7 @@ pub(crate) struct RealmInner {
     targets: RefCell<Vec<Option<Persistent>>>,
     /// Whether each class's members are installed in this realm.
     populated: RefCell<Vec<bool>>,
-    identity: RefCell<HashMap<IdentityKey, sys::JSWeakRef>>,
+    identity: RefCell<rustc_hash::FxHashMap<IdentityKey, sys::JSWeakRef>>,
     helpers: RefCell<Option<Persistent>>,
     helper_cache: RefCell<HashMap<&'static str, Persistent>>,
     /// The realm's `Object.prototype`, for the plain-object fast path of `is_plain_object`.
@@ -182,6 +182,9 @@ pub(crate) struct RealmInner {
     /// `JSContextGetGlobalObject` of the realm's context, cached: the C API
     /// call takes the JSC lock and binding calls ask for it constantly.
     global_object: Cell<sys::JSObjectRef>,
+    /// The global object behind that proxy (null when unknown). A custom
+    /// accessor read as a global variable receives it as its receiver.
+    global_target: Cell<sys::JSObjectRef>,
 }
 
 impl RealmInner {
@@ -193,12 +196,14 @@ impl RealmInner {
         if self.ctx.get().is_null() || self.native_callback_hook_active.get() {
             return None;
         }
-        let hook = self.native_callback_hook.borrow().clone()?;
-        let pending = self.native_callback_pending.borrow().clone();
-        match pending {
-            Some(pending) if !pending() => None,
-            _ => Some(hook),
+        // Runs after every native callback: ask whether there is anything to
+        // do before cloning the hook (the usual answer is no).
+        if let Some(pending) = self.native_callback_pending.borrow().as_ref() {
+            if !pending() {
+                return None;
+            }
         }
+        self.native_callback_hook.borrow().clone()
     }
 
     pub(crate) fn run_native_callback_hook(&self, scope: &Scope<'_>, hook: NativeCallbackHook) {
@@ -480,15 +485,43 @@ pub trait NamedProperties {
     fn resolve<'s>(&self, scope: &Scope<'s>, name: &str) -> JsResult<Option<Value<'s>>>;
 }
 
+thread_local! {
+    /// The last realm a callback resolved, by its global context: native
+    /// callbacks arrive in bursts from one realm (a selector engine reads
+    /// tens of thousands of properties per query), and the engine lookup
+    /// behind this (thread-local engine, realm list, weak upgrade) is a
+    /// measurable share of a 100 ns callback.
+    static LAST_REALM: RefCell<(sys::JSContextRef, Weak<RealmInner>)> = const { RefCell::new((ptr::null(), Weak::new())) };
+}
+
 pub(crate) fn realm_for_ctx(ctx: sys::JSContextRef) -> Option<Rc<RealmInner>> {
+    let cached = LAST_REALM.with(|c| {
+        let c = c.borrow();
+        if c.0 == ctx {
+            c.1.upgrade()
+        } else {
+            None
+        }
+    });
+    if let Some(realm) = cached {
+        // A disposed realm keeps its entry in the engine list until it is
+        // removed there; its context is null then.
+        if !realm.ctx.get().is_null() && realm.engine.is_live() {
+            return Some(realm);
+        }
+    }
     let engine = crate::engine::current_inner()?;
     // Callbacks receive the global context itself; only other contexts need
     // the (locking) lookup of their global context.
-    if let Some(realm) = engine.realm_for_global(ctx as sys::JSGlobalContextRef) {
-        return Some(realm);
-    }
-    let global = unsafe { sys::JSContextGetGlobalContext(ctx) };
-    engine.realm_for_global(global)
+    let realm = match engine.realm_for_global(ctx as sys::JSGlobalContextRef) {
+        Some(realm) => realm,
+        None => {
+            let global = unsafe { sys::JSContextGetGlobalContext(ctx) };
+            engine.realm_for_global(global)?
+        }
+    };
+    LAST_REALM.with(|c| *c.borrow_mut() = (ctx, Rc::downgrade(&realm)));
+    Some(realm)
 }
 
 impl<'s> Scope<'s> {
@@ -978,12 +1011,18 @@ impl<'s> Scope<'s> {
             if !h.is_null() {
                 return ((*h).tag == class::PayloadTag::Wrapper).then_some(h);
             }
-            if obj == self.global_object_raw() {
+            if self.is_global_object(obj) {
                 let h = self.realm.global_payload.get();
                 return (!h.is_null()).then_some(h);
             }
         }
         None
+    }
+
+    /// Whether `obj` is the realm's global: its proxy (what script sees) or
+    /// the object behind it (what a global variable's getter receives).
+    pub(crate) fn is_global_object(&self, obj: sys::JSObjectRef) -> bool {
+        obj == self.global_object_raw() || (!obj.is_null() && obj == self.realm.global_target.get())
     }
 
     /// The realm's global object (`JSContextGetGlobalObject`, cached).
@@ -1236,7 +1275,7 @@ pub(crate) fn create(engine: &Rc<EngineInner>, options: RealmOptions) -> JsResul
         ctors: RefCell::new(Vec::new()),
         targets: RefCell::new(Vec::new()),
         populated: RefCell::new(Vec::new()),
-        identity: RefCell::new(HashMap::new()),
+        identity: RefCell::new(rustc_hash::FxHashMap::default()),
         helpers: RefCell::new(None),
         helper_cache: RefCell::new(HashMap::new()),
         object_proto: RefCell::new(None),
@@ -1255,7 +1294,13 @@ pub(crate) fn create(engine: &Rc<EngineInner>, options: RealmOptions) -> JsResul
         global_payload: Cell::new(ptr::null_mut()),
         // SAFETY: fresh, retained global context.
         global_object: Cell::new(unsafe { sys::JSContextGetGlobalObject(ctx) }),
+        global_target: Cell::new(ptr::null_mut()),
     });
+    if let Some(target) = sys::spi::get().get_proxy_target {
+        // SAFETY: the cached global proxy of a live context.
+        let t = unsafe { target(inner.global_object.get()) };
+        inner.global_target.set(t as sys::JSObjectRef);
+    }
     engine.realms.borrow_mut().push((ctx, Rc::downgrade(&inner)));
     let realm = Realm { inner };
     {
@@ -1311,7 +1356,9 @@ fn install_classes(scope: &Scope<'_>) -> JsResult<()> {
         let parent = info.parent.map_or(-1, i64::from);
         spec.push_str(&format!("[{name},{parent},{},{}]", info.def.ctor_length, info.def.exposed));
         let native = match info.def.constructor {
-            Some(c) => make_member_fn(scope.ctx, reg.member, c, info.name, info.def.ctor_length, &keys)?.value(),
+            Some(c) => {
+                make_member_fn(scope.ctx, &realm.engine, reg.member, c, info.name, info.def.ctor_length, &keys)?.value()
+            }
             None => scope.null(),
         };
         natives.push(scope, native);
@@ -1481,12 +1528,28 @@ fn install_members(scope: &Scope<'_>, id: ClassId) -> JsResult<()> {
 /// non-enumerable, configurable), in that order.
 fn make_member_fn(
     ctx: sys::JSContextRef,
+    engine: &EngineInner,
     class: sys::JSClassRef,
     call: class::MemberCall,
     name: &str,
     length: u32,
     keys: &MemberKeys,
 ) -> JsResult<Object<'static>> {
+    // The patched JSC makes an internal function that call inline caches link
+    // to directly; a C API callback object is called through JSC's host-call
+    // slow path every time. The payload has no finalizer there: the registry
+    // keeps it for the engine's lifetime.
+    if let Some(make) = sys::spi::get().make_function_with_data {
+        let mut payload = Box::new(class::MemberPayload { tag: class::PayloadTag::Member, call });
+        let data = &mut *payload as *mut class::MemberPayload as *mut c_void;
+        engine.member_payloads.borrow_mut().push(payload);
+        let n = JsString::new(name);
+        let f = unsafe { make(ctx, n.as_raw(), length, Some(class::member_call_data), data) };
+        if f.is_null() {
+            return Err(JsError::Type("cannot create function".into()));
+        }
+        return Ok(unsafe { Object::from_raw(ctx, f) });
+    }
     let payload = Box::into_raw(Box::new(class::MemberPayload { tag: class::PayloadTag::Member, call })) as *mut c_void;
     let f = unsafe { Object::from_raw(ctx, sys::JSObjectMake(ctx, class, payload)) };
     let attrs = sys::kJSPropertyAttributeReadOnly | sys::kJSPropertyAttributeDontEnum;
@@ -1529,7 +1592,7 @@ fn install_members_raw(
         let d = &reg.classes.get(id as usize).ok_or(JsError::Type("unknown class".into()))?.def;
         (
             d.methods.iter().map(|m| (m.name, m.length, m.call)).collect::<Vec<_>>(),
-            d.accessors.iter().map(|a| (a.name, a.get, a.set)).collect::<Vec<_>>(),
+            d.accessors.iter().map(|a| (a.name, a.get, a.set, a.slot)).collect::<Vec<_>>(),
             d.constants.clone(),
             d.statics.iter().map(|m| (m.name, m.length, m.call)).collect::<Vec<_>>(),
             d.indexed_iterable,
@@ -1549,7 +1612,7 @@ fn install_members_raw(
     let member_class = engine.classes.borrow().member;
     let keys = MemberKeys::new();
     let native = |name: &str, length: u32, call: class::MemberCall| -> JsResult<Object<'_>> {
-        let f = make_member_fn(ctx, member_class, call, name, length, &keys)?;
+        let f = make_member_fn(ctx, engine, member_class, call, name, length, &keys)?;
         if let Some(p) = function_proto {
             f.set_prototype(p);
         }
@@ -1560,7 +1623,28 @@ fn install_members_raw(
         proto.set(name, f.value())?;
     }
     let accessor = helper("accessor")?;
-    for (name, get, set) in accessors {
+    let custom = sys::spi::get().set_custom_accessor;
+    for (name, get, set, slot) in accessors {
+        if let (Some(install), Some(slot)) = (custom, slot) {
+            // A custom accessor: inline caches call the getter directly
+            // (`crate::accessors`); enumerable and configurable like the
+            // ordinary form below.
+            let n = JsString::new(name);
+            let setter = set.map(|_| crate::accessors::SETTERS[usize::from(slot)]);
+            let ok = unsafe {
+                install(
+                    ctx,
+                    proto.raw,
+                    n.as_raw(),
+                    Some(crate::accessors::GETTERS[usize::from(slot)]),
+                    setter,
+                    sys::kJSPropertyAttributeNone,
+                )
+            };
+            if ok {
+                continue;
+            }
+        }
         let g = native(name, 0, get)?;
         let st = match set {
             // Setters keep length 0, as JSC's callback functions had.

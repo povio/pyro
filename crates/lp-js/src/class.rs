@@ -22,7 +22,6 @@ use crate::string::{utf16_of, JsString};
 use crate::value::{Args, Object, Value};
 use lp_jsc_sys as sys;
 use std::any::TypeId;
-use std::collections::HashMap;
 use std::ffi::CString;
 use std::marker::PhantomData;
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -71,6 +70,9 @@ pub(crate) struct AccessorSpec {
     pub name: &'static str,
     pub get: MemberCall,
     pub set: Option<MemberCall>,
+    /// Custom accessor slot ([`crate::accessors`]); `None` installs an
+    /// ordinary accessor (no patched JSC, or the slots are used up).
+    pub slot: Option<u16>,
 }
 
 /// A member's Rust callback, type-erased, plus the invoker that knows its
@@ -197,7 +199,7 @@ impl<C: JsClass> ClassDef<C> {
     /// Adds a read-only attribute.
     pub fn getter(&mut self, name: &'static str, g: GetterFn<C>) -> &mut Self {
         let get = MemberCall { invoke: getter_invoke::<C>, f: g as *const () };
-        self.accessors.push(AccessorSpec { name, get, set: None });
+        self.accessors.push(AccessorSpec { name, get, set: None, slot: None });
         self
     }
 
@@ -205,7 +207,7 @@ impl<C: JsClass> ClassDef<C> {
     pub fn accessor(&mut self, name: &'static str, g: GetterFn<C>, s: SetterFn<C>) -> &mut Self {
         let get = MemberCall { invoke: getter_invoke::<C>, f: g as *const () };
         let set = MemberCall { invoke: setter_invoke::<C>, f: s as *const () };
-        self.accessors.push(AccessorSpec { name, get, set: Some(set) });
+        self.accessors.push(AccessorSpec { name, get, set: Some(set), slot: None });
         self
     }
 
@@ -348,7 +350,7 @@ pub(crate) struct ClassDefErased {
 
 pub(crate) struct ClassRegistry {
     pub classes: Vec<ClassInfo>,
-    by_type: HashMap<TypeId, ClassId>,
+    by_type: rustc_hash::FxHashMap<TypeId, ClassId>,
     /// Parent JSClass of every wrapper class: carries the finalizer and marks
     /// objects whose private pointer is a `Header`.
     pub base: sys::JSClassRef,
@@ -381,7 +383,7 @@ impl ClassRegistry {
         mdef.callAsFunction = Some(member_call);
         mdef.finalize = Some(member_finalize);
         let member = unsafe { sys::JSClassCreate(&mdef) };
-        ClassRegistry { classes: Vec::new(), by_type: HashMap::new(), base, closure, member }
+        ClassRegistry { classes: Vec::new(), by_type: rustc_hash::FxHashMap::default(), base, closure, member }
     }
 
     pub fn id_of<C: JsClass>(&self) -> Option<ClassId> {
@@ -454,18 +456,33 @@ pub(crate) fn register<C: JsClass>(engine: &EngineInner) -> ClassId {
         def.hooks = def.hooks.inherit(&inherited);
     }
     let has_hooks = def.hooks.any();
+    let has_named_hooks =
+        def.hooks.named.is_some() || def.hooks.named_set.is_some() || def.hooks.named_delete.is_some();
+    // The patched JSC takes indexed properties through their own callbacks,
+    // which leaves a class with only those (NodeList) cacheable: its named
+    // lookups never run a hook. Without it, the named hooks parse index names.
+    let indexed_callbacks = sys::spi::get().class_set_indexed_callbacks.filter(|_| def.hooks.indexed.is_some());
     let mut jsdef = sys::JSClassDefinition::EMPTY;
     jsdef.className = cname.as_ptr();
     jsdef.attributes = sys::kJSClassAttributeNoAutomaticPrototype;
     jsdef.parentClass = reg.base;
-    if has_hooks {
+    if has_named_hooks || (def.hooks.indexed.is_some() && indexed_callbacks.is_none()) {
         jsdef.getProperty = Some(get_property_hook);
         jsdef.setProperty = Some(set_property_hook);
         jsdef.deleteProperty = Some(delete_property_hook);
+    }
+    if has_hooks {
         jsdef.getPropertyNames = Some(property_names_hook);
     }
     // SAFETY: valid definition; JSClassCreate copies the class name.
     let instance_class = unsafe { sys::JSClassCreate(&jsdef) };
+    if let Some(set) = indexed_callbacks {
+        // SAFETY: the class was just created and has no objects yet.
+        unsafe { set(instance_class, Some(get_by_index_hook), Some(set_by_index_hook)) };
+    }
+    for a in &mut def.accessors {
+        a.slot = crate::accessors::slot_for(TypeId::of::<C>(), a.name, a.get, a.set);
+    }
     reg.classes.push(ClassInfo {
         upcast: def.upcast,
         global_receiver: def.global_receiver,
@@ -594,10 +611,9 @@ pub(crate) fn new_payload<T: 'static>(
 /// `h` must be a live instance payload header whose class is registered in `reg`.
 pub(crate) unsafe fn class_data<'a, T: 'static>(reg: &ClassRegistry, h: *mut Header, want: ClassId) -> Option<&'a T> {
     unsafe {
+        // One walk up the class chain, projecting the data pointer as it
+        // goes; a chain that ends without reaching `want` is not a subclass.
         let mut class = (*h).class;
-        if !reg.is_subclass(class, want) {
-            return None;
-        }
         let mut ptr = ((*h).data_ptr)(h);
         while class != want {
             let info = reg.classes.get(class as usize)?;
@@ -742,14 +758,15 @@ unsafe fn guard_erased(
     step: &mut dyn FnMut(&Scope<'_>, Step) -> JsResult<Option<crate::Persistent>>,
 ) -> bool {
     let outcome = catch_unwind(AssertUnwindSafe(|| {
-        let _depth = DepthGuard::enter();
+        let (depth, terminating) = crate::engine::callback_cells();
+        let _depth = DepthGuard::enter_with(depth);
         let Some(realm) = crate::realm::realm_for_ctx(ctx) else {
             unsafe { throw_message(ctx, "Execution context was destroyed.", exc) };
             return false;
         };
         let scope = Scope::new(ctx, &realm);
         let result = step(&scope, Step::Run);
-        let hook = if matches!(result, Err(JsError::Terminated)) || crate::engine::TERMINATING.with(|t| t.get()) {
+        let hook = if matches!(result, Err(JsError::Terminated)) || terminating.get() {
             None
         } else {
             realm.native_callback_hook()
@@ -766,7 +783,7 @@ unsafe fn guard_erased(
         // Native code that ignored an inner termination must not let the
         // calling JS continue: treat the callback as terminated as well.
         let result = match result {
-            Ok(_) if crate::engine::TERMINATING.with(|t| t.get()) => Err(JsError::Terminated),
+            Ok(_) if terminating.get() => Err(JsError::Terminated),
             r => r,
         };
         match result {
@@ -799,18 +816,23 @@ unsafe fn guard_erased(
 }
 
 /// Tracks native-callback nesting (see `engine::DEPTH`).
-pub(crate) struct DepthGuard;
+pub(crate) struct DepthGuard(&'static std::cell::Cell<u32>);
 
 impl DepthGuard {
     pub(crate) fn enter() -> DepthGuard {
-        crate::engine::DEPTH.with(|d| d.set(d.get() + 1));
-        DepthGuard
+        Self::enter_with(crate::engine::callback_cells().0)
+    }
+
+    /// With the thread's depth cell already looked up.
+    pub(crate) fn enter_with(depth: &'static std::cell::Cell<u32>) -> DepthGuard {
+        depth.set(depth.get() + 1);
+        DepthGuard(depth)
     }
 }
 
 impl Drop for DepthGuard {
     fn drop(&mut self) {
-        let _ = crate::engine::DEPTH.try_with(|d| d.set(d.get().saturating_sub(1)));
+        self.0.set(self.0.get().saturating_sub(1));
     }
 }
 
@@ -890,7 +912,7 @@ unsafe fn this_data<'a, C: JsClass>(scope: &Scope<'_>, this: sys::JSObjectRef) -
     drop(reg);
     if let Some(f) = fallback {
         // SAFETY: only for receivers that resolve to the realm's global.
-        let global_receiver = this.is_null() || this == scope.global_object_raw();
+        let global_receiver = this.is_null() || scope.is_global_object(this);
         if global_receiver {
             if let Some(p) = unsafe { f(scope) } {
                 // SAFETY: the pointer refers to C::Data owned by the realm's
@@ -1171,6 +1193,76 @@ unsafe extern "C" fn get_property_hook(
                 };
             }
             get(scope)
+        })
+    }
+}
+
+/// `getPropertyByIndex` of a class with an indexed getter (patched JSC): the
+/// index arrives as a number, never as a string the named hooks would parse.
+unsafe extern "C" fn get_by_index_hook(
+    ctx: sys::JSContextRef,
+    object: sys::JSObjectRef,
+    index: std::os::raw::c_uint,
+    exc: *mut sys::JSValueRef,
+) -> sys::JSValueRef {
+    unsafe {
+        guard(ctx, exc, ptr::null(), |scope| {
+            let Some(hc) = hook_ctx(scope, object) else { return Ok(ptr::null()) };
+            let Some(f) = hc.indexed else { return Ok(ptr::null()) };
+            let get = |scope: &Scope<'_>| -> JsResult<sys::JSValueRef> {
+                Ok(f(scope, hc.header, index)?.unwrap_or(ptr::null()))
+            };
+            if hc.realm != scope.realm_id() {
+                return in_receiver_realm(scope, hc.realm, get);
+            }
+            get(scope)
+        })
+    }
+}
+
+/// `setPropertyByIndex`: a class with a named setter takes the index as a
+/// name (`select[0] = option`); one without ignores (sloppy) writes to its
+/// read-only indexed properties, as `set_property_hook` does.
+unsafe extern "C" fn set_by_index_hook(
+    ctx: sys::JSContextRef,
+    object: sys::JSObjectRef,
+    index: std::os::raw::c_uint,
+    value: sys::JSValueRef,
+    exc: *mut sys::JSValueRef,
+) -> bool {
+    unsafe {
+        guard(ctx, exc, false, |scope| {
+            let Some(hc) = hook_ctx(scope, object) else { return Ok(false) };
+            let Some(f) = hc.named_set else { return Ok(true) };
+            let name = index.to_string();
+            let set = |scope: &Scope<'_>| f(scope, hc.header, &name, value);
+            if hc.realm != scope.realm_id() {
+                return in_receiver_realm(scope, hc.realm, set);
+            }
+            set(scope)
+        })
+    }
+}
+
+/// `callAsFunction` of a member function made with
+/// `JSObjectMakeFunctionWithCallbackAndData`: `data` is its `MemberPayload`.
+pub(crate) unsafe extern "C" fn member_call_data(
+    ctx: sys::JSContextRef,
+    _function: sys::JSObjectRef,
+    this: sys::JSObjectRef,
+    argc: usize,
+    argv: *const sys::JSValueRef,
+    data: *mut std::ffi::c_void,
+    exc: *mut sys::JSValueRef,
+) -> sys::JSValueRef {
+    unsafe {
+        guard(ctx, exc, ptr::null(), |scope| {
+            let payload = data as *const MemberPayload;
+            if payload.is_null() {
+                return Err(JsError::Type("Illegal invocation".into()));
+            }
+            let call = (*payload).call;
+            (call.invoke)(scope, this, Args::from_raw(ctx, argc, argv), call.f)
         })
     }
 }

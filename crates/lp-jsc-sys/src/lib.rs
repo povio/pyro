@@ -540,6 +540,63 @@ pub mod spi {
         getter: JSObjectGetPropertyCallback,
     );
 
+    /// A custom accessor's getter (patched JSC, `JSObjectSetCustomAccessor`):
+    /// called by inline caches with the receiver as `this_value` (any value,
+    /// not only objects of the class) and the property name's unique string
+    /// pointer. Throws with `JSContextThrowException` and returns undefined.
+    pub type JSCustomGetterCallback =
+        unsafe extern "C" fn(ctx: JSContextRef, this_value: JSValueRef, uid: *const c_void) -> JSValueRef;
+    pub type JSCustomSetterCallback =
+        unsafe extern "C" fn(ctx: JSContextRef, this_value: JSValueRef, value: JSValueRef, uid: *const c_void) -> bool;
+    pub type JSObjectSetCustomAccessorFn = unsafe extern "C" fn(
+        ctx: JSContextRef,
+        object: JSObjectRef,
+        name: JSStringRef,
+        getter: Option<JSCustomGetterCallback>,
+        setter: Option<JSCustomSetterCallback>,
+        attributes: JSPropertyAttributes,
+    ) -> bool;
+    pub type JSContextThrowExceptionFn = unsafe extern "C" fn(ctx: JSContextRef, exception: JSValueRef);
+    /// Indexed property callbacks of a class (`JSClassSetIndexedCallbacks`).
+    pub type JSObjectGetPropertyByIndexCallback = unsafe extern "C" fn(
+        ctx: JSContextRef,
+        object: JSObjectRef,
+        index: c_uint,
+        exception: *mut JSValueRef,
+    ) -> JSValueRef;
+    pub type JSObjectSetPropertyByIndexCallback = unsafe extern "C" fn(
+        ctx: JSContextRef,
+        object: JSObjectRef,
+        index: c_uint,
+        value: JSValueRef,
+        exception: *mut JSValueRef,
+    ) -> bool;
+    pub type JSClassSetIndexedCallbacksFn = unsafe extern "C" fn(
+        class: JSClassRef,
+        get: Option<JSObjectGetPropertyByIndexCallback>,
+        set: Option<JSObjectSetPropertyByIndexCallback>,
+    );
+    /// A function object with embedder data (`JSObjectMakeFunctionWithCallbackAndData`).
+    pub type JSObjectCallAsFunctionWithDataCallback = unsafe extern "C" fn(
+        ctx: JSContextRef,
+        function: JSObjectRef,
+        this: JSObjectRef,
+        argc: usize,
+        argv: *const JSValueRef,
+        data: *mut c_void,
+        exception: *mut JSValueRef,
+    ) -> JSValueRef;
+    pub type JSObjectMakeFunctionWithCallbackAndDataFn = unsafe extern "C" fn(
+        ctx: JSContextRef,
+        name: JSStringRef,
+        length: c_uint,
+        callback: Option<JSObjectCallAsFunctionWithDataCallback>,
+        data: *mut c_void,
+    ) -> JSObjectRef;
+    pub type JSObjectGetFunctionDataFn = unsafe extern "C" fn(object: JSObjectRef) -> *mut c_void;
+    pub type JSContextGroupReleaseFreeMemoryFn = unsafe extern "C" fn(group: JSContextGroupRef);
+    pub type JSContextGroupDeleteAllCodeFn = unsafe extern "C" fn(group: JSContextGroupRef);
+
     /// Runtime-resolved SPI table. Each entry is `None` when the running
     /// JavaScriptCore does not export the symbol.
     #[derive(Debug, Clone, Copy)]
@@ -564,6 +621,13 @@ pub mod spi {
         pub set_time_zone: Option<JSContextGroupSetTimeZoneFn>,
         pub set_wrapper_property_added: Option<JSSetWrapperPropertyAddedCallbackFn>,
         pub install_named_properties: Option<JSGlobalContextInstallNamedPropertiesFn>,
+        pub set_custom_accessor: Option<JSObjectSetCustomAccessorFn>,
+        pub throw_exception: Option<JSContextThrowExceptionFn>,
+        pub class_set_indexed_callbacks: Option<JSClassSetIndexedCallbacksFn>,
+        pub make_function_with_data: Option<JSObjectMakeFunctionWithCallbackAndDataFn>,
+        pub get_function_data: Option<JSObjectGetFunctionDataFn>,
+        pub release_free_memory: Option<JSContextGroupReleaseFreeMemoryFn>,
+        pub delete_all_code: Option<JSContextGroupDeleteAllCodeFn>,
     }
 
     impl Spi {
@@ -622,6 +686,13 @@ pub mod spi {
             set_time_zone: resolve!("JSContextGroupSetTimeZone"),
             set_wrapper_property_added: resolve!("JSSetWrapperPropertyAddedCallback"),
             install_named_properties: resolve!("JSGlobalContextInstallNamedProperties"),
+            set_custom_accessor: resolve!("JSObjectSetCustomAccessor"),
+            throw_exception: resolve!("JSContextThrowException"),
+            class_set_indexed_callbacks: resolve!("JSClassSetIndexedCallbacks"),
+            make_function_with_data: resolve!("JSObjectMakeFunctionWithCallbackAndData"),
+            get_function_data: resolve!("JSObjectGetFunctionData"),
+            release_free_memory: resolve!("JSContextGroupReleaseFreeMemory"),
+            delete_all_code: resolve!("JSContextGroupDeleteAllCode"),
         })
     }
 }

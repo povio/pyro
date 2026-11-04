@@ -131,6 +131,10 @@ pub(crate) struct EngineInner {
     owner_dropped: Cell<bool>,
     /// When [`Engine::release_closed`] actually collects.
     release_gate: ReleaseGate,
+    /// Payloads of the member functions made with the patched JSC's
+    /// `JSObjectMakeFunctionWithCallbackAndData`, which have no finalizer:
+    /// they live as long as the engine, which outlives every realm.
+    pub(crate) member_payloads: RefCell<Vec<Box<class::MemberPayload>>>,
 }
 
 /// Decides when a closed page's garbage is worth a full collection: once the
@@ -235,6 +239,12 @@ impl EngineInner {
     pub(crate) fn hooks(&self) -> Option<Rc<dyn EngineHooks>> {
         self.hooks.borrow().clone()
     }
+    /// Whether callbacks may still use this engine (what `current_inner`
+    /// checks before handing it out).
+    pub(crate) fn is_live(&self) -> bool {
+        !self.is_shut_down() && !self.owner_dropped.get()
+    }
+
     pub(crate) fn is_shut_down(&self) -> bool {
         self.shut_down.get()
     }
@@ -327,6 +337,18 @@ pub(crate) fn engine_for_ctx(ctx: sys::JSContextRef) -> Option<Rc<EngineInner>> 
     (!e.is_shut_down() && e.group == group).then_some(e)
 }
 
+/// The thread's `DEPTH` and `TERMINATING` cells, as references that outlive
+/// the call: a native callback reads and writes them several times, and each
+/// thread-local access is a runtime lookup on macOS. The cells have no
+/// destructor and live as long as the thread, which the caller is on.
+pub(crate) fn callback_cells() -> (&'static Cell<u32>, &'static Cell<bool>) {
+    // SAFETY: const-initialized thread-locals without destructors are never
+    // deallocated while the thread runs; the references are used only on it.
+    let depth = DEPTH.with(|d| unsafe { &*(d as *const Cell<u32>) });
+    let terminating = TERMINATING.with(|t| unsafe { &*(t as *const Cell<bool>) });
+    (depth, terminating)
+}
+
 pub(crate) fn current_inner() -> Option<Rc<EngineInner>> {
     CURRENT.try_with(|c| c.borrow().upgrade()).ok().flatten().filter(|e| !e.is_shut_down() && !e.owner_dropped.get())
 }
@@ -383,6 +405,7 @@ impl Engine {
             shut_down: Cell::new(false),
             owner_dropped: Cell::new(false),
             release_gate: ReleaseGate::new(ReleaseGate::growth_from_env()),
+            member_payloads: RefCell::new(Vec::new()),
         });
         if caps.termination {
             // Poll the termination flag every 50 ms of continuous JS execution.
@@ -469,6 +492,13 @@ impl Engine {
         }
         if self.inner.release_gate.should_collect(process_footprint()) {
             self.settle();
+            // This collection runs inside the command that closed the page,
+            // with the closing code on the stack: JavaScriptCore scans that
+            // stack conservatively, and a compilation still running keeps its
+            // realm too, so the closed page's heap can survive it (measured:
+            // a React app's 30 MB stayed until the next close). A second
+            // collection from the idle loop, where neither holds, frees it.
+            self.inner.release_gate.pending.set(true);
         }
     }
 
@@ -488,7 +518,25 @@ impl Engine {
         self.synchronous_gc();
         self.drain_finalized();
         release_memory();
+        // The collection freed the closed page's blocks to JSC's allocator,
+        // whose scavenger returns them to the system only later, if at all
+        // while the process stays busy: do it now (patched JSC).
+        if let Some(f) = sys::spi::get().release_free_memory {
+            unsafe { f(self.inner.group()) };
+        }
         self.inner.release_gate.pending.set(false);
+    }
+
+    /// [`Engine::settle`] for a process that has gone idle: first drops every
+    /// compiled and unlinked code (the bytecode cache included; patched JSC),
+    /// which a closed page's scripts otherwise keep for a reload that may
+    /// never come. The next page re-parses what it loads. Measured after
+    /// closing a React app: 69 MB footprint with `settle`, 39 MB with this.
+    pub fn settle_idle(&self) {
+        if let Some(f) = sys::spi::get().delete_all_code {
+            unsafe { f(self.inner.group()) };
+        }
+        self.settle();
     }
 
     /// Requests a full garbage collection (asynchronous in JSC).
