@@ -357,3 +357,89 @@ fn init_script_worlds_exist_in_initial_and_replacement_child_documents() {
         assert_eq!(eval(&world.realm, "initWorld"), world.world.as_deref().unwrap_or("main"));
     }
 }
+
+#[test]
+fn document_encoding_reaches_urls_and_forms_submitted_into_named_frames() {
+    let mut t = crate::browser_thread().unwrap();
+    let loader = Rc::new(StaticLoader::default());
+    let log = loader.clone();
+    loader.insert(
+        "https://example.test/main",
+        "text/html",
+        "<meta charset=euc-jp><iframe name=t></iframe><iframe name=other></iframe>\
+         <form id=f action=/r target=t><input type=hidden name=_charset_><input name=q></form>",
+        Duration::ZERO,
+    );
+    // U+3042 is A4 A2 in EUC-JP; U+AC00 has no EUC-JP mapping.
+    let submitted = "https://example.test/r?_charset_=EUC-JP&q=%A4%A2%2C%26%2344032%3B";
+    let utf8 = "https://example.test/r?_charset_=UTF-8&q=%E3%81%82%2C%EA%B0%80";
+    loader.insert(submitted, "text/html", "<p>euc</p>", Duration::ZERO);
+    loader.insert(utf8, "text/html", "<p>utf8</p>", Duration::ZERO);
+    t.browser.set_loader(Some(loader));
+    let page = t.browser.create_page().unwrap();
+    t.browser.navigate(page, NavigateOpts::address_bar("https://example.test/main")).unwrap();
+    settle(&mut t);
+    let root = main_realm(&t, page);
+    assert_eq!(eval(&root, "document.characterSet"), "EUC-JP");
+    // [Replaceable]: a script's `frames` global shadows the Window attribute.
+    assert_eq!(
+        eval(&root, "var frames = null; frames = [1]; [frames[0], self === window, parent === window].join()"),
+        "1,true,true"
+    );
+    assert_eq!(
+        eval(&root, "globalThis.a=document.createElement('a');a.href='/x?\\u3042\\uac00#\\u3042';a.href"),
+        "https://example.test/x?%A4%A2%26%2344032%3B#%E3%81%82"
+    );
+    assert_eq!(eval(&root, "a.search"), "?%A4%A2%26%2344032%3B");
+    // Only ASCII whitespace is stripped, not U+3000.
+    assert_eq!(eval(&root, "a.href='/x?\\u3000';a.search"), "?%A1%A1");
+    // `new URL` stays UTF-8 whatever the document's encoding.
+    assert_eq!(eval(&root, "new URL('https://example.test/?\\u3042').search"), "?%E3%81%82");
+
+    eval(&root, "globalThis.f=document.getElementById('f');f.elements.q.value='\\u3042,\\uac00';f.submit()");
+    settle(&mut t);
+    let urls = |t: &BrowserThread| -> Vec<String> {
+        t.browser.frames(page).into_iter().filter(|f| f.parent.is_some()).map(|f| f.url).collect()
+    };
+    assert_eq!(urls(&t), vec![submitted.to_owned(), "about:blank".to_owned()]);
+    assert_eq!(t.browser.frames(page).iter().filter(|f| f.parent.is_none()).count(), 1);
+
+    // accept-charset beats the document's encoding.
+    eval(&root, "f.acceptCharset='bogus utf-8';f.target='other';f.submit()");
+    settle(&mut t);
+    assert_eq!(urls(&t), vec![submitted.to_owned(), utf8.to_owned()]);
+    assert!(log.log.borrow().iter().any(|u| u == utf8));
+}
+
+#[test]
+fn named_targets_do_not_reach_cross_origin_siblings() {
+    let mut t = crate::browser_thread().unwrap();
+    let loader = Rc::new(StaticLoader::default());
+    let log = loader.clone();
+    loader.insert("https://example.test/main", "text/html", "<p>main</p>", Duration::ZERO);
+    loader.insert("https://example.test/x?", "text/html", "<p>x</p>", Duration::ZERO);
+    t.browser.set_loader(Some(loader));
+    let page = t.browser.create_page().unwrap();
+    t.browser.navigate(page, NavigateOpts::address_bar("https://example.test/main")).unwrap();
+    settle(&mut t);
+    let root = main_realm(&t, page);
+    eval(
+        &root,
+        "for (const n of ['a','b']) { const f=document.createElement('iframe');f.name=n;\
+         if (n==='a') f.setAttribute('sandbox','allow-scripts');document.body.appendChild(f) }",
+    );
+    settle(&mut t);
+    let frames: Vec<_> = t.browser.frames(page).into_iter().filter(|f| f.parent.is_some()).collect();
+    let sandboxed = t.browser.frame(page, &frames[0].id).unwrap();
+    let submit = "{ const f=document.createElement('form');f.action='https://example.test/x';f.target='b';\
+         document.body.appendChild(f);f.submit() }";
+    // Opaque origin: sibling `b` is neither in its subtree nor same-origin.
+    eval(sandboxed.main_realm().unwrap(), submit);
+    settle(&mut t);
+    assert!(!log.log.borrow().iter().any(|u| u.starts_with("https://example.test/x")));
+    // The same-origin parent reaches it.
+    eval(&root, submit);
+    settle(&mut t);
+    let after: Vec<_> = t.browser.frames(page).into_iter().filter(|f| f.parent.is_some()).collect();
+    assert_eq!(after[1].url, "https://example.test/x?");
+}
