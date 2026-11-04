@@ -238,11 +238,11 @@ word count, a hash of its sorted words, first and last word, distinct y), no PDF
 
 ```sh
 cd bench/pdf/fixtures                                  # needs pdftotext and Chrome at its default path
-node probe.mjs generators/fx-fr.mjs chrome out.json    # or a binary instead of chrome
+bun probe.mjs generators/fx-fr.mjs chrome out.json    # or a binary instead of chrome
 python3 compare.py chrome-156/fr.json out.json [-v]    # per group: words on the same pages, page counts, positions
-node print-72.mjs /abs/lightningpanda                  # the 72: pages, lines and link rects, Chrome measured live
+bun print-72.mjs /abs/lightningpanda                  # the 72: pages, lines and link rects, Chrome measured live
 ./run.sh /abs/lightningpanda /tmp/out [fr sub ...]     # every set (or those named), against chrome-156/
-node geometry.mjs /abs/lightningpanda out.json         # the 152 geometry matrix
+bun geometry.mjs /abs/lightningpanda out.json         # the 152 geometry matrix
 python3 compare.py --geometry chrome-156/geometry.json out.json
 ```
 

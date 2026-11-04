@@ -1,4 +1,4 @@
-// usage: node probe.mjs <fixture module> chrome|<lp binary> out.json [nameFilter]
+// usage: bun probe.mjs <fixture module> chrome|<lp binary> out.json [nameFilter]
 import { createRequire } from 'node:module';
 import { execFileSync, spawn } from 'node:child_process';
 import { writeFileSync, mkdtempSync } from 'node:fs';

@@ -1,4 +1,4 @@
-// usage: node measure.mjs chrome|<lp binary> out.json
+// usage: bun measure.mjs chrome|<lp binary> out.json
 import { createRequire } from 'node:module';
 import { execFileSync, spawn } from 'node:child_process';
 import { writeFileSync, mkdtempSync } from 'node:fs';

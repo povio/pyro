@@ -13,7 +13,7 @@ if [ $# -eq 0 ]; then
 fi
 status=0
 for g in "$@"; do
-  if ! node probe.mjs "generators/fx-$g.mjs" "$bin" "$out/$g.json" 2>&1 | grep -v 'no word list'; then :; fi
+  if ! bun probe.mjs "generators/fx-$g.mjs" "$bin" "$out/$g.json" 2>&1 | grep -v 'no word list'; then :; fi
   if [ ! -f "$out/$g.json" ]; then
     echo "$g: probe failed"
     status=1
