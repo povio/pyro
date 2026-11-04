@@ -1,7 +1,7 @@
 // End-to-end screenshot benchmark through the real path: a lightningpanda
 // binary built with `--features render`, the fixtures served over HTTP (Lato
 // as a web font, fetched by the renderer through the page's network), and the
-// lightningpanda-test client over CDP.
+// lightning-panda client over CDP.
 //
 //   bun bench/screenshot/match-screenshot.ts [--bin target/release/lightningpanda] [--iters 50]
 //
@@ -15,7 +15,7 @@
 // plus the browser-side stage times of the compare path.
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { Lightningpanda, evaluate } from '../../packages/lightningpanda-test/src/index';
+import { Lightningpanda, evaluate } from '../../packages/lightning-panda/src/index';
 
 const args = process.argv.slice(2);
 const opt = (k: string, d: string) => (args.includes(k) ? args[args.indexOf(k) + 1] : d);

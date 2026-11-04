@@ -1,4 +1,4 @@
-// TOS apps/fe/e2e/logistics/positions-close.e2e.ts on lightningpanda-test, for
+// TOS apps/fe/e2e/logistics/positions-close.e2e.ts on lightning-panda, for
 // `bun test` in apps/fe/e2e (not run in this repository). Same checks as the
 // Playwright original: the rendered number, Settings, Close Position, the
 // confirmation dialog, the POST and the details refresh, the closed banner and
@@ -6,7 +6,7 @@
 // makes one browser call: the page comes signed in from a pool and its route
 // change is the first step of the run.
 import { afterAll, beforeAll, test } from 'bun:test';
-import { Lightningpanda, button, check, dialog, text } from 'lightningpanda-test';
+import { Lightningpanda, button, check, dialog, text } from '@povio/lightning-panda';
 
 // buildLocalStorageEntries and getEmployeeAccount are module-private in
 // auth.runtime.ts today; the port exports them.

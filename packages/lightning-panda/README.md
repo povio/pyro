@@ -1,11 +1,13 @@
-# lightningpanda-test
+# @povio/lightning-panda
+
+The Lightningpanda browser CLI and typed testing API in one package.
 
 E2E tests for `bun test` on Lightningpanda. A test sends its whole scenario as
 one `LP.run` command: the browser runs every step itself (locating, acting,
 waiting for the app to settle, checking) and replies once.
 
 ```ts
-import { Lightningpanda, button, check, dialog, text } from 'lightningpanda-test';
+import { Lightningpanda, button, check, dialog, text } from '@povio/lightning-panda';
 
 const lp = await Lightningpanda.connect('ws://127.0.0.1:9222/'); // or Lightningpanda.launch()
 await lp.profile('employee', { url: 'http://localhost:3000/platform', localStorage: { token } });
@@ -79,18 +81,32 @@ test.concurrent('closes a position', async () => {
 
 ## Install
 
-Each release ships the client with the browser:
+```sh
+npm install --save-dev @povio/lightning-panda
+# Or: bun add --dev @povio/lightning-panda
+npx lightningpanda serve --port 9222
+```
 
-- **Release archive.** `lightningpanda-test/` sits beside the `lightningpanda`
-  binary, and `Lightningpanda.launch()` starts that binary when nothing else is
-  given (`bin`, then `$LIGHTNINGPANDA_BIN`, then the archive's binary, then
-  `lightningpanda` on PATH).
-- **Release asset.** `lightningpanda-test-<version>.tgz` installs into a test
-  project: `bun add ./lightningpanda-test-0.0.4.tgz` (or its download URL).
-  Bun loads the TypeScript sources; Node gets `dist/index.js` and types.
+For release candidates, install `@povio/lightning-panda@next`.
 
-`scripts/pack-test-client.sh OUT_DIR [ARCHIVE_DIR]` builds both, versioned
-from `Cargo.toml`.
+The package bundles browsers for **macOS 14+ on Apple Silicon and Intel**, with
+layout, screenshots and PDF rendering enabled. No Rust toolchain, install
+scripts or binary downloads are needed. The API supports Node.js 22+ and Bun;
+Bun loads TypeScript sources, while Node loads compiled JavaScript and types.
+On other operating systems, use `Lightningpanda.connect()` with a remote
+browser. Installing/importing the client does not launch a local browser.
+
+`Lightningpanda.launch()` selects `bin`, then `$LIGHTNINGPANDA_BIN`, then the
+bundled browser for the current architecture, then a sibling browser in a
+legacy release archive. The CLI also respects `$LIGHTNINGPANDA_BIN`.
+
+The bundled browsers use macOS's system JavaScriptCore. **Fork mode requires
+a separately built patched JavaScriptCore browser**; select that browser with
+`bin` or `$LIGHTNINGPANDA_BIN` when using `args: ['--fork']`.
+
+The package is licensed under AGPL-3.0-only; see the included `LICENSE` and
+`NOTICE`. Maintainers: see
+[publishing instructions](https://github.com/povio/lightningpanda/blob/main/docs/NPM_PUBLISHING.md).
 
 Coding agents: read [LLM.md](LLM.md) before writing tests.
 

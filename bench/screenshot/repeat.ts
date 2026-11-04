@@ -12,7 +12,7 @@
 // 1280x720. Medians, ms.
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { Lightningpanda, css, evaluate } from '../../packages/lightningpanda-test/src/index';
+import { Lightningpanda, css, evaluate } from '../../packages/lightning-panda/src/index';
 
 const args = process.argv.slice(2);
 const opt = (k: string, d: string) => (args.includes(k) ? args[args.indexOf(k) + 1] : d);

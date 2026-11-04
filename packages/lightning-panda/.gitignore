@@ -1,0 +1,5 @@
+dist/
+native/
+LICENSE
+NOTICE
+*.tgz

@@ -8,6 +8,23 @@ page/realm lifecycle are real and tested. The DOM, networking, CDP and document 
 [docs/PARITY.md](docs/PARITY.md) lists what exists and what is missing. [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 describes the module contract.
 
+## npm package
+
+The npm distribution is `@povio/lightning-panda`: one package with the browser
+CLI and testing API. It bundles macOS 14+ binaries for Apple Silicon and Intel.
+
+```sh
+npm install --save-dev @povio/lightning-panda
+npx lightningpanda serve --port 9222
+```
+
+Install `@povio/lightning-panda@next` for release candidates. The API supports
+Node.js 22+ and Bun; remote CDP connections work from other operating systems.
+The bundled browsers use system JavaScriptCore; fork mode requires a separately
+built patched browser selected with `LIGHTNINGPANDA_BIN`.
+See [the package README](packages/lightning-panda/README.md) and
+[publishing instructions](docs/NPM_PUBLISHING.md).
+
 ## Build (macOS)
 
 ```sh
@@ -99,17 +116,17 @@ comparisons); a 20-test loop on a 2 MB app plateaus at 275 MB instead of 323.
 prepared profile once, and every connection is a `fork()` of it, starting
 with those pages booted and sharing their memory copy-on-write. Open one
 connection per test; it costs about 20 ms however long the app takes to boot,
-and its process exits when the connection closes. `lightningpanda-test` does
+and its process exits when the connection closes. `@povio/lightning-panda` does
 this by itself when the server reports `Lightningpanda.capabilities {fork: true}`.
 
-### Fast E2E tests: `LP.run` and `lightningpanda-test`
+### Fast E2E tests: `LP.run` and `@povio/lightning-panda`
 
 Page sessions also accept a native test driver, `LP.run {steps}`: a whole
 scenario (navigate, locate, click, fill, press, check, read, check requests)
 runs on the browser thread and replies once, waiting in place instead of
-polling from the client. [`packages/lightningpanda-test`](packages/lightningpanda-test)
+polling from the client. [`packages/lightning-panda`](packages/lightning-panda)
 is the `bun test` client for it, with Playwright-shaped locators and signed-in
-page pools; its [LLM.md](packages/lightningpanda-test/LLM.md) is the guide for
+page pools; its [LLM.md](packages/lightning-panda/LLM.md) is the guide for
 coding agents writing tests with it. It has a builder for every step the
 engine runs: pointer actions (click, dblclick, hover with button, position and
 force; wheel; raw mouse), typing, blur, uploads, drag, iframe-scoped locators,
@@ -117,10 +134,10 @@ style, focus, accessible-name and enabled checks, network mocks (fulfil,
 abort, passthrough, patch, hold and release), URL waits, reloads, request
 checks on status, body and headers, downloads, popups, viewport and media
 emulation, per-page init scripts, and `evaluate`, which awaits a returned
-promise. Releases ship it in the archive
-(`lightningpanda-test/`, beside the binary) and as
-`lightningpanda-test-<version>.tgz` for `bun add`;
-`scripts/pack-test-client.sh` builds both. TOS's positions-close test runs in about
+promise. The npm package `@povio/lightning-panda` ships the client and browser
+together. `scripts/pack-test-client.sh` packs staged macOS builds into
+`povio-lightning-panda-<version>.tgz` and can unpack it into a legacy release
+archive's `lightning-panda/` directory. TOS's positions-close test runs in about
 3 ms per test this way, against about 34 ms in Playwright
 (`bench/results/lp-tos-e501cef`).
 

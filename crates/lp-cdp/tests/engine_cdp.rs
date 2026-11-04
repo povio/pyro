@@ -4317,7 +4317,7 @@ const DRIVER_STEPS_PAGE: &str = r#"<!doctype html><body>
 fn driver_run_drives_a_popup_then_returns_to_the_opener() {
     let address = driver_site();
     let mut h = Harness::new();
-    // As `lightningpanda-test`: no auto-attach, so a popup navigates at once
+    // As `lightning-panda`: no auto-attach, so a popup navigates at once
     // (paused popups wait for the client's `Runtime.runIfWaitingForDebugger`).
     // Turning auto-attach off detaches the page: attach again explicitly.
     h.call(
