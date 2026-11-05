@@ -606,6 +606,8 @@ impl BrowserThread {
         engine.register::<Performance>();
         engine.register::<nav::PerformanceEntry>();
         engine.register::<nav::PerformancePaintTiming>();
+        engine.register::<nav::PerformanceMark>();
+        engine.register::<nav::PerformanceMeasure>();
         let event_loop = EventLoop::new();
         // The system JavaScriptCore binds this VM's timers to this thread's
         // run loop; the loop services it at a bounded interval for the VM's

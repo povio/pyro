@@ -28,6 +28,7 @@ mod popups;
 mod remote_ordering;
 mod runloop_idle_finalization;
 mod script_inserted;
+mod selection_pointer_timing;
 mod static_plaintext;
 mod storage_events;
 mod stylesheets;
