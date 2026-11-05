@@ -826,12 +826,13 @@ pub(crate) fn register<C: JsClass>(engine: &EngineInner) -> ClassId {
     let cname = CString::new(C::NAME).expect("class name without NUL");
     if let Some(p) = parent {
         let inherited = reg.classes[p as usize].def.hooks;
+        // A subclass answers the same names unless it adds a named hook of its own.
+        let own_named = def.hooks.named.is_some_and(|own| !inherited.named.is_some_and(|p| std::ptr::fn_addr_eq(own, p)));
         def.hooks = def.hooks.inherit(&inherited);
-        // A subclass answers the same names unless it adds hooks of its own.
-        if reg.classes[p as usize].def.announced_names && def.hooks.named == inherited.named {
+        if reg.classes[p as usize].def.announced_names && !own_named {
             def.announced_names = true;
         }
-    }
+
     let has_hooks = def.hooks.any();
     let has_named_hooks =
         def.hooks.named.is_some() || def.hooks.named_set.is_some() || def.hooks.named_delete.is_some();
