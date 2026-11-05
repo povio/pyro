@@ -29,7 +29,7 @@ use std::rc::Rc;
 
 use crate::dom::Dom;
 pub use crate::geometry::{ExternalBox, ExternalGeometry, ExternalQuads, ExternalSticky, ExternalWord, GeometrySource};
-use crate::geometry::{LayoutBox, LayoutResult, BOTTOM, LEFT, RIGHT, TOP};
+use crate::geometry::{LayoutBox, LayoutResult, PaintChain, PaintEntry, BOTTOM, LEFT, RIGHT, TOP};
 /// Overflow clips an out-of-flow box escapes while walking up to its
 /// containing block (`Layout::clip_escape`).
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -53,7 +53,8 @@ struct HitTestGeometry {
 
 use crate::media::Viewport;
 use crate::node::{DocumentKind, NodeId, NodeKind, NIL};
-use crate::style::{CheckVisibilityOptions, ScrollAxes, StyleEngine};
+use crate::style::{CheckVisibilityOptions, ComputedStyle, Display, Position, ScrollAxes, StyleEngine, UserSelect};
+use style::values::specified::box_::PositionProperty;
 
 /// A DOMRect's values.
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
@@ -493,7 +494,14 @@ impl Layout {
         let value = dom.value(el).ok().filter(|v| !v.is_empty())?;
         let b = self.layout_box(dom, el)?;
         let size = self.style.computed_font_size(dom, Some(el));
-        let weight = self.style.computed_value(dom, el, "font-weight").and_then(|w| w.parse().ok()).unwrap_or(400);
+        // A fractional weight (`350.5`) reads as the default, as its
+        // serialization did not parse as an integer.
+        let weight = self
+            .style
+            .stylo_style(dom, el)
+            .map(|s| s.get_font().font_weight.value())
+            .filter(|w| w.fract() == 0.0)
+            .map_or(400, |w| w as u16);
         Some(crate::text_metrics::text_width(&value, size, weight) + b.padding[LEFT] + b.padding[RIGHT])
     }
 
@@ -616,11 +624,11 @@ impl Layout {
         if matches!(self.html_local(dom, idx), Some("html" | "body")) {
             return None;
         }
-        let self_position = self.position_style(dom, el);
-        if self_position == "fixed" {
+        let self_position = self.position_of(dom, el);
+        if self_position == Position::Fixed {
             return None;
         }
-        let self_static = self_position.is_empty() || self_position == "static";
+        let self_static = !self_position.is_positioned();
         let mut node = dom.n(idx).parent;
         while node != NIL {
             match &dom.n(node).kind {
@@ -636,8 +644,7 @@ impl Layout {
             if tag == Some("body") {
                 return Some(dom.id_of(node));
             }
-            let position = self.position_style(dom, dom.id_of(node));
-            if !position.is_empty() && position != "static" {
+            if self.position_of(dom, dom.id_of(node)).is_positioned() {
                 return Some(dom.id_of(node));
             }
             if self_static && matches!(tag, Some("td" | "th" | "table")) {
@@ -648,8 +655,15 @@ impl Layout {
         None
     }
 
-    fn position_style(&self, dom: &Dom, el: NodeId) -> String {
-        self.style.computed_value(dom, el, "position").unwrap_or_default()
+    /// `el`'s computed `position` (`Static` without a style).
+    fn position_of(&self, dom: &Dom, el: NodeId) -> Position {
+        self.computed(dom, el).position
+    }
+
+    /// `el`'s memoized computed style (the default without one: static,
+    /// not `display: contents`, ...).
+    fn computed(&self, dom: &Dom, el: NodeId) -> ComputedStyle {
+        self.style.computed(dom, el).unwrap_or_default()
     }
 
     // ----- rects -------------------------------------------------------------
@@ -746,24 +760,47 @@ impl Layout {
     /// the nearest positioned ancestor for `position: absolute`. In-flow
     /// content escapes with its out-of-flow ancestors.
     fn clipped_by_ancestor(&self, dom: &Dom, node: NodeId, mut out: impl FnMut(NodeId, ScrollAxes) -> bool) -> bool {
+        self.for_each_clip(dom, node, &mut out)
+    }
+
+    /// [`Self::clipped_by_ancestor`]'s clips of `node` as hit testing reads
+    /// them: computed once per element of `result`.
+    fn hit_test_clips(&self, dom: &Dom, result: &LayoutResult, node: NodeId) -> Rc<[(NodeId, ScrollAxes)]> {
+        if let Some(clips) = result.hit.borrow().clips.get(&node) {
+            return clips.clone();
+        }
+        let mut clips = Vec::new();
+        self.for_each_clip(dom, node, &mut |a, axes| {
+            clips.push((a, axes));
+            false
+        });
+        let clips: Rc<[(NodeId, ScrollAxes)]> = clips.into();
+        result.hit.borrow_mut().clips.insert(node, clips.clone());
+        clips
+    }
+
+    /// Calls `out` with each overflow clip that applies to `node`, nearest
+    /// first, until it returns true (then: true).
+    fn for_each_clip(&self, dom: &Dom, node: NodeId, out: &mut dyn FnMut(NodeId, ScrollAxes) -> bool) -> bool {
         let mut escape = self.clip_escape(dom, node);
         let mut cur = dom.parent_element(node).ok().flatten();
         while let Some(a) = cur {
             if self.is_root_container(dom, a) {
                 break;
             }
-            if self.style.computed_display(dom, a).as_deref() == Some("contents") {
+            let c = self.computed(dom, a);
+            if c.display_contents {
                 cur = dom.parent_element(a).ok().flatten();
                 continue;
             }
-            let positioned = self.style.computed_value(dom, a, "position").is_some_and(|position| position != "static");
+            let positioned = c.position.is_positioned();
             let applies = match escape {
                 ClipEscape::None => true,
                 ClipEscape::Viewport => false,
                 ClipEscape::Positioned => positioned,
             };
             if applies {
-                let clips = self.style.overflow_clip_axes(dom, a);
+                let clips = ScrollAxes { x: c.overflow_x_clips, y: c.overflow_y_clips };
                 if (clips.x || clips.y) && out(a, clips) {
                     return true;
                 }
@@ -782,9 +819,9 @@ impl Layout {
         if dom.node_type(el).ok() != Some(crate::node::NodeType::Element) {
             return ClipEscape::None;
         }
-        match self.style.computed_value(dom, el, "position").as_deref() {
-            Some("fixed") => ClipEscape::Viewport,
-            Some("absolute") => ClipEscape::Positioned,
+        match self.position_of(dom, el) {
+            Position::Fixed => ClipEscape::Viewport,
+            Position::Absolute => ClipEscape::Positioned,
             _ => ClipEscape::None,
         }
     }
@@ -802,14 +839,10 @@ impl Layout {
             Some(node)
         };
         while let Some(e) = cur {
-            let v = self
-                .style
-                .computed_value(dom, e, "user-select")
-                .or_else(|| self.style.computed_value(dom, e, "-webkit-user-select"));
-            match v.map(|v| v.trim().to_ascii_lowercase()).as_deref() {
-                Some("none") => return true,
-                Some("text" | "all" | "contain") => return false,
-                _ => {}
+            match self.computed(dom, e).user_select {
+                UserSelect::None => return true,
+                UserSelect::Text | UserSelect::All | UserSelect::Contain => return false,
+                UserSelect::Auto => {}
             }
             cur = dom.parent_element(e).ok().flatten();
         }
@@ -1111,83 +1144,94 @@ impl Layout {
 
     // ----- hit testing -------------------------------------------------------
 
-    /// CSS stacking-context order, with source order breaking ties inside a layer.
-    fn paint_key(&self, dom: &Dom, result: &LayoutResult, el: NodeId) -> Vec<(u8, i32, u32)> {
-        let mut ancestors = vec![el];
-        let mut parent = dom.parent_element(el).ok().flatten();
-        while let Some(node) = parent {
-            ancestors.push(node);
-            parent = dom.parent_element(node).ok().flatten();
+    /// CSS stacking-context order, with source order breaking ties inside a
+    /// layer. Computed once per box of `result` (see [`PaintChain`]).
+    fn paint_key(&self, dom: &Dom, result: &LayoutResult, el: NodeId) -> Rc<[PaintEntry]> {
+        if let Some(key) = result.hit.borrow().keys.get(&el) {
+            return key.clone();
         }
-        ancestors.reverse();
-        let mut key = Vec::new();
-        let mut positioned_layer: Option<(u8, i32, u32)> = None;
-        let mut own_layer = false;
-        for (index, node) in ancestors.into_iter().enumerate() {
-            let Some(bounds) = result.get(node) else { continue };
-            let position = self.style.computed_value(dom, node, "position").unwrap_or_else(|| "static".into());
-            let specified_z =
-                self.style.computed_value(dom, node, "z-index").and_then(|value| value.parse::<i32>().ok());
-            let flex_or_grid_item = dom
-                .parent_element(node)
-                .ok()
-                .flatten()
-                .and_then(|parent| self.style.computed_display(dom, parent))
-                .is_some_and(|display| matches!(display.as_str(), "flex" | "inline-flex" | "grid" | "inline-grid"));
-            let z = if position != "static" || flex_or_grid_item { specified_z } else { None };
-            let transformed = self
-                .style
-                .computed_value(dom, node, "transform")
-                .is_some_and(|value| !value.is_empty() && value != "none");
-            let translucent = self
-                .style
-                .computed_value(dom, node, "opacity")
-                .and_then(|value| value.parse::<f64>().ok())
-                .is_some_and(|value| value < 1.0);
-            let isolated = self.style.computed_value(dom, node, "isolation").as_deref() == Some("isolate");
-            let context = index == 0
-                || matches!(position.as_str(), "fixed" | "sticky")
-                || (z.is_some() && (position != "static" || flex_or_grid_item))
-                || transformed
-                || translucent
-                || isolated;
-            if context {
-                if index != 0 {
-                    let z = z.unwrap_or(0);
-                    key.push((
-                        if z < 0 {
-                            1
-                        } else if z > 0 {
-                            4
-                        } else {
-                            3
-                        },
-                        z,
-                        bounds.order,
-                    ));
-                }
-                positioned_layer = None;
-                own_layer = true;
-            } else if position != "static" {
-                // z-auto positioned boxes group their normal content, but their
-                // positioned descendants belong to the enclosing real context.
-                positioned_layer = Some((3, 0, bounds.order));
-                own_layer = true;
-            } else {
-                own_layer = false;
-            }
-        }
+        let chain = self.paint_chain(dom, result, el);
         // Context backgrounds precede negative contexts, normal flow, positioned
         // zero-level content, then positive contexts. Nested contexts stay atomic.
-        if let Some(layer) = positioned_layer {
+        let mut key: Vec<PaintEntry> = chain.contexts.to_vec();
+        if let Some(layer) = chain.positioned_layer {
             key.push(layer);
         }
-        key.push((
-            if own_layer { 0 } else { 2 },
-            0,
-            if own_layer { 0 } else { result.get(el).map_or(0, |bounds| bounds.order) },
-        ));
+        let own = chain.own_layer;
+        key.push((if own { 0 } else { 2 }, 0, if own { 0 } else { result.get(el).map_or(0, |b| b.order) }));
+        let key: Rc<[PaintEntry]> = key.into();
+        result.hit.borrow_mut().keys.insert(el, key.clone());
         key
+    }
+
+    /// The paint-order state after `el`'s ancestor chain (up
+    /// `parentElement`, itself included): each box of the chain enters a
+    /// stacking context, joins a z-auto positioned layer or paints in flow.
+    /// Derived from the parent's state, so each element's is computed once
+    /// per layout result.
+    fn paint_chain(&self, dom: &Dom, result: &LayoutResult, el: NodeId) -> PaintChain {
+        // The ancestors without a state yet, nearest first.
+        let mut pending = Vec::new();
+        let mut cur = Some(el);
+        let mut state = loop {
+            let Some(node) = cur else { break PaintChain::default() };
+            if let Some(chain) = result.hit.borrow().chains.get(&node) {
+                break chain.clone();
+            }
+            pending.push(node);
+            cur = dom.parent_element(node).ok().flatten();
+        };
+        let reached_root = cur.is_none();
+        for (i, &node) in pending.iter().enumerate().rev() {
+            // The chain's first element (no parent element) always starts a context.
+            let is_root = reached_root && i == pending.len() - 1;
+            if let Some(bounds) = result.get(node) {
+                state = self.paint_step(dom, node, bounds.order, is_root, state);
+            }
+            result.hit.borrow_mut().chains.insert(node, state.clone());
+        }
+        state
+    }
+
+    /// [`Self::paint_chain`]'s step for one box.
+    fn paint_step(&self, dom: &Dom, node: NodeId, order: u32, is_root: bool, mut state: PaintChain) -> PaintChain {
+        let c = self.computed(dom, node);
+        let positioned = c.position.is_positioned();
+        let flex_or_grid_item = dom
+            .parent_element(node)
+            .ok()
+            .flatten()
+            .is_some_and(|parent| matches!(self.computed(dom, parent).display, Display::Flex | Display::Grid));
+        let z = if positioned || flex_or_grid_item { c.z_index } else { None };
+        let context = is_root
+            || matches!(c.position, Position::Fixed | Position::Sticky)
+            || z.is_some()
+            || c.transformed
+            || c.translucent
+            || c.isolated;
+        if context {
+            if !is_root {
+                let z = z.unwrap_or(0);
+                let layer = match z {
+                    z if z < 0 => 1,
+                    z if z > 0 => 4,
+                    _ => 3,
+                };
+                let mut contexts = state.contexts.to_vec();
+                contexts.push((layer, z, order));
+                state.contexts = contexts.into();
+            }
+            state.positioned_layer = None;
+            state.own_layer = true;
+        } else if positioned {
+            // z-auto positioned boxes group their normal content, but their
+            // positioned descendants belong to the enclosing real context.
+            state.positioned_layer = Some((3, 0, order));
+            state.own_layer = true;
+        } else {
+            state.own_layer = false;
+        }
+        state
     }
 
     /// An inset clip-path clips the element and its descendants, including
@@ -1247,7 +1291,7 @@ impl Layout {
             ..Default::default()
         };
         let inside = |r: &Rect| (ignore_x || (x >= r.x && x <= r.x + r.width)) && y >= r.y && y <= r.y + r.height;
-        let mut best: Option<(Vec<(u8, i32, u32)>, NodeId)> = None;
+        let mut best: Option<(Rc<[PaintEntry]>, NodeId)> = None;
         for (&el, b) in &result.boxes {
             if b.rect.width <= 0.0 && b.rect.height <= 0.0 {
                 continue;
@@ -1276,7 +1320,7 @@ impl Layout {
                     continue;
                 }
             }
-            let clipped = self.clipped_by_ancestor(dom, el, |a, clips| {
+            let clipped = self.hit_test_clips(dom, &result, el).iter().any(|&(a, clips)| {
                 if result.get(a).is_none() {
                     return false;
                 }
@@ -1301,10 +1345,7 @@ impl Layout {
         if !tag.is_ok_and(|t| matches!(&*t, "tr" | "tbody" | "thead" | "tfoot")) {
             return false;
         }
-        matches!(
-            self.style.computed_display(dom, el).as_deref(),
-            Some("table-row" | "table-row-group" | "table-header-group" | "table-footer-group")
-        )
+        self.computed(dom, el).table_row_or_group
     }
 
     /// Visible viewport rectangle, using the same containing-block clips as hit testing.
@@ -1313,9 +1354,7 @@ impl Layout {
         let (mut right, mut bottom) =
             (rect.right().min(self.inner_width() as f64), rect.bottom().min(self.inner_height() as f64));
         self.clipped_by_ancestor(dom, node, |ancestor, clips| {
-            if self.style.computed_display(dom, ancestor).as_deref() == Some("contents")
-                || self.layout_box(dom, ancestor).is_none()
-            {
+            if self.computed(dom, ancestor).display_contents || self.layout_box(dom, ancestor).is_none() {
                 return false;
             }
             if let Some(bounds) = self.client_rect(dom, ancestor) {
@@ -1928,11 +1967,15 @@ impl Layout {
                 break;
             }
             let axes = if script {
-                let x = self.style.used_value(dom, node, "overflow-x");
-                let y = self.style.used_value(dom, node, "overflow-y");
-                let (x, y) = crate::style::computed_overflow_keywords(x.as_deref(), y.as_deref());
-                let scrolls = |value: &str| matches!(value, "auto" | "scroll" | "hidden");
-                ScrollAxes { x: scrolls(&x), y: scrolls(&y) }
+                // A scroll container scrolls on both axes: the other axis's
+                // `visible` computes to `auto` and `clip` to `hidden`.
+                use style::values::specified::box_::Overflow as O;
+                let scroller = |o: O| matches!(o, O::Hidden | O::Scroll | O::Auto);
+                let any = self.style.stylo_style(dom, node).is_some_and(|s| {
+                    let b = s.get_box();
+                    scroller(b.overflow_x) || scroller(b.overflow_y)
+                });
+                ScrollAxes { x: any, y: any }
             } else {
                 self.style.overflow_axes(dom, node)
             };
@@ -2064,23 +2107,21 @@ impl Layout {
     /// relatively positioned boxes, lengths clamped to Blink's LayoutUnit
     /// range. `None`: the computed value stands.
     fn resolved_value(&self, dom: &Dom, el: NodeId, name: &str, value: &str) -> Option<String> {
-        let style = &self.style;
-        let position = || style.computed_value(dom, el, "position").unwrap_or_default();
+        let position = || self.position_of(dom, el);
         match name {
             "min-width" | "min-height" if value == "auto" => {
                 // The box's parent: display:contents ancestors generate none.
                 let mut parent = dom.parent_element(el).ok().flatten();
-                while let Some(p) = parent.filter(|&p| style.computed_display(dom, p).as_deref() == Some("contents")) {
+                while let Some(p) = parent.filter(|&p| self.computed(dom, p).display_contents) {
                     parent = dom.parent_element(p).ok().flatten();
                 }
-                let item = parent
-                    .and_then(|p| style.computed_display(dom, p))
-                    .is_some_and(|d| matches!(d.as_str(), "flex" | "inline-flex" | "grid" | "inline-grid"));
-                let out_of_flow = matches!(position().as_str(), "absolute" | "fixed");
+                let item =
+                    parent.is_some_and(|p| matches!(self.computed(dom, p).display, Display::Flex | Display::Grid));
+                let out_of_flow = matches!(position(), Position::Absolute | Position::Fixed);
                 (!item || out_of_flow).then(|| "0px".into())
             }
             "top" | "bottom" | "left" | "right" if value == "auto" || value.contains('%') => {
-                self.resolved_inset(dom, el, name, value, &position()).or_else(|| clamp_layout_units(value))
+                self.resolved_inset(dom, el, name, value, position()).or_else(|| clamp_layout_units(value))
             }
             _ => clamp_layout_units(value),
         }
@@ -2093,7 +2134,7 @@ impl Layout {
     /// mirrors the other side, and one of a sticky box stays `auto`.
     /// Absolutely positioned boxes report the distance between their margin
     /// box and the padding box of their containing block.
-    fn resolved_inset(&self, dom: &Dom, el: NodeId, name: &str, value: &str, position: &str) -> Option<String> {
+    fn resolved_inset(&self, dom: &Dom, el: NodeId, name: &str, value: &str, position: Position) -> Option<String> {
         let style = &self.style;
         if style.has_display_none(dom, el) || !dom.is_connected(el).unwrap_or(false) {
             return None;
@@ -2107,10 +2148,10 @@ impl Layout {
                 .unwrap_or(0.0)
         };
         match position {
-            "relative" | "sticky" => {
+            Position::Relative | Position::Sticky => {
                 // The containing block: the nearest ancestor that generates a box.
                 let mut parent = dom.parent_element(el).ok().flatten()?;
-                while style.computed_display(dom, parent).as_deref() == Some("contents") {
+                while self.computed(dom, parent).display_contents {
                     parent = dom.parent_element(parent).ok().flatten()?;
                 }
                 let basis = if horizontal {
@@ -2126,7 +2167,7 @@ impl Layout {
                 if value != "auto" {
                     return px(resolve(value)?);
                 }
-                if position == "sticky" {
+                if position == Position::Sticky {
                     return None;
                 }
                 let opposite = match name {
@@ -2140,14 +2181,15 @@ impl Layout {
                     _ => Some("0px".into()),
                 }
             }
-            "absolute" | "fixed" => {
+            Position::Absolute | Position::Fixed => {
                 // The containing block's padding box, in viewport coordinates.
                 let establishes = |a: NodeId| -> bool {
-                    let is = |property: &str, initial: &str| {
-                        style.computed_value(dom, a, property).is_some_and(|v| v != initial)
-                    };
-                    let transformed = is("transform", "none") || is("perspective", "none") || is("filter", "none");
-                    transformed || (position == "absolute" && is("position", "static"))
+                    let Some(s) = style.stylo_style(dom, a) else { return false };
+                    let b = s.get_box();
+                    let transformed = !b.transform.0.is_empty()
+                        || b.perspective != style::values::generics::box_::GenericPerspective::None
+                        || !s.get_effects().filter.0.is_empty();
+                    transformed || (position == Position::Absolute && b.position != PositionProperty::Static)
                 };
                 let mut ancestor = dom.parent_element(el).ok().flatten();
                 while let Some(a) = ancestor.filter(|&a| !establishes(a)) {
@@ -2163,7 +2205,9 @@ impl Layout {
                             height: self.client_height(dom, a),
                         }
                     }
-                    None => Rect { x: 0.0, y: 0.0, width: self.inner_width() as f64, height: self.inner_height() as f64 },
+                    None => {
+                        Rect { x: 0.0, y: 0.0, width: self.inner_width() as f64, height: self.inner_height() as f64 }
+                    }
                 };
                 let r = self.bounding_client_rect(dom, el);
                 px(match name {
@@ -2173,7 +2217,7 @@ impl Layout {
                     _ => block.x + block.width - (r.x + r.width + length(el, "margin-right")),
                 })
             }
-            _ => None,
+            Position::Static => None,
         }
     }
 }

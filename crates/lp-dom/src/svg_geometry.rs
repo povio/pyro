@@ -188,10 +188,8 @@ fn text_bounds(dom: &Dom, style: &StyleEngine, el: NodeId) -> Option<Bounds> {
     let text = dom.text_content(el).ok().flatten().unwrap_or_default();
     let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
     let size = style.computed_font_size(dom, Some(el));
-    let weight = style
-        .used_value(dom, el, "font-weight")
-        .and_then(|v| v.trim().parse::<f64>().ok())
-        .map_or(400, |w| w.clamp(1.0, 1000.0) as u16);
+    let weight =
+        style.stylo_style(dom, el).map_or(400, |s| (s.get_font().font_weight.value() as f64).clamp(1.0, 1000.0) as u16);
     let width = crate::text_metrics::text_width(&text, size, weight);
     let (ascent, descent) = crate::text_metrics::vertical_metrics(size);
     let (x, y) = (num(dom, el, "x"), num(dom, el, "y"));
