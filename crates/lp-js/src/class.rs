@@ -101,13 +101,19 @@ pub(crate) struct MemberCall {
 /// Calls `f` (a member callback, cast back to its real fn-pointer type) for
 /// `this` with `args`.
 pub(crate) type InvokeFn = unsafe fn(&Scope<'_>, sys::JSObjectRef, Args<'_>, *const ()) -> JsResult<sys::JSValueRef>;
-/// A getter invoked with its receiver's payload header (already known to be
-/// a wrapper instance) in a scope of the receiver's realm.
-pub(crate) type InvokeHFn = unsafe fn(&Scope<'_>, *mut Header, *const ()) -> JsResult<sys::JSValueRef>;
+/// A getter invoked with its receiver (a wrapper instance) and the
+/// receiver's payload header, in a scope of the receiver's realm.
+pub(crate) type InvokeHFn =
+    unsafe fn(&Scope<'_>, *mut Header, sys::JSObjectRef, *const ()) -> JsResult<sys::JSValueRef>;
 
 /// Member callback types: plain fn pointers. Non-capturing closures coerce.
 pub type MethodFn<C> = for<'s> fn(&Scope<'s>, &<C as JsClass>::Data, Args<'s>) -> JsResult<Value<'s>>;
 pub type GetterFn<C> = for<'s> fn(&Scope<'s>, &<C as JsClass>::Data) -> JsResult<Value<'s>>;
+/// [`MethodFn`] that also gets the receiver: the wrapper whose data it is
+/// (see [`ClassDef::method_this`]).
+pub type MethodThisFn<C> = for<'s> fn(&Scope<'s>, &<C as JsClass>::Data, Object<'s>, Args<'s>) -> JsResult<Value<'s>>;
+/// [`GetterFn`] that also gets the receiver (see [`ClassDef::getter_this`]).
+pub type GetterThisFn<C> = for<'s> fn(&Scope<'s>, &<C as JsClass>::Data, Object<'s>) -> JsResult<Value<'s>>;
 pub type SetterFn<C> = for<'s> fn(&Scope<'s>, &<C as JsClass>::Data, Value<'s>) -> JsResult<()>;
 pub type StaticFn = for<'s> fn(&Scope<'s>, Args<'s>) -> JsResult<Value<'s>>;
 pub type CtorFn = for<'s> fn(&Scope<'s>, Object<'s>, Args<'s>) -> JsResult<Object<'s>>;
@@ -329,6 +335,73 @@ impl<C: JsClass> ClassDef<C> {
             pure: true,
             result,
             get_h: Some(getter_invoke_h::<C>),
+        });
+        self
+    }
+
+    /// [`ClassDef::method`] whose callback also gets the receiver: the
+    /// wrapper whose data it is (in the receiver's realm), so a member that
+    /// needs its own wrapper (hidden properties, events it fires at itself)
+    /// does not look it up again. A class with a
+    /// [`ClassDef::global_receiver`] that resolved an `undefined`/`null`/global
+    /// receiver gets the global object.
+    pub fn method_this(&mut self, name: &'static str, length: u32, f: MethodThisFn<C>) -> &mut Self {
+        self.methods.push(MethodSpec {
+            name,
+            length,
+            call: MemberCall { invoke: method_this_invoke::<C>, f: f as *const () },
+            pure: false,
+        });
+        self
+    }
+
+    /// [`ClassDef::pure_method`] with the receiver (see [`ClassDef::method_this`]).
+    pub fn pure_method_this(&mut self, name: &'static str, length: u32, f: MethodThisFn<C>) -> &mut Self {
+        self.methods.push(MethodSpec {
+            name,
+            length,
+            call: MemberCall { invoke: method_this_invoke::<C>, f: f as *const () },
+            pure: true,
+        });
+        self
+    }
+
+    /// [`ClassDef::getter`] with the receiver (see [`ClassDef::method_this`]).
+    pub fn getter_this(&mut self, name: &'static str, g: GetterThisFn<C>) -> &mut Self {
+        let get = MemberCall { invoke: getter_this_invoke::<C>, f: g as *const () };
+        self.accessors.push(AccessorSpec {
+            name,
+            get,
+            set: None,
+            slot: None,
+            pure: false,
+            result: GetterResult::Any,
+            get_h: None,
+        });
+        self
+    }
+
+    /// [`ClassDef::pure_getter`] with the receiver (see [`ClassDef::method_this`]).
+    pub fn pure_getter_this(&mut self, name: &'static str, g: GetterThisFn<C>) -> &mut Self {
+        self.pure_getter_this_typed(name, GetterResult::Any, g)
+    }
+
+    /// [`ClassDef::pure_getter_typed`] with the receiver (see [`ClassDef::method_this`]).
+    pub fn pure_getter_this_typed(
+        &mut self,
+        name: &'static str,
+        result: GetterResult,
+        g: GetterThisFn<C>,
+    ) -> &mut Self {
+        let get = MemberCall { invoke: getter_this_invoke::<C>, f: g as *const () };
+        self.accessors.push(AccessorSpec {
+            name,
+            get,
+            set: None,
+            slot: None,
+            pure: true,
+            result,
+            get_h: Some(getter_this_invoke_h::<C>),
         });
         self
     }
@@ -1400,11 +1473,81 @@ pub(crate) unsafe fn data_of_header<'a, C: JsClass>(h: *mut Header) -> Option<&'
     }
 }
 
-unsafe fn getter_invoke_h<C: JsClass>(scope: &Scope<'_>, h: *mut Header, f: *const ()) -> JsResult<sys::JSValueRef> {
+unsafe fn getter_invoke_h<C: JsClass>(
+    scope: &Scope<'_>,
+    h: *mut Header,
+    _this: sys::JSObjectRef,
+    f: *const (),
+) -> JsResult<sys::JSValueRef> {
     let data = unsafe { data_of_header::<C>(h) }.ok_or_else(|| JsError::Type("Illegal invocation".into()))?;
     // SAFETY: stored by `ClassDef::pure_getter_typed` from this fn-pointer type.
     let f: GetterFn<C> = unsafe { std::mem::transmute(f) };
     f(scope, data).map(|v| v.raw)
+}
+
+/// The object a receiver-aware member gets: the receiver itself, or the
+/// realm's global object (what script sees) for an `undefined`/`null`
+/// receiver and for the global behind its proxy.
+fn receiver_object(scope: &Scope<'_>, this: sys::JSObjectRef) -> sys::JSObjectRef {
+    if this.is_null() || scope.is_global_object(this) {
+        scope.global_object_raw()
+    } else {
+        this
+    }
+}
+
+unsafe fn method_this_invoke<C: JsClass>(
+    scope: &Scope<'_>,
+    this: sys::JSObjectRef,
+    args: Args<'_>,
+    f: *const (),
+) -> JsResult<sys::JSValueRef> {
+    let (data, realm) = unsafe { this_data::<C>(scope, this) }?;
+    // SAFETY: stored by `ClassDef::method_this` from exactly this fn-pointer type.
+    let f: MethodThisFn<C> = unsafe { std::mem::transmute(f) };
+    let receiver = receiver_object(scope, this);
+    // SAFETY (both calls): the receiver is the callback's `this` (rooted by
+    // the calling frame) or the realm's global; values of one VM may be
+    // used with any of its contexts.
+    if let Some(realm) = realm {
+        let raw = args.raw;
+        return member_in_receiver_realm(scope, realm, |s| {
+            f(s, data, unsafe { Object::from_raw(s.ctx, receiver) }, Args { ctx: s.ctx, raw }).map(|v| v.raw)
+        });
+    }
+    f(scope, data, unsafe { Object::from_raw(scope.ctx, receiver) }, args).map(|v| v.raw)
+}
+
+unsafe fn getter_this_invoke<C: JsClass>(
+    scope: &Scope<'_>,
+    this: sys::JSObjectRef,
+    _args: Args<'_>,
+    f: *const (),
+) -> JsResult<sys::JSValueRef> {
+    let (data, realm) = unsafe { this_data::<C>(scope, this) }?;
+    // SAFETY: stored by `ClassDef::getter_this` from exactly this fn-pointer type.
+    let f: GetterThisFn<C> = unsafe { std::mem::transmute(f) };
+    let receiver = receiver_object(scope, this);
+    // SAFETY: as in `method_this_invoke`.
+    if let Some(realm) = realm {
+        return member_in_receiver_realm(scope, realm, |s| {
+            f(s, data, unsafe { Object::from_raw(s.ctx, receiver) }).map(|v| v.raw)
+        });
+    }
+    f(scope, data, unsafe { Object::from_raw(scope.ctx, receiver) }).map(|v| v.raw)
+}
+
+unsafe fn getter_this_invoke_h<C: JsClass>(
+    scope: &Scope<'_>,
+    h: *mut Header,
+    this: sys::JSObjectRef,
+    f: *const (),
+) -> JsResult<sys::JSValueRef> {
+    let data = unsafe { data_of_header::<C>(h) }.ok_or_else(|| JsError::Type("Illegal invocation".into()))?;
+    // SAFETY: stored by `ClassDef::pure_getter_this_typed` from this fn-pointer type.
+    let f: GetterThisFn<C> = unsafe { std::mem::transmute(f) };
+    // SAFETY: `this` is the wrapper whose payload `h` is, rooted by the caller.
+    f(scope, data, unsafe { Object::from_raw(scope.ctx, this) }).map(|v| v.raw)
 }
 
 unsafe fn getter_invoke<C: JsClass>(

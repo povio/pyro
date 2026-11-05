@@ -179,7 +179,7 @@ pub(crate) unsafe extern "C" fn fast_getter_dispatch(
     context: *mut c_void,
 ) -> sys::JSValueRef {
     let slot = context as usize;
-    if let Some(v) = unsafe { lean_getter_h(slot, private_data as *mut Header) } {
+    if let Some(v) = unsafe { lean_getter_h(slot, private_data as *mut Header, this) } {
         return v;
     }
     unsafe { custom_getter_dispatch(slot, ctx, this as sys::JSValueRef, ptr::null()) }
@@ -193,7 +193,7 @@ pub(crate) unsafe extern "C" fn fast_getter_dispatch(
 /// script or mutate. `None` sends the call through the full dispatch: not a
 /// wrapper instance, a disposed realm, an error, a panic.
 #[inline]
-unsafe fn lean_getter_h(slot: usize, h: *mut Header) -> Option<sys::JSValueRef> {
+unsafe fn lean_getter_h(slot: usize, h: *mut Header, this: sys::JSObjectRef) -> Option<sys::JSValueRef> {
     unsafe {
         if h.is_null() || (*h).tag != PayloadTag::Wrapper || (*h).kind != Kind::Instance {
             return None;
@@ -211,7 +211,7 @@ unsafe fn lean_getter_h(slot: usize, h: *mut Header) -> Option<sys::JSValueRef> 
             return None;
         }
         let scope = crate::realm::Scope::new(ctx, &realm);
-        match catch_unwind(AssertUnwindSafe(|| invoke(&scope, h, f))) {
+        match catch_unwind(AssertUnwindSafe(|| invoke(&scope, h, this, f))) {
             Ok(Ok(v)) if !v.is_null() => Some(v),
             _ => None,
         }
@@ -225,7 +225,7 @@ unsafe fn lean_getter(slot: usize, this: sys::JSValueRef) -> Option<sys::JSValue
     if this.is_null() {
         return None;
     }
-    unsafe { lean_getter_h(slot, sys::JSObjectGetPrivate(this) as *mut Header) }
+    unsafe { lean_getter_h(slot, sys::JSObjectGetPrivate(this) as *mut Header, this) }
 }
 
 unsafe fn custom_getter_dispatch(
