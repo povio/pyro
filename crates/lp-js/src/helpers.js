@@ -116,6 +116,57 @@
   });
   defineProperty(globalThis, 'DOMException', { value: DOMException, writable: true, configurable: true });
 
+  // QuotaExceededError: the DOMException subclass WebIDL makes of the former
+  // "QuotaExceededError" name (https://webidl.spec.whatwg.org/#quotaexceedederror).
+  // Native code throwing that name constructs this class (error.rs).
+  const quotaLimits = new WM();
+  const NumberC = Number;
+  const isFinite = NumberC.isFinite;
+  const toDouble = (v, member) => {
+    const n = NumberC(v);
+    if (!isFinite(n)) {
+      throw new TypeError(`Failed to construct 'QuotaExceededError': Failed to read the '${member}' property from 'QuotaExceededErrorOptions': The provided double value is non-finite.`);
+    }
+    return n;
+  };
+  class QuotaExceededError extends DOMException {
+    constructor(message = '', options = {}) {
+      super(message, 'QuotaExceededError');
+      // Dictionary conversion first (members in lexicographic order), then the
+      // constructor's range checks.
+      let quota = null, requested = null;
+      if (options !== undefined && options !== null) {
+        if (typeof options !== 'object' && typeof options !== 'function') {
+          throw new TypeError("Failed to construct 'QuotaExceededError': The provided value is not of type 'QuotaExceededErrorOptions'.");
+        }
+        const q = options.quota;
+        if (q !== undefined) quota = toDouble(q, 'quota');
+        const r = options.requested;
+        if (r !== undefined) requested = toDouble(r, 'requested');
+      }
+      if (quota !== null && quota < 0) {
+        throw new RangeError("Failed to construct 'QuotaExceededError': The quota must not be negative.");
+      }
+      if (requested !== null && requested < 0) {
+        throw new RangeError("Failed to construct 'QuotaExceededError': The requested value must not be negative.");
+      }
+      if (quota !== null && requested !== null && requested < quota) {
+        throw new RangeError("Failed to construct 'QuotaExceededError': The requested value must not be less than the quota.");
+      }
+      apply(wmSet, quotaLimits, [this, [requested, quota]]);
+    }
+    get requested() {
+      if (!apply(wmHas, quotaLimits, [this])) throw new TypeError('Illegal invocation');
+      return apply(wmGet, quotaLimits, [this])[0];
+    }
+    get quota() {
+      if (!apply(wmHas, quotaLimits, [this])) throw new TypeError('Illegal invocation');
+      return apply(wmGet, quotaLimits, [this])[1];
+    }
+  }
+  defineProperty(QuotaExceededError.prototype, toStringTag, { value: 'QuotaExceededError', configurable: true });
+  defineProperty(globalThis, 'QuotaExceededError', { value: QuotaExceededError, writable: true, configurable: true });
+
   function describe(v) {
     const type = v === null ? 'object' : typeof v;
     let subtype, className, description;

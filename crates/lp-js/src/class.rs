@@ -56,10 +56,12 @@ impl JsClass for NoParent {
 
 /// Raw `JSObjectCallAsFunctionCallback`.
 type IndexedFn = unsafe fn(&Scope<'_>, *mut Header, u32) -> JsResult<Option<sys::JSValueRef>>;
-type NamedFn = unsafe fn(&Scope<'_>, *mut Header, &str) -> JsResult<Option<sys::JSValueRef>>;
-type NamedSetFn = unsafe fn(&Scope<'_>, *mut Header, &str, sys::JSValueRef) -> JsResult<bool>;
-type NamedDeleteFn = unsafe fn(&Scope<'_>, *mut Header, &str) -> JsResult<bool>;
-type NamesFn = unsafe fn(&Scope<'_>, *mut Header) -> JsResult<Vec<String>>;
+/// Named hooks get the property name as JavaScript has it (UTF-16, lone
+/// surrogates intact); the `&str` registration variants convert lossily.
+type NamedFn = unsafe fn(&Scope<'_>, *mut Header, &[u16]) -> JsResult<Option<sys::JSValueRef>>;
+type NamedSetFn = unsafe fn(&Scope<'_>, *mut Header, &[u16], sys::JSValueRef) -> JsResult<bool>;
+type NamedDeleteFn = unsafe fn(&Scope<'_>, *mut Header, &[u16]) -> JsResult<bool>;
+type NamesFn = unsafe fn(&Scope<'_>, *mut Header) -> JsResult<Vec<JsString>>;
 
 pub(crate) struct MethodSpec {
     pub name: &'static str,
@@ -101,6 +103,11 @@ pub(crate) struct PropertyHooks {
     /// `[LegacyOverrideBuiltIns]`: named properties shadow prototype members.
     pub override_builtins: bool,
     pub named_set: Option<NamedSetFn>,
+    /// The named setter runs for every string name, prototype members
+    /// included (WebIDL `[[Set]]` on a true named-setter interface such as
+    /// `Storage`). Off, it emulates per-name IDL attributes and stays out of
+    /// the way of prototype accessors (`style.cssText = ..`).
+    pub set_all_names: bool,
     pub named_delete: Option<NamedDeleteFn>,
     pub names: Option<NamesFn>,
 }
@@ -118,6 +125,7 @@ impl PropertyHooks {
             named: self.named.or(parent.named),
             override_builtins: if named_own { self.override_builtins } else { parent.override_builtins },
             named_set: self.named_set.or(parent.named_set),
+            set_all_names: if self.named_set.is_some() { self.set_all_names } else { parent.set_all_names },
             named_delete: self.named_delete.or(parent.named_delete),
             names: self.names.or(parent.names),
         }
@@ -253,7 +261,23 @@ impl<C: JsClass> ClassDef<C> {
         self
     }
 
-    /// Named property setter; return `false` to fall back to an ordinary own property.
+    /// [`ClassDef::named`] with the name in UTF-16 code units, for classes
+    /// whose names may hold lone surrogates (Web Storage keys).
+    pub fn named_utf16<F>(&mut self, override_builtins: bool, _f: F) -> &mut Self
+    where
+        F: for<'s> Fn(&Scope<'s>, &C::Data, &[u16]) -> JsResult<Option<Value<'s>>> + Copy + 'static,
+    {
+        assert_zst::<F>();
+        self.hooks.named = Some(named_utf16_erased::<C, F>);
+        self.hooks.override_builtins = override_builtins;
+        self
+    }
+
+    /// Named property setter; return `false` to fall back to an ordinary own
+    /// property. Per WebIDL `[[Set]]` it runs for every string name on the
+    /// receiver itself, prototype members included (`storage.length = 1`
+    /// stores an item), so a setter that only supports some names must return
+    /// `false` for the others.
     pub fn named_setter<F>(&mut self, _f: F) -> &mut Self
     where
         F: for<'s> Fn(&Scope<'s>, &C::Data, &str, Value<'s>) -> JsResult<bool> + Copy + 'static,
@@ -263,13 +287,45 @@ impl<C: JsClass> ClassDef<C> {
         self
     }
 
-    /// Named property deleter; return `false` when the name is not supported.
+    /// [`ClassDef::named_setter`] with the name in UTF-16 code units.
+    pub fn named_setter_utf16<F>(&mut self, _f: F) -> &mut Self
+    where
+        F: for<'s> Fn(&Scope<'s>, &C::Data, &[u16], Value<'s>) -> JsResult<bool> + Copy + 'static,
+    {
+        assert_zst::<F>();
+        self.hooks.named_set = Some(named_set_utf16_erased::<C, F>);
+        self
+    }
+
+    /// Runs the named setter for every string name, prototype members
+    /// included, as WebIDL `[[Set]]` does on an interface with a named
+    /// property setter (`storage.length = 1` stores an item). Without it the
+    /// setter emulates per-name IDL attributes and prototype members win.
+    pub fn named_setter_for_all_names(&mut self) -> &mut Self {
+        self.hooks.set_all_names = true;
+        self
+    }
+
+    /// Named property deleter; return `false` when the name is not supported,
+    /// so the ordinary `[[Delete]]` runs (own properties such as symbol-keyed
+    /// expandos keep their configurability). Not consulted for names visible
+    /// on the prototype chain unless `[LegacyOverrideBuiltIns]`.
     pub fn named_deleter<F>(&mut self, _f: F) -> &mut Self
     where
         F: for<'s> Fn(&Scope<'s>, &C::Data, &str) -> JsResult<bool> + Copy + 'static,
     {
         assert_zst::<F>();
         self.hooks.named_delete = Some(named_delete_erased::<C, F>);
+        self
+    }
+
+    /// [`ClassDef::named_deleter`] with the name in UTF-16 code units.
+    pub fn named_deleter_utf16<F>(&mut self, _f: F) -> &mut Self
+    where
+        F: for<'s> Fn(&Scope<'s>, &C::Data, &[u16]) -> JsResult<bool> + Copy + 'static,
+    {
+        assert_zst::<F>();
+        self.hooks.named_delete = Some(named_delete_utf16_erased::<C, F>);
         self
     }
 
@@ -280,6 +336,16 @@ impl<C: JsClass> ClassDef<C> {
     {
         assert_zst::<F>();
         self.hooks.names = Some(names_erased::<C, F>);
+        self
+    }
+
+    /// [`ClassDef::property_names`] with the names in UTF-16 code units.
+    pub fn property_names_utf16<F>(&mut self, _f: F) -> &mut Self
+    where
+        F: for<'s> Fn(&Scope<'s>, &C::Data) -> JsResult<Vec<Vec<u16>>> + Copy + 'static,
+    {
+        assert_zst::<F>();
+        self.hooks.names = Some(names_utf16_erased::<C, F>);
         self
     }
 
@@ -1036,43 +1102,87 @@ where
     Ok(f(scope, data, index)?.map(|v| v.raw))
 }
 
-unsafe fn named_erased<C, F>(scope: &Scope<'_>, h: *mut Header, name: &str) -> JsResult<Option<sys::JSValueRef>>
+unsafe fn named_erased<C, F>(scope: &Scope<'_>, h: *mut Header, name: &[u16]) -> JsResult<Option<sys::JSValueRef>>
 where
     C: JsClass,
     F: for<'s> Fn(&Scope<'s>, &C::Data, &str) -> JsResult<Option<Value<'s>>> + Copy + 'static,
 {
     let data = unsafe { hook_data::<C>(scope, h) }?;
     let f = unsafe { conjure::<F>() };
+    Ok(f(scope, data, &String::from_utf16_lossy(name))?.map(|v| v.raw))
+}
+
+unsafe fn named_utf16_erased<C, F>(scope: &Scope<'_>, h: *mut Header, name: &[u16]) -> JsResult<Option<sys::JSValueRef>>
+where
+    C: JsClass,
+    F: for<'s> Fn(&Scope<'s>, &C::Data, &[u16]) -> JsResult<Option<Value<'s>>> + Copy + 'static,
+{
+    let data = unsafe { hook_data::<C>(scope, h) }?;
+    let f = unsafe { conjure::<F>() };
     Ok(f(scope, data, name)?.map(|v| v.raw))
 }
 
-unsafe fn named_set_erased<C, F>(scope: &Scope<'_>, h: *mut Header, name: &str, v: sys::JSValueRef) -> JsResult<bool>
+unsafe fn named_set_erased<C, F>(scope: &Scope<'_>, h: *mut Header, name: &[u16], v: sys::JSValueRef) -> JsResult<bool>
 where
     C: JsClass,
     F: for<'s> Fn(&Scope<'s>, &C::Data, &str, Value<'s>) -> JsResult<bool> + Copy + 'static,
 {
     let data = unsafe { hook_data::<C>(scope, h) }?;
+    unsafe { conjure::<F>()(scope, data, &String::from_utf16_lossy(name), Value::from_raw(scope.ctx, v)) }
+}
+
+unsafe fn named_set_utf16_erased<C, F>(
+    scope: &Scope<'_>,
+    h: *mut Header,
+    name: &[u16],
+    v: sys::JSValueRef,
+) -> JsResult<bool>
+where
+    C: JsClass,
+    F: for<'s> Fn(&Scope<'s>, &C::Data, &[u16], Value<'s>) -> JsResult<bool> + Copy + 'static,
+{
+    let data = unsafe { hook_data::<C>(scope, h) }?;
     unsafe { conjure::<F>()(scope, data, name, Value::from_raw(scope.ctx, v)) }
 }
 
-unsafe fn named_delete_erased<C, F>(scope: &Scope<'_>, h: *mut Header, name: &str) -> JsResult<bool>
+unsafe fn named_delete_erased<C, F>(scope: &Scope<'_>, h: *mut Header, name: &[u16]) -> JsResult<bool>
 where
     C: JsClass,
     F: for<'s> Fn(&Scope<'s>, &C::Data, &str) -> JsResult<bool> + Copy + 'static,
 {
     let data = unsafe { hook_data::<C>(scope, h) }?;
     let f = unsafe { conjure::<F>() };
+    f(scope, data, &String::from_utf16_lossy(name))
+}
+
+unsafe fn named_delete_utf16_erased<C, F>(scope: &Scope<'_>, h: *mut Header, name: &[u16]) -> JsResult<bool>
+where
+    C: JsClass,
+    F: for<'s> Fn(&Scope<'s>, &C::Data, &[u16]) -> JsResult<bool> + Copy + 'static,
+{
+    let data = unsafe { hook_data::<C>(scope, h) }?;
+    let f = unsafe { conjure::<F>() };
     f(scope, data, name)
 }
 
-unsafe fn names_erased<C, F>(scope: &Scope<'_>, h: *mut Header) -> JsResult<Vec<String>>
+unsafe fn names_erased<C, F>(scope: &Scope<'_>, h: *mut Header) -> JsResult<Vec<JsString>>
 where
     C: JsClass,
     F: for<'s> Fn(&Scope<'s>, &C::Data) -> JsResult<Vec<String>> + Copy + 'static,
 {
     let data = unsafe { hook_data::<C>(scope, h) }?;
     let f = unsafe { conjure::<F>() };
-    f(scope, data)
+    Ok(f(scope, data)?.iter().map(|n| JsString::new(n)).collect())
+}
+
+unsafe fn names_utf16_erased<C, F>(scope: &Scope<'_>, h: *mut Header) -> JsResult<Vec<JsString>>
+where
+    C: JsClass,
+    F: for<'s> Fn(&Scope<'s>, &C::Data) -> JsResult<Vec<Vec<u16>>> + Copy + 'static,
+{
+    let data = unsafe { hook_data::<C>(scope, h) }?;
+    let f = unsafe { conjure::<F>() };
+    Ok(f(scope, data)?.iter().map(|n| JsString::from_utf16(n)).collect())
 }
 
 /// Data of class `C` for a property-hook receiver (hooks may be inherited).
@@ -1106,6 +1216,7 @@ struct HookCtx {
     named: Option<NamedFn>,
     override_builtins: bool,
     named_set: Option<NamedSetFn>,
+    set_all_names: bool,
     named_delete: Option<NamedDeleteFn>,
     names: Option<NamesFn>,
 }
@@ -1124,6 +1235,7 @@ unsafe fn hook_ctx(scope: &Scope<'_>, object: sys::JSObjectRef) -> Option<HookCt
         named: hooks.named,
         override_builtins: hooks.override_builtins,
         named_set: hooks.named_set,
+        set_all_names: hooks.set_all_names,
         named_delete: hooks.named_delete,
         names: hooks.names,
     })
@@ -1158,8 +1270,7 @@ unsafe extern "C" fn get_property_hook(
                     if !hc.override_builtins && on_prototype_chain(scope.ctx, object, name) {
                         return Ok(ptr::null());
                     }
-                    let n = String::from_utf16_lossy(units);
-                    return Ok(f(scope, hc.header, &n)?.unwrap_or(ptr::null()));
+                    return Ok(f(scope, hc.header, units)?.unwrap_or(ptr::null()));
                 }
                 Ok(ptr::null())
             };
@@ -1236,12 +1347,16 @@ unsafe extern "C" fn set_property_hook(
                 // Indexed properties without a setter are read-only: ignore (sloppy) writes.
                 return Ok(true);
             }
+            // WebIDL [[Set]] on the receiver itself invokes the named setter for
+            // every string name when the class opted in (`storage.length = 1`
+            // stores an item that only `getItem` reads back); otherwise names
+            // the prototype chain has go to the prototype member.
             let set = |scope: &Scope<'_>| -> JsResult<bool> {
                 if let Some(f) = hc.named_set {
-                    if !hc.override_builtins && on_prototype_chain(scope.ctx, object, name) {
+                    if !hc.override_builtins && !hc.set_all_names && on_prototype_chain(scope.ctx, object, name) {
                         return Ok(false);
                     }
-                    return f(scope, hc.header, &String::from_utf16_lossy(units), value);
+                    return f(scope, hc.header, units, value);
                 }
                 Ok(false)
             };
@@ -1263,11 +1378,16 @@ unsafe extern "C" fn delete_property_hook(
         guard(ctx, exc, false, |scope| {
             let Some(hc) = hook_ctx(scope, object) else { return Ok(false) };
             let Some(f) = hc.named_delete else { return Ok(false) };
-            let name = String::from_utf16_lossy(utf16_of(name));
-            if hc.realm != scope.realm_id() {
-                return in_receiver_realm(scope, hc.realm, |s| f(s, hc.header, &name));
+            // The named property visibility algorithm: a name the prototype
+            // chain has is not a named property, so the ordinary [[Delete]] runs.
+            if !hc.override_builtins && on_prototype_chain(ctx, object, name) {
+                return Ok(false);
             }
-            f(scope, hc.header, &name)
+            let units = utf16_of(name);
+            if hc.realm != scope.realm_id() {
+                return in_receiver_realm(scope, hc.realm, |s| f(s, hc.header, units));
+            }
+            f(scope, hc.header, units)
         })
     }
 }
@@ -1299,8 +1419,8 @@ unsafe extern "C" fn property_names_hook(
                 } else {
                     f(scope, hc.header)?
                 };
-                for n in names {
-                    sys::JSPropertyNameAccumulatorAddName(acc, JsString::new(&n).as_raw());
+                for n in &names {
+                    sys::JSPropertyNameAccumulatorAddName(acc, n.as_raw());
                 }
             }
             Ok(())

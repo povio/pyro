@@ -6,6 +6,7 @@ mod callback_hook;
 mod callback_lock;
 mod class_lengths;
 mod lazy_interfaces;
+mod named_hooks;
 mod nested_realm;
 mod object_inspection;
 mod runtime;
