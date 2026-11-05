@@ -243,7 +243,9 @@ impl<'a> Cx<'a> {
         }
     }
 
-    #[inline]
+    /// The tests of `c` on `e`: inline, so a universal compound reads
+    /// nothing of the element and a type test is one atom compare.
+    #[inline(always)]
     fn compound(&self, c: &Compound, e: &ElementData) -> bool {
         let html = || self.html_doc && e.is_html();
         if let Some(n) = &c.local {
@@ -265,7 +267,12 @@ impl<'a> Cx<'a> {
                 }
             }
         }
-        c.attrs.iter().all(|t| attr_matches(t, e, html))
+        c.attrs.is_empty() || self.attrs(c, e)
+    }
+
+    #[inline(never)]
+    fn attrs(&self, c: &Compound, e: &ElementData) -> bool {
+        c.attrs.iter().all(|t| attr_matches(t, e, || self.html_doc && e.is_html()))
     }
 }
 

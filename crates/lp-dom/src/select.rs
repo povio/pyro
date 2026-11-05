@@ -4,6 +4,7 @@
 
 use std::borrow::Borrow;
 use std::fmt;
+use std::rc::Rc;
 
 use cssparser::{CowRcStr, ParseError, Parser as CssParser, ToCss};
 use markup5ever::{local_name, ns, LocalName, Namespace};
@@ -552,8 +553,12 @@ pub struct SelectorCache {
     /// string stores them (one map per width), for callers that have those
     /// and no `String`: `Element.matches` runs thousands of times per
     /// Playwright locator, and a lookup is one hash and compare of the bytes.
-    latin1: FxHashMap<Box<[u8]>, Query>,
+    latin1: FxHashMap<Rc<[u8]>, Rc<Query>>,
     utf16: FxHashMap<Box<[u16]>, Query>,
+    /// The Latin-1 selector looked up last and its query (shared with
+    /// `latin1`): a run of calls with one selector, as a selector engine's
+    /// `matches` loop makes, compares the characters and nothing else.
+    last: Option<(Rc<[u8]>, Rc<Query>)>,
 }
 const SELECTOR_CACHE_CAP: usize = 512;
 impl SelectorCache {
@@ -566,6 +571,7 @@ impl SelectorCache {
             self.map.clear();
             self.latin1.clear();
             self.utf16.clear();
+            self.last = None;
         }
         self.map.insert(text.into(), s.clone());
         Ok(s)
@@ -574,12 +580,22 @@ impl SelectorCache {
     /// `f` on the query of a selector given as Latin-1 characters, without
     /// taking it out of the cache.
     pub fn with_latin1<R>(&mut self, chars: &[u8], f: impl FnOnce(&Query) -> R) -> DomResult<R> {
-        if let Some(q) = self.latin1.get(chars) {
-            return Ok(f(q));
+        if let Some((key, q)) = &self.last {
+            if **key == *chars {
+                return Ok(f(q));
+            }
         }
-        let q = self.get(&chars.iter().map(|&c| char::from(c)).collect::<String>())?;
+        let (key, q) = match self.latin1.get_key_value(chars) {
+            Some((key, q)) => (key.clone(), q.clone()),
+            None => {
+                let q = Rc::new(self.get(&chars.iter().map(|&c| char::from(c)).collect::<String>())?);
+                let key: Rc<[u8]> = chars.into();
+                self.latin1.insert(key.clone(), q.clone());
+                (key, q)
+            }
+        };
         let r = f(&q);
-        self.latin1.insert(chars.into(), q);
+        self.last = Some((key, q));
         Ok(r)
     }
 
