@@ -6,8 +6,10 @@
 //! which may run other pending CDP replies that use the same table.
 
 use std::cell::RefCell;
+use std::rc::Rc;
 
 use lp_js::{JsError, JsException, JsType, Persistent, Scope, Value};
+use serde_json::value::RawValue;
 use serde_json::Value as Json;
 
 use crate::msg::{CdpError, CdpResult};
@@ -18,6 +20,10 @@ use crate::runtime_protocol::{
 
 /// A converted value plus the engine reference to store if the client should
 /// get an `objectId`.
+/// A session's remote-object table. Handles are shared (`Rc`) so a command
+/// can keep its target object alive across a call without re-protecting it.
+pub(crate) type Handles = RefCell<HandleTable<Rc<Persistent>>>;
+
 pub(crate) struct Described {
     pub(crate) remote: RemoteObject,
     pub(crate) keep: Option<Persistent>,
@@ -222,11 +228,22 @@ pub(crate) fn add_preview(scope: &Scope<'_>, value: Value<'_>, remote: &mut Remo
 /// Finishes a [`Described`] by registering its handle (if any).
 pub(crate) fn register(
     described: Described,
-    handles: &RefCell<HandleTable<Persistent>>,
+    handles: &Handles,
     context: ExecutionContextId,
     group: Option<&str>,
 ) -> CdpResult<RemoteObject> {
-    let Described { mut remote, keep } = described;
+    let Described { remote, keep } = described;
+    register_shared(remote, keep.map(Rc::new), handles, context, group)
+}
+
+/// [`register`] for a handle that several sessions share (console arguments).
+pub(crate) fn register_shared(
+    mut remote: RemoteObject,
+    keep: Option<Rc<Persistent>>,
+    handles: &Handles,
+    context: ExecutionContextId,
+    group: Option<&str>,
+) -> CdpResult<RemoteObject> {
     if let Some(keep) = keep {
         remote.object_id = Some(handles.borrow_mut().insert(context, group, keep)?);
     }
@@ -284,7 +301,7 @@ pub(crate) fn exception_details(
 pub(crate) fn argument<'s>(
     scope: &Scope<'s>,
     arg: &CallArgument,
-    handles: &RefCell<HandleTable<Persistent>>,
+    handles: &Handles,
     context: ExecutionContextId,
 ) -> CdpResult<Value<'s>> {
     Ok(match arg.decode()? {
@@ -305,14 +322,19 @@ pub(crate) fn argument<'s>(
     })
 }
 
-fn json_value<'s>(scope: &Scope<'s>, json: &Json) -> CdpResult<Value<'s>> {
-    Ok(match json {
-        Json::Null => scope.null(),
-        Json::Bool(b) => scope.boolean(*b),
-        Json::Number(n) => scope.number(n.as_f64().unwrap_or(f64::NAN)),
-        Json::String(s) => scope.string(s),
-        other => scope
-            .parse_json(&other.to_string())
-            .ok_or_else(|| CdpError::invalid_params("Couldn't parse value object in call argument"))?,
+/// The engine value of a JSON argument. Scalars are converted natively;
+/// objects and arrays go to the engine's `JSON.parse` as sent, so no value
+/// tree is built and key order is kept (as in Chrome).
+fn json_value<'s>(scope: &Scope<'s>, json: &RawValue) -> CdpResult<Value<'s>> {
+    let invalid = || CdpError::invalid_params("Couldn't parse value object in call argument");
+    let text = json.get();
+    Ok(match text.as_bytes().first() {
+        Some(b'n') => scope.null(),
+        Some(b't') => scope.boolean(true),
+        Some(b'f') => scope.boolean(false),
+        // The parser that validated the message, so numbers round the same.
+        Some(b'-' | b'0'..=b'9') => scope.number(serde_json::from_str::<f64>(text).map_err(|_| invalid())?),
+        Some(b'"') => scope.string(&serde_json::from_str::<std::borrow::Cow<'_, str>>(text).map_err(|_| invalid())?),
+        _ => scope.parse_json(text).ok_or_else(invalid)?,
     })
 }

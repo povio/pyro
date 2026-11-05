@@ -269,6 +269,23 @@ impl OutFrame {
         Self { buf }
     }
 
+    /// A frame reusing `buf`'s allocation (its contents are discarded).
+    pub fn with_buffer(mut buf: Vec<u8>) -> Self {
+        buf.clear();
+        buf.resize(MAX_HEADER, 0);
+        Self { buf }
+    }
+
+    /// Gives the allocation back for [`OutFrame::with_buffer`].
+    pub fn into_buffer(self) -> Vec<u8> {
+        self.buf
+    }
+
+    /// The payload written so far.
+    pub fn payload_bytes(&self) -> &[u8] {
+        &self.buf[MAX_HEADER..]
+    }
+
     /// Payload writer; everything appended becomes the frame payload.
     pub fn payload(&mut self) -> &mut Vec<u8> {
         &mut self.buf

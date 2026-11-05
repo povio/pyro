@@ -323,6 +323,8 @@ pub struct Browser<H: Host> {
     workers: Vec<WorkerEntry>,
     sessions: HashMap<String, SessionEntry>,
     browser_sessions: HashSet<String>,
+    /// The last handled message polled the prepared-page pool.
+    pool_poll: bool,
     next_id: u64,
     prepared_profiles: Vec<PreparedProfile>,
     retired_profiles: HashSet<usize>,
@@ -368,6 +370,7 @@ impl<H: Host> Browser<H> {
             workers: Vec::new(),
             sessions: HashMap::new(),
             browser_sessions: HashSet::new(),
+            pool_poll: false,
             next_id: 1,
             prepared_profiles: Vec::new(),
             retired_profiles: HashSet::new(),
@@ -812,11 +815,17 @@ impl<H: Host> Browser<H> {
                 return;
             }
         };
-        let session_id = command.session_id().map(str::to_owned);
+        self.pool_poll = command.method == "Lightningpanda.preparedPages";
         let _t = crate::perf::span_with(|| format!("cdp.dispatch {}", command.method));
         if let Err(error) = self.dispatch(&command, out) {
-            out.send(msg::error_frame(Some(command.id), &error, session_id.as_deref()));
+            out.send(msg::error_frame(Some(command.id), &error, command.session_id()));
         }
+    }
+
+    /// Whether the last message [`Browser::handle_text`] handled was a
+    /// `Lightningpanda.preparedPages` status poll (not client activity).
+    pub fn last_was_pool_poll(&self) -> bool {
+        self.pool_poll
     }
 
     fn dispatch(&mut self, cmd: &Command<'_>, out: &mut dyn Sink) -> CdpResult<()> {
@@ -911,13 +920,14 @@ impl<H: Host> Browser<H> {
         if let Some(worker) = session.worker {
             return self.worker_session_command(session_id, worker, cmd, out);
         }
-        let target = self
+        let index = self
             .targets
             .iter()
-            .find(|t| t.id == session.target_id)
+            .position(|t| t.id == session.target_id)
             .ok_or_else(|| CdpError::server("target of session is gone"))?;
-        let (page, target_id) = (target.page, target.id.clone());
+        let page = self.targets[index].page;
         if session.tab {
+            let target_id = self.targets[index].id.clone();
             return self.tab_session_command(session_id, &target_id, cmd, out);
         }
         match cmd.method.as_ref() {
@@ -943,6 +953,7 @@ impl<H: Host> Browser<H> {
             "Target.getTargetInfo" => {
                 let url = self.host.page_url(page);
                 let title = self.host.page_title(page);
+                let target_id = self.targets[index].id.clone();
                 let target = self.target(&target_id)?;
                 let info = self.info(target, &url, &title, true);
                 out.send(msg::result_frame(cmd.id, &serde_json::json!({ "targetInfo": info }), Some(session_id)));
@@ -950,9 +961,14 @@ impl<H: Host> Browser<H> {
             "Runtime.runIfWaitingForDebugger" => {
                 // Only popups start paused; resuming starts their navigation.
                 out.send(msg::result_frame(cmd.id, &Empty {}, Some(session_id)));
+                let target_id = self.targets[index].id.clone();
                 self.release_popup(&target_id, out);
             }
-            _ => self.host.page_command(PageCommand { page, target_id: &target_id, session_id, command: cmd }, out),
+            // The target id is borrowed: no copy per page command.
+            _ => {
+                let target_id = &self.targets[index].id;
+                self.host.page_command(PageCommand { page, target_id, session_id, command: cmd }, out)
+            }
         }
         Ok(())
     }
