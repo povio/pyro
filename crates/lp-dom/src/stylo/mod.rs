@@ -102,3 +102,24 @@ pub(crate) fn url_data() -> UrlExtraData {
         LazyLock::new(|| UrlExtraData(Arc::new(url::Url::parse("about:blank").expect("url"))));
     URL.clone()
 }
+
+/// The longhand properties a computed style lists (`getComputedStyle(el)`'s
+/// indexed properties), in alphabetical order.
+pub fn longhand_names() -> &'static [&'static str] {
+    static NAMES: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
+        use style::properties::ShorthandId;
+        // `all` covers every longhand but these two.
+        let mut names: Vec<&'static str> = ShorthandId::All.longhands().map(|l| l.name()).collect();
+        names.extend(["direction", "unicode-bidi"]);
+        names.retain(|name| property_id(name).is_some());
+        names.sort_unstable();
+        names.dedup();
+        names
+    });
+    &NAMES
+}
+
+/// Whether `name` is a CSS property (longhand or shorthand) the engine knows.
+pub fn is_property(name: &str) -> bool {
+    property_id(name).is_some()
+}

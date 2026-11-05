@@ -509,8 +509,15 @@ impl JsClass for ComputedStyle {
             Ok(s.string(&v))
         });
         def.method("getPropertyPriority", 1, |s, _c, _a| Ok(s.string("")));
-        def.method("item", 1, |s, _c, _a| Ok(s.string("")));
-        def.getter("length", |s, _c| Ok(s.number(0.0)));
+        // The longhands, as indexed properties; an element without computed
+        // style (not rendered) lists nothing, as in Chrome.
+        def.method("item", 1, |s, c, a| {
+            let names = computed_names(c);
+            Ok(s.string(names.get(to_u32(a.get(0))? as usize).copied().unwrap_or("")))
+        });
+        def.getter("length", |s, c| Ok(s.number(computed_names(c).len() as f64)));
+        def.indexed(|s, c, i| Ok(computed_names(c).get(i as usize).map(|name| s.string(name))));
+        def.indexed_iterator();
         def.getter("cssText", |s, _c| Ok(s.string("")));
         def.method("setProperty", 2, |_s, _c, _a| {
             Err::<Value, _>(lp_js::JsError::dom(
@@ -519,18 +526,38 @@ impl JsClass for ComputedStyle {
             ))
         });
         def.named(false, |s, c, name| {
+            // camelCase IDL attributes (`backgroundColor`) and the dashed
+            // property names themselves (`background-color`).
+            let dashed = name.contains('-');
             if !name.chars().next().is_some_and(|ch| ch.is_ascii_lowercase())
-                || !name.chars().all(|ch| ch.is_ascii_alphanumeric())
+                || !name.chars().all(|ch| ch.is_ascii_alphanumeric() || (dashed && ch == '-'))
             {
                 return Ok(None);
             }
-            let prop = crate::css::camel_to_css(name);
+            let prop = if dashed {
+                if !lp_dom::stylo::is_property(name) {
+                    return Ok(None);
+                }
+                name.to_owned()
+            } else {
+                crate::css::camel_to_css(name)
+            };
             let page = &c.el.page;
             crate::animation_events::observe(page, c.el.id);
             let v = page.layout().computed_style_value(&page.dom.borrow(), c.el.id, &prop);
             Ok(Some(s.string(&v)))
         });
     }
+}
+
+/// The property names a computed style lists.
+fn computed_names(c: &ComputedData) -> &'static [&'static str] {
+    let page = &c.el.page;
+    let dom = page.dom.borrow();
+    if page.layout().computed_style_value(&dom, c.el.id, "display").is_empty() {
+        return &[];
+    }
+    lp_dom::stylo::longhand_names()
 }
 
 /// `window.getComputedStyle(el)`.

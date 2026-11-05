@@ -1273,6 +1273,7 @@ impl JsClass for Document {
             };
             node_value(s, n.page(), e)
         });
+        def.getter("styleSheets", crate::css::style_sheets);
         def.getter("doctype", |s, n| {
             let e = n.page().dom.borrow().doctype(n.id).js()?;
             node_value(s, n.page(), e)
