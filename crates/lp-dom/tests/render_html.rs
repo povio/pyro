@@ -271,3 +271,52 @@ fn textarea_non_attribute_changes_and_special_trees_keep_the_full_snapshot_fallb
         );
     }
 }
+
+#[test]
+fn scrolled_render_copy_preserves_offsets_without_mutating_document() {
+    let (dom, document) = doc("<div id=outer data-lp-scroll-top=999><div id=inner>content</div></div>");
+    let dom = dom.borrow();
+    let outer = find(&dom, document, "#outer");
+    let inner = find(&dom, document, "#inner");
+    let opts = RenderHtml { style_text: &|_| None, stylesheet_href: &|_| None, mark: None };
+    let html = dom
+        .render_html_scrolled(
+            document,
+            &opts,
+            &[(lp_dom::snapshot::render_key(outer), (24.0, 80.0)), (lp_dom::snapshot::render_key(inner), (0.0, 16.0))],
+        )
+        .unwrap();
+    assert!(html.contains(r#"data-lp-scroll-left="24" data-lp-scroll-top="80""#), "{html}");
+    assert!(html.contains(r#"data-lp-scroll-left="0" data-lp-scroll-top="16""#), "{html}");
+    assert!(!html.contains("999"));
+    assert_eq!(dom.get_attribute(outer, "data-lp-scroll-top").unwrap(), Some("999"));
+    assert!(!dom.render_html(document, &opts).unwrap().contains("data-lp-scroll"));
+}
+
+#[test]
+fn password_render_copies_mask_current_values_without_mutating_inputs() {
+    use lp_dom::snapshot::{render_key, RenderNodeKind};
+    let (dom, document) = doc(
+        r#"<input id="password" type="PaSsWoRd" value="attribute-secret"><input id="plain" value="visible"><input id="empty" type="password">"#,
+    );
+    let password = find(&dom.borrow(), document, "#password");
+    dom.borrow_mut().set_value(password, "typed-secret").unwrap();
+    let html = render(&dom.borrow(), document);
+    assert!(!html.contains("attribute-secret"));
+    assert!(!html.contains("typed-secret"));
+    assert!(html.contains(&format!("value=\"{}\"", "•".repeat(12))));
+    assert!(html.contains(r#"<input id="plain" value="visible">"#));
+    assert!(html.contains(r#"<input id="empty" type="password">"#));
+    let opts = RenderHtml { style_text: &|_| None, stylesheet_href: &|_| None, mark: None };
+    let tree = dom.borrow().render_tree(document, &opts).unwrap();
+    let node = tree.nodes.iter().find(|node| node.key == render_key(password)).unwrap();
+    match &node.kind {
+        RenderNodeKind::Element { attrs, .. } => {
+            assert_eq!(attrs.iter().find(|(name, _)| &*name.local == "value").unwrap().1, "•".repeat(12));
+        }
+        _ => panic!("expected password input"),
+    }
+    assert_eq!(dom.borrow().value(password).unwrap(), "typed-secret");
+    dom.borrow_mut().set_attribute(password, "type", "text").unwrap();
+    assert!(render(&dom.borrow(), document).contains("typed-secret"));
+}

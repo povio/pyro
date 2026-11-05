@@ -47,6 +47,13 @@ struct Assets {
 impl Fetcher for Assets {
     fn fetch(&self, address: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
         let result = (|| {
+            if address.starts_with("data:") {
+                let data = data_url::DataUrl::process(&address).map_err(|e| format!("invalid data URL: {e:?}"))?;
+                return data
+                    .decode_to_vec()
+                    .map(|(bytes, _)| bytes)
+                    .map_err(|e| format!("invalid data URL payload: {e:?}"));
+            }
             let url = url::Url::parse(&address).map_err(|e| e.to_string())?;
             if url.origin().ascii_serialization() != self.origin {
                 return Err(format!("uncaptured resource origin: {}", url.origin().ascii_serialization()));
@@ -161,5 +168,24 @@ fn main() {
         };
         println!("{reply}");
         let _ = std::io::stdout().flush();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn fetch(address: &str) -> Result<Vec<u8>, String> {
+        let assets =
+            Assets { root: PathBuf::new(), origin: "http://test".into(), errors: Arc::new(Mutex::new(Vec::new())) };
+        let (send, receive) = mpsc::channel();
+        assets.fetch(address.into(), Box::new(move |result| send.send(result).unwrap()));
+        receive.recv().unwrap()
+    }
+    #[test]
+    fn embedded_resources_decode_without_network_or_relaxing_origin_checks() {
+        assert_eq!(fetch("data:image/png;base64,AQIDBA==").unwrap(), vec![1, 2, 3, 4]);
+        assert_eq!(fetch("data:image/svg+xml,%3Csvg%3E%3C/svg%3E").unwrap(), b"<svg></svg>");
+        assert!(fetch("https://external.test/image.png").unwrap_err().contains("uncaptured resource origin"));
+        assert!(fetch("data:image/png;base64,?").is_err());
     }
 }

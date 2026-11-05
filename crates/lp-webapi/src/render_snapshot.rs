@@ -109,7 +109,9 @@ fn snapshot_of(
         };
         let opts = RenderHtml { style_text: &style_text, stylesheet_href: &stylesheet_href, mark };
         let (html, tree) = match form {
-            Form::Html => (dom.render_html(document, &opts).unwrap_or_default(), None),
+            Form::Html => {
+                (dom.render_html_scrolled(document, &opts, &layout.scrolled_elements()).unwrap_or_default(), None)
+            }
             Form::Tree => (String::new(), Some(dom.render_tree(document, &opts).unwrap_or_default())),
             Form::None => (String::new(), None),
         };
