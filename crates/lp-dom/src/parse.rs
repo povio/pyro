@@ -357,6 +357,24 @@ pub struct DocumentParser {
     sniff: Vec<u8>,
     /// Outer input set aside by `open_insertion_point` (innermost last).
     saved: Vec<BufferQueue>,
+    /// An XML document: the response is parsed whole at end of input, then
+    /// its scripts are yielded one by one.
+    xml: Option<XmlLoad>,
+}
+
+/// State of an XML (XHTML, SVG, generic XML) document load.
+struct XmlLoad {
+    content_type: String,
+    bytes: Vec<u8>,
+    parsed: bool,
+    scripts: std::collections::VecDeque<NodeId>,
+}
+
+/// Whether a navigation response of this MIME type is an XML document.
+pub fn is_xml_mime(mime: &str) -> bool {
+    let essence = mime.split(';').next().unwrap_or("").trim().to_ascii_lowercase();
+    matches!(essence.as_str(), "text/xml" | "application/xml" | "application/xhtml+xml" | "image/svg+xml")
+        || essence.ends_with("+xml")
 }
 
 /// Charset prescan of the first bytes for `<meta charset>` /
@@ -420,7 +438,21 @@ impl DocumentParser {
             decoded: String::new(),
             sniff: Vec::new(),
             saved: Vec::new(),
+            xml: None,
         })
+    }
+
+    /// An XML document (`is_xml_mime`): parsed whole once the response has
+    /// arrived; XHTML scripts run in tree order afterwards.
+    pub fn new_xml(dom: DomRef, doc: NodeId, content_type: &str) -> DomResult<Self> {
+        let mut parser = Self::new(dom, doc, false)?;
+        parser.xml = Some(XmlLoad {
+            content_type: content_type.to_owned(),
+            bytes: Vec::new(),
+            parsed: false,
+            scripts: Default::default(),
+        });
+        Ok(parser)
     }
 
     /// A text/plain document uses the normal decoder, but never interprets
@@ -451,6 +483,12 @@ impl DocumentParser {
     /// `<meta>` prescan of the first chunk, then UTF-8 (the spec's
     /// locale-dependent default is replaced by UTF-8 — documented deviation).
     pub fn feed_bytes(&mut self, bytes: &[u8]) -> ParseStep {
+        if let Some(xml) = &mut self.xml {
+            if !xml.parsed {
+                xml.bytes.extend_from_slice(bytes);
+            }
+            return ParseStep::NeedInput;
+        }
         if self.decoder.is_some() {
             return self.decode(bytes, false);
         }
@@ -490,6 +528,17 @@ impl DocumentParser {
     /// Flushes buffered bytes and the decoder at end of input (call before
     /// `end`; resume on `Script` as usual).
     pub fn finish_bytes(&mut self) -> ParseStep {
+        if let Some(xml) = &mut self.xml {
+            if !xml.parsed {
+                xml.parsed = true;
+                let bytes = std::mem::take(&mut xml.bytes);
+                let charset = self.transport_charset.map(|e| e.name());
+                let scripts =
+                    crate::xml::parse_into(&mut self.dom.borrow_mut(), self.doc, &bytes, charset, &xml.content_type);
+                xml.scripts.extend(scripts);
+            }
+            return self.resume();
+        }
         if self.decoder.is_none() {
             self.start_decoder();
         }
@@ -559,6 +608,12 @@ impl DocumentParser {
     pub fn resume(&mut self) -> ParseStep {
         if self.ended {
             return ParseStep::NeedInput;
+        }
+        if let Some(xml) = &mut self.xml {
+            return match xml.scripts.pop_front() {
+                Some(script) => ParseStep::Script(script),
+                None => ParseStep::NeedInput,
+            };
         }
         loop {
             match self.tok.feed(&self.input) {

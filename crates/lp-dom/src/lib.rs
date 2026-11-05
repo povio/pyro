@@ -3,6 +3,7 @@
 //! dependency; JS bindings live in `lp-webapi`.
 
 pub mod computed;
+pub mod direction;
 pub mod dom;
 pub mod error;
 pub mod events;
@@ -16,6 +17,7 @@ pub mod image;
 pub mod cssom;
 pub mod inner_text;
 pub mod layout;
+pub mod live_iterator;
 pub mod live_range;
 pub mod media;
 pub mod mutation;
@@ -24,6 +26,7 @@ pub mod parse;
 pub mod script;
 pub mod select;
 pub mod serialize;
+mod slots;
 pub mod snapshot;
 pub mod style;
 pub mod stylo;

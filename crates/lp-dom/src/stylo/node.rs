@@ -322,7 +322,7 @@ impl<'a, C: CxSource<'a>> SNode<'a, C> {
         self.element().is_html() && self.cx().dom.is_html_doc(self.node().owner_doc)
     }
     fn matches(&self, pc: PseudoClass) -> bool {
-        self.cx().dom.matches_state(self.i(), pc)
+        self.cx().dom.matches_state(self.i(), &pc)
     }
 }
 
@@ -508,7 +508,8 @@ impl<'a, C: CxSource<'a>> selectors::Element for SNode<'a, C> {
     fn match_non_ts_pseudo_class(&self, pc: &NonTSPseudoClass, _ctx: &mut MatchingContext<SelectorImpl>) -> bool {
         use NonTSPseudoClass as N;
         match pc {
-            N::Active | N::Visited | N::Target | N::Fullscreen | N::Autofill => false,
+            N::Active | N::Visited | N::Fullscreen | N::Autofill => false,
+            N::Target => self.matches(PseudoClass::Target),
             N::AnyLink | N::Link => self.matches(PseudoClass::Link),
             N::Checked => self.matches(PseudoClass::Checked),
             N::Indeterminate => self.matches(PseudoClass::Indeterminate),
@@ -530,6 +531,7 @@ impl<'a, C: CxSource<'a>> selectors::Element for SNode<'a, C> {
             N::Open => self.matches(PseudoClass::Open),
             N::Modal => self.matches(PseudoClass::Modal),
             N::PopoverOpen => self.cx().popovers.contains(&self.i()),
+            N::Lang(lang) => self.match_element_lang(None, lang),
             _ => false,
         }
     }
@@ -696,6 +698,7 @@ impl<'a, C: CxSource<'a>> TElement for SNode<'a, C> {
         set(PseudoClass::Invalid, ElementState::INVALID);
         set(PseudoClass::Open, ElementState::OPEN);
         set(PseudoClass::Modal, ElementState::MODAL);
+        set(PseudoClass::Target, ElementState::URLTARGET);
         if self.cx().popovers.contains(&self.i()) {
             s |= ElementState::POPOVER_OPEN;
         }
@@ -807,14 +810,18 @@ impl<'a, C: CxSource<'a>> TElement for SNode<'a, C> {
         self.element().attrs.iter().find(|a| a.name.local == attr.0 && a.name.ns == ns.0).map(|a| a.value.to_string())
     }
     fn lang_attr(&self) -> Option<style::selector_parser::AttrValue> {
-        None
+        self.element().attr("lang").map(style::values::AtomString::from)
     }
     fn match_element_lang(
         &self,
-        _override_lang: Option<Option<style::selector_parser::AttrValue>>,
-        _value: &style::selector_parser::Lang,
+        override_lang: Option<Option<style::selector_parser::AttrValue>>,
+        value: &style::selector_parser::Lang,
     ) -> bool {
-        false
+        match override_lang {
+            Some(Some(lang)) => crate::direction::lang_range_matches(lang.as_ref(), value),
+            Some(None) => false,
+            None => self.cx().dom.lang_matches(self.i(), value),
+        }
     }
     fn is_html_document_body_element(&self) -> bool {
         let e = self.element();

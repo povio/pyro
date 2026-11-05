@@ -326,6 +326,10 @@ impl Dom {
     fn event_parent(&self, key: TargetKey, ev_ty: &LocalName, composed: bool, origin_root: u32) -> Option<TargetKey> {
         let TargetKey::Node(i) = key else { return None };
         let n = self.n(i);
+        // A slottable assigned to a slot: the slot comes next.
+        if let Some(slot) = self.find_slot(i, false) {
+            return Some(TargetKey::Node(slot));
+        }
         if n.parent != NIL {
             return Some(TargetKey::Node(n.parent));
         }
@@ -456,7 +460,16 @@ pub fn dispatch(
     ev.stop_propagation = false;
     ev.stop_immediate = false;
     ev.path.clear();
-    ev.target = Some(target);
+    // The target stays retargeted against the outermost invocation target,
+    // and is cleared when it is in a shadow tree ("clearTargets").
+    let (final_target, clear) = {
+        let d = dom.borrow();
+        let last = path.last().map_or(target, |p| p.0);
+        let t = d.retarget(target, last);
+        let clear = matches!(t, TargetKey::Node(i) if d.in_shadow_tree(i));
+        (t, clear)
+    };
+    ev.target = if clear { None } else { Some(final_target) };
     !ev.canceled
 }
 

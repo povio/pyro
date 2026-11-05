@@ -370,13 +370,33 @@ impl Dom {
             return;
         }
         let display = inner_text_display(tag);
-        if matches!(display, TextDisplay::Skip | TextDisplay::Replaced) {
+        if display == TextDisplay::Skip {
+            return;
+        }
+        let computed = state.style.computed(self, id);
+        // An atomic inline box (replaced element, inline-block and the like)
+        // keeps the collapsible spaces on both of its sides, as Chrome's
+        // rendered text does.
+        let atomic_inline = display == TextDisplay::Replaced
+            || (computed.is_some_and(|c| c.author_display)
+                && state.style.stylo_value(self, id, "display").is_some_and(|d| {
+                    matches!(d.as_str(), "inline-block" | "inline-flex" | "inline-grid" | "inline-table")
+                }));
+        if atomic_inline {
+            state.flush_breaks();
+            if state.pre_w {
+                state.out.push(' ');
+                state.pre_w = false;
+            }
+            state.wrote_any = true;
+            state.trim_left = false;
+        }
+        if display == TextDisplay::Replaced {
             return;
         }
         // text-transform inherits, so a child's own value covers its subtree only.
         let parent_transform = state.transform;
         let parent_white_space = state.white_space;
-        let computed = state.style.computed(self, id);
         let own = computed.map_or(TextTransform::Inherit, |c| c.text_transform);
         if own != TextTransform::Inherit {
             state.transform = own;

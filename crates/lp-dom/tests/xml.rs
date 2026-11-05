@@ -73,11 +73,25 @@ fn malformed_namespaces_and_xml_are_error_documents() {
         "<r><!--bad--comment--></r>",
         " <?xml version='1.0'?><r/>",
         "<?xml version='1.1'?><r/>",
-        "<!DOCTYPE r SYSTEM 'file:///unused'><r/>",
         "<!DOCTYPE r [<!ENTITY x 'xxx'>]><r>&x;</r>",
+        "<r/><!DOCTYPE r>",
     ] {
         error(source);
     }
+}
+#[test]
+fn doctype_becomes_a_document_type_node() {
+    let (dom, doc) = parse("<!DOCTYPE r PUBLIC '-//X//DTD r//EN' 'http://x/r.dtd'><r/>");
+    let first = dom.first_child(doc).unwrap().unwrap();
+    match &dom.node(first).unwrap().kind {
+        NodeKind::Doctype(d) => {
+            assert_eq!(&*d.name, "r");
+            assert_eq!(&*d.public_id, "-//X//DTD r//EN");
+            assert_eq!(&*d.system_id, "http://x/r.dtd");
+        }
+        other => panic!("expected a doctype, got {other:?}"),
+    }
+    assert_eq!(dom.tag_name(dom.document_element(doc).unwrap().unwrap()).unwrap(), "r");
 }
 #[test]
 fn limits_reject_before_building_partial_dom_trees() {

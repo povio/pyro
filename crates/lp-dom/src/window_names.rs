@@ -45,6 +45,32 @@ fn named_by_name(e: &ElementData) -> bool {
 }
 
 impl Dom {
+    /// The elements of `doc`'s tree named `name` on the Document (HTML "the
+    /// Document object's supported property names"): embed, form, iframe,
+    /// img and object by `name`, and img by `id` when it also has a `name`.
+    pub fn document_named_elements(&self, doc: NodeId, name: &str) -> DomResult<Vec<NodeId>> {
+        let r = self.check(doc)?;
+        if name.is_empty() || !self.window_name_may_exist(doc, window_name_hash(name.encode_utf16())) {
+            return Ok(Vec::new());
+        }
+        let mut found = Vec::new();
+        let mut cur = self.n(r).first_child;
+        while cur != NIL {
+            if let Some(e) = self.n(cur).element() {
+                if named_by_name(e) && e.attr("name") == Some(name)
+                    || (e.is_html()
+                        && &*e.name.local == "img"
+                        && e.id() == Some(name)
+                        && e.attr("name").is_some_and(|n| !n.is_empty()))
+                {
+                    found.push(self.id_of(cur));
+                }
+            }
+            cur = self.following_in(cur, r);
+        }
+        Ok(found)
+    }
+
     /// Whether an element of `doc` may be named `name` on the Window. False is
     /// exact; true needs `window_named_elements`.
     pub fn window_name_may_exist(&self, doc: NodeId, hash: u64) -> bool {

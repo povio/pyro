@@ -293,7 +293,8 @@ impl Dom {
         };
         let mut inline_text = String::new();
         for c in self.child_idx_iter(i) {
-            if let NodeKind::Text(s) = &self.n(c).kind {
+            // "Child text content": Text and (XML) CDATA section children.
+            if let NodeKind::Text(s) | NodeKind::CData(s) = &self.n(c).kind {
                 inline_text.push_str(s);
             }
         }

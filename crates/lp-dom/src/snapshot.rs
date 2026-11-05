@@ -677,7 +677,7 @@ impl Dom {
             (Default, "default"),
             (Open, "open"),
         ] {
-            if self.matches_state(n, pc) {
+            if self.matches_state(n, &pc) {
                 if !out.is_empty() {
                     out.push(' ');
                 }

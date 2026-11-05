@@ -631,6 +631,8 @@ impl Browser {
         let doc = page_dom.document();
         let mut parser = if resource.mime == "text/plain" {
             DocumentParser::new_plaintext(dom.clone(), doc)
+        } else if lp_dom::parse::is_xml_mime(&resource.mime) {
+            DocumentParser::new_xml(dom.clone(), doc, &resource.mime)
         } else {
             DocumentParser::new(dom.clone(), doc, !page_dom.scripting_disabled())
         }

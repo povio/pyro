@@ -162,6 +162,8 @@ pub struct Dom {
     pub(crate) mutation: MutationState,
     /// Ranges to adjust on mutation (`crate::live_range`); empty when none exists.
     pub(crate) live_ranges: Vec<std::rc::Weak<crate::live_range::LiveRange>>,
+    pub(crate) live_iterators: Vec<std::rc::Weak<crate::live_iterator::LiveIterator>>,
+    pub(crate) slot_state: crate::slots::SlotState,
     pub(crate) events: crate::events::ListenerStore,
     pub(crate) resources: crate::script::ResourceQueue,
     pub(crate) iframes: crate::iframe::IframeQueue,
@@ -214,6 +216,8 @@ impl Dom {
             html_base_docs: Default::default(),
             mutation: MutationState::default(),
             live_ranges: Vec::new(),
+            live_iterators: Vec::new(),
+            slot_state: Default::default(),
             events: Default::default(),
             resources: Default::default(),
             iframes: Default::default(),
@@ -705,6 +709,26 @@ impl Dom {
         // HTML: a data: or javascript: <base> is ignored.
         (!matches!(url.scheme(), "data" | "javascript")).then(|| url.as_str().into())
     }
+    /// Makes `doc` an XML or HTML document of `content_type` (a navigation
+    /// whose response decided it) decoded as `charset`.
+    pub fn set_document_kind(
+        &mut self,
+        doc: NodeId,
+        kind: DocumentKind,
+        content_type: &str,
+        charset: &'static str,
+    ) -> DomResult<()> {
+        let i = self.check(doc)?;
+        if let NodeKind::Document(d) = &mut self.n_mut(i).kind {
+            d.kind = kind;
+            d.content_type = content_type.into();
+            d.charset = charset;
+            d.quirks = QuirksMode::NoQuirks;
+        }
+        self.bump();
+        Ok(())
+    }
+
     pub fn set_quirks_mode(&mut self, doc: NodeId, q: QuirksMode) -> DomResult<()> {
         let i = self.check(doc)?;
         if let NodeKind::Document(d) = &mut self.n_mut(i).kind {
@@ -738,7 +762,7 @@ impl Dom {
 
     /// `document.createElement(localName)`.
     pub fn create_element(&mut self, doc: NodeId, local: &str) -> DomResult<NodeId> {
-        validate_name(local)?;
+        validate_element_name(local)?;
         let owner = self.owner_for(doc)?;
         let html = self.doc_data(owner).kind == DocumentKind::Html;
         let (local, ns) = if html {
@@ -753,7 +777,7 @@ impl Dom {
 
     /// `document.createElementNS(namespace, qualifiedName)`.
     pub fn create_element_ns(&mut self, doc: NodeId, namespace: Option<&str>, qualified: &str) -> DomResult<NodeId> {
-        let name = validate_and_extract(namespace, qualified)?;
+        let name = validate_and_extract(namespace, qualified, NameContext::Element)?;
         self.create_element_raw(doc, name)
     }
 
@@ -942,16 +966,16 @@ impl Dom {
 
     // ----- slots -------------------------------------------------------
 
-    fn is_slot(&self, i: u32) -> bool {
+    pub(crate) fn is_slot(&self, i: u32) -> bool {
         self.n(i).element().is_some_and(|e| e.is_html() && &*e.name.local == "slot")
     }
 
-    fn in_shadow_tree(&self, i: u32) -> bool {
+    pub(crate) fn in_shadow_tree(&self, i: u32) -> bool {
         matches!(&self.n(self.root_idx(i)).kind, NodeKind::Fragment(f) if f.shadow.is_some())
     }
 
     /// DOM "find a slot" (named assignment; manual slots hold no state yet).
-    fn find_slot(&self, i: u32, open_only: bool) -> Option<u32> {
+    pub(crate) fn find_slot(&self, i: u32, open_only: bool) -> Option<u32> {
         if !matches!(self.n(i).kind, NodeKind::Element(_) | NodeKind::Text(_)) {
             return None;
         }
@@ -984,7 +1008,7 @@ impl Dom {
         Ok(self.find_slot(i, true).map(|s| self.id_of(s)))
     }
 
-    fn slot_assigned(&self, slot: u32) -> Vec<u32> {
+    pub(crate) fn slot_assigned(&self, slot: u32) -> Vec<u32> {
         let host = match &self.n(self.root_idx(slot)).kind {
             NodeKind::Fragment(f) if f.shadow.is_some() => f.host,
             _ => return Vec::new(),
@@ -1454,6 +1478,62 @@ impl Dom {
         self.insert_before(parent, node, None)
     }
 
+    /// `parent.moveBefore(node, child)`: "ensure pre-move validity", then the
+    /// move as a removal and insertion (no state is preserved across it).
+    pub fn move_before(&mut self, parent: NodeId, node: NodeId, child: Option<NodeId>) -> DomResult<()> {
+        let p = self.check(parent)?;
+        let n = self.check(node)?;
+        let c = match child {
+            Some(c) => self.check(c)?,
+            None => NIL,
+        };
+        if !self.is_connected_idx(p) || !self.is_connected_idx(n) {
+            return Err(hierarchy("the node and the parent must both be connected"));
+        }
+        if self.shadow_including_root_idx(p) != self.shadow_including_root_idx(n) {
+            return Err(hierarchy("the node and the parent must share a shadow-including root"));
+        }
+        if !matches!(self.n(p).kind, NodeKind::Document(_) | NodeKind::Fragment(_) | NodeKind::Element(_)) {
+            return Err(hierarchy("parent cannot have children"));
+        }
+        if self.is_host_including_inclusive_ancestor(n, p) {
+            return Err(hierarchy("the new child contains the parent"));
+        }
+        if c != NIL && self.n(c).parent != p {
+            return Err(not_found("the reference node is not a child of this node"));
+        }
+        match &self.n(n).kind {
+            NodeKind::Element(_) | NodeKind::Comment(_) | NodeKind::ProcessingInstruction(_) => {}
+            NodeKind::Text(_) | NodeKind::CData(_) => {
+                if matches!(self.n(p).kind, NodeKind::Document(_)) {
+                    return Err(hierarchy("text cannot be a child of a document"));
+                }
+            }
+            _ => return Err(hierarchy("only elements and character data can be moved")),
+        }
+        if matches!(self.n(p).kind, NodeKind::Document(_)) {
+            self.check_document_children(n, p, c, NIL)?;
+        }
+        let mut reference = c;
+        if reference == n {
+            reference = self.n(n).next;
+        }
+        self.remove(n, false);
+        self.insert(n, p, reference, false);
+        Ok(())
+    }
+
+    /// The shadow-including root: a shadow root's host's root, recursively.
+    fn shadow_including_root_idx(&self, idx: u32) -> u32 {
+        let mut r = self.root_idx(idx);
+        loop {
+            match &self.n(r).kind {
+                NodeKind::Fragment(f) if f.shadow.is_some() => r = self.root_idx(f.host),
+                _ => return r,
+            }
+        }
+    }
+
     /// `parent.removeChild(child)`.
     pub fn remove_child(&mut self, parent: NodeId, child: NodeId) -> DomResult<NodeId> {
         let p = self.check(parent)?;
@@ -1591,6 +1671,7 @@ impl Dom {
                 self.note_connected_listeners(k);
             }
         }
+        self.slots_after_child_change(parent, &nodes);
         self.bump_tree();
         self.note(Change::Inserted(parent, nodes[0]));
         for &k in &nodes[1..] {
@@ -1655,7 +1736,11 @@ impl Dom {
         if !self.live_ranges.is_empty() {
             self.ranges_before_remove(node);
         }
+        if !self.live_iterators.is_empty() {
+            self.iterators_before_remove(node);
+        }
         self.unlink(node);
+        self.slots_after_child_change(parent, &[node]);
         self.unfocus_removed(node);
         self.bump_tree();
         self.note(Change::Removed(parent, node, next));
@@ -1707,6 +1792,9 @@ impl Dom {
             if self.n(i).owner_doc == old {
                 self.n_mut(i).owner_doc = doc;
                 moved += 1;
+                // Inline `on*` handlers compile in the new document (a clone
+                // of template contents had none in its inert one).
+                self.note_inline_handlers(i);
             }
             stack.extend(self.child_idx_iter(i));
             if let Some(e) = self.n(i).element() {
@@ -1918,7 +2006,7 @@ impl Dom {
 
     /// `setAttribute(qualifiedName, value)`.
     pub fn set_attribute(&mut self, id: NodeId, name: &str, value: &str) -> DomResult<()> {
-        validate_name(name)?;
+        validate_attribute_name(name)?;
         let (i, el) = self.el(id)?;
         match self.find_attr_qualified(i, name) {
             Some(k) => self.change_attr(i, k, value),
@@ -1933,7 +2021,7 @@ impl Dom {
 
     /// `setAttributeNS(namespace, qualifiedName, value)`.
     pub fn set_attribute_ns(&mut self, id: NodeId, ns: Option<&str>, qualified: &str, value: &str) -> DomResult<()> {
-        let qn = validate_and_extract(ns, qualified)?;
+        let qn = validate_and_extract(ns, qualified, NameContext::Attribute)?;
         let (i, el) = self.el(id)?;
         match el.attrs.iter().position(|a| a.name.ns == qn.ns && a.name.local == qn.local) {
             Some(k) => self.change_attr(i, k, value),
@@ -1981,6 +2069,9 @@ impl Dom {
         }
         self.queue_attribute(i, &name, Some(&old));
         self.resources_after_attr(i, &name.local);
+        if *old != *value {
+            self.slots_after_attr_change(i, &name.local);
+        }
     }
     fn append_attr(&mut self, i: u32, name: QualName, value: &str) {
         self.note_style_attr(i, &name, None);
@@ -1988,6 +2079,7 @@ impl Dom {
         self.bump_tree();
         self.note(Change::attr(i, &name));
         self.queue_attribute(i, &name, None);
+        self.slots_after_attr_change(i, &name.local);
         self.resources_after_attr(i, &name.local);
     }
 
@@ -2020,11 +2112,12 @@ impl Dom {
         self.note(Change::attr(i, &attr.name));
         self.queue_attribute(i, &attr.name, Some(&attr.value));
         self.resources_after_attr(i, &attr.name.local);
+        self.slots_after_attr_change(i, &attr.name.local);
     }
 
     /// `toggleAttribute(name, force)`.
     pub fn toggle_attribute(&mut self, id: NodeId, name: &str, force: Option<bool>) -> DomResult<bool> {
-        validate_name(name)?;
+        validate_attribute_name(name)?;
         let present = self.has_attribute(id, name)?;
         match (present, force) {
             (false, None | Some(true)) => {
@@ -2580,7 +2673,7 @@ fn is_name_char(c: char) -> bool {
     is_name_start(c) || matches!(c, '-' | '.' | '0'..='9' | '\u{B7}' | '\u{300}'..='\u{36F}' | '\u{203F}'..='\u{2040}')
 }
 
-/// XML `Name` production check used by createElement/setAttribute.
+/// XML `Name` production check (processing instruction targets, XML parsing).
 pub fn validate_name(name: &str) -> DomResult<()> {
     let mut chars = name.chars();
     match chars.next() {
@@ -2589,19 +2682,67 @@ pub fn validate_name(name: &str) -> DomResult<()> {
     }
 }
 
+fn invalid_character() -> DomError {
+    DomError::new(DomErrorKind::InvalidCharacter, "the string contains invalid characters")
+}
+
+/// DOM "valid element local name".
+pub fn is_valid_element_local_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    let Some(first) = chars.next() else { return false };
+    if first.is_ascii_alphabetic() {
+        return !name.contains(|c: char| c.is_ascii_whitespace() || matches!(c, '\0' | '/' | '>'));
+    }
+    if !(matches!(first, ':' | '_') || first >= '\u{80}') {
+        return false;
+    }
+    chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '.' | ':' | '_') || c >= '\u{80}')
+}
+
+/// DOM "valid attribute local name".
+pub fn is_valid_attribute_local_name(name: &str) -> bool {
+    !name.is_empty() && !name.contains(|c: char| c.is_ascii_whitespace() || matches!(c, '\0' | '/' | '=' | '>'))
+}
+
+/// DOM "valid namespace prefix".
+fn is_valid_namespace_prefix(name: &str) -> bool {
+    !name.is_empty() && !name.contains(|c: char| c.is_ascii_whitespace() || matches!(c, '\0' | '/' | '>'))
+}
+
+/// `createElement(localName)` name check.
+pub fn validate_element_name(name: &str) -> DomResult<()> {
+    if is_valid_element_local_name(name) { Ok(()) } else { Err(invalid_character()) }
+}
+
+/// `setAttribute(qualifiedName)` / `createAttribute(localName)` name check.
+pub fn validate_attribute_name(name: &str) -> DomResult<()> {
+    if is_valid_attribute_local_name(name) { Ok(()) } else { Err(invalid_character()) }
+}
+
+/// What a namespaced qualified name names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NameContext {
+    Element,
+    Attribute,
+}
+
 /// DOM "validate and extract" for namespaced names.
-pub fn validate_and_extract(namespace: Option<&str>, qualified: &str) -> DomResult<QualName> {
+pub fn validate_and_extract(namespace: Option<&str>, qualified: &str, context: NameContext) -> DomResult<QualName> {
     let ns = namespace.filter(|n| !n.is_empty()).unwrap_or("");
-    validate_name(qualified)?;
     let (prefix, local) = match qualified.split_once(':') {
-        Some((p, l)) => {
-            if p.is_empty() || l.is_empty() || l.contains(':') {
-                return Err(DomError::new(DomErrorKind::InvalidCharacter, "invalid qualified name"));
-            }
-            (Some(p), l)
-        }
+        Some((p, l)) => (Some(p), l),
         None => (None, qualified),
     };
+    if prefix.is_some_and(|p| !is_valid_namespace_prefix(p)) {
+        return Err(invalid_character());
+    }
+    let valid = match context {
+        NameContext::Element => is_valid_element_local_name(local),
+        NameContext::Attribute => is_valid_attribute_local_name(local),
+    };
+    if !valid {
+        return Err(invalid_character());
+    }
     const XML: &str = "http://www.w3.org/XML/1998/namespace";
     const XMLNS: &str = "http://www.w3.org/2000/xmlns/";
     let nserr = || DomError::new(DomErrorKind::Namespace, "invalid namespace for qualified name");
