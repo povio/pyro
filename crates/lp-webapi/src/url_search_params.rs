@@ -153,6 +153,8 @@ impl JsClass for ParamsIterator {
     type Data = IteratorData;
     type Parent = NoParent;
     fn define(def: &mut ClassDef<Self>) {
+        // No global name; `install` gives the prototype its iterator shape.
+        def.not_exposed();
         def.method("next", 0, |s, data, _| {
             let pair = (!data.done.get()).then(|| data.list.pairs.borrow().get(data.index.get()).cloned()).flatten();
             let value = match pair {
@@ -193,23 +195,30 @@ fn helper<'s>(s: &Scope<'s>, name: &str) -> JsResult<Value<'s>> {
 pub(crate) fn install(s: &Scope<'_>) -> JsResult<()> {
     let convert = s.function("usvString", |s, _, args| Ok(s.string(&dom_string(args.get(0))?)))?;
     let convert = Persistent::new(s, convert.value());
+    // Returns [helpers, the steps completing URLSearchParams.prototype and
+    // the iterator prototype once their members are installed].
     let factory=s.eval(r#"(convert=>{
         const symbol=Symbol.iterator,tag=Symbol.toStringTag,keys=Reflect.ownKeys;
         const descriptor=Object.getOwnPropertyDescriptor,define=Object.defineProperty,create=Object.create;
-        const apply=Reflect.apply,entries=URLSearchParams.prototype.entries,TypeError_=TypeError;
-        const iteratorPrototype=globalThis['URLSearchParams Iterator'].prototype;
-        delete iteratorPrototype.constructor;
-        Object.setPrototypeOf(iteratorPrototype,Object.getPrototypeOf(Object.getPrototypeOf([][symbol]())));
-        define(iteratorPrototype,tag,{value:'URLSearchParams Iterator',configurable:true});
-        delete globalThis['URLSearchParams Iterator'];
+        const apply=Reflect.apply,TypeError_=TypeError,setPrototypeOf=Object.setPrototypeOf;
+        const iteratorPrototypeOfArrays=Object.getPrototypeOf(Object.getPrototypeOf([][symbol]()));
+        // Both run when a page first uses the interface: descriptors without a prototype.
+        const iteratorPopulated=(iteratorPrototype)=>{
+            delete iteratorPrototype.constructor;
+            setPrototypeOf(iteratorPrototype,iteratorPrototypeOfArrays);
+            define(iteratorPrototype,tag,{__proto__:null,value:'URLSearchParams Iterator',configurable:true});
+        };
+        const populated=(proto)=>{
+            const entries=proto.entries;
+            define(proto,symbol,{__proto__:null,value:entries,writable:true,configurable:true});
+            define(proto,'forEach',{__proto__:null,value:function(callback,thisArg){
+                const iterator=apply(entries,this,[]);
+                if(typeof callback!=='function')throw new TypeError_('callback must be callable');
+                for(const pair of iterator)apply(callback,thisArg,[pair[1],pair[0],this]);
+            },writable:true,enumerable:true,configurable:true});
+        };
         const append=(array,value)=>define(array,array.length,{value,writable:true,enumerable:true,configurable:true});
-        define(URLSearchParams.prototype,symbol,{value:entries,writable:true,configurable:true});
-        define(URLSearchParams.prototype,'forEach',{value:function(callback,thisArg){
-            const iterator=apply(entries,this,[]);
-            if(typeof callback!=='function')throw new TypeError_('callback must be callable');
-            for(const pair of iterator)apply(callback,thisArg,[pair[1],pair[0],this]);
-        },writable:true,enumerable:true,configurable:true});
-        return {
+        return [{
             result(value,done){return {value,done};},
             fill(init){
                 if(init===undefined)return '';
@@ -236,9 +245,13 @@ pub(crate) fn install(s: &Scope<'_>) -> JsResult<()> {
                 }
                 return result;
             }
-        };
+        },populated,iteratorPopulated];
     })"#,Some("lp-url-search-params.js"),1)?;
-    let helper = factory.as_object().unwrap().call(None, &[convert.get(s)])?;
+    let parts = factory.as_object().unwrap().call(None, &[convert.get(s)])?;
+    let parts = parts.as_object().expect("URLSearchParams helpers");
+    let helper = parts.get_index(0)?;
     page_of(s)?.url_params_helpers.borrow_mut().insert(s.realm_id(), Persistent::new(s, helper));
-    Ok(())
+    let hook = |i: u32| parts.get_index(i).map(|v| v.as_object().expect("URLSearchParams hook"));
+    s.after_populate::<URLSearchParams>(hook(1)?)?;
+    s.after_populate::<ParamsIterator>(hook(2)?)
 }

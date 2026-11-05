@@ -370,3 +370,56 @@ fn indexed_properties_answer_every_index_key_form() {
         assert_eq!(eval(&r, src), want, "{src}");
     }
 }
+
+/// `Scope::after_populate`: the embedder's step for a class runs once, when
+/// the class is first populated however that happens (a wrap, a trap of its
+/// interface object, a subclass), and at once for a class already populated.
+#[test]
+fn after_populate_runs_once_with_the_population() {
+    let (_e, r) = realm();
+    let s = r.scope().unwrap();
+    let hook = |tag: &str| {
+        let src = format!("(proto, ctor) => {{ globalThis.log = (globalThis.log || '') + '{tag}:' + ctor.name + ':' + (proto === ctor.prototype) + ';'; }}");
+        s.eval(&src, None, 1).unwrap().as_object().unwrap()
+    };
+    s.after_populate::<Base>(hook("base")).unwrap();
+    s.after_populate::<Hidden>(hook("hidden")).unwrap();
+    assert_eq!(eval(&r, "String(globalThis.log)"), "undefined", "nothing populated yet");
+    // A trap of a subclass's interface object populates the chain, root first.
+    assert_eq!(eval(&r, "typeof LzMid.prototype.midOnly"), "function");
+    assert_eq!(eval(&r, "globalThis.log"), "base:LzBase:true;");
+    // A wrap of a hidden class (no global name) populates it.
+    let o = s.wrap::<Hidden>(Rc::new(Data { id: 1 }), None).unwrap();
+    s.global().set("hidden", o.value()).unwrap();
+    assert_eq!(eval(&r, "globalThis.log"), "base:LzBase:true;hidden:LzHidden:true;");
+    assert_eq!(eval(&r, "Object.getPrototypeOf(hidden) === Object.getPrototypeOf(hidden).constructor.prototype"), "true");
+    // Populated already: runs at once.
+    s.after_populate::<Mid>(hook("mid")).unwrap();
+    assert_eq!(eval(&r, "globalThis.log"), "base:LzBase:true;hidden:LzHidden:true;mid:LzMid:true;");
+    assert_eq!(eval(&r, "new LzLeaf(); globalThis.log.split(';').length"), "4");
+}
+
+/// Interfaces are populated (their prototypes made, members installed) when a
+/// page first uses them, after its scripts ran: a page that put `get`/`value`
+/// on Object.prototype or replaced Array iteration must not break that.
+#[test]
+fn population_after_page_changed_intrinsics_installs_the_eager_shape() {
+    let (_e, r) = realm();
+    eval(
+        &r,
+        "const d = Object.defineProperty;
+         d(Object.prototype, 'get', { __proto__: null, value: function () { return 'polluted'; }, configurable: true, writable: true });
+         d(Object.prototype, 'value', { __proto__: null, value: 'polluted', configurable: true, writable: true });
+         globalThis.realIterator = Array.prototype[Symbol.iterator];
+         d(Array.prototype, Symbol.iterator, { __proto__: null, value: function () { throw new Error('iterated'); }, configurable: true, writable: true });
+         'ok'",
+    );
+    // First use of every interface happens here, with the intrinsics changed.
+    assert_eq!(eval(&r, "typeof LzLeaf.prototype.leafOnly + typeof LzMid.prototype.midOnly"), "functionfunction");
+    eval(
+        &r,
+        "delete Object.prototype.get; delete Object.prototype.value;
+         Object.defineProperty(Array.prototype, Symbol.iterator, { value: realIterator, configurable: true, writable: true }); 'ok'",
+    );
+    assert_eq!(eval(&r, DUMP), EAGER_SHAPE.trim());
+}

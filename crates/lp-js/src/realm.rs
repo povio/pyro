@@ -204,11 +204,16 @@ pub(crate) struct RealmInner {
     origin: RefCell<Option<String>>,
     pub(crate) engine: Rc<EngineInner>,
     pub(crate) ctx: Cell<sys::JSGlobalContextRef>,
-    protos: RefCell<Vec<Option<Persistent>>>,
-    /// Interface objects as seen by script (proxies over `targets`).
-    ctors: RefCell<Vec<Option<Persistent>>>,
-    /// The constructor functions behind the interface proxies.
-    targets: RefCell<Vec<Option<Persistent>>>,
+    /// Interface prototype objects by class id, null until the class is
+    /// first populated (`materialize`) and past the classes this realm was
+    /// created with. Kept alive by `interfaces[0]`, which only `materialize`
+    /// writes, so a wrap reads its prototype without a lookup.
+    protos: RefCell<Vec<sys::JSValueRef>>,
+    /// The arrays `installInterfaces` returned, protected for the realm's
+    /// life: prototypes, the constructor functions behind the interface
+    /// proxies, and the interface objects as seen by script (the proxies).
+    /// Three protections per realm instead of three per class.
+    interfaces: RefCell<Option<[Persistent; 3]>>,
     /// Whether each class's members are installed in this realm.
     populated: RefCell<Vec<bool>>,
     identity: RefCell<rustc_hash::FxHashMap<IdentityKey, sys::JSWeakRef>>,
@@ -323,6 +328,18 @@ impl RealmInner {
         h.as_object().expect("helpers object").get(name)?.as_object().ok_or(JsError::Type("missing helper".into()))
     }
 
+    /// Entry `id` of interface list `list` (0 prototypes, 1 constructor
+    /// functions, 2 interface objects); an error once disposed.
+    fn interface_object<'s>(&self, scope: &Scope<'s>, list: usize, id: ClassId) -> JsResult<Value<'s>> {
+        let lists = self.interfaces.borrow();
+        let lists = lists.as_ref().ok_or(JsError::ContextDestroyed)?;
+        let v = lists[list].get(scope).as_object().expect("interface list").get_index(id)?;
+        if v.is_undefined() {
+            return Err(JsError::Type("class registered after this realm was created".into()));
+        }
+        Ok(v)
+    }
+
     pub(crate) fn prune_identity(&self, key: IdentityKey) {
         let mut map = self.identity.borrow_mut();
         if let Some(weak) = map.get(&key).copied() {
@@ -355,8 +372,7 @@ impl RealmInner {
         self.exception_reporter.set(None);
         drop(self.native_callback_pending.take());
         self.protos.borrow_mut().clear();
-        self.ctors.borrow_mut().clear();
-        self.targets.borrow_mut().clear();
+        self.interfaces.borrow_mut().take();
         self.populated.borrow_mut().clear();
         self.helpers.borrow_mut().take();
         self.helper_cache.borrow_mut().clear();
@@ -438,6 +454,14 @@ impl Realm {
     pub fn by_id(id: RealmId) -> Option<Realm> {
         let inner = crate::engine::current_inner()?.realm_by_id(id)?;
         (!inner.ctx.get().is_null()).then_some(Realm { inner })
+    }
+
+    /// Holds the execution time limit off while the embedder sets up this
+    /// realm with its own code (no page script), as realm creation does: an
+    /// armed limit costs every VM entry a read of the thread's CPU time.
+    /// Without effect while JavaScript is on the stack.
+    pub fn setup_without_watchdog(&self) -> impl Drop + '_ {
+        crate::engine::WatchdogPause::new(&self.inner.engine)
     }
 
     pub fn set_unhandled_rejection_handler(&self, handler: UnhandledRejectionHandler) {
@@ -1297,9 +1321,24 @@ impl<'s> Scope<'s> {
     /// The interface object (constructor) of `C` in this realm.
     pub fn interface<C: JsClass>(&self) -> JsResult<Object<'s>> {
         let id = self.class_id::<C>()?;
-        let ctors = self.realm.ctors.borrow();
-        let p = ctors.get(id as usize).and_then(|p| p.as_ref()).ok_or(JsError::ContextDestroyed)?;
-        Ok(p.get(self).as_object().expect("constructor object"))
+        self.realm.interface_object(self, 2, id)?.as_object().ok_or(JsError::ContextDestroyed)
+    }
+
+    /// Calls `hook(prototype, constructor)` once the members of `C` are
+    /// installed in this realm, or now if they are: the embedder's additions
+    /// to an interface (`@@iterator` aliases, unscopables) without installing
+    /// the interface at realm creation. One hook per class; it runs where
+    /// population happens, so it uses only what it captured when made.
+    pub fn after_populate<C: JsClass>(&self, hook: Object<'_>) -> JsResult<()> {
+        let id = self.class_id::<C>()?;
+        if self.realm.populated.borrow().get(id as usize).copied().unwrap_or(false) {
+            let proto = self.realm.interface_object(self, 0, id)?;
+            let target = self.realm.interface_object(self, 1, id)?;
+            return hook.call(None, &[proto, target]).map(|_| ());
+        }
+        let hooks = self.realm.helper(self, "hooks")?;
+        debug_assert!(hooks.get_index(id)?.is_undefined(), "{}: one populate hook per class", C::NAME);
+        hooks.set_index(id, hook.value())
     }
 
     fn class_id<C: JsClass>(&self) -> JsResult<ClassId> {
@@ -1315,9 +1354,11 @@ impl<'s> Scope<'s> {
         let protos = self.realm.protos.borrow();
         let p = protos
             .get(id as usize)
-            .and_then(|p| p.as_ref())
+            .copied()
+            .filter(|p| !p.is_null())
             .ok_or_else(|| JsError::Type("class registered after this realm was created".into()))?;
-        Ok(p.get(self))
+        // SAFETY: kept alive by the realm's protected prototype list.
+        Ok(unsafe { Value::from_raw(self.ctx, p) })
     }
 
     /// Stores a GC-traced hidden value on a host object (wrappers and the
@@ -1552,8 +1593,7 @@ pub(crate) fn create(engine: &Rc<EngineInner>, options: RealmOptions) -> JsResul
         engine: engine.clone(),
         ctx: Cell::new(ctx),
         protos: RefCell::new(Vec::new()),
-        ctors: RefCell::new(Vec::new()),
-        targets: RefCell::new(Vec::new()),
+        interfaces: RefCell::new(None),
         populated: RefCell::new(Vec::new()),
         identity: RefCell::new(rustc_hash::FxHashMap::default()),
         shared_strings: RefCell::new(rustc_hash::FxHashMap::default()),
@@ -1633,19 +1673,12 @@ fn install_classes(scope: &Scope<'_>) -> JsResult<()> {
     let keys = MemberKeys::new(Some(realm));
     let n = reg.classes.len();
     // One call into JavaScript for all classes: per-class calls cost a VM
-    // entry each, which dominated realm creation.
-    let mut spec = String::from("[");
-    let mut natives = crate::RootedVec::new();
+    // entry each, which dominated realm creation. The class table is the
+    // registry's, kept as JSON while classes register.
+    let spec = scope.parse_json(reg.spec_json()).expect("class spec is JSON");
+    // Filled in place: the array (on this stack) keeps each new function alive.
+    let natives = scope.array(&[])?;
     for (i, info) in reg.classes.iter().enumerate() {
-        if i > 0 {
-            spec.push(',');
-        }
-        let name = serde_json::to_string(info.name).expect("class name serializes");
-        let parent = info.parent.map_or(-1, i64::from);
-        spec.push_str(&format!(
-            "[{name},{parent},{},{},{}]",
-            info.def.ctor_length, info.def.exposed, info.def.callback_interface
-        ));
         let native = match info.def.constructor {
             Some(c) => {
                 make_member_fn(scope.ctx, &realm.engine, reg.member, c, false, info.name, info.def.ctor_length, &keys)?
@@ -1653,23 +1686,16 @@ fn install_classes(scope: &Scope<'_>) -> JsResult<()> {
             }
             None => scope.null(),
         };
-        natives.push(scope, native);
+        natives.set_index(i as u32, native)?;
     }
-    spec.push(']');
-    let spec = scope.parse_json(&spec).expect("class spec is JSON");
-    let natives: Vec<Value<'_>> = natives.iter(scope).collect();
-    let natives = scope.array(&natives)?;
     let result = install.call(None, &[spec, natives.value(), object_proto, global.value(), populate.value()])?;
     let result = result.as_object().expect("installInterfaces result");
     let lists: Vec<Object<'_>> = (0..3)
         .map(|k| result.get_index(k).map(|v| v.as_object().expect("installInterfaces list")))
         .collect::<JsResult<_>>()?;
-    let column = |list: &Object<'_>| -> JsResult<Vec<Option<Persistent>>> {
-        (0..n as u32).map(|i| Ok(Some(Persistent::new(scope, list.get_index(i)?)))).collect()
-    };
-    let protos = column(&lists[0])?;
-    let targets = column(&lists[1])?;
-    let ctors = column(&lists[2])?;
+    // Prototype objects come with population (`materialize`).
+    let protos = vec![ptr::null(); n];
+    let interfaces = [0, 1, 2].map(|k| Persistent::new(scope, lists[k].value()));
     // [LegacyFactoryFunction]s of exposed classes: global constructors over
     // the class's prototype (`Image`), lazily populated like the interface.
     let factories: Vec<(ClassId, &'static str, u32, class::MemberCall)> = reg
@@ -1683,14 +1709,12 @@ fn install_classes(scope: &Scope<'_>) -> JsResult<()> {
         let legacy_factory = realm.helper(scope, "legacyFactory")?;
         for (id, name, length, call) in factories {
             let native = make_member_fn(scope.ctx, &realm.engine, reg.member, call, false, name, length, &keys)?;
-            let proto = lists[0].get_index(id)?;
             legacy_factory.call(
                 None,
                 &[
                     global.value(),
                     scope.string(name),
                     native.value(),
-                    proto,
                     scope.number(length as f64),
                     scope.number(id as f64),
                     populate.value(),
@@ -1716,8 +1740,7 @@ fn install_classes(scope: &Scope<'_>) -> JsResult<()> {
         .collect();
     drop(reg);
     *realm.protos.borrow_mut() = protos;
-    *realm.ctors.borrow_mut() = ctors;
-    *realm.targets.borrow_mut() = targets;
+    *realm.interfaces.borrow_mut() = Some(interfaces);
     *realm.populated.borrow_mut() = vec![false; n];
     if let (Some(chain), Some(name)) = (global_chain, global_name) {
         // Chain root-first: copy members onto the global, brand instanceof.
@@ -1726,8 +1749,8 @@ fn install_classes(scope: &Scope<'_>) -> JsResult<()> {
         let mut ps = crate::RootedVec::new();
         let mut cs = crate::RootedVec::new();
         for c in &chain {
-            ps.push(scope, realm.protos.borrow()[*c as usize].as_ref().expect("proto").get(scope));
-            cs.push(scope, realm.ctors.borrow()[*c as usize].as_ref().expect("ctor").get(scope));
+            ps.push(scope, realm.interface_object(scope, 0, *c)?);
+            cs.push(scope, realm.interface_object(scope, 2, *c)?);
         }
         let ps = rooted_array(scope, &ps)?;
         let cs = rooted_array(scope, &cs)?;
@@ -1838,10 +1861,27 @@ pub(crate) fn populate_class(scope: &Scope<'_>, id: ClassId) -> JsResult<()> {
         // Marked first: member installation does not re-enter population
         // (it defines on the prototype and the proxy target directly).
         realm.populated.borrow_mut()[c as usize] = true;
-        if let Err(e) = install_members(scope, c).and_then(|()| mirror_populated(scope, c)) {
+        let done = materialize(scope, c).and_then(|()| install_members(scope, c)).and_then(|()| mirror_populated(scope, c));
+        if let Err(e) = done {
             realm.populated.borrow_mut()[c as usize] = false;
             return Err(e);
         }
+    }
+    Ok(())
+}
+
+/// Makes the interface prototype object of `id` (helpers.js `materialize`)
+/// unless it exists: once per class and realm, when the class is first
+/// populated, so a realm makes only the prototypes its page reaches.
+fn materialize(scope: &Scope<'_>, id: ClassId) -> JsResult<()> {
+    let realm = scope.realm;
+    if realm.protos.borrow().get(id as usize).is_some_and(|p| !p.is_null()) {
+        return Ok(());
+    }
+    let proto = realm.cached_helper(scope, "materialize")?.call(None, &[scope.number(f64::from(id))])?;
+    // Kept alive by the protected prototype list, where `materialize` put it.
+    if let Some(slot) = realm.protos.borrow_mut().get_mut(id as usize) {
+        *slot = proto.raw;
     }
     Ok(())
 }
@@ -1856,8 +1896,8 @@ fn mirror_populated(scope: &Scope<'_>, id: ClassId) -> JsResult<()> {
 
 fn install_members(scope: &Scope<'_>, id: ClassId) -> JsResult<()> {
     let realm = scope.realm;
-    let proto = realm.protos.borrow()[id as usize].as_ref().ok_or(JsError::ContextDestroyed)?.get(scope);
-    let target = realm.targets.borrow()[id as usize].as_ref().ok_or(JsError::ContextDestroyed)?.get(scope);
+    let proto = realm.interface_object(scope, 0, id)?;
+    let target = realm.interface_object(scope, 1, id)?;
     let helpers = realm.helpers.borrow().as_ref().ok_or(JsError::ContextDestroyed)?.get(scope);
     let (Some(proto), Some(target), Some(helpers)) = (proto.as_object(), target.as_object(), helpers.as_object())
     else {
@@ -2062,7 +2102,10 @@ fn install_members_raw(
     if let Some(kind) = iterable {
         helper(kind)?.call(None, &[proto.value()])?;
     }
-
+    // The embedder's own steps for this interface (`Scope::after_populate`).
+    if let Some(hook) = helper("hooks")?.get_index(id)?.as_object() {
+        hook.call(None, &[proto.value(), target.value()])?;
+    }
     Ok(())
 }
 
@@ -2092,7 +2135,17 @@ fn populate_disposed(ctx: sys::JSContextRef, id: ClassId, h: Object<'_>) -> JsRe
     let yes = unsafe { Value::from_raw(ctx, sys::JSValueMakeBoolean(ctx, true)) };
     let no = unsafe { Value::from_raw(ctx, sys::JSValueMakeBoolean(ctx, false)) };
     for c in chain {
-        let (Some(proto), Some(target)) = (protos.get_index(c)?.as_object(), targets.get_index(c)?.as_object()) else {
+        // A prototype nothing reached before the realm closed is made now.
+        let proto = match protos.get_index(c)?.as_object() {
+            Some(p) => Some(p),
+            None => {
+                let make = h.get("materialize")?.as_object().ok_or(JsError::ContextDestroyed)?;
+                // SAFETY: a number in the live callback context.
+                let id = unsafe { Value::from_raw(ctx, sys::JSValueMakeNumber(ctx, f64::from(c))) };
+                make.call(None, &[id])?.as_object()
+            }
+        };
+        let (Some(proto), Some(target)) = (proto, targets.get_index(c)?.as_object()) else {
             return Err(JsError::ContextDestroyed);
         };
         populated.set_index(c, yes)?;
@@ -2274,6 +2327,14 @@ pub(crate) fn remap_module_url(key: &str, origin: Option<&str>) -> String {
 #[cfg(test)]
 mod tests {
     use super::{module_source_with_url, remap_module_url};
+
+    /// Every realm evaluates helpers.js: as ASCII it is an 8-bit JSC string
+    /// made without transcoding (`JsString::new`), lexed and hashed at its size.
+    #[test]
+    fn helpers_source_is_ascii() {
+        let at = super::HELPERS_JS.find(|c: char| !c.is_ascii());
+        assert!(at.is_none(), "non-ASCII character at byte {at:?} of helpers.js (escape it)");
+    }
 
     #[test]
     fn module_source_url_is_encoded_as_a_javascript_string() {
