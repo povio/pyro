@@ -83,6 +83,27 @@ codegen-units = 16
 [profile.release-fast.package.lp-dom]
 codegen-units = 16
 
+# Tests at release speed without release link time (`cargo t`, see
+# .cargo/config.toml). `release` runs thin LTO over the whole dependency graph
+# for every test executable, with one codegen unit for most crates: rebuilding
+# the workspace tests after touching lp-dom took 90 CPU-minutes. Without LTO,
+# with parallel codegen and incremental workspace crates, each executable is
+# optimized like release but links without the cross-crate LTO pass. Ship and
+# benchmark with `release`.
+[profile.test-fast]
+inherits = "release"
+lto = "off"
+codegen-units = 16
+incremental = true
+
+[profile.test-fast.package.lp-webapi]
+codegen-units = 64
+
+# See [profile.dev.package.lp-psl]: its generated tables cost ~16 s of
+# single-core codegen when optimized, and lookups are negligible in tests.
+[profile.test-fast.package.lp-psl]
+opt-level = 0
+
 [profile.dev]
 # Backtraces keep file:line; debuggers lose local variables. Cuts clean builds
 # and target/ size; incremental rebuilds are unaffected.

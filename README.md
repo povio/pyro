@@ -34,6 +34,10 @@ cargo test
 ./scripts/check-no-v8.sh
 ```
 
+For iteration, `cargo t -p <crate>` and `cargo tall` (every crate, `render` on) test under the `test-fast`
+profile: release optimization without LTO, so a rebuild after editing lp-dom takes under a minute instead of
+tens of minutes. Ship and benchmark `release` builds.
+
 Screenshots (`Page.captureScreenshot`, `LP.run` `matchScreenshot`) need the `render` feature, off by default:
 `cargo build --release --features render`. It adds lp-render (Blitz, Stylo, Vello's CPU rasterizer: about 200
 crates), about a minute to a release build and 15 MB to the binary (15 to 30 MB on an M1 Max). Release archives
