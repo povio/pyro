@@ -705,12 +705,6 @@ impl ClassRegistry {
         self.by_type.get(&TypeId::of::<C>()).copied()
     }
 
-    /// Effective property hooks of `class` (each kind inherited separately).
-    pub fn hooks_of(&self, class: ClassId) -> Option<&PropertyHooks> {
-        let h = &self.classes.get(class as usize)?.def.hooks;
-        h.any().then_some(h)
-    }
-
     pub fn release_all(&mut self) {
         unsafe {
             for c in &self.classes {
@@ -721,6 +715,9 @@ impl ClassRegistry {
             sys::JSClassRelease(self.base);
         }
         self.classes.clear();
+        // The VM is gone, and the placeholder properties with it.
+        let gone = std::mem::take(&mut self.placeholders).len();
+        let _ = PLACEHOLDERS_PENDING.try_with(|p| p.set(p.get().saturating_sub(gone)));
     }
 }
 
@@ -954,38 +951,13 @@ pub(crate) fn new_payload<T: 'static>(
     Box::into_raw(b) as *mut Header
 }
 
-/// Borrows an instance payload as the data of `want` (the payload's class or an
-/// ancestor), following declared upcasts.
-///
-/// # Safety
-/// `h` must be a live instance payload header whose class is registered in `reg`.
-pub(crate) unsafe fn class_data<'a, T: 'static>(reg: &ClassRegistry, h: *mut Header, want: ClassId) -> Option<&'a T> {
-    unsafe {
-        // One walk up the class chain, projecting the data pointer as it
-        // goes; a chain that ends without reaching `want` is not a subclass.
-        let mut class = (*h).class;
-        let mut ptr = ((*h).data_ptr)(h);
-        while class != want {
-            let info = reg.classes.get(class as usize)?;
-            if let Some(up) = info.upcast {
-                ptr = up(ptr);
-            }
-            class = info.parent?;
-        }
-        if reg.classes.get(want as usize)?.data_type != TypeId::of::<T>() {
-            return None;
-        }
-        Some(&*(ptr as *const T))
-    }
-}
-
 unsafe fn upcast_erased<C, F>(p: *const u8) -> *const u8
 where
     C: JsClass,
     F: Fn(&C::Data) -> &<C::Parent as JsClass>::Data + Copy + 'static,
 {
     let f = unsafe { conjure::<F>() };
-    // SAFETY: p points to a live C::Data (see class_data).
+    // SAFETY: p points to a live C::Data (see data_of_header).
     f(unsafe { &*(p as *const C::Data) }) as *const _ as *const u8
 }
 
@@ -1274,48 +1246,23 @@ fn member_in_receiver_realm<R: CallbackResult>(
 /// `C` or a subclass, or the realm's global object (also for `undefined`/`null`
 /// receivers).
 unsafe fn this_data<'a, C: JsClass>(scope: &Scope<'_>, this: sys::JSObjectRef) -> JsResult<(&'a C::Data, RealmId)> {
-    let h = unsafe { scope.header_of_receiver(this) };
-    // The usual case, without the registry: walk the receiver's class chain
-    // (stable boxed entries) up to the brand, projecting the data as it goes.
-    if let Some(h) = h {
-        // SAFETY: h is a live payload of a reachable object (receiver on
-        // stack); `info` entries live as long as the registry, which outlives
-        // every callback.
-        unsafe {
-            if (*h).kind == Kind::Instance && !(*h).info.is_null() {
-                let mut info = (*h).info;
-                let mut ptr = ((*h).data_ptr)(h);
-                loop {
-                    if (*info).class_type == TypeId::of::<C>() {
-                        return Ok((&*(ptr as *const C::Data), (*h).realm));
-                    }
-                    if let Some(up) = (*info).upcast {
-                        ptr = up(ptr);
-                    }
-                    info = (*info).parent_info;
-                    if info.is_null() {
-                        break;
-                    }
-                }
-            }
+    // Walk the receiver's class chain (stable boxed entries) up to the brand,
+    // projecting the data as it goes: no registry.
+    // SAFETY: h is a live payload of a reachable object (receiver on stack);
+    // `info` entries live as long as the registry, which outlives every
+    // callback.
+    if let Some(h) = unsafe { scope.header_of_receiver(this) } {
+        if let Some(d) = unsafe { data_of_header::<C>(h) } {
+            return Ok((d, unsafe { (*h).realm }));
         }
     }
-    let reg = scope.engine_inner().classes.borrow();
-    let want = reg.id_of::<C>().expect("class registered");
-    // SAFETY: h is a live payload of a reachable object (receiver on stack).
-    let direct = h.and_then(|h| unsafe {
-        if (*h).kind != Kind::Instance {
-            None
-        } else {
-            class_data::<C::Data>(&reg, h, want)
-        }
-    });
-    if let Some(d) = direct {
-        // SAFETY: as above.
-        return Ok((d, unsafe { (*h.expect("direct data has a header")).realm }));
-    }
-    let fallback = reg.classes[want as usize].global_receiver;
-    drop(reg);
+    // Not a `C`: only the global receiver fallback is left, which needs the
+    // class's registry entry (a cold path).
+    let fallback = {
+        let reg = scope.engine_inner().classes.borrow();
+        let want = reg.id_of::<C>().expect("class registered");
+        reg.classes[want as usize].global_receiver
+    };
     if let Some(f) = fallback {
         // SAFETY: only for receivers that resolve to the realm's global.
         let global_receiver = this.is_null() || scope.is_global_object(this);
@@ -1611,31 +1558,11 @@ where
 }
 
 /// Data of class `C` for a property-hook receiver (hooks may be inherited).
-unsafe fn hook_data<'a, C: JsClass>(scope: &Scope<'_>, h: *mut Header) -> JsResult<&'a C::Data> {
+unsafe fn hook_data<'a, C: JsClass>(_scope: &Scope<'_>, h: *mut Header) -> JsResult<&'a C::Data> {
     // The class chain walk of `this_data`, without the registry.
     // SAFETY: h is a live payload header (the hook's object); `info` entries
     // live as long as the registry.
-    unsafe {
-        if (*h).kind == Kind::Instance && !(*h).info.is_null() {
-            let mut info = (*h).info;
-            let mut ptr = ((*h).data_ptr)(h);
-            loop {
-                if (*info).class_type == TypeId::of::<C>() {
-                    return Ok(&*(ptr as *const C::Data));
-                }
-                if let Some(up) = (*info).upcast {
-                    ptr = up(ptr);
-                }
-                info = (*info).parent_info;
-                if info.is_null() {
-                    break;
-                }
-            }
-        }
-    }
-    let reg = scope.engine_inner().classes.borrow();
-    let want = reg.id_of::<C>().expect("class registered");
-    unsafe { class_data::<C::Data>(&reg, h, want) }.ok_or_else(|| JsError::Type("Illegal invocation".into()))
+    unsafe { data_of_header::<C>(h) }.ok_or_else(|| JsError::Type("Illegal invocation".into()))
 }
 
 /// Parses a canonical array index ("0", "17"; not "01", "-1", "4294967295").
@@ -1674,13 +1601,21 @@ unsafe fn hook_ctx(scope: &Scope<'_>, object: sys::JSObjectRef) -> Option<HookCt
     if h.is_null() {
         return None;
     }
-    let mut reg = scope.engine_inner().classes.borrow();
-    if !reg.placeholders.is_empty() {
-        drop(reg);
+    if PLACEHOLDERS_PENDING.get() != 0 && !scope.engine_inner().classes.borrow().placeholders.is_empty() {
         unsafe { sweep_placeholders(scope) };
-        reg = scope.engine_inner().classes.borrow();
     }
-    let hooks = reg.hooks_of(unsafe { (*h).class })?;
+    // The hooks from the payload's own class entry (inherited ones are
+    // merged in at registration): no registry borrow, no class-id lookup.
+    // SAFETY: only wrapper classes install the hooks, so `h` is the live
+    // payload header of `object`; `info` lives as long as the registry.
+    let info = unsafe { (*h).info };
+    if info.is_null() {
+        return None;
+    }
+    let hooks = unsafe { &(*info).def.hooks };
+    if !hooks.any() {
+        return None;
+    }
     Some(HookCtx {
         header: h,
         realm: unsafe { (*h).realm },
@@ -1701,9 +1636,11 @@ thread_local! {
     /// properties: the property hooks then answer nothing, so the operation
     /// sees only the wrapper's real own properties and its prototype chain.
     static ORDINARY_ONLY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    /// A placeholder awaits removal ([`leave_placeholder`]): the lean
-    /// dispatch paths, which do not sweep, step aside for the full one.
-    static PLACEHOLDERS_PENDING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Placeholders awaiting removal ([`leave_placeholder`]) in all of the
+    /// thread's engines: the lean dispatch paths, which do not sweep, step
+    /// aside for the full one while it is nonzero, and [`hook_ctx`] looks at
+    /// its engine's list only then.
+    static PLACEHOLDERS_PENDING: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// Runs `f` with the property hooks switched off (see [`ORDINARY_ONLY`]).
@@ -1757,14 +1694,14 @@ unsafe fn leave_placeholder(scope: &Scope<'_>, object: sys::JSObjectRef, name: s
         sys::JSValueProtect(scope.ctx, object);
         let name = JsString::from_utf16(utf16_of(name));
         scope.engine_inner().classes.borrow_mut().placeholders.push((object, name));
-        PLACEHOLDERS_PENDING.set(true);
+        PLACEHOLDERS_PENDING.set(PLACEHOLDERS_PENDING.get() + 1);
     }
 }
 
 /// Removes the pending placeholders ([`leave_placeholder`]).
 unsafe fn sweep_placeholders(scope: &Scope<'_>) {
     let pending = std::mem::take(&mut scope.engine_inner().classes.borrow_mut().placeholders);
-    PLACEHOLDERS_PENDING.set(false);
+    PLACEHOLDERS_PENDING.set(PLACEHOLDERS_PENDING.get().saturating_sub(pending.len()));
     for (object, name) in pending {
         unsafe {
             ordinary_only(|| sys::JSObjectDeleteProperty(scope.ctx, object, name.as_raw(), ptr::null_mut()));
@@ -1807,7 +1744,9 @@ unsafe extern "C" fn get_property_hook(
                     }
                     return Ok(match f(scope, hc.header, units)? {
                         // An own property shadows the named property.
-                        Some(_) if hc.legacy && !hc.override_builtins && has_ordinary_property(scope.ctx, object, name) => {
+                        Some(_)
+                            if hc.legacy && !hc.override_builtins && has_ordinary_property(scope.ctx, object, name) =>
+                        {
                             ptr::null()
                         }
                         Some(value) => value,
@@ -1843,7 +1782,7 @@ unsafe extern "C" fn get_by_index_hook(
     if ORDINARY_ONLY.get() {
         return ptr::null();
     }
-    if !PLACEHOLDERS_PENDING.get() {
+    if PLACEHOLDERS_PENDING.get() == 0 {
         if let Some(v) = unsafe { get_by_index_lean(ctx, object, index) } {
             return v;
         }
@@ -2174,7 +2113,6 @@ unsafe extern "C" fn property_names_hook(
                 }
             }
             Ok(())
-
         })
     }
 }

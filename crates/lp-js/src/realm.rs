@@ -1085,10 +1085,24 @@ impl<'s> Scope<'s> {
     }
 
     /// Borrows the payload of argument `i` of a native callback. Arguments are
-    /// rooted by the caller's frame for the callback's duration, so no guard
-    /// is needed.
+    /// rooted by the caller's frame for the callback's duration (JSC's
+    /// argument array belongs to the calling frame, which outlives the
+    /// callback), so no guard is needed.
     pub fn unwrap_arg<C: JsClass>(&self, args: &Args<'s>, i: usize) -> Option<&'s C::Data> {
         self.unwrap_raw::<C>(args.opt(i)?).map(|(d, _)| d)
+    }
+
+    /// [`Scope::unwrap`] without the guard's protect/unprotect pair, for a
+    /// value something else keeps alive for `'s`: a callback's receiver or
+    /// argument (rooted by the calling frame), or a value reachable from one.
+    ///
+    /// # Safety
+    /// The wrapper must stay alive for `'s`. A value merely held in a local
+    /// does not qualify: the conservative scan only sees it while the
+    /// compiled code still keeps it, and a collection followed by
+    /// [`crate::Engine::drain_finalized`] would free the payload.
+    pub unsafe fn unwrap_rooted<C: JsClass>(&self, value: Value<'_>) -> Option<&'s C::Data> {
+        self.unwrap_raw::<C>(value).map(|(d, _)| d)
     }
 
     /// Payload of the realm's global object, if it is (a subclass of) `C`.
@@ -1097,24 +1111,22 @@ impl<'s> Scope<'s> {
         if h.is_null() {
             return None;
         }
-        let reg = self.realm.engine.classes.borrow();
         // SAFETY: the global payload lives as long as the realm, which this
         // scope borrows for 's.
-        unsafe { class::class_data::<C::Data>(&reg, h, reg.id_of::<C>()?) }
+        unsafe { class::data_of_header::<C>(h) }
     }
 
-    /// Data and object of a `C` wrapper (object is null for the global).
+    /// Data and object of a `C` wrapper (object is null for the global). The
+    /// brand check walks the payload's class chain (`data_of_header`): no
+    /// registry borrow, no class-id lookup.
     fn unwrap_raw<C: JsClass>(&self, value: Value<'_>) -> Option<(&'s C::Data, sys::JSObjectRef)> {
         let o = value.as_object()?;
-        let h = unsafe { self.header_of_object(o.raw) }?;
-        let is_global = h == self.realm.global_payload.get();
+        // SAFETY: a live object of this VM; its payload lives while it does
+        // (the callers root it for 's), the global's while the realm does.
         unsafe {
-            if (*h).kind != Kind::Instance {
-                return None;
-            }
-            let reg = self.realm.engine.classes.borrow();
-            let data = class::class_data::<C::Data>(&reg, h, reg.id_of::<C>()?)?;
-            Some((data, if is_global { ptr::null_mut() } else { o.raw }))
+            let h = self.header_of_object(o.raw)?;
+            let data = class::data_of_header::<C>(h)?;
+            Some((data, if h == self.realm.global_payload.get() { ptr::null_mut() } else { o.raw }))
         }
     }
 
