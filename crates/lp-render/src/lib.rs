@@ -837,6 +837,19 @@ impl Renderer {
                 let bridge = net::Bridge::new(snap, fetcher.clone(), self.resources.scoped(&snap.resource_scope));
                 let doc = blitz_html::HtmlDocument::from_html(&snap.html, self.config(snap, bridge.provider()));
                 let mut doc = doc.into_inner();
+                for id in doc.query_selector_all("[data-lp-scroll-left],[data-lp-scroll-top]").unwrap_or_default() {
+                    if let Some(node) = doc.get_node_mut(id) {
+                        let offset = |name| {
+                            node.attr(name).and_then(|s| s.parse::<f64>().ok()).filter(|v| v.is_finite()).unwrap_or(0.0)
+                        };
+                        let point = blitz_dom::Point {
+                            x: offset("data-lp-scroll-left".into()),
+                            y: offset("data-lp-scroll-top".into()),
+                        };
+                        *node.scroll_offset_mut() = point;
+                    }
+                }
+
                 svg_use::resolve(&mut doc, &snap.base_url, fetcher, self.fetch_timeout)
                     .map_err(RenderError::Resource)?;
                 let (doc, bridge) = fresh.insert((doc, bridge));
@@ -2743,5 +2756,63 @@ mod settle_resolution_tests {
         );
         eprintln!("clean full delta resolve generation advances={advances}");
         assert_eq!(advances, 1, "normal successful settling already resolved this mutation");
+    }
+}
+
+#[cfg(test)]
+mod deferred_html_scroll_tests {
+    use super::*;
+
+    struct NoFetch;
+    impl Fetcher for NoFetch {
+        fn fetch(&self, _url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
+            done(Err("unexpected resource".into()));
+        }
+    }
+    fn pixels(html: &str) -> RgbaImage {
+        let snapshot = Snapshot {
+            html: format!("<!doctype html><style>body{{margin:0;background:white}}</style>{html}"),
+            base_url: "http://test/".into(),
+            width: 80,
+            height: 80,
+            device_scale_factor: 1.0,
+            ..Default::default()
+        };
+        Renderer::new()
+            .render(&snapshot, Area::FullPage, Backend::Cpu, &(Arc::new(NoFetch) as Arc<dyn Fetcher>))
+            .unwrap()
+            .0
+    }
+    fn at(image: &RgbaImage, x: usize, y: usize) -> &[u8] {
+        let start = (y * image.width as usize + x) * 4;
+        &image.data[start..start + 4]
+    }
+    #[test]
+    fn deferred_html_nested_scroll_preserves_both_axes_and_clipping() {
+        let image = pixels(
+            r#"<div data-lp-scroll-left="40" data-lp-scroll-top="40" style="width:40px;height:40px;overflow:hidden"><div style="position:relative;width:80px;height:80px;background:red"><div data-lp-scroll-top="40" style="position:absolute;left:40px;top:40px;width:40px;height:40px;overflow:hidden"><div style="height:40px;background:blue"></div><div style="height:40px;background:green"></div></div></div></div>"#,
+        );
+        assert_eq!(at(&image, 20, 20), &[0, 128, 0, 255]);
+        assert_eq!(at(&image, 60, 20), &[255, 255, 255, 255]);
+        assert_eq!(at(&image, 20, 60), &[255, 255, 255, 255]);
+    }
+    #[test]
+    fn deferred_html_zero_or_invalid_offsets_do_not_move_content() {
+        let plain = pixels(
+            r#"<div style="width:40px;height:40px;overflow:hidden"><div style="height:80px;background:red"></div></div>"#,
+        );
+        let invalid = pixels(
+            r#"<div data-lp-scroll-left="NaN" data-lp-scroll-top="Infinity" style="width:40px;height:40px;overflow:hidden"><div style="height:80px;background:red"></div></div>"#,
+        );
+        assert_eq!(plain, invalid);
+        assert_eq!(at(&plain, 20, 20), &[255, 0, 0, 255]);
+    }
+    #[test]
+    fn deferred_html_time_input_values_are_visible() {
+        let morning = pixels(r#"<input type="time" value="08:00" style="width:70px;height:24px;font:12px Arial">"#);
+        let afternoon = pixels(r#"<input type="time" value="14:00" style="width:70px;height:24px;font:12px Arial">"#);
+        let empty = pixels(r#"<input type="time" value="" style="width:70px;height:24px;font:12px Arial">"#);
+        assert_ne!(morning, empty, "a time value must not paint as an empty field");
+        assert_ne!(morning, afternoon, "changing the saved time must change the rendered pixels");
     }
 }

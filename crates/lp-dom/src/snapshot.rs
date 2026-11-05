@@ -139,6 +139,7 @@ trait Sink {
 struct HtmlSink<'a> {
     out: String,
     mark: Option<&'a str>,
+    scroll: &'a [(u64, (f64, f64))],
 }
 
 impl Sink for HtmlSink<'_> {
@@ -147,12 +148,14 @@ impl Sink for HtmlSink<'_> {
         self.out.push_str(name);
         self.out.push('>');
     }
-    fn open(&mut self, _key: u64, tag: &str, _name: &QualName, attrs: &[RAttr<'_>], marked: bool, _void: bool) {
+    fn open(&mut self, key: u64, tag: &str, _name: &QualName, attrs: &[RAttr<'_>], marked: bool, _void: bool) {
         let out = &mut self.out;
         out.push('<');
         out.push_str(tag);
         // The state attribute is for keyed trees: markup would lose its namespace.
-        for a in attrs.iter().filter(|a| &*a.name.ns != STATE_NS) {
+        for a in attrs.iter().filter(|a| {
+            &*a.name.ns != STATE_NS && !matches!(&*a.name.local, "data-lp-scroll-left" | "data-lp-scroll-top")
+        }) {
             out.push(' ');
             match &a.name.prefix {
                 Some(p) if !p.is_empty() => {
@@ -171,6 +174,10 @@ impl Sink for HtmlSink<'_> {
         if let (true, Some(name)) = (marked, self.mark) {
             out.push(' ');
             out.push_str(name);
+        }
+        if let Some((_, (x, y))) = self.scroll.iter().find(|(id, _)| *id == key) {
+            use std::fmt::Write;
+            let _ = write!(out, " data-lp-scroll-left=\"{x}\" data-lp-scroll-top=\"{y}\"");
         }
         out.push('>');
     }
@@ -233,7 +240,17 @@ impl Sink for TreeSink {
 impl Dom {
     /// Serializes document `doc` for rendering (see the module docs).
     pub fn render_html(&self, doc: NodeId, opts: &RenderHtml<'_>) -> DomResult<String> {
-        let mut sink = HtmlSink { out: String::with_capacity(64 * 1024), mark: opts.mark.map(|m| m.1) };
+        self.render_html_scrolled(doc, opts, &[])
+    }
+
+    /// Writes scroll offsets into the render copy without modifying the live DOM.
+    pub fn render_html_scrolled(
+        &self,
+        doc: NodeId,
+        opts: &RenderHtml<'_>,
+        scroll: &[(u64, (f64, f64))],
+    ) -> DomResult<String> {
+        let mut sink = HtmlSink { out: String::with_capacity(64 * 1024), mark: opts.mark.map(|m| m.1), scroll };
         self.render_walk(doc, opts, &mut sink)?;
         Ok(sink.out)
     }
@@ -354,6 +371,7 @@ impl Dom {
                             }
                         } else if ty != InputType::File {
                             let v = self.value(id).unwrap_or_default();
+                            let v = if ty == InputType::Password { "•".repeat(v.chars().count()) } else { v };
                             if !v.is_empty() {
                                 attrs.push(RAttr { name: plain("value"), value: Cow::Owned(v), valueless: false });
                             }

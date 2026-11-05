@@ -477,7 +477,7 @@ impl LayoutPassState<'_> {
                                 },
                             );
                         }
-                        None | Some("text" | "password" | "email" | "tel" | "url" | "search") => {
+                        None | Some("text" | "password" | "email" | "tel" | "url" | "search" | "time") => {
                             // Chromium's intrinsic width: `size` (default 20) average
                             // characters plus a max-char allowance, about
                             // (size / 2 + 0.4)em (166px for 16px Arial). It does not

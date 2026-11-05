@@ -4628,3 +4628,11 @@ fn text_inputs_in_system_ui_are_as_wide_as_in_chromium() {
     }
 }
 
+#[test]
+fn table_cell_declared_height_is_minimum() {
+    let p = page(
+        r#"<!doctype html><style>*{box-sizing:border-box}body{margin:0}table{border-spacing:0;width:400px}td{padding:0;height:26px;overflow:hidden}</style><table><tbody><tr><td id="short"><div style="height:10px"></div></td></tr></tbody><tfoot><tr><td id="footer"><div id="content" style="display:flex;padding:24px 16px;height:68px">Empty</div></td></tr></tfoot></table>"#,
+    );
+    assert_eq!(p.metrics("short")[3], 26.0);
+    assert!(p.metrics("footer")[3] >= 68.0, "footer {:?}, content {:?}", p.metrics("footer"), p.metrics("content"));
+}
