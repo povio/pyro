@@ -6701,3 +6701,91 @@ fn legacy_events_request_and_observable() {
     assert_eq!(eval(r, "const o4 = []; document.getElementById('t').when('click').subscribe(ev => o4.push(ev.type)); document.getElementById('t').dispatchEvent(new Event('click')); o4.join()"), "click");
     assert_eq!(eval(r, "typeof Subscriber + ':' + (() => { try { new Subscriber(); return 'no' } catch (e) { return e.constructor.name } })()"), "function:TypeError");
 }
+
+#[test]
+fn atom_valued_reads_follow_every_change() {
+    let e = env("<!doctype html><html><body><div id=a class='x y'>t</div></body></html>");
+    let r = &e.main;
+    assert_eq!(
+        eval(r, "const d = document.getElementById('a'); [d.id, d.className, d.localName, d.getAttribute('id'), d.getAttribute('class'), d.classList.value, d.classList[1], d.classList.item(0), String(d.prefix), d.namespaceURI].join('|')"),
+        "a|x y|div|a|x y|x y|y|x|null|http://www.w3.org/1999/xhtml"
+    );
+    // Writes through every path read back at once.
+    assert_eq!(eval(r, "d.id = 'b'; d.id + '|' + d.getAttribute('id')"), "b|b");
+    assert_eq!(eval(r, "d.setAttribute('id', 'a-much-longer-identifier'); d.id"), "a-much-longer-identifier");
+    assert_eq!(eval(r, "d.getAttributeNode('id').value = 'c'; d.id"), "c");
+    assert_eq!(eval(r, "d.removeAttribute('id'); JSON.stringify([d.id, d.getAttribute('id')])"), r#"["",null]"#);
+    assert_eq!(
+        eval(r, "d.className = 'z'; [d.className, d.getAttribute('class'), d.classList.value, d.classList[0]].join()"),
+        "z,z,z,z"
+    );
+    assert_eq!(eval(r, "d.classList.add('w'); d.className + '|' + d.classList"), "z w|z w");
+    assert_eq!(
+        eval(r, "d.className = '  z  '; JSON.stringify([d.className, d.classList.length, d.classList[0]])"),
+        r#"["  z  ",1,"z"]"#
+    );
+    assert_eq!(
+        eval(r, "d.className = 'q q r'; [...d.classList].join() + '|' + d.classList[1] + '|' + d.classList[2]"),
+        "q,r|r|undefined"
+    );
+    assert_eq!(
+        eval(
+            r,
+            "d.removeAttribute('class'); JSON.stringify([d.className, d.classList.value, d.getAttribute('class')])"
+        ),
+        r#"["","",null]"#
+    );
+    assert_eq!(
+        eval(r, "d.className = 'k'; const c = d.cloneNode(); d.className = 'm'; c.className + '|' + d.className"),
+        "k|m"
+    );
+    // getAttribute('id') is the first attribute with that qualified name: here
+    // a namespaced one, not the element's id.
+    assert_eq!(
+        eval(r, "const n = document.createElement('p'); n.setAttributeNS('urn:x', 'id', 'ns'); n.setAttributeNS(null, 'id', 'plain'); n.id + '|' + n.getAttribute('id')"),
+        "plain|ns"
+    );
+    assert_eq!(
+        eval(r, "n.setAttributeNS('http://www.w3.org/1999/xlink', 'xlink:href', 'u'); n.getAttributeNames().join()"),
+        "id,id,xlink:href"
+    );
+    assert_eq!(
+        eval(r, "[...n.attributes].map(a => [a.name, a.localName, a.prefix, a.namespaceURI].join(' ')).join()"),
+        "id id  urn:x,id id  ,xlink:href href xlink http://www.w3.org/1999/xlink"
+    );
+    assert_eq!(
+        eval(r, "const g = document.createElementNS('http://www.w3.org/2000/svg', 'x:svg'); [g.localName, g.prefix, g.namespaceURI, g.tagName].join()"),
+        "svg,x,http://www.w3.org/2000/svg,x:svg"
+    );
+    // Strings are per realm; the isolated world reads the same values.
+    let iso = new_realm(&e.engine, e.engine.register::<TestWindow>(), &e.page, "isolated");
+    assert_eq!(
+        eval(&iso, "const o = document.querySelector('div'); o.id + '|' + o.className + '|' + o.localName"),
+        "|m|div"
+    );
+    assert_eq!(eval(r, "d.id = 'from-main'; d.id"), "from-main");
+    assert_eq!(eval(&iso, "o.id"), "from-main");
+}
+
+#[test]
+fn ids_read_once_do_not_accumulate() {
+    let e = env("<!doctype html><html><body><main id=list></main></body></html>");
+    let r = &e.main;
+    // 20000 distinct ids and class values, each read once and dropped, with
+    // collections in between.
+    for batch in 0..10 {
+        eval(
+            r,
+            &format!(
+                "(() => {{ const list = document.getElementById('list'); list.textContent = ''; for (let i = 0; i < 2000; i++) {{ const d = document.createElement('div'); d.id = 'row-{batch}-' + i; d.className = 'cell cell-{batch}-' + i; list.appendChild(d); }} let n = 0; for (const d of list.children) n += d.id.length + d.className.length; return n; }})()"
+            ),
+        );
+        e.engine.collect_garbage_now();
+    }
+    let n = e.main.interned_string_count();
+    assert!(n <= 6000, "{n} interned strings for 40000 distinct values read once");
+    assert_eq!(eval(r, "list.lastChild.id + '|' + list.lastChild.className"), "row-9-1999|cell cell-9-1999");
+    lp_webapi::lifecycle::realm_disposed(&e.page, e.main.id());
+    e.main.dispose();
+    assert_eq!(e.main.interned_string_count(), 0);
+}

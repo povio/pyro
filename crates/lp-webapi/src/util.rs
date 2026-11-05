@@ -34,6 +34,46 @@ impl WrapperRef {
     }
 }
 
+/// An interned atom as a JavaScript string: the realm's one string for it,
+/// made on the first read (see [`Scope::interned_string`]).
+pub(crate) trait AtomJs {
+    fn js<'s>(&self, s: &Scope<'s>) -> Value<'s>;
+}
+
+/// The identity is string_cache's own: an atom's bits, which its equality
+/// compares. A static atom's bits are an index into its set, so the second
+/// half tells the sets apart (and 4 is `upper_local_name`); a dynamic atom's
+/// are its entry's address, reusable once the atom is freed.
+macro_rules! atom_js {
+    ($($atom:ty => $set:literal),* $(,)?) => {$(
+        impl AtomJs for $atom {
+            #[inline]
+            fn js<'s>(&self, s: &Scope<'s>) -> Value<'s> {
+                s.interned_string((self.unsafe_data(), $set), self, self.is_dynamic())
+            }
+        }
+    )*};
+}
+atom_js!(lp_dom::Atom => 0, markup5ever::LocalName => 1, markup5ever::Namespace => 2, markup5ever::Prefix => 3);
+
+/// A local name uppercased (`tagName` of an HTML element in an HTML
+/// document), by the local name's identity.
+#[inline]
+pub(crate) fn upper_local_name<'s>(s: &Scope<'s>, local: &markup5ever::LocalName) -> Value<'s> {
+    s.interned_string_with((local.unsafe_data(), 4), local, local.is_dynamic(), || {
+        str::to_ascii_uppercase(local).into()
+    })
+}
+
+/// An element's id or class atom as a string: `""` when it has none.
+#[inline]
+pub(crate) fn atom_or_empty<'s>(s: &Scope<'s>, atom: Option<&lp_dom::Atom>) -> Value<'s> {
+    match atom {
+        Some(a) => a.js(s),
+        None => lp_dom::Atom::default().js(s),
+    }
+}
+
 /// Maps a DOM error to the JS exception the bindings throw.
 pub fn dom_err(e: DomError) -> JsError {
     match e {

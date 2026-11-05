@@ -299,7 +299,11 @@ impl JsClass for Node {
             Ok(s.number(n.page().dom.borrow().node_type(n.id).js()? as u16 as f64))
         });
         def.pure_getter_typed("nodeName", lp_js::GetterResult::String, |s, n| {
-            Ok(s.shared_string(&n.page().dom.borrow().node_name_shared(n.id).js()?))
+            let dom = n.page().dom.borrow();
+            Ok(match dom.tag_name_parts(n.id).js()? {
+                Some((name, upper)) => tag_name(s, name, upper),
+                None => s.shared_string(&dom.node_name_shared(n.id).js()?),
+            })
         });
         def.accessor(
             "nodeValue",
@@ -961,6 +965,23 @@ impl JsClass for ShadowRoot {
 
 // ----- element ----------------------------------------------------------
 
+/// `tagName` from [`lp_dom::Dom::tag_name_parts`]: the local name's string
+/// (the same as `localName`'s), or its uppercased form, one per realm too.
+#[inline]
+fn tag_name<'s>(s: &Scope<'s>, name: &markup5ever::QualName, upper: bool) -> Value<'s> {
+    match &name.prefix {
+        Some(p) if !p.is_empty() => {
+            let mut q = format!("{}:{}", p, name.local);
+            if upper {
+                q.make_ascii_uppercase();
+            }
+            s.string(&q)
+        }
+        _ if upper => upper_local_name(s, &name.local),
+        _ => name.local.js(s),
+    }
+}
+
 pub struct Element;
 impl JsClass for Element {
     const NAME: &'static str = "Element";
@@ -971,38 +992,39 @@ impl JsClass for Element {
         define_child_node(def);
         define_non_doctype_child(def);
         def.pure_getter_typed("tagName", lp_js::GetterResult::String, |s, n| {
-            Ok(s.shared_string(&n.page().dom.borrow().tag_name_shared(n.id).js()?))
+            let dom = n.page().dom.borrow();
+            Ok(match dom.tag_name_parts(n.id).js()? {
+                Some((name, upper)) => tag_name(s, name, upper),
+                None => s.shared_string(&dom.tag_name_shared(n.id).js()?),
+            })
         });
+        // Names, id and class are the element's atoms: one string each per
+        // realm (`AtomJs`), not a new one per read.
         def.pure_getter_typed("localName", lp_js::GetterResult::String, |s, n| {
-            Ok(s.string(n.page().dom.borrow().element(n.id).js()?.local_name()))
+            Ok(n.page().dom.borrow().element(n.id).js()?.local_name().js(s))
         });
         def.getter("namespaceURI", |s, n| {
             let dom = n.page().dom.borrow();
             let ns = dom.element(n.id).js()?.namespace();
-            Ok(if ns.is_empty() { s.null() } else { s.string(ns) })
+            Ok(if ns.is_empty() { s.null() } else { ns.js(s) })
         });
         def.getter("prefix", |s, n| {
             let dom = n.page().dom.borrow();
             Ok(match dom.element(n.id).js()?.prefix() {
-                Some(p) if !p.is_empty() => s.string(p),
+                Some(p) if !p.is_empty() => p.js(s),
                 _ => s.null(),
             })
         });
-        // `id` and `className` read the element's own id and class: the
-        // `id` atom it keeps and the `class` attribute's value.
         def.pure_accessor_typed(
             "id",
             lp_js::GetterResult::String,
-            |s, n| Ok(s.string(n.page().dom.borrow().element(n.id).js()?.id().unwrap_or(""))),
+            |s, n| Ok(atom_or_empty(s, n.page().dom.borrow().element(n.id).js()?.id_atom())),
             |_s, n, v| with_str(v, |id| n.page().dom.borrow_mut().set_attribute(n.id, "id", id).js()),
         );
         def.pure_accessor_typed(
             "className",
             lp_js::GetterResult::String,
-            |s, n| {
-                let dom = n.page().dom.borrow();
-                Ok(s.string(dom.element(n.id).js()?.attr_local(&markup5ever::local_name!("class")).unwrap_or("")))
-            },
+            |s, n| Ok(atom_or_empty(s, n.page().dom.borrow().element(n.id).js()?.class_atom())),
             |_s, n, v| with_str(v, |class| n.page().dom.borrow_mut().set_attribute(n.id, "class", class).js()),
         );
         def.pure_accessor_typed(
@@ -1055,18 +1077,30 @@ impl JsClass for Element {
             collections::remove_attribute_node(s, n.page(), n.id, a.get(0))
         });
         def.pure_method("getAttributeNames", 0, |s, n, _a| {
-            let names: Vec<String> =
-                n.page().dom.borrow().attributes(n.id).js()?.iter().map(|a| a.qualified_name()).collect();
             let mut vals = lp_js::RootedVec::new();
-            for name in names {
-                vals.push(s, s.string(&name));
+            {
+                let dom = n.page().dom.borrow();
+                for a in dom.attributes(n.id).js()? {
+                    // Making strings runs no script: the DOM stays borrowed.
+                    vals.push(
+                        s,
+                        match &a.name.prefix {
+                            Some(p) if !p.is_empty() => s.string(&a.qualified_name()),
+                            _ => a.name.local.js(s),
+                        },
+                    );
+                }
             }
             Ok(s.array(&vals.iter(s).collect::<Vec<_>>())?.value())
         });
         def.pure_method("getAttribute", 1, |s, n, a| {
             crate::util::with_arg_str(&a, 0, "Element.getAttribute", |name| {
                 let dom = n.page().dom.borrow();
-                Ok(dom.get_attribute_qualified(n.id, name).js()?.map_or(s.null(), |v| s.string(v)))
+                Ok(match dom.get_attribute_qualified_atom(n.id, name).js()? {
+                    Some((_, Some(atom))) => atom.js(s),
+                    Some((value, None)) => s.string(value),
+                    None => s.null(),
+                })
             })
         });
         def.method("getAttributeNS", 2, |s, n, a| {

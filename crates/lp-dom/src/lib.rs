@@ -48,7 +48,7 @@ pub use dom::{attr_name_hash, position, CollectionWatch, Dom};
 pub use window_names::window_name_hash;
 pub use error::{DomError, DomErrorKind, DomResult};
 pub use node::{
-    shadow_flags, Attr, AttrNodeData, ControlState, DocumentKind, NodeId, NodeKind, NodeType, QuirksMode, ShadowRootMode,
+    shadow_flags, Atom, Attr, AttrNodeData, ControlState, DocumentKind, NodeId, NodeKind, NodeType, QuirksMode, ShadowRootMode,
 };
 
 pub use markup5ever::{LocalName, Namespace, Prefix, QualName};
