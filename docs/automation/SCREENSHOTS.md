@@ -93,7 +93,7 @@ are ignored. The reply also carries `lp: {width, height, sceneHash, ms}`.
   (base64 PNGs; differing pixels red over a gray copy).
 - **`locator`:** captures the element's border box as Blitz lays it out. The element is resolved by the driver
   (retried until it exists) and marked in the snapshot.
-- The `lightningpanda-test` client stores baselines beside the tests (`__screenshots__/`), sends each one once per
+- The `lightning-panda` client stores baselines beside the tests (`__screenshots__/`), sends each one once per
   connection, and writes `.actual.png`/`.diff.png` on a failure (see its README and LLM.md).
 
 ## Not captured

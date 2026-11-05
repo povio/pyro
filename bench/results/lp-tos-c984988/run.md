@@ -5,51 +5,51 @@ cdp-perf: warning: 1-minute load average 12.7 on 10 CPUs; expect noisy timings
   wv.flow.e2e                        [head] round 1/5: median 14.219 ms
   lp.flow.e2e                        [head] round 1/5: median 6.750 ms
   lp.run.flow                        [head] round 1/5: median 7.622 ms
-      lightningpanda-test pages: {"prepared":0,"preparedBooting":0,"fresh":17}
+      lightning-panda pages: {"prepared":0,"preparedBooting":0,"fresh":17}
   tos.close.steps                    [head] round 1/5: median 11.904 ms
-      lightningpanda-test pages: {"prepared":0,"preparedBooting":0,"fresh":17}
+      lightning-panda pages: {"prepared":0,"preparedBooting":0,"fresh":17}
   tos.close.run.fresh                [head] round 1/5: median 12.590 ms
-      lightningpanda-test pages: {"prepared":2,"preparedBooting":0,"fresh":15}
+      lightning-panda pages: {"prepared":2,"preparedBooting":0,"fresh":15}
   tos.close.run                      [head] round 1/5: median 11.171 ms
   pw.tos.close                       [head] round 1/5: median 46.263 ms
   wv.flow.e2e                        [head] round 2/5: median 13.418 ms
   lp.flow.e2e                        [head] round 2/5: median 6.613 ms
   lp.run.flow                        [head] round 2/5: median 6.686 ms
-      lightningpanda-test pages: {"prepared":0,"preparedBooting":0,"fresh":17}
+      lightning-panda pages: {"prepared":0,"preparedBooting":0,"fresh":17}
   tos.close.steps                    [head] round 2/5: median 12.936 ms
-      lightningpanda-test pages: {"prepared":0,"preparedBooting":0,"fresh":17}
+      lightning-panda pages: {"prepared":0,"preparedBooting":0,"fresh":17}
   tos.close.run.fresh                [head] round 2/5: median 12.833 ms
-      lightningpanda-test pages: {"prepared":4,"preparedBooting":0,"fresh":13}
+      lightning-panda pages: {"prepared":4,"preparedBooting":0,"fresh":13}
   tos.close.run                      [head] round 2/5: median 11.065 ms
   pw.tos.close                       [head] round 2/5: median 45.675 ms
   wv.flow.e2e                        [head] round 3/5: median 14.524 ms
   lp.flow.e2e                        [head] round 3/5: median 6.729 ms
   lp.run.flow                        [head] round 3/5: median 7.054 ms
-      lightningpanda-test pages: {"prepared":0,"preparedBooting":0,"fresh":17}
+      lightning-panda pages: {"prepared":0,"preparedBooting":0,"fresh":17}
   tos.close.steps                    [head] round 3/5: median 15.309 ms
-      lightningpanda-test pages: {"prepared":0,"preparedBooting":0,"fresh":17}
+      lightning-panda pages: {"prepared":0,"preparedBooting":0,"fresh":17}
   tos.close.run.fresh                [head] round 3/5: median 11.216 ms
-      lightningpanda-test pages: {"prepared":2,"preparedBooting":0,"fresh":15}
+      lightning-panda pages: {"prepared":2,"preparedBooting":0,"fresh":15}
   tos.close.run                      [head] round 3/5: median 11.112 ms
   pw.tos.close                       [head] round 3/5: median 39.726 ms
   wv.flow.e2e                        [head] round 4/5: median 13.037 ms
   lp.flow.e2e                        [head] round 4/5: median 7.921 ms
   lp.run.flow                        [head] round 4/5: median 6.723 ms
-      lightningpanda-test pages: {"prepared":0,"preparedBooting":0,"fresh":17}
+      lightning-panda pages: {"prepared":0,"preparedBooting":0,"fresh":17}
   tos.close.steps                    [head] round 4/5: median 11.292 ms
-      lightningpanda-test pages: {"prepared":0,"preparedBooting":0,"fresh":17}
+      lightning-panda pages: {"prepared":0,"preparedBooting":0,"fresh":17}
   tos.close.run.fresh                [head] round 4/5: median 10.993 ms
-      lightningpanda-test pages: {"prepared":4,"preparedBooting":0,"fresh":13}
+      lightning-panda pages: {"prepared":4,"preparedBooting":0,"fresh":13}
   tos.close.run                      [head] round 4/5: median 10.237 ms
   pw.tos.close                       [head] round 4/5: median 45.618 ms
   wv.flow.e2e                        [head] round 5/5: median 12.595 ms
   lp.flow.e2e                        [head] round 5/5: median 6.363 ms
   lp.run.flow                        [head] round 5/5: median 6.817 ms
-      lightningpanda-test pages: {"prepared":0,"preparedBooting":0,"fresh":17}
+      lightning-panda pages: {"prepared":0,"preparedBooting":0,"fresh":17}
   tos.close.steps                    [head] round 5/5: median 12.012 ms
-      lightningpanda-test pages: {"prepared":0,"preparedBooting":0,"fresh":17}
+      lightning-panda pages: {"prepared":0,"preparedBooting":0,"fresh":17}
   tos.close.run.fresh                [head] round 5/5: median 11.822 ms
-      lightningpanda-test pages: {"prepared":2,"preparedBooting":0,"fresh":15}
+      lightning-panda pages: {"prepared":2,"preparedBooting":0,"fresh":15}
   tos.close.run                      [head] round 5/5: median 10.938 ms
   pw.tos.close                       [head] round 5/5: median 43.601 ms
 # CDP performance: head
@@ -86,49 +86,49 @@ Times are milliseconds per sample (median, p90 over all rounds); `rsd` is the ro
 
 ```
 cdp-perf: warning: 1-minute load average 12.1 on 10 CPUs; expect noisy timings
-      lightningpanda-test pages: {"prepared":0,"preparedBooting":0,"fresh":17}
+      lightning-panda pages: {"prepared":0,"preparedBooting":0,"fresh":17}
   tos.close.steps                    [head] round 1/5: median 10.565 ms
-      lightningpanda-test pages: {"prepared":0,"preparedBooting":0,"fresh":17}
+      lightning-panda pages: {"prepared":0,"preparedBooting":0,"fresh":17}
   tos.close.run.fresh                [head] round 1/5: median 10.051 ms
-      lightningpanda-test pages: {"prepared":17,"preparedBooting":0,"fresh":0}
+      lightning-panda pages: {"prepared":17,"preparedBooting":0,"fresh":0}
   tos.close.run                      [head] round 1/5: median 4.784 ms
-      lightningpanda-test pages: {"prepared":2,"preparedBooting":0,"fresh":15}
+      lightning-panda pages: {"prepared":2,"preparedBooting":0,"fresh":15}
   tos.close.run.busy                 [head] round 1/5: median 10.766 ms
   pw.tos.close                       [head] round 1/5: median 40.664 ms
-      lightningpanda-test pages: {"prepared":0,"preparedBooting":0,"fresh":17}
+      lightning-panda pages: {"prepared":0,"preparedBooting":0,"fresh":17}
   tos.close.steps                    [head] round 2/5: median 11.982 ms
-      lightningpanda-test pages: {"prepared":0,"preparedBooting":0,"fresh":17}
+      lightning-panda pages: {"prepared":0,"preparedBooting":0,"fresh":17}
   tos.close.run.fresh                [head] round 2/5: median 10.393 ms
-      lightningpanda-test pages: {"prepared":17,"preparedBooting":0,"fresh":0}
+      lightning-panda pages: {"prepared":17,"preparedBooting":0,"fresh":0}
   tos.close.run                      [head] round 2/5: median 2.941 ms
-      lightningpanda-test pages: {"prepared":2,"preparedBooting":0,"fresh":15}
+      lightning-panda pages: {"prepared":2,"preparedBooting":0,"fresh":15}
   tos.close.run.busy                 [head] round 2/5: median 10.089 ms
   pw.tos.close                       [head] round 2/5: median 42.679 ms
-      lightningpanda-test pages: {"prepared":0,"preparedBooting":0,"fresh":17}
+      lightning-panda pages: {"prepared":0,"preparedBooting":0,"fresh":17}
   tos.close.steps                    [head] round 3/5: median 11.528 ms
-      lightningpanda-test pages: {"prepared":0,"preparedBooting":0,"fresh":17}
+      lightning-panda pages: {"prepared":0,"preparedBooting":0,"fresh":17}
   tos.close.run.fresh                [head] round 3/5: median 9.761 ms
-      lightningpanda-test pages: {"prepared":17,"preparedBooting":0,"fresh":0}
+      lightning-panda pages: {"prepared":17,"preparedBooting":0,"fresh":0}
   tos.close.run                      [head] round 3/5: median 4.029 ms
-      lightningpanda-test pages: {"prepared":2,"preparedBooting":0,"fresh":15}
+      lightning-panda pages: {"prepared":2,"preparedBooting":0,"fresh":15}
   tos.close.run.busy                 [head] round 3/5: median 10.960 ms
   pw.tos.close                       [head] round 3/5: median 39.284 ms
-      lightningpanda-test pages: {"prepared":0,"preparedBooting":0,"fresh":17}
+      lightning-panda pages: {"prepared":0,"preparedBooting":0,"fresh":17}
   tos.close.steps                    [head] round 4/5: median 10.487 ms
-      lightningpanda-test pages: {"prepared":0,"preparedBooting":0,"fresh":17}
+      lightning-panda pages: {"prepared":0,"preparedBooting":0,"fresh":17}
   tos.close.run.fresh                [head] round 4/5: median 10.270 ms
-      lightningpanda-test pages: {"prepared":17,"preparedBooting":0,"fresh":0}
+      lightning-panda pages: {"prepared":17,"preparedBooting":0,"fresh":0}
   tos.close.run                      [head] round 4/5: median 2.948 ms
-      lightningpanda-test pages: {"prepared":2,"preparedBooting":0,"fresh":15}
+      lightning-panda pages: {"prepared":2,"preparedBooting":0,"fresh":15}
   tos.close.run.busy                 [head] round 4/5: median 10.268 ms
   pw.tos.close                       [head] round 4/5: median 38.764 ms
-      lightningpanda-test pages: {"prepared":0,"preparedBooting":0,"fresh":17}
+      lightning-panda pages: {"prepared":0,"preparedBooting":0,"fresh":17}
   tos.close.steps                    [head] round 5/5: median 10.401 ms
-      lightningpanda-test pages: {"prepared":0,"preparedBooting":0,"fresh":17}
+      lightning-panda pages: {"prepared":0,"preparedBooting":0,"fresh":17}
   tos.close.run.fresh                [head] round 5/5: median 9.422 ms
-      lightningpanda-test pages: {"prepared":17,"preparedBooting":0,"fresh":0}
+      lightning-panda pages: {"prepared":17,"preparedBooting":0,"fresh":0}
   tos.close.run                      [head] round 5/5: median 4.015 ms
-      lightningpanda-test pages: {"prepared":2,"preparedBooting":0,"fresh":15}
+      lightning-panda pages: {"prepared":2,"preparedBooting":0,"fresh":15}
   tos.close.run.busy                 [head] round 5/5: median 11.538 ms
   pw.tos.close                       [head] round 5/5: median 40.121 ms
 # CDP performance: head

@@ -6,7 +6,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import type { ScreenshotStep } from './steps';
+import type { ScreenshotStep } from './steps.js';
 
 /** Write new baselines instead of comparing (`LP_UPDATE_SNAPSHOTS=1`, or `bun test --update-snapshots` / `-u`). */
 export const updateMode = (): boolean =>

@@ -2,7 +2,7 @@
 
 `match-screenshot.ts` measures screenshots through the real path: a `lightningpanda` binary built with
 `--features render`, the fixtures served over HTTP by Bun (Lato as a web font, so the renderer fetches it through
-the page's network), and the `lightningpanda-test` client over CDP.
+the page's network), and the `lightning-panda` client over CDP.
 
 ```sh
 cargo build --release --features render

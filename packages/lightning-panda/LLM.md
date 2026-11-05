@@ -1,4 +1,4 @@
-# Writing E2E tests with lightningpanda-test: instructions for coding agents
+# Writing E2E tests with @povio/lightning-panda: instructions for coding agents
 
 Read this before writing or porting a test. It is the whole contract; the
 source is `src/steps.ts` (builders) and `src/index.ts` (pages and runs).
@@ -24,14 +24,16 @@ source is `src/steps.ts` (builders) and `src/index.ts` (pages and runs).
 
 ## Skeleton
 
-The client comes with each Lightningpanda release: install
-`lightningpanda-test-<version>.tgz` from the release with `bun add`, or import
-`lightningpanda-test/` from the unpacked archive. `Lightningpanda.launch()`
-finds the archive's binary on its own; set `LIGHTNINGPANDA_BIN` otherwise.
+Install the browser and client with `bun add --dev @povio/lightning-panda`
+(or `@povio/lightning-panda@next` for an RC). `Lightningpanda.launch()` finds
+the bundled macOS browser automatically. Fork mode requires a separately built
+patched JavaScriptCore browser selected via `LIGHTNINGPANDA_BIN` or `bin`.
+On other operating systems, connect to a remote browser with
+`Lightningpanda.connect()`.
 
 ```ts
 import { afterAll, beforeAll, expect, test } from 'bun:test';
-import { Lightningpanda, button, check, dialog, text, label } from 'lightningpanda-test';
+import { Lightningpanda, button, check, dialog, text, label } from '@povio/lightning-panda';
 
 let lp: Lightningpanda;
 beforeAll(async () => {
@@ -181,7 +183,7 @@ requests never finish (polling, streaming) or that you do not want to wait for.
 
 ## Porting from Playwright
 
-| Playwright | lightningpanda-test |
+| Playwright | @povio/lightning-panda |
 |---|---|
 | `page.getByRole('button', { name: 'X' })` | `button('X')` |
 | `locator.filter({ visible: true }).first()` | `loc.visible().first()` |

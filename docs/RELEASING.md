@@ -1,8 +1,11 @@
 # Release packaging
 
 Release assets contain a render-enabled `lightningpanda`, the matching
-`lp-snapshot-compare`, and one identical `lightningpanda-test` payload. Bump the
-workspace and client versions together before building. Record the source commit,
+`lp-snapshot-compare`, and one identical `lightning-panda` payload. For npm
+releases, the [tag-triggered workflow](NPM_PUBLISHING.md#release-tags) sets all
+versions automatically. For manual archive builds, run
+`node scripts/npm/release.mjs vX.Y.Z --write` and `cargo update --workspace`
+before building. Record the source commit,
 input hashes and validation results; packaging alone is not functional testing.
 
 Publish these six assets for a release version `X.Y.Z`:
@@ -10,7 +13,7 @@ Publish these six assets for a release version `X.Y.Z`:
 - `lightningpanda-rust-vX.Y.Z-macos-arm64.tar.gz`: system JavaScriptCore.
 - `lightningpanda-rust-vX.Y.Z-macos-x64.tar.gz`: system JavaScriptCore.
 - `lightningpanda-rust-vX.Y.Z-macos-arm64-fork.tar.gz`: bundled patched JavaScriptCore.
-- `lightningpanda-test-X.Y.Z.tgz`: the same client included in all binary archives.
+- `povio-lightning-panda-X.Y.Z.tgz`: the same client included in all binary archives.
 - `lightningpanda-jsc-source-vX.Y.Z.tar.gz`: matching patched JavaScriptCore source.
 - `SHA256SUMS.txt`: hashes of the five payload assets after signing and packing.
 
@@ -22,8 +25,10 @@ not convert it to a system-JSC build. Build the browser and comparison worker wi
 its Cargo linker/signing configuration applies. Keep each completed build in a
 separate staging location before building another variant.
 
-Use `scripts/pack-test-client.sh OUT_DIR` once. Unpack that exact resulting TGZ as
-`lightningpanda-test/` beside the browser in every platform archive. Keep `LICENSE`
+Stage both standard macOS binaries in `packages/lightning-panda/native/` as
+described in [NPM_PUBLISHING.md](NPM_PUBLISHING.md), then use
+`scripts/pack-test-client.sh OUT_DIR` once. Unpack that exact resulting TGZ as
+`lightning-panda/` beside the browser in every platform archive. Keep `LICENSE`
 and `NOTICE` in each archive. Signing or relocation must affect staged copies,
 never the original build outputs or the cached JavaScriptCore library.
 

@@ -931,7 +931,7 @@ const SCENARIOS = [
     teardown: wvClose,
   })),
 
-  // ---- TOS positions-close on the lightningpanda-test client (Bun only: the client is TypeScript) ----
+  // ---- TOS positions-close on the lightning-panda client (Bun only: the client is TypeScript) ----
   {
     name: 'tos.close.steps',
     group: 'tos',
@@ -1269,7 +1269,7 @@ async function cdpLpFlow(env, i, pipelined) {
   lap('close');
   return phases;
 }
-// ---------- TOS positions-close (lightningpanda-test) ----------
+// ---------- TOS positions-close (lightning-panda) ----------
 const TOS_AUTH = { authorization: 'Bearer e2e-token' };
 const tosOverview = (id) => `/tos/platform/logistics/positions/${id}/overview`;
 async function tosSeed(env) {
@@ -1278,7 +1278,7 @@ async function tosSeed(env) {
   return r.json();
 }
 // The steps of TOS's 'closes an open Position from the Position overview' (see
-// packages/lightningpanda-test/examples/positions-close.test.ts).
+// packages/lightning-panda/examples/positions-close.test.ts).
 function tosCloseSteps(t, p) {
   const { check, button, dialog, text } = t;
   return [
@@ -1294,8 +1294,8 @@ function tosCloseSteps(t, p) {
 }
 function tosSetup(prepared, connections = 1) {
   return async (env) => {
-    if (!globalThis.Bun) throw new Error('needs bun (the lightningpanda-test client is TypeScript)');
-    const t = await import('../../packages/lightningpanda-test/src/index.ts');
+    if (!globalThis.Bun) throw new Error('needs bun (the lightning-panda client is TypeScript)');
+    const t = await import('../../packages/lightning-panda/src/index.ts');
     const lp = await t.Lightningpanda.connect(env.wsUrl, { connections });
     await lp.profile('employee', {
       url: `${env.site}/tos/platform`,
@@ -1309,7 +1309,7 @@ function tosSetup(prepared, connections = 1) {
   };
 }
 async function tosTeardown(s) {
-  if (s.lp) console.error(`      lightningpanda-test pages: ${JSON.stringify(s.lp.stats)}`);
+  if (s.lp) console.error(`      lightning-panda pages: ${JSON.stringify(s.lp.stats)}`);
   s.lp?.close();
 }
 async function tosClose(s, env, mode) {

@@ -1,4 +1,4 @@
-// lightningpanda-test: E2E tests for `bun test` on Lightningpanda.
+// lightning-panda: E2E tests for `bun test` on Lightningpanda.
 //
 //   const lp = await Lightningpanda.connect(wsUrl);          // or Lightningpanda.launch()
 //   await lp.profile('employee', { url: `${app}/platform`, localStorage: tokens });
@@ -19,16 +19,15 @@
 // the server forks it from a process that booted each profile once, so the
 // page starts booted and its process exits when the page closes.
 import { spawn, type ChildProcess } from 'node:child_process';
-import { statSync } from 'node:fs';
 import { createServer } from 'node:net';
-import { fileURLToPath } from 'node:url';
-import { Cdp, CdpError } from './cdp';
-import { loaded, route as routeStep, goto, matchScreenshot, ScreenshotStep, type ScreenshotOptions, type Step, type StepLike } from './steps';
-import { mismatch, prepare, settle, ScreenshotMismatchError, type ScreenshotResult, type SentBaselines } from './screenshots';
+import { resolveBinary } from './binary.js';
+import { Cdp, CdpError } from './cdp.js';
+import { loaded, route as routeStep, goto, matchScreenshot, ScreenshotStep, type ScreenshotOptions, type Step, type StepLike } from './steps.js';
+import { mismatch, prepare, settle, ScreenshotMismatchError, type ScreenshotResult, type SentBaselines } from './screenshots.js';
 
-export * from './steps';
-export { Cdp, CdpError } from './cdp';
-export { ScreenshotMismatchError, updateMode, type ScreenshotResult } from './screenshots';
+export * from './steps.js';
+export { Cdp, CdpError } from './cdp.js';
+export { ScreenshotMismatchError, updateMode, type ScreenshotResult } from './screenshots.js';
 
 export type Profile = {
   /** Where its pages boot (and stay until a test takes one). */
@@ -137,15 +136,17 @@ export class Lightningpanda {
 
   /**
    * Starts `lightningpanda serve` on a free port and connects to it. The binary
-   * is `bin`, else `$LIGHTNINGPANDA_BIN`, else the one next to this package in a
-   * release archive, else `lightningpanda` on PATH.
+   * is `bin`, else `$LIGHTNINGPANDA_BIN`, else the bundled binary for this
+   * platform (or the sibling binary in a legacy release archive).
    */
   static async launch(opts: ConnectOptions & { bin?: string; args?: string[] } = {}): Promise<Lightningpanda> {
     const port = await freePort();
-    const child = spawn(opts.bin ?? defaultBin(), ['serve', '--host', '127.0.0.1', '--port', String(port), ...(opts.args ?? [])], {
+    const child = spawn(opts.bin ?? resolveBinary(), ['serve', '--host', '127.0.0.1', '--port', String(port), ...(opts.args ?? [])], {
       stdio: ['ignore', 'ignore', 'inherit'],
       detached: process.platform !== 'win32',
     });
+    let spawnError: Error | undefined;
+    child.once('error', (error) => { spawnError = error; });
     const deadline = Date.now() + 15_000;
     for (;;) {
       try {
@@ -154,9 +155,9 @@ export class Lightningpanda {
         const url = v.webSocketDebuggerUrl ?? `ws://127.0.0.1:${port}/`;
         return await new Lightningpanda(url, await openConns(url, opts), child).detect();
       } catch (e) {
-        if (child.exitCode !== null || Date.now() > deadline) {
+        if (spawnError || child.exitCode !== null || child.signalCode !== null || Date.now() > deadline) {
           stopLaunchedBrowser(child);
-          throw new Error(`lightningpanda serve did not start: ${e}`);
+          throw new Error(`lightningpanda serve did not start: ${spawnError ?? e}`);
         }
         await new Promise((r) => setTimeout(r, 5));
       }
@@ -465,13 +466,6 @@ function freePort(): Promise<number> {
     });
     s.on('error', reject);
   });
-}
-
-/** A release archive unpacks as `lightningpanda` beside `lightningpanda-test/`. */
-function defaultBin(): string {
-  if (process.env.LIGHTNINGPANDA_BIN) return process.env.LIGHTNINGPANDA_BIN;
-  const bin = fileURLToPath(new URL('../../lightningpanda', import.meta.url));
-  return statSync(bin, { throwIfNoEntry: false })?.isFile() ? bin : 'lightningpanda';
 }
 
 /**

@@ -1,11 +1,11 @@
-# TOS positions-close: lightningpanda-test vs Playwright
+# TOS positions-close: lightning-panda vs Playwright
 
 One run, one binary, 5 rounds, TOS's "closes an open Position from the Position overview" against the
 TOS-shaped app in `cdp-perf-site.mjs`, 2026-10-27T17:24:07Z.
 Host: Apple M1 Max, 10 CPUs, macOS 27.0.1; Load average at start 12.70/9.62/8.07, at end 13.75/10.00/8.23
 (very busy machine: the script warns above 5, so treat differences under ~10-15% as noise).
 
-- **head**: c984988 (LP.run ready signed-in pages, route/press/eval/request steps, lightningpanda-test client),
+- **head**: c984988 (LP.run ready signed-in pages, route/press/eval/request steps, lightning-panda client),
   release build; cpu/op from `bench/rss-sampler`. The bench script carries one fix on top: `tos.close.steps`
   sends each `check.request` in the same LP.run as the action that sent the request (a request step only sees
   its own run's log, as documented), instead of as a run of its own, which timed out.
@@ -39,7 +39,7 @@ Reference flows in the same run (form flow): lp.flow.e2e 6.750 ms, lp.run.flow 6
 ## Interpretation
 
 The whole TOS close flow (seed, signed-in page, Settings menu, confirm dialog, POST + GET checks, closed banner)
-takes ~11-12 ms through lightningpanda-test, about 4x faster than the same flow driven by Playwright (43.7 ms) and
+takes ~11-12 ms through lightning-panda, about 4x faster than the same flow driven by Playwright (43.7 ms) and
 at roughly a third of its browser cpu/op. Playwright's cost is spread over both halves: 16 ms to open the page
 (goto + waiting for the overview) and 21 ms for the clicks and response waits. Splitting the flow into one LP.run
 per step costs only ~0.3 ms over one LP.run, so round trips are not where the time goes.

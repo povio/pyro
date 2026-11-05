@@ -6,7 +6,7 @@ Host: Apple M1 Max, 10 CPUs, macOS 27.0.1; Load average at start 12.96/7.73/7.08
 (very busy machine: the script warns above 5, so treat differences under ~10-15% as noise).
 
 - **head**: e501cef (the serve loop boots a taken page's replacement as soon as the connection has no open page,
-  instead of only after 15 ms without commands; lightningpanda-test can open several connections and takes each
+  instead of only after 15 ms without commands; lightning-panda can open several connections and takes each
   page from the one with the fewest open pages), release build, sha256 `2262a26b724c5493`; cpu/op from
   `bench/rss-sampler`. `cargo test -p lp-cdp`: 212 passed, 0 failed.
 
