@@ -228,12 +228,14 @@ pub fn checkpoint(page: &Rc<PageDom>) {
     if page.is_disposed() {
         return;
     }
+    let slots_signaled = page.dom.try_borrow().is_ok_and(|d| d.has_signaled_slots());
     // No observer, nothing pinned, nothing to drop: nothing to do (this runs
     // after every DOM call from script).
     if page.mutations.observers.borrow().is_empty()
         && page.mutations.pins.borrow().is_empty()
         && page.mutations.pending_drops.borrow().is_empty()
         && page.mutations.pending_roots.borrow().is_empty()
+        && !slots_signaled
     {
         return;
     }
@@ -257,15 +259,18 @@ pub fn checkpoint(page: &Rc<PageDom>) {
             scheduling_realm = Some(realm.clone());
         }
     }
-    if !page.mutations.pending_roots.borrow().is_empty() && page.mutations.queued.get().is_none() {
-        let realm = scheduling_realm.or_else(|| {
-            page.mutations
-                .observers
-                .borrow()
-                .values()
-                .filter_map(Weak::upgrade)
-                .find_map(|observer| observer.realm.upgrade())
-        });
+    if (!page.mutations.pending_roots.borrow().is_empty() || slots_signaled) && page.mutations.queued.get().is_none()
+    {
+        let realm = scheduling_realm
+            .or_else(|| {
+                page.mutations
+                    .observers
+                    .borrow()
+                    .values()
+                    .filter_map(Weak::upgrade)
+                    .find_map(|observer| observer.realm.upgrade())
+            })
+            .or_else(|| page.main_world_realm());
         if let Some(realm) = realm {
             if let Ok(s) = realm.scope() {
                 let generation = page.mutations.generation.get().wrapping_add(1);
@@ -343,6 +348,11 @@ fn notify(page: &Rc<PageDom>) {
     }
     page.mutations.queued.set(None);
     page.mutations.rooted.set(0);
+    // "Signal a slot change": slotchange at each signaled slot first.
+    let slots = page.dom.borrow_mut().take_signaled_slots();
+    for slot in slots {
+        crate::input::fire_simple(page, slot, "slotchange", true, false);
+    }
     let pending = page.dom.borrow_mut().take_pending_observers();
     let roots = page.mutations.pending_roots.take();
     // Snapshot binding identities as well as native ids: a callback can dispose

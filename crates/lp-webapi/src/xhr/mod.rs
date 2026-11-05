@@ -269,15 +269,17 @@ impl JsClass for XMLHttpRequest {
             |s, d| Ok(s.string(&d.state.response_type.borrow())),
             |_s, d, value| {
                 let kind = dom_string(value)?;
+                // An unknown enum value is ignored before any state check.
+                if !matches!(kind.as_str(), "" | "text" | "json" | "arraybuffer" | "blob" | "document") {
+                    return Ok(());
+                }
                 if d.state.ready.get() >= 3 {
                     return Err(invalid("responseType cannot change after loading"));
                 }
                 if d.state.synchronous.get() {
                     return Err(sync_access("responseType cannot be set for a synchronous request"));
                 }
-                if matches!(kind.as_str(), "" | "text" | "json" | "arraybuffer" | "blob" | "document") {
-                    *d.state.response_type.borrow_mut() = kind;
-                }
+                *d.state.response_type.borrow_mut() = kind;
                 Ok(())
             },
         );
@@ -464,8 +466,14 @@ impl Xhr {
         if !asynchronous && (self.timeout.get() != 0 || !self.response_type.borrow().is_empty()) {
             return Err(sync_access("A synchronous request cannot have a timeout or a responseType"));
         }
-        if !username.is_empty() || !password.is_empty() || !url.username().is_empty() || url.password().is_some() {
-            return Err(unsupported("XHR URL credentials are not implemented"));
+        // Credentials go into the URL (open() steps 11-12); the network
+        // layer does not send them yet (documented gap).
+        if !username.is_empty() || !password.is_empty() {
+            if url.cannot_be_a_base() {
+                return Err(JsError::dom("SyntaxError", "Invalid URL"));
+            }
+            let _ = url.set_username(&username);
+            let _ = url.set_password(if password.is_empty() { None } else { Some(&password) });
         }
         self.generation.set(self.generation.get().checked_add(1).expect("XHR generation exhausted"));
         self.stop();

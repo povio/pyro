@@ -35,6 +35,10 @@ pub struct PageDom {
     /// Node references released by finalized wrappers while the DOM was
     /// borrowed; applied at the next safe point.
     pending_release: RefCell<Vec<NodeId>>,
+    /// Attr wrappers an element adopted through `setAttributeNode` keyed by
+    /// (element, namespace, local name): their wrapper identity replaces the
+    /// default one for that attribute.
+    pub(crate) attr_keys: RefCell<FxHashMap<(NodeId, String, String), lp_js::IdentityKey>>,
     /// (DOM version, removal count) seen by the last `after_task`.
     after_task_stamp: Cell<Option<(u64, u64)>>,
     current_script: Cell<Option<NodeId>>,
@@ -396,6 +400,7 @@ impl PageDom {
             selectors: RefCell::new(SelectorCache::default()),
             collection_members: RefCell::default(),
             pending_release: RefCell::new(Vec::new()),
+            attr_keys: RefCell::new(FxHashMap::default()),
             after_task_stamp: Cell::new(None),
             current_script: Cell::new(None),
             realms: RefCell::new(FxHashMap::default()),

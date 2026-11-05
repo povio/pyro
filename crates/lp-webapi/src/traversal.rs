@@ -53,6 +53,16 @@ pub struct WalkerData {
     active: Cell<bool>,
     /// NodeIterator: pointer-before-reference flag.
     before_ref: Cell<bool>,
+    /// NodeIterator: the reference the DOM moves when nodes are removed.
+    live: Option<std::rc::Rc<lp_dom::live_iterator::LiveIterator>>,
+}
+
+impl Drop for WalkerData {
+    fn drop(&mut self) {
+        if let Some(live) = &self.live {
+            self.root.page.release_node(live.reference());
+        }
+    }
 }
 
 impl WalkerData {
@@ -85,10 +95,32 @@ impl WalkerData {
         Ok(r?.to_number()? as u16)
     }
     fn cur(&self) -> NodeId {
-        self.current.borrow().id
+        match &self.live {
+            Some(live) => live.reference(),
+            None => self.current.borrow().id,
+        }
+    }
+    /// NodeIterator: the pointer-before-reference flag, as the DOM keeps it.
+    fn before(&self) -> bool {
+        match &self.live {
+            Some(live) => live.before(),
+            None => self.before_ref.get(),
+        }
     }
     fn set_cur(&self, id: NodeId) -> JsResult<()> {
+        if let Some(live) = &self.live {
+            self.page().dom.borrow_mut().set_iterator_reference(live, id, self.before_ref.get()).js()?;
+            return Ok(());
+        }
         *self.current.borrow_mut() = NodeHold::new(self.page(), id)?;
+        Ok(())
+    }
+    fn set_before(&self, before: bool) -> JsResult<()> {
+        self.before_ref.set(before);
+        if let Some(live) = &self.live {
+            let id = live.reference();
+            self.page().dom.borrow_mut().set_iterator_reference(live, id, before).js()?;
+        }
         Ok(())
     }
 }
@@ -109,6 +141,7 @@ fn new_walker(s: &Scope<'_>, n: &NodeData, a: &Args<'_>) -> JsResult<(WalkerData
             filter,
             active: Cell::new(false),
             before_ref: Cell::new(true),
+            live: None,
         },
         identity,
     ))
@@ -136,8 +169,9 @@ pub(crate) fn create_tree_walker<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -
 
 pub(crate) fn create_node_iterator<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value<'s>> {
     a.require(1, "Document.createNodeIterator")?;
-    let d = new_walker(s, n, &a)?;
-    wrap_walker::<NodeIterator>(s, &a, d)
+    let (mut data, identity) = new_walker(s, n, &a)?;
+    data.live = Some(n.page().dom.borrow_mut().new_live_iterator(data.root.id).js()?);
+    wrap_walker::<NodeIterator>(s, &a, (data, identity))
 }
 
 type Step = fn(&lp_dom::Dom, NodeId) -> Option<NodeId>;
@@ -384,7 +418,7 @@ fn preceding(dom: &lp_dom::Dom, root: NodeId, n: NodeId) -> Option<NodeId> {
 
 fn iterate<'s>(s: &Scope<'s>, w: &WalkerData, forward: bool) -> JsResult<Value<'s>> {
     let mut node = w.cur();
-    let mut before = w.before_ref.get();
+    let mut before = w.before();
     loop {
         if forward {
             if before {
@@ -404,8 +438,9 @@ fn iterate<'s>(s: &Scope<'s>, w: &WalkerData, forward: bool) -> JsResult<Value<'
             }
         }
         if w.accept(s, node)? == FILTER_ACCEPT {
-            w.set_cur(node)?;
             w.before_ref.set(before);
+            w.set_cur(node)?;
+            w.set_before(before)?;
             return opt(s, w, Some(node));
         }
     }

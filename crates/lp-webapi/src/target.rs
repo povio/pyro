@@ -75,6 +75,11 @@ impl JsClass for EventTarget {
             remove_listener(s, t, a)?;
             Ok(s.undefined())
         });
+        def.method("when", 1, |s, t, a| {
+            a.require(1, "EventTarget.when")?;
+            let this = target_object(s, &t.page, t.key)?.ok_or_else(|| JsError::Type("Illegal invocation".into()))?;
+            crate::observable::when(s, this.value(), a.get(0), a.get(1))
+        });
         def.method("dispatchEvent", 1, |s, t, a| {
             a.require(1, "EventTarget.dispatchEvent")?;
             let ev = s
@@ -541,7 +546,31 @@ fn handler_set(s: &Scope<'_>, object: Object<'_>, key: &str, value: Value<'_>) -
 
 /// IDL event handlers use an ordinary listener slot and a traced hidden value.
 /// Replacing a non-null handler preserves its position among other listeners.
+/// HTML "Window-reflecting body element event handler set": `onblur` and
+/// the like on the page document's `<body>`/`<frameset>` are the Window's.
+fn forwarded_target(target: &EventTargetData, ty: &str) -> Option<EventTargetData> {
+    if !crate::handlers::reflects_to_window(ty) {
+        return None;
+    }
+    let page = &target.page;
+    let dom = page.dom.borrow();
+    let node = dom.key_node(target.key)?;
+    let e = dom.element(node).ok()?;
+    if !(e.is_html() && matches!(&*e.name.local, "body" | "frameset")) {
+        return None;
+    }
+    if dom.node_document(node).ok() != Some(page.document()) {
+        return None;
+    }
+    drop(dom);
+    let window = page.window_target()?;
+    Some(EventTargetData::window(page, window))
+}
+
 pub(crate) fn event_handler<'s>(s: &Scope<'s>, target: &EventTargetData, ty: &str) -> JsResult<Value<'s>> {
+    if let Some(window) = forwarded_target(target, ty) {
+        return event_handler(s, &window, ty);
+    }
     crate::handlers::drain_inline(&target.page);
     let object =
         target_object(s, &target.page, target.key)?.ok_or_else(|| JsError::Type("Illegal invocation".into()))?;
@@ -569,6 +598,9 @@ pub(crate) fn set_event_handler(
     ty: &'static str,
     value: Value<'_>,
 ) -> JsResult<()> {
+    if let Some(window) = forwarded_target(target, ty) {
+        return set_event_handler(s, &window, ty, value);
+    }
     crate::handlers::drain_inline(&target.page);
     let object =
         target_object(s, &target.page, target.key)?.ok_or_else(|| JsError::Type("Illegal invocation".into()))?;

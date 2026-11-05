@@ -21,7 +21,28 @@ pub fn set_ready_state(page: &Rc<PageDom>, doc: NodeId, state: &'static str) {
 /// readyState=interactive, then `DOMContentLoaded` (bubbles to window).
 pub fn dom_content_loaded(page: &Rc<PageDom>, doc: NodeId) {
     set_ready_state(page, doc, "interactive");
+    flush_autofocus(page, doc);
     crate::input::fire_simple(page, doc, "DOMContentLoaded", true, false);
+}
+
+/// HTML "flush autofocus candidates" (simplified): the first `autofocus`
+/// element of the top-level document gets focus when nothing has it.
+fn flush_autofocus(page: &Rc<PageDom>, doc: NodeId) {
+    if page.scripting_disabled() {
+        return;
+    }
+    let candidate = {
+        let dom = page.dom.borrow();
+        if dom.focused(doc).ok().flatten().is_some() {
+            return;
+        }
+        let Ok(mut desc) = dom.descendants(doc) else { return };
+        desc.find(|&id| dom.element(id).is_ok_and(|e| e.is_html() && e.attr("autofocus").is_some()))
+            .filter(|&id| dom.is_focusable(id).unwrap_or(false))
+    };
+    if let Some(el) = candidate {
+        crate::input::focus_element(page, el);
+    }
 }
 
 /// readyState=complete, then `load` and `pageshow` at the window.

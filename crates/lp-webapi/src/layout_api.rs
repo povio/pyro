@@ -399,6 +399,57 @@ pub(crate) fn element_from_point<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -
     opt_node(s, page, hit)
 }
 
+/// `ShadowRoot.elementFromPoint`: the document's hit, retargeted against
+/// the shadow root (a host's for anything deeper, null outside its tree).
+pub(crate) fn shadow_element_from_point<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value<'s>> {
+    a.require(2, "ShadowRoot.elementFromPoint")?;
+    let (x, y) = (a.get(0).to_number()?, a.get(1).to_number()?);
+    let page = n.page();
+    let hit = hit_test(page, x, y);
+    let retargeted = hit.and_then(|h| retarget_to_root(&page.dom.borrow(), h, n.id));
+    opt_node(s, page, retargeted)
+}
+
+pub(crate) fn shadow_elements_from_point<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value<'s>> {
+    a.require(2, "ShadowRoot.elementsFromPoint")?;
+    let (x, y) = (a.get(0).to_number()?, a.get(1).to_number()?);
+    let page = n.page();
+    let ids = page.layout().elements_from_point(&page.dom.borrow(), x, y);
+    let mut out: Vec<NodeId> = Vec::new();
+    {
+        let dom = page.dom.borrow();
+        for id in ids {
+            if let Some(r) = retarget_to_root(&dom, id, n.id) {
+                if out.last() != Some(&r) {
+                    out.push(r);
+                }
+            }
+        }
+    }
+    let mut vals = lp_js::RootedVec::new();
+    for id in out {
+        vals.push(s, wrap_node(s, page, id)?.value());
+    }
+    Ok(s.array(&vals.iter(s).collect::<Vec<_>>())?.value())
+}
+
+/// DOM "retarget" of `node` against the tree rooted at `root`: the node
+/// itself when its root is `root`, else the nearest host whose root is;
+/// `None` when `root` is not a shadow-including ancestor.
+fn retarget_to_root(dom: &lp_dom::Dom, node: NodeId, root: NodeId) -> Option<NodeId> {
+    let mut cur = node;
+    loop {
+        let r = dom.root_node(cur, false).ok()?;
+        if r == root {
+            return Some(cur);
+        }
+        if !dom.is_shadow_root(r).unwrap_or(false) {
+            return None;
+        }
+        cur = dom.fragment_host(r).ok()??;
+    }
+}
+
 pub(crate) fn elements_from_point<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value<'s>> {
     a.require(2, "Document.elementsFromPoint")?;
     let (x, y) = (a.get(0).to_number()?, a.get(1).to_number()?);

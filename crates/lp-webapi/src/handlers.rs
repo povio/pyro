@@ -52,7 +52,8 @@ macro_rules! global_events {
             "timeupdate", "toggle", "volumechange", "waiting", "wheel", "pointerdown", "pointerup", "pointermove",
             "pointerover", "pointerout", "pointerenter", "pointerleave", "pointercancel", "gotpointercapture",
             "lostpointercapture", "animationstart", "animationend", "animationiteration", "animationcancel",
-            "transitionstart", "transitionend", "transitionrun", "transitioncancel"
+            "transitionstart", "transitionend", "transitionrun", "transitioncancel", "webkitanimationstart",
+            "webkitanimationend", "webkitanimationiteration", "webkittransitionend"
         ])
     };
 }

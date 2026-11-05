@@ -877,13 +877,15 @@ pub(crate) fn define_element_extras(def: &mut ClassDef<Element>) {
 }
 
 fn reflect_aria(def: &mut ClassDef<Element>) {
+    // ARIAMixin: nullable string reflection (Chrome reflects every ARIA
+    // attribute as a plain string; null or undefined removes it).
     macro_rules! aria {
         ($prop:literal, $attr:literal) => {
             def.accessor(
                 $prop,
                 |s, n| Ok(n.page().dom.borrow().get_attribute(n.id, $attr).js()?.map_or(s.null(), |v| s.string(v))),
                 |_s, n, v| {
-                    if v.is_null() {
+                    if v.is_null() || v.is_undefined() {
                         n.page().dom.borrow_mut().remove_attribute(n.id, $attr).js()?;
                         Ok(())
                     } else {
@@ -895,16 +897,49 @@ fn reflect_aria(def: &mut ClassDef<Element>) {
         };
     }
     aria!("role", "role");
-    aria!("ariaLabel", "aria-label");
-    aria!("ariaHidden", "aria-hidden");
-    aria!("ariaExpanded", "aria-expanded");
+    aria!("ariaAtomic", "aria-atomic");
+    aria!("ariaAutoComplete", "aria-autocomplete");
+    aria!("ariaBrailleLabel", "aria-braillelabel");
+    aria!("ariaBrailleRoleDescription", "aria-brailleroledescription");
+    aria!("ariaBusy", "aria-busy");
     aria!("ariaChecked", "aria-checked");
-    aria!("ariaSelected", "aria-selected");
-    aria!("ariaDisabled", "aria-disabled");
-    aria!("ariaPressed", "aria-pressed");
-    aria!("ariaLevel", "aria-level");
-    aria!("ariaValueNow", "aria-valuenow");
+    aria!("ariaColCount", "aria-colcount");
+    aria!("ariaColIndex", "aria-colindex");
+    aria!("ariaColIndexText", "aria-colindextext");
+    aria!("ariaColSpan", "aria-colspan");
+    aria!("ariaCurrent", "aria-current");
     aria!("ariaDescription", "aria-description");
+    aria!("ariaDisabled", "aria-disabled");
+    aria!("ariaExpanded", "aria-expanded");
+    aria!("ariaHasPopup", "aria-haspopup");
+    aria!("ariaHidden", "aria-hidden");
+    aria!("ariaInvalid", "aria-invalid");
+    aria!("ariaKeyShortcuts", "aria-keyshortcuts");
+    aria!("ariaLabel", "aria-label");
+    aria!("ariaLevel", "aria-level");
+    aria!("ariaLive", "aria-live");
+    aria!("ariaModal", "aria-modal");
+    aria!("ariaMultiLine", "aria-multiline");
+    aria!("ariaMultiSelectable", "aria-multiselectable");
+    aria!("ariaOrientation", "aria-orientation");
+    aria!("ariaPlaceholder", "aria-placeholder");
+    aria!("ariaPosInSet", "aria-posinset");
+    aria!("ariaPressed", "aria-pressed");
+    aria!("ariaReadOnly", "aria-readonly");
+    aria!("ariaRelevant", "aria-relevant");
+    aria!("ariaRequired", "aria-required");
+    aria!("ariaRoleDescription", "aria-roledescription");
+    aria!("ariaRowCount", "aria-rowcount");
+    aria!("ariaRowIndex", "aria-rowindex");
+    aria!("ariaRowIndexText", "aria-rowindextext");
+    aria!("ariaRowSpan", "aria-rowspan");
+    aria!("ariaSelected", "aria-selected");
+    aria!("ariaSetSize", "aria-setsize");
+    aria!("ariaSort", "aria-sort");
+    aria!("ariaValueMax", "aria-valuemax");
+    aria!("ariaValueMin", "aria-valuemin");
+    aria!("ariaValueNow", "aria-valuenow");
+    aria!("ariaValueText", "aria-valuetext");
 }
 
 // ----- HTMLElement ------------------------------------------------------------
@@ -2446,6 +2481,14 @@ pub(crate) fn create_event<'s>(s: &Scope<'s>, page: &Rc<PageDom>, iface: &str) -
         "keyboardevent" => EventInterface::KeyboardEvent,
         "messageevent" => EventInterface::MessageEvent,
         "hashchangeevent" => EventInterface::HashChangeEvent,
+        "beforeunloadevent" => EventInterface::BeforeUnloadEvent,
+        "compositionevent" => EventInterface::CompositionEvent,
+        "devicemotionevent" => EventInterface::DeviceMotionEvent,
+        "deviceorientationevent" => EventInterface::DeviceOrientationEvent,
+        "storageevent" => EventInterface::StorageEvent,
+        "textevent" => EventInterface::TextEvent,
+        "errorevent" => EventInterface::ErrorEvent,
+        "popstateevent" => EventInterface::PopStateEvent,
         _ => return Err(JsError::dom("NotSupportedError", format!("The provided event type ('{iface}') is invalid."))),
     };
     let core = EventCore::new(page, i, "", false, false, false);
@@ -2813,12 +2856,22 @@ impl JsClass for DomImplementation {
         def.method("createDocument", 2, |s, h, a| {
             let ns = opt_dom_string(a.get(0))?;
             let q = null_to_empty(a.get(1))?;
+            let doctype = if a.get(2).is_nullish() { None } else { Some(crate::node::node_arg(s, a.get(2), "createDocument")?) };
             let mut dom = h.page.dom.borrow_mut();
             let doc = dom.create_document(lp_dom::DocumentKind::Xml, "about:blank");
-            if !q.is_empty() {
-                let el = dom.create_element_ns(doc, ns.as_deref(), &q).js()?;
+            let element = if q.is_empty() { None } else { Some(dom.create_element_ns(doc, ns.as_deref(), &q).js()?) };
+            if let Some(dt) = doctype {
+                dom.append_child(doc, dt).js()?;
+            }
+            if let Some(el) = element {
                 dom.append_child(doc, el).js()?;
             }
+            let content_type = match ns.as_deref() {
+                Some("http://www.w3.org/1999/xhtml") => "application/xhtml+xml",
+                Some("http://www.w3.org/2000/svg") => "image/svg+xml",
+                _ => "application/xml",
+            };
+            let _ = dom.set_document_kind(doc, lp_dom::DocumentKind::Xml, content_type, "UTF-8");
             drop(dom);
             Ok(wrap_node(s, &h.page, doc)?.value())
         });

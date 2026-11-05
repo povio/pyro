@@ -259,6 +259,7 @@ fn context_arg(s: &Scope<'_>, v: Value<'_>, what: &str) -> JsResult<Option<(Rc<P
     }
     if let Some(a) = s.unwrap::<crate::collections::Attr>(v) {
         let (page, element, name) = attr_of(&a);
+        let Some(element) = element else { return Ok(None) };
         let index = name.find(page.dom.borrow().attributes(element).js()?);
         let index = index.ok_or_else(|| JsError::dom("InvalidStateError", "The attribute was removed."))?;
         return Ok(Some((page.clone(), XPathNode::Attr { element, index })));

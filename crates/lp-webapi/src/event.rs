@@ -25,6 +25,10 @@ pub enum EventInterface {
     KeyboardEvent,
     InputEvent,
     CompositionEvent,
+    TextEvent,
+    BeforeUnloadEvent,
+    DeviceMotionEvent,
+    DeviceOrientationEvent,
     ProgressEvent,
     ErrorEvent,
     PromiseRejectionEvent,
@@ -73,6 +77,8 @@ pub enum StorageAreaRef {
 pub struct EventFields {
     pub detail: f64,
     pub custom_detail: Option<Persistent>,
+    /// `UIEvent.view` given to a constructor or init method (a Window).
+    pub view: Option<Persistent>,
     pub screen_x: f64,
     pub screen_y: f64,
     pub client_x: f64,
@@ -81,6 +87,8 @@ pub struct EventFields {
     pub shift_key: bool,
     pub alt_key: bool,
     pub meta_key: bool,
+    /// EventModifierInit `modifierAltGraph` and the like, by [`EXTRA_MODIFIERS`] bit.
+    pub extra_modifiers: u16,
     pub button: i16,
     pub buttons: u16,
     pub related_target: Option<TargetKey>,
@@ -286,6 +294,10 @@ pub fn wrap_event<'s>(s: &Scope<'s>, core: &EventData) -> JsResult<Object<'s>> {
         EventInterface::KeyboardEvent => s.wrap::<KeyboardEvent>(d, Some(key)),
         EventInterface::InputEvent => s.wrap::<InputEvent>(d, Some(key)),
         EventInterface::CompositionEvent => s.wrap::<CompositionEvent>(d, Some(key)),
+        EventInterface::TextEvent => s.wrap::<TextEvent>(d, Some(key)),
+        EventInterface::BeforeUnloadEvent => s.wrap::<BeforeUnloadEvent>(d, Some(key)),
+        EventInterface::DeviceMotionEvent => s.wrap::<DeviceMotionEvent>(d, Some(key)),
+        EventInterface::DeviceOrientationEvent => s.wrap::<DeviceOrientationEvent>(d, Some(key)),
         EventInterface::ProgressEvent => s.wrap::<ProgressEvent>(d, Some(key)),
         EventInterface::ErrorEvent => s.wrap::<ErrorEvent>(d, Some(key)),
         EventInterface::PromiseRejectionEvent => s.wrap::<PromiseRejectionEvent>(d, Some(key)),
@@ -355,11 +367,48 @@ fn construct<'s, C: JsClass<Data = EventData>>(
         get_bool(init, "composed")?,
     );
     fill(s, &mut core.fields.borrow_mut(), init)?;
+    if matches!(
+        iface,
+        EventInterface::UiEvent
+            | EventInterface::FocusEvent
+            | EventInterface::MouseEvent
+            | EventInterface::PointerEvent
+            | EventInterface::WheelEvent
+            | EventInterface::DragEvent
+            | EventInterface::KeyboardEvent
+            | EventInterface::InputEvent
+            | EventInterface::CompositionEvent
+            | EventInterface::TouchEvent
+    ) {
+        core.fields.borrow_mut().view = view_init(s, init)?;
+    }
     let key = page.event_identity(core.id);
     core.retain_targets();
     let wrapper = s.wrap_new::<C>(core.clone(), new_target, Some(key))?;
     core.trace_targets(s, wrapper)?;
     Ok(wrapper)
+}
+
+/// `UIEventInit.view`: a Window (this realm's global) or null.
+fn view_init<'s>(s: &Scope<'s>, init: Option<Object<'s>>) -> JsResult<Option<Persistent>> {
+    let Some(o) = init else { return Ok(None) };
+    let v = o.get("view")?;
+    view_value(s, v)
+}
+
+fn view_value<'s>(s: &Scope<'s>, v: lp_js::Value<'s>) -> JsResult<Option<Persistent>> {
+    if v.is_null() || v.is_undefined() {
+        return Ok(None);
+    }
+    // This realm's global, or another Window (its `window` is itself).
+    let is_window = v.as_object().is_some_and(|o| {
+        o.as_raw() == s.global().as_raw()
+            || o.get("window").is_ok_and(|w| w.as_object().is_some_and(|w| w.as_raw() == o.as_raw()))
+    });
+    if !is_window {
+        return Err(JsError::Type("Failed to construct event: member view is not of type Window.".into()));
+    }
+    Ok(Some(Persistent::new(s, v)))
 }
 
 fn fill_none<'s>(_: &Scope<'s>, _: &mut EventFields, _: Option<Object<'s>>) -> JsResult<()> {
@@ -380,11 +429,31 @@ fn related<'s>(s: &Scope<'s>, init: Option<Object<'s>>) -> JsResult<Option<Targe
     Ok(s.unwrap::<crate::target::EventTarget>(v).map(|t| t.key))
 }
 
+/// The modifier keys EventModifierInit names beyond ctrl/shift/alt/meta.
+const EXTRA_MODIFIERS: &[(&str, &str)] = &[
+    ("modifierAltGraph", "AltGraph"),
+    ("modifierCapsLock", "CapsLock"),
+    ("modifierFn", "Fn"),
+    ("modifierFnLock", "FnLock"),
+    ("modifierHyper", "Hyper"),
+    ("modifierNumLock", "NumLock"),
+    ("modifierScrollLock", "ScrollLock"),
+    ("modifierSuper", "Super"),
+    ("modifierSymbol", "Symbol"),
+    ("modifierSymbolLock", "SymbolLock"),
+];
+
 fn fill_modifiers(f: &mut EventFields, init: Option<Object<'_>>) -> JsResult<()> {
     f.ctrl_key = get_bool(init, "ctrlKey")?;
     f.shift_key = get_bool(init, "shiftKey")?;
     f.alt_key = get_bool(init, "altKey")?;
     f.meta_key = get_bool(init, "metaKey")?;
+    f.extra_modifiers = 0;
+    for (bit, (init_name, _)) in EXTRA_MODIFIERS.iter().enumerate() {
+        if get_bool(init, init_name)? {
+            f.extra_modifiers |= 1 << bit;
+        }
+    }
     Ok(())
 }
 
@@ -673,8 +742,25 @@ impl JsClass for UiEvent {
         def.constructor(1, |s, nt, a| construct::<UiEvent>(s, nt, a, EventInterface::UiEvent, fill_ui));
         def.getter("detail", |s, e| Ok(s.number(e.fields.borrow().detail)));
         def.getter("view", |s, e| {
+            if let Some(view) = &e.fields.borrow().view {
+                return Ok(view.get(s));
+            }
             // Trusted UI events carry the window; synthetic ones default to null.
             Ok(if e.state.borrow().is_trusted { s.global().value() } else { s.null() })
+        });
+        def.method("initUIEvent", 1, |s, e, a| {
+            let ty = arg_string(&a, 0, "UIEvent.initUIEvent")?;
+            if e.state.borrow().dispatching {
+                return Ok(s.undefined());
+            }
+            init_event_state(e, &ty, a.get(1).to_bool(), a.get(2).to_bool());
+            let view = view_value(s, a.get(3))?;
+            let mut f = e.fields.borrow_mut();
+            f.view = view;
+            f.detail = if a.get(4).is_undefined() { 0.0 } else { a.get(4).to_number()? };
+            drop(f);
+            e.refresh_wrappers();
+            Ok(s.undefined())
         });
         def.getter("which", |s, e| {
             let f = e.fields.borrow();
@@ -687,6 +773,95 @@ impl JsClass for UiEvent {
                 _ => 0.0,
             }))
         });
+    }
+}
+
+/// `initEvent`-style reinitialization of the shared event state.
+fn init_event_state(e: &EventData, ty: &str, bubbles: bool, cancelable: bool) {
+    let mut st = e.state.borrow_mut();
+    st.ty = lp_dom::LocalName::from(ty);
+    st.bubbles = bubbles;
+    st.cancelable = cancelable;
+    st.initialized = true;
+    st.stop_propagation = false;
+    st.stop_immediate = false;
+    st.canceled = false;
+    st.is_trusted = false;
+    st.target = None;
+}
+
+/// Legacy `TextEvent` (`document.createEvent("TextEvent")`): no constructor.
+pub struct TextEvent;
+impl JsClass for TextEvent {
+    const NAME: &'static str = "TextEvent";
+    type Data = EventData;
+    type Parent = UiEvent;
+    fn define(def: &mut ClassDef<Self>) {
+        def.getter("data", |s, e| Ok(s.string(e.fields.borrow().data.as_deref().unwrap_or(""))));
+        def.method("initTextEvent", 1, |s, e, a| {
+            let ty = arg_string(&a, 0, "TextEvent.initTextEvent")?;
+            if e.state.borrow().dispatching {
+                return Ok(s.undefined());
+            }
+            init_event_state(e, &ty, a.get(1).to_bool(), a.get(2).to_bool());
+            let view = view_value(s, a.get(3))?;
+            let data = if a.get(4).is_undefined() { "undefined".to_owned() } else { dom_string(a.get(4))? };
+            let mut f = e.fields.borrow_mut();
+            f.view = view;
+            f.data = Some(data);
+            drop(f);
+            e.refresh_wrappers();
+            Ok(s.undefined())
+        });
+    }
+}
+
+pub struct BeforeUnloadEvent;
+impl JsClass for BeforeUnloadEvent {
+    const NAME: &'static str = "BeforeUnloadEvent";
+    type Data = EventData;
+    type Parent = Event;
+    fn define(def: &mut ClassDef<Self>) {
+        def.accessor(
+            "returnValue",
+            |s, e| Ok(s.string(e.fields.borrow().data.as_deref().unwrap_or(""))),
+            |_s, e, v| {
+                e.fields.borrow_mut().data = Some(dom_string(v)?);
+                Ok(())
+            },
+        );
+    }
+}
+
+pub struct DeviceMotionEvent;
+impl JsClass for DeviceMotionEvent {
+    const NAME: &'static str = "DeviceMotionEvent";
+    type Data = EventData;
+    type Parent = Event;
+    fn define(def: &mut ClassDef<Self>) {
+        def.constructor(1, |s, nt, a| {
+            construct::<DeviceMotionEvent>(s, nt, a, EventInterface::DeviceMotionEvent, fill_none)
+        });
+        def.getter("acceleration", |s, _e| Ok(s.null()));
+        def.getter("accelerationIncludingGravity", |s, _e| Ok(s.null()));
+        def.getter("rotationRate", |s, _e| Ok(s.null()));
+        def.getter("interval", |s, _e| Ok(s.number(0.0)));
+    }
+}
+
+pub struct DeviceOrientationEvent;
+impl JsClass for DeviceOrientationEvent {
+    const NAME: &'static str = "DeviceOrientationEvent";
+    type Data = EventData;
+    type Parent = Event;
+    fn define(def: &mut ClassDef<Self>) {
+        def.constructor(1, |s, nt, a| {
+            construct::<DeviceOrientationEvent>(s, nt, a, EventInterface::DeviceOrientationEvent, fill_none)
+        });
+        def.getter("alpha", |s, _e| Ok(s.null()));
+        def.getter("beta", |s, _e| Ok(s.null()));
+        def.getter("gamma", |s, _e| Ok(s.null()));
+        def.getter("absolute", |s, _e| Ok(s.boolean(false)));
     }
 }
 
@@ -710,7 +885,10 @@ fn modifier_state(f: &EventFields, key: &str) -> bool {
         "Shift" => f.shift_key,
         "Alt" => f.alt_key,
         "Meta" => f.meta_key,
-        _ => false,
+        _ => EXTRA_MODIFIERS
+            .iter()
+            .position(|(_, k)| *k == key)
+            .is_some_and(|bit| f.extra_modifiers & (1 << bit) != 0),
     }
 }
 
@@ -1007,6 +1185,33 @@ impl JsClass for StorageEvent {
         def.getter("oldValue", |s, e| Ok(nullable_string(s, &e.fields.borrow().storage_old)));
         def.getter("newValue", |s, e| Ok(nullable_string(s, &e.fields.borrow().storage_new)));
         def.getter("url", |s, e| Ok(s.string(&e.fields.borrow().storage_url)));
+        def.method("initStorageEvent", 1, |s, e, a| {
+            let ty = arg_string(&a, 0, "StorageEvent.initStorageEvent")?;
+            if e.state.borrow().dispatching {
+                return Ok(s.undefined());
+            }
+            init_event_state(e, &ty, a.get(1).to_bool(), a.get(2).to_bool());
+            let nullable = |v: lp_js::Value<'_>| -> JsResult<Option<String>> {
+                if v.is_undefined() || v.is_null() { Ok(None) } else { Ok(Some(dom_string(v)?)) }
+            };
+            let area = a.get(7);
+            let area = if area.is_undefined() || area.is_null() {
+                None
+            } else if s.unwrap::<crate::storage::Storage>(area).is_some() {
+                Some(StorageAreaRef::Object(Persistent::new(s, area)))
+            } else {
+                return Err(JsError::Type("parameter 8 is not of type 'Storage'.".into()));
+            };
+            let mut f = e.fields.borrow_mut();
+            f.storage_key = nullable(a.get(3))?;
+            f.storage_old = nullable(a.get(4))?;
+            f.storage_new = nullable(a.get(5))?;
+            f.storage_url = if a.get(6).is_undefined() { String::new() } else { dom_string(a.get(6))? };
+            f.storage_area = area;
+            drop(f);
+            e.refresh_wrappers();
+            Ok(s.undefined())
+        });
         def.getter("storageArea", |s, e| {
             let session = match &e.fields.borrow().storage_area {
                 None => return Ok(s.null()),
@@ -1102,6 +1307,10 @@ pub(crate) fn register(engine: &lp_js::Engine) {
     engine.register::<KeyboardEvent>();
     engine.register::<InputEvent>();
     engine.register::<CompositionEvent>();
+    engine.register::<TextEvent>();
+    engine.register::<BeforeUnloadEvent>();
+    engine.register::<DeviceMotionEvent>();
+    engine.register::<DeviceOrientationEvent>();
     engine.register::<ProgressEvent>();
     engine.register::<ErrorEvent>();
     engine.register::<PromiseRejectionEvent>();

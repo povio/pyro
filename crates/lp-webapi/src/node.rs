@@ -256,7 +256,8 @@ impl JsClass for Node {
                 Ok(t.map_or(s.null(), |t| s.string(&t)))
             },
             |_s, n, v| {
-                let text = null_to_empty(v)?;
+                // `DOMString?`: undefined converts to null, which sets "".
+                let text = if v.is_undefined() { String::new() } else { null_to_empty(v)? };
                 crate::input::blur_before_removal(n.page(), n.id, true);
                 n.page().dom.borrow_mut().set_text_content(n.id, &text).js()
             },
@@ -365,6 +366,14 @@ impl JsClass for Node {
             n.page().dom.borrow_mut().normalize(n.id).js()?;
             Ok(s.undefined())
         });
+        def.method("lookupPrefix", 1, |s, n, a| {
+            let namespace = opt_dom_string(a.get(0))?;
+            let dom = n.page().dom.borrow();
+            Ok(match dom.lookup_prefix(n.id, namespace.as_deref()).js()? {
+                Some(prefix) => s.string(prefix),
+                None => s.null(),
+            })
+        });
         def.method("lookupNamespaceURI", 1, |s, n, a| {
             let prefix = opt_dom_string(a.get(0))?;
             let dom = n.page().dom.borrow();
@@ -417,6 +426,13 @@ fn define_parent_node<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
         if let Some(c) = convert_nodes(s, n, &a)? {
             n.page().dom.borrow_mut().append_child(n.id, c).js()?;
         }
+        Ok(s.undefined())
+    });
+    def.method("moveBefore", 2, |s, n, a| {
+        a.require(2, "Node.moveBefore")?;
+        let c = node_arg(s, a.get(0), "moveBefore")?;
+        let r = opt_node_arg(s, a.get(1), "moveBefore")?;
+        n.page().dom.borrow_mut().move_before(n.id, c, r).js()?;
         Ok(s.undefined())
     });
     def.method("prepend", 0, |s, n, a| {
@@ -809,6 +825,8 @@ impl JsClass for ShadowRoot {
         });
         def.method("getHTML", 0, get_html);
         def.method("setHTMLUnsafe", 1, set_html_unsafe);
+        def.method("elementFromPoint", 2, crate::layout_api::shadow_element_from_point);
+        def.method("elementsFromPoint", 2, crate::layout_api::shadow_elements_from_point);
         def.getter("activeElement", |s, _n| Ok(s.null()));
         def.accessor(
             "innerHTML",
@@ -873,11 +891,47 @@ impl JsClass for Element {
                 n.page().dom.borrow_mut().set_attribute(n.id, "slot", &arg0).js()
             },
         );
-        def.getter("classList", |s, n| Ok(collections::token_list(s, n.page(), n.id, "class")?.value()));
+        def.accessor(
+            "classList",
+            |s, n| Ok(collections::token_list(s, n.page(), n.id, "class")?.value()),
+            // [PutForwards=value]
+            |_s, n, v| {
+                let value = dom_string(v)?;
+                n.page().dom.borrow_mut().set_attribute(n.id, "class", &value).js()
+            },
+        );
         def.getter("part", |s, n| Ok(collections::token_list(s, n.page(), n.id, "part")?.value()));
         def.getter("attributes", |s, n| Ok(collections::named_node_map(s, n.page(), n.id)?.value()));
         def.method("hasAttributes", 0, |s, n, _a| {
             Ok(s.boolean(!n.page().dom.borrow().attributes(n.id).js()?.is_empty()))
+        });
+        def.method("getAttributeNode", 1, |s, n, a| {
+            let name = arg_string(&a, 0, "Element.getAttributeNode")?;
+            match collections::attr_named_qualified(n.page(), n.id, &name)? {
+                Some(found) => collections::make_attr(s, n.page(), n.id, found),
+                None => Ok(s.null()),
+            }
+        });
+        def.method("getAttributeNodeNS", 2, |s, n, a| {
+            a.require(2, "Element.getAttributeNodeNS")?;
+            let ns = opt_dom_string(a.get(0))?;
+            let local = dom_string(a.get(1))?;
+            match collections::attr_named_ns(n.page(), n.id, ns.as_deref(), &local)? {
+                Some(found) => collections::make_attr(s, n.page(), n.id, found),
+                None => Ok(s.null()),
+            }
+        });
+        def.method("setAttributeNode", 1, |s, n, a| {
+            a.require(1, "Element.setAttributeNode")?;
+            collections::set_attribute_node(s, n.page(), n.id, a.get(0))
+        });
+        def.method("setAttributeNodeNS", 1, |s, n, a| {
+            a.require(1, "Element.setAttributeNodeNS")?;
+            collections::set_attribute_node(s, n.page(), n.id, a.get(0))
+        });
+        def.method("removeAttributeNode", 1, |s, n, a| {
+            a.require(1, "Element.removeAttributeNode")?;
+            collections::remove_attribute_node(s, n.page(), n.id, a.get(0))
         });
         def.method("getAttributeNames", 0, |s, n, _a| {
             let names: Vec<String> =
@@ -1253,6 +1307,65 @@ impl JsClass for Document {
         def.getter("forms", |s, n| {
             Ok(collections::collection(s, n.page(), n.id, CollectionKind::TagName("form".into()))?.value())
         });
+        def.getter("embeds", |s, n| {
+            Ok(collections::collection(s, n.page(), n.id, CollectionKind::TagName("embed".into()))?.value())
+        });
+        def.getter("plugins", |s, n| {
+            Ok(collections::collection(s, n.page(), n.id, CollectionKind::TagName("embed".into()))?.value())
+        });
+        def.getter("anchors", |s, n| Ok(collections::collection(s, n.page(), n.id, CollectionKind::Anchors)?.value()));
+        def.getter("applets", |s, n| Ok(collections::collection(s, n.page(), n.id, CollectionKind::Empty)?.value()));
+        def.property_names(|_s, n| {
+            let dom = n.page().dom.borrow();
+            let mut names: Vec<String> = Vec::new();
+            if let Ok(desc) = dom.descendants(n.id) {
+                for id in desc {
+                    let Ok(e) = dom.element(id) else { continue };
+                    if !e.is_html() {
+                        continue;
+                    }
+                    let local = &*e.name.local;
+                    let name = e.attr("name").filter(|v| !v.is_empty());
+                    if matches!(local, "embed" | "form" | "iframe" | "img" | "object") {
+                        if let Some(v) = name {
+                            if !names.iter().any(|x| x == v) {
+                                names.push(v.to_owned());
+                            }
+                        }
+                    }
+                    if local == "img" && name.is_some() {
+                        if let Some(id) = e.id().filter(|v| !v.is_empty()) {
+                            if !names.iter().any(|x| x == id) {
+                                names.push(id.to_owned());
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(names)
+        });
+        // Named properties: `document.foo` for `<form name=foo>` and the like;
+        // an iframe stands for its child window.
+        def.named(false, |s, n, name| {
+            let page = n.page();
+            let found = page.dom.borrow().document_named_elements(n.id, name).js()?;
+            match found[..] {
+                [] => Ok(None),
+                [el] => {
+                    let is_frame = page.dom.borrow().element(el).is_ok_and(|e| &*e.name.local == "iframe");
+                    if is_frame {
+                        if let Some(window) = page.frame_window(s, el)? {
+                            return Ok(Some(window));
+                        }
+                    }
+                    Ok(Some(wrap_node(s, page, el)?.value()))
+                }
+                _ => {
+                    let kind = CollectionKind::DocumentNamed(name.to_owned());
+                    Ok(Some(collections::collection(s, page, n.id, kind)?.value()))
+                }
+            }
+        });
         def.getter("images", |s, n| {
             Ok(collections::collection(s, n.page(), n.id, CollectionKind::TagName("img".into()))?.value())
         });
@@ -1337,6 +1450,22 @@ impl JsClass for Document {
             let d = arg_string(&a, 0, "Document.createComment")?;
             let t = n.page().dom.borrow_mut().create_comment(n.id, &d).js()?;
             Ok(wrap_node(s, n.page(), t)?.value())
+        });
+        def.method("createAttribute", 1, |s, n, a| {
+            let name = arg_string(&a, 0, "Document.createAttribute")?;
+            lp_dom::dom::validate_attribute_name(&name).js()?;
+            let html = n.page().dom.borrow().document_data(n.id).js()?.kind == DocumentKind::Html;
+            let name = if html { name.to_ascii_lowercase() } else { name };
+            collections::make_detached_attr(s, n.page(), None, &name)
+        });
+        def.method("createAttributeNS", 2, |s, n, a| {
+            a.require(2, "Document.createAttributeNS")?;
+            let ns = opt_dom_string(a.get(0))?;
+            let qualified = dom_string(a.get(1))?;
+            let qn = lp_dom::dom::validate_and_extract(ns.as_deref(), &qualified, lp_dom::dom::NameContext::Attribute)
+                .js()?;
+            let ns = (!qn.ns.is_empty()).then(|| qn.ns.to_string());
+            collections::make_detached_attr(s, n.page(), ns.as_deref(), &qualified)
         });
         def.method("createCDATASection", 1, |s, n, a| {
             let d = arg_string(&a, 0, "Document.createCDATASection")?;
