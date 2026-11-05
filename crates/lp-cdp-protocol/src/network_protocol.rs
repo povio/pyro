@@ -331,7 +331,10 @@ pub const MAX_RETAINED_BODIES: usize = 4096;
 ///
 /// - Capture is lazy: the engine only feeds events while a session of the page
 ///   has `Network` enabled, and nothing is retained before a response arrives.
-/// - Bodies are shared `Bytes` chunks (no copy) charged to a [`BodyBudget`].
+/// - Bodies are kept as copies of their chunks, charged to a [`BodyBudget`]:
+///   a chunk is a slice of the connection's read buffer, all of which stays
+///   allocated while the slice lives (a SPA's 3.5 MB of bodies held 7.2 MB
+///   of read buffers), and the copy is what the budget counts.
 ///   When the budget is full the store evicts its own oldest bodies; if that is
 ///   not enough, the new body is not retained and asking for it returns an
 ///   explicit error instead of stale or partial data.
@@ -433,8 +436,7 @@ impl BodyStore {
             }
         }
         let body = self.bodies.get_mut(&id).expect("checked above");
-        // `Bytes` is reference counted: retaining it does not copy.
-        body.chunks.push(data.clone());
+        body.chunks.push(Bytes::copy_from_slice(data));
         body.len += data.len();
         self.retained += data.len();
     }
