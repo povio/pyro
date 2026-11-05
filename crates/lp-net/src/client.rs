@@ -1139,6 +1139,9 @@ impl Io {
             if req.url.scheme() == "data" {
                 return self.serve_data(id, &req, sink, None);
             }
+            if req.url.scheme() == "blob" {
+                return self.serve_blob(id, &req, sink);
+            }
             match req.url.scheme() {
                 "http" | "https" => {}
                 s => return Err(NetError::UnsupportedScheme(s.to_owned())),
@@ -1823,6 +1826,37 @@ impl Io {
             headers.insert(header::CONTENT_TYPE, v);
         }
         let head = self.head(&req.url, StatusCode::OK, headers, ResponseKind::Basic, false);
+        // A HEAD response has no body, as for any other scheme.
+        let body = if req.method == Method::HEAD { Bytes::new() } else { body };
+        self.deliver_body(id, req, sink, head, body)
+    }
+
+    /// Fetch "scheme fetch" for `blob:`: the object the caller resolved from
+    /// its blob URL store, whole (200) or the single byte range a `Range`
+    /// header names (206 with `Content-Range`). Any other method, a revoked or
+    /// unknown URL, an unparsable or unsatisfiable range is a network error.
+    fn serve_blob(&self, id: RequestId, req: &Request, sink: &SharedSink) -> Result<(), NetError> {
+        if req.method != Method::GET {
+            return Err(NetError::Other("blob: URLs can only be fetched with GET".into()));
+        }
+        let blob = req.blob.as_ref().ok_or_else(|| NetError::Other("unknown or revoked blob: URL".into()))?;
+        let len = blob.bytes.len() as u64;
+        let mut headers = HeaderMap::new();
+        headers.insert(header::CONTENT_TYPE, HeaderValue::from_str(&blob.mime).unwrap_or(HeaderValue::from_static("")));
+        let (status, body) = match req.headers.get(header::RANGE) {
+            None => (StatusCode::OK, blob.bytes.clone()),
+            Some(value) => {
+                let range = crate::range::parse_single_range(value.as_bytes())
+                    .ok_or_else(|| NetError::Other("invalid Range header for a blob: URL".into()))?;
+                let (start, end) = crate::range::resolve_range(range, len)
+                    .ok_or_else(|| NetError::Other("unsatisfiable Range for a blob: URL".into()))?;
+                let content_range = format!("bytes {start}-{}/{len}", end - 1);
+                headers.insert(header::CONTENT_RANGE, HeaderValue::from_str(&content_range).expect("digits"));
+                (StatusCode::PARTIAL_CONTENT, blob.bytes.slice(start as usize..end as usize))
+            }
+        };
+        headers.insert(header::CONTENT_LENGTH, HeaderValue::from(body.len()));
+        let head = self.head(&req.url, status, headers, ResponseKind::Basic, false);
         self.deliver_body(id, req, sink, head, body)
     }
 }

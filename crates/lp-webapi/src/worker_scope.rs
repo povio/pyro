@@ -9,8 +9,10 @@
 //!
 //! API subset: `self`, `location`, `navigator`, `name`, `postMessage`, `close`,
 //! `onmessage`/`onmessageerror`/`onerror`, `importScripts`, timers,
-//! `queueMicrotask`, `fetch` and its classes, `console`, `TextEncoder`/`Decoder`,
-//! `URL`, `atob`/`btoa`, `structuredClone`, `crypto`, `performance.now()`.
+//! `queueMicrotask`, `fetch` and its classes, `XMLHttpRequest` (without
+//! `responseXML`; relative URLs resolve against the script URL), `console`,
+//! `TextEncoder`/`Decoder`, `URL`, `atob`/`btoa`, `structuredClone`, `crypto`,
+//! `performance.now()`.
 //!
 //! Scripts are fetched here, blocking this thread only, through the page's
 //! context `NetClient`: cookies, interception and Network events are the
@@ -386,6 +388,9 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
         let s = realm.scope()?;
         install(&s, &page)?;
     }
+    // A synchronous request parks this thread: `terminate()` must still end it.
+    let closing = start.shared.clone();
+    crate::xhr::set_sync_watch(&page, Box::new(move || closing.closing.load(Ordering::Acquire)));
     let script = load_main_script(&page, &start);
     let state = WorkerLoop {
         engine,
@@ -727,6 +732,12 @@ impl JsClass for WorkerNavigator {
     }
 }
 
+/// Whether `s` runs in a worker global scope rather than a Window: the XHR
+/// steps conditioned on "the current global object is a Window object".
+pub(crate) fn is_worker(s: &Scope<'_>) -> bool {
+    s.global_data::<DedicatedWorkerGlobalScope>().is_some()
+}
+
 /// The classes a worker's realm exposes; returns its global's class.
 fn register(engine: &Engine) -> lp_js::ClassId {
     engine.register::<EventTarget>();
@@ -743,6 +754,8 @@ fn register(engine: &Engine) -> lp_js::ClassId {
     engine.register::<crate::url_search_params::ParamsIterator>();
     engine.register::<crate::response::Response>();
     engine.register::<crate::response::BodySource>();
+    engine.register::<crate::xhr::WorkerXMLHttpRequest>();
+    engine.register::<crate::xhr::XMLHttpRequestUpload>();
     engine.register::<WorkerLocation>();
     engine.register::<WorkerNavigator>();
     engine.register::<WorkerGlobalScope>();
@@ -760,6 +773,7 @@ fn install(s: &Scope<'_>, page: &Rc<PageDom>) -> JsResult<()> {
     crate::url_search_params::install(s)?;
     crate::form_data::install(s)?;
     crate::fetch::install(s)?;
+    crate::xhr::install(s, page)?;
     crate::structured_clone::install(s, page)?;
     // Before the worker's script can change the intrinsics they capture.
     crate::structured_clone::prepare_wire(s)?;

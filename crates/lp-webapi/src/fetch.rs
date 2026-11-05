@@ -228,6 +228,15 @@ pub(crate) fn forbidden_header(name: &str) -> bool {
     ) || name.starts_with("proxy-")
         || name.starts_with("sec-")
 }
+/// Gives a `blob:` request the object its URL names, from this document's
+/// blob URL store (the network client cannot see it); a URL the store does
+/// not hold, which includes every other document's, stays unresolved and the
+/// client fails it like a revoked one.
+pub(crate) fn attach_blob(page: &PageDom, request: &mut Request) {
+    if request.url.scheme() == "blob" {
+        request.blob = page.blob_url(request.url.as_str()).map(|(bytes, mime)| lp_net::BlobBody { bytes, mime });
+    }
+}
 fn parse_request<'s>(
     s: &Scope<'s>,
     page: &PageDom,
@@ -459,6 +468,7 @@ pub(crate) fn install(s: &Scope<'_>) -> JsResult<()> {
             Err(error) => deferred.reject(s, error.to_value(s))?,
             Ok((page, mut request, signal, limits, net, poster)) => {
                 page.apply_request_defaults(&mut request);
+                attach_blob(&page, &mut request);
                 request.max_body = Some(limits.max_body_bytes);
                 let id = net.next_request_id();
                 let wire = Arc::new(Mutex::new(Wire {
