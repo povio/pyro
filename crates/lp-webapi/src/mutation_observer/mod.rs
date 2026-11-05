@@ -169,7 +169,7 @@ fn links<'s>(s: &Scope<'s>, object: Object<'s>, create: bool) -> JsResult<Option
 fn link(s: &Scope<'_>, page: &PageDom, node: NodeId, observer: Object<'_>) -> JsResult<()> {
     let node = crate::node::wrap_node(s, page, node)?;
     let array = links(s, node, true)?.unwrap();
-    let len = array.get("length")?.to_number()? as u32;
+    let len = array.get_atom("length")?.to_number()? as u32;
     let mut free = len;
     for i in 0..len {
         let value = array.get_index(i)?;
@@ -186,7 +186,7 @@ fn unlink(s: &Scope<'_>, page: &PageDom, node: NodeId, identity: IdentityKey) ->
     let Some(node) = page.node_wrapper(s, node) else { return Ok(()) };
     let Some(array) = links(s, node, false)? else { return Ok(()) };
     let Some(observer) = s.lookup_identity(identity) else { return Ok(()) };
-    let len = array.get("length")?.to_number()? as u32;
+    let len = array.get_atom("length")?.to_number()? as u32;
     for i in 0..len {
         if array.get_index(i)?.strict_equals(observer.value()) {
             array.set_index(i, s.undefined())?;
@@ -218,7 +218,7 @@ fn parse_options(s: &Scope<'_>, page: &PageDom, value: Value<'_>) -> JsResult<Ob
         None
     } else {
         let list = filter.as_object().unwrap();
-        let n = list.get("length")?.to_number()? as u32;
+        let n = list.get_atom("length")?.to_number()? as u32;
         Some((0..n).map(|i| list.get_index(i)?.to_string()).collect::<JsResult<Vec<_>>>()?)
     };
     Ok(ObserveInit {

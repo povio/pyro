@@ -184,7 +184,7 @@ impl JsClass for MessagePort {
                 // `postMessage(message, transfer)`: a sequence is the transfer list.
                 Some(v) if v.is_array() => {
                     let o = s.object();
-                    o.set("transfer", v)?;
+                    o.set_atom("transfer", v)?;
                     o.value()
                 }
                 Some(v) => v,

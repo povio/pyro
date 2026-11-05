@@ -144,8 +144,8 @@ impl JsClass for Request {
             let page = crate::target::page_of(s)?;
             let source = s.wrap::<BodySource>(StreamData::new(d.body.clone(), d.used.clone()), None)?;
             d.source_made.set(true);
-            let read = source.get("read")?;
-            let cancel = source.get("cancel")?;
+            let read = source.get_atom("read")?;
+            let cancel = source.get_atom("cancel")?;
             let stream = crate::streams::helper(s, &page, "fromBody", &[source.value(), read, cancel])?;
             let realm = d.realm.upgrade().ok_or(JsError::ContextDestroyed)?;
             let owner = realm.scope()?;

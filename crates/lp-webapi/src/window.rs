@@ -59,8 +59,8 @@ impl lp_js::NamedProperties for WindowNamedProperties {
 
 fn scroll_xy(a: &lp_js::Args<'_>) -> JsResult<(Option<i32>, Option<i32>)> {
     if let Some(o) = a.get(0).as_object() {
-        let l = o.get("left")?;
-        let t = o.get("top")?;
+        let l = o.get_atom("left")?;
+        let t = o.get_atom("top")?;
         Ok((
             (!l.is_undefined()).then(|| to_scroll_offset(l)).transpose()?,
             (!t.is_undefined()).then(|| to_scroll_offset(t)).transpose()?,
@@ -102,7 +102,7 @@ pub fn replace_window_attribute<'s>(
         .and_then(|v| v.as_object())
         .ok_or_else(|| lp_js::JsError::Type(format!("window.{name} cannot be replaced in this realm")))?;
     let desc = s.object();
-    desc.set("value", value)?;
+    desc.set_atom("value", value)?;
     for k in ["writable", "enumerable", "configurable"] {
         desc.set(k, s.boolean(true))?;
     }
@@ -579,14 +579,14 @@ pub fn css_namespace<'s>(s: &Scope<'s>) -> JsResult<Value<'s>> {
         };
         Ok(s.boolean(ok))
     })?;
-    o.set("supports", supports.value())?;
+    o.set_atom("supports", supports.value())?;
     let escape = s.function("escape", |s, _this, a| {
         let v = arg_string(&a, 0, "CSS.escape")?;
         let mut out = String::new();
         cssparser::serialize_identifier(&v, &mut out).map_err(|_| JsError::Type("CSS.escape failed".into()))?;
         Ok(s.string(&out))
     })?;
-    o.set("escape", escape.value())?;
+    o.set_atom("escape", escape.value())?;
     Ok(o.value())
 }
 
@@ -683,9 +683,9 @@ fn copy_session_storage(s: &Scope<'_>, page: &Rc<PageDom>) -> crate::storage::St
         let Some(origin) = crate::storage::tuple_origin(s, page) else { return Ok(None) };
         let storage = crate::storage::window_storage(s, page, true)?;
         let Some(storage) = storage.as_object() else { return Ok(None) };
-        let key = storage.get("key")?.as_object().ok_or(JsError::ContextDestroyed)?;
-        let get = storage.get("getItem")?.as_object().ok_or(JsError::ContextDestroyed)?;
-        let length = storage.get("length")?.to_number()? as u32;
+        let key = storage.get_atom("key")?.as_object().ok_or(JsError::ContextDestroyed)?;
+        let get = storage.get_atom("getItem")?.as_object().ok_or(JsError::ContextDestroyed)?;
+        let length = storage.get_atom("length")?.to_number()? as u32;
         let mut entries = Vec::with_capacity(length as usize);
         for i in 0..length {
             let name = key.call(Some(storage), &[s.number(f64::from(i))])?;

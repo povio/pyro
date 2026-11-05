@@ -48,7 +48,7 @@ impl JsClass for URLSearchParams {
             let converted_root = Persistent::new(s, converted);
             let converted = converted_root.get(s);
             let pairs = if let Some(array) = converted.as_object() {
-                let len = array.get("length")?.to_number()? as u32;
+                let len = array.get_atom("length")?.to_number()? as u32;
                 let mut pairs = Vec::with_capacity(len as usize);
                 for i in 0..len {
                     let pair = array.get_index(i)?.as_object().unwrap();

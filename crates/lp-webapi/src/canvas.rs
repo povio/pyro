@@ -109,16 +109,16 @@ impl JsClass for CanvasRenderingContext2D {
                 _ => 0.0,
             };
             let m = s.object();
-            m.set("width", s.number(width))?;
-            m.set("actualBoundingBoxLeft", s.number(left))?;
-            m.set("actualBoundingBoxRight", s.number(width - left))?;
-            m.set("actualBoundingBoxAscent", s.number(ascent))?;
-            m.set("actualBoundingBoxDescent", s.number(descent))?;
-            m.set("fontBoundingBoxAscent", s.number(ascent))?;
-            m.set("fontBoundingBoxDescent", s.number(descent))?;
-            m.set("emHeightAscent", s.number(ascent))?;
-            m.set("emHeightDescent", s.number(descent))?;
-            m.set("alphabeticBaseline", s.number(0.0))?;
+            m.set_atom("width", s.number(width))?;
+            m.set_atom("actualBoundingBoxLeft", s.number(left))?;
+            m.set_atom("actualBoundingBoxRight", s.number(width - left))?;
+            m.set_atom("actualBoundingBoxAscent", s.number(ascent))?;
+            m.set_atom("actualBoundingBoxDescent", s.number(descent))?;
+            m.set_atom("fontBoundingBoxAscent", s.number(ascent))?;
+            m.set_atom("fontBoundingBoxDescent", s.number(descent))?;
+            m.set_atom("emHeightAscent", s.number(ascent))?;
+            m.set_atom("emHeightDescent", s.number(descent))?;
+            m.set_atom("alphabeticBaseline", s.number(0.0))?;
             Ok(m.value())
         });
         def.method("save", 0, |s, c, _a| {

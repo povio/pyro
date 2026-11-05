@@ -112,7 +112,7 @@ pub(super) fn parse(s: &Scope<'_>, page: &Rc<PageDom>, value: Value<'_>) -> JsRe
         page.intersections.helpers.borrow().get(&s.realm_id()).map(|p| p.get(s)).ok_or(JsError::ContextDestroyed)?;
     let array =
         helper.as_object().unwrap().get_index(0)?.as_object().unwrap().call(None, &[threshold])?.as_object().unwrap();
-    let len = array.get("length")?.to_number()? as u32;
+    let len = array.get_atom("length")?.to_number()? as u32;
     let thresholds = (0..len).map(|i| array.get_index(i)?.to_number()).collect::<JsResult<Vec<_>>>()?;
     if get("trackVisibility")?.to_bool() {
         return Err(JsError::dom("NotSupportedError", "IntersectionObserver visibility tracking is not implemented"));

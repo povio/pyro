@@ -108,10 +108,10 @@ pub(crate) fn from_init(s: &Scope<'_>, init: Value<'_>) -> JsResult<HeadersData>
         let convert = s.function("byteString", |s, _this, args| Ok(s.string(&byte_string(args.get(0))?)))?;
         let converted = helper(s, "fill")?.as_object().unwrap().call(None, &[init, convert.value()])?;
         let entries = converted.as_object().expect("converted sequence");
-        let len = entries.get("length")?.to_number()? as u32;
+        let len = entries.get_atom("length")?.to_number()? as u32;
         for i in 0..len {
             let entry = entries.get_index(i)?.as_object().expect("converted entry");
-            if entry.get("length")?.to_number()? != 2.0 {
+            if entry.get_atom("length")?.to_number()? != 2.0 {
                 return Err(JsError::Type("Header entry must have two items".into()));
             }
             let name = header_name(entry.get_index(0)?)?;
@@ -235,7 +235,7 @@ fn iterator<'s>(s: &Scope<'s>, data: &HeadersData, kind: IterKind) -> JsResult<V
         let entries = list.borrow_mut().entries();
         let entry = (!done.get()).then(|| entries.get(index.get())).flatten();
         let out = s.object();
-        out.set("done", s.boolean(entry.is_none()))?;
+        out.set_atom("done", s.boolean(entry.is_none()))?;
         let value = match entry {
             Some((key, value)) => {
                 index.set(index.get() + 1);
@@ -254,7 +254,7 @@ fn iterator<'s>(s: &Scope<'s>, data: &HeadersData, kind: IterKind) -> JsResult<V
                 s.undefined()
             }
         };
-        out.set("value", value)?;
+        out.set_atom("value", value)?;
         Ok(out.value())
     })?;
     helper(s, "iterator")?.as_object().unwrap().call(None, &[next.value()])

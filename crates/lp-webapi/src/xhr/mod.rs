@@ -859,7 +859,7 @@ impl Xhr {
     fn clear_timer(&self, s: &Scope<'_>) {
         if let Some(id) = self.timer.take() {
             if let Some(functions) = self.timer_functions(s) {
-                if let Ok(Some(clear)) = functions.get("clear").map(|v| v.as_object()) {
+                if let Ok(Some(clear)) = functions.get_atom("clear").map(|v| v.as_object()) {
                     let _ = clear.call(Some(s.global()), &[s.number(id)]);
                 }
             }
@@ -885,7 +885,7 @@ impl Xhr {
             Ok(s.undefined())
         })?;
         let timer = funcs
-            .get("set")?
+            .get_atom("set")?
             .as_object()
             .unwrap()
             .call(Some(s.global()), &[callback.value(), s.number(remaining.as_secs_f64() * 1000.)])?
@@ -905,12 +905,12 @@ impl Xhr {
 }
 
 pub(crate) fn install(s: &Scope<'_>, page: &PageDom) -> JsResult<()> {
-    let set = s.global().get("setTimeout")?;
-    let clear = s.global().get("clearTimeout")?;
+    let set = s.global().get_atom("setTimeout")?;
+    let clear = s.global().get_atom("clearTimeout")?;
     if set.as_object().is_some_and(|o| o.is_function()) && clear.as_object().is_some_and(|o| o.is_function()) {
         let object = s.object();
-        object.set("set", set)?;
-        object.set("clear", clear)?;
+        object.set_atom("set", set)?;
+        object.set_atom("clear", clear)?;
         page.xhr_state.timers.borrow_mut().insert(s.realm_id(), Persistent::new(s, object.value()));
     }
     Ok(())

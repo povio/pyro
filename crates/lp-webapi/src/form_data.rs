@@ -263,8 +263,8 @@ impl JsClass for FormDataIterator {
                 }
             };
             let result = s.object();
-            result.set("value", value)?;
-            result.set("done", s.boolean(it.done.get()))?;
+            result.set_atom("value", value)?;
+            result.set_atom("done", s.boolean(it.done.get()))?;
             Ok(result.value())
         });
     }

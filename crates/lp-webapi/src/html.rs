@@ -1168,7 +1168,7 @@ impl JsClass for HtmlElement {
             let force = match a.get(0) {
                 v if v.is_undefined() => None,
                 v => match v.as_object() {
-                    Some(options) => Some(options.get("force")?).filter(|f| !f.is_undefined()).map(|f| f.to_bool()),
+                    Some(options) => Some(options.get_atom("force")?).filter(|f| !f.is_undefined()).map(|f| f.to_bool()),
                     None => Some(v.to_bool()),
                 },
             };
@@ -2003,7 +2003,7 @@ simple_class!(HtmlFormElement, "HTMLFormElement", HtmlElement, |def| {
     );
     def.getter("length", |s, n| {
         let c = collections::collection(s, n.page(), n.id, CollectionKind::FormElements)?;
-        c.get("length")
+        c.get_atom("length")
     });
     def.indexed(|s, n, i| {
         let c = collections::collection(s, n.page(), n.id, CollectionKind::FormElements)?;
@@ -2454,7 +2454,7 @@ simple_class!(HtmlTemplateElement, "HTMLTemplateElement", HtmlElement, |def| {
 
 fn slot_assigned<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>, elements_only: bool) -> JsResult<Value<'s>> {
     let flatten = match a.get(0).as_object() {
-        Some(o) => o.get("flatten")?.to_bool(),
+        Some(o) => o.get_atom("flatten")?.to_bool(),
         None => false,
     };
     let nodes = n.page().dom.borrow().assigned_nodes(n.id, flatten).js()?;
@@ -2972,7 +2972,7 @@ fn writes_blocked(page: &PageDom, doc: NodeId) -> bool {
 pub(crate) fn document_open<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value<'s>> {
     let page = n.page();
     if a.len() >= 3 {
-        let open = s.global().get("open")?;
+        let open = s.global().get_atom("open")?;
         let open = open.as_object().ok_or_else(|| JsError::Type("window.open is not a function".into()))?;
         return open.call(None, &[a.get(0), a.get(1), a.get(2)]);
     }
@@ -3396,7 +3396,7 @@ fn focus_element<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value
         value
             .as_object()
             .ok_or_else(|| JsError::Type("Focus options must be an object".into()))?
-            .get("preventScroll")?
+            .get_atom("preventScroll")?
             .to_bool()
     };
     crate::input::focus_element_with_options(n.page(), n.id, prevent_scroll);

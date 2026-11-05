@@ -559,7 +559,7 @@ pub(crate) fn install(s: &Scope<'_>) -> JsResult<()> {
         }
         Ok(promise)
     })?;
-    s.global().set("fetch", function.value())
+    s.global().set_atom("fetch", function.value())
 }
 
 fn receive(
@@ -967,8 +967,8 @@ impl Body {
         let promise = deferred.promise.get(s);
         if !self.stream_open.get() {
             let result = s.object();
-            result.set("value", s.undefined())?;
-            result.set("done", s.boolean(true))?;
+            result.set_atom("value", s.undefined())?;
+            result.set_atom("done", s.boolean(true))?;
             deferred.resolve(s, result.value())?;
             return Ok(promise);
         }
@@ -1010,16 +1010,16 @@ impl Body {
             let settled = (|| -> JsResult<()> {
                 if let Some(bytes) = chunk.filter(|_| error.is_none()) {
                     let result = s.object();
-                    result.set("value", crate::encoding::uint8_array(&s, &bytes)?)?;
-                    result.set("done", s.boolean(false))?;
+                    result.set_atom("value", crate::encoding::uint8_array(&s, &bytes)?)?;
+                    result.set_atom("done", s.boolean(false))?;
                     deferred.resolve(&s, result.value())?;
                 } else if let Some(error) = error {
                     deferred.reject(&s, error)?;
                     self.close_stream();
                 } else {
                     let result = s.object();
-                    result.set("value", s.undefined())?;
-                    result.set("done", s.boolean(true))?;
+                    result.set_atom("value", s.undefined())?;
+                    result.set_atom("done", s.boolean(true))?;
                     deferred.resolve(&s, result.value())?;
                     self.close_stream();
                 }
