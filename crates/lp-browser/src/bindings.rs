@@ -130,6 +130,24 @@ impl PageHooks for Hooks {
         });
     }
 
+    fn close_window(&self) {
+        let page = self.page;
+        let loader = self.loader.clone();
+        self.sched.post(TaskSource::Navigation, move |b| {
+            // Only a popup is script-closable (Chrome: "Scripts may close
+            // only the windows that were opened by them").
+            if page.child.is_some() || !b.page(page.page).is_some_and(|p| p.popup.is_some()) {
+                return;
+            }
+            let Some(frame_id) =
+                b.doc(page).filter(|p| p.main_frame.loader_id == loader).map(|p| p.main_frame.id.clone())
+            else {
+                return;
+            };
+            b.emit(page.page, crate::PageEvent::CloseRequested { frame_id });
+        });
+    }
+
     fn file_chooser(&self, input: lp_dom::NodeId, multiple: bool) {
         let page = self.page;
         let loader = self.loader.clone();
@@ -357,7 +375,13 @@ impl Browser {
         if page.child.is_none() {
             *state.frames.root.borrow_mut() = state.main_frame.clone();
         }
-        create(&state.frames, page, url, loader)
+        let dom = create(&state.frames, page, url, loader)?;
+        if page.child.is_none() {
+            if let Some(ticket) = &state.popup {
+                ticket.attach_page(&dom);
+            }
+        }
+        Ok(dom)
     }
 
     pub(crate) fn drain_dom_resources(&mut self, page: FrameKey) {

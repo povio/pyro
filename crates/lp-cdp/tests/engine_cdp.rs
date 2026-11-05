@@ -3416,7 +3416,7 @@ fn window_open_returns_a_minimal_popup_object() {
     let mut seen = Vec::new();
 
     let expr = "globalThis.w = window.open('data:text/html,<title>first</title>'); [typeof w, w.closed, typeof w.document, typeof w.opener, w.location.href, typeof PopupWindow].join()";
-    assert_eq!(value(&mut h, expr), json!("object,false,undefined,undefined,about:blank,undefined"));
+    assert_eq!(value(&mut h, expr), json!("object,false,undefined,object,about:blank,undefined"));
     let attached = attached_popup(&mut h, &mut seen);
     assert_eq!(attached["params"]["targetInfo"]["openerId"], json!(opener));
     assert_eq!(attached["params"]["targetInfo"]["canAccessOpener"], json!(true));

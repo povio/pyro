@@ -1292,8 +1292,14 @@ impl Host for EngineHost {
         target_id: &str,
         handle: Option<std::rc::Rc<dyn std::any::Any>>,
     ) {
+        let ticket: Option<std::rc::Rc<lp_webapi::PopupTicket>> = handle.and_then(|h| h.downcast().ok());
+        if let (Some(opener_id), Some(id)) =
+            (self.pages.get(&opener).map(|s| s.id), self.pages.get(&page).map(|s| s.id))
+        {
+            self.thread.browser.adopt_popup(id, opener_id, ticket.clone());
+        }
         if let Some(state) = self.pages.get_mut(&page) {
-            state.popup_ticket = handle.and_then(|h| h.downcast().ok());
+            state.popup_ticket = ticket;
         }
         if self.pages.get(&opener).is_some_and(|state| state.network.log.is_some()) {
             if let Some(state) = self.pages.get_mut(&page) {

@@ -734,6 +734,9 @@ impl EngineHost {
             PageEvent::PopupCommand { popup, command } => {
                 self.popup_commands.push((popup, command));
             }
+            PageEvent::CloseRequested { .. } => {
+                self.close_requests.push(page);
+            }
             PageEvent::FileChooserOpened { frame_id, input, multiple } => {
                 self.file_chooser_opened(page, &frame_id, input, multiple);
             }

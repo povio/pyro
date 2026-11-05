@@ -19,6 +19,7 @@ mod navigation_supersession;
 mod navigation_tasks;
 mod network_delivery;
 mod network_idle;
+mod popups;
 mod remote_ordering;
 mod runloop_idle_finalization;
 mod static_plaintext;

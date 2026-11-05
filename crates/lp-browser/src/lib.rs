@@ -228,6 +228,12 @@ pub enum PageEvent {
         popup: std::rc::Rc<lp_webapi::PopupState>,
         command: lp_webapi::PopupCommand,
     },
+    /// A popup page's own script called `window.close()`: the embedder
+    /// closes the page. Only popups (pages adopted with [`Browser::adopt_popup`]
+    /// and a ticket) are script-closable; other pages ignore the call.
+    CloseRequested {
+        frame_id: FrameId,
+    },
     /// A native download was initiated, before its bytes finish fetching.
     DownloadStarted,
     /// A hyperlink download finished fetching (or failed).
@@ -429,6 +435,14 @@ pub struct Page {
     document: DocumentState,
     pub(crate) frames: Rc<FrameHost>,
     session_storage: lp_webapi::StorageNamespace,
+    /// Set for a `window.open` popup: the opener's object reaches this
+    /// page's documents through it, and dropping it tells the opener the
+    /// popup closed.
+    pub(crate) popup: Option<Rc<lp_webapi::PopupTicket>>,
+    /// A popup's about:blank documents take the opener's origin and base
+    /// URL (origin, opaque-origin token, base URL), as a child frame's do
+    /// from its parent.
+    opener_origin: Option<(String, u64, String)>,
     user_agent_override: Option<lp_webapi::UserAgentOverride>,
     /// `navigator.maxTouchPoints` of its documents (touch emulation).
     max_touch_points: u32,
@@ -922,6 +936,8 @@ impl Browser {
                 _owner_pin: None,
             },
             session_storage,
+            popup: None,
+            opener_origin: None,
             user_agent_override: None,
             max_touch_points: 0,
             extra_http_headers: Default::default(),
@@ -941,6 +957,62 @@ impl Browser {
             },
         )?;
         Ok(id)
+    }
+
+    /// Makes `page` (just created in the opener's context) the popup that
+    /// `opener`'s document requested with `ticket` (`PageEvent::PopupRequested`).
+    /// With a ticket the popup keeps its opener: its documents see the
+    /// opener's window as `window.opener`, its about:blank documents take
+    /// the opener's origin and base URL, it uses the session storage copied
+    /// for it (the current about:blank document switches to it), gets the
+    /// requested browsing context name, and the opener's object reaches its
+    /// documents. Without one (`noopener`) only the context is shared.
+    pub fn adopt_popup(&mut self, page: PageId, opener: PageId, ticket: Option<Rc<lp_webapi::PopupTicket>>) {
+        let Some(ticket) = ticket else { return };
+        let opener_state = self.page(opener).map(|p| {
+            let frame = &p.main_frame;
+            (Rc::downgrade(&p.frames), (frame.origin.clone(), frame.opaque_origin, frame.base_url.clone()))
+        });
+        let local = self
+            .page(page)
+            .and_then(|p| self.contexts.iter().find(|c| c.id == p.context))
+            .map(|c| c.local_storage.clone());
+        let Some(p) = self.page_mut(page) else { return };
+        let session = ticket.session_storage();
+        p.session_storage = session.clone();
+        p.frames.settings.borrow_mut().session = session.clone();
+        p.main_frame.name = ticket.name().to_owned();
+        if let Some((frames, origin)) = opener_state {
+            *p.frames.opener.borrow_mut() = Some(frames);
+            // The initial about:blank document is the opener's creation.
+            if p.main_frame.url == "about:blank" {
+                p.main_frame.origin = origin.0.clone();
+                p.main_frame.opaque_origin = origin.1;
+                p.main_frame.base_url = origin.2.clone();
+                for realm in &p.main_frame.realms {
+                    realm.realm.set_origin(Some(origin.0.clone()));
+                }
+                if let Some(dom) = &p.main_frame.page_dom {
+                    dom.set_base_url(&origin.2);
+                    let doc = dom.document();
+                    let _ = dom.dom.borrow_mut().set_document_base_url(doc, Some(&origin.2));
+                }
+            }
+            p.opener_origin = Some(origin);
+        }
+        if let Some(dom) = &p.main_frame.page_dom {
+            if let Some(local) = local {
+                dom.set_storage_namespaces(local, session);
+            }
+            ticket.attach_page(dom);
+        }
+        p.popup = Some(ticket);
+        self.sync_root(page);
+    }
+
+    /// The page `page` opened as a popup with its opener kept, if any.
+    pub fn popup_opener(&self, page: PageId) -> Option<PageId> {
+        self.page(page)?.frames.opener.borrow().as_ref().and_then(std::rc::Weak::upgrade).map(|h| h.page)
     }
 
     pub fn page(&self, id: PageId) -> Option<&Page> {
@@ -1193,6 +1265,13 @@ impl Browser {
             .and_then(|d| d.main_frame.parent.clone())
             .and_then(|id| host.key(&id))
             .and_then(|key| host.frame(key));
+        // What an about:blank document inherits: its parent frame's origin
+        // and base URL, or for a popup's top-level frame its opener's.
+        let inherit_from: Option<(String, u64, String)> = match &inherited {
+            Some(parent) => Some((parent.origin.clone(), parent.opaque_origin, parent.base_url.clone())),
+            None if page.child.is_none() => self.page(page.page).and_then(|p| p.opener_origin.clone()),
+            None => None,
+        };
         // Attribute changes do not alter the active document's policy. Apply
         // the owner and ancestor restrictions when the next document commits.
         let sandbox = if let Some(owner) = self.doc(page).and_then(|d| d.main_frame.owner) {
@@ -1207,21 +1286,17 @@ impl Browser {
             frames::Sandbox::default()
         };
         self.doc_mut(page).ok_or(JsError::ContextDestroyed)?.main_frame.sandbox = sandbox;
-        let inherit_url = matches!(opts.url.as_str(), "about:blank" | "about:srcdoc") && inherited.is_some();
+        let inherit_url = matches!(opts.url.as_str(), "about:blank" | "about:srcdoc") && inherit_from.is_some();
         let actual_origin = if sandbox.opaque {
             "null".to_string()
         } else if inherit_url {
-            inherited.as_ref().expect("parent").origin.clone()
+            inherit_from.as_ref().expect("creator").0.clone()
         } else {
             origin.to_string()
         };
-        let token = if inherit_url && !sandbox.opaque {
-            inherited.as_ref().expect("parent").opaque_origin
-        } else {
-            self.next()
-        };
-        let base_url =
-            if inherit_url { inherited.as_ref().expect("parent").base_url.clone() } else { opts.url.clone() };
+        let token =
+            if inherit_url && !sandbox.opaque { inherit_from.as_ref().expect("creator").1 } else { self.next() };
+        let base_url = if inherit_url { inherit_from.as_ref().expect("creator").2.clone() } else { opts.url.clone() };
         {
             let mut state = self.doc_mut(page).ok_or(JsError::ContextDestroyed)?;
             state.main_frame.origin = actual_origin.clone();

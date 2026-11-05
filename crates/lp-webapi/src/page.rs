@@ -110,6 +110,9 @@ pub struct PageDom {
     pub(crate) local_storage: RefCell<crate::storage::StorageNamespace>,
     pub(crate) session_storage: RefCell<crate::storage::StorageNamespace>,
     pub(crate) opaque_storage: crate::storage::OpaqueStorage,
+    /// Named popups this document opened (`window.open(url, name)`): a
+    /// later open with the same name reuses the popup while it is open.
+    pub(crate) popups: RefCell<Vec<(String, Rc<crate::popup::PopupState>)>>,
     /// `URL.createObjectURL` store: blob URL -> (bytes, type). Owned by the
     /// creating document; revocation, document replacement and disposal drop
     /// the entries (and their bytes).
@@ -305,6 +308,9 @@ pub trait PageHooks {
     /// The document's `window.open` result asked something of its popup,
     /// after (and in order with) the navigation that requested the popup.
     fn popup_command(&self, _popup: Rc<crate::popup::PopupState>, _command: crate::popup::PopupCommand) {}
+    /// `window.close()`: the embedder closes the page if its top-level
+    /// browsing context is script-closable (a popup). The default ignores it.
+    fn close_window(&self) {}
     /// Thread-safe poster that runs a closure as a task on the page's
     /// browser thread (lp-net sinks run on the I/O thread). `None` when the
     /// embedder cannot post across threads (network APIs then fail).
@@ -437,6 +443,7 @@ impl PageDom {
             local_storage: RefCell::new(Default::default()),
             session_storage: RefCell::new(Default::default()),
             opaque_storage: Default::default(),
+            popups: RefCell::new(Vec::new()),
             blob_urls: RefCell::new(FxHashMap::default()),
             reflected_url_base: RefCell::new(None),
             hooks: RefCell::new(None),
@@ -1076,6 +1083,11 @@ impl PageDom {
     pub(crate) fn popup_command(&self, popup: Rc<crate::popup::PopupState>, command: crate::popup::PopupCommand) {
         if let Some(h) = self.hooks() {
             h.popup_command(popup, command);
+        }
+    }
+    pub(crate) fn close_window(&self) {
+        if let Some(h) = self.hooks() {
+            h.close_window();
         }
     }
     pub(crate) fn network_delivery(&self, id: lp_net::RequestId, frontier: lp_net::NetworkDelivery) {

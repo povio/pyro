@@ -154,6 +154,9 @@ pub(crate) struct FrameHost {
     retired: RefCell<Vec<DocumentState>>,
     class: Cell<lp_js::ClassId>,
     pub(crate) focus: RefCell<crate::focus::FocusState>,
+    /// The page that opened this one as a popup with its opener kept
+    /// (`Browser::adopt_popup`): the top-level window's `opener`.
+    pub(crate) opener: RefCell<Option<std::rc::Weak<FrameHost>>>,
 }
 impl FrameHost {
     pub fn new(browser: &Browser, page: PageId, context: ContextId, root: Frame, nav: Rc<PageNav>) -> Rc<Self> {
@@ -186,6 +189,7 @@ impl FrameHost {
             started: browser.started,
             retired: RefCell::new(Vec::new()),
             class: Cell::new(browser.engine.register::<Window>()),
+            opener: RefCell::new(None),
             focus: RefCell::new(crate::focus::FocusState::new(page)),
         })
     }
@@ -662,9 +666,38 @@ impl FrameHost {
             let value = lp_js::Persistent::new(&scope, scope.global().value());
             return Ok(value.get(s));
         }
-        let data = CrossWindowData { host: Rc::downgrade(self), source, target };
+        let data = CrossWindowData { host: Rc::downgrade(self), source: Some(source), target };
         Ok(s.wrap::<CrossWindow>(data, Some(lp_js::IdentityKey(0x4652414d45505258, target.child.unwrap_or(0))))?
             .value())
+    }
+    /// `window.opener` of frame `key`: the opener page's top-level window
+    /// for the top-level frame of a popup that kept its opener (null for
+    /// child frames, other pages, and a closed opener). Same-origin openers
+    /// are reached directly; otherwise a cross-origin stand-in.
+    pub fn opener_window<'s>(
+        self: &Rc<Self>,
+        s: &lp_js::Scope<'s>,
+        key: FrameKey,
+    ) -> lp_js::JsResult<lp_js::Value<'s>> {
+        if key.child.is_some() {
+            return Ok(s.null());
+        }
+        let Some(opener) = self.opener.borrow().as_ref().and_then(std::rc::Weak::upgrade) else { return Ok(s.null()) };
+        let target = FrameKey::from(opener.page);
+        let (Some(mine), Some(theirs)) = (self.frame(key), opener.frame(target)) else { return Ok(s.null()) };
+        let same_origin = if mine.origin == "null" || theirs.origin == "null" {
+            mine.origin == theirs.origin && mine.opaque_origin == theirs.opaque_origin
+        } else {
+            mine.origin == theirs.origin
+        };
+        if same_origin {
+            let world = self.world_of(key, s.realm().id())?;
+            let realm = opener.realm(target, world.as_deref())?;
+            let scope = realm.scope()?;
+            let value = lp_js::Persistent::new(&scope, scope.global().value());
+            return Ok(value.get(s));
+        }
+        opener_proxy(s, &opener)
     }
     pub fn relation<'s>(
         self: &Rc<Self>,
@@ -694,10 +727,23 @@ impl FrameHost {
     }
 }
 
+/// The cross-origin stand-in for `opener`'s top-level window (one per realm).
+fn opener_proxy<'s>(s: &lp_js::Scope<'s>, opener: &Rc<FrameHost>) -> lp_js::JsResult<lp_js::Value<'s>> {
+    let key = lp_js::IdentityKey(0x4f50454e45525758, u64::from(opener.page.0));
+    if let Some(o) = s.lookup_identity(key) {
+        return Ok(o.value());
+    }
+    let data = CrossWindowData { host: Rc::downgrade(opener), source: None, target: opener.page.into() };
+    Ok(s.wrap::<CrossWindow>(data, Some(key))?.value())
+}
+
 pub(crate) struct CrossWindow;
 pub(crate) struct CrossWindowData {
     host: std::rc::Weak<FrameHost>,
-    source: FrameKey,
+    /// The accessing frame, when it is in `host`'s page; `None` for a
+    /// popup's view of its opener (another page), which is always
+    /// cross-origin and whose target is its own top and parent.
+    source: Option<FrameKey>,
     target: FrameKey,
 }
 impl lp_js::JsClass for CrossWindow {
@@ -710,13 +756,14 @@ impl lp_js::JsClass for CrossWindow {
             let Some(host) = w.host.upgrade() else {
                 return if name == "closed" { Ok(Some(s.boolean(true))) } else { Err(JsError::ContextDestroyed) };
             };
-            let value = match name {
-                "window" | "self" | "frames" => host.window_value(s, w.source, w.target)?,
-                "parent" => host.window_value(s, w.source, host.parent_key(w.target))?,
-                "top" => host.window_value(s, w.source, host.page.into())?,
-                "length" => s.number(host.child_keys(w.target).len() as f64),
-                "closed" => s.boolean(host.frame(w.target).is_none()),
-                "focus" => {
+            let value = match (name, w.source) {
+                ("window" | "self" | "frames" | "parent" | "top", None) => opener_proxy(s, &host)?,
+                ("window" | "self" | "frames", Some(source)) => host.window_value(s, source, w.target)?,
+                ("parent", Some(source)) => host.window_value(s, source, host.parent_key(w.target))?,
+                ("top", Some(source)) => host.window_value(s, source, host.page.into())?,
+                ("length", _) => s.number(host.child_keys(w.target).len() as f64),
+                ("closed", _) => s.boolean(host.frame(w.target).is_none()),
+                ("focus", _) => {
                     let weak = w.host.clone();
                     let target = w.target;
                     s.function(name, move |s, _, _| {
@@ -727,7 +774,7 @@ impl lp_js::JsClass for CrossWindow {
                     })?
                     .value()
                 }
-                "close" | "blur" => s.function(name, |s, _, _| Ok(s.undefined()))?.value(),
+                ("close" | "blur", _) => s.function(name, |s, _, _| Ok(s.undefined()))?.value(),
                 _ => return Err(JsError::dom("SecurityError", "Blocked cross-origin frame access")),
             };
             Ok(Some(value))

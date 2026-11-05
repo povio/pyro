@@ -230,6 +230,15 @@ impl JsClass for Window {
             (Some(host), Some(key)) => host.frame_element(s, key),
             _ => Ok(s.null()),
         });
+        // `opener` is writable: assigning (e.g. null to disown) shadows it.
+        def.accessor(
+            "opener",
+            |s, w| match (w.frames.upgrade(), w.frame) {
+                (Some(host), Some(key)) => host.opener_window(s, key),
+                _ => Ok(s.null()),
+            },
+            |s, w, v| lp_webapi::window::replace_window_attribute(s, &w.target.page, "opener", v),
+        );
         def.accessor(
             "length",
             |s, w| {

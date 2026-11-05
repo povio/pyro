@@ -4,10 +4,14 @@
 
 mod dom_js;
 mod fetch_js;
+mod form_data_js;
 mod identity_js;
+mod storage_js;
 mod support;
+mod uievents_js;
 mod url_params_js;
 mod xhr_js;
+mod xhr_worker_js;
 
 /// `autotests = false` means a file in tests/ that is neither a module here nor
 /// its own `[[test]]` target would silently never run.

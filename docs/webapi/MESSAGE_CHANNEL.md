@@ -44,7 +44,30 @@ messaging within one realm. The behaviour follows upstream Lightpanda
   listeners or expandos that reference the channel stay collectable once the
   ports are closed.
 
-Gaps, all explicit:
+## BroadcastChannel
+
+`new BroadcastChannel(name)` (HTML §9.5) reaches every other open channel of
+that name whose document has the same origin in the same browser context
+(pages of one CDP browser context; documents without an embedder each form
+their own), across all pages of the browser thread.
+
+- `postMessage(message)` serializes the message once in the sender's realm
+  (the worker wire format, so non-cloneable values throw DataCloneError and
+  nothing is transferred) and each receiver deserializes it in its own realm,
+  in a task on its own page, as a trusted `MessageEvent` with `origin` the
+  sender's, `source` null and no `ports`; a message that cannot be
+  deserialized there fires `messageerror`. Other channels of the sending
+  document receive it, the sending channel does not. Posting on a closed
+  channel throws InvalidStateError.
+- An open channel is pinned, so listeners added without keeping a JS
+  reference keep running; `close()` releases the pin, and every pin goes with
+  the page.
+- Gap: workers have no BroadcastChannel.
+
+Tests: `crates/lp-browser/tests/popups.rs`
+(`broadcast_channel_reaches_same_origin_documents_of_the_browser_context`).
+
+Gaps of MessageChannel, all explicit:
 - Transferring anything throws NotSupportedError, whether as
   `postMessage(m, [port])` or `{transfer: [...]}`. This includes MessagePorts,
   so ports never leave their realm and are never shipped to workers or frames.
