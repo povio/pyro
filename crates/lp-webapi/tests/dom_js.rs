@@ -4281,9 +4281,14 @@ fn dom_parser_xml_types_case_cdata_errors_and_inert_adoption() {
     assert_eq!(
         eval(
             &e.main,
-            r#"['<r>','<r/><s/>','<r>&bad;</r>',"<!DOCTYPE r SYSTEM 'file:///unused'><r/>"].map(x=>new DOMParser().parseFromString(x,'text/xml').documentElement.localName).join()"#
+            r#"['<r>','<r/><s/>','<r>&bad;</r>',"<!DOCTYPE r [<!ENTITY x 'y'>]><r>&x;</r>"].map(x=>new DOMParser().parseFromString(x,'text/xml').documentElement.localName).join()"#
         ),
         "parsererror,parsererror,parsererror,parsererror"
+    );
+    // A DOCTYPE (without entity declarations) is a DocumentType node.
+    assert_eq!(
+        eval(&e.main, r#"const dt=new DOMParser().parseFromString("<!DOCTYPE r SYSTEM 'file:///unused'><r/>",'text/xml'); dt.doctype.name+':'+dt.doctype.systemId+':'+dt.documentElement.localName"#),
+        "r:file:///unused:r"
     );
     assert_eq!(
         eval(
