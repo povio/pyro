@@ -1,0 +1,92 @@
+diff --git a/Source/JavaScriptCore/API/JSFork.cpp b/Source/JavaScriptCore/API/JSFork.cpp
+index 16399944e7..56a45112c2 100644
+--- a/Source/JavaScriptCore/API/JSFork.cpp
++++ b/Source/JavaScriptCore/API/JSFork.cpp
+@@ -330,9 +330,15 @@ const void* JSValueGetStringCharacters(JSContextRef ctx, JSValueRef value, size_
+     if (!v.isString())
+         return nullptr;
+     VM& vm = globalObject->vm();
++    JSString* cell = asString(v);
++    // Resolving a rope allocates, which needs the API lock; a caller outside a C API
++    // callback (which keeps the lock) does not hold it. A flat string needs none.
++    std::optional<JSLockHolder> locker;
++    if (cell->isRope() && !vm.currentThreadIsHoldingAPILock())
++        locker.emplace(vm);
+     auto scope = DECLARE_THROW_SCOPE(vm);
+     // Resolves a rope once; the flat string stays cached in the cell.
+-    const String& string = asString(v)->value(globalObject);
++    const String& string = cell->value(globalObject);
+     RETURN_IF_EXCEPTION(scope, nullptr);
+     if (string.isNull())
+         return nullptr;
+@@ -346,6 +352,70 @@ const void* JSValueGetStringCharacters(JSContextRef ctx, JSValueRef value, size_
+     return impl->span16().data();
+ }
+ 
++// Strings to and from host characters (patch 0016). Declared here rather than in
++// JSForkPrivate.h, which every precompiled header includes; lp-jsc-sys resolves them at run time.
++extern "C" {
++// A string value with `length` Latin-1 characters (or UTF-16 code units, unpaired surrogates
++// kept) copied once, straight into the string: JSValueMakeString without the JSStringRef and
++// its copies. The empty and single-character strings are the VM's own. NULL when `length`
++// exceeds the longest string. Takes the API lock only when the caller does not hold it.
++JS_EXPORT JSValueRef JSValueMakeStringLatin1(JSContextRef, const unsigned char* characters, size_t length);
++JS_EXPORT JSValueRef JSValueMakeStringUTF16(JSContextRef, const JSChar* characters, size_t length);
++// JSStringCreateWithCharacters for Latin-1 characters: an 8-bit string, no decoding.
++JS_EXPORT JSStringRef JSStringCreateWithLatin1Characters(const unsigned char* characters, size_t length);
++// The characters of `string` as it stores them: `length` code units, 8-bit (Latin-1) when
++// `is8Bit`, else UTF-16; JSStringGetCharactersPtr widens an 8-bit string to a second, UTF-16
++// copy that the string keeps. Valid while `string` is retained; may be NULL when empty.
++JS_EXPORT const void* JSStringGetStoredCharacters(JSStringRef, size_t* length, bool* is8Bit);
++}
++
++WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
++
++// One StringImpl and one copy, or none for the empty and single-character strings the VM
++// keeps. JSValueMakeString needs an OpaqueJSString first (a second allocation and copy, freed
++// right after) and copies its characters again (OpaqueJSString::string() is an isolated
++// copy). C API callbacks keep the lock (patch 0009), and taking it again costs about as much
++// as making a short string.
++template<typename CharacterType>
++static JSValueRef makeStringValue(JSContextRef ctx, std::span<const CharacterType> characters)
++{
++    if (!ctx || (!characters.data() && !characters.empty()) || characters.size() > String::MaxLength)
++        return nullptr;
++    JSGlobalObject* globalObject = toJS(ctx);
++    VM& vm = globalObject->vm();
++    if (vm.currentThreadIsHoldingAPILock()) [[likely]]
++        return toRef(globalObject, jsString(vm, StringView { characters }));
++    JSLockHolder locker(vm);
++    return toRef(globalObject, jsString(vm, StringView { characters }));
++}
++
++JSValueRef JSValueMakeStringLatin1(JSContextRef ctx, const unsigned char* characters, size_t length)
++{
++    return makeStringValue(ctx, byteCast<Latin1Character>(std::span { characters, length }));
++}
++
++JSValueRef JSValueMakeStringUTF16(JSContextRef ctx, const JSChar* characters, size_t length)
++{
++    return makeStringValue(ctx, std::span { reinterpret_cast<const char16_t*>(characters), length });
++}
++
++JSStringRef JSStringCreateWithLatin1Characters(const unsigned char* characters, size_t length)
++{
++    JSC::initialize();
++    return &OpaqueJSString::create(byteCast<Latin1Character>(std::span { characters, length })).leakRef();
++}
++
++const void* JSStringGetStoredCharacters(JSStringRef string, size_t* length, bool* is8Bit)
++{
++    *length = string->length();
++    *is8Bit = string->is8Bit();
++    if (string->is8Bit())
++        return string->span8().data();
++    return string->span16().data();
++}
++
++WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
++
+ void JSContextGroupDeleteAllCode(JSContextGroupRef group)
+ {
+     if (!group)
