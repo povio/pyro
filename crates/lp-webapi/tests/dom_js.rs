@@ -3446,6 +3446,8 @@ fn worker_past_the_document_cap_fails_like_a_failed_load() {
     let tasks = Rc::new(ObserverTasks::default());
     e.page.set_hooks(Some(tasks.clone()));
     let r = &e.main;
+    // The realm's document wrapper, kept while connected.
+    let base = e.page.pinned_count();
     let more = MAX_WORKERS_PER_DOCUMENT + 4;
     eval(
         r,
@@ -3453,7 +3455,7 @@ fn worker_past_the_document_cap_fails_like_a_failed_load() {
     );
     tasks.drain();
     assert_eq!(eval(r, "errors"), more.to_string());
-    assert_eq!(e.page.pinned_count(), 0);
+    assert_eq!(e.page.pinned_count(), base);
 }
 
 #[test]
@@ -5133,7 +5135,8 @@ fn reflected_urls_follow_attributes_bases_adoption_and_document_replacement() {
     assert_eq!(eval(&e.main, "r.href"), "https://moved.example/relative.js");
     e.page.set_document(other);
     assert_eq!(
-        eval(&e.main, "[r.href,document.getElementById('new').href].join('|')"),
+        // The realm keeps its document; the replacement is `r`'s now.
+        eval(&e.main, "[r.href,r.ownerDocument.getElementById('new').href].join('|')"),
         "https://moved.example/relative.js|https://moved.example/new.js"
     );
     e.page.dom.borrow_mut().adopt_node(doc, node).unwrap();

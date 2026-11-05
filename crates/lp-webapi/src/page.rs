@@ -658,7 +658,10 @@ impl PageDom {
     pub fn document(&self) -> NodeId {
         self.document.get()
     }
-    /// Switches the displayed document (navigation commit).
+    /// Switches the displayed document (navigation commit). A realm's global
+    /// `document` stays the document it was installed with (a window's
+    /// document never changes): script of the new document runs in a new
+    /// realm, as a navigation makes one.
     pub fn set_document(&self, doc: NodeId) {
         crate::input::clear_document_focus(self);
         self.clear_render_blocking(false);

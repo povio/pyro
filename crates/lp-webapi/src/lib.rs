@@ -171,6 +171,17 @@ pub fn install(scope: &Scope<'_>, page: Rc<PageDom>) -> JsResult<()> {
     }
     let global = scope.global();
     global.set_atom("CSS", window::css_namespace(scope)?)?;
+    // A window's document never changes ([LegacyUnforgeable] `document`):
+    // made once with the realm, it is the global's constant attribute, which
+    // reads with no callback and which compiled code holds as a constant.
+    // Without the patched JavaScriptCore the pure getter serves it.
+    let document = node::wrap_node(scope, &page, page.document())?;
+    scope.define_global_constant("document", document.value());
+    // `window` ([LegacyUnforgeable]) is the global's own proxy, so
+    // `window.document` folds too.
+    if global.has("window") {
+        scope.define_global_constant("window", global.value());
+    }
     // [Unscopable] members of ChildNode and ParentNode.
     scope.eval(
         r#"(() => {

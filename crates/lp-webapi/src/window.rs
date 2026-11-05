@@ -117,8 +117,9 @@ where
     W::Data: WindowHost,
 {
     crate::handlers::define_window(def);
-    // Read on every bare `document` of page script: the lean dispatch, which
-    // finds the window's node wrapper in the document's slot.
+    // `install` makes the global's `document` a constant attribute; this
+    // getter serves realms without it (the system JavaScriptCore): the lean
+    // dispatch, which finds the window's node wrapper in the document's slot.
     def.pure_getter_typed("document", lp_js::GetterResult::ObjectOrNull, |s, w| {
         Ok(crate::node::wrap_node(s, w.page(), w.page().document())?.value())
     });
