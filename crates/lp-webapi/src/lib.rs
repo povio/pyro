@@ -40,6 +40,7 @@ pub mod input;
 pub mod intersection_observer;
 pub mod layout_api;
 pub mod lifecycle;
+pub mod media_source;
 pub mod message_channel;
 pub mod mutation_observer;
 pub mod navigator_extras;
@@ -107,6 +108,7 @@ pub fn register(engine: &lp_js::Engine) {
     range::register(engine);
     abort::register(engine);
     message_channel::register(engine);
+    media_source::register(engine);
     worker::register(engine);
     custom::register(engine);
     file::register(engine);
