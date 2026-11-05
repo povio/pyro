@@ -384,6 +384,10 @@ fn attach(dom: &mut Dom, document: NodeId, nodes: Vec<Prepared>) {
     let owner = document.index();
     let mut ids = Vec::with_capacity(nodes.len());
     for node in nodes {
+        // `<base>` elements make `document_base_url` look for one.
+        if let NodeKind::Element(e) = &node.kind {
+            dom.base_seen |= e.is_html() && &*e.name.local == "base";
+        }
         let parent = node.parent.map_or(owner, |index| ids[index]);
         let id = dom.alloc_raw(node.kind, owner);
         dom.link_raw(id, parent, NIL);

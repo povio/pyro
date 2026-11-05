@@ -444,7 +444,8 @@ fn retarget_to_root(dom: &lp_dom::Dom, node: NodeId, root: NodeId) -> Option<Nod
             return Some(cur);
         }
         if !dom.is_shadow_root(r).unwrap_or(false) {
-            return None;
+            // Not in a shadow tree: nothing to retarget (the host itself).
+            return Some(cur);
         }
         cur = dom.fragment_host(r).ok()??;
     }
