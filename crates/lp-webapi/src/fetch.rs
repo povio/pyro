@@ -228,6 +228,35 @@ pub(crate) fn forbidden_header(name: &str) -> bool {
     ) || name.starts_with("proxy-")
         || name.starts_with("sec-")
 }
+/// Fetch "forbidden request-header": a forbidden name, or a method override
+/// header whose value names a forbidden method (CONNECT, TRACE, TRACK).
+pub(crate) fn forbidden_request_header(name: &str, value: &str) -> bool {
+    if forbidden_header(name) {
+        return true;
+    }
+    if !matches!(name, "x-http-method-override" | "x-http-method" | "x-method-override") {
+        return false;
+    }
+    // "Get, decode, and split": commas inside a quoted string do not split.
+    let mut quoted = false;
+    let mut start = 0;
+    let mut parts = Vec::new();
+    for (i, ch) in value.char_indices() {
+        match ch {
+            '"' => quoted = !quoted,
+            ',' if !quoted => {
+                parts.push(&value[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    parts.push(&value[start..]);
+    parts.iter().any(|part| {
+        let method = part.trim_matches(|c| c == ' ' || c == '\t');
+        ["CONNECT", "TRACE", "TRACK"].iter().any(|m| method.eq_ignore_ascii_case(m))
+    })
+}
 /// Gives a `blob:` request the object its URL names, from this document's
 /// blob URL store (the network client cannot see it); a URL the store does
 /// not hold, which includes every other document's, stays unresolved and the

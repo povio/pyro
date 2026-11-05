@@ -166,7 +166,7 @@ impl JsClass for Request {
                 return Err(JsError::Type("Request body is already used".into()));
             }
             let bytes = if d.body.is_null() { None } else { Some(d.body.constructed_bytes()) };
-            let headers = HeadersData::from_pairs(d.header_pairs(s), false);
+            let headers = HeadersData::from_pairs(d.header_pairs(s), false).guard_request(d.mode == "no-cors");
             let signal = d.signal(s);
             wrap(s, None, Fields::copy(d), headers, bytes, d.body.mime.borrow().clone(), signal)
         });
@@ -361,7 +361,7 @@ fn construct<'s>(
     }
     // The "request" guard: forbidden request headers are dropped; "no-cors"
     // keeps only CORS-safelisted ones.
-    headers.retain(|(name, _)| !crate::fetch::forbidden_header(name));
+    headers.retain(|(name, value)| !crate::fetch::forbidden_request_header(name, value));
     if fields.mode == "no-cors" {
         headers.retain(|(name, value)| crate::headers::cors_safelisted(name, value));
     }
@@ -392,7 +392,7 @@ fn construct<'s>(
     if let Some((_, ct)) = headers.iter().find(|(n, _)| n == "content-type") {
         body_mime = ct.clone();
     }
-    let headers = HeadersData::from_pairs(headers, false);
+    let headers = HeadersData::from_pairs(headers, false).guard_request(fields.mode == "no-cors");
     wrap(s, new_target, fields, headers, body_bytes, body_mime, signal)
 }
 
