@@ -333,6 +333,8 @@ jobs:
           for f in release-out/lightningpanda-rust-v"$VERSION"-macos-arm64*.tar.gz; do tar xzf "$f" -C "$RUNNER_TEMP/extracted"; done
           cd packages/lightning-panda
           bun install --frozen-lockfile
+          # The CLI tests run the built client.
+          bun run build
           # Everything, fork mode included.
           LIGHTNINGPANDA_BIN="$RUNNER_TEMP/extracted/lightningpanda-rust-v$VERSION-macos-arm64-fork/lightningpanda" bun test ./test
           # The standard build has no fork mode.
