@@ -1397,10 +1397,13 @@ impl Browser {
         // plateaus at 218 MB instead of 629 MB, for about 5 ms per navigation.
         // A page's first document and its initial about:blank one leave
         // nothing that pays for a full collection: a test's first `goto`
-        // collected the whole heap for a blank page's two realms.
+        // collected the whole heap for a blank page's two realms. Its
+        // footprint still counts as a low point for later closes.
         drop(old_dom);
         if replaces_loaded {
             self.engine.release_closed();
+        } else {
+            self.engine.note_release_point();
         }
         // Worlds: main plus every world named by an init script.
         let mut worlds: Vec<Option<String>> = vec![None];

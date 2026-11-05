@@ -189,12 +189,18 @@ impl ReleaseGate {
     /// Whether a page that was just closed should be collected now.
     fn should_collect(&self, footprint: Option<u64>) -> bool {
         let Some(now) = footprint else { return true };
-        let low = self.low.get().min(now);
-        self.low.set(low);
+        let low = self.observe(now);
         let (min, percent) = self.growth;
         let due = now - low >= min.max(low / 100 * percent);
         self.pending.set(!due);
         due
+    }
+
+    /// Records a reading without deciding anything; the lowest so far.
+    fn observe(&self, now: u64) -> u64 {
+        let low = self.low.get().min(now);
+        self.low.set(low);
+        low
     }
 
     /// The process's pages are another's now: the next reading is the first.
@@ -514,6 +520,19 @@ impl Engine {
             // a React app's 30 MB stayed until the next close). A second
             // collection from the idle loop, where neither holds, frees it.
             self.inner.release_gate.pending.set(true);
+        }
+    }
+
+    /// [`Engine::release_closed`] for a document whose replacement leaves
+    /// nothing worth a full collection (a page's first document, its initial
+    /// about:blank one): no collection, but the footprint is still a reading
+    /// for the gate. Those moments are a process's low points, a test's
+    /// first navigation for one, and the gate measures growth from the
+    /// lowest reading: without them, the first reading would be a close
+    /// with an app loaded, and later closes would rarely collect.
+    pub fn note_release_point(&self) {
+        if let Some(now) = process_footprint() {
+            self.inner.release_gate.observe(now);
         }
     }
 
@@ -927,6 +946,14 @@ mod tests {
     fn release_gate_without_a_threshold_or_a_footprint_always_collects() {
         assert!(ReleaseGate::new((0, 0)).should_collect(Some(100 * MB)));
         assert!(ReleaseGate::new((16 * MB, 25)).should_collect(None));
+    }
+
+    #[test]
+    fn release_gate_measures_from_readings_that_collected_nothing() {
+        let gate = ReleaseGate::new((16 * MB, 25));
+        gate.observe(40 * MB);
+        assert!(!gate.pending.get(), "a reading alone leaves nothing pending");
+        assert!(gate.should_collect(Some(60 * MB)), "20 MB above the observed low point");
     }
 
     #[test]
