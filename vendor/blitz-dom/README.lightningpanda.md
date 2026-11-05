@@ -48,6 +48,15 @@ the rendered display lists. lp-render's tests cover it (`class_selectors_match_a
 The original `UPSTREAM.patch` covers only the class-atom optimization above;
 these additional local changes are covered by lp-render's rendering tests.
 
+## `<br>` as inline text
+
+- `node/node.rs` (`is_line_break`), `layout/construct.rs`: a `<br>` is a piece of inline text in every container, as
+  in Chrome: as a flex or grid child it joins neighbouring text and `<br>`s in one anonymous item, one line each,
+  instead of being blockified into an empty box. All of its CSS is ignored except `display: none` and
+  `display: contents`, which remove it. In flex and grid, white space after text or a `<br>` stays when it's preserved.
+  A `display: none` child no longer ends a run of inline content. Covered by `crates/lp-render/tests/br_flex_item.rs`
+  and `bench/pdf/fixtures/generators/fx-br.mjs`.
+
 ## Incremental passes for layout queries
 
 - `src/resolve.rs` (`resolve_layout_children`): an undamaged subtree without damaged descendants is not

@@ -487,7 +487,21 @@ impl Node {
         )
     }
 
+    /// Whether this is a `<br>` that generates a line break. Like Chrome, a `<br>` is a piece of
+    /// inline text in any container: only `display: none` and `display: contents` have an effect
+    /// on it (no break). Its other display values (blockified as a flex or grid item, too), its
+    /// position, float, box and font properties are all ignored.
+    pub fn is_line_break(&self) -> bool {
+        self.data.is_element_with_tag_name(&local_name!("br"))
+            && !self
+                .display_style()
+                .is_some_and(|d| matches!(d.inside(), DisplayInside::None | DisplayInside::Contents))
+    }
+
     pub fn is_or_contains_block(&self) -> bool {
+        if self.is_line_break() {
+            return false;
+        }
         let style = self.primary_styles();
         let style = style.as_ref();
 

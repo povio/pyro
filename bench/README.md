@@ -299,6 +299,7 @@ python3 compare.py --geometry chrome-156/geometry.json out.json
 | orphans, widows | `fx-wo`, `fx-wo2`, `fx-wo3` | 125 | `orphans` and `widows` around cuts |
 | avoid, shrink, sizes | `fx-av`, `fx-sh`, `fx-sr`, `fx-tw`, `fx-engine` | 381 | `break-inside: avoid`, overflowing documents, page sizes |
 | gaps closed by #251 | `fx-b`, `fx-b2`, `fx-b3`, `fx-f`, `fx-h`, `fx-h1`, `fx-k`, `fx-m`, `fx-s`, `fx-v` | 1706 | monolithic boxes, `break-*: avoid`, forced breaks, line and box positions at a cut |
+| `<br>` in flex and grid | `fx-br` | 631 | column and row flex, grid, a plain block: consecutive `<br>`s, text and spans around them, CSS on the `<br>`, preserved white space, line heights and fonts |
 
 Page placement and text x of whole PDFs against Chrome:
 

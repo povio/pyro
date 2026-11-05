@@ -234,8 +234,17 @@ fn push_hoisted_child(
         collect_layout_children_with_wrap(doc, child_id, out, wrap);
         return;
     }
+    // No box: it doesn't end a run of inline content.
+    if matches!(child_display.inside(), DisplayInside::None) && out.anonymous_block_id.is_some() {
+        out.children.push(child_id);
+        return;
+    }
     if let Some(wrap_ctx) = wrap {
-        let child_node_kind = child.data.kind();
+        let child_node_kind = if child.is_line_break() {
+            NodeKind::Text
+        } else {
+            child.data.kind()
+        };
         let display_outside = if child.is_or_contains_block() {
             DisplayOutside::Block
         } else {
@@ -354,6 +363,9 @@ fn classify_flow_children(
         } else if matches!(display.inside(), DisplayInside::None) {
             // display:none children generate no boxes and cast no vote.
             continue;
+        } else if child.is_line_break() {
+            classification.all_out_of_flow = false;
+            classification.all_block = false;
         } else {
             let position = style
                 .map(|s| s.clone_position())
@@ -537,7 +549,9 @@ fn collect_layout_children_with_wrap(
                 .any(|child| {
                     let display = child.display_style().unwrap_or(Display::inline());
                     let node_kind = child.data.kind();
-                    display.inside() == DisplayInside::Contents || node_kind == NodeKind::Text
+                    display.inside() == DisplayInside::Contents
+                        || node_kind == NodeKind::Text
+                        || child.is_line_break()
                 });
 
             if !has_text_node_or_contents {
@@ -805,8 +819,12 @@ fn collect_complex_layout_children(
     needs_wrap: fn(NodeKind, DisplayOutside) -> bool,
 ) {
     doc.iter_children_and_pseudos_mut(container_node_id, |child_id, doc| {
-        // Get node kind (text, element, comment, etc)
-        let child_node_kind = doc.nodes[child_id].data.kind();
+        // Get node kind (text, element, comment, etc). A `<br>` is a piece of text.
+        let child_node_kind = if doc.nodes[child_id].is_line_break() {
+            NodeKind::Text
+        } else {
+            doc.nodes[child_id].data.kind()
+        };
 
         // Get Display style. Default to inline because nodes without styles are probably text nodes
         let contains_block = doc.nodes[child_id].is_or_contains_block();
@@ -826,8 +844,18 @@ fn collect_complex_layout_children(
         // Taffy knows how to deal with `Display::None` children.
         //
         // Also hide all-whitespace flexbox children as these should be ignored
-        if child_node_kind == NodeKind::Comment || (hide_whitespace && is_whitespace_node) {
+        //
+        // White space that follows text or a `<br>` (an open anonymous block) stays if it's preserved.
+        let keep_whitespace = out.anonymous_block_id.is_some()
+            && !doc.nodes[child_id].is_collapsible_whitespace_node();
+        if child_node_kind == NodeKind::Comment
+            || (hide_whitespace && is_whitespace_node && !keep_whitespace)
+        {
             // return;
+        }
+        // No box: it doesn't end a run of inline content.
+        else if display_inside == DisplayInside::None && out.anonymous_block_id.is_some() {
+            out.children.push(child_id);
         }
         // Recurse into `Display::Contents` nodes, wrapping hoisted text and
         // inline children as if they were direct children of this container
@@ -993,6 +1021,11 @@ pub(crate) fn find_inline_layout_embedded_boxes(
 
                 let display = node.display_style().unwrap_or(Display::inline());
 
+                if node.is_line_break() {
+                    node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
+                    return;
+                }
+
                 match (display.outside(), display.inside()) {
                     (DisplayOutside::None, DisplayInside::None) => {
                         node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
@@ -1013,8 +1046,6 @@ pub(crate) fn find_inline_layout_embedded_boxes(
 
                         if is_inline_box_element(tag_name) {
                             layout_children.push(node_id);
-                        } else if *tag_name == local_name!("br") {
-                            node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
                         } else {
                             node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
                             iter_children_and_pseudos!(nodes[node_id], |child_id| {
@@ -1201,6 +1232,18 @@ fn build_inline_layout_with(
                     }
                 }
 
+                if node.is_line_break() {
+                    // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
+                    // TODO: update span id for br spans
+                    builder.push_style_modification_span(&[
+                        parley::StyleProperty::WhiteSpaceCollapse(WhiteSpaceCollapse::Preserve),
+                    ]);
+                    builder.push_text("\n");
+                    builder.pop_style_span();
+                    text_transformer.word_break(builder);
+                    return;
+                }
+
                 let display = node.display_style().unwrap_or(Display::inline());
                 let position = style
                     .map(|s| s.clone_position())
@@ -1274,17 +1317,6 @@ fn build_inline_layout_with(
                                     .map(|s| stylo_to_parley::vertical_align(&s))
                                     .unwrap_or_default(),
                             });
-                        } else if *tag_name == local_name!("br") {
-                            // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
-                            // TODO: update span id for br spans
-                            builder.push_style_modification_span(&[
-                                parley::StyleProperty::WhiteSpaceCollapse(
-                                    WhiteSpaceCollapse::Preserve,
-                                ),
-                            ]);
-                            builder.push_text("\n");
-                            builder.pop_style_span();
-                            text_transformer.word_break(builder);
                         } else {
                             // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
                             let style = node
