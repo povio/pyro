@@ -478,23 +478,31 @@ impl Dom {
 
     /// `querySelectorAll`: the elements below `root` matching `q`, in tree order.
     pub fn query_all(&self, root: NodeId, q: &Query) -> DomResult<Vec<NodeId>> {
+        let mut out = Vec::new();
+        self.query_all_into(root, q, &mut out)?;
+        Ok(out)
+    }
+
+    /// [`Dom::query_all`] appending to `out`, a buffer the caller may keep
+    /// for the next query (no growth of a fresh vector per call).
+    pub fn query_all_into(&self, root: NodeId, q: &Query, out: &mut Vec<NodeId>) -> DomResult<()> {
         if let Some(fast) = &q.fast {
             let r = self.check(root)?;
-            let mut out = Vec::new();
             self.fast_select(r, fast, |i| {
                 out.push(self.id_of(i));
                 true
             });
-            return Ok(out);
+            return Ok(());
         }
         match (&q.stylo, &q.lp) {
-            (_, Some(lp)) => self.query_selector_all(root, lp),
+            (_, Some(lp)) => out.extend(self.query_selector_all(root, lp)?),
             (Some(list), None) => {
                 let r = self.check(root)?;
-                Ok(crate::stylo::select::query(self, r, list, false).into_iter().map(|i| self.id_of(i)).collect())
+                out.extend(crate::stylo::select::query(self, r, list, false).into_iter().map(|i| self.id_of(i)));
             }
-            (None, None) => Ok(Vec::new()),
+            (None, None) => {}
         }
+        Ok(())
     }
 
     /// `Element.matches(selectors)`.

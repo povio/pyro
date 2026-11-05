@@ -52,17 +52,10 @@ pub struct NodeHolds {
 }
 
 impl NodeHolds {
-    pub fn new(page: &Rc<PageDom>, ids: Vec<NodeId>) -> JsResult<NodeHolds> {
-        {
-            let mut dom = page.dom.borrow_mut();
-            for (k, &id) in ids.iter().enumerate() {
-                if let Err(e) = dom.add_ref(id) {
-                    ids[..k].iter().for_each(|&held| dom.release(held));
-                    return Err(dom_err(e));
-                }
-            }
-        }
-        Ok(NodeHolds { page: page.clone(), ids: ids.into_boxed_slice() })
+    pub fn new(page: &Rc<PageDom>, ids: impl Into<Box<[NodeId]>>) -> JsResult<NodeHolds> {
+        let ids = ids.into();
+        page.dom.borrow_mut().add_refs(&ids).map_err(dom_err)?;
+        Ok(NodeHolds { page: page.clone(), ids })
     }
 }
 
@@ -249,10 +242,11 @@ pub(crate) fn form_named<'s>(s: &Scope<'s>, page: &PageDom, form: NodeId, name: 
     }
 }
 
-pub fn static_node_list<'s>(s: &Scope<'s>, page: &PageDom, ids: Vec<NodeId>) -> JsResult<Object<'s>> {
+pub fn static_node_list<'s>(s: &Scope<'s>, page: &PageDom, ids: impl Into<Box<[NodeId]>>) -> JsResult<Object<'s>> {
     let page = page_rc(s).inspect(|p| {
         debug_assert_eq!(p.id(), page.id());
     })?;
+    let ids = ids.into();
     // Empty static lists need no page reference.
     let holds = if ids.is_empty() { None } else { Some(NodeHolds::new(&page, ids)?) };
     s.wrap::<NodeList>(

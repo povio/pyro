@@ -2801,6 +2801,41 @@ impl Dom {
         Ok(())
     }
 
+    /// [`Dom::add_ref`] for each of `ids` (a node listed twice gets two), in
+    /// one pass that counts the first references of a run of nodes of one
+    /// document at once; none is added when one is stale.
+    pub fn add_refs(&mut self, ids: &[NodeId]) -> DomResult<()> {
+        let (mut doc, mut firsts) = (NIL, 0);
+        for (k, &id) in ids.iter().enumerate() {
+            let Ok(i) = self.check(id) else {
+                self.add_held(doc, firsts);
+                for done in &ids[..k] {
+                    self.ext_ref_dec(done.idx);
+                }
+                return Err(DomError::StaleNode);
+            };
+            let n = self.n_mut(i);
+            n.ext_refs += 1;
+            if n.ext_refs == 1 {
+                let owner = n.owner_doc;
+                if owner != doc {
+                    self.add_held(doc, firsts);
+                    (doc, firsts) = (owner, 0);
+                }
+                firsts += 1;
+            }
+        }
+        self.add_held(doc, firsts);
+        Ok(())
+    }
+
+    /// Counts `firsts` nodes of document `doc` as newly held.
+    fn add_held(&mut self, doc: u32, firsts: u32) {
+        if firsts > 0 && doc != NIL && self.slots[doc as usize].node.is_some() {
+            self.doc_data_mut(doc).held += firsts;
+        }
+    }
+
     /// Adds an external reference to node `i`, counting it in its document
     /// (`DocumentData::held`) when it is the node's first.
     fn ext_ref_inc(&mut self, i: u32) {

@@ -557,10 +557,28 @@ fn define_parent_node<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
     });
     def.pure_method("querySelectorAll", 1, |s, n, a| {
         let page = n.page();
-        let r = with_selector(&a, 0, "querySelectorAll", page, |q| page.dom.borrow().query_all(n.id, q))?.js()?;
-        Ok(collections::static_node_list(s, page, r)?.value())
+        // The matches go to a buffer kept for the next query, then once into
+        // the list: no vector grown and shrunk per call.
+        let mut found = FOUND.take();
+        let list = with_selector(&a, 0, "querySelectorAll", page, |q| {
+            page.dom.borrow().query_all_into(n.id, q, &mut found)
+        })
+        .and_then(|r| r.js())
+        .and_then(|()| collections::static_node_list(s, page, &found[..]));
+        found.clear();
+        if found.capacity() <= FOUND_KEPT {
+            FOUND.set(found);
+        }
+        Ok(list?.value())
     });
 }
+
+thread_local! {
+    /// `querySelectorAll`'s match buffer (taken while a query runs).
+    static FOUND: std::cell::Cell<Vec<NodeId>> = const { std::cell::Cell::new(Vec::new()) };
+}
+/// The most matches whose buffer is kept between queries.
+const FOUND_KEPT: usize = 1 << 16;
 
 fn define_child_node<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
     def.method("remove", 0, |s, n, _a| {

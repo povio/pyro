@@ -181,3 +181,49 @@ fn queries_outside_the_compiled_form_still_work() {
     }
     assert!(dom.element_matches(d, &parse_query("div").unwrap()).is_err(), "a document is no element");
 }
+
+#[test]
+fn query_results_held_at_once() {
+    let (dom, d) = doc(PAGE);
+    let mut dom = dom.borrow_mut();
+    let spans = dom.query_all(d, &parse_query("span").unwrap()).unwrap();
+    let refs = |dom: &Dom| spans.iter().map(|&n| dom.ext_refs(n).unwrap()).collect::<Vec<_>>();
+    let before = refs(&dom);
+    dom.add_refs(&spans).unwrap();
+    assert_eq!(refs(&dom), before.iter().map(|r| r + 1).collect::<Vec<_>>());
+    // A stale node: nothing is added.
+    let gone = dom.create_element(d, "i").unwrap();
+    dom.collect_garbage();
+    let mut with_stale = spans.clone();
+    with_stale.push(gone);
+    assert!(dom.add_refs(&with_stale).is_err());
+    assert_eq!(refs(&dom), before.iter().map(|r| r + 1).collect::<Vec<_>>());
+    spans.iter().for_each(|&n| dom.release(n));
+    assert_eq!(refs(&dom), before);
+}
+
+#[test]
+fn selector_cache_by_characters() {
+    use lp_dom::select::{Query, SelectorCache};
+    let (dom, d) = doc("<!doctype html><body><p class=\u{e9}>x</p><div></div></body>");
+    let dom = dom.borrow();
+    let mut cache = SelectorCache::default();
+    let count = |q: &Query| dom.query_all(d, q).unwrap().len();
+    // Runs of one selector, alternation, and both string widths.
+    for _ in 0..3 {
+        assert_eq!(cache.with_latin1(b"div", count).unwrap(), 1);
+        assert_eq!(cache.with_latin1(b"div", count).unwrap(), 1);
+        assert_eq!(cache.with_latin1(b"p, div", count).unwrap(), 2);
+        let wide: Vec<u16> = "body > *".encode_utf16().collect();
+        assert_eq!(cache.with_utf16(&wide, count).unwrap(), 2);
+    }
+    // Latin-1 characters beyond ASCII are those characters, not UTF-8 bytes.
+    assert_eq!(cache.with_latin1(b".\xe9", count).unwrap(), 1);
+    assert!(cache.with_latin1(b"p:::x", count).is_err());
+    // Past the cap the maps start over; lookups still answer.
+    for k in 0..600 {
+        cache.get(&format!("#x{k}")).unwrap();
+    }
+    assert_eq!(cache.with_latin1(b"div", count).unwrap(), 1);
+    assert_eq!(cache.with_latin1(b"p, div", count).unwrap(), 2);
+}
