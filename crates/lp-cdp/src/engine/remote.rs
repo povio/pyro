@@ -6,6 +6,7 @@
 //! which may run other pending CDP replies that use the same table.
 
 use std::cell::RefCell;
+use std::rc::Rc;
 
 use lp_js::{JsError, JsException, JsType, Persistent, Scope, Value};
 use serde_json::Value as Json;
@@ -18,6 +19,10 @@ use crate::runtime_protocol::{
 
 /// A converted value plus the engine reference to store if the client should
 /// get an `objectId`.
+/// A session's remote-object table. Handles are shared (`Rc`) so a command
+/// can keep its target object alive across a call without re-protecting it.
+pub(crate) type Handles = RefCell<HandleTable<Rc<Persistent>>>;
+
 pub(crate) struct Described {
     pub(crate) remote: RemoteObject,
     pub(crate) keep: Option<Persistent>,
@@ -222,11 +227,22 @@ pub(crate) fn add_preview(scope: &Scope<'_>, value: Value<'_>, remote: &mut Remo
 /// Finishes a [`Described`] by registering its handle (if any).
 pub(crate) fn register(
     described: Described,
-    handles: &RefCell<HandleTable<Persistent>>,
+    handles: &Handles,
     context: ExecutionContextId,
     group: Option<&str>,
 ) -> CdpResult<RemoteObject> {
-    let Described { mut remote, keep } = described;
+    let Described { remote, keep } = described;
+    register_shared(remote, keep.map(Rc::new), handles, context, group)
+}
+
+/// [`register`] for a handle that several sessions share (console arguments).
+pub(crate) fn register_shared(
+    mut remote: RemoteObject,
+    keep: Option<Rc<Persistent>>,
+    handles: &Handles,
+    context: ExecutionContextId,
+    group: Option<&str>,
+) -> CdpResult<RemoteObject> {
     if let Some(keep) = keep {
         remote.object_id = Some(handles.borrow_mut().insert(context, group, keep)?);
     }
@@ -284,7 +300,7 @@ pub(crate) fn exception_details(
 pub(crate) fn argument<'s>(
     scope: &Scope<'s>,
     arg: &CallArgument,
-    handles: &RefCell<HandleTable<Persistent>>,
+    handles: &Handles,
     context: ExecutionContextId,
 ) -> CdpResult<Value<'s>> {
     Ok(match arg.decode()? {

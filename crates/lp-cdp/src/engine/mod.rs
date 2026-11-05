@@ -292,7 +292,7 @@ pub(crate) struct Session {
     /// Runtime.addBinding names: their calls are reported to this session.
     pub(crate) bindings: Vec<String>,
     fetch: fetch::FetchSession,
-    pub(crate) handles: Rc<RefCell<HandleTable<Persistent>>>,
+    pub(crate) handles: Rc<remote::Handles>,
 }
 
 pub(crate) struct PageState {

@@ -10,7 +10,7 @@ use serde_json::json;
 use super::remote::{self, Described};
 use super::{EngineHost, Queued};
 use crate::msg::{self, CdpError, CdpResult};
-use crate::runtime_protocol::{CallArgument, ExceptionDetails, ExecutionContextId, HandleTable, RemoteObject};
+use crate::runtime_protocol::{CallArgument, ExceptionDetails, ExecutionContextId, RemoteObject};
 use crate::target::{PageCommand, PageKey};
 
 pub(crate) fn context_id(realm: RealmId) -> ExecutionContextId {
@@ -57,9 +57,9 @@ pub(crate) struct Reply {
     by_value: bool,
     /// `generatePreview`: object results carry a `Runtime.ObjectPreview`.
     preview: bool,
-    group: Option<String>,
+    group: Option<Rc<str>>,
     pub(crate) context: ExecutionContextId,
-    handles: Weak<RefCell<HandleTable<Persistent>>>,
+    handles: Weak<remote::Handles>,
     done: Cell<bool>,
 }
 
@@ -484,7 +484,7 @@ impl EngineHost {
         cmd: &PageCommand<'_, '_>,
         by_value: bool,
         preview: bool,
-        group: Option<String>,
+        group: Option<Rc<str>>,
         realm: &Realm,
     ) -> CdpResult<Reply> {
         let session = self.sessions.get(cmd.session_id).ok_or_else(|| CdpError::server("session is gone"))?;
@@ -504,7 +504,8 @@ impl EngineHost {
     fn evaluate(&mut self, cmd: &PageCommand<'_, '_>) -> CdpResult<()> {
         let p: EvaluateParams = cmd.command.params()?;
         let realm = self.target_realm(cmd.page, p.context_id)?;
-        let reply = self.reply_for(cmd, p.return_by_value, p.generate_preview, p.object_group, &realm)?;
+        let group = p.object_group.map(Rc::from);
+        let reply = self.reply_for(cmd, p.return_by_value, p.generate_preview, group, &realm)?;
         let exception_id = self.next_exception_id();
         let scope = realm.scope().map_err(remote::js_to_cdp)?;
         let eval = crate::perf::span("js.eval");
@@ -527,9 +528,8 @@ impl EngineHost {
         let (realm, this, inherited_group) = match &p.object_id {
             Some(object_id) => {
                 let table = handles.borrow();
-                let (context, handle) = table.get(object_id)?;
-                let this = handle.clone();
-                let group = table.group_of(object_id).map(str::to_owned);
+                let found = table.lookup(object_id)?;
+                let (context, this, group) = (found.context, found.handle.clone(), found.group.cloned());
                 drop(table);
                 (self.target_realm(cmd.page, Some(context))?, Some(this), group)
             }
@@ -539,7 +539,7 @@ impl EngineHost {
             None => return Err(CdpError::invalid_params("Either objectId or executionContextId must be specified")),
         };
         let context = context_id(realm.id());
-        let group = p.object_group.or(inherited_group);
+        let group = p.object_group.map(Rc::from).or(inherited_group);
         let reply = self.reply_for(cmd, p.return_by_value, p.generate_preview, group, &realm)?;
         let exception_id = self.next_exception_id();
         let scope = realm.scope().map_err(remote::js_to_cdp)?;
@@ -551,7 +551,7 @@ impl EngineHost {
             args.push(&scope, value);
         }
         let call = crate::perf::span("js.call_function");
-        let called = scope.call_function_rooted(&p.function_declaration, this.as_ref(), &args);
+        let called = scope.call_function_rooted(&p.function_declaration, this.as_deref(), &args);
         drop(call);
         match called {
             Ok(value) => reply.settle(&self.pending, &scope, value, p.await_promise, exception_id),
@@ -567,8 +567,8 @@ impl EngineHost {
             self.sessions.get(cmd.session_id).ok_or_else(|| CdpError::server("session is gone"))?.handles.clone();
         let (context, parent, group) = {
             let table = handles.borrow();
-            let (context, handle) = table.get(&p.object_id)?;
-            (context, handle.clone(), table.group_of(&p.object_id).map(str::to_owned))
+            let found = table.lookup(&p.object_id)?;
+            (found.context, found.handle.clone(), found.group.cloned())
         };
         let realm = self.target_realm(cmd.page, Some(context))?;
         let scope = realm.scope().map_err(remote::js_to_cdp)?;
@@ -704,7 +704,7 @@ impl EngineHost {
         let context = context_id(realm_id);
         // Described once for every session; objects carry a preview, as in
         // Chrome (Playwright renders console text for objects from it).
-        let described: Vec<Option<(RemoteObject, Option<Persistent>)>> = args
+        let described: Vec<Option<(RemoteObject, Option<Rc<Persistent>>)>> = args
             .iter()
             .map(|arg| {
                 let value = arg.get(&scope);
@@ -712,7 +712,7 @@ impl EngineHost {
                 if d.keep.is_some() {
                     remote::add_preview(&scope, value, &mut d.remote);
                 }
-                Some((d.remote, d.keep))
+                Some((d.remote, d.keep.map(Rc::new)))
             })
             .collect();
         // Parsed once for every session.
@@ -725,7 +725,7 @@ impl EngineHost {
                 let remote = d
                     .clone()
                     .ok_or_else(|| CdpError::server("unconvertible"))
-                    .and_then(|(remote, keep)| remote::register(Described { remote, keep }, &handles, context, None));
+                    .and_then(|(remote, keep)| remote::register_shared(remote, keep, &handles, context, None));
                 remote_args.push(remote.unwrap_or_else(|_| RemoteObject::undefined()));
             }
             let mut params = json!({
