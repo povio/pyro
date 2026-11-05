@@ -1429,7 +1429,9 @@ pub(crate) unsafe extern "C" fn member_call(
     exc: *mut sys::JSValueRef,
 ) -> sys::JSValueRef {
     unsafe {
-        guard(ctx, exc, ptr::null(), |scope| {
+        // No realm in the payload here (see `MemberPayload::realm`): the
+        // receiver's realm is the usual one, checked against `ctx`.
+        guard_in(ctx, wrapper_realm(this), exc, ptr::null(), |scope| {
             let payload = sys::JSObjectGetPrivate(function) as *const MemberPayload;
             if payload.is_null() {
                 return Err(JsError::Type("Illegal invocation".into()));
