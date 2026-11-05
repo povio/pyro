@@ -31,8 +31,15 @@ pub(crate) struct BindingState {
     generation: Cell<u64>,
     rooted: Cell<usize>,
     version: Cell<Option<u64>>,
+    /// Bumped at every change of this struct that [`hook_pending`] looks at;
+    /// with `Dom::hook_epoch`, the pair the hook last found nothing at.
+    epoch: Cell<u64>,
+    quiet: Cell<Option<(u64, u64)>>,
 }
 impl BindingState {
+    fn touch(&self) {
+        self.epoch.set(self.epoch.get().wrapping_add(1));
+    }
     pub(crate) fn pending_drops_is_empty(&self) -> bool {
         self.pending_drops.borrow().is_empty()
     }
@@ -54,6 +61,7 @@ impl Drop for Observer {
                 Ok(mut dom) => dom.drop_observer(id),
                 Err(_) => page.mutations.pending_drops.borrow_mut().push(id),
             }
+            page.mutations.touch();
         }
     }
 }
@@ -106,6 +114,7 @@ impl JsClass for MutationObserver {
                 targets: RefCell::new(Vec::new()),
             });
             page.mutations.observers.borrow_mut().insert(id, Rc::downgrade(&observer));
+            page.mutations.touch();
             let object = s.wrap_new::<Self>(observer, nt, Some(identity))?;
             s.set_hidden(object, CALLBACK, callback.value())?;
             Ok(object)
@@ -173,7 +182,7 @@ fn link(s: &Scope<'_>, page: &PageDom, node: NodeId, observer: Object<'_>) -> Js
     array.set_index(free, observer.value())
 }
 fn unlink(s: &Scope<'_>, page: &PageDom, node: NodeId, identity: IdentityKey) -> JsResult<()> {
-    let Some(node) = s.lookup_identity(page.node_identity(node)) else { return Ok(()) };
+    let Some(node) = page.node_wrapper(s, node) else { return Ok(()) };
     let Some(array) = links(s, node, false)? else { return Ok(()) };
     let Some(observer) = s.lookup_identity(identity) else { return Ok(()) };
     let len = array.get("length")?.to_number()? as u32;
@@ -192,6 +201,7 @@ fn pin_connected(s: &Scope<'_>, page: &PageDom, node: NodeId) -> JsResult<()> {
             .borrow_mut()
             .entry((s.realm_id(), node))
             .or_insert_with(|| Persistent::new(s, object.value()));
+        page.mutations.touch();
     }
     Ok(())
 }
@@ -246,6 +256,7 @@ pub fn checkpoint(page: &Rc<PageDom>) {
         (dom.pending_observers_from(page.mutations.rooted.get()), dom.version())
     };
     page.mutations.rooted.set(page.mutations.rooted.get() + new_pending.len());
+    page.mutations.touch();
     let mut scheduling_realm = None;
     for id in new_pending {
         let observer = page.mutations.observers.borrow().get(&id).and_then(Weak::upgrade);
@@ -272,6 +283,7 @@ pub fn checkpoint(page: &Rc<PageDom>) {
                 page.mutations.generation.set(generation);
                 let ticket = (realm.id(), generation);
                 page.mutations.queued.set(Some(ticket));
+                page.mutations.touch();
                 let weak = Rc::downgrade(page);
                 if let Err(error) = s.then(
                     s.undefined(),
@@ -285,6 +297,7 @@ pub fn checkpoint(page: &Rc<PageDom>) {
                     |_, _| {},
                 ) {
                     page.mutations.queued.set(None);
+                    page.mutations.touch();
                     s.report_exception(&error);
                 }
             }
@@ -343,6 +356,7 @@ fn notify(page: &Rc<PageDom>) {
     }
     page.mutations.queued.set(None);
     page.mutations.rooted.set(0);
+    page.mutations.touch();
     let pending = page.dom.borrow_mut().take_pending_observers();
     let roots = page.mutations.pending_roots.take();
     // Snapshot binding identities as well as native ids: a callback can dispose
@@ -428,9 +442,25 @@ fn hook_pending(page: &PageDom) -> bool {
     }
     let Ok(dom) = page.dom.try_borrow() else { return true };
     let m = &page.mutations;
+    // Every condition below changes only with `Dom::hook_epoch` (mutations,
+    // queued observers, iframe events) or `epoch` (this struct), so a pair
+    // the hook already found quiet needs no second look. Native callbacks
+    // come in bursts of tens of thousands with no change in between.
+    let now = (dom.hook_epoch(), m.epoch.get());
+    if m.quiet.get() == Some(now) {
+        return false;
+    }
+    let pending = hook_pending_slow(&dom, m);
+    if !pending {
+        m.quiet.set(Some(now));
+    }
+    pending
+}
+
+fn hook_pending_slow(dom: &lp_dom::Dom, m: &BindingState) -> bool {
     dom.has_iframe_events()
         || !m.pending_drops.borrow().is_empty()
-        || !dom.pending_observers_from(m.rooted.get()).is_empty()
+        || dom.has_pending_observers_from(m.rooted.get())
         || (!m.pending_roots.borrow().is_empty() && m.queued.get().is_none())
         // The reconcile pass of `checkpoint` only acts on observers or pins;
         // it is idempotent, so a version it skipped is reconciled later.
@@ -440,6 +470,7 @@ pub(crate) fn cancel_realm(page: &PageDom, realm: RealmId) {
     if page.mutations.queued.get().is_some_and(|(owner, _)| owner == realm) {
         page.mutations.queued.set(None);
     }
+    page.mutations.touch();
     let observers: Vec<_> =
         page.mutations.observers.borrow().values().filter_map(Weak::upgrade).filter(|o| o.realm_id == realm).collect();
     for observer in observers {

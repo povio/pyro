@@ -64,6 +64,17 @@ options:
   --fork                                serve every connection from a fork() of a process
                                         that booted the prepared pages once (patched
                                         JavaScriptCore only; env LIGHTNINGPANDA_FORK=1)
+  --spare-engine <on|off>               keep a browser thread with its JavaScriptCore
+                                        engine created ahead of the next connection
+                                        (~8 ms off its first command, ~5 MB while idle).
+                                        Default: on with --prepare (a test suite's
+                                        prepared pages), off otherwise;
+                                        env LIGHTNINGPANDA_SPARE_ENGINE=on|off
+  --render-prewarm <on|off>             scan the system fonts and warm the renderer at
+                                        startup, so the first screenshot or PDF does not
+                                        pay for it (~3 MB while idle). Default: on with
+                                        --prepare, off otherwise;
+                                        env LIGHTNINGPANDA_RENDER_PREWARM=on|off
 
 HTTP and data: document loading are supported; browser API coverage is partial.
 --experimental-features and --load-resources are accepted for CLI compatibility;
@@ -117,7 +128,9 @@ const PREBOOT_LIMIT: std::time::Duration = std::time::Duration::from_secs(30);
 /// No command for this long after a prepared page was taken: boot the next.
 const REFILL_QUIET: std::time::Duration = std::time::Duration::from_millis(15);
 /// With no command for this long, a closed page whose collection was put off
-/// (`Engine::release_closed`) is collected: the client may stay idle for good.
+/// (`Engine::release_closed`) is collected, and compiled code dropped
+/// (`Engine::settle_idle`): the client may stay idle for good. A test suite's
+/// gap between tests is shorter, so a running suite keeps its bytecode.
 const RELEASE_QUIET: std::time::Duration = std::time::Duration::from_secs(1);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -149,6 +162,41 @@ pub struct ServeOptions {
     pub fork: bool,
     /// `--template <socket>`: this process is that template (internal).
     pub template: Option<PathBuf>,
+    /// `--spare-engine` (or `LIGHTNINGPANDA_SPARE_ENGINE`): a browser thread
+    /// with its engine waits for the next connection. `None` follows the
+    /// mode: on with `--prepare` (a test suite, where the first command of a
+    /// connection should not wait for an engine), off otherwise (the spare
+    /// costs memory for as long as the server idles).
+    pub spare_engine: Option<bool>,
+    /// `--render-prewarm` (or `LIGHTNINGPANDA_RENDER_PREWARM`): warm the
+    /// renderer's process-wide state at startup. `None` follows the mode
+    /// like `spare_engine`.
+    pub render_prewarm: Option<bool>,
+}
+
+impl ServeOptions {
+    /// Whether a test suite is being served: prepared pages are what the
+    /// test client takes. The eager startup work pays off there.
+    fn test_suite_mode(&self) -> bool {
+        !self.prepare.is_empty()
+    }
+
+    pub fn spare_engine(&self) -> bool {
+        self.spare_engine.unwrap_or_else(|| self.test_suite_mode())
+    }
+
+    pub fn render_prewarm(&self) -> bool {
+        self.render_prewarm.unwrap_or_else(|| self.test_suite_mode())
+    }
+}
+
+/// `on`/`off` (also `1`/`0`, `true`/`false`).
+fn parse_switch(flag: &str, value: &str) -> Result<bool, String> {
+    match value.trim() {
+        "on" | "1" | "true" => Ok(true),
+        "off" | "0" | "false" => Ok(false),
+        other => Err(format!("{flag}: '{other}' is not on or off")),
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -186,12 +234,22 @@ impl Default for ServeOptions {
             prepare_refill_after_close: std::env::var(PREPARE_REFILL_ENV).is_ok_and(|v| v.trim() == "after-close"),
             fork: std::env::var(FORK_ENV).is_ok_and(|v| v.trim() == "1"),
             template: None,
+            spare_engine: std::env::var(SPARE_ENGINE_ENV).ok().and_then(|v| parse_switch(SPARE_ENGINE_ENV, &v).ok()),
+            render_prewarm: std::env::var(RENDER_PREWARM_ENV)
+                .ok()
+                .and_then(|v| parse_switch(RENDER_PREWARM_ENV, &v).ok()),
         }
     }
 }
 
 /// Environment equivalent of `--fork` (`1`).
 pub const FORK_ENV: &str = "LIGHTNINGPANDA_FORK";
+
+/// Environment equivalent of `--spare-engine` (`on`/`off`).
+pub const SPARE_ENGINE_ENV: &str = "LIGHTNINGPANDA_SPARE_ENGINE";
+
+/// Environment equivalent of `--render-prewarm` (`on`/`off`).
+pub const RENDER_PREWARM_ENV: &str = "LIGHTNINGPANDA_RENDER_PREWARM";
 
 /// Environment equivalent of `--prepare-refill`.
 pub const PREPARE_REFILL_ENV: &str = "LIGHTNINGPANDA_PREPARE_REFILL";
@@ -275,6 +333,8 @@ pub fn parse_args(args: &[String]) -> Result<ServeOptions, String> {
                 other => return Err(format!("--prepare-refill: '{other}' is not quiet or after-close")),
             },
             "--fork" => o.fork = true,
+            "--spare-engine" => o.spare_engine = Some(parse_switch("--spare-engine", &value()?)?),
+            "--render-prewarm" => o.render_prewarm = Some(parse_switch("--render-prewarm", &value()?)?),
             "--template" => o.template = Some(PathBuf::from(value()?)),
             other => return Err(format!("unknown option '{other}'")),
         }
@@ -394,12 +454,12 @@ pub fn serve_main(args: &[String]) -> ExitCode {
             eprintln!("lightningpanda: preparing a page at {} per connection", prepared.url);
         }
     }
-    // Fonts and the other process-wide render state load on a background
-    // thread, so the first screenshot does not pay for them. Not in fork
-    // mode: connections are served by forks of a separate template process,
-    // which must not start threads before it forks.
+    // With --render-prewarm, fonts and the other process-wide render state
+    // load on a background thread, so the first screenshot does not pay for
+    // them. Not in fork mode: connections are served by forks of a separate
+    // template process, which must not start threads before it forks.
     #[cfg(feature = "render")]
-    if template.is_none() {
+    if template.is_none() && options.render_prewarm() {
         let _ = lp_render::prewarm();
     }
     let runtime = match tokio::runtime::Builder::new_current_thread().enable_io().enable_time().build() {
@@ -418,7 +478,11 @@ pub fn serve_main(args: &[String]) -> ExitCode {
             }
             return server.run().await;
         }
-        let factory = ThreadPerConnection::with_spare(profile)?;
+        let factory = if options.spare_engine() {
+            ThreadPerConnection::with_spare(profile)?
+        } else {
+            ThreadPerConnection::without_spare(profile)
+        };
         let server = Server::bind(addr, options.server.clone(), factory).await?;
         if options.log_level <= LogLevel::Info {
             eprintln!("lightningpanda: CDP server listening on ws://{}/", server.local_addr()?);
@@ -463,6 +527,12 @@ impl ThreadPerConnection {
         let spare = factory.spawn_spare()?;
         *factory.spare.lock().unwrap_or_else(|e| e.into_inner()) = Some(spare);
         Ok(factory)
+    }
+
+    /// A factory that starts each browser thread when its connection arrives:
+    /// nothing runs, and no engine exists, while the server is idle.
+    pub fn without_spare(profile: BrowserProfile) -> Self {
+        Self { profile: Arc::new(profile), ..Self::default() }
     }
 
     /// Spawns a thread that creates its engine now and serves a later connection.
@@ -690,7 +760,7 @@ pub(crate) fn serve_browser(
         }
         let release_at = browser.host().thread.browser.engine.release_pending().then(|| quiet_since + RELEASE_QUIET);
         if release_at.is_some_and(|at| std::time::Instant::now() >= at) && inbox.is_empty() {
-            browser.host().thread.browser.engine.settle();
+            browser.host().thread.browser.engine.settle_idle();
             continue;
         }
         let quiet_at = match (quiet_at, release_at) {

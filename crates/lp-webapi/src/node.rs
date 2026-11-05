@@ -19,6 +19,10 @@ use crate::util::*;
 pub struct NodeData {
     pub target: EventTargetData,
     pub id: NodeId,
+    /// The wrapper reference the page holds in this node's slot
+    /// (`PageDom::node_wrappers`), raw; zero when the wrapper is in the
+    /// realm's identity map instead.
+    pub(crate) wrapper: std::cell::Cell<usize>,
 }
 
 impl NodeData {
@@ -29,6 +33,10 @@ impl NodeData {
 
 impl Drop for NodeData {
     fn drop(&mut self) {
+        let wrapper = self.wrapper.get();
+        if wrapper != 0 {
+            self.target.page.forget_wrapper(self.id.index(), wrapper);
+        }
         self.target.page.release_node(self.id);
     }
 }
@@ -37,8 +45,7 @@ impl Drop for NodeData {
 /// frame tree shares one `Dom`, so a node that moved between its documents may
 /// already have a wrapper in a sibling realm; a new one is made in `s`'s realm.
 pub fn wrap_node<'s>(s: &Scope<'s>, page: &PageDom, id: NodeId) -> JsResult<Object<'s>> {
-    let key = page.node_identity(id);
-    if let Some(o) = s.lookup_identity(key) {
+    if let Some(o) = page.node_wrapper(s, id) {
         return Ok(o);
     }
     let page_rc = page_of(s)?;
@@ -51,14 +58,68 @@ pub fn wrap_node<'s>(s: &Scope<'s>, page: &PageDom, id: NodeId) -> JsResult<Obje
     if let Some(o) = page.sibling_wrapper(s, id) {
         return Ok(o);
     }
-    let (ty, class) = {
+    let (ty, class, connected) = {
         let mut dom = page.dom.borrow_mut();
         dom.add_ref(id).js()?;
-        let node = dom.node(id).js()?;
-        (node.kind.node_type(), crate::html::class_for(&dom, id))
+        let ty = dom.node(id).js()?.kind.node_type();
+        let class = crate::html::class_for(&dom, id);
+        let connected = dom.is_in_active_document(id);
+        if connected {
+            dom.mark_pin_on_connect(id);
+        }
+        (ty, class, connected)
     };
-    let data = NodeData { target: EventTargetData { page: page_rc, key: TargetKey::Node(id.index()) }, id };
-    let k = Some(key);
+    let data = NodeData {
+        target: EventTargetData { page: page_rc, key: TargetKey::Node(id.index()) },
+        id,
+        wrapper: std::cell::Cell::new(0),
+    };
+    // The node keeps its wrapper (`PageDom::node_wrappers`) when it has a
+    // slot for this world; otherwise the realm's identity map does.
+    let owned = s.owned_wrappers() && page.wrapper_slot_free(s.realm_id(), id.index());
+    let k = Some(match (owned, connected) {
+        (false, _) => page.node_identity(id),
+        (true, true) => lp_js::IdentityKey::OWNED_KEPT,
+        (true, false) => lp_js::IdentityKey::OWNED,
+    });
+    let wrapper = wrap_node_kind(s, page, id, ty, class, data, k)?;
+    // A wrapper of a node in the active document lives as long as the node
+    // is connected, as in other browsers (expandos survive, and a selector
+    // engine that touches every element does not make the garbage collector
+    // drop and recreate thousands of wrappers per query). `reconcile_pins`
+    // stops keeping it when the node leaves the document.
+    register_node_wrapper(s, page, id, wrapper, owned, connected);
+    Ok(wrapper)
+}
+
+/// Records a new node wrapper where it will be found again: in the node's
+/// slot (`owned`, made with `IdentityKey::OWNED*`), or pinned if the node is
+/// connected and the wrapper is in the identity map.
+fn register_node_wrapper(s: &Scope<'_>, page: &PageDom, id: NodeId, wrapper: Object<'_>, owned: bool, connected: bool) {
+    if owned {
+        if let Some(r) = s.wrapper_ref(wrapper) {
+            page.remember_wrapper(s.realm_id(), id.index(), r);
+            if let Some(node) = s.unwrap::<Node>(wrapper.value()) {
+                node.wrapper.set(r.to_raw());
+            }
+        }
+    } else if connected {
+        page.pinned
+            .borrow_mut()
+            .entry((s.realm_id(), TargetKey::Node(id.index())))
+            .or_insert_with(|| lp_js::Persistent::new(s, wrapper.value()));
+    }
+}
+
+fn wrap_node_kind<'s>(
+    s: &Scope<'s>,
+    page: &PageDom,
+    id: NodeId,
+    ty: NodeType,
+    class: crate::html::ElClass,
+    data: NodeData,
+    k: Option<lp_js::IdentityKey>,
+) -> JsResult<Object<'s>> {
     match ty {
         NodeType::Element => crate::html::wrap_element(s, class, data, k),
         NodeType::Text => s.wrap::<Text>(data, k),
@@ -229,8 +290,12 @@ impl JsClass for Node {
         ] {
             def.constant(name, v);
         }
-        def.getter("nodeType", |s, n| Ok(s.number(n.page().dom.borrow().node_type(n.id).js()? as u16 as f64)));
-        def.getter("nodeName", |s, n| Ok(s.string(&n.page().dom.borrow().node_name(n.id).js()?)));
+        def.pure_getter_typed("nodeType", lp_js::GetterResult::Number, |s, n| {
+            Ok(s.number(n.page().dom.borrow().node_type(n.id).js()? as u16 as f64))
+        });
+        def.pure_getter_typed("nodeName", lp_js::GetterResult::String, |s, n| {
+            Ok(s.shared_string(&n.page().dom.borrow().node_name_shared(n.id).js()?))
+        });
         def.accessor(
             "nodeValue",
             |s, n| {
@@ -261,36 +326,40 @@ impl JsClass for Node {
                 n.page().dom.borrow_mut().set_text_content(n.id, &text).js()
             },
         );
-        def.getter("parentNode", |s, n| {
+        def.pure_getter_typed("parentNode", lp_js::GetterResult::ObjectOrNull, |s, n| {
             let p = n.page().dom.borrow().parent(n.id).js()?;
             node_value(s, n.page(), p)
         });
-        def.getter("parentElement", |s, n| {
+        def.pure_getter_typed("parentElement", lp_js::GetterResult::ObjectOrNull, |s, n| {
             let p = n.page().dom.borrow().parent_element(n.id).js()?;
             node_value(s, n.page(), p)
         });
-        def.getter("childNodes", |s, n| Ok(collections::child_nodes(s, n.page(), n.id)?.value()));
-        def.getter("firstChild", |s, n| {
+        def.pure_getter_typed("childNodes", lp_js::GetterResult::ObjectOrNull, |s, n| {
+            Ok(collections::child_nodes(s, n.page(), n.id)?.value())
+        });
+        def.pure_getter_typed("firstChild", lp_js::GetterResult::ObjectOrNull, |s, n| {
             let c = n.page().dom.borrow().first_child(n.id).js()?;
             node_value(s, n.page(), c)
         });
-        def.getter("lastChild", |s, n| {
+        def.pure_getter_typed("lastChild", lp_js::GetterResult::ObjectOrNull, |s, n| {
             let c = n.page().dom.borrow().last_child(n.id).js()?;
             node_value(s, n.page(), c)
         });
-        def.getter("previousSibling", |s, n| {
+        def.pure_getter_typed("previousSibling", lp_js::GetterResult::ObjectOrNull, |s, n| {
             let c = n.page().dom.borrow().prev_sibling(n.id).js()?;
             node_value(s, n.page(), c)
         });
-        def.getter("nextSibling", |s, n| {
+        def.pure_getter_typed("nextSibling", lp_js::GetterResult::ObjectOrNull, |s, n| {
             let c = n.page().dom.borrow().next_sibling(n.id).js()?;
             node_value(s, n.page(), c)
         });
-        def.getter("ownerDocument", |s, n| {
+        def.pure_getter_typed("ownerDocument", lp_js::GetterResult::ObjectOrNull, |s, n| {
             let d = n.page().dom.borrow().owner_document(n.id).js()?;
             node_value(s, n.page(), d)
         });
-        def.getter("isConnected", |s, n| Ok(s.boolean(n.page().dom.borrow().is_connected(n.id).js()?)));
+        def.pure_getter_typed("isConnected", lp_js::GetterResult::Boolean, |s, n| {
+            Ok(s.boolean(n.page().dom.borrow().is_connected(n.id).js()?))
+        });
         def.getter("baseURI", |s, n| {
             let dom = n.page().dom.borrow();
             let doc = dom.node_document(n.id).js()?;
@@ -340,20 +409,20 @@ impl JsClass for Node {
             let c = n.page().dom.borrow_mut().clone_node(n.id, deep, None).js()?;
             Ok(wrap_node(s, n.page(), c)?.value())
         });
-        def.method("contains", 1, |s, n, a| {
+        def.pure_method("contains", 1, |s, n, a| {
             let Some(o) = opt_node_arg(s, a.get(0), "contains")? else { return Ok(s.boolean(false)) };
             Ok(s.boolean(n.page().dom.borrow().contains(n.id, o).js()?))
         });
-        def.method("compareDocumentPosition", 1, |s, n, a| {
+        def.pure_method("compareDocumentPosition", 1, |s, n, a| {
             a.require(1, "Node.compareDocumentPosition")?;
             let o = node_arg(s, a.get(0), "compareDocumentPosition")?;
             Ok(s.number(n.page().dom.borrow().compare_document_position(n.id, o).js()? as f64))
         });
-        def.method("isSameNode", 1, |s, n, a| {
+        def.pure_method("isSameNode", 1, |s, n, a| {
             let o = opt_node_arg(s, a.get(0), "isSameNode")?;
             Ok(s.boolean(o == Some(n.id)))
         });
-        def.method("isEqualNode", 1, |s, n, a| {
+        def.pure_method("isEqualNode", 1, |s, n, a| {
             let Some(o) = opt_node_arg(s, a.get(0), "isEqualNode")? else { return Ok(s.boolean(false)) };
             let dom = n.page().dom.borrow();
             // Structural equality via serialization of both subtrees.
@@ -401,16 +470,18 @@ fn blur_moved(page: &Rc<PageDom>, node: NodeId) {
 // ----- mixins -------------------------------------------------------------
 
 fn define_parent_node<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
-    def.getter("children", |s, n| Ok(collections::children(s, n.page(), n.id)?.value()));
-    def.getter("firstElementChild", |s, n| {
+    def.pure_getter_typed("children", lp_js::GetterResult::ObjectOrNull, |s, n| {
+        Ok(collections::children(s, n.page(), n.id)?.value())
+    });
+    def.pure_getter_typed("firstElementChild", lp_js::GetterResult::ObjectOrNull, |s, n| {
         let c = n.page().dom.borrow().element_children(n.id).js()?.next();
         node_value(s, n.page(), c)
     });
-    def.getter("lastElementChild", |s, n| {
+    def.pure_getter_typed("lastElementChild", lp_js::GetterResult::ObjectOrNull, |s, n| {
         let c = n.page().dom.borrow().element_children(n.id).js()?.last();
         node_value(s, n.page(), c)
     });
-    def.getter("childElementCount", |s, n| {
+    def.pure_getter_typed("childElementCount", lp_js::GetterResult::Number, |s, n| {
         Ok(s.number(n.page().dom.borrow().element_children(n.id).js()?.count() as f64))
     });
     def.method("append", 0, |s, n, a| {
@@ -433,17 +504,15 @@ fn define_parent_node<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
         n.page().dom.borrow_mut().replace_all(n.id, c).js()?;
         Ok(s.undefined())
     });
-    def.method("querySelector", 1, |s, n, a| {
-        let sel = arg_string(&a, 0, "querySelector")?;
+    def.pure_method("querySelector", 1, |s, n, a| {
         let page = n.page();
-        let list = page.selectors.borrow_mut().get(&sel).js()?;
+        let list = arg_selector(&a, 0, "querySelector", page)?;
         let r = page.dom.borrow().query_first(n.id, &list).js()?;
         node_value(s, page, r)
     });
-    def.method("querySelectorAll", 1, |s, n, a| {
-        let sel = arg_string(&a, 0, "querySelectorAll")?;
+    def.pure_method("querySelectorAll", 1, |s, n, a| {
         let page = n.page();
-        let list = page.selectors.borrow_mut().get(&sel).js()?;
+        let list = arg_selector(&a, 0, "querySelectorAll", page)?;
         let r = page.dom.borrow().query_all(n.id, &list).js()?;
         Ok(collections::static_node_list(s, page, r)?.value())
     });
@@ -533,8 +602,12 @@ fn sibling_element(n: &NodeData, forward: bool) -> JsResult<Option<NodeId>> {
 }
 
 fn define_non_doctype_child<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
-    def.getter("previousElementSibling", |s, n| node_value(s, n.page(), sibling_element(n, false)?));
-    def.getter("nextElementSibling", |s, n| node_value(s, n.page(), sibling_element(n, true)?));
+    def.pure_getter_typed("previousElementSibling", lp_js::GetterResult::ObjectOrNull, |s, n| {
+        node_value(s, n.page(), sibling_element(n, false)?)
+    });
+    def.pure_getter_typed("nextElementSibling", lp_js::GetterResult::ObjectOrNull, |s, n| {
+        node_value(s, n.page(), sibling_element(n, true)?)
+    });
 }
 
 // ----- character data -----------------------------------------------------
@@ -705,8 +778,16 @@ pub fn wrap_new_node<'s, C: JsClass<Data = NodeData>>(
     new_target: Object<'s>,
 ) -> JsResult<Object<'s>> {
     page.dom.borrow_mut().add_ref(id).js()?;
-    let data = NodeData { target: EventTargetData { page: page.clone(), key: TargetKey::Node(id.index()) }, id };
-    s.wrap_new::<C>(data, new_target, Some(page.node_identity(id)))
+    let data = NodeData {
+        target: EventTargetData { page: page.clone(), key: TargetKey::Node(id.index()) },
+        id,
+        wrapper: std::cell::Cell::new(0),
+    };
+    let owned = s.owned_wrappers() && page.wrapper_slot_free(s.realm_id(), id.index());
+    let key = if owned { lp_js::IdentityKey::OWNED } else { page.node_identity(id) };
+    let wrapper = s.wrap_new::<C>(data, new_target, Some(key))?;
+    register_node_wrapper(s, page, id, wrapper, owned, false);
+    Ok(wrapper)
 }
 
 // ----- fragments ------------------------------------------------------------
@@ -723,7 +804,7 @@ impl JsClass for DocumentFragment {
             let id = page.dom.borrow_mut().create_fragment(page.document()).js()?;
             wrap_new_node::<DocumentFragment>(s, &page, id, nt)
         });
-        def.method("getElementById", 1, |s, n, a| {
+        def.pure_method("getElementById", 1, |s, n, a| {
             let id = arg_string(&a, 0, "getElementById")?;
             let r = n.page().dom.borrow().get_element_by_id(n.id, &id).js()?;
             node_value(s, n.page(), r)
@@ -835,8 +916,12 @@ impl JsClass for Element {
         define_parent_node(def);
         define_child_node(def);
         define_non_doctype_child(def);
-        def.getter("tagName", |s, n| Ok(s.string(&n.page().dom.borrow().tag_name(n.id).js()?)));
-        def.getter("localName", |s, n| Ok(s.string(n.page().dom.borrow().element(n.id).js()?.local_name())));
+        def.pure_getter_typed("tagName", lp_js::GetterResult::String, |s, n| {
+            Ok(s.shared_string(&n.page().dom.borrow().tag_name_shared(n.id).js()?))
+        });
+        def.pure_getter_typed("localName", lp_js::GetterResult::String, |s, n| {
+            Ok(s.string(n.page().dom.borrow().element(n.id).js()?.local_name()))
+        });
         def.getter("namespaceURI", |s, n| {
             let dom = n.page().dom.borrow();
             let ns = dom.element(n.id).js()?.namespace();
@@ -876,10 +961,10 @@ impl JsClass for Element {
         def.getter("classList", |s, n| Ok(collections::token_list(s, n.page(), n.id, "class")?.value()));
         def.getter("part", |s, n| Ok(collections::token_list(s, n.page(), n.id, "part")?.value()));
         def.getter("attributes", |s, n| Ok(collections::named_node_map(s, n.page(), n.id)?.value()));
-        def.method("hasAttributes", 0, |s, n, _a| {
+        def.pure_method("hasAttributes", 0, |s, n, _a| {
             Ok(s.boolean(!n.page().dom.borrow().attributes(n.id).js()?.is_empty()))
         });
-        def.method("getAttributeNames", 0, |s, n, _a| {
+        def.pure_method("getAttributeNames", 0, |s, n, _a| {
             let names: Vec<String> =
                 n.page().dom.borrow().attributes(n.id).js()?.iter().map(|a| a.qualified_name()).collect();
             let mut vals = lp_js::RootedVec::new();
@@ -888,10 +973,11 @@ impl JsClass for Element {
             }
             Ok(s.array(&vals.iter(s).collect::<Vec<_>>())?.value())
         });
-        def.method("getAttribute", 1, |s, n, a| {
-            let name = arg_string(&a, 0, "Element.getAttribute")?;
-            let dom = n.page().dom.borrow();
-            Ok(dom.get_attribute(n.id, &name).js()?.map_or(s.null(), |v| s.string(v)))
+        def.pure_method("getAttribute", 1, |s, n, a| {
+            crate::util::with_arg_str(&a, 0, "Element.getAttribute", |name| {
+                let dom = n.page().dom.borrow();
+                Ok(dom.get_attribute(n.id, name).js()?.map_or(s.null(), |v| s.string(v)))
+            })
         });
         def.method("getAttributeNS", 2, |s, n, a| {
             a.require(2, "Element.getAttributeNS")?;
@@ -935,9 +1021,10 @@ impl JsClass for Element {
             n.page().dom.borrow_mut().remove_attribute_ns(n.id, ns.as_deref(), &local).js()?;
             Ok(s.undefined())
         });
-        def.method("hasAttribute", 1, |s, n, a| {
-            let name = arg_string(&a, 0, "Element.hasAttribute")?;
-            Ok(s.boolean(n.page().dom.borrow().has_attribute(n.id, &name).js()?))
+        def.pure_method("hasAttribute", 1, |s, n, a| {
+            crate::util::with_arg_str(&a, 0, "Element.hasAttribute", |name| {
+                Ok(s.boolean(n.page().dom.borrow().has_attribute(n.id, name).js()?))
+            })
         });
         def.method("hasAttributeNS", 2, |s, n, a| {
             let ns = opt_dom_string(a.get(0))?;
@@ -951,12 +1038,11 @@ impl JsClass for Element {
             crate::input::blur_if_focus_disabled(n.page(), n.id, &name);
             Ok(s.boolean(present))
         });
-        def.method("matches", 1, element_matches);
+        def.pure_method("matches", 1, element_matches);
         def.method("webkitMatchesSelector", 1, element_matches);
-        def.method("closest", 1, |s, n, a| {
-            let sel = arg_string(&a, 0, "Element.closest")?;
+        def.pure_method("closest", 1, |s, n, a| {
             let page = n.page();
-            let list = page.selectors.borrow_mut().get(&sel).js()?;
+            let list = arg_selector(&a, 0, "Element.closest", page)?;
             let r = page.dom.borrow().element_closest(n.id, &list).js()?;
             node_value(s, page, r)
         });
@@ -1093,7 +1179,7 @@ impl JsClass for Element {
             let sr = n.page().dom.borrow_mut().attach_shadow_with(n.id, mode, flags).js()?;
             Ok(wrap_node(s, n.page(), sr)?.value())
         });
-        def.getter("shadowRoot", |s, n| {
+        def.pure_getter_typed("shadowRoot", lp_js::GetterResult::ObjectOrNull, |s, n| {
             let dom = n.page().dom.borrow();
             let sr = dom.shadow_root(n.id).js()?;
             let open = sr.is_some_and(|r| crate::html::shadow_mode(&dom, r) == "open");
@@ -1113,9 +1199,8 @@ fn assigned_slot<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
 }
 
 fn element_matches<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value<'s>> {
-    let sel = arg_string(&a, 0, "Element.matches")?;
     let page = n.page();
-    let list = page.selectors.borrow_mut().get(&sel).js()?;
+    let list = arg_selector(&a, 0, "Element.matches", page)?;
     Ok(s.boolean(page.dom.borrow().element_matches(n.id, &list).js()?))
 }
 
@@ -1289,7 +1374,7 @@ impl JsClass for Document {
         def.getter("location", |s, n| {
             Ok(if n.page().document() == n.id { s.global().get("location")? } else { s.null() })
         });
-        def.method("getElementById", 1, |s, n, a| {
+        def.pure_method("getElementById", 1, |s, n, a| {
             let id = arg_string(&a, 0, "getElementById")?;
             let r = n.page().dom.borrow().get_element_by_id(n.id, &id).js()?;
             node_value(s, n.page(), r)

@@ -1,5 +1,6 @@
-//! `JsString::new` converts large strings (e.g. classic script sources) to
-//! UTF-16 in one Rust allocation of exactly the final size, never regrown. This
+//! `JsString::new` converts large strings (e.g. classic script sources) in one
+//! Rust allocation of exactly the final size, never regrown: a NUL-terminated
+//! copy for ASCII (JSC keeps it as 8-bit characters), UTF-16 otherwise. This
 //! binary counts the Rust heap operations of the conversion on the test thread;
 //! JSC's own copy does not go through the Rust allocator.
 
@@ -62,8 +63,8 @@ fn large_strings_convert_without_regrowing_the_buffer() {
     // 3-byte UTF-8 scalars: one UTF-16 unit for every three bytes.
     let cjk = "漢字テキスト".repeat((3 << 20) / 18);
     for s in [&ascii, &mixed, &cjk] {
-        let exact = 2 * s.encode_utf16().count();
-        assert_eq!(heap_ops(s), (1, 0, exact), "one UTF-16 buffer of exactly the final size, never regrown");
+        let exact = if s.is_ascii() { s.len() + 1 } else { 2 * s.encode_utf16().count() };
+        assert_eq!(heap_ops(s), (1, 0, exact), "one buffer of exactly the final size, never regrown");
     }
     // Short NUL-free strings use the stack buffer path.
     assert_eq!(heap_ops("short"), (0, 0, 0));

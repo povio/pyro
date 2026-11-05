@@ -11,14 +11,28 @@ pub struct JsString(sys::JSStringRef);
 impl JsString {
     /// Copies `s` into a new JSC string.
     pub fn new(s: &str) -> JsString {
-        // Short NUL-free strings go through the UTF-8 C-string entry point using a
-        // stack buffer; everything else is transcoded to UTF-16 once.
+        // NUL-free strings go through the UTF-8 C-string entry point: short ones
+        // from a stack buffer, ASCII ones of any length from a heap copy. JSC
+        // keeps an all-ASCII UTF-8 string as 8-bit characters, half the memory
+        // of the UTF-16 form and faster to lex, which matters for script
+        // sources (a bundle is megabytes). Everything else is transcoded to
+        // UTF-16 once.
         const STACK: usize = 128;
-        if s.len() < STACK && !s.as_bytes().contains(&0) {
-            let mut buf = [0u8; STACK];
-            buf[..s.len()].copy_from_slice(s.as_bytes());
-            // SAFETY: buf is NUL-terminated (zeroed tail) and valid UTF-8.
-            return JsString(unsafe { sys::JSStringCreateWithUTF8CString(buf.as_ptr().cast()) });
+        let bytes = s.as_bytes();
+        if !bytes.contains(&0) {
+            if s.len() < STACK {
+                let mut buf = [0u8; STACK];
+                buf[..s.len()].copy_from_slice(bytes);
+                // SAFETY: buf is NUL-terminated (zeroed tail) and valid UTF-8.
+                return JsString(unsafe { sys::JSStringCreateWithUTF8CString(buf.as_ptr().cast()) });
+            }
+            if bytes.is_ascii() {
+                let mut buf = Vec::with_capacity(s.len() + 1);
+                buf.extend_from_slice(bytes);
+                buf.push(0);
+                // SAFETY: buf is NUL-terminated and valid UTF-8.
+                return JsString(unsafe { sys::JSStringCreateWithUTF8CString(buf.as_ptr().cast()) });
+            }
         }
         Self::from_utf16(&utf16_units(s))
     }

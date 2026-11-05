@@ -500,6 +500,11 @@ pub mod spi {
     pub type JSShouldTerminateCallback = Option<unsafe extern "C" fn(ctx: JSContextRef, context: *mut c_void) -> bool>;
 
     pub type JSWeakCreateFn = unsafe extern "C" fn(group: JSContextGroupRef, object: JSObjectRef) -> JSWeakRef;
+    /// A weak handle that also keeps its object alive while `*keep_alive` is
+    /// nonzero (patched JSC, `JSWeakCreateKeptWhile`): the collector reads
+    /// the byte while marking; the byte must outlive the handle.
+    pub type JSWeakCreateKeptWhileFn =
+        unsafe extern "C" fn(group: JSContextGroupRef, object: JSObjectRef, keep_alive: *const u8) -> JSWeakRef;
     pub type JSWeakReleaseFn = unsafe extern "C" fn(group: JSContextGroupRef, weak: JSWeakRef);
     pub type JSWeakGetObjectFn = unsafe extern "C" fn(weak: JSWeakRef) -> JSObjectRef;
     pub type JSGlobalContextSetUnhandledRejectionCallbackFn =
@@ -540,11 +545,107 @@ pub mod spi {
         getter: JSObjectGetPropertyCallback,
     );
 
+    /// A custom accessor's getter (patched JSC, `JSObjectSetCustomAccessor`):
+    /// called by inline caches with the receiver as `this_value` (any value,
+    /// not only objects of the class) and the property name's unique string
+    /// pointer. Throws with `JSContextThrowException` and returns undefined.
+    pub type JSCustomGetterCallback =
+        unsafe extern "C" fn(ctx: JSContextRef, this_value: JSValueRef, uid: *const c_void) -> JSValueRef;
+    pub type JSCustomSetterCallback =
+        unsafe extern "C" fn(ctx: JSContextRef, this_value: JSValueRef, value: JSValueRef, uid: *const c_void) -> bool;
+    pub type JSObjectSetCustomAccessorFn = unsafe extern "C" fn(
+        ctx: JSContextRef,
+        object: JSObjectRef,
+        name: JSStringRef,
+        getter: Option<JSCustomGetterCallback>,
+        setter: Option<JSCustomSetterCallback>,
+        attributes: JSPropertyAttributes,
+    ) -> bool;
+    pub type JSContextThrowExceptionFn = unsafe extern "C" fn(ctx: JSContextRef, exception: JSValueRef);
+    /// A fast getter (patched JSC, `JSObjectSetFastGetter`): what the JITs
+    /// call in place of the custom getter once they have proved the receiver
+    /// is a C API wrapper object, with its private data and `context`.
+    pub type JSFastGetterCallback = unsafe extern "C" fn(
+        ctx: JSContextRef,
+        this_object: JSObjectRef,
+        private_data: *mut c_void,
+        context: *mut c_void,
+    ) -> JSValueRef;
+    pub const kJSFastGetterResultAny: c_int = 0;
+    pub const kJSFastGetterResultNumber: c_int = 1;
+    pub const kJSFastGetterResultBoolean: c_int = 2;
+    pub const kJSFastGetterResultString: c_int = 3;
+    pub const kJSFastGetterResultObjectOrNull: c_int = 4;
+    pub type JSObjectSetFastGetterFn = unsafe extern "C" fn(
+        ctx: JSContextRef,
+        object: JSObjectRef,
+        name: JSStringRef,
+        getter: Option<JSCustomGetterCallback>,
+        setter: Option<JSCustomSetterCallback>,
+        attributes: JSPropertyAttributes,
+        fast_getter: Option<JSFastGetterCallback>,
+        context: *mut c_void,
+        result_type: c_int,
+        reads_only: bool,
+    ) -> bool;
+    /// Indexed property callbacks of a class (`JSClassSetIndexedCallbacks`).
+    pub type JSObjectGetPropertyByIndexCallback = unsafe extern "C" fn(
+        ctx: JSContextRef,
+        object: JSObjectRef,
+        index: c_uint,
+        exception: *mut JSValueRef,
+    ) -> JSValueRef;
+    pub type JSObjectSetPropertyByIndexCallback = unsafe extern "C" fn(
+        ctx: JSContextRef,
+        object: JSObjectRef,
+        index: c_uint,
+        value: JSValueRef,
+        exception: *mut JSValueRef,
+    ) -> bool;
+    pub type JSClassSetIndexedCallbacksFn = unsafe extern "C" fn(
+        class: JSClassRef,
+        get: Option<JSObjectGetPropertyByIndexCallback>,
+        set: Option<JSObjectSetPropertyByIndexCallback>,
+    );
+    /// A function object with embedder data (`JSObjectMakeFunctionWithCallbackAndData`).
+    pub type JSObjectCallAsFunctionWithDataCallback = unsafe extern "C" fn(
+        ctx: JSContextRef,
+        function: JSObjectRef,
+        this: JSObjectRef,
+        argc: usize,
+        argv: *const JSValueRef,
+        data: *mut c_void,
+        exception: *mut JSValueRef,
+    ) -> JSValueRef;
+    pub type JSObjectMakeFunctionWithCallbackAndDataFn = unsafe extern "C" fn(
+        ctx: JSContextRef,
+        name: JSStringRef,
+        length: c_uint,
+        callback: Option<JSObjectCallAsFunctionWithDataCallback>,
+        data: *mut c_void,
+    ) -> JSObjectRef;
+    pub type JSObjectGetFunctionDataFn = unsafe extern "C" fn(object: JSObjectRef) -> *mut c_void;
+    pub type JSContextGroupReleaseFreeMemoryFn = unsafe extern "C" fn(group: JSContextGroupRef);
+    pub type JSContextGroupDeleteAllCodeFn = unsafe extern "C" fn(group: JSContextGroupRef);
+    /// Freed allocator pages are replaced by fresh mappings (they leave the
+    /// resident set at once) instead of being `madvise`d.
+    pub type JSSetDecommitReplacesPagesFn = unsafe extern "C" fn(enable: bool);
+    /// A string value's characters without a copy: `length` units, Latin-1
+    /// bytes when `is_8bit`, else UTF-16. Valid while the value is reachable
+    /// and no JavaScript runs; null for a non-string.
+    pub type JSValueGetStringCharactersFn = unsafe extern "C" fn(
+        ctx: JSContextRef,
+        value: JSValueRef,
+        length: *mut usize,
+        is_8bit: *mut bool,
+    ) -> *const c_void;
+
     /// Runtime-resolved SPI table. Each entry is `None` when the running
     /// JavaScriptCore does not export the symbol.
     #[derive(Debug, Clone, Copy)]
     pub struct Spi {
         pub weak_create: Option<JSWeakCreateFn>,
+        pub weak_create_kept_while: Option<JSWeakCreateKeptWhileFn>,
         pub weak_release: Option<JSWeakReleaseFn>,
         pub weak_get_object: Option<JSWeakGetObjectFn>,
         pub set_unhandled_rejection_callback: Option<JSGlobalContextSetUnhandledRejectionCallbackFn>,
@@ -564,6 +665,16 @@ pub mod spi {
         pub set_time_zone: Option<JSContextGroupSetTimeZoneFn>,
         pub set_wrapper_property_added: Option<JSSetWrapperPropertyAddedCallbackFn>,
         pub install_named_properties: Option<JSGlobalContextInstallNamedPropertiesFn>,
+        pub set_custom_accessor: Option<JSObjectSetCustomAccessorFn>,
+        pub set_fast_getter: Option<JSObjectSetFastGetterFn>,
+        pub throw_exception: Option<JSContextThrowExceptionFn>,
+        pub class_set_indexed_callbacks: Option<JSClassSetIndexedCallbacksFn>,
+        pub make_function_with_data: Option<JSObjectMakeFunctionWithCallbackAndDataFn>,
+        pub get_function_data: Option<JSObjectGetFunctionDataFn>,
+        pub release_free_memory: Option<JSContextGroupReleaseFreeMemoryFn>,
+        pub delete_all_code: Option<JSContextGroupDeleteAllCodeFn>,
+        pub set_decommit_replaces_pages: Option<JSSetDecommitReplacesPagesFn>,
+        pub value_string_characters: Option<JSValueGetStringCharactersFn>,
     }
 
     impl Spi {
@@ -603,6 +714,7 @@ pub mod spi {
         static SPI: OnceLock<Spi> = OnceLock::new();
         SPI.get_or_init(|| Spi {
             weak_create: resolve!("JSWeakCreate"),
+            weak_create_kept_while: resolve!("JSWeakCreateKeptWhile"),
             weak_release: resolve!("JSWeakRelease"),
             weak_get_object: resolve!("JSWeakGetObject"),
             set_unhandled_rejection_callback: resolve!("JSGlobalContextSetUnhandledRejectionCallback"),
@@ -622,6 +734,16 @@ pub mod spi {
             set_time_zone: resolve!("JSContextGroupSetTimeZone"),
             set_wrapper_property_added: resolve!("JSSetWrapperPropertyAddedCallback"),
             install_named_properties: resolve!("JSGlobalContextInstallNamedProperties"),
+            set_custom_accessor: resolve!("JSObjectSetCustomAccessor"),
+            set_fast_getter: resolve!("JSObjectSetFastGetter"),
+            throw_exception: resolve!("JSContextThrowException"),
+            class_set_indexed_callbacks: resolve!("JSClassSetIndexedCallbacks"),
+            make_function_with_data: resolve!("JSObjectMakeFunctionWithCallbackAndData"),
+            get_function_data: resolve!("JSObjectGetFunctionData"),
+            release_free_memory: resolve!("JSContextGroupReleaseFreeMemory"),
+            delete_all_code: resolve!("JSContextGroupDeleteAllCode"),
+            set_decommit_replaces_pages: resolve!("JSSetDecommitReplacesPages"),
+            value_string_characters: resolve!("JSValueGetStringCharacters"),
         })
     }
 }
