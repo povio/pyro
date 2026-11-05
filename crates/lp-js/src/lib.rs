@@ -13,6 +13,7 @@ mod autorelease;
 mod class;
 mod engine;
 mod error;
+mod interned;
 mod persistent;
 mod realm;
 mod string;
@@ -26,6 +27,7 @@ pub use engine::{
     WrapperPropertyHook,
 };
 pub use error::{JsError, JsException, JsResult};
+pub use interned::InternedId;
 pub use persistent::{Persistent, RootedVec};
 pub use realm::{
     Deferred, IdentityKey, ModuleFetcher, ModuleRequest, NameUnits, NamedProperties, NativeCallbackHook, Realm,

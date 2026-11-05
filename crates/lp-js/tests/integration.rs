@@ -6,6 +6,7 @@ mod binding_shortcuts;
 mod callback_hook;
 mod callback_lock;
 mod class_lengths;
+mod interned_strings;
 mod lazy_interfaces;
 mod legacy_platform_object;
 mod redefined_accessor;
