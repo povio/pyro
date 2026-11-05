@@ -317,6 +317,15 @@ loaded went from 242 MB to 202 MB for about 5% more CPU on that SPA; small pages
 page with a large live set is the worst case measured: 18% more CPU, 39% lower peak. 0.5 is not worth it: on that page
 it costs 5.6x the CPU. A value set in the environment wins.
 
+It also defaults `JSC_smallHeapSize` to 4 MB. The C API makes its VM with JSC's small-heap setting, a collection
+after every megabyte allocated, and JSC lets the young generation reach 8 times that step while collections are
+frequent. A script that allocates steadily (Playwright's selector engine builds arrays of every element it visits)
+spent 20% of its time collecting; with 4 MB the engine's query takes 3.0 ms of browser CPU instead of 4.1 ms, which
+is what puts a Playwright locator level with Chrome. The speed follows the cap (8 MB: 3.6 to 4.1 ms, 16 MB: 3.6,
+32 MB: 3.0), so a smaller step with a larger multiplier buys nothing. The price is memory while script runs: a loaded
+mid-size SPA held 8 to 23 MB more `ps` RSS across runs, and the same as before once its page was closed.
+`JSC_smallHeapSize=1048576` in the environment restores the old trade.
+
 Patch `0009` keeps the JS lock held across C API callbacks, because a VM stays on one thread: stock JSC drops and
 retakes it around every callback. `JSC_dropLocksInAPICallbacks=true` restores the stock behavior.
 

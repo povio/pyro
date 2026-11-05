@@ -691,28 +691,21 @@ const WATCHDOG_INTERVAL_SECS: f64 = 0.05;
 /// live size before the next collection. 1 makes that about 2x, which lowers
 /// the peak on pages with a large heap for a few percent more CPU on them. See
 /// docs/ARCHITECTURE.md for the measured trade-off.
-/// Trades memory for script throughput; for a process that serves a test
-/// suite. Call before the first engine is created (JavaScriptCore reads its
-/// options once), after [`configure_process`].
 ///
-/// The C API makes its VM with JSC's small-heap setting: a collection after
-/// every megabyte allocated, each of which visits every pinned wrapper and
-/// weak handle. A script that allocates steadily (Playwright's selector
-/// engine builds arrays of every element it visits) spent 20% of its time
-/// there. 4 MB between collections takes 19% off such a query (8 MB only 2%
-/// more) and costs memory: a loaded mid-size SPA held 136 MB instead of
-/// 122 MB (`ps` RSS), which is why it is not the default. `JSC_smallHeapSize`
-/// in the environment wins.
-pub fn prefer_throughput() {
-    if std::env::var_os("JSC_smallHeapSize").is_none() {
-        std::env::set_var("JSC_smallHeapSize", "4194304");
-    }
-}
-
+/// `JSC_smallHeapSize=4194304`: the C API makes its VM with JSC's small-heap
+/// setting, a collection after every megabyte allocated. A script that
+/// allocates steadily (Playwright's selector engine builds arrays of every
+/// element it visits) spent 20% of its time collecting. 4 MB between
+/// collections takes 19% off such a query (8 MB only 2% more), which is the
+/// difference between trailing Chrome on a locator and matching it; it costs
+/// memory while script runs, about 14 MB of `ps` RSS on a loaded mid-size SPA.
+/// `JSC_smallHeapSize=1048576` in the environment restores the old trade.
 pub fn configure_process() {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {
-        for (name, value) in [("JSC_usePollingTraps", "true"), ("JSC_heapGrowthMaxIncrease", "1")] {
+        for (name, value) in
+            [("JSC_usePollingTraps", "true"), ("JSC_heapGrowthMaxIncrease", "1"), ("JSC_smallHeapSize", "4194304")]
+        {
             if std::env::var_os(name).is_none() {
                 std::env::set_var(name, value);
             }

@@ -68,3 +68,22 @@ fn heap_growth_default_yields_to_the_environment() {
     assert_eq!(growth(None), "heapGrowthMaxIncrease=1");
     assert_eq!(growth(Some("3")), "heapGrowthMaxIncrease=3");
 }
+
+/// `lp_js::configure_process` lets the heap grow 4 MB between collections
+/// (the C API's default is 1 MB), and a value the user set wins.
+#[test]
+fn young_generation_default_yields_to_the_environment() {
+    let size = |value: Option<&str>| {
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_lightningpanda"));
+        cmd.args(["eval", "-e", "1"]).env("JSC_dumpOptions", "2").env_remove("JSC_smallHeapSize");
+        if let Some(value) = value {
+            cmd.env("JSC_smallHeapSize", value);
+        }
+        let out = cmd.output().expect("run lightningpanda");
+        let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+        let option = text.split_whitespace().find(|word| word.starts_with("smallHeapSize="));
+        option.expect("option in the dump").to_owned()
+    };
+    assert_eq!(size(None), "smallHeapSize=4194304");
+    assert_eq!(size(Some("1048576")), "smallHeapSize=1048576");
+}
