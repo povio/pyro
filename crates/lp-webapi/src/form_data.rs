@@ -129,7 +129,12 @@ impl FormDataData {
 fn entry_value(s: &Scope<'_>, d: &FormDataData, value: Value<'_>, filename: Option<Value<'_>>) -> JsResult<Entry> {
     let blob = s.unwrap::<Blob>(value).map(|b| (b.bytes.clone(), b.mime.clone(), b.file.clone()));
     match blob {
-        None => Ok(Entry::Text(dom_string(value)?)),
+        None => {
+            if filename.is_some_and(|f| !f.is_undefined()) {
+                return Err(JsError::Type("parameter 2 is not of type 'Blob'.".into()));
+            }
+            Ok(Entry::Text(dom_string(value)?))
+        }
         Some((bytes, mime, file)) => {
             let filename = match filename.filter(|f| !f.is_undefined()) {
                 Some(f) => Some(dom_string(f)?),
@@ -342,6 +347,93 @@ pub(crate) fn from_urlencoded<'s>(s: &Scope<'s>, bytes: &[u8]) -> JsResult<Value
     let fd = s.wrap::<FormData>(data, Some(identity))?;
     s.set_hidden(fd, FILES, files.value())?;
     Ok(fd.value())
+}
+
+/// `Body.formData()` for a `multipart/form-data` body: each part is a text
+/// entry, or a File when it has a `filename`.
+pub(crate) fn from_multipart<'s>(s: &Scope<'s>, bytes: &[u8], boundary: &str) -> JsResult<Value<'s>> {
+    let page = crate::target::page_of(s)?;
+    let identity = page.event_identity(page.next_event_id());
+    let data = FormDataData::new(WrapperRef::new(s, identity));
+    let files = s.array(&[])?;
+    files.set_prototype(s.null());
+    let fd = s.wrap::<FormData>(data, Some(identity))?;
+    s.set_hidden(fd, FILES, files.value())?;
+    let d = s.unwrap::<FormData>(fd.value()).expect("fresh FormData");
+    let parts = parse_multipart(bytes, boundary)
+        .ok_or_else(|| JsError::Type("Failed to parse the multipart/form-data body".into()))?;
+    for part in parts {
+        let entry = match part.filename {
+            None => Entry::Text(String::from_utf8_lossy(&part.body).into_owned()),
+            Some(filename) => {
+                let file = s.wrap::<crate::file::File>(
+                    crate::file::BlobData {
+                        bytes: Bytes::from(part.body),
+                        mime: part.mime.unwrap_or_else(|| "text/plain".into()),
+                        file: Some((filename, crate::encoding::now_ms())),
+                    },
+                    None,
+                )?;
+                Entry::File(d.store(&files, file.value())?)
+            }
+        };
+        d.entries.borrow_mut().push((part.name, entry));
+    }
+    Ok(fd.value())
+}
+
+struct MultipartPart {
+    name: String,
+    filename: Option<String>,
+    mime: Option<String>,
+    body: Vec<u8>,
+}
+
+/// Splits a multipart/form-data body at `boundary`; `None` on malformed input.
+fn parse_multipart(bytes: &[u8], boundary: &str) -> Option<Vec<MultipartPart>> {
+    let delimiter = format!("--{boundary}").into_bytes();
+    let find = |hay: &[u8], needle: &[u8], from: usize| -> Option<usize> {
+        hay[from..].windows(needle.len()).position(|w| w == needle).map(|p| p + from)
+    };
+    let mut parts = Vec::new();
+    let mut pos = find(bytes, &delimiter, 0)? + delimiter.len();
+    loop {
+        if bytes[pos..].starts_with(b"--") {
+            return Some(parts);
+        }
+        // CRLF after the delimiter, then headers up to a blank line.
+        let line_end = find(bytes, b"\r\n", pos)?;
+        pos = line_end + 2;
+        let headers_end = find(bytes, b"\r\n\r\n", pos)?;
+        let headers = String::from_utf8_lossy(&bytes[pos..headers_end]).into_owned();
+        pos = headers_end + 4;
+        let mut terminator = b"\r\n".to_vec();
+        terminator.extend_from_slice(&delimiter);
+        let body_end = find(bytes, &terminator, pos)?;
+        let body = bytes[pos..body_end].to_vec();
+        pos = body_end + terminator.len();
+        let mut name = None;
+        let mut filename = None;
+        let mut mime = None;
+        for line in headers.split("\r\n") {
+            let Some((key, value)) = line.split_once(':') else { continue };
+            let value = value.trim();
+            if key.eq_ignore_ascii_case("content-disposition") {
+                for param in value.split(';').skip(1) {
+                    let Some((k, v)) = param.trim().split_once('=') else { continue };
+                    let v = v.trim().trim_matches('"').replace("%22", "\"").replace("%0D", "\r").replace("%0A", "\n");
+                    match k.trim() {
+                        "name" => name = Some(v),
+                        "filename" => filename = Some(v),
+                        _ => {}
+                    }
+                }
+            } else if key.eq_ignore_ascii_case("content-type") {
+                mime = Some(value.to_owned());
+            }
+        }
+        parts.push(MultipartPart { name: name?, filename, mime, body });
+    }
 }
 
 /// Installs `@@iterator` and `forEach` on `FormData.prototype`.

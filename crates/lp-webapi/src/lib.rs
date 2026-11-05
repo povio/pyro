@@ -49,6 +49,8 @@ mod popup;
 pub mod range;
 pub mod render_snapshot;
 pub mod resize_observer;
+pub mod request;
+pub mod observable;
 pub mod response;
 pub mod storage;
 mod streams;
@@ -127,6 +129,7 @@ pub fn register(engine: &lp_js::Engine) {
     engine.register::<url_search_params::URLSearchParams>();
     engine.register::<url_search_params::ParamsIterator>();
     engine.register::<response::Response>();
+    engine.register::<request::Request>();
     engine.register::<response::BodySource>();
     engine.register::<xhr::XMLHttpRequest>();
     engine.register::<xhr::XMLHttpRequestUpload>();
@@ -159,6 +162,21 @@ pub fn install(scope: &Scope<'_>, page: Rc<PageDom>) -> JsResult<()> {
     }
     let global = scope.global();
     global.set("CSS", window::css_namespace(scope)?)?;
+    // [Unscopable] members of ChildNode and ParentNode.
+    scope.eval(
+        r#"(() => {
+        const u = (proto, names) => { const o = Object.create(null); for (const n of names) o[n] = true;
+            Object.defineProperty(proto, Symbol.unscopables, { value: o, configurable: true }); };
+        const child = ['before', 'after', 'replaceWith', 'remove'], parent = ['prepend', 'append', 'replaceChildren'];
+        u(Element.prototype, [...child, ...parent]);
+        u(CharacterData.prototype, child);
+        u(DocumentType.prototype, child);
+        u(Document.prototype, parent);
+        u(DocumentFragment.prototype, parent);
+    })()"#,
+        Some("lightningpanda://internal/unscopables.js"),
+        1,
+    )?;
     Ok(())
 }
 

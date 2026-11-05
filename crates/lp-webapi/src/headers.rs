@@ -233,6 +233,11 @@ fn helper<'s>(s: &Scope<'s>, name: &str) -> JsResult<Value<'s>> {
     helpers.get(s).as_object().unwrap().get(name)
 }
 
+/// Whether (`name`, `value`) is a CORS-safelisted request header.
+pub(crate) fn cors_safelisted(name: &str, value: &str) -> bool {
+    lp_net::http::HeaderValue::from_str(value).is_ok_and(|v| lp_net::cors::is_safelisted_header(name, &v))
+}
+
 pub(crate) fn install(s: &Scope<'_>) -> JsResult<()> {
     let helpers = s.eval(
         r#"(() => {
