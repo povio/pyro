@@ -1183,6 +1183,10 @@ fn a_disposed_realms_global_constants_die_with_it() {
     for constant in [false, true] {
         let drops = Rc::new(Cell::new(0));
         let installed = global_holding_a_wrapper(&e, &drops, constant);
+        if constant && !installed {
+            // The system framework has no constant accessors: nothing new to check.
+            continue;
+        }
         overwrite_dead_stack();
         for _ in 0..6 {
             e.collect_garbage_now();
