@@ -2,10 +2,12 @@
 //! whole engine (and is re-signed on macOS), so one per file made `cargo test`
 //! mostly link time. Add new test files as modules here.
 
+mod document_root_element_js;
 mod dom_js;
 mod fetch_js;
 mod form_data_js;
 mod identity_js;
+mod media_source_js;
 mod storage_js;
 mod support;
 mod uievents_js;

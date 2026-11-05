@@ -6,7 +6,7 @@ use quick_xml::{Reader, XmlVersion};
 use rustc_hash::FxHashSet;
 
 use crate::dom::validate_name;
-use crate::node::{element_flags, DoctypeData, ElementData, PiData, NIL};
+use crate::node::{element_flags, DoctypeData, ElementData, FragmentData, PiData, NIL};
 use crate::{Attr, DocumentKind, Dom, NodeId, NodeKind, QualName};
 
 pub const MAX_INPUT_BYTES: usize = 8 * 1024 * 1024;
@@ -383,16 +383,31 @@ fn new_document(dom: &mut Dom, url: &str, content_type: &str) -> NodeId {
 
 fn attach(dom: &mut Dom, document: NodeId, nodes: Vec<Prepared>) {
     let owner = document.index();
-    let mut ids = Vec::with_capacity(nodes.len());
+    // Per prepared node: where its children are linked and which document
+    // owns them. The children of an XHTML `<template>` go into its template
+    // contents, a fragment in the inert document (HTML "parsing XHTML
+    // documents"); templates in other namespaces keep their children.
+    let mut targets: Vec<(u32, u32)> = Vec::with_capacity(nodes.len());
     for node in nodes {
-        // `<base>` elements make `document_base_url` look for one.
-        if let NodeKind::Element(e) = &node.kind {
-            dom.base_seen |= e.is_html() && &*e.name.local == "base";
-        }
-        let parent = node.parent.map_or(owner, |index| ids[index]);
-        let id = dom.alloc_raw(node.kind, owner);
+        let is_template = match &node.kind {
+            NodeKind::Element(e) if e.is_html() => {
+                // `<base>` elements make `document_base_url` look for one.
+                dom.base_seen |= &*e.name.local == "base";
+                &*e.name.local == "template"
+            }
+            _ => false,
+        };
+        let (parent, child_owner) = node.parent.map_or((owner, owner), |index| targets[index]);
+        let id = dom.alloc_raw(node.kind, child_owner);
         dom.link_raw(id, parent, NIL);
-        ids.push(id);
+        if is_template {
+            let inert = dom.inert_doc_for_pub(child_owner);
+            let frag = dom.alloc_raw(NodeKind::Fragment(FragmentData { host: id, shadow: None, flags: 0 }), inert);
+            dom.n_mut(id).element_mut().expect("template element").template_contents = frag;
+            targets.push((frag, inert));
+        } else {
+            targets.push((id, child_owner));
+        }
     }
 }
 

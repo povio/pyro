@@ -10,6 +10,7 @@ mod select_forms;
 mod stylo_select;
 mod tree;
 mod xml;
+mod xml_template;
 mod xpath;
 
 /// `autotests = false` means a file in tests/ that is neither a module here nor

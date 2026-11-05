@@ -1226,6 +1226,16 @@ impl JsClass for Document {
             let e = n.page().dom.borrow().document_element(n.id).js()?;
             node_value(s, n.page(), e)
         });
+        // SVG 2: the document element when it is an SVG `<svg>`, else null.
+        def.getter("rootElement", |s, n| {
+            let e = {
+                let dom = n.page().dom.borrow();
+                dom.document_element(n.id).js()?.filter(|&root| {
+                    dom.element(root).is_ok_and(|e| e.namespace() == &markup5ever::ns!(svg) && &*e.name.local == "svg")
+                })
+            };
+            node_value(s, n.page(), e)
+        });
         def.getter("doctype", |s, n| {
             let e = n.page().dom.borrow().doctype(n.id).js()?;
             node_value(s, n.page(), e)
