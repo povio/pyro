@@ -41,6 +41,10 @@ pub struct PageDom {
     after_task_stamp: Cell<Option<(u64, u64)>>,
     current_script: Cell<Option<NodeId>>,
     pub(crate) realms: RefCell<FxHashMap<RealmId, WeakRealm>>,
+    /// The main-world realm (`main_world_realm`): of `realms`, the earliest
+    /// without a world name, kept as realms register (`register_realm`) and
+    /// found again among them when it is gone.
+    main_world: RefCell<Option<WeakRealm>>,
     pub(crate) url_params_helpers: RefCell<FxHashMap<RealmId, Persistent>>,
     /// The custom element definitions of this page's realms (`crate::custom`).
     pub(crate) custom_elements: RefCell<crate::custom::Registry>,
@@ -450,6 +454,7 @@ impl PageDom {
             after_task_stamp: Cell::new(None),
             current_script: Cell::new(None),
             realms: RefCell::new(FxHashMap::default()),
+            main_world: RefCell::new(None),
             data_view_readers: RefCell::new(FxHashMap::default()),
             header_helpers: RefCell::new(FxHashMap::default()),
             url_params_helpers: RefCell::new(FxHashMap::default()),
@@ -615,6 +620,7 @@ impl PageDom {
         crate::resize_observer::dispose(self);
         crate::worker::dispose(self);
         self.realms.borrow_mut().clear();
+        drop(self.main_world.take());
         // Drop roots and embedder hooks outside RefCell borrows: destructors
         // can release wrappers or other resources owned by this page.
         drop(self.hooks.take());
@@ -993,7 +999,8 @@ impl PageDom {
     }
 
     pub(crate) fn is_window_key(&self, key: TargetKey) -> bool {
-        self.window_keys.borrow().iter().any(|(_, k)| *k == key)
+        // A node's key is never a window's.
+        matches!(key, TargetKey::Other(_)) && self.window_keys.borrow().iter().any(|(_, k)| *k == key)
     }
 
     pub(crate) fn node_identity(&self, id: NodeId) -> IdentityKey {
@@ -1137,10 +1144,48 @@ impl PageDom {
     /// The page's main-world realm: the earliest live realm without a world
     /// name (isolated worlds are named).
     pub fn main_world_realm(&self) -> Option<lp_js::Realm> {
-        let realms = self.realms.borrow();
-        let mut live: Vec<_> = realms.iter().filter_map(|(id, r)| Some((id.0, r.upgrade()?))).collect();
-        live.retain(|(_, r)| !r.is_disposed() && r.name().is_empty());
-        live.into_iter().min_by_key(|(id, _)| *id).map(|(_, r)| r)
+        if let Some(realm) = self.main_world.borrow().as_ref().and_then(|w| w.upgrade()) {
+            return Some(realm);
+        }
+        let found = {
+            let realms = self.realms.borrow();
+            realms
+                .iter()
+                .filter_map(|(id, r)| Some((id.0, r.upgrade()?)))
+                .filter(|(_, r)| r.name().is_empty())
+                .min_by_key(|(id, _)| *id)
+                .map(|(_, r)| r)
+        };
+        *self.main_world.borrow_mut() = found.as_ref().map(|r| r.downgrade());
+        found
+    }
+
+    /// Records `realm` as one of this page's (bindings installed, or a
+    /// listener registered from it).
+    pub(crate) fn register_realm(&self, realm: &lp_js::Realm) {
+        if self.realms.borrow().contains_key(&realm.id()) {
+            return;
+        }
+        self.realms.borrow_mut().insert(realm.id(), realm.downgrade());
+        if realm.name().is_empty() && !realm.is_disposed() {
+            let mut main = self.main_world.borrow_mut();
+            // A live main world stays unless this realm is earlier; without
+            // one, `main_world_realm` looks among all of them again.
+            *main = match main.as_ref().and_then(|w| w.upgrade()) {
+                Some(m) if m.id().0 < realm.id().0 => Some(m.downgrade()),
+                Some(_) => Some(realm.downgrade()),
+                None => None,
+            };
+        }
+    }
+
+    /// Forgets `realm` (disposed).
+    pub(crate) fn unregister_realm(&self, realm: RealmId) {
+        self.realms.borrow_mut().remove(&realm);
+        let mut main = self.main_world.borrow_mut();
+        if main.as_ref().and_then(|w| w.upgrade()).is_none_or(|m| m.id() == realm) {
+            *main = None;
+        }
     }
 
     pub(crate) fn post_task(&self, task: Box<dyn FnOnce()>) {

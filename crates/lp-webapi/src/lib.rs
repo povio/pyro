@@ -146,7 +146,7 @@ pub fn install(scope: &Scope<'_>, page: Rc<PageDom>) -> JsResult<()> {
         return Err(lp_js::JsError::ContextDestroyed);
     }
     let realm = scope.realm();
-    page.realms.borrow_mut().insert(realm.id(), realm.downgrade());
+    page.register_realm(&realm);
     // Document named properties (`document.formName`): the engine drops its
     // caches of a name when an element that may be named it appears.
     let names = scope.impure_names();
@@ -163,14 +163,14 @@ pub fn install(scope: &Scope<'_>, page: Rc<PageDom>) -> JsResult<()> {
     form_data::install(scope)?;
     fetch::install(scope)?;
     structured_clone::install(scope, &page)?;
-    if let Some(define) = scope.global().get("Object")?.as_object().map(|o| o.get("defineProperty")).transpose()? {
+    if let Some(define) = scope.global().get_atom("Object")?.as_object().map(|o| o.get_atom("defineProperty")).transpose()? {
         page.define_properties.borrow_mut().insert(scope.realm_id(), lp_js::Persistent::new(scope, define));
     }
     if page.max_touch_points() > 0 {
         handlers::define_touch_handlers(scope)?;
     }
     let global = scope.global();
-    global.set("CSS", window::css_namespace(scope)?)?;
+    global.set_atom("CSS", window::css_namespace(scope)?)?;
     // [Unscopable] members of ChildNode and ParentNode.
     scope.eval(
         r#"(() => {
