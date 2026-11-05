@@ -9,6 +9,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use lp_js::{JsError, JsException, JsType, Persistent, Scope, Value};
+use serde_json::value::RawValue;
 use serde_json::Value as Json;
 
 use crate::msg::{CdpError, CdpResult};
@@ -321,14 +322,19 @@ pub(crate) fn argument<'s>(
     })
 }
 
-fn json_value<'s>(scope: &Scope<'s>, json: &Json) -> CdpResult<Value<'s>> {
-    Ok(match json {
-        Json::Null => scope.null(),
-        Json::Bool(b) => scope.boolean(*b),
-        Json::Number(n) => scope.number(n.as_f64().unwrap_or(f64::NAN)),
-        Json::String(s) => scope.string(s),
-        other => scope
-            .parse_json(&other.to_string())
-            .ok_or_else(|| CdpError::invalid_params("Couldn't parse value object in call argument"))?,
+/// The engine value of a JSON argument. Scalars are converted natively;
+/// objects and arrays go to the engine's `JSON.parse` as sent, so no value
+/// tree is built and key order is kept (as in Chrome).
+fn json_value<'s>(scope: &Scope<'s>, json: &RawValue) -> CdpResult<Value<'s>> {
+    let invalid = || CdpError::invalid_params("Couldn't parse value object in call argument");
+    let text = json.get();
+    Ok(match text.as_bytes().first() {
+        Some(b'n') => scope.null(),
+        Some(b't') => scope.boolean(true),
+        Some(b'f') => scope.boolean(false),
+        // The parser that validated the message, so numbers round the same.
+        Some(b'-' | b'0'..=b'9') => scope.number(serde_json::from_str::<f64>(text).map_err(|_| invalid())?),
+        Some(b'"') => scope.string(&serde_json::from_str::<std::borrow::Cow<'_, str>>(text).map_err(|_| invalid())?),
+        _ => scope.parse_json(text).ok_or_else(invalid)?,
     })
 }

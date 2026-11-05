@@ -12,6 +12,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use serde::{Deserialize, Serialize};
+use serde_json::value::RawValue;
 use serde_json::Value;
 
 use crate::msg::{CdpError, CdpResult};
@@ -204,27 +205,30 @@ pub fn v8_style_description(name: &str, message: &str, frames: &[CallFrame]) -> 
 }
 
 /// An argument of `Runtime.callFunctionOn`.
-#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CallArgument {
-    /// `Some(Value::Null)` for an explicit `"value": null`, `None` when absent.
+    /// The JSON text of `value`, kept as sent: the engine parses it once
+    /// (`JSON.parse`), with no intermediate value tree. `Some("null")` for an
+    /// explicit `"value": null`, `None` when absent.
     #[serde(default, deserialize_with = "present")]
-    pub value: Option<Value>,
+    pub value: Option<Box<RawValue>>,
     #[serde(default)]
     pub unserializable_value: Option<String>,
     #[serde(default)]
     pub object_id: Option<String>,
 }
 
-fn present<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Value>, D::Error> {
-    Value::deserialize(d).map(Some)
+fn present<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Box<RawValue>>, D::Error> {
+    Box::<RawValue>::deserialize(d).map(Some)
 }
 
 /// Decoded argument, ready to convert into an engine value.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum Argument<'a> {
     Undefined,
-    Json(&'a Value),
+    /// JSON text (already validated by the message parser).
+    Json(&'a RawValue),
     Number(f64),
     BigInt(&'a str),
     Object(&'a str),
@@ -706,20 +710,21 @@ mod tests {
 
     #[test]
     fn decodes_call_arguments() {
-        let arg = |v: Value| serde_json::from_value::<CallArgument>(v).unwrap();
-        assert_eq!(arg(json!({})).decode().unwrap(), Argument::Undefined);
-        assert_eq!(
-            arg(json!({"value":null})).decode().unwrap(),
-            Argument::Json(&Value::Null),
-            "explicit null is not undefined"
-        );
-        let a = arg(json!({"value":{"a":1}}));
-        assert_eq!(a.decode().unwrap(), Argument::Json(&json!({"a":1})));
+        let arg = |v: &str| serde_json::from_str::<CallArgument>(v).unwrap();
+        let json = |a: Argument<'_>| match a {
+            Argument::Json(raw) => Some(raw.get().to_owned()),
+            _ => None,
+        };
+        assert!(matches!(arg("{}").decode().unwrap(), Argument::Undefined));
+        assert_eq!(json(arg("{\"value\":null}").decode().unwrap()).as_deref(), Some("null"), "explicit null");
+        let a = arg("{\"value\":{\"b\":1,\"a\":[2]}}");
+        assert_eq!(json(a.decode().unwrap()).as_deref(), Some("{\"b\":1,\"a\":[2]}"), "kept as sent");
         assert!(
-            matches!(arg(json!({"unserializableValue":"-0"})).decode().unwrap(), Argument::Number(n) if n == 0.0 && n.is_sign_negative())
+            matches!(arg("{\"unserializableValue\":\"-0\"}").decode().unwrap(), Argument::Number(n) if n == 0.0 && n.is_sign_negative())
         );
-        assert_eq!(arg(json!({"unserializableValue":"-12n"})).decode().unwrap(), Argument::BigInt("-12"));
-        assert_eq!(arg(json!({"objectId":"1.2"})).decode().unwrap(), Argument::Object("1.2"));
+        assert!(matches!(arg("{\"unserializableValue\":\"-12n\"}").decode().unwrap(), Argument::BigInt("-12")));
+        assert!(matches!(arg("{\"objectId\":\"1.2\"}").decode().unwrap(), Argument::Object("1.2")));
+        let arg = |v: Value| serde_json::from_value::<CallArgument>(v).unwrap();
         assert!(arg(json!({"unserializableValue":"1e3n"})).decode().is_err());
         assert!(arg(json!({"value":1,"objectId":"1.2"})).decode().is_err());
     }
