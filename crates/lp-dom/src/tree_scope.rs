@@ -108,7 +108,7 @@ impl Dom {
                         scope = self.root_idx(node);
                     }
                     if entering {
-                        self.id_added(scope, &id, cur);
+                        self.id_added(scope, &id, cur, Some(node));
                     } else {
                         self.id_removed(scope, &id, cur);
                     }
@@ -166,13 +166,27 @@ impl Dom {
         }
     }
 
-    fn id_added(&mut self, scope: u32, id: &Atom, el: u32) {
+    /// Element `el` with id `id` joined `scope`: as part of the subtree
+    /// `entering` (linked into the scope, its elements added in tree order),
+    /// or alone (`None`: its `id` was set).
+    fn id_added(&mut self, scope: u32, id: &Atom, el: u32, entering: Option<u32>) {
         let first = self.id_map(scope).and_then(|m| m.0.get(&**id)).map(|e| e.first.get());
-        let first = match first {
-            None => el,
-            Some(NIL) => NIL,
-            Some(f) if self.tree_order_before(el, f) => el,
-            Some(f) => f,
+        let first = match (first, entering) {
+            (None, _) => el,
+            (Some(NIL), _) => NIL,
+            // Added earlier in this pass, so before `el`: one climb from the
+            // first, not a walk of the siblings between them.
+            (Some(f), Some(sub)) if self.is_inclusive_ancestor(sub, f) => f,
+            // Outside the subtree: before or after all of it.
+            (Some(f), Some(sub)) => {
+                if self.tree_order_before(sub, f) {
+                    el
+                } else {
+                    f
+                }
+            }
+            (Some(f), None) if self.tree_order_before(el, f) => el,
+            (Some(f), None) => f,
         };
         let entry =
             self.id_map_mut(scope).0.entry(IdKey(id.clone())).or_insert(IdEntry { first: Cell::new(el), count: 0 });
@@ -208,7 +222,7 @@ impl Dom {
             self.id_removed(scope, &old, i);
         }
         if let Some(new) = new.filter(|a| !a.is_empty()) {
-            self.id_added(scope, &new, i);
+            self.id_added(scope, &new, i, None);
         }
     }
 

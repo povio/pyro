@@ -1392,38 +1392,58 @@ impl Dom {
         }
     }
 
-    /// True if `x` precedes `y` in tree order (same tree assumed).
+    /// True if `x` precedes `y` in tree order, or is `y` (same tree assumed;
+    /// false for nodes of different trees). Climbs to the children of the
+    /// common ancestor without allocating, then walks their siblings both
+    /// ways from `x`'s side, so the walk stops at whichever of `y`'s side or
+    /// a list end comes first.
     pub(crate) fn tree_order_before(&self, x: u32, y: u32) -> bool {
-        let path = |mut n: u32| {
-            let mut v = Vec::with_capacity(16);
+        let depth = |mut n: u32| {
+            let mut d = 0usize;
             while n != NIL {
-                v.push(n);
+                d += 1;
                 n = self.n(n).parent;
             }
-            v.reverse();
-            v
+            d
         };
-        let px = path(x);
-        let py = path(y);
-        let mut k = 0;
-        while k < px.len() && k < py.len() && px[k] == py[k] {
-            k += 1;
+        let (dx, dy) = (depth(x), depth(y));
+        let (mut a, mut b) = (x, y);
+        for _ in dy..dx {
+            a = self.n(a).parent;
         }
-        if k == px.len() {
-            return true; // x is ancestor of y
+        for _ in dx..dy {
+            b = self.n(b).parent;
         }
-        if k == py.len() {
-            return false;
+        if a == b {
+            // One is an inclusive ancestor of the other.
+            return dx <= dy;
         }
-        // Siblings px[k] and py[k]: walk forward from px[k].
-        let mut c = self.n(px[k]).next;
-        while c != NIL {
-            if c == py[k] {
+        loop {
+            let (pa, pb) = (self.n(a).parent, self.n(b).parent);
+            if pa == pb {
+                break;
+            }
+            a = pa;
+            b = pb;
+        }
+        if self.n(a).parent == NIL {
+            return false; // different trees
+        }
+        // Siblings `a` and `b`.
+        let (mut fwd, mut back) = (self.n(a).next, self.n(a).prev);
+        loop {
+            if fwd == b {
                 return true;
             }
-            c = self.n(c).next;
+            if back == b || fwd == NIL {
+                return false;
+            }
+            if back == NIL {
+                return true;
+            }
+            fwd = self.n(fwd).next;
+            back = self.n(back).prev;
         }
-        false
     }
 
     // ----- tree mutation -----------------------------------------------

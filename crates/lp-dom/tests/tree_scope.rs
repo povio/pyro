@@ -172,3 +172,74 @@ fn the_base_url_changes_with_base_elements_and_their_href() {
     assert_eq!(base_url(&dom), "http://elsewhere/b/");
     verify(&dom);
 }
+
+#[test]
+fn many_duplicate_ids_enter_in_one_pass_and_keep_the_first() {
+    let (dom, d) = doc("http://test/", "<!doctype html><body><p id=late></p></body>");
+    let mut dom = dom.borrow_mut();
+    let body = dom.body(d).unwrap().unwrap();
+    let p = dom.get_element_by_id(d, "late").unwrap().unwrap();
+    // A detached list of rows sharing one id, connected by one insert.
+    let ul = dom.create_element(d, "ul").unwrap();
+    let mut rows = Vec::new();
+    for _ in 0..2000 {
+        let li = dom.create_element(d, "li").unwrap();
+        dom.set_attribute(li, "id", "row").unwrap();
+        dom.append_child(ul, li).unwrap();
+        rows.push(li);
+    }
+    dom.set_attribute(rows[1500], "id", "late").unwrap();
+    // Before an existing `late`: the subtree's one becomes the first.
+    dom.insert_before(body, ul, Some(p)).unwrap();
+    assert_eq!(dom.get_element_by_id(d, "row").unwrap(), Some(rows[0]));
+    assert_eq!(dom.get_element_by_id(d, "late").unwrap(), Some(rows[1500]));
+    verify(&dom);
+    // Into the middle, after the first: the first stays.
+    let mid = dom.create_element(d, "li").unwrap();
+    dom.set_attribute(mid, "id", "row").unwrap();
+    dom.insert_before(ul, mid, Some(rows[1000])).unwrap();
+    assert_eq!(dom.get_element_by_id(d, "row").unwrap(), Some(rows[0]));
+    // Before the first: it becomes the first.
+    let head = dom.create_element(d, "li").unwrap();
+    dom.set_attribute(head, "id", "row").unwrap();
+    dom.insert_before(ul, head, Some(rows[0])).unwrap();
+    assert_eq!(dom.get_element_by_id(d, "row").unwrap(), Some(head));
+    verify(&dom);
+    // innerHTML of a connected element: the same rows, parsed.
+    let html = format!("<li id=late></li>{}", "<li id=row></li>".repeat(2000));
+    lp_dom::parse::set_inner_html(&mut dom, ul, &html).unwrap();
+    let first = dom.first_child(ul).unwrap().unwrap();
+    assert_eq!(dom.get_element_by_id(d, "late").unwrap(), Some(first));
+    assert_eq!(dom.get_element_by_id(d, "row").unwrap(), dom.next_sibling(first).unwrap());
+    verify(&dom);
+    // innerHTML of a detached element: its ids are nowhere indexed.
+    let detached = dom.create_element(d, "div").unwrap();
+    lp_dom::parse::set_inner_html(&mut dom, detached, "<i id=row></i><template><b id=row></b></template>").unwrap();
+    assert!(!dom.is_connected(dom.first_child(detached).unwrap().unwrap()).unwrap());
+    assert_eq!(dom.get_element_by_id(d, "row").unwrap(), dom.next_sibling(first).unwrap());
+    verify(&dom);
+}
+
+#[test]
+fn tree_order_matches_a_preorder_index() {
+    let (dom, d) = doc(
+        "http://test/",
+        "<!doctype html><body><div><a></a><b><i></i><u></u></b><s></s></div><p><q></q></p><em></em></body>",
+    );
+    let dom = dom.borrow();
+    let mut order = Vec::new();
+    let mut stack = vec![d];
+    while let Some(n) = stack.pop() {
+        order.push(n);
+        let kids: Vec<_> = dom.children(n).unwrap().collect();
+        stack.extend(kids.into_iter().rev());
+    }
+    for (i, &a) in order.iter().enumerate() {
+        for (j, &b) in order.iter().enumerate() {
+            if i != j {
+                let following = dom.compare_document_position(a, b).unwrap() & 0x04 != 0;
+                assert_eq!(following, i < j, "{i} vs {j}");
+            }
+        }
+    }
+}
