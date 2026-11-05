@@ -380,7 +380,10 @@ fn derives(name: &QualName) -> bool {
 }
 
 fn parse_classes(value: &str) -> Box<[Atom]> {
-    value.split_ascii_whitespace().map(Atom::from).collect()
+    // Sized once: boxing a collected `Vec` reallocates it to its length.
+    let mut classes = Vec::with_capacity(value.split_ascii_whitespace().count());
+    classes.extend(value.split_ascii_whitespace().map(Atom::from));
+    classes.into_boxed_slice()
 }
 
 #[derive(Debug)]
