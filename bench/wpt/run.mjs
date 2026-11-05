@@ -160,14 +160,15 @@ async function worker() {
   while (next < tests.length) {
     const t = tests[next++];
     let r;
+    if (restarting) await restarting;
     const gen = generation;
     try { r = await guarded(slot, t); }
     catch (e) {
       r = { status: 'error', error: String(e.message ?? e).split('\n')[0].slice(0, 200) };
       await resetSlot(slot);
       if (child.exitCode != null || child.signalCode) { restarts++; await restartBrowser(); }
-      // The browser was replaced under this page (another slot's page hung it): run the page once more.
-      if (gen !== generation && !t.retried) { t.retried = true; tests.push(t); continue; }
+      // The browser was replaced under this page (another slot's page hung it): run the page again.
+      if ((gen !== generation || /ECONNREFUSED|has been closed/.test(r.error)) && (t.retried ?? 0) < 3) { t.retried = (t.retried ?? 0) + 1; tests.push(t); continue; }
     }
     if (r.status === 'hang') { slot.browser = slot.ctx = slot.page = null; restarts++; await restartBrowser(gen); }
     if (r.status === 'timeout') await resetSlot(slot);
