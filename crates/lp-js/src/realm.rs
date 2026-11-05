@@ -1266,6 +1266,29 @@ impl<'s> Scope<'s> {
         self.realm.global_payload.get()
     }
 
+    /// Makes `name` a constant attribute of the realm's global: a
+    /// non-configurable, read-only accessor that yields `value` (a WebIDL
+    /// `[LegacyUnforgeable] readonly attribute` whose value never changes for
+    /// the global, a window's `document`). Reads make no callback, and the
+    /// optimizing JIT compiles a global variable read of it to the constant.
+    /// Replaces a configurable property of that name (a copied interface
+    /// member). Set once: false, and the property unchanged, when it is
+    /// already non-configurable or the JavaScriptCore lacks the entry point
+    /// (system framework).
+    pub fn define_global_constant(&self, name: &str, value: Value<'_>) -> bool {
+        let (Some(set), target) = (sys::spi::get().set_constant_accessor, self.realm.global_target.get()) else {
+            return false;
+        };
+        if target.is_null() {
+            return false;
+        }
+        let n = JsString::new(name);
+        // SAFETY: the live global behind this realm's proxy; `value` is a live
+        // value of this engine's VM (a scope's value), kept alive by the
+        // property from now on.
+        unsafe { set(self.ctx, target, n.as_raw(), value.raw, None, sys::kJSPropertyAttributeNone) }
+    }
+
     /// Whether `obj` is the realm's global: its proxy (what script sees) or
     /// the object behind it (what a global variable's getter receives).
     pub(crate) fn is_global_object(&self, obj: sys::JSObjectRef) -> bool {

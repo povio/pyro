@@ -1136,3 +1136,58 @@ fn global_receiver_fallback_only_for_unbound_receivers() {
     // Without a fallback, unbound receivers still throw.
     assert_eq!(eval_str(&r, "try { const p = other.ping; p() } catch (e) { e.message }"), "Illegal invocation");
 }
+
+/// A global's value (a data property, or a constant attribute) as the only
+/// reference to a wrapper; returns whether the constant was installed.
+#[inline(never)]
+fn global_holding_a_wrapper(e: &Engine, drops: &Rc<Cell<u32>>, constant: bool) -> bool {
+    let realm = e.create_realm(RealmOptions::default()).unwrap();
+    let installed = {
+        let s = realm.scope().unwrap();
+        let o = s.wrap::<Node>(node(1, drops), None).unwrap();
+        let installed = constant && s.define_global_constant("held", o.value());
+        if !installed {
+            s.global().set("held", o.value()).unwrap();
+        }
+        installed
+    };
+    assert_eq!(eval_str(&realm, "held.nodeId"), "1");
+    if installed {
+        // A non-configurable accessor that only its realm's global answers.
+        assert_eq!(
+            eval_str(&realm, "const d = Object.getOwnPropertyDescriptor(globalThis, 'held'); [typeof d.get, d.set, d.configurable, d.get.call(globalThis) === held, delete globalThis.held].join()"),
+            "function,,false,true,false"
+        );
+        assert_eq!(eval_str(&realm, "try { d.get.call({}) } catch (e) { e.constructor.name }"), "TypeError");
+        let s = realm.scope().unwrap();
+        let other = s.object();
+        assert!(!s.define_global_constant("held", other.value()), "set once");
+    }
+    realm.dispose();
+    installed
+}
+
+#[inline(never)]
+fn overwrite_dead_stack() -> u64 {
+    let mut junk = [0u64; 16 * 1024];
+    for (i, slot) in junk.iter_mut().enumerate() {
+        *slot = std::hint::black_box(i as u64);
+    }
+    std::hint::black_box(junk.iter().sum())
+}
+
+#[test]
+fn a_disposed_realms_global_constants_die_with_it() {
+    let e = engine();
+    e.register::<Element>();
+    for constant in [false, true] {
+        let drops = Rc::new(Cell::new(0));
+        let installed = global_holding_a_wrapper(&e, &drops, constant);
+        overwrite_dead_stack();
+        for _ in 0..6 {
+            e.collect_garbage_now();
+            e.drain_finalized();
+        }
+        assert_eq!(drops.get(), 1, "constant {constant} (installed {installed}): the wrapper outlived its realm");
+    }
+}
