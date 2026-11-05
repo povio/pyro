@@ -329,13 +329,17 @@ impl RealmInner {
     }
 
     /// Entry `id` of interface list `list` (0 prototypes, 1 constructor
-    /// functions, 2 interface objects); an error once disposed.
+    /// functions, 2 interface objects); an error once disposed, and for a
+    /// prototype not made yet (`materialize`).
     fn interface_object<'s>(&self, scope: &Scope<'s>, list: usize, id: ClassId) -> JsResult<Value<'s>> {
         let lists = self.interfaces.borrow();
         let lists = lists.as_ref().ok_or(JsError::ContextDestroyed)?;
+        if id as usize >= self.populated.borrow().len() {
+            return Err(JsError::Type("class registered after this realm was created".into()));
+        }
         let v = lists[list].get(scope).as_object().expect("interface list").get_index(id)?;
         if v.is_undefined() {
-            return Err(JsError::Type("class registered after this realm was created".into()));
+            return Err(JsError::Type("interface prototype read before its class was populated".into()));
         }
         Ok(v)
     }
@@ -1656,13 +1660,14 @@ pub(crate) fn create(engine: &Rc<EngineInner>, options: RealmOptions) -> JsResul
     Ok(realm)
 }
 
-/// Creates every interface object and prototype of the realm, with their
-/// inheritance, eagerly. Prototype/static members are installed on first use
-/// of the class: a wrap of it or a subclass, or any property operation on its
-/// interface object (a Proxy over the constructor whose traps install the
-/// members and then forward). Interface objects stay data properties of the
-/// global, so descriptors and identities match eager installation. The global
-/// class chain is populated eagerly (its members are copied onto the global).
+/// Creates every interface object of the realm, with their inheritance.
+/// Interface prototype objects and the prototype/static members are made on
+/// first use of the class (`populate_class`): a wrap of it or a subclass, or
+/// any property operation on its interface object (a Proxy over the
+/// constructor whose traps populate and then forward). Interface objects stay
+/// data properties of the global, so descriptors and identities match eager
+/// installation. The global class chain is populated here (its members are
+/// copied onto the global).
 fn install_classes(scope: &Scope<'_>) -> JsResult<()> {
     let realm = scope.realm;
     let reg = realm.engine.classes.borrow();
@@ -2043,10 +2048,12 @@ fn install_members_raw(
         Ok(f)
     };
     let native = |name: &str, length: u32, call: class::MemberCall| native_pure(name, length, call, false);
+    let members = helper("members")?;
+    let mut batch = MemberBatch::new(ctx, &members, &proto);
     for (name, length, call, pure) in methods {
-        let f = native_pure(name, length, call, pure)?;
-        proto.set(name, f.value())?;
+        batch.push(name, native_pure(name, length, call, pure)?)?;
     }
+    batch.flush()?;
     let accessor = helper("accessor")?;
     let custom = sys::spi::get().set_custom_accessor;
     for (name, get, set, slot) in accessors {
@@ -2095,10 +2102,11 @@ fn install_members_raw(
         constant.call(None, &[target.value(), string(name), num(v)])?;
         constant.call(None, &[proto.value(), string(name), num(v)])?;
     }
+    let mut batch = MemberBatch::new(ctx, &members, &target);
     for (name, length, call) in statics {
-        let f = native(name, length, call)?;
-        target.set(name, f.value())?;
+        batch.push(name, native(name, length, call)?)?;
     }
+    batch.flush()?;
     if let Some(kind) = iterable {
         helper(kind)?.call(None, &[proto.value()])?;
     }
@@ -2109,13 +2117,62 @@ fn install_members_raw(
     Ok(())
 }
 
+/// Methods or statics of one population step, defined by the `members`
+/// helper as `members(target, name, function, name, function, ...)` rather
+/// than assigned (see there). The arguments wait in an array on this stack,
+/// which JavaScriptCore scans conservatively: it keeps each new function
+/// alive until the helper has defined it, without a protection per member.
+struct MemberBatch<'h> {
+    ctx: sys::JSContextRef,
+    members: &'h Object<'h>,
+    /// `[target, name, function, ...]`, `len` of them set.
+    args: [sys::JSValueRef; 1 + 2 * MEMBER_BATCH],
+    len: usize,
+}
+
+/// Members per call of the `members` helper (most classes have fewer).
+const MEMBER_BATCH: usize = 32;
+
+impl<'h> MemberBatch<'h> {
+    fn new(ctx: sys::JSContextRef, members: &'h Object<'h>, target: &Object<'_>) -> MemberBatch<'h> {
+        let mut args = [ptr::null(); 1 + 2 * MEMBER_BATCH];
+        args[0] = target.raw as sys::JSValueRef;
+        MemberBatch { ctx, members, args, len: 1 }
+    }
+
+    fn push(&mut self, name: &'static str, f: Object<'_>) -> JsResult<()> {
+        if self.len == self.args.len() {
+            self.flush()?;
+        }
+        // SAFETY: the live callback/scope context; the thread's string for
+        // the static name (`atom_raw`) outlives the call.
+        self.args[self.len] = unsafe { sys::JSValueMakeString(self.ctx, crate::string::atom_raw(name)) };
+        self.args[self.len + 1] = f.raw as sys::JSValueRef;
+        self.len += 2;
+        Ok(())
+    }
+
+    fn flush(&mut self) -> JsResult<()> {
+        if self.len == 1 {
+            return Ok(());
+        }
+        let _pool = crate::autorelease::Pool::new();
+        let mut exc = ptr::null();
+        // SAFETY: `args[..len]` are live values of `ctx` (see the type).
+        unsafe {
+            sys::JSObjectCallAsFunction(self.ctx, self.members.raw, ptr::null_mut(), self.len, self.args.as_ptr(), &mut exc)
+        };
+        self.len = 1;
+        check(self.ctx, exc)
+    }
+}
+
 /// Population of a disposed realm's interface (reachable from another realm):
 /// its state lives in the helper object `h` (`classProtos`, `classTargets`,
 /// `populated`, the last recorded at disposal), so the result is the same API
 /// eager installation exposed; calling native members then throws as before.
 fn populate_disposed(ctx: sys::JSContextRef, id: ClassId, h: Object<'_>) -> JsResult<()> {
     let engine = crate::engine::engine_for_ctx(ctx).ok_or(JsError::ContextDestroyed)?;
-    let protos = h.get("classProtos")?.as_object().ok_or(JsError::ContextDestroyed)?;
     let targets = h.get("classTargets")?.as_object().ok_or(JsError::ContextDestroyed)?;
     let populated = h.get("populated")?.as_object().ok_or(JsError::ContextDestroyed)?;
     let chain = {
@@ -2134,17 +2191,14 @@ fn populate_disposed(ctx: sys::JSContextRef, id: ClassId, h: Object<'_>) -> JsRe
     };
     let yes = unsafe { Value::from_raw(ctx, sys::JSValueMakeBoolean(ctx, true)) };
     let no = unsafe { Value::from_raw(ctx, sys::JSValueMakeBoolean(ctx, false)) };
+    let make = h.get("materialize")?.as_object().ok_or(JsError::ContextDestroyed)?;
     for c in chain {
-        // A prototype nothing reached before the realm closed is made now.
-        let proto = match protos.get_index(c)?.as_object() {
-            Some(p) => Some(p),
-            None => {
-                let make = h.get("materialize")?.as_object().ok_or(JsError::ContextDestroyed)?;
-                // SAFETY: a number in the live callback context.
-                let id = unsafe { Value::from_raw(ctx, sys::JSValueMakeNumber(ctx, f64::from(c))) };
-                make.call(None, &[id])?.as_object()
-            }
-        };
+        // A prototype nothing reached before the realm closed is made now,
+        // and one whose making failed part way completed (`materialize`
+        // repeats its steps): `classProtos` alone does not say it is whole.
+        // SAFETY: a number in the live callback context.
+        let id = unsafe { Value::from_raw(ctx, sys::JSValueMakeNumber(ctx, f64::from(c))) };
+        let proto = make.call(None, &[id])?.as_object();
         let (Some(proto), Some(target)) = (proto, targets.get_index(c)?.as_object()) else {
             return Err(JsError::ContextDestroyed);
         };

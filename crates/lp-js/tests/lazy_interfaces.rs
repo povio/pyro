@@ -426,3 +426,70 @@ fn population_after_page_changed_intrinsics_installs_the_eager_shape() {
     );
     assert_eq!(eval(&r, DUMP), eval(&clean, DUMP));
 }
+
+/// Population runs after page script, so nothing it does may reach code a
+/// page put on Array.prototype (indexed accessors over the helper's tables)
+/// or Object.prototype (accessors named like members, which an assignment
+/// would call; proxy traps the interface objects do not define).
+#[test]
+fn population_after_page_changed_prototypes_runs_no_page_code() {
+    let (e, r) = realm();
+    let clean = e.create_realm(RealmOptions::default()).unwrap();
+    eval(
+        &r,
+        "globalThis.seen = [];
+         const d = Object.defineProperty;
+         for (let i = 0; i < 2000; i++) d(Array.prototype, i, { configurable: true,
+           get() { seen.push('read ' + i); return function () { seen.push('called'); }; },
+           set(v) { seen.push('write ' + i); } });
+         for (const k of ['ping', 'twoArgs', 'midOnly', 'leafOnly', 'create']) d(Object.prototype, k, { configurable: true,
+           get() { return undefined; }, set(v) { seen.push('set ' + k); } });
+         Object.prototype.apply = function (t) { seen.push('apply ' + t.name); return 'hijacked'; };
+         Object.prototype.construct = function (t) { seen.push('construct ' + t.name); return {}; };
+         'ok'",
+    );
+    // First use of every interface happens here.
+    assert_eq!(
+        eval(&r, "const l = new LzLeaf(); [typeof l.leafOnly, typeof LzMid.prototype.midOnly, Object.getPrototypeOf(l) === LzLeaf.prototype].join()"),
+        "function,function,true"
+    );
+    {
+        let s = r.scope().unwrap();
+        let o = s.wrap::<Hidden>(Rc::new(Data { id: 1 }), None).unwrap();
+        s.global().set("hidden", o.value()).unwrap();
+    }
+    assert_eq!(eval(&r, "try { LzBase(); 'called' } catch (e) { e.constructor.name }"), "TypeError");
+    assert_eq!(eval(&r, "seen.join()"), "");
+    eval(
+        &r,
+        "for (let i = 0; i < 2000; i++) delete Array.prototype[i];
+         for (const k of ['ping', 'twoArgs', 'midOnly', 'leafOnly', 'create', 'apply', 'construct']) delete Object.prototype[k];
+         'ok'",
+    );
+    assert_eq!(eval(&r, "[hidden.hiddenOnly(), LzBase.create()].join()"), "1,static");
+    assert_eq!(eval(&r, DUMP), eval(&clean, DUMP));
+}
+
+/// A first use that fails part way (the stack runs out somewhere in the
+/// population, at a different point for each attempt here) is completed by
+/// the next use: no prototype is left without its constructor, its tag or a
+/// member.
+#[test]
+fn population_failing_part_way_is_completed_by_the_next_use() {
+    let (e, r) = realm();
+    let clean = e.create_realm(RealmOptions::default()).unwrap();
+    let outcome = eval(
+        &r,
+        "(() => {
+           const names = ['LzBase', 'LzMid', 'LzLeaf'];
+           let next = 0, failed = 0;
+           function touch() { if (next >= names.length) return; try { void globalThis[names[next]].prototype; next++; } catch (e) { failed++; } }
+           function probe(k) { try { Reflect.apply(touch, null, new Array(k).fill(0)); } catch (e) { failed++; } }
+           function deeper(n) { try { deeper(n + 1); } catch (e) {} if (next < names.length) for (let k = 0; k < 64; k++) probe(k); }
+           for (let round = 0; round < 50 && next < names.length; round++) deeper(0);
+           return next + ',' + (failed > 0);
+         })()",
+    );
+    assert_eq!(outcome, "3,true");
+    assert_eq!(eval(&r, DUMP), eval(&clean, DUMP));
+}

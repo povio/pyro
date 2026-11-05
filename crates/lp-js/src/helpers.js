@@ -284,7 +284,10 @@
   // object here instead of a closure per trap.
   let populateClass = null;
   const ensureClass = (id) => { if (!populated[id]) populateClass(id, H); };
+  // No prototype: a trap the handler does not define (`apply`, `construct`)
+  // must not be found on Object.prototype, where a page could have put one.
   const lazyTraps = {
+    __proto__: null,
     get(t, k, r) { ensureClass(this.id); return reflectGet(t, k, r); },
     set(t, k, v, r) { ensureClass(this.id); return reflectSet(t, k, v, r); },
     has(t, k) { ensureClass(this.id); return reflectHas(t, k); },
@@ -310,6 +313,7 @@
   const hiddenValue = { __proto__: null, value: undefined, writable: true, enumerable: false, configurable: true };
   const fixedValue = { __proto__: null, value: undefined, writable: false, enumerable: false, configurable: false };
   const tagValue = { __proto__: null, value: undefined, writable: false, enumerable: false, configurable: true };
+  const memberValue = { __proto__: null, value: undefined, writable: true, enumerable: true, configurable: true };
   const defineHidden = (o, k, value) => { hiddenValue.value = value; defineProperty(o, k, hiddenValue); hiddenValue.value = undefined; };
 
   // The realm's interface table (`installInterfaces`), for `materialize`.
@@ -362,6 +366,8 @@
         protos[i] = undefined;
         classProtos[i] = undefined;
         populated[i] = false;
+        hooks[i] = undefined;
+        factoryTargets[i] = undefined;
       }
       exposedValue.value = undefined;
       return interfaceLists;
@@ -371,15 +377,22 @@
     // exists): before that nothing can reach it, as every way there (an
     // instance, the interface object's traps) populates first. A realm
     // makes the few its page uses instead of all of them.
+    // Every step but the creation runs again when called again: a first use
+    // that failed part way (a stack overflow, a termination) is completed by
+    // the next one instead of leaving a prototype without its constructor or
+    // tag. Redefining a property with its own value is allowed, even for the
+    // non-configurable `prototype`. The native side calls this until it
+    // returned once (realm.rs `materialize`).
     materialize(id) {
-      const made = classProtos[id];
-      if (made !== undefined) return made;
       // Runs while page script may have changed Array.prototype: indexed
       // reads of own elements only (no destructuring, no iteration).
       const entry = interfaceSpec[id];
       const name = entry[0], parent = entry[1], callback = entry[4];
-      const proto = objectCreate(parent < 0 ? interfaceObjectProto : classProtos[parent]);
-      classProtos[id] = proto;
+      let proto = classProtos[id];
+      if (proto === undefined) {
+        proto = objectCreate(parent < 0 ? interfaceObjectProto : classProtos[parent]);
+        classProtos[id] = proto;
+      }
       interfaceLists[0][id] = proto;
       if (!callback) {
         fixedValue.value = proto;
@@ -409,6 +422,18 @@
       return P;
     },
     accessor: defineAccessor,
+    // Methods or statics of a population step, `list` as name, function,
+    // name, function, ... (realm.rs `MemberBatch`). Defined, not assigned:
+    // a page may have put an accessor of the same name on Object.prototype
+    // (or a parent interface object) before the interface's first use,
+    // which an assignment would call instead of creating the member.
+    members(target, ...list) {
+      for (let i = 0; i < list.length; i += 2) {
+        memberValue.value = list[i + 1];
+        defineProperty(target, list[i], memberValue);
+      }
+      memberValue.value = undefined;
+    },
     // WebIDL sequence<T> conversion (https://webidl.spec.whatwg.org/#es-sequence):
     // the iterator protocol of `v` itself (arrays included: an overridden
     // @@iterator or %ArrayIteratorPrototype%.next is honoured, holes read
