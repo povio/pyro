@@ -22,6 +22,7 @@ mod network_idle;
 mod popups;
 mod remote_ordering;
 mod runloop_idle_finalization;
+mod script_inserted;
 mod static_plaintext;
 mod storage_events;
 mod stylesheets;

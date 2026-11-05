@@ -427,6 +427,10 @@ impl Browser {
                 if preload_nodes.insert(event.node) {
                     self.preload_event(target, event.node);
                 }
+            } else if event.kind == lp_dom::script::ResourceKind::Script {
+                // Script-inserted (or `src`-changed) scripts: "already
+                // started" makes repeats of one element no-ops.
+                self.script_event(target, event.node);
             } else {
                 bindings.apply_style_event(&event);
             }
