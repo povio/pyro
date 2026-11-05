@@ -809,6 +809,21 @@ impl EngineHost {
         self.out.push(msg::event_frame(method, params, Some(session_id)));
     }
 
+    /// One event to several sessions: `params` is serialized once and its
+    /// JSON text copied into each session's frame.
+    pub(crate) fn event_to<T: serde::Serialize + ?Sized>(&self, method: &str, params: &T, sessions: &[String]) {
+        match sessions {
+            [] => {}
+            [one] => self.event(method, params, one),
+            many => {
+                let raw = serde_json::value::to_raw_value(params).expect("CDP params serialize");
+                for session_id in many {
+                    self.event(method, &*raw, session_id);
+                }
+            }
+        }
+    }
+
     /// Translates queued engine notifications into CDP events, in order.
     pub fn flush(&mut self) {
         self.flush_renders();

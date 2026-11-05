@@ -682,9 +682,8 @@ impl EngineHost {
     /// `Runtime.bindingCalled` to the page's sessions that added the binding.
     pub(super) fn on_binding_called(&mut self, page: PageKey, realm_id: RealmId, name: String, payload: String) {
         let params = json!({ "name": name, "payload": payload, "executionContextId": context_id(realm_id) });
-        for session_id in self.sessions_of(page, |s| s.bindings.contains(&name)) {
-            self.event("Runtime.bindingCalled", &params, &session_id);
-        }
+        let sessions = self.sessions_of(page, |s| s.bindings.contains(&name));
+        self.event_to("Runtime.bindingCalled", &params, &sessions);
     }
 
     pub(super) fn on_console(
