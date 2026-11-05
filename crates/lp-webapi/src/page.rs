@@ -45,6 +45,16 @@ pub struct PageDom {
     /// Wrappers kept alive because they hold listeners for a connected
     /// node (or an active non-node target): (realm, target) -> wrapper.
     pub(crate) pinned: RefCell<FxHashMap<(RealmId, TargetKey), Persistent>>,
+    /// The wrappers of this page's nodes, by node index: where a node keeps
+    /// its wrapper (`lp_js::WrapperRef`, raw), one per script world, for up
+    /// to two worlds (the page's and one isolated world; a third world's
+    /// wrappers go through the realm's identity map). Finding a node's
+    /// wrapper is a load from here, and how long it lives is its keep flag,
+    /// set while the node is in the active document: no identity map, no pin
+    /// map and no protected value per wrapper. An entry is removed when the
+    /// wrapper's payload is dropped (`NodeData::drop`), which holds a node
+    /// reference until then, so an index never names another node.
+    node_wrappers: RefCell<Vec<[(u32, usize); 2]>>,
     /// Node wrappers pinned since the last task because script added a property to them, to
     /// unpin if the node is not connected and to mark for re-pinning when it connects.
     pub(crate) new_property_pins: RefCell<Vec<(RealmId, NodeId)>>,
@@ -403,6 +413,7 @@ impl PageDom {
             header_helpers: RefCell::new(FxHashMap::default()),
             url_params_helpers: RefCell::new(FxHashMap::default()),
             pinned: RefCell::new(FxHashMap::default()),
+            node_wrappers: RefCell::new(Vec::new()),
             new_property_pins: RefCell::new(Vec::new()),
             window_keys: RefCell::new(Vec::new()),
             window_holders: RefCell::new(FxHashMap::default()),
@@ -552,6 +563,7 @@ impl PageDom {
         drop(self.hooks.take());
         drop(self.net.take());
         drop(self.pinned.take());
+        self.unkeep_all_nodes();
         drop(self.window_holders.take());
         drop(self.same_objects.take());
         drop(self.permission_watchers.take());
@@ -1095,7 +1107,7 @@ impl PageDom {
         self.sibling_realms(s).iter().find_map(|realm| {
             let scope = realm.scope().ok()?;
             let owner = crate::target::page_of(&scope).ok()?;
-            let wrapper = scope.lookup_identity(owner.node_identity(id))?;
+            let wrapper = owner.node_wrapper(&scope, id)?;
             lp_js::Persistent::new(&scope, wrapper.value()).get(s).as_object()
         })
     }
@@ -1243,7 +1255,137 @@ impl PageDom {
 
     /// Number of wrappers pinned for listeners (diagnostics/tests).
     pub fn pinned_count(&self) -> usize {
-        self.pinned.borrow().len()
+        // SAFETY: table entries are live wrapper references (see `node_wrappers`).
+        let kept = self
+            .node_wrappers
+            .borrow()
+            .iter()
+            .flatten()
+            .filter(|(_, raw)| unsafe { lp_js::WrapperRef::from_raw(*raw).is_some_and(|r| r.is_kept()) })
+            .count();
+        self.pinned.borrow().len() + kept
+    }
+
+    /// The reference this page holds for node `idx`'s wrapper in `realm`.
+    pub(crate) fn owned_ref(&self, realm: RealmId, idx: u32) -> Option<lp_js::WrapperRef> {
+        let table = self.node_wrappers.borrow();
+        let entry = table.get(idx as usize)?;
+        let raw = entry.iter().find(|(r, raw)| *r == realm.0 && *raw != 0)?.1;
+        // SAFETY: stored from `WrapperRef::to_raw`.
+        unsafe { lp_js::WrapperRef::from_raw(raw) }
+    }
+
+    /// The wrapper of `id` in `s`'s realm, if one is alive: from the node's
+    /// slot, or (a third world, the system JavaScriptCore) the identity map.
+    pub(crate) fn node_wrapper<'s>(&self, s: &lp_js::Scope<'s>, id: NodeId) -> Option<lp_js::Object<'s>> {
+        if let Some(r) = self.owned_ref(s.realm_id(), id.index()) {
+            // SAFETY: the entry is removed before the payload is freed.
+            return unsafe { s.wrapper(r) };
+        }
+        s.lookup_identity(self.node_identity(id))
+    }
+
+    /// Whether node `idx` can keep a wrapper of `realm` in its slot.
+    pub(crate) fn wrapper_slot_free(&self, realm: RealmId, idx: u32) -> bool {
+        match self.node_wrappers.borrow().get(idx as usize) {
+            Some(entry) => entry.iter().any(|(r, raw)| *raw == 0 || *r == realm.0),
+            None => true,
+        }
+    }
+
+    /// Stores `r` as node `idx`'s wrapper in `realm` (see `wrapper_slot_free`).
+    pub(crate) fn remember_wrapper(&self, realm: RealmId, idx: u32, r: lp_js::WrapperRef) {
+        let mut table = self.node_wrappers.borrow_mut();
+        if table.len() <= idx as usize {
+            table.resize(idx as usize + 1, [(0, 0); 2]);
+        }
+        let entry = &mut table[idx as usize];
+        let way = entry
+            .iter()
+            .position(|(e, raw)| *raw != 0 && *e == realm.0)
+            .or_else(|| entry.iter().position(|(_, raw)| *raw == 0));
+        if let Some(way) = way {
+            entry[way] = (realm.0, r.to_raw());
+        }
+    }
+
+    /// Removes the reference `raw` from node `idx`'s slot (its payload is
+    /// being dropped).
+    pub(crate) fn forget_wrapper(&self, idx: u32, raw: usize) {
+        if let Some(entry) = self.node_wrappers.borrow_mut().get_mut(idx as usize) {
+            for way in entry.iter_mut() {
+                if way.1 == raw {
+                    *way = (0, 0);
+                }
+            }
+        }
+    }
+
+    /// Empties the node slots of a disposed world, so the next world can use
+    /// them (its wrappers stop being kept by `lp-js` when the realm is
+    /// disposed; their payloads forget nothing here when they are dropped).
+    pub(crate) fn forget_realm_wrappers(&self, realm: RealmId) {
+        for entry in self.node_wrappers.borrow_mut().iter_mut() {
+            for way in entry.iter_mut() {
+                if way.0 == realm.0 && way.1 != 0 {
+                    // SAFETY: a live table entry.
+                    if let Some(r) = unsafe { lp_js::WrapperRef::from_raw(way.1) } {
+                        unsafe { r.set_kept(false) };
+                    }
+                    *way = (0, 0);
+                }
+            }
+        }
+    }
+
+    /// Keeps node `idx`'s wrapper in `s`'s realm alive while the node is
+    /// connected: its keep flag, or (no slot) a pin of `object`.
+    pub(crate) fn pin_node_wrapper(&self, s: &lp_js::Scope<'_>, idx: u32, object: lp_js::Object<'_>) {
+        match self.owned_ref(s.realm_id(), idx) {
+            // SAFETY: a live table entry.
+            Some(r) => unsafe { r.set_kept(true) },
+            None => {
+                self.pinned
+                    .borrow_mut()
+                    .entry((s.realm_id(), TargetKey::Node(idx)))
+                    .or_insert_with(|| Persistent::new(s, object.value()));
+            }
+        }
+    }
+
+    /// Whether some wrapper in node `idx`'s slot is kept.
+    pub(crate) fn node_kept(&self, idx: u32) -> bool {
+        // SAFETY: live table entries.
+        self.node_wrappers.borrow().get(idx as usize).is_some_and(|entry| {
+            entry.iter().any(|(_, raw)| unsafe { lp_js::WrapperRef::from_raw(*raw).is_some_and(|r| r.is_kept()) })
+        })
+    }
+
+    /// Stops keeping node `idx`'s wrappers (of `realm`, or of every world).
+    pub(crate) fn unkeep_node(&self, realm: Option<RealmId>, idx: u32) {
+        if let Some(entry) = self.node_wrappers.borrow().get(idx as usize) {
+            for (r, raw) in entry {
+                if realm.is_none_or(|realm| realm.0 == *r) {
+                    // SAFETY: a live table entry.
+                    if let Some(w) = unsafe { lp_js::WrapperRef::from_raw(*raw) } {
+                        unsafe { w.set_kept(false) };
+                    }
+                }
+            }
+        }
+    }
+
+    /// The indices of the nodes with a kept wrapper.
+    pub(crate) fn kept_nodes(&self) -> Vec<u32> {
+        let n = self.node_wrappers.borrow().len() as u32;
+        (0..n).filter(|&i| self.node_kept(i)).collect()
+    }
+
+    fn unkeep_all_nodes(&self) {
+        let n = self.node_wrappers.borrow().len() as u32;
+        for i in 0..n {
+            self.unkeep_node(None, i);
+        }
     }
 
     /// The document's URL, for a layout engine that loads sub-resources

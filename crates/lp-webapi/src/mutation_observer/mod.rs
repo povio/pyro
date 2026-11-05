@@ -182,7 +182,7 @@ fn link(s: &Scope<'_>, page: &PageDom, node: NodeId, observer: Object<'_>) -> Js
     array.set_index(free, observer.value())
 }
 fn unlink(s: &Scope<'_>, page: &PageDom, node: NodeId, identity: IdentityKey) -> JsResult<()> {
-    let Some(node) = s.lookup_identity(page.node_identity(node)) else { return Ok(()) };
+    let Some(node) = page.node_wrapper(s, node) else { return Ok(()) };
     let Some(array) = links(s, node, false)? else { return Ok(()) };
     let Some(observer) = s.lookup_identity(identity) else { return Ok(()) };
     let len = array.get("length")?.to_number()? as u32;

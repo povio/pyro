@@ -153,15 +153,24 @@ impl JsClass for Node {
    Wrapper payloads may therefore safely own `Persistent`s.
 3. **Identity maps** are per realm: `IdentityKey -> JSWeak`. `JSWeakGetObject` returns null once the GC has found the
    object dead, so a dead wrapper is never handed out again.
-   A node wrapper made while its node is in the active document is pinned for as long as the node stays connected
-   (`lp-webapi` `wrap_node`; `reconcile_pins` drops the pin from the removal log at the next safe point, and re-pins
-   a wrapper that holds listeners or properties, which patch `0011` reports, when its node comes back). Other
-   browsers keep such wrappers too. Without it, a script that walks the document (a selector engine reads every
-   element per query) had its wrappers collected and made again each time: 15% of a Playwright locator was
-   `wrap_node` and 13% the collector. A wrapper made for a detached node can still be collected and made again
-   without script noticing. Because a page's wrappers now all die after it is navigated away from, in many small
-   batches, each document counts its externally referenced nodes (`lp-dom` `DocumentData::held`):
-   `Dom::collect_garbage` skips a document that still has one without walking its tree.
+   A node keeps its own wrapper (patch `0014`): `lp-webapi` `PageDom::node_wrappers` holds, by node index, the
+   `lp_js::WrapperRef` of the wrapper in up to two script worlds (the page's and one isolated world; a third world's,
+   and every wrapper under the system framework, go through the identity map as before). Such a wrapper is made with
+   `IdentityKey::OWNED`: it is not in the identity map, its payload header carries a weak handle made by
+   `JSWeakCreateKeptWhile` and a keep byte, and the collector asks that byte, for a wrapper nothing else reaches,
+   whether the owner still wants it. Finding a node's wrapper is a load from the table and a read of the handle; no
+   hash map, no pin entry, no protected value, and collections do not walk a table of kept wrappers. The entry is
+   removed when the payload is dropped (`NodeData::drop`), which holds a node reference until then, so an index never
+   names another node. A realm links its owned payloads through their headers and releases their handles when it is
+   disposed (they must not outlive the VM).
+   The keep byte is set while the node is in the active document (`wrap_node`; `reconcile_pins` clears it from the
+   removal log at the next safe point, and sets it again for a wrapper that holds listeners or properties, which
+   patch `0011` reports, when its node comes back). Other browsers keep such wrappers too. Without it, a script that
+   walks the document (a selector engine reads every element per query) had its wrappers collected and made again
+   each time: 15% of a Playwright locator was `wrap_node` and 13% the collector. A wrapper made for a detached node
+   can still be collected and made again without script noticing. Because a page's wrappers all die after it is
+   navigated away from, in many small batches, each document counts its externally referenced nodes (`lp-dom`
+   `DocumentData::held`): `Dom::collect_garbage` skips a document that still has one without walking its tree.
 4. **Prefer hidden properties to `Persistent`** for state a wrapper owns (event listeners, expandos the DOM needs).
    `Persistent` roots are invisible to cycle collection.
 5. **`Realm::dispose()`** (navigation) releases the global and the prototypes, empties the identity map, and
@@ -349,6 +358,11 @@ check in `JSLock::APICallbackScope` (patch `0009`) is a debug assertion now: it 
 every indexed read and method call. A getter that
 returns a constant costs 7.5 ns per call through this path, loop included, which is what Chrome's bindings cost; what
 a real getter costs above that is `lp-js` and `lp-dom` (see the measurements in `docs/OPTIMIZATION.md`).
+
+Patch `0014` adds `JSWeakCreateKeptWhile`: a weak handle whose owner (a `WeakHandleOwner`) answers the collector's
+"is this object still wanted" from a byte the host owns. It is what lets a DOM node own its wrapper (see "GC and
+lifetime rules"): WebCore does the same through opaque roots, and the C API had only `JSValueProtect`, a counted
+hash set that every collection visits in full.
 
 To change JSC: edit the checkout in `~/Library/Caches/lightningpanda/webkit-src`, `ninja -C ../webkit-build
 JavaScriptCore` to iterate, then regenerate the patch with `git diff` (use `git add -N` for new files) and rerun

@@ -19,6 +19,10 @@ use crate::util::*;
 pub struct NodeData {
     pub target: EventTargetData,
     pub id: NodeId,
+    /// The wrapper reference the page holds in this node's slot
+    /// (`PageDom::node_wrappers`), raw; zero when the wrapper is in the
+    /// realm's identity map instead.
+    pub(crate) wrapper: std::cell::Cell<usize>,
 }
 
 impl NodeData {
@@ -29,6 +33,10 @@ impl NodeData {
 
 impl Drop for NodeData {
     fn drop(&mut self) {
+        let wrapper = self.wrapper.get();
+        if wrapper != 0 {
+            self.target.page.forget_wrapper(self.id.index(), wrapper);
+        }
         self.target.page.release_node(self.id);
     }
 }
@@ -37,8 +45,7 @@ impl Drop for NodeData {
 /// frame tree shares one `Dom`, so a node that moved between its documents may
 /// already have a wrapper in a sibling realm; a new one is made in `s`'s realm.
 pub fn wrap_node<'s>(s: &Scope<'s>, page: &PageDom, id: NodeId) -> JsResult<Object<'s>> {
-    let key = page.node_identity(id);
-    if let Some(o) = s.lookup_identity(key) {
+    if let Some(o) = page.node_wrapper(s, id) {
         return Ok(o);
     }
     let page_rc = page_of(s)?;
@@ -62,21 +69,46 @@ pub fn wrap_node<'s>(s: &Scope<'s>, page: &PageDom, id: NodeId) -> JsResult<Obje
         }
         (ty, class, connected)
     };
-    let data = NodeData { target: EventTargetData { page: page_rc, key: TargetKey::Node(id.index()) }, id };
-    let k = Some(key);
+    let data = NodeData {
+        target: EventTargetData { page: page_rc, key: TargetKey::Node(id.index()) },
+        id,
+        wrapper: std::cell::Cell::new(0),
+    };
+    // The node keeps its wrapper (`PageDom::node_wrappers`) when it has a
+    // slot for this world; otherwise the realm's identity map does.
+    let owned = s.owned_wrappers() && page.wrapper_slot_free(s.realm_id(), id.index());
+    let k = Some(match (owned, connected) {
+        (false, _) => page.node_identity(id),
+        (true, true) => lp_js::IdentityKey::OWNED_KEPT,
+        (true, false) => lp_js::IdentityKey::OWNED,
+    });
     let wrapper = wrap_node_kind(s, page, id, ty, class, data, k)?;
     // A wrapper of a node in the active document lives as long as the node
     // is connected, as in other browsers (expandos survive, and a selector
     // engine that touches every element does not make the garbage collector
     // drop and recreate thousands of wrappers per query). `reconcile_pins`
-    // drops the pin when the node leaves the document.
-    if connected {
+    // stops keeping it when the node leaves the document.
+    register_node_wrapper(s, page, id, wrapper, owned, connected);
+    Ok(wrapper)
+}
+
+/// Records a new node wrapper where it will be found again: in the node's
+/// slot (`owned`, made with `IdentityKey::OWNED*`), or pinned if the node is
+/// connected and the wrapper is in the identity map.
+fn register_node_wrapper(s: &Scope<'_>, page: &PageDom, id: NodeId, wrapper: Object<'_>, owned: bool, connected: bool) {
+    if owned {
+        if let Some(r) = s.wrapper_ref(wrapper) {
+            page.remember_wrapper(s.realm_id(), id.index(), r);
+            if let Some(node) = s.unwrap::<Node>(wrapper.value()) {
+                node.wrapper.set(r.to_raw());
+            }
+        }
+    } else if connected {
         page.pinned
             .borrow_mut()
             .entry((s.realm_id(), TargetKey::Node(id.index())))
             .or_insert_with(|| lp_js::Persistent::new(s, wrapper.value()));
     }
-    Ok(wrapper)
 }
 
 fn wrap_node_kind<'s>(
@@ -746,8 +778,16 @@ pub fn wrap_new_node<'s, C: JsClass<Data = NodeData>>(
     new_target: Object<'s>,
 ) -> JsResult<Object<'s>> {
     page.dom.borrow_mut().add_ref(id).js()?;
-    let data = NodeData { target: EventTargetData { page: page.clone(), key: TargetKey::Node(id.index()) }, id };
-    s.wrap_new::<C>(data, new_target, Some(page.node_identity(id)))
+    let data = NodeData {
+        target: EventTargetData { page: page.clone(), key: TargetKey::Node(id.index()) },
+        id,
+        wrapper: std::cell::Cell::new(0),
+    };
+    let owned = s.owned_wrappers() && page.wrapper_slot_free(s.realm_id(), id.index());
+    let key = if owned { lp_js::IdentityKey::OWNED } else { page.node_identity(id) };
+    let wrapper = s.wrap_new::<C>(data, new_target, Some(key))?;
+    register_node_wrapper(s, page, id, wrapper, owned, false);
+    Ok(wrapper)
 }
 
 // ----- fragments ------------------------------------------------------------

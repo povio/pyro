@@ -639,6 +639,16 @@ pub(crate) struct Header {
     /// The realm the object was made in: the lean member dispatch gets its
     /// scope from the receiver instead of from thread-local state.
     pub realm_ref: std::rc::Weak<crate::realm::RealmInner>,
+    /// An owned wrapper (`IdentityKey::OWNED`): nonzero while its owner wants
+    /// the object kept. The collector reads it while marking, possibly from
+    /// another thread (`JSWeakCreateKeptWhile`).
+    pub keep_alive: std::sync::atomic::AtomicU8,
+    /// An owned wrapper's weak handle (null otherwise, and once released).
+    pub weak: std::cell::Cell<sys::JSWeakRef>,
+    /// The realm's list of owned wrappers (`RealmInner::owned_head`), so it
+    /// can release their handles when it is disposed.
+    pub owned_prev: std::cell::Cell<*mut Header>,
+    pub owned_next: std::cell::Cell<*mut Header>,
     pub kind: Kind,
     pub realm: RealmId,
     pub key: Option<IdentityKey>,
@@ -700,6 +710,10 @@ pub(crate) fn new_payload<T: 'static>(
             class,
             info,
             realm_ref,
+            keep_alive: std::sync::atomic::AtomicU8::new(0),
+            weak: std::cell::Cell::new(ptr::null_mut()),
+            owned_prev: std::cell::Cell::new(ptr::null_mut()),
+            owned_next: std::cell::Cell::new(ptr::null_mut()),
             kind,
             realm,
             key,
@@ -771,6 +785,35 @@ unsafe extern "C" fn finalize_wrapper(object: sys::JSObjectRef) {
 
 /// Drops payloads of finalized wrappers and prunes dead identity-map entries.
 /// Engine thread only, outside GC.
+/// Takes a dead owned wrapper's payload out of its realm's list and releases
+/// its weak handle (a no-op for other payloads, and once the realm disposed).
+///
+/// # Safety
+/// `h` is a payload header whose object is dead, on the engine's thread.
+unsafe fn release_owned(engine: &EngineInner, h: *mut Header) {
+    unsafe {
+        let weak = (*h).weak.replace(ptr::null_mut());
+        if weak.is_null() {
+            return;
+        }
+        let prev = (*h).owned_prev.replace(ptr::null_mut());
+        let next = (*h).owned_next.replace(ptr::null_mut());
+        if !prev.is_null() {
+            (*prev).owned_next.set(next);
+        } else if let Some(realm) = (*h).realm_ref.upgrade() {
+            if realm.owned_head.get() == h {
+                realm.owned_head.set(next);
+            }
+        }
+        if !next.is_null() {
+            (*next).owned_prev.set(prev);
+        }
+        if let Some((_, release, _)) = sys::spi::get().weak() {
+            release(engine.group(), weak);
+        }
+    }
+}
+
 pub(crate) fn drain_finalized(engine: &EngineInner) -> usize {
     let mut total = 0;
     loop {
@@ -791,6 +834,7 @@ pub(crate) fn drain_finalized(engine: &EngineInner) -> usize {
                         realm.prune_identity(key);
                     }
                 }
+                release_owned(engine, h);
                 ((*h).drop_fn)(h);
             }
         }

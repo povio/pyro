@@ -27,7 +27,7 @@ pub use error::{JsError, JsException, JsResult};
 pub use persistent::{Persistent, RootedVec};
 pub use realm::{
     Deferred, IdentityKey, ModuleFetcher, ModuleRequest, NameUnits, NamedProperties, NativeCallbackHook, Realm,
-    RealmId, RealmOptions, Scope, UnhandledRejectionHandler, ValueDescription, WeakRealm,
+    RealmId, RealmOptions, Scope, UnhandledRejectionHandler, ValueDescription, WeakRealm, WrapperRef,
 };
 pub use string::{atom, JsString};
 pub use value::{Args, JsType, Object, StringUnits, Value};

@@ -323,7 +323,9 @@ fn maybe_pin(s: &Scope<'_>, page: &PageDom, key: TargetKey, obj: Object<'_>) {
         if !connected {
             return;
         }
-        page.pinned.borrow_mut().entry((s.realm_id(), key)).or_insert_with(|| Persistent::new(s, obj.value()));
+        if let TargetKey::Node(idx) = key {
+            page.pin_node_wrapper(s, idx, obj);
+        }
     }
 }
 
@@ -344,6 +346,14 @@ pub(crate) fn pin_wrapper_with_properties(s: &Scope<'_>, object: Object<'_>) {
     let Some(node) = s.unwrap::<crate::node::Node>(object.value()) else { return };
     let page = &node.target.page;
     let key = (s.realm_id(), TargetKey::Node(node.id.index()));
+    if let Some(r) = page.owned_ref(s.realm_id(), node.id.index()) {
+        // SAFETY: a live table entry.
+        if !unsafe { r.is_kept() } {
+            unsafe { r.set_kept(true) };
+            page.new_property_pins.borrow_mut().push((key.0, node.id));
+        }
+        return;
+    }
     let mut pinned = page.pinned.borrow_mut();
     if !pinned.contains_key(&key) {
         pinned.insert(key, Persistent::new(s, object.value()));
@@ -357,29 +367,43 @@ pub(crate) fn reconcile_pins(page: &PageDom, dom: &mut Dom) {
         dom.mark_pin_on_connect(id);
         if !dom.is_in_active_document(id) {
             page.pinned.borrow_mut().remove(&(realm, TargetKey::Node(id.index())));
+            page.unkeep_node(Some(realm), id.index());
         }
     }
     let reconnected = dom.take_reconnected_listener_nodes();
     // Pins only become stale when a node is removed somewhere.
     let last = page.last_removals.replace(dom.removal_count());
-    if last != dom.removal_count() && !page.pinned.borrow().is_empty() {
+    if last != dom.removal_count() {
         let mut pinned = page.pinned.borrow_mut();
         match dom.nodes_removed_since(last) {
             Some(nodes) => {
                 let realms: Vec<RealmId> = page.realms.borrow().keys().copied().collect();
                 for id in nodes {
                     let key = TargetKey::Node(id.index());
-                    if realms.iter().any(|&r| pinned.contains_key(&(r, key))) && !dom.is_in_active_document(id) {
+                    let kept = page.node_kept(id.index());
+                    if (kept || realms.iter().any(|&r| pinned.contains_key(&(r, key))))
+                        && !dom.is_in_active_document(id)
+                    {
                         for &r in &realms {
                             pinned.remove(&(r, key));
+                        }
+                        if kept {
+                            page.unkeep_node(None, id.index());
                         }
                     }
                 }
             }
-            None => pinned.retain(|(_, key), _| match key {
-                TargetKey::Node(_) => dom.key_node(*key).is_some_and(|id| dom.is_in_active_document(id)),
-                TargetKey::Other(_) => true,
-            }),
+            None => {
+                pinned.retain(|(_, key), _| match key {
+                    TargetKey::Node(_) => dom.key_node(*key).is_some_and(|id| dom.is_in_active_document(id)),
+                    TargetKey::Other(_) => true,
+                });
+                for idx in page.kept_nodes() {
+                    if !dom.key_node(TargetKey::Node(idx)).is_some_and(|id| dom.is_in_active_document(id)) {
+                        page.unkeep_node(None, idx);
+                    }
+                }
+            }
         }
     }
     if reconnected.is_empty() {
@@ -392,13 +416,9 @@ pub(crate) fn reconcile_pins(page: &PageDom, dom: &mut Dom) {
             if !dom.is_in_active_document(id) {
                 continue;
             }
-            if let Some(obj) = s.lookup_identity(page.node_identity(id)) {
+            if let Some(obj) = page.node_wrapper(&s, id) {
                 if dom.has_pin_on_connect(id) || matches!(s.get_hidden(obj, LISTENERS), Ok(Some(_))) {
-                    let key = TargetKey::Node(id.index());
-                    page.pinned
-                        .borrow_mut()
-                        .entry((realm.id(), key))
-                        .or_insert_with(|| Persistent::new(&s, obj.value()));
+                    page.pin_node_wrapper(&s, id.index(), obj);
                 }
             }
         }

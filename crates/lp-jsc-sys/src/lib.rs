@@ -500,6 +500,11 @@ pub mod spi {
     pub type JSShouldTerminateCallback = Option<unsafe extern "C" fn(ctx: JSContextRef, context: *mut c_void) -> bool>;
 
     pub type JSWeakCreateFn = unsafe extern "C" fn(group: JSContextGroupRef, object: JSObjectRef) -> JSWeakRef;
+    /// A weak handle that also keeps its object alive while `*keep_alive` is
+    /// nonzero (patched JSC, `JSWeakCreateKeptWhile`): the collector reads
+    /// the byte while marking; the byte must outlive the handle.
+    pub type JSWeakCreateKeptWhileFn =
+        unsafe extern "C" fn(group: JSContextGroupRef, object: JSObjectRef, keep_alive: *const u8) -> JSWeakRef;
     pub type JSWeakReleaseFn = unsafe extern "C" fn(group: JSContextGroupRef, weak: JSWeakRef);
     pub type JSWeakGetObjectFn = unsafe extern "C" fn(weak: JSWeakRef) -> JSObjectRef;
     pub type JSGlobalContextSetUnhandledRejectionCallbackFn =
@@ -640,6 +645,7 @@ pub mod spi {
     #[derive(Debug, Clone, Copy)]
     pub struct Spi {
         pub weak_create: Option<JSWeakCreateFn>,
+        pub weak_create_kept_while: Option<JSWeakCreateKeptWhileFn>,
         pub weak_release: Option<JSWeakReleaseFn>,
         pub weak_get_object: Option<JSWeakGetObjectFn>,
         pub set_unhandled_rejection_callback: Option<JSGlobalContextSetUnhandledRejectionCallbackFn>,
@@ -708,6 +714,7 @@ pub mod spi {
         static SPI: OnceLock<Spi> = OnceLock::new();
         SPI.get_or_init(|| Spi {
             weak_create: resolve!("JSWeakCreate"),
+            weak_create_kept_while: resolve!("JSWeakCreateKeptWhile"),
             weak_release: resolve!("JSWeakRelease"),
             weak_get_object: resolve!("JSWeakGetObject"),
             set_unhandled_rejection_callback: resolve!("JSGlobalContextSetUnhandledRejectionCallback"),

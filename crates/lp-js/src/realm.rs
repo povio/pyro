@@ -30,6 +30,59 @@ pub struct RealmId(pub u32);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct IdentityKey(pub u64, pub u64);
 
+impl IdentityKey {
+    /// Not a key: asks [`Scope::wrap`] for a wrapper its owner keeps track of
+    /// itself ([`WrapperRef`]), outside the realm's identity map. The owner
+    /// holds the reference where it keeps the thing wrapped (a DOM node's
+    /// slot), so finding the wrapper again is a load, and decides how long
+    /// the wrapper lives with [`WrapperRef::set_kept`] instead of a table of
+    /// protected values. Needs the patched JavaScriptCore
+    /// ([`Scope::owned_wrappers`]).
+    pub const OWNED: IdentityKey = IdentityKey(u64::MAX, 0);
+    /// [`IdentityKey::OWNED`], kept alive from the start.
+    pub const OWNED_KEPT: IdentityKey = IdentityKey(u64::MAX, 1);
+
+    fn is_owned(self) -> bool {
+        self.0 == u64::MAX && self.1 <= 1
+    }
+}
+
+/// A wrapper made with [`IdentityKey::OWNED`], as its owner holds it. Valid
+/// until the wrapper's payload (its `Data`) is dropped: the owner forgets the
+/// reference in that `Drop`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WrapperRef(usize);
+
+impl WrapperRef {
+    pub fn to_raw(self) -> usize {
+        self.0
+    }
+
+    /// # Safety
+    /// `raw` came from [`WrapperRef::to_raw`] (zero is no reference).
+    pub unsafe fn from_raw(raw: usize) -> Option<WrapperRef> {
+        (raw != 0).then_some(WrapperRef(raw))
+    }
+
+    /// Keeps the wrapper alive (or lets the collector decide again). The
+    /// collector reads this while marking; a wrapper whose owner stopped
+    /// keeping it dies at a later collection if nothing else reaches it.
+    ///
+    /// # Safety
+    /// The wrapper's payload has not been dropped.
+    pub unsafe fn set_kept(self, keep: bool) {
+        let h = self.0 as *mut Header;
+        unsafe { (*h).keep_alive.store(u8::from(keep), std::sync::atomic::Ordering::Relaxed) };
+    }
+
+    /// # Safety
+    /// The wrapper's payload has not been dropped.
+    pub unsafe fn is_kept(self) -> bool {
+        let h = self.0 as *mut Header;
+        unsafe { (*h).keep_alive.load(std::sync::atomic::Ordering::Relaxed) != 0 }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct RealmOptions {
     /// Debug/world name (`""` for the main world).
@@ -160,6 +213,10 @@ pub(crate) struct RealmInner {
     /// fresh JSString each time was most of their cost. The `Arc` keeps the
     /// key's address from being reused.
     pub(crate) shared_strings: RefCell<rustc_hash::FxHashMap<usize, (std::sync::Arc<str>, sys::JSValueRef)>>,
+    /// The realm's owned wrappers (`IdentityKey::OWNED`), linked through
+    /// their payload headers: `dispose` releases their weak handles, which
+    /// must not outlive the VM.
+    pub(crate) owned_head: Cell<*mut Header>,
     helpers: RefCell<Option<Persistent>>,
     helper_cache: RefCell<HashMap<&'static str, Persistent>>,
     /// The realm's `Object.prototype`, for the plain-object fast path of `is_plain_object`.
@@ -295,6 +352,23 @@ impl RealmInner {
         if let Some((_, release, _)) = sys::spi::get().weak() {
             for (_, w) in self.identity.borrow_mut().drain() {
                 unsafe { release(self.engine.group(), w) };
+            }
+            // Owned wrappers: nothing keeps them any more, and their handles
+            // go now (the payloads stay until their objects die).
+            let mut h = self.owned_head.replace(ptr::null_mut());
+            while !h.is_null() {
+                // SAFETY: a payload leaves the list before it is freed
+                // (`class::release_owned`), so every entry is live.
+                unsafe {
+                    let next = (*h).owned_next.replace(ptr::null_mut());
+                    (*h).owned_prev.set(ptr::null_mut());
+                    (*h).keep_alive.store(0, std::sync::atomic::Ordering::Relaxed);
+                    let weak = (*h).weak.replace(ptr::null_mut());
+                    if !weak.is_null() {
+                        release(self.engine.group(), weak);
+                    }
+                    h = next;
+                }
             }
         }
         for (_, (_, v)) in self.shared_strings.borrow_mut().drain() {
@@ -840,7 +914,7 @@ impl<'s> Scope<'s> {
     /// Returns the wrapper for `data`, reusing the existing one for `key` in this
     /// realm (in which case `data` is dropped).
     pub fn wrap<C: JsClass>(&self, data: C::Data, key: Option<IdentityKey>) -> JsResult<Object<'s>> {
-        if let Some(k) = key {
+        if let Some(k) = key.filter(|k| !k.is_owned()) {
             if let Some(o) = self.lookup_identity(k) {
                 return Ok(o);
             }
@@ -869,6 +943,39 @@ impl<'s> Scope<'s> {
         self.make_wrapper::<C>(id, data, key, proto)
     }
 
+    /// Whether [`IdentityKey::OWNED`] wrappers can be made (patched
+    /// JavaScriptCore with `JSWeakCreateKeptWhile`).
+    pub fn owned_wrappers(&self) -> bool {
+        let spi = sys::spi::get();
+        spi.weak_create_kept_while.is_some() && spi.weak().is_some()
+    }
+
+    /// The reference of an owned wrapper of this realm (`None` for any other
+    /// object).
+    pub fn wrapper_ref(&self, object: Object<'_>) -> Option<WrapperRef> {
+        // SAFETY: a live object of this VM.
+        let h = unsafe { self.header_of_object(object.raw) }?;
+        // SAFETY: the object's live payload.
+        (!unsafe { (*h).weak.get() }.is_null()).then_some(WrapperRef(h as usize))
+    }
+
+    /// The wrapper `r` refers to, if it is still alive.
+    ///
+    /// # Safety
+    /// The wrapper's payload has not been dropped (see [`WrapperRef`]).
+    pub unsafe fn wrapper(&self, r: WrapperRef) -> Option<Object<'s>> {
+        let h = r.0 as *mut Header;
+        unsafe {
+            let weak = (*h).weak.get();
+            if weak.is_null() {
+                return None;
+            }
+            let (_, _, get) = sys::spi::get().weak()?;
+            let o = get(weak);
+            (!o.is_null()).then(|| Object::from_raw(self.ctx, o))
+        }
+    }
+
     /// Existing wrapper for `key` in this realm, if alive.
     pub fn lookup_identity(&self, key: IdentityKey) -> Option<Object<'s>> {
         let map = self.realm.identity.borrow();
@@ -886,10 +993,34 @@ impl<'s> Scope<'s> {
         proto: Value<'_>,
     ) -> JsResult<Object<'s>> {
         let class = self.realm.engine.classes.borrow().classes[id as usize].instance_class;
+        let owned = key.filter(|k| k.is_owned());
+        let key = key.filter(|k| !k.is_owned());
+        let kept_while = match owned {
+            Some(_) => {
+                Some(sys::spi::get().weak_create_kept_while.ok_or(JsError::Unsupported("JSWeakCreateKeptWhile"))?)
+            }
+            None => None,
+        };
         let h = class::new_payload(&self.realm.engine, id, Kind::Instance, self.realm, key, data);
         let obj = unsafe { sys::JSObjectMake(self.ctx, class, h as *mut c_void) };
         let obj = unsafe { Object::from_raw(self.ctx, obj) };
         obj.set_prototype(proto);
+        if let (Some(mode), Some(kept_while)) = (owned, kept_while) {
+            // SAFETY: h is the live payload of obj; its flag byte lives as
+            // long as the payload, which outlives the handle (released in
+            // `class::release_owned` or `RealmInner::dispose`).
+            unsafe {
+                (*h).keep_alive.store(u8::from(mode == IdentityKey::OWNED_KEPT), std::sync::atomic::Ordering::Relaxed);
+                let weak = kept_while(self.realm.engine.group(), obj.raw, (*h).keep_alive.as_ptr());
+                (*h).weak.set(weak);
+                let head = self.realm.owned_head.get();
+                (*h).owned_next.set(head);
+                if !head.is_null() {
+                    (*head).owned_prev.set(h);
+                }
+                self.realm.owned_head.set(h);
+            }
+        }
         if let Some(k) = key {
             let (create, release, _) = sys::spi::get().weak().ok_or(JsError::Unsupported("JSWeak"))?;
             let weak = unsafe { create(self.realm.engine.group(), obj.raw) };
@@ -1287,6 +1418,7 @@ pub(crate) fn create(engine: &Rc<EngineInner>, options: RealmOptions) -> JsResul
         populated: RefCell::new(Vec::new()),
         identity: RefCell::new(rustc_hash::FxHashMap::default()),
         shared_strings: RefCell::new(rustc_hash::FxHashMap::default()),
+        owned_head: Cell::new(ptr::null_mut()),
         helpers: RefCell::new(None),
         helper_cache: RefCell::new(HashMap::new()),
         object_proto: RefCell::new(None),
