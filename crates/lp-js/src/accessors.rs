@@ -228,6 +228,21 @@ unsafe fn lean_getter(slot: usize, this: sys::JSValueRef) -> Option<sys::JSValue
     unsafe { lean_getter_h(slot, sys::JSObjectGetPrivate(this) as *mut Header, this) }
 }
 
+/// [`lean_getter`] for a member of the realm's global (`window.document`,
+/// or a bare `document`): the global's payload is the realm's, found from
+/// `ctx`, as the full dispatch finds it.
+unsafe fn lean_global_getter(slot: usize, ctx: sys::JSContextRef, this: sys::JSValueRef) -> Option<sys::JSValueRef> {
+    let this = receiver(this)?;
+    let realm = crate::realm::realm_for_ctx(ctx)?;
+    let scope = crate::realm::Scope::new(ctx, &realm);
+    if !this.is_null() && !scope.is_global_object(this) {
+        return None;
+    }
+    let h = scope.global_payload();
+    // SAFETY: the realm's global payload (or null, refused), live for this call.
+    unsafe { lean_getter_h(slot, h, if this.is_null() { scope.global_object_raw() } else { this }) }
+}
+
 unsafe fn custom_getter_dispatch(
     slot: usize,
     ctx: sys::JSContextRef,
@@ -235,7 +250,16 @@ unsafe fn custom_getter_dispatch(
     _uid: *const c_void,
 ) -> sys::JSValueRef {
     if PURE[slot].load(Ordering::Relaxed) {
-        if let Some(v) = unsafe { lean_getter(slot, this) } {
+        // A global variable read (`document`) gets the global object itself,
+        // which is the context: no private data to read (which, for an
+        // object that is not a wrapper, costs JSC a class walk).
+        let global_read = this as usize == ctx as usize;
+        if !global_read {
+            if let Some(v) = unsafe { lean_getter(slot, this) } {
+                return v;
+            }
+        }
+        if let Some(v) = unsafe { lean_global_getter(slot, ctx, this) } {
             return v;
         }
     }

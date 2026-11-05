@@ -1261,6 +1261,11 @@ impl<'s> Scope<'s> {
         None
     }
 
+    /// The global object's payload header (null before `set_global_data`).
+    pub(crate) fn global_payload(&self) -> *mut Header {
+        self.realm.global_payload.get()
+    }
+
     /// Whether `obj` is the realm's global: its proxy (what script sees) or
     /// the object behind it (what a global variable's getter receives).
     pub(crate) fn is_global_object(&self, obj: sys::JSObjectRef) -> bool {
@@ -1702,6 +1707,13 @@ fn install_classes(scope: &Scope<'_>) -> JsResult<()> {
         chain
     });
     let global_name = realm.global_class.map(|gid| reg.classes[gid as usize].name);
+    // The pure getters of the global's classes, root-first (see below).
+    let global_pure: Vec<(&'static str, u16, bool)> = global_chain
+        .iter()
+        .flatten()
+        .flat_map(|c| reg.classes[*c as usize].def.accessors.iter())
+        .filter_map(|a| Some((a.name, a.slot.filter(|_| a.pure)?, a.set.is_some())))
+        .collect();
     drop(reg);
     *realm.protos.borrow_mut() = protos;
     *realm.ctors.borrow_mut() = ctors;
@@ -1720,6 +1732,26 @@ fn install_classes(scope: &Scope<'_>) -> JsResult<()> {
         let ps = rooted_array(scope, &ps)?;
         let cs = rooted_array(scope, &cs)?;
         install_global.call(None, &[global.value(), ps.value(), cs.value(), scope.string(name)])?;
+        // `installGlobal` copied each attribute as an accessor of functions,
+        // which a global variable read (`document`) calls through a host
+        // call frame. A pure getter is a custom accessor of the global
+        // instead, as on its prototype, so an inline cache calls it directly
+        // and its dispatch takes the lean path for the global's payload.
+        let target = realm.global_target.get();
+        if let (Some(install), false) = (sys::spi::get().set_custom_accessor, target.is_null()) {
+            for (name, slot, has_set) in global_pure {
+                let n = JsString::new(name);
+                let setter = has_set.then(|| crate::accessors::SETTERS[usize::from(slot)]);
+                let getter = Some(crate::accessors::GETTERS[usize::from(slot)]);
+                // SAFETY: the live global behind this realm's proxy; the copy
+                // is configurable.
+                unsafe {
+                    let mut exc = ptr::null();
+                    sys::JSObjectDeleteProperty(scope.ctx, target, n.as_raw(), &mut exc);
+                    install(scope.ctx, target, n.as_raw(), getter, setter, sys::kJSPropertyAttributeNone);
+                }
+            }
+        }
     }
     Ok(())
 }
@@ -1915,9 +1947,20 @@ fn install_members_raw(
     helpers: Object<'_>,
 ) -> JsResult<()> {
     // Copied out so no registry borrow spans calls into JavaScript.
-    let (methods, accessors, constants, statics, iterable) = {
+    let (methods, accessors, constants, statics, iterable, on_global) = {
         let reg = engine.classes.borrow();
         let d = &reg.classes.get(id as usize).ok_or(JsError::Type("unknown class".into()))?.def;
+        // Members of the global's class chain run on the global, which is not
+        // a wrapper: JSC's own check of a DOM attribute's receiver refuses it.
+        let mut on_global = false;
+        let mut class = realm.and_then(|r| r.global_class);
+        while let Some(c) = class {
+            if c == id {
+                on_global = true;
+                break;
+            }
+            class = reg.classes[c as usize].parent;
+        }
         (
             d.methods.iter().map(|m| (m.name, m.length, m.call, m.pure)).collect::<Vec<_>>(),
             d.accessors.iter().map(|a| (a.name, a.get, a.set, a.slot)).collect::<Vec<_>>(),
@@ -1930,6 +1973,7 @@ fn install_members_raw(
             } else {
                 None
             },
+            on_global,
         )
     };
     // SAFETY (all raw constructors below): ctx is the live callback/scope context.
@@ -1975,8 +2019,10 @@ fn install_members_raw(
             let getter = Some(crate::accessors::GETTERS[usize::from(slot)]);
             // A pure getter is a DOM attribute to the JITs, which then call
             // it with the receiver proven a wrapper (`fast_getter_dispatch`).
+            // A global's pure getter keeps the custom accessor, whose
+            // dispatch takes the lean path for the global's payload.
             let ok = match (crate::accessors::pure_result(slot), sys::spi::get().set_fast_getter) {
-                (Some(result), Some(fast)) => unsafe {
+                (Some(result), Some(fast)) if !on_global => unsafe {
                     fast(
                         ctx,
                         proto.raw,

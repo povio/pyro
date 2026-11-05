@@ -117,7 +117,11 @@ where
     W::Data: WindowHost,
 {
     crate::handlers::define_window(def);
-    def.getter("document", |s, w| Ok(crate::node::wrap_node(s, w.page(), w.page().document())?.value()));
+    // Read on every bare `document` of page script: the lean dispatch, which
+    // finds the window's node wrapper in the document's slot.
+    def.pure_getter_typed("document", lp_js::GetterResult::ObjectOrNull, |s, w| {
+        Ok(crate::node::wrap_node(s, w.page(), w.page().document())?.value())
+    });
     // `window.event` (DOM "current event"), [Replaceable]: assignment shadows
     // it with an own data property.
     def.accessor(

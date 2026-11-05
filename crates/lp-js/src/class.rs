@@ -422,6 +422,30 @@ impl<C: JsClass> ClassDef<C> {
         self
     }
 
+    /// [`ClassDef::accessor`] whose getter is pure (see
+    /// [`ClassDef::pure_getter_typed`]): reads take the lean dispatch, writes
+    /// the full one.
+    pub fn pure_accessor_typed(
+        &mut self,
+        name: &'static str,
+        result: GetterResult,
+        g: GetterFn<C>,
+        s: SetterFn<C>,
+    ) -> &mut Self {
+        let get = MemberCall { invoke: getter_invoke::<C>, f: g as *const () };
+        let set = MemberCall { invoke: setter_invoke::<C>, f: s as *const () };
+        self.accessors.push(AccessorSpec {
+            name,
+            get,
+            set: Some(set),
+            slot: None,
+            pure: true,
+            result,
+            get_h: Some(getter_invoke_h::<C>),
+        });
+        self
+    }
+
     /// Adds a read-write attribute with `[PutForwards=target]`: assignment
     /// brand-checks the receiver, reads the attribute (an observable `Get`,
     /// so an overridden getter runs and its exception propagates; a
@@ -832,7 +856,7 @@ pub(crate) fn register<C: JsClass>(engine: &EngineInner) -> ClassId {
         if reg.classes[p as usize].def.announced_names && !own_named {
             def.announced_names = true;
         }
-
+    }
     let has_hooks = def.hooks.any();
     let has_named_hooks =
         def.hooks.named.is_some() || def.hooks.named_set.is_some() || def.hooks.named_delete.is_some();
