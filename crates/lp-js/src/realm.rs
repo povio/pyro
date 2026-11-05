@@ -223,9 +223,12 @@ pub(crate) struct RealmInner {
     /// must not outlive the VM.
     pub(crate) owned_head: Cell<*mut Header>,
     helpers: RefCell<Option<Persistent>>,
-    helper_cache: RefCell<HashMap<&'static str, Persistent>>,
+    helper_cache: RefCell<rustc_hash::FxHashMap<&'static str, Persistent>>,
     /// The realm's `Object.prototype`, for the plain-object fast path of `is_plain_object`.
     object_proto: RefCell<Option<Persistent>>,
+    /// The realm's `Function.prototype`: the prototype of the native
+    /// functions it makes (`Scope::function`, interface members).
+    function_proto: RefCell<Option<Persistent>>,
     /// Functions compiled by `call_function*`, keyed by source: CDP clients
     /// send the same (large) `functionDeclaration` on every call.
     fn_cache: RefCell<HashMap<u64, (String, Persistent)>>,
@@ -354,6 +357,7 @@ impl RealmInner {
         self.helpers.borrow_mut().take();
         self.helper_cache.borrow_mut().clear();
         self.object_proto.borrow_mut().take();
+        self.function_proto.borrow_mut().take();
         self.fn_cache.borrow_mut().clear();
         self.dom_exception.borrow_mut().take();
         if let Some((_, release, _)) = sys::spi::get().weak() {
@@ -862,13 +866,23 @@ impl<'s> Scope<'s> {
         let closure_class = self.realm.engine.classes.borrow().closure;
         let obj = unsafe { sys::JSObjectMake(self.ctx, closure_class, h as *mut c_void) };
         let obj = unsafe { Object::from_raw(self.ctx, obj) };
-        let fproto = self.global().get("Function")?.as_object().map(|f| f.get("prototype"));
-        if let Some(Ok(p)) = fproto {
+        if let Some(p) = self.function_prototype()? {
             obj.set_prototype(p);
         }
         let nm = self.string(name);
-        let _ = self.realm.helper(self, "setName").and_then(|h| h.call(None, &[obj.value(), nm]));
+        let _ = self.realm.cached_helper(self, "setName").and_then(|h| h.call(None, &[obj.value(), nm]));
         Ok(obj)
+    }
+
+    /// The realm's own `Function.prototype` (%Function.prototype%), kept
+    /// from realm creation until disposal: what native functions get,
+    /// whatever page script did to the global `Function` since. A disposed
+    /// realm reads the global's.
+    fn function_prototype(&self) -> JsResult<Option<Value<'s>>> {
+        if let Some(p) = self.realm.function_proto.borrow().as_ref() {
+            return Ok(Some(p.get(self)));
+        }
+        Ok(self.global().get_atom("Function")?.as_object().and_then(|f| f.get_atom("prototype").ok()))
     }
 
     /// Defines `name` on the global (not enumerable) as a function taking one
@@ -929,7 +943,7 @@ impl<'s> Scope<'s> {
             }
             Ok(s.undefined())
         })?;
-        self.realm.helper(self, "then")?.call(None, &[value, fok.value(), ferr.value()])?;
+        self.realm.cached_helper(self, "then")?.call(None, &[value, fok.value(), ferr.value()])?;
         Ok(())
     }
 
@@ -941,7 +955,7 @@ impl<'s> Scope<'s> {
     /// of this realm. `what` names the operation in the TypeError for
     /// non-iterable values (https://webidl.spec.whatwg.org/#es-sequence).
     pub fn sequence(&self, value: Value<'_>, what: &str) -> JsResult<Object<'s>> {
-        let seq = self.realm.helper(self, "sequence")?.call(None, &[value, self.string(what)])?;
+        let seq = self.realm.cached_helper(self, "sequence")?.call(None, &[value, self.string(what)])?;
         seq.as_object().ok_or_else(|| JsError::Type("sequence conversion produced no array".into()))
     }
 
@@ -1378,7 +1392,7 @@ impl<'s> Scope<'s> {
     ) -> JsResult<String> {
         let description = description.map_or_else(|| self.undefined(), |d| self.string(d));
         let promise = promise.unwrap_or_else(|| self.undefined());
-        self.realm.helper(self, "preview")?.call(None, &[value, description, promise])?.to_string()
+        self.realm.cached_helper(self, "preview")?.call(None, &[value, description, promise])?.to_string()
     }
 
     /// CDP `internalProperties` of an object as an array of `[name, value]`
@@ -1522,8 +1536,9 @@ pub(crate) fn create(engine: &Rc<EngineInner>, options: RealmOptions) -> JsResul
         shared_strings: RefCell::new(rustc_hash::FxHashMap::default()),
         owned_head: Cell::new(ptr::null_mut()),
         helpers: RefCell::new(None),
-        helper_cache: RefCell::new(HashMap::new()),
+        helper_cache: RefCell::new(rustc_hash::FxHashMap::default()),
         object_proto: RefCell::new(None),
+        function_proto: RefCell::new(None),
         fn_cache: RefCell::new(HashMap::new()),
         dom_exception: RefCell::new(None),
         module_loader: Cell::new(ptr::null_mut()),
@@ -1556,6 +1571,9 @@ pub(crate) fn create(engine: &Rc<EngineInner>, options: RealmOptions) -> JsResul
         *realm.inner.helpers.borrow_mut() = Some(Persistent::new(&scope, helpers));
         let dom_exc = helpers.as_object().expect("helpers").get("DOMException")?;
         *realm.inner.dom_exception.borrow_mut() = Some(Persistent::new(&scope, dom_exc));
+        // Before any native function is made (interface members included).
+        let function = scope.global().get_atom("Function")?.as_object().expect("Function");
+        *realm.inner.function_proto.borrow_mut() = Some(Persistent::new(&scope, function.get_atom("prototype")?));
         install_classes(&scope)?;
         let object_proto = scope.global().get("Object")?.as_object().expect("Object").get("prototype")?;
         *realm.inner.object_proto.borrow_mut() = Some(Persistent::new(&scope, object_proto));
@@ -1897,9 +1915,15 @@ fn install_members_raw(
     let helper = |name: &str| -> JsResult<Object<'_>> {
         helpers.get(name)?.as_object().ok_or_else(|| JsError::Type("missing helper".into()))
     };
-    let function_proto = unsafe {
-        let global = Object::from_raw(ctx, sys::JSContextGetGlobalObject(ctx));
-        global.get("Function")?.as_object().map(|f| f.get("prototype")).transpose()?
+    // A live realm's own Function.prototype; a disposed one's global's.
+    let cached = realm.and_then(|r| r.function_proto.borrow().as_ref().map(Persistent::as_raw));
+    let function_proto = match cached {
+        // SAFETY: protected by the realm until its disposal.
+        Some(p) => Some(unsafe { Value::from_raw(ctx, p) }),
+        None => unsafe {
+            let global = Object::from_raw(ctx, sys::JSContextGetGlobalObject(ctx));
+            global.get("Function")?.as_object().map(|f| f.get("prototype")).transpose()?
+        },
     };
     let member_class = engine.classes.borrow().member;
     let keys = MemberKeys::new(realm);
