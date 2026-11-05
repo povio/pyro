@@ -1,4 +1,5 @@
-//! Bounded, inert XML 1.0 parsing for DOMParser. No DTD or external entities.
+//! Bounded XML 1.0 parsing for DOMParser, XHR and navigations. DOCTYPEs become nodes;
+//! no DTD processing (internal subsets are ignored) and no external entities.
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::name::{Namespace as XmlNamespace, NamespaceResolver, PrefixDeclaration, ResolveResult};
 use quick_xml::{Reader, XmlVersion};
