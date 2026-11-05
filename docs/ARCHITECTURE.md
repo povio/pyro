@@ -109,6 +109,14 @@ impl JsClass for Node {
   trampoline per (class, attribute) (see "JavaScriptCore source build", patch `0012`); with the system framework they
   are callback objects, as before. One full trampoline per member was the earlier design; it made lp-webapi's codegen
   serial and the binary 6 MB larger.
+- `def.pure_getter` / `pure_getter_typed` / `def.pure_method` declare a member that runs no script, changes nothing
+  script can observe and may be run again after an error (tree navigation, `nodeType`, `length`, `matches`,
+  `getAttribute`, `querySelector`). Such a member takes the lean dispatch (`accessors.rs` `lean_getter_h`,
+  `class.rs` `pure_member_call`, `get_by_index_lean` for indexed getters): the scope comes from the realm the
+  receiver's payload keeps (`Header::realm_ref`), the data from the payload's class chain (boxed `ClassInfo`
+  entries, no registry), and it skips what exists for callbacks that can run script or mutate: the nesting depth,
+  the termination state, the post-callback hook. An error or a panic reruns the member under the full dispatch,
+  which reports it. With patch `0013` a pure getter is also a DOM attribute to the JITs (below).
 - Panics are caught at the boundary and become `Error("Internal error: …")`.
 - The interface shape follows WebIDL:
   - accessors live on the prototype, so `Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')` works as React needs;
@@ -145,8 +153,13 @@ impl JsClass for Node {
    Wrapper payloads may therefore safely own `Persistent`s.
 3. **Identity maps** are per realm: `IdentityKey -> JSWeak`. `JSWeakGetObject` returns null once the GC has found the
    object dead, so a dead wrapper is never handed out again.
-   A node wrapper is pinned while its node is connected if it holds listeners or if script added a property to it
-   (patch `0011` reports those). Any other wrapper can be collected and made again without script noticing.
+   A node wrapper made while its node is in the active document is pinned for as long as the node stays connected
+   (`lp-webapi` `wrap_node`; `reconcile_pins` drops the pin from the removal log at the next safe point, and re-pins
+   a wrapper that holds listeners or properties, which patch `0011` reports, when its node comes back). Other
+   browsers keep such wrappers too. Without it, a script that walks the document (a selector engine reads every
+   element per query) had its wrappers collected and made again each time: 15% of a Playwright locator was
+   `wrap_node` and 13% the collector. A wrapper made for a detached node can still be collected and made again
+   without script noticing.
 4. **Prefer hidden properties to `Persistent`** for state a wrapper owns (event listeners, expandos the DOM needs).
    `Persistent` roots are invisible to cycle collection.
 5. **`Realm::dispose()`** (navigation) releases the global and the prototypes, empties the identity map, and
@@ -321,6 +334,17 @@ so a process that closed a page kept reporting its memory; `configure_process` t
 `LIGHTNINGPANDA_DECOMMIT=madvise` keeps the stock behaviour. Measured on Playwright's `locator.textContent` over a
 2,000-row page (about 44,000 DOM calls per locator): 11.1 ms to 5.4 ms, browser CPU 12.2 ms to 6.6 ms;
 `dom.mutate.1k` 2.3 to 1.9 ms.
+
+Patch `0013` takes the two paths that still went through generic code into the JITs. `JSObjectSetFastGetter` installs
+a pure getter as a JSC `DOMAttributeGetterSetter` whose `DOMJIT::GetterSetter` carries a context (the stock one is a
+bare function, so a getter installed at runtime could not have a snippet): the baseline, DFG and FTL inline caches and
+the DFG's `CallDOMGetter` prove the receiver is a C API wrapper and call `fast_getter_dispatch` with the receiver and
+its private data, no property name, no decoding of `this`, with the declared result type and a reads-only effect (the
+compiler drops a dead read and types what follows). `AccessCase::IndexedCallbackObjectLoad` makes `wrapper[i]` an
+inline-cache case that calls the class's indexed getter (`operationGetByValCallbackObject`) where stock JSC gives up
+on the cache and takes `operationGetByValGeneric`, the prototype walk and a `PropertySlot` per read. A getter that
+returns a constant costs 7.5 ns per call through this path, loop included, which is what Chrome's bindings cost; what
+a real getter costs above that is `lp-js` and `lp-dom` (see the measurements in `docs/OPTIMIZATION.md`).
 
 To change JSC: edit the checkout in `~/Library/Caches/lightningpanda/webkit-src`, `ninja -C ../webkit-build
 JavaScriptCore` to iterate, then regenerate the patch with `git diff` (use `git add -N` for new files) and rerun

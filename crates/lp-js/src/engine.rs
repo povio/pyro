@@ -272,7 +272,7 @@ impl EngineInner {
             return;
         }
         let realm_alive = self.realms.borrow().iter().any(|(_, r)| r.strong_count() > 0);
-        if realm_alive || (self.is_current() && DEPTH.with(Cell::get) > 0) {
+        if realm_alive || (self.is_current() && callback_tls().depth.get() > 0) {
             return;
         }
         let realms: Vec<Rc<RealmInner>> = self.realms.borrow().iter().filter_map(|(_, r)| r.upgrade()).collect();
@@ -301,7 +301,7 @@ impl EngineInner {
         // thread: only clear the thread state if it still refers to us.
         if was_current && self.is_current() {
             let _ = CURRENT.try_with(|c| *c.borrow_mut() = Weak::new());
-            let _ = TERMINATING.try_with(|t| t.set(false));
+            callback_tls().terminating.set(false);
         }
     }
 
@@ -317,12 +317,18 @@ impl Drop for EngineInner {
     }
 }
 
+/// Per-thread callback state, one thread-local (each access is a runtime
+/// lookup on macOS, and a native callback reads these several times).
+pub(crate) struct CallbackTls {
+    /// Native callback nesting depth on this thread (0 = called from Rust).
+    pub depth: Cell<u32>,
+    /// A termination is propagating through the VM on this thread.
+    pub terminating: Cell<bool>,
+}
+
 thread_local! {
     static CURRENT: RefCell<Weak<EngineInner>> = const { RefCell::new(Weak::new()) };
-    /// Native callback nesting depth on this thread (0 = called from Rust).
-    pub(crate) static DEPTH: Cell<u32> = const { Cell::new(0) };
-    /// A termination is propagating through the VM on this thread.
-    pub(crate) static TERMINATING: Cell<bool> = const { Cell::new(false) };
+    static CALLBACK: CallbackTls = const { CallbackTls { depth: Cell::new(0), terminating: Cell::new(false) } };
     /// Asked at each watchdog poll while JavaScript runs on this thread;
     /// returning true terminates it (see [`Engine::set_interrupt_check`]).
     static INTERRUPT_CHECK: RefCell<Option<Rc<dyn Fn() -> bool>>> = const { RefCell::new(None) };
@@ -337,16 +343,13 @@ pub(crate) fn engine_for_ctx(ctx: sys::JSContextRef) -> Option<Rc<EngineInner>> 
     (!e.is_shut_down() && e.group == group).then_some(e)
 }
 
-/// The thread's `DEPTH` and `TERMINATING` cells, as references that outlive
-/// the call: a native callback reads and writes them several times, and each
-/// thread-local access is a runtime lookup on macOS. The cells have no
-/// destructor and live as long as the thread, which the caller is on.
-pub(crate) fn callback_cells() -> (&'static Cell<u32>, &'static Cell<bool>) {
-    // SAFETY: const-initialized thread-locals without destructors are never
-    // deallocated while the thread runs; the references are used only on it.
-    let depth = DEPTH.with(|d| unsafe { &*(d as *const Cell<u32>) });
-    let terminating = TERMINATING.with(|t| unsafe { &*(t as *const Cell<bool>) });
-    (depth, terminating)
+/// The thread's callback state, as a reference that outlives the call. The
+/// cells have no destructor and live as long as the thread, which the caller
+/// is on.
+pub(crate) fn callback_tls() -> &'static CallbackTls {
+    // SAFETY: a const-initialized thread-local without a destructor is never
+    // deallocated while the thread runs; the reference is used only on it.
+    CALLBACK.with(|c| unsafe { &*(c as *const CallbackTls) })
 }
 
 pub(crate) fn current_inner() -> Option<Rc<EngineInner>> {
@@ -389,6 +392,7 @@ impl Engine {
         let (group, root) = unsafe {
             let group = sys::JSContextGroupCreate();
             let root = sys::JSGlobalContextCreateInGroup(group, std::ptr::null());
+            crate::value::verify_immediates(root);
             (group, root)
         };
         let terminate = Arc::new(TerminateState { requested: AtomicBool::new(false) });
@@ -412,7 +416,7 @@ impl Engine {
             arm_watchdog(group, &terminate);
         }
         CURRENT.with(|c| *c.borrow_mut() = Rc::downgrade(&inner));
-        TERMINATING.with(|t| t.set(false));
+        callback_tls().terminating.set(false);
         Ok(Engine { inner })
     }
 
@@ -769,7 +773,7 @@ pub(crate) struct WatchdogPause<'a>(Option<&'a EngineInner>);
 impl<'a> WatchdogPause<'a> {
     pub(crate) fn new(engine: &'a EngineInner) -> Self {
         let spi = sys::spi::get();
-        if !engine.caps.termination || DEPTH.with(Cell::get) > 0 || spi.set_execution_time_limit.is_none() {
+        if !engine.caps.termination || callback_tls().depth.get() > 0 || spi.set_execution_time_limit.is_none() {
             return WatchdogPause(None);
         }
         let Some(clear) = spi.clear_execution_time_limit else { return WatchdogPause(None) };
@@ -801,7 +805,7 @@ pub(crate) fn rearm_termination(ctx: sys::JSContextRef) {
 /// the request and flushes JSC's pending termination, which otherwise aborts
 /// the next entry when page code caught the termination exception.
 pub(crate) fn finish_termination(ctx: sys::JSContextRef) {
-    TERMINATING.with(|t| t.set(false));
+    callback_tls().terminating.set(false);
     if let Some(engine) = current_inner() {
         engine.terminate.requested.store(false, Ordering::SeqCst);
     }
@@ -820,7 +824,7 @@ unsafe extern "C" fn should_terminate(ctx: sys::JSContextRef, data: *mut c_void)
         state.requested.store(true, Ordering::SeqCst);
     }
     if state.requested.swap(false, Ordering::SeqCst) {
-        let _ = TERMINATING.try_with(|t| t.set(true));
+        callback_tls().terminating.set(true);
         return true;
     }
     // JSC does not re-arm the limit after the callback declines; re-arming

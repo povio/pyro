@@ -65,6 +65,7 @@ impl Dom {
         let node = self.id_of(idx);
         self.add_ref(node).expect("live iframe");
         self.iframes.events.entry(document).or_default().push(IframeEvent { node, change });
+        self.touch_hook();
     }
     fn iframe_subtree(&self, root: u32) -> Vec<u32> {
         let mut frames = Vec::new();

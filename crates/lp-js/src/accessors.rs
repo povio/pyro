@@ -14,15 +14,16 @@
 //! dispatcher here. Slots are process-wide, keyed by the class type and the
 //! attribute name: every engine registers the same (class, name) with the same
 //! callbacks, so the first registration's entry serves them all.
-use crate::class::{guard, MemberCall};
+use crate::class::{guard, GetterResult, Header, InvokeHFn, Kind, MemberCall, PayloadTag};
 use crate::error::JsError;
 use crate::value::Args;
 use lp_jsc_sys as sys;
 use std::any::TypeId;
 use std::collections::HashMap;
 use std::ffi::c_void;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::ptr;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Mutex;
 
 include!(concat!(env!("OUT_DIR"), "/accessor_trampolines.rs"));
@@ -58,6 +59,12 @@ impl SlotCall {
 
 static GETTER_CALLS: [SlotCall; SLOTS] = [const { SlotCall::EMPTY }; SLOTS];
 static SETTER_CALLS: [SlotCall; SLOTS] = [const { SlotCall::EMPTY }; SLOTS];
+/// Getters that take the lean dispatch (`ClassDef::pure_getter`).
+static PURE: [AtomicBool; SLOTS] = [const { AtomicBool::new(false) }; SLOTS];
+/// What each pure getter returns (`sys::spi::kJSFastGetterResult*`).
+static RESULT: [AtomicUsize; SLOTS] = [const { AtomicUsize::new(0) }; SLOTS];
+/// Each pure getter's invoker from a payload header (`InvokeHFn`; 0: none).
+static GETTER_H: [AtomicUsize; SLOTS] = [const { AtomicUsize::new(0) }; SLOTS];
 
 /// Slot numbers by (class type, attribute name).
 static SLOT_TABLE: Mutex<Option<HashMap<(TypeId, &'static str), u16>>> = Mutex::new(None);
@@ -71,7 +78,15 @@ pub(crate) fn supported() -> bool {
 /// The slot of the attribute `name` of class `class`, allocated on first use
 /// with its callbacks; `None` once the slots are exhausted (the attribute is
 /// then installed as an ordinary accessor).
-pub(crate) fn slot_for(class: TypeId, name: &'static str, get: MemberCall, set: Option<MemberCall>) -> Option<u16> {
+pub(crate) fn slot_for(
+    class: TypeId,
+    name: &'static str,
+    get: MemberCall,
+    set: Option<MemberCall>,
+    pure: bool,
+    result: GetterResult,
+    get_h: Option<InvokeHFn>,
+) -> Option<u16> {
     if !supported() {
         return None;
     }
@@ -88,6 +103,18 @@ pub(crate) fn slot_for(class: TypeId, name: &'static str, get: MemberCall, set: 
     if let Some(set) = set {
         SETTER_CALLS[slot].store(set);
     }
+    GETTER_H[slot].store(get_h.map_or(0, |f| f as usize), Ordering::Release);
+    PURE[slot].store(pure, Ordering::Release);
+    RESULT[slot].store(
+        match result {
+            GetterResult::Any => sys::spi::kJSFastGetterResultAny,
+            GetterResult::Number => sys::spi::kJSFastGetterResultNumber,
+            GetterResult::Boolean => sys::spi::kJSFastGetterResultBoolean,
+            GetterResult::String => sys::spi::kJSFastGetterResultString,
+            GetterResult::ObjectOrNull => sys::spi::kJSFastGetterResultObjectOrNull,
+        } as usize,
+        Ordering::Release,
+    );
     table.insert((class, name), slot as u16);
     Some(slot as u16)
 }
@@ -117,12 +144,83 @@ unsafe fn throw(ctx: sys::JSContextRef, exception: sys::JSValueRef) {
     }
 }
 
+/// Whether `slot` is a pure getter, and what it returns (for
+/// `JSObjectSetFastGetter`).
+pub(crate) fn pure_result(slot: u16) -> Option<std::os::raw::c_int> {
+    PURE[usize::from(slot)].load(Ordering::Acquire).then(|| RESULT[usize::from(slot)].load(Ordering::Acquire) as _)
+}
+
+/// The JITs' entry to a pure getter (`JSObjectSetFastGetter`): the receiver
+/// is a wrapper object already and `private_data` its payload header;
+/// `context` is the slot. Falls back to the full dispatch like
+/// [`lean_getter`].
+pub(crate) unsafe extern "C" fn fast_getter_dispatch(
+    ctx: sys::JSContextRef,
+    this: sys::JSObjectRef,
+    private_data: *mut c_void,
+    context: *mut c_void,
+) -> sys::JSValueRef {
+    let slot = context as usize;
+    if let Some(v) = unsafe { lean_getter_h(slot, private_data as *mut Header) } {
+        return v;
+    }
+    unsafe { custom_getter_dispatch(slot, ctx, this as sys::JSValueRef, ptr::null()) }
+}
+
+/// The lean dispatch of a pure getter (`ClassDef::pure_getter`) on the
+/// payload header `h` of its receiver: the scope is the receiver's realm
+/// (kept by the payload), so nothing here reads thread-local state or enters
+/// JavaScriptCore before the getter runs. No nesting depth, no termination
+/// bookkeeping, no post-callback hook: those exist for callbacks that can run
+/// script or mutate. `None` sends the call through the full dispatch: not a
+/// wrapper instance, a disposed realm, an error, a panic.
+#[inline]
+unsafe fn lean_getter_h(slot: usize, h: *mut Header) -> Option<sys::JSValueRef> {
+    unsafe {
+        if h.is_null() || (*h).tag != PayloadTag::Wrapper || (*h).kind != Kind::Instance {
+            return None;
+        }
+        let invoke = GETTER_H[slot].load(Ordering::Relaxed);
+        if invoke == 0 {
+            return None;
+        }
+        // SAFETY: stored from an `InvokeHFn` by `slot_for`.
+        let invoke = std::mem::transmute::<usize, InvokeHFn>(invoke);
+        let f = GETTER_CALLS[slot].f.load(Ordering::Relaxed) as *const ();
+        let realm = (*h).realm_ref.upgrade()?;
+        let ctx = realm.ctx.get() as sys::JSContextRef;
+        if ctx.is_null() {
+            return None;
+        }
+        let scope = crate::realm::Scope::new(ctx, &realm);
+        match catch_unwind(AssertUnwindSafe(|| invoke(&scope, h, f))) {
+            Ok(Ok(v)) if !v.is_null() => Some(v),
+            _ => None,
+        }
+    }
+}
+
+/// [`lean_getter_h`] for the custom accessor entry, which gets the receiver
+/// as a value: a wrapper cell's private data is its header.
+unsafe fn lean_getter(slot: usize, this: sys::JSValueRef) -> Option<sys::JSValueRef> {
+    let this = receiver(this)?;
+    if this.is_null() {
+        return None;
+    }
+    unsafe { lean_getter_h(slot, sys::JSObjectGetPrivate(this) as *mut Header) }
+}
+
 unsafe fn custom_getter_dispatch(
     slot: usize,
     ctx: sys::JSContextRef,
     this: sys::JSValueRef,
     _uid: *const c_void,
 ) -> sys::JSValueRef {
+    if PURE[slot].load(Ordering::Relaxed) {
+        if let Some(v) = unsafe { lean_getter(slot, this) } {
+            return v;
+        }
+    }
     unsafe {
         let mut exc: sys::JSValueRef = ptr::null();
         let result = guard(ctx, &mut exc, ptr::null(), |scope| {

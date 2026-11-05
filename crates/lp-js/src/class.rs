@@ -26,6 +26,7 @@ use std::ffi::CString;
 use std::marker::PhantomData;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::ptr;
+use std::rc::Rc;
 
 pub type ClassId = u32;
 
@@ -64,12 +65,22 @@ pub(crate) struct MethodSpec {
     pub name: &'static str,
     pub length: u32,
     pub call: MemberCall,
+    /// See [`ClassDef::pure_method`].
+    pub pure: bool,
 }
 
 pub(crate) struct AccessorSpec {
     pub name: &'static str,
     pub get: MemberCall,
     pub set: Option<MemberCall>,
+    /// The getter runs no script and has no observable side effect (see
+    /// [`ClassDef::pure_getter`]): it takes the lean dispatch.
+    pub pure: bool,
+    /// What a pure getter returns, for the JIT (`GetterResult::Any` unless
+    /// every result fits).
+    pub result: GetterResult,
+    /// A pure getter's invoker from the receiver's payload header.
+    pub get_h: Option<InvokeHFn>,
     /// Custom accessor slot ([`crate::accessors`]); `None` installs an
     /// ordinary accessor (no patched JSC, or the slots are used up).
     pub slot: Option<u16>,
@@ -88,6 +99,9 @@ pub(crate) struct MemberCall {
 /// Calls `f` (a member callback, cast back to its real fn-pointer type) for
 /// `this` with `args`.
 pub(crate) type InvokeFn = unsafe fn(&Scope<'_>, sys::JSObjectRef, Args<'_>, *const ()) -> JsResult<sys::JSValueRef>;
+/// A getter invoked with its receiver's payload header (already known to be
+/// a wrapper instance) in a scope of the receiver's realm.
+pub(crate) type InvokeHFn = unsafe fn(&Scope<'_>, *mut Header, *const ()) -> JsResult<sys::JSValueRef>;
 
 /// Member callback types: plain fn pointers. Non-capturing closures coerce.
 pub type MethodFn<C> = for<'s> fn(&Scope<'s>, &<C as JsClass>::Data, Args<'s>) -> JsResult<Value<'s>>;
@@ -124,6 +138,21 @@ impl PropertyHooks {
             names: self.names.or(parent.names),
         }
     }
+}
+
+/// What a pure getter ([`ClassDef::pure_getter_typed`]) returns: a promise
+/// the compiled code relies on, so a kind must cover every value the getter
+/// can return (an exception is not a value).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum GetterResult {
+    #[default]
+    Any,
+    /// A number (an integer or a double).
+    Number,
+    Boolean,
+    String,
+    /// An object, or null.
+    ObjectOrNull,
 }
 
 /// Builder passed to [`JsClass::define`].
@@ -192,6 +221,21 @@ impl<C: JsClass> ClassDef<C> {
             name,
             length,
             call: MemberCall { invoke: method_invoke::<C>, f: f as *const () },
+            pure: false,
+        });
+        self
+    }
+
+    /// Adds an operation that runs no JavaScript, changes nothing script can
+    /// observe and may be run again after an error (`matches`,
+    /// `getAttribute`, `querySelector`): it takes the lean dispatch, as a
+    /// [`ClassDef::pure_getter`] does.
+    pub fn pure_method(&mut self, name: &'static str, length: u32, f: MethodFn<C>) -> &mut Self {
+        self.methods.push(MethodSpec {
+            name,
+            length,
+            call: MemberCall { invoke: method_invoke::<C>, f: f as *const () },
+            pure: true,
         });
         self
     }
@@ -199,7 +243,27 @@ impl<C: JsClass> ClassDef<C> {
     /// Adds a read-only attribute.
     pub fn getter(&mut self, name: &'static str, g: GetterFn<C>) -> &mut Self {
         let get = MemberCall { invoke: getter_invoke::<C>, f: g as *const () };
-        self.accessors.push(AccessorSpec { name, get, set: None, slot: None });
+        self.accessors.push(AccessorSpec { name, get, set: None, slot: None, pure: false, result: GetterResult::Any, get_h: None });
+        self
+    }
+
+    /// Adds a read-only attribute whose getter runs no JavaScript, changes
+    /// nothing script can observe, and may be run again after an error (the
+    /// usual tree-navigation and state reads). Such a getter skips the
+    /// per-callback bookkeeping (nesting depth, termination state, the
+    /// post-callback hook) that exists for callbacks that can run script or
+    /// mutate: a selector engine reads these tens of thousands of times per
+    /// query. An error or a panic reruns it under the full dispatch, which
+    /// then reports it.
+    pub fn pure_getter(&mut self, name: &'static str, g: GetterFn<C>) -> &mut Self {
+        self.pure_getter_typed(name, GetterResult::Any, g)
+    }
+
+    /// [`ClassDef::pure_getter`] with what the getter returns, which lets the
+    /// JIT type what follows the read (see [`GetterResult`]).
+    pub fn pure_getter_typed(&mut self, name: &'static str, result: GetterResult, g: GetterFn<C>) -> &mut Self {
+        let get = MemberCall { invoke: getter_invoke::<C>, f: g as *const () };
+        self.accessors.push(AccessorSpec { name, get, set: None, slot: None, pure: true, result, get_h: Some(getter_invoke_h::<C>) });
         self
     }
 
@@ -207,7 +271,7 @@ impl<C: JsClass> ClassDef<C> {
     pub fn accessor(&mut self, name: &'static str, g: GetterFn<C>, s: SetterFn<C>) -> &mut Self {
         let get = MemberCall { invoke: getter_invoke::<C>, f: g as *const () };
         let set = MemberCall { invoke: setter_invoke::<C>, f: s as *const () };
-        self.accessors.push(AccessorSpec { name, get, set: Some(set), slot: None });
+        self.accessors.push(AccessorSpec { name, get, set: Some(set), slot: None, pure: false, result: GetterResult::Any, get_h: None });
         self
     }
 
@@ -219,7 +283,12 @@ impl<C: JsClass> ClassDef<C> {
 
     /// Adds a static operation on the interface object.
     pub fn static_method(&mut self, name: &'static str, length: u32, f: StaticFn) -> &mut Self {
-        self.statics.push(MethodSpec { name, length, call: MemberCall { invoke: static_invoke, f: f as *const () } });
+        self.statics.push(MethodSpec {
+            name,
+            length,
+            call: MemberCall { invoke: static_invoke, f: f as *const () },
+            pure: false,
+        });
         self
     }
 
@@ -330,7 +399,14 @@ pub(crate) struct ClassInfo {
     pub global_receiver: Option<GlobalReceiverFn>,
     pub name: &'static str,
     pub data_type: TypeId,
+    /// The `JsClass` type: the brand a member checks its receiver against.
+    pub class_type: TypeId,
     pub parent: Option<ClassId>,
+    /// The parent's entry (null at the root). Entries are boxed, so the
+    /// pointer stays valid while the registry lives: payload headers keep
+    /// one, and a member finds its receiver's data by walking these without
+    /// touching the registry.
+    pub parent_info: *const ClassInfo,
     pub instance_class: sys::JSClassRef,
     pub def: ClassDefErased,
 }
@@ -349,7 +425,7 @@ pub(crate) struct ClassDefErased {
 }
 
 pub(crate) struct ClassRegistry {
-    pub classes: Vec<ClassInfo>,
+    pub classes: Vec<Box<ClassInfo>>,
     by_type: rustc_hash::FxHashMap<TypeId, ClassId>,
     /// Parent JSClass of every wrapper class: carries the finalizer and marks
     /// objects whose private pointer is a `Header`.
@@ -469,14 +545,20 @@ pub(crate) fn register<C: JsClass>(engine: &EngineInner) -> ClassId {
         unsafe { set(instance_class, Some(get_by_index_hook), Some(set_by_index_hook)) };
     }
     for a in &mut def.accessors {
-        a.slot = crate::accessors::slot_for(TypeId::of::<C>(), a.name, a.get, a.set);
+        a.slot = crate::accessors::slot_for(TypeId::of::<C>(), a.name, a.get, a.set, a.pure, a.result, a.get_h);
     }
-    reg.classes.push(ClassInfo {
+    let parent_info: *const ClassInfo = match parent {
+        Some(p) => &*reg.classes[p as usize],
+        None => ptr::null(),
+    };
+    reg.classes.push(Box::new(ClassInfo {
         upcast: def.upcast,
         global_receiver: def.global_receiver,
         name: C::NAME,
         data_type: TypeId::of::<C::Data>(),
+        class_type: TypeId::of::<C>(),
         parent,
+        parent_info,
         instance_class,
         def: ClassDefErased {
             methods: def.methods,
@@ -489,7 +571,7 @@ pub(crate) fn register<C: JsClass>(engine: &EngineInner) -> ClassId {
             exposed: def.exposed,
             indexed_iterable: def.indexed_iterable,
         },
-    });
+    }));
     reg.by_type.insert(TypeId::of::<C>(), id);
     id
 }
@@ -519,6 +601,8 @@ pub(crate) enum PayloadTag {
 pub(crate) struct MemberPayload {
     pub tag: PayloadTag,
     pub call: MemberCall,
+    /// See [`ClassDef::pure_method`].
+    pub pure: bool,
 }
 
 /// Header at the start of every wrapper payload (`Boxed<T>`).
@@ -526,6 +610,11 @@ pub(crate) struct MemberPayload {
 pub(crate) struct Header {
     pub tag: PayloadTag,
     pub class: ClassId,
+    /// The class's registry entry (null for closures); see `ClassInfo::parent_info`.
+    pub info: *const ClassInfo,
+    /// The realm the object was made in: the lean member dispatch gets its
+    /// scope from the receiver instead of from thread-local state.
+    pub realm_ref: std::rc::Weak<crate::realm::RealmInner>,
     pub kind: Kind,
     pub realm: RealmId,
     pub key: Option<IdentityKey>,
@@ -571,14 +660,22 @@ pub(crate) fn new_payload<T: 'static>(
     engine: &EngineInner,
     class: ClassId,
     kind: Kind,
-    realm: RealmId,
+    realm: &Rc<crate::realm::RealmInner>,
     key: Option<IdentityKey>,
     data: T,
 ) -> *mut Header {
+    let realm_ref = Rc::downgrade(realm);
+    let realm = realm.id;
+    let info: *const ClassInfo = match engine.classes.borrow().classes.get(class as usize) {
+        Some(i) => &**i,
+        None => ptr::null(),
+    };
     let b = Box::new(Boxed {
         header: Header {
             tag: PayloadTag::Wrapper,
             class,
+            info,
+            realm_ref,
             kind,
             realm,
             key,
@@ -746,8 +843,9 @@ unsafe fn guard_erased(
     step: &mut dyn FnMut(&Scope<'_>, Step) -> JsResult<Option<crate::Persistent>>,
 ) -> bool {
     let outcome = catch_unwind(AssertUnwindSafe(|| {
-        let (depth, terminating) = crate::engine::callback_cells();
-        let _depth = DepthGuard::enter_with(depth);
+        let tls = crate::engine::callback_tls();
+        let terminating = &tls.terminating;
+        let _depth = DepthGuard::enter_with(&tls.depth);
         let Some(realm) = crate::realm::realm_for_ctx(ctx) else {
             unsafe { throw_message(ctx, "Execution context was destroyed.", exc) };
             return false;
@@ -808,7 +906,7 @@ pub(crate) struct DepthGuard(&'static std::cell::Cell<u32>);
 
 impl DepthGuard {
     pub(crate) fn enter() -> DepthGuard {
-        Self::enter_with(crate::engine::callback_cells().0)
+        Self::enter_with(&crate::engine::callback_tls().depth)
     }
 
     /// With the thread's depth cell already looked up.
@@ -848,7 +946,7 @@ fn in_receiver_realm<R: CallbackResult>(
     let ctx = inner.global_ctx()?;
     let receiver = Scope::new(ctx, &inner);
     let result = body(&receiver);
-    let hook = if crate::engine::TERMINATING.with(|t| t.get()) { None } else { inner.native_callback_hook() };
+    let hook = if crate::engine::callback_tls().terminating.get() { None } else { inner.native_callback_hook() };
     let _return_root = match (&hook, &result) {
         (Some(_), Ok(v)) => v.root(&receiver),
         _ => None,
@@ -882,6 +980,31 @@ fn member_in_receiver_realm<R: CallbackResult>(
 /// receivers).
 unsafe fn this_data<'a, C: JsClass>(scope: &Scope<'_>, this: sys::JSObjectRef) -> JsResult<(&'a C::Data, RealmId)> {
     let h = unsafe { scope.header_of_receiver(this) };
+    // The usual case, without the registry: walk the receiver's class chain
+    // (stable boxed entries) up to the brand, projecting the data as it goes.
+    if let Some(h) = h {
+        // SAFETY: h is a live payload of a reachable object (receiver on
+        // stack); `info` entries live as long as the registry, which outlives
+        // every callback.
+        unsafe {
+            if (*h).kind == Kind::Instance && !(*h).info.is_null() {
+                let mut info = (*h).info;
+                let mut ptr = ((*h).data_ptr)(h);
+                loop {
+                    if (*info).class_type == TypeId::of::<C>() {
+                        return Ok((&*(ptr as *const C::Data), (*h).realm));
+                    }
+                    if let Some(up) = (*info).upcast {
+                        ptr = up(ptr);
+                    }
+                    info = (*info).parent_info;
+                    if info.is_null() {
+                        break;
+                    }
+                }
+            }
+        }
+    }
     let reg = scope.engine_inner().classes.borrow();
     let want = reg.id_of::<C>().expect("class registered");
     // SAFETY: h is a live payload of a reachable object (receiver on stack).
@@ -966,6 +1089,41 @@ unsafe fn method_invoke<C: JsClass>(
         return member_in_receiver_realm(scope, realm, |s| f(s, data, Args { ctx: s.ctx, raw }).map(|v| v.raw));
     }
     f(scope, data, args).map(|v| v.raw)
+}
+
+/// The data of `C` in the instance payload `h` (the payload's class or a
+/// subclass of `C`), by the class chain: no registry, no JavaScriptCore.
+///
+/// # Safety
+/// `h` is a live wrapper payload header.
+#[inline]
+pub(crate) unsafe fn data_of_header<'a, C: JsClass>(h: *mut Header) -> Option<&'a C::Data> {
+    unsafe {
+        if (*h).kind != Kind::Instance || (*h).info.is_null() {
+            return None;
+        }
+        let mut info = (*h).info;
+        let mut ptr = ((*h).data_ptr)(h);
+        loop {
+            if (*info).class_type == TypeId::of::<C>() {
+                return Some(&*(ptr as *const C::Data));
+            }
+            if let Some(up) = (*info).upcast {
+                ptr = up(ptr);
+            }
+            info = (*info).parent_info;
+            if info.is_null() {
+                return None;
+            }
+        }
+    }
+}
+
+unsafe fn getter_invoke_h<C: JsClass>(scope: &Scope<'_>, h: *mut Header, f: *const ()) -> JsResult<sys::JSValueRef> {
+    let data = unsafe { data_of_header::<C>(h) }.ok_or_else(|| JsError::Type("Illegal invocation".into()))?;
+    // SAFETY: stored by `ClassDef::pure_getter_typed` from this fn-pointer type.
+    let f: GetterFn<C> = unsafe { std::mem::transmute(f) };
+    f(scope, data).map(|v| v.raw)
 }
 
 unsafe fn getter_invoke<C: JsClass>(
@@ -1087,6 +1245,27 @@ where
 
 /// Data of class `C` for a property-hook receiver (hooks may be inherited).
 unsafe fn hook_data<'a, C: JsClass>(scope: &Scope<'_>, h: *mut Header) -> JsResult<&'a C::Data> {
+    // The class chain walk of `this_data`, without the registry.
+    // SAFETY: h is a live payload header (the hook's object); `info` entries
+    // live as long as the registry.
+    unsafe {
+        if (*h).kind == Kind::Instance && !(*h).info.is_null() {
+            let mut info = (*h).info;
+            let mut ptr = ((*h).data_ptr)(h);
+            loop {
+                if (*info).class_type == TypeId::of::<C>() {
+                    return Ok(&*(ptr as *const C::Data));
+                }
+                if let Some(up) = (*info).upcast {
+                    ptr = up(ptr);
+                }
+                info = (*info).parent_info;
+                if info.is_null() {
+                    break;
+                }
+            }
+        }
+    }
     let reg = scope.engine_inner().classes.borrow();
     let want = reg.id_of::<C>().expect("class registered");
     unsafe { class_data::<C::Data>(&reg, h, want) }.ok_or_else(|| JsError::Type("Illegal invocation".into()))
@@ -1193,6 +1372,13 @@ unsafe extern "C" fn get_by_index_hook(
     index: std::os::raw::c_uint,
     exc: *mut sys::JSValueRef,
 ) -> sys::JSValueRef {
+    // Indexed getters run no script and have no observable side effect
+    // (collections wrap their items): the lean dispatch first, the full one
+    // for a receiver of another realm, an error, a panic, or while a
+    // termination propagates (see `ClassDef::pure_getter`).
+    if let Some(v) = unsafe { get_by_index_lean(ctx, object, index) } {
+        return v;
+    }
     unsafe {
         guard(ctx, exc, ptr::null(), |scope| {
             let Some(hc) = hook_ctx(scope, object) else { return Ok(ptr::null()) };
@@ -1205,6 +1391,28 @@ unsafe extern "C" fn get_by_index_hook(
             }
             get(scope)
         })
+    }
+}
+
+/// The lean half of [`get_by_index_hook`]: `Some` when it answered.
+unsafe fn get_by_index_lean(ctx: sys::JSContextRef, object: sys::JSObjectRef, index: u32) -> Option<sys::JSValueRef> {
+    unsafe {
+        let h = sys::JSObjectGetPrivate(object) as *mut Header;
+        if h.is_null() || (*h).tag != PayloadTag::Wrapper || (*h).info.is_null() {
+            return None;
+        }
+        let f = (*(*h).info).def.hooks.indexed?;
+        let _ = ctx;
+        let realm = (*h).realm_ref.upgrade()?;
+        let ctx = realm.ctx.get() as sys::JSContextRef;
+        if ctx.is_null() {
+            return None;
+        }
+        let scope = Scope::new(ctx, &realm);
+        match catch_unwind(AssertUnwindSafe(|| f(&scope, h, index))) {
+            Ok(Ok(v)) => Some(v.unwrap_or(ptr::null())),
+            _ => None,
+        }
     }
 }
 
@@ -1244,14 +1452,50 @@ pub(crate) unsafe extern "C" fn member_call_data(
     exc: *mut sys::JSValueRef,
 ) -> sys::JSValueRef {
     unsafe {
+        let payload = data as *const MemberPayload;
+        if !payload.is_null() && (*payload).pure {
+            if let Some(v) = pure_member_call(&*payload, this, argc, argv) {
+                return v;
+            }
+        }
         guard(ctx, exc, ptr::null(), |scope| {
-            let payload = data as *const MemberPayload;
             if payload.is_null() {
                 return Err(JsError::Type("Illegal invocation".into()));
             }
             let call = (*payload).call;
             (call.invoke)(scope, this, Args::from_raw(ctx, argc, argv), call.f)
         })
+    }
+}
+
+/// The lean dispatch of a pure operation (`ClassDef::pure_method`), in the
+/// receiver's realm: `None` sends the call through the full dispatch (a
+/// receiver that is not a wrapper, a disposed realm, an error, a panic).
+unsafe fn pure_member_call(
+    payload: &MemberPayload,
+    this: sys::JSObjectRef,
+    argc: usize,
+    argv: *const sys::JSValueRef,
+) -> Option<sys::JSValueRef> {
+    unsafe {
+        if this.is_null() {
+            return None;
+        }
+        let h = sys::JSObjectGetPrivate(this) as *mut Header;
+        if h.is_null() || (*h).tag != PayloadTag::Wrapper || (*h).kind != Kind::Instance {
+            return None;
+        }
+        let realm = (*h).realm_ref.upgrade()?;
+        let ctx = realm.ctx.get() as sys::JSContextRef;
+        if ctx.is_null() {
+            return None;
+        }
+        let scope = Scope::new(ctx, &realm);
+        let call = payload.call;
+        match catch_unwind(AssertUnwindSafe(|| (call.invoke)(&scope, this, Args::from_raw(ctx, argc, argv), call.f))) {
+            Ok(Ok(v)) if !v.is_null() => Some(v),
+            _ => None,
+        }
     }
 }
 

@@ -145,7 +145,7 @@ pub(crate) struct RealmInner {
     name: String,
     origin: RefCell<Option<String>>,
     pub(crate) engine: Rc<EngineInner>,
-    ctx: Cell<sys::JSGlobalContextRef>,
+    pub(crate) ctx: Cell<sys::JSGlobalContextRef>,
     protos: RefCell<Vec<Option<Persistent>>>,
     /// Interface objects as seen by script (proxies over `targets`).
     ctors: RefCell<Vec<Option<Persistent>>>,
@@ -154,6 +154,12 @@ pub(crate) struct RealmInner {
     /// Whether each class's members are installed in this realm.
     populated: RefCell<Vec<bool>>,
     identity: RefCell<rustc_hash::FxHashMap<IdentityKey, sys::JSWeakRef>>,
+    /// One JavaScript string per shared host string (by pointer identity),
+    /// protected for the realm's life: `tagName` and friends return the same
+    /// few dozen values tens of thousands of times per selector query, and a
+    /// fresh JSString each time was most of their cost. The `Arc` keeps the
+    /// key's address from being reused.
+    pub(crate) shared_strings: RefCell<rustc_hash::FxHashMap<usize, (std::sync::Arc<str>, sys::JSValueRef)>>,
     helpers: RefCell<Option<Persistent>>,
     helper_cache: RefCell<HashMap<&'static str, Persistent>>,
     /// The realm's `Object.prototype`, for the plain-object fast path of `is_plain_object`.
@@ -291,6 +297,10 @@ impl RealmInner {
                 unsafe { release(self.engine.group(), w) };
             }
         }
+        for (_, (_, v)) in self.shared_strings.borrow_mut().drain() {
+            // SAFETY: protected by `shared_string` on this still-live context.
+            unsafe { sys::JSValueUnprotect(ctx, v) };
+        }
         self.embedder.borrow_mut().take();
         self.named_properties.borrow_mut().take();
         // SAFETY: we owned one retain on the global context.
@@ -389,7 +399,7 @@ impl Realm {
         if !self.inner.global_payload.get().is_null() {
             return Err(JsError::Type("global data already set".into()));
         }
-        let h = class::new_payload(&self.inner.engine, id, Kind::Instance, self.inner.id, None, data);
+        let h = class::new_payload(&self.inner.engine, id, Kind::Instance, &self.inner, None, data);
         self.inner.global_payload.set(h);
         Ok(())
     }
@@ -750,7 +760,7 @@ impl<'s> Scope<'s> {
         f: impl for<'a> Fn(&Scope<'a>, Value<'a>, Args<'a>) -> JsResult<Value<'a>> + 'static,
     ) -> JsResult<Object<'s>> {
         let data: ClosureData = Box::new(f);
-        let h = class::new_payload(&self.realm.engine, u32::MAX, Kind::Closure, self.realm.id, None, data);
+        let h = class::new_payload(&self.realm.engine, u32::MAX, Kind::Closure, self.realm, None, data);
         let closure_class = self.realm.engine.classes.borrow().closure;
         let obj = unsafe { sys::JSObjectMake(self.ctx, closure_class, h as *mut c_void) };
         let obj = unsafe { Object::from_raw(self.ctx, obj) };
@@ -876,7 +886,7 @@ impl<'s> Scope<'s> {
         proto: Value<'_>,
     ) -> JsResult<Object<'s>> {
         let class = self.realm.engine.classes.borrow().classes[id as usize].instance_class;
-        let h = class::new_payload(&self.realm.engine, id, Kind::Instance, self.realm.id, key, data);
+        let h = class::new_payload(&self.realm.engine, id, Kind::Instance, self.realm, key, data);
         let obj = unsafe { sys::JSObjectMake(self.ctx, class, h as *mut c_void) };
         let obj = unsafe { Object::from_raw(self.ctx, obj) };
         obj.set_prototype(proto);
@@ -1276,6 +1286,7 @@ pub(crate) fn create(engine: &Rc<EngineInner>, options: RealmOptions) -> JsResul
         targets: RefCell::new(Vec::new()),
         populated: RefCell::new(Vec::new()),
         identity: RefCell::new(rustc_hash::FxHashMap::default()),
+        shared_strings: RefCell::new(rustc_hash::FxHashMap::default()),
         helpers: RefCell::new(None),
         helper_cache: RefCell::new(HashMap::new()),
         object_proto: RefCell::new(None),
@@ -1357,7 +1368,7 @@ fn install_classes(scope: &Scope<'_>) -> JsResult<()> {
         spec.push_str(&format!("[{name},{parent},{},{}]", info.def.ctor_length, info.def.exposed));
         let native = match info.def.constructor {
             Some(c) => {
-                make_member_fn(scope.ctx, &realm.engine, reg.member, c, info.name, info.def.ctor_length, &keys)?.value()
+                make_member_fn(scope.ctx, &realm.engine, reg.member, c, false, info.name, info.def.ctor_length, &keys)?.value()
             }
             None => scope.null(),
         };
@@ -1531,6 +1542,7 @@ fn make_member_fn(
     engine: &EngineInner,
     class: sys::JSClassRef,
     call: class::MemberCall,
+    pure: bool,
     name: &str,
     length: u32,
     keys: &MemberKeys,
@@ -1540,7 +1552,7 @@ fn make_member_fn(
     // slow path every time. The payload has no finalizer there: the registry
     // keeps it for the engine's lifetime.
     if let Some(make) = sys::spi::get().make_function_with_data {
-        let mut payload = Box::new(class::MemberPayload { tag: class::PayloadTag::Member, call });
+        let mut payload = Box::new(class::MemberPayload { tag: class::PayloadTag::Member, call, pure });
         let data = &mut *payload as *mut class::MemberPayload as *mut c_void;
         engine.member_payloads.borrow_mut().push(payload);
         let n = JsString::new(name);
@@ -1550,7 +1562,7 @@ fn make_member_fn(
         }
         return Ok(unsafe { Object::from_raw(ctx, f) });
     }
-    let payload = Box::into_raw(Box::new(class::MemberPayload { tag: class::PayloadTag::Member, call })) as *mut c_void;
+    let payload = Box::into_raw(Box::new(class::MemberPayload { tag: class::PayloadTag::Member, call, pure })) as *mut c_void;
     let f = unsafe { Object::from_raw(ctx, sys::JSObjectMake(ctx, class, payload)) };
     let attrs = sys::kJSPropertyAttributeReadOnly | sys::kJSPropertyAttributeDontEnum;
     unsafe {
@@ -1591,7 +1603,7 @@ fn install_members_raw(
         let reg = engine.classes.borrow();
         let d = &reg.classes.get(id as usize).ok_or(JsError::Type("unknown class".into()))?.def;
         (
-            d.methods.iter().map(|m| (m.name, m.length, m.call)).collect::<Vec<_>>(),
+            d.methods.iter().map(|m| (m.name, m.length, m.call, m.pure)).collect::<Vec<_>>(),
             d.accessors.iter().map(|a| (a.name, a.get, a.set, a.slot)).collect::<Vec<_>>(),
             d.constants.clone(),
             d.statics.iter().map(|m| (m.name, m.length, m.call)).collect::<Vec<_>>(),
@@ -1611,15 +1623,16 @@ fn install_members_raw(
     };
     let member_class = engine.classes.borrow().member;
     let keys = MemberKeys::new();
-    let native = |name: &str, length: u32, call: class::MemberCall| -> JsResult<Object<'_>> {
-        let f = make_member_fn(ctx, engine, member_class, call, name, length, &keys)?;
+    let native_pure = |name: &str, length: u32, call: class::MemberCall, pure: bool| -> JsResult<Object<'_>> {
+        let f = make_member_fn(ctx, engine, member_class, call, pure, name, length, &keys)?;
         if let Some(p) = function_proto {
             f.set_prototype(p);
         }
         Ok(f)
     };
-    for (name, length, call) in methods {
-        let f = native(name, length, call)?;
+    let native = |name: &str, length: u32, call: class::MemberCall| native_pure(name, length, call, false);
+    for (name, length, call, pure) in methods {
+        let f = native_pure(name, length, call, pure)?;
         proto.set(name, f.value())?;
     }
     let accessor = helper("accessor")?;
@@ -1631,15 +1644,25 @@ fn install_members_raw(
             // ordinary form below.
             let n = JsString::new(name);
             let setter = set.map(|_| crate::accessors::SETTERS[usize::from(slot)]);
-            let ok = unsafe {
-                install(
-                    ctx,
-                    proto.raw,
-                    n.as_raw(),
-                    Some(crate::accessors::GETTERS[usize::from(slot)]),
-                    setter,
-                    sys::kJSPropertyAttributeNone,
-                )
+            let getter = Some(crate::accessors::GETTERS[usize::from(slot)]);
+            // A pure getter is a DOM attribute to the JITs, which then call
+            // it with the receiver proven a wrapper (`fast_getter_dispatch`).
+            let ok = match (crate::accessors::pure_result(slot), sys::spi::get().set_fast_getter) {
+                (Some(result), Some(fast)) => unsafe {
+                    fast(
+                        ctx,
+                        proto.raw,
+                        n.as_raw(),
+                        getter,
+                        setter,
+                        sys::kJSPropertyAttributeNone,
+                        Some(crate::accessors::fast_getter_dispatch),
+                        usize::from(slot) as *mut c_void,
+                        result,
+                        true,
+                    )
+                },
+                _ => unsafe { install(ctx, proto.raw, n.as_raw(), getter, setter, sys::kJSPropertyAttributeNone) },
             };
             if ok {
                 continue;

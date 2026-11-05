@@ -18,7 +18,7 @@ mod realm;
 mod string;
 mod value;
 
-pub use class::{ClassDef, ClassId, JsClass, NoParent};
+pub use class::{ClassDef, ClassId, GetterResult, JsClass, NoParent};
 pub use engine::{
     configure_process, prepare_process_for_fork, Capabilities, ConsoleLevel, Engine, EngineHooks, TerminateHandle,
     WrapperPropertyHook,

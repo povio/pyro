@@ -557,6 +557,32 @@ pub mod spi {
         attributes: JSPropertyAttributes,
     ) -> bool;
     pub type JSContextThrowExceptionFn = unsafe extern "C" fn(ctx: JSContextRef, exception: JSValueRef);
+    /// A fast getter (patched JSC, `JSObjectSetFastGetter`): what the JITs
+    /// call in place of the custom getter once they have proved the receiver
+    /// is a C API wrapper object, with its private data and `context`.
+    pub type JSFastGetterCallback = unsafe extern "C" fn(
+        ctx: JSContextRef,
+        this_object: JSObjectRef,
+        private_data: *mut c_void,
+        context: *mut c_void,
+    ) -> JSValueRef;
+    pub const kJSFastGetterResultAny: c_int = 0;
+    pub const kJSFastGetterResultNumber: c_int = 1;
+    pub const kJSFastGetterResultBoolean: c_int = 2;
+    pub const kJSFastGetterResultString: c_int = 3;
+    pub const kJSFastGetterResultObjectOrNull: c_int = 4;
+    pub type JSObjectSetFastGetterFn = unsafe extern "C" fn(
+        ctx: JSContextRef,
+        object: JSObjectRef,
+        name: JSStringRef,
+        getter: Option<JSCustomGetterCallback>,
+        setter: Option<JSCustomSetterCallback>,
+        attributes: JSPropertyAttributes,
+        fast_getter: Option<JSFastGetterCallback>,
+        context: *mut c_void,
+        result_type: c_int,
+        reads_only: bool,
+    ) -> bool;
     /// Indexed property callbacks of a class (`JSClassSetIndexedCallbacks`).
     pub type JSObjectGetPropertyByIndexCallback = unsafe extern "C" fn(
         ctx: JSContextRef,
@@ -634,6 +660,7 @@ pub mod spi {
         pub set_wrapper_property_added: Option<JSSetWrapperPropertyAddedCallbackFn>,
         pub install_named_properties: Option<JSGlobalContextInstallNamedPropertiesFn>,
         pub set_custom_accessor: Option<JSObjectSetCustomAccessorFn>,
+        pub set_fast_getter: Option<JSObjectSetFastGetterFn>,
         pub throw_exception: Option<JSContextThrowExceptionFn>,
         pub class_set_indexed_callbacks: Option<JSClassSetIndexedCallbacksFn>,
         pub make_function_with_data: Option<JSObjectMakeFunctionWithCallbackAndDataFn>,
@@ -701,6 +728,7 @@ pub mod spi {
             set_wrapper_property_added: resolve!("JSSetWrapperPropertyAddedCallback"),
             install_named_properties: resolve!("JSGlobalContextInstallNamedProperties"),
             set_custom_accessor: resolve!("JSObjectSetCustomAccessor"),
+            set_fast_getter: resolve!("JSObjectSetFastGetter"),
             throw_exception: resolve!("JSContextThrowException"),
             class_set_indexed_callbacks: resolve!("JSClassSetIndexedCallbacks"),
             make_function_with_data: resolve!("JSObjectMakeFunctionWithCallbackAndData"),

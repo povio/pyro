@@ -72,6 +72,23 @@ pub fn arg_string(a: &Args<'_>, i: usize, what: &str) -> JsResult<String> {
     dom_string(a.get(i))
 }
 
+/// Runs `f` with string argument `i` (as [`arg_string`] converts it). An
+/// ASCII string argument is borrowed from the JavaScript string (patched
+/// JSC), with no copy: attribute names and the like arrive as short ASCII
+/// literals, and the copy into a `String` cost more than the lookup they
+/// are for.
+pub fn with_arg_str<R>(a: &Args<'_>, i: usize, what: &str, f: impl FnOnce(&str) -> JsResult<R>) -> JsResult<R> {
+    a.require(i + 1, what)?;
+    let v = a.get(i);
+    if let Some(lp_js::StringUnits::Latin1(bytes)) = v.string_units() {
+        if bytes.is_ascii() {
+            // SAFETY: ASCII bytes are UTF-8.
+            return f(unsafe { std::str::from_utf8_unchecked(bytes) });
+        }
+    }
+    f(&dom_string(v)?)
+}
+
 /// The parsed selector list of argument `i`, from the page's cache. A string
 /// argument is looked up by its characters, without making a `String`
 /// (patched JSC); anything else is converted as `arg_string` does.

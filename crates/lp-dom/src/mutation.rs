@@ -357,6 +357,7 @@ impl Dom {
                 o.records.push(rec);
                 if !m.pending.contains(&obs) {
                     m.pending.push(obs);
+                    self.touch_hook();
                 }
             }
         }
