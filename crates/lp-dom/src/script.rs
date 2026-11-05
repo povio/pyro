@@ -124,13 +124,13 @@ impl Dom {
             "script" => ResourceKind::Script,
             "style" => ResourceKind::StyleText,
             "link"
-                if e.attr("rel")
+                if e.attr_local(&local_name!("rel"))
                     .is_some_and(|r| r.split_ascii_whitespace().any(|t| t.eq_ignore_ascii_case("stylesheet"))) =>
             {
                 ResourceKind::Stylesheet
             }
             "link"
-                if e.attr("rel").is_some_and(|r| {
+                if e.attr_local(&local_name!("rel")).is_some_and(|r| {
                     r.split_ascii_whitespace()
                         .any(|t| t.eq_ignore_ascii_case("modulepreload") || t.eq_ignore_ascii_case("preload"))
                 }) =>
@@ -142,27 +142,17 @@ impl Dom {
             // An image button fetches its `src` like `<img>` (its natural
             // size is its layout size); `type` is a relevant attribute, so
             // becoming one starts the load.
-            "input" if e.attr("type").is_some_and(|t| t.eq_ignore_ascii_case("image")) => ResourceKind::Img,
+            "input" if e.attr_local(&local_name!("type")).is_some_and(|t| t.eq_ignore_ascii_case("image")) => {
+                ResourceKind::Img
+            }
             _ => return None,
         })
-    }
-
-    fn connected_idx(&self, idx: u32) -> bool {
-        let mut i = idx;
-        loop {
-            i = self.root_idx(i);
-            match &self.n(i).kind {
-                NodeKind::Document(_) => return true,
-                NodeKind::Fragment(f) if f.shadow.is_some() => i = f.host,
-                _ => return false,
-            }
-        }
     }
 
     /// Called after `node` was inserted (tree mutation or parser).
     pub(crate) fn resources_after_insert(&mut self, node: u32) {
         self.iframes_after_insert(node);
-        if !self.resources.enabled || !self.connected_idx(node) {
+        if !self.resources.enabled || !self.is_connected_idx(node) {
             return;
         }
         let parent = self.n(node).parent;
@@ -184,7 +174,7 @@ impl Dom {
     /// Called before `node` is unlinked from a connected parent.
     pub(crate) fn resources_before_remove(&mut self, node: u32) {
         self.iframes_before_remove(node);
-        if !self.resources.enabled || !self.connected_idx(node) {
+        if !self.resources.enabled || !self.is_connected_idx(node) {
             return;
         }
         let parent = self.n(node).parent;
@@ -218,7 +208,7 @@ impl Dom {
             return;
         }
         let relevant = matches!(local, "src" | "href" | "rel" | "media" | "srcset" | "type" | "disabled");
-        if !relevant || !self.connected_idx(idx) {
+        if !relevant || !self.is_connected_idx(idx) {
             return;
         }
         if let Some(k) = self.resource_kind(idx) {
@@ -239,7 +229,7 @@ impl Dom {
             return;
         }
         let p = self.n(text_node).parent;
-        if p != NIL && self.resource_kind(p) == Some(ResourceKind::StyleText) && self.connected_idx(p) {
+        if p != NIL && self.resource_kind(p) == Some(ResourceKind::StyleText) && self.is_connected_idx(p) {
             self.push_resource(p, ResourceKind::StyleText, ResourceReason::ChildrenChanged);
         }
     }
@@ -276,7 +266,9 @@ impl Dom {
     /// Parser hook: an element was closed (end tag / EOF). `<style>` content
     /// is complete at this point.
     pub(crate) fn resources_element_popped(&mut self, idx: u32) {
-        if self.resources.enabled && self.resource_kind(idx) == Some(ResourceKind::StyleText) && self.connected_idx(idx)
+        if self.resources.enabled
+            && self.resource_kind(idx) == Some(ResourceKind::StyleText)
+            && self.is_connected_idx(idx)
         {
             self.push_resource(idx, ResourceKind::StyleText, ResourceReason::ChildrenChanged);
         }
@@ -286,8 +278,8 @@ impl Dom {
     pub fn script_info(&self, script: NodeId) -> DomResult<ScriptInfo> {
         let i = self.check(script)?;
         let e = self.n(i).element().ok_or(DomError::Type("not an element"))?;
-        let ty = e.attr("type");
-        let lang = e.attr("language");
+        let ty = e.attr_local(&local_name!("type"));
+        let lang = e.attr_local(&local_name!("language"));
         let kind = match ty {
             Some(t) if !t.is_empty() => {
                 let t = t.trim().to_ascii_lowercase();
@@ -322,15 +314,15 @@ impl Dom {
         }
         Ok(ScriptInfo {
             kind,
-            src: e.attr("src").map(str::to_owned),
-            async_: e.attr("async").is_some(),
-            defer: e.attr("defer").is_some(),
-            nomodule: e.attr("nomodule").is_some(),
+            src: e.attr_local(&local_name!("src")).map(str::to_owned),
+            async_: e.attr_local(&local_name!("async")).is_some(),
+            defer: e.attr_local(&local_name!("defer")).is_some(),
+            nomodule: e.attr_local(&local_name!("nomodule")).is_some(),
             parser_inserted: e.flags & element_flags::PARSER_INSERTED != 0,
             already_started: e.flags & element_flags::SCRIPT_ALREADY_STARTED != 0,
             inline_text,
-            crossorigin: e.attr("crossorigin").map(str::to_owned),
-            integrity: e.attr("integrity").map(str::to_owned),
+            crossorigin: e.attr_local(&local_name!("crossorigin")).map(str::to_owned),
+            integrity: e.attr_local(&local_name!("integrity")).map(str::to_owned),
         })
     }
 

@@ -62,7 +62,11 @@ impl Dom {
     pub fn is_inert(&self, el: NodeId) -> bool {
         let Ok(mut i) = self.check(el) else { return false };
         loop {
-            if self.n(i).element().is_some_and(|e| e.is_html() && e.attr("inert").is_some()) {
+            if self
+                .n(i)
+                .element()
+                .is_some_and(|e| e.is_html() && e.attr_local(&markup5ever::local_name!("inert")).is_some())
+            {
                 return true;
             }
             let parent = self.n(i).parent;

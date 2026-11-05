@@ -20,7 +20,7 @@ use selectors::OpaqueElement;
 
 use crate::dom::Dom;
 use crate::error::{DomError, DomErrorKind, DomResult};
-use crate::node::{NodeId, NodeKind, NIL};
+use crate::node::{Atom, NodeId, NodeKind, NIL};
 
 #[derive(Debug, Clone)]
 pub struct Impl;
@@ -58,6 +58,27 @@ impl ToCss for CssLocalName {
     }
 }
 impl PrecomputedHash for CssLocalName {
+    fn precomputed_hash(&self) -> u32 {
+        self.0.precomputed_hash()
+    }
+}
+
+/// An id or class name in a selector: the atom elements store theirs as
+/// (`ElementData::id_atom`, `ElementData::classes`), so matching compares
+/// atoms.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct CssIdent(pub Atom);
+impl<'a> From<&'a str> for CssIdent {
+    fn from(s: &'a str) -> Self {
+        CssIdent(Atom::from(s))
+    }
+}
+impl ToCss for CssIdent {
+    fn to_css<W: fmt::Write>(&self, dest: &mut W) -> fmt::Result {
+        cssparser::serialize_identifier(&self.0, dest)
+    }
+}
+impl PrecomputedHash for CssIdent {
     fn precomputed_hash(&self) -> u32 {
         self.0.precomputed_hash()
     }
@@ -184,7 +205,7 @@ impl selectors::parser::PseudoElement for PseudoElement {}
 impl selectors::parser::SelectorImpl for Impl {
     type ExtraMatchingData<'a> = ();
     type AttrValue = CssString;
-    type Identifier = CssLocalName;
+    type Identifier = CssIdent;
     type LocalName = CssLocalName;
     type NamespaceUrl = CssNamespace;
     type NamespacePrefix = CssLocalName;
@@ -314,8 +335,16 @@ impl<'i> selectors::parser::Parser<'i> for SelParser<'_> {
                     return Err(invalid());
                 }
             }
-            "highlight" | "cue" | "cue-region" | "view-transition-group" | "view-transition-image-pair"
-            | "view-transition-old" | "view-transition-new" | "picker" | "scroll-button" | "column" => {
+            "highlight"
+            | "cue"
+            | "cue-region"
+            | "view-transition-group"
+            | "view-transition-image-pair"
+            | "view-transition-old"
+            | "view-transition-new"
+            | "picker"
+            | "scroll-button"
+            | "column" => {
                 // The argument is kept only for serialization.
                 while parser.next().is_ok() {}
             }
@@ -327,7 +356,7 @@ impl<'i> selectors::parser::Parser<'i> for SelParser<'_> {
 }
 
 /// Percent-decodes a URL fragment (bytes compared to the element's UTF-8 id).
-fn percent_decode(s: &str) -> Vec<u8> {
+pub(crate) fn percent_decode(s: &str) -> Vec<u8> {
     let b = s.as_bytes();
     let mut out = Vec::with_capacity(b.len());
     let mut i = 0;
@@ -520,18 +549,6 @@ pub struct ElemRef<'a> {
     idx: u32,
 }
 
-/// Per-element class tokens as interned atoms sorted by their precomputed
-/// hash, valid for one (DOM uid, version).
-#[derive(Default)]
-struct ClassSets {
-    key: (u64, u64),
-    sets: FxHashMap<u32, Box<[LocalName]>>,
-}
-
-thread_local! {
-    static CLASS_SETS: std::cell::RefCell<ClassSets> = std::cell::RefCell::new(ClassSets::default());
-}
-
 impl fmt::Debug for ElemRef<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "ElemRef({})", self.idx)
@@ -574,6 +591,9 @@ impl selectors::Element for ElemRef<'_> {
         p != NIL && matches!(&self.dom.n(p).kind, NodeKind::Fragment(f) if f.shadow.is_some())
     }
     fn containing_shadow_host(&self) -> Option<Self> {
+        if !self.dom.n(self.idx).in_shadow_tree() {
+            return None;
+        }
         let root = self.dom.root_idx(self.idx);
         match &self.dom.n(root).kind {
             NodeKind::Fragment(f) if f.shadow.is_some() => self.wrap(f.host),
@@ -637,46 +657,26 @@ impl selectors::Element for ElemRef<'_> {
         let d = self.data();
         d.is_html() && d.name.local == local_name!("slot")
     }
-    fn has_id(&self, id: &CssLocalName, cs: CaseSensitivity) -> bool {
-        self.data().id().is_some_and(|v| cs.eq(v.as_bytes(), id.0.as_bytes()))
-    }
-    fn has_class(&self, name: &CssLocalName, cs: CaseSensitivity) -> bool {
-        if cs != CaseSensitivity::CaseSensitive {
-            return self
-                .data()
-                .attr("class")
-                .is_some_and(|v| v.split_ascii_whitespace().any(|c| cs.eq(c.as_bytes(), name.0.as_bytes())));
-        }
-        // Tailwind class attributes run to dozens of tokens and selector
-        // matching tests them repeatedly (rightmost class, then ancestors for
-        // descendant combinators): keep each element's token hashes for the
-        // current DOM version.
-        let wanted = name.0.precomputed_hash();
-        CLASS_SETS.with(|cache| {
-            let mut cache = cache.borrow_mut();
-            let key = (self.dom.uid(), self.dom.version());
-            if cache.key != key {
-                cache.key = key;
-                cache.sets.clear();
-            }
-            let set = cache.sets.entry(self.idx).or_insert_with(|| {
-                let mut atoms: Vec<LocalName> =
-                    self.data().attr("class").unwrap_or("").split_ascii_whitespace().map(LocalName::from).collect();
-                atoms.sort_unstable_by_key(|a| a.precomputed_hash());
-                atoms.into_boxed_slice()
-            });
-            // Interned atoms: equal strings are the same atom.
-            let start = set.partition_point(|a| a.precomputed_hash() < wanted);
-            set[start..].iter().take_while(|a| a.precomputed_hash() == wanted).any(|a| *a == name.0)
+    fn has_id(&self, id: &CssIdent, cs: CaseSensitivity) -> bool {
+        self.data().id_atom().is_some_and(|own| match cs {
+            CaseSensitivity::CaseSensitive => *own == id.0,
+            CaseSensitivity::AsciiCaseInsensitive => own.eq_ignore_ascii_case(&id.0),
         })
     }
-    fn has_custom_state(&self, _name: &CssLocalName) -> bool {
+    fn has_class(&self, name: &CssIdent, cs: CaseSensitivity) -> bool {
+        let classes = self.data().classes();
+        match cs {
+            CaseSensitivity::CaseSensitive => classes.contains(&name.0),
+            CaseSensitivity::AsciiCaseInsensitive => classes.iter().any(|c| c.eq_ignore_ascii_case(&name.0)),
+        }
+    }
+    fn has_custom_state(&self, _name: &CssIdent) -> bool {
         false
     }
-    fn imported_part(&self, _name: &CssLocalName) -> Option<CssLocalName> {
+    fn imported_part(&self, _name: &CssIdent) -> Option<CssIdent> {
         None
     }
-    fn is_part(&self, _name: &CssLocalName) -> bool {
+    fn is_part(&self, _name: &CssIdent) -> bool {
         false
     }
     fn is_empty(&self) -> bool {
@@ -701,25 +701,23 @@ impl Dom {
     }
 
     fn is_link(&self, idx: u32) -> bool {
-        self.n(idx)
-            .element()
-            .is_some_and(|e| e.is_html() && matches!(&*e.name.local, "a" | "area" | "link") && e.attr("href").is_some())
+        self.n(idx).element().is_some_and(|e| {
+            e.is_html()
+                && matches!(&*e.name.local, "a" | "area" | "link")
+                && e.attr_local(&local_name!("href")).is_some()
+        })
     }
 
     /// `:target`: the element the document URL's fragment names.
+    /// An element of the document tree whose id is the URL's decoded
+    /// fragment, which the document keeps as an atom (`DocumentData::url_target`).
     fn is_url_target(&self, idx: u32) -> bool {
-        let Some(id) = self.n(idx).element().and_then(|e| e.id()) else { return false };
-        let doc = self.n(idx).owner_doc;
-        if self.root_idx(idx) != doc {
+        let n = self.n(idx);
+        let Some(id) = n.element().and_then(|e| e.id_atom()) else { return false };
+        if !n.in_document_tree() {
             return false;
         }
-        let NodeKind::Document(d) = &self.n(doc).kind else { return false };
-        let Some((_, frag)) = d.url.split_once('#') else { return false };
-        if frag.is_empty() {
-            return false;
-        }
-        let decoded = percent_decode(frag);
-        decoded == id.as_bytes()
+        matches!(&self.n(n.owner_doc).kind, NodeKind::Document(d) if d.url_target.as_ref() == Some(id))
     }
 
     pub(crate) fn matches_state(&self, idx: u32, pc: &PseudoClass) -> bool {
@@ -739,12 +737,12 @@ impl Dom {
             Indeterminate => e.control.as_ref().is_some_and(|c| c.indeterminate),
             Disabled => self.is_disabled_idx(idx),
             Enabled => self.is_form_control_idx(idx) && !self.is_disabled_idx(idx),
-            Required => self.is_form_control_idx(idx) && e.attr("required").is_some(),
-            Optional => self.is_form_control_idx(idx) && e.attr("required").is_none(),
+            Required => self.is_form_control_idx(idx) && e.attr_local(&local_name!("required")).is_some(),
+            Optional => self.is_form_control_idx(idx) && e.attr_local(&local_name!("required")).is_none(),
             ReadWrite => self.is_mutable_text_idx(idx),
             ReadOnly => !self.is_mutable_text_idx(idx),
             PlaceholderShown => {
-                e.attr("placeholder").is_some()
+                e.attr_local(&local_name!("placeholder")).is_some()
                     && self.is_mutable_text_idx(idx)
                     && self.control_value_idx(idx).is_empty()
             }
@@ -759,8 +757,10 @@ impl Dom {
             }
             Defined => !e.name.local.contains('-') || e.flags & crate::node::element_flags::CUSTOM_DEFINED != 0,
             Default => {
-                (e.is_html() && matches!(&*e.name.local, "input") && e.attr("checked").is_some())
-                    || (e.is_html() && e.name.local == local_name!("option") && e.attr("selected").is_some())
+                (e.is_html() && matches!(&*e.name.local, "input") && e.attr_local(&local_name!("checked")).is_some())
+                    || (e.is_html()
+                        && e.name.local == local_name!("option")
+                        && e.attr_local(&local_name!("selected")).is_some())
             }
             Empty => false,
             Valid | Invalid => {
@@ -780,12 +780,19 @@ impl Dom {
                 } else {
                     self.validity(id).map(|v| v.valid()).unwrap_or(true)
                 };
-                    (*pc == Valid) == ok
+                (*pc == Valid) == ok
             }
-            Open => e.is_html() && matches!(&*e.name.local, "details" | "dialog") && e.attr("open").is_some(),
+            Open => {
+                e.is_html()
+                    && matches!(&*e.name.local, "details" | "dialog")
+                    && e.attr_local(&local_name!("open")).is_some()
+            }
             // A dialog shown with `showModal()` that is still open.
             Modal => {
-                e.is_html() && &*e.name.local == "dialog" && e.attr("open").is_some() && self.is_modal_idx(idx)
+                e.is_html()
+                    && &*e.name.local == "dialog"
+                    && e.attr_local(&local_name!("open")).is_some()
+                    && self.is_modal_idx(idx)
             }
             PopoverOpen => self.is_popover_showing_idx(idx),
         }
@@ -863,18 +870,13 @@ impl Dom {
         let r = self.check(root)?;
         let quirks = self.quirks(r) == SelQuirks::Quirks;
         if let (Some(Simple::Id(id)), false) = (simple(sel), quirks) {
-            // The id index gives the first element with the id in the tree:
-            // the answer when it is inside the scope. (Duplicate ids, a match
-            // outside the scope: scan.)
-            let tree = self.root_idx(r);
-            match self.get_element_by_id(self.id_of(tree), id)? {
-                None => return Ok(None),
-                Some(found) => {
-                    let f = self.check(found)?;
-                    if f != r && self.is_inclusive_ancestor(r, f) {
-                        return Ok(Some(found));
-                    }
-                }
+            // A tree scope's id map gives the first element with the id in
+            // the tree: the answer when it is inside the scope. (Duplicate
+            // ids, a match outside the scope, a detached tree: scan.)
+            match self.indexed_by_id(self.root_idx(r), id) {
+                Some(NIL) => return Ok(None),
+                Some(f) if f != r && self.is_inclusive_ancestor(r, f) => return Ok(Some(self.id_of(f))),
+                _ => {}
             }
         }
         let mut first = None;
@@ -890,7 +892,7 @@ impl Dom {
         let r = self.check(root)?;
         if let (Some(Simple::Id(id)), false) = (simple(sel), self.quirks(r) == SelQuirks::Quirks) {
             // No element with the id in the whole tree: nothing to scan.
-            if self.get_element_by_id(self.id_of(self.root_idx(r)), id)?.is_none() {
+            if self.indexed_by_id(self.root_idx(r), id) == Some(NIL) {
                 return Ok(Vec::new());
             }
         }
@@ -922,10 +924,6 @@ impl Dom {
         if self.n(r).is_element() {
             ctx.scope_element = Some(OpaqueElement::new(self.n(r)));
         }
-        let class = match &fast {
-            Some(Simple::Class(name)) => Some(CssLocalName((*name).clone())),
-            _ => None,
-        };
         let mut cur = self.n(r).first_child;
         while cur != NIL {
             if let Some(e) = self.n(cur).element() {
@@ -934,12 +932,8 @@ impl Dom {
                         let want = if html_doc && e.is_html() { lower } else { name };
                         e.name.local == **want
                     }
-                    // The per-element class sets `has_class` keeps for the
-                    // DOM version (long Tailwind attributes split once).
-                    Some(Simple::Class(_)) => {
-                        let name = class.as_ref().expect("class");
-                        selectors::Element::has_class(&self.element_ref(cur), name, CaseSensitivity::CaseSensitive)
-                    }
+                    // The class atoms parsed when the attribute was written.
+                    Some(Simple::Class(name)) => e.has_class(name),
                     Some(Simple::Attr(name, lower)) => {
                         let want = if html_doc && e.is_html() { lower } else { name };
                         e.attrs.iter().any(|a| a.name.ns == ns!() && a.name.local == **want)
@@ -958,8 +952,8 @@ impl Dom {
 /// A selector list of one selector made of one simple selector, which
 /// `select` tests without the matching machinery.
 enum Simple<'a> {
-    Id(&'a str),
-    Class(&'a LocalName),
+    Id(&'a Atom),
+    Class(&'a Atom),
     /// The name as written and lowercased (HTML elements in HTML documents).
     Tag(&'a LocalName, &'a LocalName),
     /// `[name]` in no namespace: as written and lowercased.

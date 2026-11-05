@@ -2,7 +2,7 @@
 //! `NodeId` (slot index + generation) so stale handles are detected instead of
 //! aliasing reused memory.
 
-use markup5ever::{LocalName, Namespace, Prefix, QualName};
+use markup5ever::{local_name, LocalName, Namespace, Prefix, QualName};
 
 pub(crate) const NIL: u32 = u32::MAX;
 
@@ -62,8 +62,15 @@ pub struct DocumentData {
     pub url: Box<str>,
     /// Embedder-supplied inherited base for initial blank/srcdoc documents.
     pub(crate) base_url: Option<Box<str>>,
-    /// Resolved first `<base href>`, computed on demand; see `Dom::bump`.
+    /// Resolved first `<base href>`, computed on demand and reset when a
+    /// `<base>` enters or leaves the document tree, a connected one's `href`
+    /// changes, or the fallback base URL changes.
     pub(crate) html_base: std::cell::OnceCell<Option<Box<str>>>,
+    /// The URL's fragment, percent-decoded, as an id (`:target`); `None`
+    /// without one (or when it does not decode to UTF-8).
+    pub(crate) url_target: Option<Atom>,
+    /// Elements of the document tree by id (`getElementById`).
+    pub(crate) ids: crate::tree_scope::IdMap,
     /// Owner of `<template>` contents created while parsing this document.
     pub(crate) inert_doc: u32,
     /// Number of live nodes (including itself) whose owner document is this.
@@ -149,6 +156,14 @@ pub struct FragmentData {
     pub(crate) shadow: Option<ShadowRootMode>,
     /// `shadow_flags` of a shadow root.
     pub(crate) flags: u8,
+    /// A shadow root's elements by id, made when the first id enters it.
+    pub(crate) ids: Option<Box<crate::tree_scope::IdMap>>,
+}
+
+impl FragmentData {
+    pub(crate) fn new(host: u32, shadow: Option<ShadowRootMode>, flags: u8) -> Self {
+        FragmentData { host, shadow, flags, ids: None }
+    }
 }
 
 /// Shadow root state (`attachShadow` init dictionary, HTML `shadowroot*`
@@ -191,10 +206,22 @@ pub struct ControlState {
     pub(crate) no_selection: Option<Box<[u32]>>,
 }
 
+/// Atoms of ids and class names: Stylo's, which the cascade and both
+/// selector engines compare (one `u64` per comparison).
+pub type Atom = style::Atom;
+
 #[derive(Debug)]
 pub struct ElementData {
     pub name: QualName,
+    /// Read freely; written only through the methods that keep `id` and
+    /// `classes` in step (`set_attrs`, `push_attr`, `remove_attr`,
+    /// `replace_attr_value`, `rename_attr`).
     pub attrs: Vec<Attr>,
+    /// The `id` attribute (no namespace) as an atom, parsed when written.
+    id: Option<Atom>,
+    /// The `class` attribute (no namespace) split on ASCII whitespace,
+    /// parsed when written.
+    classes: Box<[Atom]>,
     pub(crate) template_contents: u32,
     pub(crate) shadow_root: u32,
     pub(crate) control: Option<Box<ControlState>>,
@@ -215,7 +242,16 @@ pub mod element_flags {
 
 impl ElementData {
     pub fn new(name: QualName) -> Self {
-        ElementData { name, attrs: Vec::new(), template_contents: NIL, shadow_root: NIL, control: None, flags: 0 }
+        ElementData {
+            name,
+            attrs: Vec::new(),
+            id: None,
+            classes: Box::default(),
+            template_contents: NIL,
+            shadow_root: NIL,
+            control: None,
+            flags: 0,
+        }
     }
     pub fn local_name(&self) -> &LocalName {
         &self.name.local
@@ -229,12 +265,117 @@ impl ElementData {
     pub fn is_html(&self) -> bool {
         self.name.ns == markup5ever::ns!(html)
     }
+    /// The attribute in no namespace named `local` (a dynamic name; see
+    /// [`ElementData::attr_local`] for a constant one).
     pub fn attr(&self, local: &str) -> Option<&str> {
         self.attrs.iter().find(|a| a.name.ns == markup5ever::ns!() && &*a.name.local == local).map(|a| &*a.value)
     }
-    pub fn id(&self) -> Option<&str> {
-        self.attr("id")
+    /// The attribute in no namespace named `local`, compared as atoms (for
+    /// `local_name!(..)` names).
+    #[inline]
+    pub fn attr_local(&self, local: &LocalName) -> Option<&str> {
+        self.attrs.iter().find(|a| a.name.local == *local && a.name.ns == markup5ever::ns!()).map(|a| &*a.value)
     }
+    pub fn id(&self) -> Option<&str> {
+        self.id.as_deref()
+    }
+    /// The `id` attribute as an atom.
+    #[inline]
+    pub fn id_atom(&self) -> Option<&Atom> {
+        self.id.as_ref()
+    }
+    /// The `class` attribute's tokens as atoms, in order (duplicates kept).
+    #[inline]
+    pub fn classes(&self) -> &[Atom] {
+        &self.classes
+    }
+    /// Whether `class` contains the token `name` (case-sensitive).
+    #[inline]
+    pub fn has_class(&self, name: &Atom) -> bool {
+        self.classes.contains(name)
+    }
+
+    // ----- attribute writes (keep `id` and `classes` in step) ----------
+
+    fn refresh(&mut self, local: &LocalName) {
+        if *local == local_name!("id") {
+            self.id = self.attr_local(&local_name!("id")).map(Atom::from);
+        } else if *local == local_name!("class") {
+            self.classes = self.attr_local(&local_name!("class")).map(parse_classes).unwrap_or_default();
+        }
+    }
+    /// Replaces every attribute (element creation, cloning).
+    pub(crate) fn set_attrs(&mut self, attrs: Vec<Attr>) {
+        self.attrs = attrs;
+        self.refresh(&local_name!("id"));
+        self.refresh(&local_name!("class"));
+    }
+    /// The attributes with their parsed atoms, for [`ElementData::set_attr_state`]
+    /// (cloning: nothing is parsed again).
+    pub(crate) fn attr_state(&self) -> AttrState {
+        AttrState(self.attrs.clone(), self.id.clone(), self.classes.clone())
+    }
+    pub(crate) fn set_attr_state(&mut self, state: AttrState) {
+        let AttrState(attrs, id, classes) = state;
+        self.attrs = attrs;
+        self.id = id;
+        self.classes = classes;
+    }
+    pub(crate) fn push_attr(&mut self, attr: Attr) {
+        let refresh = derives(&attr.name).then(|| attr.name.local.clone());
+        self.attrs.push(attr);
+        if let Some(local) = refresh {
+            self.refresh(&local);
+        }
+    }
+    pub(crate) fn remove_attr(&mut self, k: usize) -> Attr {
+        let attr = self.attrs.remove(k);
+        if derives(&attr.name) {
+            self.refresh(&attr.name.local);
+        }
+        attr
+    }
+    /// Sets attribute `k`'s value, returning the old one.
+    pub(crate) fn replace_attr_value(&mut self, k: usize, value: Box<str>) -> Box<str> {
+        let old = std::mem::replace(&mut self.attrs[k].value, value);
+        if derives(&self.attrs[k].name) && *old != *self.attrs[k].value {
+            let local = self.attrs[k].name.local.clone();
+            self.refresh(&local);
+        }
+        old
+    }
+    /// Gives attribute `k` another name.
+    pub(crate) fn rename_attr(&mut self, k: usize, name: QualName) {
+        let old = std::mem::replace(&mut self.attrs[k].name, name);
+        if derives(&old) {
+            self.refresh(&old.local);
+        }
+        if derives(&self.attrs[k].name) {
+            let local = self.attrs[k].name.local.clone();
+            self.refresh(&local);
+        }
+    }
+    /// Whether `id` and `classes` match the attributes (tests and debug
+    /// assertions).
+    #[doc(hidden)]
+    pub fn derived_in_step(&self) -> bool {
+        let id = self.attr_local(&local_name!("id")).map(Atom::from);
+        let classes: Box<[Atom]> = self.attr_local(&local_name!("class")).map(parse_classes).unwrap_or_default();
+        self.id == id && self.classes == classes
+    }
+}
+
+/// An element's attributes with their parsed id and classes.
+pub(crate) struct AttrState(Vec<Attr>, Option<Atom>, Box<[Atom]>);
+
+/// Whether an attribute of this name feeds `ElementData::id` or `classes`.
+#[inline]
+fn derives(name: &QualName) -> bool {
+    name.ns == markup5ever::ns!() && (name.local == local_name!("id") || name.local == local_name!("class"))
+}
+
+fn parse_classes(value: &str) -> Box<[Atom]> {
+    value.split_ascii_whitespace().map(Atom::from).collect()
 }
 
 #[derive(Debug)]
@@ -290,12 +431,24 @@ pub struct Node {
     pub(crate) prev: u32,
     pub(crate) next: u32,
     pub(crate) owner_doc: u32,
-    pub(crate) child_count: u32,
+    /// Number of children (low bits) and `tree_flags` (high bits), packed so
+    /// the header keeps to 64 bytes.
+    counts: u32,
     /// External strong references: JS wrappers (one per realm), pending
     /// mutation records, ranges, iterators. Collection requires zero refs in
     /// the whole detached tree.
     pub(crate) ext_refs: u32,
     pub kind: NodeKind,
+}
+
+/// Where a node is, kept in its header by every link and unlink (see
+/// `crate::tree_scope`) so the questions are bit tests, not walks to the root.
+pub(crate) mod tree_flags {
+    /// Its shadow-including root is a document (`isConnected`).
+    pub const CONNECTED: u32 = 1 << 31;
+    /// Its root is a shadow root (the shadow root itself included).
+    pub const IN_SHADOW_TREE: u32 = 1 << 30;
+    pub const MASK: u32 = CONNECTED | IN_SHADOW_TREE;
 }
 
 impl Node {
@@ -307,10 +460,47 @@ impl Node {
             prev: NIL,
             next: NIL,
             owner_doc,
-            child_count: 0,
+            counts: 0,
             ext_refs: 0,
             kind,
         }
+    }
+    #[inline]
+    pub(crate) fn child_count(&self) -> u32 {
+        self.counts & !tree_flags::MASK
+    }
+    #[inline]
+    pub(crate) fn add_child_count(&mut self) {
+        debug_assert!(self.child_count() < !tree_flags::MASK, "child count overflow");
+        self.counts += 1;
+    }
+    #[inline]
+    pub(crate) fn sub_child_count(&mut self) {
+        debug_assert!(self.child_count() > 0);
+        self.counts -= 1;
+    }
+    /// `tree_flags` bits.
+    #[inline]
+    pub(crate) fn tree_flags(&self) -> u32 {
+        self.counts & tree_flags::MASK
+    }
+    #[inline]
+    pub(crate) fn set_tree_flags(&mut self, flags: u32) {
+        self.counts = (self.counts & !tree_flags::MASK) | (flags & tree_flags::MASK);
+    }
+    #[inline]
+    pub(crate) fn is_connected(&self) -> bool {
+        self.counts & tree_flags::CONNECTED != 0
+    }
+    #[inline]
+    pub(crate) fn in_shadow_tree(&self) -> bool {
+        self.counts & tree_flags::IN_SHADOW_TREE != 0
+    }
+    /// In a document's tree (connected, not in a shadow tree): Stylo's
+    /// `is_in_document`.
+    #[inline]
+    pub(crate) fn in_document_tree(&self) -> bool {
+        self.tree_flags() == tree_flags::CONNECTED
     }
     pub fn element(&self) -> Option<&ElementData> {
         match &self.kind {

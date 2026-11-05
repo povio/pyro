@@ -78,7 +78,7 @@ impl Dom {
         if !named_by_name(e) {
             return;
         }
-        if let Some(name) = e.attr("name").filter(|v| !v.is_empty()) {
+        if let Some(name) = e.attr_local(&markup5ever::local_name!("name")).filter(|v| !v.is_empty()) {
             hook(name);
             if &*e.name.local == "img" {
                 if let Some(id) = e.id().filter(|v| !v.is_empty()) {
@@ -100,11 +100,11 @@ impl Dom {
         let mut cur = self.n(r).first_child;
         while cur != NIL {
             if let Some(e) = self.n(cur).element() {
-                if named_by_name(e) && e.attr("name") == Some(name)
+                if named_by_name(e) && e.attr_local(&markup5ever::local_name!("name")) == Some(name)
                     || (e.is_html()
                         && &*e.name.local == "img"
                         && e.id() == Some(name)
-                        && e.attr("name").is_some_and(|n| !n.is_empty()))
+                        && e.attr_local(&markup5ever::local_name!("name")).is_some_and(|n| !n.is_empty()))
                 {
                     found.push(self.id_of(cur));
                 }
@@ -139,7 +139,9 @@ impl Dom {
         let mut cur = self.n(r).first_child;
         while cur != NIL {
             if let Some(e) = self.n(cur).element() {
-                if e.id() == Some(name) || (named_by_name(e) && e.attr("name") == Some(name)) {
+                if e.id() == Some(name)
+                    || (named_by_name(e) && e.attr_local(&markup5ever::local_name!("name")) == Some(name))
+                {
                     found.push(cur);
                 }
             }
@@ -185,7 +187,7 @@ impl Dom {
             hashes.insert(window_name_hash(id.encode_utf16()));
         }
         if named_by_name(e) {
-            if let Some(name) = e.attr("name").filter(|v| !v.is_empty()) {
+            if let Some(name) = e.attr_local(&markup5ever::local_name!("name")).filter(|v| !v.is_empty()) {
                 hashes.insert(window_name_hash(name.encode_utf16()));
             }
         }

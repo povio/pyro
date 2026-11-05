@@ -190,7 +190,7 @@ fn prepare_with(source: &str, scripting: bool) -> Result<Vec<Prepared>> {
                     if !expanded.insert((name.ns.clone(), name.local.clone())) {
                         return Err("Duplicate expanded XML attribute");
                     }
-                    element.attrs.push(Attr { name, value: value.into() });
+                    element.push_attr(Attr { name, value: value.into() });
                 }
                 let index = push(&mut nodes, parent, NodeKind::Element(Box::new(element)))?;
                 if empty {
@@ -381,8 +381,7 @@ pub fn parse_into(
 /// and the insertion steps run, so iframes get their browsing contexts and
 /// style sheets and images load. (Scripts are the caller's: `parse_into`.)
 fn run_insertion_steps(dom: &mut Dom, document: NodeId) {
-    let elements: Vec<u32> =
-        dom.descendants(document).map(|d| d.map(|n| n.index()).collect()).unwrap_or_default();
+    let elements: Vec<u32> = dom.descendants(document).map(|d| d.map(|n| n.index()).collect()).unwrap_or_default();
     for i in elements {
         dom.note_inline_handlers(i);
     }
@@ -421,7 +420,7 @@ fn attach(dom: &mut Dom, document: NodeId, nodes: Vec<Prepared>) {
         dom.link_raw(id, parent, NIL);
         if is_template {
             let inert = dom.inert_doc_for_pub(child_owner);
-            let frag = dom.alloc_raw(NodeKind::Fragment(FragmentData { host: id, shadow: None, flags: 0 }), inert);
+            let frag = dom.alloc_raw(NodeKind::Fragment(FragmentData::new(id, None, 0)), inert);
             dom.n_mut(id).element_mut().expect("template element").template_contents = frag;
             targets.push((frag, inert));
         } else {

@@ -68,7 +68,11 @@ impl Dom {
     /// Attr node of the `k`th attribute of element `e`.
     fn attribute_node_at(&mut self, e: u32, k: usize) -> u32 {
         let name = self.n(e).element().expect("element").attrs[k].name.clone();
-        let known = self.attr_nodes_of(e).iter().copied().find(|&i| self.attr_data(i).is_some_and(|a| same_name(&a.name, &name)));
+        let known = self
+            .attr_nodes_of(e)
+            .iter()
+            .copied()
+            .find(|&i| self.attr_data(i).is_some_and(|a| same_name(&a.name, &name)));
         if let Some(i) = known {
             return i;
         }
@@ -149,10 +153,11 @@ impl Dom {
             Some(k) => {
                 // The replaced attribute's node leaves with its last value...
                 let old = self.attribute_node_at(e, k);
-                let el_data = self.n_mut(e).element_mut().expect("element");
-                let old_value = el_data.attrs[k].value.to_string();
-                // ...and the new one takes its place in the list, prefix included.
-                el_data.attrs[k].name = name;
+                let old_value = self.n(e).element().expect("element").attrs[k].value.to_string();
+                // ...and the new one takes its place in the list, prefix
+                // included (the same namespace and local name).
+                let written = name.clone();
+                self.edit_attrs(e, &written, |el| el.rename_attr(k, name));
                 self.unregister_attr_node(e, old, old_value);
                 self.register_attr_node(e, a, doc);
                 self.change_attr(e, k, &value);
@@ -207,7 +212,11 @@ impl Dom {
     /// Attribute `name` (last value `value`) was removed from element `e`:
     /// its Attr node, if one exists, keeps the value and loses its element.
     pub(crate) fn attr_removed(&mut self, e: u32, name: &QualName, value: &str) {
-        let node = self.attr_nodes_of(e).iter().copied().find(|&i| self.attr_data(i).is_some_and(|a| same_name(&a.name, name)));
+        let node = self
+            .attr_nodes_of(e)
+            .iter()
+            .copied()
+            .find(|&i| self.attr_data(i).is_some_and(|a| same_name(&a.name, name)));
         if let Some(a) = node {
             self.unregister_attr_node(e, a, value.to_owned());
         }
@@ -268,9 +277,9 @@ impl Dom {
                             == q.name.prefix.as_ref().filter(|v| !v.is_empty())
                         && p.name.local == q.name.local
                         && p.attrs.len() == q.attrs.len()
-                        && p.attrs.iter().all(|pa| {
-                            q.attrs.iter().any(|qa| same_name(&pa.name, &qa.name) && pa.value == qa.value)
-                        })
+                        && p.attrs
+                            .iter()
+                            .all(|pa| q.attrs.iter().any(|qa| same_name(&pa.name, &qa.name) && pa.value == qa.value))
                 }
                 (NodeKind::Attr(p), NodeKind::Attr(q)) => {
                     same_name(&p.name, &q.name) && self.attr_value_idx(x) == self.attr_value_idx(y)
@@ -284,7 +293,7 @@ impl Dom {
                 (NodeKind::Document(_), NodeKind::Document(_)) | (NodeKind::Fragment(_), NodeKind::Fragment(_)) => true,
                 _ => false,
             };
-            if !same || nx.child_count != ny.child_count {
+            if !same || nx.child_count() != ny.child_count() {
                 return Ok(false);
             }
             stack.extend(self.child_idx_iter(x).zip(self.child_idx_iter(y)));

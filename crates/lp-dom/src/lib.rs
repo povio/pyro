@@ -40,6 +40,7 @@ pub mod svg_geometry;
 pub mod text_metrics;
 pub mod upgrade;
 pub mod timing;
+mod tree_scope;
 pub mod xml;
 pub mod xpath;
 
