@@ -42,6 +42,8 @@ pub struct PageDom {
     current_script: Cell<Option<NodeId>>,
     pub(crate) realms: RefCell<FxHashMap<RealmId, WeakRealm>>,
     pub(crate) url_params_helpers: RefCell<FxHashMap<RealmId, Persistent>>,
+    /// The custom element definitions of this page's realms (`crate::custom`).
+    pub(crate) custom_elements: RefCell<crate::custom::Registry>,
     pub(crate) header_helpers: RefCell<FxHashMap<RealmId, Persistent>>,
     pub(crate) data_view_readers: RefCell<FxHashMap<RealmId, Persistent>>,
     /// Wrappers kept alive because they hold listeners for a connected
@@ -451,6 +453,7 @@ impl PageDom {
             data_view_readers: RefCell::new(FxHashMap::default()),
             header_helpers: RefCell::new(FxHashMap::default()),
             url_params_helpers: RefCell::new(FxHashMap::default()),
+            custom_elements: RefCell::new(crate::custom::Registry::default()),
             pinned: RefCell::new(FxHashMap::default()),
             node_wrappers: RefCell::new(Vec::new()),
             new_property_pins: RefCell::new(Vec::new()),
@@ -638,7 +641,7 @@ impl PageDom {
         self.opaque_storage.clear();
         drop(self.blob_urls.take());
         drop(self.reflected_url_base.take());
-        crate::custom::forget_page(self.id);
+        drop(self.custom_elements.take());
         let windows = self.window_keys.take();
         let mut dom = self.dom.borrow_mut();
         for (doc, key) in windows {

@@ -14,7 +14,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use lp_dom::NodeId;
+use lp_dom::{LocalName, NodeId};
 use lp_js::{ClassDef, JsClass, JsError, JsResult, NoParent, Object, Persistent, RealmId, Scope, Value};
 use rustc_hash::FxHashMap;
 
@@ -32,21 +32,53 @@ struct Callbacks {
     connected_move: Option<Persistent>,
 }
 
+/// A custom element definition of one realm (HTML "custom element definition").
+struct Definition {
+    ctor: Persistent,
+    callbacks: Callbacks,
+}
+
+/// The custom element registries of a page's realms, kept on the page
+/// (`PageDom::custom_elements`) and keyed by the local name's atom, so
+/// that `createElement` finds a definition (or that there is none) with an
+/// atom hash and no string.
 #[derive(Default)]
-pub struct Registry {
-    defs: FxHashMap<(RealmId, String), Persistent>,
-    callbacks: FxHashMap<(RealmId, String), Callbacks>,
-    waiting: FxHashMap<(RealmId, String), Vec<lp_js::Deferred>>,
+pub(crate) struct Registry {
+    defs: FxHashMap<(RealmId, LocalName), Definition>,
+    waiting: FxHashMap<(RealmId, LocalName), Vec<lp_js::Deferred>>,
     /// Elements being upgraded (construction stack).
     stack: Vec<NodeId>,
 }
 
-thread_local! {
-    static REGISTRIES: RefCell<FxHashMap<u64, Registry>> = RefCell::new(FxHashMap::default());
+impl Registry {
+    fn ctor<'s>(&self, s: &Scope<'s>, realm: RealmId, name: &LocalName) -> Option<Value<'s>> {
+        if self.defs.is_empty() {
+            return None;
+        }
+        self.defs.get(&(realm, name.clone())).map(|d| d.ctor.get(s))
+    }
 }
 
 fn with_registry<R>(page: &PageDom, f: impl FnOnce(&mut Registry) -> R) -> R {
-    REGISTRIES.with(|r| f(r.borrow_mut().entry(page.id()).or_default()))
+    f(&mut page.custom_elements.borrow_mut())
+}
+
+/// Forgets the definitions of a disposed realm (their constructors and
+/// callbacks are that realm's) and the promises waiting in it.
+pub(crate) fn realm_disposed(page: &PageDom, realm: RealmId) {
+    let (defs, waiting) = {
+        let mut r = page.custom_elements.borrow_mut();
+        let defs: Vec<Definition> = {
+            let keys: Vec<_> = r.defs.keys().filter(|k| k.0 == realm).cloned().collect();
+            keys.iter().filter_map(|k| r.defs.remove(k)).collect()
+        };
+        let keys: Vec<_> = r.waiting.keys().filter(|k| k.0 == realm).cloned().collect();
+        let waiting: Vec<_> = keys.iter().filter_map(|k| r.waiting.remove(k)).collect();
+        (defs, waiting)
+    };
+    // Dropped outside the borrow: releasing a root may release wrappers.
+    drop(defs);
+    drop(waiting);
 }
 
 fn valid_name(name: &str) -> bool {
@@ -73,12 +105,12 @@ pub(crate) fn construct_html_element<'s>(s: &Scope<'s>, new_target: Object<'s>) 
     let def_name = with_registry(&page, |r| {
         r.defs
             .iter()
-            .find(|((rid, _), ctor)| *rid == realm && ctor.get(s).strict_equals(new_target.value()))
+            .find(|((rid, _), d)| *rid == realm && d.ctor.get(s).strict_equals(new_target.value()))
             .map(|((_, n), _)| n.clone())
     });
     let Some(name) = def_name else { return Err(JsError::Type("Illegal constructor".into())) };
     let upgrading = with_registry(&page, |r| r.stack.pop());
-    let proto = new_target.get("prototype")?;
+    let proto = new_target.get_atom("prototype")?;
     match upgrading {
         Some(el) => {
             let obj = wrap_node(s, &page, el)?;
@@ -107,7 +139,7 @@ fn upgrade<'s>(s: &Scope<'s>, page: &Rc<PageDom>, el: NodeId, ctor: Value<'s>) -
     page.dom.borrow_mut().set_custom_defined(el).js()?;
     if page.dom.borrow().is_connected(el).js()? {
         let obj = wrap_node(s, page, el)?;
-        if let Some(cb) = obj.get("connectedCallback")?.as_object().filter(|f| f.is_function()) {
+        if let Some(cb) = obj.get_atom("connectedCallback")?.as_object().filter(|f| f.is_function()) {
             if let Err(e) = cb.call(Some(obj), &[]) {
                 s.report_exception(&e);
             }
@@ -164,16 +196,16 @@ pub(crate) fn run_reactions(page: &Rc<PageDom>) {
 /// `connectedCallback` (HTML "enqueue a custom element callback reaction").
 fn run_reaction(page: &Rc<PageDom>, el: NodeId, reaction: lp_dom::custom::CustomReaction) {
     use lp_dom::custom::CustomReaction;
-    let Some(name) = page.dom.borrow().element(el).ok().map(|e| e.local_name().to_string()) else { return };
+    let Some(name) = page.dom.borrow().element(el).ok().map(|e| e.local_name().clone()) else { return };
     // The definition of the element's name, in the realm that defined it.
     let realms: Vec<RealmId> =
-        with_registry(page, |r| r.callbacks.keys().filter(|(_, n)| *n == name).map(|(realm, _)| *realm).collect());
+        with_registry(page, |r| r.defs.keys().filter(|(_, n)| *n == name).map(|(realm, _)| *realm).collect());
     for realm_id in realms {
         let realm = page.realms.borrow().get(&realm_id).and_then(|r| r.upgrade());
         let Some(realm) = realm.filter(|r| !r.is_disposed()) else { continue };
         let Ok(s) = realm.scope() else { continue };
         let callbacks: Vec<Value<'_>> = with_registry(page, |r| {
-            let Some(c) = r.callbacks.get(&(realm_id, name.clone())) else { return Vec::new() };
+            let Some(c) = r.defs.get(&(realm_id, name.clone())).map(|d| &d.callbacks) else { return Vec::new() };
             let pick = |p: &Option<Persistent>| p.as_ref().map(|p| p.get(&s));
             match reaction {
                 CustomReaction::Connected => pick(&c.connected).into_iter().collect(),
@@ -228,7 +260,7 @@ fn try_upgrade(page: &Rc<PageDom>, el: NodeId) {
             return;
         }
         let (Ok(element), Ok(doc)) = (dom.element(el), dom.node_document(el)) else { return };
-        (element.local_name().to_string(), doc)
+        (element.local_name().clone(), doc)
     };
     // "Look up a custom element definition": the registry is the one of the
     // node document's window (the page's own world before an isolated one).
@@ -243,7 +275,7 @@ fn try_upgrade(page: &Rc<PageDom>, el: NodeId) {
     let realm = owner.realms.borrow().get(&realm_id).and_then(|r| r.upgrade());
     let Some(realm) = realm.filter(|r| !r.is_disposed()) else { return };
     let Ok(s) = realm.scope() else { return };
-    let Some(ctor) = with_registry(&owner, |r| r.defs.get(&(realm_id, name)).map(|p| p.get(&s))) else { return };
+    let Some(ctor) = with_registry(&owner, |r| r.ctor(&s, realm_id, &name)) else { return };
     if let Err(e) = upgrade(&s, &owner, el, ctor) {
         s.report_exception(&e);
     }
@@ -265,8 +297,15 @@ fn document_page(page: &Rc<PageDom>, doc: NodeId) -> Option<Rc<PageDom>> {
 
 /// `document.createElement` result: constructs defined custom elements.
 pub(crate) fn create_element_value<'s>(s: &Scope<'s>, page: &Rc<PageDom>, el: NodeId) -> JsResult<Value<'s>> {
-    let name = page.dom.borrow().element(el).js()?.local_name().to_string();
-    let ctor = with_registry(page, |r| r.defs.get(&(s.realm_id(), name)).map(|p| p.get(s)));
+    let ctor = {
+        let registry = page.custom_elements.borrow();
+        if registry.defs.is_empty() {
+            None
+        } else {
+            let dom = page.dom.borrow();
+            registry.ctor(s, s.realm_id(), dom.element(el).js()?.local_name())
+        }
+    };
     if let Some(ctor) = ctor {
         upgrade(s, page, el, ctor)?;
     }
@@ -289,13 +328,15 @@ impl JsClass for CustomElementRegistry {
             if !valid_name(&name) {
                 return Err(JsError::dom("SyntaxError", format!("Failed to execute 'define' on 'CustomElementRegistry': \"{name}\" is not a valid custom element name")));
             }
-            let key = (s.realm_id(), name.clone());
-            let exists = with_registry(page, |r| r.defs.contains_key(&key) || r.defs.iter().any(|(k, c)| k.0 == key.0 && c.get(s).strict_equals(ctor)));
+            let key = (s.realm_id(), LocalName::from(name.as_str()));
+            let exists = with_registry(page, |r| {
+                r.defs.contains_key(&key) || r.defs.iter().any(|(k, d)| k.0 == key.0 && d.ctor.get(s).strict_equals(ctor))
+            });
             if exists {
                 return Err(JsError::dom("NotSupportedError", format!("Failed to execute 'define' on 'CustomElementRegistry': the name \"{name}\" has already been used with this registry")));
             }
             // The lifecycle callbacks are those of the prototype at definition.
-            let proto = ctor.as_object().expect("constructor").get("prototype")?;
+            let proto = ctor.as_object().expect("constructor").get_atom("prototype")?;
             let Some(proto) = proto.as_object() else {
                 return Err(JsError::Type("Failed to execute 'define' on 'CustomElementRegistry': constructor prototype is not an object".into()));
             };
@@ -314,19 +355,19 @@ impl JsClass for CustomElementRegistry {
                 disconnected: lifecycle("disconnectedCallback")?,
                 connected_move: lifecycle("connectedMoveCallback")?,
             };
-            let disabled = ctor.as_object().expect("constructor").get("disabledFeatures")?;
+            let disabled = ctor.as_object().expect("constructor").get_atom("disabledFeatures")?;
             if let Some(list) = disabled.as_object() {
-                let len = list.get("length")?.to_number()? as u32;
+                let len = list.get_atom("length")?.to_number()? as u32;
                 for i in 0..len {
                     if dom_string(list.get_index(i)?)? == "shadow" {
                         page.dom.borrow_mut().disable_shadow_for(&name);
                     }
                 }
             }
-            with_registry(page, |r| {
-                r.callbacks.insert(key.clone(), callbacks);
-                r.defs.insert(key.clone(), Persistent::new(s, ctor))
+            let previous = with_registry(page, |r| {
+                r.defs.insert(key.clone(), Definition { ctor: Persistent::new(s, ctor), callbacks })
             });
+            drop(previous);
             // From now on an element of this name is upgraded when it connects.
             page.dom.borrow_mut().enable_custom_upgrades();
             // Upgrade existing elements of the document, in tree order.
@@ -334,7 +375,7 @@ impl JsClass for CustomElementRegistry {
                 let dom = page.dom.borrow();
                 let doc = page.document();
                 dom.descendants(doc)
-                    .map(|d| d.filter(|&n| dom.element(n).is_ok_and(|e| e.is_html() && *e.local_name() == *name)).collect())
+                    .map(|d| d.filter(|&n| dom.element(n).is_ok_and(|e| e.is_html() && *e.local_name() == key.1)).collect())
                     .unwrap_or_default()
             };
             for el in existing {
@@ -349,15 +390,15 @@ impl JsClass for CustomElementRegistry {
             Ok(s.undefined())
         });
         def.method("get", 1, |s, page, a| {
-            let name = dom_string(a.get(0))?;
-            Ok(with_registry(page, |r| r.defs.get(&(s.realm_id(), name)).map(|p| p.get(s))).unwrap_or(s.undefined()))
+            let name = with_arg_str(&a, 0, "CustomElementRegistry.get", |name| Ok(LocalName::from(name)))?;
+            Ok(with_registry(page, |r| r.ctor(s, s.realm_id(), &name)).unwrap_or(s.undefined()))
         });
         def.method("getName", 1, |s, page, a| {
             let ctor = a.get(0);
             let name = with_registry(page, |r| {
                 r.defs
                     .iter()
-                    .find(|(k, c)| k.0 == s.realm_id() && c.get(s).strict_equals(ctor))
+                    .find(|(k, d)| k.0 == s.realm_id() && d.ctor.get(s).strict_equals(ctor))
                     .map(|(k, _)| k.1.clone())
             });
             Ok(name.map_or(s.null(), |n| s.string(&n)))
@@ -372,8 +413,8 @@ impl JsClass for CustomElementRegistry {
                 )?;
                 return Ok(d.promise.get(s));
             }
-            let key = (s.realm_id(), name);
-            let existing = with_registry(page, |r| r.defs.get(&key).map(|p| p.get(s)));
+            let key = (s.realm_id(), LocalName::from(name.as_str()));
+            let existing = with_registry(page, |r| r.ctor(s, key.0, &key.1));
             let promise = d.promise.get(s);
             match existing {
                 Some(ctor) => d.resolve(s, ctor)?,
@@ -383,14 +424,14 @@ impl JsClass for CustomElementRegistry {
         });
         def.method("upgrade", 1, |s, page, a| {
             let root = crate::node::node_arg(s, a.get(0), "CustomElementRegistry.upgrade")?;
-            let candidates: Vec<(NodeId, String)> = {
+            let candidates: Vec<(NodeId, LocalName)> = {
                 let dom = page.dom.borrow();
                 dom.descendants(root)
-                    .map(|d| d.filter_map(|n| dom.element(n).ok().map(|e| (n, e.local_name().to_string()))).collect())
+                    .map(|d| d.filter_map(|n| dom.element(n).ok().map(|e| (n, e.local_name().clone()))).collect())
                     .unwrap_or_default()
             };
             for (el, name) in candidates {
-                let ctor = with_registry(page, |r| r.defs.get(&(s.realm_id(), name)).map(|p| p.get(s)));
+                let ctor = with_registry(page, |r| r.ctor(s, s.realm_id(), &name));
                 if let Some(c) = ctor {
                     upgrade(s, page, el, c)?;
                 }
@@ -404,13 +445,6 @@ impl JsClass for CustomElementRegistry {
 pub fn registry<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Value<'s>> {
     let key = lp_js::IdentityKey(page.id() | (1 << 58), 0);
     crate::window::same_object(s, page, key, || s.wrap::<CustomElementRegistry>(page.clone(), Some(key)))
-}
-
-/// Drops a page's registry state (page teardown).
-pub fn forget_page(page_id: u64) {
-    REGISTRIES.with(|r| {
-        r.borrow_mut().remove(&page_id);
-    });
 }
 
 pub(crate) fn register(engine: &lp_js::Engine) {
