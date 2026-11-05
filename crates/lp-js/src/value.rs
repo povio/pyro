@@ -254,9 +254,19 @@ impl<'s> Object<'s> {
     }
 
     pub fn get_js(&self, name: &JsString) -> JsResult<Value<'s>> {
+        self.get_raw_name(name.as_raw())
+    }
+
+    /// [`Object::get`] for a constant name: the key is the thread's string
+    /// for `name` ([`crate::atom`]), made once instead of per call.
+    pub fn get_atom(&self, name: &'static str) -> JsResult<Value<'s>> {
+        self.get_raw_name(crate::string::atom_raw(name))
+    }
+
+    fn get_raw_name(&self, name: sys::JSStringRef) -> JsResult<Value<'s>> {
         let _pool = crate::autorelease::Pool::new();
         let mut exc = ptr::null();
-        let v = unsafe { sys::JSObjectGetProperty(self.ctx, self.raw, name.as_raw(), &mut exc) };
+        let v = unsafe { sys::JSObjectGetProperty(self.ctx, self.raw, name, &mut exc) };
         check(self.ctx, exc)?;
         Ok(unsafe { Value::from_raw(self.ctx, v) })
     }
@@ -283,9 +293,28 @@ impl<'s> Object<'s> {
     }
 
     pub fn set_with(&self, name: &JsString, value: Value<'_>, attrs: sys::JSPropertyAttributes) -> JsResult<()> {
+        self.set_raw_name(name.as_raw(), value, attrs)
+    }
+
+    /// [`Object::set`] for a constant name (see [`Object::get_atom`]).
+    pub fn set_atom(&self, name: &'static str, value: Value<'_>) -> JsResult<()> {
+        self.set_raw_name(crate::string::atom_raw(name), value, sys::kJSPropertyAttributeNone)
+    }
+
+    /// [`Object::set_with`] for a constant name (see [`Object::get_atom`]).
+    pub fn set_atom_with(
+        &self,
+        name: &'static str,
+        value: Value<'_>,
+        attrs: sys::JSPropertyAttributes,
+    ) -> JsResult<()> {
+        self.set_raw_name(crate::string::atom_raw(name), value, attrs)
+    }
+
+    fn set_raw_name(&self, name: sys::JSStringRef, value: Value<'_>, attrs: sys::JSPropertyAttributes) -> JsResult<()> {
         let _pool = crate::autorelease::Pool::new();
         let mut exc = ptr::null();
-        unsafe { sys::JSObjectSetProperty(self.ctx, self.raw, name.as_raw(), value.raw, attrs, &mut exc) };
+        unsafe { sys::JSObjectSetProperty(self.ctx, self.raw, name, value.raw, attrs, &mut exc) };
         check(self.ctx, exc)
     }
 
@@ -299,6 +328,12 @@ impl<'s> Object<'s> {
     pub fn has(&self, name: &str) -> bool {
         let _pool = crate::autorelease::Pool::new();
         unsafe { sys::JSObjectHasProperty(self.ctx, self.raw, JsString::new(name).as_raw()) }
+    }
+
+    /// [`Object::has`] for a constant name (see [`Object::get_atom`]).
+    pub fn has_atom(&self, name: &'static str) -> bool {
+        let _pool = crate::autorelease::Pool::new();
+        unsafe { sys::JSObjectHasProperty(self.ctx, self.raw, crate::string::atom_raw(name)) }
     }
 
     pub fn delete(&self, name: &str) -> JsResult<bool> {

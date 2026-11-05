@@ -441,7 +441,7 @@ fn wrap<'s>(
     Ok(wrapper.value())
 }
 
-fn hidden<'s>(s: &Scope<'s>, data: &RequestData, key: &str) -> JsResult<Value<'s>> {
+fn hidden<'s>(s: &Scope<'s>, data: &RequestData, key: &'static str) -> JsResult<Value<'s>> {
     let realm = data.realm.upgrade().ok_or(JsError::ContextDestroyed)?;
     let owner = realm.scope()?;
     let wrapper = owner.lookup_identity(data.id).ok_or(JsError::ContextDestroyed)?;

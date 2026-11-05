@@ -708,14 +708,14 @@ fn handler_get<'s>(s: &Scope<'s>, object: Object<'_>, key: &str) -> JsResult<Opt
     if object.as_raw() == s.global().as_raw() {
         return Ok(window_listener_array(s, false)?.map(|h| h.get(key)).transpose()?.filter(|v| !v.is_undefined()));
     }
-    s.get_hidden(object, key)
+    s.get_hidden_str(object, key)
 }
 fn handler_set(s: &Scope<'_>, object: Object<'_>, key: &str, value: Value<'_>) -> JsResult<()> {
     if object.as_raw() == s.global().as_raw() {
         let holder = window_listener_array(s, true)?.expect("created window holder");
         return holder.set(key, value);
     }
-    s.set_hidden(object, key, value)
+    s.set_hidden_str(object, key, value)
 }
 
 /// IDL event handlers use an ordinary listener slot and a traced hidden value.

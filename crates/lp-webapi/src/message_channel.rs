@@ -253,7 +253,7 @@ pub struct ChannelData {
     identity: lp_js::IdentityKey,
 }
 
-fn channel_port<'s>(s: &Scope<'s>, c: &ChannelData, name: &str) -> JsResult<lp_js::Value<'s>> {
+fn channel_port<'s>(s: &Scope<'s>, c: &ChannelData, name: &'static str) -> JsResult<lp_js::Value<'s>> {
     let realm = c.realm.upgrade().ok_or(JsError::ContextDestroyed)?;
     let owner = realm.scope()?;
     let object = owner.lookup_identity(c.identity).ok_or(JsError::ContextDestroyed)?;

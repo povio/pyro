@@ -313,7 +313,7 @@ fn wrap_script<'s>(
 fn opaque(kind: ResponseKind) -> bool {
     matches!(kind, ResponseKind::Opaque | ResponseKind::OpaqueRedirect)
 }
-fn hidden<'s>(s: &Scope<'s>, data: &ResponseData, key: &str) -> JsResult<Value<'s>> {
+fn hidden<'s>(s: &Scope<'s>, data: &ResponseData, key: &'static str) -> JsResult<Value<'s>> {
     // A method borrowed from another same-VM realm still addresses the original
     // wrapper's traced properties. Do not root the wrapper in its own payload.
     let realm = data.realm.upgrade().ok_or(JsError::ContextDestroyed)?;

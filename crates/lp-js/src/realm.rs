@@ -1279,10 +1279,30 @@ impl<'s> Scope<'s> {
 
     /// Stores a GC-traced hidden value on a host object (wrappers and the
     /// global only). Use for per-wrapper JS state such as event listeners so
-    /// cycles through it stay collectable.
-    pub fn set_hidden(&self, object: Object<'_>, key: &str, value: Value<'_>) -> JsResult<()> {
+    /// cycles through it stay collectable. Keys are constants: the thread's
+    /// string for each ([`crate::atom`]) is made once.
+    pub fn set_hidden(&self, object: Object<'_>, key: &'static str, value: Value<'_>) -> JsResult<()> {
+        self.set_hidden_raw(object, crate::string::atom_raw(key), value)
+    }
+
+    pub fn get_hidden(&self, object: Object<'_>, key: &'static str) -> JsResult<Option<Value<'s>>> {
+        self.get_hidden_raw(object, crate::string::atom_raw(key))
+    }
+
+    /// [`Scope::set_hidden`] for a key computed at run time (a string is
+    /// made for each call).
+    pub fn set_hidden_str(&self, object: Object<'_>, key: &str, value: Value<'_>) -> JsResult<()> {
+        self.set_hidden_raw(object, JsString::new(key).as_raw(), value)
+    }
+
+    /// [`Scope::get_hidden`] for a key computed at run time.
+    pub fn get_hidden_str(&self, object: Object<'_>, key: &str) -> JsResult<Option<Value<'s>>> {
+        self.get_hidden_raw(object, JsString::new(key).as_raw())
+    }
+
+    fn set_hidden_raw(&self, object: Object<'_>, key: sys::JSStringRef, value: Value<'_>) -> JsResult<()> {
         let f = sys::spi::get().set_private_property.ok_or(JsError::Unsupported("JSObjectSetPrivateProperty"))?;
-        let ok = unsafe { f(self.ctx, object.raw, JsString::new(key).as_raw(), value.raw) };
+        let ok = unsafe { f(self.ctx, object.raw, key, value.raw) };
         if ok {
             Ok(())
         } else {
@@ -1290,9 +1310,9 @@ impl<'s> Scope<'s> {
         }
     }
 
-    pub fn get_hidden(&self, object: Object<'_>, key: &str) -> JsResult<Option<Value<'s>>> {
+    fn get_hidden_raw(&self, object: Object<'_>, key: sys::JSStringRef) -> JsResult<Option<Value<'s>>> {
         let f = sys::spi::get().get_private_property.ok_or(JsError::Unsupported("JSObjectGetPrivateProperty"))?;
-        let v = unsafe { f(self.ctx, object.raw, JsString::new(key).as_raw()) };
+        let v = unsafe { f(self.ctx, object.raw, key) };
         Ok((!v.is_null()).then(|| unsafe { Value::from_raw(self.ctx, v) }))
     }
 
