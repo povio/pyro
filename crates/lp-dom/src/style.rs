@@ -41,7 +41,7 @@ use std::rc::Rc;
 
 use cssparser::{ParseError, Parser, Token};
 use markup5ever::local_name;
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashSet;
 
 use crate::dom::Dom;
 use crate::media::{self, Viewport};
@@ -63,20 +63,6 @@ pub enum Display {
     Grid,
     #[default]
     Other,
-}
-
-impl Display {
-    fn parse(value: &str) -> Display {
-        if value.eq_ignore_ascii_case("none") {
-            Display::None
-        } else if value.eq_ignore_ascii_case("flex") || value.eq_ignore_ascii_case("inline-flex") {
-            Display::Flex
-        } else if value.eq_ignore_ascii_case("grid") || value.eq_ignore_ascii_case("inline-grid") {
-            Display::Grid
-        } else {
-            Display::Other
-        }
-    }
 }
 
 /// The case-changing part of `text-transform` (StyleManager.zig:1321-1376).
@@ -650,6 +636,65 @@ pub struct ComputedStyle {
     pub white_space: WhiteSpace,
     pub absolutely_positioned: bool,
     pub floated: bool,
+    /// Own computed `position`.
+    pub position: Position,
+    /// Own computed `display` is `contents` (the element generates no box).
+    pub display_contents: bool,
+    /// Own computed `display` is an atomic inline (`inline-block`,
+    /// `inline-flex`, `inline-grid`, `inline-table`).
+    pub atomic_inline: bool,
+    /// Own computed `display` is a table row or row group.
+    pub table_row_or_group: bool,
+    /// Own computed `z-index` (`None`: `auto`).
+    pub z_index: Option<i32>,
+    /// A `transform` other than `none`.
+    pub transformed: bool,
+    /// `opacity` below 1.
+    pub translucent: bool,
+    /// `isolation: isolate`.
+    pub isolated: bool,
+    /// Own computed `user-select`.
+    pub user_select: UserSelect,
+}
+
+/// Computed `position`.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum Position {
+    #[default]
+    Static,
+    Relative,
+    Absolute,
+    Fixed,
+    Sticky,
+}
+
+impl Position {
+    /// Anything but `static`.
+    pub fn is_positioned(self) -> bool {
+        self != Position::Static
+    }
+
+    /// The computed-value keyword.
+    pub fn keyword(self) -> &'static str {
+        match self {
+            Position::Static => "static",
+            Position::Relative => "relative",
+            Position::Absolute => "absolute",
+            Position::Fixed => "fixed",
+            Position::Sticky => "sticky",
+        }
+    }
+}
+
+/// Computed `user-select`.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum UserSelect {
+    #[default]
+    Auto,
+    Text,
+    None,
+    Contain,
+    All,
 }
 
 /// What computed `white-space-collapse` does to rendered text.
@@ -690,6 +735,9 @@ pub enum SheetSource {
 struct Sheet {
     owner: NodeId,
     source: SheetSource,
+    /// Bumped whenever `source` is set (a loader or CSSOM text, or the
+    /// `<style>` element's sheet read again).
+    revision: u64,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -711,7 +759,7 @@ pub struct StyleEngine {
     /// being added, filled or removed).
     invalidations: u64,
     /// `computed()` answers, for the observation stamp in `memo_at`.
-    memo: RefCell<FxHashMap<NodeId, ComputedStyle>>,
+    memo: RefCell<StyleMemo>,
     memo_at: Cell<Option<ObservationStamp>>,
     /// The layout engine, which computed styles come from, and the
     /// observation stamp its styles were last synced at.
@@ -720,7 +768,14 @@ pub struct StyleEngine {
     external_syncing: Cell<bool>,
     /// The rules declaring properties the engine's Stylo does not parse
     /// ([`crate::gecko_only`]), for an observation stamp.
-    gecko_rules: RefCell<Option<(ObservationStamp, Rc<Vec<crate::gecko_only::Rule>>)>>,
+    /// for the [`StyleEngine::author_sheets_key`] they were parsed at.
+    gecko_rules: RefCell<Option<(u64, Rc<Vec<crate::gecko_only::Rule>>)>>,
+    /// Sheet revisions handed out so far.
+    revisions: u64,
+    /// [`StyleEngine::author_sheets_key`] for the sheet generation and the
+    /// DOM's tree version it was computed at (`<style>` texts only change
+    /// with the tree).
+    sheets_key: Cell<Option<((u64, u64), u64)>>,
 }
 
 /// [`StyleEngine::observation_stamp`]: DOM version, sheet generation,
@@ -729,10 +784,6 @@ type ObservationStamp = (u64, u64, u32, u32);
 
 /// The layout engine and the stamp its styles were last synced at.
 type Engine = (Rc<dyn crate::geometry::GeometrySource>, Option<ObservationStamp>);
-
-/// `text-transform: none` as the computed style holds it.
-static TEXT_TRANSFORM_NONE: std::sync::LazyLock<TextTransform> =
-    std::sync::LazyLock::new(|| TextTransform::parse("none").unwrap_or_default());
 
 impl StyleEngine {
     pub fn new(doc: NodeId) -> Self {
@@ -752,6 +803,8 @@ impl StyleEngine {
             external: RefCell::new(None),
             external_syncing: Cell::new(false),
             gecko_rules: RefCell::new(None),
+            revisions: 0,
+            sheets_key: Cell::new(None),
         }
     }
 
@@ -831,83 +884,16 @@ impl StyleEngine {
         // Answers hold for the engine's stamp only.
         let stamp = self.engine_styled(dom)?;
         if self.memo_at.replace(Some(stamp)) != Some(stamp) {
-            self.memo.borrow_mut().clear();
+            self.memo.borrow_mut().reset();
         }
-        if let Some(c) = self.memo.borrow().get(&el) {
-            return Some(*c);
+        if let Some(c) = self.memo.borrow().get(el) {
+            return Some(c);
         }
         let style = self.stylo_style(dom, el)?;
-        let get = |name: &str| crate::stylo::serialize(&style, name).unwrap_or_default();
-        let display_text = get("display");
-        let display = Display::parse(&display_text);
         let parent = flat_tree_parent_element(dom, idx).map(|p| dom.id_of(p));
         let above = parent.and_then(|p| self.computed_stylo(dom, p)).unwrap_or_default();
-        let in_display_none = display == Display::None || above.in_display_none;
-        // The hot fields read typed (`computed()` runs for every element a
-        // visibility or geometry check touches); the rest serialized.
-        use style::values::specified::box_::{Float as SFloat, Overflow as SOverflow, PositionProperty};
-        let overflow = |o: SOverflow| match o {
-            SOverflow::Visible => Overflow::Visible,
-            SOverflow::Hidden => Overflow::Hidden,
-            SOverflow::Clip => Overflow::Clip,
-            _ => Overflow::Scroll,
-        };
-        let (ox, oy) = (overflow(style.get_box().overflow_x), overflow(style.get_box().overflow_y));
-        // The initial values typed, anything else through its serialization.
-        let (pan_x, pan_y) = if style.get_box().touch_action == style::values::specified::box_::TouchAction::AUTO {
-            (true, true)
-        } else {
-            parse_touch_action(&get("touch-action")).unwrap_or((true, true))
-        };
-        let overscroll = |o: style::values::specified::box_::OverscrollBehavior, name: &str| {
-            o != style::values::specified::box_::OverscrollBehavior::Auto && overscroll_contains(&get(name))
-        };
-        let size = |s: &style::values::computed::Size, name: &str| match s {
-            style::values::generics::length::GenericSize::Auto => Length::default(),
-            _ => Length::parse(&get(name)),
-        };
-        let position = style.get_position();
         let e = dom.n(idx).element().expect("element");
-        let ua_display = match e.is_html() {
-            true => ua_display(&e.name.local.to_ascii_lowercase()),
-            false => "inline",
-        };
-        let c = ComputedStyle {
-            display,
-            block_flex_or_grid: matches!(display_text.as_str(), "flex" | "grid"),
-            author_display: display_text != ua_display,
-            visibility_hidden: style.get_inherited_box().visibility != style::computed_values::visibility::T::Visible,
-            pointer_events_none: style.get_inherited_ui().pointer_events
-                == style::values::specified::ui::PointerEvents::None,
-            inert: above.inert || (e.is_html() && e.attr("inert").is_some()),
-            in_display_none,
-            in_opacity_zero: above.in_opacity_zero || style.get_effects().opacity == 0.0,
-            overflow_x_scrolls: ox == Overflow::Scroll,
-            overflow_x_clips: ox != Overflow::Visible,
-            overflow_y_scrolls: oy == Overflow::Scroll,
-            overflow_y_clips: oy != Overflow::Visible,
-            overscroll_x_contains: overscroll(style.get_box().overscroll_behavior_x, "overscroll-behavior-x"),
-            overscroll_y_contains: overscroll(style.get_box().overscroll_behavior_y, "overscroll-behavior-y"),
-            width: size(&position.width, "width"),
-            height: size(&position.height, "height"),
-            pan_x_blocked: !pan_x || above.pan_x_blocked,
-            pan_y_blocked: !pan_y || above.pan_y_blocked,
-            text_transform: if style.get_inherited_text().text_transform.is_empty() {
-                *TEXT_TRANSFORM_NONE
-            } else {
-                TextTransform::parse(&get("text-transform")).unwrap_or_default()
-            },
-            white_space: match style.get_inherited_text().clone_white_space_collapse() {
-                style::computed_values::white_space_collapse::T::Collapse => WhiteSpace::Collapse,
-                style::computed_values::white_space_collapse::T::PreserveBreaks => WhiteSpace::PreserveBreaks,
-                _ => WhiteSpace::Preserve,
-            },
-            absolutely_positioned: matches!(
-                style.get_box().position,
-                PositionProperty::Absolute | PositionProperty::Fixed
-            ),
-            floated: style.get_box().float != SFloat::None,
-        };
+        let c = derive_computed(&style, e, &above);
         self.memo.borrow_mut().insert(el, c);
         Some(c)
     }
@@ -959,10 +945,17 @@ impl StyleEngine {
     /// (`webapi/css/StyleSheetList.zig:28-30`). A sheet applies while its
     /// owner is connected.
     pub fn add_sheet(&mut self, owner: NodeId, source: SheetSource) {
+        self.revisions += 1;
+        let revision = self.revisions;
         if let Some(s) = self.sheets.iter_mut().find(|s| s.owner == owner) {
+            // The same text again is the same revision.
+            let same = matches!((&s.source, &source), (SheetSource::Text(a), SheetSource::Text(b)) if a == b);
+            if !same {
+                s.revision = revision;
+            }
             s.source = source;
         } else {
-            self.sheets.push(Sheet { owner, source });
+            self.sheets.push(Sheet { owner, source, revision });
         }
         self.sheets_added();
     }
@@ -1009,18 +1002,47 @@ impl StyleEngine {
 
     /// A key that changes when the author sheets' texts may have: the sheet
     /// generation (a sheet added, removed or given text) and the text of
-    /// every `<style>` element, which is read from the DOM.
+    /// every `<style>` element, which is read from the DOM. Those texts are
+    /// hashed again only after the tree changed.
     pub fn author_sheets_key(&self, dom: &Dom) -> u64 {
         use std::hash::{Hash, Hasher};
+        let at = (self.generation, dom.tree_version());
+        if let Some((k, key)) = self.sheets_key.get() {
+            if k == at {
+                return key;
+            }
+        }
         let mut hasher = rustc_hash::FxHasher::default();
         self.generation.hash(&mut hasher);
         for sheet in &self.sheets {
-            if matches!(sheet.source, SheetSource::StyleElement) && dom.is_alive(sheet.owner) {
-                dom.is_connected(sheet.owner).unwrap_or(false).hash(&mut hasher);
-                dom.text_content(sheet.owner).ok().flatten().unwrap_or_default().hash(&mut hasher);
+            // Which sheets apply (connected owners), and the texts read
+            // from the DOM.
+            let alive = dom.is_alive(sheet.owner);
+            (alive && dom.is_connected(sheet.owner).unwrap_or(false)).hash(&mut hasher);
+            if alive && matches!(sheet.source, SheetSource::StyleElement) {
+                hash_text_content(dom, sheet.owner, &mut hasher);
             }
         }
-        hasher.finish()
+        let key = hasher.finish();
+        self.sheets_key.set(Some((at, key)));
+        key
+    }
+
+    /// An identity of `owner`'s sheet text as it is now: its revision for a
+    /// loader or CSSOM text (set only through this engine), a hash of the
+    /// element's text for a `<style>` read from the DOM. `None`: no sheet.
+    pub fn sheet_revision(&self, dom: &Dom, owner: NodeId) -> Option<u64> {
+        use std::hash::{Hash, Hasher};
+        let sheet = self.sheets.iter().find(|s| s.owner == owner)?;
+        let mut hasher = rustc_hash::FxHasher::default();
+        match &sheet.source {
+            SheetSource::Text(_) => (0u8, sheet.revision).hash(&mut hasher),
+            SheetSource::StyleElement => {
+                1u8.hash(&mut hasher);
+                hash_text_content(dom, owner, &mut hasher);
+            }
+        }
+        Some(hasher.finish())
     }
 
     pub fn sheet_owners(&self) -> Vec<NodeId> {
@@ -1041,7 +1063,8 @@ impl StyleEngine {
             .collect();
         for n in found {
             if !self.sheets.iter().any(|s| s.owner == n) {
-                self.sheets.push(Sheet { owner: n, source: SheetSource::StyleElement });
+                self.revisions += 1;
+                self.sheets.push(Sheet { owner: n, source: SheetSource::StyleElement, revision: self.revisions });
             }
         }
         self.sheets_added();
@@ -1247,23 +1270,18 @@ impl StyleEngine {
     fn gecko_only_value(&self, dom: &Dom, el: NodeId, name: &str) -> Option<String> {
         self.owns(dom, el)?;
         self.engine_styled(dom)?;
-        let stamp = self.observation_stamp(dom);
+        // The rules change with the sheets (or the viewport, which bumps
+        // the generation the key includes), not with every DOM change.
+        let key = self.author_sheets_key(dom);
         let rules = match &*self.gecko_rules.borrow() {
-            Some((at, rules)) if *at == stamp => Some(rules.clone()),
+            Some((at, rules)) if *at == key => Some(rules.clone()),
             _ => None,
         };
         let rules = rules.unwrap_or_else(|| {
-            let texts: Vec<String> = self
-                .sheets
-                .iter()
-                .filter(|s| dom.is_alive(s.owner) && dom.is_connected(s.owner).unwrap_or(false))
-                .map(|s| match &s.source {
-                    SheetSource::Text(t) => t.clone(),
-                    SheetSource::StyleElement => dom.text_content(s.owner).ok().flatten().unwrap_or_default(),
-                })
-                .collect();
+            let mut texts = Vec::new();
+            self.for_each_author_sheet(dom, &mut |text| texts.push(text.to_owned()));
             let rules = crate::gecko_only::rules(texts.iter().map(String::as_str), &self.viewport);
-            *self.gecko_rules.borrow_mut() = Some((stamp, rules.clone()));
+            *self.gecko_rules.borrow_mut() = Some((key, rules.clone()));
             rules
         });
         let inline = |e: NodeId| self.inline_declared_value(dom, e, name);
@@ -1278,6 +1296,170 @@ impl StyleEngine {
     }
 }
 
+/// The [`ComputedStyle`] of an element whose Stylo computed values are
+/// `style`, below a flat-tree parent computed as `above`. Values read
+/// typed; only non-initial values of the rarely set properties go through
+/// their serialization.
+fn derive_computed(
+    style: &style::properties::ComputedValues,
+    e: &crate::node::ElementData,
+    above: &ComputedStyle,
+) -> ComputedStyle {
+    use style::values::specified::box_::{
+        Display as D, Float as SFloat, Overflow as SOverflow, OverscrollBehavior, PositionProperty, TouchAction,
+    };
+    let get = |name: &str| crate::stylo::serialize(style, name).unwrap_or_default();
+    let b = style.get_box();
+    let d = b.display;
+    let display = if d == D::None {
+        Display::None
+    } else if d == D::Flex || d == D::InlineFlex {
+        Display::Flex
+    } else if d == D::Grid || d == D::InlineGrid {
+        Display::Grid
+    } else {
+        Display::Other
+    };
+    let overflow = |o: SOverflow| match o {
+        SOverflow::Visible => Overflow::Visible,
+        SOverflow::Hidden => Overflow::Hidden,
+        SOverflow::Clip => Overflow::Clip,
+        _ => Overflow::Scroll,
+    };
+    let (ox, oy) = (overflow(b.overflow_x), overflow(b.overflow_y));
+    // The initial values typed, anything else through its serialization.
+    let (pan_x, pan_y) = if b.touch_action == TouchAction::AUTO {
+        (true, true)
+    } else {
+        parse_touch_action(&get("touch-action")).unwrap_or((true, true))
+    };
+    let overscroll =
+        |o: OverscrollBehavior, name: &str| o != OverscrollBehavior::Auto && overscroll_contains(&get(name));
+    let size = |s: &style::values::computed::Size, name: &str| match s {
+        style::values::generics::length::GenericSize::Auto => Length::default(),
+        _ => Length::parse(&get(name)),
+    };
+    let position = style.get_position();
+    let ua = if e.is_html() { ua_display_of(&e.name.local) } else { "inline" };
+    let effects = style.get_effects();
+    ComputedStyle {
+        display,
+        block_flex_or_grid: d == D::Flex || d == D::Grid,
+        author_display: d.to_u16() != display_keyword_bits(ua),
+        visibility_hidden: style.get_inherited_box().visibility != style::computed_values::visibility::T::Visible,
+        pointer_events_none: style.get_inherited_ui().pointer_events
+            == style::values::specified::ui::PointerEvents::None,
+        inert: above.inert || (e.is_html() && e.attr("inert").is_some()),
+        in_display_none: display == Display::None || above.in_display_none,
+        in_opacity_zero: above.in_opacity_zero || effects.opacity == 0.0,
+        overflow_x_scrolls: ox == Overflow::Scroll,
+        overflow_x_clips: ox != Overflow::Visible,
+        overflow_y_scrolls: oy == Overflow::Scroll,
+        overflow_y_clips: oy != Overflow::Visible,
+        overscroll_x_contains: overscroll(b.overscroll_behavior_x, "overscroll-behavior-x"),
+        overscroll_y_contains: overscroll(b.overscroll_behavior_y, "overscroll-behavior-y"),
+        width: size(&position.width, "width"),
+        height: size(&position.height, "height"),
+        pan_x_blocked: !pan_x || above.pan_x_blocked,
+        pan_y_blocked: !pan_y || above.pan_y_blocked,
+        text_transform: if style.get_inherited_text().text_transform.is_empty() {
+            TextTransform::None
+        } else {
+            TextTransform::parse(&get("text-transform")).unwrap_or_default()
+        },
+        white_space: match style.get_inherited_text().clone_white_space_collapse() {
+            style::computed_values::white_space_collapse::T::Collapse => WhiteSpace::Collapse,
+            style::computed_values::white_space_collapse::T::PreserveBreaks => WhiteSpace::PreserveBreaks,
+            _ => WhiteSpace::Preserve,
+        },
+        absolutely_positioned: matches!(b.position, PositionProperty::Absolute | PositionProperty::Fixed),
+        floated: b.float != SFloat::None,
+        position: match b.position {
+            PositionProperty::Static => Position::Static,
+            PositionProperty::Relative => Position::Relative,
+            PositionProperty::Absolute => Position::Absolute,
+            PositionProperty::Fixed => Position::Fixed,
+            PositionProperty::Sticky => Position::Sticky,
+            #[allow(unreachable_patterns)]
+            _ => Position::Static,
+        },
+        display_contents: d == D::Contents,
+        atomic_inline: d == D::InlineBlock || d == D::InlineFlex || d == D::InlineGrid || d == D::InlineTable,
+        table_row_or_group: d == D::TableRow
+            || d == D::TableRowGroup
+            || d == D::TableHeaderGroup
+            || d == D::TableFooterGroup,
+        z_index: match position.z_index {
+            style::values::generics::position::GenericZIndex::Integer(z) => Some(z),
+            style::values::generics::position::GenericZIndex::Auto => None,
+        },
+        transformed: !b.transform.0.is_empty(),
+        translucent: effects.opacity < 1.0,
+        isolated: b.isolation == style::computed_values::isolation::T::Isolate,
+        user_select: {
+            use style::values::specified::ui::UserSelect as U;
+            match style.get_ui().user_select {
+                U::Auto => UserSelect::Auto,
+                U::Text => UserSelect::Text,
+                U::None => UserSelect::None,
+                U::Contain => UserSelect::Contain,
+                U::All => UserSelect::All,
+            }
+        },
+    }
+}
+
+/// Memoized [`ComputedStyle`]s for one observation stamp: a sparse set
+/// over node slots (a slot's position in `dense`, checked against the id
+/// stored there), so starting over for a new stamp is O(1) and a lookup is
+/// two array reads.
+#[derive(Default)]
+struct StyleMemo {
+    /// Node slot -> index in `dense` (stale when it points past the end or
+    /// at another node's entry).
+    sparse: Vec<u32>,
+    dense: Vec<(NodeId, ComputedStyle)>,
+}
+
+impl StyleMemo {
+    fn reset(&mut self) {
+        self.dense.clear();
+    }
+
+    fn get(&self, el: NodeId) -> Option<ComputedStyle> {
+        let i = *self.sparse.get(el.idx as usize)? as usize;
+        self.dense.get(i).filter(|(id, _)| *id == el).map(|(_, c)| *c)
+    }
+
+    fn insert(&mut self, el: NodeId, c: ComputedStyle) {
+        let slot = el.idx as usize;
+        if slot >= self.sparse.len() {
+            self.sparse.resize(slot + 1, u32::MAX);
+        }
+        let i = self.sparse[slot] as usize;
+        if let Some(entry) = self.dense.get_mut(i).filter(|(id, _)| *id == el) {
+            entry.1 = c;
+            return;
+        }
+        self.sparse[slot] = self.dense.len() as u32;
+        self.dense.push((el, c));
+    }
+}
+
+/// Hashes `el`'s text content (its descendant text, as `textContent`
+/// concatenates it) without building the string; nothing for a stale id.
+fn hash_text_content(dom: &Dom, el: NodeId, hasher: &mut impl std::hash::Hasher) {
+    let Ok(root) = dom.check(el) else { return };
+    let mut cur = dom.n(root).first_child;
+    while cur != NIL {
+        if let NodeKind::Text(t) | NodeKind::CData(t) = &dom.n(cur).kind {
+            hasher.write(t.as_bytes());
+        }
+        cur = dom.following_in(cur, root);
+    }
+    hasher.write_u8(0xff);
+}
+
 /// flatTreeParentElement (webapi/Node.zig:1756-1775): shadow content takes
 /// its host. Slot assignment is not modeled (lp-dom has no assigned-slot
 /// state), so a slotted node takes its DOM parent.
@@ -1290,6 +1472,38 @@ pub(crate) fn flat_tree_parent_element(dom: &Dom, idx: u32) -> Option<u32> {
         NodeKind::Element(_) => Some(p),
         NodeKind::Fragment(f) if f.shadow.is_some() && f.host != NIL => dom.n(f.host).is_element().then_some(f.host),
         _ => None,
+    }
+}
+
+/// [`ua_display`] of an HTML element's local name, lowercased without
+/// allocating when it is lowercase already (any parsed HTML name).
+pub(crate) fn ua_display_of(local: &str) -> &'static str {
+    if local.bytes().any(|b| b.is_ascii_uppercase()) {
+        ua_display(&local.to_ascii_lowercase())
+    } else {
+        ua_display(local)
+    }
+}
+
+/// The bits of Stylo's computed `Display` for a keyword [`ua_display`]
+/// returns (`u16::MAX` for any other).
+fn display_keyword_bits(keyword: &str) -> u16 {
+    use style::values::specified::box_::Display as D;
+    match keyword {
+        "block" => D::Block.to_u16(),
+        "list-item" => D::Block.to_u16() | D::LIST_ITEM_MASK,
+        "table" => D::Table.to_u16(),
+        "table-header-group" => D::TableHeaderGroup.to_u16(),
+        "table-row-group" => D::TableRowGroup.to_u16(),
+        "table-footer-group" => D::TableFooterGroup.to_u16(),
+        "table-row" => D::TableRow.to_u16(),
+        "table-cell" => D::TableCell.to_u16(),
+        "table-caption" => D::TableCaption.to_u16(),
+        "table-column-group" => D::TableColumnGroup.to_u16(),
+        "table-column" => D::TableColumn.to_u16(),
+        "inline-block" => D::InlineBlock.to_u16(),
+        "inline" => D::Inline.to_u16(),
+        _ => u16::MAX,
     }
 }
 

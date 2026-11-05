@@ -98,6 +98,10 @@ pub(crate) struct Mirror {
     sheets: HashMap<String, String>,
     tree: Arc<Tree>,
     nodes: FxHashMap<u64, Entry>,
+    /// The key of each mirrored Blitz node, by the node id's slot (with the
+    /// whole id, which a reused slot does not match): `nodes` reversed,
+    /// maintained wherever an entry is added or removed.
+    keys: Vec<(NodeId, u64)>,
     top: Vec<u64>,
     /// Nodes given a scroll offset by [`Mirror::set_element_scroll`].
     scrolled: Vec<NodeId>,
@@ -205,6 +209,7 @@ impl Mirror {
         let (kids, top) = children_of(&tree);
         let mut nodes: FxHashMap<u64, Entry> =
             FxHashMap::with_capacity_and_hasher(tree.nodes.len(), Default::default());
+        let mut keys = Vec::new();
         {
             let mut m = doc.mutate();
             let mut ids = Vec::with_capacity(tree.nodes.len());
@@ -226,9 +231,13 @@ impl Mirror {
                 if nodes.insert(n.key, entry).is_some() {
                     return Err(Rebuild::Malformed);
                 }
+                set_key(&mut keys, id, Some(n.key));
             }
         }
-        Ok(Mirror { doc, bridge, scope, base_url, viewport, sheets, tree, nodes, top, scrolled: Vec::new() })
+        let mirror =
+            Mirror { doc, bridge, scope, base_url, viewport, sheets, tree, nodes, keys, top, scrolled: Vec::new() };
+        mirror.debug_check_keys();
+        Ok(mirror)
     }
 
     /// The Blitz node of `key`.
@@ -259,9 +268,21 @@ impl Mirror {
         self.nodes.get(&key).map(|e| e.id)
     }
 
-    /// The key of each mirrored node.
-    pub(crate) fn keys(&self) -> FxHashMap<NodeId, u64> {
-        self.nodes.iter().map(|(k, e)| (e.id, *k)).collect()
+    /// The key of the mirrored Blitz node `id`.
+    pub(crate) fn key_of(&self, id: NodeId) -> Option<u64> {
+        let slot = id.as_u64() as u32 as usize;
+        self.keys.get(slot).filter(|(at, _)| *at == id && id != NodeId::default()).map(|&(_, key)| key)
+    }
+
+    /// Checks `keys` against `nodes` (debug builds).
+    fn debug_check_keys(&self) {
+        if cfg!(debug_assertions) {
+            let mapped = self.keys.iter().filter(|(id, _)| *id != NodeId::default()).count();
+            debug_assert_eq!(mapped, self.nodes.len(), "every mirrored node has its key");
+            for (k, e) in &self.nodes {
+                debug_assert_eq!(self.key_of(e.id), Some(*k), "node {:?} maps to its key", e.id);
+            }
+        }
     }
 
     /// Applies `tree` (the page now) and `sheets` (linked sheet texts by
@@ -343,7 +364,7 @@ impl Mirror {
         }
 
         let mut mutations = 0u32;
-        let Mirror { doc, nodes, top: old_top, .. } = self;
+        let Mirror { doc, nodes, keys, top: old_top, .. } = self;
         let mut m = doc.mutate();
 
         // 1. Drop removed subtrees, keeping the nodes in them that survive
@@ -365,7 +386,9 @@ impl Mirror {
             mutations += 1;
         }
         for key in &removed {
-            nodes.remove(key);
+            if let Some(e) = nodes.remove(key) {
+                set_key(keys, e.id, None);
+            }
         }
 
         // 2. Create new nodes (detached; placed below), update changed ones.
@@ -376,6 +399,7 @@ impl Mirror {
                     created.insert(n.key);
                     let id = create(&mut m, &n.kind);
                     nodes.insert(n.key, Entry { id, name: name_of(&n.kind), hash, parent: None, children: Vec::new() });
+                    set_key(keys, id, Some(n.key));
                     mutations += 1;
                 }
                 Some(e) if e.hash != hash => {
@@ -430,6 +454,7 @@ impl Mirror {
         drop(m);
         self.sheets.clone_from(sheets);
         self.tree = tree.clone();
+        self.debug_check_keys();
         Ok(mutations)
     }
 }
@@ -479,7 +504,7 @@ impl Mirror {
             }
         }
         let mut mutations = 0u32;
-        let Mirror { doc, nodes, top, .. } = self;
+        let Mirror { doc, nodes, keys, top, .. } = self;
         let mut m = doc.mutate();
         let mut dropped: Vec<(u64, Option<u64>)> = Vec::new();
         for op in ops {
@@ -504,6 +529,7 @@ impl Mirror {
                                     n.key,
                                     Entry { id, name: name_of(&n.kind), hash, parent: None, children: Vec::new() },
                                 );
+                                set_key(keys, id, Some(n.key));
                                 mutations += 1;
                             }
                             Some(e) if e.hash != hash => {
@@ -572,6 +598,7 @@ impl Mirror {
             let mut stack = vec![key];
             while let Some(k) = stack.pop() {
                 if let Some(e) = nodes.remove(&k) {
+                    set_key(keys, e.id, None);
                     stack.extend(e.children);
                 }
             }
@@ -580,6 +607,7 @@ impl Mirror {
         // The kept tree no longer describes the document: the next whole
         // tree is diffed in full.
         self.tree = Arc::new(Tree::default());
+        self.debug_check_keys();
         Ok(mutations)
     }
 
@@ -597,6 +625,24 @@ impl Mirror {
             el.attrs.iter().find(|a| is_type(&a.name)).map(|a| a.value.to_ascii_lowercase())
         });
         now != before
+    }
+}
+
+/// Records `key` (or none) as the key of Blitz node `id`.
+fn set_key(keys: &mut Vec<(NodeId, u64)>, id: NodeId, key: Option<u64>) {
+    let slot = id.as_u64() as u32 as usize;
+    match key {
+        Some(key) => {
+            if slot >= keys.len() {
+                keys.resize(slot + 1, (NodeId::default(), 0));
+            }
+            keys[slot] = (id, key);
+        }
+        None => {
+            if keys.get(slot).is_some_and(|(at, _)| *at == id) {
+                keys[slot] = (NodeId::default(), 0);
+            }
+        }
     }
 }
 

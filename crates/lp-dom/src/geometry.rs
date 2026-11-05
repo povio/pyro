@@ -4,6 +4,7 @@
 //! whole document's boxes and words for queries that need them all (hit
 //! testing, text ranges, carets, scroll anchoring).
 
+use std::cell::RefCell;
 use std::rc::Rc;
 
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -238,6 +239,35 @@ pub struct LayoutResult {
     pub document_width: f64,
     pub document_height: f64,
     pub sticky: FxHashMap<NodeId, ExternalSticky>,
+    /// Hit testing's derived data, filled per box on first use: it depends
+    /// only on the tree, the styles and the boxes, which this result is
+    /// valid for (a new result is read after any of them change).
+    pub(crate) hit: RefCell<HitTestData>,
+}
+
+/// One stacking level of a paint key: (layer, z-index, box order).
+pub(crate) type PaintEntry = (u8, i32, u32);
+
+/// The paint-order state after an element's ancestor chain (itself
+/// included), from which its own and its descendants' paint keys follow.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct PaintChain {
+    /// The stacking contexts entered, outermost first.
+    pub(crate) contexts: Rc<[PaintEntry]>,
+    /// The z-auto positioned box whose layer the content belongs to.
+    pub(crate) positioned_layer: Option<PaintEntry>,
+    /// The last box of the chain makes its own layer.
+    pub(crate) own_layer: bool,
+}
+
+/// Per-box hit-testing data of one [`LayoutResult`].
+#[derive(Clone, Debug, Default)]
+pub(crate) struct HitTestData {
+    pub(crate) chains: FxHashMap<NodeId, PaintChain>,
+    pub(crate) keys: FxHashMap<NodeId, Rc<[PaintEntry]>>,
+    /// The overflow clips that apply to an element: (ancestor, its clipped
+    /// axes), nearest first.
+    pub(crate) clips: FxHashMap<NodeId, Rc<[(NodeId, crate::style::ScrollAxes)]>>,
 }
 
 /// The node `key` names, when it is still in `dom`.
