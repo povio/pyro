@@ -2,6 +2,7 @@
 
 use lp_jsc_sys as sys;
 use std::cell::RefCell;
+use std::mem::MaybeUninit;
 
 /// An owned, retained `JSStringRef`. Not tied to a context: JSC strings are
 /// immutable and usable from any context of the thread that created them.
@@ -10,6 +11,17 @@ pub struct JsString(sys::JSStringRef);
 impl JsString {
     /// Copies `s` into a new JSC string.
     pub fn new(s: &str) -> JsString {
+        // Patched JSC takes Latin-1 with a length: an ASCII string (most
+        // names, and script sources) is copied once, with no NUL-terminated
+        // copy, scan or decoding first, and text that fits Latin-1 stays
+        // 8-bit instead of being widened.
+        if let Some(d) = sys::spi::direct_strings() {
+            return with_host_units(s, |units| match units {
+                // SAFETY: pointer/len describe a live slice; JSC copies it.
+                HostUnits::Latin1(b) => JsString(unsafe { (d.create_latin1)(b.as_ptr(), b.len()) }),
+                HostUnits::Utf16(u) => Self::from_utf16(u),
+            });
+        }
         // NUL-free strings go through the UTF-8 C-string entry point: short ones
         // from a stack buffer, ASCII ones of any length from a heap copy. JSC
         // keeps an all-ASCII UTF-8 string as 8-bit characters, half the memory
@@ -73,13 +85,19 @@ impl JsString {
     }
 
     pub fn eq_str(&self, s: &str) -> bool {
-        eq_utf16_str(self.utf16(), s)
+        // SAFETY: self holds a retain.
+        match unsafe { stored_units(self.0) } {
+            Some(crate::StringUnits::Latin1(b)) => eq_latin1_str(b, s),
+            Some(crate::StringUnits::Utf16(u)) => eq_utf16_str(u, s),
+            None => eq_utf16_str(self.utf16(), s),
+        }
     }
 }
 
 impl std::fmt::Display for JsString {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&String::from_utf16_lossy(self.utf16()))
+        // SAFETY: self holds a retain.
+        f.write_str(&unsafe { to_rust_string(self.0) })
     }
 }
 
@@ -101,6 +119,108 @@ impl Drop for JsString {
         // SAFETY: we own one retain.
         unsafe { sys::JSStringRelease(self.0) }
     }
+}
+
+/// A host string's characters in a form JavaScriptCore stores ([`with_host_units`]).
+#[derive(Clone, Copy)]
+pub(crate) enum HostUnits<'a> {
+    Latin1(&'a [u8]),
+    Utf16(&'a [u16]),
+}
+
+/// Stack space for transcoding a short non-ASCII string (bytes; half as many
+/// UTF-16 units).
+const TRANSCODE_STACK: usize = 256;
+
+/// Runs `f` with `s` as JavaScriptCore keeps text: 8-bit (Latin-1) when every
+/// scalar fits, as JSC keeps parsed source and JSON, else UTF-16. An ASCII
+/// string is passed as it is; other text is transcoded once, on the stack
+/// when short.
+#[inline]
+pub(crate) fn with_host_units<R>(s: &str, f: impl FnOnce(HostUnits<'_>) -> R) -> R {
+    if s.is_ascii() {
+        return f(HostUnits::Latin1(s.as_bytes()));
+    }
+    with_transcoded_units(s, f)
+}
+
+#[inline(never)]
+fn with_transcoded_units<R>(s: &str, f: impl FnOnce(HostUnits<'_>) -> R) -> R {
+    let bytes = s.as_bytes();
+    // UTF-8 writes U+0080..U+00FF with lead byte 0xC2 or 0xC3 (continuation
+    // bytes are 0x80..0xBF, and 0xC0/0xC1 never occur): any byte from 0xC4 up
+    // starts a scalar beyond Latin-1.
+    if bytes.iter().all(|&b| b < 0xC4) {
+        // One Latin-1 byte per scalar: every byte but the continuation bytes.
+        let len = bytes.len() - bytes.iter().filter(|&&b| b & 0xC0 == 0x80).count();
+        let latin1 = s.chars().map(|c| c as u32 as u8);
+        if len <= TRANSCODE_STACK {
+            let mut buf = [MaybeUninit::<u8>::uninit(); TRANSCODE_STACK];
+            let n = fill(&mut buf, latin1);
+            debug_assert_eq!(n, len);
+            // SAFETY: the first `n` bytes were written.
+            return f(HostUnits::Latin1(unsafe { std::slice::from_raw_parts(buf.as_ptr().cast(), n) }));
+        }
+        let mut v = Vec::with_capacity(len);
+        v.extend(latin1);
+        return f(HostUnits::Latin1(&v));
+    }
+    let len = utf16_len(s);
+    if len <= TRANSCODE_STACK / 2 {
+        let mut buf = [MaybeUninit::<u16>::uninit(); TRANSCODE_STACK / 2];
+        let n = fill(&mut buf, s.encode_utf16());
+        debug_assert_eq!(n, len);
+        // SAFETY: the first `n` units were written.
+        return f(HostUnits::Utf16(unsafe { std::slice::from_raw_parts(buf.as_ptr().cast(), n) }));
+    }
+    f(HostUnits::Utf16(&utf16_units(s)))
+}
+
+/// Writes `items` to the front of `buf` (as many as fit) and returns how many.
+fn fill<T>(buf: &mut [MaybeUninit<T>], items: impl Iterator<Item = T>) -> usize {
+    let mut n = 0;
+    for (slot, item) in buf.iter_mut().zip(items) {
+        slot.write(item);
+        n += 1;
+    }
+    n
+}
+
+/// A Latin-1 string as UTF-8: an ASCII one copied as it is.
+pub(crate) fn latin1_to_string(b: &[u8]) -> String {
+    if b.is_ascii() {
+        // SAFETY: ASCII is UTF-8.
+        return unsafe { std::str::from_utf8_unchecked(b) }.to_owned();
+    }
+    let mut out = String::with_capacity(b.len() + b.iter().filter(|&&c| c >= 0x80).count());
+    out.extend(b.iter().map(|&c| char::from(c)));
+    out
+}
+
+/// UTF-16 as UTF-8, unpaired surrogates as U+FFFD; the buffer is sized for
+/// the common case (one byte per unit) up front.
+pub(crate) fn utf16_to_string(u: &[u16]) -> String {
+    let mut out = String::with_capacity(u.len());
+    out.extend(char::decode_utf16(u.iter().copied()).map(|c| c.unwrap_or(char::REPLACEMENT_CHARACTER)));
+    out
+}
+
+/// The characters `s` stores (patched JSC), or `None` without the entry point.
+///
+/// # Safety
+/// `s` must be live for the returned lifetime.
+unsafe fn stored_units<'a>(s: sys::JSStringRef) -> Option<crate::StringUnits<'a>> {
+    let d = sys::spi::direct_strings()?;
+    let (mut len, mut is_8bit) = (0usize, false);
+    // SAFETY: a live string; the characters are its own, valid while it is.
+    let p = unsafe { (d.stored_characters)(s, &mut len, &mut is_8bit) };
+    Some(if len == 0 {
+        crate::StringUnits::Latin1(&[])
+    } else if is_8bit {
+        crate::StringUnits::Latin1(unsafe { std::slice::from_raw_parts(p.cast::<u8>(), len) })
+    } else {
+        crate::StringUnits::Utf16(unsafe { std::slice::from_raw_parts(p.cast::<u16>(), len) })
+    })
 }
 
 /// UTF-16 code units of `s` in one allocation of exactly the needed size;
@@ -150,7 +270,19 @@ pub(crate) unsafe fn utf16_of<'a>(s: sys::JSStringRef) -> &'a [u16] {
 /// # Safety
 /// `s` must be a live string.
 pub(crate) unsafe fn to_rust_string(s: sys::JSStringRef) -> String {
-    String::from_utf16_lossy(unsafe { utf16_of(s) })
+    // The stored characters, not `utf16_of`: that widens an 8-bit string
+    // (most JSON and names) into a second copy the string keeps.
+    match unsafe { stored_units(s) } {
+        Some(units) => units.to_string_lossy(),
+        None => String::from_utf16_lossy(unsafe { utf16_of(s) }),
+    }
+}
+
+pub(crate) fn eq_latin1_str(a: &[u8], b: &str) -> bool {
+    if b.is_ascii() {
+        return a == b.as_bytes();
+    }
+    a.iter().map(|&c| char::from(c)).eq(b.chars())
 }
 
 pub(crate) fn eq_utf16_str(a: &[u16], b: &str) -> bool {

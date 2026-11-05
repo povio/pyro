@@ -385,6 +385,22 @@ Document may start to answer: an embed, form, iframe, img or object entering a t
 img, an `id`). What a hook answers is never cached. Stock JavaScriptCore ignores the attribute and keeps such
 wrappers uncacheable.
 
+Patch `0016` makes strings from host characters in one step. `JSValueMakeString` takes a `JSStringRef`, so every
+string a getter returned was built twice: `JSStringCreateWithUTF8CString` (a NUL-terminated copy, `strlen`, UTF-8
+decoding, a `StringImpl` and an `OpaqueJSString`), then `JSValueMakeString`, which takes the API lock and copies the
+characters again (`OpaqueJSString::string()` is an isolated copy), then the release. `JSValueMakeStringLatin1` and
+`JSValueMakeStringUTF16` build the value from a pointer and a length: one `StringImpl`, one copy, none for the empty
+and single-character strings the VM keeps, and the lock only when the caller does not hold it (C API callbacks keep
+it, patch `0009`). `Scope::string` passes an ASCII `&str` as it is and transcodes other text once, to Latin-1 when every
+scalar fits (as JSC keeps parsed text) and to UTF-16 otherwise, on the stack when short. `JSStringCreateWithLatin1Characters`
+does the same for `JsString::new` (property names, script sources), and `JSStringGetStoredCharacters` reads a
+`JSStringRef` without `JSStringGetCharactersPtr`'s UTF-16 widening of an 8-bit string (JSON results, property names).
+`JSValueGetStringCharacters` (patch `0012`) now takes the lock when it resolves a rope outside a callback, so
+`Value::to_string` reads a string's own characters anywhere, CDP serialization included, instead of copying them into
+a `JSStringRef` and widening them. With the system framework (or an older build) all of this falls back to the
+`JSStringRef` path. The functions are declared in `JSFork.cpp`, not `JSForkPrivate.h`, which every precompiled
+header includes.
+
 To change JSC: edit the checkout in `~/Library/Caches/lightningpanda/webkit-src`, `ninja -C ../webkit-build
 JavaScriptCore` to iterate, then regenerate the patch with `git diff` (use `git add -N` for new files) and rerun
 `scripts/jsc/build.sh`, which resets the checkout and applies `patches/` from scratch.
