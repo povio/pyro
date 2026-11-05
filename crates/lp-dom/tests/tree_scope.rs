@@ -221,6 +221,22 @@ fn many_duplicate_ids_enter_in_one_pass_and_keep_the_first() {
 }
 
 #[test]
+fn fragment_parsing_reports_resources_as_before_without_indexing_its_host() {
+    use lp_dom::script::{ResourceKind, ResourceReason};
+    let (dom, d) = doc("http://test/", "<!doctype html><body></body>");
+    let mut dom = dom.borrow_mut();
+    dom.set_resource_tracking(true);
+    dom.take_resource_events();
+    let div = dom.create_element(d, "div").unwrap();
+    lp_dom::parse::set_inner_html(&mut dom, div, "<p id=x><img src=a.png></p>").unwrap();
+    let img = dom.query_first(div, &parse_query("img").unwrap()).unwrap().unwrap();
+    assert!(!dom.is_connected(img).unwrap());
+    let evs: Vec<_> = dom.take_resource_events().iter().map(|e| (e.node, e.kind, e.reason)).collect();
+    assert_eq!(evs, [(img, ResourceKind::Img, ResourceReason::Connected)]);
+    verify(&dom);
+}
+
+#[test]
 fn tree_order_matches_a_preorder_index() {
     let (dom, d) = doc(
         "http://test/",

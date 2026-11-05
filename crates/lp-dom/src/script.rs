@@ -97,6 +97,15 @@ impl Dom {
         }
     }
 
+    /// Connected, for the resource hooks, or owned by the fragment parser's
+    /// host document. That document is not connected (so its tree needs no
+    /// tree flags or id map), but its nodes report their resources as a
+    /// connected document's would: the loader resolves each event's document
+    /// when it handles it, after the parsed nodes moved to their real one.
+    fn connected_for_resources(&self, i: u32) -> bool {
+        self.is_connected_idx(i) || self.is_fragment_parse_host(self.n(i).owner_doc)
+    }
+
     /// Whether `take_resource_events` would return anything.
     pub fn has_resource_events(&self) -> bool {
         !self.resources.events.is_empty()
@@ -152,7 +161,7 @@ impl Dom {
     /// Called after `node` was inserted (tree mutation or parser).
     pub(crate) fn resources_after_insert(&mut self, node: u32) {
         self.iframes_after_insert(node);
-        if !self.resources.enabled || !self.is_connected_idx(node) {
+        if !self.resources.enabled || !self.connected_for_resources(node) {
             return;
         }
         let parent = self.n(node).parent;
@@ -174,7 +183,7 @@ impl Dom {
     /// Called before `node` is unlinked from a connected parent.
     pub(crate) fn resources_before_remove(&mut self, node: u32) {
         self.iframes_before_remove(node);
-        if !self.resources.enabled || !self.is_connected_idx(node) {
+        if !self.resources.enabled || !self.connected_for_resources(node) {
             return;
         }
         let parent = self.n(node).parent;
@@ -208,7 +217,7 @@ impl Dom {
             return;
         }
         let relevant = matches!(local, "src" | "href" | "rel" | "media" | "srcset" | "type" | "disabled");
-        if !relevant || !self.is_connected_idx(idx) {
+        if !relevant || !self.connected_for_resources(idx) {
             return;
         }
         if let Some(k) = self.resource_kind(idx) {
@@ -229,7 +238,7 @@ impl Dom {
             return;
         }
         let p = self.n(text_node).parent;
-        if p != NIL && self.resource_kind(p) == Some(ResourceKind::StyleText) && self.is_connected_idx(p) {
+        if p != NIL && self.resource_kind(p) == Some(ResourceKind::StyleText) && self.connected_for_resources(p) {
             self.push_resource(p, ResourceKind::StyleText, ResourceReason::ChildrenChanged);
         }
     }
@@ -268,7 +277,7 @@ impl Dom {
     pub(crate) fn resources_element_popped(&mut self, idx: u32) {
         if self.resources.enabled
             && self.resource_kind(idx) == Some(ResourceKind::StyleText)
-            && self.is_connected_idx(idx)
+            && self.connected_for_resources(idx)
         {
             self.push_resource(idx, ResourceKind::StyleText, ResourceReason::ChildrenChanged);
         }

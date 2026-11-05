@@ -719,6 +719,7 @@ fn parse_fragment_with(
     let tmp_id = dom.create_document(crate::node::DocumentKind::Html, "about:blank");
     dom.set_allow_declarative_shadow_roots(tmp_id, allow_declarative_shadow_roots)?;
     let tmp = tmp_id.idx;
+    dom.make_fragment_parse_host(tmp);
     let flags = element_flags::FRAGMENT_PARSED | element_flags::SCRIPT_ALREADY_STARTED;
 
     let context_copy;

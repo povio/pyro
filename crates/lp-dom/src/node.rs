@@ -87,6 +87,11 @@ pub struct DocumentData {
     /// HTML "allow declarative shadow roots": documents displayed in a
     /// browsing context and `parseHTMLUnsafe`, not DOMParser or XHR.
     pub(crate) allow_declarative_shadow_roots: bool,
+    /// The temporary document the HTML fragment parsing algorithm builds
+    /// in. It is not connected (nothing observes its tree as such), so its
+    /// nodes get no tree flags and its ids no map: the parsed nodes leave
+    /// it without a traversal and enter their real tree scope once.
+    pub(crate) fragment_parse_host: bool,
     /// Focused element (NIL = none, i.e. body is the active element).
     pub(crate) focused: u32,
     /// Element under the (virtual) pointer for :hover.

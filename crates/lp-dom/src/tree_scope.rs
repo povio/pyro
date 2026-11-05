@@ -6,7 +6,7 @@
 //! linking a node under a parent gives its subtree the parent's flags and
 //! unlinking clears them: one traversal of the subtree, only when they change
 //! (never for a subtree built detached, as parsers and `cloneNode` build
-//! them). The same traversal moves the subtree's ids between scopes, and
+//! them; the fragment parser's host document is not connected either). The same traversal moves the subtree's ids between scopes, and
 //! notices `<base>` elements entering or leaving a document tree.
 
 use std::borrow::Borrow;
@@ -231,6 +231,7 @@ impl Dom {
     /// no index: callers walk).
     pub(crate) fn indexed_by_id(&self, root: u32, id: &str) -> Option<u32> {
         let map = match &self.n(root).kind {
+            NodeKind::Document(d) if d.fragment_parse_host => return None,
             NodeKind::Document(d) => &d.ids,
             NodeKind::Fragment(f) if f.shadow.is_some() => match f.ids.as_deref() {
                 Some(m) => m,
@@ -305,7 +306,7 @@ impl Dom {
                     return Err(format!("element {i}: id/class atoms differ from its attributes"));
                 }
             }
-            if matches!(n.kind, NodeKind::Document(_)) || in_shadow && root == i {
+            if matches!(&n.kind, NodeKind::Document(d) if !d.fragment_parse_host) || in_shadow && root == i {
                 scopes.push(i);
             }
         }
@@ -341,7 +342,7 @@ impl Dom {
 
     /// Connectedness by walking to the shadow-including root.
     pub(crate) fn connected_by_walk(&self, i: u32) -> bool {
-        matches!(self.n(self.shadow_including_root_of(i)).kind, NodeKind::Document(_))
+        matches!(&self.n(self.shadow_including_root_of(i)).kind, NodeKind::Document(d) if !d.fragment_parse_host)
     }
 
     fn shadow_including_root_of(&self, mut i: u32) -> u32 {

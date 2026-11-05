@@ -662,6 +662,7 @@ impl Dom {
             held: 0,
             active: false,
             allow_declarative_shadow_roots: false,
+            fragment_parse_host: false,
             focused: NIL,
             hovered: NIL,
         };
@@ -1008,6 +1009,17 @@ impl Dom {
         let d = self.owner_for(doc)?;
         self.doc_data_mut(d).allow_declarative_shadow_roots = allow;
         Ok(())
+    }
+    /// Makes the new, empty document `doc` the fragment parser's host:
+    /// not connected (see `DocumentData::fragment_parse_host`).
+    pub(crate) fn make_fragment_parse_host(&mut self, doc: u32) {
+        debug_assert_eq!(self.n(doc).first_child, NIL, "an empty document");
+        self.doc_data_mut(doc).fragment_parse_host = true;
+        self.n_mut(doc).set_tree_flags(0);
+    }
+    /// Whether `doc` is the fragment parser's host document.
+    pub(crate) fn is_fragment_parse_host(&self, doc: u32) -> bool {
+        self.doc_data(doc).fragment_parse_host
     }
     pub(crate) fn allows_declarative_shadow_roots(&self, doc: u32) -> bool {
         self.doc_data(doc).allow_declarative_shadow_roots
