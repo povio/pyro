@@ -621,6 +621,8 @@ impl PageDom {
         drop(self.url_params_helpers.take());
         // A drag in flight owns a Persistent to its DataTransfer wrapper.
         drop(self.drag.take());
+        // The selection owns Persistents to its Range wrappers.
+        drop(self.selection.take());
         self.opaque_storage.clear();
         drop(self.blob_urls.take());
         drop(self.reflected_url_base.take());

@@ -13,7 +13,6 @@ use std::rc::Rc;
 
 use lp_dom::{Dom, NodeId, NodeType};
 
-use crate::collections::NodeHold;
 use crate::event::{EventCore, EventInterface};
 use crate::page::PageDom;
 use crate::target::fire;
@@ -21,10 +20,14 @@ use crate::target::fire;
 /// A boundary point: (node, offset in UTF-16 units or child index).
 pub type Point = (NodeId, u32);
 
-/// The document selection: anchor and focus.
+/// The document selection: its range (shared with the Range objects script
+/// holds for it) and its direction.
 pub(crate) struct DocSelection {
-    anchor: (NodeHold, u32),
-    focus: (NodeHold, u32),
+    pub(crate) range: Rc<crate::range::RangeOwner>,
+    /// The focus is the range's start.
+    backward: bool,
+    /// The Range object each realm sees as `getRangeAt(0)`.
+    pub(crate) wrappers: Vec<(lp_js::RealmId, lp_js::Persistent)>,
 }
 
 // ----- selection state ----------------------------------------------------------
@@ -38,8 +41,8 @@ fn connected(page: &PageDom, node: NodeId) -> bool {
 pub fn selection(page: &PageDom) -> Option<(Point, Point)> {
     let sel = page.selection.borrow();
     let s = sel.as_ref()?;
-    let a = (s.anchor.0.id, s.anchor.1);
-    let f = (s.focus.0.id, s.focus.1);
+    let (start, end) = (s.range.live.start(), s.range.live.end());
+    let (a, f) = if s.backward { (end, start) } else { (start, end) };
     drop(sel);
     (connected(page, a.0) && connected(page, f.0)).then_some((a, f))
 }
@@ -50,18 +53,36 @@ pub fn selection_range(page: &PageDom) -> Option<(Point, Point)> {
     Some(if compare(page, a, f) <= 0 { (a, f) } else { (f, a) })
 }
 
+/// Selects from `anchor` to `focus` with a new range (as `collapse()` and
+/// `extend()` do).
 pub fn set_selection(page: &Rc<PageDom>, anchor: Point, focus: Point) {
-    let (Ok(a), Ok(f)) = (NodeHold::new(page, anchor.0), NodeHold::new(page, focus.0)) else { return };
     let changed = selection(page) != Some((anchor, focus));
-    *page.selection.borrow_mut() = Some(DocSelection { anchor: (a, anchor.1), focus: (f, focus.1) });
+    let backward = compare(page, anchor, focus) > 0;
+    let (start, end) = if backward { (focus, anchor) } else { (anchor, focus) };
+    let Ok(range) = crate::range::RangeOwner::new(page, start, end) else { return };
+    let old = page.selection.replace(Some(DocSelection { range, backward, wrappers: Vec::new() }));
+    drop(old);
     if changed {
         queue_selectionchange(page);
     }
 }
 
+/// `addRange()`: `range` becomes the selection's range, `wrapper` being the
+/// Range object script passed in its realm.
+pub(crate) fn set_selection_range(
+    page: &Rc<PageDom>,
+    range: Rc<crate::range::RangeOwner>,
+    wrapper: Option<(lp_js::RealmId, lp_js::Persistent)>,
+) {
+    let old = page.selection.replace(Some(DocSelection { range, backward: false, wrappers: wrapper.into_iter().collect() }));
+    drop(old);
+    queue_selectionchange(page);
+}
+
 pub fn clear_selection(page: &Rc<PageDom>) {
-    let had = page.selection.borrow_mut().take().is_some();
-    if had {
+    let old = page.selection.take();
+    if old.is_some() {
+        drop(old);
         queue_selectionchange(page);
     }
 }
