@@ -75,11 +75,7 @@ impl<A: DomAccess> Sink<A> {
 
     fn release_pins(&self) {
         let pins = self.pins.take();
-        self.dom.with(|d| {
-            for id in pins {
-                d.release(id);
-            }
-        });
+        self.dom.with(|d| d.release_parser_pins(pins));
     }
 }
 
@@ -129,7 +125,7 @@ fn insert_node(dom: &mut Dom, parent: u32, before: u32, child: NodeOrText<u32>) 
             let prev = if before == NIL { dom.n(parent).last_child } else { dom.n(before).prev };
             dom.link_raw(n, parent, before);
             dom.queue_child_list(parent, &[n], &[], prev, before);
-            dom.resources_after_insert(n);
+            dom.resources_after_parser_insert(n);
         }
     }
 }

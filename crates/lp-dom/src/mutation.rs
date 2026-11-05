@@ -83,10 +83,14 @@ pub(crate) struct MutationState {
 }
 
 impl MutationState {
+    // Both run per node of a collected tree: no lookup in an empty table.
     pub(crate) fn pins(&self, idx: u32) -> bool {
-        self.pinned.contains_key(&idx)
+        !self.pinned.is_empty() && self.pinned.contains_key(&idx)
     }
     pub(crate) fn forget_node(&mut self, idx: u32) {
+        if self.regs.is_empty() {
+            return;
+        }
         if let Some(regs) = self.regs.remove(&idx) {
             for r in regs {
                 if let Some(o) = self.observers.get_mut(r.observer as usize) {

@@ -2808,6 +2808,29 @@ impl Dom {
     pub(crate) fn release_candidate(&mut self, idx: u32) {
         self.candidates.push(idx);
     }
+
+    /// Drops the references an HTML parser held on the nodes it made. A
+    /// connected node lives exactly as long as its document, so that document
+    /// is the one collection candidate for all of them; only detached nodes
+    /// are candidates of their own. Releasing them one by one made every
+    /// parsed element a candidate, each a walk to its root at the next
+    /// `collect_garbage`.
+    pub(crate) fn release_parser_pins(&mut self, pins: Vec<NodeId>) {
+        let mut last = NIL;
+        for id in pins {
+            let Ok(i) = self.check(id) else { continue };
+            debug_assert!(self.n(i).ext_refs > 0, "unbalanced release");
+            if !self.ext_ref_dec(i) {
+                continue;
+            }
+            let n = self.n(i);
+            let candidate = if n.is_connected() && n.owner_doc != NIL { n.owner_doc } else { i };
+            if candidate != last {
+                self.candidates.push(candidate);
+                last = candidate;
+            }
+        }
+    }
     pub fn ext_refs(&self, id: NodeId) -> DomResult<u32> {
         Ok(self.node(id)?.ext_refs)
     }
@@ -2863,15 +2886,17 @@ impl Dom {
                 continue;
             }
             let root = self.component_root(c);
-            if !seen.insert(root) {
-                continue;
-            }
             if let NodeKind::Document(d) = &self.n(root).kind {
                 // A document with a referenced node (in its tree or not)
-                // stays: no need to walk the tree to find that out.
+                // stays: no need to walk the tree to find that out (nor to
+                // remember it in `seen`, which candidates of live documents
+                // only grew).
                 if d.active || d.held > 0 {
                     continue;
                 }
+            }
+            if !seen.insert(root) {
+                continue;
             }
             nodes.clear();
             self.component_nodes(root, &mut nodes);

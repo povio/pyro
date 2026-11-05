@@ -62,12 +62,20 @@ impl ListenerStore {
     }
 
     pub(crate) fn forget(&mut self, key: TargetKey) {
-        if let Some(list) = self.map.remove(&key) {
-            self.released.extend(list.into_iter().map(|l| (key, l.callback)));
+        // Called for every freed node (a closed document's whole tree), most
+        // of which never had a listener: skip the lookups in empty tables.
+        if !self.map.is_empty() {
+            if let Some(list) = self.map.remove(&key) {
+                self.released.extend(list.into_iter().map(|l| (key, l.callback)));
+            }
         }
         if let TargetKey::Node(i) = key {
-            self.windows.remove(&i);
-            self.pin_on_connect.remove(&i);
+            if !self.windows.is_empty() {
+                self.windows.remove(&i);
+            }
+            if !self.pin_on_connect.is_empty() {
+                self.pin_on_connect.remove(&i);
+            }
         }
     }
 }
