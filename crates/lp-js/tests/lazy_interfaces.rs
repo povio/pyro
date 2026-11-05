@@ -404,7 +404,10 @@ fn after_populate_runs_once_with_the_population() {
 /// on Object.prototype or replaced Array iteration must not break that.
 #[test]
 fn population_after_page_changed_intrinsics_installs_the_eager_shape() {
-    let (_e, r) = realm();
+    let (e, r) = realm();
+    // The same engine's untouched installation (a realm of the stock
+    // framework has its own setter lengths, see the eager shape tests).
+    let clean = e.create_realm(RealmOptions::default()).unwrap();
     eval(
         &r,
         "const d = Object.defineProperty;
@@ -421,5 +424,5 @@ fn population_after_page_changed_intrinsics_installs_the_eager_shape() {
         "delete Object.prototype.get; delete Object.prototype.value;
          Object.defineProperty(Array.prototype, Symbol.iterator, { value: realIterator, configurable: true, writable: true }); 'ok'",
     );
-    assert_eq!(eval(&r, DUMP), EAGER_SHAPE.trim());
+    assert_eq!(eval(&r, DUMP), eval(&clean, DUMP));
 }
