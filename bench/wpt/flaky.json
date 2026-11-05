@@ -1,0 +1,4 @@
+{
+ "//": "Pages (or only the listed subtests) the WPT gate does not check. Every entry needs a reason; keep it empty if possible. Format: \"tests\": { \"<page url>\": { \"reason\": \"...\", \"subtests\": [\"<name>\", ...] } } (omit subtests for the whole page). See README.md.",
+ "tests": {}
+}

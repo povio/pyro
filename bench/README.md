@@ -237,25 +237,27 @@ three columns. `rss-sampler PID - --once` emits one snapshot and fails explicitl
 
 `bench/wpt/` runs a WPT subset over CDP with Playwright and reports passing subtests per directory. The same
 runner works for any binary with a `serve --host --port` command line (lightningpanda, upstream Lightpanda, or a
-shim around Chrome).
+shim around Chrome). Pull requests run it as a coverage gate against a committed baseline; see
+[`wpt/README.md`](wpt/README.md).
 
 ```sh
 (cd bench && bun install)
-git clone -b fork --depth=1 https://github.com/lightpanda-io/wpt.git /abs/wpt   # testharnessreport.js exposes window.report
-bun bench/wpt/serve.mjs /abs/wpt 9415 &
+bench/wpt/fetch-wpt.sh /abs/wpt                   # the pinned upstream revision, only the paths the runner needs
 bun bench/wpt/run.mjs --wpt /abs/wpt --bin lp=$PWD/target/release/lightningpanda --sample-encoding 10 --out /tmp/lp.json
 bun bench/wpt/aggregate.mjs /tmp/lp.json [/tmp/other.json ...]                 # markdown table
 ```
 
+`run.mjs` starts `serve.mjs` on a free port unless `--base` names a running one, and `serve.mjs` serves
+`bench/wpt/testharnessreport.js` (it exposes `window.report`) in place of the checkout's, so any WPT checkout works.
 `--list` prints what would run. The default directories are dom, html/dom, encoding, url, fetch/api/basic, xhr,
-css/selectors, uievents, shadow-dom and webstorage. encoding/ has 1,257 pages, most of them long:
+css/selectors, uievents, shadow-dom and webstorage. encoding/ has 1,258 pages, most of them long:
 `--sample-encoding 10` keeps every 10th, so scale its subtests by about 10.
 
 `serve.mjs` is a static server, not wptserve: it generates `.any.html`/`.window.html` wrappers and applies `.headers`
 files. Tests that need Python handlers, testdriver, `.sub`/`.https`/`.h2` or a non-window global are excluded for every
-binary (577 files), and cross-origin hosts do not resolve. Compare binaries within one setup, not against published
-WPT numbers. The denominator per page is the largest subtest count any binary reported, so a crashed page counts its
-subtests as failures.
+binary (616 files at the pinned revision), and cross-origin hosts do not resolve. Compare binaries within one setup,
+not against published WPT numbers. The denominator per page is the largest subtest count any binary reported, so a
+crashed page counts its subtests as failures.
 
 ## Playwright feature suite
 

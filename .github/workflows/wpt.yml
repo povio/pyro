@@ -1,0 +1,191 @@
+name: WPT
+
+# Coverage gate over our WPT subset (bench/wpt/README.md). Pull requests run the gate's plan: every page that passed a
+# subtest or completed in bench/wpt/baseline.json, split across shards by recorded duration. The `gate` job fails if a
+# subtest that passes in the baseline no longer does, or a page that completed no longer completes (each confirmed by
+# one rerun). Pushes to main and manual runs run every page. Every run that changes the baseline (improvements, a full
+# run, or the first run before a baseline exists) uploads the refreshed bench/wpt/baseline.json as `wpt-baseline`.
+#
+# The browser is the fork build (patched JavaScriptCore, as the npm package ships for arm64): with the system
+# framework, window named properties and import maps are missing and ~3,200 subtests on ~150 pages fail for that
+# reason alone.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      full:
+        description: Run every page, including those with no passing subtest to protect
+        type: boolean
+        default: true
+      durations:
+        description: Refresh every page's duration in the baseline artifact (otherwise only those that moved 2x and 1 s)
+        type: boolean
+        default: false
+      runner-args:
+        description: Extra gate.mjs run arguments for every shard (e.g. --reuse-context), to compare runs with gate.mjs diff
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+# A new push to a pull request cancels its previous run.
+concurrency:
+  group: wpt-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  FULL: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.full) }}
+
+jobs:
+  # The patched JavaScriptCore, from the Actions cache (about 15 s) or built on a miss (about 7 minutes).
+  jsc:
+    uses: ./.github/workflows/jsc.yml
+
+  build:
+    needs: jsc
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v4
+        with:
+          name: patched-jsc
+          path: patched-jsc
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal --no-self-update
+      # Dependencies only (workspace crates always rebuild). Only main saves: pull requests restore main's cache, and
+      # their own entries would evict it from the repository's cache budget.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: wpt-release-fast
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      # release-fast: the release profile with lp-cdp and lp-dom split into more codegen units (Cargo.toml), so the
+      # end of the build is not one core's work.
+      - name: Build the browser against the patched JavaScriptCore
+        env:
+          JSC_DIR: ${{ needs.jsc.outputs.dir }}
+        run: |
+          # At the path it was built at: its install name is absolute.
+          export LP_JSC_DIR="$HOME/Library/Caches/lightningpanda/jsc/$JSC_DIR"
+          mkdir -p "$(dirname "$LP_JSC_DIR")"
+          mv patched-jsc "$LP_JSC_DIR"
+          cargo +stable build --locked --profile release-fast --package lightningpanda
+      - name: Bundle the patched JavaScriptCore with the browser
+        env:
+          JSC_DIR: ${{ needs.jsc.outputs.dir }}
+        run: |
+          mkdir browser
+          cp target/release-fast/lightningpanda browser/
+          scripts/release/bundle-jsc.sh browser "$HOME/Library/Caches/lightningpanda/jsc/$JSC_DIR/lib/libJavaScriptCore.dylib"
+          # Moved, so nothing can load the build cache's copy instead.
+          mv "$HOME/Library/Caches/lightningpanda/jsc/$JSC_DIR" "$RUNNER_TEMP/jsc-moved"
+          browser/lightningpanda version | grep -q 'fork: true'
+          DYLD_PRINT_LIBRARIES=1 browser/lightningpanda eval -e 1 2>&1 | grep libJavaScriptCore \
+            | grep -q "$PWD/browser/lib/libJavaScriptCore.dylib"
+          browser/lightningpanda eval -e 'console.log("ok")' | grep -Fx ok
+          tar -czf browser.tgz browser
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wpt-browser
+          path: browser.tgz
+          if-no-files-found: error
+          retention-days: 3
+
+  wpt:
+    needs: build
+    runs-on: macos-15
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # Shards are balanced by the baseline's durations; the gate job checks that all of them reported.
+        shard: [0, 1, 2, 3]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: bench
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.3'
+      - name: Install the runner's dependencies
+        working-directory: bench
+        run: bun install --frozen-lockfile
+      # The pinned WPT revision, only the directories bench/wpt/wpt-paths.txt lists (about 85 MB).
+      - uses: actions/cache@v4
+        id: wpt-cache
+        with:
+          path: wpt
+          key: wpt-${{ hashFiles('bench/wpt/wpt-revision.txt', 'bench/wpt/wpt-paths.txt', 'bench/wpt/fetch-wpt.sh') }}
+      - name: Fetch WPT
+        if: steps.wpt-cache.outputs.cache-hit != 'true'
+        run: bench/wpt/fetch-wpt.sh wpt
+      - uses: actions/download-artifact@v4
+        with:
+          name: wpt-browser
+      - run: tar -xzf browser.tgz
+      - name: Run shard ${{ strategy.job-index }} of ${{ strategy.job-total }}
+        env:
+          SHARD: ${{ strategy.job-index }}/${{ strategy.job-total }}
+          RUNNER_ARGS: ${{ inputs.runner-args }}
+          # macos-15 arm64 runners have 3 CPUs; one page more than CPUs keeps them busy while a page waits on a timer.
+          JOBS: '4'
+          OUT: wpt-shard-${{ strategy.job-index }}.json
+        run: |
+          read -r -a extra <<< "$RUNNER_ARGS"
+          full=()
+          if [ "$FULL" = true ]; then full=(--full); fi
+          # Earlier arguments win, so runner-args can override the defaults after them.
+          bun bench/wpt/gate.mjs run "${extra[@]}" --wpt wpt --bin browser/lightningpanda --jobs "$JOBS" \
+            --shard "$SHARD" "${full[@]}" --out "$OUT" --no-check
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: wpt-shard-${{ strategy.job-index }}
+          path: wpt-shard-${{ strategy.job-index }}.json
+          if-no-files-found: error
+          retention-days: 14
+
+  gate:
+    needs: wpt
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: bench
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.3'
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wpt-shard-*
+          merge-multiple: true
+      - name: Check coverage against bench/wpt/baseline.json
+        run: bun bench/wpt/gate.mjs check wpt-shard-*.json --summary "$GITHUB_STEP_SUMMARY"
+      - name: Refresh the baseline
+        id: refresh
+        if: ${{ !cancelled() }}
+        env:
+          DURATIONS: ${{ inputs.durations }}
+        run: |
+          flags=()
+          if [ "$FULL" = true ]; then flags+=(--prune); fi
+          if [ "$DURATIONS" = true ]; then flags+=(--durations); fi
+          bun bench/wpt/gate.mjs update wpt-shard-*.json --out baseline.json "${flags[@]}"
+          if cmp -s baseline.json bench/wpt/baseline.json; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            git diff --no-index --stat bench/wpt/baseline.json baseline.json || true
+          fi
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && steps.refresh.outputs.changed == 'true' }}
+        with:
+          name: wpt-baseline
+          path: baseline.json
+          retention-days: 30
