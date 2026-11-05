@@ -1108,7 +1108,6 @@ impl Renderer {
         let m = self.mirrors.get(&page)?;
         let g = self.geometry.get(&page)?;
         let doc = &m.doc;
-        let keys = m.keys();
         let mut boxes = Vec::new();
         let mut sticky = Vec::new();
         // Tree order (paint order among equals for hit testing).
@@ -1124,13 +1123,13 @@ impl Renderer {
             if !rendered {
                 continue;
             }
-            let (Some(&key), Some(b)) = (keys.get(&id), g.element_box(doc, id)) else { continue };
+            let (Some(key), Some(b)) = (m.key_of(id), g.element_box(doc, id)) else { continue };
             if b.position == BoxPosition::Sticky {
                 sticky.push((key, g.sticky_box(doc, id)));
             }
             boxes.push((key, b));
         }
-        let words = g.text_words(doc).into_iter().filter_map(|w| Some((*keys.get(&w.node)?, w))).collect();
+        let words = g.text_words(doc).into_iter().filter_map(|w| Some((m.key_of(w.node)?, w))).collect();
         let (document_width, document_height) = self.document_size(page)?;
         Some(LayoutBoxes {
             boxes,
@@ -1166,11 +1165,10 @@ impl Renderer {
     /// the first is `elementFromPoint`'s).
     pub fn elements_from_point(&self, page: u64, x: f64, y: f64) -> Vec<u64> {
         let Some(m) = self.mirrors.get(&page) else { return Vec::new() };
-        let keys = m.keys();
         let mut out = Vec::new();
         let mut cur = m.doc.element_from_point(x as f32, y as f32);
         while let Some(id) = cur {
-            if let Some(&k) = keys.get(&id) {
+            if let Some(k) = m.key_of(id) {
                 out.push(k);
             }
             cur = m.doc.get_node(id).and_then(|n| n.parent);

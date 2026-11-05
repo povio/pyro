@@ -18,7 +18,7 @@ use std::cell::RefCell;
 
 use blitz_dom::{BaseDocument, NodeId};
 use kurbo::{Affine, Rect};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 /// One element's boxes, CSS px.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -101,12 +101,44 @@ impl LayoutBox {
 pub(crate) struct Geometry {
     transforms: RefCell<FxHashMap<NodeId, (Affine, bool)>>,
     has_sticky: std::cell::Cell<Option<bool>>,
+    /// The layout (and hoisted) children of each layout parent with many,
+    /// indexed on first use: [`Geometry::in_layout_tree`] is O(1) where a
+    /// scan of the parent's list made reading every box quadratic in the
+    /// width of the tree.
+    layout_children: RefCell<FxHashMap<NodeId, FxHashSet<NodeId>>>,
 }
+
+/// Layout parents with at most this many children are scanned, not indexed.
+const SCAN_CHILDREN: usize = 16;
 
 impl Geometry {
     pub(crate) fn clear(&self) {
         self.transforms.borrow_mut().clear();
         self.has_sticky.set(None);
+        self.layout_children.borrow_mut().clear();
+    }
+
+    /// Whether `id` is a box of the current layout: the root element, or a
+    /// layout child of its layout parent.
+    fn in_layout_tree(&self, doc: &BaseDocument, id: NodeId) -> bool {
+        if doc.root_element().id == id {
+            return true;
+        }
+        let Some(parent) = doc.get_node(id).and_then(|n| n.layout_parent.get()) else { return false };
+        let Some(p) = doc.get_node(parent) else { return false };
+        let layout_children = p.layout_children.borrow();
+        let hoisted = p.hoisted_children.borrow();
+        let count = layout_children.as_ref().map_or(0, |c| c.len()) + hoisted.len();
+        if count <= SCAN_CHILDREN {
+            return layout_children.as_ref().is_some_and(|c| c.contains(&id)) || hoisted.contains(&id);
+        }
+        let mut index = self.layout_children.borrow_mut();
+        let set = index
+            .entry(parent)
+            .or_insert_with(|| layout_children.iter().flatten().chain(hoisted.iter()).copied().collect());
+        let found = set.contains(&id);
+        debug_assert_eq!(found, in_layout_tree(doc, id), "layout child index of {parent}");
+        found
     }
 
     /// Whether any element is `position: sticky`.
@@ -155,7 +187,7 @@ impl Geometry {
     /// formatting context) has none, whatever an earlier layout left in it.
     fn laid_out(&self, doc: &BaseDocument, id: NodeId) -> Option<LayoutBox> {
         let node = doc.get_node(id)?;
-        if !in_layout_tree(doc, id) {
+        if !self.in_layout_tree(doc, id) {
             let (_, fixed) = self.transform(doc, id)?;
             return Some(LayoutBox { fixed, ..LayoutBox::default() });
         }
@@ -319,7 +351,7 @@ impl Geometry {
             // zero box at the content-box origin of the nearest box around it.
             let mut cur = doc.get_node(id).and_then(|n| n.parent);
             while let Some(p) = cur {
-                if in_layout_tree(doc, p) {
+                if self.in_layout_tree(doc, p) {
                     let pb = self.laid_out(doc, p)?;
                     let (x, y) = (pb.x + pb.border[3] + pb.padding[3], pb.y + pb.border[0] + pb.padding[0]);
                     return Some(LayoutBox {
@@ -496,7 +528,7 @@ impl Geometry {
         let side = |v: &style::values::computed::LengthPercentage| {
             v.resolve(style::values::computed::Length::new(0.0)).px() as f64
         };
-        if !in_layout_tree(doc, id) {
+        if !self.in_layout_tree(doc, id) {
             let style = style?;
             let (b, p, m) = (style.get_border(), style.get_padding(), style.get_margin());
             let border = [
@@ -668,7 +700,7 @@ impl Geometry {
         let mut out = Vec::new();
         for (id, node) in doc.tree().iter() {
             let Some(text) = node.element_data().and_then(|e| e.inline_layout_data.as_ref()) else { continue };
-            if !node.flags.is_inline_root() || text.text_nodes.is_empty() || !in_layout_tree(doc, id) {
+            if !node.flags.is_inline_root() || text.text_nodes.is_empty() || !self.in_layout_tree(doc, id) {
                 continue;
             }
             let Some((t, fixed)) = self.transform(doc, id) else { continue };
@@ -779,7 +811,8 @@ fn utf16_offsets(source: &str, laid: &str) -> Vec<u32> {
 }
 
 /// Whether `id` is a box of the current layout: the root element, or a
-/// layout child of its layout parent.
+/// layout child of its layout parent (by scanning the parent's lists;
+/// [`Geometry::in_layout_tree`] indexes them).
 fn in_layout_tree(doc: &BaseDocument, id: NodeId) -> bool {
     if doc.root_element().id == id {
         return true;
