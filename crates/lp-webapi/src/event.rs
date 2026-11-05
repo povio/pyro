@@ -381,16 +381,16 @@ fn define_unforgeables<'s>(s: &Scope<'s>, page: &PageDom, wrapper: Object<'s>) -
     Ok(())
 }
 
-fn get_bool(init: Option<Object<'_>>, name: &str) -> JsResult<bool> {
+fn get_bool(init: Option<Object<'_>>, name: &'static str) -> JsResult<bool> {
     match init {
-        Some(o) => Ok(o.get(name)?.to_bool()),
+        Some(o) => Ok(o.get_atom(name)?.to_bool()),
         None => Ok(false),
     }
 }
-fn get_num(init: Option<Object<'_>>, name: &str, default: f64) -> JsResult<f64> {
+fn get_num(init: Option<Object<'_>>, name: &'static str, default: f64) -> JsResult<f64> {
     match init {
         Some(o) => {
-            let v = o.get(name)?;
+            let v = o.get_atom(name)?;
             if v.is_undefined() {
                 Ok(default)
             } else {
@@ -400,10 +400,10 @@ fn get_num(init: Option<Object<'_>>, name: &str, default: f64) -> JsResult<f64> 
         None => Ok(default),
     }
 }
-fn get_str(init: Option<Object<'_>>, name: &str) -> JsResult<String> {
+fn get_str(init: Option<Object<'_>>, name: &'static str) -> JsResult<String> {
     match init {
         Some(o) => {
-            let v = o.get(name)?;
+            let v = o.get_atom(name)?;
             if v.is_undefined() {
                 Ok(String::new())
             } else {
@@ -563,8 +563,8 @@ fn fill_pointer<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>
     f.persistent_device_id = get_num(init, "persistentDeviceId", 0.0)?;
     // Pointer Events: tilt and the spherical angles are two forms of one
     // orientation; whichever the dictionary gives determines the other.
-    let given = |name: &str| -> JsResult<Option<f64>> {
-        match init.map(|o| o.get(name)).transpose()? {
+    let given = |name: &'static str| -> JsResult<Option<f64>> {
+        match init.map(|o| o.get_atom(name)).transpose()? {
             Some(v) if !v.is_undefined() => Ok(Some(v.to_number()?)),
             _ => Ok(None),
         }
@@ -586,7 +586,7 @@ fn fill_pointer<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>
         }
     }
     for (name, into) in [("coalescedEvents", &mut f.coalesced_events), ("predictedEvents", &mut f.predicted_events)] {
-        let Some(list) = init.map(|o| o.get(name)).transpose()?.filter(|v| !v.is_undefined()) else { continue };
+        let Some(list) = init.map(|o| o.get_atom(name)).transpose()?.filter(|v| !v.is_undefined()) else { continue };
         let events = s.sequence(list, name)?;
         let len = events.get_atom("length")?.to_number()? as u32;
         for i in 0..len {
@@ -744,8 +744,8 @@ fn fill_error<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) 
 
 fn fill_storage<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
     let Some(o) = init else { return Ok(()) };
-    let nullable = |name: &str| -> JsResult<Option<String>> {
-        let v = o.get(name)?;
+    let nullable = |name: &'static str| -> JsResult<Option<String>> {
+        let v = o.get_atom(name)?;
         if v.is_undefined() || v.is_null() {
             Ok(None)
         } else {
@@ -1706,7 +1706,7 @@ impl JsClass for Touch {
             let target = event_target_key(s, target).ok_or_else(|| {
                 JsError::Type("Failed to construct 'Touch': Failed to read the 'target' property from 'TouchInit': Failed to convert value to 'EventTarget'.".into())
             })?;
-            let num = |name: &str, default: f64| get_num(Some(init), name, default);
+            let num = |name: &'static str, default: f64| get_num(Some(init), name, default);
             let point = TouchPoint {
                 identifier: identifier.to_number()? as i64,
                 target: Some(target),
@@ -1759,8 +1759,10 @@ fn touch_list<'s>(s: &Scope<'s>, page: &Rc<PageDom>, points: &[TouchPoint]) -> J
     Ok(list.value())
 }
 
-fn touch_points<'s>(s: &Scope<'s>, init: Option<Object<'s>>, name: &str) -> JsResult<Vec<TouchPoint>> {
-    let Some(list) = init.map(|o| o.get(name)).transpose()?.and_then(|v| v.as_object()) else { return Ok(Vec::new()) };
+fn touch_points<'s>(s: &Scope<'s>, init: Option<Object<'s>>, name: &'static str) -> JsResult<Vec<TouchPoint>> {
+    let Some(list) = init.map(|o| o.get_atom(name)).transpose()?.and_then(|v| v.as_object()) else {
+        return Ok(Vec::new());
+    };
     let mut out = Vec::new();
     for i in 0..list.get_atom("length")?.to_number()? as u32 {
         let v = list.get_index(i)?;
