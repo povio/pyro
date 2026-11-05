@@ -264,6 +264,39 @@ pub fn blur_before_removal(page: &Rc<PageDom>, node: NodeId, children_only: bool
     blur_element(page, focused);
 }
 
+/// HTML's focus fixup rule for a focused element that `moveBefore` moved:
+/// it keeps focus through the move, and loses it at the next rendering
+/// opportunity (here: a task of its own) when it is no longer a focusable
+/// area, i.e. it landed in an inert or non-rendered subtree. As in Chromium
+/// the element then gets `blur` and `focusout` and the body is active.
+pub(crate) fn schedule_focus_fixup(page: &Rc<PageDom>) {
+    let Some(hooks) = page.hooks() else { return };
+    let weak = Rc::downgrade(page);
+    hooks.post_task(Box::new(move || {
+        if let Some(page) = weak.upgrade() {
+            run_focus_fixup(&page);
+        }
+    }));
+}
+
+/// Blurs the focused element when it is not a focusable area any more:
+/// disconnected, disabled, inert, or not being rendered.
+pub fn run_focus_fixup(page: &Rc<PageDom>) {
+    if page.is_disposed() {
+        return;
+    }
+    let lost = {
+        let layout = page.layout();
+        let dom = page.dom.borrow();
+        let Some(f) = dom.focused(page.document()).ok().flatten() else { return };
+        let focusable = dom.is_focusable(f).unwrap_or(false) && !dom.is_inert(f) && layout.is_visible(&dom, f);
+        (!focusable).then_some(f)
+    };
+    if let Some(f) = lost {
+        blur_element(page, f);
+    }
+}
+
 /// Explicit blur keeps the owner's selected frame and remembered edit target.
 pub fn blur_element(page: &Rc<PageDom>, el: NodeId) {
     if let Some(owner) = sibling_page_of(page, el) {
@@ -356,70 +389,132 @@ fn is_text_control(dom: &Dom, el: NodeId) -> bool {
 
 // ----- click activation ------------------------------------------------------
 
+/// What an activation target's legacy-pre-activation behavior changed, for
+/// its legacy-canceled-activation behavior to undo.
 #[derive(Debug)]
-enum Activation {
+enum LegacyPreActivation {
+    None,
     Checkbox {
-        el: NodeId,
-        old: bool,
+        checked: bool,
+        indeterminate: bool,
     },
     Radio {
-        el: NodeId,
-        previously_checked: Vec<NodeId>,
         was_checked: bool,
+        previously_checked: Vec<NodeId>,
     },
-    Submit {
-        el: NodeId,
-    },
-    Reset {
-        el: NodeId,
-    },
-    Link {
-        el: NodeId,
-    },
-    Label {
-        el: NodeId,
-    },
-    Summary {
-        el: NodeId,
-    },
-    /// `<input type=file>`: shows the file picker.
-    FilePicker {
-        el: NodeId,
-    },
+}
+
+/// The one activation target of a click (DOM "dispatch" steps 6.5 and 6.9).
+#[derive(Debug)]
+struct ActivationTarget {
+    el: NodeId,
+    legacy: LegacyPreActivation,
 }
 
 fn local(dom: &Dom, id: NodeId) -> Option<String> {
     dom.element(id).ok().filter(|e| e.is_html()).map(|e| e.name.local.to_string())
 }
 
-fn activation_for(dom: &Dom, el: NodeId) -> Option<Activation> {
-    let l = local(dom, el)?;
-    if dom.is_disabled(el).unwrap_or(false) {
-        return None;
+/// A `summary` that is the summary of its parent `details`.
+fn is_details_summary(dom: &Dom, el: NodeId) -> bool {
+    let Some(parent) = dom.parent(el).ok().flatten() else { return false };
+    local(dom, parent).as_deref() == Some("details")
+        && dom
+            .element_children(parent)
+            .ok()
+            .and_then(|mut children| children.find(|&c| local(dom, c).as_deref() == Some("summary")))
+            == Some(el)
+}
+
+/// HTML elements that have activation behavior: every `input` and `button`
+/// (whatever their type or state: a disabled control is still the
+/// activation target and merely does nothing), `label`, and, as in
+/// browsers, `a`/`area` with an `href` and a `details`' own `summary`.
+fn has_activation_behavior(dom: &Dom, el: NodeId) -> bool {
+    match local(dom, el).as_deref() {
+        Some("input" | "button" | "label") => true,
+        Some("a" | "area") => dom.has_attribute(el, "href").unwrap_or(false),
+        Some("summary") => is_details_summary(dom, el),
+        _ => false,
     }
-    match l.as_str() {
-        "input" => match dom.input_type(el).ok()? {
-            InputType::Checkbox => Some(Activation::Checkbox { el, old: dom.checked(el).unwrap_or(false) }),
-            InputType::Radio => Some(Activation::Radio { el, previously_checked: Vec::new(), was_checked: false }),
-            InputType::Submit | InputType::Image => Some(Activation::Submit { el }),
-            InputType::Reset => Some(Activation::Reset { el }),
-            InputType::File => Some(Activation::FilePicker { el }),
-            _ => None,
-        },
-        "button" => match dom.get_attribute(el, "type").ok().flatten().map(|t| t.to_ascii_lowercase()).as_deref() {
-            Some("reset") => Some(Activation::Reset { el }),
-            Some("button") => None,
-            _ => Some(Activation::Submit { el }),
-        },
-        "a" | "area" if dom.has_attribute(el, "href").unwrap_or(false) => Some(Activation::Link { el }),
-        "label" => Some(Activation::Label { el }),
-        "summary" => {
-            let p = dom.parent(el).ok()??;
-            let is_first = local(dom, p).as_deref() == Some("details")
-                && dom.element_children(p).ok()?.find(|&c| local(dom, c).as_deref() == Some("summary")) == Some(el);
-            is_first.then_some(Activation::Summary { el })
+}
+
+/// An enabled HTML submit button: `input` in the Submit or Image state, or a
+/// `button` that is neither a reset nor a plain button.
+fn is_enabled_submit_button(dom: &Dom, el: NodeId) -> bool {
+    if dom.is_disabled(el).unwrap_or(false) {
+        return false;
+    }
+    match local(dom, el).as_deref() {
+        Some("input") => matches!(dom.input_type(el), Ok(InputType::Submit | InputType::Image)),
+        Some("button") => !matches!(
+            dom.get_attribute(el, "type").ok().flatten().map(|t| t.to_ascii_lowercase()).as_deref(),
+            Some("reset" | "button")
+        ),
+        _ => false,
+    }
+}
+
+/// HTML interactive content that has no activation behavior of its own: a
+/// click inside it does not activate a `label` around it.
+fn swallows_label_click(dom: &Dom, el: NodeId) -> bool {
+    match local(dom, el).as_deref() {
+        Some("select" | "textarea" | "details" | "iframe" | "embed") => true,
+        Some("audio" | "video") => dom.has_attribute(el, "controls").unwrap_or(false),
+        Some("img") => dom.has_attribute(el, "usemap").unwrap_or(false),
+        _ => false,
+    }
+}
+
+/// HTML legacy-pre-activation behavior (`input` checkboxes and radio
+/// buttons): the control is already toggled when the click's listeners run.
+fn legacy_pre_activation(page: &Rc<PageDom>, el: NodeId) -> LegacyPreActivation {
+    let mut dom = page.dom.borrow_mut();
+    if local(&dom, el).as_deref() != Some("input") {
+        return LegacyPreActivation::None;
+    }
+    match dom.input_type(el) {
+        Ok(InputType::Checkbox) => {
+            let checked = dom.checked(el).unwrap_or(false);
+            let indeterminate = dom.control_state(el).ok().flatten().is_some_and(|c| c.indeterminate);
+            let _ = dom.set_checked(el, !checked);
+            if indeterminate {
+                if let Ok(state) = dom.control_state_mut(el) {
+                    state.indeterminate = false;
+                }
+            }
+            LegacyPreActivation::Checkbox { checked, indeterminate }
         }
-        _ => None,
+        Ok(InputType::Radio) => {
+            let was_checked = dom.checked(el).unwrap_or(false);
+            let previously_checked = radio_group_checked(&dom, el);
+            let _ = dom.set_checked(el, true);
+            LegacyPreActivation::Radio { was_checked, previously_checked }
+        }
+        _ => LegacyPreActivation::None,
+    }
+}
+
+/// HTML legacy-canceled-activation behavior: the canceled click leaves the
+/// checkbox or radio group as it was.
+fn legacy_canceled_activation(page: &Rc<PageDom>, el: NodeId, legacy: LegacyPreActivation) {
+    let mut dom = page.dom.borrow_mut();
+    match legacy {
+        LegacyPreActivation::Checkbox { checked, indeterminate } => {
+            let _ = dom.set_checked(el, checked);
+            if indeterminate {
+                if let Ok(state) = dom.control_state_mut(el) {
+                    state.indeterminate = true;
+                }
+            }
+        }
+        LegacyPreActivation::Radio { was_checked, previously_checked } => {
+            let _ = dom.set_checked(el, was_checked);
+            for p in previously_checked {
+                let _ = dom.set_checked(p, true);
+            }
+        }
+        LegacyPreActivation::None => {}
     }
 }
 
@@ -433,111 +528,144 @@ pub fn dispatch_with_activation(page: &Rc<PageDom>, target: NodeId, ev: &EventDa
     if !is_click {
         return fire(page, key, ev);
     }
-    // Activation target: the target or its nearest inclusive ancestor with
-    // activation behavior (click bubbles).
-    let mut act = None;
-    {
-        let dom = page.dom.borrow();
-        let mut cur = Some(target);
-        while let Some(c) = cur {
-            if let Some(a) = activation_for(&dom, c) {
-                act = Some(a);
-                break;
-            }
-            cur = dom.parent_element(c).ok().flatten();
-        }
-    }
-    // Legacy pre-activation.
-    if let Some(a) = act.as_mut() {
-        let mut dom = page.dom.borrow_mut();
-        match a {
-            Activation::Checkbox { el, old } => {
-                let _ = dom.set_checked(*el, !*old);
-            }
-            Activation::Radio { el, previously_checked, was_checked } => {
-                *was_checked = dom.checked(*el).unwrap_or(false);
-                *previously_checked = radio_group_checked(&dom, *el);
-                let _ = dom.set_checked(*el, true);
-            }
-            _ => {}
-        }
-    }
-    let not_canceled = fire(page, key, ev);
-    let Some(a) = act else { return not_canceled };
+    let (bubbles, trusted) = {
+        let state = ev.state.borrow();
+        (state.bubbles, state.is_trusted)
+    };
+    // DOM "dispatch": the activation target is the target, else the first
+    // item of the event's path with activation behavior; the path follows
+    // slots and shadow hosts, and an item that is not a target of the event
+    // only counts when the event bubbles. Its legacy-pre-activation behavior
+    // runs before the first listener.
+    let mut activation: Option<ActivationTarget> = None;
+    let not_canceled = crate::target::fire_with(page, key, ev, &mut |path| {
+        let el = {
+            let dom = page.dom.borrow();
+            path.iter().filter(|item| bubbles || item.at_target()).find_map(|item| {
+                let el = dom.key_node(item.invocation_target)?;
+                // A user's click is not dispatched at a disabled form control
+                // (HTML): it does not activate one it reaches either.
+                let skipped = trusted && dom.is_disabled(el).unwrap_or(false);
+                (!skipped && has_activation_behavior(&dom, el)).then_some(el)
+            })
+        };
+        activation = el.map(|el| ActivationTarget { el, legacy: legacy_pre_activation(page, el) });
+    });
+    let Some(ActivationTarget { el, legacy }) = activation else { return not_canceled };
     if !not_canceled {
-        // Legacy-canceled-activation: restore.
-        let mut dom = page.dom.borrow_mut();
-        match a {
-            Activation::Checkbox { el, old } => {
-                let _ = dom.set_checked(el, old);
-            }
-            Activation::Radio { el, previously_checked, was_checked } => {
-                let _ = dom.set_checked(el, was_checked);
-                for p in previously_checked {
-                    let _ = dom.set_checked(p, true);
-                }
-            }
-            _ => {}
-        }
+        legacy_canceled_activation(page, el, legacy);
         return false;
     }
-    match a {
-        Activation::Checkbox { el, .. } => {
-            fire_input_event(page, el, "input", "", None, false);
-            fire_simple(page, el, "change", true, false);
-        }
-        Activation::Radio { el, was_checked, .. } => {
-            if !was_checked {
-                fire_input_event(page, el, "input", "", None, false);
-                fire_simple(page, el, "change", true, false);
-            }
-        }
-        Activation::Submit { el } => {
-            let form = page.dom.borrow().form_owner(el).ok().flatten();
-            if let Some(f) = form {
-                match image_button_coordinate(page, el, ev) {
-                    Some((x, y)) => crate::formdata::with_selected_coordinate(page, el, x, y, || {
-                        submit_form(page, f, Some(el), true)
-                    }),
-                    None => submit_form(page, f, Some(el), true),
+    run_activation_behavior(page, el, legacy, target, ev);
+    true
+}
+
+/// HTML activation behavior of `el`, the activation target of the click
+/// `ev` dispatched at `target`.
+fn run_activation_behavior(
+    page: &Rc<PageDom>,
+    el: NodeId,
+    legacy: LegacyPreActivation,
+    target: NodeId,
+    ev: &EventData,
+) {
+    let Some(name) = local(&page.dom.borrow(), el) else { return };
+    match name.as_str() {
+        "input" => {
+            let (ty, disabled, connected) = {
+                let dom = page.dom.borrow();
+                let Ok(ty) = dom.input_type(el) else { return };
+                (ty, dom.is_disabled(el).unwrap_or(false), dom.is_connected(el).unwrap_or(false))
+            };
+            match ty {
+                // A checkbox or radio button need not be mutable; a detached
+                // one fires nothing.
+                InputType::Checkbox | InputType::Radio => {
+                    // Clicking the radio button that is already checked changes nothing.
+                    let unchanged = matches!(legacy, LegacyPreActivation::Radio { was_checked: true, .. });
+                    if connected && !unchanged {
+                        fire_input_event(page, el, "input", "", None, false);
+                        fire_simple(page, el, "change", true, false);
+                    }
                 }
+                _ if disabled => {}
+                InputType::Submit | InputType::Image => {
+                    let form = page.dom.borrow().form_owner(el).ok().flatten();
+                    if let Some(f) = form {
+                        match image_button_coordinate(page, el, ev) {
+                            Some((x, y)) => crate::formdata::with_selected_coordinate(page, el, x, y, || {
+                                submit_form(page, f, Some(el), true)
+                            }),
+                            None => submit_form(page, f, Some(el), true),
+                        }
+                    }
+                }
+                InputType::Reset => {
+                    let form = page.dom.borrow().form_owner(el).ok().flatten();
+                    if let Some(f) = form {
+                        reset_form(page, f);
+                    }
+                }
+                InputType::File => {
+                    if let Some(h) = page.hooks() {
+                        let multiple = page.dom.borrow().has_attribute(el, "multiple").unwrap_or(false);
+                        h.file_chooser(el, multiple);
+                    }
+                }
+                _ => {}
             }
         }
-        Activation::Reset { el } => {
-            let form = page.dom.borrow().form_owner(el).ok().flatten();
-            if let Some(f) = form {
-                reset_form(page, f);
+        "button" => {
+            let (disabled, form, ty) = {
+                let dom = page.dom.borrow();
+                (
+                    dom.is_disabled(el).unwrap_or(false),
+                    dom.form_owner(el).ok().flatten(),
+                    dom.get_attribute(el, "type").ok().flatten().map(|t| t.to_ascii_lowercase()),
+                )
+            };
+            let Some(f) = form.filter(|_| !disabled) else { return };
+            match ty.as_deref() {
+                Some("reset") => reset_form(page, f),
+                Some("button") => {}
+                _ => submit_form(page, f, Some(el), true),
             }
         }
-        Activation::Link { el } => follow_hyperlink(page, el),
-        Activation::Label { el } => {
+        "a" | "area" => follow_hyperlink(page, el),
+        "label" => {
             let control = crate::html::labeled_control(&page.dom.borrow(), el);
             if let Some(c) = control {
-                // Clicks on the control itself (or interactive content inside
-                // the label) are not re-targeted.
-                let inside_control = page.dom.borrow().contains(c, target).unwrap_or(false);
-                if !inside_control && c != target {
+                // A click on the control itself, or inside interactive
+                // content of the label, is not forwarded.
+                let forwarded = {
+                    let dom = page.dom.borrow();
+                    let mut inside = false;
+                    let mut cur = Some(target);
+                    while let Some(n) = cur.filter(|&n| n != el) {
+                        inside |= n == c || swallows_label_click(&dom, n);
+                        cur = dom.parent(n).ok().flatten();
+                    }
+                    !inside
+                };
+                if forwarded {
                     let trusted = ev.state.borrow().is_trusted;
                     click_with_trust(page, c, trusted);
                     focus_element(page, c);
                 }
             }
         }
-        Activation::Summary { el } => {
+        "summary" => {
+            if !is_details_summary(&page.dom.borrow(), el) {
+                return;
+            }
             let details = page.dom.borrow().parent(el).ok().flatten();
             if let Some(d) = details {
                 let _ = page.dom.borrow_mut().toggle_attribute(d, "open", None);
                 queue_simple(page, d, "toggle", false, false);
             }
         }
-        Activation::FilePicker { el } => {
-            if let Some(h) = page.hooks() {
-                let multiple = page.dom.borrow().has_attribute(el, "multiple").unwrap_or(false);
-                h.file_chooser(el, multiple);
-            }
-        }
+        _ => {}
     }
-    true
 }
 
 fn radio_group_checked(dom: &Dom, el: NodeId) -> Vec<NodeId> {
@@ -696,6 +824,11 @@ fn follow_hyperlink(page: &Rc<PageDom>, el: NodeId) {
 /// fires `submit` (with interactive validation), then navigates with the
 /// form data set via the page hook.
 pub fn submit_form(page: &Rc<PageDom>, form: NodeId, submitter: Option<NodeId>, request: bool) {
+    // HTML "submit" step 1: a form that cannot navigate (it is not connected)
+    // is not submitted, and gets no `submit` event.
+    if !page.dom.borrow().is_connected(form).unwrap_or(false) {
+        return;
+    }
     if !page.begin_submit(form) {
         return;
     }
@@ -1094,7 +1227,7 @@ fn enter_key(page: &Rc<PageDom>, target: NodeId) {
                     let root = dom.root_node(f, false).ok()?;
                     dom.descendants(root).ok()?.find(|&n| {
                         dom.form_owner(n).ok().flatten() == Some(f)
-                            && matches!(activation_for(&dom, n), Some(Activation::Submit { .. }))
+                            && is_enabled_submit_button(&dom, n)
                     })
                 });
                 (form, button)

@@ -124,8 +124,9 @@ fn scripts_inserted_during_defer_dcl_and_load_run() {
         &log,
         &[
             ("defer-start", "defer-end"),
-            // The inline script runs at the drain after the inserting task.
-            ("defer-end", "inline-inserted"),
+            // The inline script runs inside `appendChild` (a post-connection
+            // step), before the inserting script goes on.
+            ("inline-inserted", "defer-end"),
             ("inline-inserted", "current-ok"),
             ("inline-inserted", "event:dcl"),
             ("defer-end", "second-ran"),
@@ -277,15 +278,15 @@ note('order:' + (w && d && (w.compareDocumentPosition(d) & 4) ? 'ok' : 'bad'));
 </script>
 </body></html>"#;
 
-/// An inline script inserted by a script the parser is running runs before
-/// the parser resumes, and its `document.write` parses at the parser's
+/// An inline script inserted by a script the parser is running runs inside
+/// the inserting call, and its `document.write` parses at the parser's
 /// position instead of blowing the document away (implicit `open`).
 #[test]
 fn inserted_inline_script_writes_at_parser_insertion_point() {
     let log = load(WRITE_PAGE, &[]);
     assert_before(
         &log,
-        &[("outer-end", "inserted-ran:d-unseen"), ("inserted-ran:d-unseen", "w:BODY"), ("w:BODY", "order:ok")],
+        &[("inserted-ran:d-unseen", "outer-end"), ("outer-end", "w:BODY"), ("w:BODY", "order:ok")],
     );
     assert!(log.iter().any(|l| l == "event:load"), "{log:?}");
     assert!(!log.iter().any(|l| l.starts_with("exception")), "{log:?}");

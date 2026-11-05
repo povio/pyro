@@ -648,8 +648,8 @@ fn static_point(
             "Failed to construct 'StaticRange': required member {offset} is undefined."
         )));
     }
-    if page.dom.borrow().node_type(id).js()? == NodeType::DocumentType {
-        return Err(JsError::dom("InvalidNodeTypeError", "The node provided is a doctype."));
+    if matches!(page.dom.borrow().node_type(id).js()?, NodeType::DocumentType | NodeType::Attribute) {
+        return Err(JsError::dom("InvalidNodeTypeError", "The node provided is a doctype or an attribute."));
     }
     Ok((NodeHold::new(page, id)?, to_u32(off)?))
 }

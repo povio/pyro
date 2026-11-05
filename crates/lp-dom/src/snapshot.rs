@@ -278,7 +278,7 @@ impl Dom {
             match &self.n(n).kind {
                 NodeKind::Doctype(dt) => sink.doctype(&dt.name),
                 NodeKind::Text(s) | NodeKind::CData(s) => sink.text(render_key(self.id_of(n)), s, TextKind::Node),
-                NodeKind::Comment(_) | NodeKind::ProcessingInstruction(_) => {}
+                NodeKind::Comment(_) | NodeKind::ProcessingInstruction(_) | NodeKind::Attr(_) => {}
                 NodeKind::Document(_) | NodeKind::Fragment(_) => {
                     push_children(&mut stack, self.child_idx_iter(n).collect(), scope);
                 }
@@ -656,7 +656,9 @@ impl Dom {
         let local: &str = &e.name.local;
         let control = matches!(local, "input" | "textarea" | "select" | "button" | "output");
         let kind = e.is_html()
-            && (control || matches!(local, "form" | "fieldset" | "option" | "optgroup" | "details" | "dialog"));
+            && (control
+                || matches!(local, "form" | "fieldset" | "option" | "optgroup" | "details" | "dialog")
+                || e.attr("popover").is_some());
         let editable = e.attr("contenteditable").is_some();
         // An image button (`<input type=image>`) is laid out like `<img>`:
         // its natural size travels the same way.
@@ -680,6 +682,8 @@ impl Dom {
             (PlaceholderShown, "placeholder-shown"),
             (Default, "default"),
             (Open, "open"),
+            (Modal, "modal"),
+            (PopoverOpen, "popover-open"),
         ] {
             if self.matches_state(n, &pc) {
                 if !out.is_empty() {

@@ -299,20 +299,37 @@ fn scroll_args(a: &Args<'_>) -> JsResult<(Option<i32>, Option<i32>)> {
     }
 }
 
+/// CSSOM View: whether `el`'s scroll offsets are the viewport's, so that its
+/// `scrollTop`, `scrollLeft` and `scroll*()` read and move the window: the
+/// page document's `scrollingElement` (the document element, or the body
+/// element in quirks mode).
+fn scrolls_viewport(page: &PageDom, el: NodeId) -> bool {
+    let dom = page.dom.borrow();
+    let doc = page.document();
+    if dom.node_document(el).ok() != Some(doc) {
+        return false;
+    }
+    let quirks = dom.document_data(doc).is_ok_and(|d| d.quirks == lp_dom::QuirksMode::Quirks);
+    let scrolling = if quirks { dom.body(doc) } else { dom.document_element(doc) };
+    scrolling.ok().flatten() == Some(el)
+}
+
 pub(crate) fn scroll_to<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>, by: bool) -> JsResult<Value<'s>> {
     let (l, t) = scroll_args(&a)?;
     let page = n.page();
+    let viewport = scrolls_viewport(page, n.id);
     let moved = {
         let dom = page.dom.borrow();
         let mut layout = page.layout.borrow_mut();
-        if by {
-            layout.element_scroll_by(&dom, n.id, l, t)
-        } else {
-            layout.element_scroll_to(&dom, n.id, l, t)
+        match (viewport, by) {
+            (true, true) => layout.window_scroll_by(&dom, l, t),
+            (true, false) => layout.window_scroll_to(&dom, l, t),
+            (false, true) => layout.element_scroll_by(&dom, n.id, l, t),
+            (false, false) => layout.element_scroll_to(&dom, n.id, l, t),
         }
     };
     if moved {
-        fire_scroll(page, Some(n.id));
+        fire_scroll(page, (!viewport).then_some(n.id));
     }
     Ok(s.undefined())
 }
@@ -320,24 +337,32 @@ pub(crate) fn scroll_to<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>, by: bool) 
 pub(crate) fn scroll_get<'s>(s: &Scope<'s>, n: &NodeData, top: bool) -> JsResult<Value<'s>> {
     // Reading a scroll offset sees the current layout (clamped to it).
     clamp_scrolls(n.page(), false);
+    let viewport = scrolls_viewport(n.page(), n.id);
     let layout = n.page().layout();
-    Ok(s.number(if top { layout.scroll_top(n.id) } else { layout.scroll_left(n.id) } as f64))
+    Ok(s.number(match (viewport, top) {
+        (true, true) => layout.scroll_y(),
+        (true, false) => layout.scroll_x(),
+        (false, true) => layout.scroll_top(n.id),
+        (false, false) => layout.scroll_left(n.id),
+    } as f64))
 }
 
 pub(crate) fn scroll_set(_s: &Scope<'_>, n: &NodeData, v: Value<'_>, top: bool) -> JsResult<()> {
     let value = to_scroll_offset(v)?;
     let page = n.page();
+    let viewport = scrolls_viewport(page, n.id);
     let moved = {
         let dom = page.dom.borrow();
         let mut layout = page.layout.borrow_mut();
-        if top {
-            layout.set_scroll_top(&dom, n.id, value)
-        } else {
-            layout.set_scroll_left(&dom, n.id, value)
+        match (viewport, top) {
+            (true, true) => layout.window_scroll_to(&dom, None, Some(value)),
+            (true, false) => layout.window_scroll_to(&dom, Some(value), None),
+            (false, true) => layout.set_scroll_top(&dom, n.id, value),
+            (false, false) => layout.set_scroll_left(&dom, n.id, value),
         }
     };
     if moved {
-        fire_scroll(page, Some(n.id));
+        fire_scroll(page, (!viewport).then_some(n.id));
     }
     Ok(())
 }
@@ -479,6 +504,7 @@ impl JsClass for ComputedStyle {
         def.method("getPropertyValue", 1, |s, c, a| {
             let name = arg_string(&a, 0, "CSSStyleDeclaration.getPropertyValue")?;
             let page = &c.el.page;
+            crate::animation_events::observe(page, c.el.id);
             let v = page.layout().computed_style_value(&page.dom.borrow(), c.el.id, &name);
             Ok(s.string(&v))
         });
@@ -500,6 +526,7 @@ impl JsClass for ComputedStyle {
             }
             let prop = crate::css::camel_to_css(name);
             let page = &c.el.page;
+            crate::animation_events::observe(page, c.el.id);
             let v = page.layout().computed_style_value(&page.dom.borrow(), c.el.id, &prop);
             Ok(Some(s.string(&v)))
         });

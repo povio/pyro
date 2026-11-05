@@ -16,6 +16,10 @@ pub struct LiveIterator {
     root: NodeId,
     reference: Cell<NodeId>,
     before: Cell<bool>,
+    /// The position a traversal in flight has reached (the node being
+    /// filtered and its pointer-before flag): a filter that removes nodes
+    /// moves it like the reference. It holds an external reference too.
+    candidate: Cell<Option<(NodeId, bool)>>,
 }
 
 impl LiveIterator {
@@ -25,6 +29,10 @@ impl LiveIterator {
     pub fn before(&self) -> bool {
         self.before.get()
     }
+    /// The in-flight traversal position, if a traversal is filtering a node.
+    pub fn candidate(&self) -> Option<(NodeId, bool)> {
+        self.candidate.get()
+    }
 }
 
 impl Dom {
@@ -32,7 +40,8 @@ impl Dom {
     /// `Rc` drops.
     pub fn new_live_iterator(&mut self, root: NodeId) -> DomResult<Rc<LiveIterator>> {
         self.add_ref(root)?;
-        let it = Rc::new(LiveIterator { root, reference: Cell::new(root), before: Cell::new(true) });
+        let it =
+            Rc::new(LiveIterator { root, reference: Cell::new(root), before: Cell::new(true), candidate: Cell::new(None) });
         self.live_iterators.push(Rc::downgrade(&it));
         Ok(it)
     }
@@ -49,6 +58,17 @@ impl Dom {
         Ok(())
     }
 
+    /// Sets (or clears) the position of the traversal in flight.
+    pub fn set_iterator_candidate(&mut self, it: &LiveIterator, position: Option<(NodeId, bool)>) -> DomResult<()> {
+        if let Some((node, _)) = position {
+            self.add_ref(node)?;
+        }
+        if let Some((old, _)) = it.candidate.replace(position) {
+            self.release(old);
+        }
+        Ok(())
+    }
+
     /// Remove steps: `node`, still linked, is about to leave its parent.
     #[cold]
     pub(crate) fn iterators_before_remove(&mut self, node: u32) {
@@ -61,13 +81,36 @@ impl Dom {
         self.live_iterators = list;
     }
 
+    /// "NodeIterator pre-remove steps" for the reference, and for the
+    /// position of a traversal in flight.
     fn iterator_before_remove(&mut self, it: &LiveIterator, removed: u32) {
-        let Ok(reference) = self.check(it.reference.get()) else { return };
         let Ok(root) = self.check(it.root) else { return };
-        if removed == root || !self.is_inclusive_ancestor(removed, reference) {
-            return;
+        if let Some((node, before)) = self.position_before_remove(root, it.reference.get(), it.before.get(), removed) {
+            let _ = self.set_iterator_reference(it, node, before);
         }
-        if it.before.get() {
+        if let Some((node, before)) = it.candidate.get() {
+            if let Some(moved) = self.position_before_remove(root, node, before, removed) {
+                let _ = self.set_iterator_candidate(it, Some(moved));
+            }
+        }
+    }
+
+    /// Where the position (`reference`, `before`) of an iterator over `root`
+    /// moves when `removed` leaves the tree; None: it stays.
+    fn position_before_remove(
+        &self,
+        root: u32,
+        reference: NodeId,
+        mut before: bool,
+        removed: u32,
+    ) -> Option<(NodeId, bool)> {
+        let reference = self.check(reference).ok()?;
+        // "If toBeRemovedNode is not an inclusive ancestor of the reference,
+        // or is an inclusive ancestor of the root, then return."
+        if !self.is_inclusive_ancestor(removed, reference) || self.is_inclusive_ancestor(removed, root) {
+            return None;
+        }
+        if before {
             // The first following node of `removed` inside the root that is
             // not inside `removed`: its next sibling, or an ancestor's.
             let mut cur = removed;
@@ -81,11 +124,9 @@ impl Dom {
                 cur = n.parent;
             }
             if next != NIL {
-                let id = self.id_of(next);
-                let _ = self.set_iterator_reference(it, id, true);
-                return;
+                return Some((self.id_of(next), true));
             }
-            it.before.set(false);
+            before = false;
         }
         let prev = self.n(removed).prev;
         let target = if prev == NIL {
@@ -97,7 +138,6 @@ impl Dom {
             }
             last
         };
-        let id = self.id_of(target);
-        let _ = self.set_iterator_reference(it, id, false);
+        Some((self.id_of(target), before))
     }
 }

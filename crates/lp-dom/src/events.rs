@@ -49,6 +49,8 @@ pub struct ListenerStore {
     pin_on_connect: FxHashSet<u32>,
     /// Document -> Window key for event paths.
     windows: FxHashMap<u32, u64>,
+    /// A listener for a CSS animation or transition event was ever added.
+    animation_listeners: bool,
 }
 
 impl ListenerStore {
@@ -183,6 +185,9 @@ impl Dom {
             return false;
         }
         st.next_id = st.next_id.wrapping_add(1);
+        if !st.animation_listeners && is_animation_event_type(ty) {
+            st.animation_listeners = true;
+        }
         list.push(Listener {
             id: st.next_id,
             ty: LocalName::from(ty),
@@ -210,6 +215,13 @@ impl Dom {
         }
         self.events.released.push((target, l.callback));
         Some(l.callback)
+    }
+
+    /// Whether a listener for a CSS animation or transition event (or one of
+    /// their legacy types) was ever added in this tree: only then are those
+    /// events worth working out.
+    pub fn has_animation_listeners(&self) -> bool {
+        self.events.animation_listeners
     }
 
     /// Identity of one registration, distinct from the reusable callback slot.
@@ -365,6 +377,20 @@ impl Dom {
             ai = host;
         }
     }
+    /// [`Dom::retarget`] for keys that may name a freed node (an event's
+    /// relatedTarget is only as alive as the bindings keep it).
+    fn retarget_live(&self, a: TargetKey, b: TargetKey) -> TargetKey {
+        let live = |key: TargetKey| !matches!(key, TargetKey::Node(i) if !self.slot_live(i));
+        if live(a) && live(b) {
+            self.retarget(a, b)
+        } else {
+            a
+        }
+    }
+    fn is_html_form(&self, key: TargetKey) -> bool {
+        matches!(key, TargetKey::Node(i) if self.slot_live(i)
+            && self.n(i).element().is_some_and(|e| e.is_html() && &*e.name.local == "form"))
+    }
     fn shadow_including_ancestor(&self, anc: u32, mut node: u32) -> bool {
         loop {
             if self.is_inclusive_ancestor(anc, node) {
@@ -401,44 +427,110 @@ pub trait ListenerInvoker {
     fn invoke(&mut self, callback: ListenerHandle, current_target: TargetKey, target: TargetKey);
 }
 
+/// One item of an event's path (DOM "append to an event path"), as built
+/// before any listener runs.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct PathItem {
+    pub invocation_target: TargetKey,
+    /// The event's `target` while this item's listeners run.
+    pub target: TargetKey,
+    /// The event's `relatedTarget` while this item's listeners run: the
+    /// event's own, retargeted against the invocation target.
+    pub related_target: Option<TargetKey>,
+}
+
+impl PathItem {
+    /// The item's shadow-adjusted target is non-null: the dispatch target
+    /// itself, or a shadow host the event is retargeted to. Its listeners
+    /// run at the target phase whether or not the event bubbles.
+    pub fn at_target(&self) -> bool {
+        self.invocation_target == self.target
+    }
+}
+
 /// DOM "dispatch" for an initialized event. `event` is shared with the JS
 /// Event object. Returns `false` if the event was canceled.
 ///
 /// Activation behavior and legacy pre-activation (checkbox toggling) are
-/// handled by `crate::activation` around this call.
+/// handled by the bindings around [`dispatch_with`].
 pub fn dispatch(
     dom: &RefCell<Dom>,
     target: TargetKey,
     event: &RefCell<EventState>,
     invoker: &mut dyn ListenerInvoker,
 ) -> bool {
-    let path = {
+    dispatch_with(dom, target, event, invoker, &mut |_| {})
+}
+
+/// [`dispatch`], calling `before_listeners` with the event's path once it is
+/// built and before any listener runs (dispatch steps 6.5 to 6.12: the
+/// caller picks the activation target from it and runs its
+/// legacy-pre-activation behavior). It is not called for an event that is
+/// not dispatched at all (step 6's condition).
+pub fn dispatch_with(
+    dom: &RefCell<Dom>,
+    target: TargetKey,
+    event: &RefCell<EventState>,
+    invoker: &mut dyn ListenerInvoker,
+    before_listeners: &mut dyn FnMut(&[PathItem]),
+) -> bool {
+    let (path, clear_targets) = {
         let mut ev = event.borrow_mut();
         ev.dispatching = true;
-        ev.target = Some(target);
         let d = dom.borrow();
-        let path = d.event_path(target, &ev);
-        ev.path = path.iter().map(|p| p.0).collect();
-        path
+        let related = ev.related_target;
+        // Steps 4 and 6: an event whose relatedTarget retargets to the target
+        // itself (a node of the target's own shadow tree) is not dispatched.
+        // Its targets are reset, as for any event that pointed into a shadow
+        // tree.
+        if related.is_some_and(|r| r != target && d.retarget_live(r, target) == target) {
+            (Vec::new(), true)
+        } else {
+            let mut path: Vec<PathItem> = Vec::new();
+            for (k, (cur, shadow_target)) in d.event_path(target, &ev).into_iter().enumerate() {
+                let related_target = related.map(|r| d.retarget_live(r, cur));
+                // Step 6.9.7: the path ends below a shadow host that is the
+                // relatedTarget as seen from there.
+                if k > 0 && shadow_target == cur && related_target == Some(cur) {
+                    break;
+                }
+                path.push(PathItem { invocation_target: cur, target: shadow_target, related_target });
+            }
+            // Steps 6.10 and 6.11 ("clearTargets"), decided before listeners
+            // can move nodes: the outermost target or relatedTarget the event
+            // exposes is a node of a shadow tree.
+            let in_shadow = |key: TargetKey| matches!(key, TargetKey::Node(i) if d.slot_live(i) && d.in_shadow_tree(i));
+            let clear = path
+                .iter()
+                .rev()
+                .find(|item| item.at_target())
+                .is_some_and(|item| in_shadow(item.target) || item.related_target.is_some_and(in_shadow));
+            ev.target = Some(target);
+            ev.path = path.iter().map(|p| p.invocation_target).collect();
+            (path, clear)
+        }
     };
+    if !path.is_empty() {
+        before_listeners(&path);
+    }
     let ty = event.borrow().ty.clone();
 
     // Capturing: from the outermost ancestor down to (and including) target.
-    for k in (0..path.len()).rev() {
-        let (cur, shadow_target) = path[k];
+    for item in path.iter().rev() {
         {
             let mut ev = event.borrow_mut();
             if ev.stop_propagation {
                 break;
             }
-            ev.phase = if k == 0 || shadow_target == cur { Phase::AtTarget } else { Phase::Capturing };
-            ev.target = Some(shadow_target);
+            ev.phase = if item.at_target() { Phase::AtTarget } else { Phase::Capturing };
+            ev.target = Some(item.target);
+            ev.related_target = item.related_target;
         }
-        invoke_listeners(dom, cur, shadow_target, &ty, event, invoker, true);
+        invoke_listeners(dom, item.invocation_target, item.target, &ty, event, invoker, true);
     }
     // Bubbling: target, then ancestors when bubbles.
-    for (k, &(cur, shadow_target)) in path.iter().enumerate() {
-        let at_target = k == 0 || shadow_target == cur;
+    for item in &path {
+        let at_target = item.at_target();
         {
             let mut ev = event.borrow_mut();
             if ev.stop_propagation {
@@ -447,10 +539,19 @@ pub fn dispatch(
             if !at_target && !ev.bubbles {
                 continue;
             }
+            // A `submit` or `reset` event of a nested form (or of any other
+            // descendant) does not reach the listeners of an ancestor form,
+            // nor anything above it: Chromium, Gecko and WebKit all stop its
+            // propagation there.
+            if !at_target && matches!(&*ty, "submit" | "reset") && dom.borrow().is_html_form(item.invocation_target) {
+                ev.stop_propagation = true;
+                break;
+            }
             ev.phase = if at_target { Phase::AtTarget } else { Phase::Bubbling };
-            ev.target = Some(shadow_target);
+            ev.target = Some(item.target);
+            ev.related_target = item.related_target;
         }
-        invoke_listeners(dom, cur, shadow_target, &ty, event, invoker, false);
+        invoke_listeners(dom, item.invocation_target, item.target, &ty, event, invoker, false);
     }
 
     let mut ev = event.borrow_mut();
@@ -460,16 +561,14 @@ pub fn dispatch(
     ev.stop_propagation = false;
     ev.stop_immediate = false;
     ev.path.clear();
-    // The target stays retargeted against the outermost invocation target,
-    // and is cleared when it is in a shadow tree ("clearTargets").
-    let (final_target, clear) = {
-        let d = dom.borrow();
-        let last = path.last().map_or(target, |p| p.0);
-        let t = d.retarget(target, last);
-        let clear = matches!(t, TargetKey::Node(i) if d.in_shadow_tree(i));
-        (t, clear)
-    };
-    ev.target = if clear { None } else { Some(final_target) };
+    if clear_targets {
+        ev.target = None;
+        ev.related_target = None;
+    } else if let Some(last) = path.last() {
+        // The targets stay as the outermost invocation target saw them.
+        ev.target = Some(last.target);
+        ev.related_target = last.related_target;
+    }
     !ev.canceled
 }
 
@@ -484,8 +583,64 @@ fn invoke_listeners(
 ) {
     let listeners = dom.borrow().snapshot(cur, ty);
     if listeners.is_empty() {
+        // DOM "invoke" step 7: a trusted event no listener of the target was
+        // registered for is retried under its legacy type (`animationend`
+        // as `webkitAnimationEnd`), and reports that type meanwhile.
+        let Some(legacy) = legacy_event_type(ty).filter(|_| event.borrow().is_trusted) else { return };
+        let legacy = LocalName::from(legacy);
+        let listeners = dom.borrow().snapshot(cur, &legacy);
+        if listeners.is_empty() {
+            return;
+        }
+        event.borrow_mut().ty = legacy;
+        run_listeners(dom, cur, target, listeners, event, invoker, capture_pass);
+        event.borrow_mut().ty = ty.clone();
         return;
     }
+    run_listeners(dom, cur, target, listeners, event, invoker, capture_pass);
+}
+
+/// The CSS animation and transition event types, with their legacy aliases.
+fn is_animation_event_type(ty: &str) -> bool {
+    matches!(ty.as_bytes().first(), Some(b'a' | b't' | b'w'))
+        && matches!(
+            ty,
+            "animationstart"
+                | "animationiteration"
+                | "animationend"
+                | "animationcancel"
+                | "transitionrun"
+                | "transitionstart"
+                | "transitionend"
+                | "transitioncancel"
+                | "webkitAnimationStart"
+                | "webkitAnimationIteration"
+                | "webkitAnimationEnd"
+                | "webkitTransitionEnd"
+        )
+}
+
+/// The legacy event type a trusted event of type `ty` falls back to.
+fn legacy_event_type(ty: &str) -> Option<&'static str> {
+    Some(match ty {
+        "animationend" => "webkitAnimationEnd",
+        "animationiteration" => "webkitAnimationIteration",
+        "animationstart" => "webkitAnimationStart",
+        "transitionend" => "webkitTransitionEnd",
+        _ => return None,
+    })
+}
+
+/// DOM "inner invoke" over the listeners of `cur` registered for the event's type.
+fn run_listeners(
+    dom: &RefCell<Dom>,
+    cur: TargetKey,
+    target: TargetKey,
+    listeners: Vec<Listener>,
+    event: &RefCell<EventState>,
+    invoker: &mut dyn ListenerInvoker,
+    capture_pass: bool,
+) {
     event.borrow_mut().current_target = Some(cur);
     for l in listeners {
         if l.capture != capture_pass {

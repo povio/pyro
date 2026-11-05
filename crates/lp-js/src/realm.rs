@@ -438,6 +438,23 @@ impl Realm {
         Ok(())
     }
 
+    /// Runs `f` with the native callback hook enabled again for the native
+    /// callbacks `f` causes in this realm, when called from inside the hook
+    /// (elsewhere it only runs `f`). For a hook that itself runs page script
+    /// (HTML post-connection steps execute an inserted `<script>` before the
+    /// inserting call returns): that script's own DOM calls need the hook.
+    pub fn reenter_native_callback_hook<R>(&self, f: impl FnOnce() -> R) -> R {
+        struct Restore<'a>(&'a Cell<bool>, bool);
+        impl Drop for Restore<'_> {
+            fn drop(&mut self) {
+                self.0.set(self.1);
+            }
+        }
+        let active = &self.inner.native_callback_hook_active;
+        let _restore = Restore(active, active.replace(false));
+        f()
+    }
+
     pub fn set_module_fetcher(&self, fetcher: Option<Rc<dyn ModuleFetcher>>) {
         *self.inner.module_fetcher.borrow_mut() = fetcher;
     }
@@ -963,6 +980,27 @@ impl<'s> Scope<'s> {
         let proto = self.realm.object_proto.borrow();
         let Some(proto) = proto.as_ref() else { return false };
         unsafe { sys::JSObjectGetPrototype(self.ctx, o.raw) == proto.get(self).raw }
+    }
+
+    /// The realm `object` was created in (the "associated realm" of a Web IDL
+    /// callback), when it is a live realm of this engine: a function's own
+    /// realm rather than its caller's, and a Proxy's rather than its target's.
+    /// `None` without the global-context SPI, for an object of another engine
+    /// or of a disposed realm. Runs no script.
+    pub fn object_realm(&self, object: Object<'_>) -> Option<Realm> {
+        let get_context = sys::spi::get().get_object_global_context?;
+        if unsafe { sys::JSContextGetGroup(object.ctx) } != self.realm.engine.group() {
+            return None;
+        }
+        // SAFETY: object is live in this VM; reading its global runs no script.
+        let context = unsafe { get_context(object.raw) };
+        if context.is_null() {
+            return None;
+        }
+        if context == self.realm.ctx.get() {
+            return Some(self.realm());
+        }
+        self.realm.engine.realm_for_global(context).map(|inner| Realm { inner })
     }
 
     /// Tests for one of this engine's native wrappers/closures or a same-VM
@@ -1601,7 +1639,13 @@ fn install_members_raw(
             d.accessors.iter().map(|a| (a.name, a.get, a.set)).collect::<Vec<_>>(),
             d.constants.clone(),
             d.statics.iter().map(|m| (m.name, m.length, m.call)).collect::<Vec<_>>(),
-            d.indexed_iterable,
+            if d.indexed_iterable {
+                Some("iterable")
+            } else if d.indexed_iterator {
+                Some("iterator")
+            } else {
+                None
+            },
         )
     };
     // SAFETY (all raw constructors below): ctx is the live callback/scope context.
@@ -1647,9 +1691,10 @@ fn install_members_raw(
         let f = native(name, length, call)?;
         target.set(name, f.value())?;
     }
-    if iterable {
-        helper("iterable")?.call(None, &[proto.value()])?;
+    if let Some(kind) = iterable {
+        helper(kind)?.call(None, &[proto.value()])?;
     }
+
     Ok(())
 }
 

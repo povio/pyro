@@ -81,6 +81,8 @@ pub struct WindowData {
     frame: Option<crate::frames::FrameKey>,
     frame_definer: RefCell<Option<Persistent>>,
     frame_index_count: Cell<usize>,
+    /// Identity of this realm's `performance` wrapper once it was made.
+    performance: Cell<Option<IdentityKey>>,
 }
 
 impl WindowData {
@@ -91,6 +93,9 @@ impl WindowData {
 
     pub fn new(sched: Scheduler<Browser>, nav: Rc<PageNav>, page: &Rc<lp_webapi::PageDom>) -> WindowData {
         let key = page.window_target().expect("document window target");
+        // `Event.timeStamp` reads the clock `performance.now()` reads.
+        let clock = nav.clone();
+        page.set_event_clock(Rc::new(move || clock.now_ms()));
         WindowData {
             sched,
             nav,
@@ -102,6 +107,7 @@ impl WindowData {
             frame: None,
             frame_definer: RefCell::new(None),
             frame_index_count: Cell::new(0),
+            performance: Cell::new(None),
         }
     }
 
@@ -208,11 +214,18 @@ impl JsClass for Window {
         );
         def.getter("history", |s, w| Ok(s.wrap::<History>(w.nav.clone(), Some(IdentityKey(KEY_HISTORY, 0)))?.value()));
         def.getter("performance", |s, w| {
-            if let Some(o) = s.lookup_identity(IdentityKey(KEY_PERFORMANCE, 0)) {
+            if let Some(o) = w.performance.get().and_then(|identity| s.lookup_identity(identity)) {
                 return Ok(o.value());
             }
-            Ok(s.wrap::<Performance>(PerformanceData::new(w.nav.clone()), Some(IdentityKey(KEY_PERFORMANCE, 0)))?
-                .value())
+            // [SameObject] and an EventTarget: the wrapper carries its event
+            // listeners, so the realm keeps it.
+            let data = PerformanceData::new(w.nav.clone(), &w.target.page);
+            let identity = data.wrapper_identity().unwrap_or(IdentityKey(KEY_PERFORMANCE, 0));
+            let key = data.event_target().key;
+            let performance = s.wrap::<Performance>(data, Some(identity))?;
+            lp_webapi::target::pin_target(s, &w.target.page, key, performance);
+            w.performance.set(Some(identity));
+            Ok(performance.value())
         });
         def.getter("top", |s, w| match (w.frames.upgrade(), w.frame) {
             (Some(host), Some(key)) => host.relation(s, key, true),
@@ -230,6 +243,41 @@ impl JsClass for Window {
             (Some(host), Some(key)) => host.frame_element(s, key),
             _ => Ok(s.null()),
         });
+        // `window.name`: the name of the window's navigable. A child frame
+        // takes it from its iframe's `name` attribute when it is created (and
+        // when the attribute changes), a popup from `window.open`.
+        def.accessor(
+            "name",
+            |s, w| {
+                let name = match (w.frames.upgrade(), w.frame) {
+                    (Some(host), Some(key)) => host.with_frame(key, |f| f.name.clone()),
+                    _ => None,
+                };
+                Ok(s.string(&name.unwrap_or_default()))
+            },
+            |_s, w, v| {
+                let name = v.to_string()?;
+                let (Some(host), Some(key)) = (w.frames.upgrade(), w.frame) else { return Ok(()) };
+                match key.child {
+                    Some(id) => {
+                        if let Some(child) = host.children.borrow_mut().get_mut(&id) {
+                            child.main_frame.name = name;
+                        }
+                    }
+                    None => {
+                        // The root frame mirrors the page's main frame: name both.
+                        host.root.borrow_mut().name.clone_from(&name);
+                        let page = host.page;
+                        w.sched.post(lp_runtime::TaskSource::DomManipulation, move |browser: &mut Browser| {
+                            if let Some(p) = browser.page_mut(page) {
+                                p.main_frame.name = name;
+                            }
+                        });
+                    }
+                }
+                Ok(())
+            },
+        );
         // `opener` is writable: assigning (e.g. null to disown) shadows it.
         def.accessor(
             "opener",
@@ -381,6 +429,28 @@ pub fn request_native_frame(realm: &Realm) -> JsResult<Rc<Cell<bool>>> {
 
 fn run_animation_frame(scope: &Scope<'_>) {
     let Some(w) = scope.global_data::<Window>() else { return };
+    // A render-blocked document (a pending render-blocking stylesheet or
+    // script, an unresolved `<link rel=expect>`) has no rendering
+    // opportunity: the frame runs as soon as rendering is unblocked.
+    if w.target.page.render_blocked() {
+        w.animation.borrow_mut().timer = None;
+        let realm_weak = scope.realm().downgrade();
+        w.target.page.when_render_unblocked(Box::new(move || {
+            let Some(realm) = realm_weak.upgrade() else { return };
+            let Ok(scope) = realm.scope() else { return };
+            let Some(w) = scope.global_data::<Window>() else { return };
+            let mut frame = w.animation.borrow_mut();
+            if frame.timer.is_none() && !(frame.callbacks.is_empty() && frame.native_callbacks.is_empty()) {
+                let realm_weak = realm.downgrade();
+                frame.timer = Some(w.sched.set_timer(Duration::ZERO, false, true, move |_browser: &mut Browser| {
+                    let Some(realm) = realm_weak.upgrade() else { return };
+                    let Ok(scope) = realm.scope() else { return };
+                    run_animation_frame(&scope);
+                }));
+            }
+        }));
+        return;
+    }
     lp_webapi::layout_api::flush_pending_scrolls(&w.target.page);
     let (handles, native): (Vec<u32>, _) = {
         let mut frame = w.animation.borrow_mut();

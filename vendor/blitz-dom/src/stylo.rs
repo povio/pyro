@@ -517,11 +517,11 @@ impl selectors::Element for BlitzNode<'_> {
             NonTSPseudoClass::Default => self.has_lp_state("default"),
 
             NonTSPseudoClass::InRange => false,
-            NonTSPseudoClass::Modal => false,
+            NonTSPseudoClass::Modal => self.has_lp_state("modal"),
             NonTSPseudoClass::Open => self.has_lp_state("open"),
             NonTSPseudoClass::Optional => self.has_lp_state("optional"),
             NonTSPseudoClass::OutOfRange => false,
-            NonTSPseudoClass::PopoverOpen => false,
+            NonTSPseudoClass::PopoverOpen => self.has_lp_state("popover-open"),
             NonTSPseudoClass::Required => self.has_lp_state("required"),
             NonTSPseudoClass::UserInvalid => false,
             NonTSPseudoClass::UserValid => false,

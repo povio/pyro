@@ -530,7 +530,7 @@ impl<'a, C: CxSource<'a>> selectors::Element for SNode<'a, C> {
             N::Invalid => self.matches(PseudoClass::Invalid),
             N::Open => self.matches(PseudoClass::Open),
             N::Modal => self.matches(PseudoClass::Modal),
-            N::PopoverOpen => self.cx().popovers.contains(&self.i()),
+            N::PopoverOpen => self.cx().popovers.contains(&self.i()) || self.matches(PseudoClass::PopoverOpen),
             N::Lang(lang) => self.match_element_lang(None, lang),
             _ => false,
         }
@@ -699,7 +699,7 @@ impl<'a, C: CxSource<'a>> TElement for SNode<'a, C> {
         set(PseudoClass::Open, ElementState::OPEN);
         set(PseudoClass::Modal, ElementState::MODAL);
         set(PseudoClass::Target, ElementState::URLTARGET);
-        if self.cx().popovers.contains(&self.i()) {
+        if self.cx().popovers.contains(&self.i()) || self.matches(PseudoClass::PopoverOpen) {
             s |= ElementState::POPOVER_OPEN;
         }
         s

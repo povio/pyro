@@ -79,6 +79,9 @@ pub struct PageNav {
     /// Current document in the page's DOM (keeps `document.URL` in sync).
     document: RefCell<Option<(DomRef, NodeId)>>,
     time_origin: Cell<Instant>,
+    /// When the current document first had a rendering opportunity
+    /// (`now_ms`): its Paint Timing entries.
+    first_paint: Cell<Option<f64>>,
 }
 
 impl PageNav {
@@ -106,6 +109,7 @@ impl PageNav {
             }),
             document: RefCell::new(None),
             time_origin: Cell::new(crate::clock::now()),
+            first_paint: Cell::new(None),
         })
     }
 
@@ -187,6 +191,7 @@ impl PageNav {
         drop(st);
         *self.document.borrow_mut() = document;
         self.time_origin.set(crate::clock::now());
+        self.first_paint.set(None);
     }
 
     pub(crate) fn set_document(&self, document: Option<(DomRef, NodeId)>) {
@@ -316,6 +321,22 @@ impl PageNav {
         });
     }
 
+    /// HTML "navigate to a fragment", for a navigation the document requested
+    /// (a followed hyperlink, a submitted GET form): when `url` is the
+    /// document's URL but for a fragment it has, the URL changes at once, in
+    /// place when it is the same URL, and `hashchange` is queued. Returns
+    /// false for any other URL, which is a navigation to load.
+    pub(crate) fn navigate_to_fragment(&self, url: &str) -> bool {
+        let (Ok(current), Ok(target)) = (Url::parse(&self.url()), Url::parse(url)) else { return false };
+        if target.fragment().is_none() || !same_document_except_fragment(&current, &target) {
+            return false;
+        }
+        let kind = if current == target { SameDocumentKind::Replace } else { SameDocumentKind::Fragment };
+        self.same_document(target.as_str(), None, kind);
+        self.queue_hashchange(current.as_str(), target.as_str());
+        true
+    }
+
     /// Queues `hashchange` at the window when a same-document navigation
     /// changed only the fragment.
     fn queue_hashchange(&self, old_url: &str, new_url: &str) {
@@ -366,9 +387,24 @@ impl PageNav {
         Ok(value)
     }
 
-    /// Milliseconds since the current document's time origin.
+    /// Milliseconds since the current document's time origin, in steps of
+    /// 100 microseconds: the resolution of `performance.now()`, animation
+    /// frame times and `Event.timeStamp` in a document that is not
+    /// cross-origin isolated (as in Chrome).
     pub fn now_ms(&self) -> f64 {
-        crate::clock::now().saturating_duration_since(self.time_origin.get()).as_secs_f64() * 1000.0
+        let ms = crate::clock::now().saturating_duration_since(self.time_origin.get()).as_secs_f64() * 1000.0;
+        (ms * 10.0).floor() / 10.0
+    }
+
+    /// Time of the current document's first paint, once it had one.
+    pub(crate) fn first_paint(&self) -> Option<f64> {
+        self.first_paint.get()
+    }
+    /// Records the first paint (now) unless one was recorded.
+    pub(crate) fn note_first_paint(&self) {
+        if self.first_paint.get().is_none() {
+            self.first_paint.set(Some(self.now_ms()));
+        }
     }
 }
 
@@ -634,14 +670,85 @@ pub struct PerformanceData {
     nav: Rc<PageNav>,
     /// Wall-clock time of the time origin (ms since the Unix epoch).
     origin_wall_ms: f64,
+    /// `Performance` is an EventTarget (`resourcetimingbufferfull`).
+    target: lp_webapi::EventTargetData,
 }
 
 impl PerformanceData {
-    pub(crate) fn new(nav: Rc<PageNav>) -> PerformanceData {
+    pub(crate) fn new(nav: Rc<PageNav>, page: &Rc<lp_webapi::PageDom>) -> PerformanceData {
         let now_wall = crate::clock::wall_ms();
         let origin_wall_ms = now_wall - nav.now_ms();
-        PerformanceData { nav, origin_wall_ms }
+        PerformanceData { nav, origin_wall_ms, target: lp_webapi::EventTargetData::new(page) }
     }
+    /// The identity its wrapper is made with (event dispatch looks it up).
+    pub(crate) fn wrapper_identity(&self) -> Option<lp_js::IdentityKey> {
+        self.target.wrapper_identity()
+    }
+    pub(crate) fn event_target(&self) -> &lp_webapi::EventTargetData {
+        &self.target
+    }
+}
+
+/// The timeline entries matching the filters: `first-paint` and
+/// `first-contentful-paint`, once the document had its first rendering
+/// opportunity (`Browser::note_first_paint`). Nothing is rasterized, so both
+/// carry the time of that opportunity.
+fn paint_entries<'s>(
+    s: &Scope<'s>,
+    p: &PerformanceData,
+    name: Option<&str>,
+    entry_type: Option<&str>,
+) -> JsResult<Value<'s>> {
+    let mut entries = Vec::new();
+    if let Some(start) = p.nav.first_paint().filter(|_| entry_type.is_none_or(|t| t == "paint")) {
+        for entry_name in ["first-paint", "first-contentful-paint"] {
+            if name.is_none_or(|n| n == entry_name) {
+                let data = PerformanceEntryData { name: entry_name, entry_type: "paint", start };
+                entries.push(s.wrap::<PerformancePaintTiming>(data, None)?.value());
+            }
+        }
+    }
+    Ok(s.array(&entries)?.value())
+}
+
+pub struct PerformanceEntryData {
+    name: &'static str,
+    entry_type: &'static str,
+    start: f64,
+}
+
+pub struct PerformanceEntry;
+
+impl JsClass for PerformanceEntry {
+    const NAME: &'static str = "PerformanceEntry";
+    type Data = PerformanceEntryData;
+    type Parent = NoParent;
+
+    fn define(def: &mut ClassDef<Self>) {
+        def.getter("name", |s, e| Ok(s.string(e.name)));
+        def.getter("entryType", |s, e| Ok(s.string(e.entry_type)));
+        def.getter("startTime", |s, e| Ok(s.number(e.start)));
+        def.getter("duration", |s, _e| Ok(s.number(0.0)));
+        def.method("toJSON", 0, |s, e, _a| {
+            let o = s.object();
+            o.set("name", s.string(e.name))?;
+            o.set("entryType", s.string(e.entry_type))?;
+            o.set("startTime", s.number(e.start))?;
+            o.set("duration", s.number(0.0))?;
+            Ok(o.value())
+        });
+    }
+}
+
+/// Paint Timing: `first-paint` / `first-contentful-paint`.
+pub struct PerformancePaintTiming;
+
+impl JsClass for PerformancePaintTiming {
+    const NAME: &'static str = "PerformancePaintTiming";
+    type Data = PerformanceEntryData;
+    type Parent = PerformanceEntry;
+
+    fn define(_def: &mut ClassDef<Self>) {}
 }
 
 pub struct Performance;
@@ -649,9 +756,10 @@ pub struct Performance;
 impl JsClass for Performance {
     const NAME: &'static str = "Performance";
     type Data = PerformanceData;
-    type Parent = NoParent;
+    type Parent = lp_webapi::EventTarget;
 
     fn define(def: &mut ClassDef<Self>) {
+        def.upcast(|p: &PerformanceData| &p.target);
         def.method("now", 0, |s, p, _a| Ok(s.number(p.nav.now_ms())));
         def.getter("timeOrigin", |s, p| Ok(s.number(p.origin_wall_ms)));
         // User Timing is not implemented: entries are not recorded.
@@ -659,9 +767,17 @@ impl JsClass for Performance {
         def.method("measure", 1, |s, _p, _a| Ok(s.undefined()));
         def.method("clearMarks", 0, |s, _p, _a| Ok(s.undefined()));
         def.method("clearMeasures", 0, |s, _p, _a| Ok(s.undefined()));
-        def.method("getEntries", 0, |s, _p, _a| Ok(s.array(&[])?.value()));
-        def.method("getEntriesByName", 1, |s, _p, _a| Ok(s.array(&[])?.value()));
-        def.method("getEntriesByType", 1, |s, _p, _a| Ok(s.array(&[])?.value()));
+        // The performance timeline only has the Paint Timing entries.
+        def.method("getEntries", 0, |s, p, _a| paint_entries(s, p, None, None));
+        def.method("getEntriesByName", 1, |s, p, a| {
+            let name = a.get(0).to_string()?;
+            let ty = a.opt(1).filter(|v| !v.is_undefined()).map(|v| v.to_string()).transpose()?;
+            paint_entries(s, p, Some(&name), ty.as_deref())
+        });
+        def.method("getEntriesByType", 1, |s, p, a| {
+            let ty = a.get(0).to_string()?;
+            paint_entries(s, p, None, Some(&ty))
+        });
         def.method("toJSON", 0, |s, p, _a| {
             let o = s.object();
             o.set("timeOrigin", s.number(p.origin_wall_ms))?;

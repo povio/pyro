@@ -16,6 +16,7 @@
 //!    `page.dispose()`. Per-world removal can use `lifecycle::realm_disposed`.
 
 pub mod abort;
+mod animation_events;
 pub mod canvas;
 pub mod collections;
 pub mod crypto;
@@ -48,6 +49,7 @@ pub mod node;
 pub mod page;
 mod popup;
 pub mod range;
+pub mod render_blocking;
 pub mod render_snapshot;
 pub mod resize_observer;
 pub mod request;
@@ -83,6 +85,7 @@ pub use page::{
     NavigationRequest, PageDom, PageHooks, RemotePoster,
 };
 pub use popup::{PopupCommand, PopupState, PopupTicket};
+pub use render_blocking::RenderBlocker;
 pub use storage::{StorageNamespace, StorageSeed};
 pub use target::{EventTarget, EventTargetData};
 pub use window::{define_members, WindowHost};

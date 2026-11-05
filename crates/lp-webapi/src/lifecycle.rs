@@ -56,6 +56,25 @@ pub fn load(page: &Rc<PageDom>, doc: NodeId) {
     }
 }
 
+/// HTML "prompt to unload" for a document about to be navigated away from:
+/// fires `beforeunload` (cancelable) at its Window. Returns whether a
+/// listener asked for the prompt (canceled the event or set `returnValue`).
+/// There is nobody to answer one, and Chrome shows none without a user
+/// gesture, so the embedder navigates either way.
+pub fn before_unload(page: &Rc<PageDom>) -> bool {
+    if page.is_disposed() || page.scripting_disabled() {
+        return false;
+    }
+    let Some(window) = page.window_target() else { return false };
+    if !page.dom.borrow().has_listeners(window) {
+        return false;
+    }
+    let ev = EventCore::trusted(page, EventInterface::BeforeUnloadEvent, "beforeunload", false, true);
+    let canceled = !fire(page, window, &ev);
+    let asked = ev.fields.borrow().data.as_deref().is_some_and(|text| !text.is_empty());
+    canceled || asked
+}
+
 fn window_key(page: &PageDom, _doc: NodeId) -> Option<lp_dom::events::TargetKey> {
     page.window_target()
 }
@@ -167,6 +186,7 @@ pub fn realm_disposed(page: &PageDom, realm: RealmId) {
     drop(page.same_objects.borrow_mut().remove(&realm));
     drop(page.structured_clones.borrow_mut().remove(&realm));
     drop(page.define_properties.borrow_mut().remove(&realm));
+    drop(page.event_unforgeables.borrow_mut().remove(&realm));
     page.pinned.borrow_mut().retain(|(r, _), _| *r != realm);
 }
 

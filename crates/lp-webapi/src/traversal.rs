@@ -4,7 +4,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use lp_dom::NodeId;
-use lp_js::{Args, ClassDef, JsClass, JsError, JsResult, NoParent, Scope, Value};
+use lp_js::{Args, ClassDef, JsClass, JsError, JsResult, NoParent, Object, Scope, Value};
 
 use crate::collections::NodeHold;
 use crate::node::{node_arg, wrap_node, NodeData};
@@ -85,17 +85,23 @@ impl WalkerData {
         let fv = f.hidden(s, FILTER)?.unwrap_or(s.null());
         let Some(fo) = fv.as_object() else { return Ok(FILTER_ACCEPT) };
         let node_v = wrap_node(s, self.page(), node)?.value();
+        // "Set the active flag ... if this throws an exception, then unset
+        // the active flag and rethrow the exception."
         self.active.set(true);
-        let r = if fo.is_function() {
-            fo.call(None, &[node_v])
-        } else {
-            match fo.get("acceptNode")?.as_object().filter(|m| m.is_function()) {
-                Some(m) => m.call(Some(fo), &[node_v]),
-                None => Err(JsError::Type("NodeFilter has no acceptNode method".into())),
-            }
-        };
+        let result = call_filter(s, fo, node_v);
         self.active.set(false);
-        Ok(r?.to_number()? as u16)
+        result
+    }
+
+    /// NodeIterator: filters `node`, the position a traversal has reached,
+    /// and returns the result with where that position is afterwards.
+    fn filter_at(&self, s: &Scope<'_>, node: NodeId, before: bool) -> JsResult<(u16, (NodeId, bool))> {
+        let Some(live) = &self.live else { return Ok((self.accept(s, node)?, (node, before))) };
+        self.page().dom.borrow_mut().set_iterator_candidate(live, Some((node, before))).js()?;
+        let result = self.accept(s, node);
+        let at = live.candidate().unwrap_or((node, before));
+        self.page().dom.borrow_mut().set_iterator_candidate(live, None).js()?;
+        Ok((result?, at))
     }
     fn cur(&self) -> NodeId {
         match &self.live {
@@ -130,10 +136,84 @@ impl WalkerData {
 
 const FILTER: &str = "__lpTraversalFilter";
 
+/// Web IDL "call a user object's operation" for the `NodeFilter` callback
+/// interface: `filter` is a function, or an object whose `acceptNode` is read
+/// on every call. It runs in the filter's associated realm (the one it was
+/// created in), so a TypeError of the conversion is that realm's.
+fn call_filter(s: &Scope<'_>, filter: Object<'_>, node: Value<'_>) -> JsResult<u16> {
+    let realm = s.object_realm(filter).filter(|r| r.id() != s.realm_id());
+    let Some(realm) = realm else { return run_filter(s, filter, node) };
+    let cs = realm.scope()?;
+    // A callback of a document that left its browsing context (a removed
+    // iframe) is no longer runnable: it throws without being called.
+    let runnable =
+        crate::target::page_of(&cs).is_ok_and(|p| !p.is_disposed() && p.hooks().is_none_or(|h| h.focus_document_is_live()));
+    if !runnable {
+        return Err(JsError::Type(
+            "Failed to execute 'acceptNode' on 'NodeFilter': The provided callback is no longer runnable.".into(),
+        ));
+    }
+    let Some(filter) = lp_js::Persistent::new(s, filter.value()).get(&cs).as_object() else {
+        return Ok(FILTER_ACCEPT);
+    };
+    let node = lp_js::Persistent::new(s, node).get(&cs);
+    run_filter(&cs, filter, node)
+}
+
+/// A TypeError of `s`'s realm, whichever realm the native caller runs in.
+fn type_error_of(s: &Scope<'_>, message: &str) -> JsError {
+    JsError::Thrown(lp_js::Persistent::new(s, JsError::Type(message.into()).to_value(s)))
+}
+
+/// Whether `o` is a revoked Proxy. Calling one throws a TypeError of the
+/// realm the Proxy was made in, where Web IDL wants the callback's realm.
+/// `Array.isArray` is the one operation that tells without running a trap.
+fn is_revoked_proxy(s: &Scope<'_>, o: Object<'_>) -> bool {
+    if !o.value().has_proxy_target().unwrap_or(false) {
+        return false;
+    }
+    let is_array = s.global().get("Array").ok().and_then(|a| a.as_object()).and_then(|a| a.get("isArray").ok());
+    is_array.and_then(|f| f.as_object()).filter(|f| f.is_function()).is_some_and(|f| f.call(None, &[o.value()]).is_err())
+}
+
+fn run_filter(s: &Scope<'_>, filter: Object<'_>, node: Value<'_>) -> JsResult<u16> {
+    let revoked = |o: Object<'_>| {
+        is_revoked_proxy(s, o).then(|| type_error_of(s, "NodeFilter callback is a revoked Proxy")).map_or(Ok(()), Err)
+    };
+    let result = if filter.is_function() {
+        revoked(filter)?;
+        filter.call(None, &[node])?
+    } else {
+        // Get(O, "acceptNode"): an exception of the getter is rethrown as is.
+        let method = match filter.get("acceptNode") {
+            Ok(m) => m,
+            Err(JsError::Thrown(e)) => return Err(JsError::Thrown(e)),
+            Err(e) => return Err(type_error_of(s, &e.to_string())),
+        };
+        match method.as_object().filter(|m| m.is_function()) {
+            Some(m) => {
+                revoked(m)?;
+                m.call(Some(filter), &[node])?
+            }
+            None => return Err(type_error_of(s, "NodeFilter has no acceptNode method")),
+        }
+    };
+    // Web IDL `unsigned short`: ToNumber, then modulo 2^16.
+    let n = result.to_number()?;
+    if !n.is_finite() {
+        return Ok(0);
+    }
+    Ok(n.trunc().rem_euclid(65536.0) as u16)
+}
+
 /// The walker data, with its identity key when it has a filter to keep on its wrapper.
 fn new_walker(s: &Scope<'_>, n: &NodeData, a: &Args<'_>) -> JsResult<(WalkerData, Option<lp_js::IdentityKey>)> {
     let root = node_arg(s, a.get(0), "createTreeWalker")?;
     let what = if a.get(1).is_undefined() { 0xFFFF_FFFF } else { to_u32(a.get(1))? };
+    // `NodeFilter?` is a callback interface: null/undefined, or any object.
+    if !a.get(2).is_nullish() && !a.get(2).is_object() {
+        return Err(JsError::Type("parameter 3 is not of type 'NodeFilter'.".into()));
+    }
     let identity = (!a.get(2).is_nullish()).then(|| n.page().event_identity(n.page().next_event_id()));
     let filter = identity.map(|key| WrapperRef::new(s, key));
     Ok((
@@ -440,12 +520,19 @@ fn iterate<'s>(s: &Scope<'s>, w: &WalkerData, forward: bool) -> JsResult<Value<'
                 None => return Ok(s.null()),
             }
         }
-        if w.accept(s, node)? == FILTER_ACCEPT {
-            w.before_ref.set(before);
-            w.set_cur(node)?;
-            w.set_before(before)?;
+        // The position reached is live while the filter runs: a filter that
+        // removes the node (or an ancestor) moves it like the reference, and
+        // the traversal goes on, or ends, from where it was moved to.
+        let position = w.filter_at(s, node, before)?;
+        let (result, (at, at_before)) = position;
+        if result == FILTER_ACCEPT {
+            w.before_ref.set(at_before);
+            w.set_cur(at)?;
+            w.set_before(at_before)?;
             return opt(s, w, Some(node));
         }
+        node = at;
+        before = at_before;
     }
 }
 
@@ -457,7 +544,7 @@ impl JsClass for NodeIterator {
     fn define(def: &mut ClassDef<Self>) {
         def.getter("root", |s, w| Ok(wrap_node(s, w.page(), w.root.id)?.value()));
         def.getter("referenceNode", |s, w| Ok(wrap_node(s, w.page(), w.cur())?.value()));
-        def.getter("pointerBeforeReferenceNode", |s, w| Ok(s.boolean(w.before_ref.get())));
+        def.getter("pointerBeforeReferenceNode", |s, w| Ok(s.boolean(w.before())));
         def.getter("whatToShow", |s, w| Ok(s.number(w.what_to_show as f64)));
         def.getter("filter", |s, w| match &w.filter {
             Some(f) => Ok(f.hidden(s, FILTER)?.unwrap_or(s.null())),

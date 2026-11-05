@@ -11,10 +11,10 @@ use std::collections::HashMap;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use lp_dom::{attr_name_hash, CollectionWatch, Dom, NodeId, NodeType};
+use lp_dom::{attr_name_hash, CollectionWatch, Dom, NodeId};
 use lp_js::{ClassDef, IdentityKey, JsClass, JsError, JsResult, NoParent, Object, Scope, Value};
 
-use crate::node::wrap_node;
+use crate::node::{wrap_node, NodeData};
 use crate::page::PageDom;
 use crate::util::*;
 
@@ -131,6 +131,7 @@ impl JsClass for NodeList {
                 None => Ok(s.null()),
             }
         });
+        def.legacy_platform_object();
         def.indexed(|s, l, i| match l.get(i as usize) {
             Some((p, id)) => Ok(Some(wrap_node(s, &p, id)?.value())),
             None => Ok(None),
@@ -259,7 +260,19 @@ pub fn child_nodes<'s>(s: &Scope<'s>, page: &PageDom, id: NodeId) -> JsResult<Ob
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum CollectionKind {
     Children,
+    /// `getElementsByTagName(name)`: elements whose qualified name is `name`
+    /// (`*`: all). [`collection`] turns it into `TagNameHtml` where the DOM's
+    /// "list of elements with qualified name" lowercases for HTML elements.
     TagName(String),
+    /// `getElementsByTagName(name)` with ASCII uppercase letters in `name`,
+    /// asked of a root whose node document was an HTML document at the time:
+    /// HTML elements match `lower` (`name` in ASCII lowercase), elements of
+    /// other namespaces `name` itself. The choice stays with the collection
+    /// when its root later moves to an XML document.
+    TagNameHtml {
+        name: String,
+        lower: String,
+    },
     TagNameNs(String, String),
     ClassName(String),
     Name(String),
@@ -315,7 +328,7 @@ fn watch(kind: &CollectionKind) -> Option<CollectionWatch> {
         CollectionKind::Children => {
             CollectionWatch { children_only: true, elements_only: true, ..CollectionWatch::default() }
         }
-        CollectionKind::TagName(_) | CollectionKind::TagNameNs(..) => subtree(&[]),
+        CollectionKind::TagName(_) | CollectionKind::TagNameHtml { .. } | CollectionKind::TagNameNs(..) => subtree(&[]),
         CollectionKind::ClassName(_) => subtree(&["class"]),
         CollectionKind::Name(_) => subtree(&["name"]),
         CollectionKind::WindowNamed(_) | CollectionKind::DocumentNamed(_) => subtree(&["id", "name"]),
@@ -330,24 +343,8 @@ fn matches_kind(dom: &Dom, root: NodeId, id: NodeId, kind: &CollectionKind) -> b
     let html = e.is_html();
     let local = &*e.name.local;
     match kind {
-        CollectionKind::TagName(t) => {
-            if t == "*" {
-                return true;
-            }
-            let fold = html
-                && dom
-                    .node_document(id)
-                    .ok()
-                    .and_then(|d| dom.document_data(d).ok())
-                    .is_some_and(|d| d.kind == lp_dom::DocumentKind::Html);
-            let (prefix, wanted_local) = t.split_once(':').unwrap_or(("", t));
-            let actual_prefix = e.name.prefix.as_deref().unwrap_or("");
-            if fold {
-                actual_prefix.eq_ignore_ascii_case(prefix) && local.eq_ignore_ascii_case(wanted_local)
-            } else {
-                actual_prefix == prefix && local == wanted_local
-            }
-        }
+        CollectionKind::TagName(t) => t == "*" || qualified_name_is(e, t),
+        CollectionKind::TagNameHtml { name, lower } => qualified_name_is(e, if html { lower } else { name }),
         CollectionKind::TagNameNs(namespace, name) => {
             (namespace == "*" || namespace.as_str() == &*e.name.ns) && (name == "*" || name.as_str() == local)
         }
@@ -383,6 +380,18 @@ fn matches_kind(dom: &Dom, root: NodeId, id: NodeId, kind: &CollectionKind) -> b
                 && dom.form_owner(id).ok().flatten() == Some(root)
         }
         _ => false,
+    }
+}
+
+/// Whether the element's qualified name (`prefix:local`, else `local`) is
+/// `wanted`, compared case-sensitively.
+fn qualified_name_is(e: &lp_dom::node::ElementData, wanted: &str) -> bool {
+    let local = &*e.name.local;
+    match e.name.prefix.as_deref() {
+        Some(prefix) if !prefix.is_empty() => {
+            wanted.strip_prefix(prefix).and_then(|rest| rest.strip_prefix(':')).is_some_and(|l| l == local)
+        }
+        _ => wanted == local,
     }
 }
 
@@ -481,6 +490,25 @@ impl CollectionData {
             dom.element(n).is_ok_and(|e| e.id() == Some(name) || (e.is_html() && e.attr("name") == Some(name)))
         })
     }
+    /// The supported property names (DOM, HTMLCollection): of each element
+    /// in tree order its non-empty `id`, then its non-empty `name` when it is
+    /// an HTML element, without duplicates.
+    fn supported_names(&self) -> Vec<String> {
+        let items = self.items();
+        let dom = self.root.page.dom.borrow();
+        let mut seen = std::collections::HashSet::new();
+        let mut names = Vec::new();
+        for id in items {
+            let Ok(e) = dom.element(id) else { continue };
+            let name = if e.is_html() { e.attr("name") } else { None };
+            for n in [e.id(), name].into_iter().flatten() {
+                if !n.is_empty() && seen.insert(n) {
+                    names.push(n.to_owned());
+                }
+            }
+        }
+        names
+    }
 }
 
 pub struct HtmlCollection;
@@ -513,7 +541,10 @@ impl JsClass for HtmlCollection {
             Some(id) => Ok(Some(wrap_node(s, &c.root.page, id)?.value())),
             None => Ok(None),
         });
-        def.indexed_iterable();
+        def.unenumerable_property_names(|_s, c| Ok(c.supported_names()));
+        // No `iterable<>` declaration: @@iterator alone.
+        def.indexed_iterator();
+        def.legacy_platform_object();
     }
 }
 
@@ -559,8 +590,58 @@ impl JsClass for HtmlOptionsCollection {
             }
             Ok(s.undefined())
         });
+        // The indexed property setter (HTML, "set the value of a new indexed
+        // property"); the class is the one collection whose indices can be
+        // written. Other names: a visible named property stays read-only,
+        // anything else becomes an own property.
+        def.named_setter(|s, c, name, v| {
+            let Some(index) = name.parse::<u32>().ok().filter(|i| *i != u32::MAX && i.to_string() == name) else {
+                return Ok(c.named(name).is_some());
+            };
+            let index = index as usize;
+            // Browsers refuse to grow a select past this many options.
+            const MAX_OPTIONS: usize = 100_000;
+            let mut dom = c.root.page.dom.borrow_mut();
+            let options = dom.select_options(c.root.id).js()?;
+            if index >= MAX_OPTIONS && index >= options.len() {
+                return Ok(true);
+            }
+            if v.is_nullish() {
+
+                if let Some(&option) = options.get(index) {
+                    dom.remove_node(option).js()?;
+                }
+                return Ok(true);
+            }
+            let option = s
+                .unwrap::<crate::node::Node>(v)
+                .map(|n| n.id)
+                .filter(|&id| dom.element(id).is_ok_and(|e| e.is_html() && &*e.name.local == "option"))
+                .ok_or_else(|| {
+                    JsError::Type("Failed to set an indexed property on 'HTMLOptionsCollection': not an HTMLOptionElement.".into())
+                })?;
+            match options.get(index) {
+                Some(&old) => {
+                    if old != option {
+                        let parent = dom.parent(old).js()?.unwrap_or(c.root.id);
+                        dom.replace_child(parent, option, old).js()?;
+                    }
+                }
+                None => {
+                    // Options without attributes or children fill the gap.
+                    let doc = dom.node_document(c.root.id).js()?;
+                    for _ in options.len()..index {
+                        let filler = dom.create_element_ns(doc, Some("http://www.w3.org/1999/xhtml"), "option").js()?;
+                        dom.insert_before(c.root.id, filler, None).js()?;
+                    }
+                    dom.insert_before(c.root.id, option, None).js()?;
+                }
+            }
+            Ok(true)
+        });
     }
 }
+
 
 fn kind_slot(kind: &CollectionKind) -> Option<u64> {
     Some(match kind {
@@ -588,6 +669,26 @@ pub fn collection<'s>(s: &Scope<'s>, page: &PageDom, root: NodeId, kind: Collect
     }
     let page = page_rc(s)?;
     let options = kind == CollectionKind::Options;
+    let kind = match kind {
+        // DOM "list of elements with qualified name": whether HTML elements
+        // are matched against the lowercased name is decided here, by the
+        // root's node document.
+        CollectionKind::TagName(name) if name.bytes().any(|b| b.is_ascii_uppercase()) => {
+            let dom = page.dom.borrow();
+            let html_document = dom
+                .node_document(root)
+                .ok()
+                .and_then(|d| dom.document_data(d).ok())
+                .is_some_and(|d| d.kind == lp_dom::DocumentKind::Html);
+            if html_document {
+                let lower = name.to_ascii_lowercase();
+                CollectionKind::TagNameHtml { name, lower }
+            } else {
+                CollectionKind::TagName(name)
+            }
+        }
+        kind => kind,
+    };
     let data =
         CollectionData { root: NodeHold::new(&page, root)?, kind, cache: RefCell::new((u64::MAX, Rc::default())) };
     if options {
@@ -676,7 +777,9 @@ impl JsClass for DomTokenList {
             let i = to_u32(a.get(0))? as usize;
             Ok(t.tokens().get(i).map_or(s.null(), |x| s.string(x)))
         });
+        def.legacy_platform_object();
         def.indexed(|s, t, i| Ok(t.tokens().get(i as usize).map(|x| s.string(x))));
+
         def.method("contains", 1, |s, t, a| {
             let tok = dom_string(a.get(0))?;
             Ok(s.boolean(t.tokens().contains(&tok)))
@@ -729,12 +832,17 @@ impl JsClass for DomTokenList {
             check_tokens(&[old.clone(), new.clone()])?;
             let mut toks = t.tokens();
             let Some(pos) = toks.iter().position(|x| *x == old) else { return Ok(s.boolean(false)) };
-            if old != new {
-                if toks.contains(&new) {
-                    toks.remove(pos);
-                } else {
-                    toks[pos] = new;
-                }
+            // Infra "replace" in an ordered set: the first of either token
+            // becomes the new one, every other instance of both goes.
+            let first = toks.iter().position(|x| *x == old || *x == new).unwrap_or(pos);
+            let mut at = 0;
+            toks.retain(|x| {
+                let keep = at == first || (*x != old && *x != new);
+                at += 1;
+                keep
+            });
+            if let Some(slot) = toks.iter_mut().find(|x| **x == old) {
+                *slot = new;
             }
             t.write(&toks)?;
             Ok(s.boolean(true))
@@ -774,6 +882,8 @@ pub fn token_list<'s>(s: &Scope<'s>, page: &PageDom, id: NodeId, attr: &'static 
         "part" => 13,
         "rel" => 14,
         "sandbox" => 15,
+        // `link` has both `sizes` (16) and `blocking`.
+        "blocking" => 17,
         _ => 16,
     };
     let key = coll_identity(page, slot, id);
@@ -790,19 +900,17 @@ pub struct NamedNodeMapData {
     el: NodeHold,
 }
 
-/// Identity of an attribute on its element: (namespace, local name), plus
-/// the qualified name it is exposed under.
+/// Identity of an attribute on its element: (namespace, local name).
 #[derive(Clone)]
 pub(crate) struct AttrName {
     /// Empty for no namespace.
     pub ns: String,
     pub local: String,
-    pub qualified: String,
 }
 
 impl AttrName {
     pub(crate) fn of(a: &lp_dom::Attr) -> AttrName {
-        AttrName { ns: a.name.ns.to_string(), local: a.name.local.to_string(), qualified: a.qualified_name() }
+        AttrName { ns: a.name.ns.to_string(), local: a.name.local.to_string() }
     }
     pub(crate) fn ns(&self) -> Option<&str> {
         (!self.ns.is_empty()).then_some(self.ns.as_str())
@@ -813,82 +921,12 @@ impl AttrName {
     }
 }
 
-pub struct AttrData {
-    page: Rc<PageDom>,
-    /// The element this attribute belongs to (`None`: created detached).
-    el: RefCell<Option<NodeHold>>,
-    name: RefCell<AttrName>,
-    /// The value while detached (`createAttribute`, or after removal), kept
-    /// current on every read while attached.
-    value: RefCell<String>,
-    /// This wrapper's identity key; the element's current key for the
-    /// attribute says whether this wrapper still represents it.
-    key: IdentityKey,
-}
-
-static NEXT_DETACHED_ATTR: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
-
-impl AttrData {
-    /// The element this attribute is attached to, if it still is.
-    fn owner(&self) -> Option<NodeId> {
-        let hold = self.el.borrow();
-        let hold = hold.as_ref()?;
-        let name = self.name.borrow();
-        let dom = self.page.dom.borrow();
-        let present = dom.attributes(hold.id).ok().is_some_and(|attrs| name.find(attrs).is_some());
-        if !present {
-            return None;
-        }
-        drop(dom);
-        (attr_key(&self.page, hold.id, &name) == self.key).then_some(hold.id)
-    }
-    fn value(&self) -> JsResult<String> {
-        if let Some(el) = self.owner() {
-            let name = self.name.borrow();
-            let dom = self.page.dom.borrow();
-            let v = dom.get_attribute_ns(el, name.ns(), &name.local).js()?.unwrap_or("").to_owned();
-            drop(dom);
-            *self.value.borrow_mut() = v.clone();
-            return Ok(v);
-        }
-        Ok(self.value.borrow().clone())
-    }
-    fn set_value(&self, v: Value<'_>) -> JsResult<()> {
-        let value = dom_string(v)?;
-        if let Some(el) = self.owner() {
-            let name = self.name.borrow();
-            let mut dom = self.page.dom.borrow_mut();
-            dom.set_existing_attribute_ns(el, name.ns(), &name.local, &value).js()?;
-        }
-        *self.value.borrow_mut() = value;
-        Ok(())
-    }
-    /// Remembers the current value, for after the attribute leaves its element.
-    fn snapshot(&self) {
-        let _ = self.value();
-    }
-}
-
-/// The identity key of element `el`'s attribute `name`: the wrapper adopted
-/// by `setAttributeNode`, else the default one.
-pub(crate) fn attr_key(page: &PageDom, el: NodeId, name: &AttrName) -> IdentityKey {
-    if let Some(k) = page.attr_keys.borrow().get(&(el, name.ns.clone(), name.local.clone())) {
-        return *k;
-    }
-    let base = coll_identity(page, 22, el);
-    let mut h: u64 = 0xcbf29ce484222325;
-    for b in name.ns.bytes().chain([0u8]).chain(name.local.bytes()) {
-        h = (h ^ u64::from(b)).wrapping_mul(0x100000001b3);
-    }
-    IdentityKey(base.0, base.1 ^ h)
-}
-
-/// Attribute of `el` with qualified name `name` (lowercased on HTML
-/// elements, like `getAttribute`).
+/// Attribute of `el` with qualified name `name` (lowercased on an HTML
+/// element of an HTML document, like `getAttribute`).
 fn attr_named(page: &PageDom, el: NodeId, name: &str) -> JsResult<Option<AttrName>> {
     let dom = page.dom.borrow();
-    let lower = if dom.element(el).js()?.is_html() { name.to_ascii_lowercase() } else { name.to_owned() };
-    Ok(dom.attributes(el).js()?.iter().find(|a| a.qualified_name() == lower).map(AttrName::of))
+    let at = dom.attribute_index_qualified(el, name).js()?;
+    Ok(at.map(|k| AttrName::of(&dom.attributes(el).unwrap_or_default()[k])))
 }
 
 pub(crate) fn attr_named_qualified(page: &PageDom, el: NodeId, name: &str) -> JsResult<Option<AttrName>> {
@@ -941,7 +979,7 @@ impl JsClass for NamedNodeMap {
                 return Err(JsError::dom("NotFoundError", format!("No item with name '{name}' was found.")));
             };
             let attr = make_attr(s, &m.el.page, m.el.id, found.clone())?;
-            detach_attr(s, &m.el.page, m.el.id, &found)?;
+            m.el.page.dom.borrow_mut().remove_attribute_ns(m.el.id, found.ns(), &found.local).js()?;
             Ok(attr)
         });
         def.method("removeNamedItemNS", 2, |s, m, a| {
@@ -951,15 +989,40 @@ impl JsClass for NamedNodeMap {
                 return Err(JsError::dom("NotFoundError", format!("No item with name '{local}' was found.")));
             };
             let attr = make_attr(s, &m.el.page, m.el.id, found.clone())?;
-            detach_attr(s, &m.el.page, m.el.id, &found)?;
+            m.el.page.dom.borrow_mut().remove_attribute_ns(m.el.id, found.ns(), &found.local).js()?;
             Ok(attr)
         });
         def.named(false, |s, m, name| match attr_named(&m.el.page, m.el.id, name)? {
             Some(n) => Ok(Some(make_attr(s, &m.el.page, m.el.id, n)?)),
             None => Ok(None),
         });
-        def.indexed_iterable();
+        // The supported property names (DOM, NamedNodeMap): the attributes'
+        // qualified names without duplicates; on an HTML element of an HTML
+        // document not those with ASCII uppercase letters, which the named
+        // getter (it lowercases) never finds.
+        def.unenumerable_property_names(|_s, m| {
+            let dom = m.el.page.dom.borrow();
+            let lowercase_only = dom.element(m.el.id).js()?.is_html()
+                && dom
+                    .node_document(m.el.id)
+                    .ok()
+                    .and_then(|d| dom.document_data(d).ok())
+                    .is_some_and(|d| d.kind == lp_dom::DocumentKind::Html);
+            let mut names: Vec<String> = Vec::new();
+            for a in dom.attributes(m.el.id).js()? {
+                let name = a.qualified_name();
+                if !names.contains(&name) && !(lowercase_only && name.bytes().any(|b| b.is_ascii_uppercase())) {
+                    names.push(name);
+                }
+            }
+            Ok(names)
+        });
+        // No `iterable<>` declaration: @@iterator alone.
+
+        def.indexed_iterator();
+        def.legacy_platform_object();
     }
+
 }
 
 fn attr_at<'s>(s: &Scope<'s>, m: &NamedNodeMapData, i: usize) -> JsResult<Option<Value<'s>>> {
@@ -970,70 +1033,33 @@ fn attr_at<'s>(s: &Scope<'s>, m: &NamedNodeMapData, i: usize) -> JsResult<Option
     }
 }
 
-/// Owner page, owner element and name of an `Attr`.
-pub(crate) fn attr_of(a: &AttrData) -> (&Rc<PageDom>, Option<NodeId>, AttrName) {
-    (&a.page, a.owner(), a.name.borrow().clone())
+/// Owner element and name of the `Attr` wrapped by `n` (`None`: not an Attr).
+pub(crate) fn attr_of(n: &NodeData) -> Option<(Option<NodeId>, AttrName)> {
+    let dom = n.page().dom.borrow();
+    let a = dom.attr_node_data(n.id).ok()?;
+    let name = AttrName { ns: a.name.ns.to_string(), local: a.name.local.to_string() };
+    Some((dom.attr_owner_element(n.id).ok()?, name))
 }
 
-/// The Attr wrapper of element `el`'s attribute `name`.
+/// The Attr node of element `el`'s attribute `name`: the same object for as
+/// long as the attribute stays on the element (null when it is not there).
 pub(crate) fn make_attr<'s>(s: &Scope<'s>, page: &Rc<PageDom>, el: NodeId, name: AttrName) -> JsResult<Value<'s>> {
-    let key = attr_key(page, el, &name);
-    if let Some(o) = s.lookup_identity(key) {
-        if let Some(a) = s.unwrap::<Attr>(o.value()) {
-            a.snapshot();
-        }
-        return Ok(o.value());
+    let node = page.dom.borrow_mut().attribute_node(el, name.ns(), &name.local).js()?;
+    match node {
+        Some(id) => Ok(wrap_node(s, page, id)?.value()),
+        None => Ok(s.null()),
     }
-    let data = AttrData {
-        page: page.clone(),
-        el: RefCell::new(Some(NodeHold::new(page, el)?)),
-        name: RefCell::new(name),
-        value: RefCell::new(String::new()),
-        key,
-    };
-    let o = s.wrap::<Attr>(data, Some(key))?;
-    if let Some(a) = s.unwrap::<Attr>(o.value()) {
-        a.snapshot();
-    }
-    Ok(o.value())
 }
 
-/// `document.createAttribute[NS]`: a detached Attr.
+/// `document.createAttribute[NS]`: an Attr of `doc` without an element.
 pub(crate) fn make_detached_attr<'s>(
     s: &Scope<'s>,
     page: &Rc<PageDom>,
-    ns: Option<&str>,
-    qualified: &str,
+    doc: NodeId,
+    name: lp_dom::QualName,
 ) -> JsResult<Value<'s>> {
-    let (prefix, local) = match qualified.split_once(':') {
-        Some((p, l)) => (Some(p), l),
-        None => (None, qualified),
-    };
-    let _ = prefix;
-    let name = AttrName { ns: ns.unwrap_or("").to_owned(), local: local.to_owned(), qualified: qualified.to_owned() };
-    let key = IdentityKey(1 << 59, NEXT_DETACHED_ATTR.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
-    let data = AttrData {
-        page: page.clone(),
-        el: RefCell::new(None),
-        name: RefCell::new(name),
-        value: RefCell::new(String::new()),
-        key,
-    };
-    Ok(s.wrap::<Attr>(data, Some(key))?.value())
-}
-
-/// Removes attribute `name` from `el`, keeping its wrapper's last value.
-fn detach_attr(s: &Scope<'_>, page: &Rc<PageDom>, el: NodeId, name: &AttrName) -> JsResult<()> {
-    let key = attr_key(page, el, name);
-    if let Some(o) = s.lookup_identity(key) {
-        if let Some(a) = s.unwrap::<Attr>(o.value()) {
-            a.snapshot();
-        }
-    }
-    page.attr_keys.borrow_mut().remove(&(el, name.ns.clone(), name.local.clone()));
-    let mut dom = page.dom.borrow_mut();
-    dom.remove_attribute_ns(el, name.ns(), &name.local).js()?;
-    Ok(())
+    let id = page.dom.borrow_mut().create_attribute(doc, name).js()?;
+    Ok(wrap_node(s, page, id)?.value())
 }
 
 /// `Element.setAttributeNode[NS]` / `NamedNodeMap.setNamedItem[NS]`:
@@ -1047,40 +1073,12 @@ pub(crate) fn set_attribute_node<'s>(
     let Some(a) = s.unwrap::<Attr>(attr) else {
         return Err(JsError::Type("parameter 1 is not of type 'Attr'.".into()));
     };
-    if let Some(owner) = a.owner() {
-        if owner != el {
-            return Err(JsError::dom("InUseAttributeError", "The attribute is in use by another element."));
-        }
-        return Ok(attr);
+    let replaced = page.dom.borrow_mut().set_attribute_node(el, a.id).js()?;
+    match replaced {
+        Some(old) if old == a.id => Ok(attr),
+        Some(old) => Ok(wrap_node(s, page, old)?.value()),
+        None => Ok(s.null()),
     }
-    let name = a.name.borrow().clone();
-    let value = a.value()?;
-    let old = attr_named_ns(page, el, name.ns(), &name.local)?;
-    let replaced = match &old {
-        Some(old_name) => {
-            let old_attr = make_attr(s, page, el, old_name.clone())?;
-            let mut dom = page.dom.borrow_mut();
-            dom.set_existing_attribute_ns(el, name.ns(), &name.local, &value).js()?;
-            drop(dom);
-            old_attr
-        }
-        None => {
-            let mut dom = page.dom.borrow_mut();
-            match name.ns() {
-                Some(ns) => dom.set_attribute_ns(el, Some(ns), &name.qualified, &value).js()?,
-                None => dom.set_attribute(el, &name.qualified, &value).js()?,
-            }
-            drop(dom);
-            s.null()
-        }
-    };
-    page.attr_keys.borrow_mut().insert((el, name.ns.clone(), name.local.clone()), a.key);
-    *a.el.borrow_mut() = Some(NodeHold::new(page, el)?);
-    // The element's own spelling of the name (HTML lowercases).
-    if let Some(now) = attr_named_ns(page, el, name.ns(), &name.local)? {
-        *a.name.borrow_mut() = now;
-    }
-    Ok(replaced)
 }
 
 /// `Element.removeAttributeNode`.
@@ -1093,81 +1091,46 @@ pub(crate) fn remove_attribute_node<'s>(
     let Some(a) = s.unwrap::<Attr>(attr) else {
         return Err(JsError::Type("parameter 1 is not of type 'Attr'.".into()));
     };
-    if a.owner() != Some(el) {
-        return Err(JsError::dom("NotFoundError", "The node was not found."));
-    }
-    let name = a.name.borrow().clone();
-    detach_attr(s, page, el, &name)?;
+    page.dom.borrow_mut().remove_attribute_node(el, a.id).js()?;
     Ok(attr)
 }
 
+/// `Attr`: a Node (https://dom.spec.whatwg.org/#interface-attr). The Node
+/// members (`nodeValue`, `textContent`, `cloneNode`, `isEqualNode`..) come
+/// from `Node`; the attribute's state lives in `lp_dom` (`Dom::attribute_node`).
 pub struct Attr;
 impl JsClass for Attr {
     const NAME: &'static str = "Attr";
-    type Data = AttrData;
-    type Parent = NoParent;
+    type Data = NodeData;
+    type Parent = crate::node::Node;
     fn define(def: &mut ClassDef<Self>) {
-        def.getter("name", |s, a| Ok(s.string(&a.name.borrow().qualified)));
-        def.getter("nodeName", |s, a| Ok(s.string(&a.name.borrow().qualified)));
-        def.getter("nodeType", |s, _a| Ok(s.number(NodeType::Attribute as u16 as f64)));
-        def.getter("localName", |s, a| Ok(s.string(&a.name.borrow().local)));
+        def.getter("name", |s, a| Ok(s.string(&a.page().dom.borrow().attr_node_data(a.id).js()?.qualified_name())));
+        def.getter("localName", |s, a| Ok(s.string(&a.page().dom.borrow().attr_node_data(a.id).js()?.name.local)));
         def.getter("prefix", |s, a| {
-            let name = a.name.borrow();
-            let prefix = name.qualified.strip_suffix(name.local.as_str()).and_then(|p| p.strip_suffix(':'));
-            Ok(prefix.map_or(s.null(), |p| s.string(p)))
+            let dom = a.page().dom.borrow();
+            Ok(match &dom.attr_node_data(a.id).js()?.name.prefix {
+                Some(p) if !p.is_empty() => s.string(p),
+                _ => s.null(),
+            })
         });
-        def.getter("namespaceURI", |s, a| Ok(a.name.borrow().ns().map_or(s.null(), |ns| s.string(ns))));
-        def.accessor("value", |s, a| Ok(s.string(&a.value()?)), |_s, a, v| a.set_value(v));
-        def.accessor("nodeValue", |s, a| Ok(s.string(&a.value()?)), |_s, a, v| a.set_value(v));
-        def.accessor("textContent", |s, a| Ok(s.string(&a.value()?)), |_s, a, v| a.set_value(v));
-        def.getter("ownerElement", |s, a| match a.owner() {
-            Some(el) => Ok(wrap_node(s, &a.page, el)?.value()),
-            None => Ok(s.null()),
+        def.getter("namespaceURI", |s, a| {
+            let dom = a.page().dom.borrow();
+            let ns = &dom.attr_node_data(a.id).js()?.name.ns;
+            Ok(if ns.is_empty() { s.null() } else { s.string(ns) })
         });
-        def.getter("ownerDocument", |s, a| Ok(wrap_node(s, &a.page, a.page.document())?.value()));
+        def.accessor(
+            "value",
+            |s, a| Ok(s.string(a.page().dom.borrow().attr_node_value(a.id).js()?)),
+            |_s, a, v| {
+                let value = dom_string(v)?;
+                a.page().dom.borrow_mut().set_attr_node_value(a.id, &value).js()
+            },
+        );
+        def.getter("ownerElement", |s, a| {
+            let owner = a.page().dom.borrow().attr_owner_element(a.id).js()?;
+            crate::node::node_value(s, a.page(), owner)
+        });
         def.getter("specified", |s, _a| Ok(s.boolean(true)));
-        def.getter("parentNode", |s, _a| Ok(s.null()));
-        def.getter("parentElement", |s, _a| Ok(s.null()));
-        def.getter("childNodes", |s, _a| Ok(s.array(&[])?.value()));
-        def.getter("firstChild", |s, _a| Ok(s.null()));
-        def.getter("lastChild", |s, _a| Ok(s.null()));
-        def.getter("previousSibling", |s, _a| Ok(s.null()));
-        def.getter("nextSibling", |s, _a| Ok(s.null()));
-        def.getter("isConnected", |s, a| Ok(s.boolean(a.owner().is_some_and(|el| a.page.dom.borrow().is_connected(el).unwrap_or(false)))));
-        def.getter("baseURI", |s, a| {
-            let dom = a.page.dom.borrow();
-            Ok(s.string(dom.document_base_url(a.page.document()).js()?))
-        });
-        def.method("hasChildNodes", 0, |s, _a, _| Ok(s.boolean(false)));
-        def.method("cloneNode", 0, |s, a, _| {
-            let name = a.name.borrow().clone();
-            let value = a.value()?;
-            let clone = make_detached_attr(s, &a.page, name.ns(), &name.qualified)?;
-            if let Some(c) = s.unwrap::<Attr>(clone) {
-                *c.value.borrow_mut() = value;
-            }
-            Ok(clone)
-        });
-        def.method("isEqualNode", 1, |s, a, args| {
-            let Some(b) = s.unwrap::<Attr>(args.get(0)) else { return Ok(s.boolean(false)) };
-            let (an, bn) = (a.name.borrow().clone(), b.name.borrow().clone());
-            Ok(s.boolean(an.ns == bn.ns && an.local == bn.local && a.value()? == b.value()?))
-        });
-        def.method("isSameNode", 1, |s, a, args| {
-            Ok(s.boolean(s.unwrap::<Attr>(args.get(0)).is_some_and(|b| b.key == a.key)))
-        });
-        def.method("lookupNamespaceURI", 1, |s, a, args| {
-            let prefix = opt_dom_string(args.get(0))?;
-            let Some(el) = a.owner() else { return Ok(s.null()) };
-            let dom = a.page.dom.borrow();
-            Ok(dom.lookup_namespace_uri(el, prefix.as_deref()).js()?.map_or(s.null(), |n| s.string(n)))
-        });
-        def.method("lookupPrefix", 1, |s, a, args| {
-            let ns = opt_dom_string(args.get(0))?;
-            let Some(el) = a.owner() else { return Ok(s.null()) };
-            let dom = a.page.dom.borrow();
-            Ok(dom.lookup_prefix(el, ns.as_deref()).js()?.map_or(s.null(), |n| s.string(n)))
-        });
     }
 }
 

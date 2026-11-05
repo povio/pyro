@@ -312,6 +312,37 @@ impl Dom {
             None => e.attr("selected").is_some(),
         }
     }
+    /// Before `node` leaves its parent: an option its select shows as
+    /// selected only by default (the selectedness setting algorithm picked
+    /// it) keeps that selectedness outside the select, as its selectedness
+    /// is state of the option. Covers an option and the options of an
+    /// optgroup.
+    pub(crate) fn options_before_remove(&mut self, node: u32) {
+        let (select, options): (u32, Vec<u32>) = match self.html_local(node).map(|l| &**l) {
+            Some("option") => (self.option_select(node), vec![node]),
+            Some("optgroup") => {
+                let parent = self.n(node).parent;
+                if parent == NIL || self.html_local(parent) != Some(&local_name!("select")) {
+                    return;
+                }
+                let options =
+                    self.child_idx_iter(node).filter(|&c| self.html_local(c) == Some(&local_name!("option"))).collect();
+                (parent, options)
+            }
+            _ => return,
+        };
+        if select == NIL {
+            return;
+        }
+        let selected = self.selected_options_idx(select);
+        for option in options {
+            if selected.contains(&option) && !self.option_explicit(option) {
+                if let Some(e) = self.n_mut(option).element_mut() {
+                    e.control.get_or_insert_with(Default::default).selected = Some(true);
+                }
+            }
+        }
+    }
     fn option_select(&self, opt: u32) -> u32 {
         let mut p = self.n(opt).parent;
         if p != NIL && self.html_local(p) == Some(&local_name!("optgroup")) {
@@ -349,6 +380,12 @@ impl Dom {
         }
         if let Some(&last) = opts.iter().rev().find(|&&o| self.option_explicit(o)) {
             return vec![last];
+        }
+        // The selectedness setting algorithm runs when options come and go,
+        // not after script deselected them all.
+        let deselected = self.n(select).element().unwrap().control.as_ref().and_then(|c| c.no_selection.as_deref());
+        if deselected == Some(opts.as_slice()) {
+            return Vec::new();
         }
         let size =
             self.n(select).element().unwrap().attr("size").and_then(|s| s.trim().parse::<u32>().ok()).unwrap_or(1);
@@ -389,7 +426,24 @@ impl Dom {
             }
         }
         self.control_state_mut(opt)?.selected = Some(v);
+        // The setter asks the select for a reset.
+        if select != NIL {
+            self.set_no_selection(select, None);
+        }
         Ok(())
+    }
+    /// Records that script left the options `opts` of `select` all
+    /// deselected (`None`: the default selection applies again).
+    fn set_no_selection(&mut self, select: u32, opts: Option<Vec<u32>>) {
+        let Some(el) = self.n_mut(select).element_mut() else { return };
+        match opts {
+            Some(opts) => el.control.get_or_insert_with(Default::default).no_selection = Some(opts.into()),
+            None => {
+                if let Some(c) = el.control.as_mut() {
+                    c.no_selection = None;
+                }
+            }
+        }
     }
     pub fn set_selected_index(&mut self, select: NodeId, index: i32) -> DomResult<()> {
         let s = self.check(select)?;
@@ -398,6 +452,8 @@ impl Dom {
             let oid = self.id_of(o);
             self.control_state_mut(oid)?.selected = Some(k as i32 == index);
         }
+        let none = index < 0 || index as usize >= opts.len();
+        self.set_no_selection(s, none.then_some(opts));
         Ok(())
     }
 
@@ -514,6 +570,8 @@ impl Dom {
                     found |= hit;
                     self.control_state_mut(oid)?.selected = Some(hit);
                 }
+                let opts = self.select_options_idx(i);
+                self.set_no_selection(i, (!found).then_some(opts));
             }
             _ => self.set_attribute(id, "value", v)?,
         }
@@ -546,6 +604,28 @@ impl Dom {
         let c = self.control_state_mut(id)?;
         c.selection = (start, end);
         c.selection_set = true;
+        Ok(())
+    }
+
+    /// `selectionDirection`: `Some(true)` backward, `Some(false)` forward,
+    /// `None` for "none" (no direction was given for the current selection).
+    pub fn selection_direction(&self, id: NodeId) -> DomResult<Option<bool>> {
+        let selection = self.selection(id)?;
+        let i = self.check(id)?;
+        let e = self.n(i).element().ok_or(DomError::Type("not an element"))?;
+        Ok(e.control
+            .as_ref()
+            .and_then(|c| c.selection_direction)
+            .filter(|(_, of)| *of == selection)
+            .map(|(backward, _)| backward))
+    }
+    /// Gives the current selection a direction (`None`: "none"). A later
+    /// selection change resets it.
+    pub fn set_selection_direction(&mut self, id: NodeId, backward: Option<bool>) -> DomResult<()> {
+        let selection = self.selection(id)?;
+        let i = self.check(id)?;
+        let e = self.n_mut(i).element_mut().ok_or(DomError::Type("not an element"))?;
+        e.control.get_or_insert_with(Default::default).selection_direction = backward.map(|b| (b, selection));
         Ok(())
     }
 

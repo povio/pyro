@@ -15,14 +15,59 @@ type AbortHook = Box<dyn FnOnce(&PageDom)>;
 
 /// The abort reason, a hidden property of the signal's wrapper.
 const REASON: &str = "__lpAbortReason";
+/// The signal's "dependent signals" (`AbortSignal.any` results that follow
+/// it), an array on the signal's wrapper.
+const DEPENDENTS: &str = "__lpAbortDependents";
+/// A dependent signal's "source signals", an array on its wrapper.
+const SOURCES: &str = "__lpAbortSources";
+
+thread_local! {
+    /// The first exception an abort algorithm of script threw while a signal
+    /// was aborting (an Observable closing an iterator whose `return()`
+    /// throws). The abort steps go on; the exception leaves through the
+    /// `abort()` call that started them.
+    static ALGORITHM_EXCEPTION: RefCell<Option<JsError>> = const { RefCell::new(None) };
+}
+
+/// Records the exception of an abort algorithm for the `abort()` call that is
+/// running it; only the first one is kept.
+pub(crate) fn algorithm_threw(error: JsError) {
+    ALGORITHM_EXCEPTION.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        if slot.is_none() {
+            *slot = Some(error);
+        }
+    });
+}
+
+/// Rethrows what an abort algorithm threw during the abort that just ran.
+fn rethrow_algorithm_exception() -> JsResult<()> {
+    match ALGORITHM_EXCEPTION.with(|slot| slot.borrow_mut().take()) {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
+}
 
 /// Identity of a native abort step; never reused within one signal.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct AbortHookId(u64);
 
+impl AbortHookId {
+    /// The identity as a number (never 0) for bookkeeping kept in script.
+    pub(crate) fn to_number(self) -> f64 {
+        self.0 as f64
+    }
+    pub(crate) fn from_number(id: f64) -> AbortHookId {
+        AbortHookId(id as u64)
+    }
+}
+
 pub struct AbortSignalData {
     pub target: EventTargetData,
     aborted: Cell<bool>,
+    /// Made by `AbortSignal.any`: it follows its source signals and has no
+    /// dependent signals of its own.
+    dependent: Cell<bool>,
     /// The signal's own wrapper, found again through its realm's identity map.
     /// The abort reason is a hidden property of that wrapper, which the GC
     /// traces: a `Persistent` here could be rooted through the reason (an
@@ -92,10 +137,40 @@ impl AbortSignalData {
         drop(removed);
     }
 
-    /// "signal abort".
+    /// "signal abort": the signal and its dependent signals take the reason,
+    /// then the signal's abort steps run, then those of each dependent.
     pub fn abort(&self, s: &Scope<'_>, reason: Value<'_>) {
-        if self.aborted.replace(true) {
+        if !self.set_aborted(s, reason) {
             return;
+        }
+        // The dependents stay on the wrapper, which is alive; only the ones
+        // this abort reached run their steps.
+        let dependents = self.wrapper.hidden(s, DEPENDENTS).ok().flatten().and_then(|v| v.as_object());
+        let mut reached = Vec::new();
+        if let Some(list) = dependents {
+            let reason = self.reason(s);
+            let len = list.get("length").and_then(|v| v.to_number()).unwrap_or(0.0) as u32;
+            for i in 0..len {
+                let Some(dependent) = list.get_index(i).ok().and_then(|v| s.unwrap::<AbortSignal>(v)) else { continue };
+                if dependent.set_aborted(s, reason) {
+                    reached.push(i);
+                }
+            }
+        }
+        self.run_abort_steps();
+        if let Some(list) = dependents {
+            for i in reached {
+                if let Some(dependent) = list.get_index(i).ok().and_then(|v| s.unwrap::<AbortSignal>(v)) {
+                    dependent.run_abort_steps();
+                }
+            }
+        }
+    }
+
+    /// Sets the abort reason; false when the signal was already aborted.
+    fn set_aborted(&self, s: &Scope<'_>, reason: Value<'_>) -> bool {
+        if self.aborted.replace(true) {
+            return false;
         }
         let reason = if reason.is_undefined() {
             JsError::dom("AbortError", "signal is aborted without reason").to_value(s)
@@ -107,6 +182,11 @@ impl AbortSignalData {
         if let Ok(wrapper) = self.wrapper.get(s) {
             let _ = s.set_hidden(wrapper, REASON, reason);
         }
+        true
+    }
+
+    /// "run the abort steps": the abort algorithms, then the `abort` event.
+    fn run_abort_steps(&self) {
         let page = self.target.page.clone();
         for (key, registration) in self.remove_on_abort.take() {
             page.dom.borrow_mut().abort_listener(key, registration);
@@ -129,6 +209,11 @@ impl JsClass for AbortSignal {
         def.upcast(|d: &AbortSignalData| &d.target);
         def.getter("aborted", |s, d| Ok(s.boolean(d.aborted())));
         def.getter("reason", |s, d| Ok(d.reason(s)));
+        def.accessor(
+            "onabort",
+            |s, d| crate::target::event_handler(s, &d.target, "abort"),
+            |s, d, v| crate::target::set_event_handler(s, &d.target, "abort", v),
+        );
         def.method("throwIfAborted", 0, |s, d, _a| {
             if d.aborted() {
                 let r = d.reason(s);
@@ -152,6 +237,7 @@ impl JsClass for AbortSignal {
                     let reason = JsError::dom("TimeoutError", "signal timed out").to_value(s);
                     d.abort(s, reason);
                 }
+                rethrow_algorithm_exception()?;
                 Ok(s.undefined())
             })?;
             let set_timeout = s.global().get("setTimeout")?;
@@ -165,33 +251,63 @@ impl JsClass for AbortSignal {
             let list =
                 a.get(0).as_object().ok_or_else(|| JsError::Type("AbortSignal.any requires an iterable".into()))?;
             let len = list.get("length")?.to_number()? as u32;
+            // "create a dependent abort signal": an aborted signal in the
+            // list gives its reason; otherwise the result follows each
+            // signal, or the sources of one that is itself dependent.
+            let Some(result) = s.unwrap::<AbortSignal>(sig.value()) else { return Ok(sig.value()) };
+            for i in 0..len {
+                let Some(src) = s.unwrap::<AbortSignal>(list.get_index(i)?) else { continue };
+                if src.aborted() {
+                    result.set_aborted(s, src.reason(s));
+                    return Ok(sig.value());
+                }
+            }
+            result.dependent.set(true);
             for i in 0..len {
                 let v = list.get_index(i)?;
                 let Some(src) = s.unwrap::<AbortSignal>(v) else { continue };
-                if src.aborted() {
-                    if let Some(d) = s.unwrap::<AbortSignal>(sig.value()) {
-                        d.abort(s, src.reason(s));
-                    }
-                    break;
+                if !src.dependent.get() {
+                    follow(s, v, sig)?;
+                    continue;
                 }
-                let target = Persistent::new(s, sig.value());
-                let realm = s.realm().downgrade();
-                let source = src.wrapper.clone();
-                src.add_abort_hook(Box::new(move |_page| {
-                    let Some(realm) = realm.upgrade() else { return };
-                    let Ok(s) = realm.scope() else { return };
-                    // The source is aborting, so its wrapper is alive and holds the
-                    // reason; this also works when the source is from another realm.
-                    let reason = AbortSignalData::stored_reason(&source, &s).unwrap_or(s.undefined());
-                    let target_signal = s.unwrap::<AbortSignal>(target.get(&s));
-                    if let Some(d) = target_signal {
-                        d.abort(&s, reason);
-                    }
-                }));
+                let Some(sources) = s.get_hidden(src.wrapper.get(s)?, SOURCES)?.and_then(|v| v.as_object()) else {
+                    continue;
+                };
+                let count = sources.get("length")?.to_number()? as u32;
+                for j in 0..count {
+                    follow(s, sources.get_index(j)?, sig)?;
+                }
             }
             Ok(sig.value())
         });
     }
+}
+
+/// Makes the new signal `dependent` a dependent signal of the signal `source`
+/// (and `source` one of its source signals), once.
+fn follow<'s>(s: &Scope<'s>, source: Value<'s>, dependent: Object<'s>) -> JsResult<()> {
+    let Some(source) = source.as_object() else { return Ok(()) };
+    let dependents = hidden_list(s, source, DEPENDENTS)?;
+    let len = dependents.get("length")?.to_number()? as u32;
+    // A source reached twice: `dependent` was just made, so it can only be
+    // the entry this `AbortSignal.any` call appended last.
+    if len > 0 && dependents.get_index(len - 1)?.strict_equals(dependent.value()) {
+        return Ok(());
+    }
+    dependents.set_index(len, dependent.value())?;
+    let sources = hidden_list(s, dependent, SOURCES)?;
+    let len = sources.get("length")?.to_number()? as u32;
+    sources.set_index(len, source.value())
+}
+
+/// The array kept as `owner`'s hidden property `key`, made on first use.
+fn hidden_list<'s>(s: &Scope<'s>, owner: Object<'s>, key: &str) -> JsResult<Object<'s>> {
+    if let Some(list) = s.get_hidden(owner, key)?.and_then(|v| v.as_object()) {
+        return Ok(list);
+    }
+    let list = s.array(&[])?;
+    s.set_hidden(owner, key, list.value())?;
+    Ok(list)
 }
 
 pub fn new_signal<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
@@ -202,6 +318,7 @@ pub fn new_signal<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
     let data = AbortSignalData {
         target,
         aborted: Cell::new(false),
+        dependent: Cell::new(false),
         wrapper: WrapperRef::new(s, key),
         remove_on_abort: RefCell::new(Vec::new()),
         hooks: Rc::new(RefCell::new(Vec::new())),
@@ -243,6 +360,7 @@ impl JsClass for AbortController {
             if let Some(d) = s.unwrap::<AbortSignal>(c.signal(s)?) {
                 d.abort(s, a.get(0));
             }
+            rethrow_algorithm_exception()?;
             Ok(s.undefined())
         });
     }

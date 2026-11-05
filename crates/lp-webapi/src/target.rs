@@ -9,7 +9,7 @@
 
 use std::rc::Rc;
 
-use lp_dom::events::{dispatch, AddOptions, ListenerHandle, ListenerInvoker, TargetKey};
+use lp_dom::events::{dispatch_with, AddOptions, ListenerHandle, ListenerInvoker, PathItem, TargetKey};
 use lp_dom::{Dom, NodeId};
 use lp_js::{Args, ClassDef, JsClass, JsError, JsResult, NoParent, Object, Persistent, Realm, RealmId, Scope, Value};
 
@@ -26,6 +26,14 @@ pub struct EventTargetData {
 }
 
 impl EventTargetData {
+    /// The identity the wrapper of a non-node, non-window target must be made
+    /// with (`Scope::wrap`), so that dispatch finds it to invoke its listeners.
+    pub fn wrapper_identity(&self) -> Option<lp_js::IdentityKey> {
+        match self.key {
+            TargetKey::Other(k) if !self.page.is_window_key(self.key) => Some(self.page.other_identity(k)),
+            _ => None,
+        }
+    }
     /// A fresh non-node target (XMLHttpRequest, AbortSignal, `new EventTarget()`).
     pub fn new(page: &Rc<PageDom>) -> EventTargetData {
         let key = page.dom.borrow_mut().new_target_key();
@@ -188,26 +196,44 @@ fn window_listener_array<'s>(s: &Scope<'s>, create: bool) -> JsResult<Option<Obj
     Ok(Some(arr))
 }
 
-fn parse_options(v: Value<'_>) -> JsResult<(AddOptions, Option<Object<'_>>)> {
+/// DOM "flatten more": `AddEventListenerOptions` or a capture boolean. The
+/// members are read in Web IDL dictionary order (`capture`, then `once`,
+/// `passive`, `signal`), each once; a present `signal` must be an AbortSignal
+/// (it is not nullable).
+fn parse_options<'s>(s: &Scope<'_>, v: Value<'s>) -> JsResult<(AddOptions, Option<Object<'s>>)> {
     if let Some(o) = v.as_object() {
-        let signal = o.get("signal")?.as_object();
-        Ok((
-            AddOptions {
-                capture: o.get("capture")?.to_bool(),
-                once: o.get("once")?.to_bool(),
-                passive: {
-                    let p = o.get("passive")?;
-                    if p.is_undefined() {
-                        None
-                    } else {
-                        Some(p.to_bool())
-                    }
-                },
-            },
-            signal,
-        ))
+        let capture = o.get("capture")?.to_bool();
+        let once = o.get("once")?.to_bool();
+        let passive = {
+            let p = o.get("passive")?;
+            if p.is_undefined() {
+                None
+            } else {
+                Some(p.to_bool())
+            }
+        };
+        let signal = o.get("signal")?;
+        let signal = if signal.is_undefined() {
+            None
+        } else {
+            if s.unwrap::<crate::abort::AbortSignal>(signal).is_none() {
+                return Err(JsError::Type(
+                    "Failed to execute 'addEventListener' on 'EventTarget': Failed to read the 'signal' property from 'AddEventListenerOptions': Failed to convert value to 'AbortSignal'.".into(),
+                ));
+            }
+            signal.as_object()
+        };
+        Ok((AddOptions { capture, once, passive }, signal))
     } else {
         Ok((AddOptions { capture: v.to_bool(), once: false, passive: None }, None))
+    }
+}
+
+/// DOM "flatten": `EventListenerOptions` (only `capture`) or a capture boolean.
+fn parse_capture(v: Value<'_>) -> JsResult<bool> {
+    match v.as_object() {
+        Some(o) => Ok(o.get("capture")?.to_bool()),
+        None => Ok(v.to_bool()),
     }
 }
 
@@ -232,13 +258,36 @@ fn handle_for(realm: RealmId, slot: u32) -> ListenerHandle {
     ListenerHandle((u64::from(realm.0) << 32) | u64::from(slot))
 }
 
+/// Slot bit of a handle whose callback is the trampoline of an IDL event
+/// handler (`set_event_handler`): the listener's callback, for the realm
+/// rules of DOM "inner invoke", is the handler function it calls.
+const HANDLER_SLOT: u32 = 1 << 31;
+
+fn handler_handle_for(realm: RealmId, slot: u32) -> ListenerHandle {
+    handle_for(realm, slot | HANDLER_SLOT)
+}
+
+/// HTML "event handler event type": the legacy `onwebkit*` handlers listen for
+/// the mixed-case legacy types.
+fn handler_event_type(ty: &'static str) -> &'static str {
+    match ty {
+        "webkitanimationend" => "webkitAnimationEnd",
+        "webkitanimationiteration" => "webkitAnimationIteration",
+        "webkitanimationstart" => "webkitAnimationStart",
+        "webkittransitionend" => "webkitTransitionEnd",
+        _ => ty,
+    }
+}
+
 fn add_listener<'s>(s: &Scope<'s>, t: &EventTargetData, a: Args<'s>) -> JsResult<()> {
     a.require(2, "EventTarget.addEventListener")?;
     crate::handlers::drain_inline(&t.page);
     let ty = dom_string(a.get(0))?;
     let cb = a.get(1);
+    // The options are converted before a null callback returns: their getters
+    // run (feature detection) and a bad `signal` throws either way.
+    let (mut opts, signal) = parse_options(s, a.get(2))?;
     let Some(cb_obj) = cb.as_object() else { return Ok(()) };
-    let (mut opts, signal) = parse_options(a.get(2))?;
     if opts.passive.is_none() {
         opts.passive = Some(default_passive(&t.page, t.key, &ty));
     }
@@ -296,10 +345,10 @@ fn remove_listener<'s>(s: &Scope<'s>, t: &EventTargetData, a: Args<'s>) -> JsRes
     a.require(2, "EventTarget.removeEventListener")?;
     let ty = dom_string(a.get(0))?;
     let cb = a.get(1);
+    let capture = parse_capture(a.get(2))?;
     if !cb.is_object() {
         return Ok(());
     }
-    let (opts, _) = parse_options(a.get(2))?;
     let Some(obj) = target_object(s, &t.page, t.key)? else { return Ok(()) };
     let Some(arr) = listener_array(s, obj, false)? else { return Ok(()) };
     let len = arr.get("length")?.to_number()? as u32;
@@ -307,7 +356,7 @@ fn remove_listener<'s>(s: &Scope<'s>, t: &EventTargetData, a: Args<'s>) -> JsRes
         if arr.get_index(i)?.strict_equals(cb) {
             let handle = handle_for(s.realm_id(), i);
             let mut dom = t.page.dom.borrow_mut();
-            if dom.remove_listener(t.key, &ty, handle, opts.capture).is_some() && !dom.handle_in_use(t.key, handle) {
+            if dom.remove_listener(t.key, &ty, handle, capture).is_some() && !dom.handle_in_use(t.key, handle) {
                 drop(dom);
                 arr.set_index(i, s.undefined())?;
             }
@@ -416,7 +465,13 @@ pub(crate) fn release_listener_slots(page: &PageDom, released: Vec<(TargetKey, L
         return;
     }
     for (key, handle) in released {
-        if page.dom.borrow().handle_in_use(key, handle) {
+        // The slot may have been reused since, by a listener or by a handler.
+        let other = ListenerHandle(handle.0 ^ u64::from(HANDLER_SLOT));
+        let in_use = {
+            let dom = page.dom.borrow();
+            dom.handle_in_use(key, handle) || dom.handle_in_use(key, other)
+        };
+        if in_use {
             continue;
         }
         let realm_id = RealmId((handle.0 >> 32) as u32);
@@ -424,7 +479,7 @@ pub(crate) fn release_listener_slots(page: &PageDom, released: Vec<(TargetKey, L
         let Ok(s) = realm.scope() else { continue };
         let Ok(Some(obj)) = target_object(&s, page, key) else { continue };
         if let Ok(Some(arr)) = listener_array(&s, obj, false) {
-            let _ = arr.set_index(handle.0 as u32, s.undefined());
+            let _ = arr.set_index(handle.0 as u32 & !HANDLER_SLOT, s.undefined());
         }
     }
 }
@@ -432,15 +487,42 @@ pub(crate) fn release_listener_slots(page: &PageDom, released: Vec<(TargetKey, L
 struct Invoker<'a> {
     page: &'a PageDom,
     event: &'a Rc<EventCore>,
+    /// Invocation targets whose root was a shadow root when the event path
+    /// was built (DOM "invocation-target-in-shadow-tree"); a listener that
+    /// moves a node during dispatch does not change it.
+    in_shadow: Vec<TargetKey>,
+}
+
+/// Moves a value of this VM into `to`'s realm (the same object, entered there).
+fn rehome<'a>(to: &Scope<'a>, value: Value<'_>) -> Value<'a> {
+    // SAFETY: both realms belong to one VM, and the caller keeps the value alive.
+    unsafe { Value::from_raw(to.ctx(), value.as_raw()) }
+}
+
+/// ECMAScript IsArray throws for a revoked Proxy and runs no trap of a live
+/// one, so it tells the two apart without side effects. JavaScriptCore throws
+/// the TypeError of calling a revoked Proxy in the Proxy's own realm; a
+/// callback is called in its associated realm, whose TypeError it must be.
+fn is_revoked_proxy(s: &Scope<'_>, value: Value<'_>) -> bool {
+    if !value.has_proxy_target().unwrap_or(false) {
+        return false;
+    }
+    let is_array = s.global().get("Array").ok().and_then(|a| a.as_object()).and_then(|a| a.get("isArray").ok());
+    is_array.and_then(|f| f.as_object()).is_some_and(|f| f.call(None, &[rehome(s, value)]).is_err())
 }
 
 impl ListenerInvoker for Invoker<'_> {
     fn invoke(&mut self, callback: ListenerHandle, current: TargetKey, _target: TargetKey) {
-        if self.page.scripting_disabled() {
+        // HTML "check if we can run script": not with scripting disabled, nor
+        // in a document that is no longer fully active (its frame was removed).
+        if self.page.scripting_disabled() || !self.page.is_fully_active() {
             return;
         }
+        // The relatedTarget as this invocation target sees it (DOM "invoke").
+        self.event.fields.borrow_mut().related_target = self.event.state.borrow().related_target;
         let realm_id = RealmId((callback.0 >> 32) as u32);
-        let slot = callback.0 as u32;
+        let is_handler = callback.0 as u32 & HANDLER_SLOT != 0;
+        let slot = callback.0 as u32 & !HANDLER_SLOT;
         let Some(realm) = self.page.listener_realm(realm_id) else { return };
         if realm.is_disposed() {
             return;
@@ -453,51 +535,82 @@ impl ListenerInvoker for Invoker<'_> {
             }
         }
         let Ok(s) = realm.scope() else { return };
-        // DOM "inner invoke": the listener's global (a Window) exposes the event
-        // as its current event unless the invocation target is in a shadow
-        // tree; the previous value is restored afterwards, including on throw.
-        // The callback's microtask checkpoint runs before the restore.
-        let in_shadow = {
-            let d = self.page.dom.borrow();
-            d.key_node(current)
-                .and_then(|id| d.root_node(id, false).ok())
-                .is_some_and(|root| d.is_shadow_root(root).unwrap_or(false))
+        // The listener was registered in `s`'s realm, on the target's wrapper there.
+        let found = (|| -> JsResult<Option<(Object<'_>, Object<'_>, Object<'_>)>> {
+            let Some(this) = target_object(&s, self.page, current)? else { return Ok(None) };
+            let Some(arr) = listener_array(&s, this, false)? else { return Ok(None) };
+            let Some(fo) = arr.get_index(slot)?.as_object() else { return Ok(None) };
+            // Web IDL "associated realm" of the callback: the realm the
+            // function or callback interface object was created in; for an
+            // event handler, that of the handler function (HTML leaves the
+            // realm of its internal listener open, and browsers use this one).
+            let owner = if is_handler {
+                let ty = self.event.state.borrow().ty.to_string();
+                handler_get(&s, this, &format!("__lpHandler_{ty}"))?.and_then(|v| v.as_object()).unwrap_or(fo)
+            } else {
+                fo
+            };
+            Ok(Some((this, fo, owner)))
+        })();
+        let (this, fo, owner) = match found {
+            Ok(Some(found)) => found,
+            Ok(None) => return,
+            Err(e) => return s.report_exception(&e),
         };
+        let callback_realm = s.object_realm(owner).filter(|r| r.id() != realm_id && !r.is_disposed());
+        let callback_scope = callback_realm.as_ref().and_then(|r| r.scope().ok());
+        // `cs`: the callback's realm, which is entered for the call, owns the
+        // current event and reports the exception.
+        let cs = callback_scope.as_ref().unwrap_or(&s);
+        // DOM "inner invoke": the callback's global (a Window) exposes the
+        // event as its current event unless the invocation target was in a
+        // shadow tree; the previous value is restored afterwards, including on
+        // throw. The callback's microtask checkpoint runs before the restore.
+        let in_shadow = self.in_shadow.contains(&current);
         let mut saved: Option<Persistent> = None;
         let mut swapped = false;
         let result = (|| -> JsResult<()> {
-            let Some(this) = target_object(&s, self.page, current)? else { return Ok(()) };
-            let Some(arr) = listener_array(&s, this, false)? else { return Ok(()) };
-            let f = arr.get_index(slot)?;
-            let Some(fo) = f.as_object() else { return Ok(()) };
             let ev = wrap_event(&s, self.event)?;
             if !in_shadow {
-                let holder = window_listener_array(&s, true)?.expect("created window holder");
-                saved = Some(Persistent::new(&s, holder.get(CURRENT_EVENT)?));
-                holder.set(CURRENT_EVENT, ev.value())?;
+                let holder = window_listener_array(cs, true)?.expect("created window holder");
+                saved = Some(Persistent::new(cs, holder.get(CURRENT_EVENT)?));
+                holder.set(CURRENT_EVENT, rehome(cs, ev.value()))?;
                 swapped = true;
             }
-            if fo.is_function() {
+            if is_handler {
+                // The trampoline runs in its own realm and calls the handler.
                 fo.call(Some(this), &[ev.value()])?;
+                return Ok(());
+            }
+            let (Some(fo), ev) = (rehome(cs, fo.value()).as_object(), rehome(cs, ev.value())) else { return Ok(()) };
+            let this = rehome(cs, this.value()).as_object();
+            if fo.is_function() {
+                fo.call(this, &[ev])?;
             } else {
                 let handle = fo.get("handleEvent")?;
                 match handle.as_object().filter(|h| h.is_function()) {
+                    Some(h) if is_revoked_proxy(cs, handle) => {
+                        let _ = h;
+                        return Err(JsError::Type("The 'handleEvent' callback is a revoked Proxy.".into()));
+                    }
                     Some(h) => {
-                        h.call(Some(fo), &[ev.value()])?;
+                        h.call(Some(fo), &[ev])?;
                     }
                     None => return Err(JsError::Type("The provided callback is not a function.".into())),
                 }
             }
             Ok(())
         })();
+        // The exception is reported while the event is still the current
+        // one: the `error` event's listeners see it as `window.event`.
+        if let Err(e) = result {
+            cs.report_exception(&e);
+        }
         if swapped {
-            if let Ok(Some(holder)) = window_listener_array(&s, false) {
-                let prev = saved.as_ref().map_or(s.undefined(), |p| p.get(&s));
+            if let Ok(Some(holder)) = window_listener_array(cs, false) {
+                let prev = saved.as_ref().map_or(cs.undefined(), |p| p.get(cs));
                 let _ = holder.set(CURRENT_EVENT, prev);
             }
-        }
-        if let Err(e) = result {
-            s.report_exception(&e);
         }
     }
 }
@@ -512,16 +625,50 @@ pub(crate) fn current_event<'s>(s: &Scope<'s>) -> JsResult<Value<'s>> {
 
 /// Dispatches `event` at `target` (DOM "dispatch"). Returns false if canceled.
 pub fn fire(page: &PageDom, target: TargetKey, event: &EventData) -> bool {
+    fire_with(page, target, event, &mut |_| {})
+}
+
+/// [`fire`], calling `before_listeners` with the event's path before any
+/// listener runs (see `lp_dom::events::dispatch_with`): where the activation
+/// target is picked and its legacy-pre-activation behavior runs.
+pub(crate) fn fire_with(
+    page: &PageDom,
+    target: TargetKey,
+    event: &EventData,
+    before_listeners: &mut dyn FnMut(&[PathItem]),
+) -> bool {
     crate::handlers::drain_inline(page);
-    event.state.borrow_mut().target = Some(target);
+    {
+        // Dispatch retargets the relatedTarget for each invocation target.
+        let mut state = event.state.borrow_mut();
+        state.target = Some(target);
+        state.related_target = event.fields.borrow().related_target;
+    }
     event.refresh_wrappers();
     // A callback can detach ancestors and run GC during dispatch.
     let path = page.dom.borrow().event_path(target, &event.state.borrow());
     let ids: Vec<_> = path.iter().filter_map(|(key, _)| page.dom.borrow().key_node(*key)).collect();
     let _path_holds: Vec<_> =
         ids.into_iter().filter_map(|id| crate::collections::NodeHold::new(&event.page, id).ok()).collect();
-    let mut inv = Invoker { page, event };
-    let result = dispatch(&page.dom, target, &event.state, &mut inv);
+    // A node whose root is a shadow root has that root on the path after it,
+    // so a path without one (nearly all) needs no root walks.
+    let in_shadow = {
+        let dom = page.dom.borrow();
+        let shadow_root = |id: NodeId| dom.is_shadow_root(id).unwrap_or(false);
+        if path.iter().any(|(key, _)| dom.key_node(*key).is_some_and(shadow_root)) {
+            let in_shadow_tree = |key: &TargetKey| {
+                dom.key_node(*key).and_then(|id| dom.root_node(id, false).ok()).is_some_and(shadow_root)
+            };
+            path.iter().map(|(key, _)| *key).filter(in_shadow_tree).collect()
+        } else {
+            Vec::new()
+        }
+    };
+    let mut inv = Invoker { page, event, in_shadow };
+    let result = dispatch_with(&page.dom, target, &event.state, &mut inv, before_listeners);
+    // The relatedTarget stays as the outermost invocation target saw it, or
+    // is reset with the target ("clearTargets").
+    event.fields.borrow_mut().related_target = event.state.borrow().related_target;
     event.refresh_wrappers();
     result
 }
@@ -574,10 +721,11 @@ fn forwarded_target(target: &EventTargetData, ty: &str) -> Option<EventTargetDat
     Some(EventTargetData::window(page, window))
 }
 
-pub(crate) fn event_handler<'s>(s: &Scope<'s>, target: &EventTargetData, ty: &str) -> JsResult<Value<'s>> {
+pub(crate) fn event_handler<'s>(s: &Scope<'s>, target: &EventTargetData, ty: &'static str) -> JsResult<Value<'s>> {
     if let Some(window) = forwarded_target(target, ty) {
         return event_handler(s, &window, ty);
     }
+    let ty = handler_event_type(ty);
     crate::handlers::drain_inline(&target.page);
     let object =
         target_object(s, &target.page, target.key)?.ok_or_else(|| JsError::Type("Illegal invocation".into()))?;
@@ -596,7 +744,8 @@ fn handler_slot(s: &Scope<'_>, target: &EventTargetData, object: Object<'_>, ty:
         .transpose()?
         .map(|v| v as u32);
     Ok(slot.filter(|&slot| {
-        target.page.dom.borrow().listener_registration(target.key, ty, handle_for(s.realm_id(), slot), false).is_some()
+        let handle = handler_handle_for(s.realm_id(), slot);
+        target.page.dom.borrow().listener_registration(target.key, ty, handle, false).is_some()
     }))
 }
 pub(crate) fn set_event_handler(
@@ -608,6 +757,7 @@ pub(crate) fn set_event_handler(
     if let Some(window) = forwarded_target(target, ty) {
         return set_event_handler(s, &window, ty, value);
     }
+    let ty = handler_event_type(ty);
     crate::handlers::drain_inline(&target.page);
     let object =
         target_object(s, &target.page, target.key)?.ok_or_else(|| JsError::Type("Illegal invocation".into()))?;
@@ -618,7 +768,7 @@ pub(crate) fn set_event_handler(
     handler_set(s, object, &value_key, value)?;
     if let Some(slot) = slot {
         if value.is_null() {
-            let handle = handle_for(s.realm_id(), slot);
+            let handle = handler_handle_for(s.realm_id(), slot);
             target.page.dom.borrow_mut().remove_listener(target.key, ty, handle, false);
             if let Some(array) = listener_array(s, object, false)? {
                 array.set_index(slot, s.undefined())?;
@@ -662,8 +812,27 @@ pub(crate) fn set_event_handler(
                     }
                     None => {
                         let result = handler.call(Some(object), &[event])?;
-                        // HTML "process the event handler return value".
-                        cancel_on_false && result.is_boolean() && !result.to_bool()
+                        // HTML "process the event handler return value". A
+                        // `beforeunload` handler (OnBeforeUnloadEventHandler)
+                        // returns `DOMString?`: a value other than null
+                        // cancels the event and, converted to a string here
+                        // (the event is still the current one), becomes its
+                        // `returnValue` unless that is already set.
+                        let before_unload = (ty == "beforeunload")
+                            .then(|| s.unwrap::<crate::event::BeforeUnloadEvent>(event))
+                            .flatten();
+                        match before_unload {
+                            Some(before_unload) if !result.is_nullish() => {
+                                let text = dom_string(result)?;
+                                let mut fields = before_unload.fields.borrow_mut();
+                                if fields.data.as_deref().unwrap_or("").is_empty() {
+                                    fields.data = Some(text);
+                                }
+                                true
+                            }
+                            Some(_) => false,
+                            None => cancel_on_false && result.is_boolean() && !result.to_bool(),
+                        }
                     }
                 };
                 if cancel {
@@ -691,7 +860,7 @@ pub(crate) fn set_event_handler(
     target.page.dom.borrow_mut().add_listener(
         target.key,
         ty,
-        handle_for(s.realm_id(), slot),
+        handler_handle_for(s.realm_id(), slot),
         AddOptions { capture: false, once: false, passive: None },
     );
     maybe_pin(s, &target.page, target.key, object);

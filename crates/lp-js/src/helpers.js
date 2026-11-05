@@ -371,6 +371,11 @@
         defineProperty(proto, k, { value: ArrayProto[k], writable: true, enumerable: true, configurable: true });
       }
     },
+    // An indexed getter without an `iterable<V>` declaration: @@iterator only.
+    iterator(proto) {
+      defineProperty(proto, symbolIterator, { value: ArrayProto.values, writable: true, configurable: true });
+    },
+
     setLength(fn, length) {
       try { defineProperty(fn, 'length', { value: length }); } catch (_) {}
     },
@@ -401,6 +406,10 @@
           configurable: true,
         });
       }
+      // The global is not an instance of its interface prototype object, so
+      // `constructor` (found on that prototype in a browser) is copied too:
+      // `window.constructor === Window`.
+      defineProperty(global, 'constructor', { value: ctors[ctors.length - 1], writable: true, enumerable: false, configurable: true });
       defineProperty(global, toStringTag, { value: name, writable: false, enumerable: false, configurable: true });
       installNamedPropertiesObject(global, protos, name);
     },

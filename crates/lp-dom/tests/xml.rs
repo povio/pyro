@@ -26,7 +26,7 @@ fn qualified_names_attributes_entities_and_default_namespace_reset() {
     assert_eq!(dom.get_attribute(item, "plain").unwrap(), Some("x   y"));
     let child = dom.first_child(item).unwrap().unwrap();
     assert_eq!(&*dom.element(child).unwrap().name.ns, "");
-    assert_eq!(dom.get_attribute(child, "xmlns").unwrap(), Some(""));
+    assert_eq!(dom.get_attribute_qualified(child, "xmlns").unwrap(), Some(""));
 }
 #[test]
 fn text_cdata_comments_pi_and_whitespace_survive() {

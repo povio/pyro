@@ -359,7 +359,10 @@ pub fn parse_into(
     let (source, _, _) = encoding.decode(bytes);
     let _ = dom.set_document_kind(document, DocumentKind::Xml, content_type, encoding.name());
     match prepare_with(&source, true) {
-        Ok(nodes) => attach(dom, document, nodes),
+        Ok(nodes) => {
+            attach(dom, document, nodes);
+            run_insertion_steps(dom, document);
+        }
         Err(message) => {
             let error =
                 dom.create_element_ns(document, Some(PARSERERROR), "parsererror").expect("fixed parsererror name");
@@ -371,6 +374,22 @@ pub fn parse_into(
     dom.descendants(document)
         .map(|d| d.filter(|&n| dom.element(n).is_ok_and(|e| e.is_html() && &*e.name.local == "script")).collect())
         .unwrap_or_default()
+}
+
+/// What the HTML parser does node by node, for a navigated XML document once
+/// its whole tree is attached: `on*` attributes are queued for compilation
+/// and the insertion steps run, so iframes get their browsing contexts and
+/// style sheets and images load. (Scripts are the caller's: `parse_into`.)
+fn run_insertion_steps(dom: &mut Dom, document: NodeId) {
+    let elements: Vec<u32> =
+        dom.descendants(document).map(|d| d.map(|n| n.index()).collect()).unwrap_or_default();
+    for i in elements {
+        dom.note_inline_handlers(i);
+    }
+    let top: Vec<u32> = dom.child_idx_iter(document.index()).collect();
+    for node in top {
+        dom.resources_after_insert(node);
+    }
 }
 
 fn new_document(dom: &mut Dom, url: &str, content_type: &str) -> NodeId {
@@ -438,6 +457,7 @@ impl Dom {
             NodeKind::Document(_) => self.document_element(node)?,
             NodeKind::Element(_) => Some(node),
             NodeKind::Fragment(_) | NodeKind::Doctype(_) => None,
+            NodeKind::Attr(a) => self.opt_id(a.owner),
             _ => self.parent_element(node)?,
         };
         if current.is_some() {
@@ -473,6 +493,7 @@ impl Dom {
             NodeKind::Document(_) => self.document_element(node)?,
             NodeKind::Element(_) => Some(node),
             NodeKind::Fragment(_) | NodeKind::Doctype(_) => None,
+            NodeKind::Attr(a) => self.opt_id(a.owner),
             _ => self.parent_element(node)?,
         };
         while let Some(id) = current {

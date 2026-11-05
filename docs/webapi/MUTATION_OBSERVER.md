@@ -17,7 +17,10 @@ outside JavaScript callbacks. Embedders must not replace this hook without
 preserving that checkpoint behavior.
 
 Callbacks execute in the observer's realm with the observer as this and the
-second argument. Exceptions are reported without preventing other callbacks.
+second argument. Exceptions are reported without preventing other callbacks,
+to the window of the callback function's own realm (`window.onerror` of the
+frame the function came from, not of the frame whose `MutationObserver` it was
+given to).
 Detached subtree registrations expire at notification. If a scheduling realm
 is disposed, its stale reaction is ignored and remaining observers can schedule
 in another live realm. Call lifecycle::realm_disposed before disposing a realm;

@@ -40,6 +40,8 @@ pub enum EventInterface {
     StorageEvent,
     MediaQueryListEvent,
     TouchEvent,
+    AnimationEvent,
+    TransitionEvent,
 }
 
 /// One touch point (`Touch`): its target and viewport/screen position.
@@ -141,6 +143,13 @@ pub struct EventFields {
     pub media_query: String,
     pub media_matches: bool,
     pub touch: Option<Rc<TouchLists>>,
+    /// `AnimationEvent.animationName`.
+    pub animation_name: String,
+    /// `TransitionEvent.propertyName`.
+    pub property_name: String,
+    /// `elapsedTime` (seconds) and `pseudoElement` of both.
+    pub elapsed_time: f64,
+    pub pseudo_element: String,
 }
 
 pub struct EventCore {
@@ -158,8 +167,11 @@ thread_local! {
     static TIME_ORIGIN: Instant = Instant::now();
 }
 
-fn now_ms() -> f64 {
-    TIME_ORIGIN.with(|t| t.elapsed().as_secs_f64() * 1000.0)
+/// `Event.timeStamp` of an event created now: the document's clock, so that
+/// it shares `performance.now()`'s time origin and resolution. A page without
+/// one (no embedder) counts from the first event of the thread.
+fn now_ms(page: &PageDom) -> f64 {
+    page.event_time().unwrap_or_else(|| TIME_ORIGIN.with(|t| t.elapsed().as_secs_f64() * 1000.0))
 }
 
 impl EventCore {
@@ -172,7 +184,7 @@ impl EventCore {
         composed: bool,
     ) -> EventData {
         let mut st = EventState::new(ty, bubbles, cancelable, composed);
-        st.time_stamp = now_ms();
+        st.time_stamp = now_ms(page);
         Rc::new(EventCore {
             id: page.next_event_id(),
             page: page.clone(),
@@ -309,9 +321,53 @@ pub fn wrap_event<'s>(s: &Scope<'s>, core: &EventData) -> JsResult<Object<'s>> {
         EventInterface::StorageEvent => s.wrap::<StorageEvent>(d, Some(key)),
         EventInterface::MediaQueryListEvent => s.wrap::<MediaQueryListEvent>(d, Some(key)),
         EventInterface::TouchEvent => s.wrap::<TouchEvent>(d, Some(key)),
+        EventInterface::AnimationEvent => s.wrap::<AnimationEvent>(d, Some(key)),
+        EventInterface::TransitionEvent => s.wrap::<TransitionEvent>(d, Some(key)),
     }?;
+    define_unforgeables(s, &core.page, wrapper)?;
     core.trace_targets(s, wrapper)?;
     Ok(wrapper)
+}
+
+/// `isTrusted` is [LegacyUnforgeable]: an own, non-configurable accessor of
+/// every event object, with one getter per realm. The realm's installer
+/// defines it with the `Object.defineProperty` captured before page script
+/// ran.
+fn define_unforgeables<'s>(s: &Scope<'s>, page: &PageDom, wrapper: Object<'s>) -> JsResult<()> {
+    let realm = s.realm_id();
+    let cached = page.event_unforgeables.borrow().get(&realm).map(|p| p.get(s));
+    let install = match cached.and_then(|v| v.as_object()) {
+        Some(install) => install,
+        None => {
+            let define = page.define_properties.borrow().get(&realm).map(|p| p.get(s));
+            let define = match define {
+                Some(define) => define,
+                None => match s.global().get("Object")?.as_object() {
+                    Some(object) => object.get("defineProperty")?,
+                    None => return Ok(()),
+                },
+            };
+            let getter = s.function("get isTrusted", |s, this, _args| {
+                let event = s.unwrap::<Event>(this).ok_or_else(|| JsError::Type("Illegal invocation".into()))?;
+                let trusted = event.state.borrow().is_trusted;
+                Ok(s.boolean(trusted))
+            })?;
+            let make = s.eval(
+                "(function (define, get) { const d = { get, set: undefined, enumerable: true, configurable: false };\n\
+                 return function (event) { define(event, 'isTrusted', d); }; })",
+                Some("lightningpanda://internal/event-unforgeables.js"),
+                1,
+            )?;
+            let Some(install) = make.as_object().map(|f| f.call(None, &[define, getter.value()])).transpose()? else {
+                return Ok(());
+            };
+            let Some(install) = install.as_object() else { return Ok(()) };
+            page.event_unforgeables.borrow_mut().insert(realm, Persistent::new(s, install.value()));
+            install
+        }
+    };
+    install.call(None, &[wrapper.value()])?;
+    Ok(())
 }
 
 fn get_bool(init: Option<Object<'_>>, name: &str) -> JsResult<bool> {
@@ -385,6 +441,7 @@ fn construct<'s, C: JsClass<Data = EventData>>(
     let key = page.event_identity(core.id);
     core.retain_targets();
     let wrapper = s.wrap_new::<C>(core.clone(), new_target, Some(key))?;
+    define_unforgeables(s, &page, wrapper)?;
     core.trace_targets(s, wrapper)?;
     Ok(wrapper)
 }
@@ -602,6 +659,20 @@ fn fill_message<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>
     Ok(())
 }
 
+fn fill_animation<'s>(_: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
+    f.animation_name = get_str(init, "animationName")?;
+    f.elapsed_time = get_num(init, "elapsedTime", 0.0)?;
+    f.pseudo_element = get_str(init, "pseudoElement")?;
+    Ok(())
+}
+
+fn fill_transition<'s>(_: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
+    f.property_name = get_str(init, "propertyName")?;
+    f.elapsed_time = get_num(init, "elapsedTime", 0.0)?;
+    f.pseudo_element = get_str(init, "pseudoElement")?;
+    Ok(())
+}
+
 fn fill_pagetransition<'s>(_: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
     f.persisted = get_bool(init, "persisted")?;
     Ok(())
@@ -645,7 +716,7 @@ impl JsClass for Event {
         def.getter("cancelable", |s, e| Ok(s.boolean(e.state.borrow().cancelable)));
         def.getter("composed", |s, e| Ok(s.boolean(e.state.borrow().composed)));
         def.getter("defaultPrevented", |s, e| Ok(s.boolean(e.state.borrow().canceled)));
-        def.getter("isTrusted", |s, e| Ok(s.boolean(e.state.borrow().is_trusted)));
+        // `isTrusted` is an own property of each event (`define_unforgeables`).
         def.getter("timeStamp", |s, e| Ok(s.number(e.state.borrow().time_stamp)));
         def.accessor(
             "returnValue",
@@ -721,13 +792,14 @@ impl JsClass for CustomEvent {
         def.getter("detail", |s, e| Ok(e.fields.borrow().custom_detail.as_ref().map_or(s.null(), |p| p.get(s))));
         def.method("initCustomEvent", 1, |s, e, a| {
             let ty = arg_string(&a, 0, "CustomEvent.initCustomEvent")?;
-            {
-                let mut st = e.state.borrow_mut();
-                st.ty = lp_dom::LocalName::from(ty.as_str());
-                st.bubbles = a.get(1).to_bool();
-                st.cancelable = a.get(2).to_bool();
+            if e.state.borrow().dispatching {
+                return Ok(s.undefined());
             }
-            e.fields.borrow_mut().custom_detail = Some(Persistent::new(s, a.get(3)));
+            init_event_state(e, &ty, a.get(1).to_bool(), a.get(2).to_bool());
+            // `optional any detail = null`.
+            let detail = a.get(3);
+            e.fields.borrow_mut().custom_detail = (!detail.is_undefined()).then(|| Persistent::new(s, detail));
+            e.refresh_wrappers();
             Ok(s.undefined())
         });
     }
@@ -921,6 +993,27 @@ fn modifier_state(f: &EventFields, key: &str) -> bool {
     }
 }
 
+/// CSSOM View `offsetX`/`offsetY`: the event's position relative to the
+/// padding edge of its target (the retargeted one a listener sees), or its
+/// page position while it has no rendered target element.
+fn mouse_offset(e: &EventData) -> (f64, f64) {
+    let (x, y) = {
+        let f = e.fields.borrow();
+        (f.client_x, f.client_y)
+    };
+    let target = e.state.borrow().target;
+    let layout = e.page.layout();
+    let dom = e.page.dom.borrow();
+    let Some(el) = target.and_then(|key| dom.key_node(key)).filter(|&node| dom.element(node).is_ok()) else {
+        return (x, y);
+    };
+    if !layout.is_visible(&dom, el) {
+        return (x, y);
+    }
+    let rect = layout.bounding_client_rect(&dom, el);
+    (x - rect.left() - layout.client_left(&dom, el), y - rect.top() - layout.client_top(&dom, el))
+}
+
 pub struct MouseEvent;
 impl JsClass for MouseEvent {
     const NAME: &'static str = "MouseEvent";
@@ -937,8 +1030,8 @@ impl JsClass for MouseEvent {
         // No scrolling offset model beyond the viewport origin: page == client.
         def.getter("pageX", |s, e| Ok(s.number(e.fields.borrow().client_x)));
         def.getter("pageY", |s, e| Ok(s.number(e.fields.borrow().client_y)));
-        def.getter("offsetX", |s, _e| Ok(s.number(0.0)));
-        def.getter("offsetY", |s, _e| Ok(s.number(0.0)));
+        def.getter("offsetX", |s, e| Ok(s.number(mouse_offset(e).0)));
+        def.getter("offsetY", |s, e| Ok(s.number(mouse_offset(e).1)));
         def.getter("movementX", |s, _e| Ok(s.number(0.0)));
         def.getter("movementY", |s, _e| Ok(s.number(0.0)));
         def.getter("ctrlKey", |s, e| Ok(s.boolean(e.fields.borrow().ctrl_key)));
@@ -1340,6 +1433,40 @@ impl JsClass for PageTransitionEvent {
     }
 }
 
+/// CSS Animations `AnimationEvent` (`animationstart`, `animationiteration`,
+/// `animationend`, `animationcancel`).
+pub struct AnimationEvent;
+impl JsClass for AnimationEvent {
+    const NAME: &'static str = "AnimationEvent";
+    type Data = EventData;
+    type Parent = Event;
+    fn define(def: &mut ClassDef<Self>) {
+        def.constructor(1, |s, nt, a| {
+            construct::<AnimationEvent>(s, nt, a, EventInterface::AnimationEvent, fill_animation)
+        });
+        def.getter("animationName", |s, e| Ok(s.string(&e.fields.borrow().animation_name)));
+        def.getter("elapsedTime", |s, e| Ok(s.number(e.fields.borrow().elapsed_time)));
+        def.getter("pseudoElement", |s, e| Ok(s.string(&e.fields.borrow().pseudo_element)));
+    }
+}
+
+/// CSS Transitions `TransitionEvent` (`transitionrun`, `transitionstart`,
+/// `transitionend`, `transitioncancel`).
+pub struct TransitionEvent;
+impl JsClass for TransitionEvent {
+    const NAME: &'static str = "TransitionEvent";
+    type Data = EventData;
+    type Parent = Event;
+    fn define(def: &mut ClassDef<Self>) {
+        def.constructor(1, |s, nt, a| {
+            construct::<TransitionEvent>(s, nt, a, EventInterface::TransitionEvent, fill_transition)
+        });
+        def.getter("propertyName", |s, e| Ok(s.string(&e.fields.borrow().property_name)));
+        def.getter("elapsedTime", |s, e| Ok(s.number(e.fields.borrow().elapsed_time)));
+        def.getter("pseudoElement", |s, e| Ok(s.string(&e.fields.borrow().pseudo_element)));
+    }
+}
+
 pub struct MessageEvent;
 impl JsClass for MessageEvent {
     const NAME: &'static str = "MessageEvent";
@@ -1397,6 +1524,8 @@ pub(crate) fn register(engine: &lp_js::Engine) {
     engine.register::<MediaQueryListEvent>();
     engine.register::<Touch>();
     engine.register::<TouchEvent>();
+    engine.register::<AnimationEvent>();
+    engine.register::<TransitionEvent>();
 }
 
 /// A `Touch` wrapper's state.

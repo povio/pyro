@@ -370,6 +370,10 @@ fn notify(page: &Rc<PageDom>) {
         page.dom.borrow_mut().clear_transient(id);
         let Some(realm) = observer.realm.upgrade() else { continue };
         let Ok(s) = realm.scope() else { continue };
+        // Web IDL "invoke a callback function": an exception of the callback
+        // is reported to the global of the callback's own realm, which is not
+        // the observer's when the function came from another window.
+        let mut callback_realm = None;
         let result = (|| {
             let records = record::take(page, id)?;
             if records.is_empty() {
@@ -384,11 +388,15 @@ fn notify(page: &Rc<PageDom>) {
             let callback =
                 s.get_hidden(wrapper, CALLBACK)?.and_then(|v| v.as_object()).ok_or(JsError::ContextDestroyed)?;
             let records = record::array(&s, records)?;
+            callback_realm = s.object_realm(callback).filter(|r| r.id() != s.realm_id());
             callback.call(Some(wrapper), &[records, wrapper.value()])?;
             Ok(())
         })();
         if let Err(error) = result {
-            s.report_exception(&error);
+            match callback_realm.as_ref().and_then(|r| r.scope().ok()) {
+                Some(owner) => owner.report_exception(&error),
+                None => s.report_exception(&error),
+            }
         }
     }
     drop(roots);
@@ -421,6 +429,9 @@ pub(crate) fn install(s: &Scope<'_>, page: &Rc<PageDom>) -> JsResult<()> {
     s.realm().set_native_callback_hook(Some(Rc::new(move |_| {
         if let Some(page) = weak.upgrade() {
             page.flush_iframe_events();
+            page.update_render_blocking();
+            crate::custom::run_reactions(&page);
+            crate::custom::run_upgrades(&page);
             checkpoint(&page);
         }
     })))?;
@@ -439,6 +450,10 @@ fn hook_pending(page: &PageDom) -> bool {
     let Ok(dom) = page.dom.try_borrow() else { return true };
     let m = &page.mutations;
     dom.has_iframe_events()
+        || page.render_blocking_pending(&dom)
+        || dom.has_custom_reactions_for(page.document())
+        || dom.has_upgrade_candidates()
+        || (dom.has_signaled_slots() && m.queued.get().is_none())
         || !m.pending_drops.borrow().is_empty()
         || !dom.pending_observers_from(m.rooted.get()).is_empty()
         || (!m.pending_roots.borrow().is_empty() && m.queued.get().is_none())

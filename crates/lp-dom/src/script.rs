@@ -172,6 +172,15 @@ impl Dom {
         self.scan_subtree(node, ResourceReason::Connected);
     }
 
+    /// HTML's script "children changed steps", for an insertion into
+    /// `parent` (removals do not prepare a script): called once per insert,
+    /// before the post-connection steps of the inserted nodes.
+    pub(crate) fn script_children_inserted(&mut self, parent: u32) {
+        if self.script_steps_due(parent) && self.resources.enabled {
+            self.push_resource(parent, ResourceKind::Script, ResourceReason::ChildrenChanged);
+        }
+    }
+
     /// Called before `node` is unlinked from a connected parent.
     pub(crate) fn resources_before_remove(&mut self, node: u32) {
         self.iframes_before_remove(node);
@@ -197,8 +206,14 @@ impl Dom {
         }
     }
 
-    pub(crate) fn resources_after_attr(&mut self, idx: u32, local: &str) {
+    /// Called after the attribute `local` of `idx` was set or removed;
+    /// `added` when the element did not have it before.
+    pub(crate) fn resources_after_attr(&mut self, idx: u32, local: &str, added: bool) {
         self.iframes_after_attr(idx, local);
+        // HTML: a connected script is prepared when it gets a `src` it did
+        // not have. No other attribute change (`type`, a changed or removed
+        // `src`) prepares it again.
+        let script_src = local == "src" && added && self.script_steps_due(idx);
         if !self.resources.enabled {
             return;
         }
@@ -207,6 +222,9 @@ impl Dom {
             return;
         }
         if let Some(k) = self.resource_kind(idx) {
+            if k == ResourceKind::Script && !script_src {
+                return;
+            }
             self.push_resource(idx, k, ResourceReason::AttrChanged);
         } else if local == "rel" {
             // rel removed "stylesheet": the old sheet must go.
@@ -246,7 +264,7 @@ impl Dom {
         }
     }
 
-    fn push_resource(&mut self, idx: u32, kind: ResourceKind, reason: ResourceReason) {
+    pub(crate) fn push_resource(&mut self, idx: u32, kind: ResourceKind, reason: ResourceReason) {
         let ev = ResourceEvent { node: self.id_of(idx), kind, reason };
         // Coalesce consecutive duplicates (e.g. many text appends to one <style>).
         if self.resources.events.last() != Some(&ev) {
@@ -329,6 +347,7 @@ impl Dom {
         let i = self.check(el)?;
         let e = self.n_mut(i).element_mut().ok_or(DomError::Type("not an element"))?;
         e.flags |= element_flags::CUSTOM_DEFINED;
+        self.reactions.any_custom = true;
         // :defined is element state.
         self.bump();
         self.note(crate::dom::Change::State(i));

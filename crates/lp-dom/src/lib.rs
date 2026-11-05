@@ -2,6 +2,7 @@
 //! of lightpanda-io/browser (AGPL-3.0-only). Pure Rust, no JS engine
 //! dependency; JS bindings live in `lp-webapi`.
 
+mod attr_node;
 pub mod computed;
 pub mod direction;
 pub mod dom;
@@ -15,6 +16,11 @@ pub mod iframe;
 mod window_names;
 pub mod image;
 pub mod cssom;
+pub mod custom;
+mod moving;
+mod nonce;
+pub mod picture;
+mod top_layer;
 pub mod inner_text;
 pub mod layout;
 pub mod live_iterator;
@@ -32,6 +38,8 @@ pub mod style;
 pub mod stylo;
 pub mod svg_geometry;
 pub mod text_metrics;
+pub mod upgrade;
+pub mod timing;
 pub mod xml;
 pub mod xpath;
 
@@ -39,7 +47,7 @@ pub use dom::{attr_name_hash, position, CollectionWatch, Dom};
 pub use window_names::window_name_hash;
 pub use error::{DomError, DomErrorKind, DomResult};
 pub use node::{
-    shadow_flags, Attr, ControlState, DocumentKind, NodeId, NodeKind, NodeType, QuirksMode, ShadowRootMode,
+    shadow_flags, Attr, AttrNodeData, ControlState, DocumentKind, NodeId, NodeKind, NodeType, QuirksMode, ShadowRootMode,
 };
 
 pub use markup5ever::{LocalName, Namespace, Prefix, QualName};

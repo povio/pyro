@@ -84,6 +84,7 @@ impl Browser {
         let Some((url, crossorigin, integrity)) = config else {
             drop(state);
             self.doc_mut(page).expect("page").stylesheets.remove(node);
+            bindings.unblock_rendering(node);
             remove_sheet(&bindings, node);
             self.queue_stylesheets_changed(page, loader);
             return;
@@ -134,6 +135,29 @@ impl Browser {
             },
         );
         drop(guard);
+        // HTML "block rendering": a stylesheet the parser inserted blocks
+        // implicitly, any other one through `blocking=render`; both only
+        // when their media matches. `finish_stylesheet` unblocks.
+        let blocker = {
+            let dom = bindings.dom.borrow();
+            let attr = |name| dom.get_attribute(node, name).ok().flatten();
+            let media = attr("media").unwrap_or("");
+            let parser_inserted = dom
+                .element(node)
+                .is_ok_and(|e| e.flags & lp_dom::node::element_flags::PARSER_INSERTED != 0);
+            let explicit =
+                attr("blocking").is_some_and(|v| v.split_ascii_whitespace().any(|t| t.eq_ignore_ascii_case("render")));
+            if !(media.is_empty() || lp_dom::media::matches(media, &bindings.viewport())) {
+                None
+            } else if parser_inserted {
+                Some(lp_webapi::RenderBlocker::Implicit)
+            } else {
+                explicit.then_some(lp_webapi::RenderBlocker::Explicit)
+            }
+        };
+        if let Some(blocker) = blocker {
+            bindings.block_rendering(node, blocker);
+        }
         // Reserve a cascade slot now; completion order must not reorder sheets.
         bindings.set_stylesheet_text(node, "");
         let weak = Rc::downgrade(&bindings);
@@ -205,6 +229,7 @@ impl Browser {
             remove_sheet(bindings, node);
         }
         drop(state);
+        bindings.unblock_rendering(node);
         // This callback is already a later owner-thread task. No DOM/state
         // borrow survives dispatch into JavaScript.
         lp_webapi::lifecycle::resource_loaded(bindings, node, ok);

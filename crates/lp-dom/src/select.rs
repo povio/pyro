@@ -756,9 +756,11 @@ impl Dom {
                     (*pc == Valid) == ok
             }
             Open => e.is_html() && matches!(&*e.name.local, "details" | "dialog") && e.attr("open").is_some(),
-            // Modal dialogs and open popovers are tracked by the style engine,
-            // not by selector matching.
-            Modal | PopoverOpen => false,
+            // A dialog shown with `showModal()` that is still open.
+            Modal => {
+                e.is_html() && &*e.name.local == "dialog" && e.attr("open").is_some() && self.is_modal_idx(idx)
+            }
+            PopoverOpen => self.is_popover_showing_idx(idx),
         }
     }
 

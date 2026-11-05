@@ -26,6 +26,8 @@ pub struct PageDom {
     document: Cell<NodeId>,
     scripting_disabled: Cell<bool>,
     flushing_iframes: Cell<bool>,
+    /// The document's render-blocking element set (see `render_blocking`).
+    pub(crate) render_blocking: crate::render_blocking::RenderBlocking,
     connected_iframes: RefCell<FxHashSet<NodeId>>,
     pub(crate) selectors: RefCell<SelectorCache>,
     /// Members of live collections by (root, kind), shared by every
@@ -35,10 +37,6 @@ pub struct PageDom {
     /// Node references released by finalized wrappers while the DOM was
     /// borrowed; applied at the next safe point.
     pending_release: RefCell<Vec<NodeId>>,
-    /// Attr wrappers an element adopted through `setAttributeNode` keyed by
-    /// (element, namespace, local name): their wrapper identity replaces the
-    /// default one for that attribute.
-    pub(crate) attr_keys: RefCell<FxHashMap<(NodeId, String, String), lp_js::IdentityKey>>,
     /// (DOM version, removal count) seen by the last `after_task`.
     after_task_stamp: Cell<Option<(u64, u64)>>,
     current_script: Cell<Option<NodeId>>,
@@ -92,6 +90,14 @@ pub struct PageDom {
     /// threw see it (an isolated world's error skips the page's `onerror`,
     /// the page's errors skip the isolated worlds).
     pub(crate) error_event_world: Cell<Option<(u64, RealmId)>>,
+    /// The document's clock (`performance.now()`), which `Event.timeStamp`
+    /// reads so both share a time origin and a resolution.
+    event_clock: RefCell<Option<Rc<dyn Fn() -> f64>>>,
+    /// Each realm's installer of `isTrusted`, a [LegacyUnforgeable] accessor:
+    /// an own property of every event (`event::define_unforgeables`).
+    pub(crate) event_unforgeables: RefCell<FxHashMap<RealmId, Persistent>>,
+    /// CSS animation and transition event timelines.
+    pub(crate) animation_events: crate::animation_events::State,
     pub net: RefCell<Option<lp_net::NetClient>>,
     pub(crate) intersections: crate::intersection_observer::BindingState,
     pub(crate) resizes: crate::resize_observer::BindingState,
@@ -289,6 +295,12 @@ pub enum FocusTarget {
 
 /// Embedder (lp-browser) services the bindings need.
 pub trait PageHooks {
+    /// Observation-only (no JS): the frame that showed this document was
+    /// removed from its page (its iframe left the document). Such a document
+    /// is no longer fully active although script of it may still be running.
+    fn frame_detached(&self) -> bool {
+        false
+    }
     /// Observation-only (no JS): this document still belongs to a live owner
     /// frame/loader. Unlike is_focused, unselected frames also return true.
     /// Checked before a request can cancel a shared transition token.
@@ -369,6 +381,13 @@ pub trait PageHooks {
     }
     /// Called without DOM/hook borrows before the inserting native call returns.
     fn iframe_connected(&self, _iframe: NodeId) {}
+    /// HTML "prepare the script element" for a connected `<script>` the
+    /// parser did not insert: it was inserted, had a child inserted, or got a
+    /// `src`. Called like `iframe_connected`, in post-connection order with
+    /// it, so an inline classic script can execute before the inserting DOM
+    /// call returns. The script's own DOM calls flush their post-connection
+    /// steps: see `lp_js::Realm::reenter_native_callback_hook`.
+    fn script_connected(&self, _script: NodeId) {}
     /// Removed iframe owners, descendants before ancestors.
     fn iframe_disconnected(&self, _iframe: NodeId) {}
     fn iframe_attribute_changed(&self, _iframe: NodeId, _attribute: IframeAttribute) {}
@@ -411,11 +430,11 @@ impl PageDom {
             document: Cell::new(document),
             scripting_disabled: Cell::new(false),
             flushing_iframes: Cell::new(false),
+            render_blocking: Default::default(),
             connected_iframes: RefCell::new(FxHashSet::default()),
             selectors: RefCell::new(SelectorCache::default()),
             collection_members: RefCell::default(),
             pending_release: RefCell::new(Vec::new()),
-            attr_keys: RefCell::new(FxHashMap::default()),
             after_task_stamp: Cell::new(None),
             current_script: Cell::new(None),
             realms: RefCell::new(FxHashMap::default()),
@@ -438,6 +457,9 @@ impl PageDom {
             next_event: Cell::new(1),
             error_reporting: Cell::new(false),
             error_event_world: Cell::new(None),
+            event_clock: RefCell::new(None),
+            event_unforgeables: RefCell::new(FxHashMap::default()),
+            animation_events: Default::default(),
             net: RefCell::new(None),
             identity: RefCell::new(Default::default()),
             context_services: Default::default(),
@@ -551,6 +573,14 @@ impl PageDom {
         self.disposed.get()
     }
 
+    /// HTML "fully active", as far as script of the document can tell: the
+    /// document was not replaced by a navigation and its frame was not
+    /// removed. Callbacks of a document that is not fully active do not run
+    /// ("check if we can run script").
+    pub fn is_fully_active(&self) -> bool {
+        !self.disposed.get() && !self.hooks.borrow().as_ref().is_some_and(|h| h.frame_detached())
+    }
+
     /// Release document-owned binding state before disposing its realms.
     /// Call once on navigation/page teardown, on the browser thread at a safe
     /// point with no DOM borrow. Idempotent; a disposed PageDom cannot be reused.
@@ -560,6 +590,7 @@ impl PageDom {
             return;
         }
         crate::input::clear_document_focus(self);
+        self.clear_render_blocking(true);
         self.dom.borrow_mut().unwatch_iframes(self.document());
         self.connected_iframes.borrow_mut().clear();
         crate::fetch::dispose(self);
@@ -581,6 +612,9 @@ impl PageDom {
         drop(self.structured_clones.take());
         drop(self.worker_wire.take());
         drop(self.define_properties.take());
+        drop(self.event_unforgeables.take());
+        drop(self.event_clock.take());
+        self.animation_events.clear();
         drop(self.pending_port_reconcile.take());
         drop(self.data_view_readers.take());
         drop(self.header_helpers.take());
@@ -604,6 +638,7 @@ impl PageDom {
     /// Switches the displayed document (navigation commit).
     pub fn set_document(&self, doc: NodeId) {
         crate::input::clear_document_focus(self);
+        self.clear_render_blocking(false);
         {
             let mut dom = self.dom.borrow_mut();
             dom.unwatch_iframes(self.document());
@@ -690,6 +725,13 @@ impl PageDom {
                     }
                     IframeChange::AttributeChanged(attribute) if connected => {
                         hooks.iframe_attribute_changed(event.node, attribute);
+                    }
+                    IframeChange::Script if connected => {
+                        // Page script may run: the DOM calls it makes flush
+                        // their own post-connection steps before returning.
+                        self.flushing_iframes.set(false);
+                        hooks.script_connected(event.node);
+                        self.flushing_iframes.set(true);
                     }
                     _ => (),
                 }
@@ -946,6 +988,15 @@ impl PageDom {
     pub(crate) fn event_identity(&self, event: u64) -> IdentityKey {
         IdentityKey(self.id | EVENT_NS, event)
     }
+    /// Installs the clock `Event.timeStamp` reads: milliseconds since the
+    /// document's time origin, as `performance.now()` reports them.
+    pub fn set_event_clock(&self, clock: Rc<dyn Fn() -> f64>) {
+        *self.event_clock.borrow_mut() = Some(clock);
+    }
+    /// The document's clock now, if the embedder installed one.
+    pub(crate) fn event_time(&self) -> Option<f64> {
+        self.event_clock.borrow().as_ref().map(|clock| clock())
+    }
     pub(crate) fn next_event_id(&self) -> u64 {
         let n = self.next_event.get();
         self.next_event.set(n + 1);
@@ -990,12 +1041,16 @@ impl PageDom {
             return;
         }
         self.flush_iframe_events();
+        self.update_render_blocking();
+        crate::custom::run_reactions(self);
+        crate::custom::run_upgrades(self);
         crate::message_channel::reconcile_ports(self);
         crate::mutation_observer::after_task(self);
         crate::intersection_observer::after_task(self);
         crate::resize_observer::after_task(self);
         self.frame_resize_after_task();
         crate::layout_api::schedule_scroll_clamp(self);
+        crate::animation_events::after_task(self);
         crate::input::update_hover_after_task(self);
         self.url_params_helpers.borrow_mut().retain(|realm, _| {
             self.realms.borrow().get(realm).and_then(|r| r.upgrade()).is_some_and(|r| !r.is_disposed())
@@ -1034,6 +1089,7 @@ impl PageDom {
             return false;
         }
         !dom.has_iframe_events()
+            && !self.render_blocking_pending(&dom)
             && !dom.has_pending_mutations()
             && !dom.has_gc_candidates()
             && self.mutations.pending_drops_is_empty()
@@ -1118,14 +1174,41 @@ impl PageDom {
     pub(crate) fn sibling_realms(&self, s: &lp_js::Scope<'_>) -> Vec<lp_js::Realm> {
         self.hooks().map(|h| h.sibling_realms(s)).unwrap_or_default()
     }
-    /// The wrapper of `id` in a sibling realm of `s`, if one is alive.
-    pub(crate) fn sibling_wrapper<'s>(&self, s: &lp_js::Scope<'s>, id: NodeId) -> Option<lp_js::Object<'s>> {
-        self.sibling_realms(s).iter().find_map(|realm| {
+    /// The wrapper of `id` in a sibling realm of `s`: the one alive there, or
+    /// a new one when the node was created in that realm's document (a node
+    /// belongs to the realm of the document it was created in, whichever
+    /// realm first asks for it and whichever document it has moved to).
+    pub(crate) fn sibling_wrapper<'s>(
+        &self,
+        s: &lp_js::Scope<'s>,
+        id: NodeId,
+    ) -> lp_js::JsResult<Option<lp_js::Object<'s>>> {
+        let siblings = self.sibling_realms(s);
+        if siblings.is_empty() {
+            return Ok(None);
+        }
+        let existing = siblings.iter().find_map(|realm| {
             let scope = realm.scope().ok()?;
             let owner = crate::target::page_of(&scope).ok()?;
             let wrapper = scope.lookup_identity(owner.node_identity(id))?;
             lp_js::Persistent::new(&scope, wrapper.value()).get(s).as_object()
-        })
+        });
+        if existing.is_some() {
+            return Ok(existing);
+        }
+        let Ok(home) = self.dom.borrow().creation_document(id) else { return Ok(None) };
+        if home == self.document() {
+            return Ok(None);
+        }
+        for realm in &siblings {
+            let Ok(scope) = realm.scope() else { continue };
+            let Ok(owner) = crate::target::page_of(&scope) else { continue };
+            if owner.document() == home && !owner.is_disposed() && Rc::ptr_eq(&owner.dom, &self.dom) {
+                let wrapper = crate::node::wrap_node(&scope, &owner, id)?;
+                return Ok(lp_js::Persistent::new(&scope, wrapper.value()).get(s).as_object());
+            }
+        }
+        Ok(None)
     }
     /// A realm that may hold listeners of a target of this page: its own, or a
     /// sibling document's when the target's wrapper was made there.
@@ -1157,6 +1240,8 @@ impl PageDom {
     /// "interactive", "complete").
     pub fn set_ready_state(&self, doc: NodeId, state: &'static str) {
         self.ready.borrow_mut().insert(doc, state);
+        // Expect links only block rendering while the document is loading.
+        self.render_blocking_changed();
     }
     pub fn ready_state(&self, doc: NodeId) -> &'static str {
         self.ready.borrow().get(&doc).copied().unwrap_or("complete")

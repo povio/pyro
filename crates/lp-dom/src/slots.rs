@@ -84,6 +84,7 @@ impl Dom {
         if parent == NIL {
             return;
         }
+        self.signal_fallback_change(parent);
         if let Some(sr) = self.named_shadow_root(parent) {
             self.check_slots_in_root(sr);
         }
@@ -95,6 +96,65 @@ impl Dom {
                 }
             }
             self.check_slots_in_root(root);
+        }
+    }
+
+    /// DOM insert, remove and move: "if parent's root is a shadow root, and
+    /// parent is a slot whose assigned nodes is the empty list, then run
+    /// signal a slot change for parent" (its fallback content changed).
+    fn signal_fallback_change(&mut self, parent: u32) {
+        if self.is_slot(parent)
+            && self.in_shadow_tree(parent)
+            && self.slot_assigned(parent).is_empty()
+            && !self.slot_state.signaled.contains(&parent)
+        {
+            self.slot_state.signaled.push(parent);
+        }
+    }
+
+    /// The slots of `node`'s subtree, `node` included, in tree order.
+    fn slots_in_subtree(&self, node: u32) -> Vec<u32> {
+        let mut slots = Vec::new();
+        if self.is_slot(node) {
+            slots.push(node);
+        }
+        let mut cur = self.n(node).first_child;
+        while cur != NIL {
+            if self.is_slot(cur) {
+                slots.push(cur);
+            }
+            cur = self.following_in(cur, node);
+        }
+        slots
+    }
+
+    /// DOM "move": `node` went from `old_parent` to `new_parent` (already
+    /// linked there). Unlike a removal, a moved slot keeps the assignment it
+    /// was last seen with, so one that loses or gains its assigned nodes by
+    /// leaving or entering a shadow tree is signaled.
+    pub(crate) fn slots_after_move(&mut self, old_parent: u32, new_parent: u32, node: u32) {
+        self.signal_fallback_change(old_parent);
+        if let Some(sr) = self.named_shadow_root(old_parent) {
+            self.check_slots_in_root(sr);
+        }
+        let moved_slots = self.slots_in_subtree(node);
+        if !moved_slots.is_empty() && self.in_shadow_tree(old_parent) {
+            let root = self.root_idx(old_parent);
+            self.check_slots_in_root(root);
+        }
+        if let Some(sr) = self.named_shadow_root(new_parent) {
+            self.check_slots_in_root(sr);
+        }
+        self.signal_fallback_change(new_parent);
+        if !moved_slots.is_empty() {
+            if self.in_shadow_tree(new_parent) {
+                let root = self.root_idx(new_parent);
+                self.check_slots_in_root(root);
+            } else {
+                for slot in moved_slots {
+                    self.check_slot(slot);
+                }
+            }
         }
     }
 

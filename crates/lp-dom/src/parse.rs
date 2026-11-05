@@ -113,6 +113,8 @@ fn append_text(dom: &mut Dom, parent: u32, before: u32, text: &str) {
     let owner = dom.n(parent).owner_doc;
     let t = dom.alloc_raw(NodeKind::Text(text.to_owned()), owner);
     dom.link_raw(t, parent, before);
+    // The parser's insertions are tree mutations for mutation observers.
+    dom.queue_child_list(parent, &[t], &[], prev, before);
 }
 
 fn insert_node(dom: &mut Dom, parent: u32, before: u32, child: NodeOrText<u32>) {
@@ -124,7 +126,9 @@ fn insert_node(dom: &mut Dom, parent: u32, before: u32, child: NodeOrText<u32>) 
             }
             let owner = dom.n(parent).owner_doc;
             dom.set_owner_raw(n, owner);
+            let prev = if before == NIL { dom.n(parent).last_child } else { dom.n(before).prev };
             dom.link_raw(n, parent, before);
+            dom.queue_child_list(parent, &[n], &[], prev, before);
             dom.resources_after_insert(n);
         }
     }

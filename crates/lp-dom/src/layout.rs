@@ -469,10 +469,32 @@ impl Layout {
         if let Some(size) = self.root_scroll_size(dom, el, axis) {
             return size;
         }
+        let text = if axis == Axis::Width { self.text_control_scroll_width(dom, el) } else { None };
         self.layout_box(dom, el).map_or(0.0, |b| match axis {
-            Axis::Width => b.scroll_width.max(b.client_width),
+            Axis::Width => b.scroll_width.max(b.client_width).max(text.unwrap_or(0.0)),
             Axis::Height => b.scroll_height.max(b.client_height),
         })
+    }
+
+    /// The scrollable width of a single-line text `<input>`: its value's
+    /// width plus the padding. The value sits in an inner editor that
+    /// scrolls horizontally whatever the input's `overflow` is, and the
+    /// input's `scrollLeft` is that editor's (as in Chrome). `None` for
+    /// other elements and an empty value.
+    fn text_control_scroll_width(&self, dom: &Dom, el: NodeId) -> Option<f64> {
+        use crate::forms::InputType as T;
+        let e = dom.element(el).ok()?;
+        if !(e.is_html() && &*e.name.local == "input") {
+            return None;
+        }
+        if !matches!(dom.input_type(el).ok()?, T::Text | T::Search | T::Tel | T::Url | T::Email | T::Password) {
+            return None;
+        }
+        let value = dom.value(el).ok().filter(|v| !v.is_empty())?;
+        let b = self.layout_box(dom, el)?;
+        let size = self.style.computed_font_size(dom, Some(el));
+        let weight = self.style.computed_value(dom, el, "font-weight").and_then(|w| w.parse().ok()).unwrap_or(400);
+        Some(crate::text_metrics::text_width(&value, size, weight) + b.padding[LEFT] + b.padding[RIGHT])
     }
 
     /// `scrollExtent` (Element.zig:1845-1858): how far `el` scrolls on
@@ -483,7 +505,8 @@ impl Layout {
         }
         // Only scroll containers scroll; others stay at 0 (as in Chrome).
         let clips = self.style.overflow_clip_axes(dom, el);
-        if !(if axis == Axis::Width { clips.x } else { clips.y }) {
+        let text_control = axis == Axis::Width && self.text_control_scroll_width(dom, el).is_some();
+        if !(if axis == Axis::Width { clips.x } else { clips.y }) && !text_control {
             return Some(0.0);
         }
         let client = self.client_axis(dom, el, axis);

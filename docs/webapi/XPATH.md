@@ -69,9 +69,9 @@ Deviations:
 - Invalidation uses a page-wide counter, so a tree mutation in any
   document of the page (not only the context node's) invalidates
   iterators.
-- Attribute results are new `Attr` objects on each access (`Attr` wrappers
-  have no identity in this rewrite), so `r.snapshotItem(0) ===
-  r.snapshotItem(0)` is false for attributes.
+- An attribute result is the element's `Attr` node (the object
+  `getAttributeNode` returns); one whose attribute was removed since the
+  evaluation reads as null.
 - `node()` also matches the doctype (as upstream does; XPath 1.0's data
   model has no doctype node), so `count(/node())` is 2 for
   `<!DOCTYPE html><html>`. Its name and string-value are empty.

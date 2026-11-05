@@ -246,6 +246,13 @@ impl FrameHost {
     pub fn matches(&self, key: FrameKey, loader: &LoaderId) -> bool {
         self.with_frame(key, |f| f.loader_id == *loader).unwrap_or(false)
     }
+    /// The session history of the frame `key`.
+    pub(crate) fn nav(&self, key: FrameKey) -> Option<Rc<PageNav>> {
+        match key.child {
+            None => Some(self.root_nav.clone()),
+            Some(id) => self.children.borrow().get(&id).map(|child| child.nav.clone()),
+        }
+    }
     pub fn make_realm(
         self: &Rc<Self>,
         key: FrameKey,
@@ -622,8 +629,20 @@ impl FrameHost {
             .ok_or(JsError::ContextDestroyed)
     }
     /// Realms of `realm`'s world in the frames of this tree other than `source`.
+    /// A removed frame's realms count until they are disposed (`drain_retired`):
+    /// its script may still run, and the nodes it wrapped keep those wrappers.
     pub fn sibling_realms(&self, source: FrameKey, realm: lp_js::RealmId) -> Vec<Realm> {
-        let Ok(world) = self.world_of(source, realm) else { return Vec::new() };
+        let retired = self.retired.borrow();
+        let world = match self.world_of(source, realm) {
+            Ok(world) => world,
+            Err(_) => {
+                let of_retired = retired.iter().flat_map(|d| d.main_frame.realms.iter()).find(|r| r.realm.id() == realm);
+                match of_retired {
+                    Some(r) => r.world.clone(),
+                    None => return Vec::new(),
+                }
+            }
+        };
         let of = |frame: &Frame| frame.realms.iter().find(|r| r.world == world).map(|r| r.realm.clone());
         let mut realms = Vec::new();
         if source.child.is_some() {
@@ -633,6 +652,9 @@ impl FrameHost {
             if source.child != Some(*id) {
                 realms.extend(of(&doc.main_frame));
             }
+        }
+        for doc in retired.iter() {
+            realms.extend(of(&doc.main_frame).filter(|r| r.id() != realm && !r.is_disposed()));
         }
         realms
     }
@@ -933,6 +955,7 @@ impl Browser {
                     charset: None,
                     body: html.into_bytes(),
                     content_disposition: None,
+                    header_csp: false,
                 },
                 HistoryHandling::Replace,
             )

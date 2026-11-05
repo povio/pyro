@@ -530,6 +530,22 @@ impl Browser {
         p.main_frame.page_dom.as_ref().is_none_or(|d| d.quiet_since_last_task())
     }
 
+    /// Paint Timing without a renderer: a document has its first paint at
+    /// the first safe point at which it has a body and is not render-blocked
+    /// (HTML: a render-blocked document has no rendering opportunity).
+    fn note_first_paint(&mut self, key: frames::FrameKey) {
+        let Some(state) = self.doc(key) else { return };
+        if state.nav.first_paint().is_some() {
+            return;
+        }
+        let (Some(bindings), nav) = (state.main_frame.page_dom.clone(), state.nav.clone()) else { return };
+        drop(state);
+        let has_body = bindings.dom.try_borrow().is_ok_and(|dom| dom.body(bindings.document()).ok().flatten().is_some());
+        if has_body && !bindings.render_blocked() {
+            nav.note_first_paint();
+        }
+    }
+
     /// Owner-thread safe point after synchronous host/inspector JavaScript.
     /// Call only after releasing DOM borrows. Event-loop tasks invoke it automatically.
     pub fn checkpoint(&mut self) {
@@ -560,6 +576,7 @@ impl Browser {
             host.drain_retired();
             for key in host.keys() {
                 self.fire_load_if_ready(key);
+                self.note_first_paint(key);
             }
         }
     }
@@ -587,6 +604,8 @@ impl BrowserThread {
         engine.register::<Location>();
         engine.register::<History>();
         engine.register::<Performance>();
+        engine.register::<nav::PerformanceEntry>();
+        engine.register::<nav::PerformancePaintTiming>();
         let event_loop = EventLoop::new();
         // The system JavaScriptCore binds this VM's timers to this thread's
         // run loop; the loop services it at a bounded interval for the VM's
@@ -1206,6 +1225,12 @@ impl Browser {
         opts: NavigateOpts,
         history: HistoryHandling,
     ) -> Result<LoaderId, JsError> {
+        // HTML "navigate": the document being left is asked first
+        // (`beforeunload` at its Window). The navigation goes on whatever its
+        // listeners answer (`lp_webapi::lifecycle::before_unload`).
+        if let Some(leaving) = self.doc(page).and_then(|doc| doc.main_frame.page_dom.clone()) {
+            lp_webapi::lifecycle::before_unload(&leaving);
+        }
         let loader_id = LoaderId(format!("{:032X}", self.next()));
         // Invalidate the previous fetch even for blank or failed navigation.
         self.cancel_pending_document(page);

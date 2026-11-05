@@ -993,6 +993,36 @@ impl StyleEngine {
         })
     }
 
+    /// Calls `f` with the text of each author sheet whose owner is connected,
+    /// in cascade order (CSSOM edits included).
+    pub fn for_each_author_sheet(&self, dom: &Dom, f: &mut dyn FnMut(&str)) {
+        for sheet in &self.sheets {
+            if !dom.is_alive(sheet.owner) || !dom.is_connected(sheet.owner).unwrap_or(false) {
+                continue;
+            }
+            match &sheet.source {
+                SheetSource::Text(text) => f(text),
+                SheetSource::StyleElement => f(&dom.text_content(sheet.owner).ok().flatten().unwrap_or_default()),
+            }
+        }
+    }
+
+    /// A key that changes when the author sheets' texts may have: the sheet
+    /// generation (a sheet added, removed or given text) and the text of
+    /// every `<style>` element, which is read from the DOM.
+    pub fn author_sheets_key(&self, dom: &Dom) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = rustc_hash::FxHasher::default();
+        self.generation.hash(&mut hasher);
+        for sheet in &self.sheets {
+            if matches!(sheet.source, SheetSource::StyleElement) && dom.is_alive(sheet.owner) {
+                dom.is_connected(sheet.owner).unwrap_or(false).hash(&mut hasher);
+                dom.text_content(sheet.owner).ok().flatten().unwrap_or_default().hash(&mut hasher);
+            }
+        }
+        hasher.finish()
+    }
+
     pub fn sheet_owners(&self) -> Vec<NodeId> {
         self.sheets.iter().map(|s| s.owner).collect()
     }
