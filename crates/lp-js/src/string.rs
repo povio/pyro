@@ -2,7 +2,6 @@
 
 use lp_jsc_sys as sys;
 use std::cell::RefCell;
-use std::collections::HashMap;
 
 /// An owned, retained `JSStringRef`. Not tied to a context: JSC strings are
 /// immutable and usable from any context of the thread that created them.
@@ -163,18 +162,60 @@ pub(crate) fn eq_utf16_str(a: &[u16], b: &str) -> bool {
 }
 
 thread_local! {
-    static ATOMS: RefCell<HashMap<&'static str, JsString>> = RefCell::new(HashMap::new());
+    /// One JSC string per static name, keyed by the name's address and
+    /// length: no hashing of the characters, and literals are deduplicated
+    /// by the linker, so a name used at many sites is usually one entry (a
+    /// duplicate is merely a second entry with equal contents). Entries are
+    /// never removed, so a raw `JSStringRef` taken from the table stays valid
+    /// for the thread's lifetime.
+    static ATOMS: RefCell<rustc_hash::FxHashMap<(usize, usize), JsString>> =
+        RefCell::new(rustc_hash::FxHashMap::default());
+}
+
+/// The thread's JSC string for the static name `name`, made on first use:
+/// constant property keys ([`crate::Scope::get_hidden`],
+/// [`crate::Object::get_atom`]) need no string creation and release per
+/// access. The reference is borrowed from the thread's table, which keeps it
+/// for the thread's lifetime. The table borrow ends before this returns, so
+/// callers may enter JSC (which may call back into code that asks for atoms)
+/// while they use it.
+#[inline]
+pub(crate) fn atom_raw(name: &'static str) -> sys::JSStringRef {
+    let key = (name.as_ptr() as usize, name.len());
+    ATOMS.with(|a| {
+        if let Some(s) = a.borrow().get(&key) {
+            return s.as_raw();
+        }
+        let s = JsString::new(name);
+        let raw = s.as_raw();
+        a.borrow_mut().insert(key, s);
+        raw
+    })
 }
 
 /// Returns a cached JSC string for a static name (property names, event types).
 /// Cached per thread for the thread's lifetime.
 pub fn atom(name: &'static str) -> JsString {
-    ATOMS.with(|a| a.borrow_mut().entry(name).or_insert_with(|| JsString::new(name)).clone())
+    // SAFETY: a live string owned by the thread's table; retained here.
+    unsafe { JsString::from_raw_borrowed(atom_raw(name)) }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn atoms_are_made_once_per_name() {
+        const NAME: &str = "listeners";
+        let a = atom_raw(NAME);
+        assert_eq!(atom_raw(NAME), a);
+        assert!(atom(NAME).eq_str("listeners"));
+        // A name at another address is another entry with equal contents.
+        let other: &'static str = Box::leak(String::from("listeners").into_boxed_str());
+        let b = atom_raw(other);
+        assert_ne!(a, b);
+        assert_eq!(unsafe { utf16_of(a) }, unsafe { utf16_of(b) });
+    }
 
     #[test]
     fn roundtrips_utf8_utf16_and_nul() {

@@ -14,7 +14,7 @@
 //! dispatcher here. Slots are process-wide, keyed by the class type and the
 //! attribute name: every engine registers the same (class, name) with the same
 //! callbacks, so the first registration's entry serves them all.
-use crate::class::{guard, GetterResult, Header, InvokeHFn, Kind, MemberCall, PayloadTag};
+use crate::class::{guard_in, GetterResult, Header, InvokeHFn, Kind, MemberCall, PayloadTag};
 use crate::error::JsError;
 use crate::value::Args;
 use lp_jsc_sys as sys;
@@ -179,7 +179,7 @@ pub(crate) unsafe extern "C" fn fast_getter_dispatch(
     context: *mut c_void,
 ) -> sys::JSValueRef {
     let slot = context as usize;
-    if let Some(v) = unsafe { lean_getter_h(slot, private_data as *mut Header) } {
+    if let Some(v) = unsafe { lean_getter_h(slot, private_data as *mut Header, this) } {
         return v;
     }
     unsafe { custom_getter_dispatch(slot, ctx, this as sys::JSValueRef, ptr::null()) }
@@ -193,7 +193,7 @@ pub(crate) unsafe extern "C" fn fast_getter_dispatch(
 /// script or mutate. `None` sends the call through the full dispatch: not a
 /// wrapper instance, a disposed realm, an error, a panic.
 #[inline]
-unsafe fn lean_getter_h(slot: usize, h: *mut Header) -> Option<sys::JSValueRef> {
+unsafe fn lean_getter_h(slot: usize, h: *mut Header, this: sys::JSObjectRef) -> Option<sys::JSValueRef> {
     unsafe {
         if h.is_null() || (*h).tag != PayloadTag::Wrapper || (*h).kind != Kind::Instance {
             return None;
@@ -211,7 +211,7 @@ unsafe fn lean_getter_h(slot: usize, h: *mut Header) -> Option<sys::JSValueRef> 
             return None;
         }
         let scope = crate::realm::Scope::new(ctx, &realm);
-        match catch_unwind(AssertUnwindSafe(|| invoke(&scope, h, f))) {
+        match catch_unwind(AssertUnwindSafe(|| invoke(&scope, h, this, f))) {
             Ok(Ok(v)) if !v.is_null() => Some(v),
             _ => None,
         }
@@ -225,7 +225,7 @@ unsafe fn lean_getter(slot: usize, this: sys::JSValueRef) -> Option<sys::JSValue
     if this.is_null() {
         return None;
     }
-    unsafe { lean_getter_h(slot, sys::JSObjectGetPrivate(this) as *mut Header) }
+    unsafe { lean_getter_h(slot, sys::JSObjectGetPrivate(this) as *mut Header, this) }
 }
 
 unsafe fn custom_getter_dispatch(
@@ -241,7 +241,9 @@ unsafe fn custom_getter_dispatch(
     }
     unsafe {
         let mut exc: sys::JSValueRef = ptr::null();
-        let result = guard(ctx, &mut exc, ptr::null(), |scope| {
+        // A wrapper receiver's realm is usually the caller's (`ctx`).
+        let candidate = receiver(this).and_then(|o| crate::class::wrapper_realm(o));
+        let result = guard_in(ctx, candidate, &mut exc, ptr::null(), |scope| {
             let Some(call) = GETTER_CALLS[slot].load() else { return Err(JsError::Type("Illegal invocation".into())) };
             let Some(this) = receiver(this) else { return Err(JsError::Type("Illegal invocation".into())) };
             (call.invoke)(scope, this, Args::from_raw(ctx, 0, ptr::null()), call.f)
@@ -266,7 +268,8 @@ unsafe fn custom_setter_dispatch(
 ) -> bool {
     unsafe {
         let mut exc: sys::JSValueRef = ptr::null();
-        let stands = guard(ctx, &mut exc, false, |scope| {
+        let candidate = receiver(this).and_then(|o| crate::class::wrapper_realm(o));
+        let stands = guard_in(ctx, candidate, &mut exc, false, |scope| {
             let Some(call) = SETTER_CALLS[slot].load() else { return Err(JsError::Type("Illegal invocation".into())) };
             let Some(this) = receiver(this) else { return Err(JsError::Type("Illegal invocation".into())) };
             (call.invoke)(scope, this, Args::from_raw(ctx, 1, &value), call.f)?;

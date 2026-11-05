@@ -301,7 +301,7 @@ fn follow<'s>(s: &Scope<'s>, source: Value<'s>, dependent: Object<'s>) -> JsResu
 }
 
 /// The array kept as `owner`'s hidden property `key`, made on first use.
-fn hidden_list<'s>(s: &Scope<'s>, owner: Object<'s>, key: &str) -> JsResult<Object<'s>> {
+fn hidden_list<'s>(s: &Scope<'s>, owner: Object<'s>, key: &'static str) -> JsResult<Object<'s>> {
     if let Some(list) = s.get_hidden(owner, key)?.and_then(|v| v.as_object()) {
         return Ok(list);
     }

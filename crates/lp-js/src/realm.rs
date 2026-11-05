@@ -222,10 +222,17 @@ pub(crate) struct RealmInner {
     /// their payload headers: `dispose` releases their weak handles, which
     /// must not outlive the VM.
     pub(crate) owned_head: Cell<*mut Header>,
+    /// The member function payloads whose `realm` is this realm (patched JSC
+    /// only; the engine owns them for its lifetime): `dispose` clears their
+    /// `realm`, so the payloads do not keep this allocation alive.
+    member_fns: RefCell<Vec<*const class::MemberPayload>>,
     helpers: RefCell<Option<Persistent>>,
-    helper_cache: RefCell<HashMap<&'static str, Persistent>>,
+    helper_cache: RefCell<rustc_hash::FxHashMap<&'static str, Persistent>>,
     /// The realm's `Object.prototype`, for the plain-object fast path of `is_plain_object`.
     object_proto: RefCell<Option<Persistent>>,
+    /// The realm's `Function.prototype`: the prototype of the native
+    /// functions it makes (`Scope::function`, interface members).
+    function_proto: RefCell<Option<Persistent>>,
     /// Functions compiled by `call_function*`, keyed by source: CDP clients
     /// send the same (large) `functionDeclaration` on every call.
     fn_cache: RefCell<HashMap<u64, (String, Persistent)>>,
@@ -336,7 +343,7 @@ impl RealmInner {
             return;
         }
         self.global_object.set(ptr::null_mut());
-        self.engine.realms.borrow_mut().retain(|(g, _)| *g != ctx);
+        self.engine.realms.borrow_mut().remove(&(ctx as usize));
         let loader = self.module_loader.replace(ptr::null_mut());
         if !loader.is_null() {
             unsafe { sys::modules::lp_jsc_module_loader_release(loader) };
@@ -354,8 +361,23 @@ impl RealmInner {
         self.helpers.borrow_mut().take();
         self.helper_cache.borrow_mut().clear();
         self.object_proto.borrow_mut().take();
+        self.function_proto.borrow_mut().take();
         self.fn_cache.borrow_mut().clear();
         self.dom_exception.borrow_mut().take();
+        for p in std::mem::take(&mut *self.member_fns.borrow_mut()) {
+            // SAFETY: the engine (which this realm keeps alive) owns the
+            // payload; no reference into the cell is held (`member_call_data`).
+            drop(unsafe { (*p).realm.take() });
+        }
+        #[cfg(debug_assertions)]
+        {
+            let me: *const RealmInner = self;
+            let payloads = self.engine.member_payloads.borrow();
+            debug_assert!(
+                payloads.iter().all(|p| unsafe { (*p.realm.as_ptr()).as_ref() }.is_none_or(|w| w.as_ptr() != me)),
+                "every member payload of a disposed realm has its realm cleared"
+            );
+        }
         if let Some((_, release, _)) = sys::spi::get().weak() {
             for (_, w) in self.identity.borrow_mut().drain() {
                 unsafe { release(self.engine.group(), w) };
@@ -599,43 +621,37 @@ pub trait NamedProperties {
     fn resolve<'s>(&self, scope: &Scope<'s>, name: &str) -> JsResult<Option<Value<'s>>>;
 }
 
-thread_local! {
-    /// The last realm a callback resolved, by its global context: native
-    /// callbacks arrive in bursts from one realm (a selector engine reads
-    /// tens of thousands of properties per query), and the engine lookup
-    /// behind this (thread-local engine, realm list, weak upgrade) is a
-    /// measurable share of a 100 ns callback.
-    static LAST_REALM: RefCell<(sys::JSContextRef, Weak<RealmInner>)> = const { RefCell::new((ptr::null(), Weak::new())) };
-}
-
+/// The realm of the current engine whose context is `ctx`: the realm a
+/// native callback runs in. Callbacks that know a candidate (a member
+/// function's or closure's own realm, a receiver's) try it first with
+/// [`realm_if_ctx`]; this is for the rest.
 pub(crate) fn realm_for_ctx(ctx: sys::JSContextRef) -> Option<Rc<RealmInner>> {
-    let cached = LAST_REALM.with(|c| {
-        let c = c.borrow();
-        if c.0 == ctx {
-            c.1.upgrade()
-        } else {
-            None
-        }
-    });
-    if let Some(realm) = cached {
-        // A disposed realm keeps its entry in the engine list until it is
-        // removed there; its context is null then.
-        if !realm.ctx.get().is_null() && realm.engine.is_live() {
-            return Some(realm);
-        }
-    }
     let engine = crate::engine::current_inner()?;
     // Callbacks receive the global context itself; only other contexts need
     // the (locking) lookup of their global context.
-    let realm = match engine.realm_for_global(ctx as sys::JSGlobalContextRef) {
-        Some(realm) => realm,
+    match engine.realm_for_global(ctx as sys::JSGlobalContextRef) {
+        Some(realm) => Some(realm),
         None => {
             let global = unsafe { sys::JSContextGetGlobalContext(ctx) };
-            engine.realm_for_global(global)?
+            engine.realm_for_global(global)
         }
-    };
-    LAST_REALM.with(|c| *c.borrow_mut() = (ctx, Rc::downgrade(&realm)));
-    Some(realm)
+    }
+}
+
+/// `candidate`, if it is what [`realm_for_ctx`] would find for `ctx`: a live
+/// realm of a live engine whose global context is `ctx` (only the thread's
+/// current engine is live, and a realm whose context is set is in its
+/// engine's map). Costs a weak upgrade and two compares, no lookup.
+#[inline]
+pub(crate) fn realm_if_ctx(candidate: &Weak<RealmInner>, ctx: sys::JSContextRef) -> Option<Rc<RealmInner>> {
+    let realm = candidate.upgrade()?;
+    (realm.ctx.get() as sys::JSContextRef == ctx && !ctx.is_null() && realm.engine.is_live()).then_some(realm)
+}
+
+/// Whether `realm` is the realm `scope` works in.
+#[inline]
+pub(crate) fn is_scope_realm(realm: &Weak<RealmInner>, scope: &Scope<'_>) -> bool {
+    std::ptr::eq(realm.as_ptr(), Rc::as_ptr(scope.realm))
 }
 
 impl<'s> Scope<'s> {
@@ -868,13 +884,23 @@ impl<'s> Scope<'s> {
         let closure_class = self.realm.engine.classes.borrow().closure;
         let obj = unsafe { sys::JSObjectMake(self.ctx, closure_class, h as *mut c_void) };
         let obj = unsafe { Object::from_raw(self.ctx, obj) };
-        let fproto = self.global().get("Function")?.as_object().map(|f| f.get("prototype"));
-        if let Some(Ok(p)) = fproto {
+        if let Some(p) = self.function_prototype()? {
             obj.set_prototype(p);
         }
         let nm = self.string(name);
-        let _ = self.realm.helper(self, "setName").and_then(|h| h.call(None, &[obj.value(), nm]));
+        let _ = self.realm.cached_helper(self, "setName").and_then(|h| h.call(None, &[obj.value(), nm]));
         Ok(obj)
+    }
+
+    /// The realm's own `Function.prototype` (%Function.prototype%), kept
+    /// from realm creation until disposal: what native functions get,
+    /// whatever page script did to the global `Function` since. A disposed
+    /// realm reads the global's.
+    fn function_prototype(&self) -> JsResult<Option<Value<'s>>> {
+        if let Some(p) = self.realm.function_proto.borrow().as_ref() {
+            return Ok(Some(p.get(self)));
+        }
+        Ok(self.global().get_atom("Function")?.as_object().and_then(|f| f.get_atom("prototype").ok()))
     }
 
     /// Defines `name` on the global (not enumerable) as a function taking one
@@ -935,7 +961,7 @@ impl<'s> Scope<'s> {
             }
             Ok(s.undefined())
         })?;
-        self.realm.helper(self, "then")?.call(None, &[value, fok.value(), ferr.value()])?;
+        self.realm.cached_helper(self, "then")?.call(None, &[value, fok.value(), ferr.value()])?;
         Ok(())
     }
 
@@ -947,7 +973,7 @@ impl<'s> Scope<'s> {
     /// of this realm. `what` names the operation in the TypeError for
     /// non-iterable values (https://webidl.spec.whatwg.org/#es-sequence).
     pub fn sequence(&self, value: Value<'_>, what: &str) -> JsResult<Object<'s>> {
-        let seq = self.realm.helper(self, "sequence")?.call(None, &[value, self.string(what)])?;
+        let seq = self.realm.cached_helper(self, "sequence")?.call(None, &[value, self.string(what)])?;
         seq.as_object().ok_or_else(|| JsError::Type("sequence conversion produced no array".into()))
     }
 
@@ -1085,10 +1111,24 @@ impl<'s> Scope<'s> {
     }
 
     /// Borrows the payload of argument `i` of a native callback. Arguments are
-    /// rooted by the caller's frame for the callback's duration, so no guard
-    /// is needed.
+    /// rooted by the caller's frame for the callback's duration (JSC's
+    /// argument array belongs to the calling frame, which outlives the
+    /// callback), so no guard is needed.
     pub fn unwrap_arg<C: JsClass>(&self, args: &Args<'s>, i: usize) -> Option<&'s C::Data> {
         self.unwrap_raw::<C>(args.opt(i)?).map(|(d, _)| d)
+    }
+
+    /// [`Scope::unwrap`] without the guard's protect/unprotect pair, for a
+    /// value something else keeps alive for `'s`: a callback's receiver or
+    /// argument (rooted by the calling frame), or a value reachable from one.
+    ///
+    /// # Safety
+    /// The wrapper must stay alive for `'s`. A value merely held in a local
+    /// does not qualify: the conservative scan only sees it while the
+    /// compiled code still keeps it, and a collection followed by
+    /// [`crate::Engine::drain_finalized`] would free the payload.
+    pub unsafe fn unwrap_rooted<C: JsClass>(&self, value: Value<'_>) -> Option<&'s C::Data> {
+        self.unwrap_raw::<C>(value).map(|(d, _)| d)
     }
 
     /// Payload of the realm's global object, if it is (a subclass of) `C`.
@@ -1097,24 +1137,22 @@ impl<'s> Scope<'s> {
         if h.is_null() {
             return None;
         }
-        let reg = self.realm.engine.classes.borrow();
         // SAFETY: the global payload lives as long as the realm, which this
         // scope borrows for 's.
-        unsafe { class::class_data::<C::Data>(&reg, h, reg.id_of::<C>()?) }
+        unsafe { class::data_of_header::<C>(h) }
     }
 
-    /// Data and object of a `C` wrapper (object is null for the global).
+    /// Data and object of a `C` wrapper (object is null for the global). The
+    /// brand check walks the payload's class chain (`data_of_header`): no
+    /// registry borrow, no class-id lookup.
     fn unwrap_raw<C: JsClass>(&self, value: Value<'_>) -> Option<(&'s C::Data, sys::JSObjectRef)> {
         let o = value.as_object()?;
-        let h = unsafe { self.header_of_object(o.raw) }?;
-        let is_global = h == self.realm.global_payload.get();
+        // SAFETY: a live object of this VM; its payload lives while it does
+        // (the callers root it for 's), the global's while the realm does.
         unsafe {
-            if (*h).kind != Kind::Instance {
-                return None;
-            }
-            let reg = self.realm.engine.classes.borrow();
-            let data = class::class_data::<C::Data>(&reg, h, reg.id_of::<C>()?)?;
-            Some((data, if is_global { ptr::null_mut() } else { o.raw }))
+            let h = self.header_of_object(o.raw)?;
+            let data = class::data_of_header::<C>(h)?;
+            Some((data, if h == self.realm.global_payload.get() { ptr::null_mut() } else { o.raw }))
         }
     }
 
@@ -1279,10 +1317,30 @@ impl<'s> Scope<'s> {
 
     /// Stores a GC-traced hidden value on a host object (wrappers and the
     /// global only). Use for per-wrapper JS state such as event listeners so
-    /// cycles through it stay collectable.
-    pub fn set_hidden(&self, object: Object<'_>, key: &str, value: Value<'_>) -> JsResult<()> {
+    /// cycles through it stay collectable. Keys are constants: the thread's
+    /// string for each ([`crate::atom`]) is made once.
+    pub fn set_hidden(&self, object: Object<'_>, key: &'static str, value: Value<'_>) -> JsResult<()> {
+        self.set_hidden_raw(object, crate::string::atom_raw(key), value)
+    }
+
+    pub fn get_hidden(&self, object: Object<'_>, key: &'static str) -> JsResult<Option<Value<'s>>> {
+        self.get_hidden_raw(object, crate::string::atom_raw(key))
+    }
+
+    /// [`Scope::set_hidden`] for a key computed at run time (a string is
+    /// made for each call).
+    pub fn set_hidden_str(&self, object: Object<'_>, key: &str, value: Value<'_>) -> JsResult<()> {
+        self.set_hidden_raw(object, JsString::new(key).as_raw(), value)
+    }
+
+    /// [`Scope::get_hidden`] for a key computed at run time.
+    pub fn get_hidden_str(&self, object: Object<'_>, key: &str) -> JsResult<Option<Value<'s>>> {
+        self.get_hidden_raw(object, JsString::new(key).as_raw())
+    }
+
+    fn set_hidden_raw(&self, object: Object<'_>, key: sys::JSStringRef, value: Value<'_>) -> JsResult<()> {
         let f = sys::spi::get().set_private_property.ok_or(JsError::Unsupported("JSObjectSetPrivateProperty"))?;
-        let ok = unsafe { f(self.ctx, object.raw, JsString::new(key).as_raw(), value.raw) };
+        let ok = unsafe { f(self.ctx, object.raw, key, value.raw) };
         if ok {
             Ok(())
         } else {
@@ -1290,9 +1348,9 @@ impl<'s> Scope<'s> {
         }
     }
 
-    pub fn get_hidden(&self, object: Object<'_>, key: &str) -> JsResult<Option<Value<'s>>> {
+    fn get_hidden_raw(&self, object: Object<'_>, key: sys::JSStringRef) -> JsResult<Option<Value<'s>>> {
         let f = sys::spi::get().get_private_property.ok_or(JsError::Unsupported("JSObjectGetPrivateProperty"))?;
-        let v = unsafe { f(self.ctx, object.raw, JsString::new(key).as_raw()) };
+        let v = unsafe { f(self.ctx, object.raw, key) };
         Ok((!v.is_null()).then(|| unsafe { Value::from_raw(self.ctx, v) }))
     }
 
@@ -1352,7 +1410,7 @@ impl<'s> Scope<'s> {
     ) -> JsResult<String> {
         let description = description.map_or_else(|| self.undefined(), |d| self.string(d));
         let promise = promise.unwrap_or_else(|| self.undefined());
-        self.realm.helper(self, "preview")?.call(None, &[value, description, promise])?.to_string()
+        self.realm.cached_helper(self, "preview")?.call(None, &[value, description, promise])?.to_string()
     }
 
     /// CDP `internalProperties` of an object as an array of `[name, value]`
@@ -1439,7 +1497,8 @@ pub(crate) unsafe extern "C" fn closure_call(
     exc: *mut sys::JSValueRef,
 ) -> sys::JSValueRef {
     unsafe {
-        class::guard(ctx, exc, ptr::null(), |scope| {
+        // The closure's own realm (its payload's), which JSC calls it in.
+        class::guard_in(ctx, class::wrapper_realm(function), exc, ptr::null(), |scope| {
             let h = sys::JSObjectGetPrivate(function) as *mut Header;
             let f =
                 if h.is_null() || (*h).kind != Kind::Closure { None } else { class::payload_data::<ClosureData>(h) };
@@ -1494,9 +1553,11 @@ pub(crate) fn create(engine: &Rc<EngineInner>, options: RealmOptions) -> JsResul
         identity: RefCell::new(rustc_hash::FxHashMap::default()),
         shared_strings: RefCell::new(rustc_hash::FxHashMap::default()),
         owned_head: Cell::new(ptr::null_mut()),
+        member_fns: RefCell::new(Vec::new()),
         helpers: RefCell::new(None),
-        helper_cache: RefCell::new(HashMap::new()),
+        helper_cache: RefCell::new(rustc_hash::FxHashMap::default()),
         object_proto: RefCell::new(None),
+        function_proto: RefCell::new(None),
         fn_cache: RefCell::new(HashMap::new()),
         dom_exception: RefCell::new(None),
         module_loader: Cell::new(ptr::null_mut()),
@@ -1520,7 +1581,7 @@ pub(crate) fn create(engine: &Rc<EngineInner>, options: RealmOptions) -> JsResul
         let t = unsafe { target(inner.global_object.get()) };
         inner.global_target.set(t as sys::JSObjectRef);
     }
-    engine.realms.borrow_mut().push((ctx, Rc::downgrade(&inner)));
+    engine.realms.borrow_mut().insert(ctx as usize, Rc::downgrade(&inner));
     let realm = Realm { inner };
     {
         let _watchdog = crate::engine::WatchdogPause::new(engine);
@@ -1529,6 +1590,9 @@ pub(crate) fn create(engine: &Rc<EngineInner>, options: RealmOptions) -> JsResul
         *realm.inner.helpers.borrow_mut() = Some(Persistent::new(&scope, helpers));
         let dom_exc = helpers.as_object().expect("helpers").get("DOMException")?;
         *realm.inner.dom_exception.borrow_mut() = Some(Persistent::new(&scope, dom_exc));
+        // Before any native function is made (interface members included).
+        let function = scope.global().get_atom("Function")?.as_object().expect("Function");
+        *realm.inner.function_proto.borrow_mut() = Some(Persistent::new(&scope, function.get_atom("prototype")?));
         install_classes(&scope)?;
         let object_proto = scope.global().get("Object")?.as_object().expect("Object").get("prototype")?;
         *realm.inner.object_proto.borrow_mut() = Some(Persistent::new(&scope, object_proto));
@@ -1561,7 +1625,7 @@ fn install_classes(scope: &Scope<'_>) -> JsResult<()> {
     let object_proto = global.get("Object")?.as_object().expect("Object").get("prototype")?;
     let install = realm.helper(scope, "installInterfaces")?;
     let populate = make_native_fn(scope, "populate", populate_tramp);
-    let keys = MemberKeys::new();
+    let keys = MemberKeys::new(Some(realm));
     let n = reg.classes.len();
     // One call into JavaScript for all classes: per-class calls cost a VM
     // entry each, which dominated realm creation.
@@ -1767,7 +1831,7 @@ fn install_members(scope: &Scope<'_>, id: ClassId) -> JsResult<()> {
     else {
         return Err(JsError::Type("invalid interface state".into()));
     };
-    install_members_raw(scope.ctx, &realm.engine, id, proto, target, helpers)
+    install_members_raw(scope.ctx, &realm.engine, Some(realm), id, proto, target, helpers)
 }
 
 /// Installs `id`'s members onto `proto`/`target` using only `ctx` and the
@@ -1792,9 +1856,15 @@ fn make_member_fn(
     // slow path every time. The payload has no finalizer there: the registry
     // keeps it for the engine's lifetime.
     if let Some(make) = sys::spi::get().make_function_with_data {
-        let mut payload = Box::new(class::MemberPayload { tag: class::PayloadTag::Member, call, pure });
+        // A disposed realm would never clear it again (see `member_fns`).
+        let realm = keys.realm.filter(|r| !r.ctx.get().is_null());
+        let cell = Cell::new(realm.map(Rc::downgrade));
+        let mut payload = Box::new(class::MemberPayload { tag: class::PayloadTag::Member, call, pure, realm: cell });
         let data = &mut *payload as *mut class::MemberPayload as *mut c_void;
         engine.member_payloads.borrow_mut().push(payload);
+        if let Some(r) = realm {
+            r.member_fns.borrow_mut().push(data as *const class::MemberPayload);
+        }
         let n = JsString::new(name);
         let f = unsafe { make(ctx, n.as_raw(), length, Some(class::member_call_data), data) };
         if f.is_null() {
@@ -1802,8 +1872,9 @@ fn make_member_fn(
         }
         return Ok(unsafe { Object::from_raw(ctx, f) });
     }
-    let payload =
-        Box::into_raw(Box::new(class::MemberPayload { tag: class::PayloadTag::Member, call, pure })) as *mut c_void;
+    // No realm: this payload is freed by `member_finalize` (see `MemberPayload::realm`).
+    let payload = class::MemberPayload { tag: class::PayloadTag::Member, call, pure, realm: Cell::new(None) };
+    let payload = Box::into_raw(Box::new(payload)) as *mut c_void;
     let f = unsafe { Object::from_raw(ctx, sys::JSObjectMake(ctx, class, payload)) };
     let attrs = sys::kJSPropertyAttributeReadOnly | sys::kJSPropertyAttributeDontEnum;
     unsafe {
@@ -1819,21 +1890,25 @@ fn make_member_fn(
     Ok(f)
 }
 
-/// The `length` and `name` keys, created once per installation pass.
-struct MemberKeys {
+/// What every member function of one installation pass shares: the
+/// `length` and `name` keys, and the realm the functions belong to (`None`
+/// for a disposed realm).
+struct MemberKeys<'a> {
     length: JsString,
     name: JsString,
+    realm: Option<&'a Rc<RealmInner>>,
 }
 
-impl MemberKeys {
-    fn new() -> MemberKeys {
-        MemberKeys { length: JsString::new("length"), name: JsString::new("name") }
+impl<'a> MemberKeys<'a> {
+    fn new(realm: Option<&'a Rc<RealmInner>>) -> MemberKeys<'a> {
+        MemberKeys { length: JsString::new("length"), name: JsString::new("name"), realm }
     }
 }
 
 fn install_members_raw(
     ctx: sys::JSContextRef,
     engine: &EngineInner,
+    realm: Option<&Rc<RealmInner>>,
     id: ClassId,
     proto: Object<'_>,
     target: Object<'_>,
@@ -1864,12 +1939,18 @@ fn install_members_raw(
     let helper = |name: &str| -> JsResult<Object<'_>> {
         helpers.get(name)?.as_object().ok_or_else(|| JsError::Type("missing helper".into()))
     };
-    let function_proto = unsafe {
-        let global = Object::from_raw(ctx, sys::JSContextGetGlobalObject(ctx));
-        global.get("Function")?.as_object().map(|f| f.get("prototype")).transpose()?
+    // A live realm's own Function.prototype; a disposed one's global's.
+    let cached = realm.and_then(|r| r.function_proto.borrow().as_ref().map(Persistent::as_raw));
+    let function_proto = match cached {
+        // SAFETY: protected by the realm until its disposal.
+        Some(p) => Some(unsafe { Value::from_raw(ctx, p) }),
+        None => unsafe {
+            let global = Object::from_raw(ctx, sys::JSContextGetGlobalObject(ctx));
+            global.get("Function")?.as_object().map(|f| f.get("prototype")).transpose()?
+        },
     };
     let member_class = engine.classes.borrow().member;
-    let keys = MemberKeys::new();
+    let keys = MemberKeys::new(realm);
     let native_pure = |name: &str, length: u32, call: class::MemberCall, pure: bool| -> JsResult<Object<'_>> {
         let f = make_member_fn(ctx, engine, member_class, call, pure, name, length, &keys)?;
         if let Some(p) = function_proto {
@@ -1969,7 +2050,7 @@ fn populate_disposed(ctx: sys::JSContextRef, id: ClassId, h: Object<'_>) -> JsRe
             return Err(JsError::ContextDestroyed);
         };
         populated.set_index(c, yes)?;
-        if let Err(e) = install_members_raw(ctx, &engine, c, proto, target, h) {
+        if let Err(e) = install_members_raw(ctx, &engine, None, c, proto, target, h) {
             populated.set_index(c, no)?;
             return Err(e);
         }
@@ -2163,5 +2244,54 @@ mod tests {
         assert_eq!(remap_module_url("file:///c.js", Some("file://")), "file:///c.js");
         assert_eq!(remap_module_url("file:///c.js", Some("null")), "file:///c.js");
         assert_eq!(remap_module_url("file:///c.js", None), "file:///c.js");
+    }
+    struct Probe;
+    impl crate::JsClass for Probe {
+        const NAME: &'static str = "MemberRealmProbe";
+        type Data = ();
+        type Parent = crate::NoParent;
+        fn define(def: &mut crate::ClassDef<Self>) {
+            def.constructor(0, |s, target, _| s.wrap_new::<Self>((), target, None));
+            def.method("one", 0, |s, _, _| Ok(s.number(1.0)));
+        }
+    }
+
+    /// Member payloads live as long as the engine; disposing a realm clears
+    /// the realm they hold (`RealmInner::member_fns`), so they do not keep its
+    /// allocation, and its functions still throw rather than run.
+    #[test]
+    fn disposed_realm_member_payloads_drop_their_realm() {
+        let engine = crate::Engine::new().unwrap();
+        engine.register::<Probe>();
+        let holds = |inner: *const super::RealmInner| {
+            let payloads = engine.inner.member_payloads.borrow();
+            payloads
+                .iter()
+                .filter(|p| unsafe { (*p.realm.as_ptr()).as_ref() }.is_some_and(|w| w.as_ptr() == inner))
+                .count()
+        };
+        let keep = engine.create_realm(Default::default()).unwrap();
+        let realm = engine.create_realm(Default::default()).unwrap();
+        let ptr = std::rc::Rc::as_ptr(&realm.inner);
+        {
+            let s = realm.scope().unwrap();
+            assert_eq!(s.eval("new MemberRealmProbe().one()", None, 1).unwrap().to_number().unwrap(), 1.0);
+            let f = s.eval("MemberRealmProbe.prototype.one", None, 1).unwrap();
+            keep.scope().unwrap().global().set("foreign", f).unwrap();
+        }
+        let patched = crate::sys::spi::get().make_function_with_data.is_some();
+        assert_eq!(holds(ptr) > 0, patched);
+        assert_eq!(realm.inner.member_fns.borrow().len(), holds(ptr));
+        let weak = std::rc::Rc::downgrade(&realm.inner);
+        realm.dispose();
+        assert_eq!(holds(ptr), 0);
+        assert!(realm.inner.member_fns.borrow().is_empty());
+        drop(realm);
+        assert!(weak.upgrade().is_none());
+        let s = keep.scope().unwrap();
+        assert!(s
+            .eval("try { foreign.call(new MemberRealmProbe()); false } catch (e) { true }", None, 1)
+            .unwrap()
+            .to_bool());
     }
 }

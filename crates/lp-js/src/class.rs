@@ -17,7 +17,7 @@
 
 use crate::engine::EngineInner;
 use crate::error::{throw_into, throw_message, JsError, JsResult};
-use crate::realm::{IdentityKey, RealmId, Scope};
+use crate::realm::{IdentityKey, Scope};
 use crate::string::{utf16_of, JsString};
 use crate::value::{Args, Object, Value};
 use lp_jsc_sys as sys;
@@ -101,13 +101,19 @@ pub(crate) struct MemberCall {
 /// Calls `f` (a member callback, cast back to its real fn-pointer type) for
 /// `this` with `args`.
 pub(crate) type InvokeFn = unsafe fn(&Scope<'_>, sys::JSObjectRef, Args<'_>, *const ()) -> JsResult<sys::JSValueRef>;
-/// A getter invoked with its receiver's payload header (already known to be
-/// a wrapper instance) in a scope of the receiver's realm.
-pub(crate) type InvokeHFn = unsafe fn(&Scope<'_>, *mut Header, *const ()) -> JsResult<sys::JSValueRef>;
+/// A getter invoked with its receiver (a wrapper instance) and the
+/// receiver's payload header, in a scope of the receiver's realm.
+pub(crate) type InvokeHFn =
+    unsafe fn(&Scope<'_>, *mut Header, sys::JSObjectRef, *const ()) -> JsResult<sys::JSValueRef>;
 
 /// Member callback types: plain fn pointers. Non-capturing closures coerce.
 pub type MethodFn<C> = for<'s> fn(&Scope<'s>, &<C as JsClass>::Data, Args<'s>) -> JsResult<Value<'s>>;
 pub type GetterFn<C> = for<'s> fn(&Scope<'s>, &<C as JsClass>::Data) -> JsResult<Value<'s>>;
+/// [`MethodFn`] that also gets the receiver: the wrapper whose data it is
+/// (see [`ClassDef::method_this`]).
+pub type MethodThisFn<C> = for<'s> fn(&Scope<'s>, &<C as JsClass>::Data, Object<'s>, Args<'s>) -> JsResult<Value<'s>>;
+/// [`GetterFn`] that also gets the receiver (see [`ClassDef::getter_this`]).
+pub type GetterThisFn<C> = for<'s> fn(&Scope<'s>, &<C as JsClass>::Data, Object<'s>) -> JsResult<Value<'s>>;
 pub type SetterFn<C> = for<'s> fn(&Scope<'s>, &<C as JsClass>::Data, Value<'s>) -> JsResult<()>;
 pub type StaticFn = for<'s> fn(&Scope<'s>, Args<'s>) -> JsResult<Value<'s>>;
 pub type CtorFn = for<'s> fn(&Scope<'s>, Object<'s>, Args<'s>) -> JsResult<Object<'s>>;
@@ -329,6 +335,73 @@ impl<C: JsClass> ClassDef<C> {
             pure: true,
             result,
             get_h: Some(getter_invoke_h::<C>),
+        });
+        self
+    }
+
+    /// [`ClassDef::method`] whose callback also gets the receiver: the
+    /// wrapper whose data it is (in the receiver's realm), so a member that
+    /// needs its own wrapper (hidden properties, events it fires at itself)
+    /// does not look it up again. A class with a
+    /// [`ClassDef::global_receiver`] that resolved an `undefined`/`null`/global
+    /// receiver gets the global object.
+    pub fn method_this(&mut self, name: &'static str, length: u32, f: MethodThisFn<C>) -> &mut Self {
+        self.methods.push(MethodSpec {
+            name,
+            length,
+            call: MemberCall { invoke: method_this_invoke::<C>, f: f as *const () },
+            pure: false,
+        });
+        self
+    }
+
+    /// [`ClassDef::pure_method`] with the receiver (see [`ClassDef::method_this`]).
+    pub fn pure_method_this(&mut self, name: &'static str, length: u32, f: MethodThisFn<C>) -> &mut Self {
+        self.methods.push(MethodSpec {
+            name,
+            length,
+            call: MemberCall { invoke: method_this_invoke::<C>, f: f as *const () },
+            pure: true,
+        });
+        self
+    }
+
+    /// [`ClassDef::getter`] with the receiver (see [`ClassDef::method_this`]).
+    pub fn getter_this(&mut self, name: &'static str, g: GetterThisFn<C>) -> &mut Self {
+        let get = MemberCall { invoke: getter_this_invoke::<C>, f: g as *const () };
+        self.accessors.push(AccessorSpec {
+            name,
+            get,
+            set: None,
+            slot: None,
+            pure: false,
+            result: GetterResult::Any,
+            get_h: None,
+        });
+        self
+    }
+
+    /// [`ClassDef::pure_getter`] with the receiver (see [`ClassDef::method_this`]).
+    pub fn pure_getter_this(&mut self, name: &'static str, g: GetterThisFn<C>) -> &mut Self {
+        self.pure_getter_this_typed(name, GetterResult::Any, g)
+    }
+
+    /// [`ClassDef::pure_getter_typed`] with the receiver (see [`ClassDef::method_this`]).
+    pub fn pure_getter_this_typed(
+        &mut self,
+        name: &'static str,
+        result: GetterResult,
+        g: GetterThisFn<C>,
+    ) -> &mut Self {
+        let get = MemberCall { invoke: getter_this_invoke::<C>, f: g as *const () };
+        self.accessors.push(AccessorSpec {
+            name,
+            get,
+            set: None,
+            slot: None,
+            pure: true,
+            result,
+            get_h: Some(getter_this_invoke_h::<C>),
         });
         self
     }
@@ -705,12 +778,6 @@ impl ClassRegistry {
         self.by_type.get(&TypeId::of::<C>()).copied()
     }
 
-    /// Effective property hooks of `class` (each kind inherited separately).
-    pub fn hooks_of(&self, class: ClassId) -> Option<&PropertyHooks> {
-        let h = &self.classes.get(class as usize)?.def.hooks;
-        h.any().then_some(h)
-    }
-
     pub fn release_all(&mut self) {
         unsafe {
             for c in &self.classes {
@@ -721,6 +788,9 @@ impl ClassRegistry {
             sys::JSClassRelease(self.base);
         }
         self.classes.clear();
+        // The VM is gone, and the placeholder properties with it.
+        let gone = std::mem::take(&mut self.placeholders).len();
+        let _ = PLACEHOLDERS_PENDING.try_with(|p| p.set(p.get().saturating_sub(gone)));
     }
 }
 
@@ -854,6 +924,15 @@ pub(crate) struct MemberPayload {
     pub call: MemberCall,
     /// See [`ClassDef::pure_method`].
     pub pure: bool,
+    /// The realm the function was made in, whose context JSC passes to its
+    /// calls: the full dispatch's candidate realm. `None` once that realm is
+    /// disposed (`RealmInner::member_fns` lists the payloads to clear, so the
+    /// engine-lifetime payload does not keep the realm's allocation), and for
+    /// functions made without the patched JSC, whose payload is freed by a GC
+    /// finalizer, which may run on another thread and so must not touch the
+    /// `Rc` counts. Written only on the engine thread, by `dispose`, which a
+    /// call of the function may run: readers never hold a reference into it.
+    pub realm: std::cell::Cell<Option<std::rc::Weak<crate::realm::RealmInner>>>,
 }
 
 /// Header at the start of every wrapper payload (`Boxed<T>`).
@@ -864,7 +943,9 @@ pub(crate) struct Header {
     /// The class's registry entry (null for closures); see `ClassInfo::parent_info`.
     pub info: *const ClassInfo,
     /// The realm the object was made in: the lean member dispatch gets its
-    /// scope from the receiver instead of from thread-local state.
+    /// scope from the receiver instead of from thread-local state, the full
+    /// dispatch its candidate realm (`guard_in`), cross-realm calls their
+    /// receiver's realm and finalization the identity map to prune.
     pub realm_ref: std::rc::Weak<crate::realm::RealmInner>,
     /// An owned wrapper (`IdentityKey::OWNED`): nonzero while its owner wants
     /// the object kept. The collector reads it while marking, possibly from
@@ -877,7 +958,6 @@ pub(crate) struct Header {
     pub owned_prev: std::cell::Cell<*mut Header>,
     pub owned_next: std::cell::Cell<*mut Header>,
     pub kind: Kind,
-    pub realm: RealmId,
     pub key: Option<IdentityKey>,
     pub data_type: TypeId,
     pub drop_fn: unsafe fn(*mut Header),
@@ -926,7 +1006,6 @@ pub(crate) fn new_payload<T: 'static>(
     data: T,
 ) -> *mut Header {
     let realm_ref = Rc::downgrade(realm);
-    let realm = realm.id;
     let info: *const ClassInfo = match engine.classes.borrow().classes.get(class as usize) {
         Some(i) => &**i,
         None => ptr::null(),
@@ -942,7 +1021,6 @@ pub(crate) fn new_payload<T: 'static>(
             owned_prev: std::cell::Cell::new(ptr::null_mut()),
             owned_next: std::cell::Cell::new(ptr::null_mut()),
             kind,
-            realm,
             key,
             data_type: TypeId::of::<T>(),
             drop_fn: drop_boxed::<T>,
@@ -954,38 +1032,13 @@ pub(crate) fn new_payload<T: 'static>(
     Box::into_raw(b) as *mut Header
 }
 
-/// Borrows an instance payload as the data of `want` (the payload's class or an
-/// ancestor), following declared upcasts.
-///
-/// # Safety
-/// `h` must be a live instance payload header whose class is registered in `reg`.
-pub(crate) unsafe fn class_data<'a, T: 'static>(reg: &ClassRegistry, h: *mut Header, want: ClassId) -> Option<&'a T> {
-    unsafe {
-        // One walk up the class chain, projecting the data pointer as it
-        // goes; a chain that ends without reaching `want` is not a subclass.
-        let mut class = (*h).class;
-        let mut ptr = ((*h).data_ptr)(h);
-        while class != want {
-            let info = reg.classes.get(class as usize)?;
-            if let Some(up) = info.upcast {
-                ptr = up(ptr);
-            }
-            class = info.parent?;
-        }
-        if reg.classes.get(want as usize)?.data_type != TypeId::of::<T>() {
-            return None;
-        }
-        Some(&*(ptr as *const T))
-    }
-}
-
 unsafe fn upcast_erased<C, F>(p: *const u8) -> *const u8
 where
     C: JsClass,
     F: Fn(&C::Data) -> &<C::Parent as JsClass>::Data + Copy + 'static,
 {
     let f = unsafe { conjure::<F>() };
-    // SAFETY: p points to a live C::Data (see class_data).
+    // SAFETY: p points to a live C::Data (see data_of_header).
     f(unsafe { &*(p as *const C::Data) }) as *const _ as *const u8
 }
 
@@ -1055,9 +1108,9 @@ pub(crate) fn drain_finalized(engine: &EngineInner) -> usize {
             // and its JS object is dead, so we are the sole owner.
             unsafe {
                 if let Some(key) = (*h).key {
-                    let realm =
-                        engine.realms.borrow().iter().filter_map(|(_, r)| r.upgrade()).find(|r| r.id == (*h).realm);
-                    if let Some(realm) = realm {
+                    // The payload's own realm, while it is live (a disposed
+                    // realm has released its identity map already).
+                    if let Some(realm) = (*h).realm_ref.upgrade().filter(|r| !r.ctx.get().is_null()) {
                         realm.prune_identity(key);
                     }
                 }
@@ -1105,6 +1158,37 @@ pub(crate) unsafe fn guard<R: CallbackResult>(
     fallback: R,
     body: impl FnOnce(&Scope<'_>) -> JsResult<R>,
 ) -> R {
+    unsafe { guard_in(ctx, None, exc, fallback, body) }
+}
+
+/// [`guard`] with a candidate for the realm the callback runs in: the realm
+/// of the member function or closure being called (whose context JSC passes
+/// as `ctx`), or of the receiver of a property hook or custom accessor
+/// (which usually is the caller's). The candidate is used when its global
+/// context is `ctx`; otherwise the realm is looked up by `ctx` as `guard`
+/// does, so the realm is the same either way.
+#[inline]
+pub(crate) unsafe fn guard_in<R: CallbackResult>(
+    ctx: sys::JSContextRef,
+    candidate: Option<&std::rc::Weak<crate::realm::RealmInner>>,
+    exc: *mut sys::JSValueRef,
+    fallback: R,
+    body: impl FnOnce(&Scope<'_>) -> JsResult<R>,
+) -> R {
+    let realm = candidate.and_then(|c| crate::realm::realm_if_ctx(c, ctx));
+    unsafe { guard_resolved(ctx, realm, exc, fallback, body) }
+}
+
+/// [`guard_in`] with the candidate already upgraded and checked by
+/// [`crate::realm::realm_if_ctx`] (`None`: look the realm up by `ctx`).
+#[inline]
+pub(crate) unsafe fn guard_resolved<R: CallbackResult>(
+    ctx: sys::JSContextRef,
+    realm: Option<Rc<crate::realm::RealmInner>>,
+    exc: *mut sys::JSValueRef,
+    fallback: R,
+    body: impl FnOnce(&Scope<'_>) -> JsResult<R>,
+) -> R {
     let mut body = Some(body);
     let mut out = None;
     let mut step = |scope: &Scope<'_>, step: Step| match step {
@@ -1114,7 +1198,7 @@ pub(crate) unsafe fn guard<R: CallbackResult>(
         }
         Step::Root => Ok(out.as_ref().and_then(|v| v.root(scope))),
     };
-    match unsafe { guard_erased(ctx, exc, &mut step) } {
+    match unsafe { guard_erased(ctx, realm, exc, &mut step) } {
         true => out.expect("successful callback result"),
         false => fallback,
     }
@@ -1134,14 +1218,26 @@ enum Step {
 #[cfg_attr(not(debug_assertions), inline(always))]
 unsafe fn guard_erased(
     ctx: sys::JSContextRef,
+    candidate: Option<Rc<crate::realm::RealmInner>>,
     exc: *mut sys::JSValueRef,
     step: &mut dyn FnMut(&Scope<'_>, Step) -> JsResult<Option<crate::Persistent>>,
 ) -> bool {
+    // The realm handle is released inside the unwind boundary (its drop may
+    // dispose the realm and call hooks).
+    let mut candidate = candidate;
     let outcome = catch_unwind(AssertUnwindSafe(|| {
         let tls = crate::engine::callback_tls();
         let terminating = &tls.terminating;
         let _depth = DepthGuard::enter_with(&tls.depth);
-        let Some(realm) = crate::realm::realm_for_ctx(ctx) else {
+        let realm = match candidate.take() {
+            Some(realm) => Some(realm),
+            None => crate::realm::realm_for_ctx(ctx),
+        };
+        debug_assert!(
+            realm.as_ref().map(Rc::as_ptr) == crate::realm::realm_for_ctx(ctx).as_ref().map(Rc::as_ptr),
+            "the candidate realm is the one the context belongs to"
+        );
+        let Some(realm) = realm else {
             unsafe { throw_message(ctx, "Execution context was destroyed.", exc) };
             return false;
         };
@@ -1233,11 +1329,12 @@ unsafe fn throw_message_value(ctx: sys::JSContextRef, msg: &str, exc: *mut sys::
 #[cold]
 #[inline(never)]
 fn in_receiver_realm<R: CallbackResult>(
-    scope: &Scope<'_>,
-    realm: RealmId,
+    realm: &ReceiverRealm,
     body: impl FnOnce(&Scope<'_>) -> JsResult<R>,
 ) -> JsResult<R> {
-    let inner = scope.engine_inner().realm_by_id(realm).ok_or(JsError::ContextDestroyed)?;
+    // The receiver's payload holds its realm: a disposed one has no
+    // context, a dropped one does not upgrade.
+    let inner = realm.upgrade().ok_or(JsError::ContextDestroyed)?;
     let ctx = inner.global_ctx()?;
     let receiver = Scope::new(ctx, &inner);
     let result = body(&receiver);
@@ -1261,61 +1358,43 @@ fn in_receiver_realm<R: CallbackResult>(
 #[inline(never)]
 fn member_in_receiver_realm<R: CallbackResult>(
     scope: &Scope<'_>,
-    realm: RealmId,
+    realm: &ReceiverRealm,
     body: impl FnOnce(&Scope<'_>) -> JsResult<R>,
 ) -> JsResult<R> {
-    match scope.engine_inner().realm_by_id(realm) {
-        Some(inner) if inner.global_ctx().is_ok() => in_receiver_realm(scope, realm, body),
+    match realm.upgrade() {
+        Some(inner) if inner.global_ctx().is_ok() => in_receiver_realm(realm, body),
         _ => body(scope),
     }
 }
 
-/// Resolves `this` to class `C`'s data and the realm it belongs to: wrappers of
-/// `C` or a subclass, or the realm's global object (also for `undefined`/`null`
-/// receivers).
-unsafe fn this_data<'a, C: JsClass>(scope: &Scope<'_>, this: sys::JSObjectRef) -> JsResult<(&'a C::Data, RealmId)> {
-    let h = unsafe { scope.header_of_receiver(this) };
-    // The usual case, without the registry: walk the receiver's class chain
-    // (stable boxed entries) up to the brand, projecting the data as it goes.
-    if let Some(h) = h {
-        // SAFETY: h is a live payload of a reachable object (receiver on
-        // stack); `info` entries live as long as the registry, which outlives
-        // every callback.
-        unsafe {
-            if (*h).kind == Kind::Instance && !(*h).info.is_null() {
-                let mut info = (*h).info;
-                let mut ptr = ((*h).data_ptr)(h);
-                loop {
-                    if (*info).class_type == TypeId::of::<C>() {
-                        return Ok((&*(ptr as *const C::Data), (*h).realm));
-                    }
-                    if let Some(up) = (*info).upcast {
-                        ptr = up(ptr);
-                    }
-                    info = (*info).parent_info;
-                    if info.is_null() {
-                        break;
-                    }
-                }
-            }
+/// A receiver's realm, as its payload header holds it.
+type ReceiverRealm = std::rc::Weak<crate::realm::RealmInner>;
+
+/// Resolves `this` to class `C`'s data and, when it is not `scope`'s, the
+/// realm it belongs to: wrappers of `C` or a subclass, or the realm's global
+/// object (also for `undefined`/`null` receivers).
+unsafe fn this_data<'a, C: JsClass>(
+    scope: &Scope<'_>,
+    this: sys::JSObjectRef,
+) -> JsResult<(&'a C::Data, Option<&'a ReceiverRealm>)> {
+    // Walk the receiver's class chain (stable boxed entries) up to the brand,
+    // projecting the data as it goes: no registry.
+    // SAFETY: h is a live payload of a reachable object (receiver on stack);
+    // `info` entries live as long as the registry, which outlives every
+    // callback.
+    if let Some(h) = unsafe { scope.header_of_receiver(this) } {
+        if let Some(d) = unsafe { data_of_header::<C>(h) } {
+            let realm = unsafe { &(*h).realm_ref };
+            return Ok((d, (!crate::realm::is_scope_realm(realm, scope)).then_some(realm)));
         }
     }
-    let reg = scope.engine_inner().classes.borrow();
-    let want = reg.id_of::<C>().expect("class registered");
-    // SAFETY: h is a live payload of a reachable object (receiver on stack).
-    let direct = h.and_then(|h| unsafe {
-        if (*h).kind != Kind::Instance {
-            None
-        } else {
-            class_data::<C::Data>(&reg, h, want)
-        }
-    });
-    if let Some(d) = direct {
-        // SAFETY: as above.
-        return Ok((d, unsafe { (*h.expect("direct data has a header")).realm }));
-    }
-    let fallback = reg.classes[want as usize].global_receiver;
-    drop(reg);
+    // Not a `C`: only the global receiver fallback is left, which needs the
+    // class's registry entry (a cold path).
+    let fallback = {
+        let reg = scope.engine_inner().classes.borrow();
+        let want = reg.id_of::<C>().expect("class registered");
+        reg.classes[want as usize].global_receiver
+    };
     if let Some(f) = fallback {
         // SAFETY: only for receivers that resolve to the realm's global.
         let global_receiver = this.is_null() || scope.is_global_object(this);
@@ -1323,7 +1402,7 @@ unsafe fn this_data<'a, C: JsClass>(scope: &Scope<'_>, this: sys::JSObjectRef) -
             if let Some(p) = unsafe { f(scope) } {
                 // SAFETY: the pointer refers to C::Data owned by the realm's
                 // global payload, which outlives this callback.
-                return Ok((unsafe { &*(p as *const C::Data) }, scope.realm_id()));
+                return Ok((unsafe { &*(p as *const C::Data) }, None));
             }
         }
     }
@@ -1350,7 +1429,9 @@ pub(crate) unsafe extern "C" fn member_call(
     exc: *mut sys::JSValueRef,
 ) -> sys::JSValueRef {
     unsafe {
-        guard(ctx, exc, ptr::null(), |scope| {
+        // No realm in the payload here (see `MemberPayload::realm`): the
+        // receiver's realm is the usual one, checked against `ctx`.
+        guard_in(ctx, wrapper_realm(this), exc, ptr::null(), |scope| {
             let payload = sys::JSObjectGetPrivate(function) as *const MemberPayload;
             if payload.is_null() {
                 return Err(JsError::Type("Illegal invocation".into()));
@@ -1379,7 +1460,7 @@ unsafe fn method_invoke<C: JsClass>(
     let (data, realm) = unsafe { this_data::<C>(scope, this) }?;
     // SAFETY: stored by `ClassDef::method` from exactly this fn-pointer type.
     let f: MethodFn<C> = unsafe { std::mem::transmute(f) };
-    if realm != scope.realm_id() {
+    if let Some(realm) = realm {
         let raw = args.raw;
         return member_in_receiver_realm(scope, realm, |s| f(s, data, Args { ctx: s.ctx, raw }).map(|v| v.raw));
     }
@@ -1414,11 +1495,81 @@ pub(crate) unsafe fn data_of_header<'a, C: JsClass>(h: *mut Header) -> Option<&'
     }
 }
 
-unsafe fn getter_invoke_h<C: JsClass>(scope: &Scope<'_>, h: *mut Header, f: *const ()) -> JsResult<sys::JSValueRef> {
+unsafe fn getter_invoke_h<C: JsClass>(
+    scope: &Scope<'_>,
+    h: *mut Header,
+    _this: sys::JSObjectRef,
+    f: *const (),
+) -> JsResult<sys::JSValueRef> {
     let data = unsafe { data_of_header::<C>(h) }.ok_or_else(|| JsError::Type("Illegal invocation".into()))?;
     // SAFETY: stored by `ClassDef::pure_getter_typed` from this fn-pointer type.
     let f: GetterFn<C> = unsafe { std::mem::transmute(f) };
     f(scope, data).map(|v| v.raw)
+}
+
+/// The object a receiver-aware member gets: the receiver itself, or the
+/// realm's global object (what script sees) for an `undefined`/`null`
+/// receiver and for the global behind its proxy.
+fn receiver_object(scope: &Scope<'_>, this: sys::JSObjectRef) -> sys::JSObjectRef {
+    if this.is_null() || scope.is_global_object(this) {
+        scope.global_object_raw()
+    } else {
+        this
+    }
+}
+
+unsafe fn method_this_invoke<C: JsClass>(
+    scope: &Scope<'_>,
+    this: sys::JSObjectRef,
+    args: Args<'_>,
+    f: *const (),
+) -> JsResult<sys::JSValueRef> {
+    let (data, realm) = unsafe { this_data::<C>(scope, this) }?;
+    // SAFETY: stored by `ClassDef::method_this` from exactly this fn-pointer type.
+    let f: MethodThisFn<C> = unsafe { std::mem::transmute(f) };
+    let receiver = receiver_object(scope, this);
+    // SAFETY (both calls): the receiver is the callback's `this` (rooted by
+    // the calling frame) or the realm's global; values of one VM may be
+    // used with any of its contexts.
+    if let Some(realm) = realm {
+        let raw = args.raw;
+        return member_in_receiver_realm(scope, realm, |s| {
+            f(s, data, unsafe { Object::from_raw(s.ctx, receiver) }, Args { ctx: s.ctx, raw }).map(|v| v.raw)
+        });
+    }
+    f(scope, data, unsafe { Object::from_raw(scope.ctx, receiver) }, args).map(|v| v.raw)
+}
+
+unsafe fn getter_this_invoke<C: JsClass>(
+    scope: &Scope<'_>,
+    this: sys::JSObjectRef,
+    _args: Args<'_>,
+    f: *const (),
+) -> JsResult<sys::JSValueRef> {
+    let (data, realm) = unsafe { this_data::<C>(scope, this) }?;
+    // SAFETY: stored by `ClassDef::getter_this` from exactly this fn-pointer type.
+    let f: GetterThisFn<C> = unsafe { std::mem::transmute(f) };
+    let receiver = receiver_object(scope, this);
+    // SAFETY: as in `method_this_invoke`.
+    if let Some(realm) = realm {
+        return member_in_receiver_realm(scope, realm, |s| {
+            f(s, data, unsafe { Object::from_raw(s.ctx, receiver) }).map(|v| v.raw)
+        });
+    }
+    f(scope, data, unsafe { Object::from_raw(scope.ctx, receiver) }).map(|v| v.raw)
+}
+
+unsafe fn getter_this_invoke_h<C: JsClass>(
+    scope: &Scope<'_>,
+    h: *mut Header,
+    this: sys::JSObjectRef,
+    f: *const (),
+) -> JsResult<sys::JSValueRef> {
+    let data = unsafe { data_of_header::<C>(h) }.ok_or_else(|| JsError::Type("Illegal invocation".into()))?;
+    // SAFETY: stored by `ClassDef::pure_getter_this_typed` from this fn-pointer type.
+    let f: GetterThisFn<C> = unsafe { std::mem::transmute(f) };
+    // SAFETY: `this` is the wrapper whose payload `h` is, rooted by the caller.
+    f(scope, data, unsafe { Object::from_raw(scope.ctx, this) }).map(|v| v.raw)
 }
 
 unsafe fn getter_invoke<C: JsClass>(
@@ -1430,7 +1581,7 @@ unsafe fn getter_invoke<C: JsClass>(
     let (data, realm) = unsafe { this_data::<C>(scope, this) }?;
     // SAFETY: stored by `ClassDef::getter`/`accessor` from this fn-pointer type.
     let f: GetterFn<C> = unsafe { std::mem::transmute(f) };
-    if realm != scope.realm_id() {
+    if let Some(realm) = realm {
         return member_in_receiver_realm(scope, realm, |s| f(s, data).map(|v| v.raw));
     }
     f(scope, data).map(|v| v.raw)
@@ -1445,7 +1596,7 @@ unsafe fn setter_invoke<C: JsClass>(
     let (data, realm) = unsafe { this_data::<C>(scope, this) }?;
     // SAFETY: stored by `ClassDef::accessor` from this fn-pointer type.
     let f: SetterFn<C> = unsafe { std::mem::transmute(f) };
-    if realm != scope.realm_id() {
+    if let Some(realm) = realm {
         let value = args.get(0).raw;
         return member_in_receiver_realm(scope, realm, |s| {
             f(s, data, unsafe { Value::from_raw(s.ctx, value) })?;
@@ -1611,31 +1762,11 @@ where
 }
 
 /// Data of class `C` for a property-hook receiver (hooks may be inherited).
-unsafe fn hook_data<'a, C: JsClass>(scope: &Scope<'_>, h: *mut Header) -> JsResult<&'a C::Data> {
+unsafe fn hook_data<'a, C: JsClass>(_scope: &Scope<'_>, h: *mut Header) -> JsResult<&'a C::Data> {
     // The class chain walk of `this_data`, without the registry.
     // SAFETY: h is a live payload header (the hook's object); `info` entries
     // live as long as the registry.
-    unsafe {
-        if (*h).kind == Kind::Instance && !(*h).info.is_null() {
-            let mut info = (*h).info;
-            let mut ptr = ((*h).data_ptr)(h);
-            loop {
-                if (*info).class_type == TypeId::of::<C>() {
-                    return Ok(&*(ptr as *const C::Data));
-                }
-                if let Some(up) = (*info).upcast {
-                    ptr = up(ptr);
-                }
-                info = (*info).parent_info;
-                if info.is_null() {
-                    break;
-                }
-            }
-        }
-    }
-    let reg = scope.engine_inner().classes.borrow();
-    let want = reg.id_of::<C>().expect("class registered");
-    unsafe { class_data::<C::Data>(&reg, h, want) }.ok_or_else(|| JsError::Type("Illegal invocation".into()))
+    unsafe { data_of_header::<C>(h) }.ok_or_else(|| JsError::Type("Illegal invocation".into()))
 }
 
 /// Parses a canonical array index ("0", "17"; not "01", "-1", "4294967295").
@@ -1657,7 +1788,6 @@ fn array_index(name: &[u16]) -> Option<u32> {
 /// class's hooks (copied out so no registry borrow is held during callbacks).
 struct HookCtx {
     header: *mut Header,
-    realm: RealmId,
     indexed: Option<IndexedFn>,
     named: Option<NamedFn>,
     override_builtins: bool,
@@ -1669,21 +1799,58 @@ struct HookCtx {
     legacy: bool,
 }
 
+impl HookCtx {
+    /// The receiver's realm, when it is not the one `scope` works in (the
+    /// hooks get the caller's context).
+    fn foreign_realm(&self, scope: &Scope<'_>) -> Option<&std::rc::Weak<crate::realm::RealmInner>> {
+        // SAFETY: the hook's object, and so its payload, is alive while the
+        // hook runs.
+        let realm = unsafe { &(*self.header).realm_ref };
+        (!crate::realm::is_scope_realm(realm, scope)).then_some(realm)
+    }
+}
+
+/// The realm a wrapper was made in, as the candidate for a callback's realm
+/// ([`guard_in`]); `None` for any other object.
+///
+/// # Safety
+/// `object` is null or a live object on the VM's thread; the reference is
+/// valid while the object is.
+#[inline]
+pub(crate) unsafe fn wrapper_realm<'a>(
+    object: sys::JSObjectRef,
+) -> Option<&'a std::rc::Weak<crate::realm::RealmInner>> {
+    if object.is_null() {
+        return None;
+    }
+    unsafe {
+        let h = sys::JSObjectGetPrivate(object) as *mut Header;
+        (!h.is_null() && (*h).tag == PayloadTag::Wrapper).then(|| &(*h).realm_ref)
+    }
+}
+
 unsafe fn hook_ctx(scope: &Scope<'_>, object: sys::JSObjectRef) -> Option<HookCtx> {
     let h = unsafe { sys::JSObjectGetPrivate(object) } as *mut Header;
     if h.is_null() {
         return None;
     }
-    let mut reg = scope.engine_inner().classes.borrow();
-    if !reg.placeholders.is_empty() {
-        drop(reg);
+    if PLACEHOLDERS_PENDING.get() != 0 && !scope.engine_inner().classes.borrow().placeholders.is_empty() {
         unsafe { sweep_placeholders(scope) };
-        reg = scope.engine_inner().classes.borrow();
     }
-    let hooks = reg.hooks_of(unsafe { (*h).class })?;
+    // The hooks from the payload's own class entry (inherited ones are
+    // merged in at registration): no registry borrow, no class-id lookup.
+    // SAFETY: only wrapper classes install the hooks, so `h` is the live
+    // payload header of `object`; `info` lives as long as the registry.
+    let info = unsafe { (*h).info };
+    if info.is_null() {
+        return None;
+    }
+    let hooks = unsafe { &(*info).def.hooks };
+    if !hooks.any() {
+        return None;
+    }
     Some(HookCtx {
         header: h,
-        realm: unsafe { (*h).realm },
         indexed: hooks.indexed,
         named: hooks.named,
         override_builtins: hooks.override_builtins,
@@ -1701,9 +1868,11 @@ thread_local! {
     /// properties: the property hooks then answer nothing, so the operation
     /// sees only the wrapper's real own properties and its prototype chain.
     static ORDINARY_ONLY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    /// A placeholder awaits removal ([`leave_placeholder`]): the lean
-    /// dispatch paths, which do not sweep, step aside for the full one.
-    static PLACEHOLDERS_PENDING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Placeholders awaiting removal ([`leave_placeholder`]) in all of the
+    /// thread's engines: the lean dispatch paths, which do not sweep, step
+    /// aside for the full one while it is nonzero, and [`hook_ctx`] looks at
+    /// its engine's list only then.
+    static PLACEHOLDERS_PENDING: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// Runs `f` with the property hooks switched off (see [`ORDINARY_ONLY`]).
@@ -1757,14 +1926,14 @@ unsafe fn leave_placeholder(scope: &Scope<'_>, object: sys::JSObjectRef, name: s
         sys::JSValueProtect(scope.ctx, object);
         let name = JsString::from_utf16(utf16_of(name));
         scope.engine_inner().classes.borrow_mut().placeholders.push((object, name));
-        PLACEHOLDERS_PENDING.set(true);
+        PLACEHOLDERS_PENDING.set(PLACEHOLDERS_PENDING.get() + 1);
     }
 }
 
 /// Removes the pending placeholders ([`leave_placeholder`]).
 unsafe fn sweep_placeholders(scope: &Scope<'_>) {
     let pending = std::mem::take(&mut scope.engine_inner().classes.borrow_mut().placeholders);
-    PLACEHOLDERS_PENDING.set(false);
+    PLACEHOLDERS_PENDING.set(PLACEHOLDERS_PENDING.get().saturating_sub(pending.len()));
     for (object, name) in pending {
         unsafe {
             ordinary_only(|| sys::JSObjectDeleteProperty(scope.ctx, object, name.as_raw(), ptr::null_mut()));
@@ -1792,7 +1961,7 @@ unsafe extern "C" fn get_property_hook(
         return ptr::null();
     }
     unsafe {
-        guard(ctx, exc, ptr::null(), |scope| {
+        guard_in(ctx, wrapper_realm(object), exc, ptr::null(), |scope| {
             let Some(hc) = hook_ctx(scope, object) else { return Ok(ptr::null()) };
             let units = utf16_of(name);
             let get = |scope: &Scope<'_>| -> JsResult<sys::JSValueRef> {
@@ -1807,7 +1976,9 @@ unsafe extern "C" fn get_property_hook(
                     }
                     return Ok(match f(scope, hc.header, units)? {
                         // An own property shadows the named property.
-                        Some(_) if hc.legacy && !hc.override_builtins && has_ordinary_property(scope.ctx, object, name) => {
+                        Some(_)
+                            if hc.legacy && !hc.override_builtins && has_ordinary_property(scope.ctx, object, name) =>
+                        {
                             ptr::null()
                         }
                         Some(value) => value,
@@ -1816,8 +1987,8 @@ unsafe extern "C" fn get_property_hook(
                 }
                 Ok(ptr::null())
             };
-            if hc.realm != scope.realm_id() {
-                return match in_receiver_realm(scope, hc.realm, get) {
+            if let Some(realm) = hc.foreign_realm(scope) {
+                return match in_receiver_realm(realm, get) {
                     // A closed realm's members stay readable; calling them throws.
                     Err(JsError::ContextDestroyed) if on_prototype_chain(ctx, object, name) => Ok(ptr::null()),
                     result => result,
@@ -1843,20 +2014,20 @@ unsafe extern "C" fn get_by_index_hook(
     if ORDINARY_ONLY.get() {
         return ptr::null();
     }
-    if !PLACEHOLDERS_PENDING.get() {
+    if PLACEHOLDERS_PENDING.get() == 0 {
         if let Some(v) = unsafe { get_by_index_lean(ctx, object, index) } {
             return v;
         }
     }
     unsafe {
-        guard(ctx, exc, ptr::null(), |scope| {
+        guard_in(ctx, wrapper_realm(object), exc, ptr::null(), |scope| {
             let Some(hc) = hook_ctx(scope, object) else { return Ok(ptr::null()) };
             let Some(f) = hc.indexed else { return Ok(ptr::null()) };
             let get = |scope: &Scope<'_>| -> JsResult<sys::JSValueRef> {
                 Ok(f(scope, hc.header, index)?.unwrap_or(ptr::null()))
             };
-            if hc.realm != scope.realm_id() {
-                return in_receiver_realm(scope, hc.realm, get);
+            if let Some(realm) = hc.foreign_realm(scope) {
+                return in_receiver_realm(realm, get);
             }
             get(scope)
         })
@@ -1899,7 +2070,7 @@ unsafe extern "C" fn set_by_index_hook(
         return false;
     }
     unsafe {
-        guard(ctx, exc, false, |scope| {
+        guard_in(ctx, wrapper_realm(object), exc, false, |scope| {
             let Some(hc) = hook_ctx(scope, object) else { return Ok(false) };
             let Some(f) = hc.named_set else {
                 // A legacy platform object refuses the write the way a
@@ -1916,8 +2087,8 @@ unsafe extern "C" fn set_by_index_hook(
             };
             let name: Vec<u16> = index.to_string().encode_utf16().collect();
             let set = |scope: &Scope<'_>| f(scope, hc.header, &name, value);
-            if hc.realm != scope.realm_id() {
-                return in_receiver_realm(scope, hc.realm, set);
+            if let Some(realm) = hc.foreign_realm(scope) {
+                return in_receiver_realm(realm, set);
             }
             set(scope)
         })
@@ -1942,7 +2113,15 @@ pub(crate) unsafe extern "C" fn member_call_data(
                 return v;
             }
         }
-        guard(ctx, exc, ptr::null(), |scope| {
+        // The function's own realm is the one JSC calls it in. Upgraded here,
+        // with no reference into the cell kept: the call may dispose the realm,
+        // which clears it.
+        let realm = if payload.is_null() {
+            None
+        } else {
+            (*(*payload).realm.as_ptr()).as_ref().and_then(|c| crate::realm::realm_if_ctx(c, ctx))
+        };
+        guard_resolved(ctx, realm, exc, ptr::null(), |scope| {
             if payload.is_null() {
                 return Err(JsError::Type("Illegal invocation".into()));
             }
@@ -2040,7 +2219,7 @@ unsafe extern "C" fn set_property_hook(
         return false;
     }
     unsafe {
-        guard(ctx, exc, false, |scope| {
+        guard_in(ctx, wrapper_realm(object), exc, false, |scope| {
             let Some(hc) = hook_ctx(scope, object) else { return Ok(false) };
             let units = utf16_of(name);
             if hc.indexed.is_some() && array_index(units).is_some() && hc.named_set.is_none() {
@@ -2061,8 +2240,8 @@ unsafe extern "C" fn set_property_hook(
                     let visible = |scope: &Scope<'_>| -> JsResult<bool> {
                         Ok(!on_prototype_chain(scope.ctx, object, name) && f(scope, hc.header, units)?.is_some())
                     };
-                    let visible = if hc.realm != scope.realm_id() {
-                        in_receiver_realm(scope, hc.realm, visible)?
+                    let visible = if let Some(realm) = hc.foreign_realm(scope) {
+                        in_receiver_realm(realm, visible)?
                     } else {
                         visible(scope)?
                     };
@@ -2085,8 +2264,8 @@ unsafe extern "C" fn set_property_hook(
                 }
                 Ok(false)
             };
-            if hc.realm != scope.realm_id() {
-                return in_receiver_realm(scope, hc.realm, set);
+            if let Some(realm) = hc.foreign_realm(scope) {
+                return in_receiver_realm(realm, set);
             }
             set(scope)
         })
@@ -2103,7 +2282,7 @@ unsafe extern "C" fn delete_property_hook(
         return false;
     }
     unsafe {
-        guard(ctx, exc, false, |scope| {
+        guard_in(ctx, wrapper_realm(object), exc, false, |scope| {
             let Some(hc) = hook_ctx(scope, object) else { return Ok(false) };
             let Some(f) = hc.named_delete else { return Ok(false) };
 
@@ -2113,8 +2292,8 @@ unsafe extern "C" fn delete_property_hook(
                 return Ok(false);
             }
             let units = utf16_of(name);
-            if hc.realm != scope.realm_id() {
-                return in_receiver_realm(scope, hc.realm, |s| f(s, hc.header, units));
+            if let Some(realm) = hc.foreign_realm(scope) {
+                return in_receiver_realm(realm, |s| f(s, hc.header, units));
             }
             f(scope, hc.header, units)
         })
@@ -2127,7 +2306,7 @@ unsafe extern "C" fn property_names_hook(
     acc: sys::JSPropertyNameAccumulatorRef,
 ) {
     unsafe {
-        guard(ctx, ptr::null_mut(), (), |scope| {
+        guard_in(ctx, wrapper_realm(object), ptr::null_mut(), (), |scope| {
             let Some(hc) = hook_ctx(scope, object) else { return Ok(()) };
             if hc.indexed.is_some() {
                 let len = Object::from_raw(ctx, object).get("length")?;
@@ -2138,9 +2317,9 @@ unsafe extern "C" fn property_names_hook(
                 }
             }
             if let Some(f) = hc.names {
-                let names = if hc.realm != scope.realm_id() {
+                let names = if let Some(realm) = hc.foreign_realm(scope) {
                     let mut names = Vec::new();
-                    in_receiver_realm(scope, hc.realm, |s| {
+                    in_receiver_realm(realm, |s| {
                         names = f(s, hc.header)?;
                         Ok(())
                     })?;
@@ -2153,9 +2332,9 @@ unsafe extern "C" fn property_names_hook(
                 }
             }
             if let Some(f) = hc.unenumerable_names {
-                let names = if hc.realm != scope.realm_id() {
+                let names = if let Some(realm) = hc.foreign_realm(scope) {
                     let mut names = Vec::new();
-                    in_receiver_realm(scope, hc.realm, |s| {
+                    in_receiver_realm(realm, |s| {
                         names = f(s, hc.header)?;
                         Ok(())
                     })?;
@@ -2174,7 +2353,6 @@ unsafe extern "C" fn property_names_hook(
                 }
             }
             Ok(())
-
         })
     }
 }

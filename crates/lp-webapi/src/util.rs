@@ -29,7 +29,7 @@ impl WrapperRef {
         Ok(unsafe { Value::from_raw(s.ctx(), wrapper.value().as_raw()) }.as_object().expect("wrapper"))
     }
 
-    pub(crate) fn hidden<'s>(&self, s: &Scope<'s>, key: &str) -> JsResult<Option<Value<'s>>> {
+    pub(crate) fn hidden<'s>(&self, s: &Scope<'s>, key: &'static str) -> JsResult<Option<Value<'s>>> {
         s.get_hidden(self.get(s)?, key)
     }
 }
