@@ -15,6 +15,7 @@ mod select_fast;
 mod select_forms;
 mod select_query;
 mod stylo_select;
+mod text_content;
 mod tree;
 mod tree_scope;
 mod xml;

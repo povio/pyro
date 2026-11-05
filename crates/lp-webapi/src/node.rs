@@ -331,11 +331,12 @@ impl JsClass for Node {
                 }
             },
         );
-        def.accessor(
+        def.pure_accessor_typed(
             "textContent",
+            lp_js::GetterResult::Any,
             |s, n| {
-                let t = n.page().dom.borrow().text_content(n.id).js()?;
-                Ok(t.map_or(s.null(), |t| s.string(&t)))
+                let dom = n.page().dom.borrow();
+                Ok(dom.text_content_ref(n.id).js()?.map_or(s.null(), |t| s.string(&t)))
             },
             |_s, n, v| {
                 // `DOMString?`: undefined converts to null, which sets "".

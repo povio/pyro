@@ -2531,17 +2531,52 @@ impl Dom {
 
     /// `Node.textContent` getter (None for documents and doctypes).
     pub fn text_content(&self, id: NodeId) -> DomResult<Option<String>> {
-        let i = self.check(id)?;
-        Ok(match &self.n(i).kind {
+        Ok(self.text_content_ref(id)?.map(std::borrow::Cow::into_owned))
+    }
+
+    /// [`Dom::text_content`], borrowed from the node holding it when one
+    /// node's data is all of it (character data, an attribute's value, an
+    /// element with one text node).
+    pub fn text_content_ref(&self, id: NodeId) -> DomResult<Option<std::borrow::Cow<'_, str>>> {
+        let (i, n) = self.live(id)?;
+        Ok(match &n.kind {
             NodeKind::Document(_) | NodeKind::Doctype(_) => None,
-            NodeKind::Attr(_) => self.attr_value_idx(i).map(str::to_owned),
-            k if k.char_data().is_some() => Some(k.char_data().unwrap().to_owned()),
-            _ => {
-                let mut out = String::new();
-                self.collect_text(i, &mut out);
-                Some(out)
-            }
+            NodeKind::Attr(_) => self.attr_value_idx(i).map(std::borrow::Cow::Borrowed),
+            k => match k.char_data() {
+                Some(d) => Some(std::borrow::Cow::Borrowed(d)),
+                None => Some(self.descendant_text(i)),
+            },
         })
+    }
+
+    /// The concatenated data of the Text descendants of `root` (light tree)
+    /// in one walk: borrowed while at most one of them is non-empty.
+    pub(crate) fn descendant_text(&self, root: u32) -> std::borrow::Cow<'_, str> {
+        let r = self.n(root);
+        if r.first_child != NIL && r.first_child == r.last_child {
+            if let NodeKind::Text(s) | NodeKind::CData(s) = &self.n(r.first_child).kind {
+                return std::borrow::Cow::Borrowed(s);
+            }
+        }
+        let mut first: &str = "";
+        let mut out: Option<String> = None;
+        let mut cur = r.first_child;
+        while cur != NIL {
+            if let NodeKind::Text(s) | NodeKind::CData(s) = &self.n(cur).kind {
+                if let Some(out) = &mut out {
+                    out.push_str(s);
+                } else if first.is_empty() {
+                    first = s;
+                } else if !s.is_empty() {
+                    let mut o = String::with_capacity(2 * (first.len() + s.len()));
+                    o.push_str(first);
+                    o.push_str(s);
+                    out = Some(o);
+                }
+            }
+            cur = self.following_in(cur, root);
+        }
+        out.map_or(std::borrow::Cow::Borrowed(first), std::borrow::Cow::Owned)
     }
 
     /// Concatenated data of descendant Text nodes (light tree).
