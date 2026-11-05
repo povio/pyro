@@ -162,23 +162,6 @@ pub fn install(scope: &Scope<'_>, page: Rc<PageDom>) -> JsResult<()> {
     Ok(())
 }
 
-/// Helpers for an isolated world only (never the page's own world): what an
-/// automation client's injected script may ask the browser directly.
-/// `__lightningpandaShadowRootCount()` is the number of shadow roots in the
-/// page's document tree, so Playwright's selector engine can skip its
-/// shadow-piercing walk on a page without any (`lp-cdp` `playwright.rs`).
-pub fn install_world_helpers(scope: &Scope<'_>) -> JsResult<()> {
-    let count = scope.function("__lightningpandaShadowRootCount", |s, _this, _args| {
-        let page = target::page_of(s)?;
-        let n = page.dom.borrow().shadow_root_count();
-        Ok(s.number(f64::from(n)))
-    })?;
-    let attrs = lp_js::sys::kJSPropertyAttributeDontEnum
-        | lp_js::sys::kJSPropertyAttributeReadOnly
-        | lp_js::sys::kJSPropertyAttributeDontDelete;
-    scope.global().set_with(&lp_js::JsString::new("__lightningpandaShadowRootCount"), count.value(), attrs)
-}
-
 /// Resolves a JS value to its native node (CDP DOM.describeNode etc.).
 pub fn node_from_value(scope: &Scope<'_>, value: Value<'_>) -> Option<(Rc<PageDom>, lp_dom::NodeId)> {
     let n = scope.unwrap::<node::Node>(value)?;

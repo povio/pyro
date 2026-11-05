@@ -273,9 +273,6 @@ impl FrameHost {
             key,
         ))?;
         lp_webapi::install(&realm.scope()?, dom)?;
-        if world.is_some() {
-            lp_webapi::install_world_helpers(&realm.scope()?)?;
-        }
         if crate::clock::page_clock_enabled() {
             realm.scope()?.eval(crate::clock::DATE_SCRIPT, Some("lightningpanda://internal/clock.js"), 1)?;
         }
