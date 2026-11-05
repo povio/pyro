@@ -157,6 +157,9 @@ pub struct Dom {
     /// event. The hook compares it against the value it last found nothing
     /// at, instead of checking every queue after every native callback.
     hook_epoch: u64,
+    /// Told each name a Document may start to answer as a named property
+    /// (`Dom::set_named_item_hook`).
+    pub(crate) named_item_hook: Option<std::rc::Rc<dyn Fn(&str)>>,
     /// Qualified names as the `tagName`/`nodeName` strings script sees,
     /// shared so a realm can keep one JavaScript string per name.
     names: std::cell::RefCell<NameCache>,
@@ -247,6 +250,7 @@ impl Dom {
             version: 0,
             tree_version: 0,
             hook_epoch: 0,
+            named_item_hook: None,
             names: std::cell::RefCell::new(NameCache::default()),
             candidates: Vec::new(),
             live: 0,
@@ -618,6 +622,7 @@ impl Dom {
         self.link(node, parent, before);
         self.bump_tree();
         self.note(Change::Inserted(parent, node));
+        self.announce_named_items(node);
     }
     pub(crate) fn unlink_raw(&mut self, node: u32) {
         let parent = self.n(node).parent;
@@ -1648,6 +1653,7 @@ impl Dom {
         self.resources_after_move(node, old_parent);
         self.bump_tree();
         self.note(Change::Inserted(parent, node));
+        self.announce_named_items(node);
         if self.is_connected_idx(parent) {
             self.enqueue_custom_reactions(node, crate::custom::CustomReaction::Moved);
         }
@@ -1813,6 +1819,9 @@ impl Dom {
         self.note(Change::Inserted(parent, nodes[0]));
         for &k in &nodes[1..] {
             self.note_more(Change::Inserted(parent, k));
+        }
+        for &k in &nodes {
+            self.announce_named_items(k);
         }
         if !suppress {
             self.queue_child_list(parent, &nodes, &[], prev, child);
@@ -2345,6 +2354,7 @@ impl Dom {
             self.note(Change::attr(i, &name));
         }
         self.queue_attribute(i, &name, Some(&old));
+        self.announce_named_attr(i, &name);
         if !drives_element_behaviour(&name) {
             return;
         }
@@ -2359,6 +2369,7 @@ impl Dom {
         self.bump_tree();
         self.note(Change::attr(i, &name));
         self.queue_attribute(i, &name, None);
+        self.announce_named_attr(i, &name);
         if !drives_element_behaviour(&name) {
             return;
         }

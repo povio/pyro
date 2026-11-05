@@ -43,6 +43,10 @@ impl SlotCall {
         self.invoke.store(call.invoke as usize, Ordering::Release);
     }
 
+    fn clear(&self) {
+        self.invoke.store(0, Ordering::Release);
+    }
+
     fn load(&self) -> Option<MemberCall> {
         let invoke = self.invoke.load(Ordering::Acquire);
         if invoke == 0 {
@@ -65,6 +69,16 @@ static PURE: [AtomicBool; SLOTS] = [const { AtomicBool::new(false) }; SLOTS];
 static RESULT: [AtomicUsize; SLOTS] = [const { AtomicUsize::new(0) }; SLOTS];
 /// Each pure getter's invoker from a payload header (`InvokeHFn`; 0: none).
 static GETTER_H: [AtomicUsize; SLOTS] = [const { AtomicUsize::new(0) }; SLOTS];
+
+/// Attributes that found no free slot (see [`slot_usage`]).
+static OVERFLOWED: AtomicUsize = AtomicUsize::new(0);
+
+/// Custom accessor slots in use, and the attributes that found none and were
+/// installed as ordinary accessors (slower: no direct inline cache call).
+pub fn slot_usage() -> (usize, usize) {
+    let used = SLOT_TABLE.lock().unwrap_or_else(|e| e.into_inner()).as_ref().map_or(0, |t| t.len());
+    (used, OVERFLOWED.load(Ordering::Relaxed))
+}
 
 /// Slot numbers by (class type, attribute name).
 static SLOT_TABLE: Mutex<Option<HashMap<(TypeId, &'static str), u16>>> = Mutex::new(None);
@@ -92,16 +106,20 @@ pub(crate) fn slot_for(
     }
     let mut table = SLOT_TABLE.lock().unwrap_or_else(|e| e.into_inner());
     let table = table.get_or_insert_with(HashMap::new);
-    if let Some(&slot) = table.get(&(class, name)) {
-        return Some(slot);
-    }
-    let slot = table.len();
-    if slot >= SLOTS {
-        return None;
-    }
+    // A class that defines an attribute twice (shared members, then its own)
+    // gets the later definition, as the prototype property it installs last.
+    let slot = match table.get(&(class, name)) {
+        Some(&slot) => usize::from(slot),
+        None if table.len() >= SLOTS => {
+            OVERFLOWED.fetch_add(1, Ordering::Relaxed);
+            return None;
+        }
+        None => table.len(),
+    };
     GETTER_CALLS[slot].store(get);
-    if let Some(set) = set {
-        SETTER_CALLS[slot].store(set);
+    match set {
+        Some(set) => SETTER_CALLS[slot].store(set),
+        None => SETTER_CALLS[slot].clear(),
     }
     GETTER_H[slot].store(get_h.map_or(0, |f| f as usize), Ordering::Release);
     PURE[slot].store(pure, Ordering::Release);

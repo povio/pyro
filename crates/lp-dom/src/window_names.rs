@@ -40,11 +40,54 @@ pub fn window_name_hash(units: impl Iterator<Item = u16>) -> u64 {
 
 /// Whether this element's `name` attribute names it on the Window. An iframe
 /// names its child window, which the caller resolves.
-fn named_by_name(e: &ElementData) -> bool {
+pub(crate) fn named_by_name(e: &ElementData) -> bool {
     e.is_html() && matches!(&*e.name.local, "embed" | "form" | "iframe" | "img" | "object")
 }
 
 impl Dom {
+    /// Tells `hook` each name a Document may start to answer as a named
+    /// property (see [`Dom::document_named_elements`]): a qualifying element
+    /// entering a tree, or getting its `name` (or, for an img, `id`). A
+    /// superset: elements outside documents and names a Document already has
+    /// are told too. The script engine drops what it cached about the name
+    /// (lp-js `ImpureNames`), so `hook` may not touch the DOM.
+    pub fn set_named_item_hook(&mut self, hook: Option<std::rc::Rc<dyn Fn(&str)>>) {
+        self.named_item_hook = hook;
+    }
+
+    /// `node` and its descendants (no shadow trees) entered a tree.
+    pub(crate) fn announce_named_items(&self, node: u32) {
+        let Some(hook) = self.named_item_hook.as_ref() else { return };
+        let mut cur = node;
+        while cur != NIL {
+            self.announce_element_names(cur, hook);
+            cur = self.following_in(cur, node);
+        }
+    }
+
+    /// An attribute of element `i` was set.
+    pub(crate) fn announce_named_attr(&self, i: u32, name: &markup5ever::QualName) {
+        let Some(hook) = self.named_item_hook.as_ref() else { return };
+        if name.ns.is_empty() && matches!(&*name.local, "name" | "id") {
+            self.announce_element_names(i, hook);
+        }
+    }
+
+    fn announce_element_names(&self, i: u32, hook: &std::rc::Rc<dyn Fn(&str)>) {
+        let Some(e) = self.n(i).element() else { return };
+        if !named_by_name(e) {
+            return;
+        }
+        if let Some(name) = e.attr("name").filter(|v| !v.is_empty()) {
+            hook(name);
+            if &*e.name.local == "img" {
+                if let Some(id) = e.id().filter(|v| !v.is_empty()) {
+                    hook(id);
+                }
+            }
+        }
+    }
+
     /// The elements of `doc`'s tree named `name` on the Document (HTML "the
     /// Document object's supported property names"): embed, form, iframe,
     /// img and object by `name`, and img by `id` when it also has a `name`.

@@ -147,6 +147,10 @@ pub fn install(scope: &Scope<'_>, page: Rc<PageDom>) -> JsResult<()> {
     }
     let realm = scope.realm();
     page.realms.borrow_mut().insert(realm.id(), realm.downgrade());
+    // Document named properties (`document.formName`): the engine drops its
+    // caches of a name when an element that may be named it appears.
+    let names = scope.impure_names();
+    page.dom.borrow_mut().set_named_item_hook(Some(Rc::new(move |name: &str| names.announce(name))));
     xhr::install(scope, &page)?;
     realm.set_embedder(page.clone());
     realm.set_named_properties(Rc::new(window::WindowNamedProperties(page.clone())));

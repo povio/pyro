@@ -166,3 +166,16 @@ fn user_timing_marks_and_measures() {
          TypeError,SyntaxError,TypeError,SyntaxError,TypeError,TypeError,2,0,null"
     );
 }
+
+#[test]
+fn accessor_slots_fit_the_registry() {
+    // Every attribute of every registered class gets a custom accessor slot;
+    // one that does not is installed as an ordinary accessor, which the
+    // inline caches cannot call directly (a silent slowdown). Raise SLOTS in
+    // crates/lp-js/build.rs when this fails.
+    let (_t, root) = page();
+    assert_eq!(eval(&root, "typeof document.body.childNodes.length"), "number");
+    let (used, overflowed) = lp_js::accessor_slot_usage();
+    assert!(used > 0, "no custom accessors in use");
+    assert_eq!(overflowed, 0, "{overflowed} attributes found no accessor slot ({used} in use)");
+}

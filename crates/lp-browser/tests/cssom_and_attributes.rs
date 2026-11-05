@@ -174,3 +174,37 @@ fn hidden_until_found_and_writing_suggestions_reflect() {
         "false,true,true,until-found,until-found,true,,false,false,false,true,true,false,true"
     );
 }
+
+#[test]
+fn document_named_properties_appear_in_hot_code() {
+    // The document's lookups are cached by the JITs; a named element that
+    // appears afterwards must still be seen by the same compiled code.
+    let (_t, root) = page();
+    assert_eq!(
+        eval(
+            &root,
+            "(() => { const read = (d) => [d.lateForm, d.nodeType, d.lateImg];
+               let last;
+               for (let i = 0; i < 20000; i++) last = read(document);
+               const out = [String(last)];
+               const form = document.body.appendChild(document.createElement('form'));
+               form.name = 'lateForm';
+               last = read(document);
+               out.push(last[0] === form, last[1]);
+               const img = document.createElement('img');
+               img.id = 'lateImg';
+               document.body.appendChild(img);
+               out.push(read(document)[2] === undefined);
+               img.setAttribute('name', 'other');
+               out.push(read(document)[2] === img);
+               for (let i = 0; i < 20000; i++) last = read(document);
+               form.remove();
+               out.push(read(document)[0] === undefined);
+               // A prototype member is never shadowed (named(false)).
+               document.body.insertAdjacentHTML('beforeend', '<form name=nodeType></form>');
+               out.push(read(document)[1]);
+               return out.join('|'); })()"
+        ),
+        ",9,|true|9|true|true|true|9"
+    );
+}

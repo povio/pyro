@@ -373,6 +373,18 @@ Patch `0014` adds `JSWeakCreateKeptWhile`: a weak handle whose owner (a `WeakHan
 lifetime rules"): WebCore does the same through opaque roots, and the C API had only `JSValueProtect`, a counted
 hash set that every collection visits in full.
 
+Patch `0015` keeps the lookups on a wrapper with named properties cacheable. A class with a `getProperty` hook makes
+every lookup on its wrappers uncacheable: a read of `document.nodeType` ran the hook and a prototype check before
+finding the member (270 ns instead of 61). A class made with `ClassDef::named_properties_are_announced` (Document,
+whose `named(false)` getter answers `document.formName`) gets the `kJSClassAttributeImpureNamedProperties` attribute;
+its wrappers then have a structure marked impure (`GetOwnPropertySlotIsImpure | NewImpurePropertyFiresWatchpoints`)
+instead of `ProhibitsPropertyCaching`, as WebCore's `HTMLDocument` does. An inline cache that remembers a lookup
+watches its name, and `JSAddImpureProperty(name)` drops those caches. lp-dom calls the hook from
+`Dom::set_named_item_hook` (installed by `lp_webapi::install`, through `lp_js::ImpureNames`) for every name a
+Document may start to answer: an embed, form, iframe, img or object entering a tree, or getting a `name` (or, for an
+img, an `id`). What a hook answers is never cached. Stock JavaScriptCore ignores the attribute and keeps such
+wrappers uncacheable.
+
 To change JSC: edit the checkout in `~/Library/Caches/lightningpanda/webkit-src`, `ninja -C ../webkit-build
 JavaScriptCore` to iterate, then regenerate the patch with `git diff` (use `git add -N` for new files) and rerun
 `scripts/jsc/build.sh`, which resets the checkout and applies `patches/` from scratch.

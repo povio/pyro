@@ -183,6 +183,8 @@ pub struct ClassDef<C: JsClass> {
     /// A legacy callback interface (`NodeFilter`): not a constructor, no
     /// `prototype` property.
     pub(crate) callback_interface: bool,
+    /// See [`ClassDef::named_properties_are_announced`].
+    pub(crate) announced_names: bool,
     pub(crate) hooks: PropertyHooks,
     pub(crate) exposed: bool,
     pub(crate) indexed_iterable: bool,
@@ -252,6 +254,7 @@ impl<C: JsClass> ClassDef<C> {
             ctor_length: 0,
             legacy_factories: Vec::new(),
             callback_interface: false,
+            announced_names: false,
             hooks: PropertyHooks::default(),
             exposed: true,
             indexed_iterable: false,
@@ -384,6 +387,16 @@ impl<C: JsClass> ClassDef<C> {
     /// Makes this a legacy callback interface (`NodeFilter`): the interface
     /// object is a plain function (no `[[Construct]]`, no `prototype`
     /// property) carrying the constants; `x instanceof NodeFilter` throws.
+    /// The named getter answers only names the embedder announced with
+    /// [`crate::ImpureNames`] before they can first be answered, and never a name of
+    /// the prototype chain (`named(false, ..)`). The wrappers' property lookups
+    /// then stay cacheable by the JITs (patched JavaScriptCore), instead of
+    /// running the hook on every read, as WebCore does for HTMLDocument.
+    pub fn named_properties_are_announced(&mut self) -> &mut Self {
+        self.announced_names = true;
+        self
+    }
+
     pub fn legacy_callback_interface(&mut self) -> &mut Self {
         self.callback_interface = true;
         self
@@ -633,6 +646,7 @@ pub(crate) struct ClassDefErased {
     pub ctor_length: u32,
     pub legacy_factories: Vec<MethodSpec>,
     pub callback_interface: bool,
+    pub announced_names: bool,
     pub hooks: PropertyHooks,
     pub exposed: bool,
     pub indexed_iterable: bool,
@@ -743,6 +757,10 @@ pub(crate) fn register<C: JsClass>(engine: &EngineInner) -> ClassId {
     if let Some(p) = parent {
         let inherited = reg.classes[p as usize].def.hooks;
         def.hooks = def.hooks.inherit(&inherited);
+        // A subclass answers the same names unless it adds hooks of its own.
+        if reg.classes[p as usize].def.announced_names && def.hooks.named == inherited.named {
+            def.announced_names = true;
+        }
     }
     let has_hooks = def.hooks.any();
     let has_named_hooks =
@@ -754,6 +772,10 @@ pub(crate) fn register<C: JsClass>(engine: &EngineInner) -> ClassId {
     let mut jsdef = sys::JSClassDefinition::EMPTY;
     jsdef.className = cname.as_ptr();
     jsdef.attributes = sys::kJSClassAttributeNoAutomaticPrototype;
+    if def.announced_names && sys::spi::get().add_impure_property.is_some() {
+        debug_assert!(!def.hooks.override_builtins && def.hooks.indexed.is_none(), "announced names need named(false)");
+        jsdef.attributes |= sys::kJSClassAttributeImpureNamedProperties;
+    }
     jsdef.parentClass = reg.base;
     if has_named_hooks || (def.hooks.indexed.is_some() && indexed_callbacks.is_none()) {
         jsdef.getProperty = Some(get_property_hook);
@@ -794,6 +816,7 @@ pub(crate) fn register<C: JsClass>(engine: &EngineInner) -> ClassId {
             ctor_length: def.ctor_length,
             legacy_factories: def.legacy_factories,
             callback_interface: def.callback_interface,
+            announced_names: def.announced_names,
             hooks: def.hooks,
             exposed: def.exposed,
             indexed_iterable: def.indexed_iterable,

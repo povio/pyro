@@ -1,0 +1,254 @@
+diff --git a/Source/JavaScriptCore/API/JSCallbackObject.cpp b/Source/JavaScriptCore/API/JSCallbackObject.cpp
+index ef79caed47..9b07fe9a98 100644
+--- a/Source/JavaScriptCore/API/JSCallbackObject.cpp
++++ b/Source/JavaScriptCore/API/JSCallbackObject.cpp
+@@ -123,6 +123,12 @@ Structure* JSCallbackObject<JSNonFinalObject>::createCacheableStructure(VM& vm,
+     return Structure::create(vm, globalObject, proto, TypeInfo(ObjectType, StructureFlags & ~(OverridesGetOwnPropertySlot | ProhibitsPropertyCaching)), info());
+ }
+ 
++template <>
++Structure* JSCallbackObject<JSNonFinalObject>::createImpureNamedStructure(VM& vm, JSGlobalObject* globalObject, JSValue proto)
++{
++    return Structure::create(vm, globalObject, proto, TypeInfo(ObjectType, (StructureFlags & ~ProhibitsPropertyCaching) | GetOwnPropertySlotIsImpure | NewImpurePropertyFiresWatchpoints), info());
++}
++
+ template <>
+ Structure* JSCallbackObject<JSGlobalObject>::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue proto)
+ { 
+diff --git a/Source/JavaScriptCore/API/JSCallbackObject.h b/Source/JavaScriptCore/API/JSCallbackObject.h
+index ec98e58a2a..f7e408977c 100644
+--- a/Source/JavaScriptCore/API/JSCallbackObject.h
++++ b/Source/JavaScriptCore/API/JSCallbackObject.h
+@@ -181,6 +181,12 @@ public:
+     // the C++ getOwnPropertySlot and inline caches accept the structure. put stays overridden, so
+     // the embedder hears of each property added to a wrapper.
+     static Structure* createCacheableStructure(VM&, JSGlobalObject*, JSValue);
++    // For wrappers of a class with kJSClassAttributeImpureNamedProperties: its hooks answer
++    // names that come and go (a document's named elements), and the embedder announces each
++    // name that may appear with JSAddImpureProperty. Inline caches may then remember lookups,
++    // watching the names they remember, as WebCore's HTMLDocument does. What a hook answers is
++    // never cached.
++    static Structure* createImpureNamedStructure(VM&, JSGlobalObject*, JSValue);
+     
+     JSValue getPrivateProperty(const Identifier& propertyName) const
+     {
+diff --git a/Source/JavaScriptCore/API/JSCallbackObjectFunctions.h b/Source/JavaScriptCore/API/JSCallbackObjectFunctions.h
+index ad757d4cc7..d55e3e212f 100644
+--- a/Source/JavaScriptCore/API/JSCallbackObjectFunctions.h
++++ b/Source/JavaScriptCore/API/JSCallbackObjectFunctions.h
+@@ -217,6 +217,7 @@ bool JSCallbackObject<Parent>::getOwnPropertySlot(JSObject* object, JSGlobalObje
+                 JSLock::APICallbackScope callbackScope(globalObject);
+                 if (hasProperty(ctx, thisRef, propertyNameRef.get())) {
+                     slot.setCustom(thisObject, attributes, getCallbackGetter());
++                    slot.disableCaching();
+                     return true;
+                 }
+             } else if (JSObjectGetPropertyCallback getProperty = jsClass->getProperty) {
+@@ -231,10 +232,14 @@ bool JSCallbackObject<Parent>::getOwnPropertySlot(JSObject* object, JSGlobalObje
+                 if (exception) {
+                     throwException(globalObject, scope, toJS(globalObject, exception));
+                     slot.setValue(thisObject, attributes, jsUndefined());
++                    slot.disableCaching();
+                     return true;
+                 }
+                 if (value) {
++                    // A hook's answer is not a property an inline cache may remember (the
++                    // structure of an impure wrapper does not prohibit caching).
+                     slot.setValue(thisObject, attributes, toJS(globalObject, value));
++                    slot.disableCaching();
+                     return true;
+                 }
+             }
+@@ -245,6 +250,7 @@ bool JSCallbackObject<Parent>::getOwnPropertySlot(JSObject* object, JSGlobalObje
+                     RETURN_IF_EXCEPTION(scope, false);
+                     if (value) {
+                         slot.setValue(thisObject, attributes, value);
++                        slot.disableCaching();
+                         return true;
+                     }
+                 }
+@@ -253,6 +259,7 @@ bool JSCallbackObject<Parent>::getOwnPropertySlot(JSObject* object, JSGlobalObje
+             if (OpaqueJSClassStaticFunctionsTable* staticFunctions = jsClass->staticFunctions(globalObject)) {
+                 if (staticFunctions->contains(name)) {
+                     slot.setCustom(thisObject, attributes, getStaticFunctionGetter());
++                    slot.disableCaching();
+                     return true;
+                 }
+             }
+diff --git a/Source/JavaScriptCore/API/JSClassRef.cpp b/Source/JavaScriptCore/API/JSClassRef.cpp
+index 24c5a00428..3124ca161f 100644
+--- a/Source/JavaScriptCore/API/JSClassRef.cpp
++++ b/Source/JavaScriptCore/API/JSClassRef.cpp
+@@ -30,6 +30,7 @@
+ #include "InitializeThreading.h"
+ #include "JSCInlines.h"
+ #include "JSCallbackObject.h"
++#include "JSForkPrivate.h"
+ 
+ using namespace JSC;
+ 
+@@ -82,6 +83,7 @@ OpaqueJSClass::OpaqueJSClass(const JSClassDefinition* definition, OpaqueJSClass*
+         && !callAsFunction && !callAsConstructor && !hasInstance && !convertToType
+         && m_staticValues.isEmpty() && m_staticFunctions.isEmpty()
+         && (!parentClass || parentClass->wrappersAreCacheable);
++    impureNamedProperties = !wrappersAreCacheable && (definition->attributes & kJSClassAttributeImpureNamedProperties);
+ }
+ 
+ OpaqueJSClass::~OpaqueJSClass()
+diff --git a/Source/JavaScriptCore/API/JSClassRef.h b/Source/JavaScriptCore/API/JSClassRef.h
+index 124070deae..36d86e53c9 100644
+--- a/Source/JavaScriptCore/API/JSClassRef.h
++++ b/Source/JavaScriptCore/API/JSClassRef.h
+@@ -134,6 +134,8 @@ struct OpaqueJSClass : public ThreadSafeRefCounted<OpaqueJSClass> {
+     // named lookups are ordinary object lookups, which inline caches may remember.
+     // (getPropertyNames only adds keys to enumeration, which stays on the method table.)
+     bool wrappersAreCacheable { false };
++    // kJSClassAttributeImpureNamedProperties (JSForkPrivate.h).
++    bool impureNamedProperties { false };
+ 
+ private:
+     friend struct OpaqueJSClassContextData;
+diff --git a/Source/JavaScriptCore/API/JSFork.cpp b/Source/JavaScriptCore/API/JSFork.cpp
+index b97035c44a..16399944e7 100644
+--- a/Source/JavaScriptCore/API/JSFork.cpp
++++ b/Source/JavaScriptCore/API/JSFork.cpp
+@@ -107,6 +107,15 @@ void JSCompleteJITPlans(JSContextGroupRef group, bool wait)
+ #endif
+ }
+ 
++void JSAddImpureProperty(JSContextRef ctx, JSStringRef propertyName)
++{
++    JSGlobalObject* globalObject = toJS(ctx);
++    VM& vm = globalObject->vm();
++    JSLockHolder locker(vm);
++    Identifier name = propertyName->identifier(&vm);
++    vm.addImpureProperty(name.impl());
++}
++
+ void JSSetWrapperPropertyAddedCallback(void (*callback)(JSContextRef, JSObjectRef))
+ {
+     JSC::wrapperPropertyAddedCallback = callback;
+diff --git a/Source/JavaScriptCore/API/JSForkPrivate.h b/Source/JavaScriptCore/API/JSForkPrivate.h
+index 0bbe7a9e4d..a52b57f34a 100644
+--- a/Source/JavaScriptCore/API/JSForkPrivate.h
++++ b/Source/JavaScriptCore/API/JSForkPrivate.h
+@@ -162,6 +162,19 @@ JS_EXPORT void JSSetDecommitReplacesPages(bool enable);
+    for a non-string value, or a rope that cannot be resolved (an exception is then pending). */
+ JS_EXPORT const void* JSValueGetStringCharacters(JSContextRef ctx, JSValueRef value, size_t* length, bool* is8Bit);
+ 
++/* A JSClassDefinition attribute: the class's property hooks answer only names the embedder
++   announces with JSAddImpureProperty before they can first be answered (a document's named
++   elements), they never answer a name its prototype chain has, and the class (with its
++   parents) has no call, construct, static value or static function. Its wrappers' lookups
++   are then cacheable, as WebCore's for HTMLDocument: an inline cache that remembers a lookup
++   watches the name, and announcing the name drops the caches. */
++#define kJSClassAttributeImpureNamedProperties (1u << 30)
++
++/* Announces that a wrapper of a kJSClassAttributeImpureNamedProperties class may now answer
++   `propertyName`: inline caches and compiled code that assumed otherwise are dropped. Cheap
++   when nothing watches the name. May not run JavaScript; callable with the DOM borrowed. */
++JS_EXPORT void JSAddImpureProperty(JSContextRef ctx, JSStringRef propertyName);
++
+ #ifdef __cplusplus
+ }
+ #endif
+diff --git a/Source/JavaScriptCore/API/JSObjectRef.cpp b/Source/JavaScriptCore/API/JSObjectRef.cpp
+index 556a7a39b1..87fcaceb0a 100644
+--- a/Source/JavaScriptCore/API/JSObjectRef.cpp
++++ b/Source/JavaScriptCore/API/JSObjectRef.cpp
+@@ -91,7 +91,13 @@ JSObjectRef JSObjectMake(JSContextRef ctx, JSClassRef jsClass, void* data)
+     if (!jsClass)
+         return toRef(constructEmptyObject(globalObject));
+ 
+-    Structure* structure = jsClass->wrappersAreCacheable && Options::cacheCallbackObjectLookups() ? globalObject->cacheableCallbackObjectStructure() : globalObject->callbackObjectStructure();
++    Structure* structure = globalObject->callbackObjectStructure();
++    if (Options::cacheCallbackObjectLookups()) {
++        if (jsClass->wrappersAreCacheable)
++            structure = globalObject->cacheableCallbackObjectStructure();
++        else if (jsClass->impureNamedProperties)
++            structure = globalObject->impureNamedCallbackObjectStructure();
++    }
+     JSCallbackObject<JSNonFinalObject>* object = JSCallbackObject<JSNonFinalObject>::create(globalObject, structure, jsClass, data);
+     if (JSObject* prototype = jsClass->prototype(globalObject))
+         object->setPrototypeDirect(vm, prototype);
+diff --git a/Source/JavaScriptCore/runtime/JSCustomGetterFunction.cpp b/Source/JavaScriptCore/runtime/JSCustomGetterFunction.cpp
+index dbbe70cdb5..1cc7c056cb 100644
+--- a/Source/JavaScriptCore/runtime/JSCustomGetterFunction.cpp
++++ b/Source/JavaScriptCore/runtime/JSCustomGetterFunction.cpp
+@@ -41,7 +41,11 @@ JSC_DEFINE_HOST_FUNCTION(customGetterFunctionCall, (JSGlobalObject* globalObject
+     auto scope = DECLARE_THROW_SCOPE(vm);
+ 
+     JSCustomGetterFunction* customGetterFunction = uncheckedDowncast<JSCustomGetterFunction>(callFrame->jsCallee());
+-    JSValue thisValue = callFrame->thisValue();
++    // A bare call of a closure variable has the variable's scope as its this value. Strict
++    // ToThis turns a scope into undefined and leaves any other value as it is, as WebCore's
++    // attribute getters do (the global's attributes then apply to the global).
++    JSValue thisValue = callFrame->thisValue().toThis(globalObject, ECMAMode::strict());
++    RETURN_IF_EXCEPTION(scope, encodedJSValue());
+     auto getter = customGetterFunction->getter();
+ 
+     if (auto domAttribute = customGetterFunction->domAttribute()) {
+diff --git a/Source/JavaScriptCore/runtime/JSCustomSetterFunction.cpp b/Source/JavaScriptCore/runtime/JSCustomSetterFunction.cpp
+index 9b61059738..6d66d16867 100644
+--- a/Source/JavaScriptCore/runtime/JSCustomSetterFunction.cpp
++++ b/Source/JavaScriptCore/runtime/JSCustomSetterFunction.cpp
+@@ -37,9 +37,15 @@ static JSC_DECLARE_HOST_FUNCTION(customSetterFunctionCall);
+ 
+ JSC_DEFINE_HOST_FUNCTION(customSetterFunctionCall, (JSGlobalObject* globalObject, CallFrame* callFrame))
+ {
++    VM& vm = globalObject->vm();
++    auto scope = DECLARE_THROW_SCOPE(vm);
+     auto customSetterFunction = uncheckedDowncast<JSCustomSetterFunction>(callFrame->jsCallee());
+     auto setter = customSetterFunction->setter();
+-    setter(globalObject, JSValue::encode(callFrame->thisValue()), JSValue::encode(callFrame->argument(0)), customSetterFunction->propertyName());
++    // See customGetterFunctionCall: a scope this value is undefined.
++    JSValue thisValue = callFrame->thisValue().toThis(globalObject, ECMAMode::strict());
++    RETURN_IF_EXCEPTION(scope, encodedJSValue());
++    scope.release();
++    setter(globalObject, JSValue::encode(thisValue), JSValue::encode(callFrame->argument(0)), customSetterFunction->propertyName());
+     return JSValue::encode(jsUndefined());
+ }
+ 
+diff --git a/Source/JavaScriptCore/runtime/JSGlobalObject.cpp b/Source/JavaScriptCore/runtime/JSGlobalObject.cpp
+index 4b0b2c1a0d..48e13715e9 100644
+--- a/Source/JavaScriptCore/runtime/JSGlobalObject.cpp
++++ b/Source/JavaScriptCore/runtime/JSGlobalObject.cpp
+@@ -1227,6 +1227,10 @@ void JSGlobalObject::init(VM& vm)
+         [] (const Initializer<Structure>& init) {
+             init.set(JSCallbackObject<JSNonFinalObject>::createCacheableStructure(init.vm, init.owner, init.owner->m_objectPrototype.get()));
+         });
++    m_impureNamedCallbackObjectStructure.initLater(
++        [] (const Initializer<Structure>& init) {
++            init.set(JSCallbackObject<JSNonFinalObject>::createImpureNamedStructure(init.vm, init.owner, init.owner->m_objectPrototype.get()));
++        });
+     m_rawJSONObjectStructure.initLater(
+         [] (const Initializer<Structure>& init) {
+             init.set(JSRawJSONObject::createStructure(init.vm, init.owner, jsNull()));
+@@ -2997,6 +3001,7 @@ void JSGlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+     thisObject->m_callbackFunctionStructure.visit(visitor);
+     thisObject->m_callbackObjectStructure.visit(visitor);
+     thisObject->m_cacheableCallbackObjectStructure.visit(visitor);
++    thisObject->m_impureNamedCallbackObjectStructure.visit(visitor);
+     thisObject->m_rawJSONObjectStructure.visit(visitor);
+ #if JSC_OBJC_API_ENABLED
+     thisObject->m_objcCallbackFunctionStructure.visit(visitor);
+diff --git a/Source/JavaScriptCore/runtime/JSGlobalObject.h b/Source/JavaScriptCore/runtime/JSGlobalObject.h
+index 5f373ad3f4..1a2ada8727 100644
+--- a/Source/JavaScriptCore/runtime/JSGlobalObject.h
++++ b/Source/JavaScriptCore/runtime/JSGlobalObject.h
+@@ -352,6 +352,7 @@ public:
+     LazyProperty<JSGlobalObject, Structure> m_callbackFunctionStructure;
+     LazyProperty<JSGlobalObject, Structure> m_callbackObjectStructure;
+     LazyProperty<JSGlobalObject, Structure> m_cacheableCallbackObjectStructure;
++    LazyProperty<JSGlobalObject, Structure> m_impureNamedCallbackObjectStructure;
+     LazyProperty<JSGlobalObject, Structure> m_rawJSONObjectStructure;
+ #if JSC_OBJC_API_ENABLED
+     LazyProperty<JSGlobalObject, Structure> m_objcCallbackFunctionStructure;
+@@ -904,6 +905,7 @@ public:
+     Structure* callbackFunctionStructure() const { return m_callbackFunctionStructure.get(this); }
+     Structure* callbackObjectStructure() const { return m_callbackObjectStructure.get(this); }
+     Structure* cacheableCallbackObjectStructure() const { return m_cacheableCallbackObjectStructure.get(this); }
++    Structure* impureNamedCallbackObjectStructure() const { return m_impureNamedCallbackObjectStructure.get(this); }
+     Structure* rawJSONObjectStructure() const { return m_rawJSONObjectStructure.get(this); }
+ #if JSC_OBJC_API_ENABLED
+     Structure* objcCallbackFunctionStructure() const { return m_objcCallbackFunctionStructure.get(this); }

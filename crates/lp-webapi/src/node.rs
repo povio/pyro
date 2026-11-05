@@ -1478,7 +1478,11 @@ impl JsClass for Document {
             Ok(names)
         });
         // Named properties: `document.foo` for `<form name=foo>` and the like;
-        // an iframe stands for its child window.
+        // an iframe stands for its child window. lp-dom announces every name
+        // that may appear (`Dom::set_named_item_hook`, installed by
+        // `lp_webapi::install`), so reads of the document's other properties
+        // stay inline-cacheable.
+        def.named_properties_are_announced();
         def.named(false, |s, n, name| {
             let page = n.page();
             let found = page.dom.borrow().document_named_elements(n.id, name).js()?;

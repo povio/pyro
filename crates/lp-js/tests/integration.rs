@@ -7,6 +7,7 @@ mod callback_lock;
 mod class_lengths;
 mod lazy_interfaces;
 mod legacy_platform_object;
+mod redefined_accessor;
 mod named_hooks;
 mod nested_realm;
 mod object_inspection;
