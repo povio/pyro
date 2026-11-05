@@ -118,6 +118,17 @@ pub struct Request {
     /// Never offered to the [`crate::Interceptor`]: the caller's thread, which
     /// answers interception decisions, is blocked on this request (sync XHR).
     pub skip_interception: bool,
+    /// The object behind a `blob:` URL, looked up by the caller in its
+    /// document's blob URL store (the client has no access to it). A `blob:`
+    /// request without one fails as for a revoked URL.
+    pub blob: Option<BlobBody>,
+}
+
+/// A `Blob` served for a `blob:` URL: its bytes and its `type`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BlobBody {
+    pub bytes: Bytes,
+    pub mime: String,
 }
 
 /// Fetch request cache mode (WHATWG Fetch, "cache mode"), applied to the
@@ -163,6 +174,7 @@ impl Request {
             max_body: None,
             cache: CacheMode::Default,
             skip_interception: false,
+            blob: None,
         }
     }
 }

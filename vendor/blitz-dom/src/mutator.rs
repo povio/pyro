@@ -384,7 +384,14 @@ impl DocumentMutator<'_> {
 
         if (tag, attr) == tag_and_attr!("input", "checked") {
             set_input_checked_state(element, value.to_string());
-        } else if (tag, attr) == tag_and_attr!("img", "src") {
+        } else if (tag, attr) == tag_and_attr!("img", "src")
+            // lightningpanda: an image button fetches its `src` like `<img>`;
+            // `type` becoming "image" starts the load (HTML "image button
+            // state": the type changing to Image Button updates the image data).
+            || (*tag == local_name!("input")
+                && (*attr == local_name!("src") || *attr == local_name!("type"))
+                && crate::layout::replaced::is_image_input(element))
+        {
             self.load_image(node_id);
         } else if (tag, attr) == tag_and_attr!("canvas", "src") {
             self.load_custom_paint_src(node_id);
@@ -540,7 +547,7 @@ impl DocumentMutator<'_> {
     /// Remove the node from it's parent but don't drop it
     pub fn remove_node(&mut self, node_id: NodeId) {
         // A removed element inside a `:has()` argument changes its anchors.
-        self.doc.invalidate_has_anchors(node_id);
+        self.doc.invalidate_has_anchors_around(node_id);
         if let Some(parent_id) = self.doc.nodes[node_id].parent {
             self.doc.invalidate_has_anchors(parent_id);
             self.restyle_if_empty_matters(parent_id);
@@ -580,6 +587,13 @@ impl DocumentMutator<'_> {
         node_id: NodeId,
         on_drop: &mut dyn FnMut(NodeId),
     ) -> Option<Node> {
+        // lightningpanda: a dropped element inside a `:has()` argument
+        // changes its anchors, as in `remove_node`.
+        self.doc.invalidate_has_anchors_around(node_id);
+        if let Some(parent_id) = self.doc.nodes[node_id].parent {
+            self.doc.invalidate_has_anchors(parent_id);
+            self.restyle_if_empty_matters(parent_id);
+        }
         let node_is_in_document = self.doc.nodes[node_id].flags.is_in_document();
         self.process_removed_subtree(node_id);
 
@@ -761,7 +775,7 @@ impl DocumentMutator<'_> {
             // `remove_node` does (`:has()` anchors, `:empty`), checked while
             // it is still linked.
             if let Some(old_parent_id) = self.doc.nodes[child_id].parent {
-                self.doc.invalidate_has_anchors(child_id);
+                self.doc.invalidate_has_anchors_around(child_id);
                 self.doc.invalidate_has_anchors(old_parent_id);
                 self.restyle_if_empty_matters(old_parent_id);
             }
@@ -808,6 +822,12 @@ impl DocumentMutator<'_> {
             let child = &mut self.doc.nodes[child_id];
             let child_was_in_doc = child.flags.is_in_document();
             child.parent = Some(parent_id);
+            // lightningpanda: the anchors that can see the new position
+            // (ancestors, their previous siblings) may match differently.
+            if new_parent_is_in_document {
+                self.doc.invalidate_has_anchors_around(child_id);
+            }
+            let child = &mut self.doc.nodes[child_id];
             // A moved element's ancestors (inherited styles, descendant
             // selectors) changed; new ones have no style yet. Either way the
             // style traversal must reach it.
@@ -1058,6 +1078,15 @@ impl<'doc> DocumentMutator<'doc> {
                 _ if has_custom_widget => {}
                 "link" => self.eager_op_queue.push(SpecialOp::LoadStylesheet(node_id)),
                 "img" => self.eager_op_queue.push(SpecialOp::LoadImage(node_id)),
+                // lightningpanda: an image button is replaced content showing
+                // its `src` image, so it loads like `<img>` (and is a form
+                // control like any other input).
+                "input" if crate::layout::replaced::is_image_input(element) => {
+                    self.eager_op_queue.push(SpecialOp::LoadImage(node_id));
+                    self.eager_op_queue
+                        .push(SpecialOp::ProcessButtonInput(node_id));
+                    self.form_nodes.insert(node_id);
+                }
                 "iframe" => self.eager_op_queue.push(SpecialOp::LoadIframe(node_id)),
                 "canvas" => self
                     .eager_op_queue

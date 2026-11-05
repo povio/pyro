@@ -35,6 +35,14 @@ not forwarded. Explicit inspector/Realm evaluation remains available. Parser
 scripts, dynamic scripts and timers require browser-side checks. Existing gaps
 in parser-created inline event handlers remain unchanged.
 
+`PageHooks::frame_detached()` (default false) tells the bindings that the frame
+showing the document was removed from its page; no JS runs in it. Script of such
+a document can still be on the stack (`frameElement.remove()` returns to it), but
+the document is no longer fully active: `PageDom::is_fully_active()` is false,
+event-listener invocation is suppressed as for disabled scripting (HTML "check if
+we can run script"), and `Observable`/`Subscriber`/`EventTarget.when()` do
+nothing.
+
 These hooks do not implement iframe navigation, origin isolation, WindowProxy,
 child realms, child lifecycle/load events, layout, or input routing. Those are
 browser/protocol integration work described in the browser frame design.
@@ -55,6 +63,15 @@ and listeners stay with the receiver. This costs one realm-id comparison per cal
 A node that moved between documents keeps its wrapper within a script world:
 `PageHooks::sibling_realms` lists that world's realms in the other frames, searched
 only when a realm has no wrapper yet, and empty for a page without child frames.
+A node's wrapper is made in the realm of the document the node was created in
+(DOM "create a node"), whichever realm asks for it first and whichever document
+it has been adopted into: `Dom::creation_document` records that document when a
+node moves to a document of another window, and a document without a browsing
+context (`createHTMLDocument`, DOMParser, `new Document()`, template contents)
+counts for the window whose script created it. A node whose creating window is
+unknown or gone is wrapped in the realm that asks. A removed frame's realms stay
+in `sibling_realms` until they are disposed, so its nodes keep one wrapper while
+its script can still run.
 An Event keeps its object the same way, and dispatch runs listeners in any realm of
 the tree. After a child navigates, its old indexed and named properties, and direct
 calls through its old prototypes, throw `Execution context was destroyed`.

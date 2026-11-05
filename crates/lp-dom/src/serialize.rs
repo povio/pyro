@@ -238,6 +238,8 @@ impl Dom {
                         out.push_str(&pi.data);
                         out.push_str("?>");
                     }
+                    // An attribute serializes to the empty string.
+                    NodeKind::Attr(_) => {}
                     NodeKind::Doctype(d) => {
                         out.push_str("<!DOCTYPE ");
                         out.push_str(&d.name);
@@ -418,6 +420,7 @@ impl Dom {
                         out.push_str(&pi.data);
                         out.push('>');
                     }
+                    NodeKind::Attr(_) => {}
                     NodeKind::Doctype(d) => {
                         out.push_str("<!DOCTYPE ");
                         out.push_str(&d.name);

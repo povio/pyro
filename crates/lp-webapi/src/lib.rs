@@ -16,6 +16,7 @@
 //!    `page.dispose()`. Per-world removal can use `lifecycle::realm_disposed`.
 
 pub mod abort;
+mod animation_events;
 pub mod canvas;
 pub mod collections;
 pub mod crypto;
@@ -40,6 +41,7 @@ pub mod input;
 pub mod intersection_observer;
 pub mod layout_api;
 pub mod lifecycle;
+pub mod media_source;
 pub mod message_channel;
 pub mod mutation_observer;
 pub mod navigator_extras;
@@ -47,8 +49,11 @@ pub mod node;
 pub mod page;
 mod popup;
 pub mod range;
+pub mod render_blocking;
 pub mod render_snapshot;
 pub mod resize_observer;
+pub mod request;
+pub mod observable;
 pub mod response;
 pub mod storage;
 mod streams;
@@ -80,6 +85,7 @@ pub use page::{
     NavigationRequest, PageDom, PageHooks, RemotePoster,
 };
 pub use popup::{PopupCommand, PopupState, PopupTicket};
+pub use render_blocking::RenderBlocker;
 pub use storage::{StorageNamespace, StorageSeed};
 pub use target::{EventTarget, EventTargetData};
 pub use window::{define_members, WindowHost};
@@ -105,6 +111,7 @@ pub fn register(engine: &lp_js::Engine) {
     range::register(engine);
     abort::register(engine);
     message_channel::register(engine);
+    media_source::register(engine);
     worker::register(engine);
     custom::register(engine);
     file::register(engine);
@@ -127,6 +134,7 @@ pub fn register(engine: &lp_js::Engine) {
     engine.register::<url_search_params::URLSearchParams>();
     engine.register::<url_search_params::ParamsIterator>();
     engine.register::<response::Response>();
+    engine.register::<request::Request>();
     engine.register::<response::BodySource>();
     engine.register::<xhr::XMLHttpRequest>();
     engine.register::<xhr::XMLHttpRequestUpload>();
@@ -139,6 +147,10 @@ pub fn install(scope: &Scope<'_>, page: Rc<PageDom>) -> JsResult<()> {
     }
     let realm = scope.realm();
     page.realms.borrow_mut().insert(realm.id(), realm.downgrade());
+    // Document named properties (`document.formName`): the engine drops its
+    // caches of a name when an element that may be named it appears.
+    let names = scope.impure_names();
+    page.dom.borrow_mut().set_named_item_hook(Some(Rc::new(move |name: &str| names.announce(name))));
     xhr::install(scope, &page)?;
     realm.set_embedder(page.clone());
     realm.set_named_properties(Rc::new(window::WindowNamedProperties(page.clone())));
@@ -159,6 +171,21 @@ pub fn install(scope: &Scope<'_>, page: Rc<PageDom>) -> JsResult<()> {
     }
     let global = scope.global();
     global.set("CSS", window::css_namespace(scope)?)?;
+    // [Unscopable] members of ChildNode and ParentNode.
+    scope.eval(
+        r#"(() => {
+        const u = (proto, names) => { const o = Object.create(null); for (const n of names) o[n] = true;
+            Object.defineProperty(proto, Symbol.unscopables, { value: o, configurable: true }); };
+        const child = ['before', 'after', 'replaceWith', 'remove'], parent = ['prepend', 'append', 'replaceChildren'];
+        u(Element.prototype, [...child, ...parent]);
+        u(CharacterData.prototype, child);
+        u(DocumentType.prototype, child);
+        u(Document.prototype, parent);
+        u(DocumentFragment.prototype, parent);
+    })()"#,
+        Some("lightningpanda://internal/unscopables.js"),
+        1,
+    )?;
     Ok(())
 }
 

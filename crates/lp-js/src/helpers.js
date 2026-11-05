@@ -24,6 +24,7 @@
   const reflectDelete = Reflect.deleteProperty;
   const ProxyC = Proxy;
   const reflectPreventExtensions = Reflect.preventExtensions;
+  const reflectConstruct = Reflect.construct;
   // Interface state for member installation after disposal (see realm.rs
   // populate_disposed); `populated` is kept in sync by the native side.
   // Held here, so it lives exactly as long as some interface proxy (whose
@@ -56,6 +57,7 @@
   const arrayConcat = Array.prototype.concat;
   const isArray = Array.isArray;
   const toStringTag = Symbol.toStringTag;
+  const symbolIterator = Symbol.iterator;
   const objToString = O.prototype.toString;
   const fnToString = Function.prototype.toString;
   const ErrorCtor = Error;
@@ -93,28 +95,109 @@
     'QUOTA_EXCEEDED_ERR', 'TIMEOUT_ERR', 'INVALID_NODE_TYPE_ERR', 'DATA_CLONE_ERR',
   ];
 
-  // DOMException as a JS class (prototype chains to Error.prototype per WebIDL).
-  const names = new WM();
-  class DOMException extends ErrorCtor {
-    constructor(message = '', name = 'Error') {
-      super(String(message));
-      apply(wmSet, names, [this, String(name)]);
-    }
-    get name() {
-      if (!apply(wmHas, names, [this])) throw new TypeError('Illegal invocation');
-      return apply(wmGet, names, [this]);
-    }
-    get code() {
-      if (!apply(wmHas, names, [this])) throw new TypeError('Illegal invocation');
-      return DOM_EXCEPTION_CODES[apply(wmGet, names, [this])] || 0;
-    }
+  // An interface attribute: accessor pair, named `get x`/`set x`.
+  function defineAccessor(proto, name, get, set) {
+    try { defineProperty(get, 'name', { value: 'get ' + name }); } catch (_) {}
+    if (set) { try { defineProperty(set, 'name', { value: 'set ' + name }); } catch (_) {} }
+    defineProperty(proto, name, { get, set, enumerable: true, configurable: true });
   }
-  defineProperty(DOMException.prototype, toStringTag, { value: 'DOMException', configurable: true });
+
+  // DOMException (https://webidl.spec.whatwg.org/#idl-DOMException): a
+  // platform object whose prototype chains to Error.prototype, with `name`,
+  // `message` and `code` as brand-checked accessors on the prototype (not own
+  // data properties) and no class-side inheritance from Error. The instance
+  // is a real Error (`Reflect.construct(Error, ...)`), so it carries JSC's
+  // stack trace, and takes its prototype from `new.target` (QuotaExceededError
+  // and page subclasses), falling back to DOMException.prototype when that
+  // is not an object ("internally create a new object implementing the
+  // interface", https://webidl.spec.whatwg.org/#internally-create-a-new-object-implementing-the-interface).
+  const exceptionSlots = new WM();
+  const DOMException = { DOMException: function (message = '', name = 'Error') {
+    if (new.target === undefined) {
+      throw new TypeError("Failed to construct 'DOMException': Please use the 'new' operator, this DOM object constructor cannot be called as a function.");
+    }
+    // DOMString conversion is ToString: a Symbol throws (String() would
+    // describe it instead).
+    const slots = [`${message}`, `${name}`];
+    const e = reflectConstruct(ErrorCtor, [], DOMException);
+    if (new.target !== DOMException) {
+      // Read after the arguments are converted.
+      const proto = new.target.prototype;
+      if (proto !== null && (typeof proto === 'object' || typeof proto === 'function')) setPrototypeOf(e, proto);
+    }
+    apply(wmSet, exceptionSlots, [e, slots]);
+    return e;
+  } }.DOMException;
+  const exceptionSlot = (self, member) => {
+    const slots = apply(wmGet, exceptionSlots, [self]);
+    if (slots === undefined) {
+      throw new TypeError(`Failed to read the '${member}' property from 'DOMException': Illegal invocation`);
+    }
+    return slots;
+  };
+  const DOMExceptionProto = objectCreate(ErrorCtor.prototype);
+  defineProperty(DOMException, 'prototype', { value: DOMExceptionProto, writable: false, enumerable: false, configurable: false });
+  defineProperty(DOMExceptionProto, 'constructor', { value: DOMException, writable: true, enumerable: false, configurable: true });
+  defineAccessor(DOMExceptionProto, 'name', function name() { return exceptionSlot(this, 'name')[1]; });
+  defineAccessor(DOMExceptionProto, 'message', function message() { return exceptionSlot(this, 'message')[0]; });
+  defineAccessor(DOMExceptionProto, 'code', function code() { return DOM_EXCEPTION_CODES[exceptionSlot(this, 'code')[1]] || 0; });
+  defineProperty(DOMExceptionProto, toStringTag, { value: 'DOMException', configurable: true });
   DOM_EXCEPTION_CONSTANTS.forEach((n, i) => {
     defineProperty(DOMException, n, { value: i + 1, enumerable: true });
-    defineProperty(DOMException.prototype, n, { value: i + 1, enumerable: true });
+    defineProperty(DOMExceptionProto, n, { value: i + 1, enumerable: true });
   });
   defineProperty(globalThis, 'DOMException', { value: DOMException, writable: true, configurable: true });
+
+  // QuotaExceededError: the DOMException subclass WebIDL makes of the former
+  // "QuotaExceededError" name (https://webidl.spec.whatwg.org/#quotaexceedederror).
+  // Native code throwing that name constructs this class (error.rs).
+  const quotaLimits = new WM();
+  const NumberC = Number;
+  const isFinite = NumberC.isFinite;
+  const toDouble = (v, member) => {
+    const n = NumberC(v);
+    if (!isFinite(n)) {
+      throw new TypeError(`Failed to construct 'QuotaExceededError': Failed to read the '${member}' property from 'QuotaExceededErrorOptions': The provided double value is non-finite.`);
+    }
+    return n;
+  };
+  class QuotaExceededError extends DOMException {
+    constructor(message = '', options = {}) {
+      super(message, 'QuotaExceededError');
+      // Dictionary conversion first (members in lexicographic order), then the
+      // constructor's range checks.
+      let quota = null, requested = null;
+      if (options !== undefined && options !== null) {
+        if (typeof options !== 'object' && typeof options !== 'function') {
+          throw new TypeError("Failed to construct 'QuotaExceededError': The provided value is not of type 'QuotaExceededErrorOptions'.");
+        }
+        const q = options.quota;
+        if (q !== undefined) quota = toDouble(q, 'quota');
+        const r = options.requested;
+        if (r !== undefined) requested = toDouble(r, 'requested');
+      }
+      if (quota !== null && quota < 0) {
+        throw new RangeError("Failed to construct 'QuotaExceededError': The quota must not be negative.");
+      }
+      if (requested !== null && requested < 0) {
+        throw new RangeError("Failed to construct 'QuotaExceededError': The requested value must not be negative.");
+      }
+      if (quota !== null && requested !== null && requested < quota) {
+        throw new RangeError("Failed to construct 'QuotaExceededError': The requested value must not be less than the quota.");
+      }
+      apply(wmSet, quotaLimits, [this, [requested, quota]]);
+    }
+    get requested() {
+      if (!apply(wmHas, quotaLimits, [this])) throw new TypeError('Illegal invocation');
+      return apply(wmGet, quotaLimits, [this])[0];
+    }
+    get quota() {
+      if (!apply(wmHas, quotaLimits, [this])) throw new TypeError('Illegal invocation');
+      return apply(wmGet, quotaLimits, [this])[1];
+    }
+  }
+  defineProperty(QuotaExceededError.prototype, toStringTag, { value: 'QuotaExceededError', configurable: true });
+  defineProperty(globalThis, 'QuotaExceededError', { value: QuotaExceededError, writable: true, configurable: true });
 
   function describe(v) {
     const type = v === null ? 'object' : typeof v;
@@ -159,23 +242,54 @@
     return { type, subtype, className, description };
   }
 
+  // A constructor shim over `native(newTarget, args)` (class.rs ctor_invoke),
+  // named `name`; its own keys come in the order length, name, prototype.
+  function nativeConstructor(name, native, length) {
+    const C = ({ [name]: function (...args) {
+      if (new.target === undefined) {
+        throw new TypeError(`Failed to construct '${name}': Please use the 'new' operator, this DOM object constructor cannot be called as a function.`);
+      }
+      return native(new.target, args);
+    } })[name];
+    if (length !== 0) defineProperty(C, 'length', { value: length });
+    return C;
+  }
+
+  // A Proxy over `target` whose property traps run `ensure()` first (member
+  // installation on first use), then forward unchanged. Construction, calls
+  // and [[GetPrototypeOf]] need no members.
+  function lazyProxy(target, ensure) {
+    return new ProxyC(target, {
+      get(t, k, r) { ensure(); return reflectGet(t, k, r); },
+      set(t, k, v, r) { ensure(); return reflectSet(t, k, v, r); },
+      has(t, k) { ensure(); return reflectHas(t, k); },
+      ownKeys(t) { ensure(); return reflectOwnKeys(t); },
+      getOwnPropertyDescriptor(t, k) { ensure(); return reflectGOPD(t, k); },
+      defineProperty(t, k, d) { ensure(); return reflectDefine(t, k, d); },
+      deleteProperty(t, k) { ensure(); return reflectDelete(t, k); },
+      // Members must exist before the target stops accepting properties.
+      preventExtensions(t) { ensure(); return reflectPreventExtensions(t); },
+    });
+  }
+
   const H = {
     classProtos,
     classTargets,
     populated,
     DOMException,
-    makeInterface(name, native, proto, parentCtor, length, global) {
+    // `callback`: a legacy callback interface object (NodeFilter), which is
+    // not a constructor and has no `prototype` property, so `instanceof` on
+    // it throws (https://webidl.spec.whatwg.org/#legacy-callback-interface-object).
+    makeInterface(name, native, proto, parentCtor, length, global, callback) {
       const C = native
-        ? ({ [name]: function (...args) {
-            if (new.target === undefined) {
-              throw new TypeError(`Failed to construct '${name}': Please use the 'new' operator, this DOM object constructor cannot be called as a function.`);
-            }
-            return native(new.target, args);
-          } })[name]
-        : ({ [name]: function () { throw new TypeError('Illegal constructor'); } })[name];
-      // Both constructor forms above start with length 0.
-      if (length !== 0) defineProperty(C, 'length', { value: length });
-      defineProperty(C, 'prototype', { value: proto, writable: false, enumerable: false, configurable: false });
+        ? nativeConstructor(name, native, length)
+        : callback
+          ? ({ [name]() { throw new TypeError('Illegal constructor'); } })[name]
+          : ({ [name]: function () { throw new TypeError('Illegal constructor'); } })[name];
+      if (!native && length !== 0) defineProperty(C, 'length', { value: length });
+      if (!callback) {
+        defineProperty(C, 'prototype', { value: proto, writable: false, enumerable: false, configurable: false });
+      }
       defineProperty(proto, 'constructor', { value: C, writable: true, enumerable: false, configurable: true });
       defineProperty(proto, toStringTag, { value: name, writable: false, enumerable: false, configurable: true });
       if (parentCtor) setPrototypeOf(C, parentCtor);
@@ -183,14 +297,14 @@
       return C;
     },
     // Every interface of a new realm in one call (realm.rs install_classes):
-    // `spec[i]` is [name, parent index or -1, constructor length, exposed].
-    // Returns [protos, targets, ctors], indexed like `spec`.
+    // `spec[i]` is [name, parent index or -1, constructor length, exposed,
+    // callback interface]. Returns [protos, targets, ctors], indexed like `spec`.
     installInterfaces(spec, natives, objectProto, global, populate) {
       const protos = [], targets = [], ctors = [];
       for (let i = 0; i < spec.length; i++) {
-        const [name, parent, length, exposed] = spec[i];
+        const [name, parent, length, exposed, callback] = spec[i];
         const proto = objectCreate(parent < 0 ? objectProto : protos[parent]);
-        const C = H.makeInterface(name, natives[i], proto, parent < 0 ? null : ctors[parent], length, null);
+        const C = H.makeInterface(name, natives[i], proto, parent < 0 ? null : ctors[parent], length, null, callback);
         protos[i] = proto;
         targets[i] = C;
         ctors[i] = H.lazyInterface(C, proto, exposed ? global : null, name, i, populate);
@@ -199,41 +313,69 @@
     },
     // Interface object as seen by script: a Proxy over the constructor whose
     // property traps first install the class members natively (once), then
-    // forward unchanged. Construction/call/[[GetPrototypeOf]] need no members.
+    // forward unchanged.
     lazyInterface(C, proto, global, name, id, populate) {
       let done = false;
       classProtos[id] = proto;
       classTargets[id] = C;
-      const ensure = () => { if (!done) { populate(id, H); done = true; } };
-      const P = new ProxyC(C, {
-        get(t, k, r) { ensure(); return reflectGet(t, k, r); },
-        set(t, k, v, r) { ensure(); return reflectSet(t, k, v, r); },
-        has(t, k) { ensure(); return reflectHas(t, k); },
-        ownKeys(t) { ensure(); return reflectOwnKeys(t); },
-        getOwnPropertyDescriptor(t, k) { ensure(); return reflectGOPD(t, k); },
-        defineProperty(t, k, d) { ensure(); return reflectDefine(t, k, d); },
-        deleteProperty(t, k) { ensure(); return reflectDelete(t, k); },
-        // Members must exist before the target stops accepting properties.
-        preventExtensions(t) { ensure(); return reflectPreventExtensions(t); },
-      });
+      const P = lazyProxy(C, () => { if (!done) { populate(id, H); done = true; } });
       defineProperty(proto, 'constructor', { value: P, writable: true, enumerable: false, configurable: true });
       if (global) defineProperty(global, name, { value: P, writable: true, enumerable: false, configurable: true });
       return P;
     },
-    accessor(proto, name, get, set) {
-      try { defineProperty(get, 'name', { value: 'get ' + name }); } catch (_) {}
-      if (set) { try { defineProperty(set, 'name', { value: 'set ' + name }); } catch (_) {} }
-      defineProperty(proto, name, { get, set, enumerable: true, configurable: true });
+    // A [LegacyFactoryFunction] of interface `id` (`new Image(w, h)`): a
+    // constructor whose `prototype` is the interface prototype object, own
+    // keys in the order length, name, prototype, with the same lazy member
+    // installation as the interface object
+    // (https://webidl.spec.whatwg.org/#legacy-factory-functions).
+    legacyFactory(global, name, native, proto, length, id, populate) {
+      const F = nativeConstructor(name, native, length);
+      defineProperty(F, 'prototype', { value: proto, writable: false, enumerable: false, configurable: false });
+      let done = false;
+      const P = lazyProxy(F, () => { if (!done) { populate(id, H); done = true; } });
+      defineProperty(global, name, { value: P, writable: true, enumerable: false, configurable: true });
+      return P;
+    },
+    accessor: defineAccessor,
+    // WebIDL sequence<T> conversion (https://webidl.spec.whatwg.org/#es-sequence):
+    // the iterator protocol of `v` itself (arrays included: an overridden
+    // @@iterator or %ArrayIteratorPrototype%.next is honoured, holes read
+    // through the prototype), as a fresh array of the yielded values.
+    sequence(v, what) {
+      if (v === null || (typeof v !== 'object' && typeof v !== 'function')) {
+        throw new TypeError(`${what}: The provided value cannot be converted to a sequence.`);
+      }
+      const method = v[symbolIterator];
+      if (typeof method !== 'function') {
+        throw new TypeError(`${what}: The object must have a callable @@iterator property.`);
+      }
+      const out = [];
+      const iterator = apply(method, v, []);
+      if (iterator === null || typeof iterator !== 'object') throw new TypeError(`${what}: Iterator result is not an object.`);
+      const next = iterator.next;
+      for (let n = 0; ; n++) {
+        const r = apply(next, iterator, []);
+        if (r === null || typeof r !== 'object') throw new TypeError(`${what}: Iterator result is not an object.`);
+        if (r.done) return out;
+        // CreateDataProperty: a [[Set]] would reach accessors a page put on
+        // Array.prototype's indices.
+        reflectDefine(out, n, { value: r.value, writable: true, enumerable: true, configurable: true });
+      }
     },
     constant(target, name, value) {
       defineProperty(target, name, { value, writable: false, enumerable: true, configurable: false });
     },
     iterable(proto) {
-      defineProperty(proto, Symbol.iterator, { value: ArrayProto.values, writable: true, configurable: true });
+      defineProperty(proto, symbolIterator, { value: ArrayProto.values, writable: true, configurable: true });
       for (const k of ['entries', 'keys', 'values', 'forEach']) {
         defineProperty(proto, k, { value: ArrayProto[k], writable: true, enumerable: true, configurable: true });
       }
     },
+    // An indexed getter without an `iterable<V>` declaration: @@iterator only.
+    iterator(proto) {
+      defineProperty(proto, symbolIterator, { value: ArrayProto.values, writable: true, configurable: true });
+    },
+
     setLength(fn, length) {
       try { defineProperty(fn, 'length', { value: length }); } catch (_) {}
     },
@@ -264,7 +406,12 @@
           configurable: true,
         });
       }
+      // The global is not an instance of its interface prototype object, so
+      // `constructor` (found on that prototype in a browser) is copied too:
+      // `window.constructor === Window`.
+      defineProperty(global, 'constructor', { value: ctors[ctors.length - 1], writable: true, enumerable: false, configurable: true });
       defineProperty(global, toStringTag, { value: name, writable: false, enumerable: false, configurable: true });
+      installNamedPropertiesObject(global, protos, name);
     },
     describe,
     // `describe` as one NUL-separated string (type, subtype, className,
@@ -345,6 +492,61 @@
       return new ErrorCtor().stack;
     },
   };
+
+  // The named properties object of a `[Global]` interface with named
+  // properties (https://webidl.spec.whatwg.org/#named-properties-object):
+  // in the prototype chain between the interface prototype object
+  // (Window.prototype) and its parent's (EventTarget.prototype). JSC's named
+  // lookup object (the global's immutable [[Prototype]], `real`) cannot be
+  // re-chained, so the chain gets an exotic object emulating the spec's
+  // internal methods over it: named properties are read through `real`,
+  // subject to the named property visibility algorithm; [[DefineOwnProperty]],
+  // [[Delete]] and [[PreventExtensions]] fail (so a [[Set]] with the object
+  // itself as receiver fails too, unless it reaches a setter further up);
+  // own keys are only @@toStringTag.
+  function installNamedPropertiesObject(global, protos, name) {
+    if (protos.length < 2) return;
+    const real = getPrototypeOf(global);
+    const tag = real !== null && real !== undefined ? getOwnPropertyDescriptor(real, toStringTag) : undefined;
+    if (!tag || tag.value !== name + 'Properties') return;
+    const parent = protos[protos.length - 2];
+    const interfaceProto = protos[protos.length - 1];
+    const target = objectCreate(parent);
+    defineProperty(target, toStringTag, { value: tag.value, writable: false, enumerable: false, configurable: true });
+    const isArrayIndex = (k) => { const n = k >>> 0; return n !== 0xFFFFFFFF && StringC(n) === k; };
+    // Named property visibility (https://webidl.spec.whatwg.org/#dfn-named-property-visibility):
+    // a supported name is hidden by an own property of the global (which
+    // also carries the interface members; its indices are the WindowProxy's
+    // child frames, not properties of the Window) and by a property of any
+    // other object on its prototype chain.
+    const named = (k) => {
+      if (typeof k !== 'string') return undefined;
+      if (!isArrayIndex(k) && reflectGOPD(global, k) !== undefined) return undefined;
+      if (reflectGOPD(interfaceProto, k) !== undefined || reflectHas(parent, k)) return undefined;
+      const d = reflectGOPD(real, k);
+      return d === undefined ? undefined : { value: d.value, writable: true, enumerable: false, configurable: true };
+    };
+    const wp = new ProxyC(target, {
+      getPrototypeOf: () => parent,
+      setPrototypeOf: (t, p) => p === parent,
+      isExtensible: () => true,
+      preventExtensions: () => false,
+      getOwnPropertyDescriptor: (t, k) => named(k) ?? reflectGOPD(t, k),
+      defineProperty: () => false,
+      has: (t, k) => named(k) !== undefined || reflectHas(t, k),
+      get(t, k, r) { const d = named(k); return d === undefined ? reflectGet(t, k, r) : d.value; },
+      // [[Set]] is ordinary. Starting at the target (which has no named
+      // properties) gives the same result: a visible name is on no object
+      // further up, so the lookup ends in a data property on the receiver,
+      // which fails when that is this object ([[DefineOwnProperty]]); a
+      // setter further up (`__proto__`, whose [[SetPrototypeOf]] then
+      // fails) runs with the receiver as `this`.
+      set: (t, k, v, r) => reflectSet(t, k, v, r),
+      deleteProperty: () => false,
+      ownKeys: (t) => reflectOwnKeys(t),
+    });
+    setPrototypeOf(interfaceProto, wp);
+  }
 
   function primitiveOf(v) {
     if (v === null || typeof v !== 'object') return undefined;
@@ -445,6 +647,12 @@
         for (const k of ['stack', 'message']) {
           const desc = getOwnPropertyDescriptor(v, k);
           if (desc && 'value' in desc) push(k, desc.value);
+          // A DOMException's message is an accessor on its prototype: read
+          // from the slot, so a preview never runs a page-defined getter.
+          else if (k === 'message' && !desc) {
+            const slots = apply(wmGet, exceptionSlots, [v]);
+            if (slots !== undefined) push(k, slots[0]);
+          }
         }
         return out;
       }

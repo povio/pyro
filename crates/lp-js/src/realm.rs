@@ -193,6 +193,11 @@ pub type NativeCallbackHook = Rc<dyn for<'s> Fn(&Scope<'s>)>;
 /// Browser notification for a rejected promise; true cancels default reporting.
 pub type UnhandledRejectionHandler = for<'s> fn(&Scope<'s>, Value<'s>, Value<'s>) -> JsResult<bool>;
 
+/// Embedder step of [`Scope::report_exception`] (HTML "report an exception"
+/// fires an `error` event at the Window); true means the exception was
+/// handled and the engine hooks are not told.
+pub type ExceptionReporter = for<'s> fn(&Scope<'s>, &JsException) -> bool;
+
 pub(crate) struct RealmInner {
     pub(crate) id: RealmId,
     name: String,
@@ -229,6 +234,7 @@ pub(crate) struct RealmInner {
     module_fetcher: RefCell<Option<Rc<dyn ModuleFetcher>>>,
     native_callback_hook: RefCell<Option<NativeCallbackHook>>,
     unhandled_rejection_handler: Cell<Option<UnhandledRejectionHandler>>,
+    exception_reporter: Cell<Option<ExceptionReporter>>,
     /// Optional cheap test of whether the hook has anything to do; when it
     /// says no, the hook (and the rooting of the callback result) is skipped.
     native_callback_pending: RefCell<Option<Rc<dyn Fn() -> bool>>>,
@@ -339,6 +345,7 @@ impl RealmInner {
         // Release captured embedder state without holding the hook cell borrow.
         drop(self.native_callback_hook.take());
         self.unhandled_rejection_handler.set(None);
+        self.exception_reporter.set(None);
         drop(self.native_callback_pending.take());
         self.protos.borrow_mut().clear();
         self.ctors.borrow_mut().clear();
@@ -413,6 +420,12 @@ impl Realm {
 
     pub fn set_unhandled_rejection_handler(&self, handler: UnhandledRejectionHandler) {
         self.inner.unhandled_rejection_handler.set(Some(handler));
+    }
+
+    /// Installs the embedder's "report an exception" step, run by
+    /// [`Scope::report_exception`] before the engine hooks (`None` removes it).
+    pub fn set_exception_reporter(&self, reporter: Option<ExceptionReporter>) {
+        self.inner.exception_reporter.set(reporter);
     }
 
     pub fn id(&self) -> RealmId {
@@ -512,6 +525,23 @@ impl Realm {
         self.scope()?;
         drop(self.inner.native_callback_pending.replace(pending));
         Ok(())
+    }
+
+    /// Runs `f` with the native callback hook enabled again for the native
+    /// callbacks `f` causes in this realm, when called from inside the hook
+    /// (elsewhere it only runs `f`). For a hook that itself runs page script
+    /// (HTML post-connection steps execute an inserted `<script>` before the
+    /// inserting call returns): that script's own DOM calls need the hook.
+    pub fn reenter_native_callback_hook<R>(&self, f: impl FnOnce() -> R) -> R {
+        struct Restore<'a>(&'a Cell<bool>, bool);
+        impl Drop for Restore<'_> {
+            fn drop(&mut self) {
+                self.0.set(self.1);
+            }
+        }
+        let active = &self.inner.native_callback_hook_active;
+        let _restore = Restore(active, active.replace(false));
+        f()
     }
 
     pub fn set_module_fetcher(&self, fetcher: Option<Rc<dyn ModuleFetcher>>) {
@@ -909,6 +939,18 @@ impl<'s> Scope<'s> {
         Ok(())
     }
 
+    // -- conversions ------------------------------------------------------
+
+    /// WebIDL `sequence<T>` conversion of `value`: iterates it with its own
+    /// iterator protocol (arrays included, so overridden `@@iterator`s and
+    /// holes are honoured) and returns the yielded values as a fresh array
+    /// of this realm. `what` names the operation in the TypeError for
+    /// non-iterable values (https://webidl.spec.whatwg.org/#es-sequence).
+    pub fn sequence(&self, value: Value<'_>, what: &str) -> JsResult<Object<'s>> {
+        let seq = self.realm.helper(self, "sequence")?.call(None, &[value, self.string(what)])?;
+        seq.as_object().ok_or_else(|| JsError::Type("sequence conversion produced no array".into()))
+    }
+
     // -- host objects ------------------------------------------------------
 
     /// Returns the wrapper for `data`, reusing the existing one for `key` in this
@@ -1114,6 +1156,27 @@ impl<'s> Scope<'s> {
         unsafe { sys::JSObjectGetPrototype(self.ctx, o.raw) == proto.get(self).raw }
     }
 
+    /// The realm `object` was created in (the "associated realm" of a Web IDL
+    /// callback), when it is a live realm of this engine: a function's own
+    /// realm rather than its caller's, and a Proxy's rather than its target's.
+    /// `None` without the global-context SPI, for an object of another engine
+    /// or of a disposed realm. Runs no script.
+    pub fn object_realm(&self, object: Object<'_>) -> Option<Realm> {
+        let get_context = sys::spi::get().get_object_global_context?;
+        if unsafe { sys::JSContextGetGroup(object.ctx) } != self.realm.engine.group() {
+            return None;
+        }
+        // SAFETY: object is live in this VM; reading its global runs no script.
+        let context = unsafe { get_context(object.raw) };
+        if context.is_null() {
+            return None;
+        }
+        if context == self.realm.ctx.get() {
+            return Some(self.realm());
+        }
+        self.realm.engine.realm_for_global(context).map(|inner| Realm { inner })
+    }
+
     /// Tests for one of this engine's native wrappers/closures or a same-VM
     /// global object, without invoking getters, proxy traps, or other JS.
     /// Includes globals retained by another realm after their owner is disposed.
@@ -1233,14 +1296,26 @@ impl<'s> Scope<'s> {
         Ok((!v.is_null()).then(|| unsafe { Value::from_raw(self.ctx, v) }))
     }
 
-    /// Reports an uncaught exception to the engine hooks (console/CDP).
-    /// Termination is not an exception and is not reported.
+    /// Reports an uncaught exception: first to the realm's
+    /// [`ExceptionReporter`] (a Window fires its `error` event, which may
+    /// run script), then, unless that handled it, to the engine hooks
+    /// (console/CDP). Termination is not an exception and is not reported.
     pub fn report_exception(&self, error: &JsError) {
         if matches!(error, JsError::Terminated) {
             return;
         }
-        if let Some(h) = self.realm.engine.hooks() {
-            let details = error.details(self);
+        let hooks = self.realm.engine.hooks();
+        let reporter = self.realm.exception_reporter.get();
+        if hooks.is_none() && reporter.is_none() {
+            return;
+        }
+        let details = error.details(self);
+        if let Some(reporter) = reporter {
+            if reporter(self, &details) {
+                return;
+            }
+        }
+        if let Some(h) = hooks {
             h.exception_thrown(&self.realm(), &details);
         }
     }
@@ -1428,6 +1503,7 @@ pub(crate) fn create(engine: &Rc<EngineInner>, options: RealmOptions) -> JsResul
         module_fetcher: RefCell::new(None),
         native_callback_hook: RefCell::new(None),
         unhandled_rejection_handler: Cell::new(None),
+        exception_reporter: Cell::new(None),
         native_callback_pending: RefCell::new(None),
         native_callback_hook_active: Cell::new(false),
         inline_modules: RefCell::new(HashMap::new()),
@@ -1497,7 +1573,10 @@ fn install_classes(scope: &Scope<'_>) -> JsResult<()> {
         }
         let name = serde_json::to_string(info.name).expect("class name serializes");
         let parent = info.parent.map_or(-1, i64::from);
-        spec.push_str(&format!("[{name},{parent},{},{}]", info.def.ctor_length, info.def.exposed));
+        spec.push_str(&format!(
+            "[{name},{parent},{},{},{}]",
+            info.def.ctor_length, info.def.exposed, info.def.callback_interface
+        ));
         let native = match info.def.constructor {
             Some(c) => {
                 make_member_fn(scope.ctx, &realm.engine, reg.member, c, false, info.name, info.def.ctor_length, &keys)?
@@ -1522,6 +1601,34 @@ fn install_classes(scope: &Scope<'_>) -> JsResult<()> {
     let protos = column(&lists[0])?;
     let targets = column(&lists[1])?;
     let ctors = column(&lists[2])?;
+    // [LegacyFactoryFunction]s of exposed classes: global constructors over
+    // the class's prototype (`Image`), lazily populated like the interface.
+    let factories: Vec<(ClassId, &'static str, u32, class::MemberCall)> = reg
+        .classes
+        .iter()
+        .enumerate()
+        .filter(|(_, info)| info.def.exposed)
+        .flat_map(|(i, info)| info.def.legacy_factories.iter().map(move |f| (i as ClassId, f.name, f.length, f.call)))
+        .collect();
+    if !factories.is_empty() {
+        let legacy_factory = realm.helper(scope, "legacyFactory")?;
+        for (id, name, length, call) in factories {
+            let native = make_member_fn(scope.ctx, &realm.engine, reg.member, call, false, name, length, &keys)?;
+            let proto = lists[0].get_index(id)?;
+            legacy_factory.call(
+                None,
+                &[
+                    global.value(),
+                    scope.string(name),
+                    native.value(),
+                    proto,
+                    scope.number(length as f64),
+                    scope.number(id as f64),
+                    populate.value(),
+                ],
+            )?;
+        }
+    }
     let global_chain = realm.global_class.map(|gid| {
         let mut chain = vec![gid];
         while let Some(p) = reg.classes[*chain.last().expect("non-empty") as usize].parent {
@@ -1741,7 +1848,13 @@ fn install_members_raw(
             d.accessors.iter().map(|a| (a.name, a.get, a.set, a.slot)).collect::<Vec<_>>(),
             d.constants.clone(),
             d.statics.iter().map(|m| (m.name, m.length, m.call)).collect::<Vec<_>>(),
-            d.indexed_iterable,
+            if d.indexed_iterable {
+                Some("iterable")
+            } else if d.indexed_iterator {
+                Some("iterator")
+            } else {
+                None
+            },
         )
     };
     // SAFETY (all raw constructors below): ctx is the live callback/scope context.
@@ -1819,9 +1932,10 @@ fn install_members_raw(
         let f = native(name, length, call)?;
         target.set(name, f.value())?;
     }
-    if iterable {
-        helper("iterable")?.call(None, &[proto.value()])?;
+    if let Some(kind) = iterable {
+        helper(kind)?.call(None, &[proto.value()])?;
     }
+
     Ok(())
 }
 

@@ -2,12 +2,28 @@
 //! whole engine (and is re-signed on macOS), so one per file made `cargo test`
 //! mostly link time. Add new test files as modules here.
 
+mod activation_js;
+mod attr_nodes_js;
+mod collections_js;
+mod document_root_element_js;
 mod dom_js;
+mod error_events_js;
+mod events_misc_js;
 mod fetch_js;
+mod form_data_js;
 mod identity_js;
+mod image_input_js;
+mod media_source_js;
+mod move_before_js;
+mod observable_js;
+mod storage_js;
 mod support;
+mod traversal_js;
+mod uievents_js;
+mod webidl_js;
 mod url_params_js;
 mod xhr_js;
+mod xhr_worker_js;
 
 /// `autotests = false` means a file in tests/ that is neither a module here nor
 /// its own `[[test]]` target would silently never run.

@@ -1,11 +1,12 @@
-//! Bounded, inert XML 1.0 parsing for DOMParser. No DTD or external entities.
+//! Bounded XML 1.0 parsing for DOMParser, XHR and navigations. DOCTYPEs become nodes;
+//! no DTD processing (internal subsets are ignored) and no external entities.
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::name::{Namespace as XmlNamespace, NamespaceResolver, PrefixDeclaration, ResolveResult};
 use quick_xml::{Reader, XmlVersion};
 use rustc_hash::FxHashSet;
 
 use crate::dom::validate_name;
-use crate::node::{element_flags, ElementData, PiData, NIL};
+use crate::node::{element_flags, DoctypeData, ElementData, FragmentData, PiData, NIL};
 use crate::{Attr, DocumentKind, Dom, NodeId, NodeKind, QualName};
 
 pub const MAX_INPUT_BYTES: usize = 8 * 1024 * 1024;
@@ -75,7 +76,46 @@ fn text(nodes: &mut Vec<Prepared>, parent: Option<usize>, value: &str) -> Result
     }
     Ok(())
 }
+/// Parses `<!DOCTYPE name [PUBLIC "pub" "sys" | SYSTEM "sys"] [[subset]]>`
+/// (the text between `<!DOCTYPE` and `>`); the internal subset is ignored.
+fn doctype(text: &str) -> Result<DoctypeData> {
+    let text = text.trim();
+    let end = text.find(|c: char| c.is_ascii_whitespace() || c == '[').unwrap_or(text.len());
+    let name = &text[..end];
+    validate_name(name).map_err(|_| "Invalid XML doctype name")?;
+    let mut rest = text[end..].trim_start();
+    let literal = |rest: &mut &str| -> Result<String> {
+        let quote = rest.chars().next().filter(|c| matches!(c, '"' | '\'')).ok_or("Invalid XML doctype literal")?;
+        let body = &rest[1..];
+        let close = body.find(quote).ok_or("Unterminated XML doctype literal")?;
+        let value = body[..close].to_owned();
+        *rest = body[close + 1..].trim_start();
+        Ok(value)
+    };
+    let (public_id, system_id) = if let Some(after) = rest.strip_prefix("PUBLIC") {
+        rest = after.trim_start();
+        let public = literal(&mut rest)?;
+        let system = if rest.starts_with(['"', '\'']) { literal(&mut rest)? } else { String::new() };
+        (public, system)
+    } else if let Some(after) = rest.strip_prefix("SYSTEM") {
+        rest = after.trim_start();
+        (String::new(), literal(&mut rest)?)
+    } else {
+        (String::new(), String::new())
+    };
+    if !rest.is_empty() && !rest.starts_with('[') {
+        return Err("Invalid XML doctype");
+    }
+    Ok(DoctypeData { name: name.into(), public_id: public_id.into(), system_id: system_id.into() })
+}
+
 fn prepare(source: &str) -> Result<Vec<Prepared>> {
+    prepare_with(source, false)
+}
+
+/// `scripting`: elements are parser-inserted and their scripts may run
+/// (a navigated XHTML document); otherwise they are inert.
+fn prepare_with(source: &str, scripting: bool) -> Result<Vec<Prepared>> {
     if source.len() > MAX_INPUT_BYTES {
         return Err("XML input limit exceeded");
     }
@@ -137,7 +177,8 @@ fn prepare(source: &str) -> Result<Vec<Prepared>> {
                     return Err("Reserved xmlns prefix on XML element");
                 }
                 let mut element = ElementData::new(name);
-                element.flags |= element_flags::SCRIPT_ALREADY_STARTED;
+                element.flags |=
+                    if scripting { element_flags::PARSER_INSERTED } else { element_flags::SCRIPT_ALREADY_STARTED };
                 let mut expanded = FxHashSet::default();
                 for (key, value) in attributes {
                     let ns = if key.as_namespace_binding().is_some() {
@@ -243,7 +284,13 @@ fn prepare(source: &str) -> Result<Vec<Prepared>> {
                     previous = order;
                 }
             }
-            Event::DocType(_) => return Err("DTD declarations are not supported"),
+            Event::DocType(value) => {
+                if roots > 0 || parent.is_some() || nodes.iter().any(|n| matches!(n.kind, NodeKind::Doctype(_))) {
+                    return Err("Misplaced XML doctype");
+                }
+                let text = value.xml10_content();
+                push(&mut nodes, None, NodeKind::Doctype(Box::new(doctype(&text)?)))?;
+            }
             Event::Eof => break,
         }
         first = false;
@@ -276,11 +323,7 @@ pub fn parse_bytes(
     charset: Option<&str>,
     content_type: &str,
 ) -> Option<NodeId> {
-    let encoding = encoding_rs::Encoding::for_bom(bytes)
-        .map(|(encoding, _)| encoding)
-        .or_else(|| charset.and_then(|label| encoding_rs::Encoding::for_label(label.as_bytes())))
-        .or_else(|| declared_encoding(bytes))
-        .unwrap_or(encoding_rs::UTF_8);
+    let encoding = choose_encoding(bytes, charset);
     let (source, _, had_errors) = encoding.decode(bytes);
     if had_errors {
         return None;
@@ -289,6 +332,64 @@ pub fn parse_bytes(
     let document = new_document(dom, url, content_type);
     attach(dom, document, nodes);
     Some(document)
+}
+
+/// Chooses the encoding of an XML resource: BOM, transport charset, the
+/// XML declaration, then UTF-8.
+fn choose_encoding(bytes: &[u8], charset: Option<&str>) -> &'static encoding_rs::Encoding {
+    encoding_rs::Encoding::for_bom(bytes)
+        .map(|(encoding, _)| encoding)
+        .or_else(|| charset.and_then(|label| encoding_rs::Encoding::for_label(label.as_bytes())))
+        .or_else(|| declared_encoding(bytes))
+        .unwrap_or(encoding_rs::UTF_8)
+}
+
+/// Parses a navigated XML resource into `document` (an empty document the
+/// browsing context created): its tree, or a `parsererror` element on
+/// malformed input. Returns the document's HTML `<script>` elements in tree
+/// order, which may run (XHTML).
+pub fn parse_into(
+    dom: &mut Dom,
+    document: NodeId,
+    bytes: &[u8],
+    charset: Option<&str>,
+    content_type: &str,
+) -> Vec<NodeId> {
+    let encoding = choose_encoding(bytes, charset);
+    let (source, _, _) = encoding.decode(bytes);
+    let _ = dom.set_document_kind(document, DocumentKind::Xml, content_type, encoding.name());
+    match prepare_with(&source, true) {
+        Ok(nodes) => {
+            attach(dom, document, nodes);
+            run_insertion_steps(dom, document);
+        }
+        Err(message) => {
+            let error =
+                dom.create_element_ns(document, Some(PARSERERROR), "parsererror").expect("fixed parsererror name");
+            let text = dom.create_text(document, message).expect("live document");
+            dom.append_child(document, error).expect("new document");
+            dom.append_child(error, text).expect("new element");
+        }
+    }
+    dom.descendants(document)
+        .map(|d| d.filter(|&n| dom.element(n).is_ok_and(|e| e.is_html() && &*e.name.local == "script")).collect())
+        .unwrap_or_default()
+}
+
+/// What the HTML parser does node by node, for a navigated XML document once
+/// its whole tree is attached: `on*` attributes are queued for compilation
+/// and the insertion steps run, so iframes get their browsing contexts and
+/// style sheets and images load. (Scripts are the caller's: `parse_into`.)
+fn run_insertion_steps(dom: &mut Dom, document: NodeId) {
+    let elements: Vec<u32> =
+        dom.descendants(document).map(|d| d.map(|n| n.index()).collect()).unwrap_or_default();
+    for i in elements {
+        dom.note_inline_handlers(i);
+    }
+    let top: Vec<u32> = dom.child_idx_iter(document.index()).collect();
+    for node in top {
+        dom.resources_after_insert(node);
+    }
 }
 
 fn new_document(dom: &mut Dom, url: &str, content_type: &str) -> NodeId {
@@ -301,12 +402,31 @@ fn new_document(dom: &mut Dom, url: &str, content_type: &str) -> NodeId {
 
 fn attach(dom: &mut Dom, document: NodeId, nodes: Vec<Prepared>) {
     let owner = document.index();
-    let mut ids = Vec::with_capacity(nodes.len());
+    // Per prepared node: where its children are linked and which document
+    // owns them. The children of an XHTML `<template>` go into its template
+    // contents, a fragment in the inert document (HTML "parsing XHTML
+    // documents"); templates in other namespaces keep their children.
+    let mut targets: Vec<(u32, u32)> = Vec::with_capacity(nodes.len());
     for node in nodes {
-        let parent = node.parent.map_or(owner, |index| ids[index]);
-        let id = dom.alloc_raw(node.kind, owner);
+        let is_template = match &node.kind {
+            NodeKind::Element(e) if e.is_html() => {
+                // `<base>` elements make `document_base_url` look for one.
+                dom.base_seen |= &*e.name.local == "base";
+                &*e.name.local == "template"
+            }
+            _ => false,
+        };
+        let (parent, child_owner) = node.parent.map_or((owner, owner), |index| targets[index]);
+        let id = dom.alloc_raw(node.kind, child_owner);
         dom.link_raw(id, parent, NIL);
-        ids.push(id);
+        if is_template {
+            let inert = dom.inert_doc_for_pub(child_owner);
+            let frag = dom.alloc_raw(NodeKind::Fragment(FragmentData { host: id, shadow: None, flags: 0 }), inert);
+            dom.n_mut(id).element_mut().expect("template element").template_contents = frag;
+            targets.push((frag, inert));
+        } else {
+            targets.push((id, child_owner));
+        }
     }
 }
 
@@ -330,21 +450,24 @@ pub fn parse_document(dom: &mut Dom, url: &str, source: &str, content_type: &str
 }
 
 impl Dom {
-    /// DOM namespace lookup, including inherited declarations and default resets.
+    /// DOM "locate a namespace" (`lookupNamespaceURI`).
     pub fn lookup_namespace_uri(&self, node: NodeId, prefix: Option<&str>) -> crate::DomResult<Option<&str>> {
         let prefix = prefix.filter(|value| !value.is_empty());
-        if prefix == Some("xml") {
-            return Ok(Some("http://www.w3.org/XML/1998/namespace"));
-        }
-        if prefix == Some("xmlns") {
-            return Ok(Some(XMLNS));
-        }
         let mut current = match &self.node(node)?.kind {
             NodeKind::Document(_) => self.document_element(node)?,
             NodeKind::Element(_) => Some(node),
             NodeKind::Fragment(_) | NodeKind::Doctype(_) => None,
+            NodeKind::Attr(a) => self.opt_id(a.owner),
             _ => self.parent_element(node)?,
         };
+        if current.is_some() {
+            if prefix == Some("xml") {
+                return Ok(Some("http://www.w3.org/XML/1998/namespace"));
+            }
+            if prefix == Some("xmlns") {
+                return Ok(Some(XMLNS));
+            }
+        }
         while let Some(id) = current {
             let element = self.element(id)?;
             if !element.name.ns.is_empty() && element.name.prefix.as_deref() == prefix {
@@ -356,6 +479,34 @@ impl Dom {
                     if declared == prefix {
                         return Ok((!attr.value.is_empty()).then_some(&attr.value));
                     }
+                }
+            }
+            current = self.parent_element(id)?;
+        }
+        Ok(None)
+    }
+
+    /// DOM "locate a namespace prefix" (`lookupPrefix`).
+    pub fn lookup_prefix(&self, node: NodeId, namespace: Option<&str>) -> crate::DomResult<Option<&str>> {
+        let Some(namespace) = namespace.filter(|value| !value.is_empty()) else { return Ok(None) };
+        let mut current = match &self.node(node)?.kind {
+            NodeKind::Document(_) => self.document_element(node)?,
+            NodeKind::Element(_) => Some(node),
+            NodeKind::Fragment(_) | NodeKind::Doctype(_) => None,
+            NodeKind::Attr(a) => self.opt_id(a.owner),
+            _ => self.parent_element(node)?,
+        };
+        while let Some(id) = current {
+            let element = self.element(id)?;
+            if &*element.name.ns == namespace {
+                if let Some(prefix) = element.name.prefix.as_deref() {
+                    return Ok(Some(prefix));
+                }
+            }
+            for attr in &element.attrs {
+                if &*attr.name.ns == XMLNS && attr.name.prefix.as_deref() == Some("xmlns") && &*attr.value == namespace
+                {
+                    return Ok(Some(&attr.name.local));
                 }
             }
             current = self.parent_element(id)?;

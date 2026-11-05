@@ -469,10 +469,32 @@ impl Layout {
         if let Some(size) = self.root_scroll_size(dom, el, axis) {
             return size;
         }
+        let text = if axis == Axis::Width { self.text_control_scroll_width(dom, el) } else { None };
         self.layout_box(dom, el).map_or(0.0, |b| match axis {
-            Axis::Width => b.scroll_width.max(b.client_width),
+            Axis::Width => b.scroll_width.max(b.client_width).max(text.unwrap_or(0.0)),
             Axis::Height => b.scroll_height.max(b.client_height),
         })
+    }
+
+    /// The scrollable width of a single-line text `<input>`: its value's
+    /// width plus the padding. The value sits in an inner editor that
+    /// scrolls horizontally whatever the input's `overflow` is, and the
+    /// input's `scrollLeft` is that editor's (as in Chrome). `None` for
+    /// other elements and an empty value.
+    fn text_control_scroll_width(&self, dom: &Dom, el: NodeId) -> Option<f64> {
+        use crate::forms::InputType as T;
+        let e = dom.element(el).ok()?;
+        if !(e.is_html() && &*e.name.local == "input") {
+            return None;
+        }
+        if !matches!(dom.input_type(el).ok()?, T::Text | T::Search | T::Tel | T::Url | T::Email | T::Password) {
+            return None;
+        }
+        let value = dom.value(el).ok().filter(|v| !v.is_empty())?;
+        let b = self.layout_box(dom, el)?;
+        let size = self.style.computed_font_size(dom, Some(el));
+        let weight = self.style.computed_value(dom, el, "font-weight").and_then(|w| w.parse().ok()).unwrap_or(400);
+        Some(crate::text_metrics::text_width(&value, size, weight) + b.padding[LEFT] + b.padding[RIGHT])
     }
 
     /// `scrollExtent` (Element.zig:1845-1858): how far `el` scrolls on
@@ -483,7 +505,8 @@ impl Layout {
         }
         // Only scroll containers scroll; others stay at 0 (as in Chrome).
         let clips = self.style.overflow_clip_axes(dom, el);
-        if !(if axis == Axis::Width { clips.x } else { clips.y }) {
+        let text_control = axis == Axis::Width && self.text_control_scroll_width(dom, el).is_some();
+        if !(if axis == Axis::Width { clips.x } else { clips.y }) && !text_control {
             return Some(0.0);
         }
         let client = self.client_axis(dom, el, axis);
@@ -2056,7 +2079,56 @@ impl Layout {
                 let out_of_flow = matches!(position().as_str(), "absolute" | "fixed");
                 (!item || out_of_flow).then(|| "0px".into())
             }
-            "top" | "bottom" | "left" | "right" if value == "auto" && position() == "relative" => {
+            "top" | "bottom" | "left" | "right" if value == "auto" || value.contains('%') => {
+                self.resolved_inset(dom, el, name, value, &position()).or_else(|| clamp_layout_units(value))
+            }
+            _ => clamp_layout_units(value),
+        }
+    }
+
+    /// The resolved value of an inset property that is `auto` or has a
+    /// percentage (CSSOM: the used value for a positioned, rendered box).
+    /// Relative and sticky boxes resolve percentages against their
+    /// containing block's content box; an `auto` side of a relative box
+    /// mirrors the other side, and one of a sticky box stays `auto`.
+    /// Absolutely positioned boxes report the distance between their margin
+    /// box and the padding box of their containing block.
+    fn resolved_inset(&self, dom: &Dom, el: NodeId, name: &str, value: &str, position: &str) -> Option<String> {
+        let style = &self.style;
+        if style.has_display_none(dom, el) || !dom.is_connected(el).unwrap_or(false) {
+            return None;
+        }
+        let horizontal = matches!(name, "left" | "right");
+        let px = |v: f64| Some(format!("{}px", crate::computed::fmt_num(v)));
+        let length = |el: NodeId, property: &str| -> f64 {
+            style
+                .computed_value(dom, el, property)
+                .and_then(|v| v.strip_suffix("px").and_then(|n| n.parse::<f64>().ok()))
+                .unwrap_or(0.0)
+        };
+        match position {
+            "relative" | "sticky" => {
+                // The containing block: the nearest ancestor that generates a box.
+                let mut parent = dom.parent_element(el).ok().flatten()?;
+                while style.computed_display(dom, parent).as_deref() == Some("contents") {
+                    parent = dom.parent_element(parent).ok().flatten()?;
+                }
+                let basis = if horizontal {
+                    self.client_width(dom, parent) - length(parent, "padding-left") - length(parent, "padding-right")
+                } else {
+                    self.client_height(dom, parent) - length(parent, "padding-top") - length(parent, "padding-bottom")
+                };
+                let resolve = |value: &str| -> Option<f64> {
+                    let (px, percent) =
+                        crate::computed::resolve_len(value, &crate::computed::LengthContext::fonts(16.0, 16.0))?;
+                    Some(px + percent / 100.0 * basis)
+                };
+                if value != "auto" {
+                    return px(resolve(value)?);
+                }
+                if position == "sticky" {
+                    return None;
+                }
                 let opposite = match name {
                     "top" => "bottom",
                     "bottom" => "top",
@@ -2064,14 +2136,44 @@ impl Layout {
                     _ => "left",
                 };
                 match style.computed_value(dom, el, opposite).as_deref() {
-                    Some(o) if o.ends_with("px") => {
-                        let px = o.trim_end_matches("px").parse::<f64>().ok()?;
-                        Some(format!("{}px", crate::computed::fmt_num(-px)))
-                    }
+                    Some(o) if o != "auto" => px(-resolve(o)?),
                     _ => Some("0px".into()),
                 }
             }
-            _ => clamp_layout_units(value),
+            "absolute" | "fixed" => {
+                // The containing block's padding box, in viewport coordinates.
+                let establishes = |a: NodeId| -> bool {
+                    let is = |property: &str, initial: &str| {
+                        style.computed_value(dom, a, property).is_some_and(|v| v != initial)
+                    };
+                    let transformed = is("transform", "none") || is("perspective", "none") || is("filter", "none");
+                    transformed || (position == "absolute" && is("position", "static"))
+                };
+                let mut ancestor = dom.parent_element(el).ok().flatten();
+                while let Some(a) = ancestor.filter(|&a| !establishes(a)) {
+                    ancestor = dom.parent_element(a).ok().flatten();
+                }
+                let block = match ancestor {
+                    Some(a) => {
+                        let r = self.bounding_client_rect(dom, a);
+                        Rect {
+                            x: r.x + self.client_left(dom, a),
+                            y: r.y + self.client_top(dom, a),
+                            width: self.client_width(dom, a),
+                            height: self.client_height(dom, a),
+                        }
+                    }
+                    None => Rect { x: 0.0, y: 0.0, width: self.inner_width() as f64, height: self.inner_height() as f64 },
+                };
+                let r = self.bounding_client_rect(dom, el);
+                px(match name {
+                    "top" => r.y - length(el, "margin-top") - block.y,
+                    "left" => r.x - length(el, "margin-left") - block.x,
+                    "bottom" => block.y + block.height - (r.y + r.height + length(el, "margin-bottom")),
+                    _ => block.x + block.width - (r.x + r.width + length(el, "margin-right")),
+                })
+            }
+            _ => None,
         }
     }
 }

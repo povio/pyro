@@ -14,9 +14,38 @@ use crate::node::{node_arg, wrap_node, Node};
 use crate::page::PageDom;
 use crate::util::*;
 
+/// A live range and the node references its boundary points hold. Shared by
+/// the Range wrappers over it and, while it is the selection's range, by the
+/// document selection (`crate::editing`).
+pub(crate) struct RangeOwner {
+    pub(crate) page: Rc<PageDom>,
+    pub(crate) live: Rc<LiveRange>,
+}
+
+impl RangeOwner {
+    /// A range from `start` to `end` (in tree order).
+    pub(crate) fn new(page: &Rc<PageDom>, start: Point, end: Point) -> JsResult<Rc<RangeOwner>> {
+        let mut dom = page.dom.borrow_mut();
+        let live = dom.new_live_range(start.0).js()?;
+        let owner = Rc::new(RangeOwner { page: page.clone(), live });
+        let set = dom.set_live_range(&owner.live, start, end).js();
+        // Dropping the owner releases nodes: not while the DOM is borrowed.
+        drop(dom);
+        set.map(|()| owner)
+    }
+}
+
+impl Drop for RangeOwner {
+    fn drop(&mut self) {
+        self.page.release_node(self.live.start().0);
+        self.page.release_node(self.live.end().0);
+    }
+}
+
 pub struct RangeData {
     page: Rc<PageDom>,
     live: Rc<LiveRange>,
+    owner: Rc<RangeOwner>,
 }
 
 impl RangeData {
@@ -24,15 +53,10 @@ impl RangeData {
         self.page.clone()
     }
     pub fn new(page: &Rc<PageDom>, node: NodeId) -> JsResult<RangeData> {
-        let live = page.dom.borrow_mut().new_live_range(node).js()?;
-        Ok(RangeData { page: page.clone(), live })
+        Ok(RangeData::from_owner(RangeOwner::new(page, (node, 0), (node, 0))?))
     }
-}
-
-impl Drop for RangeData {
-    fn drop(&mut self) {
-        self.page.release_node(self.live.start().0);
-        self.page.release_node(self.live.end().0);
+    pub(crate) fn from_owner(owner: Rc<RangeOwner>) -> RangeData {
+        RangeData { page: owner.page.clone(), live: owner.live.clone(), owner }
     }
 }
 
@@ -648,8 +672,8 @@ fn static_point(
             "Failed to construct 'StaticRange': required member {offset} is undefined."
         )));
     }
-    if page.dom.borrow().node_type(id).js()? == NodeType::DocumentType {
-        return Err(JsError::dom("InvalidNodeTypeError", "The node provided is a doctype."));
+    if matches!(page.dom.borrow().node_type(id).js()?, NodeType::DocumentType | NodeType::Attribute) {
+        return Err(JsError::dom("InvalidNodeTypeError", "The node provided is a doctype or an attribute."));
     }
     Ok((NodeHold::new(page, id)?, to_u32(off)?))
 }
@@ -690,11 +714,30 @@ pub struct SelectionData {
     page: Rc<PageDom>,
 }
 
-fn range_value<'s>(s: &Scope<'s>, page: &Rc<PageDom>, start: (NodeId, u32), end: (NodeId, u32)) -> JsResult<Value<'s>> {
-    let r = RangeData::new(page, start.0)?;
-    set_point(&r, start.0, start.1, true)?;
-    set_point(&r, end.0, end.1, false)?;
-    Ok(s.wrap::<Range>(r, None)?.value())
+/// The Range object of the selection for this realm: the one script added,
+/// or one made over the selection's range on first use.
+fn selection_range_object<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Value<'s>> {
+    let realm = s.realm_id();
+    let owner = {
+        let sel = page.selection.borrow();
+        let Some(doc_sel) = sel.as_ref() else { return Ok(s.null()) };
+        if let Some((_, wrapper)) = doc_sel.wrappers.iter().find(|(r, _)| *r == realm) {
+            return Ok(wrapper.get(s));
+        }
+        doc_sel.range.clone()
+    };
+    let value = s.wrap::<Range>(RangeData::from_owner(owner.clone()), None)?.value();
+    if let Some(doc_sel) = page.selection.borrow_mut().as_mut().filter(|d| Rc::ptr_eq(&d.range, &owner)) {
+        doc_sel.wrappers.push((realm, lp_js::Persistent::new(s, value)));
+    }
+    Ok(value)
+}
+
+/// Whether `node` is in the page's document (the selection ignores nodes
+/// of other trees).
+fn in_document(page: &PageDom, node: NodeId) -> bool {
+    let dom = page.dom.borrow();
+    dom.is_connected(node).unwrap_or(false) && dom.node_document(node).ok() == Some(page.document())
 }
 
 /// A boundary point argument: the node must be in this document and the
@@ -755,21 +798,27 @@ impl JsClass for Selection {
             }))
         });
         def.method("getRangeAt", 1, |s, sel, a| {
-            let Some((start, end)) = editing::selection_range(&sel.page).filter(|_| to_u32(a.get(0)).ok() == Some(0))
-            else {
+            if editing::selection(&sel.page).is_none() || to_u32(a.get(0)).ok() != Some(0) {
                 return Err(JsError::dom("IndexSizeError", "The index provided is not a valid range index."));
-            };
-            range_value(s, &sel.page, start, end)
+            }
+            selection_range_object(s, &sel.page)
         });
         def.method("addRange", 1, |s, sel, a| {
             let Some(r) = s.unwrap::<Range>(a.get(0)) else {
                 return Err(JsError::Type("parameter 1 is not of type 'Range'.".into()));
             };
-            if editing::selection(&sel.page).is_none() {
-                let (sn, so, en, eo) = points(&r);
-                drop(r);
-                editing::set_selection(&sel.page, (sn, so), (en, eo));
+            // A range of another tree is ignored, and so is a second range.
+            let (start, end) = (r.live.start(), r.live.end());
+            if !Rc::ptr_eq(&r.page, &sel.page)
+                || !in_document(&sel.page, start.0)
+                || !in_document(&sel.page, end.0)
+                || editing::selection(&sel.page).is_some()
+            {
+                return Ok(s.undefined());
             }
+            let owner = r.owner.clone();
+            drop(r);
+            editing::set_selection_range(&sel.page, owner, Some((s.realm_id(), lp_js::Persistent::new(s, a.get(0)))));
             Ok(s.undefined())
         });
         def.method("removeAllRanges", 0, |s, sel, _a| {
@@ -780,26 +829,38 @@ impl JsClass for Selection {
             editing::clear_selection(&sel.page);
             Ok(s.undefined())
         });
-        def.method("removeRange", 1, |s, sel, _a| {
+        def.method("removeRange", 1, |s, sel, a| {
+            let Some(r) = s.unwrap::<Range>(a.get(0)) else {
+                return Err(JsError::Type("parameter 1 is not of type 'Range'.".into()));
+            };
+            let is_selected = sel.page.selection.borrow().as_ref().is_some_and(|d| Rc::ptr_eq(&d.range, &r.owner));
+            drop(r);
+            if !is_selected {
+                return Err(JsError::dom("NotFoundError", "The given range isn't in the selection."));
+            }
             editing::clear_selection(&sel.page);
             Ok(s.undefined())
         });
         def.method("collapse", 1, |s, sel, a| {
-            if a.get(0).is_null() {
+            if a.get(0).is_null() || a.get(0).is_undefined() {
                 editing::clear_selection(&sel.page);
                 return Ok(s.undefined());
             }
             let p = point_arg(s, &sel.page, a.get(0), a.get(1), "Selection.collapse")?;
-            editing::set_selection(&sel.page, p, p);
+            if in_document(&sel.page, p.0) {
+                editing::set_selection(&sel.page, p, p);
+            }
             Ok(s.undefined())
         });
         def.method("setPosition", 1, |s, sel, a| {
-            if a.get(0).is_null() {
+            if a.get(0).is_null() || a.get(0).is_undefined() {
                 editing::clear_selection(&sel.page);
                 return Ok(s.undefined());
             }
             let p = point_arg(s, &sel.page, a.get(0), a.get(1), "Selection.setPosition")?;
-            editing::set_selection(&sel.page, p, p);
+            if in_document(&sel.page, p.0) {
+                editing::set_selection(&sel.page, p, p);
+            }
             Ok(s.undefined())
         });
         def.method("collapseToStart", 0, |s, sel, _a| {
@@ -818,21 +879,36 @@ impl JsClass for Selection {
         });
         def.method("selectAllChildren", 1, |s, sel, a| {
             let node = node_arg(s, a.get(0), "Selection.selectAllChildren")?;
-            let len = node_length(&sel.page, node)?;
-            editing::set_selection(&sel.page, (node, 0), (node, len));
+            let children = {
+                let dom = sel.page.dom.borrow();
+                if dom.node_type(node).js()? == NodeType::DocumentType {
+                    return Err(JsError::dom("InvalidNodeTypeError", "The node provided is a DocumentType node."));
+                }
+                dom.child_count(node).js()? as u32
+            };
+            if in_document(&sel.page, node) {
+                editing::set_selection(&sel.page, (node, 0), (node, children));
+            }
             Ok(s.undefined())
         });
         def.method("setBaseAndExtent", 4, |s, sel, a| {
+            a.require(4, "Selection.setBaseAndExtent")?;
             let anchor = point_arg(s, &sel.page, a.get(0), a.get(1), "Selection.setBaseAndExtent")?;
             let focus = point_arg(s, &sel.page, a.get(2), a.get(3), "Selection.setBaseAndExtent")?;
-            editing::set_selection(&sel.page, anchor, focus);
+            if in_document(&sel.page, anchor.0) && in_document(&sel.page, focus.0) {
+                editing::set_selection(&sel.page, anchor, focus);
+            }
             Ok(s.undefined())
         });
         def.method("extend", 1, |s, sel, a| {
-            let focus = point_arg(s, &sel.page, a.get(0), a.get(1), "Selection.extend")?;
+            let node = node_arg(s, a.get(0), "Selection.extend")?;
+            if !in_document(&sel.page, node) {
+                return Ok(s.undefined());
+            }
             let Some((anchor, _)) = editing::selection(&sel.page) else {
                 return Err(JsError::dom("InvalidStateError", "There is no selection to extend."));
             };
+            let focus = point_arg(s, &sel.page, a.get(0), a.get(1), "Selection.extend")?;
             editing::set_selection(&sel.page, anchor, focus);
             Ok(s.undefined())
         });

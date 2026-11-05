@@ -15,6 +15,11 @@ pub enum IframeChange {
     Connected,
     Disconnected,
     AttributeChanged(IframeAttribute),
+    /// HTML "prepare the script element" is due for a `<script>` the parser
+    /// did not insert: it became connected, had a child inserted, or got a
+    /// `src` attribute it lacked. Queued with the iframe events because both
+    /// are post-connection steps and run in one (tree) order.
+    Script,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct IframeEvent {
@@ -59,7 +64,8 @@ impl Dom {
         (self.iframes.documents.contains(&doc) && self.is_connected_idx(idx)).then_some(doc)
     }
     fn iframe_element(&self, idx: u32) -> bool {
-        self.n(idx).element().is_some_and(|e| e.is_html() && &*e.name.local == "iframe")
+        // `<frame>` creates a child navigable like `<iframe>` does.
+        self.n(idx).element().is_some_and(|e| e.is_html() && matches!(&*e.name.local, "iframe" | "frame"))
     }
     fn iframe_event(&mut self, document: NodeId, idx: u32, change: IframeChange) {
         let node = self.id_of(idx);
@@ -88,10 +94,60 @@ impl Dom {
         }
         frames
     }
+    /// Whether `idx` is a script element "prepare the script element" can
+    /// still run: not started, and not one the parser drives itself.
+    fn preparable_script(&self, idx: u32) -> bool {
+        use crate::node::element_flags::{PARSER_INSERTED, SCRIPT_ALREADY_STARTED};
+        self.n(idx).element().is_some_and(|e| {
+            &*e.name.local == "script"
+                && (e.is_html() || e.name.ns == markup5ever::ns!(svg))
+                && e.flags & (PARSER_INSERTED | SCRIPT_ALREADY_STARTED) == 0
+        })
+    }
+    /// The iframes and preparable scripts of `root`'s subtree in
+    /// shadow-including tree order: the order of their post-connection steps.
+    fn post_connection_subtree(&self, root: u32) -> Vec<(u32, IframeChange)> {
+        let mut found = Vec::new();
+        let mut stack = vec![root];
+        while let Some(idx) = stack.pop() {
+            if self.iframe_element(idx) {
+                found.push((idx, IframeChange::Connected));
+            } else if self.preparable_script(idx) {
+                found.push((idx, IframeChange::Script));
+            }
+            let mut child = self.n(idx).last_child;
+            while child != NIL {
+                stack.push(child);
+                child = self.n(child).prev;
+            }
+            // Pushed last, so the shadow tree is visited before the children.
+            if let Some(e) = self.n(idx).element() {
+                if e.shadow_root != NIL {
+                    stack.push(e.shadow_root);
+                }
+            }
+        }
+        found
+    }
     pub(crate) fn iframes_after_insert(&mut self, idx: u32) {
         let Some(document) = self.iframe_document(idx) else { return };
-        for node in self.iframe_subtree(idx) {
-            self.iframe_event(document, node, IframeChange::Connected);
+        for (node, change) in self.post_connection_subtree(idx) {
+            self.iframe_event(document, node, change);
+        }
+    }
+    /// Queues "prepare the script element" for the connected script `idx`
+    /// (HTML's script "children changed steps" and `src` attribute steps).
+    /// Returns whether it was queued.
+    pub(crate) fn script_steps_due(&mut self, idx: u32) -> bool {
+        if !self.preparable_script(idx) {
+            return false;
+        }
+        match self.iframe_document(idx) {
+            Some(document) => {
+                self.iframe_event(document, idx, IframeChange::Script);
+                true
+            }
+            None => false,
         }
     }
     pub(crate) fn iframes_before_remove(&mut self, idx: u32) {

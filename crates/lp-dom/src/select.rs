@@ -86,8 +86,12 @@ impl<'a> From<&'a str> for CssNamespace {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PseudoClass {
+    /// `:lang(ranges)`: comma-separated language ranges.
+    Lang(Box<str>),
+    /// `:dir(ltr|rtl)`.
+    Dir(Box<str>),
     AnyLink,
     Link,
     Visited,
@@ -119,7 +123,13 @@ pub enum PseudoClass {
 impl ToCss for PseudoClass {
     fn to_css<W: fmt::Write>(&self, dest: &mut W) -> fmt::Result {
         use PseudoClass::*;
+        match self {
+            Lang(r) => return write!(dest, ":lang({r})"),
+            Dir(d) => return write!(dest, ":dir({d})"),
+            _ => {}
+        }
         dest.write_str(match self {
+            Lang(_) | Dir(_) => unreachable!(),
             AnyLink => ":any-link",
             Link => ":link",
             Visited => ":visited",
@@ -246,13 +256,123 @@ impl<'i> selectors::parser::Parser<'i> for SelParser<'_> {
         );
         pc.ok_or_else(|| ParseError::custom(SelectorParseErrorKind::UnsupportedPseudoClassOrElement))
     }
+    fn parse_non_ts_functional_pseudo_class(
+        &self,
+        name: CowRcStr<'i>,
+        parser: &mut CssParser<'i>,
+        _after_part: bool,
+    ) -> Result<PseudoClass, ParseError<Self::Error>> {
+        if name.eq_ignore_ascii_case("lang") {
+            let mut ranges = Vec::new();
+            loop {
+                ranges.push(parser.expect_ident_or_string()?.to_string());
+                if parser.try_parse(|p| p.expect_comma()).is_err() {
+                    break;
+                }
+            }
+            return Ok(PseudoClass::Lang(ranges.join(",").into()));
+        }
+        if name.eq_ignore_ascii_case("dir") {
+            let d = parser.expect_ident()?.to_ascii_lowercase();
+            return Ok(PseudoClass::Dir(d.into()));
+        }
+        Err(ParseError::custom(SelectorParseErrorKind::UnsupportedPseudoClassOrElement))
+    }
     fn parse_pseudo_element(&self, name: CowRcStr<'i>) -> Result<PseudoElement, ParseError<Self::Error>> {
-        Ok(PseudoElement(name.to_ascii_lowercase()))
+        let lower = name.to_ascii_lowercase();
+        // Unknown pseudo-elements are invalid selectors, except the
+        // `-webkit-` prefixed ones browsers accept (and never match).
+        if !KNOWN_PSEUDO_ELEMENTS.contains(&lower.as_str()) && !lower.starts_with("-webkit-") {
+            return Err(ParseError::custom(SelectorParseErrorKind::UnsupportedPseudoClassOrElement));
+        }
+        Ok(PseudoElement(lower))
+    }
+    fn parse_functional_pseudo_element(
+        &self,
+        name: CowRcStr<'i>,
+        parser: &mut CssParser<'i>,
+    ) -> Result<PseudoElement, ParseError<Self::Error>> {
+        let lower = name.to_ascii_lowercase();
+        let invalid = || ParseError::custom(SelectorParseErrorKind::UnsupportedPseudoClassOrElement);
+        let start = parser.position();
+        match lower.as_str() {
+            // `::slotted(<compound-selector>)`.
+            "slotted" => {
+                let list = SelectorList::parse(self, parser, ParseRelative::No)?;
+                let [selector] = list.slice() else { return Err(invalid()) };
+                let mut iter = selector.iter();
+                while iter.next().is_some() {}
+                if iter.next_sequence().is_some() {
+                    return Err(invalid());
+                }
+            }
+            // `::part(<ident>+)`.
+            "part" => {
+                parser.expect_ident()?;
+                while parser.try_parse(|p| p.expect_ident().map(|_| ())).is_ok() {}
+                if !parser.is_exhausted() {
+                    return Err(invalid());
+                }
+            }
+            "highlight" | "cue" | "cue-region" | "view-transition-group" | "view-transition-image-pair"
+            | "view-transition-old" | "view-transition-new" | "picker" | "scroll-button" | "column" => {
+                // The argument is kept only for serialization.
+                while parser.next().is_ok() {}
+            }
+            _ => return Err(invalid()),
+        }
+        let arg = parser.slice_from(start).to_owned();
+        Ok(PseudoElement(format!("{lower}({arg})")))
     }
 }
 
-fn match_ignore_ascii_case<T: Copy>(name: &str, table: &[(&str, T)]) -> Option<T> {
-    table.iter().find(|(n, _)| n.eq_ignore_ascii_case(name)).map(|(_, v)| *v)
+/// Percent-decodes a URL fragment (bytes compared to the element's UTF-8 id).
+fn percent_decode(s: &str) -> Vec<u8> {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%' && i + 2 < b.len() {
+            let hex = |c: u8| (c as char).to_digit(16);
+            if let (Some(h), Some(l)) = (hex(b[i + 1]), hex(b[i + 2])) {
+                out.push((h * 16 + l) as u8);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+    out
+}
+
+/// Pseudo-elements a selector may name (CSS Pseudo-Elements 4, Scoping,
+/// View Transitions, the form control parts browsers ship).
+const KNOWN_PSEUDO_ELEMENTS: &[&str] = &[
+    "before",
+    "after",
+    "first-line",
+    "first-letter",
+    "selection",
+    "backdrop",
+    "placeholder",
+    "marker",
+    "file-selector-button",
+    "spelling-error",
+    "grammar-error",
+    "target-text",
+    "details-content",
+    "view-transition",
+    "cue",
+    "checkmark",
+    "picker-icon",
+    "scroll-marker",
+    "scroll-marker-group",
+    "search-text",
+];
+
+fn match_ignore_ascii_case<T: Clone>(name: &str, table: &[(&str, T)]) -> Option<T> {
+    table.iter().find(|(n, _)| n.eq_ignore_ascii_case(name)).map(|(_, v)| v.clone())
 }
 
 pub type Selectors = SelectorList<Impl>;
@@ -504,7 +624,7 @@ impl selectors::Element for ElemRef<'_> {
         })
     }
     fn match_non_ts_pseudo_class(&self, pc: &PseudoClass, _ctx: &mut MatchingContext<Impl>) -> bool {
-        self.dom.matches_state(self.idx, *pc)
+        self.dom.matches_state(self.idx, pc)
     }
     fn match_pseudo_element(&self, _pe: &PseudoElement, _ctx: &mut MatchingContext<Impl>) -> bool {
         false
@@ -586,12 +706,35 @@ impl Dom {
             .is_some_and(|e| e.is_html() && matches!(&*e.name.local, "a" | "area" | "link") && e.attr("href").is_some())
     }
 
-    pub(crate) fn matches_state(&self, idx: u32, pc: PseudoClass) -> bool {
+    /// `:target`: the element the document URL's fragment names.
+    fn is_url_target(&self, idx: u32) -> bool {
+        let Some(id) = self.n(idx).element().and_then(|e| e.id()) else { return false };
+        let doc = self.n(idx).owner_doc;
+        if self.root_idx(idx) != doc {
+            return false;
+        }
+        let NodeKind::Document(d) = &self.n(doc).kind else { return false };
+        let Some((_, frag)) = d.url.split_once('#') else { return false };
+        if frag.is_empty() {
+            return false;
+        }
+        let decoded = percent_decode(frag);
+        decoded == id.as_bytes()
+    }
+
+    pub(crate) fn matches_state(&self, idx: u32, pc: &PseudoClass) -> bool {
         use PseudoClass::*;
         let e = self.n(idx).element().expect("element");
         match pc {
+            Lang(ranges) => self.lang_matches(idx, ranges),
+            Dir(d) => match &**d {
+                "ltr" => self.directionality_idx(idx) == crate::direction::Direction::Ltr,
+                "rtl" => self.directionality_idx(idx) == crate::direction::Direction::Rtl,
+                _ => false,
+            },
             AnyLink | Link => self.is_link(idx),
-            Visited | Active | Target => false,
+            Visited | Active => false,
+            Target => self.is_url_target(idx),
             Checked => self.checkedness_idx(idx) || self.option_selected_idx(idx),
             Indeterminate => e.control.as_ref().is_some_and(|c| c.indeterminate),
             Disabled => self.is_disabled_idx(idx),
@@ -637,12 +780,14 @@ impl Dom {
                 } else {
                     self.validity(id).map(|v| v.valid()).unwrap_or(true)
                 };
-                (pc == Valid) == ok
+                    (*pc == Valid) == ok
             }
             Open => e.is_html() && matches!(&*e.name.local, "details" | "dialog") && e.attr("open").is_some(),
-            // Modal dialogs and open popovers are tracked by the style engine,
-            // not by selector matching.
-            Modal | PopoverOpen => false,
+            // A dialog shown with `showModal()` that is still open.
+            Modal => {
+                e.is_html() && &*e.name.local == "dialog" && e.attr("open").is_some() && self.is_modal_idx(idx)
+            }
+            PopoverOpen => self.is_popover_showing_idx(idx),
         }
     }
 

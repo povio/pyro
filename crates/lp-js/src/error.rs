@@ -70,12 +70,18 @@ impl JsError {
             JsError::Range(m) => make("RangeError", m),
             JsError::Syntax(m) => make("SyntaxError", m),
             JsError::Reference(m) => make("ReferenceError", m),
-            JsError::Dom { name, message } => scope
-                .realm_inner()
-                .dom_exception_ctor(scope)
-                .and_then(|c| c.construct(&[scope.string(message), scope.string(name)]).ok())
-                .map(|o| o.value())
-                .unwrap_or_else(|| make("Error", &format!("{name}: {message}"))),
+            JsError::Dom { name, message } => {
+                let dom_exception = scope.realm_inner().dom_exception_ctor(scope);
+                let quota = dom_exception.as_ref().filter(|_| name == "QuotaExceededError");
+                quota
+                    .and_then(|dom_exception| quota_exceeded_error_ctor(scope, dom_exception))
+                    .and_then(|c| c.construct(&[scope.string(message)]).ok())
+                    .or_else(|| {
+                        dom_exception.and_then(|c| c.construct(&[scope.string(message), scope.string(name)]).ok())
+                    })
+                    .map(|o| o.value())
+                    .unwrap_or_else(|| make("Error", &format!("{name}: {message}")))
+            }
             JsError::Thrown(p) => p.get(scope),
             JsError::Terminated => make("Error", "Execution terminated"),
             JsError::ContextDestroyed => make("Error", "Execution context was destroyed."),
@@ -88,6 +94,15 @@ impl JsError {
         let v = self.to_value(scope);
         JsException::from_value(scope, v)
     }
+}
+
+/// The realm's `QuotaExceededError` class (helpers.js), read from the global
+/// like the `TypeError` and friends above: page script may replace the
+/// binding, so only a constructor that still extends the realm's own
+/// `DOMException` counts, else a plain DOMException of that name is thrown.
+fn quota_exceeded_error_ctor<'s>(scope: &Scope<'s>, dom_exception: &Object<'s>) -> Option<Object<'s>> {
+    let ctor = scope.global().get("QuotaExceededError").ok()?.as_object()?;
+    (ctor.is_constructor() && ctor.prototype().strict_equals(dom_exception.value())).then_some(ctor)
 }
 
 impl std::fmt::Display for JsError {

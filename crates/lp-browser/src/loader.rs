@@ -10,13 +10,26 @@
 //! * import maps: merged into the realm's map when reached;
 //! * `nomodule` classic scripts and data blocks: not executed.
 //!
-//! Deviation: a deferred module's evaluation promise (including top-level
-//! await) is awaited before the next deferred script/`DOMContentLoaded`,
-//! because JSC fetches the module graph during evaluation, not before it.
+//! Scripts the parser did not insert (`appendChild`, `cloneNode`, a `src` set
+//! while connected) arrive as `ResourceKind::Script` resource events and go
+//! through `Browser::script_event`: inline classic scripts run at the drain,
+//! external classic ones join the set of scripts that execute as soon as
+//! possible (independently of parsing and of the deferred list), and modules
+//! fetch their graph and run when ready. External and module script elements
+//! get `load`/`error` events.
 //!
-//! DOM lifecycle and currentScript are wired through lp-webapi. Script element
-//! load/error events, script-inserted scripts, and iframe/image resources remain
-//! separate loader work. Linked stylesheets are handled by `stylesheets`.
+//! Deviations: a deferred module's evaluation promise (including top-level
+//! await) is awaited before the next deferred script/`DOMContentLoaded`,
+//! because JSC fetches the module graph during evaluation, not before it. A
+//! script-inserted script is prepared when the inserting script returns (a
+//! parser-run script) or at the end of the inserting task (a handler or a
+//! timer), instead of inside the DOM call that inserted it. A module
+//! element's `load` fires when its evaluation promise fulfills, `error` when
+//! it rejects (also for an evaluation error).
+//!
+//! DOM lifecycle and currentScript are wired through lp-webapi. Iframe/image
+//! resources are separate loader work; linked stylesheets are handled by
+//! `stylesheets`.
 
 use crate::frames::FrameKey;
 use crate::{Browser, HistoryHandling, LoaderId, NavigateOpts, PageEvent, PageId};
@@ -90,6 +103,9 @@ pub struct Resource {
     pub body: Vec<u8>,
     /// The `Content-Disposition` response header, if any.
     pub content_disposition: Option<String>,
+    /// The response carried a `Content-Security-Policy` header (the policy
+    /// itself is not enforced; a document delivered with one hides nonces).
+    pub header_csp: bool,
 }
 
 impl Resource {
@@ -257,6 +273,7 @@ impl ResourceLoader for NetLoader {
                 mime: head.mime,
                 charset: head.charset,
                 content_disposition: None,
+                header_csp: false,
                 body: hit.file.body.to_vec(),
             };
             browser.scheduler().post(TaskSource::Networking, move |b| b.complete_fetch(id, Ok(resource)));
@@ -285,6 +302,7 @@ impl ResourceLoader for NetLoader {
                                 .get(http::header::CONTENT_DISPOSITION)
                                 .and_then(|v| v.to_str().ok())
                                 .map(str::to_owned),
+                            header_csp: h.headers.contains_key(http::header::CONTENT_SECURITY_POLICY),
                             body: std::mem::take(&mut body),
                         }),
                         None => Err("net::ERR_EMPTY_RESPONSE".to_string()),
@@ -332,7 +350,15 @@ impl ResourceLoader for StaticLoader {
         browser.scheduler().set_timer(delay, false, true, move |b| {
             let result = match entry.clone() {
                 Some((mime, body, _)) => {
-                    Ok(Resource { url: url.clone(), status: 200, mime, charset: None, body, content_disposition: None })
+                    Ok(Resource {
+                        url: url.clone(),
+                        status: 200,
+                        mime,
+                        charset: None,
+                        body,
+                        content_disposition: None,
+                        header_csp: false,
+                    })
                 }
                 None => Err(format!("net::ERR_FILE_NOT_FOUND {url}")),
             };
@@ -629,8 +655,13 @@ impl Browser {
         let page_dom = self.doc(page).and_then(|p| p.main_frame.page_dom.clone()).ok_or(JsError::ContextDestroyed)?;
         let dom = page_dom.dom.clone();
         let doc = page_dom.document();
+        if resource.header_csp {
+            let _ = dom.borrow_mut().set_header_csp(doc, true);
+        }
         let mut parser = if resource.mime == "text/plain" {
             DocumentParser::new_plaintext(dom.clone(), doc)
+        } else if lp_dom::parse::is_xml_mime(&resource.mime) {
+            DocumentParser::new_xml(dom.clone(), doc, &resource.mime)
         } else {
             DocumentParser::new(dom.clone(), doc, !page_dom.scripting_disabled())
         }
@@ -708,6 +739,7 @@ impl Browser {
                             load.parsing_done = true;
                             drop(load);
                             if let Some(dom) = self.doc(page).and_then(|p| p.main_frame.page_dom.clone()) {
+                                dom.set_parser_position(None);
                                 lp_webapi::lifecycle::set_ready_state(&dom, dom.document(), "interactive");
                             }
                             self.run_deferred(page);
@@ -727,6 +759,12 @@ impl Browser {
             .and_then(|p| p.main_frame.page_dom.clone())
             .and_then(|p| p.dom.borrow().script_info(node).ok())
             .is_some_and(|s| s.kind == ScriptKind::Classic && (s.src.is_none() || (!s.async_ && !s.defer)));
+        // The parser is paused here: the script's ancestors are its open
+        // elements, which an expect link's target must not be among.
+        if let Some(bindings) = self.doc(page).and_then(|p| p.main_frame.page_dom.clone()) {
+            bindings.set_parser_position(Some(node));
+            bindings.update_render_blocking();
+        }
         if blocks && self.stylesheets_block_scripts(page) {
             let mut load = self.load_mut(page).expect("load");
             if load.dom.borrow_mut().add_ref(node).is_ok() {
@@ -744,6 +782,13 @@ impl Browser {
         let dom = load.dom.clone();
         let base = load.url.clone();
         drop(load);
+        // HTML "script end tag": a microtask checkpoint comes first, so
+        // mutation observers are told about the parser's insertions up to
+        // this script before it runs (no script is on the stack here, so the
+        // queued delivery runs at once).
+        if let Some(bindings) = self.doc(page).and_then(|p| p.main_frame.page_dom.clone()) {
+            lp_webapi::mutation_observer::checkpoint(&bindings);
+        }
         if self.doc(page).is_some_and(|d| d.main_frame.sandbox.scripts_disabled) {
             return;
         }
@@ -751,6 +796,18 @@ impl Browser {
             let mut d = dom.borrow_mut();
             let Ok(info) = d.script_info(node) else { return };
             if info.already_started {
+                return;
+            }
+            // Spec order: an element without source text, a disconnected one
+            // (the script before it removed it) and a data block return
+            // before "already started" is set, and are no longer
+            // parser-inserted: a later insertion, or text inserted into the
+            // element, prepares it like a script-created element.
+            if (info.src.is_none() && info.inline_text.is_empty())
+                || !d.is_connected(node).unwrap_or(false)
+                || info.kind == ScriptKind::Data
+            {
+                let _ = d.clear_parser_inserted(node);
                 return;
             }
             let _ = d.mark_script_started(node);
@@ -771,7 +828,7 @@ impl Browser {
         let ty = match info.kind {
             ScriptKind::Classic if !info.nomodule => ScriptType::Classic,
             ScriptKind::Module => ScriptType::Module,
-            // nomodule classic and data blocks.
+            // nomodule classic.
             _ => return,
         };
         let src_url = match info.src.as_deref() {
@@ -781,6 +838,10 @@ impl Browser {
             },
             None => None,
         };
+        if src_url.is_some() {
+            // A parser-blocking script is implicitly render-blocking.
+            self.block_rendering_on_script(page, node, ty == ScriptType::Classic && !info.async_ && !info.defer);
+        }
         match (ty, src_url) {
             (ScriptType::Classic, None) => self.execute_at_insertion_point(page, &info.inline_text, &base, &element),
             (ScriptType::Classic, Some(url)) if info.async_ => self.fetch_async(page, ty, url, element),
@@ -800,8 +861,14 @@ impl Browser {
                         l.blocked = false;
                     }
                     match res {
-                        Ok(text) => b.execute_at_insertion_point(page, &text, &u, &element),
-                        Err(e) => b.report_load_error(page, &e),
+                        Ok(text) => {
+                            b.execute_at_insertion_point(page, &text, &u, &element);
+                            b.script_loaded(page, &element, true);
+                        }
+                        Err(e) => {
+                            b.report_load_error(page, &e);
+                            b.script_loaded(page, &element, false);
+                        }
                     }
                     b.continue_parsing(page);
                 });
@@ -816,7 +883,7 @@ impl Browser {
                     format!("{}#inline-module-{}", base.split('#').next().unwrap_or(&base), l.inline_module_seq)
                 };
                 if info.async_ {
-                    self.execute_module(page, &info.inline_text, &url, false);
+                    self.execute_module(page, &info.inline_text, &url, false, Some(element));
                 } else {
                     let ps = PendingScript { element, ty, url, source: Some(Ok(info.inline_text)) };
                     self.load_mut(page).expect("load").deferred.push_back(Rc::new(RefCell::new(ps)));
@@ -871,30 +938,182 @@ impl Browser {
         });
     }
 
+    /// Fetches a script of the "set of scripts that will execute as soon as
+    /// possible" (parser-inserted `async`, or script-inserted external) and
+    /// runs it when it arrives. While it is in flight it delays the `load`
+    /// event of a document that is still loading; a document without a
+    /// `DocumentLoad` (about:blank, a written document) has no such gate.
     fn fetch_async(&mut self, page: FrameKey, ty: ScriptType, url: String, element: Rc<ResourceNode>) {
-        let loader_id = {
-            let mut l = self.load_mut(page).expect("load");
-            l.async_pending += 1;
-            l.loader_id.clone()
+        let loader_id = self.frame_loader(page);
+        if loader_id.is_none() {
+            return;
+        }
+        let counted = match self.load_mut(page) {
+            Some(mut l) => {
+                l.async_pending += 1;
+                true
+            }
+            None => false,
         };
         let kind = if ty == ScriptType::Module { ResourceKind::ModuleScript } else { ResourceKind::Script };
         let u = url.clone();
         self.fetch_text(page, url, kind, move |b, res| {
-            if b.current_loader(page) != Some(loader_id) {
+            if b.frame_loader(page) != loader_id {
                 return;
             }
             match res {
-                Ok(text) if ty == ScriptType::Classic => b.execute_external(page, &text, &u, &element),
-                Ok(text) => {
-                    b.execute_module(page, &text, &u, false);
+                Ok(text) if ty == ScriptType::Classic => {
+                    b.execute_external(page, &text, &u, &element);
+                    b.script_loaded(page, &element, true);
                 }
-                Err(e) => b.report_load_error(page, &e),
+                Ok(text) => {
+                    b.execute_module(page, &text, &u, false, Some(element));
+                }
+                Err(e) => {
+                    b.report_load_error(page, &e);
+                    b.script_loaded(page, &element, false);
+                }
             }
-            if let Some(mut l) = b.load_mut(page) {
-                l.async_pending -= 1;
+            // The script or its `load`/`error` handler may have replaced the
+            // document: its load is not the one counted.
+            if b.frame_loader(page) != loader_id {
+                return;
+            }
+            if counted {
+                if let Some(mut l) = b.load_mut(page) {
+                    l.async_pending -= 1;
+                }
             }
             b.maybe_fire_load(page);
         });
+    }
+
+    /// The loader of the document `page` shows (`None` without a document).
+    fn frame_loader(&self, page: FrameKey) -> Option<LoaderId> {
+        self.doc(page).map(|p| p.main_frame.loader_id.clone())
+    }
+
+    /// `load` (`ok`) or `error` on a script element, after it executed or its
+    /// fetch failed. Dispatched in the loader's task, as the spec's "execute
+    /// the script element" does.
+    fn script_loaded(&self, page: FrameKey, element: &ResourceNode, ok: bool) {
+        if let Some(bindings) = self.doc(page).and_then(|p| p.main_frame.page_dom.clone()) {
+            bindings.unblock_rendering(element.node);
+            lp_webapi::lifecycle::resource_loaded(&bindings, element.node, ok);
+        }
+    }
+
+    /// HTML "block rendering" on a script whose fetch starts, if it is
+    /// potentially render-blocking: `implicit`ly (a parser-blocking script)
+    /// or through `blocking=render`. `script_loaded` unblocks it.
+    fn block_rendering_on_script(&self, page: FrameKey, node: NodeId, implicit: bool) {
+        let Some(bindings) = self.doc(page).and_then(|p| p.main_frame.page_dom.clone()) else { return };
+        let explicit = bindings
+            .dom
+            .borrow()
+            .get_attribute(node, "blocking")
+            .ok()
+            .flatten()
+            .is_some_and(|v| v.split_ascii_whitespace().any(|t| t.eq_ignore_ascii_case("render")));
+        if implicit {
+            bindings.block_rendering(node, lp_webapi::RenderBlocker::Implicit);
+        } else if explicit {
+            bindings.block_rendering(node, lp_webapi::RenderBlocker::Explicit);
+        }
+    }
+
+    /// "Prepare the script element" for a script the parser did not insert:
+    /// a connected `<script>` inserted by script (or moved, or cloned), or
+    /// one whose `src` was set while connected. The DOM reports these as
+    /// `ResourceKind::Script` resource events; parser-inserted scripts are
+    /// driven by `ParseStep::Script` instead and never arrive here (one whose
+    /// `src` changes after it was prepared is "already started").
+    pub(crate) fn script_event(&mut self, page: FrameKey, node: NodeId) {
+        let Some(state) = self.doc(page) else { return };
+        let Some(bindings) = state.main_frame.page_dom.clone() else { return };
+        if state.main_frame.sandbox.scripts_disabled {
+            return;
+        }
+        let base = state.main_frame.base_url.clone();
+        drop(state);
+        let dom = bindings.dom.clone();
+        let info = {
+            let mut d = dom.borrow_mut();
+            let Ok(info) = d.script_info(node) else { return };
+            // Spec order: an already-started element, an inline element
+            // without source text, a disconnected element, and an unknown
+            // type return before "already started" is set.
+            if info.already_started || !d.is_connected(node).unwrap_or(false) {
+                return;
+            }
+            if info.src.is_none() && info.inline_text.is_empty() {
+                return;
+            }
+            if info.kind == ScriptKind::Data {
+                return;
+            }
+            let _ = d.mark_script_started(node);
+            info
+        };
+        if info.kind == ScriptKind::ImportMap {
+            let map_base = {
+                let d = dom.borrow();
+                d.node_document(node).ok().and_then(|doc| d.document_base_url(doc).ok().map(str::to_owned))
+            };
+            self.add_import_map(page, &info, map_base.as_deref().unwrap_or(&base));
+            return;
+        }
+        if dom.borrow_mut().add_ref(node).is_err() {
+            return;
+        }
+        let element = Rc::new(ResourceNode { dom, node });
+        let ty = match info.kind {
+            ScriptKind::Classic if !info.nomodule => ScriptType::Classic,
+            ScriptKind::Module => ScriptType::Module,
+            _ => return, // nomodule classic: already started, never run
+        };
+        let src_url = match info.src.as_deref() {
+            None => None,
+            Some(s) if s.is_empty() => {
+                self.script_loaded(page, &element, false);
+                return;
+            }
+            Some(s) => match resolve_url(&base, s) {
+                Some(u) => Some(u),
+                None => {
+                    self.script_loaded(page, &element, false);
+                    return;
+                }
+            },
+        };
+        match (ty, src_url) {
+            // Spec: runs immediately, at insertion; here once the inserting
+            // script (or task) returns. While the parser is parsing (not
+            // paused on a script it waits for) the inserting script was one
+            // it ran, so `document.write` has that insertion point; otherwise
+            // there is none.
+            (ScriptType::Classic, None) => {
+                let parsing = self.load_mut(page).is_some_and(|l| l.parser.is_some() && !l.blocked);
+                if parsing {
+                    self.execute_at_insertion_point(page, &info.inline_text, &base, &element);
+                } else {
+                    self.execute_classic(page, &info.inline_text, &base, &element);
+                }
+                // Scripts it inserted are prepared before the drain returns.
+                self.drain_dom_resources(page);
+            }
+            // External classic scripts inserted by script are "force async":
+            // `defer` is ignored and they run as soon as they arrive.
+            (ScriptType::Classic, Some(url)) | (ScriptType::Module, Some(url)) => {
+                self.block_rendering_on_script(page, node, false);
+                self.fetch_async(page, ty, url, element)
+            }
+            (ScriptType::Module, None) => {
+                let url = dynamic_inline_module_url(&base);
+                self.execute_module(page, &info.inline_text, &url, false, Some(element));
+                self.drain_dom_resources(page);
+            }
+        }
     }
 
     /// Runs ready deferred scripts in order once parsing is done, then fires
@@ -920,13 +1139,19 @@ impl Browser {
                 (n.ty, n.url.clone(), n.element.clone())
             };
             match source {
-                Ok(text) if ty == ScriptType::Classic => self.execute_external(page, &text, &url, &element),
+                Ok(text) if ty == ScriptType::Classic => {
+                    self.execute_external(page, &text, &url, &element);
+                    self.script_loaded(page, &element, true);
+                }
                 Ok(text) => {
-                    if self.execute_module(page, &text, &url, true) {
+                    if self.execute_module(page, &text, &url, true, Some(element)) {
                         return; // resumes when the module's promise settles
                     }
                 }
-                Err(e) => self.report_load_error(page, &e),
+                Err(e) => {
+                    self.report_load_error(page, &e);
+                    self.script_loaded(page, &element, false);
+                }
             }
         }
         self.fire_dom_content_loaded(page);
@@ -1130,6 +1355,14 @@ impl Browser {
         let Some(realm) = self.main_realm(page) else { return };
         let Ok(scope) = realm.scope() else { return };
         let bindings = self.doc(page).and_then(|p| p.main_frame.page_dom.clone());
+        // HTML "execute the script element": a script moved to another
+        // document since it was prepared does not run.
+        if let Some(dom) = &bindings {
+            if dom.dom.borrow().node_document(element.node).ok() != Some(dom.document()) {
+                return;
+            }
+        }
+        let outer = bindings.as_ref().and_then(|dom| dom.current_script());
         if let Some(dom) = &bindings {
             dom.set_current_script(Some(element.node));
         }
@@ -1137,7 +1370,7 @@ impl Browser {
             scope.report_exception(&e);
         }
         if let Some(dom) = &bindings {
-            dom.set_current_script(None);
+            dom.set_current_script(outer);
         }
     }
 
@@ -1184,6 +1417,8 @@ impl Browser {
         for node in bindings.take_written_scripts() {
             self.parser_reached_script(page, node);
         }
+        // Scripts this script inserted run before the parser resumes.
+        self.drain_dom_resources(page);
     }
 
     /// Runs an external classic script outside the parser: it has no insertion
@@ -1222,8 +1457,10 @@ impl Browser {
             if blocking {
                 lp_webapi::lifecycle::written_script_fetched(bindings, node, "", Err("invalid URL".into()));
             } else if info.src.is_none() && info.kind == ScriptKind::Module {
-                let url = format!("{}#inline-module-{}", base.split('#').next().unwrap_or(&base), node.index());
-                self.execute_module(page, &info.inline_text, &url, false);
+                let url = dynamic_inline_module_url(&base);
+                let element =
+                    dom.borrow_mut().add_ref(node).ok().map(|_| Rc::new(ResourceNode { dom: dom.clone(), node }));
+                self.execute_module(page, &info.inline_text, &url, false, element);
             }
             return;
         };
@@ -1238,7 +1475,7 @@ impl Browser {
         if dom.borrow_mut().add_ref(node).is_err() {
             return;
         }
-        let element = ResourceNode { dom, node };
+        let element = Rc::new(ResourceNode { dom, node });
         let module = info.kind == ScriptKind::Module;
         let kind = if module { ResourceKind::ModuleScript } else { ResourceKind::Script };
         let u = url.clone();
@@ -1249,17 +1486,32 @@ impl Browser {
             }
             match res {
                 Ok(text) if module => {
-                    b.execute_module(page, &text, &u, false);
+                    b.execute_module(page, &text, &u, false, Some(element));
                 }
-                Ok(text) => b.execute_external(page, &text, &u, &element),
-                Err(e) => b.report_load_error(page, &e),
+                Ok(text) => {
+                    b.execute_external(page, &text, &u, &element);
+                    b.script_loaded(page, &element, true);
+                }
+                Err(e) => {
+                    b.report_load_error(page, &e);
+                    b.script_loaded(page, &element, false);
+                }
             }
         });
     }
 
     /// Starts a module; with `deferred`, parsing-completion work waits for its
-    /// evaluation promise. Returns whether such a wait was set up.
-    fn execute_module(&mut self, page: FrameKey, text: &str, url: &str, deferred: bool) -> bool {
+    /// evaluation promise, otherwise the `load` event does. Returns whether
+    /// such a wait was set up. `element` gets `load` when the promise
+    /// fulfills and `error` when evaluation cannot start or rejects.
+    fn execute_module(
+        &mut self,
+        page: FrameKey,
+        text: &str,
+        url: &str,
+        deferred: bool,
+        element: Option<Rc<ResourceNode>>,
+    ) -> bool {
         let Some(realm) = self.main_realm(page) else { return false };
         let Ok(scope) = realm.scope() else { return false };
         let bindings = self.doc(page).and_then(|p| p.main_frame.page_dom.clone());
@@ -1271,22 +1523,36 @@ impl Browser {
             Ok(p) => p,
             Err(e) => {
                 scope.report_exception(&e);
+                if let Some(element) = &element {
+                    self.script_loaded(page, element, false);
+                }
                 return false;
             }
         };
-        let loader_id = self.current_loader(page);
+        let loader_id = self.frame_loader(page);
         let sched = self.scheduler();
-        let resume = move || {
+        let counted = self.load_mut(page).is_some();
+        let resume = move |ok: bool| {
             let loader_id = loader_id.clone();
+            let element = element.clone();
             sched.post(TaskSource::Networking, move |b| {
-                if b.current_loader(page) != loader_id {
+                if b.frame_loader(page) != loader_id {
                     return;
                 }
-                if let Some(mut l) = b.load_mut(page) {
-                    if deferred {
-                        l.awaiting_module = false;
-                    } else {
-                        l.async_pending -= 1;
+                if let Some(element) = &element {
+                    b.script_loaded(page, element, ok);
+                }
+                // The handler may have replaced the document.
+                if b.frame_loader(page) != loader_id {
+                    return;
+                }
+                if counted {
+                    if let Some(mut l) = b.load_mut(page) {
+                        if deferred {
+                            l.awaiting_module = false;
+                        } else {
+                            l.async_pending -= 1;
+                        }
                     }
                 }
                 if deferred {
@@ -1300,10 +1566,10 @@ impl Browser {
         let (ok, err) = (resume.clone(), resume);
         let r = scope.then(
             promise,
-            move |_s, _v| ok(),
+            move |_s, _v| ok(true),
             move |s, e| {
                 s.report_exception(&JsError::Thrown(Persistent::new(s, e)));
-                err()
+                err(false)
             },
         );
         if let Err(e) = r {
@@ -1323,8 +1589,55 @@ impl Browser {
     fn report_load_error(&mut self, page: FrameKey, error: &str) {
         let Some(realm) = self.main_realm(page) else { return };
         let Ok(scope) = realm.scope() else { return };
-        scope.report_exception(&JsError::Type(format!("Failed to load script: {error}")));
+        lp_webapi::lifecycle::report_diagnostic(&scope, &JsError::Type(format!("Failed to load script: {error}")));
     }
+}
+
+/// The synchronous part of "prepare the script element" for a script the
+/// parser did not insert (`PageHooks::script_connected`, a post-connection
+/// step): an inline classic script executes here, before the DOM call that
+/// connected it (or gave it its text) returns. External scripts, modules and
+/// import maps need the loader and stay queued as `ResourceKind::Script`
+/// resource events for `Browser::script_event`, which finds an element this
+/// function ran "already started".
+pub(crate) fn prepare_inserted_script(frame: &crate::Frame, node: NodeId) {
+    if frame.sandbox.scripts_disabled {
+        return;
+    }
+    let (Some(bindings), Some(realm)) = (frame.page_dom.clone(), frame.main_realm().cloned()) else { return };
+    let text = {
+        // Script never runs under a DOM borrow: a held one defers to the drain.
+        let Ok(mut dom) = bindings.dom.try_borrow_mut() else { return };
+        let Ok(info) = dom.script_info(node) else { return };
+        if info.already_started || info.parser_inserted || !dom.is_connected(node).unwrap_or(false) {
+            return;
+        }
+        if info.src.is_some() || info.inline_text.is_empty() || info.kind != ScriptKind::Classic || info.nomodule {
+            return;
+        }
+        let _ = dom.mark_script_started(node);
+        info.inline_text
+    };
+    let Ok(scope) = realm.scope() else { return };
+    let outer = bindings.current_script();
+    bindings.set_current_script(Some(node));
+    realm.reenter_native_callback_hook(|| {
+        if let Err(e) = scope.eval(&text, Some(&frame.base_url), 1) {
+            scope.report_exception(&e);
+        }
+    });
+    bindings.set_current_script(outer);
+}
+
+/// Registry key of an inline module the parser did not reach (script-inserted
+/// or written). JSC never evaluates a URL twice and node indices are reused
+/// after DOM garbage collection, so the key is a process-wide sequence under a
+/// prefix the parser's `#inline-module-N` keys never use.
+fn dynamic_inline_module_url(base: &str) -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let n = SEQ.fetch_add(1, Ordering::Relaxed) + 1;
+    format!("{}#inline-module-dyn-{n}", base.split('#').next().unwrap_or(base))
 }
 
 pub(crate) fn install_module_fetcher(sched: lp_runtime::Scheduler<Browser>, page: FrameKey, realm: &Realm) {

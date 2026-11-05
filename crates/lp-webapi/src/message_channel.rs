@@ -1,4 +1,6 @@
-//! `MessageChannel` / `MessagePort` (HTML §9.4) for same-realm messaging.
+//! `MessageChannel` / `MessagePort` (HTML §9.4) for same-realm messaging,
+//! and `BroadcastChannel` (HTML §9.5) across the documents of a browser
+//! context (see the end of this file).
 //!
 //! Each port is a non-node EventTarget. `postMessage` structured-clones the
 //! message (the realm's original `structuredClone`, so non-cloneable values
@@ -288,7 +290,170 @@ impl JsClass for MessageChannel {
     }
 }
 
+// ---------------------------------------------------------------------------
+// BroadcastChannel
+//
+// A channel reaches every other open channel with the same name whose
+// document has the same origin in the same browser context, in every page
+// of this browser thread. `postMessage` serializes the message once in the
+// sender's realm (`structured_clone::encode_message`, so non-cloneable
+// values throw DataCloneError and nothing is transferred) and each receiver
+// deserializes it in its own realm, in a task on its own page, as a trusted
+// `MessageEvent` (`origin` the sender's, no `source`, no `ports`); a message
+// that cannot be deserialized there fires `messageerror`. Channels of the
+// sender's own document receive it too, the sending channel does not.
+//
+// Lifetime: an open channel is pinned so listeners added without keeping a
+// JS reference keep running (HTML keeps a channel with an event listener
+// alive); `close()` releases the pin, and every pin goes with the page. The
+// registry holds channels weakly and is pruned as it is used.
+//
+// Gaps (explicit): workers have no BroadcastChannel; the "browser context"
+// is the page's `ContextServices` (what pages of a CDP browser context
+// share), so documents without an embedder each form their own.
+
+thread_local! {
+    static CHANNELS: RefCell<Vec<Weak<ChannelInner>>> = const { RefCell::new(Vec::new()) };
+}
+
+pub(crate) struct ChannelInner {
+    target: EventTargetData,
+    realm: WeakRealm,
+    name: String,
+    /// The document's tuple origin, or a per-document key for an opaque one.
+    origin: String,
+    /// Identity of the browser context (`ContextServices` pointer).
+    context: usize,
+    closed: Cell<bool>,
+}
+
+impl ChannelInner {
+    fn page(&self) -> &Rc<PageDom> {
+        &self.target.page
+    }
+
+    fn matches(&self, other: &ChannelInner) -> bool {
+        self.context == other.context && self.origin == other.origin && self.name == other.name
+    }
+
+    /// Delivers `message` (already queued as a task on this page).
+    fn deliver(&self, message: &crate::structured_clone::WireMessage, origin: &str) {
+        if self.closed.get() || self.page().is_disposed() {
+            return;
+        }
+        let Some(realm) = self.realm.upgrade() else { return };
+        let Ok(scope) = realm.scope() else { return };
+        let (ty, data) = match crate::structured_clone::decode_message(&scope, message) {
+            Ok(value) => ("message", Some(Persistent::new(&scope, value))),
+            Err(_) => ("messageerror", None),
+        };
+        let ev = EventCore::trusted(self.page(), EventInterface::MessageEvent, ty, false, false);
+        {
+            let mut f = ev.fields.borrow_mut();
+            f.message_data = data;
+            f.origin = origin.to_owned();
+        }
+        fire(self.page(), self.target.key, &ev);
+    }
+
+    fn close(&self) {
+        if self.closed.replace(true) {
+            return;
+        }
+        if let Some(realm) = self.realm.upgrade() {
+            if let Ok(s) = realm.scope() {
+                unpin_target(&s, self.page(), self.target.key);
+            }
+        }
+        CHANNELS.with(|c| c.borrow_mut().retain(|w| w.upgrade().is_some_and(|c| !c.closed.get())));
+    }
+}
+
+pub struct BroadcastData(Rc<ChannelInner>);
+
+pub struct BroadcastChannel;
+impl JsClass for BroadcastChannel {
+    const NAME: &'static str = "BroadcastChannel";
+    type Data = BroadcastData;
+    type Parent = EventTarget;
+    fn define(def: &mut ClassDef<Self>) {
+        def.upcast(|d: &BroadcastData| &d.0.target);
+        def.constructor(1, |s, nt, a| {
+            a.require(1, "BroadcastChannel")?;
+            let name = crate::util::dom_string(a.get(0))?;
+            let page = page_of(s)?;
+            if page.is_disposed() {
+                return Err(JsError::ContextDestroyed);
+            }
+            let origin = crate::storage::tuple_origin(s, &page).unwrap_or_else(|| format!("opaque:{}", page.id()));
+            let target = EventTargetData::new(&page);
+            let TargetKey::Other(k) = target.key else { unreachable!() };
+            let key = page.other_identity(k);
+            let inner = Rc::new(ChannelInner {
+                target,
+                realm: s.realm().downgrade(),
+                name,
+                origin,
+                context: Rc::as_ptr(&page.context_services()) as usize,
+                closed: Cell::new(false),
+            });
+            let object = s.wrap_new::<BroadcastChannel>(BroadcastData(inner.clone()), nt, Some(key))?;
+            pin_target(s, &page, inner.target.key, object);
+            CHANNELS.with(|c| {
+                let mut c = c.borrow_mut();
+                c.retain(|w| w.upgrade().is_some_and(|c| !c.closed.get()));
+                c.push(Rc::downgrade(&inner));
+            });
+            Ok(object)
+        });
+        def.getter("name", |s, d| Ok(s.string(&d.0.name)));
+        def.method("postMessage", 1, |s, d, a| {
+            a.require(1, "BroadcastChannel.postMessage")?;
+            if d.0.closed.get() {
+                return Err(JsError::dom("InvalidStateError", "Channel is closed"));
+            }
+            if d.0.page().is_disposed() {
+                return Err(JsError::ContextDestroyed);
+            }
+            let message = Rc::new(crate::structured_clone::encode_message(s, a.get(0), s.undefined())?);
+            let origin = d.0.origin.clone();
+            let receivers: Vec<Rc<ChannelInner>> = CHANNELS.with(|c| {
+                c.borrow()
+                    .iter()
+                    .filter_map(Weak::upgrade)
+                    .filter(|c| !c.closed.get() && !Rc::ptr_eq(c, &d.0) && c.matches(&d.0) && !c.page().is_disposed())
+                    .collect()
+            });
+            for receiver in receivers {
+                let (message, origin) = (message.clone(), origin.clone());
+                let weak = Rc::downgrade(&receiver);
+                receiver.page().post_task(Box::new(move || {
+                    if let Some(receiver) = weak.upgrade() {
+                        receiver.deliver(&message, &origin);
+                    }
+                }));
+            }
+            Ok(s.undefined())
+        });
+        def.method("close", 0, |s, d, _a| {
+            d.0.close();
+            Ok(s.undefined())
+        });
+        def.accessor(
+            "onmessage",
+            |s, d| crate::target::event_handler(s, &d.0.target, "message"),
+            |s, d, value| crate::target::set_event_handler(s, &d.0.target, "message", value),
+        );
+        def.accessor(
+            "onmessageerror",
+            |s, d| crate::target::event_handler(s, &d.0.target, "messageerror"),
+            |s, d, value| crate::target::set_event_handler(s, &d.0.target, "messageerror", value),
+        );
+    }
+}
+
 pub(crate) fn register(engine: &lp_js::Engine) {
     engine.register::<MessagePort>();
     engine.register::<MessageChannel>();
+    engine.register::<BroadcastChannel>();
 }

@@ -6,7 +6,7 @@
 
 use crate::node::{ComputedStyleRef, ImageData, NodeData, SpecialElementData};
 use crate::{document::BaseDocument, dom_node_id, node::Node, taffy_node_id};
-use markup5ever::{LocalName, local_name};
+use markup5ever::local_name;
 use std::cell::Ref;
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
@@ -34,7 +34,7 @@ pub(crate) mod text_transform;
 pub(crate) mod writing_mode;
 
 use self::replaced::{
-    IntrinsicSizes, ReplacedContext, compute_replaced_layout, is_replaced_element,
+    IntrinsicSizes, ReplacedContext, compute_replaced_layout, is_image_input, is_replaced,
 };
 use self::table::TableTreeWrapper;
 
@@ -46,16 +46,21 @@ const DEFAULT_OBJECT_SIZE: taffy::Size<f32> = taffy::Size {
 };
 
 /// The intrinsic dimensions and default object size for a replaced element
-/// whose intrinsic dimensions are determined by its tag: an image with no
-/// loaded resource has no intrinsic dimensions and a zero default object size;
-/// a canvas has an intrinsic size and aspect ratio given by its width/height
-/// attributes (defaulting to 300x150); other replaced elements (video, iframe,
-/// embed) have no intrinsic dimensions and the 300x150 default object size.
+/// whose intrinsic dimensions are determined by its tag: an image (`<img>`,
+/// or an `<input type=image>` image button) with no loaded resource has no
+/// intrinsic dimensions and a zero default object size; a canvas has an
+/// intrinsic size and aspect ratio given by its width/height attributes
+/// (defaulting to 300x150); other replaced elements (video, iframe, embed)
+/// have no intrinsic dimensions and the 300x150 default object size.
 fn tag_intrinsic_sizes(
-    tag_name: &LocalName,
+    element: &crate::node::ElementData,
     attr_size: taffy::Size<Option<f32>>,
 ) -> (IntrinsicSizes, taffy::Size<f32>) {
-    if *tag_name == local_name!("img") || *tag_name == local_name!("svg") {
+    let tag_name = &element.name.local;
+    if *tag_name == local_name!("img")
+        || *tag_name == local_name!("svg")
+        || is_image_input(element)
+    {
         return (IntrinsicSizes::default(), taffy::Size::ZERO);
     }
     if *tag_name == local_name!("canvas") {
@@ -524,7 +529,7 @@ impl LayoutPassState<'_> {
                     }
                 }
 
-                if is_replaced_element(&element_data.name.local) {
+                if is_replaced(element_data) {
                     // Width/height attributes are presentational hints mapped to the CSS
                     // width/height properties by
                     // `synthesize_presentational_hints_for_legacy_attributes`, so they
@@ -583,12 +588,12 @@ impl LayoutPassState<'_> {
                         SpecialElementData::Canvas(_)
                         | SpecialElementData::SubDocument(_)
                         | SpecialElementData::None => {
-                            tag_intrinsic_sizes(&element_data.name.local, attr_size)
+                            tag_intrinsic_sizes(element_data, attr_size)
                         }
                         #[cfg(feature = "custom-widget")]
                         SpecialElementData::CustomWidget(widget_data) => {
                             let (fallback, default_object_size) =
-                                tag_intrinsic_sizes(&element_data.name.local, attr_size);
+                                tag_intrinsic_sizes(element_data, attr_size);
                             // A canvas's content attributes determine its intrinsic size,
                             // overriding the widget-reported one; the widget-reported size
                             // in turn overrides the tag's fallback.
@@ -621,12 +626,14 @@ impl LayoutPassState<'_> {
                         _ => unreachable!(),
                     };
 
-                    // lightningpanda: an image the embedder has loaded but Blitz
-                    // has not (yet) reports its natural size through the
-                    // render tree's state attribute (`natural=W,H`).
+                    // lightningpanda: an image (`<img>` or `<input type=image>`)
+                    // the embedder has loaded but Blitz has not (yet) reports
+                    // its natural size through the render tree's state
+                    // attribute (`natural=W,H`).
                     let loaded = matches!(&element_data.special_data, SpecialElementData::Image(d) if !matches!(&**d, ImageData::None));
+                    let is_image = *element_data.name.local == *"img" || is_image_input(element_data);
                     let (intrinsic_sizes, default_object_size) = match lp_natural_size(element_data) {
-                        Some((width, height)) if !loaded && *element_data.name.local == *"img" => (
+                        Some((width, height)) if !loaded && is_image => (
                             IntrinsicSizes {
                                 width: Some(width),
                                 height: Some(height),

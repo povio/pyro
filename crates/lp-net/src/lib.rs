@@ -8,6 +8,7 @@ pub mod cookies;
 pub mod cors;
 pub mod data_url;
 pub mod proxy;
+pub mod range;
 pub mod request;
 pub mod static_files;
 mod subscription;

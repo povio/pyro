@@ -1148,7 +1148,7 @@ impl Node {
 
         let mut flags = stylo_taffy::StyleFlags::empty();
         if let Some(el) = self.data.downcast_element() {
-            if crate::layout::replaced::is_replaced_element(&el.name.local) {
+            if crate::layout::replaced::is_replaced(el) {
                 flags |= stylo_taffy::StyleFlags::IS_REPLACED;
             }
             if el.name.local == local_name!("button") {

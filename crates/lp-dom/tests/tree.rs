@@ -114,7 +114,11 @@ fn attributes_and_case() {
     assert_eq!(dom.attributes(x).unwrap().last().unwrap().name.local.to_string(), "title");
     assert!(dom.toggle_attribute(x, "hidden", None).unwrap());
     assert!(!dom.toggle_attribute(x, "hidden", None).unwrap());
-    assert!(dom.set_attribute(x, "1bad", "").is_err());
+    // DOM "valid attribute local name": digits may lead, but not `=`, `/`, `>`
+    // or whitespace.
+    assert!(dom.set_attribute(x, "1ok", "").is_ok());
+    assert!(dom.set_attribute(x, "a=b", "").is_err());
+    assert!(dom.set_attribute(x, "a b", "").is_err());
     dom.set_attribute_ns(x, Some("http://www.w3.org/1999/xlink"), "xlink:href", "#a").unwrap();
     assert_eq!(dom.get_attribute(x, "xlink:href").unwrap(), Some("#a"));
     assert_eq!(dom.get_attribute_ns(x, Some("http://www.w3.org/1999/xlink"), "href").unwrap(), Some("#a"));
@@ -457,4 +461,52 @@ fn declarative_shadow_roots_follow_the_document_opt_in() {
     let h = dm.get_element_by_id(safe, "h").unwrap().unwrap();
     let sr = dm.shadow_root(h).unwrap().unwrap();
     assert_eq!(dm.inner_html(sr).unwrap(), "<b>x</b>");
+}
+
+#[test]
+fn element_and_attribute_names_follow_the_dom_standard() {
+    use lp_dom::dom::{is_valid_attribute_local_name, is_valid_element_local_name};
+    for ok in ["foo", "f}oo", "foo\u{ffff}", "_a", ":b", "\u{0bc6}foo"] {
+        assert!(is_valid_element_local_name(ok), "{ok:?}");
+    }
+    for bad in ["", "1foo", "foo>", "foo/", "f oo", "<foo", "}foo", "\u{0bc6}fo o"] {
+        assert!(!is_valid_element_local_name(bad), "{bad:?}");
+    }
+    assert!(is_valid_attribute_local_name("1bad"));
+    assert!(!is_valid_attribute_local_name("a=b"));
+    let (dom, d) = doc("<div id=x></div>");
+    let mut dom = dom.borrow_mut();
+    assert!(dom.create_element(d, "1foo").is_err());
+    assert!(dom.create_element(d, "f}oo").is_ok());
+    assert!(dom.create_element_ns(d, None, "a:b").is_err(), "a prefix needs a namespace");
+}
+
+#[test]
+fn move_before_checks_connectivity_and_moves_without_removal_records() {
+    let (dom, d) = doc("<div id=a><p id=p></p></div><div id=b></div>");
+    let mut dom = dom.borrow_mut();
+    let (a, b, p) = (
+        dom.get_element_by_id(d, "a").unwrap().unwrap(),
+        dom.get_element_by_id(d, "b").unwrap().unwrap(),
+        dom.get_element_by_id(d, "p").unwrap().unwrap(),
+    );
+    let detached = dom.create_element(d, "span").unwrap();
+    assert!(dom.move_before(b, detached, None).is_err(), "node must be connected");
+    assert!(dom.move_before(detached, p, None).is_err(), "parent must be connected");
+    assert!(dom.move_before(p, a, None).is_err(), "an ancestor cannot move into its descendant");
+    dom.move_before(b, p, None).unwrap();
+    assert_eq!(dom.parent(p).unwrap(), Some(b));
+    assert_eq!(dom.first_child(a).unwrap(), None);
+}
+
+#[test]
+fn namespace_prefix_lookups() {
+    let (dom, d) = doc("<div id=x xmlns:p='urn:p'><svg id=s><circle id=c></circle></svg></div>");
+    let frag = dom.borrow_mut().create_fragment(d).unwrap();
+    let dom = dom.borrow();
+    let c = dom.get_element_by_id(d, "c").unwrap().unwrap();
+    assert_eq!(dom.lookup_prefix(c, Some("http://www.w3.org/2000/svg")).unwrap(), None, "no prefix on the element");
+    assert_eq!(dom.lookup_namespace_uri(c, None).unwrap(), Some("http://www.w3.org/2000/svg"));
+    assert_eq!(dom.lookup_namespace_uri(c, Some("xml")).unwrap(), Some("http://www.w3.org/XML/1998/namespace"));
+    assert_eq!(dom.lookup_namespace_uri(frag, Some("xml")).unwrap(), None, "fragments have no namespace");
 }

@@ -82,6 +82,25 @@ synchronous flag. Deviations: such a request skips CDP Fetch interception
 parked, and it fails with NetworkError after 60 seconds instead of waiting
 forever. Network observation still reports it.
 
+Workers: `worker_scope` registers the same object as `WorkerXMLHttpRequest`
+(interface name `XMLHttpRequest`) in a worker's own engine, over the worker's
+`PageDom`, so requests run on the worker's thread and loop with the script URL
+as the base for `open()`. `responseXML` is `[Exposed=Window]`: the worker
+prototype has none, and `responseType = 'document'` is ignored. The
+Window-only checks do not apply: a synchronous request may carry a `timeout`
+(the parked `send()` then throws TimeoutError when it expires) and a
+`responseType`. `Worker.terminate()` ends a parked synchronous request within
+50 ms (NetworkError into terminated script) and cancels in-flight asynchronous
+ones with the worker's page.
+
+`blob:` URLs: `send()` and `fetch()` resolve the URL in the document's blob URL
+store (`URL.createObjectURL`) and hand the bytes to lp-net as
+`Request::blob`, which serves them per Fetch "scheme fetch": 200 with the
+blob's type and `Content-Length`, or for a single `Range` header 206 with
+`Content-Range` (`lp_net::range`); other methods, a revoked or another
+document's URL, and an unparsable or unsatisfiable range are network errors.
+HEAD of a `data:` URL has headers and no body.
+
 Document responses: `responseType = 'document'` and `responseXML` parse the
 final body once into an inert document. Any `*/xml` or `*+xml` MIME type (and a
 missing Content-Type) parses as XML with `lp_dom::xml` under its limits;

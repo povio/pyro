@@ -205,14 +205,11 @@ macro_rules! reflect_cors {
     };
 }
 
-/// A DOMTokenList attribute with `[PutForwards=value]`.
+/// A DOMTokenList attribute with `[PutForwards=value]`: assignment sets the
+/// list's `value` (an observable `[[Set]]` on the list object).
 macro_rules! reflect_tokens {
     ($def:expr, $prop:literal, $attr:literal) => {
-        $def.accessor(
-            $prop,
-            |s, n| Ok(collections::token_list(s, n.page(), n.id, $attr)?.value()),
-            |_s, n, v| set_attr(n, $attr, &dom_string(v)?),
-        );
+        $def.put_forwards($prop, |s, n| Ok(collections::token_list(s, n.page(), n.id, $attr)?.value()), "value");
     };
 }
 
@@ -485,6 +482,15 @@ fn set_attr(n: &NodeData, attr: &str, value: &str) -> JsResult<()> {
     n.page().dom.borrow_mut().set_attribute(n.id, attr, value).js()
 }
 
+/// The element a legacy factory function (`new Image()`) creates: an HTML
+/// element `local_name` of the realm's current document, before its wrapper.
+fn create_factory_element(s: &Scope<'_>, local_name: &str) -> JsResult<(Rc<PageDom>, NodeId)> {
+    let page = crate::target::page_of(s)?;
+    let doc = page.document();
+    let el = page.dom.borrow_mut().create_element(doc, local_name).js()?;
+    Ok((page, el))
+}
+
 fn set_ulong(n: &NodeData, attr: &str, value: u32, default: u32) -> JsResult<()> {
     let value = if value as i64 > MAX_REFLECTED_INT { default } else { value };
     set_attr(n, attr, &value.to_string())
@@ -652,6 +658,7 @@ pub enum ElClass {
     Generic,
     Svg,
     SvgGraphics,
+    SvgA,
     SvgRoot,
     Other,
 }
@@ -661,9 +668,10 @@ pub fn class_for(dom: &Dom, id: NodeId) -> ElClass {
     if e.namespace() == &markup5ever::ns!(svg) {
         return match &*e.name.local {
             "svg" => ElClass::SvgRoot,
+            "a" => ElClass::SvgA,
             // SVGGraphicsElement interfaces (SVG 2).
             "g" | "rect" | "circle" | "ellipse" | "line" | "polyline" | "polygon" | "path" | "text" | "tspan"
-            | "textPath" | "use" | "image" | "foreignObject" | "a" | "switch" | "defs" => ElClass::SvgGraphics,
+            | "textPath" | "use" | "image" | "foreignObject" | "switch" | "defs" => ElClass::SvgGraphics,
             _ => ElClass::Svg,
         };
     }
@@ -826,6 +834,7 @@ pub fn wrap_element<'s>(s: &Scope<'s>, class: ElClass, d: NodeData, k: Option<Id
         Generic => s.wrap::<HtmlElement>(d, k),
         Svg => s.wrap::<SvgElement>(d, k),
         SvgGraphics => s.wrap::<SvgGraphicsElement>(d, k),
+        SvgA => s.wrap::<SvgAElement>(d, k),
         SvgRoot => s.wrap::<SvgSvgElement>(d, k),
         Other => s.wrap::<Element>(d, k),
     }
@@ -877,13 +886,15 @@ pub(crate) fn define_element_extras(def: &mut ClassDef<Element>) {
 }
 
 fn reflect_aria(def: &mut ClassDef<Element>) {
+    // ARIAMixin: nullable string reflection (Chrome reflects every ARIA
+    // attribute as a plain string; null or undefined removes it).
     macro_rules! aria {
         ($prop:literal, $attr:literal) => {
             def.accessor(
                 $prop,
                 |s, n| Ok(n.page().dom.borrow().get_attribute(n.id, $attr).js()?.map_or(s.null(), |v| s.string(v))),
                 |_s, n, v| {
-                    if v.is_null() {
+                    if v.is_null() || v.is_undefined() {
                         n.page().dom.borrow_mut().remove_attribute(n.id, $attr).js()?;
                         Ok(())
                     } else {
@@ -895,16 +906,49 @@ fn reflect_aria(def: &mut ClassDef<Element>) {
         };
     }
     aria!("role", "role");
-    aria!("ariaLabel", "aria-label");
-    aria!("ariaHidden", "aria-hidden");
-    aria!("ariaExpanded", "aria-expanded");
+    aria!("ariaAtomic", "aria-atomic");
+    aria!("ariaAutoComplete", "aria-autocomplete");
+    aria!("ariaBrailleLabel", "aria-braillelabel");
+    aria!("ariaBrailleRoleDescription", "aria-brailleroledescription");
+    aria!("ariaBusy", "aria-busy");
     aria!("ariaChecked", "aria-checked");
-    aria!("ariaSelected", "aria-selected");
-    aria!("ariaDisabled", "aria-disabled");
-    aria!("ariaPressed", "aria-pressed");
-    aria!("ariaLevel", "aria-level");
-    aria!("ariaValueNow", "aria-valuenow");
+    aria!("ariaColCount", "aria-colcount");
+    aria!("ariaColIndex", "aria-colindex");
+    aria!("ariaColIndexText", "aria-colindextext");
+    aria!("ariaColSpan", "aria-colspan");
+    aria!("ariaCurrent", "aria-current");
     aria!("ariaDescription", "aria-description");
+    aria!("ariaDisabled", "aria-disabled");
+    aria!("ariaExpanded", "aria-expanded");
+    aria!("ariaHasPopup", "aria-haspopup");
+    aria!("ariaHidden", "aria-hidden");
+    aria!("ariaInvalid", "aria-invalid");
+    aria!("ariaKeyShortcuts", "aria-keyshortcuts");
+    aria!("ariaLabel", "aria-label");
+    aria!("ariaLevel", "aria-level");
+    aria!("ariaLive", "aria-live");
+    aria!("ariaModal", "aria-modal");
+    aria!("ariaMultiLine", "aria-multiline");
+    aria!("ariaMultiSelectable", "aria-multiselectable");
+    aria!("ariaOrientation", "aria-orientation");
+    aria!("ariaPlaceholder", "aria-placeholder");
+    aria!("ariaPosInSet", "aria-posinset");
+    aria!("ariaPressed", "aria-pressed");
+    aria!("ariaReadOnly", "aria-readonly");
+    aria!("ariaRelevant", "aria-relevant");
+    aria!("ariaRequired", "aria-required");
+    aria!("ariaRoleDescription", "aria-roledescription");
+    aria!("ariaRowCount", "aria-rowcount");
+    aria!("ariaRowIndex", "aria-rowindex");
+    aria!("ariaRowIndexText", "aria-rowindextext");
+    aria!("ariaRowSpan", "aria-rowspan");
+    aria!("ariaSelected", "aria-selected");
+    aria!("ariaSetSize", "aria-setsize");
+    aria!("ariaSort", "aria-sort");
+    aria!("ariaValueMax", "aria-valuemax");
+    aria!("ariaValueMin", "aria-valuemin");
+    aria!("ariaValueNow", "aria-valuenow");
+    aria!("ariaValueText", "aria-valuetext");
 }
 
 // ----- HTMLElement ------------------------------------------------------------
@@ -930,7 +974,17 @@ impl JsClass for HtmlElement {
             |s, n| {
                 let dom = n.page().dom.borrow();
                 let attr = dom.get_attribute(n.id, "nonce").js()?;
-                Ok(s.string(&n.page().nonce(n.id, attr).unwrap_or_else(|| attr.unwrap_or("").to_owned())))
+                if let Some(nonce) = n.page().nonce(n.id, attr) {
+                    return Ok(s.string(&nonce));
+                }
+                // Connecting to a document with a header-delivered CSP emptied
+                // the attribute: the slot still holds the nonce it had.
+                if attr == Some("") {
+                    if let Some(hidden) = dom.hidden_nonce(n.id) {
+                        return Ok(s.string(&n.page().nonce(n.id, Some(hidden)).unwrap_or_else(|| hidden.to_owned())));
+                    }
+                }
+                Ok(s.string(attr.unwrap_or("")))
             },
             |_s, n, v| {
                 let value = dom_string(v)?;
@@ -939,7 +993,56 @@ impl JsClass for HtmlElement {
                 Ok(())
             },
         );
-        reflect_bool!(def, "hidden", "hidden");
+        // `hidden` is (boolean or unrestricted double or DOMString)?: the
+        // "until-found" state reads back as that string.
+        def.accessor(
+            "hidden",
+            |s, n| {
+                let dom = n.page().dom.borrow();
+                Ok(match dom.get_attribute(n.id, "hidden").js()? {
+                    Some(v) if v.eq_ignore_ascii_case("until-found") => s.string("until-found"),
+                    Some(_) => s.boolean(true),
+                    None => s.boolean(false),
+                })
+            },
+            |_s, n, v| {
+                let until_found = v.is_string() && v.to_string()?.eq_ignore_ascii_case("until-found");
+                let mut dom = n.page().dom.borrow_mut();
+                if until_found {
+                    dom.set_attribute(n.id, "hidden", "until-found").js()
+                } else if v.is_nullish() || !v.to_bool() {
+                    dom.remove_attribute(n.id, "hidden").js().map(|_| ())
+                } else {
+                    dom.set_attribute(n.id, "hidden", "").js()
+                }
+            },
+        );
+        // HTML "computed writing suggestions value": "false" when the
+        // attribute says so, or is in its default state under an element
+        // whose computed value is "false".
+        def.accessor(
+            "writingSuggestions",
+            |s, n| {
+                let dom = n.page().dom.borrow();
+                let mut el = Some(n.id);
+                let mut value = "true";
+                while let Some(e) = el {
+                    match dom.get_attribute(e, "writingsuggestions").js()? {
+                        Some(v) if v.eq_ignore_ascii_case("false") => {
+                            value = "false";
+                            break;
+                        }
+                        Some(v) if v.is_empty() || v.eq_ignore_ascii_case("true") => break,
+                        _ => el = dom.parent_element(e).js()?,
+                    }
+                }
+                Ok(s.string(value))
+            },
+            |_s, n, v| {
+                let value = v.to_string()?;
+                n.page().dom.borrow_mut().set_attribute(n.id, "writingsuggestions", &value).js()
+            },
+        );
         reflect_bool!(def, "inert", "inert");
         reflect_bool!(def, "autofocus", "autofocus");
         reflect_str!(def, "popover", "popover");
@@ -1024,11 +1127,8 @@ impl JsClass for HtmlElement {
             Ok(s.boolean(false))
         });
         def.getter("dataset", |s, n| Ok(collections::dataset(s, n.page(), n.id)?.value()));
-        def.accessor(
-            "style",
-            |s, n| Ok(crate::css::inline_style(s, n.page(), n.id)?.value()),
-            |_s, n, v| crate::css::set_inline_style(n.page(), n.id, v),
-        );
+        // [PutForwards=cssText]
+        def.put_forwards("style", |s, n| Ok(crate::css::inline_style(s, n.page(), n.id)?.value()), "cssText");
         def.accessor("innerText", crate::layout_api::inner_text, crate::layout_api::set_inner_text);
         def.accessor("outerText", crate::layout_api::inner_text, crate::layout_api::set_outer_text);
         def.getter("offsetParent", crate::layout_api::offset_parent);
@@ -1055,10 +1155,66 @@ impl JsClass for HtmlElement {
             let make = s.eval("(function(root){return {get shadowRoot(){return root()}, setFormValue(){}, setValidity(){}, states: new Set(), form: null, labels: [], willValidate: false, checkValidity(){return true}, reportValidity(){return true}}})", None, 1)?;
             make.as_object().ok_or_else(|| JsError::Type("attachInternals".into()))?.call(None, &[root.value()])
         });
-        def.method("showPopover", 0, |s, _n, _a| Ok(s.undefined()));
-        def.method("hidePopover", 0, |s, _n, _a| Ok(s.undefined()));
-        def.method("togglePopover", 0, |s, _n, _a| Ok(s.boolean(false)));
+        def.method("showPopover", 0, |s, n, _a| {
+            set_popover_showing(n, true)?;
+            Ok(s.undefined())
+        });
+        def.method("hidePopover", 0, |s, n, _a| {
+            set_popover_showing(n, false)?;
+            Ok(s.undefined())
+        });
+        def.method("togglePopover", 0, |s, n, a| {
+            // `force` is a boolean or a dictionary with a `force` member.
+            let force = match a.get(0) {
+                v if v.is_undefined() => None,
+                v => match v.as_object() {
+                    Some(options) => Some(options.get("force")?).filter(|f| !f.is_undefined()).map(|f| f.to_bool()),
+                    None => Some(v.to_bool()),
+                },
+            };
+            let showing = n.page().dom.borrow().is_popover_showing(n.id);
+            match force {
+                // Already in the wanted state: only the validity errors.
+                Some(want) if want == showing => {
+                    check_popover_validity(n, showing)?;
+                }
+                _ => set_popover_showing(n, !showing)?,
+            }
+            Ok(s.boolean(n.page().dom.borrow().is_popover_showing(n.id)))
+        });
     }
+}
+
+/// HTML "check popover validity": whether `showPopover` (`expect_showing`
+/// false) or `hidePopover` (true) has anything to do. An element without a
+/// valid `popover` attribute throws NotSupportedError, a disconnected one or
+/// an open dialog InvalidStateError.
+fn check_popover_validity(n: &NodeData, expect_showing: bool) -> JsResult<bool> {
+    let dom = n.page().dom.borrow();
+    if !dom.has_attribute(n.id, "popover").js()? {
+        return Err(JsError::dom("NotSupportedError", "Not supported on elements that do not have a valid value for the 'popover' attribute."));
+    }
+    if !dom.is_connected(n.id).js()? {
+        return Err(JsError::dom("InvalidStateError", "Invalid on disconnected popover elements."));
+    }
+    let open_dialog =
+        dom.element(n.id).js()?.local_name() == &lp_dom::LocalName::from("dialog") && dom.has_attribute(n.id, "open").js()?;
+    if !expect_showing && open_dialog {
+        return Err(JsError::dom("InvalidStateError", "The dialog is already open as a dialog, and therefore cannot be opened as a popover."));
+    }
+    Ok(dom.is_popover_showing(n.id) == expect_showing)
+}
+
+/// `showPopover()` / `hidePopover()`: the popover visibility state, which
+/// `:popover-open` and the UA rule hiding closed popovers read. Removing the
+/// popover from its document hides it; `moveBefore` does not.
+/// Not modelled: `beforetoggle`/`toggle` events, light dismiss, the auto
+/// popover stack (showing one popover hides no other).
+fn set_popover_showing(n: &NodeData, showing: bool) -> JsResult<()> {
+    if check_popover_validity(n, !showing)? {
+        n.page().dom.borrow_mut().set_popover_showing(n.id, showing).js()?;
+    }
+    Ok(())
 }
 
 simple_class!(HtmlUnknownElement, "HTMLUnknownElement", HtmlElement);
@@ -1107,15 +1263,18 @@ simple_class!(HtmlLinkElement, "HTMLLinkElement", HtmlElement, |def| {
     reflect_bool!(def, "disabled", "disabled");
     reflect_tokens!(def, "relList", "rel");
     reflect_tokens!(def, "sizes", "sizes");
+    reflect_tokens!(def, "blocking", "blocking");
     def.getter("sheet", crate::css::element_sheet);
 });
 simple_class!(HtmlStyleElement, "HTMLStyleElement", HtmlElement, |def| {
     reflect_str!(def, "media", "media");
     reflect_str!(def, "type", "type");
     reflect_bool!(def, "disabled", "disabled");
+    reflect_tokens!(def, "blocking", "blocking");
     def.getter("sheet", crate::css::element_sheet);
 });
 simple_class!(HtmlScriptElement, "HTMLScriptElement", HtmlElement, |def| {
+    reflect_tokens!(def, "blocking", "blocking");
     reflect_url!(def, "src", "src");
     reflect_str!(def, "type", "type");
     reflect_str!(def, "charset", "charset");
@@ -1240,6 +1399,19 @@ simple_class!(HtmlAreaElement, "HTMLAreaElement", HtmlElement, |def| {
     reflect_bool!(def, "noHref", "nohref");
 });
 simple_class!(HtmlImageElement, "HTMLImageElement", HtmlElement, |def| {
+    // [LegacyFactoryFunction=Image(optional unsigned long width, optional unsigned long height)]
+    def.legacy_factory("Image", 0, |s, new_target, a| {
+        let (page, el) = create_factory_element(s, "img")?;
+        for (i, attr) in [(0, "width"), (1, "height")] {
+            if !a.get(i).is_undefined() {
+                // `unsigned long`, reflected: values above 2147483647 read and write as 0.
+                let v = to_u32(a.get(i))?;
+                let v = if v as i64 > MAX_REFLECTED_INT { 0 } else { v };
+                page.dom.borrow_mut().set_attribute(el, attr, &v.to_string()).js()?;
+            }
+        }
+        crate::node::wrap_new_node::<Self>(s, &page, el, new_target)
+    });
     reflect_url!(def, "src", "src");
     reflect_str!(def, "alt", "alt");
     reflect_str!(def, "srcset", "srcset");
@@ -1265,8 +1437,12 @@ simple_class!(HtmlImageElement, "HTMLImageElement", HtmlElement, |def| {
     def.getter("naturalHeight", |s, n| Ok(s.number(n.page().dom.borrow().natural_size(n.id).map_or(0.0, |(_, h)| h))));
     def.getter("complete", |s, n| Ok(s.boolean(n.page().image_complete(n.id))));
     def.getter("currentSrc", |s, n| {
+        let viewport = n.page().viewport();
         let dom = n.page().dom.borrow();
-        Ok(s.string(&dom.get_attribute(n.id, "src").js()?.map(|v| resolve_url(&dom, n.id, v)).unwrap_or_default()))
+        // A `<picture>` parent's matching `<source>` is the selected source.
+        let picture = dom.picture_source(n.id, &viewport);
+        let selected = picture.as_deref().or(dom.get_attribute(n.id, "src").js()?);
+        Ok(s.string(&selected.map(|v| resolve_url(&dom, n.id, v)).unwrap_or_default()))
     });
     def.method("decode", 0, |s, _n, _a| s.eval("Promise.resolve()", None, 1));
 });
@@ -1308,7 +1484,9 @@ fn define_text_selection<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
             {
                 let mut dom = n.page().dom.borrow_mut();
                 let (_, e) = dom.selection(n.id).js()?;
+                let direction = dom.selection_direction(n.id).js()?;
                 dom.set_selection_range(n.id, st, e.max(st)).js()?;
+                dom.set_selection_direction(n.id, direction).js()?;
             }
             crate::editing::queue_control_selectionchange(n.page(), n.id);
             Ok(())
@@ -1327,20 +1505,46 @@ fn define_text_selection<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
             {
                 let mut dom = n.page().dom.borrow_mut();
                 let (st, _) = dom.selection(n.id).js()?;
+                let direction = dom.selection_direction(n.id).js()?;
                 dom.set_selection_range(n.id, st, end).js()?;
+                dom.set_selection_direction(n.id, direction).js()?;
             }
             crate::editing::queue_control_selectionchange(n.page(), n.id);
             Ok(())
         },
     );
-    def.accessor("selectionDirection", |s, _n| Ok(s.string("none")), |_s, _n, _v| Ok(()));
+    def.accessor(
+        "selectionDirection",
+        |s, n| {
+            if !has_selection(n) {
+                return Ok(s.null());
+            }
+            Ok(s.string(match n.page().dom.borrow().selection_direction(n.id).js()? {
+                Some(true) => "backward",
+                Some(false) => "forward",
+                None => "none",
+            }))
+        },
+        |_s, n, v| {
+            if !has_selection(n) {
+                return Err(JsError::dom("InvalidStateError", "The input element's type does not support selection."));
+            }
+            let direction = selection_direction(&dom_string(v)?);
+            n.page().dom.borrow_mut().set_selection_direction(n.id, direction).js()
+        },
+    );
     def.method("setSelectionRange", 2, |s, n, a| {
         if !has_selection(n) {
             return Err(JsError::dom("InvalidStateError", "The input element's type does not support selection."));
         }
         let arg0 = to_u32(a.get(0))?;
         let arg1 = to_u32(a.get(1))?;
-        n.page().dom.borrow_mut().set_selection_range(n.id, arg0, arg1).js()?;
+        let direction = if a.get(2).is_undefined() { None } else { selection_direction(&dom_string(a.get(2))?) };
+        {
+            let mut dom = n.page().dom.borrow_mut();
+            dom.set_selection_range(n.id, arg0, arg1).js()?;
+            dom.set_selection_direction(n.id, direction).js()?;
+        }
         crate::editing::queue_control_selectionchange(n.page(), n.id);
         Ok(s.undefined())
     });
@@ -1371,6 +1575,16 @@ fn define_text_selection<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
         crate::editing::queue_control_selectionchange(n.page(), n.id);
         Ok(s.undefined())
     });
+}
+
+/// A `selectionDirection` keyword: backward (`Some(true)`), forward, or
+/// "none" for anything else.
+fn selection_direction(keyword: &str) -> Option<bool> {
+    match keyword {
+        "backward" => Some(true),
+        "forward" => Some(false),
+        _ => None,
+    }
 }
 
 fn has_selection(n: &NodeData) -> bool {
@@ -1642,6 +1856,36 @@ simple_class!(HtmlSelectElement, "HTMLSelectElement", HtmlElement, |def| {
 });
 
 simple_class!(HtmlOptionElement, "HTMLOptionElement", HtmlElement, |def| {
+    // [LegacyFactoryFunction=Option(optional DOMString text = "", optional DOMString value,
+    //                               optional boolean defaultSelected = false, optional boolean selected = false)]
+    def.legacy_factory("Option", 0, |s, new_target, a| {
+        let (page, el) = create_factory_element(s, "option")?;
+        let text = if a.get(0).is_undefined() { String::new() } else { dom_string(a.get(0))? };
+        let value = if a.get(1).is_undefined() { None } else { Some(dom_string(a.get(1))?) };
+        let default_selected = a.get(2).to_bool();
+        let selected = a.get(3).to_bool();
+        {
+            let mut dom = page.dom.borrow_mut();
+            if !text.is_empty() {
+                dom.set_text_content(el, &text).js()?;
+            }
+            if let Some(value) = value {
+                dom.set_attribute(el, "value", &value).js()?;
+            }
+            if default_selected {
+                dom.set_attribute(el, "selected", "").js()?;
+            }
+            // The constructor sets the selectedness, not the dirtiness. When
+            // the selectedness is what the attribute gives, the option stays
+            // clean and keeps following `defaultSelected`; an explicit state
+            // is only needed when the two differ (which lp-dom can only
+            // record as dirty).
+            if selected != default_selected {
+                dom.set_option_selected(el, selected).js()?;
+            }
+        }
+        crate::node::wrap_new_node::<Self>(s, &page, el, new_target)
+    });
     reflect_bool!(def, "disabled", "disabled");
     reflect_bool!(def, "defaultSelected", "selected");
     def.getter("form", |s, n| {
@@ -1744,6 +1988,8 @@ simple_class!(HtmlButtonElement, "HTMLButtonElement", HtmlElement, |def| {
 simple_class!(HtmlFormElement, "HTMLFormElement", HtmlElement, |def| {
     reflect_str!(def, "name", "name");
     reflect_str!(def, "target", "target");
+    reflect_str!(def, "rel", "rel");
+    reflect_tokens!(def, "relList", "rel");
     reflect_enum!(def, "enctype", "enctype", FORM_ENCTYPE);
     reflect_enum!(def, "encoding", "enctype", FORM_ENCTYPE);
     reflect_str!(def, "acceptCharset", "accept-charset");
@@ -1899,12 +2145,152 @@ fn table_section<'s>(s: &Scope<'s>, n: &NodeData, tag: &str) -> JsResult<Value<'
     node_value(s, n.page(), found)
 }
 
+/// A "table-created" element: an HTML `tag` element of `parent`'s node document.
+fn table_created(dom: &mut Dom, parent: NodeId, tag: &str) -> JsResult<NodeId> {
+    let doc = dom.node_document(parent).js()?;
+    dom.create_element_ns(doc, Some("http://www.w3.org/1999/xhtml"), tag).js()
+}
+
+/// `createCaption()` / `createTHead()` / `createTFoot()`: the table's first
+/// `tag` child, created at the place HTML gives it when there is none.
+fn table_ensure_child<'s>(s: &Scope<'s>, n: &NodeData, tag: &str) -> JsResult<Value<'s>> {
+    let mut dom = n.page().dom.borrow_mut();
+    let kids: Vec<NodeId> = dom.element_children(n.id).js()?.collect();
+    let el = match kids.iter().copied().find(|&c| is_html(&dom, c, &[tag])) {
+        Some(el) => el,
+        None => {
+            let el = table_created(&mut dom, n.id, tag)?;
+            let before = match tag {
+                // First child of the table.
+                "caption" => dom.first_child(n.id).js()?,
+                // Before the first child element that is neither a caption nor a colgroup.
+                "thead" => kids.iter().copied().find(|&c| !is_html(&dom, c, &["caption", "colgroup"])),
+                // At the end.
+                _ => None,
+            };
+            dom.insert_before(n.id, el, before).js()?;
+            el
+        }
+    };
+    drop(dom);
+    Ok(wrap_node(s, n.page(), el)?.value())
+}
+
+/// `deleteCaption()` / `deleteTHead()` / `deleteTFoot()`.
+fn table_delete_child(n: &NodeData, tag: &str) -> JsResult<()> {
+    let mut dom = n.page().dom.borrow_mut();
+    let found = dom.element_children(n.id).js()?.find(|&c| is_html(&dom, c, &[tag]));
+    if let Some(el) = found {
+        dom.remove_node(el).js()?;
+    }
+    Ok(())
+}
+
+/// The `index` argument of `insertRow` / `insertCell` (default -1) against a
+/// collection of `len` members: the member to insert before (`None`: at the
+/// end), or an "IndexSizeError".
+fn insertion_index(a: &Args<'_>, len: usize, what: &str) -> JsResult<Option<usize>> {
+    let index = if a.get(0).is_undefined() { -1 } else { to_i32(a.get(0))? };
+    match usize::try_from(index) {
+        Ok(i) if i < len => Ok(Some(i)),
+        Ok(i) if i == len => Ok(None),
+        Err(_) if index == -1 => Ok(None),
+        _ => Err(index_size_error(what)),
+    }
+}
+
+/// `deleteRow(index)` / `deleteCell(index)` over `members`: -1 removes the
+/// last one (nothing when there is none); other indices outside the
+/// collection are an "IndexSizeError".
+fn delete_member(n: &NodeData, a: &Args<'_>, kind: &CollectionKind, operation: &str) -> JsResult<()> {
+    a.require(1, operation)?;
+    let index = to_i32(a.get(0))?;
+    let mut dom = n.page().dom.borrow_mut();
+    let members = table_collection(&dom, n.id, kind);
+    let member = match usize::try_from(index) {
+        Ok(i) => Some(*members.get(i).ok_or_else(|| index_size_error("index"))?),
+        Err(_) if index == -1 => members.last().copied(),
+        Err(_) => return Err(index_size_error("index")),
+    };
+    if let Some(member) = member {
+        dom.remove_node(member).js()?;
+    }
+    Ok(())
+}
+
+/// `insertRow(index)` on a section, `insertCell(index)` on a row: a new `tag`
+/// child at `index` of the element's `kind` collection.
+fn insert_member<'s>(s: &Scope<'s>, n: &NodeData, a: &Args<'_>, kind: &CollectionKind, tag: &str, what: &str) -> JsResult<Value<'s>> {
+    let mut dom = n.page().dom.borrow_mut();
+    let members = table_collection(&dom, n.id, kind);
+    let before = insertion_index(a, members.len(), what)?.map(|i| members[i]);
+    let el = table_created(&mut dom, n.id, tag)?;
+    dom.insert_before(n.id, el, before).js()?;
+    drop(dom);
+    Ok(wrap_node(s, n.page(), el)?.value())
+}
+
 simple_class!(HtmlTableElement, "HTMLTableElement", HtmlElement, |def| {
     def.getter("rows", |s, n| Ok(collections::collection(s, n.page(), n.id, CollectionKind::TableRows)?.value()));
     def.getter("tBodies", |s, n| Ok(collections::collection(s, n.page(), n.id, CollectionKind::TableBodies)?.value()));
     def.getter("tHead", |s, n| table_section(s, n, "thead"));
     def.getter("tFoot", |s, n| table_section(s, n, "tfoot"));
     def.getter("caption", |s, n| table_section(s, n, "caption"));
+    def.method("createCaption", 0, |s, n, _a| table_ensure_child(s, n, "caption"));
+    def.method("deleteCaption", 0, |s, n, _a| table_delete_child(n, "caption").map(|()| s.undefined()));
+    def.method("createTHead", 0, |s, n, _a| table_ensure_child(s, n, "thead"));
+    def.method("deleteTHead", 0, |s, n, _a| table_delete_child(n, "thead").map(|()| s.undefined()));
+    def.method("createTFoot", 0, |s, n, _a| table_ensure_child(s, n, "tfoot"));
+    def.method("deleteTFoot", 0, |s, n, _a| table_delete_child(n, "tfoot").map(|()| s.undefined()));
+    def.method("createTBody", 0, |s, n, _a| {
+        let mut dom = n.page().dom.borrow_mut();
+        // After the last tbody child, else at the end of the table.
+        let last_body = dom.element_children(n.id).js()?.filter(|&c| is_html(&dom, c, &["tbody"])).last();
+        let before = match last_body {
+            Some(body) => dom.next_sibling(body).js()?,
+            None => None,
+        };
+        let body = table_created(&mut dom, n.id, "tbody")?;
+        dom.insert_before(n.id, body, before).js()?;
+        drop(dom);
+        Ok(wrap_node(s, n.page(), body)?.value())
+    });
+    def.method("insertRow", 0, |s, n, a| {
+        let mut dom = n.page().dom.borrow_mut();
+        let rows = table_collection(&dom, n.id, &CollectionKind::TableRows);
+        let before = insertion_index(&a, rows.len(), "index")?.map(|i| rows[i]);
+        let row = table_created(&mut dom, n.id, "tr")?;
+        match (before, rows.last()) {
+            // Before the row at that index, in that row's parent.
+            (Some(before), _) => {
+                let parent = dom.parent(before).js()?.unwrap_or(n.id);
+                dom.insert_before(parent, row, Some(before)).js()?;
+            }
+            // At the end of the parent of the last row.
+            (None, Some(&last)) => {
+                let parent = dom.parent(last).js()?.unwrap_or(n.id);
+                dom.insert_before(parent, row, None).js()?;
+            }
+            // No rows: into the last tbody, creating one when there is none.
+            (None, None) => {
+                let last_body = dom.element_children(n.id).js()?.filter(|&c| is_html(&dom, c, &["tbody"])).last();
+                let body = match last_body {
+                    Some(body) => body,
+                    None => {
+                        let body = table_created(&mut dom, n.id, "tbody")?;
+                        dom.insert_before(n.id, body, None).js()?;
+                        body
+                    }
+                };
+                dom.insert_before(body, row, None).js()?;
+            }
+        }
+        drop(dom);
+        Ok(wrap_node(s, n.page(), row)?.value())
+    });
+    def.method("deleteRow", 1, |s, n, a| {
+        delete_member(n, &a, &CollectionKind::TableRows, "deleteRow").map(|()| s.undefined())
+    });
     reflect_str!(def, "border", "border");
     reflect_str!(def, "width", "width");
     reflect_str!(def, "align", "align");
@@ -1926,11 +2312,21 @@ fn define_cell_alignment<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
 simple_class!(HtmlTableSectionElement, "HTMLTableSectionElement", HtmlElement, |def| {
     define_cell_alignment(def);
     def.getter("rows", |s, n| Ok(collections::collection(s, n.page(), n.id, CollectionKind::SectionRows)?.value()));
+    def.method("insertRow", 0, |s, n, a| insert_member(s, n, &a, &CollectionKind::SectionRows, "tr", "index"));
+    def.method("deleteRow", 1, |s, n, a| {
+        delete_member(n, &a, &CollectionKind::SectionRows, "deleteRow").map(|()| s.undefined())
+    });
 });
 simple_class!(HtmlTableRowElement, "HTMLTableRowElement", HtmlElement, |def| {
     define_cell_alignment(def);
     reflect_str_nn!(def, "bgColor", "bgcolor");
     def.getter("cells", |s, n| Ok(collections::collection(s, n.page(), n.id, CollectionKind::RowCells)?.value()));
+    def.method("insertCell", 0, |s, n, a| insert_member(s, n, &a, &CollectionKind::RowCells, "td", "index"));
+    def.method("deleteCell", 1, |s, n, a| {
+        delete_member(n, &a, &CollectionKind::RowCells, "deleteCell").map(|()| s.undefined())
+
+    });
+
     def.getter("rowIndex", |s, n| {
         let dom = n.page().dom.borrow();
         let mut p = dom.parent(n.id).js()?;
@@ -2128,7 +2524,22 @@ simple_class!(HtmlVideoElement, "HTMLVideoElement", HtmlMediaElement, |def| {
     def.getter("videoWidth", |s, _n| Ok(s.number(0.0)));
     def.getter("videoHeight", |s, _n| Ok(s.number(0.0)));
 });
-simple_class!(HtmlAudioElement, "HTMLAudioElement", HtmlMediaElement);
+simple_class!(HtmlAudioElement, "HTMLAudioElement", HtmlMediaElement, |def| {
+    // [LegacyFactoryFunction=Audio(optional DOMString src)]
+    def.legacy_factory("Audio", 0, |s, new_target, a| {
+        let (page, el) = create_factory_element(s, "audio")?;
+        // Converted before the DOM is borrowed: `toString` is page script.
+        let src = if a.get(0).is_undefined() { None } else { Some(dom_string(a.get(0))?) };
+        {
+            let mut dom = page.dom.borrow_mut();
+            dom.set_attribute(el, "preload", "auto").js()?;
+            if let Some(src) = src {
+                dom.set_attribute(el, "src", &src).js()?;
+            }
+        }
+        crate::node::wrap_new_node::<Self>(s, &page, el, new_target)
+    });
+});
 simple_class!(HtmlBrElement, "HTMLBRElement", HtmlElement, |def| {
     reflect_str!(def, "clear", "clear");
 });
@@ -2163,7 +2574,25 @@ simple_class!(HtmlDialogElement, "HTMLDialogElement", HtmlElement, |def| {
         Ok(s.undefined())
     });
     def.method("showModal", 0, |s, n, _a| {
-        n.page().dom.borrow_mut().set_attribute(n.id, "open", "").js()?;
+        {
+            let dom = n.page().dom.borrow();
+            if dom.has_attribute(n.id, "open").js()? {
+                if dom.is_modal(n.id) {
+                    return Ok(s.undefined());
+                }
+                return Err(JsError::dom("InvalidStateError", "The dialog is already open as a non-modal dialog, and therefore cannot be opened as a modal dialog."));
+            }
+            if !dom.is_connected(n.id).js()? {
+                return Err(JsError::dom("InvalidStateError", "The element is not in a Document."));
+            }
+            if dom.is_popover_showing(n.id) {
+                return Err(JsError::dom("InvalidStateError", "The dialog is already open as a Popover, and therefore cannot be opened as a modal dialog."));
+            }
+        }
+        let mut dom = n.page().dom.borrow_mut();
+        dom.set_attribute(n.id, "open", "").js()?;
+        // `:modal` until the dialog closes or leaves its document.
+        dom.set_modal(n.id, true).js()?;
         Ok(s.undefined())
     });
     def.method("close", 0, |s, n, a| {
@@ -2174,7 +2603,11 @@ simple_class!(HtmlDialogElement, "HTMLDialogElement", HtmlElement, |def| {
         if !a.get(0).is_undefined() {
             n.page().set_dialog_return(n.id, dom_string(a.get(0))?);
         }
-        n.page().dom.borrow_mut().remove_attribute(n.id, "open").js()?;
+        {
+            let mut dom = n.page().dom.borrow_mut();
+            dom.remove_attribute(n.id, "open").js()?;
+            dom.set_modal(n.id, false).js()?;
+        }
         crate::input::queue_simple(n.page(), n.id, "close", false, false);
         Ok(s.undefined())
     });
@@ -2325,6 +2758,18 @@ simple_class!(HtmlFrameElement, "HTMLFrameElement", HtmlElement, |def| {
     reflect_bool!(def, "noResize", "noresize");
     reflect_str_nn!(def, "marginHeight", "marginheight");
     reflect_str_nn!(def, "marginWidth", "marginwidth");
+    // A connected frame has a child navigable, as an iframe does.
+    def.getter("contentDocument", |s, n| {
+        if let Some(document) = n.page().frame_document_value(s, n.id)? {
+            return Ok(document);
+        }
+        let doc = n.page().frame_document(n.id);
+        node_value(s, n.page(), doc)
+    });
+    def.getter("contentWindow", |s, n| match n.page().frame_window(s, n.id)? {
+        Some(w) => Ok(w),
+        None => Ok(s.null()),
+    });
 });
 simple_class!(HtmlFontElement, "HTMLFontElement", HtmlElement, |def| {
     reflect_str_nn!(def, "color", "color");
@@ -2356,11 +2801,8 @@ impl JsClass for SvgElement {
     fn define(def: &mut ClassDef<Self>) {
         crate::handlers::define_global(def);
         def.getter("dataset", |s, n| Ok(collections::dataset(s, n.page(), n.id)?.value()));
-        def.accessor(
-            "style",
-            |s, n| Ok(crate::css::inline_style(s, n.page(), n.id)?.value()),
-            |_s, n, v| crate::css::set_inline_style(n.page(), n.id, v),
-        );
+        // [PutForwards=cssText]
+        def.put_forwards("style", |s, n| Ok(crate::css::inline_style(s, n.page(), n.id)?.value()), "cssText");
         def.getter("ownerSVGElement", |s, n| {
             let dom = n.page().dom.borrow();
             let mut p = dom.parent_element(n.id).js()?;
@@ -2402,6 +2844,15 @@ simple_class!(SvgGraphicsElement, "SVGGraphicsElement", SvgElement, |def| {
     });
 });
 simple_class!(SvgSvgElement, "SVGSVGElement", SvgGraphicsElement);
+// SVG 2 `a`: the link attributes it shares with HTML's.
+simple_class!(SvgAElement, "SVGAElement", SvgGraphicsElement, |def| {
+    reflect_str!(def, "rel", "rel");
+    reflect_tokens!(def, "relList", "rel");
+    reflect_str!(def, "download", "download");
+    reflect_str!(def, "ping", "ping");
+    reflect_str!(def, "hreflang", "hreflang");
+    reflect_str!(def, "type", "type");
+});
 
 // ----- document helpers ---------------------------------------------------------------
 
@@ -2446,6 +2897,14 @@ pub(crate) fn create_event<'s>(s: &Scope<'s>, page: &Rc<PageDom>, iface: &str) -
         "keyboardevent" => EventInterface::KeyboardEvent,
         "messageevent" => EventInterface::MessageEvent,
         "hashchangeevent" => EventInterface::HashChangeEvent,
+        "beforeunloadevent" => EventInterface::BeforeUnloadEvent,
+        "compositionevent" => EventInterface::CompositionEvent,
+        "devicemotionevent" => EventInterface::DeviceMotionEvent,
+        "deviceorientationevent" => EventInterface::DeviceOrientationEvent,
+        "storageevent" => EventInterface::StorageEvent,
+        "textevent" => EventInterface::TextEvent,
+        "errorevent" => EventInterface::ErrorEvent,
+        "popstateevent" => EventInterface::PopStateEvent,
         _ => return Err(JsError::dom("NotSupportedError", format!("The provided event type ('{iface}') is invalid."))),
     };
     let core = EventCore::new(page, i, "", false, false, false);
@@ -2759,7 +3218,10 @@ pub(crate) fn written_script_fetched(page: &Rc<PageDom>, node: NodeId, url: &str
         Err(error) => {
             if let Some(realm) = page.main_world_realm() {
                 if let Ok(scope) = realm.scope() {
-                    scope.report_exception(&JsError::Type(format!("Failed to load script: {error}")));
+                    crate::lifecycle::report_diagnostic(
+                        &scope,
+                        &JsError::Type(format!("Failed to load script: {error}")),
+                    );
                 }
             }
         }
@@ -2811,20 +3273,32 @@ impl JsClass for DomImplementation {
             Ok(wrap_node(s, &h.page, doc)?.value())
         });
         def.method("createDocument", 2, |s, h, a| {
+            a.require(2, "DOMImplementation.createDocument")?;
             let ns = opt_dom_string(a.get(0))?;
             let q = null_to_empty(a.get(1))?;
+            let doctype = if a.get(2).is_nullish() { None } else { Some(crate::node::node_arg(s, a.get(2), "createDocument")?) };
             let mut dom = h.page.dom.borrow_mut();
             let doc = dom.create_document(lp_dom::DocumentKind::Xml, "about:blank");
-            if !q.is_empty() {
-                let el = dom.create_element_ns(doc, ns.as_deref(), &q).js()?;
+            let element = if q.is_empty() { None } else { Some(dom.create_element_ns(doc, ns.as_deref(), &q).js()?) };
+            if let Some(dt) = doctype {
+                dom.append_child(doc, dt).js()?;
+            }
+            if let Some(el) = element {
                 dom.append_child(doc, el).js()?;
             }
+            let content_type = match ns.as_deref() {
+                Some("http://www.w3.org/1999/xhtml") => "application/xhtml+xml",
+                Some("http://www.w3.org/2000/svg") => "image/svg+xml",
+                _ => "application/xml",
+            };
+            let _ = dom.set_document_kind(doc, lp_dom::DocumentKind::Xml, content_type, "UTF-8");
             drop(dom);
             Ok(wrap_node(s, &h.page, doc)?.value())
         });
         def.method("createDocumentType", 3, |s, h, a| {
             a.require(3, "DOMImplementation.createDocumentType")?;
             let (name, public, system) = (dom_string(a.get(0))?, dom_string(a.get(1))?, dom_string(a.get(2))?);
+            lp_dom::dom::validate_doctype_name(&name).js()?;
             let mut dom = h.page.dom.borrow_mut();
             let dt = dom.create_doctype(h.id, &name, &public, &system).js()?;
             drop(dom);
@@ -2909,6 +3383,7 @@ pub(crate) fn register(engine: &lp_js::Engine) {
     engine.register::<SvgElement>();
     engine.register::<SvgGraphicsElement>();
     engine.register::<SvgSvgElement>();
+    engine.register::<SvgAElement>();
     engine.register::<DomImplementation>();
 }
 

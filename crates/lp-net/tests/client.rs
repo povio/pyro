@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use bytes::Bytes;
-use http::Method;
+use http::{header, HeaderValue, Method};
 use lp_net::*;
 
 struct Server {
@@ -179,6 +179,74 @@ fn start_server() -> Server {
         }
     });
     Server { port, log, gate }
+}
+
+#[test]
+fn blob_requests_serve_the_object_whole_or_by_single_range() {
+    let c = NetClient::new(NetConfig::default()).unwrap();
+    let blob = BlobBody { bytes: Bytes::from_static(b"A simple Hello, World! example"), mime: "text/plain".into() };
+    let request = |range: Option<&str>, method: Method| {
+        let mut r = Request::get(Url::parse("blob:http://a.test/9f0d").unwrap(), Destination::Xhr);
+        r.method = method;
+        r.blob = Some(blob.clone());
+        if let Some(range) = range {
+            r.headers.insert(header::RANGE, HeaderValue::from_str(range).unwrap());
+        }
+        r
+    };
+    let (kinds, head, body, error) = collect(&c, request(None, Method::GET));
+    assert_eq!(kinds, ["response 200", "finished"]);
+    assert!(error.is_none());
+    let head = head.unwrap();
+    assert_eq!(head.headers[header::CONTENT_TYPE], "text/plain");
+    assert_eq!(head.headers[header::CONTENT_LENGTH], "30");
+    assert!(!head.headers.contains_key(header::CONTENT_RANGE));
+    assert_eq!(head.kind, ResponseKind::Basic);
+    assert_eq!(body, b"A simple Hello, World! example");
+
+    for (range, content_range, expected) in [
+        ("bytes=9-21", "bytes 9-21/30", "Hello, World!"),
+        ("bytes \t =\t 23-", "bytes 23-29/30", "example"),
+        ("bytes=-\t 7", "bytes 23-29/30", "example"),
+        ("bytes=4-100000000000", "bytes 4-29/30", "mple Hello, World! example"),
+    ] {
+        let (kinds, head, body, _) = collect(&c, request(Some(range), Method::GET));
+        assert_eq!(kinds, ["response 206", "finished"], "{range}");
+        let head = head.unwrap();
+        assert_eq!(head.status_text, "Partial Content");
+        assert_eq!(head.headers[header::CONTENT_RANGE], content_range, "{range}");
+        assert_eq!(head.headers[header::CONTENT_LENGTH], expected.len().to_string(), "{range}");
+        assert_eq!(body, expected.as_bytes(), "{range}");
+    }
+    for range in ["", "bytes", "byte=0-", "bytes=0-5,15-", "bytes=-", "bytes=10-5", "bytes=30-", "bytes=-0"] {
+        let (kinds, head, _, error) = collect(&c, request(Some(range), Method::GET));
+        assert_eq!(kinds, ["failed"], "{range}");
+        assert!(head.is_none() && matches!(error, Some(NetError::Other(_))), "{range}");
+    }
+    // Only GET; a URL the caller could not resolve is a revoked one.
+    let (kinds, ..) = collect(&c, request(None, Method::POST));
+    assert_eq!(kinds, ["failed"]);
+    let mut revoked = request(None, Method::GET);
+    revoked.blob = None;
+    let (kinds, _, _, error) = collect(&c, revoked);
+    assert_eq!(kinds, ["failed"]);
+    assert!(matches!(error, Some(NetError::Other(m)) if m.contains("revoked")));
+    // An untyped blob still carries its (empty) Content-Type.
+    let mut untyped = request(None, Method::GET);
+    untyped.blob = Some(BlobBody { bytes: Bytes::from_static(b"x"), mime: String::new() });
+    let (_, head, _, _) = collect(&c, untyped);
+    assert_eq!(head.unwrap().headers[header::CONTENT_TYPE], "");
+}
+
+#[test]
+fn head_of_a_data_url_has_headers_and_no_body() {
+    let c = NetClient::new(NetConfig::default()).unwrap();
+    let mut r = Request::get(Url::parse("data:text/plain,hi%20there").unwrap(), Destination::Xhr);
+    r.method = Method::HEAD;
+    let (kinds, head, body, _) = collect(&c, r);
+    assert_eq!(kinds, ["response 200", "finished"]);
+    assert_eq!(head.unwrap().headers[header::CONTENT_TYPE], "text/plain");
+    assert!(body.is_empty());
 }
 
 fn url(s: &Server, path: &str) -> Url {

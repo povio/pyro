@@ -13,7 +13,6 @@ use std::rc::Rc;
 
 use lp_dom::{Dom, NodeId, NodeType};
 
-use crate::collections::NodeHold;
 use crate::event::{EventCore, EventInterface};
 use crate::page::PageDom;
 use crate::target::fire;
@@ -21,10 +20,23 @@ use crate::target::fire;
 /// A boundary point: (node, offset in UTF-16 units or child index).
 pub type Point = (NodeId, u32);
 
-/// The document selection: anchor and focus.
+/// The document selection: its range (shared with the Range objects script
+/// holds for it) and its direction.
 pub(crate) struct DocSelection {
-    anchor: (NodeHold, u32),
-    focus: (NodeHold, u32),
+    pub(crate) range: Rc<crate::range::RangeOwner>,
+    /// The focus is the range's start.
+    backward: bool,
+    /// The Range object each realm sees as `getRangeAt(0)`.
+    pub(crate) wrappers: Vec<(lp_js::RealmId, lp_js::Persistent)>,
+    /// The nodes a selection made by a gesture, by typing or by
+    /// `collapse()`/`extend()` was set on. As measured in Chromium, such a
+    /// selection is gone once one of them leaves the document; a range
+    /// script added follows its live boundary points instead.
+    origin: Option<(crate::collections::NodeHold, crate::collections::NodeHold)>,
+    /// Anchor and focus of a selection whose ends are in different trees (a
+    /// shadow tree and its host's): a range cannot span them, so the range
+    /// is collapsed at the focus and the ends are kept here.
+    cross_tree: Option<(Point, Point)>,
 }
 
 // ----- selection state ----------------------------------------------------------
@@ -38,9 +50,17 @@ fn connected(page: &PageDom, node: NodeId) -> bool {
 pub fn selection(page: &PageDom) -> Option<(Point, Point)> {
     let sel = page.selection.borrow();
     let s = sel.as_ref()?;
-    let a = (s.anchor.0.id, s.anchor.1);
-    let f = (s.focus.0.id, s.focus.1);
+    let (start, end) = (s.range.live.start(), s.range.live.end());
+    let (a, f) = if s.backward { (end, start) } else { (start, end) };
+    let origin = s.origin.as_ref().map(|(a, f)| (a.id, f.id));
+    let cross_tree = s.cross_tree;
     drop(sel);
+    if origin.is_some_and(|(a, f)| !connected(page, a) || !connected(page, f)) {
+        return None;
+    }
+    if let Some(points) = cross_tree {
+        return Some(points);
+    }
     (connected(page, a.0) && connected(page, f.0)).then_some((a, f))
 }
 
@@ -50,18 +70,55 @@ pub fn selection_range(page: &PageDom) -> Option<(Point, Point)> {
     Some(if compare(page, a, f) <= 0 { (a, f) } else { (f, a) })
 }
 
+/// Selects from `anchor` to `focus` with a new range (as `collapse()` and
+/// `extend()` do).
 pub fn set_selection(page: &Rc<PageDom>, anchor: Point, focus: Point) {
-    let (Ok(a), Ok(f)) = (NodeHold::new(page, anchor.0), NodeHold::new(page, focus.0)) else { return };
     let changed = selection(page) != Some((anchor, focus));
-    *page.selection.borrow_mut() = Some(DocSelection { anchor: (a, anchor.1), focus: (f, focus.1) });
+    let same_tree = {
+        let dom = page.dom.borrow();
+        dom.root_node(anchor.0, false).ok() == dom.root_node(focus.0, false).ok()
+    };
+    let backward = same_tree && compare(page, anchor, focus) > 0;
+    let (start, end) = match (same_tree, backward) {
+        (false, _) => (focus, focus),
+        (true, true) => (focus, anchor),
+        (true, false) => (anchor, focus),
+    };
+    let cross_tree = (!same_tree).then_some((anchor, focus));
+    let Ok(range) = crate::range::RangeOwner::new(page, start, end) else { return };
+    let origin = match (
+        crate::collections::NodeHold::new(page, anchor.0),
+        crate::collections::NodeHold::new(page, focus.0),
+    ) {
+        (Ok(a), Ok(f)) => Some((a, f)),
+        _ => None,
+    };
+    let old =
+        page.selection.replace(Some(DocSelection { range, backward, wrappers: Vec::new(), origin, cross_tree }));
+    drop(old);
     if changed {
         queue_selectionchange(page);
     }
 }
 
+/// `addRange()`: `range` becomes the selection's range, `wrapper` being the
+/// Range object script passed in its realm.
+pub(crate) fn set_selection_range(
+    page: &Rc<PageDom>,
+    range: Rc<crate::range::RangeOwner>,
+    wrapper: Option<(lp_js::RealmId, lp_js::Persistent)>,
+) {
+    let selection =
+        DocSelection { range, backward: false, wrappers: wrapper.into_iter().collect(), origin: None, cross_tree: None };
+    let old = page.selection.replace(Some(selection));
+    drop(old);
+    queue_selectionchange(page);
+}
+
 pub fn clear_selection(page: &Rc<PageDom>) {
-    let had = page.selection.borrow_mut().take().is_some();
-    if had {
+    let old = page.selection.take();
+    if old.is_some() {
+        drop(old);
         queue_selectionchange(page);
     }
 }
@@ -446,6 +503,68 @@ pub fn insert_text(page: &Rc<PageDom>, host: NodeId, text: &str) {
         };
         set_selection(page, caret, caret);
     });
+}
+
+/// `document.execCommand(command, showUI, value)`. Only `insertText` is
+/// supported: it types `value` into the focused text control or the
+/// contenteditable host of the focused element (else of the selection), with
+/// `beforeinput`/`input` and no `textInput` (Chromium fires none for
+/// execCommand, and uievents/textInput/api.html expects none). Returns
+/// whether the command was handled.
+pub(crate) fn exec_command(page: &Rc<PageDom>, command: &str, value: &str) -> bool {
+    if !command.eq_ignore_ascii_case("inserttext") {
+        return false;
+    }
+    let doc = page.document();
+    let focused = page.dom.borrow().focused(doc).ok().flatten();
+    // The focused element's host or text control comes first; otherwise the
+    // document selection may still sit in a host (focus on a checkbox does
+    // not clear it, as in Chromium).
+    let (host, control) = {
+        let dom = page.dom.borrow();
+        match focused {
+            Some(f) if is_text_entry_control(&dom, f) => (None, Some(f)),
+            Some(f) if editing_host(&dom, f).is_some() => (editing_host(&dom, f), None),
+            _ => (selection_range(page).and_then(|(start, _)| editing_host(&dom, start.0)), None),
+        }
+    };
+    if let Some(host) = host {
+        insert_text(page, host, value);
+        return true;
+    }
+    let Some(control) = control else { return false };
+    if !input_event(page, control, "beforeinput", "insertText", Some(value), true)
+        || page.document() != doc
+        || !connected(page, control)
+    {
+        return true;
+    }
+    let changed = page.dom.borrow_mut().insert_text(control, value).unwrap_or(false);
+    if changed {
+        queue_control_selectionchange(page, control);
+        input_event(page, control, "input", "insertText", Some(value), false);
+    }
+    true
+}
+
+/// A textarea or an input whose type takes typed text.
+fn is_text_entry_control(dom: &Dom, el: NodeId) -> bool {
+    use lp_dom::forms::InputType;
+    match local(dom, el).as_str() {
+        "textarea" => true,
+        "input" => !matches!(
+            dom.input_type(el),
+            Ok(InputType::Checkbox
+                | InputType::Radio
+                | InputType::File
+                | InputType::Submit
+                | InputType::Reset
+                | InputType::Button
+                | InputType::Image
+                | InputType::Hidden)
+        ),
+        _ => false,
+    }
 }
 
 /// Backspace / Delete: deletes the selection, else one character (merging

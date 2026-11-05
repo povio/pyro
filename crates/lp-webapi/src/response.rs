@@ -445,6 +445,9 @@ pub struct StreamData {
     opened: Cell<bool>,
 }
 impl StreamData {
+    pub(crate) fn new(body: Rc<Body>, used: Rc<Cell<bool>>) -> StreamData {
+        StreamData { body, used, opened: Cell::new(false) }
+    }
     /// False when `text()` and the like already took the body.
     fn open(&self) -> bool {
         if self.opened.get() {

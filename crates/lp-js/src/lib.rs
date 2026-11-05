@@ -18,8 +18,10 @@ mod realm;
 mod string;
 mod value;
 
+pub use accessors::slot_usage as accessor_slot_usage;
 pub use class::{ClassDef, ClassId, GetterResult, JsClass, NoParent};
 pub use engine::{
+    ImpureNames,
     configure_process, prepare_process_for_fork, Capabilities, ConsoleLevel, Engine, EngineHooks, TerminateHandle,
     WrapperPropertyHook,
 };

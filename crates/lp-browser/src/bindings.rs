@@ -22,6 +22,12 @@ struct Hooks {
 }
 
 impl PageHooks for Hooks {
+    fn frame_detached(&self) -> bool {
+        // Only a child frame can leave its page.
+        self.page.child.is_some()
+            && self.frames.upgrade().is_some_and(|host| host.with_frame(self.page, |_| ()).is_none())
+    }
+
     fn focus_document_is_live(&self) -> bool {
         self.frames.upgrade().is_some_and(|host| {
             host.matches(self.page, &self.loader)
@@ -63,11 +69,33 @@ impl PageHooks for Hooks {
     fn navigate(&self, request: NavigationRequest) {
         let page = self.page;
         let loader = self.loader.clone();
+        // HTML "navigate": a GET of the document's own URL with a fragment is
+        // a fragment navigation, done at once (the URL has changed when the
+        // link's `click()` returns) and never a reload.
+        let own_frame = request.target.as_deref().is_none_or(|t| t.is_empty() || t.eq_ignore_ascii_case("_self"));
+        if own_frame && request.method == "GET" && request.body.is_none() {
+            let nav = self.frames.upgrade().filter(|host| host.matches(page, &loader)).and_then(|host| host.nav(page));
+            if nav.is_some_and(|nav| nav.navigate_to_fragment(&request.url)) {
+                return;
+            }
+        }
         self.sched.post(TaskSource::Navigation, move |b| {
             if !b.doc(page).is_some_and(|p| p.main_frame.loader_id == loader) {
                 return;
             }
             let named = request.target.as_deref().and_then(|t| b.page(page.page)?.frames.named_frame(page, t));
+            // HTML "navigate to a javascript: URL": the script runs in the
+            // target document, which stays (replacing it with a string result
+            // is not supported).
+            if let Some(source) = javascript_url_source(&request.url) {
+                let realm = b.doc(named.unwrap_or(page)).and_then(|p| p.main_frame.main_realm().cloned());
+                if let Some(scope) = realm.as_ref().and_then(|realm| realm.scope().ok()) {
+                    if let Err(e) = scope.eval(&source, None, 1) {
+                        scope.report_exception(&e);
+                    }
+                }
+                return;
+            }
             let new_context = named.is_none()
                 && request
                     .target
@@ -127,6 +155,24 @@ impl PageHooks for Hooks {
         // The queue `navigate` uses, so this follows the popup's request.
         self.sched.post(TaskSource::Navigation, move |b| {
             b.emit(page.page, crate::PageEvent::PopupCommand { popup, command });
+        });
+    }
+
+    fn close_window(&self) {
+        let page = self.page;
+        let loader = self.loader.clone();
+        self.sched.post(TaskSource::Navigation, move |b| {
+            // Only a popup is script-closable (Chrome: "Scripts may close
+            // only the windows that were opened by them").
+            if page.child.is_some() || !b.page(page.page).is_some_and(|p| p.popup.is_some()) {
+                return;
+            }
+            let Some(frame_id) =
+                b.doc(page).filter(|p| p.main_frame.loader_id == loader).map(|p| p.main_frame.id.clone())
+            else {
+                return;
+            };
+            b.emit(page.page, crate::PageEvent::CloseRequested { frame_id });
         });
     }
 
@@ -255,6 +301,15 @@ impl PageHooks for Hooks {
             }
         }
     }
+    fn script_connected(&self, node: lp_dom::NodeId) {
+        if let Some(host) = self.frames.upgrade() {
+            if host.matches(self.page, &self.loader) {
+                if let Some(frame) = host.frame(self.page) {
+                    crate::loader::prepare_inserted_script(&frame, node);
+                }
+            }
+        }
+    }
     fn iframe_disconnected(&self, node: lp_dom::NodeId) {
         if let Some(host) = self.frames.upgrade() {
             if host.matches(self.page, &self.loader) {
@@ -293,7 +348,9 @@ impl PageHooks for Hooks {
         host.document_value(scope, self.page, key).map(Some)
     }
     fn sibling_realms(&self, scope: &lp_js::Scope<'_>) -> Vec<lp_js::Realm> {
-        let Some(host) = self.frames.upgrade().filter(|h| h.has_children()) else { return Vec::new() };
+        let Some(host) = self.frames.upgrade().filter(|h| h.has_children() || h.has_retired()) else {
+            return Vec::new();
+        };
         host.sibling_realms(self.page, scope.realm_id())
     }
     fn frame_window<'s>(&self, scope: &lp_js::Scope<'s>, node: lp_dom::NodeId) -> Option<lp_js::Value<'s>> {
@@ -357,7 +414,13 @@ impl Browser {
         if page.child.is_none() {
             *state.frames.root.borrow_mut() = state.main_frame.clone();
         }
-        create(&state.frames, page, url, loader)
+        let dom = create(&state.frames, page, url, loader)?;
+        if page.child.is_none() {
+            if let Some(ticket) = &state.popup {
+                ticket.attach_page(&dom);
+            }
+        }
+        Ok(dom)
     }
 
     pub(crate) fn drain_dom_resources(&mut self, page: FrameKey) {
@@ -403,11 +466,23 @@ impl Browser {
                 if preload_nodes.insert(event.node) {
                     self.preload_event(target, event.node);
                 }
+            } else if event.kind == lp_dom::script::ResourceKind::Script {
+                // Script-inserted (or `src`-changed) scripts: "already
+                // started" makes repeats of one element no-ops.
+                self.script_event(target, event.node);
             } else {
                 bindings.apply_style_event(&event);
             }
         }
     }
+}
+
+/// The script of a `javascript:` URL (HTML "evaluate a javascript: URL": the
+/// percent-decoded rest of the URL), or `None` for any other URL.
+fn javascript_url_source(url: &str) -> Option<String> {
+    const SCHEME: &str = "javascript:";
+    let rest = url.get(SCHEME.len()..).filter(|_| url[..SCHEME.len()].eq_ignore_ascii_case(SCHEME))?;
+    Some(percent_encoding::percent_decode_str(rest).decode_utf8_lossy().into_owned())
 }
 
 pub(crate) fn create(

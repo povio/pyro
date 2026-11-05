@@ -6,7 +6,7 @@ use std::rc::Rc;
 use std::time::Instant;
 
 use lp_dom::events::{EventState, TargetKey};
-use lp_js::{Args, ClassDef, JsClass, JsError, JsResult, Object, Persistent, Scope};
+use lp_js::{Args, ClassDef, JsClass, JsError, JsResult, Object, Persistent, Scope, Value};
 
 use crate::page::PageDom;
 use crate::target::{page_of, target_value};
@@ -25,6 +25,10 @@ pub enum EventInterface {
     KeyboardEvent,
     InputEvent,
     CompositionEvent,
+    TextEvent,
+    BeforeUnloadEvent,
+    DeviceMotionEvent,
+    DeviceOrientationEvent,
     ProgressEvent,
     ErrorEvent,
     PromiseRejectionEvent,
@@ -36,6 +40,8 @@ pub enum EventInterface {
     StorageEvent,
     MediaQueryListEvent,
     TouchEvent,
+    AnimationEvent,
+    TransitionEvent,
 }
 
 /// One touch point (`Touch`): its target and viewport/screen position.
@@ -73,6 +79,8 @@ pub enum StorageAreaRef {
 pub struct EventFields {
     pub detail: f64,
     pub custom_detail: Option<Persistent>,
+    /// `UIEvent.view` given to a constructor or init method (a Window).
+    pub view: Option<Persistent>,
     pub screen_x: f64,
     pub screen_y: f64,
     pub client_x: f64,
@@ -81,6 +89,8 @@ pub struct EventFields {
     pub shift_key: bool,
     pub alt_key: bool,
     pub meta_key: bool,
+    /// EventModifierInit `modifierAltGraph` and the like, by [`EXTRA_MODIFIERS`] bit.
+    pub extra_modifiers: u16,
     pub button: i16,
     pub buttons: u16,
     pub related_target: Option<TargetKey>,
@@ -99,6 +109,17 @@ pub struct EventFields {
     pub width: f64,
     pub height: f64,
     pub pressure: f64,
+    pub tangential_pressure: f64,
+    pub tilt_x: f64,
+    pub tilt_y: f64,
+    pub twist: f64,
+    /// `None`: the default, a pen perpendicular to the surface (π/2).
+    pub altitude_angle: Option<f64>,
+    pub azimuth_angle: f64,
+    pub persistent_device_id: f64,
+    /// `coalescedEvents` / `predictedEvents` of the init dictionary.
+    pub coalesced_events: Vec<Persistent>,
+    pub predicted_events: Vec<Persistent>,
     pub delta_x: f64,
     pub delta_y: f64,
     pub delta_z: f64,
@@ -133,6 +154,13 @@ pub struct EventFields {
     pub media_query: String,
     pub media_matches: bool,
     pub touch: Option<Rc<TouchLists>>,
+    /// `AnimationEvent.animationName`.
+    pub animation_name: String,
+    /// `TransitionEvent.propertyName`.
+    pub property_name: String,
+    /// `elapsedTime` (seconds) and `pseudoElement` of both.
+    pub elapsed_time: f64,
+    pub pseudo_element: String,
 }
 
 pub struct EventCore {
@@ -150,8 +178,11 @@ thread_local! {
     static TIME_ORIGIN: Instant = Instant::now();
 }
 
-fn now_ms() -> f64 {
-    TIME_ORIGIN.with(|t| t.elapsed().as_secs_f64() * 1000.0)
+/// `Event.timeStamp` of an event created now: the document's clock, so that
+/// it shares `performance.now()`'s time origin and resolution. A page without
+/// one (no embedder) counts from the first event of the thread.
+fn now_ms(page: &PageDom) -> f64 {
+    page.event_time().unwrap_or_else(|| TIME_ORIGIN.with(|t| t.elapsed().as_secs_f64() * 1000.0))
 }
 
 impl EventCore {
@@ -164,7 +195,7 @@ impl EventCore {
         composed: bool,
     ) -> EventData {
         let mut st = EventState::new(ty, bubbles, cancelable, composed);
-        st.time_stamp = now_ms();
+        st.time_stamp = now_ms(page);
         Rc::new(EventCore {
             id: page.next_event_id(),
             page: page.clone(),
@@ -286,6 +317,10 @@ pub fn wrap_event<'s>(s: &Scope<'s>, core: &EventData) -> JsResult<Object<'s>> {
         EventInterface::KeyboardEvent => s.wrap::<KeyboardEvent>(d, Some(key)),
         EventInterface::InputEvent => s.wrap::<InputEvent>(d, Some(key)),
         EventInterface::CompositionEvent => s.wrap::<CompositionEvent>(d, Some(key)),
+        EventInterface::TextEvent => s.wrap::<TextEvent>(d, Some(key)),
+        EventInterface::BeforeUnloadEvent => s.wrap::<BeforeUnloadEvent>(d, Some(key)),
+        EventInterface::DeviceMotionEvent => s.wrap::<DeviceMotionEvent>(d, Some(key)),
+        EventInterface::DeviceOrientationEvent => s.wrap::<DeviceOrientationEvent>(d, Some(key)),
         EventInterface::ProgressEvent => s.wrap::<ProgressEvent>(d, Some(key)),
         EventInterface::ErrorEvent => s.wrap::<ErrorEvent>(d, Some(key)),
         EventInterface::PromiseRejectionEvent => s.wrap::<PromiseRejectionEvent>(d, Some(key)),
@@ -297,9 +332,53 @@ pub fn wrap_event<'s>(s: &Scope<'s>, core: &EventData) -> JsResult<Object<'s>> {
         EventInterface::StorageEvent => s.wrap::<StorageEvent>(d, Some(key)),
         EventInterface::MediaQueryListEvent => s.wrap::<MediaQueryListEvent>(d, Some(key)),
         EventInterface::TouchEvent => s.wrap::<TouchEvent>(d, Some(key)),
+        EventInterface::AnimationEvent => s.wrap::<AnimationEvent>(d, Some(key)),
+        EventInterface::TransitionEvent => s.wrap::<TransitionEvent>(d, Some(key)),
     }?;
+    define_unforgeables(s, &core.page, wrapper)?;
     core.trace_targets(s, wrapper)?;
     Ok(wrapper)
+}
+
+/// `isTrusted` is [LegacyUnforgeable]: an own, non-configurable accessor of
+/// every event object, with one getter per realm. The realm's installer
+/// defines it with the `Object.defineProperty` captured before page script
+/// ran.
+fn define_unforgeables<'s>(s: &Scope<'s>, page: &PageDom, wrapper: Object<'s>) -> JsResult<()> {
+    let realm = s.realm_id();
+    let cached = page.event_unforgeables.borrow().get(&realm).map(|p| p.get(s));
+    let install = match cached.and_then(|v| v.as_object()) {
+        Some(install) => install,
+        None => {
+            let define = page.define_properties.borrow().get(&realm).map(|p| p.get(s));
+            let define = match define {
+                Some(define) => define,
+                None => match s.global().get("Object")?.as_object() {
+                    Some(object) => object.get("defineProperty")?,
+                    None => return Ok(()),
+                },
+            };
+            let getter = s.function("get isTrusted", |s, this, _args| {
+                let event = s.unwrap::<Event>(this).ok_or_else(|| JsError::Type("Illegal invocation".into()))?;
+                let trusted = event.state.borrow().is_trusted;
+                Ok(s.boolean(trusted))
+            })?;
+            let make = s.eval(
+                "(function (define, get) { const d = { get, set: undefined, enumerable: true, configurable: false };\n\
+                 return function (event) { define(event, 'isTrusted', d); }; })",
+                Some("lightningpanda://internal/event-unforgeables.js"),
+                1,
+            )?;
+            let Some(install) = make.as_object().map(|f| f.call(None, &[define, getter.value()])).transpose()? else {
+                return Ok(());
+            };
+            let Some(install) = install.as_object() else { return Ok(()) };
+            page.event_unforgeables.borrow_mut().insert(realm, Persistent::new(s, install.value()));
+            install
+        }
+    };
+    install.call(None, &[wrapper.value()])?;
+    Ok(())
 }
 
 fn get_bool(init: Option<Object<'_>>, name: &str) -> JsResult<bool> {
@@ -355,11 +434,61 @@ fn construct<'s, C: JsClass<Data = EventData>>(
         get_bool(init, "composed")?,
     );
     fill(s, &mut core.fields.borrow_mut(), init)?;
+    // As in Chrome, only pointer events proper keep fractional coordinates:
+    // mouse, wheel and drag events, and the PointerEvents that replaced
+    // mouse events (click, auxclick, contextmenu), have integer ones.
+    if matches!(iface, EventInterface::MouseEvent | EventInterface::WheelEvent | EventInterface::DragEvent)
+        || (iface == EventInterface::PointerEvent && matches!(&*ty, "click" | "auxclick" | "contextmenu"))
+    {
+        let mut f = core.fields.borrow_mut();
+        f.screen_x = f.screen_x.floor();
+        f.screen_y = f.screen_y.floor();
+        f.client_x = f.client_x.floor();
+        f.client_y = f.client_y.floor();
+    }
+    if matches!(
+        iface,
+        EventInterface::UiEvent
+            | EventInterface::FocusEvent
+            | EventInterface::MouseEvent
+            | EventInterface::PointerEvent
+            | EventInterface::WheelEvent
+            | EventInterface::DragEvent
+            | EventInterface::KeyboardEvent
+            | EventInterface::InputEvent
+            | EventInterface::CompositionEvent
+            | EventInterface::TouchEvent
+    ) {
+        core.fields.borrow_mut().view = view_init(s, init)?;
+    }
     let key = page.event_identity(core.id);
     core.retain_targets();
     let wrapper = s.wrap_new::<C>(core.clone(), new_target, Some(key))?;
+    define_unforgeables(s, &page, wrapper)?;
     core.trace_targets(s, wrapper)?;
     Ok(wrapper)
+}
+
+/// `UIEventInit.view`: a Window (this realm's global) or null.
+fn view_init<'s>(s: &Scope<'s>, init: Option<Object<'s>>) -> JsResult<Option<Persistent>> {
+    let Some(o) = init else { return Ok(None) };
+    let v = o.get("view")?;
+    view_value(s, v)
+}
+
+fn view_value<'s>(s: &Scope<'s>, v: lp_js::Value<'s>) -> JsResult<Option<Persistent>> {
+    if v.is_null() || v.is_undefined() {
+        return Ok(None);
+    }
+    // This realm's global, or another Window (its `window` is itself).
+    let is_window = v.as_object().is_some_and(|o| {
+        o.as_raw() == s.global().as_raw()
+            || o.get("window").is_ok_and(|w| w.as_object().is_some_and(|w| w.as_raw() == o.as_raw()))
+    });
+    if !is_window {
+        return Err(JsError::Type("Failed to construct event: member view is not of type Window.".into()));
+    }
+    Ok(Some(Persistent::new(s, v)))
 }
 
 fn fill_none<'s>(_: &Scope<'s>, _: &mut EventFields, _: Option<Object<'s>>) -> JsResult<()> {
@@ -380,11 +509,31 @@ fn related<'s>(s: &Scope<'s>, init: Option<Object<'s>>) -> JsResult<Option<Targe
     Ok(s.unwrap::<crate::target::EventTarget>(v).map(|t| t.key))
 }
 
+/// The modifier keys EventModifierInit names beyond ctrl/shift/alt/meta.
+const EXTRA_MODIFIERS: &[(&str, &str)] = &[
+    ("modifierAltGraph", "AltGraph"),
+    ("modifierCapsLock", "CapsLock"),
+    ("modifierFn", "Fn"),
+    ("modifierFnLock", "FnLock"),
+    ("modifierHyper", "Hyper"),
+    ("modifierNumLock", "NumLock"),
+    ("modifierScrollLock", "ScrollLock"),
+    ("modifierSuper", "Super"),
+    ("modifierSymbol", "Symbol"),
+    ("modifierSymbolLock", "SymbolLock"),
+];
+
 fn fill_modifiers(f: &mut EventFields, init: Option<Object<'_>>) -> JsResult<()> {
     f.ctrl_key = get_bool(init, "ctrlKey")?;
     f.shift_key = get_bool(init, "shiftKey")?;
     f.alt_key = get_bool(init, "altKey")?;
     f.meta_key = get_bool(init, "metaKey")?;
+    f.extra_modifiers = 0;
+    for (bit, (init_name, _)) in EXTRA_MODIFIERS.iter().enumerate() {
+        if get_bool(init, init_name)? {
+            f.extra_modifiers |= 1 << bit;
+        }
+    }
     Ok(())
 }
 
@@ -409,7 +558,118 @@ fn fill_pointer<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>
     f.pressure = get_num(init, "pressure", 0.0)?;
     f.pointer_type = get_str(init, "pointerType")?;
     f.is_primary = get_bool(init, "isPrimary")?;
+    f.tangential_pressure = get_num(init, "tangentialPressure", 0.0)?;
+    f.twist = get_num(init, "twist", 0.0)?;
+    f.persistent_device_id = get_num(init, "persistentDeviceId", 0.0)?;
+    // Pointer Events: tilt and the spherical angles are two forms of one
+    // orientation; whichever the dictionary gives determines the other.
+    let given = |name: &str| -> JsResult<Option<f64>> {
+        match init.map(|o| o.get(name)).transpose()? {
+            Some(v) if !v.is_undefined() => Ok(Some(v.to_number()?)),
+            _ => Ok(None),
+        }
+    };
+    let (tilt_x, tilt_y) = (given("tiltX")?, given("tiltY")?);
+    let (altitude, azimuth) = (given("altitudeAngle")?, given("azimuthAngle")?);
+    if tilt_x.is_none() && tilt_y.is_none() && (altitude.is_some() || azimuth.is_some()) {
+        let (altitude, azimuth) = (altitude.unwrap_or(std::f64::consts::FRAC_PI_2), azimuth.unwrap_or(0.0));
+        (f.tilt_x, f.tilt_y) = spherical_to_tilt(altitude, azimuth);
+        (f.altitude_angle, f.azimuth_angle) = (Some(altitude), azimuth);
+    } else {
+        (f.tilt_x, f.tilt_y) = (tilt_x.unwrap_or(0.0), tilt_y.unwrap_or(0.0));
+        if altitude.is_none() && azimuth.is_none() {
+            let (altitude, azimuth) = tilt_to_spherical(f.tilt_x, f.tilt_y);
+            (f.altitude_angle, f.azimuth_angle) = (Some(altitude), azimuth);
+        } else {
+            (f.altitude_angle, f.azimuth_angle) =
+                (Some(altitude.unwrap_or(std::f64::consts::FRAC_PI_2)), azimuth.unwrap_or(0.0));
+        }
+    }
+    for (name, into) in [("coalescedEvents", &mut f.coalesced_events), ("predictedEvents", &mut f.predicted_events)] {
+        let Some(list) = init.map(|o| o.get(name)).transpose()?.filter(|v| !v.is_undefined()) else { continue };
+        let events = s.sequence(list, name)?;
+        let len = events.get("length")?.to_number()? as u32;
+        for i in 0..len {
+            let event = events.get_index(i)?;
+            if s.unwrap::<PointerEvent>(event).is_none() {
+                return Err(JsError::Type(format!("Failed to construct 'PointerEvent': {name} must hold PointerEvents.")));
+            }
+            into.push(Persistent::new(s, event));
+        }
+    }
     Ok(())
+}
+
+/// Pointer Events "converting between tiltX / tiltY and altitudeAngle /
+/// azimuthAngle": spherical angles (radians) to tilt (degrees).
+fn spherical_to_tilt(altitude: f64, azimuth: f64) -> (f64, f64) {
+    use std::f64::consts::{FRAC_PI_2, PI};
+    let (mut x, mut y) = (0.0, 0.0);
+    if altitude == 0.0 {
+        if azimuth == 0.0 || azimuth == 2.0 * PI {
+            x = FRAC_PI_2;
+        } else if azimuth == FRAC_PI_2 {
+            y = FRAC_PI_2;
+        } else if azimuth == PI {
+            x = -FRAC_PI_2;
+        } else if azimuth == 3.0 * FRAC_PI_2 {
+            y = -FRAC_PI_2;
+        } else if azimuth > 0.0 && azimuth < FRAC_PI_2 {
+            (x, y) = (FRAC_PI_2, FRAC_PI_2);
+        } else if azimuth > FRAC_PI_2 && azimuth < PI {
+            (x, y) = (-FRAC_PI_2, FRAC_PI_2);
+        } else if azimuth > PI && azimuth < 3.0 * FRAC_PI_2 {
+            (x, y) = (-FRAC_PI_2, -FRAC_PI_2);
+        } else if azimuth > 3.0 * FRAC_PI_2 && azimuth < 2.0 * PI {
+            (x, y) = (FRAC_PI_2, -FRAC_PI_2);
+        }
+    } else {
+        let tan_altitude = altitude.tan();
+        x = (azimuth.cos() / tan_altitude).atan();
+        y = (azimuth.sin() / tan_altitude).atan();
+    }
+    (x.to_degrees().round(), y.to_degrees().round())
+}
+
+/// Tilt (degrees) to (altitudeAngle, azimuthAngle) in radians.
+fn tilt_to_spherical(tilt_x: f64, tilt_y: f64) -> (f64, f64) {
+    use std::f64::consts::{FRAC_PI_2, PI};
+    let (x, y) = (tilt_x.to_radians(), tilt_y.to_radians());
+    let flat = tilt_x.abs() == 90.0 || tilt_y.abs() == 90.0;
+    let azimuth = if tilt_x == 0.0 {
+        if tilt_y > 0.0 {
+            FRAC_PI_2
+        } else if tilt_y < 0.0 {
+            3.0 * FRAC_PI_2
+        } else {
+            0.0
+        }
+    } else if tilt_y == 0.0 {
+        if tilt_x < 0.0 {
+            PI
+        } else {
+            0.0
+        }
+    } else if flat {
+        0.0
+    } else {
+        let a = y.tan().atan2(x.tan());
+        if a < 0.0 {
+            a + 2.0 * PI
+        } else {
+            a
+        }
+    };
+    let altitude = if flat {
+        0.0
+    } else if tilt_x == 0.0 {
+        FRAC_PI_2 - y.abs()
+    } else if tilt_y == 0.0 {
+        FRAC_PI_2 - x.abs()
+    } else {
+        (1.0 / (x.tan().powi(2) + y.tan().powi(2)).sqrt()).atan()
+    };
+    (altitude, azimuth)
 }
 
 fn fill_wheel<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
@@ -533,6 +793,20 @@ fn fill_message<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>
     Ok(())
 }
 
+fn fill_animation<'s>(_: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
+    f.animation_name = get_str(init, "animationName")?;
+    f.elapsed_time = get_num(init, "elapsedTime", 0.0)?;
+    f.pseudo_element = get_str(init, "pseudoElement")?;
+    Ok(())
+}
+
+fn fill_transition<'s>(_: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
+    f.property_name = get_str(init, "propertyName")?;
+    f.elapsed_time = get_num(init, "elapsedTime", 0.0)?;
+    f.pseudo_element = get_str(init, "pseudoElement")?;
+    Ok(())
+}
+
 fn fill_pagetransition<'s>(_: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
     f.persisted = get_bool(init, "persisted")?;
     Ok(())
@@ -576,7 +850,7 @@ impl JsClass for Event {
         def.getter("cancelable", |s, e| Ok(s.boolean(e.state.borrow().cancelable)));
         def.getter("composed", |s, e| Ok(s.boolean(e.state.borrow().composed)));
         def.getter("defaultPrevented", |s, e| Ok(s.boolean(e.state.borrow().canceled)));
-        def.getter("isTrusted", |s, e| Ok(s.boolean(e.state.borrow().is_trusted)));
+        // `isTrusted` is an own property of each event (`define_unforgeables`).
         def.getter("timeStamp", |s, e| Ok(s.number(e.state.borrow().time_stamp)));
         def.accessor(
             "returnValue",
@@ -652,13 +926,14 @@ impl JsClass for CustomEvent {
         def.getter("detail", |s, e| Ok(e.fields.borrow().custom_detail.as_ref().map_or(s.null(), |p| p.get(s))));
         def.method("initCustomEvent", 1, |s, e, a| {
             let ty = arg_string(&a, 0, "CustomEvent.initCustomEvent")?;
-            {
-                let mut st = e.state.borrow_mut();
-                st.ty = lp_dom::LocalName::from(ty.as_str());
-                st.bubbles = a.get(1).to_bool();
-                st.cancelable = a.get(2).to_bool();
+            if e.state.borrow().dispatching {
+                return Ok(s.undefined());
             }
-            e.fields.borrow_mut().custom_detail = Some(Persistent::new(s, a.get(3)));
+            init_event_state(e, &ty, a.get(1).to_bool(), a.get(2).to_bool());
+            // `optional any detail = null`.
+            let detail = a.get(3);
+            e.fields.borrow_mut().custom_detail = (!detail.is_undefined()).then(|| Persistent::new(s, detail));
+            e.refresh_wrappers();
             Ok(s.undefined())
         });
     }
@@ -673,9 +948,25 @@ impl JsClass for UiEvent {
         def.constructor(1, |s, nt, a| construct::<UiEvent>(s, nt, a, EventInterface::UiEvent, fill_ui));
         def.getter("detail", |s, e| Ok(s.number(e.fields.borrow().detail)));
         def.getter("view", |s, e| {
+            if let Some(view) = &e.fields.borrow().view {
+                return Ok(view.get(s));
+            }
             // Trusted UI events carry the window; synthetic ones default to null.
             Ok(if e.state.borrow().is_trusted { s.global().value() } else { s.null() })
         });
+        def.method("initUIEvent", 1, |s, e, a| {
+            let ty = arg_string(&a, 0, "UIEvent.initUIEvent")?;
+            if e.state.borrow().dispatching {
+                return Ok(s.undefined());
+            }
+            init_ui_event(s, e, &ty, &a)?;
+            e.refresh_wrappers();
+            Ok(s.undefined())
+        });
+        // https://w3c.github.io/uievents/#dom-uievent-pseudotarget: the
+        // pseudo-element the event targets. Hit testing never resolves to a
+        // pseudo-element here, so every UI event reports none.
+        def.getter("pseudoTarget", |s, _e| Ok(s.null()));
         def.getter("which", |s, e| {
             let f = e.fields.borrow();
             Ok(s.number(match e.iface {
@@ -687,6 +978,125 @@ impl JsClass for UiEvent {
                 _ => 0.0,
             }))
         });
+    }
+}
+
+/// The shared `initUIEvent(type, bubbles, cancelable, view, detail)` prefix of
+/// the legacy UI event initializers (`a[0..5]`). The caller has checked the
+/// dispatch flag.
+fn init_ui_event<'s>(s: &Scope<'s>, e: &EventData, ty: &str, a: &Args<'s>) -> JsResult<()> {
+    init_event_state(e, ty, a.get(1).to_bool(), a.get(2).to_bool());
+    let view = view_value(s, a.get(3))?;
+    let mut f = e.fields.borrow_mut();
+    f.view = view;
+    f.detail = init_num(a, 4)?;
+    Ok(())
+}
+
+/// An optional numeric initializer argument: missing is 0.
+fn init_num<'s>(a: &Args<'s>, i: usize) -> JsResult<f64> {
+    let v = a.get(i);
+    if v.is_undefined() {
+        Ok(0.0)
+    } else {
+        v.to_number()
+    }
+}
+
+/// An optional `EventTarget?` initializer argument.
+fn init_target<'s>(s: &Scope<'s>, v: lp_js::Value<'s>) -> Option<TargetKey> {
+    if let Some(n) = s.unwrap::<crate::node::Node>(v) {
+        return Some(n.target.key);
+    }
+    s.unwrap::<crate::target::EventTarget>(v).map(|t| t.key)
+}
+
+/// `initEvent`-style reinitialization of the shared event state.
+fn init_event_state(e: &EventData, ty: &str, bubbles: bool, cancelable: bool) {
+    let mut st = e.state.borrow_mut();
+    st.ty = lp_dom::LocalName::from(ty);
+    st.bubbles = bubbles;
+    st.cancelable = cancelable;
+    st.initialized = true;
+    st.stop_propagation = false;
+    st.stop_immediate = false;
+    st.canceled = false;
+    st.is_trusted = false;
+    st.target = None;
+}
+
+/// Legacy `TextEvent` (`document.createEvent("TextEvent")`): no constructor.
+pub struct TextEvent;
+impl JsClass for TextEvent {
+    const NAME: &'static str = "TextEvent";
+    type Data = EventData;
+    type Parent = UiEvent;
+    fn define(def: &mut ClassDef<Self>) {
+        def.getter("data", |s, e| Ok(s.string(e.fields.borrow().data.as_deref().unwrap_or(""))));
+        def.method("initTextEvent", 1, |s, e, a| {
+            let ty = arg_string(&a, 0, "TextEvent.initTextEvent")?;
+            if e.state.borrow().dispatching {
+                return Ok(s.undefined());
+            }
+            init_event_state(e, &ty, a.get(1).to_bool(), a.get(2).to_bool());
+            let view = view_value(s, a.get(3))?;
+            let data = if a.get(4).is_undefined() { "undefined".to_owned() } else { dom_string(a.get(4))? };
+            let mut f = e.fields.borrow_mut();
+            f.view = view;
+            f.data = Some(data);
+            drop(f);
+            e.refresh_wrappers();
+            Ok(s.undefined())
+        });
+    }
+}
+
+pub struct BeforeUnloadEvent;
+impl JsClass for BeforeUnloadEvent {
+    const NAME: &'static str = "BeforeUnloadEvent";
+    type Data = EventData;
+    type Parent = Event;
+    fn define(def: &mut ClassDef<Self>) {
+        def.accessor(
+            "returnValue",
+            |s, e| Ok(s.string(e.fields.borrow().data.as_deref().unwrap_or(""))),
+            |_s, e, v| {
+                e.fields.borrow_mut().data = Some(dom_string(v)?);
+                Ok(())
+            },
+        );
+    }
+}
+
+pub struct DeviceMotionEvent;
+impl JsClass for DeviceMotionEvent {
+    const NAME: &'static str = "DeviceMotionEvent";
+    type Data = EventData;
+    type Parent = Event;
+    fn define(def: &mut ClassDef<Self>) {
+        def.constructor(1, |s, nt, a| {
+            construct::<DeviceMotionEvent>(s, nt, a, EventInterface::DeviceMotionEvent, fill_none)
+        });
+        def.getter("acceleration", |s, _e| Ok(s.null()));
+        def.getter("accelerationIncludingGravity", |s, _e| Ok(s.null()));
+        def.getter("rotationRate", |s, _e| Ok(s.null()));
+        def.getter("interval", |s, _e| Ok(s.number(0.0)));
+    }
+}
+
+pub struct DeviceOrientationEvent;
+impl JsClass for DeviceOrientationEvent {
+    const NAME: &'static str = "DeviceOrientationEvent";
+    type Data = EventData;
+    type Parent = Event;
+    fn define(def: &mut ClassDef<Self>) {
+        def.constructor(1, |s, nt, a| {
+            construct::<DeviceOrientationEvent>(s, nt, a, EventInterface::DeviceOrientationEvent, fill_none)
+        });
+        def.getter("alpha", |s, _e| Ok(s.null()));
+        def.getter("beta", |s, _e| Ok(s.null()));
+        def.getter("gamma", |s, _e| Ok(s.null()));
+        def.getter("absolute", |s, _e| Ok(s.boolean(false)));
     }
 }
 
@@ -710,8 +1120,32 @@ fn modifier_state(f: &EventFields, key: &str) -> bool {
         "Shift" => f.shift_key,
         "Alt" => f.alt_key,
         "Meta" => f.meta_key,
-        _ => false,
+        _ => EXTRA_MODIFIERS
+            .iter()
+            .position(|(_, k)| *k == key)
+            .is_some_and(|bit| f.extra_modifiers & (1 << bit) != 0),
     }
+}
+
+/// CSSOM View `offsetX`/`offsetY`: the event's position relative to the
+/// padding edge of its target (the retargeted one a listener sees), or its
+/// page position while it has no rendered target element.
+fn mouse_offset(e: &EventData) -> (f64, f64) {
+    let (x, y) = {
+        let f = e.fields.borrow();
+        (f.client_x, f.client_y)
+    };
+    let target = e.state.borrow().target;
+    let layout = e.page.layout();
+    let dom = e.page.dom.borrow();
+    let Some(el) = target.and_then(|key| dom.key_node(key)).filter(|&node| dom.element(node).is_ok()) else {
+        return (x, y);
+    };
+    if !layout.is_visible(&dom, el) {
+        return (x, y);
+    }
+    let rect = layout.bounding_client_rect(&dom, el);
+    (x - rect.left() - layout.client_left(&dom, el), y - rect.top() - layout.client_top(&dom, el))
 }
 
 pub struct MouseEvent;
@@ -730,8 +1164,8 @@ impl JsClass for MouseEvent {
         // No scrolling offset model beyond the viewport origin: page == client.
         def.getter("pageX", |s, e| Ok(s.number(e.fields.borrow().client_x)));
         def.getter("pageY", |s, e| Ok(s.number(e.fields.borrow().client_y)));
-        def.getter("offsetX", |s, _e| Ok(s.number(0.0)));
-        def.getter("offsetY", |s, _e| Ok(s.number(0.0)));
+        def.getter("offsetX", |s, e| Ok(s.number(mouse_offset(e).0)));
+        def.getter("offsetY", |s, e| Ok(s.number(mouse_offset(e).1)));
         def.getter("movementX", |s, _e| Ok(s.number(0.0)));
         def.getter("movementY", |s, _e| Ok(s.number(0.0)));
         def.getter("ctrlKey", |s, e| Ok(s.boolean(e.fields.borrow().ctrl_key)));
@@ -748,6 +1182,29 @@ impl JsClass for MouseEvent {
             let k = dom_string(a.get(0))?;
             Ok(s.boolean(modifier_state(&e.fields.borrow(), &k)))
         });
+        // https://w3c.github.io/uievents/#idl-mouseevent-initializers
+        def.method("initMouseEvent", 1, |s, e, a| {
+            let ty = arg_string(&a, 0, "MouseEvent.initMouseEvent")?;
+            if e.state.borrow().dispatching {
+                return Ok(s.undefined());
+            }
+            init_ui_event(s, e, &ty, &a)?;
+            let related = init_target(s, a.get(14));
+            let mut f = e.fields.borrow_mut();
+            f.screen_x = init_num(&a, 5)?;
+            f.screen_y = init_num(&a, 6)?;
+            f.client_x = init_num(&a, 7)?;
+            f.client_y = init_num(&a, 8)?;
+            f.ctrl_key = a.get(9).to_bool();
+            f.alt_key = a.get(10).to_bool();
+            f.shift_key = a.get(11).to_bool();
+            f.meta_key = a.get(12).to_bool();
+            f.button = init_num(&a, 13)? as i16;
+            f.related_target = related;
+            drop(f);
+            e.refresh_wrappers();
+            Ok(s.undefined())
+        });
     }
 }
 
@@ -762,14 +1219,25 @@ impl JsClass for PointerEvent {
         def.getter("width", |s, e| Ok(s.number(e.fields.borrow().width)));
         def.getter("height", |s, e| Ok(s.number(e.fields.borrow().height)));
         def.getter("pressure", |s, e| Ok(s.number(e.fields.borrow().pressure)));
-        def.getter("tangentialPressure", |s, _e| Ok(s.number(0.0)));
-        def.getter("tiltX", |s, _e| Ok(s.number(0.0)));
-        def.getter("tiltY", |s, _e| Ok(s.number(0.0)));
-        def.getter("twist", |s, _e| Ok(s.number(0.0)));
+        def.getter("tangentialPressure", |s, e| Ok(s.number(e.fields.borrow().tangential_pressure)));
+        def.getter("tiltX", |s, e| Ok(s.number(e.fields.borrow().tilt_x)));
+        def.getter("tiltY", |s, e| Ok(s.number(e.fields.borrow().tilt_y)));
+        def.getter("twist", |s, e| Ok(s.number(e.fields.borrow().twist)));
+        def.getter("altitudeAngle", |s, e| {
+            Ok(s.number(e.fields.borrow().altitude_angle.unwrap_or(std::f64::consts::FRAC_PI_2)))
+        });
+        def.getter("azimuthAngle", |s, e| Ok(s.number(e.fields.borrow().azimuth_angle)));
+        def.getter("persistentDeviceId", |s, e| Ok(s.number(e.fields.borrow().persistent_device_id)));
         def.getter("pointerType", |s, e| Ok(s.string(&e.fields.borrow().pointer_type)));
         def.getter("isPrimary", |s, e| Ok(s.boolean(e.fields.borrow().is_primary)));
-        def.method("getCoalescedEvents", 0, |s, _e, _a| Ok(s.array(&[])?.value()));
-        def.method("getPredictedEvents", 0, |s, _e, _a| Ok(s.array(&[])?.value()));
+        def.method("getCoalescedEvents", 0, |s, e, _a| {
+            let events: Vec<Value<'_>> = e.fields.borrow().coalesced_events.iter().map(|p| p.get(s)).collect();
+            Ok(s.array(&events)?.value())
+        });
+        def.method("getPredictedEvents", 0, |s, e, _a| {
+            let events: Vec<Value<'_>> = e.fields.borrow().predicted_events.iter().map(|p| p.get(s)).collect();
+            Ok(s.array(&events)?.value())
+        });
     }
 }
 
@@ -857,6 +1325,28 @@ impl JsClass for KeyboardEvent {
         def.method("getModifierState", 1, |s, e, a| {
             let k = dom_string(a.get(0))?;
             Ok(s.boolean(modifier_state(&e.fields.borrow(), &k)))
+        });
+        // https://w3c.github.io/uievents/#idl-keyboardevent-initializers
+        def.method("initKeyboardEvent", 1, |s, e, a| {
+            let ty = arg_string(&a, 0, "KeyboardEvent.initKeyboardEvent")?;
+            if e.state.borrow().dispatching {
+                return Ok(s.undefined());
+            }
+            init_event_state(e, &ty, a.get(1).to_bool(), a.get(2).to_bool());
+            let view = view_value(s, a.get(3))?;
+            let key = if a.get(4).is_undefined() { String::new() } else { dom_string(a.get(4))? };
+            let mut f = e.fields.borrow_mut();
+            f.view = view;
+            f.detail = 0.0;
+            f.key = key;
+            f.location = init_num(&a, 5)? as u32;
+            f.ctrl_key = a.get(6).to_bool();
+            f.alt_key = a.get(7).to_bool();
+            f.shift_key = a.get(8).to_bool();
+            f.meta_key = a.get(9).to_bool();
+            drop(f);
+            e.refresh_wrappers();
+            Ok(s.undefined())
         });
     }
 }
@@ -1007,6 +1497,33 @@ impl JsClass for StorageEvent {
         def.getter("oldValue", |s, e| Ok(nullable_string(s, &e.fields.borrow().storage_old)));
         def.getter("newValue", |s, e| Ok(nullable_string(s, &e.fields.borrow().storage_new)));
         def.getter("url", |s, e| Ok(s.string(&e.fields.borrow().storage_url)));
+        def.method("initStorageEvent", 1, |s, e, a| {
+            let ty = arg_string(&a, 0, "StorageEvent.initStorageEvent")?;
+            if e.state.borrow().dispatching {
+                return Ok(s.undefined());
+            }
+            init_event_state(e, &ty, a.get(1).to_bool(), a.get(2).to_bool());
+            let nullable = |v: lp_js::Value<'_>| -> JsResult<Option<String>> {
+                if v.is_undefined() || v.is_null() { Ok(None) } else { Ok(Some(dom_string(v)?)) }
+            };
+            let area = a.get(7);
+            let area = if area.is_undefined() || area.is_null() {
+                None
+            } else if s.unwrap::<crate::storage::Storage>(area).is_some() {
+                Some(StorageAreaRef::Object(Persistent::new(s, area)))
+            } else {
+                return Err(JsError::Type("parameter 8 is not of type 'Storage'.".into()));
+            };
+            let mut f = e.fields.borrow_mut();
+            f.storage_key = nullable(a.get(3))?;
+            f.storage_old = nullable(a.get(4))?;
+            f.storage_new = nullable(a.get(5))?;
+            f.storage_url = if a.get(6).is_undefined() { String::new() } else { dom_string(a.get(6))? };
+            f.storage_area = area;
+            drop(f);
+            e.refresh_wrappers();
+            Ok(s.undefined())
+        });
         def.getter("storageArea", |s, e| {
             let session = match &e.fields.borrow().storage_area {
                 None => return Ok(s.null()),
@@ -1061,6 +1578,40 @@ impl JsClass for PageTransitionEvent {
     }
 }
 
+/// CSS Animations `AnimationEvent` (`animationstart`, `animationiteration`,
+/// `animationend`, `animationcancel`).
+pub struct AnimationEvent;
+impl JsClass for AnimationEvent {
+    const NAME: &'static str = "AnimationEvent";
+    type Data = EventData;
+    type Parent = Event;
+    fn define(def: &mut ClassDef<Self>) {
+        def.constructor(1, |s, nt, a| {
+            construct::<AnimationEvent>(s, nt, a, EventInterface::AnimationEvent, fill_animation)
+        });
+        def.getter("animationName", |s, e| Ok(s.string(&e.fields.borrow().animation_name)));
+        def.getter("elapsedTime", |s, e| Ok(s.number(e.fields.borrow().elapsed_time)));
+        def.getter("pseudoElement", |s, e| Ok(s.string(&e.fields.borrow().pseudo_element)));
+    }
+}
+
+/// CSS Transitions `TransitionEvent` (`transitionrun`, `transitionstart`,
+/// `transitionend`, `transitioncancel`).
+pub struct TransitionEvent;
+impl JsClass for TransitionEvent {
+    const NAME: &'static str = "TransitionEvent";
+    type Data = EventData;
+    type Parent = Event;
+    fn define(def: &mut ClassDef<Self>) {
+        def.constructor(1, |s, nt, a| {
+            construct::<TransitionEvent>(s, nt, a, EventInterface::TransitionEvent, fill_transition)
+        });
+        def.getter("propertyName", |s, e| Ok(s.string(&e.fields.borrow().property_name)));
+        def.getter("elapsedTime", |s, e| Ok(s.number(e.fields.borrow().elapsed_time)));
+        def.getter("pseudoElement", |s, e| Ok(s.string(&e.fields.borrow().pseudo_element)));
+    }
+}
+
 pub struct MessageEvent;
 impl JsClass for MessageEvent {
     const NAME: &'static str = "MessageEvent";
@@ -1102,6 +1653,10 @@ pub(crate) fn register(engine: &lp_js::Engine) {
     engine.register::<KeyboardEvent>();
     engine.register::<InputEvent>();
     engine.register::<CompositionEvent>();
+    engine.register::<TextEvent>();
+    engine.register::<BeforeUnloadEvent>();
+    engine.register::<DeviceMotionEvent>();
+    engine.register::<DeviceOrientationEvent>();
     engine.register::<ProgressEvent>();
     engine.register::<ErrorEvent>();
     engine.register::<PromiseRejectionEvent>();
@@ -1114,6 +1669,8 @@ pub(crate) fn register(engine: &lp_js::Engine) {
     engine.register::<MediaQueryListEvent>();
     engine.register::<Touch>();
     engine.register::<TouchEvent>();
+    engine.register::<AnimationEvent>();
+    engine.register::<TransitionEvent>();
 }
 
 /// A `Touch` wrapper's state.

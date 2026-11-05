@@ -228,13 +228,69 @@ pub(crate) fn forbidden_header(name: &str) -> bool {
     ) || name.starts_with("proxy-")
         || name.starts_with("sec-")
 }
+/// Fetch "forbidden request-header": a forbidden name, or a method override
+/// header whose value names a forbidden method (CONNECT, TRACE, TRACK).
+pub(crate) fn forbidden_request_header(name: &str, value: &str) -> bool {
+    if forbidden_header(name) {
+        return true;
+    }
+    if !matches!(name, "x-http-method-override" | "x-http-method" | "x-method-override") {
+        return false;
+    }
+    // "Get, decode, and split": commas inside a quoted string do not split.
+    let mut quoted = false;
+    let mut start = 0;
+    let mut parts = Vec::new();
+    for (i, ch) in value.char_indices() {
+        match ch {
+            '"' => quoted = !quoted,
+            ',' if !quoted => {
+                parts.push(&value[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    parts.push(&value[start..]);
+    parts.iter().any(|part| {
+        let method = part.trim_matches(|c| c == ' ' || c == '\t');
+        ["CONNECT", "TRACE", "TRACK"].iter().any(|m| method.eq_ignore_ascii_case(m))
+    })
+}
+/// Gives a `blob:` request the object its URL names, from this document's
+/// blob URL store (the network client cannot see it); a URL the store does
+/// not hold, which includes every other document's, stays unresolved and the
+/// client fails it like a revoked one.
+pub(crate) fn attach_blob(page: &PageDom, request: &mut Request) {
+    if request.url.scheme() == "blob" {
+        request.blob = page.blob_url(request.url.as_str()).map(|(bytes, mime)| lp_net::BlobBody { bytes, mime });
+    }
+}
 fn parse_request<'s>(
     s: &Scope<'s>,
     page: &PageDom,
     input: Value<'s>,
     init: Value<'s>,
 ) -> JsResult<(Request, Option<Persistent>)> {
-    let input = dom_string(input)?;
+    // A Request input: its fields, overridden by `init`.
+    let request_input = s.unwrap::<crate::request::Request>(input);
+    let input = match &request_input {
+        Some(r) => r.url.clone(),
+        None => dom_string(input)?,
+    };
+    let default_string = |key: &str, default: &str| -> String {
+        match &request_input {
+            Some(r) => match key {
+                "method" => r.method.clone(),
+                "mode" => r.mode.clone(),
+                "credentials" => r.credentials.clone(),
+                "redirect" => r.redirect.clone(),
+                "cache" => r.cache.clone(),
+                _ => default.to_owned(),
+            },
+            None => default.to_owned(),
+        }
+    };
     let resolved = crate::html::resolve_url_utf8(&page.dom.borrow(), page.document(), &input);
     let mut url = lp_net::Url::parse(&resolved).map_err(|_| JsError::Type("Invalid fetch URL".into()))?;
     if !url.username().is_empty() || url.password().is_some() {
@@ -242,7 +298,7 @@ fn parse_request<'s>(
     }
     url.set_fragment(None);
     let mut request = Request::get(url, Destination::Fetch);
-    let method = string_option(s, init, "method", "GET")?;
+    let method = string_option(s, init, "method", &default_string("method", "GET"))?;
     let upper = method.to_ascii_uppercase();
     if matches!(upper.as_str(), "CONNECT" | "TRACE" | "TRACK") {
         return Err(JsError::Type("Forbidden fetch method".into()));
@@ -254,19 +310,19 @@ fn parse_request<'s>(
             method.as_bytes()
         })
         .map_err(|_| JsError::Type("Invalid fetch method".into()))?;
-    request.mode = match string_option(s, init, "mode", "cors")?.as_str() {
+    request.mode = match string_option(s, init, "mode", &default_string("mode", "cors"))?.as_str() {
         "cors" => RequestMode::Cors,
         "same-origin" => RequestMode::SameOrigin,
         "no-cors" => RequestMode::NoCors,
         _ => return Err(JsError::Type("Invalid fetch mode".into())),
     };
-    request.credentials = match string_option(s, init, "credentials", "same-origin")?.as_str() {
+    request.credentials = match string_option(s, init, "credentials", &default_string("credentials", "same-origin"))?.as_str() {
         "omit" => Credentials::Omit,
         "same-origin" => Credentials::SameOrigin,
         "include" => Credentials::Include,
         _ => return Err(JsError::Type("Invalid fetch credentials".into())),
     };
-    request.redirect = match string_option(s, init, "redirect", "follow")?.as_str() {
+    request.redirect = match string_option(s, init, "redirect", &default_string("redirect", "follow"))?.as_str() {
         "follow" => RedirectMode::Follow,
         "error" => RedirectMode::Error,
         "manual" => RedirectMode::Manual,
@@ -275,8 +331,12 @@ fn parse_request<'s>(
     if request.mode == RequestMode::NoCors && !matches!(request.method, Method::GET | Method::HEAD | Method::POST) {
         return Err(JsError::Type("Invalid no-cors method".into()));
     }
-    let headers = headers::from_init(s, option(s, init, "headers")?)?;
-    for (name, value) in headers.pairs() {
+    let headers_init = option(s, init, "headers")?;
+    let header_pairs = match (&request_input, headers_init.is_undefined()) {
+        (Some(r), true) => r.header_pairs(s),
+        _ => headers::from_init(s, headers_init)?.pairs(),
+    };
+    for (name, value) in header_pairs {
         if forbidden_header(&name) {
             continue;
         }
@@ -291,7 +351,22 @@ fn parse_request<'s>(
         request.headers.append(key, value);
     }
     let body = option(s, init, "body")?;
-    if !body.is_null() && !body.is_undefined() {
+    let input_body = match (&request_input, body.is_undefined()) {
+        (Some(r), true) => r.take_body()?.map(|bytes| (bytes, r.body.mime.borrow().clone())),
+        _ => None,
+    };
+    if let Some((bytes, mime)) = input_body {
+        if matches!(request.method, Method::GET | Method::HEAD) {
+            return Err(JsError::Type("GET/HEAD cannot have a body".into()));
+        }
+        if !mime.is_empty() && !request.headers.contains_key(header::CONTENT_TYPE) {
+            request.headers.insert(
+                header::CONTENT_TYPE,
+                HeaderValue::from_str(&mime).map_err(|_| JsError::Type("Invalid body MIME type".into()))?,
+            );
+        }
+        request.body = Some(bytes);
+    } else if !body.is_null() && !body.is_undefined() {
         if matches!(request.method, Method::GET | Method::HEAD) {
             return Err(JsError::Type("GET/HEAD cannot have a body".into()));
         }
@@ -320,7 +395,7 @@ fn parse_request<'s>(
     if option(s, init, "keepalive")?.to_bool() {
         return Err(JsError::Type("fetch keepalive is not implemented".into()));
     }
-    request.cache = match string_option(s, init, "cache", "default")?.as_str() {
+    request.cache = match string_option(s, init, "cache", &default_string("cache", "default"))?.as_str() {
         "default" => lp_net::CacheMode::Default,
         "no-store" => lp_net::CacheMode::NoStore,
         "reload" => lp_net::CacheMode::Reload,
@@ -333,6 +408,10 @@ fn parse_request<'s>(
         return Err(JsError::Type("'only-if-cached' can be set only with 'same-origin' mode".into()));
     }
     let signal = option(s, init, "signal")?;
+    let signal = match (&request_input, signal.is_undefined()) {
+        (Some(r), true) => r.signal(s).unwrap_or_else(|| s.undefined()),
+        _ => signal,
+    };
     let signal = if signal.is_null() || signal.is_undefined() {
         None
     } else {
@@ -418,6 +497,7 @@ pub(crate) fn install(s: &Scope<'_>) -> JsResult<()> {
             Err(error) => deferred.reject(s, error.to_value(s))?,
             Ok((page, mut request, signal, limits, net, poster)) => {
                 page.apply_request_defaults(&mut request);
+                attach_blob(&page, &mut request);
                 request.max_body = Some(limits.max_body_bytes);
                 let id = net.next_request_id();
                 let wire = Arc::new(Mutex::new(Wire {
@@ -653,6 +733,14 @@ impl Body {
         })
     }
 
+    /// The bytes of a script-constructed body (`Body::constructed`).
+    pub(crate) fn constructed_bytes(&self) -> Bytes {
+        let wire = self.wire.lock().expect("body wire");
+        match wire.chunks.as_slice() {
+            [one] => one.clone(),
+            chunks => Bytes::from(chunks.concat()),
+        }
+    }
     pub(crate) fn add_consumer(&self) {
         if !self.is_null() {
             self.consumers.set(self.consumers.get() + 1);
@@ -772,6 +860,17 @@ impl Body {
                 let essence = mime.split(';').next().unwrap_or("").trim();
                 if essence.eq_ignore_ascii_case("application/x-www-form-urlencoded") {
                     crate::form_data::from_urlencoded(s, &bytes)
+                } else if essence.eq_ignore_ascii_case("multipart/form-data") {
+                    let boundary = mime
+                        .split(';')
+                        .skip(1)
+                        .filter_map(|p| p.trim().split_once('='))
+                        .find(|(k, _)| k.trim().eq_ignore_ascii_case("boundary"))
+                        .map(|(_, v)| v.trim().trim_matches('"').to_owned());
+                    match boundary {
+                        Some(b) => crate::form_data::from_multipart(s, &bytes, &b),
+                        None => Err(JsError::Type("Cannot parse a 'multipart/form-data' body without a boundary".into())),
+                    }
                 } else {
                     Err(JsError::Type(format!("Cannot parse a '{essence}' body as FormData")))
                 }

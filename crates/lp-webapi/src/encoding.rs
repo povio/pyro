@@ -214,7 +214,7 @@ impl JsClass for TextDecoder {
     fn define(def: &mut ClassDef<Self>) {
         def.constructor(0, |s, nt, a| {
             let label = if a.get(0).is_undefined() { "utf-8".to_owned() } else { dom_string(a.get(0))? };
-            let encoding = encoding_rs::Encoding::for_label(label.trim().as_bytes())
+            let encoding = encoding_rs::Encoding::for_label(label.as_bytes())
                 .ok_or_else(|| JsError::Range(format!("The encoding label provided ('{label}') is invalid.")))?;
             let (fatal, ignore_bom) = match a.get(1).as_object() {
                 Some(o) => (o.get("fatal")?.to_bool(), o.get("ignoreBOM")?.to_bool()),

@@ -47,10 +47,13 @@ impl JsClass for URL {
         });
         def.static_method("createObjectURL", 1, |s, args| {
             args.require(1, "URL.createObjectURL")?;
-            let blob = s.unwrap::<crate::file::Blob>(args.get(0)).ok_or_else(|| {
-                JsError::Type("Failed to execute 'createObjectURL' on 'URL': parameter 1 is not of type 'Blob'.".into())
-            })?;
             let page = page_of(s)?;
+            if s.unwrap::<crate::media_source::MediaSource>(args.get(0)).is_some() {
+                return Ok(s.string(&crate::media_source::object_url(s, &page)?));
+            }
+            let blob = s.unwrap::<crate::file::Blob>(args.get(0)).ok_or_else(|| {
+                JsError::Type("Failed to execute 'createObjectURL' on 'URL': parameter 1 is not of type 'Blob' or 'MediaSource'.".into())
+            })?;
             let origin = crate::storage::tuple_origin(s, &page).unwrap_or_else(|| "null".into());
             let url = format!("blob:{origin}/{}", crate::crypto::random_uuid()?);
             page.blob_urls.borrow_mut().insert(url.clone(), (blob.bytes.clone(), blob.mime.clone()));

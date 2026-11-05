@@ -134,6 +134,7 @@ where
     def.getter("clientInformation", |s, w| navigator(s, w.page()));
     def.getter("ClipboardItem", |s, w| crate::navigator_extras::member(s, w.page(), "ClipboardItem"));
     crate::streams::define_globals(def);
+    crate::observable::define_globals(def);
     def.getter("screen", |s, w| {
         let key = lp_js::IdentityKey(w.page().id() | (1 << 57), 1);
         same_object(s, w.page(), key, || s.wrap::<Screen>(w.page().clone(), Some(key)))
@@ -210,6 +211,12 @@ where
         }
     });
     def.method("stop", 0, |s, _w, _a| Ok(s.undefined()));
+    // Closes a script-closable top-level browsing context (a popup); the
+    // embedder decides and closes the page later. No-op elsewhere.
+    def.method("close", 0, |s, w, _a| {
+        w.page().close_window();
+        Ok(s.undefined())
+    });
     def.method("postMessage", 1, |s, w, a| {
         // Same-window postMessage: queue a MessageEvent on the window.
         let page = w.page().clone();
@@ -589,8 +596,13 @@ pub(crate) fn register(engine: &lp_js::Engine) {
 /// `window.open(url, target, features)`. A new browsing context opens as a
 /// popup page in the same browser context (the CDP layer announces it with
 /// its opener). With `noopener`/`noreferrer` it returns null, as browsers do;
-/// otherwise it returns the minimal [`crate::popup::PopupWindow`], since there
-/// is no cross-page WindowProxy. `_self`/`_top`/`_parent` navigate this page.
+/// otherwise it returns this realm's [`crate::popup::PopupWindow`] for the
+/// popup (see that module for what it reaches). A named popup this document
+/// opened earlier and still open is reused: the same object comes back and
+/// the popup navigates to `url` unless it is empty (HTML "navigable target
+/// name" lookup, limited to this document's own popups). The popup's session
+/// storage is copied from this document's now. `_self`/`_top`/`_parent`
+/// navigate this page.
 fn window_open<'s>(s: &Scope<'s>, page: &Rc<PageDom>, a: &lp_js::Args<'s>) -> JsResult<Value<'s>> {
     let url = crate::util::opt_dom_string(a.get(0))?.unwrap_or_default();
     let target = crate::util::opt_dom_string(a.get(1))?.filter(|t| !t.is_empty()).unwrap_or_else(|| "_blank".into());
@@ -599,6 +611,7 @@ fn window_open<'s>(s: &Scope<'s>, page: &Rc<PageDom>, a: &lp_js::Args<'s>) -> Js
         .split(|c: char| c == ',' || c.is_ascii_whitespace())
         .filter_map(|f| f.split('=').next())
         .any(|f| f == "noopener" || f == "noreferrer");
+    let url_given = !url.is_empty();
     let url = if url.is_empty() {
         "about:blank".to_owned()
     } else {
@@ -612,17 +625,30 @@ fn window_open<'s>(s: &Scope<'s>, page: &Rc<PageDom>, a: &lp_js::Args<'s>) -> Js
     if lp_net::Url::parse(&url).is_err() {
         return Err(JsError::dom("SyntaxError", format!("'{url}' is not a valid URL.")));
     }
-    let same_context = matches!(target.to_ascii_lowercase().as_str(), "_self" | "_top" | "_parent");
+    let lower = target.to_ascii_lowercase();
+    let same_context = matches!(lower.as_str(), "_self" | "_top" | "_parent");
+    let named = !same_context && lower != "_blank";
+    if named && !no_opener {
+        let existing =
+            page.popups.borrow().iter().find(|(n, p)| *n == target && !p.is_closed()).map(|(_, p)| p.clone());
+        if let Some(popup) = existing {
+            if url_given {
+                page.popup_command(popup.clone(), crate::popup::PopupCommand::Navigate(url));
+            }
+            return crate::popup::wrap_popup(s, page, &popup);
+        }
+    }
     let (ticket, popup) = if same_context || no_opener {
         (None, None)
     } else {
-        let (ticket, popup) = crate::popup::PopupTicket::new();
+        let name = if named { target.clone() } else { String::new() };
+        let (ticket, popup) = crate::popup::PopupTicket::new(name, copy_session_storage(s, page));
         (Some(ticket), Some(popup))
     };
     let opener = ticket.is_some();
     page.navigate(crate::page::NavigationRequest {
         url,
-        target: Some(target),
+        target: Some(target.clone()),
         method: "GET".into(),
         body: None,
         content_type: None,
@@ -631,9 +657,50 @@ fn window_open<'s>(s: &Scope<'s>, page: &Rc<PageDom>, a: &lp_js::Args<'s>) -> Js
     });
     match popup {
         Some(popup) => {
-            Ok(s.wrap::<crate::popup::PopupWindow>(crate::popup::PopupData::new(page, popup), None)?.value())
+            if named {
+                let mut popups = page.popups.borrow_mut();
+                popups.retain(|(n, p)| *n != target && !p.is_closed());
+                popups.push((target, popup.clone()));
+            }
+            crate::popup::wrap_popup(s, page, &popup)
         }
         None if same_context => Ok(s.global().value()),
         None => Ok(s.null()),
+    }
+}
+
+/// A new session storage namespace holding a copy of this document's
+/// session storage area (HTML copies the opener's whole session storage
+/// into a new top-level traversable). Only the document's own origin is
+/// copied: the namespace does not expose other origins' areas, and a popup
+/// starts there anyway. An opaque-origin document has no area to copy.
+fn copy_session_storage(s: &Scope<'_>, page: &Rc<PageDom>) -> crate::storage::StorageNamespace {
+    let copy = (|| -> JsResult<Option<crate::storage::StorageNamespace>> {
+        let Some(origin) = crate::storage::tuple_origin(s, page) else { return Ok(None) };
+        let storage = crate::storage::window_storage(s, page, true)?;
+        let Some(storage) = storage.as_object() else { return Ok(None) };
+        let key = storage.get("key")?.as_object().ok_or(JsError::ContextDestroyed)?;
+        let get = storage.get("getItem")?.as_object().ok_or(JsError::ContextDestroyed)?;
+        let length = storage.get("length")?.to_number()? as u32;
+        let mut entries = Vec::with_capacity(length as usize);
+        for i in 0..length {
+            let name = key.call(Some(storage), &[s.number(f64::from(i))])?;
+            if name.is_null() {
+                break;
+            }
+            let name = name.to_string()?;
+            let value = get.call(Some(storage), &[s.string(&name)])?;
+            if !value.is_null() {
+                entries.push((name, value.to_string()?));
+            }
+        }
+        let seed = crate::storage::StorageSeed::new(vec![(origin, entries)])
+            .map_err(|e| JsError::Type(format!("cannot copy session storage: {e}")))?;
+        Ok(Some(crate::storage::StorageNamespace::seeded(&seed)))
+    })();
+    match copy {
+        Ok(Some(namespace)) => namespace,
+        // SecurityError (opaque origin) or a disposed page: the popup starts empty.
+        _ => crate::storage::StorageNamespace::default(),
     }
 }

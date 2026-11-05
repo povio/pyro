@@ -899,6 +899,10 @@ canvas {
     user-select: none;
 }
 
+:focus-visible {
+    outline: auto 1px;
+}
+
 iframe:focus-visible,
 body:focus-visible,
 html:focus-visible {

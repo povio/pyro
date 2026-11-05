@@ -1,10 +1,15 @@
 //! Custom elements: `customElements.define/get/whenDefined/upgrade`,
 //! construction and upgrade of existing elements.
 //!
-//! Gap (documented): connected/disconnected/attributeChanged/adopted
-//! reactions are only run when an element is upgraded while connected
-//! (`connectedCallback`); later DOM insertions/removals/attribute changes
-//! do not enqueue reactions yet.
+//! Callback reactions: the DOM queues `connectedCallback`,
+//! `disconnectedCallback` and `connectedMoveCallback` reactions as custom
+//! elements are inserted, removed and moved (`lp_dom::custom`), and
+//! [`run_reactions`] runs them when the DOM call that queued them returns
+//! (the native callback hook, the `[CEReactions]` point). The callbacks are
+//! the ones the prototype had when the element was defined.
+//!
+//! Gap (documented): `attributeChangedCallback` and `adoptedCallback`
+//! reactions are not enqueued, and the parser does not upgrade elements.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -18,9 +23,19 @@ use crate::page::PageDom;
 use crate::target::page_of;
 use crate::util::*;
 
+/// The lifecycle callbacks of a definition, read from the prototype by
+/// `define` (HTML: "lifecycle callbacks").
+#[derive(Default)]
+struct Callbacks {
+    connected: Option<Persistent>,
+    disconnected: Option<Persistent>,
+    connected_move: Option<Persistent>,
+}
+
 #[derive(Default)]
 pub struct Registry {
     defs: FxHashMap<(RealmId, String), Persistent>,
+    callbacks: FxHashMap<(RealmId, String), Callbacks>,
     waiting: FxHashMap<(RealmId, String), Vec<lp_js::Deferred>>,
     /// Elements being upgraded (construction stack).
     stack: Vec<NodeId>,
@@ -101,6 +116,153 @@ fn upgrade<'s>(s: &Scope<'s>, page: &Rc<PageDom>, el: NodeId, ctor: Value<'s>) -
     Ok(())
 }
 
+thread_local! {
+    /// Pages whose reaction queue is being run (a callback's own DOM calls
+    /// add to the queue the running loop empties).
+    static RUNNING: RefCell<Vec<u64>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Runs the custom element callback reactions the DOM queued for `page`'s
+/// document, in order, until none is left. Called when a native DOM call
+/// returns to script and after each task; a held DOM borrow defers them to
+/// the next such point.
+pub(crate) fn run_reactions(page: &Rc<PageDom>) {
+    if page.is_disposed() {
+        return;
+    }
+    let pending = page.dom.try_borrow().is_ok_and(|dom| dom.has_custom_reactions_for(page.document()));
+    if !pending || RUNNING.with(|r| r.borrow().contains(&page.id())) {
+        return;
+    }
+    RUNNING.with(|r| r.borrow_mut().push(page.id()));
+    struct Done(u64);
+    impl Drop for Done {
+        fn drop(&mut self) {
+            RUNNING.with(|r| r.borrow_mut().retain(|&id| id != self.0));
+        }
+    }
+    let _done = Done(page.id());
+    loop {
+        let batch = {
+            let Ok(mut dom) = page.dom.try_borrow_mut() else { return };
+            dom.take_custom_reactions(page.document())
+        };
+        if batch.is_empty() {
+            return;
+        }
+        for (el, reaction) in batch {
+            if page.is_disposed() {
+                return;
+            }
+            run_reaction(page, el, reaction);
+        }
+    }
+}
+
+/// Calls the callback of one reaction on `el` with no arguments. A move
+/// without `connectedMoveCallback` calls `disconnectedCallback` and then
+/// `connectedCallback` (HTML "enqueue a custom element callback reaction").
+fn run_reaction(page: &Rc<PageDom>, el: NodeId, reaction: lp_dom::custom::CustomReaction) {
+    use lp_dom::custom::CustomReaction;
+    let Some(name) = page.dom.borrow().element(el).ok().map(|e| e.local_name().to_string()) else { return };
+    // The definition of the element's name, in the realm that defined it.
+    let realms: Vec<RealmId> =
+        with_registry(page, |r| r.callbacks.keys().filter(|(_, n)| *n == name).map(|(realm, _)| *realm).collect());
+    for realm_id in realms {
+        let realm = page.realms.borrow().get(&realm_id).and_then(|r| r.upgrade());
+        let Some(realm) = realm.filter(|r| !r.is_disposed()) else { continue };
+        let Ok(s) = realm.scope() else { continue };
+        let callbacks: Vec<Value<'_>> = with_registry(page, |r| {
+            let Some(c) = r.callbacks.get(&(realm_id, name.clone())) else { return Vec::new() };
+            let pick = |p: &Option<Persistent>| p.as_ref().map(|p| p.get(&s));
+            match reaction {
+                CustomReaction::Connected => pick(&c.connected).into_iter().collect(),
+                CustomReaction::Disconnected => pick(&c.disconnected).into_iter().collect(),
+                CustomReaction::Moved => match pick(&c.connected_move) {
+                    Some(moved) => vec![moved],
+                    None => pick(&c.disconnected).into_iter().chain(pick(&c.connected)).collect(),
+                },
+            }
+        });
+        if callbacks.is_empty() {
+            return;
+        }
+        let Ok(obj) = wrap_node(&s, page, el) else { return };
+        for callback in callbacks {
+            let Some(f) = callback.as_object() else { continue };
+            if let Err(e) = f.call(Some(obj), &[]) {
+                s.report_exception(&e);
+            }
+        }
+        return;
+    }
+}
+
+/// HTML "try to upgrade an element" for the elements that became connected
+/// while not custom (`lp_dom::upgrade`): each is upgraded with the definition
+/// its node document's window has for its name, whichever realm inserted it.
+/// Called where the callback reactions run: when a native DOM call returns
+/// to script and after each task.
+pub(crate) fn run_upgrades(page: &Rc<PageDom>) {
+    if page.is_disposed() {
+        return;
+    }
+    loop {
+        let batch = {
+            let Ok(mut dom) = page.dom.try_borrow_mut() else { return };
+            dom.take_upgrade_candidates()
+        };
+        if batch.is_empty() {
+            return;
+        }
+        for el in batch {
+            try_upgrade(page, el);
+        }
+    }
+}
+
+fn try_upgrade(page: &Rc<PageDom>, el: NodeId) {
+    let (name, doc) = {
+        let dom = page.dom.borrow();
+        if !dom.awaits_upgrade(el) {
+            return;
+        }
+        let (Ok(element), Ok(doc)) = (dom.element(el), dom.node_document(el)) else { return };
+        (element.local_name().to_string(), doc)
+    };
+    // "Look up a custom element definition": the registry is the one of the
+    // node document's window (the page's own world before an isolated one).
+    let Some(owner) = document_page(page, doc) else { return };
+    let main = owner.main_world_realm().map(|r| r.id());
+    let realm_id = with_registry(&owner, |r| {
+        let mut realms: Vec<RealmId> = r.defs.keys().filter(|(_, n)| *n == name).map(|(realm, _)| *realm).collect();
+        realms.sort_by_key(|id| Some(*id) != main);
+        realms.first().copied()
+    });
+    let Some(realm_id) = realm_id else { return };
+    let realm = owner.realms.borrow().get(&realm_id).and_then(|r| r.upgrade());
+    let Some(realm) = realm.filter(|r| !r.is_disposed()) else { return };
+    let Ok(s) = realm.scope() else { return };
+    let Some(ctor) = with_registry(&owner, |r| r.defs.get(&(realm_id, name)).map(|p| p.get(&s))) else { return };
+    if let Err(e) = upgrade(&s, &owner, el, ctor) {
+        s.report_exception(&e);
+    }
+}
+
+/// The bindings of the window that displays `doc`: `page`'s own, or those of
+/// another document of its frame tree.
+fn document_page(page: &Rc<PageDom>, doc: NodeId) -> Option<Rc<PageDom>> {
+    if page.document() == doc {
+        return Some(page.clone());
+    }
+    let realm = page.main_world_realm()?;
+    let scope = realm.scope().ok()?;
+    page.sibling_realms(&scope).iter().find_map(|sibling| {
+        let s = sibling.scope().ok()?;
+        page_of(&s).ok().filter(|p| p.document() == doc && !p.is_disposed())
+    })
+}
+
 /// `document.createElement` result: constructs defined custom elements.
 pub(crate) fn create_element_value<'s>(s: &Scope<'s>, page: &Rc<PageDom>, el: NodeId) -> JsResult<Value<'s>> {
     let name = page.dom.borrow().element(el).js()?.local_name().to_string();
@@ -132,6 +294,26 @@ impl JsClass for CustomElementRegistry {
             if exists {
                 return Err(JsError::dom("NotSupportedError", format!("Failed to execute 'define' on 'CustomElementRegistry': the name \"{name}\" has already been used with this registry")));
             }
+            // The lifecycle callbacks are those of the prototype at definition.
+            let proto = ctor.as_object().expect("constructor").get("prototype")?;
+            let Some(proto) = proto.as_object() else {
+                return Err(JsError::Type("Failed to execute 'define' on 'CustomElementRegistry': constructor prototype is not an object".into()));
+            };
+            let lifecycle = |name: &str| -> JsResult<Option<Persistent>> {
+                let value = proto.get(name)?;
+                if value.is_undefined() {
+                    return Ok(None);
+                }
+                if !value.as_object().is_some_and(|f| f.is_function()) {
+                    return Err(JsError::Type(format!("Failed to execute 'define' on 'CustomElementRegistry': {name} is not a function")));
+                }
+                Ok(Some(Persistent::new(s, value)))
+            };
+            let callbacks = Callbacks {
+                connected: lifecycle("connectedCallback")?,
+                disconnected: lifecycle("disconnectedCallback")?,
+                connected_move: lifecycle("connectedMoveCallback")?,
+            };
             let disabled = ctor.as_object().expect("constructor").get("disabledFeatures")?;
             if let Some(list) = disabled.as_object() {
                 let len = list.get("length")?.to_number()? as u32;
@@ -141,7 +323,12 @@ impl JsClass for CustomElementRegistry {
                     }
                 }
             }
-            with_registry(page, |r| r.defs.insert(key.clone(), Persistent::new(s, ctor)));
+            with_registry(page, |r| {
+                r.callbacks.insert(key.clone(), callbacks);
+                r.defs.insert(key.clone(), Persistent::new(s, ctor))
+            });
+            // From now on an element of this name is upgraded when it connects.
+            page.dom.borrow_mut().enable_custom_upgrades();
             // Upgrade existing elements of the document, in tree order.
             let existing: Vec<NodeId> = {
                 let dom = page.dom.borrow();

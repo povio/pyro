@@ -115,6 +115,27 @@ impl Attr {
     }
 }
 
+/// An `Attr` node: an attribute seen as a node (`getAttributeNode`,
+/// `createAttribute`). While `owner` is set the element's attribute list holds
+/// the value; `value` is the value of a detached one.
+#[derive(Debug, Clone)]
+pub struct AttrNodeData {
+    pub name: QualName,
+    pub(crate) value: String,
+    /// Element this attribute belongs to; NIL while detached.
+    pub(crate) owner: u32,
+}
+
+impl AttrNodeData {
+    /// Qualified name (`Attr.name`).
+    pub fn qualified_name(&self) -> String {
+        match &self.name.prefix {
+            Some(p) if !p.is_empty() => format!("{}:{}", p, self.name.local),
+            _ => self.name.local.to_string(),
+        }
+    }
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum ShadowRootMode {
     Open,
@@ -155,12 +176,19 @@ pub struct ControlState {
     pub selection: (u32, u32),
     /// Selection explicitly set (otherwise caret sits at the end of value).
     pub selection_set: bool,
+    /// Selection direction script gave (`true`: backward), with the
+    /// selection it was given for: any other selection has direction "none".
+    pub(crate) selection_direction: Option<(bool, (u32, u32))>,
     /// Value changed by user editing (enables tooLong/tooShort).
     pub user_edited: bool,
     /// `setCustomValidity` message.
     pub custom_validity: Option<String>,
     /// `<option>` selectedness when explicitly set.
     pub selected: Option<bool>,
+    /// `<select>`: script deselected every option (`selectedIndex = -1`) of
+    /// this list of options, so none is selected by default until an option
+    /// is inserted, removed or selected.
+    pub(crate) no_selection: Option<Box<[u32]>>,
 }
 
 #[derive(Debug)]
@@ -219,6 +247,8 @@ pub enum NodeKind {
     CData(String),
     Comment(String),
     ProcessingInstruction(Box<PiData>),
+    /// An attribute as a node; never linked into a tree.
+    Attr(Box<AttrNodeData>),
 }
 
 impl NodeKind {
@@ -232,6 +262,7 @@ impl NodeKind {
             NodeKind::CData(_) => NodeType::CDataSection,
             NodeKind::Comment(_) => NodeType::Comment,
             NodeKind::ProcessingInstruction(_) => NodeType::ProcessingInstruction,
+            NodeKind::Attr(_) => NodeType::Attribute,
         }
     }
     /// `CharacterData.data` for text-like nodes.

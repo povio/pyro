@@ -21,11 +21,34 @@ use std::rc::{Rc, Weak};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use lp_js::{ClassDef, IdentityKey, JsClass, JsError, JsResult, NoParent, Scope, Value};
+use lp_js::{ClassDef, IdentityKey, JsClass, JsError, JsResult, JsString, NoParent, Scope, Value};
 use rustc_hash::FxHashMap;
 
 use crate::page::PageDom;
-use crate::util::{arg_string, dom_string, to_u32};
+use crate::util::to_u32;
+
+/// A key or value as JavaScript holds it: UTF-16 code units, lone surrogates
+/// included (`storage.setItem("\uD800", ..)` round-trips exactly, as the
+/// WPT storage_setitem tests require); a Rust `String` would replace them with
+/// U+FFFD.
+type Wtf16 = Vec<u16>;
+
+fn wtf16(s: &str) -> Wtf16 {
+    s.encode_utf16().collect()
+}
+
+fn lossy(units: &[u16]) -> String {
+    String::from_utf16_lossy(units)
+}
+
+/// ToString of a JS value kept as UTF-16 (may run user `toString`).
+fn dom_wtf16(v: Value<'_>) -> JsResult<Wtf16> {
+    Ok(v.to_js_string()?.utf16().to_vec())
+}
+
+fn js_wtf16<'s>(s: &Scope<'s>, units: &[u16]) -> Value<'s> {
+    s.js_string(&JsString::from_utf16(units))
+}
 
 static NEXT_AREA: AtomicU64 = AtomicU64::new(1);
 /// Chromium's per-origin quota: 10 MiB of keys and values counted as UTF-16
@@ -35,7 +58,7 @@ const DEFAULT_QUOTA: usize = 10 * 1024 * 1024;
 
 struct Area {
     id: u64,
-    entries: Vec<(String, String)>,
+    entries: Vec<(Wtf16, Wtf16)>,
     bytes: usize,
     quota: usize,
     /// Set when an opaque-origin document's area is discarded: contents are
@@ -44,11 +67,11 @@ struct Area {
 }
 
 impl Area {
-    fn get(&self, key: &str) -> Option<&str> {
-        self.entries.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str())
+    fn get(&self, key: &[u16]) -> Option<&[u16]> {
+        self.entries.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_slice())
     }
 
-    fn set(&mut self, key: String, value: String) -> JsResult<()> {
+    fn set(&mut self, key: Wtf16, value: Wtf16) -> JsResult<()> {
         if self.retired {
             return Err(JsError::dom(
                 "InvalidStateError",
@@ -69,7 +92,7 @@ impl Area {
         Ok(())
     }
 
-    fn remove(&mut self, key: &str) {
+    fn remove(&mut self, key: &[u16]) {
         if let Some(i) = self.entries.iter().position(|(k, _)| k == key) {
             let (key, value) = self.entries.remove(i);
             self.bytes -= entry_bytes(&key, &value);
@@ -77,8 +100,8 @@ impl Area {
     }
 }
 
-fn entry_bytes(key: &str, value: &str) -> usize {
-    (key.encode_utf16().count() + value.encode_utf16().count()).saturating_mul(2)
+fn entry_bytes(key: &[u16], value: &[u16]) -> usize {
+    (key.len() + value.len()).saturating_mul(2)
 }
 
 /// Entries every new local-storage namespace starts with (the `serve
@@ -187,23 +210,25 @@ impl StorageNamespace {
             let area = self.area(origin.clone());
             let mut area = area.borrow_mut();
             for (key, value) in entries {
-                match area.entries.iter().position(|(k, _)| k == key) {
+                let (key, value) = (wtf16(key), wtf16(value));
+                match area.entries.iter().position(|(k, _)| *k == key) {
                     Some(i) => {
-                        area.bytes = area.bytes.saturating_sub(entry_bytes(key, &area.entries[i].1));
+                        area.bytes = area.bytes.saturating_sub(entry_bytes(&key, &area.entries[i].1));
                         area.entries[i].1 = value.clone();
                     }
                     None => area.entries.push((key.clone(), value.clone())),
                 }
-                area.bytes = area.bytes.saturating_add(entry_bytes(key, value));
+                area.bytes = area.bytes.saturating_add(entry_bytes(&key, &value));
             }
         }
     }
 
-    /// The value stored for `key` under `origin` (storage key form), if any.
-    /// Does not create an area for an unknown origin.
+    /// The value stored for `key` under `origin` (storage key form), if any;
+    /// lone surrogates read as U+FFFD. Does not create an area for an unknown
+    /// origin.
     pub fn get(&self, origin: &str, key: &str) -> Option<String> {
         let area = self.0.origins.borrow().get(origin)?.clone();
-        let value = area.borrow().get(key).map(str::to_owned);
+        let value = area.borrow().get(&wtf16(key)).map(lossy);
         value
     }
 
@@ -251,10 +276,11 @@ struct Source {
 }
 
 impl StorageData {
-    /// Queues `storage` events for a change: `key` None for clear().
-    fn changed(&self, key: Option<&str>, old: Option<String>, new: Option<String>) {
+    /// Queues `storage` events for a change: `key` None for clear(). Event
+    /// fields are Rust strings, so lone surrogates reach listeners as U+FFFD.
+    fn changed(&self, key: Option<&[u16]>, old: Option<&[u16]>, new: Option<&[u16]>) {
         if let Some(source) = &self.1 {
-            broadcast(source, key.map(str::to_owned), old, new);
+            broadcast(source, key.map(lossy), old.map(lossy), new.map(lossy));
         }
     }
 }
@@ -307,9 +333,14 @@ fn broadcast(source: &Source, key: Option<String>, old: Option<String>, new: Opt
     }
 }
 
-/// The tuple origin of a page's current document, if any.
+/// The tuple origin of a page's current document, if any. An explicitly
+/// inherited realm origin (about:blank/srcdoc frames, popups) wins over the
+/// document URL, as in `tuple_origin`.
 pub(crate) fn document_origin(page: &PageDom) -> Option<String> {
-    let url = page.dom.borrow().document_data(page.document()).ok().map(|d| d.url.to_string())?;
+    let url = match page.main_world_realm().and_then(|r| r.origin()) {
+        Some(origin) => origin,
+        None => page.dom.borrow().document_data(page.document()).ok().map(|d| d.url.to_string())?,
+    };
     url::Url::parse(&url)
         .ok()
         .map(|url| url.origin())
@@ -329,22 +360,24 @@ impl JsClass for Storage {
         def.method("key", 1, |s, data, args| {
             args.require(1, "Storage.key")?;
             let index = to_u32(args.get(0))? as usize;
-            Ok(data.0.borrow().entries.get(index).map_or(s.null(), |(key, _)| s.string(key)))
+            Ok(data.0.borrow().entries.get(index).map_or(s.null(), |(key, _)| js_wtf16(s, key)))
         });
         def.method("getItem", 1, |s, data, args| {
-            let key = arg_string(&args, 0, "Storage.getItem")?;
-            Ok(data.0.borrow().get(&key).map_or(s.null(), |v| s.string(v)))
+            args.require(1, "Storage.getItem")?;
+            let key = dom_wtf16(args.get(0))?;
+            Ok(data.0.borrow().get(&key).map_or(s.null(), |v| js_wtf16(s, v)))
         });
         def.method("setItem", 2, |s, data, args| {
             args.require(2, "Storage.setItem")?;
             // Coerce before borrowing; user toString may access the same storage.
-            let key = dom_string(args.get(0))?;
-            let value = dom_string(args.get(1))?;
+            let key = dom_wtf16(args.get(0))?;
+            let value = dom_wtf16(args.get(1))?;
             set_item(data, key, value)?;
             Ok(s.undefined())
         });
         def.method("removeItem", 1, |s, data, args| {
-            let key = arg_string(&args, 0, "Storage.removeItem")?;
+            args.require(1, "Storage.removeItem")?;
+            let key = dom_wtf16(args.get(0))?;
             remove_item(data, &key);
             Ok(s.undefined())
         });
@@ -361,38 +394,39 @@ impl JsClass for Storage {
             }
             Ok(s.undefined())
         });
-        def.named(false, |s, data, name| Ok(data.0.borrow().get(name).map(|v| s.string(v))));
-        def.named_setter(|_s, data, name, value| {
-            let value = dom_string(value)?;
-            set_item(data, name.to_owned(), value)?;
+        def.named_utf16(false, |s, data, name| Ok(data.0.borrow().get(name).map(|v| js_wtf16(s, v))));
+        def.named_setter_utf16(|_s, data, name, value| {
+            let value = dom_wtf16(value)?;
+            set_item(data, name.to_vec(), value)?;
             Ok(true)
         });
-        def.named_deleter(|_s, data, name| {
-            remove_item(data, name);
-            Ok(true)
-        });
-        def.property_names(|_s, data| Ok(data.0.borrow().entries.iter().map(|(k, _)| k.clone()).collect()));
+        def.named_setter_for_all_names();
+        // Only a stored key is a supported property name: anything else (a
+        // symbol-keyed expando, which reaches the hooks under the symbol's
+        // description) is left to the ordinary [[Delete]].
+        def.named_deleter_utf16(|_s, data, name| Ok(remove_item(data, name)));
+        def.property_names_utf16(|_s, data| Ok(data.0.borrow().entries.iter().map(|(k, _)| k.clone()).collect()));
     }
 }
 
 /// `setItem`: no event when the value is unchanged.
-fn set_item(data: &StorageData, key: String, value: String) -> JsResult<()> {
-    let old = data.0.borrow().get(&key).map(str::to_owned);
-    if old.as_deref() == Some(value.as_str()) {
+fn set_item(data: &StorageData, key: Wtf16, value: Wtf16) -> JsResult<()> {
+    let old = data.0.borrow().get(&key).map(<[u16]>::to_vec);
+    if old.as_deref() == Some(value.as_slice()) {
         return Ok(());
     }
     data.0.borrow_mut().set(key.clone(), value.clone())?;
-    data.changed(Some(&key), old, Some(value));
+    data.changed(Some(&key), old.as_deref(), Some(&value));
     Ok(())
 }
 
-/// `removeItem`: no event when the key is absent.
-fn remove_item(data: &StorageData, key: &str) {
-    let old = data.0.borrow().get(key).map(str::to_owned);
-    if old.is_some() {
-        data.0.borrow_mut().remove(key);
-        data.changed(Some(key), old, None);
-    }
+/// `removeItem`: no event when the key is absent. Returns whether it was present.
+fn remove_item(data: &StorageData, key: &[u16]) -> bool {
+    let old = data.0.borrow().get(key).map(<[u16]>::to_vec);
+    let Some(old) = old else { return false };
+    data.0.borrow_mut().remove(key);
+    data.changed(Some(key), Some(&old), None);
+    true
 }
 
 /// The realm's tuple origin, or `None` when it is opaque. An explicitly

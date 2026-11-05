@@ -13,6 +13,9 @@ pub struct HeaderList {
     values: BTreeMap<String, Vec<String>>,
     sorted: Option<Entries>,
     immutable: bool,
+    /// Fetch's "request" (`Some(false)`) or "request-no-cors" (`Some(true)`)
+    /// guard: forbidden request headers are silently not set.
+    request_guard: Option<bool>,
 }
 impl HeaderList {
     fn append(&mut self, name: String, value: String) {
@@ -49,6 +52,28 @@ impl HeadersData {
         }
         list.immutable = immutable;
         Self(Rc::new(RefCell::new(list)))
+    }
+    /// The headers of a Request: its guard is "request", or
+    /// "request-no-cors" for a `no-cors` request.
+    pub(crate) fn guard_request(self, no_cors: bool) -> Self {
+        self.0.borrow_mut().request_guard = Some(no_cors);
+        self
+    }
+    /// Whether the guard lets script write `name: value` (`value` is the
+    /// value the header would have, `None` for a removal).
+    fn guard_allows(&self, name: &str, value: Option<&str>) -> bool {
+        let list = self.0.borrow();
+        let Some(no_cors) = list.request_guard else { return true };
+        if crate::fetch::forbidden_request_header(name, value.unwrap_or("")) {
+            return false;
+        }
+        if !no_cors {
+            return true;
+        }
+        match value {
+            Some(value) => cors_safelisted(name, value),
+            None => matches!(name, "accept" | "accept-language" | "content-language" | "content-type"),
+        }
     }
     pub(crate) fn pairs(&self) -> Vec<(String, String)> {
         self.0.borrow().values.iter().map(|(n, values)| (n.clone(), values.join(", "))).collect()
@@ -111,7 +136,14 @@ impl JsClass for Headers {
             let name = validate_name(name)?;
             let value = validate_value(value)?;
             data.check_mutable()?;
-            data.0.borrow_mut().append(name, value);
+            // A no-cors guard judges the combined value.
+            let combined = match data.0.borrow().values.get(&name) {
+                Some(existing) if !existing.is_empty() => format!("{}, {value}", existing.join(", ")),
+                _ => value.clone(),
+            };
+            if data.guard_allows(&name, Some(&combined)) {
+                data.0.borrow_mut().append(name, value);
+            }
             Ok(s.undefined())
         });
         def.method("set", 2, |s, data, args| {
@@ -121,6 +153,9 @@ impl JsClass for Headers {
             let name = validate_name(name)?;
             let value = validate_value(value)?;
             data.check_mutable()?;
+            if !data.guard_allows(&name, Some(&value)) {
+                return Ok(s.undefined());
+            }
             let mut list = data.0.borrow_mut();
             list.values.insert(name, vec![value]);
             list.sorted = None;
@@ -130,6 +165,9 @@ impl JsClass for Headers {
             args.require(1, "Headers.delete")?;
             let name = header_name(args.get(0))?;
             data.check_mutable()?;
+            if !data.guard_allows(&name, None) {
+                return Ok(s.undefined());
+            }
             let mut list = data.0.borrow_mut();
             list.values.remove(&name);
             list.sorted = None;
@@ -231,6 +269,11 @@ fn helper<'s>(s: &Scope<'s>, name: &str) -> JsResult<Value<'s>> {
         .cloned()
         .ok_or_else(|| JsError::Type("Headers bindings are not installed".into()))?;
     helpers.get(s).as_object().unwrap().get(name)
+}
+
+/// Whether (`name`, `value`) is a CORS-safelisted request header.
+pub(crate) fn cors_safelisted(name: &str, value: &str) -> bool {
+    lp_net::http::HeaderValue::from_str(value).is_ok_and(|v| lp_net::cors::is_safelisted_header(name, &v))
 }
 
 pub(crate) fn install(s: &Scope<'_>) -> JsResult<()> {

@@ -1358,7 +1358,12 @@ await check('popup event from window.open and a target=_blank link', async () =>
     await popup.waitForLoadState();
     assert.equal(await popup.title(), 'Opened');
     assert.equal(await popup.opener(), p);
-    assert.deepEqual(await p.evaluate(() => [typeof w.close, w.closed, typeof w.document]), ['function', false, 'undefined']);
+    // The popup's data: document has an opaque origin: reading its document
+    // from the opener is a cross-origin access.
+    assert.deepEqual(
+      await p.evaluate(() => { let doc; try { doc = typeof w.document; } catch (e) { doc = e.name; } return [typeof w.close, w.closed, doc]; }),
+      ['function', false, 'SecurityError'],
+    );
     const closed = popup.waitForEvent('close');
     await p.evaluate(() => w.close());
     await closed;

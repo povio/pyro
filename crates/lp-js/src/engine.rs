@@ -952,3 +952,37 @@ unsafe extern "C" fn wrapper_property_added(ctx: sys::JSContextRef, object: sys:
         })
     }
 }
+
+/// Announces names that wrappers of a class made with
+/// `ClassDef::named_properties_are_announced` may now answer (a document gained
+/// an element named `name`): JavaScriptCore drops the inline caches and
+/// compiled code that assumed no such property. Cheap when nothing watches the
+/// name; safe to call with the DOM borrowed (it runs no JavaScript).
+#[derive(Clone)]
+pub struct ImpureNames(std::rc::Weak<EngineInner>);
+
+impl ImpureNames {
+    pub fn announce(&self, name: &str) {
+        let Some(engine) = self.0.upgrade() else { return };
+        if engine.is_shut_down() {
+            return;
+        }
+        if let Some(add) = sys::spi::get().add_impure_property {
+            let name = crate::JsString::new(name);
+            // SAFETY: the engine's root context is alive while the engine is.
+            unsafe { add(engine.root_ctx(), name.as_raw()) };
+        }
+    }
+}
+
+impl Engine {
+    pub fn impure_names(&self) -> ImpureNames {
+        ImpureNames(Rc::downgrade(&self.inner))
+    }
+}
+
+impl<'s> crate::Scope<'s> {
+    pub fn impure_names(&self) -> ImpureNames {
+        ImpureNames(Rc::downgrade(self.engine_inner()))
+    }
+}

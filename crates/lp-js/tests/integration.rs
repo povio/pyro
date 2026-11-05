@@ -6,9 +6,13 @@ mod callback_hook;
 mod callback_lock;
 mod class_lengths;
 mod lazy_interfaces;
+mod legacy_platform_object;
+mod redefined_accessor;
+mod named_hooks;
 mod nested_realm;
 mod object_inspection;
 mod runtime;
+mod webidl_bindings;
 
 /// `autotests = false` means a file in tests/ that is neither a module here nor
 /// its own `[[test]]` target would silently never run.

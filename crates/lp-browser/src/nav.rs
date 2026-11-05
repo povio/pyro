@@ -16,7 +16,7 @@ use crate::{
 };
 use lp_dom::parse::DomRef;
 use lp_dom::NodeId;
-use lp_js::{ClassDef, JsClass, JsError, JsResult, NoParent, Scope, Value};
+use lp_js::{ClassDef, JsClass, JsError, JsResult, NoParent, Persistent, Scope, Value};
 use lp_runtime::{Scheduler, TaskSource};
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -79,6 +79,9 @@ pub struct PageNav {
     /// Current document in the page's DOM (keeps `document.URL` in sync).
     document: RefCell<Option<(DomRef, NodeId)>>,
     time_origin: Cell<Instant>,
+    /// When the current document first had a rendering opportunity
+    /// (`now_ms`): its Paint Timing entries.
+    first_paint: Cell<Option<f64>>,
 }
 
 impl PageNav {
@@ -106,6 +109,7 @@ impl PageNav {
             }),
             document: RefCell::new(None),
             time_origin: Cell::new(crate::clock::now()),
+            first_paint: Cell::new(None),
         })
     }
 
@@ -187,6 +191,7 @@ impl PageNav {
         drop(st);
         *self.document.borrow_mut() = document;
         self.time_origin.set(crate::clock::now());
+        self.first_paint.set(None);
     }
 
     pub(crate) fn set_document(&self, document: Option<(DomRef, NodeId)>) {
@@ -316,6 +321,22 @@ impl PageNav {
         });
     }
 
+    /// HTML "navigate to a fragment", for a navigation the document requested
+    /// (a followed hyperlink, a submitted GET form): when `url` is the
+    /// document's URL but for a fragment it has, the URL changes at once, in
+    /// place when it is the same URL, and `hashchange` is queued. Returns
+    /// false for any other URL, which is a navigation to load.
+    pub(crate) fn navigate_to_fragment(&self, url: &str) -> bool {
+        let (Ok(current), Ok(target)) = (Url::parse(&self.url()), Url::parse(url)) else { return false };
+        if target.fragment().is_none() || !same_document_except_fragment(&current, &target) {
+            return false;
+        }
+        let kind = if current == target { SameDocumentKind::Replace } else { SameDocumentKind::Fragment };
+        self.same_document(target.as_str(), None, kind);
+        self.queue_hashchange(current.as_str(), target.as_str());
+        true
+    }
+
     /// Queues `hashchange` at the window when a same-document navigation
     /// changed only the fragment.
     fn queue_hashchange(&self, old_url: &str, new_url: &str) {
@@ -366,9 +387,24 @@ impl PageNav {
         Ok(value)
     }
 
-    /// Milliseconds since the current document's time origin.
+    /// Milliseconds since the current document's time origin, in steps of
+    /// 100 microseconds: the resolution of `performance.now()`, animation
+    /// frame times and `Event.timeStamp` in a document that is not
+    /// cross-origin isolated (as in Chrome).
     pub fn now_ms(&self) -> f64 {
-        crate::clock::now().saturating_duration_since(self.time_origin.get()).as_secs_f64() * 1000.0
+        let ms = crate::clock::now().saturating_duration_since(self.time_origin.get()).as_secs_f64() * 1000.0;
+        (ms * 10.0).floor() / 10.0
+    }
+
+    /// Time of the current document's first paint, once it had one.
+    pub(crate) fn first_paint(&self) -> Option<f64> {
+        self.first_paint.get()
+    }
+    /// Records the first paint (now) unless one was recorded.
+    pub(crate) fn note_first_paint(&self) {
+        if self.first_paint.get().is_none() {
+            self.first_paint.set(Some(self.now_ms()));
+        }
     }
 }
 
@@ -634,14 +670,304 @@ pub struct PerformanceData {
     nav: Rc<PageNav>,
     /// Wall-clock time of the time origin (ms since the Unix epoch).
     origin_wall_ms: f64,
+    /// `Performance` is an EventTarget (`resourcetimingbufferfull`).
+    target: lp_webapi::EventTargetData,
+    /// User Timing: the marks and measures of the performance entry buffer,
+    /// in the order they were added.
+    user_entries: RefCell<Vec<UserEntry>>,
+}
+
+/// A `PerformanceMark` or `PerformanceMeasure` in the entry buffer.
+struct UserEntry {
+    name: String,
+    mark: bool,
+    start: f64,
+    object: Persistent,
 }
 
 impl PerformanceData {
-    pub(crate) fn new(nav: Rc<PageNav>) -> PerformanceData {
+    pub(crate) fn new(nav: Rc<PageNav>, page: &Rc<lp_webapi::PageDom>) -> PerformanceData {
         let now_wall = crate::clock::wall_ms();
         let origin_wall_ms = now_wall - nav.now_ms();
-        PerformanceData { nav, origin_wall_ms }
+        PerformanceData {
+            nav,
+            origin_wall_ms,
+            target: lp_webapi::EventTargetData::new(page),
+            user_entries: RefCell::new(Vec::new()),
+        }
     }
+    /// The identity its wrapper is made with (event dispatch looks it up).
+    pub(crate) fn wrapper_identity(&self) -> Option<lp_js::IdentityKey> {
+        self.target.wrapper_identity()
+    }
+    pub(crate) fn event_target(&self) -> &lp_webapi::EventTargetData {
+        &self.target
+    }
+}
+
+/// The timeline entries matching the filters, sorted by start time: the
+/// User Timing marks and measures, and `first-paint` /
+/// `first-contentful-paint` once the document had its first rendering
+/// opportunity (`Browser::note_first_paint`). Nothing is rasterized, so both
+/// paint entries carry the time of that opportunity.
+fn timeline_entries<'s>(
+    s: &Scope<'s>,
+    p: &PerformanceData,
+    name: Option<&str>,
+    entry_type: Option<&str>,
+) -> JsResult<Value<'s>> {
+    let mut entries: Vec<(f64, Value<'s>)> = Vec::new();
+    if let Some(start) = p.nav.first_paint().filter(|_| entry_type.is_none_or(|t| t == "paint")) {
+        for entry_name in ["first-paint", "first-contentful-paint"] {
+            if name.is_none_or(|n| n == entry_name) {
+                let data = PerformanceEntryData::new(entry_name, "paint", start, 0.0);
+                entries.push((start, s.wrap::<PerformancePaintTiming>(data, None)?.value()));
+            }
+        }
+    }
+    for entry in p.user_entries.borrow().iter() {
+        let ty = if entry.mark { "mark" } else { "measure" };
+        if name.is_none_or(|n| n == entry.name) && entry_type.is_none_or(|t| t == ty) {
+            entries.push((entry.start, entry.object.get(s)));
+        }
+    }
+    // Stable: entries with equal start times keep the order they were added.
+    entries.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+    let values: Vec<Value<'s>> = entries.into_iter().map(|(_, v)| v).collect();
+    Ok(s.array(&values)?.value())
+}
+
+pub struct PerformanceEntryData {
+    name: String,
+    entry_type: &'static str,
+    start: f64,
+    duration: f64,
+    /// `detail` of a mark or measure (a structured clone), null when absent.
+    detail: Option<Persistent>,
+}
+
+impl PerformanceEntryData {
+    fn new(name: &str, entry_type: &'static str, start: f64, duration: f64) -> PerformanceEntryData {
+        PerformanceEntryData { name: name.to_owned(), entry_type, start, duration, detail: None }
+    }
+}
+
+fn entry_json<'s>(s: &Scope<'s>, e: &PerformanceEntryData, detail: bool) -> JsResult<Value<'s>> {
+    let o = s.object();
+    o.set("name", s.string(&e.name))?;
+    o.set("entryType", s.string(e.entry_type))?;
+    o.set("startTime", s.number(e.start))?;
+    o.set("duration", s.number(e.duration))?;
+    if detail {
+        o.set("detail", e.detail.as_ref().map_or(s.null(), |d| d.get(s)))?;
+    }
+    Ok(o.value())
+}
+
+pub struct PerformanceEntry;
+
+impl JsClass for PerformanceEntry {
+    const NAME: &'static str = "PerformanceEntry";
+    type Data = PerformanceEntryData;
+    type Parent = NoParent;
+
+    fn define(def: &mut ClassDef<Self>) {
+        def.getter("name", |s, e| Ok(s.string(&e.name)));
+        def.getter("entryType", |s, e| Ok(s.string(e.entry_type)));
+        def.getter("startTime", |s, e| Ok(s.number(e.start)));
+        def.getter("duration", |s, e| Ok(s.number(e.duration)));
+        def.method("toJSON", 0, |s, e, _a| entry_json(s, e, false));
+    }
+}
+
+/// Paint Timing: `first-paint` / `first-contentful-paint`.
+pub struct PerformancePaintTiming;
+
+impl JsClass for PerformancePaintTiming {
+    const NAME: &'static str = "PerformancePaintTiming";
+    type Data = PerformanceEntryData;
+    type Parent = PerformanceEntry;
+
+    fn define(_def: &mut ClassDef<Self>) {}
+}
+
+/// Navigation Timing's `PerformanceTiming` attribute names: not usable as
+/// mark names in a Window (User Timing).
+const TIMING_ATTRIBUTES: &[&str] = &[
+    "navigationStart",
+    "unloadEventStart",
+    "unloadEventEnd",
+    "redirectStart",
+    "redirectEnd",
+    "fetchStart",
+    "domainLookupStart",
+    "domainLookupEnd",
+    "connectStart",
+    "connectEnd",
+    "secureConnectionStart",
+    "requestStart",
+    "responseStart",
+    "responseEnd",
+    "domLoading",
+    "domInteractive",
+    "domContentLoadedEventStart",
+    "domContentLoadedEventEnd",
+    "domComplete",
+    "loadEventStart",
+    "loadEventEnd",
+];
+
+/// A member of an options dictionary, `None` when absent or undefined.
+fn member<'s>(options: Option<lp_js::Object<'s>>, name: &str) -> JsResult<Option<Value<'s>>> {
+    match options {
+        Some(o) => Ok(Some(o.get(name)?).filter(|v| !v.is_undefined())),
+        None => Ok(None),
+    }
+}
+
+/// The structured clone of a `detail` member (null when absent).
+fn clone_detail<'s>(s: &Scope<'s>, detail: Option<Value<'s>>) -> JsResult<Option<Persistent>> {
+    let Some(detail) = detail.filter(|v| !v.is_null()) else { return Ok(None) };
+    let clone = s.global().get("structuredClone")?;
+    let clone = clone.as_object().ok_or_else(|| JsError::Type("structuredClone is unavailable".into()))?;
+    Ok(Some(Persistent::new(s, clone.call(None, &[detail])?)))
+}
+
+/// User Timing "create a PerformanceMark": `now` is the current time.
+fn mark_data<'s>(s: &Scope<'s>, name: &str, options: Value<'s>, now: f64) -> JsResult<PerformanceEntryData> {
+    if TIMING_ATTRIBUTES.contains(&name) {
+        return Err(JsError::dom(
+            "SyntaxError",
+            format!("'{name}' is part of the PerformanceTiming interface, and cannot be used as a mark name."),
+        ));
+    }
+    if !options.is_nullish() && options.as_object().is_none() {
+        return Err(JsError::Type("The mark options are not an object.".into()));
+    }
+    let options = options.as_object();
+    let start = match member(options, "startTime")? {
+        Some(v) => {
+            let t = v.to_number()?;
+            if !t.is_finite() {
+                return Err(JsError::Type("startTime is not a finite number.".into()));
+            }
+            if t < 0.0 {
+                return Err(JsError::Type(format!("'{name}' cannot have a negative start time.")));
+            }
+            t
+        }
+        None => now,
+    };
+    let detail = clone_detail(s, member(options, "detail")?)?;
+    Ok(PerformanceEntryData { name: name.to_owned(), entry_type: "mark", start, duration: 0.0, detail })
+}
+
+pub struct PerformanceMark;
+
+impl JsClass for PerformanceMark {
+    const NAME: &'static str = "PerformanceMark";
+    type Data = PerformanceEntryData;
+    type Parent = PerformanceEntry;
+
+    fn define(def: &mut ClassDef<Self>) {
+        def.constructor(1, |s, nt, a| {
+            a.require(1, "PerformanceMark")?;
+            let name = a.get(0).to_string()?;
+            let now = s.global_data::<crate::window::Window>().map_or(0.0, |w| w.now_ms());
+            s.wrap_new::<PerformanceMark>(mark_data(s, &name, a.get(1), now)?, nt, None)
+        });
+        def.getter("detail", |s, e| Ok(e.detail.as_ref().map_or(s.null(), |d| d.get(s))));
+        def.method("toJSON", 0, |s, e, _a| entry_json(s, e, true));
+    }
+}
+
+pub struct PerformanceMeasure;
+
+impl JsClass for PerformanceMeasure {
+    const NAME: &'static str = "PerformanceMeasure";
+    type Data = PerformanceEntryData;
+    type Parent = PerformanceEntry;
+
+    fn define(def: &mut ClassDef<Self>) {
+        def.getter("detail", |s, e| Ok(e.detail.as_ref().map_or(s.null(), |d| d.get(s))));
+        def.method("toJSON", 0, |s, e, _a| entry_json(s, e, true));
+    }
+}
+
+/// User Timing "convert a mark to a timestamp".
+fn mark_timestamp(p: &PerformanceData, mark: Value<'_>) -> JsResult<f64> {
+    if mark.is_number() {
+        let t = mark.to_number()?;
+        if t < 0.0 {
+            return Err(JsError::Type("A measure cannot start or end at a negative time.".into()));
+        }
+        return Ok(t);
+    }
+    let name = mark.to_string()?;
+    if name == "navigationStart" {
+        return Ok(0.0);
+    }
+    let found = p.user_entries.borrow().iter().rev().find(|e| e.mark && e.name == name).map(|e| e.start);
+    found.ok_or_else(|| JsError::dom("SyntaxError", format!("The mark '{name}' does not exist.")))
+}
+
+/// `performance.measure(name, startOrOptions, endMark)`.
+fn measure<'s>(s: &Scope<'s>, p: &PerformanceData, a: &lp_js::Args<'s>) -> JsResult<Value<'s>> {
+    a.require(1, "Performance.measure")?;
+    let name = a.get(0).to_string()?;
+    let end_mark = a.opt(2).filter(|v| !v.is_undefined());
+    // A dictionary only when it is an object (a string or number is a mark).
+    let options = a.get(1).as_object();
+    let (start, end, duration) = (member(options, "start")?, member(options, "end")?, member(options, "duration")?);
+    let detail = member(options, "detail")?;
+    let is_options = start.is_some() || end.is_some() || duration.is_some() || detail.is_some();
+    if is_options {
+        if end_mark.is_some() {
+            return Err(JsError::Type("If a non-empty measure options object is given, endMark must not be.".into()));
+        }
+        if start.is_none() && end.is_none() {
+            return Err(JsError::Type("The measure options need at least one of start and end.".into()));
+        }
+        if start.is_some() && end.is_some() && duration.is_some() {
+            return Err(JsError::Type("The measure options cannot have all of start, duration and end.".into()));
+        }
+    }
+    let duration = duration.map(|d| d.to_number()).transpose()?;
+    let end_time = match (end_mark, end, start, duration) {
+        (Some(mark), ..) => mark_timestamp(p, mark)?,
+        (None, Some(end), ..) => mark_timestamp(p, end)?,
+        (None, None, Some(start), Some(duration)) => mark_timestamp(p, start)? + duration,
+        _ => p.nav.now_ms(),
+    };
+    let start_time = match (start, duration, end) {
+        (Some(start), ..) => mark_timestamp(p, start)?,
+        (None, Some(duration), Some(end)) => mark_timestamp(p, end)? - duration,
+        _ if !is_options && !a.get(1).is_nullish() => mark_timestamp(p, a.get(1))?,
+        _ => 0.0,
+    };
+    let data = PerformanceEntryData {
+        name: name.clone(),
+        entry_type: "measure",
+        start: start_time,
+        duration: end_time - start_time,
+        detail: clone_detail(s, detail)?,
+    };
+    let object = s.wrap::<PerformanceMeasure>(data, None)?.value();
+    p.user_entries.borrow_mut().push(UserEntry { name, mark: false, start: start_time, object: Persistent::new(s, object) });
+    Ok(object)
+}
+
+/// `clearMarks(name)` / `clearMeasures(name)`.
+fn clear_entries(p: &PerformanceData, marks: bool, name: Option<String>) {
+    let removed: Vec<UserEntry> = {
+        let mut entries = p.user_entries.borrow_mut();
+        let (gone, kept) = std::mem::take(&mut *entries)
+            .into_iter()
+            .partition(|e| e.mark == marks && name.as_ref().is_none_or(|n| *n == e.name));
+        *entries = kept;
+        gone
+    };
+    drop(removed);
 }
 
 pub struct Performance;
@@ -649,19 +975,44 @@ pub struct Performance;
 impl JsClass for Performance {
     const NAME: &'static str = "Performance";
     type Data = PerformanceData;
-    type Parent = NoParent;
+    type Parent = lp_webapi::EventTarget;
 
     fn define(def: &mut ClassDef<Self>) {
+        def.upcast(|p: &PerformanceData| &p.target);
         def.method("now", 0, |s, p, _a| Ok(s.number(p.nav.now_ms())));
         def.getter("timeOrigin", |s, p| Ok(s.number(p.origin_wall_ms)));
-        // User Timing is not implemented: entries are not recorded.
-        def.method("mark", 1, |s, _p, _a| Ok(s.undefined()));
-        def.method("measure", 1, |s, _p, _a| Ok(s.undefined()));
-        def.method("clearMarks", 0, |s, _p, _a| Ok(s.undefined()));
-        def.method("clearMeasures", 0, |s, _p, _a| Ok(s.undefined()));
-        def.method("getEntries", 0, |s, _p, _a| Ok(s.array(&[])?.value()));
-        def.method("getEntriesByName", 1, |s, _p, _a| Ok(s.array(&[])?.value()));
-        def.method("getEntriesByType", 1, |s, _p, _a| Ok(s.array(&[])?.value()));
+        def.method("mark", 1, |s, p, a| {
+            a.require(1, "Performance.mark")?;
+            let name = a.get(0).to_string()?;
+            let data = mark_data(s, &name, a.get(1), p.nav.now_ms())?;
+            let start = data.start;
+            let object = s.wrap::<PerformanceMark>(data, None)?.value();
+            p.user_entries.borrow_mut().push(UserEntry { name, mark: true, start, object: Persistent::new(s, object) });
+            Ok(object)
+        });
+        def.method("measure", 1, |s, p, a| measure(s, p, &a));
+        def.method("clearMarks", 0, |s, p, a| {
+            let name = a.opt(0).filter(|v| !v.is_undefined()).map(|v| v.to_string()).transpose()?;
+            clear_entries(p, true, name);
+            Ok(s.undefined())
+        });
+        def.method("clearMeasures", 0, |s, p, a| {
+            let name = a.opt(0).filter(|v| !v.is_undefined()).map(|v| v.to_string()).transpose()?;
+            clear_entries(p, false, name);
+            Ok(s.undefined())
+        });
+        def.method("getEntries", 0, |s, p, _a| timeline_entries(s, p, None, None));
+        def.method("getEntriesByName", 1, |s, p, a| {
+            a.require(1, "Performance.getEntriesByName")?;
+            let name = a.get(0).to_string()?;
+            let ty = a.opt(1).filter(|v| !v.is_undefined()).map(|v| v.to_string()).transpose()?;
+            timeline_entries(s, p, Some(&name), ty.as_deref())
+        });
+        def.method("getEntriesByType", 1, |s, p, a| {
+            a.require(1, "Performance.getEntriesByType")?;
+            let ty = a.get(0).to_string()?;
+            timeline_entries(s, p, None, Some(&ty))
+        });
         def.method("toJSON", 0, |s, p, _a| {
             let o = s.object();
             o.set("timeOrigin", s.number(p.origin_wall_ms))?;

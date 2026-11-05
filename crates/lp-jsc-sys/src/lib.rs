@@ -72,6 +72,10 @@ pub const kJSPropertyAttributeDontDelete: JSPropertyAttributes = 1 << 3;
 pub type JSClassAttributes = c_uint;
 pub const kJSClassAttributeNone: JSClassAttributes = 0;
 pub const kJSClassAttributeNoAutomaticPrototype: JSClassAttributes = 1 << 1;
+/// Patched JavaScriptCore only (`webkit/patches/0015-impure-named-properties.patch`): the
+/// class's hooks answer only names announced with `JSAddImpureProperty`, so its wrappers'
+/// lookups stay cacheable. Stock JavaScriptCore ignores the bit.
+pub const kJSClassAttributeImpureNamedProperties: JSClassAttributes = 1 << 30;
 
 pub type JSRelationCondition = c_uint;
 
@@ -538,6 +542,8 @@ pub mod spi {
     pub type JSContextGroupSetTimeZoneFn = unsafe extern "C" fn(group: JSContextGroupRef, id: *const c_char) -> bool;
     pub type JSNamedPropertyFilter =
         unsafe extern "C" fn(ctx: JSContextRef, characters: *const c_void, length: usize, is_8bit: bool) -> bool;
+    /// Patched JavaScriptCore only (`webkit/patches/0015-impure-named-properties.patch`).
+    pub type JSAddImpurePropertyFn = unsafe extern "C" fn(ctx: JSContextRef, name: JSStringRef);
     /// Patched JavaScriptCore only (`webkit/patches/0004-named-properties-object.patch`).
     pub type JSGlobalContextInstallNamedPropertiesFn = unsafe extern "C" fn(
         ctx: JSGlobalContextRef,
@@ -665,6 +671,7 @@ pub mod spi {
         pub set_time_zone: Option<JSContextGroupSetTimeZoneFn>,
         pub set_wrapper_property_added: Option<JSSetWrapperPropertyAddedCallbackFn>,
         pub install_named_properties: Option<JSGlobalContextInstallNamedPropertiesFn>,
+        pub add_impure_property: Option<JSAddImpurePropertyFn>,
         pub set_custom_accessor: Option<JSObjectSetCustomAccessorFn>,
         pub set_fast_getter: Option<JSObjectSetFastGetterFn>,
         pub throw_exception: Option<JSContextThrowExceptionFn>,
@@ -734,6 +741,7 @@ pub mod spi {
             set_time_zone: resolve!("JSContextGroupSetTimeZone"),
             set_wrapper_property_added: resolve!("JSSetWrapperPropertyAddedCallback"),
             install_named_properties: resolve!("JSGlobalContextInstallNamedProperties"),
+            add_impure_property: resolve!("JSAddImpureProperty"),
             set_custom_accessor: resolve!("JSObjectSetCustomAccessor"),
             set_fast_getter: resolve!("JSObjectSetFastGetter"),
             throw_exception: resolve!("JSContextThrowException"),

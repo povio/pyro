@@ -9,9 +9,12 @@
 //! entry stores only its slot number in that array. Slots are never reused; removed
 //! entries leave an `undefined` tombstone so a dropped File becomes collectable.
 //! Blob values become Files named "blob" (or the given filename), as in browsers.
-//! Iteration (`entries/keys/values/@@iterator/forEach`) snapshots the entry
-//! list when the iterator is created (live mutation during iteration is not
-//! reflected — documented deviation).
+//! Iteration (`entries/keys/values/@@iterator/forEach`) is live, as WebIDL's
+//! iterable declarations require: each `next()` reads the entry at the
+//! iterator's index at call time, so deleting during iteration skips, deleting
+//! already-visited entries shifts the remainder, and appended entries are
+//! reached. The iterator keeps its FormData alive through a hidden property
+//! (`__lpFormDataTarget`) and resolves it again on every `next()`.
 //!
 //! No `RefCell` borrow of the entry list is ever held across a call that can reach
 //! JS, and the hidden array has a null prototype, so script-defined indexed
@@ -28,6 +31,15 @@ use crate::util::*;
 
 /// The File objects of a FormData, a hidden property of its wrapper.
 const FILES: &str = "__lpFormDataFiles";
+/// The FormData an iterator walks, a hidden property of the iterator wrapper
+/// (so the GC keeps the FormData, and its files array, alive with it).
+const TARGET: &str = "__lpFormDataTarget";
+
+/// `Date.now()`-style timestamp for a File created now: `lastModified` is an
+/// integer number of milliseconds (WebIDL `long long`).
+fn now_integer_ms() -> f64 {
+    crate::encoding::now_ms().floor()
+}
 
 #[derive(Clone)]
 enum Entry {
@@ -129,7 +141,12 @@ impl FormDataData {
 fn entry_value(s: &Scope<'_>, d: &FormDataData, value: Value<'_>, filename: Option<Value<'_>>) -> JsResult<Entry> {
     let blob = s.unwrap::<Blob>(value).map(|b| (b.bytes.clone(), b.mime.clone(), b.file.clone()));
     match blob {
-        None => Ok(Entry::Text(dom_string(value)?)),
+        None => {
+            if filename.is_some_and(|f| !f.is_undefined()) {
+                return Err(JsError::Type("parameter 2 is not of type 'Blob'.".into()));
+            }
+            Ok(Entry::Text(dom_string(value)?))
+        }
         Some((bytes, mime, file)) => {
             let filename = match filename.filter(|f| !f.is_undefined()) {
                 Some(f) => Some(dom_string(f)?),
@@ -140,7 +157,7 @@ fn entry_value(s: &Scope<'_>, d: &FormDataData, value: Value<'_>, filename: Opti
                 return Ok(Entry::File(d.store(&d.files(s)?, value)?));
             }
             let name = filename.unwrap_or_else(|| file.as_ref().map_or("blob".to_owned(), |f| f.0.clone()));
-            let lm = file.as_ref().map_or_else(crate::encoding::now_ms, |f| f.1);
+            let lm = file.as_ref().map_or_else(now_integer_ms, |f| f.1);
             let files = d.files(s)?;
             let f = s.wrap::<File>(BlobData { bytes, mime, file: Some((name, lm)) }, None)?;
             Ok(Entry::File(d.store(&files, f.value())?))
@@ -165,24 +182,112 @@ fn name_arg(a: &Args<'_>, what: &str) -> JsResult<String> {
     arg_string(a, 0, what)
 }
 
-fn snapshot<'s>(s: &Scope<'s>, d: &FormDataData, kind: u8) -> JsResult<Value<'s>> {
-    let entries = d.copy_entries();
-    let mut files = None;
-    let mut items = lp_js::RootedVec::new();
-    for (name, e) in &entries {
-        let v = match kind {
-            0 => {
-                let value = read_entry(s, d, &mut files, e)?;
-                s.array(&[s.string(name), value])?.value()
-            }
-            1 => s.string(name),
-            _ => read_entry(s, d, &mut files, e)?,
-        };
-        items.push(s, v);
+/// HTML "submit button": `<input type=submit|image>` or a `<button>` in the
+/// Submit Button state (its `type` is neither `reset` nor `button`).
+fn is_submit_button(dom: &lp_dom::Dom, id: lp_dom::NodeId) -> bool {
+    let Ok(e) = dom.element(id) else { return false };
+    if !e.is_html() {
+        return false;
     }
-    let arr = s.array(&items.iter(s).collect::<Vec<_>>())?;
-    let values = arr.get("values")?.as_object().ok_or_else(|| JsError::Type("Array.prototype.values".into()))?;
-    values.call(Some(arr), &[])
+    match &**e.local_name() {
+        "input" => matches!(
+            dom.input_type(id),
+            Ok(lp_dom::forms::InputType::Submit | lp_dom::forms::InputType::Image)
+        ),
+        "button" => {
+            !matches!(e.attr("type").map(str::to_ascii_lowercase).as_deref(), Some("reset" | "button"))
+        }
+        _ => false,
+    }
+}
+
+#[derive(Clone, Copy)]
+enum IterKind {
+    Entries,
+    Keys,
+    Values,
+}
+
+/// A live `FormData` iterator (WebIDL "iterable declaration" default
+/// iterator object): `target` is resolved and `entries[index]` read on every
+/// `next()`.
+pub struct IteratorData {
+    target: WrapperRef,
+    index: Cell<usize>,
+    done: Cell<bool>,
+    kind: IterKind,
+}
+
+pub(crate) struct FormDataIterator;
+impl JsClass for FormDataIterator {
+    const NAME: &'static str = "FormData Iterator";
+    type Data = IteratorData;
+    type Parent = NoParent;
+    fn define(def: &mut ClassDef<Self>) {
+        // Argument 0 is the receiver, passed by the `next` shim `install` puts on
+        // the prototype (native methods do not see `this`).
+        def.method("next", 0, |s, it, a| {
+            let value = if it.done.get() {
+                s.undefined()
+            } else {
+                // The receiver's hidden TARGET property keeps the FormData alive and
+                // finds it again without going through its (possibly closed) realm.
+                let this = a.get(0).as_object().filter(|o| {
+                    s.unwrap::<FormDataIterator>(o.value()).is_some_and(|u| std::ptr::eq::<IteratorData>(&*u, it))
+                });
+                let target = match this {
+                    Some(o) => s.get_hidden(o, TARGET)?.and_then(|v| v.as_object()).ok_or(JsError::ContextDestroyed)?,
+                    None => it.target.get(s)?,
+                };
+                let d = s.unwrap::<FormData>(target.value()).ok_or(JsError::ContextDestroyed)?;
+                let entry = d.entries.borrow().get(it.index.get()).cloned();
+                match entry {
+                    Some((name, e)) => {
+                        it.index.set(it.index.get() + 1);
+                        match it.kind {
+                            IterKind::Keys => s.string(&name),
+                            IterKind::Values => read_entry(s, &d, &mut None, &e)?,
+                            IterKind::Entries => {
+                                let mut pair = lp_js::RootedVec::new();
+                                pair.push(s, s.string(&name));
+                                let value = read_entry(s, &d, &mut None, &e)?;
+                                pair.push(s, value);
+                                s.array(&pair.iter(s).collect::<Vec<_>>())?.value()
+                            }
+                        }
+                    }
+                    None => {
+                        it.done.set(true);
+                        s.undefined()
+                    }
+                }
+            };
+            let result = s.object();
+            result.set("value", value)?;
+            result.set("done", s.boolean(it.done.get()))?;
+            Ok(result.value())
+        });
+    }
+}
+
+/// A new live iterator over `d`. `this` is the receiver as passed by the
+/// `entries/keys/values` shims (`install`): it is `d`'s own wrapper, alive, and
+/// is stored on the iterator; it is resolved through the identity map only when
+/// a caller somehow reached the native without the shim.
+fn iterator<'s>(s: &Scope<'s>, d: &FormDataData, this: Value<'s>, kind: IterKind) -> JsResult<Value<'s>> {
+    let this = this
+        .as_object()
+        .filter(|o| s.unwrap::<FormData>(o.value()).is_some_and(|u| std::ptr::eq::<FormDataData>(&*u, d)));
+    let target = match this {
+        Some(o) => o,
+        None => d.wrapper.get(s)?,
+    };
+    let it = s.wrap::<FormDataIterator>(
+        IteratorData { target: d.wrapper.clone(), index: Cell::new(0), done: Cell::new(false), kind },
+        None,
+    )?;
+    s.set_hidden(it, TARGET, target.value())?;
+    Ok(it.value())
 }
 
 pub struct FormData;
@@ -217,6 +322,11 @@ impl JsClass for FormData {
                         let id = s.unwrap::<crate::node::Node>(v).map(|n| n.id).ok_or_else(|| {
                             JsError::Type("Failed to construct 'FormData': submitter is not an HTMLElement.".into())
                         })?;
+                        if !is_submit_button(&page.dom.borrow(), id) {
+                            return Err(JsError::Type(
+                                "Failed to construct 'FormData': The specified element is not a submit button.".into(),
+                            ));
+                        }
                         if page.dom.borrow().form_owner(id).ok().flatten() != Some(form_id) {
                             return Err(JsError::dom(
                                 "NotFoundError",
@@ -324,9 +434,11 @@ impl JsClass for FormData {
             let name = name_arg(&a, "FormData.has")?;
             Ok(s.boolean(d.entries.borrow().iter().any(|(n, _)| *n == name)))
         });
-        def.method("entries", 0, |s, d, _a| snapshot(s, d, 0));
-        def.method("keys", 0, |s, d, _a| snapshot(s, d, 1));
-        def.method("values", 0, |s, d, _a| snapshot(s, d, 2));
+        // Argument 0 is the receiver, passed by the shims `install` puts on the
+        // prototype (native methods do not see `this`).
+        def.method("entries", 0, |s, d, a| iterator(s, d, a.get(0), IterKind::Entries));
+        def.method("keys", 0, |s, d, a| iterator(s, d, a.get(0), IterKind::Keys));
+        def.method("values", 0, |s, d, a| iterator(s, d, a.get(0), IterKind::Values));
     }
 }
 
@@ -344,12 +456,120 @@ pub(crate) fn from_urlencoded<'s>(s: &Scope<'s>, bytes: &[u8]) -> JsResult<Value
     Ok(fd.value())
 }
 
-/// Installs `@@iterator` and `forEach` on `FormData.prototype`.
+/// `Body.formData()` for a `multipart/form-data` body: each part is a text
+/// entry, or a File when it has a `filename`.
+pub(crate) fn from_multipart<'s>(s: &Scope<'s>, bytes: &[u8], boundary: &str) -> JsResult<Value<'s>> {
+    let page = crate::target::page_of(s)?;
+    let identity = page.event_identity(page.next_event_id());
+    let data = FormDataData::new(WrapperRef::new(s, identity));
+    let files = s.array(&[])?;
+    files.set_prototype(s.null());
+    let fd = s.wrap::<FormData>(data, Some(identity))?;
+    s.set_hidden(fd, FILES, files.value())?;
+    let d = s.unwrap::<FormData>(fd.value()).expect("fresh FormData");
+    let parts = parse_multipart(bytes, boundary)
+        .ok_or_else(|| JsError::Type("Failed to parse the multipart/form-data body".into()))?;
+    for part in parts {
+        let entry = match part.filename {
+            None => Entry::Text(String::from_utf8_lossy(&part.body).into_owned()),
+            Some(filename) => {
+                let file = s.wrap::<crate::file::File>(
+                    crate::file::BlobData {
+                        bytes: Bytes::from(part.body),
+                        mime: part.mime.unwrap_or_else(|| "text/plain".into()),
+                        file: Some((filename, now_integer_ms())),
+                    },
+                    None,
+                )?;
+                Entry::File(d.store(&files, file.value())?)
+            }
+        };
+        d.entries.borrow_mut().push((part.name, entry));
+    }
+    Ok(fd.value())
+}
+
+struct MultipartPart {
+    name: String,
+    filename: Option<String>,
+    mime: Option<String>,
+    body: Vec<u8>,
+}
+
+/// Splits a multipart/form-data body at `boundary`; `None` on malformed input.
+fn parse_multipart(bytes: &[u8], boundary: &str) -> Option<Vec<MultipartPart>> {
+    let delimiter = format!("--{boundary}").into_bytes();
+    let find = |hay: &[u8], needle: &[u8], from: usize| -> Option<usize> {
+        hay[from..].windows(needle.len()).position(|w| w == needle).map(|p| p + from)
+    };
+    let mut parts = Vec::new();
+    let mut pos = find(bytes, &delimiter, 0)? + delimiter.len();
+    loop {
+        if bytes[pos..].starts_with(b"--") {
+            return Some(parts);
+        }
+        // CRLF after the delimiter, then headers up to a blank line.
+        let line_end = find(bytes, b"\r\n", pos)?;
+        pos = line_end + 2;
+        let headers_end = find(bytes, b"\r\n\r\n", pos)?;
+        let headers = String::from_utf8_lossy(&bytes[pos..headers_end]).into_owned();
+        pos = headers_end + 4;
+        let mut terminator = b"\r\n".to_vec();
+        terminator.extend_from_slice(&delimiter);
+        let body_end = find(bytes, &terminator, pos)?;
+        let body = bytes[pos..body_end].to_vec();
+        pos = body_end + terminator.len();
+        let mut name = None;
+        let mut filename = None;
+        let mut mime = None;
+        for line in headers.split("\r\n") {
+            let Some((key, value)) = line.split_once(':') else { continue };
+            let value = value.trim();
+            if key.eq_ignore_ascii_case("content-disposition") {
+                for param in value.split(';').skip(1) {
+                    let Some((k, v)) = param.trim().split_once('=') else { continue };
+                    let v = v.trim().trim_matches('"').replace("%22", "\"").replace("%0D", "\r").replace("%0A", "\n");
+                    match k.trim() {
+                        "name" => name = Some(v),
+                        "filename" => filename = Some(v),
+                        _ => {}
+                    }
+                }
+            } else if key.eq_ignore_ascii_case("content-type") {
+                mime = Some(value.to_owned());
+            }
+        }
+        parts.push(MultipartPart { name: name?, filename, mime, body });
+    }
+}
+
+/// Installs `@@iterator` and `forEach` on `FormData.prototype` and shapes the
+/// iterator prototype like a WebIDL default iterator object (inherits
+/// `%IteratorPrototype%`, `@@toStringTag` "FormData Iterator", no constructor
+/// and no global).
 pub(crate) fn install(s: &Scope<'_>) -> JsResult<()> {
     s.eval(
         r#"(() => {
-        const proto = FormData.prototype, apply = Reflect.apply, entries = proto.entries;
-        Object.defineProperty(proto, Symbol.iterator, { value: entries, writable: true, configurable: true });
+        const proto = FormData.prototype, apply = Reflect.apply, define = Object.defineProperty;
+        // Native methods do not see their receiver: each shim passes `this` as
+        // the (hidden) first argument of the native it replaces.
+        const shim = (object, name) => {
+            const native = object[name];
+            const fn = function () { return apply(native, this, [this]); };
+            define(fn, 'name', { value: name, configurable: true });
+            define(object, name, { value: fn, writable: true, enumerable: true, configurable: true });
+            return fn;
+        };
+        const entries = shim(proto, 'entries');
+        shim(proto, 'keys');
+        shim(proto, 'values');
+        const iteratorPrototype = globalThis['FormData Iterator'].prototype;
+        shim(iteratorPrototype, 'next');
+        delete iteratorPrototype.constructor;
+        Object.setPrototypeOf(iteratorPrototype, Object.getPrototypeOf(Object.getPrototypeOf([][Symbol.iterator]())));
+        define(iteratorPrototype, Symbol.toStringTag, { value: 'FormData Iterator', configurable: true });
+        delete globalThis['FormData Iterator'];
+        define(proto, Symbol.iterator, { value: entries, writable: true, configurable: true });
         Object.defineProperty(proto, 'forEach', { value: function (callback, thisArg) {
             if (typeof callback !== 'function') throw new TypeError('callback must be callable');
             for (const pair of apply(entries, this, [])) apply(callback, thisArg, [pair[1], pair[0], this]);
@@ -373,4 +593,5 @@ pub(crate) fn multipart_body(s: &Scope<'_>, v: Value<'_>) -> JsResult<Option<(By
 
 pub(crate) fn register(engine: &lp_js::Engine) {
     engine.register::<FormData>();
+    engine.register::<FormDataIterator>();
 }

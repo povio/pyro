@@ -2,14 +2,21 @@
 //! whole engine (and is re-signed on macOS), so one per file made `cargo test`
 //! mostly link time. Add new test files as modules here.
 
+mod animation_events;
+mod adoption;
+mod attr_nodes;
+mod dispatch_targets;
 mod id_index;
 mod loader;
+mod move_before;
+mod post_connection;
 mod render_html;
 mod select_fast;
 mod select_forms;
 mod stylo_select;
 mod tree;
 mod xml;
+mod xml_template;
 mod xpath;
 
 /// `autotests = false` means a file in tests/ that is neither a module here nor

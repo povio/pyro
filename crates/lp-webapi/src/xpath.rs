@@ -21,8 +21,7 @@
 //! ignored (a new XPathResult is always returned); `createNSResolver(node)`
 //! returns `node`. Results hold a reference on every node (like static
 //! NodeLists), so nodes stay alive while the result is reachable.
-//! Attribute results are fresh `Attr` objects on every access (Attr
-//! wrappers have no identity in this rewrite).
+//! An attribute result is its element's `Attr` node.
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -255,13 +254,15 @@ fn target(dom: &Dom, n: XPathNode) -> JsResult<(NodeId, Option<AttrName>)> {
 /// `contextNode`: a Node or an Attr (`None` for null/undefined).
 fn context_arg(s: &Scope<'_>, v: Value<'_>, what: &str) -> JsResult<Option<(Rc<PageDom>, XPathNode)>> {
     if let Some(n) = s.unwrap::<crate::node::Node>(v) {
-        return Ok(Some((n.page().clone(), XPathNode::Node(n.id))));
-    }
-    if let Some(a) = s.unwrap::<crate::collections::Attr>(v) {
-        let (page, element, name) = attr_of(&a);
-        let index = name.find(page.dom.borrow().attributes(element).js()?);
-        let index = index.ok_or_else(|| JsError::dom("InvalidStateError", "The attribute was removed."))?;
-        return Ok(Some((page.clone(), XPathNode::Attr { element, index })));
+        let page = n.page();
+        // An Attr is a Node; XPath addresses it through its element.
+        if let Some((element, name)) = attr_of(&n) {
+            let Some(element) = element else { return Ok(None) };
+            let index = name.find(page.dom.borrow().attributes(element).js()?);
+            let index = index.ok_or_else(|| JsError::dom("InvalidStateError", "The attribute was removed."))?;
+            return Ok(Some((page.clone(), XPathNode::Attr { element, index })));
+        }
+        return Ok(Some((page.clone(), XPathNode::Node(n.id))));
     }
     if v.is_nullish() {
         return Ok(None);

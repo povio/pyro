@@ -13,10 +13,15 @@
 //!   recognized image nor `image/*` fires `error`. An `image/*` body whose
 //!   format has no header parser (for example AVIF) loads with an unknown
 //!   size. SVG takes its size from numeric `width`/`height` on the root.
-//! - An empty `src` fires `error`; removing `src` clears the image. Not
-//!   modelled: `srcset`/`sizes` selection, `loading="lazy"` deferral (lazy
-//!   images load eagerly), `<picture>`, `decode()` timing, images that are
-//!   not connected (`new Image()`).
+//! - An empty `src` fires `error`; removing `src` clears the image. The
+//!   `<img>`'s own `srcset` (with `sizes`) selects the candidate for the
+//!   device pixel ratio (`lp_dom::picture`). Not modelled:
+//!   `loading="lazy"` deferral (lazy images load eagerly), `decode()` timing,
+//!   images that are not connected (`new Image()`).
+//! - An `<img>` child of a `<picture>` loads the first preceding `<source>`
+//!   whose `media` matches and whose `type` is an image type
+//!   (`lp_dom::picture`). Moving, inserting or removing a `<source>` or the
+//!   `<img>` selects again and reloads when the URL changed.
 use crate::frames::FrameKey;
 use crate::loader::ResourceNode;
 use crate::{Browser, FetchRequest, LoaderId, Resource, ResourceCancellation, ResourceKind};
@@ -83,9 +88,13 @@ impl Browser {
         let loaded = state.main_frame.loaded;
         // Inspect the final state: several src writes in one task start one load.
         let raw_src = bindings.dom.borrow().get_attribute(node, "src").ok().flatten().map(str::to_owned);
+        // A `<picture>` parent's matching `<source>` provides the image
+        // instead of `src` (a `<source>` or the `<img>` moving in or out of
+        // the picture is a relevant mutation: the DOM queues this event).
+        let picture_source = bindings.dom.borrow().picture_source(node, &bindings.viewport());
         let source = {
             let dom = bindings.dom.borrow();
-            match dom.get_attribute(node, "src").ok().flatten() {
+            match picture_source.as_deref().or(dom.get_attribute(node, "src").ok().flatten()) {
                 None => Source::None,
                 Some(v) if v.trim().is_empty() => Source::Invalid,
                 Some(v) => url::Url::parse(&base)
@@ -151,6 +160,7 @@ impl Browser {
                     charset: None,
                     body: bytes.to_vec(),
                     content_disposition: None,
+                    header_csp: false,
                 })
                 .ok_or_else(|| "revoked or unknown blob URL".to_owned());
             self.scheduler().post(TaskSource::Networking, move |b| finish(b, result));

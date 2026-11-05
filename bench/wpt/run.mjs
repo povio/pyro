@@ -75,8 +75,9 @@ function discover() {
 
 // ---------- browser ----------
 async function freePort() { return new Promise((r) => { const s = net.createServer(); s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => r(p)); }); }); }
-let child, endpoint;
+let child, endpoint, generation = 0;
 async function startBrowser() {
+  generation++;
   if (child) { try { process.kill(-child.pid, 'SIGKILL'); } catch {} }
   const port = await freePort();
   child = spawn(BIN, ['serve', '--host', '127.0.0.1', '--port', String(port), '--log-level', 'error', '--load-resources', 'stylesheet', '--load-resources', 'iframe', '--cdp-max-connections', '64'],
@@ -110,8 +111,24 @@ async function runOne(slot, t) {
     await new Promise((r) => setTimeout(r, 100));
   }
 }
+// A page that spins the browser's main thread never answers `evaluate`, and closing its connection
+// never returns either: past a hard deadline the page is recorded as `hang` and the browser is replaced.
+async function guarded(slot, t) {
+  const hard = (t.long ? LONG : TIMEOUT) + 15000;
+  let timer;
+  const hang = new Promise((r) => { timer = setTimeout(() => r({ status: 'hang', ms: hard }), hard); });
+  const run = runOne(slot, t);
+  run.catch(() => {});
+  try { return await Promise.race([run, hang]); } finally { clearTimeout(timer); }
+}
+let restarting = null;
+async function restartBrowser(gen = generation) {
+  if (gen !== generation) return restarting;
+  restarting = startBrowser().catch(() => {});
+  return restarting;
+}
 async function resetSlot(slot) {
-  try { await slot.browser?.close(); } catch {}
+  try { await Promise.race([slot.browser?.close(), new Promise((r) => setTimeout(r, 5000))]); } catch {}
   slot.browser = slot.ctx = slot.page = null;
 }
 
@@ -143,12 +160,17 @@ async function worker() {
   while (next < tests.length) {
     const t = tests[next++];
     let r;
-    try { r = await runOne(slot, t); }
+    if (restarting) await restarting;
+    const gen = generation;
+    try { r = await guarded(slot, t); }
     catch (e) {
       r = { status: 'error', error: String(e.message ?? e).split('\n')[0].slice(0, 200) };
       await resetSlot(slot);
-      if (child.exitCode != null || child.signalCode) { restarts++; await startBrowser().catch(() => {}); }
+      if (child.exitCode != null || child.signalCode) { restarts++; await restartBrowser(); }
+      // The browser was replaced under this page (another slot's page hung it): run the page again.
+      if ((gen !== generation || /ECONNREFUSED|has been closed/.test(r.error)) && (t.retried ?? 0) < 3) { t.retried = (t.retried ?? 0) + 1; tests.push(t); continue; }
     }
+    if (r.status === 'hang') { slot.browser = slot.ctx = slot.page = null; restarts++; await restartBrowser(gen); }
     if (r.status === 'timeout') await resetSlot(slot);
     results.push({ ...t, status: r.status, ms: r.ms, error: r.error, subtests: parse(r.log) });
     if (++done % 100 === 0) fs.writeFileSync(OUT + '.partial', JSON.stringify({ label: LABEL, results }));

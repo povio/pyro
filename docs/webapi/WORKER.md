@@ -17,8 +17,9 @@ implement `new Worker(url)`. A worker runs its script off the page's thread.
   `atob`/`btoa`, `structuredClone`, `crypto`, `performance.now()`, `console`,
   `fetch` with `Headers`/`Response`/`FormData`/`Blob`/`File`, `AbortController`,
   `URL`/`URLSearchParams`, `TextEncoder`/`TextDecoder`, `MessageChannel`, `Event`
-  and its message, error, progress and rejection subclasses. Everything else is
-  undefined, including `document`, `XMLHttpRequest`, `indexedDB` and `Worker`.
+  and its message, error, progress and rejection subclasses, `XMLHttpRequest`
+  without `responseXML` (see [XHR](XHR.md)). Everything else is undefined,
+  including `document`, `indexedDB` and `Worker`.
 - **Script fetch.** On the worker's thread, blocking only it, through the page's
   context `NetClient` (cookies, interception, Network events) with the page's
   user agent, extra headers and cache setting. The URL must be same-origin with

@@ -1,6 +1,11 @@
 //! XMLHttpRequest. Native state is browser-thread confined; delivery buffers
 //! are bounded and I/O callbacks queue only routing IDs. A synchronous request
 //! parks the browser thread on those same callbacks; nothing else waits on it.
+//!
+//! Workers get the same object through [`WorkerXMLHttpRequest`], on their own
+//! thread with their own `PageDom`: no `responseXML`, `responseType =
+//! "document"` ignored, and a synchronous request may carry a `timeout`
+//! (`TimeoutError`) and ends when the worker is terminated.
 mod body;
 mod delivery;
 use crate::{
@@ -34,6 +39,9 @@ const RESPONSE: &str = "__lpXhrResponse";
 /// A synchronous request parks the browser thread, so one that never settles
 /// must not wedge the connection: it fails with NetworkError after this long.
 const SYNC_WAIT: Duration = Duration::from_secs(60);
+/// How often a parked synchronous request asks the [`XhrState::sync_watch`]
+/// whether its thread should still wait.
+const SYNC_POLL: Duration = Duration::from_millis(50);
 
 pub(crate) struct XhrState {
     limits: Cell<XhrLimits>,
@@ -41,6 +49,9 @@ pub(crate) struct XhrState {
     jobs: RefCell<FxHashMap<RequestId, Rc<Pending>>>,
     instances: RefCell<FxHashMap<u64, Weak<Xhr>>>,
     timers: RefCell<FxHashMap<RealmId, Persistent>>,
+    /// Asked while a synchronous request waits: true ends the wait with a
+    /// network error (a worker being terminated).
+    sync_watch: RefCell<Option<Box<dyn Fn() -> bool>>>,
 }
 impl Default for XhrState {
     fn default() -> Self {
@@ -50,6 +61,7 @@ impl Default for XhrState {
             jobs: RefCell::default(),
             instances: RefCell::default(),
             timers: RefCell::default(),
+            sync_watch: RefCell::new(None),
         }
     }
 }
@@ -85,6 +97,9 @@ struct Xhr {
     key: TargetKey,
     identity: IdentityKey,
     instance: u64,
+    /// The global is a worker scope, not a Window: the steps the XHR spec
+    /// conditions on "the current global object is a Window object" are skipped.
+    worker: bool,
     ready: Cell<u8>,
     sent: Cell<bool>,
     synchronous: Cell<bool>,
@@ -128,228 +143,254 @@ fn sync_access(message: &str) -> JsError {
     JsError::dom("InvalidAccessError", message)
 }
 
+/// `XMLHttpRequest` of a Window.
 pub struct XMLHttpRequest;
 impl JsClass for XMLHttpRequest {
     const NAME: &'static str = "XMLHttpRequest";
     type Data = XhrData;
     type Parent = EventTarget;
     fn define(def: &mut ClassDef<Self>) {
-        def.upcast(|d: &XhrData| &d.target);
-        def.constructor(0, |s, nt, _| {
-            let page = page_of(s)?;
-            if page.is_disposed() {
-                return Err(JsError::ContextDestroyed);
-            }
-            let target = EventTargetData::new(&page);
-            let TargetKey::Other(instance) = target.key else { unreachable!() };
-            let identity = page.other_identity(instance);
-            let state = Rc::new(Xhr {
-                page: Rc::downgrade(&page),
-                realm: s.realm().downgrade(),
-                realm_id: s.realm_id(),
-                key: target.key,
-                identity,
-                instance,
-                ready: Cell::new(0),
-                sent: Cell::new(false),
-                synchronous: Cell::new(false),
-                generation: Cell::new(0),
-                active: Cell::new(None),
-                request: RefCell::new(None),
-                head: RefCell::new(None),
-                wire: RefCell::new(None),
-                response_type: RefCell::new(String::new()),
-                with_credentials: Cell::new(false),
-                timeout: Cell::new(0),
-                timer: Cell::new(None),
-                started: Cell::new(None),
-                override_mime: RefCell::new(None),
-                text: RefCell::new(None),
-                reported: Cell::new(0),
-                visible_chunks: Cell::new(0),
-                disposed: Cell::new(false),
-                upload_target: EventTargetData::new(&page),
-                upload_listeners: Cell::new(false),
-                upload_complete: Cell::new(true),
-                upload_total: Cell::new(0),
-            });
-            page.xhr_state.instances.borrow_mut().insert(instance, Rc::downgrade(&state));
-            let wrapper = s.wrap_new::<Self>(XhrData { target, state }, nt, Some(identity))?;
-            Ok(wrapper)
-        });
-        for (name, value) in [("UNSENT", 0.), ("OPENED", 1.), ("HEADERS_RECEIVED", 2.), ("LOADING", 3.), ("DONE", 4.)] {
-            def.constant(name, value);
-        }
-        def.getter("readyState", |s, d| Ok(s.number(d.state.ready.get() as f64)));
-        def.method("open", 2, |s, d, args| {
-            d.state.open(s, args)?;
-            Ok(s.undefined())
-        });
-        def.method("send", 0, |s, d, args| {
-            d.state.send(s, args.get(0))?;
-            Ok(s.undefined())
-        });
-        def.method("abort", 0, |s, d, _| {
-            d.state.abort();
-            Ok(s.undefined())
-        });
-        def.method("setRequestHeader", 2, |s, d, args| {
-            args.require(2, "XMLHttpRequest.setRequestHeader")?;
-            let name = crate::headers::byte_string(args.get(0))?;
-            let value = crate::headers::byte_string(args.get(1))?;
-            d.state.can_send()?;
-            let name =
-                crate::headers::validate_name(name).map_err(|_| JsError::dom("SyntaxError", "Invalid header name"))?;
-            let value = crate::headers::validate_value(value)
-                .map_err(|_| JsError::dom("SyntaxError", "Invalid header value"))?;
-            if crate::fetch::forbidden_header(&name)
-                || (matches!(name.as_str(), "x-http-method" | "x-http-method-override" | "x-method-override")
-                    && value
-                        .split(',')
-                        .any(|v| matches!(v.trim().to_ascii_uppercase().as_str(), "CONNECT" | "TRACE" | "TRACK")))
-            {
-                return Ok(s.undefined());
-            }
-            let key =
-                HeaderName::from_bytes(name.as_bytes()).map_err(|_| JsError::dom("SyntaxError", "Invalid header"))?;
-            let mut request = d.state.request.borrow_mut();
-            let request = request.as_mut().expect("opened request");
-            let mut bytes = request
-                .headers
-                .get(&key)
-                .map(|v| {
-                    let mut b = v.as_bytes().to_vec();
-                    b.extend_from_slice(b", ");
-                    b
-                })
-                .unwrap_or_default();
-            bytes.extend(value.chars().map(|c| c as u8));
-            request.headers.insert(
-                key,
-                HeaderValue::from_bytes(&bytes).map_err(|_| JsError::dom("SyntaxError", "Invalid header value"))?,
-            );
-            Ok(s.undefined())
-        });
-        def.getter("status", |s, d| {
-            Ok(s.number(
-                d.state
-                    .head
-                    .borrow()
-                    .as_ref()
-                    .filter(|_| d.state.ready.get() >= 2)
-                    .map_or(0., |h| h.status.as_u16() as f64),
-            ))
-        });
-        def.getter("statusText", |s, d| {
-            Ok(s.string(
-                &d.state
-                    .head
-                    .borrow()
-                    .as_ref()
-                    .filter(|_| d.state.ready.get() >= 2)
-                    .map_or(String::new(), |h| h.status_text.clone()),
-            ))
-        });
-        def.getter("responseURL", |s, d| {
-            Ok(s.string(
-                &d.state
-                    .head
-                    .borrow()
-                    .as_ref()
-                    .filter(|_| d.state.ready.get() >= 2)
-                    .map_or(String::new(), |h| h.url.to_string()),
-            ))
-        });
-        def.getter("responseText", |s, d| d.state.response_text(s));
-        def.getter("response", |s, d| d.state.response(s));
-        def.getter("responseXML", |s, d| d.state.response_xml(s));
-        def.getter("upload", |s, d| upload_object(s, &d.state));
-        def.accessor(
-            "responseType",
-            |s, d| Ok(s.string(&d.state.response_type.borrow())),
-            |_s, d, value| {
-                let kind = dom_string(value)?;
-                if d.state.ready.get() >= 3 {
-                    return Err(invalid("responseType cannot change after loading"));
-                }
-                if d.state.synchronous.get() {
-                    return Err(sync_access("responseType cannot be set for a synchronous request"));
-                }
-                if matches!(kind.as_str(), "" | "text" | "json" | "arraybuffer" | "blob" | "document") {
-                    *d.state.response_type.borrow_mut() = kind;
-                }
-                Ok(())
-            },
-        );
-        def.accessor(
-            "withCredentials",
-            |s, d| Ok(s.boolean(d.state.with_credentials.get())),
-            |_s, d, value| {
-                if d.state.ready.get() > 1 || d.state.sent.get() {
-                    return Err(invalid("withCredentials cannot change during a request"));
-                }
-                d.state.with_credentials.set(value.to_bool());
-                Ok(())
-            },
-        );
-        def.accessor(
-            "timeout",
-            |s, d| Ok(s.number(d.state.timeout.get() as f64)),
-            |s, d, value| {
-                let timeout = to_u32(value)?;
-                if d.state.synchronous.get() {
-                    return Err(sync_access("timeout cannot be set for a synchronous request"));
-                }
-                d.state.timeout.set(timeout);
-                if d.state.sent.get() {
-                    d.state.schedule_timer(s)?;
-                }
-                Ok(())
-            },
-        );
-        def.method("overrideMimeType", 1, |s, d, args| {
-            args.require(1, "XMLHttpRequest.overrideMimeType")?;
-            let mime = dom_string(args.get(0))?;
-            if d.state.ready.get() >= 3 {
-                return Err(invalid("MIME type cannot change after loading"));
-            }
-            *d.state.override_mime.borrow_mut() = Some(mime);
-            Ok(s.undefined())
-        });
-        def.method("getResponseHeader", 1, |s, d, args| {
-            args.require(1, "XMLHttpRequest.getResponseHeader")?;
-            let name = crate::headers::byte_string(args.get(0))?.to_ascii_lowercase();
-            let value = d.state.headers().into_iter().find(|(n, _)| n == &name).map(|(_, v)| v);
-            Ok(value.map_or(s.null(), |v| s.string(&v)))
-        });
-        def.method("getAllResponseHeaders", 0, |s, d, _| {
-            let mut out = String::new();
-            for (name, value) in d.state.headers() {
-                out.push_str(&name);
-                out.push_str(": ");
-                out.push_str(&value);
-                out.push_str("\r\n");
-            }
-            Ok(s.string(&out))
-        });
-        macro_rules! handler {
-            ($name:literal, $ty:literal) => {
-                def.accessor(
-                    $name,
-                    |s, d| crate::target::event_handler(s, &d.target, $ty),
-                    |s, d, value| crate::target::set_event_handler(s, &d.target, $ty, value),
-                );
-            };
-        }
-        handler!("onreadystatechange", "readystatechange");
-        handler!("onloadstart", "loadstart");
-        handler!("onprogress", "progress");
-        handler!("onabort", "abort");
-        handler!("onerror", "error");
-        handler!("ontimeout", "timeout");
-        handler!("onload", "load");
-        handler!("onloadend", "loadend");
+        define_members(def, false);
     }
+}
+
+/// `XMLHttpRequest` of a worker global: `responseXML` is `[Exposed=Window]`,
+/// so the prototype has none. Registered under the same interface name in a
+/// worker's own engine.
+pub struct WorkerXMLHttpRequest;
+impl JsClass for WorkerXMLHttpRequest {
+    const NAME: &'static str = "XMLHttpRequest";
+    type Data = XhrData;
+    type Parent = EventTarget;
+    fn define(def: &mut ClassDef<Self>) {
+        define_members(def, true);
+    }
+}
+
+fn define_members<C: JsClass<Data = XhrData, Parent = EventTarget>>(def: &mut ClassDef<C>, worker: bool) {
+    def.upcast(|d: &XhrData| &d.target);
+    def.constructor(0, |s, nt, _| {
+        let page = page_of(s)?;
+        if page.is_disposed() {
+            return Err(JsError::ContextDestroyed);
+        }
+        let target = EventTargetData::new(&page);
+        let TargetKey::Other(instance) = target.key else { unreachable!() };
+        let identity = page.other_identity(instance);
+        let state = Rc::new(Xhr {
+            page: Rc::downgrade(&page),
+            realm: s.realm().downgrade(),
+            realm_id: s.realm_id(),
+            key: target.key,
+            identity,
+            instance,
+            worker: crate::worker_scope::is_worker(s),
+            ready: Cell::new(0),
+            sent: Cell::new(false),
+            synchronous: Cell::new(false),
+            generation: Cell::new(0),
+            active: Cell::new(None),
+            request: RefCell::new(None),
+            head: RefCell::new(None),
+            wire: RefCell::new(None),
+            response_type: RefCell::new(String::new()),
+            with_credentials: Cell::new(false),
+            timeout: Cell::new(0),
+            timer: Cell::new(None),
+            started: Cell::new(None),
+            override_mime: RefCell::new(None),
+            text: RefCell::new(None),
+            reported: Cell::new(0),
+            visible_chunks: Cell::new(0),
+            disposed: Cell::new(false),
+            upload_target: EventTargetData::new(&page),
+            upload_listeners: Cell::new(false),
+            upload_complete: Cell::new(true),
+            upload_total: Cell::new(0),
+        });
+        page.xhr_state.instances.borrow_mut().insert(instance, Rc::downgrade(&state));
+        let wrapper = s.wrap_new::<C>(XhrData { target, state }, nt, Some(identity))?;
+        Ok(wrapper)
+    });
+    for (name, value) in [("UNSENT", 0.), ("OPENED", 1.), ("HEADERS_RECEIVED", 2.), ("LOADING", 3.), ("DONE", 4.)] {
+        def.constant(name, value);
+    }
+    def.getter("readyState", |s, d| Ok(s.number(d.state.ready.get() as f64)));
+    def.method("open", 2, |s, d, args| {
+        d.state.open(s, args)?;
+        Ok(s.undefined())
+    });
+    def.method("send", 0, |s, d, args| {
+        d.state.send(s, args.get(0))?;
+        Ok(s.undefined())
+    });
+    def.method("abort", 0, |s, d, _| {
+        d.state.abort();
+        Ok(s.undefined())
+    });
+    def.method("setRequestHeader", 2, |s, d, args| {
+        args.require(2, "XMLHttpRequest.setRequestHeader")?;
+        let name = crate::headers::byte_string(args.get(0))?;
+        let value = crate::headers::byte_string(args.get(1))?;
+        d.state.can_send()?;
+        let name =
+            crate::headers::validate_name(name).map_err(|_| JsError::dom("SyntaxError", "Invalid header name"))?;
+        let value =
+            crate::headers::validate_value(value).map_err(|_| JsError::dom("SyntaxError", "Invalid header value"))?;
+        if crate::fetch::forbidden_header(&name)
+            || (matches!(name.as_str(), "x-http-method" | "x-http-method-override" | "x-method-override")
+                && value
+                    .split(',')
+                    .any(|v| matches!(v.trim().to_ascii_uppercase().as_str(), "CONNECT" | "TRACE" | "TRACK")))
+        {
+            return Ok(s.undefined());
+        }
+        let key = HeaderName::from_bytes(name.as_bytes()).map_err(|_| JsError::dom("SyntaxError", "Invalid header"))?;
+        let mut request = d.state.request.borrow_mut();
+        let request = request.as_mut().expect("opened request");
+        let mut bytes = request
+            .headers
+            .get(&key)
+            .map(|v| {
+                let mut b = v.as_bytes().to_vec();
+                b.extend_from_slice(b", ");
+                b
+            })
+            .unwrap_or_default();
+        bytes.extend(value.chars().map(|c| c as u8));
+        request.headers.insert(
+            key,
+            HeaderValue::from_bytes(&bytes).map_err(|_| JsError::dom("SyntaxError", "Invalid header value"))?,
+        );
+        Ok(s.undefined())
+    });
+    def.getter("status", |s, d| {
+        Ok(s.number(
+            d.state
+                .head
+                .borrow()
+                .as_ref()
+                .filter(|_| d.state.ready.get() >= 2)
+                .map_or(0., |h| h.status.as_u16() as f64),
+        ))
+    });
+    def.getter("statusText", |s, d| {
+        Ok(s.string(
+            &d.state
+                .head
+                .borrow()
+                .as_ref()
+                .filter(|_| d.state.ready.get() >= 2)
+                .map_or(String::new(), |h| h.status_text.clone()),
+        ))
+    });
+    def.getter("responseURL", |s, d| {
+        Ok(s.string(
+            &d.state
+                .head
+                .borrow()
+                .as_ref()
+                .filter(|_| d.state.ready.get() >= 2)
+                .map_or(String::new(), |h| h.url.to_string()),
+        ))
+    });
+    def.getter("responseText", |s, d| d.state.response_text(s));
+    def.getter("response", |s, d| d.state.response(s));
+    if !worker {
+        def.getter("responseXML", |s, d| d.state.response_xml(s));
+    }
+    def.getter("upload", |s, d| upload_object(s, &d.state));
+    def.accessor(
+        "responseType",
+        |s, d| Ok(s.string(&d.state.response_type.borrow())),
+        |_s, d, value| {
+            let kind = dom_string(value)?;
+            // An unknown enum value is ignored before any state check.
+            if !matches!(kind.as_str(), "" | "text" | "json" | "arraybuffer" | "blob" | "document") {
+                return Ok(());
+            }
+            // A worker has no document response.
+            if d.state.worker && kind == "document" {
+                return Ok(());
+            }
+            if d.state.ready.get() >= 3 {
+                return Err(invalid("responseType cannot change after loading"));
+            }
+            if d.state.synchronous.get() && !d.state.worker {
+                return Err(sync_access("responseType cannot be set for a synchronous request"));
+            }
+            *d.state.response_type.borrow_mut() = kind;
+            Ok(())
+        },
+    );
+    def.accessor(
+        "withCredentials",
+        |s, d| Ok(s.boolean(d.state.with_credentials.get())),
+        |_s, d, value| {
+            if d.state.ready.get() > 1 || d.state.sent.get() {
+                return Err(invalid("withCredentials cannot change during a request"));
+            }
+            d.state.with_credentials.set(value.to_bool());
+            Ok(())
+        },
+    );
+    def.accessor(
+        "timeout",
+        |s, d| Ok(s.number(d.state.timeout.get() as f64)),
+        |s, d, value| {
+            let timeout = to_u32(value)?;
+            if d.state.synchronous.get() && !d.state.worker {
+                return Err(sync_access("timeout cannot be set for a synchronous request"));
+            }
+            d.state.timeout.set(timeout);
+            if d.state.sent.get() {
+                d.state.schedule_timer(s)?;
+            }
+            Ok(())
+        },
+    );
+    def.method("overrideMimeType", 1, |s, d, args| {
+        args.require(1, "XMLHttpRequest.overrideMimeType")?;
+        let mime = dom_string(args.get(0))?;
+        if d.state.ready.get() >= 3 {
+            return Err(invalid("MIME type cannot change after loading"));
+        }
+        *d.state.override_mime.borrow_mut() = Some(mime);
+        Ok(s.undefined())
+    });
+    def.method("getResponseHeader", 1, |s, d, args| {
+        args.require(1, "XMLHttpRequest.getResponseHeader")?;
+        let name = crate::headers::byte_string(args.get(0))?.to_ascii_lowercase();
+        let value = d.state.headers().into_iter().find(|(n, _)| n == &name).map(|(_, v)| v);
+        Ok(value.map_or(s.null(), |v| s.string(&v)))
+    });
+    def.method("getAllResponseHeaders", 0, |s, d, _| {
+        let mut out = String::new();
+        for (name, value) in d.state.headers() {
+            out.push_str(&name);
+            out.push_str(": ");
+            out.push_str(&value);
+            out.push_str("\r\n");
+        }
+        Ok(s.string(&out))
+    });
+    macro_rules! handler {
+        ($name:literal, $ty:literal) => {
+            def.accessor(
+                $name,
+                |s, d| crate::target::event_handler(s, &d.target, $ty),
+                |s, d, value| crate::target::set_event_handler(s, &d.target, $ty, value),
+            );
+        };
+    }
+    handler!("onreadystatechange", "readystatechange");
+    handler!("onloadstart", "loadstart");
+    handler!("onprogress", "progress");
+    handler!("onabort", "abort");
+    handler!("onerror", "error");
+    handler!("ontimeout", "timeout");
+    handler!("onload", "load");
+    handler!("onloadend", "loadend");
 }
 
 const UPLOAD: &str = "__lpXhrUpload";
@@ -461,11 +502,17 @@ impl Xhr {
         let resolved = crate::html::resolve_url(&page.dom.borrow(), page.document(), &url);
         let mut url = lp_net::Url::parse(&resolved).map_err(|_| JsError::dom("SyntaxError", "Invalid URL"))?;
         url.set_fragment(None);
-        if !asynchronous && (self.timeout.get() != 0 || !self.response_type.borrow().is_empty()) {
+        if !asynchronous && !self.worker && (self.timeout.get() != 0 || !self.response_type.borrow().is_empty()) {
             return Err(sync_access("A synchronous request cannot have a timeout or a responseType"));
         }
-        if !username.is_empty() || !password.is_empty() || !url.username().is_empty() || url.password().is_some() {
-            return Err(unsupported("XHR URL credentials are not implemented"));
+        // Credentials go into the URL (open() steps 11-12); the network
+        // layer does not send them yet (documented gap).
+        if !username.is_empty() || !password.is_empty() {
+            if url.cannot_be_a_base() {
+                return Err(JsError::dom("SyntaxError", "Invalid URL"));
+            }
+            let _ = url.set_username(&username);
+            let _ = url.set_password(if password.is_empty() { None } else { Some(&password) });
         }
         self.generation.set(self.generation.get().checked_add(1).expect("XHR generation exhausted"));
         self.stop();
@@ -542,6 +589,7 @@ impl Xhr {
         request.frame_id = context.frame_id;
         request.loader_id = context.loader_id;
         page.apply_request_defaults(&mut request);
+        crate::fetch::attach_blob(&page, &mut request);
         request.max_body = Some(limits.max_body_bytes);
         let id = net.next_request_id();
         let wire = Arc::new(Mutex::new(Delivery::new(page.xhr_state.budget.clone())));
@@ -587,7 +635,8 @@ impl Xhr {
     /// reports the terminal event, with no events before it and an exception on
     /// failure. Tasks and CDP commands wait, as for a dialog, but the transport
     /// needs nothing from this thread unless the request is intercepted: the
-    /// decision would be read here, so it skips interception.
+    /// decision would be read here, so it skips interception. A worker's
+    /// `timeout` bounds the wait (`TimeoutError`), and its termination ends it.
     fn send_sync(
         &self,
         page: &Rc<PageDom>,
@@ -610,7 +659,10 @@ impl Xhr {
             request,
             Box::new(move |event| delivery::receive(&sink, page_id, id, &poster, limits, event)),
         );
-        let deadline = Instant::now() + SYNC_WAIT;
+        let timeout = Some(self.timeout.get()).filter(|t| *t != 0).map(|t| Duration::from_millis(t as u64));
+        let deadline = Instant::now() + timeout.unwrap_or(SYNC_WAIT).min(SYNC_WAIT);
+        let watch = page.xhr_state.sync_watch.borrow().is_some();
+        let mut timed_out = false;
         let (head, bytes, terminal, chunks, frontier) = loop {
             let snapshot = wire.lock().unwrap().snapshot();
             if snapshot.2.is_some() {
@@ -619,9 +671,18 @@ impl Xhr {
             if let Some(head) = snapshot.0 {
                 *self.head.borrow_mut() = Some(head);
             }
-            match woken.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+            if watch && page.xhr_state.sync_watch.borrow().as_ref().is_some_and(|closing| closing()) {
+                break (None, 0, None, 0, snapshot.4);
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            match woken.recv_timeout(if watch { remaining.min(SYNC_POLL) } else { remaining }) {
                 Ok(()) => {}
-                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => break (None, 0, None, 0, snapshot.4),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                    if remaining.is_zero() {
+                        timed_out = timeout.is_some();
+                        break (None, 0, None, 0, snapshot.4);
+                    }
+                }
                 // The sink is gone: its terminal event, if any, is in the wire.
                 Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
                     let last = wire.lock().unwrap().snapshot();
@@ -640,13 +701,15 @@ impl Xhr {
         if !matches!(terminal, Some(Ok(()))) || self.head.borrow().is_none() {
             let reason = match terminal {
                 Some(Err(error)) => error.to_string(),
+                _ if timed_out => "synchronous request timed out".to_owned(),
                 _ => "synchronous request did not complete".to_owned(),
             };
             self.stop();
             self.head.take();
             self.text.take();
             self.ready.set(4);
-            return Err(JsError::dom("NetworkError", format!("Failed to execute 'send': {reason}")));
+            let name = if timed_out { "TimeoutError" } else { "NetworkError" };
+            return Err(JsError::dom(name, format!("Failed to execute 'send': {reason}")));
         }
         self.active.set(None);
         self.sent.set(false);
@@ -851,6 +914,11 @@ pub(crate) fn install(s: &Scope<'_>, page: &PageDom) -> JsResult<()> {
         page.xhr_state.timers.borrow_mut().insert(s.realm_id(), Persistent::new(s, object.value()));
     }
     Ok(())
+}
+/// Makes a parked synchronous request of `page` poll `closing`: once it
+/// returns true the request fails with a NetworkError instead of waiting on.
+pub(crate) fn set_sync_watch(page: &PageDom, closing: Box<dyn Fn() -> bool>) {
+    *page.xhr_state.sync_watch.borrow_mut() = Some(closing);
 }
 pub(crate) fn cancel_realm(page: &PageDom, realm: RealmId) {
     let instances: Vec<_> =

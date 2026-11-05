@@ -37,7 +37,8 @@ pub(crate) struct BindingState {
     quiet: Cell<Option<(u64, u64)>>,
 }
 impl BindingState {
-    fn touch(&self) {
+    /// Something `hook_pending` reads changed (see `quiet`).
+    pub(crate) fn touch(&self) {
         self.epoch.set(self.epoch.get().wrapping_add(1));
     }
     pub(crate) fn pending_drops_is_empty(&self) -> bool {
@@ -238,12 +239,14 @@ pub fn checkpoint(page: &Rc<PageDom>) {
     if page.is_disposed() {
         return;
     }
+    let slots_signaled = page.dom.try_borrow().is_ok_and(|d| d.has_signaled_slots());
     // No observer, nothing pinned, nothing to drop: nothing to do (this runs
     // after every DOM call from script).
     if page.mutations.observers.borrow().is_empty()
         && page.mutations.pins.borrow().is_empty()
         && page.mutations.pending_drops.borrow().is_empty()
         && page.mutations.pending_roots.borrow().is_empty()
+        && !slots_signaled
     {
         return;
     }
@@ -268,15 +271,18 @@ pub fn checkpoint(page: &Rc<PageDom>) {
             scheduling_realm = Some(realm.clone());
         }
     }
-    if !page.mutations.pending_roots.borrow().is_empty() && page.mutations.queued.get().is_none() {
-        let realm = scheduling_realm.or_else(|| {
-            page.mutations
-                .observers
-                .borrow()
-                .values()
-                .filter_map(Weak::upgrade)
-                .find_map(|observer| observer.realm.upgrade())
-        });
+    if (!page.mutations.pending_roots.borrow().is_empty() || slots_signaled) && page.mutations.queued.get().is_none()
+    {
+        let realm = scheduling_realm
+            .or_else(|| {
+                page.mutations
+                    .observers
+                    .borrow()
+                    .values()
+                    .filter_map(Weak::upgrade)
+                    .find_map(|observer| observer.realm.upgrade())
+            })
+            .or_else(|| page.main_world_realm());
         if let Some(realm) = realm {
             if let Ok(s) = realm.scope() {
                 let generation = page.mutations.generation.get().wrapping_add(1);
@@ -357,6 +363,11 @@ fn notify(page: &Rc<PageDom>) {
     page.mutations.queued.set(None);
     page.mutations.rooted.set(0);
     page.mutations.touch();
+    // "Signal a slot change": slotchange at each signaled slot first.
+    let slots = page.dom.borrow_mut().take_signaled_slots();
+    for slot in slots {
+        crate::input::fire_simple(page, slot, "slotchange", true, false);
+    }
     let pending = page.dom.borrow_mut().take_pending_observers();
     let roots = page.mutations.pending_roots.take();
     // Snapshot binding identities as well as native ids: a callback can dispose
@@ -374,6 +385,10 @@ fn notify(page: &Rc<PageDom>) {
         page.dom.borrow_mut().clear_transient(id);
         let Some(realm) = observer.realm.upgrade() else { continue };
         let Ok(s) = realm.scope() else { continue };
+        // Web IDL "invoke a callback function": an exception of the callback
+        // is reported to the global of the callback's own realm, which is not
+        // the observer's when the function came from another window.
+        let mut callback_realm = None;
         let result = (|| {
             let records = record::take(page, id)?;
             if records.is_empty() {
@@ -388,11 +403,15 @@ fn notify(page: &Rc<PageDom>) {
             let callback =
                 s.get_hidden(wrapper, CALLBACK)?.and_then(|v| v.as_object()).ok_or(JsError::ContextDestroyed)?;
             let records = record::array(&s, records)?;
+            callback_realm = s.object_realm(callback).filter(|r| r.id() != s.realm_id());
             callback.call(Some(wrapper), &[records, wrapper.value()])?;
             Ok(())
         })();
         if let Err(error) = result {
-            s.report_exception(&error);
+            match callback_realm.as_ref().and_then(|r| r.scope().ok()) {
+                Some(owner) => owner.report_exception(&error),
+                None => s.report_exception(&error),
+            }
         }
     }
     drop(roots);
@@ -425,6 +444,9 @@ pub(crate) fn install(s: &Scope<'_>, page: &Rc<PageDom>) -> JsResult<()> {
     s.realm().set_native_callback_hook(Some(Rc::new(move |_| {
         if let Some(page) = weak.upgrade() {
             page.flush_iframe_events();
+            page.update_render_blocking();
+            crate::custom::run_reactions(&page);
+            crate::custom::run_upgrades(&page);
             checkpoint(&page);
         }
     })))?;
@@ -450,15 +472,19 @@ fn hook_pending(page: &PageDom) -> bool {
     if m.quiet.get() == Some(now) {
         return false;
     }
-    let pending = hook_pending_slow(&dom, m);
+    let pending = hook_pending_slow(page, &dom, m);
     if !pending {
         m.quiet.set(Some(now));
     }
     pending
 }
 
-fn hook_pending_slow(dom: &lp_dom::Dom, m: &BindingState) -> bool {
+fn hook_pending_slow(page: &PageDom, dom: &lp_dom::Dom, m: &BindingState) -> bool {
     dom.has_iframe_events()
+        || page.render_blocking_pending(dom)
+        || dom.has_custom_reactions_for(page.document())
+        || dom.has_upgrade_candidates()
+        || (dom.has_signaled_slots() && m.queued.get().is_none())
         || !m.pending_drops.borrow().is_empty()
         || dom.has_pending_observers_from(m.rooted.get())
         || (!m.pending_roots.borrow().is_empty() && m.queued.get().is_none())

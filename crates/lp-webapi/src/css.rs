@@ -139,16 +139,43 @@ fn known_property(name: &str) -> bool {
 }
 
 pub struct StyleData {
-    el: NodeHold,
+    source: StyleSource,
+}
+
+/// What a CSSStyleDeclaration reads and writes.
+enum StyleSource {
+    /// An element's `style` attribute.
+    Inline(NodeHold),
+    /// The declaration block of a style rule of `owner`'s sheet.
+    Rule { owner: NodeHold, node: Rc<RuleNode> },
 }
 
 impl StyleData {
     fn decls(&self) -> Vec<Declaration> {
-        let dom = self.el.page.dom.borrow();
-        parse_declarations(dom.get_attribute(self.el.id, "style").ok().flatten().unwrap_or(""))
+        match &self.source {
+            StyleSource::Inline(el) => {
+                let dom = el.page.dom.borrow();
+                parse_declarations(dom.get_attribute(el.id, "style").ok().flatten().unwrap_or(""))
+            }
+            StyleSource::Rule { node, .. } => match &node.kind {
+                RuleKind::Style { block, .. } => parse_declarations(&block.borrow()),
+                _ => Vec::new(),
+            },
+        }
     }
     fn write(&self, decls: &[Declaration]) -> JsResult<()> {
-        self.el.page.dom.borrow_mut().set_attribute(self.el.id, "style", &serialize_declarations(decls)).js()
+        match &self.source {
+            StyleSource::Inline(el) => {
+                el.page.dom.borrow_mut().set_attribute(el.id, "style", &serialize_declarations(decls)).js()
+            }
+            StyleSource::Rule { owner, node } => {
+                if let RuleKind::Style { block, .. } = &node.kind {
+                    *block.borrow_mut() = serialize_declarations(decls);
+                    commit_edit(&owner.page, owner.id, &sheet_model(&owner.page, owner.id));
+                }
+                Ok(())
+            }
+        }
     }
     fn get(&self, name: &str) -> String {
         self.decls().into_iter().find(|d| d.name == name).map(|d| d.value).unwrap_or_default()
@@ -183,7 +210,10 @@ impl JsClass for CssStyleDeclaration {
             },
         );
         def.getter("length", |s, st| Ok(s.number(st.decls().len() as f64)));
-        def.getter("parentRule", |s, _st| Ok(s.null()));
+        def.getter("parentRule", |s, st| match &st.source {
+            StyleSource::Inline(_) => Ok(s.null()),
+            StyleSource::Rule { owner, node } => Ok(rule_wrapper(s, node, owner)?.value()),
+        });
         def.accessor(
             "cssFloat",
             |s, st| Ok(s.string(&st.get("float"))),
@@ -239,15 +269,6 @@ impl JsClass for CssStyleDeclaration {
     }
 }
 
-/// `element.style = value`: `[PutForwards=cssText]` on the `style`
-/// attribute, so it behaves exactly like `element.style.cssText = value`.
-pub fn set_inline_style(page: &PageDom, id: NodeId, value: Value<'_>) -> JsResult<()> {
-    // cssText is [LegacyNullToEmptyString].
-    let text = if value.is_null() { String::new() } else { dom_string(value)? };
-    let decls = parse_declarations(&text);
-    page.dom.borrow_mut().set_attribute(id, "style", &serialize_declarations(&decls)).js()
-}
-
 pub fn inline_style<'s>(s: &Scope<'s>, page: &PageDom, id: NodeId) -> JsResult<Object<'s>> {
     let base = page.node_identity(id);
     let key = IdentityKey(base.0 | (1 << 61) | (22 << 48), base.1);
@@ -255,7 +276,7 @@ pub fn inline_style<'s>(s: &Scope<'s>, page: &PageDom, id: NodeId) -> JsResult<O
         return Ok(o);
     }
     let page = crate::target::page_of(s)?;
-    s.wrap::<CssStyleDeclaration>(StyleData { el: NodeHold::new(&page, id)? }, Some(key))
+    s.wrap::<CssStyleDeclaration>(StyleData { source: StyleSource::Inline(NodeHold::new(&page, id)?) }, Some(key))
 }
 
 // ----- stylesheets ------------------------------------------------------------
@@ -294,7 +315,7 @@ impl RuleList {
 }
 
 enum RuleKind {
-    Style { selector: RefCell<String>, block: String },
+    Style { selector: RefCell<String>, block: RefCell<String> },
     Group { name: String, condition: String, list: RuleList },
     Other { rule_type: u16, text: String },
 }
@@ -311,7 +332,9 @@ impl RuleNode {
         let identity = IdentityKey(1 << 56, NEXT_RULE.fetch_add(1, Ordering::Relaxed));
         Rc::new_cyclic(|me| {
             let kind = match parsed {
-                ParsedRule::Style { selector, block } => RuleKind::Style { selector: RefCell::new(selector), block },
+                ParsedRule::Style { selector, block } => {
+                    RuleKind::Style { selector: RefCell::new(selector), block: RefCell::new(block) }
+                }
                 ParsedRule::Group { name, condition, rules } => {
                     let list = RuleList::default();
                     list.replace(rules.into_iter().map(|r| RuleNode::new(r, me.clone())).collect());
@@ -326,7 +349,7 @@ impl RuleNode {
     /// The text given to the style engine: blocks stay as written.
     fn source_text(&self) -> String {
         match &self.kind {
-            RuleKind::Style { selector, block } => format!("{} {{{block}}}", selector.borrow()),
+            RuleKind::Style { selector, block } => format!("{} {{{}}}", selector.borrow(), block.borrow()),
             RuleKind::Group { name, condition, list } => {
                 let body = list.rules.borrow().iter().map(|r| r.source_text()).collect::<Vec<_>>().join("\n");
                 format!("@{name} {condition} {{\n{body}\n}}")
@@ -338,7 +361,7 @@ impl RuleNode {
     fn css_text(&self) -> String {
         match &self.kind {
             RuleKind::Style { selector, block } => {
-                let decls = serialize_declarations(&parse_declarations(block));
+                let decls = serialize_declarations(&parse_declarations(&block.borrow()));
                 if decls.is_empty() {
                     format!("{} {{ }}", selector.borrow())
                 } else {
@@ -543,6 +566,30 @@ impl JsClass for CssStyleRule {
     type Parent = NoParent;
     fn define(def: &mut ClassDef<Self>) {
         define_rule(def);
+        // The rule's declaration block ([PutForwards=cssText]); one object
+        // per rule and realm.
+        def.accessor(
+            "style",
+            |s, r| {
+                let key = IdentityKey(r.node.identity.0 | (1 << 55), r.node.identity.1);
+                if let Some(o) = s.lookup_identity(key) {
+                    return Ok(o.value());
+                }
+                let source = StyleSource::Rule {
+                    owner: NodeHold::new(&r.owner.page, r.owner.id)?,
+                    node: r.node.clone(),
+                };
+                Ok(s.wrap::<CssStyleDeclaration>(StyleData { source }, Some(key))?.value())
+            },
+            |_s, r, v| {
+                let decls = parse_declarations(&dom_string(v)?);
+                let source = StyleSource::Rule {
+                    owner: NodeHold::new(&r.owner.page, r.owner.id)?,
+                    node: r.node.clone(),
+                };
+                StyleData { source }.write(&decls)
+            },
+        );
         def.accessor(
             "selectorText",
             |s, r| match &r.node.kind {
@@ -683,18 +730,76 @@ pub(crate) fn element_sheet<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'
     if !connected {
         return Ok(s.null());
     }
-    let base = n.page().node_identity(n.id);
+    sheet_object(s, n.page(), n.id)
+}
+
+/// The CSSStyleSheet of the connected `<style>` or `<link>` element `owner`.
+fn sheet_object<'s>(s: &Scope<'s>, page: &Rc<PageDom>, owner: NodeId) -> JsResult<Value<'s>> {
+    let base = page.node_identity(owner);
     let key = IdentityKey(base.0 | (1 << 61) | (23 << 48), base.1);
     if let Some(o) = s.lookup_identity(key) {
         return Ok(o.value());
     }
-    let page: Rc<PageDom> = n.page().clone();
-    Ok(s.wrap::<CssStyleSheet>(SheetData { owner: NodeHold::new(&page, n.id)? }, Some(key))?.value())
+    Ok(s.wrap::<CssStyleSheet>(SheetData { owner: NodeHold::new(page, owner)? }, Some(key))?.value())
+}
+
+/// `document.styleSheets`: the sheets of the document's `<style>` elements
+/// and stylesheet links, in tree order. Live: it reads the tree each time.
+pub struct StyleSheetList;
+
+impl StyleSheetList {
+    fn owners(root: &NodeHold) -> Vec<NodeId> {
+        let dom = root.page.dom.borrow();
+        let Ok(nodes) = dom.descendants(root.id) else { return Vec::new() };
+        nodes
+            .filter(|&n| {
+                dom.element(n).is_ok_and(|e| match &*e.name.local {
+                    "style" => e.is_html() || e.namespace() == &markup5ever::ns!(svg),
+                    "link" => {
+                        e.is_html()
+                            && e.attr("rel").is_some_and(|rel| {
+                                rel.split_ascii_whitespace().any(|t| t.eq_ignore_ascii_case("stylesheet"))
+                            })
+                    }
+                    _ => false,
+                })
+            })
+            .collect()
+    }
+}
+
+impl JsClass for StyleSheetList {
+    const NAME: &'static str = "StyleSheetList";
+    type Data = NodeHold;
+    type Parent = NoParent;
+    fn define(def: &mut ClassDef<Self>) {
+        def.getter("length", |s, root| Ok(s.number(StyleSheetList::owners(root).len() as f64)));
+        def.method("item", 1, |s, root, a| match StyleSheetList::owners(root).get(to_u32(a.get(0))? as usize) {
+            Some(&owner) => sheet_object(s, &root.page, owner),
+            None => Ok(s.null()),
+        });
+        def.indexed(|s, root, i| match StyleSheetList::owners(root).get(i as usize) {
+            Some(&owner) => sheet_object(s, &root.page, owner).map(Some),
+            None => Ok(None),
+        });
+        def.indexed_iterator();
+    }
+}
+
+/// `document.styleSheets` (one list object per document and realm).
+pub(crate) fn style_sheets<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
+    let base = n.page().node_identity(n.id);
+    let key = IdentityKey(base.0 | (1 << 61) | (24 << 48), base.1);
+    if let Some(o) = s.lookup_identity(key) {
+        return Ok(o.value());
+    }
+    Ok(s.wrap::<StyleSheetList>(NodeHold::new(n.page(), n.id)?, Some(key))?.value())
 }
 
 pub(crate) fn register(engine: &lp_js::Engine) {
     engine.register::<CssStyleDeclaration>();
     engine.register::<CssStyleSheet>();
+    engine.register::<StyleSheetList>();
     engine.register::<CssStyleRule>();
     engine.register::<CssGroupRule>();
     engine.register::<CssOtherRule>();

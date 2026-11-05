@@ -1,3 +1,4 @@
+use crate::node::ElementData;
 use markup5ever::{LocalName, local_name};
 use taffy::{
     AvailableSpace, BoxSizing, CoreStyle, LayoutInput, LayoutOutput, MaybeMath, MaybeResolve,
@@ -14,6 +15,23 @@ pub(crate) fn is_replaced_element(tag_name: &LocalName) -> bool {
         || *tag_name == local_name!("video")
         || *tag_name == local_name!("embed")
         || *tag_name == local_name!("iframe")
+}
+
+/// Whether `element` is an `<input>` in the Image Button state: the one
+/// input type that is replaced content, laid out like `<img>` at its
+/// image's intrinsic size (HTML rendering, "image button"). The type
+/// keyword is matched ASCII case-insensitively, as attribute keywords are.
+pub(crate) fn is_image_input(element: &ElementData) -> bool {
+    element.name.local == local_name!("input")
+        && element
+            .attr(local_name!("type"))
+            .is_some_and(|value| value.eq_ignore_ascii_case("image"))
+}
+
+/// Whether `element` is laid out as a replaced element: a replaced tag
+/// ([`is_replaced_element`]) or an image button ([`is_image_input`]).
+pub(crate) fn is_replaced(element: &ElementData) -> bool {
+    is_replaced_element(&element.name.local) || is_image_input(element)
 }
 
 /// The intrinsic dimensions of a replaced element per CSS Images 3

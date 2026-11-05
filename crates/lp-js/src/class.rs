@@ -56,10 +56,12 @@ impl JsClass for NoParent {
 
 /// Raw `JSObjectCallAsFunctionCallback`.
 type IndexedFn = unsafe fn(&Scope<'_>, *mut Header, u32) -> JsResult<Option<sys::JSValueRef>>;
-type NamedFn = unsafe fn(&Scope<'_>, *mut Header, &str) -> JsResult<Option<sys::JSValueRef>>;
-type NamedSetFn = unsafe fn(&Scope<'_>, *mut Header, &str, sys::JSValueRef) -> JsResult<bool>;
-type NamedDeleteFn = unsafe fn(&Scope<'_>, *mut Header, &str) -> JsResult<bool>;
-type NamesFn = unsafe fn(&Scope<'_>, *mut Header) -> JsResult<Vec<String>>;
+/// Named hooks get the property name as JavaScript has it (UTF-16, lone
+/// surrogates intact); the `&str` registration variants convert lossily.
+type NamedFn = unsafe fn(&Scope<'_>, *mut Header, &[u16]) -> JsResult<Option<sys::JSValueRef>>;
+type NamedSetFn = unsafe fn(&Scope<'_>, *mut Header, &[u16], sys::JSValueRef) -> JsResult<bool>;
+type NamedDeleteFn = unsafe fn(&Scope<'_>, *mut Header, &[u16]) -> JsResult<bool>;
+type NamesFn = unsafe fn(&Scope<'_>, *mut Header) -> JsResult<Vec<JsString>>;
 
 pub(crate) struct MethodSpec {
     pub name: &'static str,
@@ -117,8 +119,17 @@ pub(crate) struct PropertyHooks {
     /// `[LegacyOverrideBuiltIns]`: named properties shadow prototype members.
     pub override_builtins: bool,
     pub named_set: Option<NamedSetFn>,
+    /// The named setter runs for every string name, prototype members
+    /// included (WebIDL `[[Set]]` on a true named-setter interface such as
+    /// `Storage`). Off, it emulates per-name IDL attributes and stays out of
+    /// the way of prototype accessors (`style.cssText = ..`).
+    pub set_all_names: bool,
     pub named_delete: Option<NamedDeleteFn>,
     pub names: Option<NamesFn>,
+    /// [`ClassDef::unenumerable_property_names`].
+    pub unenumerable_names: Option<NamesFn>,
+    /// [`ClassDef::legacy_platform_object`].
+    pub legacy: bool,
 }
 
 impl PropertyHooks {
@@ -134,8 +145,11 @@ impl PropertyHooks {
             named: self.named.or(parent.named),
             override_builtins: if named_own { self.override_builtins } else { parent.override_builtins },
             named_set: self.named_set.or(parent.named_set),
+            set_all_names: if self.named_set.is_some() { self.set_all_names } else { parent.set_all_names },
             named_delete: self.named_delete.or(parent.named_delete),
             names: self.names.or(parent.names),
+            unenumerable_names: self.unenumerable_names.or(parent.unenumerable_names),
+            legacy: self.legacy || parent.legacy,
         }
     }
 }
@@ -163,12 +177,44 @@ pub struct ClassDef<C: JsClass> {
     pub(crate) constants: Vec<(&'static str, f64)>,
     pub(crate) constructor: Option<MemberCall>,
     pub(crate) ctor_length: u32,
+    /// `[LegacyFactoryFunction]`s: global constructors of this class's
+    /// instances (`Image`, `Option`, `Audio`).
+    pub(crate) legacy_factories: Vec<MethodSpec>,
+    /// A legacy callback interface (`NodeFilter`): not a constructor, no
+    /// `prototype` property.
+    pub(crate) callback_interface: bool,
+    /// See [`ClassDef::named_properties_are_announced`].
+    pub(crate) announced_names: bool,
     pub(crate) hooks: PropertyHooks,
     pub(crate) exposed: bool,
     pub(crate) indexed_iterable: bool,
+    pub(crate) indexed_iterator: bool,
     pub(crate) upcast: Option<UpcastFn>,
     pub(crate) global_receiver: Option<GlobalReceiverFn>,
     _c: PhantomData<C>,
+}
+
+/// The identifiers of a `[PutForwards]` setter (see [`ClassDef::put_forwards`]).
+struct PutForwards {
+    name: &'static str,
+    target: &'static str,
+}
+
+impl PutForwards {
+    /// The program-lifetime pair for `name`/`target`, which a setter's
+    /// [`MemberCall`] points at. Interned: classes are defined once per
+    /// engine (one per browser thread), so leaking a pair per definition
+    /// would grow with every engine created.
+    fn interned(name: &'static str, target: &'static str) -> &'static PutForwards {
+        static INTERNED: std::sync::Mutex<Vec<&'static PutForwards>> = std::sync::Mutex::new(Vec::new());
+        let mut interned = INTERNED.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(found) = interned.iter().copied().find(|p| p.name == name && p.target == target) {
+            return found;
+        }
+        let pair: &'static PutForwards = Box::leak(Box::new(PutForwards { name, target }));
+        interned.push(pair);
+        pair
+    }
 }
 
 /// Resolves the data an operation uses when called with an undefined, null or
@@ -206,9 +252,13 @@ impl<C: JsClass> ClassDef<C> {
             constants: Vec::new(),
             constructor: None,
             ctor_length: 0,
+            legacy_factories: Vec::new(),
+            callback_interface: false,
+            announced_names: false,
             hooks: PropertyHooks::default(),
             exposed: true,
             indexed_iterable: false,
+            indexed_iterator: false,
             upcast: None,
             global_receiver: None,
             _c: PhantomData,
@@ -299,6 +349,59 @@ impl<C: JsClass> ClassDef<C> {
         self
     }
 
+    /// Adds a read-write attribute with `[PutForwards=target]`: assignment
+    /// brand-checks the receiver, reads the attribute (an observable `Get`,
+    /// so an overridden getter runs and its exception propagates; a
+    /// non-object result is a TypeError) and performs `[[Set]]` of `target`
+    /// on the result (https://webidl.spec.whatwg.org/#PutForwards).
+    pub fn put_forwards(&mut self, name: &'static str, g: GetterFn<C>, target: &'static str) -> &mut Self {
+        let get = MemberCall { invoke: getter_invoke::<C>, f: g as *const () };
+        let forwards = PutForwards::interned(name, target);
+        let set = MemberCall { invoke: put_forwards_invoke::<C>, f: forwards as *const PutForwards as *const () };
+        self.accessors.push(AccessorSpec {
+            name,
+            get,
+            set: Some(set),
+            slot: None,
+            pure: false,
+            result: GetterResult::Any,
+            get_h: None,
+        });
+        self
+    }
+
+    /// Adds a `[LegacyFactoryFunction]`: a global constructor `name` (such as
+    /// `Image` for `HTMLImageElement`) whose `prototype` is this interface's
+    /// prototype object. The callback is a [`ClassDef::constructor`] one and
+    /// receives `new.target`, so `class X extends Image {}` works.
+    pub fn legacy_factory(&mut self, name: &'static str, length: u32, f: CtorFn) -> &mut Self {
+        self.legacy_factories.push(MethodSpec {
+            name,
+            length,
+            call: MemberCall { invoke: ctor_invoke, f: f as *const () },
+            pure: false,
+        });
+        self
+    }
+
+    /// Makes this a legacy callback interface (`NodeFilter`): the interface
+    /// object is a plain function (no `[[Construct]]`, no `prototype`
+    /// property) carrying the constants; `x instanceof NodeFilter` throws.
+    /// The named getter answers only names the embedder announced with
+    /// [`crate::ImpureNames`] before they can first be answered, and never a name of
+    /// the prototype chain (`named(false, ..)`). The wrappers' property lookups
+    /// then stay cacheable by the JITs (patched JavaScriptCore), instead of
+    /// running the hook on every read, as WebCore does for HTMLDocument.
+    pub fn named_properties_are_announced(&mut self) -> &mut Self {
+        self.announced_names = true;
+        self
+    }
+
+    pub fn legacy_callback_interface(&mut self) -> &mut Self {
+        self.callback_interface = true;
+        self
+    }
+
     /// Adds a constant on both the interface object and the prototype.
     pub fn constant(&mut self, name: &'static str, value: f64) -> &mut Self {
         self.constants.push((name, value));
@@ -348,7 +451,23 @@ impl<C: JsClass> ClassDef<C> {
         self
     }
 
-    /// Named property setter; return `false` to fall back to an ordinary own property.
+    /// [`ClassDef::named`] with the name in UTF-16 code units, for classes
+    /// whose names may hold lone surrogates (Web Storage keys).
+    pub fn named_utf16<F>(&mut self, override_builtins: bool, _f: F) -> &mut Self
+    where
+        F: for<'s> Fn(&Scope<'s>, &C::Data, &[u16]) -> JsResult<Option<Value<'s>>> + Copy + 'static,
+    {
+        assert_zst::<F>();
+        self.hooks.named = Some(named_utf16_erased::<C, F>);
+        self.hooks.override_builtins = override_builtins;
+        self
+    }
+
+    /// Named property setter; return `false` to fall back to an ordinary own
+    /// property. Per WebIDL `[[Set]]` it runs for every string name on the
+    /// receiver itself, prototype members included (`storage.length = 1`
+    /// stores an item), so a setter that only supports some names must return
+    /// `false` for the others.
     pub fn named_setter<F>(&mut self, _f: F) -> &mut Self
     where
         F: for<'s> Fn(&Scope<'s>, &C::Data, &str, Value<'s>) -> JsResult<bool> + Copy + 'static,
@@ -358,13 +477,45 @@ impl<C: JsClass> ClassDef<C> {
         self
     }
 
-    /// Named property deleter; return `false` when the name is not supported.
+    /// [`ClassDef::named_setter`] with the name in UTF-16 code units.
+    pub fn named_setter_utf16<F>(&mut self, _f: F) -> &mut Self
+    where
+        F: for<'s> Fn(&Scope<'s>, &C::Data, &[u16], Value<'s>) -> JsResult<bool> + Copy + 'static,
+    {
+        assert_zst::<F>();
+        self.hooks.named_set = Some(named_set_utf16_erased::<C, F>);
+        self
+    }
+
+    /// Runs the named setter for every string name, prototype members
+    /// included, as WebIDL `[[Set]]` does on an interface with a named
+    /// property setter (`storage.length = 1` stores an item). Without it the
+    /// setter emulates per-name IDL attributes and prototype members win.
+    pub fn named_setter_for_all_names(&mut self) -> &mut Self {
+        self.hooks.set_all_names = true;
+        self
+    }
+
+    /// Named property deleter; return `false` when the name is not supported,
+    /// so the ordinary `[[Delete]]` runs (own properties such as symbol-keyed
+    /// expandos keep their configurability). Not consulted for names visible
+    /// on the prototype chain unless `[LegacyOverrideBuiltIns]`.
     pub fn named_deleter<F>(&mut self, _f: F) -> &mut Self
     where
         F: for<'s> Fn(&Scope<'s>, &C::Data, &str) -> JsResult<bool> + Copy + 'static,
     {
         assert_zst::<F>();
         self.hooks.named_delete = Some(named_delete_erased::<C, F>);
+        self
+    }
+
+    /// [`ClassDef::named_deleter`] with the name in UTF-16 code units.
+    pub fn named_deleter_utf16<F>(&mut self, _f: F) -> &mut Self
+    where
+        F: for<'s> Fn(&Scope<'s>, &C::Data, &[u16]) -> JsResult<bool> + Copy + 'static,
+    {
+        assert_zst::<F>();
+        self.hooks.named_delete = Some(named_delete_utf16_erased::<C, F>);
         self
     }
 
@@ -378,11 +529,61 @@ impl<C: JsClass> ClassDef<C> {
         self
     }
 
+    /// Supported property names of a `[LegacyUnenumerableNamedProperties]`
+    /// interface (`HTMLCollection`, `NamedNodeMap`): own property keys that
+    /// `Object.getOwnPropertyNames` and `Reflect.ownKeys` list after the
+    /// indices, and `Object.keys` and `for..in` leave out. Names that are not
+    /// visible (an array index on a class with indexed properties, a name the
+    /// prototype chain has) are dropped by the caller.
+    pub fn unenumerable_property_names<F>(&mut self, _f: F) -> &mut Self
+    where
+        F: for<'s> Fn(&Scope<'s>, &C::Data) -> JsResult<Vec<String>> + Copy + 'static,
+    {
+        assert_zst::<F>();
+        self.hooks.unenumerable_names = Some(names_erased::<C, F>);
+        self
+    }
+
+    /// [`ClassDef::property_names`] with the names in UTF-16 code units.
+    pub fn property_names_utf16<F>(&mut self, _f: F) -> &mut Self
+    where
+        F: for<'s> Fn(&Scope<'s>, &C::Data) -> JsResult<Vec<Vec<u16>>> + Copy + 'static,
+    {
+        assert_zst::<F>();
+        self.hooks.names = Some(names_utf16_erased::<C, F>);
+        self
+    }
+
     /// Value iterator over an indexed object with `length` (WebIDL
     /// `iterable<V>` on indexed properties): installs `Symbol.iterator`,
     /// `entries`, `keys`, `values` and `forEach` from `Array.prototype`.
     pub fn indexed_iterable(&mut self) -> &mut Self {
         self.indexed_iterable = true;
+        self
+    }
+
+    /// `Symbol.iterator` alone (`Array.prototype.values`): what WebIDL gives
+    /// an interface that supports indexed properties and has `length` but no
+    /// `iterable<V>` declaration (`HTMLCollection`, `NamedNodeMap`), which
+    /// therefore has no `entries`, `keys`, `values` or `forEach`.
+    pub fn indexed_iterator(&mut self) -> &mut Self {
+        self.indexed_iterator = true;
+        self
+    }
+
+    /// WebIDL legacy platform object rules for the indexed properties and the
+    /// setter-less named properties of this class (`HTMLCollection`,
+    /// `NodeList`, `NamedNodeMap`), over the default "prototype members first,
+    /// then the getter":
+    /// - an own property of the wrapper (an expando script set while the name
+    ///   was not supported) shadows the named property of that name (named
+    ///   property visibility algorithm);
+    /// - assigning to an array index or to a visible named property is
+    ///   refused like a write to a read-only property: a `TypeError` in
+    ///   strict mode code, ignored in sloppy mode code, and no own property is
+    ///   created.
+    pub fn legacy_platform_object(&mut self) -> &mut Self {
+        self.hooks.legacy = true;
         self
     }
 
@@ -443,14 +644,21 @@ pub(crate) struct ClassDefErased {
     pub constants: Vec<(&'static str, f64)>,
     pub constructor: Option<MemberCall>,
     pub ctor_length: u32,
+    pub legacy_factories: Vec<MethodSpec>,
+    pub callback_interface: bool,
+    pub announced_names: bool,
     pub hooks: PropertyHooks,
     pub exposed: bool,
     pub indexed_iterable: bool,
+    pub indexed_iterator: bool,
 }
 
 pub(crate) struct ClassRegistry {
     pub classes: Vec<Box<ClassInfo>>,
     by_type: rustc_hash::FxHashMap<TypeId, ClassId>,
+    /// Placeholder properties awaiting removal ([`leave_placeholder`]): the
+    /// protected wrapper and the property name.
+    placeholders: Vec<(sys::JSObjectRef, JsString)>,
     /// Parent JSClass of every wrapper class: carries the finalizer and marks
     /// objects whose private pointer is a `Header`.
     pub base: sys::JSClassRef,
@@ -483,7 +691,14 @@ impl ClassRegistry {
         mdef.callAsFunction = Some(member_call);
         mdef.finalize = Some(member_finalize);
         let member = unsafe { sys::JSClassCreate(&mdef) };
-        ClassRegistry { classes: Vec::new(), by_type: rustc_hash::FxHashMap::default(), base, closure, member }
+        ClassRegistry {
+            classes: Vec::new(),
+            by_type: rustc_hash::FxHashMap::default(),
+            placeholders: Vec::new(),
+            base,
+            closure,
+            member,
+        }
     }
 
     pub fn id_of<C: JsClass>(&self) -> Option<ClassId> {
@@ -542,6 +757,10 @@ pub(crate) fn register<C: JsClass>(engine: &EngineInner) -> ClassId {
     if let Some(p) = parent {
         let inherited = reg.classes[p as usize].def.hooks;
         def.hooks = def.hooks.inherit(&inherited);
+        // A subclass answers the same names unless it adds hooks of its own.
+        if reg.classes[p as usize].def.announced_names && def.hooks.named == inherited.named {
+            def.announced_names = true;
+        }
     }
     let has_hooks = def.hooks.any();
     let has_named_hooks =
@@ -553,6 +772,10 @@ pub(crate) fn register<C: JsClass>(engine: &EngineInner) -> ClassId {
     let mut jsdef = sys::JSClassDefinition::EMPTY;
     jsdef.className = cname.as_ptr();
     jsdef.attributes = sys::kJSClassAttributeNoAutomaticPrototype;
+    if def.announced_names && sys::spi::get().add_impure_property.is_some() {
+        debug_assert!(!def.hooks.override_builtins && def.hooks.indexed.is_none(), "announced names need named(false)");
+        jsdef.attributes |= sys::kJSClassAttributeImpureNamedProperties;
+    }
     jsdef.parentClass = reg.base;
     if has_named_hooks || (def.hooks.indexed.is_some() && indexed_callbacks.is_none()) {
         jsdef.getProperty = Some(get_property_hook);
@@ -591,9 +814,13 @@ pub(crate) fn register<C: JsClass>(engine: &EngineInner) -> ClassId {
             constants: def.constants,
             constructor: def.constructor,
             ctor_length: def.ctor_length,
+            legacy_factories: def.legacy_factories,
+            callback_interface: def.callback_interface,
+            announced_names: def.announced_names,
             hooks: def.hooks,
             exposed: def.exposed,
             indexed_iterable: def.indexed_iterable,
+            indexed_iterator: def.indexed_iterator,
         },
     }));
     reg.by_type.insert(TypeId::of::<C>(), id);
@@ -1229,6 +1456,34 @@ unsafe fn setter_invoke<C: JsClass>(
     Ok(unsafe { sys::JSValueMakeUndefined(scope.ctx) })
 }
 
+/// Setter of a `[PutForwards]` attribute (see [`ClassDef::put_forwards`]).
+/// Only the brand check touches the instance; the forwarding is ordinary
+/// JavaScript property access on the receiver, so it runs in the caller's
+/// realm like any other `Get`/`Set` the caller performs.
+unsafe fn put_forwards_invoke<C: JsClass>(
+    scope: &Scope<'_>,
+    this: sys::JSObjectRef,
+    args: Args<'_>,
+    f: *const (),
+) -> JsResult<sys::JSValueRef> {
+    unsafe { this_data::<C>(scope, this) }?;
+    // SAFETY: stored by `ClassDef::put_forwards` from an interned (leaked) `PutForwards`.
+    let forwards = unsafe { &*(f as *const PutForwards) };
+    let receiver = if this.is_null() { scope.global() } else { unsafe { Object::from_raw(scope.ctx, this) } };
+    let value = receiver.get(forwards.name)?;
+    let Some(target) = value.as_object() else {
+        return Err(JsError::Type(format!(
+            "Failed to set the '{}' property on '{}': The '{}' attribute's value is not an object.",
+            forwards.name,
+            C::NAME,
+            forwards.name
+        )));
+    };
+    // A missing argument is `undefined` (Args::get), like any attribute setter.
+    target.set(forwards.target, args.get(0))?;
+    Ok(unsafe { sys::JSValueMakeUndefined(scope.ctx) })
+}
+
 unsafe fn static_invoke(
     scope: &Scope<'_>,
     _this: sys::JSObjectRef,
@@ -1272,43 +1527,87 @@ where
     Ok(f(scope, data, index)?.map(|v| v.raw))
 }
 
-unsafe fn named_erased<C, F>(scope: &Scope<'_>, h: *mut Header, name: &str) -> JsResult<Option<sys::JSValueRef>>
+unsafe fn named_erased<C, F>(scope: &Scope<'_>, h: *mut Header, name: &[u16]) -> JsResult<Option<sys::JSValueRef>>
 where
     C: JsClass,
     F: for<'s> Fn(&Scope<'s>, &C::Data, &str) -> JsResult<Option<Value<'s>>> + Copy + 'static,
 {
     let data = unsafe { hook_data::<C>(scope, h) }?;
     let f = unsafe { conjure::<F>() };
+    Ok(f(scope, data, &String::from_utf16_lossy(name))?.map(|v| v.raw))
+}
+
+unsafe fn named_utf16_erased<C, F>(scope: &Scope<'_>, h: *mut Header, name: &[u16]) -> JsResult<Option<sys::JSValueRef>>
+where
+    C: JsClass,
+    F: for<'s> Fn(&Scope<'s>, &C::Data, &[u16]) -> JsResult<Option<Value<'s>>> + Copy + 'static,
+{
+    let data = unsafe { hook_data::<C>(scope, h) }?;
+    let f = unsafe { conjure::<F>() };
     Ok(f(scope, data, name)?.map(|v| v.raw))
 }
 
-unsafe fn named_set_erased<C, F>(scope: &Scope<'_>, h: *mut Header, name: &str, v: sys::JSValueRef) -> JsResult<bool>
+unsafe fn named_set_erased<C, F>(scope: &Scope<'_>, h: *mut Header, name: &[u16], v: sys::JSValueRef) -> JsResult<bool>
 where
     C: JsClass,
     F: for<'s> Fn(&Scope<'s>, &C::Data, &str, Value<'s>) -> JsResult<bool> + Copy + 'static,
 {
     let data = unsafe { hook_data::<C>(scope, h) }?;
+    unsafe { conjure::<F>()(scope, data, &String::from_utf16_lossy(name), Value::from_raw(scope.ctx, v)) }
+}
+
+unsafe fn named_set_utf16_erased<C, F>(
+    scope: &Scope<'_>,
+    h: *mut Header,
+    name: &[u16],
+    v: sys::JSValueRef,
+) -> JsResult<bool>
+where
+    C: JsClass,
+    F: for<'s> Fn(&Scope<'s>, &C::Data, &[u16], Value<'s>) -> JsResult<bool> + Copy + 'static,
+{
+    let data = unsafe { hook_data::<C>(scope, h) }?;
     unsafe { conjure::<F>()(scope, data, name, Value::from_raw(scope.ctx, v)) }
 }
 
-unsafe fn named_delete_erased<C, F>(scope: &Scope<'_>, h: *mut Header, name: &str) -> JsResult<bool>
+unsafe fn named_delete_erased<C, F>(scope: &Scope<'_>, h: *mut Header, name: &[u16]) -> JsResult<bool>
 where
     C: JsClass,
     F: for<'s> Fn(&Scope<'s>, &C::Data, &str) -> JsResult<bool> + Copy + 'static,
 {
     let data = unsafe { hook_data::<C>(scope, h) }?;
     let f = unsafe { conjure::<F>() };
+    f(scope, data, &String::from_utf16_lossy(name))
+}
+
+unsafe fn named_delete_utf16_erased<C, F>(scope: &Scope<'_>, h: *mut Header, name: &[u16]) -> JsResult<bool>
+where
+    C: JsClass,
+    F: for<'s> Fn(&Scope<'s>, &C::Data, &[u16]) -> JsResult<bool> + Copy + 'static,
+{
+    let data = unsafe { hook_data::<C>(scope, h) }?;
+    let f = unsafe { conjure::<F>() };
     f(scope, data, name)
 }
 
-unsafe fn names_erased<C, F>(scope: &Scope<'_>, h: *mut Header) -> JsResult<Vec<String>>
+unsafe fn names_erased<C, F>(scope: &Scope<'_>, h: *mut Header) -> JsResult<Vec<JsString>>
 where
     C: JsClass,
     F: for<'s> Fn(&Scope<'s>, &C::Data) -> JsResult<Vec<String>> + Copy + 'static,
 {
     let data = unsafe { hook_data::<C>(scope, h) }?;
     let f = unsafe { conjure::<F>() };
-    f(scope, data)
+    Ok(f(scope, data)?.iter().map(|n| JsString::new(n)).collect())
+}
+
+unsafe fn names_utf16_erased<C, F>(scope: &Scope<'_>, h: *mut Header) -> JsResult<Vec<JsString>>
+where
+    C: JsClass,
+    F: for<'s> Fn(&Scope<'s>, &C::Data) -> JsResult<Vec<Vec<u16>>> + Copy + 'static,
+{
+    let data = unsafe { hook_data::<C>(scope, h) }?;
+    let f = unsafe { conjure::<F>() };
+    Ok(f(scope, data)?.iter().map(|n| JsString::from_utf16(n)).collect())
 }
 
 /// Data of class `C` for a property-hook receiver (hooks may be inherited).
@@ -1363,8 +1662,11 @@ struct HookCtx {
     named: Option<NamedFn>,
     override_builtins: bool,
     named_set: Option<NamedSetFn>,
+    set_all_names: bool,
     named_delete: Option<NamedDeleteFn>,
     names: Option<NamesFn>,
+    unenumerable_names: Option<NamesFn>,
+    legacy: bool,
 }
 
 unsafe fn hook_ctx(scope: &Scope<'_>, object: sys::JSObjectRef) -> Option<HookCtx> {
@@ -1372,7 +1674,12 @@ unsafe fn hook_ctx(scope: &Scope<'_>, object: sys::JSObjectRef) -> Option<HookCt
     if h.is_null() {
         return None;
     }
-    let reg = scope.engine_inner().classes.borrow();
+    let mut reg = scope.engine_inner().classes.borrow();
+    if !reg.placeholders.is_empty() {
+        drop(reg);
+        unsafe { sweep_placeholders(scope) };
+        reg = scope.engine_inner().classes.borrow();
+    }
     let hooks = reg.hooks_of(unsafe { (*h).class })?;
     Some(HookCtx {
         header: h,
@@ -1381,9 +1688,89 @@ unsafe fn hook_ctx(scope: &Scope<'_>, object: sys::JSObjectRef) -> Option<HookCt
         named: hooks.named,
         override_builtins: hooks.override_builtins,
         named_set: hooks.named_set,
+        set_all_names: hooks.set_all_names,
         named_delete: hooks.named_delete,
         names: hooks.names,
+        unenumerable_names: hooks.unenumerable_names,
+        legacy: hooks.legacy,
     })
+}
+
+thread_local! {
+    /// Set while a hook asks JavaScriptCore about a wrapper's ordinary
+    /// properties: the property hooks then answer nothing, so the operation
+    /// sees only the wrapper's real own properties and its prototype chain.
+    static ORDINARY_ONLY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// A placeholder awaits removal ([`leave_placeholder`]): the lean
+    /// dispatch paths, which do not sweep, step aside for the full one.
+    static PLACEHOLDERS_PENDING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Runs `f` with the property hooks switched off (see [`ORDINARY_ONLY`]).
+fn ordinary_only<R>(f: impl FnOnce() -> R) -> R {
+    let was = ORDINARY_ONLY.replace(true);
+    let out = f();
+    ORDINARY_ONLY.set(was);
+    out
+}
+
+/// True if `name` resolves without the hooks: a real own property of the
+/// wrapper (an expando) or a property on its prototype chain.
+unsafe fn has_ordinary_property(ctx: sys::JSContextRef, object: sys::JSObjectRef, name: sys::JSStringRef) -> bool {
+    ordinary_only(|| unsafe { sys::JSObjectHasProperty(ctx, object, name) })
+}
+
+/// Puts a placeholder on the wrapper: a real own property `name` that is
+/// read-only and not enumerable, for the ordinary object code JavaScriptCore
+/// runs right after a hook returns. The C API hooks cannot express two things
+/// a WebIDL legacy platform object needs, and that code does both for such a
+/// property:
+/// - a write that fails like one to a read-only property, i.e. with a
+///   `TypeError` in strict mode code only. The set hook can claim a write or
+///   throw whatever the caller's strictness; when it returns `false` the
+///   ordinary put runs and stops at the placeholder.
+/// - an own property key that `Object.getOwnPropertyNames` lists and
+///   `Object.keys` and `for..in` do not. The names hook is not told which is
+///   asking; the real properties are listed after it by that rule.
+///
+/// Script does not see the placeholder itself: every property operation on a
+/// wrapper of a class with hooks enters a hook before it looks at the real
+/// properties, and [`hook_ctx`] removes the pending placeholders first. The
+/// one exception is the list of real index keys, read before the names hook:
+/// an own-keys listing that directly follows a refused write to an index past
+/// the end still has that index. The wrapper stays protected until the
+/// placeholder is removed. Call only for a name [`has_ordinary_property`]
+/// lacks.
+unsafe fn leave_placeholder(scope: &Scope<'_>, object: sys::JSObjectRef, name: sys::JSStringRef) {
+    unsafe {
+        let mut exc: sys::JSValueRef = ptr::null();
+        ordinary_only(|| {
+            sys::JSObjectSetProperty(
+                scope.ctx,
+                object,
+                name,
+                sys::JSValueMakeUndefined(scope.ctx),
+                sys::kJSPropertyAttributeReadOnly | sys::kJSPropertyAttributeDontEnum,
+                &mut exc,
+            )
+        });
+        sys::JSValueProtect(scope.ctx, object);
+        let name = JsString::from_utf16(utf16_of(name));
+        scope.engine_inner().classes.borrow_mut().placeholders.push((object, name));
+        PLACEHOLDERS_PENDING.set(true);
+    }
+}
+
+/// Removes the pending placeholders ([`leave_placeholder`]).
+unsafe fn sweep_placeholders(scope: &Scope<'_>) {
+    let pending = std::mem::take(&mut scope.engine_inner().classes.borrow_mut().placeholders);
+    PLACEHOLDERS_PENDING.set(false);
+    for (object, name) in pending {
+        unsafe {
+            ordinary_only(|| sys::JSObjectDeleteProperty(scope.ctx, object, name.as_raw(), ptr::null_mut()));
+            sys::JSValueUnprotect(scope.ctx, object);
+        }
+    }
 }
 
 /// True if `name` resolves on the object's prototype chain (named properties
@@ -1401,6 +1788,9 @@ unsafe extern "C" fn get_property_hook(
     name: sys::JSStringRef,
     exc: *mut sys::JSValueRef,
 ) -> sys::JSValueRef {
+    if ORDINARY_ONLY.get() {
+        return ptr::null();
+    }
     unsafe {
         guard(ctx, exc, ptr::null(), |scope| {
             let Some(hc) = hook_ctx(scope, object) else { return Ok(ptr::null()) };
@@ -1415,8 +1805,14 @@ unsafe extern "C" fn get_property_hook(
                     if !hc.override_builtins && on_prototype_chain(scope.ctx, object, name) {
                         return Ok(ptr::null());
                     }
-                    let n = String::from_utf16_lossy(units);
-                    return Ok(f(scope, hc.header, &n)?.unwrap_or(ptr::null()));
+                    return Ok(match f(scope, hc.header, units)? {
+                        // An own property shadows the named property.
+                        Some(_) if hc.legacy && !hc.override_builtins && has_ordinary_property(scope.ctx, object, name) => {
+                            ptr::null()
+                        }
+                        Some(value) => value,
+                        None => ptr::null(),
+                    });
                 }
                 Ok(ptr::null())
             };
@@ -1444,8 +1840,13 @@ unsafe extern "C" fn get_by_index_hook(
     // (collections wrap their items): the lean dispatch first, the full one
     // for a receiver of another realm, an error, a panic, or while a
     // termination propagates (see `ClassDef::pure_getter`).
-    if let Some(v) = unsafe { get_by_index_lean(ctx, object, index) } {
-        return v;
+    if ORDINARY_ONLY.get() {
+        return ptr::null();
+    }
+    if !PLACEHOLDERS_PENDING.get() {
+        if let Some(v) = unsafe { get_by_index_lean(ctx, object, index) } {
+            return v;
+        }
     }
     unsafe {
         guard(ctx, exc, ptr::null(), |scope| {
@@ -1494,11 +1895,26 @@ unsafe extern "C" fn set_by_index_hook(
     value: sys::JSValueRef,
     exc: *mut sys::JSValueRef,
 ) -> bool {
+    if ORDINARY_ONLY.get() {
+        return false;
+    }
     unsafe {
         guard(ctx, exc, false, |scope| {
             let Some(hc) = hook_ctx(scope, object) else { return Ok(false) };
-            let Some(f) = hc.named_set else { return Ok(true) };
-            let name = index.to_string();
+            let Some(f) = hc.named_set else {
+                // A legacy platform object refuses the write the way a
+                // read-only property does (see `set_property_hook`): the
+                // ordinary put that follows stops at the placeholder.
+                if hc.legacy && hc.indexed.is_some() {
+                    let name = JsString::new(&index.to_string());
+                    if !has_ordinary_property(scope.ctx, object, name.as_raw()) {
+                        leave_placeholder(scope, object, name.as_raw());
+                        return Ok(false);
+                    }
+                }
+                return Ok(true);
+            };
+            let name: Vec<u16> = index.to_string().encode_utf16().collect();
             let set = |scope: &Scope<'_>| f(scope, hc.header, &name, value);
             if hc.realm != scope.realm_id() {
                 return in_receiver_realm(scope, hc.realm, set);
@@ -1620,20 +2036,52 @@ unsafe extern "C" fn set_property_hook(
     value: sys::JSValueRef,
     exc: *mut sys::JSValueRef,
 ) -> bool {
+    if ORDINARY_ONLY.get() {
+        return false;
+    }
     unsafe {
         guard(ctx, exc, false, |scope| {
             let Some(hc) = hook_ctx(scope, object) else { return Ok(false) };
             let units = utf16_of(name);
             if hc.indexed.is_some() && array_index(units).is_some() && hc.named_set.is_none() {
-                // Indexed properties without a setter are read-only: ignore (sloppy) writes.
+                // Indexed properties without a setter are read-only, and no
+                // index past the end can be defined either.
+                if hc.legacy && !has_ordinary_property(scope.ctx, object, name) {
+                    leave_placeholder(scope, object, name);
+                    return Ok(false);
+                }
+                // Ignore (sloppy) writes.
                 return Ok(true);
             }
+            if hc.legacy && hc.named_set.is_none() && !hc.override_builtins {
+                if let Some(f) = hc.named {
+                    // WebIDL [[DefineOwnProperty]]: no own property may be
+                    // created for a supported property name, so the write to a
+                    // visible named property fails.
+                    let visible = |scope: &Scope<'_>| -> JsResult<bool> {
+                        Ok(!on_prototype_chain(scope.ctx, object, name) && f(scope, hc.header, units)?.is_some())
+                    };
+                    let visible = if hc.realm != scope.realm_id() {
+                        in_receiver_realm(scope, hc.realm, visible)?
+                    } else {
+                        visible(scope)?
+                    };
+                    if visible && !has_ordinary_property(scope.ctx, object, name) {
+                        leave_placeholder(scope, object, name);
+                    }
+                    return Ok(false);
+                }
+            }
+            // WebIDL [[Set]] on the receiver itself invokes the named setter for
+            // every string name when the class opted in (`storage.length = 1`
+            // stores an item that only `getItem` reads back); otherwise names
+            // the prototype chain has go to the prototype member.
             let set = |scope: &Scope<'_>| -> JsResult<bool> {
                 if let Some(f) = hc.named_set {
-                    if !hc.override_builtins && on_prototype_chain(scope.ctx, object, name) {
+                    if !hc.override_builtins && !hc.set_all_names && on_prototype_chain(scope.ctx, object, name) {
                         return Ok(false);
                     }
-                    return f(scope, hc.header, &String::from_utf16_lossy(units), value);
+                    return f(scope, hc.header, units, value);
                 }
                 Ok(false)
             };
@@ -1651,15 +2099,24 @@ unsafe extern "C" fn delete_property_hook(
     name: sys::JSStringRef,
     exc: *mut sys::JSValueRef,
 ) -> bool {
+    if ORDINARY_ONLY.get() {
+        return false;
+    }
     unsafe {
         guard(ctx, exc, false, |scope| {
             let Some(hc) = hook_ctx(scope, object) else { return Ok(false) };
             let Some(f) = hc.named_delete else { return Ok(false) };
-            let name = String::from_utf16_lossy(utf16_of(name));
-            if hc.realm != scope.realm_id() {
-                return in_receiver_realm(scope, hc.realm, |s| f(s, hc.header, &name));
+
+            // The named property visibility algorithm: a name the prototype
+            // chain has is not a named property, so the ordinary [[Delete]] runs.
+            if !hc.override_builtins && on_prototype_chain(ctx, object, name) {
+                return Ok(false);
             }
-            f(scope, hc.header, &name)
+            let units = utf16_of(name);
+            if hc.realm != scope.realm_id() {
+                return in_receiver_realm(scope, hc.realm, |s| f(s, hc.header, units));
+            }
+            f(scope, hc.header, units)
         })
     }
 }
@@ -1691,11 +2148,33 @@ unsafe extern "C" fn property_names_hook(
                 } else {
                     f(scope, hc.header)?
                 };
-                for n in names {
-                    sys::JSPropertyNameAccumulatorAddName(acc, JsString::new(&n).as_raw());
+                for n in &names {
+                    sys::JSPropertyNameAccumulatorAddName(acc, n.as_raw());
+                }
+            }
+            if let Some(f) = hc.unenumerable_names {
+                let names = if hc.realm != scope.realm_id() {
+                    let mut names = Vec::new();
+                    in_receiver_realm(scope, hc.realm, |s| {
+                        names = f(s, hc.header)?;
+                        Ok(())
+                    })?;
+                    names
+                } else {
+                    f(scope, hc.header)?
+                };
+                // Listed by JavaScriptCore itself, from the wrapper's real
+                // properties, when the caller wants non-enumerable keys too.
+                for n in &names {
+                    let visible = !(hc.indexed.is_some() && array_index(n.utf16()).is_some())
+                        && !has_ordinary_property(ctx, object, n.as_raw());
+                    if visible {
+                        leave_placeholder(scope, object, n.as_raw());
+                    }
                 }
             }
             Ok(())
+
         })
     }
 }

@@ -299,20 +299,37 @@ fn scroll_args(a: &Args<'_>) -> JsResult<(Option<i32>, Option<i32>)> {
     }
 }
 
+/// CSSOM View: whether `el`'s scroll offsets are the viewport's, so that its
+/// `scrollTop`, `scrollLeft` and `scroll*()` read and move the window: the
+/// page document's `scrollingElement` (the document element, or the body
+/// element in quirks mode).
+fn scrolls_viewport(page: &PageDom, el: NodeId) -> bool {
+    let dom = page.dom.borrow();
+    let doc = page.document();
+    if dom.node_document(el).ok() != Some(doc) {
+        return false;
+    }
+    let quirks = dom.document_data(doc).is_ok_and(|d| d.quirks == lp_dom::QuirksMode::Quirks);
+    let scrolling = if quirks { dom.body(doc) } else { dom.document_element(doc) };
+    scrolling.ok().flatten() == Some(el)
+}
+
 pub(crate) fn scroll_to<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>, by: bool) -> JsResult<Value<'s>> {
     let (l, t) = scroll_args(&a)?;
     let page = n.page();
+    let viewport = scrolls_viewport(page, n.id);
     let moved = {
         let dom = page.dom.borrow();
         let mut layout = page.layout.borrow_mut();
-        if by {
-            layout.element_scroll_by(&dom, n.id, l, t)
-        } else {
-            layout.element_scroll_to(&dom, n.id, l, t)
+        match (viewport, by) {
+            (true, true) => layout.window_scroll_by(&dom, l, t),
+            (true, false) => layout.window_scroll_to(&dom, l, t),
+            (false, true) => layout.element_scroll_by(&dom, n.id, l, t),
+            (false, false) => layout.element_scroll_to(&dom, n.id, l, t),
         }
     };
     if moved {
-        fire_scroll(page, Some(n.id));
+        fire_scroll(page, (!viewport).then_some(n.id));
     }
     Ok(s.undefined())
 }
@@ -320,24 +337,32 @@ pub(crate) fn scroll_to<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>, by: bool) 
 pub(crate) fn scroll_get<'s>(s: &Scope<'s>, n: &NodeData, top: bool) -> JsResult<Value<'s>> {
     // Reading a scroll offset sees the current layout (clamped to it).
     clamp_scrolls(n.page(), false);
+    let viewport = scrolls_viewport(n.page(), n.id);
     let layout = n.page().layout();
-    Ok(s.number(if top { layout.scroll_top(n.id) } else { layout.scroll_left(n.id) } as f64))
+    Ok(s.number(match (viewport, top) {
+        (true, true) => layout.scroll_y(),
+        (true, false) => layout.scroll_x(),
+        (false, true) => layout.scroll_top(n.id),
+        (false, false) => layout.scroll_left(n.id),
+    } as f64))
 }
 
 pub(crate) fn scroll_set(_s: &Scope<'_>, n: &NodeData, v: Value<'_>, top: bool) -> JsResult<()> {
     let value = to_scroll_offset(v)?;
     let page = n.page();
+    let viewport = scrolls_viewport(page, n.id);
     let moved = {
         let dom = page.dom.borrow();
         let mut layout = page.layout.borrow_mut();
-        if top {
-            layout.set_scroll_top(&dom, n.id, value)
-        } else {
-            layout.set_scroll_left(&dom, n.id, value)
+        match (viewport, top) {
+            (true, true) => layout.window_scroll_to(&dom, None, Some(value)),
+            (true, false) => layout.window_scroll_to(&dom, Some(value), None),
+            (false, true) => layout.set_scroll_top(&dom, n.id, value),
+            (false, false) => layout.set_scroll_left(&dom, n.id, value),
         }
     };
     if moved {
-        fire_scroll(page, Some(n.id));
+        fire_scroll(page, (!viewport).then_some(n.id));
     }
     Ok(())
 }
@@ -399,6 +424,58 @@ pub(crate) fn element_from_point<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -
     opt_node(s, page, hit)
 }
 
+/// `ShadowRoot.elementFromPoint`: the document's hit, retargeted against
+/// the shadow root (a host's for anything deeper, null outside its tree).
+pub(crate) fn shadow_element_from_point<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value<'s>> {
+    a.require(2, "ShadowRoot.elementFromPoint")?;
+    let (x, y) = (a.get(0).to_number()?, a.get(1).to_number()?);
+    let page = n.page();
+    let hit = hit_test(page, x, y);
+    let retargeted = hit.and_then(|h| retarget_to_root(&page.dom.borrow(), h, n.id));
+    opt_node(s, page, retargeted)
+}
+
+pub(crate) fn shadow_elements_from_point<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value<'s>> {
+    a.require(2, "ShadowRoot.elementsFromPoint")?;
+    let (x, y) = (a.get(0).to_number()?, a.get(1).to_number()?);
+    let page = n.page();
+    let ids = page.layout().elements_from_point(&page.dom.borrow(), x, y);
+    let mut out: Vec<NodeId> = Vec::new();
+    {
+        let dom = page.dom.borrow();
+        for id in ids {
+            if let Some(r) = retarget_to_root(&dom, id, n.id) {
+                if out.last() != Some(&r) {
+                    out.push(r);
+                }
+            }
+        }
+    }
+    let mut vals = lp_js::RootedVec::new();
+    for id in out {
+        vals.push(s, wrap_node(s, page, id)?.value());
+    }
+    Ok(s.array(&vals.iter(s).collect::<Vec<_>>())?.value())
+}
+
+/// DOM "retarget" of `node` against the tree rooted at `root`: the node
+/// itself when its root is `root`, else the nearest host whose root is;
+/// `None` when `root` is not a shadow-including ancestor.
+fn retarget_to_root(dom: &lp_dom::Dom, node: NodeId, root: NodeId) -> Option<NodeId> {
+    let mut cur = node;
+    loop {
+        let r = dom.root_node(cur, false).ok()?;
+        if r == root {
+            return Some(cur);
+        }
+        if !dom.is_shadow_root(r).unwrap_or(false) {
+            // Not in a shadow tree: nothing to retarget (the host itself).
+            return Some(cur);
+        }
+        cur = dom.fragment_host(r).ok()??;
+    }
+}
+
 pub(crate) fn elements_from_point<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value<'s>> {
     a.require(2, "Document.elementsFromPoint")?;
     let (x, y) = (a.get(0).to_number()?, a.get(1).to_number()?);
@@ -427,12 +504,20 @@ impl JsClass for ComputedStyle {
         def.method("getPropertyValue", 1, |s, c, a| {
             let name = arg_string(&a, 0, "CSSStyleDeclaration.getPropertyValue")?;
             let page = &c.el.page;
+            crate::animation_events::observe(page, c.el.id);
             let v = page.layout().computed_style_value(&page.dom.borrow(), c.el.id, &name);
             Ok(s.string(&v))
         });
         def.method("getPropertyPriority", 1, |s, _c, _a| Ok(s.string("")));
-        def.method("item", 1, |s, _c, _a| Ok(s.string("")));
-        def.getter("length", |s, _c| Ok(s.number(0.0)));
+        // The longhands, as indexed properties; an element without computed
+        // style (not rendered) lists nothing, as in Chrome.
+        def.method("item", 1, |s, c, a| {
+            let names = computed_names(c);
+            Ok(s.string(names.get(to_u32(a.get(0))? as usize).copied().unwrap_or("")))
+        });
+        def.getter("length", |s, c| Ok(s.number(computed_names(c).len() as f64)));
+        def.indexed(|s, c, i| Ok(computed_names(c).get(i as usize).map(|name| s.string(name))));
+        def.indexed_iterator();
         def.getter("cssText", |s, _c| Ok(s.string("")));
         def.method("setProperty", 2, |_s, _c, _a| {
             Err::<Value, _>(lp_js::JsError::dom(
@@ -441,17 +526,38 @@ impl JsClass for ComputedStyle {
             ))
         });
         def.named(false, |s, c, name| {
+            // camelCase IDL attributes (`backgroundColor`) and the dashed
+            // property names themselves (`background-color`).
+            let dashed = name.contains('-');
             if !name.chars().next().is_some_and(|ch| ch.is_ascii_lowercase())
-                || !name.chars().all(|ch| ch.is_ascii_alphanumeric())
+                || !name.chars().all(|ch| ch.is_ascii_alphanumeric() || (dashed && ch == '-'))
             {
                 return Ok(None);
             }
-            let prop = crate::css::camel_to_css(name);
+            let prop = if dashed {
+                if !lp_dom::stylo::is_property(name) {
+                    return Ok(None);
+                }
+                name.to_owned()
+            } else {
+                crate::css::camel_to_css(name)
+            };
             let page = &c.el.page;
+            crate::animation_events::observe(page, c.el.id);
             let v = page.layout().computed_style_value(&page.dom.borrow(), c.el.id, &prop);
             Ok(Some(s.string(&v)))
         });
     }
+}
+
+/// The property names a computed style lists.
+fn computed_names(c: &ComputedData) -> &'static [&'static str] {
+    let page = &c.el.page;
+    let dom = page.dom.borrow();
+    if page.layout().computed_style_value(&dom, c.el.id, "display").is_empty() {
+        return &[];
+    }
+    lp_dom::stylo::longhand_names()
 }
 
 /// `window.getComputedStyle(el)`.

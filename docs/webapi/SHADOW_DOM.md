@@ -53,6 +53,11 @@ and `assignedElements({flatten})` follow named assignment, computed on each call
 - `disabledFeatures` is per Dom store, not per realm.
 - The parser does not construct defined custom elements, so a parsed host stays
   un-upgraded until `define` or an explicit upgrade.
+- Custom elements get `connectedCallback`, `disconnectedCallback` and
+  `connectedMoveCallback` reactions (see [moveBefore](MOVE_BEFORE.md));
+  `attributeChangedCallback` and `adoptedCallback` are not called.
+- `slotchange` also fires for a slot whose fallback content changed while it
+  has no assigned nodes.
 - Parser insertions queue no MutationObserver records, so an observer cannot run
   `attachShadow` or move a template in the middle of a parse.
 - Scoped custom element registries and `shadowrootadoptedstylesheets` are absent.
