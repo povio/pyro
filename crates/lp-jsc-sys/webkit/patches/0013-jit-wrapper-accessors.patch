@@ -583,3 +583,23 @@ index a8d678e772..c5b4393180 100644
 +    macro(J_JITOperation_GPP, GPRReg, GPRReg, GPRReg, GPRReg) \
  
  #endif
+diff --git a/Source/JavaScriptCore/runtime/JSLock.cpp b/Source/JavaScriptCore/runtime/JSLock.cpp
+index c2b37fc9f4..0a43ec0185 100644
+--- a/Source/JavaScriptCore/runtime/JSLock.cpp
++++ b/Source/JavaScriptCore/runtime/JSLock.cpp
+@@ -421,9 +421,13 @@ JSLock::APICallbackScope::APICallbackScope(JSGlobalObject* globalObject)
+     }
+     if (!globalObject)
+         return;
+-    // A callback must never run from the collector, with or without the lock.
++    // A callback must never run from the collector, with or without the lock. Checked in debug
++    // builds only: the two checks look the current thread up twice, which was 9% of a selector
++    // engine's query (an indexed read or a method call per element, each through this scope).
++#if ASSERT_ENABLED
+     VM& vm = globalObject->vm();
+-    RELEASE_ASSERT(!vm.currentThreadIsHoldingAPILock() || !vm.isCollectorBusyOnCurrentThread(), vm.currentThreadIsHoldingAPILock(), vm.isCollectorBusyOnCurrentThread());
++    ASSERT(!vm.currentThreadIsHoldingAPILock() || !vm.isCollectorBusyOnCurrentThread());
++#endif
+ }
+ 
+ JSLock::DropAllLocks::~DropAllLocks()

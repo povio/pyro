@@ -69,7 +69,11 @@ options:
                                         (~8 ms off its first command, ~5 MB while idle).
                                         Default: on with --prepare (a test suite's
                                         prepared pages), off otherwise;
-                                        env LIGHTNINGPANDA_SPARE_ENGINE=on|off
+                                        env LIGHTNINGPANDA_SPARE_ENGINE=on|off.
+                                        --prepare also lets the JavaScript heap grow
+                                        4 MB between collections instead of 1 MB (faster
+                                        locators, about 10% more memory on a loaded app);
+                                        env JSC_smallHeapSize=<bytes> sets it either way
   --render-prewarm <on|off>             scan the system fonts and warm the renderer at
                                         startup, so the first screenshot or PDF does not
                                         pay for it (~3 MB while idle). Default: on with
@@ -418,6 +422,12 @@ pub fn serve_main(args: &[String]) -> ExitCode {
             return ExitCode::from(2);
         }
     };
+    // A test suite's pages run selector engines and assertions in a loop:
+    // fewer, larger collections (see `lp_js::prefer_throughput`). Before any
+    // engine exists, so JavaScriptCore reads it.
+    if options.test_suite_mode() {
+        lp_js::prefer_throughput();
+    }
     if let Some(socket) = &options.template {
         return crate::fork::template_main(&options, socket);
     }

@@ -1368,7 +1368,8 @@ fn install_classes(scope: &Scope<'_>) -> JsResult<()> {
         spec.push_str(&format!("[{name},{parent},{},{}]", info.def.ctor_length, info.def.exposed));
         let native = match info.def.constructor {
             Some(c) => {
-                make_member_fn(scope.ctx, &realm.engine, reg.member, c, false, info.name, info.def.ctor_length, &keys)?.value()
+                make_member_fn(scope.ctx, &realm.engine, reg.member, c, false, info.name, info.def.ctor_length, &keys)?
+                    .value()
             }
             None => scope.null(),
         };
@@ -1562,7 +1563,8 @@ fn make_member_fn(
         }
         return Ok(unsafe { Object::from_raw(ctx, f) });
     }
-    let payload = Box::into_raw(Box::new(class::MemberPayload { tag: class::PayloadTag::Member, call, pure })) as *mut c_void;
+    let payload =
+        Box::into_raw(Box::new(class::MemberPayload { tag: class::PayloadTag::Member, call, pure })) as *mut c_void;
     let f = unsafe { Object::from_raw(ctx, sys::JSObjectMake(ctx, class, payload)) };
     let attrs = sys::kJSPropertyAttributeReadOnly | sys::kJSPropertyAttributeDontEnum;
     unsafe {

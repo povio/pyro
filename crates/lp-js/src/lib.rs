@@ -20,8 +20,8 @@ mod value;
 
 pub use class::{ClassDef, ClassId, GetterResult, JsClass, NoParent};
 pub use engine::{
-    configure_process, prepare_process_for_fork, Capabilities, ConsoleLevel, Engine, EngineHooks, TerminateHandle,
-    WrapperPropertyHook,
+    configure_process, prefer_throughput, prepare_process_for_fork, Capabilities, ConsoleLevel, Engine, EngineHooks,
+    TerminateHandle, WrapperPropertyHook,
 };
 pub use error::{JsError, JsException, JsResult};
 pub use persistent::{Persistent, RootedVec};

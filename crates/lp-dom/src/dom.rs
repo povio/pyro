@@ -111,7 +111,13 @@ impl Default for NameCache {
     fn default() -> Self {
         NameCache {
             tags: Default::default(),
-            fixed: ["#text".into(), "#cdata-section".into(), "#comment".into(), "#document".into(), "#document-fragment".into()],
+            fixed: [
+                "#text".into(),
+                "#cdata-section".into(),
+                "#comment".into(),
+                "#document".into(),
+                "#document-fragment".into(),
+            ],
         }
     }
 }
@@ -647,6 +653,7 @@ impl Dom {
             html_base: Default::default(),
             inert_doc: NIL,
             owned: 0,
+            held: 0,
             active: false,
             allow_declarative_shadow_roots: false,
             focused: NIL,
@@ -845,7 +852,7 @@ impl Dom {
         let inert = self.create_document(kind, "about:blank").idx;
         // The inert document lives exactly as long as its creator: the
         // reference is dropped when the creator is collected.
-        self.n_mut(inert).ext_refs += 1;
+        self.ext_ref_inc(inert);
         if let NodeKind::Document(d) = &mut self.n_mut(inert).kind {
             d.inert_doc = inert;
         }
@@ -1738,10 +1745,12 @@ impl Dom {
         }
         let mut stack = vec![node];
         let mut moved = 0u32;
+        let mut held = 0u32;
         while let Some(i) = stack.pop() {
             if self.n(i).owner_doc == old {
                 self.n_mut(i).owner_doc = doc;
                 moved += 1;
+                held += u32::from(self.n(i).ext_refs > 0);
             }
             stack.extend(self.child_idx_iter(i));
             if let Some(e) = self.n(i).element() {
@@ -1752,6 +1761,8 @@ impl Dom {
         }
         self.doc_data_mut(old).owned -= moved;
         self.doc_data_mut(doc).owned += moved;
+        self.doc_data_mut(old).held -= held;
+        self.doc_data_mut(doc).held += held;
         self.candidates.push(old);
     }
 
@@ -2442,16 +2453,45 @@ impl Dom {
     /// Registers an external strong reference (JS wrapper creation, records).
     pub fn add_ref(&mut self, id: NodeId) -> DomResult<()> {
         let i = self.check(id)?;
-        self.n_mut(i).ext_refs += 1;
+        self.ext_ref_inc(i);
         Ok(())
+    }
+
+    /// Adds an external reference to node `i`, counting it in its document
+    /// (`DocumentData::held`) when it is the node's first.
+    fn ext_ref_inc(&mut self, i: u32) {
+        let n = self.n_mut(i);
+        n.ext_refs += 1;
+        if n.ext_refs == 1 {
+            let owner = n.owner_doc;
+            if owner != NIL && self.slots[owner as usize].node.is_some() {
+                self.doc_data_mut(owner).held += 1;
+            }
+        }
+    }
+
+    /// Drops an external reference of node `i`; true when it was the last.
+    fn ext_ref_dec(&mut self, i: u32) -> bool {
+        let n = self.n_mut(i);
+        if n.ext_refs == 0 {
+            return false;
+        }
+        n.ext_refs -= 1;
+        if n.ext_refs > 0 {
+            return false;
+        }
+        let owner = n.owner_doc;
+        if owner != NIL && self.slots[owner as usize].node.is_some() {
+            let d = self.doc_data_mut(owner);
+            d.held = d.held.saturating_sub(1);
+        }
+        true
     }
     /// Drops an external reference. Collection happens in `collect_garbage`.
     pub fn release(&mut self, id: NodeId) {
         if let Ok(i) = self.check(id) {
-            let n = self.n_mut(i);
-            debug_assert!(n.ext_refs > 0, "unbalanced release");
-            n.ext_refs = n.ext_refs.saturating_sub(1);
-            if n.ext_refs == 0 {
+            debug_assert!(self.n(i).ext_refs > 0, "unbalanced release");
+            if self.ext_ref_dec(i) {
                 self.candidates.push(i);
             }
         }
@@ -2508,7 +2548,9 @@ impl Dom {
                 continue;
             }
             if let NodeKind::Document(d) = &self.n(root).kind {
-                if d.active {
+                // A document with a referenced node (in its tree or not)
+                // stays: no need to walk the tree to find that out.
+                if d.active || d.held > 0 {
                     continue;
                 }
             }
@@ -2555,8 +2597,7 @@ impl Dom {
             }
         }
         if inert != NIL && self.slots[inert as usize].node.is_some() {
-            let n = self.n_mut(inert);
-            n.ext_refs = n.ext_refs.saturating_sub(1);
+            self.ext_ref_dec(inert);
             self.candidates.push(inert);
         }
     }

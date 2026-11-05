@@ -159,7 +159,9 @@ impl JsClass for Node {
    browsers keep such wrappers too. Without it, a script that walks the document (a selector engine reads every
    element per query) had its wrappers collected and made again each time: 15% of a Playwright locator was
    `wrap_node` and 13% the collector. A wrapper made for a detached node can still be collected and made again
-   without script noticing.
+   without script noticing. Because a page's wrappers now all die after it is navigated away from, in many small
+   batches, each document counts its externally referenced nodes (`lp-dom` `DocumentData::held`):
+   `Dom::collect_garbage` skips a document that still has one without walking its tree.
 4. **Prefer hidden properties to `Persistent`** for state a wrapper owns (event listeners, expandos the DOM needs).
    `Persistent` roots are invisible to cycle collection.
 5. **`Realm::dispose()`** (navigation) releases the global and the prototypes, empties the identity map, and
@@ -342,7 +344,9 @@ the DFG's `CallDOMGetter` prove the receiver is a C API wrapper and call `fast_g
 its private data, no property name, no decoding of `this`, with the declared result type and a reads-only effect (the
 compiler drops a dead read and types what follows). `AccessCase::IndexedCallbackObjectLoad` makes `wrapper[i]` an
 inline-cache case that calls the class's indexed getter (`operationGetByValCallbackObject`) where stock JSC gives up
-on the cache and takes `operationGetByValGeneric`, the prototype walk and a `PropertySlot` per read. A getter that
+on the cache and takes `operationGetByValGeneric`, the prototype walk and a `PropertySlot` per read. The collector
+check in `JSLock::APICallbackScope` (patch `0009`) is a debug assertion now: it looked the current thread up twice on
+every indexed read and method call. A getter that
 returns a constant costs 7.5 ns per call through this path, loop included, which is what Chrome's bindings cost; what
 a real getter costs above that is `lp-js` and `lp-dom` (see the measurements in `docs/OPTIMIZATION.md`).
 

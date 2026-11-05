@@ -258,8 +258,12 @@ impl JsClass for Node {
         ] {
             def.constant(name, v);
         }
-        def.pure_getter_typed("nodeType", lp_js::GetterResult::Number, |s, n| Ok(s.number(n.page().dom.borrow().node_type(n.id).js()? as u16 as f64)));
-        def.pure_getter_typed("nodeName", lp_js::GetterResult::String, |s, n| Ok(s.shared_string(&n.page().dom.borrow().node_name_shared(n.id).js()?)));
+        def.pure_getter_typed("nodeType", lp_js::GetterResult::Number, |s, n| {
+            Ok(s.number(n.page().dom.borrow().node_type(n.id).js()? as u16 as f64))
+        });
+        def.pure_getter_typed("nodeName", lp_js::GetterResult::String, |s, n| {
+            Ok(s.shared_string(&n.page().dom.borrow().node_name_shared(n.id).js()?))
+        });
         def.accessor(
             "nodeValue",
             |s, n| {
@@ -298,7 +302,9 @@ impl JsClass for Node {
             let p = n.page().dom.borrow().parent_element(n.id).js()?;
             node_value(s, n.page(), p)
         });
-        def.pure_getter_typed("childNodes", lp_js::GetterResult::ObjectOrNull, |s, n| Ok(collections::child_nodes(s, n.page(), n.id)?.value()));
+        def.pure_getter_typed("childNodes", lp_js::GetterResult::ObjectOrNull, |s, n| {
+            Ok(collections::child_nodes(s, n.page(), n.id)?.value())
+        });
         def.pure_getter_typed("firstChild", lp_js::GetterResult::ObjectOrNull, |s, n| {
             let c = n.page().dom.borrow().first_child(n.id).js()?;
             node_value(s, n.page(), c)
@@ -319,7 +325,9 @@ impl JsClass for Node {
             let d = n.page().dom.borrow().owner_document(n.id).js()?;
             node_value(s, n.page(), d)
         });
-        def.pure_getter_typed("isConnected", lp_js::GetterResult::Boolean, |s, n| Ok(s.boolean(n.page().dom.borrow().is_connected(n.id).js()?)));
+        def.pure_getter_typed("isConnected", lp_js::GetterResult::Boolean, |s, n| {
+            Ok(s.boolean(n.page().dom.borrow().is_connected(n.id).js()?))
+        });
         def.getter("baseURI", |s, n| {
             let dom = n.page().dom.borrow();
             let doc = dom.node_document(n.id).js()?;
@@ -430,7 +438,9 @@ fn blur_moved(page: &Rc<PageDom>, node: NodeId) {
 // ----- mixins -------------------------------------------------------------
 
 fn define_parent_node<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
-    def.pure_getter_typed("children", lp_js::GetterResult::ObjectOrNull, |s, n| Ok(collections::children(s, n.page(), n.id)?.value()));
+    def.pure_getter_typed("children", lp_js::GetterResult::ObjectOrNull, |s, n| {
+        Ok(collections::children(s, n.page(), n.id)?.value())
+    });
     def.pure_getter_typed("firstElementChild", lp_js::GetterResult::ObjectOrNull, |s, n| {
         let c = n.page().dom.borrow().element_children(n.id).js()?.next();
         node_value(s, n.page(), c)
@@ -560,8 +570,12 @@ fn sibling_element(n: &NodeData, forward: bool) -> JsResult<Option<NodeId>> {
 }
 
 fn define_non_doctype_child<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
-    def.pure_getter_typed("previousElementSibling", lp_js::GetterResult::ObjectOrNull, |s, n| node_value(s, n.page(), sibling_element(n, false)?));
-    def.pure_getter_typed("nextElementSibling", lp_js::GetterResult::ObjectOrNull, |s, n| node_value(s, n.page(), sibling_element(n, true)?));
+    def.pure_getter_typed("previousElementSibling", lp_js::GetterResult::ObjectOrNull, |s, n| {
+        node_value(s, n.page(), sibling_element(n, false)?)
+    });
+    def.pure_getter_typed("nextElementSibling", lp_js::GetterResult::ObjectOrNull, |s, n| {
+        node_value(s, n.page(), sibling_element(n, true)?)
+    });
 }
 
 // ----- character data -----------------------------------------------------
@@ -862,8 +876,12 @@ impl JsClass for Element {
         define_parent_node(def);
         define_child_node(def);
         define_non_doctype_child(def);
-        def.pure_getter_typed("tagName", lp_js::GetterResult::String, |s, n| Ok(s.shared_string(&n.page().dom.borrow().tag_name_shared(n.id).js()?)));
-        def.pure_getter_typed("localName", lp_js::GetterResult::String, |s, n| Ok(s.string(n.page().dom.borrow().element(n.id).js()?.local_name())));
+        def.pure_getter_typed("tagName", lp_js::GetterResult::String, |s, n| {
+            Ok(s.shared_string(&n.page().dom.borrow().tag_name_shared(n.id).js()?))
+        });
+        def.pure_getter_typed("localName", lp_js::GetterResult::String, |s, n| {
+            Ok(s.string(n.page().dom.borrow().element(n.id).js()?.local_name()))
+        });
         def.getter("namespaceURI", |s, n| {
             let dom = n.page().dom.borrow();
             let ns = dom.element(n.id).js()?.namespace();

@@ -243,7 +243,15 @@ impl<C: JsClass> ClassDef<C> {
     /// Adds a read-only attribute.
     pub fn getter(&mut self, name: &'static str, g: GetterFn<C>) -> &mut Self {
         let get = MemberCall { invoke: getter_invoke::<C>, f: g as *const () };
-        self.accessors.push(AccessorSpec { name, get, set: None, slot: None, pure: false, result: GetterResult::Any, get_h: None });
+        self.accessors.push(AccessorSpec {
+            name,
+            get,
+            set: None,
+            slot: None,
+            pure: false,
+            result: GetterResult::Any,
+            get_h: None,
+        });
         self
     }
 
@@ -263,7 +271,15 @@ impl<C: JsClass> ClassDef<C> {
     /// JIT type what follows the read (see [`GetterResult`]).
     pub fn pure_getter_typed(&mut self, name: &'static str, result: GetterResult, g: GetterFn<C>) -> &mut Self {
         let get = MemberCall { invoke: getter_invoke::<C>, f: g as *const () };
-        self.accessors.push(AccessorSpec { name, get, set: None, slot: None, pure: true, result, get_h: Some(getter_invoke_h::<C>) });
+        self.accessors.push(AccessorSpec {
+            name,
+            get,
+            set: None,
+            slot: None,
+            pure: true,
+            result,
+            get_h: Some(getter_invoke_h::<C>),
+        });
         self
     }
 
@@ -271,7 +287,15 @@ impl<C: JsClass> ClassDef<C> {
     pub fn accessor(&mut self, name: &'static str, g: GetterFn<C>, s: SetterFn<C>) -> &mut Self {
         let get = MemberCall { invoke: getter_invoke::<C>, f: g as *const () };
         let set = MemberCall { invoke: setter_invoke::<C>, f: s as *const () };
-        self.accessors.push(AccessorSpec { name, get, set: Some(set), slot: None, pure: false, result: GetterResult::Any, get_h: None });
+        self.accessors.push(AccessorSpec {
+            name,
+            get,
+            set: Some(set),
+            slot: None,
+            pure: false,
+            result: GetterResult::Any,
+            get_h: None,
+        });
         self
     }
 
