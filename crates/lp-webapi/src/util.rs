@@ -91,13 +91,22 @@ pub fn with_str<R>(v: Value<'_>, f: impl FnOnce(&str) -> JsResult<R>) -> JsResul
 /// `v` converted as [`dom_string`] does: the characters of an ASCII string
 /// borrowed (see [`with_arg_str`]), anything else converted.
 pub fn str_of<'v>(v: &'v Value<'_>) -> JsResult<std::borrow::Cow<'v, str>> {
-    if let Some(lp_js::StringUnits::Latin1(bytes)) = v.string_units() {
-        if bytes.is_ascii() {
-            // SAFETY: ASCII bytes are UTF-8.
-            return Ok(std::borrow::Cow::Borrowed(unsafe { std::str::from_utf8_unchecked(bytes) }));
-        }
+    if let Some(s) = ascii_str(v) {
+        return Ok(std::borrow::Cow::Borrowed(s));
     }
     dom_string(*v).map(std::borrow::Cow::Owned)
+}
+
+/// The characters of an ASCII string value, borrowed; `None` for anything
+/// else (which [`str_of`] converts).
+pub fn ascii_str<'v>(v: &'v Value<'_>) -> Option<&'v str> {
+    match v.string_units() {
+        // SAFETY: ASCII bytes are UTF-8.
+        Some(lp_js::StringUnits::Latin1(bytes)) if bytes.is_ascii() => {
+            Some(unsafe { std::str::from_utf8_unchecked(bytes) })
+        }
+        _ => None,
+    }
 }
 
 /// The parsed selector list of argument `i`, from the page's cache. A string
