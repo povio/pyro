@@ -1413,10 +1413,17 @@ impl Layout {
     /// `window.scrollTo` (Window.zig:780-794): each given axis is clamped to
     /// [0, scrollSize - viewport]. Returns whether the offset moved (the
     /// caller then schedules `scroll`/`scrollend` on the document).
+    ///
+    /// Only a positive coordinate needs the limit: zero or less lands at the
+    /// origin whatever the document's size, so `scrollTo(0, 0)` (a router's
+    /// scroll restoration on every navigation) lays nothing out.
     pub fn window_scroll_to(&mut self, dom: &Dom, left: Option<i32>, top: Option<i32>) -> bool {
-        let (w, h) = self.document_scroll_size(dom);
-        let max_x = scroll_limit(w, self.inner_width());
-        let max_y = scroll_limit(h, self.inner_height());
+        let (max_x, max_y) = if left.is_some_and(|l| l > 0) || top.is_some_and(|t| t > 0) {
+            let (w, h) = self.document_scroll_size(dom);
+            (scroll_limit(w, self.inner_width()), scroll_limit(h, self.inner_height()))
+        } else {
+            (0, 0)
+        };
         let new_x = left.map_or(self.window_scroll.0, |l| (l.max(0) as u32).min(max_x));
         let new_y = top.map_or(self.window_scroll.1, |t| (t.max(0) as u32).min(max_y));
         if (new_x, new_y) == self.window_scroll {
@@ -1692,10 +1699,11 @@ impl Layout {
         moved
     }
 
-    /// `clampScroll` (Element.zig:2261-2270).
+    /// `clampScroll` (Element.zig:2261-2270). Zero needs no extent (no
+    /// layout): `scrollTop = 0` on a container at the top stays a no-op.
     fn clamp_scroll(&self, dom: &Dom, el: NodeId, axis: Axis, target: i64) -> u32 {
         let mut clamped = target;
-        if clamped < 0 {
+        if clamped <= 0 {
             clamped = 0;
         } else if let Some(extent) = self.scroll_extent(dom, el, axis) {
             clamped = clamped.min(extent.floor() as i64);
@@ -2616,5 +2624,67 @@ mod hit_test_geometry_work {
         dom.set_attribute(target, "data-moved", "yes").unwrap();
         assert_eq!(layout.element_from_point(&dom, 635.0, 198.0), None);
         assert_eq!(layout.element_from_point(&dom, 5.0, 5.0), Some(target));
+    }
+}
+
+#[cfg(test)]
+mod scroll_to_origin {
+    use super::*;
+    use std::cell::Cell;
+
+    /// A 2000 px tall document that counts its syncs.
+    struct Tall(Cell<usize>);
+
+    impl GeometrySource for Tall {
+        fn sync(&self, _dom: &Dom, _layout: &Layout) {
+            self.0.set(self.0.get() + 1);
+        }
+        fn element_box(&self, _key: u64) -> Option<ExternalBox> {
+            Some(ExternalBox {
+                width: 800.0,
+                height: 2000.0,
+                scroll_height: 2000.0,
+                client_height: 600.0,
+                ..Default::default()
+            })
+        }
+        fn geometry(&self) -> Option<ExternalGeometry> {
+            Some(ExternalGeometry { document_width: 800.0, document_height: 2000.0, ..Default::default() })
+        }
+        fn document_size(&self) -> Option<(f64, f64)> {
+            Some((800.0, 2000.0))
+        }
+        fn has_sticky(&self) -> bool {
+            false
+        }
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+    }
+
+    #[test]
+    fn scrolling_to_the_origin_lays_nothing_out() {
+        use crate::parse::{parse_document, DomRef};
+        let dom_ref: DomRef = Rc::new(RefCell::new(Dom::new()));
+        let doc = parse_document(&dom_ref, "http://test/", "<!doctype html><body><div id=s></div></body>");
+        let dom = Rc::try_unwrap(dom_ref).ok().unwrap().into_inner();
+        let div = dom.get_element_by_id(doc, "s").unwrap().unwrap();
+        let source = Rc::new(Tall(Cell::new(0)));
+        let mut layout = Layout::with_viewport(doc, Viewport::new(800, 600));
+        layout.set_geometry_source(Some(source.clone()));
+        // At the origin already, or asked for it: no layout, no move.
+        assert!(!layout.window_scroll_to(&dom, Some(0), Some(0)));
+        assert!(!layout.window_scroll_to(&dom, Some(-5), None));
+        assert!(!layout.window_scroll_by(&dom, Some(0), Some(-10)));
+        assert!(!layout.set_scroll_top(&dom, div, 0));
+        assert_eq!(source.0.get(), 0, "a scroll to the origin synced the layout");
+        // A positive offset needs the document's size.
+        assert!(layout.window_scroll_to(&dom, None, Some(500)));
+        assert_eq!(layout.scroll_y(), 500);
+        assert_eq!(source.0.get(), 1);
+        // Back to the origin moves without laying out again.
+        assert!(layout.window_scroll_to(&dom, Some(0), Some(0)));
+        assert_eq!(layout.scroll_y(), 0);
+        assert_eq!(source.0.get(), 1);
     }
 }
