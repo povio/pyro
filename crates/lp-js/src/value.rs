@@ -660,6 +660,41 @@ impl<'s> Scope<'s> {
     pub fn global(&self) -> Object<'s> {
         unsafe { Object::from_raw(self.ctx, self.global_object_raw()) }
     }
+
+    /// `value`, a value of another realm of this engine, as a value of this
+    /// scope: the same JavaScript value, used with this realm's context from
+    /// now on (no copy, no protect/unprotect, unlike a round trip through a
+    /// [`crate::Persistent`]).
+    ///
+    /// Sound because a JavaScript value belongs to the VM, not to a realm:
+    /// every context of the engine's context group can use it, and the
+    /// result's context is this scope's, alive for `'s`. Rooting is
+    /// unchanged: like any [`Value`], the result is kept alive by being on
+    /// the stack (see the module docs), not by the realm it came from, so a
+    /// value that was only reachable from a scope that has since ended must
+    /// still be held in a local. Panics for a value of another engine,
+    /// which no context of this one may touch.
+    pub fn rehome(&self, value: Value<'_>) -> Value<'s> {
+        self.assert_same_engine(value.ctx);
+        // SAFETY: a live value of this VM (checked above), rooted per the module rule.
+        unsafe { Value::from_raw(self.ctx, value.raw) }
+    }
+
+    /// [`Scope::rehome`] for an object.
+    pub fn rehome_object(&self, object: Object<'_>) -> Object<'s> {
+        self.assert_same_engine(object.ctx);
+        // SAFETY: as in `rehome`.
+        unsafe { Object::from_raw(self.ctx, object.raw) }
+    }
+
+    fn assert_same_engine(&self, ctx: sys::JSContextRef) {
+        // SAFETY: both contexts are live (the value's scope, or another
+        // realm of a live engine); reading the group runs no script.
+        assert!(
+            ctx == self.ctx || unsafe { sys::JSContextGetGroup(ctx) } == self.engine_inner().group(),
+            "rehome: the value belongs to another engine"
+        );
+    }
 }
 
 impl std::fmt::Debug for Value<'_> {
