@@ -139,6 +139,10 @@ impl Dom {
             }
             "iframe" | "frame" => ResourceKind::Iframe,
             "img" => ResourceKind::Img,
+            // An image button fetches its `src` like `<img>` (its natural
+            // size is its layout size); `type` is a relevant attribute, so
+            // becoming one starts the load.
+            "input" if e.attr("type").is_some_and(|t| t.eq_ignore_ascii_case("image")) => ResourceKind::Img,
             _ => return None,
         })
     }

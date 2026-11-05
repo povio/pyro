@@ -7,6 +7,7 @@ mod dom_js;
 mod fetch_js;
 mod form_data_js;
 mod identity_js;
+mod image_input_js;
 mod media_source_js;
 mod storage_js;
 mod support;

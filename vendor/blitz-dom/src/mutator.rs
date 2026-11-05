@@ -384,7 +384,14 @@ impl DocumentMutator<'_> {
 
         if (tag, attr) == tag_and_attr!("input", "checked") {
             set_input_checked_state(element, value.to_string());
-        } else if (tag, attr) == tag_and_attr!("img", "src") {
+        } else if (tag, attr) == tag_and_attr!("img", "src")
+            // lightningpanda: an image button fetches its `src` like `<img>`;
+            // `type` becoming "image" starts the load (HTML "image button
+            // state": the type changing to Image Button updates the image data).
+            || (*tag == local_name!("input")
+                && (*attr == local_name!("src") || *attr == local_name!("type"))
+                && crate::layout::replaced::is_image_input(element))
+        {
             self.load_image(node_id);
         } else if (tag, attr) == tag_and_attr!("canvas", "src") {
             self.load_custom_paint_src(node_id);
@@ -1071,6 +1078,15 @@ impl<'doc> DocumentMutator<'doc> {
                 _ if has_custom_widget => {}
                 "link" => self.eager_op_queue.push(SpecialOp::LoadStylesheet(node_id)),
                 "img" => self.eager_op_queue.push(SpecialOp::LoadImage(node_id)),
+                // lightningpanda: an image button is replaced content showing
+                // its `src` image, so it loads like `<img>` (and is a form
+                // control like any other input).
+                "input" if crate::layout::replaced::is_image_input(element) => {
+                    self.eager_op_queue.push(SpecialOp::LoadImage(node_id));
+                    self.eager_op_queue
+                        .push(SpecialOp::ProcessButtonInput(node_id));
+                    self.form_nodes.insert(node_id);
+                }
                 "iframe" => self.eager_op_queue.push(SpecialOp::LoadIframe(node_id)),
                 "canvas" => self
                     .eager_op_queue

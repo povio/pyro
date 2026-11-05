@@ -658,7 +658,11 @@ impl Dom {
         let kind = e.is_html()
             && (control || matches!(local, "form" | "fieldset" | "option" | "optgroup" | "details" | "dialog"));
         let editable = e.attr("contenteditable").is_some();
-        let natural = (e.is_html() && local == "img").then(|| self.natural_size(self.id_of(n))).flatten();
+        // An image button (`<input type=image>`) is laid out like `<img>`:
+        // its natural size travels the same way.
+        let is_image = local == "img"
+            || (local == "input" && e.attr("type").is_some_and(|t| t.eq_ignore_ascii_case("image")));
+        let natural = (e.is_html() && is_image).then(|| self.natural_size(self.id_of(n))).flatten();
         if !kind && !editable && natural.is_none() {
             return None;
         }

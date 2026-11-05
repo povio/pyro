@@ -159,6 +159,15 @@ input[type="file"] {
     background-color: transparent;
 }
 
+/* lightningpanda: an image button is replaced content laid out like <img>
+   at its image's intrinsic size, without the text-input border, padding and
+   background (Chromium's UA sheet: padding/border/background-color initial). */
+input[type="image" i] {
+    border: none;
+    padding: 0;
+    background-color: transparent;
+}
+
 /* https://html.spec.whatwg.org/#the-fieldset-and-legend-elements */
 fieldset {
     display: block;
