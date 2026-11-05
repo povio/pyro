@@ -1,6 +1,7 @@
 //! Form data set construction and form submission encoding (HTML §4.10.21).
 
 use std::borrow::Cow;
+use std::cell::Cell;
 use std::rc::Rc;
 
 use encoding_rs::Encoding;
@@ -14,6 +15,34 @@ use crate::page::{NavigationRequest, PageDom};
 pub enum EntryValue {
     Text(String),
     File(FileEntry),
+}
+
+thread_local! {
+    /// The image button whose activation is submitting its form right now,
+    /// with its "selected coordinate" (page id, element, x, y). Set around
+    /// the submission so that `new FormData(form, submitter)` in a `submit`
+    /// handler, and the submission itself, see the click's coordinates; an
+    /// image button that is not being activated submits (0, 0).
+    static SELECTED_COORDINATE: Cell<Option<(u64, NodeId, i64, i64)>> = const { Cell::new(None) };
+}
+
+/// Runs `f` (a form submission from the image button `el`) with `el`'s
+/// selected coordinate set to (`x`, `y`); nested submissions restore the
+/// outer coordinate afterwards.
+pub(crate) fn with_selected_coordinate<R>(page: &PageDom, el: NodeId, x: i64, y: i64, f: impl FnOnce() -> R) -> R {
+    let outer = SELECTED_COORDINATE.with(|c| c.replace(Some((page.id(), el, x, y))));
+    let result = f();
+    SELECTED_COORDINATE.with(|c| c.set(outer));
+    result
+}
+
+/// The selected coordinate of the image button `el` of `page`: (0, 0)
+/// unless it is the button being activated.
+fn selected_coordinate(page: &PageDom, el: NodeId) -> (i64, i64) {
+    SELECTED_COORDINATE.with(|c| match c.get() {
+        Some((p, e, x, y)) if p == page.id() && e == el => (x, y),
+        _ => (0, 0),
+    })
 }
 
 /// "Constructing the entry list" for `form` (submitter included if given).
@@ -57,8 +86,9 @@ fn form_entries_with_charset(
                     InputType::Image => {
                         if Some(c) == submitter {
                             let prefix = if name.is_empty() { String::new() } else { format!("{name}.") };
-                            out.push((format!("{prefix}x"), EntryValue::Text("0".into())));
-                            out.push((format!("{prefix}y"), EntryValue::Text("0".into())));
+                            let (x, y) = selected_coordinate(page, c);
+                            out.push((format!("{prefix}x"), EntryValue::Text(x.to_string())));
+                            out.push((format!("{prefix}y"), EntryValue::Text(y.to_string())));
                         }
                     }
                     InputType::Checkbox | InputType::Radio => {

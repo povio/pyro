@@ -1512,7 +1512,11 @@ impl JsClass for Document {
         def.method("getSelection", 0, |s, _n, _a| {
             s.global().get("getSelection")?.as_object().map_or(Ok(s.null()), |f| f.call(None, &[]))
         });
-        def.method("execCommand", 0, |s, _n, _a| Ok(s.boolean(false)));
+        def.method("execCommand", 1, |s, n, a| {
+            let command = arg_string(&a, 0, "Document.execCommand")?;
+            let value = if a.get(2).is_undefined() { String::new() } else { dom_string(a.get(2))? };
+            Ok(s.boolean(crate::editing::exec_command(n.page(), &command, &value)))
+        });
         def.method("queryCommandSupported", 0, |s, _n, _a| Ok(s.boolean(false)));
         def.method("open", 0, crate::html::document_open);
         def.method("close", 0, |s, n, _a| crate::html::document_close(s, n));

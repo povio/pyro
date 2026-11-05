@@ -753,15 +753,14 @@ impl JsClass for UiEvent {
             if e.state.borrow().dispatching {
                 return Ok(s.undefined());
             }
-            init_event_state(e, &ty, a.get(1).to_bool(), a.get(2).to_bool());
-            let view = view_value(s, a.get(3))?;
-            let mut f = e.fields.borrow_mut();
-            f.view = view;
-            f.detail = if a.get(4).is_undefined() { 0.0 } else { a.get(4).to_number()? };
-            drop(f);
+            init_ui_event(s, e, &ty, &a)?;
             e.refresh_wrappers();
             Ok(s.undefined())
         });
+        // https://w3c.github.io/uievents/#dom-uievent-pseudotarget: the
+        // pseudo-element the event targets. Hit testing never resolves to a
+        // pseudo-element here, so every UI event reports none.
+        def.getter("pseudoTarget", |s, _e| Ok(s.null()));
         def.getter("which", |s, e| {
             let f = e.fields.borrow();
             Ok(s.number(match e.iface {
@@ -774,6 +773,36 @@ impl JsClass for UiEvent {
             }))
         });
     }
+}
+
+/// The shared `initUIEvent(type, bubbles, cancelable, view, detail)` prefix of
+/// the legacy UI event initializers (`a[0..5]`). The caller has checked the
+/// dispatch flag.
+fn init_ui_event<'s>(s: &Scope<'s>, e: &EventData, ty: &str, a: &Args<'s>) -> JsResult<()> {
+    init_event_state(e, ty, a.get(1).to_bool(), a.get(2).to_bool());
+    let view = view_value(s, a.get(3))?;
+    let mut f = e.fields.borrow_mut();
+    f.view = view;
+    f.detail = init_num(a, 4)?;
+    Ok(())
+}
+
+/// An optional numeric initializer argument: missing is 0.
+fn init_num<'s>(a: &Args<'s>, i: usize) -> JsResult<f64> {
+    let v = a.get(i);
+    if v.is_undefined() {
+        Ok(0.0)
+    } else {
+        v.to_number()
+    }
+}
+
+/// An optional `EventTarget?` initializer argument.
+fn init_target<'s>(s: &Scope<'s>, v: lp_js::Value<'s>) -> Option<TargetKey> {
+    if let Some(n) = s.unwrap::<crate::node::Node>(v) {
+        return Some(n.target.key);
+    }
+    s.unwrap::<crate::target::EventTarget>(v).map(|t| t.key)
 }
 
 /// `initEvent`-style reinitialization of the shared event state.
@@ -926,6 +955,29 @@ impl JsClass for MouseEvent {
             let k = dom_string(a.get(0))?;
             Ok(s.boolean(modifier_state(&e.fields.borrow(), &k)))
         });
+        // https://w3c.github.io/uievents/#idl-mouseevent-initializers
+        def.method("initMouseEvent", 1, |s, e, a| {
+            let ty = arg_string(&a, 0, "MouseEvent.initMouseEvent")?;
+            if e.state.borrow().dispatching {
+                return Ok(s.undefined());
+            }
+            init_ui_event(s, e, &ty, &a)?;
+            let related = init_target(s, a.get(14));
+            let mut f = e.fields.borrow_mut();
+            f.screen_x = init_num(&a, 5)?;
+            f.screen_y = init_num(&a, 6)?;
+            f.client_x = init_num(&a, 7)?;
+            f.client_y = init_num(&a, 8)?;
+            f.ctrl_key = a.get(9).to_bool();
+            f.alt_key = a.get(10).to_bool();
+            f.shift_key = a.get(11).to_bool();
+            f.meta_key = a.get(12).to_bool();
+            f.button = init_num(&a, 13)? as i16;
+            f.related_target = related;
+            drop(f);
+            e.refresh_wrappers();
+            Ok(s.undefined())
+        });
     }
 }
 
@@ -1035,6 +1087,28 @@ impl JsClass for KeyboardEvent {
         def.method("getModifierState", 1, |s, e, a| {
             let k = dom_string(a.get(0))?;
             Ok(s.boolean(modifier_state(&e.fields.borrow(), &k)))
+        });
+        // https://w3c.github.io/uievents/#idl-keyboardevent-initializers
+        def.method("initKeyboardEvent", 1, |s, e, a| {
+            let ty = arg_string(&a, 0, "KeyboardEvent.initKeyboardEvent")?;
+            if e.state.borrow().dispatching {
+                return Ok(s.undefined());
+            }
+            init_event_state(e, &ty, a.get(1).to_bool(), a.get(2).to_bool());
+            let view = view_value(s, a.get(3))?;
+            let key = if a.get(4).is_undefined() { String::new() } else { dom_string(a.get(4))? };
+            let mut f = e.fields.borrow_mut();
+            f.view = view;
+            f.detail = 0.0;
+            f.key = key;
+            f.location = init_num(&a, 5)? as u32;
+            f.ctrl_key = a.get(6).to_bool();
+            f.alt_key = a.get(7).to_bool();
+            f.shift_key = a.get(8).to_bool();
+            f.meta_key = a.get(9).to_bool();
+            drop(f);
+            e.refresh_wrappers();
+            Ok(s.undefined())
         });
     }
 }

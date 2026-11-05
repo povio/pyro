@@ -83,6 +83,31 @@ fn live_element(page: &PageDom, doc: NodeId, el: NodeId) -> bool {
     dom.node_document(el).ok() == Some(doc) && dom.is_connected(el).unwrap_or(false)
 }
 
+/// The sibling page (an iframe's document sharing this `Dom`) whose document
+/// `el` belongs to, when that is not `page`'s own. A node created by one
+/// document and adopted into a frame's keeps its wrapper's page, so its
+/// `focus()`/`blur()` must be applied by the page that owns it now.
+fn sibling_page_of(page: &Rc<PageDom>, el: NodeId) -> Option<Rc<PageDom>> {
+    let doc = page.dom.borrow().node_document(el).ok()?;
+    if doc == page.document() {
+        return None;
+    }
+    let realm = page.realms.borrow().values().find_map(|r| r.upgrade())?;
+    let scope = realm.scope().ok()?;
+    page.sibling_realms(&scope).iter().find_map(|sibling| {
+        let s = sibling.scope().ok()?;
+        let owner = crate::target::page_of(&s).ok()?;
+        (!Rc::ptr_eq(&owner, page) && owner.document() == doc).then_some(owner)
+    })
+}
+
+/// An element whose focus means the focus of another document (its child
+/// browsing context). Focus events across documents carry no relatedTarget,
+/// as in Chromium, where the parent never focuses the owner element itself.
+fn is_frame_owner(dom: &Dom, el: NodeId) -> bool {
+    dom.element(el).is_ok_and(|e| e.is_html() && matches!(&*e.name.local, "iframe" | "frame" | "object" | "embed"))
+}
+
 fn request_focus(page: &Rc<PageDom>, target: FocusTarget, prevent_scroll: bool) -> Option<FocusTransition> {
     if !focus_document_is_live(page) {
         return None;
@@ -102,6 +127,9 @@ pub fn focus_element(page: &Rc<PageDom>, el: NodeId) {
 
 /// Focus with the already-converted preventScroll option.
 pub fn focus_element_with_options(page: &Rc<PageDom>, el: NodeId, prevent_scroll: bool) {
+    if let Some(owner) = sibling_page_of(page, el) {
+        return focus_element_with_options(&owner, el, prevent_scroll);
+    }
     let doc = page.document();
     if !live_element(page, doc, el) || !page.dom.borrow().is_focusable(el).unwrap_or(false) {
         return;
@@ -125,8 +153,13 @@ pub fn focus_element_with_transition(page: &Rc<PageDom>, el: NodeId, token: &Foc
     if prev == Some(el) {
         return;
     }
+    // Focus entering or leaving a child document reports no relatedTarget.
+    let (blur_related, focus_related) = {
+        let dom = page.dom.borrow();
+        ((!is_frame_owner(&dom, el)).then_some(el), prev.filter(|&p| !is_frame_owner(&dom, p)))
+    };
     if let Some(prev) = prev {
-        run_blur(page, doc, prev, Some(el), token);
+        run_blur(page, doc, prev, blur_related, token);
     }
     if !live_document(page, doc, token)
         || !live_element(page, doc, el)
@@ -150,11 +183,11 @@ pub fn focus_element_with_transition(page: &Rc<PageDom>, el: NodeId, token: &Foc
     if is_text_control(&page.dom.borrow(), el) {
         crate::editing::queue_control_selectionchange(page, el);
     }
-    fire_focus_event(page, el, "focus", false, prev);
+    fire_focus_event(page, el, "focus", false, focus_related);
     if !live_document(page, doc, token) || !live_element(page, doc, el) {
         return;
     }
-    fire_focus_event(page, el, "focusin", true, prev);
+    fire_focus_event(page, el, "focusin", true, focus_related);
     if live_document(page, doc, token) {
         for target in scrolled {
             let node = match target {
@@ -233,6 +266,9 @@ pub fn blur_before_removal(page: &Rc<PageDom>, node: NodeId, children_only: bool
 
 /// Explicit blur keeps the owner's selected frame and remembered edit target.
 pub fn blur_element(page: &Rc<PageDom>, el: NodeId) {
+    if let Some(owner) = sibling_page_of(page, el) {
+        return blur_element(&owner, el);
+    }
     if page.dom.borrow().focused(page.document()).ok().flatten() != Some(el) {
         return;
     }
@@ -459,7 +495,12 @@ pub fn dispatch_with_activation(page: &Rc<PageDom>, target: NodeId, ev: &EventDa
         Activation::Submit { el } => {
             let form = page.dom.borrow().form_owner(el).ok().flatten();
             if let Some(f) = form {
-                submit_form(page, f, Some(el), true);
+                match image_button_coordinate(page, el, ev) {
+                    Some((x, y)) => crate::formdata::with_selected_coordinate(page, el, x, y, || {
+                        submit_form(page, f, Some(el), true)
+                    }),
+                    None => submit_form(page, f, Some(el), true),
+                }
             }
         }
         Activation::Reset { el } => {
@@ -516,6 +557,29 @@ fn radio_group_checked(dom: &Dom, el: NodeId) -> Vec<NodeId> {
             .collect()
         })
         .unwrap_or_default()
+}
+
+/// The "selected coordinate" an activated `<input type=image>` submits
+/// (HTML "constructing the entry list"): the click's position relative to the
+/// image's border box, floored, as Chrome computes it; (0, 0) for a click
+/// without a position (`click()` and keyboard activation, which set
+/// `pointerId` -1). `None` for every other submitter.
+fn image_button_coordinate(page: &Rc<PageDom>, el: NodeId, ev: &EventData) -> Option<(i64, i64)> {
+    {
+        let dom = page.dom.borrow();
+        if local(&dom, el).as_deref() != Some("input") || dom.input_type(el).ok()? != InputType::Image {
+            return None;
+        }
+    }
+    let (client_x, client_y, positionless) = {
+        let f = ev.fields.borrow();
+        (f.client_x, f.client_y, f.pointer_id == -1)
+    };
+    if positionless || !matches!(ev.iface, EventInterface::MouseEvent | EventInterface::PointerEvent) {
+        return Some((0, 0));
+    }
+    let rect = page.layout().bounding_client_rect(&page.dom.borrow(), el).layout_units();
+    Some(((client_x - rect.left()).floor() as i64, (client_y - rect.top()).floor() as i64))
 }
 
 /// `HTMLElement.click()`: synthetic (untrusted) PointerEvent click. As in

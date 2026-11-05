@@ -972,7 +972,7 @@ fn formdata_prototype_methods_on_a_disposed_realm_formdata_propagate_context_des
         &b,
         r#"(() => { const t = (f) => { try { return String(f()); } catch (e) { return 'threw'; } };
             return [t(() => FormData.prototype.get.call(__fdA, 'f')), t(() => FormData.prototype.getAll.call(__fdA, 'f')),
-                    t(() => FormData.prototype.entries.call(__fdA)), t(() => FormData.prototype.get.call(__fdA, 't')),
+                    t(() => [...FormData.prototype.entries.call(__fdA)]), t(() => FormData.prototype.get.call(__fdA, 't')),
                     t(() => FormData.prototype.has.call(__fdA, 'f')), t(() => [...FormData.prototype.keys.call(__fdA)].join('+'))].join(','); })()"#,
     );
     assert_eq!(out, "threw,threw,threw,txt,true,t+f");
@@ -999,7 +999,8 @@ fn formdata_survives_script_reentrancy_from_conversions_and_callbacks() {
             // name conversion mutates
             fd.append({ toString() { fd.delete('f'); return 'n'; } }, 'nv');
             out.push([...fd.keys()].join('+'), fd.has('f'));
-            // forEach callback mutates the FormData: iteration is a snapshot, values stay readable
+            // forEach callback mutates the FormData: iteration is live (deleting the current entry shifts the next one
+            // into its place, so it is skipped; an appended entry is reached), values stay readable
             const seen = [];
             fd.forEach((v, k) => {
                 if (k === 'x') { fd.delete('x'); fd.append('late', new File(['l'], 'l.txt')); }
@@ -1011,7 +1012,7 @@ fn formdata_survives_script_reentrancy_from_conversions_and_callbacks() {
     );
     assert_eq!(
         out,
-        "f+re+x|renamed.txt|true|f+x+mid+re|v2|x+mid+re+n|false|x:renamed.txt,mid:m,re:v2,n:nv|mid+re+n+late|l.txt"
+        "f+re+x|renamed.txt|true|f+x+mid+re|v2|x+mid+re+n|false|x:renamed.txt,re:v2,n:nv,late:l.txt|mid+re+n+late|l.txt"
     );
 }
 
