@@ -6,7 +6,7 @@ use std::rc::Rc;
 use std::time::Instant;
 
 use lp_dom::events::{EventState, TargetKey};
-use lp_js::{Args, ClassDef, JsClass, JsError, JsResult, Object, Persistent, Scope};
+use lp_js::{Args, ClassDef, JsClass, JsError, JsResult, Object, Persistent, Scope, Value};
 
 use crate::page::PageDom;
 use crate::target::{page_of, target_value};
@@ -109,6 +109,17 @@ pub struct EventFields {
     pub width: f64,
     pub height: f64,
     pub pressure: f64,
+    pub tangential_pressure: f64,
+    pub tilt_x: f64,
+    pub tilt_y: f64,
+    pub twist: f64,
+    /// `None`: the default, a pen perpendicular to the surface (π/2).
+    pub altitude_angle: Option<f64>,
+    pub azimuth_angle: f64,
+    pub persistent_device_id: f64,
+    /// `coalescedEvents` / `predictedEvents` of the init dictionary.
+    pub coalesced_events: Vec<Persistent>,
+    pub predicted_events: Vec<Persistent>,
     pub delta_x: f64,
     pub delta_y: f64,
     pub delta_z: f64,
@@ -423,6 +434,18 @@ fn construct<'s, C: JsClass<Data = EventData>>(
         get_bool(init, "composed")?,
     );
     fill(s, &mut core.fields.borrow_mut(), init)?;
+    // As in Chrome, only pointer events proper keep fractional coordinates:
+    // mouse, wheel and drag events, and the PointerEvents that replaced
+    // mouse events (click, auxclick, contextmenu), have integer ones.
+    if matches!(iface, EventInterface::MouseEvent | EventInterface::WheelEvent | EventInterface::DragEvent)
+        || (iface == EventInterface::PointerEvent && matches!(&*ty, "click" | "auxclick" | "contextmenu"))
+    {
+        let mut f = core.fields.borrow_mut();
+        f.screen_x = f.screen_x.floor();
+        f.screen_y = f.screen_y.floor();
+        f.client_x = f.client_x.floor();
+        f.client_y = f.client_y.floor();
+    }
     if matches!(
         iface,
         EventInterface::UiEvent
@@ -535,7 +558,118 @@ fn fill_pointer<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>
     f.pressure = get_num(init, "pressure", 0.0)?;
     f.pointer_type = get_str(init, "pointerType")?;
     f.is_primary = get_bool(init, "isPrimary")?;
+    f.tangential_pressure = get_num(init, "tangentialPressure", 0.0)?;
+    f.twist = get_num(init, "twist", 0.0)?;
+    f.persistent_device_id = get_num(init, "persistentDeviceId", 0.0)?;
+    // Pointer Events: tilt and the spherical angles are two forms of one
+    // orientation; whichever the dictionary gives determines the other.
+    let given = |name: &str| -> JsResult<Option<f64>> {
+        match init.map(|o| o.get(name)).transpose()? {
+            Some(v) if !v.is_undefined() => Ok(Some(v.to_number()?)),
+            _ => Ok(None),
+        }
+    };
+    let (tilt_x, tilt_y) = (given("tiltX")?, given("tiltY")?);
+    let (altitude, azimuth) = (given("altitudeAngle")?, given("azimuthAngle")?);
+    if tilt_x.is_none() && tilt_y.is_none() && (altitude.is_some() || azimuth.is_some()) {
+        let (altitude, azimuth) = (altitude.unwrap_or(std::f64::consts::FRAC_PI_2), azimuth.unwrap_or(0.0));
+        (f.tilt_x, f.tilt_y) = spherical_to_tilt(altitude, azimuth);
+        (f.altitude_angle, f.azimuth_angle) = (Some(altitude), azimuth);
+    } else {
+        (f.tilt_x, f.tilt_y) = (tilt_x.unwrap_or(0.0), tilt_y.unwrap_or(0.0));
+        if altitude.is_none() && azimuth.is_none() {
+            let (altitude, azimuth) = tilt_to_spherical(f.tilt_x, f.tilt_y);
+            (f.altitude_angle, f.azimuth_angle) = (Some(altitude), azimuth);
+        } else {
+            (f.altitude_angle, f.azimuth_angle) =
+                (Some(altitude.unwrap_or(std::f64::consts::FRAC_PI_2)), azimuth.unwrap_or(0.0));
+        }
+    }
+    for (name, into) in [("coalescedEvents", &mut f.coalesced_events), ("predictedEvents", &mut f.predicted_events)] {
+        let Some(list) = init.map(|o| o.get(name)).transpose()?.filter(|v| !v.is_undefined()) else { continue };
+        let events = s.sequence(list, name)?;
+        let len = events.get("length")?.to_number()? as u32;
+        for i in 0..len {
+            let event = events.get_index(i)?;
+            if s.unwrap::<PointerEvent>(event).is_none() {
+                return Err(JsError::Type(format!("Failed to construct 'PointerEvent': {name} must hold PointerEvents.")));
+            }
+            into.push(Persistent::new(s, event));
+        }
+    }
     Ok(())
+}
+
+/// Pointer Events "converting between tiltX / tiltY and altitudeAngle /
+/// azimuthAngle": spherical angles (radians) to tilt (degrees).
+fn spherical_to_tilt(altitude: f64, azimuth: f64) -> (f64, f64) {
+    use std::f64::consts::{FRAC_PI_2, PI};
+    let (mut x, mut y) = (0.0, 0.0);
+    if altitude == 0.0 {
+        if azimuth == 0.0 || azimuth == 2.0 * PI {
+            x = FRAC_PI_2;
+        } else if azimuth == FRAC_PI_2 {
+            y = FRAC_PI_2;
+        } else if azimuth == PI {
+            x = -FRAC_PI_2;
+        } else if azimuth == 3.0 * FRAC_PI_2 {
+            y = -FRAC_PI_2;
+        } else if azimuth > 0.0 && azimuth < FRAC_PI_2 {
+            (x, y) = (FRAC_PI_2, FRAC_PI_2);
+        } else if azimuth > FRAC_PI_2 && azimuth < PI {
+            (x, y) = (-FRAC_PI_2, FRAC_PI_2);
+        } else if azimuth > PI && azimuth < 3.0 * FRAC_PI_2 {
+            (x, y) = (-FRAC_PI_2, -FRAC_PI_2);
+        } else if azimuth > 3.0 * FRAC_PI_2 && azimuth < 2.0 * PI {
+            (x, y) = (FRAC_PI_2, -FRAC_PI_2);
+        }
+    } else {
+        let tan_altitude = altitude.tan();
+        x = (azimuth.cos() / tan_altitude).atan();
+        y = (azimuth.sin() / tan_altitude).atan();
+    }
+    (x.to_degrees().round(), y.to_degrees().round())
+}
+
+/// Tilt (degrees) to (altitudeAngle, azimuthAngle) in radians.
+fn tilt_to_spherical(tilt_x: f64, tilt_y: f64) -> (f64, f64) {
+    use std::f64::consts::{FRAC_PI_2, PI};
+    let (x, y) = (tilt_x.to_radians(), tilt_y.to_radians());
+    let flat = tilt_x.abs() == 90.0 || tilt_y.abs() == 90.0;
+    let azimuth = if tilt_x == 0.0 {
+        if tilt_y > 0.0 {
+            FRAC_PI_2
+        } else if tilt_y < 0.0 {
+            3.0 * FRAC_PI_2
+        } else {
+            0.0
+        }
+    } else if tilt_y == 0.0 {
+        if tilt_x < 0.0 {
+            PI
+        } else {
+            0.0
+        }
+    } else if flat {
+        0.0
+    } else {
+        let a = y.tan().atan2(x.tan());
+        if a < 0.0 {
+            a + 2.0 * PI
+        } else {
+            a
+        }
+    };
+    let altitude = if flat {
+        0.0
+    } else if tilt_x == 0.0 {
+        FRAC_PI_2 - y.abs()
+    } else if tilt_y == 0.0 {
+        FRAC_PI_2 - x.abs()
+    } else {
+        (1.0 / (x.tan().powi(2) + y.tan().powi(2)).sqrt()).atan()
+    };
+    (altitude, azimuth)
 }
 
 fn fill_wheel<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
@@ -1085,14 +1219,25 @@ impl JsClass for PointerEvent {
         def.getter("width", |s, e| Ok(s.number(e.fields.borrow().width)));
         def.getter("height", |s, e| Ok(s.number(e.fields.borrow().height)));
         def.getter("pressure", |s, e| Ok(s.number(e.fields.borrow().pressure)));
-        def.getter("tangentialPressure", |s, _e| Ok(s.number(0.0)));
-        def.getter("tiltX", |s, _e| Ok(s.number(0.0)));
-        def.getter("tiltY", |s, _e| Ok(s.number(0.0)));
-        def.getter("twist", |s, _e| Ok(s.number(0.0)));
+        def.getter("tangentialPressure", |s, e| Ok(s.number(e.fields.borrow().tangential_pressure)));
+        def.getter("tiltX", |s, e| Ok(s.number(e.fields.borrow().tilt_x)));
+        def.getter("tiltY", |s, e| Ok(s.number(e.fields.borrow().tilt_y)));
+        def.getter("twist", |s, e| Ok(s.number(e.fields.borrow().twist)));
+        def.getter("altitudeAngle", |s, e| {
+            Ok(s.number(e.fields.borrow().altitude_angle.unwrap_or(std::f64::consts::FRAC_PI_2)))
+        });
+        def.getter("azimuthAngle", |s, e| Ok(s.number(e.fields.borrow().azimuth_angle)));
+        def.getter("persistentDeviceId", |s, e| Ok(s.number(e.fields.borrow().persistent_device_id)));
         def.getter("pointerType", |s, e| Ok(s.string(&e.fields.borrow().pointer_type)));
         def.getter("isPrimary", |s, e| Ok(s.boolean(e.fields.borrow().is_primary)));
-        def.method("getCoalescedEvents", 0, |s, _e, _a| Ok(s.array(&[])?.value()));
-        def.method("getPredictedEvents", 0, |s, _e, _a| Ok(s.array(&[])?.value()));
+        def.method("getCoalescedEvents", 0, |s, e, _a| {
+            let events: Vec<Value<'_>> = e.fields.borrow().coalesced_events.iter().map(|p| p.get(s)).collect();
+            Ok(s.array(&events)?.value())
+        });
+        def.method("getPredictedEvents", 0, |s, e, _a| {
+            let events: Vec<Value<'_>> = e.fields.borrow().predicted_events.iter().map(|p| p.get(s)).collect();
+            Ok(s.array(&events)?.value())
+        });
     }
 }
 
