@@ -84,6 +84,8 @@ pub(crate) struct Conn {
     /// Messages decoded while a script ran, handed to the session next.
     held: VecDeque<Inbound>,
     current: Option<(Pending, usize)>,
+    /// Reused buffer for the whole frames of one vectored write.
+    batch: Vec<Pending>,
     state: State,
     /// The session was told (one `Inbound::Closed`).
     closed_sent: bool,
@@ -98,7 +100,12 @@ pub(crate) struct Conn {
 
 impl Conn {
     /// `buffered` holds bytes read past the upgrade request.
-    pub(crate) fn new(sock: TcpStream, buffered: &[u8], out: OutboundRx, config: ServerConfig) -> std::io::Result<Conn> {
+    pub(crate) fn new(
+        sock: TcpStream,
+        buffered: &[u8],
+        out: OutboundRx,
+        config: ServerConfig,
+    ) -> std::io::Result<Conn> {
         sock.set_nonblocking(true)?;
         let mut decoder = Decoder::new(config.ws);
         decoder.feed(buffered);
@@ -115,6 +122,7 @@ impl Conn {
             queued: VecDeque::new(),
             held: VecDeque::new(),
             current: None,
+            batch: Vec::new(),
             state: State::Open,
             closed_sent: false,
             close_written: false,
@@ -489,8 +497,9 @@ impl Conn {
                 }
             }
             // Whole items after the frame in progress, up to the batch bounds
-            // and never past a close frame.
-            let mut batch: Vec<Pending> = Vec::new();
+            // and never past a close frame. The batch buffer is reused.
+            let mut batch = std::mem::take(&mut self.batch);
+            debug_assert!(batch.is_empty());
             let (first, offset) = self.current.as_ref().expect("set above");
             let mut bytes = first.as_ref().len() - offset;
             let mut closes = is_close(first);
@@ -502,11 +511,13 @@ impl Conn {
             }
             let written = {
                 let (first, offset) = self.current.as_ref().expect("set above");
-                let mut slices = Vec::with_capacity(batch.len() + 1);
-                slices.push(std::io::IoSlice::new(&first.as_ref()[*offset..]));
-                slices.extend(batch.iter().map(|p| std::io::IoSlice::new(p.as_ref())));
+                let mut slices = [std::io::IoSlice::new(&[]); MAX_BATCH];
+                slices[0] = std::io::IoSlice::new(&first.as_ref()[*offset..]);
+                for (slot, p) in slices[1..].iter_mut().zip(&batch) {
+                    *slot = std::io::IoSlice::new(p.as_ref());
+                }
                 let write = crate::perf::now();
-                let r = (&self.sock).write_vectored(&slices);
+                let r = (&self.sock).write_vectored(&slices[..batch.len() + 1]);
                 if r.is_ok() {
                     crate::perf::record_since("io.ws_write", write);
                 }
@@ -516,32 +527,34 @@ impl Conn {
                 Ok(mut n) => {
                     self.write_blocked_since = None;
                     // Advance through the frame in progress, then the batch.
-                    let mut items = std::iter::once(self.current.take().expect("set above")).chain(
-                        batch.into_iter().map(|p| (p, 0)),
-                    );
-                    let mut leftover: Vec<(Pending, usize)> = Vec::new();
-                    for (item, offset) in items.by_ref() {
+                    let (mut item, mut offset) = self.current.take().expect("set above");
+                    let mut rest = batch.drain(..);
+                    loop {
                         let len = item.as_ref().len() - offset;
-                        if n >= len {
-                            n -= len;
-                            if is_close(&item) {
-                                // The close frame is out: nothing is written after it.
-                                self.close_written = true;
-                                self.state = State::Closing;
-                                let _ = self.sock.shutdown(Shutdown::Write);
-                                return;
-                            }
-                        } else {
-                            leftover.push((item, offset + n));
+                        if n < len {
+                            // Partly written: it stays in progress, the rest
+                            // goes back to the queues.
+                            self.current = Some((item, offset + n));
+                            let remaining: Vec<Pending> = rest.by_ref().collect();
+                            self.requeue(remaining);
                             break;
                         }
+                        n -= len;
+                        if is_close(&item) {
+                            // The close frame is out: nothing is written after it.
+                            drop(rest);
+                            self.close_written = true;
+                            self.state = State::Closing;
+                            let _ = self.sock.shutdown(Shutdown::Write);
+                            return;
+                        }
+                        match rest.next() {
+                            Some(next) => (item, offset) = (next, 0),
+                            None => break,
+                        }
                     }
-                    leftover.extend(items);
-                    let mut leftover = leftover.into_iter();
-                    if let Some((item, offset)) = leftover.next() {
-                        self.current = Some((item, offset));
-                        self.requeue(leftover.map(|(p, _)| p));
-                    }
+                    drop(rest);
+                    self.batch = batch;
                 }
                 Err(e) if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::TimedOut => {
                     self.requeue(batch);
