@@ -993,7 +993,56 @@ impl JsClass for HtmlElement {
                 Ok(())
             },
         );
-        reflect_bool!(def, "hidden", "hidden");
+        // `hidden` is (boolean or unrestricted double or DOMString)?: the
+        // "until-found" state reads back as that string.
+        def.accessor(
+            "hidden",
+            |s, n| {
+                let dom = n.page().dom.borrow();
+                Ok(match dom.get_attribute(n.id, "hidden").js()? {
+                    Some(v) if v.eq_ignore_ascii_case("until-found") => s.string("until-found"),
+                    Some(_) => s.boolean(true),
+                    None => s.boolean(false),
+                })
+            },
+            |_s, n, v| {
+                let until_found = v.is_string() && v.to_string()?.eq_ignore_ascii_case("until-found");
+                let mut dom = n.page().dom.borrow_mut();
+                if until_found {
+                    dom.set_attribute(n.id, "hidden", "until-found").js()
+                } else if v.is_nullish() || !v.to_bool() {
+                    dom.remove_attribute(n.id, "hidden").js().map(|_| ())
+                } else {
+                    dom.set_attribute(n.id, "hidden", "").js()
+                }
+            },
+        );
+        // HTML "computed writing suggestions value": "false" when the
+        // attribute says so, or is in its default state under an element
+        // whose computed value is "false".
+        def.accessor(
+            "writingSuggestions",
+            |s, n| {
+                let dom = n.page().dom.borrow();
+                let mut el = Some(n.id);
+                let mut value = "true";
+                while let Some(e) = el {
+                    match dom.get_attribute(e, "writingsuggestions").js()? {
+                        Some(v) if v.eq_ignore_ascii_case("false") => {
+                            value = "false";
+                            break;
+                        }
+                        Some(v) if v.is_empty() || v.eq_ignore_ascii_case("true") => break,
+                        _ => el = dom.parent_element(e).js()?,
+                    }
+                }
+                Ok(s.string(value))
+            },
+            |_s, n, v| {
+                let value = v.to_string()?;
+                n.page().dom.borrow_mut().set_attribute(n.id, "writingsuggestions", &value).js()
+            },
+        );
         reflect_bool!(def, "inert", "inert");
         reflect_bool!(def, "autofocus", "autofocus");
         reflect_str!(def, "popover", "popover");
