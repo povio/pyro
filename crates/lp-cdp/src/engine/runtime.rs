@@ -459,8 +459,10 @@ impl EngineHost {
     pub(super) fn announce_contexts(&self, page: PageKey, session_id: &str) {
         let Some(state) = self.pages.get(&page) else { return };
         for info in self.thread.browser.frames(state.id) {
-            let Some(frame) = self.thread.browser.frame(state.id, &info.id) else { continue };
-            for r in &frame.realms {
+            let Some(realms) = self.thread.browser.with_frame(state.id, &info.id, |f| f.realms.clone()) else {
+                continue;
+            };
+            for r in &realms {
                 let origin = r.realm.origin().unwrap_or_default();
                 let context = context_description(r.realm.id(), r.world.as_deref(), &origin, &info.id.0);
                 self.event("Runtime.executionContextCreated", &json!({ "context": context }), session_id);
@@ -678,8 +680,7 @@ impl EngineHost {
     }
 
     /// `Runtime.bindingCalled` to the page's sessions that added the binding.
-    pub(super) fn on_binding_called(&mut self, realm_id: RealmId, name: String, payload: String) {
-        let Some(page) = self.page_of_realm(realm_id) else { return };
+    pub(super) fn on_binding_called(&mut self, page: PageKey, realm_id: RealmId, name: String, payload: String) {
         let params = json!({ "name": name, "payload": payload, "executionContextId": context_id(realm_id) });
         for session_id in self.sessions_of(page, |s| s.bindings.contains(&name)) {
             self.event("Runtime.bindingCalled", &params, &session_id);
@@ -688,13 +689,13 @@ impl EngineHost {
 
     pub(super) fn on_console(
         &mut self,
+        page: PageKey,
         realm_id: RealmId,
         level: ConsoleLevel,
         args: Vec<Persistent>,
         timestamp: f64,
         stack: Option<String>,
     ) {
-        let Some(page) = self.page_of_realm(realm_id) else { return };
         let sessions = self.sessions_of(page, |s| s.runtime_enabled);
         if sessions.is_empty() {
             return;
@@ -741,8 +742,7 @@ impl EngineHost {
         }
     }
 
-    pub(super) fn on_exception(&mut self, realm_id: RealmId, exception: JsException, timestamp: f64) {
-        let Some(page) = self.page_of_realm(realm_id) else { return };
+    pub(super) fn on_exception(&mut self, page: PageKey, realm_id: RealmId, exception: JsException, timestamp: f64) {
         let sessions = self.sessions_of(page, |s| s.runtime_enabled);
         if sessions.is_empty() {
             return;

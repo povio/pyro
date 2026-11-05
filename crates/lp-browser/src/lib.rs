@@ -26,7 +26,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-pub use frames::FrameInfo;
+pub use frames::{realm_page, FrameInfo};
 use frames::{FrameHost, FrameKey};
 pub use loader::{
     FetchDone, FetchRequest, NetLoader, Resource, ResourceCancellation, ResourceKind, ResourceLoader, StaticLoader,
@@ -540,7 +540,8 @@ impl Browser {
         }
         let (Some(bindings), nav) = (state.main_frame.page_dom.clone(), state.nav.clone()) else { return };
         drop(state);
-        let has_body = bindings.dom.try_borrow().is_ok_and(|dom| dom.body(bindings.document()).ok().flatten().is_some());
+        let has_body =
+            bindings.dom.try_borrow().is_ok_and(|dom| dom.body(bindings.document()).ok().flatten().is_some());
         if has_body && !bindings.render_blocked() {
             nav.note_first_paint();
         }
@@ -938,6 +939,7 @@ impl Browser {
         let session_storage = frames.settings.borrow().session.clone();
         let init_scripts = self.contexts.iter().find(|c| c.id == context).unwrap().init_scripts.clone();
         frames.settings.borrow_mut().scripts = init_scripts.clone();
+        debug_assert!(self.pages.last().is_none_or(|last| last.id < id), "page ids increase");
         self.pages.push(Page {
             id,
             context,
@@ -1036,12 +1038,20 @@ impl Browser {
         self.page(page)?.frames.opener.borrow().as_ref().and_then(std::rc::Weak::upgrade).map(|h| h.page)
     }
 
+    /// `pages` stays sorted by id: ids come from one increasing counter,
+    /// pages are only appended at creation and removal keeps the order.
+    fn page_index(&self, id: PageId) -> Option<usize> {
+        debug_assert!(self.pages.windows(2).all(|w| w[0].id < w[1].id), "pages sorted by id");
+        self.pages.binary_search_by_key(&id, |p| p.id).ok()
+    }
+
     pub fn page(&self, id: PageId) -> Option<&Page> {
-        self.pages.iter().find(|p| p.id == id)
+        self.page_index(id).map(|i| &self.pages[i])
     }
 
     pub(crate) fn page_mut(&mut self, id: PageId) -> Option<&mut Page> {
-        let page = self.pages.iter_mut().find(|p| p.id == id)?;
+        let index = self.page_index(id)?;
+        let page = &mut self.pages[index];
         page.root_dirty.set(true);
         Some(page)
     }
@@ -1420,7 +1430,7 @@ impl Browser {
 
     /// Closes a page, disposing its realms and cancelling timers.
     pub fn close_page(&mut self, page: PageId) -> bool {
-        let Some(pos) = self.pages.iter().position(|p| p.id == page) else { return false };
+        let Some(pos) = self.page_index(page) else { return false };
         self.cancel_pending_document(page.into());
         let host = self.pages[pos].frames.clone();
         host.invalidate_focus(page.into(), false);

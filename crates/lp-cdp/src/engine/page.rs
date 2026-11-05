@@ -385,7 +385,9 @@ impl EngineHost {
         for info in self.thread.browser.frames(page_id) {
             // An earlier script can synchronously remove a later frame from
             // this snapshot. Skip it without failing future installation.
-            let Some(frame) = self.thread.browser.frame(page_id, &info.id) else { continue };
+            let Some(main) = self.thread.browser.with_frame(page_id, &info.id, |f| f.main_realm().cloned()) else {
+                continue;
+            };
             let realm = match world {
                 Some(name) => Some(
                     self.thread
@@ -393,7 +395,7 @@ impl EngineHost {
                         .isolated_world_in_frame(page_id, &info.id, name)
                         .map_err(|e| CdpError::server(format!("cannot create isolated world: {e}")))?,
                 ),
-                None => frame.main_realm().cloned(),
+                None => main,
             };
             if let Some(realm) = realm {
                 if let Ok(scope) = realm.scope() {
@@ -600,14 +602,16 @@ impl EngineHost {
                     }
                     None => (None, Vec::new()),
                 };
-                let info = self.pages.get(&page).and_then(|p| self.thread.browser.frame(p.id, &frame_id));
+                let info = self.pages.get(&page).and_then(|p| {
+                    self.thread.browser.with_frame(p.id, &frame_id, |f| (f.origin.clone(), f.name.clone()))
+                });
                 let origin = pending
                     .iter()
                     .find(|(_, world, _)| world.is_none())
                     .map(|(_, _, origin)| origin.as_str())
-                    .or_else(|| info.as_ref().map(|f| f.origin.as_str()))
+                    .or_else(|| info.as_ref().map(|(origin, _)| origin.as_str()))
                     .unwrap_or("null");
-                let name = info.as_ref().map_or("", |f| f.name.as_str());
+                let name = info.as_ref().map_or("", |(_, name)| name.as_str());
                 let frame = frame_description(&frame_id.0, parent.as_ref(), &loader_id.0, &url, name, origin);
                 for s in &all {
                     self.event("Page.frameNavigated", &json!({"frame":frame,"type":"Navigation"}), s);

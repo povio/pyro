@@ -91,6 +91,12 @@ impl WindowData {
         &self.nav
     }
 
+    /// The frame this window belongs to (`None` for a window made outside
+    /// a page's frame tree).
+    pub(crate) fn frame_key(&self) -> Option<crate::frames::FrameKey> {
+        self.frame
+    }
+
     pub fn new(sched: Scheduler<Browser>, nav: Rc<PageNav>, page: &Rc<lp_webapi::PageDom>) -> WindowData {
         let key = page.window_target().expect("document window target");
         // `Event.timeStamp` reads the clock `performance.now()` reads.
