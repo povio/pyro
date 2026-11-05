@@ -1571,13 +1571,24 @@ impl BaseDocument {
     /// previous siblings, and its own previous siblings) restyle their
     /// subtrees.
     pub fn invalidate_has_anchors(&mut self, node_id: NodeId) {
+        self.invalidate_has_anchors_impl(node_id, true);
+    }
+
+    /// lightningpanda: as [`Self::invalidate_has_anchors`] for a node just
+    /// inserted at (or removed from) a position: the node carries no search
+    /// flags yet, so every anchor that can see the position restyles.
+    pub fn invalidate_has_anchors_around(&mut self, node_id: NodeId) {
+        self.invalidate_has_anchors_impl(node_id, false);
+    }
+
+    fn invalidate_has_anchors_impl(&mut self, node_id: NodeId, require_search_flags: bool) {
         use selectors::matching::ElementSelectorFlags as F;
         let search = F::RELATIVE_SELECTOR_SEARCH_DIRECTION_ANCESTOR
             | F::RELATIVE_SELECTOR_SEARCH_DIRECTION_SIBLING
             | F::RELATIVE_SELECTOR_SEARCH_DIRECTION_ANCESTOR_SIBLING;
         let flags = |n: &Node| if n.is_element() { n.selector_flags().get() } else { F::empty() };
         let Some(node) = self.nodes.get(node_id) else { return };
-        if !flags(node).intersects(search) {
+        if require_search_flags && !flags(node).intersects(search) {
             return;
         }
         let mut anchors = Vec::new();
@@ -1601,8 +1612,26 @@ impl BaseDocument {
             }
             cur = parent;
         }
+        // An anchor whose `:has()` answer may change restyles its subtree,
+        // and, when a sibling combinator follows the anchor's compound
+        // (`:has(...) ~ .x`: the parent carries the slow-selector flags), the
+        // siblings that compound can reach.
+        let mut restyle = Vec::new();
         for id in anchors {
-            if self.nodes[id].primary_styles().is_some() {
+            restyle.push(id);
+            if let Some(p) = self.nodes[id].parent {
+                let pf = flags(&self.nodes[p]);
+                if pf.contains(F::HAS_SLOW_SELECTOR) {
+                    restyle.extend(self.nodes[p].children.iter().copied().filter(|&c| c != id));
+                } else if pf.contains(F::HAS_SLOW_SELECTOR_LATER_SIBLINGS) {
+                    let children = &self.nodes[p].children;
+                    let at = children.iter().position(|&c| c == id).map_or(children.len(), |i| i + 1);
+                    restyle.extend(children[at..].iter().copied());
+                }
+            }
+        }
+        for id in restyle {
+            if self.nodes[id].is_element() && self.nodes[id].primary_styles().is_some() {
                 self.nodes[id].set_restyle_hint(RestyleHint::restyle_subtree());
             }
         }
