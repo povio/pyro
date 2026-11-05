@@ -129,10 +129,12 @@ pub struct Dom {
     version: u64,
     /// See `tree_version()`.
     tree_version: u64,
-    /// Bumped whenever something the embedder's post-callback hook acts on
-    /// may have changed: a mutation, a queued observer, a queued iframe
-    /// event. The hook compares it against the value it last found nothing
-    /// at, instead of checking every queue after every native callback.
+    /// Bumped whenever one of the queues the embedder's post-callback hook
+    /// drains gets an entry: a queued observer, iframe event, custom element
+    /// reaction, upgrade candidate or slot change. A mutation alone does not
+    /// bump it (what follows every mutation compares `version`), so the hook
+    /// compares it against the value it last found nothing at, instead of
+    /// checking every queue after every native callback.
     hook_epoch: u64,
     /// Told each name a Document may start to answer as a named property
     /// (`Dom::set_named_item_hook`).
@@ -329,8 +331,9 @@ impl Dom {
     pub fn version(&self) -> u64 {
         self.version
     }
-    /// See the `hook_epoch` field: changes whenever a post-callback hook may
-    /// have work (conservative; never misses a change).
+    /// See the `hook_epoch` field: changes whenever a queue the
+    /// post-callback hook drains may have work (conservative; never misses
+    /// one). Work that follows any mutation follows `version` instead.
     pub fn hook_epoch(&self) -> u64 {
         self.hook_epoch
     }
@@ -345,7 +348,6 @@ impl Dom {
     #[track_caller]
     pub(crate) fn bump(&mut self) {
         self.version = self.version.wrapping_add(1);
-        self.hook_epoch = self.hook_epoch.wrapping_add(1);
         // Unknown until a precise `note` refines it: an un-annotated bump
         // (forms, parser, script state) makes consumers invalidate fully.
         self.push_change(Change::Unknown(std::panic::Location::caller()));
