@@ -252,17 +252,22 @@ fn image_button_submits_the_clicks_coordinate() {
     assert_eq!(
         eval(
             r,
-            "seen = null; image.dispatchEvent(new MouseEvent('click', {clientX: rect.left + 23, clientY: rect.top + 46, bubbles: true})); seen"
+            "seen = null; { const x = Math.ceil(rect.left) + 23, y = Math.ceil(rect.top) + 46;
+               image.dispatchEvent(new MouseEvent('click', {clientX: x, clientY: y, bubbles: true}));
+               seen === Math.floor(x - rect.left) + ',' + Math.floor(y - rect.top) }"
         ),
-        "23,46"
+        "true"
     );
-    // Fractional positions floor.
+    // A constructed MouseEvent has integer coordinates (as in Chrome), and
+    // the offset from the image's box floors.
     assert_eq!(
         eval(
             r,
-            "seen = null; image.dispatchEvent(new MouseEvent('click', {clientX: rect.left + 5.9, clientY: rect.top + 0.2, bubbles: true})); seen"
+            "seen = null; { const x = Math.ceil(rect.left) + 5.9, y = Math.ceil(rect.top) + 0.2;
+               image.dispatchEvent(new MouseEvent('click', {clientX: x, clientY: y, bubbles: true}));
+               seen === Math.floor(Math.floor(x) - rect.left) + ',' + Math.floor(Math.floor(y) - rect.top) }"
         ),
-        "5,0"
+        "true"
     );
     // click() has no position: (0, 0).
     assert_eq!(eval(r, "seen = null; image.click(); seen"), "0,0");

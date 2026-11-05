@@ -28,6 +28,11 @@ pub(crate) struct DocSelection {
     backward: bool,
     /// The Range object each realm sees as `getRangeAt(0)`.
     pub(crate) wrappers: Vec<(lp_js::RealmId, lp_js::Persistent)>,
+    /// The nodes a selection made by a gesture, by typing or by
+    /// `collapse()`/`extend()` was set on. As measured in Chromium, such a
+    /// selection is gone once one of them leaves the document; a range
+    /// script added follows its live boundary points instead.
+    origin: Option<(crate::collections::NodeHold, crate::collections::NodeHold)>,
 }
 
 // ----- selection state ----------------------------------------------------------
@@ -43,7 +48,11 @@ pub fn selection(page: &PageDom) -> Option<(Point, Point)> {
     let s = sel.as_ref()?;
     let (start, end) = (s.range.live.start(), s.range.live.end());
     let (a, f) = if s.backward { (end, start) } else { (start, end) };
+    let origin = s.origin.as_ref().map(|(a, f)| (a.id, f.id));
     drop(sel);
+    if origin.is_some_and(|(a, f)| !connected(page, a) || !connected(page, f)) {
+        return None;
+    }
     (connected(page, a.0) && connected(page, f.0)).then_some((a, f))
 }
 
@@ -60,7 +69,14 @@ pub fn set_selection(page: &Rc<PageDom>, anchor: Point, focus: Point) {
     let backward = compare(page, anchor, focus) > 0;
     let (start, end) = if backward { (focus, anchor) } else { (anchor, focus) };
     let Ok(range) = crate::range::RangeOwner::new(page, start, end) else { return };
-    let old = page.selection.replace(Some(DocSelection { range, backward, wrappers: Vec::new() }));
+    let origin = match (
+        crate::collections::NodeHold::new(page, anchor.0),
+        crate::collections::NodeHold::new(page, focus.0),
+    ) {
+        (Ok(a), Ok(f)) => Some((a, f)),
+        _ => None,
+    };
+    let old = page.selection.replace(Some(DocSelection { range, backward, wrappers: Vec::new(), origin }));
     drop(old);
     if changed {
         queue_selectionchange(page);
@@ -74,7 +90,8 @@ pub(crate) fn set_selection_range(
     range: Rc<crate::range::RangeOwner>,
     wrapper: Option<(lp_js::RealmId, lp_js::Persistent)>,
 ) {
-    let old = page.selection.replace(Some(DocSelection { range, backward: false, wrappers: wrapper.into_iter().collect() }));
+    let selection = DocSelection { range, backward: false, wrappers: wrapper.into_iter().collect(), origin: None };
+    let old = page.selection.replace(Some(selection));
     drop(old);
     queue_selectionchange(page);
 }
