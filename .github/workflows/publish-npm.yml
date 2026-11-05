@@ -70,10 +70,10 @@ jobs:
           path: .
       - name: Install Rust
         run: rustup toolchain install stable --profile minimal --no-self-update
-      - name: Build browser with rendering
+      - name: Build browser with rendering, and the comparison worker
         env:
           RUST_TARGET: ${{ matrix.target }}
-        run: cargo +stable build --locked --release --package lightningpanda --features render --target "$RUST_TARGET"
+        run: cargo +stable build --locked --release --package lightningpanda --package lp-render --features render --target "$RUST_TARGET"
       - name: Verify and stage binary
         env:
           ARCH: ${{ matrix.arch }}
@@ -88,10 +88,88 @@ jobs:
           "$binary" eval -e 'console.log("npm-smoke-ok")' | grep -Fx npm-smoke-ok
           mkdir -p "native/darwin-$ARCH"
           cp "$binary" "native/darwin-$ARCH/lightningpanda"
+          comparator="target/$RUST_TARGET/release/lp-snapshot-compare"
+          codesign --verify --strict "$comparator"
+          mkdir -p "archive/$ARCH"
+          cp "$binary" "$comparator" "archive/$ARCH/"
       - uses: actions/upload-artifact@v4
         with:
           name: native-${{ matrix.arch }}
           path: native/
+          if-no-files-found: error
+          retention-days: 7
+      # The GitHub release archive's binaries (the npm package takes only the browser).
+      - uses: actions/upload-artifact@v4
+        with:
+          name: archive-${{ matrix.arch }}
+          path: archive/${{ matrix.arch }}/
+          if-no-files-found: error
+          retention-days: 7
+
+  jsc:
+    uses: ./.github/workflows/jsc.yml
+
+  # The fork variant: the same browser linked against the patched JavaScriptCore.
+  fork:
+    needs: [release, jsc]
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '14.0'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-manifests
+          path: .
+      - uses: actions/download-artifact@v4
+        with:
+          name: patched-jsc
+          path: patched-jsc
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal --no-self-update
+      - name: Build browser and comparison worker against the patched JavaScriptCore
+        env:
+          JSC_DIR: ${{ needs.jsc.outputs.dir }}
+        run: |
+          # At the path it was built at: its install name is absolute.
+          export LP_JSC_DIR="$HOME/Library/Caches/lightningpanda/jsc/$JSC_DIR"
+          mkdir -p "$(dirname "$LP_JSC_DIR")"
+          mv patched-jsc "$LP_JSC_DIR"
+          cargo +stable build --locked --release --package lightningpanda --package lp-render --features render
+      - name: Verify and stage binaries
+        env:
+          VERSION: ${{ needs.release.outputs.version }}
+        run: |
+          binary=target/release/lightningpanda
+          codesign --verify --strict "$binary"
+          otool -L "$binary" | grep libJavaScriptCore.dylib
+          "$binary" version | grep -Fx "lightningpanda $VERSION"
+          "$binary" version | grep -q 'fork: true'
+          mkdir -p archive/fork
+          cp "$binary" target/release/lp-snapshot-compare archive/fork/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: archive-fork
+          path: archive/fork/
+          if-no-files-found: error
+          retention-days: 7
+
+  # The JavaScriptCore source asset and the notices the fork archive ships.
+  jsc-source:
+    needs: release
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - name: Export the patched sparse WebKit tree
+        env:
+          VERSION: ${{ needs.release.outputs.version }}
+        run: scripts/release/jsc-source.sh "$VERSION" "$GITHUB_SHA" jsc-source
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jsc-source
+          path: jsc-source/
           if-no-files-found: error
           retention-days: 7
 
@@ -171,6 +249,91 @@ jobs:
           ./node_modules/.bin/lightningpanda version
           node "$GITHUB_WORKSPACE/scripts/npm/smoke.mjs"
           bun "$GITHUB_WORKSPACE/scripts/npm/smoke.mjs"
+
+  # The GitHub release: the three platform archives, the client, the
+  # JavaScriptCore source and checksums (docs/RELEASING.md), assembled from the
+  # builds above and tested from their extracted form before upload.
+  github-release:
+    needs: [release, build, fork, jsc, jsc-source, package, smoke]
+    runs-on: macos-15
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.release.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-manifests
+          path: .
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.0'
+      - uses: actions/download-artifact@v4
+        with:
+          name: archive-arm64
+          path: release-in/arm64
+      - uses: actions/download-artifact@v4
+        with:
+          name: archive-x64
+          path: release-in/x64
+      - uses: actions/download-artifact@v4
+        with:
+          name: archive-fork
+          path: release-in/fork
+      - uses: actions/download-artifact@v4
+        with:
+          name: patched-jsc
+          path: release-in/jsc
+      - uses: actions/download-artifact@v4
+        with:
+          name: npm-package
+          path: release-in
+      - uses: actions/download-artifact@v4
+        with:
+          name: jsc-source
+          path: jsc-source
+      - name: Assemble and check the archives
+        run: |
+          chmod +x release-in/*/lightningpanda release-in/*/lp-snapshot-compare
+          mkdir release-out
+          mv "jsc-source/lightningpanda-jsc-source-v$VERSION.tar.gz" release-out/
+          mv jsc-source/jsc-licenses release-in/
+          scripts/release/assemble.sh "$VERSION" "$GITHUB_SHA" release-in release-out
+      - name: Test the client against the extracted browsers
+        run: |
+          mkdir "$RUNNER_TEMP/extracted"
+          for f in release-out/lightningpanda-rust-v"$VERSION"-macos-arm64*.tar.gz; do tar xzf "$f" -C "$RUNNER_TEMP/extracted"; done
+          cd packages/lightning-panda
+          bun install --frozen-lockfile
+          # Everything, fork mode included.
+          LIGHTNINGPANDA_BIN="$RUNNER_TEMP/extracted/lightningpanda-rust-v$VERSION-macos-arm64-fork/lightningpanda" bun test ./test
+          # The standard build has no fork mode.
+          LIGHTNINGPANDA_BIN="$RUNNER_TEMP/extracted/lightningpanda-rust-v$VERSION-macos-arm64/lightningpanda" bun test test/binary.test.ts test/screenshot.test.ts
+      - name: Publish the GitHub release
+        env:
+          TAG: ${{ github.ref_name }}
+          DIST_TAG: ${{ needs.release.outputs.dist-tag }}
+        run: |
+          assets=(release-out/*.tar.gz release-out/*.tgz release-out/SHA256SUMS.txt)
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            # A re-run: replace the assets, keep the notes.
+            gh release upload "$TAG" --clobber "${assets[@]}"
+          else
+            prerelease=()
+            [[ "$DIST_TAG" == next ]] && prerelease=(--prerelease)
+            gh release create "$TAG" --verify-tag --title "Rust Lightpanda $TAG" --generate-notes "${prerelease[@]}" "${assets[@]}"
+          fi
+      - name: Verify the uploaded assets
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          mkdir "$RUNNER_TEMP/downloaded"
+          cd "$RUNNER_TEMP/downloaded"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY"
+          shasum -a 256 -c SHA256SUMS.txt
 
   publish:
     needs: [release, smoke]
