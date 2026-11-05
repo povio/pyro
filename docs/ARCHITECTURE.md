@@ -326,22 +326,6 @@ To change JSC: edit the checkout in `~/Library/Caches/lightningpanda/webkit-src`
 JavaScriptCore` to iterate, then regenerate the patch with `git diff` (use `git add -N` for new files) and rerun
 `scripts/jsc/build.sh`, which resets the checkout and applies `patches/` from scratch.
 
-## Playwright's selector engine
-
-Playwright never asks CDP for locators: it installs its own selector engine into the page's utility world (a 300 KB
-script) and runs it through `Runtime.callFunctionOn`, so a locator is JavaScript making DOM calls. Two of its habits
-dominate on pages without shadow DOM: `query` splits `#id span` at every combinator, queries the last compound and
-climbs each candidate's parents with `parentElement` and `matches` (its custom pseudo-classes may sit anywhere in the
-chain), and `_queryCSS` reads `shadowRoot` of every element under the scope to pierce shadow trees. On the 2,000-row
-bench page that was 44,000 DOM calls per locator. `lp-cdp` `engine/playwright.rs` rewrites the script as it arrives in
-`Runtime.evaluate`, only when it contains those two methods exactly as Playwright 1.59.1 ships them (another version
-keeps its script): a plain CSS selector (no custom pseudo-class, CSS combinators only, no scope clause, the document as
-root) becomes one `querySelectorAll`, and the shadow walk is skipped, both only while
-`__lightningpandaShadowRootCount()` is 0. That function exists in isolated worlds only (never the page's own), backed by
-`Dom::shadow_root_count()`. Results and order are those of CSS, which is what Playwright computes by hand for such
-selectors; its own engine takes over as soon as a shadow root, a custom pseudo-class, a scope clause or an element root
-is involved. `pw.locator.textContent.2k`: 5.4 ms to 1.2 ms (Chrome 2.9 ms).
-
 ## Fork mode (`serve --fork`)
 
 Copy-on-write page snapshots: an app's startup (parsing and running its JavaScript) is paid once, not per test.
