@@ -14,7 +14,7 @@
 //! dispatcher here. Slots are process-wide, keyed by the class type and the
 //! attribute name: every engine registers the same (class, name) with the same
 //! callbacks, so the first registration's entry serves them all.
-use crate::class::{guard, GetterResult, Header, InvokeHFn, Kind, MemberCall, PayloadTag};
+use crate::class::{guard_in, GetterResult, Header, InvokeHFn, Kind, MemberCall, PayloadTag};
 use crate::error::JsError;
 use crate::value::Args;
 use lp_jsc_sys as sys;
@@ -241,7 +241,9 @@ unsafe fn custom_getter_dispatch(
     }
     unsafe {
         let mut exc: sys::JSValueRef = ptr::null();
-        let result = guard(ctx, &mut exc, ptr::null(), |scope| {
+        // A wrapper receiver's realm is usually the caller's (`ctx`).
+        let candidate = receiver(this).and_then(|o| crate::class::wrapper_realm(o));
+        let result = guard_in(ctx, candidate, &mut exc, ptr::null(), |scope| {
             let Some(call) = GETTER_CALLS[slot].load() else { return Err(JsError::Type("Illegal invocation".into())) };
             let Some(this) = receiver(this) else { return Err(JsError::Type("Illegal invocation".into())) };
             (call.invoke)(scope, this, Args::from_raw(ctx, 0, ptr::null()), call.f)
@@ -266,7 +268,8 @@ unsafe fn custom_setter_dispatch(
 ) -> bool {
     unsafe {
         let mut exc: sys::JSValueRef = ptr::null();
-        let stands = guard(ctx, &mut exc, false, |scope| {
+        let candidate = receiver(this).and_then(|o| crate::class::wrapper_realm(o));
+        let stands = guard_in(ctx, candidate, &mut exc, false, |scope| {
             let Some(call) = SETTER_CALLS[slot].load() else { return Err(JsError::Type("Illegal invocation".into())) };
             let Some(this) = receiver(this) else { return Err(JsError::Type("Illegal invocation".into())) };
             (call.invoke)(scope, this, Args::from_raw(ctx, 1, &value), call.f)?;

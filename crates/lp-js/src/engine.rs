@@ -118,7 +118,11 @@ pub(crate) struct EngineInner {
     root: sys::JSGlobalContextRef,
     pub(crate) caps: Capabilities,
     pub(crate) classes: RefCell<ClassRegistry>,
-    pub(crate) realms: RefCell<Vec<(sys::JSGlobalContextRef, Weak<RealmInner>)>>,
+    /// The live realms by their global context (the address of the context,
+    /// which a callback receives): a callback that cannot tell its realm from
+    /// its function or receiver finds it here with one hash lookup. A realm
+    /// enters at creation and leaves when it is disposed.
+    pub(crate) realms: RefCell<rustc_hash::FxHashMap<usize, Weak<RealmInner>>>,
     pub(crate) hooks: RefCell<Option<Rc<dyn EngineHooks>>>,
     pub(crate) next_realm_id: Cell<u32>,
     terminate: Arc<TerminateState>,
@@ -251,12 +255,19 @@ impl EngineInner {
 
     /// Finds the realm owning global context `global`.
     pub(crate) fn realm_for_global(&self, global: sys::JSGlobalContextRef) -> Option<Rc<RealmInner>> {
-        self.realms.borrow().iter().find(|(g, _)| *g == global).and_then(|(_, r)| r.upgrade())
+        self.realms.borrow().get(&(global as usize)).and_then(Weak::upgrade)
     }
 
-    /// Finds a live realm by id (cross-realm paths only: this walks the list).
+    /// Finds a live realm by id (`Realm::by_id` only: this walks the map).
     pub(crate) fn realm_by_id(&self, id: crate::RealmId) -> Option<Rc<RealmInner>> {
-        self.realms.borrow().iter().filter_map(|(_, r)| r.upgrade()).find(|r| r.id == id)
+        self.realms.borrow().values().filter_map(Weak::upgrade).find(|r| r.id == id)
+    }
+
+    /// The live realms, in creation order.
+    pub(crate) fn live_realms(&self) -> Vec<Rc<RealmInner>> {
+        let mut realms: Vec<Rc<RealmInner>> = self.realms.borrow().values().filter_map(Weak::upgrade).collect();
+        realms.sort_by_key(|r| r.id);
+        realms
     }
 
     /// Disposes every realm, destroys the VM (running all remaining finalizers)
@@ -271,11 +282,11 @@ impl EngineInner {
         if self.shut_down.get() {
             return;
         }
-        let realm_alive = self.realms.borrow().iter().any(|(_, r)| r.strong_count() > 0);
+        let realm_alive = self.realms.borrow().values().any(|r| r.strong_count() > 0);
         if realm_alive || (self.is_current() && callback_tls().depth.get() > 0) {
             return;
         }
-        let realms: Vec<Rc<RealmInner>> = self.realms.borrow().iter().filter_map(|(_, r)| r.upgrade()).collect();
+        let realms = self.live_realms();
         for r in &realms {
             r.dispose();
         }
@@ -401,7 +412,7 @@ impl Engine {
             root,
             caps,
             classes: RefCell::new(ClassRegistry::new()),
-            realms: RefCell::new(Vec::new()),
+            realms: RefCell::new(rustc_hash::FxHashMap::default()),
             hooks: RefCell::new(None),
             next_realm_id: Cell::new(1),
             terminate: terminate.clone(),
@@ -623,7 +634,7 @@ impl Engine {
                 reseed(self.inner.root);
                 for (global, realm) in self.inner.realms.borrow().iter() {
                     if realm.strong_count() > 0 {
-                        reseed(*global);
+                        reseed(*global as sys::JSGlobalContextRef);
                     }
                 }
             }
@@ -664,7 +675,7 @@ impl Engine {
 
     /// Live realms of this engine.
     pub fn realms(&self) -> Vec<Realm> {
-        self.inner.realms.borrow().iter().filter_map(|(_, r)| r.upgrade()).map(|inner| Realm { inner }).collect()
+        self.inner.live_realms().into_iter().map(|inner| Realm { inner }).collect()
     }
 }
 
@@ -946,7 +957,7 @@ unsafe extern "C" fn wrapper_property_added(ctx: sys::JSContextRef, object: sys:
     let Some(hook) = WRAPPER_PROPERTY_HOOK.get() else { return };
     // SAFETY: called by JSC on the VM's thread, with live arguments and the lock held.
     unsafe {
-        crate::class::guard(ctx, std::ptr::null_mut(), (), |scope| {
+        crate::class::guard_in(ctx, crate::class::wrapper_realm(object), std::ptr::null_mut(), (), |scope| {
             hook(scope, Object::from_raw(ctx, object));
             Ok(())
         })
