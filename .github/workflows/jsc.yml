@@ -1,0 +1,81 @@
+name: Patched JavaScriptCore
+
+# Builds the patched JavaScriptCore the fork variant links
+# (scripts/jsc/build.sh) and keeps it in the Actions cache, keyed by the WebKit
+# revision and the patches. A build takes hours on a hosted runner, so `main`
+# rebuilds whenever the inputs change: caches saved on the default branch are
+# the ones release tags can restore. Release tags call this workflow and get
+# the cached build, or build it themselves on a miss.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - crates/lp-jsc-sys/webkit/**
+      - scripts/jsc/build.sh
+      - .github/workflows/jsc.yml
+  # A change to the patches shows on its pull request whether they still build.
+  pull_request:
+    paths:
+      - crates/lp-jsc-sys/webkit/**
+      - scripts/jsc/build.sh
+      - .github/workflows/jsc.yml
+  workflow_dispatch:
+  workflow_call:
+    outputs:
+      dir:
+        description: Directory name of the build under ~/Library/Caches/lightningpanda/jsc
+        value: ${{ jobs.jsc.outputs.dir }}
+
+permissions:
+  contents: read
+
+jobs:
+  jsc:
+    runs-on: macos-15
+    # A cold build at -j2 on a hosted runner; cached builds take a minute.
+    timeout-minutes: 360
+    outputs:
+      dir: ${{ steps.key.outputs.dir }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Cache key
+        id: key
+        run: |
+          rev="$(tr -d '[:space:]' < crates/lp-jsc-sys/webkit/REVISION)"
+          patches="$(cat crates/lp-jsc-sys/webkit/patches/*.patch | shasum -a 256 | cut -c1-12)"
+          echo "dir=${rev:0:12}-$patches" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache/restore@v4
+        id: cache
+        with:
+          path: ~/Library/Caches/lightningpanda/jsc/${{ steps.key.outputs.dir }}
+          key: patched-jsc-macos-arm64-${{ steps.key.outputs.dir }}
+      - name: Build patched JavaScriptCore
+        if: steps.cache.outputs.cache-hit != 'true'
+        env:
+          # The hosted runner has 3 CPUs and 7 GB of memory; the build needs
+          # about 3 GB per job.
+          JOBS: '2'
+        run: |
+          brew install ninja
+          scripts/jsc/build.sh
+      - uses: actions/cache/save@v4
+        if: steps.cache.outputs.cache-hit != 'true'
+        with:
+          path: ~/Library/Caches/lightningpanda/jsc/${{ steps.key.outputs.dir }}
+          key: patched-jsc-macos-arm64-${{ steps.key.outputs.dir }}
+      - name: Check the build
+        env:
+          DIR: ${{ steps.key.outputs.dir }}
+        run: |
+          lib="$HOME/Library/Caches/lightningpanda/jsc/$DIR/lib/libJavaScriptCore.dylib"
+          lipo -archs "$lib" | grep -qx arm64
+          codesign --verify --strict "$lib"
+          # A fork-support entry point (patch 0002): this is the patched library.
+          nm -gU "$lib" | grep -q JSPrepareForFork
+      - uses: actions/upload-artifact@v4
+        with:
+          name: patched-jsc
+          path: ~/Library/Caches/lightningpanda/jsc/${{ steps.key.outputs.dir }}
+          if-no-files-found: error
+          retention-days: 7

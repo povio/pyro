@@ -1,5 +1,32 @@
 # Release packaging
 
+## In CI (the normal way)
+
+Push a tag `vX.Y.Z` (or `vX.Y.Z-rc.N`) on the commit to release. The
+`publish-npm.yml` workflow then does everything below without local work:
+
+- stamps the versions from the tag;
+- builds the standard browsers and comparison workers for ARM64 and Intel;
+- builds the fork variant against the patched JavaScriptCore (`jsc.yml`, which
+  restores it from the Actions cache, or builds it on a miss);
+- exports the patched JavaScriptCore source (`scripts/release/jsc-source.sh`);
+- assembles, signs and checks the three archives (`scripts/release/assemble.sh`);
+- tests the client against the extracted ARM64 browsers;
+- publishes the npm package and creates the GitHub release with all six assets
+  and generated notes, then downloads them and verifies the checksums.
+
+A release candidate tag makes a GitHub prerelease and publishes to npm `next`.
+A cold JavaScriptCore build takes hours on a hosted runner. `jsc.yml` therefore
+rebuilds on `main` whenever the patches or `scripts/jsc/build.sh` change, so a
+tag normally finds the build cached. Push the tag after that run has finished.
+Intel binaries are inspected in CI but never executed (no Rosetta on the
+runners).
+
+The rest of this document is what those scripts do, and the manual procedure
+for a release built outside CI.
+
+## Contents
+
 Release assets contain a render-enabled `lightningpanda`, the matching
 `lp-snapshot-compare`, and one identical `lightning-panda` payload. For npm
 releases, the [tag-triggered workflow](NPM_PUBLISHING.md#release-tags) sets all
