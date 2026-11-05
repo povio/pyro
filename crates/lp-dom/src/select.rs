@@ -21,6 +21,7 @@ use selectors::OpaqueElement;
 use crate::dom::Dom;
 use crate::error::{DomError, DomErrorKind, DomResult};
 use crate::node::{Atom, NodeId, NodeKind, NIL};
+use crate::select_query::FastList;
 
 #[derive(Debug, Clone)]
 pub struct Impl;
@@ -419,12 +420,14 @@ pub fn parse_selectors_in(text: &str, namespaces: &[(String, String)]) -> DomRes
 }
 
 /// A selector list for the DOM's query APIs: Stylo's (`crate::stylo::select`),
-/// or lp-dom's when only it parses one. Queries for one id, class, tag or attribute
-/// presence take lp-dom's direct paths (id index, cached class sets).
+/// or lp-dom's when only it parses one. Lists of type, id, class and attribute
+/// tests under descendant and child combinators also have a compiled form
+/// (`crate::select_query`), which the queries take instead.
 #[derive(Clone)]
 pub struct Query {
     stylo: Option<crate::stylo::select::List>,
     lp: Option<Selectors>,
+    fast: Option<std::sync::Arc<FastList>>,
 }
 
 /// Parses a selector list for [`Dom::query_first`] and friends; invalid
@@ -433,16 +436,36 @@ pub fn parse_query(text: &str) -> DomResult<Query> {
     let stylo = crate::stylo::select::parse(text);
     let lp = match &stylo {
         None => Some(parse_selectors(text)?),
-        // One id, class, tag or attribute presence: lp-dom's direct tests
-        // (the id index, cached class sets) beat general matching.
-        Some(_) => parse_selectors(text).ok().filter(|l| simple(l).is_some()),
+        Some(_) => None,
     };
-    Ok(Query { stylo, lp })
+    let fast = match (&stylo, &lp) {
+        (Some(list), _) => crate::select_query::compile(list),
+        (None, Some(list)) => crate::select_query::compile(list),
+        (None, None) => None,
+    };
+    Ok(Query { stylo, lp, fast: fast.map(std::sync::Arc::new) })
+}
+
+impl Query {
+    /// Whether the queries take the compiled form (tests).
+    #[doc(hidden)]
+    pub fn is_compiled(&self) -> bool {
+        self.fast.is_some()
+    }
 }
 
 impl Dom {
     /// `querySelector`: the first element below `root` matching `q`.
     pub fn query_first(&self, root: NodeId, q: &Query) -> DomResult<Option<NodeId>> {
+        if let Some(fast) = &q.fast {
+            let r = self.check(root)?;
+            let mut first = NIL;
+            self.fast_select(r, fast, |i| {
+                first = i;
+                false
+            });
+            return Ok(self.opt_id(first));
+        }
         match (&q.stylo, &q.lp) {
             (_, Some(lp)) => self.query_selector(root, lp),
             (Some(list), None) => {
@@ -455,6 +478,15 @@ impl Dom {
 
     /// `querySelectorAll`: the elements below `root` matching `q`, in tree order.
     pub fn query_all(&self, root: NodeId, q: &Query) -> DomResult<Vec<NodeId>> {
+        if let Some(fast) = &q.fast {
+            let r = self.check(root)?;
+            let mut out = Vec::new();
+            self.fast_select(r, fast, |i| {
+                out.push(self.id_of(i));
+                true
+            });
+            return Ok(out);
+        }
         match (&q.stylo, &q.lp) {
             (_, Some(lp)) => self.query_selector_all(root, lp),
             (Some(list), None) => {
@@ -467,6 +499,10 @@ impl Dom {
 
     /// `Element.matches(selectors)`.
     pub fn element_matches(&self, el: NodeId, q: &Query) -> DomResult<bool> {
+        if let Some(fast) = &q.fast {
+            let (_, n) = self.live(el)?;
+            return self.fast_matches(n, fast).ok_or(DomError::Type("not an element"));
+        }
         match (&q.stylo, &q.lp) {
             (Some(list), _) => {
                 let i = self.check(el)?;
@@ -482,6 +518,10 @@ impl Dom {
 
     /// `Element.closest(selectors)`.
     pub fn element_closest(&self, el: NodeId, q: &Query) -> DomResult<Option<NodeId>> {
+        if let Some(fast) = &q.fast {
+            let (i, n) = self.live(el)?;
+            return Ok(self.fast_closest(i, n, fast).map(|i| self.id_of(i)));
+        }
         match (&q.stylo, &q.lp) {
             (Some(list), _) => {
                 let i = self.check(el)?;
@@ -500,10 +540,12 @@ impl Dom {
 #[derive(Default)]
 pub struct SelectorCache {
     map: FxHashMap<Box<str>, Query>,
-    /// The same queries keyed by a hash of the selector's UTF-16 units, for
-    /// callers that have the JavaScript string's characters and no `String`
-    /// (`Element.matches` runs thousands of times per Playwright locator).
-    by_units: FxHashMap<u64, (Box<[u16]>, Query)>,
+    /// The same queries keyed by the selector's characters as a JavaScript
+    /// string stores them (one map per width), for callers that have those
+    /// and no `String`: `Element.matches` runs thousands of times per
+    /// Playwright locator, and a lookup is one hash and compare of the bytes.
+    latin1: FxHashMap<Box<[u8]>, Query>,
+    utf16: FxHashMap<Box<[u16]>, Query>,
 }
 const SELECTOR_CACHE_CAP: usize = 512;
 impl SelectorCache {
@@ -514,32 +556,34 @@ impl SelectorCache {
         let s = parse_query(text)?;
         if self.map.len() >= SELECTOR_CACHE_CAP {
             self.map.clear();
-            self.by_units.clear();
+            self.latin1.clear();
+            self.utf16.clear();
         }
         self.map.insert(text.into(), s.clone());
         Ok(s)
     }
 
-    /// [`SelectorCache::get`] for a selector given as its code units, with
-    /// `hash` over them (the same for either width) and `text` building the
-    /// `String` only on a miss. A hash collision falls back to the text.
-    pub fn get_units(
-        &mut self,
-        hash: u64,
-        same: impl Fn(&[u16]) -> bool,
-        units: impl FnOnce() -> Box<[u16]>,
-        text: impl FnOnce() -> String,
-    ) -> DomResult<Query> {
-        if let Some((key, q)) = self.by_units.get(&hash) {
-            if same(key) {
-                return Ok(q.clone());
-            }
-            return self.get(&text());
+    /// `f` on the query of a selector given as Latin-1 characters, without
+    /// taking it out of the cache.
+    pub fn with_latin1<R>(&mut self, chars: &[u8], f: impl FnOnce(&Query) -> R) -> DomResult<R> {
+        if let Some(q) = self.latin1.get(chars) {
+            return Ok(f(q));
         }
-        let text = text();
-        let q = self.get(&text)?;
-        self.by_units.insert(hash, (units(), q.clone()));
-        Ok(q)
+        let q = self.get(&chars.iter().map(|&c| char::from(c)).collect::<String>())?;
+        let r = f(&q);
+        self.latin1.insert(chars.into(), q);
+        Ok(r)
+    }
+
+    /// [`SelectorCache::with_latin1`] for UTF-16 code units.
+    pub fn with_utf16<R>(&mut self, units: &[u16], f: impl FnOnce(&Query) -> R) -> DomResult<R> {
+        if let Some(q) = self.utf16.get(units) {
+            return Ok(f(q));
+        }
+        let q = self.get(&String::from_utf16_lossy(units))?;
+        let r = f(&q);
+        self.utf16.insert(units.into(), q);
+        Ok(r)
     }
 }
 

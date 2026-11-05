@@ -551,14 +551,12 @@ fn define_parent_node<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
     });
     def.pure_method("querySelector", 1, |s, n, a| {
         let page = n.page();
-        let list = arg_selector(&a, 0, "querySelector", page)?;
-        let r = page.dom.borrow().query_first(n.id, &list).js()?;
+        let r = with_selector(&a, 0, "querySelector", page, |q| page.dom.borrow().query_first(n.id, q))?.js()?;
         node_value(s, page, r)
     });
     def.pure_method("querySelectorAll", 1, |s, n, a| {
         let page = n.page();
-        let list = arg_selector(&a, 0, "querySelectorAll", page)?;
-        let r = page.dom.borrow().query_all(n.id, &list).js()?;
+        let r = with_selector(&a, 0, "querySelectorAll", page, |q| page.dom.borrow().query_all(n.id, q))?.js()?;
         Ok(collections::static_node_list(s, page, r)?.value())
     });
 }
@@ -1134,8 +1132,8 @@ impl JsClass for Element {
         def.method("webkitMatchesSelector", 1, element_matches);
         def.pure_method("closest", 1, |s, n, a| {
             let page = n.page();
-            let list = arg_selector(&a, 0, "Element.closest", page)?;
-            let r = page.dom.borrow().element_closest(n.id, &list).js()?;
+            let r =
+                with_selector(&a, 0, "Element.closest", page, |q| page.dom.borrow().element_closest(n.id, q))?.js()?;
             node_value(s, page, r)
         });
         def.method("getElementsByTagName", 1, |s, n, a| {
@@ -1292,8 +1290,8 @@ fn assigned_slot<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
 
 fn element_matches<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value<'s>> {
     let page = n.page();
-    let list = arg_selector(&a, 0, "Element.matches", page)?;
-    Ok(s.boolean(page.dom.borrow().element_matches(n.id, &list).js()?))
+    let r = with_selector(&a, 0, "Element.matches", page, |q| page.dom.borrow().element_matches(n.id, q))?;
+    Ok(s.boolean(r.js()?))
 }
 
 fn insert_adjacent(dom: &mut lp_dom::Dom, el: NodeId, pos: &str, node: NodeId) -> JsResult<bool> {

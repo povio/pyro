@@ -13,6 +13,7 @@ mod post_connection;
 mod render_html;
 mod select_fast;
 mod select_forms;
+mod select_query;
 mod stylo_select;
 mod tree;
 mod tree_scope;

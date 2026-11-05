@@ -100,26 +100,29 @@ pub fn str_of<'v>(v: &'v Value<'_>) -> JsResult<std::borrow::Cow<'v, str>> {
     dom_string(*v).map(std::borrow::Cow::Owned)
 }
 
-/// The parsed selector list of argument `i`, from the page's cache. A string
-/// argument is looked up by its characters, without making a `String`
-/// (patched JSC); anything else is converted as `arg_string` does.
-pub fn arg_selector(
+/// `f` on the parsed selector list of argument `i`, from the page's cache
+/// (not copied out of it; `f` must not use the cache). A string argument is
+/// looked up by its characters, without making a `String` (patched JSC);
+/// anything else is converted as `arg_string` does.
+pub fn with_selector<R>(
     a: &Args<'_>,
     i: usize,
     what: &str,
     page: &crate::page::PageDom,
-) -> JsResult<lp_dom::select::Query> {
+    f: impl FnOnce(&lp_dom::select::Query) -> R,
+) -> JsResult<R> {
     a.require(i + 1, what)?;
     let v = a.get(i);
-    if let Some(units) = v.string_units() {
-        return page
-            .selectors
-            .borrow_mut()
-            .get_units(units.fx_hash(), |key| units.eq_units(key), || units.to_units(), || units.to_string_lossy())
-            .js();
+    match v.string_units() {
+        Some(lp_js::StringUnits::Latin1(chars)) => page.selectors.borrow_mut().with_latin1(chars, f).js(),
+        Some(lp_js::StringUnits::Utf16(units)) => page.selectors.borrow_mut().with_utf16(units, f).js(),
+        None => {
+            // The conversion may run script, which may query selectors.
+            let sel = dom_string(v)?;
+            let q = page.selectors.borrow_mut().get(&sel).js()?;
+            Ok(f(&q))
+        }
     }
-    let sel = dom_string(v)?;
-    page.selectors.borrow_mut().get(&sel).js()
 }
 
 /// `[LegacyNullToEmptyString]` (innerHTML, textContent setter semantics).
