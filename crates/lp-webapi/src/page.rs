@@ -1022,9 +1022,13 @@ impl PageDom {
 
     /// Releases a wrapper's node reference (called from payload drop).
     pub(crate) fn release_node(&self, id: NodeId) {
+        self.release_nodes(std::slice::from_ref(&id));
+    }
+    /// [`PageDom::release_node`] for each of `ids`, under one borrow.
+    pub(crate) fn release_nodes(&self, ids: &[NodeId]) {
         match self.dom.try_borrow_mut() {
-            Ok(mut d) => d.release(id),
-            Err(_) => self.pending_release.borrow_mut().push(id),
+            Ok(mut d) => ids.iter().for_each(|&id| d.release(id)),
+            Err(_) => self.pending_release.borrow_mut().extend_from_slice(ids),
         }
     }
 

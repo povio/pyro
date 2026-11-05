@@ -79,14 +79,25 @@ pub fn arg_string(a: &Args<'_>, i: usize, what: &str) -> JsResult<String> {
 /// are for.
 pub fn with_arg_str<R>(a: &Args<'_>, i: usize, what: &str, f: impl FnOnce(&str) -> JsResult<R>) -> JsResult<R> {
     a.require(i + 1, what)?;
-    let v = a.get(i);
+    with_str(a.get(i), f)
+}
+
+/// Runs `f` with `v` converted as [`dom_string`] does, borrowing the
+/// characters of an ASCII string (see [`with_arg_str`]).
+pub fn with_str<R>(v: Value<'_>, f: impl FnOnce(&str) -> JsResult<R>) -> JsResult<R> {
+    f(&str_of(&v)?)
+}
+
+/// `v` converted as [`dom_string`] does: the characters of an ASCII string
+/// borrowed (see [`with_arg_str`]), anything else converted.
+pub fn str_of<'v>(v: &'v Value<'_>) -> JsResult<std::borrow::Cow<'v, str>> {
     if let Some(lp_js::StringUnits::Latin1(bytes)) = v.string_units() {
         if bytes.is_ascii() {
             // SAFETY: ASCII bytes are UTF-8.
-            return f(unsafe { std::str::from_utf8_unchecked(bytes) });
+            return Ok(std::borrow::Cow::Borrowed(unsafe { std::str::from_utf8_unchecked(bytes) }));
         }
     }
-    f(&dom_string(v)?)
+    dom_string(*v).map(std::borrow::Cow::Owned)
 }
 
 /// The parsed selector list of argument `i`, from the page's cache. A string
