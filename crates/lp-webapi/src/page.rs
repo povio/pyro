@@ -83,6 +83,15 @@ pub struct PageDom {
     pub(crate) pending_port_reconcile: RefCell<Vec<std::rc::Weak<crate::message_channel::PortInner>>>,
     pub(crate) last_removals: Cell<u64>,
     next_event: Cell<u64>,
+    /// HTML "in error reporting mode": an `error` event for an uncaught
+    /// exception is being dispatched at the Window, so an exception thrown
+    /// by one of its listeners is reported without a second event.
+    pub(crate) error_reporting: Cell<bool>,
+    /// (event id, realm) while an `error` event for an uncaught exception
+    /// is dispatched: as in Chrome, only the listeners of the world that
+    /// threw see it (an isolated world's error skips the page's `onerror`,
+    /// the page's errors skip the isolated worlds).
+    pub(crate) error_event_world: Cell<Option<(u64, RealmId)>>,
     pub net: RefCell<Option<lp_net::NetClient>>,
     pub(crate) intersections: crate::intersection_observer::BindingState,
     pub(crate) resizes: crate::resize_observer::BindingState,
@@ -427,6 +436,8 @@ impl PageDom {
             pending_port_reconcile: RefCell::new(Vec::new()),
             last_removals: Cell::new(u64::MAX),
             next_event: Cell::new(1),
+            error_reporting: Cell::new(false),
+            error_event_world: Cell::new(None),
             net: RefCell::new(None),
             identity: RefCell::new(Default::default()),
             context_services: Default::default(),

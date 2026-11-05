@@ -140,6 +140,11 @@ pub type NativeCallbackHook = Rc<dyn for<'s> Fn(&Scope<'s>)>;
 /// Browser notification for a rejected promise; true cancels default reporting.
 pub type UnhandledRejectionHandler = for<'s> fn(&Scope<'s>, Value<'s>, Value<'s>) -> JsResult<bool>;
 
+/// Embedder step of [`Scope::report_exception`] (HTML "report an exception"
+/// fires an `error` event at the Window); true means the exception was
+/// handled and the engine hooks are not told.
+pub type ExceptionReporter = for<'s> fn(&Scope<'s>, &JsException) -> bool;
+
 pub(crate) struct RealmInner {
     pub(crate) id: RealmId,
     name: String,
@@ -166,6 +171,7 @@ pub(crate) struct RealmInner {
     module_fetcher: RefCell<Option<Rc<dyn ModuleFetcher>>>,
     native_callback_hook: RefCell<Option<NativeCallbackHook>>,
     unhandled_rejection_handler: Cell<Option<UnhandledRejectionHandler>>,
+    exception_reporter: Cell<Option<ExceptionReporter>>,
     /// Optional cheap test of whether the hook has anything to do; when it
     /// says no, the hook (and the rooting of the callback result) is skipped.
     native_callback_pending: RefCell<Option<Rc<dyn Fn() -> bool>>>,
@@ -271,6 +277,7 @@ impl RealmInner {
         // Release captured embedder state without holding the hook cell borrow.
         drop(self.native_callback_hook.take());
         self.unhandled_rejection_handler.set(None);
+        self.exception_reporter.set(None);
         drop(self.native_callback_pending.take());
         self.protos.borrow_mut().clear();
         self.ctors.borrow_mut().clear();
@@ -324,6 +331,12 @@ impl Realm {
 
     pub fn set_unhandled_rejection_handler(&self, handler: UnhandledRejectionHandler) {
         self.inner.unhandled_rejection_handler.set(Some(handler));
+    }
+
+    /// Installs the embedder's "report an exception" step, run by
+    /// [`Scope::report_exception`] before the engine hooks (`None` removes it).
+    pub fn set_exception_reporter(&self, reporter: Option<ExceptionReporter>) {
+        self.inner.exception_reporter.set(reporter);
     }
 
     pub fn id(&self) -> RealmId {
@@ -1053,14 +1066,26 @@ impl<'s> Scope<'s> {
         Ok((!v.is_null()).then(|| unsafe { Value::from_raw(self.ctx, v) }))
     }
 
-    /// Reports an uncaught exception to the engine hooks (console/CDP).
-    /// Termination is not an exception and is not reported.
+    /// Reports an uncaught exception: first to the realm's
+    /// [`ExceptionReporter`] (a Window fires its `error` event, which may
+    /// run script), then, unless that handled it, to the engine hooks
+    /// (console/CDP). Termination is not an exception and is not reported.
     pub fn report_exception(&self, error: &JsError) {
         if matches!(error, JsError::Terminated) {
             return;
         }
-        if let Some(h) = self.realm.engine.hooks() {
-            let details = error.details(self);
+        let hooks = self.realm.engine.hooks();
+        let reporter = self.realm.exception_reporter.get();
+        if hooks.is_none() && reporter.is_none() {
+            return;
+        }
+        let details = error.details(self);
+        if let Some(reporter) = reporter {
+            if reporter(self, &details) {
+                return;
+            }
+        }
+        if let Some(h) = hooks {
             h.exception_thrown(&self.realm(), &details);
         }
     }
@@ -1246,6 +1271,7 @@ pub(crate) fn create(engine: &Rc<EngineInner>, options: RealmOptions) -> JsResul
         module_fetcher: RefCell::new(None),
         native_callback_hook: RefCell::new(None),
         unhandled_rejection_handler: Cell::new(None),
+        exception_reporter: Cell::new(None),
         native_callback_pending: RefCell::new(None),
         native_callback_hook_active: Cell::new(false),
         inline_modules: RefCell::new(HashMap::new()),

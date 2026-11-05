@@ -4,6 +4,7 @@
 
 mod document_root_element_js;
 mod dom_js;
+mod error_events_js;
 mod fetch_js;
 mod form_data_js;
 mod identity_js;

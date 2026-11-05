@@ -445,6 +445,13 @@ impl ListenerInvoker for Invoker<'_> {
         if realm.is_disposed() {
             return;
         }
+        // An uncaught exception's `error` event is the throwing world's
+        // affair (`lifecycle::report_exception`).
+        if let Some((event, world)) = self.page.error_event_world.get() {
+            if event == self.event.id && world != realm_id {
+                return;
+            }
+        }
         let Ok(s) = realm.scope() else { return };
         // DOM "inner invoke": the listener's global (a Window) exposes the event
         // as its current event unless the invocation target is in a shadow
@@ -624,13 +631,43 @@ pub(crate) fn set_event_handler(
         return Ok(());
     }
     let cancel_on_false = !matches!(ty, "mouseover" | "error");
+    let window_error = ty == "error" && target.page.is_window_key(target.key);
     let callback = s.function("eventHandler", move |s, this, args| {
         if let Some(object) = this.as_object() {
             if let Some(handler) = handler_get(s, object, &value_key)?.and_then(|v| v.as_object()) {
-                let result = handler.call(Some(object), &[args.get(0)])?;
-                // HTML "process the event handler return value".
-                if cancel_on_false && result.is_boolean() && !result.to_bool() {
-                    if let Some(event) = args.get(0).as_object() {
+                let event = args.get(0);
+                // HTML "special error event handling" (OnErrorEventHandler):
+                // the Window's `onerror` gets an ErrorEvent's fields as five
+                // arguments and cancels the event by returning true.
+                let error_fields = if window_error {
+                    s.unwrap::<crate::event::ErrorEvent>(event).map(|e| {
+                        let f = e.fields.borrow();
+                        (f.message.clone(), f.filename.clone(), f.lineno, f.colno, f.error.clone())
+                    })
+                } else {
+                    None
+                };
+                let cancel = match error_fields {
+                    Some((message, filename, lineno, colno, error)) => {
+                        let error = error.as_ref().map_or(s.undefined(), |e| e.get(s));
+                        let args = [
+                            s.string(&message),
+                            s.string(&filename),
+                            s.number(lineno.into()),
+                            s.number(colno.into()),
+                            error,
+                        ];
+                        let result = handler.call(Some(object), &args)?;
+                        result.is_boolean() && result.to_bool()
+                    }
+                    None => {
+                        let result = handler.call(Some(object), &[event])?;
+                        // HTML "process the event handler return value".
+                        cancel_on_false && result.is_boolean() && !result.to_bool()
+                    }
+                };
+                if cancel {
+                    if let Some(event) = event.as_object() {
                         if let Some(prevent) = event.get("preventDefault")?.as_object() {
                             prevent.call(Some(event), &[])?;
                         }

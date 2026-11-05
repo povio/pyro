@@ -277,6 +277,8 @@ impl FrameHost {
             key,
         ))?;
         lp_webapi::install(&realm.scope()?, dom)?;
+        // Uncaught exceptions of the realm's callbacks fire `error` at the Window.
+        realm.set_exception_reporter(Some(lp_webapi::lifecycle::report_exception));
         if crate::clock::page_clock_enabled() {
             realm.scope()?.eval(crate::clock::DATE_SCRIPT, Some("lightningpanda://internal/clock.js"), 1)?;
         }

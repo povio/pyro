@@ -3,7 +3,7 @@
 use std::rc::Rc;
 
 use lp_dom::NodeId;
-use lp_js::{Persistent, RealmId};
+use lp_js::{JsError, JsException, Persistent, RealmId, Scope};
 
 use crate::event::{EventCore, EventInterface};
 use crate::page::PageDom;
@@ -58,6 +58,60 @@ pub fn load(page: &Rc<PageDom>, doc: NodeId) {
 
 fn window_key(page: &PageDom, _doc: NodeId) -> Option<lp_dom::events::TargetKey> {
     page.window_target()
+}
+
+/// HTML "report an exception" for a Window, installed on page realms as
+/// their `lp_js::ExceptionReporter`: an uncaught exception of a callback
+/// the platform invoked (listener, timer, observer, script evaluation) fires
+/// a trusted, cancelable `error` ErrorEvent at the Window right away, with
+/// `message`/`filename`/`lineno`/`colno`/`error` from the thrown value.
+/// Returns true when a listener canceled the event (`window.onerror`
+/// returning true, `preventDefault()`): the caller then skips the console
+/// report. While the event is dispatched the page is "in error reporting
+/// mode": an exception of one of its listeners is reported but fires no
+/// second event. A disposed page, a page without scripting and the error
+/// of a realm that has no Window get no event. As in Chrome, only the
+/// listeners of the world that threw see the event: an isolated world's
+/// exception never reaches the page's `onerror`, and a page exception stays
+/// out of content scripts. Dispatch runs script, so a report made while the
+/// DOM is borrowed is replayed from a task.
+pub fn report_exception(s: &Scope<'_>, exception: &JsException) -> bool {
+    let Ok(page) = crate::target::page_of(s) else { return false };
+    if page.is_disposed() || page.scripting_disabled() || s.realm().is_disposed() || page.error_reporting.get() {
+        return false;
+    }
+    let Some(target) = page.window_target() else { return false };
+    if page.dom.try_borrow_mut().is_err() {
+        // The caller holds the DOM: dispatch (and the console report an
+        // unhandled event leads to) from a task of its own. Without an
+        // embedder to post it the exception is only reported.
+        let (Some(value), Some(hooks)) = (exception.value.clone(), page.hooks()) else { return false };
+        let realm = s.realm().downgrade();
+        hooks.post_task(Box::new(move || {
+            let Some(realm) = realm.upgrade() else { return };
+            let Ok(s) = realm.scope() else { return };
+            s.report_exception(&JsError::Thrown(value));
+        }));
+        return true;
+    }
+    let ev = EventCore::trusted(&page, EventInterface::ErrorEvent, "error", false, true);
+    {
+        let mut fields = ev.fields.borrow_mut();
+        fields.message = format!("Uncaught {}", exception.text());
+        fields.filename = match &exception.url {
+            Some(url) => url.clone(),
+            None => page.dom.borrow().document_data(page.document()).map(|d| d.url.to_string()).unwrap_or_default(),
+        };
+        fields.lineno = exception.line.unwrap_or(0);
+        fields.colno = exception.column.unwrap_or(0);
+        fields.error = exception.value.clone();
+    }
+    page.error_reporting.set(true);
+    page.error_event_world.set(Some((ev.id, s.realm_id())));
+    let not_canceled = fire(&page, target, &ev);
+    page.error_event_world.set(None);
+    page.error_reporting.set(false);
+    !not_canceled
 }
 
 /// `popstate` at the window (history traversal / back-forward).
