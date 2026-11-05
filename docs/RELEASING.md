@@ -16,9 +16,14 @@ Push a tag `vX.Y.Z` (or `vX.Y.Z-rc.N`) on the commit to release. The
   and generated notes, then downloads them and verifies the checksums.
 
 A release candidate tag makes a GitHub prerelease and publishes to npm `next`.
-A cold JavaScriptCore build takes hours on a hosted runner. `jsc.yml` therefore
-rebuilds on `main` whenever the patches or `scripts/jsc/build.sh` change, so a
-tag normally finds the build cached. Push the tag after that run has finished.
+A cold JavaScriptCore build takes about 7 minutes on a hosted runner (measured on
+the first run). `jsc.yml` rebuilds on `main` whenever the patches or
+`scripts/jsc/build.sh` change, so a tag normally finds the build cached.
+
+The npm package's arm64 browser is the fork build with its JavaScriptCore
+bundled (`scripts/release/bundle-jsc.sh`); its Intel browser is the standard
+build. Every release archive's client therefore carries the fork browser, but
+launches the browser of its own archive first.
 Intel binaries are inspected in CI but never executed (no Rosetta on the
 runners).
 
