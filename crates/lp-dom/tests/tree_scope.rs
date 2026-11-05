@@ -259,3 +259,60 @@ fn tree_order_matches_a_preorder_index() {
         }
     }
 }
+
+#[test]
+fn document_element_head_and_body_are_kept_as_the_tree_changes() {
+    let (dom, d) = doc("http://test/", "<!doctype html><html><head></head><body><p>x</p></body></html>");
+    let mut dom = dom.borrow_mut();
+    let html = dom.document_element(d).unwrap().unwrap();
+    let head = dom.head(d).unwrap().unwrap();
+    let body = dom.body(d).unwrap().unwrap();
+    verify(&dom);
+    // A body inserted before the first is the body until it leaves.
+    let b2 = dom.create_element(d, "body").unwrap();
+    dom.insert_before(html, b2, Some(body)).unwrap();
+    assert_eq!(dom.body(d).unwrap(), Some(b2));
+    verify(&dom);
+    dom.remove_child(html, b2).unwrap();
+    assert_eq!(dom.body(d).unwrap(), Some(body));
+    // A body in another namespace, or not a child of the html element, is not
+    // the body; a frameset is.
+    let svg_body = dom.create_element_ns(d, Some("http://www.w3.org/2000/svg"), "body").unwrap();
+    dom.insert_before(html, svg_body, Some(body)).unwrap();
+    assert_eq!(dom.body(d).unwrap(), Some(body));
+    dom.move_before(html, body, Some(head)).unwrap();
+    assert_eq!(dom.body(d).unwrap(), Some(body));
+    let fs = dom.create_element(d, "frameset").unwrap();
+    dom.append_child(body, fs).unwrap();
+    assert_eq!(dom.body(d).unwrap(), Some(body));
+    verify(&dom);
+    dom.remove_child(html, body).unwrap();
+    assert_eq!(dom.body(d).unwrap(), None);
+    dom.append_child(html, fs).unwrap();
+    assert_eq!(dom.body(d).unwrap(), Some(fs));
+    verify(&dom);
+    // A replaced head passes to its replacement.
+    let h2 = dom.create_element(d, "head").unwrap();
+    dom.replace_child(html, h2, head).unwrap();
+    assert_eq!(dom.head(d).unwrap(), Some(h2));
+    verify(&dom);
+    // No document element, no head or body; a new one brings its own.
+    dom.remove_child(d, html).unwrap();
+    assert_eq!((dom.document_element(d).unwrap(), dom.head(d).unwrap(), dom.body(d).unwrap()), (None, None, None));
+    verify(&dom);
+    let other = dom.create_element(d, "html").unwrap();
+    let ob = dom.create_element(d, "body").unwrap();
+    dom.append_child(other, ob).unwrap();
+    dom.append_child(d, other).unwrap();
+    assert_eq!(
+        (dom.document_element(d).unwrap(), dom.head(d).unwrap(), dom.body(d).unwrap()),
+        (Some(other), None, Some(ob))
+    );
+    verify(&dom);
+    // A clone keeps its own.
+    let c = dom.clone_node(d, true, None).unwrap();
+    let cb = dom.body(c).unwrap().unwrap();
+    assert_ne!(cb, ob);
+    assert_eq!(dom.parent(cb).unwrap(), dom.document_element(c).unwrap());
+    verify(&dom);
+}

@@ -68,6 +68,9 @@ impl Dom {
         if flags != 0 {
             self.retag(node, flags);
         }
+        if self.n(node).is_element() {
+            self.document_roots_linked(node, parent);
+        }
     }
 
     /// Before `node` is unlinked from its parent: it and its shadow-including
@@ -76,6 +79,9 @@ impl Dom {
     pub(crate) fn tree_unlinking(&mut self, node: u32) {
         if self.n(node).tree_flags() != 0 {
             self.retag(node, 0);
+        }
+        if self.n(node).is_element() {
+            self.document_roots_unlinking(node);
         }
     }
 
@@ -337,6 +343,25 @@ impl Dom {
                 }
             }
         }
+        // Each document's kept document element, head and body are what
+        // walking its children finds.
+        for i in 0..self.slot_count() {
+            if !self.slot_live(i) {
+                continue;
+            }
+            let NodeKind::Document(d) = &self.n(i).kind else { continue };
+            let root = self.first_element_child_idx(i);
+            let (head, body) = match root {
+                NIL => (NIL, NIL),
+                r => (self.head_child_idx(r, NIL), self.body_child_idx(r, NIL)),
+            };
+            if (d.document_element, d.head, d.body) != (root, head, body) {
+                return Err(format!(
+                    "document {i}: kept (root, head, body) ({}, {}, {}), tree ({root}, {head}, {body})",
+                    d.document_element, d.head, d.body
+                ));
+            }
+        }
         Ok(())
     }
 
@@ -351,6 +376,100 @@ impl Dom {
             match &self.n(i).kind {
                 NodeKind::Fragment(f) if f.shadow.is_some() => i = f.host,
                 _ => return i,
+            }
+        }
+    }
+}
+
+impl Dom {
+    // ----- document element, head and body -----------------------------
+
+    /// The document whose document element is `parent`, if any.
+    fn document_of_root(&self, parent: u32) -> u32 {
+        let doc = self.n(parent).parent;
+        match doc != NIL && matches!(&self.n(doc).kind, NodeKind::Document(d) if d.document_element == parent) {
+            true => doc,
+            false => NIL,
+        }
+    }
+
+    /// Records `element` (NIL: none) as `doc`'s document element, with its
+    /// `head` and `body`.
+    fn set_document_element(&mut self, doc: u32, element: u32) {
+        let (head, body) = match element {
+            NIL => (NIL, NIL),
+            e => (self.head_child_idx(e, NIL), self.body_child_idx(e, NIL)),
+        };
+        if let NodeKind::Document(d) = &mut self.n_mut(doc).kind {
+            d.document_element = element;
+            d.head = head;
+            d.body = body;
+        }
+    }
+
+    /// After element `node` was linked under `parent`: it may be a
+    /// document's document element now, or that element's head or body.
+    fn document_roots_linked(&mut self, node: u32, parent: u32) {
+        if let NodeKind::Document(d) = &self.n(parent).kind {
+            let current = d.document_element;
+            // The first element child: a document has one, but the parsers'
+            // raw links do not check.
+            let first = self.first_element_child_idx(parent);
+            if first != current {
+                self.set_document_element(parent, first);
+            }
+            return;
+        }
+        let doc = self.document_of_root(parent);
+        if doc == NIL {
+            return;
+        }
+        let Some(e) = self.n(node).element().filter(|e| e.is_html()) else { return };
+        if e.name.local == local_name!("head") {
+            let head = self.head_child_idx(parent, NIL);
+            if let NodeKind::Document(d) = &mut self.n_mut(doc).kind {
+                d.head = head;
+            }
+        } else if crate::dom::is_body_name(&e.name.local) {
+            let body = self.body_child_idx(parent, NIL);
+            if let NodeKind::Document(d) = &mut self.n_mut(doc).kind {
+                d.body = body;
+            }
+        }
+    }
+
+    /// Before element `node` is unlinked: the document element, head or
+    /// body it is passes to the next such sibling (the first after it).
+    fn document_roots_unlinking(&mut self, node: u32) {
+        let parent = self.n(node).parent;
+        if parent == NIL {
+            return;
+        }
+        if let NodeKind::Document(d) = &self.n(parent).kind {
+            if d.document_element == node {
+                let mut next = self.n(node).next;
+                while next != NIL && !self.n(next).is_element() {
+                    next = self.n(next).next;
+                }
+                self.set_document_element(parent, next);
+            }
+            return;
+        }
+        let doc = self.document_of_root(parent);
+        if doc == NIL {
+            return;
+        }
+        let NodeKind::Document(d) = &self.n(doc).kind else { return };
+        let (head, body) = (d.head, d.body);
+        if head == node {
+            let next = self.head_child_idx(parent, node);
+            if let NodeKind::Document(d) = &mut self.n_mut(doc).kind {
+                d.head = next;
+            }
+        } else if body == node {
+            let next = self.body_child_idx(parent, node);
+            if let NodeKind::Document(d) = &mut self.n_mut(doc).kind {
+                d.body = next;
             }
         }
     }

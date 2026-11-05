@@ -665,6 +665,9 @@ impl Dom {
             fragment_parse_host: false,
             focused: NIL,
             hovered: NIL,
+            document_element: NIL,
+            head: NIL,
+            body: NIL,
         };
         let idx = self.alloc(NodeKind::Document(Box::new(data)), NIL);
         // A document owns itself, and is connected.
@@ -2716,31 +2719,67 @@ impl Dom {
     /// `document.documentElement`.
     pub fn document_element(&self, doc: NodeId) -> DomResult<Option<NodeId>> {
         let d = self.check(doc)?;
-        Ok(self.child_idx_iter(d).find(|&c| self.n(c).is_element()).map(|c| self.id_of(c)))
+        let e = match &self.n(d).kind {
+            NodeKind::Document(data) => data.document_element,
+            _ => self.first_element_child_idx(d),
+        };
+        Ok((e != NIL).then(|| self.id_of(e)))
+    }
+    /// First element child of `parent` (NIL for none).
+    pub(crate) fn first_element_child_idx(&self, parent: u32) -> u32 {
+        self.child_idx_iter(parent).find(|&c| self.n(c).is_element()).unwrap_or(NIL)
     }
     pub fn doctype(&self, doc: NodeId) -> DomResult<Option<NodeId>> {
         let d = self.check(doc)?;
         Ok(self.child_idx_iter(d).find(|&c| matches!(self.n(c).kind, NodeKind::Doctype(_))).map(|c| self.id_of(c)))
     }
-    fn html_child(&self, parent: u32, name: &LocalName) -> Option<u32> {
-        self.child_idx_iter(parent).find(|&c| self.n(c).element().is_some_and(|e| e.is_html() && &e.name.local == name))
-    }
     /// `document.head`.
     pub fn head(&self, doc: NodeId) -> DomResult<Option<NodeId>> {
-        let Some(html) = self.document_element(doc)? else { return Ok(None) };
-        Ok(self.html_child(html.idx, &local_name!("head")).map(|c| self.id_of(c)))
+        let d = self.check(doc)?;
+        let h = match &self.n(d).kind {
+            NodeKind::Document(data) => data.head,
+            _ => match self.first_element_child_idx(d) {
+                NIL => NIL,
+                html => self.head_child_idx(html, NIL),
+            },
+        };
+        Ok((h != NIL).then(|| self.id_of(h)))
     }
     /// `document.body` (first body or frameset child of the html element).
     pub fn body(&self, doc: NodeId) -> DomResult<Option<NodeId>> {
-        let Some(html) = self.document_element(doc)? else { return Ok(None) };
-        Ok(self
-            .child_idx_iter(html.idx)
-            .find(|&c| {
-                self.n(c).element().is_some_and(|e| {
-                    e.is_html() && (e.name.local == local_name!("body") || e.name.local == local_name!("frameset"))
-                })
-            })
-            .map(|c| self.id_of(c)))
+        let d = self.check(doc)?;
+        let b = match &self.n(d).kind {
+            NodeKind::Document(data) => data.body,
+            _ => match self.first_element_child_idx(d) {
+                NIL => NIL,
+                html => self.body_child_idx(html, NIL),
+            },
+        };
+        Ok((b != NIL).then(|| self.id_of(b)))
+    }
+    /// The first HTML `body` or `frameset` child of `html` after `after`
+    /// (NIL: from the first child); NIL for none.
+    pub(crate) fn body_child_idx(&self, html: u32, after: u32) -> u32 {
+        let mut c = if after == NIL { self.n(html).first_child } else { self.n(after).next };
+        while c != NIL {
+            if self.n(c).element().is_some_and(|e| e.is_html() && is_body_name(&e.name.local)) {
+                return c;
+            }
+            c = self.n(c).next;
+        }
+        NIL
+    }
+    /// The first HTML `head` child of `html` after `after` (NIL: from the
+    /// first child); NIL for none.
+    pub(crate) fn head_child_idx(&self, html: u32, after: u32) -> u32 {
+        let mut c = if after == NIL { self.n(html).first_child } else { self.n(after).next };
+        while c != NIL {
+            if self.n(c).element().is_some_and(|e| e.is_html() && e.name.local == local_name!("head")) {
+                return c;
+            }
+            c = self.n(c).next;
+        }
+        NIL
     }
 
     // ----- control state -----------------------------------------------
@@ -2967,6 +3006,11 @@ impl Iterator for Descendants<'_> {
 }
 
 // ----- helpers -----------------------------------------------------------
+
+/// `body` or `frameset`: the local names of a document's body element.
+pub(crate) fn is_body_name(local: &LocalName) -> bool {
+    *local == local_name!("body") || *local == local_name!("frameset")
+}
 
 /// The id `:target` matches for a document at `url`: its fragment,
 /// percent-decoded (`None` without one, or when it is not UTF-8, which no id is).
