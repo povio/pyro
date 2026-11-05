@@ -94,6 +94,27 @@ impl<'s> Value<'s> {
     pub fn is_string(&self) -> bool {
         unsafe { sys::JSValueIsString(self.ctx, self.raw) }
     }
+
+    /// The characters of a string value, without a copy (patched JSC;
+    /// `None` otherwise, or for a non-string): `Latin1` bytes or UTF-16
+    /// units, borrowed for as long as this value is. Callers that want a
+    /// `String` for anything but a lookup should use `to_string`.
+    pub fn string_units(&self) -> Option<StringUnits<'_>> {
+        let f = sys::spi::get().value_string_characters?;
+        let mut len = 0usize;
+        let mut is_8bit = false;
+        // SAFETY: a live value on its thread; the pointer refers to the
+        // string cell's own buffer, which outlives this borrow of the value.
+        let p = unsafe { f(self.ctx, self.raw, &mut len, &mut is_8bit) };
+        if p.is_null() {
+            return None;
+        }
+        Some(if is_8bit {
+            StringUnits::Latin1(unsafe { std::slice::from_raw_parts(p.cast::<u8>(), len) })
+        } else {
+            StringUnits::Utf16(unsafe { std::slice::from_raw_parts(p.cast::<u16>(), len) })
+        })
+    }
     pub fn is_symbol(&self) -> bool {
         unsafe { sys::JSValueIsSymbol(self.ctx, self.raw) }
     }
@@ -392,8 +413,9 @@ impl RawArgs {
 /// code caught the termination value); back at depth 0 the termination state
 /// is reset.
 pub(crate) fn check(ctx: sys::JSContextRef, exc: sys::JSValueRef) -> JsResult<()> {
-    if crate::engine::TERMINATING.with(|t| t.get()) {
-        if crate::engine::DEPTH.with(|d| d.get()) == 0 {
+    let tls = crate::engine::callback_tls();
+    if tls.terminating.get() {
+        if tls.depth.get() == 0 {
             crate::engine::finish_termination(ctx);
         }
         return Err(JsError::Terminated);
@@ -406,6 +428,47 @@ pub(crate) fn check(ctx: sys::JSContextRef, exc: sys::JSValueRef) -> JsResult<()
 }
 
 /// Arguments of a native callback.
+/// A JavaScript string's characters as JSC keeps them ([`Value::string_units`]).
+#[derive(Clone, Copy, Debug)]
+pub enum StringUnits<'a> {
+    Latin1(&'a [u8]),
+    Utf16(&'a [u16]),
+}
+
+impl StringUnits<'_> {
+    /// FxHash of the code units, the same for either representation.
+    pub fn fx_hash(&self) -> u64 {
+        use std::hash::Hasher;
+        let mut h = rustc_hash::FxHasher::default();
+        match self {
+            StringUnits::Latin1(b) => b.iter().for_each(|&c| h.write_u16(u16::from(c))),
+            StringUnits::Utf16(u) => u.iter().for_each(|&c| h.write_u16(c)),
+        }
+        h.finish()
+    }
+
+    pub fn eq_units(&self, units: &[u16]) -> bool {
+        match self {
+            StringUnits::Latin1(b) => b.len() == units.len() && b.iter().zip(units).all(|(&c, &u)| u16::from(c) == u),
+            StringUnits::Utf16(u) => *u == units,
+        }
+    }
+
+    pub fn to_units(&self) -> Box<[u16]> {
+        match self {
+            StringUnits::Latin1(b) => b.iter().map(|&c| u16::from(c)).collect(),
+            StringUnits::Utf16(u) => (*u).into(),
+        }
+    }
+
+    pub fn to_string_lossy(&self) -> String {
+        match self {
+            StringUnits::Latin1(b) => b.iter().map(|&c| char::from(c)).collect(),
+            StringUnits::Utf16(u) => String::from_utf16_lossy(u),
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 pub struct Args<'s> {
     pub(crate) ctx: sys::JSContextRef,
@@ -458,22 +521,88 @@ impl<'s> Args<'s> {
     }
 }
 
+// JavaScriptCore's 64-bit immediates (JSCJSValue.h). Getters return these
+// tens of thousands of times per selector query, and each `JSValueMake*` is
+// a call into the library; `verify_immediates` checks them against it once
+// per process, and they are used only if every one matches.
+const IMM_NULL: usize = 0x2;
+const IMM_FALSE: usize = 0x6;
+const IMM_TRUE: usize = 0x7;
+const IMM_UNDEFINED: usize = 0xa;
+const IMM_INT32_TAG: usize = 0xfffe_0000_0000_0000;
+
+/// 0: not checked; 1: the immediates match this JavaScriptCore; 2: they do not.
+static IMMEDIATES: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+#[inline]
+fn immediates_verified() -> bool {
+    IMMEDIATES.load(std::sync::atomic::Ordering::Relaxed) == 1
+}
+
+/// Compares the immediates above with what JavaScriptCore makes (once per
+/// process, from engine creation).
+pub(crate) fn verify_immediates(ctx: sys::JSContextRef) {
+    use std::sync::atomic::Ordering;
+    if IMMEDIATES.load(Ordering::Relaxed) != 0 || !cfg!(target_pointer_width = "64") {
+        return;
+    }
+    // SAFETY: a live context; these calls make immediates.
+    let ok = unsafe {
+        sys::JSValueMakeNull(ctx) as usize == IMM_NULL
+            && sys::JSValueMakeUndefined(ctx) as usize == IMM_UNDEFINED
+            && sys::JSValueMakeBoolean(ctx, true) as usize == IMM_TRUE
+            && sys::JSValueMakeBoolean(ctx, false) as usize == IMM_FALSE
+            && [0i32, 1, -1, 2000, i32::MAX, i32::MIN]
+                .iter()
+                .all(|&i| sys::JSValueMakeNumber(ctx, f64::from(i)) as usize == IMM_INT32_TAG | i as u32 as usize)
+    };
+    IMMEDIATES.store(if ok { 1 } else { 2 }, Ordering::Relaxed);
+}
+
 /// Value constructors bound to a scope.
 impl<'s> Scope<'s> {
     pub fn undefined(&self) -> Value<'s> {
+        if immediates_verified() {
+            return unsafe { Value::from_raw(self.ctx, IMM_UNDEFINED as sys::JSValueRef) };
+        }
         unsafe { Value::from_raw(self.ctx, sys::JSValueMakeUndefined(self.ctx)) }
     }
     pub fn null(&self) -> Value<'s> {
+        if immediates_verified() {
+            return unsafe { Value::from_raw(self.ctx, IMM_NULL as sys::JSValueRef) };
+        }
         unsafe { Value::from_raw(self.ctx, sys::JSValueMakeNull(self.ctx)) }
     }
     pub fn boolean(&self, b: bool) -> Value<'s> {
+        if immediates_verified() {
+            return unsafe { Value::from_raw(self.ctx, (if b { IMM_TRUE } else { IMM_FALSE }) as sys::JSValueRef) };
+        }
         unsafe { Value::from_raw(self.ctx, sys::JSValueMakeBoolean(self.ctx, b)) }
     }
     pub fn number(&self, n: f64) -> Value<'s> {
+        // An int32 (not negative zero) is an immediate: no call into JSC.
+        let i = n as i32;
+        if f64::from(i) == n && (i != 0 || n.is_sign_positive()) && immediates_verified() {
+            return unsafe { Value::from_raw(self.ctx, (IMM_INT32_TAG | i as u32 as usize) as sys::JSValueRef) };
+        }
         unsafe { Value::from_raw(self.ctx, sys::JSValueMakeNumber(self.ctx, n)) }
     }
     pub fn string(&self, s: &str) -> Value<'s> {
         self.js_string(&JsString::new(s))
+    }
+    /// The realm's one JavaScript string for a shared host string (see
+    /// `RealmInner::shared_strings`): for values with few distinct contents
+    /// that the host keeps alive, such as tag names.
+    pub fn shared_string(&self, s: &std::sync::Arc<str>) -> Value<'s> {
+        let key = std::sync::Arc::as_ptr(s) as *const u8 as usize;
+        if let Some((_, v)) = self.realm.shared_strings.borrow().get(&key) {
+            return unsafe { Value::from_raw(self.ctx, *v) };
+        }
+        let v = self.string(s);
+        // SAFETY: a live value of this context; released in `dispose`.
+        unsafe { sys::JSValueProtect(self.ctx, v.raw) };
+        self.realm.shared_strings.borrow_mut().insert(key, (s.clone(), v.raw));
+        v
     }
     pub fn js_string(&self, s: &JsString) -> Value<'s> {
         unsafe { Value::from_raw(self.ctx, sys::JSValueMakeString(self.ctx, s.as_raw())) }

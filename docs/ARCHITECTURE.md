@@ -102,10 +102,21 @@ impl JsClass for Node {
 }
 ```
 
-- Callbacks are plain fn pointers (non-capturing closures coerce). Each member is a callable object whose private
-  data holds its fn pointer plus a per-class invoker (`lp-js` `MemberCall`): one `extern "C"` entry for all members,
-  one invoker per class and member kind. A call reads the pointer from the object and looks nothing else up. One
-  trampoline per member was the earlier design; it made lp-webapi's codegen serial and the binary 6 MB larger.
+- Callbacks are plain fn pointers (non-capturing closures coerce). Each member carries its fn pointer plus a per-class
+  invoker (`lp-js` `MemberCall`): one `extern "C"` entry for all members, one invoker per class and member kind. A
+  call reads the pointer from the function's data and looks nothing else up. With the patched JSC an operation is an
+  internal function made by `JSObjectMakeFunctionWithCallbackAndData` and an attribute a custom accessor with a
+  trampoline per (class, attribute) (see "JavaScriptCore source build", patch `0012`); with the system framework they
+  are callback objects, as before. One full trampoline per member was the earlier design; it made lp-webapi's codegen
+  serial and the binary 6 MB larger.
+- `def.pure_getter` / `pure_getter_typed` / `def.pure_method` declare a member that runs no script, changes nothing
+  script can observe and may be run again after an error (tree navigation, `nodeType`, `length`, `matches`,
+  `getAttribute`, `querySelector`). Such a member takes the lean dispatch (`accessors.rs` `lean_getter_h`,
+  `class.rs` `pure_member_call`, `get_by_index_lean` for indexed getters): the scope comes from the realm the
+  receiver's payload keeps (`Header::realm_ref`), the data from the payload's class chain (boxed `ClassInfo`
+  entries, no registry), and it skips what exists for callbacks that can run script or mutate: the nesting depth,
+  the termination state, the post-callback hook. An error or a panic reruns the member under the full dispatch,
+  which reports it. With patch `0013` a pure getter is also a DOM attribute to the JITs (below).
 - Panics are caught at the boundary and become `Error("Internal error: …")`.
 - The interface shape follows WebIDL:
   - accessors live on the prototype, so `Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')` works as React needs;
@@ -142,8 +153,24 @@ impl JsClass for Node {
    Wrapper payloads may therefore safely own `Persistent`s.
 3. **Identity maps** are per realm: `IdentityKey -> JSWeak`. `JSWeakGetObject` returns null once the GC has found the
    object dead, so a dead wrapper is never handed out again.
-   A node wrapper is pinned while its node is connected if it holds listeners or if script added a property to it
-   (patch `0011` reports those). Any other wrapper can be collected and made again without script noticing.
+   A node keeps its own wrapper (patch `0014`): `lp-webapi` `PageDom::node_wrappers` holds, by node index, the
+   `lp_js::WrapperRef` of the wrapper in up to two script worlds (the page's and one isolated world; a third world's,
+   and every wrapper under the system framework, go through the identity map as before). Such a wrapper is made with
+   `IdentityKey::OWNED`: it is not in the identity map, its payload header carries a weak handle made by
+   `JSWeakCreateKeptWhile` and a keep byte, and the collector asks that byte, for a wrapper nothing else reaches,
+   whether the owner still wants it. Finding a node's wrapper is a load from the table and a read of the handle; no
+   hash map, no pin entry, no protected value, and collections do not walk a table of kept wrappers. The entry is
+   removed when the payload is dropped (`NodeData::drop`), which holds a node reference until then, so an index never
+   names another node. A realm links its owned payloads through their headers and releases their handles when it is
+   disposed (they must not outlive the VM).
+   The keep byte is set while the node is in the active document (`wrap_node`; `reconcile_pins` clears it from the
+   removal log at the next safe point, and sets it again for a wrapper that holds listeners or properties, which
+   patch `0011` reports, when its node comes back). Other browsers keep such wrappers too. Without it, a script that
+   walks the document (a selector engine reads every element per query) had its wrappers collected and made again
+   each time: 15% of a Playwright locator was `wrap_node` and 13% the collector. A wrapper made for a detached node
+   can still be collected and made again without script noticing. Because a page's wrappers all die after it is
+   navigated away from, in many small batches, each document counts its externally referenced nodes (`lp-dom`
+   `DocumentData::held`): `Dom::collect_garbage` skips a document that still has one without walking its tree.
 4. **Prefer hidden properties to `Persistent`** for state a wrapper owns (event listeners, expandos the DOM needs).
    `Persistent` roots are invisible to cycle collection.
 5. **`Realm::dispose()`** (navigation) releases the global and the prototypes, empties the identity map, and
@@ -272,15 +299,32 @@ copy-on-write page snapshots: load an app's JS once, then start each test from t
   each realm otherwise compiled `makeInterface`, `lazyInterface` and `accessor` in the DFG again.
 
 Navigating or closing a page no longer always collects: `Engine::release_closed` runs `settle` only once the process's
-physical footprint is 32 MB or 25%, whichever is larger, above its lowest reading. `serve` collects what is left after
-1 s without a command. `LIGHTNINGPANDA_RELEASE_GROWTH=<MB>[:<percent>]` overrides the thresholds (`0`
-collects every time) and `LIGHTNINGPANDA_RELEASE_ON_CLOSE=0` turns it off, for benchmarks.
+physical footprint is 32 MB or 25%, whichever is larger, above its lowest reading. That collection runs inside the
+command that closed the page, with the closing code on the stack (scanned conservatively) and perhaps a compilation
+still running, so it can miss the closed page's heap; it therefore also arms the idle collection. `serve` collects what
+is left after 1 s without a command, with `Engine::settle_idle`: every compiled and unlinked code is dropped first
+(the bytecode cache included, so the next page re-parses its scripts; a running suite's gaps are shorter than 1 s and
+keep theirs), then the heap is collected and the allocator's free pages are returned. Measured after closing a React
+app: 97 MB footprint before, 39 MB after (upstream Lightpanda: 34 MB). `LIGHTNINGPANDA_RELEASE_GROWTH=<MB>[:<percent>]`
+overrides the thresholds (`0` collects every time) and `LIGHTNINGPANDA_RELEASE_ON_CLOSE=0` turns it off, for benchmarks.
+
+`JsString::new` keeps an all-ASCII string of any length as 8-bit characters in JSC (a script source was converted to
+UTF-16 before, twice its size, and lexed as such).
 
 `lp_js::configure_process` defaults `JSC_heapGrowthMaxIncrease` to 1 (JSC's default is 3, used on machines with at least
 16 GB), so the heap grows to about 2x its live size between collections rather than 4x. Peak footprint with a large SPA
 loaded went from 242 MB to 202 MB for about 5% more CPU on that SPA; small pages see no CPU change. An allocation-heavy
 page with a large live set is the worst case measured: 18% more CPU, 39% lower peak. 0.5 is not worth it: on that page
 it costs 5.6x the CPU. A value set in the environment wins.
+
+It also defaults `JSC_smallHeapSize` to 4 MB. The C API makes its VM with JSC's small-heap setting, a collection
+after every megabyte allocated, and JSC lets the young generation reach 8 times that step while collections are
+frequent. A script that allocates steadily (Playwright's selector engine builds arrays of every element it visits)
+spent 20% of its time collecting; with 4 MB the engine's query takes 3.0 ms of browser CPU instead of 4.1 ms, which
+is what puts a Playwright locator level with Chrome. The speed follows the cap (8 MB: 3.6 to 4.1 ms, 16 MB: 3.6,
+32 MB: 3.0), so a smaller step with a larger multiplier buys nothing. The price is memory while script runs: a loaded
+mid-size SPA held 8 to 23 MB more `ps` RSS across runs, and the same as before once its page was closed.
+`JSC_smallHeapSize=1048576` in the environment restores the old trade.
 
 Patch `0009` keeps the JS lock held across C API callbacks, because a VM stays on one thread: stock JSC drops and
 retakes it around every callback. `JSC_dropLocksInAPICallbacks=true` restores the stock behavior.
@@ -290,6 +334,44 @@ Patch `0010` gives wrappers of classes without property hooks their own root str
 Classes with named getters, callable objects and the global stay on the stock structure. These wrappers also have no own
 `Symbol.toStringTag`: it is found on the prototype, as in browsers. `JSC_cacheCallbackObjectLookups=false` restores the stock
 structure for new wrappers.
+
+Patch `0012` gives host-object members the paths WebCore's bindings have, since the C API's `JSCallbackObject` can
+neither be inline-cached for a property it answers nor linked by a call site. `JSObjectSetCustomAccessor` installs an
+attribute as a JSC `CustomGetterSetter`: an inline cache calls the getter's C function directly with the receiver, no
+call frame, and `Object.getOwnPropertyDescriptor` still reifies `{get, set}` functions. JSC passes a custom getter no
+data, so `lp-js` gives each (class, attribute) a trampoline of its own (`build.rs` generates 1,024 of them;
+`src/accessors.rs` dispatches). `JSObjectMakeFunctionWithCallbackAndData` makes an operation an ordinary internal
+function carrying its `MemberCall`, which call inline caches link to. `JSClassSetIndexedCallbacks` takes `list[i]` to an
+indexed callback with the index as a number (stock JSC turns it into an atom string and runs the named hook), also for
+`"3"` keys through `hasOwnProperty` and friends, so a class with only indexed hooks keeps cacheable wrappers and
+`list.length` is an inline-cached prototype read. `JSObjectGetPrivate` checks the plain-wrapper class first.
+`JSContextGroupReleaseFreeMemory` (the libpas scavenger, run now) and `JSContextGroupDeleteAllCode` back
+`Engine::settle` and `Engine::settle_idle`. `JSValueGetStringCharacters` hands a string argument's characters out
+without a copy (`Value::string_units`): the selector cache answers `matches`/`querySelector` by their hash, with no
+`String`. `JSSetDecommitReplacesPages` makes libpas give freed pages back by mapping fresh ones over them: Darwin
+keeps `madvise`d pages in the resident set until it needs them (the physical footprint drops, `ps` RSS does not),
+so a process that closed a page kept reporting its memory; `configure_process` turns it on,
+`LIGHTNINGPANDA_DECOMMIT=madvise` keeps the stock behaviour. Measured on Playwright's `locator.textContent` over a
+2,000-row page (about 44,000 DOM calls per locator): 11.1 ms to 5.4 ms, browser CPU 12.2 ms to 6.6 ms;
+`dom.mutate.1k` 2.3 to 1.9 ms.
+
+Patch `0013` takes the two paths that still went through generic code into the JITs. `JSObjectSetFastGetter` installs
+a pure getter as a JSC `DOMAttributeGetterSetter` whose `DOMJIT::GetterSetter` carries a context (the stock one is a
+bare function, so a getter installed at runtime could not have a snippet): the baseline, DFG and FTL inline caches and
+the DFG's `CallDOMGetter` prove the receiver is a C API wrapper and call `fast_getter_dispatch` with the receiver and
+its private data, no property name, no decoding of `this`, with the declared result type and a reads-only effect (the
+compiler drops a dead read and types what follows). `AccessCase::IndexedCallbackObjectLoad` makes `wrapper[i]` an
+inline-cache case that calls the class's indexed getter (`operationGetByValCallbackObject`) where stock JSC gives up
+on the cache and takes `operationGetByValGeneric`, the prototype walk and a `PropertySlot` per read. The collector
+check in `JSLock::APICallbackScope` (patch `0009`) is a debug assertion now: it looked the current thread up twice on
+every indexed read and method call. A getter that
+returns a constant costs 7.5 ns per call through this path, loop included, which is what Chrome's bindings cost; what
+a real getter costs above that is `lp-js` and `lp-dom` (see the measurements in `docs/OPTIMIZATION.md`).
+
+Patch `0014` adds `JSWeakCreateKeptWhile`: a weak handle whose owner (a `WeakHandleOwner`) answers the collector's
+"is this object still wanted" from a byte the host owns. It is what lets a DOM node own its wrapper (see "GC and
+lifetime rules"): WebCore does the same through opaque roots, and the C API had only `JSValueProtect`, a counted
+hash set that every collection visits in full.
 
 To change JSC: edit the checkout in `~/Library/Caches/lightningpanda/webkit-src`, `ninja -C ../webkit-build
 JavaScriptCore` to iterate, then regenerate the patch with `git diff` (use `git add -N` for new files) and rerun

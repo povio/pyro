@@ -471,6 +471,10 @@ impl Dom {
 #[derive(Default)]
 pub struct SelectorCache {
     map: FxHashMap<Box<str>, Query>,
+    /// The same queries keyed by a hash of the selector's UTF-16 units, for
+    /// callers that have the JavaScript string's characters and no `String`
+    /// (`Element.matches` runs thousands of times per Playwright locator).
+    by_units: FxHashMap<u64, (Box<[u16]>, Query)>,
 }
 const SELECTOR_CACHE_CAP: usize = 512;
 impl SelectorCache {
@@ -481,9 +485,32 @@ impl SelectorCache {
         let s = parse_query(text)?;
         if self.map.len() >= SELECTOR_CACHE_CAP {
             self.map.clear();
+            self.by_units.clear();
         }
         self.map.insert(text.into(), s.clone());
         Ok(s)
+    }
+
+    /// [`SelectorCache::get`] for a selector given as its code units, with
+    /// `hash` over them (the same for either width) and `text` building the
+    /// `String` only on a miss. A hash collision falls back to the text.
+    pub fn get_units(
+        &mut self,
+        hash: u64,
+        same: impl Fn(&[u16]) -> bool,
+        units: impl FnOnce() -> Box<[u16]>,
+        text: impl FnOnce() -> String,
+    ) -> DomResult<Query> {
+        if let Some((key, q)) = self.by_units.get(&hash) {
+            if same(key) {
+                return Ok(q.clone());
+            }
+            return self.get(&text());
+        }
+        let text = text();
+        let q = self.get(&text)?;
+        self.by_units.insert(hash, (units(), q.clone()));
+        Ok(q)
     }
 }
 

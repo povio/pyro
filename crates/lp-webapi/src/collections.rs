@@ -123,7 +123,7 @@ impl JsClass for NodeList {
     type Data = NodeListData;
     type Parent = NoParent;
     fn define(def: &mut ClassDef<Self>) {
-        def.getter("length", |s, l| Ok(s.number(l.len() as f64)));
+        def.pure_getter_typed("length", lp_js::GetterResult::Number, |s, l| Ok(s.number(l.len() as f64)));
         def.method("item", 1, |s, l, a| {
             let i = to_u32(a.get(0))? as usize;
             match l.get(i) {
@@ -517,7 +517,9 @@ impl JsClass for HtmlCollection {
     type Data = CollectionData;
     type Parent = NoParent;
     fn define(def: &mut ClassDef<Self>) {
-        def.getter("length", |s, c| Ok(s.number(c.with_items(|v| v.len()) as f64)));
+        def.pure_getter_typed("length", lp_js::GetterResult::Number, |s, c| {
+            Ok(s.number(c.with_items(|v| v.len()) as f64))
+        });
         def.method("item", 1, |s, c, a| {
             let i = to_u32(a.get(0))? as usize;
             let id = c.with_items(|v| v.get(i).copied());

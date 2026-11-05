@@ -339,3 +339,34 @@ fn interface_objects_report_native_source() {
         "function,LzLeaf,1,true"
     );
 }
+
+/// Index keys reach the indexed getter however script spells them (the
+/// patched JSC takes them to a numeric callback; the stock framework parses
+/// the name), and the named lookups around them stay ordinary.
+#[test]
+fn indexed_properties_answer_every_index_key_form() {
+    let (_e, r) = realm();
+    {
+        let s = r.scope().unwrap();
+        let o = s.wrap::<Leaf>(Rc::new(Data { id: 5 }), None).unwrap();
+        s.global().set("leaf", o.value()).unwrap();
+    }
+    let checks = [
+        ("leaf[0] + ',' + leaf['1'] + ',' + leaf[2] + ',' + leaf['01'] + ',' + leaf[-1]", "0,10,undefined,undefined,undefined"),
+        ("[('0' in leaf), (1 in leaf), ('2' in leaf), leaf.hasOwnProperty('1'), leaf.hasOwnProperty(2)].join()", "true,true,false,true,false"),
+        ("JSON.stringify(Object.getOwnPropertyDescriptor(leaf, '1'))", r#"{"value":10,"writable":false,"enumerable":false,"configurable":true}"#),
+        ("Object.getOwnPropertyDescriptor(leaf, '5')", "undefined"),
+        ("Object.keys(leaf).join() + '|' + Object.getOwnPropertyNames(leaf).join()", "0,1|0,1"),
+        ("[...leaf].join('+') + '|' + Array.from(leaf).length + '|' + leaf.length", "0+10|2|2"),
+        // Indexed properties without a setter ignore sloppy writes and take no own property.
+        ("leaf[0] = 7; leaf['1'] = 8; [leaf[0], leaf[1], leaf.hasOwnProperty('0')].join()", "0,10,true"),
+        ("(() => { 'use strict'; try { leaf[0] = 7; return 'no throw'; } catch (e) { return e.constructor.name; } })()", "no throw"),
+        // Expandos and named members are unaffected.
+        ("leaf.foo = 3; leaf.foo + ',' + typeof leaf.midOnly + ',' + leaf.midOnly()", "3,function,true"),
+        ("Object.getOwnPropertyDescriptor(LzMid.prototype, 'length').get.call(leaf)", "2"),
+        ("Reflect.get(LzMid.prototype, '1', leaf)", "undefined"),
+    ];
+    for (src, want) in checks {
+        assert_eq!(eval(&r, src), want, "{src}");
+    }
+}

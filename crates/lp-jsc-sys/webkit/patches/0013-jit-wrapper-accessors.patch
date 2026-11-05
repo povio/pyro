@@ -1,0 +1,605 @@
+diff --git a/Source/JavaScriptCore/API/JSCallbackObject.cpp b/Source/JavaScriptCore/API/JSCallbackObject.cpp
+index 2c710bc479..ef79caed47 100644
+--- a/Source/JavaScriptCore/API/JSCallbackObject.cpp
++++ b/Source/JavaScriptCore/API/JSCallbackObject.cpp
+@@ -28,6 +28,8 @@
+ #include "JSCallbackObject.h"
+ 
+ #include "JSCInlines.h"
++#include "FrameTracers.h"
++#include "OperationResult.h"
+ 
+ namespace JSC {
+ 
+@@ -193,4 +195,32 @@ JSC_DEFINE_CUSTOM_GETTER(staticFunctionGetterJSGlobalObjectCallbackObject, (JSGl
+     return JSCallbackObject<JSGlobalObject>::staticFunctionGetterImpl(globalObject, thisValue, propertyName);
+ }
+ 
++// Lightningpanda: the inline caches' `wrapper[i]` (AccessCase::IndexedCallbackObjectLoad): the
++// class chain's indexed getter, then the generic get for an index it does not answer.
++JSC_DECLARE_JIT_OPERATION(operationGetByValCallbackObject, EncodedJSValue, (JSGlobalObject*, EncodedJSValue, EncodedJSValue));
++JSC_DEFINE_JIT_OPERATION(operationGetByValCallbackObject, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue encodedBase, EncodedJSValue encodedProperty))
++{
++    VM& vm = globalObject->vm();
++    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
++    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
++    auto scope = DECLARE_THROW_SCOPE(vm);
++    JSValue baseValue = JSValue::decode(encodedBase);
++    JSValue property = JSValue::decode(encodedProperty);
++    auto* object = static_cast<JSCallbackObject<JSNonFinalObject>*>(baseValue.asCell());
++    if (property.isInt32() && property.asInt32() >= 0) {
++        unsigned index = static_cast<unsigned>(property.asInt32());
++        PropertySlot slot(baseValue, PropertySlot::InternalMethodType::Get);
++        bool handled = false;
++        if (object->tryIndexedGetter(globalObject, index, slot, handled)) {
++            OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
++            OPERATION_RETURN(scope, JSValue::encode(slot.getValue(globalObject, index)));
++        }
++        OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
++        OPERATION_RETURN(scope, JSValue::encode(baseValue.get(globalObject, index)));
++    }
++    auto propertyName = property.toPropertyKey(globalObject);
++    OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
++    OPERATION_RETURN(scope, JSValue::encode(baseValue.get(globalObject, propertyName)));
++}
++
+ } // namespace JSC
+diff --git a/Source/JavaScriptCore/API/JSCallbackObject.h b/Source/JavaScriptCore/API/JSCallbackObject.h
+index c70f38f3f4..ec98e58a2a 100644
+--- a/Source/JavaScriptCore/API/JSCallbackObject.h
++++ b/Source/JavaScriptCore/API/JSCallbackObject.h
+@@ -218,9 +218,12 @@ private:
+ 
+     static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&);
+     static bool getOwnPropertySlotByIndex(JSObject*, JSGlobalObject*, unsigned propertyName, PropertySlot&);
++public:
+     // Lightningpanda: the class chain's getPropertyByIndex, if any (`handled`); true when it
+-    // answered (a value, or an exception already thrown).
++    // answered (a value, or an exception already thrown). Public for the inline caches'
++    // operationGetByValCallbackObject.
+     bool tryIndexedGetter(JSGlobalObject*, unsigned index, PropertySlot&, bool& handled);
++private:
+     bool hasIndexedSetter() const;
+     
+     static bool put(JSCell*, JSGlobalObject*, PropertyName, JSValue, PutPropertySlot&);
+diff --git a/Source/JavaScriptCore/API/JSFork.cpp b/Source/JavaScriptCore/API/JSFork.cpp
+index 79c3f43e1a..b97035c44a 100644
+--- a/Source/JavaScriptCore/API/JSFork.cpp
++++ b/Source/JavaScriptCore/API/JSFork.cpp
+@@ -13,6 +13,15 @@
+ #include "JSCallbackFunction.h"
+ #include "JSCallbackObject.h"
+ #include "CustomGetterSetter.h"
++#include "DOMAttributeGetterSetter.h"
++#include "DOMJITCallDOMGetterSnippet.h"
++#include "DOMJITGetterSetter.h"
++#include "FrameTracers.h"
++#include "OperationResult.h"
++#include "Snippet.h"
++#include "SnippetParams.h"
++#include <wtf/Lock.h>
++#include <wtf/NeverDestroyed.h>
+ #include "DeleteAllCodeEffort.h"
+ #include "JSClassRef.h"
+ #include "JSGlobalObject.h"
+@@ -132,6 +141,129 @@ bool JSObjectSetCustomAccessor(JSContextRef ctx, JSObjectRef object, JSStringRef
+     return jsObject->putDirectCustomAccessor(vm, name, accessor, attrs);
+ }
+ 
++namespace JSC {
++
++// A fast getter installed through the C API: the DOMJIT::GetterSetter the
++// inline caches and the DFG hold a pointer to (immortal: compiled code keeps
++// pointing at it), plus the C callback the snippet's slow path calls. One per
++// distinct (getter, fastGetter, context, resultType, readsOnly), shared by
++// every VM in the process, so equal attributes merge in the DFG.
++struct APIFastGetter final : public DOMJIT::GetterSetter {
++    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(APIFastGetter);
++public:
++#if ENABLE(JIT)
++    static Ref<DOMJIT::CallDOMGetterSnippet> compile(const DOMJIT::GetterSetter&);
++#endif
++    APIFastGetter(DOMJIT::GetterSetter::CustomGetter getter, JSFastGetterCallback fast, void* context, SpeculatedType resultType, bool readsOnly)
++        : DOMJIT::GetterSetter(getter,
++#if ENABLE(JIT)
++            &APIFastGetter::compile,
++#else
++            static_cast<SnippetCompilerWithContext>(nullptr),
++#endif
++            resultType, this)
++        , fast(fast)
++        , fastContext(context)
++        , readsOnly(readsOnly)
++    {
++    }
++
++    JSFastGetterCallback fast;
++    void* fastContext;
++    bool readsOnly;
++};
++
++static Lock apiFastGettersLock;
++static Vector<std::unique_ptr<APIFastGetter>>& apiFastGetters() WTF_REQUIRES_LOCK(apiFastGettersLock)
++{
++    static NeverDestroyed<Vector<std::unique_ptr<APIFastGetter>>> getters;
++    return getters.get();
++}
++
++static const APIFastGetter* internAPIFastGetter(DOMJIT::GetterSetter::CustomGetter getter, JSFastGetterCallback fast, void* context, SpeculatedType resultType, bool readsOnly)
++{
++    Locker locker { apiFastGettersLock };
++    auto& getters = apiFastGetters();
++    for (auto& g : getters) {
++        if (g->getter() == getter && g->fast == fast && g->fastContext == context && g->resultType() == resultType && g->readsOnly == readsOnly)
++            return g.get();
++    }
++    getters.append(makeUnique<APIFastGetter>(getter, fast, context, resultType, readsOnly));
++    return getters.last().get();
++}
++
++JSC_DECLARE_JIT_OPERATION(operationAPIFastGetter, EncodedJSValue, (JSGlobalObject*, void*, void*));
++JSC_DEFINE_JIT_OPERATION(operationAPIFastGetter, EncodedJSValue, (JSGlobalObject* globalObject, void* cell, void* getter))
++{
++    VM& vm = globalObject->vm();
++    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
++    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
++    auto scope = DECLARE_THROW_SCOPE(vm);
++    // The compiled code proved the receiver's class (the annotation's classInfo).
++    auto* object = static_cast<JSCallbackObject<JSNonFinalObject>*>(cell);
++    auto* g = static_cast<const APIFastGetter*>(getter);
++    JSValueRef result = g->fast(toRef(globalObject), toRef(object), object->getPrivate(), g->fastContext);
++    OPERATION_RETURN(scope, result ? JSValue::encode(toJS(globalObject, result)) : JSValue::encode(jsUndefined()));
++}
++
++#if ENABLE(JIT)
++Ref<DOMJIT::CallDOMGetterSnippet> APIFastGetter::compile(const DOMJIT::GetterSetter& gs)
++{
++    auto* g = static_cast<const APIFastGetter*>(gs.context());
++    Ref<DOMJIT::CallDOMGetterSnippet> snippet = DOMJIT::CallDOMGetterSnippet::create();
++    snippet->requireGlobalObject = true;
++    snippet->numGPScratchRegisters = 1;
++    if (g->readsOnly)
++        snippet->effect = DOMJIT::Effect::forRead(DOMJIT::HeapRange::top());
++    snippet->setGenerator([=] (CCallHelpers& jit, SnippetParams& params) {
++        GPRReg result = params[0].gpr();
++        GPRReg base = params[1].gpr();
++        GPRReg globalObject = params[2].gpr();
++        GPRReg getter = params.gpScratch(0);
++        jit.move(CCallHelpers::TrustedImmPtr(g), getter);
++        params.addSlowPathCall(jit.jump(), jit, operationAPIFastGetter, result, globalObject, base, getter);
++        return CCallHelpers::JumpList();
++    });
++    return snippet;
++}
++#endif
++
++} // namespace JSC
++
++bool JSObjectSetFastGetter(JSContextRef ctx, JSObjectRef object, JSStringRef propertyName, JSCustomGetterCallback getter, JSCustomSetterCallback setter, JSPropertyAttributes attributes, JSFastGetterCallback fastGetter, void* context, int resultType, bool readsOnly)
++{
++    if (!ctx || !object || !propertyName || !getter || !fastGetter)
++        return false;
++    JSGlobalObject* globalObject = toJS(ctx);
++    VM& vm = globalObject->vm();
++    JSLockHolder locker(vm);
++    JSObject* jsObject = toJS(object);
++    Identifier name = propertyName->identifier(&vm);
++    if (parseIndex(name))
++        return false;
++    unsigned attrs = static_cast<unsigned>(PropertyAttribute::CustomAccessor);
++    if (attributes & kJSPropertyAttributeDontEnum)
++        attrs |= static_cast<unsigned>(PropertyAttribute::DontEnum);
++    if (attributes & kJSPropertyAttributeDontDelete)
++        attrs |= static_cast<unsigned>(PropertyAttribute::DontDelete);
++    if (!setter)
++        attrs |= static_cast<unsigned>(PropertyAttribute::ReadOnly);
++    SpeculatedType spec;
++    switch (resultType) {
++    case kJSFastGetterResultNumber: spec = SpecBytecodeNumber; break;
++    case kJSFastGetterResultBoolean: spec = SpecBoolean; break;
++    case kJSFastGetterResultString: spec = SpecString; break;
++    case kJSFastGetterResultObjectOrNull: spec = SpecObject | SpecOther; break;
++    default: spec = SpecBytecodeTop; break;
++    }
++    auto rawGetter = reinterpret_cast<EncodedJSValue (*)(JSGlobalObject*, EncodedJSValue, PropertyName)>(getter);
++    GetValueFunc getValue(rawGetter);
++    PutValueFunc putValue = setter ? PutValueFunc(reinterpret_cast<bool (*)(JSGlobalObject*, EncodedJSValue, EncodedJSValue, PropertyName)>(setter)) : PutValueFunc(nullptr);
++    const APIFastGetter* domJIT = internAPIFastGetter(rawGetter, fastGetter, context, spec, readsOnly);
++    auto* accessor = DOMAttributeGetterSetter::create(vm, getValue, putValue, DOMAttributeAnnotation { JSCallbackObject<JSNonFinalObject>::info(), domJIT });
++    return jsObject->putDirectCustomAccessor(vm, name, accessor, attrs);
++}
++
+ void JSContextThrowException(JSContextRef ctx, JSValueRef exception)
+ {
+     if (!ctx)
+diff --git a/Source/JavaScriptCore/API/JSForkPrivate.h b/Source/JavaScriptCore/API/JSForkPrivate.h
+index 24ae910204..0bbe7a9e4d 100644
+--- a/Source/JavaScriptCore/API/JSForkPrivate.h
++++ b/Source/JavaScriptCore/API/JSForkPrivate.h
+@@ -95,6 +95,30 @@ typedef JSValueRef (*JSCustomGetterCallback)(JSContextRef ctx, JSValueRef thisVa
+ typedef bool (*JSCustomSetterCallback)(JSContextRef ctx, JSValueRef thisValue, JSValueRef value, const void* propertyNameUID);
+ JS_EXPORT bool JSObjectSetCustomAccessor(JSContextRef ctx, JSObjectRef object, JSStringRef propertyName, JSCustomGetterCallback getter, JSCustomSetterCallback setter, JSPropertyAttributes attributes);
+ 
++/* A custom accessor (as above) whose getter the JITs also call directly, as a
++   DOM attribute: the property carries the class of C API wrapper objects, so
++   every tier first proves the receiver is one (another receiver gets a
++   TypeError from the generic path, as a DOM attribute would), and then the
++   baseline, DFG and FTL inline caches and the DFG/FTL CallDOMGetter call
++   `fastGetter` with the receiver and its private data instead of `getter` with
++   an encoded this-value and property name. `getter` still serves the
++   interpreter, reified getter functions, super and with-this reads. The
++   callback may throw with JSContextThrowException (and return NULL or any
++   value). `resultType` says what the getter returns, as a promise the compiler
++   relies on (JSFastGetterResult*): say Any unless every result fits.
++   `readsOnly`: the getter changes nothing script can observe and runs no
++   script, so compiled code may reuse a result while nothing has been written
++   in between. `context` is passed back to `fastGetter`. */
++typedef JSValueRef (*JSFastGetterCallback)(JSContextRef ctx, JSObjectRef thisObject, void* privateData, void* context);
++enum {
++    kJSFastGetterResultAny = 0,
++    kJSFastGetterResultNumber = 1,
++    kJSFastGetterResultBoolean = 2,
++    kJSFastGetterResultString = 3,
++    kJSFastGetterResultObjectOrNull = 4
++};
++JS_EXPORT bool JSObjectSetFastGetter(JSContextRef ctx, JSObjectRef object, JSStringRef propertyName, JSCustomGetterCallback getter, JSCustomSetterCallback setter, JSPropertyAttributes attributes, JSFastGetterCallback fastGetter, void* context, int resultType, bool readsOnly);
++
+ /* Throws `exception` in `ctx`, for callbacks with no exception out-parameter
+    (custom accessors). Call only while JavaScript of `ctx` is on the stack. */
+ JS_EXPORT void JSContextThrowException(JSContextRef ctx, JSValueRef exception);
+diff --git a/Source/JavaScriptCore/bytecode/AccessCase.cpp b/Source/JavaScriptCore/bytecode/AccessCase.cpp
+index 1648b7d6af..0e400d55be 100644
+--- a/Source/JavaScriptCore/bytecode/AccessCase.cpp
++++ b/Source/JavaScriptCore/bytecode/AccessCase.cpp
+@@ -190,6 +190,7 @@ Ref<AccessCase> AccessCase::create(VM& vm, JSCell* owner, AccessType type, Cache
+     case IndexedNoIndexingInMiss:
+     case IndexedProxyObjectIn:
+     case IndexedProxyObjectLoad:
++    case IndexedCallbackObjectLoad:
+     case IndexedProxyObjectStore:
+         RELEASE_ASSERT(!prototypeAccessChain);
+         break;
+@@ -383,6 +384,7 @@ bool AccessCase::guardedByStructureCheckSkippingConstantIdentifierCheck() const
+     case InstanceOfMegamorphic:
+     case IndexedProxyObjectIn:
+     case IndexedProxyObjectLoad:
++    case IndexedCallbackObjectLoad:
+     case IndexedProxyObjectStore:
+     case IndexedMegamorphicIn:
+     case IndexedMegamorphicLoad:
+@@ -552,6 +554,7 @@ bool AccessCase::requiresIdentifierNameMatch() const
+     case InstanceOfMegamorphic:
+     case IndexedProxyObjectIn:
+     case IndexedProxyObjectLoad:
++    case IndexedCallbackObjectLoad:
+     case IndexedProxyObjectStore:
+     case IndexedMegamorphicIn:
+     case IndexedMegamorphicLoad:
+@@ -699,6 +702,7 @@ bool AccessCase::requiresInt32PropertyCheck() const
+     case SetPrivateBrand:
+     case IndexedProxyObjectIn:
+     case IndexedProxyObjectLoad:
++    case IndexedCallbackObjectLoad:
+     case IndexedProxyObjectStore:
+     case IndexedMegamorphicIn:
+     case IndexedMegamorphicLoad:
+@@ -977,6 +981,7 @@ void AccessCase::forEachDependentCell(VM&, NOESCAPE const Functor& functor) cons
+     case IndexedNoIndexingInMiss:
+     case IndexedProxyObjectIn:
+     case IndexedProxyObjectLoad:
++    case IndexedCallbackObjectLoad:
+     case IndexedProxyObjectStore:
+         break;
+     }
+@@ -1004,6 +1009,7 @@ bool AccessCase::doesCalls(VM&) const
+     case ProxyObjectStore:
+     case IndexedProxyObjectIn:
+     case IndexedProxyObjectLoad:
++    case IndexedCallbackObjectLoad:
+     case IndexedProxyObjectStore:
+     case StoreMegamorphic:
+     case IndexedMegamorphicStore:
+@@ -1256,6 +1262,7 @@ bool AccessCase::canReplace(const AccessCase& other) const
+     case ProxyObjectStore:
+     case IndexedProxyObjectIn:
+     case IndexedProxyObjectLoad:
++    case IndexedCallbackObjectLoad:
+     case IndexedProxyObjectStore:
+     case IndexedInt32InHit:
+     case IndexedDoubleInHit:
+@@ -1582,6 +1589,7 @@ inline void AccessCase::runWithDowncast(NOESCAPE const Func& func)
+     case ProxyObjectStore:
+     case IndexedProxyObjectIn:
+     case IndexedProxyObjectLoad:
++    case IndexedCallbackObjectLoad:
+     case IndexedProxyObjectStore:
+         func(static_cast<AccessCase*>(this));
+         break;
+@@ -1783,6 +1791,7 @@ bool AccessCase::canBeShared(const AccessCase& lhs, const AccessCase& rhs)
+     case InstanceOfMegamorphic:
+     case IndexedProxyObjectIn:
+     case IndexedProxyObjectLoad:
++    case IndexedCallbackObjectLoad:
+     case IndexedProxyObjectStore:
+         return true;
+ 
+diff --git a/Source/JavaScriptCore/bytecode/AccessCase.h b/Source/JavaScriptCore/bytecode/AccessCase.h
+index 99fbe7dd4a..49d5d5f224 100644
+--- a/Source/JavaScriptCore/bytecode/AccessCase.h
++++ b/Source/JavaScriptCore/bytecode/AccessCase.h
+@@ -93,6 +93,7 @@ DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(AccessCase);
+     macro(CheckPrivateBrand) \
+     macro(SetPrivateBrand) \
+     macro(IndexedProxyObjectLoad) \
++    macro(IndexedCallbackObjectLoad) \
+     macro(IndexedMegamorphicLoad) \
+     macro(IndexedInt32Load) \
+     macro(IndexedDoubleLoad) \
+diff --git a/Source/JavaScriptCore/bytecode/InlineCacheCompiler.cpp b/Source/JavaScriptCore/bytecode/InlineCacheCompiler.cpp
+index 2bfa8d6ddc..3dbf3a8648 100644
+--- a/Source/JavaScriptCore/bytecode/InlineCacheCompiler.cpp
++++ b/Source/JavaScriptCore/bytecode/InlineCacheCompiler.cpp
+@@ -26,6 +26,8 @@
+ #include "config.h"
+ #include "InlineCacheCompiler.h"
+ 
++#include "JSCallbackObject.h"
++
+ #if ENABLE(JIT)
+ 
+ #include "AccessCaseSnippetParams.h"
+@@ -77,6 +79,9 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+ 
+ namespace JSC {
+ 
++// Lightningpanda: see AccessCase::IndexedCallbackObjectLoad (defined in API/JSCallbackObject.cpp).
++JSC_DECLARE_JIT_OPERATION(operationGetByValCallbackObject, EncodedJSValue, (JSGlobalObject*, EncodedJSValue, EncodedJSValue));
++
+ namespace InlineCacheCompilerInternal {
+ static constexpr bool verbose = false;
+ static constexpr bool traceHandlerExecution = false;
+@@ -272,6 +277,7 @@ static bool LEGACY_NODELETE needsScratchFPR(AccessCase::AccessType type)
+     case AccessCase::InstanceOfMegamorphic:
+     case AccessCase::IndexedProxyObjectIn:
+     case AccessCase::IndexedProxyObjectLoad:
++    case AccessCase::IndexedCallbackObjectLoad:
+     case AccessCase::IndexedProxyObjectStore:
+     case AccessCase::IndexedMegamorphicLoad:
+     case AccessCase::IndexedMegamorphicStore:
+@@ -480,6 +486,7 @@ static bool LEGACY_NODELETE forInBy(AccessCase::AccessType type)
+     case AccessCase::ProxyObjectLoad:
+     case AccessCase::ProxyObjectStore:
+     case AccessCase::IndexedProxyObjectLoad:
++    case AccessCase::IndexedCallbackObjectLoad:
+     case AccessCase::IndexedProxyObjectStore:
+     case AccessCase::CustomValueGetter:
+     case AccessCase::CustomAccessorGetter:
+@@ -589,6 +596,7 @@ static bool LEGACY_NODELETE isStateless(AccessCase::AccessType type)
+     case AccessCase::RegExpLastIndexStore:
+     case AccessCase::ArrayLengthStore:
+     case AccessCase::IndexedProxyObjectLoad:
++    case AccessCase::IndexedCallbackObjectLoad:
+     case AccessCase::IndexedMegamorphicLoad:
+     case AccessCase::IndexedMegamorphicStore:
+     case AccessCase::IndexedInt32Load:
+@@ -850,6 +858,7 @@ static bool LEGACY_NODELETE isMegamorphic(AccessCase::AccessType type)
+     case AccessCase::ProxyObjectStore:
+     case AccessCase::IndexedProxyObjectIn:
+     case AccessCase::IndexedProxyObjectLoad:
++    case AccessCase::IndexedCallbackObjectLoad:
+     case AccessCase::IndexedProxyObjectStore:
+     case AccessCase::Load:
+     case AccessCase::Transition:
+@@ -1022,6 +1031,7 @@ bool canBeViaGlobalProxy(AccessCase::AccessType type)
+     case AccessCase::ProxyObjectStore:
+     case AccessCase::IndexedProxyObjectIn:
+     case AccessCase::IndexedProxyObjectLoad:
++    case AccessCase::IndexedCallbackObjectLoad:
+     case AccessCase::IndexedProxyObjectStore:
+     case AccessCase::IntrinsicGetter:
+     case AccessCase::ModuleNamespaceLoad:
+@@ -2079,6 +2089,56 @@ void InlineCacheCompiler::generateWithGuard(unsigned index, AccessCase& accessCa
+         return;
+     }
+ 
++    case AccessCase::IndexedCallbackObjectLoad: {
++        // Lightningpanda: `wrapper[i]` on a C API object (JSClassSetIndexedCallbacks) calls
++        // the class's indexed getter from the inline cache, instead of the generic get
++        // (operationGetByValGeneric, the prototype-chain walk, a PropertySlot and the
++        // virtual getOwnPropertySlotByIndex), as a custom getter call does for `wrapper.x`.
++        ASSERT(!accessCase.viaGlobalProxy());
++        GPRReg propertyGPR = m_propertyCache.propertyGPR();
++
++        jit.emitLoadStructure(vm, baseGPR, scratchGPR);
++        jit.loadPtr(CCallHelpers::Address(scratchGPR, Structure::classInfoOffset()), scratchGPR);
++        fallThrough.append(jit.branchPtr(CCallHelpers::NotEqual, scratchGPR, CCallHelpers::TrustedImmPtr(JSCallbackObject<JSNonFinalObject>::info())));
++
++        InlineCacheCompiler::SpillState spillState = preserveLiveRegistersToStackForCall();
++
++        if (m_propertyCache.isHandlerIC()) {
++            callSiteIndexForExceptionHandlingOrOriginal();
++            jit.transfer32(CCallHelpers::Address(m_propertyCache.propertyCacheGPR(), PropertyInlineCache::offsetOfCallSiteIndex()), CCallHelpers::highWordFor(CallFrameSlot::argumentCountIncludingThis));
++        } else
++            jit.store32(CCallHelpers::TrustedImm32(callSiteIndexForExceptionHandlingOrOriginal().bits()), CCallHelpers::highWordFor(CallFrameSlot::argumentCountIncludingThis));
++
++        if (m_propertyCache.isHandlerIC())
++            InlineCacheCompiler::emitDataICPrepareForCall(jit);
++        jit.makeSpaceOnStackForCCall();
++
++        if (useHandlerIC()) {
++            jit.loadPtr(CCallHelpers::Address(m_propertyCache.propertyCacheGPR(), PropertyInlineCache::offsetOfGlobalObject()), scratchGPR);
++            jit.setupArguments<J_JITOperation_GJJ>(scratchGPR, baseGPR, propertyGPR);
++        } else
++            jit.setupArguments<J_JITOperation_GJJ>(CCallHelpers::TrustedImmPtr(m_globalObject), baseGPR, propertyGPR);
++        jit.prepareCallOperation(vm);
++        jit.callOperation<OperationPtrTag>(operationGetByValCallbackObject);
++        jit.setupResults(valueGPR);
++
++        jit.reclaimSpaceOnStackForCCall();
++        if (m_propertyCache.isHandlerIC())
++            InlineCacheCompiler::emitDataICRestoreAfterCall(jit);
++
++        CCallHelpers::Jump noException = jit.emitExceptionCheck(vm, CCallHelpers::InvertedExceptionCheck);
++
++        restoreLiveRegistersFromStackForCallWithThrownException(spillState);
++        emitExplicitExceptionHandler();
++
++        noException.link(&jit);
++        RegisterSet dontRestore;
++        dontRestore.add(valueGPR, IgnoreVectors);
++        restoreLiveRegistersFromStackForCall(spillState, dontRestore);
++        succeed();
++        return;
++    }
++
+     case AccessCase::IndexedScopedArgumentsLoad:
+     case AccessCase::IndexedScopedArgumentsInHit: {
+         ASSERT(!accessCase.viaGlobalProxy());
+@@ -3906,6 +3966,7 @@ void InlineCacheCompiler::generateAccessCase(unsigned index, AccessCase& accessC
+     case AccessCase::InMegamorphic:
+     case AccessCase::IndexedProxyObjectIn:
+     case AccessCase::IndexedProxyObjectLoad:
++    case AccessCase::IndexedCallbackObjectLoad:
+     case AccessCase::IndexedProxyObjectStore:
+     case AccessCase::IndexedMegamorphicIn:
+     case AccessCase::IndexedMegamorphicLoad:
+@@ -4012,7 +4073,7 @@ void InlineCacheCompiler::emitDOMJITGetter(JSGlobalObject* globalObjectForDOMJIT
+         jit.store32(CCallHelpers::TrustedImm32(callSiteIndexForExceptionHandlingOrOriginal().bits()), CCallHelpers::highWordFor(CallFrameSlot::argumentCountIncludingThis));
+ 
+     // We construct the environment that can execute the DOMJIT::Snippet here.
+-    Ref<DOMJIT::CallDOMGetterSnippet> snippet = domJIT->compiler()();
++    Ref<DOMJIT::CallDOMGetterSnippet> snippet = domJIT->compileSnippet();
+ 
+     Vector<GPRReg> gpScratch;
+     Vector<FPRReg> fpScratch;
+diff --git a/Source/JavaScriptCore/bytecode/Repatch.cpp b/Source/JavaScriptCore/bytecode/Repatch.cpp
+index f225e7a26e..611e2f6758 100644
+--- a/Source/JavaScriptCore/bytecode/Repatch.cpp
++++ b/Source/JavaScriptCore/bytecode/Repatch.cpp
+@@ -26,6 +26,8 @@
+ #include "config.h"
+ #include "Repatch.h"
+ 
++#include "JSCallbackObject.h"
++
+ #include "BinarySwitch.h"
+ #include "CCallHelpers.h"
+ #include "CacheableIdentifierInlines.h"
+@@ -819,6 +821,8 @@ static InlineCacheAction tryCacheArrayGetByVal(JSGlobalObject* globalObject, Cod
+             accessType = AccessCase::IndexedStringLoad;
+         else if (base->type() == ProxyObjectType)
+             accessType = AccessCase::IndexedProxyObjectLoad;
++        else if (base->classInfo() == JSCallbackObject<JSNonFinalObject>::info())
++            accessType = AccessCase::IndexedCallbackObjectLoad; // Lightningpanda
+         else if (isTypedView(base->type())) {
+             auto* typedArray = uncheckedDowncast<JSArrayBufferView>(base);
+             switch (typedArray->type()) {
+diff --git a/Source/JavaScriptCore/dfg/DFGByteCodeParser.cpp b/Source/JavaScriptCore/dfg/DFGByteCodeParser.cpp
+index 8963f52055..564cf5b09c 100644
+--- a/Source/JavaScriptCore/dfg/DFGByteCodeParser.cpp
++++ b/Source/JavaScriptCore/dfg/DFGByteCodeParser.cpp
+@@ -6331,7 +6331,7 @@ bool ByteCodeParser::handleDOMJITGetter(Operand result, const GetByVariant& vari
+ 
+     if (const auto* domJIT = domAttribute->domJIT) {
+         callDOMGetterData->domJIT = domJIT;
+-        Ref<DOMJIT::CallDOMGetterSnippet> snippet = domJIT->compiler()();
++        Ref<DOMJIT::CallDOMGetterSnippet> snippet = domJIT->compileSnippet();
+         callDOMGetterData->snippet = snippet.ptr();
+         m_graph.m_domJITSnippets.append(WTF::move(snippet));
+     }
+diff --git a/Source/JavaScriptCore/domjit/DOMJITCallDOMGetterSnippet.h b/Source/JavaScriptCore/domjit/DOMJITCallDOMGetterSnippet.h
+index b7ecbe09e4..e86eaa85f4 100644
+--- a/Source/JavaScriptCore/domjit/DOMJITCallDOMGetterSnippet.h
++++ b/Source/JavaScriptCore/domjit/DOMJITCallDOMGetterSnippet.h
+@@ -53,6 +53,13 @@ private:
+     CallDOMGetterSnippet() = default;
+ };
+ 
++inline Ref<CallDOMGetterSnippet> GetterSetter::compileSnippet() const
++{
++    if (m_compilerWithContext)
++        return m_compilerWithContext(*this);
++    return m_compiler();
++}
++
+ } }
+ 
+ #endif
+diff --git a/Source/JavaScriptCore/domjit/DOMJITGetterSetter.h b/Source/JavaScriptCore/domjit/DOMJITGetterSetter.h
+index 0c12a62d8e..63db3c0630 100644
+--- a/Source/JavaScriptCore/domjit/DOMJITGetterSetter.h
++++ b/Source/JavaScriptCore/domjit/DOMJITGetterSetter.h
+@@ -42,6 +42,11 @@ public:
+     using CustomGetter = GetValueFunc::Ptr;
+     using CustomSetter = PutValueFunc::Ptr;
+     using SnippetCompiler = Ref<DOMJIT::CallDOMGetterSnippet>(*)();
++    // A compiler that reads the GetterSetter it compiles for (its `context()`):
++    // for getters installed at runtime through the C API, which have no
++    // function of their own per attribute. Runs on compiler threads, so it
++    // must read only immutable data.
++    using SnippetCompilerWithContext = Ref<DOMJIT::CallDOMGetterSnippet>(*)(const GetterSetter&);
+ 
+     constexpr GetterSetter(CustomGetter getter, SnippetCompiler compiler, SpeculatedType resultType)
+         : m_getter(getter)
+@@ -50,15 +55,29 @@ public:
+     {
+     }
+ 
++    constexpr GetterSetter(CustomGetter getter, SnippetCompilerWithContext compiler, SpeculatedType resultType, const void* context)
++        : m_getter(getter)
++        , m_compilerWithContext(compiler)
++        , m_resultType(resultType)
++        , m_context(context)
++    {
++    }
++
+     constexpr CustomGetter getter() const { return m_getter; }
+     constexpr CustomSetter setter() const { return nullptr; }
+     constexpr SnippetCompiler compiler() const { return m_compiler; }
+     constexpr SpeculatedType resultType() const { return m_resultType; }
++    constexpr const void* context() const { return m_context; }
++    // The snippet, from whichever compiler this GetterSetter has (defined in
++    // DOMJITCallDOMGetterSnippet.h).
++    inline Ref<DOMJIT::CallDOMGetterSnippet> compileSnippet() const;
+ 
+ private:
+     WTF_VTBL_FUNCPTR_PTRAUTH(DOMJITGetterSetter) CustomGetter m_getter;
+-    SnippetCompiler m_compiler;
++    SnippetCompiler m_compiler { nullptr };
++    SnippetCompilerWithContext m_compilerWithContext { nullptr };
+     SpeculatedType m_resultType;
++    const void* m_context { nullptr };
+ };
+ 
+ } // namespace DOMJIT
+diff --git a/Source/JavaScriptCore/jit/SnippetSlowPathCalls.h b/Source/JavaScriptCore/jit/SnippetSlowPathCalls.h
+index a8d678e772..c5b4393180 100644
+--- a/Source/JavaScriptCore/jit/SnippetSlowPathCalls.h
++++ b/Source/JavaScriptCore/jit/SnippetSlowPathCalls.h
+@@ -33,5 +33,6 @@
+ // macro(OperationType, ArgType1, ArgType2, ...)
+ #define SNIPPET_SLOW_PATH_CALLS(macro) \
+     macro(J_JITOperation_GP, GPRReg, GPRReg, GPRReg) \
++    macro(J_JITOperation_GPP, GPRReg, GPRReg, GPRReg, GPRReg) \
+ 
+ #endif
+diff --git a/Source/JavaScriptCore/runtime/JSLock.cpp b/Source/JavaScriptCore/runtime/JSLock.cpp
+index c2b37fc9f4..0a43ec0185 100644
+--- a/Source/JavaScriptCore/runtime/JSLock.cpp
++++ b/Source/JavaScriptCore/runtime/JSLock.cpp
+@@ -421,9 +421,13 @@ JSLock::APICallbackScope::APICallbackScope(JSGlobalObject* globalObject)
+     }
+     if (!globalObject)
+         return;
+-    // A callback must never run from the collector, with or without the lock.
++    // A callback must never run from the collector, with or without the lock. Checked in debug
++    // builds only: the two checks look the current thread up twice, which was 9% of a selector
++    // engine's query (an indexed read or a method call per element, each through this scope).
++#if ASSERT_ENABLED
+     VM& vm = globalObject->vm();
+-    RELEASE_ASSERT(!vm.currentThreadIsHoldingAPILock() || !vm.isCollectorBusyOnCurrentThread(), vm.currentThreadIsHoldingAPILock(), vm.isCollectorBusyOnCurrentThread());
++    ASSERT(!vm.currentThreadIsHoldingAPILock() || !vm.isCollectorBusyOnCurrentThread());
++#endif
+ }
+ 
+ JSLock::DropAllLocks::~DropAllLocks()

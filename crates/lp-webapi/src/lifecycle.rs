@@ -188,6 +188,7 @@ pub fn realm_disposed(page: &PageDom, realm: RealmId) {
     drop(page.define_properties.borrow_mut().remove(&realm));
     drop(page.event_unforgeables.borrow_mut().remove(&realm));
     page.pinned.borrow_mut().retain(|(r, _), _| *r != realm);
+    page.forget_realm_wrappers(realm);
 }
 
 /// The loader fetched the parser-blocking script `node` written to the

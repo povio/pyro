@@ -384,7 +384,11 @@ impl Dom {
                 }));
         if atomic_inline {
             // The space before the box renders; its contents start afresh.
-            state.flush_breaks();
+            // A replaced element writes nothing itself, so the line breaks
+            // pending before it stay pending (and are dropped at the end).
+            if display != TextDisplay::Replaced {
+                state.flush_breaks();
+            }
             if state.pre_w {
                 state.out.push(' ');
                 state.pre_w = false;

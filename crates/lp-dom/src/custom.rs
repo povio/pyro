@@ -62,6 +62,7 @@ impl Dom {
                 let doc = self.id_of(self.n(i).owner_doc);
                 let node = self.id_of(i);
                 self.reactions.queued.entry(doc).or_default().push((node, reaction));
+                self.touch_hook();
             }
         }
     }

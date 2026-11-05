@@ -240,7 +240,7 @@ fn put_forwards_setter_gets_the_attribute_then_sets_the_target() {
               return [plain, got, real.text, setCalled, fake.text, d.set.name, d.set.length].join("|");
             })()"#
         ),
-        "red|2|blue|true|pink|set style|0"
+        "red|2|blue|true|pink|set style|1"
     );
 }
 

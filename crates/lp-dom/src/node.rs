@@ -68,6 +68,12 @@ pub struct DocumentData {
     pub(crate) inert_doc: u32,
     /// Number of live nodes (including itself) whose owner document is this.
     pub(crate) owned: u32,
+    /// How many of those nodes have an external reference (`Node::ext_refs`
+    /// above zero). While it is not zero the document cannot be collected,
+    /// which `Dom::collect_garbage` then knows without walking its tree: a
+    /// page's wrappers die in many small batches after a navigation, and each
+    /// batch otherwise cost a walk of the whole old document.
+    pub(crate) held: u32,
     /// Set while a browsing context (window) displays this document. Such a
     /// document and its tree are never collected.
     pub(crate) active: bool,

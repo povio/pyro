@@ -30,6 +30,7 @@ impl Dom {
             self.slot_state.assignments.insert(slot, now);
             if !self.slot_state.signaled.contains(&slot) {
                 self.slot_state.signaled.push(slot);
+                self.touch_hook();
             }
         }
     }
@@ -109,6 +110,7 @@ impl Dom {
             && !self.slot_state.signaled.contains(&parent)
         {
             self.slot_state.signaled.push(parent);
+            self.touch_hook();
         }
     }
 

@@ -131,6 +131,10 @@ pub(crate) struct EngineInner {
     owner_dropped: Cell<bool>,
     /// When [`Engine::release_closed`] actually collects.
     release_gate: ReleaseGate,
+    /// Payloads of the member functions made with the patched JSC's
+    /// `JSObjectMakeFunctionWithCallbackAndData`, which have no finalizer:
+    /// they live as long as the engine, which outlives every realm.
+    pub(crate) member_payloads: RefCell<Vec<Box<class::MemberPayload>>>,
 }
 
 /// Decides when a closed page's garbage is worth a full collection: once the
@@ -235,6 +239,12 @@ impl EngineInner {
     pub(crate) fn hooks(&self) -> Option<Rc<dyn EngineHooks>> {
         self.hooks.borrow().clone()
     }
+    /// Whether callbacks may still use this engine (what `current_inner`
+    /// checks before handing it out).
+    pub(crate) fn is_live(&self) -> bool {
+        !self.is_shut_down() && !self.owner_dropped.get()
+    }
+
     pub(crate) fn is_shut_down(&self) -> bool {
         self.shut_down.get()
     }
@@ -262,7 +272,7 @@ impl EngineInner {
             return;
         }
         let realm_alive = self.realms.borrow().iter().any(|(_, r)| r.strong_count() > 0);
-        if realm_alive || (self.is_current() && DEPTH.with(Cell::get) > 0) {
+        if realm_alive || (self.is_current() && callback_tls().depth.get() > 0) {
             return;
         }
         let realms: Vec<Rc<RealmInner>> = self.realms.borrow().iter().filter_map(|(_, r)| r.upgrade()).collect();
@@ -291,7 +301,7 @@ impl EngineInner {
         // thread: only clear the thread state if it still refers to us.
         if was_current && self.is_current() {
             let _ = CURRENT.try_with(|c| *c.borrow_mut() = Weak::new());
-            let _ = TERMINATING.try_with(|t| t.set(false));
+            callback_tls().terminating.set(false);
         }
     }
 
@@ -307,12 +317,18 @@ impl Drop for EngineInner {
     }
 }
 
+/// Per-thread callback state, one thread-local (each access is a runtime
+/// lookup on macOS, and a native callback reads these several times).
+pub(crate) struct CallbackTls {
+    /// Native callback nesting depth on this thread (0 = called from Rust).
+    pub depth: Cell<u32>,
+    /// A termination is propagating through the VM on this thread.
+    pub terminating: Cell<bool>,
+}
+
 thread_local! {
     static CURRENT: RefCell<Weak<EngineInner>> = const { RefCell::new(Weak::new()) };
-    /// Native callback nesting depth on this thread (0 = called from Rust).
-    pub(crate) static DEPTH: Cell<u32> = const { Cell::new(0) };
-    /// A termination is propagating through the VM on this thread.
-    pub(crate) static TERMINATING: Cell<bool> = const { Cell::new(false) };
+    static CALLBACK: CallbackTls = const { CallbackTls { depth: Cell::new(0), terminating: Cell::new(false) } };
     /// Asked at each watchdog poll while JavaScript runs on this thread;
     /// returning true terminates it (see [`Engine::set_interrupt_check`]).
     static INTERRUPT_CHECK: RefCell<Option<Rc<dyn Fn() -> bool>>> = const { RefCell::new(None) };
@@ -325,6 +341,15 @@ pub(crate) fn engine_for_ctx(ctx: sys::JSContextRef) -> Option<Rc<EngineInner>> 
     // SAFETY: ctx is a live context passed by the caller.
     let group = unsafe { sys::JSContextGetGroup(ctx) };
     (!e.is_shut_down() && e.group == group).then_some(e)
+}
+
+/// The thread's callback state, as a reference that outlives the call. The
+/// cells have no destructor and live as long as the thread, which the caller
+/// is on.
+pub(crate) fn callback_tls() -> &'static CallbackTls {
+    // SAFETY: a const-initialized thread-local without a destructor is never
+    // deallocated while the thread runs; the reference is used only on it.
+    CALLBACK.with(|c| unsafe { &*(c as *const CallbackTls) })
 }
 
 pub(crate) fn current_inner() -> Option<Rc<EngineInner>> {
@@ -367,6 +392,7 @@ impl Engine {
         let (group, root) = unsafe {
             let group = sys::JSContextGroupCreate();
             let root = sys::JSGlobalContextCreateInGroup(group, std::ptr::null());
+            crate::value::verify_immediates(root);
             (group, root)
         };
         let terminate = Arc::new(TerminateState { requested: AtomicBool::new(false) });
@@ -383,13 +409,14 @@ impl Engine {
             shut_down: Cell::new(false),
             owner_dropped: Cell::new(false),
             release_gate: ReleaseGate::new(ReleaseGate::growth_from_env()),
+            member_payloads: RefCell::new(Vec::new()),
         });
         if caps.termination {
             // Poll the termination flag every 50 ms of continuous JS execution.
             arm_watchdog(group, &terminate);
         }
         CURRENT.with(|c| *c.borrow_mut() = Rc::downgrade(&inner));
-        TERMINATING.with(|t| t.set(false));
+        callback_tls().terminating.set(false);
         Ok(Engine { inner })
     }
 
@@ -469,6 +496,13 @@ impl Engine {
         }
         if self.inner.release_gate.should_collect(process_footprint()) {
             self.settle();
+            // This collection runs inside the command that closed the page,
+            // with the closing code on the stack: JavaScriptCore scans that
+            // stack conservatively, and a compilation still running keeps its
+            // realm too, so the closed page's heap can survive it (measured:
+            // a React app's 30 MB stayed until the next close). A second
+            // collection from the idle loop, where neither holds, frees it.
+            self.inner.release_gate.pending.set(true);
         }
     }
 
@@ -488,7 +522,25 @@ impl Engine {
         self.synchronous_gc();
         self.drain_finalized();
         release_memory();
+        // The collection freed the closed page's blocks to JSC's allocator,
+        // whose scavenger returns them to the system only later, if at all
+        // while the process stays busy: do it now (patched JSC).
+        if let Some(f) = sys::spi::get().release_free_memory {
+            unsafe { f(self.inner.group()) };
+        }
         self.inner.release_gate.pending.set(false);
+    }
+
+    /// [`Engine::settle`] for a process that has gone idle: first drops every
+    /// compiled and unlinked code (the bytecode cache included; patched JSC),
+    /// which a closed page's scripts otherwise keep for a reload that may
+    /// never come. The next page re-parses what it loads. Measured after
+    /// closing a React app: 69 MB footprint with `settle`, 39 MB with this.
+    pub fn settle_idle(&self) {
+        if let Some(f) = sys::spi::get().delete_all_code {
+            unsafe { f(self.inner.group()) };
+        }
+        self.settle();
     }
 
     /// Requests a full garbage collection (asynchronous in JSC).
@@ -639,12 +691,32 @@ const WATCHDOG_INTERVAL_SECS: f64 = 0.05;
 /// live size before the next collection. 1 makes that about 2x, which lowers
 /// the peak on pages with a large heap for a few percent more CPU on them. See
 /// docs/ARCHITECTURE.md for the measured trade-off.
+///
+/// `JSC_smallHeapSize=4194304`: the C API makes its VM with JSC's small-heap
+/// setting, a collection after every megabyte allocated. A script that
+/// allocates steadily (Playwright's selector engine builds arrays of every
+/// element it visits) spent 20% of its time collecting. 4 MB between
+/// collections takes 19% off such a query (8 MB only 2% more), which is the
+/// difference between trailing Chrome on a locator and matching it; it costs
+/// memory while script runs, about 14 MB of `ps` RSS on a loaded mid-size SPA.
+/// `JSC_smallHeapSize=1048576` in the environment restores the old trade.
 pub fn configure_process() {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {
-        for (name, value) in [("JSC_usePollingTraps", "true"), ("JSC_heapGrowthMaxIncrease", "1")] {
+        for (name, value) in
+            [("JSC_usePollingTraps", "true"), ("JSC_heapGrowthMaxIncrease", "1"), ("JSC_smallHeapSize", "4194304")]
+        {
             if std::env::var_os(name).is_none() {
                 std::env::set_var(name, value);
+            }
+        }
+        // Freed pages leave the resident set (patched JSC): macOS keeps
+        // `madvise`d pages resident until it needs them, so a process that
+        // closed a page kept reporting its memory as in use.
+        // `LIGHTNINGPANDA_DECOMMIT=madvise` keeps the stock behaviour.
+        if std::env::var("LIGHTNINGPANDA_DECOMMIT").map_or(true, |v| v != "madvise") {
+            if let Some(f) = sys::spi::get().set_decommit_replaces_pages {
+                unsafe { f(true) };
             }
         }
     });
@@ -712,7 +784,7 @@ pub(crate) struct WatchdogPause<'a>(Option<&'a EngineInner>);
 impl<'a> WatchdogPause<'a> {
     pub(crate) fn new(engine: &'a EngineInner) -> Self {
         let spi = sys::spi::get();
-        if !engine.caps.termination || DEPTH.with(Cell::get) > 0 || spi.set_execution_time_limit.is_none() {
+        if !engine.caps.termination || callback_tls().depth.get() > 0 || spi.set_execution_time_limit.is_none() {
             return WatchdogPause(None);
         }
         let Some(clear) = spi.clear_execution_time_limit else { return WatchdogPause(None) };
@@ -744,7 +816,7 @@ pub(crate) fn rearm_termination(ctx: sys::JSContextRef) {
 /// the request and flushes JSC's pending termination, which otherwise aborts
 /// the next entry when page code caught the termination exception.
 pub(crate) fn finish_termination(ctx: sys::JSContextRef) {
-    TERMINATING.with(|t| t.set(false));
+    callback_tls().terminating.set(false);
     if let Some(engine) = current_inner() {
         engine.terminate.requested.store(false, Ordering::SeqCst);
     }
@@ -763,7 +835,7 @@ unsafe extern "C" fn should_terminate(ctx: sys::JSContextRef, data: *mut c_void)
         state.requested.store(true, Ordering::SeqCst);
     }
     if state.requested.swap(false, Ordering::SeqCst) {
-        let _ = TERMINATING.try_with(|t| t.set(true));
+        callback_tls().terminating.set(true);
         return true;
     }
     // JSC does not re-arm the limit after the callback declines; re-arming

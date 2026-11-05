@@ -16,6 +16,11 @@
 //! element left the document, lost `blocking=render` (unless it blocks
 //! implicitly), or, for an expect link, its target was parsed.
 //!
+//! Every change that can give the post-callback hook work (a dirty flag, a
+//! new waiter or entry) bumps the mutation bindings' epoch
+//! (`BindingState::touch`): the hook skips its checks while neither that
+//! nor the DOM's hook epoch moved.
+//!
 //! Deviations: there is no time limit on render-blocking; a document without
 //! a body is not render-blocked by that alone (only by the elements in the
 //! set); `<style>` elements with pending `@import`s do not block.
@@ -100,6 +105,7 @@ impl PageDom {
             return false;
         }
         set.push((el, kind));
+        self.mutations.touch();
         true
     }
 
@@ -113,6 +119,7 @@ impl PageDom {
         if found {
             self.release_render_blocking_ref(el);
             self.render_blocking.dirty.set(true);
+        self.mutations.touch();
             self.update_render_blocking();
         }
     }
@@ -130,10 +137,12 @@ impl PageDom {
             self.release_render_blocking_ref(old);
         }
         self.render_blocking.dirty.set(true);
+        self.mutations.touch();
     }
 
     pub(crate) fn render_blocking_changed(&self) {
         self.render_blocking.dirty.set(true);
+        self.mutations.touch();
     }
 
     /// Whether an evaluation could change anything (for the native callback
@@ -150,6 +159,7 @@ impl PageDom {
     /// render-blocking element set).
     pub fn render_blocked(&self) -> bool {
         self.render_blocking.dirty.set(true);
+        self.mutations.touch();
         self.update_render_blocking();
         !self.render_blocking.set.borrow().is_empty()
     }
@@ -158,6 +168,7 @@ impl PageDom {
     /// finds the set empty).
     pub fn when_render_unblocked(&self, f: Box<dyn FnOnce()>) {
         self.render_blocking.waiters.borrow_mut().push(f);
+        self.mutations.touch();
     }
 
     /// Re-evaluates the render-blocking element set at a safe point (no
@@ -305,6 +316,7 @@ impl PageDom {
         rb.closed.set(closed);
         rb.version.set(None);
         rb.dirty.set(true);
+        self.mutations.touch();
         for node in nodes {
             self.release_render_blocking_ref(node);
         }

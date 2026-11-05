@@ -100,6 +100,28 @@ impl Change {
 /// Per root (slot index), the first element in tree order for each id.
 type IdIndex = rustc_hash::FxHashMap<u32, RootIds>;
 
+/// Shared `tagName`/`nodeName` strings (see `Dom::tag_name_shared`).
+struct NameCache {
+    tags: rustc_hash::FxHashMap<(Option<Prefix>, LocalName, bool), std::sync::Arc<str>>,
+    /// `#text`, `#cdata-section`, `#comment`, `#document`, `#document-fragment`.
+    fixed: [std::sync::Arc<str>; 5],
+}
+
+impl Default for NameCache {
+    fn default() -> Self {
+        NameCache {
+            tags: Default::default(),
+            fixed: [
+                "#text".into(),
+                "#cdata-section".into(),
+                "#comment".into(),
+                "#document".into(),
+                "#document-fragment".into(),
+            ],
+        }
+    }
+}
+
 /// One root's id map and what it is valid for.
 struct RootIds {
     /// Slot generation of the root it was built for.
@@ -130,6 +152,14 @@ pub struct Dom {
     version: u64,
     /// See `tree_version()`.
     tree_version: u64,
+    /// Bumped whenever something the embedder's post-callback hook acts on
+    /// may have changed: a mutation, a queued observer, a queued iframe
+    /// event. The hook compares it against the value it last found nothing
+    /// at, instead of checking every queue after every native callback.
+    hook_epoch: u64,
+    /// Qualified names as the `tagName`/`nodeName` strings script sees,
+    /// shared so a realm can keep one JavaScript string per name.
+    names: std::cell::RefCell<NameCache>,
     /// Roots of trees that may have become unreachable.
     candidates: Vec<u32>,
     /// A `<base>` element was created; until then no document walks for one.
@@ -216,6 +246,8 @@ impl Dom {
             free: Vec::new(),
             version: 0,
             tree_version: 0,
+            hook_epoch: 0,
+            names: std::cell::RefCell::new(NameCache::default()),
             candidates: Vec::new(),
             live: 0,
             removals: 0,
@@ -315,6 +347,14 @@ impl Dom {
     pub fn version(&self) -> u64 {
         self.version
     }
+    /// See the `hook_epoch` field: changes whenever a post-callback hook may
+    /// have work (conservative; never misses a change).
+    pub fn hook_epoch(&self) -> u64 {
+        self.hook_epoch
+    }
+    pub(crate) fn touch_hook(&mut self) {
+        self.hook_epoch = self.hook_epoch.wrapping_add(1);
+    }
     /// Process-unique identity of this DOM (with `version`, a cache key
     /// that changes on every mutation).
     pub fn uid(&self) -> u64 {
@@ -323,6 +363,7 @@ impl Dom {
     #[track_caller]
     pub(crate) fn bump(&mut self) {
         self.version = self.version.wrapping_add(1);
+        self.hook_epoch = self.hook_epoch.wrapping_add(1);
         if self.base_seen {
             self.reset_html_bases();
         }
@@ -636,6 +677,7 @@ impl Dom {
             html_base: Default::default(),
             inert_doc: NIL,
             owned: 0,
+            held: 0,
             active: false,
             allow_declarative_shadow_roots: false,
             focused: NIL,
@@ -857,7 +899,7 @@ impl Dom {
         let inert = self.create_document(kind, "about:blank").idx;
         // The inert document lives exactly as long as its creator: the
         // reference is dropped when the creator is collected.
-        self.n_mut(inert).ext_refs += 1;
+        self.ext_ref_inc(inert);
         if let NodeKind::Document(d) = &mut self.n_mut(inert).kind {
             d.inert_doc = inert;
         }
@@ -1899,10 +1941,12 @@ impl Dom {
         let mut templates = Vec::new();
         let mut stack = vec![node];
         let mut moved = 0u32;
+        let mut held = 0u32;
         while let Some(i) = stack.pop() {
             if self.n(i).owner_doc == old {
                 self.n_mut(i).owner_doc = doc;
                 moved += 1;
+                held += u32::from(self.n(i).ext_refs > 0);
                 if let Some(from) = created_in {
                     self.creation_docs.entry(i).or_insert(from);
                 }
@@ -1925,6 +1969,8 @@ impl Dom {
         }
         self.doc_data_mut(old).owned -= moved;
         self.doc_data_mut(doc).owned += moved;
+        self.doc_data_mut(old).held -= held;
+        self.doc_data_mut(doc).held += held;
         self.candidates.push(old);
         // HTML "template adopting steps": the contents of an adopted
         // `<template>` move to the template contents owner of its new
@@ -2390,6 +2436,37 @@ impl Dom {
         Ok(q)
     }
 
+    /// `tagName` as a shared string: one allocation per distinct name for
+    /// the DOM's lifetime, so callers can cache by pointer identity.
+    pub fn tag_name_shared(&self, id: NodeId) -> DomResult<std::sync::Arc<str>> {
+        let (i, el) = self.el(id)?;
+        let upper = el.is_html() && self.doc_data(self.n(i).owner_doc).kind == DocumentKind::Html;
+        let key = (el.name.prefix.clone(), el.name.local.clone(), upper);
+        if let Some(s) = self.names.borrow().tags.get(&key) {
+            return Ok(s.clone());
+        }
+        let s: std::sync::Arc<str> = self.tag_name(id)?.into();
+        self.names.borrow_mut().tags.insert(key, s.clone());
+        Ok(s)
+    }
+
+    /// `nodeName` as a shared string (see [`Dom::tag_name_shared`]).
+    pub fn node_name_shared(&self, id: NodeId) -> DomResult<std::sync::Arc<str>> {
+        let i = self.check(id)?;
+        let fixed = match &self.n(i).kind {
+            NodeKind::Element(_) => return self.tag_name_shared(id),
+            NodeKind::Text(_) => 0,
+            NodeKind::CData(_) => 1,
+            NodeKind::Comment(_) => 2,
+            NodeKind::Document(_) => 3,
+            NodeKind::Fragment(_) => 4,
+            NodeKind::Doctype(_) | NodeKind::ProcessingInstruction(_) | NodeKind::Attr(_) => {
+                return Ok(self.node_name(id)?.into())
+            }
+        };
+        Ok(self.names.borrow().fixed[fixed].clone())
+    }
+
     pub fn node_name(&self, id: NodeId) -> DomResult<String> {
         let i = self.check(id)?;
         Ok(match &self.n(i).kind {
@@ -2717,16 +2794,45 @@ impl Dom {
     /// Registers an external strong reference (JS wrapper creation, records).
     pub fn add_ref(&mut self, id: NodeId) -> DomResult<()> {
         let i = self.check(id)?;
-        self.n_mut(i).ext_refs += 1;
+        self.ext_ref_inc(i);
         Ok(())
+    }
+
+    /// Adds an external reference to node `i`, counting it in its document
+    /// (`DocumentData::held`) when it is the node's first.
+    fn ext_ref_inc(&mut self, i: u32) {
+        let n = self.n_mut(i);
+        n.ext_refs += 1;
+        if n.ext_refs == 1 {
+            let owner = n.owner_doc;
+            if owner != NIL && self.slots[owner as usize].node.is_some() {
+                self.doc_data_mut(owner).held += 1;
+            }
+        }
+    }
+
+    /// Drops an external reference of node `i`; true when it was the last.
+    fn ext_ref_dec(&mut self, i: u32) -> bool {
+        let n = self.n_mut(i);
+        if n.ext_refs == 0 {
+            return false;
+        }
+        n.ext_refs -= 1;
+        if n.ext_refs > 0 {
+            return false;
+        }
+        let owner = n.owner_doc;
+        if owner != NIL && self.slots[owner as usize].node.is_some() {
+            let d = self.doc_data_mut(owner);
+            d.held = d.held.saturating_sub(1);
+        }
+        true
     }
     /// Drops an external reference. Collection happens in `collect_garbage`.
     pub fn release(&mut self, id: NodeId) {
         if let Ok(i) = self.check(id) {
-            let n = self.n_mut(i);
-            debug_assert!(n.ext_refs > 0, "unbalanced release");
-            n.ext_refs = n.ext_refs.saturating_sub(1);
-            if n.ext_refs == 0 {
+            debug_assert!(self.n(i).ext_refs > 0, "unbalanced release");
+            if self.ext_ref_dec(i) {
                 self.candidates.push(i);
             }
         }
@@ -2793,7 +2899,9 @@ impl Dom {
                 continue;
             }
             if let NodeKind::Document(d) = &self.n(root).kind {
-                if d.active {
+                // A document with a referenced node (in its tree or not)
+                // stays: no need to walk the tree to find that out.
+                if d.active || d.held > 0 {
                     continue;
                 }
             }
@@ -2844,8 +2952,7 @@ impl Dom {
             }
         }
         if inert != NIL && self.slots[inert as usize].node.is_some() {
-            let n = self.n_mut(inert);
-            n.ext_refs = n.ext_refs.saturating_sub(1);
+            self.ext_ref_dec(inert);
             self.candidates.push(inert);
         }
     }

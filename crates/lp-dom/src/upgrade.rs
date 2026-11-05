@@ -46,6 +46,7 @@ impl Dom {
             if self.upgrade_candidate(i) {
                 let id = self.id_of(i);
                 self.upgrades.queued.push(id);
+                self.touch_hook();
             }
             let mut child = self.n(i).last_child;
             while child != NIL {

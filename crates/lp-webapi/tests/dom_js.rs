@@ -1255,6 +1255,23 @@ impl Drop for RetainingHooks {
 
 #[test]
 fn page_disposal_releases_hooks_registry_and_listener_roots() {
+    // JavaScriptCore scans the native stack and the registers conservatively:
+    // a wrapper pointer left in a dead slot or a callee-saved register by the
+    // calls of the scenario would keep that wrapper (and through its payload
+    // the page) alive without any reference cycle. The scenario therefore
+    // runs in a frame of its own, whose stack is overwritten before the
+    // collections below.
+    let (engine, weak) = disposal_scenario();
+    overwrite_dead_stack();
+    for _ in 0..6 {
+        engine.collect_garbage_now();
+        engine.drain_finalized();
+    }
+    assert!(weak.upgrade().is_none(), "disposed bindings kept their PageDom alive");
+}
+
+#[inline(never)]
+fn disposal_scenario() -> (Engine, std::rc::Weak<PageDom>) {
     let Env { engine, page, main } = env("<body><div id=target></div></body>");
     assert_eq!(eval(&main, "globalThis.fired=0; window.addEventListener('test',()=>fired++); document.querySelector('#target').addEventListener('test',()=>fired++); customElements.define('x-disposal', class extends HTMLElement{}); 'ok'"), "ok");
     page.after_task();
@@ -1272,11 +1289,17 @@ fn page_disposal_releases_hooks_registry_and_listener_roots() {
     main.dispose();
     drop(main);
     drop(page);
-    for _ in 0..6 {
-        engine.collect_garbage_now();
-        engine.drain_finalized();
+    (engine, weak)
+}
+
+/// Overwrites the stack below the caller's frame (see the test above).
+#[inline(never)]
+fn overwrite_dead_stack() -> u64 {
+    let mut junk = [0u64; 16 * 1024];
+    for (i, slot) in junk.iter_mut().enumerate() {
+        *slot = std::hint::black_box(i as u64);
     }
-    assert!(weak.upgrade().is_none(), "disposed bindings kept their PageDom alive");
+    std::hint::black_box(junk.iter().sum())
 }
 
 #[test]
@@ -6563,7 +6586,10 @@ fn expandos_on_connected_nodes_outlive_unreferenced_wrappers() {
         ),
         "kept,kept,kept"
     );
-    assert_eq!(e.page.pinned_count(), 3, "only the wrappers holding properties");
+    // Every wrapper of a node in the active document is pinned while the node
+    // is connected (not only those holding properties), so the three are a
+    // lower bound.
+    assert!(e.page.pinned_count() >= 3, "{}", e.page.pinned_count());
 }
 
 #[test]
@@ -6572,13 +6598,15 @@ fn expando_pins_follow_the_node_in_and_out_of_the_document() {
     let r = &e.main;
     eval(r, "document.getElementById('s').mark = 'kept'; globalThis.d = document.getElementById('d'); 'ok'");
     e.page.after_task();
-    assert_eq!(e.page.pinned_count(), 1);
+    // The document, `d` and `s` (connected wrappers are pinned while connected).
+    let base = e.page.pinned_count();
+    assert!(base >= 3, "{base}");
     eval(r, "d.remove(); 'ok'");
     e.page.after_task();
-    assert_eq!(e.page.pinned_count(), 0, "disconnected: nothing pins it");
+    assert_eq!(e.page.pinned_count(), base - 2, "disconnected: nothing pins `d` and `s`");
     eval(r, "document.body.append(d); 'ok'");
     e.page.after_task();
-    assert_eq!(e.page.pinned_count(), 1, "pinned again");
+    assert!(e.page.pinned_count() >= base, "pinned again: {}", e.page.pinned_count());
     collect(&e);
     assert_eq!(eval(r, "document.getElementById('s').mark"), "kept");
 }
@@ -6589,11 +6617,12 @@ fn gc_reclaims_removed_rows_with_expandos() {
     let r = &e.main;
     eval(r, "globalThis.list = document.getElementById('list'); for (let i = 0; i < 5000; i++) { const li = document.createElement('li'); li.row = i; list.append(li); } 'ok'");
     e.page.after_task();
-    assert_eq!(e.page.pinned_count(), 5000);
+    assert!(e.page.pinned_count() >= 5000, "{}", e.page.pinned_count());
     let before = e.page.dom.borrow().live_nodes();
     eval(r, "while (list.firstChild) list.firstChild.remove(); 'ok'");
     e.page.after_task();
-    assert_eq!(e.page.pinned_count(), 0);
+    // The list and the document stay pinned; no removed row does.
+    assert!(e.page.pinned_count() < 10, "{}", e.page.pinned_count());
     collect(&e);
     let after = e.page.dom.borrow().live_nodes();
     assert!(after + 1900 < before, "removed rows reclaimed: before={before} after={after}");
@@ -6605,10 +6634,11 @@ fn removing_one_of_many_expando_rows_unpins_only_its_subtree() {
     let r = &e.main;
     eval(r, "globalThis.list = document.getElementById('list'); for (let i = 0; i < 100; i++) { const li = document.createElement('li'); const b = document.createElement('b'); li.append(b); li.row = i; b.row = i; list.append(li); } 'ok'");
     e.page.after_task();
-    assert_eq!(e.page.pinned_count(), 200);
+    let base = e.page.pinned_count();
+    assert!(base >= 200, "{base}");
     eval(r, "globalThis.moved = list.lastChild; moved.remove(); list.prepend(moved); list.children[1].remove(); 'ok'");
     e.page.after_task();
-    assert_eq!(e.page.pinned_count(), 198, "the moved row stays pinned, the removed one does not");
+    assert_eq!(e.page.pinned_count(), base - 2, "the moved row stays pinned, the removed one (li and b) does not");
 }
 
 #[test]
