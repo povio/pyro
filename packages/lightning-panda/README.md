@@ -97,12 +97,13 @@ On other operating systems, use `Lightningpanda.connect()` with a remote
 browser. Installing/importing the client does not launch a local browser.
 
 `Lightningpanda.launch()` selects `bin`, then `$LIGHTNINGPANDA_BIN`, then the
-bundled browser for the current architecture, then a sibling browser in a
-legacy release archive. The CLI also respects `$LIGHTNINGPANDA_BIN`.
+browser beside the package in a release archive, then the bundled browser for
+the current architecture. The CLI also respects `$LIGHTNINGPANDA_BIN`.
 
-The bundled browsers use macOS's system JavaScriptCore. **Fork mode requires
-a separately built patched JavaScriptCore browser**; select that browser with
-`bin` or `$LIGHTNINGPANDA_BIN` when using `args: ['--fork']`.
+On Apple silicon the bundled browser is the **fork-capable build** with its
+patched JavaScriptCore included, so `args: ['--fork']` works without a separate
+browser. The Intel browser uses macOS's system JavaScriptCore and has no fork
+mode.
 
 The package is licensed under AGPL-3.0-only; see the included `LICENSE` and
 `NOTICE`. Maintainers: see
