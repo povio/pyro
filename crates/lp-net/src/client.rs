@@ -675,6 +675,22 @@ fn http_client(config: &NetConfig, tls: &rustls::ClientConfig, proxy: Option<Arc
 /// Every client of the process, for [`suspend_for_fork`].
 static CLIENTS: Mutex<Vec<std::sync::Weak<Inner>>> = Mutex::new(Vec::new());
 
+/// Run on an I/O thread once it has had no request for [`IO_IDLE_RELEASE`]
+/// ([`set_idle_release`]).
+static IDLE_RELEASE: std::sync::OnceLock<fn()> = std::sync::OnceLock::new();
+
+/// How long an I/O thread waits without a request before it runs the
+/// [`set_idle_release`] hook.
+const IO_IDLE_RELEASE: Duration = Duration::from_secs(1);
+
+/// Registers what an I/O thread runs once its requests are done and none
+/// came for a second: an allocator with per-thread heaps (the executable's)
+/// returns the pages of the response buffers the browser freed, which only
+/// the thread that allocated them can (a loaded mid-size SPA: 3 MB less).
+pub fn set_idle_release(release: fn()) {
+    let _ = IDLE_RELEASE.set(release);
+}
+
 /// Stops the I/O thread of every client in the process, so that the process
 /// can `fork()` (only the calling thread survives a fork). Requests still in
 /// flight fail with `Aborted`; cookies, cache and observers are kept. Call
@@ -749,7 +765,24 @@ fn io_main(mut rx: mpsc::UnboundedReceiver<Cmd>, shared: Arc<Shared>, cookies: A
             h2_origins: Mutex::new(HashSet::new()),
         });
         let tasks: std::rc::Rc<std::cell::RefCell<HashMap<RequestId, Task>>> = Default::default();
-        while let Some(cmd) = rx.recv().await {
+        // Whether the idle hook ran since the last request.
+        let mut released = true;
+        loop {
+            let cmd = match (released, IDLE_RELEASE.get()) {
+                (false, Some(release)) => match tokio::time::timeout(IO_IDLE_RELEASE, rx.recv()).await {
+                    Ok(cmd) => cmd,
+                    Err(_) => {
+                        if tasks.borrow().is_empty() {
+                            release();
+                            released = true;
+                        }
+                        continue;
+                    }
+                },
+                _ => rx.recv().await,
+            };
+            let Some(cmd) = cmd else { break };
+            released = false;
             match cmd {
                 Cmd::Fetch(id, req, sink) => {
                     let destination = req.destination;

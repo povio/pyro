@@ -11,6 +11,28 @@ use std::process::ExitCode;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
+/// The process's Rust heap. macOS's allocator keeps the pages of freed
+/// blocks resident and charged to the process (`malloc_zone_pressure_relief`
+/// releases none of them): after a closed SPA the system heap held 28 MB
+/// for 3 MB of live blocks. mimalloc returns them (`MADV_FREE_REUSABLE`
+/// after a delay, at once on [`lp_js::Engine::settle`]).
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
+unsafe extern "C" {
+    /// Frees the calling thread's empty pages (and the blocks other threads
+    /// freed into them) and returns the free ones to the system.
+    fn mi_collect(force: bool);
+}
+
+/// Returns mimalloc's free pages to the system now: the browser thread's on
+/// [`lp_js::Engine::settle`], an I/O thread's once it is idle (it owns the
+/// response buffers the browser thread frees).
+fn release_allocator() {
+    // SAFETY: mimalloc's public API, callable from any thread at any time.
+    unsafe { mi_collect(true) }
+}
+
 const USAGE: &str = "\
 usage: lightningpanda <command> [options]
 
@@ -24,6 +46,8 @@ commands:
 ";
 
 fn main() -> ExitCode {
+    lp_js::set_allocator_release(release_allocator);
+    lp_net::set_idle_release(release_allocator);
     lp_js::configure_process();
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
