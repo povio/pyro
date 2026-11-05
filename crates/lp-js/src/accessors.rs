@@ -14,7 +14,7 @@
 //! dispatcher here. Slots are process-wide, keyed by the class type and the
 //! attribute name: every engine registers the same (class, name) with the same
 //! callbacks, so the first registration's entry serves them all.
-use crate::class::{guard_in, GetterResult, Header, InvokeHFn, Kind, MemberCall, PayloadTag};
+use crate::class::{guard_in, GetterResult, Header, InvokeHFn, Kind, MemberCall, PayloadTag, SetHFn};
 use crate::error::JsError;
 use crate::value::Args;
 use lp_jsc_sys as sys;
@@ -69,6 +69,8 @@ static PURE: [AtomicBool; SLOTS] = [const { AtomicBool::new(false) }; SLOTS];
 static RESULT: [AtomicUsize; SLOTS] = [const { AtomicUsize::new(0) }; SLOTS];
 /// Each pure getter's invoker from a payload header (`InvokeHFn`; 0: none).
 static GETTER_H: [AtomicUsize; SLOTS] = [const { AtomicUsize::new(0) }; SLOTS];
+/// Each setter's invoker from a payload header (`SetHFn`; 0: none).
+static SETTER_H: [AtomicUsize; SLOTS] = [const { AtomicUsize::new(0) }; SLOTS];
 
 /// Attributes that found no free slot (see [`slot_usage`]).
 static OVERFLOWED: AtomicUsize = AtomicUsize::new(0);
@@ -100,6 +102,7 @@ pub(crate) fn slot_for(
     pure: bool,
     result: GetterResult,
     get_h: Option<InvokeHFn>,
+    set_h: Option<SetHFn>,
 ) -> Option<u16> {
     if !supported() {
         return None;
@@ -122,6 +125,7 @@ pub(crate) fn slot_for(
         None => SETTER_CALLS[slot].clear(),
     }
     GETTER_H[slot].store(get_h.map_or(0, |f| f as usize), Ordering::Release);
+    SETTER_H[slot].store(set_h.map_or(0, |f| f as usize), Ordering::Release);
     PURE[slot].store(pure, Ordering::Release);
     RESULT[slot].store(
         match result {
@@ -292,8 +296,27 @@ unsafe fn custom_setter_dispatch(
 ) -> bool {
     unsafe {
         let mut exc: sys::JSValueRef = ptr::null();
-        let candidate = receiver(this).and_then(|o| crate::class::wrapper_realm(o));
+        // A wrapper instance's payload header, read once: it gives the
+        // candidate realm and, in that realm, the setter's data.
+        let h = match receiver(this) {
+            Some(o) if !o.is_null() => {
+                let h = sys::JSObjectGetPrivate(o) as *mut Header;
+                (!h.is_null() && (*h).tag == PayloadTag::Wrapper).then_some(h)
+            }
+            _ => None,
+        };
+        let candidate = h.map(|h| &(*h).realm_ref);
         let stands = guard_in(ctx, candidate, &mut exc, false, |scope| {
+            if let Some(h) = h.filter(|&h| (*h).kind == Kind::Instance) {
+                let set_h = SETTER_H[slot].load(Ordering::Relaxed);
+                if set_h != 0 && crate::realm::is_scope_realm(&(*h).realm_ref, scope) {
+                    // SAFETY: stored from a `SetHFn` by `slot_for`.
+                    let set_h = std::mem::transmute::<usize, SetHFn>(set_h);
+                    if set_h(scope, h, value, SETTER_CALLS[slot].f.load(Ordering::Relaxed) as *const ())? {
+                        return Ok(true);
+                    }
+                }
+            }
             let Some(call) = SETTER_CALLS[slot].load() else { return Err(JsError::Type("Illegal invocation".into())) };
             let Some(this) = receiver(this) else { return Err(JsError::Type("Illegal invocation".into())) };
             (call.invoke)(scope, this, Args::from_raw(ctx, 1, &value), call.f)?;

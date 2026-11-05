@@ -510,7 +510,25 @@ pub mod spi {
     pub type JSWeakCreateKeptWhileFn =
         unsafe extern "C" fn(group: JSContextGroupRef, object: JSObjectRef, keep_alive: *const u8) -> JSWeakRef;
     pub type JSWeakReleaseFn = unsafe extern "C" fn(group: JSContextGroupRef, weak: JSWeakRef);
+    /// `JSWeakRelease` of `count` handles under one lock (patched JSC).
+    pub type JSWeakReleaseManyFn = unsafe extern "C" fn(group: JSContextGroupRef, weaks: *const JSWeakRef, count: usize);
     pub type JSWeakGetObjectFn = unsafe extern "C" fn(weak: JSWeakRef) -> JSObjectRef;
+    /// The structure of new wrappers of a class with one prototype in one
+    /// global object (patched JSC, `JSWrapperShapeCreate`); null if the class
+    /// has none to share.
+    pub type JSWrapperShapeRef = *mut c_void;
+    pub type JSWrapperShapeCreateFn =
+        unsafe extern "C" fn(ctx: JSContextRef, class: JSClassRef, prototype: JSObjectRef) -> JSWrapperShapeRef;
+    pub type JSWrapperShapeReleaseFn = unsafe extern "C" fn(group: JSContextGroupRef, shape: JSWrapperShapeRef);
+    /// A new wrapper of `shape` with private data `data` (`JSObjectMakeWrapper`):
+    /// with `keep_alive`, also its `JSWeakCreateKeptWhile` handle in `*weak`.
+    pub type JSObjectMakeWrapperFn = unsafe extern "C" fn(
+        ctx: JSContextRef,
+        shape: JSWrapperShapeRef,
+        data: *mut c_void,
+        keep_alive: *const u8,
+        weak: *mut JSWeakRef,
+    ) -> JSObjectRef;
     pub type JSGlobalContextSetUnhandledRejectionCallbackFn =
         unsafe extern "C" fn(ctx: JSGlobalContextRef, function: JSObjectRef, exception: *mut JSValueRef);
     pub type JSContextGroupSetExecutionTimeLimitFn = unsafe extern "C" fn(
@@ -653,7 +671,11 @@ pub mod spi {
         pub weak_create: Option<JSWeakCreateFn>,
         pub weak_create_kept_while: Option<JSWeakCreateKeptWhileFn>,
         pub weak_release: Option<JSWeakReleaseFn>,
+        pub weak_release_many: Option<JSWeakReleaseManyFn>,
         pub weak_get_object: Option<JSWeakGetObjectFn>,
+        pub wrapper_shape_create: Option<JSWrapperShapeCreateFn>,
+        pub wrapper_shape_release: Option<JSWrapperShapeReleaseFn>,
+        pub object_make_wrapper: Option<JSObjectMakeWrapperFn>,
         pub set_unhandled_rejection_callback: Option<JSGlobalContextSetUnhandledRejectionCallbackFn>,
         pub set_execution_time_limit: Option<JSContextGroupSetExecutionTimeLimitFn>,
         pub clear_execution_time_limit: Option<JSContextGroupClearExecutionTimeLimitFn>,
@@ -723,7 +745,11 @@ pub mod spi {
             weak_create: resolve!("JSWeakCreate"),
             weak_create_kept_while: resolve!("JSWeakCreateKeptWhile"),
             weak_release: resolve!("JSWeakRelease"),
+            weak_release_many: resolve!("JSWeakReleaseMany"),
             weak_get_object: resolve!("JSWeakGetObject"),
+            wrapper_shape_create: resolve!("JSWrapperShapeCreate"),
+            wrapper_shape_release: resolve!("JSWrapperShapeRelease"),
+            object_make_wrapper: resolve!("JSObjectMakeWrapper"),
             set_unhandled_rejection_callback: resolve!("JSGlobalContextSetUnhandledRejectionCallback"),
             set_execution_time_limit: resolve!("JSContextGroupSetExecutionTimeLimit"),
             clear_execution_time_limit: resolve!("JSContextGroupClearExecutionTimeLimit"),

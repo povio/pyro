@@ -1,0 +1,120 @@
+diff --git a/Source/JavaScriptCore/API/JSWeakPrivate.cpp b/Source/JavaScriptCore/API/JSWeakPrivate.cpp
+--- a/Source/JavaScriptCore/API/JSWeakPrivate.cpp
++++ b/Source/JavaScriptCore/API/JSWeakPrivate.cpp
+@@ -28,7 +28,11 @@
+ 
+ #include "APICast.h"
+ #include "IntegrityInlines.h"
++#include "JSCallbackObject.h"
+ #include "JSCellInlines.h"
++#include "JSClassRef.h"
++#include "Options.h"
++#include "StrongInlines.h"
+ #include "Weak.h"
+ #include "WeakHandleOwner.h"
+ #include <wtf/NeverDestroyed.h>
+@@ -87,6 +91,60 @@
+     return new OpaqueJSWeak(toJS(objectRef), &keptWhileOwner(), const_cast<unsigned char*>(keepAlive));
+ }
+ 
++struct OpaqueJSWrapperShape {
++    OpaqueJSWrapperShape(VM& vm, Structure* structure, JSClassRef jsClass)
++        : structure(vm, structure)
++        , jsClass(jsClass)
++    {
++    }
++
++    Strong<Structure> structure;
++    RefPtr<OpaqueJSClass> jsClass;
++};
++
++JSWrapperShapeRef JSWrapperShapeCreate(JSContextRef ctx, JSClassRef jsClass, JSObjectRef prototypeRef)
++{
++    JSGlobalObject* globalObject = toJS(ctx);
++    VM& vm = globalObject->vm();
++    JSLockHolder locker(vm);
++    // The structure JSObjectMake starts its objects with.
++    Structure* structure = globalObject->callbackObjectStructure();
++    if (Options::cacheCallbackObjectLookups()) {
++        if (jsClass->wrappersAreCacheable)
++            structure = globalObject->cacheableCallbackObjectStructure();
++        else if (jsClass->impureNamedProperties)
++            structure = globalObject->impureNamedCallbackObjectStructure();
++    }
++    // The transition JSObject::setPrototypeDirect makes for each of them.
++    JSObject* prototype = toJS(prototypeRef);
++    prototype->didBecomePrototype(vm);
++    if (structure->hasMonoProto()) {
++        DeferredStructureTransitionWatchpointFire deferred(vm, structure);
++        structure = Structure::changePrototypeTransition(vm, structure, prototype, deferred);
++    } else
++        return nullptr;
++    return new OpaqueJSWrapperShape(vm, structure, jsClass);
++}
++
++void JSWrapperShapeRelease(JSContextGroupRef contextGroup, JSWrapperShapeRef shape)
++{
++    VM* vm = toJS(contextGroup);
++    JSLockHolder locker(vm);
++    delete shape;
++}
++
++JSObjectRef JSObjectMakeWrapper(JSContextRef ctx, JSWrapperShapeRef shape, void* data, const unsigned char* keepAlive, JSWeakRef* weak)
++{
++    JSGlobalObject* globalObject = toJS(ctx);
++    VM& vm = globalObject->vm();
++    JSLockHolder locker(vm);
++    ASSERT(shape->structure->globalObject() == globalObject);
++    JSCallbackObject<JSNonFinalObject>* object = JSCallbackObject<JSNonFinalObject>::create(globalObject, shape->structure.get(), shape->jsClass.get(), data);
++    if (keepAlive && weak)
++        *weak = new OpaqueJSWeak(object, &keptWhileOwner(), const_cast<unsigned char*>(keepAlive));
++    return toRef(object);
++}
++
+ void JSWeakRetain(JSContextGroupRef contextGroup, JSWeakRef weakRef)
+ {
+     VM* vm = toJS(contextGroup);
+@@ -101,6 +159,14 @@
+     weakRef->deref();
+ }
+ 
++void JSWeakReleaseMany(JSContextGroupRef contextGroup, const JSWeakRef* weakRefs, size_t count)
++{
++    VM* vm = toJS(contextGroup);
++    JSLockHolder locker(vm);
++    for (size_t i = 0; i < count; ++i)
++        weakRefs[i]->deref();
++}
++
+ JSObjectRef JSWeakGetObject(JSWeakRef weakRef)
+ {
+     return toRef(weakRef->weak.get());
+diff --git a/Source/JavaScriptCore/API/JSWeakPrivate.h b/Source/JavaScriptCore/API/JSWeakPrivate.h
+--- a/Source/JavaScriptCore/API/JSWeakPrivate.h
++++ b/Source/JavaScriptCore/API/JSWeakPrivate.h
+@@ -46,8 +46,25 @@
+    object, a collection ends it and JSWeakGetObject returns NULL. */
+ JS_EXPORT JSWeakRef JSWeakCreateKeptWhile(JSContextGroupRef, JSObjectRef, const unsigned char* keepAlive);
+ 
++/* Lightningpanda: the structure of new host wrappers of `jsClass` whose prototype is
++   `prototype` (an object), as JSObjectMake followed by JSObjectSetPrototype gives them: for a
++   host that makes many wrappers of one class with one prototype in one global object. Made
++   once; the wrappers made from it start with it instead of transitioning to it one by one.
++   Release it with JSWrapperShapeRelease before the context group goes away. */
++typedef struct OpaqueJSWrapperShape* JSWrapperShapeRef;
++JS_EXPORT JSWrapperShapeRef JSWrapperShapeCreate(JSContextRef ctx, JSClassRef jsClass, JSObjectRef prototype);
++JS_EXPORT void JSWrapperShapeRelease(JSContextGroupRef, JSWrapperShapeRef);
++
++/* Lightningpanda: JSObjectMake, JSObjectSetPrototype and JSWeakCreateKeptWhile in one call
++   (one lock, no prototype chain walk: a new object has no cycle to check), for a new wrapper
++   with private data `data` in the global object of `ctx`, which made `shape`. When `keepAlive`
++   is not NULL, `*weak` receives a JSWeakCreateKeptWhile handle of the object. */
++JS_EXPORT JSObjectRef JSObjectMakeWrapper(JSContextRef ctx, JSWrapperShapeRef shape, void* data, const unsigned char* keepAlive, JSWeakRef* weak);
++
+ JS_EXPORT void JSWeakRetain(JSContextGroupRef, JSWeakRef);
+ JS_EXPORT void JSWeakRelease(JSContextGroupRef, JSWeakRef);
++/* Lightningpanda: JSWeakRelease of `count` handles under one lock. */
++JS_EXPORT void JSWeakReleaseMany(JSContextGroupRef, const JSWeakRef* weakRefs, size_t count);
+ 
+ JS_EXPORT JSObjectRef JSWeakGetObject(JSWeakRef);
+ 
