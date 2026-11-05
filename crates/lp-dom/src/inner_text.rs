@@ -383,15 +383,16 @@ impl Dom {
                     matches!(d.as_str(), "inline-block" | "inline-flex" | "inline-grid" | "inline-table")
                 }));
         if atomic_inline {
+            // The space before the box renders; its contents start afresh.
             state.flush_breaks();
             if state.pre_w {
                 state.out.push(' ');
                 state.pre_w = false;
             }
-            state.wrote_any = true;
-            state.trim_left = false;
+            state.trim_left = true;
         }
         if display == TextDisplay::Replaced {
+            state.trim_left = false;
             return;
         }
         // text-transform inherits, so a child's own value covers its subtree only.
@@ -404,6 +405,12 @@ impl Dom {
         state.white_space = computed.map_or(parent_white_space, |c| c.white_space);
         match display {
             TextDisplay::Skip | TextDisplay::Replaced => unreachable!(),
+            TextDisplay::Inline | TextDisplay::Transparent if atomic_inline => {
+                self.collect_inner_text(idx, state);
+                // A trailing space inside the box collapses; the one after it renders.
+                state.pre_w = false;
+                state.trim_left = false;
+            }
             TextDisplay::Inline | TextDisplay::Transparent => self.collect_inner_text(idx, state),
             TextDisplay::Block => {
                 state.require_breaks(1);

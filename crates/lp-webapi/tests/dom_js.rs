@@ -6364,6 +6364,12 @@ fn inner_text_follows_computed_white_space() {
         ("<x>a </x> <x> b</x>", r#""a b""#),
         ("<x>a</x> <x> b</x>", r#""a b""#),
         ("<table style='white-space:pre'>  <td>a</td>  </table>", r#""a""#),
+        // Atomic inline boxes keep the collapsible spaces on both sides, and
+        // their contents start a fresh context (Chrome's rendered text).
+        ("abc <input> def", r#""abc  def""#),
+        ("abc <span style='display:inline-block'></span> def", r#""abc  def""#),
+        ("abc <span style='display:inline-block'> def </span> ghi", r#""abc def ghi""#),
+        ("<input> <div>abc</div>", r#""abc""#),
     ] {
         assert_eq!(text(html), expected, "{html}");
     }
