@@ -140,12 +140,41 @@ pub struct ClassDef<C: JsClass> {
     pub(crate) constants: Vec<(&'static str, f64)>,
     pub(crate) constructor: Option<MemberCall>,
     pub(crate) ctor_length: u32,
+    /// `[LegacyFactoryFunction]`s: global constructors of this class's
+    /// instances (`Image`, `Option`, `Audio`).
+    pub(crate) legacy_factories: Vec<MethodSpec>,
+    /// A legacy callback interface (`NodeFilter`): not a constructor, no
+    /// `prototype` property.
+    pub(crate) callback_interface: bool,
     pub(crate) hooks: PropertyHooks,
     pub(crate) exposed: bool,
     pub(crate) indexed_iterable: bool,
     pub(crate) upcast: Option<UpcastFn>,
     pub(crate) global_receiver: Option<GlobalReceiverFn>,
     _c: PhantomData<C>,
+}
+
+/// The identifiers of a `[PutForwards]` setter (see [`ClassDef::put_forwards`]).
+struct PutForwards {
+    name: &'static str,
+    target: &'static str,
+}
+
+impl PutForwards {
+    /// The program-lifetime pair for `name`/`target`, which a setter's
+    /// [`MemberCall`] points at. Interned: classes are defined once per
+    /// engine (one per browser thread), so leaking a pair per definition
+    /// would grow with every engine created.
+    fn interned(name: &'static str, target: &'static str) -> &'static PutForwards {
+        static INTERNED: std::sync::Mutex<Vec<&'static PutForwards>> = std::sync::Mutex::new(Vec::new());
+        let mut interned = INTERNED.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(found) = interned.iter().copied().find(|p| p.name == name && p.target == target) {
+            return found;
+        }
+        let pair: &'static PutForwards = Box::leak(Box::new(PutForwards { name, target }));
+        interned.push(pair);
+        pair
+    }
 }
 
 /// Resolves the data an operation uses when called with an undefined, null or
@@ -183,6 +212,8 @@ impl<C: JsClass> ClassDef<C> {
             constants: Vec::new(),
             constructor: None,
             ctor_length: 0,
+            legacy_factories: Vec::new(),
+            callback_interface: false,
             hooks: PropertyHooks::default(),
             exposed: true,
             indexed_iterable: false,
@@ -214,6 +245,40 @@ impl<C: JsClass> ClassDef<C> {
         let get = MemberCall { invoke: getter_invoke::<C>, f: g as *const () };
         let set = MemberCall { invoke: setter_invoke::<C>, f: s as *const () };
         self.accessors.push(AccessorSpec { name, get, set: Some(set) });
+        self
+    }
+
+    /// Adds a read-write attribute with `[PutForwards=target]`: assignment
+    /// brand-checks the receiver, reads the attribute (an observable `Get`,
+    /// so an overridden getter runs and its exception propagates; a
+    /// non-object result is a TypeError) and performs `[[Set]]` of `target`
+    /// on the result (https://webidl.spec.whatwg.org/#PutForwards).
+    pub fn put_forwards(&mut self, name: &'static str, g: GetterFn<C>, target: &'static str) -> &mut Self {
+        let get = MemberCall { invoke: getter_invoke::<C>, f: g as *const () };
+        let forwards = PutForwards::interned(name, target);
+        let set = MemberCall { invoke: put_forwards_invoke::<C>, f: forwards as *const PutForwards as *const () };
+        self.accessors.push(AccessorSpec { name, get, set: Some(set) });
+        self
+    }
+
+    /// Adds a `[LegacyFactoryFunction]`: a global constructor `name` (such as
+    /// `Image` for `HTMLImageElement`) whose `prototype` is this interface's
+    /// prototype object. The callback is a [`ClassDef::constructor`] one and
+    /// receives `new.target`, so `class X extends Image {}` works.
+    pub fn legacy_factory(&mut self, name: &'static str, length: u32, f: CtorFn) -> &mut Self {
+        self.legacy_factories.push(MethodSpec {
+            name,
+            length,
+            call: MemberCall { invoke: ctor_invoke, f: f as *const () },
+        });
+        self
+    }
+
+    /// Makes this a legacy callback interface (`NodeFilter`): the interface
+    /// object is a plain function (no `[[Construct]]`, no `prototype`
+    /// property) carrying the constants; `x instanceof NodeFilter` throws.
+    pub fn legacy_callback_interface(&mut self) -> &mut Self {
+        self.callback_interface = true;
         self
     }
 
@@ -407,6 +472,8 @@ pub(crate) struct ClassDefErased {
     pub constants: Vec<(&'static str, f64)>,
     pub constructor: Option<MemberCall>,
     pub ctor_length: u32,
+    pub legacy_factories: Vec<MethodSpec>,
+    pub callback_interface: bool,
     pub hooks: PropertyHooks,
     pub exposed: bool,
     pub indexed_iterable: bool,
@@ -546,6 +613,8 @@ pub(crate) fn register<C: JsClass>(engine: &EngineInner) -> ClassId {
             constants: def.constants,
             constructor: def.constructor,
             ctor_length: def.ctor_length,
+            legacy_factories: def.legacy_factories,
+            callback_interface: def.callback_interface,
             hooks: def.hooks,
             exposed: def.exposed,
             indexed_iterable: def.indexed_iterable,
@@ -1056,6 +1125,34 @@ unsafe fn setter_invoke<C: JsClass>(
         });
     }
     f(scope, data, args.get(0))?;
+    Ok(unsafe { sys::JSValueMakeUndefined(scope.ctx) })
+}
+
+/// Setter of a `[PutForwards]` attribute (see [`ClassDef::put_forwards`]).
+/// Only the brand check touches the instance; the forwarding is ordinary
+/// JavaScript property access on the receiver, so it runs in the caller's
+/// realm like any other `Get`/`Set` the caller performs.
+unsafe fn put_forwards_invoke<C: JsClass>(
+    scope: &Scope<'_>,
+    this: sys::JSObjectRef,
+    args: Args<'_>,
+    f: *const (),
+) -> JsResult<sys::JSValueRef> {
+    unsafe { this_data::<C>(scope, this) }?;
+    // SAFETY: stored by `ClassDef::put_forwards` from an interned (leaked) `PutForwards`.
+    let forwards = unsafe { &*(f as *const PutForwards) };
+    let receiver = if this.is_null() { scope.global() } else { unsafe { Object::from_raw(scope.ctx, this) } };
+    let value = receiver.get(forwards.name)?;
+    let Some(target) = value.as_object() else {
+        return Err(JsError::Type(format!(
+            "Failed to set the '{}' property on '{}': The '{}' attribute's value is not an object.",
+            forwards.name,
+            C::NAME,
+            forwards.name
+        )));
+    };
+    // A missing argument is `undefined` (Args::get), like any attribute setter.
+    target.set(forwards.target, args.get(0))?;
     Ok(unsafe { sys::JSValueMakeUndefined(scope.ctx) })
 }
 

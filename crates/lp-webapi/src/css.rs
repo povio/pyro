@@ -239,15 +239,6 @@ impl JsClass for CssStyleDeclaration {
     }
 }
 
-/// `element.style = value`: `[PutForwards=cssText]` on the `style`
-/// attribute, so it behaves exactly like `element.style.cssText = value`.
-pub fn set_inline_style(page: &PageDom, id: NodeId, value: Value<'_>) -> JsResult<()> {
-    // cssText is [LegacyNullToEmptyString].
-    let text = if value.is_null() { String::new() } else { dom_string(value)? };
-    let decls = parse_declarations(&text);
-    page.dom.borrow_mut().set_attribute(id, "style", &serialize_declarations(&decls)).js()
-}
-
 pub fn inline_style<'s>(s: &Scope<'s>, page: &PageDom, id: NodeId) -> JsResult<Object<'s>> {
     let base = page.node_identity(id);
     let key = IdentityKey(base.0 | (1 << 61) | (22 << 48), base.1);

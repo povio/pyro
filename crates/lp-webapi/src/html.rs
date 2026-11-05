@@ -205,14 +205,11 @@ macro_rules! reflect_cors {
     };
 }
 
-/// A DOMTokenList attribute with `[PutForwards=value]`.
+/// A DOMTokenList attribute with `[PutForwards=value]`: assignment sets the
+/// list's `value` (an observable `[[Set]]` on the list object).
 macro_rules! reflect_tokens {
     ($def:expr, $prop:literal, $attr:literal) => {
-        $def.accessor(
-            $prop,
-            |s, n| Ok(collections::token_list(s, n.page(), n.id, $attr)?.value()),
-            |_s, n, v| set_attr(n, $attr, &dom_string(v)?),
-        );
+        $def.put_forwards($prop, |s, n| Ok(collections::token_list(s, n.page(), n.id, $attr)?.value()), "value");
     };
 }
 
@@ -483,6 +480,15 @@ fn int_attr(n: &NodeData, attr: &str, min: i64, default: impl Into<f64>) -> JsRe
 
 fn set_attr(n: &NodeData, attr: &str, value: &str) -> JsResult<()> {
     n.page().dom.borrow_mut().set_attribute(n.id, attr, value).js()
+}
+
+/// The element a legacy factory function (`new Image()`) creates: an HTML
+/// element `local_name` of the realm's current document, before its wrapper.
+fn create_factory_element(s: &Scope<'_>, local_name: &str) -> JsResult<(Rc<PageDom>, NodeId)> {
+    let page = crate::target::page_of(s)?;
+    let doc = page.document();
+    let el = page.dom.borrow_mut().create_element(doc, local_name).js()?;
+    Ok((page, el))
 }
 
 fn set_ulong(n: &NodeData, attr: &str, value: u32, default: u32) -> JsResult<()> {
@@ -1059,11 +1065,8 @@ impl JsClass for HtmlElement {
             Ok(s.boolean(false))
         });
         def.getter("dataset", |s, n| Ok(collections::dataset(s, n.page(), n.id)?.value()));
-        def.accessor(
-            "style",
-            |s, n| Ok(crate::css::inline_style(s, n.page(), n.id)?.value()),
-            |_s, n, v| crate::css::set_inline_style(n.page(), n.id, v),
-        );
+        // [PutForwards=cssText]
+        def.put_forwards("style", |s, n| Ok(crate::css::inline_style(s, n.page(), n.id)?.value()), "cssText");
         def.accessor("innerText", crate::layout_api::inner_text, crate::layout_api::set_inner_text);
         def.accessor("outerText", crate::layout_api::inner_text, crate::layout_api::set_outer_text);
         def.getter("offsetParent", crate::layout_api::offset_parent);
@@ -1275,6 +1278,19 @@ simple_class!(HtmlAreaElement, "HTMLAreaElement", HtmlElement, |def| {
     reflect_bool!(def, "noHref", "nohref");
 });
 simple_class!(HtmlImageElement, "HTMLImageElement", HtmlElement, |def| {
+    // [LegacyFactoryFunction=Image(optional unsigned long width, optional unsigned long height)]
+    def.legacy_factory("Image", 0, |s, new_target, a| {
+        let (page, el) = create_factory_element(s, "img")?;
+        for (i, attr) in [(0, "width"), (1, "height")] {
+            if !a.get(i).is_undefined() {
+                // `unsigned long`, reflected: values above 2147483647 read and write as 0.
+                let v = to_u32(a.get(i))?;
+                let v = if v as i64 > MAX_REFLECTED_INT { 0 } else { v };
+                page.dom.borrow_mut().set_attribute(el, attr, &v.to_string()).js()?;
+            }
+        }
+        crate::node::wrap_new_node::<Self>(s, &page, el, new_target)
+    });
     reflect_url!(def, "src", "src");
     reflect_str!(def, "alt", "alt");
     reflect_str!(def, "srcset", "srcset");
@@ -1677,6 +1693,36 @@ simple_class!(HtmlSelectElement, "HTMLSelectElement", HtmlElement, |def| {
 });
 
 simple_class!(HtmlOptionElement, "HTMLOptionElement", HtmlElement, |def| {
+    // [LegacyFactoryFunction=Option(optional DOMString text = "", optional DOMString value,
+    //                               optional boolean defaultSelected = false, optional boolean selected = false)]
+    def.legacy_factory("Option", 0, |s, new_target, a| {
+        let (page, el) = create_factory_element(s, "option")?;
+        let text = if a.get(0).is_undefined() { String::new() } else { dom_string(a.get(0))? };
+        let value = if a.get(1).is_undefined() { None } else { Some(dom_string(a.get(1))?) };
+        let default_selected = a.get(2).to_bool();
+        let selected = a.get(3).to_bool();
+        {
+            let mut dom = page.dom.borrow_mut();
+            if !text.is_empty() {
+                dom.set_text_content(el, &text).js()?;
+            }
+            if let Some(value) = value {
+                dom.set_attribute(el, "value", &value).js()?;
+            }
+            if default_selected {
+                dom.set_attribute(el, "selected", "").js()?;
+            }
+            // The constructor sets the selectedness, not the dirtiness. When
+            // the selectedness is what the attribute gives, the option stays
+            // clean and keeps following `defaultSelected`; an explicit state
+            // is only needed when the two differ (which lp-dom can only
+            // record as dirty).
+            if selected != default_selected {
+                dom.set_option_selected(el, selected).js()?;
+            }
+        }
+        crate::node::wrap_new_node::<Self>(s, &page, el, new_target)
+    });
     reflect_bool!(def, "disabled", "disabled");
     reflect_bool!(def, "defaultSelected", "selected");
     def.getter("form", |s, n| {
@@ -1779,6 +1825,8 @@ simple_class!(HtmlButtonElement, "HTMLButtonElement", HtmlElement, |def| {
 simple_class!(HtmlFormElement, "HTMLFormElement", HtmlElement, |def| {
     reflect_str!(def, "name", "name");
     reflect_str!(def, "target", "target");
+    reflect_str!(def, "rel", "rel");
+    reflect_tokens!(def, "relList", "rel");
     reflect_enum!(def, "enctype", "enctype", FORM_ENCTYPE);
     reflect_enum!(def, "encoding", "enctype", FORM_ENCTYPE);
     reflect_str!(def, "acceptCharset", "accept-charset");
@@ -2163,7 +2211,22 @@ simple_class!(HtmlVideoElement, "HTMLVideoElement", HtmlMediaElement, |def| {
     def.getter("videoWidth", |s, _n| Ok(s.number(0.0)));
     def.getter("videoHeight", |s, _n| Ok(s.number(0.0)));
 });
-simple_class!(HtmlAudioElement, "HTMLAudioElement", HtmlMediaElement);
+simple_class!(HtmlAudioElement, "HTMLAudioElement", HtmlMediaElement, |def| {
+    // [LegacyFactoryFunction=Audio(optional DOMString src)]
+    def.legacy_factory("Audio", 0, |s, new_target, a| {
+        let (page, el) = create_factory_element(s, "audio")?;
+        // Converted before the DOM is borrowed: `toString` is page script.
+        let src = if a.get(0).is_undefined() { None } else { Some(dom_string(a.get(0))?) };
+        {
+            let mut dom = page.dom.borrow_mut();
+            dom.set_attribute(el, "preload", "auto").js()?;
+            if let Some(src) = src {
+                dom.set_attribute(el, "src", &src).js()?;
+            }
+        }
+        crate::node::wrap_new_node::<Self>(s, &page, el, new_target)
+    });
+});
 simple_class!(HtmlBrElement, "HTMLBRElement", HtmlElement, |def| {
     reflect_str!(def, "clear", "clear");
 });
@@ -2391,11 +2454,8 @@ impl JsClass for SvgElement {
     fn define(def: &mut ClassDef<Self>) {
         crate::handlers::define_global(def);
         def.getter("dataset", |s, n| Ok(collections::dataset(s, n.page(), n.id)?.value()));
-        def.accessor(
-            "style",
-            |s, n| Ok(crate::css::inline_style(s, n.page(), n.id)?.value()),
-            |_s, n, v| crate::css::set_inline_style(n.page(), n.id, v),
-        );
+        // [PutForwards=cssText]
+        def.put_forwards("style", |s, n| Ok(crate::css::inline_style(s, n.page(), n.id)?.value()), "cssText");
         def.getter("ownerSVGElement", |s, n| {
             let dom = n.page().dom.borrow();
             let mut p = dom.parent_element(n.id).js()?;

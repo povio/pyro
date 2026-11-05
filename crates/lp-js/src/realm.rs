@@ -805,6 +805,18 @@ impl<'s> Scope<'s> {
         Ok(())
     }
 
+    // -- conversions ------------------------------------------------------
+
+    /// WebIDL `sequence<T>` conversion of `value`: iterates it with its own
+    /// iterator protocol (arrays included, so overridden `@@iterator`s and
+    /// holes are honoured) and returns the yielded values as a fresh array
+    /// of this realm. `what` names the operation in the TypeError for
+    /// non-iterable values (https://webidl.spec.whatwg.org/#es-sequence).
+    pub fn sequence(&self, value: Value<'_>, what: &str) -> JsResult<Object<'s>> {
+        let seq = self.realm.helper(self, "sequence")?.call(None, &[value, self.string(what)])?;
+        seq.as_object().ok_or_else(|| JsError::Type("sequence conversion produced no array".into()))
+    }
+
     // -- host objects ------------------------------------------------------
 
     /// Returns the wrapper for `data`, reusing the existing one for `key` in this
@@ -1335,7 +1347,10 @@ fn install_classes(scope: &Scope<'_>) -> JsResult<()> {
         }
         let name = serde_json::to_string(info.name).expect("class name serializes");
         let parent = info.parent.map_or(-1, i64::from);
-        spec.push_str(&format!("[{name},{parent},{},{}]", info.def.ctor_length, info.def.exposed));
+        spec.push_str(&format!(
+            "[{name},{parent},{},{},{}]",
+            info.def.ctor_length, info.def.exposed, info.def.callback_interface
+        ));
         let native = match info.def.constructor {
             Some(c) => make_member_fn(scope.ctx, reg.member, c, info.name, info.def.ctor_length, &keys)?.value(),
             None => scope.null(),
@@ -1357,6 +1372,34 @@ fn install_classes(scope: &Scope<'_>) -> JsResult<()> {
     let protos = column(&lists[0])?;
     let targets = column(&lists[1])?;
     let ctors = column(&lists[2])?;
+    // [LegacyFactoryFunction]s of exposed classes: global constructors over
+    // the class's prototype (`Image`), lazily populated like the interface.
+    let factories: Vec<(ClassId, &'static str, u32, class::MemberCall)> = reg
+        .classes
+        .iter()
+        .enumerate()
+        .filter(|(_, info)| info.def.exposed)
+        .flat_map(|(i, info)| info.def.legacy_factories.iter().map(move |f| (i as ClassId, f.name, f.length, f.call)))
+        .collect();
+    if !factories.is_empty() {
+        let legacy_factory = realm.helper(scope, "legacyFactory")?;
+        for (id, name, length, call) in factories {
+            let native = make_member_fn(scope.ctx, reg.member, call, name, length, &keys)?;
+            let proto = lists[0].get_index(id)?;
+            legacy_factory.call(
+                None,
+                &[
+                    global.value(),
+                    scope.string(name),
+                    native.value(),
+                    proto,
+                    scope.number(length as f64),
+                    scope.number(id as f64),
+                    populate.value(),
+                ],
+            )?;
+        }
+    }
     let global_chain = realm.global_class.map(|gid| {
         let mut chain = vec![gid];
         while let Some(p) = reg.classes[*chain.last().expect("non-empty") as usize].parent {

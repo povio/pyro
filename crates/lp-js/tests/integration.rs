@@ -10,6 +10,7 @@ mod named_hooks;
 mod nested_realm;
 mod object_inspection;
 mod runtime;
+mod webidl_bindings;
 
 /// `autotests = false` means a file in tests/ that is neither a module here nor
 /// its own `[[test]]` target would silently never run.

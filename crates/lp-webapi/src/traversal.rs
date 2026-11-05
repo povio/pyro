@@ -21,6 +21,9 @@ impl JsClass for NodeFilter {
     type Data = ();
     type Parent = NoParent;
     fn define(def: &mut ClassDef<Self>) {
+        // A callback interface: `NodeFilter` is neither constructible nor has
+        // a `prototype`; it only carries the constants.
+        def.legacy_callback_interface();
         for (n, v) in [
             ("FILTER_ACCEPT", 1.0),
             ("FILTER_REJECT", 2.0),
