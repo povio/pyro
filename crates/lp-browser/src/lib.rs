@@ -1364,14 +1364,18 @@ impl Browser {
             p.images = Default::default();
             p.preloads = Default::default();
             let old_dom = p.main_frame.page_dom.replace(page_dom.clone());
+            // What the commit replaces: nothing (a new frame's first
+            // document), the initial about:blank one, or a loaded document.
+            let replaces_loaded = old_dom.is_some() && !p.nav.is_initial_blank();
             p.main_frame.dom = Some(page_dom.dom.clone());
             p.main_frame.document = Some(page_dom.document());
             p.main_frame.url = opts.url.clone();
             p.main_frame.loader_id = loader_id.clone();
             p.nav.commit_document(&opts.url, history, None);
             p.nav.set_document(Some((page_dom.dom.clone(), page_dom.document())));
-            (p.main_frame.id.clone(), old, scripts.clone(), p.nav.clone(), old_dom)
+            (p.main_frame.id.clone(), old, scripts.clone(), p.nav.clone(), (old_dom, replaces_loaded))
         };
+        let (old_dom, replaces_loaded) = old_dom;
         if let Some(dom) = &old_dom {
             dom.dispose();
         }
@@ -1391,8 +1395,13 @@ impl Browser {
         // it before the next one boots instead of waiting for JSC's heuristics.
         // Measured on 80 navigations of a 2 MB React bundle: the process
         // plateaus at 218 MB instead of 629 MB, for about 5 ms per navigation.
+        // A page's first document and its initial about:blank one leave
+        // nothing that pays for a full collection: a test's first `goto`
+        // collected the whole heap for a blank page's two realms.
         drop(old_dom);
-        self.engine.release_closed();
+        if replaces_loaded {
+            self.engine.release_closed();
+        }
         // Worlds: main plus every world named by an init script.
         let mut worlds: Vec<Option<String>> = vec![None];
         for s in &scripts {
