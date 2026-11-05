@@ -539,23 +539,18 @@ impl Dom {
             return None;
         }
         let mut nodes = Vec::new();
-        let mut stack: Vec<u32> = Vec::new();
         for &root in self.removal_log.iter().skip(self.removal_log.len() - count as usize) {
             if root == NIL {
                 return None;
             }
-            stack.push(root);
-            while let Some(i) = stack.pop() {
-                if !self.slot_live(i) {
-                    continue;
-                }
+            // A freed root lists nothing (a reused slot: its node's subtree).
+            if !self.slot_live(root) {
+                continue;
+            }
+            let mut i = root;
+            while i != NIL {
                 nodes.push(self.id_of(i));
-                stack.extend(self.child_idx_iter(i));
-                if let Some(e) = self.n(i).element() {
-                    if e.shadow_root != NIL {
-                        stack.push(e.shadow_root);
-                    }
-                }
+                i = self.next_shadow_including(i, root);
             }
         }
         Some(nodes)
@@ -813,7 +808,13 @@ impl Dom {
         let owner = self.owner_for(doc)?;
         let html = self.doc_data(owner).kind == DocumentKind::Html;
         let (local, ns) = if html {
-            (LocalName::from(local.to_ascii_lowercase()), ns!(html))
+            // Script mostly passes lowercase names: no lowercased copy then.
+            let local = if local.bytes().any(|b| b.is_ascii_uppercase()) {
+                LocalName::from(local.to_ascii_lowercase())
+            } else {
+                LocalName::from(local)
+            };
+            (local, ns!(html))
         } else {
             // XML documents: "application/xhtml+xml" gets the HTML namespace.
             let ns = if &*self.doc_data(owner).content_type == "application/xhtml+xml" { ns!(html) } else { ns!() };
@@ -1028,7 +1029,7 @@ impl Dom {
     // ----- slots -------------------------------------------------------
 
     pub(crate) fn is_slot(&self, i: u32) -> bool {
-        self.n(i).element().is_some_and(|e| e.is_html() && &*e.name.local == "slot")
+        self.n(i).element().is_some_and(|e| e.name.local == local_name!("slot") && e.is_html())
     }
 
     /// Whether `i`'s root is a shadow root (a bit kept by `tree_scope`).
@@ -1267,6 +1268,103 @@ impl Dom {
             }
         }
         NIL
+    }
+
+    /// The node after `idx` in `root`'s shadow-including subtree, in
+    /// shadow-including tree order with an element's shadow tree before its
+    /// children (the order of post-connection steps), or NIL. Follows the
+    /// tree's own links, so a walk needs no stack.
+    pub(crate) fn next_shadow_including(&self, idx: u32, root: u32) -> u32 {
+        let n = self.n(idx);
+        if let NodeKind::Element(e) = &n.kind {
+            if e.shadow_root != NIL {
+                return e.shadow_root;
+            }
+        }
+        if n.first_child != NIL {
+            return n.first_child;
+        }
+        self.climb_shadow_including(idx, root, false)
+    }
+
+    /// [`Dom::next_shadow_including`] reading every child list from its last
+    /// child to its first (an element's shadow tree still comes first): the
+    /// order of a walk that pushes each node's children onto a stack in order.
+    pub(crate) fn next_shadow_including_rev(&self, idx: u32, root: u32) -> u32 {
+        let n = self.n(idx);
+        if let NodeKind::Element(e) = &n.kind {
+            if e.shadow_root != NIL {
+                return e.shadow_root;
+            }
+        }
+        if n.last_child != NIL {
+            return n.last_child;
+        }
+        self.climb_shadow_including(idx, root, true)
+    }
+
+    /// [`Dom::next_shadow_including`] with an element's shadow tree after
+    /// its children instead of before them.
+    pub(crate) fn next_shadow_including_light_first(&self, idx: u32, root: u32) -> u32 {
+        let n = self.n(idx);
+        if n.first_child != NIL {
+            return n.first_child;
+        }
+        if let NodeKind::Element(e) = &n.kind {
+            if e.shadow_root != NIL {
+                return e.shadow_root;
+            }
+        }
+        let mut cur = idx;
+        loop {
+            if cur == root {
+                return NIL;
+            }
+            let n = self.n(cur);
+            if n.next != NIL {
+                return n.next;
+            }
+            if n.parent != NIL {
+                // The parent's children are done: its shadow tree is next.
+                cur = n.parent;
+                if let NodeKind::Element(e) = &self.n(cur).kind {
+                    if e.shadow_root != NIL {
+                        return e.shadow_root;
+                    }
+                }
+                continue;
+            }
+            // A shadow root is done, and with it its host.
+            let NodeKind::Fragment(FragmentData { host, shadow: Some(_), .. }) = &n.kind else { return NIL };
+            cur = *host;
+        }
+    }
+
+    /// The next node once `cur`'s subtree is done (see `next_shadow_including`).
+    fn climb_shadow_including(&self, mut cur: u32, root: u32, rev: bool) -> u32 {
+        loop {
+            if cur == root {
+                return NIL;
+            }
+            let n = self.n(cur);
+            let sibling = if rev { n.prev } else { n.next };
+            if sibling != NIL {
+                return sibling;
+            }
+            if n.parent != NIL {
+                cur = n.parent;
+                continue;
+            }
+            // A shadow root is done: its host's children come next.
+            let NodeKind::Fragment(FragmentData { host, shadow: Some(_), .. }) = &n.kind else { return NIL };
+            let host = *host;
+            let h = self.n(host);
+            let first = if rev { h.last_child } else { h.first_child };
+            if first != NIL {
+                return first;
+            }
+            cur = host;
+        }
     }
 
     /// Pre-order iterator over the inclusive descendants of `id`.
@@ -1765,7 +1863,10 @@ impl Dom {
             None => NIL,
         };
         let removed: Vec<u32> = self.child_idx_iter(p).collect();
+        // The record's list of added nodes, only when an observer may want it.
+        let observed = self.mutation.any_registration();
         let added: Vec<u32> = match n {
+            _ if !observed => Vec::new(),
             NIL => Vec::new(),
             n if matches!(self.n(n).kind, NodeKind::Fragment(_)) => self.child_idx_iter(n).collect(),
             n => vec![n],
@@ -1776,7 +1877,7 @@ impl Dom {
         if n != NIL {
             self.insert(n, p, NIL, true);
         }
-        if !added.is_empty() || !removed.is_empty() {
+        if observed && (!added.is_empty() || !removed.is_empty()) {
             self.queue_child_list(p, &added, &removed, NIL, NIL);
         }
         Ok(())
@@ -1784,36 +1885,37 @@ impl Dom {
 
     /// Core insert: `node` (or fragment children) into `parent` before `child`.
     fn insert(&mut self, node: u32, parent: u32, child: u32, suppress: bool) {
-        let nodes: Vec<u32> = if matches!(self.n(node).kind, NodeKind::Fragment(_)) {
+        if matches!(self.n(node).kind, NodeKind::Fragment(_)) {
             let kids: Vec<u32> = self.child_idx_iter(node).collect();
             for &k in &kids {
                 self.remove(k, true);
             }
             if !kids.is_empty() {
                 self.queue_child_list(node, &[], &kids, NIL, NIL);
+                self.insert_nodes(&kids, parent, child, suppress);
             }
-            kids
         } else {
             if self.n(node).parent != NIL {
                 self.remove(node, false);
             }
-            vec![node]
-        };
-        if nodes.is_empty() {
-            return;
+            self.insert_nodes(&[node], parent, child, suppress);
         }
+    }
+
+    /// The rest of `insert` for `nodes` (not empty), already parentless.
+    fn insert_nodes(&mut self, nodes: &[u32], parent: u32, child: u32, suppress: bool) {
         if child != NIL && !self.live_ranges.is_empty() {
             self.ranges_before_insert(parent, child, nodes.len() as u32);
         }
         let prev = if child == NIL { self.n(parent).last_child } else { self.n(child).prev };
         let doc = self.n(parent).owner_doc;
-        for &k in &nodes {
+        for &k in nodes {
             self.adopt_idx(k, doc);
             self.link(k, parent, child);
         }
         let connected = self.is_connected_idx(parent);
         self.script_children_inserted(parent);
-        for &k in &nodes {
+        for &k in nodes {
             self.resources_after_insert(k);
             self.picture_images_changed(parent, k);
             if connected {
@@ -1822,20 +1924,20 @@ impl Dom {
                 self.upgrades_after_insert(k);
             }
         }
-        self.slots_after_child_change(parent, &nodes);
+        self.slots_after_child_change(parent, nodes);
         self.bump_tree();
         self.note(Change::Inserted(parent, nodes[0]));
         for &k in &nodes[1..] {
             self.note_more(Change::Inserted(parent, k));
         }
-        for &k in &nodes {
+        for &k in nodes {
             self.announce_named_items(k);
         }
         if !suppress {
-            self.queue_child_list(parent, &nodes, &[], prev, child);
+            self.queue_child_list(parent, nodes, &[], prev, child);
         }
         if connected {
-            for &k in &nodes {
+            for &k in nodes {
                 self.hide_nonces(k);
             }
         }
@@ -2313,6 +2415,18 @@ impl Dom {
                 let qn = QualName::new(None, ns!(), LocalName::from(&*local));
                 self.append_attr(i, qn, value);
             }
+        }
+        Ok(())
+    }
+
+    /// Sets the attribute in no namespace named `local`, as a reflected IDL
+    /// attribute does (`className`, `id`, `slot`): the name is a valid,
+    /// lowercase atom already, so nothing is validated, lowercased or looked up.
+    pub fn set_attribute_local(&mut self, id: NodeId, local: &LocalName, value: &str) -> DomResult<()> {
+        let (i, el) = self.el(id)?;
+        match el.attrs.iter().position(|a| a.name.local == *local && a.name.ns == ns!()) {
+            Some(k) => self.change_attr(i, k, value),
+            None => self.append_attr(i, QualName::new(None, ns!(), local.clone()), value),
         }
         Ok(())
     }
@@ -2825,21 +2939,31 @@ impl Dom {
         }
     }
 
-    fn component_nodes(&self, root: u32, out: &mut Vec<u32>) {
-        let mut stack = vec![root];
-        while let Some(i) = stack.pop() {
-            out.push(i);
-            stack.extend(self.child_idx_iter(i));
+    /// The nodes of the component rooted at `root` (its tree, shadow trees,
+    /// template contents and Attr nodes) into `out`, which is also the walk's
+    /// work list; `false`, and `out` incomplete, as soon as one of them is
+    /// referenced (a wrapper, a queued mutation record): that component stays,
+    /// and a detached tree whose root has a wrapper is not walked at all.
+    fn unreferenced_component(&self, root: u32, out: &mut Vec<u32>) -> bool {
+        out.push(root);
+        let mut k = 0;
+        while let Some(&i) = out.get(k) {
+            k += 1;
+            if self.n(i).ext_refs > 0 || self.mutation.pins(i) {
+                return false;
+            }
+            out.extend(self.child_idx_iter(i));
             if let Some(e) = self.n(i).element() {
                 if e.shadow_root != NIL {
-                    stack.push(e.shadow_root);
+                    out.push(e.shadow_root);
                 }
                 if e.template_contents != NIL {
-                    stack.push(e.template_contents);
+                    out.push(e.template_contents);
                 }
-                stack.extend_from_slice(self.attr_nodes_of(i));
+                out.extend_from_slice(self.attr_nodes_of(i));
             }
         }
+        true
     }
 
     /// Frees every detached component that has no external references, no
@@ -2850,6 +2974,7 @@ impl Dom {
     pub fn collect_garbage(&mut self) -> usize {
         let mut freed_total = 0;
         let mut seen: FxHashSet<u32> = FxHashSet::default();
+        let mut last_root = NIL;
         let mut nodes = Vec::new();
         while let Some(c) = self.candidates.pop() {
             if self.slots.get(c as usize).is_none_or(|s| s.node.is_none()) {
@@ -2863,9 +2988,12 @@ impl Dom {
                 continue;
             }
             let root = self.component_root(c);
-            if !seen.insert(root) {
+            // Candidates come in runs of one component (a removed tree's
+            // nodes, the nodes made for it): the previous root needs no hash.
+            if root == last_root || !seen.insert(root) {
                 continue;
             }
+            last_root = root;
             if let NodeKind::Document(d) = &self.n(root).kind {
                 // A document with a referenced node (in its tree or not)
                 // stays: no need to walk the tree to find that out.
@@ -2874,8 +3002,7 @@ impl Dom {
                 }
             }
             nodes.clear();
-            self.component_nodes(root, &mut nodes);
-            if nodes.iter().any(|&i| self.n(i).ext_refs > 0 || self.mutation.pins(i)) {
+            if !self.unreferenced_component(root, &mut nodes) {
                 continue;
             }
             if matches!(self.n(root).kind, NodeKind::Document(_)) {
@@ -2892,6 +3019,7 @@ impl Dom {
             nodes = batch;
             // Freeing may orphan other documents; re-examine them.
             seen.clear();
+            last_root = NIL;
         }
         freed_total
     }
@@ -3125,4 +3253,87 @@ pub fn validate_and_extract(namespace: Option<&str>, qualified: &str, context: N
         return Err(nserr());
     }
     Ok(QualName::new(prefix.map(Prefix::from), Namespace::from(ns), LocalName::from(local)))
+}
+
+#[cfg(test)]
+mod walk_tests {
+    use super::*;
+
+    /// The stack walks the stackless ones replace: children pushed last to
+    /// first (mode 0) or first to last (mode 1) with the shadow root pushed
+    /// last, or the shadow root pushed first and children last to first (2).
+    fn stack_order(dom: &Dom, root: u32, mode: u8) -> Vec<u32> {
+        let mut out = Vec::new();
+        let mut stack = vec![root];
+        while let Some(i) = stack.pop() {
+            out.push(i);
+            let kids: Vec<u32> = dom.child_idx_iter(i).collect();
+            let sr = dom.n(i).element().map_or(NIL, |e| e.shadow_root);
+            if mode == 2 && sr != NIL {
+                stack.push(sr);
+            }
+            if mode == 1 {
+                stack.extend(kids);
+            } else {
+                stack.extend(kids.into_iter().rev());
+            }
+            if mode != 2 && sr != NIL {
+                stack.push(sr);
+            }
+        }
+        out
+    }
+
+    fn walk(dom: &Dom, root: u32, mode: u8) -> Vec<u32> {
+        let mut out = Vec::new();
+        let mut i = root;
+        while i != NIL {
+            out.push(i);
+            i = match mode {
+                0 => dom.next_shadow_including(i, root),
+                1 => dom.next_shadow_including_rev(i, root),
+                _ => dom.next_shadow_including_light_first(i, root),
+            };
+        }
+        out
+    }
+
+    #[test]
+    fn stackless_walks_keep_the_stack_orders() {
+        let mut dom = Dom::new();
+        let doc = dom.create_document(DocumentKind::Html, "about:blank");
+        let el = |dom: &mut Dom, name: &str| dom.create_element(doc, name).unwrap();
+        let root = el(&mut dom, "div");
+        let a = el(&mut dom, "section");
+        let b = el(&mut dom, "span");
+        let c = el(&mut dom, "p");
+        let host = el(&mut dom, "div");
+        dom.append_child(root, a).unwrap();
+        dom.append_child(root, host).unwrap();
+        dom.append_child(root, c).unwrap();
+        dom.append_child(a, b).unwrap();
+        let sr = dom.attach_shadow(host, ShadowRootMode::Open).unwrap();
+        let s1 = el(&mut dom, "slot");
+        let s2 = el(&mut dom, "em");
+        let inner_host = el(&mut dom, "span");
+        dom.append_child(sr, s1).unwrap();
+        dom.append_child(sr, inner_host).unwrap();
+        dom.append_child(s1, s2).unwrap();
+        let inner = dom.attach_shadow(inner_host, ShadowRootMode::Closed).unwrap();
+        let deep = el(&mut dom, "i");
+        dom.append_child(inner, deep).unwrap();
+        let light = el(&mut dom, "u");
+        dom.append_child(host, light).unwrap();
+        let t = dom.create_text(doc, "x").unwrap();
+        dom.append_child(light, t).unwrap();
+        for start in [root, a, host, c, light] {
+            let r = dom.check(start).unwrap();
+            for mode in [0, 1, 2] {
+                assert_eq!(walk(&dom, r, mode), stack_order(&dom, r, mode), "start {start:?} mode {mode}");
+            }
+        }
+        // root, section, span, host, its shadow root, slot, em, the inner
+        // host, its shadow root, i, u, the text, p.
+        assert_eq!(walk(&dom, dom.check(root).unwrap(), 0).len(), 13);
+    }
 }
