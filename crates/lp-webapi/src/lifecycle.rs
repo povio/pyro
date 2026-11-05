@@ -114,6 +114,16 @@ pub fn report_exception(s: &Scope<'_>, exception: &JsException) -> bool {
     !not_canceled
 }
 
+/// Reports an engine diagnostic (a script that failed to load) to the
+/// console/CDP hooks only. It is no script exception, so no `error` event
+/// fires at the Window: Chrome fires `error` at the element and logs.
+pub fn report_diagnostic(s: &Scope<'_>, error: &JsError) {
+    let Ok(page) = crate::target::page_of(s) else { return s.report_exception(error) };
+    let was = page.error_reporting.replace(true);
+    s.report_exception(error);
+    page.error_reporting.set(was);
+}
+
 /// `popstate` at the window (history traversal / back-forward).
 pub fn popstate(page: &Rc<PageDom>, state: Option<Persistent>) {
     let Some(w) = page.window_target() else { return };

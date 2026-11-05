@@ -100,3 +100,26 @@ fn isolated_world_exceptions_skip_the_page_handler() {
     // The page's handler canceled its own error only.
     assert_eq!(*hooks.exceptions.borrow(), ["Error: iso"]);
 }
+
+#[test]
+fn a_script_that_fails_to_load_does_not_call_window_onerror() {
+    let mut thread = crate::browser_thread().unwrap();
+    let hooks = Rc::new(Recorder::default());
+    thread.browser.set_engine_hooks(Some(hooks.clone()));
+    let page = thread.browser.create_page().unwrap();
+    let loader = Rc::new(StaticLoader::default());
+    loader.insert(
+        "http://site.test/",
+        "text/html",
+        "<!doctype html><script>globalThis.seen = []; window.onerror = (m) => { seen.push(m); };</script>\
+         <script src='/missing.js' onerror=\"seen.push('element error')\"></script>",
+        Duration::ZERO,
+    );
+    thread.browser.set_loader(Some(loader));
+    thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    thread.run_until_idle(Some(Instant::now() + Duration::from_secs(3)));
+    // Chrome: `error` at the element and a console report, no Window event.
+    assert_eq!(eval(&thread, page, "seen.join('|')"), "element error");
+    assert_eq!(hooks.exceptions.borrow().len(), 1);
+    assert!(hooks.exceptions.borrow()[0].contains("Failed to load script"));
+}

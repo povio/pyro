@@ -13,8 +13,7 @@
 //! `removeAttribute` clears it. Attributes from the HTML parser, `innerHTML`
 //! and cloning are compiled in the main world before the next event dispatch,
 //! listener registration or handler access (`drain_inline`), so pages without
-//! them pay one emptiness check. Gaps (documented): the special
-//! `window.onerror` 5-argument signature and `onbeforeunload` return
+//! them pay one emptiness check. Gap (documented): `onbeforeunload` return
 //! semantics are not implemented.
 
 use lp_js::{ClassDef, JsClass, JsResult, Scope, Value};

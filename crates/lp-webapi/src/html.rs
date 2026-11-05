@@ -2862,7 +2862,10 @@ pub(crate) fn written_script_fetched(page: &Rc<PageDom>, node: NodeId, url: &str
         Err(error) => {
             if let Some(realm) = page.main_world_realm() {
                 if let Ok(scope) = realm.scope() {
-                    scope.report_exception(&JsError::Type(format!("Failed to load script: {error}")));
+                    crate::lifecycle::report_diagnostic(
+                        &scope,
+                        &JsError::Type(format!("Failed to load script: {error}")),
+                    );
                 }
             }
         }

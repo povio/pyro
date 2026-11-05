@@ -1514,7 +1514,7 @@ impl Browser {
     fn report_load_error(&mut self, page: FrameKey, error: &str) {
         let Some(realm) = self.main_realm(page) else { return };
         let Ok(scope) = realm.scope() else { return };
-        scope.report_exception(&JsError::Type(format!("Failed to load script: {error}")));
+        lp_webapi::lifecycle::report_diagnostic(&scope, &JsError::Type(format!("Failed to load script: {error}")));
     }
 }
 
