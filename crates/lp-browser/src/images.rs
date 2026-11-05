@@ -13,8 +13,9 @@
 //!   recognized image nor `image/*` fires `error`. An `image/*` body whose
 //!   format has no header parser (for example AVIF) loads with an unknown
 //!   size. SVG takes its size from numeric `width`/`height` on the root.
-//! - An empty `src` fires `error`; removing `src` clears the image. Not
-//!   modelled: the `<img>`'s own `srcset`/`sizes` selection,
+//! - An empty `src` fires `error`; removing `src` clears the image. The
+//!   `<img>`'s own `srcset` (with `sizes`) selects the candidate for the
+//!   device pixel ratio (`lp_dom::picture`). Not modelled:
 //!   `loading="lazy"` deferral (lazy images load eagerly), `decode()` timing,
 //!   images that are not connected (`new Image()`).
 //! - An `<img>` child of a `<picture>` loads the first preceding `<source>`

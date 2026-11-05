@@ -1,7 +1,6 @@
-//! `<picture>`: the image source a `<source>` sibling provides for an
-//! `<img>` (HTML "select an image source", the part that reads the picture's
-//! sources). The `<img>`'s own `srcset`/`sizes` are not modelled: without a
-//! matching `<source>` the image loads its `src`.
+//! HTML "select an image source" for an `<img>`: the matching `<source>` of
+//! a `<picture>` parent, else the image's own `srcset` (with `sizes` giving
+//! the source size of width descriptors), else its `src`.
 
 use crate::dom::Dom;
 use crate::media::Viewport;
@@ -90,7 +89,7 @@ impl Dom {
             self.n(idx).element().is_some_and(|e| e.is_html() && &*e.name.local == local)
         };
         if parent == NIL || !html(parent, "picture") {
-            return None;
+            return self.own_srcset_source(i, viewport);
         }
         let mut child = self.n(parent).first_child;
         while child != NIL && child != i {
@@ -103,7 +102,7 @@ impl Dom {
                 });
                 if media_ok && type_ok {
                     if let Some(srcset) = e.attr("srcset") {
-                        let candidates = parse_srcset(srcset, f64::from(viewport.width));
+                        let candidates = parse_srcset(srcset, source_size(e.attr("sizes"), viewport));
                         if let Some(c) = pick_candidate(&candidates, viewport.device_scale_factor) {
                             return Some(c.url.clone());
                         }
@@ -112,6 +111,89 @@ impl Dom {
             }
             child = self.n(child).next;
         }
-        None
+        self.own_srcset_source(i, viewport)
     }
+
+    /// The candidate the `<img>`'s own `srcset` selects; its `src` counts as
+    /// a 1x candidate when the set has no 1x one and no width descriptors.
+    fn own_srcset_source(&self, img: u32, viewport: &Viewport) -> Option<String> {
+        let e = self.n(img).element()?;
+        let srcset = e.attr("srcset")?;
+        let mut candidates = parse_srcset(srcset, source_size(e.attr("sizes"), viewport));
+        let has_width = srcset_has_width_descriptor(srcset);
+        if let Some(src) = e.attr("src").filter(|src| !src.is_empty()) {
+            if !has_width && !candidates.iter().any(|c| c.density == 1.0) {
+                candidates.push(Candidate { url: src.to_owned(), density: 1.0 });
+            }
+        }
+        pick_candidate(&candidates, viewport.device_scale_factor).map(|c| c.url.clone())
+    }
+}
+
+/// Whether a candidate of `srcset` has a width descriptor.
+fn srcset_has_width_descriptor(srcset: &str) -> bool {
+    srcset.split(',').any(|candidate| {
+        candidate.split_ascii_whitespace().skip(1).any(|d| {
+            d.strip_suffix('w').is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+        })
+    })
+}
+
+/// HTML "parse a sizes attribute": the source size in CSS px. Each
+/// comma-separated entry is a media condition followed by a length; the
+/// first whose condition matches (or that has none) wins. `100vw` when
+/// nothing applies.
+pub fn source_size(sizes: Option<&str>, viewport: &Viewport) -> f64 {
+    let default = f64::from(viewport.width);
+    let Some(sizes) = sizes else { return default };
+    let cx = crate::computed::LengthContext {
+        viewport_width: f64::from(viewport.width),
+        viewport_height: f64::from(viewport.height),
+        ..crate::computed::LengthContext::fonts(16.0, 16.0)
+    };
+    // Split on top-level commas.
+    let mut entries = Vec::new();
+    let (mut depth, mut start) = (0i32, 0);
+    for (i, ch) in sizes.char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' => depth -= 1,
+            ',' if depth <= 0 => {
+                entries.push(&sizes[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    entries.push(&sizes[start..]);
+    for entry in entries {
+        let entry = entry.trim();
+        if entry.is_empty() {
+            continue;
+        }
+        // The size is the last component value: a token, or a function.
+        let mut depth = 0i32;
+        let mut split = 0;
+        for (i, ch) in entry.char_indices().rev() {
+            match ch {
+                ')' => depth += 1,
+                '(' => depth -= 1,
+                c if c.is_ascii_whitespace() && depth == 0 => {
+                    split = i + 1;
+                    break;
+                }
+                _ => {}
+            }
+        }
+        let (condition, size) = (entry[..split].trim(), &entry[split..]);
+        // A percentage or a negative length is not a source size value.
+        let Some((px, percent)) = crate::computed::resolve_len(size, &cx) else { continue };
+        if percent != 0.0 || px < 0.0 || size.contains('%') {
+            continue;
+        }
+        if condition.is_empty() || crate::media::matches(condition, viewport) {
+            return px;
+        }
+    }
+    default
 }
