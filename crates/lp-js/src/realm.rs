@@ -222,6 +222,10 @@ pub(crate) struct RealmInner {
     /// their payload headers: `dispose` releases their weak handles, which
     /// must not outlive the VM.
     pub(crate) owned_head: Cell<*mut Header>,
+    /// The member function payloads whose `realm` is this realm (patched JSC
+    /// only; the engine owns them for its lifetime): `dispose` clears their
+    /// `realm`, so the payloads do not keep this allocation alive.
+    member_fns: RefCell<Vec<*const class::MemberPayload>>,
     helpers: RefCell<Option<Persistent>>,
     helper_cache: RefCell<rustc_hash::FxHashMap<&'static str, Persistent>>,
     /// The realm's `Object.prototype`, for the plain-object fast path of `is_plain_object`.
@@ -360,6 +364,20 @@ impl RealmInner {
         self.function_proto.borrow_mut().take();
         self.fn_cache.borrow_mut().clear();
         self.dom_exception.borrow_mut().take();
+        for p in std::mem::take(&mut *self.member_fns.borrow_mut()) {
+            // SAFETY: the engine (which this realm keeps alive) owns the
+            // payload; no reference into the cell is held (`member_call_data`).
+            drop(unsafe { (*p).realm.take() });
+        }
+        #[cfg(debug_assertions)]
+        {
+            let me: *const RealmInner = self;
+            let payloads = self.engine.member_payloads.borrow();
+            debug_assert!(
+                payloads.iter().all(|p| unsafe { (*p.realm.as_ptr()).as_ref() }.is_none_or(|w| w.as_ptr() != me)),
+                "every member payload of a disposed realm has its realm cleared"
+            );
+        }
         if let Some((_, release, _)) = sys::spi::get().weak() {
             for (_, w) in self.identity.borrow_mut().drain() {
                 unsafe { release(self.engine.group(), w) };
@@ -1535,6 +1553,7 @@ pub(crate) fn create(engine: &Rc<EngineInner>, options: RealmOptions) -> JsResul
         identity: RefCell::new(rustc_hash::FxHashMap::default()),
         shared_strings: RefCell::new(rustc_hash::FxHashMap::default()),
         owned_head: Cell::new(ptr::null_mut()),
+        member_fns: RefCell::new(Vec::new()),
         helpers: RefCell::new(None),
         helper_cache: RefCell::new(rustc_hash::FxHashMap::default()),
         object_proto: RefCell::new(None),
@@ -1837,10 +1856,15 @@ fn make_member_fn(
     // slow path every time. The payload has no finalizer there: the registry
     // keeps it for the engine's lifetime.
     if let Some(make) = sys::spi::get().make_function_with_data {
-        let realm = keys.realm.clone();
-        let mut payload = Box::new(class::MemberPayload { tag: class::PayloadTag::Member, call, pure, realm });
+        // A disposed realm would never clear it again (see `member_fns`).
+        let realm = keys.realm.filter(|r| !r.ctx.get().is_null());
+        let cell = Cell::new(realm.map(Rc::downgrade));
+        let mut payload = Box::new(class::MemberPayload { tag: class::PayloadTag::Member, call, pure, realm: cell });
         let data = &mut *payload as *mut class::MemberPayload as *mut c_void;
         engine.member_payloads.borrow_mut().push(payload);
+        if let Some(r) = realm {
+            r.member_fns.borrow_mut().push(data as *const class::MemberPayload);
+        }
         let n = JsString::new(name);
         let f = unsafe { make(ctx, n.as_raw(), length, Some(class::member_call_data), data) };
         if f.is_null() {
@@ -1849,7 +1873,7 @@ fn make_member_fn(
         return Ok(unsafe { Object::from_raw(ctx, f) });
     }
     // No realm: this payload is freed by `member_finalize` (see `MemberPayload::realm`).
-    let payload = class::MemberPayload { tag: class::PayloadTag::Member, call, pure, realm: None };
+    let payload = class::MemberPayload { tag: class::PayloadTag::Member, call, pure, realm: Cell::new(None) };
     let payload = Box::into_raw(Box::new(payload)) as *mut c_void;
     let f = unsafe { Object::from_raw(ctx, sys::JSObjectMake(ctx, class, payload)) };
     let attrs = sys::kJSPropertyAttributeReadOnly | sys::kJSPropertyAttributeDontEnum;
@@ -1869,15 +1893,15 @@ fn make_member_fn(
 /// What every member function of one installation pass shares: the
 /// `length` and `name` keys, and the realm the functions belong to (`None`
 /// for a disposed realm).
-struct MemberKeys {
+struct MemberKeys<'a> {
     length: JsString,
     name: JsString,
-    realm: Option<Weak<RealmInner>>,
+    realm: Option<&'a Rc<RealmInner>>,
 }
 
-impl MemberKeys {
-    fn new(realm: Option<&Rc<RealmInner>>) -> MemberKeys {
-        MemberKeys { length: JsString::new("length"), name: JsString::new("name"), realm: realm.map(Rc::downgrade) }
+impl<'a> MemberKeys<'a> {
+    fn new(realm: Option<&'a Rc<RealmInner>>) -> MemberKeys<'a> {
+        MemberKeys { length: JsString::new("length"), name: JsString::new("name"), realm }
     }
 }
 
@@ -2220,5 +2244,54 @@ mod tests {
         assert_eq!(remap_module_url("file:///c.js", Some("file://")), "file:///c.js");
         assert_eq!(remap_module_url("file:///c.js", Some("null")), "file:///c.js");
         assert_eq!(remap_module_url("file:///c.js", None), "file:///c.js");
+    }
+    struct Probe;
+    impl crate::JsClass for Probe {
+        const NAME: &'static str = "MemberRealmProbe";
+        type Data = ();
+        type Parent = crate::NoParent;
+        fn define(def: &mut crate::ClassDef<Self>) {
+            def.constructor(0, |s, target, _| s.wrap_new::<Self>((), target, None));
+            def.method("one", 0, |s, _, _| Ok(s.number(1.0)));
+        }
+    }
+
+    /// Member payloads live as long as the engine; disposing a realm clears
+    /// the realm they hold (`RealmInner::member_fns`), so they do not keep its
+    /// allocation, and its functions still throw rather than run.
+    #[test]
+    fn disposed_realm_member_payloads_drop_their_realm() {
+        let engine = crate::Engine::new().unwrap();
+        engine.register::<Probe>();
+        let holds = |inner: *const super::RealmInner| {
+            let payloads = engine.inner.member_payloads.borrow();
+            payloads
+                .iter()
+                .filter(|p| unsafe { (*p.realm.as_ptr()).as_ref() }.is_some_and(|w| w.as_ptr() == inner))
+                .count()
+        };
+        let keep = engine.create_realm(Default::default()).unwrap();
+        let realm = engine.create_realm(Default::default()).unwrap();
+        let ptr = std::rc::Rc::as_ptr(&realm.inner);
+        {
+            let s = realm.scope().unwrap();
+            assert_eq!(s.eval("new MemberRealmProbe().one()", None, 1).unwrap().to_number().unwrap(), 1.0);
+            let f = s.eval("MemberRealmProbe.prototype.one", None, 1).unwrap();
+            keep.scope().unwrap().global().set("foreign", f).unwrap();
+        }
+        let patched = crate::sys::spi::get().make_function_with_data.is_some();
+        assert_eq!(holds(ptr) > 0, patched);
+        assert_eq!(realm.inner.member_fns.borrow().len(), holds(ptr));
+        let weak = std::rc::Rc::downgrade(&realm.inner);
+        realm.dispose();
+        assert_eq!(holds(ptr), 0);
+        assert!(realm.inner.member_fns.borrow().is_empty());
+        drop(realm);
+        assert!(weak.upgrade().is_none());
+        let s = keep.scope().unwrap();
+        assert!(s
+            .eval("try { foreign.call(new MemberRealmProbe()); false } catch (e) { true }", None, 1)
+            .unwrap()
+            .to_bool());
     }
 }

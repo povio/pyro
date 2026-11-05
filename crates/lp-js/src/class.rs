@@ -925,11 +925,14 @@ pub(crate) struct MemberPayload {
     /// See [`ClassDef::pure_method`].
     pub pure: bool,
     /// The realm the function was made in, whose context JSC passes to its
-    /// calls: the full dispatch's candidate realm (`guard_in`). `None` for a
-    /// disposed realm's functions, and for those made without the patched
-    /// JSC, whose payload is freed by a GC finalizer, which may run on
-    /// another thread and so must not touch the `Rc` counts.
-    pub realm: Option<std::rc::Weak<crate::realm::RealmInner>>,
+    /// calls: the full dispatch's candidate realm. `None` once that realm is
+    /// disposed (`RealmInner::member_fns` lists the payloads to clear, so the
+    /// engine-lifetime payload does not keep the realm's allocation), and for
+    /// functions made without the patched JSC, whose payload is freed by a GC
+    /// finalizer, which may run on another thread and so must not touch the
+    /// `Rc` counts. Written only on the engine thread, by `dispose`, which a
+    /// call of the function may run: readers never hold a reference into it.
+    pub realm: std::cell::Cell<Option<std::rc::Weak<crate::realm::RealmInner>>>,
 }
 
 /// Header at the start of every wrapper payload (`Boxed<T>`).
@@ -1172,6 +1175,20 @@ pub(crate) unsafe fn guard_in<R: CallbackResult>(
     fallback: R,
     body: impl FnOnce(&Scope<'_>) -> JsResult<R>,
 ) -> R {
+    let realm = candidate.and_then(|c| crate::realm::realm_if_ctx(c, ctx));
+    unsafe { guard_resolved(ctx, realm, exc, fallback, body) }
+}
+
+/// [`guard_in`] with the candidate already upgraded and checked by
+/// [`crate::realm::realm_if_ctx`] (`None`: look the realm up by `ctx`).
+#[inline]
+pub(crate) unsafe fn guard_resolved<R: CallbackResult>(
+    ctx: sys::JSContextRef,
+    realm: Option<Rc<crate::realm::RealmInner>>,
+    exc: *mut sys::JSValueRef,
+    fallback: R,
+    body: impl FnOnce(&Scope<'_>) -> JsResult<R>,
+) -> R {
     let mut body = Some(body);
     let mut out = None;
     let mut step = |scope: &Scope<'_>, step: Step| match step {
@@ -1181,7 +1198,7 @@ pub(crate) unsafe fn guard_in<R: CallbackResult>(
         }
         Step::Root => Ok(out.as_ref().and_then(|v| v.root(scope))),
     };
-    match unsafe { guard_erased(ctx, candidate, exc, &mut step) } {
+    match unsafe { guard_erased(ctx, realm, exc, &mut step) } {
         true => out.expect("successful callback result"),
         false => fallback,
     }
@@ -1201,15 +1218,18 @@ enum Step {
 #[cfg_attr(not(debug_assertions), inline(always))]
 unsafe fn guard_erased(
     ctx: sys::JSContextRef,
-    candidate: Option<&std::rc::Weak<crate::realm::RealmInner>>,
+    candidate: Option<Rc<crate::realm::RealmInner>>,
     exc: *mut sys::JSValueRef,
     step: &mut dyn FnMut(&Scope<'_>, Step) -> JsResult<Option<crate::Persistent>>,
 ) -> bool {
+    // The realm handle is released inside the unwind boundary (its drop may
+    // dispose the realm and call hooks).
+    let mut candidate = candidate;
     let outcome = catch_unwind(AssertUnwindSafe(|| {
         let tls = crate::engine::callback_tls();
         let terminating = &tls.terminating;
         let _depth = DepthGuard::enter_with(&tls.depth);
-        let realm = match candidate.and_then(|c| crate::realm::realm_if_ctx(c, ctx)) {
+        let realm = match candidate.take() {
             Some(realm) => Some(realm),
             None => crate::realm::realm_for_ctx(ctx),
         };
@@ -2091,9 +2111,15 @@ pub(crate) unsafe extern "C" fn member_call_data(
                 return v;
             }
         }
-        // The function's own realm is the one JSC calls it in.
-        let candidate = if payload.is_null() { None } else { (*payload).realm.as_ref() };
-        guard_in(ctx, candidate, exc, ptr::null(), |scope| {
+        // The function's own realm is the one JSC calls it in. Upgraded here,
+        // with no reference into the cell kept: the call may dispose the realm,
+        // which clears it.
+        let realm = if payload.is_null() {
+            None
+        } else {
+            (*(*payload).realm.as_ptr()).as_ref().and_then(|c| crate::realm::realm_if_ctx(c, ctx))
+        };
+        guard_resolved(ctx, realm, exc, ptr::null(), |scope| {
             if payload.is_null() {
                 return Err(JsError::Type("Illegal invocation".into()));
             }
