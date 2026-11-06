@@ -1479,7 +1479,9 @@ impl<'s> Scope<'s> {
 
     /// [`Scope::define_global_constant`] with the value made on first use:
     /// the property is the same non-configurable, read-only accessor from
-    /// the start, and the first read of it (a bare `name`, `globalThis.name`,
+    /// the start, its `get` one function for its whole life (a descriptor
+    /// taken before the first read still applies after it, and after
+    /// `dispose`), and the first read of it (a bare `name`, `globalThis.name`,
     /// the reified getter) calls `make` in this realm and keeps its value as
     /// the constant from then on. A realm whose script never reads it never
     /// pays for the value (a window's `document`: its wrapper installs the

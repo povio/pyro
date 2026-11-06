@@ -1270,6 +1270,20 @@ fn a_lazy_global_constant_is_made_on_its_first_read_only() {
         "1,true,true"
     );
     assert_eq!(made.get(), 2);
+    // Its getter is the one reified before the first read (a failed one
+    // included), so the descriptor taken then applies again as it is: the
+    // snapshot and restore of a global's properties that sandboxes do.
+    assert_eq!(
+        eval_str(
+            &realm,
+            "const after = Object.getOwnPropertyDescriptor(globalThis, 'held'); \
+             [after.get === d.get, globalThis.__lookupGetter__('held') === d.get, \
+              (() => { try { Object.defineProperty(globalThis, 'held', d); return 'applied'; } catch (e) { return e.message; } })(), \
+              (() => { try { Object.defineProperty(globalThis, 'held', { get: d.get }); return 'applied'; } catch (e) { return e.message; } })(), \
+              held.nodeId].join()"
+        ),
+        "true,true,applied,applied,1"
+    );
     // Made once: later reads, compiled code folding it, the getter reified
     // before it was made.
     assert_eq!(eval_str(&realm, "let n = 0; for (let i = 0; i < 200000; i++) n += held.nodeId; n"), "200000");
@@ -1305,6 +1319,7 @@ fn lazy_constant_of_a_disposed_realm(
         let hs = holder.scope().unwrap();
         hs.global().set("stale", global.get(&hs)).unwrap();
     }
+    eval_str(holder, "globalThis.staleGet = Object.getOwnPropertyDescriptor(stale, 'held').get");
     realm.dispose();
     true
 }
@@ -1330,6 +1345,12 @@ fn a_disposed_realms_lazy_constant_throws_and_releases_its_value() {
             "Execution context was destroyed."
         );
         assert_eq!(eval_str(&holder, "Object.getOwnPropertyDescriptor(stale, 'held').configurable"), "false");
+        // The getter stays the function it was while the realm lived.
+        assert_eq!(
+            eval_str(&holder, "Object.getOwnPropertyDescriptor(stale, 'held').get === staleGet"),
+            "true",
+            "read first: {read_first}"
+        );
         assert_eq!(made.get(), u32::from(read_first), "read first: {read_first}");
         overwrite_dead_stack();
         for _ in 0..6 {

@@ -1355,6 +1355,60 @@ fn held_window_scenario() -> (Engine, DomRef, Realm, std::rc::Weak<PageDom>, usi
     (engine, dom, holder, weak, live)
 }
 
+#[test]
+fn a_windows_document_has_one_getter_from_install_to_teardown() {
+    // [LegacyUnforgeable] `document` is the global's own accessor, its value
+    // made on the first read. Its `get` stays one function throughout (before
+    // that read, after it, after the realm is torn down), so descriptors
+    // taken early apply again as they are: the snapshot and restore of a
+    // global's properties that sandboxes and test harnesses do.
+    let Env { engine, page, main } = env("<body><p></p></body>");
+    if !window::has_window_constants() {
+        // The system framework serves `document` from Window.prototype.
+        return;
+    }
+    let holder = engine.create_realm(RealmOptions::default()).unwrap();
+    {
+        let s = main.scope().unwrap();
+        let global = lp_js::Persistent::new(&s, s.global().value());
+        let hs = holder.scope().unwrap();
+        hs.global().set("held", global.get(&hs)).unwrap();
+    }
+    eval(&holder, "globalThis.early = Object.getOwnPropertyDescriptor(held, 'document').get");
+    assert_eq!(
+        eval(
+            &main,
+            "globalThis.snap = Object.getOwnPropertyDescriptors(globalThis); \
+             [typeof snap.document.get, snap.document.set, snap.document.enumerable, snap.document.configurable, \
+              'document' in Window.prototype].join()"
+        ),
+        "function,,true,false,false"
+    );
+    assert_eq!(
+        eval(
+            &main,
+            "const first = document.body.firstChild.nodeName; \
+             const failed = Object.keys(snap).filter(k => { try { Object.defineProperty(globalThis, k, snap[k]); return false; } \
+               catch { return true; } }); \
+             [first, Object.getOwnPropertyDescriptor(globalThis, 'document').get === snap.document.get, \
+              snap.document.get.call(window) === document, failed.join('|')].join()"
+        ),
+        "P,true,true,"
+    );
+    // Navigation's teardown of a frame (lp-browser `frames.rs`).
+    page.dispose();
+    lifecycle::realm_disposed(&page, main.id());
+    main.dispose();
+    assert_eq!(
+        eval(
+            &holder,
+            "[Object.getOwnPropertyDescriptor(held, 'document').get === early, \
+              (() => { try { held.document; return 'read'; } catch (e) { return e.message; } })()].join()"
+        ),
+        "true,Execution context was destroyed."
+    );
+}
+
 /// Overwrites the stack below the caller's frame (see the test above).
 #[inline(never)]
 fn overwrite_dead_stack() -> u64 {
