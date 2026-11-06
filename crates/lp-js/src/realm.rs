@@ -2606,6 +2606,13 @@ fn console_label_call(realm: &RealmInner, method: ConsoleMethod, label: String) 
     })
 }
 
+/// Hands a console call to the embedder. A panicking hook is the
+/// embedder's bug, not the page's: it is not thrown into the script (the
+/// call's own errors, a label's ToString, are).
+fn console_notify(hooks: &dyn crate::engine::EngineHooks, realm: &Realm, level: ConsoleLevel, values: &[Value<'_>]) {
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| hooks.console_api(realm, level, values)));
+}
+
 unsafe fn console_call(
     ctx: sys::JSContextRef,
     method: ConsoleMethod,
@@ -2635,7 +2642,7 @@ unsafe fn console_call(
                     if method == ConsoleMethod::TimeLog && level == ConsoleLevel::Log {
                         values.extend(args.iter().skip(1));
                     }
-                    hooks.console_api(&scope.realm(), level, &values);
+                    console_notify(&*hooks, &scope.realm(), level, &values);
                     return Ok(undefined);
                 }
             };
@@ -2650,7 +2657,7 @@ unsafe fn console_call(
             };
             // Arguments stay rooted by the caller's frame.
             let values: Vec<Value<'_>> = args.iter().skip(skip).collect();
-            hooks.console_api(&scope.realm(), level, &values);
+            console_notify(&*hooks, &scope.realm(), level, &values);
             Ok(undefined)
         })
     }
