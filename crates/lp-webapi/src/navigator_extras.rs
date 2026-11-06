@@ -312,6 +312,16 @@ impl ContextServices {
     pub fn clipboard_text(&self) -> Option<String> {
         self.clipboard.borrow().iter().find(|e| e.0 == "text/plain").map(|e| e.1.clone())
     }
+
+    /// The clipboard's text entries (MIME type, data), as a paste reads them.
+    pub(crate) fn clipboard_strings(&self) -> Vec<(String, String)> {
+        self.clipboard.borrow().iter().filter(|e| !e.2).map(|e| (e.0.clone(), e.1.clone())).collect()
+    }
+
+    /// Replaces the clipboard with text entries (copy, cut).
+    pub(crate) fn write_clipboard_strings(&self, items: Vec<(String, String)>) {
+        *self.clipboard.borrow_mut() = items.into_iter().map(|(ty, data)| (ty, data, false)).collect();
+    }
 }
 
 /// Member `name` (`userAgentData`, `permissions`, `clipboard`, `geolocation` or

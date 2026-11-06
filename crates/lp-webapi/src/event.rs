@@ -45,6 +45,9 @@ pub enum EventInterface {
     TransitionEvent,
     ToggleEvent,
     CommandEvent,
+    /// Made in JS on first use (`crate::editing_globals`): natively an
+    /// Event wrapper with ClipboardEvent.prototype.
+    ClipboardEvent,
 }
 
 /// One touch point (`Touch`): its target and viewport/screen position.
@@ -359,6 +362,7 @@ pub fn wrap_event<'s>(s: &Scope<'s>, core: &EventData) -> JsResult<Object<'s>> {
         EventInterface::TransitionEvent => s.wrap::<TransitionEvent>(d, Some(key)),
         EventInterface::ToggleEvent => s.wrap::<ToggleEvent>(d, Some(key)),
         EventInterface::CommandEvent => s.wrap::<CommandEvent>(d, Some(key)),
+        EventInterface::ClipboardEvent => crate::editing_globals::wrap_clipboard_event(s, d, key),
     }?;
     define_unforgeables(s, &core.page, wrapper)?;
     core.trace_targets(s, wrapper)?;
@@ -1407,7 +1411,14 @@ impl JsClass for InputEvent {
         def.getter("data", |s, e| Ok(e.fields.borrow().data.as_deref().map_or(s.null(), |d| s.string(d))));
         def.getter("inputType", |s, e| Ok(s.string(&e.fields.borrow().input_type)));
         def.getter("isComposing", |s, e| Ok(s.boolean(e.fields.borrow().is_composing)));
-        def.getter("dataTransfer", |s, _e| Ok(s.null()));
+        // Set on paste and insertHTML in editable content.
+        def.getter("dataTransfer", |s, e| {
+            let reference = e.fields.borrow().data_transfer.clone();
+            Ok(match reference {
+                Some(reference) => reference.get(s)?.value(),
+                None => s.null(),
+            })
+        });
         def.method("getTargetRanges", 0, |s, _e, _a| Ok(s.array(&[])?.value()));
     }
 }

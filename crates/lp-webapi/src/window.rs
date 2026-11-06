@@ -155,6 +155,7 @@ where
     crate::event_source::define_globals(def);
     crate::websocket::define_globals(def);
     crate::indexeddb::define_globals(def);
+    crate::editing_globals::define_globals(def);
     def.getter("screen", |s, w| {
         let key = lp_js::IdentityKey(w.page().id() | (1 << 57), 1);
         same_object(s, w.page(), key, || s.wrap::<Screen>(w.page().clone(), Some(key)))

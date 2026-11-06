@@ -9,6 +9,7 @@ mod crypto_js;
 mod custom_elements_js;
 mod document_root_element_js;
 mod dom_js;
+mod editing_js;
 mod error_events_js;
 mod event_source_js;
 mod events_misc_js;

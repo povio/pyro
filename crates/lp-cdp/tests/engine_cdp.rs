@@ -2458,9 +2458,8 @@ fn push_state_event_precedes_the_evaluate_reply() {
 
 /// Playwright on macOS sends the editing commands its table derives from the
 /// key (crInput `_commandsForCode`), e.g. ArrowRight -> ["moveRight"]. Those are
-/// accepted and the engine's own key default actions run (TOS batch 12,
-/// docubox-templates `keyboard.press("ArrowRight")`). Commands that are not the
-/// key's own encoding still fail explicitly, before any event is delivered.
+/// accepted and run in place of the key's default action (TOS batch 12,
+/// docubox-templates `keyboard.press("ArrowRight")`).
 #[test]
 fn input_accepts_mac_key_derived_editing_commands() {
     let mut h = Harness::new();
@@ -2535,9 +2534,10 @@ fn input_accepts_mac_key_derived_editing_commands() {
             "ArrowDown"
         ])
     );
-    // Commands are advisory (Playwright derives scrolling, clipboard, undo
-    // and word movement too, and Emacs-style aliases): the key events are
-    // delivered and the key's own default action runs, as on Linux.
+    // Other commands (scrolling, clipboard, undo, word movement, Emacs-style
+    // aliases): the key events are delivered; handled commands act on the
+    // focused element (here a button: nothing to edit), the others leave the
+    // key's own default action.
     let advisory = [
         ("ArrowLeft", "ArrowLeft", 1, json!(["moveWordLeft"])),
         ("z", "KeyZ", 4, json!(["undo"])),
