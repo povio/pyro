@@ -170,6 +170,16 @@ fn constructor_validates_url_and_protocols() {
         names,
         "SyntaxError,SyntaxError,SyntaxError,SyntaxError,SyntaxError,SyntaxError,SyntaxError,SyntaxError,TypeError"
     );
+    // WebIDL converts `url` before `protocols`.
+    let order = env.eval(
+        r#"const seen = [];
+        try {
+            new WebSocket({ toString() { seen.push('url'); return 'ws://127.0.0.1/'; } },
+                { [Symbol.iterator]() { seen.push('protocols'); throw new Error('stop'); } });
+        } catch (e) { seen.push(e.message); }
+        seen.join()"#,
+    );
+    assert_eq!(order, "url,protocols,stop");
     let urls = env.eval(
         r#"const list = [];
         for (const url of [origin_ + '/x', 'https://127.0.0.1:1/', 'rel?q', '']) {

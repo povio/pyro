@@ -12,7 +12,7 @@
   const define = Object.defineProperty;
   const getOwn = Object.getOwnPropertyDescriptor;
   const ownKeys = Reflect.ownKeys;
-    const iterator = Symbol.iterator;
+  const iterator = Symbol.iterator;
   const toStringTag = Symbol.toStringTag;
   const ET = EventTarget;
   const Ev = Event;
@@ -92,9 +92,11 @@
 
     constructor(url, protocols = undefined) {
       if (arguments.length < 1) throw new TE("Failed to construct 'WebSocket': 1 argument required, but only 0 present.");
-      super();
+      // WebIDL converts the arguments in order: url, then protocols.
+      const href = S(url);
       const list = protocolList(protocols);
-      const result = connect(this, S(url), list);
+      super();
+      const result = connect(this, href, list);
       this.#id = result[0];
       this.#url = result[1];
       this.#origin = result[2];
