@@ -170,6 +170,43 @@ fn css_animations_and_transitions_fire_their_events() {
 }
 
 #[test]
+fn a_first_style_read_fires_nothing_and_a_later_read_after_a_change_fires_its_transition() {
+    // A first read only records the before-change style (the sheets' timing
+    // rules are not needed for it); a second read after a change reads them
+    // and starts the transition. An element first read never transitions.
+    let (mut t, root) = page_with_frames();
+    eval(
+        &root,
+        "globalThis.log = [];
+         for (const type of ['animationstart', 'transitionrun'])
+           addEventListener(type, e => log.push(e.type + ':' + (e.animationName || e.propertyName) + ':' + e.target.id));
+         const style = document.head.appendChild(document.createElement('style'));
+         style.textContent = '@keyframes grow {} .t { width: 100px; transition: width 1s } .w { width: 200px } .a { animation: grow 1s infinite }'; 0",
+    );
+    t.run_until_idle(Some(Instant::now() + Duration::from_millis(50)));
+    eval(
+        &root,
+        "for (const id of ['el', 'first', 'animated']) {
+           const e = document.body.appendChild(document.createElement('div'));
+           e.id = id;
+         }
+         el.className = 't';
+         getComputedStyle(el).width;
+         el.className = 't w';
+         getComputedStyle(el).width;
+         first.className = 't w';
+         getComputedStyle(first).width;
+         animated.className = 'a';
+         getComputedStyle(animated).animationName; 0",
+    );
+    run_until(&mut t, &root, "log.length >= 2");
+    t.run_until_idle(Some(Instant::now() + Duration::from_millis(50)));
+    let mut log: Vec<String> = eval(&root, "log.join(' ')").split(' ').map(str::to_owned).collect();
+    log.sort();
+    assert_eq!(log, ["animationstart:grow:animated", "transitionrun:width:el"]);
+}
+
+#[test]
 fn the_scrolling_elements_offsets_are_the_viewports() {
     let (mut t, root) = page_with_frames();
     assert_eq!(
