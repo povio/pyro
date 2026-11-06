@@ -1,25 +1,57 @@
 diff --git a/Source/JavaScriptCore/API/JSFork.cpp b/Source/JavaScriptCore/API/JSFork.cpp
-index 16399944e7..56a45112c2 100644
+index 16399944e7..fbc2fd4b5a 100644
 --- a/Source/JavaScriptCore/API/JSFork.cpp
 +++ b/Source/JavaScriptCore/API/JSFork.cpp
-@@ -330,9 +330,15 @@ const void* JSValueGetStringCharacters(JSContextRef ctx, JSValueRef value, size_
+@@ -20,6 +20,7 @@
+ #include "OperationResult.h"
+ #include "Snippet.h"
+ #include "SnippetParams.h"
++#include "TopExceptionScope.h"
+ #include <wtf/Lock.h>
+ #include <wtf/NeverDestroyed.h>
+ #include "DeleteAllCodeEffort.h"
+@@ -329,14 +330,33 @@ const void* JSValueGetStringCharacters(JSContextRef ctx, JSValueRef value, size_
+     JSValue v = toJS(globalObject, value);
      if (!v.isString())
          return nullptr;
-     VM& vm = globalObject->vm();
-+    JSString* cell = asString(v);
-+    // Resolving a rope allocates, which needs the API lock; a caller outside a C API
-+    // callback (which keeps the lock) does not hold it. A flat string needs none.
-+    std::optional<JSLockHolder> locker;
-+    if (cell->isRope() && !vm.currentThreadIsHoldingAPILock())
-+        locker.emplace(vm);
-     auto scope = DECLARE_THROW_SCOPE(vm);
-     // Resolves a rope once; the flat string stays cached in the cell.
+-    VM& vm = globalObject->vm();
+-    auto scope = DECLARE_THROW_SCOPE(vm);
+-    // Resolves a rope once; the flat string stays cached in the cell.
 -    const String& string = asString(v)->value(globalObject);
-+    const String& string = cell->value(globalObject);
-     RETURN_IF_EXCEPTION(scope, nullptr);
-     if (string.isNull())
+-    RETURN_IF_EXCEPTION(scope, nullptr);
+-    if (string.isNull())
++    JSString* cell = asString(v);
++    StringImpl* impl;
++    // A flat string is read as it is: nothing allocates or throws, so it needs neither the API
++    // lock nor an exception check (which would also run the VM's traps, outside the VM too).
++    if (!cell->isRope()) [[likely]]
++        impl = cell->getValueImpl();
++    else {
++        // Resolving a rope allocates (once; the flat string stays cached in the cell), which
++        // needs the API lock. C API callbacks keep it (patch 0009), and there a failure stays
++        // pending and reaches the script like any throw. A caller that does not hold the lock
++        // is the top of the stack: nothing above it would see the out-of-memory error, so it
++        // is dropped here (JSForkPrivate.h describes the callback case).
++        VM& vm = globalObject->vm();
++        std::optional<JSLockHolder> locker;
++        if (!vm.currentThreadIsHoldingAPILock())
++            locker.emplace(vm);
++        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
++        auto string = cell->value(globalObject);
++        if (scope.exception()) [[unlikely]] {
++            if (locker)
++                scope.clearException();
++            return nullptr;
++        }
++        impl = string->impl();
++    }
++    if (!impl)
          return nullptr;
-@@ -346,6 +352,70 @@ const void* JSValueGetStringCharacters(JSContextRef ctx, JSValueRef value, size_
+-    StringImpl* impl = string.impl();
+     if (length)
+         *length = impl->length();
+     if (is8Bit)
+@@ -346,6 +366,70 @@ const void* JSValueGetStringCharacters(JSContextRef ctx, JSValueRef value, size_
      return impl->span16().data();
  }
  

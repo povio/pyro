@@ -117,8 +117,10 @@ impl<'s> Value<'s> {
     }
 
     /// [`Value::string_units`] for any caller, inside a native callback or
-    /// not: patch 0016's JavaScriptCore takes the API lock when it has to
-    /// resolve a rope outside a callback. `None` without that patch.
+    /// not: patch 0016's JavaScriptCore reads a flat string with no lock and
+    /// no trap check, and takes the API lock only to resolve a rope outside a
+    /// callback, where a failure leaves no exception pending. `None` without
+    /// that patch.
     fn string_units_anywhere(&self) -> Option<StringUnits<'_>> {
         sys::spi::direct_strings()?;
         self.string_units()

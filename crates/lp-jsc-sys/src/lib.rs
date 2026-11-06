@@ -716,9 +716,11 @@ pub mod spi {
         }
 
         /// Strings to and from host characters without a `JSStringRef` in
-        /// between (patch 0016), all or nothing. Its JavaScriptCore also takes
-        /// the API lock in `JSValueGetStringCharacters` when it resolves a rope
-        /// outside a callback, so `value_string_characters` is safe anywhere.
+        /// between (patch 0016), all or nothing. Its JavaScriptCore also makes
+        /// `value_string_characters` safe anywhere: a flat string is read with
+        /// no lock and no exception check, and a rope is resolved under the API
+        /// lock, taken when the caller does not hold it; a failure there (out of
+        /// memory) leaves no exception pending.
         pub fn direct_strings(&self) -> Option<DirectStrings> {
             self.value_string_characters?;
             Some(DirectStrings {

@@ -395,9 +395,12 @@ it, patch `0009`). `Scope::string` passes an ASCII `&str` as it is and transcode
 scalar fits (as JSC keeps parsed text) and to UTF-16 otherwise, on the stack when short. `JSStringCreateWithLatin1Characters`
 does the same for `JsString::new` (property names, script sources), and `JSStringGetStoredCharacters` reads a
 `JSStringRef` without `JSStringGetCharactersPtr`'s UTF-16 widening of an 8-bit string (JSON results, property names).
-`JSValueGetStringCharacters` (patch `0012`) now takes the lock when it resolves a rope outside a callback, so
+`JSValueGetStringCharacters` (patch `0012`) was only called inside callbacks; `0016` makes it safe anywhere, so
 `Value::to_string` reads a string's own characters anywhere, CDP serialization included, instead of copying them into
-a `JSStringRef` and widening them. With the system framework (or an older build) all of this falls back to the
+a `JSStringRef` and widening them. A flat string is read with no lock and no exception check (the check would also run
+the VM's traps, outside the VM too). Only a rope takes the lock, when the caller does not hold it, and there an
+out-of-memory error from resolving it is cleared, since nothing above the call would see it; inside a callback it stays
+pending and reaches the script. With the system framework (or an older build) all of this falls back to the
 `JSStringRef` path. The functions are declared in `JSFork.cpp`, not `JSForkPrivate.h`, which every precompiled
 header includes.
 
