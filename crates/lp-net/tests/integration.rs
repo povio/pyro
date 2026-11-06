@@ -9,6 +9,7 @@ mod h2;
 mod idle_release;
 mod proxy;
 mod static_files;
+mod websocket;
 
 /// `autotests = false` means a file in tests/ that is neither a module here nor
 /// its own `[[test]]` target would silently never run.
