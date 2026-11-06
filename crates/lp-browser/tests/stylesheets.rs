@@ -127,8 +127,9 @@ fn stylesheet_inserted_by_dcl_listener_delays_window_load() {
 
 #[test]
 fn invalid_mime_integrity_and_oversized_css_report_error_without_retaining_bytes() {
-    let (mut thread, page, loader) = setup("<link id=mime rel=stylesheet href=/wrong.css><link id=integrity rel=stylesheet href=/integrity.css integrity='sha256-unsupported'><link id=large rel=stylesheet href=/large.css>");
+    let (mut thread, page, loader) = setup("<link id=mime rel=stylesheet href=/wrong.css><link id=integrity rel=stylesheet href=/integrity.css integrity='sha256-mismatch'><link id=large rel=stylesheet href=/large.css>");
     loader.insert("http://site.test/wrong.css", "text/html", "html { display: none }", Duration::ZERO);
+    loader.insert("http://site.test/integrity.css", "text/css", "html { display: none }", Duration::ZERO);
     loader.insert("http://site.test/large.css", "text/css", &" ".repeat(4 * 1024 * 1024 + 1), Duration::ZERO);
     thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
     settle(&mut thread);
@@ -137,8 +138,52 @@ fn invalid_mime_integrity_and_oversized_css_report_error_without_retaining_bytes
         "integrity:error|large:error|mime:error"
     );
     assert_eq!(thread.browser.page(page).unwrap().stylesheet_usage(), (0, 0));
-    assert!(!loader.log.borrow().iter().any(|u| u.ends_with("integrity.css")));
+    assert_eq!(eval(&thread, page, "getComputedStyle(document.documentElement).display"), "block");
     assert_eq!(eval(&thread, page, "events[events.length - 1]"), "window:load");
+}
+
+#[test]
+fn integrity_matching_stylesheets_apply_and_opaque_ones_are_blocked() {
+    let css = "html { display: none }";
+    let sri = lp_webapi::sri::sha256_expression(css.as_bytes());
+    let (mut thread, page, loader) = setup(&format!(
+        "<link id=ok rel=stylesheet href=/ok.css integrity='{sri}'>\
+         <link id=unknown rel=stylesheet href=/unknown.css integrity='md5-whatever'>\
+         <link id=opaque rel=stylesheet href=http://cdn.test/opaque.css integrity='{sri}'>\
+         <link id=cors rel=stylesheet href=http://cdn.test/cors.css integrity='{sri}' crossorigin=anonymous>"
+    ));
+    for url in [
+        "http://site.test/ok.css",
+        "http://site.test/unknown.css",
+        "http://cdn.test/opaque.css",
+        "http://cdn.test/cors.css",
+    ] {
+        loader.insert(url, "text/css", css, Duration::ZERO);
+    }
+    thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    settle(&mut thread);
+    assert_eq!(
+        eval(&thread, page, "events.filter(e => e !== 'window:load').sort().join('|')"),
+        "cors:load|ok:load|opaque:error|unknown:load"
+    );
+    assert_eq!(eval(&thread, page, "getComputedStyle(document.documentElement).display"), "none");
+}
+
+#[test]
+fn base_href_resolves_stylesheet_urls() {
+    let (mut thread, page, loader) = setup("<base href='/assets/'><link id=theme rel=stylesheet href=theme.css>");
+    loader.insert(
+        "http://site.test/deep/route/",
+        "text/html",
+        "<base href='/assets/'><link id=theme rel=stylesheet href=theme.css>",
+        Duration::ZERO,
+    );
+    loader.insert("http://site.test/assets/theme.css", "text/css", "html { display: none }", Duration::ZERO);
+    thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/deep/route/")).unwrap();
+    settle(&mut thread);
+    assert_eq!(eval(&thread, page, "events.join('|')"), "theme:load|window:load");
+    assert!(!loader.log.borrow().iter().any(|u| u.contains("/deep/route/theme.css")));
+    assert_eq!(eval(&thread, page, "getComputedStyle(document.documentElement).display"), "none");
 }
 
 #[test]

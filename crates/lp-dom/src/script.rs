@@ -242,7 +242,19 @@ impl Dom {
             return;
         }
         let relevant = matches!(local, "src" | "href" | "rel" | "media" | "srcset" | "type" | "disabled");
-        if !relevant || !self.connected_for_resources(idx) {
+        if !relevant {
+            return;
+        }
+        if !self.connected_for_resources(idx) {
+            // HTML "update the image data" runs for an `<img>` whether or not
+            // it is connected (`new Image()`, a tree built before insertion).
+            // The loader drops events of a document without a browsing
+            // context (template contents, createHTMLDocument).
+            if matches!(local, "src" | "srcset")
+                && self.n(idx).element().is_some_and(|e| e.is_html() && e.name.local == local_name!("img"))
+            {
+                self.push_resource(idx, ResourceKind::Img, ResourceReason::AttrChanged);
+            }
             return;
         }
         if let Some(k) = self.resource_kind(idx) {

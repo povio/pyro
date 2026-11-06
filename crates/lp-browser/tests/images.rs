@@ -120,3 +120,98 @@ fn blob_and_inserted_images_load_after_window_load_without_reordering_it() {
     settle(&mut thread);
     assert_eq!(eval(&thread, page, "events.join('|')"), "window:load|blob:load:true:5x7");
 }
+
+#[test]
+fn images_that_are_not_connected_load_and_delay_window_load() {
+    let (mut thread, page, loader) = setup(
+        "<template id=t><img src=/inert.png></template><script>
+           globalThis.detached = [];
+           const img = new Image();
+           img.onload = () => detached.push('new:' + img.complete + ':' + img.naturalWidth);
+           img.src = '/slow.png';
+           addEventListener('load', () => detached.push('window'));
+           const built = document.createElement('img');
+           built.onerror = () => detached.push('built:error');
+           built.setAttribute('src', '/missing.png');
+           const inert = document.implementation.createHTMLDocument().createElement('img');
+           inert.src = '/inert-doc.png';
+         </script>",
+    );
+    loader.insert_bytes("http://site.test/slow.png", "image/png", &png(4, 3), Duration::from_millis(30));
+    thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    settle(&mut thread);
+    let log = eval(&thread, page, "detached.join('|')");
+    assert!(log.ends_with("new:true:4|window"), "a detached image delays window load: {log}");
+    assert!(log.contains("built:error"), "{log}");
+    // Documents without a browsing context fetch nothing.
+    assert!(!loader.log.borrow().iter().any(|u| u.contains("inert")), "{:?}", loader.log.borrow());
+    // An image that is not referenced any more still fires its event.
+    loader.insert_bytes("http://site.test/slow.png?2", "image/png", &png(1, 1), Duration::from_millis(20));
+    eval(
+        &thread,
+        page,
+        "detached.length = 0; (() => { const i = new Image(); i.onload = () => detached.push('gc'); i.src = '/slow.png?2'; })(); 1",
+    );
+    thread.browser.checkpoint();
+    thread.browser.engine.collect_garbage_now();
+    settle(&mut thread);
+    assert_eq!(eval(&thread, page, "detached.join('|')"), "gc");
+    // Inserting a loaded image does not request it again.
+    eval(&thread, page, "const again = new Image(); again.src = '/slow.png'; globalThis.again = again; 1");
+    settle(&mut thread);
+    eval(&thread, page, "document.body.append(again); 1");
+    settle(&mut thread);
+    assert_eq!(loader.log.borrow().iter().filter(|u| u.ends_with("/slow.png")).count(), 2);
+}
+
+#[test]
+fn decode_settles_with_the_current_request() {
+    let (mut thread, page, loader) = setup("<p>decode</p>");
+    loader.insert_bytes("http://site.test/a.png", "image/png", &png(2, 2), Duration::from_millis(10));
+    loader.insert_bytes("http://site.test/b.png", "image/png", &png(3, 3), Duration::from_millis(10));
+    loader.insert_bytes("http://site.test/corrupt.png", "image/png", b"\x89PNG-not-really", Duration::ZERO);
+    thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    settle(&mut thread);
+    eval(
+        &thread,
+        page,
+        "globalThis.out = {};
+         globalThis.note = (name, p) => p.then(() => out[name] = 'ok', e => out[name] = e.name);
+         const a = new Image(); a.src = '/a.png'; note('good', a.decode());
+         note('nosrc', new Image().decode());
+         note('missing', Object.assign(new Image(), {src: '/missing.png'}).decode());
+         note('corrupt', Object.assign(new Image(), {src: '/corrupt.png'}).decode());
+         const c = new Image(); c.src = '/a.png?changed'; note('changed', c.decode()); c.src = '/b.png'; note('after', c.decode());
+         const inert = document.implementation.createHTMLDocument().createElement('img');
+         inert.src = '/a.png'; note('inactive', inert.decode());
+         globalThis.a = a; 1",
+    );
+    settle(&mut thread);
+    assert_eq!(
+        eval(
+            &thread,
+            page,
+            "['good','nosrc','missing','corrupt','changed','after','inactive'].map(k => k + ':' + out[k]).join('|')"
+        ),
+        "good:ok|nosrc:EncodingError|missing:EncodingError|corrupt:EncodingError|changed:EncodingError|after:ok|inactive:EncodingError"
+    );
+    // A complete image decodes at once, also after setting the same src again.
+    eval(&thread, page, "a.src = '/a.png'; note('again', a.decode()); 1");
+    settle(&mut thread);
+    assert_eq!(eval(&thread, page, "out.again"), "ok");
+}
+
+#[test]
+fn base_href_resolves_image_urls() {
+    let (mut thread, page, loader) = setup("");
+    loader.insert(
+        "http://site.test/deep/route/",
+        "text/html",
+        "<base href='/assets/'><img id=a src=a.png>",
+        Duration::ZERO,
+    );
+    loader.insert_bytes("http://site.test/assets/a.png", "image/png", &png(5, 5), Duration::ZERO);
+    thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/deep/route/")).unwrap();
+    settle(&mut thread);
+    assert_eq!(eval(&thread, page, "events.join('|')"), "a:load:true:5x5|window:load");
+}

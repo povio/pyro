@@ -158,8 +158,11 @@ pub struct PageDom {
     submitting: RefCell<Vec<NodeId>>,
     hovered: Cell<Option<NodeId>>,
     /// `<img>` resource state set by the embedder: the `src` value the
-    /// current load is for, and whether it is still loading.
-    images: RefCell<FxHashMap<NodeId, (String, bool)>>,
+    /// current load is for, whether it is still loading, and whether the
+    /// finished load is decodable (`decode()` resolves).
+    pub(crate) images: RefCell<FxHashMap<NodeId, (String, bool, bool)>>,
+    /// Pending `HTMLImageElement.decode()` promises (`crate::image_decode`).
+    pub(crate) image_decodes: RefCell<FxHashMap<NodeId, Vec<crate::image_decode::PendingDecode>>>,
     /// The last mouse input's position and state, for boundary events when
     /// content under a stationary pointer changes.
     pub(crate) pointer: RefCell<Option<crate::input::MouseInput>>,
@@ -508,6 +511,7 @@ impl PageDom {
             submitting: RefCell::new(Vec::new()),
             hovered: Cell::new(None),
             images: RefCell::new(FxHashMap::default()),
+            image_decodes: RefCell::new(FxHashMap::default()),
             pointer: RefCell::new(None),
             hover_update_queued: Cell::new(false),
             press_target: Cell::new(None),
@@ -1352,10 +1356,11 @@ impl PageDom {
     pub fn set_image_state(&self, el: NodeId, src: Option<&str>, pending: bool) {
         match src {
             Some(src) => {
-                self.images.borrow_mut().insert(el, (src.to_owned(), pending));
+                self.images.borrow_mut().insert(el, (src.to_owned(), pending, false));
             }
             None => {
                 self.images.borrow_mut().remove(&el);
+                crate::image_decode::reject_all(self, el);
             }
         }
     }
@@ -1366,7 +1371,8 @@ impl PageDom {
         let src = self.dom.borrow().get_attribute(el, "src").ok().flatten().map(str::to_owned);
         let Some(src) = src else { return true };
         match self.images.borrow().get(&el) {
-            Some((loading, pending)) if *loading == src => !pending,
+            Some((loading, pending, _)) if *loading == src => !pending,
+
             // Empty or unresolvable sources are complete (broken).
             _ => src.trim().is_empty(),
         }
@@ -1530,6 +1536,18 @@ impl PageDom {
         self.node_wrappers.borrow().get(idx as usize).is_some_and(|entry| {
             entry.iter().any(|(_, raw)| unsafe { lp_js::WrapperRef::from_raw(*raw).is_some_and(|r| r.is_kept()) })
         })
+    }
+
+    /// Keeps node `idx`'s live wrappers (of every world) from collection.
+    pub(crate) fn keep_node(&self, idx: u32) {
+        if let Some(entry) = self.node_wrappers.borrow().get(idx as usize) {
+            for (_, raw) in entry {
+                // SAFETY: a live table entry.
+                if let Some(w) = unsafe { lp_js::WrapperRef::from_raw(*raw) } {
+                    unsafe { w.set_kept(true) };
+                }
+            }
+        }
     }
 
     /// Stops keeping node `idx`'s wrappers (of `realm`, or of every world).

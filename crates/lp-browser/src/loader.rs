@@ -230,6 +230,9 @@ impl ResourceLoader for NetLoader {
         if request.crossorigin.as_deref().is_some_and(|v| v.eq_ignore_ascii_case("use-credentials")) {
             req.credentials = lp_net::Credentials::Include;
         }
+        if req.url.scheme() == "blob" {
+            req.blob = blob_body(browser, request.page, req.url.as_str());
+        }
         if !matches!(request.kind, ResourceKind::Document | ResourceKind::Iframe) {
             req.origin = Some(
                 request
@@ -500,6 +503,74 @@ pub(crate) fn origin_of(url: &str) -> String {
 
 fn resolve_url(base: &str, href: &str) -> Option<String> {
     url::Url::parse(base).ok()?.join(href).ok().map(|u| u.to_string())
+}
+
+/// The object a `blob:` URL names, from the blob URL store of a document of
+/// `page` with the URL's origin: the requesting document's own, or a parent's
+/// or child's for a same-origin frame (a parent's blob as an iframe `src`).
+fn blob_body(browser: &Browser, page: PageId, url: &str) -> Option<lp_net::BlobBody> {
+    let host = browser.page(page)?.frames.clone();
+    let origin = origin_of(url);
+    host.keys().into_iter().find_map(|key| {
+        let page_dom = browser.doc(key).filter(|d| d.main_frame.origin == origin)?.main_frame.page_dom.clone()?;
+        let (bytes, mime) = page_dom.blob_url(url)?;
+        Some(lp_net::BlobBody { bytes, mime })
+    })
+}
+
+/// The base URL `node`'s document resolves its URLs against: its first
+/// `<base href>`, else the document's fallback base URL.
+pub(crate) fn node_base_url(dom: &lp_dom::Dom, node: NodeId) -> Option<String> {
+    let doc = dom.node_document(node).ok()?;
+    dom.document_base_url(doc).ok().map(str::to_owned)
+}
+
+/// The `integrity` and `crossorigin` attributes a script fetch honours.
+#[derive(Clone, Default)]
+pub(crate) struct ScriptFetch {
+    pub integrity: Option<String>,
+    pub crossorigin: Option<String>,
+}
+
+impl ScriptFetch {
+    fn of(info: &lp_dom::script::ScriptInfo) -> ScriptFetch {
+        ScriptFetch {
+            integrity: info.integrity.clone().filter(|v| !lp_webapi::sri::is_empty(v)),
+            crossorigin: info.crossorigin.clone(),
+        }
+    }
+}
+
+/// SRI for a fetched response: `None` when it may be used, else the
+/// console message. A cross-origin response fetched without CORS is opaque
+/// and never matches (Fetch: integrity metadata on a no-cors request).
+pub(crate) fn integrity_error(
+    resource: &Resource,
+    integrity: Option<&str>,
+    cors: bool,
+    document_origin: &str,
+) -> Option<String> {
+    let integrity = integrity.filter(|v| !lp_webapi::sri::is_empty(v))?;
+    let opaque = !cors && {
+        let origin = origin_of(&resource.url);
+        origin != "null" && origin != document_origin
+    };
+    if opaque {
+        return Some(format!(
+            "Subresource Integrity: The resource '{}' has an integrity attribute, but the resource requires the \
+             request to be CORS enabled to check the integrity, and it is not. The resource has been blocked \
+             because the integrity cannot be enforced.",
+            resource.url
+        ));
+    }
+    (!lp_webapi::sri::matches(integrity, &resource.body)).then(|| {
+        format!(
+            "Failed to find a valid digest in the 'integrity' attribute for resource '{}' with computed SHA-256 \
+             integrity '{}'. The resource has been blocked.",
+            resource.url,
+            lp_webapi::sri::sha256_expression(&resource.body)
+        )
+    })
 }
 
 impl Browser {
@@ -863,10 +934,14 @@ impl Browser {
             _ => return,
         };
         let src_url = match info.src.as_deref() {
-            Some(s) => match resolve_url(&base, s) {
-                Some(u) => Some(u),
-                None => return, // spec: error event (needs lp-webapi)
-            },
+            Some(s) => {
+                // `<base href>` aware; the inline-script URL stays `base`.
+                let src_base = node_base_url(&element.dom.borrow(), node).unwrap_or_else(|| base.clone());
+                match resolve_url(&src_base, s) {
+                    Some(u) => Some(u),
+                    None => return, // spec: error event (needs lp-webapi)
+                }
+            }
             None => None,
         };
         if src_url.is_some() {
@@ -875,8 +950,12 @@ impl Browser {
         }
         match (ty, src_url) {
             (ScriptType::Classic, None) => self.execute_at_insertion_point(page, &info.inline_text, &base, &element),
-            (ScriptType::Classic, Some(url)) if info.async_ => self.fetch_async(page, ty, url, element),
-            (ScriptType::Classic, Some(url)) if info.defer => self.fetch_deferred(page, ty, url, element),
+            (ScriptType::Classic, Some(url)) if info.async_ => {
+                self.fetch_async(page, ty, url, element, ScriptFetch::of(&info))
+            }
+            (ScriptType::Classic, Some(url)) if info.defer => {
+                self.fetch_deferred(page, ty, url, element, ScriptFetch::of(&info))
+            }
             (ScriptType::Classic, Some(url)) => {
                 // Parser-blocking: pause until fetched and executed.
                 let loader_id = self.current_loader(page);
@@ -884,7 +963,7 @@ impl Browser {
                     l.blocked = true;
                 }
                 let u = url.clone();
-                self.fetch_text(page, url, ResourceKind::Script, move |b, res| {
+                self.fetch_script(page, url, ResourceKind::Script, ScriptFetch::of(&info), move |b, res| {
                     if b.current_loader(page) != loader_id {
                         return;
                     }
@@ -904,8 +983,10 @@ impl Browser {
                     b.continue_parsing(page);
                 });
             }
-            (ScriptType::Module, Some(url)) if info.async_ => self.fetch_async(page, ty, url, element),
-            (ScriptType::Module, Some(url)) => self.fetch_deferred(page, ty, url, element),
+            (ScriptType::Module, Some(url)) if info.async_ => {
+                self.fetch_async(page, ty, url, element, ScriptFetch::of(&info))
+            }
+            (ScriptType::Module, Some(url)) => self.fetch_deferred(page, ty, url, element, ScriptFetch::of(&info)),
             (ScriptType::Module, None) => {
                 let url = {
                     let mut l = self.load_mut(page).expect("load");
@@ -931,6 +1012,19 @@ impl Browser {
         kind: ResourceKind,
         done: impl FnOnce(&mut Browser, Result<String, String>) + 'static,
     ) {
+        self.fetch_script(page, url, kind, ScriptFetch::default(), done);
+    }
+
+    /// [`Browser::fetch_text`] honouring a script's `crossorigin` (CORS
+    /// mode) and `integrity` (a mismatch is an error).
+    pub(crate) fn fetch_script(
+        &mut self,
+        page: FrameKey,
+        url: String,
+        kind: ResourceKind,
+        opts: ScriptFetch,
+        done: impl FnOnce(&mut Browser, Result<String, String>) + 'static,
+    ) {
         let Some(loader) = self.loader_for(page) else {
             self.scheduler().post(TaskSource::Networking, move |b| done(b, Err("no resource loader".into())));
             return;
@@ -939,14 +1033,24 @@ impl Browser {
         let frame_id = self.doc(page).map(|p| p.main_frame.id.0.clone());
         // Subresources carry the document's loader id (CDP Network.* routing).
         let loader_id = self.doc(page).map(|p| p.main_frame.loader_id.0.clone());
-        let req =
-            FetchRequest { post: None, url, kind, page: page.page, referrer, frame_id, loader_id, crossorigin: None };
+        let ScriptFetch { integrity, crossorigin } = opts;
+        let cors = kind == ResourceKind::ModuleScript || crossorigin.is_some();
+        let req = FetchRequest { post: None, url, kind, page: page.page, referrer, frame_id, loader_id, crossorigin };
         loader.fetch(
             self,
             req,
             Box::new(move |b, res| {
                 let res = match res {
-                    Ok(r) if (200..300).contains(&r.status) => Ok(r.text()),
+                    Ok(r) if (200..300).contains(&r.status) => {
+                        let blocked = integrity.as_deref().and_then(|i| {
+                            let origin = b.doc(page).map(|p| p.main_frame.origin.clone()).unwrap_or_default();
+                            integrity_error(&r, Some(i), cors, &origin)
+                        });
+                        match blocked {
+                            Some(e) => Err(e),
+                            None => Ok(r.text()),
+                        }
+                    }
                     Ok(r) => Err(format!("HTTP {} for {}", r.status, r.url)),
                     Err(e) => Err(e),
                 };
@@ -955,12 +1059,19 @@ impl Browser {
         );
     }
 
-    fn fetch_deferred(&mut self, page: FrameKey, ty: ScriptType, url: String, element: Rc<ResourceNode>) {
+    fn fetch_deferred(
+        &mut self,
+        page: FrameKey,
+        ty: ScriptType,
+        url: String,
+        element: Rc<ResourceNode>,
+        opts: ScriptFetch,
+    ) {
         let ps = Rc::new(RefCell::new(PendingScript { element, ty, url: url.clone(), source: None }));
         self.load_mut(page).expect("load").deferred.push_back(ps.clone());
         let kind = if ty == ScriptType::Module { ResourceKind::ModuleScript } else { ResourceKind::Script };
         let loader_id = self.current_loader(page);
-        self.fetch_text(page, url, kind, move |b, res| {
+        self.fetch_script(page, url, kind, opts, move |b, res| {
             if b.current_loader(page) != loader_id {
                 return;
             }
@@ -974,7 +1085,14 @@ impl Browser {
     /// runs it when it arrives. While it is in flight it delays the `load`
     /// event of a document that is still loading; a document without a
     /// `DocumentLoad` (about:blank, a written document) has no such gate.
-    fn fetch_async(&mut self, page: FrameKey, ty: ScriptType, url: String, element: Rc<ResourceNode>) {
+    fn fetch_async(
+        &mut self,
+        page: FrameKey,
+        ty: ScriptType,
+        url: String,
+        element: Rc<ResourceNode>,
+        opts: ScriptFetch,
+    ) {
         let loader_id = self.frame_loader(page);
         if loader_id.is_none() {
             return;
@@ -988,7 +1106,7 @@ impl Browser {
         };
         let kind = if ty == ScriptType::Module { ResourceKind::ModuleScript } else { ResourceKind::Script };
         let u = url.clone();
-        self.fetch_text(page, url, kind, move |b, res| {
+        self.fetch_script(page, url, kind, opts, move |b, res| {
             if b.frame_loader(page) != loader_id {
                 return;
             }
@@ -1109,13 +1227,16 @@ impl Browser {
                 self.script_loaded(page, &element, false);
                 return;
             }
-            Some(s) => match resolve_url(&base, s) {
-                Some(u) => Some(u),
-                None => {
-                    self.script_loaded(page, &element, false);
-                    return;
+            Some(s) => {
+                let src_base = node_base_url(&element.dom.borrow(), node).unwrap_or_else(|| base.clone());
+                match resolve_url(&src_base, s) {
+                    Some(u) => Some(u),
+                    None => {
+                        self.script_loaded(page, &element, false);
+                        return;
+                    }
                 }
-            },
+            }
         };
         match (ty, src_url) {
             // Spec: runs immediately, at insertion; here once the inserting
@@ -1137,7 +1258,7 @@ impl Browser {
             // `defer` is ignored and they run as soon as they arrive.
             (ScriptType::Classic, Some(url)) | (ScriptType::Module, Some(url)) => {
                 self.block_rendering_on_script(page, node, false);
-                self.fetch_async(page, ty, url, element)
+                self.fetch_async(page, ty, url, element, ScriptFetch::of(&info))
             }
             (ScriptType::Module, None) => {
                 let url = dynamic_inline_module_url(&base);
@@ -1487,7 +1608,10 @@ impl Browser {
             info
         };
         let base = self.doc(page).map(|p| p.main_frame.base_url.clone()).unwrap_or_default();
-        let src_url = info.src.as_deref().and_then(|s| resolve_url(&base, s));
+        let src_url = info.src.as_deref().and_then(|s| {
+            let src_base = node_base_url(&dom.borrow(), node).unwrap_or_else(|| base.clone());
+            resolve_url(&src_base, s)
+        });
         let blocking = bindings.written_script_pending() == Some(node);
         let Some(url) = src_url else {
             if blocking {
@@ -1503,7 +1627,7 @@ impl Browser {
         if blocking {
             let bindings = bindings.clone();
             let u = url.clone();
-            self.fetch_text(page, url, ResourceKind::Script, move |_, res| {
+            self.fetch_script(page, url, ResourceKind::Script, ScriptFetch::of(&info), move |_, res| {
                 lp_webapi::lifecycle::written_script_fetched(&bindings, node, &u, res);
             });
             return;
@@ -1516,7 +1640,7 @@ impl Browser {
         let kind = if module { ResourceKind::ModuleScript } else { ResourceKind::Script };
         let u = url.clone();
         let current = bindings.clone();
-        self.fetch_text(page, url, kind, move |b, res| {
+        self.fetch_script(page, url, kind, ScriptFetch::of(&info), move |b, res| {
             if !b.doc(page).and_then(|p| p.main_frame.page_dom.clone()).is_some_and(|d| Rc::ptr_eq(&d, &current)) {
                 return;
             }
@@ -1626,6 +1750,13 @@ impl Browser {
         let Some(realm) = self.main_realm(page) else { return };
         let Ok(scope) = realm.scope() else { return };
         lp_webapi::lifecycle::report_diagnostic(&scope, &JsError::Type(format!("Failed to load script: {error}")));
+    }
+
+    /// A subresource failure the console reports (no `error` event at the Window).
+    pub(crate) fn report_console_error(&mut self, page: FrameKey, error: &str) {
+        let Some(realm) = self.main_realm(page) else { return };
+        let Ok(scope) = realm.scope() else { return };
+        lp_webapi::lifecycle::report_diagnostic(&scope, &JsError::Type(error.to_owned()));
     }
 }
 
