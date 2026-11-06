@@ -16,6 +16,7 @@ mod form_data_js;
 mod forms_js;
 mod identity_js;
 mod image_input_js;
+mod indexeddb_js;
 mod media_source_js;
 mod move_before_js;
 mod observable_js;

@@ -58,6 +58,10 @@ pub(crate) struct WireMessage {
 }
 
 impl WireMessage {
+    #[cfg(test)]
+    pub(crate) fn empty() -> Self {
+        WireMessage { text: String::new(), buffers: Vec::new() }
+    }
     /// What the message holds in memory while queued.
     pub(crate) fn size(&self) -> usize {
         self.text.len() + self.buffers.iter().map(Vec::len).sum::<usize>() + 64

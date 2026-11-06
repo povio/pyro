@@ -648,6 +648,12 @@ impl ListenerInvoker for Invoker<'_> {
         // The exception is reported while the event is still the current
         // one: the `error` event's listeners see it as `window.event`.
         if let Err(e) = result {
+            WATCHED.with(|w| {
+                let (watched, _) = w.get();
+                if std::ptr::eq(watched, Rc::as_ptr(self.event)) {
+                    w.set((watched, true));
+                }
+            });
             cs.report_exception(&e);
         }
         if swapped {
@@ -657,6 +663,23 @@ impl ListenerInvoker for Invoker<'_> {
             }
         }
     }
+}
+
+thread_local! {
+    /// The event whose dispatch [`fire_noting_exceptions`] runs, and whether
+    /// one of its listeners threw. Touched only on the exception path.
+    static WATCHED: std::cell::Cell<(*const crate::event::EventCore, bool)> =
+        const { std::cell::Cell::new((std::ptr::null(), false)) };
+}
+
+/// [`fire`], also telling whether a listener of this event threw (IndexedDB
+/// aborts the transaction then). Exceptions of other events dispatched by
+/// those listeners do not count.
+pub(crate) fn fire_noting_exceptions(page: &PageDom, target: TargetKey, event: &EventData) -> (bool, bool) {
+    let outer = WATCHED.replace((Rc::as_ptr(event), false));
+    let not_canceled = fire(page, target, event);
+    let (_, threw) = WATCHED.replace(outer);
+    (not_canceled, threw)
 }
 
 /// Key of the realm's current event on its traced window holder.

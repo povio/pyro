@@ -1450,9 +1450,6 @@ fn indexeddb_empty_restore_preserves_context_and_origin_isolation() {
     );
     eval(&realm, "indexedDB.databases().then(a=>{a.push({name:'injected',version:1});return indexedDB.databases()}).then(a=>result=String(a.length))");
     assert_eq!(eval(&realm, "result"), "0");
-    // The unsupported nonempty restore must fail before clearing existing data.
-    eval(&realm, "restore({indexedDB:[{name:'db',version:1,stores:[]}],localStorage:[]}).then(()=>result='WRONG',e=>result=e.name)");
-    assert_eq!(eval(&realm, "result+':'+localStorage.getItem('auth-test')"), "NotSupportedError:synthetic");
     let (_next, navigated) =
         storage_page(&engine, "http://example.test/next", local.clone(), StorageNamespace::default());
     assert_eq!(eval(&navigated, "localStorage.getItem('auth-test')"), "synthetic");
@@ -1479,7 +1476,7 @@ fn indexeddb_opaque_origin_rejects_and_nonempty_operations_are_explicit() {
     assert_eq!(eval(&realm, "try{indexedDB.open('db')}catch(e){e.name}"), "SecurityError");
     let (_page, realm) =
         storage_page(&engine, "http://example.test", StorageNamespace::default(), StorageNamespace::default());
-    assert_eq!(eval(&realm, "try{indexedDB.deleteDatabase('db')}catch(e){e.name}"), "NotSupportedError");
+    assert_eq!(eval(&realm, "indexedDB.deleteDatabase('db') instanceof IDBOpenDBRequest"), "true");
     assert_eq!(eval(&realm, "try{new IDBFactory()}catch(e){e.name}"), "TypeError");
 }
 
