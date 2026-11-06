@@ -71,6 +71,28 @@ these additional local changes are covered by lp-render's rendering tests.
   `BaseDocument::needs_resolve` tells a caller whether a `resolve` could change anything.
 
 lp-render's mirror tests (incremental documents against fresh builds after random mutations) cover them.
+
+## Layout styles written with the style
+
+`src/node/stylo_data.rs` (`LayoutStyles`), `src/stylo.rs`, `src/node/node.rs`, `src/layout/{table,construct,damage}.rs`:
+what layout reads of a primary style in another form is derived when the primary style is written, not on every
+layout pass. `StyloData` keeps, next to Stylo's data:
+
+- `table_part`: the physical `taffy::Style` (`stylo_taffy::to_taffy_style`) of a table, row, column or cell.
+  Table construction (`table_taffy_style`, transposed into the table's writing mode) and the column-width and row-height
+  reads (`physical_size`) clone or read it instead of converting every cell of the table again.
+- `cell`: a table cell's style as its own layout sees it (no definite height; collapsed borders replaced by its half
+  of them), which `Node::layout_style` used to clone from the primary style on every call (each Taffy style read of a
+  cell in a `border-collapse: collapse` table).
+
+The style traversal (`RecalcStyle::process_preorder`, for a primary style it replaced, and
+`sync_pseudo_element_styles`) rewrites them, as does `Node::update_layout_styles` wherever a primary style is set
+outside it (anonymous blocks, pseudo-elements, refreshed anonymous styles), and `Node::set_collapsed_border` when table
+construction changes a cell's collapsed borders. `StyloData::clear` drops them with the style. Debug builds assert at
+every read that they are what the current primary style gives (`assert_layout_styles_are_current`); lp-render's mirror
+test `tables_lay_out_from_the_styles_written_at_restyle` covers text edits, rows, spans, collapsed borders and display
+changes. On a 1,200-row table, `to_taffy_style` was ~6% of a cell edit and the cell style clone ~15% of a width
+resize.
 - `assets/default.css`: text inputs take Chromium's UA box (`border: 2px inset`, `padding: 1px 2px`; a
   40x30 input is 48x36), textareas keep `1px solid` / `2px` and wrap like Chromium's
   (`white-space: pre-wrap; overflow-wrap: break-word`: a word longer than the box breaks).

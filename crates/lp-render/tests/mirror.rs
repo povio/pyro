@@ -1015,6 +1015,60 @@ fn rounding_follows_anonymous_boxes() {
     );
 }
 
+/// Table parts keep their Taffy styles (and cells their layout styles with collapsed borders) from
+/// when their style was written: text edits, rows arriving and leaving, spans, collapsed borders that
+/// stop and start being uniform, and display changes that make a box a table part and back.
+#[test]
+fn tables_lay_out_from_the_styles_written_at_restyle() {
+    fn edit(what: &'static str, f: impl Fn(&Page) + 'static) -> (String, Mutate) {
+        (what.into(), Box::new(f))
+    }
+    rounds_as_a_fresh_build(
+        r#"<table id=t style="border-collapse:collapse;width:300.5px"><colgroup><col id=col style="width:40.5px"><col></colgroup><tbody id=tb><tr id=r1 style="height:20.5px"><td id=a style="border:1px solid">a</td><td id=b colspan=2 style="height:15.5px;border:2px solid">b</td></tr><tr id=r2><td id=c rowspan=2>c</td><td id=d>d</td><td id=e style="padding:3.5px">e</td></tr><tr id=r3><td>f</td><td>g</td></tr></tbody></table><table id=s style="border-spacing:2.5px"><tr><td id=s1 style="width:30%;height:12.5px">s</td><td id=s2>t</td></tr></table><div id=flip style="width:120.5px"><span id=fc>x</span><span>y</span></div>"#,
+        vec![
+            edit("a cell's text", |p| {
+                let n = p.find("#d");
+                p.dom.borrow_mut().set_text_content(n, "a longer cell text that wraps").unwrap();
+            }),
+            style("#a", "border:3.5px solid"),
+            style("#b", "height:25.25px;border:2px solid;width:90.5px"),
+            style("#t", "border-collapse:separate;width:300.5px"),
+            style("#t", "border-collapse:collapse;width:250.5px"),
+            style("#col", "width:60.25px"),
+            style("#r1", "height:30.75px"),
+            edit("a row arrives", |p| {
+                let mut d = p.dom.borrow_mut();
+                let tr = d.create_element(p.doc, "tr").unwrap();
+                for text in ["h", "i"] {
+                    let td = d.create_element(p.doc, "td").unwrap();
+                    let t = d.create_text(p.doc, text).unwrap();
+                    d.append_child(td, t).unwrap();
+                    d.append_child(tr, td).unwrap();
+                }
+                drop(d);
+                let tb = p.find("#tb");
+                p.dom.borrow_mut().append_child(tb, tr).unwrap();
+            }),
+            edit("a row leaves", |p| {
+                let (tb, r2) = (p.find("#tb"), p.find("#r2"));
+                p.dom.borrow_mut().remove_child(tb, r2).unwrap();
+            }),
+            edit("a colspan changes", |p| {
+                let n = p.find("#b");
+                p.dom.borrow_mut().set_attribute(n, "colspan", "1").unwrap();
+            }),
+            style("#s1", "width:40%;height:18.5px;display:block"),
+            style("#s1", "width:40%;height:18.5px"),
+            style("#s2", "padding:4.5px;border:1.5px solid"),
+            style("#flip", "width:120.5px;display:table"),
+            style("#fc", "display:table-cell;height:10.5px"),
+            style("#fc", "display:table-cell;height:10.5px;border-collapse:collapse;border:2px solid"),
+            style("#flip", "width:140.5px;display:block"),
+            style("#fc", "display:inline"),
+        ],
+    );
+}
+
 #[test]
 fn rounding_follows_relative_sizes_under_a_clamped_box() {
     rounds_as_a_fresh_build(

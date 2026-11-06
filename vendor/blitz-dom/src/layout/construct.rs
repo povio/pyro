@@ -166,6 +166,7 @@ impl LayoutChildren {
         *doc.nodes[node_id]
             .stylo_element_data_mut()
             .ensure_init_mut() = stylo_element_data;
+        doc.nodes[node_id].update_layout_styles();
 
         if doc.nodes[container_node_id]
             .flags
@@ -747,6 +748,7 @@ fn flush_pseudo_elements(doc: &mut BaseDocument, node_id: NodeId) {
             *doc.nodes[new_node_id]
                 .stylo_element_data_mut()
                 .ensure_init_mut() = element_data;
+            doc.nodes[new_node_id].update_layout_styles();
 
             let node = &mut doc.nodes[node_id];
             node.set_pe_by_index(idx, Some(new_node_id));
@@ -794,16 +796,23 @@ fn flush_pseudo_elements(doc: &mut BaseDocument, node_id: NodeId) {
                 (None, None) => {}
             }
 
-            let mut node_styles = doc.nodes[pe_node_id]
-                .try_stylo_element_data_mut()
-                .and_then(|s| s.get_mut());
-            let node_styles = &mut node_styles.as_mut().unwrap();
-            node_styles.damage.insert(ALL_DAMAGE);
-            let primary_styles = &mut node_styles.styles.primary;
+            let replaced = {
+                let mut node_styles = doc.nodes[pe_node_id]
+                    .try_stylo_element_data_mut()
+                    .and_then(|s| s.get_mut());
+                let node_styles = &mut node_styles.as_mut().unwrap();
+                node_styles.damage.insert(ALL_DAMAGE);
+                let primary_styles = &mut node_styles.styles.primary;
 
-            if !std::ptr::eq(&**primary_styles.as_ref().unwrap(), &*pe_style) {
-                *primary_styles = Some(pe_style);
-                node_styles.set_restyled();
+                let replaced = !std::ptr::eq(&**primary_styles.as_ref().unwrap(), &*pe_style);
+                if replaced {
+                    *primary_styles = Some(pe_style);
+                    node_styles.set_restyled();
+                }
+                replaced
+            };
+            if replaced {
+                doc.nodes[pe_node_id].update_layout_styles();
                 doc.pending_style_image_nodes.push(pe_node_id);
             }
         }

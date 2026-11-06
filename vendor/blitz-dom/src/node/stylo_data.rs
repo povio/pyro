@@ -16,12 +16,55 @@ use crate::layout::damage::ALL_DAMAGE;
 ///   - Stylo's thread-safe traversal model: `init`/`clear` only happen during exclusive-access phases
 pub struct StyloData {
     inner: UnsafeCell<Option<ElementDataWrapper>>,
+    /// lightningpanda: the primary style in the forms layout reads it in, rewritten whenever the
+    /// primary style is replaced (see [`LayoutStyles`]).
+    layout: UnsafeCell<LayoutStyles>,
 }
 
 impl Default for StyloData {
     fn default() -> Self {
         Self {
             inner: UnsafeCell::new(None),
+            layout: UnsafeCell::new(LayoutStyles::default()),
+        }
+    }
+}
+
+/// lightningpanda: what layout reads of a node's primary style, derived from it when it is
+/// written instead of on every layout pass. `Node::update_layout_styles` (and, in the style
+/// traversal, `RecalcStyle::process_preorder`) rewrites it each time the primary style is
+/// replaced, and table construction when a cell's collapsed borders change.
+#[derive(Default)]
+pub(crate) struct LayoutStyles {
+    /// The physical Taffy style of a table, table row, column or cell
+    /// ([`stylo_taffy::to_taffy_style`]), which table construction places cells and sizes tracks
+    /// from.
+    pub(crate) table_part: Option<Box<taffy::Style<style::Atom>>>,
+    /// A table cell's style as its own layout reads it, where that differs from the primary
+    /// style (see [`cell_layout_style`]).
+    pub(crate) cell: Option<Box<style::properties::ComputedValues>>,
+}
+
+impl LayoutStyles {
+    /// The layout styles of a node whose primary style is `style` and whose half collapsed
+    /// borders (a cell of a table without uniform ones) are `collapsed_border`.
+    pub(crate) fn derive(
+        style: &style::properties::ComputedValues,
+        collapsed_border: Option<[f32; 4]>,
+    ) -> Self {
+        use style::values::specified::box_::DisplayInside;
+        let inside = style.clone_display().inside();
+        let table_part = matches!(
+            inside,
+            DisplayInside::Table
+                | DisplayInside::TableRow
+                | DisplayInside::TableColumn
+                | DisplayInside::TableCell
+        )
+        .then(|| Box::new(stylo_taffy::to_taffy_style(style)));
+        Self {
+            table_part,
+            cell: cell_layout_style(style, collapsed_border),
         }
     }
 }
@@ -86,6 +129,35 @@ impl StyloData {
         self.primary_styles().map(|primary| ComputedStyleRef { primary, layout: None })
     }
 
+    /// The primary computed style as the node's own layout reads it: a table cell's
+    /// [`LayoutStyles::cell`] when it has one.
+    pub(crate) fn layout_computed_styles(&self) -> Option<ComputedStyleRef<'_>> {
+        let layout = self.layout_styles().cell.as_deref();
+        self.primary_styles().map(|primary| ComputedStyleRef { primary, layout })
+    }
+
+    /// The layout styles derived from the primary style.
+    #[inline]
+    pub(crate) fn layout_styles(&self) -> &LayoutStyles {
+        // SAFETY: written only through `&mut self`, or by the style traversal while it has
+        // exclusive access to the node (see `set_layout_styles`).
+        unsafe { &*self.layout.get() }
+    }
+
+    /// Mutable access to the layout styles derived from the primary style.
+    pub(crate) fn layout_styles_mut(&mut self) -> &mut LayoutStyles {
+        self.layout.get_mut()
+    }
+
+    /// Replace the layout styles derived from the primary style, from the style traversal.
+    ///
+    /// SAFETY:
+    /// There must be no outstanding borrows of the layout styles. The style traversal, which has
+    /// exclusive access to the node it restyles and never reads them, upholds this.
+    pub(crate) unsafe fn set_layout_styles(&self, styles: LayoutStyles) {
+        unsafe { *self.layout.get() = styles };
+    }
+
     /// Get a mutable reference to the data
     pub unsafe fn unsafe_stylo_only_mut(&self) -> Option<ElementDataMut<'_>> {
         let opt = unsafe { &mut *self.inner.get() };
@@ -115,6 +187,7 @@ impl StyloData {
     /// when this method is called
     pub unsafe fn clear(&self) {
         unsafe { *self.inner.get() = None };
+        unsafe { *self.layout.get() = LayoutStyles::default() };
     }
 }
 
@@ -134,22 +207,30 @@ impl Deref for StyleDataRef<'_> {
 pub struct ComputedStyleRef<'a> {
     primary: StyleDataRef<'a>,
     // Layout-derived table internals never replace the authored primary style.
-    layout: Option<Box<style::properties::ComputedValues>>,
+    layout: Option<&'a style::properties::ComputedValues>,
 }
 
-impl ComputedStyleRef<'_> {
-    pub(crate) fn for_table_cell_layout(mut self, collapsed_border: Option<[f32; 4]>) -> Self {
-        use style::computed_values::border_collapse::T as BorderCollapse;
-        use style::values::specified::box_::DisplayInside;
-        if self.clone_display().inside() != DisplayInside::TableCell {
-            return self;
-        }
-        let numeric_height = stylo_taffy::convert::dimension(&self.clone_height()).into_option().is_some();
-        let collapsed = self.clone_border_collapse() == BorderCollapse::Collapse;
-        if !numeric_height && !collapsed {
-            return self;
-        }
-        let mut derived = Box::new((*self).clone());
+/// A table cell's style as its own layout reads it, when that differs from its primary style
+/// `style`. `collapsed_border` is the cell's half of the collapsed borders around it in a table
+/// without uniform ones. Stored as [`LayoutStyles::cell`].
+pub(crate) fn cell_layout_style(
+    style: &style::properties::ComputedValues,
+    collapsed_border: Option<[f32; 4]>,
+) -> Option<Box<style::properties::ComputedValues>> {
+    use style::computed_values::border_collapse::T as BorderCollapse;
+    use style::values::specified::box_::DisplayInside;
+    if style.clone_display().inside() != DisplayInside::TableCell {
+        return None;
+    }
+    let numeric_height = stylo_taffy::convert::dimension(&style.get_position().height)
+        .into_option()
+        .is_some();
+    let collapsed = style.clone_border_collapse() == BorderCollapse::Collapse;
+    if !numeric_height && !collapsed {
+        return None;
+    }
+    {
+        let mut derived = Box::new(style.clone());
         // TableCell retains this length as an intrinsic border-box minimum.
         // A definite height here would prevent the cell from growing to fit.
         if numeric_height {
@@ -175,8 +256,7 @@ impl ComputedStyleRef<'_> {
                 border.border_left_style = BorderStyle::Solid;
             }
         }
-        self.layout = Some(derived);
-        self
+        Some(derived)
     }
 }
 
@@ -184,6 +264,6 @@ impl Deref for ComputedStyleRef<'_> {
     type Target = style::properties::ComputedValues;
 
     fn deref(&self) -> &Self::Target {
-        self.layout.as_deref().unwrap_or_else(|| self.primary.0.styles.get_primary().unwrap())
+        self.layout.unwrap_or_else(|| self.primary.0.styles.get_primary().unwrap())
     }
 }

@@ -241,6 +241,9 @@ impl BaseDocument {
                 }
                 (data.damage | diff.damage, changed)
             };
+            if changed {
+                self.nodes[anonymous_id].update_layout_styles();
+            }
 
             // Refresh nested owned boxes unless reconstruction will replace them.
             if changed && !damage.intersects(CONSTRUCT_BOX | CONSTRUCT_FC) {
