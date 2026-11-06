@@ -31,6 +31,7 @@ pub mod node;
 pub mod parse;
 pub mod script;
 pub mod select;
+mod select_query;
 pub mod serialize;
 mod slots;
 pub mod snapshot;

@@ -41,7 +41,9 @@ struct IdEntry {
     /// The first element with the id in tree order; NIL once the first of
     /// several left (found again by the next lookup).
     first: Cell<u32>,
-    /// Elements of the scope with the id.
+    /// Elements of the scope with the id. Compiled queries rely on it (one:
+    /// the only candidate or the subtree to walk; none: no match), so every
+    /// tree or `id` write must go through `id_added` / `id_removed`.
     count: u32,
 }
 
@@ -236,25 +238,31 @@ impl Dom {
     /// `Some(NIL)` for none, `None` when `root` is no tree scope (it has
     /// no index: callers walk).
     pub(crate) fn indexed_by_id(&self, root: u32, id: &str) -> Option<u32> {
+        self.indexed_by_id_count(root, id).map(|(first, _)| first)
+    }
+
+    /// [`Dom::indexed_by_id`] and how many elements of the scope have the
+    /// id: `Some((NIL, 0))` for none.
+    pub(crate) fn indexed_by_id_count(&self, root: u32, id: &str) -> Option<(u32, u32)> {
         let map = match &self.n(root).kind {
             NodeKind::Document(d) if d.fragment_parse_host => return None,
             NodeKind::Document(d) => &d.ids,
             NodeKind::Fragment(f) if f.shadow.is_some() => match f.ids.as_deref() {
                 Some(m) => m,
-                None => return Some(NIL),
+                None => return Some((NIL, 0)),
             },
             _ => return None,
         };
-        let Some(entry) = map.0.get(id) else { return Some(NIL) };
+        let Some(entry) = map.0.get(id) else { return Some((NIL, 0)) };
         let first = entry.first.get();
         if first != NIL {
-            return Some(first);
+            return Some((first, entry.count));
         }
         // The first of several left: find the new first once.
         let found = self.walk_by_id(root, id);
         debug_assert!(found != NIL, "an indexed id has an element");
         entry.first.set(found);
-        Some(found)
+        Some((found, entry.count))
     }
 
     /// The first element with id `id` in the light tree under `root`

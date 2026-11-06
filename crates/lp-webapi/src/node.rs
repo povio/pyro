@@ -331,11 +331,12 @@ impl JsClass for Node {
                 }
             },
         );
-        def.accessor(
+        def.pure_accessor_typed(
             "textContent",
+            lp_js::GetterResult::Any,
             |s, n| {
-                let t = n.page().dom.borrow().text_content(n.id).js()?;
-                Ok(t.map_or(s.null(), |t| s.string(&t)))
+                let dom = n.page().dom.borrow();
+                Ok(dom.text_content_ref(n.id).js()?.map_or(s.null(), |t| s.string(&t)))
             },
             |_s, n, v| {
                 // `DOMString?`: undefined converts to null, which sets "".
@@ -551,17 +552,34 @@ fn define_parent_node<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
     });
     def.pure_method("querySelector", 1, |s, n, a| {
         let page = n.page();
-        let list = arg_selector(&a, 0, "querySelector", page)?;
-        let r = page.dom.borrow().query_first(n.id, &list).js()?;
+        let r = with_selector(&a, 0, "querySelector", page, |q| page.dom.borrow().query_first(n.id, q))?.js()?;
         node_value(s, page, r)
     });
     def.pure_method("querySelectorAll", 1, |s, n, a| {
         let page = n.page();
-        let list = arg_selector(&a, 0, "querySelectorAll", page)?;
-        let r = page.dom.borrow().query_all(n.id, &list).js()?;
-        Ok(collections::static_node_list(s, page, r)?.value())
+        // The matches go to a buffer kept for the next query, then once into
+        // the list: no vector grown and shrunk per call.
+        let mut found = FOUND.take();
+        let list =
+            with_selector(&a, 0, "querySelectorAll", page, |q| page.dom.borrow().query_all_into(n.id, q, &mut found))
+                .and_then(|r| r.js())
+                .and_then(|()| collections::static_node_list(s, page, &found[..]));
+        found.clear();
+        // A larger query's buffer is cut down, not kept whole for the
+        // thread's life (and its forks).
+        found.shrink_to(FOUND_KEPT);
+        FOUND.set(found);
+        Ok(list?.value())
     });
 }
+
+thread_local! {
+    /// `querySelectorAll`'s match buffer (taken while a query runs).
+    static FOUND: std::cell::Cell<Vec<NodeId>> = const { std::cell::Cell::new(Vec::new()) };
+}
+/// The most matches whose buffer is kept between queries (64 KB): a
+/// `querySelectorAll('*')` of a document of some thousand elements.
+const FOUND_KEPT: usize = 1 << 13;
 
 fn define_child_node<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
     def.method("remove", 0, |s, n, _a| {
@@ -1134,8 +1152,8 @@ impl JsClass for Element {
         def.method("webkitMatchesSelector", 1, element_matches);
         def.pure_method("closest", 1, |s, n, a| {
             let page = n.page();
-            let list = arg_selector(&a, 0, "Element.closest", page)?;
-            let r = page.dom.borrow().element_closest(n.id, &list).js()?;
+            let r =
+                with_selector(&a, 0, "Element.closest", page, |q| page.dom.borrow().element_closest(n.id, q))?.js()?;
             node_value(s, page, r)
         });
         def.method("getElementsByTagName", 1, |s, n, a| {
@@ -1292,8 +1310,8 @@ fn assigned_slot<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
 
 fn element_matches<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value<'s>> {
     let page = n.page();
-    let list = arg_selector(&a, 0, "Element.matches", page)?;
-    Ok(s.boolean(page.dom.borrow().element_matches(n.id, &list).js()?))
+    let r = with_selector(&a, 0, "Element.matches", page, |q| page.dom.borrow().element_matches(n.id, q))?;
+    Ok(s.boolean(r.js()?))
 }
 
 fn insert_adjacent(dom: &mut lp_dom::Dom, el: NodeId, pos: &str, node: NodeId) -> JsResult<bool> {

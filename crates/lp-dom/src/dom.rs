@@ -2534,17 +2534,52 @@ impl Dom {
 
     /// `Node.textContent` getter (None for documents and doctypes).
     pub fn text_content(&self, id: NodeId) -> DomResult<Option<String>> {
-        let i = self.check(id)?;
-        Ok(match &self.n(i).kind {
+        Ok(self.text_content_ref(id)?.map(std::borrow::Cow::into_owned))
+    }
+
+    /// [`Dom::text_content`], borrowed from the node holding it when one
+    /// node's data is all of it (character data, an attribute's value, an
+    /// element with one text node).
+    pub fn text_content_ref(&self, id: NodeId) -> DomResult<Option<std::borrow::Cow<'_, str>>> {
+        let (i, n) = self.live(id)?;
+        Ok(match &n.kind {
             NodeKind::Document(_) | NodeKind::Doctype(_) => None,
-            NodeKind::Attr(_) => self.attr_value_idx(i).map(str::to_owned),
-            k if k.char_data().is_some() => Some(k.char_data().unwrap().to_owned()),
-            _ => {
-                let mut out = String::new();
-                self.collect_text(i, &mut out);
-                Some(out)
-            }
+            NodeKind::Attr(_) => self.attr_value_idx(i).map(std::borrow::Cow::Borrowed),
+            k => match k.char_data() {
+                Some(d) => Some(std::borrow::Cow::Borrowed(d)),
+                None => Some(self.descendant_text(i)),
+            },
         })
+    }
+
+    /// The concatenated data of the Text descendants of `root` (light tree)
+    /// in one walk: borrowed while at most one of them is non-empty.
+    pub(crate) fn descendant_text(&self, root: u32) -> std::borrow::Cow<'_, str> {
+        let r = self.n(root);
+        if r.first_child != NIL && r.first_child == r.last_child {
+            if let NodeKind::Text(s) | NodeKind::CData(s) = &self.n(r.first_child).kind {
+                return std::borrow::Cow::Borrowed(s);
+            }
+        }
+        let mut first: &str = "";
+        let mut out: Option<String> = None;
+        let mut cur = r.first_child;
+        while cur != NIL {
+            if let NodeKind::Text(s) | NodeKind::CData(s) = &self.n(cur).kind {
+                if let Some(out) = &mut out {
+                    out.push_str(s);
+                } else if first.is_empty() {
+                    first = s;
+                } else if !s.is_empty() {
+                    let mut o = String::with_capacity(2 * (first.len() + s.len()));
+                    o.push_str(first);
+                    o.push_str(s);
+                    out = Some(o);
+                }
+            }
+            cur = self.following_in(cur, root);
+        }
+        out.map_or(std::borrow::Cow::Borrowed(first), std::borrow::Cow::Owned)
     }
 
     /// Concatenated data of descendant Text nodes (light tree).
@@ -2808,6 +2843,43 @@ impl Dom {
         let i = self.check(id)?;
         self.ext_ref_inc(i);
         Ok(())
+    }
+
+    /// [`Dom::add_ref`] for each of `ids` (a node listed twice gets two), in
+    /// one pass that counts the first references of a run of nodes of one
+    /// document at once; none is added when one is stale.
+    pub fn add_refs(&mut self, ids: &[NodeId]) -> DomResult<()> {
+        let (mut doc, mut firsts) = (NIL, 0);
+        for (k, &id) in ids.iter().enumerate() {
+            let Ok(i) = self.check(id) else {
+                // Undo: each node returns to its count before the call, so
+                // none becomes a collection candidate (unlike `release`).
+                self.add_held(doc, firsts);
+                for done in &ids[..k] {
+                    self.ext_ref_dec(done.idx);
+                }
+                return Err(DomError::StaleNode);
+            };
+            let n = self.n_mut(i);
+            n.ext_refs += 1;
+            if n.ext_refs == 1 {
+                let owner = n.owner_doc;
+                if owner != doc {
+                    self.add_held(doc, firsts);
+                    (doc, firsts) = (owner, 0);
+                }
+                firsts += 1;
+            }
+        }
+        self.add_held(doc, firsts);
+        Ok(())
+    }
+
+    /// Counts `firsts` nodes of document `doc` as newly held.
+    fn add_held(&mut self, doc: u32, firsts: u32) {
+        if firsts > 0 && doc != NIL && self.slots[doc as usize].node.is_some() {
+            self.doc_data_mut(doc).held += firsts;
+        }
     }
 
     /// Adds an external reference to node `i`, counting it in its document
