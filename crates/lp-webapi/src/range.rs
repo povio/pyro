@@ -611,7 +611,7 @@ impl JsClass for Range {
                         .ok_or_else(|| JsError::Type("no context element".into()))?
                 }
             };
-            let frag = lp_dom::parse::parse_fragment(&mut page.dom.borrow_mut(), ctx, &html).js()?;
+            let frag = lp_dom::parse::parse_contextual_fragment(&mut page.dom.borrow_mut(), ctx, &html).js()?;
             Ok(wrap_node(s, &page, frag)?.value())
         });
         def.method("getBoundingClientRect", 0, |s, r, _a| crate::layout_api::range_rect(s, &r.page(), points(r)));

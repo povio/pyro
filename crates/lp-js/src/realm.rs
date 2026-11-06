@@ -295,6 +295,10 @@ pub(crate) struct RealmInner {
     /// What makes each lazy constant attribute's value on its first read
     /// ([`Scope::define_lazy_global_constant`]).
     lazy_constants: RefCell<Vec<(&'static str, LazyGlobalConstant)>>,
+    /// `console.count` counters and `console.time` timers by label (empty,
+    /// and unallocated, until script uses them).
+    console_counts: RefCell<rustc_hash::FxHashMap<String, u64>>,
+    console_timers: RefCell<rustc_hash::FxHashMap<String, std::time::Instant>>,
 }
 
 impl RealmInner {
@@ -1891,6 +1895,8 @@ pub(crate) fn create(engine: &Rc<EngineInner>, options: RealmOptions) -> JsResul
         global_target: Cell::new(ptr::null_mut()),
         global_constants: Cell::new(false),
         lazy_constants: RefCell::new(Vec::new()),
+        console_counts: RefCell::new(Default::default()),
+        console_timers: RefCell::new(Default::default()),
     });
     if let Some(target) = sys::spi::get().get_proxy_target {
         // SAFETY: the cached global proxy of a live context.
@@ -2496,8 +2502,24 @@ fn make_native_fn<'s>(scope: &Scope<'s>, name: &str, call: sys::JSObjectCallAsFu
     unsafe { Object::from_raw(scope.ctx, sys::JSObjectMakeFunctionWithCallback(scope.ctx, n.as_raw(), Some(call))) }
 }
 
+/// What a console method does beyond forwarding its arguments.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ConsoleMethod {
+    /// Forwards its arguments at this level.
+    Plain(ConsoleLevel),
+    Count,
+    CountReset,
+    Time,
+    TimeLog,
+    TimeEnd,
+    /// `timeStamp`, `profile` and `profileEnd`: Chrome hands these to its
+    /// tracing and profiler agents and sends no `Runtime.consoleAPICalled`;
+    /// with neither here they do nothing.
+    Ignored,
+}
+
 macro_rules! console_methods {
-    ($($name:literal => $level:expr),* $(,)?) => {
+    ($($name:literal => $method:expr),* $(,)?) => {
         fn install_console(scope: &Scope<'_>) -> JsResult<()> {
             let console = scope.object();
             $(
@@ -2508,9 +2530,9 @@ macro_rules! console_methods {
                         _this: sys::JSObjectRef,
                         argc: usize,
                         argv: *const sys::JSValueRef,
-                        _exc: *mut sys::JSValueRef,
+                        exc: *mut sys::JSValueRef,
                     ) -> sys::JSValueRef {
-                        unsafe { console_call(ctx, $level, argc, argv) }
+                        unsafe { console_call(ctx, $method, argc, argv, exc) }
                     }
                     console.set($name, make_native_fn(scope, $name, tramp).value())?;
                 }
@@ -2522,35 +2544,116 @@ macro_rules! console_methods {
 }
 
 console_methods! {
-    "log" => ConsoleLevel::Log,
-    "debug" => ConsoleLevel::Debug,
-    "info" => ConsoleLevel::Info,
-    "warn" => ConsoleLevel::Warning,
-    "error" => ConsoleLevel::Error,
-    "dir" => ConsoleLevel::Dir,
-    "dirxml" => ConsoleLevel::Dir,
-    "table" => ConsoleLevel::Table,
-    "trace" => ConsoleLevel::Trace,
-    "assert" => ConsoleLevel::Assert,
-    "clear" => ConsoleLevel::Clear,
-    "count" => ConsoleLevel::Count,
-    "timeEnd" => ConsoleLevel::TimeEnd,
-    "group" => ConsoleLevel::StartGroup,
-    "groupCollapsed" => ConsoleLevel::StartGroupCollapsed,
-    "groupEnd" => ConsoleLevel::EndGroup,
+    "log" => ConsoleMethod::Plain(ConsoleLevel::Log),
+    "debug" => ConsoleMethod::Plain(ConsoleLevel::Debug),
+    "info" => ConsoleMethod::Plain(ConsoleLevel::Info),
+    "warn" => ConsoleMethod::Plain(ConsoleLevel::Warning),
+    "error" => ConsoleMethod::Plain(ConsoleLevel::Error),
+    "dir" => ConsoleMethod::Plain(ConsoleLevel::Dir),
+    "dirxml" => ConsoleMethod::Plain(ConsoleLevel::Dirxml),
+    "table" => ConsoleMethod::Plain(ConsoleLevel::Table),
+    "trace" => ConsoleMethod::Plain(ConsoleLevel::Trace),
+    "assert" => ConsoleMethod::Plain(ConsoleLevel::Assert),
+    "clear" => ConsoleMethod::Plain(ConsoleLevel::Clear),
+    "count" => ConsoleMethod::Count,
+    "countReset" => ConsoleMethod::CountReset,
+    "group" => ConsoleMethod::Plain(ConsoleLevel::StartGroup),
+    "groupCollapsed" => ConsoleMethod::Plain(ConsoleLevel::StartGroupCollapsed),
+    "groupEnd" => ConsoleMethod::Plain(ConsoleLevel::EndGroup),
+    "time" => ConsoleMethod::Time,
+    "timeLog" => ConsoleMethod::TimeLog,
+    "timeEnd" => ConsoleMethod::TimeEnd,
+    "timeStamp" => ConsoleMethod::Ignored,
+    "profile" => ConsoleMethod::Ignored,
+    "profileEnd" => ConsoleMethod::Ignored,
+}
+
+/// Milliseconds since `start` as Chrome prints them (`0.0625`).
+fn console_elapsed(start: std::time::Instant) -> String {
+    let ms = start.elapsed().as_nanos() as f64 / 1e6;
+    format!("{ms}")
+}
+
+/// The message and level of a counting or timing call (console.spec.whatwg.org
+/// "count", "time" ...; texts as Chrome's), `None` when it reports nothing.
+fn console_label_call(realm: &RealmInner, method: ConsoleMethod, label: String) -> Option<(ConsoleLevel, String)> {
+    Some(match method {
+        ConsoleMethod::Count => {
+            let mut counts = realm.console_counts.borrow_mut();
+            let n = counts.entry(label.clone()).or_insert(0);
+            *n += 1;
+            (ConsoleLevel::Count, format!("{label}: {n}"))
+        }
+        ConsoleMethod::CountReset => match realm.console_counts.borrow_mut().get_mut(&label) {
+            Some(n) => {
+                *n = 0;
+                return None;
+            }
+            None => (ConsoleLevel::Warning, format!("Count for '{label}' does not exist")),
+        },
+        ConsoleMethod::Time => {
+            let mut timers = realm.console_timers.borrow_mut();
+            if timers.contains_key(&label) {
+                (ConsoleLevel::Warning, format!("Timer '{label}' already exists"))
+            } else {
+                timers.insert(label, std::time::Instant::now());
+                return None;
+            }
+        }
+        // Chrome reports timeLog as a plain log.
+        ConsoleMethod::TimeLog => match realm.console_timers.borrow().get(&label) {
+            Some(&start) => (ConsoleLevel::Log, format!("{label}: {} ms", console_elapsed(start))),
+            None => (ConsoleLevel::Warning, format!("Timer '{label}' does not exist")),
+        },
+        ConsoleMethod::TimeEnd => match realm.console_timers.borrow_mut().remove(&label) {
+            Some(start) => (ConsoleLevel::TimeEnd, format!("{label}: {} ms", console_elapsed(start))),
+            None => (ConsoleLevel::Warning, format!("Timer '{label}' does not exist")),
+        },
+        ConsoleMethod::Plain(_) | ConsoleMethod::Ignored => return None,
+    })
+}
+
+/// Hands a console call to the embedder. A panicking hook is the
+/// embedder's bug, not the page's: it is not thrown into the script (the
+/// call's own errors, a label's ToString, are).
+fn console_notify(hooks: &dyn crate::engine::EngineHooks, realm: &Realm, level: ConsoleLevel, values: &[Value<'_>]) {
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| hooks.console_api(realm, level, values)));
 }
 
 unsafe fn console_call(
     ctx: sys::JSContextRef,
-    level: ConsoleLevel,
+    method: ConsoleMethod,
     argc: usize,
     argv: *const sys::JSValueRef,
+    exc: *mut sys::JSValueRef,
 ) -> sys::JSValueRef {
     let undefined = unsafe { sys::JSValueMakeUndefined(ctx) };
     unsafe {
-        class::guard(ctx, ptr::null_mut(), undefined, |scope| {
-            let Some(hooks) = scope.realm.engine.hooks() else { return Ok(undefined) };
+        // Errors (a label's ToString) are thrown to the caller.
+        class::guard(ctx, exc, undefined, |scope| {
             let args = Args::from_raw(ctx, argc, argv);
+            let level = match method {
+                ConsoleMethod::Plain(level) => level,
+                ConsoleMethod::Ignored => return Ok(undefined),
+                _ => {
+                    // The label is converted, and its errors thrown, whether
+                    // or not anyone listens.
+                    let first = args.get(0);
+                    let label = if first.is_undefined() { "default".to_owned() } else { first.to_string()? };
+                    let Some((level, message)) = console_label_call(scope.realm, method, label) else {
+                        return Ok(undefined);
+                    };
+                    let Some(hooks) = scope.realm.engine.hooks() else { return Ok(undefined) };
+                    let mut values = vec![scope.string(&message)];
+                    // timeLog's further arguments follow its message.
+                    if method == ConsoleMethod::TimeLog && level == ConsoleLevel::Log {
+                        values.extend(args.iter().skip(1));
+                    }
+                    console_notify(&*hooks, &scope.realm(), level, &values);
+                    return Ok(undefined);
+                }
+            };
+            let Some(hooks) = scope.realm.engine.hooks() else { return Ok(undefined) };
             let skip = if level == ConsoleLevel::Assert {
                 if args.get(0).to_bool() {
                     return Ok(undefined);
@@ -2561,7 +2664,7 @@ unsafe fn console_call(
             };
             // Arguments stay rooted by the caller's frame.
             let values: Vec<Value<'_>> = args.iter().skip(skip).collect();
-            hooks.console_api(&scope.realm(), level, &values);
+            console_notify(&*hooks, &scope.realm(), level, &values);
             Ok(undefined)
         })
     }

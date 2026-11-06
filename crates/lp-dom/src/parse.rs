@@ -789,6 +789,27 @@ pub fn parse_fragment(dom: &mut Dom, context: NodeId, html: &str) -> DomResult<N
     parse_fragment_with(dom, context, html, false)
 }
 
+/// `Range.createContextualFragment` (DOM Parsing): [`parse_fragment`], then
+/// every script of the fragment is unmarked "already started" (and as a
+/// fragment parser's), so it runs once the fragment is inserted into a
+/// document, unlike `innerHTML`'s.
+pub fn parse_contextual_fragment(dom: &mut Dom, context: NodeId, html: &str) -> DomResult<NodeId> {
+    let frag = parse_fragment_with(dom, context, html, false)?;
+    let scripts: Vec<u32> = dom
+        .descendants(frag)?
+        .filter_map(|id| {
+            let i = dom.check(id).ok()?;
+            dom.n(i).element().is_some_and(|e| e.name.local == local_name!("script")).then_some(i)
+        })
+        .collect();
+    for i in scripts {
+        if let Some(e) = dom.n_mut(i).element_mut() {
+            e.flags &= !(element_flags::SCRIPT_ALREADY_STARTED | element_flags::FRAGMENT_PARSED);
+        }
+    }
+    Ok(frag)
+}
+
 fn parse_fragment_with(
     dom: &mut Dom,
     context: NodeId,

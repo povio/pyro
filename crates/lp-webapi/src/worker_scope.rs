@@ -599,9 +599,13 @@ impl JsClass for WorkerGlobalScope {
         });
         def.getter("navigator", |s, g| Ok(navigator(s, g)?.value()));
         def.getter("origin", |s, _g| Ok(s.string(s.realm().origin().as_deref().unwrap_or("null"))));
-        def.getter("isSecureContext", |s, g| {
-            let secure = g.url.scheme() == "https" || matches!(g.url.host_str(), Some("localhost" | "127.0.0.1"));
-            Ok(s.boolean(secure))
+        // The worker's URL stands for its owner's context: a same-origin
+        // script, or a blob:/data: URL whose origin is the creator's.
+        def.getter("isSecureContext", |s, g| Ok(s.boolean(lp_net::is_potentially_trustworthy_url(&g.url))));
+        // No COOP/COEP isolation here.
+        def.getter("crossOriginIsolated", |s, _g| Ok(s.boolean(false)));
+        def.method_this("reportError", 1, |s, _g, this, a| {
+            crate::report_error::report_error(s, this, &a, "WorkerGlobalScope", false)
         });
         def.getter("crypto", |s, _g| crate::crypto::crypto_value(s));
         crate::crypto::define_globals(def);

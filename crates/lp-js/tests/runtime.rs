@@ -323,6 +323,70 @@ fn console_and_exception_hooks() {
 }
 
 #[test]
+fn console_counting_and_timing() {
+    #[derive(Default)]
+    struct Hooks {
+        log: RefCell<Vec<String>>,
+    }
+    impl EngineHooks for Hooks {
+        fn console_api(&self, _realm: &Realm, level: ConsoleLevel, args: &[Value<'_>]) {
+            let parts: Vec<String> = args.iter().map(|a| a.to_string().unwrap_or_default()).collect();
+            self.log.borrow_mut().push(format!("{}:{}", level.cdp_type(), parts.join(" ")));
+        }
+    }
+    let e = engine();
+    let hooks = Rc::new(Hooks::default());
+    e.set_hooks(Some(hooks.clone()));
+    let r = e.create_realm(RealmOptions::default()).unwrap();
+    eval_str(
+        &r,
+        "console.count(); console.count(); console.count('x'); console.countReset(); console.count(); \
+         console.countReset('nope'); console.dirxml('d'); console.timeStamp('t'); console.profile('p'); \
+         console.profileEnd('p'); console.time(); console.time();",
+    );
+    assert_eq!(
+        *hooks.log.borrow(),
+        vec![
+            "count:default: 1",
+            "count:default: 2",
+            "count:x: 1",
+            "count:default: 1",
+            "warning:Count for 'nope' does not exist",
+            "dirxml:d",
+            "warning:Timer 'default' already exists",
+        ]
+    );
+    hooks.log.borrow_mut().clear();
+    eval_str(&r, "console.timeLog(undefined, 'extra', 2); console.timeEnd(); console.timeEnd(); console.timeLog('t')");
+    let log = hooks.log.borrow();
+    assert_eq!(log.len(), 4, "{log:?}");
+    let ms = |s: &str, prefix: &str| -> f64 {
+        let rest = s.strip_prefix(prefix).unwrap_or_else(|| panic!("{s}"));
+        let (n, tail) = rest.split_once(" ms").unwrap();
+        assert!(n.parse::<f64>().unwrap() >= 0.0);
+        assert!(!n.contains('e'), "{n}");
+        tail.parse::<f64>().unwrap_or(0.0)
+    };
+    ms(&log[0], "log:default: ");
+    assert!(log[0].ends_with(" ms extra 2"), "{}", log[0]);
+    ms(&log[1], "timeEnd:default: ");
+    assert_eq!(log[2], "warning:Timer 'default' does not exist");
+    assert_eq!(log[3], "warning:Timer 't' does not exist");
+    drop(log);
+    // Labels go through ToString, whose errors are thrown.
+    assert_eq!(
+        eval_str(
+            &r,
+            "['count','countReset','time','timeLog','timeEnd'].map(m => { let called = false; \
+             console[m]({ toString() { called = true; return 'o' } }); \
+             try { console[m]({ toString() { throw new Error('conv') } }); return 'no throw' } \
+             catch (e) { return called + e.message } }).join()"
+        ),
+        "trueconv,trueconv,trueconv,trueconv,trueconv"
+    );
+}
+
+#[test]
 fn native_closures_promises_and_microtasks() {
     let e = engine();
     let r = e.create_realm(RealmOptions::default()).unwrap();

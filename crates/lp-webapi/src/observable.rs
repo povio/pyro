@@ -74,7 +74,7 @@ const INTERNAL_URLS: [&str; 2] = ["lightningpanda://", "lightpanda://"];
 /// HTML "report an exception" with `value`. An Error carries the location it
 /// was made at; any other value (`subscriber.error("text")`) is reported at
 /// the script that is running, where a `throw` of it would have been.
-fn report_exception<'s>(s: &Scope<'s>, value: Value<'s>) {
+pub(crate) fn report_exception<'s>(s: &Scope<'s>, value: Value<'s>) {
     let mut details = JsException::from_value(s, value);
     if details.line.is_none() {
         if let Some((url, line, column)) = running_script_location(s) {

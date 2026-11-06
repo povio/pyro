@@ -1044,7 +1044,12 @@ fn measure<'s>(s: &Scope<'s>, p: &PerformanceData, a: &lp_js::Args<'s>) -> JsRes
         detail: clone_detail(s, detail)?,
     };
     let object = s.wrap::<PerformanceMeasure>(data, None)?.value();
-    p.user_entries.borrow_mut().push(UserEntry { name, mark: false, start: start_time, object: Persistent::new(s, object) });
+    p.user_entries.borrow_mut().push(UserEntry {
+        name,
+        mark: false,
+        start: start_time,
+        object: Persistent::new(s, object),
+    });
     Ok(object)
 }
 

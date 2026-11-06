@@ -54,6 +54,19 @@ pub(crate) struct PendingNavigation {
     session: String,
 }
 
+/// `Page.Frame.secureContextType` of a frame at `url` (its own URL only;
+/// Chrome also reports an insecure ancestor).
+fn secure_context_type(url: &str) -> &'static str {
+    let Ok(url) = lp_net::Url::parse(url) else { return "InsecureScheme" };
+    if !lp_net::is_potentially_trustworthy_url(&url) {
+        return "InsecureScheme";
+    }
+    match url.scheme() {
+        "http" | "ws" => "SecureLocalhost",
+        _ => "Secure",
+    }
+}
+
 fn frame_description(
     id: &str,
     parent: Option<&FrameId>,
@@ -65,7 +78,7 @@ fn frame_description(
     let mut value = json!({
         "id": id, "loaderId": loader, "url": url, "name": name,
         "domainAndRegistry": "", "securityOrigin": if origin == "null" { "://" } else { origin },
-        "mimeType": "text/html", "secureContextType": "InsecureScheme",
+        "mimeType": "text/html", "secureContextType": secure_context_type(url),
         "crossOriginIsolatedContextType": "NotIsolated", "gatedAPIFeatures": [],
     });
     if let Some(parent) = parent {
@@ -872,4 +885,20 @@ fn new_guid() -> String {
     b[8] = (b[8] & 0x3f) | 0x80;
     let h: String = b.iter().map(|x| format!("{x:02x}")).collect();
     format!("{}-{}-{}-{}-{}", &h[0..8], &h[8..12], &h[12..16], &h[16..20], &h[20..32])
+}
+
+#[cfg(test)]
+mod secure_context_tests {
+    #[test]
+    fn secure_context_types() {
+        for (url, want) in [
+            ("https://a.test/", "Secure"),
+            ("about:blank", "Secure"),
+            ("http://app.localhost:3000/", "SecureLocalhost"),
+            ("http://127.0.0.1/", "SecureLocalhost"),
+            ("http://a.test/", "InsecureScheme"),
+        ] {
+            assert_eq!(super::secure_context_type(url), want, "{url}");
+        }
+    }
 }
