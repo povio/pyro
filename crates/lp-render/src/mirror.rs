@@ -678,26 +678,27 @@ fn update(m: &mut DocumentMutator<'_>, id: NodeId, kind: &TreeKind) -> bool {
 }
 
 /// Makes `want` the children of `parent`, moving as few nodes as it can
-/// (an insertion, removal or move costs one operation). Children that do
-/// not belong here any more are detached first; their new parent places
-/// them. Of the children that stay, the longest run already in the wanted
-/// order (a longest increasing subsequence of their current positions)
-/// stays put and every other wanted node is placed right before its wanted
-/// successor, from the end backwards: a rotation by one is one move, not
-/// one per node it shifted.
+/// (an insertion, removal or move costs one operation). Of the children
+/// that stay, the longest run already in the wanted order (a longest
+/// increasing subsequence of their current positions) stays put and every
+/// other wanted node is placed right before its wanted successor, from the
+/// end backwards: a rotation by one is one move, not one per node it
+/// shifted. Children that do not belong here any more are detached last
+/// (their new parent places them), so a wanted node moved out of one of
+/// them never leaves the document on the way.
 fn reorder(m: &mut DocumentMutator<'_>, parent: NodeId, want: &[u64], nodes: &FxHashMap<u64, Entry>) -> u32 {
     let want: Vec<NodeId> = want.iter().map(|k| nodes[k].id).collect();
     let wanted: FxHashSet<NodeId> = want.iter().copied().collect();
     let mut ops = 0;
     // Position of each staying child among the staying children.
     let mut current: FxHashMap<NodeId, usize> = FxHashMap::default();
+    let mut leaving: Vec<NodeId> = Vec::new();
     for id in m.child_ids(parent) {
         if wanted.contains(&id) {
             let next = current.len();
             current.insert(id, next);
         } else {
-            m.remove_node(id);
-            ops += 1;
+            leaving.push(id);
         }
     }
     let at: Vec<Option<usize>> = want.iter().map(|id| current.get(id).copied()).collect();
@@ -710,6 +711,10 @@ fn reorder(m: &mut DocumentMutator<'_>, parent: NodeId, want: &[u64], nodes: &Fx
             Some(&next) => m.insert_nodes_before(next, &[want[i]]),
             None => m.append_children(parent, &[want[i]]),
         }
+        ops += 1;
+    }
+    for id in leaving {
+        m.remove_node(id);
         ops += 1;
     }
     debug_assert_eq!(m.child_ids(parent).as_slice(), want.as_slice());
@@ -808,5 +813,43 @@ mod reorder_tests {
             // One removal, the new node, and every moved node.
             assert_eq!(ops, 1 + 1 + (5 - kept), "{perm:?}");
         }
+    }
+
+    /// A wanted node that sits inside a child leaving the list stays in the
+    /// document while it moves: it is placed before the leaving child is
+    /// detached, as the DOM moved it (`parent.append(x); c.remove()`), so
+    /// its subtree is not torn down and set up again (focus, selection,
+    /// stylesheets, subdocuments).
+    #[test]
+    fn a_node_moved_out_of_a_leaving_child_stays_in_the_document() {
+        let mut doc = BaseDocument::new(DocumentConfig::default());
+        let root = doc.root_node().id;
+        let mut m = doc.mutate();
+        let html = m.create_element(blitz_dom::qual_name!("html"), vec![]);
+        m.append_children(root, &[html]);
+        let mut nodes: FxHashMap<u64, Entry> = FxHashMap::default();
+        let mut entry = |m: &mut DocumentMutator<'_>, key: u64, tag: &str| {
+            let name = QualName::new(None, blitz_dom::ns!(html), tag.into());
+            let id = m.create_element(name, vec![]);
+            nodes.insert(key, Entry { id, name: None, parent: None, children: Vec::new() });
+            id
+        };
+        let parent = entry(&mut m, 0, "div");
+        let leaving = entry(&mut m, 1, "div");
+        let moved = entry(&mut m, 2, "input");
+        let stays = entry(&mut m, 3, "span");
+        m.append_children(html, &[parent]);
+        m.append_children(leaving, &[moved]);
+        m.append_children(parent, &[leaving, stays]);
+        drop(m);
+        doc.set_focus_to(moved);
+        assert_eq!(doc.focused_node(), Some(moved));
+
+        let mut m = doc.mutate();
+        reorder(&mut m, parent, &[2, 3], &nodes);
+        assert_eq!(m.child_ids(parent).to_vec(), vec![moved, stays]);
+        assert!(m.doc.get_node(leaving).unwrap().parent.is_none());
+        drop(m);
+        assert_eq!(doc.focused_node(), Some(moved), "the moved node never left the document");
     }
 }
