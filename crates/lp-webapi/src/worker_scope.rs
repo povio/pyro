@@ -644,6 +644,12 @@ impl JsClass for WorkerGlobalScope {
             |s, g| crate::target::event_handler(s, &g.target, "error"),
             |s, g, value| crate::target::set_event_handler(s, &g.target, "error", value),
         );
+        // Made on first use, as in a window.
+        def.accessor(
+            "EventSource",
+            |s, g| crate::event_source::global(s, &g.target.page, "EventSource"),
+            |s, g, value| crate::event_source::replace(s, &g.target.page, "EventSource", value),
+        );
     }
 }
 

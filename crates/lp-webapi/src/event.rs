@@ -144,6 +144,8 @@ pub struct EventFields {
     /// an event-to-global persistent root. Port messages have no source.
     pub message_source: Option<TargetKey>,
     pub origin: String,
+    /// MessageEvent `lastEventId` (EventSource); None reads as "".
+    pub last_event_id: Option<Box<str>>,
     pub(crate) data_transfer: Option<crate::data_transfer::DataTransferRef>,
     pub storage_key: Option<String>,
     pub storage_old: Option<String>,
@@ -790,6 +792,8 @@ fn fill_message<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>
         f.message_data = Some(Persistent::new(s, o.get_atom("data")?));
     }
     f.origin = get_str(init, "origin")?;
+    let last_event_id = get_str(init, "lastEventId")?;
+    f.last_event_id = (!last_event_id.is_empty()).then(|| last_event_id.into());
     Ok(())
 }
 
@@ -1621,7 +1625,7 @@ impl JsClass for MessageEvent {
         def.constructor(1, |s, nt, a| construct::<MessageEvent>(s, nt, a, EventInterface::MessageEvent, fill_message));
         def.getter("data", |s, e| Ok(e.fields.borrow().message_data.as_ref().map_or(s.null(), |p| p.get(s))));
         def.getter("origin", |s, e| Ok(s.string(&e.fields.borrow().origin)));
-        def.getter("lastEventId", |s, _e| Ok(s.string("")));
+        def.getter("lastEventId", |s, e| Ok(s.string(e.fields.borrow().last_event_id.as_deref().unwrap_or(""))));
         def.getter("source", |s, e| {
             let source = e.fields.borrow().message_source;
             crate::target::target_value(s, &e.page, source)

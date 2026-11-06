@@ -27,6 +27,7 @@ pub mod dom_parser;
 pub mod editing;
 pub mod encoding;
 pub mod event;
+mod event_source;
 pub mod fetch;
 pub mod file;
 pub mod file_reader;

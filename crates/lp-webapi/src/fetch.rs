@@ -1296,6 +1296,7 @@ impl Body {
 }
 
 pub(crate) fn cancel_realm(page: &PageDom, realm: RealmId) {
+    crate::event_source::cancel_realm(page, realm);
     let bodies: Vec<_> =
         page.fetch_state.bodies.borrow().values().filter_map(Weak::upgrade).filter(|b| b.realm_id == realm).collect();
     for body in bodies {
@@ -1310,6 +1311,7 @@ pub(crate) fn cancel_realm(page: &PageDom, realm: RealmId) {
     }
 }
 pub(crate) fn dispose(page: &PageDom) {
+    crate::event_source::dispose(page);
     PAGES.with(|pages| pages.borrow_mut().remove(&page.id()));
     let bodies: Vec<_> = page.fetch_state.bodies.borrow().values().filter_map(Weak::upgrade).collect();
     for body in bodies {

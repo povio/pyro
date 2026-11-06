@@ -116,6 +116,18 @@ browser-initiated (`none`), so a CDP `Page.navigate` with a `referrer` reports
 a site relation to it; link and form navigations do not send `Sec-Fetch-User`
 (no user-activation tracking).
 
+`EventSource` (server-sent events) exists in windows and dedicated workers and
+is made on a realm's first use of the name. It streams a `text/event-stream`
+GET (`Accept: text/event-stream`, `Cache-Control: no-cache`, credentials per
+`withCredentials`, CORS for cross-origin URLs) through the context client, and
+parses it per HTML (BOM, CR/LF/CRLF, comments, `event`/`data`/`id`/`retry`).
+`open`, `message`/named events (MessageEvent with `origin` and `lastEventId`)
+and `error` fire in order; the end of the stream or a network error
+reconnects after the reconnection time (default 3 s, `retry`) with
+`Last-Event-ID`; a non-200 response, another MIME type or a CORS failure
+closes it for good. Its events are dispatched by script, so `isTrusted` is
+false. Document disposal or realm teardown stops its connection.
+
 Content-Encoding is decoded like Chrome: lists (`gzip, br`, or several header
 lines) decode in reverse order, `deflate` accepts zlib-wrapped and raw streams,
 and a list naming `identity` or an unsupported coding (`zstd`, bogus values)
