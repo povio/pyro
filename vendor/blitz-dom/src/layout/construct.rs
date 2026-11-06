@@ -434,9 +434,11 @@ fn collect_layout_children_with_wrap(
     doc.nodes[container_node_id]
         .flags
         .reset_construction_flags();
-    if let Some(element_data) = doc.nodes[container_node_id].element_data_mut() {
-        element_data.take_inline_layout();
-    }
+    // An inline root built again reuses its layout: the build keeps the lines its last break
+    // produced over the text that did not change (`build_into_keeping_lines`).
+    let previous_inline_layout = doc.nodes[container_node_id]
+        .element_data_mut()
+        .and_then(|element_data| element_data.take_inline_layout());
 
     flush_pseudo_elements(doc, container_node_id);
 
@@ -619,10 +621,7 @@ fn collect_layout_children_with_wrap(
 
             // TODO: fix display:contents
             if classification.all_inline {
-                let existing_layout = doc.nodes[container_node_id]
-                    .element_data_mut()
-                    .and_then(|el| el.inline_layout_data.take());
-                let layout = existing_layout.unwrap_or_else(|| Box::new(TextLayout::new()));
+                let layout = previous_inline_layout.unwrap_or_else(|| Box::new(TextLayout::new()));
 
                 // Queue node for inline layout construction. Deferring construction of inline layouts to a
                 // dedicated phase allows us to multithread the expensive text shaping step.
@@ -1166,6 +1165,7 @@ fn build_inline_layout_with(
     // The strut goes before the first in-flow inline box: trailing white
     // space after it still hangs, leading white space before it still
     // collapses.
+    let strut_build = strut;
     let strut = &mut { strut };
 
     if let Some(before_id) = root_node.before() {
@@ -1202,7 +1202,13 @@ fn build_inline_layout_with(
         );
     }
 
-    text_layout.text = builder.build_into(&mut text_layout.layout);
+    // The first build keeps the lines of the layout's last break over the text that did not
+    // change, for `BreakLines::resume`. The strut build follows a build of the same content.
+    text_layout.text = if strut_build {
+        builder.build_into(&mut text_layout.layout)
+    } else {
+        builder.build_into_keeping_lines(&mut text_layout.layout)
+    };
     text_layout.text_nodes = std::mem::take(text_nodes);
     return;
 
