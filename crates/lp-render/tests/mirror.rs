@@ -1616,9 +1616,10 @@ fn table_rows_added_and_removed_match_fresh_builds() {
     table_steps_match_fresh_builds(&page, steps);
 }
 
-/// A cell's text edit collects the cells of its row again, not the table's, and lays out the grid
-/// again from its last layout; appending a row collects only its cells and lays out the grid again too,
-/// and so does removing a row, which collects no cell.
+/// A cell's text edit collects no cell again (the cell's box and its row are as they were; construction
+/// damage stops at the cell, which is noted as changed) and lays out the grid again from its last layout;
+/// appending a row collects only its cells and lays out the grid again too, and so does removing a row,
+/// which collects no cell.
 #[test]
 fn a_cell_edit_collects_only_its_row() {
     let rows = table_rows("c", 50);
@@ -1642,7 +1643,7 @@ fn a_cell_edit_collects_only_its_row() {
         let td = p.find("#c20 td:nth-child(2)");
         p.dom.borrow_mut().set_text_content(td, "edited").unwrap();
     });
-    assert_eq!(tables, (0, 3), "a text edit");
+    assert_eq!(tables, (0, 0), "a text edit");
     assert_eq!(grids, (0, 1), "a text edit");
     let (tables, grids) = edit("an append", &page, &mut r, &|p| {
         let tbody = p.find("#b");

@@ -203,7 +203,9 @@ its inputs.
   damaged cell in its table (`LayoutData::table_cell_index`, the cell's index in `TableContext::cells`).
 - `src/resolve.rs`, `src/layout/table.rs` (`update_table_context`): a table whose rows or cells changed collects
   again only the rows with damage of their own or a cell with it, and rows added to or removed from a row group
-  between rows it keeps; the other rows and cells stay. Its layout children are listed again only when cells were
+  between rows it keeps; the other rows and cells stay. A change inside a cell (its text, its children) reaches the
+  table as relayout only (`propagate_damage_flags` stops construction damage at the cell's box, see "Construction
+  damage stops at the box that owns it"): no row is collected again, the cell is noted as changed. Its layout children are listed again only when cells were
   added or removed, and `resolve_layout_children` visits only the cells that changed. A change it cannot place (a
   `rowspan`, an out-of-flow part, a new column, a change to the first row, which gives the columns their widths and
   the first cell the gutters, the table's own damage, ...) builds the table again.
@@ -292,6 +294,19 @@ inserts and removals, spans, collapsed borders, nested and vertical tables, stac
 changes (`table_*_match_fresh_builds`), and counts what an edit, an append, a removal and an insert collect and lay
 out (`a_cell_edit_collects_only_its_row`). `blitz_tables` and `blitz_table_grids` (lp-render) report tables built, cells
 collected and grids laid out whole or again.
+
+## Construction damage stops at the box that owns it
+
+`src/layout/damage.rs` (`propagate_damage_flags`, `forwards_construction`), `src/mutator.rs`: the mutator marks a
+parent whose child list or text changed with `CHILDREN_CHANGED` (`CONSTRUCT_FC`: collect its layout children again),
+not `ALL_DAMAGE`; `CONSTRUCT_BOX` means the node's own box changed. A reconstructing node forwards `RELAYOUT |
+CONSTRUCT_DESCENDENT` to its parent, plus `CONSTRUCT_FC` only when its own box changed or when its children are laid
+out by an ancestor: `display: inline` boxes (to the inline root, replaced ones included since `is_or_contains_block`
+looks through them), `display: contents`, table rows, row groups, columns and column groups (to the table) and list
+items (to the list). A paragraph appended deep in a page collects its container's children again, not every
+ancestor's. `phase_profile::constructions` counts the collections (and, with it, the tables built from scratch).
+Covered by `crates/lp-render/tests/incremental_construction.rs` (each change compared with a fresh build, boxes and
+pixels).
 
 ## Moving from 0.3.0-beta.4 to main
 
