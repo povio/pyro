@@ -116,10 +116,7 @@ fn iteration_is_live_over_the_entry_list() {
              return keys.join(',') + '|' + values.join(','); }"#,
     );
     // Deleting while iterating skips the removed entry.
-    assert_eq!(
-        eval(r, "walk(make([['foo','0'],['baz','1'],['BAR','2']]), fd => fd.delete('baz'))"),
-        "foo,BAR|0,2"
-    );
+    assert_eq!(eval(r, "walk(make([['foo','0'],['baz','1'],['BAR','2']]), fd => fd.delete('baz'))"), "foo,BAR|0,2");
     // Deleting an already-visited entry shifts the remainder (one is skipped).
     assert_eq!(
         eval(
@@ -187,7 +184,10 @@ fn iterator_prototype_matches_webidl_default_iterator_objects() {
         "true"
     );
     assert_eq!(eval(r, "FormData.prototype[Symbol.iterator] === FormData.prototype.entries"), "true");
-    assert_eq!(eval(r, "{ const fd = new FormData(); fd.append('a', '1'); JSON.stringify([...fd]) }"), r#"[["a","1"]]"#);
+    assert_eq!(
+        eval(r, "{ const fd = new FormData(); fd.append('a', '1'); JSON.stringify([...fd]) }"),
+        r#"[["a","1"]]"#
+    );
 }
 
 #[test]
@@ -219,10 +219,7 @@ fn constructor_validates_the_submitter() {
         "DOMException:NotFoundError"
     );
     // Valid submitters contribute their entry in tree order.
-    assert_eq!(
-        eval(r, "names(new FormData(form, document.querySelector('[name=named]')))"),
-        "n1=v1,named=GO,n3=v3"
-    );
+    assert_eq!(eval(r, "names(new FormData(form, document.querySelector('[name=named]')))"), "n1=v1,named=GO,n3=v3");
     assert_eq!(
         eval(r, "names(new FormData(form, document.querySelector('[name=outerNamed]')))"),
         "outerNamed=GO,n1=v1,n3=v3"
@@ -272,7 +269,10 @@ fn image_button_submits_the_clicks_coordinate() {
     // click() has no position: (0, 0).
     assert_eq!(eval(r, "seen = null; image.click(); seen"), "0,0");
     // Outside the activation the coordinate is (0, 0) again.
-    assert_eq!(eval(r, "{ const fd = new FormData(form, image); fd.get('namedImage.x') + ',' + fd.get('namedImage.y') }"), "0,0");
+    assert_eq!(
+        eval(r, "{ const fd = new FormData(form, image); fd.get('namedImage.x') + ',' + fd.get('namedImage.y') }"),
+        "0,0"
+    );
     // Another submitter is unaffected by the image's coordinate.
     assert_eq!(
         eval(

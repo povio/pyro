@@ -246,6 +246,34 @@ fn key_paths_generators_and_constraints() {
 }
 
 #[test]
+fn key_generator_exhausts_after_2_pow_53() {
+    let env = Env::new();
+    let d = env.doc("http://idb.test/");
+    d.eval(HELPERS);
+    let got = env.run(
+        &d,
+        r#"
+        const log = [];
+        const db = await openDb('overflow', 1, db => {
+          db.createObjectStore('bumped', {autoIncrement: true});
+          db.createObjectStore('explicit', {autoIncrement: true});
+        });
+        const tx = db.transaction(['bumped', 'explicit'], 'readwrite');
+        const fails = r => new Promise(ok => { r.onsuccess = () => ok('stored ' + r.result); r.onerror = e => { e.preventDefault(); ok(r.error.name); }; });
+        const bumped = tx.objectStore('bumped'), explicit = tx.objectStore('explicit');
+        // put() would silently overwrite 2^53 if the generator stayed there.
+        bumped.put('a', 9007199254740991);
+        log.push(await req(bumped.put('b')), await fails(bumped.put('c')));
+        explicit.put('a', 9007199254740992);
+        log.push(await fails(explicit.put('b')), await fails(explicit.put('c')));
+        log.push(await req(bumped.count()), await done(tx));
+        out = log.join('|');
+    "#,
+    );
+    assert_eq!(got, "9007199254740992|ConstraintError|ConstraintError|ConstraintError|2|complete");
+}
+
+#[test]
 fn aborts_roll_back_data_generators_and_upgrades() {
     let env = Env::new();
     let d = env.doc("http://idb.test/");
@@ -484,6 +512,13 @@ fn interfaces_are_lazy_globals_and_opaque_origins_reject() {
     assert_eq!(opaque.eval("try { indexedDB.open('db'); 'no' } catch (e) { e.name }"), "SecurityError");
     assert_eq!(opaque.eval("try { indexedDB.deleteDatabase('db'); 'no' } catch (e) { e.name }"), "SecurityError");
     assert_eq!(opaque.eval("typeof IDBKeyRange.only(1)"), "object");
+    // cmp touches no storage: it works for opaque origins too.
+    assert_eq!(opaque.eval("indexedDB.cmp([1], 'a') + ':' + indexedDB.cmp(1, 2)"), "1:-1");
+    // The interface tags live on the prototypes, as in Chrome.
+    assert_eq!(
+        d.eval("const r = indexedDB.open('tags'); Object.getOwnPropertySymbols(r).length + ':' + Object.prototype.toString.call(r)"),
+        "0:[object IDBOpenDBRequest]"
+    );
 }
 
 #[test]

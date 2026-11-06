@@ -271,8 +271,7 @@ pub fn checkpoint(page: &Rc<PageDom>) {
             scheduling_realm = Some(realm.clone());
         }
     }
-    if (!page.mutations.pending_roots.borrow().is_empty() || slots_signaled) && page.mutations.queued.get().is_none()
-    {
+    if (!page.mutations.pending_roots.borrow().is_empty() || slots_signaled) && page.mutations.queued.get().is_none() {
         let realm = scheduling_realm
             .or_else(|| {
                 page.mutations

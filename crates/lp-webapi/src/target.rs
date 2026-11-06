@@ -536,7 +536,6 @@ struct Invoker<'a> {
     in_shadow: Vec<TargetKey>,
 }
 
-
 /// ECMAScript IsArray throws for a revoked Proxy and runs no trap of a live
 /// one, so it tells the two apart without side effects. JavaScriptCore throws
 /// the TypeError of calling a revoked Proxy in the Proxy's own realm; a
@@ -545,7 +544,8 @@ fn is_revoked_proxy(s: &Scope<'_>, value: Value<'_>) -> bool {
     if !value.has_proxy_target().unwrap_or(false) {
         return false;
     }
-    let is_array = s.global().get_atom("Array").ok().and_then(|a| a.as_object()).and_then(|a| a.get_atom("isArray").ok());
+    let is_array =
+        s.global().get_atom("Array").ok().and_then(|a| a.as_object()).and_then(|a| a.get_atom("isArray").ok());
     is_array.and_then(|f| f.as_object()).is_some_and(|f| f.call(None, &[s.rehome(value)]).is_err())
 }
 

@@ -34,7 +34,6 @@
   const illegal = () => new TE('Illegal constructor');
   const fail = (name, message) => new DE(message, name);
   const tag = (C, name) => defineProperty(C.prototype, tagKey, { value: name, configurable: true });
-  const ownTag = (o, name) => defineProperty(o, tagKey, { value: name, configurable: true });
   const domString = (v) => `${v}`;
 
   // ---- Keys ----
@@ -507,7 +506,6 @@
       if (t !== token) throw illegal();
       super();
       this.#s = { done: false, result: undefined, error: null, source: null, tx: null };
-      ownTag(this, new.target === IDBOpenDBRequest ? 'IDBOpenDBRequest' : 'IDBRequest');
     }
     static {
       requestState = (r) => r.#s;
@@ -599,7 +597,6 @@
       if (t !== token) throw illegal();
       super();
       this.#c = c;
-      ownTag(this, 'IDBDatabase');
     }
     static {
       connection = (d) => d.#c;
@@ -691,7 +688,6 @@
       if (t !== token) throw illegal();
       super();
       this.#x = x;
-      ownTag(this, 'IDBTransaction');
     }
     static {
       txOf = (t) => t.#x;

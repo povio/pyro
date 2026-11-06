@@ -8,7 +8,7 @@ use std::rc::Rc;
 
 use lp_dom::parse::{parse_document, DocumentParser, DomRef, ParseStep};
 use lp_dom::script::{ResourceKind, ResourceReason};
-use lp_dom::{Dom, DocumentKind};
+use lp_dom::{DocumentKind, Dom};
 use lp_js::{ClassDef, Engine, JsClass, Realm, RealmOptions};
 use lp_webapi::*;
 
@@ -105,15 +105,13 @@ const RECT: &str = "(el => { const r = el.getBoundingClientRect(); return [r.x, 
 
 #[test]
 fn image_input_is_a_replaced_box_at_its_natural_size() {
-    let e = env(
-        r#"<!doctype html><html><body>
+    let e = env(r#"<!doctype html><html><body>
         <div><input id=button type=image src=/images/100px-green-rect.svg style="display:block"></div>
         <div><img id=img src=/images/100px-green-rect.svg style="display:block"></div>
         <div><input id=sized type=image src=/images/100px-green-rect.svg width=50 style="display:block"></div>
         <div><input id=unloaded type=image src=/images/missing.svg style="display:block"></div>
         <input id=plain type=image src=/images/missing.svg>
-        </body></html>"#,
-    );
+        </body></html>"#);
     e.loaded("button", 200.0, 200.0);
     e.loaded("img", 200.0, 200.0);
     e.loaded("sized", 200.0, 200.0);
@@ -143,11 +141,9 @@ fn image_input_is_a_replaced_box_at_its_natural_size() {
 fn wpt_constructor_submitter_coordinate() {
     // xhr/formdata/constructor-submitter-coordinate.html: the click's
     // position inside a 200x200 image button at (8, 8).
-    let e = env(
-        r#"<!doctype html><html><body>
+    let e = env(r#"<!doctype html><html><body>
         <form><input id=submitter type=image src=/images/100px-green-rect.svg></form>
-        </body></html>"#,
-    );
+        </body></html>"#);
     e.loaded("submitter", 200.0, 200.0);
     assert_eq!(
         eval(

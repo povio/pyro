@@ -72,7 +72,10 @@ fn env(html: &str) -> Env {
         .expect("realm");
     let key = page.window_target().unwrap_or_else(|| page.create_window_target(page.document()));
     realm
-        .set_global_data::<TestWindow>(TestWindowData { page: page.clone(), target: EventTargetData::window(&page, key) })
+        .set_global_data::<TestWindow>(TestWindowData {
+            page: page.clone(),
+            target: EventTargetData::window(&page, key),
+        })
         .unwrap();
     install(&realm.scope().unwrap(), page.clone()).unwrap();
     Env { engine, page, main: realm }
@@ -116,7 +119,10 @@ fn pre_move_validity_allows_disconnected_trees_with_one_root() {
     assert_eq!(name("p.moveBefore(origin, null)"), "HierarchyRequestError");
     assert_eq!(name("a.moveBefore(b, document.createElement('i'))"), "NotFoundError");
     // A disconnected iframe moves without a browsing context to keep.
-    assert_eq!(name("const f = dest.appendChild(document.createElement('iframe')); origin.moveBefore(f, null)"), "no error");
+    assert_eq!(
+        name("const f = dest.appendChild(document.createElement('iframe')); origin.moveBefore(f, null)"),
+        "no error"
+    );
 }
 
 #[test]
@@ -136,7 +142,10 @@ fn custom_elements_get_connected_and_disconnected_reactions_when_the_call_return
     assert_eq!(eval(r, "log = []; el.remove(); log.join()"), "disconnected:false");
     // An insertion of a connected element: both reactions run once it is
     // in its new place.
-    assert_eq!(eval(r, "log = []; a.append(el); b.append(el); log.join()"), "connected:true,disconnected:true,connected:true");
+    assert_eq!(
+        eval(r, "log = []; a.append(el); b.append(el); log.join()"),
+        "connected:true,disconnected:true,connected:true"
+    );
     // Nothing for a tree that is not connected.
     assert_eq!(eval(r, "log = []; el.remove(); log = []; document.createElement('div').append(el); log.join()"), "");
     // Callbacks are those the prototype had at definition.
@@ -178,7 +187,10 @@ fn a_move_runs_connected_move_callback_or_disconnected_then_connected() {
          customElements.define('x-only-c', class extends HTMLElement { connectedCallback() { log.push('c'); } }); \
          customElements.define('x-none', class extends HTMLElement {});",
     );
-    assert_eq!(eval(r, "var m = a.appendChild(document.createElement('x-move')); log = []; b.moveBefore(m, null); log.join()"), "move");
+    assert_eq!(
+        eval(r, "var m = a.appendChild(document.createElement('x-move')); log = []; b.moveBefore(m, null); log.join()"),
+        "move"
+    );
     // The fallback runs per element in tree order, both callbacks while connected.
     assert_eq!(
         eval(
@@ -219,11 +231,9 @@ fn a_move_runs_connected_move_callback_or_disconnected_then_connected() {
 
 #[test]
 fn the_focused_element_stays_focused_and_no_focus_event_fires() {
-    let e = env(
-        "<!doctype html><html><body><section id=a><button id=btn>B</button></section><section id=b></section>\
+    let e = env("<!doctype html><html><body><section id=a><button id=btn>B</button></section><section id=b></section>\
          <section id=inert inert></section><section id=hidden hidden></section>\
-         <style>#gone:has(button) { display: none }</style><section id=gone></section></body></html>",
-    );
+         <style>#gone:has(button) { display: none }</style><section id=gone></section></body></html>");
     let r = &e.main;
     eval(
         r,
@@ -233,8 +243,14 @@ fn the_focused_element_stays_focused_and_no_focus_event_fires() {
          btn.focus();",
     );
     assert_eq!(eval(r, "events.join()"), "focus,focusin");
-    assert_eq!(eval(r, "b.moveBefore(btn, null); [document.activeElement === btn, within()].join('|')"), "true|HTML,BODY,b,btn");
-    assert_eq!(eval(r, "a.moveBefore(b, null); [document.activeElement === btn, within()].join('|')"), "true|HTML,BODY,a,b,btn");
+    assert_eq!(
+        eval(r, "b.moveBefore(btn, null); [document.activeElement === btn, within()].join('|')"),
+        "true|HTML,BODY,b,btn"
+    );
+    assert_eq!(
+        eval(r, "a.moveBefore(b, null); [document.activeElement === btn, within()].join('|')"),
+        "true|HTML,BODY,a,b,btn"
+    );
     assert_eq!(eval(r, "b.moveBefore(btn, null); document.activeElement === btn"), "true", "same parent");
     assert_eq!(eval(r, "events.join()"), "focus,focusin");
     // Still focusable where it is: the fixup leaves it alone.
@@ -264,7 +280,10 @@ fn a_text_selection_and_its_direction_survive_a_move() {
     let r = &e.main;
     let state = "[i.selectionStart, i.selectionEnd, i.selectionDirection].join()";
     assert_eq!(eval(r, &format!("i.focus(); i.setSelectionRange(2, 7, 'backward'); {state}")), "2,7,backward");
-    assert_eq!(eval(r, &format!("b.moveBefore(i, null); [document.activeElement === i, {state}].join()")), "true,2,7,backward");
+    assert_eq!(
+        eval(r, &format!("b.moveBefore(i, null); [document.activeElement === i, {state}].join()")),
+        "true,2,7,backward"
+    );
     assert_eq!(eval(r, &format!("i.selectionStart = 3; {state}")), "3,7,backward");
     assert_eq!(eval(r, &format!("i.selectionDirection = 'forward'; {state}")), "3,7,forward");
     assert_eq!(eval(r, &format!("i.setSelectionRange(1, 2); {state}")), "1,2,none");
@@ -276,10 +295,9 @@ fn a_text_selection_and_its_direction_survive_a_move() {
 
 #[test]
 fn modal_dialogs_and_popovers_stay_open_across_a_move() {
-    let e = env(
-        "<!doctype html><html><body><section id=a><dialog id=dlg></dialog><div id=pop popover>P</div></section>\
-         <section id=b></section></body></html>",
-    );
+    let e =
+        env("<!doctype html><html><body><section id=a><dialog id=dlg></dialog><div id=pop popover>P</div></section>\
+         <section id=b></section></body></html>");
     let r = &e.main;
     assert_eq!(eval(r, "[dlg.matches(':modal'), pop.matches(':popover-open')].join()"), "false,false");
     assert_eq!(eval(r, "dlg.showModal(); pop.showPopover(); [dlg.matches(':modal'), dlg.open, pop.matches(':popover-open')].join()"), "true,true,true");
@@ -293,9 +311,19 @@ fn modal_dialogs_and_popovers_stay_open_across_a_move() {
         eval(r, "a.append(dlg, pop); [dlg.matches(':modal'), dlg.open, pop.matches(':popover-open'), getComputedStyle(pop).display].join()"),
         "false,true,false,none"
     );
-    assert_eq!(eval(r, "try { dlg.showModal(); 'no' } catch (e) { e.name }"), "InvalidStateError", "open and not modal");
-    assert_eq!(eval(r, "dlg.close(); dlg.showModal(); dlg.showModal(); dlg.close(); [dlg.matches(':modal'), dlg.open].join()"), "false,false");
-    assert_eq!(eval(r, "try { document.createElement('dialog').showModal(); 'no' } catch (e) { e.name }"), "InvalidStateError");
+    assert_eq!(
+        eval(r, "try { dlg.showModal(); 'no' } catch (e) { e.name }"),
+        "InvalidStateError",
+        "open and not modal"
+    );
+    assert_eq!(
+        eval(r, "dlg.close(); dlg.showModal(); dlg.showModal(); dlg.close(); [dlg.matches(':modal'), dlg.open].join()"),
+        "false,false"
+    );
+    assert_eq!(
+        eval(r, "try { document.createElement('dialog').showModal(); 'no' } catch (e) { e.name }"),
+        "InvalidStateError"
+    );
     // Popover validity and toggling.
     assert_eq!(eval(r, "try { a.showPopover(); 'no' } catch (e) { e.name }"), "NotSupportedError");
     assert_eq!(
@@ -310,7 +338,13 @@ fn modal_dialogs_and_popovers_stay_open_across_a_move() {
         ),
         "true,true,false,false,false"
     );
-    assert_eq!(eval(r, "pop.showPopover(); pop.showPopover(); pop.hidePopover(); pop.hidePopover(); pop.matches(':popover-open')"), "false");
+    assert_eq!(
+        eval(
+            r,
+            "pop.showPopover(); pop.showPopover(); pop.hidePopover(); pop.hidePopover(); pop.matches(':popover-open')"
+        ),
+        "false"
+    );
 }
 
 #[test]
@@ -355,7 +389,15 @@ fn connecting_to_a_document_with_a_csp_header_hides_the_nonce_and_a_move_does_no
     let r = &e.main;
     let state = "[div.getAttribute('nonce'), div.nonce].join()";
     // Without a header-delivered policy the attribute stays.
-    assert_eq!(eval(r, &format!("var div = document.createElement('div'); div.setAttribute('nonce', 'abc'); a.append(div); {state}")), "abc,abc");
+    assert_eq!(
+        eval(
+            r,
+            &format!(
+                "var div = document.createElement('div'); div.setAttribute('nonce', 'abc'); a.append(div); {state}"
+            )
+        ),
+        "abc,abc"
+    );
     e.page.dom.borrow_mut().set_header_csp(e.page.document(), true).unwrap();
     assert_eq!(eval(r, &format!("b.moveBefore(div, null); {state}")), "abc,abc", "a move connects nothing");
     assert_eq!(eval(r, &format!("a.insertBefore(div, null); {state}")), ",abc", "an insertion does");
@@ -369,10 +411,9 @@ fn connecting_to_a_document_with_a_csp_header_hides_the_nonce_and_a_move_does_no
 
 #[test]
 fn a_picture_source_is_the_current_source_of_its_image() {
-    let e = env(
-        "<!doctype html><html><body><picture id=pic><source id=src srcset='/green.png' media='(min-width: 10px)'>\
-         <img id=img src='/red.png'></picture></body></html>",
-    );
+    let e =
+        env("<!doctype html><html><body><picture id=pic><source id=src srcset='/green.png' media='(min-width: 10px)'>\
+         <img id=img src='/red.png'></picture></body></html>");
     let r = &e.main;
     assert_eq!(eval(r, "img.currentSrc"), "http://localhost:5173/green.png");
     assert_eq!(eval(r, "document.body.moveBefore(src, null); img.currentSrc"), "http://localhost:5173/red.png");

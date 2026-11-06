@@ -316,12 +316,13 @@ fn parse_request<'s>(
         "no-cors" => RequestMode::NoCors,
         _ => return Err(JsError::Type("Invalid fetch mode".into())),
     };
-    request.credentials = match string_option(s, init, "credentials", &default_string("credentials", "same-origin"))?.as_str() {
-        "omit" => Credentials::Omit,
-        "same-origin" => Credentials::SameOrigin,
-        "include" => Credentials::Include,
-        _ => return Err(JsError::Type("Invalid fetch credentials".into())),
-    };
+    request.credentials =
+        match string_option(s, init, "credentials", &default_string("credentials", "same-origin"))?.as_str() {
+            "omit" => Credentials::Omit,
+            "same-origin" => Credentials::SameOrigin,
+            "include" => Credentials::Include,
+            _ => return Err(JsError::Type("Invalid fetch credentials".into())),
+        };
     request.redirect = match string_option(s, init, "redirect", &default_string("redirect", "follow"))?.as_str() {
         "follow" => RedirectMode::Follow,
         "error" => RedirectMode::Error,
@@ -869,7 +870,9 @@ impl Body {
                         .map(|(_, v)| v.trim().trim_matches('"').to_owned());
                     match boundary {
                         Some(b) => crate::form_data::from_multipart(s, &bytes, &b),
-                        None => Err(JsError::Type("Cannot parse a 'multipart/form-data' body without a boundary".into())),
+                        None => {
+                            Err(JsError::Type("Cannot parse a 'multipart/form-data' body without a boundary".into()))
+                        }
                     }
                 } else {
                     Err(JsError::Type(format!("Cannot parse a '{essence}' body as FormData")))

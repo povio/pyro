@@ -15,7 +15,8 @@ fn run(env: &Env, body: &str) -> String {
     env.eval(&format!("(() => {{ try {{ {body} }} catch (e) {{ return 'threw ' + e.name; }} }})()"))
 }
 
-const ATTR: &str = "const el = document.createElement('div'); el.setAttribute('x', 'abc'); const attr = el.getAttributeNode('x');";
+const ATTR: &str =
+    "const el = document.createElement('div'); el.setAttribute('x', 'abc'); const attr = el.getAttributeNode('x');";
 
 #[test]
 fn attr_is_a_node() {
@@ -77,7 +78,12 @@ fn attr_is_a_node() {
     );
     // Events can be dispatched at it.
     assert_eq!(
-        run(&env, &format!("{ATTR} let n = 0; attr.addEventListener('x', () => n++); attr.dispatchEvent(new Event('x')); return n")),
+        run(
+            &env,
+            &format!(
+                "{ATTR} let n = 0; attr.addEventListener('x', () => n++); attr.dispatchEvent(new Event('x')); return n"
+            )
+        ),
         "1"
     );
 }
@@ -231,7 +237,8 @@ fn ranges_take_attr_boundary_points() {
 #[test]
 fn create_attribute_takes_the_whole_name_as_local_name() {
     let env = env();
-    let describe = "(a) => [a.localName, a.name, a.prefix, a.namespaceURI, JSON.stringify(a.value), a.ownerElement].join('|')";
+    let describe =
+        "(a) => [a.localName, a.name, a.prefix, a.namespaceURI, JSON.stringify(a.value), a.ownerElement].join('|')";
     for name in [":", "a:0", "0:a", ":a", "x:y:x", "title"] {
         assert_eq!(
             env.eval(&format!("({describe})(document.createAttribute({name:?}))")),
@@ -246,12 +253,12 @@ fn create_attribute_takes_the_whole_name_as_local_name() {
         "TiTle:X|TiTle:X|true"
     );
     for bad in ["", "a b", "a=b", "a>b", "a/b"] {
-        assert_eq!(run(&env, &format!("document.createAttribute({bad:?}); return 'no throw'")), "threw InvalidCharacterError");
+        assert_eq!(
+            run(&env, &format!("document.createAttribute({bad:?}); return 'no throw'")),
+            "threw InvalidCharacterError"
+        );
     }
-    assert_eq!(
-        env.eval(&format!("({describe})(document.createAttributeNS('urn:n', 'p:l'))")),
-        "l|p:l|p|urn:n|\"\"|"
-    );
+    assert_eq!(env.eval(&format!("({describe})(document.createAttributeNS('urn:n', 'p:l'))")), "l|p:l|p|urn:n|\"\"|");
 }
 
 #[test]
@@ -371,10 +378,7 @@ fn doctype_names_and_create_document_arguments() {
         );
     }
     for ok in ["html", "edi:<", "1", "a=b", ""] {
-        assert_eq!(
-            run(&env, &format!("return document.implementation.createDocumentType('{ok}', 'p', 's').name")),
-            ok
-        );
+        assert_eq!(run(&env, &format!("return document.implementation.createDocumentType('{ok}', 'p', 's').name")), ok);
     }
     assert_eq!(run(&env, "document.implementation.createDocument(); return 'no throw'"), "threw TypeError");
     assert_eq!(run(&env, "document.implementation.createDocument('urn:x'); return 'no throw'"), "threw TypeError");

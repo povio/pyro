@@ -41,6 +41,17 @@ const MAX_GENERATED: f64 = 9007199254740992.0;
 /// Sorts after every encoded key (they start with '1'..'5').
 const KEY_MAX: &str = "~";
 
+/// The key generator's number after `n`. 2^53 + 1 is not a float64, so the
+/// generator is marked exhausted with infinity instead (`n + 1.0` would round
+/// back to 2^53 and hand out that key again).
+fn after(n: f64) -> f64 {
+    if n >= MAX_GENERATED {
+        f64::INFINITY
+    } else {
+        n + 1.0
+    }
+}
+
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 fn next_id() -> u64 {
     NEXT_ID.fetch_add(1, Ordering::Relaxed)
@@ -670,7 +681,12 @@ impl JsClass for IdbFactory {
         });
         def.method_this("cmp", 2, |s, data, this, args| {
             args.require(2, "IDBFactory.cmp")?;
-            let module = factory_module(s, this, data)?;
+            // Comparing keys needs no storage: opaque origins may too.
+            let module = match data.origin() {
+                Ok(_) => factory_module(s, this, data)?,
+                Err(JsError::ContextDestroyed) => return Err(JsError::ContextDestroyed),
+                Err(_) => opaque_module(s, this)?,
+            };
             call_module(s, module, "cmp", &[args.get(0), args.get(1)])
         });
     }
@@ -1200,7 +1216,7 @@ fn natives<'s>(
                 return Ok(-1.0);
             }
             db.log(tx, || Undo::Generator { store: store.clone(), old: current });
-            db.store(&store)?.current = current + 1.0;
+            db.store(&store)?.current = after(current);
             Ok(current)
         })?;
         Ok(s.number(key))
@@ -1214,7 +1230,7 @@ fn natives<'s>(
             let value = (key.min(MAX_GENERATED)).floor();
             if value >= current {
                 db.log(tx, || Undo::Generator { store: store.clone(), old: current });
-                db.store(&store)?.current = value + 1.0;
+                db.store(&store)?.current = after(value);
             }
             Ok(())
         })?;
