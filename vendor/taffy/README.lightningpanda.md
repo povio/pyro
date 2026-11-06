@@ -80,3 +80,15 @@ in `crates/lp-render/tests/mirror.rs` fails if the skip stops firing; `LP.geomet
 `roundedNodes` and `roundingSkips`.
 
 `compute/mod.rs`: `compute_root_layout_in` takes an initial containing block of another size than the root's available space (print: Blink's rounds down, the page area up). The `UPSTREAM.patch` hunk for it is at the end of that file.
+
+`compute/grid/mod.rs` and `compute/grid/types/grid_item.rs`: the re-check of the items' min-content widths
+after row sizing skips an item the first column pass read nothing from that depends on its content or its
+grid area (`GridItem::inline_contribution_consumed`, set when a min-content or max-content contribution is
+computed in the inline axis, or a minimum contribution that resolves a percentage or uses an aspect ratio).
+Upstream measured every item crossing an intrinsic column and compared it with a cache the first pass never
+filled for such items, so an `fr` column holding a `min-width: 0` item re-ran column sizing on every layout.
+The columns of the first pass do not depend on a skipped item, so the outcome only changes when nothing else
+asks for the re-run; that is limited to grids of a definite width, where the re-run's inputs are otherwise
+the first pass's. Covered by the `rerun_tests` module at the end of `compute/grid/mod.rs` (run them from a
+copy of this directory with an empty `[workspace]` table, as the crate is not a workspace member). The
+`UPSTREAM.patch` hunks for it are the last two sections.
