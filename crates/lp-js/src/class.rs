@@ -902,7 +902,10 @@ pub(crate) fn register<C: JsClass>(engine: &EngineInner) -> ClassId {
         // SAFETY: the class was just created and has no objects yet.
         unsafe { set(instance_class, Some(get_by_index_hook), Some(set_by_index_hook)) };
     }
-    for a in &mut def.accessors {
+    // Last first: a class that defines an attribute twice (shared members,
+    // then its own) gets the later definition in the slot both share, as the
+    // prototype property it installs last.
+    for a in def.accessors.iter_mut().rev() {
         a.slot =
             crate::accessors::slot_for(TypeId::of::<C>(), a.name, a.get, a.set, a.pure, a.result, a.get_h, a.set_h);
     }

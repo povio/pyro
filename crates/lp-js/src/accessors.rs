@@ -109,10 +109,14 @@ pub(crate) fn slot_for(
     }
     let mut table = SLOT_TABLE.lock().unwrap_or_else(|e| e.into_inner());
     let table = table.get_or_insert_with(HashMap::new);
-    // A class that defines an attribute twice (shared members, then its own)
-    // gets the later definition, as the prototype property it installs last.
     let slot = match table.get(&(class, name)) {
-        Some(&slot) => usize::from(slot),
+        // Written once, by the first registration: every later one has the
+        // same callbacks, and a slot that never changes cannot give a
+        // dispatch on another thread one definition's invoker with another's
+        // callback (`GETTER_H`, `SETTER_H` and the calls are separate words).
+        // A class that defines an attribute twice registers its later
+        // definition first (`class::register`).
+        Some(&slot) => return Some(slot),
         None if table.len() >= SLOTS => {
             OVERFLOWED.fetch_add(1, Ordering::Relaxed);
             return None;
