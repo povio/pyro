@@ -101,6 +101,12 @@ pub fn blitz_constructions() -> (u64, u64) {
     blitz_dom::phase_profile::constructions()
 }
 
+/// Inline layouts Blitz broke into lines on this thread, the lines it kept from their last
+/// break (resumed after text changed past them), and the text bytes the line breaker went over.
+pub fn blitz_line_breaks() -> (u64, u64, u64) {
+    blitz_dom::phase_profile::line_breaks()
+}
+
 /// Layout algorithm runs Blitz made to place children on this thread (cache
 /// misses, not size measurements), and how many were the root element's.
 pub fn blitz_performed_layouts() -> (u64, u64) {

@@ -4,6 +4,7 @@
 use crate::inline_box::{InlineBox, LayoutInlineBox};
 use crate::layout::spacing::{Justification, Spacing};
 use crate::layout::style_metrics::{BoxMetrics, StyleMetrics};
+use crate::layout::resume::{AdoptedLines, LineStart};
 use crate::layout::whitespace::whitespace_hangs;
 use crate::layout::{ContentWidths, LineMetrics, Style};
 use crate::resolve::ResolvedStyle;
@@ -220,6 +221,11 @@ pub(crate) struct LayoutData<B: Brush> {
     ///
     /// Each line owns a contiguous slice ([`LineData::aligned_subtree_offsets`]).
     pub(crate) aligned_subtree_offsets: Vec<AlignedSubtreeOffset>,
+    /// The line breaker's state at the start of each line, or empty when the break cannot be
+    /// repeated from it (see [`crate::layout::resume`]).
+    pub(crate) line_starts: Vec<LineStart>,
+    /// Lines of the previous build kept for the next break to continue after.
+    pub(crate) adopted: AdoptedLines,
     /// The width constraint that was used to line break the layout
     pub(crate) layout_max_advance: f32,
     /// The computed width of the layout excluding hanging whitespace
@@ -257,6 +263,8 @@ impl<B: Brush> Default for LayoutData<B> {
             lines: Vec::new(),
             line_items: Vec::new(),
             aligned_subtree_offsets: Vec::new(),
+            line_starts: Vec::new(),
+            adopted: AdoptedLines::default(),
             alignment: None,
             layout_max_advance: 0.0,
             indent_amount: 0.0,
@@ -286,6 +294,8 @@ impl<B: Brush> LayoutData<B> {
         self.lines.clear();
         self.line_items.clear();
         self.aligned_subtree_offsets.clear();
+        self.line_starts.clear();
+        self.adopted.clear();
         self.alignment = None;
     }
 

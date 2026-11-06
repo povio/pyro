@@ -50,6 +50,21 @@ up to 1 px, and rounding their tops loses what decides whether a line fits. Cove
 `GlyphRun::atom_texts` (`src/layout/line.rs`) gives each atom's source text range and glyph count
 in glyph order, so PDF output can map a ligature glyph to all the characters it stands for.
 
+`layout/resume.rs`, `TreeBuilder::build_into_keeping_lines` and `BreakLines::resume`: resumed line
+breaking. The breaker records its state at the start of each line (`LayoutData::line_starts`; none
+when the caller placed boxes, hit a max height or reverted mid-break). Building a layout again with
+`build_into_keeping_lines` compares the new shaped data with the old (styles, style metrics, runs,
+items, clusters, characters and glyphs, from the start) and keeps the old lines whose break the
+breaker decided entirely inside the equal prefix: all but the last two lines that lie in it, since
+the atom that overflowed a line lies at the latest in the line after next. `resume`, called with
+the geometry the caller gives lines after the first, continues breaking after the kept lines when
+the old break had the same layout max advance, text indent and line geometry; otherwise it starts
+over. LTR text without inline boxes only. Blitz builds every inline root this way and resumes
+when no floats are involved and the text is not justified, so a paragraph that pagination grows
+word by word is broken from its last lines. On `cmr-overflow` the bytes going through the breaker
+went from about 240 to 40 per break, with identical PDFs. Covered by the differential tests in
+`crates/lp-render/tests/line_break_resume.rs`.
+
 ## Updating or dropping the patch
 
 Copy the published crate from `~/.cargo/registry/src/*/parley-<version>` and re-apply

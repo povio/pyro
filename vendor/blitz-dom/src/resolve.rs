@@ -31,7 +31,7 @@ use crate::{
         LayoutPassState,
         inline::build_inline_layout_into,
     },
-    node::TextBrush,
+    node::{TextBrush, TextLayout},
     BaseDocument,
 };
 
@@ -726,8 +726,11 @@ impl BaseDocument {
                     #[cfg(not(feature = "parallel-construct"))]
                     let font_ctx_mut = &mut *self.font_ctx.lock().unwrap();
 
-                    layout.content_widths = None;
-                    layout.last_break = None;
+                    // Only the parley layout carries over (see `build_inline_layout_into`).
+                    *layout = TextLayout {
+                        layout: std::mem::take(&mut layout.layout),
+                        ..TextLayout::new()
+                    };
                     build_inline_layout_into(
                         &self.nodes,
                         layout_ctx_mut,
@@ -1017,6 +1020,22 @@ pub mod phase_profile {
     /// from their last layout in the rows that changed.
     pub fn table_grids() -> (u64, u64) {
         TABLE_GRIDS.with(|t| t.get())
+    }
+    std::thread_local! {
+        static BREAKS: Cell<(u64, u64, u64)> = const { Cell::new((0, 0, 0)) };
+    }
+    /// An inline layout was broken into lines, continuing after `kept` lines of its last break
+    /// and going over `bytes` of its text.
+    pub(crate) fn broke(kept: usize, bytes: usize) {
+        BREAKS.with(|b| {
+            let (n, k, t) = b.get();
+            b.set((n + 1, k + kept as u64, t + bytes as u64));
+        });
+    }
+    /// Inline layouts broken into lines on this thread so far, the lines kept from their last
+    /// break (resumed), and the text bytes the line breaker went over.
+    pub fn line_breaks() -> (u64, u64, u64) {
+        BREAKS.with(|b| b.get())
     }
     /// Milliseconds per phase on this thread so far.
     pub fn peek() -> [f64; 9] {

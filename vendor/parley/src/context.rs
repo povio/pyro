@@ -46,6 +46,12 @@ pub struct LayoutContext<B: Brush = [u8; 4]> {
 
     /// Built layouts by their inputs (see [`crate::builder`]).
     pub(crate) build_cache: crate::build_cache::BuildCache<B>,
+
+    /// Scratch for [`TreeBuilder::build_into_keeping_lines`]: the layout data being built
+    /// again, while the new data is built and compared with it. Empty between builds.
+    ///
+    /// [`TreeBuilder::build_into_keeping_lines`]: crate::TreeBuilder::build_into_keeping_lines
+    pub(crate) previous_layout: crate::layout::data::LayoutData<B>,
 }
 
 impl<B: Brush> LayoutContext<B> {
@@ -65,6 +71,7 @@ impl<B: Brush> LayoutContext<B> {
             analysis_data_sources: AnalysisDataSources::new(),
             scx: Shaper::default(),
             build_cache: Default::default(),
+            previous_layout: Default::default(),
         }
     }
 

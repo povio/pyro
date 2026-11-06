@@ -11,6 +11,7 @@ use core_maths::CoreFloat;
 use parlance::BidiLevel;
 
 use crate::layout::data::{AlignedSubtreeOffset, run_box_metrics};
+use crate::layout::resume::{BreakInputs, LineStart};
 use crate::layout::spacing::{EffectiveSpacing, Justification, is_word_separator};
 use crate::layout::style_metrics::{
     BoxMetrics, InlineBoxPlacement, StyleMetrics, inline_box_placement,
@@ -41,6 +42,7 @@ struct LineLayout {
     lines: Vec<LineData>,
     line_items: Vec<LineItemData>,
     aligned_subtree_offsets: Vec<AlignedSubtreeOffset>,
+    line_starts: Vec<LineStart>,
 }
 
 impl LineLayout {
@@ -51,6 +53,14 @@ impl LineLayout {
             &mut self.aligned_subtree_offsets,
             &mut layout.aligned_subtree_offsets,
         );
+        core::mem::swap(&mut self.line_starts, &mut layout.line_starts);
+    }
+
+    fn clear(&mut self) {
+        self.lines.clear();
+        self.line_items.clear();
+        self.aligned_subtree_offsets.clear();
+        self.line_starts.clear();
     }
 
     /// Drops the lines from `len` onwards, along with their aligned subtree offsets.
@@ -773,6 +783,32 @@ impl BreakerState {
         self.subtrees.restore(prev_state.subtrees_len);
     }
 
+    /// The state at the start of the current line, for [`BreakLines::resume`].
+    fn line_start(&self) -> LineStart {
+        LineStart {
+            item_idx: self.item_idx,
+            run_idx: self.run_idx,
+            cluster_idx: self.cluster_idx,
+            items: self.line.items.clone(),
+            clusters: self.line.clusters.clone(),
+            text_wrap_mode: self.line.text_wrap_mode,
+            line_x: self.line_x,
+            line_y: self.line_y,
+            layout_max_advance: self.layout_max_advance,
+            line_max_advance: self.line_max_advance,
+            line_max_height: self.line_max_height,
+        }
+    }
+
+    /// Whether a line that started at `start` had the line geometry this state gives the
+    /// current line (all but its block position).
+    fn same_geometry(&self, start: &LineStart) -> bool {
+        start.line_x.to_bits() == self.line_x.to_bits()
+            && start.layout_max_advance.to_bits() == self.layout_max_advance.to_bits()
+            && start.line_max_advance.to_bits() == self.line_max_advance.to_bits()
+            && start.line_max_height.to_bits() == self.line_max_height.to_bits()
+    }
+
     #[inline(always)]
     fn update_max_height_exceeded(&mut self) {
         self.line.max_height_exceeded = self.line_max_height != f32::MAX
@@ -843,6 +879,14 @@ pub struct BreakLines<'a, B: Brush> {
     state: BreakerState,
     prev_state: Option<BreakerState>,
     done: bool,
+    /// The inputs of the break that produced the lines kept from the layout's previous build,
+    /// which `lines` holds until [`Self::resume`] continues after them or breaking starts over.
+    adopted: Option<BreakInputs>,
+    /// Whether the current line's start has been recorded in `lines.line_starts`.
+    line_open: bool,
+    /// Whether this break can be repeated from its recorded line starts: the caller neither
+    /// placed boxes nor reverted mid-line. When not, no line starts are kept.
+    resumable: bool,
 }
 
 impl<'a, B: Brush> BreakLines<'a, B> {
@@ -851,18 +895,93 @@ impl<'a, B: Brush> BreakLines<'a, B> {
         layout.data.height = 0.;
         let mut lines = LineLayout::default();
         lines.swap(&mut layout.data);
-        lines.lines.clear();
-        lines.line_items.clear();
-        lines.aligned_subtree_offsets.clear();
+        lines.clear();
+        // Lines kept from the previous build stay until `resume` or the first line.
+        let adopted = layout.data.adopted.inputs.take();
+        if adopted.is_some() {
+            let kept = &mut layout.data.adopted;
+            core::mem::swap(&mut lines.lines, &mut kept.lines);
+            core::mem::swap(&mut lines.line_items, &mut kept.line_items);
+            core::mem::swap(
+                &mut lines.aligned_subtree_offsets,
+                &mut kept.aligned_subtree_offsets,
+            );
+            core::mem::swap(&mut lines.line_starts, &mut kept.line_starts);
+        }
         let mut this = Self {
             layout,
             lines,
             state: BreakerState::default(),
             prev_state: None,
             done: false,
+            adopted,
+            line_open: false,
+            resumable: true,
         };
         this.reset_line();
         this
+    }
+
+    /// Continues breaking after the lines kept when the layout was built again from text with
+    /// the same beginning (see [`crate::layout::resume`]), and returns how many lines were kept.
+    ///
+    /// Call it once the state is set up for the first line, before the first
+    /// [`Self::break_next`], with the line x and max advance the caller gives every later line
+    /// (it must give them all the same, as without floats). The kept lines are used only if the
+    /// break that produced them had the layout max advance, text indent and max line height this
+    /// one has, started the first line where the state now starts it, and gave the first line
+    /// the geometry the state now gives it and every later line `line_x` and `line_max_advance`.
+    /// Otherwise, and when nothing was kept, this returns 0 and breaking starts from the first
+    /// line.
+    pub fn resume(&mut self, line_x: f32, line_max_advance: f32) -> usize {
+        let Some(inputs) = self.adopted.take() else {
+            return 0;
+        };
+        let kept = self.lines.lines.len();
+        let data = &self.layout.data;
+        let starts = &self.lines.line_starts;
+        let same_inputs = kept > 0
+            && starts.len() == kept + 1
+            && !self.line_open
+            && inputs.layout_max_advance.to_bits() == self.state.layout_max_advance.to_bits()
+            && inputs.indent_amount.to_bits() == data.indent_amount.to_bits()
+            && inputs.indent_options == data.indent_options
+            && starts[0].line_y.to_bits() == self.state.line_y.to_bits()
+            && self.state.same_geometry(&starts[0])
+            && starts[1..].iter().all(|start| {
+                start.line_x.to_bits() == line_x.to_bits()
+                    && start.line_max_advance.to_bits() == line_max_advance.to_bits()
+                    && start.layout_max_advance.to_bits()
+                        == self.state.layout_max_advance.to_bits()
+                    && start.line_max_height.to_bits() == self.state.line_max_height.to_bits()
+            });
+        if !same_inputs {
+            self.lines.clear();
+            return 0;
+        }
+        let start = self.lines.line_starts.pop().unwrap();
+        let state = &mut self.state;
+        state.item_idx = start.item_idx;
+        state.run_idx = start.run_idx;
+        state.cluster_idx = start.cluster_idx;
+        state.line.items = start.items;
+        state.line.clusters = start.clusters;
+        state.line.text_wrap_mode = start.text_wrap_mode;
+        state.line_x = start.line_x;
+        state.line_y = start.line_y;
+        state.line_max_advance = start.line_max_advance;
+        state.items = self.lines.line_items.len();
+        state.lines = kept;
+        self.reset_line();
+        kept
+    }
+
+    /// Drops the lines kept from the previous build unless [`Self::resume`] took them.
+    #[inline(always)]
+    fn discard_adopted(&mut self) {
+        if self.adopted.take().is_some() {
+            self.lines.clear();
+        }
     }
 
     /// Reset the per-line running state in preparation for building a new line.
@@ -934,6 +1053,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
 
         self.state.items = self.lines.line_items.len();
         self.state.lines = self.lines.lines.len();
+        self.line_open = false;
         self.state.prev_boundary = None;
         self.state.emergency_boundary = None;
 
@@ -992,6 +1112,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
     // than blink, for reasons which haven't been fully understood.
     #[doc(hidden)]
     pub fn set_prior_line_width(&mut self, advance: f32) {
+        self.resumable = false;
         if let Some(line) = self.lines.lines.last_mut() {
             line.metrics.inline_max_coord = line.metrics.inline_min_coord + advance;
         }
@@ -999,6 +1120,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
 
     /// Reverts the to an externally saved state.
     pub fn revert_to(&mut self, state: BreakerState) {
+        self.resumable = false;
         self.state = state;
         self.lines.truncate(self.state.lines);
         self.lines.line_items.truncate(self.state.items);
@@ -1031,6 +1153,18 @@ impl<'a, B: Brush> BreakLines<'a, B> {
     /// Computes the next line in the paragraph. Returns the advance and size
     /// (width and height for horizontal layouts) of the line.
     pub fn break_next(&mut self) -> Option<YieldData> {
+        let yielded = self.break_next_inner();
+        // A line the caller placed boxes on, or that went past its max height, cannot be
+        // broken again from its start without the caller.
+        if !matches!(yielded, None | Some(YieldData::LineBreak(_))) {
+            self.resumable = false;
+        }
+        yielded
+    }
+
+    #[inline(always)]
+    fn break_next_inner(&mut self) -> Option<YieldData> {
+        self.discard_adopted();
         assert!(
             self.state.layout_max_advance == f32::INFINITY
                 || self.state.line_max_advance - self.state.layout_max_advance < 1.0
@@ -1039,6 +1173,12 @@ impl<'a, B: Brush> BreakLines<'a, B> {
         // Maintain iterator state
         if self.done {
             return None;
+        }
+        if !self.line_open {
+            self.line_open = true;
+            if self.resumable {
+                self.lines.line_starts.push(self.state.line_start());
+            }
         }
         match &mut self.prev_state {
             Some(prev_state) => prev_state.clone_from(&self.state),
@@ -1305,6 +1445,8 @@ impl<'a, B: Brush> BreakLines<'a, B> {
     /// ligature or a multi-character grapheme), the whole atom is placed on the line before
     /// breaking.
     pub fn break_next_with_length(&mut self, max_chars: u32) -> Option<()> {
+        self.discard_adopted();
+        self.resumable = false;
         if self.done {
             return None;
         }
@@ -1636,6 +1778,10 @@ impl<'a, B: Brush> BreakLines<'a, B> {
 
 impl<B: Brush> Drop for BreakLines<'_, B> {
     fn drop(&mut self) {
+        self.discard_adopted();
+        if !self.resumable || self.lines.line_starts.len() != self.lines.lines.len() {
+            self.lines.line_starts.clear();
+        }
         // Compute the overall width and height of the entire layout
         // The "width" excludes hanging whitespace. The "full_width" includes it.
         let mut layout_width = 0_f32;
