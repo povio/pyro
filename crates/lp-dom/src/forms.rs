@@ -337,6 +337,27 @@ impl Dom {
         Ok(self.input_type_idx(i))
     }
 
+    /// The `button` element's `type` state when it is Submit Button: the
+    /// keyword `submit`, or the Auto state (missing or invalid `type`)
+    /// without a `command` or `commandfor` attribute (HTML "submit button").
+    fn button_type_is_submit_idx(&self, idx: u32) -> bool {
+        let Some(e) = self.n(idx).element() else { return false };
+        match e.attr_local(&local_name!("type")) {
+            Some(t) if t.eq_ignore_ascii_case("submit") => true,
+            Some(t) if t.eq_ignore_ascii_case("reset") || t.eq_ignore_ascii_case("button") => false,
+            _ => {
+                e.attr_local(&local_name!("command")).is_none()
+                    && e.attr_local(&LocalName::from("commandfor")).is_none()
+            }
+        }
+    }
+
+    /// Whether `<button>` `id` is a submit button (its `type` state is
+    /// Submit Button, or Auto without `command`/`commandfor`).
+    pub fn button_is_submit(&self, id: NodeId) -> bool {
+        self.check(id).is_ok_and(|i| self.button_type_is_submit_idx(i))
+    }
+
     pub(crate) fn is_form_control_idx(&self, idx: u32) -> bool {
         matches!(
             self.html_local(idx).map(|l| &**l),
@@ -1238,10 +1259,7 @@ impl Dom {
         let listed = match &**local {
             "input" => !matches!(self.input_type_idx(i), InputType::Hidden | InputType::Reset | InputType::Button),
             "select" | "textarea" => true,
-            "button" => !matches!(
-                e.attr_local(&local_name!("type")).map(|t| t.to_ascii_lowercase()).as_deref(),
-                Some("reset" | "button")
-            ),
+            "button" => self.button_type_is_submit_idx(i),
             _ if self.is_face_idx(i) => return Ok(self.face_will_validate_idx(i)),
             _ => false,
         };

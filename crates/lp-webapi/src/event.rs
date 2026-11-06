@@ -43,6 +43,8 @@ pub enum EventInterface {
     TouchEvent,
     AnimationEvent,
     TransitionEvent,
+    ToggleEvent,
+    CommandEvent,
 }
 
 /// One touch point (`Touch`): its target and viewport/screen position.
@@ -135,6 +137,8 @@ pub struct EventFields {
     pub error: Option<Persistent>,
     pub promise: Option<Persistent>,
     pub reason: Option<Persistent>,
+    /// `SubmitEvent.submitter`, and the `source` of `ToggleEvent` and
+    /// `CommandEvent` (one event never has both).
     pub submitter: Option<TargetKey>,
     pub state: Option<Persistent>,
     /// `FormDataEvent.formData`.
@@ -171,6 +175,11 @@ pub struct EventFields {
     /// `elapsedTime` (seconds) and `pseudoElement` of both.
     pub elapsed_time: f64,
     pub pseudo_element: String,
+    /// `ToggleEvent.oldState` / `.newState`.
+    pub old_state: String,
+    pub new_state: String,
+    /// `CommandEvent.command`.
+    pub command: String,
 }
 
 /// Resolves a `MessageEvent.source` window in the realm reading it.
@@ -348,6 +357,8 @@ pub fn wrap_event<'s>(s: &Scope<'s>, core: &EventData) -> JsResult<Object<'s>> {
         EventInterface::TouchEvent => s.wrap::<TouchEvent>(d, Some(key)),
         EventInterface::AnimationEvent => s.wrap::<AnimationEvent>(d, Some(key)),
         EventInterface::TransitionEvent => s.wrap::<TransitionEvent>(d, Some(key)),
+        EventInterface::ToggleEvent => s.wrap::<ToggleEvent>(d, Some(key)),
+        EventInterface::CommandEvent => s.wrap::<CommandEvent>(d, Some(key)),
     }?;
     define_unforgeables(s, &core.page, wrapper)?;
     core.trace_targets(s, wrapper)?;
@@ -1532,6 +1543,71 @@ fn fill_formdata<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>
     Ok(())
 }
 
+/// `source` of a ToggleEventInit or CommandEventInit: an Element or null.
+fn fill_source<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>, iface: &str) -> JsResult<()> {
+    let Some(o) = init else { return Ok(()) };
+    let v = o.get_atom("source")?;
+    if v.is_undefined() || v.is_null() {
+        return Ok(());
+    }
+    let element = s.unwrap::<crate::node::Node>(v).filter(|n| n.page().dom.borrow().element(n.id).is_ok());
+    match element {
+        Some(n) => {
+            f.submitter = Some(n.target.key);
+            Ok(())
+        }
+        None => Err(JsError::Type(format!(
+            "Failed to construct '{iface}': Failed to read the 'source' property from '{iface}Init': Failed to convert value to 'Element'."
+        ))),
+    }
+}
+
+fn fill_toggle<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
+    f.old_state = get_str(init, "oldState")?;
+    f.new_state = get_str(init, "newState")?;
+    fill_source(s, f, init, "ToggleEvent")
+}
+
+fn fill_command<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
+    f.command = get_str(init, "command")?;
+    fill_source(s, f, init, "CommandEvent")
+}
+
+/// `ToggleEvent` (HTML): details, popover and dialog `beforetoggle` /
+/// `toggle`.
+pub struct ToggleEvent;
+impl JsClass for ToggleEvent {
+    const NAME: &'static str = "ToggleEvent";
+    type Data = EventData;
+    type Parent = Event;
+    fn define(def: &mut ClassDef<Self>) {
+        def.constructor(1, |s, nt, a| construct::<ToggleEvent>(s, nt, a, EventInterface::ToggleEvent, fill_toggle));
+        def.getter("oldState", |s, e| Ok(s.string(&e.fields.borrow().old_state)));
+        def.getter("newState", |s, e| Ok(s.string(&e.fields.borrow().new_state)));
+        def.getter("source", |s, e| {
+            let k = e.fields.borrow().submitter;
+            target_value(s, &e.page, k)
+        });
+    }
+}
+
+/// `CommandEvent` (HTML invokers): what a `commandfor` button asks of its
+/// target.
+pub struct CommandEvent;
+impl JsClass for CommandEvent {
+    const NAME: &'static str = "CommandEvent";
+    type Data = EventData;
+    type Parent = Event;
+    fn define(def: &mut ClassDef<Self>) {
+        def.constructor(1, |s, nt, a| construct::<CommandEvent>(s, nt, a, EventInterface::CommandEvent, fill_command));
+        def.getter("command", |s, e| Ok(s.string(&e.fields.borrow().command)));
+        def.getter("source", |s, e| {
+            let k = e.fields.borrow().submitter;
+            target_value(s, &e.page, k)
+        });
+    }
+}
+
 pub struct PopStateEvent;
 impl JsClass for PopStateEvent {
     const NAME: &'static str = "PopStateEvent";
@@ -1748,6 +1824,8 @@ pub(crate) fn register(engine: &lp_js::Engine) {
     engine.register::<TouchEvent>();
     engine.register::<AnimationEvent>();
     engine.register::<TransitionEvent>();
+    engine.register::<ToggleEvent>();
+    engine.register::<CommandEvent>();
 }
 
 /// A `Touch` wrapper's state.

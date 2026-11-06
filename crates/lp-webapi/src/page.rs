@@ -210,6 +210,8 @@ pub struct PageDom {
     /// Control activated by a Space keydown, clicked on the matching keyup.
     pub(crate) space_target: Cell<Option<NodeId>>,
     dialog_returns: RefCell<FxHashMap<NodeId, String>>,
+    /// Popovers, dialogs and invokers (`popover.rs`).
+    pub(crate) popover: crate::popover::PopoverState,
     /// `nonce` IDL values, keyed with the content attribute they were set
     /// over: a later attribute change wins, as it updates the internal slot.
     nonces: RefCell<FxHashMap<NodeId, (Option<String>, String)>>,
@@ -539,6 +541,7 @@ impl PageDom {
             ignore_destructive_writes: Cell::new(0),
             space_target: Cell::new(None),
             dialog_returns: RefCell::new(FxHashMap::default()),
+            popover: Default::default(),
             nonces: RefCell::new(FxHashMap::default()),
             sheet_models: RefCell::new(FxHashMap::default()),
             files: RefCell::new(FxHashMap::default()),
@@ -709,6 +712,12 @@ impl PageDom {
     /// defers work until the next safe point.
     pub fn flush_iframe_events(&self) {
         use lp_dom::iframe::IframeChange;
+        // `<details>` toggles lp-dom queued: one empty check otherwise.
+        if self.dom.try_borrow().is_ok_and(|d| d.has_details_toggles()) {
+            if let Some(this) = self.this.upgrade() {
+                crate::popover::flush_details_toggles(&this);
+            }
+        }
         if self.is_disposed() || self.flushing_iframes.replace(true) {
             return;
         }
@@ -1134,6 +1143,7 @@ impl PageDom {
             return false;
         }
         !dom.has_iframe_events()
+            && !dom.has_details_toggles()
             && !self.render_blocking_pending(&dom)
             && !dom.has_pending_mutations()
             && !dom.has_gc_candidates()

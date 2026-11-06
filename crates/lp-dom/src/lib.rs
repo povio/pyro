@@ -21,6 +21,7 @@ mod internals;
 mod moving;
 mod nonce;
 pub mod picture;
+mod details;
 mod top_layer;
 pub mod inner_text;
 pub mod layout;
@@ -47,6 +48,7 @@ pub mod xml;
 pub mod xpath;
 
 pub use dom::{attr_name_hash, position, CollectionWatch, Dom};
+pub use top_layer::PopoverStack;
 pub use window_names::window_name_hash;
 pub use error::{DomError, DomErrorKind, DomResult};
 pub use node::{

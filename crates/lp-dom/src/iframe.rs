@@ -50,6 +50,10 @@ impl Dom {
             self.release(event.node);
         }
     }
+    /// Whether `document` is a watched browsing-context document.
+    pub(crate) fn is_watched_document(&self, document: NodeId) -> bool {
+        self.iframes.documents.contains(&document)
+    }
     /// Transfers pinned events to the caller. Call `release(event.node)` once
     /// per event after callbacks, including skipped events. Other documents'
     /// queues are untouched; loader resource draining does not consume these.

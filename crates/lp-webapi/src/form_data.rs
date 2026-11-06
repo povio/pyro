@@ -183,15 +183,18 @@ fn name_arg(a: &Args<'_>, what: &str) -> JsResult<String> {
 }
 
 /// HTML "submit button": `<input type=submit|image>` or a `<button>` in the
-/// Submit Button state (its `type` is neither `reset` nor `button`).
+/// Submit Button state (`type=submit`, or Auto without `command`/`commandfor`).
 fn is_submit_button(dom: &lp_dom::Dom, id: lp_dom::NodeId) -> bool {
     let Ok(e) = dom.element(id) else { return false };
     if !e.is_html() {
         return false;
     }
     match &**e.local_name() {
-        "input" => matches!(dom.input_type(id), Ok(lp_dom::forms::InputType::Submit | lp_dom::forms::InputType::Image)),
-        "button" => !matches!(e.attr("type").map(str::to_ascii_lowercase).as_deref(), Some("reset" | "button")),
+        "input" => matches!(
+            dom.input_type(id),
+            Ok(lp_dom::forms::InputType::Submit | lp_dom::forms::InputType::Image)
+        ),
+        "button" => dom.button_is_submit(id),
         _ => false,
     }
 }

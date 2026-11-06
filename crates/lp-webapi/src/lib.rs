@@ -54,6 +54,7 @@ pub mod navigator_extras;
 pub mod node;
 pub mod observable;
 pub mod page;
+mod popover;
 mod popup;
 pub mod range;
 pub mod render_blocking;

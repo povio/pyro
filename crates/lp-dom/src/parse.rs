@@ -182,6 +182,7 @@ impl<A: DomAccess> TreeSink for Sink<A> {
         let created = self.dom.with(|d| {
             let owner = self.doc_owner(d);
             d.base_seen |= name.local == local_name!("base");
+            let is_details = name.local == local_name!("details") && name.ns == markup5ever::ns!(html);
             let mut el = ElementData::new(name);
             el.set_attrs(
                 attrs.into_iter().map(|a| crate::node::Attr { name: a.name, value: (&*a.value).into() }).collect(),
@@ -194,6 +195,9 @@ impl<A: DomAccess> TreeSink for Sink<A> {
                 d.n_mut(i).element_mut().unwrap().template_contents = frag;
             }
             d.note_inline_handlers(i);
+            if is_details {
+                d.details_created(i);
+            }
             let id = d.id_of(i);
             d.add_ref(id).expect("new parser element");
             self.pins.borrow_mut().push(id);

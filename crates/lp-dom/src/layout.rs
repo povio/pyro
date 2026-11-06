@@ -1195,6 +1195,16 @@ impl Layout {
 
     /// [`Self::paint_chain`]'s step for one box.
     fn paint_step(&self, dom: &Dom, node: NodeId, order: u32, is_root: bool, mut state: PaintChain) -> PaintChain {
+        // A top-layer element (modal dialog, showing popover) paints above
+        // the whole document in its own root context, by its rank in the
+        // top layer, whatever its ancestors' stacking contexts. One empty
+        // check when the top layer is empty.
+        if let Some(rank) = dom.top_layer_rank(node) {
+            state.contexts = Rc::from([(5, rank as i32, 0)].as_slice());
+            state.positioned_layer = None;
+            state.own_layer = true;
+            return state;
+        }
         let c = self.computed(dom, node);
         let positioned = c.position.is_positioned();
         let flex_or_grid_item = dom
@@ -1333,7 +1343,13 @@ impl Layout {
                 best = Some((key, el));
             }
         }
-        best.map(|(_, node)| node)
+        // Outside the topmost modal dialog everything is inert: the point
+        // hits the dialog's ::backdrop, whose events go to the dialog.
+        best.map(|(_, node)| node).or_else(|| {
+            dom.topmost_modal().filter(|&m| {
+                dom.node_document(m).ok() == Some(self.document()) && result.get(m).is_some() && self.is_visible(dom, m)
+            })
+        })
     }
 
     /// A table row or row group, which Chromium hits only through its
