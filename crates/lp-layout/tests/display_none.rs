@@ -241,3 +241,88 @@ fn a_hidden_shadow_host_hides_its_styled_shadow_tree() {
     let d1 = p.find("#d1");
     assert_eq!(!p.layout.is_visible(&p.dom, d1), p.derived_hidden(d1));
 }
+
+#[test]
+fn a_light_child_styled_before_its_host_got_a_shadow_root_follows_slot_assignment() {
+    let mut p = page();
+    let host = p.find("#host2");
+    let light = p.find("#light2");
+    assert_eq!(p.rect("#light2"), (100.0, 20.0));
+    let root = p.dom.attach_shadow(host, ShadowRootMode::Open).unwrap();
+    let inner = p.dom.create_element(p.doc, "div").unwrap();
+    p.dom.append_child(root, inner).unwrap();
+    assert!(!p.layout.is_visible(&p.dom, light), "unslotted after styled");
+    assert_eq!(p.rect("#light2"), (0.0, 0.0));
+    // A slot appears: assigned and shown.
+    let slot = p.dom.create_element(p.doc, "slot").unwrap();
+    p.dom.append_child(inner, slot).unwrap();
+    assert!(p.layout.is_visible(&p.dom, light));
+    // Renamed slot: unassigned again.
+    p.dom.set_attribute(slot, "name", "other").unwrap();
+    assert!(!p.layout.is_visible(&p.dom, light), "unassigned after rename");
+    assert_eq!(p.rect("#light2"), (0.0, 0.0));
+    // Assigned again by name.
+    p.dom.set_attribute(light, "slot", "other").unwrap();
+    assert!(p.layout.is_visible(&p.dom, light), "assigned by name");
+    assert_eq!(p.rect("#light2"), (100.0, 20.0));
+}
+
+#[test]
+fn media_query_and_sheet_text_changes_hide_and_show_an_ancestor() {
+    let mut p = page();
+    let style = p.dom.create_element(p.doc, "style").unwrap();
+    p.dom.set_text_content(style, "@media (max-width: 500px) { #b { display: none } }").unwrap();
+    let head = p.dom.query_selector(p.doc, &parse_selectors("head").unwrap()).unwrap().unwrap();
+    p.dom.append_child(head, style).unwrap();
+    p.layout.style_mut().discover_style_elements(&p.dom);
+    let b2 = p.find("#b2");
+    assert!(p.layout.is_visible(&p.dom, b2));
+    p.check_all_agree("wide");
+    p.layout.set_viewport(Viewport::new(400, 600));
+    assert!(!p.layout.is_visible(&p.dom, b2), "narrow");
+    p.check_all_agree("narrow");
+    p.layout.set_viewport(Viewport::new(800, 600));
+    assert!(p.layout.is_visible(&p.dom, b2), "wide again");
+    p.dom.set_text_content(style, "#d { display: none }").unwrap();
+    p.layout.style_mut().discover_style_elements(&p.dom);
+    assert!(!p.visible("#d2") && p.visible("#b2"), "sheet text");
+    p.check_all_agree("sheet text");
+}
+
+#[test]
+fn an_element_moved_under_a_hidden_parent_follows_its_own_and_the_parents_changes() {
+    let mut p = page();
+    let (c, d1) = (p.find("#c"), p.find("#d1"));
+    assert_eq!(p.rect("#d1"), (100.0, 20.0));
+    p.dom.append_child(c, d1).unwrap();
+    assert!(!p.visible("#d2"));
+    p.dom.set_attribute(d1, "class", "gone").unwrap();
+    p.dom.remove_attribute(c, "class").unwrap();
+    assert!(!p.layout.is_visible(&p.dom, d1));
+    assert!(p.layout.is_visible(&p.dom, c));
+    p.check_all_agree("c shown, d1 gone");
+    p.dom.set_attribute(d1, "class", "box").unwrap();
+    assert!(p.layout.is_visible(&p.dom, d1) && p.visible("#d2"));
+    p.check_all_agree("d1 box");
+}
+
+#[test]
+fn closed_details_content_agrees_with_the_derivation() {
+    let mut p = page();
+    let body = p.dom.query_selector(p.doc, &parse_selectors("body").unwrap()).unwrap().unwrap();
+    let det = p.dom.create_element(p.doc, "details").unwrap();
+    p.dom.set_attribute(det, "open", "").unwrap();
+    let sum = p.dom.create_element(p.doc, "summary").unwrap();
+    let inner = p.dom.create_element(p.doc, "div").unwrap();
+    p.dom.set_attribute(inner, "class", "box").unwrap();
+    p.dom.append_child(det, sum).unwrap();
+    p.dom.append_child(det, inner).unwrap();
+    p.dom.append_child(body, det).unwrap();
+    let open = p.layout.is_visible(&p.dom, inner);
+    assert_eq!(p.engine_answers(inner), Some(open));
+    assert_eq!(!open, p.derived_hidden(inner));
+    p.dom.remove_attribute(det, "open").unwrap();
+    let closed = p.layout.is_visible(&p.dom, inner);
+    assert!(open);
+    assert_eq!(!closed, p.derived_hidden(inner));
+}
