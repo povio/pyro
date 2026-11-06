@@ -161,7 +161,9 @@ impl Browser {
             );
             generation
         };
-        bindings.set_image_state(node, raw_src.as_deref(), true);
+        // A `srcset`/`<picture>` source without `src` is a request too
+        // (`None` would clear the image and reject pending `decode()`s).
+        bindings.set_image_state(node, Some(raw_src.as_deref().unwrap_or("")), true);
         bindings.keep_loading_image(node, true);
         bindings.dom.borrow_mut().set_natural_size(node, None);
         let weak = Rc::downgrade(&bindings);

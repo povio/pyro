@@ -54,6 +54,10 @@ pub(crate) fn decode<'s>(s: &Scope<'s>, page: &Rc<PageDom>, el: NodeId) -> JsRes
         None => {
             let pending = PendingDecode { realm: s.realm().downgrade(), deferred, source };
             page.image_decodes.borrow_mut().entry(el).or_default().push(pending);
+            // Settles even when no mutation queued a load (a detached
+            // `<picture>`'s `<source>` changed): the loader's image update
+            // starts the request, or settles at once for the current one.
+            page.dom.borrow_mut().queue_image_update(el);
         }
     }
     Ok(promise)

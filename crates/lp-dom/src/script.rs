@@ -283,6 +283,18 @@ impl Dom {
         }
     }
 
+    /// Asks the loader to update `img`'s image data (its `Img` event): what
+    /// `decode()` waits on when no request of the selected source is known,
+    /// e.g. a `<source>` of a detached `<picture>` changed.
+    pub fn queue_image_update(&mut self, img: NodeId) {
+        if !self.resources.enabled {
+            return;
+        }
+        if let Ok(i) = self.check(img) {
+            self.push_resource(i, ResourceKind::Img, ResourceReason::AttrChanged);
+        }
+    }
+
     pub(crate) fn resources_after_text(&mut self, text_node: u32) {
         if !self.resources.enabled {
             return;

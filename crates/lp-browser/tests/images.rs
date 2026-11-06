@@ -215,3 +215,34 @@ fn base_href_resolves_image_urls() {
     settle(&mut thread);
     assert_eq!(eval(&thread, page, "events.join('|')"), "a:load:true:5x5|window:load");
 }
+
+#[test]
+fn decode_of_srcset_and_detached_picture_images() {
+    let (mut thread, page, loader) = setup("<p>decode</p>");
+    loader.insert_bytes("http://site.test/s.png", "image/png", &png(2, 2), Duration::from_millis(10));
+    loader.insert_bytes("http://site.test/p.png", "image/png", &png(3, 3), Duration::from_millis(10));
+    thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    settle(&mut thread);
+    eval(
+        &thread,
+        page,
+        "globalThis.out = {};
+         globalThis.note = (name, p) => p.then(() => out[name] = 'ok', e => out[name] = e.name);
+         // srcset only (WPT image-decode.html): no src attribute.
+         const s = new Image(); s.srcset = '/s.png 100w'; note('srcset', s.decode()); note('srcset2', s.decode());
+         const m = new Image(); m.srcset = '/missing.png 100w'; note('srcsetMissing', m.decode());
+         // A detached <picture> whose <source> changes (image-decode-picture.html).
+         const picture = document.createElement('picture');
+         const source = document.createElement('source');
+         const img = document.createElement('img');
+         picture.append(source, img);
+         source.srcset = '/p.png';
+         note('picture', img.decode());
+         1",
+    );
+    settle(&mut thread);
+    assert_eq!(
+        eval(&thread, page, "['srcset','srcset2','srcsetMissing','picture'].map(k => k + ':' + out[k]).join('|')"),
+        "srcset:ok|srcset2:ok|srcsetMissing:EncodingError|picture:ok"
+    );
+}
