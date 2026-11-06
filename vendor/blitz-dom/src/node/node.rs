@@ -97,6 +97,11 @@ pub struct Node {
     pub layout_parent: Cell<Option<NodeId>>,
     /// A separate child list that includes anonymous collections of inline elements
     pub layout_children: RefCell<Option<ThinVec<NodeId>>>,
+    /// The node whose `layout_children` list holds this node, kept by layout
+    /// construction as it writes the lists (`resolve_layout_children`): set
+    /// for each node of a list it stores, cleared for each node of the list it
+    /// replaces that still points here. See [`Node::is_layout_child`].
+    pub layout_children_owner: Cell<Option<NodeId>>,
     /// Out-of-flow (absolutely/fixed positioned) boxes for which this node is the
     /// containing block. Recorded by Taffy's out-of-flow positioning pass. The
     /// `Layout.location` of these boxes is relative to this node's border box.
@@ -418,6 +423,7 @@ impl Node {
             layout_parent: Cell::new(None),
             oof_containing_block: Cell::new(None),
             layout_children: RefCell::new(None),
+            layout_children_owner: Cell::new(None),
             hoisted_children: RefCell::new(ThinVec::new()),
             anonymous_blocks: ThinVec::new(),
             paint_children: RefCell::new(None),
@@ -1696,6 +1702,12 @@ impl Node {
             let display = styles.clone_display();
             display.outside() == DisplayOutside::Inline && display.inside() == DisplayInside::Flow
         })
+    }
+
+    /// Whether this node is in its `layout_parent`'s `layout_children` list,
+    /// in O(1): the list that last stored it belongs to its layout parent.
+    pub fn is_layout_child(&self) -> bool {
+        self.layout_parent.get().is_some() && self.layout_children_owner.get() == self.layout_parent.get()
     }
 
     /// The node whose box this node's `Layout.location` is relative to: the

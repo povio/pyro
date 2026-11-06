@@ -645,7 +645,8 @@ pub struct Renderer {
     /// Persistent documents of [`Live`] snapshots, by page.
     mirrors: HashMap<u64, mirror::Mirror>,
     pdf_cache: pdf::PdfCache,
-    /// Layout-query memos of persistent documents, by page.
+    /// Layout queries of persistent documents, by page (present once the
+    /// page's document has been laid out for them).
     geometry: HashMap<u64, geometry::Geometry>,
     /// External SVG sprite files of persistent documents, by resource
     /// scope and URL.
@@ -971,7 +972,7 @@ impl Renderer {
         let mut timings = Timings::default();
         let mut fresh = None;
         self.prepare(snap, fetcher, &mut fresh, &mut timings)?;
-        self.geometry.entry(live.page).or_default().clear();
+        self.geometry.entry(live.page).or_default();
         Ok(timings)
     }
 
@@ -1015,7 +1016,7 @@ impl Renderer {
         timings.fetch = fetch;
         timings.layout = started.elapsed().saturating_sub(fetch);
         if !style_only || doc.root_node().tree().geometry_generation() != geometry_generation {
-            self.geometry.entry(page).or_default().clear();
+            self.geometry.entry(page).or_default();
         }
         Ok(timings)
     }
@@ -1033,11 +1034,11 @@ impl Renderer {
             let generation = m.doc.root_node().tree().geometry_generation();
             m.doc.resolve_style(0.0);
             if m.doc.root_node().tree().geometry_generation() != generation {
-                self.geometry.entry(page).or_default().clear();
+                self.geometry.entry(page).or_default();
             }
         } else if changed {
             m.doc.resolve(0.0);
-            self.geometry.entry(page).or_default().clear();
+            self.geometry.entry(page).or_default();
         }
     }
 
@@ -1231,7 +1232,7 @@ impl Renderer {
         let m = self.mirrors.get_mut(&page).ok_or(RenderError::NoElement)?;
         let paint = paint_document(&mut m.doc, viewport, dpr.clamp(0.1, 16.0), opts, Timings::default())?;
         if paint.relaid {
-            self.geometry.entry(page).or_default().clear();
+            self.geometry.entry(page).or_default();
         }
         Ok(paint)
     }
