@@ -92,6 +92,18 @@ pub enum HistoryHandling {
     Reload,
 }
 
+/// The document a commit replaces, as far as freeing it goes
+/// (`Browser::commit_document`).
+#[derive(Clone, Copy)]
+enum Replaced {
+    /// None, or the initial about:blank one as it was made.
+    Nothing,
+    /// The initial about:blank one, given content since.
+    FilledBlank,
+    /// A loaded one.
+    Loaded,
+}
+
 #[derive(Debug, Clone)]
 pub struct NavigateOpts {
     /// Body and content type of a form POST (`None`: GET).
@@ -409,6 +421,9 @@ pub struct DocumentState {
     pub nav: Rc<PageNav>,
     pub(crate) pending_loader: Option<LoaderId>,
     pub(crate) pending_cancel: Option<ResourceCancellation>,
+    /// The loader and URL of `pending_loader` when the frame's scripts
+    /// started it, which `document.open()` stops (HTML "stop loading").
+    pub(crate) pending_script: Option<(LoaderId, String)>,
     pub(crate) load: Option<loader::DocumentLoad>,
     pub(crate) stylesheets: stylesheets::Stylesheets,
     pub(crate) images: images::Images,
@@ -951,6 +966,7 @@ impl Browser {
                 main_frame: frame,
                 pending_loader: None,
                 pending_cancel: None,
+                pending_script: None,
                 nav,
                 load: None,
                 stylesheets: Default::default(),
@@ -1243,6 +1259,15 @@ impl Browser {
         if let Some(leaving) = self.doc(page).and_then(|doc| doc.main_frame.page_dom.clone()) {
             lp_webapi::lifecycle::before_unload(&leaving);
         }
+        // "The navigation must be a replace" when it leaves the initial
+        // about:blank document, decided as it starts: a document.open()
+        // before it commits does not make it a push.
+        let history = match history {
+            HistoryHandling::Push if self.doc(page).is_some_and(|doc| doc.nav.is_initial_blank()) => {
+                HistoryHandling::Replace
+            }
+            history => history,
+        };
         let loader_id = LoaderId(format!("{:032X}", self.next()));
         // Invalidate the previous fetch even for blank or failed navigation.
         self.cancel_pending_document(page);
@@ -1365,17 +1390,30 @@ impl Browser {
             p.preloads = Default::default();
             let old_dom = p.main_frame.page_dom.replace(page_dom.clone());
             // What the commit replaces: nothing (a new frame's first
-            // document), the initial about:blank one, or a loaded document.
-            let replaces_loaded = old_dom.is_some() && !p.nav.is_initial_blank();
+            // document) or the initial about:blank one as it was made; that
+            // one given content, written with document.open() (it is not
+            // "initial" any more) or filled through DOM APIs; or a loaded
+            // document.
+            let replaced = match &old_dom {
+                None => Replaced::Nothing,
+                Some(old) if p.nav.is_first_blank() => {
+                    if !p.nav.is_initial_blank() || bindings::blank_document_has_content(old) {
+                        Replaced::FilledBlank
+                    } else {
+                        Replaced::Nothing
+                    }
+                }
+                Some(_) => Replaced::Loaded,
+            };
             p.main_frame.dom = Some(page_dom.dom.clone());
             p.main_frame.document = Some(page_dom.document());
             p.main_frame.url = opts.url.clone();
             p.main_frame.loader_id = loader_id.clone();
             p.nav.commit_document(&opts.url, history, None);
             p.nav.set_document(Some((page_dom.dom.clone(), page_dom.document())));
-            (p.main_frame.id.clone(), old, scripts.clone(), p.nav.clone(), (old_dom, replaces_loaded))
+            (p.main_frame.id.clone(), old, scripts.clone(), p.nav.clone(), (old_dom, replaced))
         };
-        let (old_dom, replaces_loaded) = old_dom;
+        let (old_dom, replaced) = old_dom;
         if let Some(dom) = &old_dom {
             dom.dispose();
         }
@@ -1395,15 +1433,22 @@ impl Browser {
         // it before the next one boots instead of waiting for JSC's heuristics.
         // Measured on 80 navigations of a 2 MB React bundle: the process
         // plateaus at 218 MB instead of 629 MB, for about 5 ms per navigation.
-        // A page's first document and its initial about:blank one leave
-        // nothing that pays for a full collection: a test's first `goto`
+        // A page's first document and its untouched initial about:blank one
+        // leave nothing that pays for a full collection: a test's first `goto`
         // collected the whole heap for a blank page's two realms. Its
-        // footprint still counts as a low point for later closes.
+        // footprint still counts as a low point for later closes. An initial
+        // document given content is collected only once the process has grown
+        // past the gate, and then later (`Engine::defer_release_if_due`):
+        // `page.setContent` of 40k nodes and a 1M-object array stayed after
+        // the `goto` (81 MB, 26 MB released), while a `<style>` an init script
+        // added had the idle loop drop the next page's compiled code. (What a
+        // script kept on the blank document's window alone, with no node, is
+        // left to the next release or JavaScriptCore's own collections.)
         drop(old_dom);
-        if replaces_loaded {
-            self.engine.release_closed();
-        } else {
-            self.engine.note_release_point();
+        match replaced {
+            Replaced::Loaded => self.engine.release_closed(),
+            Replaced::FilledBlank => self.engine.defer_release_if_due(),
+            Replaced::Nothing => self.engine.note_release_point(),
         }
         // Worlds: main plus every world named by an init script.
         let mut worlds: Vec<Option<String>> = vec![None];

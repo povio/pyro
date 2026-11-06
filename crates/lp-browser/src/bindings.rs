@@ -73,14 +73,20 @@ impl PageHooks for Hooks {
         // a fragment navigation, done at once (the URL has changed when the
         // link's `click()` returns) and never a reload.
         let own_frame = request.target.as_deref().is_none_or(|t| t.is_empty() || t.eq_ignore_ascii_case("_self"));
-        if own_frame && request.method == "GET" && request.body.is_none() {
-            let nav = self.frames.upgrade().filter(|host| host.matches(page, &loader)).and_then(|host| host.nav(page));
-            if nav.is_some_and(|nav| nav.navigate_to_fragment(&request.url)) {
+        let nav = own_frame
+            .then(|| self.frames.upgrade().filter(|host| host.matches(page, &loader)).and_then(|host| host.nav(page)))
+            .flatten();
+        if request.method == "GET" && request.body.is_none() {
+            if nav.as_ref().is_some_and(|nav| nav.navigate_to_fragment(&request.url)) {
                 return;
             }
         }
+        // `document.open()` before the task runs drops it (stop loading).
+        let stops = nav.map(|nav| nav.stop_count());
         self.sched.post(TaskSource::Navigation, move |b| {
-            if !b.doc(page).is_some_and(|p| p.main_frame.loader_id == loader) {
+            if !b.doc(page).is_some_and(|p| {
+                p.main_frame.loader_id == loader && stops.is_none_or(|stops| p.nav.stop_count() == stops)
+            }) {
                 return;
             }
             let named = request.target.as_deref().and_then(|t| b.page(page.page)?.frames.named_frame(page, t));
@@ -243,6 +249,16 @@ impl PageHooks for Hooks {
     }
 
     fn document_reopened(&self) {
+        // At once, not in the task below: a navigation the same script
+        // starts commits against the opened document.
+        let nav = self
+            .frames
+            .upgrade()
+            .filter(|host| host.matches(self.page, &self.loader))
+            .and_then(|host| host.nav(self.page));
+        if let Some(nav) = nav {
+            nav.document_opened();
+        }
         let page = self.page;
         let loader = self.loader.clone();
         self.sched.post(TaskSource::DomManipulation, move |b| {
@@ -485,6 +501,25 @@ fn javascript_url_source(url: &str) -> Option<String> {
     Some(percent_encoding::percent_decode_str(rest).decode_utf8_lossy().into_owned())
 }
 
+/// Every about:blank document's markup.
+const BLANK_MARKUP: &str = "<!doctype html><html><head></head><body></body></html>";
+/// The nodes `BLANK_MARKUP` makes: the document, the doctype, html, head, body.
+const BLANK_NODES: usize = 5;
+
+/// An about:blank document has nodes beyond the ones it was made with: a
+/// script or `Runtime.evaluate` filled it through DOM APIs (an inserted
+/// iframe, whose documents are its own, included). A shadow tree is not
+/// among the document's descendants: one attached to body (the only one of
+/// the five that can host one) counts as well.
+pub(crate) fn blank_document_has_content(page_dom: &PageDom) -> bool {
+    let dom = page_dom.dom.borrow();
+    let Ok(nodes) = dom.descendants(page_dom.document()) else { return true };
+    nodes
+        .take(BLANK_NODES + 1)
+        .enumerate()
+        .any(|(i, node)| i == BLANK_NODES || dom.shadow_root(node).is_ok_and(|root| root.is_some()))
+}
+
 pub(crate) fn create(
     host: &Rc<crate::frames::FrameHost>,
     page: FrameKey,
@@ -495,7 +530,7 @@ pub(crate) fn create(
     let settings = host.settings.borrow().clone();
     let dom = host.dom.clone();
     let doc = if url == "about:blank" {
-        lp_dom::parse::parse_document(&dom, url, "<!doctype html><html><head></head><body></body></html>")
+        lp_dom::parse::parse_document(&dom, url, BLANK_MARKUP)
     } else {
         dom.borrow_mut().create_document(lp_dom::DocumentKind::Html, url)
     };
