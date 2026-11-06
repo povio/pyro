@@ -491,6 +491,7 @@ fn follows_version(page: &PageDom, dom: &lp_dom::Dom, m: &BindingState) -> bool 
 
 fn hook_pending_slow(page: &PageDom, dom: &lp_dom::Dom, m: &BindingState) -> bool {
     dom.has_iframe_events()
+        || dom.has_details_toggles()
         || page.render_blocking_pending(dom)
         || dom.has_custom_reactions_for(page.document())
         || dom.has_upgrade_candidates()

@@ -120,6 +120,15 @@ fn request_focus(page: &Rc<PageDom>, target: FocusTarget, prevent_scroll: bool) 
     (apply && live_document(page, doc, &token)).then_some(token)
 }
 
+/// A focusable area, or the dialog its focusing steps focus, that a modal
+/// dialog does not make inert. Without a modal dialog this is one
+/// empty-set check more than before.
+fn can_focus(page: &PageDom, el: NodeId) -> bool {
+    let dom = page.dom.borrow();
+    (dom.is_focusable(el).unwrap_or(false) || page.popover.forced_focus(el))
+        && !(dom.topmost_modal().is_some() && dom.is_inert(el))
+}
+
 /// HTML focusing steps, coordinated with the browsing-context owner.
 pub fn focus_element(page: &Rc<PageDom>, el: NodeId) {
     focus_element_with_options(page, el, false);
@@ -131,7 +140,7 @@ pub fn focus_element_with_options(page: &Rc<PageDom>, el: NodeId, prevent_scroll
         return focus_element_with_options(&owner, el, prevent_scroll);
     }
     let doc = page.document();
-    if !live_element(page, doc, el) || !page.dom.borrow().is_focusable(el).unwrap_or(false) {
+    if !live_element(page, doc, el) || !can_focus(page, el) {
         return;
     }
     if let Some(token) = request_focus(page, FocusTarget::Element(el), prevent_scroll) {
@@ -146,7 +155,7 @@ pub fn focus_element_with_transition(page: &Rc<PageDom>, el: NodeId, token: &Foc
     }
     adopt_transition(page, token);
     let doc = page.document();
-    if !live_element(page, doc, el) || !page.dom.borrow().is_focusable(el).unwrap_or(false) {
+    if !live_element(page, doc, el) || !can_focus(page, el) {
         return;
     }
     let prev = page.dom.borrow().focused(doc).ok().flatten();
@@ -161,10 +170,7 @@ pub fn focus_element_with_transition(page: &Rc<PageDom>, el: NodeId, token: &Foc
     if let Some(prev) = prev {
         run_blur(page, doc, prev, blur_related, token);
     }
-    if !live_document(page, doc, token)
-        || !live_element(page, doc, el)
-        || !page.dom.borrow().is_focusable(el).unwrap_or(false)
-    {
+    if !live_document(page, doc, token) || !live_element(page, doc, el) || !can_focus(page, el) {
         return;
     }
     let _ = page.dom.borrow_mut().set_focused(doc, Some(el));
@@ -447,10 +453,7 @@ fn is_enabled_submit_button(dom: &Dom, el: NodeId) -> bool {
     }
     match local(dom, el).as_deref() {
         Some("input") => matches!(dom.input_type(el), Ok(InputType::Submit | InputType::Image)),
-        Some("button") => !matches!(
-            dom.get_attribute(el, "type").ok().flatten().map(|t| t.to_ascii_lowercase()).as_deref(),
-            Some("reset" | "button")
-        ),
+        Some("button") => crate::popover::button_is_submit(dom, el),
         _ => false,
     }
 }
@@ -614,6 +617,9 @@ fn run_activation_behavior(
                 }
                 _ => {}
             }
+            if !disabled && matches!(ty, InputType::Submit | InputType::Image | InputType::Reset | InputType::Button) {
+                crate::popover::popover_target_activation(page, el, target);
+            }
         }
         "button" => {
             let (disabled, form, ty) = {
@@ -624,12 +630,19 @@ fn run_activation_behavior(
                     dom.get_attribute(el, "type").ok().flatten().map(|t| t.to_ascii_lowercase()),
                 )
             };
-            let Some(f) = form.filter(|_| !disabled) else { return };
-            match ty.as_deref() {
-                Some("reset") => reset_form(page, f),
-                Some("button") => {}
-                _ => submit_form(page, f, Some(el), true),
+            if disabled {
+                return;
             }
+            if let Some(f) = form {
+                match ty.as_deref() {
+                    Some("reset") => reset_form(page, f),
+                    Some("button") => {}
+                    _ if !crate::popover::button_is_submit(&page.dom.borrow(), el) => {}
+                    _ => submit_form(page, f, Some(el), true),
+                }
+            }
+            // `commandfor`, else `popovertarget`.
+            crate::popover::button_activation(page, el, target);
         }
         "a" | "area" => follow_hyperlink(page, el),
         "label" => {
@@ -659,9 +672,9 @@ fn run_activation_behavior(
                 return;
             }
             let details = page.dom.borrow().parent(el).ok().flatten();
+            // lp-dom queues the `toggle` event of the attribute change.
             if let Some(d) = details {
                 let _ = page.dom.borrow_mut().toggle_attribute(d, "open", None);
-                queue_simple(page, d, "toggle", false, false);
             }
         }
         _ => {}
@@ -851,7 +864,10 @@ pub fn submit_form(page: &Rc<PageDom>, form: NodeId, submitter: Option<NodeId>, 
     } else {
         true
     };
-    if proceed {
+    let dialog = proceed && crate::popover::is_dialog_method(&page.dom.borrow(), form, submitter);
+    if dialog {
+        crate::popover::submit_dialog(page, form, submitter);
+    } else if proceed {
         let req = crate::formdata::form_submission(page, form, submitter);
         if let Some(req) = req {
             page.navigate(req);
@@ -1039,6 +1055,10 @@ fn editing_key_action(page: &Rc<PageDom>, host: NodeId, k: &KeyInput) {
 
 /// Default actions for non-text keys on the focused element.
 fn default_key_action(page: &Rc<PageDom>, target: NodeId, k: &KeyInput) {
+    // A close request: the newest open dialog or auto popover closes.
+    if k.key == "Escape" && crate::popover::close_request(page) {
+        return;
+    }
     if let Some(host) = editing_host_of(page, target) {
         editing_key_action(page, host, k);
         return;
@@ -1300,9 +1320,12 @@ fn focus_next(page: &Rc<PageDom>, from: NodeId, backward: bool) {
         let dom = page.dom.borrow();
         let doc = page.document();
         let Ok(all) = dom.descendants(doc) else { return };
+        // A modal dialog keeps sequential focus inside it.
+        let blocked = dom.topmost_modal().is_some();
         let candidates: Vec<NodeId> = all
             .filter(|&n| {
                 dom.is_focusable(n).unwrap_or(false)
+                    && !(blocked && dom.is_inert(n))
                     && dom
                         .get_attribute(n, "tabindex")
                         .ok()
@@ -1762,6 +1785,7 @@ fn dispatch_mouse_inner(
             }
         }
         MouseKind::Pressed => {
+            crate::popover::light_dismiss(page, target, m.x, m.y, true);
             let pd = touch.is_some()
                 || fire(page, tkey, &mouse_event(page, EventInterface::PointerEvent, "pointerdown", m, true));
             let md = !pd || fire(page, tkey, &mouse_event(page, EventInterface::MouseEvent, "mousedown", m, true));
@@ -1827,6 +1851,7 @@ fn dispatch_mouse_inner(
             if touch.is_none() {
                 fire(page, tkey, &mouse_event(page, EventInterface::PointerEvent, "pointerup", m, true));
             }
+            crate::popover::light_dismiss(page, target, m.x, m.y, false);
             // Only a canceled pointerdown holds back the mouseup (an app's
             // pointerup handler that calls preventDefault does not).
             if !page.compat_mouse_suppressed.replace(false) {

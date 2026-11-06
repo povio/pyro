@@ -1155,66 +1155,40 @@ impl JsClass for HtmlElement {
             let make = s.eval("(function(root){return {get shadowRoot(){return root()}, setFormValue(){}, setValidity(){}, states: new Set(), form: null, labels: [], willValidate: false, checkValidity(){return true}, reportValidity(){return true}}})", None, 1)?;
             make.as_object().ok_or_else(|| JsError::Type("attachInternals".into()))?.call(None, &[root.value()])
         });
-        def.method("showPopover", 0, |s, n, _a| {
-            set_popover_showing(n, true)?;
+        def.method("showPopover", 0, |s, n, a| {
+            let source = crate::popover::source_option(s, a.get(0))?;
+            crate::popover::show_popover(n.page(), n.id, true, source)?;
             Ok(s.undefined())
         });
         def.method("hidePopover", 0, |s, n, _a| {
-            set_popover_showing(n, false)?;
+            crate::popover::hide_popover(n.page(), n.id, true, true, true, None)?;
             Ok(s.undefined())
         });
         def.method("togglePopover", 0, |s, n, a| {
-            // `force` is a boolean or a dictionary with a `force` member.
-            let force = match a.get(0) {
-                v if v.is_undefined() => None,
+            // `force` is a boolean or a dictionary with `force` and `source`.
+            let (force, source) = match a.get(0) {
+                v if v.is_undefined() => (None, None),
                 v => match v.as_object() {
-                    Some(options) => Some(options.get_atom("force")?).filter(|f| !f.is_undefined()).map(|f| f.to_bool()),
-                    None => Some(v.to_bool()),
+                    Some(options) => (
+                        Some(options.get_atom("force")?).filter(|f| !f.is_undefined()).map(|f| f.to_bool()),
+                        crate::popover::source_option(s, v)?,
+                    ),
+                    None => (Some(v.to_bool()), None),
                 },
             };
-            let showing = n.page().dom.borrow().is_popover_showing(n.id);
+            let page = n.page();
+            let showing = page.dom.borrow().is_popover_showing(n.id);
             match force {
                 // Already in the wanted state: only the validity errors.
                 Some(want) if want == showing => {
-                    check_popover_validity(n, showing)?;
+                    crate::popover::check_popover_validity(page, n.id, showing, true)?;
                 }
-                _ => set_popover_showing(n, !showing)?,
+                _ if showing => crate::popover::hide_popover(page, n.id, true, true, true, source)?,
+                _ => crate::popover::show_popover(page, n.id, true, source)?,
             }
-            Ok(s.boolean(n.page().dom.borrow().is_popover_showing(n.id)))
+            Ok(s.boolean(page.dom.borrow().is_popover_showing(n.id)))
         });
     }
-}
-
-/// HTML "check popover validity": whether `showPopover` (`expect_showing`
-/// false) or `hidePopover` (true) has anything to do. An element without a
-/// valid `popover` attribute throws NotSupportedError, a disconnected one or
-/// an open dialog InvalidStateError.
-fn check_popover_validity(n: &NodeData, expect_showing: bool) -> JsResult<bool> {
-    let dom = n.page().dom.borrow();
-    if !dom.has_attribute(n.id, "popover").js()? {
-        return Err(JsError::dom("NotSupportedError", "Not supported on elements that do not have a valid value for the 'popover' attribute."));
-    }
-    if !dom.is_connected(n.id).js()? {
-        return Err(JsError::dom("InvalidStateError", "Invalid on disconnected popover elements."));
-    }
-    let open_dialog =
-        dom.element(n.id).js()?.local_name() == &lp_dom::LocalName::from("dialog") && dom.has_attribute(n.id, "open").js()?;
-    if !expect_showing && open_dialog {
-        return Err(JsError::dom("InvalidStateError", "The dialog is already open as a dialog, and therefore cannot be opened as a popover."));
-    }
-    Ok(dom.is_popover_showing(n.id) == expect_showing)
-}
-
-/// `showPopover()` / `hidePopover()`: the popover visibility state, which
-/// `:popover-open` and the UA rule hiding closed popovers read. Removing the
-/// popover from its document hides it; `moveBefore` does not.
-/// Not modelled: `beforetoggle`/`toggle` events, light dismiss, the auto
-/// popover stack (showing one popover hides no other).
-fn set_popover_showing(n: &NodeData, showing: bool) -> JsResult<()> {
-    if check_popover_validity(n, !showing)? {
-        n.page().dom.borrow_mut().set_popover_showing(n.id, showing).js()?;
-    }
-    Ok(())
 }
 
 simple_class!(HtmlUnknownElement, "HTMLUnknownElement", HtmlElement);
@@ -1597,6 +1571,7 @@ fn has_selection(n: &NodeData) -> bool {
 }
 
 simple_class!(HtmlInputElement, "HTMLInputElement", HtmlElement, |def| {
+    crate::popover::define_popover_invoker(def);
     define_labels(def);
     define_validation(def);
     define_text_selection(def);
@@ -1967,6 +1942,8 @@ simple_class!(HtmlButtonElement, "HTMLButtonElement", HtmlElement, |def| {
     reflect_bool!(def, "disabled", "disabled");
     reflect_bool!(def, "formNoValidate", "formnovalidate");
     def.getter("form", form_value);
+    crate::popover::define_popover_invoker(def);
+    crate::popover::define_command_invoker(def);
     def.accessor(
         "type",
         |s, n| {
@@ -1975,6 +1952,8 @@ simple_class!(HtmlButtonElement, "HTMLButtonElement", HtmlElement, |def| {
             Ok(s.string(match t.as_deref() {
                 Some("reset") => "reset",
                 Some("button") => "button",
+                // A `commandfor` button without a valid type is a plain button.
+                _ if !crate::popover::button_is_submit(&dom, n.id) => "button",
                 _ => "submit",
             }))
         },
@@ -2569,48 +2548,7 @@ simple_class!(HtmlDialogElement, "HTMLDialogElement", HtmlElement, |def| {
             Ok(())
         },
     );
-    def.method("show", 0, |s, n, _a| {
-        n.page().dom.borrow_mut().set_attribute(n.id, "open", "").js()?;
-        Ok(s.undefined())
-    });
-    def.method("showModal", 0, |s, n, _a| {
-        {
-            let dom = n.page().dom.borrow();
-            if dom.has_attribute(n.id, "open").js()? {
-                if dom.is_modal(n.id) {
-                    return Ok(s.undefined());
-                }
-                return Err(JsError::dom("InvalidStateError", "The dialog is already open as a non-modal dialog, and therefore cannot be opened as a modal dialog."));
-            }
-            if !dom.is_connected(n.id).js()? {
-                return Err(JsError::dom("InvalidStateError", "The element is not in a Document."));
-            }
-            if dom.is_popover_showing(n.id) {
-                return Err(JsError::dom("InvalidStateError", "The dialog is already open as a Popover, and therefore cannot be opened as a modal dialog."));
-            }
-        }
-        let mut dom = n.page().dom.borrow_mut();
-        dom.set_attribute(n.id, "open", "").js()?;
-        // `:modal` until the dialog closes or leaves its document.
-        dom.set_modal(n.id, true).js()?;
-        Ok(s.undefined())
-    });
-    def.method("close", 0, |s, n, a| {
-        let was_open = n.page().dom.borrow().has_attribute(n.id, "open").js()?;
-        if !was_open {
-            return Ok(s.undefined());
-        }
-        if !a.get(0).is_undefined() {
-            n.page().set_dialog_return(n.id, dom_string(a.get(0))?);
-        }
-        {
-            let mut dom = n.page().dom.borrow_mut();
-            dom.remove_attribute(n.id, "open").js()?;
-            dom.set_modal(n.id, false).js()?;
-        }
-        crate::input::queue_simple(n.page(), n.id, "close", false, false);
-        Ok(s.undefined())
-    });
+    crate::popover::define_dialog(def);
 });
 simple_class!(HtmlDetailsElement, "HTMLDetailsElement", HtmlElement, |def| {
     reflect_bool!(def, "open", "open");
