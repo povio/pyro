@@ -32,11 +32,12 @@
   // populate_disposed); `populated` is kept in sync by the native side.
   // Held here, so it lives exactly as long as some interface proxy (whose
   // handler's traps reference this object) is reachable. `hooks[id]` runs
-  // once class `id` is populated (realm.rs `after_populate`).
+  // once class `id` is populated (realm.rs `after_populate`); most classes
+  // have none, and a read of a missing one must not reach Array.prototype.
   const classProtos = [];
   const classTargets = [];
   const populated = [];
-  const hooks = [];
+  const hooks = { __proto__: null };
   const P = Promise;
   const promiseThen = P.prototype.then;
   const promiseResolveFn = P.resolve;
@@ -306,21 +307,35 @@
   // Descriptors reused for every interface (only `value` changes): the
   // installation defines a few properties per interface, hundreds per realm.
   // `exposedValue` is used while the realm is made, so it is an ordinary
-  // object (JSC's fast descriptor read); the others have no prototype:
-  // `materialize` runs after page script, which may have put `get` or `set`
-  // on Object.prototype.
+  // object (JSC's fast descriptor read).
   const exposedValue = { value: undefined, writable: true, enumerable: false, configurable: true };
-  const hiddenValue = { __proto__: null, value: undefined, writable: true, enumerable: false, configurable: true };
-  const fixedValue = { __proto__: null, value: undefined, writable: false, enumerable: false, configurable: false };
-  const tagValue = { __proto__: null, value: undefined, writable: false, enumerable: false, configurable: true };
-  const memberValue = { __proto__: null, value: undefined, writable: true, enumerable: true, configurable: true };
-  const defineHidden = (o, k, value) => { hiddenValue.value = value; defineProperty(o, k, hiddenValue); hiddenValue.value = undefined; };
+  // Population runs after page script. A data descriptor's four fields are
+  // its own; `get` and `set` an ordinary one looks up on Object.prototype,
+  // where a page may have put them. While it has neither, the ordinary
+  // descriptor [0] reads the same as the one without a prototype [1], and
+  // JSC reads it without lookups (a define costs about 40% less).
+  // `descriptorIndex()` says which applies now.
+  const objectProto = O.prototype;
+  const objectHasOwn = O.hasOwn;
+  const descriptorIndex = () => (objectHasOwn(objectProto, 'get') || objectHasOwn(objectProto, 'set') ? 1 : 0);
+  const dataDescriptors = (writable, enumerable, configurable) => [
+    { value: undefined, writable, enumerable, configurable },
+    { __proto__: null, value: undefined, writable, enumerable, configurable },
+  ];
+  const hiddenValues = dataDescriptors(true, false, true);
+  const fixedValues = dataDescriptors(false, false, false);
+  const tagValues = dataDescriptors(false, false, true);
+  const memberValues = dataDescriptors(true, true, true);
+  const constantValues = dataDescriptors(false, true, false);
+  const defineData = (o, k, d, value) => { d.value = value; defineProperty(o, k, d); d.value = undefined; };
 
   // The realm's interface table (`installInterfaces`), for `materialize`.
   let interfaceSpec = null, interfaceObjectProto = null, interfaceLists = null;
   // [LegacyFactoryFunction]s by interface id: their `prototype` is the
-  // interface prototype object, defined when it is made.
-  const factoryTargets = [];
+  // interface prototype object, defined when it is made. No prototype: a
+  // read of an interface without any, after page script, meets no getter
+  // a page put on Array.prototype or Object.prototype.
+  const factoryTargets = { __proto__: null };
 
   const H = {
     classProtos,
@@ -366,8 +381,6 @@
         protos[i] = undefined;
         classProtos[i] = undefined;
         populated[i] = false;
-        hooks[i] = undefined;
-        factoryTargets[i] = undefined;
       }
       exposedValue.value = undefined;
       return interfaceLists;
@@ -394,16 +407,14 @@
         classProtos[id] = proto;
       }
       interfaceLists[0][id] = proto;
+      const k = descriptorIndex();
       if (!callback) {
-        fixedValue.value = proto;
-        defineProperty(interfaceLists[1][id], 'prototype', fixedValue);
+        defineData(interfaceLists[1][id], 'prototype', fixedValues[k], proto);
         const factories = factoryTargets[id];
-        if (factories) for (let i = 0; i < factories.length; i++) defineProperty(factories[i], 'prototype', fixedValue);
-        fixedValue.value = undefined;
+        if (factories) for (let i = 0; i < factories.length; i++) defineData(factories[i], 'prototype', fixedValues[k], proto);
       }
-      tagValue.value = name;
-      defineProperty(proto, toStringTag, tagValue);
-      defineHidden(proto, 'constructor', interfaceLists[2][id]);
+      defineData(proto, toStringTag, tagValues[k], name);
+      defineData(proto, 'constructor', hiddenValues[k], interfaceLists[2][id]);
       return proto;
     },
     // A [LegacyFactoryFunction] of interface `id` (`new Image(w, h)`): a
@@ -428,11 +439,12 @@
     // (or a parent interface object) before the interface's first use,
     // which an assignment would call instead of creating the member.
     members(target, ...list) {
+      const d = memberValues[descriptorIndex()];
       for (let i = 0; i < list.length; i += 2) {
-        memberValue.value = list[i + 1];
-        defineProperty(target, list[i], memberValue);
+        d.value = list[i + 1];
+        defineProperty(target, list[i], d);
       }
-      memberValue.value = undefined;
+      d.value = undefined;
     },
     // WebIDL sequence<T> conversion (https://webidl.spec.whatwg.org/#es-sequence):
     // the iterator protocol of `v` itself (arrays included: an overridden
@@ -459,10 +471,19 @@
         reflectDefine(out, n, { value: r.value, writable: true, enumerable: true, configurable: true });
       }
     },
-    // Population steps (see defineAccessor): no prototype on descriptors,
-    // no iteration, the Array.prototype methods of the realm's creation.
-    constant(target, name, value) {
-      defineProperty(target, name, { __proto__: null, value, writable: false, enumerable: true, configurable: false });
+    // Population steps (see `descriptorIndex` and defineAccessor):
+    // descriptors whose fields are read as their own, no iteration, the
+    // Array.prototype methods of the realm's creation.
+    // An interface's constants, `list` as name, value, ...: each on the
+    // interface object, then on its prototype (realm.rs `MemberBatch`).
+    constants(target, proto, ...list) {
+      const d = constantValues[descriptorIndex()];
+      for (let i = 0; i < list.length; i += 2) {
+        d.value = list[i + 1];
+        defineProperty(target, list[i], d);
+        defineProperty(proto, list[i], d);
+      }
+      d.value = undefined;
     },
     iterable(proto) {
       defineProperty(proto, symbolIterator, { __proto__: null, value: arrayIterables[2], writable: true, configurable: true });

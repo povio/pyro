@@ -2049,9 +2049,9 @@ fn install_members_raw(
     };
     let native = |name: &str, length: u32, call: class::MemberCall| native_pure(name, length, call, false);
     let members = helper("members")?;
-    let mut batch = MemberBatch::new(ctx, &members, &proto);
+    let mut batch = MemberBatch::new(ctx, &members, &[proto.raw]);
     for (name, length, call, pure) in methods {
-        batch.push(name, native_pure(name, length, call, pure)?)?;
+        batch.push(name, native_pure(name, length, call, pure)?.raw as sys::JSValueRef)?;
     }
     batch.flush()?;
     let accessor = helper("accessor")?;
@@ -2097,14 +2097,17 @@ fn install_members_raw(
         };
         accessor.call(None, &[proto.value(), string(name), g.value(), st])?;
     }
-    let constant = helper("constant")?;
+    // Each on the interface object, then on the prototype; one call into
+    // JavaScript per batch instead of two per constant.
+    let constant_list = helper("constants")?;
+    let mut batch = MemberBatch::new(ctx, &constant_list, &[target.raw, proto.raw]);
     for (name, v) in constants {
-        constant.call(None, &[target.value(), string(name), num(v)])?;
-        constant.call(None, &[proto.value(), string(name), num(v)])?;
+        batch.push(name, num(v).raw)?;
     }
-    let mut batch = MemberBatch::new(ctx, &members, &target);
+    batch.flush()?;
+    let mut batch = MemberBatch::new(ctx, &members, &[target.raw]);
     for (name, length, call) in statics {
-        batch.push(name, native(name, length, call)?)?;
+        batch.push(name, native(name, length, call)?.raw as sys::JSValueRef)?;
     }
     batch.flush()?;
     if let Some(kind) = iterable {
@@ -2117,52 +2120,57 @@ fn install_members_raw(
     Ok(())
 }
 
-/// Methods or statics of one population step, defined by the `members`
-/// helper as `members(target, name, function, name, function, ...)` rather
-/// than assigned (see there). The arguments wait in an array on this stack,
-/// which JavaScriptCore scans conservatively: it keeps each new function
-/// alive until the helper has defined it, without a protection per member.
+/// Named values of one population step, for the helper `members(target,
+/// name, function, ...)` (methods, statics) or `constants(target, proto,
+/// name, value, ...)`: defined, not assigned (see there), in one call into
+/// JavaScript per batch instead of one per value. The arguments wait in an
+/// array on this stack, which JavaScriptCore scans conservatively: it keeps
+/// each new function alive until the helper has defined it, without a
+/// protection per member.
 struct MemberBatch<'h> {
     ctx: sys::JSContextRef,
-    members: &'h Object<'h>,
-    /// `[target, name, function, ...]`, `len` of them set.
-    args: [sys::JSValueRef; 1 + 2 * MEMBER_BATCH],
+    helper: &'h Object<'h>,
+    /// The helper's leading objects, then `name, value` pairs: `len` set.
+    args: [sys::JSValueRef; 2 + 2 * MEMBER_BATCH],
+    lead: usize,
     len: usize,
 }
 
-/// Members per call of the `members` helper (most classes have fewer).
+/// Values per call of a batch helper (most classes have fewer).
 const MEMBER_BATCH: usize = 32;
 
 impl<'h> MemberBatch<'h> {
-    fn new(ctx: sys::JSContextRef, members: &'h Object<'h>, target: &Object<'_>) -> MemberBatch<'h> {
-        let mut args = [ptr::null(); 1 + 2 * MEMBER_BATCH];
-        args[0] = target.raw as sys::JSValueRef;
-        MemberBatch { ctx, members, args, len: 1 }
+    fn new(ctx: sys::JSContextRef, helper: &'h Object<'h>, lead: &[sys::JSObjectRef]) -> MemberBatch<'h> {
+        let mut args = [ptr::null(); 2 + 2 * MEMBER_BATCH];
+        for (slot, o) in args.iter_mut().zip(lead) {
+            *slot = *o as sys::JSValueRef;
+        }
+        MemberBatch { ctx, helper, args, lead: lead.len(), len: lead.len() }
     }
 
-    fn push(&mut self, name: &'static str, f: Object<'_>) -> JsResult<()> {
-        if self.len == self.args.len() {
+    fn push(&mut self, name: &'static str, value: sys::JSValueRef) -> JsResult<()> {
+        if self.len + 2 > self.args.len() {
             self.flush()?;
         }
+        self.args[self.len + 1] = value;
         // SAFETY: the live callback/scope context; the thread's string for
         // the static name (`atom_raw`) outlives the call.
         self.args[self.len] = unsafe { sys::JSValueMakeString(self.ctx, crate::string::atom_raw(name)) };
-        self.args[self.len + 1] = f.raw as sys::JSValueRef;
         self.len += 2;
         Ok(())
     }
 
     fn flush(&mut self) -> JsResult<()> {
-        if self.len == 1 {
+        if self.len == self.lead {
             return Ok(());
         }
         let _pool = crate::autorelease::Pool::new();
         let mut exc = ptr::null();
         // SAFETY: `args[..len]` are live values of `ctx` (see the type).
         unsafe {
-            sys::JSObjectCallAsFunction(self.ctx, self.members.raw, ptr::null_mut(), self.len, self.args.as_ptr(), &mut exc)
+            sys::JSObjectCallAsFunction(self.ctx, self.helper.raw, ptr::null_mut(), self.len, self.args.as_ptr(), &mut exc)
         };
-        self.len = 1;
+        self.len = self.lead;
         check(self.ctx, exc)
     }
 }

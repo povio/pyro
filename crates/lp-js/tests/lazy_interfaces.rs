@@ -444,6 +444,8 @@ fn population_after_page_changed_prototypes_runs_no_page_code() {
            set(v) { seen.push('write ' + i); } });
          for (const k of ['ping', 'twoArgs', 'midOnly', 'leafOnly', 'create']) d(Object.prototype, k, { configurable: true,
            get() { return undefined; }, set(v) { seen.push('set ' + k); } });
+         for (const k of ['get', 'set']) d(Object.prototype, k, { configurable: true,
+           get() { seen.push('descriptor ' + k); return undefined; } });
          Object.prototype.apply = function (t) { seen.push('apply ' + t.name); return 'hijacked'; };
          Object.prototype.construct = function (t) { seen.push('construct ' + t.name); return {}; };
          'ok'",
@@ -463,7 +465,7 @@ fn population_after_page_changed_prototypes_runs_no_page_code() {
     eval(
         &r,
         "for (let i = 0; i < 2000; i++) delete Array.prototype[i];
-         for (const k of ['ping', 'twoArgs', 'midOnly', 'leafOnly', 'create', 'apply', 'construct']) delete Object.prototype[k];
+         for (const k of ['ping', 'twoArgs', 'midOnly', 'leafOnly', 'create', 'apply', 'construct', 'get', 'set']) delete Object.prototype[k];
          'ok'",
     );
     assert_eq!(eval(&r, "[hidden.hiddenOnly(), LzBase.create()].join()"), "1,static");
