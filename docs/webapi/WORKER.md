@@ -11,7 +11,9 @@ implement `new Worker(url)`. A worker runs its script off the page's thread.
   model as a browser thread. A page without workers pays one empty-list check
   when disposed; `worker_wire.js` is compiled on a realm's first worker use.
 - **Global.** `DedicatedWorkerGlobalScope` (`WorkerGlobalScope`, `EventTarget`):
-  `self`, `location`, `navigator` (subset), `name`, `origin`, `isSecureContext`,
+  `self`, `location`, `navigator` (subset), `name`, `origin`, `isSecureContext`
+  (the script URL is potentially trustworthy), `crossOriginIsolated` (false),
+  `reportError`,
   `postMessage`, `close`, `onmessage`, `onmessageerror`, `onerror`,
   `importScripts`, `setTimeout`/`setInterval` and their clears, `queueMicrotask`,
   `atob`/`btoa`, `structuredClone`, `crypto`, `performance.now()`, `console`,

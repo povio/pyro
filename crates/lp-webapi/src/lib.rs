@@ -51,6 +51,7 @@ mod popup;
 pub mod range;
 pub mod render_blocking;
 pub mod render_snapshot;
+pub mod report_error;
 pub mod resize_observer;
 pub mod request;
 pub mod observable;

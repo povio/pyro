@@ -621,7 +621,7 @@ impl FrameHost {
             .or_else(|| named.iter().find(|&&key| self.same_origin(source, key)))
             .copied()
     }
-    fn parent_key(&self, key: FrameKey) -> FrameKey {
+    pub(crate) fn parent_key(&self, key: FrameKey) -> FrameKey {
         self.frame(key).and_then(|f| f.parent).and_then(|id| self.key(&id)).unwrap_or(key)
     }
     pub fn child_keys(&self, key: FrameKey) -> FrameKeys {
