@@ -266,6 +266,16 @@ struct Path {
 
 const TOLERANCE: f64 = 0.01;
 
+/// The flattening tolerance for an arc of `radius` (user units) drawn through
+/// `t`: [`TOLERANCE`] in device pixels, but never below a millionth of the
+/// radius. kurbo's segment count grows with radius / tolerance, so a page's
+/// `arc(0, 0, 1e300, 0, 6)` would otherwise never finish.
+fn arc_tolerance(radius: f64, t: Affine) -> f64 {
+    let scale = t.determinant().abs().sqrt();
+    let device = if scale.is_finite() && scale > 0.0 { TOLERANCE / scale } else { TOLERANCE };
+    device.max(radius * 1e-6)
+}
+
 impl Path {
     fn move_to(&mut self, p: Point) {
         self.bez.move_to(p);
@@ -352,7 +362,7 @@ impl Builder<'_> {
         }
         let arc = kurbo::Arc { center, radii, start_angle: start, sweep_angle: sweep, x_rotation: rotation };
         let mut end_point = p;
-        for el in arc.append_iter(TOLERANCE) {
+        for el in arc.append_iter(arc_tolerance(rx.max(ry), self.t)) {
             if let PathEl::CurveTo(a, b, c) = el {
                 end_point = self.t * c;
                 self.path.bez.curve_to(self.t * a, self.t * b, end_point);
@@ -430,7 +440,12 @@ impl Builder<'_> {
     }
     fn svg(&mut self, data: &str) {
         // A path whose data has an error draws nothing here (HTML keeps the
-        // part before the error).
+        // part before the error). kurbo flattens SVG arcs at a fixed
+        // tolerance, so arcs with huge numbers would take forever: such
+        // data draws nothing either.
+        if svg_arc_too_large(data) {
+            return;
+        }
         let Ok(bez) = BezPath::from_svg(data) else { return };
         for el in bez.elements() {
             match *el {
@@ -442,6 +457,49 @@ impl Builder<'_> {
             }
         }
     }
+}
+
+/// Whether SVG path `data` has an arc command and a number of magnitude
+/// 1e12 or more (an integer part of 13+ digits or a positive exponent of 12+):
+/// kurbo would cut such an arc into millions of curves.
+fn svg_arc_too_large(data: &str) -> bool {
+    if !data.bytes().any(|b| b == b'A' || b == b'a') {
+        return false;
+    }
+    let bytes = data.as_bytes();
+    let mut i = 0;
+    let mut digits = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'0'..=b'9' => {
+                digits += 1;
+                if digits >= 13 {
+                    return true;
+                }
+            }
+            b'e' | b'E' => {
+                digits = 0;
+                let mut j = i + 1;
+                let negative = bytes.get(j) == Some(&b'-');
+                if matches!(bytes.get(j), Some(b'-' | b'+')) {
+                    j += 1;
+                }
+                let mut exponent = 0u32;
+                while let Some(d @ b'0'..=b'9') = bytes.get(j) {
+                    exponent = exponent.saturating_mul(10).saturating_add(u32::from(d - b'0'));
+                    j += 1;
+                }
+                if !negative && exponent >= 12 {
+                    return true;
+                }
+                i = j;
+                continue;
+            }
+            _ => digits = 0,
+        }
+        i += 1;
+    }
+    false
 }
 
 /// Replays the ops of a Path2D (canvas2d.js) into `path` through `t`.
@@ -533,9 +591,16 @@ fn point_in_fill(path: &BezPath, p: Point, evenodd: bool) -> bool {
     (if evenodd { winding % 2 != 0 } else { winding != 0 }) || on_outline(&path, p)
 }
 
-fn stroke_outline(path: &BezPath, state: &State) -> BezPath {
+/// The outline of `path` stroked with `state`'s line settings, and the
+/// factor it was scaled by: wide strokes are computed scaled down to a width
+/// of 1 (scale the query point by the same factor), because kurbo flattens
+/// round joins and caps at a fixed tolerance and a page's
+/// `lineWidth = 1e300` would otherwise never finish.
+fn stroke_outline(path: &BezPath, state: &State) -> (BezPath, f64) {
     let t = state.transform;
     let scale = t.determinant().abs().sqrt();
+    let width = state.line_width * scale;
+    let k = if width > 1.0 { 1.0 / width } else { 1.0 };
     let cap = match state.line_cap {
         "round" => kurbo::Cap::Round,
         "square" => kurbo::Cap::Square,
@@ -546,9 +611,15 @@ fn stroke_outline(path: &BezPath, state: &State) -> BezPath {
         "bevel" => kurbo::Join::Bevel,
         _ => kurbo::Join::Miter,
     };
-    let style =
-        kurbo::Stroke::new(state.line_width * scale).with_caps(cap).with_join(join).with_miter_limit(state.miter_limit);
-    kurbo::stroke(path.elements().iter().copied(), &style, &kurbo::StrokeOpts::default(), TOLERANCE)
+    let style = kurbo::Stroke::new(width * k).with_caps(cap).with_join(join).with_miter_limit(state.miter_limit);
+    let scaled = Affine::scale(k);
+    let outline = kurbo::stroke(
+        path.elements().iter().map(|el| scaled * *el),
+        &style,
+        &kurbo::StrokeOpts::default(),
+        (TOLERANCE * k).max(1e-6),
+    );
+    (outline, k)
 }
 
 // ---- The context ----------------------------------------------------------
@@ -749,7 +820,8 @@ fn is_point_in<'s>(s: &Scope<'s>, c: &ContextData, a: Args<'s>, stroke: bool) ->
     let state = c.state.borrow().clone();
     let inside = |path: &BezPath| {
         if stroke {
-            let outline = stroke_outline(path, &state);
+            let (outline, k) = stroke_outline(path, &state);
+            let p = Point::new(p.x * k, p.y * k);
             outline.winding(p) != 0 || on_outline(&outline, p)
         } else {
             point_in_fill(path, p, evenodd)
@@ -1318,5 +1390,41 @@ mod tests {
         assert!(point_in_fill(&path.bez, Point::new(100.0, 50.0), false));
         assert!(point_in_fill(&path.bez, Point::new(118.0, 50.0), false));
         assert!(!point_in_fill(&path.bez, Point::new(0.0, 50.0), false));
+    }
+
+    #[test]
+    fn huge_arcs_and_strokes_finish() {
+        let mut path = Path::default();
+        let mut b = Builder { path: &mut path, t: Affine::IDENTITY };
+        b.ellipse(0.0, 0.0, 1e300, 1e300, 0.0, 0.0, TAU, false);
+        assert!(path.bez.elements().len() < 100);
+        assert!(point_in_fill(&path.bez, Point::new(5.0, 5.0), false));
+
+        let mut path = Path::default();
+        let mut b = Builder { path: &mut path, t: Affine::IDENTITY };
+        b.move_to(0.0, 0.0);
+        b.line_to(100.0, 0.0);
+        b.line_to(100.0, 100.0);
+        let mut state = State::new();
+        state.line_join = "round";
+        state.line_cap = "round";
+        state.line_width = 1e300;
+        stroke_outline(&path.bez, &state);
+        state.line_width = 1e6;
+        let (outline, k) = stroke_outline(&path.bez, &state);
+        assert!(outline.winding(Point::new(50.0 * k, 50.0 * k)) != 0);
+        assert!(outline.winding(Point::new(0.0, 600_000.0 * k)) == 0);
+        state.line_width = 4.0;
+        let (outline, k) = stroke_outline(&path.bez, &state);
+        assert!(outline.winding(Point::new(50.0 * k, 1.0 * k)) != 0);
+        assert!(outline.winding(Point::new(50.0 * k, 3.0 * k)) == 0);
+
+        assert!(svg_arc_too_large("M0 0 A1e300 1e300 0 1 1 1 1"));
+        assert!(svg_arc_too_large("M0 0a9999999999999 1 0 1 1 1 1"));
+        assert!(!svg_arc_too_large("M0 0 A10 10 0 1 1 1e-20 1"));
+        assert!(!svg_arc_too_large("M0 0 L1e300 0"));
+        let mut path = Path::default();
+        Builder { path: &mut path, t: Affine::IDENTITY }.svg("M0 0 A1e300 1e300 0 1 1 1 1");
+        assert!(path.bez.elements().is_empty());
     }
 }

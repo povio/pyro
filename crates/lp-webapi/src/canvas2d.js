@@ -477,18 +477,26 @@
     for (let i = 0; i < args.length; i++) if (!isFinite(args[i])) return false;
     return true;
   }
+  // Copies `src` onto the end of `dst` without spreading it as call
+  // arguments: a long path (a chart's thousands of points) exceeds the
+  // engine's argument limit.
+  function append(dst, src) {
+    let n = dst.length;
+    for (let i = 0; i < src.length; i++) dst[n++] = src[i];
+  }
   function record(self, op, args) {
     const o = ops(self);
     if (!allFinite(args)) return;
-    o.push(op, ...args);
+    o[o.length] = op;
+    append(o, args);
   }
   class Path2D {
     constructor(path) {
       const o = [];
       paths.set(this, o);
       if (path === undefined) return;
-      if (paths.has(path)) o.push(...paths.get(path));
-      else o.push(12, String(path));
+      if (paths.has(path)) append(o, paths.get(path));
+      else append(o, [12, String(path)]);
     }
     addPath(path, transform) {
       const own = ops(this);
@@ -497,7 +505,12 @@
       const m = fixup(transform, true).m;
       const t = [m[0], m[1], m[4], m[5], m[12], m[13]];
       if (!allFinite(t)) return;
-      own.push(10, ...t, ...other, 11);
+      // `other` may be this path: copy it before it grows.
+      const copy = other === own ? other.slice() : other;
+      own[own.length] = 10;
+      append(own, t);
+      append(own, copy);
+      own[own.length] = 11;
     }
     closePath() { ops(this).push(8); }
     moveTo(x, y) { record(this, 0, [+x, +y]); }

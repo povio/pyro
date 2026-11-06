@@ -217,6 +217,23 @@ fn paths_answer_hit_tests() {
         "true,true,true,false"
     );
     assert_eq!(eval(r, "try { new Path2D().arc(0, 0, -1, 0, 1) } catch (e) { e.name }"), "IndexSizeError");
+    // Long paths (charts) copy without hitting the argument limit; a path
+    // added to itself doubles.
+    assert_eq!(
+        eval(
+            r,
+            "var big = new Path2D(); for (var i = 0; i < 200000; i++) big.lineTo(i, i % 7); var c = new Path2D(big); c.addPath(c); x.isPointInStroke(c, 100, 2)"
+        ),
+        "true"
+    );
+    // Huge radii and line widths answer (flattening is bounded).
+    assert_eq!(
+        eval(
+            r,
+            "x.beginPath(); x.arc(0, 0, 1e300, 0, 6); x.lineWidth = 1e300; x.lineJoin = 'round'; x.lineCap = 'round'; [x.isPointInPath(5, 5), typeof x.isPointInStroke(5, 5), x.isPointInPath(new Path2D('M0 0 A1e300 1e300 0 1 1 1 1'), 0, 0)].join()"
+        ),
+        "true,boolean,false"
+    );
     assert_eq!(eval(r, "try { x.roundRect(0, 0, 1, 1, [1, 2, 3, 4, 5]) } catch (e) { e.name }"), "RangeError");
     assert_eq!(eval(r, "try { x.isPointInPath({}, 1, 1) } catch (e) { e.name }"), "TypeError");
 }
