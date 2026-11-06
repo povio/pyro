@@ -522,6 +522,41 @@ fn worker_terminate_stops_a_busy_script_and_errors_reach_the_page() {
 }
 
 #[test]
+fn module_workers_import_statically_and_dynamically() {
+    let (mut t, rec, page) = worker_setup();
+    let dep = data_url("export const x = 40;");
+    let lazy = data_url("export default 2;");
+    let module = data_url(&format!(
+        "import {{ x }} from {dep:?};
+         const lazy = await import({lazy:?});
+         let scripts; try {{ importScripts({dep:?}); }} catch (e) {{ scripts = e.name; }}
+         postMessage(['module', x + lazy.default, import.meta.url.slice(0, 5), scripts, typeof this].join());"
+    ));
+    let classic = data_url(&format!("import({dep:?}).then((m) => postMessage('classic:' + m.x));"));
+    let broken = data_url("import 'http://127.0.0.1:1/missing.js'; postMessage('ran');");
+    eval(
+        &t,
+        page,
+        &format!(
+            r#"const m = new Worker({module:?}, {{type: 'module'}});
+            m.onmessage = (e) => console.log(e.data);
+            m.onerror = (e) => console.log('module-error:' + e.message);
+            const c = new Worker({classic:?});
+            c.onmessage = (e) => console.log(e.data);
+            const b = new Worker({broken:?}, {{type: 'module'}});
+            b.onmessage = (e) => console.log(e.data);
+            b.onerror = () => console.log('broken-error');"#
+        ),
+    );
+    until_console(&mut t, &rec, "module,42,data:,TypeError,undefined");
+    until_console(&mut t, &rec, "classic:40");
+    until_console(&mut t, &rec, "broken-error");
+    assert!(!rec.console.borrow().iter().any(|c| c.contains("log:ran") || c.contains("module-error")));
+    t.browser.close_all();
+    assert!(lp_webapi::join_stopped(Duration::from_secs(5)), "worker threads end");
+}
+
+#[test]
 fn navigating_away_ends_a_documents_workers() {
     let (mut t, rec, page) = worker_setup();
     let script = data_url("postMessage('up'); setInterval(() => postMessage('tick'), 1);");

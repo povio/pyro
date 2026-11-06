@@ -3520,10 +3520,14 @@ fn worker_constructor_checks_and_load_failure_without_a_network() {
             r,
             "const err = (f) => { try { f(); return 'ok'; } catch (e) { return e.name; } };
              [err(() => new Worker('http://[')), err(() => new Worker()), err(() => Worker('w.js')),
-              err(() => new Worker('w.js', {type: 'module'})), err(() => new Worker('w.js', {type: 'other'})),
+              err(() => new Worker('w.js', {type: 'module'}).terminate()), err(() => new Worker('w.js', {type: 'other'})),
               err(() => new Worker('https://example.test/w.js')), typeof SharedWorker, typeof ServiceWorker].join()",
         ),
-        "SyntaxError,TypeError,TypeError,NotSupportedError,TypeError,SecurityError,undefined,undefined"
+        if lp_js::Capabilities::detect().modules {
+            "SyntaxError,TypeError,TypeError,ok,TypeError,SecurityError,undefined,undefined"
+        } else {
+            "SyntaxError,TypeError,TypeError,NotSupportedError,TypeError,SecurityError,undefined,undefined"
+        }
     );
     assert_eq!(e.page.pinned_count(), base, "a rejected construction leaves nothing behind");
     // This embedder has no network: the error comes in a later task, as a plain trusted Event.

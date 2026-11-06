@@ -75,6 +75,8 @@ pub(crate) struct WorkerStart {
     user_agent: Option<UserAgentOverride>,
     extra_headers: HeaderMap,
     cache_disabled: bool,
+    /// `new Worker(url, {type: 'module'})`: the script is a module.
+    pub(crate) module: bool,
     pub(crate) early: Vec<Early>,
 }
 
@@ -104,6 +106,7 @@ impl WorkerStart {
             user_agent: page.identity.borrow().value.clone(),
             extra_headers: page.extra_http_headers(),
             cache_disabled: page.cache_disabled(),
+            module: false,
             early: Vec::new(),
         })
     }
@@ -324,13 +327,13 @@ fn run(start: WorkerStart, ready: mpsc::SyncSender<LoopHandle<WorkerLoop>>) {
     if ready.send(event_loop.handle()).is_err() {
         return;
     }
-    let (id, shared, poster) = (start.id, start.shared.clone(), start.poster.clone());
+    let (id, shared, poster, module) = (start.id, start.shared.clone(), start.poster.clone(), start.module);
     match set_up(&event_loop, start) {
         Ok((mut state, script)) => {
             let closing = shared.clone();
             if let Some(script) = script {
                 if !shared.closing.load(Ordering::Acquire) {
-                    run_script(&state, &script);
+                    run_script(&state, &script, module);
                 }
                 event_loop.run_until(&mut state, None, false, move |_| closing.closing.load(Ordering::Acquire));
             }
@@ -382,8 +385,19 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
         sched: event_loop.scheduler(),
         timers: RefCell::new(HashMap::new()),
         next_timer: Cell::new(1),
+        module: start.module,
     };
     realm.set_global_data::<DedicatedWorkerGlobalScope>(scope)?;
+    // Static imports of a module worker and `import()` in any worker: the
+    // worker's own fetches, like `importScripts`.
+    realm.set_module_fetcher(Some(Rc::new(WorkerModuleFetcher {
+        page: Rc::downgrade(&page),
+        net: start.net.clone(),
+        shared: start.shared.clone(),
+        origin: start.origin.clone(),
+        url: start.url.to_string(),
+        sched: event_loop.scheduler(),
+    })));
     {
         let s = realm.scope()?;
         install(&s, &page)?;
@@ -425,10 +439,66 @@ fn script_text(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).into_owned()
 }
 
-fn run_script(state: &WorkerLoop, script: &(String, String)) {
+fn run_script(state: &WorkerLoop, script: &(String, String), module: bool) {
     let Ok(s) = state.realm.scope() else { return };
-    if let Err(e) = s.eval(&script.0, Some(&script.1), 1) {
+    if !module {
+        if let Err(e) = s.eval(&script.0, Some(&script.1), 1) {
+            s.report_exception(&e);
+        }
+        return;
+    }
+    // A module's graph loads, then it evaluates: an import that fails or a
+    // throw at its top level rejects the evaluation promise, which reports
+    // the error (`error` at the Worker).
+    let evaluated = s.eval_module(&script.0, &script.1).and_then(|promise| {
+        s.then(promise, |_, _| {}, |s, error| s.report_exception(&JsError::Thrown(lp_js::Persistent::new(s, error))))
+    });
+    if let Err(e) = evaluated {
         s.report_exception(&e);
+    }
+}
+
+/// The ES module source of a worker's realm: each module is fetched in a task
+/// of the worker's loop, as `importScripts` fetches (CORS mode, as module
+/// scripts are).
+struct WorkerModuleFetcher {
+    page: std::rc::Weak<PageDom>,
+    net: NetClient,
+    shared: Arc<Shared>,
+    origin: Option<String>,
+    url: String,
+    sched: Scheduler<WorkerLoop>,
+}
+
+impl lp_js::ModuleFetcher for WorkerModuleFetcher {
+    fn document_base_url(&self, _realm: &Realm) -> Option<String> {
+        Some(self.url.clone())
+    }
+
+    fn fetch(&self, realm: &Realm, url: String, request: lp_js::ModuleRequest) {
+        let realm = realm.downgrade();
+        let (page, net, shared, origin) =
+            (self.page.clone(), self.net.clone(), self.shared.clone(), self.origin.clone());
+        let request = RefCell::new(Some(request));
+        self.sched.post(TaskSource::Networking, move |_| {
+            let Some(request) = request.borrow_mut().take() else { return };
+            let Some(realm) = realm.upgrade().filter(|r| !r.is_disposed()) else { return };
+            let Ok(s) = realm.scope() else { return };
+            let source = match (page.upgrade(), lp_net::Url::parse(&url)) {
+                (Some(page), Ok(parsed)) => match page.blob_url(&url) {
+                    Some((bytes, _)) => Ok(bytes),
+                    None => fetch_script(&page, &net, &shared, &origin, parsed, RequestMode::Cors),
+                },
+                _ => Err("invalid URL".to_owned()),
+            };
+            let done = match source {
+                Ok(bytes) => request.resolve(&s, &script_text(&bytes)),
+                Err(_) => request.reject(&s, &JsError::Type(format!("Failed to fetch module: {url}"))),
+            };
+            if let Err(e) = done {
+                s.report_exception(&e);
+            }
+        });
     }
 }
 
@@ -501,6 +571,8 @@ pub struct ScopeData {
     sched: Scheduler<WorkerLoop>,
     timers: RefCell<HashMap<u32, TimerId>>,
     next_timer: Cell<u32>,
+    /// A module worker: `importScripts` throws.
+    module: bool,
 }
 
 fn set_timer<'s>(s: &Scope<'s>, g: &ScopeData, a: Args<'s>, repeat: bool) -> JsResult<Value<'s>> {
@@ -606,6 +678,12 @@ impl JsClass for WorkerGlobalScope {
         // HTML: fetched in order first, then run in order, synchronously. The
         // thread blocks; the owner page keeps running.
         def.method("importScripts", 0, |s, g, a| {
+            if g.module {
+                return Err(JsError::Type(
+                    "Failed to execute 'importScripts' on 'WorkerGlobalScope': Module scripts don't support importScripts()."
+                        .into(),
+                ));
+            }
             let mut urls = Vec::with_capacity(a.len());
             for value in a.iter() {
                 let input = value.to_string()?;
