@@ -6,6 +6,7 @@ mod animation_events;
 mod adoption;
 mod attr_nodes;
 mod dispatch_targets;
+mod forms_values;
 mod id_index;
 mod loader;
 mod move_before;
