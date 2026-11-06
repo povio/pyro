@@ -355,6 +355,9 @@ impl BaseDocument {
                 let diff = RestyleDamage::compute_style_difference::<&Node>(old_style, &style);
                 let changed = matches!(diff.change, StyleChange::Changed { .. });
                 if changed {
+                    // An anonymous box's style is never sticky (`position` is
+                    // not inherited), so `NodeTree::sticky_count` is unchanged.
+                    debug_assert!(!crate::tree::is_sticky(&style));
                     data.styles.primary = Some(style.clone());
                     data.set_restyled();
                 }

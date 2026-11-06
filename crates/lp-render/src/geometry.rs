@@ -11,14 +11,13 @@
 //!   (the first cell's widest borders; row borders are left out). Chromium's
 //!   cells take half of each collapsed border, the row's included.
 //!
-//! Boxes are computed per element on request; transforms along the
-//! containing-block chains are memoized until the document changes.
-
-use std::cell::RefCell;
+//! Boxes are computed per element on request from the document as it is:
+//! nothing is memoized between queries. An element's transform walks its
+//! containing-block chain (O(depth)), and layout-tree membership reads the
+//! owner Blitz records on each node as it writes the layout child lists.
 
 use blitz_dom::{BaseDocument, NodeId};
 use kurbo::{Affine, Rect};
-use rustc_hash::{FxHashMap, FxHashSet};
 
 /// One element's boxes, CSS px.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -96,89 +95,80 @@ impl LayoutBox {
     }
 }
 
-/// Per-document memo, valid until the document changes ([`Geometry::clear`]).
+/// Layout queries of one persistent document. It holds no state: every
+/// query reads the document.
 #[derive(Default)]
-pub(crate) struct Geometry {
-    transforms: RefCell<FxHashMap<NodeId, (Affine, bool)>>,
-    has_sticky: std::cell::Cell<Option<bool>>,
-    /// The layout (and hoisted) children of each layout parent with many,
-    /// indexed on first use: [`Geometry::in_layout_tree`] is O(1) where a
-    /// scan of the parent's list made reading every box quadratic in the
-    /// width of the tree.
-    layout_children: RefCell<FxHashMap<NodeId, FxHashSet<NodeId>>>,
+pub(crate) struct Geometry;
+
+/// Whether any node of `doc` is `position: sticky`: Blitz's `NodeTree` counts
+/// them as primary styles are written and nodes dropped. Debug builds check the
+/// count against a scan of every node.
+pub(crate) fn has_sticky(doc: &BaseDocument) -> bool {
+    let tree = doc.tree();
+    debug_assert_eq!(
+        tree.sticky_count(),
+        tree.iter()
+            .filter(|(_, n)| {
+                n.primary_styles().is_some_and(|s| s.clone_position() == style::computed_values::position::T::Sticky)
+            })
+            .count(),
+        "NodeTree::sticky_count disagrees with a scan",
+    );
+    tree.has_sticky()
 }
 
-/// Layout parents with at most this many children are scanned, not indexed.
-const SCAN_CHILDREN: usize = 16;
-
 impl Geometry {
-    pub(crate) fn clear(&self) {
-        self.transforms.borrow_mut().clear();
-        self.has_sticky.set(None);
-        self.layout_children.borrow_mut().clear();
-    }
-
     /// Whether `id` is a box of the current layout: the root element, or a
-    /// layout child of its layout parent.
+    /// layout child of its layout parent. O(1) for a layout child (Blitz
+    /// records the list that holds each node); the parent's hoisted list is
+    /// scanned only for nodes in no layout child list.
     fn in_layout_tree(&self, doc: &BaseDocument, id: NodeId) -> bool {
         if doc.root_element().id == id {
             return true;
         }
-        let Some(parent) = doc.get_node(id).and_then(|n| n.layout_parent.get()) else { return false };
+        let Some(node) = doc.get_node(id) else { return false };
+        let Some(parent) = node.layout_parent.get() else { return false };
         let Some(p) = doc.get_node(parent) else { return false };
-        let layout_children = p.layout_children.borrow();
-        let hoisted = p.hoisted_children.borrow();
-        let count = layout_children.as_ref().map_or(0, |c| c.len()) + hoisted.len();
-        if count <= SCAN_CHILDREN {
-            return layout_children.as_ref().is_some_and(|c| c.contains(&id)) || hoisted.contains(&id);
-        }
-        let mut index = self.layout_children.borrow_mut();
-        let set = index
-            .entry(parent)
-            .or_insert_with(|| layout_children.iter().flatten().chain(hoisted.iter()).copied().collect());
-        let found = set.contains(&id);
-        debug_assert_eq!(found, in_layout_tree(doc, id), "layout child index of {parent}");
+        let found = node.is_layout_child() || p.hoisted_children.borrow().contains(&id);
+        debug_assert_eq!(found, in_layout_tree(doc, id), "layout child owner of {id:?} under {parent:?}");
         found
     }
 
-    /// Whether any element is `position: sticky`.
-    pub(crate) fn has_sticky(&self, doc: &BaseDocument) -> bool {
-        if let Some(v) = self.has_sticky.get() {
-            return v;
-        }
-        let v = doc.tree().iter().any(|(_, n)| {
-            n.primary_styles().is_some_and(|s| s.clone_position() == style::computed_values::position::T::Sticky)
-        });
-        self.has_sticky.set(Some(v));
-        v
-    }
-
-    /// `id`'s border box to the document and whether it is in a fixed box.
+    /// `id`'s border box to the document and whether it is in a fixed box:
+    /// composed down its containing-block chain, root first.
     fn transform(&self, doc: &BaseDocument, id: NodeId) -> Option<(Affine, bool)> {
-        if let Some(t) = self.transforms.borrow().get(&id) {
-            return Some(*t);
+        let mut chain = Vec::new();
+        let mut cur = Some(id);
+        while let Some(i) = cur {
+            let node = doc.get_node(i)?;
+            chain.push(node);
+            cur = node.containing_block();
         }
-        let node = doc.get_node(id)?;
-        let (base, in_fixed) = match node.containing_block() {
-            Some(parent) => {
-                let (p, fixed) = self.transform(doc, parent)?;
-                let scroll = doc.get_node(parent)?.scroll_offset();
-                (p * Affine::translate((-scroll.x, -scroll.y)), fixed)
-            }
-            None => (Affine::IDENTITY, false),
-        };
-        let fixed = in_fixed
-            || node.primary_styles().is_some_and(|s| s.clone_position() == style::computed_values::position::T::Fixed);
-        let location = doc.physical_unrounded_layout(id).location;
-        // Blitz keeps the CSS transform's translation in device px
-        // (`Node::set_transform`); this chain is in CSS px.
-        let own = node.transform().as_deref().copied().map_or(Affine::IDENTITY, |t| {
-            let scale = doc.viewport().scale_f64();
-            let [a, b, c, d, e, f] = t.as_coeffs();
-            Affine::new([a, b, c, d, e / scale, f / scale])
-        });
-        let t = base * Affine::translate((location.x as f64, location.y as f64)) * own;
-        self.transforms.borrow_mut().insert(id, (t, fixed));
+        let scale = doc.viewport().scale_f64();
+        let (mut t, mut fixed) = (Affine::IDENTITY, false);
+        let mut parent: Option<&blitz_dom::Node> = None;
+        for node in chain.into_iter().rev() {
+            let base = match parent {
+                Some(p) => {
+                    let scroll = p.scroll_offset();
+                    t * Affine::translate((-scroll.x, -scroll.y))
+                }
+                None => Affine::IDENTITY,
+            };
+            fixed = fixed
+                || node
+                    .primary_styles()
+                    .is_some_and(|s| s.clone_position() == style::computed_values::position::T::Fixed);
+            let location = doc.physical_unrounded_layout(node.id).location;
+            // Blitz keeps the CSS transform's translation in device px
+            // (`Node::set_transform`); this chain is in CSS px.
+            let own = node.transform().as_deref().copied().map_or(Affine::IDENTITY, |t| {
+                let [a, b, c, d, e, f] = t.as_coeffs();
+                Affine::new([a, b, c, d, e / scale, f / scale])
+            });
+            t = base * Affine::translate((location.x as f64, location.y as f64)) * own;
+            parent = Some(node);
+        }
         Some((t, fixed))
     }
 
@@ -812,7 +802,7 @@ fn utf16_offsets(source: &str, laid: &str) -> Vec<u32> {
 
 /// Whether `id` is a box of the current layout: the root element, or a
 /// layout child of its layout parent (by scanning the parent's lists;
-/// [`Geometry::in_layout_tree`] indexes them).
+/// [`Geometry::in_layout_tree`] reads the owner Blitz records instead).
 fn in_layout_tree(doc: &BaseDocument, id: NodeId) -> bool {
     if doc.root_element().id == id {
         return true;

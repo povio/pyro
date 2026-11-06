@@ -160,6 +160,9 @@ impl LayoutChildren {
         };
         drop(parent_style);
 
+        // `position` is not inherited, so an anonymous box is never sticky
+        // and leaves `NodeTree::sticky_count` unchanged.
+        debug_assert!(!crate::tree::is_sticky(&style));
         stylo_element_data.styles.primary = Some(style);
         stylo_element_data.set_restyled();
 
@@ -740,6 +743,7 @@ fn flush_pseudo_elements(doc: &mut BaseDocument, node_id: NodeId) {
                 doc.nodes[new_node_id].children.push(text_node_id);
             }
 
+            doc.nodes.note_primary_style_change(None, Some(&**pe_style));
             let mut element_data = StyloElementData::default();
             element_data.styles.primary = Some(pe_style.clone());
             element_data.set_restyled();
@@ -794,16 +798,27 @@ fn flush_pseudo_elements(doc: &mut BaseDocument, node_id: NodeId) {
                 (None, None) => {}
             }
 
-            let mut node_styles = doc.nodes[pe_node_id]
-                .try_stylo_element_data_mut()
-                .and_then(|s| s.get_mut());
-            let node_styles = &mut node_styles.as_mut().unwrap();
-            node_styles.damage.insert(ALL_DAMAGE);
-            let primary_styles = &mut node_styles.styles.primary;
+            let old_sticky = doc.nodes[pe_node_id]
+                .primary_styles()
+                .is_some_and(|s| crate::tree::is_sticky(&s));
+            let new_sticky = crate::tree::is_sticky(&pe_style);
+            let restyled = {
+                let mut node_styles = doc.nodes[pe_node_id]
+                    .try_stylo_element_data_mut()
+                    .and_then(|s| s.get_mut());
+                let node_styles = &mut node_styles.as_mut().unwrap();
+                node_styles.damage.insert(ALL_DAMAGE);
+                let primary_styles = &mut node_styles.styles.primary;
 
-            if !std::ptr::eq(&**primary_styles.as_ref().unwrap(), &*pe_style) {
-                *primary_styles = Some(pe_style);
-                node_styles.set_restyled();
+                let restyled = !std::ptr::eq(&**primary_styles.as_ref().unwrap(), &*pe_style);
+                if restyled {
+                    *primary_styles = Some(pe_style);
+                    node_styles.set_restyled();
+                }
+                restyled
+            };
+            if restyled {
+                doc.nodes.note_sticky_change(old_sticky, new_sticky);
                 doc.pending_style_image_nodes.push(pe_node_id);
             }
         }

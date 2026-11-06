@@ -537,6 +537,18 @@ impl BaseDocument {
                     doc.deallocate_anonymous_block(anon_id);
                 }
 
+                // The old list is about to be replaced: its nodes no longer
+                // belong to it, unless another list has claimed them since.
+                if let Some(old) = doc.nodes[node_id].layout_children.borrow().as_ref() {
+                    for &child_id in old {
+                        if let Some(child) = doc.nodes.get(child_id) {
+                            if child.layout_children_owner.get() == Some(node_id) {
+                                child.layout_children_owner.set(None);
+                            }
+                        }
+                    }
+                }
+
                 let mut collected = LayoutChildren::default();
                 phase_profile::collected();
                 collect_layout_children(doc, node_id, &mut collected);
@@ -547,6 +559,7 @@ impl BaseDocument {
                 for child_id in layout_children.iter().copied() {
                     resolve_layout_children_recursive(doc, child_id);
                     doc.nodes[child_id].layout_parent.set(Some(node_id));
+                    doc.nodes[child_id].layout_children_owner.set(Some(node_id));
                     if let Some(mut data) = doc.nodes[child_id].try_stylo_element_data_mut().and_then(|s| s.get_mut()) {
                         data.damage.remove(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
                     }
@@ -578,6 +591,7 @@ impl BaseDocument {
                         }
                         resolve_layout_children_recursive(doc, child_id);
                         doc.nodes[child_id].layout_parent.set(Some(node_id));
+                        doc.nodes[child_id].layout_children_owner.set(Some(node_id));
                     }
 
                     *doc.nodes[node_id].layout_children.borrow_mut() = Some(layout_children);
@@ -905,5 +919,187 @@ pub mod phase_profile {
     /// Milliseconds per phase on this thread so far.
     pub fn peek() -> [f64; 9] {
         NS.with(|ns| ns.get().map(|n| n as f64 / 1e6))
+    }
+}
+
+#[cfg(test)]
+mod layout_children_owner_tests {
+    use crate::{Attribute, BaseDocument, DocumentConfig, qual_name};
+    use blitz_traits::shell::{ColorScheme, Viewport};
+
+    /// `Node::is_layout_child` agrees with a scan of every node's layout
+    /// parent's `layout_children` list.
+    fn assert_owners_match_lists(doc: &BaseDocument, when: &str) {
+        let mut members = 0;
+        for (id, node) in doc.tree().iter() {
+            let parent = node.layout_parent.get().and_then(|p| doc.get_node(p));
+            let scan = parent.is_some_and(|p| p.layout_children.borrow().as_ref().is_some_and(|c| c.contains(&id)));
+            assert_eq!(node.is_layout_child() && parent.is_some(), scan, "{when}: node {id:?}");
+            members += scan as usize;
+        }
+        assert!(members > 3, "{when}: the document has layout children ({members})");
+    }
+
+    #[test]
+    fn owner_tracks_list_membership_through_reconstruction() {
+        let mut doc = BaseDocument::new(DocumentConfig {
+            viewport: Some(Viewport::new(400, 300, 1.0, ColorScheme::Light)),
+            ..Default::default()
+        });
+        let root_id = doc.root_node().id;
+        let style = |value: &str| Attribute { name: qual_name!("style"), value: value.to_string() };
+        let mut m = doc.mutate();
+        let html = m.create_element(qual_name!("html"), vec![style("display:block")]);
+        let body = m.create_element(qual_name!("body"), vec![style("display:block")]);
+        let outer = m.create_element(qual_name!("div"), vec![style("display:block")]);
+        let x = m.create_element(qual_name!("div"), vec![style("display:block")]);
+        let x_text = m.create_text_node("x");
+        let span = m.create_element(qual_name!("span"), vec![]);
+        let inner = m.create_element(qual_name!("div"), vec![style("display:inline-block")]);
+        let inner_text = m.create_text_node("inner");
+        let y = m.create_element(qual_name!("div"), vec![style("display:block")]);
+        let abs = m.create_element(qual_name!("div"), vec![style("display:block;position:absolute")]);
+        m.append_children(x, &[x_text]);
+        m.append_children(inner, &[inner_text]);
+        m.append_children(span, &[inner]);
+        m.append_children(outer, &[x, span, y, abs]);
+        m.append_children(body, &[outer]);
+        m.append_children(html, &[body]);
+        m.append_children(root_id, &[html]);
+        drop(m);
+        doc.resolve(0.0);
+        assert_owners_match_lists(&doc, "first layout");
+
+        // Children leave `outer`'s list while keeping it as layout parent:
+        // one is no longer displayed, the rest become its inline content.
+        let mut m = doc.mutate();
+        m.set_attribute(x, qual_name!("style"), "display:none");
+        m.set_attribute(y, qual_name!("style"), "display:inline");
+        m.set_attribute(abs, qual_name!("style"), "display:none");
+        drop(m);
+        doc.resolve(0.0);
+        assert_owners_match_lists(&doc, "children leave the list");
+        assert_eq!(doc.nodes[y].layout_parent.get(), Some(outer));
+        assert!(!doc.nodes[y].is_layout_child());
+
+        // A block turns inline: it leaves `outer`'s list for an anonymous
+        // block's inline content, and the inline-block becomes a block.
+        let mut m = doc.mutate();
+        m.set_attribute(x, qual_name!("style"), "display:inline");
+        m.set_attribute(inner, qual_name!("style"), "display:block");
+        drop(m);
+        doc.resolve(0.0);
+        assert_owners_match_lists(&doc, "display changes");
+
+        // A container turns inline with a block child left in its old list,
+        // a child is dropped, and a new block arrives.
+        let mut m = doc.mutate();
+        m.set_attribute(outer, qual_name!("style"), "display:inline");
+        m.remove_and_drop_node(y);
+        let z = m.create_element(qual_name!("div"), vec![style("display:block")]);
+        m.append_children(body, &[z]);
+        drop(m);
+        doc.resolve(0.0);
+        assert_owners_match_lists(&doc, "container turns inline");
+
+        // And back, so the old lists are replaced again.
+        let mut m = doc.mutate();
+        m.set_attribute(outer, qual_name!("style"), "display:block");
+        m.set_attribute(x, qual_name!("style"), "display:block");
+        drop(m);
+        doc.resolve(0.0);
+        assert_owners_match_lists(&doc, "restored");
+    }
+}
+
+#[cfg(test)]
+mod layout_children_owner_reparent_tests {
+    use crate::{Attribute, BaseDocument, DocumentConfig, qual_name};
+    use blitz_traits::shell::{ColorScheme, Viewport};
+
+    fn scan(doc: &BaseDocument, id: crate::NodeId) -> bool {
+        let node = &doc.nodes[id];
+        node.layout_parent
+            .get()
+            .and_then(|p| doc.get_node(p))
+            .is_some_and(|p| p.layout_children.borrow().as_ref().is_some_and(|c| c.contains(&id)))
+    }
+
+    fn check(doc: &BaseDocument, when: &str) {
+        for (id, node) in doc.tree().iter() {
+            assert_eq!(node.is_layout_child(), scan(doc, id), "{when}: node {id:?}");
+        }
+    }
+
+    /// A node moved between layout containers, in both traversal orders (its
+    /// new container visited before and after its old one), and a node
+    /// detached but kept alive.
+    #[test]
+    fn owner_follows_nodes_moved_between_containers() {
+        let mut doc = BaseDocument::new(DocumentConfig {
+            viewport: Some(Viewport::new(400, 300, 1.0, ColorScheme::Light)),
+            ..Default::default()
+        });
+        let root_id = doc.root_node().id;
+        let block = || vec![Attribute { name: qual_name!("style"), value: "display:block".to_string() }];
+        let mut m = doc.mutate();
+        let html = m.create_element(qual_name!("html"), block());
+        let body = m.create_element(qual_name!("body"), block());
+        let a = m.create_element(qual_name!("div"), block());
+        let b = m.create_element(qual_name!("div"), block());
+        let x = m.create_element(qual_name!("div"), block());
+        let y = m.create_element(qual_name!("div"), block());
+        let z = m.create_element(qual_name!("div"), block());
+        m.append_children(a, &[x, y]);
+        m.append_children(b, &[z]);
+        m.append_children(body, &[a, b]);
+        m.append_children(html, &[body]);
+        m.append_children(root_id, &[html]);
+        drop(m);
+        doc.resolve(0.0);
+        check(&doc, "first layout");
+        assert!(doc.nodes[x].is_layout_child());
+
+        // Later sibling container: `a` (old) is visited before `b` (new).
+        let mut m = doc.mutate();
+        m.append_children(b, &[x]);
+        drop(m);
+        doc.resolve(0.0);
+        check(&doc, "moved to a later container");
+        assert_eq!(doc.nodes[x].layout_parent.get(), Some(b));
+        assert!(doc.nodes[x].is_layout_child());
+
+        // Back: `a` (new) is visited before `b` (old).
+        let mut m = doc.mutate();
+        m.append_children(a, &[x]);
+        drop(m);
+        doc.resolve(0.0);
+        check(&doc, "moved to an earlier container");
+        assert!(doc.nodes[x].is_layout_child());
+
+        // Up to the ancestor, before and after its old container.
+        let mut m = doc.mutate();
+        m.insert_nodes_before(a, &[x]);
+        drop(m);
+        doc.resolve(0.0);
+        check(&doc, "moved up before its old container");
+        let mut m = doc.mutate();
+        m.append_children(a, &[x]);
+        drop(m);
+        doc.resolve(0.0);
+        let mut m = doc.mutate();
+        m.append_children(body, &[x]);
+        drop(m);
+        doc.resolve(0.0);
+        check(&doc, "moved up after its old container");
+        assert_eq!(doc.nodes[x].layout_parent.get(), Some(body));
+
+        // Detached but alive: in no list.
+        let mut m = doc.mutate();
+        m.remove_node(y);
+        drop(m);
+        doc.resolve(0.0);
+        check(&doc, "detached");
+        assert!(!doc.nodes[y].is_layout_child());
     }
 }
