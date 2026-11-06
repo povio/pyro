@@ -1285,11 +1285,74 @@ fn disposal_scenario() -> (Engine, std::rc::Weak<PageDom>) {
     assert!(dropped.get(), "embedder hook cycle was not broken");
     assert_eq!(page.pinned_count(), 0);
     assert_eq!(eval(&main, "window.dispatchEvent(new Event('test')); document.querySelector('#target').dispatchEvent(new Event('test')); fired"), "0");
+    // Script of the disposed page fills per-realm caches of it again (Event
+    // `isTrusted`, Headers, URLSearchParams, TextDecoder, window listeners):
+    // they go with the page once its realm is disposed, which releases the
+    // global's `document` (the page's way back to them).
+    eval(
+        &main,
+        "try { new Headers({a: '1'}).get('a'); new URLSearchParams('a=1').get('a'); \
+         new TextDecoder().decode(new DataView(new ArrayBuffer(2))); window.addEventListener('late', () => {}); } catch {}",
+    );
     assert!(install(&main.scope().unwrap(), page.clone()).is_err());
     main.dispose();
     drop(main);
     drop(page);
     (engine, weak)
+}
+
+#[test]
+fn a_held_window_of_a_torn_down_page_keeps_neither_its_document_nor_its_page() {
+    // Another realm keeps the window's global (a stale `iframe.contentWindow`
+    // after a navigation): the global's `document` goes with its realm, so the
+    // old tree is freed, and reading it throws as on any disposed window.
+    let (engine, dom, holder, weak, live) = held_window_scenario();
+    overwrite_dead_stack();
+    for _ in 0..6 {
+        engine.collect_garbage_now();
+        engine.drain_finalized();
+        dom.borrow_mut().collect_garbage();
+    }
+    assert!(weak.upgrade().is_none(), "a held window kept its PageDom alive");
+    let left = dom.borrow().live_nodes();
+    assert!(left < live / 10, "a held window kept its document: {left} of {live} nodes left");
+    assert_eq!(
+        eval(&holder, "try { held.document; 'read' } catch (e) { e.message }"),
+        "Execution context was destroyed."
+    );
+}
+
+#[inline(never)]
+fn held_window_scenario() -> (Engine, DomRef, Realm, std::rc::Weak<PageDom>, usize) {
+    let Env { engine, page, main } = env(&format!("<body>{}</body>", "<div><p>x</p></div>".repeat(500)));
+    // Hot enough for the optimizing JIT to fold `document`.
+    assert_eq!(
+        eval(
+            &main,
+            "let n = 0; for (let i = 0; i < 200000; i++) n += document.nodeType; document.body.children.length"
+        ),
+        "500"
+    );
+    let holder = engine.create_realm(RealmOptions::default()).unwrap();
+    {
+        let s = main.scope().unwrap();
+        let global = lp_js::Persistent::new(&s, s.global().value());
+        let hs = holder.scope().unwrap();
+        hs.global().set("held", global.get(&hs)).unwrap();
+    }
+    assert_eq!(eval(&holder, "held.document.body.children.length"), "500");
+    let dom = page.dom.clone();
+    let live = dom.borrow().live_nodes();
+    assert!(live > 1500, "{live}");
+    let weak = Rc::downgrade(&page);
+    // Navigation's teardown of a frame (lp-browser `frames.rs`).
+    page.dispose();
+    lifecycle::realm_disposed(&page, main.id());
+    main.dispose();
+    dom.borrow_mut().set_document_active(page.document(), false).unwrap();
+    drop(main);
+    drop(page);
+    (engine, dom, holder, weak, live)
 }
 
 /// Overwrites the stack below the caller's frame (see the test above).
@@ -3446,6 +3509,8 @@ fn worker_past_the_document_cap_fails_like_a_failed_load() {
     let tasks = Rc::new(ObserverTasks::default());
     e.page.set_hooks(Some(tasks.clone()));
     let r = &e.main;
+    // The realm's document wrapper, kept while connected.
+    let base = e.page.pinned_count();
     let more = MAX_WORKERS_PER_DOCUMENT + 4;
     eval(
         r,
@@ -3453,7 +3518,7 @@ fn worker_past_the_document_cap_fails_like_a_failed_load() {
     );
     tasks.drain();
     assert_eq!(eval(r, "errors"), more.to_string());
-    assert_eq!(e.page.pinned_count(), 0);
+    assert_eq!(e.page.pinned_count(), base);
 }
 
 #[test]
@@ -5133,7 +5198,8 @@ fn reflected_urls_follow_attributes_bases_adoption_and_document_replacement() {
     assert_eq!(eval(&e.main, "r.href"), "https://moved.example/relative.js");
     e.page.set_document(other);
     assert_eq!(
-        eval(&e.main, "[r.href,document.getElementById('new').href].join('|')"),
+        // The realm keeps its document; the replacement is `r`'s now.
+        eval(&e.main, "[r.href,r.ownerDocument.getElementById('new').href].join('|')"),
         "https://moved.example/relative.js|https://moved.example/new.js"
     );
     e.page.dom.borrow_mut().adopt_node(doc, node).unwrap();

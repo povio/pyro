@@ -96,6 +96,13 @@ pub struct DocumentData {
     pub(crate) focused: u32,
     /// Element under the (virtual) pointer for :hover.
     pub(crate) hovered: u32,
+    /// The document element (first element child), its first HTML `head`
+    /// child and its first HTML `body` or `frameset` child; NIL for none.
+    /// Kept by `tree_linked`/`tree_unlinking`, which every link and unlink
+    /// passes, so `document.body` is one load, not two child-list walks.
+    pub(crate) document_element: u32,
+    pub(crate) head: u32,
+    pub(crate) body: u32,
 }
 
 #[derive(Debug, Clone)]

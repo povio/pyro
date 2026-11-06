@@ -1345,7 +1345,9 @@ impl JsClass for Document {
             let doc = lp_dom::parse::parse_html_unsafe(&page.dom, &html);
             Ok(wrap_node(s, &page, doc)?.value())
         });
-        def.getter("documentElement", |s, n| {
+        // `documentElement`, `head` and `body` are kept on the document's
+        // data as its tree changes: one load each, on the lean dispatch.
+        def.pure_getter_typed("documentElement", lp_js::GetterResult::ObjectOrNull, |s, n| {
             let e = n.page().dom.borrow().document_element(n.id).js()?;
             node_value(s, n.page(), e)
         });
@@ -1377,12 +1379,13 @@ impl JsClass for Document {
             let e = n.page().dom.borrow().doctype(n.id).js()?;
             node_value(s, n.page(), e)
         });
-        def.getter("head", |s, n| {
+        def.pure_getter_typed("head", lp_js::GetterResult::ObjectOrNull, |s, n| {
             let e = n.page().dom.borrow().head(n.id).js()?;
             node_value(s, n.page(), e)
         });
-        def.accessor(
+        def.pure_accessor_typed(
             "body",
+            lp_js::GetterResult::ObjectOrNull,
             |s, n| {
                 let e = n.page().dom.borrow().body(n.id).js()?;
                 node_value(s, n.page(), e)

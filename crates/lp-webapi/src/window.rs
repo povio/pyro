@@ -110,6 +110,13 @@ pub fn replace_window_attribute<'s>(
     Ok(())
 }
 
+/// Whether [`crate::install`] makes `document` and `window` the global's own
+/// constant attributes (patched JavaScriptCore). A Window class then leaves
+/// them out of its prototype, as WebIDL does for [LegacyUnforgeable] members.
+pub fn has_window_constants() -> bool {
+    lp_js::Capabilities::detect().global_constants
+}
+
 /// Adds lp-webapi's Window members to lp-browser's `Window` class.
 pub fn define_members<W>(def: &mut ClassDef<W>)
 where
@@ -117,11 +124,15 @@ where
     W::Data: WindowHost,
 {
     crate::handlers::define_window(def);
-    // Read on every bare `document` of page script: the lean dispatch, which
-    // finds the window's node wrapper in the document's slot.
-    def.pure_getter_typed("document", lp_js::GetterResult::ObjectOrNull, |s, w| {
-        Ok(crate::node::wrap_node(s, w.page(), w.page().document())?.value())
-    });
+    // `install` makes `document` the global's own constant attribute where
+    // the JavaScriptCore can (`has_window_constants`). Otherwise (the system
+    // framework) this getter serves it: the lean dispatch, which finds the
+    // window's node wrapper in the document's slot.
+    if !has_window_constants() {
+        def.pure_getter_typed("document", lp_js::GetterResult::ObjectOrNull, |s, w| {
+            Ok(crate::node::wrap_node(s, w.page(), w.page().document())?.value())
+        });
+    }
     // `window.event` (DOM "current event"), [Replaceable]: assignment shadows
     // it with an own data property.
     def.accessor(
