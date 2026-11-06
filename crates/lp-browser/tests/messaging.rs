@@ -142,6 +142,55 @@ fn cross_origin_frames_message_each_other_and_navigate_through_location() {
 }
 
 #[test]
+fn cross_origin_post_message_errors_belong_to_the_posting_realm() {
+    // The clone into another origin's realm must not hand the poster that
+    // realm's error objects (and so its Function constructor).
+    let (mut t, _) = loaded(&["https://a.test/main", "https://b.test/child"]);
+    let page = open_page(&mut t, "https://a.test/main");
+    let root = main_realm(&t, page);
+    eval(
+        &root,
+        "globalThis.f = document.createElement('iframe'); f.src = 'https://b.test/child'; document.body.appendChild(f)",
+    );
+    settle(&mut t);
+    let child = child_realm(&t, page, 0);
+    eval(
+        &child,
+        "globalThis.got = []; addEventListener('message', e => {
+           if (e.ports.length) e.ports[0].onmessage = m => got.push('port:' + JSON.stringify(m.data) + ':' + (m.data.constructor === Object));
+           else got.push('win:' + JSON.stringify(e.data) + ':' + (e.data.constructor === Object));
+         })",
+    );
+    assert_eq!(
+        eval(
+            &root,
+            "const w = f.contentWindow;
+             const err = (fn) => { try { fn(); return 'ok'; } catch (e) {
+               return [e.name, e instanceof DOMException || e instanceof TypeError || e instanceof RangeError,
+                       e.constructor.constructor === Function].join(':'); } };
+             globalThis.c = new MessageChannel();
+             [err(() => w.postMessage(() => 1, '*')), err(() => w.postMessage(1, {transfer: [1]})),
+              err(() => w.postMessage({a: document}, '*')),
+              err(() => w.postMessage({get x() { throw new RangeError('getter'); }}, '*')),
+              err(() => w.postMessage({k: 'v'}, '*')), err(() => w.postMessage('p', '*', [c.port2]))].join()",
+        ),
+        "DataCloneError:true:true,TypeError:true:true,DataCloneError:true:true,RangeError:true:true,ok,ok"
+    );
+    settle(&mut t);
+    assert_eq!(
+        eval(
+            &root,
+            "const perr = (fn) => { try { fn(); return 'ok'; } catch (e) {
+               return [e.name, e instanceof DOMException, e.constructor.constructor === Function].join(':'); } };
+             [perr(() => c.port1.postMessage(() => 1)), perr(() => c.port1.postMessage({k: 'v'})), c.port2.constructor === MessagePort].join()",
+        ),
+        "DataCloneError:true:true,ok,true"
+    );
+    settle(&mut t);
+    assert_eq!(eval(&child, "got.join('|')"), "win:{\"k\":\"v\"}:true|port:{\"k\":\"v\"}:true");
+}
+
+#[test]
 fn popup_and_opener_see_each_other_as_message_source() {
     let (mut t, events) = loaded(&["http://app.test/a", "http://app.test/b", "http://other.test/x"]);
     let a = open_page(&mut t, "http://app.test/a");

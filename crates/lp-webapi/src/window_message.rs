@@ -92,10 +92,12 @@ pub fn post_message_args<'s>(
 /// target window's, and queues the `message` event at `page`'s window.
 /// `origin` is the source's serialized origin; `source` resolves the
 /// source window in the realm reading `event.source` (`None`: the target
-/// window itself). Errors (DataCloneError, a getter's exception) propagate.
+/// window itself). Errors (DataCloneError, a getter's exception) propagate
+/// in the realm of `s`, the poster's scope (see `structured_clone::clone_into`).
 /// Without `deliver` (the target origin did not match) the message is still
 /// serialized, transferring what it lists, and then dropped.
 pub fn send_window_message<'s>(
+    s: &Scope<'s>,
     message: Value<'s>,
     options: Value<'s>,
     page: &Rc<PageDom>,
@@ -108,7 +110,7 @@ pub fn send_window_message<'s>(
     let (data, ports) = if message.as_object().is_none() && options.is_nullish() {
         (Persistent::new(&rs, rs.rehome(message)), None)
     } else {
-        let (data, ports) = crate::structured_clone::clone_with_ports(&rs, rs.rehome(message), rs.rehome(options))?;
+        let (data, ports) = crate::structured_clone::clone_into(s, &rs, message, options)?;
         (Persistent::new(&rs, data), Some(Persistent::new(&rs, ports.value())))
     };
     if !deliver {

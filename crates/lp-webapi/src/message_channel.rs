@@ -211,7 +211,7 @@ impl JsClass for MessagePort {
             match receiver.as_ref().map(|r| r.scope()).transpose()? {
                 Some(rs) => {
                     let (cloned, ports) =
-                        crate::structured_clone::clone_with_ports(&rs, rs.rehome(a.get(0)), rs.rehome(options))?;
+                        crate::structured_clone::clone_into(s, &rs, a.get(0), options)?;
                     let ports =
                         (ports.get_atom("length")?.to_number()? > 0.0).then(|| Persistent::new(&rs, ports.value()));
                     if let Some(peer) = peer.filter(|_| !doomed) {

@@ -285,7 +285,7 @@ pub fn post_message_to_self<'s>(s: &Scope<'s>, page: &Rc<PageDom>, a: &lp_js::Ar
     let (message, target_origin, options) = crate::window_message::post_message_args(s, a, &origin)?;
     let realm = page.main_world_realm().unwrap_or_else(|| s.realm());
     let deliver = target_origin.allows(&origin);
-    crate::window_message::send_window_message(message, options, page, &realm, origin, None, deliver)
+    crate::window_message::send_window_message(s, message, options, page, &realm, origin, None, deliver)
 }
 
 /// A Window [SameObject] attribute value for this realm: looked up by

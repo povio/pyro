@@ -862,7 +862,7 @@ pub(crate) fn post_message<'s>(
     let deliver = target_origin.allows(&origin);
     let window = (!Rc::ptr_eq(&source_host, host) || source != target)
         .then(|| message_source(host, target, &source_host, source));
-    lp_webapi::window_message::send_window_message(message, options, &page, &realm, incumbent, window, deliver)
+    lp_webapi::window_message::send_window_message(s, message, options, &page, &realm, incumbent, window, deliver)
 }
 
 pub(crate) struct CrossWindow;

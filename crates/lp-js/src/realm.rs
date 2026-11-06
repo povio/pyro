@@ -864,6 +864,9 @@ impl<'s> Scope<'s> {
             return Err(JsError::Unsupported("ES modules (JSScript module SPI)"));
         }
         self.realm.inline_modules.borrow_mut().insert(url.to_string(), source.to_string());
+        // Module top-level code runs with this realm as the entry realm (as
+        // classic scripts do), e.g. for postMessage's incumbent window.
+        let _entry = crate::engine::EntryGuard::enter(self.ctx);
         let mut err: sys::JSStringRef = ptr::null();
         let source_with_url = module_source_with_url(source, url);
         let v = unsafe {

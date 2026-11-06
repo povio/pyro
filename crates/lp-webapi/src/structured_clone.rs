@@ -79,6 +79,48 @@ pub(crate) fn clone_with_ports<'s>(
     Ok((value, ports))
 }
 
+/// [`clone_with_ports`] of a message posted from `s`'s realm into `rs`'s
+/// (a window or MessagePort of another realm). Whatever the clone throws at
+/// the poster (a getter's exception, a transfer-list TypeError, a
+/// DataCloneError) must belong to the poster's realm, never the receiver's:
+/// a cross-origin receiver's error objects would hand the poster its
+/// `Function`. So across realms the message is first cloned in `s` (user
+/// code and errors stay there), and that copy, which holds only clonable
+/// values, is cloned into `rs`, transferring the ports the first pass made;
+/// an error of that second pass is reported as a realm-less DataCloneError.
+/// Within one realm this is a single [`clone_with_ports`].
+pub(crate) fn clone_into<'s, 'r>(
+    s: &Scope<'s>,
+    rs: &Scope<'r>,
+    value: lp_js::Value<'s>,
+    options: lp_js::Value<'s>,
+) -> JsResult<(lp_js::Value<'r>, lp_js::Object<'r>)> {
+    if s.realm_id() == rs.realm_id() {
+        return clone_with_ports(rs, rs.rehome(value), rs.rehome(options));
+    }
+    let second = |value: lp_js::Value<'r>, options: lp_js::Value<'r>| {
+        clone_with_ports(rs, value, options).map_err(|error| match error {
+            JsError::Terminated | JsError::ContextDestroyed => error,
+            JsError::Dom { name, message } if name == "DataCloneError" => JsError::Dom { name, message },
+            _ => JsError::dom("DataCloneError", "The message could not be cloned into the receiving realm."),
+        })
+    };
+    if realm_clone(s).is_err() {
+        // No clone function in the poster's realm (an internal one): clone
+        // straight into the receiver, still without leaking its errors.
+        return second(rs.rehome(value), rs.rehome(options));
+    }
+    let (copy, ports) = clone_with_ports(s, value, options)?;
+    let options = if ports.get_atom("length")?.to_number()? > 0.0 {
+        let o = rs.object();
+        o.set_atom("transfer", rs.rehome(ports.value()))?;
+        o.value()
+    } else {
+        rs.undefined()
+    };
+    second(rs.rehome(copy), options)
+}
+
 /// `postMessage(message, transfer)` / `postMessage(message, options)` as the
 /// `structuredClone` options argument: a sequence is the transfer list.
 pub(crate) fn transfer_options<'s>(s: &Scope<'s>, arg: Option<lp_js::Value<'s>>) -> JsResult<lp_js::Value<'s>> {
