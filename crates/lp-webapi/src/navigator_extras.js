@@ -374,8 +374,10 @@
   const notificationData = new WeakMap();
   const notificationError = (rest) => new TypeErrorC(`Failed to construct 'Notification': ${rest}`);
   const DIRECTIONS = ['auto', 'ltr', 'rtl'];
-  const setTimeoutC = setTimeout;
-  const structuredCloneC = structuredClone;
+  // Captured when present: a realm without timers (or structuredClone)
+  // still gets the rest of this module.
+  const setTimeoutC = globalThis.setTimeout;
+  const structuredCloneC = globalThis.structuredClone;
   const queueTask = (f) => setTimeoutC(f, 0);
   const stringMember = (options, key) => (options[key] === undefined ? '' : String(options[key]));
   const urlMember = (options, key) => {
