@@ -1018,6 +1018,10 @@ impl JsClass for ShadowRoot {
         });
         def.method("getHTML", 0, get_html);
         def.method("setHTMLUnsafe", 1, set_html_unsafe);
+        def.method("getAnimations", 0, |s, n, _a| {
+            let root = wrap_node(s, n.page(), n.id)?.value();
+            crate::animations::root_animations(s, n.page(), root)
+        });
         def.method("elementFromPoint", 2, crate::layout_api::shadow_element_from_point);
         def.method("elementsFromPoint", 2, crate::layout_api::shadow_elements_from_point);
         def.getter("activeElement", |s, _n| Ok(s.null()));
@@ -1491,6 +1495,11 @@ impl JsClass for Document {
             node_value(s, n.page(), e)
         });
         def.getter("styleSheets", crate::css::style_sheets);
+        def.getter("timeline", |s, n| crate::animations::timeline(s, n.page()));
+        def.method("getAnimations", 0, |s, n, _a| {
+            let root = wrap_node(s, n.page(), n.id)?.value();
+            crate::animations::root_animations(s, n.page(), root)
+        });
         def.getter("doctype", |s, n| {
             let e = n.page().dom.borrow().doctype(n.id).js()?;
             node_value(s, n.page(), e)

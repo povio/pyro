@@ -185,6 +185,12 @@ fn now_ms(page: &PageDom) -> f64 {
     page.event_time().unwrap_or_else(|| TIME_ORIGIN.with(|t| t.elapsed().as_secs_f64() * 1000.0))
 }
 
+/// The document's clock now (`performance.now()`'s), as `Event.timeStamp`
+/// reads it.
+pub(crate) fn page_now_ms(page: &PageDom) -> f64 {
+    now_ms(page)
+}
+
 impl EventCore {
     pub fn new(
         page: &Rc<PageDom>,

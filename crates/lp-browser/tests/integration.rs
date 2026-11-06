@@ -36,6 +36,7 @@ mod stylesheets;
 mod stylesheets_http;
 mod user_agent;
 mod viewport;
+mod web_animations;
 
 /// Loads nothing: the pages' sub-resources come from the loader.
 struct NoFetch;

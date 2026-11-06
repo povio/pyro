@@ -17,6 +17,7 @@
 
 pub mod abort;
 mod animation_events;
+mod animations;
 pub mod canvas;
 pub mod collections;
 pub mod crypto;
