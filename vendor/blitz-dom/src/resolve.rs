@@ -806,6 +806,19 @@ pub mod phase_profile {
         CONSTRUCTED.with(|c| c.get())
     }
     std::thread_local! {
+        static PERFORMED: Cell<(u64, u64)> = const { Cell::new((0, 0)) };
+    }
+    /// A box's layout algorithm ran to place its children (not a size
+    /// measurement, not a cache hit); `root` for the root element.
+    pub(crate) fn performed(root: bool) {
+        PERFORMED.with(|p| p.set((p.get().0 + 1, p.get().1 + root as u64)));
+    }
+    /// Layout algorithm runs that placed children on this thread so far, and
+    /// how many of them were the root element's.
+    pub fn performed_layouts() -> (u64, u64) {
+        PERFORMED.with(|p| p.get())
+    }
+    std::thread_local! {
         static RESTYLED: Cell<u64> = const { Cell::new(0) };
     }
     /// A node was visited by the style traversal.

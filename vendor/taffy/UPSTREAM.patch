@@ -360,3 +360,21 @@
  };
  #[doc(inline)]
  pub use crate::style::Style;
+--- a/src/compute/mod.rs
++++ b/src/compute/mod.rs
+@@ -189,6 +189,15 @@ pub fn compute_root_layout_in(
+         debug_assert!(unclaimed.is_empty(), "the root positioning pass must claim all remaining candidates");
+         if !root_is_cached {
+             tree.add_hoisted_children(root, &hoisted);
++        } else if {
++            let claims = tree.get_core_container_style(root).is_containing_block();
++            !claims.absolute && !claims.fixed
++        } {
++            // lightningpanda: a root which claims no out-of-flow box itself hoists exactly the boxes
++            // of this pass, which may differ from the last run's even when its own layout is cached:
++            // a box relaid here (its ancestors' layout untouched) can surface other candidates.
++            tree.clear_hoisted_children(root);
++            tree.add_hoisted_children(root, &hoisted);
+         }
+     }
+ }

@@ -16,25 +16,25 @@ impl Fetcher for NoFetch {
     }
 }
 
-struct Page {
-    dom: DomRef,
-    doc: NodeId,
+pub(crate) struct Page {
+    pub(crate) dom: DomRef,
+    pub(crate) doc: NodeId,
 }
 
 impl Page {
-    fn new(html: &str) -> Self {
+    pub(crate) fn new(html: &str) -> Self {
         let dom: DomRef = Rc::new(RefCell::new(Dom::new()));
         let doc = parse_document(&dom, "http://test/", html);
         Self { dom, doc }
     }
-    fn find(&self, css: &str) -> NodeId {
+    pub(crate) fn find(&self, css: &str) -> NodeId {
         self.dom.borrow().query_selector(self.doc, &parse_selectors(css).unwrap()).unwrap().unwrap()
     }
-    fn text(&self, css: &str) -> NodeId {
+    pub(crate) fn text(&self, css: &str) -> NodeId {
         let el = self.find(css);
         self.dom.borrow().first_child(el).unwrap().unwrap()
     }
-    fn snapshot(&self) -> Snapshot {
+    pub(crate) fn snapshot(&self) -> Snapshot {
         let opts = RenderHtml { style_text: &|_| None, stylesheet_href: &|_| None, mark: None };
         let tree = self.dom.borrow().render_tree(self.doc, &opts).unwrap();
         let tree = Tree {
@@ -63,7 +63,7 @@ impl Page {
     }
 }
 
-fn paint(r: &mut Renderer, s: &Snapshot) -> Painted {
+pub(crate) fn paint(r: &mut Renderer, s: &Snapshot) -> Painted {
     r.paint(s, Area::Viewport, &(Arc::new(NoFetch) as Arc<dyn Fetcher>)).unwrap()
 }
 

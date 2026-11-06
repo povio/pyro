@@ -100,6 +100,12 @@ pub fn blitz_constructions() -> (u64, u64) {
     blitz_dom::phase_profile::constructions()
 }
 
+/// Layout algorithm runs Blitz made to place children on this thread (cache
+/// misses, not size measurements), and how many were the root element's.
+pub fn blitz_performed_layouts() -> (u64, u64) {
+    blitz_dom::phase_profile::performed_layouts()
+}
+
 /// `resolve` calls Blitz made on this thread, and how many of their layout passes ran Taffy.
 pub fn blitz_passes() -> (u64, u64) {
     blitz_dom::phase_profile::passes()
