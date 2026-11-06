@@ -769,13 +769,28 @@ pub struct StyleEngine {
     /// The rules declaring properties the engine's Stylo does not parse
     /// ([`crate::gecko_only`]), for an observation stamp.
     /// for the [`StyleEngine::author_sheets_key`] they were parsed at.
-    gecko_rules: RefCell<Option<(u64, Rc<Vec<crate::gecko_only::Rule>>)>>,
+    gecko_rules: RefCell<Option<(AuthorSheetsKey, Rc<Vec<crate::gecko_only::Rule>>)>>,
     /// Sheet revisions handed out so far.
     revisions: u64,
-    /// [`StyleEngine::author_sheets_key`] for the sheet generation and the
-    /// DOM's tree version it was computed at (`<style>` texts only change
-    /// with the tree).
-    sheets_key: Cell<Option<((u64, u64), u64)>>,
+    /// Debug builds: the last [`StyleEngine::author_sheets_key`] and a hash
+    /// of the sheet texts it stood for, to check the key moves whenever the
+    /// texts do.
+    #[cfg(debug_assertions)]
+    checked_key: RefCell<Option<(AuthorSheetsKey, u64)>>,
+}
+
+/// [`StyleEngine::author_sheets_key`]: equal keys, equal author sheet texts.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AuthorSheetsKey {
+    /// The sheet generation: sheets added, removed or given text, viewport
+    /// and other invalidations.
+    generation: u64,
+    /// [`Dom::style_text_revision`]: a `<style>`'s child text changed.
+    text_revision: u64,
+    /// Which sheets (in cascade order) have a connected owner: bits 0-63,
+    /// then the rest 64 per word (empty for at most 64 sheets).
+    connected: u64,
+    connected_rest: Vec<u64>,
 }
 
 /// [`StyleEngine::observation_stamp`]: DOM version, sheet generation,
@@ -804,7 +819,8 @@ impl StyleEngine {
             external_syncing: Cell::new(false),
             gecko_rules: RefCell::new(None),
             revisions: 0,
-            sheets_key: Cell::new(None),
+            #[cfg(debug_assertions)]
+            checked_key: RefCell::new(None),
         }
     }
 
@@ -987,7 +1003,9 @@ impl StyleEngine {
     }
 
     /// Calls `f` with the text of each author sheet whose owner is connected,
-    /// in cascade order (CSSOM edits included).
+    /// in cascade order (CSSOM edits included). A `<style>`'s text is its
+    /// child text content (HTML: "the child text content of the style
+    /// element"), not the text of deeper descendants.
     pub fn for_each_author_sheet(&self, dom: &Dom, f: &mut dyn FnMut(&str)) {
         for sheet in &self.sheets {
             if !dom.is_alive(sheet.owner) || !dom.is_connected(sheet.owner).unwrap_or(false) {
@@ -995,54 +1013,69 @@ impl StyleEngine {
             }
             match &sheet.source {
                 SheetSource::Text(text) => f(text),
-                SheetSource::StyleElement => f(&dom.text_content(sheet.owner).ok().flatten().unwrap_or_default()),
+                SheetSource::StyleElement => f(&dom.child_text_content(sheet.owner)),
             }
         }
     }
 
     /// A key that changes when the author sheets' texts may have: the sheet
-    /// generation (a sheet added, removed or given text) and the text of
-    /// every `<style>` element, which is read from the DOM. Those texts are
-    /// hashed again only after the tree changed.
-    pub fn author_sheets_key(&self, dom: &Dom) -> u64 {
-        use std::hash::{Hash, Hasher};
-        let at = (self.generation, dom.tree_version());
-        if let Some((k, key)) = self.sheets_key.get() {
-            if k == at {
-                return key;
+    /// generation (a sheet added, removed or given text), the DOM's
+    /// [`Dom::style_text_revision`] (a `<style>`'s child text changed) and
+    /// which sheets have a connected owner. Nothing is hashed or read from
+    /// the sheets' texts.
+    pub fn author_sheets_key(&self, dom: &Dom) -> AuthorSheetsKey {
+        let mut connected = 0u64;
+        let mut connected_rest = Vec::new();
+        for (i, sheet) in self.sheets.iter().enumerate() {
+            let on = dom.is_alive(sheet.owner) && dom.is_connected(sheet.owner).unwrap_or(false);
+            if i < 64 {
+                connected |= u64::from(on) << i;
+            } else {
+                let (word, bit) = ((i - 64) / 64, (i - 64) % 64);
+                if word == connected_rest.len() {
+                    connected_rest.push(0);
+                }
+                connected_rest[word] |= u64::from(on) << bit;
             }
         }
-        let mut hasher = rustc_hash::FxHasher::default();
-        self.generation.hash(&mut hasher);
-        for sheet in &self.sheets {
-            // Which sheets apply (connected owners), and the texts read
-            // from the DOM.
-            let alive = dom.is_alive(sheet.owner);
-            (alive && dom.is_connected(sheet.owner).unwrap_or(false)).hash(&mut hasher);
-            if alive && matches!(sheet.source, SheetSource::StyleElement) {
-                hash_text_content(dom, sheet.owner, &mut hasher);
-            }
-        }
-        let key = hasher.finish();
-        self.sheets_key.set(Some((at, key)));
+        let key = AuthorSheetsKey {
+            generation: self.generation,
+            text_revision: dom.style_text_revision(),
+            connected,
+            connected_rest,
+        };
+        #[cfg(debug_assertions)]
+        self.check_sheets_key(dom, &key);
         key
     }
 
-    /// An identity of `owner`'s sheet text as it is now: its revision for a
-    /// loader or CSSOM text (set only through this engine), a hash of the
-    /// element's text for a `<style>` read from the DOM. `None`: no sheet.
-    pub fn sheet_revision(&self, dom: &Dom, owner: NodeId) -> Option<u64> {
-        use std::hash::{Hash, Hasher};
-        let sheet = self.sheets.iter().find(|s| s.owner == owner)?;
+    /// Debug builds: the sheet texts are the same while the key is.
+    #[cfg(debug_assertions)]
+    fn check_sheets_key(&self, dom: &Dom, key: &AuthorSheetsKey) {
+        use std::hash::Hasher;
         let mut hasher = rustc_hash::FxHasher::default();
-        match &sheet.source {
-            SheetSource::Text(_) => (0u8, sheet.revision).hash(&mut hasher),
-            SheetSource::StyleElement => {
-                1u8.hash(&mut hasher);
-                hash_text_content(dom, owner, &mut hasher);
-            }
+        self.for_each_author_sheet(dom, &mut |text| {
+            hasher.write(text.as_bytes());
+            hasher.write_u8(0xff);
+        });
+        let hash = hasher.finish();
+        let mut last = self.checked_key.borrow_mut();
+        if let Some((k, h)) = &*last {
+            debug_assert!(k != key || *h == hash, "author sheet texts changed under the same key {key:?}");
         }
-        Some(hasher.finish())
+        *last = Some((key.clone(), hash));
+    }
+
+    /// An identity of `owner`'s sheet text as it is now: its revision for a
+    /// loader or CSSOM text (set only through this engine), the element's
+    /// [`Dom::style_element_text_revision`] for a `<style>` read from the
+    /// DOM (the low bit tells the two apart). `None`: no sheet.
+    pub fn sheet_revision(&self, dom: &Dom, owner: NodeId) -> Option<u64> {
+        let sheet = self.sheets.iter().find(|s| s.owner == owner)?;
+        Some(match &sheet.source {
+            SheetSource::Text(_) => sheet.revision << 1,
+            SheetSource::StyleElement => (dom.style_element_text_revision(owner).unwrap_or_default() << 1) | 1,
+        })
     }
 
     pub fn sheet_owners(&self) -> Vec<NodeId> {
@@ -1444,20 +1477,6 @@ impl StyleMemo {
         self.sparse[slot] = self.dense.len() as u32;
         self.dense.push((el, c));
     }
-}
-
-/// Hashes `el`'s text content (its descendant text, as `textContent`
-/// concatenates it) without building the string; nothing for a stale id.
-fn hash_text_content(dom: &Dom, el: NodeId, hasher: &mut impl std::hash::Hasher) {
-    let Ok(root) = dom.check(el) else { return };
-    let mut cur = dom.n(root).first_child;
-    while cur != NIL {
-        if let NodeKind::Text(t) | NodeKind::CData(t) = &dom.n(cur).kind {
-            hasher.write(t.as_bytes());
-        }
-        cur = dom.following_in(cur, root);
-    }
-    hasher.write_u8(0xff);
 }
 
 /// flatTreeParentElement (webapi/Node.zig:1756-1775): shadow content takes

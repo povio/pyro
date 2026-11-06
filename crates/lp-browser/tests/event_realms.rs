@@ -207,6 +207,43 @@ fn a_first_style_read_fires_nothing_and_a_later_read_after_a_change_fires_its_tr
 }
 
 #[test]
+fn a_style_text_edit_reaches_the_timing_rules_within_the_same_task() {
+    // The sheets' timing rules follow a `<style>`'s text as soon as it is
+    // edited, before the task's style checkpoint: `@keyframes` added there
+    // start the animation, and a transition added there runs on the next read.
+    let (mut t, root) = page_with_frames();
+    eval(
+        &root,
+        "globalThis.log = [];
+         for (const type of ['animationstart', 'transitionrun'])
+           addEventListener(type, e => log.push(e.type + ':' + (e.animationName || e.propertyName) + ':' + e.target.id));
+         globalThis.style = document.head.appendChild(document.createElement('style'));
+         style.textContent = '.t { width: 100px } .w { width: 200px } .a { animation: grow 1s infinite }';
+         for (const id of ['el', 'animated']) {
+           const e = document.body.appendChild(document.createElement('div'));
+           e.id = id;
+         }
+         el.className = 't';
+         animated.className = 'a';
+         getComputedStyle(el).width;
+         getComputedStyle(animated).animationName; 0",
+    );
+    t.run_until_idle(Some(Instant::now() + Duration::from_millis(50)));
+    assert_eq!(eval(&root, "log.join(' ')"), "");
+    eval(
+        &root,
+        "style.firstChild.data = '@keyframes grow {} .t { width: 100px; transition: width 1s } .w { width: 200px } .a { animation: grow 1s infinite }';
+         getComputedStyle(animated).animationName;
+         el.className = 't w';
+         getComputedStyle(el).width; 0",
+    );
+    run_until(&mut t, &root, "log.length >= 2");
+    let mut log: Vec<String> = eval(&root, "log.join(' ')").split(' ').map(str::to_owned).collect();
+    log.sort();
+    assert_eq!(log, ["animationstart:grow:animated", "transitionrun:width:el"]);
+}
+
+#[test]
 fn the_scrolling_elements_offsets_are_the_viewports() {
     let (mut t, root) = page_with_frames();
     assert_eq!(
