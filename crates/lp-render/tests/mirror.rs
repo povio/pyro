@@ -1148,3 +1148,53 @@ fn rounding_skips_what_a_change_did_not_touch() {
     assert!(after.1 - before.1 >= 190, "skipped {} subtrees", after.1 - before.1);
     assert!(after.0 - before.0 < whole / 2, "reached {} of {whole} nodes", after.0 - before.0);
 }
+
+/// `Renderer::has_sticky` reads Blitz's count of sticky primary styles,
+/// maintained as styles are written and nodes dropped: it must follow every
+/// way an element stops or starts being sticky, through deltas, and agree
+/// with a whole-tree sync.
+#[test]
+fn sticky_count_follows_style_changes_and_removals() {
+    let page = Page::new(
+        "<!doctype html><html><head><style>.s{position:sticky;top:0} .pb::before{content:'x';position:sticky;top:0}</style></head>\
+         <body><div id=h><div id=a></div></div><div id=b></div><div id=c></div><div id=p></div></body></html>",
+    );
+    let (mut r, mut w) = (Renderer::new(), Renderer::new());
+    r.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
+    assert!(!r.has_sticky(1), "nothing is sticky at first");
+    let (h, a, b, c, p) = (page.find("#h"), page.find("#a"), page.find("#b"), page.find("#c"), page.find("#p"));
+    let body = page.find("body");
+    let set = |n: NodeId, k: &'static str, v: &'static str| move |pg: &Page| pg.dom.borrow_mut().set_attribute(n, k, v).unwrap();
+    let unset = |n: NodeId, k: &'static str| move |pg: &Page| {
+        pg.dom.borrow_mut().remove_attribute(n, k).unwrap();
+    };
+    let remove = |n: NodeId| move |pg: &Page| {
+        pg.dom.borrow_mut().remove_child(body, n).unwrap();
+    };
+    let steps: Vec<(&str, Box<dyn Fn(&Page)>, bool)> = vec![
+        ("a class switches to sticky", Box::new(set(a, "class", "s")), true),
+        ("and back", Box::new(unset(a, "class")), false),
+        ("sticky again", Box::new(set(a, "class", "s")), true),
+        ("its ancestor is display:none", Box::new(set(h, "style", "display:none")), false),
+        ("the ancestor is shown again", Box::new(unset(h, "style")), true),
+        ("the sticky element's subtree is removed", Box::new(remove(h)), false),
+        ("::before is sticky", Box::new(set(p, "class", "pb")), true),
+        ("::before goes away", Box::new(unset(p, "class")), false),
+        ("two sticky elements", Box::new(move |pg: &Page| {
+            set(b, "class", "s")(pg);
+            set(c, "class", "s")(pg);
+        }), true),
+        ("one of the two is removed", Box::new(remove(b)), true),
+        ("the other is removed", Box::new(remove(c)), false),
+    ];
+    for (what, step, sticky) in &steps {
+        let since = page.dom.borrow().version();
+        step(&page);
+        let delta = page.dom.borrow().render_delta(page.doc, since, &Page::opts()).expect("a delta");
+        r.sync_delta(1, &delta_ops(delta), (640, 480, 1.0, false, false), false)
+            .unwrap_or_else(|e| panic!("{what}: {e:?}"));
+        w.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
+        assert_eq!(r.has_sticky(1), *sticky, "delta sync: {what}");
+        assert_eq!(w.has_sticky(1), *sticky, "whole-tree sync: {what}");
+    }
+}

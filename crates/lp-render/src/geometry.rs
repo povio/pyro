@@ -100,12 +100,28 @@ impl LayoutBox {
 #[derive(Default)]
 pub(crate) struct Geometry {
     transforms: RefCell<FxHashMap<NodeId, (Affine, bool)>>,
-    has_sticky: std::cell::Cell<Option<bool>>,
     /// The layout (and hoisted) children of each layout parent with many,
     /// indexed on first use: [`Geometry::in_layout_tree`] is O(1) where a
     /// scan of the parent's list made reading every box quadratic in the
     /// width of the tree.
     layout_children: RefCell<FxHashMap<NodeId, FxHashSet<NodeId>>>,
+}
+
+/// Whether any node of `doc` is `position: sticky`: Blitz's `NodeTree` counts
+/// them as primary styles are written and nodes dropped. Debug builds check the
+/// count against a scan of every node.
+pub(crate) fn has_sticky(doc: &BaseDocument) -> bool {
+    let tree = doc.tree();
+    debug_assert_eq!(
+        tree.sticky_count(),
+        tree.iter()
+            .filter(|(_, n)| {
+                n.primary_styles().is_some_and(|s| s.clone_position() == style::computed_values::position::T::Sticky)
+            })
+            .count(),
+        "NodeTree::sticky_count disagrees with a scan",
+    );
+    tree.has_sticky()
 }
 
 /// Layout parents with at most this many children are scanned, not indexed.
@@ -114,7 +130,6 @@ const SCAN_CHILDREN: usize = 16;
 impl Geometry {
     pub(crate) fn clear(&self) {
         self.transforms.borrow_mut().clear();
-        self.has_sticky.set(None);
         self.layout_children.borrow_mut().clear();
     }
 
@@ -139,18 +154,6 @@ impl Geometry {
         let found = set.contains(&id);
         debug_assert_eq!(found, in_layout_tree(doc, id), "layout child index of {parent}");
         found
-    }
-
-    /// Whether any element is `position: sticky`.
-    pub(crate) fn has_sticky(&self, doc: &BaseDocument) -> bool {
-        if let Some(v) = self.has_sticky.get() {
-            return v;
-        }
-        let v = doc.tree().iter().any(|(_, n)| {
-            n.primary_styles().is_some_and(|s| s.clone_position() == style::computed_values::position::T::Sticky)
-        });
-        self.has_sticky.set(Some(v));
-        v
     }
 
     /// `id`'s border box to the document and whether it is in a fixed box.

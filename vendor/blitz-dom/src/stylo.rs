@@ -768,6 +768,9 @@ impl<'a> TElement for BlitzNode<'a> {
     }
 
     unsafe fn clear_data(&self) {
+        if let Some(style) = self.primary_styles() {
+            self.tree().note_primary_style_change(Some(&**style), None);
+        }
         // SAFETY: stylo traversal has exclusive access to nodes
         unsafe { self.stylo_element_data().clear() }
     }
@@ -1362,7 +1365,12 @@ impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
             // let mut data = el.mutate_data().unwrap();
             let mut data = unsafe { el.ensure_data() };
             let before = context.thread_local.statistics.clone();
+            let old_sticky = data.styles.get_primary().is_some_and(|s| crate::tree::is_sticky(s));
             recalc_style_at(self, context, el, &mut data, note_child);
+            let new_sticky = data.styles.get_primary().is_some_and(|s| crate::tree::is_sticky(s));
+            if old_sticky != new_sticky {
+                el.tree().note_sticky_change(old_sticky, new_sticky);
+            }
             let after = &context.thread_local.statistics;
             crate::resolve::phase_profile::style_stats([
                 after.elements_styled - before.elements_styled,
@@ -1486,6 +1494,7 @@ fn sync_pseudo_element_styles(
                     .push(pe_node_id);
             }
         }
+        pe_node.tree().note_primary_style_change(Some(&*old_style), Some(&*pe_style));
         pe_data.styles.primary = Some(pe_style);
         pe_data.set_restyled();
     }

@@ -1162,7 +1162,7 @@ impl Renderer {
     /// Whether any element of `page`'s document is `position: sticky`.
     pub fn has_sticky(&self, page: u64) -> bool {
         match (self.mirrors.get(&page), self.geometry.get(&page)) {
-            (Some(m), Some(g)) => g.has_sticky(&m.doc),
+            (Some(m), Some(_)) => geometry::has_sticky(&m.doc),
             _ => false,
         }
     }
