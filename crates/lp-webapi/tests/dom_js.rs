@@ -2698,7 +2698,8 @@ fn web_crypto_random_and_digest() {
     assert_eq!(out, "started");
     assert_eq!(
         eval(r, "res"),
-        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad|a9993e364706816aba3e25717850c26c9cd0d89d|NotSupportedError|NotSupportedError|true"
+        // sign() without arguments: a WebIDL argument error rejects the promise.
+        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad|a9993e364706816aba3e25717850c26c9cd0d89d|NotSupportedError|TypeError|true"
     );
 }
 

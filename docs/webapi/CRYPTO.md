@@ -1,6 +1,7 @@
-# Web Crypto subset
+# Web Crypto
 
-`window.crypto` (one `Crypto` object per realm) provides:
+`crypto` (one `Crypto` object per realm, in windows and dedicated workers)
+provides:
 
 - `getRandomValues(view)`: integer typed arrays only (Int8/Uint8/
   Uint8Clamped/Int16/Uint16/Int32/Uint32/BigInt64/BigUint64); other views
@@ -8,13 +9,75 @@
   `QuotaExceededError`. Fills the view in place (respecting its byteOffset)
   from the OS CSPRNG (`getrandom`) and returns the same object.
 - `randomUUID()`: RFC 4122 version 4 UUID string.
-- `crypto.subtle.digest(algorithm, data)`: SHA-1, SHA-256, SHA-384 and
-  SHA-512 (algorithm as a case-insensitive string or `{name}`), BufferSource
-  data, resolving to an `ArrayBuffer`. Argument errors reject the promise.
+- `crypto.subtle` (`SubtleCrypto`) and `CryptoKey`, below.
 
-All other `SubtleCrypto` operations (`encrypt`, `decrypt`, `sign`, `verify`,
-`generateKey`, `deriveKey`, `deriveBits`, `importKey`, `exportKey`,
-`wrapKey`, `unwrapKey`) reject with `NotSupportedError`; there is no
-`CryptoKey`. Upstream Lightpanda implements more of SubtleCrypto
-(src/browser/webapi/SubtleCrypto.zig); that is not ported. `crypto` and
-`crypto.subtle` are exposed regardless of secure context.
+`crypto` and `crypto.subtle` are exposed regardless of secure context.
+
+## SubtleCrypto
+
+`digest` runs natively (crypto.rs). The other operations run in
+`crates/lp-webapi/src/subtle.js` (WebIDL conversions, algorithm
+normalization and the per-algorithm steps of the Web Crypto API) over the
+byte primitives of `crypto_subtle.rs` (RustCrypto: `aes`, `ghash`, `aes-kw`,
+`hmac`, `pbkdf2`, `hkdf`, `p256`/`p384`/`p521`, `ed25519-dalek`,
+`x25519-dalek`, `rsa`). The script is made on a realm's first SubtleCrypto
+call other than `digest`, or its first read of `CryptoKey`; a realm that never
+uses keys pays one global accessor.
+
+| Algorithm | Operations | Formats |
+|---|---|---|
+| SHA-1/256/384/512 | digest | |
+| HMAC | sign, verify, generateKey, importKey, exportKey, deriveKey target | raw, jwk |
+| AES-GCM | encrypt, decrypt (any IV length; tag 32-128 bits), generateKey, import/export, wrap/unwrap | raw, jwk |
+| AES-CBC, AES-CTR | encrypt, decrypt, generateKey, import/export, wrap/unwrap | raw, jwk |
+| AES-KW | wrapKey, unwrapKey, generateKey, import/export | raw, jwk |
+| PBKDF2, HKDF | deriveBits, deriveKey, importKey (non-extractable) | raw |
+| ECDSA (P-256/384/521) | sign, verify (IEEE P1363 signatures), generateKey, import/export | raw (public, compressed or not), spki, pkcs8, jwk |
+| ECDH (P-256/384/521) | deriveBits, deriveKey, generateKey, import/export | raw, spki, pkcs8, jwk |
+| Ed25519 | sign, verify (strict: small-order keys and R fail, as in Chrome), generateKey, import/export | raw, spki, pkcs8, jwk |
+| X25519 | deriveBits (an all-zero secret is an OperationError), deriveKey, generateKey, import/export | raw, spki, pkcs8, jwk |
+| RSASSA-PKCS1-v1_5, RSA-PSS | sign, verify, generateKey, import/export | spki, pkcs8, jwk |
+| RSA-OAEP | encrypt, decrypt, wrap/unwrap, generateKey, import/export | spki, pkcs8, jwk |
+
+Errors carry the spec names and follow the spec's step order: WebIDL
+argument errors (missing arguments, a non-CryptoKey, an invalid enum, an
+[EnforceRange] value out of range, a missing required dictionary member) reject
+with `TypeError`; an unknown algorithm name (matched ASCII case-insensitively,
+so U+212A KELVIN SIGN is not `K`) or curve with `NotSupportedError`; bad usages
+or empty usages for a secret/private key with `SyntaxError`; key data that does
+not parse or match the algorithm with `DataError`; a wrong key, usage or key
+type with `InvalidAccessError`; a failed operation (bad tag, bad padding, an
+invalid length) with `OperationError`. Key data is copied after the algorithm
+is normalized. Operations run synchronously and settle the returned promise.
+
+RSA generation accepts the public exponents 3 and 65537 and modulus lengths
+that are multiples of 8 from 256 to 16384, as Chromium does. JWK export orders
+members alphabetically (a dictionary converted to JS); EC and X25519 JWKs carry
+no `alg`, Ed25519 JWKs carry `alg: "Ed25519"`.
+
+## CryptoKey
+
+`type`, `extractable`, `algorithm` and `usages` (the last two are the same
+object on every read). Usages are kept de-duplicated in a fixed order. Key
+material stays in a private field: the raw bytes of secret keys, PKCS #8 or
+SPKI DER for EC and RSA keys, the 32 raw bytes for Ed25519 and X25519.
+
+CryptoKeys are structured-cloneable within a realm (`structuredClone`,
+`MessageChannel`): the clone script asks `crypto::clone_platform_object` for
+an object it does not know, which copies a CryptoKey's slots. A realm that has
+not made subtle.js has no keys, so this costs it nothing.
+
+## Limits
+
+- CryptoKeys do not cross to or from a worker by `postMessage` (the worker
+  wire format has no CryptoKey): DataCloneError, as for other unsupported
+  objects.
+- RSA-OAEP labels must be valid UTF-8 (the `rsa` crate keeps the label as a
+  string); other labels reject with `NotSupportedError`.
+- RSA JWKs need all CRT members (`p`, `q`, `dp`, `dq`, `qi`) for private
+  keys; multi-prime keys (`oth`) are not supported. JWK members are decoded
+  as unpadded base64url.
+- Not implemented: the `raw-secret`/`raw-public`/`raw-private` formats, Ed448,
+  X448, and the modern algorithms (ML-KEM, ML-DSA, AES-OCB, ChaCha20-Poly1305,
+  Argon2, KMAC, `getPublicKey`, `supports`); they reject as unknown algorithms
+  or invalid formats.

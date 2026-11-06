@@ -150,6 +150,8 @@ where
     def.getter("ClipboardItem", |s, w| crate::navigator_extras::member(s, w.page(), "ClipboardItem"));
     crate::streams::define_globals(def);
     crate::observable::define_globals(def);
+    crate::crypto::define_globals(def);
+    crate::storage_manager::define_globals(def);
     def.getter("screen", |s, w| {
         let key = lp_js::IdentityKey(w.page().id() | (1 << 57), 1);
         same_object(s, w.page(), key, || s.wrap::<Screen>(w.page().clone(), Some(key)))
@@ -352,6 +354,7 @@ impl JsClass for Navigator {
         def.getter("geolocation", |s, p| crate::navigator_extras::member(s, p, "geolocation"));
         def.getter("permissions", |s, p| crate::navigator_extras::member(s, p, "permissions"));
         def.getter("clipboard", |s, p| crate::navigator_extras::member(s, p, "clipboard"));
+        def.getter("storage", |s, p| crate::storage_manager::storage(s, p));
         def.getter("webdriver", |s, _p| Ok(s.boolean(true)));
         def.getter("doNotTrack", |s, _p| Ok(s.null()));
         def.getter("pdfViewerEnabled", |s, _p| Ok(s.boolean(false)));

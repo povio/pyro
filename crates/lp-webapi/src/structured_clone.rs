@@ -5,6 +5,12 @@ use lp_js::{JsError, JsResult, Persistent, Scope};
 pub(crate) fn install(s: &Scope<'_>, page: &crate::page::PageDom) -> JsResult<()> {
     let guard = s.function("cloneObjectGuard", |s, _, args| {
         let value = args.get(0);
+        // `guard(value, true)`: the copy of a platform object the script does
+        // not know (CryptoKey), or undefined; asked only for a value the
+        // script would otherwise reject.
+        if args.len() > 1 {
+            return crate::crypto::clone_platform_object(s, value);
+        }
         let check: JsResult<bool> = (|| Ok(s.is_host_object(value)? || value.has_proxy_target()?))();
         match check {
             Ok(reject) => Ok(s.boolean(!reject)),

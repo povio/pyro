@@ -10,7 +10,17 @@ Implemented: `ReadableStream` (start/pull/cancel, strategies, `getReader`,
 `tee`, `pipeTo`, `pipeThrough`, async iteration, `ReadableStream.from`),
 default and BYOB readers, `WritableStream` and its writer, `TransformStream`,
 `ByteLengthQueuingStrategy`, `CountQueuingStrategy`, `TextEncoderStream`,
-`TextDecoderStream` (`TextDecoder.decode` now honors `stream: true`).
+`TextDecoderStream` (`TextDecoder.decode` now honors `stream: true`),
+`CompressionStream` and `DecompressionStream`. The same names exist in
+dedicated workers.
+
+Compression (`compression.rs`, flate2's raw deflate with the gzip header and
+trailer handled there): formats `"gzip"`, `"deflate"` (zlib) and
+`"deflate-raw"`; another format is a TypeError. Chunks must be BufferSources
+and come out as Uint8Arrays (empty outputs are not enqueued). Decompression
+takes input split anywhere; corrupt data, a bad gzip checksum, bytes after the
+end of the compressed data, or input that ends early error the stream with a
+TypeError.
 
 Bodies:
 - `response.body` of a fetch is a byte stream that delivers bytes as they
@@ -32,4 +42,4 @@ Gaps:
   `.body` takes the bytes from the other.
 - A stream from another realm is not recognized as a body.
 - There is no `Request` class, so no `Request.body`; streams are not
-  transferable through `postMessage`; no `CompressionStream`.
+  transferable through `postMessage`. `CompressionStream` has no `"brotli"`.
