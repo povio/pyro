@@ -138,6 +138,8 @@ fn ensure_parse_prefs() {
         style_config::set_pref!("layout.css.tree-counting-functions.enabled", true);
         style_config::set_pref!("layout.css.progress-function.enabled", true);
         style_config::set_pref!("layout.variable_fonts.enabled", true);
+        // lp-render builds Blitz with its `writing-mode` feature.
+        style_config::set_pref!("layout.writing-mode.enabled", true);
         style_config::set_pref!("layout.container-queries.enabled", true);
         style_config::set_pref!("layout.css.nth-child-of.enabled", true);
         style_config::set_pref!("layout.css.starting-style-at-rules.enabled", true);

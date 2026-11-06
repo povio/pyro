@@ -324,9 +324,14 @@ pub(crate) fn check_visibility<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> 
         let o = arg.as_object().ok_or_else(|| {
             lp_js::JsError::type_error("Failed to execute 'checkVisibility': options is not an object.")
         })?;
+        // Dictionary members are read in lexicographic order.
         let flag = |k: &str| o.get(k).map(|v| v.to_bool());
-        opts.check_opacity = flag("checkOpacity")? | flag("opacityProperty")?;
-        opts.check_visibility = flag("checkVisibilityCSS")? | flag("visibilityProperty")?;
+        let check_opacity = flag("checkOpacity")?;
+        let check_visibility_css = flag("checkVisibilityCSS")?;
+        let opacity_property = flag("opacityProperty")?;
+        let visibility_property = flag("visibilityProperty")?;
+        opts.check_opacity = check_opacity || opacity_property;
+        opts.check_visibility = check_visibility_css || visibility_property;
     }
     let page = n.page();
     let v = page.layout().check_visibility(&page.dom.borrow(), n.id, opts);
