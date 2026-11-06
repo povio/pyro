@@ -3,3 +3,4 @@
 mod computed_style;
 mod flow;
 mod inner_text;
+mod rect_sync;
