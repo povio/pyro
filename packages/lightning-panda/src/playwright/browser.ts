@@ -2,7 +2,9 @@
 import { EventEmitter } from 'node:events';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { Lightningpanda, type ConnectOptions } from '../index.js';
-import { initScriptSource, Page } from './page.js';
+import { CdpError } from '../cdp.js';
+import { urlMatches, resolveUrl, type UrlMatch } from './match.js';
+import { initScriptSource, Page, sameRoute, type Attachment, type RouteEntry, type RouteHandler } from './page.js';
 
 type Cookie = {
   name: string;
@@ -31,6 +33,16 @@ export type ContextOptions = {
 
 const DEFAULT_VIEWPORT = { width: 1280, height: 720 };
 
+/**
+ * Pages booted ahead (`use: { lightningpanda: { boot: [...] } }`): a test
+ * whose page's first `goto` is `url`, or matches `routes` on the same origin,
+ * gets a page that already loaded `url` with the context's init scripts,
+ * storage and viewport, and the goto becomes a same-document route change
+ * (`pushState` + `popstate`, settled). Booted before the test runs: the
+ * app's shell and boot requests come from before the test seeded anything.
+ */
+export type BootSpec = { url: string; routes?: UrlMatch | UrlMatch[]; pool?: number };
+
 type TestDefaults = { options: ContextOptions; timeout?: number; navigationTimeout?: number; testIdAttribute: string };
 let testDefaults: TestDefaults | undefined;
 /** The running test's `use` options (`@povio/lightning-panda/test`): `browser.newContext()` starts from them. */
@@ -54,17 +66,49 @@ export class Browser {
     return testDefaults?.testIdAttribute ?? 'data-testid';
   }
 
+  /** Booted-ahead page profiles on this connection, by profile key. */
+  private _profiles = new Map<string, Promise<number>>();
+  /** Pages taken from a pool and pages created fresh (`browser._stats`). */
+  readonly _stats = { pooled: 0, fresh: 0 };
+
   constructor(
     readonly _lp: Lightningpanda,
     private _owned = true,
+    readonly _boot: BootSpec[] = [],
   ) {
     _lp.cdp.onClose(() => this._events.emit('disconnected', this));
   }
 
+  /** The boot spec covering a first navigation to `target`, and its boot URL. */
+  async _bootFor(target: string, baseURL?: string): Promise<{ spec: BootSpec; url: string } | undefined> {
+    for (const spec of this._boot) {
+      const url = resolveUrl(baseURL, spec.url);
+      if (url === target) return { spec, url };
+      if (!spec.routes || new URL(url).origin !== new URL(target).origin) continue;
+      for (const r of Array.isArray(spec.routes) ? spec.routes : [spec.routes]) {
+        if (await urlMatches(baseURL, target, r)) return { spec, url };
+      }
+    }
+    return undefined;
+  }
+
+  /** The prepared-page profile for these settings, registered on first use. */
+  _profile(url: string, initScripts: string[], viewport: { width: number; height: number } | null, pool: number): Promise<number> {
+    const key = JSON.stringify([url, initScripts, viewport, pool]);
+    let id = this._profiles.get(key);
+    if (!id) {
+      id = this._lp.cdp
+        .send('Lightningpanda.registerPreparedPage', { url, initScripts, ...(viewport ? { viewport } : {}), pool })
+        .then((r: { profileId: number }) => r.profileId);
+      id.catch(() => this._profiles.delete(key));
+      this._profiles.set(key, id);
+    }
+    return id;
+  }
+
   async newContext(options: ContextOptions = {}): Promise<BrowserContext> {
     const merged: ContextOptions = { ...this._defaults, ...options };
-    const { browserContextId } = await this._lp.cdp.send('Target.createBrowserContext');
-    const context = new BrowserContext(this, browserContextId, merged);
+    const context = new BrowserContext(this, merged);
     await context._init();
     this._contexts.add(context);
     return context;
@@ -110,6 +154,10 @@ export class Browser {
 }
 
 export class BrowserContext {
+  _routes: RouteEntry[] = [];
+  /** The browser context id: made on the first page that needs one, or a booted page's. */
+  private _idPromise?: Promise<string>;
+  private _id?: string;
   private _pages = new Set<Page>();
   private _initScripts: string[] = [];
   private _cookies: Cookie[] = [];
@@ -123,7 +171,6 @@ export class BrowserContext {
 
   constructor(
     private _browser: Browser,
-    readonly _id: string,
     /** Read by `expect(page).toHaveURL()` for `baseURL`. */
     readonly _options: ContextOptions,
   ) {
@@ -154,28 +201,83 @@ export class BrowserContext {
 
   async newPage(): Promise<Page> {
     if (this._closed) throw new Error('browserContext.newPage: Target page, context or browser has been closed');
-    const { targetId } = await this.cdp.send('Target.createTarget', { url: 'about:blank', browserContextId: this._id });
-    const { sessionId } = await this.cdp.send('Target.attachToTarget', { targetId, flatten: true });
     const o = this._options;
     const viewport = o.viewport === null ? null : (o.viewport ?? DEFAULT_VIEWPORT);
-    const page = new Page(this, this.cdp, sessionId, targetId, viewport);
-    const send = (method: string, params: object = {}) => this.cdp.send(method, params, sessionId);
-    // Pipelined: the server runs them in order, before any later command.
-    const setup: Promise<unknown>[] = [send('Page.enable')];
-    if (viewport) setup.push(send('Emulation.setDeviceMetricsOverride', { ...viewport, deviceScaleFactor: 1, mobile: false }));
-    if (o.userAgent) setup.push(send('Emulation.setUserAgentOverride', { userAgent: o.userAgent }));
-    if (o.extraHTTPHeaders) setup.push(page._enableNetwork(), send('Network.setExtraHTTPHeaders', { headers: o.extraHTTPHeaders }));
-    if (this._cookies.length) setup.push(send('Network.setCookies', { cookies: this._cookies.map(cdpCookie) }));
-    for (const source of this._initScripts) setup.push(send('Page.addScriptToEvaluateOnNewDocument', { source }));
-    if (o.colorScheme || o.reducedMotion) {
-      setup.push(send('LP.run', { steps: [{ media: { ...(o.colorScheme ? { colorScheme: o.colorScheme } : {}), ...(o.reducedMotion ? { reducedMotion: o.reducedMotion } : {}) } }] }));
-    }
-    await Promise.all(setup);
-    this._cookies = []; // in the context's jar now
+    // No target yet: the page's first command decides which (see `_attachPage`).
+    const page = new Page(this, this.cdp, viewport);
     this._pages.add(page);
     this._events.emit('page', page);
     return page;
   }
+
+  private contextId(): Promise<string> {
+    return (this._idPromise ??= this.cdp.send('Target.createBrowserContext').then((r: { browserContextId: string }) => {
+      this._id = r.browserContextId;
+      return r.browserContextId;
+    }));
+  }
+
+  /** A target for `page`: a booted-ahead one for a covered first `goto`, else a new one. */
+  async _attachPage(page: Page, gotoUrl?: string): Promise<Attachment> {
+    const o = this._options;
+    const viewport = page.viewportSize();
+    const scripts = [...this._initScripts, ...page._pendingScripts];
+    // A booted page brings its own browser context: only the context's first page can take one.
+    const plain = !this._idPromise && !this._cookies.length && !o.extraHTTPHeaders && !o.userAgent && !media(o);
+    const boot = plain && gotoUrl ? await this._browser._bootFor(gotoUrl, o.baseURL) : undefined;
+    if (boot && !this._idPromise) {
+      let acquired: { sessionId: string; targetId: string; browserContextId: string; ready: boolean } | undefined;
+      const taking = (async () => {
+        const profileId = await this._browser._profile(boot.url, scripts, viewport, boot.spec.pool ?? 2);
+        try {
+          acquired = await this.cdp.send('Lightningpanda.acquirePreparedPage', { profileId, attach: true });
+          return acquired!.browserContextId;
+        } catch (e) {
+          if (!(e instanceof CdpError)) throw e;
+          return null;
+        }
+      })();
+      this._idPromise = taking.then((id) => id ?? this.cdp.send('Target.createBrowserContext').then((r: any) => r.browserContextId));
+      this._id = await this._idPromise;
+      if (acquired) {
+        this._browser._stats.pooled++;
+        const { frameTree } = await this.cdp.send('Page.getFrameTree', {}, acquired.sessionId);
+        page._bind(acquired.sessionId, acquired.targetId, frameTree.frame.id, frameTree.frame.url);
+        await this.setUp(page, false);
+        return { pooled: true, ready: acquired.ready, url: boot.url };
+      }
+    }
+    const browserContextId = await this.contextId();
+    const { targetId } = await this.cdp.send('Target.createTarget', { url: 'about:blank', browserContextId });
+    const { sessionId } = await this.cdp.send('Target.attachToTarget', { targetId, flatten: true });
+    page._bind(sessionId, targetId);
+    this._browser._stats.fresh++;
+    await this.setUp(page, true, scripts);
+    return { pooled: false, ready: true };
+  }
+
+  /** Domains and emulation for a page's new session; pipelined, the server runs them in order. */
+  private async setUp(page: Page, fresh: boolean, scripts: string[] = []): Promise<void> {
+    const o = this._options;
+    const send = (method: string, params: object = {}) => page._sendNow(method, params);
+    const setup: Promise<unknown>[] = [send('Page.enable')];
+    const viewport = page.viewportSize();
+    if (fresh && viewport) setup.push(send('Emulation.setDeviceMetricsOverride', { ...viewport, deviceScaleFactor: 1, mobile: false }));
+    if (o.userAgent) setup.push(send('Emulation.setUserAgentOverride', { userAgent: o.userAgent }));
+    if (page._wants.network || o.extraHTTPHeaders) setup.push((page._network = send('Network.enable').then(() => undefined)));
+    if (o.extraHTTPHeaders) setup.push(send('Network.setExtraHTTPHeaders', { headers: o.extraHTTPHeaders }));
+    if (page._wants.runtime) setup.push((page._runtime = send('Runtime.enable').then(() => undefined)));
+    if (page._wants.fetch || page._routes.length || this._routes.length) {
+      setup.push((page._fetch = send('Fetch.enable', { patterns: [{ urlPattern: '*' }] }).then(() => undefined)));
+    }
+    if (fresh && this._cookies.length) setup.push(send('Network.setCookies', { cookies: this._cookies.map(cdpCookie) }));
+    for (const source of scripts) setup.push(send('Page.addScriptToEvaluateOnNewDocument', { source }));
+    const m = media(o);
+    if (fresh && m) setup.push(send('LP.run', { steps: [{ media: m }] }));
+    await Promise.all(setup);
+    if (fresh) this._cookies = []; // in the context's jar now
+  }
+
   _pageClosed(page: Page) {
     this._pages.delete(page);
     if (this._ownedBy === page) void this.close();
@@ -190,15 +292,19 @@ export class BrowserContext {
   async addInitScript(script: string | Function | { path?: string; content?: string }, arg?: unknown): Promise<void> {
     const source = initScriptSource(script, arg);
     this._initScripts.push(source);
-    await Promise.all(this.pages().map((p) => p._send('Page.addScriptToEvaluateOnNewDocument', { source })));
+    await Promise.all(this.attached().map((p) => p._send('Page.addScriptToEvaluateOnNewDocument', { source })));
+  }
+  /** Pages that have a target (the others pick up context state when they get one). */
+  private attached(): Page[] {
+    return this.pages().filter((p) => p._isAttached);
   }
   async addCookies(cookies: Cookie[]): Promise<void> {
-    const page = this.pages()[0];
+    const page = this.attached()[0];
     if (page) await page._send('Network.setCookies', { cookies: cookies.map(cdpCookie) });
     else this._cookies.push(...cookies);
   }
   async cookies(urls?: string | string[]): Promise<Cookie[]> {
-    const page = this.pages()[0];
+    const page = this.attached()[0];
     if (!page) return [...this._cookies];
     const list = urls === undefined ? undefined : Array.isArray(urls) ? urls : [urls];
     const { cookies } = await page._send('Network.getCookies', list ? { urls: list } : {});
@@ -206,7 +312,7 @@ export class BrowserContext {
   }
   async clearCookies(): Promise<void> {
     this._cookies = [];
-    const page = this.pages()[0];
+    const page = this.attached()[0];
     if (page) await page._send('Network.clearBrowserCookies');
   }
   async storageState(o: { path?: string } = {}): Promise<StorageState> {
@@ -227,7 +333,7 @@ export class BrowserContext {
   }
   async setExtraHTTPHeaders(headers: Record<string, string>): Promise<void> {
     this._options.extraHTTPHeaders = headers;
-    await Promise.all(this.pages().map(async (p) => {
+    await Promise.all(this.attached().map(async (p) => {
       await p._enableNetwork();
       await p._send('Network.setExtraHTTPHeaders', { headers });
     }));
@@ -242,10 +348,16 @@ export class BrowserContext {
   async clearPermissions(): Promise<void> {}
   async setGeolocation(): Promise<void> {}
   async setOffline(): Promise<void> {}
-  async route(): Promise<never> {
-    throw new Error('lightning-panda: context.route is not supported yet');
+  async route(url: UrlMatch, handler: RouteHandler, options: { times?: number } = {}): Promise<void> {
+    this._routes.unshift({ url, handler, times: options.times });
+    await Promise.all(this.pages().map((p) => p._enableFetch()));
   }
-  async unroute(): Promise<void> {}
+  async unroute(url: UrlMatch, handler?: RouteHandler): Promise<void> {
+    this._routes = this._routes.filter((r) => !sameRoute(r, url, handler));
+  }
+  async unrouteAll(_options: { behavior?: 'wait' | 'ignoreErrors' | 'default' } = {}): Promise<void> {
+    this._routes = [];
+  }
   async exposeFunction(): Promise<never> {
     throw new Error('lightning-panda: context.exposeFunction is not supported yet');
   }
@@ -281,10 +393,19 @@ export class BrowserContext {
     if (this._closed) return;
     this._closed = true;
     for (const p of [...this._pages]) await p.close();
-    this.cdp.post('Target.disposeBrowserContext', { browserContextId: this._id });
+    const id = this._id ?? (this._idPromise ? await this._idPromise.catch(() => undefined) : undefined);
+    if (id) this.cdp.post('Target.disposeBrowserContext', { browserContextId: id });
     this._browser._contextClosed(this);
     this._events.emit('close', this);
   }
+}
+
+/** Media emulation the options ask for beyond the defaults (Playwright's `colorScheme: 'light'` is one). */
+function media(o: ContextOptions): Record<string, string> | undefined {
+  const m: Record<string, string> = {};
+  if (o.colorScheme && o.colorScheme !== 'light') m.colorScheme = o.colorScheme;
+  if (o.reducedMotion && o.reducedMotion !== 'no-preference') m.reducedMotion = o.reducedMotion;
+  return Object.keys(m).length ? m : undefined;
 }
 
 function cdpCookie(c: Cookie): Record<string, unknown> {
@@ -298,8 +419,8 @@ function cdpCookie(c: Cookie): Record<string, unknown> {
 /** `chromium` for scripts that launch a browser themselves (`chromium.launch()`). */
 export const chromium = {
   name: () => 'chromium',
-  async launch(o: ConnectOptions & { bin?: string; args?: string[] } = {}): Promise<Browser> {
-    return new Browser(await Lightningpanda.launch(o));
+  async launch(o: ConnectOptions & { bin?: string; args?: string[]; boot?: BootSpec[] } = {}): Promise<Browser> {
+    return new Browser(await Lightningpanda.launch(o), true, o.boot);
   },
   async connectOverCDP(wsEndpoint: string | { wsEndpoint: string }): Promise<Browser> {
     const url = typeof wsEndpoint === 'string' ? wsEndpoint : wsEndpoint.wsEndpoint;

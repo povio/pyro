@@ -3,6 +3,6 @@
 // that drive a browser without the test runner.
 import { TimeoutError } from './page.js';
 
-export { chromium, Browser, BrowserContext, type ContextOptions } from './browser.js';
-export { Page, Frame, Locator, FrameLocator, Request, Response, Dialog, ConsoleMessage, Keyboard, Mouse, TimeoutError } from './page.js';
+export { chromium, Browser, BrowserContext, type BootSpec, type ContextOptions } from './browser.js';
+export { Page, Frame, Locator, FrameLocator, Request, Response, Route, Dialog, ConsoleMessage, Keyboard, Mouse, TimeoutError } from './page.js';
 export const errors = { TimeoutError };

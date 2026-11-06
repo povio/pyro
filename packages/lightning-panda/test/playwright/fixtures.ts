@@ -4,7 +4,8 @@ import * as pw from 'playwright/test';
 import * as lp from '../../src/playwright/test';
 import { Lightningpanda } from '../../src/index';
 
-const stock = pw.test.extend<{}, { _lp: Lightningpanda }>({
+const stock = pw.test.extend<{}, { _lp: Lightningpanda; lightningpanda: object }>({
+  lightningpanda: [{}, { scope: 'worker', option: true }],
   _lp: [
     async ({}, use) => {
       const browser = await Lightningpanda.launch({ bin: process.env.LIGHTNINGPANDA_BIN });
@@ -26,3 +27,5 @@ const stock = pw.test.extend<{}, { _lp: Lightningpanda }>({
 
 export const test = process.env.PW_ENGINE === 'chromium-cdp' ? stock : lp.test;
 export const expect = pw.expect;
+
+export const isStock = process.env.PW_ENGINE === 'chromium-cdp';

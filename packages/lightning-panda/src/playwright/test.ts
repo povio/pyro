@@ -10,7 +10,7 @@
 import { test as base } from 'playwright/test';
 import type { Browser as PwBrowser, BrowserContext as PwContext, Page as PwPage } from 'playwright/test';
 import { Lightningpanda } from '../index.js';
-import { Browser, setTestDefaults, type ContextOptions } from './browser.js';
+import { Browser, setTestDefaults, type BootSpec, type ContextOptions } from './browser.js';
 
 // Playwright's own exports and types: `Page`, `Locator`, … stay its types.
 export * from 'playwright/test';
@@ -22,6 +22,12 @@ export type LightningpandaOptions = {
   bin?: string;
   /** Extra `lightningpanda serve` arguments. */
   args?: string[];
+  /**
+   * Pages to keep booted ahead: a test whose page first goes to `url` (or to
+   * a `routes` match on its origin) starts from one, the app changing route
+   * in place. `[{ url: '/platform', routes: '/platform/**' }]`.
+   */
+  boot?: BootSpec[];
 };
 
 type WorkerFixtures = { lightningpanda: LightningpandaOptions; _lightningpanda: Lightningpanda };
@@ -41,8 +47,8 @@ export const test = base.extend<{ _lpContextDefaults: void }, WorkerFixtures>({
     { scope: 'worker' },
   ],
   browser: [
-    async ({ _lightningpanda }, use) => {
-      const browser = new Browser(_lightningpanda, false);
+    async ({ _lightningpanda, lightningpanda }, use) => {
+      const browser = new Browser(_lightningpanda, false, lightningpanda.boot);
       await use(browser as unknown as PwBrowser);
       await browser.close();
     },

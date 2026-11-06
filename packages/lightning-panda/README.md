@@ -109,17 +109,36 @@ page), so `expect` imported from `@playwright/test` in helper files works
 too. Config options honoured: `baseURL`, `viewport`, `storageState`,
 `extraHTTPHeaders`, `userAgent`, `colorScheme`, `actionTimeout`,
 `navigationTimeout`, `testIdAttribute`. The `request` fixture is Playwright's.
-`@povio/lightning-panda/playwright` has the same classes for scripts
-(`chromium.launch()`, `chromium.connectOverCDP(ws)`).
+`page.route` and `context.route` (`fulfill`, `continue`, `abort`,
+`fallback`, `fetch`, `times`; globs, RegExps and predicates) run on the
+browser's request interception. `@povio/lightning-panda/playwright` has the
+same classes for scripts (`chromium.launch()`, `chromium.connectOverCDP(ws)`).
 
-The TOS close flow takes 33 ms per test this way against 67 ms for stock
-Playwright driving the same browser over CDP (Playwright runner, one worker,
-`bunx playwright test -c test/playwright tos-close`, `REPEAT=40`). Actions
-settle before they return (the next call starts once the page is quiet), so
-a test that asserts a transient state between an action and its result
-(a spinner) can miss it.
+**Pages booted ahead.** A page gets its target on its first command. With
 
-Not supported yet (they throw a clear error): `page.route`/`context.route`,
+```ts
+// playwright.config.ts
+use: { lightningpanda: { boot: [{ url: '/platform', routes: '/platform/**' }] } }
+```
+
+a context's first page whose first call is `goto` to a `routes` match (or to
+`url` itself) is taken from a pool of pages that already loaded `url` with
+the context's init scripts, `storageState` local storage and viewport, and
+the `goto` becomes a same-document route change (`pushState` + `popstate`,
+settled), returning `null`. The app's shell was booted before the test
+seeded anything, so use it for routes that fetch their data when they
+mount. Contexts with cookies, `extraHTTPHeaders`, `userAgent` or media
+emulation, and any other first call, get a fresh page.
+
+The TOS close flow (`test/playwright/tos-flow.ts`, Playwright code as TOS
+writes it) takes 23 ms per test on booted pages, 29-33 ms on fresh pages and
+55-67 ms for stock Playwright driving the same browser over CDP (Playwright
+runner, one worker, `REPEAT=40`, medians of two rounds on a loaded machine).
+Actions settle before they return (the next call starts once the page is
+quiet), so a test that asserts a transient state between an action and its
+result (a spinner) can miss it.
+
+Not supported yet (they throw a clear error): `routeFromHAR`,
 element and JS handles (`$`, `evaluateHandle`), `locator.and/or`,
 `filter()` after `first()/last()/nth()`, `getByRole` options other than
 `name`/`exact`, XPath and most Playwright-only selector engines (CSS with a

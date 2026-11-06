@@ -1042,8 +1042,17 @@ export class Page extends Scope {
   private _defaultTimeout?: number;
   private _defaultNavigationTimeout?: number;
   private _viewport: { width: number; height: number } | null;
-  private _network?: Promise<void>;
-  private _runtime?: Promise<void>;
+  _network?: Promise<void>;
+  _runtime?: Promise<void>;
+  _fetch?: Promise<void>;
+  /** Asked for before the page has a target: sent as part of attaching it. */
+  _wants = { network: false, runtime: false, fetch: false };
+  /** `page.addInitScript` before the page has a target. */
+  _pendingScripts: string[] = [];
+  _routes: RouteEntry[] = [];
+  _sessionId = '';
+  _targetId = '';
+  private _attaching?: Promise<Attachment>;
   private _requests = new Map<string, Request>();
   private _off: (() => void)[] = [];
   private _events = new EventEmitter();
@@ -1052,15 +1061,13 @@ export class Page extends Scope {
   constructor(
     private _context: BrowserContext,
     private _cdp: Cdp,
-    readonly _sessionId: string,
-    readonly _targetId: string,
     viewport: { width: number; height: number } | null,
   ) {
     super();
     this._viewport = viewport;
     this._events.setMaxListeners(0);
     this._navigations.setMaxListeners(0);
-    const mine = (fn: (p: any) => void) => (p: any, sid?: string) => sid === _sessionId && fn(p);
+    const mine = (fn: (p: any) => void) => (p: any, sid?: string) => !!sid && sid === this._sessionId && fn(p);
     const on = (method: string, fn: (p: any) => void) => this._off.push(_cdp.on(method, mine(fn)));
     on('Page.frameNavigated', (p) => {
       if (p.frame.parentId) return;
@@ -1068,7 +1075,7 @@ export class Page extends Scope {
       this.setUrl(p.frame.url + (p.frame.urlFragment ?? ''));
     });
     on('Page.navigatedWithinDocument', (p) => {
-      if (!p.frameId || p.frameId === (this._mainFrameId ?? _targetId)) this.setUrl(p.url);
+      if (!p.frameId || p.frameId === (this._mainFrameId ?? this._targetId)) this.setUrl(p.url);
     });
     on('Page.javascriptDialogOpening', (p) => {
       const dialog = new Dialog(this, p.type, p.message, p.defaultPrompt ?? '');
@@ -1110,11 +1117,31 @@ export class Page extends Scope {
       if (d.exception?.description) err.stack = d.exception.description;
       this._events.emit('pageerror', err);
     });
+    on('Fetch.requestPaused', (p) => void this.onPaused(p));
     this._off.push(
       _cdp.on('Target.detachedFromTarget', (p) => {
-        if (p.sessionId === _sessionId) this.markClosed();
+        if (p.sessionId && p.sessionId === this._sessionId) this.markClosed();
       }),
     );
+  }
+
+  /**
+   * The page gets its target on its first command: a pre-booted one when
+   * that command is a `goto` the browser's `boot` config covers, else a new
+   * one (see `BrowserContext._attachPage`).
+   */
+  _attach(gotoUrl?: string): Promise<Attachment> {
+    return (this._attaching ??= this._context._attachPage(this, gotoUrl));
+  }
+  get _isAttached(): boolean {
+    return this._attaching !== undefined;
+  }
+  /** The target the context made or took for this page. */
+  _bind(sessionId: string, targetId: string, mainFrameId?: string, url?: string) {
+    this._sessionId = sessionId;
+    this._targetId = targetId;
+    if (mainFrameId) this._mainFrameId = mainFrameId;
+    if (url) this.setUrl(url);
   }
 
   private setUrl(url: string) {
@@ -1163,7 +1190,12 @@ export class Page extends Scope {
 
   // ---- plumbing ----
 
-  _send<T = any>(method: string, params: object = {}): Promise<T> {
+  async _send<T = any>(method: string, params: object = {}): Promise<T> {
+    await this._attach();
+    return this._cdp.send(method, params, this._sessionId);
+  }
+  /** On the attached session only (setup while attaching, cleanup). */
+  _sendNow<T = any>(method: string, params: object = {}): Promise<T> {
     return this._cdp.send(method, params, this._sessionId);
   }
 
@@ -1171,6 +1203,7 @@ export class Page extends Scope {
   async _run(api: string, steps: Step[], describe?: string): Promise<RunReply> {
     if (this._closed) throw new Error(`${api}: Target page, context or browser has been closed`);
     try {
+      await this._attach();
       return await this._cdp.send('LP.run', { steps }, this._sessionId);
     } catch (e) {
       throw runError(api, e, describe);
@@ -1243,12 +1276,27 @@ export class Page extends Scope {
   }
   private enableFor(event: string) {
     if (['request', 'response', 'requestfinished', 'requestfailed'].includes(event)) void this._enableNetwork();
-    if (['console', 'pageerror'].includes(event)) this._runtime ??= this._send('Runtime.enable').then(() => undefined);
+    if (['console', 'pageerror'].includes(event)) {
+      if (!this._isAttached) this._wants.runtime = true;
+      else this._runtime ??= this._send('Runtime.enable').then(() => undefined);
+    }
     if (['popup', 'download', 'filechooser', 'websocket', 'worker', 'crash'].includes(event)) throw notSupported(`page.on('${event}')`);
   }
   /** Network events from now on (requests already in flight are not seen). */
   _enableNetwork(): Promise<void> {
+    if (!this._isAttached) {
+      this._wants.network = true;
+      return Promise.resolve();
+    }
     return (this._network ??= this._send('Network.enable').then(() => undefined));
+  }
+  /** Request interception for `route()` (every request pauses until a handler or the default decides). */
+  _enableFetch(): Promise<void> {
+    if (!this._isAttached) {
+      this._wants.fetch = true;
+      return Promise.resolve();
+    }
+    return (this._fetch ??= this._send('Fetch.enable', { patterns: [{ urlPattern: '*' }] }).then(() => undefined));
   }
 
   async waitForEvent(event: string, optionsOrPredicate?: ((arg: any) => boolean | Promise<boolean>) | (Timeout & { predicate?: (arg: any) => boolean | Promise<boolean> })): Promise<any> {
@@ -1328,6 +1376,17 @@ export class Page extends Scope {
     const target = resolveUrl(this._context._options.baseURL, url);
     const waitUntil = options.waitUntil === 'domcontentloaded' || options.waitUntil === 'commit' ? 'domcontentloaded' : 'load';
     const timeout = this.navTimeout(options.timeout);
+    if (!this._isAttached) {
+      const a = await this._attach(target);
+      if (a.pooled) {
+        // A page booted ahead at the boot URL: the app changes route in place.
+        const steps: Step[] = a.ready ? [] : [{ loaded: { timeout } }];
+        if (target !== a.url) steps.push({ route: { url: target, timeout } });
+        if (options.waitUntil === 'networkidle') steps.push({ idle: { timeout } });
+        if (steps.length) await this._run('page.goto', steps, `navigating to "${target}"`);
+        return null;
+      }
+    }
     const steps: Step[] = [{ goto: { url: target, waitUntil, timeout } }];
     if (options.waitUntil === 'networkidle') steps.push({ idle: { timeout } });
     const r = await this._run(`page.goto`, steps, `navigating to "${target}"`);
@@ -1446,7 +1505,9 @@ export class Page extends Scope {
     ]);
   }
   async addInitScript(script: string | Function | { path?: string; content?: string }, arg?: unknown): Promise<void> {
-    await this._send('Page.addScriptToEvaluateOnNewDocument', { source: initScriptSource(script, arg) });
+    const source = initScriptSource(script, arg);
+    if (!this._isAttached) this._pendingScripts.push(source);
+    else await this._send('Page.addScriptToEvaluateOnNewDocument', { source });
   }
   async addScriptTag(o: { url?: string; path?: string; content?: string; type?: string }): Promise<null> {
     const content = o.content ?? (o.path ? readFileSync(o.path, 'utf8') : undefined);
@@ -1500,10 +1561,38 @@ export class Page extends Scope {
 
   // ---- unsupported for now ----
 
-  async route(): Promise<never> {
-    throw notSupported('page.route (lightningpanda has mock steps; Fetch-based routing is planned)');
+  async route(url: UrlMatch, handler: RouteHandler, options: { times?: number } = {}): Promise<void> {
+    this._routes.unshift({ url, handler, times: options.times });
+    await this._enableFetch();
   }
-  async unroute(): Promise<void> {}
+  async unroute(url: UrlMatch, handler?: RouteHandler): Promise<void> {
+    this._routes = this._routes.filter((r) => !sameRoute(r, url, handler));
+  }
+  async unrouteAll(_options: { behavior?: 'wait' | 'ignoreErrors' | 'default' } = {}): Promise<void> {
+    this._routes = [];
+  }
+  async routeFromHAR(): Promise<never> {
+    throw notSupported('page.routeFromHAR');
+  }
+
+  /** A request paused by `Fetch.enable`: the first matching route decides (page routes, then the context's). */
+  private async onPaused(p: any): Promise<void> {
+    const request = new Request(this, p.networkId ?? '', p.request, p.resourceType ?? 'Other');
+    const route = new Route(this, p.requestId, request);
+    const base = this._context._options.baseURL;
+    try {
+      for (const entry of [...this._routes, ...this._context._routes]) {
+        if (entry.times !== undefined && entry.times <= 0) continue;
+        if (!(await urlMatches(base, request.url(), entry.url))) continue;
+        if (entry.times !== undefined) entry.times--;
+        if (await route._handle(entry.handler)) return;
+      }
+      await route._continueDefault();
+    } catch (e) {
+      if (!this._closed && !(e instanceof CdpError)) console.error('lightning-panda: route handler failed:', e);
+      await route._continueDefault().catch(() => {});
+    }
+  }
   async exposeFunction(): Promise<never> {
     throw notSupported('page.exposeFunction');
   }
@@ -1532,8 +1621,159 @@ export class Page extends Scope {
   }
   async close(_options: { runBeforeUnload?: boolean } = {}): Promise<void> {
     if (this._closed) return;
-    this._cdp.post('Target.closeTarget', { targetId: this._targetId });
+    if (this._attaching) {
+      await this._attaching.catch(() => undefined);
+      if (this._targetId) this._cdp.post('Target.closeTarget', { targetId: this._targetId });
+    }
     this.markClosed();
+  }
+}
+
+// ---- routes ----
+
+export type Attachment = { pooled: boolean; ready: boolean; url?: string };
+export type RouteHandler = (route: Route, request: Request) => unknown;
+export type RouteEntry = { url: UrlMatch; handler: RouteHandler; times?: number };
+export const sameRoute = (r: RouteEntry, url: UrlMatch, handler?: RouteHandler) =>
+  String(r.url) === String(url) && (handler === undefined || r.handler === handler);
+
+const ERROR_REASONS: Record<string, string> = {
+  aborted: 'Aborted', accessdenied: 'AccessDenied', addressunreachable: 'AddressUnreachable', blockedbyclient: 'BlockedByClient',
+  blockedbyresponse: 'BlockedByResponse', connectionaborted: 'ConnectionAborted', connectionclosed: 'ConnectionClosed',
+  connectionfailed: 'ConnectionFailed', connectionrefused: 'ConnectionRefused', connectionreset: 'ConnectionReset',
+  internetdisconnected: 'InternetDisconnected', namenotresolved: 'NameNotResolved', timedout: 'TimedOut', failed: 'Failed',
+};
+const MIME: Record<string, string> = {
+  html: 'text/html', htm: 'text/html', js: 'text/javascript', mjs: 'text/javascript', css: 'text/css', json: 'application/json',
+  png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', svg: 'image/svg+xml', txt: 'text/plain', woff2: 'font/woff2',
+};
+const headerList = (h: Record<string, string>) => Object.entries(h).map(([name, value]) => ({ name, value: String(value) }));
+
+type Overrides = { url?: string; method?: string; headers?: Record<string, string>; postData?: string | Buffer | object };
+
+/** The response `route.fetch()` returns (Playwright's APIResponse shape). */
+class FetchedResponse {
+  constructor(
+    private _url: string,
+    private _status: number,
+    private _statusText: string,
+    private _headers: Record<string, string>,
+    private _body: Buffer,
+  ) {}
+  url() { return this._url; }
+  status() { return this._status; }
+  statusText() { return this._statusText; }
+  ok() { return this._status >= 200 && this._status <= 299; }
+  headers() { return { ...this._headers }; }
+  headersArray() { return headerList(this._headers); }
+  async body() { return this._body; }
+  async text() { return this._body.toString('utf8'); }
+  async json() { return JSON.parse(this._body.toString('utf8')); }
+  async dispose() {}
+}
+
+export class Route {
+  private decided = false;
+  private overrides: Overrides = {};
+  private settle?: (handled: boolean) => void;
+
+  constructor(
+    private _page: Page,
+    private _id: string,
+    private _request: Request,
+  ) {}
+  request(): Request {
+    return this._request;
+  }
+
+  /** Runs one handler: true once it fulfilled, continued or aborted; false on `fallback()`. */
+  _handle(handler: RouteHandler): Promise<boolean> {
+    return new Promise<boolean>((resolve, reject) => {
+      this.settle = resolve;
+      Promise.resolve()
+        .then(() => handler(this, this._request))
+        .catch(reject);
+    });
+  }
+  private decide(): void {
+    if (this.decided) throw new Error('Route is already handled!');
+    this.decided = true;
+  }
+  async _continueDefault(): Promise<void> {
+    if (this.decided) return;
+    this.decided = true;
+    await this.sendContinue();
+  }
+  private async sendContinue(): Promise<void> {
+    const o = this.overrides;
+    const postData = o.postData === undefined ? undefined : Buffer.isBuffer(o.postData) ? o.postData : Buffer.from(typeof o.postData === 'string' ? o.postData : JSON.stringify(o.postData));
+    await this._page._sendNow('Fetch.continueRequest', {
+      requestId: this._id,
+      ...(o.url ? { url: o.url } : {}),
+      ...(o.method ? { method: o.method } : {}),
+      ...(o.headers ? { headers: headerList(o.headers) } : {}),
+      ...(postData ? { postData: postData.toString('base64') } : {}),
+    });
+  }
+
+  async fulfill(o: { status?: number; headers?: Record<string, string>; contentType?: string; body?: string | Buffer; json?: unknown; path?: string; response?: FetchedResponse | Response } = {}): Promise<void> {
+    this.decide();
+    let status = o.status ?? o.response?.status() ?? 200;
+    const headers: Record<string, string> = {};
+    for (const [k, v] of Object.entries(o.response?.headers() ?? {})) headers[k.toLowerCase()] = v;
+    for (const [k, v] of Object.entries(o.headers ?? {})) headers[k.toLowerCase()] = v;
+    let body: Buffer | undefined;
+    if (o.json !== undefined) {
+      body = Buffer.from(JSON.stringify(o.json));
+      headers['content-type'] ??= 'application/json';
+    } else if (o.body !== undefined) {
+      body = Buffer.isBuffer(o.body) ? o.body : Buffer.from(o.body);
+    } else if (o.path) {
+      body = readFileSync(o.path);
+      headers['content-type'] ??= MIME[o.path.split('.').pop()?.toLowerCase() ?? ''] ?? 'application/octet-stream';
+    } else if (o.response) {
+      body = await o.response.body();
+    }
+    if (o.contentType) headers['content-type'] = o.contentType;
+    if (body && !headers['content-length'] && !headers['transfer-encoding']) headers['content-length'] = String(body.length);
+    delete headers['content-encoding'];
+    await this._page._sendNow('Fetch.fulfillRequest', {
+      requestId: this._id,
+      responseCode: status,
+      responseHeaders: headerList(headers),
+      body: (body ?? Buffer.alloc(0)).toString('base64'),
+    });
+    this.settle?.(true);
+  }
+  async continue(o: Overrides = {}): Promise<void> {
+    this.decide();
+    this.overrides = { ...this.overrides, ...o };
+    await this.sendContinue();
+    this.settle?.(true);
+  }
+  async abort(errorCode = 'failed'): Promise<void> {
+    this.decide();
+    await this._page._sendNow('Fetch.failRequest', { requestId: this._id, errorReason: ERROR_REASONS[errorCode.toLowerCase()] ?? 'Failed' });
+    this.settle?.(true);
+  }
+  async fallback(o: Overrides = {}): Promise<void> {
+    if (this.decided) throw new Error('Route is already handled!');
+    this.overrides = { ...this.overrides, ...o };
+    this.settle?.(false);
+  }
+  /** The request as it would go out (with `fallback`/`continue` overrides), from Node. */
+  async fetch(o: Overrides & { maxRedirects?: number; timeout?: number } = {}): Promise<FetchedResponse> {
+    const all = { ...this.overrides, ...o };
+    const url = all.url ?? this._request.url();
+    const method = all.method ?? this._request.method();
+    const headers = { ...this._request.headers(), ...(all.headers ?? {}) };
+    delete headers['host'];
+    delete headers['content-length'];
+    const body = all.postData !== undefined ? (typeof all.postData === 'string' || Buffer.isBuffer(all.postData) ? all.postData : JSON.stringify(all.postData)) : (this._request.postData() ?? undefined);
+    const r = await fetch(url, { method, headers, body: method === 'GET' || method === 'HEAD' ? undefined : (body as any), redirect: all.maxRedirects === 0 ? 'manual' : 'follow' });
+    const h: Record<string, string> = {};
+    r.headers.forEach((v, k) => (h[k] = v));
+    return new FetchedResponse(r.url, r.status, r.statusText, h, Buffer.from(await r.arrayBuffer()));
   }
 }
 
