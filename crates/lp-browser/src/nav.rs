@@ -273,6 +273,11 @@ impl PageNav {
         st.url = url.to_string();
         drop(st);
         *self.document.borrow_mut() = document;
+        // The previous document's realms are disposed with it: drop their
+        // hooks now, so a frame whose later documents never fire an event
+        // does not keep their globals protected.
+        self.timeline_watchers.borrow_mut().clear();
+        self.navigation_hooks.borrow_mut().clear();
         self.time_origin.set(crate::clock::now());
         self.first_paint.set(None);
         self.nav_type.set(match history {
@@ -1872,9 +1877,9 @@ pub(crate) fn navigation_module<'s>(s: &Scope<'s>, nav: &Rc<PageNav>) -> JsResul
         let target = Url::parse(&a.get(0).to_string()?).map_err(|_| JsError::dom("SyntaxError", "Invalid URL"))?;
         let replace = a.get(1).to_bool();
         let state = a.opt(2).filter(|v| !v.is_undefined()).map(|v| v.to_string()).transpose()?;
-        nav.navigation_api_call.set(true);
+        let outer = nav.navigation_api_call.replace(true);
         let same = navigate_to(&nav, target, replace);
-        nav.navigation_api_call.set(false);
+        nav.navigation_api_call.set(outer);
         if same {
             nav.set_navigation_state(state);
         }
@@ -1890,9 +1895,9 @@ pub(crate) fn navigation_module<'s>(s: &Scope<'s>, nav: &Rc<PageNav>) -> JsResul
             _ => "push",
         };
         let state = a.opt(2).filter(|v| !v.is_undefined()).map(|v| v.to_string()).transpose()?;
-        nav.navigation_api_call.set(true);
+        let outer = nav.navigation_api_call.replace(true);
         nav.commit_intercepted(&url, navigation_type);
-        nav.navigation_api_call.set(false);
+        nav.navigation_api_call.set(outer);
         if navigation_type != "reload" || state.is_some() {
             nav.set_navigation_state(state);
         }

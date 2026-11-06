@@ -402,7 +402,7 @@
         throw notificationError(`Failed to read the 'dir' property from 'NotificationOptions': The provided value '${dir}' is not a valid enum value of type NotificationDirection.`);
       }
       const actions = options.actions === undefined ? [] : Array.from(options.actions);
-      const vibrate = options.vibrate === undefined ? [] : (typeof options.vibrate === 'object' ? Array.from(options.vibrate, Number) : [Number(options.vibrate)]);
+      const vibrate = options.vibrate === undefined ? [] : (options.vibrate !== null && typeof options.vibrate === 'object' ? Array.from(options.vibrate, Number) : [Number(options.vibrate)]);
       const silent = options.silent === undefined || options.silent === null ? null : !!options.silent;
       const renotify = !!options.renotify;
       const tagName = stringMember(options, 'tag');
