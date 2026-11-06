@@ -355,6 +355,24 @@ fn shadow_retargeting_path() {
 }
 
 #[test]
+fn non_node_targets_take_an_explicit_event_parent() {
+    let (dom, _d) = doc("");
+    let mut dm = dom.borrow_mut();
+    let (request, tx, db) = (dm.new_target_key(), dm.new_target_key(), dm.new_target_key());
+    let ev = EventState::new("error", true, true, false);
+    assert_eq!(dm.event_path(request, &ev), vec![(request, request)]);
+    dm.set_target_parent(request, Some(tx));
+    dm.set_target_parent(tx, Some(db));
+    let path: Vec<TargetKey> = dm.event_path(request, &ev).into_iter().map(|(k, _)| k).collect();
+    assert_eq!(path, vec![request, tx, db]);
+    // A forgotten target leaves no link behind; unlinking removes the parent.
+    dm.forget_target(request);
+    assert_eq!(dm.event_path(request, &ev).len(), 1);
+    dm.set_target_parent(tx, None);
+    assert_eq!(dm.event_path(tx, &ev).len(), 1);
+}
+
+#[test]
 fn clone_deep_with_template() {
     let (dom, d) = doc("<div id=x a=1><template><p>t</p></template><input id=i></div>");
     let mut dm = dom.borrow_mut();
