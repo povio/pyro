@@ -81,11 +81,12 @@ test.concurrent('closes a position', async () => {
 
 ## Playwright tests, unchanged
 
-Existing Playwright tests run on Lightningpanda by swapping one import and
-keeping Playwright's runner, config, reporters and `expect`:
+Playwright tests run on Lightningpanda by replacing the imports of
+`playwright` and `@playwright/test` with `@povio/lightning-panda/playwright`.
+Nothing else in a test changes, and Playwright itself is not needed:
 
 ```ts
-import { test, expect } from '@povio/lightning-panda/test'; // was '@playwright/test'
+import { test, expect, type Page } from '@povio/lightning-panda/playwright'; // was '@playwright/test'
 
 test('closes a position', async ({ page }) => {
   await page.goto(`/positions/${id}`);
@@ -98,21 +99,61 @@ test('closes a position', async ({ page }) => {
 });
 ```
 
-`browser`, `context` and `page` become Lightningpanda's (one browser per
-worker: `$LIGHTNINGPANDA_WS`, else launched with `$LIGHTNINGPANDA_BIN` or the
-bundled one; `use: { lightningpanda: { wsEndpoint, bin, args } }` in the
-config). Each awaited call is one `LP.run` command, so locating, the
-actionability checks, auto-waiting and settling run natively in the browser.
-`expect` stays Playwright's: its locator matchers call the locators'
-`_expect`, which maps them onto native checks (or retries a value read in the
-page), so `expect` imported from `@playwright/test` in helper files works
-too. Config options honoured: `baseURL`, `viewport`, `storageState`,
-`extraHTTPHeaders`, `userAgent`, `colorScheme`, `actionTimeout`,
-`navigationTimeout`, `testIdAttribute`. The `request` fixture is Playwright's.
-`page.route` and `context.route` (`fulfill`, `continue`, `abort`,
-`fallback`, `fetch`, `times`; globs, RegExps and predicates) run on the
-browser's request interception. `@povio/lightning-panda/playwright` has the
-same classes for scripts (`chromium.launch()`, `chromium.connectOverCDP(ws)`).
+```sh
+LP_CONFIG=playwright.config.ts bun test ./e2e/positions-close.e2e.ts
+```
+
+The module is the whole of Playwright's API, implemented here:
+
+- **The library:** `chromium` (`launch`, `connectOverCDP`), Browser,
+  BrowserContext, Page, Frame, Locator, FrameLocator, handles, Request,
+  Response, Route, Download, Dialog, Worker, FileChooser, WebSocket,
+  `request` (APIRequestContext), `devices`, `errors`, `selectors`.
+- **The runner, on `bun test`:** `test`, `test.describe` (`only`, `skip`,
+  `serial`, `parallel`, `configure`), `beforeEach`/`afterEach`/
+  `beforeAll`/`afterAll` with fixtures, `test.extend` (test and worker
+  fixtures, options, `auto`, overrides that use the fixture they replace),
+  `test.use`, `test.step`, `test.info()`, `skip`/`fixme`/`fail`/`slow`,
+  retries and timeouts. Built-in fixtures: `browser`, `context`, `page`,
+  `request`, `playwright`, `browserName` and every context option.
+- **`expect`:** every web-first matcher on locators, pages (`toHaveURL`,
+  `toHaveTitle`, `toHaveScreenshot`) and API responses (`toBeOK`), plus
+  `.not`, `.soft`, `.poll`, `.configure`, `.extend` and `toPass`. Other
+  matchers and the asymmetric ones (`expect.any`, `objectContaining`, ...)
+  are Bun's, which follow Jest as Playwright's do.
+- **The config file:** `defineConfig` with `use` (the config's, then the
+  project's), `projects` (`$LP_PROJECT`, else the first), `timeout`,
+  `retries`, `expect.timeout`, `outputDir`, `webServer` (started, waited for
+  and stopped; `reuseExistingServer`), `globalSetup` and `globalTeardown`. The
+  file is `$LP_CONFIG`, else `lightningpanda.config.*` or `playwright.config.*`
+  in the working directory.
+
+The browser is `$LIGHTNINGPANDA_WS`, else one launched per run
+(`$LIGHTNINGPANDA_BIN` or the bundled one), configurable with `use: {
+lightningpanda: { wsEndpoint, bin, args, boot } }`. Each awaited call is one
+`LP.run` command, so locating, the actionability checks, auto-waiting and
+settling run in the browser.
+
+Differences from Playwright's runner:
+
+- **Running:** `bun test` picks up `*.test.*`, `*_test.*`, `*.spec.*` and
+  `*_spec.*` files. Pass other files (`*.e2e.ts`) by path.
+- **Order:** a run's files share one process and one browser, and a file's
+  tests run one after another, a `mode: 'parallel'` describe's too, since its
+  tests may share module state set in hooks. `LP_CONCURRENT=1` runs parallel
+  describes concurrently.
+- **Skipping:** a test that calls `test.skip()` while running is reported as
+  passed with a `skipped` note, because Bun cannot mark a running test as
+  skipped.
+- **Not there:** Playwright's own reporters, its trace viewer, video, and
+  sharding. Bun reports.
+
+The TOS close flow (`test/playwright/tos-flow.ts`, Playwright code as TOS
+writes it) takes 14.7 ms per test this way (median of 40, fresh page),
+against 41–44 ms for stock Playwright driving the same browser over CDP.
+Actions settle before they return (the next call starts once the page is
+quiet), so a test that asserts a transient state between an action and its
+result (a spinner) can miss it.
 
 **Pages booted ahead.** A page gets its target on its first command. With
 
@@ -129,14 +170,6 @@ settled), returning `null`. The app's shell was booted before the test
 seeded anything, so use it for routes that fetch their data when they
 mount. Contexts with cookies, `extraHTTPHeaders`, `userAgent` or media
 emulation, and any other first call, get a fresh page.
-
-The TOS close flow (`test/playwright/tos-flow.ts`, Playwright code as TOS
-writes it) takes 23 ms per test on booted pages, 29-33 ms on fresh pages and
-55-67 ms for stock Playwright driving the same browser over CDP (Playwright
-runner, one worker, `REPEAT=40`, medians of two rounds on a loaded machine).
-Actions settle before they return (the next call starts once the page is
-quiet), so a test that asserts a transient state between an action and its
-result (a spinner) can miss it.
 
 Also covered:
 

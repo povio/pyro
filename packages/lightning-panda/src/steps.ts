@@ -613,7 +613,7 @@ export const matchScreenshot = (name: string, opts: ScreenshotOptions = {}): Scr
 function callerDir(): string {
   const here = import.meta.url.replace(/^file:\/\//, '').replace(/[^/]*$/, '');
   for (const line of (new Error().stack ?? '').split('\n').slice(1)) {
-    const m = /(?:\(|at )(?:file:\/\/)?(\/[^():]+):\d+:\d+\)?\s*$/.exec(line);
+    const m = /(?:\(|at )(?:file:\/\/)?(\/[^():]+):\d+(?::\d+)?\)?\s*$/.exec(line);
     if (m && !m[1].startsWith(here)) return m[1].replace(/\/[^/]*$/, '');
   }
   return process.cwd();

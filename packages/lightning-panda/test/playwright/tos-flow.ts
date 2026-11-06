@@ -1,7 +1,7 @@
 // TOS's "closes an open Position from the Position overview", written as TOS
 // writes it (bench/scripts/cdp-perf.mjs `pw.tos.close`): stock Playwright
 // code, only the `test` import differs.
-import type { Browser, APIRequestContext } from 'playwright/test';
+import type { Browser, APIRequestContext } from '../../src/playwright/index';
 import { expect } from './fixtures';
 
 const AUTH = { authorization: 'Bearer e2e-token' };

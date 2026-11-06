@@ -1,10 +1,11 @@
-// Playwright's runner on lightningpanda: `bunx playwright test -c test/playwright`.
-// The specs import `test` from `fixtures.ts`, which is `@povio/lightning-panda/test`
-// unless PW_ENGINE=chromium-cdp, which runs the same specs with stock
-// Playwright connected over CDP to the same lightningpanda (for comparison).
+// The specs' config, for both runs:
+// - `LP_CONFIG=test/playwright/playwright.config.ts bun test ./test/playwright/*.pw.ts`:
+//   `@povio/lightning-panda/playwright` (our runner, expect and client);
+// - `PW_ENGINE=chromium-cdp bunx playwright test -c test/playwright`: stock
+//   Playwright driving the same lightningpanda over CDP (the parity check).
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { defineConfig } from 'playwright/test';
+import { defineConfig } from '../../src/playwright/config';
 
 const root = join(import.meta.dirname, '../../../..');
 process.env.LIGHTNINGPANDA_BIN ??= [join(root, 'target/release/lightningpanda'), join(root, 'target/debug/lightningpanda')].find(existsSync);

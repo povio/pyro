@@ -27,6 +27,8 @@ import {
 import type { BrowserContext } from './browser.js';
 import { callDeclaration, Download, ElementHandle, hasHandles, JSHandle, serializeArg, valueOf, type Sender } from './handles.js';
 
+const SENT = new WeakMap<Cdp, Map<string, string>>();
+
 export class TimeoutError extends Error {
   override name = 'TimeoutError';
 }
@@ -790,7 +792,7 @@ function nativeCheck(expression: string, o: ExpectOptions): Record<string, unkno
   }
 }
 
-async function expectLocator(loc: Locator, expression: string, o: ExpectOptions): Promise<ExpectResult> {
+export async function expectLocator(loc: Locator, expression: string, o: ExpectOptions): Promise<ExpectResult> {
   const isNot = !!o.isNot;
   const timeout = o.timeout ?? 5_000;
   const native = nativeCheck(expression, o);
@@ -1518,6 +1520,18 @@ export class Page extends Scope {
     } catch (e) {
       throw runError(api, e, describe);
     }
+  }
+
+  /** One LP.run command with the engine's error as it is (its `data` included). */
+  async _runRaw(steps: Step[]): Promise<RunReply> {
+    await this._attach();
+    return this._cdp.send('LP.run', { steps }, this._sessionId);
+  }
+  /** Screenshot baselines this connection already holds (`toHaveScreenshot`). */
+  get _baselines(): Map<string, string> {
+    let m = SENT.get(this._cdp);
+    if (!m) SENT.set(this._cdp, (m = new Map()));
+    return m;
   }
 
   /** An eval step that calls `fn` (with a locator's element(s) and `arg`); its value. */
