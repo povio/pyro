@@ -876,6 +876,61 @@ fn a_pass_without_damage_runs_no_layout() {
     assert!(blitz_passes().1 > after.1, "damage runs layout");
 }
 
+/// A node brought back to what Blitz holds (text set and reset, attributes
+/// removed and set again in another order) changes nothing in the document,
+/// by delta or by whole tree: the mirror compares against Blitz's own text
+/// and attributes.
+#[test]
+fn a_node_set_back_to_what_blitz_holds_changes_nothing() {
+    let page = Page::new(PAGE);
+    let (mut r, mut w) = (Renderer::new(), Renderer::new());
+    check(&mut w, &page, "the first render");
+    r.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
+    let text = page.dom.borrow().first_child(page.find("#panel p")).unwrap().unwrap();
+    let el = page.find("#list");
+    let delta = |r: &mut Renderer, step: &dyn Fn(&mut Dom)| {
+        let since = page.dom.borrow().version();
+        step(&mut page.dom.borrow_mut());
+        let ops = delta_ops(page.dom.borrow().render_delta(page.doc, since, &Page::opts()).expect("a delta"));
+        assert!(!ops.is_empty(), "the journal records the change");
+        r.sync_delta(1, &ops, (640, 480, 1.0, false, false), false).unwrap();
+    };
+    let attr_names = |page: &Page| -> Vec<String> {
+        let key = lp_dom::snapshot::render_key(el);
+        let tree = page.tree();
+        let n = tree.nodes.iter().find(|n| n.key == key).unwrap();
+        let TreeKind::Element { attrs, .. } = &n.kind else { unreachable!() };
+        attrs.iter().map(|(a, _)| a.local.to_string()).collect()
+    };
+
+    // Synced with `class` before `title`.
+    delta(&mut r, &|d| {
+        d.set_attribute(el, "class", "on").unwrap();
+        d.set_attribute(el, "title", "t").unwrap();
+    });
+    assert!(check(&mut w, &page, "class and title set").mutations > 0);
+    assert_eq!(attr_names(&page), ["id", "class", "title"]);
+
+    let steps: [(&str, &dyn Fn(&mut Dom)); 2] = [
+        ("text set and reset", &|d| {
+            d.set_text_content(text, "changed").unwrap();
+            d.set_text_content(text, "one").unwrap();
+        }),
+        ("attributes reordered", &|d| {
+            d.remove_attribute(el, "class").unwrap();
+            d.set_attribute(el, "class", "on").unwrap();
+        }),
+    ];
+    for (what, step) in steps {
+        let before = blitz_passes();
+        delta(&mut r, step);
+        assert_eq!(blitz_passes().1, before.1, "{what}: the delta lays nothing out");
+        assert_eq!(check(&mut w, &page, what).mutations, 0, "{what}: the whole tree mutates nothing");
+        assert_eq!(r.mirrored_html(1), w.mirrored_html(1), "{what}");
+    }
+    assert_eq!(attr_names(&page), ["id", "title", "class"]);
+}
+
 // Incremental rounding: a persistent document must round as a fresh build does, whatever a
 // relayout moved. Every box paints, and sizes are fractional so that rounding shows.
 
