@@ -75,11 +75,7 @@ impl<A: DomAccess> Sink<A> {
 
     fn release_pins(&self) {
         let pins = self.pins.take();
-        self.dom.with(|d| {
-            for id in pins {
-                d.release(id);
-            }
-        });
+        self.dom.with(|d| d.release_parser_pins(pins));
     }
 }
 
@@ -129,7 +125,7 @@ fn insert_node(dom: &mut Dom, parent: u32, before: u32, child: NodeOrText<u32>) 
             let prev = if before == NIL { dom.n(parent).last_child } else { dom.n(before).prev };
             dom.link_raw(n, parent, before);
             dom.queue_child_list(parent, &[n], &[], prev, before);
-            dom.resources_after_insert(n);
+            dom.resources_after_parser_insert(n);
         }
     }
 }
@@ -155,13 +151,14 @@ impl<A: DomAccess> TreeSink for Sink<A> {
             let owner = self.doc_owner(d);
             d.base_seen |= name.local == local_name!("base");
             let mut el = ElementData::new(name);
-            el.attrs =
-                attrs.into_iter().map(|a| crate::node::Attr { name: a.name, value: (&*a.value).into() }).collect();
+            el.set_attrs(
+                attrs.into_iter().map(|a| crate::node::Attr { name: a.name, value: (&*a.value).into() }).collect(),
+            );
             el.flags = self.elem_flags;
             let i = d.alloc_raw(NodeKind::Element(Box::new(el)), owner);
             if flags.template {
                 let inert = d.inert_doc_for_pub(owner);
-                let frag = d.alloc_raw(NodeKind::Fragment(FragmentData { host: i, shadow: None, flags: 0 }), inert);
+                let frag = d.alloc_raw(NodeKind::Fragment(FragmentData::new(i, None, 0)), inert);
                 d.n_mut(i).element_mut().unwrap().template_contents = frag;
             }
             d.note_inline_handlers(i);
@@ -268,9 +265,10 @@ impl<A: DomAccess> TreeSink for Sink<A> {
                 let Some(el) = d.n_mut(*target).element_mut() else { return };
                 if !el.attrs.iter().any(|x| x.name == a.name) {
                     d.note_style_attr(*target, &a.name, None);
-                    let Some(el) = d.n_mut(*target).element_mut() else { return };
                     let change = crate::dom::Change::attr(*target, &a.name);
-                    el.attrs.push(crate::node::Attr { name: a.name, value: (&*a.value).into() });
+                    let name = a.name.clone();
+                    let attr = crate::node::Attr { name: a.name, value: (&*a.value).into() };
+                    d.edit_attrs(*target, &name, |el| el.push_attr(attr));
                     d.bump_tree();
                     d.note(change);
                 }
@@ -322,7 +320,7 @@ impl<A: DomAccess> TreeSink for Sink<A> {
             d.n(*handle).element().is_some_and(|e| {
                 e.name.ns == ns!(mathml)
                     && e.name.local == local_name!("annotation-xml")
-                    && e.attr("encoding").is_some_and(|v| {
+                    && e.attr_local(&local_name!("encoding")).is_some_and(|v| {
                         v.eq_ignore_ascii_case("text/html") || v.eq_ignore_ascii_case("application/xhtml+xml")
                     })
             })
@@ -717,6 +715,7 @@ fn parse_fragment_with(
     let tmp_id = dom.create_document(crate::node::DocumentKind::Html, "about:blank");
     dom.set_allow_declarative_shadow_roots(tmp_id, allow_declarative_shadow_roots)?;
     let tmp = tmp_id.idx;
+    dom.make_fragment_parse_host(tmp);
     let flags = element_flags::FRAGMENT_PARSED | element_flags::SCRIPT_ALREADY_STARTED;
 
     let context_copy;

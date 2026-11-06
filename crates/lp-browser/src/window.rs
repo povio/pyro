@@ -91,6 +91,12 @@ impl WindowData {
         &self.nav
     }
 
+    /// The frame this window belongs to (`None` for a window made outside
+    /// a page's frame tree).
+    pub(crate) fn frame_key(&self) -> Option<crate::frames::FrameKey> {
+        self.frame
+    }
+
     pub fn new(sched: Scheduler<Browser>, nav: Rc<PageNav>, page: &Rc<lp_webapi::PageDom>) -> WindowData {
         let key = page.window_target().expect("document window target");
         // `Event.timeStamp` reads the clock `performance.now()` reads.
@@ -304,7 +310,11 @@ impl JsClass for Window {
             }
             _ => Ok(None),
         });
-        def.getter("window", |s, _w| Ok(s.global().value()));
+        // [LegacyUnforgeable]: the global's own constant where the
+        // JavaScriptCore supports it (`lp_webapi::install`).
+        if !lp_webapi::window::has_window_constants() {
+            def.getter("window", |s, _w| Ok(s.global().value()));
+        }
         def.accessor(
             "self",
             |s, _w| Ok(s.global().value()),

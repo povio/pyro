@@ -176,12 +176,37 @@ pub fn event_frame<T: Serialize + ?Sized>(method: &str, params: &T, session_id: 
     to_frame(&Out { method, params, session_id })
 }
 
+/// Scratch buffers above this size are not kept for the next message.
+const SCRATCH_KEEP: usize = 256 * 1024;
+
+thread_local! {
+    /// Serialization scratch: a message is written here, then copied once
+    /// into a frame of exactly its size, instead of growing the frame from a
+    /// guess (several reallocations and copies for a typical reply).
+    static SCRATCH: std::cell::RefCell<Vec<u8>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
 fn to_frame<T: Serialize>(value: &T) -> OutFrame {
     let _t = crate::perf::span("json.serialize");
-    let mut frame = OutFrame::with_capacity(128);
     // Serializing plain structs/maps into a Vec cannot fail.
-    serde_json::to_writer(frame.payload(), value).expect("CDP message serializes");
-    frame
+    let direct = |value: &T| {
+        let mut frame = OutFrame::with_capacity(128);
+        serde_json::to_writer(frame.payload(), value).expect("CDP message serializes");
+        frame
+    };
+    SCRATCH.with(|scratch| {
+        let Ok(mut scratch) = scratch.try_borrow_mut() else { return direct(value) };
+        let mut buf = OutFrame::with_buffer(std::mem::take(&mut *scratch));
+        serde_json::to_writer(buf.payload(), value).expect("CDP message serializes");
+        if buf.payload_len() > SCRATCH_KEEP {
+            // A large message keeps the buffer it was written into.
+            return buf;
+        }
+        let mut frame = OutFrame::with_capacity(buf.payload_len());
+        frame.payload().extend_from_slice(buf.payload_bytes());
+        *scratch = buf.into_buffer();
+        frame
+    })
 }
 
 /// Empty `{}` result for commands that return nothing.

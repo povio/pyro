@@ -377,11 +377,8 @@ impl Dom {
         // An atomic inline box (replaced element, inline-block and the like)
         // keeps the collapsible spaces on both of its sides, as Chrome's
         // rendered text does.
-        let atomic_inline = display == TextDisplay::Replaced
-            || (computed.is_some_and(|c| c.author_display)
-                && state.style.stylo_value(self, id, "display").is_some_and(|d| {
-                    matches!(d.as_str(), "inline-block" | "inline-flex" | "inline-grid" | "inline-table")
-                }));
+        let atomic_inline =
+            display == TextDisplay::Replaced || computed.is_some_and(|c| c.author_display && c.atomic_inline);
         if atomic_inline {
             // The space before the box renders; its contents start afresh.
             // A replaced element writes nothing itself, so the line breaks

@@ -1,8 +1,10 @@
-//! `JsString::new` converts large strings (e.g. classic script sources) in one
-//! Rust allocation of exactly the final size, never regrown: a NUL-terminated
-//! copy for ASCII (JSC keeps it as 8-bit characters), UTF-16 otherwise. This
-//! binary counts the Rust heap operations of the conversion on the test thread;
-//! JSC's own copy does not go through the Rust allocator.
+//! `JsString::new` converts large strings (e.g. classic script sources) in at
+//! most one Rust allocation of exactly the final size, never regrown. With
+//! patched JSC (`webkit/patches/0016`) an ASCII string needs none (JSC copies
+//! it as Latin-1), other text that fits Latin-1 one byte per scalar, the rest
+//! UTF-16; the system framework takes a NUL-terminated copy for ASCII instead.
+//! This binary counts the Rust heap operations of the conversion on the test
+//! thread; JSC's own copy does not go through the Rust allocator.
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
@@ -58,14 +60,25 @@ fn heap_ops(s: &str) -> (usize, usize, usize) {
 
 #[test]
 fn large_strings_convert_without_regrowing_the_buffer() {
+    let direct = lp_js::sys::spi::direct_strings().is_some();
     let ascii = "x".repeat(3 << 20);
     let mixed = "žabe 🐸 €\0".repeat((3 << 20) / 15);
     // 3-byte UTF-8 scalars: one UTF-16 unit for every three bytes.
     let cjk = "漢字テキスト".repeat((3 << 20) / 18);
-    for s in [&ascii, &mixed, &cjk] {
-        let exact = if s.is_ascii() { s.len() + 1 } else { 2 * s.encode_utf16().count() };
-        assert_eq!(heap_ops(s), (1, 0, exact), "one buffer of exactly the final size, never regrown");
+    let latin1 = "café über ".repeat((3 << 20) / 12);
+    for s in [&ascii, &mixed, &cjk, &latin1] {
+        let expected = match (direct, s.is_ascii(), s.chars().all(|c| u32::from(c) < 0x100)) {
+            (true, true, _) => (0, 0, 0),
+            (true, false, true) => (1, 0, s.chars().count()),
+            (false, true, _) => (1, 0, s.len() + 1),
+            _ => (1, 0, 2 * s.encode_utf16().count()),
+        };
+        assert_eq!(heap_ops(s), expected, "at most one buffer of exactly the final size, never regrown");
     }
-    // Short NUL-free strings use the stack buffer path.
+    // Short strings use a stack buffer (or none).
     assert_eq!(heap_ops("short"), (0, 0, 0));
+    assert_eq!(heap_ops("žabe 🐸"), (0, 0, 0));
+    if direct {
+        assert_eq!(heap_ops("café"), (0, 0, 0));
+    }
 }

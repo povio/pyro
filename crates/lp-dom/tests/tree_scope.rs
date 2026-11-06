@@ -1,0 +1,341 @@
+//! State kept at mutation time instead of recomputed per query: id and
+//! class atoms parsed when attributes are written, connectedness bits,
+//! `:target`'s id and the `<base>` URL reset only when it can change.
+
+use std::cell::RefCell;
+use std::rc::Rc;
+
+use lp_dom::parse::{parse_document, DomRef};
+use lp_dom::select::parse_query;
+use lp_dom::*;
+
+fn doc(url: &str, html: &str) -> (DomRef, NodeId) {
+    let dom: DomRef = Rc::new(RefCell::new(Dom::new()));
+    let d = parse_document(&dom, url, html);
+    dom.borrow_mut().set_document_active(d, true).unwrap();
+    (dom, d)
+}
+
+#[track_caller]
+fn verify(dom: &Dom) {
+    dom.verify_tree_state().unwrap();
+}
+
+fn matches(dom: &Dom, el: NodeId, css: &str) -> bool {
+    dom.element_matches(el, &parse_query(css).unwrap()).unwrap()
+}
+
+fn all(dom: &Dom, root: NodeId, css: &str) -> Vec<NodeId> {
+    dom.query_all(root, &parse_query(css).unwrap()).unwrap()
+}
+
+#[test]
+fn class_and_id_atoms_follow_every_attribute_write() {
+    let (dom, d) = doc("http://test/", "<!doctype html><body><p id=p class='a  b a'></p><i class=b></i></body>");
+    let mut dom = dom.borrow_mut();
+    let p = dom.get_element_by_id(d, "p").unwrap().unwrap();
+    let classes = |dom: &Dom| dom.element(p).unwrap().classes().iter().map(|a| a.to_string()).collect::<Vec<_>>();
+    assert_eq!(classes(&dom), ["a", "b", "a"]);
+    assert_eq!(all(&dom, d, ".b").len(), 2);
+    dom.set_attribute(p, "class", "c").unwrap();
+    assert_eq!(classes(&dom), ["c"]);
+    assert_eq!(all(&dom, d, ".b").len(), 1);
+    assert_eq!(all(&dom, d, ".c"), [p]);
+    assert!(matches(&dom, p, "body > .c:not(.b)"));
+    // A `class` attribute in a namespace is not the element's class.
+    dom.set_attribute_ns(p, Some("urn:x"), "class", "z").unwrap();
+    assert!(!matches(&dom, p, ".z"));
+    dom.remove_attribute(p, "class").unwrap();
+    assert!(classes(&dom).is_empty());
+    assert!(!matches(&dom, p, ".c"));
+    dom.set_attribute(p, "id", "q").unwrap();
+    assert_eq!(dom.element(p).unwrap().id_atom().map(|a| a.to_string()).as_deref(), Some("q"));
+    assert!(matches(&dom, p, "#q") && !matches(&dom, p, "#p"));
+    // Clones copy the parsed atoms (`setAttribute` would find the namespaced `class` first).
+    dom.remove_attribute_ns(p, Some("urn:x"), "class").unwrap();
+    dom.set_attribute(p, "class", "k l").unwrap();
+    let c = dom.clone_node(p, false, None).unwrap();
+    assert!(matches(&dom, c, ".l#q"));
+    verify(&dom);
+}
+
+#[test]
+fn quirks_mode_compares_class_and_id_atoms_without_case() {
+    // No doctype: quirks mode, where class and id selectors ignore ASCII case.
+    let (dom, d) = doc("http://test/", "<body><p id=Main class=Big></p></body>");
+    let dom = dom.borrow();
+    let p = dom.get_element_by_id(d, "Main").unwrap().unwrap();
+    assert!(matches(&dom, p, ".big") && matches(&dom, p, "#main") && matches(&dom, p, "p.BIG"));
+    assert_eq!(all(&dom, d, ".bIG"), [p]);
+}
+
+#[test]
+fn connectedness_follows_insertion_removal_and_shadow_hosts() {
+    let (dom, d) = doc("http://test/", "<!doctype html><body><div id=host></div></body>");
+    let mut dom = dom.borrow_mut();
+    let body = dom.body(d).unwrap().unwrap();
+    let host = dom.get_element_by_id(d, "host").unwrap().unwrap();
+    let sr = dom.attach_shadow(host, ShadowRootMode::Open).unwrap();
+    let inner = dom.create_element(d, "span").unwrap();
+    dom.set_attribute(inner, "id", "inner").unwrap();
+    dom.append_child(sr, inner).unwrap();
+    assert!(dom.is_connected(inner).unwrap() && dom.is_in_active_document(inner));
+    assert_eq!(dom.get_element_by_id(sr, "inner").unwrap(), Some(inner));
+    assert_eq!(dom.get_element_by_id(d, "inner").unwrap(), None, "a shadow tree is its own scope");
+    dom.remove_node(host).unwrap();
+    assert!(!dom.is_connected(host).unwrap() && !dom.is_connected(inner).unwrap());
+    assert!(!dom.is_in_active_document(inner));
+    assert_eq!(dom.get_element_by_id(d, "host").unwrap(), None);
+    assert_eq!(dom.get_element_by_id(sr, "inner").unwrap(), Some(inner), "a detached shadow root keeps its ids");
+    verify(&dom);
+    // A subtree built detached connects as a whole.
+    let wrap = dom.create_element(d, "section").unwrap();
+    dom.append_child(wrap, host).unwrap();
+    assert!(!dom.is_connected(inner).unwrap());
+    dom.append_child(body, wrap).unwrap();
+    assert!(dom.is_connected(inner).unwrap());
+    assert_eq!(dom.get_element_by_id(d, "host").unwrap(), Some(host));
+    verify(&dom);
+    // Duplicates: the first in tree order wins, and the next one after it leaves.
+    let early = dom.create_element(d, "b").unwrap();
+    dom.set_attribute(early, "id", "host").unwrap();
+    let first = dom.first_child(body).unwrap();
+    dom.insert_before(body, early, first).unwrap();
+    assert_eq!(dom.get_element_by_id(d, "host").unwrap(), Some(early));
+    verify(&dom);
+    dom.remove_node(early).unwrap();
+    assert_eq!(dom.get_element_by_id(d, "host").unwrap(), Some(host));
+    // Another document's tree: its own scope.
+    let other = dom.create_document(DocumentKind::Html, "about:blank");
+    let html = dom.create_element(other, "html").unwrap();
+    dom.append_child(other, html).unwrap();
+    dom.append_child(html, wrap).unwrap();
+    assert!(dom.is_connected(inner).unwrap() && !dom.is_in_active_document(inner));
+    assert_eq!(dom.get_element_by_id(other, "host").unwrap(), Some(host));
+    assert_eq!(dom.get_element_by_id(d, "host").unwrap(), None);
+    verify(&dom);
+}
+
+#[test]
+fn target_is_the_decoded_url_fragment() {
+    let (dom, d) = doc("http://test/#t%C3%A9", "<!doctype html><body><p id=té></p><p id=other></p></body>");
+    let mut dom = dom.borrow_mut();
+    let p = dom.get_element_by_id(d, "té").unwrap().unwrap();
+    let other = dom.get_element_by_id(d, "other").unwrap().unwrap();
+    assert!(matches(&dom, p, ":target") && !matches(&dom, other, ":target"));
+    dom.set_document_url(d, "http://test/#other").unwrap();
+    assert!(!matches(&dom, p, ":target") && matches(&dom, other, ":target"));
+    // Detached: not the target.
+    dom.remove_node(other).unwrap();
+    assert!(!matches(&dom, other, ":target"));
+    dom.set_document_url(d, "http://test/").unwrap();
+    assert!(!matches(&dom, p, ":target"));
+}
+
+#[test]
+fn the_base_url_changes_with_base_elements_and_their_href() {
+    let (dom, d) = doc("http://test/dir/page", "<!doctype html><head><base href=/a/></head><body></body>");
+    let mut dom = dom.borrow_mut();
+    let base_url = |dom: &Dom| dom.document_base_url(d).unwrap().to_owned();
+    assert_eq!(base_url(&dom), "http://test/a/");
+    let base = dom.query_first(d, &parse_query("base").unwrap()).unwrap().unwrap();
+    // Unrelated mutations keep it.
+    let body = dom.body(d).unwrap().unwrap();
+    dom.set_attribute(body, "data-x", "1").unwrap();
+    assert_eq!(base_url(&dom), "http://test/a/");
+    dom.set_attribute(base, "href", "/b/").unwrap();
+    assert_eq!(base_url(&dom), "http://test/b/");
+    // Another <base> earlier in tree order wins; one in a detached or shadow tree does not count.
+    let early = dom.create_element(d, "base").unwrap();
+    dom.set_attribute(early, "href", "/c/").unwrap();
+    let wrap = dom.create_element(d, "div").unwrap();
+    dom.append_child(wrap, early).unwrap();
+    assert_eq!(base_url(&dom), "http://test/b/");
+    let host = dom.create_element(d, "div").unwrap();
+    dom.append_child(body, host).unwrap();
+    let sr = dom.attach_shadow(host, ShadowRootMode::Open).unwrap();
+    let shadowed = dom.create_element(d, "base").unwrap();
+    dom.set_attribute(shadowed, "href", "/s/").unwrap();
+    dom.remove_node(base).unwrap();
+    assert_eq!(base_url(&dom), "http://test/dir/page");
+    dom.append_child(sr, shadowed).unwrap();
+    assert_eq!(base_url(&dom), "http://test/dir/page");
+    let head = dom.head(d).unwrap().unwrap();
+    dom.append_child(head, wrap).unwrap();
+    assert_eq!(base_url(&dom), "http://test/c/");
+    dom.append_child(head, base).unwrap();
+    assert_eq!(base_url(&dom), "http://test/c/");
+    // Moving the first one after the other.
+    dom.move_before(head, wrap, None).unwrap();
+    assert_eq!(base_url(&dom), "http://test/b/");
+    dom.set_document_url(d, "http://elsewhere/x").unwrap();
+    assert_eq!(base_url(&dom), "http://elsewhere/b/");
+    verify(&dom);
+}
+
+#[test]
+fn many_duplicate_ids_enter_in_one_pass_and_keep_the_first() {
+    let (dom, d) = doc("http://test/", "<!doctype html><body><p id=late></p></body>");
+    let mut dom = dom.borrow_mut();
+    let body = dom.body(d).unwrap().unwrap();
+    let p = dom.get_element_by_id(d, "late").unwrap().unwrap();
+    // A detached list of rows sharing one id, connected by one insert.
+    let ul = dom.create_element(d, "ul").unwrap();
+    let mut rows = Vec::new();
+    for _ in 0..2000 {
+        let li = dom.create_element(d, "li").unwrap();
+        dom.set_attribute(li, "id", "row").unwrap();
+        dom.append_child(ul, li).unwrap();
+        rows.push(li);
+    }
+    dom.set_attribute(rows[1500], "id", "late").unwrap();
+    // Before an existing `late`: the subtree's one becomes the first.
+    dom.insert_before(body, ul, Some(p)).unwrap();
+    assert_eq!(dom.get_element_by_id(d, "row").unwrap(), Some(rows[0]));
+    assert_eq!(dom.get_element_by_id(d, "late").unwrap(), Some(rows[1500]));
+    verify(&dom);
+    // Into the middle, after the first: the first stays.
+    let mid = dom.create_element(d, "li").unwrap();
+    dom.set_attribute(mid, "id", "row").unwrap();
+    dom.insert_before(ul, mid, Some(rows[1000])).unwrap();
+    assert_eq!(dom.get_element_by_id(d, "row").unwrap(), Some(rows[0]));
+    // Before the first: it becomes the first.
+    let head = dom.create_element(d, "li").unwrap();
+    dom.set_attribute(head, "id", "row").unwrap();
+    dom.insert_before(ul, head, Some(rows[0])).unwrap();
+    assert_eq!(dom.get_element_by_id(d, "row").unwrap(), Some(head));
+    verify(&dom);
+    // innerHTML of a connected element: the same rows, parsed.
+    let html = format!("<li id=late></li>{}", "<li id=row></li>".repeat(2000));
+    lp_dom::parse::set_inner_html(&mut dom, ul, &html).unwrap();
+    let first = dom.first_child(ul).unwrap().unwrap();
+    assert_eq!(dom.get_element_by_id(d, "late").unwrap(), Some(first));
+    assert_eq!(dom.get_element_by_id(d, "row").unwrap(), dom.next_sibling(first).unwrap());
+    verify(&dom);
+    // innerHTML of a detached element: its ids are nowhere indexed.
+    let detached = dom.create_element(d, "div").unwrap();
+    lp_dom::parse::set_inner_html(&mut dom, detached, "<i id=row></i><template><b id=row></b></template>").unwrap();
+    assert!(!dom.is_connected(dom.first_child(detached).unwrap().unwrap()).unwrap());
+    assert_eq!(dom.get_element_by_id(d, "row").unwrap(), dom.next_sibling(first).unwrap());
+    verify(&dom);
+}
+
+#[test]
+fn fragment_parsing_reports_resources_as_before_without_indexing_its_host() {
+    use lp_dom::script::{ResourceKind, ResourceReason};
+    let (dom, d) = doc("http://test/", "<!doctype html><body></body>");
+    let mut dom = dom.borrow_mut();
+    dom.set_resource_tracking(true);
+    dom.take_resource_events();
+    let div = dom.create_element(d, "div").unwrap();
+    lp_dom::parse::set_inner_html(&mut dom, div, "<p id=x><img src=a.png></p>").unwrap();
+    let img = dom.query_first(div, &parse_query("img").unwrap()).unwrap().unwrap();
+    assert!(!dom.is_connected(img).unwrap());
+    let evs: Vec<_> = dom.take_resource_events().iter().map(|e| (e.node, e.kind, e.reason)).collect();
+    assert_eq!(evs, [(img, ResourceKind::Img, ResourceReason::Connected)]);
+    verify(&dom);
+}
+
+#[test]
+fn tree_order_matches_a_preorder_index() {
+    let (dom, d) = doc(
+        "http://test/",
+        "<!doctype html><body><div><a></a><b><i></i><u></u></b><s></s></div><p><q></q></p><em></em></body>",
+    );
+    let dom = dom.borrow();
+    let mut order = Vec::new();
+    let mut stack = vec![d];
+    while let Some(n) = stack.pop() {
+        order.push(n);
+        let kids: Vec<_> = dom.children(n).unwrap().collect();
+        stack.extend(kids.into_iter().rev());
+    }
+    for (i, &a) in order.iter().enumerate() {
+        for (j, &b) in order.iter().enumerate() {
+            if i != j {
+                let following = dom.compare_document_position(a, b).unwrap() & 0x04 != 0;
+                assert_eq!(following, i < j, "{i} vs {j}");
+            }
+        }
+    }
+}
+
+#[test]
+fn document_element_head_and_body_are_kept_as_the_tree_changes() {
+    let (dom, d) = doc("http://test/", "<!doctype html><html><head></head><body><p>x</p></body></html>");
+    let mut dom = dom.borrow_mut();
+    let html = dom.document_element(d).unwrap().unwrap();
+    let head = dom.head(d).unwrap().unwrap();
+    let body = dom.body(d).unwrap().unwrap();
+    verify(&dom);
+    // A body inserted before the first is the body until it leaves.
+    let b2 = dom.create_element(d, "body").unwrap();
+    dom.insert_before(html, b2, Some(body)).unwrap();
+    assert_eq!(dom.body(d).unwrap(), Some(b2));
+    verify(&dom);
+    dom.remove_child(html, b2).unwrap();
+    assert_eq!(dom.body(d).unwrap(), Some(body));
+    // A body in another namespace, or not a child of the html element, is not
+    // the body; a frameset is.
+    let svg_body = dom.create_element_ns(d, Some("http://www.w3.org/2000/svg"), "body").unwrap();
+    dom.insert_before(html, svg_body, Some(body)).unwrap();
+    assert_eq!(dom.body(d).unwrap(), Some(body));
+    dom.move_before(html, body, Some(head)).unwrap();
+    assert_eq!(dom.body(d).unwrap(), Some(body));
+    let fs = dom.create_element(d, "frameset").unwrap();
+    dom.append_child(body, fs).unwrap();
+    assert_eq!(dom.body(d).unwrap(), Some(body));
+    verify(&dom);
+    dom.remove_child(html, body).unwrap();
+    assert_eq!(dom.body(d).unwrap(), None);
+    dom.append_child(html, fs).unwrap();
+    assert_eq!(dom.body(d).unwrap(), Some(fs));
+    verify(&dom);
+    // A replaced head passes to its replacement.
+    let h2 = dom.create_element(d, "head").unwrap();
+    dom.replace_child(html, h2, head).unwrap();
+    assert_eq!(dom.head(d).unwrap(), Some(h2));
+    verify(&dom);
+    // No document element, no head or body; a new one brings its own.
+    dom.remove_child(d, html).unwrap();
+    assert_eq!((dom.document_element(d).unwrap(), dom.head(d).unwrap(), dom.body(d).unwrap()), (None, None, None));
+    verify(&dom);
+    let other = dom.create_element(d, "html").unwrap();
+    let ob = dom.create_element(d, "body").unwrap();
+    dom.append_child(other, ob).unwrap();
+    dom.append_child(d, other).unwrap();
+    assert_eq!(
+        (dom.document_element(d).unwrap(), dom.head(d).unwrap(), dom.body(d).unwrap()),
+        (Some(other), None, Some(ob))
+    );
+    verify(&dom);
+    // A clone keeps its own.
+    let c = dom.clone_node(d, true, None).unwrap();
+    let cb = dom.body(c).unwrap().unwrap();
+    assert_ne!(cb, ob);
+    assert_eq!(dom.parent(cb).unwrap(), dom.document_element(c).unwrap());
+    verify(&dom);
+    // Only an HTML `html` document element has a head and a body: not an
+    // svg root, nor an `html` element in another namespace, whatever HTML
+    // children they have, before or after those children are linked.
+    dom.remove_child(d, other).unwrap();
+    let svg = dom.create_element_ns(d, Some("http://www.w3.org/2000/svg"), "svg").unwrap();
+    let sh = dom.create_element(d, "head").unwrap();
+    dom.append_child(svg, sh).unwrap();
+    dom.append_child(d, svg).unwrap();
+    let sb = dom.create_element(d, "body").unwrap();
+    dom.append_child(svg, sb).unwrap();
+    assert_eq!((dom.document_element(d).unwrap(), dom.head(d).unwrap(), dom.body(d).unwrap()), (Some(svg), None, None));
+    verify(&dom);
+    dom.remove_child(d, svg).unwrap();
+    let foreign = dom.create_element_ns(d, Some("http://www.w3.org/2000/svg"), "html").unwrap();
+    dom.append_child(d, foreign).unwrap();
+    dom.append_child(foreign, sh).unwrap();
+    dom.append_child(foreign, sb).unwrap();
+    assert_eq!((dom.head(d).unwrap(), dom.body(d).unwrap()), (None, None));
+    verify(&dom);
+    dom.remove_child(d, foreign).unwrap();
+    dom.append_child(d, other).unwrap();
+    assert_eq!((dom.head(d).unwrap(), dom.body(d).unwrap()), (None, Some(ob)));
+    verify(&dom);
+}

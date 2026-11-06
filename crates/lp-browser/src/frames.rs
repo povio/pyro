@@ -135,6 +135,22 @@ pub(crate) fn drop_spare_realm() {
     });
 }
 
+/// The child key a child frame's id spells (`{key:032X}`), if it is one.
+fn child_of_frame_id(id: &str) -> Option<u64> {
+    let hex = id.as_bytes();
+    if hex.len() != 32 || !hex.iter().all(|b| b.is_ascii_digit() || (b'A'..=b'F').contains(b)) {
+        return None;
+    }
+    u64::try_from(u128::from_str_radix(id, 16).ok()?).ok()
+}
+
+/// The page and frame a realm's `Window` belongs to, read from the realm's
+/// own global data (every frame realm gets it in `make_realm`). Says nothing
+/// about whether the frame is still live; see [`Browser::has_live_realm`].
+pub fn realm_page(scope: &lp_js::Scope<'_>) -> Option<PageId> {
+    scope.global_data::<Window>()?.frame_key().map(|key| key.page)
+}
+
 /// Frame keys of one page without a heap allocation for up to four frames.
 pub type FrameKeys = smallvec::SmallVec<[FrameKey; 4]>;
 
@@ -217,14 +233,17 @@ impl FrameHost {
         !self.children.borrow().is_empty()
     }
     pub fn key(&self, id: &FrameId) -> Option<FrameKey> {
-        if self.root.borrow().id == *id {
+        self.key_of(&id.0)
+    }
+    /// [`FrameHost::key`] for an id given as text.
+    pub fn key_of(&self, id: &str) -> Option<FrameKey> {
+        if self.root.borrow().id.0 == id {
             return Some(self.page.into());
         }
-        self.children
-            .borrow()
-            .iter()
-            .find(|(_, d)| d.main_frame.id == *id)
-            .map(|(id, _)| FrameKey { page: self.page, child: Some(*id) })
+        // A child frame's id is its key in hex (`attach`): no search.
+        let child = child_of_frame_id(id)?;
+        let found = self.children.borrow().get(&child).is_some_and(|d| d.main_frame.id.0 == id);
+        found.then_some(FrameKey { page: self.page, child: Some(child) })
     }
     /// Root first, then child frames. Inline for the common single-frame
     /// page: this runs several times per checkpoint.
@@ -283,13 +302,17 @@ impl FrameHost {
             Rc::downgrade(self),
             key,
         ))?;
-        lp_webapi::install(&realm.scope()?, dom)?;
-        // Uncaught exceptions of the realm's callbacks fire `error` at the Window.
-        realm.set_exception_reporter(Some(lp_webapi::lifecycle::report_exception));
-        if crate::clock::page_clock_enabled() {
-            realm.scope()?.eval(crate::clock::DATE_SCRIPT, Some("lightningpanda://internal/clock.js"), 1)?;
+        {
+            // Engine code only, up to the bindings and init scripts below.
+            let _setup = realm.setup_without_watchdog();
+            lp_webapi::install(&realm.scope()?, dom)?;
+            // Uncaught exceptions of the realm's callbacks fire `error` at the Window.
+            realm.set_exception_reporter(Some(lp_webapi::lifecycle::report_exception));
+            if crate::clock::page_clock_enabled() {
+                realm.scope()?.eval(crate::clock::DATE_SCRIPT, Some("lightningpanda://internal/clock.js"), 1)?;
+            }
+            window::init_frame_indices(&realm)?;
         }
-        window::init_frame_indices(&realm)?;
         loader::install_module_fetcher(self.sched.clone(), key, &realm);
         let entry = FrameRealm { world: world.clone(), realm: realm.clone() };
         match key.child {
@@ -370,6 +393,7 @@ impl FrameHost {
         let id = self.next();
         let key = FrameKey { page: self.page, child: Some(id) };
         let fid = FrameId(format!("{id:032X}"));
+        debug_assert_eq!(child_of_frame_id(&fid.0), Some(id));
         let lid = LoaderId(format!("{:032X}", self.next()));
         let origin = if sandbox.opaque { "null".into() } else { ancestor.origin.clone() };
         let nav = PageNav::new(self.page, fid.clone(), self.sched.clone(), self.observer.clone());
@@ -400,6 +424,7 @@ impl FrameHost {
                 nav: nav.clone(),
                 pending_loader: None,
                 pending_cancel: None,
+                pending_script: None,
                 load: None,
                 stylesheets: Default::default(),
                 images: Default::default(),
@@ -636,7 +661,8 @@ impl FrameHost {
         let world = match self.world_of(source, realm) {
             Ok(world) => world,
             Err(_) => {
-                let of_retired = retired.iter().flat_map(|d| d.main_frame.realms.iter()).find(|r| r.realm.id() == realm);
+                let of_retired =
+                    retired.iter().flat_map(|d| d.main_frame.realms.iter()).find(|r| r.realm.id() == realm);
                 match of_retired {
                     Some(r) => r.world.clone(),
                     None => return Vec::new(),
@@ -834,20 +860,67 @@ impl Browser {
         p.frames
             .keys()
             .into_iter()
-            .filter_map(|key| self.doc(key).map(|d| d.main_frame.clone()))
-            .map(|f| FrameInfo {
-                id: f.id,
-                parent: f.parent,
-                owner: f.owner,
-                url: f.url,
-                loader_id: f.loader_id,
-                name: f.name,
-                origin: f.origin,
-                network_idle: f.network_idle,
-                dom_content_loaded: f.dom_content_loaded,
-                loaded: f.loaded,
+            .filter_map(|key| {
+                // Only the snapshot's fields are copied, not the whole frame.
+                self.doc(key).map(|d| {
+                    let f = &d.main_frame;
+                    FrameInfo {
+                        id: f.id.clone(),
+                        parent: f.parent.clone(),
+                        owner: f.owner,
+                        url: f.url.clone(),
+                        loader_id: f.loader_id.clone(),
+                        name: f.name.clone(),
+                        origin: f.origin.clone(),
+                        network_idle: f.network_idle.clone(),
+                        dom_content_loaded: f.dom_content_loaded,
+                        loaded: f.loaded,
+                    }
+                })
             })
             .collect()
+    }
+    /// Whether `realm` belongs to a live (not detached) frame of `page`. No
+    /// frame is cloned.
+    pub fn has_live_realm(&self, page: PageId, realm: RealmId) -> bool {
+        let Some(p) = self.page(page) else { return false };
+        self.sync_root(page);
+        let holds = |f: &Frame| f.realms.iter().any(|r| r.realm.id() == realm);
+        holds(&p.frames.root.borrow()) || p.frames.children.borrow().values().any(|d| holds(&d.main_frame))
+    }
+    /// Whether `page` has a live frame with this id.
+    pub fn has_frame(&self, page: PageId, id: &str) -> bool {
+        self.page(page).is_some_and(|p| p.frames.key_of(id).is_some())
+    }
+    /// Reads the live frame `id` of `page` without cloning it (the borrowed
+    /// counterpart of [`Browser::frame`]). `f` must not mutate the browser.
+    pub fn with_frame<R>(&self, page: PageId, id: &FrameId, f: impl FnOnce(&Frame) -> R) -> Option<R> {
+        let host = &self.page(page)?.frames;
+        let key = host.key(id)?;
+        if key.child.is_none() {
+            self.sync_root(page);
+        }
+        host.with_frame(key, f)
+    }
+    /// Reads the live frame of `page` whose document is `document`, root
+    /// first, without cloning it. `f` must not mutate the browser.
+    pub fn with_frame_of_document<R>(
+        &self,
+        page: PageId,
+        document: &Rc<lp_webapi::PageDom>,
+        f: impl FnOnce(&Frame) -> R,
+    ) -> Option<R> {
+        let host = &self.page(page)?.frames;
+        self.sync_root(page);
+        let shows = |frame: &Frame| frame.page_dom.as_ref().is_some_and(|dom| Rc::ptr_eq(dom, document));
+        {
+            let root = host.root.borrow();
+            if shows(&root) {
+                return Some(f(&root));
+            }
+        }
+        let children = host.children.borrow();
+        children.values().map(|d| &d.main_frame).find(|frame| shows(frame)).map(f)
     }
     /// The page's realm with this id, searching the root frame first. A
     /// handle clone only; no frame is cloned (hot: every `Runtime.*` command).
@@ -871,7 +944,7 @@ impl Browser {
     }
     pub fn frame_of_owner(&self, page: PageId, owner: NodeId) -> Option<FrameId> {
         let host = &self.page(page)?.frames;
-        host.owner(owner).and_then(|key| host.frame(key)).map(|f| f.id)
+        host.owner(owner).and_then(|key| host.with_frame(key, |f| f.id.clone()))
     }
     pub fn isolated_world_in_frame(&mut self, page: PageId, id: &FrameId, name: &str) -> Result<Realm, JsError> {
         let host = self.page(page).ok_or(JsError::ContextDestroyed)?.frames.clone();
@@ -1017,5 +1090,20 @@ impl Browser {
             dom.set_cache_disabled(settings.cache_disabled);
             dom.set_max_touch_points(settings.max_touch_points);
         }
+    }
+}
+
+#[cfg(test)]
+mod frame_id_tests {
+    use super::child_of_frame_id;
+
+    #[test]
+    fn child_frame_ids_spell_their_keys() {
+        for key in [0u64, 1, 42, 0xDEAD_BEEF, u64::MAX] {
+            assert_eq!(child_of_frame_id(&format!("{key:032X}")), Some(key));
+        }
+        assert_eq!(child_of_frame_id(&format!("{:032x}", 0xABu64)), None, "lowercase is not an id we made");
+        assert_eq!(child_of_frame_id("2A"), None);
+        assert_eq!(child_of_frame_id(&format!("{:032X}", u128::from(u64::MAX) + 1)), None);
     }
 }

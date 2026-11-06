@@ -26,7 +26,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-pub use frames::FrameInfo;
+pub use frames::{realm_page, FrameInfo};
 use frames::{FrameHost, FrameKey};
 pub use loader::{
     FetchDone, FetchRequest, NetLoader, Resource, ResourceCancellation, ResourceKind, ResourceLoader, StaticLoader,
@@ -90,6 +90,18 @@ pub enum HistoryHandling {
     Traverse,
     /// Reload of the current entry, which keeps its id and state.
     Reload,
+}
+
+/// The document a commit replaces, as far as freeing it goes
+/// (`Browser::commit_document`).
+#[derive(Clone, Copy)]
+enum Replaced {
+    /// None, or the initial about:blank one as it was made.
+    Nothing,
+    /// The initial about:blank one, given content since.
+    FilledBlank,
+    /// A loaded one.
+    Loaded,
 }
 
 #[derive(Debug, Clone)]
@@ -409,6 +421,9 @@ pub struct DocumentState {
     pub nav: Rc<PageNav>,
     pub(crate) pending_loader: Option<LoaderId>,
     pub(crate) pending_cancel: Option<ResourceCancellation>,
+    /// The loader and URL of `pending_loader` when the frame's scripts
+    /// started it, which `document.open()` stops (HTML "stop loading").
+    pub(crate) pending_script: Option<(LoaderId, String)>,
     pub(crate) load: Option<loader::DocumentLoad>,
     pub(crate) stylesheets: stylesheets::Stylesheets,
     pub(crate) images: images::Images,
@@ -540,7 +555,8 @@ impl Browser {
         }
         let (Some(bindings), nav) = (state.main_frame.page_dom.clone(), state.nav.clone()) else { return };
         drop(state);
-        let has_body = bindings.dom.try_borrow().is_ok_and(|dom| dom.body(bindings.document()).ok().flatten().is_some());
+        let has_body =
+            bindings.dom.try_borrow().is_ok_and(|dom| dom.body(bindings.document()).ok().flatten().is_some());
         if has_body && !bindings.render_blocked() {
             nav.note_first_paint();
         }
@@ -938,6 +954,7 @@ impl Browser {
         let session_storage = frames.settings.borrow().session.clone();
         let init_scripts = self.contexts.iter().find(|c| c.id == context).unwrap().init_scripts.clone();
         frames.settings.borrow_mut().scripts = init_scripts.clone();
+        debug_assert!(self.pages.last().is_none_or(|last| last.id < id), "page ids increase");
         self.pages.push(Page {
             id,
             context,
@@ -949,6 +966,7 @@ impl Browser {
                 main_frame: frame,
                 pending_loader: None,
                 pending_cancel: None,
+                pending_script: None,
                 nav,
                 load: None,
                 stylesheets: Default::default(),
@@ -1036,12 +1054,20 @@ impl Browser {
         self.page(page)?.frames.opener.borrow().as_ref().and_then(std::rc::Weak::upgrade).map(|h| h.page)
     }
 
+    /// `pages` stays sorted by id: ids come from one increasing counter,
+    /// pages are only appended at creation and removal keeps the order.
+    fn page_index(&self, id: PageId) -> Option<usize> {
+        debug_assert!(self.pages.windows(2).all(|w| w[0].id < w[1].id), "pages sorted by id");
+        self.pages.binary_search_by_key(&id, |p| p.id).ok()
+    }
+
     pub fn page(&self, id: PageId) -> Option<&Page> {
-        self.pages.iter().find(|p| p.id == id)
+        self.page_index(id).map(|i| &self.pages[i])
     }
 
     pub(crate) fn page_mut(&mut self, id: PageId) -> Option<&mut Page> {
-        let page = self.pages.iter_mut().find(|p| p.id == id)?;
+        let index = self.page_index(id)?;
+        let page = &mut self.pages[index];
         page.root_dirty.set(true);
         Some(page)
     }
@@ -1233,6 +1259,15 @@ impl Browser {
         if let Some(leaving) = self.doc(page).and_then(|doc| doc.main_frame.page_dom.clone()) {
             lp_webapi::lifecycle::before_unload(&leaving);
         }
+        // "The navigation must be a replace" when it leaves the initial
+        // about:blank document, decided as it starts: a document.open()
+        // before it commits does not make it a push.
+        let history = match history {
+            HistoryHandling::Push if self.doc(page).is_some_and(|doc| doc.nav.is_initial_blank()) => {
+                HistoryHandling::Replace
+            }
+            history => history,
+        };
         let loader_id = LoaderId(format!("{:032X}", self.next()));
         // Invalidate the previous fetch even for blank or failed navigation.
         self.cancel_pending_document(page);
@@ -1354,14 +1389,31 @@ impl Browser {
             p.images = Default::default();
             p.preloads = Default::default();
             let old_dom = p.main_frame.page_dom.replace(page_dom.clone());
+            // What the commit replaces: nothing (a new frame's first
+            // document) or the initial about:blank one as it was made; that
+            // one given content, written with document.open() (it is not
+            // "initial" any more) or filled through DOM APIs; or a loaded
+            // document.
+            let replaced = match &old_dom {
+                None => Replaced::Nothing,
+                Some(old) if p.nav.is_first_blank() => {
+                    if !p.nav.is_initial_blank() || bindings::blank_document_has_content(old) {
+                        Replaced::FilledBlank
+                    } else {
+                        Replaced::Nothing
+                    }
+                }
+                Some(_) => Replaced::Loaded,
+            };
             p.main_frame.dom = Some(page_dom.dom.clone());
             p.main_frame.document = Some(page_dom.document());
             p.main_frame.url = opts.url.clone();
             p.main_frame.loader_id = loader_id.clone();
             p.nav.commit_document(&opts.url, history, None);
             p.nav.set_document(Some((page_dom.dom.clone(), page_dom.document())));
-            (p.main_frame.id.clone(), old, scripts.clone(), p.nav.clone(), old_dom)
+            (p.main_frame.id.clone(), old, scripts.clone(), p.nav.clone(), (old_dom, replaced))
         };
+        let (old_dom, replaced) = old_dom;
         if let Some(dom) = &old_dom {
             dom.dispose();
         }
@@ -1381,8 +1433,23 @@ impl Browser {
         // it before the next one boots instead of waiting for JSC's heuristics.
         // Measured on 80 navigations of a 2 MB React bundle: the process
         // plateaus at 218 MB instead of 629 MB, for about 5 ms per navigation.
+        // A page's first document and its untouched initial about:blank one
+        // leave nothing that pays for a full collection: a test's first `goto`
+        // collected the whole heap for a blank page's two realms. Its
+        // footprint still counts as a low point for later closes. An initial
+        // document given content is collected only once the process has grown
+        // past the gate, and then later (`Engine::defer_release_if_due`):
+        // `page.setContent` of 40k nodes and a 1M-object array stayed after
+        // the `goto` (81 MB, 26 MB released), while a `<style>` an init script
+        // added had the idle loop drop the next page's compiled code. (What a
+        // script kept on the blank document's window alone, with no node, is
+        // left to the next release or JavaScriptCore's own collections.)
         drop(old_dom);
-        self.engine.release_closed();
+        match replaced {
+            Replaced::Loaded => self.engine.release_closed(),
+            Replaced::FilledBlank => self.engine.defer_release_if_due(),
+            Replaced::Nothing => self.engine.note_release_point(),
+        }
         // Worlds: main plus every world named by an init script.
         let mut worlds: Vec<Option<String>> = vec![None];
         for s in &scripts {
@@ -1420,7 +1487,7 @@ impl Browser {
 
     /// Closes a page, disposing its realms and cancelling timers.
     pub fn close_page(&mut self, page: PageId) -> bool {
-        let Some(pos) = self.pages.iter().position(|p| p.id == page) else { return false };
+        let Some(pos) = self.page_index(page) else { return false };
         self.cancel_pending_document(page.into());
         let host = self.pages[pos].frames.clone();
         host.invalidate_focus(page.into(), false);

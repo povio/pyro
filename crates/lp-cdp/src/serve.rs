@@ -786,13 +786,15 @@ pub(crate) fn serve_browser(
             match message {
                 Inbound::Text(text) => {
                     lp_browser::note_client_activity();
-                    // Polling the pool's status is not test activity.
-                    if !text.contains("\"Lightningpanda.preparedPages\"") {
-                        quiet_since = std::time::Instant::now();
-                    }
+                    let received = std::time::Instant::now();
                     let handle = crate::perf::span("cdp.handle_text");
                     browser.handle_text(&text, &mut sink);
                     drop(handle);
+                    // Polling the pool's status is not test activity. The
+                    // parsed method says so (no scan of the message text).
+                    if !browser.last_was_pool_poll() {
+                        quiet_since = received;
+                    }
                     let flush = crate::perf::span("host.flush");
                     browser.host_mut().flush();
                     drop(flush);

@@ -43,10 +43,10 @@ fn replace(s: &Scope<'_>, page: &Rc<PageDom>, name: &str, value: Value<'_>) -> J
     let define = page.define_properties.borrow().get(&s.realm_id()).map(|p| p.get(s));
     let define = define.and_then(|v| v.as_object()).ok_or_else(unavailable)?;
     let desc = s.object();
-    desc.set("value", value)?;
-    desc.set("writable", s.boolean(true))?;
-    desc.set("enumerable", s.boolean(false))?;
-    desc.set("configurable", s.boolean(true))?;
+    desc.set_atom("value", value)?;
+    desc.set_atom("writable", s.boolean(true))?;
+    desc.set_atom("enumerable", s.boolean(false))?;
+    desc.set_atom("configurable", s.boolean(true))?;
     define.call(None, &[s.global().value(), s.string(name), desc.value()])?;
     Ok(())
 }
@@ -114,14 +114,14 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         report_exception(s, a.get(0));
         Ok(s.undefined())
     })?;
-    natives.set("reportException", report.value())?;
+    natives.set_atom("reportException", report.value())?;
     // Whether the realm's document is fully active: a Subscriber does
     // nothing once its document is detached.
     let active = s.function("fullyActive", |s, _this, _a| Ok(s.boolean(page_of(s).is_ok_and(|p| p.is_fully_active()))))?;
-    natives.set("fullyActive", active.value())?;
+    natives.set_atom("fullyActive", active.value())?;
     let is_signal =
         s.function("isAbortSignal", |s, _this, a| Ok(s.boolean(s.unwrap::<AbortSignal>(a.get(0)).is_some())))?;
-    natives.set("isAbortSignal", is_signal.value())?;
+    natives.set_atom("isAbortSignal", is_signal.value())?;
     // DOM "add an abort algorithm": when the signal aborts, the module runs
     // the steps it keeps under `key` for the signal. The steps stay in JS
     // (the GC sees what they reach); the signal only holds the key. Returns
@@ -137,7 +137,7 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
             let Ok(s) = realm.scope() else { return };
             let run = || -> JsResult<()> {
                 let module = module(&s, &page_of(&s)?)?;
-                let run = module.get("runAbortAlgorithm")?.as_object().ok_or_else(unavailable)?;
+                let run = module.get_atom("runAbortAlgorithm")?.as_object().ok_or_else(unavailable)?;
                 run.call(None, &[wrapper.get(&s)?.value(), s.number(key)])?;
                 Ok(())
             };
@@ -148,7 +148,7 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         }));
         Ok(s.number(hook.map_or(0.0, AbortHookId::to_number)))
     })?;
-    natives.set("addAbortHook", add.value())?;
+    natives.set_atom("addAbortHook", add.value())?;
     // DOM "remove an abort algorithm", for steps that became moot.
     let remove = s.function("removeAbortHook", |s, _this, a| {
         if let Some(signal) = s.unwrap::<AbortSignal>(a.get(0)) {
@@ -156,7 +156,7 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         }
         Ok(s.undefined())
     })?;
-    natives.set("removeAbortHook", remove.value())?;
+    natives.set_atom("removeAbortHook", remove.value())?;
     Ok(natives)
 }
 
@@ -164,5 +164,5 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
 pub(crate) fn when<'s>(s: &Scope<'s>, target: Value<'s>, ty: Value<'s>, options: Value<'s>) -> JsResult<Value<'s>> {
     let page = crate::target::page_of(s)?;
     let module = module(s, &page)?;
-    module.get("when")?.as_object().ok_or_else(unavailable)?.call(None, &[target, ty, options])
+    module.get_atom("when")?.as_object().ok_or_else(unavailable)?.call(None, &[target, ty, options])
 }

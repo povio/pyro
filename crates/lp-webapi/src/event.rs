@@ -353,8 +353,8 @@ fn define_unforgeables<'s>(s: &Scope<'s>, page: &PageDom, wrapper: Object<'s>) -
             let define = page.define_properties.borrow().get(&realm).map(|p| p.get(s));
             let define = match define {
                 Some(define) => define,
-                None => match s.global().get("Object")?.as_object() {
-                    Some(object) => object.get("defineProperty")?,
+                None => match s.global().get_atom("Object")?.as_object() {
+                    Some(object) => object.get_atom("defineProperty")?,
                     None => return Ok(()),
                 },
             };
@@ -381,16 +381,16 @@ fn define_unforgeables<'s>(s: &Scope<'s>, page: &PageDom, wrapper: Object<'s>) -
     Ok(())
 }
 
-fn get_bool(init: Option<Object<'_>>, name: &str) -> JsResult<bool> {
+fn get_bool(init: Option<Object<'_>>, name: &'static str) -> JsResult<bool> {
     match init {
-        Some(o) => Ok(o.get(name)?.to_bool()),
+        Some(o) => Ok(o.get_atom(name)?.to_bool()),
         None => Ok(false),
     }
 }
-fn get_num(init: Option<Object<'_>>, name: &str, default: f64) -> JsResult<f64> {
+fn get_num(init: Option<Object<'_>>, name: &'static str, default: f64) -> JsResult<f64> {
     match init {
         Some(o) => {
-            let v = o.get(name)?;
+            let v = o.get_atom(name)?;
             if v.is_undefined() {
                 Ok(default)
             } else {
@@ -400,10 +400,10 @@ fn get_num(init: Option<Object<'_>>, name: &str, default: f64) -> JsResult<f64> 
         None => Ok(default),
     }
 }
-fn get_str(init: Option<Object<'_>>, name: &str) -> JsResult<String> {
+fn get_str(init: Option<Object<'_>>, name: &'static str) -> JsResult<String> {
     match init {
         Some(o) => {
-            let v = o.get(name)?;
+            let v = o.get_atom(name)?;
             if v.is_undefined() {
                 Ok(String::new())
             } else {
@@ -472,7 +472,7 @@ fn construct<'s, C: JsClass<Data = EventData>>(
 /// `UIEventInit.view`: a Window (this realm's global) or null.
 fn view_init<'s>(s: &Scope<'s>, init: Option<Object<'s>>) -> JsResult<Option<Persistent>> {
     let Some(o) = init else { return Ok(None) };
-    let v = o.get("view")?;
+    let v = o.get_atom("view")?;
     view_value(s, v)
 }
 
@@ -483,7 +483,7 @@ fn view_value<'s>(s: &Scope<'s>, v: lp_js::Value<'s>) -> JsResult<Option<Persist
     // This realm's global, or another Window (its `window` is itself).
     let is_window = v.as_object().is_some_and(|o| {
         o.as_raw() == s.global().as_raw()
-            || o.get("window").is_ok_and(|w| w.as_object().is_some_and(|w| w.as_raw() == o.as_raw()))
+            || o.get_atom("window").is_ok_and(|w| w.as_object().is_some_and(|w| w.as_raw() == o.as_raw()))
     });
     if !is_window {
         return Err(JsError::Type("Failed to construct event: member view is not of type Window.".into()));
@@ -502,7 +502,7 @@ fn fill_ui<'s>(_: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> 
 
 fn related<'s>(s: &Scope<'s>, init: Option<Object<'s>>) -> JsResult<Option<TargetKey>> {
     let Some(o) = init else { return Ok(None) };
-    let v = o.get("relatedTarget")?;
+    let v = o.get_atom("relatedTarget")?;
     if let Some(n) = s.unwrap::<crate::node::Node>(v) {
         return Ok(Some(n.target.key));
     }
@@ -563,8 +563,8 @@ fn fill_pointer<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>
     f.persistent_device_id = get_num(init, "persistentDeviceId", 0.0)?;
     // Pointer Events: tilt and the spherical angles are two forms of one
     // orientation; whichever the dictionary gives determines the other.
-    let given = |name: &str| -> JsResult<Option<f64>> {
-        match init.map(|o| o.get(name)).transpose()? {
+    let given = |name: &'static str| -> JsResult<Option<f64>> {
+        match init.map(|o| o.get_atom(name)).transpose()? {
             Some(v) if !v.is_undefined() => Ok(Some(v.to_number()?)),
             _ => Ok(None),
         }
@@ -586,9 +586,9 @@ fn fill_pointer<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>
         }
     }
     for (name, into) in [("coalescedEvents", &mut f.coalesced_events), ("predictedEvents", &mut f.predicted_events)] {
-        let Some(list) = init.map(|o| o.get(name)).transpose()?.filter(|v| !v.is_undefined()) else { continue };
+        let Some(list) = init.map(|o| o.get_atom(name)).transpose()?.filter(|v| !v.is_undefined()) else { continue };
         let events = s.sequence(list, name)?;
-        let len = events.get("length")?.to_number()? as u32;
+        let len = events.get_atom("length")?.to_number()? as u32;
         for i in 0..len {
             let event = events.get_index(i)?;
             if s.unwrap::<PointerEvent>(event).is_none() {
@@ -697,7 +697,7 @@ fn fill_keyboard<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>
 fn fill_input<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
     fill_ui(s, f, init)?;
     f.data = match init {
-        Some(o) => opt_dom_string(o.get("data")?)?,
+        Some(o) => opt_dom_string(o.get_atom("data")?)?,
         None => None,
     };
     f.input_type = get_str(init, "inputType")?;
@@ -713,7 +713,7 @@ fn fill_focus<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) 
 
 fn fill_custom<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
     if let Some(o) = init {
-        let d = o.get("detail")?;
+        let d = o.get_atom("detail")?;
         if !d.is_undefined() {
             f.custom_detail = Some(Persistent::new(s, d));
         }
@@ -734,7 +734,7 @@ fn fill_error<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) 
     f.lineno = get_num(init, "lineno", 0.0)? as u32;
     f.colno = get_num(init, "colno", 0.0)? as u32;
     if let Some(o) = init {
-        let e = o.get("error")?;
+        let e = o.get_atom("error")?;
         if !e.is_undefined() {
             f.error = Some(Persistent::new(s, e));
         }
@@ -744,8 +744,8 @@ fn fill_error<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) 
 
 fn fill_storage<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
     let Some(o) = init else { return Ok(()) };
-    let nullable = |name: &str| -> JsResult<Option<String>> {
-        let v = o.get(name)?;
+    let nullable = |name: &'static str| -> JsResult<Option<String>> {
+        let v = o.get_atom(name)?;
         if v.is_undefined() || v.is_null() {
             Ok(None)
         } else {
@@ -756,7 +756,7 @@ fn fill_storage<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>
     f.storage_old = nullable("oldValue")?;
     f.storage_new = nullable("newValue")?;
     f.storage_url = get_str(Some(o), "url")?;
-    let area = o.get("storageArea")?;
+    let area = o.get_atom("storageArea")?;
     if !area.is_undefined() && !area.is_null() {
         if s.unwrap::<crate::storage::Storage>(area).is_none() {
             return Err(JsError::Type("StorageEvent: storageArea is not a Storage".into()));
@@ -768,7 +768,7 @@ fn fill_storage<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>
 
 fn fill_popstate<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
     if let Some(o) = init {
-        f.state = Some(Persistent::new(s, o.get("state")?));
+        f.state = Some(Persistent::new(s, o.get_atom("state")?));
     }
     Ok(())
 }
@@ -787,7 +787,7 @@ fn fill_media_query<'s>(_: &Scope<'s>, f: &mut EventFields, init: Option<Object<
 
 fn fill_message<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
     if let Some(o) = init {
-        f.message_data = Some(Persistent::new(s, o.get("data")?));
+        f.message_data = Some(Persistent::new(s, o.get_atom("data")?));
     }
     f.origin = get_str(init, "origin")?;
     Ok(())
@@ -814,7 +814,7 @@ fn fill_pagetransition<'s>(_: &Scope<'s>, f: &mut EventFields, init: Option<Obje
 
 fn fill_submit<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
     if let Some(o) = init {
-        if let Some(n) = s.unwrap::<crate::node::Node>(o.get("submitter")?) {
+        if let Some(n) = s.unwrap::<crate::node::Node>(o.get_atom("submitter")?) {
             f.submitter = Some(n.target.key);
         }
     }
@@ -1271,7 +1271,7 @@ impl JsClass for DragEvent {
             // construction, then keep the value on the event's traced wrapper.
             let _root = Persistent::new(s, wrapper.value());
             let value = match init {
-                Some(init) => init.get("dataTransfer")?,
+                Some(init) => init.get_atom("dataTransfer")?,
                 None => s.null(),
             };
             if !value.is_nullish() {
@@ -1425,12 +1425,12 @@ impl JsClass for PromiseRejectionEvent {
 
 fn fill_promise_rejection<'s>(s: &Scope<'s>, fields: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
     let init = init.ok_or_else(|| JsError::Type("PromiseRejectionEvent requires a promise".into()))?;
-    let promise = init.get("promise")?;
+    let promise = init.get_atom("promise")?;
     if promise.as_object().is_none() {
         return Err(JsError::Type("PromiseRejectionEvent promise must be an object".into()));
     }
     fields.promise = Some(Persistent::new(s, promise));
-    fields.reason = Some(Persistent::new(s, init.get("reason")?));
+    fields.reason = Some(Persistent::new(s, init.get_atom("reason")?));
     Ok(())
 }
 
@@ -1691,13 +1691,13 @@ impl JsClass for Touch {
                 .get(0)
                 .as_object()
                 .ok_or_else(|| JsError::Type("Failed to construct 'Touch': 1 argument required, but only 0 present.".into()))?;
-            let identifier = init.get("identifier")?;
+            let identifier = init.get_atom("identifier")?;
             if identifier.is_undefined() {
                 return Err(JsError::Type(
                     "Failed to construct 'Touch': Failed to read the 'identifier' property from 'TouchInit': Required member is undefined.".into(),
                 ));
             }
-            let target = init.get("target")?;
+            let target = init.get_atom("target")?;
             if target.is_undefined() {
                 return Err(JsError::Type(
                     "Failed to construct 'Touch': Failed to read the 'target' property from 'TouchInit': Required member is undefined.".into(),
@@ -1706,7 +1706,7 @@ impl JsClass for Touch {
             let target = event_target_key(s, target).ok_or_else(|| {
                 JsError::Type("Failed to construct 'Touch': Failed to read the 'target' property from 'TouchInit': Failed to convert value to 'EventTarget'.".into())
             })?;
-            let num = |name: &str, default: f64| get_num(Some(init), name, default);
+            let num = |name: &'static str, default: f64| get_num(Some(init), name, default);
             let point = TouchPoint {
                 identifier: identifier.to_number()? as i64,
                 target: Some(target),
@@ -1759,10 +1759,12 @@ fn touch_list<'s>(s: &Scope<'s>, page: &Rc<PageDom>, points: &[TouchPoint]) -> J
     Ok(list.value())
 }
 
-fn touch_points<'s>(s: &Scope<'s>, init: Option<Object<'s>>, name: &str) -> JsResult<Vec<TouchPoint>> {
-    let Some(list) = init.map(|o| o.get(name)).transpose()?.and_then(|v| v.as_object()) else { return Ok(Vec::new()) };
+fn touch_points<'s>(s: &Scope<'s>, init: Option<Object<'s>>, name: &'static str) -> JsResult<Vec<TouchPoint>> {
+    let Some(list) = init.map(|o| o.get_atom(name)).transpose()?.and_then(|v| v.as_object()) else {
+        return Ok(Vec::new());
+    };
     let mut out = Vec::new();
-    for i in 0..list.get("length")?.to_number()? as u32 {
+    for i in 0..list.get_atom("length")?.to_number()? as u32 {
         let v = list.get_index(i)?;
         let touch = s.unwrap::<Touch>(v).ok_or_else(|| {
             JsError::Type(format!("Failed to construct 'TouchEvent': Failed to read the '{name}' property from 'TouchEventInit': Failed to convert value to 'Touch'."))

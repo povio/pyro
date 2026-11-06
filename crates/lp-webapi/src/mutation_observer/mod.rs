@@ -169,7 +169,7 @@ fn links<'s>(s: &Scope<'s>, object: Object<'s>, create: bool) -> JsResult<Option
 fn link(s: &Scope<'_>, page: &PageDom, node: NodeId, observer: Object<'_>) -> JsResult<()> {
     let node = crate::node::wrap_node(s, page, node)?;
     let array = links(s, node, true)?.unwrap();
-    let len = array.get("length")?.to_number()? as u32;
+    let len = array.get_atom("length")?.to_number()? as u32;
     let mut free = len;
     for i in 0..len {
         let value = array.get_index(i)?;
@@ -186,7 +186,7 @@ fn unlink(s: &Scope<'_>, page: &PageDom, node: NodeId, identity: IdentityKey) ->
     let Some(node) = page.node_wrapper(s, node) else { return Ok(()) };
     let Some(array) = links(s, node, false)? else { return Ok(()) };
     let Some(observer) = s.lookup_identity(identity) else { return Ok(()) };
-    let len = array.get("length")?.to_number()? as u32;
+    let len = array.get_atom("length")?.to_number()? as u32;
     for i in 0..len {
         if array.get_index(i)?.strict_equals(observer.value()) {
             array.set_index(i, s.undefined())?;
@@ -218,7 +218,7 @@ fn parse_options(s: &Scope<'_>, page: &PageDom, value: Value<'_>) -> JsResult<Ob
         None
     } else {
         let list = filter.as_object().unwrap();
-        let n = list.get("length")?.to_number()? as u32;
+        let n = list.get_atom("length")?.to_number()? as u32;
         Some((0..n).map(|i| list.get_index(i)?.to_string()).collect::<JsResult<Vec<_>>>()?)
     };
     Ok(ObserveInit {
@@ -464,12 +464,14 @@ fn hook_pending(page: &PageDom) -> bool {
     }
     let Ok(dom) = page.dom.try_borrow() else { return true };
     let m = &page.mutations;
-    // Every condition below changes only with `Dom::hook_epoch` (mutations,
-    // queued observers, iframe events) or `epoch` (this struct), so a pair
-    // the hook already found quiet needs no second look. Native callbacks
-    // come in bursts of tens of thousands with no change in between.
+    // Every condition below changes only with `Dom::hook_epoch` (an entry in
+    // one of the queues the hook drains), `epoch` (this struct) or, for the
+    // two passes that follow every mutation, `Dom::version`: a pair the hook
+    // already found quiet needs no second look while neither pass looks at
+    // the tree. Native callbacks come in bursts of tens of thousands, most
+    // of them mutating nothing the hook drains.
     let now = (dom.hook_epoch(), m.epoch.get());
-    if m.quiet.get() == Some(now) {
+    if m.quiet.get() == Some(now) && !follows_version(page, &dom, m) {
         return false;
     }
     let pending = hook_pending_slow(page, &dom, m);
@@ -477,6 +479,14 @@ fn hook_pending(page: &PageDom) -> bool {
         m.quiet.set(Some(now));
     }
     pending
+}
+
+/// Whether a pass of the hook that runs after any mutation would look at the
+/// tree again: the render-blocking evaluation while the set can change, and
+/// the reconcile pass of `checkpoint` while observers or pins exist.
+fn follows_version(page: &PageDom, dom: &lp_dom::Dom, m: &BindingState) -> bool {
+    page.render_blocking_follows_version(dom)
+        || (m.version.get() != Some(dom.version()) && (!m.observers.borrow().is_empty() || !m.pins.borrow().is_empty()))
 }
 
 fn hook_pending_slow(page: &PageDom, dom: &lp_dom::Dom, m: &BindingState) -> bool {

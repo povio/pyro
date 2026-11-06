@@ -11,7 +11,7 @@
 
 use crate::error::{JsError, JsResult};
 use crate::realm::Scope;
-use crate::string::{to_rust_string, JsString};
+use crate::string::{latin1_to_string, to_rust_string, utf16_to_string, with_host_units, HostUnits, JsString};
 use lp_jsc_sys as sys;
 use std::marker::PhantomData;
 use std::ptr;
@@ -115,6 +115,16 @@ impl<'s> Value<'s> {
             StringUnits::Utf16(unsafe { std::slice::from_raw_parts(p.cast::<u16>(), len) })
         })
     }
+
+    /// [`Value::string_units`] for any caller, inside a native callback or
+    /// not: patch 0016's JavaScriptCore reads a flat string with no lock and
+    /// no trap check, and takes the API lock only to resolve a rope outside a
+    /// callback, where a failure leaves no exception pending. `None` without
+    /// that patch.
+    fn string_units_anywhere(&self) -> Option<StringUnits<'_>> {
+        sys::spi::direct_strings()?;
+        self.string_units()
+    }
     pub fn is_symbol(&self) -> bool {
         unsafe { sys::JSValueIsSymbol(self.ctx, self.raw) }
     }
@@ -176,6 +186,14 @@ impl<'s> Value<'s> {
 
     /// ToString converted to UTF-8.
     pub fn to_string(&self) -> JsResult<String> {
+        // A string's own characters, copied once (patched JSC): no
+        // `JSStringRef` copy, no UTF-16 widening of an 8-bit string. While a
+        // termination propagates, `check` below reports it, as every call does.
+        if !crate::engine::callback_tls().terminating.get() {
+            if let Some(units) = self.string_units_anywhere() {
+                return Ok(units.to_string_lossy());
+            }
+        }
         let _pool = crate::autorelease::Pool::new();
         let mut exc = ptr::null();
         let s = unsafe { sys::JSValueToStringCopy(self.ctx, self.raw, &mut exc) };
@@ -190,6 +208,9 @@ impl<'s> Value<'s> {
 
     /// If this is a string, its UTF-8 contents; no user code runs.
     pub fn as_string(&self) -> Option<String> {
+        if sys::spi::direct_strings().is_some() && !crate::engine::callback_tls().terminating.get() {
+            return self.string_units_anywhere().map(|u| u.to_string_lossy());
+        }
         if self.is_string() {
             self.to_string().ok()
         } else {
@@ -254,9 +275,19 @@ impl<'s> Object<'s> {
     }
 
     pub fn get_js(&self, name: &JsString) -> JsResult<Value<'s>> {
+        self.get_raw_name(name.as_raw())
+    }
+
+    /// [`Object::get`] for a constant name: the key is the thread's string
+    /// for `name` ([`crate::atom`]), made once instead of per call.
+    pub fn get_atom(&self, name: &'static str) -> JsResult<Value<'s>> {
+        self.get_raw_name(crate::string::atom_raw(name))
+    }
+
+    fn get_raw_name(&self, name: sys::JSStringRef) -> JsResult<Value<'s>> {
         let _pool = crate::autorelease::Pool::new();
         let mut exc = ptr::null();
-        let v = unsafe { sys::JSObjectGetProperty(self.ctx, self.raw, name.as_raw(), &mut exc) };
+        let v = unsafe { sys::JSObjectGetProperty(self.ctx, self.raw, name, &mut exc) };
         check(self.ctx, exc)?;
         Ok(unsafe { Value::from_raw(self.ctx, v) })
     }
@@ -283,9 +314,28 @@ impl<'s> Object<'s> {
     }
 
     pub fn set_with(&self, name: &JsString, value: Value<'_>, attrs: sys::JSPropertyAttributes) -> JsResult<()> {
+        self.set_raw_name(name.as_raw(), value, attrs)
+    }
+
+    /// [`Object::set`] for a constant name (see [`Object::get_atom`]).
+    pub fn set_atom(&self, name: &'static str, value: Value<'_>) -> JsResult<()> {
+        self.set_raw_name(crate::string::atom_raw(name), value, sys::kJSPropertyAttributeNone)
+    }
+
+    /// [`Object::set_with`] for a constant name (see [`Object::get_atom`]).
+    pub fn set_atom_with(
+        &self,
+        name: &'static str,
+        value: Value<'_>,
+        attrs: sys::JSPropertyAttributes,
+    ) -> JsResult<()> {
+        self.set_raw_name(crate::string::atom_raw(name), value, attrs)
+    }
+
+    fn set_raw_name(&self, name: sys::JSStringRef, value: Value<'_>, attrs: sys::JSPropertyAttributes) -> JsResult<()> {
         let _pool = crate::autorelease::Pool::new();
         let mut exc = ptr::null();
-        unsafe { sys::JSObjectSetProperty(self.ctx, self.raw, name.as_raw(), value.raw, attrs, &mut exc) };
+        unsafe { sys::JSObjectSetProperty(self.ctx, self.raw, name, value.raw, attrs, &mut exc) };
         check(self.ctx, exc)
     }
 
@@ -299,6 +349,12 @@ impl<'s> Object<'s> {
     pub fn has(&self, name: &str) -> bool {
         let _pool = crate::autorelease::Pool::new();
         unsafe { sys::JSObjectHasProperty(self.ctx, self.raw, JsString::new(name).as_raw()) }
+    }
+
+    /// [`Object::has`] for a constant name (see [`Object::get_atom`]).
+    pub fn has_atom(&self, name: &'static str) -> bool {
+        let _pool = crate::autorelease::Pool::new();
+        unsafe { sys::JSObjectHasProperty(self.ctx, self.raw, crate::string::atom_raw(name)) }
     }
 
     pub fn delete(&self, name: &str) -> JsResult<bool> {
@@ -427,7 +483,6 @@ pub(crate) fn check(ctx: sys::JSContextRef, exc: sys::JSValueRef) -> JsResult<()
     }
 }
 
-/// Arguments of a native callback.
 /// A JavaScript string's characters as JSC keeps them ([`Value::string_units`]).
 #[derive(Clone, Copy, Debug)]
 pub enum StringUnits<'a> {
@@ -463,12 +518,13 @@ impl StringUnits<'_> {
 
     pub fn to_string_lossy(&self) -> String {
         match self {
-            StringUnits::Latin1(b) => b.iter().map(|&c| char::from(c)).collect(),
-            StringUnits::Utf16(u) => String::from_utf16_lossy(u),
+            StringUnits::Latin1(b) => latin1_to_string(b),
+            StringUnits::Utf16(u) => utf16_to_string(u),
         }
     }
 }
 
+/// Arguments of a native callback.
 #[derive(Clone, Copy)]
 pub struct Args<'s> {
     pub(crate) ctx: sys::JSContextRef,
@@ -588,7 +644,34 @@ impl<'s> Scope<'s> {
         unsafe { Value::from_raw(self.ctx, sys::JSValueMakeNumber(self.ctx, n)) }
     }
     pub fn string(&self, s: &str) -> Value<'s> {
+        // Patched JSC makes the value from the characters: one copy into the
+        // string, where `JSValueMakeString` needs a `JSStringRef` made and
+        // released around it, copies twice and takes the API lock.
+        if let Some(d) = sys::spi::direct_strings() {
+            // SAFETY: a live context of this thread; JSC copies the slice.
+            let v = with_host_units(s, |units| unsafe {
+                match units {
+                    HostUnits::Latin1(b) => (d.make_latin1)(self.ctx, b.as_ptr(), b.len()),
+                    HostUnits::Utf16(u) => (d.make_utf16)(self.ctx, u.as_ptr(), u.len()),
+                }
+            });
+            if !v.is_null() {
+                return unsafe { Value::from_raw(self.ctx, v) };
+            }
+        }
         self.js_string(&JsString::new(s))
+    }
+    /// A string of UTF-16 code units, unpaired surrogates kept (what a
+    /// `DOMString` may hold and `&str` cannot).
+    pub fn string_utf16(&self, units: &[u16]) -> Value<'s> {
+        if let Some(d) = sys::spi::direct_strings() {
+            // SAFETY: as in `string`.
+            let v = unsafe { (d.make_utf16)(self.ctx, units.as_ptr(), units.len()) };
+            if !v.is_null() {
+                return unsafe { Value::from_raw(self.ctx, v) };
+            }
+        }
+        self.js_string(&JsString::from_utf16(units))
     }
     /// The realm's one JavaScript string for a shared host string (see
     /// `RealmInner::shared_strings`): for values with few distinct contents
@@ -624,6 +707,41 @@ impl<'s> Scope<'s> {
     }
     pub fn global(&self) -> Object<'s> {
         unsafe { Object::from_raw(self.ctx, self.global_object_raw()) }
+    }
+
+    /// `value`, a value of another realm of this engine, as a value of this
+    /// scope: the same JavaScript value, used with this realm's context from
+    /// now on (no copy, no protect/unprotect, unlike a round trip through a
+    /// [`crate::Persistent`]).
+    ///
+    /// Sound because a JavaScript value belongs to the VM, not to a realm:
+    /// every context of the engine's context group can use it, and the
+    /// result's context is this scope's, alive for `'s`. Rooting is
+    /// unchanged: like any [`Value`], the result is kept alive by being on
+    /// the stack (see the module docs), not by the realm it came from, so a
+    /// value that was only reachable from a scope that has since ended must
+    /// still be held in a local. Panics for a value of another engine,
+    /// which no context of this one may touch.
+    pub fn rehome(&self, value: Value<'_>) -> Value<'s> {
+        self.assert_same_engine(value.ctx);
+        // SAFETY: a live value of this VM (checked above), rooted per the module rule.
+        unsafe { Value::from_raw(self.ctx, value.raw) }
+    }
+
+    /// [`Scope::rehome`] for an object.
+    pub fn rehome_object(&self, object: Object<'_>) -> Object<'s> {
+        self.assert_same_engine(object.ctx);
+        // SAFETY: as in `rehome`.
+        unsafe { Object::from_raw(self.ctx, object.raw) }
+    }
+
+    fn assert_same_engine(&self, ctx: sys::JSContextRef) {
+        // SAFETY: both contexts are live (the value's scope, or another
+        // realm of a live engine); reading the group runs no script.
+        assert!(
+            ctx == self.ctx || unsafe { sys::JSContextGetGroup(ctx) } == self.engine_inner().group(),
+            "rehome: the value belongs to another engine"
+        );
     }
 }
 

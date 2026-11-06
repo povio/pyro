@@ -13,23 +13,27 @@ mod autorelease;
 mod class;
 mod engine;
 mod error;
+mod interned;
 mod persistent;
 mod realm;
 mod string;
 mod value;
 
 pub use accessors::slot_usage as accessor_slot_usage;
-pub use class::{ClassDef, ClassId, GetterResult, JsClass, NoParent};
+pub use class::{ClassDef, ClassId, GetterResult, GetterThisFn, JsClass, MethodThisFn, NoParent};
 pub use engine::{
     ImpureNames,
     configure_process, prepare_process_for_fork, Capabilities, ConsoleLevel, Engine, EngineHooks, TerminateHandle,
     WrapperPropertyHook,
 };
+pub use engine::set_allocator_release;
 pub use error::{JsError, JsException, JsResult};
+pub use interned::InternedId;
 pub use persistent::{Persistent, RootedVec};
 pub use realm::{
-    Deferred, IdentityKey, ModuleFetcher, ModuleRequest, NameUnits, NamedProperties, NativeCallbackHook, Realm,
-    RealmId, RealmOptions, Scope, UnhandledRejectionHandler, ValueDescription, WeakRealm, WrapperRef,
+    Deferred, IdentityKey, LazyGlobalConstant, ModuleFetcher, ModuleRequest, NameUnits, NamedProperties,
+    NativeCallbackHook, Realm, RealmId, RealmOptions, Scope, UnhandledRejectionHandler, ValueDescription, WeakRealm,
+    WrapperRef,
 };
 pub use string::{atom, JsString};
 pub use value::{Args, JsType, Object, StringUnits, Value};

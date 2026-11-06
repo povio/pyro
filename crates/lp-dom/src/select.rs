@@ -4,6 +4,7 @@
 
 use std::borrow::Borrow;
 use std::fmt;
+use std::rc::Rc;
 
 use cssparser::{CowRcStr, ParseError, Parser as CssParser, ToCss};
 use markup5ever::{local_name, ns, LocalName, Namespace};
@@ -20,7 +21,8 @@ use selectors::OpaqueElement;
 
 use crate::dom::Dom;
 use crate::error::{DomError, DomErrorKind, DomResult};
-use crate::node::{NodeId, NodeKind, NIL};
+use crate::node::{Atom, NodeId, NodeKind, NIL};
+use crate::select_query::FastList;
 
 #[derive(Debug, Clone)]
 pub struct Impl;
@@ -58,6 +60,27 @@ impl ToCss for CssLocalName {
     }
 }
 impl PrecomputedHash for CssLocalName {
+    fn precomputed_hash(&self) -> u32 {
+        self.0.precomputed_hash()
+    }
+}
+
+/// An id or class name in a selector: the atom elements store theirs as
+/// (`ElementData::id_atom`, `ElementData::classes`), so matching compares
+/// atoms.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct CssIdent(pub Atom);
+impl<'a> From<&'a str> for CssIdent {
+    fn from(s: &'a str) -> Self {
+        CssIdent(Atom::from(s))
+    }
+}
+impl ToCss for CssIdent {
+    fn to_css<W: fmt::Write>(&self, dest: &mut W) -> fmt::Result {
+        cssparser::serialize_identifier(&self.0, dest)
+    }
+}
+impl PrecomputedHash for CssIdent {
     fn precomputed_hash(&self) -> u32 {
         self.0.precomputed_hash()
     }
@@ -184,7 +207,7 @@ impl selectors::parser::PseudoElement for PseudoElement {}
 impl selectors::parser::SelectorImpl for Impl {
     type ExtraMatchingData<'a> = ();
     type AttrValue = CssString;
-    type Identifier = CssLocalName;
+    type Identifier = CssIdent;
     type LocalName = CssLocalName;
     type NamespaceUrl = CssNamespace;
     type NamespacePrefix = CssLocalName;
@@ -314,8 +337,16 @@ impl<'i> selectors::parser::Parser<'i> for SelParser<'_> {
                     return Err(invalid());
                 }
             }
-            "highlight" | "cue" | "cue-region" | "view-transition-group" | "view-transition-image-pair"
-            | "view-transition-old" | "view-transition-new" | "picker" | "scroll-button" | "column" => {
+            "highlight"
+            | "cue"
+            | "cue-region"
+            | "view-transition-group"
+            | "view-transition-image-pair"
+            | "view-transition-old"
+            | "view-transition-new"
+            | "picker"
+            | "scroll-button"
+            | "column" => {
                 // The argument is kept only for serialization.
                 while parser.next().is_ok() {}
             }
@@ -327,7 +358,7 @@ impl<'i> selectors::parser::Parser<'i> for SelParser<'_> {
 }
 
 /// Percent-decodes a URL fragment (bytes compared to the element's UTF-8 id).
-fn percent_decode(s: &str) -> Vec<u8> {
+pub(crate) fn percent_decode(s: &str) -> Vec<u8> {
     let b = s.as_bytes();
     let mut out = Vec::with_capacity(b.len());
     let mut i = 0;
@@ -390,12 +421,14 @@ pub fn parse_selectors_in(text: &str, namespaces: &[(String, String)]) -> DomRes
 }
 
 /// A selector list for the DOM's query APIs: Stylo's (`crate::stylo::select`),
-/// or lp-dom's when only it parses one. Queries for one id, class, tag or attribute
-/// presence take lp-dom's direct paths (id index, cached class sets).
+/// or lp-dom's when only it parses one. Lists of type, id, class and attribute
+/// tests under descendant and child combinators also have a compiled form
+/// (`crate::select_query`), which the queries take instead.
 #[derive(Clone)]
 pub struct Query {
     stylo: Option<crate::stylo::select::List>,
     lp: Option<Selectors>,
+    fast: Option<std::sync::Arc<FastList>>,
 }
 
 /// Parses a selector list for [`Dom::query_first`] and friends; invalid
@@ -404,16 +437,36 @@ pub fn parse_query(text: &str) -> DomResult<Query> {
     let stylo = crate::stylo::select::parse(text);
     let lp = match &stylo {
         None => Some(parse_selectors(text)?),
-        // One id, class, tag or attribute presence: lp-dom's direct tests
-        // (the id index, cached class sets) beat general matching.
-        Some(_) => parse_selectors(text).ok().filter(|l| simple(l).is_some()),
+        Some(_) => None,
     };
-    Ok(Query { stylo, lp })
+    let fast = match (&stylo, &lp) {
+        (Some(list), _) => crate::select_query::compile(list),
+        (None, Some(list)) => crate::select_query::compile(list),
+        (None, None) => None,
+    };
+    Ok(Query { stylo, lp, fast: fast.map(std::sync::Arc::new) })
+}
+
+impl Query {
+    /// Whether the queries take the compiled form (tests).
+    #[doc(hidden)]
+    pub fn is_compiled(&self) -> bool {
+        self.fast.is_some()
+    }
 }
 
 impl Dom {
     /// `querySelector`: the first element below `root` matching `q`.
     pub fn query_first(&self, root: NodeId, q: &Query) -> DomResult<Option<NodeId>> {
+        if let Some(fast) = &q.fast {
+            let r = self.check(root)?;
+            let mut first = NIL;
+            self.fast_select(r, fast, true, |i| {
+                first = i;
+                false
+            });
+            return Ok(self.opt_id(first));
+        }
         match (&q.stylo, &q.lp) {
             (_, Some(lp)) => self.query_selector(root, lp),
             (Some(list), None) => {
@@ -426,18 +479,39 @@ impl Dom {
 
     /// `querySelectorAll`: the elements below `root` matching `q`, in tree order.
     pub fn query_all(&self, root: NodeId, q: &Query) -> DomResult<Vec<NodeId>> {
+        let mut out = Vec::new();
+        self.query_all_into(root, q, &mut out)?;
+        Ok(out)
+    }
+
+    /// [`Dom::query_all`] appending to `out`, a buffer the caller may keep
+    /// for the next query (no growth of a fresh vector per call).
+    pub fn query_all_into(&self, root: NodeId, q: &Query, out: &mut Vec<NodeId>) -> DomResult<()> {
+        if let Some(fast) = &q.fast {
+            let r = self.check(root)?;
+            self.fast_select(r, fast, false, |i| {
+                out.push(self.id_of(i));
+                true
+            });
+            return Ok(());
+        }
         match (&q.stylo, &q.lp) {
-            (_, Some(lp)) => self.query_selector_all(root, lp),
+            (_, Some(lp)) => out.extend(self.query_selector_all(root, lp)?),
             (Some(list), None) => {
                 let r = self.check(root)?;
-                Ok(crate::stylo::select::query(self, r, list, false).into_iter().map(|i| self.id_of(i)).collect())
+                out.extend(crate::stylo::select::query(self, r, list, false).into_iter().map(|i| self.id_of(i)));
             }
-            (None, None) => Ok(Vec::new()),
+            (None, None) => {}
         }
+        Ok(())
     }
 
     /// `Element.matches(selectors)`.
     pub fn element_matches(&self, el: NodeId, q: &Query) -> DomResult<bool> {
+        if let Some(fast) = &q.fast {
+            let (_, n) = self.live(el)?;
+            return self.fast_matches(n, fast).ok_or(DomError::Type("not an element"));
+        }
         match (&q.stylo, &q.lp) {
             (Some(list), _) => {
                 let i = self.check(el)?;
@@ -453,6 +527,10 @@ impl Dom {
 
     /// `Element.closest(selectors)`.
     pub fn element_closest(&self, el: NodeId, q: &Query) -> DomResult<Option<NodeId>> {
+        if let Some(fast) = &q.fast {
+            let (i, n) = self.live(el)?;
+            return Ok(self.fast_closest(i, n, fast).map(|i| self.id_of(i)));
+        }
         match (&q.stylo, &q.lp) {
             (Some(list), _) => {
                 let i = self.check(el)?;
@@ -471,10 +549,16 @@ impl Dom {
 #[derive(Default)]
 pub struct SelectorCache {
     map: FxHashMap<Box<str>, Query>,
-    /// The same queries keyed by a hash of the selector's UTF-16 units, for
-    /// callers that have the JavaScript string's characters and no `String`
-    /// (`Element.matches` runs thousands of times per Playwright locator).
-    by_units: FxHashMap<u64, (Box<[u16]>, Query)>,
+    /// The same queries keyed by the selector's characters as a JavaScript
+    /// string stores them (one map per width), for callers that have those
+    /// and no `String`: `Element.matches` runs thousands of times per
+    /// Playwright locator, and a lookup is one hash and compare of the bytes.
+    latin1: FxHashMap<Rc<[u8]>, Rc<Query>>,
+    utf16: FxHashMap<Box<[u16]>, Query>,
+    /// The Latin-1 selector looked up last and its query (shared with
+    /// `latin1`): a run of calls with one selector, as a selector engine's
+    /// `matches` loop makes, compares the characters and nothing else.
+    last: Option<(Rc<[u8]>, Rc<Query>)>,
 }
 const SELECTOR_CACHE_CAP: usize = 512;
 impl SelectorCache {
@@ -483,34 +567,62 @@ impl SelectorCache {
             return Ok(s.clone());
         }
         let s = parse_query(text)?;
-        if self.map.len() >= SELECTOR_CACHE_CAP {
-            self.map.clear();
-            self.by_units.clear();
-        }
+        self.make_room(self.map.len());
         self.map.insert(text.into(), s.clone());
         Ok(s)
     }
 
-    /// [`SelectorCache::get`] for a selector given as its code units, with
-    /// `hash` over them (the same for either width) and `text` building the
-    /// `String` only on a miss. A hash collision falls back to the text.
-    pub fn get_units(
-        &mut self,
-        hash: u64,
-        same: impl Fn(&[u16]) -> bool,
-        units: impl FnOnce() -> Box<[u16]>,
-        text: impl FnOnce() -> String,
-    ) -> DomResult<Query> {
-        if let Some((key, q)) = self.by_units.get(&hash) {
-            if same(key) {
-                return Ok(q.clone());
-            }
-            return self.get(&text());
+    /// Empties the cache when a map about to gain an entry (holding `len`)
+    /// is full. Each map is checked: several UTF-16 keys (lone surrogates)
+    /// convert to one text, so `utf16` can outgrow `map`.
+    fn make_room(&mut self, len: usize) {
+        if len >= SELECTOR_CACHE_CAP {
+            self.map.clear();
+            self.latin1.clear();
+            self.utf16.clear();
+            self.last = None;
         }
-        let text = text();
-        let q = self.get(&text)?;
-        self.by_units.insert(hash, (units(), q.clone()));
-        Ok(q)
+    }
+
+    /// Entries in the cache's maps (tests).
+    #[doc(hidden)]
+    pub fn entry_count(&self) -> usize {
+        self.map.len() + self.latin1.len() + self.utf16.len()
+    }
+
+    /// `f` on the query of a selector given as Latin-1 characters, without
+    /// taking it out of the cache.
+    pub fn with_latin1<R>(&mut self, chars: &[u8], f: impl FnOnce(&Query) -> R) -> DomResult<R> {
+        if let Some((key, q)) = &self.last {
+            if **key == *chars {
+                return Ok(f(q));
+            }
+        }
+        let (key, q) = match self.latin1.get_key_value(chars) {
+            Some((key, q)) => (key.clone(), q.clone()),
+            None => {
+                let q = Rc::new(self.get(&chars.iter().map(|&c| char::from(c)).collect::<String>())?);
+                self.make_room(self.latin1.len());
+                let key: Rc<[u8]> = chars.into();
+                self.latin1.insert(key.clone(), q.clone());
+                (key, q)
+            }
+        };
+        let r = f(&q);
+        self.last = Some((key, q));
+        Ok(r)
+    }
+
+    /// [`SelectorCache::with_latin1`] for UTF-16 code units.
+    pub fn with_utf16<R>(&mut self, units: &[u16], f: impl FnOnce(&Query) -> R) -> DomResult<R> {
+        if let Some(q) = self.utf16.get(units) {
+            return Ok(f(q));
+        }
+        let q = self.get(&String::from_utf16_lossy(units))?;
+        let r = f(&q);
+        self.make_room(self.utf16.len());
+        self.utf16.insert(units.into(), q);
+        Ok(r)
     }
 }
 
@@ -518,18 +630,6 @@ impl SelectorCache {
 pub struct ElemRef<'a> {
     dom: &'a Dom,
     idx: u32,
-}
-
-/// Per-element class tokens as interned atoms sorted by their precomputed
-/// hash, valid for one (DOM uid, version).
-#[derive(Default)]
-struct ClassSets {
-    key: (u64, u64),
-    sets: FxHashMap<u32, Box<[LocalName]>>,
-}
-
-thread_local! {
-    static CLASS_SETS: std::cell::RefCell<ClassSets> = std::cell::RefCell::new(ClassSets::default());
 }
 
 impl fmt::Debug for ElemRef<'_> {
@@ -574,6 +674,9 @@ impl selectors::Element for ElemRef<'_> {
         p != NIL && matches!(&self.dom.n(p).kind, NodeKind::Fragment(f) if f.shadow.is_some())
     }
     fn containing_shadow_host(&self) -> Option<Self> {
+        if !self.dom.n(self.idx).in_shadow_tree() {
+            return None;
+        }
         let root = self.dom.root_idx(self.idx);
         match &self.dom.n(root).kind {
             NodeKind::Fragment(f) if f.shadow.is_some() => self.wrap(f.host),
@@ -637,46 +740,26 @@ impl selectors::Element for ElemRef<'_> {
         let d = self.data();
         d.is_html() && d.name.local == local_name!("slot")
     }
-    fn has_id(&self, id: &CssLocalName, cs: CaseSensitivity) -> bool {
-        self.data().id().is_some_and(|v| cs.eq(v.as_bytes(), id.0.as_bytes()))
-    }
-    fn has_class(&self, name: &CssLocalName, cs: CaseSensitivity) -> bool {
-        if cs != CaseSensitivity::CaseSensitive {
-            return self
-                .data()
-                .attr("class")
-                .is_some_and(|v| v.split_ascii_whitespace().any(|c| cs.eq(c.as_bytes(), name.0.as_bytes())));
-        }
-        // Tailwind class attributes run to dozens of tokens and selector
-        // matching tests them repeatedly (rightmost class, then ancestors for
-        // descendant combinators): keep each element's token hashes for the
-        // current DOM version.
-        let wanted = name.0.precomputed_hash();
-        CLASS_SETS.with(|cache| {
-            let mut cache = cache.borrow_mut();
-            let key = (self.dom.uid(), self.dom.version());
-            if cache.key != key {
-                cache.key = key;
-                cache.sets.clear();
-            }
-            let set = cache.sets.entry(self.idx).or_insert_with(|| {
-                let mut atoms: Vec<LocalName> =
-                    self.data().attr("class").unwrap_or("").split_ascii_whitespace().map(LocalName::from).collect();
-                atoms.sort_unstable_by_key(|a| a.precomputed_hash());
-                atoms.into_boxed_slice()
-            });
-            // Interned atoms: equal strings are the same atom.
-            let start = set.partition_point(|a| a.precomputed_hash() < wanted);
-            set[start..].iter().take_while(|a| a.precomputed_hash() == wanted).any(|a| *a == name.0)
+    fn has_id(&self, id: &CssIdent, cs: CaseSensitivity) -> bool {
+        self.data().id_atom().is_some_and(|own| match cs {
+            CaseSensitivity::CaseSensitive => *own == id.0,
+            CaseSensitivity::AsciiCaseInsensitive => own.eq_ignore_ascii_case(&id.0),
         })
     }
-    fn has_custom_state(&self, _name: &CssLocalName) -> bool {
+    fn has_class(&self, name: &CssIdent, cs: CaseSensitivity) -> bool {
+        let classes = self.data().classes();
+        match cs {
+            CaseSensitivity::CaseSensitive => classes.contains(&name.0),
+            CaseSensitivity::AsciiCaseInsensitive => classes.iter().any(|c| c.eq_ignore_ascii_case(&name.0)),
+        }
+    }
+    fn has_custom_state(&self, _name: &CssIdent) -> bool {
         false
     }
-    fn imported_part(&self, _name: &CssLocalName) -> Option<CssLocalName> {
+    fn imported_part(&self, _name: &CssIdent) -> Option<CssIdent> {
         None
     }
-    fn is_part(&self, _name: &CssLocalName) -> bool {
+    fn is_part(&self, _name: &CssIdent) -> bool {
         false
     }
     fn is_empty(&self) -> bool {
@@ -701,25 +784,23 @@ impl Dom {
     }
 
     fn is_link(&self, idx: u32) -> bool {
-        self.n(idx)
-            .element()
-            .is_some_and(|e| e.is_html() && matches!(&*e.name.local, "a" | "area" | "link") && e.attr("href").is_some())
+        self.n(idx).element().is_some_and(|e| {
+            e.is_html()
+                && matches!(&*e.name.local, "a" | "area" | "link")
+                && e.attr_local(&local_name!("href")).is_some()
+        })
     }
 
     /// `:target`: the element the document URL's fragment names.
+    /// An element of the document tree whose id is the URL's decoded
+    /// fragment, which the document keeps as an atom (`DocumentData::url_target`).
     fn is_url_target(&self, idx: u32) -> bool {
-        let Some(id) = self.n(idx).element().and_then(|e| e.id()) else { return false };
-        let doc = self.n(idx).owner_doc;
-        if self.root_idx(idx) != doc {
+        let n = self.n(idx);
+        let Some(id) = n.element().and_then(|e| e.id_atom()) else { return false };
+        if !n.in_document_tree() {
             return false;
         }
-        let NodeKind::Document(d) = &self.n(doc).kind else { return false };
-        let Some((_, frag)) = d.url.split_once('#') else { return false };
-        if frag.is_empty() {
-            return false;
-        }
-        let decoded = percent_decode(frag);
-        decoded == id.as_bytes()
+        matches!(&self.n(n.owner_doc).kind, NodeKind::Document(d) if d.url_target.as_ref() == Some(id))
     }
 
     pub(crate) fn matches_state(&self, idx: u32, pc: &PseudoClass) -> bool {
@@ -739,12 +820,12 @@ impl Dom {
             Indeterminate => e.control.as_ref().is_some_and(|c| c.indeterminate),
             Disabled => self.is_disabled_idx(idx),
             Enabled => self.is_form_control_idx(idx) && !self.is_disabled_idx(idx),
-            Required => self.is_form_control_idx(idx) && e.attr("required").is_some(),
-            Optional => self.is_form_control_idx(idx) && e.attr("required").is_none(),
+            Required => self.is_form_control_idx(idx) && e.attr_local(&local_name!("required")).is_some(),
+            Optional => self.is_form_control_idx(idx) && e.attr_local(&local_name!("required")).is_none(),
             ReadWrite => self.is_mutable_text_idx(idx),
             ReadOnly => !self.is_mutable_text_idx(idx),
             PlaceholderShown => {
-                e.attr("placeholder").is_some()
+                e.attr_local(&local_name!("placeholder")).is_some()
                     && self.is_mutable_text_idx(idx)
                     && self.control_value_idx(idx).is_empty()
             }
@@ -759,8 +840,10 @@ impl Dom {
             }
             Defined => !e.name.local.contains('-') || e.flags & crate::node::element_flags::CUSTOM_DEFINED != 0,
             Default => {
-                (e.is_html() && matches!(&*e.name.local, "input") && e.attr("checked").is_some())
-                    || (e.is_html() && e.name.local == local_name!("option") && e.attr("selected").is_some())
+                (e.is_html() && matches!(&*e.name.local, "input") && e.attr_local(&local_name!("checked")).is_some())
+                    || (e.is_html()
+                        && e.name.local == local_name!("option")
+                        && e.attr_local(&local_name!("selected")).is_some())
             }
             Empty => false,
             Valid | Invalid => {
@@ -780,12 +863,19 @@ impl Dom {
                 } else {
                     self.validity(id).map(|v| v.valid()).unwrap_or(true)
                 };
-                    (*pc == Valid) == ok
+                (*pc == Valid) == ok
             }
-            Open => e.is_html() && matches!(&*e.name.local, "details" | "dialog") && e.attr("open").is_some(),
+            Open => {
+                e.is_html()
+                    && matches!(&*e.name.local, "details" | "dialog")
+                    && e.attr_local(&local_name!("open")).is_some()
+            }
             // A dialog shown with `showModal()` that is still open.
             Modal => {
-                e.is_html() && &*e.name.local == "dialog" && e.attr("open").is_some() && self.is_modal_idx(idx)
+                e.is_html()
+                    && &*e.name.local == "dialog"
+                    && e.attr_local(&local_name!("open")).is_some()
+                    && self.is_modal_idx(idx)
             }
             PopoverOpen => self.is_popover_showing_idx(idx),
         }
@@ -863,18 +953,13 @@ impl Dom {
         let r = self.check(root)?;
         let quirks = self.quirks(r) == SelQuirks::Quirks;
         if let (Some(Simple::Id(id)), false) = (simple(sel), quirks) {
-            // The id index gives the first element with the id in the tree:
-            // the answer when it is inside the scope. (Duplicate ids, a match
-            // outside the scope: scan.)
-            let tree = self.root_idx(r);
-            match self.get_element_by_id(self.id_of(tree), id)? {
-                None => return Ok(None),
-                Some(found) => {
-                    let f = self.check(found)?;
-                    if f != r && self.is_inclusive_ancestor(r, f) {
-                        return Ok(Some(found));
-                    }
-                }
+            // A tree scope's id map gives the first element with the id in
+            // the tree: the answer when it is inside the scope. (Duplicate
+            // ids, a match outside the scope, a detached tree: scan.)
+            match self.indexed_by_id(self.root_idx(r), id) {
+                Some(NIL) => return Ok(None),
+                Some(f) if f != r && self.is_inclusive_ancestor(r, f) => return Ok(Some(self.id_of(f))),
+                _ => {}
             }
         }
         let mut first = None;
@@ -890,7 +975,7 @@ impl Dom {
         let r = self.check(root)?;
         if let (Some(Simple::Id(id)), false) = (simple(sel), self.quirks(r) == SelQuirks::Quirks) {
             // No element with the id in the whole tree: nothing to scan.
-            if self.get_element_by_id(self.id_of(self.root_idx(r)), id)?.is_none() {
+            if self.indexed_by_id(self.root_idx(r), id) == Some(NIL) {
                 return Ok(Vec::new());
             }
         }
@@ -922,10 +1007,6 @@ impl Dom {
         if self.n(r).is_element() {
             ctx.scope_element = Some(OpaqueElement::new(self.n(r)));
         }
-        let class = match &fast {
-            Some(Simple::Class(name)) => Some(CssLocalName((*name).clone())),
-            _ => None,
-        };
         let mut cur = self.n(r).first_child;
         while cur != NIL {
             if let Some(e) = self.n(cur).element() {
@@ -934,12 +1015,8 @@ impl Dom {
                         let want = if html_doc && e.is_html() { lower } else { name };
                         e.name.local == **want
                     }
-                    // The per-element class sets `has_class` keeps for the
-                    // DOM version (long Tailwind attributes split once).
-                    Some(Simple::Class(_)) => {
-                        let name = class.as_ref().expect("class");
-                        selectors::Element::has_class(&self.element_ref(cur), name, CaseSensitivity::CaseSensitive)
-                    }
+                    // The class atoms parsed when the attribute was written.
+                    Some(Simple::Class(name)) => e.has_class(name),
                     Some(Simple::Attr(name, lower)) => {
                         let want = if html_doc && e.is_html() { lower } else { name };
                         e.attrs.iter().any(|a| a.name.ns == ns!() && a.name.local == **want)
@@ -958,8 +1035,8 @@ impl Dom {
 /// A selector list of one selector made of one simple selector, which
 /// `select` tests without the matching machinery.
 enum Simple<'a> {
-    Id(&'a str),
-    Class(&'a LocalName),
+    Id(&'a Atom),
+    Class(&'a Atom),
     /// The name as written and lowercased (HTML elements in HTML documents).
     Tag(&'a LocalName, &'a LocalName),
     /// `[name]` in no namespace: as written and lowercased.

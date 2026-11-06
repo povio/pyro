@@ -29,8 +29,71 @@ impl WrapperRef {
         Ok(unsafe { Value::from_raw(s.ctx(), wrapper.value().as_raw()) }.as_object().expect("wrapper"))
     }
 
-    pub(crate) fn hidden<'s>(&self, s: &Scope<'s>, key: &str) -> JsResult<Option<Value<'s>>> {
+    pub(crate) fn hidden<'s>(&self, s: &Scope<'s>, key: &'static str) -> JsResult<Option<Value<'s>>> {
         s.get_hidden(self.get(s)?, key)
+    }
+}
+
+/// An interned atom as a JavaScript string: the realm's one string for it,
+/// made on the first read (see [`Scope::interned_string`]).
+pub(crate) trait AtomJs {
+    fn js<'s>(&self, s: &Scope<'s>) -> Value<'s>;
+}
+
+/// The identity is string_cache's own: an atom's bits, which its equality
+/// compares. A static atom's bits are an index into its set, so the second
+/// half tells the sets apart (and 4 is `upper_local_name`); a dynamic atom's
+/// are its entry's address, reusable once the atom is freed.
+macro_rules! atom_js {
+    ($($atom:ty => $set:literal),* $(,)?) => {$(
+        impl AtomJs for $atom {
+            #[inline]
+            fn js<'s>(&self, s: &Scope<'s>) -> Value<'s> {
+                s.interned_string((self.unsafe_data(), $set), self, self.is_dynamic())
+            }
+        }
+    )*};
+}
+atom_js!(lp_dom::Atom => 0, markup5ever::LocalName => 1, markup5ever::Namespace => 2, markup5ever::Prefix => 3);
+
+/// A local name uppercased (`tagName` of an HTML element in an HTML
+/// document), by the local name's identity.
+#[inline]
+pub(crate) fn upper_local_name<'s>(s: &Scope<'s>, local: &markup5ever::LocalName) -> Value<'s> {
+    s.interned_string_with((local.unsafe_data(), 4), local, local.is_dynamic(), || {
+        str::to_ascii_uppercase(local).into()
+    })
+}
+
+/// An element's id atom as a string: `""` when it has none.
+#[inline]
+pub(crate) fn atom_or_empty<'s>(s: &Scope<'s>, atom: Option<&lp_dom::Atom>) -> Value<'s> {
+    match atom {
+        Some(a) => a.js(s),
+        None => lp_dom::Atom::default().js(s),
+    }
+}
+
+/// An attribute's value as a string: the atom the element keeps for it
+/// ([`lp_dom::node::ElementData::attr_atom`]), else the realm's string for
+/// that text ([`Scope::text_string`]: one per distinct value, by its hash).
+/// Nothing is done when the attribute is written.
+#[inline]
+pub(crate) fn attr_value<'s>(s: &Scope<'s>, value: &str, atom: Option<&lp_dom::Atom>) -> Value<'s> {
+    match atom {
+        Some(a) => a.js(s),
+        None => s.text_string(value),
+    }
+}
+
+/// `className` (and the class list's `value`): `""` without the attribute.
+/// A one-token value is its token's atom, any other its text (interning the
+/// value when written made every class write dearer).
+#[inline]
+pub(crate) fn class_name<'s>(s: &Scope<'s>, el: &lp_dom::node::ElementData) -> Value<'s> {
+    match el.class_value() {
+        Some((value, atom)) => attr_value(s, value, atom),
+        None => lp_dom::Atom::default().js(s),
     }
 }
 
@@ -79,36 +142,50 @@ pub fn arg_string(a: &Args<'_>, i: usize, what: &str) -> JsResult<String> {
 /// are for.
 pub fn with_arg_str<R>(a: &Args<'_>, i: usize, what: &str, f: impl FnOnce(&str) -> JsResult<R>) -> JsResult<R> {
     a.require(i + 1, what)?;
-    let v = a.get(i);
+    with_str(a.get(i), f)
+}
+
+/// Runs `f` with `v` converted as [`dom_string`] does, borrowing the
+/// characters of an ASCII string (see [`with_arg_str`]).
+pub fn with_str<R>(v: Value<'_>, f: impl FnOnce(&str) -> JsResult<R>) -> JsResult<R> {
+    f(&str_of(&v)?)
+}
+
+/// `v` converted as [`dom_string`] does: the characters of an ASCII string
+/// borrowed (see [`with_arg_str`]), anything else converted.
+pub fn str_of<'v>(v: &'v Value<'_>) -> JsResult<std::borrow::Cow<'v, str>> {
     if let Some(lp_js::StringUnits::Latin1(bytes)) = v.string_units() {
         if bytes.is_ascii() {
             // SAFETY: ASCII bytes are UTF-8.
-            return f(unsafe { std::str::from_utf8_unchecked(bytes) });
+            return Ok(std::borrow::Cow::Borrowed(unsafe { std::str::from_utf8_unchecked(bytes) }));
         }
     }
-    f(&dom_string(v)?)
+    dom_string(*v).map(std::borrow::Cow::Owned)
 }
 
-/// The parsed selector list of argument `i`, from the page's cache. A string
-/// argument is looked up by its characters, without making a `String`
-/// (patched JSC); anything else is converted as `arg_string` does.
-pub fn arg_selector(
+/// `f` on the parsed selector list of argument `i`, from the page's cache
+/// (not copied out of it; `f` must not use the cache). A string argument is
+/// looked up by its characters, without making a `String` (patched JSC);
+/// anything else is converted as `arg_string` does.
+pub fn with_selector<R>(
     a: &Args<'_>,
     i: usize,
     what: &str,
     page: &crate::page::PageDom,
-) -> JsResult<lp_dom::select::Query> {
+    f: impl FnOnce(&lp_dom::select::Query) -> R,
+) -> JsResult<R> {
     a.require(i + 1, what)?;
     let v = a.get(i);
-    if let Some(units) = v.string_units() {
-        return page
-            .selectors
-            .borrow_mut()
-            .get_units(units.fx_hash(), |key| units.eq_units(key), || units.to_units(), || units.to_string_lossy())
-            .js();
+    match v.string_units() {
+        Some(lp_js::StringUnits::Latin1(chars)) => page.selectors.borrow_mut().with_latin1(chars, f).js(),
+        Some(lp_js::StringUnits::Utf16(units)) => page.selectors.borrow_mut().with_utf16(units, f).js(),
+        None => {
+            // The conversion may run script, which may query selectors.
+            let sel = dom_string(v)?;
+            let q = page.selectors.borrow_mut().get(&sel).js()?;
+            Ok(f(&q))
+        }
     }
-    let sel = dom_string(v)?;
-    page.selectors.borrow_mut().get(&sel).js()
 }
 
 /// `[LegacyNullToEmptyString]` (innerHTML, textContent setter semantics).

@@ -149,7 +149,7 @@ impl AbortSignalData {
         let mut reached = Vec::new();
         if let Some(list) = dependents {
             let reason = self.reason(s);
-            let len = list.get("length").and_then(|v| v.to_number()).unwrap_or(0.0) as u32;
+            let len = list.get_atom("length").and_then(|v| v.to_number()).unwrap_or(0.0) as u32;
             for i in 0..len {
                 let Some(dependent) = list.get_index(i).ok().and_then(|v| s.unwrap::<AbortSignal>(v)) else { continue };
                 if dependent.set_aborted(s, reason) {
@@ -240,7 +240,7 @@ impl JsClass for AbortSignal {
                 rethrow_algorithm_exception()?;
                 Ok(s.undefined())
             })?;
-            let set_timeout = s.global().get("setTimeout")?;
+            let set_timeout = s.global().get_atom("setTimeout")?;
             if let Some(f) = set_timeout.as_object() {
                 f.call(None, &[cb.value(), s.number(ms)])?;
             }
@@ -250,7 +250,7 @@ impl JsClass for AbortSignal {
             let sig = new_signal(s)?;
             let list =
                 a.get(0).as_object().ok_or_else(|| JsError::Type("AbortSignal.any requires an iterable".into()))?;
-            let len = list.get("length")?.to_number()? as u32;
+            let len = list.get_atom("length")?.to_number()? as u32;
             // "create a dependent abort signal": an aborted signal in the
             // list gives its reason; otherwise the result follows each
             // signal, or the sources of one that is itself dependent.
@@ -273,7 +273,7 @@ impl JsClass for AbortSignal {
                 let Some(sources) = s.get_hidden(src.wrapper.get(s)?, SOURCES)?.and_then(|v| v.as_object()) else {
                     continue;
                 };
-                let count = sources.get("length")?.to_number()? as u32;
+                let count = sources.get_atom("length")?.to_number()? as u32;
                 for j in 0..count {
                     follow(s, sources.get_index(j)?, sig)?;
                 }
@@ -288,7 +288,7 @@ impl JsClass for AbortSignal {
 fn follow<'s>(s: &Scope<'s>, source: Value<'s>, dependent: Object<'s>) -> JsResult<()> {
     let Some(source) = source.as_object() else { return Ok(()) };
     let dependents = hidden_list(s, source, DEPENDENTS)?;
-    let len = dependents.get("length")?.to_number()? as u32;
+    let len = dependents.get_atom("length")?.to_number()? as u32;
     // A source reached twice: `dependent` was just made, so it can only be
     // the entry this `AbortSignal.any` call appended last.
     if len > 0 && dependents.get_index(len - 1)?.strict_equals(dependent.value()) {
@@ -296,12 +296,12 @@ fn follow<'s>(s: &Scope<'s>, source: Value<'s>, dependent: Object<'s>) -> JsResu
     }
     dependents.set_index(len, dependent.value())?;
     let sources = hidden_list(s, dependent, SOURCES)?;
-    let len = sources.get("length")?.to_number()? as u32;
+    let len = sources.get_atom("length")?.to_number()? as u32;
     sources.set_index(len, source.value())
 }
 
 /// The array kept as `owner`'s hidden property `key`, made on first use.
-fn hidden_list<'s>(s: &Scope<'s>, owner: Object<'s>, key: &str) -> JsResult<Object<'s>> {
+fn hidden_list<'s>(s: &Scope<'s>, owner: Object<'s>, key: &'static str) -> JsResult<Object<'s>> {
     if let Some(list) = s.get_hidden(owner, key)?.and_then(|v| v.as_object()) {
         return Ok(list);
     }

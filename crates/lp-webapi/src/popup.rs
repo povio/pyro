@@ -219,7 +219,7 @@ impl PopupData {
         let Some((_, realm)) = self.reachable_page()? else { return Ok(None) };
         let scope = realm.scope()?;
         let value = scope.global().get(name)?;
-        Ok(Some(Persistent::new(&scope, value).get(s)))
+        Ok(Some(s.rehome(value)))
     }
 
     /// `popup.fetch(...)`: the popup's own `fetch` once its page exists,
@@ -229,13 +229,13 @@ impl PopupData {
         match self.reachable_page()? {
             Some((_, realm)) => {
                 let scope = realm.scope()?;
-                let fetch = scope.global().get("fetch")?;
+                let fetch = scope.global().get_atom("fetch")?;
                 let fetch = fetch.as_object().filter(|f| f.is_function()).ok_or(JsError::ContextDestroyed)?;
                 let result = fetch.call(None, &args)?;
-                Ok(Persistent::new(&scope, result).get(s))
+                Ok(s.rehome(result))
             }
             None => {
-                let fetch = s.global().get("fetch")?;
+                let fetch = s.global().get_atom("fetch")?;
                 let fetch = fetch.as_object().filter(|f| f.is_function()).ok_or(JsError::ContextDestroyed)?;
                 fetch.call(None, &args)
             }
@@ -247,7 +247,7 @@ impl PopupData {
         if let Some((page, realm)) = self.reachable_page()? {
             let scope = realm.scope()?;
             let value = crate::storage::window_storage(&scope, &page, session)?;
-            return Ok(Persistent::new(&scope, value).get(s));
+            return Ok(s.rehome(value));
         }
         if !self.same_origin() {
             return Err(JsError::dom("SecurityError", "Blocked a frame from accessing a cross-origin frame."));
@@ -276,7 +276,7 @@ impl PopupData {
         a.require(1, "Window.postMessage")?;
         let (target_origin, options) = match a.get(1).as_object() {
             Some(o) if !a.get(1).is_array() => {
-                let t = o.get("targetOrigin")?;
+                let t = o.get_atom("targetOrigin")?;
                 let t = if t.is_undefined() { "/".to_owned() } else { t.to_string()? };
                 (t, a.get(1))
             }
@@ -285,7 +285,7 @@ impl PopupData {
                 let options = match a.opt(2) {
                     Some(v) if v.is_array() => {
                         let o = s.object();
-                        o.set("transfer", v)?;
+                        o.set_atom("transfer", v)?;
                         o.value()
                     }
                     Some(v) => v,

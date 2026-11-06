@@ -142,7 +142,7 @@ impl Dom {
         self.html_local(idx) == Some(&local_name!("input"))
     }
     pub(crate) fn input_type_idx(&self, idx: u32) -> InputType {
-        InputType::parse(self.n(idx).element().and_then(|e| e.attr("type")))
+        InputType::parse(self.n(idx).element().and_then(|e| e.attr_local(&local_name!("type"))))
     }
     pub fn input_type(&self, id: NodeId) -> DomResult<InputType> {
         let i = self.check(id)?;
@@ -161,17 +161,17 @@ impl Dom {
         let e = self.n(idx).element().unwrap();
         match &**local {
             "option" => {
-                if e.attr("disabled").is_some() {
+                if e.attr_local(&local_name!("disabled")).is_some() {
                     return true;
                 }
                 let p = self.n(idx).parent;
                 p != NIL
                     && self.html_local(p) == Some(&local_name!("optgroup"))
-                    && self.n(p).element().unwrap().attr("disabled").is_some()
+                    && self.n(p).element().unwrap().attr_local(&local_name!("disabled")).is_some()
             }
-            "optgroup" => e.attr("disabled").is_some(),
+            "optgroup" => e.attr_local(&local_name!("disabled")).is_some(),
             "input" | "button" | "select" | "textarea" | "fieldset" => {
-                if e.attr("disabled").is_some() {
+                if e.attr_local(&local_name!("disabled")).is_some() {
                     return true;
                 }
                 // Descendant of a disabled fieldset, unless inside its first legend.
@@ -179,7 +179,7 @@ impl Dom {
                 let mut p = self.n(idx).parent;
                 while p != NIL {
                     if self.html_local(p) == Some(&local_name!("fieldset"))
-                        && self.n(p).element().unwrap().attr("disabled").is_some()
+                        && self.n(p).element().unwrap().attr_local(&local_name!("disabled")).is_some()
                     {
                         let first_legend =
                             self.child_idx_iter(p).find(|&c| self.html_local(c) == Some(&local_name!("legend")));
@@ -206,9 +206,11 @@ impl Dom {
         let textual = match &**local {
             "textarea" => true,
             "input" => matches!(self.input_type_idx(idx).value_mode(), ValueMode::Value),
-            _ => return e.attr("contenteditable").is_some_and(|v| !v.eq_ignore_ascii_case("false")),
+            _ => {
+                return e.attr_local(&local_name!("contenteditable")).is_some_and(|v| !v.eq_ignore_ascii_case("false"))
+            }
         };
-        textual && e.attr("readonly").is_none() && !self.is_disabled_idx(idx)
+        textual && e.attr_local(&local_name!("readonly")).is_none() && !self.is_disabled_idx(idx)
     }
 
     pub(crate) fn checkedness_idx(&self, idx: u32) -> bool {
@@ -218,7 +220,7 @@ impl Dom {
         let e = self.n(idx).element().unwrap();
         match &e.control {
             Some(c) if c.dirty_checked => c.checked.unwrap_or(false),
-            _ => e.attr("checked").is_some(),
+            _ => e.attr_local(&local_name!("checked")).is_some(),
         }
     }
     pub fn checked(&self, id: NodeId) -> DomResult<bool> {
@@ -249,16 +251,12 @@ impl Dom {
     /// Form owner: `form` attribute target or nearest ancestor form.
     pub(crate) fn form_owner_idx(&self, idx: u32) -> u32 {
         let Some(e) = self.n(idx).element() else { return NIL };
-        if let Some(fid) = e.attr("form") {
+        if let Some(fid) = e.attr_local(&local_name!("form")) {
+            // The first element with that id in the tree: the tree scope's
+            // id map (an empty id is never indexed: walk for it).
             let root = self.root_idx(idx);
-            let mut cur = self.n(root).first_child;
-            while cur != NIL {
-                if self.n(cur).element().is_some_and(|ce| ce.id() == Some(fid)) {
-                    return if self.html_local(cur) == Some(&local_name!("form")) { cur } else { NIL };
-                }
-                cur = self.following_in(cur, root);
-            }
-            return NIL;
+            let found = if fid.is_empty() { self.walk_by_id(root, fid) } else { self.first_by_id(root, fid) };
+            return if found != NIL && self.html_local(found) == Some(&local_name!("form")) { found } else { NIL };
         }
         let mut p = self.n(idx).parent;
         while p != NIL {
@@ -275,7 +273,9 @@ impl Dom {
     }
 
     pub(crate) fn radio_group(&self, idx: u32) -> Vec<u32> {
-        let Some(name) = self.n(idx).element().and_then(|e| e.attr("name")).filter(|n| !n.is_empty()) else {
+        let Some(name) =
+            self.n(idx).element().and_then(|e| e.attr_local(&local_name!("name"))).filter(|n| !n.is_empty())
+        else {
             return vec![idx];
         };
         let form = self.form_owner_idx(idx);
@@ -285,7 +285,7 @@ impl Dom {
         while cur != NIL {
             if self.is_input(cur)
                 && self.input_type_idx(cur) == InputType::Radio
-                && self.n(cur).element().unwrap().attr("name") == Some(name)
+                && self.n(cur).element().unwrap().attr_local(&local_name!("name")) == Some(name)
                 && self.form_owner_idx(cur) == form
             {
                 out.push(cur);
@@ -309,7 +309,7 @@ impl Dom {
         let e = self.n(idx).element().unwrap();
         match e.control.as_ref().and_then(|c| c.selected) {
             Some(s) => s,
-            None => e.attr("selected").is_some(),
+            None => e.attr_local(&local_name!("selected")).is_some(),
         }
     }
     /// Before `node` leaves its parent: an option its select shows as
@@ -369,7 +369,7 @@ impl Dom {
         out
     }
     fn is_multiple(&self, select: u32) -> bool {
-        self.n(select).element().unwrap().attr("multiple").is_some()
+        self.n(select).element().unwrap().attr_local(&local_name!("multiple")).is_some()
     }
     /// Selectedness setting algorithm applied on read: single selects with
     /// display size 1 select their first non-disabled option when none is.
@@ -387,8 +387,13 @@ impl Dom {
         if deselected == Some(opts.as_slice()) {
             return Vec::new();
         }
-        let size =
-            self.n(select).element().unwrap().attr("size").and_then(|s| s.trim().parse::<u32>().ok()).unwrap_or(1);
+        let size = self
+            .n(select)
+            .element()
+            .unwrap()
+            .attr_local(&local_name!("size"))
+            .and_then(|s| s.trim().parse::<u32>().ok())
+            .unwrap_or(1);
         if size <= 1 {
             if let Some(&first) = opts.iter().find(|&&o| !self.is_disabled_idx(o)) {
                 return vec![first];
@@ -460,7 +465,7 @@ impl Dom {
     /// `option.value`: value attribute or stripped/collapsed text.
     pub fn option_value(&self, opt: NodeId) -> DomResult<String> {
         let o = self.check(opt)?;
-        if let Some(v) = self.n(o).element().and_then(|e| e.attr("value")) {
+        if let Some(v) = self.n(o).element().and_then(|e| e.attr_local(&local_name!("value"))) {
             return Ok(v.to_owned());
         }
         Ok(self.option_text_idx(o))
@@ -489,10 +494,10 @@ impl Dom {
                 match ty.value_mode() {
                     ValueMode::Value => match e.control.as_ref().and_then(|c| c.value.as_ref()) {
                         Some(v) => v.clone(),
-                        None => sanitize(ty, e.attr("value").unwrap_or("")),
+                        None => sanitize(ty, e.attr_local(&local_name!("value")).unwrap_or("")),
                     },
-                    ValueMode::Default => e.attr("value").unwrap_or("").to_owned(),
-                    ValueMode::DefaultOn => e.attr("value").unwrap_or("on").to_owned(),
+                    ValueMode::Default => e.attr_local(&local_name!("value")).unwrap_or("").to_owned(),
+                    ValueMode::DefaultOn => e.attr_local(&local_name!("value")).unwrap_or("on").to_owned(),
                     ValueMode::Filename => e
                         .control
                         .as_ref()
@@ -513,7 +518,7 @@ impl Dom {
                 None => String::new(),
             },
             "option" => self.option_value(id)?,
-            _ => e.attr("value").unwrap_or("").to_owned(),
+            _ => e.attr_local(&local_name!("value")).unwrap_or("").to_owned(),
         })
     }
 
@@ -645,7 +650,13 @@ impl Dom {
         }
         let (a, b) = utf16_range(&value, s, e - s)?;
         value.replace_range(a..b, &text);
-        if let Some(max) = self.n(i).element().unwrap().attr("maxlength").and_then(|m| m.trim().parse::<u32>().ok()) {
+        if let Some(max) = self
+            .n(i)
+            .element()
+            .unwrap()
+            .attr_local(&local_name!("maxlength"))
+            .and_then(|m| m.trim().parse::<u32>().ok())
+        {
             if utf16_len(&value) > max && !text.is_empty() {
                 return Ok(false);
             }
@@ -729,15 +740,15 @@ impl Dom {
         if !self.is_connected(id)? || self.is_disabled_idx(i) {
             return Ok(false);
         }
-        if e.attr("tabindex").is_some_and(|t| t.trim().parse::<i32>().is_ok()) {
+        if e.attr_local(&local_name!("tabindex")).is_some_and(|t| t.trim().parse::<i32>().is_ok()) {
             return Ok(true);
         }
-        if e.attr("contenteditable").is_some_and(|v| !v.eq_ignore_ascii_case("false")) {
+        if e.attr_local(&local_name!("contenteditable")).is_some_and(|v| !v.eq_ignore_ascii_case("false")) {
             return Ok(true);
         }
         Ok(e.is_html()
             && match &*e.name.local {
-                "a" | "area" => e.attr("href").is_some(),
+                "a" | "area" => e.attr_local(&local_name!("href")).is_some(),
                 "input" => self.input_type_idx(i) != InputType::Hidden,
                 "button" | "select" | "textarea" | "iframe" | "summary" => true,
                 _ => false,
@@ -796,10 +807,16 @@ impl Dom {
         let listed = match &**local {
             "input" => !matches!(self.input_type_idx(i), InputType::Hidden | InputType::Reset | InputType::Button),
             "select" | "textarea" => true,
-            "button" => !matches!(e.attr("type").map(|t| t.to_ascii_lowercase()).as_deref(), Some("reset" | "button")),
+            "button" => !matches!(
+                e.attr_local(&local_name!("type")).map(|t| t.to_ascii_lowercase()).as_deref(),
+                Some("reset" | "button")
+            ),
             _ => false,
         };
-        if !listed || self.is_disabled_idx(i) || (e.attr("readonly").is_some() && &**local != "select") {
+        if !listed
+            || self.is_disabled_idx(i)
+            || (e.attr_local(&local_name!("readonly")).is_some() && &**local != "select")
+        {
             return Ok(false);
         }
         // Not inside a <datalist>.
@@ -825,7 +842,7 @@ impl Dom {
         let local = self.html_local(i).map(|l| l.to_string()).unwrap_or_default();
         v.custom_error =
             e.control.as_ref().is_some_and(|c| c.custom_validity.as_deref().is_some_and(|m| !m.is_empty()));
-        let required = e.attr("required").is_some();
+        let required = e.attr_local(&local_name!("required")).is_some();
         let value = self.value(id)?;
         match local.as_str() {
             "input" => {
@@ -851,7 +868,7 @@ impl Dom {
                                     && !d.ends_with('.')
                                     && !a.contains(char::is_whitespace)
                             };
-                            v.type_mismatch = if e.attr("multiple").is_some() {
+                            v.type_mismatch = if e.attr_local(&local_name!("multiple")).is_some() {
                                 !value.split(',').all(|a| check(a.trim()))
                             } else {
                                 !check(&value)
@@ -860,10 +877,12 @@ impl Dom {
                         InputType::Url => v.type_mismatch = !value.contains(':') || value.starts_with(':'),
                         InputType::Number | InputType::Range => {
                             if let Ok(n) = value.parse::<f64>() {
-                                if let Some(min) = e.attr("min").and_then(|m| m.parse::<f64>().ok()) {
+                                if let Some(min) = e.attr_local(&local_name!("min")).and_then(|m| m.parse::<f64>().ok())
+                                {
                                     v.range_underflow = n < min;
                                 }
-                                if let Some(max) = e.attr("max").and_then(|m| m.parse::<f64>().ok()) {
+                                if let Some(max) = e.attr_local(&local_name!("max")).and_then(|m| m.parse::<f64>().ok())
+                                {
                                     v.range_overflow = n > max;
                                 }
                             }
@@ -878,7 +897,7 @@ impl Dom {
                     let sel = self.selected_options_idx(i);
                     // Placeholder label option (first, empty value, size 1 single select).
                     sel.is_empty()
-                        || (e.attr("multiple").is_none()
+                        || (e.attr_local(&local_name!("multiple")).is_none()
                             && sel.first() == self.select_options_idx(i).first()
                             && self.option_value(self.id_of(sel[0]))?.is_empty())
                 };
@@ -889,10 +908,10 @@ impl Dom {
         let dirty = e.control.as_ref().is_some_and(|c| c.dirty_value && c.user_edited);
         if dirty && !value.is_empty() {
             let len = crate::dom::utf16_len(&value) as i64;
-            if let Some(max) = e.attr("maxlength").and_then(|m| m.trim().parse::<i64>().ok()) {
+            if let Some(max) = e.attr_local(&local_name!("maxlength")).and_then(|m| m.trim().parse::<i64>().ok()) {
                 v.too_long = len > max;
             }
-            if let Some(min) = e.attr("minlength").and_then(|m| m.trim().parse::<i64>().ok()) {
+            if let Some(min) = e.attr_local(&local_name!("minlength")).and_then(|m| m.trim().parse::<i64>().ok()) {
                 v.too_short = len < min;
             }
         }

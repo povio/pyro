@@ -502,7 +502,7 @@ fn rules_array<'s>(
         s.set_hidden(holder, GENERATION, s.number(generation as f64))?;
     }
     let rules = list.rules.borrow().clone();
-    array.set("length", s.number(0.0))?;
+    array.set_atom("length", s.number(0.0))?;
     for (i, rule) in rules.iter().enumerate() {
         let wrapper = rule_wrapper(s, rule, owner)?;
         array.set_index(i as u32, wrapper.value())?;

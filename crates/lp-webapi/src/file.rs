@@ -30,7 +30,7 @@ fn blob_parts(s: &Scope<'_>, parts: Value<'_>) -> JsResult<Vec<u8>> {
         }
         return Err(JsError::Type("The provided value cannot be converted to a sequence.".into()));
     };
-    let len = list.get("length")?.to_number()? as u32;
+    let len = list.get_atom("length")?.to_number()? as u32;
     for i in 0..len {
         let p = list.get_index(i)?;
         if let Some(b) = s.unwrap::<Blob>(p) {
@@ -47,7 +47,7 @@ fn blob_parts(s: &Scope<'_>, parts: Value<'_>) -> JsResult<Vec<u8>> {
 fn mime_of(opts: Value<'_>) -> JsResult<String> {
     match opts.as_object() {
         Some(o) => {
-            let t = o.get("type")?;
+            let t = o.get_atom("type")?;
             if t.is_undefined() {
                 Ok(String::new())
             } else {
@@ -124,7 +124,7 @@ impl JsClass for File {
             let name = dom_string(a.get(1))?;
             let mime = mime_of(a.get(2))?;
             let lm = match a.get(2).as_object() {
-                Some(o) if !o.get("lastModified")?.is_undefined() => o.get("lastModified")?.to_number()?,
+                Some(o) if !o.get_atom("lastModified")?.is_undefined() => o.get_atom("lastModified")?.to_number()?,
                 _ => crate::encoding::now_ms(),
             };
             s.wrap_new::<File>(BlobData { bytes: Bytes::from(bytes), mime, file: Some((name, lm)) }, nt, None)

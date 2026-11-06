@@ -1285,11 +1285,128 @@ fn disposal_scenario() -> (Engine, std::rc::Weak<PageDom>) {
     assert!(dropped.get(), "embedder hook cycle was not broken");
     assert_eq!(page.pinned_count(), 0);
     assert_eq!(eval(&main, "window.dispatchEvent(new Event('test')); document.querySelector('#target').dispatchEvent(new Event('test')); fired"), "0");
+    // Script of the disposed page fills per-realm caches of it again (Event
+    // `isTrusted`, Headers, URLSearchParams, TextDecoder, window listeners):
+    // they go with the page once its realm is disposed, which releases the
+    // global's `document` (the page's way back to them).
+    eval(
+        &main,
+        "try { new Headers({a: '1'}).get('a'); new URLSearchParams('a=1').get('a'); \
+         new TextDecoder().decode(new DataView(new ArrayBuffer(2))); window.addEventListener('late', () => {}); } catch {}",
+    );
     assert!(install(&main.scope().unwrap(), page.clone()).is_err());
     main.dispose();
     drop(main);
     drop(page);
     (engine, weak)
+}
+
+#[test]
+fn a_held_window_of_a_torn_down_page_keeps_neither_its_document_nor_its_page() {
+    // Another realm keeps the window's global (a stale `iframe.contentWindow`
+    // after a navigation): the global's `document` goes with its realm, so the
+    // old tree is freed, and reading it throws as on any disposed window.
+    let (engine, dom, holder, weak, live) = held_window_scenario();
+    overwrite_dead_stack();
+    for _ in 0..6 {
+        engine.collect_garbage_now();
+        engine.drain_finalized();
+        dom.borrow_mut().collect_garbage();
+    }
+    assert!(weak.upgrade().is_none(), "a held window kept its PageDom alive");
+    let left = dom.borrow().live_nodes();
+    assert!(left < live / 10, "a held window kept its document: {left} of {live} nodes left");
+    assert_eq!(
+        eval(&holder, "try { held.document; 'read' } catch (e) { e.message }"),
+        "Execution context was destroyed."
+    );
+}
+
+#[inline(never)]
+fn held_window_scenario() -> (Engine, DomRef, Realm, std::rc::Weak<PageDom>, usize) {
+    let Env { engine, page, main } = env(&format!("<body>{}</body>", "<div><p>x</p></div>".repeat(500)));
+    // Hot enough for the optimizing JIT to fold `document`.
+    assert_eq!(
+        eval(
+            &main,
+            "let n = 0; for (let i = 0; i < 200000; i++) n += document.nodeType; document.body.children.length"
+        ),
+        "500"
+    );
+    let holder = engine.create_realm(RealmOptions::default()).unwrap();
+    {
+        let s = main.scope().unwrap();
+        let global = lp_js::Persistent::new(&s, s.global().value());
+        let hs = holder.scope().unwrap();
+        hs.global().set("held", global.get(&hs)).unwrap();
+    }
+    assert_eq!(eval(&holder, "held.document.body.children.length"), "500");
+    let dom = page.dom.clone();
+    let live = dom.borrow().live_nodes();
+    assert!(live > 1500, "{live}");
+    let weak = Rc::downgrade(&page);
+    // Navigation's teardown of a frame (lp-browser `frames.rs`).
+    page.dispose();
+    lifecycle::realm_disposed(&page, main.id());
+    main.dispose();
+    dom.borrow_mut().set_document_active(page.document(), false).unwrap();
+    drop(main);
+    drop(page);
+    (engine, dom, holder, weak, live)
+}
+
+#[test]
+fn a_windows_document_has_one_getter_from_install_to_teardown() {
+    // [LegacyUnforgeable] `document` is the global's own accessor, its value
+    // made on the first read. Its `get` stays one function throughout (before
+    // that read, after it, after the realm is torn down), so descriptors
+    // taken early apply again as they are: the snapshot and restore of a
+    // global's properties that sandboxes and test harnesses do.
+    let Env { engine, page, main } = env("<body><p></p></body>");
+    if !window::has_window_constants() {
+        // The system framework serves `document` from Window.prototype.
+        return;
+    }
+    let holder = engine.create_realm(RealmOptions::default()).unwrap();
+    {
+        let s = main.scope().unwrap();
+        let global = lp_js::Persistent::new(&s, s.global().value());
+        let hs = holder.scope().unwrap();
+        hs.global().set("held", global.get(&hs)).unwrap();
+    }
+    eval(&holder, "globalThis.early = Object.getOwnPropertyDescriptor(held, 'document').get");
+    assert_eq!(
+        eval(
+            &main,
+            "globalThis.snap = Object.getOwnPropertyDescriptors(globalThis); \
+             [typeof snap.document.get, snap.document.set, snap.document.enumerable, snap.document.configurable, \
+              'document' in Window.prototype].join()"
+        ),
+        "function,,true,false,false"
+    );
+    assert_eq!(
+        eval(
+            &main,
+            "const first = document.body.firstChild.nodeName; \
+             const failed = Object.keys(snap).filter(k => { try { Object.defineProperty(globalThis, k, snap[k]); return false; } \
+               catch { return true; } }); \
+             [first, Object.getOwnPropertyDescriptor(globalThis, 'document').get === snap.document.get, \
+              snap.document.get.call(window) === document, failed.join('|')].join()"
+        ),
+        "P,true,true,"
+    );
+    // Navigation's teardown of a frame (lp-browser `frames.rs`).
+    page.dispose();
+    lifecycle::realm_disposed(&page, main.id());
+    main.dispose();
+    assert_eq!(
+        eval(
+            &holder,
+            "[Object.getOwnPropertyDescriptor(held, 'document').get === early, \
+              (() => { try { held.document; return 'read'; } catch (e) { return e.message; } })()].join()"
+        ),
+        "true,Execution context was destroyed."
+    );
 }
 
 /// Overwrites the stack below the caller's frame (see the test above).
@@ -3446,6 +3563,8 @@ fn worker_past_the_document_cap_fails_like_a_failed_load() {
     let tasks = Rc::new(ObserverTasks::default());
     e.page.set_hooks(Some(tasks.clone()));
     let r = &e.main;
+    // The realm's document wrapper, kept while connected.
+    let base = e.page.pinned_count();
     let more = MAX_WORKERS_PER_DOCUMENT + 4;
     eval(
         r,
@@ -3453,7 +3572,7 @@ fn worker_past_the_document_cap_fails_like_a_failed_load() {
     );
     tasks.drain();
     assert_eq!(eval(r, "errors"), more.to_string());
-    assert_eq!(e.page.pinned_count(), 0);
+    assert_eq!(e.page.pinned_count(), base);
 }
 
 #[test]
@@ -5133,7 +5252,8 @@ fn reflected_urls_follow_attributes_bases_adoption_and_document_replacement() {
     assert_eq!(eval(&e.main, "r.href"), "https://moved.example/relative.js");
     e.page.set_document(other);
     assert_eq!(
-        eval(&e.main, "[r.href,document.getElementById('new').href].join('|')"),
+        // The realm keeps its document; the replacement is `r`'s now.
+        eval(&e.main, "[r.href,r.ownerDocument.getElementById('new').href].join('|')"),
         "https://moved.example/relative.js|https://moved.example/new.js"
     );
     e.page.dom.borrow_mut().adopt_node(doc, node).unwrap();
@@ -5737,6 +5857,29 @@ fn removing_the_focused_element_fires_blur_and_focusout_first() {
     assert_eq!(
         eval(r, "const h = make('h'); h.addEventListener('blur', () => document.getElementById('other').appendChild(h), { once: true }); let err = ''; try { h.parentNode.removeChild(h); } catch (x) { err = x.name; } [err, h.parentNode.id].join(':')"),
         "NotFoundError:other"
+    );
+}
+
+/// `textContent =` converts its value before the focused element inside
+/// loses focus (an object's `toString` runs first), and reads a string's
+/// characters only after the blur handlers ran. A handler that uses the
+/// string as a property key while an equal atom exists swaps the string's
+/// buffer for the atom's; a collection keeps the old buffer only while it
+/// finds the string on the stack, so a read of it can't be relied on. This
+/// checks the text after such a handler and its allocations; it can't force
+/// the collection to drop the old buffer.
+#[test]
+fn text_content_converts_before_the_blur_and_reads_the_string_after() {
+    let e = env("<body><div id=cell></div></body>");
+    let r = &e.main;
+    eval(r, "window.log = []; window.cell = document.getElementById('cell'); window.focusIn = (onBlur) => { const i = document.createElement('input'); cell.appendChild(i); i.focus(); i.addEventListener('blur', () => { log.push('blur'); onBlur(); }, { once: true }); };");
+    assert_eq!(
+        eval(r, "focusIn(() => {}); cell.textContent = { toString() { log.push('toString'); return 'object'; } }; log.join() + '|' + cell.textContent"),
+        "toString,blur|object"
+    );
+    assert_eq!(
+        eval(r, "log.length = 0; const tail = 'x'.repeat(4000) + Math.random(); window.atom = 'text-' + tail; ({})[atom] = 1; window.key = 'text-' + tail; focusIn(() => { ({})[key] = 1; let a; for (let n = 0; n < 200000; n++) a = [n, n]; }); cell.textContent = key; [log.join(), cell.textContent === atom, cell.firstChild.data.length === atom.length].join()"),
+        "blur,true,true"
     );
 }
 
@@ -6700,4 +6843,115 @@ fn legacy_events_request_and_observable() {
     assert_eq!(eval(r, "const o3 = []; const ac = new AbortController(); new Observable(s => { s.addTeardown(() => o3.push('a')); s.addTeardown(() => o3.push('b')) }).subscribe({}, {signal: ac.signal}); ac.abort(); o3.join()"), "b,a");
     assert_eq!(eval(r, "const o4 = []; document.getElementById('t').when('click').subscribe(ev => o4.push(ev.type)); document.getElementById('t').dispatchEvent(new Event('click')); o4.join()"), "click");
     assert_eq!(eval(r, "typeof Subscriber + ':' + (() => { try { new Subscriber(); return 'no' } catch (e) { return e.constructor.name } })()"), "function:TypeError");
+}
+
+#[test]
+fn atom_valued_reads_follow_every_change() {
+    let e = env("<!doctype html><html><body><div id=a class='x y'>t</div></body></html>");
+    let r = &e.main;
+    assert_eq!(
+        eval(r, "const d = document.getElementById('a'); [d.id, d.className, d.localName, d.getAttribute('id'), d.getAttribute('class'), d.classList.value, d.classList[1], d.classList.item(0), String(d.prefix), d.namespaceURI].join('|')"),
+        "a|x y|div|a|x y|x y|y|x|null|http://www.w3.org/1999/xhtml"
+    );
+    // Writes through every path read back at once.
+    assert_eq!(eval(r, "d.id = 'b'; d.id + '|' + d.getAttribute('id')"), "b|b");
+    assert_eq!(eval(r, "d.setAttribute('id', 'a-much-longer-identifier'); d.id"), "a-much-longer-identifier");
+    assert_eq!(eval(r, "d.getAttributeNode('id').value = 'c'; d.id"), "c");
+    assert_eq!(eval(r, "d.removeAttribute('id'); JSON.stringify([d.id, d.getAttribute('id')])"), r#"["",null]"#);
+    assert_eq!(
+        eval(r, "d.className = 'z'; [d.className, d.getAttribute('class'), d.classList.value, d.classList[0]].join()"),
+        "z,z,z,z"
+    );
+    assert_eq!(eval(r, "d.classList.add('w'); d.className + '|' + d.classList"), "z w|z w");
+    assert_eq!(
+        eval(r, "d.className = '  z  '; JSON.stringify([d.className, d.classList.length, d.classList[0]])"),
+        r#"["  z  ",1,"z"]"#
+    );
+    assert_eq!(
+        eval(r, "d.className = 'q q r'; [...d.classList].join() + '|' + d.classList[1] + '|' + d.classList[2]"),
+        "q,r|r|undefined"
+    );
+    assert_eq!(
+        eval(
+            r,
+            "d.removeAttribute('class'); JSON.stringify([d.className, d.classList.value, d.getAttribute('class')])"
+        ),
+        r#"["","",null]"#
+    );
+    assert_eq!(
+        eval(r, "d.className = 'k'; const c = d.cloneNode(); d.className = 'm'; c.className + '|' + d.className"),
+        "k|m"
+    );
+    // Values of the same length one after another (the new value may take
+    // the old one's allocation), read between writes.
+    assert_eq!(
+        eval(r, "const seen = []; for (const v of ['aa bb', 'cc dd', 'aa bb', 'ee ff']) { d.className = v; seen.push(d.className, d.getAttribute('class'), d.classList.value); } seen.join()"),
+        "aa bb,aa bb,aa bb,cc dd,cc dd,cc dd,aa bb,aa bb,aa bb,ee ff,ee ff,ee ff"
+    );
+    assert_eq!(
+        eval(r, "const dx = []; for (const v of ['one two', 'one twx', '', 'x']) { d.setAttribute('data-x', v); dx.push(d.getAttribute('data-x'), d.getAttribute('data-x')); } d.removeAttribute('data-x'); dx.push(d.getAttribute('data-x')); JSON.stringify(dx)"),
+        r#"["one two","one two","one twx","one twx","","","x","x",null]"#
+    );
+    // Long values (no table entry over 1 KB) and non-ASCII text.
+    assert_eq!(
+        eval(r, "const out = []; for (const v of ['y'.repeat(1024), 'z'.repeat(1025), 'z'.repeat(1024) + 'w', '\\u00e9t\\u00e9 \\u65e5\\u672c', '\\u00e9t\\u00e9 \\u65e5\\u672d']) { d.setAttribute('data-v', v); const a = d.getAttribute('data-v'), b = d.getAttribute('data-v'); out.push(a === v && b === v); } out.join()"),
+        "true,true,true,true,true"
+    );
+    assert_eq!(
+        eval(r, "d.className = 'solo'; d.className + '|' + d.getAttribute('class') + '|' + d.classList.value"),
+        "solo|solo|solo"
+    );
+    // getAttribute('id') is the first attribute with that qualified name: here
+    // a namespaced one, not the element's id.
+    assert_eq!(
+        eval(r, "const n = document.createElement('p'); n.setAttributeNS('urn:x', 'id', 'ns'); n.setAttributeNS(null, 'id', 'plain'); n.id + '|' + n.getAttribute('id')"),
+        "plain|ns"
+    );
+    assert_eq!(
+        eval(r, "n.setAttributeNS('http://www.w3.org/1999/xlink', 'xlink:href', 'u'); n.getAttributeNames().join()"),
+        "id,id,xlink:href"
+    );
+    assert_eq!(
+        eval(r, "[...n.attributes].map(a => [a.name, a.localName, a.prefix, a.namespaceURI].join(' ')).join()"),
+        "id id  urn:x,id id  ,xlink:href href xlink http://www.w3.org/1999/xlink"
+    );
+    assert_eq!(
+        eval(r, "const g = document.createElementNS('http://www.w3.org/2000/svg', 'x:svg'); [g.localName, g.prefix, g.namespaceURI, g.tagName].join()"),
+        "svg,x,http://www.w3.org/2000/svg,x:svg"
+    );
+    assert_eq!(
+        eval(r, "const h = document.createElementNS('http://www.w3.org/1999/xhtml', 'h:Div'); [h.tagName, h.nodeName, h.tagName, h.localName, document.body.tagName, document.body.nodeName].join()"),
+        "H:DIV,H:DIV,H:DIV,Div,BODY,BODY"
+    );
+    // Strings are per realm; the isolated world reads the same values.
+    let iso = new_realm(&e.engine, e.engine.register::<TestWindow>(), &e.page, "isolated");
+    assert_eq!(
+        eval(&iso, "const o = document.querySelector('div'); o.id + '|' + o.className + '|' + o.localName"),
+        "|solo|div"
+    );
+    assert_eq!(eval(r, "d.id = 'from-main'; d.id"), "from-main");
+    assert_eq!(eval(&iso, "o.id"), "from-main");
+}
+
+#[test]
+fn ids_read_once_do_not_accumulate() {
+    let e = env("<!doctype html><html><body><main id=list></main></body></html>");
+    let r = &e.main;
+    // 20000 distinct ids and class values, each read once and dropped, with
+    // collections in between.
+    for batch in 0..10 {
+        eval(
+            r,
+            &format!(
+                "(() => {{ const list = document.getElementById('list'); list.textContent = ''; for (let i = 0; i < 2000; i++) {{ const d = document.createElement('div'); d.id = 'row-{batch}-' + i; d.className = 'cell cell-{batch}-' + i; list.appendChild(d); }} let n = 0; for (const d of list.children) n += d.id.length + d.className.length; return n; }})()"
+            ),
+        );
+        e.engine.collect_garbage_now();
+    }
+    let n = e.main.interned_string_count();
+    assert!(n <= 6000, "{n} interned strings for 40000 distinct values read once");
+    assert_eq!(eval(r, "const last = document.getElementById('list').lastChild; last.id + '|' + last.className"), "row-9-1999|cell cell-9-1999");
+    lp_webapi::lifecycle::realm_disposed(&e.page, e.main.id());
+    e.main.dispose();
+    assert_eq!(e.main.interned_string_count(), 0);
 }
