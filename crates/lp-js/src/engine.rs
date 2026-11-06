@@ -863,9 +863,24 @@ unsafe extern "C" fn should_terminate(ctx: sys::JSContextRef, data: *mut c_void)
     false
 }
 
+/// What returns the process allocator's free pages when it is not the
+/// system's ([`set_allocator_release`]).
+static ALLOCATOR_RELEASE: std::sync::OnceLock<fn()> = std::sync::OnceLock::new();
+
+/// Registers how the executable's global allocator returns its free pages
+/// to the operating system: [`release_memory`] calls it besides the system
+/// allocator's own release. An executable that replaces the allocator sets
+/// it at the start of `main`.
+pub fn set_allocator_release(release: fn()) {
+    let _ = ALLOCATOR_RELEASE.set(release);
+}
+
 /// Returns the allocator's free pages to the operating system (what
 /// `malloc_trim(0)` does on glibc; `malloc_zone_pressure_relief` on macOS).
 pub fn release_memory() {
+    if let Some(release) = ALLOCATOR_RELEASE.get() {
+        release();
+    }
     #[cfg(target_os = "macos")]
     {
         unsafe extern "C" {
