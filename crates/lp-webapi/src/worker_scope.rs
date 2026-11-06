@@ -9,7 +9,7 @@
 //!
 //! API subset: `self`, `location`, `navigator`, `name`, `postMessage`, `close`,
 //! `onmessage`/`onmessageerror`/`onerror`, `importScripts`, timers,
-//! `queueMicrotask`, `fetch` and its classes, `XMLHttpRequest` (without
+//! `queueMicrotask`, `fetch` and its classes, `WebSocket`, `XMLHttpRequest` (without
 //! `responseXML`; relative URLs resolve against the script URL), `console`,
 //! `TextEncoder`/`Decoder`, `URL`, `atob`/`btoa`, `structuredClone`, `crypto`,
 //! `performance.now()`.
@@ -382,6 +382,7 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
         sched: event_loop.scheduler(),
         timers: RefCell::new(HashMap::new()),
         next_timer: Cell::new(1),
+        websocket_module: RefCell::new(None),
     };
     realm.set_global_data::<DedicatedWorkerGlobalScope>(scope)?;
     {
@@ -501,6 +502,8 @@ pub struct ScopeData {
     sched: Scheduler<WorkerLoop>,
     timers: RefCell<HashMap<u32, TimerId>>,
     next_timer: Cell<u32>,
+    /// websocket.js's module, made on the scope's first use of `WebSocket`.
+    pub(crate) websocket_module: RefCell<Option<Persistent>>,
 }
 
 fn set_timer<'s>(s: &Scope<'s>, g: &ScopeData, a: Args<'s>, repeat: bool) -> JsResult<Value<'s>> {
@@ -572,6 +575,7 @@ impl JsClass for WorkerGlobalScope {
             Ok(s.boolean(secure))
         });
         def.getter("crypto", |s, _g| crate::crypto::crypto_value(s));
+        crate::websocket::define_worker_globals(def);
         def.method("setTimeout", 1, |s, g, a| set_timer(s, g, a, false));
         def.method("setInterval", 1, |s, g, a| set_timer(s, g, a, true));
         def.method("clearTimeout", 0, clear_timer);
