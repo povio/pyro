@@ -13,7 +13,7 @@ diff --git a/Source/JavaScriptCore/API/JSWeakPrivate.cpp b/Source/JavaScriptCore
  #include "Weak.h"
  #include "WeakHandleOwner.h"
  #include <wtf/NeverDestroyed.h>
-@@ -87,6 +91,60 @@
+@@ -87,6 +91,67 @@
      return new OpaqueJSWeak(toJS(objectRef), &keptWhileOwner(), const_cast<unsigned char*>(keepAlive));
  }
  
@@ -64,7 +64,14 @@ diff --git a/Source/JavaScriptCore/API/JSWeakPrivate.cpp b/Source/JavaScriptCore
 +    JSGlobalObject* globalObject = toJS(ctx);
 +    VM& vm = globalObject->vm();
 +    JSLockHolder locker(vm);
-+    ASSERT(shape->structure->globalObject() == globalObject);
++    // A shape serves the global object that made it only: for another, the caller makes the
++    // wrapper the old way.
++    if (shape->structure->realm() != globalObject) [[unlikely]]
++        return nullptr;
++    // The object starts with the structure JSObject::setPrototypeDirect would move it to. The
++    // rest of setPrototypeDirect does nothing for a new object: it is no prototype yet (no
++    // structure chain to invalidate, no haveABadTime) and has no indexed storage (nothing to
++    // switch to slow-put storage).
 +    JSCallbackObject<JSNonFinalObject>* object = JSCallbackObject<JSNonFinalObject>::create(globalObject, shape->structure.get(), shape->jsClass.get(), data);
 +    if (keepAlive && weak)
 +        *weak = new OpaqueJSWeak(object, &keptWhileOwner(), const_cast<unsigned char*>(keepAlive));
@@ -74,7 +81,7 @@ diff --git a/Source/JavaScriptCore/API/JSWeakPrivate.cpp b/Source/JavaScriptCore
  void JSWeakRetain(JSContextGroupRef contextGroup, JSWeakRef weakRef)
  {
      VM* vm = toJS(contextGroup);
-@@ -101,6 +159,14 @@
+@@ -101,6 +166,14 @@
      weakRef->deref();
  }
  
@@ -92,7 +99,7 @@ diff --git a/Source/JavaScriptCore/API/JSWeakPrivate.cpp b/Source/JavaScriptCore
 diff --git a/Source/JavaScriptCore/API/JSWeakPrivate.h b/Source/JavaScriptCore/API/JSWeakPrivate.h
 --- a/Source/JavaScriptCore/API/JSWeakPrivate.h
 +++ b/Source/JavaScriptCore/API/JSWeakPrivate.h
-@@ -46,8 +46,25 @@
+@@ -46,8 +46,26 @@
     object, a collection ends it and JSWeakGetObject returns NULL. */
  JS_EXPORT JSWeakRef JSWeakCreateKeptWhile(JSContextGroupRef, JSObjectRef, const unsigned char* keepAlive);
  
@@ -108,7 +115,8 @@ diff --git a/Source/JavaScriptCore/API/JSWeakPrivate.h b/Source/JavaScriptCore/A
 +/* Lightningpanda: JSObjectMake, JSObjectSetPrototype and JSWeakCreateKeptWhile in one call
 +   (one lock, no prototype chain walk: a new object has no cycle to check), for a new wrapper
 +   with private data `data` in the global object of `ctx`, which made `shape`. When `keepAlive`
-+   is not NULL, `*weak` receives a JSWeakCreateKeptWhile handle of the object. */
++   is not NULL, `*weak` receives a JSWeakCreateKeptWhile handle of the object. Returns NULL,
++   making nothing, when another global object made `shape`. */
 +JS_EXPORT JSObjectRef JSObjectMakeWrapper(JSContextRef ctx, JSWrapperShapeRef shape, void* data, const unsigned char* keepAlive, JSWeakRef* weak);
 +
  JS_EXPORT void JSWeakRetain(JSContextGroupRef, JSWeakRef);
