@@ -281,7 +281,7 @@ index b84e8751..adc2f827 100644
  
  /// The offset applied to an item in a single axis by its `inset` if it is `position: relative`
 diff --git a/src/compute/grid/mod.rs b/src/compute/grid/mod.rs
-index f0109c6e..f4c6addc 100644
+index f0109c6e..950af2fe 100644
 --- a/src/compute/grid/mod.rs
 +++ b/src/compute/grid/mod.rs
 @@ -39,12 +39,15 @@ mod alignment;
@@ -383,45 +383,7 @@ index f0109c6e..f4c6addc 100644
 +                index as u16,
 +            ));
 +        }
- 
--    // 4. Implicit Grid: Estimate Track Counts
--    // Estimate the number of rows and columns in the implicit grid (= the entire grid)
--    // This is necessary as part of placement. Doing it early here is a perf optimisation to reduce allocations.
--    let (est_col_counts, est_row_counts) =
--        compute_grid_size_estimate(explicit_col_count, explicit_row_count, &placements);
--
--    // 5. Grid Item Placement
--    // Match items (children) to a definite grid position (row start/end and column start/end position)
--    let mut cell_occupancy_matrix = CellOccupancyMatrix::with_track_counts(est_col_counts, est_row_counts);
--    // `items` is in document order from here on (placement only fills in each item's grid area). The track
--    // sizing and baseline passes sort references to the items rather than the items themselves.
--    place_grid_items(&mut cell_occupancy_matrix, &mut items, &placements, style.grid_auto_flow());
--
--    // Extract track counts from previous step (auto-placement can expand the number of tracks)
--    let final_col_counts = *cell_occupancy_matrix.track_counts(AbsoluteAxis::Horizontal);
--    let final_row_counts = *cell_occupancy_matrix.track_counts(AbsoluteAxis::Vertical);
--
--    // 5. Initialize Tracks
--    // Initialize (explicit and implicit) grid tracks (and gutters)
--    // This resolves the min and max track sizing functions for all tracks and gutters
--    let mut columns = GridTrackVec::new();
--    let mut rows = GridTrackVec::new();
--    initialize_grid_tracks(
--        &mut columns,
--        final_col_counts,
--        &style,
--        AbsoluteAxis::Horizontal,
--        col_auto_repetition_count,
--        |column_index| cell_occupancy_matrix.column_is_occupied(column_index),
--    );
--    initialize_grid_tracks(
--        &mut rows,
--        final_row_counts,
--        &style,
--        AbsoluteAxis::Vertical,
--        row_auto_repetition_count,
--        |row_index| cell_occupancy_matrix.row_is_occupied(row_index),
--    );
++
 +        // 4. Implicit Grid: Estimate Track Counts
 +        // Estimate the number of rows and columns in the implicit grid (= the entire grid)
 +        // This is necessary as part of placement. Doing it early here is a perf optimisation to reduce allocations.
@@ -461,7 +423,45 @@ index f0109c6e..f4c6addc 100644
 +            |row_index| cell_occupancy_matrix.row_is_occupied(row_index),
 +        );
  
-+
+-    // 4. Implicit Grid: Estimate Track Counts
+-    // Estimate the number of rows and columns in the implicit grid (= the entire grid)
+-    // This is necessary as part of placement. Doing it early here is a perf optimisation to reduce allocations.
+-    let (est_col_counts, est_row_counts) =
+-        compute_grid_size_estimate(explicit_col_count, explicit_row_count, &placements);
+-
+-    // 5. Grid Item Placement
+-    // Match items (children) to a definite grid position (row start/end and column start/end position)
+-    let mut cell_occupancy_matrix = CellOccupancyMatrix::with_track_counts(est_col_counts, est_row_counts);
+-    // `items` is in document order from here on (placement only fills in each item's grid area). The track
+-    // sizing and baseline passes sort references to the items rather than the items themselves.
+-    place_grid_items(&mut cell_occupancy_matrix, &mut items, &placements, style.grid_auto_flow());
+-
+-    // Extract track counts from previous step (auto-placement can expand the number of tracks)
+-    let final_col_counts = *cell_occupancy_matrix.track_counts(AbsoluteAxis::Horizontal);
+-    let final_row_counts = *cell_occupancy_matrix.track_counts(AbsoluteAxis::Vertical);
+-
+-    // 5. Initialize Tracks
+-    // Initialize (explicit and implicit) grid tracks (and gutters)
+-    // This resolves the min and max track sizing functions for all tracks and gutters
+-    let mut columns = GridTrackVec::new();
+-    let mut rows = GridTrackVec::new();
+-    initialize_grid_tracks(
+-        &mut columns,
+-        final_col_counts,
+-        &style,
+-        AbsoluteAxis::Horizontal,
+-        col_auto_repetition_count,
+-        |column_index| cell_occupancy_matrix.column_is_occupied(column_index),
+-    );
+-    initialize_grid_tracks(
+-        &mut rows,
+-        final_row_counts,
+-        &style,
+-        AbsoluteAxis::Vertical,
+-        row_auto_repetition_count,
+-        |row_index| cell_occupancy_matrix.row_is_occupied(row_index),
+-    );
+ 
 +        // 6. Track Sizing
 +
 +        // Convert grid placements in origin-zero coordinates to indexes into the GridTrack (rows and columns) vectors
@@ -763,7 +763,7 @@ index f0109c6e..f4c6addc 100644
      output
  }
  
-@@ -1454,3 +1612,110 @@ impl DetailedGridItemsInfo {
+@@ -1454,3 +1612,131 @@ impl DetailedGridItemsInfo {
          }
      }
  }
@@ -782,6 +782,8 @@ index f0109c6e..f4c6addc 100644
 +        Text,
 +        /// 20 wide once its height is known, 50 wide before, 10 tall
 +        HeightDependent,
++        /// 10 wide (min-content); 30 wide (max-content) once its height is known, 50 before; 10 tall
++        MaxContentHeightDependent,
 +    }
 +
 +    /// Lay out a 200px-wide grid with the given columns and one item per column, returning the item widths
@@ -827,6 +829,11 @@ index f0109c6e..f4c6addc 100644
 +                                    50.0
 +                                }
 +                            }
++                            Leaf::MaxContentHeightDependent => match (available.width, known.height) {
++                                (AvailableSpace::MinContent, _) => 10.0,
++                                (_, Some(_)) => 30.0,
++                                (_, None) => 50.0,
++                            },
 +                        };
 +                        Size { width: known.width.unwrap_or(width), height: known.height.unwrap_or(10.0) }
 +                    },
@@ -872,6 +879,20 @@ index f0109c6e..f4c6addc 100644
 +        let (widths, _) =
 +            layout(vec![auto(), fr(1.0)], &[(Leaf::HeightDependent, Style::default()), (Leaf::Text, min_width_zero())]);
 +        assert_eq!(widths, vec![20.0, 180.0]);
++    }
++
++    #[test]
++    fn an_unread_item_does_not_change_the_other_columns() {
++        // The auto column's item has a max-content width that changes with its row but a min-content width that
++        // does not, so the re-check (which compares min-content widths, css-grid-1 §12.1 step 3) asks for no re-run
++        // and the column keeps the first pass's 50px. Before the skip, the `min-width: 0` item in the `fr` column
++        // forced a re-run on its empty cache, which took up the new max-content width and gave 30px: the auto
++        // column's size depended on whether an unrelated item sat beside it.
++        let item = (Leaf::MaxContentHeightDependent, Style::default());
++        let (alone, _) = layout(vec![auto()], &[item.clone()]);
++        let (beside, _) = layout(vec![auto(), fr(1.0)], &[item, (Leaf::Text, min_width_zero())]);
++        assert_eq!(alone, vec![50.0]);
++        assert_eq!(beside, vec![50.0, 150.0]);
 +    }
 +}
 diff --git a/src/compute/grid/table_reuse.rs b/src/compute/grid/table_reuse.rs
