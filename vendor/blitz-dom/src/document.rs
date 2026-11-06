@@ -1237,7 +1237,13 @@ impl BaseDocument {
         let shared = origin == Origin::Author && !css.contains("@import");
         if shared {
             if let Some(sheet) = crate::util::shared_sheet(css, self.url.as_str()) {
-                return sheet;
+                // A stylist holds a sheet once: another element of this
+                // document with the same text (two `<style>`s alike, adopted
+                // sheets reordered) parses its own.
+                if !self.nodes_to_stylesheet.values().any(|s| *s == sheet) {
+                    return sheet;
+                }
+                return self.parse_stylesheet(css, origin);
             }
         }
         let sheet = self.parse_stylesheet(css, origin);

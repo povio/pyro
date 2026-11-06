@@ -41,11 +41,13 @@ pub struct RenderHtml<'a> {
     pub stylesheet_href: &'a dyn Fn(NodeId) -> Option<String>,
     /// Element to mark with `mark.1` (a valueless attribute).
     pub mark: Option<(NodeId, &'a str)>,
-    /// The texts of the constructed sheets a document or shadow root adopts
+    /// The constructed sheets (id and text) a document or shadow root adopts
     /// (`adoptedStyleSheets`), in order; `None` when nothing adopts any.
     /// They render as `<style>` elements after the document element's
-    /// children and after a shadow tree's.
-    pub adopted: Option<&'a dyn Fn(NodeId) -> Vec<std::rc::Rc<str>>>,
+    /// children and after a shadow tree's, each text once: shadow styles are
+    /// global in the render tree, and a sheet shared by many shadow roots
+    /// (a component's) is one sheet to the renderer.
+    pub adopted: Option<&'a dyn Fn(NodeId) -> Vec<(u64, std::rc::Rc<str>)>>,
 }
 
 /// Changes to a [`RenderTree`] ([`Dom::render_delta`]).
@@ -278,12 +280,23 @@ impl Dom {
     }
 
     /// Pushes the `<style>` steps of the sheets `scope` adopts (rendered
-    /// after what `stack` holds above them).
-    fn push_adopted(&self, stack: &mut Vec<Step>, opts: &RenderHtml<'_>, scope: u32) {
+    /// after what `stack` holds above them), but texts already `emitted`.
+    fn push_adopted(
+        &self,
+        stack: &mut Vec<Step>,
+        opts: &RenderHtml<'_>,
+        scope: u32,
+        emitted: &mut rustc_hash::FxHashSet<std::rc::Rc<str>>,
+    ) {
         let Some(adopted) = opts.adopted else { return };
-        let sheets = adopted(self.id_of(scope));
-        for (i, text) in sheets.into_iter().enumerate().rev() {
-            stack.push(Step::Adopted(adopted_key(scope, i), text));
+        let mut sheets = Vec::new();
+        for (_, text) in adopted(self.id_of(scope)) {
+            if !text.is_empty() && emitted.insert(text.clone()) {
+                sheets.push((adopted_key(emitted.len()), text));
+            }
+        }
+        for (key, text) in sheets.into_iter().rev() {
+            stack.push(Step::Adopted(key, text));
         }
     }
 
@@ -296,6 +309,8 @@ impl Dom {
         let mut hosts: Vec<(u32, Scope)> = Vec::new();
         // Tags of the open elements, for `close`.
         let mut tags: Vec<String> = Vec::new();
+        // Adopted sheet texts rendered so far.
+        let mut emitted = rustc_hash::FxHashSet::default();
         let mut stack = Vec::new();
         push_children(&mut stack, roots, NONE);
         while let Some(step) = stack.pop() {
@@ -436,11 +451,11 @@ impl Dom {
                     }
                     if e.shadow_root != NIL {
                         hosts.push((n, scope));
-                        self.push_adopted(&mut stack, opts, e.shadow_root);
+                        self.push_adopted(&mut stack, opts, e.shadow_root, &mut emitted);
                         push_children(&mut stack, self.child_idx_iter(e.shadow_root).collect(), hosts.len() - 1);
                     } else {
                         if n == root && self.n(n).parent != NIL {
-                            self.push_adopted(&mut stack, opts, self.n(n).parent);
+                            self.push_adopted(&mut stack, opts, self.n(n).parent, &mut emitted);
                         }
                         push_children(&mut stack, self.child_idx_iter(n).collect(), scope);
                     }
@@ -710,8 +725,8 @@ impl Dom {
         let editable = e.attr("contenteditable").is_some();
         // An image button (`<input type=image>`) is laid out like `<img>`:
         // its natural size travels the same way.
-        let is_image = local == "img"
-            || (local == "input" && e.attr("type").is_some_and(|t| t.eq_ignore_ascii_case("image")));
+        let is_image =
+            local == "img" || (local == "input" && e.attr("type").is_some_and(|t| t.eq_ignore_ascii_case("image")));
         let natural = (e.is_html() && is_image).then(|| self.natural_size(self.id_of(n))).flatten();
         if !kind && !editable && natural.is_none() {
             return None;
@@ -800,10 +815,12 @@ impl Dom {
     }
 }
 
-/// The render key of the `index`th sheet adopted by the document or shadow
-/// root at slot `scope`: bit 62 marks it apart from node keys.
-fn adopted_key(scope: u32, index: usize) -> u64 {
-    (1 << 62) | (((index as u64) & 0x3fff_ffff) << 32) | u64::from(scope)
+/// The render key of the `n`th adopted sheet rendered: bit 62 marks it
+/// apart from node keys. Keys follow the rendering order (not the sheet), so
+/// a reordered list changes the texts of the same elements: the renderer
+/// cascades its sheets in the order it made their elements.
+fn adopted_key(n: usize) -> u64 {
+    (1 << 62) | n as u64
 }
 
 fn push_children(stack: &mut Vec<Step>, kids: Vec<u32>, scope: Scope) {

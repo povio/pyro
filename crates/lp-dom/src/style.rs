@@ -1047,10 +1047,10 @@ impl StyleEngine {
         }
     }
 
-    /// The texts of the constructed sheets `scope` adopts, in order.
-    pub fn adopted_sheets(&self, scope: NodeId) -> Vec<Rc<str>> {
+    /// The constructed sheets (id and text) `scope` adopts, in order.
+    pub fn adopted_sheets(&self, scope: NodeId) -> Vec<(u64, Rc<str>)> {
         let Some(ids) = self.adopted.get(&scope) else { return Vec::new() };
-        ids.iter().filter_map(|id| self.constructed.get(id).cloned()).collect()
+        ids.iter().filter_map(|id| Some((*id, self.constructed.get(id)?.clone()))).collect()
     }
 
     /// Whether any document or shadow root adopts a constructed sheet.

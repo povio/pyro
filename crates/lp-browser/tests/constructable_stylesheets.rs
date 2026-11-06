@@ -107,3 +107,26 @@ fn replace_resolves_and_regular_sheets_refuse_it() {
         "true|1|SyntaxError|NotAllowedError|function|true|true|true"
     );
 }
+
+#[test]
+fn one_sheet_shared_by_many_shadow_roots_styles_them_all() {
+    let (_t, root) = page();
+    assert_eq!(
+        eval(
+            &root,
+            "(() => { const sheet = new CSSStyleSheet();
+               sheet.replaceSync('b { padding-left: 4px }');
+               const inner = [];
+               for (let i = 0; i < 3; i++) {
+                 const shadow = document.body.appendChild(document.createElement('div')).attachShadow({ mode: 'open' });
+                 shadow.adoptedStyleSheets = [sheet, sheet];
+                 inner.push(shadow.appendChild(document.createElement('b')));
+               }
+               const out = inner.map(b => getComputedStyle(b).paddingLeft);
+               sheet.replaceSync('b { padding-left: 6px }');
+               out.push(getComputedStyle(inner[2]).paddingLeft);
+               return out.join(); })()"
+        ),
+        "4px,4px,4px,6px"
+    );
+}
