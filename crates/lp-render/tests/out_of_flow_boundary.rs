@@ -231,3 +231,158 @@ fn an_abspos_box_in_flex_grid_and_inline_contexts() {
         });
     }
 }
+
+#[test]
+fn content_dependent_static_positions_and_span_containing_blocks() {
+    let cases: Vec<(&str, String)> = vec![
+        ("flex centered", r#"<style>body{margin:0;font:14px sans-serif} .w{display:flex;justify-content:center;align-items:center;height:300px} #m{position:absolute}</style><div class=w><p>x</p><div id=m><p id=first>measured</p></div></div>"#.into()),
+        ("grid centered", r#"<style>body{margin:0;font:14px sans-serif} .w{display:grid;place-items:center;height:300px} #m{position:absolute}</style><div class=w><p>x</p><div id=m><p id=first>measured</p></div></div>"#.into()),
+        ("rtl auto insets", r#"<style>body{margin:0;font:14px sans-serif;direction:rtl} #m{position:absolute}</style><p>x</p><div id=m><p id=first>measured</p></div>"#.into()),
+        ("text-align center inline", r#"<style>body{margin:0;font:14px sans-serif} p{text-align:center} #m{position:absolute}</style><p>x <span id=m><span id=first>measured</span></span> y</p>"#.into()),
+        ("html positioned", r#"<style>html{position:relative} body{margin:0;font:14px sans-serif} #m{position:absolute;top:0;left:0}</style><p>x</p><div id=m><p id=first>measured</p></div>"#.into()),
+        ("html transformed", r#"<style>html{transform:translateX(1px)} body{margin:0;font:14px sans-serif} #m{position:absolute;top:0;left:0}</style><p>x</p><div id=m><p id=first>measured</p></div>"#.into()),
+        ("scroll container between", r#"<style>body{margin:0;font:14px sans-serif} .s{overflow:auto;height:100px} #m{position:absolute;top:0;left:0}</style><div class=s><p>x</p><div id=m><p id=first>measured</p></div></div>"#.into()),
+        ("table cell", r#"<style>body{margin:0;font:14px sans-serif} #m{position:absolute}</style><table><tr><td>x<div id=m><p id=first>measured</p></div></td></tr></table>"#.into()),
+        ("positioned span, inline-block, p", r#"<style>body{margin:0;font:14px sans-serif} .r{position:relative} .ib{display:inline-block} #m{position:absolute;top:20px;left:0}</style><p>text <span class=r>s <span class=ib>ib <b id=m><i id=first>measured</i></b></span></span> more</p>"#.into()),
+        ("positioned span, inline-block, anonymous root", r#"<style>body{margin:0;font:14px sans-serif} .r{position:relative} .ib{display:inline-block} #m{position:absolute;top:20px;left:0}</style><div>text <span class=r>s <span class=ib>ib <b id=m><i id=first>measured</i></b></span></span> more<div>block</div></div>"#.into()),
+        ("positioned span, block in inline", r#"<style>body{margin:0;font:14px sans-serif} .r{position:relative} #m{position:absolute;top:20px;left:0}</style><div>text <span class=r>s <div>blk <b id=m><i id=first>measured</i></b></div></span> more</div>"#.into()),
+        ("positioned span, block in inline, deeper", r#"<style>body{margin:0;font:14px sans-serif} .r{position:relative} #m{position:absolute;top:20px;left:0}</style><div>text <span class=r>s <div><section>blk <b id=m><i id=first>measured</i></b></section></div></span> more</div>"#.into()),
+        ("fixed in positioned-only ancestor", r#"<style>body{margin:0;font:14px sans-serif} main{position:relative} #m{position:fixed;top:0;left:0}</style><main><p>x</p><div><div id=m><p id=first>measured</p></div></div></main>"#.into()),
+        ("pseudo parent", r#"<style>body{margin:0;font:14px sans-serif} #m{position:absolute;top:0;left:0} #m::after{content:"after"}</style><p>x</p><div id=m><p id=first>measured</p></div>"#.into()),
+    ];
+    for (what, html) in &cases {
+        let html = format!("<!doctype html>{html}");
+        check(&format!("{what}: text edited"), &html, &|p| {
+            let t = p.text("#first");
+            p.dom.borrow_mut().replace_data(t, 0, 8, "measured again, and much wider than before").unwrap();
+        });
+        check(&format!("{what}: paragraph appended"), &html, &|p| {
+            append_paragraph(p, "#m", "a far longer paragraph which wraps over more than one line of the box");
+        });
+        check(&format!("{what}: fixed added"), &html, &|p| {
+            let m = p.find("#m");
+            let mut d = p.dom.borrow_mut();
+            let f = d.create_element(p.doc, "div").unwrap();
+            d.set_attribute(f, "style", "position:fixed;top:300px;left:20px;width:50px;height:40px;background:red")
+                .unwrap();
+            let t = d.create_text(p.doc, "fixed").unwrap();
+            d.append_child(f, t).unwrap();
+            d.append_child(m, f).unwrap();
+        });
+    }
+}
+
+#[test]
+fn an_ancestor_becoming_or_ceasing_to_be_a_containing_block() {
+    for (what, css, class) in [
+        (
+            "transform removed",
+            "main{transform:translateX(5px)} main.n{transform:none} #m{position:fixed;top:0;right:0}",
+            "n",
+        ),
+        ("transform added", "main.n{transform:translateX(5px)} #m{position:fixed;top:0;right:0}", "n"),
+        (
+            "position removed",
+            "main{position:relative} main.n{position:static} #m{position:absolute;top:0;right:0}",
+            "n",
+        ),
+        ("position added", "main.n{position:relative} #m{position:absolute;top:0;right:0}", "n"),
+        ("filter removed", "main{filter:blur(0)} main.n{filter:none} #m{position:fixed;top:0;right:0}", "n"),
+        (
+            "will-change removed",
+            "main{will-change:transform} main.n{will-change:auto} #m{position:fixed;top:0;right:0}",
+            "n",
+        ),
+        ("contain removed", "main{contain:paint} main.n{contain:none} #m{position:absolute;top:0;right:0}", "n"),
+    ] {
+        let html = format!(
+            r#"<!doctype html><style>body{{margin:0;font:14px sans-serif}} main{{margin:30px}} {css}</style>
+<main><p>one</p><div><div id=m><p id=first>measured</p></div></div><p>two</p></main>"#
+        );
+        check(&format!("{what} alone"), &html, &|p| {
+            let m = p.find("main");
+            p.dom.borrow_mut().set_attribute(m, "class", class).unwrap();
+        });
+        check(&format!("{what} with text edited"), &html, &|p| {
+            let m = p.find("main");
+            p.dom.borrow_mut().set_attribute(m, "class", class).unwrap();
+            let t = p.text("#first");
+            p.dom.borrow_mut().replace_data(t, 0, 8, "measured again, wider").unwrap();
+        });
+    }
+}
+
+#[test]
+fn several_boundaries_and_in_flow_changes_together() {
+    let html = r#"<!doctype html><style>body{margin:0;font:14px sans-serif} #m{position:absolute;inset:0;margin:auto;width:fit-content;height:fit-content} #k{position:absolute;bottom:0;left:0}</style><p id=flowp>flow</p><div id=m><p id=first>measured</p></div><div id=k><p id=second>other</p></div>"#;
+    let (_, root) = check("centered with margin auto", html, &|p| {
+        let t = p.text("#first");
+        p.dom.borrow_mut().replace_data(t, 0, 8, "measured again, and much wider than before").unwrap();
+    });
+    assert_eq!(root, 0);
+    let (_, root) = check("two boundaries at once", html, &|p| {
+        append_paragraph(p, "#m", "one more");
+        append_paragraph(p, "#k", "and another one which is longer");
+    });
+    assert_eq!(root, 0);
+    check("boundary and in-flow change together", html, &|p| {
+        append_paragraph(p, "#m", "one more");
+        let t = p.text("#flowp");
+        p.dom
+            .borrow_mut()
+            .replace_data(
+                t,
+                0,
+                4,
+                "flow text that is now considerably longer and wraps onto more lines than before, surely, yes",
+            )
+            .unwrap();
+    });
+    let html2 = r#"<!doctype html><style>body{margin:0;font:14px sans-serif} #m{position:absolute;top:10px;left:10px}</style><p>flow</p>"#;
+    for step in 0..2 {
+        check(&format!("abspos child of html, step {step}"), html2, &|p| {
+            let root = p.find("html");
+            let mut d = p.dom.borrow_mut();
+            let div = d.create_element(p.doc, "div").unwrap();
+            d.set_attribute(div, "id", "m").unwrap();
+            let t = d.create_text(p.doc, "on html").unwrap();
+            d.append_child(div, t).unwrap();
+            d.append_child(root, div).unwrap();
+            if step == 1 {
+                let para = d.create_element(p.doc, "p").unwrap();
+                let t = d.create_text(p.doc, "more").unwrap();
+                d.append_child(para, t).unwrap();
+                d.append_child(div, para).unwrap();
+            }
+        });
+    }
+}
+
+#[test]
+fn an_abspos_child_of_the_root_element_is_a_boundary() {
+    let html = r#"<!doctype html><style>body{margin:0;font:14px sans-serif} #m{position:absolute;top:10px;left:10px}</style><p>flow</p>"#;
+    let page = Page::new(html);
+    let mut live = Renderer::new();
+    paint(&mut live, &page.snapshot());
+    let t;
+    {
+        let root = page.find("html");
+        let mut d = page.dom.borrow_mut();
+        let div = d.create_element(page.doc, "div").unwrap();
+        d.set_attribute(div, "id", "m").unwrap();
+        t = d.create_text(page.doc, "on html").unwrap();
+        d.append_child(div, t).unwrap();
+        d.append_child(root, div).unwrap();
+    }
+    paint(&mut live, &page.snapshot());
+    page.dom.borrow_mut().replace_data(t, 0, 2, "much wider text, on").unwrap();
+    let snap = page.snapshot();
+    let before = blitz_performed_layouts();
+    let inc = paint(&mut live, &snap);
+    let after = blitz_performed_layouts();
+    let mut fresh = Renderer::new();
+    let scratch = paint(&mut fresh, &snap);
+    assert_eq!(live.mirrored_layout(1), fresh.mirrored_layout(1));
+    assert_eq!(inc.hash, scratch.hash);
+    assert_eq!(after.1 - before.1, 0, "the root's in-flow layout is not run again");
+}
