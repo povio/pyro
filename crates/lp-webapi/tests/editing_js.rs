@@ -221,6 +221,25 @@ fn shortcuts_copy_and_paste_with_clipboard_events() {
     assert_eq!(eval(r, "read"), "copyMe");
 }
 
+/// Pasted markup loses scripts, event handler attributes and `javascript:`
+/// URLs (the clipboard may hold markup another page wrote); insertHTML keeps
+/// the attributes.
+#[test]
+fn rich_paste_is_sanitized() {
+    let e = env(
+        "<body><div id=src><b onclick='hit()' ONMOUSEOVER='hit()' €x=1 title=t>x</b><a href=' javascript:hit()'>l</a><a href='/ok'>k</a></div>\
+         <div id=ed contenteditable></div></body>",
+    );
+    let r = &e.main;
+    eval(r, "getSelection().selectAllChildren(src)");
+    press(&e.page, "c", "", primary(false));
+    eval(r, "ed.focus()");
+    press(&e.page, "v", "", primary(false));
+    assert_eq!(eval(r, "ed.innerHTML"), "<b €x=\"1\" title=\"t\">x</b><a>l</a><a href=\"/ok\">k</a>");
+    eval(r, "ed.textContent = ''; ed.focus(); document.execCommand('insertHTML', false, '<i onclick=\"f()\">y</i>')");
+    assert_eq!(eval(r, "ed.innerHTML"), "<i onclick=\"f()\">y</i>");
+}
+
 #[test]
 fn copy_handlers_set_the_data_and_cut_deletes() {
     let e = env("<body><input id=i value='hello world'><div id=ed contenteditable>abc def</div></body>");
@@ -425,6 +444,23 @@ fn contenteditable_line_breaks_arrows_and_words() {
     press(&e.page, "ArrowUp", "", input::Modifiers::default());
     press(&e.page, "ArrowRight", "", word(true));
     assert_eq!(eval(r, "sel()"), r#""hello",0,"hello",5"#);
+}
+
+/// Outside editable content, word keys and macOS move commands leave a
+/// selection alone unless they extend it (as in Chromium).
+#[test]
+fn document_selection_moves_only_when_extended() {
+    let e = env("<body><p id=p>one two three</p><button id=b>b</button></body>");
+    let r = &e.main;
+    eval(r, SEL);
+    eval(r, "b.focus(); getSelection().collapse(p.firstChild, 0)");
+    press(&e.page, "ArrowRight", "", word(false));
+    command(&e.page, "ArrowRight", input::Modifiers::default(), &["moveWordRight"]);
+    assert_eq!(eval(r, "sel()"), r#""one two three",0,"one two three",0"#);
+    press(&e.page, "ArrowRight", "", word(true));
+    assert_eq!(eval(r, "sel()"), r#""one two three",0,"one two three",3"#);
+    command(&e.page, "ArrowRight", input::Modifiers::default(), &["moveWordRightAndModifySelection"]);
+    assert_eq!(eval(r, "sel()"), r#""one two three",0,"one two three",7"#);
 }
 
 #[test]

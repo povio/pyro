@@ -88,7 +88,8 @@ fn selected(page: &Rc<PageDom>, source: &Source) -> Option<(String, Option<Strin
             return None;
         }
         let units: Vec<u16> = dom.value(*c).ok()?.encode_utf16().collect();
-        return Some((String::from_utf16_lossy(&units[s as usize..e as usize]), None));
+        let slice = units.get(s as usize..(e as usize).min(units.len()))?;
+        return Some((String::from_utf16_lossy(slice), None));
     }
     let (start, end) = editing::selection_range(page)?;
     if start == end {

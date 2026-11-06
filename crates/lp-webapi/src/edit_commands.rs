@@ -439,7 +439,8 @@ impl Flat {
     /// The text from `a` to `b` as copied: line breaks as linefeeds, objects
     /// left out.
     fn text(&self, a: u32, b: u32) -> String {
-        let slice = &self.units[(a as usize).min(self.units.len())..(b as usize).min(self.units.len())];
+        let b = (b as usize).min(self.units.len());
+        let slice = &self.units[(a as usize).min(b)..b];
         let units: Vec<u16> =
             slice.iter().filter(|&&u| u != OBJECT).map(|&u| if u == LINE || u == PARA { PARA } else { u }).collect();
         String::from_utf16_lossy(&units)
@@ -799,6 +800,10 @@ fn run_op(page: &Rc<PageDom>, el: NodeId, op: Op) {
     match (op, target_of(page, el)) {
         (Op::Move(f, g, x), Target::Host(h)) => host_move(page, h, f, g, x),
         (Op::Move(f, g, x), Target::Control(c)) => control_move(page, c, f, g, x),
+        // Outside editable content only the moves that extend the
+        // selection act (Chromium enables the others in editable text or
+        // caret browsing only).
+        (Op::Move(_, _, false), Target::Document) => {}
         (Op::Move(f, g, x), Target::Document) => {
             if let Some((_, focus)) = editing::selection(page) {
                 if let Some(scope) = scope_of(page, focus.0) {
@@ -1309,6 +1314,10 @@ fn remove_inline(page: &Rc<PageDom>, host: NodeId, names: &[&str], input_type: &
             for &t in &texts {
                 while let Some(a) = ancestor_named(&dom, t, host, names) {
                     hoist(&mut dom, t, a);
+                    // A hoist that could not move the text would repeat.
+                    if ancestor_named(&dom, t, host, names) == Some(a) {
+                        break;
+                    }
                 }
             }
             texts
@@ -1606,14 +1615,32 @@ struct Step {
 }
 
 const UNDO_LIMIT: usize = 100;
+/// Bytes of saved values and markup the undo steps keep at most (the
+/// oldest go first; the latest step is always kept).
+const UNDO_BYTES: usize = 16 << 20;
+
+impl Saved {
+    fn bytes(&self) -> usize {
+        match self {
+            Saved::Control { value, .. } => value.len(),
+            Saved::Host { html, .. } => html.len(),
+        }
+    }
+}
 
 impl UndoHistory {
     fn push(&mut self, step: Step) {
         self.undo.push(step);
-        if self.undo.len() > UNDO_LIMIT {
-            self.undo.remove(0);
-        }
         self.redo.clear();
+        let mut drop = self.undo.len().saturating_sub(UNDO_LIMIT);
+        let mut total: usize = self.undo[drop..].iter().map(|s| s.saved.bytes()).sum();
+        while total > UNDO_BYTES && drop + 1 < self.undo.len() {
+            total -= self.undo[drop].saved.bytes();
+            drop += 1;
+        }
+        if drop > 0 {
+            self.undo.drain(..drop);
+        }
     }
 }
 

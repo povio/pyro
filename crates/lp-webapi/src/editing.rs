@@ -86,15 +86,12 @@ pub fn set_selection(page: &Rc<PageDom>, anchor: Point, focus: Point) {
     };
     let cross_tree = (!same_tree).then_some((anchor, focus));
     let Ok(range) = crate::range::RangeOwner::new(page, start, end) else { return };
-    let origin = match (
-        crate::collections::NodeHold::new(page, anchor.0),
-        crate::collections::NodeHold::new(page, focus.0),
-    ) {
-        (Ok(a), Ok(f)) => Some((a, f)),
-        _ => None,
-    };
-    let old =
-        page.selection.replace(Some(DocSelection { range, backward, wrappers: Vec::new(), origin, cross_tree }));
+    let origin =
+        match (crate::collections::NodeHold::new(page, anchor.0), crate::collections::NodeHold::new(page, focus.0)) {
+            (Ok(a), Ok(f)) => Some((a, f)),
+            _ => None,
+        };
+    let old = page.selection.replace(Some(DocSelection { range, backward, wrappers: Vec::new(), origin, cross_tree }));
     drop(old);
     if changed {
         queue_selectionchange(page);
@@ -108,8 +105,13 @@ pub(crate) fn set_selection_range(
     range: Rc<crate::range::RangeOwner>,
     wrapper: Option<(lp_js::RealmId, lp_js::Persistent)>,
 ) {
-    let selection =
-        DocSelection { range, backward: false, wrappers: wrapper.into_iter().collect(), origin: None, cross_tree: None };
+    let selection = DocSelection {
+        range,
+        backward: false,
+        wrappers: wrapper.into_iter().collect(),
+        origin: None,
+        cross_tree: None,
+    };
     let old = page.selection.replace(Some(selection));
     drop(old);
     queue_selectionchange(page);
@@ -857,7 +859,10 @@ const DROPPED_ON_INSERT: &[&str] = &["script", "style", "meta", "link", "title",
 
 /// Moves `frag`'s children to the caret, splitting the text there; returns
 /// the caret after them.
-fn insert_fragment(dom: &mut Dom, host: NodeId, caret: Point, frag: NodeId) -> Point {
+/// With `sanitize` (paste), event handler attributes and `javascript:` URLs
+/// are dropped too, as Chromium sanitizes pasted markup: the clipboard may
+/// hold markup another page wrote.
+fn insert_fragment(dom: &mut Dom, host: NodeId, caret: Point, frag: NodeId, sanitize: bool) -> Point {
     let drop: Vec<NodeId> = dom
         .descendants(frag)
         .map(|d| d.filter(|&n| DROPPED_ON_INSERT.contains(&local(dom, n).as_str())).collect())
@@ -865,6 +870,35 @@ fn insert_fragment(dom: &mut Dom, host: NodeId, caret: Point, frag: NodeId) -> P
     for n in drop {
         if let Ok(Some(p)) = dom.parent(n) {
             let _ = dom.remove_child(p, n);
+        }
+    }
+    if sanitize {
+        let elements: Vec<NodeId> = dom
+            .descendants(frag)
+            .map(|d| d.filter(|&n| dom.node_type(n).ok() == Some(NodeType::Element)).collect())
+            .unwrap_or_default();
+        for el in elements {
+            let unsafe_attrs: Vec<String> = dom
+                .attributes(el)
+                .map(|attrs| {
+                    attrs
+                        .iter()
+                        .filter(|a| {
+                            let name = &*a.name.local;
+                            name.len() > 2 && name.get(..2).is_some_and(|p| p.eq_ignore_ascii_case("on"))
+                                || matches!(name, "href" | "src" | "action" | "formaction" | "xlink:href")
+                                    && a.value
+                                        .trim_start_matches(|c: char| c.is_ascii_whitespace() || c.is_ascii_control())
+                                        .get(..11)
+                                        .is_some_and(|p| p.eq_ignore_ascii_case("javascript:"))
+                        })
+                        .map(|a| a.qualified_name())
+                        .collect()
+                })
+                .unwrap_or_default();
+            for name in unsafe_attrs {
+                let _ = dom.remove_attribute(el, &name);
+            }
         }
     }
     let kids: Vec<NodeId> = dom.children(frag).map(|c| c.collect()).unwrap_or_default();
@@ -917,7 +951,7 @@ pub(crate) fn insert_html(page: &Rc<PageDom>, host: NodeId, html: &str, input_ty
             let context = if is_text(&dom, caret.0) { dom.parent(caret.0).ok().flatten() } else { Some(caret.0) };
             let context = context.filter(|&c| dom.node_type(c).ok() == Some(NodeType::Element)).unwrap_or(host);
             match lp_dom::parse::parse_fragment(&mut dom, context, html) {
-                Ok(frag) => insert_fragment(&mut dom, host, caret, frag),
+                Ok(frag) => insert_fragment(&mut dom, host, caret, frag, false),
                 Err(_) => caret,
             }
         };
@@ -949,7 +983,7 @@ pub(crate) fn insert_pasted(
                         if is_text(&dom, caret.0) { dom.parent(caret.0).ok().flatten() } else { Some(caret.0) };
                     let context = context.filter(|&c| dom.node_type(c).ok() == Some(NodeType::Element)).unwrap_or(host);
                     match lp_dom::parse::parse_fragment(&mut dom, context, html) {
-                        Ok(frag) => insert_fragment(&mut dom, host, caret, frag),
+                        Ok(frag) => insert_fragment(&mut dom, host, caret, frag, true),
                         Err(_) => caret,
                     }
                 }
