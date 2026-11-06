@@ -1188,9 +1188,10 @@ try {
       await p.goto(`${fixtureOrigin}/document`, { timeout: 5000 });
       const invalid = await p.evaluate(() => {
         const failure = (f) => { try { f(); return 'no throw'; } catch (e) { return e.name; } };
-        return [failure(() => new Worker('http://[')), failure(() => new Worker('/x.js', { type: 'module' }))];
+        return [failure(() => new Worker('http://[')), failure(() => new Worker('/x.js', { type: 'module' }).terminate())];
       });
-      assert.deepEqual(invalid, ['SyntaxError', 'NotSupportedError']);
+      // Module workers are supported (patched JavaScriptCore).
+      assert.deepEqual(invalid, ['SyntaxError', 'no throw']);
       const missing = await p.evaluate(() => new Promise((resolve) => {
         const w = new Worker('/missing-worker.js');
         w.onerror = (ev) => resolve(ev.type);
