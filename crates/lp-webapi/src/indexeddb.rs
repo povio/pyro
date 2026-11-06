@@ -547,11 +547,9 @@ fn run_step(handle: u64) {
         let event = s.unwrap::<crate::event::Event>(event).map(|e| (*e).clone());
         let (Some(key), Some(event)) = (key, event) else { return Err(unavailable()) };
         event.state.borrow_mut().is_trusted = true;
-        let thrown = crate::target::listener_exceptions();
         // Native dispatch: each listener is an outermost call, so microtasks
         // run after it while the transaction is still active.
-        let not_canceled = crate::target::fire(&page, key, &event);
-        let threw = crate::target::listener_exceptions() != thrown;
+        let (not_canceled, threw) = crate::target::fire_noting_exceptions(&page, key, &event);
         if let Some(after) = after.as_object() {
             after.call(None, &[s.boolean(not_canceled), s.boolean(threw)])?;
         }

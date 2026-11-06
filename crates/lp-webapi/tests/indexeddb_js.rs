@@ -470,6 +470,20 @@ fn requests_events_and_transaction_lifetime() {
     "#,
     );
     assert_eq!(got, "AbortError|TransactionInactiveError|[\"a\",\"ab\"]|ReadOnlyError|readonly|default|relaxed|TransactionInactiveError|complete");
+    // Only the IDB event's own listeners abort: an exception in a listener of
+    // another event they dispatch is reported there and does not count.
+    let got = env.run(
+        &d,
+        r#"
+        const db = await openDb('ev');
+        const t = db.transaction('s', 'readwrite');
+        const inner = new EventTarget();
+        inner.addEventListener('x', () => { throw new Error('inner'); });
+        t.objectStore('s').put('y', 6).onsuccess = () => inner.dispatchEvent(new Event('x'));
+        out = await done(t).catch(e => 'abort ' + e.name);
+    "#,
+    );
+    assert_eq!(got, "complete");
 }
 
 #[test]
