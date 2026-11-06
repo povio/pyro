@@ -1,5 +1,5 @@
-// navigator.userAgentData, navigator.permissions, navigator.clipboard and
-// ClipboardItem for one realm, made on first use. `native` reads the page's
+// navigator.userAgentData, navigator.permissions, navigator.clipboard,
+// ClipboardItem and Notification for one realm, made on first use. `native` reads the page's
 // client hints, its context's permission table and clipboard:
 //   uaData() -> JSON {brands, fullVersionList, mobile, platform, ...}
 //   permissionState(name) -> 'granted' | 'denied' | 'prompt'
@@ -362,11 +362,140 @@
   }
   tag(Geolocation, 'Geolocation');
 
+  // Notification (non-persistent). Nothing is displayed: a notification of
+  // a document whose 'notifications' permission is granted reports 'show'
+  // as Chrome's headless platform does, any other one 'error'. permission
+  // reads the context's table ('prompt' is 'default'); requestPermission
+  // has no user to ask, so it reports that state.
+  const notificationPermission = () => {
+    const state = native.permissionState('notifications');
+    return state === 'prompt' ? 'default' : state;
+  };
+  const notificationData = new WeakMap();
+  const notificationError = (rest) => new TypeErrorC(`Failed to construct 'Notification': ${rest}`);
+  const DIRECTIONS = ['auto', 'ltr', 'rtl'];
+  const setTimeoutC = setTimeout;
+  const structuredCloneC = structuredClone;
+  const queueTask = (f) => setTimeoutC(f, 0);
+  const stringMember = (options, key) => (options[key] === undefined ? '' : String(options[key]));
+  const urlMember = (options, key) => {
+    if (options[key] === undefined) return '';
+    try {
+      return new URL(String(options[key]), document.baseURI).href;
+    } catch (e) {
+      return '';
+    }
+  };
+  class Notification extends EventTargetC {
+    constructor(title, options) {
+      if (new.target === undefined) {
+        throw new TypeErrorC("Failed to construct 'Notification': Please use the 'new' operator, this DOM object constructor cannot be called as a function.");
+      }
+      if (arguments.length === 0) throw notificationError('1 argument required, but only 0 present.');
+      title = String(title);
+      if (options === undefined || options === null) options = {};
+      else if (typeof options !== 'object' && typeof options !== 'function') {
+        throw notificationError("The provided value is not of type 'NotificationOptions'.");
+      }
+      const dir = options.dir === undefined ? 'auto' : String(options.dir);
+      if (!DIRECTIONS.includes(dir)) {
+        throw notificationError(`Failed to read the 'dir' property from 'NotificationOptions': The provided value '${dir}' is not a valid enum value of type NotificationDirection.`);
+      }
+      const actions = options.actions === undefined ? [] : Array.from(options.actions);
+      const vibrate = options.vibrate === undefined ? [] : (typeof options.vibrate === 'object' ? Array.from(options.vibrate, Number) : [Number(options.vibrate)]);
+      const silent = options.silent === undefined || options.silent === null ? null : !!options.silent;
+      const renotify = !!options.renotify;
+      const tagName = stringMember(options, 'tag');
+      if (actions.length > 0) {
+        throw notificationError('Actions are only supported for persistent notifications shown using ServiceWorkerRegistration.showNotification().');
+      }
+      if (silent === true && vibrate.length > 0) {
+        throw notificationError('Silent notifications must not specify vibration patterns.');
+      }
+      if (renotify && tagName === '') {
+        throw notificationError('Notifications which set the renotify flag must specify a non-empty tag.');
+      }
+      super();
+      ownTag(this, 'Notification');
+      const d = {
+        title, dir, lang: stringMember(options, 'lang'), body: stringMember(options, 'body'), tag: tagName,
+        image: urlMember(options, 'image'), icon: urlMember(options, 'icon'), badge: urlMember(options, 'badge'),
+        vibrate: freeze(vibrate), timestamp: options.timestamp === undefined ? DateC.now() : Number(options.timestamp),
+        renotify, silent, requireInteraction: !!options.requireInteraction,
+        data: options.data === undefined ? null : structuredCloneC(options.data),
+        handlers: { click: null, show: null, error: null, close: null },
+        shown: false, closed: false,
+      };
+      notificationData.set(this, d);
+      const granted = notificationPermission() === 'granted';
+      queueTask(() => {
+        if (d.closed) return;
+        if (granted) d.shown = true;
+        this.dispatchEvent(new EventC(granted ? 'show' : 'error'));
+      });
+    }
+    static get permission() {
+      return notificationPermission();
+    }
+    static get maxActions() {
+      return 2;
+    }
+    static requestPermission(callback) {
+      const state = notificationPermission();
+      if (typeof callback === 'function') queueTask(() => callback(state));
+      return resolved(state);
+    }
+    close() {
+      const d = notificationData.get(this);
+      if (d === undefined || d.closed) return;
+      d.closed = true;
+      if (d.shown) queueTask(() => this.dispatchEvent(new EventC('close')));
+    }
+    get actions() {
+      return freeze([]);
+    }
+  }
+  for (const key of ['title', 'dir', 'lang', 'body', 'tag', 'image', 'icon', 'badge', 'vibrate', 'timestamp', 'renotify', 'silent', 'requireInteraction', 'data']) {
+    defineProperty(Notification.prototype, key, {
+      get() {
+        const d = notificationData.get(this);
+        if (d === undefined) throw new TypeErrorC('Illegal invocation');
+        return d[key];
+      },
+      enumerable: true,
+      configurable: true,
+    });
+  }
+  for (const type of ['click', 'show', 'error', 'close']) {
+    defineProperty(Notification.prototype, 'on' + type, {
+      get() {
+        return notificationData.get(this)?.handlers[type] ?? null;
+      },
+      set(v) {
+        const d = notificationData.get(this);
+        if (d === undefined) return;
+        const had = d.handlers[type] !== null;
+        d.handlers[type] = typeof v === 'function' || (v !== null && typeof v === 'object') ? v : null;
+        if (!had && d.handlers[type] !== null && !d['installed_' + type]) {
+          d['installed_' + type] = true;
+          addListener.call(this, type, (e) => {
+            const h = d.handlers[type];
+            if (typeof h === 'function') h.call(this, e);
+          });
+        }
+      },
+      enumerable: true,
+      configurable: true,
+    });
+  }
+  tag(Notification, 'Notification');
+
   return {
     geolocation: new Geolocation(token),
     userAgentData: new NavigatorUAData(token),
     permissions: new Permissions(token),
     clipboard: new Clipboard(token),
     ClipboardItem,
+    Notification,
   };
 })

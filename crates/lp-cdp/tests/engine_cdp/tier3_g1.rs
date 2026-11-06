@@ -386,6 +386,47 @@ fn permission_status_fires_change_when_its_state_flips() {
     );
 }
 
+#[test]
+fn notification_follows_the_notifications_permission() {
+    let mut h = Harness::new();
+    let ctx = context_id(&mut h);
+    let probe = "(async () => { const n = new Notification('hi', {body: 'b', tag: 't', data: {x: 1}}); \
+         const ev = await new Promise(r => { n.onshow = () => r('show'); n.onerror = () => r('error'); }); \
+         return [Notification.permission, await Notification.requestPermission(), ev, n.title, n.body, n.tag, n.data.x, \
+           n.dir, n.silent, n instanceof EventTarget, Object.prototype.toString.call(n), Notification.maxActions]; })()";
+    assert_eq!(
+        eval_await(&mut h, probe),
+        json!(["default", "default", "error", "hi", "b", "t", 1, "auto", null, true, "[object Notification]", 2])
+    );
+    h.call(None, "Browser.grantPermissions", json!({"permissions": ["notifications"], "browserContextId": ctx}));
+    let granted = eval_await(&mut h, probe);
+    assert_eq!(json!([granted[0], granted[1], granted[2]]), json!(["granted", "granted", "show"]));
+    // A shown notification reports close.
+    assert_eq!(
+        eval_await(
+            &mut h,
+            "new Promise(r => { const n = new Notification('x'); n.onshow = () => n.close(); n.onclose = () => r('closed'); })"
+        ),
+        "closed"
+    );
+    h.call(None, "Browser.resetPermissions", json!({"browserContextId": ctx}));
+    h.call(
+        None,
+        "Browser.setPermission",
+        json!({"permission": {"name": "notifications"}, "setting": "denied", "browserContextId": ctx}),
+    );
+    assert_eq!(eval_await(&mut h, "Notification.permission"), "denied");
+    assert_eq!(
+        eval_await(
+            &mut h,
+            "[() => new Notification(), () => Notification('x'), () => new Notification('x', {actions: [{action: 'a', title: 'a'}]}), \
+              () => new Notification('x', {silent: true, vibrate: [1]}), () => new Notification('x', {dir: 'up'})] \
+              .map(f => { try { f(); return 'ok' } catch (e) { return e.name } })"
+        ),
+        json!(["TypeError", "TypeError", "TypeError", "TypeError", "TypeError"])
+    );
+}
+
 // ----- touch ---------------------------------------------------------------------
 
 const TOUCH_PAGE: &str = r#"(() => {
