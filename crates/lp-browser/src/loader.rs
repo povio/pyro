@@ -106,6 +106,8 @@ pub struct Resource {
     /// The response carried a `Content-Security-Policy` header (the policy
     /// itself is not enforced; a document delivered with one hides nonces).
     pub header_csp: bool,
+    /// The `Refresh` response header (HTML declarative refresh), if any.
+    pub refresh: Option<String>,
 }
 
 impl Resource {
@@ -277,6 +279,7 @@ impl ResourceLoader for NetLoader {
                 charset: head.charset,
                 content_disposition: None,
                 header_csp: false,
+                refresh: None,
                 body: hit.file.body.to_vec(),
             };
             browser.scheduler().post(TaskSource::Networking, move |b| b.complete_fetch(id, Ok(resource)));
@@ -287,6 +290,7 @@ impl ResourceLoader for NetLoader {
         }
         let mut head: Option<lp_net::ResponseHead> = None;
         let mut body: Vec<u8> = Vec::new();
+        let document = matches!(request.kind, ResourceKind::Document | ResourceKind::Iframe);
         let native_id = self.client.fetch(
             req,
             Box::new(move |ev| match ev {
@@ -306,6 +310,10 @@ impl ResourceLoader for NetLoader {
                                 .and_then(|v| v.to_str().ok())
                                 .map(str::to_owned),
                             header_csp: h.headers.contains_key(http::header::CONTENT_SECURITY_POLICY),
+                            // Only a document honours it; other kinds skip the lookup.
+                            refresh: document
+                                .then(|| h.headers.get(http::header::REFRESH)?.to_str().ok().map(str::to_owned))
+                                .flatten(),
                             body: std::mem::take(&mut body),
                         }),
                         None => Err("net::ERR_EMPTY_RESPONSE".to_string()),
@@ -361,6 +369,7 @@ impl ResourceLoader for StaticLoader {
                         body,
                         content_disposition: None,
                         header_csp: false,
+                        refresh: None,
                     })
                 }
                 None => Err(format!("net::ERR_FILE_NOT_FOUND {url}")),
@@ -759,6 +768,9 @@ impl Browser {
         let doc = page_dom.document();
         if resource.header_csp {
             let _ = dom.borrow_mut().set_header_csp(doc, true);
+        }
+        if let Some(refresh) = resource.refresh.as_deref() {
+            self.refresh_header(page, refresh);
         }
         let mut parser = if resource.mime == "text/plain" {
             DocumentParser::new_plaintext(dom.clone(), doc)
@@ -1477,6 +1489,7 @@ impl Browser {
                 timestamp: self.timestamp(),
             },
         );
+        self.start_pending_refresh(page, frame.loader_id.clone());
         self.watch_network_idle(page, frame.loader_id);
         if let Some(parent) = frame.parent.and_then(|id| host.key(&id)) {
             if let Some(owner) = frame.owner {

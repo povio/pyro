@@ -429,6 +429,7 @@ impl FrameHost {
                 stylesheets: Default::default(),
                 images: Default::default(),
                 preloads: Default::default(),
+                refresh: Default::default(),
                 _owner_pin: Some(loader::ResourceNode { dom: self.dom.clone(), node }),
             },
         );
@@ -988,7 +989,7 @@ impl Browser {
         let Some(parent) = frame.parent.as_ref().and_then(|id| host.key(id)).and_then(|key| host.frame(key)) else {
             return;
         };
-        let (srcdoc, src) = {
+        let (srcdoc, src, src_base) = {
             let dom = host.dom.borrow();
             if !dom.is_connected(owner).unwrap_or(false) {
                 return;
@@ -996,6 +997,8 @@ impl Browser {
             (
                 dom.get_attribute(owner, "srcdoc").ok().flatten().map(str::to_owned),
                 dom.get_attribute(owner, "src").ok().flatten().map(str::to_owned),
+                // `<base href>` aware.
+                crate::loader::node_base_url(&dom, owner),
             )
         };
         let result = if let Some(html) = srcdoc {
@@ -1029,6 +1032,7 @@ impl Browser {
                     body: html.into_bytes(),
                     content_disposition: None,
                     header_csp: false,
+                    refresh: None,
                 },
                 HistoryHandling::Replace,
             )
@@ -1037,7 +1041,7 @@ impl Browser {
             let url = if raw.trim().is_empty() {
                 "about:blank".to_string()
             } else {
-                url::Url::parse(&parent.base_url)
+                url::Url::parse(src_base.as_deref().unwrap_or(&parent.base_url))
                     .and_then(|u| u.join(&raw))
                     .map(|u| u.to_string())
                     .unwrap_or_else(|_| raw.clone())

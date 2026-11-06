@@ -16,6 +16,7 @@ mod nav;
 mod network_idle;
 mod preload;
 mod quiet;
+mod refresh;
 mod stylesheets;
 mod viewport;
 mod window;
@@ -428,6 +429,7 @@ pub struct DocumentState {
     pub(crate) stylesheets: stylesheets::Stylesheets,
     pub(crate) images: images::Images,
     pub(crate) preloads: preload::Preloads,
+    pub(crate) refresh: refresh::Refresh,
     pub(crate) _owner_pin: Option<loader::ResourceNode>,
 }
 
@@ -972,6 +974,7 @@ impl Browser {
                 stylesheets: Default::default(),
                 images: Default::default(),
                 preloads: Default::default(),
+                refresh: Default::default(),
                 _owner_pin: None,
             },
             session_storage,
@@ -1388,6 +1391,7 @@ impl Browser {
             p.stylesheets = Default::default();
             p.images = Default::default();
             p.preloads = Default::default();
+            p.refresh = Default::default();
             let old_dom = p.main_frame.page_dom.replace(page_dom.clone());
             // What the commit replaces: nothing (a new frame's first
             // document) or the initial about:blank one as it was made; that

@@ -65,6 +65,9 @@ pub enum ResourceKind {
     /// `<link rel=modulepreload>` / `<link rel=preload>`: fetched ahead, with
     /// `load`/`error` on the link (bundlers' preload helpers await them).
     Preload,
+    /// `<meta http-equiv=refresh>`: its insertion schedules a declarative
+    /// refresh (the loader handles `Connected` events only).
+    Meta,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -149,6 +152,16 @@ impl Dom {
             }
             local_name!("iframe") | local_name!("frame") => ResourceKind::Iframe,
             local_name!("img") => ResourceKind::Img,
+            // HTML: a refresh pragma acts when inserted into the document
+            // tree (connected, not in a shadow tree), decided here because
+            // the loader may see the event after the meta was removed.
+            local_name!("meta")
+                if self.is_connected_idx(idx)
+                    && !self.in_shadow_tree(idx)
+                    && e.attr_local(&local_name!("http-equiv")).is_some_and(|v| v.eq_ignore_ascii_case("refresh")) =>
+            {
+                ResourceKind::Meta
+            }
             // An image button fetches its `src` like `<img>` (its natural
             // size is its layout size); `type` is a relevant attribute, so
             // becoming one starts the load.

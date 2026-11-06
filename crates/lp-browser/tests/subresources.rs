@@ -86,18 +86,19 @@ fn script_inserted_scripts_and_modulepreloads_check_integrity() {
 }
 
 #[test]
-fn base_href_resolves_script_and_preload_urls() {
+fn base_href_resolves_script_preload_and_iframe_urls() {
     let (mut thread, page, loader) = setup(
         "http://site.test/users/42",
         "<base href='/app/'><link id=pre rel=preload as=script href=pre.js>\
-         <script id=main src=main.js></script><script id=mod type=module src=mod.js></script>",
+         <script id=main src=main.js></script><script id=mod type=module src=mod.js></script><iframe id=fr src=frame.html></iframe>",
     );
     loader.insert("http://site.test/app/pre.js", "text/javascript", "", Duration::ZERO);
     loader.insert("http://site.test/app/main.js", "text/javascript", "globalThis.main = 1", Duration::ZERO);
     loader.insert("http://site.test/app/mod.js", "text/javascript", "globalThis.mod = 1", Duration::ZERO);
+    loader.insert("http://site.test/app/frame.html", "text/html", "<p>frame</p>", Duration::ZERO);
     thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/users/42")).unwrap();
     settle(&mut thread);
-    assert_eq!(eval(&thread, page, "events.sort().join('|')"), "main:load|mod:load|pre:load");
+    assert_eq!(eval(&thread, page, "events.sort().join('|')"), "fr:load|main:load|mod:load|pre:load");
     assert!(!loader.log.borrow().iter().skip(1).any(|u| u.contains("/users/")), "{:?}", loader.log.borrow());
     // Inserted later, still against the base URL.
     loader.insert("http://site.test/app/late.js", "text/javascript", "globalThis.late = 1", Duration::ZERO);
@@ -157,4 +158,105 @@ fn blob_urls_load_as_scripts_modules_stylesheets_and_frames() {
         "classic|css:none|frame:from blob:|import:42|revoked:error|script:load"
     );
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+fn url_of(thread: &BrowserThread, page: PageId) -> String {
+    thread.browser.page(page).unwrap().main_frame.url.clone()
+}
+
+#[test]
+fn meta_refresh_navigates_after_load_and_only_once() {
+    let (mut thread, page, loader) = setup(
+        "http://site.test/",
+        "<meta http-equiv=Refresh content='0; URL=\"/target\"'><meta http-equiv=refresh content='0; url=/second'>\
+         <script>addEventListener('load', () => sessionStorage.loadedFirst = '1')</script>",
+    );
+    loader.insert("http://site.test/target", "text/html", "<p>target</p>", Duration::ZERO);
+    loader.insert("http://site.test/second", "text/html", "<p>second</p>", Duration::ZERO);
+    thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    settle(&mut thread);
+    assert_eq!(url_of(&thread, page), "http://site.test/target");
+    // The first pragma wins; the refresh came after the load event; a
+    // zero delay replaces the history entry.
+    assert!(!loader.log.borrow().iter().any(|u| u.ends_with("/second")));
+    assert_eq!(eval(&thread, page, "[sessionStorage.loadedFirst, history.length].join()"), "1,1");
+}
+
+#[test]
+fn meta_refresh_inserted_by_script_applies_but_not_in_shadow_trees_or_sandboxes() {
+    let (mut thread, page, loader) = setup("http://site.test/", "<p>page</p>");
+    loader.insert("http://site.test/dynamic", "text/html", "<p>dynamic</p>", Duration::ZERO);
+    loader.insert("http://site.test/shadow", "text/html", "<p>shadow</p>", Duration::ZERO);
+    thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    settle(&mut thread);
+    // A shadow tree's meta does nothing, nor does a later attribute change.
+    eval(
+        &thread,
+        page,
+        "const host = document.createElement('div'); document.body.append(host);
+         host.attachShadow({mode: 'open'}).innerHTML = `<meta http-equiv=refresh content='0; url=/shadow'>`;
+         const late = document.createElement('meta'); late.content = '0; url=/shadow'; document.head.append(late);
+         late.httpEquiv = 'refresh'; 1",
+    );
+    settle(&mut thread);
+    assert_eq!(url_of(&thread, page), "http://site.test/");
+    // Removed right after insertion: the refresh still happens.
+    eval(
+        &thread,
+        page,
+        "document.body.insertAdjacentHTML('beforeend', `<meta id=m http-equiv=refresh content='0;dynamic'>`);
+         document.getElementById('m').remove(); 1",
+    );
+    settle(&mut thread);
+    assert_eq!(url_of(&thread, page), "http://site.test/dynamic");
+    assert!(!loader.log.borrow().iter().any(|u| u.ends_with("/shadow")));
+    // A frame sandboxed without allow-scripts does not refresh.
+    loader.insert("http://site.test/framed", "text/html", "<iframe sandbox src=/inner></iframe>", Duration::ZERO);
+    loader.insert(
+        "http://site.test/inner",
+        "text/html",
+        "<meta http-equiv=refresh content='0; url=/escaped'>",
+        Duration::ZERO,
+    );
+    thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/framed")).unwrap();
+    settle(&mut thread);
+    assert!(!loader.log.borrow().iter().any(|u| u.ends_with("/escaped")), "{:?}", loader.log.borrow());
+}
+
+#[test]
+fn http_refresh_header_navigates() {
+    use std::io::{BufRead, BufReader, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let server = std::thread::spawn(move || {
+        for _ in 0..2 {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut first = String::new();
+            reader.read_line(&mut first).unwrap();
+            loop {
+                let mut line = String::new();
+                if reader.read_line(&mut line).unwrap_or(0) == 0 || line == "\r\n" {
+                    break;
+                }
+            }
+            let (extra, body) =
+                if first.contains(" / ") { ("Refresh: 0; url=/after\r\n", "before") } else { ("", "after") };
+            let _ = write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n{extra}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+        }
+    });
+    let mut thread = crate::browser_thread().unwrap();
+    thread.enable_network(Default::default()).unwrap();
+    let page = thread.browser.create_page().unwrap();
+    thread.browser.navigate(page, NavigateOpts::address_bar(format!("{origin}/"))).unwrap();
+    let target = format!("{origin}/after");
+    thread.run_until(Some(Instant::now() + Duration::from_secs(5)), |b| {
+        b.page(page).unwrap().main_frame.url == target && b.page(page).unwrap().main_frame.loaded
+    });
+    assert_eq!(eval(&thread, page, "document.body.textContent"), "after");
+    server.join().unwrap();
 }
