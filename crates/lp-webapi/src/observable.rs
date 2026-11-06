@@ -117,7 +117,8 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
     natives.set_atom("reportException", report.value())?;
     // Whether the realm's document is fully active: a Subscriber does
     // nothing once its document is detached.
-    let active = s.function("fullyActive", |s, _this, _a| Ok(s.boolean(page_of(s).is_ok_and(|p| p.is_fully_active()))))?;
+    let active =
+        s.function("fullyActive", |s, _this, _a| Ok(s.boolean(page_of(s).is_ok_and(|p| p.is_fully_active()))))?;
     natives.set_atom("fullyActive", active.value())?;
     let is_signal =
         s.function("isAbortSignal", |s, _this, a| Ok(s.boolean(s.unwrap::<AbortSignal>(a.get(0)).is_some())))?;
@@ -127,8 +128,7 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
     // (the GC sees what they reach); the signal only holds the key. Returns
     // the hook's identity for `removeAbortHook`.
     let add = s.function("addAbortHook", |s, _this, a| {
-        let signal =
-            s.unwrap::<AbortSignal>(a.get(0)).ok_or_else(|| JsError::Type("not an AbortSignal".into()))?;
+        let signal = s.unwrap::<AbortSignal>(a.get(0)).ok_or_else(|| JsError::Type("not an AbortSignal".into()))?;
         let key = a.get(1).to_number()?;
         let realm = s.realm().downgrade();
         let wrapper = signal.wrapper.clone();

@@ -72,19 +72,29 @@ fn event_source_fails_on_a_wrong_type_and_rejects_bad_urls() {
     env.until("seen.length===1");
     assert_eq!(env.eval("seen.join()"), "error:2");
     assert_eq!(env.eval("try{new EventSource('http://[bad');'no'}catch(e){e.name}"), "SyntaxError");
+    // A scheme that cannot serve an event stream fails for good too.
+    env.eval(
+        "globalThis.ftp=new EventSource('ftp://example.invalid/x');ftp.onerror=()=>seen.push('ftp:'+ftp.readyState)",
+    );
+    env.until("seen.length===2");
+    assert_eq!(env.eval("seen[1]"), "ftp:2");
     assert_eq!(env.eval("Object.prototype.toString.call(EventSource.prototype)"), "[object EventSource]");
     assert_eq!(env.eval("Object.getOwnPropertyDescriptor(globalThis,'EventSource').enumerable"), "false");
     let _ = server.release.send(());
 }
 
-/// A dedicated worker has EventSource too, resolving against its script.
+/// A dedicated worker has EventSource too, resolving against its script;
+/// its requests follow the main script's `Referrer-Policy` header.
 #[test]
 fn event_source_in_a_worker() {
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::<(String, String)>::new()));
+    let log = seen.clone();
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
     std::thread::spawn(move || {
         for stream in listener.incoming() {
             let Ok(mut stream) = stream else { break };
+            let log = log.clone();
             std::thread::spawn(move || {
                 let mut reader = BufReader::new(stream.try_clone().unwrap());
                 let mut first = String::new();
@@ -92,12 +102,16 @@ fn event_source_in_a_worker() {
                     return;
                 }
                 let path = first.split_whitespace().nth(1).unwrap_or("/").to_owned();
+                let mut headers = String::new();
                 loop {
                     let mut line = String::new();
                     if reader.read_line(&mut line).unwrap_or(0) == 0 || line == "\r\n" {
                         break;
                     }
+                    headers.push_str(&line);
                 }
+                log.lock().unwrap().push((path.clone(), headers));
+                let policy = if path == "/worker.js" { "Referrer-Policy: origin\r\n" } else { "" };
                 let (kind, body) = match path.as_str() {
                     "/worker.js" => (
                         "application/javascript",
@@ -110,7 +124,7 @@ fn event_source_in_a_worker() {
                 };
                 let _ = write!(
                     stream,
-                    "HTTP/1.1 200 OK\r\nContent-Type: {kind}\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{body}",
+                    "HTTP/1.1 200 OK\r\nContent-Type: {kind}\r\n{policy}Connection: close\r\nContent-Length: {}\r\n\r\n{body}",
                     body.len()
                 );
             });
@@ -122,6 +136,8 @@ fn event_source_in_a_worker() {
     ));
     env.until("msgs.length>=1");
     assert_eq!(env.eval("msgs[0]"), "function,true,from-worker");
+    let events = seen.lock().unwrap().iter().find(|(p, _)| p == "/events").cloned().unwrap();
+    assert_eq!(header(&events.1, "referer"), Some(format!("{base}/").as_str()));
     env.eval("w.terminate()");
     std::thread::sleep(Duration::from_millis(50));
 }

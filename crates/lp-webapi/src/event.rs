@@ -594,7 +594,9 @@ fn fill_pointer<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>
         for i in 0..len {
             let event = events.get_index(i)?;
             if s.unwrap::<PointerEvent>(event).is_none() {
-                return Err(JsError::Type(format!("Failed to construct 'PointerEvent': {name} must hold PointerEvents.")));
+                return Err(JsError::Type(format!(
+                    "Failed to construct 'PointerEvent': {name} must hold PointerEvents."
+                )));
             }
             into.push(Persistent::new(s, event));
         }
@@ -1124,10 +1126,7 @@ fn modifier_state(f: &EventFields, key: &str) -> bool {
         "Shift" => f.shift_key,
         "Alt" => f.alt_key,
         "Meta" => f.meta_key,
-        _ => EXTRA_MODIFIERS
-            .iter()
-            .position(|(_, k)| *k == key)
-            .is_some_and(|bit| f.extra_modifiers & (1 << bit) != 0),
+        _ => EXTRA_MODIFIERS.iter().position(|(_, k)| *k == key).is_some_and(|bit| f.extra_modifiers & (1 << bit) != 0),
     }
 }
 
@@ -1508,7 +1507,11 @@ impl JsClass for StorageEvent {
             }
             init_event_state(e, &ty, a.get(1).to_bool(), a.get(2).to_bool());
             let nullable = |v: lp_js::Value<'_>| -> JsResult<Option<String>> {
-                if v.is_undefined() || v.is_null() { Ok(None) } else { Ok(Some(dom_string(v)?)) }
+                if v.is_undefined() || v.is_null() {
+                    Ok(None)
+                } else {
+                    Ok(Some(dom_string(v)?))
+                }
             };
             let area = a.get(7);
             let area = if area.is_undefined() || area.is_null() {

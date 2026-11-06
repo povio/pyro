@@ -73,7 +73,7 @@ enum Report {
     Text(String),
     End,
     /// A network error; `true` when the connection must not be retried (a
-    /// CORS failure).
+    /// CORS failure, or a URL that is not http(s)).
     Failed(bool),
 }
 
@@ -150,12 +150,16 @@ fn start(
 ) -> JsResult<RequestId> {
     let net = page.net.borrow().clone().ok_or_else(|| JsError::Type("Page networking is not installed".into()))?;
     let poster = page.remote_poster().ok_or_else(|| JsError::Type("Browser task poster is not installed".into()))?;
+    // A scheme that cannot serve an event stream fails the connection for
+    // good instead of reconnecting (Chrome).
+    let fatal_scheme = !matches!(url.scheme(), "http" | "https");
     let mut request = Request::get(url, Destination::EventSource);
     request.credentials = if with_credentials { Credentials::Include } else { Credentials::SameOrigin };
     request.cache = lp_net::CacheMode::NoStore;
     request.headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
     if !last_event_id.is_empty() {
-        if let Ok(v) = HeaderValue::from_str(last_event_id) {
+        // The id is UTF-8 (it never holds NUL, CR or LF).
+        if let Ok(v) = HeaderValue::from_bytes(last_event_id.as_bytes()) {
             request.headers.insert(header::HeaderName::from_static("last-event-id"), v);
         }
     }
@@ -211,7 +215,7 @@ fn start(
                     }
                     Report::End
                 }
-                ResponseEvent::Failed(error) => Report::Failed(matches!(error, NetError::Cors(_))),
+                ResponseEvent::Failed(error) => Report::Failed(fatal_scheme || matches!(error, NetError::Cors(_))),
             };
             let post = {
                 let mut q = queue.lock().unwrap();

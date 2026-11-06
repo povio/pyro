@@ -237,6 +237,10 @@ impl PageDom {
         *self.referrer.referrer.borrow_mut() = value.unwrap_or_default();
         self.referrer.header_policy.set(header);
     }
+    /// The `Referrer-Policy` header of a worker's main script response.
+    pub(crate) fn set_referrer_policy_header(&self, header: Option<lp_net::ReferrerPolicy>) {
+        self.referrer.header_policy.set(header);
+    }
     /// `document.referrer`.
     pub fn document_referrer(&self) -> String {
         self.referrer.referrer.borrow().clone()
@@ -414,12 +418,13 @@ fn parse_request<'s>(
         "no-cors" => RequestMode::NoCors,
         _ => return Err(JsError::Type("Invalid fetch mode".into())),
     };
-    request.credentials = match string_option(s, init, "credentials", &default_string("credentials", "same-origin"))?.as_str() {
-        "omit" => Credentials::Omit,
-        "same-origin" => Credentials::SameOrigin,
-        "include" => Credentials::Include,
-        _ => return Err(JsError::Type("Invalid fetch credentials".into())),
-    };
+    request.credentials =
+        match string_option(s, init, "credentials", &default_string("credentials", "same-origin"))?.as_str() {
+            "omit" => Credentials::Omit,
+            "same-origin" => Credentials::SameOrigin,
+            "include" => Credentials::Include,
+            _ => return Err(JsError::Type("Invalid fetch credentials".into())),
+        };
     request.redirect = match string_option(s, init, "redirect", &default_string("redirect", "follow"))?.as_str() {
         "follow" => RedirectMode::Follow,
         "error" => RedirectMode::Error,
@@ -503,7 +508,12 @@ fn parse_request<'s>(
             policy
         }
     };
-    request.referrer_policy = lp_net::ReferrerPolicy::parse(&policy).unwrap_or_else(|| page.referrer_policy());
+    // The document's policy is looked up only when a referrer is sent.
+    request.referrer_policy = match lp_net::ReferrerPolicy::parse(&policy) {
+        Some(policy) => policy,
+        None if request.referrer.is_some() => page.referrer_policy(),
+        None => Default::default(),
+    };
     let integrity = match option(s, init, "integrity")? {
         v if v.is_undefined() => request_input.as_ref().map(|r| r.integrity.clone()).unwrap_or_default(),
         v => dom_string(v)?,
@@ -1109,7 +1119,9 @@ impl Body {
                         .map(|(_, v)| v.trim().trim_matches('"').to_owned());
                     match boundary {
                         Some(b) => crate::form_data::from_multipart(s, &bytes, &b),
-                        None => Err(JsError::Type("Cannot parse a 'multipart/form-data' body without a boundary".into())),
+                        None => {
+                            Err(JsError::Type("Cannot parse a 'multipart/form-data' body without a boundary".into()))
+                        }
                     }
                 } else {
                     Err(JsError::Type(format!("Cannot parse a '{essence}' body as FormData")))
