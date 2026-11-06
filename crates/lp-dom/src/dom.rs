@@ -2739,8 +2739,8 @@ impl Dom {
         let h = match &self.n(d).kind {
             NodeKind::Document(data) => data.head,
             _ => match self.first_element_child_idx(d) {
-                NIL => NIL,
-                html => self.head_child_idx(html, NIL),
+                html if html != NIL && self.is_html_root(html) => self.head_child_idx(html, NIL),
+                _ => NIL,
             },
         };
         Ok((h != NIL).then(|| self.id_of(h)))
@@ -2751,11 +2751,16 @@ impl Dom {
         let b = match &self.n(d).kind {
             NodeKind::Document(data) => data.body,
             _ => match self.first_element_child_idx(d) {
-                NIL => NIL,
-                html => self.body_child_idx(html, NIL),
+                html if html != NIL && self.is_html_root(html) => self.body_child_idx(html, NIL),
+                _ => NIL,
             },
         };
         Ok((b != NIL).then(|| self.id_of(b)))
+    }
+    /// Whether element `e` is an HTML `html` element: only such a document
+    /// element has a `head` and a `body` (HTML "the html element").
+    pub(crate) fn is_html_root(&self, e: u32) -> bool {
+        self.n(e).element().is_some_and(|el| el.is_html() && el.name.local == local_name!("html"))
     }
     /// The first HTML `body` or `frameset` child of `html` after `after`
     /// (NIL: from the first child); NIL for none.

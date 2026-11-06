@@ -352,8 +352,8 @@ impl Dom {
             let NodeKind::Document(d) = &self.n(i).kind else { continue };
             let root = self.first_element_child_idx(i);
             let (head, body) = match root {
-                NIL => (NIL, NIL),
-                r => (self.head_child_idx(r, NIL), self.body_child_idx(r, NIL)),
+                r if r != NIL && self.is_html_root(r) => (self.head_child_idx(r, NIL), self.body_child_idx(r, NIL)),
+                _ => (NIL, NIL),
             };
             if (d.document_element, d.head, d.body) != (root, head, body) {
                 return Err(format!(
@@ -384,21 +384,25 @@ impl Dom {
 impl Dom {
     // ----- document element, head and body -----------------------------
 
-    /// The document whose document element is `parent`, if any.
-    fn document_of_root(&self, parent: u32) -> u32 {
+    /// The document whose document element is `parent`, an HTML `html`
+    /// element (the only one with a head and a body), if any.
+    fn document_of_html_root(&self, parent: u32) -> u32 {
         let doc = self.n(parent).parent;
-        match doc != NIL && matches!(&self.n(doc).kind, NodeKind::Document(d) if d.document_element == parent) {
+        match doc != NIL
+            && matches!(&self.n(doc).kind, NodeKind::Document(d) if d.document_element == parent)
+            && self.is_html_root(parent)
+        {
             true => doc,
             false => NIL,
         }
     }
 
     /// Records `element` (NIL: none) as `doc`'s document element, with its
-    /// `head` and `body`.
+    /// `head` and `body` (none unless it is an HTML `html` element).
     fn set_document_element(&mut self, doc: u32, element: u32) {
         let (head, body) = match element {
-            NIL => (NIL, NIL),
-            e => (self.head_child_idx(e, NIL), self.body_child_idx(e, NIL)),
+            e if e != NIL && self.is_html_root(e) => (self.head_child_idx(e, NIL), self.body_child_idx(e, NIL)),
+            _ => (NIL, NIL),
         };
         if let NodeKind::Document(d) = &mut self.n_mut(doc).kind {
             d.document_element = element;
@@ -420,7 +424,7 @@ impl Dom {
             }
             return;
         }
-        let doc = self.document_of_root(parent);
+        let doc = self.document_of_html_root(parent);
         if doc == NIL {
             return;
         }
@@ -455,7 +459,7 @@ impl Dom {
             }
             return;
         }
-        let doc = self.document_of_root(parent);
+        let doc = self.document_of_html_root(parent);
         if doc == NIL {
             return;
         }

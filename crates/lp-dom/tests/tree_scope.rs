@@ -315,4 +315,27 @@ fn document_element_head_and_body_are_kept_as_the_tree_changes() {
     assert_ne!(cb, ob);
     assert_eq!(dom.parent(cb).unwrap(), dom.document_element(c).unwrap());
     verify(&dom);
+    // Only an HTML `html` document element has a head and a body: not an
+    // svg root, nor an `html` element in another namespace, whatever HTML
+    // children they have, before or after those children are linked.
+    dom.remove_child(d, other).unwrap();
+    let svg = dom.create_element_ns(d, Some("http://www.w3.org/2000/svg"), "svg").unwrap();
+    let sh = dom.create_element(d, "head").unwrap();
+    dom.append_child(svg, sh).unwrap();
+    dom.append_child(d, svg).unwrap();
+    let sb = dom.create_element(d, "body").unwrap();
+    dom.append_child(svg, sb).unwrap();
+    assert_eq!((dom.document_element(d).unwrap(), dom.head(d).unwrap(), dom.body(d).unwrap()), (Some(svg), None, None));
+    verify(&dom);
+    dom.remove_child(d, svg).unwrap();
+    let foreign = dom.create_element_ns(d, Some("http://www.w3.org/2000/svg"), "html").unwrap();
+    dom.append_child(d, foreign).unwrap();
+    dom.append_child(foreign, sh).unwrap();
+    dom.append_child(foreign, sb).unwrap();
+    assert_eq!((dom.head(d).unwrap(), dom.body(d).unwrap()), (None, None));
+    verify(&dom);
+    dom.remove_child(d, foreign).unwrap();
+    dom.append_child(d, other).unwrap();
+    assert_eq!((dom.head(d).unwrap(), dom.body(d).unwrap()), (None, Some(ob)));
+    verify(&dom);
 }
