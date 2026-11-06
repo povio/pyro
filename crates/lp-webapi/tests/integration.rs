@@ -20,6 +20,7 @@ mod forms_js;
 mod identity_js;
 mod image_input_js;
 mod indexeddb_js;
+mod layout_text_js;
 mod media_source_js;
 mod messaging_js;
 mod move_before_js;

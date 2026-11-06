@@ -1997,7 +1997,9 @@ impl Names<'_> {
     /// around every child that is not `display:inline` (and `<br>`).
     fn inner_text(&self, id: NodeId, opts: NameOpts) -> String {
         let dom = self.dom;
-        let mut out = String::new();
+        // Generated `::before` / `::after` text counts (Playwright's
+        // `getPseudoContent`).
+        let mut out = self.layout.pseudo_name_content(dom, id, &lp_dom::stylo::PseudoElement::Before);
         for c in dom.children(id).into_iter().flatten() {
             match dom.node(c).map(|n| &n.kind) {
                 Ok(NodeKind::Text(t)) => out.push_str(t),
@@ -2015,6 +2017,7 @@ impl Names<'_> {
                 _ => {}
             }
         }
+        out.push_str(&self.layout.pseudo_name_content(dom, id, &lp_dom::stylo::PseudoElement::After));
         out
     }
 }

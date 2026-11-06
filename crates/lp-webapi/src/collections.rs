@@ -1294,43 +1294,41 @@ pub struct StringMapData {
 }
 
 fn camel_to_data_attr(name: &str) -> Option<String> {
-    let mut out = String::from("data-");
-    let b = name.as_bytes();
-    for (i, &c) in b.iter().enumerate() {
-        if c == b'-' && b.get(i + 1).is_some_and(|n| n.is_ascii_lowercase()) {
+    let mut out = String::with_capacity(name.len() + 5);
+    out.push_str("data-");
+    let mut chars = name.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '-' && chars.peek().is_some_and(|n| n.is_ascii_lowercase()) {
             return None; // SyntaxError per spec for setter; getter: absent
         }
         if c.is_ascii_uppercase() {
             out.push('-');
-            out.push(c.to_ascii_lowercase() as char);
+            out.push(c.to_ascii_lowercase());
         } else {
-            out.push(c as char);
+            out.push(c);
         }
     }
     Some(out)
 }
 
 fn data_attr_to_camel(attr: &str) -> Option<String> {
+    // HTML "supported property names" of DOMStringMap: names after `data-`
+    // without ASCII upper alphas; each `-` followed by an ASCII lower alpha
+    // is removed and that letter uppercased.
     let rest = attr.strip_prefix("data-")?;
-    let mut out = String::new();
-    let mut up = false;
-    for c in rest.chars() {
-        if c == '-' {
-            up = true;
-            continue;
-        }
-        if up && c.is_ascii_lowercase() {
-            out.push(c.to_ascii_uppercase());
-        } else {
-            if up {
-                out.push('-');
-            }
-            out.push(c);
-        }
-        up = false;
+    if rest.bytes().any(|b| b.is_ascii_uppercase()) {
+        return None;
     }
-    if up {
-        out.push('-');
+    let mut out = String::with_capacity(rest.len());
+    let mut chars = rest.chars().peekable();
+    while let Some(c) = chars.next() {
+        match chars.peek() {
+            Some(&n) if c == '-' && n.is_ascii_lowercase() => {
+                out.push(n.to_ascii_uppercase());
+                chars.next();
+            }
+            _ => out.push(c),
+        }
     }
     Some(out)
 }
@@ -1393,5 +1391,13 @@ mod tests {
         assert_eq!(camel_to_data_attr("fooBar").as_deref(), Some("data-foo-bar"));
         assert_eq!(data_attr_to_camel("data-foo-bar").as_deref(), Some("fooBar"));
         assert_eq!(data_attr_to_camel("data-x").as_deref(), Some("x"));
+        assert_eq!(data_attr_to_camel("data-foo--bar").as_deref(), Some("foo-Bar"));
+        assert_eq!(data_attr_to_camel("data--").as_deref(), Some("-"));
+        assert_eq!(data_attr_to_camel("data-Foo"), None);
+        assert_eq!(data_attr_to_camel("data-\u{e9}t\u{e9}").as_deref(), Some("\u{e9}t\u{e9}"));
+        assert_eq!(camel_to_data_attr("\u{e0}").as_deref(), Some("data-\u{e0}"));
+        assert_eq!(camel_to_data_attr("\u{37e}foo").as_deref(), Some("data-\u{37e}foo"));
+        assert_eq!(camel_to_data_attr("a-b"), None);
+        assert_eq!(camel_to_data_attr("a-\u{e9}").as_deref(), Some("data-a-\u{e9}"));
     }
 }

@@ -190,7 +190,6 @@ pub fn install(scope: &Scope<'_>, page: Rc<PageDom>) -> JsResult<()> {
         handlers::define_touch_handlers(scope)?;
     }
     let global = scope.global();
-    global.set_atom("CSS", window::css_namespace(scope)?)?;
     // A window's `document` and `window` ([LegacyUnforgeable]) never change:
     // they are the global's own constant attributes (not members of
     // Window.prototype, see `window::has_window_constants`), which read with

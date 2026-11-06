@@ -1649,11 +1649,16 @@ impl JsClass for Document {
                 }
             }
         });
+        const HTML_NS: &str = "http://www.w3.org/1999/xhtml";
         def.getter("images", |s, n| {
-            Ok(collections::collection(s, n.page(), n.id, CollectionKind::TagName("img".into()))?.value())
+            // HTML `img` elements only (not foreign elements of that name).
+            let kind = CollectionKind::TagNameNs(HTML_NS.into(), "img".into());
+            Ok(collections::collection(s, n.page(), n.id, kind)?.value())
         });
         def.getter("scripts", |s, n| {
-            Ok(collections::collection(s, n.page(), n.id, CollectionKind::TagName("script".into()))?.value())
+            // HTML `script` elements only (not foreign elements of that name).
+            let kind = CollectionKind::TagNameNs(HTML_NS.into(), "script".into());
+            Ok(collections::collection(s, n.page(), n.id, kind)?.value())
         });
         def.getter("links", |s, n| Ok(collections::collection(s, n.page(), n.id, CollectionKind::Links)?.value()));
         def.accessor(

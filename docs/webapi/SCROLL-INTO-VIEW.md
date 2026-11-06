@@ -9,3 +9,9 @@ The reduced Chrome147 and pinned5b baseline use the same nested-overflow HTML. C
 This preserves the existing bounded vertical/start reveal policy and reveals horizontally clipped targets at the nearer edge. A horizontally visible target or oversized target spanning both edges retains its offset. This prevents a subsequent focus from creating an extra horizontal scroll after reveal. It does not implement complete scroll alignment options, smooth scrolling, hidden-versus-clip policy, full CSS geometry or child-frame scrolling. CDP consumption is a separate protocol increment. No full TOS/common-suite result is implied by the native tests or reduced control.
 
 Validation: 302 affected release tests passed (one pre-existing ignored), strict release all-target Clippy and formatting passed. Retained red/green logs and Chrome/baseline probe are in `evidence/nested-scroll-reveal/`.
+
+## Alignment options
+
+`Element.scrollIntoView(arg)` reads its `(boolean or ScrollIntoViewOptions)` argument. No argument, `true`, `null` and `{}` keep the policy above (block start, inline nearest). `false` aligns block end. `{block, inline}` take `start`, `center`, `end` or `nearest` per axis (`Layout::scroll_into_view_aligned_script_targets`): each scrollable ancestor (auto, scroll or hidden overflow, inside-out) and then the viewport scrolls so the target's border box lands at that edge, centred, or by its nearest edge, clamped to the scroll range; a fixed-position target moves only its ancestors. An invalid `block`, `inline` or `behavior` value throws `TypeError`. `behavior: 'smooth'` is accepted and scrolls instantly. Scroll margins and `scroll-padding` are not applied.
+
+`Element.checkVisibility(options)` reads `checkOpacity` / `opacityProperty` (an ancestor-or-self with `opacity: 0` is invisible) and `checkVisibilityCSS` / `visibilityProperty` (inherited `visibility: hidden`); `contentVisibilityAuto` is ignored.

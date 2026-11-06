@@ -250,9 +250,45 @@ pub(crate) fn schedule_scroll_clamp(page: &Rc<PageDom>) {
     );
 }
 
-pub(crate) fn scroll_into_view<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
+/// `scrollIntoView(arg)`: `(boolean or ScrollIntoViewOptions)`; `true`, a
+/// missing argument and `{}` align block start / inline nearest, `false`
+/// block end / inline nearest. `behavior` is accepted; scrolling is instant.
+pub(crate) fn scroll_into_view<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value<'s>> {
+    use lp_dom::layout::ScrollAlign;
+    let arg = a.get(0);
+    let (mut block, mut inline) = (ScrollAlign::Start, ScrollAlign::Nearest);
+    if let Some(o) = arg.as_object() {
+        // Dictionary members in lexicographic order: behavior, block, inline.
+        let behavior = o.get("behavior")?;
+        if !behavior.is_undefined() {
+            let b = dom_string(behavior)?;
+            if !matches!(b.as_str(), "auto" | "instant" | "smooth") {
+                return Err(lp_js::JsError::type_error(format!(
+                    "Failed to execute 'scrollIntoView' on 'Element': The provided value '{b}' is not a valid enum value of type ScrollBehavior."
+                )));
+            }
+        }
+        let position = |k: &str, out: &mut ScrollAlign| -> JsResult<()> {
+            let v = o.get(k)?;
+            if v.is_undefined() {
+                return Ok(());
+            }
+            let text = dom_string(v)?;
+            *out = ScrollAlign::parse(&text).ok_or_else(|| {
+                lp_js::JsError::type_error(format!(
+                    "Failed to execute 'scrollIntoView' on 'Element': The provided value '{text}' is not a valid enum value of type ScrollLogicalPosition."
+                ))
+            })?;
+            Ok(())
+        };
+        position("block", &mut block)?;
+        position("inline", &mut inline)?;
+    } else if !arg.is_undefined() && !arg.is_null() && !arg.to_bool() {
+        block = ScrollAlign::End;
+    }
     let page = n.page();
-    let moved = page.layout.borrow_mut().scroll_into_view_targets(&page.dom.borrow(), n.id);
+    let moved =
+        page.layout.borrow_mut().scroll_into_view_aligned_script_targets(&page.dom.borrow(), n.id, block, inline);
     fire_scroll_targets(page, moved);
     Ok(s.undefined())
 }
@@ -278,9 +314,27 @@ fn fire_scroll_targets(page: &Rc<PageDom>, moved: Vec<lp_dom::layout::ScrollTarg
     }
 }
 
-pub(crate) fn check_visibility<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
+/// `checkVisibility(options)`: `checkOpacity` / `opacityProperty` add the
+/// opacity:0 test, `checkVisibilityCSS` / `visibilityProperty` the
+/// visibility test (CSSOM View, CheckVisibilityOptions).
+pub(crate) fn check_visibility<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value<'s>> {
+    let mut opts = CheckVisibilityOptions::default();
+    let arg = a.get(0);
+    if !arg.is_undefined() && !arg.is_null() {
+        let o = arg.as_object().ok_or_else(|| {
+            lp_js::JsError::type_error("Failed to execute 'checkVisibility': options is not an object.")
+        })?;
+        // Dictionary members are read in lexicographic order.
+        let flag = |k: &str| o.get(k).map(|v| v.to_bool());
+        let check_opacity = flag("checkOpacity")?;
+        let check_visibility_css = flag("checkVisibilityCSS")?;
+        let opacity_property = flag("opacityProperty")?;
+        let visibility_property = flag("visibilityProperty")?;
+        opts.check_opacity = check_opacity || opacity_property;
+        opts.check_visibility = check_visibility_css || visibility_property;
+    }
     let page = n.page();
-    let v = page.layout().check_visibility(&page.dom.borrow(), n.id, CheckVisibilityOptions::default());
+    let v = page.layout().check_visibility(&page.dom.borrow(), n.id, opts);
     Ok(s.boolean(v))
 }
 
@@ -490,6 +544,26 @@ pub(crate) fn elements_from_point<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) 
 /// Read-only computed style (`getComputedStyle`).
 pub struct ComputedData {
     el: crate::collections::NodeHold,
+    /// The `pseudoElt` argument, parsed.
+    pseudo: lp_dom::stylo::PseudoArg,
+}
+
+impl ComputedData {
+    /// The computed value of `name` for the element or its pseudo-element.
+    fn value(&self, name: &str) -> String {
+        use lp_dom::stylo::PseudoArg;
+        let page = &self.el.page;
+        match &self.pseudo {
+            PseudoArg::Element => {
+                crate::animation_events::observe(page, self.el.id);
+                page.layout().computed_style_value(&page.dom.borrow(), self.el.id, name)
+            }
+            PseudoArg::Pseudo(pseudo) => {
+                page.layout().computed_pseudo_style_value(&page.dom.borrow(), self.el.id, pseudo, name)
+            }
+            PseudoArg::Invalid => String::new(),
+        }
+    }
 }
 
 pub struct ComputedStyle;
@@ -501,10 +575,7 @@ impl JsClass for ComputedStyle {
         def.not_exposed();
         def.method("getPropertyValue", 1, |s, c, a| {
             let name = arg_string(&a, 0, "CSSStyleDeclaration.getPropertyValue")?;
-            let page = &c.el.page;
-            crate::animation_events::observe(page, c.el.id);
-            let v = page.layout().computed_style_value(&page.dom.borrow(), c.el.id, &name);
-            Ok(s.string(&v))
+            Ok(s.string(&c.value(&name)))
         });
         def.method("getPropertyPriority", 1, |s, _c, _a| Ok(s.string("")));
         // The longhands, as indexed properties; an element without computed
@@ -540,16 +611,16 @@ impl JsClass for ComputedStyle {
             } else {
                 crate::css::camel_to_css(name)
             };
-            let page = &c.el.page;
-            crate::animation_events::observe(page, c.el.id);
-            let v = page.layout().computed_style_value(&page.dom.borrow(), c.el.id, &prop);
-            Ok(Some(s.string(&v)))
+            Ok(Some(s.string(&c.value(&prop))))
         });
     }
 }
 
 /// The property names a computed style lists.
 fn computed_names(c: &ComputedData) -> &'static [&'static str] {
+    if c.pseudo == lp_dom::stylo::PseudoArg::Invalid {
+        return &[];
+    }
     let page = &c.el.page;
     let dom = page.dom.borrow();
     if page.layout().computed_style_value(&dom, c.el.id, "display").is_empty() {
@@ -558,9 +629,19 @@ fn computed_names(c: &ComputedData) -> &'static [&'static str] {
     lp_dom::stylo::longhand_names()
 }
 
-/// `window.getComputedStyle(el)`.
-pub fn get_computed_style<'s>(s: &Scope<'s>, page: &Rc<PageDom>, el: NodeId) -> JsResult<Object<'s>> {
-    s.wrap::<ComputedStyle>(ComputedData { el: crate::collections::NodeHold::new(page, el)? }, None)
+/// `window.getComputedStyle(el, pseudoElt)`.
+pub fn get_computed_style<'s>(
+    s: &Scope<'s>,
+    page: &Rc<PageDom>,
+    el: NodeId,
+    pseudo_elt: Value<'s>,
+) -> JsResult<Object<'s>> {
+    let pseudo = if pseudo_elt.is_undefined() || pseudo_elt.is_null() {
+        lp_dom::stylo::PseudoArg::Element
+    } else {
+        lp_dom::stylo::parse_pseudo_arg(&dom_string(pseudo_elt)?)
+    };
+    s.wrap::<ComputedStyle>(ComputedData { el: crate::collections::NodeHold::new(page, el)?, pseudo }, None)
 }
 
 /// A live `MediaQueryList` (`PageDom::media_queries`): its target, query

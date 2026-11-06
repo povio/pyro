@@ -179,6 +179,17 @@ where
     crate::websocket::define_globals(def);
     crate::indexeddb::define_globals(def);
     crate::editing_globals::define_globals(def);
+    // The `CSS` namespace object, made on its first read (most realms never
+    // read it); assignment shadows it with a data property.
+    def.accessor(
+        "CSS",
+        |s, w| {
+            let value = css_namespace(s)?;
+            css_namespace_property(s, w.page(), value)?;
+            Ok(value)
+        },
+        |s, w, value| css_namespace_property(s, w.page(), value),
+    );
     def.getter("screen", |s, w| {
         let key = lp_js::IdentityKey(w.page().id() | (1 << 57), 1);
         same_object(s, w.page(), key, || s.wrap::<Screen>(w.page().clone(), Some(key)))
@@ -191,7 +202,7 @@ where
     });
     def.method("getComputedStyle", 1, |s, w, a| {
         let el = crate::node::node_arg(s, a.get(0), "Window.getComputedStyle")?;
-        Ok(crate::layout_api::get_computed_style(s, w.page(), el)?.value())
+        Ok(crate::layout_api::get_computed_style(s, w.page(), el, a.get(1))?.value())
     });
     def.method("matchMedia", 1, |s, w, a| {
         let q = arg_string(&a, 0, "Window.matchMedia")?;
@@ -582,25 +593,42 @@ fn screen(p: &PageDom) -> (u32, u32) {
     (v.screen_width.unwrap_or(v.width), v.screen_height.unwrap_or(v.height))
 }
 
-/// `CSS` namespace object (supports/escape).
+/// Replaces the lazy `CSS` accessor with the namespace's own data property
+/// (writable, configurable, not enumerable, as WebIDL defines a namespace).
+fn css_namespace_property<'s>(s: &Scope<'s>, page: &crate::page::PageDom, value: Value<'s>) -> JsResult<()> {
+    let define = page.define_properties.borrow().get(&s.realm_id()).map(|p| p.get(s));
+    let define = define.and_then(|v| v.as_object()).ok_or_else(|| JsError::type_error("CSS is unavailable"))?;
+    let desc = s.object();
+    desc.set_atom("value", value)?;
+    desc.set_atom("writable", s.boolean(true))?;
+    desc.set_atom("enumerable", s.boolean(false))?;
+    desc.set_atom("configurable", s.boolean(true))?;
+    define.call(None, &[s.global().value(), s.string("CSS"), desc.value()])?;
+    Ok(())
+}
+
+/// `CSS` namespace object (supports/escape/registerProperty).
 pub fn css_namespace<'s>(s: &Scope<'s>) -> JsResult<Value<'s>> {
     let o = s.object();
     let supports = s.function("supports", |s, _this, a| {
-        if a.len() == 1 {
-            let text = dom_string(a.get(0))?;
-            let selector = text.trim().strip_prefix("selector(").and_then(|t| t.strip_suffix(')'));
-            if let Some(selector) = selector {
-                return Ok(s.boolean(lp_dom::cssom::normalize_selector(selector, &Vec::new()).is_some()));
+        if a.len() == 0 {
+            return Err(JsError::type_error(
+                "Failed to execute 'supports' on 'CSS': 1 argument required, but only 0 present.",
+            ));
+        }
+        if a.len() >= 2 {
+            let property = dom_string(a.get(0))?;
+            let value = dom_string(a.get(1))?;
+            return Ok(s.boolean(lp_dom::stylo::supports_declaration(&property, &value)));
+        }
+        let text = dom_string(a.get(0))?;
+        let selector = text.trim().strip_prefix("selector(").and_then(|t| t.strip_suffix(')'));
+        if let Some(selector) = selector {
+            if lp_dom::cssom::normalize_selector(selector, &Vec::new()).is_some() {
+                return Ok(s.boolean(true));
             }
         }
-        // Syntax-level check only: property names and values are accepted.
-        let ok = if a.len() >= 2 {
-            !dom_string(a.get(0))?.is_empty()
-        } else {
-            let cond = dom_string(a.get(0))?;
-            cond.contains(':') || cond.trim_start().starts_with("selector(")
-        };
-        Ok(s.boolean(ok))
+        Ok(s.boolean(lp_dom::stylo::supports_condition(&text)))
     })?;
     o.set_atom("supports", supports.value())?;
     let escape = s.function("escape", |s, _this, a| {
@@ -610,6 +638,48 @@ pub fn css_namespace<'s>(s: &Scope<'s>) -> JsResult<Value<'s>> {
         Ok(s.string(&out))
     })?;
     o.set_atom("escape", escape.value())?;
+    let register = s.function("registerProperty", |s, _this, a| {
+        let page = crate::target::page_of(s)?;
+        let def = a.get(0);
+        let def = if def.is_undefined() || def.is_null() { None } else { Some(def) };
+        let def = match def {
+            Some(v) => Some(v.as_object().ok_or_else(|| {
+                JsError::type_error(
+                    "Failed to execute 'registerProperty' on 'CSS': The provided value is not of type 'PropertyDefinition'.",
+                )
+            })?),
+            None => None,
+        };
+        // PropertyDefinition members, in WebIDL dictionary order.
+        let member = |k: &str| def.map_or(Ok(s.undefined()), |d| d.get(k));
+        let inherits = member("inherits")?;
+        if inherits.is_undefined() {
+            return Err(JsError::type_error(
+                "Failed to execute 'registerProperty' on 'CSS': required member inherits is undefined.",
+            ));
+        }
+        let inherits = inherits.to_bool();
+        let initial = member("initialValue")?;
+        let initial = if initial.is_undefined() { None } else { Some(dom_string(initial)?) };
+        let name = member("name")?;
+        if name.is_undefined() {
+            return Err(JsError::type_error(
+                "Failed to execute 'registerProperty' on 'CSS': required member name is undefined.",
+            ));
+        }
+        let name = dom_string(name)?;
+        let syntax = member("syntax")?;
+        let syntax = if syntax.is_undefined() { "*".to_owned() } else { dom_string(syntax)? };
+        let initial_value = lp_dom::stylo::validate_property_registration(&name, &syntax, initial.as_deref())
+            .map_err(|message| JsError::dom("SyntaxError", message))?;
+        let property = lp_dom::style::RegisteredProperty { name, syntax, inherits, initial_value };
+        let fresh = page.layout.borrow_mut().style_mut().register_property(property);
+        if !fresh {
+            return Err(JsError::dom("InvalidModificationError", "The name provided has already been registered."));
+        }
+        Ok(s.undefined())
+    })?;
+    o.set_atom("registerProperty", register.value())?;
     Ok(o.value())
 }
 

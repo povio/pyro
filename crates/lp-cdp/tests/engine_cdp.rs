@@ -3340,6 +3340,9 @@ mod accessibility;
 #[path = "engine_cdp/frames.rs"]
 mod frames;
 
+#[path = "engine_cdp/layout_text.rs"]
+mod layout_text;
+
 #[path = "engine_cdp/tier3_g2.rs"]
 mod tier3_g2;
 

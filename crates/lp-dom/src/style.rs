@@ -645,6 +645,8 @@ pub struct ComputedStyle {
     pub atomic_inline: bool,
     /// Own computed `display` is a table row or row group.
     pub table_row_or_group: bool,
+    /// The box kind of the own computed (blockified) `display`.
+    pub box_kind: BoxKind,
     /// Own computed `z-index` (`None`: `auto`).
     pub z_index: Option<i32>,
     /// A `transform` other than `none`.
@@ -655,6 +657,30 @@ pub struct ComputedStyle {
     pub isolated: bool,
     /// Own computed `user-select`.
     pub user_select: UserSelect,
+}
+
+/// The kind of box an element's computed `display` generates, after
+/// Stylo's blockification of flex/grid items, floats and absolutely
+/// positioned boxes (what `innerText` breaks lines at).
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum BoxKind {
+    /// `display: none`.
+    None,
+    /// `display: contents`: no box of its own.
+    Contents,
+    /// An inline-level box (`inline`, `inline-block`, `inline-flex`,
+    /// `inline-table`, ...).
+    #[default]
+    Inline,
+    /// A block-level box (`block`, `flow-root`, `flex`, `grid`,
+    /// `list-item`, `table`) or `table-caption`.
+    Block,
+    TableCell,
+    TableRow,
+    /// A table row group (`table-row-group`, `-header-group`, `-footer-group`).
+    TableRowGroup,
+    /// `table-column` / `table-column-group`.
+    TableColumn,
 }
 
 /// Computed `position`.
@@ -776,6 +802,18 @@ pub struct StyleEngine {
     /// DOM's tree version it was computed at (`<style>` texts only change
     /// with the tree).
     sheets_key: Cell<Option<((u64, u64), u64)>>,
+    /// The document's `CSS.registerProperty()` registrations, in order.
+    registered_properties: Vec<RegisteredProperty>,
+}
+
+/// One `CSS.registerProperty()` registration (validated by
+/// [`crate::stylo::validate_property_registration`]).
+#[derive(Clone, Debug)]
+pub struct RegisteredProperty {
+    pub name: String,
+    pub syntax: String,
+    pub inherits: bool,
+    pub initial_value: Option<String>,
 }
 
 /// [`StyleEngine::observation_stamp`]: DOM version, sheet generation,
@@ -805,6 +843,7 @@ impl StyleEngine {
             gecko_rules: RefCell::new(None),
             revisions: 0,
             sheets_key: Cell::new(None),
+            registered_properties: Vec::new(),
         }
     }
 
@@ -817,6 +856,36 @@ impl StyleEngine {
     ) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
         self.owns(dom, el)?;
         self.external_style(dom, el)
+    }
+
+    /// Records a `CSS.registerProperty()` registration; `false` (and nothing
+    /// changes) when the name is registered already.
+    pub fn register_property(&mut self, property: RegisteredProperty) -> bool {
+        if self.registered_property(&property.name).is_some() {
+            return false;
+        }
+        self.registered_properties.push(property);
+        true
+    }
+
+    /// The registration of custom property `name`, if script made one.
+    pub fn registered_property(&self, name: &str) -> Option<&RegisteredProperty> {
+        self.registered_properties.iter().find(|p| p.name == name)
+    }
+
+    /// The layout engine's style of `el`'s pseudo-element `pseudo` (see
+    /// [`crate::geometry::GeometrySource::element_pseudo_style`]).
+    pub fn stylo_pseudo_style(
+        &self,
+        dom: &Dom,
+        el: NodeId,
+        pseudo: &style::selector_parser::PseudoElement,
+        generated_only: bool,
+    ) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
+        self.owns(dom, el)?;
+        self.engine_styled(dom)?;
+        let external = self.external.borrow();
+        external.as_ref()?.0.element_pseudo_style(crate::snapshot::render_key(el), pseudo, generated_only)
     }
 
     /// The layout engine's style of `el` (its styles brought up to `dom`).
@@ -1399,6 +1468,7 @@ fn derive_computed(
             || d == D::TableRowGroup
             || d == D::TableHeaderGroup
             || d == D::TableFooterGroup,
+        box_kind: box_kind_of(d),
         z_index: match position.z_index {
             style::values::generics::position::GenericZIndex::Integer(z) => Some(z),
             style::values::generics::position::GenericZIndex::Auto => None,
@@ -1416,6 +1486,30 @@ fn derive_computed(
                 U::All => UserSelect::All,
             }
         },
+    }
+}
+
+/// The [`BoxKind`] of a computed Stylo `display`.
+fn box_kind_of(d: style::values::specified::box_::Display) -> BoxKind {
+    use style::values::specified::box_::{Display as D, DisplayInside as I, DisplayOutside as O};
+    if d == D::None {
+        return BoxKind::None;
+    }
+    if d == D::Contents {
+        return BoxKind::Contents;
+    }
+    match d.outside() {
+        O::None => BoxKind::None,
+        O::Inline => BoxKind::Inline,
+        O::Block | O::TableCaption => BoxKind::Block,
+        O::InternalTable => match d.inside() {
+            I::TableCell => BoxKind::TableCell,
+            I::TableRow => BoxKind::TableRow,
+            I::TableColumn | I::TableColumnGroup => BoxKind::TableColumn,
+            _ => BoxKind::TableRowGroup,
+        },
+        #[allow(unreachable_patterns)]
+        _ => BoxKind::Inline,
     }
 }
 
