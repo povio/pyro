@@ -310,7 +310,11 @@ impl JsClass for Window {
             }
             _ => Ok(None),
         });
-        def.getter("window", |s, _w| Ok(s.global().value()));
+        // [LegacyUnforgeable]: the global's own constant where the
+        // JavaScriptCore supports it (`lp_webapi::install`).
+        if !lp_webapi::window::has_window_constants() {
+            def.getter("window", |s, _w| Ok(s.global().value()));
+        }
         def.accessor(
             "self",
             |s, _w| Ok(s.global().value()),
