@@ -1565,6 +1565,7 @@ dependencies = [
  "lp-cdp",
  "lp-js",
  "lp-net",
+ "lp-render",
  "lp-runtime",
  "mimalloc",
  "serde_json",

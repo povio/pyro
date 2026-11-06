@@ -55,8 +55,9 @@ mod allocator_tag {
 }
 
 /// Returns mimalloc's free pages to the system now: the browser thread's on
-/// [`lp_js::Engine::settle`], an I/O thread's once it is idle (it owns the
-/// response buffers the browser thread frees).
+/// [`lp_js::Engine::settle`], an I/O thread's or the render thread's once it
+/// is idle (each owns the pages of what it allocated: response buffers,
+/// render documents and images, which the browser thread frees).
 fn release_allocator() {
     // SAFETY: mimalloc's public API, callable from any thread at any time.
     unsafe { mi_collect(true) }
@@ -77,6 +78,8 @@ commands:
 fn main() -> ExitCode {
     lp_js::set_allocator_release(release_allocator);
     lp_net::set_idle_release(release_allocator);
+    #[cfg(feature = "render")]
+    lp_render::worker::set_idle_release(release_allocator);
     lp_js::configure_process();
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
