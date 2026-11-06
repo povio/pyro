@@ -138,14 +138,23 @@ Actions settle before they return (the next call starts once the page is
 quiet), so a test that asserts a transient state between an action and its
 result (a spinner) can miss it.
 
-Not supported yet (they throw a clear error): `routeFromHAR`,
-element and JS handles (`$`, `evaluateHandle`), `locator.and/or`,
-`filter()` after `first()/last()/nth()`, `getByRole` options other than
-`name`/`exact`, XPath and most Playwright-only selector engines (CSS with a
-trailing `:has-text()` / `:visible`, `text=`, `role=`, `>>` chains work),
-popups, downloads, `keyboard.down/up`, click modifiers. Dialogs opened by
-`page.evaluate()` reach `page.on('dialog')`; a dialog an action opens is
-dismissed. `page.frames()` lists only the main frame (use `frameLocator`).
+Also covered: element and JS handles (`page.$`, `$$`, `evaluateHandle`,
+`locator.elementHandle()`, handles as `evaluate` arguments; element handle
+actions run natively on the element, which carries a `data-lp-handle`
+attribute for the length of the action), `locator.and()`/`or()`, filters and
+`nth()` after `first()/last()/nth()`, every `getByRole` option, XPath, popups
+(`page.on('popup')`, `context.on('page')`), downloads (`page.on('download')`,
+`saveAs`, `path`), `keyboard.down/up`, click modifiers, `page.frames()` and
+child frames (their `<iframe>` gets a `data-lp-frame` attribute once listed),
+`exposeFunction`/`exposeBinding`, and `routeFromHAR` replay. With a
+`page.on('dialog')` listener, a dialog an action opens waits for its answer as
+in Chrome; without one it is dismissed.
+
+Not supported (they throw a clear error): `routeFromHAR` recording
+(`update`), handles to elements inside child frames, `frame.goto` on a child
+frame, Playwright-only selector engines beyond CSS (with a trailing
+`:has-text()` / `:visible`), XPath, `text=`, `role=`, `id=`, test ids and `>>`
+chains, and `filechooser`, `websocket` and `worker` events.
 
 ## Install
 

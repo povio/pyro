@@ -4534,6 +4534,87 @@ fn driver_run_eval_calls_functions_with_elements() {
     assert!(r["error"]["message"].as_str().unwrap_or_default().contains("needs a locator"), "{r}");
 }
 
+/// Locator kinds for Playwright's API: `xpath`, `of` (filter or nth after
+/// an nth), `or` (union in document order), `and` (intersection) and the
+/// `getByRole` state options.
+#[test]
+fn driver_locators_xpath_of_or_and_role_states() {
+    let address = driver_site();
+    let mut h = Harness::new();
+    let html = r#"<h1>Top</h1><h2>Sub</h2><div aria-level="3" role="heading">Aria</div>
+<ul><li>Apple <b>red</b></li><li>Banana</li><li>Cherry <b>red</b></li></ul>
+<input type="checkbox" id="a" checked aria-label="A"><input type="checkbox" id="b" aria-label="B">
+<button aria-pressed="true">Bold</button><button aria-pressed="false">Italic</button><button disabled>Off</button>
+<button aria-expanded="true">Menu</button><button hidden>Ghost</button>
+<select aria-label="S"><option>x</option><option selected>y</option></select>"#;
+    let steps = json!([
+        {"goto": {"url": format!("http://{address}/form")}},
+        {"eval": {"expression": "(h) => { document.body.innerHTML = h; }", "arg": html}},
+        {"read": {"locator": {"xpath": "//li[b]"}, "read": "count", "as": "xpath"}},
+        {"read": {"locator": {"of": {"css": "li", "nth": 0}, "filter": {"hasText": "Apple"}}, "read": "count", "as": "ofKeep"}},
+        {"read": {"locator": {"of": {"css": "li", "nth": 0}, "filter": {"hasText": "Banana"}}, "read": "count", "as": "ofDrop"}},
+        {"read": {"locator": {"of": {"css": "h2"}, "or": [{"css": "h1"}], "nth": 0}, "read": "text", "as": "orFirst"}},
+        {"read": {"locator": {"of": {"css": "li"}, "and": [{"xpath": "//li[b]"}]}, "read": "count", "as": "and"}},
+        {"read": {"locator": {"of": {"css": "li"}, "and": [{"text": "red"}]}, "read": "count", "as": "andText"}},
+        {"read": {"locator": {"role": "heading", "level": 2}, "read": "text", "as": "level2"}},
+        {"read": {"locator": {"role": "heading", "level": 3}, "read": "text", "as": "level3"}},
+        {"read": {"locator": {"role": "checkbox", "checked": true}, "read": "name", "as": "checked"}},
+        {"read": {"locator": {"role": "button", "pressed": true}, "read": "name", "as": "pressed"}},
+        {"read": {"locator": {"role": "button", "disabled": true}, "read": "name", "as": "disabled"}},
+        {"read": {"locator": {"role": "button", "expanded": true}, "read": "name", "as": "expanded"}},
+        {"read": {"locator": {"role": "option"}, "read": "count", "as": "options"}},
+        {"read": {"locator": {"role": "option", "selected": true}, "read": "text", "as": "selected"}},
+        {"read": {"locator": {"role": "button", "includeHidden": true}, "read": "count", "as": "hidden"}},
+        {"read": {"locator": {"role": "button"}, "read": "count", "as": "notHidden"}},
+    ]);
+    let r = h.page("LP.run", json!({ "steps": steps }));
+    let reads = &r["result"]["reads"];
+    assert_eq!(reads["xpath"], 2, "{r}");
+    assert_eq!(reads["ofKeep"], 1, "{r}");
+    assert_eq!(reads["ofDrop"], 0, "{r}");
+    assert_eq!(reads["orFirst"], "Top", "document order: {r}");
+    assert_eq!(reads["and"], 2, "{r}");
+    // As Playwright: the text locator names the <b>, not the <li>.
+    assert_eq!(reads["andText"], 0, "{r}");
+    assert_eq!(reads["options"], 2, "options of a visible select: {r}");
+    assert_eq!(reads["level2"], "Sub", "{r}");
+    assert_eq!(reads["level3"], "Aria", "{r}");
+    assert_eq!(reads["checked"], "A", "{r}");
+    assert_eq!(reads["pressed"], "Bold", "{r}");
+    assert_eq!(reads["disabled"], "Off", "{r}");
+    assert_eq!(reads["expanded"], "Menu", "{r}");
+    assert_eq!(reads["selected"], "y", "{r}");
+    assert_eq!(reads["hidden"], 5, "{r}");
+    assert_eq!(reads["notHidden"], 4, "{r}");
+    let r = h.page("LP.run", json!({"steps": [{"read": {"locator": {"css": "li", "level": 1}, "read": "count"}}]}));
+    assert!(r["error"]["message"].as_str().unwrap_or_default().contains("need a role"), "{r}");
+}
+
+/// `modifiers` on pointer actions set the events' modifier flags (Playwright's
+/// `click({ modifiers })`).
+#[test]
+fn driver_click_modifiers_reach_the_events() {
+    let address = driver_site();
+    let mut h = Harness::new();
+    let steps = json!([
+        {"goto": {"url": format!("http://{address}/form")}},
+        {"eval": {"expression": "() => { document.body.innerHTML = '<button id=m>M</button>'; window.seen = []; m.addEventListener('click', (e) => seen.push([e.shiftKey, e.ctrlKey, e.altKey, e.metaKey].join())); }", "call": true}},
+        {"act": {"locator": {"css": "#m"}, "action": "click", "modifiers": ["Shift", "Alt"]}},
+        {"act": {"locator": {"css": "#m"}, "action": "click"}},
+        {"mouse": {"action": "click", "x": 5, "y": 5, "modifiers": ["Control"]}},
+        {"eval": {"expression": "seen", "as": "seen"}},
+    ]);
+    let r = h.page("LP.run", json!({ "steps": steps }));
+    let seen = r["result"]["reads"]["seen"].as_array().cloned().unwrap_or_else(|| panic!("{r}"));
+    assert_eq!(seen[0], "true,false,true,false", "{r}");
+    assert_eq!(seen[1], "false,false,false,false", "{r}");
+    let r = h.page(
+        "LP.run",
+        json!({"steps": [{"act": {"locator": {"css": "#m"}, "action": "click", "modifiers": ["Hyper"]}}]}),
+    );
+    assert!(r["error"]["message"].as_str().unwrap_or_default().contains("unknown modifier"), "{r}");
+}
+
 const DRIVER_STEPS_PAGE: &str = r#"<!doctype html><body>
 <style>#tip{display:none} #cell:hover + #tip{display:block} #box{color:rgb(1, 2, 3);width:120px;height:40px}</style>
 <div id="cell">Cell</div><div id="tip">Tooltip</div>

@@ -62,14 +62,18 @@ const SETTLE_MAX: Duration = Duration::from_millis(1_000);
 /// How many times a turn's marker task lets queued tasks go first.
 const MARKER_HOPS: u32 = 4;
 
-/// What a locator names. Exactly one of `css`, `testId`, `text`, `role`,
-/// `label` or `placeholder`, searched inside each match of `within` (else the
-/// document), narrowed by `filter`; `nth` then picks one match instead of
-/// requiring a unique one.
+/// What a locator names. Exactly one of `css`, `xpath`, `testId`, `text`,
+/// `role`, `label`, `placeholder` or `of` (another locator's matches, so a
+/// filter or `nth` can follow an `nth`), searched inside each match of
+/// `within` (else the document), joined with the matches of `or` (document
+/// order) and kept only where every `and` matches too, narrowed by `filter`;
+/// `nth` then picks one match instead of requiring a unique one.
 #[derive(Deserialize, Serialize, Clone, Debug, Default)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(super) struct Locator {
     css: Option<String>,
+    xpath: Option<String>,
+    of: Option<Box<Locator>>,
     test_id: Option<String>,
     /// Attribute `testId` matches (default `data-testid`).
     test_id_attribute: Option<String>,
@@ -77,6 +81,23 @@ pub(super) struct Locator {
     role: Option<String>,
     /// Accessible name for `role`.
     name: Option<Pattern>,
+    /// `role` state filters (Playwright's `getByRole` options): `checked`
+    /// and `pressed` (`true`, `false` or `"mixed"`), `disabled`, `expanded`,
+    /// `selected`, `level`; `includeHidden` lets hidden elements match.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    checked: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pressed: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    disabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    expanded: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    selected: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    level: Option<u32>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    include_hidden: bool,
     label: Option<Pattern>,
     placeholder: Option<Pattern>,
     /// Whole-string, case-sensitive match for text, name, label and
@@ -91,6 +112,78 @@ pub(super) struct Locator {
     /// Search inside the document of this `<iframe>` (a locator in the
     /// parent document; may itself have a `frame`).
     frame: Option<Box<Locator>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    or: Vec<Locator>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    and: Vec<Locator>,
+}
+
+impl Locator {
+    // ---- role states ----
+
+    fn has_role_states(&self) -> bool {
+        self.checked.is_some()
+            || self.pressed.is_some()
+            || self.disabled.is_some()
+            || self.expanded.is_some()
+            || self.selected.is_some()
+            || self.level.is_some()
+    }
+
+    /// Whether `n` (an element with the locator's role) has the asked states.
+    fn role_states_hold(&self, dom: &Dom, n: NodeId) -> bool {
+        let tri = |want: &Value, have: Option<&str>| match want {
+            Value::Bool(true) => have == Some("true"),
+            Value::Bool(false) => have != Some("true") && have != Some("mixed"),
+            Value::String(s) => have == Some(s.as_str()),
+            _ => false,
+        };
+        if let Some(want) = &self.checked {
+            let have = match checked_state(dom, n, true) {
+                Some(Checked::Yes) => "true",
+                Some(Checked::Mixed) => "mixed",
+                _ => "false",
+            };
+            if !tri(want, Some(have)) {
+                return false;
+            }
+        }
+        if let Some(want) = &self.pressed {
+            if !tri(want, attr(dom, n, "aria-pressed")) {
+                return false;
+            }
+        }
+        if let Some(want) = self.disabled {
+            let aria = self_and_ancestors(dom, n).any(|a| attr(dom, a, "aria-disabled") == Some("true"));
+            if (disabled(dom, n) || aria) != want {
+                return false;
+            }
+        }
+        if let Some(want) = self.expanded {
+            if (attr(dom, n, "aria-expanded") == Some("true")) != want {
+                return false;
+            }
+        }
+        if let Some(want) = self.selected {
+            let selected = attr(dom, n, "aria-selected") == Some("true")
+                || (local(dom, n) == Some("option") && dom.option_selected(n).unwrap_or(false));
+            if selected != want {
+                return false;
+            }
+        }
+        if let Some(want) = self.level {
+            let level = attr(dom, n, "aria-level").and_then(|l| l.trim().parse::<u32>().ok()).or_else(|| {
+                local(dom, n)
+                    .and_then(|t| t.strip_prefix('h'))
+                    .and_then(|d| d.parse::<u32>().ok())
+                    .filter(|d| (1..=6).contains(d))
+            });
+            if level != Some(want) {
+                return false;
+            }
+        }
+        true
+    }
 }
 
 /// Narrows a locator's matches. Every given condition must hold.
@@ -164,12 +257,37 @@ struct PointerOpts {
     force: bool,
     /// `wheel`: the delta.
     delta: (f64, f64),
+    /// Modifier keys held during the action (`ctrlKey`, `shiftKey`, ... on its events).
+    modifiers: input::Modifiers,
 }
 
 impl Default for PointerOpts {
     fn default() -> Self {
-        PointerOpts { button: MouseButton::Left, position: None, force: false, delta: (0.0, 0.0) }
+        PointerOpts {
+            button: MouseButton::Left,
+            position: None,
+            force: false,
+            delta: (0.0, 0.0),
+            modifiers: input::Modifiers::default(),
+        }
     }
+}
+
+/// `["Shift", "ControlOrMeta"]` as held modifiers (`ControlOrMeta` is Meta on macOS).
+fn modifiers_of(names: &[String]) -> CdpResult<input::Modifiers> {
+    let mut m = input::Modifiers::default();
+    for name in names {
+        match name.as_str() {
+            "Shift" => m.shift = true,
+            "Control" => m.ctrl = true,
+            "Alt" => m.alt = true,
+            "Meta" => m.meta = true,
+            "ControlOrMeta" if cfg!(target_os = "macos") => m.meta = true,
+            "ControlOrMeta" => m.ctrl = true,
+            other => return Err(CdpError::invalid_params(format!("unknown modifier {other:?}"))),
+        }
+    }
+    Ok(m)
 }
 
 /// A `mouse` step's action, at viewport coordinates (`page.mouse.*`).
@@ -1691,7 +1809,14 @@ fn hidden_for_aria(dom: &Dom, layout: &Layout, id: NodeId, ancestors: bool) -> b
         || local(dom, id) == Some("option") && self_and_ancestors(dom, id).any(|a| local(dom, a) == Some("select"));
     let style = layout.style();
     if ancestors {
-        if !layout.is_visible(dom, id) {
+        // An option of a closed <select> has no box of its own: as in
+        // Playwright, it is as visible as its select.
+        let boxed = if in_select() {
+            self_and_ancestors(dom, id).find(|a| local(dom, *a) == Some("select")).unwrap_or(id)
+        } else {
+            id
+        };
+        if !layout.is_visible(dom, boxed) {
             return true;
         }
     } else if style.has_display_none(dom, id) {
@@ -2136,6 +2261,8 @@ impl Locator {
     fn validate(&self) -> CdpResult<()> {
         let kinds = [
             self.css.is_some(),
+            self.xpath.is_some(),
+            self.of.is_some(),
             self.test_id.is_some(),
             self.text.is_some(),
             self.role.is_some(),
@@ -2144,11 +2271,16 @@ impl Locator {
         ];
         if kinds.iter().filter(|k| **k).count() != 1 {
             return Err(CdpError::invalid_params(
-                "locator needs exactly one of css, testId, text, role, label, placeholder",
+                "locator needs exactly one of css, xpath, testId, text, role, label, placeholder, of",
             ));
         }
-        if let Some(within) = &self.within {
-            within.validate()?;
+        if self.has_role_states() && self.role.is_none() {
+            return Err(CdpError::invalid_params(
+                "checked, pressed, disabled, expanded, selected and level need a role",
+            ));
+        }
+        for l in self.within.iter().chain(self.of.iter()).map(|b| &**b).chain(self.or.iter()).chain(self.and.iter()) {
+            l.validate()?;
         }
         if let Some(f) = &self.filter {
             for l in [&f.has, &f.has_not].into_iter().flatten() {
@@ -2169,13 +2301,30 @@ impl Locator {
             None => vec![base],
         };
         let mut found = Vec::new();
-        if let [root] = roots[..] {
+        if let Some(of) = &self.of {
+            let mut seen = HashSet::new();
+            for root in roots {
+                found.extend(of.resolve_at(page, selectors, root)?.into_iter().filter(|n| seen.insert(*n)));
+            }
+        } else if let [root] = roots[..] {
             found = self.matches_in(page, selectors, root)?;
         } else {
             let mut seen = HashSet::new();
             for root in roots {
                 found.extend(self.matches_in(page, selectors, root)?.into_iter().filter(|n| seen.insert(*n)));
             }
+        }
+        if !self.or.is_empty() {
+            let mut all: HashSet<NodeId> = found.iter().copied().collect();
+            for other in &self.or {
+                all.extend(other.resolve_at(page, selectors, base)?);
+            }
+            let dom = page.dom.borrow();
+            found = dom.descendants(base).into_iter().flatten().filter(|n| all.contains(n)).collect();
+        }
+        for other in &self.and {
+            let keep: HashSet<NodeId> = other.resolve_at(page, selectors, base)?.into_iter().collect();
+            found.retain(|n| keep.contains(n));
         }
         if let Some(f) = &self.filter {
             let mut kept = Vec::with_capacity(found.len());
@@ -2203,6 +2352,19 @@ impl Locator {
         if let Some(css) = &self.css {
             let sel = selectors.borrow_mut().get(css).map_err(|_| CdpError::invalid_params("invalid css selector"))?;
             found = dom.query_all(root, &sel).map_err(|e| CdpError::server(format!("{e:?}")))?;
+        } else if let Some(xpath) = &self.xpath {
+            let value = lp_dom::xpath::evaluate(&dom, xpath, lp_dom::xpath::XPathNode::Node(root))
+                .map_err(|e| CdpError::invalid_params(format!("invalid xpath: {e:?}")))?;
+            let lp_dom::xpath::XPathValue::NodeSet(nodes) = value else {
+                return Err(CdpError::invalid_params("xpath must select nodes"));
+            };
+            found = nodes
+                .into_iter()
+                .filter_map(|n| match n {
+                    lp_dom::xpath::XPathNode::Node(id) if dom.element(id).is_ok() => Some(id),
+                    _ => None,
+                })
+                .collect();
         } else if let Some(id) = &self.test_id {
             let name = self.test_id_attribute.as_deref().unwrap_or("data-testid");
             found = elements(&dom, root).filter(inside).filter(|n| attr(&dom, *n, name) == Some(id.as_str())).collect();
@@ -2222,7 +2384,8 @@ impl Locator {
             found = elements(&dom, root)
                 .filter(inside)
                 .filter(|n| role_of(&dom, *n).as_deref() == Some(role.as_str()))
-                .filter(|n| !hidden_for_aria(&dom, &layout, *n, true))
+                .filter(|n| self.include_hidden || !hidden_for_aria(&dom, &layout, *n, true))
+                .filter(|n| self.role_states_hold(&dom, *n))
                 .filter(|n| match &self.name {
                     Some(want) => want.matches(&accessible_name(&dom, &layout, doc, *n), self.exact),
                     None => true,
@@ -2713,7 +2876,14 @@ fn pointer(page: &Rc<PageDom>, id: NodeId, what: Pointer, opts: PointerOpts) -> 
         Ok(p) => p,
         Err(retry) => return retry,
     };
-    let m = MouseInput { x, y, delta_x: opts.delta.0, delta_y: opts.delta.1, ..MouseInput::default() };
+    let m = MouseInput {
+        x,
+        y,
+        delta_x: opts.delta.0,
+        delta_y: opts.delta.1,
+        modifiers: opts.modifiers,
+        ..MouseInput::default()
+    };
     // Hover-dependent layout (a tooltip the move hid, a menu it opened) can
     // shift the element between events: a move or press goes where it is
     // then; a release or wheel where the pointer is.
@@ -2751,7 +2921,14 @@ fn mouse_step(
 ) -> Attempt {
     let (x0, y0) = input::pointer_position(page).unwrap_or((0.0, 0.0));
     let (x, y) = (x.unwrap_or(x0), y.unwrap_or(y0));
-    let mut m = MouseInput { x, y, delta_x: opts.delta.0, delta_y: opts.delta.1, ..MouseInput::default() };
+    let mut m = MouseInput {
+        x,
+        y,
+        delta_x: opts.delta.0,
+        delta_y: opts.delta.1,
+        modifiers: opts.modifiers,
+        ..MouseInput::default()
+    };
     // Buttons stay held between steps (`down`, `move`, `up` drags).
     m.buttons = input::pointer_buttons(page);
     let send = |m: &MouseInput, kind: MouseKind| input::dispatch_mouse(page, kind, m).map_err(Attempt::Retry);
@@ -3014,6 +3191,9 @@ struct ActParams {
     /// `wheel`: the delta.
     delta_x: Option<f64>,
     delta_y: Option<f64>,
+    /// Pointer actions: modifier keys held (`Shift`, `Control`, `Alt`, `Meta`, `ControlOrMeta`).
+    #[serde(default)]
+    modifiers: Vec<String>,
     timeout: Option<u64>,
 }
 
@@ -3039,6 +3219,9 @@ struct MouseParams {
     delta_x: Option<f64>,
     delta_y: Option<f64>,
     steps: Option<u32>,
+    /// Modifier keys held (`Shift`, `Control`, `Alt`, `Meta`, `ControlOrMeta`).
+    #[serde(default)]
+    modifiers: Vec<String>,
     /// Wait for the requests the action started (default: true).
     settle: Option<bool>,
     timeout: Option<u64>,
@@ -3077,6 +3260,7 @@ impl MouseParams {
             position: None,
             force: true,
             delta: (self.delta_x.unwrap_or(0.0), self.delta_y.unwrap_or(0.0)),
+            modifiers: modifiers_of(&self.modifiers)?,
         };
         let steps = self.steps.unwrap_or(1).clamp(1, 1_000);
         let settle = self.settle.unwrap_or(true);
@@ -3575,6 +3759,7 @@ impl ActParams {
             position: self.position.map(|p| (p.x, p.y)),
             force: self.force,
             delta: (self.delta_x.unwrap_or(0.0), self.delta_y.unwrap_or(0.0)),
+            modifiers: modifiers_of(&self.modifiers)?,
         };
         Ok((
             Step::Act { locator: self.locator, action, value: self.value, settle, to: self.to, files, pointer },
@@ -3899,6 +4084,19 @@ impl EngineHost {
                 (steps, false)
             }
             "query" => return self.driver_query(cmd).map(Some),
+            // `LP.dialogs {block}`: dialogs this page's driver steps open wait
+            // for `Page.handleJavaScriptDialog` like other dialogs (dialog.rs)
+            // instead of returning what a dismissed one gives.
+            "dialogs" => {
+                #[derive(Deserialize)]
+                struct P {
+                    block: bool,
+                }
+                let p = cmd.command.params::<P>()?;
+                let id = self.pages.get(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?.id;
+                self.collector.dialogs.set_driver_blocking(id, p.block);
+                return Ok(Some(json!({})));
+            }
             _ => return Err(CdpError::unsupported(&cmd.command.method)),
         };
         let state = self.pages.get_mut(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?;
@@ -4064,7 +4262,7 @@ impl EngineHost {
                     self.thread.browser.checkpoint();
                     match advanced {
                         Ok(None) => {
-                            w.phase = Phase::Act { seq: Some(seq), before, hop: None, at: Instant::now() + TURN };
+                            w.phase = Phase::Act { seq: Some(seq), before, hop: None, at: self.turn_end(pid) };
                             return Ok(Drive::Park(Box::new(w)));
                         }
                         Ok(Some(value)) => {
@@ -4355,7 +4553,7 @@ impl EngineHost {
                     match attempt {
                         Attempt::Done(value) => self.finish_step(&mut w, &step, value, before),
                         Attempt::Continue(seq) => {
-                            w.phase = Phase::Act { seq: Some(seq), before, hop: None, at: Instant::now() + TURN };
+                            w.phase = Phase::Act { seq: Some(seq), before, hop: None, at: self.turn_end(pid) };
                             return Ok(Drive::Park(Box::new(w)));
                         }
                         Attempt::RetrySoon(reason) => {
@@ -4401,7 +4599,7 @@ impl EngineHost {
                 w.phase = Phase::Settle { requests, since: now, until: now + SETTLE_MAX };
             }
             None if matches!(step, Step::Act { .. } | Step::Eval { .. } | Step::AdvanceTime { .. }) => {
-                w.phase = Phase::Act { seq: None, before: None, hop: None, at: now + TURN };
+                w.phase = Phase::Act { seq: None, before: None, hop: None, at: self.turn_end(w.job.pid) };
                 if matches!(step, Step::Eval { .. }) {
                     w.job.trace_post_eval_turn_start();
                 }
@@ -4441,6 +4639,18 @@ impl EngineHost {
     }
 
     /// A marker set from a task posted behind the tasks queued now.
+    /// When the event-loop turn starting now may end (the marker task goes
+    /// in then): after [`TURN`] when the page has an animation frame,
+    /// observer callbacks or a timer due soon that the turn must let run;
+    /// at once otherwise, the marker still running behind every queued task.
+    fn turn_end(&self, pid: PageId) -> Instant {
+        let now = Instant::now();
+        match self.thread.browser.page_work(pid) {
+            Some(w) if w.frames == 0 && w.observers == 0 && w.timers == 0 => now,
+            _ => now + TURN,
+        }
+    }
+
     fn marker(&self) -> Rc<Cell<bool>> {
         let done = Rc::new(Cell::new(false));
         post_marker(self.thread.browser.scheduler(), done.clone(), MARKER_HOPS);

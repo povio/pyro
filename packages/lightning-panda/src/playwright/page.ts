@@ -25,6 +25,7 @@ import {
   urlMatches,
 } from './match.js';
 import type { BrowserContext } from './browser.js';
+import { callDeclaration, Download, ElementHandle, hasHandles, JSHandle, serializeArg, valueOf } from './handles.js';
 
 export class TimeoutError extends Error {
   override name = 'TimeoutError';
@@ -284,11 +285,14 @@ abstract class Scope {
     return Object.keys(options).length ? loc.filter(options) : loc;
   }
   getByRole(role: string, options: RoleOptions = {}): Locator {
-    const { name, exact, ...rest } = options;
-    const extra = Object.keys(rest).filter((k) => rest[k] !== undefined && !(k === 'includeHidden' && rest[k] === false));
+    const { name, exact, checked, pressed, disabled, expanded, selected, level, includeHidden, ...rest } = options;
+    const extra = Object.keys(rest).filter((k) => rest[k] !== undefined);
     if (extra.length) throw notSupported(`getByRole option ${extra.join(', ')}`);
-    const spec: LocatorSpec = { role, ...(name === undefined ? {} : { name: pattern(name) }), ...(exact ? { exact: true } : {}) };
-    return this._child(spec, `getByRole(${quote(role)}${optsString({ name, exact })})`);
+    const states = clean({ checked, pressed, disabled, expanded, selected, level, includeHidden }) as Partial<LocatorSpec>;
+    // `false` is a state to match, not an absent option.
+    for (const [k, v] of Object.entries({ checked, pressed, disabled, expanded, selected })) if (v === false) (states as any)[k] = false;
+    const spec: LocatorSpec = { role, ...(name === undefined ? {} : { name: pattern(name) }), ...(exact ? { exact: true } : {}), ...states };
+    return this._child(spec, `getByRole(${quote(role)}${optsString({ name, exact, checked, pressed, disabled, expanded, selected, level, includeHidden })})`);
   }
   getByText(text: TextMatch, options: { exact?: boolean } = {}): Locator {
     return this._child({ text: pattern(text), ...(options.exact ? { exact: true } : {}) }, `getByText(${quote(text)}${optsString(options)})`);
@@ -344,19 +348,24 @@ export class Locator extends Scope {
 
   // ---- narrowing ----
 
+  /** The spec to narrow further: wrapped (`of`) once it has picked an `nth`, so the new step applies after it. */
+  private base(): LocatorSpec {
+    if (this._spec.nth === undefined) return this._spec;
+    const { frame, ...picked } = this._spec;
+    return { of: picked, ...(frame ? { frame } : {}) };
+  }
   filter(options: FilterOptions = {}): Locator {
-    if (this._spec.nth !== undefined) throw notSupported('filter() after first(), last() or nth()');
-    const filter = { ...this._spec.filter };
+    const base = this.base();
+    const filter = { ...base.filter };
     if (options.hasText !== undefined) filter.hasText = pattern(options.hasText);
     if (options.hasNotText !== undefined) filter.hasNotText = pattern(options.hasNotText);
     if (options.has) filter.has = innerSpec(options.has);
     if (options.hasNot) filter.hasNot = innerSpec(options.hasNot);
     if (options.visible !== undefined) filter.visible = options.visible;
-    return new Locator(this._page, { ...this._spec, filter }, `${this._desc}.filter(${filterDesc(options)})`);
+    return new Locator(this._page, { ...base, filter }, `${this._desc}.filter(${filterDesc(options)})`);
   }
   nth(index: number): Locator {
-    if (this._spec.nth !== undefined) throw notSupported('nth() after first(), last() or nth()');
-    return new Locator(this._page, { ...this._spec, nth: index }, `${this._desc}.nth(${index})`);
+    return new Locator(this._page, { ...this.base(), nth: index }, `${this._desc}.nth(${index})`);
   }
   first(): Locator {
     return this.nth(0).withDesc(`${this._desc}.first()`);
@@ -367,11 +376,20 @@ export class Locator extends Scope {
   private withDesc(desc: string): Locator {
     return new Locator(this._page, this._spec, desc);
   }
-  and(_locator: Locator): Locator {
-    throw notSupported('locator.and()');
+  /** Matches of both (Playwright's `and`). */
+  and(locator: Locator): Locator {
+    return this.join('and', locator);
   }
-  or(_locator: Locator): Locator {
-    throw notSupported('locator.or()');
+  /** Matches of either, in document order (Playwright's `or`). */
+  or(locator: Locator): Locator {
+    return this.join('or', locator);
+  }
+  private join(kind: 'and' | 'or', other: Locator): Locator {
+    const { frame, ...mine } = this._spec;
+    const { frame: otherFrame, ...theirs } = other._spec;
+    if (JSON.stringify(frame) !== JSON.stringify(otherFrame)) throw new Error(`locator.${kind}: locators must belong to the same frame`);
+    const spec: LocatorSpec = { of: mine, [kind]: [theirs], ...(frame ? { frame } : {}) };
+    return new Locator(this._page, spec, `${this._desc}.${kind}(${other._desc})`);
   }
   contentFrame(): FrameLocator {
     return new FrameLocator(this._page, this);
@@ -380,11 +398,16 @@ export class Locator extends Scope {
     const n = await this.count();
     return Array.from({ length: n }, (_, i) => this.nth(i));
   }
-  async elementHandle(): Promise<never> {
-    throw notSupported('element handles (use locators)');
+  /** The element (waiting for exactly one), as a handle. */
+  async elementHandle(options: Timeout = {}): Promise<ElementHandle> {
+    const h = await this._page._handleFrom('locator.elementHandle', '(el) => el', { locator: this._spec, timeout: options.timeout }, this._desc);
+    return h.asElement()!;
   }
-  async elementHandles(): Promise<never> {
-    throw notSupported('element handles (use locators)');
+  async elementHandles(): Promise<ElementHandle[]> {
+    const list = await this._page._handleFrom('locator.elementHandles', '(els) => els', { locator: this._spec, all: true }, this._desc);
+    const props = await list.getProperties();
+    await list.dispose();
+    return [...props.values()].map((h) => h.asElement()).filter((h): h is ElementHandle => !!h);
   }
 
   // ---- actions ----
@@ -394,8 +417,9 @@ export class Locator extends Scope {
     return this._page._run(`locator.${api}`, [step], this._desc).then(() => undefined);
   }
   private pointer(o: ClickOptions): Record<string, unknown> {
-    if (o.modifiers?.length) throw notSupported('click modifiers');
+    const modifiers = [...new Set([...(o.modifiers ?? []), ...this._page.keyboard._held()])];
     return {
+      ...(modifiers.length ? { modifiers } : {}),
       ...(o.button && o.button !== 'left' ? { button: o.button } : {}),
       ...(o.position ? { position: o.position } : {}),
       ...(o.force ? { force: true } : {}),
@@ -559,8 +583,8 @@ export class Locator extends Scope {
   _evaluateAll<R>(fn: string, arg?: unknown): Promise<R> {
     return this._page._call('expect', fn, { locator: this._spec, all: true, arg, timeout: 0 }, this._desc);
   }
-  async evaluateHandle(): Promise<never> {
-    throw notSupported('JS handles (use evaluate)');
+  async evaluateHandle<A = unknown>(fn: string | ((el: any, arg: A) => unknown), arg?: A, options: Timeout = {}): Promise<JSHandle> {
+    return this._page._handleFrom('locator.evaluateHandle', source(fn), { locator: this._spec, arg, timeout: options.timeout }, this._desc);
   }
   async waitFor(options: Timeout & { state?: 'attached' | 'detached' | 'visible' | 'hidden' } = {}): Promise<void> {
     const timeout = this._page._timeout(options.timeout);
@@ -914,57 +938,117 @@ const RECEIVED = `(els, { expression, name, innerText }) => {
 
 type GotoOptions = Timeout & { waitUntil?: 'load' | 'domcontentloaded' | 'networkidle' | 'commit'; referer?: string };
 
+/** In the page: `fn` (source) run in the document of the `<iframe>` it gets. */
+const IN_FRAME = `(iframe, [src, arg, expression]) => {
+  const w = iframe.contentWindow;
+  if (!w) throw new Error('the frame has no window (cross-origin or detached)');
+  return expression ? w.eval(src) : w.eval('(' + src + '\\n)')(arg);
+}`;
+
+/**
+ * The main frame (`page.mainFrame()`), or a child frame: its locators search
+ * the document of its `<iframe>`, which carries a `data-lp-frame` attribute
+ * once the frame is listed (`page.frames()`, `frame.childFrames()`).
+ */
 export class Frame extends Scope {
-  constructor(readonly _page: Page) {
+  _name = '';
+  _url = 'about:blank';
+  _detached = false;
+  constructor(
+    readonly _page: Page,
+    /** A child frame's id (none for the main frame). */
+    readonly _id?: string,
+    public _parent: Frame | null = null,
+  ) {
     super();
   }
+  /** The `<iframe>` of a child frame, as a locator (in its parent's document). */
+  get _owner(): LocatorSpec | undefined {
+    if (!this._id) return undefined;
+    const own: LocatorSpec = { css: `[data-lp-frame="${this._id}"]` };
+    const parent = this._parent?._owner;
+    return parent ? { ...own, frame: parent } : own;
+  }
   protected _child(spec: LocatorSpec, desc: string): Locator {
-    return new Locator(this._page, spec, desc);
+    const owner = this._owner;
+    return owner ? new Locator(this._page, { ...spec, frame: owner }, `frame(${quote(this._name || this._id!)}).${desc}`) : new Locator(this._page, spec, desc);
   }
   page(): Page {
     return this._page;
   }
   url(): string {
-    return this._page.url();
+    return this._id ? this._url : this._page.url();
   }
   name(): string {
-    return '';
+    return this._name;
   }
-  parentFrame(): null {
-    return null;
+  parentFrame(): Frame | null {
+    return this._id ? this._parent : null;
   }
   childFrames(): Frame[] {
-    return [];
+    return this._page._childFrames(this);
   }
   isDetached(): boolean {
-    return this._page.isClosed();
+    return this._id ? this._detached : this._page.isClosed();
+  }
+  async frameElement(): Promise<ElementHandle> {
+    if (!this._owner) throw new Error('frame.frameElement: the main frame has no element');
+    const h = await this._page._handleFrom('frame.frameElement', '(el) => el', { locator: this._owner });
+    return h.asElement()!;
   }
   goto(url: string, options?: GotoOptions) {
+    if (this._id) throw notSupported('frame.goto on a child frame');
     return this._page.goto(url, options);
   }
-  evaluate<R, A>(fn: string | ((arg: A) => R | Promise<R>), arg?: A) {
-    return this._page.evaluate(fn, arg);
+  async evaluate<R, A>(fn: string | ((arg: A) => R | Promise<R>), arg?: A): Promise<R> {
+    if (!this._owner) return this._page.evaluate(fn, arg);
+    const expression = typeof fn === 'string';
+    return this._page._call('frame.evaluate', IN_FRAME, { locator: this._owner, arg: [expression ? fn : fn.toString(), arg ?? null, expression] });
   }
   content() {
-    return this._page.content();
+    if (!this._id) return this._page.content();
+    return this.evaluate(() => (document.doctype ? '<!DOCTYPE ' + document.doctype.name + '>' : '') + document.documentElement.outerHTML);
   }
   title() {
-    return this._page.title();
+    if (!this._id) return this._page.title();
+    return this.evaluate(() => document.title);
   }
   waitForLoadState(state?: 'load' | 'domcontentloaded' | 'networkidle', options?: Timeout) {
     return this._page.waitForLoadState(state, options);
   }
   waitForURL(url: UrlMatch, options?: Timeout & { waitUntil?: GotoOptions['waitUntil'] }) {
+    if (this._id) throw notSupported('frame.waitForURL on a child frame');
     return this._page.waitForURL(url, options);
   }
-  waitForSelector(selector: string, options?: Timeout & { state?: 'attached' | 'detached' | 'visible' | 'hidden' }) {
-    return this._page.waitForSelector(selector, options);
+  async waitForSelector(selector: string, options: Timeout & { state?: 'attached' | 'detached' | 'visible' | 'hidden' } = {}): Promise<ElementHandle | null> {
+    if (!this._id) return this._page.waitForSelector(selector, options);
+    await this.locator(selector).first().waitFor(options);
+    return null;
   }
   waitForFunction<R, A>(fn: string | ((arg: A) => R | Promise<R>), arg?: A, options?: Timeout & { polling?: number | 'raf' }) {
+    if (this._id) throw notSupported('frame.waitForFunction on a child frame');
     return this._page.waitForFunction(fn, arg, options);
   }
   waitForTimeout(ms: number) {
     return this._page.waitForTimeout(ms);
+  }
+  $(selector: string) {
+    if (this._id) throw notSupported('element handles in child frames');
+    return this._page.$(selector);
+  }
+  $$(selector: string) {
+    if (this._id) throw notSupported('element handles in child frames');
+    return this._page.$$(selector);
+  }
+  $eval<R, A>(selector: string, fn: (el: any, arg: A) => R | Promise<R>, arg?: A): Promise<R> {
+    return this.locator(selector).first().evaluate(fn, arg);
+  }
+  $$eval<R, A>(selector: string, fn: (els: any[], arg: A) => R | Promise<R>, arg?: A): Promise<R> {
+    return this.locator(selector).evaluateAll(fn, arg);
+  }
+  evaluateHandle<A>(fn: string | ((arg: A) => unknown), arg?: A) {
+    if (this._id) throw notSupported('JS handles in child frames');
+    return this._page.evaluateHandle(fn, arg);
   }
 
   /** `expect(page).toHaveURL()` and `.toHaveTitle()` from `@playwright/test`. */
@@ -987,10 +1071,41 @@ export class Frame extends Scope {
   }
 }
 
+/** `keyboard.down/up` key definitions: `key`, `code`, key code, and the text a press types. */
+const MODIFIER_BITS: Record<string, number> = { Alt: 1, Control: 2, Meta: 4, Shift: 8 };
+function keyDefinition(key: string): { key: string; code: string; keyCode: number; text: string; location: number } {
+  const named: Record<string, [string, number, string?]> = {
+    Enter: ['Enter', 13, '\r'], Tab: ['Tab', 9, '\t'], Backspace: ['Backspace', 8], Escape: ['Escape', 27], Delete: ['Delete', 46],
+    ArrowLeft: ['ArrowLeft', 37], ArrowUp: ['ArrowUp', 38], ArrowRight: ['ArrowRight', 39], ArrowDown: ['ArrowDown', 40],
+    Home: ['Home', 36], End: ['End', 35], PageUp: ['PageUp', 33], PageDown: ['PageDown', 34], Insert: ['Insert', 45],
+    Shift: ['ShiftLeft', 16], Control: ['ControlLeft', 17], Alt: ['AltLeft', 18], Meta: ['MetaLeft', 91], ' ': ['Space', 32, ' '],
+  };
+  for (let i = 1; i <= 12; i++) named[`F${i}`] = [`F${i}`, 111 + i];
+  if (named[key]) {
+    const [code, keyCode, text] = named[key];
+    return { key, code, keyCode, text: text ?? '', location: MODIFIER_BITS[key] ? 1 : 0 };
+  }
+  if (key.length === 1) {
+    const upper = key.toUpperCase();
+    const code = /[a-z]/i.test(key) ? `Key${upper}` : /\d/.test(key) ? `Digit${key}` : '';
+    return { key, code, keyCode: upper.charCodeAt(0), text: key, location: 0 };
+  }
+  throw new Error(`Unknown key: "${key}"`);
+}
+
 export class Keyboard {
+  private held = new Set<string>();
   constructor(private _page: Page) {}
+  /** Modifier keys held with `down()`: they apply to clicks and presses. */
+  _held(): string[] {
+    return [...this.held].filter((k) => k in MODIFIER_BITS);
+  }
+  private bits(): number {
+    return this._held().reduce((b, k) => b | MODIFIER_BITS[k], 0);
+  }
   async press(key: string, _options: { delay?: number } = {}): Promise<void> {
-    await this._page._focused('keyboard.press', 'press', key);
+    const chord = [...this._held(), key].join('+');
+    await this._page._focused('keyboard.press', 'press', chord);
   }
   async type(text: string, _options: { delay?: number } = {}): Promise<void> {
     await this._page._focused('keyboard.type', 'type', text);
@@ -998,18 +1113,32 @@ export class Keyboard {
   async insertText(text: string): Promise<void> {
     await this._page._focused('keyboard.insertText', 'type', text);
   }
-  async down(_key: string): Promise<void> {
-    throw notSupported('keyboard.down');
+  async down(key: string): Promise<void> {
+    const d = keyDefinition(key);
+    const repeat = this.held.has(key);
+    this.held.add(key);
+    await this._page._send('Input.dispatchKeyEvent', {
+      type: d.text && !this._held().some((k) => k !== 'Shift') ? 'keyDown' : 'rawKeyDown',
+      key: d.key, code: d.code, windowsVirtualKeyCode: d.keyCode, text: d.text, unmodifiedText: d.text,
+      location: d.location, autoRepeat: repeat, modifiers: this.bits(),
+    });
   }
-  async up(_key: string): Promise<void> {
-    throw notSupported('keyboard.up');
+  async up(key: string): Promise<void> {
+    const d = keyDefinition(key);
+    this.held.delete(key);
+    await this._page._send('Input.dispatchKeyEvent', {
+      type: 'keyUp', key: d.key, code: d.code, windowsVirtualKeyCode: d.keyCode, location: d.location, modifiers: this.bits(),
+    });
   }
 }
 
 export class Mouse {
   constructor(private _page: Page) {}
   private step(action: string, o: Record<string, unknown>) {
-    return this._page._run(`mouse.${action}`, [{ mouse: { action, ...clean(o) } }]).then(() => undefined);
+    const modifiers = this._page.keyboard._held();
+    return this._page
+      ._run(`mouse.${action}`, [{ mouse: { action, ...clean(o), ...(modifiers.length ? { modifiers } : {}) } }])
+      .then(() => undefined);
   }
   click(x: number, y: number, o: { button?: string; clickCount?: number } = {}) {
     return this.step(o.clickCount === 2 ? 'dblclick' : 'click', { x, y, button: o.button });
@@ -1050,6 +1179,12 @@ export class Page extends Scope {
   /** `page.addInitScript` before the page has a target. */
   _pendingScripts: string[] = [];
   _routes: RouteEntry[] = [];
+  /** Child frames by id, from Page events (or the frame tree when attaching to a booted page). */
+  private _frames = new Map<string, Frame>();
+  private _marking = new Map<string, Promise<void>>();
+  /** `exposeBinding` callbacks by binding name. */
+  _bindings = new Map<string, { name: string; callback: (source: any, ...args: any[]) => unknown; script: string }>();
+  private _dialogsBlock = false;
   _sessionId = '';
   _targetId = '';
   private _attaching?: Promise<Attachment>;
@@ -1070,10 +1205,28 @@ export class Page extends Scope {
     const mine = (fn: (p: any) => void) => (p: any, sid?: string) => !!sid && sid === this._sessionId && fn(p);
     const on = (method: string, fn: (p: any) => void) => this._off.push(_cdp.on(method, mine(fn)));
     on('Page.frameNavigated', (p) => {
-      if (p.frame.parentId) return;
+      if (p.frame.parentId) {
+        const f = this.childFrame(p.frame.id, p.frame.parentId);
+        f._url = p.frame.url + (p.frame.urlFragment ?? '');
+        f._name = p.frame.name ?? '';
+        this._events.emit('framenavigated', f);
+        return;
+      }
       this._mainFrameId = p.frame.id;
       this.setUrl(p.frame.url + (p.frame.urlFragment ?? ''));
     });
+    on('Page.frameAttached', (p) => {
+      if (p.parentFrameId) this._events.emit('frameattached', this.childFrame(p.frameId, p.parentFrameId));
+    });
+    on('Page.frameDetached', (p) => {
+      const f = this._frames.get(p.frameId);
+      if (!f) return;
+      f._detached = true;
+      this._frames.delete(p.frameId);
+      this._marking.delete(p.frameId);
+      this._events.emit('framedetached', f);
+    });
+    on('Runtime.bindingCalled', (p) => void this.onBinding(p));
     on('Page.navigatedWithinDocument', (p) => {
       if (!p.frameId || p.frameId === (this._mainFrameId ?? this._targetId)) this.setUrl(p.url);
     });
@@ -1081,6 +1234,7 @@ export class Page extends Scope {
       const dialog = new Dialog(this, p.type, p.message, p.defaultPrompt ?? '');
       if (this._events.listenerCount('dialog')) this._events.emit('dialog', dialog);
       else dialog.dismiss().catch(() => {});
+      this._syncDialogs();
     });
     on('Page.loadEventFired', () => this._events.emit('load', this));
     on('Page.domContentEventFired', () => this._events.emit('domcontentloaded', this));
@@ -1135,6 +1289,52 @@ export class Page extends Scope {
   }
   get _isAttached(): boolean {
     return this._attaching !== undefined;
+  }
+  /** A popup: the target already exists and `attaching` binds and sets it up. */
+  _adopt(attaching: Promise<Attachment>) {
+    this._attaching = attaching;
+  }
+  /** Child frames of the frame tree (`Page.getFrameTree`). */
+  _seedFrames(tree: { frame: { id: string; parentId?: string; url: string; urlFragment?: string; name?: string }; childFrames?: any[] }) {
+    for (const child of tree.childFrames ?? []) {
+      const f = this.childFrame(child.frame.id, tree.frame.id);
+      f._url = child.frame.url + (child.frame.urlFragment ?? '');
+      f._name = child.frame.name ?? '';
+      this._seedFrames(child);
+    }
+  }
+  private childFrame(id: string, parentId: string): Frame {
+    let f = this._frames.get(id);
+    const parent = parentId === this._mainFrameId || !this._frames.has(parentId) ? this._mainFrame : this._frames.get(parentId)!;
+    if (!f) this._frames.set(id, (f = new Frame(this, id, parent)));
+    else f._parent = parent;
+    return f;
+  }
+  get _mainFrameIdValue(): string | undefined {
+    return this._mainFrameId;
+  }
+  /** Children of `frame`; marks their `<iframe>` elements so their locators can find them. */
+  _childFrames(frame: Frame): Frame[] {
+    const out = [...this._frames.values()].filter((f) => (frame._id ? f._parent === frame : f._parent === this._mainFrame));
+    for (const f of out) this.markFrame(f);
+    return out;
+  }
+  private markFrame(f: Frame): void {
+    if (!f._id || this._marking.has(f._id)) return;
+    const id = f._id;
+    const done = (async () => {
+      const { backendNodeId } = await this._send('DOM.getFrameOwner', { frameId: id });
+      const { object } = await this._send('DOM.resolveNode', { backendNodeId });
+      await this._send('Runtime.callFunctionOn', {
+        objectId: object.objectId,
+        functionDeclaration: 'function (id) { this.setAttribute("data-lp-frame", id); }',
+        arguments: [{ value: id }],
+      });
+      await this._send('Runtime.releaseObject', { objectId: object.objectId }).catch(() => {});
+    })().catch(() => {
+      this._marking.delete(id);
+    });
+    this._marking.set(id, done);
   }
   /** The target the context made or took for this page. */
   _bind(sessionId: string, targetId: string, mainFrameId?: string, url?: string) {
@@ -1253,6 +1453,7 @@ export class Page extends Scope {
   on(event: string, listener: (...args: any[]) => void): this {
     this.enableFor(event);
     this._events.on(event, listener);
+    if (event === 'dialog') this._syncDialogs();
     return this;
   }
   addListener(event: string, listener: (...args: any[]) => void): this {
@@ -1261,11 +1462,30 @@ export class Page extends Scope {
   once(event: string, listener: (...args: any[]) => void): this {
     this.enableFor(event);
     this._events.once(event, listener);
+    if (event === 'dialog') this._syncDialogs();
     return this;
   }
   off(event: string, listener: (...args: any[]) => void): this {
     this._events.off(event, listener);
+    if (event === 'dialog') this._syncDialogs();
     return this;
+  }
+  /** Emits a page event (popups and downloads come from the browser connection). */
+  _emit(event: string, arg: unknown): void {
+    this._events.emit(event, arg);
+  }
+  /**
+   * With a 'dialog' listener, dialogs an action opens wait for its answer
+   * (`LP.dialogs {block}`), as in Chrome; without one they are dismissed.
+   */
+  _syncDialogs(): void {
+    const want = this._events.listenerCount('dialog') > 0;
+    if (want === this._dialogsBlock) return;
+    this._dialogsBlock = want;
+    if (this._isAttached) void this._send('LP.dialogs', { block: want }).catch(() => {});
+  }
+  get _wantsDialogs(): boolean {
+    return this._dialogsBlock;
   }
   removeListener(event: string, listener: (...args: any[]) => void): this {
     return this.off(event, listener);
@@ -1280,7 +1500,7 @@ export class Page extends Scope {
       if (!this._isAttached) this._wants.runtime = true;
       else this._runtime ??= this._send('Runtime.enable').then(() => undefined);
     }
-    if (['popup', 'download', 'filechooser', 'websocket', 'worker', 'crash'].includes(event)) throw notSupported(`page.on('${event}')`);
+    if (['filechooser', 'websocket', 'worker'].includes(event)) throw notSupported(`page.on('${event}')`);
   }
   /** Network events from now on (requests already in flight are not seen). */
   _enableNetwork(): Promise<void> {
@@ -1360,9 +1580,21 @@ export class Page extends Scope {
     return this._mainFrame;
   }
   frames(): Frame[] {
-    return [this._mainFrame];
+    const all = [this._mainFrame, ...this._frames.values()];
+    for (const f of this._frames.values()) this.markFrame(f);
+    return all;
   }
-  frame(_selector: string | { name?: string; url?: UrlMatch }): Frame | null {
+  frame(selector: string | { name?: string; url?: string | RegExp | ((url: URL) => boolean) }): Frame | null {
+    const o = typeof selector === 'string' ? { name: selector } : selector;
+    for (const f of this.frames()) {
+      if (o.name !== undefined && f.name() !== o.name) continue;
+      if (o.url !== undefined) {
+        const u = f.url();
+        const ok = typeof o.url === 'string' ? u === o.url : o.url instanceof RegExp ? o.url.test(u) : (() => { try { return o.url(new URL(u)); } catch { return false; } })();
+        if (!ok) continue;
+      }
+      return f;
+    }
     return null;
   }
   context(): BrowserContext {
@@ -1442,9 +1674,13 @@ export class Page extends Scope {
   async waitForTimeout(ms: number): Promise<void> {
     await delay(ms);
   }
-  async waitForSelector(selector: string, options: Timeout & { state?: 'attached' | 'detached' | 'visible' | 'hidden' } = {}): Promise<null> {
-    await this.locator(selector).waitFor(options);
-    return null;
+  async waitForSelector(selector: string, options: Timeout & { state?: 'attached' | 'detached' | 'visible' | 'hidden' } = {}): Promise<ElementHandle | null> {
+    const state = options.state ?? 'visible';
+    const loc = this.locator(selector);
+    await (state === 'visible' ? loc.filter({ visible: true }).first() : loc.first()).waitFor(options);
+    if (state === 'hidden' || state === 'detached') return null;
+    const h = await this._handleFrom('page.waitForSelector', state === 'visible' ? VISIBLE_FIRST : '(els) => els[0] ?? null', { locator: loc._spec, all: true });
+    return h.asElement();
   }
   async waitForFunction<R, A>(fn: string | ((arg: A) => R | Promise<R>), arg?: A, options: Timeout & { polling?: number | 'raf' } = {}): Promise<{ jsonValue(): Promise<R> }> {
     const interval = typeof options.polling === 'number' ? options.polling : 16;
@@ -1457,23 +1693,56 @@ export class Page extends Scope {
   // ---- content ----
 
   async evaluate<R, A = unknown>(fn: string | ((arg: A) => R | Promise<R>), arg?: A): Promise<R> {
-    if (this._events.listenerCount('dialog')) return this.evaluateBlocking(fn, arg);
+    if (hasHandles(arg)) return this._callOn(null, fn, arg, true) as Promise<R>;
     if (typeof fn === 'string') {
       const r = await this._run('page.evaluate', [{ eval: { expression: fn, as: 'v', timeout: this._timeout() } }]);
       return r.reads.v;
     }
     return this._call('page.evaluate', fn.toString(), { arg });
   }
-  /** Runtime.evaluate: a dialog it opens waits for the 'dialog' listener's answer, as in Chrome. */
-  private async evaluateBlocking<R, A>(fn: string | ((arg: A) => R | Promise<R>), arg?: A): Promise<R> {
-    const expression =
-      typeof fn === 'string' ? fn : `(${fn.toString()})(${arg === undefined ? 'undefined' : JSON.stringify(arg)})`;
-    const r = await this._send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true });
-    if (r.exceptionDetails) throw new Error(`page.evaluate: ${r.exceptionDetails.exception?.description ?? r.exceptionDetails.text}`);
-    return r.result.value;
+  async evaluateHandle<A = unknown>(fn: string | ((arg: A) => unknown), arg?: A): Promise<JSHandle> {
+    if (hasHandles(arg)) return this._callOn(null, fn, arg, false) as Promise<JSHandle>;
+    const expression = typeof fn === 'string' ? fn : `(${fn.toString()}\n)(${arg === undefined ? 'undefined' : JSON.stringify(arg)})`;
+    const r = await this._send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: false });
+    if (r.exceptionDetails) throw new Error(`page.evaluateHandle: ${r.exceptionDetails.exception?.description ?? r.exceptionDetails.text}`);
+    return this._handle(r.result);
   }
-  async evaluateHandle(): Promise<never> {
-    throw notSupported('JS handles (use evaluate)');
+  /** A remote object as a handle (an element handle for a DOM node). */
+  _handle(remote: any): JSHandle {
+    return remote.subtype === 'node' ? new ElementHandle(this, remote) : new JSHandle(this, remote);
+  }
+  /**
+   * `fn` (source) called in an LP.run `eval` step (with a locator's
+   * element(s) and `arg`), its value handed over as a handle: the step
+   * leaves it in a page-global queue that `Runtime.evaluate` takes it from.
+   */
+  async _handleFrom(api: string, fn: string, o: { locator?: LocatorSpec; all?: boolean; arg?: unknown; timeout?: number }, describe?: string): Promise<JSHandle> {
+    if (o.locator?.frame) throw notSupported('handles to elements in child frames');
+    const stash = `async (x, arg) => { const v = await (${fn}\n)(x, arg); (globalThis[Symbol.for('lp.handoff')] ??= []).push(v); return null; }`;
+    await this._call(api, stash, o, describe);
+    const r = await this._send('Runtime.evaluate', { expression: `globalThis[Symbol.for('lp.handoff')].shift()`, returnByValue: false });
+    return this._handle(r.result);
+  }
+  /** `fn` called on `self` (or the page, when null) with `arg`, whose handles go as remote objects. */
+  async _callOn(self: JSHandle | null, fn: string | Function, arg: unknown, byValue: boolean): Promise<unknown> {
+    const { template, handles } = serializeArg(arg);
+    const target = self?._objectId ?? handles.find((h) => h._objectId)?._objectId;
+    if (!target) {
+      // A primitive handle and no other: plain JSON.
+      const args = [self ? valueOf(self._remote) : undefined, template];
+      const src = typeof fn === 'function' ? fn.toString() : `() => (${fn})`;
+      const value = await this._call('evaluate', `(a) => (${src}\n)(${self ? 'a[0], ' : ''}a[1])`, { arg: args });
+      return byValue ? value : this._handle({ type: typeof value, value });
+    }
+    const r = await this._send('Runtime.callFunctionOn', {
+      functionDeclaration: callDeclaration(fn, !!self),
+      objectId: target,
+      arguments: [template === undefined ? {} : { value: template }, ...handles.map((h) => (h._objectId ? { objectId: h._objectId } : { value: valueOf(h._remote) }))],
+      awaitPromise: true,
+      returnByValue: byValue,
+    });
+    if (r.exceptionDetails) throw new Error(`evaluate: ${r.exceptionDetails.exception?.description ?? r.exceptionDetails.text}`);
+    return byValue ? valueOf(r.result) : this._handle(r.result);
   }
   async $eval<R, A>(selector: string, fn: (el: any, arg: A) => R | Promise<R>, arg?: A): Promise<R> {
     return this.locator(selector).first().evaluate(fn, arg);
@@ -1481,11 +1750,13 @@ export class Page extends Scope {
   async $$eval<R, A>(selector: string, fn: (els: any[], arg: A) => R | Promise<R>, arg?: A): Promise<R> {
     return this.locator(selector).evaluateAll(fn, arg);
   }
-  async $(): Promise<never> {
-    throw notSupported('element handles (use page.locator)');
+  /** The first match (no waiting), or null. */
+  async $(selector: string): Promise<ElementHandle | null> {
+    const h = await this._handleFrom('page.$', '(els) => els[0] ?? null', { locator: this.locator(selector)._spec, all: true });
+    return h.asElement();
   }
-  async $$(): Promise<never> {
-    throw notSupported('element handles (use page.locator)');
+  async $$(selector: string): Promise<ElementHandle[]> {
+    return this.locator(selector).elementHandles();
   }
   async title(): Promise<string> {
     return this._call('page.title', '() => document.title', {});
@@ -1571,8 +1842,8 @@ export class Page extends Scope {
   async unrouteAll(_options: { behavior?: 'wait' | 'ignoreErrors' | 'default' } = {}): Promise<void> {
     this._routes = [];
   }
-  async routeFromHAR(): Promise<never> {
-    throw notSupported('page.routeFromHAR');
+  async routeFromHAR(har: string, options: HarOptions = {}): Promise<void> {
+    await this.route(options.url ?? '**/*', harHandler(har, options));
   }
 
   /** A request paused by `Fetch.enable`: the first matching route decides (page routes, then the context's). */
@@ -1593,11 +1864,40 @@ export class Page extends Scope {
       await route._continueDefault().catch(() => {});
     }
   }
-  async exposeFunction(): Promise<never> {
-    throw notSupported('page.exposeFunction');
+  async exposeFunction(name: string, fn: (...args: any[]) => unknown): Promise<void> {
+    await this.exposeBinding(name, (_source: unknown, ...args: unknown[]) => fn(...args));
   }
-  async exposeBinding(): Promise<never> {
-    throw notSupported('page.exposeBinding');
+  /** `window[name](...args)` in every document of this page calls `callback({ page, frame, context }, ...args)` here. */
+  async exposeBinding(name: string, callback: (source: any, ...args: any[]) => unknown): Promise<void> {
+    if (this._bindings.has(bindingName(name))) throw new Error(`page.exposeBinding: Function "${name}" has been already registered`);
+    const entry = { name, callback, script: bindingScript(name) };
+    this._bindings.set(bindingName(name), entry);
+    if (this._isAttached) await this._installBinding(entry);
+  }
+  /** Adds the CDP binding and defines `window[name]` now and in later documents. */
+  async _installBinding(b: { name: string; script: string }): Promise<void> {
+    await this._sendNow('Runtime.addBinding', { name: bindingName(b.name) });
+    await this._sendNow('Page.addScriptToEvaluateOnNewDocument', { source: b.script });
+    await this._sendNow('Runtime.evaluate', { expression: b.script }).catch(() => {});
+  }
+  private async onBinding(p: { name: string; payload: string; executionContextId: number }): Promise<void> {
+    const b = this._bindings.get(p.name) ?? this._context._bindings.get(p.name);
+    if (!b) return;
+    let call: { id: number; args: unknown[] };
+    try {
+      call = JSON.parse(p.payload);
+    } catch {
+      return;
+    }
+    const key = JSON.stringify(`${p.name}:${call.id}`);
+    let expression: string;
+    try {
+      const value = await b.callback({ page: this, frame: this._mainFrame, context: this._context }, ...call.args);
+      expression = `globalThis.__lpDeliver(${key}, true, ${JSON.stringify(value === undefined ? null : value)})`;
+    } catch (e) {
+      expression = `globalThis.__lpDeliver(${key}, false, ${JSON.stringify(String((e as Error)?.message ?? e))})`;
+    }
+    await this._sendNow('Runtime.evaluate', { expression, contextId: p.executionContextId }).catch(() => {});
   }
 
   // ---- misc ----
@@ -1776,6 +2076,52 @@ export class Route {
     return new FetchedResponse(r.url, r.status, r.statusText, h, Buffer.from(await r.arrayBuffer()));
   }
 }
+
+// ---- bindings and HAR ----
+
+export const bindingName = (name: string) => `__lpb_${name}`;
+/** Defines `window[name]`: each call goes out through the CDP binding and resolves on `__lpDeliver`. */
+export function bindingScript(name: string): string {
+  const b = JSON.stringify(bindingName(name));
+  return `(() => {
+  const binding = globalThis[${b}];
+  if (typeof binding !== 'function') return;
+  const calls = (globalThis.__lpBindingCalls ??= new Map());
+  let seq = 0;
+  globalThis.__lpDeliver ??= (key, ok, value) => { const c = calls.get(key); if (!c) return; calls.delete(key); ok ? c.resolve(value) : c.reject(new Error(value)); };
+  Object.defineProperty(globalThis, ${JSON.stringify(name)}, { configurable: true, writable: true, value: (...args) => new Promise((resolve, reject) => {
+    const id = ++seq;
+    calls.set(${b} + ':' + id, { resolve, reject });
+    binding(JSON.stringify({ id, args }));
+  }) });
+})();`;
+}
+
+export type HarOptions = { url?: UrlMatch; notFound?: 'abort' | 'fallback'; update?: boolean; updateContent?: string; updateMode?: string };
+
+/** Replays a HAR file: the entry with the request's method and URL (and body, when several match). */
+export function harHandler(path: string, options: HarOptions): RouteHandler {
+  if (options.update) throw notSupported('routeFromHAR with update (recording)');
+  const har = JSON.parse(readFileSync(path, 'utf8'));
+  const entries: any[] = har.log?.entries ?? [];
+  const dir = path.replace(/[^/]*$/, '');
+  return async (route, request) => {
+    const candidates = entries.filter((e) => e.request?.method === request.method() && e.request?.url === request.url());
+    const posted = request.postData();
+    const entry = candidates.find((e) => (e.request?.postData?.text ?? null) === posted) ?? candidates[0];
+    if (!entry) return options.notFound === 'fallback' ? route.fallback() : route.abort();
+    const res = entry.response ?? {};
+    const headers: Record<string, string> = {};
+    for (const h of res.headers ?? []) if (!/^(content-length|content-encoding|transfer-encoding)$/i.test(h.name)) headers[h.name] = h.value;
+    const c = res.content ?? {};
+    const body = c._file ? readFileSync(dir + c._file) : c.text === undefined ? Buffer.alloc(0) : Buffer.from(c.text, c.encoding === 'base64' ? 'base64' : 'utf8');
+    if (res.status >= 300 && res.status < 400 && res.redirectURL) headers.location ??= res.redirectURL;
+    await route.fulfill({ status: res.status ?? 200, headers, body, ...(c.mimeType ? { contentType: c.mimeType } : {}) });
+  };
+}
+
+/** In the page: the first visible element of the matches (`waitForSelector`'s default state). */
+const VISIBLE_FIRST = `(els) => els.find((e) => e.checkVisibility ? e.checkVisibility({ visibilityProperty: true }) : e.getBoundingClientRect().width > 0) ?? els[0] ?? null`;
 
 export function initScriptSource(script: string | Function | { path?: string; content?: string }, arg?: unknown): string {
   if (typeof script === 'function') return `(${script.toString()})(${arg === undefined ? 'undefined' : JSON.stringify(arg)});`;

@@ -1,10 +1,24 @@
 // Playwright's Browser and BrowserContext on one lightningpanda connection.
 import { EventEmitter } from 'node:events';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { Lightningpanda, type ConnectOptions } from '../index.js';
 import { CdpError } from '../cdp.js';
 import { urlMatches, resolveUrl, type UrlMatch } from './match.js';
-import { initScriptSource, Page, sameRoute, type Attachment, type RouteEntry, type RouteHandler } from './page.js';
+import { Download } from './handles.js';
+import {
+  bindingName,
+  bindingScript,
+  harHandler,
+  initScriptSource,
+  Page,
+  sameRoute,
+  type Attachment,
+  type HarOptions,
+  type RouteEntry,
+  type RouteHandler,
+} from './page.js';
 
 type Cookie = {
   name: string;
@@ -71,12 +85,44 @@ export class Browser {
   /** Pages taken from a pool and pages created fresh (`browser._stats`). */
   readonly _stats = { pooled: 0, fresh: 0 };
 
+  /** Where downloads land (named by guid) until `saveAs` copies them; removed on close. */
+  private _downloadDir = mkdtempSync(join(tmpdir(), 'lp-downloads-'));
+  private _downloads = new Map<string, Download>();
+
   constructor(
     readonly _lp: Lightningpanda,
     private _owned = true,
     readonly _boot: BootSpec[] = [],
   ) {
-    _lp.cdp.onClose(() => this._events.emit('disconnected', this));
+    const cdp = _lp.cdp;
+    cdp.onClose(() => this._events.emit('disconnected', this));
+    // Popups: targets announced with an opener become pages of the opener's context.
+    cdp.on('Target.targetCreated', (p) => {
+      const info = p.targetInfo;
+      if (info?.type !== 'page' || !info.openerId) return;
+      for (const context of this._contexts) {
+        const opener = context.pages().find((page) => page._targetId === info.openerId);
+        if (opener) return void context._adoptPopup(info.targetId, opener);
+      }
+    });
+    cdp.on('Browser.downloadWillBegin', (p) => {
+      for (const context of this._contexts) {
+        const page = context.pages().find((page) => page._mainFrameIdValue === p.frameId) ?? (p.frameId ? undefined : context.pages()[0]);
+        if (!page) continue;
+        const download = new Download(page, p.url, p.suggestedFilename);
+        this._downloads.set(p.guid, download);
+        page._emit('download', download);
+        return;
+      }
+    });
+    cdp.on('Browser.downloadProgress', (p) => {
+      const download = this._downloads.get(p.guid);
+      if (!download || p.state === 'inProgress') return;
+      this._downloads.delete(p.guid);
+      download._finish(p.state === 'completed' ? { path: p.filePath ?? join(this._downloadDir, p.guid), failure: null } : { path: null, failure: 'canceled' });
+    });
+    cdp.post('Target.setDiscoverTargets', { discover: true });
+    cdp.post('Browser.setDownloadBehavior', { behavior: 'allowAndName', downloadPath: this._downloadDir, eventsEnabled: true });
   }
 
   /** The boot spec covering a first navigation to `target`, and its boot URL. */
@@ -150,11 +196,14 @@ export class Browser {
   async close(): Promise<void> {
     for (const c of [...this._contexts]) await c.close();
     if (this._owned) this._lp.close();
+    rmSync(this._downloadDir, { recursive: true, force: true });
   }
 }
 
 export class BrowserContext {
   _routes: RouteEntry[] = [];
+  /** `exposeBinding` callbacks of every page of this context, by binding name. */
+  _bindings = new Map<string, { name: string; callback: (source: any, ...args: any[]) => unknown; script: string }>();
   /** The browser context id: made on the first page that needs one, or a booted page's. */
   private _idPromise?: Promise<string>;
   private _id?: string;
@@ -243,6 +292,7 @@ export class BrowserContext {
         this._browser._stats.pooled++;
         const { frameTree } = await this.cdp.send('Page.getFrameTree', {}, acquired.sessionId);
         page._bind(acquired.sessionId, acquired.targetId, frameTree.frame.id, frameTree.frame.url);
+        page._seedFrames(frameTree);
         await this.setUp(page, false);
         return { pooled: true, ready: acquired.ready, url: boot.url };
       }
@@ -274,8 +324,35 @@ export class BrowserContext {
     for (const source of scripts) setup.push(send('Page.addScriptToEvaluateOnNewDocument', { source }));
     const m = media(o);
     if (fresh && m) setup.push(send('LP.run', { steps: [{ media: m }] }));
+    if (page._wantsDialogs) setup.push(send('LP.dialogs', { block: true }));
+    for (const b of [...this._bindings.values(), ...page._bindings.values()]) setup.push(page._installBinding(b));
     await Promise.all(setup);
     if (fresh) this._cookies = []; // in the context's jar now
+  }
+
+  /** A popup `opener` opened: a page of this context on the existing target. */
+  async _adoptPopup(targetId: string, opener: Page): Promise<void> {
+    const o = this._options;
+    const page = new Page(this, this.cdp, o.viewport === null ? null : (o.viewport ?? DEFAULT_VIEWPORT));
+    this._pages.add(page);
+    const attaching = (async (): Promise<Attachment> => {
+      const { sessionId } = await this.cdp.send('Target.attachToTarget', { targetId, flatten: true });
+      page._bind(sessionId, targetId);
+      await this.setUp(page, true, this._initScripts);
+      const { frameTree } = await page._sendNow('Page.getFrameTree');
+      page._bind(sessionId, targetId, frameTree.frame.id, frameTree.frame.url);
+      page._seedFrames(frameTree);
+      return { pooled: false, ready: true };
+    })();
+    page._adopt(attaching);
+    try {
+      await attaching;
+    } catch {
+      this._pages.delete(page);
+      return;
+    }
+    this._events.emit('page', page);
+    opener._emit('popup', page);
   }
 
   _pageClosed(page: Page) {
@@ -358,8 +435,17 @@ export class BrowserContext {
   async unrouteAll(_options: { behavior?: 'wait' | 'ignoreErrors' | 'default' } = {}): Promise<void> {
     this._routes = [];
   }
-  async exposeFunction(): Promise<never> {
-    throw new Error('lightning-panda: context.exposeFunction is not supported yet');
+  async routeFromHAR(har: string, options: HarOptions = {}): Promise<void> {
+    await this.route(options.url ?? '**/*', harHandler(har, options));
+  }
+  async exposeFunction(name: string, fn: (...args: any[]) => unknown): Promise<void> {
+    await this.exposeBinding(name, (_source: unknown, ...args: unknown[]) => fn(...args));
+  }
+  async exposeBinding(name: string, callback: (source: any, ...args: any[]) => unknown): Promise<void> {
+    if (this._bindings.has(bindingName(name))) throw new Error(`browserContext.exposeBinding: Function "${name}" has been already registered`);
+    const entry = { name, callback, script: bindingScript(name) };
+    this._bindings.set(bindingName(name), entry);
+    await Promise.all(this.attached().map((p) => p._attach().then(() => p._installBinding(entry))));
   }
   get tracing() {
     const noop = async () => {};

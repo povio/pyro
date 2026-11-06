@@ -147,13 +147,13 @@ function part(sel: string, testIdAttribute: string): LocatorSpec {
       case 'role':
         return rolePart(body);
       case 'xpath':
-        throw unsupported('an xpath= selector');
+        return { xpath: body };
       default:
         if (name === testIdAttribute) return { testId: quoted(body).text, testIdAttribute: name };
         if (name.startsWith('internal:')) throw unsupported(`the ${name} selector engine`);
     }
   }
-  if (s.startsWith('//') || s.startsWith('..') || s.startsWith('(//')) throw unsupported('an XPath selector');
+  if (s.startsWith('//') || s.startsWith('..') || s.startsWith('(//')) return { xpath: s };
   if (/^["'].*["']$/s.test(s)) {
     const { text, exact } = quoted(s);
     return exact ? { text, exact: true } : { text };

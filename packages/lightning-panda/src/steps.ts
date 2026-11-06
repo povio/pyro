@@ -35,6 +35,22 @@ export type LocatorSpec = {
   nth?: number;
   /** Search inside the document of the `<iframe>` this locator matches (in the parent document). */
   frame?: LocatorSpec;
+  /** An XPath expression (relative to `within`, else the document). */
+  xpath?: string;
+  /** Another locator's matches as the base set (a filter or `nth` after an `nth`). */
+  of?: LocatorSpec;
+  /** Joined with these locators' matches, in document order (Playwright's `or`). */
+  or?: LocatorSpec[];
+  /** Kept only where each of these matches too (Playwright's `and`). */
+  and?: LocatorSpec[];
+  /** `role` states (Playwright's `getByRole` options). */
+  checked?: boolean | 'mixed';
+  pressed?: boolean | 'mixed';
+  disabled?: boolean;
+  expanded?: boolean;
+  selected?: boolean;
+  level?: number;
+  includeHidden?: boolean;
 };
 
 export type Step = Record<string, unknown>;
