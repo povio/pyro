@@ -1448,6 +1448,8 @@ mod rerun_tests {
         Text,
         /// 20 wide once its height is known, 50 wide before, 10 tall
         HeightDependent,
+        /// 10 wide (min-content); 30 wide (max-content) once its height is known, 50 before; 10 tall
+        MaxContentHeightDependent,
     }
 
     /// Lay out a 200px-wide grid with the given columns and one item per column, returning the item widths
@@ -1493,6 +1495,11 @@ mod rerun_tests {
                                     50.0
                                 }
                             }
+                            Leaf::MaxContentHeightDependent => match (available.width, known.height) {
+                                (AvailableSpace::MinContent, _) => 10.0,
+                                (_, Some(_)) => 30.0,
+                                (_, None) => 50.0,
+                            },
                         };
                         Size { width: known.width.unwrap_or(width), height: known.height.unwrap_or(10.0) }
                     },
@@ -1538,5 +1545,19 @@ mod rerun_tests {
         let (widths, _) =
             layout(vec![auto(), fr(1.0)], &[(Leaf::HeightDependent, Style::default()), (Leaf::Text, min_width_zero())]);
         assert_eq!(widths, vec![20.0, 180.0]);
+    }
+
+    #[test]
+    fn an_unread_item_does_not_change_the_other_columns() {
+        // The auto column's item has a max-content width that changes with its row but a min-content width that
+        // does not, so the re-check (which compares min-content widths, css-grid-1 §12.1 step 3) asks for no re-run
+        // and the column keeps the first pass's 50px. Before the skip, the `min-width: 0` item in the `fr` column
+        // forced a re-run on its empty cache, which took up the new max-content width and gave 30px: the auto
+        // column's size depended on whether an unrelated item sat beside it.
+        let item = (Leaf::MaxContentHeightDependent, Style::default());
+        let (alone, _) = layout(vec![auto()], &[item.clone()]);
+        let (beside, _) = layout(vec![auto(), fr(1.0)], &[item, (Leaf::Text, min_width_zero())]);
+        assert_eq!(alone, vec![50.0]);
+        assert_eq!(beside, vec![50.0, 150.0]);
     }
 }

@@ -87,8 +87,13 @@ grid area (`GridItem::inline_contribution_consumed`, set when a min-content or m
 computed in the inline axis, or a minimum contribution that resolves a percentage or uses an aspect ratio).
 Upstream measured every item crossing an intrinsic column and compared it with a cache the first pass never
 filled for such items, so an `fr` column holding a `min-width: 0` item re-ran column sizing on every layout.
-The columns of the first pass do not depend on a skipped item, so the outcome only changes when nothing else
-asks for the re-run; that is limited to grids of a definite width, where the re-run's inputs are otherwise
-the first pass's. Covered by the `rerun_tests` module at the end of `compute/grid/mod.rs` (run them from a
+The columns of the first pass do not depend on a skipped item. The skip is limited to grids of a definite
+width, so the inline percentage basis and `fr` expansion space are the same in both passes. The re-run is
+not a no-op, though: it estimates the rows from their base sizes and re-reads every other item's max-content
+and minimum contributions. So when a skipped item was the only reason for the re-run, the result can change.
+That happens when another item's max-content width changes with its row but its min-content width does not.
+Before, the re-run picked up the new max-content width. Now the first pass's value stays, the same result
+the grid gives without the skipped item, and the same as css-grid-1 §12.1 step 3, which re-runs only on a
+changed min-content contribution. `an_unread_item_does_not_change_the_other_columns` pins this. Covered by the `rerun_tests` module at the end of `compute/grid/mod.rs` (run them from a
 copy of this directory with an empty `[workspace]` table, as the crate is not a workspace member). The
 `UPSTREAM.patch` hunks for it are the last two sections.
