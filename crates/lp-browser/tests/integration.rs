@@ -34,6 +34,7 @@ mod static_plaintext;
 mod storage_events;
 mod stylesheets;
 mod stylesheets_http;
+mod subresources;
 mod user_agent;
 mod viewport;
 

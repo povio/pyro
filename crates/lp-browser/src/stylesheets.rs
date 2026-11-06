@@ -17,7 +17,8 @@ struct Sheet {
     node: Rc<ResourceNode>,
     url: String,
     crossorigin: Option<String>,
-    integrity: bool,
+    /// `integrity` metadata with a recognized hash (checked on completion).
+    integrity: Option<String>,
     generation: u64,
     pending: bool,
     parser_inserted: bool,
@@ -72,11 +73,13 @@ impl Browser {
             enabled
                 .then(|| {
                     let href = attr("href").filter(|v| !v.trim().is_empty())?;
-                    let url = url::Url::parse(&referrer).ok()?.join(href).ok()?.to_string();
+                    // `<base href>` aware; the referrer stays the frame's URL.
+                    let base = crate::loader::node_base_url(&dom, node).unwrap_or_else(|| referrer.clone());
+                    let url = url::Url::parse(&base).ok()?.join(href).ok()?.to_string();
                     Some((
                         url,
                         attr("crossorigin").map(str::to_owned),
-                        attr("integrity").is_some_and(|v| !v.is_empty()),
+                        attr("integrity").filter(|v| !lp_webapi::sri::is_empty(v)).map(str::to_owned),
                     ))
                 })
                 .flatten()
@@ -120,7 +123,7 @@ impl Browser {
                 node: hold,
                 url: url.clone(),
                 crossorigin: crossorigin.clone(),
-                integrity,
+                integrity: integrity.clone(),
                 generation,
                 parser_inserted: bindings
                     .dom
@@ -161,15 +164,22 @@ impl Browser {
         // Reserve a cascade slot now; completion order must not reorder sheets.
         bindings.set_stylesheet_text(node, "");
         let weak = Rc::downgrade(&bindings);
-        let finish = move |b: &mut Browser, result| {
+        let cors = crossorigin.is_some();
+        let finish = move |b: &mut Browser, result: Result<Resource, String>| {
             let Some(bindings) = weak.upgrade() else { return };
+            // SRI: a mismatching (or opaque) response is a network error.
+            let result = result.and_then(|r| {
+                let origin = b.doc(page).map(|p| p.main_frame.origin.clone()).unwrap_or_default();
+                match crate::loader::integrity_error(&r, integrity.as_deref(), cors, &origin) {
+                    Some(e) => {
+                        b.report_console_error(page, &e);
+                        Err(e)
+                    }
+                    None => Ok(r),
+                }
+            });
             b.finish_stylesheet(page, &loader, &bindings, node, generation, result);
         };
-        if integrity {
-            self.scheduler()
-                .post(TaskSource::Networking, move |b| finish(b, Err("stylesheet integrity is unsupported".into())));
-            return;
-        }
         let Some(resource_loader) = self.loader_for(page) else {
             self.scheduler().post(TaskSource::Networking, move |b| finish(b, Err("no resource loader".into())));
             return;

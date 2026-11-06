@@ -39,8 +39,11 @@ same setters as `URL`, against the `<base>`-aware document base; an unparseable
 
 Gaps:
 - The download itself is not performed, and no CDP download events are emitted.
-- `fetch`, XHR and navigation of `blob:` URLs are not implemented (upstream
-  resolves them).
+- Top-level navigation to a `blob:` URL is not covered by tests. The page's
+  resource loader serves `blob:` URLs to scripts, `import()`, stylesheets and
+  iframes from the store of a same-origin document of the page (a parent's
+  blob as a child frame's `src`); fetch and XHR resolve them in the
+  document's own store.
 
 The reproduced application failure was Vite's preload helper calling new URL in
 the [unchanged TOS query-parameters run](../validation/TOS_QUERY_PARAMS_SMOKE.md).

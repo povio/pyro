@@ -1444,7 +1444,7 @@ simple_class!(HtmlImageElement, "HTMLImageElement", HtmlElement, |def| {
         let selected = picture.as_deref().or(dom.get_attribute(n.id, "src").js()?);
         Ok(s.string(&selected.map(|v| resolve_url(&dom, n.id, v)).unwrap_or_default()))
     });
-    def.method("decode", 0, |s, _n, _a| s.eval("Promise.resolve()", None, 1));
+    def.method("decode", 0, |s, n, _a| crate::image_decode::decode(s, n.page(), n.id));
 });
 
 // ----- forms --------------------------------------------------------------------

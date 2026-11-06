@@ -65,6 +65,9 @@ pub enum ResourceKind {
     /// `<link rel=modulepreload>` / `<link rel=preload>`: fetched ahead, with
     /// `load`/`error` on the link (bundlers' preload helpers await them).
     Preload,
+    /// `<meta http-equiv=refresh>`: its insertion schedules a declarative
+    /// refresh (the loader handles `Connected` events only).
+    Meta,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -149,6 +152,16 @@ impl Dom {
             }
             local_name!("iframe") | local_name!("frame") => ResourceKind::Iframe,
             local_name!("img") => ResourceKind::Img,
+            // HTML: a refresh pragma acts when inserted into the document
+            // tree (connected, not in a shadow tree), decided here because
+            // the loader may see the event after the meta was removed.
+            local_name!("meta")
+                if self.is_connected_idx(idx)
+                    && !self.in_shadow_tree(idx)
+                    && e.attr_local(&local_name!("http-equiv")).is_some_and(|v| v.eq_ignore_ascii_case("refresh")) =>
+            {
+                ResourceKind::Meta
+            }
             // An image button fetches its `src` like `<img>` (its natural
             // size is its layout size); `type` is a relevant attribute, so
             // becoming one starts the load.
@@ -242,7 +255,19 @@ impl Dom {
             return;
         }
         let relevant = matches!(local, "src" | "href" | "rel" | "media" | "srcset" | "type" | "disabled");
-        if !relevant || !self.connected_for_resources(idx) {
+        if !relevant {
+            return;
+        }
+        if !self.connected_for_resources(idx) {
+            // HTML "update the image data" runs for an `<img>` whether or not
+            // it is connected (`new Image()`, a tree built before insertion).
+            // The loader drops events of a document without a browsing
+            // context (template contents, createHTMLDocument).
+            if matches!(local, "src" | "srcset")
+                && self.n(idx).element().is_some_and(|e| e.is_html() && e.name.local == local_name!("img"))
+            {
+                self.push_resource(idx, ResourceKind::Img, ResourceReason::AttrChanged);
+            }
             return;
         }
         if let Some(k) = self.resource_kind(idx) {
@@ -255,6 +280,18 @@ impl Dom {
             if self.n(idx).element().is_some_and(|e| e.is_html() && e.name.local == local_name!("link")) {
                 self.push_resource(idx, ResourceKind::Stylesheet, ResourceReason::Removed);
             }
+        }
+    }
+
+    /// Asks the loader to update `img`'s image data (its `Img` event): what
+    /// `decode()` waits on when no request of the selected source is known,
+    /// e.g. a `<source>` of a detached `<picture>` changed.
+    pub fn queue_image_update(&mut self, img: NodeId) {
+        if !self.resources.enabled {
+            return;
+        }
+        if let Ok(i) = self.check(img) {
+            self.push_resource(i, ResourceKind::Img, ResourceReason::AttrChanged);
         }
     }
 

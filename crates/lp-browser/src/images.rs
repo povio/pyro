@@ -2,8 +2,16 @@
 //! destination, so CDP sees an Image request) to learn the natural size
 //! from the file header. Pixels are never decoded or painted.
 //!
-//! - A connected `<img src>` starts a load when its resolved URL changes. An
-//!   unchanged `src` does not re-request.
+//! - An `<img src>` starts a load when its resolved URL (against the
+//!   document base URL, so `<base href>` counts) changes, connected or not:
+//!   `new Image()` and an `<img>` built before insertion load as in Chromium,
+//!   when their document has a browsing context. The element is pinned while
+//!   its request is in flight and released when it completes. An unchanged
+//!   `src` does not re-request.
+//! - `decode()` (`lp_webapi::image_decode`) fulfills once the current
+//!   request completed with a recognized image, and rejects with
+//!   `EncodingError` for a broken one, a source changed before completion,
+//!   no source, or an inactive document.
 //! - `blob:` URLs read the page's blob store; `data:` URLs go through the
 //!   network client.
 //! - While loading, `complete` is false. Images that start before the
@@ -16,8 +24,8 @@
 //! - An empty `src` fires `error`; removing `src` clears the image. The
 //!   `<img>`'s own `srcset` (with `sizes`) selects the candidate for the
 //!   device pixel ratio (`lp_dom::picture`). Not modelled:
-//!   `loading="lazy"` deferral (lazy images load eagerly), `decode()` timing,
-//!   images that are not connected (`new Image()`).
+//!   `loading="lazy"` deferral (lazy images load eagerly), re-resolving a
+//!   loaded `src` when a `<base>` is inserted later.
 //! - An `<img>` child of a `<picture>` loads the first preceding `<source>`
 //!   whose `media` matches and whose `type` is an image type
 //!   (`lp_dom::picture`). Moving, inserting or removing a `<source>` or the
@@ -35,7 +43,9 @@ use std::rc::Rc;
 const MAX_IMAGE_BYTES: usize = 64 * 1024 * 1024;
 
 struct Image {
-    _node: Rc<ResourceNode>,
+    /// Pins the element while its request is in flight (a `new Image()`
+    /// nobody references still fires `load`); released when it completes.
+    _node: Option<Rc<ResourceNode>>,
     url: String,
     /// The `src` attribute value this load is for.
     src: String,
@@ -49,6 +59,10 @@ struct Image {
 pub(crate) struct Images {
     entries: HashMap<NodeId, Image>,
     generation: u64,
+    /// Entry count at which those of collected elements are dropped (a
+    /// finished request no longer pins its element, and `new Image()`
+    /// beacons would otherwise accumulate): amortized O(1) per load.
+    sweep_at: usize,
 }
 
 impl Images {
@@ -97,21 +111,29 @@ impl Browser {
             match picture_source.as_deref().or(dom.get_attribute(node, "src").ok().flatten()) {
                 None => Source::None,
                 Some(v) if v.trim().is_empty() => Source::Invalid,
-                Some(v) => url::Url::parse(&base)
+                // `<base href>` aware; the referrer stays the frame's URL.
+                Some(v) => url::Url::parse(&crate::loader::node_base_url(&dom, node).unwrap_or_else(|| base.clone()))
                     .ok()
                     .and_then(|b| b.join(v.trim()).ok())
                     .map_or(Source::Invalid, |u| Source::Url(u.to_string())),
             }
         };
-        let current = state.images.entries.get(&node).map(|i| i.url.clone());
+        let current = state.images.entries.get(&node).map(|i| (i.url.clone(), i.pending));
         drop(state);
         let url = match source {
-            Source::Url(url) if current.as_deref() == Some(url.as_str()) => return,
+            Source::Url(url) if current.as_ref().is_some_and(|(u, _)| *u == url) => {
+                // Same request: a `decode()` made since waits for nothing.
+                if current.is_some_and(|(_, pending)| !pending) {
+                    bindings.settle_image_decodes(node);
+                }
+                return;
+            }
             Source::Url(url) => url,
             Source::None | Source::Invalid => {
                 let invalid = matches!(source, Source::Invalid);
                 self.doc_mut(page).expect("page").images.entries.remove(&node);
                 bindings.set_image_state(node, None, false);
+                bindings.keep_loading_image(node, false);
                 bindings.dom.borrow_mut().set_natural_size(node, None);
                 if invalid {
                     self.image_error_task(page, loader, &bindings, node);
@@ -128,11 +150,16 @@ impl Browser {
             let images = &mut guard.images;
             images.generation += 1;
             let generation = images.generation;
+            if images.entries.len() >= images.sweep_at {
+                let dom = bindings.dom.borrow();
+                images.entries.retain(|id, i| i.pending || dom.is_alive(*id));
+                images.sweep_at = (images.entries.len() * 2).max(64);
+            }
             // Replacing an entry drops its cancellation, stopping the old request.
             images.entries.insert(
                 node,
                 Image {
-                    _node: hold,
+                    _node: Some(hold),
                     url: url.clone(),
                     src: raw_src.clone().unwrap_or_default(),
                     generation,
@@ -143,7 +170,10 @@ impl Browser {
             );
             generation
         };
-        bindings.set_image_state(node, raw_src.as_deref(), true);
+        // A `srcset`/`<picture>` source without `src` is a request too
+        // (`None` would clear the image and reject pending `decode()`s).
+        bindings.set_image_state(node, Some(raw_src.as_deref().unwrap_or("")), true);
+        bindings.keep_loading_image(node, true);
         bindings.dom.borrow_mut().set_natural_size(node, None);
         let weak = Rc::downgrade(&bindings);
         let finish = move |b: &mut Browser, result| {
@@ -161,6 +191,7 @@ impl Browser {
                     body: bytes.to_vec(),
                     content_disposition: None,
                     header_csp: false,
+                    refresh: None,
                 })
                 .ok_or_else(|| "revoked or unknown blob URL".to_owned());
             self.scheduler().post(TaskSource::Networking, move |b| finish(b, result));
@@ -208,21 +239,34 @@ impl Browser {
         }
         image.pending = false;
         let src = image.src.clone();
+        // Nothing needs the element pinned once its request completed.
+        let hold = image._node.take();
         drop(state);
+        // `decode()` resolves for a parsed header or a format without a
+        // header parser; a PNG/GIF/JPEG/WebP whose header does not parse is
+        // corrupt.
+        let mut decodable = false;
         let outcome = result.ok().filter(|r| (200..300).contains(&r.status) && !r.body.is_empty()).and_then(|r| {
             let body = &r.body[..r.body.len().min(MAX_IMAGE_BYTES)];
             if let Some((w, h)) = lp_dom::image::dimensions(body) {
+                decodable = true;
                 return Some(Some((w as f64, h as f64)));
             }
             if r.mime == "image/svg+xml" || body.trim_ascii_start().starts_with(b"<svg") {
+                decodable = true;
                 return Some(svg_size(body));
             }
+            decodable = !matches!(r.mime.as_str(), "image/png" | "image/gif" | "image/jpeg" | "image/webp");
             r.mime.starts_with("image/").then_some(None)
         });
+        let decodable = decodable && outcome.is_some();
         bindings.dom.borrow_mut().set_natural_size(node, outcome.flatten());
-        bindings.set_image_state(node, Some(&src), false);
+        bindings.image_loaded(node, &src, decodable);
         // A later owner-thread task: no DOM/state borrow survives dispatch.
         lp_webapi::lifecycle::resource_loaded(bindings, node, outcome.is_some());
+        bindings.keep_loading_image(node, false);
+        drop(hold);
+
         self.maybe_fire_load(page);
     }
 

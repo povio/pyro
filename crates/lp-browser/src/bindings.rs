@@ -486,6 +486,11 @@ impl Browser {
                 // Script-inserted (or `src`-changed) scripts: "already
                 // started" makes repeats of one element no-ops.
                 self.script_event(target, event.node);
+            } else if event.kind == lp_dom::script::ResourceKind::Meta {
+                // A refresh pragma acts on insertion only.
+                if event.reason == lp_dom::script::ResourceReason::Connected {
+                    self.meta_refresh_event(target, event.node);
+                }
             } else {
                 bindings.apply_style_event(&event);
             }
