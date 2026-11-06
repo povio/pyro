@@ -1791,6 +1791,7 @@ dependencies = [
  "cssparser",
  "encoding_rs",
  "getrandom 0.3.4",
+ "kurbo",
  "lp-dom",
  "lp-js",
  "lp-layout",
