@@ -54,13 +54,14 @@ pub struct AttributeChange {
 /// Outcome of the HTML parser's "create an element for a token" for a name
 /// a window defined ([`ParserCustomElements::construct`]).
 pub enum ParserConstruct {
-    /// No definition: the parser creates the element itself.
+    /// No definition (any more): the parser gives the element its
+    /// attributes itself.
     NotDefined,
-    /// The constructor made this element; the parser gave it the token's
+    /// The constructor ran on the element, which got the token's attributes.
+    Constructed,
+    /// The constructor threw or returned another object (reported): the
+    /// element is "failed", never upgraded; the parser gives it its
     /// attributes.
-    Constructed(NodeId),
-    /// The constructor threw or returned an unusable element (reported):
-    /// the parser makes a "failed" element, never upgraded.
     Failed,
 }
 
@@ -68,10 +69,12 @@ pub enum ParserConstruct {
 /// (HTML "create an element for a token" with the synchronous custom
 /// elements flag, and the element queue the parser's insertions push).
 pub trait ParserCustomElements {
-    /// Constructs `local`'s definition for a token of `document`: the
-    /// constructor runs now, then the token's `attrs` are appended
-    /// ([`Dom::append_parser_attributes`]) and the reactions that queued run.
-    fn construct(&self, document: NodeId, local: &LocalName, attrs: &[(QualName, String)]) -> ParserConstruct;
+    /// Runs the constructor of `element`'s definition now, on `element`
+    /// (made by the parser for a token, not inserted yet, without
+    /// attributes); then appends the token's `attrs`
+    /// ([`Dom::append_parser_attributes`]) and runs the reactions that
+    /// queued.
+    fn construct(&self, element: NodeId, attrs: &[(QualName, String)]) -> ParserConstruct;
     /// Runs the reactions and upgrades the parser's insertion queued.
     fn run_reactions(&self);
 }
@@ -269,20 +272,30 @@ impl Dom {
         Ok(())
     }
 
-    /// The parser's checks of what a constructor returned (HTML "create an
-    /// element", synchronous custom elements flag): an element of `document`
-    /// named `local` in the HTML namespace, with no attributes, children or
-    /// parent.
-    pub fn parser_constructed_ok(&self, el: NodeId, document: NodeId, local: &LocalName) -> bool {
-        let (Ok(i), Ok(document)) = (self.check(el), self.check(document)) else { return false };
-        let n = self.n(i);
-        let Some(e) = n.element() else { return false };
-        e.is_html()
-            && e.name.local == *local
-            && e.attrs.is_empty()
-            && n.first_child == NIL
-            && n.parent == NIL
-            && n.owner_doc == document
+    /// Whether the parser of `document` may construct an element named
+    /// `name` (a window defined that name and gave its hooks).
+    pub(crate) fn parser_may_construct(&self, document: u32, name: &QualName) -> bool {
+        !self.reactions.defined.is_empty()
+            && name.ns == markup5ever::ns!(html)
+            && self.reactions.defined.contains(&name.local)
+            && self.reactions.parser.contains_key(&self.id_of(document))
+    }
+
+    /// The token's attributes of a parser-made element that was not
+    /// constructed, set as the parser sets any element's (no records).
+    pub(crate) fn set_parsed_attributes(&mut self, i: u32, attrs: Vec<(QualName, String)>) {
+        if attrs.is_empty() {
+            return;
+        }
+        let Some(e) = self.n_mut(i).element_mut() else { return };
+        let mut all: Vec<crate::node::Attr> = e.attrs.to_vec();
+        for (name, value) in attrs {
+            if !all.iter().any(|a| a.name == name) {
+                all.push(crate::node::Attr { name, value: value.as_str().into() });
+            }
+        }
+        e.set_attrs(all);
+        self.note_inline_handlers(i);
     }
 
     /// Appends the attributes of the token the parser constructed `el` for,

@@ -215,6 +215,30 @@ pub(crate) fn construct_html_element<'s>(s: &Scope<'s>, new_target: Object<'s>) 
 /// attributes it had, `connectedCallback` when it was connected, and the
 /// form-associated callbacks.
 fn upgrade<'s>(s: &Scope<'s>, page: &Rc<PageDom>, el: NodeId, ctor: Value<'s>) -> JsResult<()> {
+    upgrade_with(s, page, el, ctor, |name| {
+        JsError::Type(format!("Failed to upgrade \"{name}\": the constructor did not return the element it upgraded."))
+    })
+}
+
+/// The parser's synchronous construction of `el` (HTML "create an element
+/// for a token"): the upgrade of the element it made for the token, whose
+/// constructor must return that element (else `NotSupportedError`).
+fn construct_for_parser<'s>(s: &Scope<'s>, page: &Rc<PageDom>, el: NodeId, ctor: Value<'s>) -> JsResult<()> {
+    upgrade_with(s, page, el, ctor, |name| {
+        JsError::dom(
+            "NotSupportedError",
+            format!("The result of constructing a custom element \"{name}\" must be the element the parser created."),
+        )
+    })
+}
+
+fn upgrade_with<'s>(
+    s: &Scope<'s>,
+    page: &Rc<PageDom>,
+    el: NodeId,
+    ctor: Value<'s>,
+    mismatch: impl FnOnce(&LocalName) -> JsError,
+) -> JsResult<()> {
     let realm = s.realm_id();
     let name = page.dom.borrow().element(el).js()?.local_name().clone();
     let (observed, face) = {
@@ -245,6 +269,14 @@ fn upgrade<'s>(s: &Scope<'s>, page: &Rc<PageDom>, el: NodeId, ctor: Value<'s>) -
             r.stack.pop();
         }
         r.constructing.retain(|&c| c != el);
+    });
+    // "If SameValue(constructResult, element) is false, throw".
+    let result = result.and_then(|made| {
+        if crate::node::node_arg(s, made.value(), "upgrade").ok() == Some(el) {
+            Ok(())
+        } else {
+            Err(mismatch(&name))
+        }
     });
     if let Err(e) = result {
         let _ = page.dom.borrow_mut().set_custom_failed(el);
@@ -536,48 +568,39 @@ impl ParserHooks {
 }
 
 impl ParserCustomElements for ParserHooks {
-    fn construct(&self, document: NodeId, local: &LocalName, attrs: &[(QualName, String)]) -> ParserConstruct {
+    fn construct(&self, el: NodeId, attrs: &[(QualName, String)]) -> ParserConstruct {
         let Some(page) = self.page.upgrade() else { return ParserConstruct::NotDefined };
-        if page.is_disposed() || document != page.document() {
+        if page.is_disposed() {
             return ParserConstruct::NotDefined;
         }
+        let name = {
+            let dom = page.dom.borrow();
+            if dom.node_document(el).ok() != Some(page.document()) {
+                return ParserConstruct::NotDefined;
+            }
+            let Ok(e) = dom.element(el) else { return ParserConstruct::NotDefined };
+            e.local_name().clone()
+        };
         let Some(realm) = page.main_world_realm().filter(|r| !r.is_disposed()) else {
             return ParserConstruct::NotDefined;
         };
         let Ok(s) = realm.scope() else { return ParserConstruct::NotDefined };
-        let Some(ctor) = with_registry(&page, |r| r.ctor(&s, realm.id(), local)) else {
+        let Some(ctor) = with_registry(&page, |r| r.ctor(&s, realm.id(), &name)) else {
             return ParserConstruct::NotDefined;
         };
         // "Perform a microtask checkpoint" (no script runs here).
         crate::mutation_observer::checkpoint(&page);
         Self::counted(&page, || {
-            let made = ctor
-                .as_object()
-                .ok_or_else(|| JsError::Type("not a constructor".into()))
-                .and_then(|c| c.construct(&[]));
-            let outcome = match made {
+            let outcome = match construct_for_parser(&s, &page, el, ctor) {
+                Ok(()) => {
+                    if let Err(e) = page.dom.borrow_mut().append_parser_attributes(el, attrs) {
+                        s.report_exception(&dom_err(e));
+                    }
+                    ParserConstruct::Constructed
+                }
                 Err(e) => {
                     s.report_exception(&e);
                     ParserConstruct::Failed
-                }
-                Ok(obj) => {
-                    let el = crate::node::node_arg(&s, obj.value(), "create an element").ok();
-                    let usable = el.filter(|&el| page.dom.borrow().parser_constructed_ok(el, document, local));
-                    match usable {
-                        Some(el) => {
-                            if let Err(e) = page.dom.borrow_mut().append_parser_attributes(el, attrs) {
-                                s.report_exception(&dom_err(e));
-                            }
-                            ParserConstruct::Constructed(el)
-                        }
-                        None => {
-                            s.report_exception(&JsError::dom(
-                                "NotSupportedError",
-                                format!("The result of constructing a custom element \"{local}\" must be a new element of the document with no attributes, children or parent."),
-                            ));
-                            ParserConstruct::Failed
-                        }
-                    }
                 }
             };
             run_reactions(&page);

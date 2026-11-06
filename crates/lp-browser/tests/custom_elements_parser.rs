@@ -130,3 +130,24 @@ fn constructors_in_a_child_frame_can_reach_the_frame_tree() {
     );
     assert_eq!(log, ["frame 1,1", "done"], "{log:?}");
 }
+
+#[test]
+fn template_contents_stay_inert_and_declarative_shadow_roots_construct() {
+    let log = load(
+        r#"<!doctype html><head><script>
+        var made = 0;
+        customElements.define('x-count', class extends HTMLElement { constructor() { super(); made++; } });
+        </script></head><body>
+        <template id=t><x-count></x-count></template>
+        <div id=host><template shadowrootmode=open><x-count></x-count></template></div>
+        <x-count></x-count>
+        <script>
+        const inert = document.getElementById('t').content.firstChild;
+        const shadow = document.getElementById('host').shadowRoot.firstChild;
+        console.log('made', made, inert.matches(':defined'), shadow.matches(':defined'));
+        console.log('done');
+        </script></body>"#,
+        None,
+    );
+    assert_eq!(log, ["made 2 false true", "done"], "{log:?}");
+}

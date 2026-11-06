@@ -49,6 +49,11 @@ struct Sink<A: DomAccess> {
     /// reactions its insertions queue run at once (HTML "create an element
     /// for a token", "insert an element at the adjusted insertion location").
     sync_custom: bool,
+    /// Elements of a defined name created for a token, with the token's
+    /// attributes: constructed (or, in inert template contents, given their
+    /// attributes) when the parser inserts them, which is when their
+    /// intended parent, and so their node document, is known.
+    pending_custom: RefCell<Vec<(u32, Vec<Attribute>)>>,
     quirks: Cell<Option<QuirksMode>>,
     /// First element created (the fragment parser's context element).
     first_created: Cell<u32>,
@@ -72,6 +77,7 @@ impl<A: DomAccess> Sink<A> {
             doc,
             elem_flags,
             sync_custom,
+            pending_custom: RefCell::new(Vec::new()),
             quirks: Cell::new(None),
             first_created: Cell::new(NIL),
             pins: RefCell::new(vec![id]),
@@ -80,6 +86,16 @@ impl<A: DomAccess> Sink<A> {
     }
 
     fn release_pins(&self) {
+        // Elements of defined names the parser never inserted keep their
+        // token's attributes.
+        let pending = self.pending_custom.take();
+        if !pending.is_empty() {
+            self.dom.with(|d| {
+                for (n, attrs) in pending {
+                    d.set_parsed_attributes(n, attrs.into_iter().map(|a| (a.name, a.value.to_string())).collect());
+                }
+            });
+        }
         let pins = self.pins.take();
         self.dom.with(|d| d.release_parser_pins(pins));
     }
@@ -135,8 +151,8 @@ fn insert_node(dom: &mut Dom, parent: u32, before: u32, child: NodeOrText<u32>) 
             if dom.internals.faces != 0 {
                 dom.faces_after_tree_change(n);
             }
-            // Elements of defined names were constructed when created
-            // (`Sink::create_custom_element`): no upgrade candidates here.
+            // Elements of defined names were constructed before their
+            // insertion (`Sink::settle_custom`): no upgrade candidates here.
             if dom.is_connected_idx(parent) {
                 dom.enqueue_custom_reactions(n, crate::custom::CustomReaction::Connected);
             }
@@ -161,19 +177,8 @@ impl<A: DomAccess> TreeSink for Sink<A> {
         ElemNameRef(self.dom.with(|d| d.n(*target).element().map(|e| e.name.clone())).expect("element"))
     }
     fn create_element(&self, name: QualName, attrs: Vec<Attribute>, flags: ElementFlags) -> u32 {
-        let failed = Cell::new(false);
-        if self.sync_custom && !flags.template {
-            match self.create_custom_element(&name, &attrs) {
-                Some(Ok(created)) => {
-                    if self.first_created.get() == NIL {
-                        self.first_created.set(created);
-                    }
-                    return created;
-                }
-                Some(Err(())) => failed.set(true),
-                None => {}
-            }
-        }
+        let custom = self.sync_custom && !flags.template && self.dom.with(|d| d.parser_may_construct(self.doc, &name));
+        let (attrs, held) = if custom { (Vec::new(), Some(attrs)) } else { (attrs, None) };
         let created = self.dom.with(|d| {
             let owner = self.doc_owner(d);
             d.base_seen |= name.local == local_name!("base");
@@ -182,9 +187,6 @@ impl<A: DomAccess> TreeSink for Sink<A> {
                 attrs.into_iter().map(|a| crate::node::Attr { name: a.name, value: (&*a.value).into() }).collect(),
             );
             el.flags = self.elem_flags;
-            if failed.get() {
-                el.flags |= element_flags::CUSTOM_FAILED;
-            }
             let i = d.alloc_raw(NodeKind::Element(Box::new(el)), owner);
             if flags.template {
                 let inert = d.inert_doc_for_pub(owner);
@@ -199,6 +201,9 @@ impl<A: DomAccess> TreeSink for Sink<A> {
         });
         if self.first_created.get() == NIL {
             self.first_created.set(created);
+        }
+        if let Some(attrs) = held {
+            self.pending_custom.borrow_mut().push((created, attrs));
         }
         created
     }
@@ -221,6 +226,7 @@ impl<A: DomAccess> TreeSink for Sink<A> {
         })
     }
     fn append(&self, parent: &u32, child: NodeOrText<u32>) {
+        self.settle_custom(*parent, &child);
         self.dom.with(|d| insert_node(d, *parent, NIL, child));
         self.run_custom_reactions();
     }
@@ -283,7 +289,13 @@ impl<A: DomAccess> TreeSink for Sink<A> {
         });
     }
     fn append_before_sibling(&self, sibling: &u32, new_node: NodeOrText<u32>) {
+        let parent = self.dom.with(|d| d.n(*sibling).parent);
+        if parent == NIL {
+            return;
+        }
+        self.settle_custom(parent, &new_node);
         self.dom.with(|d| {
+            // The constructor may have moved the sibling.
             let parent = d.n(*sibling).parent;
             if parent != NIL {
                 insert_node(d, parent, *sibling, new_node);
@@ -365,42 +377,49 @@ impl<A: DomAccess> Sink<A> {
         d.n(self.doc).owner_doc
     }
 
-    /// HTML "create an element for a token" when a window defined `name`:
-    /// the constructor runs now (no DOM borrow is held), then the token's
-    /// attributes are appended and their reactions run. `None`: not
-    /// defined; `Some(Err)`: a "failed" element is to be made.
-    fn create_custom_element(&self, name: &QualName, attrs: &[Attribute]) -> Option<Result<u32, ()>> {
-        let (hooks, doc) = self.dom.with(|d| Some((d.parser_custom_elements(self.doc, name)?, d.id_of(self.doc))))?;
-        let attrs: Vec<(QualName, String)> = attrs.iter().map(|a| (a.name.clone(), a.value.to_string())).collect();
-        match hooks.construct(doc, &name.local, &attrs) {
-            crate::custom::ParserConstruct::NotDefined => None,
-            crate::custom::ParserConstruct::Failed => Some(Err(())),
-            crate::custom::ParserConstruct::Constructed(el) => Some(Ok(self.dom.with(|d| {
-                let i = el.idx;
-                d.n_mut(i).element_mut().expect("element").flags |= self.elem_flags;
-                d.note_inline_handlers(i);
-                if d.add_ref(el).is_ok() {
-                    self.pins.borrow_mut().push(el);
-                }
-                i
-            }))),
+    /// HTML "create an element for a token" for an element of a defined
+    /// name, run as the parser inserts it into `parent`: in the document
+    /// (not inert template contents), its definition's constructor runs now
+    /// (no DOM borrow is held), then the token's attributes are appended
+    /// and their reactions run; elsewhere it just gets its attributes.
+    fn settle_custom(&self, parent: u32, child: &NodeOrText<u32>) {
+        let NodeOrText::AppendNode(n) = child else { return };
+        let attrs = {
+            let mut pending = self.pending_custom.borrow_mut();
+            if pending.is_empty() {
+                return;
+            }
+            let Some(k) = pending.iter().position(|(p, _)| p == n) else { return };
+            pending.swap_remove(k).1
+        };
+        let n = *n;
+        let attrs: Vec<(QualName, String)> = attrs.into_iter().map(|a| (a.name, a.value.to_string())).collect();
+        let hooks = self.dom.with(|d| {
+            let name = d.n(n).element().map(|e| e.name.clone())?;
+            (d.n(parent).owner_doc == self.doc).then(|| d.parser_custom_elements(self.doc, &name)).flatten()
+        });
+        let constructed = match hooks {
+            Some(hooks) => {
+                let el = self.dom.with(|d| d.id_of(n));
+                matches!(hooks.construct(el, &attrs), crate::custom::ParserConstruct::Constructed)
+            }
+            None => false,
+        };
+        if !constructed {
+            self.dom.with(|d| d.set_parsed_attributes(n, attrs));
         }
     }
 
-    /// The element queue of a parser insertion: the reactions and upgrades
-    /// it queued run before parsing goes on (main document parser only).
+    /// The element queue of a parser insertion: the reactions it queued
+    /// run before parsing goes on (main document parser only).
     fn run_custom_reactions(&self) {
         if !self.sync_custom {
             return;
         }
         let doc = self.doc;
         let hooks = self.dom.with(|d| {
-            let active = matches!(&d.n(doc).kind, NodeKind::Document(data) if data.active);
-            if active {
-                d.parser_reactions_pending(doc)
-            } else {
-                None
-            }
+            let hooks = d.parser_reactions_pending(doc)?;
+            matches!(&d.n(doc).kind, NodeKind::Document(data) if data.active).then_some(hooks)
         });
         if let Some(hooks) = hooks {
             hooks.run_reactions();
