@@ -50,12 +50,14 @@ static CALLS: AtomicU64 = AtomicU64::new(0);
 static TOTAL_CALLS: AtomicU64 = AtomicU64::new(0);
 /// Syncs from lp-dom's change journal (the rest sent the whole tree).
 static DELTAS: AtomicU64 = AtomicU64::new(0);
+/// Timers, running only while `lp_render::profiling` is on.
 static SNAPSHOT_NS: AtomicU64 = AtomicU64::new(0);
 static LAYOUT_NS: AtomicU64 = AtomicU64::new(0);
 static READ_NS: AtomicU64 = AtomicU64::new(0);
 
 /// `LP_GEOMETRY_PROFILE=1`: time in syncs, whole-document reads and box
-/// reads, printed to stderr every 250 syncs (diagnostic).
+/// reads, printed to stderr every 250 syncs (diagnostic; turns
+/// `lp_render::profiling` on for the counters it prints).
 mod profile {
     use std::cell::Cell;
     use std::time::Duration;
@@ -105,7 +107,8 @@ pub fn resources_changed() {
 const BLANK: &str = "about:blank";
 
 /// Layouts since the last call: count, journal syncs, and milliseconds
-/// building the node list, applying it and laying out, and reading boxes.
+/// building the node list, applying it and laying out, and reading boxes
+/// (the milliseconds only while `lp_render::profiling` is on).
 pub fn take_stats() -> (u64, u64, f64, f64, f64) {
     let ms = |a: &AtomicU64| a.swap(0, Ordering::Relaxed) as f64 / 1e6;
     (
@@ -126,6 +129,9 @@ pub fn peek_layout_count() -> u64 {
 /// Makes this thread's new documents take their geometry from Blitz,
 /// loading sub-resources through `fetcher`.
 pub fn install(fetcher: Arc<dyn Fetcher>) {
+    if profile::on() {
+        lp_render::profiling::enable();
+    }
     lp_dom::layout::set_geometry_source_factory(Some(Rc::new(move || {
         Rc::new(BlitzGeometry {
             page: NEXT_PAGE.fetch_add(1, Ordering::Relaxed),
@@ -268,7 +274,7 @@ impl BlitzGeometry {
 
     /// The document as a keyed node list for this page's Blitz document.
     fn snapshot(&self, dom: &Dom, style: &StyleEngine) -> Option<Snapshot> {
-        let t = Instant::now();
+        let t = lp_render::profiling::on().then(Instant::now);
         let base = self.base_url.borrow();
         let sheets = RefCell::new(HashMap::new());
         let tree = {
@@ -293,7 +299,9 @@ impl BlitzGeometry {
             background: None,
             element_scroll: None,
         };
-        SNAPSHOT_NS.fetch_add(t.elapsed().as_nanos() as u64, Ordering::Relaxed);
+        if let Some(t) = t {
+            SNAPSHOT_NS.fetch_add(t.elapsed().as_nanos() as u64, Ordering::Relaxed);
+        }
         Some(snap)
     }
 
@@ -335,7 +343,8 @@ impl BlitzGeometry {
                 None
             };
             if let (Some(restyled), true) = (restyled, vp == viewport) {
-                let t = Instant::now();
+                let profiling = lp_render::profiling::on();
+                let t = profiling.then(Instant::now);
                 let delta = {
                     let base = self.base_url.borrow();
                     let (style_text, stylesheet_href) = Self::render_opts(dom, style, base.parsed.as_ref(), None);
@@ -345,7 +354,9 @@ impl BlitzGeometry {
                         delta
                     })
                 };
-                SNAPSHOT_NS.fetch_add(t.elapsed().as_nanos() as u64, Ordering::Relaxed);
+                if let Some(t) = t {
+                    SNAPSHOT_NS.fetch_add(t.elapsed().as_nanos() as u64, Ordering::Relaxed);
+                }
                 if let Some(delta) = delta {
                     let ops = convert_delta(delta);
                     let dpr = v.device_scale_factor;
@@ -365,9 +376,10 @@ impl BlitzGeometry {
                     if let Some(t) = timings {
                         CALLS.fetch_add(1, Ordering::Relaxed);
                         TOTAL_CALLS.fetch_add(1, Ordering::Relaxed);
-                        TOTAL_CALLS.fetch_add(1, Ordering::Relaxed);
                         DELTAS.fetch_add(1, Ordering::Relaxed);
-                        LAYOUT_NS.fetch_add((t.fetch + t.layout).as_nanos() as u64, Ordering::Relaxed);
+                        if profiling {
+                            LAYOUT_NS.fetch_add((t.fetch + t.layout).as_nanos() as u64, Ordering::Relaxed);
+                        }
                         return;
                     }
                 }
@@ -383,7 +395,9 @@ impl BlitzGeometry {
         if let Some(t) = timings {
             CALLS.fetch_add(1, Ordering::Relaxed);
             TOTAL_CALLS.fetch_add(1, Ordering::Relaxed);
-            LAYOUT_NS.fetch_add((t.fetch + t.layout).as_nanos() as u64, Ordering::Relaxed);
+            if lp_render::profiling::on() {
+                LAYOUT_NS.fetch_add((t.fetch + t.layout).as_nanos() as u64, Ordering::Relaxed);
+            }
         }
     }
 }
@@ -463,9 +477,11 @@ impl BlitzGeometry {
     }
 
     fn element_box_inner(&self, key: u64) -> Option<ExternalBox> {
-        let t = Instant::now();
+        let t = lp_render::profiling::on().then(Instant::now);
         let b = RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.element_box(self.page, key));
-        READ_NS.fetch_add(t.elapsed().as_nanos() as u64, Ordering::Relaxed);
+        if let Some(t) = t {
+            READ_NS.fetch_add(t.elapsed().as_nanos() as u64, Ordering::Relaxed);
+        }
         if b.is_some_and(|b| b.width == 0.0 || b.height == 0.0) && geometry_debug() {
             let what = RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.describe_element(self.page, key));
             eprintln!("lp-geometry: empty box {b:?}\n  {}", what.unwrap_or_default());

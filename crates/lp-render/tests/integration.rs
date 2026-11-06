@@ -11,6 +11,7 @@ mod incremental_flex_overflow;
 mod input_percentage_min_content;
 mod mirror;
 mod pdf_fidelity;
+mod profiling_timers;
 mod render;
 mod table_cell_height;
 mod table_cell_width;
