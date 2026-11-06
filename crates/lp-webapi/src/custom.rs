@@ -702,7 +702,8 @@ impl JsClass for CustomElementRegistry {
                 dom.enable_custom_upgrades();
                 dom.note_custom_definition(&key.1, observed);
                 if install_hooks {
-                    dom.set_parser_custom_elements(Some(Rc::new(ParserHooks { page: Rc::downgrade(page) })));
+                    let hooks = Rc::new(ParserHooks { page: Rc::downgrade(page) });
+                    dom.set_parser_custom_elements(page.document(), Some(hooks));
                 }
             }
             // Upgrade existing elements of the document, in tree order.

@@ -7,6 +7,7 @@ mod cache_disabled;
 mod child_frame_network;
 mod child_frames;
 mod cssom_and_attributes;
+mod custom_elements_parser;
 mod detached_frame_script;
 mod document_write;
 mod error_events;

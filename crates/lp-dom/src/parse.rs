@@ -135,9 +135,10 @@ fn insert_node(dom: &mut Dom, parent: u32, before: u32, child: NodeOrText<u32>) 
             if dom.internals.faces != 0 {
                 dom.faces_after_tree_change(n);
             }
+            // Elements of defined names were constructed when created
+            // (`Sink::create_custom_element`): no upgrade candidates here.
             if dom.is_connected_idx(parent) {
                 dom.enqueue_custom_reactions(n, crate::custom::CustomReaction::Connected);
-                dom.upgrades_after_insert(n);
             }
         }
     }
@@ -369,7 +370,7 @@ impl<A: DomAccess> Sink<A> {
     /// attributes are appended and their reactions run. `None`: not
     /// defined; `Some(Err)`: a "failed" element is to be made.
     fn create_custom_element(&self, name: &QualName, attrs: &[Attribute]) -> Option<Result<u32, ()>> {
-        let (hooks, doc) = self.dom.with(|d| Some((d.parser_custom_elements(name)?, d.id_of(self.doc))))?;
+        let (hooks, doc) = self.dom.with(|d| Some((d.parser_custom_elements(self.doc, name)?, d.id_of(self.doc))))?;
         let attrs: Vec<(QualName, String)> = attrs.iter().map(|a| (a.name.clone(), a.value.to_string())).collect();
         match hooks.construct(doc, &name.local, &attrs) {
             crate::custom::ParserConstruct::NotDefined => None,
@@ -396,7 +397,7 @@ impl<A: DomAccess> Sink<A> {
         let hooks = self.dom.with(|d| {
             let active = matches!(&d.n(doc).kind, NodeKind::Document(data) if data.active);
             if active {
-                d.parser_reactions_pending()
+                d.parser_reactions_pending(doc)
             } else {
                 None
             }

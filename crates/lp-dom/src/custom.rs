@@ -88,8 +88,9 @@ pub(crate) struct ReactionQueue {
     observed: FxHashMap<LocalName, Vec<LocalName>>,
     /// The element names some window defined (the parser constructs those).
     defined: FxHashSet<LocalName>,
-    /// Installed by the bindings with the first definition.
-    parser: Option<Rc<dyn ParserCustomElements>>,
+    /// Installed by the bindings of a window with its first definition,
+    /// by the window's document.
+    parser: FxHashMap<NodeId, Rc<dyn ParserCustomElements>>,
 }
 
 impl Dom {
@@ -202,28 +203,40 @@ impl Dom {
         }
     }
 
-    /// Installs the bindings' side of the parser's custom elements.
-    pub fn set_parser_custom_elements(&mut self, hooks: Option<Rc<dyn ParserCustomElements>>) {
-        self.reactions.parser = hooks;
+    /// Installs (or with `None` removes) the bindings' side of the parser's
+    /// custom elements for `document`, the document of their window.
+    pub fn set_parser_custom_elements(&mut self, document: NodeId, hooks: Option<Rc<dyn ParserCustomElements>>) {
+        // Documents collected since leave their window's hooks behind.
+        let mut parser = std::mem::take(&mut self.reactions.parser);
+        parser.retain(|doc, _| *doc != document && self.check(*doc).is_ok());
+        if let Some(hooks) = hooks {
+            parser.insert(document, hooks);
+        }
+        self.reactions.parser = parser;
     }
 
-    /// The parser hooks, when an HTML element named `name` may be defined.
-    pub(crate) fn parser_custom_elements(&self, name: &QualName) -> Option<Rc<dyn ParserCustomElements>> {
+    /// The parser hooks of `document`, when an HTML element named `name`
+    /// may be defined.
+    pub(crate) fn parser_custom_elements(
+        &self,
+        document: u32,
+        name: &QualName,
+    ) -> Option<Rc<dyn ParserCustomElements>> {
         if self.reactions.defined.is_empty()
             || name.ns != markup5ever::ns!(html)
             || !self.reactions.defined.contains(&name.local)
         {
             return None;
         }
-        self.reactions.parser.clone()
+        self.reactions.parser.get(&self.id_of(document)).cloned()
     }
 
-    /// The parser hooks, when its insertion queued reactions or upgrades.
-    pub(crate) fn parser_reactions_pending(&self) -> Option<Rc<dyn ParserCustomElements>> {
-        if self.reactions.queued.is_empty() && !self.has_upgrade_candidates() {
+    /// The parser hooks of `document`, when its insertion queued reactions.
+    pub(crate) fn parser_reactions_pending(&self, document: u32) -> Option<Rc<dyn ParserCustomElements>> {
+        if self.reactions.queued.is_empty() {
             return None;
         }
-        self.reactions.parser.clone()
+        self.reactions.parser.get(&self.id_of(document)).cloned()
     }
 
     /// Sets the flags of an element about to be upgraded or constructed

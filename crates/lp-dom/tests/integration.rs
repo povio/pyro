@@ -5,6 +5,7 @@
 mod animation_events;
 mod adoption;
 mod attr_nodes;
+mod custom_reactions;
 mod dispatch_targets;
 mod id_index;
 mod loader;
