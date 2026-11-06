@@ -164,6 +164,7 @@ impl Dom {
     /// Called after `node` was inserted (tree mutation or parser).
     pub(crate) fn resources_after_insert(&mut self, node: u32) {
         self.iframes_after_insert(node);
+        self.media_after_insert(node);
         if !self.resources.enabled || !self.connected_for_resources(node) {
             return;
         }
@@ -184,6 +185,7 @@ impl Dom {
             return self.resources_after_insert(node);
         }
         self.iframe_after_parser_insert(node);
+        self.media_after_insert(node);
         if !self.resources.enabled || !self.connected_for_resources(node) {
             return;
         }
@@ -234,6 +236,7 @@ impl Dom {
     /// `added` when the element did not have it before.
     pub(crate) fn resources_after_attr(&mut self, idx: u32, local: &str, added: bool) {
         self.iframes_after_attr(idx, local);
+        self.media_after_attr(idx, local);
         // HTML: a connected script is prepared when it gets a `src` it did
         // not have. No other attribute change (`type`, a changed or removed
         // `src`) prepares it again.

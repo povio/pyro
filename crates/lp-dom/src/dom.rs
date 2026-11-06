@@ -146,6 +146,10 @@ pub struct Dom {
     candidates: Vec<u32>,
     /// A `<base>` element was created; until then no document walks for one.
     pub(crate) base_seen: bool,
+    /// An `<audio>` or `<video>` element was created; until then no
+    /// mutation looks for media load triggers (`media_element`).
+    pub(crate) media_seen: bool,
+    pub(crate) media: crate::media_element::MediaQueue,
     live: u32,
     /// Bumped whenever a node is removed from its parent.
     removals: u64,
@@ -236,6 +240,8 @@ impl Dom {
             shadow_roots: 0,
             pending_inline_handlers: Vec::new(),
             base_seen: false,
+            media_seen: false,
+            media: Default::default(),
             mutation: MutationState::default(),
             live_ranges: Vec::new(),
             live_iterators: Vec::new(),
@@ -797,6 +803,7 @@ impl Dom {
         let owner = self.owner_for(doc)?;
         let is_template = name.ns == ns!(html) && name.local == local_name!("template");
         self.base_seen |= name.local == local_name!("base");
+        self.media_seen |= matches!(name.local, local_name!("audio") | local_name!("video"));
         let idx = self.alloc_raw(NodeKind::Element(Box::new(ElementData::new(name))), owner);
         if is_template {
             let inert = self.inert_doc_for(owner);

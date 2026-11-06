@@ -46,6 +46,7 @@ impl Dom {
     /// Releases queued nodes for a replaced/disposed browsing context.
     pub fn unwatch_iframes(&mut self, document: NodeId) {
         self.iframes.documents.remove(&document);
+        self.drop_media_events(document);
         for event in self.take_iframe_events(document) {
             self.release(event.node);
         }
@@ -59,6 +60,10 @@ impl Dom {
     }
     pub fn take_iframe_events(&mut self, document: NodeId) -> Vec<IframeEvent> {
         self.iframes.events.remove(&document).unwrap_or_default()
+    }
+    /// A browsing-context document (`watch_iframes`).
+    pub(crate) fn is_watched_document(&self, document: NodeId) -> bool {
+        self.iframes.documents.contains(&document)
     }
     fn iframe_document(&self, idx: u32) -> Option<NodeId> {
         let doc = self.id_of(self.n(idx).owner_doc);

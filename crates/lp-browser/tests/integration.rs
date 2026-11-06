@@ -19,6 +19,7 @@ mod history_rewrite;
 mod images;
 mod link_fragment;
 mod loading;
+mod media;
 mod microtask_species;
 mod named_access;
 mod navigation_supersession;
