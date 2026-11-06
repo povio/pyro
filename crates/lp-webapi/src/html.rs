@@ -1565,14 +1565,36 @@ fn define_text_selection<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
     });
     def.method("setRangeText", 1, |s, n, a| {
         let text = arg_string(&a, 0, "setRangeText")?;
-        let range = if a.len() >= 3 { Some((to_u32(a.get(1))?, to_u32(a.get(2))?)) } else { None };
-        let mut dom = n.page().dom.borrow_mut();
-        if let Some((st, en)) = range {
-            dom.set_selection_range(n.id, st, en).js()?;
+        if !has_selection(n) {
+            return Err(JsError::dom("InvalidStateError", "The input element's type does not support selection."));
         }
-        dom.insert_text(n.id, &text).js()?;
-        drop(dom);
+        let (start, end, mode) = if a.len() >= 2 {
+            a.require(3, "setRangeText")?;
+            let mode = match a.get(3) {
+                v if v.is_undefined() => lp_dom::forms::RangeMode::Preserve,
+                v => match dom_string(v)?.as_str() {
+                    "select" => lp_dom::forms::RangeMode::Select,
+                    "start" => lp_dom::forms::RangeMode::Start,
+                    "end" => lp_dom::forms::RangeMode::End,
+                    "preserve" => lp_dom::forms::RangeMode::Preserve,
+                    other => {
+                        return Err(JsError::Type(format!(
+                            "Failed to execute 'setRangeText': The provided value '{other}' is not a valid enum value of type SelectionMode."
+                        )))
+                    }
+                },
+            };
+            (to_u32(a.get(1))?, to_u32(a.get(2))?, mode)
+        } else {
+            let (st, en) = n.page().dom.borrow().selection(n.id).js()?;
+            (st, en, lp_dom::forms::RangeMode::Preserve)
+        };
+        if start > end {
+            return Err(JsError::dom("IndexSizeError", "The provided start value is larger than the end value."));
+        }
+        n.page().dom.borrow_mut().set_range_text(n.id, &text, start, end, mode).js()?;
         crate::editing::queue_control_selectionchange(n.page(), n.id);
+        crate::input::queue_simple(n.page(), n.id, "select", true, false);
         Ok(s.undefined())
     });
 }
@@ -1674,19 +1696,39 @@ simple_class!(HtmlInputElement, "HTMLInputElement", HtmlElement, |def| {
     );
     def.accessor(
         "valueAsNumber",
-        |s, n| {
-            let dom = n.page().dom.borrow();
-            let ty = dom.input_type(n.id).js()?;
-            let v = dom.value(n.id).js()?;
-            Ok(s.number(match ty {
-                InputType::Number | InputType::Range => v.parse::<f64>().unwrap_or(f64::NAN),
-                _ => f64::NAN,
-            }))
-        },
+        |s, n| Ok(s.number(n.page().dom.borrow().value_as_number(n.id).js()?)),
         |_s, n, v| {
             let x = v.to_number()?;
-            let text = if x.is_finite() { format_number(x) } else { String::new() };
-            n.page().dom.borrow_mut().set_value(n.id, &text).js()
+            if x.is_infinite() {
+                return Err(JsError::Type(
+                    "Failed to set the 'valueAsNumber' property on 'HTMLInputElement': The value provided is infinite."
+                        .into(),
+                ));
+            }
+            n.page().dom.borrow_mut().set_value_as_number(n.id, x).js()
+        },
+    );
+    def.accessor(
+        "valueAsDate",
+        |s, n| {
+            let time = n.page().dom.borrow().value_as_date(n.id).js()?;
+            match time {
+                Some(t) => Ok(s.date(t)?.value()),
+                None => Ok(s.null()),
+            }
+        },
+        |_s, n, v| {
+            let time = if v.is_null() {
+                None
+            } else if v.is_date() {
+                Some(v.to_number()?)
+            } else {
+                return Err(JsError::Type(
+                    "Failed to set the 'valueAsDate' property on 'HTMLInputElement': The provided value is not a Date."
+                        .into(),
+                ));
+            };
+            n.page().dom.borrow_mut().set_value_as_date(n.id, time).js()
         },
     );
     def.accessor("files", crate::file::input_files, crate::file::set_input_files);
@@ -1701,32 +1743,15 @@ simple_class!(HtmlInputElement, "HTMLInputElement", HtmlElement, |def| {
         drop(dom);
         node_value(s, n.page(), target)
     });
-    def.method("stepUp", 0, |s, n, a| step(s, n, a, 1.0));
-    def.method("stepDown", 0, |s, n, a| step(s, n, a, -1.0));
+    def.method("stepUp", 0, |s, n, a| step(s, n, a, true));
+    def.method("stepDown", 0, |s, n, a| step(s, n, a, false));
     def.method("showPicker", 0, |s, _n, _a| Ok(s.undefined()));
 });
 
-fn format_number(x: f64) -> String {
-    if x.fract() == 0.0 && x.abs() < 1e15 {
-        format!("{}", x as i64)
-    } else {
-        format!("{x}")
-    }
-}
-
-fn step<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>, dir: f64) -> JsResult<Value<'s>> {
-    let k = if a.get(0).is_undefined() { 1.0 } else { a.get(0).to_number()? };
-    let mut dom = n.page().dom.borrow_mut();
-    let step = dom.get_attribute(n.id, "step").js()?.and_then(|v| v.parse::<f64>().ok()).unwrap_or(1.0);
-    let cur = dom.value(n.id).js()?.parse::<f64>().unwrap_or(0.0);
-    let mut v = cur + dir * k * step;
-    if let Some(max) = dom.get_attribute(n.id, "max").js()?.and_then(|x| x.parse::<f64>().ok()) {
-        v = v.min(max);
-    }
-    if let Some(min) = dom.get_attribute(n.id, "min").js()?.and_then(|x| x.parse::<f64>().ok()) {
-        v = v.max(min);
-    }
-    dom.set_value(n.id, &format_number(v)).js()?;
+/// `stepUp(n)` / `stepDown(n)`.
+fn step<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>, up: bool) -> JsResult<Value<'s>> {
+    let k = if a.get(0).is_undefined() { 1 } else { to_i32(a.get(0))? };
+    n.page().dom.borrow_mut().step_value(n.id, f64::from(k), up).js()?;
     Ok(s.undefined())
 }
 
@@ -1829,14 +1854,7 @@ simple_class!(HtmlSelectElement, "HTMLSelectElement", HtmlElement, |def| {
         node_value(s, n.page(), found)
     });
     def.method("add", 1, |s, n, a| {
-        let el = crate::node::node_arg(s, a.get(0), "HTMLSelectElement.add")?;
-        let before = crate::node::opt_node_arg(s, a.get(1), "HTMLSelectElement.add").ok().flatten();
-        let mut dom = n.page().dom.borrow_mut();
-        let parent = match before {
-            Some(b) => dom.parent(b).js()?.unwrap_or(n.id),
-            None => n.id,
-        };
-        dom.insert_before(parent, el, before).js()?;
+        collections::options_add(s, n.page(), n.id, a, "HTMLSelectElement")?;
         Ok(s.undefined())
     });
     def.method("remove", 0, |s, n, a| {
@@ -2596,22 +2614,29 @@ simple_class!(HtmlDialogElement, "HTMLDialogElement", HtmlElement, |def| {
         Ok(s.undefined())
     });
     def.method("close", 0, |s, n, a| {
-        let was_open = n.page().dom.borrow().has_attribute(n.id, "open").js()?;
-        if !was_open {
-            return Ok(s.undefined());
-        }
-        if !a.get(0).is_undefined() {
-            n.page().set_dialog_return(n.id, dom_string(a.get(0))?);
-        }
-        {
-            let mut dom = n.page().dom.borrow_mut();
-            dom.remove_attribute(n.id, "open").js()?;
-            dom.set_modal(n.id, false).js()?;
-        }
-        crate::input::queue_simple(n.page(), n.id, "close", false, false);
+        let result = if a.get(0).is_undefined() { None } else { Some(dom_string(a.get(0))?) };
+        close_dialog(n.page(), n.id, result).js()?;
         Ok(s.undefined())
     });
 });
+
+/// HTML "close the dialog" with `result` (None: null, the return value is
+/// kept): `close()` and `<form method=dialog>` submission.
+pub(crate) fn close_dialog(page: &Rc<PageDom>, dialog: NodeId, result: Option<String>) -> lp_dom::DomResult<()> {
+    if !page.dom.borrow().has_attribute(dialog, "open")? {
+        return Ok(());
+    }
+    if let Some(result) = result {
+        page.set_dialog_return(dialog, result);
+    }
+    {
+        let mut dom = page.dom.borrow_mut();
+        dom.remove_attribute(dialog, "open")?;
+        dom.set_modal(dialog, false)?;
+    }
+    crate::input::queue_simple(page, dialog, "close", false, false);
+    Ok(())
+}
 simple_class!(HtmlDetailsElement, "HTMLDetailsElement", HtmlElement, |def| {
     reflect_bool!(def, "open", "open");
     reflect_str!(def, "name", "name");

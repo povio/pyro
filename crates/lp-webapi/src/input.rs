@@ -439,12 +439,9 @@ fn has_activation_behavior(dom: &Dom, el: NodeId) -> bool {
     }
 }
 
-/// An enabled HTML submit button: `input` in the Submit or Image state, or a
-/// `button` that is neither a reset nor a plain button.
-fn is_enabled_submit_button(dom: &Dom, el: NodeId) -> bool {
-    if dom.is_disabled(el).unwrap_or(false) {
-        return false;
-    }
+/// An HTML submit button, enabled or not: `input` in the Submit or Image
+/// state, or a `button` that is neither a reset nor a plain button.
+fn is_submit_button(dom: &Dom, el: NodeId) -> bool {
     match local(dom, el).as_deref() {
         Some("input") => matches!(dom.input_type(el), Ok(InputType::Submit | InputType::Image)),
         Some("button") => !matches!(
@@ -852,12 +849,31 @@ pub fn submit_form(page: &Rc<PageDom>, form: NodeId, submitter: Option<NodeId>, 
         true
     };
     if proceed {
-        let req = crate::formdata::form_submission(page, form, submitter);
-        if let Some(req) = req {
+        if crate::formdata::is_dialog_method(&page.dom.borrow(), form, submitter) {
+            submit_dialog(page, form, submitter);
+        } else if let Some(req) = crate::formdata::form_submission(page, form, submitter) {
             page.navigate(req);
         }
     }
     page.end_submit(form);
+}
+
+/// The dialog method: closes the form's nearest `dialog` ancestor (not
+/// across a shadow root) with the submitter's result; no entry list, no
+/// navigation.
+fn submit_dialog(page: &Rc<PageDom>, form: NodeId, submitter: Option<NodeId>) {
+    let dialog = {
+        let dom = page.dom.borrow();
+        let mut cur = dom.parent_element(form).ok().flatten();
+        while let Some(n) = cur.filter(|&n| local(&dom, n).as_deref() != Some("dialog")) {
+            cur = dom.parent_element(n).ok().flatten();
+        }
+        cur
+    };
+    if let Some(dialog) = dialog {
+        let result = crate::formdata::dialog_result(page, submitter);
+        let _ = crate::html::close_dialog(page, dialog, result);
+    }
 }
 
 /// `form.reset()`: fires `reset`, then restores default values.
@@ -865,16 +881,38 @@ pub fn reset_form(page: &Rc<PageDom>, form: NodeId) {
     if !fire_simple(page, form, "reset", true, true) {
         return;
     }
+    // The form's resettable elements: those it owns anywhere in its tree
+    // (`form=` associates controls outside it), and the options of its
+    // selects.
     let controls: Vec<NodeId> = {
         let dom = page.dom.borrow();
-        dom.descendants(form)
-            .map(|d| d.filter(|&n| dom.form_owner(n).ok().flatten() == Some(form)).collect())
-            .unwrap_or_default()
+        let Ok(root) = dom.root_node(form, false) else { return };
+        let mut out = Vec::new();
+        for n in dom.descendants(root).into_iter().flatten() {
+            let resettable = matches!(local(&dom, n).as_deref(), Some("input" | "select" | "textarea"));
+            if resettable && dom.form_owner(n).ok().flatten() == Some(form) {
+                out.push(n);
+                if local(&dom, n).as_deref() == Some("select") {
+                    out.extend(dom.select_options(n).unwrap_or_default());
+                }
+            }
+        }
+        out
     };
     let mut dom = page.dom.borrow_mut();
     for c in controls {
-        if let Ok(st) = dom.control_state_mut(c) {
-            *st = Default::default();
+        // Back to the default value, checkedness and selectedness; a
+        // custom validity message is not part of that.
+        if dom.control_state(c).ok().flatten().is_some() {
+            if let Ok(st) = dom.control_state_mut(c) {
+                let custom_validity = st.custom_validity.take();
+                *st = Default::default();
+                st.custom_validity = custom_validity;
+            }
+        }
+        // A file input's selected files are emptied.
+        if dom.input_type(c).ok() == Some(InputType::File) && local(&dom, c).as_deref() == Some("input") {
+            page.files.borrow_mut().remove(&c);
         }
     }
 }
@@ -1013,7 +1051,7 @@ fn press_char(page: &Rc<PageDom>, target: NodeId, k: &KeyInput) {
     }
     if k.text == "\r" || k.text == "\n" {
         enter_key(page, target);
-    } else {
+    } else if !select_typeahead(page, target, &k.text) {
         insert_text_at(page, target, &k.text);
     }
 }
@@ -1041,6 +1079,9 @@ fn editing_key_action(page: &Rc<PageDom>, host: NodeId, k: &KeyInput) {
 fn default_key_action(page: &Rc<PageDom>, target: NodeId, k: &KeyInput) {
     if let Some(host) = editing_host_of(page, target) {
         editing_key_action(page, host, k);
+        return;
+    }
+    if !(k.modifiers.alt || k.modifiers.ctrl || k.modifiers.meta) && control_key_action(page, target, &k.key) {
         return;
     }
     let editable = is_text_control(&page.dom.borrow(), target);
@@ -1078,8 +1119,211 @@ fn default_key_action(page: &Rc<PageDom>, target: NodeId, k: &KeyInput) {
     }
 }
 
-/// Text controls whose caret ArrowUp/ArrowDown move. Number, date/time, range
-/// and color inputs step or pick values instead, which is not modelled.
+/// The value-changing keys of form controls (Chrome's default handlers):
+/// ArrowUp/ArrowDown step a number input; arrows, PageUp/PageDown, Home and
+/// End move a range slider; arrows move the checked radio button (and
+/// focus) within its group; arrows, Home and End change a single-selection
+/// `<select>`'s option. A change fires `input` and `change`. Returns
+/// whether the key was such an action (handled, even when nothing changed).
+fn control_key_action(page: &Rc<PageDom>, el: NodeId, key: &str) -> bool {
+    let (name, ty, mutable) = {
+        let dom = page.dom.borrow();
+        let Some(name) = local(&dom, el) else { return false };
+        if !matches!(name.as_str(), "input" | "select") {
+            return false;
+        }
+        let ty = dom.input_type(el).ok();
+        let mutable = !dom.is_disabled(el).unwrap_or(true) && !dom.has_attribute(el, "readonly").unwrap_or(false);
+        (name, ty, mutable)
+    };
+    let changed = match (name.as_str(), ty) {
+        ("input", Some(InputType::Number)) => {
+            let up = match key {
+                "ArrowUp" => true,
+                "ArrowDown" => false,
+                _ => return false,
+            };
+            mutable && step_by_key(page, el, |dom| dom.step_value(el, 1.0, up))
+        }
+        ("input", Some(InputType::Range)) => {
+            if !matches!(
+                key,
+                "ArrowUp" | "ArrowRight" | "ArrowDown" | "ArrowLeft" | "PageUp" | "PageDown" | "Home" | "End"
+            ) {
+                return false;
+            }
+            mutable && step_by_key(page, el, |dom| range_key(dom, el, key))
+        }
+        ("input", Some(InputType::Radio)) => {
+            let forward = match key {
+                "ArrowDown" | "ArrowRight" => true,
+                "ArrowUp" | "ArrowLeft" => false,
+                _ => return false,
+            };
+            let next = next_radio(&page.dom.borrow(), el, forward);
+            if let Some(next) = next {
+                focus_element(page, next);
+                keyboard_click(page, next);
+            }
+            // The click fired the events.
+            false
+        }
+        ("select", _) => {
+            if !matches!(key, "ArrowUp" | "ArrowDown" | "Home" | "End")
+                || page.dom.borrow().has_attribute(el, "multiple").unwrap_or(true)
+            {
+                return false;
+            }
+            mutable
+                && select_by_key(page, el, |options, current| {
+                    let pos = current.and_then(|c| options.iter().position(|&o| o == c));
+                    match (key, pos) {
+                        ("ArrowDown", Some(p)) => options.get(p + 1).copied(),
+                        ("ArrowUp", Some(p)) => p.checked_sub(1).map(|p| options[p]),
+                        ("ArrowDown" | "Home", _) => options.first().copied(),
+                        _ => options.last().copied(),
+                    }
+                })
+        }
+        _ => return false,
+    };
+    if changed {
+        fire_control_change(page, el);
+    }
+    true
+}
+
+/// `input` and `change` for a value the user committed at once (a key
+/// stepped or picked it): blurring later fires no second `change`.
+fn fire_control_change(page: &Rc<PageDom>, el: NodeId) {
+    fire_input_event(page, el, "input", "", None, false);
+    fire_simple(page, el, "change", true, false);
+    if page.focus_values.borrow().contains_key(&el) {
+        page.remember_focus_value(el);
+    }
+}
+
+/// Runs a value change of `el` and tells whether its value changed.
+fn step_by_key(page: &Rc<PageDom>, el: NodeId, f: impl FnOnce(&mut Dom) -> lp_dom::DomResult<()>) -> bool {
+    let mut dom = page.dom.borrow_mut();
+    let before = dom.value(el).ok();
+    let _ = f(&mut dom);
+    dom.value(el).ok() != before
+}
+
+/// A range slider key: one step for an arrow, a tenth of the range (at
+/// least a step) for PageUp/PageDown, the ends for Home/End.
+fn range_key(dom: &mut Dom, el: NodeId, key: &str) -> lp_dom::DomResult<()> {
+    let attr = |dom: &Dom, name: &str| dom.get_attribute(el, name).ok().flatten().and_then(lp_dom::forms::parse_float);
+    let min = attr(dom, "min").unwrap_or(0.0);
+    let max = attr(dom, "max").unwrap_or(100.0).max(min);
+    match key {
+        "Home" => dom.set_value_as_number(el, min),
+        "End" => dom.set_value_as_number(el, max),
+        "PageUp" | "PageDown" => {
+            let step = dom
+                .get_attribute(el, "step")
+                .ok()
+                .flatten()
+                .and_then(lp_dom::forms::parse_float)
+                .filter(|&s| s > 0.0)
+                .unwrap_or(1.0);
+            let big = step.max((max - min) / 10.0);
+            let v = dom.value_as_number(el)?;
+            dom.set_value_as_number(el, if key == "PageUp" { v + big } else { v - big })
+        }
+        _ => {
+            let up = matches!(key, "ArrowUp" | "ArrowRight");
+            match dom.step_value(el, 1.0, up) {
+                // step=any: a hundredth of the range.
+                Err(_) => {
+                    let v = dom.value_as_number(el)?;
+                    let delta = (max - min) / 100.0;
+                    dom.set_value_as_number(el, if up { v + delta } else { v - delta })
+                }
+                ok => ok,
+            }
+        }
+    }
+}
+
+/// The enabled radio button after (or before) `el` in its group, wrapping.
+fn next_radio(dom: &Dom, el: NodeId, forward: bool) -> Option<NodeId> {
+    let name = dom.get_attribute(el, "name").ok().flatten().filter(|n| !n.is_empty())?.to_owned();
+    let root = dom.root_node(el, false).ok()?;
+    let form = dom.form_owner(el).ok().flatten();
+    let group: Vec<NodeId> = dom
+        .descendants(root)
+        .ok()?
+        .filter(|&n| {
+            (n == el || !dom.is_disabled(n).unwrap_or(true))
+                && local(dom, n).as_deref() == Some("input")
+                && dom.input_type(n).ok() == Some(InputType::Radio)
+                && dom.get_attribute(n, "name").ok().flatten() == Some(name.as_str())
+                && dom.form_owner(n).ok().flatten() == form
+        })
+        .collect();
+    let pos = group.iter().position(|&n| n == el)?;
+    let next = if forward { (pos + 1) % group.len() } else { (pos + group.len() - 1) % group.len() };
+    (group[next] != el).then_some(group[next])
+}
+
+/// Selects the option `pick` chooses among a select's enabled options,
+/// given the selected one; tells whether the selection changed.
+fn select_by_key(
+    page: &Rc<PageDom>,
+    select: NodeId,
+    pick: impl FnOnce(&[NodeId], Option<NodeId>) -> Option<NodeId>,
+) -> bool {
+    let mut dom = page.dom.borrow_mut();
+    let Ok(options) = dom.select_options(select) else { return false };
+    let enabled: Vec<NodeId> = options.into_iter().filter(|&o| !dom.is_disabled(o).unwrap_or(true)).collect();
+    let current = dom.selected_options(select).ok().and_then(|s| s.first().copied());
+    let current_enabled = current.filter(|c| enabled.contains(c));
+    match pick(&enabled, current_enabled) {
+        Some(next) if Some(next) != current => dom.set_option_selected(next, true).is_ok(),
+        _ => false,
+    }
+}
+
+/// Typeahead in a focused single-selection `<select>`: the next enabled
+/// option (after the selected one, wrapping) whose label starts with the
+/// typed character. Returns whether `el` is such a select.
+fn select_typeahead(page: &Rc<PageDom>, el: NodeId, text: &str) -> bool {
+    {
+        let dom = page.dom.borrow();
+        if local(&dom, el).as_deref() != Some("select") || dom.has_attribute(el, "multiple").unwrap_or(true) {
+            return false;
+        }
+        if dom.is_disabled(el).unwrap_or(true) {
+            return true;
+        }
+    }
+    let prefix = text.to_lowercase();
+    if prefix.trim().is_empty() {
+        return true;
+    }
+    let labels: Vec<(NodeId, String)> = {
+        let dom = page.dom.borrow();
+        dom.select_options(el)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|o| (o, dom.option_text(o).unwrap_or_default().to_lowercase()))
+            .collect()
+    };
+    let changed = select_by_key(page, el, |options, current| {
+        let start = current.and_then(|c| options.iter().position(|&o| o == c)).map_or(0, |p| p + 1);
+        (0..options.len())
+            .map(|k| options[(start + k) % options.len()])
+            .find(|o| labels.iter().any(|(id, label)| id == o && label.starts_with(&prefix)))
+    });
+    if changed {
+        fire_control_change(page, el);
+    }
+    true
+}
+
+/// Text controls whose caret ArrowUp/ArrowDown move.
 fn vertical_caret_control(dom: &Dom, el: NodeId) -> bool {
     match local(dom, el).as_deref() {
         Some("textarea") => true,
@@ -1219,27 +1463,69 @@ fn enter_key(page: &Rc<PageDom>, target: NodeId) {
     match l.as_deref() {
         Some("textarea") => insert_text_at(page, target, "\n"),
         Some("input") => {
-            // Implicit submission: click the default button, else submit.
-            let (form, default_button) = {
-                let dom = page.dom.borrow();
-                let form = dom.form_owner(target).ok().flatten();
-                let button = form.and_then(|f| {
-                    let root = dom.root_node(f, false).ok()?;
-                    dom.descendants(root).ok()?.find(|&n| {
-                        dom.form_owner(n).ok().flatten() == Some(f)
-                            && is_enabled_submit_button(&dom, n)
-                    })
-                });
-                (form, button)
-            };
-            match (form, default_button) {
-                (_, Some(b)) => element_click(page, b),
-                (Some(f), None) => submit_form(page, f, None, true),
-                _ => {}
+            let ty = page.dom.borrow().input_type(target).ok();
+            // Enter activates a button input itself.
+            if matches!(ty, Some(InputType::Submit | InputType::Image | InputType::Reset | InputType::Button)) {
+                keyboard_click(page, target);
+                return;
+            }
+            let action = implicit_submission(&page.dom.borrow(), target);
+            match action {
+                ImplicitSubmission::Click(b) => element_click(page, b),
+                ImplicitSubmission::Submit(f) => submit_form(page, f, None, true),
+                ImplicitSubmission::Nothing => {}
             }
         }
         Some("a") | Some("button") => element_click(page, target),
         _ => {}
+    }
+}
+
+enum ImplicitSubmission {
+    Click(NodeId),
+    Submit(NodeId),
+    Nothing,
+}
+
+/// A field that blocks implicit submission (HTML §4.10.21.2): Enter in one
+/// submits a form that has no submit button only when it is the only one.
+fn blocks_implicit_submission(ty: InputType) -> bool {
+    use InputType::*;
+    matches!(ty, Text | Search | Tel | Url | Email | Password | Date | Month | Week | Time | DateTimeLocal | Number)
+}
+
+/// What Enter in the input `field` does, as in Chrome
+/// (HTMLFormElement::SubmitImplicitly): the form's default button (its
+/// first submit button, disabled or not) is clicked when enabled, and a
+/// disabled one blocks submission; without one, a field that blocks
+/// implicit submission submits the form when it is the only such field.
+/// Other inputs (checkboxes, radios, ...) click the first enabled submit
+/// button and never submit without one.
+fn implicit_submission(dom: &Dom, field: NodeId) -> ImplicitSubmission {
+    let Some(form) = dom.form_owner(field).ok().flatten() else { return ImplicitSubmission::Nothing };
+    let Ok(root) = dom.root_node(form, false) else { return ImplicitSubmission::Nothing };
+    let trigger = dom.input_type(field).is_ok_and(blocks_implicit_submission);
+    let mut blocking = 0;
+    for n in dom.descendants(root).into_iter().flatten() {
+        let Some(name) = local(dom, n) else { continue };
+        if !matches!(name.as_str(), "input" | "button") || dom.form_owner(n).ok().flatten() != Some(form) {
+            continue;
+        }
+        if is_submit_button(dom, n) {
+            if !dom.is_disabled(n).unwrap_or(false) {
+                return ImplicitSubmission::Click(n);
+            }
+            if trigger {
+                return ImplicitSubmission::Nothing;
+            }
+        } else if name == "input" && dom.input_type(n).is_ok_and(blocks_implicit_submission) {
+            blocking += 1;
+        }
+    }
+    if trigger && blocking == 1 {
+        ImplicitSubmission::Submit(form)
+    } else {
+        ImplicitSubmission::Nothing
     }
 }
 

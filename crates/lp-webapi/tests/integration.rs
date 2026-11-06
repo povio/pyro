@@ -11,6 +11,7 @@ mod error_events_js;
 mod events_misc_js;
 mod fetch_js;
 mod form_data_js;
+mod forms_js;
 mod identity_js;
 mod image_input_js;
 mod media_source_js;

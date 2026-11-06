@@ -431,10 +431,10 @@ fn arrow_up_and_down_move_the_caret_in_text_controls() {
     press("ArrowDown", false);
     assert_eq!(sel("t"), "2,2");
 
-    // Number inputs step values in browsers (not modelled): untouched here.
+    // Number inputs step their value instead.
     eval(r, "document.getElementById('n').focus();");
     press("ArrowUp", false);
-    assert_eq!(eval(r, "document.getElementById('n').value"), "5");
+    assert_eq!(eval(r, "document.getElementById('n').value"), "6");
 }
 
 #[test]

@@ -1,13 +1,15 @@
 //! Form data set construction and form submission encoding (HTML §4.10.21).
 
 use std::borrow::Cow;
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use encoding_rs::Encoding;
 use lp_dom::forms::InputType;
 use lp_dom::{Dom, NodeId};
+use lp_js::{Object, Persistent, Scope};
 
+use crate::event::{EventCore, EventInterface};
 use crate::file::FileEntry;
 use crate::page::{NavigationRequest, PageDom};
 
@@ -45,9 +47,60 @@ fn selected_coordinate(page: &PageDom, el: NodeId) -> (i64, i64) {
     })
 }
 
-/// "Constructing the entry list" for `form` (submitter included if given).
+/// The form controls' entries for `form` (submitter included if given),
+/// without the `formdata` event: see [`construct_entry_list`].
 pub fn form_entries(page: &PageDom, form: NodeId, submitter: Option<NodeId>) -> Vec<(String, EntryValue)> {
     form_entries_with_charset(page, form, submitter, "UTF-8")
+}
+
+thread_local! {
+    /// Forms whose `formdata` event is being dispatched (page id, form):
+    /// their "constructing entry list" flag.
+    static CONSTRUCTING: RefCell<Vec<(u64, NodeId)>> = const { RefCell::new(Vec::new()) };
+}
+
+/// An entry list: the controls' entries, or the FormData a `formdata`
+/// event carried (listeners may have changed it).
+pub(crate) enum EntryList<'s> {
+    Entries(Vec<(String, EntryValue)>),
+    FormData(Object<'s>),
+}
+
+/// HTML "constructing the entry list" for `form`: None when the form is
+/// already constructing one (a `formdata` listener asked again). When a
+/// `formdata` listener was ever added in the tree and a realm is given,
+/// the entries are put in a new FormData of that realm and a `formdata`
+/// event carrying it is fired at the form; otherwise no event can be
+/// observed and the entries are returned as they are.
+pub(crate) fn construct_entry_list<'s>(
+    s: Option<&Scope<'s>>,
+    page: &Rc<PageDom>,
+    form: NodeId,
+    submitter: Option<NodeId>,
+    charset: &str,
+) -> Option<EntryList<'s>> {
+    let key = (page.id(), form);
+    if CONSTRUCTING.with(|c| c.borrow().contains(&key)) {
+        return None;
+    }
+    let entries = form_entries_with_charset(page, form, submitter, charset);
+    let Some(s) = s.filter(|_| page.dom.borrow().has_formdata_listeners()) else {
+        return Some(EntryList::Entries(entries));
+    };
+    let Some(target) = page.dom.borrow().node_key(form) else { return Some(EntryList::Entries(entries)) };
+    let fd = match crate::form_data::with_entries(s, entries) {
+        Ok(fd) => fd,
+        Err(e) => {
+            s.report_exception(&e);
+            return Some(EntryList::Entries(Vec::new()));
+        }
+    };
+    let ev = EventCore::trusted(page, EventInterface::FormDataEvent, "formdata", true, false);
+    ev.fields.borrow_mut().form_data = Some(Persistent::new(s, fd.value()));
+    CONSTRUCTING.with(|c| c.borrow_mut().push(key));
+    crate::target::fire(page, target, &ev);
+    CONSTRUCTING.with(|c| c.borrow_mut().retain(|k| *k != key));
+    Some(EntryList::FormData(fd))
 }
 
 /// `form_entries`, reporting `charset` in a hidden `_charset_` control.
@@ -236,6 +289,74 @@ fn form_encoding(dom: &Dom, form: NodeId) -> &'static Encoding {
         .map_or_else(|| crate::html::document_output_encoding(dom, form), |e| e.output_encoding())
 }
 
+/// Whether submitting `form` (from `submitter`) uses the dialog method.
+pub(crate) fn is_dialog_method(dom: &Dom, form: NodeId, submitter: Option<NodeId>) -> bool {
+    attr_override(dom, form, submitter, "method", "formmethod").is_some_and(|m| m.eq_ignore_ascii_case("dialog"))
+}
+
+/// The result a dialog submission closes its dialog with: an image
+/// button's selected coordinate as "x,y", else the submitter's value
+/// attribute (None: null, the return value is kept).
+pub(crate) fn dialog_result(page: &PageDom, submitter: Option<NodeId>) -> Option<String> {
+    let s = submitter?;
+    let dom = page.dom.borrow();
+    let image = dom.element(s).is_ok_and(|e| e.is_html() && *e.local_name() == *"input")
+        && dom.input_type(s).ok() == Some(InputType::Image);
+    if image {
+        let (x, y) = selected_coordinate(page, s);
+        return Some(format!("{x},{y}"));
+    }
+    dom.get_attribute(s, "value").ok().flatten().map(str::to_owned)
+}
+
+/// The entry list a submission sends; None (no submission) when the form
+/// is already constructing one. The `formdata` event's FormData is made in
+/// the main world.
+fn submission_entries(
+    page: &Rc<PageDom>,
+    form: NodeId,
+    submitter: Option<NodeId>,
+    charset: &str,
+) -> Option<Vec<(String, EntryValue)>> {
+    let realm = page.dom.borrow().has_formdata_listeners().then(|| page.main_world_realm()).flatten();
+    let scope = realm.as_ref().and_then(|r| r.scope().ok());
+    match construct_entry_list(scope.as_ref(), page, form, submitter, charset)? {
+        EntryList::Entries(entries) => Some(entries),
+        EntryList::FormData(fd) => {
+            let s = scope.as_ref()?;
+            match crate::form_data::entries_of(s, fd) {
+                // Entries script added: "converting an entry list to a list
+                // of name-value pairs" gives their names and text CRLF line
+                // breaks (the controls' own entries already have them).
+                Ok(entries) => Some(
+                    entries
+                        .into_iter()
+                        .map(|(name, v)| {
+                            let v = match v {
+                                EntryValue::Text(t) => EntryValue::Text(crlf(t)),
+                                file => file,
+                            };
+                            (crlf(name), v)
+                        })
+                        .collect(),
+                ),
+                Err(e) => {
+                    s.report_exception(&e);
+                    None
+                }
+            }
+        }
+    }
+}
+
+/// `s` with every CR, LF and CRLF as CRLF.
+fn crlf(s: String) -> String {
+    if !s.contains(['\r', '\n']) {
+        return s;
+    }
+    s.replace("\r\n", "\n").replace('\r', "\n").replace('\n', "\r\n")
+}
+
 /// Builds the navigation for submitting `form` (None for `method=dialog`
 /// or an unresolvable action).
 pub(crate) fn form_submission(
@@ -243,15 +364,22 @@ pub(crate) fn form_submission(
     form: NodeId,
     submitter: Option<NodeId>,
 ) -> Option<NavigationRequest> {
-    let enc = form_encoding(&page.dom.borrow(), form);
-    let entries = form_entries_with_charset(page, form, submitter, enc.name());
-    let dom = page.dom.borrow();
-    let method = attr_override(&dom, form, submitter, "method", "formmethod").map(|m| m.to_ascii_lowercase());
-    let method = match method.as_deref() {
-        Some("post") => "POST",
-        Some("dialog") => return None,
-        _ => "GET",
+    let (enc, method) = {
+        let dom = page.dom.borrow();
+        let method = attr_override(&dom, form, submitter, "method", "formmethod").map(|m| m.to_ascii_lowercase());
+        let method = match method.as_deref() {
+            Some("post") => "POST",
+            Some("dialog") => return None,
+            _ => "GET",
+        };
+        (form_encoding(&dom, form), method)
     };
+    let entries = submission_entries(page, form, submitter, enc.name())?;
+    let dom = page.dom.borrow();
+    // A `formdata` listener can disconnect the form: it cannot navigate.
+    if !dom.is_connected(form).unwrap_or(false) {
+        return None;
+    }
     let action = attr_override(&dom, form, submitter, "action", "formaction").filter(|a| !a.is_empty());
     let doc = dom.node_document(form).ok()?;
     let doc_url = dom.document_data(doc).ok()?.url.to_string();

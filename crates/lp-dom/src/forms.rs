@@ -1022,6 +1022,50 @@ impl Dom {
         Ok(true)
     }
 
+    /// `setRangeText(text, start, end, mode)` (HTML §4.10.18): replaces
+    /// `start..end`, clamped to the value, without the maxlength limit and
+    /// the user-edit flag of typing, then selects per `mode`. The caller
+    /// throws IndexSizeError for `start > end`.
+    pub fn set_range_text(&mut self, id: NodeId, text: &str, start: u32, end: u32, mode: RangeMode) -> DomResult<()> {
+        let i = self.check(id)?;
+        let is_input = self.is_input(i);
+        let text =
+            if is_input { strip_newlines(text).into_owned() } else { text.replace("\r\n", "\n").replace('\r', "\n") };
+        let mut value = self.edit_text(i)?;
+        let len = utf16_len(&value);
+        let (start, end) = (start.min(len), end.min(len));
+        let (mut sel_start, mut sel_end) = self.selection(id)?;
+        let (a, b) = utf16_range(&value, start, end.saturating_sub(start))?;
+        value.replace_range(a..b, &text);
+        let text_len = utf16_len(&text);
+        let new_end = start + text_len;
+        match mode {
+            RangeMode::Select => (sel_start, sel_end) = (start, new_end),
+            RangeMode::Start => (sel_start, sel_end) = (start, start),
+            RangeMode::End => (sel_start, sel_end) = (new_end, new_end),
+            RangeMode::Preserve => {
+                let delta = text_len as i64 - (end - start) as i64;
+                let shift = |p: u32, collapsed: u32| {
+                    if p > end {
+                        (p as i64 + delta) as u32
+                    } else if p > start {
+                        collapsed
+                    } else {
+                        p
+                    }
+                };
+                sel_start = shift(sel_start, start);
+                sel_end = shift(sel_end, new_end);
+            }
+        }
+        let c = self.control_state_mut(id)?;
+        c.value = Some(value);
+        c.dirty_value = true;
+        c.selection = (sel_start, sel_end.max(sel_start));
+        c.selection_set = true;
+        Ok(())
+    }
+
     /// Backspace: deletes the selection or the code point before the caret.
     pub fn delete_backward(&mut self, id: NodeId) -> DomResult<bool> {
         let (s, e) = self.selection(id)?;
@@ -1288,6 +1332,15 @@ impl Dom {
         let i = self.check(id)?;
         Ok(self.n(i).element().and_then(|e| e.control.as_ref()).and_then(|c| c.custom_validity.as_deref()))
     }
+}
+
+/// `SelectionMode` of `setRangeText`.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum RangeMode {
+    Select,
+    Start,
+    End,
+    Preserve,
 }
 
 /// Constraint-validation flags.
