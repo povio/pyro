@@ -20,7 +20,6 @@ use style::values::computed::Display;
 use style::values::specified::box_::DisplayInside;
 use style::values::specified::box_::DisplayOutside;
 
-use super::replaced::is_inline_box_element;
 use thin_vec::ThinVec;
 
 // Blitz-specific damage bits, in increasing order of severity above Servo's
@@ -373,9 +372,10 @@ impl BaseDocument {
 /// Whether the node's layout children are collected by an ancestor's
 /// construction rather than (only) its own, so that construction damage on it
 /// must reconstruct its parent too:
-/// - non-atomic inline boxes: their content is part of the inline root's
-///   inline layout (`find_inline_layout_embedded_boxes`), and a block among it
-///   changes how the container partitions its children (`is_or_contains_block`);
+/// - `display: inline` boxes: a non-atomic one's content is part of the
+///   inline root's inline layout (`find_inline_layout_embedded_boxes`), and a
+///   block among any one's children (replaced elements included) changes how
+///   the container partitions its children (`is_or_contains_block`);
 /// - `display: contents`: its children are hoisted into the parent's box;
 /// - table rows, row groups, columns and column groups: they are never layout
 ///   children; the table collects their cells into its `TableContext`;
@@ -394,12 +394,11 @@ fn forwards_construction(node: &Node) -> bool {
     }
     match display.inside() {
         DisplayInside::Contents => true,
-        DisplayInside::Flow => {
-            display.outside() == DisplayOutside::Inline
-                && !node
-                    .element_data()
-                    .is_some_and(|el| is_inline_box_element(&el.name.local))
-        }
+        // Replaced inline elements (`<canvas>`, `<svg>`, ...) included: they
+        // are atomic in the inline layout, but `is_or_contains_block` looks
+        // through any `display: inline` element at its children, so a block
+        // among them changes how the parent partitions its children.
+        DisplayInside::Flow => display.outside() == DisplayOutside::Inline,
         inside => is_table_part_inside(inside),
     }
 }

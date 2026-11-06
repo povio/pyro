@@ -314,3 +314,41 @@ fn an_appended_block_reconstructs_only_its_container() {
     // The article and the new paragraph, not every ancestor up to the root.
     assert_eq!(collected, 2);
 }
+
+#[test]
+fn a_block_appended_inside_a_replaced_inline_reaches_its_inline_root() {
+    // A `<canvas>` is `display: inline`: a block among its (fallback)
+    // children makes it contain a block (`is_or_contains_block`), which
+    // changes how its parent partitions its children.
+    let html = r#"<!doctype html><style>body{margin:0;font:14px sans-serif} canvas{width:40px;height:20px}</style>
+<div><p id=p>before <canvas id=cv></canvas> after</p></div>"#;
+    check("a block appended inside a canvas", html, &|p| {
+        let cv = p.find("#cv");
+        let mut d = p.dom.borrow_mut();
+        let div = d.create_element(p.doc, "div").unwrap();
+        let t = d.create_text(p.doc, "fallback").unwrap();
+        d.append_child(div, t).unwrap();
+        d.append_child(cv, div).unwrap();
+    });
+}
+
+#[test]
+fn a_repaint_only_change_to_collapsed_table_borders_rebuilds_the_table() {
+    // Collapsed borders (their widths and colors) are resolved into the
+    // table's context: a restyle that only repaints them must rebuild it.
+    let base = "body{margin:0;font:14px sans-serif} table{border-collapse:collapse} td{padding:2px;border:3px solid";
+    let html = format!(
+        r#"<!doctype html><style id=s>{base} rgb(255,0,0)}} td.b{{border-right:5px dashed rgb(0,128,0)}}</style>
+<table><tr><td id=c1 class=b>one</td><td>two</td></tr><tr><td>three</td><td>four</td></tr></table>"#
+    );
+    for (what, css) in [
+        ("td border-color", format!("{base} rgb(0,0,255)}} td.b{{border-right:5px dashed rgb(0,128,0)}}")),
+        ("td color with currentColor borders", format!("{base}}} td{{color:rgb(0,0,255)}} td.b{{border-right:5px dashed}}")),
+    ] {
+        let (_, tables) = check(what, &html, &|p| {
+            let s = p.find("#s");
+            p.dom.borrow_mut().set_text_content(s, &css).unwrap();
+        });
+        assert_eq!(tables, 1, "{what}");
+    }
+}
