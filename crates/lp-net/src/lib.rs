@@ -16,7 +16,10 @@ pub use subscription::{NetSubscription, NetWake, SubscriptionError, Subscription
 
 pub use cache::{SharedAssetCache, SHARED_ASSET_CACHE_ENV};
 pub use client::set_idle_release;
-pub use client::websocket::{is_bad_port, WebSocketActivity, WebSocketHandle, WebSocketRequest, WsEvent, WsSink};
+pub use client::websocket::{
+    accept_key as websocket_accept_key, is_bad_port, WebSocketActivity, WebSocketHandle, WebSocketRequest, WsEvent,
+    WsSink,
+};
 pub use client::{
     AuthChallenge, AuthDecision, InterceptDecision, Interceptor, NetActivity, NetClient, NetConfig, NetEvent,
     NetSettings, PausedRequest, PausedResponse, RequestInfo, ResponseDecision, ResponseSink,

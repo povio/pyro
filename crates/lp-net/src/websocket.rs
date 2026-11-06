@@ -397,7 +397,8 @@ fn valid_close_code(code: u16) -> bool {
     !(code < 1000 || code == 1006 || (1014..3000).contains(&code) || code >= 5000)
 }
 
-pub(crate) fn accept_key(key: &str) -> String {
+/// `Sec-WebSocket-Accept` for a `Sec-WebSocket-Key`.
+pub fn accept_key(key: &str) -> String {
     use base64::Engine;
     use sha1::{Digest, Sha1};
     let digest = Sha1::digest(format!("{key}{GUID}").as_bytes());
