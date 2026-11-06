@@ -66,6 +66,9 @@ impl GeometrySource for Counted {
     fn element_style(&self, key: u64) -> Option<::style::servo_arc::Arc<::style::properties::ComputedValues>> {
         self.inner.element_style(key)
     }
+    fn element_displayed(&self, key: u64) -> Option<bool> {
+        self.inner.element_displayed(key)
+    }
 }
 
 struct Page {

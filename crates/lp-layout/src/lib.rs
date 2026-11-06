@@ -553,6 +553,10 @@ impl GeometrySource for BlitzGeometry {
         RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.element_style(self.page, key))
     }
 
+    fn element_displayed(&self, key: u64) -> Option<bool> {
+        RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.element_displayed(self.page, key))
+    }
+
     fn has_sticky(&self) -> bool {
         RENDERER.with(|r| r.try_borrow().ok().and_then(|r| Some(r.as_ref()?.has_sticky(self.page))).unwrap_or(false))
     }
