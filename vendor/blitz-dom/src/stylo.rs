@@ -75,10 +75,6 @@ impl Drop for LayoutThreadScope {
 }
 
 impl Node {
-    /// lightningpanda: whether the element's `urn:x-lightningpanda:state`
-    /// attribute (written by lp-dom's render tree) lists `state`: the
-    /// pseudo-classes Blitz cannot derive itself (validity, placeholder
-    /// shown, read-write, ...).
     /// `:state(name)`: lightningpanda's custom states attribute (names
     /// separated by U+001F).
     fn has_lp_custom_state(&self, state: &str) -> bool {
@@ -91,6 +87,10 @@ impl Node {
         })
     }
 
+    /// lightningpanda: whether the element's `urn:x-lightningpanda:state`
+    /// attribute (written by lp-dom's render tree) lists `state`: the
+    /// pseudo-classes Blitz cannot derive itself (validity, placeholder
+    /// shown, read-write, ...).
     fn has_lp_state(&self, state: &str) -> bool {
         self.element_data().is_some_and(|e| {
             e.attrs.iter().any(|a| {
