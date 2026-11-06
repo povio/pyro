@@ -155,6 +155,14 @@ impl PageDom {
         rb.dirty.get() || rb.version.get() != Some(dom.version())
     }
 
+    /// Whether the evaluation would look at the tree again (it was
+    /// mutated since): the part of [`PageDom::render_blocking_pending`]
+    /// that follows `Dom::version` rather than the mutation bindings' epoch.
+    pub(crate) fn render_blocking_follows_version(&self, dom: &Dom) -> bool {
+        let rb = &self.render_blocking;
+        !(rb.closed.get() && rb.set.borrow().is_empty()) && rb.version.get() != Some(dom.version())
+    }
+
     /// Whether the document is render-blocked now (after re-evaluating the
     /// render-blocking element set).
     pub fn render_blocked(&self) -> bool {

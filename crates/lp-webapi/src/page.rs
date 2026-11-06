@@ -378,8 +378,9 @@ pub trait PageHooks {
     ) -> Option<DialogAnswer> {
         None
     }
-    /// `document.open()` replaced the loaded document's content: the frame is
-    /// loading again, so DOMContentLoaded/load can be reported anew.
+    /// `document.open()` replaced the frame's document's content: the frame
+    /// is loading again, so DOMContentLoaded/load can be reported anew, and
+    /// the document is no longer the initial about:blank one.
     fn document_reopened(&self) {}
     /// `document.close()` finished the script-created parser (readyState is
     /// already "interactive"): fire DOMContentLoaded, then load once nothing
@@ -658,7 +659,10 @@ impl PageDom {
     pub fn document(&self) -> NodeId {
         self.document.get()
     }
-    /// Switches the displayed document (navigation commit).
+    /// Switches the displayed document (navigation commit). A realm's global
+    /// `document` stays the document it was installed with (a window's
+    /// document never changes): script of the new document runs in a new
+    /// realm, as a navigation makes one.
     pub fn set_document(&self, doc: NodeId) {
         crate::input::clear_document_focus(self);
         self.clear_render_blocking(false);

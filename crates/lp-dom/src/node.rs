@@ -96,6 +96,13 @@ pub struct DocumentData {
     pub(crate) focused: u32,
     /// Element under the (virtual) pointer for :hover.
     pub(crate) hovered: u32,
+    /// The document element (first element child), its first HTML `head`
+    /// child and its first HTML `body` or `frameset` child; NIL for none.
+    /// Kept by `tree_linked`/`tree_unlinking`, which every link and unlink
+    /// passes, so `document.body` is one load, not two child-list walks.
+    pub(crate) document_element: u32,
+    pub(crate) head: u32,
+    pub(crate) body: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -294,6 +301,30 @@ impl ElementData {
     pub fn classes(&self) -> &[Atom] {
         &self.classes
     }
+    /// The atom this element keeps for attribute `k`'s value, if any: its
+    /// `id` atom when `k` is `id` (no namespace).
+    #[inline]
+    pub fn attr_atom(&self, k: usize) -> Option<&Atom> {
+        let name = &self.attrs.get(k)?.name;
+        if name.local == local_name!("id") && name.ns == markup5ever::ns!() {
+            self.id.as_ref()
+        } else {
+            None
+        }
+    }
+    /// The `class` attribute (no namespace), with its token's atom when the
+    /// value is one token and nothing else (`className`).
+    #[inline]
+    pub fn class_value(&self) -> Option<(&str, Option<&Atom>)> {
+        let value = self.attr_local(&local_name!("class"))?;
+        // The token is the value less ASCII whitespace: one as long is the
+        // whole value (and the value's text need not be read).
+        let only = match &*self.classes {
+            [only] if only.len() == value.len() => Some(only),
+            _ => None,
+        };
+        Some((value, only))
+    }
     /// Whether `class` contains the token `name` (case-sensitive).
     #[inline]
     pub fn has_class(&self, name: &Atom) -> bool {
@@ -380,7 +411,10 @@ fn derives(name: &QualName) -> bool {
 }
 
 fn parse_classes(value: &str) -> Box<[Atom]> {
-    value.split_ascii_whitespace().map(Atom::from).collect()
+    // Sized once: boxing a collected `Vec` reallocates it to its length.
+    let mut classes = Vec::with_capacity(value.split_ascii_whitespace().count());
+    classes.extend(value.split_ascii_whitespace().map(Atom::from));
+    classes.into_boxed_slice()
 }
 
 #[derive(Debug)]

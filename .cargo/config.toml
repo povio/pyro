@@ -17,3 +17,10 @@ rustflags = ["-C", "link-arg=-Bscripts/macos/linker"]
 
 [target.x86_64-apple-darwin]
 rustflags = ["-C", "link-arg=-Bscripts/macos/linker"]
+
+# Tests under the `test-fast` profile (Cargo.toml). `cargo t -p lp-dom [filter]`
+# tests one crate; `cargo tall` is the full pass: every crate, render feature on.
+# Both still need LP_JSC_DIR (or LP_JSC=system) as for builds.
+[alias]
+t = "test --profile test-fast"
+tall = "test --profile test-fast --workspace --features lightningpanda/render"

@@ -129,16 +129,17 @@ impl Dom {
         if !e.is_html() {
             return None;
         }
-        Some(match &*e.name.local {
-            "script" => ResourceKind::Script,
-            "style" => ResourceKind::StyleText,
-            "link"
+        // Atoms compare as integers: no string comparison per name.
+        Some(match e.name.local {
+            local_name!("script") => ResourceKind::Script,
+            local_name!("style") => ResourceKind::StyleText,
+            local_name!("link")
                 if e.attr_local(&local_name!("rel"))
                     .is_some_and(|r| r.split_ascii_whitespace().any(|t| t.eq_ignore_ascii_case("stylesheet"))) =>
             {
                 ResourceKind::Stylesheet
             }
-            "link"
+            local_name!("link")
                 if e.attr_local(&local_name!("rel")).is_some_and(|r| {
                     r.split_ascii_whitespace()
                         .any(|t| t.eq_ignore_ascii_case("modulepreload") || t.eq_ignore_ascii_case("preload"))
@@ -146,12 +147,14 @@ impl Dom {
             {
                 ResourceKind::Preload
             }
-            "iframe" | "frame" => ResourceKind::Iframe,
-            "img" => ResourceKind::Img,
+            local_name!("iframe") | local_name!("frame") => ResourceKind::Iframe,
+            local_name!("img") => ResourceKind::Img,
             // An image button fetches its `src` like `<img>` (its natural
             // size is its layout size); `type` is a relevant attribute, so
             // becoming one starts the load.
-            "input" if e.attr_local(&local_name!("type")).is_some_and(|t| t.eq_ignore_ascii_case("image")) => {
+            local_name!("input")
+                if e.attr_local(&local_name!("type")).is_some_and(|t| t.eq_ignore_ascii_case("image")) =>
+            {
                 ResourceKind::Img
             }
             _ => return None,
@@ -169,6 +172,33 @@ impl Dom {
             self.push_resource(parent, ResourceKind::StyleText, ResourceReason::ChildrenChanged);
         }
         self.scan_subtree(node, ResourceReason::Connected);
+    }
+
+    /// `resources_after_insert` for a node the HTML parser inserted: nearly
+    /// always one it just made, with no children or shadow root yet, whose
+    /// subtree is itself. That case is checked without the subtree walks and
+    /// their two stacks per parsed node.
+    pub(crate) fn resources_after_parser_insert(&mut self, node: u32) {
+        let n = self.n(node);
+        if n.first_child != NIL || n.element().is_some_and(|e| e.shadow_root != NIL) {
+            return self.resources_after_insert(node);
+        }
+        self.iframe_after_parser_insert(node);
+        if !self.resources.enabled || !self.connected_for_resources(node) {
+            return;
+        }
+        let parent = self.n(node).parent;
+        if parent != NIL && self.resource_kind(parent) == Some(ResourceKind::StyleText) {
+            self.push_resource(parent, ResourceKind::StyleText, ResourceReason::ChildrenChanged);
+        }
+        // `scan_subtree` of the node alone.
+        if let Some(k) = self.resource_kind(node) {
+            let parser_script = k == ResourceKind::Script
+                && self.n(node).element().is_some_and(|e| e.flags & element_flags::PARSER_INSERTED != 0);
+            if !parser_script {
+                self.push_resource(node, k, ResourceReason::Connected);
+            }
+        }
     }
 
     /// HTML's script "children changed steps", for an insertion into
@@ -191,17 +221,12 @@ impl Dom {
             self.push_resource(parent, ResourceKind::StyleText, ResourceReason::ChildrenChanged);
         }
         // Only stylesheet owners need removal notifications.
-        let mut stack = vec![node];
-        while let Some(i) = stack.pop() {
+        let mut i = node;
+        while i != NIL {
             if let Some(k @ (ResourceKind::Stylesheet | ResourceKind::StyleText)) = self.resource_kind(i) {
                 self.push_resource(i, k, ResourceReason::Removed);
             }
-            stack.extend(self.child_idx_iter(i));
-            if let Some(e) = self.n(i).element() {
-                if e.shadow_root != NIL {
-                    stack.push(e.shadow_root);
-                }
-            }
+            i = self.next_shadow_including_rev(i, node);
         }
     }
 
@@ -244,8 +269,10 @@ impl Dom {
     }
 
     fn scan_subtree(&mut self, node: u32, reason: ResourceReason) {
-        let mut stack = vec![node];
-        while let Some(i) = stack.pop() {
+        // Shadow trees first, then children from the last: the order this
+        // walk had with a stack, kept without one.
+        let mut i = node;
+        while i != NIL {
             if let Some(k) = self.resource_kind(i) {
                 // Parser-inserted scripts are driven by ParseStep::Script.
                 let parser_script = k == ResourceKind::Script
@@ -254,12 +281,7 @@ impl Dom {
                     self.push_resource(i, k, reason);
                 }
             }
-            stack.extend(self.child_idx_iter(i));
-            if let Some(e) = self.n(i).element() {
-                if e.shadow_root != NIL {
-                    stack.push(e.shadow_root);
-                }
-            }
+            i = self.next_shadow_including_rev(i, node);
         }
     }
 

@@ -193,6 +193,20 @@ pub type NativeCallbackHook = Rc<dyn for<'s> Fn(&Scope<'s>)>;
 /// Browser notification for a rejected promise; true cancels default reporting.
 pub type UnhandledRejectionHandler = for<'s> fn(&Scope<'s>, Value<'s>, Value<'s>) -> JsResult<bool>;
 
+/// How a new wrapper gets its prototype (`Scope::make_wrapper`).
+#[derive(Clone, Copy)]
+enum WrapperProto<'a> {
+    /// Its class's shape in the realm (the class's own prototype).
+    Shape(sys::spi::JSWrapperShapeRef),
+    /// Any prototype, set after the object is made.
+    Value(Value<'a>),
+}
+
+/// The `RealmInner::shapes` entry of a class whose wrappers are made without
+/// a shape (no patched JSC, or it made none): the shape is not asked for
+/// again. No shape has this address.
+const NO_SHAPE: sys::spi::JSWrapperShapeRef = ptr::dangling_mut::<c_void>();
+
 /// Embedder step of [`Scope::report_exception`] (HTML "report an exception"
 /// fires an `error` event at the Window); true means the exception was
 /// handled and the engine hooks are not told.
@@ -204,11 +218,21 @@ pub(crate) struct RealmInner {
     origin: RefCell<Option<String>>,
     pub(crate) engine: Rc<EngineInner>,
     pub(crate) ctx: Cell<sys::JSGlobalContextRef>,
-    protos: RefCell<Vec<Option<Persistent>>>,
-    /// Interface objects as seen by script (proxies over `targets`).
-    ctors: RefCell<Vec<Option<Persistent>>>,
-    /// The constructor functions behind the interface proxies.
-    targets: RefCell<Vec<Option<Persistent>>>,
+    /// Interface prototype objects by class id, null until the class is
+    /// first populated (`materialize`) and past the classes this realm was
+    /// created with. Kept alive by `interfaces[0]`, which only `materialize`
+    /// writes, so a wrap reads its prototype without a lookup.
+    protos: RefCell<Vec<sys::JSValueRef>>,
+    /// The structure of each class's wrappers with its prototype of this
+    /// realm (patched JSC, `JSWrapperShapeCreate`), by class id: made with
+    /// the first wrapper, which every later one then starts with (null: not
+    /// made yet; [`NO_SHAPE`]: none). Released by `dispose`.
+    shapes: RefCell<Vec<sys::spi::JSWrapperShapeRef>>,
+    /// The arrays `installInterfaces` returned, protected for the realm's
+    /// life: prototypes, the constructor functions behind the interface
+    /// proxies, and the interface objects as seen by script (the proxies).
+    /// Three protections per realm instead of three per class.
+    interfaces: RefCell<Option<[Persistent; 3]>>,
     /// Whether each class's members are installed in this realm.
     populated: RefCell<Vec<bool>>,
     identity: RefCell<rustc_hash::FxHashMap<IdentityKey, sys::JSWeakRef>>,
@@ -218,14 +242,18 @@ pub(crate) struct RealmInner {
     /// fresh JSString each time was most of their cost. The `Arc` keeps the
     /// key's address from being reused.
     pub(crate) shared_strings: RefCell<rustc_hash::FxHashMap<usize, (std::sync::Arc<str>, sys::JSValueRef)>>,
+    /// One weakly held JavaScript string per interned host string (atoms:
+    /// ids, class values, local names), see `crate::interned`.
+    pub(crate) interned: RefCell<crate::interned::InternedStrings>,
     /// The realm's owned wrappers (`IdentityKey::OWNED`), linked through
     /// their payload headers: `dispose` releases their weak handles, which
     /// must not outlive the VM.
     pub(crate) owned_head: Cell<*mut Header>,
-    /// The member function payloads whose `realm` is this realm (patched JSC
-    /// only; the engine owns them for its lifetime): `dispose` clears their
-    /// `realm`, so the payloads do not keep this allocation alive.
-    member_fns: RefCell<Vec<*const class::MemberPayload>>,
+    /// The payloads of this realm's member functions (patched JSC only):
+    /// `dispose` clears their `realm`, so they do not keep this allocation
+    /// alive, and hands them to the engine, which frees them once the
+    /// realm's global object is dead (`EngineInner::retire_members`).
+    member_fns: RefCell<Vec<Box<class::MemberPayload>>>,
     helpers: RefCell<Option<Persistent>>,
     helper_cache: RefCell<rustc_hash::FxHashMap<&'static str, Persistent>>,
     /// The realm's `Object.prototype`, for the plain-object fast path of `is_plain_object`.
@@ -261,6 +289,12 @@ pub(crate) struct RealmInner {
     /// The global object behind that proxy (null when unknown). A custom
     /// accessor read as a global variable receives it as its receiver.
     global_target: Cell<sys::JSObjectRef>,
+    /// The global has constant attributes ([`Scope::define_global_constant`]),
+    /// whose values `dispose` releases.
+    global_constants: Cell<bool>,
+    /// What makes each lazy constant attribute's value on its first read
+    /// ([`Scope::define_lazy_global_constant`]).
+    lazy_constants: RefCell<Vec<(&'static str, LazyGlobalConstant)>>,
 }
 
 impl RealmInner {
@@ -323,6 +357,22 @@ impl RealmInner {
         h.as_object().expect("helpers object").get(name)?.as_object().ok_or(JsError::Type("missing helper".into()))
     }
 
+    /// Entry `id` of interface list `list` (0 prototypes, 1 constructor
+    /// functions, 2 interface objects); an error once disposed, and for a
+    /// prototype not made yet (`materialize`).
+    fn interface_object<'s>(&self, scope: &Scope<'s>, list: usize, id: ClassId) -> JsResult<Value<'s>> {
+        let lists = self.interfaces.borrow();
+        let lists = lists.as_ref().ok_or(JsError::ContextDestroyed)?;
+        if id as usize >= self.populated.borrow().len() {
+            return Err(JsError::Type("class registered after this realm was created".into()));
+        }
+        let v = lists[list].get(scope).as_object().expect("interface list").get_index(id)?;
+        if v.is_undefined() {
+            return Err(JsError::Type("interface prototype read before its class was populated".into()));
+        }
+        Ok(v)
+    }
+
     pub(crate) fn prune_identity(&self, key: IdentityKey) {
         let mut map = self.identity.borrow_mut();
         if let Some(weak) = map.get(&key).copied() {
@@ -355,8 +405,14 @@ impl RealmInner {
         self.exception_reporter.set(None);
         drop(self.native_callback_pending.take());
         self.protos.borrow_mut().clear();
-        self.ctors.borrow_mut().clear();
-        self.targets.borrow_mut().clear();
+        let shapes = std::mem::take(&mut *self.shapes.borrow_mut());
+        if let Some(release) = sys::spi::get().wrapper_shape_release {
+            for shape in shapes.into_iter().filter(|&s| !s.is_null() && s != NO_SHAPE) {
+                // SAFETY: made by `JSWrapperShapeCreate` in this realm's group.
+                unsafe { release(self.engine.group(), shape) };
+            }
+        }
+        self.interfaces.borrow_mut().take();
         self.populated.borrow_mut().clear();
         self.helpers.borrow_mut().take();
         self.helper_cache.borrow_mut().clear();
@@ -364,11 +420,19 @@ impl RealmInner {
         self.function_proto.borrow_mut().take();
         self.fn_cache.borrow_mut().clear();
         self.dom_exception.borrow_mut().take();
-        for p in std::mem::take(&mut *self.member_fns.borrow_mut()) {
-            // SAFETY: the engine (which this realm keeps alive) owns the
-            // payload; no reference into the cell is held (`member_call_data`).
-            drop(unsafe { (*p).realm.take() });
+        let member_fns = std::mem::take(&mut *self.member_fns.borrow_mut());
+        for p in &member_fns {
+            // No reference into the cell is held (`member_call_data`).
+            drop(p.realm.take());
         }
+        // The functions may outlive the realm (script elsewhere holds one),
+        // their global with them: the payloads go when it does.
+        let global = match self.global_target.get() {
+            // SAFETY: the context is still retained.
+            g if g.is_null() => unsafe { sys::JSContextGetGlobalObject(ctx) },
+            g => g,
+        };
+        self.engine.retire_members(global, member_fns);
         #[cfg(debug_assertions)]
         {
             let me: *const RealmInner = self;
@@ -404,8 +468,20 @@ impl RealmInner {
             // SAFETY: protected by `shared_string` on this still-live context.
             unsafe { sys::JSValueUnprotect(ctx, v) };
         }
+        self.interned.borrow_mut().clear(self.engine.group());
         self.embedder.borrow_mut().take();
         self.named_properties.borrow_mut().take();
+        if self.global_constants.replace(false) {
+            if let Some(clear) = sys::spi::get().clear_constant_accessors {
+                // SAFETY: the live global behind this realm's proxy, on its
+                // still-retained context. Its constants (a window's document)
+                // would otherwise live as long as the global object, which
+                // script elsewhere may hold (a stale `contentWindow`); a lazy
+                // one not read yet is never made.
+                unsafe { clear(ctx, self.global_target.get()) };
+            }
+        }
+        drop(std::mem::take(&mut *self.lazy_constants.borrow_mut()));
         // SAFETY: we owned one retain on the global context.
         unsafe { sys::JSGlobalContextRelease(ctx) };
         if let Some(h) = self.engine.hooks() {
@@ -438,6 +514,14 @@ impl Realm {
     pub fn by_id(id: RealmId) -> Option<Realm> {
         let inner = crate::engine::current_inner()?.realm_by_id(id)?;
         (!inner.ctx.get().is_null()).then_some(Realm { inner })
+    }
+
+    /// Holds the execution time limit off while the embedder sets up this
+    /// realm with its own code (no page script), as realm creation does: an
+    /// armed limit costs every VM entry a read of the thread's CPU time.
+    /// Without effect while JavaScript is on the stack.
+    pub fn setup_without_watchdog(&self) -> impl Drop + '_ {
+        crate::engine::WatchdogPause::new(&self.inner.engine)
     }
 
     pub fn set_unhandled_rejection_handler(&self, handler: UnhandledRejectionHandler) {
@@ -485,8 +569,9 @@ impl Realm {
     }
 
     /// Tears the realm down now: callbacks into its functions afterwards throw
-    /// "Execution context was destroyed.", persistent prototypes are released
-    /// and `EngineHooks::realm_destroyed` fires. Idempotent.
+    /// "Execution context was destroyed.", as reads of its global's constant
+    /// attributes do (their values are released), persistent prototypes are
+    /// released and `EngineHooks::realm_destroyed` fires. Idempotent.
     pub fn dispose(&self) {
         self.inner.dispose();
     }
@@ -988,9 +1073,52 @@ impl<'s> Scope<'s> {
             }
         }
         let id = self.class_id::<C>()?;
+        // A shape is asked for once the class was populated in this realm.
+        let shape = self.shape_entry(id);
+        if !shape.is_null() && shape != NO_SHAPE {
+            return self.make_wrapper::<C>(id, data, key, WrapperProto::Shape(shape));
+        }
         populate_class(self, id)?;
         let proto = self.proto(id)?;
-        self.make_wrapper::<C>(id, data, key, proto)
+        let made = match shape.is_null().then(|| self.make_shape(id, proto)).flatten() {
+            Some(shape) => WrapperProto::Shape(shape),
+            None => WrapperProto::Value(proto),
+        };
+        self.make_wrapper::<C>(id, data, key, made)
+    }
+
+    /// Class `id`'s entry in this realm's wrapper shapes: null until one is
+    /// asked for, [`NO_SHAPE`] when there is none.
+    #[inline]
+    fn shape_entry(&self, id: ClassId) -> sys::spi::JSWrapperShapeRef {
+        self.realm.shapes.borrow().get(id as usize).copied().unwrap_or(ptr::null_mut())
+    }
+
+    /// Makes the wrapper shape of class `id` (populated), whose prototype in
+    /// this realm is `proto`, and records it, or [`NO_SHAPE`] when there is
+    /// none: once per class and realm.
+    #[cold]
+    fn make_shape(&self, id: ClassId, proto: Value<'_>) -> Option<sys::spi::JSWrapperShapeRef> {
+        let shape = self.create_shape(id, proto).unwrap_or(NO_SHAPE);
+        let mut shapes = self.realm.shapes.borrow_mut();
+        if shapes.len() <= id as usize {
+            shapes.resize(id as usize + 1, ptr::null_mut());
+        }
+        shapes[id as usize] = shape;
+        (shape != NO_SHAPE).then_some(shape)
+    }
+
+    /// `JSWrapperShapeCreate` for class `id` with prototype `proto` (patched
+    /// JSC); `None` without it, or when JSC makes none.
+    fn create_shape(&self, id: ClassId, proto: Value<'_>) -> Option<sys::spi::JSWrapperShapeRef> {
+        let spi = sys::spi::get();
+        let create = spi.wrapper_shape_create?;
+        spi.object_make_wrapper?;
+        let proto = proto.as_object()?;
+        let class = self.realm.engine.classes.borrow().classes[id as usize].instance_class;
+        // SAFETY: a live class and an object of this context.
+        let shape = unsafe { create(self.ctx, class, proto.raw) };
+        (!shape.is_null()).then_some(shape)
     }
 
     /// Creates a wrapper whose prototype comes from `new_target` (constructors,
@@ -1008,7 +1136,7 @@ impl<'s> Scope<'s> {
             None => self.proto(id)?,
         };
         let proto = unsafe { Value::from_raw(self.ctx, proto.raw) };
-        self.make_wrapper::<C>(id, data, key, proto)
+        self.make_wrapper::<C>(id, data, key, WrapperProto::Value(proto))
     }
 
     /// Whether [`IdentityKey::OWNED`] wrappers can be made (patched
@@ -1058,28 +1186,62 @@ impl<'s> Scope<'s> {
         id: ClassId,
         data: C::Data,
         key: Option<IdentityKey>,
-        proto: Value<'_>,
+        proto: WrapperProto<'_>,
     ) -> JsResult<Object<'s>> {
-        let class = self.realm.engine.classes.borrow().classes[id as usize].instance_class;
         let owned = key.filter(|k| k.is_owned());
         let key = key.filter(|k| !k.is_owned());
+        let spi = sys::spi::get();
         let kept_while = match owned {
-            Some(_) => {
-                Some(sys::spi::get().weak_create_kept_while.ok_or(JsError::Unsupported("JSWeakCreateKeptWhile"))?)
-            }
+            Some(_) => Some(spi.weak_create_kept_while.ok_or(JsError::Unsupported("JSWeakCreateKeptWhile"))?),
             None => None,
         };
         let h = class::new_payload(&self.realm.engine, id, Kind::Instance, self.realm, key, data);
-        let obj = unsafe { sys::JSObjectMake(self.ctx, class, h as *mut c_void) };
+        if let Some(mode) = owned {
+            // Before the handle exists: the collector reads it from then on.
+            // SAFETY: h is the payload just made.
+            unsafe {
+                (*h).keep_alive.store(u8::from(mode == IdentityKey::OWNED_KEPT), std::sync::atomic::Ordering::Relaxed)
+            };
+        }
+        let (obj, mut weak) = match proto {
+            WrapperProto::Shape(shape) => {
+                // Object, prototype and handle in one call (patched JSC).
+                let make = spi.object_make_wrapper.expect("shapes are made with JSObjectMakeWrapper present");
+                let mut weak: sys::JSWeakRef = ptr::null();
+                // SAFETY: the flag byte lives as long as the payload, which
+                // outlives the handle (see below).
+                let keep = if owned.is_some() { unsafe { (*h).keep_alive.as_ptr() as *const u8 } } else { ptr::null() };
+                // SAFETY: a shape made in this realm.
+                let obj = unsafe { make(self.ctx, shape, h as *mut c_void, keep, &mut weak) };
+                if !obj.is_null() {
+                    (obj, weak)
+                } else {
+                    // JSC refused the shape: another global object made it
+                    // (never so while a realm's scopes run in its context).
+                    // The old way, then.
+                    match self.proto(id) {
+                        // SAFETY: no object holds the payload yet.
+                        Ok(proto) => (unsafe { self.make_object(id, h, proto.raw) }, ptr::null()),
+                        Err(e) => {
+                            // SAFETY: as above; dropped once.
+                            unsafe { ((*h).drop_fn)(h) };
+                            return Err(e);
+                        }
+                    }
+                }
+            }
+            // SAFETY: no object holds the payload yet.
+            WrapperProto::Value(proto) => (unsafe { self.make_object(id, h, proto.raw) }, ptr::null()),
+        };
         let obj = unsafe { Object::from_raw(self.ctx, obj) };
-        obj.set_prototype(proto);
-        if let (Some(mode), Some(kept_while)) = (owned, kept_while) {
+        if let (Some(_), Some(kept_while)) = (owned, kept_while) {
             // SAFETY: h is the live payload of obj; its flag byte lives as
             // long as the payload, which outlives the handle (released in
             // `class::release_owned` or `RealmInner::dispose`).
             unsafe {
-                (*h).keep_alive.store(u8::from(mode == IdentityKey::OWNED_KEPT), std::sync::atomic::Ordering::Relaxed);
-                let weak = kept_while(self.realm.engine.group(), obj.raw, (*h).keep_alive.as_ptr());
+                if weak.is_null() {
+                    weak = kept_while(self.realm.engine.group(), obj.raw, (*h).keep_alive.as_ptr());
+                }
                 (*h).weak.set(weak);
                 let head = self.realm.owned_head.get();
                 (*h).owned_next.set(head);
@@ -1097,6 +1259,23 @@ impl<'s> Scope<'s> {
             }
         }
         Ok(obj)
+    }
+
+    /// A class `id` wrapper with payload `h` by `JSObjectMake`, then given
+    /// its prototype `proto`. A new object's prototype runs no script and
+    /// makes no Objective-C temporaries, so no autorelease pool is pushed
+    /// (`Object::set_prototype` pushes one).
+    ///
+    /// # Safety
+    /// `h` is a payload of class `id` that no object holds yet, and `proto`
+    /// an object of this context.
+    unsafe fn make_object(&self, id: ClassId, h: *mut Header, proto: sys::JSValueRef) -> sys::JSObjectRef {
+        let class = self.realm.engine.classes.borrow().classes[id as usize].instance_class;
+        unsafe {
+            let obj = sys::JSObjectMake(self.ctx, class, h as *mut c_void);
+            sys::JSObjectSetPrototype(self.ctx, obj, proto);
+            obj
+        }
     }
 
     /// Borrows the payload of a `C` (or subclass) wrapper. The returned guard
@@ -1266,6 +1445,80 @@ impl<'s> Scope<'s> {
         self.realm.global_payload.get()
     }
 
+    /// Makes `name` a constant attribute of the realm's global: a
+    /// non-configurable, read-only accessor that yields `value` (a WebIDL
+    /// `[LegacyUnforgeable] readonly attribute` whose value never changes for
+    /// the global, a window's `document`). Reads make no callback, and the
+    /// optimizing JIT compiles a global variable read of it to the constant.
+    /// Replaces a configurable property of that name (a copied interface
+    /// member). The realm keeps `value` until it is disposed; reads after
+    /// that throw, as its callbacks do. Set once: false, and the property
+    /// unchanged, when it is already non-configurable or the JavaScriptCore
+    /// lacks the entry points (system framework, see
+    /// [`crate::Capabilities::global_constants`]).
+    pub fn define_global_constant(&self, name: &str, value: Value<'_>) -> bool {
+        let spi = sys::spi::get();
+        let (Some(set), Some(_), target) =
+            (spi.set_constant_accessor, spi.clear_constant_accessors, self.realm.global_target.get())
+        else {
+            return false;
+        };
+        if target.is_null() {
+            return false;
+        }
+        let n = JsString::new(name);
+        // SAFETY: the live global behind this realm's proxy; `value` is a live
+        // value of this engine's VM (a scope's value), kept alive by the
+        // property until `dispose` clears it.
+        let set = unsafe { set(self.ctx, target, n.as_raw(), value.raw, None, sys::kJSPropertyAttributeNone) };
+        if set {
+            self.realm.global_constants.set(true);
+        }
+        set
+    }
+
+    /// [`Scope::define_global_constant`] with the value made on first use:
+    /// the property is the same non-configurable, read-only accessor from
+    /// the start, its `get` one function for its whole life (a descriptor
+    /// taken before the first read still applies after it, and after
+    /// `dispose`), and the first read of it (a bare `name`, `globalThis.name`,
+    /// the reified getter) calls `make` in this realm and keeps its value as
+    /// the constant from then on. A realm whose script never reads it never
+    /// pays for the value (a window's `document`: its wrapper installs the
+    /// Document interfaces). An error from `make` is the read's, and the next
+    /// read calls it again. Disposed before the first read, the realm never
+    /// calls it: reads throw. False, as for `define_global_constant`, when
+    /// the property exists or the JavaScriptCore lacks the entry points.
+    pub fn define_lazy_global_constant(&self, name: &'static str, make: LazyGlobalConstant) -> bool {
+        let spi = sys::spi::get();
+        let (Some(set), Some(initializer), Some(_), target) = (
+            spi.set_lazy_constant_accessor,
+            spi.set_constant_accessor_initializer,
+            spi.clear_constant_accessors,
+            self.realm.global_target.get(),
+        ) else {
+            return false;
+        };
+        if target.is_null() {
+            return false;
+        }
+        static INITIALIZER: std::sync::Once = std::sync::Once::new();
+        // SAFETY: a function for the process's life.
+        INITIALIZER.call_once(|| unsafe { initializer(Some(make_lazy_global_constant)) });
+        // Listed first: nothing reads the property before it exists, and a
+        // refused one is unlisted again.
+        self.realm.lazy_constants.borrow_mut().push((name, make));
+        let n = JsString::new(name);
+        // SAFETY: the live global behind this realm's proxy.
+        let set = unsafe { set(self.ctx, target, n.as_raw(), None, sys::kJSPropertyAttributeNone) };
+        if set {
+            self.realm.global_constants.set(true);
+        } else {
+            self.realm.lazy_constants.borrow_mut().pop();
+        }
+        set
+    }
+
     /// Whether `obj` is the realm's global: its proxy (what script sees) or
     /// the object behind it (what a global variable's getter receives).
     pub(crate) fn is_global_object(&self, obj: sys::JSObjectRef) -> bool {
@@ -1297,9 +1550,24 @@ impl<'s> Scope<'s> {
     /// The interface object (constructor) of `C` in this realm.
     pub fn interface<C: JsClass>(&self) -> JsResult<Object<'s>> {
         let id = self.class_id::<C>()?;
-        let ctors = self.realm.ctors.borrow();
-        let p = ctors.get(id as usize).and_then(|p| p.as_ref()).ok_or(JsError::ContextDestroyed)?;
-        Ok(p.get(self).as_object().expect("constructor object"))
+        self.realm.interface_object(self, 2, id)?.as_object().ok_or(JsError::ContextDestroyed)
+    }
+
+    /// Calls `hook(prototype, constructor)` once the members of `C` are
+    /// installed in this realm, or now if they are: the embedder's additions
+    /// to an interface (`@@iterator` aliases, unscopables) without installing
+    /// the interface at realm creation. One hook per class; it runs where
+    /// population happens, so it uses only what it captured when made.
+    pub fn after_populate<C: JsClass>(&self, hook: Object<'_>) -> JsResult<()> {
+        let id = self.class_id::<C>()?;
+        if self.realm.populated.borrow().get(id as usize).copied().unwrap_or(false) {
+            let proto = self.realm.interface_object(self, 0, id)?;
+            let target = self.realm.interface_object(self, 1, id)?;
+            return hook.call(None, &[proto, target]).map(|_| ());
+        }
+        let hooks = self.realm.helper(self, "hooks")?;
+        debug_assert!(hooks.get_index(id)?.is_undefined(), "{}: one populate hook per class", C::NAME);
+        hooks.set_index(id, hook.value())
     }
 
     fn class_id<C: JsClass>(&self) -> JsResult<ClassId> {
@@ -1315,9 +1583,11 @@ impl<'s> Scope<'s> {
         let protos = self.realm.protos.borrow();
         let p = protos
             .get(id as usize)
-            .and_then(|p| p.as_ref())
+            .copied()
+            .filter(|p| !p.is_null())
             .ok_or_else(|| JsError::Type("class registered after this realm was created".into()))?;
-        Ok(p.get(self))
+        // SAFETY: kept alive by the realm's protected prototype list.
+        Ok(unsafe { Value::from_raw(self.ctx, p) })
     }
 
     /// Stores a GC-traced hidden value on a host object (wrappers and the
@@ -1491,6 +1761,37 @@ impl Deferred {
     }
 }
 
+/// What makes the value of a lazy global constant
+/// ([`Scope::define_lazy_global_constant`]), in the realm it belongs to.
+pub type LazyGlobalConstant = Rc<dyn for<'a> Fn(&Scope<'a>) -> JsResult<Value<'a>>>;
+
+/// The process's initializer of lazy constant accessors
+/// (`JSSetConstantAccessorInitializer`): the first read of one in `ctx`'s
+/// realm. JavaScriptCore keeps the value as the constant.
+unsafe extern "C" fn make_lazy_global_constant(
+    ctx: sys::JSContextRef,
+    object: sys::JSObjectRef,
+    name: sys::JSStringRef,
+    exc: *mut sys::JSValueRef,
+) -> sys::JSValueRef {
+    unsafe {
+        class::guard(ctx, exc, ptr::null(), |scope| {
+            // SAFETY: the property's name, alive during the call.
+            let name = JsString::from_raw_borrowed(name);
+            // Cloned out: `make` may define or read other lazy constants.
+            let make = {
+                let table = scope.realm.lazy_constants.borrow();
+                table.iter().find(|(n, _)| name.eq_str(n)).map(|(_, m)| m.clone())
+            };
+            // Only this realm's global holds its lazy constants.
+            match make {
+                Some(make) if scope.is_global_object(object) => Ok(make(scope)?.raw),
+                _ => Err(JsError::ContextDestroyed),
+            }
+        })
+    }
+}
+
 type ClosureData = Box<dyn for<'a> Fn(&Scope<'a>, Value<'a>, Args<'a>) -> JsResult<Value<'a>>>;
 
 pub(crate) unsafe extern "C" fn closure_call(
@@ -1552,11 +1853,12 @@ pub(crate) fn create(engine: &Rc<EngineInner>, options: RealmOptions) -> JsResul
         engine: engine.clone(),
         ctx: Cell::new(ctx),
         protos: RefCell::new(Vec::new()),
-        ctors: RefCell::new(Vec::new()),
-        targets: RefCell::new(Vec::new()),
+        shapes: RefCell::new(Vec::new()),
+        interfaces: RefCell::new(None),
         populated: RefCell::new(Vec::new()),
         identity: RefCell::new(rustc_hash::FxHashMap::default()),
         shared_strings: RefCell::new(rustc_hash::FxHashMap::default()),
+        interned: RefCell::new(crate::interned::InternedStrings::new()),
         owned_head: Cell::new(ptr::null_mut()),
         member_fns: RefCell::new(Vec::new()),
         helpers: RefCell::new(None),
@@ -1580,6 +1882,8 @@ pub(crate) fn create(engine: &Rc<EngineInner>, options: RealmOptions) -> JsResul
         // SAFETY: fresh, retained global context.
         global_object: Cell::new(unsafe { sys::JSContextGetGlobalObject(ctx) }),
         global_target: Cell::new(ptr::null_mut()),
+        global_constants: Cell::new(false),
+        lazy_constants: RefCell::new(Vec::new()),
     });
     if let Some(target) = sys::spi::get().get_proxy_target {
         // SAFETY: the cached global proxy of a live context.
@@ -1616,13 +1920,14 @@ pub(crate) fn create(engine: &Rc<EngineInner>, options: RealmOptions) -> JsResul
     Ok(realm)
 }
 
-/// Creates every interface object and prototype of the realm, with their
-/// inheritance, eagerly. Prototype/static members are installed on first use
-/// of the class: a wrap of it or a subclass, or any property operation on its
-/// interface object (a Proxy over the constructor whose traps install the
-/// members and then forward). Interface objects stay data properties of the
-/// global, so descriptors and identities match eager installation. The global
-/// class chain is populated eagerly (its members are copied onto the global).
+/// Creates every interface object of the realm, with their inheritance.
+/// Interface prototype objects and the prototype/static members are made on
+/// first use of the class (`populate_class`): a wrap of it or a subclass, or
+/// any property operation on its interface object (a Proxy over the
+/// constructor whose traps populate and then forward). Interface objects stay
+/// data properties of the global, so descriptors and identities match eager
+/// installation. The global class chain is populated here (its members are
+/// copied onto the global).
 fn install_classes(scope: &Scope<'_>) -> JsResult<()> {
     let realm = scope.realm;
     let reg = realm.engine.classes.borrow();
@@ -1633,19 +1938,12 @@ fn install_classes(scope: &Scope<'_>) -> JsResult<()> {
     let keys = MemberKeys::new(Some(realm));
     let n = reg.classes.len();
     // One call into JavaScript for all classes: per-class calls cost a VM
-    // entry each, which dominated realm creation.
-    let mut spec = String::from("[");
-    let mut natives = crate::RootedVec::new();
+    // entry each, which dominated realm creation. The class table is the
+    // registry's, kept as JSON while classes register.
+    let spec = scope.parse_json(reg.spec_json()).expect("class spec is JSON");
+    // Filled in place: the array (on this stack) keeps each new function alive.
+    let natives = scope.array(&[])?;
     for (i, info) in reg.classes.iter().enumerate() {
-        if i > 0 {
-            spec.push(',');
-        }
-        let name = serde_json::to_string(info.name).expect("class name serializes");
-        let parent = info.parent.map_or(-1, i64::from);
-        spec.push_str(&format!(
-            "[{name},{parent},{},{},{}]",
-            info.def.ctor_length, info.def.exposed, info.def.callback_interface
-        ));
         let native = match info.def.constructor {
             Some(c) => {
                 make_member_fn(scope.ctx, &realm.engine, reg.member, c, false, info.name, info.def.ctor_length, &keys)?
@@ -1653,23 +1951,16 @@ fn install_classes(scope: &Scope<'_>) -> JsResult<()> {
             }
             None => scope.null(),
         };
-        natives.push(scope, native);
+        natives.set_index(i as u32, native)?;
     }
-    spec.push(']');
-    let spec = scope.parse_json(&spec).expect("class spec is JSON");
-    let natives: Vec<Value<'_>> = natives.iter(scope).collect();
-    let natives = scope.array(&natives)?;
     let result = install.call(None, &[spec, natives.value(), object_proto, global.value(), populate.value()])?;
     let result = result.as_object().expect("installInterfaces result");
     let lists: Vec<Object<'_>> = (0..3)
         .map(|k| result.get_index(k).map(|v| v.as_object().expect("installInterfaces list")))
         .collect::<JsResult<_>>()?;
-    let column = |list: &Object<'_>| -> JsResult<Vec<Option<Persistent>>> {
-        (0..n as u32).map(|i| Ok(Some(Persistent::new(scope, list.get_index(i)?)))).collect()
-    };
-    let protos = column(&lists[0])?;
-    let targets = column(&lists[1])?;
-    let ctors = column(&lists[2])?;
+    // Prototype objects come with population (`materialize`).
+    let protos = vec![ptr::null(); n];
+    let interfaces = [0, 1, 2].map(|k| Persistent::new(scope, lists[k].value()));
     // [LegacyFactoryFunction]s of exposed classes: global constructors over
     // the class's prototype (`Image`), lazily populated like the interface.
     let factories: Vec<(ClassId, &'static str, u32, class::MemberCall)> = reg
@@ -1683,14 +1974,12 @@ fn install_classes(scope: &Scope<'_>) -> JsResult<()> {
         let legacy_factory = realm.helper(scope, "legacyFactory")?;
         for (id, name, length, call) in factories {
             let native = make_member_fn(scope.ctx, &realm.engine, reg.member, call, false, name, length, &keys)?;
-            let proto = lists[0].get_index(id)?;
             legacy_factory.call(
                 None,
                 &[
                     global.value(),
                     scope.string(name),
                     native.value(),
-                    proto,
                     scope.number(length as f64),
                     scope.number(id as f64),
                     populate.value(),
@@ -1716,8 +2005,7 @@ fn install_classes(scope: &Scope<'_>) -> JsResult<()> {
         .collect();
     drop(reg);
     *realm.protos.borrow_mut() = protos;
-    *realm.ctors.borrow_mut() = ctors;
-    *realm.targets.borrow_mut() = targets;
+    *realm.interfaces.borrow_mut() = Some(interfaces);
     *realm.populated.borrow_mut() = vec![false; n];
     if let (Some(chain), Some(name)) = (global_chain, global_name) {
         // Chain root-first: copy members onto the global, brand instanceof.
@@ -1726,8 +2014,8 @@ fn install_classes(scope: &Scope<'_>) -> JsResult<()> {
         let mut ps = crate::RootedVec::new();
         let mut cs = crate::RootedVec::new();
         for c in &chain {
-            ps.push(scope, realm.protos.borrow()[*c as usize].as_ref().expect("proto").get(scope));
-            cs.push(scope, realm.ctors.borrow()[*c as usize].as_ref().expect("ctor").get(scope));
+            ps.push(scope, realm.interface_object(scope, 0, *c)?);
+            cs.push(scope, realm.interface_object(scope, 2, *c)?);
         }
         let ps = rooted_array(scope, &ps)?;
         let cs = rooted_array(scope, &cs)?;
@@ -1838,10 +2126,27 @@ pub(crate) fn populate_class(scope: &Scope<'_>, id: ClassId) -> JsResult<()> {
         // Marked first: member installation does not re-enter population
         // (it defines on the prototype and the proxy target directly).
         realm.populated.borrow_mut()[c as usize] = true;
-        if let Err(e) = install_members(scope, c).and_then(|()| mirror_populated(scope, c)) {
+        let done = materialize(scope, c).and_then(|()| install_members(scope, c)).and_then(|()| mirror_populated(scope, c));
+        if let Err(e) = done {
             realm.populated.borrow_mut()[c as usize] = false;
             return Err(e);
         }
+    }
+    Ok(())
+}
+
+/// Makes the interface prototype object of `id` (helpers.js `materialize`)
+/// unless it exists: once per class and realm, when the class is first
+/// populated, so a realm makes only the prototypes its page reaches.
+fn materialize(scope: &Scope<'_>, id: ClassId) -> JsResult<()> {
+    let realm = scope.realm;
+    if realm.protos.borrow().get(id as usize).is_some_and(|p| !p.is_null()) {
+        return Ok(());
+    }
+    let proto = realm.cached_helper(scope, "materialize")?.call(None, &[scope.number(f64::from(id))])?;
+    // Kept alive by the protected prototype list, where `materialize` put it.
+    if let Some(slot) = realm.protos.borrow_mut().get_mut(id as usize) {
+        *slot = proto.raw;
     }
     Ok(())
 }
@@ -1856,8 +2161,8 @@ fn mirror_populated(scope: &Scope<'_>, id: ClassId) -> JsResult<()> {
 
 fn install_members(scope: &Scope<'_>, id: ClassId) -> JsResult<()> {
     let realm = scope.realm;
-    let proto = realm.protos.borrow()[id as usize].as_ref().ok_or(JsError::ContextDestroyed)?.get(scope);
-    let target = realm.targets.borrow()[id as usize].as_ref().ok_or(JsError::ContextDestroyed)?.get(scope);
+    let proto = realm.interface_object(scope, 0, id)?;
+    let target = realm.interface_object(scope, 1, id)?;
     let helpers = realm.helpers.borrow().as_ref().ok_or(JsError::ContextDestroyed)?.get(scope);
     let (Some(proto), Some(target), Some(helpers)) = (proto.as_object(), target.as_object(), helpers.as_object())
     else {
@@ -1885,17 +2190,22 @@ fn make_member_fn(
 ) -> JsResult<Object<'static>> {
     // The patched JSC makes an internal function that call inline caches link
     // to directly; a C API callback object is called through JSC's host-call
-    // slow path every time. The payload has no finalizer there: the registry
-    // keeps it for the engine's lifetime.
+    // slow path every time. The payload has no finalizer there: its realm
+    // keeps it, then the engine until the realm's global is dead.
     if let Some(make) = sys::spi::get().make_function_with_data {
         // A disposed realm would never clear it again (see `member_fns`).
         let realm = keys.realm.filter(|r| !r.ctx.get().is_null());
         let cell = Cell::new(realm.map(Rc::downgrade));
         let mut payload = Box::new(class::MemberPayload { tag: class::PayloadTag::Member, call, pure, realm: cell });
         let data = &mut *payload as *mut class::MemberPayload as *mut c_void;
-        engine.member_payloads.borrow_mut().push(payload);
-        if let Some(r) = realm {
-            r.member_fns.borrow_mut().push(data as *const class::MemberPayload);
+        // The realm owns it: the function is made in its context, so its
+        // global is the realm's. A disposed realm's goes to the engine.
+        match realm {
+            Some(r) => {
+                debug_assert_eq!(r.ctx.get() as usize, ctx as usize, "member functions are made in their realm");
+                r.member_fns.borrow_mut().push(payload)
+            }
+            None => engine.member_payloads.borrow_mut().push(payload),
         }
         let n = JsString::new(name);
         let f = unsafe { make(ctx, n.as_raw(), length, Some(class::member_call_data), data) };
@@ -2003,10 +2313,12 @@ fn install_members_raw(
         Ok(f)
     };
     let native = |name: &str, length: u32, call: class::MemberCall| native_pure(name, length, call, false);
+    let members = helper("members")?;
+    let mut batch = MemberBatch::new(ctx, &members, &[proto.raw]);
     for (name, length, call, pure) in methods {
-        let f = native_pure(name, length, call, pure)?;
-        proto.set(name, f.value())?;
+        batch.push(name, native_pure(name, length, call, pure)?.raw as sys::JSValueRef)?;
     }
+    batch.flush()?;
     let accessor = helper("accessor")?;
     let custom = sys::spi::get().set_custom_accessor;
     for (name, get, set, slot) in accessors {
@@ -2050,20 +2362,82 @@ fn install_members_raw(
         };
         accessor.call(None, &[proto.value(), string(name), g.value(), st])?;
     }
-    let constant = helper("constant")?;
+    // Each on the interface object, then on the prototype; one call into
+    // JavaScript per batch instead of two per constant.
+    let constant_list = helper("constants")?;
+    let mut batch = MemberBatch::new(ctx, &constant_list, &[target.raw, proto.raw]);
     for (name, v) in constants {
-        constant.call(None, &[target.value(), string(name), num(v)])?;
-        constant.call(None, &[proto.value(), string(name), num(v)])?;
+        batch.push(name, num(v).raw)?;
     }
+    batch.flush()?;
+    let mut batch = MemberBatch::new(ctx, &members, &[target.raw]);
     for (name, length, call) in statics {
-        let f = native(name, length, call)?;
-        target.set(name, f.value())?;
+        batch.push(name, native(name, length, call)?.raw as sys::JSValueRef)?;
     }
+    batch.flush()?;
     if let Some(kind) = iterable {
         helper(kind)?.call(None, &[proto.value()])?;
     }
-
+    // The embedder's own steps for this interface (`Scope::after_populate`).
+    if let Some(hook) = helper("hooks")?.get_index(id)?.as_object() {
+        hook.call(None, &[proto.value(), target.value()])?;
+    }
     Ok(())
+}
+
+/// Named values of one population step, for the helper `members(target,
+/// name, function, ...)` (methods, statics) or `constants(target, proto,
+/// name, value, ...)`: defined, not assigned (see there), in one call into
+/// JavaScript per batch instead of one per value. The arguments wait in an
+/// array on this stack, which JavaScriptCore scans conservatively: it keeps
+/// each new function alive until the helper has defined it, without a
+/// protection per member.
+struct MemberBatch<'h> {
+    ctx: sys::JSContextRef,
+    helper: &'h Object<'h>,
+    /// The helper's leading objects, then `name, value` pairs: `len` set.
+    args: [sys::JSValueRef; 2 + 2 * MEMBER_BATCH],
+    lead: usize,
+    len: usize,
+}
+
+/// Values per call of a batch helper (most classes have fewer).
+const MEMBER_BATCH: usize = 32;
+
+impl<'h> MemberBatch<'h> {
+    fn new(ctx: sys::JSContextRef, helper: &'h Object<'h>, lead: &[sys::JSObjectRef]) -> MemberBatch<'h> {
+        let mut args = [ptr::null(); 2 + 2 * MEMBER_BATCH];
+        for (slot, o) in args.iter_mut().zip(lead) {
+            *slot = *o as sys::JSValueRef;
+        }
+        MemberBatch { ctx, helper, args, lead: lead.len(), len: lead.len() }
+    }
+
+    fn push(&mut self, name: &'static str, value: sys::JSValueRef) -> JsResult<()> {
+        if self.len + 2 > self.args.len() {
+            self.flush()?;
+        }
+        self.args[self.len + 1] = value;
+        // SAFETY: the live callback/scope context; the thread's string for
+        // the static name (`atom_raw`) outlives the call.
+        self.args[self.len] = unsafe { sys::JSValueMakeString(self.ctx, crate::string::atom_raw(name)) };
+        self.len += 2;
+        Ok(())
+    }
+
+    fn flush(&mut self) -> JsResult<()> {
+        if self.len == self.lead {
+            return Ok(());
+        }
+        let _pool = crate::autorelease::Pool::new();
+        let mut exc = ptr::null();
+        // SAFETY: `args[..len]` are live values of `ctx` (see the type).
+        unsafe {
+            sys::JSObjectCallAsFunction(self.ctx, self.helper.raw, ptr::null_mut(), self.len, self.args.as_ptr(), &mut exc)
+        };
+        self.len = self.lead;
+        check(self.ctx, exc)
+    }
 }
 
 /// Population of a disposed realm's interface (reachable from another realm):
@@ -2072,7 +2446,6 @@ fn install_members_raw(
 /// eager installation exposed; calling native members then throws as before.
 fn populate_disposed(ctx: sys::JSContextRef, id: ClassId, h: Object<'_>) -> JsResult<()> {
     let engine = crate::engine::engine_for_ctx(ctx).ok_or(JsError::ContextDestroyed)?;
-    let protos = h.get("classProtos")?.as_object().ok_or(JsError::ContextDestroyed)?;
     let targets = h.get("classTargets")?.as_object().ok_or(JsError::ContextDestroyed)?;
     let populated = h.get("populated")?.as_object().ok_or(JsError::ContextDestroyed)?;
     let chain = {
@@ -2091,8 +2464,15 @@ fn populate_disposed(ctx: sys::JSContextRef, id: ClassId, h: Object<'_>) -> JsRe
     };
     let yes = unsafe { Value::from_raw(ctx, sys::JSValueMakeBoolean(ctx, true)) };
     let no = unsafe { Value::from_raw(ctx, sys::JSValueMakeBoolean(ctx, false)) };
+    let make = h.get("materialize")?.as_object().ok_or(JsError::ContextDestroyed)?;
     for c in chain {
-        let (Some(proto), Some(target)) = (protos.get_index(c)?.as_object(), targets.get_index(c)?.as_object()) else {
+        // A prototype nothing reached before the realm closed is made now,
+        // and one whose making failed part way completed (`materialize`
+        // repeats its steps): `classProtos` alone does not say it is whole.
+        // SAFETY: a number in the live callback context.
+        let id = unsafe { Value::from_raw(ctx, sys::JSValueMakeNumber(ctx, f64::from(c))) };
+        let proto = make.call(None, &[id])?.as_object();
+        let (Some(proto), Some(target)) = (proto, targets.get_index(c)?.as_object()) else {
             return Err(JsError::ContextDestroyed);
         };
         populated.set_index(c, yes)?;
@@ -2275,6 +2655,14 @@ pub(crate) fn remap_module_url(key: &str, origin: Option<&str>) -> String {
 mod tests {
     use super::{module_source_with_url, remap_module_url};
 
+    /// Every realm evaluates helpers.js: as ASCII it is an 8-bit JSC string
+    /// made without transcoding (`JsString::new`), lexed and hashed at its size.
+    #[test]
+    fn helpers_source_is_ascii() {
+        let at = super::HELPERS_JS.find(|c: char| !c.is_ascii());
+        assert!(at.is_none(), "non-ASCII character at byte {at:?} of helpers.js (escape it)");
+    }
+
     #[test]
     fn module_source_url_is_encoded_as_a_javascript_string() {
         let source = module_source_with_url("export {}", "https://site.test/a\"b\u{2028}.js");
@@ -2302,20 +2690,23 @@ mod tests {
         }
     }
 
-    /// Member payloads live as long as the engine; disposing a realm clears
-    /// the realm they hold (`RealmInner::member_fns`), so they do not keep its
-    /// allocation, and its functions still throw rather than run.
+    /// The member payloads that hold `inner` as their realm, wherever they are.
+    fn payloads_holding(engine: &crate::Engine, realm: &super::RealmInner, inner: *const super::RealmInner) -> usize {
+        let holds = |p: &super::class::MemberPayload| {
+            unsafe { (*p.realm.as_ptr()).as_ref() }.is_some_and(|w| w.as_ptr() == inner)
+        };
+        let owned = realm.member_fns.borrow().iter().filter(|p| holds(p)).count();
+        let kept = engine.inner.member_payloads.borrow().iter().filter(|p| holds(p)).count();
+        owned + kept + engine.inner.retired_payloads().filter(|&p| holds(unsafe { &*p })).count()
+    }
+
+    /// Disposing a realm clears the realm its member payloads hold
+    /// (`RealmInner::member_fns`), so they do not keep its allocation, and its
+    /// functions still throw rather than run.
     #[test]
     fn disposed_realm_member_payloads_drop_their_realm() {
         let engine = crate::Engine::new().unwrap();
         engine.register::<Probe>();
-        let holds = |inner: *const super::RealmInner| {
-            let payloads = engine.inner.member_payloads.borrow();
-            payloads
-                .iter()
-                .filter(|p| unsafe { (*p.realm.as_ptr()).as_ref() }.is_some_and(|w| w.as_ptr() == inner))
-                .count()
-        };
         let keep = engine.create_realm(Default::default()).unwrap();
         let realm = engine.create_realm(Default::default()).unwrap();
         let ptr = std::rc::Rc::as_ptr(&realm.inner);
@@ -2326,11 +2717,12 @@ mod tests {
             keep.scope().unwrap().global().set("foreign", f).unwrap();
         }
         let patched = crate::sys::spi::get().make_function_with_data.is_some();
-        assert_eq!(holds(ptr) > 0, patched);
-        assert_eq!(realm.inner.member_fns.borrow().len(), holds(ptr));
+        let held = payloads_holding(&engine, &realm.inner, ptr);
+        assert_eq!(held > 0, patched);
+        assert_eq!(realm.inner.member_fns.borrow().len(), held);
         let weak = std::rc::Rc::downgrade(&realm.inner);
         realm.dispose();
-        assert_eq!(holds(ptr), 0);
+        assert_eq!(payloads_holding(&engine, &realm.inner, ptr), 0);
         assert!(realm.inner.member_fns.borrow().is_empty());
         drop(realm);
         assert!(weak.upgrade().is_none());
@@ -2339,5 +2731,66 @@ mod tests {
             .eval("try { foreign.call(new MemberRealmProbe()); false } catch (e) { true }", None, 1)
             .unwrap()
             .to_bool());
+    }
+
+    #[inline(never)]
+    fn realm_with_a_held_member(engine: &crate::Engine, keep: &crate::Realm) -> usize {
+        let realm = engine.create_realm(Default::default()).unwrap();
+        let s = realm.scope().unwrap();
+        assert_eq!(s.eval("new MemberRealmProbe().one()", None, 1).unwrap().to_number().unwrap(), 1.0);
+        let f = s.eval("MemberRealmProbe.prototype.one", None, 1).unwrap();
+        keep.scope().unwrap().global().set("foreign", f).unwrap();
+        let n = realm.inner.member_fns.borrow().len();
+        drop(s);
+        realm.dispose();
+        n
+    }
+
+    #[inline(never)]
+    fn overwrite_dead_stack() -> u64 {
+        let mut junk = [0u64; 16 * 1024];
+        for (i, slot) in junk.iter_mut().enumerate() {
+            *slot = std::hint::black_box(i as u64);
+        }
+        std::hint::black_box(junk.iter().sum())
+    }
+
+    /// A disposed realm's member payloads are freed once its global object
+    /// is dead, and not before: a function of it held elsewhere keeps the
+    /// global, and must still find its payload when called.
+    #[test]
+    fn disposed_realm_member_payloads_go_with_its_global() {
+        let engine = crate::Engine::new().unwrap();
+        engine.register::<Probe>();
+        if crate::sys::spi::get().make_function_with_data.is_none() || crate::sys::spi::get().weak().is_none() {
+            return;
+        }
+        let keep = engine.create_realm(Default::default()).unwrap();
+        let n = realm_with_a_held_member(&engine, &keep);
+        assert!(n > 0);
+        let retired = || engine.inner.retired_payloads().count();
+        for _ in 0..3 {
+            engine.collect_garbage_now();
+            engine.drain_finalized();
+        }
+        assert_eq!(retired(), n, "a held function keeps its realm's payloads");
+        // Called, it finds its payload, and throws as a disposed realm's function.
+        assert!(keep
+            .scope()
+            .unwrap()
+            .eval("try { foreign.call(new MemberRealmProbe()); false } catch (e) { true }", None, 1)
+            .unwrap()
+            .to_bool());
+        keep.scope().unwrap().eval("foreign = undefined", None, 1).unwrap();
+        overwrite_dead_stack();
+        for _ in 0..6 {
+            engine.collect_garbage_now();
+            engine.drain_finalized();
+            if retired() == 0 {
+                break;
+            }
+        }
+        assert_eq!(retired(), 0, "the payloads outlived their realm's global");
+        assert_eq!(engine.inner.member_payloads.borrow().len(), 0);
     }
 }

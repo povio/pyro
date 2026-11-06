@@ -119,6 +119,26 @@ fn regression_parser_roots_detached_open_elements() {
     d.borrow_mut().collect_garbage();
     assert!(!d.borrow().is_alive(div), "ended parser retained detached elements");
 }
+
+#[test]
+fn ended_parser_releases_a_document_left_while_parsing() {
+    let d: DomRef = Rc::new(RefCell::new(Dom::new()));
+    let doc = d.borrow_mut().create_document(DocumentKind::Html, "http://test/");
+    d.borrow_mut().set_document_active(doc, true).unwrap();
+    let mut p = DocumentParser::new(d.clone(), doc, true).unwrap();
+    assert!(matches!(p.feed("<body><div id=x><script></script><span>after</span></div>"), ParseStep::Script(_)));
+    let div = d.borrow().get_element_by_id(doc, "x").unwrap().unwrap();
+    // Navigated away mid-parse: the parser's references keep the tree.
+    d.borrow_mut().set_document_active(doc, false).unwrap();
+    d.borrow_mut().collect_garbage();
+    assert!(d.borrow().is_alive(div), "parser lost its document's tree");
+    p.resume();
+    p.end();
+    // Its connected nodes are released through the document.
+    d.borrow_mut().collect_garbage();
+    assert!(!d.borrow().is_alive(div), "ended parser retained an inactive document's tree");
+    assert!(!d.borrow().is_alive(doc), "ended parser retained an inactive document");
+}
 #[test]
 fn regression_replace_child_record_sibling() {
     use lp_dom::mutation::ObserveInit;

@@ -296,7 +296,13 @@ fn document_page(page: &Rc<PageDom>, doc: NodeId) -> Option<Rc<PageDom>> {
 }
 
 /// `document.createElement` result: constructs defined custom elements.
-pub(crate) fn create_element_value<'s>(s: &Scope<'s>, page: &Rc<PageDom>, el: NodeId) -> JsResult<Value<'s>> {
+/// `el` was just made in `doc`, a document of `page`.
+pub(crate) fn create_element_value<'s>(
+    s: &Scope<'s>,
+    page: &Rc<PageDom>,
+    doc: NodeId,
+    el: NodeId,
+) -> JsResult<Value<'s>> {
     let ctor = {
         let registry = page.custom_elements.borrow();
         if registry.defs.is_empty() {
@@ -307,9 +313,11 @@ pub(crate) fn create_element_value<'s>(s: &Scope<'s>, page: &Rc<PageDom>, el: No
         }
     };
     if let Some(ctor) = ctor {
+        // The constructor may have wrapped it (`this`).
         upgrade(s, page, el, ctor)?;
+        return Ok(wrap_node(s, page, el)?.value());
     }
-    Ok(wrap_node(s, page, el)?.value())
+    Ok(crate::node::wrap_created_node(s, page, doc, el)?.value())
 }
 
 pub struct CustomElementRegistry;

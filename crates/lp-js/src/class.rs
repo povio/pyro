@@ -83,6 +83,9 @@ pub(crate) struct AccessorSpec {
     pub result: GetterResult,
     /// A pure getter's invoker from the receiver's payload header.
     pub get_h: Option<InvokeHFn>,
+    /// The setter's invoker from the receiver's payload header, for a
+    /// setter of the class's own data (`ClassDef::accessor`).
+    pub set_h: Option<SetHFn>,
     /// Custom accessor slot ([`crate::accessors`]); `None` installs an
     /// ordinary accessor (no patched JSC, or the slots are used up).
     pub slot: Option<u16>,
@@ -105,6 +108,12 @@ pub(crate) type InvokeFn = unsafe fn(&Scope<'_>, sys::JSObjectRef, Args<'_>, *co
 /// receiver's payload header, in a scope of the receiver's realm.
 pub(crate) type InvokeHFn =
     unsafe fn(&Scope<'_>, *mut Header, sys::JSObjectRef, *const ()) -> JsResult<sys::JSValueRef>;
+
+/// A setter invoked with its receiver's payload header and the new value,
+/// in a scope of the receiver's realm.
+/// `Ok(false)`: the payload is not one of the setter's class (the full
+/// dispatch then decides).
+pub(crate) type SetHFn = unsafe fn(&Scope<'_>, *mut Header, sys::JSValueRef, *const ()) -> JsResult<bool>;
 
 /// Member callback types: plain fn pointers. Non-capturing closures coerce.
 pub type MethodFn<C> = for<'s> fn(&Scope<'s>, &<C as JsClass>::Data, Args<'s>) -> JsResult<Value<'s>>;
@@ -307,6 +316,7 @@ impl<C: JsClass> ClassDef<C> {
             pure: false,
             result: GetterResult::Any,
             get_h: None,
+            set_h: None,
         });
         self
     }
@@ -335,6 +345,7 @@ impl<C: JsClass> ClassDef<C> {
             pure: true,
             result,
             get_h: Some(getter_invoke_h::<C>),
+            set_h: None,
         });
         self
     }
@@ -377,6 +388,7 @@ impl<C: JsClass> ClassDef<C> {
             pure: false,
             result: GetterResult::Any,
             get_h: None,
+            set_h: None,
         });
         self
     }
@@ -402,6 +414,7 @@ impl<C: JsClass> ClassDef<C> {
             pure: true,
             result,
             get_h: Some(getter_this_invoke_h::<C>),
+            set_h: None,
         });
         self
     }
@@ -418,6 +431,7 @@ impl<C: JsClass> ClassDef<C> {
             pure: false,
             result: GetterResult::Any,
             get_h: None,
+            set_h: Some(setter_invoke_h::<C>),
         });
         self
     }
@@ -442,6 +456,7 @@ impl<C: JsClass> ClassDef<C> {
             pure: true,
             result,
             get_h: Some(getter_invoke_h::<C>),
+            set_h: Some(setter_invoke_h::<C>),
         });
         self
     }
@@ -463,6 +478,7 @@ impl<C: JsClass> ClassDef<C> {
             pure: false,
             result: GetterResult::Any,
             get_h: None,
+            set_h: None,
         });
         self
     }
@@ -742,7 +758,6 @@ pub(crate) struct ClassDefErased {
     pub constructor: Option<MemberCall>,
     pub ctor_length: u32,
     pub legacy_factories: Vec<MethodSpec>,
-    pub callback_interface: bool,
     pub announced_names: bool,
     pub hooks: PropertyHooks,
     pub exposed: bool,
@@ -765,6 +780,10 @@ pub(crate) struct ClassRegistry {
     /// callable objects whose private data is a `MemberCall`. Not a `base`
     /// subclass: their private pointer is not a `Header`.
     pub member: sys::JSClassRef,
+    /// `classes` as the JSON table `installInterfaces` takes (helpers.js),
+    /// one `[name, parent, ctor length, exposed, callback]` entry per class,
+    /// appended as each registers: every realm creation reads it as is.
+    spec: String,
 }
 
 impl ClassRegistry {
@@ -795,7 +814,24 @@ impl ClassRegistry {
             base,
             closure,
             member,
+            spec: String::from("[]"),
         }
+    }
+
+    /// See [`ClassRegistry::spec`].
+    pub fn spec_json(&self) -> &str {
+        &self.spec
+    }
+
+    fn push_spec(&mut self, name: &str, parent: Option<ClassId>, ctor_length: u32, exposed: bool, callback: bool) {
+        use std::fmt::Write;
+        self.spec.pop();
+        if self.spec.len() > 1 {
+            self.spec.push(',');
+        }
+        let name = serde_json::to_string(name).expect("class name serializes");
+        let parent = parent.map_or(-1, i64::from);
+        let _ = write!(self.spec, "[{name},{parent},{ctor_length},{exposed},{callback}]]");
     }
 
     pub fn id_of<C: JsClass>(&self) -> Option<ClassId> {
@@ -812,6 +848,7 @@ impl ClassRegistry {
             sys::JSClassRelease(self.base);
         }
         self.classes.clear();
+        self.spec = String::from("[]");
         // The VM is gone, and the placeholder properties with it.
         let gone = std::mem::take(&mut self.placeholders).len();
         let _ = PLACEHOLDERS_PENDING.try_with(|p| p.set(p.get().saturating_sub(gone)));
@@ -886,13 +923,18 @@ pub(crate) fn register<C: JsClass>(engine: &EngineInner) -> ClassId {
         // SAFETY: the class was just created and has no objects yet.
         unsafe { set(instance_class, Some(get_by_index_hook), Some(set_by_index_hook)) };
     }
-    for a in &mut def.accessors {
-        a.slot = crate::accessors::slot_for(TypeId::of::<C>(), a.name, a.get, a.set, a.pure, a.result, a.get_h);
+    // Last first: a class that defines an attribute twice (shared members,
+    // then its own) gets the later definition in the slot both share, as the
+    // prototype property it installs last.
+    for a in def.accessors.iter_mut().rev() {
+        a.slot =
+            crate::accessors::slot_for(TypeId::of::<C>(), a.name, a.get, a.set, a.pure, a.result, a.get_h, a.set_h);
     }
     let parent_info: *const ClassInfo = match parent {
         Some(p) => &*reg.classes[p as usize],
         None => ptr::null(),
     };
+    reg.push_spec(C::NAME, parent, def.ctor_length, def.exposed, def.callback_interface);
     reg.classes.push(Box::new(ClassInfo {
         upcast: def.upcast,
         global_receiver: def.global_receiver,
@@ -910,7 +952,6 @@ pub(crate) fn register<C: JsClass>(engine: &EngineInner) -> ClassId {
             constructor: def.constructor,
             ctor_length: def.ctor_length,
             legacy_factories: def.legacy_factories,
-            callback_interface: def.callback_interface,
             announced_names: def.announced_names,
             hooks: def.hooks,
             exposed: def.exposed,
@@ -1090,16 +1131,17 @@ unsafe extern "C" fn finalize_wrapper(object: sys::JSObjectRef) {
 
 /// Drops payloads of finalized wrappers and prunes dead identity-map entries.
 /// Engine thread only, outside GC.
-/// Takes a dead owned wrapper's payload out of its realm's list and releases
-/// its weak handle (a no-op for other payloads, and once the realm disposed).
+/// Takes a dead owned wrapper's payload out of its realm's list and gives
+/// its weak handle to release (none for other payloads, and once the realm
+/// disposed).
 ///
 /// # Safety
 /// `h` is a payload header whose object is dead, on the engine's thread.
-unsafe fn release_owned(engine: &EngineInner, h: *mut Header) {
+unsafe fn release_owned(h: *mut Header) -> Option<sys::JSWeakRef> {
     unsafe {
         let weak = (*h).weak.replace(ptr::null_mut());
         if weak.is_null() {
-            return;
+            return None;
         }
         let prev = (*h).owned_prev.replace(ptr::null_mut());
         let next = (*h).owned_next.replace(ptr::null_mut());
@@ -1113,21 +1155,39 @@ unsafe fn release_owned(engine: &EngineInner, h: *mut Header) {
         if !next.is_null() {
             (*next).owned_prev.set(prev);
         }
-        if let Some((_, release, _)) = sys::spi::get().weak() {
-            release(engine.group(), weak);
+        Some(weak)
+    }
+}
+
+/// Releases the weak handles of dead owned wrappers: under one lock with the
+/// patched JSC (`JSWeakReleaseMany`), one by one otherwise.
+fn release_weaks(engine: &EngineInner, weaks: &[sys::JSWeakRef]) {
+    if weaks.is_empty() {
+        return;
+    }
+    let spi = sys::spi::get();
+    // SAFETY: handles this engine made and still owns, released once.
+    unsafe {
+        if let Some(many) = spi.weak_release_many {
+            many(engine.group(), weaks.as_ptr(), weaks.len());
+        } else if let Some((_, release, _)) = spi.weak() {
+            for &w in weaks {
+                release(engine.group(), w);
+            }
         }
     }
 }
 
 pub(crate) fn drain_finalized(engine: &EngineInner) -> usize {
     let mut total = 0;
+    let mut weaks = Vec::new();
     loop {
         let batch = engine.finalized.take();
         if batch.is_empty() {
             return total;
         }
         total += batch.len();
-        for h in batch {
+        for &h in &batch {
             let h = h as *mut Header;
             // SAFETY: each pointer was enqueued exactly once by finalize_wrapper
             // and its JS object is dead, so we are the sole owner.
@@ -1139,9 +1199,16 @@ pub(crate) fn drain_finalized(engine: &EngineInner) -> usize {
                         realm.prune_identity(key);
                     }
                 }
-                release_owned(engine, h);
-                ((*h).drop_fn)(h);
+                weaks.extend(release_owned(h));
             }
+        }
+        // The handles go before the payloads that hold their flag bytes.
+        release_weaks(engine, &weaks);
+        weaks.clear();
+        for h in batch {
+            let h = h as *mut Header;
+            // SAFETY: as above; dropped once.
+            unsafe { ((*h).drop_fn)(h) };
         }
     }
 }
@@ -1610,6 +1677,22 @@ unsafe fn getter_invoke<C: JsClass>(
         return member_in_receiver_realm(scope, realm, |s| f(s, data).map(|v| v.raw));
     }
     f(scope, data).map(|v| v.raw)
+}
+
+/// [`setter_invoke`] from the receiver's payload header `h`, in the
+/// receiver's realm: the custom setter dispatch found `h` already.
+unsafe fn setter_invoke_h<C: JsClass>(
+    scope: &Scope<'_>,
+    h: *mut Header,
+    value: sys::JSValueRef,
+    f: *const (),
+) -> JsResult<bool> {
+    let Some(data) = (unsafe { data_of_header::<C>(h) }) else { return Ok(false) };
+    // SAFETY: stored by `ClassDef::accessor` from this fn-pointer type.
+    let f: SetterFn<C> = unsafe { std::mem::transmute(f) };
+    // SAFETY: the setter's argument, rooted by the calling frame.
+    f(scope, data, unsafe { Value::from_raw(scope.ctx, value) })?;
+    Ok(true)
 }
 
 unsafe fn setter_invoke<C: JsClass>(

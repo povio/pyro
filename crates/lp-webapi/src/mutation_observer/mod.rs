@@ -464,12 +464,14 @@ fn hook_pending(page: &PageDom) -> bool {
     }
     let Ok(dom) = page.dom.try_borrow() else { return true };
     let m = &page.mutations;
-    // Every condition below changes only with `Dom::hook_epoch` (mutations,
-    // queued observers, iframe events) or `epoch` (this struct), so a pair
-    // the hook already found quiet needs no second look. Native callbacks
-    // come in bursts of tens of thousands with no change in between.
+    // Every condition below changes only with `Dom::hook_epoch` (an entry in
+    // one of the queues the hook drains), `epoch` (this struct) or, for the
+    // two passes that follow every mutation, `Dom::version`: a pair the hook
+    // already found quiet needs no second look while neither pass looks at
+    // the tree. Native callbacks come in bursts of tens of thousands, most
+    // of them mutating nothing the hook drains.
     let now = (dom.hook_epoch(), m.epoch.get());
-    if m.quiet.get() == Some(now) {
+    if m.quiet.get() == Some(now) && !follows_version(page, &dom, m) {
         return false;
     }
     let pending = hook_pending_slow(page, &dom, m);
@@ -477,6 +479,14 @@ fn hook_pending(page: &PageDom) -> bool {
         m.quiet.set(Some(now));
     }
     pending
+}
+
+/// Whether a pass of the hook that runs after any mutation would look at the
+/// tree again: the render-blocking evaluation while the set can change, and
+/// the reconcile pass of `checkpoint` while observers or pins exist.
+fn follows_version(page: &PageDom, dom: &lp_dom::Dom, m: &BindingState) -> bool {
+    page.render_blocking_follows_version(dom)
+        || (m.version.get() != Some(dom.version()) && (!m.observers.borrow().is_empty() || !m.pins.borrow().is_empty()))
 }
 
 fn hook_pending_slow(page: &PageDom, dom: &lp_dom::Dom, m: &BindingState) -> bool {

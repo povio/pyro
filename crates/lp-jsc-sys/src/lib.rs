@@ -510,7 +510,25 @@ pub mod spi {
     pub type JSWeakCreateKeptWhileFn =
         unsafe extern "C" fn(group: JSContextGroupRef, object: JSObjectRef, keep_alive: *const u8) -> JSWeakRef;
     pub type JSWeakReleaseFn = unsafe extern "C" fn(group: JSContextGroupRef, weak: JSWeakRef);
+    /// `JSWeakRelease` of `count` handles under one lock (patched JSC).
+    pub type JSWeakReleaseManyFn = unsafe extern "C" fn(group: JSContextGroupRef, weaks: *const JSWeakRef, count: usize);
     pub type JSWeakGetObjectFn = unsafe extern "C" fn(weak: JSWeakRef) -> JSObjectRef;
+    /// The structure of new wrappers of a class with one prototype in one
+    /// global object (patched JSC, `JSWrapperShapeCreate`); null if the class
+    /// has none to share.
+    pub type JSWrapperShapeRef = *mut c_void;
+    pub type JSWrapperShapeCreateFn =
+        unsafe extern "C" fn(ctx: JSContextRef, class: JSClassRef, prototype: JSObjectRef) -> JSWrapperShapeRef;
+    pub type JSWrapperShapeReleaseFn = unsafe extern "C" fn(group: JSContextGroupRef, shape: JSWrapperShapeRef);
+    /// A new wrapper of `shape` with private data `data` (`JSObjectMakeWrapper`):
+    /// with `keep_alive`, also its `JSWeakCreateKeptWhile` handle in `*weak`.
+    pub type JSObjectMakeWrapperFn = unsafe extern "C" fn(
+        ctx: JSContextRef,
+        shape: JSWrapperShapeRef,
+        data: *mut c_void,
+        keep_alive: *const u8,
+        weak: *mut JSWeakRef,
+    ) -> JSObjectRef;
     pub type JSGlobalContextSetUnhandledRejectionCallbackFn =
         unsafe extern "C" fn(ctx: JSGlobalContextRef, function: JSObjectRef, exception: *mut JSValueRef);
     pub type JSContextGroupSetExecutionTimeLimitFn = unsafe extern "C" fn(
@@ -567,6 +585,44 @@ pub mod spi {
         setter: Option<JSCustomSetterCallback>,
         attributes: JSPropertyAttributes,
     ) -> bool;
+    /// A constant accessor (patched JSC, `JSObjectSetConstantAccessor`): a
+    /// non-configurable accessor of `object` whose reads on it yield `value`
+    /// with no callback, and which the DFG folds to `value`. Set once.
+    pub type JSObjectSetConstantAccessorFn = unsafe extern "C" fn(
+        ctx: JSContextRef,
+        object: JSObjectRef,
+        name: JSStringRef,
+        value: JSValueRef,
+        setter: Option<JSCustomSetterCallback>,
+        attributes: JSPropertyAttributes,
+    ) -> bool;
+    /// What makes a lazy constant accessor's value on its first read
+    /// (`JSConstantAccessorInitializer`): `ctx` is the realm of `object`, the
+    /// holder. The value, or null with `*exception` set.
+    pub type JSConstantAccessorInitializer = unsafe extern "C" fn(
+        ctx: JSContextRef,
+        object: JSObjectRef,
+        name: JSStringRef,
+        exception: *mut JSValueRef,
+    ) -> JSValueRef;
+    /// Sets the process's initializer of lazy constant accessors (patched JSC,
+    /// `JSSetConstantAccessorInitializer`).
+    pub type JSSetConstantAccessorInitializerFn =
+        unsafe extern "C" fn(initializer: Option<JSConstantAccessorInitializer>);
+    /// A constant accessor whose value the initializer makes on the first
+    /// read (patched JSC, `JSObjectSetLazyConstantAccessor`): the same
+    /// non-configurable property from the start. Set once.
+    pub type JSObjectSetLazyConstantAccessorFn = unsafe extern "C" fn(
+        ctx: JSContextRef,
+        object: JSObjectRef,
+        name: JSStringRef,
+        setter: Option<JSCustomSetterCallback>,
+        attributes: JSPropertyAttributes,
+    ) -> bool;
+    /// Releases the values of `object`'s constant accessors as its realm is
+    /// torn down (patched JSC, `JSObjectClearConstantAccessors`): reads of
+    /// them throw from then on, lazy ones' too.
+    pub type JSObjectClearConstantAccessorsFn = unsafe extern "C" fn(ctx: JSContextRef, object: JSObjectRef);
     pub type JSContextThrowExceptionFn = unsafe extern "C" fn(ctx: JSContextRef, exception: JSValueRef);
     /// A fast getter (patched JSC, `JSObjectSetFastGetter`): what the JITs
     /// call in place of the custom getter once they have proved the receiver
@@ -645,6 +701,27 @@ pub mod spi {
         length: *mut usize,
         is_8bit: *mut bool,
     ) -> *const c_void;
+    /// A string value made from `length` Latin-1 bytes, copied once into the
+    /// string (patched JSC, `webkit/patches/0016-direct-strings.patch`):
+    /// `JSValueMakeString` without the `JSStringRef` and its two copies. Null
+    /// when `length` exceeds JavaScript's longest string. Takes the API lock
+    /// only when the caller does not hold it.
+    pub type JSValueMakeStringLatin1Fn =
+        unsafe extern "C" fn(ctx: JSContextRef, characters: *const u8, length: usize) -> JSValueRef;
+    /// [`JSValueMakeStringLatin1Fn`] for UTF-16 code units (unpaired
+    /// surrogates kept).
+    pub type JSValueMakeStringUTF16Fn =
+        unsafe extern "C" fn(ctx: JSContextRef, characters: *const JSChar, length: usize) -> JSValueRef;
+    /// `JSStringCreateWithCharacters` for Latin-1 bytes: an 8-bit string,
+    /// nothing decoded (patched JSC, 0016).
+    pub type JSStringCreateWithLatin1CharactersFn =
+        unsafe extern "C" fn(characters: *const u8, length: usize) -> JSStringRef;
+    /// A string's characters as it stores them (patched JSC, 0016): `length`
+    /// units, Latin-1 bytes when `is_8bit`, else UTF-16, valid while the
+    /// string is retained (`JSStringGetCharactersPtr` widens an 8-bit string
+    /// into a second copy the string keeps). May be null when empty.
+    pub type JSStringGetStoredCharactersFn =
+        unsafe extern "C" fn(string: JSStringRef, length: *mut usize, is_8bit: *mut bool) -> *const c_void;
 
     /// Runtime-resolved SPI table. Each entry is `None` when the running
     /// JavaScriptCore does not export the symbol.
@@ -653,7 +730,11 @@ pub mod spi {
         pub weak_create: Option<JSWeakCreateFn>,
         pub weak_create_kept_while: Option<JSWeakCreateKeptWhileFn>,
         pub weak_release: Option<JSWeakReleaseFn>,
+        pub weak_release_many: Option<JSWeakReleaseManyFn>,
         pub weak_get_object: Option<JSWeakGetObjectFn>,
+        pub wrapper_shape_create: Option<JSWrapperShapeCreateFn>,
+        pub wrapper_shape_release: Option<JSWrapperShapeReleaseFn>,
+        pub object_make_wrapper: Option<JSObjectMakeWrapperFn>,
         pub set_unhandled_rejection_callback: Option<JSGlobalContextSetUnhandledRejectionCallbackFn>,
         pub set_execution_time_limit: Option<JSContextGroupSetExecutionTimeLimitFn>,
         pub clear_execution_time_limit: Option<JSContextGroupClearExecutionTimeLimitFn>,
@@ -674,6 +755,10 @@ pub mod spi {
         pub add_impure_property: Option<JSAddImpurePropertyFn>,
         pub set_custom_accessor: Option<JSObjectSetCustomAccessorFn>,
         pub set_fast_getter: Option<JSObjectSetFastGetterFn>,
+        pub set_constant_accessor: Option<JSObjectSetConstantAccessorFn>,
+        pub set_lazy_constant_accessor: Option<JSObjectSetLazyConstantAccessorFn>,
+        pub set_constant_accessor_initializer: Option<JSSetConstantAccessorInitializerFn>,
+        pub clear_constant_accessors: Option<JSObjectClearConstantAccessorsFn>,
         pub throw_exception: Option<JSContextThrowExceptionFn>,
         pub class_set_indexed_callbacks: Option<JSClassSetIndexedCallbacksFn>,
         pub make_function_with_data: Option<JSObjectMakeFunctionWithCallbackAndDataFn>,
@@ -682,6 +767,10 @@ pub mod spi {
         pub delete_all_code: Option<JSContextGroupDeleteAllCodeFn>,
         pub set_decommit_replaces_pages: Option<JSSetDecommitReplacesPagesFn>,
         pub value_string_characters: Option<JSValueGetStringCharactersFn>,
+        pub make_string_latin1: Option<JSValueMakeStringLatin1Fn>,
+        pub make_string_utf16: Option<JSValueMakeStringUTF16Fn>,
+        pub string_create_latin1: Option<JSStringCreateWithLatin1CharactersFn>,
+        pub string_stored_characters: Option<JSStringGetStoredCharactersFn>,
     }
 
     impl Spi {
@@ -690,10 +779,43 @@ pub mod spi {
             Some((self.weak_create?, self.weak_release?, self.weak_get_object?))
         }
 
+        /// Strings to and from host characters without a `JSStringRef` in
+        /// between (patch 0016), all or nothing. Its JavaScriptCore also makes
+        /// `value_string_characters` safe anywhere: a flat string is read with
+        /// no lock and no exception check, and a rope is resolved under the API
+        /// lock, taken when the caller does not hold it; a failure there (out of
+        /// memory) leaves no exception pending.
+        pub fn direct_strings(&self) -> Option<DirectStrings> {
+            self.value_string_characters?;
+            Some(DirectStrings {
+                make_latin1: self.make_string_latin1?,
+                make_utf16: self.make_string_utf16?,
+                create_latin1: self.string_create_latin1?,
+                stored_characters: self.string_stored_characters?,
+            })
+        }
+
         /// fork() support needs all three entry points.
         pub fn fork(&self) -> Option<(JSPrepareForForkFn, JSDidForkFn, JSGlobalContextReseedRandomFn)> {
             Some((self.prepare_for_fork?, self.did_fork?, self.reseed_random?))
         }
+    }
+
+    /// The entry points of [`Spi::direct_strings`].
+    #[derive(Debug, Clone, Copy)]
+    pub struct DirectStrings {
+        pub make_latin1: JSValueMakeStringLatin1Fn,
+        pub make_utf16: JSValueMakeStringUTF16Fn,
+        pub create_latin1: JSStringCreateWithLatin1CharactersFn,
+        pub stored_characters: JSStringGetStoredCharactersFn,
+    }
+
+    /// [`Spi::direct_strings`], resolved once per process: one load on the
+    /// paths that make every string.
+    #[inline]
+    pub fn direct_strings() -> Option<&'static DirectStrings> {
+        static DIRECT: OnceLock<Option<DirectStrings>> = OnceLock::new();
+        DIRECT.get_or_init(|| get().direct_strings()).as_ref()
     }
 
     unsafe extern "C" {
@@ -723,7 +845,11 @@ pub mod spi {
             weak_create: resolve!("JSWeakCreate"),
             weak_create_kept_while: resolve!("JSWeakCreateKeptWhile"),
             weak_release: resolve!("JSWeakRelease"),
+            weak_release_many: resolve!("JSWeakReleaseMany"),
             weak_get_object: resolve!("JSWeakGetObject"),
+            wrapper_shape_create: resolve!("JSWrapperShapeCreate"),
+            wrapper_shape_release: resolve!("JSWrapperShapeRelease"),
+            object_make_wrapper: resolve!("JSObjectMakeWrapper"),
             set_unhandled_rejection_callback: resolve!("JSGlobalContextSetUnhandledRejectionCallback"),
             set_execution_time_limit: resolve!("JSContextGroupSetExecutionTimeLimit"),
             clear_execution_time_limit: resolve!("JSContextGroupClearExecutionTimeLimit"),
@@ -744,6 +870,10 @@ pub mod spi {
             add_impure_property: resolve!("JSAddImpureProperty"),
             set_custom_accessor: resolve!("JSObjectSetCustomAccessor"),
             set_fast_getter: resolve!("JSObjectSetFastGetter"),
+            set_constant_accessor: resolve!("JSObjectSetConstantAccessor"),
+            set_lazy_constant_accessor: resolve!("JSObjectSetLazyConstantAccessor"),
+            set_constant_accessor_initializer: resolve!("JSSetConstantAccessorInitializer"),
+            clear_constant_accessors: resolve!("JSObjectClearConstantAccessors"),
             throw_exception: resolve!("JSContextThrowException"),
             class_set_indexed_callbacks: resolve!("JSClassSetIndexedCallbacks"),
             make_function_with_data: resolve!("JSObjectMakeFunctionWithCallbackAndData"),
@@ -752,6 +882,10 @@ pub mod spi {
             delete_all_code: resolve!("JSContextGroupDeleteAllCode"),
             set_decommit_replaces_pages: resolve!("JSSetDecommitReplacesPages"),
             value_string_characters: resolve!("JSValueGetStringCharacters"),
+            make_string_latin1: resolve!("JSValueMakeStringLatin1"),
+            make_string_utf16: resolve!("JSValueMakeStringUTF16"),
+            string_create_latin1: resolve!("JSStringCreateWithLatin1Characters"),
+            string_stored_characters: resolve!("JSStringGetStoredCharacters"),
         })
     }
 }

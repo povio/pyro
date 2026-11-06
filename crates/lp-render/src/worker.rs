@@ -4,9 +4,9 @@
 
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::{channel, Sender};
+use std::sync::mpsc::{channel, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::{
     compare, decode_png, diff_image, encode_jpeg, encode_png, Area, Backend, Fetcher, Renderer, RgbaImage, Snapshot,
@@ -151,14 +151,48 @@ pub struct RenderWorker {
     tx: Sender<Job>,
 }
 
+/// Run on the render thread a second after its last job ([`set_idle_release`]).
+static IDLE_RELEASE: OnceLock<fn()> = OnceLock::new();
+
+/// How long the render thread waits without a job before it runs the
+/// [`set_idle_release`] hook.
+const IDLE_RELEASE_AFTER: Duration = Duration::from_secs(1);
+
+/// Registers what the render thread runs once a second has passed since its
+/// last job: an allocator with per-thread heaps (the executable's) returns
+/// the pages of what the render freed and of the images the browser thread
+/// freed since, which only the thread that allocated them can (a closed SPA
+/// after one screenshot: about 2 MB).
+pub fn set_idle_release(release: fn()) {
+    let _ = IDLE_RELEASE.set(release);
+}
+
 impl RenderWorker {
     pub fn spawn() -> std::io::Result<RenderWorker> {
         let (tx, rx) = channel::<Job>();
         std::thread::Builder::new().name("lp-render".into()).spawn(move || {
             let mut renderer = None;
-            while let Ok(job) = rx.recv() {
+            // A job ran since the idle hook did.
+            let mut due = false;
+            loop {
+                let job = match (due, IDLE_RELEASE.get()) {
+                    (true, Some(release)) => match rx.recv_timeout(IDLE_RELEASE_AFTER) {
+                        Ok(job) => job,
+                        Err(RecvTimeoutError::Timeout) => {
+                            release();
+                            due = false;
+                            continue;
+                        }
+                        Err(RecvTimeoutError::Disconnected) => break,
+                    },
+                    _ => match rx.recv() {
+                        Ok(job) => job,
+                        Err(_) => break,
+                    },
+                };
                 let r = renderer.get_or_insert_with(Renderer::new);
                 run(r, job);
+                due = true;
             }
         })?;
         Ok(RenderWorker { tx })

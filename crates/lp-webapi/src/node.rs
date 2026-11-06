@@ -71,6 +71,40 @@ pub fn wrap_node<'s>(s: &Scope<'s>, page: &PageDom, id: NodeId) -> JsResult<Obje
         }
         (ty, class, connected)
     };
+    make_node_wrapper(s, page, page_rc, id, ty, class, connected)
+}
+
+/// [`wrap_node`] for a node the calling DOM operation just made in `doc`
+/// (`createElement`, `createTextNode`): no world has a wrapper of it yet,
+/// and when `doc` is the document of `page`, the page of `s`, the node
+/// belongs to `s`'s realm. Then the searches for an existing wrapper, in
+/// this world and its siblings, and for the node's home realm are skipped.
+pub fn wrap_created_node<'s>(s: &Scope<'s>, page: &Rc<PageDom>, doc: NodeId, id: NodeId) -> JsResult<Object<'s>> {
+    let page_rc = page_of(s)?;
+    if doc != page.document() || page_rc.id() != page.id() {
+        return wrap_node(s, page, id);
+    }
+    let (ty, class) = {
+        let mut dom = page.dom.borrow_mut();
+        dom.add_ref(id).js()?;
+        let ty = dom.node(id).js()?.kind.node_type();
+        (ty, crate::html::class_for(&dom, id))
+    };
+    // Not in a document yet: nothing to pin.
+    make_node_wrapper(s, page, page_rc, id, ty, class, false)
+}
+
+/// The wrapper of `id` in `s`'s realm, which has none: `page` holds the
+/// node's new reference already.
+fn make_node_wrapper<'s>(
+    s: &Scope<'s>,
+    page: &PageDom,
+    page_rc: Rc<PageDom>,
+    id: NodeId,
+    ty: NodeType,
+    class: crate::html::ElClass,
+    connected: bool,
+) -> JsResult<Object<'s>> {
     let data = NodeData {
         target: EventTargetData { page: page_rc, key: TargetKey::Node(id.index()) },
         id,
@@ -101,7 +135,10 @@ fn register_node_wrapper(s: &Scope<'_>, page: &PageDom, id: NodeId, wrapper: Obj
     if owned {
         if let Some(r) = s.wrapper_ref(wrapper) {
             page.remember_wrapper(s.realm_id(), id.index(), r);
-            if let Some(node) = s.unwrap::<Node>(wrapper.value()) {
+            // SAFETY: the wrapper was made just now and nothing that could
+            // collect it runs before the payload is written (no allocation
+            // in between): no protect/unprotect pair is needed.
+            if let Some(node) = unsafe { s.unwrap_rooted::<Node>(wrapper.value()) } {
                 node.wrapper.set(r.to_raw());
             }
         }
@@ -157,9 +194,15 @@ pub fn node_value<'s>(s: &Scope<'s>, page: &PageDom, id: Option<NodeId>) -> JsRe
 
 /// Extracts a Node argument (WebIDL `Node`), with a TypeError otherwise.
 pub fn node_arg(s: &Scope<'_>, v: Value<'_>, what: &str) -> JsResult<NodeId> {
-    s.unwrap::<Node>(v)
-        .map(|n| n.id)
+    node_id_of(s, v)
         .ok_or_else(|| JsError::Type(format!("Failed to execute '{what}': parameter is not of type 'Node'.")))
+}
+
+/// The node of a Node wrapper value: its id is read at once, so no
+/// protect/unprotect pair keeps the wrapper alive meanwhile (`Scope::unwrap`).
+fn node_id_of(s: &Scope<'_>, v: Value<'_>) -> Option<NodeId> {
+    // SAFETY: the payload is read before anything can run a collection.
+    unsafe { s.unwrap_rooted::<Node>(v) }.map(|n| n.id)
 }
 
 pub fn opt_node_arg(s: &Scope<'_>, v: Value<'_>, what: &str) -> JsResult<Option<NodeId>> {
@@ -189,8 +232,8 @@ impl NodeArgs {
     fn collect(s: &Scope<'_>, a: &Args<'_>) -> JsResult<Self> {
         let mut items = Vec::with_capacity(a.len());
         for v in a.iter() {
-            items.push(match s.unwrap::<Node>(v) {
-                Some(nd) => NodeArg::Node(nd.id),
+            items.push(match node_id_of(s, v) {
+                Some(id) => NodeArg::Node(id),
                 None => NodeArg::Text(dom_string(v)?),
             });
         }
@@ -299,7 +342,11 @@ impl JsClass for Node {
             Ok(s.number(n.page().dom.borrow().node_type(n.id).js()? as u16 as f64))
         });
         def.pure_getter_typed("nodeName", lp_js::GetterResult::String, |s, n| {
-            Ok(s.shared_string(&n.page().dom.borrow().node_name_shared(n.id).js()?))
+            let dom = n.page().dom.borrow();
+            Ok(match dom.tag_name_parts(n.id).js()? {
+                Some((name, upper)) => tag_name(s, name, upper),
+                None => s.shared_string(&dom.node_name_shared(n.id).js()?),
+            })
         });
         def.accessor(
             "nodeValue",
@@ -331,23 +378,35 @@ impl JsClass for Node {
                 }
             },
         );
-        def.accessor(
+        def.pure_accessor_typed(
             "textContent",
+            lp_js::GetterResult::Any,
             |s, n| {
-                let t = n.page().dom.borrow().text_content(n.id).js()?;
-                Ok(t.map_or(s.null(), |t| s.string(&t)))
+                let dom = n.page().dom.borrow();
+                Ok(dom.text_content_ref(n.id).js()?.map_or(s.null(), |t| s.string(&t)))
             },
             |_s, n, v| {
                 // `DOMString?`: undefined converts to null, which sets "".
-                let set = |text: &str| {
-                    crate::input::blur_before_removal(n.page(), n.id, true);
-                    n.page().dom.borrow_mut().set_text_content(n.id, text).js()
-                };
-                if v.is_nullish() {
-                    set("")
-                } else {
-                    with_str(v, set)
+                // The value converts first (an object's toString runs before
+                // the blur, as in the spec), then a focused element inside
+                // loses focus, which runs script. A string's characters are
+                // borrowed only after that: a handler that uses the string
+                // as a property key can swap its buffer for an atom's, and a
+                // GC can then free the old one.
+                let blur = || crate::input::blur_before_removal(n.page(), n.id, true);
+                let set = |text: &str| n.page().dom.borrow_mut().set_text_content(n.id, text).js();
+                // A string (the usual value) needs no nullish test first.
+                if v.is_string() {
+                    blur();
+                    return with_str(v, set);
                 }
+                if v.is_nullish() {
+                    blur();
+                    return set("");
+                }
+                let text = dom_string(v)?;
+                blur();
+                set(&text)
             },
         );
         def.pure_getter_typed("parentNode", lp_js::GetterResult::ObjectOrNull, |s, n| {
@@ -551,17 +610,34 @@ fn define_parent_node<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
     });
     def.pure_method("querySelector", 1, |s, n, a| {
         let page = n.page();
-        let list = arg_selector(&a, 0, "querySelector", page)?;
-        let r = page.dom.borrow().query_first(n.id, &list).js()?;
+        let r = with_selector(&a, 0, "querySelector", page, |q| page.dom.borrow().query_first(n.id, q))?.js()?;
         node_value(s, page, r)
     });
     def.pure_method("querySelectorAll", 1, |s, n, a| {
         let page = n.page();
-        let list = arg_selector(&a, 0, "querySelectorAll", page)?;
-        let r = page.dom.borrow().query_all(n.id, &list).js()?;
-        Ok(collections::static_node_list(s, page, r)?.value())
+        // The matches go to a buffer kept for the next query, then once into
+        // the list: no vector grown and shrunk per call.
+        let mut found = FOUND.take();
+        let list =
+            with_selector(&a, 0, "querySelectorAll", page, |q| page.dom.borrow().query_all_into(n.id, q, &mut found))
+                .and_then(|r| r.js())
+                .and_then(|()| collections::static_node_list(s, page, &found[..]));
+        found.clear();
+        // A larger query's buffer is cut down, not kept whole for the
+        // thread's life (and its forks).
+        found.shrink_to(FOUND_KEPT);
+        FOUND.set(found);
+        Ok(list?.value())
     });
 }
+
+thread_local! {
+    /// `querySelectorAll`'s match buffer (taken while a query runs).
+    static FOUND: std::cell::Cell<Vec<NodeId>> = const { std::cell::Cell::new(Vec::new()) };
+}
+/// The most matches whose buffer is kept between queries (64 KB): a
+/// `querySelectorAll('*')` of a document of some thousand elements.
+const FOUND_KEPT: usize = 1 << 13;
 
 fn define_child_node<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
     def.method("remove", 0, |s, n, _a| {
@@ -961,6 +1037,17 @@ impl JsClass for ShadowRoot {
 
 // ----- element ----------------------------------------------------------
 
+/// `tagName` from [`lp_dom::Dom::tag_name_parts`]: the local name's string
+/// (the same as `localName`'s), or its uppercased form, one per realm too.
+#[inline]
+fn tag_name<'s>(s: &Scope<'s>, local: &markup5ever::LocalName, upper: bool) -> Value<'s> {
+    if upper {
+        upper_local_name(s, local)
+    } else {
+        local.js(s)
+    }
+}
+
 pub struct Element;
 impl JsClass for Element {
     const NAME: &'static str = "Element";
@@ -971,39 +1058,49 @@ impl JsClass for Element {
         define_child_node(def);
         define_non_doctype_child(def);
         def.pure_getter_typed("tagName", lp_js::GetterResult::String, |s, n| {
-            Ok(s.shared_string(&n.page().dom.borrow().tag_name_shared(n.id).js()?))
+            let dom = n.page().dom.borrow();
+            Ok(match dom.tag_name_parts(n.id).js()? {
+                Some((name, upper)) => tag_name(s, name, upper),
+                None => s.shared_string(&dom.tag_name_shared(n.id).js()?),
+            })
         });
+        // Names and id are the element's atoms, class its attribute value:
+        // one string each per realm (`AtomJs`, `attr_value`), not a new one
+        // per read.
         def.pure_getter_typed("localName", lp_js::GetterResult::String, |s, n| {
-            Ok(s.string(n.page().dom.borrow().element(n.id).js()?.local_name()))
+            Ok(n.page().dom.borrow().element(n.id).js()?.local_name().js(s))
         });
         def.getter("namespaceURI", |s, n| {
             let dom = n.page().dom.borrow();
             let ns = dom.element(n.id).js()?.namespace();
-            Ok(if ns.is_empty() { s.null() } else { s.string(ns) })
+            Ok(if ns.is_empty() { s.null() } else { ns.js(s) })
         });
         def.getter("prefix", |s, n| {
             let dom = n.page().dom.borrow();
             Ok(match dom.element(n.id).js()?.prefix() {
-                Some(p) if !p.is_empty() => s.string(p),
+                Some(p) if !p.is_empty() => p.js(s),
                 _ => s.null(),
             })
         });
-        // `id` and `className` read the element's own id and class: the
-        // `id` atom it keeps and the `class` attribute's value.
         def.pure_accessor_typed(
             "id",
             lp_js::GetterResult::String,
-            |s, n| Ok(s.string(n.page().dom.borrow().element(n.id).js()?.id().unwrap_or(""))),
-            |_s, n, v| with_str(v, |id| n.page().dom.borrow_mut().set_attribute(n.id, "id", id).js()),
+            |s, n| Ok(atom_or_empty(s, n.page().dom.borrow().element(n.id).js()?.id_atom())),
+            |_s, n, v| {
+                with_str(v, |id| {
+                    n.page().dom.borrow_mut().set_attribute_local(n.id, &markup5ever::local_name!("id"), id).js()
+                })
+            },
         );
         def.pure_accessor_typed(
             "className",
             lp_js::GetterResult::String,
-            |s, n| {
-                let dom = n.page().dom.borrow();
-                Ok(s.string(dom.element(n.id).js()?.attr_local(&markup5ever::local_name!("class")).unwrap_or("")))
+            |s, n| Ok(class_name(s, n.page().dom.borrow().element(n.id).js()?)),
+            |_s, n, v| {
+                with_str(v, |class| {
+                    n.page().dom.borrow_mut().set_attribute_local(n.id, &markup5ever::local_name!("class"), class).js()
+                })
             },
-            |_s, n, v| with_str(v, |class| n.page().dom.borrow_mut().set_attribute(n.id, "class", class).js()),
         );
         def.pure_accessor_typed(
             "slot",
@@ -1012,14 +1109,22 @@ impl JsClass for Element {
                 let dom = n.page().dom.borrow();
                 Ok(s.string(dom.element(n.id).js()?.attr_local(&markup5ever::local_name!("slot")).unwrap_or("")))
             },
-            |_s, n, v| with_str(v, |slot| n.page().dom.borrow_mut().set_attribute(n.id, "slot", slot).js()),
+            |_s, n, v| {
+                with_str(v, |slot| {
+                    n.page().dom.borrow_mut().set_attribute_local(n.id, &markup5ever::local_name!("slot"), slot).js()
+                })
+            },
         );
         def.pure_accessor_typed(
             "classList",
             lp_js::GetterResult::ObjectOrNull,
             |s, n| Ok(collections::token_list(s, n.page(), n.id, "class")?.value()),
             // [PutForwards=value]
-            |_s, n, v| with_str(v, |value| n.page().dom.borrow_mut().set_attribute(n.id, "class", value).js()),
+            |_s, n, v| {
+                with_str(v, |value| {
+                    n.page().dom.borrow_mut().set_attribute_local(n.id, &markup5ever::local_name!("class"), value).js()
+                })
+            },
         );
         def.getter("part", |s, n| Ok(collections::token_list(s, n.page(), n.id, "part")?.value()));
         def.getter("attributes", |s, n| Ok(collections::named_node_map(s, n.page(), n.id)?.value()));
@@ -1055,18 +1160,29 @@ impl JsClass for Element {
             collections::remove_attribute_node(s, n.page(), n.id, a.get(0))
         });
         def.pure_method("getAttributeNames", 0, |s, n, _a| {
-            let names: Vec<String> =
-                n.page().dom.borrow().attributes(n.id).js()?.iter().map(|a| a.qualified_name()).collect();
             let mut vals = lp_js::RootedVec::new();
-            for name in names {
-                vals.push(s, s.string(&name));
+            {
+                let dom = n.page().dom.borrow();
+                for a in dom.attributes(n.id).js()? {
+                    // Making strings runs no script: the DOM stays borrowed.
+                    vals.push(
+                        s,
+                        match &a.name.prefix {
+                            Some(p) if !p.is_empty() => s.string(&a.qualified_name()),
+                            _ => a.name.local.js(s),
+                        },
+                    );
+                }
             }
             Ok(s.array(&vals.iter(s).collect::<Vec<_>>())?.value())
         });
         def.pure_method("getAttribute", 1, |s, n, a| {
             crate::util::with_arg_str(&a, 0, "Element.getAttribute", |name| {
                 let dom = n.page().dom.borrow();
-                Ok(dom.get_attribute_qualified(n.id, name).js()?.map_or(s.null(), |v| s.string(v)))
+                Ok(match dom.get_attribute_qualified_atom(n.id, name).js()? {
+                    Some((value, atom)) => attr_value(s, value, atom),
+                    None => s.null(),
+                })
             })
         });
         def.method("getAttributeNS", 2, |s, n, a| {
@@ -1134,8 +1250,8 @@ impl JsClass for Element {
         def.method("webkitMatchesSelector", 1, element_matches);
         def.pure_method("closest", 1, |s, n, a| {
             let page = n.page();
-            let list = arg_selector(&a, 0, "Element.closest", page)?;
-            let r = page.dom.borrow().element_closest(n.id, &list).js()?;
+            let r =
+                with_selector(&a, 0, "Element.closest", page, |q| page.dom.borrow().element_closest(n.id, q))?.js()?;
             node_value(s, page, r)
         });
         def.method("getElementsByTagName", 1, |s, n, a| {
@@ -1292,8 +1408,8 @@ fn assigned_slot<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
 
 fn element_matches<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value<'s>> {
     let page = n.page();
-    let list = arg_selector(&a, 0, "Element.matches", page)?;
-    Ok(s.boolean(page.dom.borrow().element_matches(n.id, &list).js()?))
+    let r = with_selector(&a, 0, "Element.matches", page, |q| page.dom.borrow().element_matches(n.id, q))?;
+    Ok(s.boolean(r.js()?))
 }
 
 fn insert_adjacent(dom: &mut lp_dom::Dom, el: NodeId, pos: &str, node: NodeId) -> JsResult<bool> {
@@ -1345,7 +1461,9 @@ impl JsClass for Document {
             let doc = lp_dom::parse::parse_html_unsafe(&page.dom, &html);
             Ok(wrap_node(s, &page, doc)?.value())
         });
-        def.getter("documentElement", |s, n| {
+        // `documentElement`, `head` and `body` are kept on the document's
+        // data as its tree changes: one load each, on the lean dispatch.
+        def.pure_getter_typed("documentElement", lp_js::GetterResult::ObjectOrNull, |s, n| {
             let e = n.page().dom.borrow().document_element(n.id).js()?;
             node_value(s, n.page(), e)
         });
@@ -1377,12 +1495,13 @@ impl JsClass for Document {
             let e = n.page().dom.borrow().doctype(n.id).js()?;
             node_value(s, n.page(), e)
         });
-        def.getter("head", |s, n| {
+        def.pure_getter_typed("head", lp_js::GetterResult::ObjectOrNull, |s, n| {
             let e = n.page().dom.borrow().head(n.id).js()?;
             node_value(s, n.page(), e)
         });
-        def.accessor(
+        def.pure_accessor_typed(
             "body",
+            lp_js::GetterResult::ObjectOrNull,
             |s, n| {
                 let e = n.page().dom.borrow().body(n.id).js()?;
                 node_value(s, n.page(), e)
@@ -1579,27 +1698,36 @@ impl JsClass for Document {
             let el = with_arg_str(&a, 0, "Document.createElement", |name| {
                 n.page().dom.borrow_mut().create_element(n.id, name).js()
             })?;
-            if let Some(is) = a.get(1).as_object().map(|o| o.get_atom("is")).transpose()?.filter(|v| !v.is_undefined()) {
+            if let Some(is) = a
+                .opt(1)
+                .and_then(|o| o.as_object())
+                .map(|o| o.get_atom("is"))
+                .transpose()?
+                .filter(|v| !v.is_undefined())
+            {
                 let arg0 = dom_string(is)?;
                 n.page().dom.borrow_mut().set_attribute(el, "is", &arg0).js()?;
             }
-            crate::html::upgrade_if_custom(s, n.page(), el)
+            crate::html::upgrade_if_custom(s, n.page(), n.id, el)
         });
         def.method("createElementNS", 2, |s, n, a| {
             a.require(2, "Document.createElementNS")?;
             let ns = opt_dom_string(a.get(0))?;
             let q = dom_string(a.get(1))?;
             let el = n.page().dom.borrow_mut().create_element_ns(n.id, ns.as_deref(), &q).js()?;
-            crate::html::upgrade_if_custom(s, n.page(), el)
+            crate::html::upgrade_if_custom(s, n.page(), n.id, el)
         });
         def.method("createTextNode", 1, |s, n, a| {
-            let t = with_arg_str(&a, 0, "Document.createTextNode", |d| n.page().dom.borrow_mut().create_text(n.id, d).js())?;
-            Ok(wrap_node(s, n.page(), t)?.value())
+            let t = with_arg_str(&a, 0, "Document.createTextNode", |d| {
+                n.page().dom.borrow_mut().create_text(n.id, d).js()
+            })?;
+            Ok(wrap_created_node(s, n.page(), n.id, t)?.value())
         });
         def.method("createComment", 1, |s, n, a| {
-            let t =
-                with_arg_str(&a, 0, "Document.createComment", |d| n.page().dom.borrow_mut().create_comment(n.id, d).js())?;
-            Ok(wrap_node(s, n.page(), t)?.value())
+            let t = with_arg_str(&a, 0, "Document.createComment", |d| {
+                n.page().dom.borrow_mut().create_comment(n.id, d).js()
+            })?;
+            Ok(wrap_created_node(s, n.page(), n.id, t)?.value())
         });
         def.method("createAttribute", 1, |s, n, a| {
             let name = arg_string(&a, 0, "Document.createAttribute")?;
@@ -1632,7 +1760,7 @@ impl JsClass for Document {
         });
         def.method("createDocumentFragment", 0, |s, n, _a| {
             let f = n.page().dom.borrow_mut().create_fragment(n.id).js()?;
-            Ok(wrap_node(s, n.page(), f)?.value())
+            Ok(wrap_created_node(s, n.page(), n.id, f)?.value())
         });
         def.method("createEvent", 1, |s, n, a| {
             let iface = arg_string(&a, 0, "Document.createEvent")?;

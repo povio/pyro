@@ -2924,8 +2924,8 @@ pub(crate) fn elements_from_point<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) 
     crate::layout_api::elements_from_point(s, n, a)
 }
 
-pub(crate) fn upgrade_if_custom<'s>(s: &Scope<'s>, page: &Rc<PageDom>, el: NodeId) -> JsResult<Value<'s>> {
-    crate::custom::create_element_value(s, page, el)
+pub(crate) fn upgrade_if_custom<'s>(s: &Scope<'s>, page: &Rc<PageDom>, doc: NodeId, el: NodeId) -> JsResult<Value<'s>> {
+    crate::custom::create_element_value(s, page, doc, el)
 }
 
 // ----- document.open / write / close ----------------------------------------
@@ -3016,7 +3016,10 @@ fn open_document(page: &Rc<PageDom>, doc: NodeId) -> JsResult<()> {
     *page.script_parser.borrow_mut() = Some(parser);
     page.script_parser_active.set(true);
     page.script_parser_close.set(false);
-    if let Some(hooks) = page.hooks() {
+    // The frame's document only: one made with createHTMLDocument (or
+    // DOMParser) is no frame's, which neither loads again nor stops being
+    // the initial about:blank document.
+    if let Some(hooks) = page.hooks().filter(|_| doc == page.document()) {
         hooks.document_reopened();
     }
     Ok(())
@@ -3091,7 +3094,8 @@ fn close_document(page: &Rc<PageDom>, doc: NodeId) {
     parser.end();
     page.script_parser_active.set(false);
     crate::lifecycle::set_ready_state(page, doc, "interactive");
-    if !page.hooks().is_some_and(|h| h.document_closed()) {
+    // The frame's document only, as for `document_reopened`.
+    if !page.hooks().filter(|_| doc == page.document()).is_some_and(|h| h.document_closed()) {
         let p = page.clone();
         page.post_task(Box::new(move || {
             if p.is_disposed() || p.document() != doc {

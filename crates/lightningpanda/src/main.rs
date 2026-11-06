@@ -11,6 +11,58 @@ use std::process::ExitCode;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
+/// The process's Rust heap. macOS's allocator keeps the pages of freed
+/// blocks resident and charged to the process (`malloc_zone_pressure_relief`
+/// releases none of them): after a closed SPA the system heap held 28 MB
+/// for 3 MB of live blocks. mimalloc returns them (`MADV_FREE_REUSABLE`
+/// after a delay, at once on [`lp_js::Engine::settle`]).
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
+unsafe extern "C" {
+    /// Frees the calling thread's empty pages (and the blocks other threads
+    /// freed into them) and returns the free ones to the system.
+    fn mi_collect(force: bool);
+}
+
+/// The VM tag of mimalloc's regions. Its default (100) is
+/// `VM_MEMORY_IOACCELERATOR`, so vmmap and footprint showed the Rust heap as
+/// the GPU driver's "IOAccelerator"; `VM_MEMORY_APPLICATION_SPECIFIC_1`
+/// shows as "App-Specific Tag 1".
+#[cfg(target_os = "macos")]
+mod allocator_tag {
+    use std::ffi::{c_int, c_long};
+
+    /// mimalloc's `mi_option_os_tag`.
+    const MI_OPTION_OS_TAG: c_int = 18;
+    const VM_MEMORY_APPLICATION_SPECIFIC_1: c_long = 240;
+
+    unsafe extern "C" {
+        fn mi_option_set(option: c_int, value: c_long);
+    }
+
+    extern "C" fn tag_allocator_regions() {
+        // SAFETY: mimalloc's public API; it only stores the value.
+        unsafe { mi_option_set(MI_OPTION_OS_TAG, VM_MEMORY_APPLICATION_SPECIFIC_1) }
+    }
+
+    /// Runs before `main`, so before the first Rust allocation: mimalloc
+    /// tags a region when it maps it, and its first arena serves the heap
+    /// from then on.
+    #[used]
+    #[link_section = "__DATA,__mod_init_func"]
+    static TAG_BEFORE_MAIN: extern "C" fn() = tag_allocator_regions;
+}
+
+/// Returns mimalloc's free pages to the system now: the browser thread's on
+/// [`lp_js::Engine::settle`], an I/O thread's or the render thread's once it
+/// is idle (each owns the pages of what it allocated: response buffers,
+/// render documents and images, which the browser thread frees).
+fn release_allocator() {
+    // SAFETY: mimalloc's public API, callable from any thread at any time.
+    unsafe { mi_collect(true) }
+}
+
 const USAGE: &str = "\
 usage: lightningpanda <command> [options]
 
@@ -24,6 +76,10 @@ commands:
 ";
 
 fn main() -> ExitCode {
+    lp_js::set_allocator_release(release_allocator);
+    lp_net::set_idle_release(release_allocator);
+    #[cfg(feature = "render")]
+    lp_render::worker::set_idle_release(release_allocator);
     lp_js::configure_process();
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {

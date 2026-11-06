@@ -52,17 +52,10 @@ pub struct NodeHolds {
 }
 
 impl NodeHolds {
-    pub fn new(page: &Rc<PageDom>, ids: Vec<NodeId>) -> JsResult<NodeHolds> {
-        {
-            let mut dom = page.dom.borrow_mut();
-            for (k, &id) in ids.iter().enumerate() {
-                if let Err(e) = dom.add_ref(id) {
-                    ids[..k].iter().for_each(|&held| dom.release(held));
-                    return Err(dom_err(e));
-                }
-            }
-        }
-        Ok(NodeHolds { page: page.clone(), ids: ids.into_boxed_slice() })
+    pub fn new(page: &Rc<PageDom>, ids: impl Into<Box<[NodeId]>>) -> JsResult<NodeHolds> {
+        let ids = ids.into();
+        page.dom.borrow_mut().add_refs(&ids).map_err(dom_err)?;
+        Ok(NodeHolds { page: page.clone(), ids })
     }
 }
 
@@ -249,10 +242,11 @@ pub(crate) fn form_named<'s>(s: &Scope<'s>, page: &PageDom, form: NodeId, name: 
     }
 }
 
-pub fn static_node_list<'s>(s: &Scope<'s>, page: &PageDom, ids: Vec<NodeId>) -> JsResult<Object<'s>> {
+pub fn static_node_list<'s>(s: &Scope<'s>, page: &PageDom, ids: impl Into<Box<[NodeId]>>) -> JsResult<Object<'s>> {
     let page = page_rc(s).inspect(|p| {
         debug_assert_eq!(p.id(), page.id());
     })?;
+    let ids = ids.into();
     // Empty static lists need no page reference.
     let holds = if ids.is_empty() { None } else { Some(NodeHolds::new(&page, ids)?) };
     s.wrap::<NodeList>(
@@ -749,6 +743,24 @@ impl TokenListData {
         }
         out
     }
+    /// Token `i` of the set as a string: a `class` token is the element's
+    /// atom, so its realm's one string for it.
+    fn token<'s>(&self, s: &Scope<'s>, dom: &lp_dom::Dom, i: usize) -> Option<Value<'s>> {
+        if self.attr == "class" {
+            let classes = dom.element(self.el.id).ok()?.classes();
+            let mut set = classes.iter().enumerate().filter(|&(k, c)| !classes[..k].contains(c));
+            return set.nth(i).map(|(_, c)| c.js(s));
+        }
+        self.tokens_in(dom).get(i).map(|x| s.string(x))
+    }
+    /// The attribute's value (`value`, `toString`): `class` as `className`.
+    fn value<'s>(&self, s: &Scope<'s>) -> JsResult<Value<'s>> {
+        let dom = self.el.page.dom.borrow();
+        if self.attr == "class" {
+            return Ok(crate::util::class_name(s, dom.element(self.el.id).js()?));
+        }
+        Ok(s.string(dom.get_attribute(self.el.id, self.attr).js()?.unwrap_or("")))
+    }
     fn contains(&self, token: &str) -> bool {
         let dom = self.el.page.dom.borrow();
         if self.attr == "class" {
@@ -813,26 +825,16 @@ impl JsClass for DomTokenList {
         });
         def.accessor(
             "value",
-            |s, t| {
-                let dom = t.el.page.dom.borrow();
-                Ok(s.string(dom.get_attribute(t.el.id, t.attr).js()?.unwrap_or("")))
-            },
+            |s, t| t.value(s),
             |_s, t, v| with_str(v, |value| t.el.page.dom.borrow_mut().set_attribute(t.el.id, t.attr, value).js()),
         );
-        def.method("toString", 0, |s, t, _a| {
-            let dom = t.el.page.dom.borrow();
-            Ok(s.string(dom.get_attribute(t.el.id, t.attr).js()?.unwrap_or("")))
-        });
+        def.method("toString", 0, |s, t, _a| t.value(s));
         def.method("item", 1, |s, t, a| {
             let i = to_u32(a.get(0))? as usize;
-            let dom = t.el.page.dom.borrow();
-            Ok(t.tokens_in(&dom).get(i).map_or(s.null(), |x| s.string(x)))
+            Ok(t.token(s, &t.el.page.dom.borrow(), i).unwrap_or_else(|| s.null()))
         });
         def.legacy_platform_object();
-        def.indexed(|s, t, i| {
-            let dom = t.el.page.dom.borrow();
-            Ok(t.tokens_in(&dom).get(i as usize).map(|x| s.string(x)))
-        });
+        def.indexed(|s, t, i| Ok(t.token(s, &t.el.page.dom.borrow(), i as usize)));
 
         def.method("contains", 1, |s, t, a| {
             let v = a.get(0);
@@ -1160,19 +1162,26 @@ impl JsClass for Attr {
     type Data = NodeData;
     type Parent = crate::node::Node;
     fn define(def: &mut ClassDef<Self>) {
-        def.getter("name", |s, a| Ok(s.string(&a.page().dom.borrow().attr_node_data(a.id).js()?.qualified_name())));
-        def.getter("localName", |s, a| Ok(s.string(&a.page().dom.borrow().attr_node_data(a.id).js()?.name.local)));
+        def.getter("name", |s, a| {
+            let dom = a.page().dom.borrow();
+            let attr = dom.attr_node_data(a.id).js()?;
+            Ok(match &attr.name.prefix {
+                Some(p) if !p.is_empty() => s.string(&attr.qualified_name()),
+                _ => attr.name.local.js(s),
+            })
+        });
+        def.getter("localName", |s, a| Ok(a.page().dom.borrow().attr_node_data(a.id).js()?.name.local.js(s)));
         def.getter("prefix", |s, a| {
             let dom = a.page().dom.borrow();
             Ok(match &dom.attr_node_data(a.id).js()?.name.prefix {
-                Some(p) if !p.is_empty() => s.string(p),
+                Some(p) if !p.is_empty() => p.js(s),
                 _ => s.null(),
             })
         });
         def.getter("namespaceURI", |s, a| {
             let dom = a.page().dom.borrow();
             let ns = &dom.attr_node_data(a.id).js()?.name.ns;
-            Ok(if ns.is_empty() { s.null() } else { s.string(ns) })
+            Ok(if ns.is_empty() { s.null() } else { ns.js(s) })
         });
         def.accessor(
             "value",

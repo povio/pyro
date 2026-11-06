@@ -302,13 +302,17 @@ impl FrameHost {
             Rc::downgrade(self),
             key,
         ))?;
-        lp_webapi::install(&realm.scope()?, dom)?;
-        // Uncaught exceptions of the realm's callbacks fire `error` at the Window.
-        realm.set_exception_reporter(Some(lp_webapi::lifecycle::report_exception));
-        if crate::clock::page_clock_enabled() {
-            realm.scope()?.eval(crate::clock::DATE_SCRIPT, Some("lightningpanda://internal/clock.js"), 1)?;
+        {
+            // Engine code only, up to the bindings and init scripts below.
+            let _setup = realm.setup_without_watchdog();
+            lp_webapi::install(&realm.scope()?, dom)?;
+            // Uncaught exceptions of the realm's callbacks fire `error` at the Window.
+            realm.set_exception_reporter(Some(lp_webapi::lifecycle::report_exception));
+            if crate::clock::page_clock_enabled() {
+                realm.scope()?.eval(crate::clock::DATE_SCRIPT, Some("lightningpanda://internal/clock.js"), 1)?;
+            }
+            window::init_frame_indices(&realm)?;
         }
-        window::init_frame_indices(&realm)?;
         loader::install_module_fetcher(self.sched.clone(), key, &realm);
         let entry = FrameRealm { world: world.clone(), realm: realm.clone() };
         match key.child {
@@ -420,6 +424,7 @@ impl FrameHost {
                 nav: nav.clone(),
                 pending_loader: None,
                 pending_cancel: None,
+                pending_script: None,
                 load: None,
                 stylesheets: Default::default(),
                 images: Default::default(),

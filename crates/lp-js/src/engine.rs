@@ -33,6 +33,10 @@ pub struct Capabilities {
     pub object_global_context: bool,
     /// fork() support (patched JavaScriptCore): [`Engine::prepare_for_fork`].
     pub fork: bool,
+    /// Constant attributes of a realm's global (patched JavaScriptCore):
+    /// [`crate::Scope::define_global_constant`] and
+    /// [`crate::Scope::define_lazy_global_constant`].
+    pub global_constants: bool,
 }
 
 impl Capabilities {
@@ -50,6 +54,11 @@ impl Capabilities {
             proxy_targets: spi.get_proxy_target.is_some(),
             object_global_context: spi.get_object_global_context.is_some(),
             fork: spi.fork().is_some(),
+            global_constants: spi.set_constant_accessor.is_some()
+                && spi.set_lazy_constant_accessor.is_some()
+                && spi.set_constant_accessor_initializer.is_some()
+                && spi.clear_constant_accessors.is_some()
+                && spi.get_proxy_target.is_some(),
         }
     }
 }
@@ -136,9 +145,18 @@ pub(crate) struct EngineInner {
     /// When [`Engine::release_closed`] actually collects.
     release_gate: ReleaseGate,
     /// Payloads of the member functions made with the patched JSC's
-    /// `JSObjectMakeFunctionWithCallbackAndData`, which have no finalizer:
-    /// they live as long as the engine, which outlives every realm.
+    /// `JSObjectMakeFunctionWithCallbackAndData`, which have no finalizer, and
+    /// for no live realm: they live as long as the engine, which outlives
+    /// every realm. A live realm owns its functions' payloads
+    /// (`RealmInner::member_fns`) and retires them when it is disposed.
     pub(crate) member_payloads: RefCell<Vec<Box<class::MemberPayload>>>,
+    /// Disposed realms' member payloads, each realm's with a weak handle to
+    /// its global object: freed once the collector finds that global dead
+    /// ([`EngineInner::release_dead_members`]). Every function points at its
+    /// realm's global (its structure does), so none of them is alive then.
+    retired_members: RefCell<Vec<RetiredMembers>>,
+    /// Garbage collections seen, for sweeping the realms' interned strings.
+    pub(crate) collections: crate::interned::Collections,
 }
 
 /// Decides when a closed page's garbage is worth a full collection: once the
@@ -159,7 +177,7 @@ struct ReleaseGate {
     /// A closed page has not been collected yet.
     pending: Cell<bool>,
     /// (minimum growth in bytes, percent of the footprint).
-    growth: (u64, u64),
+    growth: Cell<(u64, u64)>,
 }
 
 /// A loop of small pages levels off about 20 MB above its first reading under
@@ -171,7 +189,7 @@ const RELEASE_GROWTH_PERCENT: u64 = 25;
 
 impl ReleaseGate {
     fn new(growth: (u64, u64)) -> ReleaseGate {
-        ReleaseGate { low: Cell::new(u64::MAX), pending: Cell::new(false), growth }
+        ReleaseGate { low: Cell::new(u64::MAX), pending: Cell::new(false), growth: Cell::new(growth) }
     }
 
     /// `LIGHTNINGPANDA_RELEASE_GROWTH=<MB>[:<percent>]` overrides the
@@ -189,12 +207,32 @@ impl ReleaseGate {
     /// Whether a page that was just closed should be collected now.
     fn should_collect(&self, footprint: Option<u64>) -> bool {
         let Some(now) = footprint else { return true };
-        let low = self.low.get().min(now);
-        self.low.set(low);
-        let (min, percent) = self.growth;
-        let due = now - low >= min.max(low / 100 * percent);
+        let due = self.due(now);
         self.pending.set(!due);
         due
+    }
+
+    /// Leaves a collection pending only when one is due (without a
+    /// footprint always, as [`ReleaseGate::should_collect`] then collects).
+    fn defer_if_due(&self, footprint: Option<u64>) {
+        if footprint.is_none_or(|now| self.due(now)) {
+            self.pending.set(true);
+        }
+    }
+
+    /// Whether the process has grown past the threshold since its lowest
+    /// reading, `now` included.
+    fn due(&self, now: u64) -> bool {
+        let low = self.observe(now);
+        let (min, percent) = self.growth.get();
+        now - low >= min.max(low / 100 * percent)
+    }
+
+    /// Records a reading without deciding anything; the lowest so far.
+    fn observe(&self, now: u64) -> u64 {
+        let low = self.low.get().min(now);
+        self.low.set(low);
+        low
     }
 
     /// The process's pages are another's now: the next reading is the first.
@@ -233,7 +271,79 @@ fn process_footprint() -> Option<u64> {
     }
 }
 
+/// The member payloads of one disposed realm (`EngineInner::retired_members`).
+struct RetiredMembers {
+    /// The realm's global object.
+    global: sys::JSWeakRef,
+    payloads: Vec<Box<class::MemberPayload>>,
+}
+
 impl EngineInner {
+    /// Takes the member payloads of a realm being disposed, whose global
+    /// object `global` is still alive: they go with it (see
+    /// `retired_members`), or with the engine when no weak handle can watch
+    /// it.
+    pub(crate) fn retire_members(&self, global: sys::JSObjectRef, payloads: Vec<Box<class::MemberPayload>>) {
+        if payloads.is_empty() {
+            return;
+        }
+        match sys::spi::get().weak() {
+            Some((create, _, _)) if !global.is_null() && !self.is_shut_down() => {
+                // SAFETY: a live object of this engine's VM.
+                let weak = unsafe { create(self.group, global) };
+                self.retired_members.borrow_mut().push(RetiredMembers { global: weak, payloads });
+            }
+            _ => self.member_payloads.borrow_mut().extend(payloads),
+        }
+    }
+
+    /// Frees the member payloads of disposed realms whose global object the
+    /// collector found dead: no function that holds one is alive to be
+    /// called. Without this, every realm that installed an interface kept
+    /// 48 bytes per member for the engine's life (about 250 members, 12 KB,
+    /// for a realm whose script read `document`, every navigation). A safe
+    /// point: after a task, after a settle.
+    pub(crate) fn release_dead_members(&self) {
+        let Ok(mut retired) = self.retired_members.try_borrow_mut() else { return };
+        if retired.is_empty() || self.is_shut_down() {
+            return;
+        }
+        let Some((_, release, get)) = sys::spi::get().weak() else { return };
+        let mut dead = Vec::new();
+        retired.retain_mut(|r| {
+            // SAFETY: handles owned here, released once.
+            if !unsafe { get(r.global) }.is_null() {
+                return true;
+            }
+            unsafe { release(self.group, r.global) };
+            dead.push(std::mem::take(&mut r.payloads));
+            false
+        });
+        drop(retired);
+        drop(dead);
+    }
+
+    /// The payloads waiting for their realm's global to die (tests).
+    #[cfg(test)]
+    pub(crate) fn retired_payloads(&self) -> impl Iterator<Item = *const class::MemberPayload> {
+        let retired = self.retired_members.borrow();
+        let all: Vec<_> = retired.iter().flat_map(|r| r.payloads.iter().map(|p| &**p as *const _)).collect();
+        all.into_iter()
+    }
+
+    /// The retired payloads' handles go before the VM; the payloads stay
+    /// with the engine (engine shutdown).
+    fn release_retired_members(&self) {
+        let retired = std::mem::take(&mut *self.retired_members.borrow_mut());
+        let Some((_, release, _)) = sys::spi::get().weak() else { return };
+        let mut kept = self.member_payloads.borrow_mut();
+        for r in retired {
+            // SAFETY: handles owned here; the VM is still alive.
+            unsafe { release(self.group, r.global) };
+            kept.extend(r.payloads);
+        }
+    }
+
     pub(crate) fn group(&self) -> sys::JSContextGroupRef {
         self.group
     }
@@ -292,6 +402,8 @@ impl EngineInner {
         }
         drop(realms);
         class::drain_finalized(self);
+        self.collections.release(self.group);
+        self.release_retired_members();
         self.shut_down.set(true);
         // SAFETY: no realm, scope or callback remains; the root context and
         // group are owned here. Releasing the group destroys the VM, which
@@ -421,6 +533,8 @@ impl Engine {
             owner_dropped: Cell::new(false),
             release_gate: ReleaseGate::new(ReleaseGate::growth_from_env()),
             member_payloads: RefCell::new(Vec::new()),
+            retired_members: RefCell::new(Vec::new()),
+            collections: crate::interned::Collections::new(),
         });
         if caps.termination {
             // Poll the termination flag every 50 ms of continuous JS execution.
@@ -487,7 +601,10 @@ impl Engine {
     /// Releases payloads of wrappers finalized by the GC. Call at safe points
     /// (the event loop does this after each task).
     pub fn drain_finalized(&self) -> usize {
-        class::drain_finalized(&self.inner)
+        let n = class::drain_finalized(&self.inner);
+        crate::interned::sweep_realms(&self.inner, false);
+        self.inner.release_dead_members();
+        n
     }
 
     /// Frees what a closed page (or a navigated-away document) left behind,
@@ -517,6 +634,44 @@ impl Engine {
         }
     }
 
+    /// [`Engine::release_closed`] for a document whose replacement leaves
+    /// nothing worth a full collection (a page's first document, its initial
+    /// about:blank one): no collection, but the footprint is still a reading
+    /// for the gate. Those moments are a process's low points, a test's
+    /// first navigation for one, and the gate measures growth from the
+    /// lowest reading: without them, the first reading would be a close
+    /// with an app loaded, and later closes would rarely collect.
+    pub fn note_release_point(&self) {
+        if let Some(now) = process_footprint() {
+            self.inner.release_gate.observe(now);
+        }
+    }
+
+    /// [`Engine::release_closed`] for a document that was never loaded but
+    /// that scripts may have filled (an initial about:blank one written by
+    /// `page.setContent`): usually little to free, sometimes a lot. A reading
+    /// for the gate, as [`Engine::note_release_point`] takes, and no
+    /// collection now. Only when the gate is due is a collection left
+    /// pending, for the next close or an idle moment
+    /// ([`Engine::release_pending`]). Collecting at once ran a second full
+    /// collection when the page closed soon after (setContent, goto, close:
+    /// 8% more instructions), and leaving one pending for a small document
+    /// had the idle loop drop the live page's compiled code (`settle_idle`)
+    /// after its first quiet second.
+    pub fn defer_release_if_due(&self) {
+        if std::env::var("LIGHTNINGPANDA_RELEASE_ON_CLOSE").is_ok_and(|v| v == "0") {
+            return self.note_release_point();
+        }
+        self.inner.release_gate.defer_if_due(process_footprint());
+    }
+
+    /// The growth past which a release collects, as
+    /// `LIGHTNINGPANDA_RELEASE_GROWTH` sets it, for this engine (tests).
+    #[doc(hidden)]
+    pub fn set_release_growth(&self, min_bytes: u64, percent: u64) {
+        self.inner.release_gate.growth.set((min_bytes, percent));
+    }
+
     /// Whether a closed page is still waiting for the collection
     /// [`Engine::release_closed`] put off. [`Engine::settle`] runs it.
     pub fn release_pending(&self) -> bool {
@@ -531,7 +686,9 @@ impl Engine {
         // compile. One still running holds its realm until the next settle.
         self.complete_jit_plans(false);
         self.synchronous_gc();
-        self.drain_finalized();
+        class::drain_finalized(&self.inner);
+        crate::interned::sweep_realms(&self.inner, true);
+        self.inner.release_dead_members();
         release_memory();
         // The collection freed the closed page's blocks to JSC's allocator,
         // whose scavenger returns them to the system only later, if at all
@@ -857,9 +1014,24 @@ unsafe extern "C" fn should_terminate(ctx: sys::JSContextRef, data: *mut c_void)
     false
 }
 
+/// What returns the process allocator's free pages when it is not the
+/// system's ([`set_allocator_release`]).
+static ALLOCATOR_RELEASE: std::sync::OnceLock<fn()> = std::sync::OnceLock::new();
+
+/// Registers how the executable's global allocator returns its free pages
+/// to the operating system: [`release_memory`] calls it besides the system
+/// allocator's own release. An executable that replaces the allocator sets
+/// it at the start of `main`.
+pub fn set_allocator_release(release: fn()) {
+    let _ = ALLOCATOR_RELEASE.set(release);
+}
+
 /// Returns the allocator's free pages to the operating system (what
 /// `malloc_trim(0)` does on glibc; `malloc_zone_pressure_relief` on macOS).
 pub fn release_memory() {
+    if let Some(release) = ALLOCATOR_RELEASE.get() {
+        release();
+    }
     #[cfg(target_os = "macos")]
     {
         unsafe extern "C" {
@@ -927,6 +1099,41 @@ mod tests {
     fn release_gate_without_a_threshold_or_a_footprint_always_collects() {
         assert!(ReleaseGate::new((0, 0)).should_collect(Some(100 * MB)));
         assert!(ReleaseGate::new((16 * MB, 25)).should_collect(None));
+    }
+
+    #[test]
+    fn release_gate_measures_from_readings_that_collected_nothing() {
+        let gate = ReleaseGate::new((16 * MB, 25));
+        gate.observe(40 * MB);
+        assert!(!gate.pending.get(), "a reading alone leaves nothing pending");
+        assert!(gate.should_collect(Some(60 * MB)), "20 MB above the observed low point");
+    }
+
+    #[test]
+    fn release_gate_defers_only_what_is_due() {
+        let gate = ReleaseGate::new((16 * MB, 25));
+        gate.defer_if_due(Some(40 * MB));
+        assert!(!gate.pending.get(), "the first reading is the reference");
+        gate.defer_if_due(Some(50 * MB));
+        assert!(!gate.pending.get(), "under the threshold");
+        gate.defer_if_due(Some(56 * MB));
+        assert!(gate.pending.get(), "past it");
+        gate.pending.set(false);
+        gate.defer_if_due(Some(30 * MB));
+        assert!(!gate.pending.get());
+        assert!(gate.should_collect(Some(46 * MB)), "measured from the deferral's reading");
+        gate.pending.set(false);
+        gate.defer_if_due(None);
+        assert!(gate.pending.get(), "without a footprint, as a close collects");
+    }
+
+    #[test]
+    fn release_gate_defer_keeps_a_pending_collection() {
+        let gate = ReleaseGate::new((16 * MB, 25));
+        assert!(!gate.should_collect(Some(40 * MB)));
+        assert!(gate.pending.get());
+        gate.defer_if_due(Some(41 * MB));
+        assert!(gate.pending.get(), "a close left it pending");
     }
 
     #[test]

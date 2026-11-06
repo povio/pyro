@@ -41,7 +41,9 @@ struct IdEntry {
     /// The first element with the id in tree order; NIL once the first of
     /// several left (found again by the next lookup).
     first: Cell<u32>,
-    /// Elements of the scope with the id.
+    /// Elements of the scope with the id. Compiled queries rely on it (one:
+    /// the only candidate or the subtree to walk; none: no match), so every
+    /// tree or `id` write must go through `id_added` / `id_removed`.
     count: u32,
 }
 
@@ -68,6 +70,9 @@ impl Dom {
         if flags != 0 {
             self.retag(node, flags);
         }
+        if self.n(node).is_element() {
+            self.document_roots_linked(node, parent);
+        }
     }
 
     /// Before `node` is unlinked from its parent: it and its shadow-including
@@ -76,6 +81,9 @@ impl Dom {
     pub(crate) fn tree_unlinking(&mut self, node: u32) {
         if self.n(node).tree_flags() != 0 {
             self.retag(node, 0);
+        }
+        if self.n(node).is_element() {
+            self.document_roots_unlinking(node);
         }
     }
 
@@ -230,25 +238,31 @@ impl Dom {
     /// `Some(NIL)` for none, `None` when `root` is no tree scope (it has
     /// no index: callers walk).
     pub(crate) fn indexed_by_id(&self, root: u32, id: &str) -> Option<u32> {
+        self.indexed_by_id_count(root, id).map(|(first, _)| first)
+    }
+
+    /// [`Dom::indexed_by_id`] and how many elements of the scope have the
+    /// id: `Some((NIL, 0))` for none.
+    pub(crate) fn indexed_by_id_count(&self, root: u32, id: &str) -> Option<(u32, u32)> {
         let map = match &self.n(root).kind {
             NodeKind::Document(d) if d.fragment_parse_host => return None,
             NodeKind::Document(d) => &d.ids,
             NodeKind::Fragment(f) if f.shadow.is_some() => match f.ids.as_deref() {
                 Some(m) => m,
-                None => return Some(NIL),
+                None => return Some((NIL, 0)),
             },
             _ => return None,
         };
-        let Some(entry) = map.0.get(id) else { return Some(NIL) };
+        let Some(entry) = map.0.get(id) else { return Some((NIL, 0)) };
         let first = entry.first.get();
         if first != NIL {
-            return Some(first);
+            return Some((first, entry.count));
         }
         // The first of several left: find the new first once.
         let found = self.walk_by_id(root, id);
         debug_assert!(found != NIL, "an indexed id has an element");
         entry.first.set(found);
-        Some(found)
+        Some((found, entry.count))
     }
 
     /// The first element with id `id` in the light tree under `root`
@@ -337,6 +351,25 @@ impl Dom {
                 }
             }
         }
+        // Each document's kept document element, head and body are what
+        // walking its children finds.
+        for i in 0..self.slot_count() {
+            if !self.slot_live(i) {
+                continue;
+            }
+            let NodeKind::Document(d) = &self.n(i).kind else { continue };
+            let root = self.first_element_child_idx(i);
+            let (head, body) = match root {
+                r if r != NIL && self.is_html_root(r) => (self.head_child_idx(r, NIL), self.body_child_idx(r, NIL)),
+                _ => (NIL, NIL),
+            };
+            if (d.document_element, d.head, d.body) != (root, head, body) {
+                return Err(format!(
+                    "document {i}: kept (root, head, body) ({}, {}, {}), tree ({root}, {head}, {body})",
+                    d.document_element, d.head, d.body
+                ));
+            }
+        }
         Ok(())
     }
 
@@ -351,6 +384,104 @@ impl Dom {
             match &self.n(i).kind {
                 NodeKind::Fragment(f) if f.shadow.is_some() => i = f.host,
                 _ => return i,
+            }
+        }
+    }
+}
+
+impl Dom {
+    // ----- document element, head and body -----------------------------
+
+    /// The document whose document element is `parent`, an HTML `html`
+    /// element (the only one with a head and a body), if any.
+    fn document_of_html_root(&self, parent: u32) -> u32 {
+        let doc = self.n(parent).parent;
+        match doc != NIL
+            && matches!(&self.n(doc).kind, NodeKind::Document(d) if d.document_element == parent)
+            && self.is_html_root(parent)
+        {
+            true => doc,
+            false => NIL,
+        }
+    }
+
+    /// Records `element` (NIL: none) as `doc`'s document element, with its
+    /// `head` and `body` (none unless it is an HTML `html` element).
+    fn set_document_element(&mut self, doc: u32, element: u32) {
+        let (head, body) = match element {
+            e if e != NIL && self.is_html_root(e) => (self.head_child_idx(e, NIL), self.body_child_idx(e, NIL)),
+            _ => (NIL, NIL),
+        };
+        if let NodeKind::Document(d) = &mut self.n_mut(doc).kind {
+            d.document_element = element;
+            d.head = head;
+            d.body = body;
+        }
+    }
+
+    /// After element `node` was linked under `parent`: it may be a
+    /// document's document element now, or that element's head or body.
+    fn document_roots_linked(&mut self, node: u32, parent: u32) {
+        if let NodeKind::Document(d) = &self.n(parent).kind {
+            let current = d.document_element;
+            // The first element child: a document has one, but the parsers'
+            // raw links do not check.
+            let first = self.first_element_child_idx(parent);
+            if first != current {
+                self.set_document_element(parent, first);
+            }
+            return;
+        }
+        let doc = self.document_of_html_root(parent);
+        if doc == NIL {
+            return;
+        }
+        let Some(e) = self.n(node).element().filter(|e| e.is_html()) else { return };
+        if e.name.local == local_name!("head") {
+            let head = self.head_child_idx(parent, NIL);
+            if let NodeKind::Document(d) = &mut self.n_mut(doc).kind {
+                d.head = head;
+            }
+        } else if crate::dom::is_body_name(&e.name.local) {
+            let body = self.body_child_idx(parent, NIL);
+            if let NodeKind::Document(d) = &mut self.n_mut(doc).kind {
+                d.body = body;
+            }
+        }
+    }
+
+    /// Before element `node` is unlinked: the document element, head or
+    /// body it is passes to the next such sibling (the first after it).
+    fn document_roots_unlinking(&mut self, node: u32) {
+        let parent = self.n(node).parent;
+        if parent == NIL {
+            return;
+        }
+        if let NodeKind::Document(d) = &self.n(parent).kind {
+            if d.document_element == node {
+                let mut next = self.n(node).next;
+                while next != NIL && !self.n(next).is_element() {
+                    next = self.n(next).next;
+                }
+                self.set_document_element(parent, next);
+            }
+            return;
+        }
+        let doc = self.document_of_html_root(parent);
+        if doc == NIL {
+            return;
+        }
+        let NodeKind::Document(d) = &self.n(doc).kind else { return };
+        let (head, body) = (d.head, d.body);
+        if head == node {
+            let next = self.head_child_idx(parent, node);
+            if let NodeKind::Document(d) = &mut self.n_mut(doc).kind {
+                d.head = next;
+            }
+        } else if body == node {
+            let next = self.body_child_idx(parent, node);
+            if let NodeKind::Document(d) = &mut self.n_mut(doc).kind {
+                d.body = next;
             }
         }
     }
