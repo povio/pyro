@@ -25,7 +25,8 @@
 //! takes a connection (`release_after_fork`). A page that waits for a worker's
 //! reply during template boot waits until then.
 //!
-//! Gaps (explicit): `{type: 'module'}` throws NotSupportedError; `SharedWorker`
+//! Gaps (explicit): `{type: 'module'}` throws NotSupportedError on the system
+//! JavaScriptCore framework (module workers need the patched build); `SharedWorker`
 //! and `ServiceWorker` are undefined so feature detection takes the no-worker
 //! path; workers cannot start workers; only ArrayBuffers can be transferred. See
 //! docs/webapi/WORKER.md.
