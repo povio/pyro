@@ -425,6 +425,15 @@ impl BaseDocument {
         let node = &mut self.nodes[node_id];
         node.anonymous_blocks = anonymous_blocks;
         node.children = children;
+        // The paint tree is built lazily (`ensure_paint_tree`), possibly after
+        // several resolves: remember that this resolve's damage may have
+        // changed the node's paint lists before the damage is dropped.
+        if node
+            .damage()
+            .is_some_and(|d| d.contains(RestyleDamage::REBUILD_STACKING_CONTEXT))
+        {
+            node.flags.insert(NodeFlags::PAINT_TREE_DIRTY);
+        }
         node.clear_damage_mut();
         node.unset_damaged_descendants();
         node.unset_dirty_descendants();

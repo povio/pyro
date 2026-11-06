@@ -366,6 +366,10 @@ pub struct BaseDocument {
     /// Boxes laid out by an out-of-flow containing block (`oof_containing_block`
     /// set), so paint-tree passes visit them instead of every node.
     pub(crate) oof_hoisted: HashSet<NodeId>,
+    /// A resolve ran since the paint tree was last built: `ensure_paint_tree`
+    /// rebuilds the nodes flagged `PAINT_TREE_DIRTY` before the next paint or
+    /// hit test.
+    pub(crate) paint_tree_dirty: bool,
 
     /// Nodes that contain custom widgets
     #[cfg(feature = "custom-widget")]
@@ -551,6 +555,7 @@ impl BaseDocument {
             changed_nodes: HashSet::new(),
             deferred_construction_nodes: Vec::new(),
             oof_hoisted: HashSet::new(),
+            paint_tree_dirty: true,
             image_cache: HashMap::new(),
             pending_images: HashMap::new(),
             pending_style_image_nodes: Vec::new(),
@@ -1756,7 +1761,9 @@ impl BaseDocument {
     }
 
     // Takes (x, y) co-ordinates (relative to the )
-    pub fn hit(&self, x: f32, y: f32) -> Option<HitResult> {
+    /// Builds the paint tree first if a resolve left it stale
+    /// ([`ensure_paint_tree`](Self::ensure_paint_tree)).
+    pub fn hit(&mut self, x: f32, y: f32) -> Option<HitResult> {
         self.hit_with_scrollbar(x, y).0
     }
 
@@ -1767,7 +1774,7 @@ impl BaseDocument {
     /// This implements the hit-testing semantics of `document.elementFromPoint()`.
     /// Hit testing consults layout, so [`resolve`](Self::resolve) should be called
     /// before this method to ensure layout is up to date.
-    pub fn element_from_point(&self, x: f32, y: f32) -> Option<NodeId> {
+    pub fn element_from_point(&mut self, x: f32, y: f32) -> Option<NodeId> {
         let viewport = self.viewport();
         let scale = viewport.scale();
         let (viewport_width, viewport_height) = (
@@ -1802,7 +1809,7 @@ impl BaseDocument {
     /// by its ancestor elements (which is correct for non-overlapping content).
     /// As with [`element_from_point`](Self::element_from_point), layout should be
     /// resolved before calling this method.
-    pub fn elements_from_point(&self, x: f32, y: f32) -> Vec<NodeId> {
+    pub fn elements_from_point(&mut self, x: f32, y: f32) -> Vec<NodeId> {
         let mut element_ids = Vec::new();
         let mut current = self.element_from_point(x, y);
         while let Some(node_id) = current {
@@ -2023,10 +2030,12 @@ impl BaseDocument {
     /// thumb under the point (shares the traversal, so it costs nothing
     /// extra).
     pub(crate) fn hit_with_scrollbar(
-        &self,
+        &mut self,
         x: f32,
         y: f32,
     ) -> (Option<HitResult>, Option<crate::node::ScrollbarRef>) {
+        // Hit testing walks `paint_children` and the stacking contexts.
+        self.ensure_paint_tree();
         if TDocument::as_node(&self.root_node())
             .first_element_child()
             .is_none()
@@ -2772,7 +2781,7 @@ impl BaseDocument {
     /// Find the text position (inline_root_id, byte_offset) at a given point.
     /// Uses hit() for proper coordinate transformation, then finds the inline root
     /// and byte offset.
-    pub fn find_text_position(&self, x: f32, y: f32) -> Option<(NodeId, usize)> {
+    pub fn find_text_position(&mut self, x: f32, y: f32) -> Option<(NodeId, usize)> {
         let hit = self.hit(x, y)?;
         let hit_node = self.get_node(hit.node_id)?;
         let inline_root = hit_node.inline_root_ancestor()?;

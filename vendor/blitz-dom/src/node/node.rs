@@ -57,6 +57,12 @@ bitflags! {
         const IS_TABLE_ROOT = 0b00000010;
         /// Whether the node is "in the document" (~= has a parent and isn't a template node)
         const IS_IN_DOCUMENT = 0b00000100;
+        /// The node's `paint_children`, `stacking_context` or
+        /// `sc_contribution_cache` may be out of date: some resolve since the
+        /// last paint-tree build stored `REBUILD_STACKING_CONTEXT` damage on it
+        /// (set by `clear_damage_and_dirty_flags`, removed when
+        /// `ensure_paint_tree` rebuilds the node). New nodes start dirty.
+        const PAINT_TREE_DIRTY = 0b00001000;
     }
 }
 
@@ -424,7 +430,7 @@ impl Node {
             stacking_context: None,
             sc_contribution_cache: RefCell::new(ThinVec::new()),
 
-            flags: NodeFlags::empty(),
+            flags: NodeFlags::PAINT_TREE_DIRTY,
             data,
         }
     }
