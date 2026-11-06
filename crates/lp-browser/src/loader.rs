@@ -106,6 +106,8 @@ pub struct Resource {
     /// The response carried a `Content-Security-Policy` header (the policy
     /// itself is not enforced; a document delivered with one hides nonces).
     pub header_csp: bool,
+    /// The response's `Referrer-Policy` header (a document's default policy).
+    pub referrer_policy: Option<lp_net::ReferrerPolicy>,
 }
 
 impl Resource {
@@ -258,6 +260,19 @@ impl ResourceLoader for NetLoader {
                 .map(|f| f.origin);
         }
         req.referrer = request.referrer.as_deref().and_then(|r| url::Url::parse(r).ok());
+        // The requesting document's policy (for a navigation: the frame's
+        // current document, which started it).
+        if req.referrer.is_some() {
+            if let Some(policy) = request
+                .frame_id
+                .as_deref()
+                .and_then(|id| browser.page(request.page)?.frames.key_of(id))
+                .and_then(|key| browser.page(request.page)?.frames.page_dom(key))
+                .map(|page_dom| page_dom.referrer_policy())
+            {
+                req.referrer_policy = policy;
+            }
+        }
         req.frame_id = request.frame_id;
         req.loader_id = request.loader_id;
         // A preloaded static file: answered here, on the browser thread, with
@@ -274,6 +289,7 @@ impl ResourceLoader for NetLoader {
                 charset: head.charset,
                 content_disposition: None,
                 header_csp: false,
+                referrer_policy: None,
                 body: hit.file.body.to_vec(),
             };
             browser.scheduler().post(TaskSource::Networking, move |b| b.complete_fetch(id, Ok(resource)));
@@ -303,6 +319,9 @@ impl ResourceLoader for NetLoader {
                                 .and_then(|v| v.to_str().ok())
                                 .map(str::to_owned),
                             header_csp: h.headers.contains_key(http::header::CONTENT_SECURITY_POLICY),
+                            referrer_policy: lp_net::ReferrerPolicy::from_header(
+                                h.headers.get_all("referrer-policy").iter().filter_map(|v| v.to_str().ok()),
+                            ),
                             body: std::mem::take(&mut body),
                         }),
                         None => Err("net::ERR_EMPTY_RESPONSE".to_string()),
@@ -358,6 +377,7 @@ impl ResourceLoader for StaticLoader {
                         body,
                         content_disposition: None,
                         header_csp: false,
+                        referrer_policy: None,
                     })
                 }
                 None => Err(format!("net::ERR_FILE_NOT_FOUND {url}")),
@@ -682,8 +702,14 @@ impl Browser {
         history: HistoryHandling,
     ) -> Result<(), JsError> {
         let origin = origin_of(&resource.url);
+        // The policy the navigation request was sent with (its initiator's).
+        let policy = match &opts.referrer {
+            Some(_) => self.doc(page).and_then(|p| p.main_frame.page_dom.as_ref().map(|d| d.referrer_policy())),
+            None => None,
+        };
         self.commit_document(page, opts, loader_id.clone(), &origin, history)?;
         let page_dom = self.doc(page).and_then(|p| p.main_frame.page_dom.clone()).ok_or(JsError::ContextDestroyed)?;
+        page_dom.set_document_referrer(opts.referrer.as_deref(), policy.unwrap_or_default(), resource.referrer_policy);
         let dom = page_dom.dom.clone();
         let doc = page_dom.document();
         if resource.header_csp {

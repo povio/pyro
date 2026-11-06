@@ -1029,6 +1029,7 @@ impl Browser {
                     body: html.into_bytes(),
                     content_disposition: None,
                     header_csp: false,
+                    referrer_policy: None,
                 },
                 HistoryHandling::Replace,
             )
