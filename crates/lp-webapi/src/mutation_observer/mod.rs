@@ -363,11 +363,12 @@ fn notify(page: &Rc<PageDom>) {
     page.mutations.queued.set(None);
     page.mutations.rooted.set(0);
     page.mutations.touch();
-    // "Signal a slot change": slotchange at each signaled slot first.
+    // "Notify mutation observers": the signal set is taken now (slot
+    // changes made by the callbacks join the next compound microtask), and
+    // its slots get `slotchange` after every observer callback has run.
     let slots = page.dom.borrow_mut().take_signaled_slots();
-    for slot in slots {
-        crate::input::fire_simple(page, slot, "slotchange", true, false);
-    }
+    // The signal set holds its slots strongly across the callbacks.
+    let slot_holds = if slots.is_empty() { None } else { crate::collections::NodeHolds::new(page, slots.clone()).ok() };
     let pending = page.dom.borrow_mut().take_pending_observers();
     let roots = page.mutations.pending_roots.take();
     // Snapshot binding identities as well as native ids: a callback can dispose
@@ -415,6 +416,10 @@ fn notify(page: &Rc<PageDom>) {
         }
     }
     drop(roots);
+    for slot in slots {
+        crate::input::fire_simple(page, slot, "slotchange", true, false);
+    }
+    drop(slot_holds);
     // Native-only embedders can cause mutations inside a callback without a
     // runtime hook; make sure those also get a subsequent notification.
     checkpoint(page);

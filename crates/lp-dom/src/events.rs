@@ -407,6 +407,56 @@ impl Dom {
         }
     }
 
+    /// `Event.composedPath()`: the dispatch path without the nodes of
+    /// closed shadow trees the current target cannot see (the "unclosed
+    /// node" relation Chrome applies). Empty when not dispatching.
+    pub fn composed_path(&self, ev: &EventState) -> Vec<TargetKey> {
+        let Some(cur) = ev.current_target else { return Vec::new() };
+        let closed_root = |k: &TargetKey| {
+            matches!(*k, TargetKey::Node(i) if self.slot_live(i)
+                && matches!(&self.n(i).kind, NodeKind::Fragment(f) if f.shadow == Some(crate::ShadowRootMode::Closed)))
+        };
+        // Every shadow tree the path passes through has its root on the
+        // path, so a path without a closed root (nearly all) hides nothing.
+        if !ev.path.iter().any(closed_root) {
+            return ev.path.clone();
+        }
+        // A non-node current target (the Window) sees what its document does.
+        let viewer = match cur {
+            TargetKey::Node(i) if self.slot_live(i) => i,
+            _ => match ev.path.iter().rev().find_map(|k| match *k {
+                TargetKey::Node(i) if self.slot_live(i) => Some(i),
+                _ => None,
+            }) {
+                Some(i) => i,
+                None => return ev.path.clone(),
+            },
+        };
+        ev.path
+            .iter()
+            .copied()
+            .filter(|&k| match k {
+                TargetKey::Node(i) if self.slot_live(i) => self.is_unclosed_node_of(i, viewer),
+                _ => true,
+            })
+            .collect()
+    }
+
+    /// `a` is an unclosed node of `b`: `a`'s root is a shadow-including
+    /// inclusive ancestor of `b`, or an open shadow root whose host is.
+    fn is_unclosed_node_of(&self, mut a: u32, b: u32) -> bool {
+        loop {
+            let root = self.root_idx(a);
+            if self.shadow_including_ancestor(root, b) {
+                return true;
+            }
+            match &self.n(root).kind {
+                NodeKind::Fragment(f) if f.shadow == Some(crate::ShadowRootMode::Open) => a = f.host,
+                _ => return false,
+            }
+        }
+    }
+
     /// Builds the event path: (invocation target, shadow-adjusted target).
     pub fn event_path(&self, target: TargetKey, ev: &EventState) -> Vec<(TargetKey, TargetKey)> {
         let origin_root = match target {

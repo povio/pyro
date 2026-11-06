@@ -750,6 +750,10 @@ pub struct StyleSheetList;
 impl StyleSheetList {
     fn owners(root: &NodeHold) -> Vec<NodeId> {
         let dom = root.page.dom.borrow();
+        // A disconnected shadow root's `<style>`s have no sheets.
+        if !dom.is_connected(root.id).unwrap_or(false) {
+            return Vec::new();
+        }
         let Ok(nodes) = dom.descendants(root.id) else { return Vec::new() };
         nodes
             .filter(|&n| {
@@ -786,7 +790,8 @@ impl JsClass for StyleSheetList {
     }
 }
 
-/// `document.styleSheets` (one list object per document and realm).
+/// `document.styleSheets` / `shadowRoot.styleSheets` (one list object per
+/// document or shadow root and realm).
 pub(crate) fn style_sheets<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
     let base = n.page().node_identity(n.id);
     let key = IdentityKey(base.0 | (1 << 61) | (24 << 48), base.1);

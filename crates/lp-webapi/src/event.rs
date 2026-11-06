@@ -887,7 +887,7 @@ impl JsClass for Event {
             Ok(s.undefined())
         });
         def.method("composedPath", 0, |s, e, _a| {
-            let path = e.state.borrow().path.clone();
+            let path = e.page.dom.borrow().composed_path(&e.state.borrow());
             let mut vals = lp_js::RootedVec::new();
             for k in path {
                 vals.push(s, target_value(s, &e.page, Some(k))?);
