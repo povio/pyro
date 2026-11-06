@@ -41,6 +41,9 @@ pub(crate) struct LineStart {
     pub(crate) layout_max_advance: f32,
     pub(crate) line_max_advance: f32,
     pub(crate) line_max_height: f32,
+    /// The end of the shaped clusters the breaker had read before this line (exclusive): all
+    /// earlier lines were decided by the clusters before it.
+    pub(crate) read_end: u32,
 }
 
 /// The inputs of the break that produced adopted lines, besides the per-line geometry in their
@@ -153,6 +156,7 @@ fn equal_cluster_prefix<B: Brush>(old: &LayoutData<B>, new: &LayoutData<B>) -> u
 }
 
 /// The end of `line`'s shaped clusters (its items are all text runs here).
+#[cfg(debug_assertions)]
 fn line_cluster_end(line: &LineData, line_items: &[LineItemData]) -> u32 {
     line_items[line.item_range.clone()]
         .iter()
@@ -164,16 +168,17 @@ fn line_cluster_end(line: &LineData, line_items: &[LineItemData]) -> u32 {
 /// Keeps, in `new.adopted`, the leading lines of `old`'s last break that a break of `new` with
 /// the same inputs would produce again, and returns how many.
 ///
-/// The breaker decides a line's end once an atom overflowed it, and that atom lies at the latest
-/// in the line after next: the next line ends before it only at an emergency break, and the line
-/// after that then starts with it. So line `j` is kept when every cluster up to the end of line
-/// `j + 2` is the same in both layouts. The breaker state at the start of the first line not
-/// kept is kept with them, so that breaking can continue from there.
+/// The breaker decides a line's end once an atom overflowed it, and that atom can lie many lines
+/// on (a long word broken at emergency opportunities over lines narrower than the one it did not
+/// fit on). So each recorded line start says how far the breaker had read before it
+/// ([`LineStart::read_end`]), and line `k` is resumed from when everything read before it is the
+/// same in both layouts. The breaker state at the start of that line is kept with the lines
+/// before it, so that breaking can continue from there.
 pub(crate) fn adopt_line_prefix<B: Brush>(new: &mut LayoutData<B>, old: &LayoutData<B>) -> usize {
     new.adopted.clear();
     let line_count = old.lines.len();
     // `line_starts` is only complete when the old break can be repeated.
-    if line_count < 3
+    if line_count < 2
         || old.line_starts.len() != line_count
         || old.text_len == 0
         || new.text_len == 0
@@ -186,16 +191,20 @@ pub(crate) fn adopt_line_prefix<B: Brush>(new: &mut LayoutData<B>, old: &LayoutD
     if equal == 0 {
         return 0;
     }
-    // The lines whose clusters all lie in the equal prefix; all but the last two are kept.
-    let fitting = old
-        .lines
+    // The line starts after the first that the breaker reached reading only the equal prefix
+    // (`read_end` only grows from line to line).
+    let kept = old.line_starts[1..]
         .iter()
-        .take_while(|line| line_cluster_end(line, &old.line_items) <= equal)
+        .take_while(|start| start.read_end <= equal)
         .count();
-    let kept = fitting.saturating_sub(2);
     if kept == 0 {
         return 0;
     }
+    #[cfg(debug_assertions)]
+    debug_assert!(
+        line_cluster_end(&old.lines[kept - 1], &old.line_items) <= equal,
+        "a kept line ends past what was read before the next one"
+    );
     let last = &old.lines[kept - 1];
     let adopted = &mut new.adopted;
     adopted.inputs = Some(BreakInputs {

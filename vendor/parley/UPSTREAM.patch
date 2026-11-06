@@ -343,7 +343,7 @@ index 1569071..c3b1e35 100644
      ///
      /// See also [`Self::style_index`].
 diff --git a/src/layout/line_break.rs b/src/layout/line_break.rs
-index 3c3798c..3fdbb0f 100644
+index 3c3798c..f49024d 100644
 --- a/src/layout/line_break.rs
 +++ b/src/layout/line_break.rs
 @@ -11,6 +11,7 @@ use core_maths::CoreFloat;
@@ -387,7 +387,7 @@ index 3c3798c..3fdbb0f 100644
      }
  
      /// Drops the lines from `len` onwards, along with their aligned subtree offsets.
-@@ -768,6 +783,32 @@ impl BreakerState {
+@@ -768,6 +783,33 @@ impl BreakerState {
          self.subtrees.restore(prev_state.subtrees_len);
      }
  
@@ -405,6 +405,7 @@ index 3c3798c..3fdbb0f 100644
 +            layout_max_advance: self.layout_max_advance,
 +            line_max_advance: self.line_max_advance,
 +            line_max_height: self.line_max_height,
++            read_end: 0,
 +        }
 +    }
 +
@@ -420,7 +421,7 @@ index 3c3798c..3fdbb0f 100644
      #[inline(always)]
      fn update_max_height_exceeded(&mut self) {
          self.line.max_height_exceeded = self.line_max_height != f32::MAX
-@@ -838,6 +879,14 @@ pub struct BreakLines<'a, B: Brush> {
+@@ -838,6 +880,17 @@ pub struct BreakLines<'a, B: Brush> {
      state: BreakerState,
      prev_state: Option<BreakerState>,
      done: bool,
@@ -432,10 +433,13 @@ index 3c3798c..3fdbb0f 100644
 +    /// Whether this break can be repeated from its recorded line starts: the caller neither
 +    /// placed boxes nor reverted mid-line. When not, no line starts are kept.
 +    resumable: bool,
++    /// The end of the shaped clusters the breaker has read so far (exclusive): every line ended
++    /// so far was decided by clusters before it. Recorded in each [`LineStart`].
++    read_end: u32,
  }
  
  impl<'a, B: Brush> BreakLines<'a, B> {
-@@ -846,20 +895,95 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -846,20 +899,97 @@ impl<'a, B: Brush> BreakLines<'a, B> {
          layout.data.height = 0.;
          let mut lines = LineLayout::default();
          lines.swap(&mut layout.data);
@@ -464,6 +468,7 @@ index 3c3798c..3fdbb0f 100644
 +            adopted,
 +            line_open: false,
 +            resumable: true,
++            read_end: 0,
          };
          this.reset_line();
          this
@@ -519,6 +524,7 @@ index 3c3798c..3fdbb0f 100644
 +        state.line_max_advance = start.line_max_advance;
 +        state.items = self.lines.line_items.len();
 +        state.lines = kept;
++        self.read_end = start.read_end;
 +        self.reset_line();
 +        kept
 +    }
@@ -534,7 +540,7 @@ index 3c3798c..3fdbb0f 100644
      /// Reset the per-line running state in preparation for building a new line.
      ///
      /// The line starts out containing the root span box (the "strut", CSS 2 §10.8).
-@@ -929,6 +1053,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -929,6 +1059,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
  
          self.state.items = self.lines.line_items.len();
          self.state.lines = self.lines.lines.len();
@@ -542,7 +548,7 @@ index 3c3798c..3fdbb0f 100644
          self.state.prev_boundary = None;
          self.state.emergency_boundary = None;
  
-@@ -987,6 +1112,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -987,6 +1118,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
      // than blink, for reasons which haven't been fully understood.
      #[doc(hidden)]
      pub fn set_prior_line_width(&mut self, advance: f32) {
@@ -550,7 +556,7 @@ index 3c3798c..3fdbb0f 100644
          if let Some(line) = self.lines.lines.last_mut() {
              line.metrics.inline_max_coord = line.metrics.inline_min_coord + advance;
          }
-@@ -994,6 +1120,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -994,6 +1126,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
  
      /// Reverts the to an externally saved state.
      pub fn revert_to(&mut self, state: BreakerState) {
@@ -558,7 +564,7 @@ index 3c3798c..3fdbb0f 100644
          self.state = state;
          self.lines.truncate(self.state.lines);
          self.lines.line_items.truncate(self.state.items);
-@@ -1026,6 +1153,18 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1026,6 +1159,18 @@ impl<'a, B: Brush> BreakLines<'a, B> {
      /// Computes the next line in the paragraph. Returns the advance and size
      /// (width and height for horizontal layouts) of the line.
      pub fn break_next(&mut self) -> Option<YieldData> {
@@ -577,20 +583,31 @@ index 3c3798c..3fdbb0f 100644
          assert!(
              self.state.layout_max_advance == f32::INFINITY
                  || self.state.line_max_advance - self.state.layout_max_advance < 1.0
-@@ -1035,6 +1174,12 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1035,6 +1180,14 @@ impl<'a, B: Brush> BreakLines<'a, B> {
          if self.done {
              return None;
          }
 +        if !self.line_open {
 +            self.line_open = true;
 +            if self.resumable {
-+                self.lines.line_starts.push(self.state.line_start());
++                let mut start = self.state.line_start();
++                start.read_end = self.read_end;
++                self.lines.line_starts.push(start);
 +            }
 +        }
          match &mut self.prev_state {
              Some(prev_state) => prev_state.clone_from(&self.state),
              None => self.prev_state = Some(self.state.clone()),
-@@ -1103,15 +1248,15 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1060,6 +1213,8 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+ 
+             match item.kind {
+                 LayoutItemKind::InlineBox => {
++                    // Inline boxes are sized by the caller: no line is kept past one.
++                    self.read_end = u32::MAX;
+                     let inline_box = &self.layout.data.inline_boxes[item.index].inline_box;
+ 
+                     // In-flow boxes are aligned relative to their containing style's span box
+@@ -1103,15 +1258,15 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                          if self.state.line.text_wrap_mode == TextWrapMode::Wrap {
                              self.state.mark_line_break_opportunity();
                          }
@@ -614,7 +631,17 @@ index 3c3798c..3fdbb0f 100644
                      }
                  }
                  LayoutItemKind::TextRun => {
-@@ -1188,7 +1333,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1126,6 +1281,9 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+ 
+                     // Iterate over the remaining atoms in the Run
+                     for atom in slice.atoms_from(self.state.cluster_idx) {
++                        // The breaker reads the atom and, to find where it ends, the first
++                        // cluster after it.
++                        self.read_end = self.read_end.max(atom.shaped_clusters_range().end + 1);
+                         // Retrieve metadata about the atom
+                         let first_character = &atom.characters()[0];
+                         let whitespace = first_character.whitespace;
+@@ -1188,7 +1346,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                          // If the content fits (the x position does NOT exceed max_advance)
                          //
                          // We simply append the atom to the current line
@@ -623,7 +650,7 @@ index 3c3798c..3fdbb0f 100644
                              if max_height_exceeded {
                                  return self.max_height_break_data(line_height);
                              }
-@@ -1216,7 +1361,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1216,7 +1374,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                                  spacing,
                                  item.bidi_level.is_rtl(),
                              );
@@ -632,7 +659,16 @@ index 3c3798c..3fdbb0f 100644
                                  if max_height_exceeded {
                                      return self.max_height_break_data(line_height);
                                  }
-@@ -1300,6 +1445,8 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1283,6 +1441,8 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+         if self.state.line.items.end == 0 {
+             self.state.line.items.end = 1;
+         }
++        // The end of the content was read.
++        self.read_end = u32::MAX;
+         self.done = true;
+         self.start_new_line(BreakReason::None, max_advance, line_indent)
+     }
+@@ -1300,6 +1460,8 @@ impl<'a, B: Brush> BreakLines<'a, B> {
      /// ligature or a multi-character grapheme), the whole atom is placed on the line before
      /// breaking.
      pub fn break_next_with_length(&mut self, max_chars: u32) -> Option<()> {
@@ -641,7 +677,7 @@ index 3c3798c..3fdbb0f 100644
          if self.done {
              return None;
          }
-@@ -1617,6 +1764,9 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1617,6 +1779,9 @@ impl<'a, B: Brush> BreakLines<'a, B> {
          } else {
              line.metrics.baseline + line_box_extents.under
          };
@@ -651,7 +687,7 @@ index 3c3798c..3fdbb0f 100644
          line.metrics.content_block_min_coord = line.metrics.baseline - content_box_extents.over;
          line.metrics.content_block_max_coord = line.metrics.baseline + content_box_extents.under;
  
-@@ -1628,6 +1778,10 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1628,6 +1793,10 @@ impl<'a, B: Brush> BreakLines<'a, B> {
  
  impl<B: Brush> Drop for BreakLines<'_, B> {
      fn drop(&mut self) {
@@ -676,10 +712,10 @@ index 6e2baba..56e8bd1 100644
  pub(crate) mod style_metrics;
 diff --git a/src/layout/resume.rs b/src/layout/resume.rs
 new file mode 100644
-index 0000000..b4f659b
+index 0000000..75dffe5
 --- /dev/null
 +++ b/src/layout/resume.rs
-@@ -0,0 +1,217 @@
+@@ -0,0 +1,226 @@
 +// Copyright 2026 the Parley Authors
 +// SPDX-License-Identifier: Apache-2.0 OR MIT
 +
@@ -723,6 +759,9 @@ index 0000000..b4f659b
 +    pub(crate) layout_max_advance: f32,
 +    pub(crate) line_max_advance: f32,
 +    pub(crate) line_max_height: f32,
++    /// The end of the shaped clusters the breaker had read before this line (exclusive): all
++    /// earlier lines were decided by the clusters before it.
++    pub(crate) read_end: u32,
 +}
 +
 +/// The inputs of the break that produced adopted lines, besides the per-line geometry in their
@@ -835,6 +874,7 @@ index 0000000..b4f659b
 +}
 +
 +/// The end of `line`'s shaped clusters (its items are all text runs here).
++#[cfg(debug_assertions)]
 +fn line_cluster_end(line: &LineData, line_items: &[LineItemData]) -> u32 {
 +    line_items[line.item_range.clone()]
 +        .iter()
@@ -846,16 +886,17 @@ index 0000000..b4f659b
 +/// Keeps, in `new.adopted`, the leading lines of `old`'s last break that a break of `new` with
 +/// the same inputs would produce again, and returns how many.
 +///
-+/// The breaker decides a line's end once an atom overflowed it, and that atom lies at the latest
-+/// in the line after next: the next line ends before it only at an emergency break, and the line
-+/// after that then starts with it. So line `j` is kept when every cluster up to the end of line
-+/// `j + 2` is the same in both layouts. The breaker state at the start of the first line not
-+/// kept is kept with them, so that breaking can continue from there.
++/// The breaker decides a line's end once an atom overflowed it, and that atom can lie many lines
++/// on (a long word broken at emergency opportunities over lines narrower than the one it did not
++/// fit on). So each recorded line start says how far the breaker had read before it
++/// ([`LineStart::read_end`]), and line `k` is resumed from when everything read before it is the
++/// same in both layouts. The breaker state at the start of that line is kept with the lines
++/// before it, so that breaking can continue from there.
 +pub(crate) fn adopt_line_prefix<B: Brush>(new: &mut LayoutData<B>, old: &LayoutData<B>) -> usize {
 +    new.adopted.clear();
 +    let line_count = old.lines.len();
 +    // `line_starts` is only complete when the old break can be repeated.
-+    if line_count < 3
++    if line_count < 2
 +        || old.line_starts.len() != line_count
 +        || old.text_len == 0
 +        || new.text_len == 0
@@ -868,16 +909,20 @@ index 0000000..b4f659b
 +    if equal == 0 {
 +        return 0;
 +    }
-+    // The lines whose clusters all lie in the equal prefix; all but the last two are kept.
-+    let fitting = old
-+        .lines
++    // The line starts after the first that the breaker reached reading only the equal prefix
++    // (`read_end` only grows from line to line).
++    let kept = old.line_starts[1..]
 +        .iter()
-+        .take_while(|line| line_cluster_end(line, &old.line_items) <= equal)
++        .take_while(|start| start.read_end <= equal)
 +        .count();
-+    let kept = fitting.saturating_sub(2);
 +    if kept == 0 {
 +        return 0;
 +    }
++    #[cfg(debug_assertions)]
++    debug_assert!(
++        line_cluster_end(&old.lines[kept - 1], &old.line_items) <= equal,
++        "a kept line ends past what was read before the next one"
++    );
 +    let last = &old.lines[kept - 1];
 +    let adopted = &mut new.adopted;
 +    adopted.inputs = Some(BreakInputs {

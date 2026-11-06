@@ -364,9 +364,11 @@ fn resume_after_a_style_change_keeps_no_lines() {
     break_and_align(&mut layout, &case, case.width, true);
     assert!(layout.len() > 4);
 
-    // The same text again: all but the last two lines are kept.
+    // The same text again: all lines are kept up to the one after which the breaker read the
+    // end of the text (the last, or the one before when its overflowing atom ended the text).
     build(&mut lcx, &mut fcx, &case, &content, &mut layout, true);
-    assert_eq!(break_and_align(&mut layout, &case, case.width, true), layout.len() - 2);
+    let kept = break_and_align(&mut layout, &case, case.width, true);
+    assert!((layout.len() - 2..layout.len()).contains(&kept), "kept {kept} of {}", layout.len());
 
     let root = TextStyle { letter_spacing: 1.0, ..root_style(&case) };
     let mut tb = lcx.tree_builder(&mut fcx, 1.0, true, &root);
@@ -455,9 +457,47 @@ mod document {
             ("centered", "text-align:center", true),
             ("justify", "text-align:justify", false),
             ("rtl", "direction:rtl", false),
+            // The first line is wider than the others: a word broken over several lines may
+            // fit on the first line again once shortened.
+            ("negative indent anywhere", "text-indent:-150px;padding-left:150px;overflow-wrap:anywhere", true),
+            ("hanging indent anywhere", "text-indent:120px hanging;overflow-wrap:anywhere", true),
         ] {
             let kept: u64 = [3, 99].into_iter().map(|seed| check(what, &doc(style, ""), seed)).sum();
             assert_eq!(kept > 0, expect_resumes, "{what}: lines kept {kept}");
+        }
+    }
+
+    /// A long word that did not fit beside the first line's text is broken over the narrower
+    /// lines after it; shortened, it fits on the first line again.
+    #[test]
+    fn a_shortened_word_moves_back_to_a_wider_first_line() {
+        for style in [
+            "text-indent:-300px;padding-left:300px;overflow-wrap:anywhere",
+            "text-indent:150px hanging;overflow-wrap:anywhere",
+        ] {
+            let html = format!(
+                "<!doctype html><style>body{{margin:0;font:14px sans-serif}} #p{{width:180px;{style}}}</style>\
+                 <p id=p>a {}</p><p>after</p>",
+                "x".repeat(120)
+            );
+            let page = Page::new(&html);
+            let mut live = Renderer::new();
+            paint(&mut live, &page.snapshot());
+            let node = page.text("#p");
+            let mut kept = 0;
+            for n in (1..120).rev() {
+                let text = format!("a {}", "x".repeat(n));
+                page.dom.borrow_mut().set_text_content(node, &text).unwrap();
+                let snap = page.snapshot();
+                let before = blitz_line_breaks().1;
+                let incremental = paint(&mut live, &snap);
+                kept += blitz_line_breaks().1 - before;
+                let mut fresh = Renderer::new();
+                let scratch = paint(&mut fresh, &snap);
+                assert_eq!(live.mirrored_layout(1), fresh.mirrored_layout(1), "{style}, {n} x: boxes differ");
+                assert_eq!(incremental.hash, scratch.hash, "{style}, {n} x: pixels differ");
+            }
+            assert!(kept > 0, "{style}: nothing resumed");
         }
     }
 
@@ -466,4 +506,68 @@ mod document {
         let html = doc("", "<div style='float:left;width:60px;height:300px'></div>");
         assert_eq!(check("float", &html, 5), 0);
     }
+}
+
+/// Builds `first`, breaks it, builds each of `then` keeping lines, and checks each resumed break
+/// against a from-scratch one; returns the lines kept.
+fn check_sequence(case: &Case, first: &str, then: &[String]) -> usize {
+    let mut fcx = FontContext::new();
+    let mut lcx = LayoutContext::new();
+    let mut ref_lcx = LayoutContext::new();
+    let mut layout = Layout::new();
+    build(&mut lcx, &mut fcx, case, &vec![(0, first.to_string())], &mut layout, true);
+    break_and_align(&mut layout, case, case.width, true);
+    let mut total = 0;
+    for text in then {
+        let content: Content = vec![(0, text.clone())];
+        build(&mut lcx, &mut fcx, case, &content, &mut layout, true);
+        total += break_and_align(&mut layout, case, case.width, true);
+        let mut reference = Layout::new();
+        build(&mut ref_lcx, &mut fcx, case, &content, &mut reference, false);
+        break_and_align(&mut reference, case, case.width, false);
+        let lines = |l: &Layout<Brush>| {
+            l.lines().map(|line| line.text_range()).collect::<Vec<_>>()
+        };
+        assert_eq!(lines(&layout), lines(&reference), "{}: {text:?}", case.name);
+        assert_eq!(format!("{layout:#?}"), format!("{reference:#?}"), "{}: {text:?}", case.name);
+    }
+    total
+}
+
+/// When a later line is narrower than an earlier one (a hanging or negative `text-indent`, or
+/// `each-line` after a forced break), the atom that overflowed a line can lie many lines on: a
+/// long word that did not fit beside the first line's text is broken over several narrow lines.
+/// Shortening that word can let it fit on the first line again, so those lines cannot be kept.
+#[test]
+fn resume_when_later_lines_are_narrower_than_the_line_they_follow() {
+    let word = |n: usize| format!("a {}", "x".repeat(n));
+    for (name, indent, indent_options, collapse) in [
+        ("hanging", 70.0, IndentOptions { each_line: false, hanging: true }, WhiteSpaceCollapse::Collapse),
+        ("negative", -140.0, IndentOptions::default(), WhiteSpaceCollapse::Collapse),
+    ] {
+        let case = Case {
+            name,
+            overflow_wrap: OverflowWrap::Anywhere,
+            collapse,
+            width: 100.0,
+            indent,
+            indent_options,
+            ..base_case()
+        };
+        let then: Vec<String> = (1..60).rev().map(word).collect();
+        assert!(check_sequence(&case, &word(80), &then) > 0, "{name}: nothing resumed");
+    }
+    // `each-line`: the line after a forced break is the narrow one.
+    let case = Case {
+        name: "each-line",
+        overflow_wrap: OverflowWrap::Anywhere,
+        collapse: WhiteSpaceCollapse::Preserve,
+        width: 100.0,
+        indent: 70.0,
+        indent_options: IndentOptions { each_line: true, hanging: false },
+        ..base_case()
+    };
+    let text = |n: usize| format!("b\na {}", "x".repeat(n));
+    let then: Vec<String> = (1..60).rev().map(text).collect();
+    check_sequence(&case, &text(80), &then);
 }

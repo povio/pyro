@@ -55,8 +55,11 @@ breaking. The breaker records its state at the start of each line (`LayoutData::
 when the caller placed boxes, hit a max height or reverted mid-break). Building a layout again with
 `build_into_keeping_lines` compares the new shaped data with the old (styles, style metrics, runs,
 items, clusters, characters and glyphs, from the start) and keeps the old lines whose break the
-breaker decided entirely inside the equal prefix: all but the last two lines that lie in it, since
-the atom that overflowed a line lies at the latest in the line after next. `resume`, called with
+breaker decided entirely inside the equal prefix: each line start also records how far the breaker
+had read before it (`LineStart::read_end`), and lines are kept up to the last start reached reading
+only the equal prefix. (The atom that overflowed a line can lie many lines on, when a word broken at
+emergency opportunities runs over lines narrower than the first: a hanging or negative
+`text-indent`, or `each-line` after a forced break.) `resume`, called with
 the geometry the caller gives lines after the first, continues breaking after the kept lines when
 the old break had the same layout max advance, text indent and line geometry; otherwise it starts
 over. LTR text without inline boxes only. Blitz builds every inline root this way and resumes
