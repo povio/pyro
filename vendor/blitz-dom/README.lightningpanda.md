@@ -107,7 +107,8 @@ lp-render's mirror tests (incremental documents against fresh builds after rando
   rows past it.
 - `src/stylo.rs`: `BaseDocument::pseudo_element_style` answers `getComputedStyle(el, pseudo)`: the stored
   eager `::before`/`::after`/`::first-letter`/`::selection` style (resolved on demand under `display: none`,
-  like `resolve_undisplayed_style`), Stylo's lazy cascade for `::marker`, `::placeholder` and the other lazy
+  like `resolve_undisplayed_style`; a `::before`/`::after` the traversal dropped for having no `content` is matched
+  against its rules on demand), Stylo's lazy cascade for `::marker`, `::placeholder` and the other lazy
   pseudo-elements, else a rule-less style inheriting from the element. `generated_only` limits it to the
   stored eager style (no work otherwise), for accessible names.
 - `assets/default.css`: only a `<select>`'s options and optgroups are `display: none` (the control paints

@@ -262,6 +262,58 @@ impl crate::document::BaseDocument {
         if eager.is_some() {
             return eager;
         }
+        if pseudo.is_before_or_after() {
+            // The traversal drops a `::before` / `::after` that generates no
+            // box (`content: none`), but its rules still apply to its
+            // computed style (Chromium): match them against this element
+            // alone. With no `::before` / `::after` rules this is an empty
+            // selector-map lookup.
+            use selectors::context::{MatchingForInvalidation, NeedsSelectorFlags, SelectorCaches};
+            use selectors::matching::MatchingMode;
+            let _layout_thread_scope = LayoutThreadScope::enter();
+            let guard = &self.guard;
+            let guards = StylesheetGuards {
+                author: &guard.read(),
+                ua_or_user: &guard.read(),
+            };
+            let mut caches = SelectorCaches::default();
+            let mut matching = MatchingContext::<SelectorImpl>::new(
+                MatchingMode::ForStatelessPseudoElement,
+                None,
+                &mut caches,
+                self.stylist.quirks_mode(),
+                NeedsSelectorFlags::No,
+                MatchingForInvalidation::No,
+            );
+            matching.extra_data.originating_element_style = Some(&primary);
+            let mut declarations = style::applicable_declarations::ApplicableDeclarationList::new();
+            self.stylist.push_applicable_declarations(
+                node,
+                Some(pseudo),
+                None,
+                None,
+                Default::default(),
+                RuleInclusion::All,
+                &mut declarations,
+                &mut matching,
+            );
+            if !declarations.is_empty() {
+                let flags = matching.extra_data.cascade_input_flags;
+                let rules = self.stylist.rule_tree().compute_rule_node(&mut declarations, &guards);
+                let inputs = style::context::CascadeInputs {
+                    rules: Some(rules),
+                    flags,
+                    ..Default::default()
+                };
+                return Some(self.stylist.compute_pseudo_element_style_with_inputs(
+                    inputs,
+                    pseudo,
+                    &guards,
+                    Some(&primary),
+                    Some(node),
+                ));
+            }
+        }
         if pseudo.is_lazy() {
             let _layout_thread_scope = LayoutThreadScope::enter();
             let guard = &self.guard;

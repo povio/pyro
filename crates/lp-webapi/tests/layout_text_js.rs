@@ -231,8 +231,8 @@ fn css_supports_parses_with_stylo() {
 fn get_computed_style_reads_pseudo_elements() {
     let e = env("<style>#t{width:100px;color:rgb(255,0,0)}#t::before{content:'icon';color:rgb(0,128,0);display:block}\
          #t::after{content:attr(data-x)}#n{display:none}#n::before{content:'Foo'}\
-         li::marker{color:rgb(0,0,255)}input::placeholder{color:rgb(1,2,3)}</style>\
-         <div id=t data-x=tail>x</div><div id=n></div><p id=p>p</p><ul><li id=l>i</li></ul><input id=i placeholder=a>");
+         #c::before{color:rgb(0,128,0)}li::marker{color:rgb(0,0,255)}input::placeholder{color:rgb(1,2,3)}</style>\
+         <div id=t data-x=tail>x</div><div id=n></div><div id=c>c</div><p id=p>p</p><ul><li id=l>i</li></ul><input id=i placeholder=a>");
     let v = |js: &str| eval(&e.main, js);
     assert_eq!(
         v("[getComputedStyle(t,'::before').content,getComputedStyle(t,':before').color,getComputedStyle(t,'::before').display,\
@@ -246,6 +246,11 @@ fn get_computed_style_reads_pseudo_elements() {
         "none|inline|static"
     );
     assert_eq!(v("getComputedStyle(n,'::before').content"), "\"Foo\"");
+    // A rule that generates no box (no `content`) still styles the pseudo-element.
+    assert_eq!(
+        v("[getComputedStyle(c,'::before').color,getComputedStyle(c,'::before').content,getComputedStyle(c,'::after').color].join('|')"),
+        "rgb(0, 128, 0)|none|rgb(0, 0, 0)"
+    );
     assert_eq!(v("getComputedStyle(l,'::marker').color"), "rgb(0, 0, 255)");
     assert_eq!(v("getComputedStyle(i,'::placeholder').color"), "rgb(1, 2, 3)");
     // Without a colon the argument is ignored; an unknown or malformed one is an empty style.
