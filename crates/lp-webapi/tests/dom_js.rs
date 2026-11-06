@@ -4429,7 +4429,10 @@ fn dom_parser_xml_types_case_cdata_errors_and_inert_adoption() {
     );
     // A DOCTYPE (without entity declarations) is a DocumentType node.
     assert_eq!(
-        eval(&e.main, r#"const dt=new DOMParser().parseFromString("<!DOCTYPE r SYSTEM 'file:///unused'><r/>",'text/xml'); dt.doctype.name+':'+dt.doctype.systemId+':'+dt.documentElement.localName"#),
+        eval(
+            &e.main,
+            r#"const dt=new DOMParser().parseFromString("<!DOCTYPE r SYSTEM 'file:///unused'><r/>",'text/xml'); dt.doctype.name+':'+dt.doctype.systemId+':'+dt.documentElement.localName"#
+        ),
         "r:file:///unused:r"
     );
     assert_eq!(
@@ -6786,37 +6789,84 @@ fn removing_one_of_many_expando_rows_unpins_only_its_subtree() {
 
 #[test]
 fn attr_nodes_aria_token_lists_and_named_properties() {
-    let e = env(
-        "<!doctype html><html><body><div id=app class='a b' aria-label=hi></div>\
-         <form name=f1></form><img id=pic name=picname><iframe name=fr></iframe></body></html>",
-    );
+    let e = env("<!doctype html><html><body><div id=app class='a b' aria-label=hi></div>\
+         <form name=f1></form><img id=pic name=picname><iframe name=fr></iframe></body></html>");
     let r = &e.main;
     // Attr nodes keep their identity, move between elements and detach.
     assert_eq!(eval(r, "const app = document.getElementById('app'); app.getAttributeNode('class') === app.attributes.getNamedItem('class') && app.attributes[0].name === 'id'"), "true");
-    assert_eq!(eval(r, "const at = document.createAttribute('data-x'); at.value = '1'; String(at.ownerElement) + at.name"), "nulldata-x");
-    assert_eq!(eval(r, "app.setAttributeNode(at) === null && app.getAttributeNode('data-x') === at && at.ownerElement === app"), "true");
-    assert_eq!(eval(r, "const other = document.createElement('b'); try { other.setAttributeNode(at); 'no' } catch (e) { e.name }"), "InUseAttributeError");
-    assert_eq!(eval(r, "app.removeAttributeNode(at) === at && at.ownerElement === null && at.value + app.hasAttribute('data-x')"), "1false");
-    assert_eq!(eval(r, "const ns = document.createAttributeNS('urn:x', 'p:q'); ns.prefix + ns.localName + ns.namespaceURI"), "pqurn:x");
+    assert_eq!(
+        eval(r, "const at = document.createAttribute('data-x'); at.value = '1'; String(at.ownerElement) + at.name"),
+        "nulldata-x"
+    );
+    assert_eq!(
+        eval(
+            r,
+            "app.setAttributeNode(at) === null && app.getAttributeNode('data-x') === at && at.ownerElement === app"
+        ),
+        "true"
+    );
+    assert_eq!(
+        eval(
+            r,
+            "const other = document.createElement('b'); try { other.setAttributeNode(at); 'no' } catch (e) { e.name }"
+        ),
+        "InUseAttributeError"
+    );
+    assert_eq!(
+        eval(
+            r,
+            "app.removeAttributeNode(at) === at && at.ownerElement === null && at.value + app.hasAttribute('data-x')"
+        ),
+        "1false"
+    );
+    assert_eq!(
+        eval(r, "const ns = document.createAttributeNS('urn:x', 'p:q'); ns.prefix + ns.localName + ns.namespaceURI"),
+        "pqurn:x"
+    );
     // ARIAMixin reflects every attribute as a nullable string.
     assert_eq!(eval(r, "app.ariaLabel + ':' + String(app.ariaBusy)"), "hi:null");
-    assert_eq!(eval(r, "app.ariaBusy = 'true'; app.ariaBusy = undefined; String(app.ariaBusy) + app.hasAttribute('aria-busy')"), "nullfalse");
+    assert_eq!(
+        eval(
+            r,
+            "app.ariaBusy = 'true'; app.ariaBusy = undefined; String(app.ariaBusy) + app.hasAttribute('aria-busy')"
+        ),
+        "nullfalse"
+    );
     assert_eq!(eval(r, "app.ariaRowIndexText = 'x'; app.getAttribute('aria-rowindextext')"), "x");
     // DOMTokenList update steps and supports().
-    assert_eq!(eval(r, "const d = document.createElement('div'); d.classList.remove('a'); String(d.getAttribute('class'))"), "null");
+    assert_eq!(
+        eval(r, "const d = document.createElement('div'); d.classList.remove('a'); String(d.getAttribute('class'))"),
+        "null"
+    );
     assert_eq!(eval(r, "d.classList.add('a'); d.classList.replace('a', 'a'); d.getAttribute('class')"), "a");
     assert_eq!(eval(r, "try { d.classList.replace(' ', '') } catch (e) { e.name }"), "SyntaxError");
     assert_eq!(eval(r, "try { d.classList.supports('a') } catch (e) { e.constructor.name }"), "TypeError");
     assert_eq!(eval(r, "d.classList = 'x y'; d.className"), "x y");
     // Document named properties and collections.
-    assert_eq!(eval(r, "document.f1 === document.forms[0] && 'f1' in document && document.picname === document.pic"), "true");
+    assert_eq!(
+        eval(r, "document.f1 === document.forms[0] && 'f1' in document && document.picname === document.pic"),
+        "true"
+    );
     assert_eq!(eval(r, "Object.getOwnPropertyNames(document).includes('picname') && document.embeds.length === 0 && document.applets.length === 0"), "true");
-    assert_eq!(eval(r, "typeof document.fr === 'object' && document.fr !== null"), "true", "an iframe by name is its window");
+    assert_eq!(
+        eval(r, "typeof document.fr === 'object' && document.fr !== null"),
+        "true",
+        "an iframe by name is its window"
+    );
     // Namespace lookups, textContent and moveBefore.
-    assert_eq!(eval(r, "String(app.lookupPrefix('http://www.w3.org/1999/xhtml')) + app.lookupNamespaceURI('xml')"), "nullhttp://www.w3.org/XML/1998/namespace");
+    assert_eq!(
+        eval(r, "String(app.lookupPrefix('http://www.w3.org/1999/xhtml')) + app.lookupNamespaceURI('xml')"),
+        "nullhttp://www.w3.org/XML/1998/namespace"
+    );
     assert_eq!(eval(r, "app.textContent = undefined; JSON.stringify(app.textContent)"), "\"\"");
-    assert_eq!(eval(r, "const f = document.forms[0]; document.body.moveBefore(f, app); document.body.firstElementChild === f"), "true");
-    assert_eq!(eval(r, "try { document.body.moveBefore(document.createElement('x'), null); 'no' } catch (e) { e.name }"), "HierarchyRequestError");
+    assert_eq!(
+        eval(r, "const f = document.forms[0]; document.body.moveBefore(f, app); document.body.firstElementChild === f"),
+        "true"
+    );
+    assert_eq!(
+        eval(r, "try { document.body.moveBefore(document.createElement('x'), null); 'no' } catch (e) { e.name }"),
+        "HierarchyRequestError"
+    );
 }
 
 #[test]
@@ -6829,11 +6879,23 @@ fn legacy_events_request_and_observable() {
     assert_eq!(eval(r, "try { new UIEvent('x', {view: {}}); 'no' } catch (e) { e.constructor.name }"), "TypeError");
     assert_eq!(eval(r, "const se = document.createEvent('StorageEvent'); se.initStorageEvent('storage', false, false, 'k', null, 'v'); se.key + se.oldValue + se.newValue"), "knullv");
     assert_eq!(eval(r, "window.onblur = null; document.body.setAttribute('onblur', 'return'); typeof window.onblur + (window.onblur === document.body.onblur)"), "functiontrue");
-    assert_eq!(eval(r, "'remove' in Element.prototype[Symbol.unscopables] && 'append' in Document.prototype[Symbol.unscopables]"), "true");
+    assert_eq!(
+        eval(
+            r,
+            "'remove' in Element.prototype[Symbol.unscopables] && 'append' in Document.prototype[Symbol.unscopables]"
+        ),
+        "true"
+    );
     // Request: fields, headers guard, body and fetch input.
     assert_eq!(eval(r, "const rq = new Request('/x?y', {method: 'post', body: 'hi', headers: {'X-A': '1', 'Cookie': 'no'}}); rq.method + rq.url + rq.headers.get('x-a') + String(rq.headers.get('cookie')) + rq.headers.get('content-type')"), "POSThttp://localhost:5173/x?y1nulltext/plain;charset=UTF-8");
-    assert_eq!(eval(r, "rq.mode + rq.credentials + rq.cache + rq.redirect + rq.referrer + rq.bodyUsed"), "corssame-origindefaultfollowabout:clientfalse");
-    assert_eq!(eval(r, "try { new Request('/x', {method: 'TRACE'}); 'no' } catch (e) { e.constructor.name }"), "TypeError");
+    assert_eq!(
+        eval(r, "rq.mode + rq.credentials + rq.cache + rq.redirect + rq.referrer + rq.bodyUsed"),
+        "corssame-origindefaultfollowabout:clientfalse"
+    );
+    assert_eq!(
+        eval(r, "try { new Request('/x', {method: 'TRACE'}); 'no' } catch (e) { e.constructor.name }"),
+        "TypeError"
+    );
     assert_eq!(eval(r, "try { new Request('http://u:p@h/'); 'no' } catch (e) { e.constructor.name }"), "TypeError");
     assert_eq!(eval(r, "const c = rq.clone(); c.bodyUsed + ':' + (c.headers !== rq.headers)"), "false:true");
     assert_eq!(eval(r, "new Request(rq).bodyUsed + ':' + rq.bodyUsed"), "false:true");
@@ -6950,7 +7012,10 @@ fn ids_read_once_do_not_accumulate() {
     }
     let n = e.main.interned_string_count();
     assert!(n <= 6000, "{n} interned strings for 40000 distinct values read once");
-    assert_eq!(eval(r, "const last = document.getElementById('list').lastChild; last.id + '|' + last.className"), "row-9-1999|cell cell-9-1999");
+    assert_eq!(
+        eval(r, "const last = document.getElementById('list').lastChild; last.id + '|' + last.className"),
+        "row-9-1999|cell cell-9-1999"
+    );
     lp_webapi::lifecycle::realm_disposed(&e.page, e.main.id());
     e.main.dispose();
     assert_eq!(e.main.interned_string_count(), 0);

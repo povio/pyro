@@ -20,9 +20,9 @@ mod storage_js;
 mod support;
 mod traversal_js;
 mod uievents_js;
+mod url_params_js;
 mod webidl_js;
 mod websocket_js;
-mod url_params_js;
 mod xhr_js;
 mod xhr_worker_js;
 

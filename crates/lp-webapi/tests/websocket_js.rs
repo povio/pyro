@@ -289,6 +289,24 @@ fn blobs_server_close_and_connecting_close() {
 }
 
 #[test]
+fn close_with_only_a_reason_sends_1000_and_symbols_throw() {
+    let server = WsServer::new("");
+    let env = Env::new(&format!("{}/page", server.base));
+    env.eval(&format!(
+        r#"globalThis.log = []; globalThis.done = false;
+        const code = f => {{ try {{ f(); return 'none'; }} catch (e) {{ return e.name; }} }};
+        log.push(code(() => new WebSocket(Symbol('x'))));
+        log.push(code(() => new WebSocket('ws://127.0.0.1:{p}/', Symbol('p'))));
+        const ws = new WebSocket('ws://127.0.0.1:{p}/echo');
+        ws.onopen = () => ws.close(undefined, 'only reason');
+        ws.onclose = e => {{ log.push(e.code + ':' + e.reason + ':' + e.wasClean); done = true; }};"#,
+        p = server.port
+    ));
+    env.until("done");
+    assert_eq!(env.eval("log.join('|')"), "TypeError|TypeError|1000:only reason:true");
+}
+
+#[test]
 fn handshake_carries_cookies_and_set_cookie_is_seen_after_open() {
     let server = WsServer::new("");
     let env = Env::new(&format!("{}/page", server.base));

@@ -20,7 +20,12 @@
   const B = Blob;
   const DOMEx = DOMException;
   const TE = TypeError;
-  const S = String;
+  const Str = String;
+  // WebIDL DOMString/USVString conversion: a Symbol throws.
+  function S(v) {
+    if (typeof v === 'symbol') throw new TE('Cannot convert a Symbol value to a string');
+    return Str(v);
+  }
   const N = Number;
   const floor = Math.floor;
 
@@ -137,7 +142,12 @@
       this.#state = CLOSING;
       // Closing a connection that is not established fails it.
       if (state === CONNECTING) abort(this.#id);
-      else close(this.#id, code === undefined ? -1 : code, reason === undefined ? '' : reason);
+      else {
+        // A reason without a code is sent with 1000 (no code, no body).
+        if (reason === undefined) reason = '';
+        if (code === undefined) code = reason === '' ? -1 : 1000;
+        close(this.#id, code, reason);
+      }
     }
 
     send(data) {
