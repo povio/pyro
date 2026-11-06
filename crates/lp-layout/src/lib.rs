@@ -132,7 +132,7 @@ pub fn install(fetcher: Arc<dyn Fetcher>) {
             synced: Default::default(),
             sheets: Default::default(),
             resources: std::cell::Cell::new(RESOURCES.load(Ordering::Relaxed)),
-            base_url: RefCell::new(BLANK.into()),
+            base_url: RefCell::new(BaseUrl::new(BLANK)),
             fetcher: fetcher.clone(),
         }) as Rc<dyn GeometrySource>
     })));
@@ -143,9 +143,23 @@ pub fn install(fetcher: Arc<dyn Fetcher>) {
 /// ratio bits, dark) and style invalidations.
 type SyncedAt = (u64, u64, (u32, u32, u64, bool, bool), u64);
 
+/// A document's base URL as given, and parsed once when it is set: links
+/// resolve against the parsed form on every sync, while the snapshot keeps
+/// the original text (`Url` normalizes it).
+struct BaseUrl {
+    text: String,
+    parsed: Option<url::Url>,
+}
+
+impl BaseUrl {
+    fn new(text: &str) -> Self {
+        Self { text: text.to_owned(), parsed: url::Url::parse(text).ok() }
+    }
+}
+
 pub struct BlitzGeometry {
     page: u64,
-    base_url: RefCell<String>,
+    base_url: RefCell<BaseUrl>,
     fetcher: Arc<dyn Fetcher>,
     /// The DOM version, style generation, viewport and style invalidations
     /// it was last synced at.
@@ -236,15 +250,14 @@ impl BlitzGeometry {
     fn render_opts<'a>(
         dom: &'a Dom,
         style: &'a StyleEngine,
-        base_url: &str,
+        base: Option<&'a url::Url>,
         sheets: Option<&'a RefCell<HashMap<String, String>>>,
     ) -> (impl Fn(NodeId) -> Option<String> + 'a, impl Fn(NodeId) -> Option<String> + 'a) {
-        let base = url::Url::parse(base_url).ok();
         let style_text = move |owner: NodeId| style.sheet_text(owner).map(str::to_owned);
         let stylesheet_href = move |link: NodeId| {
             let text = style.sheet_text(link)?;
             let href = dom.get_attribute(link, "href").ok().flatten()?;
-            let url = base.as_ref()?.join(href.trim()).ok()?.to_string();
+            let url = base?.join(href.trim()).ok()?.to_string();
             if let Some(sheets) = sheets {
                 sheets.borrow_mut().insert(url.clone(), text.to_owned());
             }
@@ -256,17 +269,17 @@ impl BlitzGeometry {
     /// The document as a keyed node list for this page's Blitz document.
     fn snapshot(&self, dom: &Dom, style: &StyleEngine) -> Option<Snapshot> {
         let t = Instant::now();
-        let base_url = self.base_url.borrow().clone();
+        let base = self.base_url.borrow();
         let sheets = RefCell::new(HashMap::new());
         let tree = {
-            let (style_text, stylesheet_href) = Self::render_opts(dom, style, &base_url, Some(&sheets));
+            let (style_text, stylesheet_href) = Self::render_opts(dom, style, base.parsed.as_ref(), Some(&sheets));
             let opts = RenderHtml { style_text: &style_text, stylesheet_href: &stylesheet_href, mark: None };
             Arc::new(convert(dom.render_tree(style.document(), &opts).ok()?))
         };
         let v = style.viewport();
         let snap = Snapshot {
             html: String::new(),
-            base_url,
+            base_url: base.text.clone(),
             sheets: sheets.into_inner(),
             width: v.width,
             height: v.height,
@@ -323,13 +336,15 @@ impl BlitzGeometry {
             };
             if let (Some(restyled), true) = (restyled, vp == viewport) {
                 let t = Instant::now();
-                let base_url = self.base_url.borrow().clone();
-                let (style_text, stylesheet_href) = Self::render_opts(dom, style, &base_url, None);
-                let opts = RenderHtml { style_text: &style_text, stylesheet_href: &stylesheet_href, mark: None };
-                let delta = dom.render_delta(style.document(), version, &opts).map(|mut delta| {
-                    delta.ops.extend(restyled.iter().filter_map(|&owner| dom.render_style_text(owner, &opts)));
-                    delta
-                });
+                let delta = {
+                    let base = self.base_url.borrow();
+                    let (style_text, stylesheet_href) = Self::render_opts(dom, style, base.parsed.as_ref(), None);
+                    let opts = RenderHtml { style_text: &style_text, stylesheet_href: &stylesheet_href, mark: None };
+                    dom.render_delta(style.document(), version, &opts).map(|mut delta| {
+                        delta.ops.extend(restyled.iter().filter_map(|&owner| dom.render_style_text(owner, &opts)));
+                        delta
+                    })
+                };
                 SNAPSHOT_NS.fetch_add(t.elapsed().as_nanos() as u64, Ordering::Relaxed);
                 if let Some(delta) = delta {
                     let ops = convert_delta(delta);
@@ -501,7 +516,7 @@ impl GeometrySource for BlitzGeometry {
     }
 
     fn set_base_url(&self, url: &str) {
-        *self.base_url.borrow_mut() = url.to_owned();
+        *self.base_url.borrow_mut() = BaseUrl::new(url);
     }
 
     fn stale(&self) -> bool {
@@ -642,6 +657,31 @@ mod tests {
 
     fn find(dom: &Dom, doc: NodeId, css: &str) -> NodeId {
         dom.query_selector(doc, &parse_selectors(css).unwrap()).unwrap().unwrap()
+    }
+
+    #[test]
+    fn base_url_is_parsed_when_set_and_keeps_its_text() {
+        use lp_dom::layout::GeometrySource;
+        let g = super::BlitzGeometry {
+            page: 0,
+            synced: Default::default(),
+            sheets: Default::default(),
+            resources: Default::default(),
+            base_url: RefCell::new(super::BaseUrl::new(super::BLANK)),
+            fetcher: std::sync::Arc::new(NoFetch),
+        };
+        assert_eq!(g.base_url.borrow().text, "about:blank");
+        assert_eq!(g.base_url.borrow().parsed.as_ref().map(|u| u.as_str()), Some("about:blank"));
+        // Navigation sets a new base; the text stays as given while links
+        // resolve against the parsed (normalized) form.
+        g.set_base_url("HTTP://Example.COM/a/b.html");
+        let base = g.base_url.borrow();
+        assert_eq!(base.text, "HTTP://Example.COM/a/b.html");
+        let parsed = base.parsed.as_ref().unwrap();
+        assert_eq!(parsed.join("s.css").unwrap().as_str(), "http://example.com/a/s.css");
+        drop(base);
+        g.set_base_url("not a url");
+        assert!(g.base_url.borrow().parsed.is_none());
     }
 
     #[test]
