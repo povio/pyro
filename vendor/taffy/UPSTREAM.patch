@@ -1286,7 +1286,7 @@ index 18063621..dae69e35 100644
  }
  
 diff --git a/src/compute/mod.rs b/src/compute/mod.rs
-index bb954acf..b41aef6f 100644
+index bb954acf..e8ef5b58 100644
 --- a/src/compute/mod.rs
 +++ b/src/compute/mod.rs
 @@ -80,13 +80,24 @@ pub fn compute_root_layout(
@@ -1315,7 +1315,23 @@ index bb954acf..b41aef6f 100644
      let oof_root_area = match (position.is_out_of_flow(), icb_size.width, icb_size.height) {
          (true, Some(width), Some(height)) => Some(Size { width, height }),
          _ => None,
-@@ -381,6 +392,9 @@ pub fn round_layout(tree: &mut impl RoundTree, node_id: NodeId) {
+@@ -181,6 +192,15 @@ pub fn compute_root_layout(
+         debug_assert!(unclaimed.is_empty(), "the root positioning pass must claim all remaining candidates");
+         if !root_is_cached {
+             tree.add_hoisted_children(root, &hoisted);
++        } else if {
++            let claims = tree.get_core_container_style(root).is_containing_block();
++            !claims.absolute && !claims.fixed
++        } {
++            // lightningpanda: a root which claims no out-of-flow box itself hoists exactly the boxes
++            // of this pass, which may differ from the last run's even when its own layout is cached:
++            // a box relaid here (its ancestors' layout untouched) can surface other candidates.
++            tree.clear_hoisted_children(root);
++            tree.add_hoisted_children(root, &hoisted);
+         }
+     }
+ }
+@@ -381,6 +401,9 @@ pub fn round_layout(tree: &mut impl RoundTree, node_id: NodeId) {
      /// Recursive function to apply rounding to all descendents
      fn round_layout_inner(tree: &mut impl RoundTree, node_id: NodeId, cumulative_x: f32, cumulative_y: f32) {
          let unrounded_layout = tree.get_unrounded_layout(node_id);
@@ -1325,7 +1341,7 @@ index bb954acf..b41aef6f 100644
          let mut layout = unrounded_layout;
  
          let parent_x = cumulative_x;
-@@ -416,6 +430,7 @@ pub fn round_layout(tree: &mut impl RoundTree, node_id: NodeId) {
+@@ -416,6 +439,7 @@ pub fn round_layout(tree: &mut impl RoundTree, node_id: NodeId) {
          );
  
          tree.set_final_layout(node_id, &layout);
@@ -1333,7 +1349,7 @@ index bb954acf..b41aef6f 100644
  
          // Recurse into in-flow children. Out-of-flow (absolute/fixed) children are skipped here:
          // they are instead visited via their containing block's hoisted child list below, which
-@@ -489,7 +504,8 @@ pub fn compute_hidden_layout(tree: &mut (impl LayoutPartialTree + CacheTree), no
+@@ -489,7 +513,8 @@ pub fn compute_hidden_layout(tree: &mut (impl LayoutPartialTree + CacheTree), no
  pub mod detailed_info {
      #[cfg(feature = "grid")]
      pub use super::grid::{

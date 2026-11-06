@@ -16,6 +16,7 @@ use style::selector_parser::{PseudoElement, RestyleDamage};
 use style::shared_lock::StylesheetGuards;
 use style::url::ComputedUrl;
 use style::values::generics::image::Image as StyloImage;
+use style::values::computed::Display;
 use style::values::specified::align::AlignFlags;
 use style::values::specified::box_::DisplayInside;
 use style::values::specified::box_::DisplayOutside;
@@ -59,6 +60,23 @@ pub(crate) const CHILDREN_CHANGED: RestyleDamage = CONSTRUCT_FC;
 pub(crate) const ALL_DAMAGE: RestyleDamage =
     RestyleDamage::from_bits_retain(0b_0000_0000_1110_1111);
 
+/// An out-of-flow box below the node needs relayout, but nothing the node's
+/// own layout reads changed: the box's static position (computed by its
+/// parent from the box's style) and its existence are the same, and an
+/// out-of-flow box takes no part in its ancestors' in-flow layout or
+/// intrinsic sizes. It is what such a box returns to its parent in place of
+/// `RELAYOUT` (keeping `RECALCULATE_OVERFLOW`), so the ancestors keep their
+/// layout caches and the box is relaid by the root positioning pass, which
+/// runs whether or not the root's own layout comes from its cache.
+///
+/// Only the initial containing block is such a boundary: every ancestor that
+/// could be the box's containing block (`is_containing_block_for_some`) turns
+/// it back into `RELAYOUT`, since its out-of-flow pass runs inside its own
+/// cached layout. Never stored on a node. Deliberately not part of
+/// `ALL_DAMAGE`.
+pub(crate) const POS_CHILD_RELAYOUT: RestyleDamage =
+    RestyleDamage::from_bits_retain(0b_0000_0001_0000_0000);
+
 impl BaseDocument {
     /// Union `RestyleDamage` up the tree and clear the layout caches of every
     /// node whose subtree needs relayout.
@@ -74,7 +92,9 @@ impl BaseDocument {
             .try_stylo_element_data_mut()
             .and_then(|s| s.get_mut())
         {
-            data.damage
+            // `RestyleDamage::reconstruct()` sets every bit: the
+            // `POS_CHILD_RELAYOUT` flag only ever comes from children.
+            data.damage - POS_CHILD_RELAYOUT
         } else {
             return RestyleDamage::empty();
         };
@@ -115,6 +135,19 @@ impl BaseDocument {
                 DisplayInside::Flex | DisplayInside::Grid
             );
         damage_from_children.remove(REORDER_CHILDREN);
+
+        // An out-of-flow descendant is relaid by its containing block: if this
+        // node can be one, it relays (its out-of-flow pass runs inside its
+        // cached layout); otherwise the flag passes on to the root.
+        let mut pos_child = false;
+        if damage_from_children.contains(POS_CHILD_RELAYOUT) {
+            damage_from_children.remove(POS_CHILD_RELAYOUT);
+            if is_containing_block_for_some(&self.nodes[node_id]) {
+                damage_from_children.insert(RestyleDamage::RELAYOUT);
+            } else {
+                pos_child = true;
+            }
+        }
         damage |= damage_from_children;
 
         // Put children back
@@ -155,9 +188,24 @@ impl BaseDocument {
 
         // Reconstruction replaces the anonymous boxes with freshly styled ones.
         if !own_damage.is_empty() && !damage.intersects(CONSTRUCT_BOX | CONSTRUCT_FC) {
-            let anonymous_damage = self.refresh_anonymous_block_styles(node_id);
+            let anonymous_damage = self.refresh_anonymous_block_styles(node_id) - POS_CHILD_RELAYOUT;
             damage |= anonymous_damage;
             damage_for_parent |= anonymous_damage;
+        }
+
+        // An out-of-flow box relaid only for what is inside it (its own style
+        // and box are unchanged, so is its static position) is a relayout
+        // boundary: its ancestors keep their layout (see `POS_CHILD_RELAYOUT`).
+        if damage_for_parent.contains(ONLY_RELAYOUT)
+            && !damage_for_parent.contains(CONSTRUCT_FC)
+            && !own_damage.intersects(ONLY_RELAYOUT | CONSTRUCT_BOX)
+            && self.is_relayout_boundary(node_id)
+        {
+            damage_for_parent.remove(ONLY_RELAYOUT);
+            pos_child = true;
+        }
+        if pos_child {
+            damage_for_parent.insert(POS_CHILD_RELAYOUT);
         }
 
         let node = &mut self.nodes[node_id];
@@ -248,6 +296,21 @@ impl BaseDocument {
                 ctx.placed.borrow_mut().damaged(index as usize, ctx.cells.len());
             }
         }
+    }
+
+    /// Whether `node_id` is an out-of-flow box (with a box of its own, below
+    /// the root element) whose relayout need not relayout its ancestors.
+    fn is_relayout_boundary(&self, node_id: NodeId) -> bool {
+        let node = &self.nodes[node_id];
+        let Some(parent) = node.parent else { return false };
+        // The root element is laid out by the root pass itself.
+        if self.nodes[parent].parent.is_none() {
+            return false;
+        }
+        node.is_out_of_flow()
+            && node
+                .display_style()
+                .is_some_and(|d| d.inside() != DisplayInside::Contents && d != Display::None)
     }
 
     /// Refresh owned anonymous boxes without revisiting their DOM children.
@@ -430,6 +493,18 @@ fn forwards_construction(node: &Node) -> bool {
         DisplayInside::Flow => display.outside() == DisplayOutside::Inline,
         inside => is_table_part_inside(inside),
     }
+}
+
+/// Whether the node can be the containing block of an out-of-flow box below
+/// it: positioned, or establishing one for `absolute` or `fixed` boxes
+/// (transforms, filters, containment, `will-change`, size containers). A
+/// superset of what any Taffy layout claims (the inline-box claims of a
+/// positioned span included), not narrowed by position kind.
+fn is_containing_block_for_some(node: &Node) -> bool {
+    node.primary_styles().is_some_and(|style| {
+        let claims = stylo_taffy::convert::containing_block_claims(&style);
+        claims.absolute || claims.fixed
+    })
 }
 
 /// Table-internal boxes which are not layout children: the table reads them
