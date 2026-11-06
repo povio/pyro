@@ -96,6 +96,18 @@ are ignored. The reply also carries `lp: {width, height, sceneHash, ms}`.
 - The `lightning-panda` client stores baselines beside the tests (`__screenshots__/`), sends each one once per
   connection, and writes `.actual.png`/`.diff.png` on a failure (see its README and LLM.md).
 
+## Deferred HTML captures
+
+`captureOnly` HTML includes current inner `scrollLeft`/`scrollTop` offsets in reserved
+`data-lp-scroll-left` and `data-lp-scroll-top` attributes. The renderer restores these offsets
+when replaying the immutable document. Page-authored attributes with these names are ignored;
+the live DOM is unchanged. This complements the existing scroll metadata used by live-tree captures.
+
+Password values are replaced with masking bullets in both HTML and keyed render copies. Plain
+text inputs retain their current values. Time inputs render their saved value instead of appearing
+empty. The comparison worker accepts embedded `data:` resources without fetching them, while
+retaining origin and filesystem-root checks for external resources.
+
 ## Not captured
 
 - Canvas, video and WebGL pixels.

@@ -7,9 +7,14 @@ and two native browsers: `native/darwin-arm64/lightningpanda` and
 The browsers require macOS 14 or newer. Remote CDP connections can be used from
 other operating systems; the package deliberately has no `os` restriction.
 
-The npm builds use **system JavaScriptCore**, with rendering enabled. Fork mode
-is not included; use a separately built patched browser via `LIGHTNINGPANDA_BIN`
-or `Lightningpanda.launch({ bin })`. No install-time scripts or downloads run.
+Both browsers have rendering enabled. The **arm64 browser is the fork-capable
+build**: it is linked against the patched JavaScriptCore, which ships beside it
+as `native/darwin-arm64/lib/libJavaScriptCore.dylib`
+(`scripts/release/bundle-jsc.sh`), so fork mode (`--fork`) and the patched
+engine's fast paths work out of the box. The Intel browser uses **system
+JavaScriptCore** (the patched library is built for arm64 only), so it has no
+fork mode. `npm pack` refuses an arm64 browser without its library. No
+install-time scripts or downloads run.
 
 ## One-time npm setup
 

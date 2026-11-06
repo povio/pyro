@@ -142,3 +142,5 @@ first cell's borders. A table whose collapsed borders are not one uniform grid n
 rules: each cell keeps half of the borders around it (`LayoutData::collapsed_border`, read through
 `for_table_cell_layout`) and the table half of its outer ones, as Chromium's boxes do. Uniform tables keep the gutter.
 Values in `bench/pdf/fixtures/chrome-156/table-collapse.json`, tests in `crates/lp-render/tests/table_collapsed_borders.rs`.
+
+Time inputs use the existing text-editor construction and intrinsic measurement paths so captured values are painted.

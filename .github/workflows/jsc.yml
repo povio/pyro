@@ -2,7 +2,7 @@ name: Patched JavaScriptCore
 
 # Builds the patched JavaScriptCore the fork variant links
 # (scripts/jsc/build.sh) and keeps it in the Actions cache, keyed by the WebKit
-# revision and the patches. A build takes hours on a hosted runner, so `main`
+# revision and the patches. A cold build takes about 7 minutes; `main`
 # rebuilds whenever the inputs change: caches saved on the default branch are
 # the ones release tags can restore. Release tags call this workflow and get
 # the cached build, or build it themselves on a miss.
@@ -33,7 +33,7 @@ permissions:
 jobs:
   jsc:
     runs-on: macos-15
-    # A cold build at -j2 on a hosted runner; cached builds take a minute.
+    # A cold build at -j2 took 7 minutes; cached builds take a minute.
     timeout-minutes: 360
     outputs:
       dir: ${{ steps.key.outputs.dir }}

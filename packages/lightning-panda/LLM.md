@@ -26,8 +26,9 @@ source is `src/steps.ts` (builders) and `src/index.ts` (pages and runs).
 
 Install the browser and client with `bun add --dev @povio/lightning-panda`
 (or `@povio/lightning-panda@next` for an RC). `Lightningpanda.launch()` finds
-the bundled macOS browser automatically. Fork mode requires a separately built
-patched JavaScriptCore browser selected via `LIGHTNINGPANDA_BIN` or `bin`.
+the bundled macOS browser automatically. On Apple silicon it is the
+fork-capable build (patched JavaScriptCore bundled), so `--fork` works; the
+Intel browser has no fork mode.
 On other operating systems, connect to a remote browser with
 `Lightningpanda.connect()`.
 

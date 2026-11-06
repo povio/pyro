@@ -92,7 +92,10 @@ jobs:
           codesign --verify --strict "$comparator"
           mkdir -p "archive/$ARCH"
           cp "$binary" "$comparator" "archive/$ARCH/"
+      # The npm package's Intel browser. Its arm64 browser is the fork build
+      # with its patched JavaScriptCore (the `fork` job).
       - uses: actions/upload-artifact@v4
+        if: matrix.arch == 'x64'
         with:
           name: native-${{ matrix.arch }}
           path: native/
@@ -148,10 +151,28 @@ jobs:
           "$binary" version | grep -q 'fork: true'
           mkdir -p archive/fork
           cp "$binary" target/release/lp-snapshot-compare archive/fork/
+      - name: Bundle the patched JavaScriptCore for the npm package
+        env:
+          JSC_DIR: ${{ needs.jsc.outputs.dir }}
+        run: |
+          mkdir -p native/darwin-arm64
+          cp target/release/lightningpanda native/darwin-arm64/
+          scripts/release/bundle-jsc.sh native/darwin-arm64 "$HOME/Library/Caches/lightningpanda/jsc/$JSC_DIR/lib/libJavaScriptCore.dylib"
+          # Moved, so nothing can load the build cache's copy instead.
+          mv "$HOME/Library/Caches/lightningpanda/jsc/$JSC_DIR" "$RUNNER_TEMP/jsc-moved"
+          native/darwin-arm64/lightningpanda version | grep -q 'fork: true'
+          DYLD_PRINT_LIBRARIES=1 native/darwin-arm64/lightningpanda eval -e 1 2>&1 | grep libJavaScriptCore \
+            | grep -q "$PWD/native/darwin-arm64/lib/libJavaScriptCore.dylib"
       - uses: actions/upload-artifact@v4
         with:
           name: archive-fork
           path: archive/fork/
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-arm64
+          path: native/
           if-no-files-found: error
           retention-days: 7
 
@@ -174,7 +195,7 @@ jobs:
           retention-days: 7
 
   package:
-    needs: [release, build]
+    needs: [release, build, fork]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -247,6 +268,10 @@ jobs:
           npm init -y
           npm install --ignore-scripts "$GITHUB_WORKSPACE"/npm-package/*.tgz
           ./node_modules/.bin/lightningpanda version
+          # The arm64 browser is the fork build; the Intel one uses system JavaScriptCore.
+          want=false
+          [[ "$(uname -m)" == arm64 ]] && want=true
+          ./node_modules/.bin/lightningpanda version | grep -q "fork: $want"
           node "$GITHUB_WORKSPACE/scripts/npm/smoke.mjs"
           bun "$GITHUB_WORKSPACE/scripts/npm/smoke.mjs"
 
@@ -308,6 +333,8 @@ jobs:
           for f in release-out/lightningpanda-rust-v"$VERSION"-macos-arm64*.tar.gz; do tar xzf "$f" -C "$RUNNER_TEMP/extracted"; done
           cd packages/lightning-panda
           bun install --frozen-lockfile
+          # The CLI tests run the built client.
+          bun run build
           # Everything, fork mode included.
           LIGHTNINGPANDA_BIN="$RUNNER_TEMP/extracted/lightningpanda-rust-v$VERSION-macos-arm64-fork/lightningpanda" bun test ./test
           # The standard build has no fork mode.

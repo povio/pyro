@@ -10,10 +10,12 @@ export function resolveBinary({
   env = process.env,
 }: { platform?: string; arch?: string; root?: string; env?: NodeJS.ProcessEnv } = {}): string {
   if (env.LIGHTNINGPANDA_BIN) return env.LIGHTNINGPANDA_BIN;
-  const bundled = join(root, 'native', `${platform}-${arch}`, 'lightningpanda');
-  if (statSync(bundled, { throwIfNoEntry: false })?.isFile()) return bundled;
+  // A release archive unpacks the client beside the browser it ships (the
+  // standard or the fork build); that one wins over the package's own.
   const sibling = join(root, '..', 'lightningpanda');
   if (statSync(sibling, { throwIfNoEntry: false })?.isFile()) return sibling;
+  const bundled = join(root, 'native', `${platform}-${arch}`, 'lightningpanda');
+  if (statSync(bundled, { throwIfNoEntry: false })?.isFile()) return bundled;
   if (platform !== 'darwin' || !['arm64', 'x64'].includes(arch)) {
     throw new Error(`Lightningpanda has no bundled browser for ${platform}-${arch}. The browser supports macOS 14+ on arm64 and x64. Use Lightningpanda.connect() for a remote browser, or set LIGHTNINGPANDA_BIN.`);
   }

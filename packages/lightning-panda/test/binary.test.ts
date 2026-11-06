@@ -20,9 +20,25 @@ test('resolves each bundled architecture and gives an explicit override preceden
     }
     expect(() => resolveBinary({ root, platform: 'linux', arch: 'x64', env: {} })).toThrow('connect()');
     expect(() => resolveBinary({ root, platform: 'darwin', arch: 'unknown', env: {} })).toThrow('no bundled browser');
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('a release archive client takes the browser beside it over its bundled one', () => {
+  const archive = mkdtempSync(join(tmpdir(), 'lp-archive-'));
+  try {
+    const root = join(archive, 'lightning-panda');
+    const bundledDir = join(root, 'native', 'darwin-arm64');
+    mkdirSync(bundledDir, { recursive: true });
+    writeFileSync(join(bundledDir, 'lightningpanda'), 'fixture');
+    const beside = join(archive, 'lightningpanda');
+    writeFileSync(beside, 'fixture');
+    expect(resolveBinary({ root, platform: 'darwin', arch: 'arm64', env: {} })).toBe(beside);
+    expect(resolveBinary({ root, platform: 'darwin', arch: 'arm64', env: { LIGHTNINGPANDA_BIN: '/custom/browser' } })).toBe('/custom/browser');
+    rmSync(beside);
+    expect(resolveBinary({ root, platform: 'darwin', arch: 'arm64', env: {} })).toBe(join(bundledDir, 'lightningpanda'));
     rmSync(join(root, 'native'), { recursive: true });
     expect(() => resolveBinary({ root, platform: 'darwin', arch: 'arm64', env: {} })).toThrow('Missing bundled browser');
-  } finally { rmSync(root, { recursive: true, force: true }); }
+  } finally { rmSync(archive, { recursive: true, force: true }); }
 });
 
 test('CLI forwards arguments and exit status to the selected browser', () => {

@@ -21,7 +21,6 @@ commit="${2:?usage: $0 VERSION COMMIT IN_DIR OUT_DIR}"
 in="$(cd "${3:?usage: $0 VERSION COMMIT IN_DIR OUT_DIR}" && pwd)"
 out="$(cd "${4:?usage: $0 VERSION COMMIT IN_DIR OUT_DIR}" && pwd)"
 root="$(cd "$(dirname "$0")/../.." && pwd)"
-entitlements="$root/scripts/macos/jit.entitlements"
 client="$in/povio-lightning-panda-$version.tgz"
 source_asset="lightningpanda-jsc-source-v$version.tar.gz"
 host_arch="$(uname -m)"
@@ -65,16 +64,8 @@ for variant in arm64 x64 fork; do
     tar xzf "$client" -C "$dir/lightning-panda" --strip-components=1
 
     if [[ "$variant" == fork ]]; then
-        mkdir -p "$dir/lib" "$dir/third-party/JavaScriptCore"
-        cp "$in/jsc/lib/libJavaScriptCore.dylib" "$dir/lib/"
-        chmod u+w "$dir/lib/libJavaScriptCore.dylib"
-        # Relocate: the build links the library by its absolute cache path.
-        linked="$(otool -L "$dir/lightningpanda" | awk '/libJavaScriptCore\.dylib/ {print $1; exit}')"
-        [[ -n "$linked" ]] || fail "the fork browser does not link libJavaScriptCore.dylib"
-        install_name_tool -id @rpath/libJavaScriptCore.dylib "$dir/lib/libJavaScriptCore.dylib"
-        install_name_tool -change "$linked" @loader_path/lib/libJavaScriptCore.dylib "$dir/lightningpanda"
-        codesign -f -s - "$dir/lib/libJavaScriptCore.dylib"
-        codesign -f -s - --entitlements "$entitlements" "$dir/lightningpanda" "$dir/lp-snapshot-compare"
+        mkdir -p "$dir/third-party/JavaScriptCore"
+        "$root/scripts/release/bundle-jsc.sh" "$dir" "$in/jsc/lib/libJavaScriptCore.dylib"
         cp -R "$in/jsc-licenses" "$dir/third-party/JavaScriptCore/licenses"
         rev="$(tr -d '[:space:]' < "$in/jsc/inputs/REVISION")"
         cat > "$dir/third-party/JavaScriptCore/SOURCE.txt" <<EOF

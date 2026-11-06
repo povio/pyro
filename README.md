@@ -20,8 +20,9 @@ npx lightningpanda serve --port 9222
 
 Install `@povio/lightning-panda@next` for release candidates. The API supports
 Node.js 22+ and Bun; remote CDP connections work from other operating systems.
-The bundled browsers use system JavaScriptCore; fork mode requires a separately
-built patched browser selected with `LIGHTNINGPANDA_BIN`.
+On Apple silicon the bundled browser is the fork-capable build with its patched
+JavaScriptCore included; the Intel browser uses system JavaScriptCore and has no
+fork mode.
 See [the package README](packages/lightning-panda/README.md) and
 [publishing instructions](docs/NPM_PUBLISHING.md).
 
