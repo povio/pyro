@@ -23,7 +23,9 @@ not. Code: `crates/lp-webapi/src/popover.rs` (algorithms and bindings),
   cancelable) for every change of the `open` attribute's presence, however it
   changed: `details.open`, `setAttribute`/`removeAttribute`, a summary click,
   the parser (`<details open>`), the exclusive accordion. lp-dom queues the
-  change at mutation time and the page posts the task.
+  change at mutation time and the page of the details' document posts the
+  task; details in documents no page watches (template contents,
+  `DOMParser`) fire nothing.
 
 ## Popovers
 
@@ -45,9 +47,9 @@ not. Code: `crates/lp-webapi/src/popover.rs` (algorithms and bindings),
 
 ## Dialogs
 
-- `show()` / `showModal()` follow the spec's checks and exceptions,
-  `showModal()` puts the dialog in the top layer and hides the auto popovers
-  that do not contain it.
+- `show()` / `showModal()` follow the spec's checks and exceptions;
+  `showModal()` puts the dialog in the top layer, and both hide the auto
+  popovers that do not contain the dialog.
 - Dialog focusing steps: the autofocus delegate, else the first focusable
   descendant that is rendered (tabindex >= 0), else the dialog itself.
   Closing returns focus to the element focused before when the focus was
@@ -78,8 +80,11 @@ not. Code: `crates/lp-webapi/src/popover.rs` (algorithms and bindings),
   `request-close`; `close`/`request-close` pass the button's `value`).
   Custom commands (`--name`) only fire the event. An unknown command, or a
   built-in the target cannot run (popover commands on a non-popover, dialog
-  commands on a non-dialog), fires nothing. A button with `commandfor` and no
-  valid `type` is a plain button (`type` reads `button`) and does not submit.
+  commands on a non-dialog), fires nothing. A button with `command` or
+  `commandfor` and no valid `type` is a plain button (`type` reads `button`)
+  and does not submit. With a form owner, only a `type=button` button runs
+  its command: a submit or reset button submits or resets, and one with no
+  valid `type` does nothing (button-type-behavior.html).
 - The element-reflecting setters store the element and set the content
   attribute to `""`; an empty attribute then means the stored element.
 

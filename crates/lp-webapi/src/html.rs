@@ -1952,7 +1952,7 @@ simple_class!(HtmlButtonElement, "HTMLButtonElement", HtmlElement, |def| {
             Ok(s.string(match t.as_deref() {
                 Some("reset") => "reset",
                 Some("button") => "button",
-                // A `commandfor` button without a valid type is a plain button.
+                // Without a valid type, a `command`/`commandfor` button is a plain button.
                 _ if !crate::popover::button_is_submit(&dom, n.id) => "button",
                 _ => "submit",
             }))

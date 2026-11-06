@@ -72,11 +72,25 @@ fn popover_stacks_follow_visibility_and_removal() {
 
 #[test]
 fn details_open_changes_are_queued_and_close_the_name_group() {
-    let (dom, d) = doc("<details id=x name=g open></details><details id=y name=g></details><details id=z></details>");
+    let (dom, d) = doc("<body id=b></body>");
     let mut dom = dom.borrow_mut();
+    let body = by_id(&dom, d, "b");
+    dom.watch_iframes(d).unwrap();
+    // Toggles of details in a document nobody watches (template contents)
+    // are dropped when the page's document takes its own.
+    lp_dom::parse::set_inner_html(&mut dom, body, "<template><details open></details></template>").unwrap();
+    assert!(dom.has_details_toggles());
+    assert!(dom.take_details_toggles(d).is_empty());
+    assert!(!dom.has_details_toggles());
+    lp_dom::parse::set_inner_html(
+        &mut dom,
+        body,
+        "<details id=x name=g open></details><details id=y name=g></details><details id=z></details>",
+    )
+    .unwrap();
     let (x, y, z) = (by_id(&dom, d, "x"), by_id(&dom, d, "y"), by_id(&dom, d, "z"));
     let take = |dom: &mut Dom| {
-        let t = dom.take_details_toggles();
+        let t = dom.take_details_toggles(d);
         for (n, _) in &t {
             dom.release(*n);
         }
@@ -96,4 +110,19 @@ fn details_open_changes_are_queued_and_close_the_name_group() {
     dom.set_attribute(z, "name", "g").unwrap();
     assert!(!dom.has_attribute(z, "open").unwrap());
     assert_eq!(take(&mut dom), [(z, false), (z, true)]);
+}
+
+#[test]
+fn a_modal_dialog_in_a_shadow_tree_does_not_block_its_hosts() {
+    let (dom, d) = doc("<div id=host><span id=light></span></div><p id=other></p>");
+    let mut dom = dom.borrow_mut();
+    let (host, light, other) = (by_id(&dom, d, "host"), by_id(&dom, d, "light"), by_id(&dom, d, "other"));
+    let root = dom.attach_shadow(host, ShadowRootMode::Open).unwrap();
+    let dialog = dom.create_element(d, "dialog").unwrap();
+    dom.append_child(root, dialog).unwrap();
+    assert!(!dom.blocked_by_modal(other));
+    dom.set_modal(dialog, true).unwrap();
+    let html = dom.parent(dom.parent(host).unwrap().unwrap()).unwrap().unwrap();
+    assert!(!dom.blocked_by_modal(host) && !dom.blocked_by_modal(html) && !dom.blocked_by_modal(dialog));
+    assert!(dom.blocked_by_modal(other) && dom.blocked_by_modal(light));
 }

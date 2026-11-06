@@ -180,7 +180,7 @@ pub(crate) fn queue_toggle(page: &Rc<PageDom>, el: NodeId, old_open: bool, new_o
 /// Queues the `toggle` events of the details elements lp-dom recorded.
 pub(crate) fn flush_details_toggles(page: &Rc<PageDom>) {
     let toggles = match page.dom.try_borrow_mut() {
-        Ok(mut dom) if dom.has_details_toggles() => dom.take_details_toggles(),
+        Ok(mut dom) if dom.has_details_toggles() => dom.take_details_toggles(page.document()),
         _ => return,
     };
     for (el, was_open) in toggles {
@@ -668,6 +668,9 @@ fn show_dialog(page: &Rc<PageDom>, el: NodeId) -> JsResult<()> {
     queue_toggle(page, el, false, true, None);
     let previous = focused(page);
     page.dom.borrow_mut().set_attribute(el, "open", "").js()?;
+    // Popovers that do not contain the dialog close, as for showModal().
+    let until = topmost_popover_ancestor(&page.dom.borrow(), el, PopoverStack::Auto, None);
+    hide_all_popovers_until(page, until, false, true);
     after_dialog_open(page, el, previous);
     Ok(())
 }
@@ -847,14 +850,10 @@ fn is_invoker_type(dom: &Dom, el: NodeId) -> bool {
     }
 }
 
-/// HTML button `type` state: a missing or invalid `type` is Submit, or
-/// Button when the button has `commandfor`.
+/// HTML "submit button" for a `button`: `type=submit`, or a missing or
+/// invalid `type` without `command`/`commandfor` (the Auto state).
 pub(crate) fn button_is_submit(dom: &Dom, el: NodeId) -> bool {
-    match dom.get_attribute(el, "type").ok().flatten().map(str::to_ascii_lowercase).as_deref() {
-        Some("submit") => true,
-        Some("reset" | "button") => false,
-        _ => !dom.has_attribute(el, "commandfor").unwrap_or(false),
-    }
+    dom.button_is_submit(el)
 }
 
 fn is_submit_button(dom: &Dom, el: NodeId) -> bool {

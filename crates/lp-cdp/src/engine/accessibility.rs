@@ -79,10 +79,10 @@ impl AxNode {
 }
 
 /// Outside the topmost modal dialog: neither it, inside it, nor one of its
-/// ancestors (Chromium leaves what a modal dialog blocks out of the tree).
-/// One empty-set check without a modal dialog.
+/// shadow-including ancestors (Chromium leaves what a modal dialog blocks
+/// out of the tree). One empty-set check without a modal dialog.
 fn blocked_by_modal(dom: &Dom, el: NodeId) -> bool {
-    dom.topmost_modal().is_some_and(|m| !dom.contains(el, m).unwrap_or(true) && !dom.contains(m, el).unwrap_or(true))
+    dom.blocked_by_modal(el)
 }
 
 /// Inherited walk state.

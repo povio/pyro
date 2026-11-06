@@ -274,7 +274,12 @@ fn command_invokers() {
          <button id=tp commandfor=p command=toggle-popover>tp</button>
          <button id=bad commandfor=p command=show-modal>bad</button>
          <button id=custom commandfor=p command=--Refresh>c</button>
-         <form id=form><button id=inform commandfor=p command=toggle-popover>f</button></form></body>");
+         <form id=form><button id=inform commandfor=p command=toggle-popover>f</button>
+           <button id=btn type=button commandfor=p command=toggle-popover>b</button>
+           <button id=sub type=submit commandfor=p command=toggle-popover>s</button>
+           <button id=rst type=reset commandfor=p command=toggle-popover>r</button>
+           <button id=cmdonly command=toggle-popover>c</button></form>
+         <button id=out type=reset commandfor=p command=toggle-popover>o</button></body>");
     assert_eq!(
         e.eval(
             "window.cmds = [];
@@ -308,7 +313,23 @@ fn command_invokers() {
             [shown, p.matches(':popover-open'), cmds.join(' '), submitted, inform.type, custom.command, bad.command,
              (bad.command = 'Nope', bad.command), tp.commandForElement === p].join()"
         ),
-        "true,false,toggle-popover:tp:true toggle-popover:tp:true --Refresh:custom:true toggle-popover:tp:true toggle-popover:inform:true toggle-popover:inform:true,false,button,--Refresh,show-modal,,true"
+        "true,false,toggle-popover:tp:true toggle-popover:tp:true --Refresh:custom:true toggle-popover:tp:true,false,button,--Refresh,show-modal,,true"
+    );
+    // With a form owner, only `type=button` runs its command: a submit or
+    // reset button does only that, the Auto state nothing
+    // (button-type-behavior.html); outside a form every type does.
+    assert_eq!(
+        e.eval(
+            "cmds.length = 0; let submits = 0, resets = 0;
+            form.onsubmit = () => { submits++; return false; }; form.onreset = () => { resets++; };
+            sub.click(); const afterSubmit = p.matches(':popover-open');
+            rst.click(); const afterReset = p.matches(':popover-open');
+            cmdonly.click();
+            btn.click(); const afterButton = p.matches(':popover-open'); btn.click();
+            out.click(); const afterOut = p.matches(':popover-open'); out.click();
+            [submits, resets, afterSubmit, afterReset, afterButton, afterOut, cmdonly.type, sub.type, cmds.join(' ')].join()"
+        ),
+        "1,1,false,false,true,true,button,submit,toggle-popover:btn:true toggle-popover:btn:true toggle-popover:out:true toggle-popover:out:true"
     );
     e.page.dispose();
 }
@@ -499,6 +520,22 @@ fn removing_open_from_a_modal_dialog_unblocks_the_document() {
             [blocked, d.matches(':modal'), document.activeElement.id].join()"
         ),
         "in,false,out"
+    );
+    e.page.dispose();
+}
+
+#[test]
+fn dialog_show_hides_popovers_that_do_not_contain_it() {
+    let e = env("<body><div id=p popover>p<dialog id=inner>i</dialog></div><div id=q popover>q</div>
+         <dialog id=outer>o</dialog></body>");
+    assert_eq!(
+        e.eval(
+            "p.showPopover(); inner.show();
+            const kept = p.matches(':popover-open');
+            outer.show();
+            [kept, p.matches(':popover-open'), inner.open, outer.open].join()"
+        ),
+        "true,false,true,true"
     );
     e.page.dispose();
 }

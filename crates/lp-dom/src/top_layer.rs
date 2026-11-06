@@ -199,6 +199,18 @@ impl Dom {
         }
     }
 
+    /// Whether the topmost modal dialog blocks `el` and `el` does not lead
+    /// to it: in the dialog's document, neither inside the dialog nor a
+    /// shadow-including ancestor of it. One empty-set check without a
+    /// modal dialog.
+    pub fn blocked_by_modal(&self, el: NodeId) -> bool {
+        let Some(modal) = self.topmost_modal() else { return false };
+        let (Ok(m), Ok(e)) = (self.check(modal), self.check(el)) else { return false };
+        self.n(m).owner_doc == self.n(e).owner_doc
+            && !self.shadow_including_inclusive_ancestor(m, e)
+            && !self.shadow_including_inclusive_ancestor(e, m)
+    }
+
     /// Element `i` lost its `open` attribute: a modal dialog is no longer
     /// modal (it would otherwise keep its document inert while hidden).
     pub(crate) fn top_layer_open_removed(&mut self, i: u32) {

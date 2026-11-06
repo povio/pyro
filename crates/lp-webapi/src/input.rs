@@ -633,12 +633,17 @@ fn run_activation_behavior(
             if disabled {
                 return;
             }
+            // With a form owner, a submit or reset button does only that and
+            // the Auto state (no valid `type`) does nothing; only
+            // `type=button` goes on to its command.
             if let Some(f) = form {
                 match ty.as_deref() {
-                    Some("reset") => reset_form(page, f),
+                    Some("reset") => return reset_form(page, f),
                     Some("button") => {}
-                    _ if !crate::popover::button_is_submit(&page.dom.borrow(), el) => {}
-                    _ => submit_form(page, f, Some(el), true),
+                    _ if crate::popover::button_is_submit(&page.dom.borrow(), el) => {
+                        return submit_form(page, f, Some(el), true);
+                    }
+                    _ => return,
                 }
             }
             // `commandfor`, else `popovertarget`.

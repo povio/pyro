@@ -16,7 +16,8 @@ use crate::node::{NodeId, NIL};
 pub(crate) struct DetailsState {
     /// The details elements whose `open` attribute appeared or went, with
     /// whether it was open before, oldest first. Each entry holds a
-    /// reference to its node until the embedder takes it.
+    /// reference to its node until the embedder of its document takes it
+    /// ([`Dom::take_details_toggles`]).
     toggles: Vec<(NodeId, bool)>,
     /// Some `details` element has had a `name` attribute: insertion then
     /// checks exclusivity. Never reset (a page that uses accordions keeps
@@ -78,15 +79,34 @@ impl Dom {
         }
     }
 
-    /// Whether details toggles are queued.
+    /// Whether details toggles are queued (for any document).
     pub fn has_details_toggles(&self) -> bool {
         !self.details.toggles.is_empty()
     }
 
-    /// Takes the queued details toggles: each node with whether it was open
-    /// before. The caller releases each node once it is done with it.
-    pub fn take_details_toggles(&mut self) -> Vec<(NodeId, bool)> {
-        std::mem::take(&mut self.details.toggles)
+    /// Takes the details toggles of the details now in `document`: each
+    /// node with whether it was open before. The caller releases each node
+    /// once it is done with it. Toggles of details in documents no embedder
+    /// watches (template contents, `DOMParser` documents, a fragment
+    /// parser's document left behind) are dropped: their tasks would never
+    /// run. Other watched documents' toggles stay for their embedder. The
+    /// node document is read now, not when queued: fragment parsing creates
+    /// elements in an inert document and adopts them on insertion.
+    pub fn take_details_toggles(&mut self, document: NodeId) -> Vec<(NodeId, bool)> {
+        let mut out = Vec::new();
+        let mut keep = Vec::new();
+        for (node, was_open) in std::mem::take(&mut self.details.toggles) {
+            let doc = self.check(node).ok().map(|i| self.id_of(self.n(i).owner_doc));
+            if doc == Some(document) {
+                out.push((node, was_open));
+            } else if doc.is_some_and(|d| self.is_watched_document(d)) {
+                keep.push((node, was_open));
+            } else {
+                self.release(node);
+            }
+        }
+        self.details.toggles = keep;
+        out
     }
 
     /// The details name group of `i` without `i`: the other details
