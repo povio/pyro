@@ -10,8 +10,9 @@
 //! again, waiting for the preload when it is still in flight. The import
 //! takes the source itself: the engine's module map has the module from
 //! then on, so the document keeps no second copy (a mid-size SPA's chunks
-//! are megabytes of text). `rel=preload as=script` stays a plain fetch into
-//! the HTTP cache.
+//! are megabytes of text), only a marker that answers a later modulepreload
+//! of the URL without a request. `rel=preload as=script` stays a plain
+//! fetch into the HTTP cache.
 
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -39,6 +40,11 @@ enum ModuleEntry {
     Pending(Vec<(ModuleWaiter, bool)>),
     /// Fetched, not imported yet.
     Done(String),
+    /// Fetched and imported: the engine's module map has the module, and
+    /// the document keeps no source. A later modulepreload link of the URL
+    /// loads at once, as one answered from the module map; an import (the
+    /// engine asks only for a module it does not have) requests it.
+    Imported,
 }
 
 /// Preloads started per document, at most (a page's own chunks number far fewer).
@@ -69,13 +75,16 @@ impl Browser {
                 waiters.push((waiter, import));
                 return None;
             }
-            Some(ModuleEntry::Done(source)) if import => {
-                let source = std::mem::take(source);
-                doc.preloads.modules.remove(url);
+            // A link: the module was fetched (and is kept, or imported).
+            Some(ModuleEntry::Done(_) | ModuleEntry::Imported) if !import => String::new(),
+            // The import takes the source and leaves the marker.
+            Some(entry @ ModuleEntry::Done(_)) => {
+                let ModuleEntry::Done(source) = std::mem::replace(entry, ModuleEntry::Imported) else {
+                    unreachable!("matched Done")
+                };
                 source
             }
-            Some(ModuleEntry::Done(_)) => String::new(),
-            None => return Some(waiter),
+            Some(ModuleEntry::Imported) | None => return Some(waiter),
         };
         drop(doc);
         waiter(self, Ok(source));
@@ -86,28 +95,32 @@ impl Browser {
     /// the source for an import when none took it.
     fn module_preloaded(&mut self, page: FrameKey, url: &str, result: Result<String, String>) {
         let Some(mut doc) = self.doc_mut(page) else { return };
-        let waiters = match doc.preloads.modules.remove(url) {
-            Some(ModuleEntry::Pending(waiters)) => waiters,
-            Some(ModuleEntry::Done(_)) | None => Vec::new(),
-        };
-        let imported = waiters.iter().any(|(_, import)| *import);
-        if let (Ok(source), false) = (&result, imported) {
-            doc.preloads.modules.insert(url.to_owned(), ModuleEntry::Done(source.clone()));
-        }
-        drop(doc);
-        // The last importer gets the source itself, the others a copy;
-        // links only the outcome.
-        let (mut source, failed) = match result {
-            Ok(source) => (Some(source), None),
-            Err(e) => (None, Some(e)),
+        let (key, waiters) = match doc.preloads.modules.remove_entry(url) {
+            Some((key, ModuleEntry::Pending(waiters))) => (key, waiters),
+            Some((key, ModuleEntry::Done(_) | ModuleEntry::Imported)) => (key, Vec::new()),
+            None => (url.to_owned(), Vec::new()),
         };
         let last_import = waiters.iter().rposition(|(_, import)| *import);
+        // What the importers get: the last one the source itself, the
+        // others a copy. With none, the document keeps it.
+        let mut source = match result {
+            Ok(source) if last_import.is_none() => {
+                doc.preloads.modules.insert(key, ModuleEntry::Done(source));
+                Ok(None)
+            }
+            Ok(source) => {
+                doc.preloads.modules.insert(key, ModuleEntry::Imported);
+                Ok(Some(source))
+            }
+            Err(e) => Err(e),
+        };
+        drop(doc);
         for (i, (waiter, import)) in waiters.into_iter().enumerate() {
-            let outcome = match (&failed, import) {
-                (Some(e), _) => Err(e.clone()),
-                (None, false) => Ok(String::new()),
-                (None, true) if Some(i) == last_import => Ok(source.take().unwrap_or_default()),
-                (None, true) => Ok(source.clone().unwrap_or_default()),
+            let outcome = match &mut source {
+                Err(e) => Err(e.clone()),
+                Ok(_) if !import => Ok(String::new()),
+                Ok(source) if Some(i) == last_import => Ok(source.take().unwrap_or_default()),
+                Ok(source) => Ok(source.clone().unwrap_or_default()),
             };
             waiter(self, outcome);
         }

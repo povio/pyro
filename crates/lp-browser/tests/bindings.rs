@@ -236,6 +236,14 @@ fn preload_links_fire_load_and_error() {
     assert!(eval(&thread, page, "seen.includes('late:load') && seen.includes('latep:load')") == "true");
     assert_eq!(loader.log.borrow().iter().filter(|u| *u == "http://site.test/chunk.js").count(), 1);
     assert_eq!(loader.log.borrow().iter().filter(|u| *u == "http://site.test/lib.js").count(), 2);
+    // Once an import took the preloaded source, a link still loads from the
+    // module map without a request.
+    eval(&thread, page, "import('/chunk.js').then(m => seen.push('import:' + m.a));");
+    settle(&mut thread);
+    eval(&thread, page, "const l2 = document.createElement('link'); l2.rel = 'modulepreload'; l2.href = '/chunk.js'; l2.addEventListener('load', () => seen.push('after-import:load')); document.head.appendChild(l2);");
+    settle(&mut thread);
+    assert_eq!(eval(&thread, page, "seen.includes('import:1') && seen.includes('after-import:load')"), "true");
+    assert_eq!(loader.log.borrow().iter().filter(|u| *u == "http://site.test/chunk.js").count(), 1);
 }
 
 /// `import()` of a module a `<link rel=modulepreload>` fetched takes the
@@ -281,6 +289,11 @@ import('/missing.js').then(() => out.push('missing:ok'), () => out.push('missing
     eval(&thread, page, "import('/chunk.js').then(m => out.push('second:' + m.a + ':' + evals));");
     settle(&mut thread);
     assert_eq!(eval(&thread, page, "out.sort().join()"), "first:1:1,missing:rejected,second:1:1");
+    assert_eq!(loader.log.borrow().iter().filter(|u| *u == "http://site.test/chunk.js").count(), 1);
+    // A modulepreload link after the import loads from the module map.
+    eval(&thread, page, "const l = document.createElement('link'); l.rel = 'modulepreload'; l.href = '/chunk.js'; l.addEventListener('load', () => out.push('link:load')); document.head.appendChild(l);");
+    settle(&mut thread);
+    assert_eq!(eval(&thread, page, "out.sort().join()"), "first:1:1,link:load,missing:rejected,second:1:1");
     assert_eq!(loader.log.borrow().iter().filter(|u| *u == "http://site.test/chunk.js").count(), 1);
     // The next document starts without the cache.
     thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
