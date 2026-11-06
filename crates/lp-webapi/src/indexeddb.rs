@@ -786,7 +786,7 @@ struct Ctx {
 }
 
 impl Ctx {
-    /// Runs `f` on database `name` (created on demand when `create`).
+    /// Runs `f` on database `name` of this origin (UnknownError when it is gone).
     fn db<R>(&self, name: &str, f: impl FnOnce(&mut Db) -> JsResult<R>) -> JsResult<R> {
         let mut server = self.namespace.lock();
         let db = server.origins.get_mut(&self.origin).and_then(|dbs| dbs.get_mut(name)).ok_or_else(|| unknown(name))?;
