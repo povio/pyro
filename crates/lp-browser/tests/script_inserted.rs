@@ -321,3 +321,25 @@ fn inline_modules_inserted_by_script_each_run() {
     assert_before(&log, &[("m1-ran", "m1-load"), ("m3-ran", "event:load")]);
     assert!(!log.iter().any(|l| l.starts_with("exception") || l.starts_with("rejection")), "{log:?}");
 }
+
+/// `Range.createContextualFragment` scripts run once the fragment is
+/// inserted (postscribe-style injectors); `innerHTML`'s never do.
+#[test]
+fn contextual_fragment_scripts_run_when_inserted() {
+    let log = load(
+        r#"<!doctype html><body><div id=host></div><script>
+        const range = document.createRange();
+        range.selectNode(document.body);
+        const frag = range.createContextualFragment(
+            '<p id=injected>x</p><script>console.log("fragment-ran", !!document.getElementById("injected"))<\/script>');
+        console.log('parsed');
+        document.getElementById('host').innerHTML = '<script>console.log("inner-html-ran")<\/script>';
+        document.body.appendChild(frag);
+        console.log('appended');
+        </script></body>"#,
+        &[],
+    );
+    assert_before(&log, &[("parsed", "fragment-ran true"), ("fragment-ran true", "appended")]);
+    assert!(!log.iter().any(|l| l == "inner-html-ran"), "{log:?}");
+    assert!(!log.iter().any(|l| l.starts_with("exception")), "{log:?}");
+}
