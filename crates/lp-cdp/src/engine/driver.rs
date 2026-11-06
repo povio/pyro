@@ -469,6 +469,8 @@ enum Step {
     Eval {
         expression: String,
         key: Option<String>,
+        /// Call the expression's function value instead of returning it.
+        call: Option<Box<EvalCall>>,
     },
     /// Resizes the viewport mid-run (`innerWidth`, `resize`, media queries,
     /// layout); settles like an action so listeners have run.
@@ -3487,12 +3489,30 @@ struct RouteParams {
     timeout: Option<u64>,
 }
 
+/// How an `eval` step calls its function (see [`EvalParams`]).
+#[derive(Clone, Debug)]
+struct EvalCall {
+    locator: Option<Locator>,
+    all: bool,
+    arg: Option<Value>,
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct EvalParams {
     expression: String,
     #[serde(rename = "as")]
     key: Option<String>,
+    /// The expression is a function: call it (Playwright's `evaluate(fn, arg)`).
+    #[serde(default)]
+    call: bool,
+    /// Call it with the element this locator matches (waiting for exactly
+    /// one), or with the array of all matches when `all`.
+    locator: Option<Locator>,
+    #[serde(default)]
+    all: bool,
+    /// Its last argument, as JSON.
+    arg: Option<Value>,
     /// How long to wait for a returned promise.
     timeout: Option<u64>,
 }
@@ -3665,7 +3685,17 @@ impl StepParams {
             StepParams::DownloadCount(p) => Ok((Step::DownloadCount { key: p.key }, p.timeout)),
             StepParams::Popup(p) => Ok((Step::Popup { key: p.key }, p.timeout)),
             StepParams::Route(p) => Ok((Step::Route { url: p.url, settle: p.settle.unwrap_or(true) }, p.timeout)),
-            StepParams::Eval(p) => Ok((Step::Eval { expression: p.expression, key: p.key }, p.timeout)),
+            StepParams::Eval(p) => {
+                if let Some(l) = &p.locator {
+                    l.validate()?;
+                }
+                if p.all && p.locator.is_none() {
+                    return Err(CdpError::invalid_params("eval: `all` needs a locator"));
+                }
+                let call = (p.call || p.locator.is_some() || p.arg.is_some())
+                    .then(|| Box::new(EvalCall { locator: p.locator, all: p.all, arg: p.arg }));
+                Ok((Step::Eval { expression: p.expression, key: p.key, call }, p.timeout))
+            }
             StepParams::Request(p) => Ok((Step::Request(p.matcher), p.timeout)),
             StepParams::Viewport(p) => Ok((Step::Viewport { width: p.width, height: p.height }, None)),
             StepParams::Media(p) => p.step(),
@@ -4199,6 +4229,46 @@ impl EngineHost {
                             self.thread.browser.checkpoint();
                             (Attempt::Done(json!({ "advanced": ms })), None)
                         }
+                        Step::Eval { expression, call: Some(call), .. } => {
+                            let main = self.main_document(w.job.page).map_err(|e| w.job.fail(e))?;
+                            let (doc, nodes) = match &call.locator {
+                                None => (main, Vec::new()),
+                                Some(locator) => {
+                                    let doc = match self.scope_page(pid, &main, locator).map_err(|e| w.job.fail(e))? {
+                                        Ok(doc) => doc,
+                                        Err(Attempt::Retry(reason) | Attempt::RetrySoon(reason)) => {
+                                            return self.park_retry(w, &step, timeout, Some(&main), reason, now);
+                                        }
+                                        Err(_) => unreachable!("scope_page only retries"),
+                                    };
+                                    let found =
+                                        locator.resolve(&doc, &self.waiters.selectors).map_err(|e| w.job.fail(e))?;
+                                    let nodes = if call.all {
+                                        found
+                                    } else {
+                                        match single(&found, &doc.dom.borrow(), locator) {
+                                            Ok(Some(id)) => vec![id],
+                                            Ok(None) => {
+                                                let reason = format!("{} matched no element", locator.describe());
+                                                return self.park_retry(w, &step, timeout, Some(&doc), reason, now);
+                                            }
+                                            Err(e) => return Err(w.job.fail(e)),
+                                        }
+                                    };
+                                    (doc, nodes)
+                                }
+                            };
+                            match self
+                                .call_step(w.job.page, &doc, expression, call, &nodes)
+                                .map_err(|e| w.job.fail(e))?
+                            {
+                                Evaluated::Value(value) => (Attempt::Done(value), None),
+                                Evaluated::Pending(settled) => {
+                                    w.phase = Phase::Await(settled);
+                                    continue;
+                                }
+                            }
+                        }
                         Step::Eval { expression, .. } => {
                             match self
                                 .eval_step(pid, expression, w.job.trace_stage_context())
@@ -4541,6 +4611,68 @@ impl EngineHost {
         if let Some(checkpoint) = checkpoint {
             checkpoint.finish("done");
         }
+        Ok(value)
+    }
+
+    /// Calls the function `src` evaluates to in the realm of `doc` with the
+    /// matched element (or the array of them, `all`) and the JSON `arg`.
+    fn call_step(
+        &mut self,
+        page: PageKey,
+        doc: &Rc<PageDom>,
+        src: &str,
+        call: &EvalCall,
+        nodes: &[NodeId],
+    ) -> CdpResult<Evaluated> {
+        let realm = self
+            .frame_for_document(page, doc)
+            .and_then(|f| f.main_realm().cloned())
+            .ok_or_else(|| CdpError::server("the element's frame has no realm"))?;
+        let value = {
+            let scope = realm.scope().map_err(super::remote::js_to_cdp)?;
+            let threw = |scope: &lp_js::Scope<'_>, e: lp_js::JsError| {
+                CdpError::server(format!("threw: {}", e.details(scope).message))
+            };
+            let f = scope.eval(&format!("({src}\n)"), Some("lp-run"), 1).map_err(|e| threw(&scope, e))?;
+            let Some(f) = f.as_object().filter(|f| f.is_function()) else {
+                return Err(CdpError::invalid_params("eval: the expression is not a function"));
+            };
+            let mut args = lp_js::RootedVec::new();
+            if call.locator.is_some() {
+                if call.all {
+                    let list = scope.array(&[]).map_err(super::remote::js_to_cdp)?;
+                    for (i, id) in nodes.iter().enumerate() {
+                        let el = lp_webapi::wrap_node(&scope, doc, *id).map_err(super::remote::js_to_cdp)?;
+                        list.set_index(i as u32, el.value()).map_err(super::remote::js_to_cdp)?;
+                    }
+                    args.push(&scope, list.value());
+                } else {
+                    let el = lp_webapi::wrap_node(&scope, doc, nodes[0]).map_err(super::remote::js_to_cdp)?;
+                    args.push(&scope, el.value());
+                }
+            }
+            let arg = match &call.arg {
+                Some(arg) => scope.parse_json(&arg.to_string()).unwrap_or_else(|| scope.undefined()),
+                None => scope.undefined(),
+            };
+            args.push(&scope, arg);
+            let v = f.call_rooted(None, &args).map_err(|e| threw(&scope, e))?;
+            if super::runtime::is_thenable(v) {
+                let settled: Settlement = Rc::new(RefCell::new(None));
+                let (ok, err) = (settled.clone(), settled.clone());
+                scope
+                    .then(
+                        v,
+                        move |_, v| *ok.borrow_mut() = Some(Ok(json_of(v))),
+                        move |s, v| *err.borrow_mut() = Some(Err(JsException::from_value(s, v).message)),
+                    )
+                    .map_err(super::remote::js_to_cdp)?;
+                Evaluated::Pending(settled)
+            } else {
+                Evaluated::Value(json_of(v))
+            }
+        };
+        self.thread.browser.checkpoint();
         Ok(value)
     }
 

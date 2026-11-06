@@ -4490,6 +4490,50 @@ fn driver_run_routes_presses_and_checks_requests() {
     assert!(r["error"]["message"].as_str().unwrap_or_default().contains("threw"), "{r}");
 }
 
+/// `eval` with `call`: the expression is a function, called with the JSON
+/// `arg`; with a `locator` it gets the element (waiting for exactly one) or,
+/// with `all`, the array of matches. Playwright's `evaluate(fn, arg)` and
+/// `locator.evaluate(fn, arg)`.
+#[test]
+fn driver_run_eval_calls_functions_with_elements() {
+    let address = driver_site();
+    let mut h = Harness::new();
+    let steps = json!([
+        {"goto": {"url": format!("http://{address}/form")}},
+        {"eval": {"expression": "(n) => n * 2", "call": true, "arg": 21, "as": "doubled"}},
+        {"eval": {"expression": "() => document.title.length >= 0", "call": true, "as": "noArg"}},
+        {"eval": {"expression": "(el, suffix) => el.id + suffix", "locator": {"role": "button", "name": "Settings", "exact": true}, "arg": "!", "as": "one"}},
+        {"eval": {"expression": "(els) => els.map((e) => e.tagName)", "locator": {"css": "button"}, "all": true, "as": "all"}},
+        {"eval": {"expression": "(els) => els.length", "locator": {"css": "#missing"}, "all": true, "as": "none"}},
+        {"eval": {"expression": "async (el) => { await new Promise((r) => setTimeout(r, 5)); return el.tagName; }", "locator": {"css": "#out"}, "as": "later"}},
+    ]);
+    let r = h.page("LP.run", json!({ "steps": steps }));
+    let reads = &r["result"]["reads"];
+    assert_eq!(reads["doubled"], 42, "{r}");
+    assert_eq!(reads["noArg"], true, "{r}");
+    assert_eq!(reads["one"], "settings!", "{r}");
+    assert!(reads["all"].as_array().is_some_and(|a| !a.is_empty() && a.iter().all(|t| t == "BUTTON")), "{r}");
+    assert_eq!(reads["none"], 0, "{r}");
+    assert_eq!(reads["later"], "DIV", "{r}");
+
+    // Waits for the element, then times out naming the locator.
+    let r = h.page(
+        "LP.run",
+        json!({"steps": [{"eval": {"expression": "(el) => el.id", "locator": {"css": "#missing"}, "timeout": 50}}]}),
+    );
+    let message = r["error"]["message"].as_str().unwrap_or_default();
+    assert!(message.contains("timed out after 50 ms") && message.contains("matched no element"), "{r}");
+    let r =
+        h.page("LP.run", json!({"steps": [{"eval": {"expression": "(el) => el.id", "locator": {"css": "button"}}}]}));
+    assert!(r["error"]["message"].as_str().unwrap_or_default().contains("strict mode violation"), "{r}");
+    let r = h.page("LP.run", json!({"steps": [{"eval": {"expression": "42", "call": true}}]}));
+    assert!(r["error"]["message"].as_str().unwrap_or_default().contains("not a function"), "{r}");
+    let r = h.page("LP.run", json!({"steps": [{"eval": {"expression": "(x) => x.y.z", "call": true, "arg": {}}}]}));
+    assert!(r["error"]["message"].as_str().unwrap_or_default().contains("threw"), "{r}");
+    let r = h.page("LP.run", json!({"steps": [{"eval": {"expression": "(e) => e", "all": true}}]}));
+    assert!(r["error"]["message"].as_str().unwrap_or_default().contains("needs a locator"), "{r}");
+}
+
 const DRIVER_STEPS_PAGE: &str = r#"<!doctype html><body>
 <style>#tip{display:none} #cell:hover + #tip{display:block} #box{color:rgb(1, 2, 3);width:120px;height:40px}</style>
 <div id="cell">Cell</div><div id="tip">Tooltip</div>

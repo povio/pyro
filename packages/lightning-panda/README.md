@@ -79,6 +79,55 @@ test.concurrent('closes a position', async () => {
   Baselines come from lightningpanda's renderer: Chromium screenshots do not
   match them pixel for pixel.
 
+## Playwright tests, unchanged
+
+Existing Playwright tests run on Lightningpanda by swapping one import and
+keeping Playwright's runner, config, reporters and `expect`:
+
+```ts
+import { test, expect } from '@povio/lightning-panda/test'; // was '@playwright/test'
+
+test('closes a position', async ({ page }) => {
+  await page.goto(`/positions/${id}`);
+  await page.getByRole('button', { name: 'Settings', exact: true }).press('Enter');
+  const done = page.waitForResponse((r) => r.url().endsWith('/close') && r.status() === 200);
+  await page.getByRole('dialog').filter({ hasText: 'will be closed' })
+    .getByRole('button', { name: 'Close Position', exact: true }).click();
+  await done;
+  await expect(page.getByRole('button', { name: 'Reopen Position' })).toHaveCount(1);
+});
+```
+
+`browser`, `context` and `page` become Lightningpanda's (one browser per
+worker: `$LIGHTNINGPANDA_WS`, else launched with `$LIGHTNINGPANDA_BIN` or the
+bundled one; `use: { lightningpanda: { wsEndpoint, bin, args } }` in the
+config). Each awaited call is one `LP.run` command, so locating, the
+actionability checks, auto-waiting and settling run natively in the browser.
+`expect` stays Playwright's: its locator matchers call the locators'
+`_expect`, which maps them onto native checks (or retries a value read in the
+page), so `expect` imported from `@playwright/test` in helper files works
+too. Config options honoured: `baseURL`, `viewport`, `storageState`,
+`extraHTTPHeaders`, `userAgent`, `colorScheme`, `actionTimeout`,
+`navigationTimeout`, `testIdAttribute`. The `request` fixture is Playwright's.
+`@povio/lightning-panda/playwright` has the same classes for scripts
+(`chromium.launch()`, `chromium.connectOverCDP(ws)`).
+
+The TOS close flow takes 33 ms per test this way against 67 ms for stock
+Playwright driving the same browser over CDP (Playwright runner, one worker,
+`bunx playwright test -c test/playwright tos-close`, `REPEAT=40`). Actions
+settle before they return (the next call starts once the page is quiet), so
+a test that asserts a transient state between an action and its result
+(a spinner) can miss it.
+
+Not supported yet (they throw a clear error): `page.route`/`context.route`,
+element and JS handles (`$`, `evaluateHandle`), `locator.and/or`,
+`filter()` after `first()/last()/nth()`, `getByRole` options other than
+`name`/`exact`, XPath and most Playwright-only selector engines (CSS with a
+trailing `:has-text()` / `:visible`, `text=`, `role=`, `>>` chains work),
+popups, downloads, `keyboard.down/up`, click modifiers. Dialogs opened by
+`page.evaluate()` reach `page.on('dialog')`; a dialog an action opens is
+dismissed. `page.frames()` lists only the main frame (use `frameLocator`).
+
 ## Install
 
 ```sh
