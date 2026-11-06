@@ -845,9 +845,9 @@ pub fn wrap_element<'s>(s: &Scope<'s>, class: ElClass, d: NodeData, k: Option<Id
 pub(crate) fn define_element_extras(def: &mut ClassDef<Element>) {
     def.method("getBoundingClientRect", 0, |s, n, _a| crate::layout_api::bounding_rect(s, n));
     def.method("getClientRects", 0, |s, n, _a| crate::layout_api::client_rects(s, n));
-    def.method("scrollIntoView", 0, |s, n, _a| crate::layout_api::scroll_into_view(s, n));
+    def.method("scrollIntoView", 0, |s, n, a| crate::layout_api::scroll_into_view(s, n, a));
     def.method("scrollIntoViewIfNeeded", 0, |s, n, a| crate::layout_api::scroll_into_view_if_needed(s, n, a));
-    def.method("checkVisibility", 0, |s, n, _a| crate::layout_api::check_visibility(s, n));
+    def.method("checkVisibility", 0, |s, n, a| crate::layout_api::check_visibility(s, n, a));
     def.method("scroll", 0, |s, n, a| crate::layout_api::scroll_to(s, n, a, false));
     def.method("scrollTo", 0, |s, n, a| crate::layout_api::scroll_to(s, n, a, false));
     def.method("scrollBy", 0, |s, n, a| crate::layout_api::scroll_to(s, n, a, true));

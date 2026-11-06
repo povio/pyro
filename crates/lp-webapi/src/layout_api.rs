@@ -250,9 +250,45 @@ pub(crate) fn schedule_scroll_clamp(page: &Rc<PageDom>) {
     );
 }
 
-pub(crate) fn scroll_into_view<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
+/// `scrollIntoView(arg)`: `(boolean or ScrollIntoViewOptions)`; `true`, a
+/// missing argument and `{}` align block start / inline nearest, `false`
+/// block end / inline nearest. `behavior` is accepted; scrolling is instant.
+pub(crate) fn scroll_into_view<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value<'s>> {
+    use lp_dom::layout::ScrollAlign;
+    let arg = a.get(0);
+    let (mut block, mut inline) = (ScrollAlign::Start, ScrollAlign::Nearest);
+    if let Some(o) = arg.as_object() {
+        // Dictionary members in lexicographic order: behavior, block, inline.
+        let behavior = o.get("behavior")?;
+        if !behavior.is_undefined() {
+            let b = dom_string(behavior)?;
+            if !matches!(b.as_str(), "auto" | "instant" | "smooth") {
+                return Err(lp_js::JsError::type_error(format!(
+                    "Failed to execute 'scrollIntoView' on 'Element': The provided value '{b}' is not a valid enum value of type ScrollBehavior."
+                )));
+            }
+        }
+        let position = |k: &str, out: &mut ScrollAlign| -> JsResult<()> {
+            let v = o.get(k)?;
+            if v.is_undefined() {
+                return Ok(());
+            }
+            let text = dom_string(v)?;
+            *out = ScrollAlign::parse(&text).ok_or_else(|| {
+                lp_js::JsError::type_error(format!(
+                    "Failed to execute 'scrollIntoView' on 'Element': The provided value '{text}' is not a valid enum value of type ScrollLogicalPosition."
+                ))
+            })?;
+            Ok(())
+        };
+        position("block", &mut block)?;
+        position("inline", &mut inline)?;
+    } else if !arg.is_undefined() && !arg.is_null() && !arg.to_bool() {
+        block = ScrollAlign::End;
+    }
     let page = n.page();
-    let moved = page.layout.borrow_mut().scroll_into_view_targets(&page.dom.borrow(), n.id);
+    let moved =
+        page.layout.borrow_mut().scroll_into_view_aligned_script_targets(&page.dom.borrow(), n.id, block, inline);
     fire_scroll_targets(page, moved);
     Ok(s.undefined())
 }
@@ -278,9 +314,22 @@ fn fire_scroll_targets(page: &Rc<PageDom>, moved: Vec<lp_dom::layout::ScrollTarg
     }
 }
 
-pub(crate) fn check_visibility<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
+/// `checkVisibility(options)`: `checkOpacity` / `opacityProperty` add the
+/// opacity:0 test, `checkVisibilityCSS` / `visibilityProperty` the
+/// visibility test (CSSOM View, CheckVisibilityOptions).
+pub(crate) fn check_visibility<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value<'s>> {
+    let mut opts = CheckVisibilityOptions::default();
+    let arg = a.get(0);
+    if !arg.is_undefined() && !arg.is_null() {
+        let o = arg.as_object().ok_or_else(|| {
+            lp_js::JsError::type_error("Failed to execute 'checkVisibility': options is not an object.")
+        })?;
+        let flag = |k: &str| o.get(k).map(|v| v.to_bool());
+        opts.check_opacity = flag("checkOpacity")? | flag("opacityProperty")?;
+        opts.check_visibility = flag("checkVisibilityCSS")? | flag("visibilityProperty")?;
+    }
     let page = n.page();
-    let v = page.layout().check_visibility(&page.dom.borrow(), n.id, CheckVisibilityOptions::default());
+    let v = page.layout().check_visibility(&page.dom.borrow(), n.id, opts);
     Ok(s.boolean(v))
 }
 
