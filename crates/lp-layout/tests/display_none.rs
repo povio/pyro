@@ -196,3 +196,48 @@ fn shadow_trees_follow_the_flat_tree() {
     assert!(p.layout.is_visible(&p.dom, light2));
     assert_eq!(p.rect("#light2"), (100.0, 20.0));
 }
+
+#[test]
+fn a_hidden_shadow_host_hides_its_styled_shadow_tree() {
+    let mut p = page();
+    let host = p.find("#host");
+    let root = p.dom.attach_shadow(host, ShadowRootMode::Open).unwrap();
+    let inner = p.dom.create_element(p.doc, "div").unwrap();
+    p.dom.set_attribute(inner, "style", "width: 100px; height: 20px").unwrap();
+    p.dom.append_child(root, inner).unwrap();
+    let slot = p.dom.create_element(p.doc, "slot").unwrap();
+    p.dom.set_attribute(slot, "name", "fallback").unwrap();
+    p.dom.append_child(inner, slot).unwrap();
+    let fb = p.dom.create_element(p.doc, "div").unwrap();
+    p.dom.set_attribute(fb, "style", "width: 100px; height: 20px").unwrap();
+    p.dom.append_child(slot, fb).unwrap();
+    // A shadow host nested in the shadow tree.
+    let nested = p.dom.create_element(p.doc, "div").unwrap();
+    p.dom.append_child(root, nested).unwrap();
+    let nroot = p.dom.attach_shadow(nested, ShadowRootMode::Open).unwrap();
+    let ninner = p.dom.create_element(p.doc, "div").unwrap();
+    p.dom.set_attribute(ninner, "style", "width: 100px; height: 20px").unwrap();
+    p.dom.append_child(nroot, ninner).unwrap();
+    let light = p.find("#light");
+    for el in [inner, fb, ninner] {
+        assert!(p.layout.is_visible(&p.dom, el));
+        assert_eq!(p.layout.bounding_client_rect(&p.dom, el).width, 100.0);
+    }
+    p.dom.set_attribute(host, "style", "display: none").unwrap();
+    for el in [inner, fb, ninner, light] {
+        assert!(!p.layout.is_visible(&p.dom, el), "{el:?}");
+        assert_eq!(p.layout.bounding_client_rect(&p.dom, el).width, 0.0);
+    }
+    p.dom.remove_attribute(host, "style").unwrap();
+    p.dom.set_attribute(nested, "style", "display: none").unwrap();
+    assert!(!p.layout.is_visible(&p.dom, ninner));
+    assert!(p.layout.is_visible(&p.dom, fb));
+    p.dom.remove_attribute(nested, "style").unwrap();
+    assert!(p.layout.is_visible(&p.dom, ninner));
+    // A move of a styled shadow element under a hidden light element.
+    let c = p.find("#c");
+    p.dom.append_child(c, inner).unwrap();
+    assert!(!p.layout.is_visible(&p.dom, inner) && !p.layout.is_visible(&p.dom, fb));
+    let d1 = p.find("#d1");
+    assert_eq!(!p.layout.is_visible(&p.dom, d1), p.derived_hidden(d1));
+}
