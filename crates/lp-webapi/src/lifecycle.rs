@@ -173,6 +173,7 @@ pub fn resource_loaded(page: &Rc<PageDom>, el: NodeId, ok: bool) {
 /// window listener holder and pinned wrappers.
 pub fn realm_disposed(page: &PageDom, realm: RealmId) {
     crate::fetch::cancel_realm(page, realm);
+    crate::websocket::cancel_realm(realm);
     crate::xhr::cancel_realm(page, realm);
     crate::file_reader::cancel_realm(page, realm);
     crate::mutation_observer::cancel_realm(page, realm);

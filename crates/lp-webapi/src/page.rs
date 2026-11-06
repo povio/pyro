@@ -625,6 +625,7 @@ impl PageDom {
         self.dom.borrow_mut().unwatch_iframes(self.document());
         self.connected_iframes.borrow_mut().clear();
         crate::fetch::dispose(self);
+        crate::websocket::dispose(self);
         crate::xhr::dispose(self);
         crate::file_reader::dispose(self);
         crate::mutation_observer::dispose(self);

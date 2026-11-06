@@ -32,6 +32,9 @@ use crate::referrer::FetchSite;
 use crate::request::*;
 use crate::subscription::{NetSubscription, NetWake, SubscriptionLimits, Subscriptions};
 
+#[path = "websocket.rs"]
+pub mod websocket;
+
 /// Consumer of one request's events; wrap it to post to the browser loop.
 ///
 /// Guarantees: every sink passed to [`NetClient::fetch`] receives exactly one
@@ -170,6 +173,13 @@ pub enum NetEvent {
         destination: Destination,
         timestamp: f64,
     },
+    /// A WebSocket connection's progress (`Network.webSocket*`).
+    WebSocket {
+        id: RequestId,
+        /// Boxed: `NetEvent`s of every request stay their size.
+        activity: Box<websocket::WebSocketActivity>,
+        timestamp: f64,
+    },
 }
 
 /// A request paused for CDP Fetch interception (request stage).
@@ -276,6 +286,7 @@ pub trait Interceptor: Send + Sync {
 enum Cmd {
     Fetch(RequestId, Box<Request>, ResponseSink),
     Cancel(RequestId),
+    WebSocket(Box<websocket::Start>),
 }
 
 struct Inner {
@@ -845,6 +856,9 @@ fn io_main(mut rx: mpsc::UnboundedReceiver<Cmd>, shared: Arc<Shared>, cookies: A
                         }
                     });
                     tasks.borrow_mut().insert(id, Task { handle, sink, destination });
+                }
+                Cmd::WebSocket(start) => {
+                    tokio::task::spawn_local(io.clone().websocket(*start));
                 }
                 Cmd::Cancel(id) => {
                     // Release the map borrow before awaiting task destruction.

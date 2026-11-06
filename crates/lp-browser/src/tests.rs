@@ -188,6 +188,7 @@ fn static_files_load_on_the_browser_thread_with_network_events() {
             lp_net::NetEvent::LoadingFinished { encoded_len, .. } => format!("finished:{encoded_len}"),
             lp_net::NetEvent::DataReceived { .. } => "data".into(),
             lp_net::NetEvent::LoadingFailed { error, .. } => format!("failed:{error}"),
+            lp_net::NetEvent::WebSocket { .. } => "websocket".into(),
         });
     }
     assert!(rec.console.borrow().iter().any(|c| c == "log:static:/app/route"), "{:?}", rec.console.borrow());

@@ -71,6 +71,7 @@ pub mod url;
 pub mod url_search_params;
 pub mod util;
 pub mod validity;
+pub mod websocket;
 pub mod window;
 pub mod worker;
 mod worker_scope;

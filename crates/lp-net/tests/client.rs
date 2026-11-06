@@ -565,6 +565,7 @@ fn observer_starts_data_and_early_failure_requests() {
                 NetEvent::DataReceived { .. } => "data",
                 NetEvent::LoadingFinished { .. } => "finished",
                 NetEvent::LoadingFailed { .. } => "failed",
+                NetEvent::WebSocket { .. } => "websocket",
             });
         }
         assert_eq!(observed, expected, "{url} offline={offline} same_origin={same_origin}");

@@ -216,11 +216,65 @@ impl NetworkTranslator {
                     }),
                 ))
             }
+            NetEvent::WebSocket { id, activity, timestamp } => Some(websocket_event(*id, activity, *timestamp)),
         }
     }
 
     pub fn inflight(&self) -> usize {
         self.inflight.len()
+    }
+}
+
+/// `Network.webSocket*` of a connection's activity, in Chrome's shapes (what
+/// Playwright's `crPage.js` reads for `page.on('websocket')`). Stateless: the
+/// request id is the connection's.
+fn websocket_event(id: RequestId, activity: &lp_net::WebSocketActivity, timestamp: f64) -> (&'static str, Value) {
+    use lp_net::WebSocketActivity as A;
+    let request_id = id.to_string();
+    let frame = |opcode: u8, payload: &Bytes, mask: bool| {
+        let data = if opcode == 1 { String::from_utf8_lossy(payload).into_owned() } else { base64_encode(payload) };
+        json!({ "opcode": opcode, "mask": mask, "payloadData": data })
+    };
+    match activity {
+        A::Created { url, .. } => (
+            "Network.webSocketCreated",
+            json!({ "requestId": request_id, "url": url.as_str(), "initiator": { "type": "script" } }),
+        ),
+        A::WillSendHandshakeRequest { headers, wall_time } => (
+            "Network.webSocketWillSendHandshakeRequest",
+            json!({
+                "requestId": request_id,
+                "timestamp": timestamp,
+                "wallTime": wall_time,
+                "request": { "headers": headers_json(headers) },
+            }),
+        ),
+        A::HandshakeResponseReceived { status, status_text, headers, request_headers } => (
+            "Network.webSocketHandshakeResponseReceived",
+            json!({
+                "requestId": request_id,
+                "timestamp": timestamp,
+                "response": {
+                    "status": status,
+                    "statusText": status_text,
+                    "headers": headers_json(headers),
+                    "requestHeaders": headers_json(request_headers),
+                },
+            }),
+        ),
+        A::FrameSent { opcode, payload } => (
+            "Network.webSocketFrameSent",
+            json!({ "requestId": request_id, "timestamp": timestamp, "response": frame(*opcode, payload, true) }),
+        ),
+        A::FrameReceived { opcode, payload } => (
+            "Network.webSocketFrameReceived",
+            json!({ "requestId": request_id, "timestamp": timestamp, "response": frame(*opcode, payload, false) }),
+        ),
+        A::FrameError { message } => (
+            "Network.webSocketFrameError",
+            json!({ "requestId": request_id, "timestamp": timestamp, "errorMessage": message }),
+        ),
+        A::Closed => ("Network.webSocketClosed", json!({ "requestId": request_id, "timestamp": timestamp })),
     }
 }
 
@@ -405,7 +459,7 @@ impl BodyStore {
                 }
             }
             NetEvent::LoadingFailed { id, .. } => self.remove(*id),
-            NetEvent::RequestWillBeSent { .. } => {}
+            NetEvent::RequestWillBeSent { .. } | NetEvent::WebSocket { .. } => {}
         }
     }
 
@@ -614,6 +668,45 @@ mod tests {
         assert_eq!(t.translate(&finished(7)).unwrap().0, "Network.loadingFinished");
         assert_eq!(t.inflight(), 0);
         assert!(t.translate(&finished(7)).is_none(), "unknown request ignored");
+    }
+
+    #[test]
+    fn websocket_activity_translates_to_chrome_events() {
+        use lp_net::WebSocketActivity as A;
+        let mut t = NetworkTranslator::default();
+        let ws = |activity| NetEvent::WebSocket { id: RequestId(4), activity: Box::new(activity), timestamp: 2.0 };
+        let (m, p) =
+            t.translate(&ws(A::Created { url: "wss://h/s".parse().unwrap(), frame_id: Some("F".into()) })).unwrap();
+        assert_eq!(
+            (m, p["requestId"].as_str(), p["url"].as_str()),
+            ("Network.webSocketCreated", Some("4"), Some("wss://h/s"))
+        );
+        let mut headers = HeaderMap::new();
+        headers.insert("upgrade", "websocket".parse().unwrap());
+        let (m, p) =
+            t.translate(&ws(A::WillSendHandshakeRequest { headers: headers.clone(), wall_time: 9.0 })).unwrap();
+        assert_eq!(m, "Network.webSocketWillSendHandshakeRequest");
+        assert_eq!(p["request"]["headers"]["upgrade"], "websocket");
+        let (m, p) = t
+            .translate(&ws(A::HandshakeResponseReceived {
+                status: 101,
+                status_text: "Switching Protocols".into(),
+                headers,
+                request_headers: HeaderMap::new(),
+            }))
+            .unwrap();
+        assert_eq!((m, p["response"]["status"].as_u64()), ("Network.webSocketHandshakeResponseReceived", Some(101)));
+        let (m, p) = t.translate(&ws(A::FrameSent { opcode: 1, payload: "hi".into() })).unwrap();
+        assert_eq!(m, "Network.webSocketFrameSent");
+        assert_eq!(p["response"], json!({"opcode": 1, "mask": true, "payloadData": "hi"}));
+        let (m, p) = t.translate(&ws(A::FrameReceived { opcode: 2, payload: vec![0xff, 0].into() })).unwrap();
+        assert_eq!(m, "Network.webSocketFrameReceived");
+        assert_eq!(p["response"], json!({"opcode": 2, "mask": false, "payloadData": "/wA="}));
+        let (m, p) = t.translate(&ws(A::FrameError { message: "boom".into() })).unwrap();
+        assert_eq!((m, p["errorMessage"].as_str()), ("Network.webSocketFrameError", Some("boom")));
+        let (m, p) = t.translate(&ws(A::Closed)).unwrap();
+        assert_eq!((m, p["timestamp"].as_f64()), ("Network.webSocketClosed", Some(2.0)));
+        assert_eq!(t.inflight(), 0, "connections keep no translator state");
     }
 
     #[test]
