@@ -7,7 +7,11 @@
 // for the length of the action.
 import { copyFileSync, createReadStream, mkdirSync, rmSync } from 'node:fs';
 import { dirname } from 'node:path';
-import type { Locator, Page } from './page.js';
+import type { LocatorSpec } from '../steps.js';
+import type { Frame, Locator, Page } from './page.js';
+
+/** Where a handle's CDP commands go: its page's session, or a worker's. */
+export type Sender = (method: string, params?: object) => Promise<any>;
 
 type Remote = { type: string; subtype?: string; objectId?: string; value?: unknown; unserializableValue?: string; description?: string; className?: string };
 type Timeout = { timeout?: number };
@@ -57,7 +61,14 @@ export class JSHandle {
   constructor(
     readonly _page: Page,
     readonly _remote: Remote,
+    /** The `<iframe>` chain of the frame the object lives in (none: the main frame). */
+    readonly _frame?: LocatorSpec,
+    /** A worker's session instead of the page's. */
+    readonly _via?: Sender,
   ) {}
+  _send(method: string, params: object = {}): Promise<any> {
+    return this._via ? this._via(method, params) : this._page._send(method, params);
+  }
   get _objectId(): string | undefined {
     return this._remote.objectId;
   }
@@ -77,9 +88,9 @@ export class JSHandle {
   async getProperties(): Promise<Map<string, JSHandle>> {
     const map = new Map<string, JSHandle>();
     if (!this._objectId) return map;
-    const { result } = await this._page._send('Runtime.getProperties', { objectId: this._objectId, ownProperties: true });
+    const { result } = await this._send('Runtime.getProperties', { objectId: this._objectId, ownProperties: true });
     for (const p of result as { name: string; enumerable?: boolean; value?: Remote }[]) {
-      if (p.value && p.enumerable !== false) map.set(p.name, this._page._handle(p.value));
+      if (p.value && p.enumerable !== false) map.set(p.name, this._page._handle(p.value, this._frame, this._via));
     }
     return map;
   }
@@ -89,7 +100,7 @@ export class JSHandle {
   async dispose(): Promise<void> {
     if (this._disposed || !this._objectId) return;
     this._disposed = true;
-    await this._page._send('Runtime.releaseObject', { objectId: this._objectId }).catch(() => {});
+    await this._send('Runtime.releaseObject', { objectId: this._objectId }).catch(() => {});
   }
   async [Symbol.asyncDispose](): Promise<void> {
     await this.dispose();
@@ -119,7 +130,7 @@ export class ElementHandle extends JSHandle {
     }, id);
     if (!connected) throw new Error('elementHandle: Element is not attached to the DOM');
     try {
-      return await fn(this._page.locator(`[data-lp-handle="${id}"]`));
+      return await fn(this._page._locatorFor({ css: `[data-lp-handle="${id}"]`, ...(this._frame ? { frame: this._frame } : {}) }, `elementHandle(${id})`));
     } finally {
       await this.evaluate((el: Element) => el.removeAttribute('data-lp-handle')).catch(() => {});
     }
@@ -173,11 +184,16 @@ export class ElementHandle extends JSHandle {
       return r.width === 0 && r.height === 0 ? null : { x: r.x, y: r.y, width: r.width, height: r.height };
     });
   }
-  ownerFrame() {
-    return Promise.resolve(this._page.mainFrame());
+  async ownerFrame(): Promise<Frame> {
+    return this._page._frameOf(this._frame) ?? this._page.mainFrame();
   }
-  contentFrame() {
-    return Promise.resolve(null);
+  /** The frame of an `<iframe>` element, else null. */
+  async contentFrame(): Promise<Frame | null> {
+    const isFrame = await this.evaluate((el: Element) => el.localName === 'iframe' || el.localName === 'frame');
+    if (!isFrame) return null;
+    await this._page._markFrames();
+    const id = await this.getAttribute('data-lp-frame');
+    return id ? this._page._frameById(id) : null;
   }
   async waitForElementState(state: 'visible' | 'hidden' | 'stable' | 'enabled' | 'disabled' | 'editable', o: Timeout = {}): Promise<void> {
     await this.marked(async (l) => {

@@ -7,6 +7,7 @@ import { Lightningpanda, type ConnectOptions } from '../index.js';
 import { CdpError } from '../cdp.js';
 import { urlMatches, resolveUrl, type UrlMatch } from './match.js';
 import { Download } from './handles.js';
+import { HarRecorder } from './har.js';
 import {
   bindingName,
   bindingScript,
@@ -14,6 +15,7 @@ import {
   initScriptSource,
   Page,
   sameRoute,
+  WORKER_AUTO_ATTACH,
   type Attachment,
   type HarOptions,
   type RouteEntry,
@@ -202,6 +204,8 @@ export class Browser {
 
 export class BrowserContext {
   _routes: RouteEntry[] = [];
+  /** `routeFromHAR(…, { update: true })` recorders: written when the context closes. */
+  _har: HarRecorder[] = [];
   /** `exposeBinding` callbacks of every page of this context, by binding name. */
   _bindings = new Map<string, { name: string; callback: (source: any, ...args: any[]) => unknown; script: string }>();
   /** The browser context id: made on the first page that needs one, or a booted page's. */
@@ -314,6 +318,7 @@ export class BrowserContext {
     const viewport = page.viewportSize();
     if (fresh && viewport) setup.push(send('Emulation.setDeviceMetricsOverride', { ...viewport, deviceScaleFactor: 1, mobile: false }));
     if (o.userAgent) setup.push(send('Emulation.setUserAgentOverride', { userAgent: o.userAgent }));
+    if (this._har.some((r) => r.covers(page))) page._wants.network = true;
     if (page._wants.network || o.extraHTTPHeaders) setup.push((page._network = send('Network.enable').then(() => undefined)));
     if (o.extraHTTPHeaders) setup.push(send('Network.setExtraHTTPHeaders', { headers: o.extraHTTPHeaders }));
     if (page._wants.runtime) setup.push((page._runtime = send('Runtime.enable').then(() => undefined)));
@@ -325,6 +330,9 @@ export class BrowserContext {
     const m = media(o);
     if (fresh && m) setup.push(send('LP.run', { steps: [{ media: m }] }));
     if (page._wantsDialogs) setup.push(send('LP.dialogs', { block: true }));
+    if (page._wants.fileChooser) setup.push(send('Page.setInterceptFileChooserDialog', { enabled: true }));
+    if (page._wants.workers) setup.push(send('Target.setAutoAttach', WORKER_AUTO_ATTACH));
+    for (const recorder of this._har) if (recorder.covers(page)) recorder.attach(page);
     for (const b of [...this._bindings.values(), ...page._bindings.values()]) setup.push(page._installBinding(b));
     await Promise.all(setup);
     if (fresh) this._cookies = []; // in the context's jar now
@@ -436,7 +444,14 @@ export class BrowserContext {
     this._routes = [];
   }
   async routeFromHAR(har: string, options: HarOptions = {}): Promise<void> {
+    if (options.update) return this._recordHar(har, options);
     await this.route(options.url ?? '**/*', harHandler(har, options));
+  }
+  /** Records the requests of `only` (else every page of the context) into `har`, written on close. */
+  async _recordHar(har: string, options: HarOptions, only?: Page): Promise<void> {
+    const recorder = new HarRecorder(har, options, this._options.baseURL, only);
+    this._har.push(recorder);
+    for (const page of this.pages()) if (recorder.covers(page)) recorder.attach(page);
   }
   async exposeFunction(name: string, fn: (...args: any[]) => unknown): Promise<void> {
     await this.exposeBinding(name, (_source: unknown, ...args: unknown[]) => fn(...args));
@@ -478,6 +493,7 @@ export class BrowserContext {
   async close(): Promise<void> {
     if (this._closed) return;
     this._closed = true;
+    for (const recorder of this._har) await recorder.save();
     for (const p of [...this._pages]) await p.close();
     const id = this._id ?? (this._idPromise ? await this._idPromise.catch(() => undefined) : undefined);
     if (id) this.cdp.post('Target.disposeBrowserContext', { browserContextId: id });

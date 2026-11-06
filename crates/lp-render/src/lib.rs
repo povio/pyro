@@ -639,6 +639,10 @@ const PREWARM_HTML: &str = r#"<!doctype html><html><body style="font-family: sys
 
 /// UA rule that settles transitions and animations at their end values.
 const NO_TRANSITIONS: &str = "*, *::before, *::after { transition: none !important; animation: none !important; }";
+/// Chrome's `<input type=file>` box ("Choose File · No file chosen"): Blitz
+/// lays the control out with no content to size it by, so it would be
+/// zero-sized and never visible or clickable.
+const FILE_INPUT: &str = r#"input[type="file" i] { box-sizing: border-box; width: 253px; height: 21px; }"#;
 
 /// Fonts and raster backends, reused across renders on one thread.
 pub struct Renderer {
@@ -750,6 +754,7 @@ impl Renderer {
         // would stay at its first frame (a drawer sliding in stays off
         // screen). Layout queries, screenshots and PDFs take the end state.
         config.ua_stylesheets.push(blitz_dom::UserAgentStylesheet::parse(NO_TRANSITIONS));
+        config.ua_stylesheets.push(blitz_dom::UserAgentStylesheet::parse(FILE_INPUT));
         config
     }
 

@@ -138,23 +138,39 @@ Actions settle before they return (the next call starts once the page is
 quiet), so a test that asserts a transient state between an action and its
 result (a spinner) can miss it.
 
-Also covered: element and JS handles (`page.$`, `$$`, `evaluateHandle`,
-`locator.elementHandle()`, handles as `evaluate` arguments; element handle
-actions run natively on the element, which carries a `data-lp-handle`
-attribute for the length of the action), `locator.and()`/`or()`, filters and
-`nth()` after `first()/last()/nth()`, every `getByRole` option, XPath, popups
-(`page.on('popup')`, `context.on('page')`), downloads (`page.on('download')`,
-`saveAs`, `path`), `keyboard.down/up`, click modifiers, `page.frames()` and
-child frames (their `<iframe>` gets a `data-lp-frame` attribute once listed),
-`exposeFunction`/`exposeBinding`, and `routeFromHAR` replay. With a
-`page.on('dialog')` listener, a dialog an action opens waits for its answer as
-in Chrome; without one it is dismissed.
+Also covered:
 
-Not supported (they throw a clear error): `routeFromHAR` recording
-(`update`), handles to elements inside child frames, `frame.goto` on a child
-frame, Playwright-only selector engines beyond CSS (with a trailing
-`:has-text()` / `:visible`), XPath, `text=`, `role=`, `id=`, test ids and `>>`
-chains, and `filechooser`, `websocket` and `worker` events.
+- element and JS handles (`page.$`, `$$`, `evaluateHandle`,
+  `locator.elementHandle()`, handles as `evaluate` arguments), in the main
+  frame and in child frames; element handle actions run natively on the
+  element, which carries a `data-lp-handle` attribute for the length of the
+  action
+- `locator.and()`/`or()`, filters and `nth()` after `first()/last()/nth()`,
+  every `getByRole` option, XPath
+- selector strings: `css=`, `text=`, `role=`, `id=`, `xpath=`, `data-testid=`,
+  `nth=`, `visible=`, `>>` chains, the `internal:` engines Playwright's
+  locators serialize to (`internal:role`, `:text`, `:label`, `:attr`,
+  `:testid`, `:has`, `:has-not`, `:has-text`, `:has-not-text`, `:and`, `:or`,
+  `:chain`, `:control=enter-frame`), and CSS with `:has-text()`, `:text()`,
+  `:text-is()`, `:text-matches()`, `:visible`, `:nth-match()` and `:light()`
+- popups (`page.on('popup')`, `context.on('page')`), downloads
+  (`page.on('download')`, `saveAs`, `path`), file choosers
+  (`page.on('filechooser')`, `setFiles`), workers (`page.on('worker')`,
+  `worker.evaluate`)
+- `keyboard.down/up`, click modifiers
+- `page.frames()` and child frames (`goto`, `waitForURL`, `waitForFunction`,
+  locators, handles; their `<iframe>` gets a `data-lp-frame` attribute once
+  listed)
+- `exposeFunction`/`exposeBinding`, `routeFromHAR` replay and recording
+  (`update: true`, written when the context closes; bodies beside the file
+  unless `updateContent: 'embed'`)
+- with a `page.on('dialog')` listener, a dialog an action opens waits for its
+  answer as in Chrome; without one it is dismissed
+
+Not supported (a clear error): `page.on('websocket')`, as lightningpanda
+pages have no `WebSocket` API yet; the deprecated layout pseudo-classes
+(`:left-of()`, `:right-of()`, `:above()`, `:below()`, `:near()`); a `+` or `~`
+combinator right after a Playwright pseudo-class.
 
 ## Install
 
