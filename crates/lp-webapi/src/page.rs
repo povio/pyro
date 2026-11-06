@@ -201,6 +201,11 @@ pub struct PageDom {
     pub(crate) ignore_destructive_writes: Cell<u32>,
     /// Control activated by a Space keydown, clicked on the matching keyup.
     pub(crate) space_target: Cell<Option<NodeId>>,
+    /// The last input that can move focus was a pointer press (a key press
+    /// clears it): Chrome's `:focus-visible` modality.
+    pub(crate) pointer_modality: Cell<bool>,
+    /// Pointer capture of the mouse (pointerId 1), see `crate::input`.
+    pub(crate) mouse_capture: Cell<crate::pointer_capture::MouseCapture>,
     dialog_returns: RefCell<FxHashMap<NodeId, String>>,
     /// `nonce` IDL values, keyed with the content attribute they were set
     /// over: a later attribute change wins, as it updates the internal slot.
@@ -527,6 +532,8 @@ impl PageDom {
             written_pending: Cell::new(None),
             ignore_destructive_writes: Cell::new(0),
             space_target: Cell::new(None),
+            pointer_modality: Cell::new(false),
+            mouse_capture: Cell::new(Default::default()),
             dialog_returns: RefCell::new(FxHashMap::default()),
             nonces: RefCell::new(FxHashMap::default()),
             sheet_models: RefCell::new(FxHashMap::default()),

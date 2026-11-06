@@ -480,7 +480,8 @@ impl<'a, C: CxSource<'a>> selectors::Element for SNode<'a, C> {
     fn match_non_ts_pseudo_class(&self, pc: &NonTSPseudoClass, _ctx: &mut MatchingContext<SelectorImpl>) -> bool {
         use NonTSPseudoClass as N;
         match pc {
-            N::Active | N::Visited | N::Fullscreen | N::Autofill => false,
+            N::Active => self.matches(PseudoClass::Active),
+            N::Visited | N::Fullscreen | N::Autofill => false,
             N::Target => self.matches(PseudoClass::Target),
             N::AnyLink | N::Link => self.matches(PseudoClass::Link),
             N::Checked => self.matches(PseudoClass::Checked),
@@ -637,6 +638,7 @@ impl<'a, C: CxSource<'a>> TElement for SNode<'a, C> {
         // Every state `match_non_ts_pseudo_class` answers from, so
         // invalidation snapshots see each one change.
         set(PseudoClass::Hover, ElementState::HOVER);
+        set(PseudoClass::Active, ElementState::ACTIVE);
         set(PseudoClass::Focus, ElementState::FOCUS);
         set(PseudoClass::FocusWithin, ElementState::FOCUS_WITHIN);
         set(PseudoClass::FocusVisible, ElementState::FOCUSRING);

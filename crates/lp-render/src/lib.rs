@@ -1026,6 +1026,35 @@ impl Renderer {
     /// changes.
     pub fn set_interaction(&mut self, page: u64, hovered: Option<u64>, focused: Option<u64>, style_only: bool) {
         let changed = self.mark_interaction(page, hovered, focused);
+        self.settle_interaction(page, changed, style_only);
+    }
+
+    /// [`Renderer::set_interaction`] with `:active` on the element keyed
+    /// `active` (and its ancestors) and whether the focused element matches
+    /// `:focus-visible`.
+    pub fn set_interaction_states(
+        &mut self,
+        page: u64,
+        hovered: Option<u64>,
+        focused: Option<u64>,
+        active: Option<u64>,
+        focus_visible: bool,
+        style_only: bool,
+    ) {
+        // The ring first, so a newly focused node gets it as it is focused.
+        let changed = match self.mirrors.get_mut(&page) {
+            Some(m) => {
+                let active = active.and_then(|k| m.node(k));
+                let ring = m.doc.set_focus_ring(focus_visible);
+                m.doc.set_active_to(active) || ring
+            }
+            None => false,
+        };
+        let changed = self.mark_interaction(page, hovered, focused) || changed;
+        self.settle_interaction(page, changed, style_only);
+    }
+
+    fn settle_interaction(&mut self, page: u64, changed: bool, style_only: bool) {
         let Some(m) = self.mirrors.get_mut(&page) else { return };
         // Called on every geometry read: without news a pass would change nothing.
         let changed = changed || m.doc.needs_resolve();

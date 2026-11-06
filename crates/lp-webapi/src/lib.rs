@@ -47,6 +47,7 @@ pub mod mutation_observer;
 pub mod navigator_extras;
 pub mod node;
 pub mod page;
+mod pointer_capture;
 mod popup;
 pub mod range;
 pub mod render_blocking;
