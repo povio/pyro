@@ -45,7 +45,6 @@ Gaps:
   blob as a child frame's `src`); fetch and XHR resolve them in the
   document's own store.
 
-
 The reproduced application failure was Vite's preload helper calling new URL in
 the [unchanged TOS query-parameters run](../validation/TOS_QUERY_PARAMS_SMOKE.md).
 That failed run and its binary remain preserved. A fresh exact-candidate smoke
