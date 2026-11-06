@@ -7,7 +7,7 @@
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { connect } from 'node:net';
-import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 export type WebServer = {
@@ -50,11 +50,102 @@ export const devices: Record<string, Record<string, unknown>> = {
   'iPhone 15': { userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1', viewport: { width: 393, height: 659 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true, defaultBrowserType: 'webkit' },
 };
 
+export type ResolvedProject = {
+  name: string;
+  /** Its index in `config.projects` (0 without projects). */
+  index: number;
+  use: Record<string, unknown>;
+  outputDir: string;
+  testDir: string;
+  testMatch: Matcher;
+  testIgnore: Matcher;
+  timeout: number;
+  retries: number;
+  metadata: Record<string, unknown>;
+};
+type Matcher = string | RegExp | (string | RegExp)[];
 export type Loaded = {
   config: PlaywrightTestConfig;
-  project: { name: string; use: Record<string, unknown>; outputDir: string; testDir: string; timeout: number; retries: number; metadata: Record<string, unknown> };
+  /** The default project: `$LP_PROJECT`, else the first. */
+  project: ResolvedProject;
+  projects: ResolvedProject[];
   dir: string;
 };
+
+const DEFAULT_MATCH = '**/*.@(spec|test).?(c|m)[jt]s?(x)';
+
+/** A Playwright glob (`**`, `*`, `?`, `{a,b}`, `@(a|b)`, `?(a)`, `[..]`) as a RegExp. */
+export function glob(pattern: string): RegExp {
+  let out = '';
+  for (let i = 0; i < pattern.length; i++) {
+    const c = pattern[i];
+    const next = pattern[i + 1];
+    if (c === '*' && next === '*') {
+      i++;
+      if (pattern[i + 1] === '/') {
+        i++;
+        out += '(?:.*/)?';
+      } else out += '.*';
+    } else if (c === '*') out += '[^/]*';
+    else if ((c === '@' || c === '?' || c === '+' || c === '!') && next === '(') {
+      const close = pattern.indexOf(')', i);
+      const alts = pattern.slice(i + 2, close).split('|').map((a) => glob(a).source.slice(1, -1)).join('|');
+      out += c === '@' ? `(?:${alts})` : c === '?' ? `(?:${alts})?` : c === '+' ? `(?:${alts})+` : `(?!(?:${alts}))[^/]*`;
+      i = close;
+    } else if (c === '?') out += '[^/]';
+    else if (c === '{') {
+      const close = pattern.indexOf('}', i);
+      out += `(?:${pattern.slice(i + 1, close).split(',').map((a) => glob(a).source.slice(1, -1)).join('|')})`;
+      i = close;
+    } else if (c === '[') {
+      const close = pattern.indexOf(']', i);
+      out += pattern.slice(i, close + 1);
+      i = close;
+    } else out += c.replace(/[.+^$()|\\]/g, '\\$&');
+  }
+  return new RegExp(`^${out}$`);
+}
+
+/** Whether `file` (absolute) matches a project's `testMatch`/`testIgnore`: a pattern without `/` tests the file name. */
+function matches(m: Matcher, file: string, testDir: string): boolean {
+  const rel = relative(testDir, file).split(sep).join('/');
+  return ([] as (string | RegExp)[]).concat(m).some((p) => {
+    if (p instanceof RegExp) return p.test(file);
+    const re = glob(p);
+    return p.includes('/') ? re.test(rel) || re.test(file) : re.test(basename(file));
+  });
+}
+
+/** Test files of `project` under its testDir. */
+export function projectFiles(p: ResolvedProject): string[] {
+  const out: string[] = [];
+  const walkDir = (dir: string) => {
+    for (const name of readdirSync(dir).sort()) {
+      if (name === 'node_modules' || name.startsWith('.')) continue;
+      const f = join(dir, name);
+      const st = statSync(f, { throwIfNoEntry: false });
+      if (st?.isDirectory()) {
+        if (resolve(f) !== resolve(p.outputDir)) walkDir(f);
+      } else if (st?.isFile() && matches(p.testMatch, f, p.testDir) && !(p.testIgnore && matches(p.testIgnore, f, p.testDir))) out.push(f);
+    }
+  };
+  if (existsSync(p.testDir)) walkDir(p.testDir);
+  return out;
+}
+
+/** The project a test file belongs to: `$LP_FILE_PROJECTS` (set by `lightningpanda test`), else the first whose files include it. */
+export function projectFor(l: Loaded, file: string): ResolvedProject {
+  const map = process.env.LP_FILE_PROJECTS;
+  if (map) {
+    const i = (JSON.parse(map) as Record<string, number>)[file];
+    if (i !== undefined && l.projects[i]) return l.projects[i];
+  }
+  if (process.env.LP_PROJECT === undefined && l.projects.length > 1) {
+    const found = l.projects.find((p) => file.startsWith(p.testDir + sep) && matches(p.testMatch, file, p.testDir));
+    if (found) return found;
+  }
+  return l.project;
+}
 
 function configFile(): string | undefined {
   const named = process.env.LP_CONFIG ?? process.env.PLAYWRIGHT_CONFIG;
@@ -72,20 +163,24 @@ export async function loadConfig(): Promise<Loaded> {
   const file = configFile();
   const config: PlaywrightTestConfig = file ? ((await import(pathToFileURL(file).href)).default ?? {}) : {};
   const dir = file ? dirname(file) : process.cwd();
-  const want = process.env.LP_PROJECT;
-  const picked = config.projects?.length ? (config.projects.find((p) => p.name === want) ?? (want ? undefined : config.projects[0])) : undefined;
-  if (want && config.projects?.length && !picked) throw new Error(`lightning-panda: no project named ${JSON.stringify(want)} in ${file}`);
-  const p: Project = picked ?? {};
-  const project = {
+  const resolveProject = (p: Project, index: number): ResolvedProject => ({
     name: p.name ?? '',
+    index,
     use: { ...(config.use ?? {}), ...(p.use ?? {}) },
     outputDir: resolve(dir, (p.outputDir ?? config.outputDir ?? 'test-results') as string),
     testDir: resolve(dir, (p.testDir ?? config.testDir ?? '.') as string),
+    testMatch: (p.testMatch ?? config.testMatch ?? DEFAULT_MATCH) as Matcher,
+    testIgnore: (p.testIgnore ?? config.testIgnore ?? []) as Matcher,
     timeout: (p.timeout ?? config.timeout ?? 30_000) as number,
-    retries: (p.retries ?? config.retries ?? 0) as number,
+    retries: Number(process.env.LP_RETRIES ?? p.retries ?? config.retries ?? 0),
     metadata: { ...((config.metadata as object) ?? {}), ...(p.metadata ?? {}) },
-  };
-  return { config, project, dir };
+  });
+  const projects = config.projects?.length ? config.projects.map(resolveProject) : [resolveProject({}, 0)];
+  const want = process.env.LP_PROJECT;
+  const project = want === undefined ? projects[0] : projects.find((p) => p.name === want);
+  if (!project) throw new Error(`lightning-panda: no project named ${JSON.stringify(want)} in ${file}`);
+  if (process.env.LP_TIMEOUT) for (const p of projects) p.timeout = Number(process.env.LP_TIMEOUT);
+  return { config, project, projects, dir };
 }
 
 const children: ChildProcess[] = [];

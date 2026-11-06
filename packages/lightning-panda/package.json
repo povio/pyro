@@ -39,11 +39,11 @@
     "NOTICE"
   ],
   "scripts": {
-    "build": "bun build src/index.ts src/cli.ts src/playwright/test.ts src/playwright/index.ts --root src --outdir dist --target node --format esm --external bun:test --splitting && tsc -p tsconfig.json",
+    "build": "bun build src/index.ts src/cli.ts src/playwright/test.ts src/playwright/index.ts src/playwright/cli.ts --root src --outdir dist --target node --format esm --external bun:test --splitting && tsc -p tsconfig.json",
     "prepack": "bun run build && node ../../scripts/npm/prepare-package.mjs",
     "test:package": "bun test test/binary.test.ts && node --test ../../scripts/npm/release.test.mjs",
     "test": "bun test ./test",
-    "test:playwright": "LP_CONFIG=test/playwright/playwright.config.ts bun test ./test/playwright/*.pw.ts",
+    "test:playwright": "bun src/cli.ts test -c test/playwright/playwright.config.ts",
     "test:parity": "PW_ENGINE=chromium-cdp playwright test -c test/playwright"
   },
   "devDependencies": {

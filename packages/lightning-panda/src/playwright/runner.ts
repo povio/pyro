@@ -8,11 +8,12 @@
 // Bun. Tests of a file run one after another (a describe's `mode:
 // 'parallel'` too, as its tests may share module state set in hooks);
 // `LP_CONCURRENT=1` runs those in parallel describes concurrently.
+import { appendFileSync } from 'node:fs';
 import { relative } from 'node:path';
 import { Lightningpanda } from '../index.js';
 import { Browser, chromium, setTestDefaults, type BootSpec, type ContextOptions } from './browser.js';
 import { als, currentTest, SkipError, TestInfo } from './context.js';
-import { devices, globalSetup, loadConfig, runFiles, startWebServers, stopWebServers, stopWithThisProcess, type Loaded } from './config.js';
+import { devices, globalSetup, loadConfig, projectFor, runFiles, startWebServers, stopWebServers, stopWithThisProcess, type Loaded, type ResolvedProject } from './config.js';
 import { expect, ready, setExpectDefaults } from './expect.js';
 import { TimeoutError } from './page.js';
 import { APIRequestContext, request } from './request.js';
@@ -34,8 +35,11 @@ function ensureLoaded(): Promise<Loaded> {
   return (loading ??= (async () => {
     const l = await loadConfig();
     setExpectDefaults({ timeout: l.config.expect?.timeout });
-    await startWebServers(l);
-    teardowns = await globalSetup(l);
+    // A worker of `lightningpanda test`: the parent started the servers and ran global setup.
+    if (!WORKER) {
+      await startWebServers(l);
+      teardowns = await globalSetup(l);
+    }
     await ready;
     loaded = l;
     return l;
@@ -43,6 +47,23 @@ function ensureLoaded(): Promise<Loaded> {
 }
 
 const BIG = 2_147_483_647;
+
+/** `lightningpanda test` runs this process as worker LP_WORKER_INDEX of LP_WORKERS. */
+const WORKER = process.env.LP_WORKER === '1';
+const WORKERS = Math.max(1, Number(process.env.LP_WORKERS ?? 1));
+const WORKER_INDEX = Number(process.env.LP_WORKER_INDEX ?? 0);
+const FULLY_PARALLEL = process.env.LP_FULLY_PARALLEL === '1';
+const GREP = process.env.LP_GREP ? new RegExp(process.env.LP_GREP) : undefined;
+const GREP_INVERT = process.env.LP_GREP_INVERT ? new RegExp(process.env.LP_GREP_INVERT) : undefined;
+const LIST = process.env.LP_LIST === '1';
+const OWNERS: Record<string, number> = process.env.LP_FILE_OWNERS ? JSON.parse(process.env.LP_FILE_OWNERS) : {};
+
+/** One line per finished test for `lightningpanda test`'s reporter (`$LP_RESULTS`). */
+type Outcome = { file: string; titlePath: string[]; status: 'passed' | 'failed' | 'timedOut' | 'skipped'; flaky?: boolean; expectedFailure?: boolean; duration: number; retries: number; error?: { message: string; stack?: string }; skipReason?: string; worker: number };
+function record(o: Omit<Outcome, 'worker'>): void {
+  const out = process.env.LP_RESULTS;
+  if (out) appendFileSync(out, JSON.stringify({ ...o, worker: WORKER_INDEX }) + '\n');
+}
 const cfg = (): Loaded => {
   if (!loaded) throw new Error('lightning-panda: the test runner needs `bun test`');
   return loaded;
@@ -157,7 +178,7 @@ class Run {
     const provided = new Promise<unknown>((r) => (provide = r));
     let release!: () => void;
     const released = new Promise<void>((r) => (release = r));
-    const second = def.scope === 'worker' ? { workerIndex: 0, parallelIndex: 0, project: cfg().project, config: cfg().config } : this.info;
+    const second = def.scope === 'worker' ? { workerIndex: WORKER_INDEX, parallelIndex: WORKER_INDEX, project: this.info?.project ?? cfg().project, config: cfg().config } : this.info;
     let used = false;
     const done = Promise.resolve()
       .then(() =>
@@ -311,6 +332,8 @@ type Scope = {
   failed?: boolean;
   defs?: Defs;
   workerRun?: Run;
+  /** Tests this process runs in the scope and its describes (its beforeAll/afterAll run only then). */
+  registered?: number;
 };
 
 const roots = new Map<string, Scope>();
@@ -352,7 +375,8 @@ const chain = (s: Scope): Scope[] => {
   for (let c: Scope | undefined = s; c; c = c.parent) out.unshift(c);
   return out;
 };
-const useOf = (s: Scope) => Object.assign({}, cfg().project.use, ...chain(s).map((c) => c.use));
+const projectOf = (file: string): ResolvedProject => projectFor(cfg(), file);
+const useOf = (s: Scope) => Object.assign({}, projectOf(s.file).use, ...chain(s).map((c) => c.use));
 
 // ---- running a test ----
 
@@ -428,34 +452,48 @@ async function runOnce(entry: Entry, info: TestInfo): Promise<void> {
   if (failure !== undefined) throw failure;
 }
 
+const titlePathOf = (s: Scope, title: string) => [relative(process.cwd(), s.file), ...chain(s).map((c) => c.title).filter(Boolean), title];
+
 async function runTest(entry: Entry): Promise<void> {
   const l = cfg();
+  const project = projectOf(entry.scope.file);
   const scopes = chain(entry.scope);
+  const titlePath = titlePathOf(entry.scope, entry.title);
+  const started = Date.now();
   if (scopes.some((s) => s.mode === 'serial' && s.failed)) {
-    console.log(`  ↳ skipped: ${entry.title} (an earlier test of its serial group failed)`);
+    if (!process.env.LP_RESULTS) console.log(`  ↳ skipped: ${entry.title} (an earlier test of its serial group failed)`);
+    record({ file: entry.scope.file, titlePath, status: 'skipped', duration: 0, retries: 0, skipReason: 'an earlier test of its serial group failed' });
     return;
   }
-  const retries = [...scopes].reverse().find((s) => s.retries !== undefined)?.retries ?? l.project.retries;
-  const timeout = [...scopes].reverse().find((s) => s.timeout !== undefined)?.timeout ?? l.project.timeout;
-  const titles = scopes.map((s) => s.title).filter(Boolean);
+  const retries = [...scopes].reverse().find((s) => s.retries !== undefined)?.retries ?? project.retries;
+  const timeout = [...scopes].reverse().find((s) => s.timeout !== undefined)?.timeout ?? project.timeout;
   for (let attempt = 0; ; attempt++) {
-    const info = new TestInfo(entry.title, [relative(process.cwd(), entry.scope.file), ...titles, entry.title], entry.scope.file, l.project, l.config, timeout, attempt);
+    const info = new TestInfo(entry.title, titlePath, entry.scope.file, project, l.config, timeout, attempt);
+    (info as { workerIndex: number }).workerIndex = WORKER_INDEX;
+    (info as { parallelIndex: number }).parallelIndex = WORKER_INDEX;
     if (entry.expectFail) info.fail();
     try {
       await als.run(info, () => runOnce(entry, info));
       if (info.expectedStatus === 'failed') throw new Error('Expected to fail, but passed.');
+      record({ file: entry.scope.file, titlePath, status: 'passed', flaky: attempt > 0, duration: Date.now() - started, retries: attempt });
       return;
     } catch (e) {
       if (e instanceof SkipError || info._skipped !== undefined) {
-        console.log(`  ↳ skipped: ${entry.title}${info._skipped ? ` (${info._skipped})` : ''}`);
+        if (!process.env.LP_RESULTS) console.log(`  ↳ skipped: ${entry.title}${info._skipped ? ` (${info._skipped})` : ''}`);
+        record({ file: entry.scope.file, titlePath, status: 'skipped', duration: Date.now() - started, retries: attempt, skipReason: info._skipped || undefined });
         return;
       }
-      if (info.expectedStatus === 'failed') return;
+      if (info.expectedStatus === 'failed') {
+        record({ file: entry.scope.file, titlePath, status: 'passed', expectedFailure: true, duration: Date.now() - started, retries: attempt });
+        return;
+      }
       if (attempt < retries) {
-        console.log(`  ↳ retry ${attempt + 1}/${retries}: ${entry.title}`);
+        if (!process.env.LP_RESULTS) console.log(`  ↳ retry ${attempt + 1}/${retries}: ${entry.title}`);
         continue;
       }
       for (const s of scopes) if (s.mode === 'serial') s.failed = true;
+      const err = e as Error;
+      record({ file: entry.scope.file, titlePath, status: err instanceof TimeoutError && /Test timeout/.test(err.message) ? 'timedOut' : 'failed', duration: Date.now() - started, retries: attempt, error: { message: String(err?.message ?? e), stack: err?.stack } });
       throw e;
     }
   }
@@ -466,8 +504,11 @@ function allHook(kind: 'beforeAll' | 'afterAll', fn: Function, defs: Defs, s: Sc
   if (!bun) return;
   const register = kind === 'beforeAll' ? bun.beforeAll : bun.afterAll;
   register(async () => {
+    // As Playwright: a worker that runs none of the describe's tests runs none of its hooks.
+    if (!s.registered) return;
     const l = cfg();
-    const info = new TestInfo(`${kind} hook`, [relative(process.cwd(), s.file), s.title, kind].filter(Boolean), s.file, l.project, l.config, l.project.timeout, 0);
+    const project = projectOf(s.file);
+    const info = new TestInfo(`${kind} hook`, [relative(process.cwd(), s.file), s.title, kind].filter(Boolean), s.file, project, l.config, project.timeout, 0);
     const run = new Run(defs, useOf(s), info, true);
     await als.run(info, async () => {
       try {
@@ -520,6 +561,27 @@ type Describe = {
   configure: (o: { mode?: 'default' | 'serial' | 'parallel'; retries?: number; timeout?: number }) => void;
 };
 
+/** Tests declared per file: a parallel test goes to worker (its index % LP_WORKERS). */
+const declared = new Map<string, number>();
+/**
+ * Whether this worker runs a test declared in `s`: a parallel one (`fullyParallel`,
+ * or a describe with `mode: 'parallel'`) by its index in the file; the others
+ * with their whole file, on the worker that owns it.
+ */
+function owned(s: Scope): boolean {
+  if (WORKERS === 1) return true;
+  const scopes = chain(s);
+  const serial = scopes.some((c) => c.mode === 'serial' || c.mode === 'default');
+  const parallel = !serial && (FULLY_PARALLEL || scopes.some((c) => c.mode === 'parallel'));
+  if (parallel) {
+    const i = declared.get(s.file) ?? 0;
+    declared.set(s.file, i + 1);
+    return i % WORKERS === WORKER_INDEX;
+  }
+  const owner = OWNERS[s.file] ?? [...s.file].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7) % WORKERS;
+  return owner === WORKER_INDEX;
+}
+
 function make(defs: Defs): TestType {
   const declare = (variant: 'normal' | 'only' | 'skip' | 'fixme' | 'fail', title: string, a: unknown, b?: unknown) => {
     if (!bun) throw new Error('lightning-panda: run tests with `bun test`');
@@ -529,7 +591,19 @@ function make(defs: Defs): TestType {
     const entry: Entry = { title, fn, scope: s, defs, details, expectFail: variant === 'fail' };
     const tags = ([] as string[]).concat(details?.tag ?? []);
     const name = tags.length ? `${title} ${tags.join(' ')}` : title;
-    if (variant === 'skip' || variant === 'fixme') return bun.test.skip(name, () => {});
+    const titlePath = titlePathOf(s, title);
+    const full = [...titlePath, ...tags].join(' ');
+    if ((GREP && !GREP.test(full)) || (GREP_INVERT && GREP_INVERT.test(full))) return;
+    if (!owned(s)) return;
+    if (LIST) {
+      record({ file: s.file, titlePath, status: 'skipped', duration: 0, retries: 0, skipReason: 'list' });
+      return;
+    }
+    if (variant === 'skip' || variant === 'fixme') {
+      record({ file: s.file, titlePath, status: 'skipped', duration: 0, retries: 0, skipReason: variant });
+      return bun.test.skip(name, () => {});
+    }
+    for (const c of chain(s)) c.registered = (c.registered ?? 0) + 1;
     const body = () => runTest(entry);
     const concurrent = process.env.LP_CONCURRENT === '1' && chain(s).some((c) => c.mode === 'parallel');
     if (variant === 'only') bun.test.only(name, body, BIG);

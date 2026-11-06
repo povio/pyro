@@ -100,8 +100,15 @@ test('closes a position', async ({ page }) => {
 ```
 
 ```sh
-LP_CONFIG=playwright.config.ts bun test ./e2e/positions-close.e2e.ts
+npx lightningpanda test                      # as `npx playwright test`
+npx lightningpanda test -c playwright.e2e.config.ts positions-close -j 4
 ```
+
+`lightningpanda test` takes Playwright's usual flags (`-c`, `--project`,
+`-j/--workers`, `-g/--grep`, `--grep-invert`, `--retries`, `--timeout`,
+`-u`, `-x`, `--max-failures`, `--list`, `--reporter list|line|dot`) and file
+filters. It needs [Bun](https://bun.sh) on PATH: the tests run in `bun test`
+worker processes.
 
 The module is the whole of Playwright's API, implemented here:
 
@@ -134,19 +141,26 @@ lightningpanda: { wsEndpoint, bin, args, boot } }`. Each awaited call is one
 `LP.run` command, so locating, the actionability checks, auto-waiting and
 settling run in the browser.
 
-Differences from Playwright's runner:
+How a run goes, as with `playwright test`:
 
-- **Running:** `bun test` picks up `*.test.*`, `*_test.*`, `*.spec.*` and
-  `*_spec.*` files. Pass other files (`*.e2e.ts`) by path.
-- **Order:** a run's files share one process and one browser, and a file's
-  tests run one after another, a `mode: 'parallel'` describe's too, since its
-  tests may share module state set in hooks. `LP_CONCURRENT=1` runs parallel
-  describes concurrently.
-- **Skipping:** a test that calls `test.skip()` while running is reported as
-  passed with a `skipped` note, because Bun cannot mark a running test as
-  skipped.
-- **Not there:** Playwright's own reporters, its trace viewer, video, and
-  sharding. Bun reports.
+- **Files:** each project's `testDir`, `testMatch` (default
+  `**/*.@(spec|test).?(c|m)[jt]s?(x)`; a pattern without `/` matches file
+  names, so TOS's `*.e2e.ts` lists work) and `testIgnore`. Each file gets its
+  own project's `use`.
+- **Workers:** `workers` processes (the config's, `-j`, else half the CPUs),
+  each with its own browser and module state. A file's tests run in order in
+  one worker. Tests that are parallel (`fullyParallel`, or a describe with
+  `mode: 'parallel'`) spread over the workers, and a describe's `beforeAll`
+  and `afterAll` run in each worker that runs some of its tests. Web servers
+  and global setup run once, in the parent.
+- **Reporting:** passes, failures (with their errors), skips (declared or
+  `test.skip()` at run time), flaky tests (passed on a retry) and expected
+  failures, then a summary. The tests' own output is shown per worker.
+
+Plain `bun test ./e2e/foo.e2e.ts` (with `$LP_CONFIG` naming the config) also
+runs the tests, in one process: Bun then reports a run-time `test.skip()` as
+a pass, since it cannot mark a running test as skipped. Not there either way:
+Playwright's HTML report, trace viewer, video and sharding.
 
 The TOS close flow (`test/playwright/tos-flow.ts`, Playwright code as TOS
 writes it) takes 14.7 ms per test this way (median of 40, fresh page),
