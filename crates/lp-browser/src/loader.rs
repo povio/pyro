@@ -513,11 +513,37 @@ impl Browser {
         let Some(mut state) = self.doc_mut(page) else { return };
         let pending = state.pending_loader.take();
         let cancel = state.pending_cancel.take();
+        state.pending_script = None;
         drop(state);
         drop(cancel);
         if let Some(loader) = pending {
             self.forget_network_activity(page, &loader);
         }
+    }
+
+    /// Cancels the uncommitted navigation when the frame's scripts started
+    /// it (`Browser::document_reopened`), reported as an aborted one. Not
+    /// `navigation_failed`: a child frame's opened document fires its own
+    /// load events when it is closed.
+    fn stop_script_navigation(&mut self, page: FrameKey) {
+        let Some(state) = self.doc(page) else { return };
+        let Some((loader_id, url)) = state.pending_script.clone().filter(|(id, _)| state.pending_loader() == Some(id))
+        else {
+            return;
+        };
+        let frame_id = state.main_frame.id.clone();
+        drop(state);
+        self.cancel_pending_document(page);
+        self.emit(
+            page.page,
+            PageEvent::FrameNavigateFailed {
+                frame_id,
+                loader_id,
+                url,
+                error: "net::ERR_ABORTED".into(),
+                cdp_request_id: None,
+            },
+        );
     }
 
     /// Starts fetching a document for a non-blank navigation.
@@ -532,8 +558,13 @@ impl Browser {
             return Err(JsError::Unsupported("navigation without a resource loader"));
         };
         let frame_id = self.doc(page).map(|p| p.main_frame.id.0.clone());
+        // Not an automation client's (`Page.navigate`) or a traversal, which
+        // `document.open()` does not stop.
+        let script = opts.cdp_request_id.is_none()
+            && !matches!(opts.reason, crate::NavigationReason::AddressBar | crate::NavigationReason::History);
         if let Some(mut p) = self.doc_mut(page) {
             p.pending_loader = Some(loader_id.clone());
+            p.pending_script = script.then(|| (loader_id.clone(), opts.url.clone()));
         }
         let req = FetchRequest {
             post: opts.post.clone(),
@@ -1215,7 +1246,12 @@ impl Browser {
 
     /// `document.open()` on the loaded document: it is loading again, so
     /// DOMContentLoaded/load (and their CDP lifecycle events) can fire anew.
+    /// A navigation the frame's scripts started before it, still fetching,
+    /// is cancelled (HTML "stop loading"), as Chrome cancels one; one an
+    /// automation client started commits. Runs as a task queued by the
+    /// open, so a navigation a script queued after it has not started yet.
     pub(crate) fn document_reopened(&mut self, page: FrameKey) {
+        self.stop_script_navigation(page);
         let Some(mut state) = self.doc_mut(page) else { return };
         state.main_frame.dom_content_loaded = false;
         state.main_frame.loaded = false;

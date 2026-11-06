@@ -359,13 +359,15 @@ fn set_document_content_replaces_the_frame_document() {
 
 /// `page.setContent()` then `goto()`: document.open() made the initial
 /// about:blank document an ordinary one (HTML "document open steps"), so the
-/// navigation pushes an entry (Chrome: history.length 2) and releases the
-/// written document as it would a loaded one. An untouched initial document
-/// is replaced and not released.
+/// navigation pushes an entry (Chrome: history.length 2) and, once the
+/// process has grown past the release gate (due at every reading here),
+/// leaves the written document's collection pending. An untouched initial
+/// document is replaced and not released.
 #[test]
 fn navigating_from_set_document_content_releases_the_written_document() {
     for written in [false, true] {
         let mut h = Harness::new();
+        h.browser.host_mut().thread.browser.engine.set_release_growth(0, 0);
         h.page("Page.enable", json!({}));
         let frame = h.frame_id.clone();
         if written {

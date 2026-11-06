@@ -73,14 +73,20 @@ impl PageHooks for Hooks {
         // a fragment navigation, done at once (the URL has changed when the
         // link's `click()` returns) and never a reload.
         let own_frame = request.target.as_deref().is_none_or(|t| t.is_empty() || t.eq_ignore_ascii_case("_self"));
-        if own_frame && request.method == "GET" && request.body.is_none() {
-            let nav = self.frames.upgrade().filter(|host| host.matches(page, &loader)).and_then(|host| host.nav(page));
-            if nav.is_some_and(|nav| nav.navigate_to_fragment(&request.url)) {
+        let nav = own_frame
+            .then(|| self.frames.upgrade().filter(|host| host.matches(page, &loader)).and_then(|host| host.nav(page)))
+            .flatten();
+        if request.method == "GET" && request.body.is_none() {
+            if nav.as_ref().is_some_and(|nav| nav.navigate_to_fragment(&request.url)) {
                 return;
             }
         }
+        // `document.open()` before the task runs drops it (stop loading).
+        let stops = nav.map(|nav| nav.stop_count());
         self.sched.post(TaskSource::Navigation, move |b| {
-            if !b.doc(page).is_some_and(|p| p.main_frame.loader_id == loader) {
+            if !b.doc(page).is_some_and(|p| {
+                p.main_frame.loader_id == loader && stops.is_none_or(|stops| p.nav.stop_count() == stops)
+            }) {
                 return;
             }
             let named = request.target.as_deref().and_then(|t| b.page(page.page)?.frames.named_frame(page, t));
@@ -502,10 +508,16 @@ const BLANK_NODES: usize = 5;
 
 /// An about:blank document has nodes beyond the ones it was made with: a
 /// script or `Runtime.evaluate` filled it through DOM APIs (an inserted
-/// iframe, whose documents are its own, included).
+/// iframe, whose documents are its own, included). A shadow tree is not
+/// among the document's descendants: one attached to body (the only one of
+/// the five that can host one) counts as well.
 pub(crate) fn blank_document_has_content(page_dom: &PageDom) -> bool {
     let dom = page_dom.dom.borrow();
-    dom.descendants(page_dom.document()).map_or(true, |mut nodes| nodes.nth(BLANK_NODES).is_some())
+    let Ok(nodes) = dom.descendants(page_dom.document()) else { return true };
+    nodes
+        .take(BLANK_NODES + 1)
+        .enumerate()
+        .any(|(i, node)| i == BLANK_NODES || dom.shadow_root(node).is_ok_and(|root| root.is_some()))
 }
 
 pub(crate) fn create(

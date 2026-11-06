@@ -167,7 +167,7 @@ struct ReleaseGate {
     /// A closed page has not been collected yet.
     pending: Cell<bool>,
     /// (minimum growth in bytes, percent of the footprint).
-    growth: (u64, u64),
+    growth: Cell<(u64, u64)>,
 }
 
 /// A loop of small pages levels off about 20 MB above its first reading under
@@ -179,7 +179,7 @@ const RELEASE_GROWTH_PERCENT: u64 = 25;
 
 impl ReleaseGate {
     fn new(growth: (u64, u64)) -> ReleaseGate {
-        ReleaseGate { low: Cell::new(u64::MAX), pending: Cell::new(false), growth }
+        ReleaseGate { low: Cell::new(u64::MAX), pending: Cell::new(false), growth: Cell::new(growth) }
     }
 
     /// `LIGHTNINGPANDA_RELEASE_GROWTH=<MB>[:<percent>]` overrides the
@@ -197,11 +197,25 @@ impl ReleaseGate {
     /// Whether a page that was just closed should be collected now.
     fn should_collect(&self, footprint: Option<u64>) -> bool {
         let Some(now) = footprint else { return true };
-        let low = self.observe(now);
-        let (min, percent) = self.growth;
-        let due = now - low >= min.max(low / 100 * percent);
+        let due = self.due(now);
         self.pending.set(!due);
         due
+    }
+
+    /// Leaves a collection pending only when one is due (without a
+    /// footprint always, as [`ReleaseGate::should_collect`] then collects).
+    fn defer_if_due(&self, footprint: Option<u64>) {
+        if footprint.is_none_or(|now| self.due(now)) {
+            self.pending.set(true);
+        }
+    }
+
+    /// Whether the process has grown past the threshold since its lowest
+    /// reading, `now` included.
+    fn due(&self, now: u64) -> bool {
+        let low = self.observe(now);
+        let (min, percent) = self.growth.get();
+        now - low >= min.max(low / 100 * percent)
     }
 
     /// Records a reading without deciding anything; the lowest so far.
@@ -546,6 +560,31 @@ impl Engine {
         if let Some(now) = process_footprint() {
             self.inner.release_gate.observe(now);
         }
+    }
+
+    /// [`Engine::release_closed`] for a document that was never loaded but
+    /// that scripts may have filled (an initial about:blank one written by
+    /// `page.setContent`): usually little to free, sometimes a lot. A reading
+    /// for the gate, as [`Engine::note_release_point`] takes, and no
+    /// collection now. Only when the gate is due is a collection left
+    /// pending, for the next close or an idle moment
+    /// ([`Engine::release_pending`]). Collecting at once ran a second full
+    /// collection when the page closed soon after (setContent, goto, close:
+    /// 8% more instructions), and leaving one pending for a small document
+    /// had the idle loop drop the live page's compiled code (`settle_idle`)
+    /// after its first quiet second.
+    pub fn defer_release_if_due(&self) {
+        if std::env::var("LIGHTNINGPANDA_RELEASE_ON_CLOSE").is_ok_and(|v| v == "0") {
+            return self.note_release_point();
+        }
+        self.inner.release_gate.defer_if_due(process_footprint());
+    }
+
+    /// The growth past which a release collects, as
+    /// `LIGHTNINGPANDA_RELEASE_GROWTH` sets it, for this engine (tests).
+    #[doc(hidden)]
+    pub fn set_release_growth(&self, min_bytes: u64, percent: u64) {
+        self.inner.release_gate.growth.set((min_bytes, percent));
     }
 
     /// Whether a closed page is still waiting for the collection
@@ -982,6 +1021,33 @@ mod tests {
         gate.observe(40 * MB);
         assert!(!gate.pending.get(), "a reading alone leaves nothing pending");
         assert!(gate.should_collect(Some(60 * MB)), "20 MB above the observed low point");
+    }
+
+    #[test]
+    fn release_gate_defers_only_what_is_due() {
+        let gate = ReleaseGate::new((16 * MB, 25));
+        gate.defer_if_due(Some(40 * MB));
+        assert!(!gate.pending.get(), "the first reading is the reference");
+        gate.defer_if_due(Some(50 * MB));
+        assert!(!gate.pending.get(), "under the threshold");
+        gate.defer_if_due(Some(56 * MB));
+        assert!(gate.pending.get(), "past it");
+        gate.pending.set(false);
+        gate.defer_if_due(Some(30 * MB));
+        assert!(!gate.pending.get());
+        assert!(gate.should_collect(Some(46 * MB)), "measured from the deferral's reading");
+        gate.pending.set(false);
+        gate.defer_if_due(None);
+        assert!(gate.pending.get(), "without a footprint, as a close collects");
+    }
+
+    #[test]
+    fn release_gate_defer_keeps_a_pending_collection() {
+        let gate = ReleaseGate::new((16 * MB, 25));
+        assert!(!gate.should_collect(Some(40 * MB)));
+        assert!(gate.pending.get());
+        gate.defer_if_due(Some(41 * MB));
+        assert!(gate.pending.get(), "a close left it pending");
     }
 
     #[test]

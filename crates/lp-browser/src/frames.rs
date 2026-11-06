@@ -424,6 +424,7 @@ impl FrameHost {
                 nav: nav.clone(),
                 pending_loader: None,
                 pending_cancel: None,
+                pending_script: None,
                 load: None,
                 stylesheets: Default::default(),
                 images: Default::default(),

@@ -55,8 +55,15 @@ struct NavState {
     state_version: u64,
     scroll_restoration_manual: bool,
     /// The only entry is the page's initial about:blank document, which the
-    /// next navigation replaces.
+    /// next navigation replaces (HTML "is initial about:blank").
     initial: bool,
+    /// The active document is that initial about:blank one, though
+    /// `document.open()` or `pushState` may have cleared `initial` since: no
+    /// document has been fetched for the frame yet.
+    first_blank: bool,
+    /// `document.open()` calls on the frame's documents (HTML "stop
+    /// loading"): a navigation its scripts started before one is dropped.
+    stops: u64,
 }
 
 impl NavState {
@@ -106,6 +113,8 @@ impl PageNav {
                 state_version: 0,
                 scroll_restoration_manual: false,
                 initial: false,
+                first_blank: false,
+                stops: 0,
             }),
             document: RefCell::new(None),
             time_origin: Cell::new(crate::clock::now()),
@@ -149,12 +158,29 @@ impl PageNav {
         self.state.borrow().initial
     }
 
-    /// HTML "document open steps": `document.open()` (or a `write()` that
-    /// opens) on the active document makes it no longer the initial
-    /// about:blank one. The next navigation then pushes an entry, and its
-    /// commit releases what was written (`page.setContent`, then `goto`).
+    /// The active document is the frame's initial about:blank one, whether
+    /// or not a script has opened it since (no document has been fetched).
+    pub(crate) fn is_first_blank(&self) -> bool {
+        self.state.borrow().first_blank
+    }
+
+    /// HTML "document open steps" on the active document (`document.open()`,
+    /// or a `write()` that opens):
+    /// - "stop loading": a navigation its scripts started and that has not
+    ///   committed is dropped ([`PageNav::stop_count`]), as Chrome does;
+    /// - it is no longer the initial about:blank document: a navigation
+    ///   started after it pushes an entry (`page.setContent`, then `goto`:
+    ///   Chrome's history.length is 2), one started before it replaces.
     pub(crate) fn document_opened(&self) {
-        self.state.borrow_mut().initial = false;
+        let mut st = self.state.borrow_mut();
+        st.initial = false;
+        st.stops += 1;
+    }
+
+    /// Changes when the frame stops loading ([`PageNav::document_opened`]):
+    /// a script navigation taken before a change is dropped after it.
+    pub(crate) fn stop_count(&self) -> u64 {
+        self.state.borrow().stops
     }
 
     /// Records a committed cross-document navigation.
@@ -168,9 +194,11 @@ impl PageNav {
         // "url equals the active document's URL" -> replace).
         let same_url = st.entries.get(st.index).is_some_and(|e| e.url == url);
         let initial = std::mem::take(&mut st.initial);
+        st.first_blank = false;
         match history {
             _ if st.entries.is_empty() => {
                 st.initial = url == "about:blank";
+                st.first_blank = st.initial;
                 st.entries.push(entry);
                 st.index = 0;
             }
@@ -259,11 +287,18 @@ impl PageNav {
 
     fn navigate(&self, url: String, history: HistoryHandling) {
         let page = self.page;
-        let document = self.state.borrow().doc_seq;
+        let (document, stops) = {
+            let st = self.state.borrow();
+            (st.doc_seq, st.stops)
+        };
         let frame_id = self.frame_id.clone();
         self.sched.post(TaskSource::Navigation, move |b| {
             let Some(page) = b.page(page).and_then(|p| p.frames.key(&frame_id)) else { return };
-            if !b.doc(page).is_some_and(|p| p.nav.state.borrow().doc_seq == document) {
+            // Another document, or this one was opened since (stop loading).
+            if !b.doc(page).is_some_and(|p| {
+                let st = p.nav.state.borrow();
+                st.doc_seq == document && st.stops == stops
+            }) {
                 return;
             }
             let opts = NavigateOpts {
