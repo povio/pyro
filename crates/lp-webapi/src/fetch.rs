@@ -50,6 +50,9 @@ pub struct RequestContext {
 pub(crate) struct FetchState {
     limits: Cell<FetchLimits>,
     budget: Arc<Budget>,
+    /// Body bytes of this document's keepalive fetches and beacons still in
+    /// flight (released by their sinks), against [`KEEPALIVE_QUOTA`].
+    pub(crate) keepalive_bytes: Arc<AtomicUsize>,
     context: RefCell<RequestContext>,
     jobs: RefCell<FxHashMap<RequestId, Rc<Job>>>,
     bodies: RefCell<FxHashMap<RequestId, Weak<Body>>>,
@@ -59,6 +62,7 @@ impl Default for FetchState {
         Self {
             limits: Cell::new(FetchLimits::default()),
             budget: Arc::new(Budget::default()),
+            keepalive_bytes: Arc::default(),
             context: RefCell::new(RequestContext::default()),
             jobs: RefCell::new(FxHashMap::default()),
             bodies: RefCell::new(FxHashMap::default()),
@@ -117,6 +121,40 @@ struct Job {
     signal: Option<Persistent>,
     credentials: Credentials,
     body: Rc<Body>,
+    /// `integrity` metadata: the response is held until the whole body has
+    /// arrived and matched (SRI), then delivered.
+    integrity: Option<crate::integrity::Integrity>,
+    held_head: RefCell<Option<ResponseHead>>,
+}
+
+/// Fetch's keepalive quota: the body bytes of a document's keepalive
+/// requests in flight at once (Chrome's 64 KiB).
+pub(crate) const KEEPALIVE_QUOTA: usize = 64 * 1024;
+
+/// Reserves `len` keepalive body bytes; the returned guard releases them when
+/// the request ends (its sink sees the terminal event or is dropped).
+pub(crate) fn reserve_keepalive(bytes: &Arc<AtomicUsize>, len: usize) -> Option<KeepaliveGuard> {
+    bytes
+        .try_update(Ordering::AcqRel, Ordering::Acquire, |n| n.checked_add(len).filter(|n| *n <= KEEPALIVE_QUOTA))
+        .ok()?;
+    Some(KeepaliveGuard { bytes: bytes.clone(), len })
+}
+
+pub(crate) struct KeepaliveGuard {
+    bytes: Arc<AtomicUsize>,
+    len: usize,
+}
+impl Drop for KeepaliveGuard {
+    fn drop(&mut self) {
+        self.bytes.fetch_sub(self.len, Ordering::AcqRel);
+    }
+}
+
+/// A document's referrer state (`PageDom::referrer`).
+#[derive(Default)]
+pub(crate) struct DocumentReferrer {
+    referrer: RefCell<String>,
+    header_policy: Cell<Option<lp_net::ReferrerPolicy>>,
 }
 struct Reader {
     realm: WeakRealm,
@@ -149,6 +187,8 @@ pub(crate) struct Body {
     abort_signal: RefCell<Option<WrapperRef>>,
     aborted: Cell<bool>,
     disposed: Cell<bool>,
+    /// A keepalive fetch: document teardown leaves its transport running.
+    keepalive: bool,
     pub(crate) mime: RefCell<String>,
 }
 impl Drop for Body {
@@ -179,6 +219,57 @@ impl PageDom {
     }
     pub(crate) fn request_context(&self) -> RequestContext {
         self.fetch_state.context.borrow().clone()
+    }
+    /// Sets `document.referrer` (the navigation request's referrer source,
+    /// before policy) and the document response's `Referrer-Policy` header.
+    /// `policy` is the one the navigation request was sent with.
+    pub fn set_document_referrer(
+        &self,
+        referrer: Option<&str>,
+        policy: lp_net::ReferrerPolicy,
+        header: Option<lp_net::ReferrerPolicy>,
+    ) {
+        let url = self.document_url();
+        let value = referrer
+            .and_then(|r| lp_net::Url::parse(r).ok())
+            .zip(lp_net::Url::parse(&url).ok())
+            .and_then(|(r, target)| lp_net::referrer::referrer_for(&r, &target, policy));
+        *self.referrer.referrer.borrow_mut() = value.unwrap_or_default();
+        self.referrer.header_policy.set(header);
+    }
+    /// `document.referrer`.
+    pub fn document_referrer(&self) -> String {
+        self.referrer.referrer.borrow().clone()
+    }
+    /// The document's referrer policy: its last `<meta name=referrer>` in
+    /// `<head>` with a known value, else its `Referrer-Policy` header, else
+    /// strict-origin-when-cross-origin. Read when a request is made (the head
+    /// is found in constant time and scanned over its children only).
+    pub fn referrer_policy(&self) -> lp_net::ReferrerPolicy {
+        let dom = self.dom.borrow();
+        let mut policy = self.referrer.header_policy.get();
+        if let Ok(Some(head)) = dom.head(self.document()) {
+            for child in dom.children(head).into_iter().flatten() {
+                let Ok(e) = dom.element(child) else { continue };
+                if !e.is_html() || *e.local_name() != *"meta" {
+                    continue;
+                }
+                let named = dom.get_attribute(child, "name").ok().flatten().is_some_and(|n| {
+                    n.trim_matches(|c: char| c.is_ascii_whitespace()).eq_ignore_ascii_case("referrer")
+                });
+                if let Some(p) = named
+                    .then(|| dom.get_attribute(child, "content").ok().flatten())
+                    .flatten()
+                    .and_then(lp_net::ReferrerPolicy::from_meta)
+                {
+                    policy = Some(p);
+                }
+            }
+        }
+        policy.unwrap_or_default()
+    }
+    pub(crate) fn document_url(&self) -> String {
+        self.dom.borrow().document_data(self.document()).map(|d| d.url.to_string()).unwrap_or_default()
     }
     /// Active network jobs and logical retained body bytes (diagnostics).
     pub fn fetch_usage(&self) -> (usize, usize) {
@@ -266,12 +357,19 @@ pub(crate) fn attach_blob(page: &PageDom, request: &mut Request) {
         request.blob = page.blob_url(request.url.as_str()).map(|(bytes, mime)| lp_net::BlobBody { bytes, mime });
     }
 }
+/// What a fetch does beyond its `lp_net::Request`.
+struct FetchExtras {
+    integrity: Option<crate::integrity::Integrity>,
+    /// Keepalive: the reserved body bytes, held until the request ends.
+    keepalive: Option<KeepaliveGuard>,
+}
+
 fn parse_request<'s>(
     s: &Scope<'s>,
     page: &PageDom,
     input: Value<'s>,
     init: Value<'s>,
-) -> JsResult<(Request, Option<Persistent>)> {
+) -> JsResult<(Request, Option<Persistent>, FetchExtras)> {
     // A Request input: its fields, overridden by `init`.
     let request_input = s.unwrap::<crate::request::Request>(input);
     let input = match &request_input {
@@ -386,15 +484,50 @@ fn parse_request<'s>(
             request.headers.remove(name);
         }
     }
-    for key in ["integrity", "referrer", "referrerPolicy"] {
-        let value = option(s, init, key)?;
-        if !value.is_undefined() && !dom_string(value)?.is_empty() {
-            return Err(JsError::Type(format!("fetch {key} is not implemented")));
+    // Referrer: init, else the Request input's, else "client" (the document).
+    let referrer = match option(s, init, "referrer")? {
+        v if v.is_undefined() => request_input.as_ref().map_or_else(|| "client".to_owned(), |r| r.referrer.clone()),
+        v => crate::request::parse_referrer(page, &dom_string(v)?).map_err(JsError::Type)?,
+    };
+    let document_url = page.document_url();
+    request.referrer = match referrer.as_str() {
+        "no-referrer" => None,
+        "client" => lp_net::Url::parse(&document_url).ok(),
+        url => lp_net::Url::parse(url).ok(),
+    };
+    let policy = match option(s, init, "referrerPolicy")? {
+        v if v.is_undefined() => request_input.as_ref().map(|r| r.referrer_policy.clone()).unwrap_or_default(),
+        v => {
+            let policy = dom_string(v)?;
+            crate::request::check_referrer_policy(&policy).map_err(JsError::Type)?;
+            policy
+        }
+    };
+    request.referrer_policy = lp_net::ReferrerPolicy::parse(&policy).unwrap_or_else(|| page.referrer_policy());
+    let integrity = match option(s, init, "integrity")? {
+        v if v.is_undefined() => request_input.as_ref().map(|r| r.integrity.clone()).unwrap_or_default(),
+        v => dom_string(v)?,
+    };
+    if !integrity.is_empty() && request.mode == RequestMode::NoCors {
+        // An opaque response can never match its metadata.
+        if crate::integrity::Integrity::parse(&integrity).is_some() {
+            return Err(JsError::Type("Failed to fetch: integrity metadata on a no-cors request".into()));
         }
     }
-    if option(s, init, "keepalive")?.to_bool() {
-        return Err(JsError::Type("fetch keepalive is not implemented".into()));
-    }
+    let keepalive = match option(s, init, "keepalive")? {
+        v if v.is_undefined() => request_input.as_ref().is_some_and(|r| r.keepalive),
+        v => v.to_bool(),
+    };
+    let keepalive = if keepalive {
+        let len = request.body.as_ref().map_or(0, Bytes::len);
+        Some(
+            reserve_keepalive(&page.fetch_state.keepalive_bytes, len)
+                .ok_or_else(|| JsError::Type("Failed to fetch: keepalive request body exceeds its quota".into()))?,
+        )
+    } else {
+        None
+    };
+    let extras = FetchExtras { integrity: crate::integrity::Integrity::parse(&integrity), keepalive };
     request.cache = match string_option(s, init, "cache", &default_string("cache", "default"))?.as_str() {
         "default" => lp_net::CacheMode::Default,
         "no-store" => lp_net::CacheMode::NoStore,
@@ -420,14 +553,13 @@ fn parse_request<'s>(
         }
         Some(Persistent::new(s, signal))
     };
-    let document_url = page.dom.borrow().document_data(page.document()).map(|d| d.url.to_string()).unwrap_or_default();
     request.origin = Some(s.realm().origin().unwrap_or_else(|| {
         lp_net::Url::parse(&document_url).map(|u| u.origin().ascii_serialization()).unwrap_or_else(|_| "null".into())
     }));
     let context = page.fetch_state.context.borrow();
     request.frame_id = context.frame_id.clone();
     request.loader_id = context.loader_id.clone();
-    Ok((request, signal))
+    Ok((request, signal, extras))
 }
 
 /// Fetch "extract a body" for the supported BodyInit types: FormData
@@ -451,6 +583,55 @@ pub(crate) fn extract_body(s: &Scope<'_>, body: Value<'_>) -> JsResult<(Bytes, S
     })
 }
 
+/// `navigator.sendBeacon(url, data)` (Beacon spec): a keepalive POST with
+/// credentials, `no-cors` unless the body's type is not CORS-safelisted.
+/// It is not one of the document's fetches, so it outlives the document.
+/// Returns false when the body exceeds the keepalive quota or the page has
+/// no network.
+pub(crate) fn send_beacon(s: &Scope<'_>, page: &PageDom, url: lp_net::Url, data: Value<'_>) -> JsResult<bool> {
+    let (body, mime) = if data.is_null() || data.is_undefined() {
+        (Bytes::new(), String::new())
+    } else if crate::streams::is_stream(s, data)? {
+        return Err(JsError::Type("Failed to execute 'sendBeacon': a ReadableStream body is not supported.".into()));
+    } else {
+        extract_body(s, data)?
+    };
+    let Some(net) = page.net.borrow().clone() else { return Ok(false) };
+    let Some(guard) = reserve_keepalive(&page.fetch_state.keepalive_bytes, body.len()) else { return Ok(false) };
+    let mut request = Request::get(url, Destination::Beacon);
+    request.method = Method::POST;
+    request.credentials = Credentials::Include;
+    request.mode = RequestMode::NoCors;
+    if !mime.is_empty() {
+        let value = HeaderValue::from_str(&mime).map_err(|_| JsError::Type("Invalid body MIME type".into()))?;
+        if !lp_net::cors::is_safelisted_header("content-type", &value) {
+            request.mode = RequestMode::Cors;
+        }
+        request.headers.insert(header::CONTENT_TYPE, value);
+    }
+    request.body = Some(body);
+    let document_url = page.document_url();
+    request.origin = Some(s.realm().origin().unwrap_or_else(|| {
+        lp_net::Url::parse(&document_url).map(|u| u.origin().ascii_serialization()).unwrap_or_else(|_| "null".into())
+    }));
+    request.referrer = lp_net::Url::parse(&document_url).ok();
+    request.referrer_policy = page.referrer_policy();
+    let context = page.request_context();
+    request.frame_id = context.frame_id;
+    request.loader_id = context.loader_id;
+    page.apply_request_defaults(&mut request);
+    let mut guard = Some(guard);
+    net.fetch(
+        request,
+        Box::new(move |event| {
+            if matches!(event, ResponseEvent::Finished { .. } | ResponseEvent::Failed(_)) {
+                guard.take();
+            }
+        }),
+    );
+    Ok(true)
+}
+
 pub(crate) fn install(s: &Scope<'_>) -> JsResult<()> {
     let function = s.function("fetch", |s, _this, args| {
         let deferred = s.deferred()?;
@@ -472,7 +653,7 @@ pub(crate) fn install(s: &Scope<'_>) -> JsResult<()> {
             if page.is_disposed() {
                 return Err(JsError::ContextDestroyed);
             }
-            let (request, signal) = parse_request(s, &page, args.get(0), args.get(1))?;
+            let (request, signal, extras) = parse_request(s, &page, args.get(0), args.get(1))?;
             // Init conversion can execute script, including embedder teardown.
             if page.is_disposed() {
                 return Err(JsError::ContextDestroyed);
@@ -491,11 +672,11 @@ pub(crate) fn install(s: &Scope<'_>) -> JsResult<()> {
                 page.net.borrow().clone().ok_or_else(|| JsError::Type("Page networking is not installed".into()))?;
             let poster =
                 page.remote_poster().ok_or_else(|| JsError::Type("Browser task poster is not installed".into()))?;
-            Ok((page, request, signal, limits, net, poster))
+            Ok((page, request, signal, extras, limits, net, poster))
         })();
         match result {
             Err(error) => deferred.reject(s, error.to_value(s))?,
-            Ok((page, mut request, signal, limits, net, poster)) => {
+            Ok((page, mut request, signal, extras, limits, net, poster)) => {
                 page.apply_request_defaults(&mut request);
                 attach_blob(&page, &mut request);
                 request.max_body = Some(limits.max_body_bytes);
@@ -526,6 +707,7 @@ pub(crate) fn install(s: &Scope<'_>) -> JsResult<()> {
                     abort_signal: RefCell::new(None),
                     aborted: Cell::new(false),
                     disposed: Cell::new(false),
+                    keepalive: extras.keepalive.is_some(),
                     mime: RefCell::new(String::new()),
                 });
                 page.fetch_state.bodies.borrow_mut().insert(id, Rc::downgrade(&body));
@@ -546,14 +728,26 @@ pub(crate) fn install(s: &Scope<'_>) -> JsResult<()> {
                     signal,
                     credentials: request.credentials,
                     body,
+                    integrity: extras.integrity,
+                    held_head: RefCell::new(None),
                 });
+                if job.integrity.is_some() {
+                    // Nothing is delivered before the whole body is checked.
+                    job.body.wire.lock().unwrap().streaming = false;
+                }
                 page.fetch_state.jobs.borrow_mut().insert(id, job);
                 let page_id = page.id();
                 PAGES.with(|pages| pages.borrow_mut().insert(page_id, Rc::downgrade(&page)));
+                let mut keepalive = extras.keepalive;
                 net.fetch_with_id(
                     id,
                     request,
-                    Box::new(move |event| receive(&wire, page_id, id, &poster, limits, event)),
+                    Box::new(move |event| {
+                        if matches!(event, ResponseEvent::Finished { .. } | ResponseEvent::Failed(_)) {
+                            keepalive.take();
+                        }
+                        receive(&wire, page_id, id, &poster, limits, event)
+                    }),
                 );
             }
         }
@@ -652,6 +846,28 @@ fn pump(page_id: u64, id: RequestId) {
     if page.is_disposed() || job.body.disposed.get() || job.body.aborted.get() {
         return;
     }
+    let head = match &job.integrity {
+        None => head,
+        Some(integrity) => {
+            if let Some(head) = head {
+                if matches!(head.kind, lp_net::ResponseKind::Opaque | lp_net::ResponseKind::OpaqueRedirect) {
+                    fail_integrity(&s, &page, &job, id);
+                    return;
+                }
+                *job.held_head.borrow_mut() = Some(head);
+            }
+            if matches!(terminal, Some(Ok(()))) {
+                let held = job.held_head.borrow_mut().take();
+                if held.is_some() && !integrity.matches(&job.body.wire.lock().unwrap().chunks) {
+                    fail_integrity(&s, &page, &job, id);
+                    return;
+                }
+                held
+            } else {
+                None
+            }
+        }
+    };
     if let Some(head) = head {
         *job.body.mime.borrow_mut() =
             if matches!(head.kind, lp_net::ResponseKind::Opaque | lp_net::ResponseKind::OpaqueRedirect) {
@@ -696,6 +912,29 @@ fn pump(page_id: u64, id: RequestId) {
     }
 }
 
+/// The body did not match the request's integrity metadata (or the response
+/// is opaque): a network error, as if it never arrived.
+fn fail_integrity(s: &Scope<'_>, page: &PageDom, job: &Job, id: RequestId) {
+    if let Some(net) = page.net.borrow().as_ref() {
+        net.cancel(id);
+    }
+    {
+        let mut wire = job.body.wire.lock().unwrap();
+        wire.terminal = Some(Err(NetError::Other("integrity mismatch".into())));
+        wire.closed = true;
+        wire.clear_body();
+    }
+    *job.body.visible_terminal.borrow_mut() = Some(Err(NetError::Other("integrity mismatch".into())));
+    job.held_head.borrow_mut().take();
+    if let Some(deferred) = job.promise.borrow_mut().take() {
+        let error = JsError::Type("Failed to fetch: the response does not match its integrity metadata".into());
+        let _ = deferred.reject(s, error.to_value(s));
+    }
+    page.fetch_state.jobs.borrow_mut().remove(&id);
+    job.body.settle_readers();
+    job.body.release_if_unused();
+}
+
 impl Body {
     /// A complete in-memory body for script-constructed Responses
     /// (`new Response(body)`, `Response.json`, `Response.error`). `None` is a
@@ -729,6 +968,7 @@ impl Body {
             abort_signal: RefCell::new(None),
             aborted: Cell::new(false),
             disposed: Cell::new(false),
+            keepalive: false,
             mime: RefCell::new(mime),
         })
     }
@@ -1059,8 +1299,10 @@ pub(crate) fn cancel_realm(page: &PageDom, realm: RealmId) {
     let bodies: Vec<_> =
         page.fetch_state.bodies.borrow().values().filter_map(Weak::upgrade).filter(|b| b.realm_id == realm).collect();
     for body in bodies {
-        if let Some(net) = page.net.borrow().as_ref() {
-            net.cancel(body.id);
+        if !body.keepalive {
+            if let Some(net) = page.net.borrow().as_ref() {
+                net.cancel(body.id);
+            }
         }
         let job = page.fetch_state.jobs.borrow_mut().remove(&body.id);
         body.dispose();
@@ -1071,8 +1313,12 @@ pub(crate) fn dispose(page: &PageDom) {
     PAGES.with(|pages| pages.borrow_mut().remove(&page.id()));
     let bodies: Vec<_> = page.fetch_state.bodies.borrow().values().filter_map(Weak::upgrade).collect();
     for body in bodies {
-        if let Some(net) = page.net.borrow().as_ref() {
-            net.cancel(body.id);
+        // A keepalive fetch outlives its document (Fetch "keepalive"): its
+        // transport runs on and the page-side state goes.
+        if !body.keepalive {
+            if let Some(net) = page.net.borrow().as_ref() {
+                net.cancel(body.id);
+            }
         }
         body.dispose();
     }

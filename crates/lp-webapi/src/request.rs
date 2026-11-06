@@ -64,6 +64,39 @@ impl RequestData {
 }
 
 const METHODS: &[&str] = &["DELETE", "GET", "HEAD", "OPTIONS", "POST", "PUT"];
+/// RequestInit `referrer`: `""` is `no-referrer`; `about:client` or a URL of
+/// another origin than the document's is `client`; else the parsed URL.
+pub(crate) fn parse_referrer(page: &crate::page::PageDom, referrer: &str) -> Result<String, String> {
+    if referrer.is_empty() {
+        return Ok("no-referrer".into());
+    }
+    let dom = page.dom.borrow();
+    let base = dom.document_base_url(page.document()).ok().and_then(|b| lp_net::Url::parse(b).ok());
+    let parsed = lp_net::Url::options()
+        .base_url(base.as_ref())
+        .parse(referrer)
+        .map_err(|_| format!("Invalid referrer '{referrer}'"))?;
+    let document = dom.document_data(page.document()).ok().and_then(|d| lp_net::Url::parse(&d.url).ok());
+    Ok(
+        if (parsed.scheme() == "about" && parsed.path() == "client")
+            || document.is_none_or(|d| d.origin() != parsed.origin())
+        {
+            "client".into()
+        } else {
+            parsed.to_string()
+        },
+    )
+}
+
+/// A RequestInit `referrerPolicy` must be a ReferrerPolicy enum value.
+pub(crate) fn check_referrer_policy(policy: &str) -> Result<(), String> {
+    if REFERRER_POLICIES.contains(&policy) {
+        Ok(())
+    } else {
+        Err(format!("The provided value '{policy}' is not a valid enum value of type ReferrerPolicy."))
+    }
+}
+
 const REFERRER_POLICIES: &[&str] = &[
     "",
     "no-referrer",
@@ -265,28 +298,11 @@ fn construct<'s>(
         fields.mode = "same-origin".into();
     }
     if let Some(referrer) = string_option(s, init, "referrer")? {
-        if referrer.is_empty() {
-            fields.referrer = "no-referrer".into();
-        } else {
-            let base = page.dom.borrow().document_base_url(page.document()).ok().map(str::to_owned);
-            let parsed = match base.as_deref().and_then(|b| lp_net::Url::parse(b).ok()) {
-                Some(b) => b.join(&referrer),
-                None => lp_net::Url::parse(&referrer),
-            }
-            .map_err(|_| JsError::Type(format!("Failed to construct 'Request': Invalid referrer '{referrer}'")))?;
-            fields.referrer = if parsed.scheme() == "about" && parsed.path() == "client" {
-                "client".into()
-            } else {
-                parsed.to_string()
-            };
-        }
+        fields.referrer = parse_referrer(&page, &referrer)
+            .map_err(|e| JsError::Type(format!("Failed to construct 'Request': {e}")))?;
     }
     if let Some(policy) = string_option(s, init, "referrerPolicy")? {
-        if !REFERRER_POLICIES.contains(&policy.as_str()) {
-            return Err(JsError::Type(format!(
-                "Failed to construct 'Request': The provided value '{policy}' is not a valid enum value of type ReferrerPolicy."
-            )));
-        }
+        check_referrer_policy(&policy).map_err(|e| JsError::Type(format!("Failed to construct 'Request': {e}")))?;
         fields.referrer_policy = policy;
     }
     if let Some(mode) = string_option(s, init, "mode")? {

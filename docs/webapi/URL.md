@@ -35,7 +35,7 @@ Hosts: ASCII hosts with invalid `xn--` labels pass through as in browsers, throu
 the patched `vendor/idna`. `<a>`/`<area>` read and write URL components with the
 same setters as `URL`, against the `<base>`-aware document base; an unparseable
 `href` reads as itself with protocol `:` and ignores component writes.
-`navigator.sendBeacon` validates the URL and sends nothing.
+`navigator.sendBeacon` validates the URL and sends the beacon (see [Fetch](FETCH.md)).
 
 Gaps:
 - The download itself is not performed, and no CDP download events are emitted.

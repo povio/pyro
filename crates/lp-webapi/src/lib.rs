@@ -38,6 +38,7 @@ pub mod html;
 pub mod identity;
 pub mod indexeddb;
 pub mod input;
+mod integrity;
 pub mod intersection_observer;
 pub mod layout_api;
 pub mod lifecycle;

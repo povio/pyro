@@ -571,6 +571,9 @@ impl Xhr {
             return Err(invalid("XHR was reopened during body conversion"));
         }
         let page = self.page()?;
+        // Referrer "client": the document, under its referrer policy.
+        request.referrer = lp_net::Url::parse(&page.document_url()).ok();
+        request.referrer_policy = page.referrer_policy();
         let limits = page.xhr_state.limits.get();
         if page.xhr_state.jobs.borrow().len() >= limits.max_requests {
             return Err(JsError::dom("QuotaExceededError", "Too many pending XHR requests"));

@@ -148,6 +148,9 @@ pub struct PageDom {
     /// creating document; revocation, document replacement and disposal drop
     /// the entries (and their bytes).
     pub(crate) blob_urls: RefCell<FxHashMap<String, (bytes::Bytes, String)>>,
+    /// `document.referrer` and the `Referrer-Policy` header of the document's
+    /// response, set by the embedder at commit (`crate::fetch`).
+    pub(crate) referrer: crate::fetch::DocumentReferrer,
     pub(crate) reflected_url_base: RefCell<Option<crate::html::ReflectedUrlBase>>,
     hooks: RefCell<Option<Rc<dyn PageHooks>>>,
     ready: RefCell<FxHashMap<NodeId, &'static str>>,
@@ -498,6 +501,7 @@ impl PageDom {
             opaque_storage: Default::default(),
             popups: RefCell::new(Vec::new()),
             blob_urls: RefCell::new(FxHashMap::default()),
+            referrer: Default::default(),
             reflected_url_base: RefCell::new(None),
             hooks: RefCell::new(None),
             ready: RefCell::new(FxHashMap::default()),

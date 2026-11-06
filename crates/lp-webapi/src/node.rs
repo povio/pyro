@@ -1659,7 +1659,10 @@ impl JsClass for Document {
                 Ok(())
             },
         );
-        def.getter("referrer", |s, _n| Ok(s.string("")));
+        def.getter("referrer", |s, n| {
+            let page = n.page();
+            Ok(s.string(&if page.document() == n.id { page.document_referrer() } else { String::new() }))
+        });
         def.getter("domain", |s, n| {
             if s.realm().origin().as_deref() == Some("null") {
                 return Ok(s.string(""));
