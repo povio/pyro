@@ -55,6 +55,7 @@ pub mod node;
 pub mod observable;
 pub mod page;
 mod popover;
+mod pointer_capture;
 mod popup;
 pub mod range;
 pub mod render_blocking;

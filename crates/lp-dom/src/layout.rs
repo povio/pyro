@@ -1179,7 +1179,9 @@ impl Layout {
                 break chain.clone();
             }
             pending.push(node);
-            cur = dom.parent_element(node).ok().flatten();
+            // A shadow tree's top-level elements paint within their host.
+            cur =
+                dom.check(node).ok().and_then(|i| crate::style::flat_tree_parent_element(dom, i)).map(|i| dom.id_of(i));
         };
         let reached_root = cur.is_none();
         for (i, &node) in pending.iter().enumerate().rev() {
@@ -1323,10 +1325,11 @@ impl Layout {
                 let same_layer = key.len() == top_key.len()
                     && key[..key.len() - 1] == top_key[..top_key.len() - 1]
                     && key.last().map(|value| (value.0, value.1)) == top_key.last().map(|value| (value.0, value.1));
-                if same_layer && dom.contains(el, *top_node).unwrap_or(false) {
+                // Shadow-including: a host's shadow content paints over it.
+                if same_layer && dom.shadow_including_contains(el, *top_node) {
                     continue;
                 }
-                if *top_key > key && !(same_layer && dom.contains(*top_node, el).unwrap_or(false)) {
+                if *top_key > key && !(same_layer && dom.shadow_including_contains(*top_node, el)) {
                     continue;
                 }
             }
@@ -1406,8 +1409,17 @@ impl Layout {
         let mut out = Vec::new();
         let mut cur = self.element_from_point(dom, x, y);
         while let Some(el) = cur {
-            let parent = dom.parent_element(el).ok().flatten();
-            if parent.is_none() || self.style.is_hit_testable(dom, el) {
+            // Flat-tree ancestors: a slottable's slot (boxless, so not
+            // listed), a shadow root's host.
+            let parent = match dom.assigned_slot_any(el) {
+                Some(slot) => Some(slot),
+                None => match dom.parent(el).ok().flatten() {
+                    Some(p) if dom.is_shadow_root(p).unwrap_or(false) => dom.fragment_host(p).ok().flatten(),
+                    _ => dom.parent_element(el).ok().flatten(),
+                },
+            };
+            let slot = dom.element(el).is_ok_and(|e| e.is_html() && &*e.name.local == "slot");
+            if parent.is_none() || (self.style.is_hit_testable(dom, el) && !slot) {
                 out.push(el);
             }
             cur = parent;

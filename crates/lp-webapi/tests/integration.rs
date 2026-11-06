@@ -13,6 +13,7 @@ mod error_events_js;
 mod event_source_js;
 mod events_misc_js;
 mod fetch_js;
+mod focus_shadow_js;
 mod form_data_js;
 mod forms_js;
 mod identity_js;

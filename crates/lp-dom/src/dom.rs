@@ -668,6 +668,8 @@ impl Dom {
             fragment_parse_host: false,
             focused: NIL,
             hovered: NIL,
+            activated: NIL,
+            focus_visible: false,
             document_element: NIL,
             head: NIL,
             body: NIL,

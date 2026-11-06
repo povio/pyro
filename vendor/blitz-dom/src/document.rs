@@ -310,6 +310,9 @@ pub struct BaseDocument {
     pub(crate) focus_node_id: Option<NodeId>,
     /// The node which is currently active (if any)
     pub(crate) active_node_id: Option<NodeId>,
+    /// The focused node matches `:focus-visible` (FOCUSRING), as the
+    /// embedder decides it.
+    pub(crate) focus_ring: bool,
     /// The node which recieved a mousedown event (if any)
     pub(crate) mousedown_node_id: Option<NodeId>,
     /// The last time a mousedown was made (for double-click detection)
@@ -536,6 +539,7 @@ impl BaseDocument {
             last_client_pointer_position: None,
             focus_node_id: None,
             active_node_id: None,
+            focus_ring: false,
             mousedown_node_id: None,
             has_active_animations: false,
             subdoc_is_animating: false,
@@ -1915,15 +1919,53 @@ impl BaseDocument {
         }
 
         // Focus the new node
+        let ring = self.focus_ring;
         self.snapshot_node_and(
             focus_node_id,
             ElementState::FOCUS | ElementState::FOCUSRING,
-            |node| node.focus(shell_provider),
+            |node| {
+                node.focus(shell_provider);
+                if let Some(data) = node.element_data_mut() {
+                    data.element_state.set(ElementState::FOCUSRING, ring);
+                }
+            },
         );
 
         self.focus_node_id = Some(focus_node_id);
         self.set_focus_within(focus_node_id, true);
 
+        true
+    }
+
+    /// Whether the focused node (now and later) matches `:focus-visible`;
+    /// true when a focused node's state changed.
+    pub fn set_focus_ring(&mut self, on: bool) -> bool {
+        if self.focus_ring == on {
+            return false;
+        }
+        self.focus_ring = on;
+        let Some(id) = self.focus_node_id else { return false };
+        self.snapshot_node_and(id, ElementState::FOCUSRING, |node| {
+            if let Some(data) = node.element_data_mut() {
+                data.element_state.set(ElementState::FOCUSRING, on);
+            }
+            node.mark_ancestors_dirty();
+        });
+        true
+    }
+
+    /// Puts `:active` on `node` and its ancestors (off the previous active
+    /// node's); true when anything changed.
+    pub fn set_active_to(&mut self, node: Option<NodeId>) -> bool {
+        let node = node.and_then(|id| self.nearest_non_anonymous_ancestor(id));
+        if node == self.active_node_id {
+            return false;
+        }
+        self.unactive_node();
+        for &id in self.maybe_node_element_ancestors(node).iter() {
+            self.snapshot_node_and(id, ElementState::ACTIVE, |node| node.active());
+        }
+        self.active_node_id = node;
         true
     }
 

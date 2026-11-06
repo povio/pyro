@@ -1177,6 +1177,63 @@ impl Dom {
         (i != NIL).then(|| self.id_of(i))
     }
 
+    pub(crate) fn activated_idx(&self, doc: u32) -> u32 {
+        match &self.n(doc).kind {
+            NodeKind::Document(d) if d.activated != NIL && self.slot_live(d.activated) => d.activated,
+            _ => NIL,
+        }
+    }
+
+    pub(crate) fn focus_visible_flag(&self, doc: u32) -> bool {
+        matches!(&self.n(doc).kind, NodeKind::Document(d) if d.focus_visible)
+    }
+
+    /// The element being activated (`:active`), if any.
+    pub fn activated(&self, doc: NodeId) -> Option<NodeId> {
+        let d = self.check(doc).ok()?;
+        self.opt_id(self.activated_idx(d))
+    }
+
+    /// Sets the element being activated (`:active`); a change restyles like
+    /// a hover change.
+    pub fn set_activated(&mut self, doc: NodeId, el: Option<NodeId>) -> DomResult<()> {
+        let d = self.check(doc)?;
+        let new = match el {
+            Some(e) => self.check(e)?,
+            None => NIL,
+        };
+        if self.activated_idx(d) == new {
+            return Ok(());
+        }
+        if let NodeKind::Document(dd) = &mut self.n_mut(d).kind {
+            dd.activated = new;
+        }
+        self.bump();
+        self.note(crate::dom::Change::Pseudo);
+        Ok(())
+    }
+
+    /// Whether the focused element matches `:focus-visible`.
+    pub fn focus_visible(&self, doc: NodeId) -> bool {
+        self.check(doc).is_ok_and(|d| self.focus_visible_flag(d))
+    }
+
+    /// Sets whether the focused element matches `:focus-visible`.
+    pub fn set_focus_visible(&mut self, doc: NodeId, visible: bool) -> DomResult<()> {
+        let d = self.check(doc)?;
+        if self.focus_visible_flag(d) == visible {
+            return Ok(());
+        }
+        if let NodeKind::Document(dd) = &mut self.n_mut(d).kind {
+            dd.focus_visible = visible;
+        }
+        if self.focused_idx(d) != NIL {
+            self.bump();
+            self.note(crate::dom::Change::Pseudo);
+        }
+        Ok(())
+    }
+
     pub(crate) fn hovered_idx(&self, doc: u32) -> u32 {
         match &self.n(doc).kind {
             NodeKind::Document(d) if d.hovered != NIL && self.slot_live(d.hovered) => d.hovered,
@@ -1212,6 +1269,34 @@ impl Dom {
         let d = self.check(doc)?;
         Ok(self.opt_id(self.focused_idx(d)))
     }
+    /// DOM "retarget" of `node` against the tree rooted at `root`: the node
+    /// itself when its root is `root` (or is not a shadow root), else the
+    /// nearest shadow host whose root is. `None` for a dead node.
+    pub fn retarget_node(&self, node: NodeId, root: NodeId) -> Option<NodeId> {
+        let mut cur = node;
+        loop {
+            let r = self.root_node(cur, false).ok()?;
+            if r == root || !self.is_shadow_root(r).unwrap_or(false) {
+                return Some(cur);
+            }
+            cur = self.fragment_host(r).ok()??;
+        }
+    }
+
+    /// `DocumentOrShadowRoot.activeElement` for `root` (a document or a
+    /// shadow root): the focused element retargeted against `root`, null
+    /// when that lands outside `root`'s tree; a document falls back to its
+    /// body when nothing in it is focused.
+    pub fn active_element(&self, root: NodeId) -> DomResult<Option<NodeId>> {
+        let doc = self.node_document(root)?;
+        let candidate = self.focused(doc)?.and_then(|f| self.retarget_node(f, root));
+        let in_tree = candidate.filter(|&c| self.root_node(c, false).is_ok_and(|r| r == root));
+        if root == doc {
+            return Ok(in_tree.or(self.body(doc)?));
+        }
+        Ok(in_tree)
+    }
+
     /// Sets the focused element. Event dispatch (blur/focusout/focus/focusin)
     /// is the caller's responsibility; returns the previously focused node.
     pub fn set_focused(&mut self, doc: NodeId, el: Option<NodeId>) -> DomResult<Option<NodeId>> {

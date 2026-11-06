@@ -289,10 +289,12 @@ impl BlitzGeometry {
         let doc = style.document();
         let hovered = dom.hovered(doc).map(lp_dom::snapshot::render_key);
         let focused = dom.focused(doc).ok().flatten().map(lp_dom::snapshot::render_key);
+        let active = dom.activated(doc).map(lp_dom::snapshot::render_key);
+        let focus_visible = dom.focus_visible(doc);
         RENDERER.with(|r| {
             if let Ok(mut r) = r.try_borrow_mut() {
                 if let Some(r) = r.as_mut() {
-                    r.set_interaction(self.page, hovered, focused, style_only);
+                    r.set_interaction_states(self.page, hovered, focused, active, focus_visible, style_only);
                 }
             }
         });

@@ -824,7 +824,11 @@ impl Dom {
                 _ => false,
             },
             AnyLink | Link => self.is_link(idx),
-            Visited | Active => false,
+            Visited => false,
+            Active => {
+                let a = self.activated_idx(self.n(idx).owner_doc);
+                a != NIL && self.shadow_including_inclusive_ancestor(idx, a)
+            }
             Target => self.is_url_target(idx),
             Checked => self.checkedness_idx(idx) || self.option_selected_idx(idx),
             Indeterminate => e.control.as_ref().is_some_and(|c| c.indeterminate),
@@ -840,7 +844,11 @@ impl Dom {
                     && self.is_mutable_text_idx(idx)
                     && self.control_value_idx(idx).is_empty()
             }
-            Focus | FocusVisible => self.focused_idx(self.n(idx).owner_doc) == idx,
+            Focus => self.focused_idx(self.n(idx).owner_doc) == idx,
+            FocusVisible => {
+                let doc = self.n(idx).owner_doc;
+                self.focused_idx(doc) == idx && self.focus_visible_flag(doc)
+            }
             FocusWithin => {
                 let f = self.focused_idx(self.n(idx).owner_doc);
                 f != NIL && self.shadow_including_inclusive_ancestor(idx, f)

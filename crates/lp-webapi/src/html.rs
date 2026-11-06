@@ -873,9 +873,9 @@ pub(crate) fn define_element_extras(def: &mut ClassDef<Element>) {
         let page = n.page();
         Ok(s.number(page.layout().client_left(&page.dom.borrow(), n.id)))
     });
-    def.method("setPointerCapture", 1, |s, _n, _a| Ok(s.undefined()));
-    def.method("releasePointerCapture", 1, |s, _n, _a| Ok(s.undefined()));
-    def.method("hasPointerCapture", 1, |s, _n, _a| Ok(s.boolean(false)));
+    def.method("setPointerCapture", 1, crate::pointer_capture::set_pointer_capture);
+    def.method("releasePointerCapture", 1, crate::pointer_capture::release_pointer_capture);
+    def.method("hasPointerCapture", 1, crate::pointer_capture::has_pointer_capture);
     def.method("animate", 0, |s, _n, _a| {
         s.eval("({finished: Promise.resolve(), cancel(){}, finish(){}, play(){}, pause(){}, addEventListener(){}, removeEventListener(){}, onfinish: null, playState: 'finished'})", None, 1)
     });

@@ -9,6 +9,7 @@ pub mod dom;
 pub mod error;
 pub mod events;
 mod flow_font;
+mod focus_nav;
 pub mod forms;
 pub(crate) mod gecko_only;
 pub mod geometry;

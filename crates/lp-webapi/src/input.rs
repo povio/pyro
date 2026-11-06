@@ -14,7 +14,7 @@ use crate::event::{EventCore, EventData, EventInterface};
 use crate::page::{FocusTarget, FocusTransition, PageDom};
 use crate::target::fire;
 
-fn key_of(page: &PageDom, id: NodeId) -> Option<TargetKey> {
+pub(crate) fn key_of(page: &PageDom, id: NodeId) -> Option<TargetKey> {
     page.dom.borrow().node_key(id)
 }
 
@@ -140,9 +140,27 @@ pub fn focus_element_with_options(page: &Rc<PageDom>, el: NodeId, prevent_scroll
         return focus_element_with_options(&owner, el, prevent_scroll);
     }
     let doc = page.document();
-    if !live_element(page, doc, el) || !can_focus(page, el) {
+    if !live_element(page, doc, el) {
         return;
     }
+    // HTML focusing steps: a `delegatesFocus` host forwards focus to its
+    // focus delegate (none when focus is already inside it), and only a
+    // focusable area (not inert, being rendered) takes focus.
+    let el = {
+        let layout = page.layout();
+        let dom = page.dom.borrow();
+        if dom.is_delegates_focus_host(el) {
+            let inside = dom.focused(doc).ok().flatten().is_some_and(|f| dom.shadow_including_contains(el, f));
+            match (!inside).then(|| dom.focus_delegate(el, &|n| is_focusable_area(&layout, &dom, n))).flatten() {
+                Some(d) => d,
+                None => return,
+            }
+        } else if is_focusable_area(&layout, &dom, el) || page.popover.forced_focus(el) {
+            el
+        } else {
+            return;
+        }
+    };
     if let Some(token) = request_focus(page, FocusTarget::Element(el), prevent_scroll) {
         focus_element_with_transition(page, el, &token);
     }
@@ -173,7 +191,16 @@ pub fn focus_element_with_transition(page: &Rc<PageDom>, el: NodeId, token: &Foc
     if !live_document(page, doc, token) || !live_element(page, doc, el) || !can_focus(page, el) {
         return;
     }
-    let _ = page.dom.borrow_mut().set_focused(doc, Some(el));
+    {
+        // `:focus-visible` as Chrome decides it: after keyboard input (and
+        // for script focus before any pointer press) the focused element
+        // shows its ring; after a pointer press only an element that takes
+        // typed text does.
+        let mut dom = page.dom.borrow_mut();
+        let visible = !page.pointer_modality.get() || takes_typed_text(&dom, el);
+        let _ = dom.set_focus_visible(doc, visible);
+        let _ = dom.set_focused(doc, Some(el));
+    }
     if is_text_control(&page.dom.borrow(), el) {
         page.editing_target.set(Some(el));
     }
@@ -207,7 +234,13 @@ pub fn focus_element_with_transition(page: &Rc<PageDom>, el: NodeId, token: &Foc
 
 fn run_blur(page: &Rc<PageDom>, doc: NodeId, el: NodeId, related: Option<NodeId>, token: &FocusTransition) {
     let _ = page.dom.borrow_mut().set_focused(doc, None);
-    page.space_target.set(None);
+    if page.space_target.take().is_some() {
+        // A Space-activated control stops being `:active` when it blurs.
+        let mut dom = page.dom.borrow_mut();
+        if dom.activated(doc) == Some(el) {
+            let _ = dom.set_activated(doc, None);
+        }
+    }
     if !live_element(page, doc, el) {
         return;
     }
@@ -283,6 +316,26 @@ pub(crate) fn schedule_focus_fixup(page: &Rc<PageDom>) {
             run_focus_fixup(&page);
         }
     }));
+}
+
+/// Elements that take typed text (text controls, editable content): mouse
+/// focus on them still matches `:focus-visible`, as in Chrome.
+fn takes_typed_text(dom: &Dom, el: NodeId) -> bool {
+    is_text_control(dom, el) || crate::editing::editing_host(dom, el).is_some()
+}
+
+/// HTML "focusable area": focusable, not inert, and being rendered (not in
+/// a `display: none` subtree nor `visibility: hidden`, as Chrome's
+/// focusable-style check). An `<area>` is rendered through its image map.
+pub(crate) fn is_focusable_area(layout: &lp_dom::layout::Layout, dom: &Dom, el: NodeId) -> bool {
+    if !dom.is_focusable(el).unwrap_or(false) || dom.is_inert(el) {
+        return false;
+    }
+    if dom.element(el).is_ok_and(|e| e.is_html() && &*e.name.local == "area") {
+        return true;
+    }
+    let opts = lp_dom::style::CheckVisibilityOptions { check_visibility: true, check_opacity: false };
+    layout.check_visibility(dom, el, opts)
 }
 
 /// Blurs the focused element when it is not a focusable area any more:
@@ -993,6 +1046,11 @@ pub fn dispatch_key(page: &Rc<PageDom>, kind: KeyKind, k: &KeyInput) {
     let Some(tkey) = key_of(page, target) else { return };
     match kind {
         KeyKind::KeyDown | KeyKind::RawKeyDown => {
+            if !(k.modifiers.ctrl || k.modifiers.meta || k.modifiers.alt) {
+                // Keyboard use makes focus visible, the current focus too.
+                page.pointer_modality.set(false);
+                let _ = page.dom.borrow_mut().set_focus_visible(doc, true);
+            }
             let ev = key_event(page, "keydown", k, 0);
             let ok = fire(page, tkey, &ev);
             if !ok || page.document() != doc || !accepts_keyboard(page) {
@@ -1003,6 +1061,7 @@ pub fn dispatch_key(page: &Rc<PageDom>, kind: KeyKind, k: &KeyInput) {
                 // Browsers mark the control active on Space keydown and click
                 // it on the matching keyup (Blink KeyboardClickableInputTypeView).
                 page.space_target.set(Some(target));
+                let _ = page.dom.borrow_mut().set_activated(doc, Some(target));
             }
             if kind == KeyKind::KeyDown && !k.text.is_empty() {
                 press_char(page, target, k);
@@ -1014,6 +1073,9 @@ pub fn dispatch_key(page: &Rc<PageDom>, kind: KeyKind, k: &KeyInput) {
         KeyKind::KeyUp => {
             let ev = key_event(page, "keyup", k, 0);
             let ok = fire(page, tkey, &ev);
+            if k.key == " " && page.space_target.get().is_some() {
+                let _ = page.dom.borrow_mut().set_activated(doc, None);
+            }
             if k.key == " "
                 && page.space_target.take() == Some(target)
                 && ok
@@ -1583,38 +1645,32 @@ pub fn insert_text(page: &Rc<PageDom>, text: &str) {
     insert_text_at(page, target, text);
 }
 
-/// Sequential focus navigation in tree order (tabindex >= 0 or naturally
-/// focusable; positive tabindex ordering is not modelled).
-fn focus_next(page: &Rc<PageDom>, from: NodeId, backward: bool) {
+/// Sequential focus navigation (Tab / Shift+Tab) from the focused element
+/// through the flattened tabindex-ordered scopes of the document, its
+/// shadow trees and slots (see `lp_dom::focus_nav`), over focusable areas.
+fn focus_next(page: &Rc<PageDom>, _from: NodeId, backward: bool) {
     let next = {
+        let layout = page.layout();
         let dom = page.dom.borrow();
         let doc = page.document();
-        let Ok(all) = dom.descendants(doc) else { return };
-        // A modal dialog keeps sequential focus inside it.
-        let blocked = dom.topmost_modal().is_some();
-        let candidates: Vec<NodeId> = all
-            .filter(|&n| {
-                dom.is_focusable(n).unwrap_or(false)
-                    && !(blocked && dom.is_inert(n))
-                    && dom
-                        .get_attribute(n, "tabindex")
-                        .ok()
-                        .flatten()
-                        .and_then(|t| t.trim().parse::<i32>().ok())
-                        .unwrap_or(0)
-                        >= 0
-            })
-            .collect();
-        let pos = candidates.iter().position(|&c| c == from);
-        match (pos, backward) {
-            (Some(p), false) => candidates.get(p + 1).copied(),
-            (Some(p), true) => p.checked_sub(1).and_then(|i| candidates.get(i).copied()),
-            (None, false) => candidates.first().copied(),
-            (None, true) => candidates.last().copied(),
-        }
+        let current = dom.focused(doc).ok().flatten();
+        dom.sequential_focus_target(doc, current, backward, &|n| is_focusable_area(&layout, &dom, n))
     };
     if let Some(n) = next {
         focus_element(page, n);
+    }
+}
+
+/// The parent element in the flat tree: a slottable's slot, a shadow
+/// root's host, else the parent element.
+fn flat_parent_element(dom: &Dom, el: NodeId) -> Option<NodeId> {
+    if let Some(slot) = dom.assigned_slot_any(el) {
+        return Some(slot);
+    }
+    match dom.parent(el).ok().flatten() {
+        Some(p) if dom.is_shadow_root(p).unwrap_or(false) => dom.fragment_host(p).ok().flatten(),
+        Some(p) if dom.element(p).is_ok() => Some(p),
+        _ => None,
     }
 }
 
@@ -1663,7 +1719,13 @@ pub struct MouseInput {
     pub delta_y: f64,
 }
 
-fn mouse_event(page: &Rc<PageDom>, iface: EventInterface, ty: &str, m: &MouseInput, cancelable: bool) -> EventData {
+pub(crate) fn mouse_event(
+    page: &Rc<PageDom>,
+    iface: EventInterface,
+    ty: &str,
+    m: &MouseInput,
+    cancelable: bool,
+) -> EventData {
     let ev = EventCore::trusted(
         page,
         iface,
@@ -2032,7 +2094,16 @@ fn dispatch_mouse_inner(
     touch: Option<i32>,
 ) -> Result<Option<DragData>, String> {
     // Empty viewport space targets the root element, as Chromium hit-tests it.
-    let target = pointer_target(page, m.x, m.y, true).ok_or_else(|| "no element at point".to_owned())?;
+    let hit = pointer_target(page, m.x, m.y, true).ok_or_else(|| "no element at point".to_owned())?;
+    // Mouse pointer events (and their compatibility mouse events) go to the
+    // capture target while there is one.
+    let captured = match (touch, kind) {
+        (None, MouseKind::Pressed | MouseKind::Moved | MouseKind::Released) => {
+            crate::pointer_capture::capture_target(page, m)
+        }
+        _ => None,
+    };
+    let target = captured.unwrap_or(hit);
     let Some(tkey) = key_of(page, target) else { return Err("stale target".into()) };
     match kind {
         MouseKind::Moved => {
@@ -2056,6 +2127,15 @@ fn dispatch_mouse_inner(
         }
         MouseKind::Pressed => {
             crate::popover::light_dismiss(page, target, m.x, m.y, true);
+            page.pointer_modality.set(true);
+            if touch.is_none() {
+                let mut c = page.mouse_capture.get();
+                c.buttons_down = true;
+                page.mouse_capture.set(c);
+            }
+            if m.button == MouseButton::Left {
+                let _ = page.dom.borrow_mut().set_activated(page.document(), Some(target));
+            }
             let pd = touch.is_some()
                 || fire(page, tkey, &mouse_event(page, EventInterface::PointerEvent, "pointerdown", m, true));
             let md = !pd || fire(page, tkey, &mouse_event(page, EventInterface::MouseEvent, "mousedown", m, true));
@@ -2074,11 +2154,13 @@ fn dispatch_mouse_inner(
                     let mut cur = Some(target);
                     let mut found = None;
                     while let Some(c) = cur {
-                        if dom.is_focusable(c).unwrap_or(false) {
+                        // A host that delegates focus takes it for a press
+                        // anywhere in it (its delegate, see focus()).
+                        if dom.is_focusable(c).unwrap_or(false) || dom.is_delegates_focus_host(c) {
                             found = Some(c);
                             break;
                         }
-                        cur = dom.parent_element(c).ok().flatten();
+                        cur = flat_parent_element(&dom, c);
                     }
                     found
                 };
@@ -2118,8 +2200,18 @@ fn dispatch_mouse_inner(
             note_buttons(page, m);
             page.drag_candidate.set(None);
             page.text_drag.set(None);
+            if m.button == MouseButton::Left {
+                let _ = page.dom.borrow_mut().set_activated(page.document(), None);
+            }
             if touch.is_none() {
                 fire(page, tkey, &mouse_event(page, EventInterface::PointerEvent, "pointerup", m, true));
+                // Implicit release right after pointerup: lostpointercapture
+                // before the compatibility mouseup and the click.
+                let mut c = page.mouse_capture.get();
+                c.pending = None;
+                c.buttons_down = m.buttons != 0;
+                page.mouse_capture.set(c);
+                crate::pointer_capture::process_pending_capture(page, m);
             }
             crate::popover::light_dismiss(page, target, m.x, m.y, false);
             // Only a canceled pointerdown holds back the mouseup (an app's
@@ -2128,8 +2220,10 @@ fn dispatch_mouse_inner(
                 fire(page, tkey, &mouse_event(page, EventInterface::MouseEvent, "mouseup", m, true));
             }
             let pressed = page.take_press_target();
-            // click targets the common ancestor of press and release targets.
+            // click targets the common ancestor of press and release targets;
+            // under capture, the capture target (as in Chrome).
             let click_target = match pressed {
+                Some(_) if captured.is_some() => captured,
                 Some(p) if p == target => Some(target),
                 Some(p) => common_ancestor(&page.dom.borrow(), p, target),
                 None => None,
