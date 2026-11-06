@@ -13,6 +13,7 @@ mod fetch_js;
 mod form_data_js;
 mod identity_js;
 mod image_input_js;
+mod layout_text_js;
 mod media_source_js;
 mod move_before_js;
 mod observable_js;

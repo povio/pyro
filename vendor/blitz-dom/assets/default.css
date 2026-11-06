@@ -187,7 +187,15 @@ legend {
     padding-inline-end: 2px;
 }
 
-option {
+/* lightningpanda: only a select's options are painted by the control; an
+   option or optgroup elsewhere is a block (Chromium). */
+option,
+optgroup {
+    display: block;
+}
+
+select option,
+select optgroup {
     display: none;
 }
 
