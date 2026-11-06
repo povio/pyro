@@ -96,4 +96,14 @@ Before, the re-run picked up the new max-content width. Now the first pass's val
 the grid gives without the skipped item, and the same as css-grid-1 §12.1 step 3, which re-runs only on a
 changed min-content contribution. `an_unread_item_does_not_change_the_other_columns` pins this. Covered by the `rerun_tests` module at the end of `compute/grid/mod.rs` (run them from a
 copy of this directory with an empty `[workspace]` table, as the crate is not a workspace member). The
-`UPSTREAM.patch` hunks for it are the last two sections.
+`UPSTREAM.patch` hunks for it are the two sections before the table placement ones.
+
+`compute/grid/mod.rs` and `tree/traits.rs`: a tree can place a grid's items itself.
+`LayoutGridContainer::track_counts` (default `None`) answers how many columns and rows the placed items reach,
+and `resolved_placement` each in-flow item's area in origin-zero lines. The grid then skips named-line
+resolution, the grid size estimate, auto-placement and its occupancy matrix, and sizes the explicit tracks
+plus whatever the items reach past them (no negative implicit tracks). Empty `auto-fit` tracks are found from
+the items' areas. blitz-dom's tables answer it from `TableContext::placement`, computed once as the table is
+built (`place_cells` in `layout/table.rs`, the same `row dense` placement). In debug builds
+`debug_assert_tree_placement` runs the grid's own placement as well and asserts the areas and track counts are
+equal. The `UPSTREAM.patch` hunks for it are the last two sections.

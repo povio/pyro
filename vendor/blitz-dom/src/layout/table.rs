@@ -489,6 +489,11 @@ pub struct TableContext {
     /// Laid out with the fixed table layout algorithm: cell contents don't size
     /// the columns, so cells have no intrinsic width.
     pub is_fixed: bool,
+    /// The grid area of each cell (parallel to `cells`) and the number of columns and rows they reach,
+    /// placed as the table is built (`place_cells`). The grid reads them through
+    /// `LayoutGridContainer::track_counts`/`resolved_placement` instead of placing the cells on every layout.
+    /// `None` when a cell's rows or span are outside what `place_cells` handles; the grid then places them.
+    pub placement: Option<CellPlacement>,
     /// Backing storage for `calc()` track sizes synthesised by the table layout code.
     /// Taffy stores calc values as raw pointers, so these must outlive the `style`.
     #[allow(dead_code)]
@@ -671,6 +676,75 @@ fn resolve_collapsed_edges(
         offer(table, 0, 0, nrows, ncols, 0);
     }
     edges
+}
+
+/// The grid areas of a table's cells, in the order of `TableContext::cells`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CellPlacement {
+    /// The number of columns (`width`) and rows (`height`) the cells reach
+    pub extent: taffy::Size<u16>,
+    /// Each cell's columns (`width`) and rows (`height`), as origin-zero grid lines
+    pub areas: Vec<taffy::Size<taffy::Line<u16>>>,
+}
+
+/// The most grid lines `place_cells` places a cell up to: Taffy's limited grid, past which it clamps placements.
+const PLACEMENT_LINE_LIMIT: u16 = 10_000;
+
+/// Places the cells as the grid's `row dense` auto-placement does: each cell, in order, has the rows its
+/// `grid-row` gives and the first columns, scanning from the first, that are free in all of those rows.
+/// Taffy runs that same algorithm over an occupancy matrix on every layout of the table; this runs it once, as
+/// the table is built, over each row's occupied column ranges. `None` (the grid then places the cells) for a
+/// cell whose `grid-row` is not a positive line and a span, whose `grid-column` is not `auto` and a span, or
+/// whose area would reach past Taffy's limited grid.
+fn place_cells(cells: &[TableCell]) -> Option<CellPlacement> {
+    use taffy::GridPlacement::{Auto, Line, Span};
+    // For each row, the column ranges its cells occupy, in placement order
+    let mut occupied: Vec<Vec<Range<u16>>> = Vec::new();
+    let mut extent = taffy::Size { width: 0u16, height: 0u16 };
+    let mut areas = Vec::with_capacity(cells.len());
+    for cell in cells {
+        let (Line(start), Span(rowspan)) = (&cell.style.grid_row.start, &cell.style.grid_row.end) else {
+            return None;
+        };
+        let (Auto, Span(colspan)) = (&cell.style.grid_column.start, &cell.style.grid_column.end) else {
+            return None;
+        };
+        let (start, rowspan, colspan) = (start.as_i16(), *rowspan, *colspan);
+        if start < 1 || rowspan == 0 || colspan == 0 {
+            return None;
+        }
+        let r0 = (start - 1) as u16;
+        let r1 = r0.checked_add(rowspan).filter(|end| *end <= PLACEMENT_LINE_LIMIT)?;
+        if occupied.len() < r1 as usize {
+            occupied.resize_with(r1 as usize, Vec::new);
+        }
+        let rows = &mut occupied[r0 as usize..r1 as usize];
+        let mut c0 = 0u16;
+        let c1 = loop {
+            let c1 = c0.checked_add(colspan).filter(|end| *end <= PLACEMENT_LINE_LIMIT)?;
+            // Jump past the furthest occupied range the columns overlap (in any of the rows)
+            let collision = rows
+                .iter()
+                .flat_map(|row| row.iter())
+                .filter(|range| range.start < c1 && range.end > c0)
+                .map(|range| range.end)
+                .max();
+            match collision {
+                Some(end) => c0 = end,
+                None => break c1,
+            }
+        };
+        for row in rows.iter_mut() {
+            row.push(c0..c1);
+        }
+        extent.width = extent.width.max(c1);
+        extent.height = extent.height.max(r1);
+        areas.push(taffy::Size {
+            width: taffy::Line { start: c0, end: c1 },
+            height: taffy::Line { start: r0, end: r1 },
+        });
+    }
+    Some(CellPlacement { extent, areas })
 }
 
 #[derive(Debug, Clone)]
@@ -1142,6 +1216,7 @@ pub(crate) fn build_table_context(
         }
     }
 
+    let placement = place_cells(&cells);
     let layout_children = cells
         .iter()
         .map(|cell| cell.node_id)
@@ -1163,6 +1238,7 @@ pub(crate) fn build_table_context(
             border_style: first_cell_border,
             collapsed_edges,
             is_fixed,
+            placement,
             calc_values,
         },
         layout_children,
@@ -1660,11 +1736,206 @@ impl taffy::LayoutGridContainer for TableTreeWrapper<'_, '_> {
         true
     }
 
+    fn track_counts(&self, _node_id: taffy::NodeId) -> Option<taffy::Size<u16>> {
+        #[cfg(test)]
+        if tests::GRID_PLACES_CELLS.with(|grid_places| grid_places.get()) {
+            return None;
+        }
+        self.ctx.placement.as_ref().map(|placement| placement.extent)
+    }
+
+    fn resolved_placement(
+        &self,
+        _node_id: taffy::NodeId,
+        child_node_id: taffy::NodeId,
+    ) -> Option<taffy::Size<taffy::Line<u16>>> {
+        let placement = self.ctx.placement.as_ref()?;
+        placement.areas.get(usize::from(child_node_id)).copied()
+    }
+
     fn set_detailed_grid_info(
         &mut self,
         _node_id: taffy::NodeId,
         detailed_grid_info: DetailedGridInfo<Atom>,
     ) {
         *self.ctx.computed_grid_info.borrow_mut() = Some(detailed_grid_info);
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::TableContext;
+    use crate::node::SpecialElementData;
+    use crate::{Attribute, BaseDocument, DocumentConfig, qual_name};
+    use blitz_traits::shell::{ColorScheme, Viewport};
+    use std::cell::Cell;
+    use std::sync::Arc;
+
+    thread_local! {
+        /// Set by the tests to have the grid place a table's cells itself, as without
+        /// `LayoutGridContainer::track_counts`, to compare with the table's own placement.
+        pub(crate) static GRID_PLACES_CELLS: Cell<bool> = const { Cell::new(false) };
+    }
+
+    /// A table: its style, its `<col span>`s, and its row groups, each a display, a style and rows of
+    /// cells, a cell being `(colspan, rowspan, extra style)`.
+    type Spec = (&'static str, &'static [u16], &'static [(&'static str, &'static [&'static [(u16, u16, &'static str)]])]);
+
+    const TABLES: &[Spec] = &[
+        // A rowspan hole that a colspan cell does not fit beside (the cursor and dense placement differ)
+        ("", &[], &[("table-row-group", &[&[(1, 1, ""), (1, 2, ""), (1, 1, "")], &[(2, 1, ""), (1, 1, "")]])]),
+        // Rowspans of several rows, leaving holes that later cells fill
+        ("", &[], &[("table-row-group", &[
+            &[(1, 3, ""), (1, 1, ""), (1, 2, ""), (1, 1, "")],
+            &[(1, 1, ""), (1, 1, "")],
+            &[(2, 1, ""), (1, 1, ""), (1, 1, "")],
+            &[(1, 1, ""), (3, 1, "")],
+        ])]),
+        // A rowspan past its row group stops at the group's end; thead and tfoot are reordered
+        ("border-collapse:collapse", &[], &[
+            ("table-footer-group", &[&[(1, 1, ""), (2, 1, "")]]),
+            ("table-row-group", &[&[(1, 5, ""), (1, 1, ""), (1, 1, "")], &[(1, 1, ""), (1, 2, "")]]),
+            ("table-header-group", &[&[(3, 1, "")], &[(1, 2, ""), (1, 1, "")]]),
+        ]),
+        // `<col span>` gives more columns than the cells use, and a wide colspan more than the cols
+        ("table-layout:fixed;width:300px", &[3, 1], &[("table-row-group", &[&[(1, 1, ""), (2, 1, "")], &[(6, 1, "")], &[(1, 2, ""), (1, 1, "")]])]),
+        // Out-of-flow and display:none cells take no grid area
+        ("position:relative", &[], &[("table-row-group", &[
+            &[(1, 1, ""), (1, 1, "position:absolute"), (1, 2, "")],
+            &[(1, 1, "display:none"), (1, 1, ""), (2, 1, "")],
+        ])]),
+        // A vertical table
+        ("writing-mode:vertical-rl", &[], &[("table-row-group", &[&[(1, 2, ""), (2, 1, "")], &[(1, 1, ""), (1, 1, "")]])]),
+        // colspan=0 is not a span the table places: the grid places the cells
+        ("", &[], &[("table-row-group", &[&[(0, 1, ""), (1, 1, "")], &[(1, 1, ""), (1, 1, "")]])]),
+    ];
+
+    fn build(grid_places_cells: bool) -> BaseDocument {
+        GRID_PLACES_CELLS.with(|grid_places| grid_places.set(grid_places_cells));
+        let mut doc = BaseDocument::new(DocumentConfig {
+            viewport: Some(Viewport::new(800, 600, 1.0, ColorScheme::Light)),
+            ..Default::default()
+        });
+        let root_id = doc.root_node().id;
+        let attr = |name: &str, value: &str| Attribute {
+            name: match name {
+                "style" => qual_name!("style"),
+                "span" => qual_name!("span"),
+                "colspan" => qual_name!("colspan"),
+                _ => qual_name!("rowspan"),
+            },
+            value: value.to_string(),
+        };
+        let mut mutator = doc.mutate();
+        let html = mutator.create_element(qual_name!("html"), vec![]);
+        let body = mutator.create_element(qual_name!("body"), vec![]);
+        for (table_style, cols, groups) in TABLES {
+            let table = mutator.create_element(qual_name!("table"), vec![attr("style", &format!("display:table;{table_style}"))]);
+            if !cols.is_empty() {
+                let colgroup = mutator.create_element(qual_name!("colgroup"), vec![attr("style", "display:table-column-group")]);
+                for span in cols.iter() {
+                    let col = mutator.create_element(
+                        qual_name!("col"),
+                        vec![attr("style", "display:table-column;width:20px"), attr("span", &span.to_string())],
+                    );
+                    mutator.append_children(colgroup, &[col]);
+                }
+                mutator.append_children(table, &[colgroup]);
+            }
+            for (group_display, rows) in groups.iter() {
+                let group = mutator.create_element(qual_name!("tbody"), vec![attr("style", &format!("display:{group_display}"))]);
+                for (r, cells) in rows.iter().enumerate() {
+                    let tr = mutator.create_element(qual_name!("tr"), vec![attr("style", "display:table-row")]);
+                    for (c, (colspan, rowspan, cell_style)) in cells.iter().enumerate() {
+                        let td = mutator.create_element(
+                            qual_name!("td"),
+                            vec![
+                                attr("style", &format!("display:table-cell;border:1px solid;{cell_style}")),
+                                attr("colspan", &colspan.to_string()),
+                                attr("rowspan", &rowspan.to_string()),
+                            ],
+                        );
+                        // Different content widths, so that a misplaced cell changes the columns
+                        let text = mutator.create_text_node(&"x".repeat(1 + (r * 3 + c) % 5));
+                        mutator.append_children(td, &[text]);
+                        mutator.append_children(tr, &[td]);
+                    }
+                    mutator.append_children(group, &[tr]);
+                }
+                mutator.append_children(table, &[group]);
+            }
+            mutator.append_children(body, &[table]);
+        }
+        mutator.append_children(html, &[body]);
+        mutator.append_children(root_id, &[html]);
+        drop(mutator);
+        doc.resolve(0.0);
+        GRID_PLACES_CELLS.with(|grid_places| grid_places.set(false));
+        doc
+    }
+
+    fn tables(doc: &BaseDocument) -> Vec<Arc<TableContext>> {
+        doc.nodes
+            .iter()
+            .filter_map(|(_, node)| match &node.element_data()?.special_data {
+                SpecialElementData::TableRoot(ctx) => Some(Arc::clone(ctx)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The table's own cell placement (`place_cells`) is what the grid's placement gives: the grid areas
+    /// and track counts the grid records, and every box's layout, are the same when the grid places the
+    /// cells itself. Covers rowspan holes beside colspans, rowspans clamped to their group, thead/tfoot
+    /// reordering, `<col span>`, out-of-flow and `display:none` cells, a vertical table, and the fallback
+    /// to the grid for a span the table does not place. (Debug builds also assert it on every grid layout.)
+    #[test]
+    fn table_cell_placement_is_the_grids() {
+        let (own, grid) = (build(false), build(true));
+        let (own_tables, grid_tables) = (tables(&own), tables(&grid));
+        assert_eq!(own_tables.len(), TABLES.len());
+        assert_eq!(grid_tables.len(), TABLES.len());
+        let mut placed = 0;
+        for (own_ctx, grid_ctx) in own_tables.iter().zip(grid_tables.iter()) {
+            let (own_info, grid_info) = (own_ctx.computed_grid_info.borrow(), grid_ctx.computed_grid_info.borrow());
+            let (own_info, grid_info) = (own_info.as_ref().unwrap(), grid_info.as_ref().unwrap());
+            assert_eq!(own_info, grid_info);
+            if let Some(placement) = &own_ctx.placement {
+                placed += 1;
+                let lines = |line: taffy::Line<u16>| (line.start + 1, line.end + 1);
+                let areas: Vec<_> = placement.areas.iter().map(|area| (lines(area.height), lines(area.width))).collect();
+                let in_flow: Vec<_> = own_ctx
+                    .cells
+                    .iter()
+                    .zip(areas)
+                    .filter(|(cell, _)| {
+                        own.nodes[cell.node_id].primary_styles().is_some_and(|style| {
+                            !style.clone_position().is_absolutely_positioned()
+                                && style.clone_display() != style::values::specified::box_::Display::None
+                        })
+                    })
+                    .map(|(_, area)| area)
+                    .collect();
+                let recorded: Vec<_> = own_info
+                    .items
+                    .iter()
+                    .map(|item| ((item.row_start, item.row_end), (item.column_start, item.column_end)))
+                    .collect();
+                assert_eq!(in_flow, recorded);
+                for (tracks, extent) in [(&own_info.columns, placement.extent.width), (&own_info.rows, placement.extent.height)] {
+                    assert_eq!(tracks.negative_implicit_tracks, 0);
+                    assert_eq!(tracks.explicit_tracks + tracks.positive_implicit_tracks, tracks.explicit_tracks.max(extent));
+                }
+            }
+        }
+        // The colspan=0 table is left to the grid
+        assert_eq!(placed, TABLES.len() - 1);
+        assert_eq!(own.nodes.len(), grid.nodes.len());
+        for ((id, own_node), (_, grid_node)) in own.nodes.iter().zip(grid.nodes.iter()) {
+            if !(own_node.is_element() || own_node.is_anonymous()) {
+                continue;
+            }
+            assert_eq!(own_node.final_layout(), grid_node.final_layout(), "node {id}: {}", own_node.node_debug_str());
+        }
     }
 }

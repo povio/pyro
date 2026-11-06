@@ -361,6 +361,24 @@ pub trait LayoutGridContainer: LayoutPartialTree {
         false
     }
 
+    /// Whether the tree places `node_id`'s in-flow children itself (lightningpanda: a table places its cells
+    /// in rows and columns as it builds them). `Some(extent)`: the number of tracks the placed items reach from
+    /// the grid's first explicit line, in each axis (`width`: columns, `height`: rows). The grid then reads each
+    /// item's area from [`Self::resolved_placement`] instead of resolving named lines, estimating the grid's size
+    /// and running the auto-placement algorithm over an occupancy matrix. The areas must be what that algorithm
+    /// gives for the children's `grid-row`/`grid-column` styles and the container's `grid-auto-flow`, and no
+    /// area may start before the first explicit line. `None` (the default): the grid places the items.
+    fn track_counts(&self, _node_id: NodeId) -> Option<Size<u16>> {
+        None
+    }
+
+    /// The grid area of the in-flow child `child_node_id` of `node_id`, as origin-zero lines (0 is the first
+    /// explicit line; `width`: column lines, `height`: row lines). Read only when [`Self::track_counts`] answers
+    /// `Some`, and then it must answer for every in-flow child.
+    fn resolved_placement(&self, _node_id: NodeId, _child_node_id: NodeId) -> Option<Size<Line<u16>>> {
+        None
+    }
+
     /// Set the node's detailed grid information
     ///
     /// Implementing this method is optional. Doing so allows you to access details about the the grid such as

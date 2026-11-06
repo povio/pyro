@@ -150,4 +150,13 @@ getters read in place of the style's (see `vendor/stylo_taffy/README.lightningpa
 fixed-height or collapsed-border cell. `a_table_cell_override_reads_as_the_copied_style_did` checks every getter
 against that copy.
 
+`src/layout/table.rs`: the table places its cells once, as it is built (`place_cells`, stored as
+`TableContext::placement`), and hands the areas to the grid through taffy's `LayoutGridContainer::track_counts`
+and `resolved_placement` (see `vendor/taffy/README.lightningpanda.md`). It runs the grid's `row dense`
+placement over each row's occupied column ranges, which is not always the column `ColumnCursor` gave the cell
+(`TableCell::column`): a colspan cell that does not fit beside a rowspan hole moves past it and a later cell
+backfills the hole. Upstream ran taffy's placement on every layout of the table. A cell whose `grid-row` is
+not a positive line and a span (or whose `colspan` is 0) leaves the placement to the grid.
+`table_cell_placement_is_the_grids` compares the grid info and every box's layout with the grid placing the cells.
+
 Time inputs use the existing text-editor construction and intrinsic measurement paths so captured values are painted.
