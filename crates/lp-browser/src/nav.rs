@@ -143,6 +143,12 @@ impl PageNav {
         true
     }
 
+    /// The active document is the page's initial about:blank one (no
+    /// navigation has committed since it).
+    pub(crate) fn is_initial_blank(&self) -> bool {
+        self.state.borrow().initial
+    }
+
     /// Records a committed cross-document navigation.
     pub(crate) fn commit_document(&self, url: &str, history: HistoryHandling, document: Option<(DomRef, NodeId)>) {
         self.pending_frame_url.borrow_mut().take();

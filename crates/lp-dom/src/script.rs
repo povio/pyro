@@ -174,6 +174,33 @@ impl Dom {
         self.scan_subtree(node, ResourceReason::Connected);
     }
 
+    /// `resources_after_insert` for a node the HTML parser inserted: nearly
+    /// always one it just made, with no children or shadow root yet, whose
+    /// subtree is itself. That case is checked without the subtree walks and
+    /// their two stacks per parsed node.
+    pub(crate) fn resources_after_parser_insert(&mut self, node: u32) {
+        let n = self.n(node);
+        if n.first_child != NIL || n.element().is_some_and(|e| e.shadow_root != NIL) {
+            return self.resources_after_insert(node);
+        }
+        self.iframe_after_parser_insert(node);
+        if !self.resources.enabled || !self.connected_for_resources(node) {
+            return;
+        }
+        let parent = self.n(node).parent;
+        if parent != NIL && self.resource_kind(parent) == Some(ResourceKind::StyleText) {
+            self.push_resource(parent, ResourceKind::StyleText, ResourceReason::ChildrenChanged);
+        }
+        // `scan_subtree` of the node alone.
+        if let Some(k) = self.resource_kind(node) {
+            let parser_script = k == ResourceKind::Script
+                && self.n(node).element().is_some_and(|e| e.flags & element_flags::PARSER_INSERTED != 0);
+            if !parser_script {
+                self.push_resource(node, k, ResourceReason::Connected);
+            }
+        }
+    }
+
     /// HTML's script "children changed steps", for an insertion into
     /// `parent` (removals do not prepare a script): called once per insert,
     /// before the post-connection steps of the inserted nodes.

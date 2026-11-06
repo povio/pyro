@@ -12,6 +12,9 @@
   const getOwnPropertySymbols = O.getOwnPropertySymbols;
   const getOwnPropertyDescriptor = O.getOwnPropertyDescriptor;
   const ArrayProto = Array.prototype;
+  // An indexed iterable's members (`iterable` below), as the realm made them.
+  const arrayIterableNames = ['entries', 'keys', 'values', 'forEach'];
+  const arrayIterables = [ArrayProto.entries, ArrayProto.keys, ArrayProto.values, ArrayProto.forEach];
   // Intrinsics are invoked only through the captured Reflect.apply: a page
   // replacing Function.prototype.call/apply/bind cannot intercept them.
   const apply = Reflect.apply;
@@ -28,10 +31,13 @@
   // Interface state for member installation after disposal (see realm.rs
   // populate_disposed); `populated` is kept in sync by the native side.
   // Held here, so it lives exactly as long as some interface proxy (whose
-  // closure references this object) is reachable.
+  // handler's traps reference this object) is reachable. `hooks[id]` runs
+  // once class `id` is populated (realm.rs `after_populate`); most classes
+  // have none, and a read of a missing one must not reach Array.prototype.
   const classProtos = [];
   const classTargets = [];
   const populated = [];
+  const hooks = { __proto__: null };
   const P = Promise;
   const promiseThen = P.prototype.then;
   const promiseResolveFn = P.resolve;
@@ -96,10 +102,13 @@
   ];
 
   // An interface attribute: accessor pair, named `get x`/`set x`.
+  // Interfaces are populated when a page first uses them, after its scripts
+  // may have put `get`, `set` or `value` on Object.prototype: the member
+  // installation's descriptors have no prototype.
   function defineAccessor(proto, name, get, set) {
-    try { defineProperty(get, 'name', { value: 'get ' + name }); } catch (_) {}
-    if (set) { try { defineProperty(set, 'name', { value: 'set ' + name }); } catch (_) {} }
-    defineProperty(proto, name, { get, set, enumerable: true, configurable: true });
+    try { defineProperty(get, 'name', { __proto__: null, value: 'get ' + name }); } catch (_) {}
+    if (set) { try { defineProperty(set, 'name', { __proto__: null, value: 'set ' + name }); } catch (_) {} }
+    defineProperty(proto, name, { __proto__: null, get, set, enumerable: true, configurable: true });
   }
 
   // DOMException (https://webidl.spec.whatwg.org/#idl-DOMException): a
@@ -242,101 +251,201 @@
     return { type, subtype, className, description };
   }
 
+  // Interface functions get their `name` defined, as SetFunctionName leaves
+  // it: naming through a computed key (`({ [name]: function () {} })[name]`)
+  // made a structure transition and two inline cache misses per distinct
+  // name, hundreds per realm. Own keys stay length, name, prototype. Used
+  // while the realm is made only, so an ordinary descriptor (JSC reads one
+  // inheriting from an untouched Object.prototype without lookups).
+  const nameValue = { value: '', writable: false, enumerable: false, configurable: true };
+  const named = (fn, name) => {
+    nameValue.value = name;
+    defineProperty(fn, 'name', nameValue);
+    return fn;
+  };
+
   // A constructor shim over `native(newTarget, args)` (class.rs ctor_invoke),
   // named `name`; its own keys come in the order length, name, prototype.
   function nativeConstructor(name, native, length) {
-    const C = ({ [name]: function (...args) {
+    const C = named(function (...args) {
       if (new.target === undefined) {
         throw new TypeError(`Failed to construct '${name}': Please use the 'new' operator, this DOM object constructor cannot be called as a function.`);
       }
       return native(new.target, args);
-    } })[name];
+    }, name);
     if (length !== 0) defineProperty(C, 'length', { value: length });
     return C;
   }
 
-  // A Proxy over `target` whose property traps run `ensure()` first (member
-  // installation on first use), then forward unchanged. Construction, calls
-  // and [[GetPrototypeOf]] need no members.
-  function lazyProxy(target, ensure) {
-    return new ProxyC(target, {
-      get(t, k, r) { ensure(); return reflectGet(t, k, r); },
-      set(t, k, v, r) { ensure(); return reflectSet(t, k, v, r); },
-      has(t, k) { ensure(); return reflectHas(t, k); },
-      ownKeys(t) { ensure(); return reflectOwnKeys(t); },
-      getOwnPropertyDescriptor(t, k) { ensure(); return reflectGOPD(t, k); },
-      defineProperty(t, k, d) { ensure(); return reflectDefine(t, k, d); },
-      deleteProperty(t, k) { ensure(); return reflectDelete(t, k); },
-      // Members must exist before the target stops accepting properties.
-      preventExtensions(t) { ensure(); return reflectPreventExtensions(t); },
-    });
+  // Interface objects are Proxies over their constructors whose property
+  // traps first install the class members natively (once), then forward
+  // unchanged. Construction, calls and [[GetPrototypeOf]] need no members.
+  // Every proxy of a realm shares these traps: a handler is an object over
+  // them that only carries its class id, so an interface costs one small
+  // object here instead of a closure per trap.
+  let populateClass = null;
+  const ensureClass = (id) => { if (!populated[id]) populateClass(id, H); };
+  // No prototype: a trap the handler does not define (`apply`, `construct`)
+  // must not be found on Object.prototype, where a page could have put one.
+  const lazyTraps = {
+    __proto__: null,
+    get(t, k, r) { ensureClass(this.id); return reflectGet(t, k, r); },
+    set(t, k, v, r) { ensureClass(this.id); return reflectSet(t, k, v, r); },
+    has(t, k) { ensureClass(this.id); return reflectHas(t, k); },
+    ownKeys(t) { ensureClass(this.id); return reflectOwnKeys(t); },
+    getOwnPropertyDescriptor(t, k) { ensureClass(this.id); return reflectGOPD(t, k); },
+    defineProperty(t, k, d) { ensureClass(this.id); return reflectDefine(t, k, d); },
+    deleteProperty(t, k) { ensureClass(this.id); return reflectDelete(t, k); },
+    // Members must exist before the target stops accepting properties.
+    preventExtensions(t) { ensureClass(this.id); return reflectPreventExtensions(t); },
+  };
+  function lazyProxy(target, id) {
+    const handler = objectCreate(lazyTraps);
+    handler.id = id;
+    return new ProxyC(target, handler);
   }
+  // Descriptors reused for every interface (only `value` changes): the
+  // installation defines a few properties per interface, hundreds per realm.
+  // `exposedValue` is used while the realm is made, so it is an ordinary
+  // object (JSC's fast descriptor read).
+  const exposedValue = { value: undefined, writable: true, enumerable: false, configurable: true };
+  // Population runs after page script. A data descriptor's four fields are
+  // its own; `get` and `set` an ordinary one looks up on Object.prototype,
+  // where a page may have put them. While it has neither, the ordinary
+  // descriptor [0] reads the same as the one without a prototype [1], and
+  // JSC reads it without lookups (a define costs about 40% less).
+  // `descriptorIndex()` says which applies now.
+  const objectProto = O.prototype;
+  const objectHasOwn = O.hasOwn;
+  const descriptorIndex = () => (objectHasOwn(objectProto, 'get') || objectHasOwn(objectProto, 'set') ? 1 : 0);
+  const dataDescriptors = (writable, enumerable, configurable) => [
+    { value: undefined, writable, enumerable, configurable },
+    { __proto__: null, value: undefined, writable, enumerable, configurable },
+  ];
+  const hiddenValues = dataDescriptors(true, false, true);
+  const fixedValues = dataDescriptors(false, false, false);
+  const tagValues = dataDescriptors(false, false, true);
+  const memberValues = dataDescriptors(true, true, true);
+  const constantValues = dataDescriptors(false, true, false);
+  const defineData = (o, k, d, value) => { d.value = value; defineProperty(o, k, d); d.value = undefined; };
+
+  // The realm's interface table (`installInterfaces`), for `materialize`.
+  let interfaceSpec = null, interfaceObjectProto = null, interfaceLists = null;
+  // [LegacyFactoryFunction]s by interface id: their `prototype` is the
+  // interface prototype object, defined when it is made. No prototype: a
+  // read of an interface without any, after page script, meets no getter
+  // a page put on Array.prototype or Object.prototype.
+  const factoryTargets = { __proto__: null };
 
   const H = {
     classProtos,
     classTargets,
     populated,
+    hooks,
     DOMException,
-    // `callback`: a legacy callback interface object (NodeFilter), which is
-    // not a constructor and has no `prototype` property, so `instanceof` on
-    // it throws (https://webidl.spec.whatwg.org/#legacy-callback-interface-object).
-    makeInterface(name, native, proto, parentCtor, length, global, callback) {
-      const C = native
-        ? nativeConstructor(name, native, length)
-        : callback
-          ? ({ [name]() { throw new TypeError('Illegal constructor'); } })[name]
-          : ({ [name]: function () { throw new TypeError('Illegal constructor'); } })[name];
-      if (!native && length !== 0) defineProperty(C, 'length', { value: length });
-      if (!callback) {
-        defineProperty(C, 'prototype', { value: proto, writable: false, enumerable: false, configurable: false });
-      }
-      defineProperty(proto, 'constructor', { value: C, writable: true, enumerable: false, configurable: true });
-      defineProperty(proto, toStringTag, { value: name, writable: false, enumerable: false, configurable: true });
-      if (parentCtor) setPrototypeOf(C, parentCtor);
-      if (global) defineProperty(global, name, { value: C, writable: true, enumerable: false, configurable: true });
-      return C;
-    },
     // Every interface of a new realm in one call (realm.rs install_classes):
     // `spec[i]` is [name, parent index or -1, constructor length, exposed,
-    // callback interface]. Returns [protos, targets, ctors], indexed like `spec`.
+    // callback interface]. Returns [protos, targets, ctors], indexed like
+    // `spec`; `protos[i]` stays empty until `materialize(i)`. A callback
+    // interface (NodeFilter) is not a constructor and has no `prototype`
+    // property, so `instanceof` on it throws
+    // (https://webidl.spec.whatwg.org/#legacy-callback-interface-object).
     installInterfaces(spec, natives, objectProto, global, populate) {
+      populateClass = populate;
+      interfaceSpec = spec;
+      interfaceObjectProto = objectProto;
       const protos = [], targets = [], ctors = [];
+      interfaceLists = [protos, targets, ctors];
       for (let i = 0; i < spec.length; i++) {
         const [name, parent, length, exposed, callback] = spec[i];
-        const proto = objectCreate(parent < 0 ? objectProto : protos[parent]);
-        const C = H.makeInterface(name, natives[i], proto, parent < 0 ? null : ctors[parent], length, null, callback);
-        protos[i] = proto;
+        const native = natives[i];
+        const C = native
+          ? nativeConstructor(name, native, length)
+          : callback
+            // Not a constructor, no `prototype` (as a method would be).
+            ? named(() => { throw new TypeError('Illegal constructor'); }, name)
+            : named(function () { throw new TypeError('Illegal constructor'); }, name);
+        if (!native && length !== 0) defineProperty(C, 'length', { value: length });
+        if (parent >= 0) setPrototypeOf(C, ctors[parent]);
+        classTargets[i] = C;
+        const P = lazyProxy(C, i);
+        if (exposed) {
+          exposedValue.value = P;
+          defineProperty(global, name, exposedValue);
+        }
         targets[i] = C;
-        ctors[i] = H.lazyInterface(C, proto, exposed ? global : null, name, i, populate);
+        ctors[i] = P;
+        // Own slots now, while no page script ran: what is stored later (by
+        // `materialize`, or natively) must not reach a setter, nor a read a
+        // getter, that a page put on Array.prototype.
+        protos[i] = undefined;
+        classProtos[i] = undefined;
+        populated[i] = false;
       }
-      return [protos, targets, ctors];
+      exposedValue.value = undefined;
+      return interfaceLists;
     },
-    // Interface object as seen by script: a Proxy over the constructor whose
-    // property traps first install the class members natively (once), then
-    // forward unchanged.
-    lazyInterface(C, proto, global, name, id, populate) {
-      let done = false;
-      classProtos[id] = proto;
-      classTargets[id] = C;
-      const P = lazyProxy(C, () => { if (!done) { populate(id, H); done = true; } });
-      defineProperty(proto, 'constructor', { value: P, writable: true, enumerable: false, configurable: true });
-      if (global) defineProperty(global, name, { value: P, writable: true, enumerable: false, configurable: true });
-      return P;
+    // The interface prototype object of `id`, made when the interface is
+    // first populated (realm.rs populate_class, root first, so the parent's
+    // exists): before that nothing can reach it, as every way there (an
+    // instance, the interface object's traps) populates first. A realm
+    // makes the few its page uses instead of all of them.
+    // Every step but the creation runs again when called again: a first use
+    // that failed part way (a stack overflow, a termination) is completed by
+    // the next one instead of leaving a prototype without its constructor or
+    // tag. Redefining a property with its own value is allowed, even for the
+    // non-configurable `prototype`. The native side calls this until it
+    // returned once (realm.rs `materialize`).
+    materialize(id) {
+      // Runs while page script may have changed Array.prototype: indexed
+      // reads of own elements only (no destructuring, no iteration).
+      const entry = interfaceSpec[id];
+      const name = entry[0], parent = entry[1], callback = entry[4];
+      let proto = classProtos[id];
+      if (proto === undefined) {
+        proto = objectCreate(parent < 0 ? interfaceObjectProto : classProtos[parent]);
+        classProtos[id] = proto;
+      }
+      interfaceLists[0][id] = proto;
+      const k = descriptorIndex();
+      if (!callback) {
+        defineData(interfaceLists[1][id], 'prototype', fixedValues[k], proto);
+        const factories = factoryTargets[id];
+        if (factories) for (let i = 0; i < factories.length; i++) defineData(factories[i], 'prototype', fixedValues[k], proto);
+      }
+      defineData(proto, toStringTag, tagValues[k], name);
+      defineData(proto, 'constructor', hiddenValues[k], interfaceLists[2][id]);
+      return proto;
     },
     // A [LegacyFactoryFunction] of interface `id` (`new Image(w, h)`): a
     // constructor whose `prototype` is the interface prototype object, own
     // keys in the order length, name, prototype, with the same lazy member
     // installation as the interface object
     // (https://webidl.spec.whatwg.org/#legacy-factory-functions).
-    legacyFactory(global, name, native, proto, length, id, populate) {
+    legacyFactory(global, name, native, length, id, populate) {
       const F = nativeConstructor(name, native, length);
-      defineProperty(F, 'prototype', { value: proto, writable: false, enumerable: false, configurable: false });
-      let done = false;
-      const P = lazyProxy(F, () => { if (!done) { populate(id, H); done = true; } });
+      const proto = classProtos[id];
+      if (proto !== undefined) defineProperty(F, 'prototype', { value: proto, writable: false, enumerable: false, configurable: false });
+      else (factoryTargets[id] ??= []).push(F);
+      populateClass = populate;
+      const P = lazyProxy(F, id);
       defineProperty(global, name, { value: P, writable: true, enumerable: false, configurable: true });
       return P;
     },
     accessor: defineAccessor,
+    // Methods or statics of a population step, `list` as name, function,
+    // name, function, ... (realm.rs `MemberBatch`). Defined, not assigned:
+    // a page may have put an accessor of the same name on Object.prototype
+    // (or a parent interface object) before the interface's first use,
+    // which an assignment would call instead of creating the member.
+    members(target, ...list) {
+      const d = memberValues[descriptorIndex()];
+      for (let i = 0; i < list.length; i += 2) {
+        d.value = list[i + 1];
+        defineProperty(target, list[i], d);
+      }
+      d.value = undefined;
+    },
     // WebIDL sequence<T> conversion (https://webidl.spec.whatwg.org/#es-sequence):
     // the iterator protocol of `v` itself (arrays included: an overridden
     // @@iterator or %ArrayIteratorPrototype%.next is honoured, holes read
@@ -362,25 +471,36 @@
         reflectDefine(out, n, { value: r.value, writable: true, enumerable: true, configurable: true });
       }
     },
-    constant(target, name, value) {
-      defineProperty(target, name, { value, writable: false, enumerable: true, configurable: false });
+    // Population steps (see `descriptorIndex` and defineAccessor):
+    // descriptors whose fields are read as their own, no iteration, the
+    // Array.prototype methods of the realm's creation.
+    // An interface's constants, `list` as name, value, ...: each on the
+    // interface object, then on its prototype (realm.rs `MemberBatch`).
+    constants(target, proto, ...list) {
+      const d = constantValues[descriptorIndex()];
+      for (let i = 0; i < list.length; i += 2) {
+        d.value = list[i + 1];
+        defineProperty(target, list[i], d);
+        defineProperty(proto, list[i], d);
+      }
+      d.value = undefined;
     },
     iterable(proto) {
-      defineProperty(proto, symbolIterator, { value: ArrayProto.values, writable: true, configurable: true });
-      for (const k of ['entries', 'keys', 'values', 'forEach']) {
-        defineProperty(proto, k, { value: ArrayProto[k], writable: true, enumerable: true, configurable: true });
+      defineProperty(proto, symbolIterator, { __proto__: null, value: arrayIterables[2], writable: true, configurable: true });
+      for (let i = 0; i < arrayIterableNames.length; i++) {
+        defineProperty(proto, arrayIterableNames[i], { __proto__: null, value: arrayIterables[i], writable: true, enumerable: true, configurable: true });
       }
     },
     // An indexed getter without an `iterable<V>` declaration: @@iterator only.
     iterator(proto) {
-      defineProperty(proto, symbolIterator, { value: ArrayProto.values, writable: true, configurable: true });
+      defineProperty(proto, symbolIterator, { __proto__: null, value: arrayIterables[2], writable: true, configurable: true });
     },
 
     setLength(fn, length) {
-      try { defineProperty(fn, 'length', { value: length }); } catch (_) {}
+      try { defineProperty(fn, 'length', { __proto__: null, value: length }); } catch (_) {}
     },
     setName(fn, name) {
-      try { defineProperty(fn, 'name', { value: name }); } catch (_) {}
+      try { defineProperty(fn, 'name', { __proto__: null, value: name }); } catch (_) {}
     },
     then(value, onFulfilled, onRejected) {
       apply(promiseThen, value === undefined ? microtaskSeed : promiseResolve(value), [onFulfilled, onRejected]);
@@ -564,7 +684,10 @@
 
   function previewText(x) {
     switch (typeof x) {
-      case 'string': return x.length > 100 ? apply(stringSlice, x, [0, 50]) + '…' + apply(stringSlice, x, [-49]) : x;
+      // The ellipsis escaped: one non-ASCII character made this whole file
+      // a UTF-16 source, transcoded (and lexed and hashed at twice the
+      // size) in every realm.
+      case 'string': return x.length > 100 ? apply(stringSlice, x, [0, 50]) + '\u2026' + apply(stringSlice, x, [-49]) : x;
       case 'number': return objectIs(x, -0) ? '-0' : StringC(x);
       case 'bigint': return StringC(x) + 'n';
       case 'symbol': return apply(symbolToString, x, []);

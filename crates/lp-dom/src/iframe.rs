@@ -119,6 +119,20 @@ impl Dom {
             self.iframe_event(document, node, change);
         }
     }
+    /// `iframes_after_insert` for a node without children or shadow root
+    /// (`resources_after_parser_insert`): the node's own kind decides first.
+    pub(crate) fn iframe_after_parser_insert(&mut self, idx: u32) {
+        let change = if self.iframe_element(idx) {
+            IframeChange::Connected
+        } else if self.preparable_script(idx) {
+            IframeChange::Script
+        } else {
+            return;
+        };
+        if let Some(document) = self.iframe_document(idx) {
+            self.iframe_event(document, idx, change);
+        }
+    }
     /// Queues "prepare the script element" for the connected script `idx`
     /// (HTML's script "children changed steps" and `src` attribute steps).
     /// Returns whether it was queued.

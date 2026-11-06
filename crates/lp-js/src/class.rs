@@ -758,7 +758,6 @@ pub(crate) struct ClassDefErased {
     pub constructor: Option<MemberCall>,
     pub ctor_length: u32,
     pub legacy_factories: Vec<MethodSpec>,
-    pub callback_interface: bool,
     pub announced_names: bool,
     pub hooks: PropertyHooks,
     pub exposed: bool,
@@ -781,6 +780,10 @@ pub(crate) struct ClassRegistry {
     /// callable objects whose private data is a `MemberCall`. Not a `base`
     /// subclass: their private pointer is not a `Header`.
     pub member: sys::JSClassRef,
+    /// `classes` as the JSON table `installInterfaces` takes (helpers.js),
+    /// one `[name, parent, ctor length, exposed, callback]` entry per class,
+    /// appended as each registers: every realm creation reads it as is.
+    spec: String,
 }
 
 impl ClassRegistry {
@@ -811,7 +814,24 @@ impl ClassRegistry {
             base,
             closure,
             member,
+            spec: String::from("[]"),
         }
+    }
+
+    /// See [`ClassRegistry::spec`].
+    pub fn spec_json(&self) -> &str {
+        &self.spec
+    }
+
+    fn push_spec(&mut self, name: &str, parent: Option<ClassId>, ctor_length: u32, exposed: bool, callback: bool) {
+        use std::fmt::Write;
+        self.spec.pop();
+        if self.spec.len() > 1 {
+            self.spec.push(',');
+        }
+        let name = serde_json::to_string(name).expect("class name serializes");
+        let parent = parent.map_or(-1, i64::from);
+        let _ = write!(self.spec, "[{name},{parent},{ctor_length},{exposed},{callback}]]");
     }
 
     pub fn id_of<C: JsClass>(&self) -> Option<ClassId> {
@@ -828,6 +848,7 @@ impl ClassRegistry {
             sys::JSClassRelease(self.base);
         }
         self.classes.clear();
+        self.spec = String::from("[]");
         // The VM is gone, and the placeholder properties with it.
         let gone = std::mem::take(&mut self.placeholders).len();
         let _ = PLACEHOLDERS_PENDING.try_with(|p| p.set(p.get().saturating_sub(gone)));
@@ -913,6 +934,7 @@ pub(crate) fn register<C: JsClass>(engine: &EngineInner) -> ClassId {
         Some(p) => &*reg.classes[p as usize],
         None => ptr::null(),
     };
+    reg.push_spec(C::NAME, parent, def.ctor_length, def.exposed, def.callback_interface);
     reg.classes.push(Box::new(ClassInfo {
         upcast: def.upcast,
         global_receiver: def.global_receiver,
@@ -930,7 +952,6 @@ pub(crate) fn register<C: JsClass>(engine: &EngineInner) -> ClassId {
             constructor: def.constructor,
             ctor_length: def.ctor_length,
             legacy_factories: def.legacy_factories,
-            callback_interface: def.callback_interface,
             announced_names: def.announced_names,
             hooks: def.hooks,
             exposed: def.exposed,
