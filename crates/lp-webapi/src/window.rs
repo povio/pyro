@@ -150,6 +150,17 @@ where
     def.getter("ClipboardItem", |s, w| crate::navigator_extras::member(s, w.page(), "ClipboardItem"));
     crate::streams::define_globals(def);
     crate::observable::define_globals(def);
+    // The `CSS` namespace object, made on its first read (most realms never
+    // read it); assignment shadows it with a data property.
+    def.accessor(
+        "CSS",
+        |s, w| {
+            let value = css_namespace(s)?;
+            css_namespace_property(s, w.page(), value)?;
+            Ok(value)
+        },
+        |s, w, value| css_namespace_property(s, w.page(), value),
+    );
     def.getter("screen", |s, w| {
         let key = lp_js::IdentityKey(w.page().id() | (1 << 57), 1);
         same_object(s, w.page(), key, || s.wrap::<Screen>(w.page().clone(), Some(key)))
@@ -570,25 +581,42 @@ fn screen(p: &PageDom) -> (u32, u32) {
     (v.screen_width.unwrap_or(v.width), v.screen_height.unwrap_or(v.height))
 }
 
+/// Replaces the lazy `CSS` accessor with the namespace's own data property
+/// (writable, configurable, not enumerable, as WebIDL defines a namespace).
+fn css_namespace_property<'s>(s: &Scope<'s>, page: &crate::page::PageDom, value: Value<'s>) -> JsResult<()> {
+    let define = page.define_properties.borrow().get(&s.realm_id()).map(|p| p.get(s));
+    let define = define.and_then(|v| v.as_object()).ok_or_else(|| JsError::type_error("CSS is unavailable"))?;
+    let desc = s.object();
+    desc.set_atom("value", value)?;
+    desc.set_atom("writable", s.boolean(true))?;
+    desc.set_atom("enumerable", s.boolean(false))?;
+    desc.set_atom("configurable", s.boolean(true))?;
+    define.call(None, &[s.global().value(), s.string("CSS"), desc.value()])?;
+    Ok(())
+}
+
 /// `CSS` namespace object (supports/escape).
 pub fn css_namespace<'s>(s: &Scope<'s>) -> JsResult<Value<'s>> {
     let o = s.object();
     let supports = s.function("supports", |s, _this, a| {
-        if a.len() == 1 {
-            let text = dom_string(a.get(0))?;
-            let selector = text.trim().strip_prefix("selector(").and_then(|t| t.strip_suffix(')'));
-            if let Some(selector) = selector {
-                return Ok(s.boolean(lp_dom::cssom::normalize_selector(selector, &Vec::new()).is_some()));
+        if a.len() == 0 {
+            return Err(JsError::type_error(
+                "Failed to execute 'supports' on 'CSS': 1 argument required, but only 0 present.",
+            ));
+        }
+        if a.len() >= 2 {
+            let property = dom_string(a.get(0))?;
+            let value = dom_string(a.get(1))?;
+            return Ok(s.boolean(lp_dom::stylo::supports_declaration(&property, &value)));
+        }
+        let text = dom_string(a.get(0))?;
+        let selector = text.trim().strip_prefix("selector(").and_then(|t| t.strip_suffix(')'));
+        if let Some(selector) = selector {
+            if lp_dom::cssom::normalize_selector(selector, &Vec::new()).is_some() {
+                return Ok(s.boolean(true));
             }
         }
-        // Syntax-level check only: property names and values are accepted.
-        let ok = if a.len() >= 2 {
-            !dom_string(a.get(0))?.is_empty()
-        } else {
-            let cond = dom_string(a.get(0))?;
-            cond.contains(':') || cond.trim_start().starts_with("selector(")
-        };
-        Ok(s.boolean(ok))
+        Ok(s.boolean(lp_dom::stylo::supports_condition(&text)))
     })?;
     o.set_atom("supports", supports.value())?;
     let escape = s.function("escape", |s, _this, a| {

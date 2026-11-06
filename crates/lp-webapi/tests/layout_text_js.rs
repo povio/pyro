@@ -190,3 +190,39 @@ fn scroll_into_view_aligns_block_and_inline() {
     );
     e.page.dispose();
 }
+
+#[test]
+fn css_supports_parses_with_stylo() {
+    let e = env("<div></div>");
+    let all = |cases: &str| eval(&e.main, &format!("[{cases}].map(c=>CSS.supports(...c)).join()"));
+    assert_eq!(
+        all("['color','red'],['display','block'],['margin','10px 20px'],['--my-color','blue'],['width','min(100px, 50%)'],\
+             ['font','revert'],['COLOR','red'],['color','  red  '],['display','grid']"),
+        "true,true,true,true,true,true,true,true,true"
+    );
+    assert_eq!(
+        all("['not-a-real-property','red'],['color','rainbow'],['display','10px'],['  color  ','red'],\
+             ['margin-top','!invalid'],['color','red !important'],['color','red; width: 1px'],['-moz-appearance','none'],\
+             ['display','bogus'],['foo','bar']"),
+        "false,false,false,false,false,false,false,false,false,false"
+    );
+    assert_eq!(
+        all("['(color: red)'],['not (color: rainbow)'],['(color: red) and (display: block)'],\
+             ['(color: red) or (not-a-real-property: red)'],['NOT (color: rainbow)'],['color: red'],\
+             ['selector(a > b)'],['selector(:has(a))'],['(display: grid) and selector(div)']"),
+        "true,true,true,true,true,true,true,true,true"
+    );
+    assert_eq!(
+        all("['(color: rainbow)'],['(not-a-real-property: red)'],['not (display: grid)'],\
+             ['(color: red) and (not-a-real-property: red)'],['not'],['(color: red) and'],['not-a-real-property: red'],\
+             [';'],['selector(a >)'],['foo(bar)']"),
+        "false,false,false,false,false,false,false,false,false,false"
+    );
+    assert_eq!(eval(&e.main, "try{CSS.supports();'no'}catch(err){err.constructor.name}"), "TypeError");
+    // The namespace is made on first read and is then an ordinary data property.
+    assert_eq!(
+        eval(&e.main, "const d=Object.getOwnPropertyDescriptor(window,'CSS');[CSS===CSS,typeof d.value,d.enumerable,d.writable].join()"),
+        "true,object,false,true"
+    );
+    e.page.dispose();
+}

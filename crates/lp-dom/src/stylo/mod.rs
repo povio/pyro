@@ -123,3 +123,86 @@ pub fn longhand_names() -> &'static [&'static str] {
 pub fn is_property(name: &str) -> bool {
     property_id(name).is_some()
 }
+
+/// Turns on the Stylo features the page's cascade parses with (Blitz sets the
+/// same process-wide prefs when it makes its first document): `CSS.supports`
+/// can run before any document was laid out.
+fn ensure_parse_prefs() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        style_config::set_pref!("layout.grid.enabled", true);
+        style_config::set_pref!("layout.css.has-selector.enabled", true);
+        style_config::set_pref!("layout.unimplemented", true);
+        style_config::set_pref!("layout.columns.enabled", true);
+        style_config::set_pref!("layout.css.basic-shape-shape.enabled", true);
+        style_config::set_pref!("layout.css.tree-counting-functions.enabled", true);
+        style_config::set_pref!("layout.css.progress-function.enabled", true);
+        style_config::set_pref!("layout.variable_fonts.enabled", true);
+        style_config::set_pref!("layout.container-queries.enabled", true);
+        style_config::set_pref!("layout.css.nth-child-of.enabled", true);
+        style_config::set_pref!("layout.css.starting-style-at-rules.enabled", true);
+        style_config::set_pref!("layout.css.at-scope.enabled", true);
+        style_config::set_pref!("layout.css.style-queries.enabled", true);
+        style_config::set_pref!("layout.css.line-clamp.enabled", true);
+        style_config::set_pref!("layout.css.fit-content-function.enabled", true);
+        style_config::set_pref!("layout.css.supports.at-rule.enabled", true);
+    });
+}
+
+/// `CSS.supports(property, value)` (CSS Conditional 3): whether `property`
+/// names a property the engine supports (ASCII case-insensitively; a custom
+/// property as written) and `value` parses as that property's value in an
+/// author style rule. The few properties Stylo's servo build does not parse
+/// but lp-dom computes ([`crate::gecko_only`]) count as supported.
+pub fn supports_declaration(property: &str, value: &str) -> bool {
+    use style::properties::{parse_one_declaration_into, SourcePropertyDeclaration};
+    use style::stylesheets::{CssRuleType, Origin};
+    ensure_parse_prefs();
+    let Ok(id) = style::properties::PropertyId::parse_enabled_for_all_content(property) else {
+        let lower = property.to_ascii_lowercase();
+        return crate::gecko_only::handles(&lower) && !value.trim().is_empty();
+    };
+    let mut declarations = SourcePropertyDeclaration::default();
+    parse_one_declaration_into(
+        &mut declarations,
+        id,
+        value,
+        Origin::Author,
+        &url_data(),
+        None,
+        style_traits::ParsingMode::DEFAULT,
+        QuirksMode::NoQuirks,
+        CssRuleType::Style,
+    )
+    .is_ok()
+}
+
+/// `CSS.supports(conditionText)`: `text` parsed as a `<supports-condition>`,
+/// else as one declaration in parentheses, and evaluated as `@supports`
+/// would be (declarations, `selector()`, `not` / `and` / `or`; unknown
+/// syntax is false).
+pub fn supports_condition(text: &str) -> bool {
+    use style::stylesheets::supports_rule::SupportsCondition;
+    use style::stylesheets::{CssRuleType, Origin};
+    ensure_parse_prefs();
+    let url = url_data();
+    let context = style::parser::ParserContext::new(
+        Origin::Author,
+        &url,
+        Some(CssRuleType::Style),
+        style_traits::ParsingMode::DEFAULT,
+        QuirksMode::NoQuirks,
+        Default::default(),
+        None,
+        None,
+        Default::default(),
+    );
+    let parse = |text: &str| {
+        let mut parser = cssparser::Parser::new(text);
+        parser.parse_entirely(|p| SupportsCondition::parse(p)).ok()
+    };
+    match parse(text) {
+        Some(condition) => condition.eval(&context),
+        None => parse(&format!("({text})")).is_some_and(|condition| condition.eval(&context)),
+    }
+}
