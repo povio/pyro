@@ -16,8 +16,10 @@ use style::shared_lock::StylesheetGuards;
 use style::url::ComputedUrl;
 use style::values::generics::image::Image as StyloImage;
 use style::values::specified::align::AlignFlags;
+use style::values::computed::Display;
 use style::values::specified::box_::DisplayInside;
 use style::values::specified::box_::DisplayOutside;
+
 use thin_vec::ThinVec;
 
 // Blitz-specific damage bits, in increasing order of severity above Servo's
@@ -28,20 +30,51 @@ pub(crate) const ONLY_RELAYOUT: RestyleDamage =
 
 /// The node's `order` changed: its flex/grid container must re-collect its
 /// `layout_children` (which sorts them). Consumed by the container in
-/// `propagate_damage_flags`, which marks itself `CONSTRUCT_BOX` without
+/// `propagate_damage_flags`, which marks itself `CONSTRUCT_FC` without
 /// forwarding that further up. Deliberately not part of `ALL_DAMAGE`.
 pub(crate) const REORDER_CHILDREN: RestyleDamage =
     RestyleDamage::from_bits_retain(0b_0000_0000_0001_0000);
 
+/// The node's own box changed (its style, attributes, or it is new): it is
+/// reconstructed, and so is the box that contains it, whose layout children
+/// it is one of.
 pub(crate) const CONSTRUCT_BOX: RestyleDamage =
     RestyleDamage::from_bits_retain(0b_0000_0000_0010_0000);
+/// The node's children changed (inserted, removed, text edited, or a child's
+/// own box changed): it re-collects its layout children. Unlike
+/// `CONSTRUCT_BOX`, this stops at the node unless its children are laid out
+/// by an ancestor (see `forwards_construction`); the mutator marks a parent
+/// with it alone (`CHILDREN_CHANGED`).
 pub(crate) const CONSTRUCT_FC: RestyleDamage =
     RestyleDamage::from_bits_retain(0b_0000_0000_0100_0000);
+/// Something below the node is reconstructed (a traversal hint only).
 pub(crate) const CONSTRUCT_DESCENDENT: RestyleDamage =
     RestyleDamage::from_bits_retain(0b_0000_0000_1000_0000);
 
+/// What the mutator marks a parent with when its child list or a child's
+/// text changes: re-collect this node's layout children, nothing above.
+/// `propagate_damage_flags` adds the relayout it implies.
+pub(crate) const CHILDREN_CHANGED: RestyleDamage = CONSTRUCT_FC;
+
 pub(crate) const ALL_DAMAGE: RestyleDamage =
     RestyleDamage::from_bits_retain(0b_0000_0000_1110_1111);
+
+/// An out-of-flow box below the node needs relayout, but nothing the node's
+/// own layout reads changed: the box's static position (computed by its
+/// parent from the box's style) and its existence are the same, and an
+/// out-of-flow box takes no part in its ancestors' in-flow layout or
+/// intrinsic sizes. It is what such a box returns to its parent in place of
+/// `RELAYOUT` (keeping `RECALCULATE_OVERFLOW`), so the ancestors keep their
+/// layout caches and the box is relaid by the root positioning pass, which
+/// runs whether or not the root's own layout comes from its cache.
+///
+/// Only the initial containing block is such a boundary: every ancestor that
+/// could be the box's containing block (`is_containing_block_for_some`) turns
+/// it back into `RELAYOUT`, since its out-of-flow pass runs inside its own
+/// cached layout. Never stored on a node. Deliberately not part of
+/// `ALL_DAMAGE`.
+pub(crate) const POS_CHILD_RELAYOUT: RestyleDamage =
+    RestyleDamage::from_bits_retain(0b_0000_0001_0000_0000);
 
 impl BaseDocument {
     /// Union `RestyleDamage` up the tree and clear the layout caches of every
@@ -58,7 +91,9 @@ impl BaseDocument {
             .try_stylo_element_data_mut()
             .and_then(|s| s.get_mut())
         {
-            data.damage
+            // `RestyleDamage::reconstruct()` sets every bit: the
+            // `POS_CHILD_RELAYOUT` flag only ever comes from children.
+            data.damage - POS_CHILD_RELAYOUT
         } else {
             return RestyleDamage::empty();
         };
@@ -88,32 +123,67 @@ impl BaseDocument {
         }
 
         // A child's `order` changed: this container re-collects (and so re-sorts)
-        // its layout children. Only the direct parent consumes the flag, and the
-        // resulting `CONSTRUCT_BOX` is not forwarded further up: the container's
-        // own box is unchanged, so ancestors need only `RELAYOUT` (always set
-        // alongside `REORDER_CHILDREN`) plus `CONSTRUCT_DESCENDENT` so that a
-        // traversal gated on it still reaches this container.
+        // its layout children. Only the direct parent consumes the flag; like
+        // any other change to its children, it reaches ancestors only as
+        // `RELAYOUT` (always set alongside `REORDER_CHILDREN`) plus
+        // `CONSTRUCT_DESCENDENT`.
         let reorder = damage_from_children.contains(REORDER_CHILDREN)
             && matches!(
                 self.nodes[node_id].display_constructed_as().inside(),
                 DisplayInside::Flex | DisplayInside::Grid
             );
         damage_from_children.remove(REORDER_CHILDREN);
+
+        // An out-of-flow descendant is relaid by its containing block: if this
+        // node can be one, it relays (its out-of-flow pass runs inside its
+        // cached layout); otherwise the flag passes on to the root.
+        let mut pos_child = false;
+        if damage_from_children.contains(POS_CHILD_RELAYOUT) {
+            damage_from_children.remove(POS_CHILD_RELAYOUT);
+            if self.is_containing_block_for_some(node_id) {
+                damage_from_children.insert(RestyleDamage::RELAYOUT);
+            } else {
+                pos_child = true;
+            }
+        }
         damage |= damage_from_children;
 
         // Put children back
         self.nodes[node_id].children = children;
 
-        if damage.contains(CONSTRUCT_BOX) {
+        if reorder {
+            damage.insert(CONSTRUCT_FC);
+        }
+
+        // A table copies its own style, and the width, padding, border and
+        // height of its parts, into its `TableContext`: a style change that
+        // only relayouts any of them still rebuilds it. (Parts forward it
+        // below; here the table itself.)
+        let display = self.nodes[node_id].display_style();
+        if own_damage.contains(ONLY_RELAYOUT)
+            && display.is_some_and(|d| d.inside() == DisplayInside::Table)
+        {
+            damage.insert(CONSTRUCT_FC);
+        }
+
+        let reconstructs = damage.intersects(CONSTRUCT_BOX | CONSTRUCT_FC);
+        if reconstructs {
             damage.insert(RestyleDamage::RELAYOUT);
         }
 
-        // Compute damage to propagate to parent
-        let mut damage_for_parent = damage; // & RestyleDamage::RELAYOUT;
-
-        if reorder {
-            damage.insert(CONSTRUCT_BOX);
+        // Compute damage to propagate to parent. Reconstruction stops at the
+        // box that owns it: the parent re-collects its layout children only
+        // when this box itself changed, or when this node's children are
+        // laid out by the parent (or further up).
+        let mut damage_for_parent = damage - (CONSTRUCT_BOX | CONSTRUCT_FC);
+        if reconstructs {
             damage_for_parent.insert(CONSTRUCT_DESCENDENT);
+            if own_damage.contains(CONSTRUCT_BOX) || forwards_construction(&self.nodes[node_id]) {
+                damage_for_parent.insert(CONSTRUCT_FC);
+            }
+        }
+        if own_damage.contains(ONLY_RELAYOUT) && display.is_some_and(is_table_part) {
+            damage_for_parent.insert(CONSTRUCT_FC);
         }
 
         // An inline `<svg>` is rendered from a snapshot of its subtree (with
@@ -130,9 +200,24 @@ impl BaseDocument {
 
         // Reconstruction replaces the anonymous boxes with freshly styled ones.
         if !own_damage.is_empty() && !damage.intersects(CONSTRUCT_BOX | CONSTRUCT_FC) {
-            let anonymous_damage = self.refresh_anonymous_block_styles(node_id);
+            let anonymous_damage = self.refresh_anonymous_block_styles(node_id) - POS_CHILD_RELAYOUT;
             damage |= anonymous_damage;
             damage_for_parent |= anonymous_damage;
+        }
+
+        // An out-of-flow box relaid only for what is inside it (its own style
+        // and box are unchanged, so is its static position) is a relayout
+        // boundary: its ancestors keep their layout (see `POS_CHILD_RELAYOUT`).
+        if damage_for_parent.contains(ONLY_RELAYOUT)
+            && !damage_for_parent.contains(CONSTRUCT_FC)
+            && !own_damage.intersects(ONLY_RELAYOUT | CONSTRUCT_BOX)
+            && self.is_relayout_boundary(node_id)
+        {
+            damage_for_parent.remove(ONLY_RELAYOUT);
+            pos_child = true;
+        }
+        if pos_child {
+            damage_for_parent.insert(POS_CHILD_RELAYOUT);
         }
 
         let node = &mut self.nodes[node_id];
@@ -140,8 +225,8 @@ impl BaseDocument {
         // If the node or any of it's children have been mutated or their layout styles
         // have changed, then we should clear it's layout cache.
         let mut invalidate_anonymous_ancestors = false;
-        if damage.intersects(ONLY_RELAYOUT | CONSTRUCT_BOX) {
-            node.invalidate_layout_cache();
+        if damage.intersects(ONLY_RELAYOUT | CONSTRUCT_BOX | CONSTRUCT_FC) {
+            node.clear_layout_cache();
             invalidate_anonymous_ancestors = true;
             damage.remove(ONLY_RELAYOUT);
         }
@@ -168,7 +253,7 @@ impl BaseDocument {
                 if !ancestor.is_anonymous() {
                     break;
                 }
-                ancestor.invalidate_layout_cache();
+                ancestor.clear_layout_cache();
                 current = ancestor.layout_parent.get();
             }
         }
@@ -192,6 +277,40 @@ impl BaseDocument {
 
         // Propagate damage to parent
         damage_for_parent
+    }
+
+    /// Whether `node_id` is an out-of-flow box (with a box of its own, below
+    /// the root element) whose relayout need not relayout its ancestors.
+    fn is_relayout_boundary(&self, node_id: NodeId) -> bool {
+        let node = &self.nodes[node_id];
+        let Some(parent) = node.parent else { return false };
+        // The root element is laid out by the root pass itself.
+        if self.nodes[parent].parent.is_none() {
+            return false;
+        }
+        node.is_out_of_flow()
+            && node
+                .display_style()
+                .is_some_and(|d| d.inside() != DisplayInside::Contents && d != Display::None)
+    }
+
+    /// Whether the node, or an anonymous box it owns, can be the containing
+    /// block of an out-of-flow box below it. A superset of what any Taffy
+    /// layout claims, not narrowed by position kind: its style claims
+    /// (`style_claims_out_of_flow`), or it or an anonymous inline root it owns
+    /// claims for a span (`inline_root_claims_out_of_flow`; the spans
+    /// themselves are DOM ancestors of the boxes inside them and claim by
+    /// style).
+    fn is_containing_block_for_some(&self, node_id: NodeId) -> bool {
+        fn owns_claiming_inline_root(doc: &BaseDocument, node: &Node) -> bool {
+            inline_root_claims_out_of_flow(node)
+                || node.anonymous_blocks.iter().any(|&id| {
+                    // Owners can list anonymous boxes freed by construction.
+                    doc.nodes.get(id).is_some_and(|anon| owns_claiming_inline_root(doc, anon))
+                })
+        }
+        let node = &self.nodes[node_id];
+        style_claims_out_of_flow(node) || owns_claiming_inline_root(self, node)
     }
 
     /// Refresh owned anonymous boxes without revisiting their DOM children.
@@ -256,7 +375,7 @@ impl BaseDocument {
             // Invalidate cached layout and consume only the relayout bit.
             let node = &mut self.nodes[anonymous_id];
             if damage.intersects(ONLY_RELAYOUT | CONSTRUCT_BOX) {
-                node.invalidate_layout_cache();
+                node.clear_layout_cache();
                 damage.remove(ONLY_RELAYOUT);
             }
 
@@ -325,10 +444,93 @@ impl BaseDocument {
         let node = &mut self.nodes[node_id];
         node.anonymous_blocks = anonymous_blocks;
         node.children = children;
+        // The paint tree is built lazily (`ensure_paint_tree`), possibly after
+        // several resolves: remember that this resolve's damage may have
+        // changed the node's paint lists before the damage is dropped.
+        if node
+            .damage()
+            .is_some_and(|d| d.contains(RestyleDamage::REBUILD_STACKING_CONTEXT))
+        {
+            node.flags.insert(NodeFlags::PAINT_TREE_DIRTY);
+        }
         node.clear_damage_mut();
         node.unset_damaged_descendants();
         node.unset_dirty_descendants();
     }
+}
+
+/// Whether the node's layout children are collected by an ancestor's
+/// construction rather than (only) its own, so that construction damage on it
+/// must reconstruct its parent too:
+/// - `display: inline` boxes: a non-atomic one's content is part of the
+///   inline root's inline layout (`find_inline_layout_embedded_boxes`), and a
+///   block among any one's children (replaced elements included) changes how
+///   the container partitions its children (`is_or_contains_block`);
+/// - `display: contents`: its children are hoisted into the parent's box;
+/// - table rows, row groups, columns and column groups: they are never layout
+///   children; the table collects their cells into its `TableContext`;
+/// - list items: their markers are numbered by the list's construction
+///   (`collect_list_item_children`).
+///
+/// Forwarding repeats at each such ancestor, so damage reaches the first box
+/// that owns the content (the inline root, the table, the first non-contents
+/// ancestor).
+fn forwards_construction(node: &Node) -> bool {
+    let Some(display) = node.display_style() else {
+        return false;
+    };
+    if display.is_list_item() {
+        return true;
+    }
+    match display.inside() {
+        DisplayInside::Contents => true,
+        // Replaced inline elements (`<canvas>`, `<svg>`, ...) included: they
+        // are atomic in the inline layout, but `is_or_contains_block` looks
+        // through any `display: inline` element at its children, so a block
+        // among them changes how the parent partitions its children.
+        DisplayInside::Flow => display.outside() == DisplayOutside::Inline,
+        inside => is_table_part_inside(inside),
+    }
+}
+
+/// Whether the node's style makes it the containing block of out-of-flow
+/// boxes below it: positioned, or establishing one for `absolute` or `fixed`
+/// boxes (transforms, filters, containment, `will-change`, size containers).
+fn style_claims_out_of_flow(node: &Node) -> bool {
+    node.primary_styles().is_some_and(|style| {
+        let claims = stylo_taffy::convert::containing_block_claims(&style);
+        claims.absolute || claims.fixed
+    })
+}
+
+/// Whether the node is an inline root that claims the out-of-flow boxes of its
+/// subtree for a positioned (or filtered) span with an inline box below it
+/// (`TextLayout::span_cb_flags`, set by its last layout and added to its
+/// layout style). The claim covers every out-of-flow box of the inline root,
+/// also those outside the span, whose DOM ancestors may claim nothing.
+fn inline_root_claims_out_of_flow(node: &Node) -> bool {
+    node.element_data()
+        .and_then(|element| element.inline_layout_data.as_deref())
+        .is_some_and(|layout| !layout.span_cb_flags.is_empty())
+}
+
+/// Table-internal boxes whose style is copied into the table's `TableContext`.
+fn is_table_part(display: Display) -> bool {
+    is_table_part_inside(display.inside()) || display.inside() == DisplayInside::TableCell
+}
+
+/// Table-internal boxes which are not layout children: the table reads them
+/// (and their cells) directly.
+fn is_table_part_inside(inside: DisplayInside) -> bool {
+    matches!(
+        inside,
+        DisplayInside::TableRow
+            | DisplayInside::TableRowGroup
+            | DisplayInside::TableHeaderGroup
+            | DisplayInside::TableFooterGroup
+            | DisplayInside::TableColumn
+            | DisplayInside::TableColumnGroup
+    )
 }
 
 // fn is_fc_root(style: &ComputedValues) -> bool {

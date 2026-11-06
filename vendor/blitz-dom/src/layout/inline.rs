@@ -762,6 +762,18 @@ impl LayoutPassState<'_> {
                 state.set_line_max_advance(initial_slot.width * scale);
                 state.set_line_x(initial_slot.x * scale);
                 state.set_line_y((initial_slot.y * scale) as f64);
+                // Without floats every line after the first gets the same geometry, so breaking
+                // can continue after the lines kept from the last build, when the text changed
+                // after them (parley checks the rest: same width, indent and line geometry, LTR,
+                // no inline boxes). Justified text is broken from the start, conservatively;
+                // `hyphens` and `::first-line` are not supported, so there is nothing to check.
+                let is_justified = self.nodes[node_id].primary_styles().is_some_and(|s| {
+                    stylo_to_parley::text_align(s.clone_text_align()) == parley::Alignment::Justify
+                        || stylo_to_parley::text_align_last(s.clone_text_align_last())
+                            == Some(parley::Alignment::Justify)
+                });
+                // Lines after the first get x 0 and the full width (see `YieldData::LineBreak` below).
+                let kept = if !floats_involved && !is_justified { breaker.resume(0.0, width) } else { 0 };
 
                 // TODO: revert state and retry layout if a line doesn't fit
                 //
@@ -876,6 +888,11 @@ impl LayoutPassState<'_> {
                 }
                 breaker.finish();
                 inline_layout.last_break = (!floats_involved).then_some(break_key);
+                let resumed_at = match kept {
+                    0 => 0,
+                    kept => inline_layout.layout.get(kept - 1).map_or(0, |line| line.text_range().end),
+                };
+                crate::phase_profile::broke(kept, inline_layout.text.len().saturating_sub(resumed_at));
             }
         }
 

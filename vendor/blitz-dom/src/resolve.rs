@@ -29,7 +29,7 @@ use crate::{
         damage::{ALL_DAMAGE, CONSTRUCT_BOX, CONSTRUCT_DESCENDENT, CONSTRUCT_FC},
         LayoutPassState,
     },
-    node::TextBrush,
+    node::{TextBrush, TextLayout},
     BaseDocument,
 };
 
@@ -181,7 +181,7 @@ impl BaseDocument {
             self.nodes[root_node_id]
                 .set_restyle_hint(style::invalidation::element::restyle_hints::RestyleHint::restyle_subtree());
             for (_, node) in self.nodes.iter_mut() {
-                node.invalidate_layout_cache();
+                node.clear_layout_cache();
             }
             self.mark_all_damaged();
         }
@@ -192,10 +192,12 @@ impl BaseDocument {
         timer.record_time("transform");
         phase_profile::mark(5, &mut phase_t);
 
-        // Build paint children / stacking contexts for damaged subtrees. Runs
-        // after layout and transforms so that stacking-context roots created by
-        // this frame's transforms are picked up, and before damage is cleared.
-        self.build_paint_tree(root_node_id);
+        // Paint children / stacking contexts are rebuilt lazily, by the first
+        // paint or hit test after this resolve (`ensure_paint_tree`), for the
+        // nodes `clear_damage_and_dirty_flags` flags `PAINT_TREE_DIRTY` below.
+        // Forced layouts (`getBoundingClientRect` and the like) never read
+        // them, so a run of them builds the tree once, not once per resolve.
+        self.paint_tree_dirty = true;
         timer.record_time("paint_tree");
         phase_profile::mark(6, &mut phase_t);
 
@@ -536,6 +538,7 @@ impl BaseDocument {
                 }
 
                 let mut collected = LayoutChildren::default();
+                phase_profile::collected();
                 collect_layout_children(doc, node_id, &mut collected);
                 let layout_children = collected.children;
                 doc.nodes[node_id].anonymous_blocks = collected.anonymous_blocks;
@@ -648,8 +651,11 @@ impl BaseDocument {
                     #[cfg(not(feature = "parallel-construct"))]
                     let font_ctx_mut = &mut *self.font_ctx.lock().unwrap();
 
-                    layout.content_widths = None;
-                    layout.last_break = None;
+                    // Only the parley layout carries over (see `build_inline_layout_into`).
+                    *layout = TextLayout {
+                        layout: std::mem::take(&mut layout.layout),
+                        ..TextLayout::new()
+                    };
                     build_inline_layout_into(
                         &self.nodes,
                         layout_ctx_mut,
@@ -664,12 +670,6 @@ impl BaseDocument {
                     {
                         LAYOUT_CTX.set(Some(layout_ctx));
                     }
-
-                    // If layout doesn't contain any inline boxes, then it is safe to populate the content_widths
-                    // cache during this parallelized stage.
-                    // if layout.layout.inline_boxes().is_empty() {
-                    //     layout.content_widths();
-                    // }
 
                     ConstructionTaskResult {
                         node_id: task.node_id,
@@ -806,6 +806,34 @@ pub mod phase_profile {
         REBUILDS.with(|r| r.get())
     }
     std::thread_local! {
+        static CONSTRUCTED: Cell<(u64, u64)> = const { Cell::new((0, 0)) };
+    }
+    /// A container's layout children were collected again.
+    pub(crate) fn collected() {
+        CONSTRUCTED.with(|c| c.set((c.get().0 + 1, c.get().1)));
+    }
+    /// A table's `TableContext` was built again.
+    pub(crate) fn table_built() {
+        CONSTRUCTED.with(|c| c.set((c.get().0, c.get().1 + 1)));
+    }
+    /// Layout-children collections and table context builds on this thread so far.
+    pub fn constructions() -> (u64, u64) {
+        CONSTRUCTED.with(|c| c.get())
+    }
+    std::thread_local! {
+        static PERFORMED: Cell<(u64, u64)> = const { Cell::new((0, 0)) };
+    }
+    /// A box's layout algorithm ran to place its children (not a size
+    /// measurement, not a cache hit); `root` for the root element.
+    pub(crate) fn performed(root: bool) {
+        PERFORMED.with(|p| p.set((p.get().0 + 1, p.get().1 + root as u64)));
+    }
+    /// Layout algorithm runs that placed children on this thread so far, and
+    /// how many of them were the root element's.
+    pub fn performed_layouts() -> (u64, u64) {
+        PERFORMED.with(|p| p.get())
+    }
+    std::thread_local! {
         static RESTYLED: Cell<u64> = const { Cell::new(0) };
     }
     /// A node was visited by the style traversal.
@@ -857,6 +885,22 @@ pub mod phase_profile {
     /// reached, the nodes under it not).
     pub fn rounding() -> (u64, u64) {
         ROUNDING.with(|r| r.get())
+    }
+    std::thread_local! {
+        static BREAKS: Cell<(u64, u64, u64)> = const { Cell::new((0, 0, 0)) };
+    }
+    /// An inline layout was broken into lines, continuing after `kept` lines of its last break
+    /// and going over `bytes` of its text.
+    pub(crate) fn broke(kept: usize, bytes: usize) {
+        BREAKS.with(|b| {
+            let (n, k, t) = b.get();
+            b.set((n + 1, k + kept as u64, t + bytes as u64));
+        });
+    }
+    /// Inline layouts broken into lines on this thread so far, the lines kept from their last
+    /// break (resumed), and the text bytes the line breaker went over.
+    pub fn line_breaks() -> (u64, u64, u64) {
+        BREAKS.with(|b| b.get())
     }
     /// Milliseconds per phase on this thread so far.
     pub fn peek() -> [f64; 9] {

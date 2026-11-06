@@ -106,4 +106,11 @@ plus whatever the items reach past them (no negative implicit tracks). Empty `au
 the items' areas. blitz-dom's tables answer it from `TableContext::placement`, computed once as the table is
 built (`place_cells` in `layout/table.rs`, the same `row dense` placement). In debug builds
 `debug_assert_tree_placement` runs the grid's own placement as well and asserts the areas and track counts are
-equal. The `UPSTREAM.patch` hunks for it are the last two sections.
+equal. The `UPSTREAM.patch` hunks for it are the two sections before the last one.
+`compute/mod.rs`, the root positioning pass: a root whose own layout comes from its cache, and which claims no
+out-of-flow box itself, records this pass's hoisted boxes again instead of keeping the last run's. blitz-dom
+relays an out-of-flow box whose containing block is the initial containing block without relaying its
+ancestors (`POS_CHILD_RELAYOUT` in `layout/damage.rs`), so the root's layout is cached while the box, relaid
+here, can surface other candidates (a `position: fixed` box added inside it). A root that claims boxes is
+always relaid when one of them changes, and keeps its list. The hunk is the second `compute/mod.rs` section of `UPSTREAM.patch`, after the table placement ones.
+Covered by `crates/lp-render/tests/out_of_flow_boundary.rs`.
