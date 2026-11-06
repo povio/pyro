@@ -51,6 +51,9 @@ pub struct ListenerStore {
     windows: FxHashMap<u32, u64>,
     /// A listener for a CSS animation or transition event was ever added.
     animation_listeners: bool,
+    /// Non-node target -> its event path parent (an IndexedDB request's
+    /// transaction, a transaction's connection). Empty unless such targets exist.
+    other_parents: FxHashMap<u64, u64>,
 }
 
 impl ListenerStore {
@@ -67,6 +70,11 @@ impl ListenerStore {
         if !self.map.is_empty() {
             if let Some(list) = self.map.remove(&key) {
                 self.released.extend(list.into_iter().map(|l| (key, l.callback)));
+            }
+        }
+        if let TargetKey::Other(k) = key {
+            if !self.other_parents.is_empty() {
+                self.other_parents.remove(&k);
             }
         }
         if let TargetKey::Node(i) = key {
@@ -158,6 +166,20 @@ impl Dom {
     pub fn new_target_key(&mut self) -> TargetKey {
         self.events.next_key += 1;
         TargetKey::Other(self.events.next_key)
+    }
+
+    /// Makes `parent` the event path parent of the non-node target `child`
+    /// ("get the parent"), or removes its parent. Node targets are ignored.
+    pub fn set_target_parent(&mut self, child: TargetKey, parent: Option<TargetKey>) {
+        let TargetKey::Other(c) = child else { return };
+        match parent {
+            Some(TargetKey::Other(p)) => {
+                self.events.other_parents.insert(c, p);
+            }
+            _ => {
+                self.events.other_parents.remove(&c);
+            }
+        }
     }
 
     /// Associates a document with its Window target (event path parent).
@@ -339,7 +361,14 @@ impl Dom {
 
     /// Shadow-including parent for event paths ("get the parent").
     fn event_parent(&self, key: TargetKey, ev_ty: &LocalName, composed: bool, origin_root: u32) -> Option<TargetKey> {
-        let TargetKey::Node(i) = key else { return None };
+        let TargetKey::Node(i) = key else {
+            let TargetKey::Other(k) = key else { return None };
+            // Nearly always empty: no hashing for XHR, AbortSignal, Window.
+            if self.events.other_parents.is_empty() {
+                return None;
+            }
+            return self.events.other_parents.get(&k).map(|&p| TargetKey::Other(p));
+        };
         let n = self.n(i);
         // A slottable assigned to a slot: the slot comes next.
         if let Some(slot) = self.find_slot(i, false) {

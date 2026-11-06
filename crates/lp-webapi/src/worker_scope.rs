@@ -75,6 +75,8 @@ pub(crate) struct WorkerStart {
     user_agent: Option<UserAgentOverride>,
     extra_headers: HeaderMap,
     cache_disabled: bool,
+    /// The owner's context partition: the worker's IndexedDB shares its data.
+    indexed_db: crate::indexeddb::Namespace,
     pub(crate) early: Vec<Early>,
 }
 
@@ -104,6 +106,7 @@ impl WorkerStart {
             user_agent: page.identity.borrow().value.clone(),
             extra_headers: page.extra_http_headers(),
             cache_disabled: page.cache_disabled(),
+            indexed_db: page.local_storage.borrow().indexed_db(),
             early: Vec::new(),
         })
     }
@@ -365,6 +368,10 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
     page.set_user_agent_override(start.user_agent.clone()).map_err(|e| JsError::Type(e.to_string()))?;
     page.set_extra_http_headers(start.extra_headers.clone());
     page.set_cache_disabled(start.cache_disabled);
+    page.set_storage_namespaces(
+        crate::storage::StorageNamespace::with_indexed_db(start.indexed_db.clone()),
+        Default::default(),
+    );
     page.set_request_context(crate::RequestContext { frame_id: start.frame_id.clone(), loader_id: None });
     let window = page.create_window_target(document);
     *page.net.borrow_mut() = Some(start.net.clone());
@@ -547,6 +554,12 @@ const KEY_LOCATION: u64 = (1 << 56) | 1;
 const KEY_NAVIGATOR: u64 = (1 << 56) | 2;
 
 pub struct WorkerGlobalScope;
+impl crate::indexeddb::PageOf for ScopeData {
+    fn page_of(&self) -> &Rc<PageDom> {
+        &self.target.page
+    }
+}
+
 impl JsClass for WorkerGlobalScope {
     const NAME: &'static str = "WorkerGlobalScope";
     type Data = ScopeData;
@@ -572,6 +585,8 @@ impl JsClass for WorkerGlobalScope {
             Ok(s.boolean(secure))
         });
         def.getter("crypto", |s, _g| crate::crypto::crypto_value(s));
+        def.getter("indexedDB", |s, g| crate::indexeddb::window_factory(s, &g.target.page));
+        crate::indexeddb::define_globals(def);
         def.method("setTimeout", 1, |s, g, a| set_timer(s, g, a, false));
         def.method("setInterval", 1, |s, g, a| set_timer(s, g, a, true));
         def.method("clearTimeout", 0, clear_timer);
@@ -756,6 +771,7 @@ fn register(engine: &Engine) -> lp_js::ClassId {
     engine.register::<crate::response::BodySource>();
     engine.register::<crate::xhr::WorkerXMLHttpRequest>();
     engine.register::<crate::xhr::XMLHttpRequestUpload>();
+    engine.register::<crate::indexeddb::IdbFactory>();
     engine.register::<WorkerLocation>();
     engine.register::<WorkerNavigator>();
     engine.register::<WorkerGlobalScope>();

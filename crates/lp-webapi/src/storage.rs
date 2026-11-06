@@ -196,6 +196,15 @@ impl StorageNamespace {
         }))
     }
 
+    /// A fresh namespace whose IndexedDB data is `indexed_db` (a dedicated
+    /// worker shares its owner's databases; workers have no Web Storage).
+    pub(crate) fn with_indexed_db(indexed_db: crate::indexeddb::Namespace) -> Self {
+        let namespace = Self::default();
+        let mut inner = Rc::try_unwrap(namespace.0).ok().expect("fresh namespace");
+        inner.indexed_db = indexed_db;
+        Self(Rc::new(inner))
+    }
+
     /// A namespace with the default quota holding a copy of `seed`'s entries.
     pub fn seeded(seed: &StorageSeed) -> Self {
         let namespace = Self::default();

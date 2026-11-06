@@ -642,6 +642,7 @@ impl ListenerInvoker for Invoker<'_> {
         // The exception is reported while the event is still the current
         // one: the `error` event's listeners see it as `window.event`.
         if let Err(e) = result {
+            LISTENER_EXCEPTIONS.set(LISTENER_EXCEPTIONS.get().wrapping_add(1));
             cs.report_exception(&e);
         }
         if swapped {
@@ -651,6 +652,19 @@ impl ListenerInvoker for Invoker<'_> {
             }
         }
     }
+}
+
+thread_local! {
+    /// Listener invocations that threw on this thread, for callers that must
+    /// know whether a dispatch "had an exception" (IndexedDB aborts the
+    /// transaction then). Counted only on the exception path.
+    static LISTENER_EXCEPTIONS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Count of listener exceptions on this thread so far (compare before and
+/// after a dispatch).
+pub(crate) fn listener_exceptions() -> u64 {
+    LISTENER_EXCEPTIONS.get()
 }
 
 /// Key of the realm's current event on its traced window holder.
