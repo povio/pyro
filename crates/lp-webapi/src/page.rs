@@ -161,6 +161,8 @@ pub struct PageDom {
     /// current load is for, whether it is still loading, and whether the
     /// finished load is decodable (`decode()` resolves).
     pub(crate) images: RefCell<FxHashMap<NodeId, (String, bool, bool)>>,
+    /// `images` size at which entries of collected elements are dropped.
+    images_sweep_at: Cell<usize>,
     /// Pending `HTMLImageElement.decode()` promises (`crate::image_decode`).
     pub(crate) image_decodes: RefCell<FxHashMap<NodeId, Vec<crate::image_decode::PendingDecode>>>,
     /// The last mouse input's position and state, for boundary events when
@@ -511,6 +513,7 @@ impl PageDom {
             submitting: RefCell::new(Vec::new()),
             hovered: Cell::new(None),
             images: RefCell::new(FxHashMap::default()),
+            images_sweep_at: Cell::new(64),
             image_decodes: RefCell::new(FxHashMap::default()),
             pointer: RefCell::new(None),
             hover_update_queued: Cell::new(false),
@@ -1356,7 +1359,15 @@ impl PageDom {
     pub fn set_image_state(&self, el: NodeId, src: Option<&str>, pending: bool) {
         match src {
             Some(src) => {
-                self.images.borrow_mut().insert(el, (src.to_owned(), pending, false));
+                let mut images = self.images.borrow_mut();
+                // Elements collected since (`new Image()` beacons): amortized O(1).
+                if images.len() >= self.images_sweep_at.get() {
+                    if let Ok(dom) = self.dom.try_borrow() {
+                        images.retain(|id, _| dom.is_alive(*id));
+                        self.images_sweep_at.set((images.len() * 2).max(64));
+                    }
+                }
+                images.insert(el, (src.to_owned(), pending, false));
             }
             None => {
                 self.images.borrow_mut().remove(&el);

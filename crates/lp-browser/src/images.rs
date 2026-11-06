@@ -59,6 +59,10 @@ struct Image {
 pub(crate) struct Images {
     entries: HashMap<NodeId, Image>,
     generation: u64,
+    /// Entry count at which those of collected elements are dropped (a
+    /// finished request no longer pins its element, and `new Image()`
+    /// beacons would otherwise accumulate): amortized O(1) per load.
+    sweep_at: usize,
 }
 
 impl Images {
@@ -146,6 +150,11 @@ impl Browser {
             let images = &mut guard.images;
             images.generation += 1;
             let generation = images.generation;
+            if images.entries.len() >= images.sweep_at {
+                let dom = bindings.dom.borrow();
+                images.entries.retain(|id, i| i.pending || dom.is_alive(*id));
+                images.sweep_at = (images.entries.len() * 2).max(64);
+            }
             // Replacing an entry drops its cancellation, stopping the old request.
             images.entries.insert(
                 node,
