@@ -1138,9 +1138,10 @@ fn global_receiver_fallback_only_for_unbound_receivers() {
 }
 
 /// A global's value (a data property, or a constant attribute) as the only
-/// reference to a wrapper; returns whether the constant was installed.
+/// reference to a wrapper; with `holder`, that realm keeps the global itself
+/// (a stale `contentWindow`). Returns whether the constant was installed.
 #[inline(never)]
-fn global_holding_a_wrapper(e: &Engine, drops: &Rc<Cell<u32>>, constant: bool) -> bool {
+fn global_holding_a_wrapper(e: &Engine, drops: &Rc<Cell<u32>>, constant: bool, holder: Option<&Realm>) -> bool {
     let realm = e.create_realm(RealmOptions::default()).unwrap();
     let installed = {
         let s = realm.scope().unwrap();
@@ -1159,9 +1160,19 @@ fn global_holding_a_wrapper(e: &Engine, drops: &Rc<Cell<u32>>, constant: bool) -
             "function,,false,true,false"
         );
         assert_eq!(eval_str(&realm, "try { d.get.call({}) } catch (e) { e.constructor.name }"), "TypeError");
+        // Compiled code folds it (holding it weakly).
+        assert_eq!(eval_str(&realm, "let n = 0; for (let i = 0; i < 200000; i++) n += held.nodeId; n"), "200000");
         let s = realm.scope().unwrap();
         let other = s.object();
         assert!(!s.define_global_constant("held", other.value()), "set once");
+    }
+    if let Some(holder) = holder {
+        let global = {
+            let s = realm.scope().unwrap();
+            Persistent::new(&s, s.global().value())
+        };
+        let hs = holder.scope().unwrap();
+        hs.global().set("stale", global.get(&hs)).unwrap();
     }
     realm.dispose();
     installed
@@ -1180,9 +1191,10 @@ fn overwrite_dead_stack() -> u64 {
 fn a_disposed_realms_global_constants_die_with_it() {
     let e = engine();
     e.register::<Element>();
-    for constant in [false, true] {
+    let holder = e.create_realm(RealmOptions::default()).unwrap();
+    for (constant, held) in [(false, false), (true, false), (true, true)] {
         let drops = Rc::new(Cell::new(0));
-        let installed = global_holding_a_wrapper(&e, &drops, constant);
+        let installed = global_holding_a_wrapper(&e, &drops, constant, held.then_some(&holder));
         if constant && !installed {
             // The system framework has no constant accessors: nothing new to check.
             continue;
@@ -1192,6 +1204,15 @@ fn a_disposed_realms_global_constants_die_with_it() {
             e.collect_garbage_now();
             e.drain_finalized();
         }
-        assert_eq!(drops.get(), 1, "constant {constant} (installed {installed}): the wrapper outlived its realm");
+        assert_eq!(drops.get(), 1, "constant {constant}, global held {held}: the wrapper outlived its realm");
+        if held {
+            // The global outlives its realm, its constant does not: reads
+            // throw, as the callbacks of a disposed realm do.
+            assert_eq!(
+                eval_str(&holder, "try { stale.held; 'read' } catch (e) { e.message }"),
+                "Execution context was destroyed."
+            );
+            assert_eq!(eval_str(&holder, "Object.getOwnPropertyDescriptor(stale, 'held').configurable"), "false");
+        }
     }
 }

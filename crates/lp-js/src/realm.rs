@@ -261,6 +261,9 @@ pub(crate) struct RealmInner {
     /// The global object behind that proxy (null when unknown). A custom
     /// accessor read as a global variable receives it as its receiver.
     global_target: Cell<sys::JSObjectRef>,
+    /// The global has constant attributes ([`Scope::define_global_constant`]),
+    /// whose values `dispose` releases.
+    global_constants: Cell<bool>,
 }
 
 impl RealmInner {
@@ -406,6 +409,15 @@ impl RealmInner {
         }
         self.embedder.borrow_mut().take();
         self.named_properties.borrow_mut().take();
+        if self.global_constants.replace(false) {
+            if let Some(clear) = sys::spi::get().clear_constant_accessors {
+                // SAFETY: the live global behind this realm's proxy, on its
+                // still-retained context. Its constants (a window's document)
+                // would otherwise live as long as the global object, which
+                // script elsewhere may hold (a stale `contentWindow`).
+                unsafe { clear(ctx, self.global_target.get()) };
+            }
+        }
         // SAFETY: we owned one retain on the global context.
         unsafe { sys::JSGlobalContextRelease(ctx) };
         if let Some(h) = self.engine.hooks() {
@@ -485,8 +497,9 @@ impl Realm {
     }
 
     /// Tears the realm down now: callbacks into its functions afterwards throw
-    /// "Execution context was destroyed.", persistent prototypes are released
-    /// and `EngineHooks::realm_destroyed` fires. Idempotent.
+    /// "Execution context was destroyed.", as reads of its global's constant
+    /// attributes do (their values are released), persistent prototypes are
+    /// released and `EngineHooks::realm_destroyed` fires. Idempotent.
     pub fn dispose(&self) {
         self.inner.dispose();
     }
@@ -1272,11 +1285,16 @@ impl<'s> Scope<'s> {
     /// the global, a window's `document`). Reads make no callback, and the
     /// optimizing JIT compiles a global variable read of it to the constant.
     /// Replaces a configurable property of that name (a copied interface
-    /// member). Set once: false, and the property unchanged, when it is
-    /// already non-configurable or the JavaScriptCore lacks the entry point
-    /// (system framework).
+    /// member). The realm keeps `value` until it is disposed; reads after
+    /// that throw, as its callbacks do. Set once: false, and the property
+    /// unchanged, when it is already non-configurable or the JavaScriptCore
+    /// lacks the entry points (system framework, see
+    /// [`crate::Capabilities::global_constants`]).
     pub fn define_global_constant(&self, name: &str, value: Value<'_>) -> bool {
-        let (Some(set), target) = (sys::spi::get().set_constant_accessor, self.realm.global_target.get()) else {
+        let spi = sys::spi::get();
+        let (Some(set), Some(_), target) =
+            (spi.set_constant_accessor, spi.clear_constant_accessors, self.realm.global_target.get())
+        else {
             return false;
         };
         if target.is_null() {
@@ -1285,8 +1303,12 @@ impl<'s> Scope<'s> {
         let n = JsString::new(name);
         // SAFETY: the live global behind this realm's proxy; `value` is a live
         // value of this engine's VM (a scope's value), kept alive by the
-        // property from now on.
-        unsafe { set(self.ctx, target, n.as_raw(), value.raw, None, sys::kJSPropertyAttributeNone) }
+        // property until `dispose` clears it.
+        let set = unsafe { set(self.ctx, target, n.as_raw(), value.raw, None, sys::kJSPropertyAttributeNone) };
+        if set {
+            self.realm.global_constants.set(true);
+        }
+        set
     }
 
     /// Whether `obj` is the realm's global: its proxy (what script sees) or
@@ -1603,6 +1625,7 @@ pub(crate) fn create(engine: &Rc<EngineInner>, options: RealmOptions) -> JsResul
         // SAFETY: fresh, retained global context.
         global_object: Cell::new(unsafe { sys::JSContextGetGlobalObject(ctx) }),
         global_target: Cell::new(ptr::null_mut()),
+        global_constants: Cell::new(false),
     });
     if let Some(target) = sys::spi::get().get_proxy_target {
         // SAFETY: the cached global proxy of a live context.

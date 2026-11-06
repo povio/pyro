@@ -373,12 +373,7 @@ fn define_unforgeables<'s>(s: &Scope<'s>, page: &PageDom, wrapper: Object<'s>) -
                 return Ok(());
             };
             let Some(install) = install.as_object() else { return Ok(()) };
-            // Not kept by a disposed page: its realm's global holds the
-            // document's wrapper, which holds the page, so the root would
-            // keep both.
-            if !page.is_disposed() {
-                page.event_unforgeables.borrow_mut().insert(realm, Persistent::new(s, install.value()));
-            }
+            page.event_unforgeables.borrow_mut().insert(realm, Persistent::new(s, install.value()));
             install
         }
     };

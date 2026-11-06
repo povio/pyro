@@ -578,6 +578,10 @@ pub mod spi {
         setter: Option<JSCustomSetterCallback>,
         attributes: JSPropertyAttributes,
     ) -> bool;
+    /// Releases the values of `object`'s constant accessors as its realm is
+    /// torn down (patched JSC, `JSObjectClearConstantAccessors`): reads of
+    /// them throw from then on.
+    pub type JSObjectClearConstantAccessorsFn = unsafe extern "C" fn(ctx: JSContextRef, object: JSObjectRef);
     pub type JSContextThrowExceptionFn = unsafe extern "C" fn(ctx: JSContextRef, exception: JSValueRef);
     /// A fast getter (patched JSC, `JSObjectSetFastGetter`): what the JITs
     /// call in place of the custom getter once they have proved the receiver
@@ -686,6 +690,7 @@ pub mod spi {
         pub set_custom_accessor: Option<JSObjectSetCustomAccessorFn>,
         pub set_fast_getter: Option<JSObjectSetFastGetterFn>,
         pub set_constant_accessor: Option<JSObjectSetConstantAccessorFn>,
+        pub clear_constant_accessors: Option<JSObjectClearConstantAccessorsFn>,
         pub throw_exception: Option<JSContextThrowExceptionFn>,
         pub class_set_indexed_callbacks: Option<JSClassSetIndexedCallbacksFn>,
         pub make_function_with_data: Option<JSObjectMakeFunctionWithCallbackAndDataFn>,
@@ -757,6 +762,7 @@ pub mod spi {
             set_custom_accessor: resolve!("JSObjectSetCustomAccessor"),
             set_fast_getter: resolve!("JSObjectSetFastGetter"),
             set_constant_accessor: resolve!("JSObjectSetConstantAccessor"),
+            clear_constant_accessors: resolve!("JSObjectClearConstantAccessors"),
             throw_exception: resolve!("JSContextThrowException"),
             class_set_indexed_callbacks: resolve!("JSClassSetIndexedCallbacks"),
             make_function_with_data: resolve!("JSObjectMakeFunctionWithCallbackAndData"),

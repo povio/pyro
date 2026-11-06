@@ -9,35 +9,38 @@ diff --git a/Source/JavaScriptCore/API/JSFork.cpp b/Source/JavaScriptCore/API/JS
  #include "JSLock.h"
  #include "OpaqueJSString.h"
  #include "VM.h"
-@@ -152,6 +153,80 @@
+@@ -152,6 +153,123 @@
  
  namespace JSC {
  
-+// Lightningpanda: the value of `receiver`'s own constant accessor `name` (JSObjectSetConstantAccessor),
-+// through its global proxy; empty if it has none.
-+static JSValue constantAccessorValue(VM& vm, JSValue receiver, PropertyName name)
++static JSC_DECLARE_CUSTOM_GETTER(constantAccessorGetter);
++
++// Lightningpanda: `receiver`'s own constant accessor `name` (JSObjectSetConstantAccessor),
++// through its global proxy; null if it has none.
++static CustomGetterSetter* constantAccessorOf(VM& vm, JSValue receiver, PropertyName name)
 +{
 +    if (!receiver.isObject())
-+        return JSValue();
++        return nullptr;
 +    JSObject* object = asObject(receiver);
 +    if (object->type() == GlobalProxyType)
 +        object = uncheckedDowncast<JSGlobalProxy>(object)->target();
 +    unsigned attributes;
 +    PropertyOffset offset = object->structure()->get(vm, name, attributes);
 +    if (!isValidOffset(offset) || !(attributes & PropertyAttribute::CustomAccessor))
-+        return JSValue();
++        return nullptr;
 +    JSValue value = object->getDirect(offset);
 +    if (!value.isCell() || value.asCell()->type() != CustomGetterSetterType)
-+        return JSValue();
-+    return static_cast<CustomGetterSetter*>(value.asCell())->constant();
++        return nullptr;
++    auto* accessor = static_cast<CustomGetterSetter*>(value.asCell());
++    return accessor->getter() == CustomGetterSetter::CustomGetter(constantAccessorGetter) ? accessor : nullptr;
 +}
 +
 +// The getter of every constant accessor. A read of the holder's property (directly, through
 +// its global proxy, or as a bare global variable) gets the constant; so does the reified getter
 +// called with the holder, or with undefined or null (its realm's global, as for a WebIDL [Global]
 +// interface). Any other receiver has no such own property and gets the TypeError of a failed
-+// brand check. The DFG folds global variable reads of the property instead of calling this.
-+static JSC_DECLARE_CUSTOM_GETTER(constantAccessorGetter);
++// brand check. Once the constant is cleared with its realm (JSObjectClearConstantAccessors),
++// reads throw. The DFG folds global variable reads of the property instead of calling this.
 +JSC_DEFINE_CUSTOM_GETTER(constantAccessorGetter, (JSGlobalObject* globalObject, EncodedJSValue thisValue, PropertyName name))
 +{
 +    VM& vm = globalObject->vm();
@@ -45,9 +48,12 @@ diff --git a/Source/JavaScriptCore/API/JSFork.cpp b/Source/JavaScriptCore/API/JS
 +    JSValue receiver = JSValue::decode(thisValue);
 +    if (receiver.isUndefinedOrNull())
 +        receiver = globalObject->globalThis();
-+    if (JSValue constant = constantAccessorValue(vm, receiver, name))
++    CustomGetterSetter* accessor = constantAccessorOf(vm, receiver, name);
++    if (!accessor)
++        return throwVMTypeError(globalObject, scope, "Illegal invocation"_s);
++    if (JSValue constant = accessor->constant())
 +        return JSValue::encode(constant);
-+    return throwVMTypeError(globalObject, scope, "Illegal invocation"_s);
++    return throwVMError(globalObject, scope, "Execution context was destroyed."_s);
 +}
 +
 +} // namespace JSC
@@ -59,6 +65,7 @@ diff --git a/Source/JavaScriptCore/API/JSFork.cpp b/Source/JavaScriptCore/API/JS
 +    JSGlobalObject* globalObject = toJS(ctx);
 +    VM& vm = globalObject->vm();
 +    JSLockHolder locker(vm);
++    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 +    JSObject* jsObject = toJS(object);
 +    if (jsObject->type() == GlobalProxyType)
 +        jsObject = uncheckedDowncast<JSGlobalProxy>(jsObject)->target();
@@ -72,7 +79,13 @@ diff --git a/Source/JavaScriptCore/API/JSFork.cpp b/Source/JavaScriptCore/API/JS
 +        if (existingAttributes & PropertyAttribute::DontDelete)
 +            return false;
 +        DeletePropertySlot slot;
-+        if (!jsObject->methodTable()->deleteProperty(jsObject, globalObject, name, slot))
++        bool deleted = jsObject->methodTable()->deleteProperty(jsObject, globalObject, name, slot);
++        // A C API class's deleteProperty callback may throw.
++        if (scope.exception()) [[unlikely]] {
++            scope.clearException();
++            return false;
++        }
++        if (!deleted)
 +            return false;
 +    }
 +    unsigned attrs = static_cast<unsigned>(PropertyAttribute::CustomAccessor) | static_cast<unsigned>(PropertyAttribute::DontDelete);
@@ -85,6 +98,36 @@ diff --git a/Source/JavaScriptCore/API/JSFork.cpp b/Source/JavaScriptCore/API/JS
 +    return jsObject->putDirectCustomAccessor(vm, name, accessor, attrs);
 +}
 +
++void JSObjectClearConstantAccessors(JSContextRef ctx, JSObjectRef object)
++{
++    if (!ctx || !object)
++        return;
++    VM& vm = toJS(ctx)->vm();
++    JSLockHolder locker(vm);
++    JSObject* jsObject = toJS(object);
++    if (jsObject->type() == GlobalProxyType)
++        jsObject = uncheckedDowncast<JSGlobalProxy>(jsObject)->target();
++    Vector<PropertyOffset, 4> offsets;
++    jsObject->structure()->forEachProperty(vm, [&](const auto& entry) {
++        if (!(entry.attributes() & PropertyAttribute::CustomAccessor))
++            return true;
++        JSValue value = jsObject->getDirect(entry.offset());
++        if (value.isCell() && value.asCell()->type() == CustomGetterSetterType) {
++            auto* accessor = static_cast<CustomGetterSetter*>(value.asCell());
++            if (accessor->getter() == CustomGetterSetter::CustomGetter(constantAccessorGetter) && accessor->constant())
++                offsets.append(entry.offset());
++        }
++        return true;
++    });
++    // A CustomGetterSetter does not change once published (the DFG reads it concurrently), so
++    // each property gets a new one without a constant: the getter throws and the DFG folds
++    // nothing. Same getter, setter and structure, so inline caches stay valid.
++    for (PropertyOffset offset : offsets) {
++        auto* accessor = static_cast<CustomGetterSetter*>(jsObject->getDirect(offset).asCell());
++        jsObject->putDirectOffset(vm, offset, CustomGetterSetter::create(vm, accessor->getter(), accessor->setter()));
++    }
++}
++
 +namespace JSC {
 +
  // A fast getter installed through the C API: the DOMJIT::GetterSetter the
@@ -93,7 +136,7 @@ diff --git a/Source/JavaScriptCore/API/JSFork.cpp b/Source/JavaScriptCore/API/JS
 diff --git a/Source/JavaScriptCore/API/JSForkPrivate.h b/Source/JavaScriptCore/API/JSForkPrivate.h
 --- a/Source/JavaScriptCore/API/JSForkPrivate.h
 +++ b/Source/JavaScriptCore/API/JSForkPrivate.h
-@@ -95,6 +95,17 @@
+@@ -95,6 +95,23 @@
  typedef bool (*JSCustomSetterCallback)(JSContextRef ctx, JSValueRef thisValue, JSValueRef value, const void* propertyNameUID);
  JS_EXPORT bool JSObjectSetCustomAccessor(JSContextRef ctx, JSObjectRef object, JSStringRef propertyName, JSCustomGetterCallback getter, JSCustomSetterCallback setter, JSPropertyAttributes attributes);
  
@@ -105,8 +148,14 @@ diff --git a/Source/JavaScriptCore/API/JSForkPrivate.h b/Source/JavaScriptCore/A
 +   other receiver, throws a TypeError. `setter` (as for JSObjectSetCustomAccessor)
 +   may be NULL for a read-only attribute. `attributes` honours DontEnum. Fails if
 +   `object` already has a non-configurable property of that name: it is set once.
-+   `value` stays alive as long as the property. */
++   `value` stays alive as long as the property, or until JSObjectClearConstantAccessors. */
 +JS_EXPORT bool JSObjectSetConstantAccessor(JSContextRef ctx, JSObjectRef object, JSStringRef propertyName, JSValueRef value, JSCustomSetterCallback setter, JSPropertyAttributes attributes);
++
++/* Releases the values of `object`'s constant accessors, as its realm is torn down:
++   the properties stay (non-configurable), and reads of them throw an Error,
++   "Execution context was destroyed.". Code the DFG compiled with a value folded
++   holds it weakly, so it no longer keeps the value alive. */
++JS_EXPORT void JSObjectClearConstantAccessors(JSContextRef ctx, JSObjectRef object);
 +
  /* A custom accessor (as above) whose getter the JITs also call directly, as a
     DOM attribute: the property carries the class of C API wrapper objects, so
@@ -123,15 +172,16 @@ diff --git a/Source/JavaScriptCore/dfg/DFGByteCodeParser.cpp b/Source/JavaScript
  #include "DFGAbstractHeap.h"
  #include "DFGArrayMode.h"
  #include "DFGBackwardsPropagationPhase.h"
-@@ -1087,6 +1089,32 @@
+@@ -1087,6 +1089,33 @@
          return jsConstant(m_graph.freeze(constantValue));
      }
  
 +    // Lightningpanda: the value of `cell`'s own constant accessor `uid` (JSObjectSetConstantAccessor),
 +    // through a global proxy, if it has one. Such a property cannot be deleted or redefined (it is
-+    // non-configurable) and its CustomGetterSetter never changes, so the value holds for as long as
-+    // `cell` lives. A global proxy's target is read once here: JSC alone never retargets one (only
-+    // WebCore's WindowProxy does).
++    // non-configurable), so the value holds for as long as `cell` lives, until its realm is torn down
++    // (JSObjectClearConstantAccessors), which leaves code compiled before then with a weak constant.
++    // A global proxy's target is read once here: JSC alone never retargets one (only WebCore's
++    // WindowProxy does).
 +    JSValue constantAccessorOf(JSCell* cell, UniquedStringImpl* uid)
 +    {
 +        if (m_graph.m_plan.isUnlinked())
@@ -156,7 +206,7 @@ diff --git a/Source/JavaScriptCore/dfg/DFGByteCodeParser.cpp b/Source/JavaScript
      InlineCallFrame* LEGACY_NODELETE inlineCallFrame()
      {
          return m_inlineStackTop->m_inlineCallFrame;
-@@ -7375,6 +7403,16 @@
+@@ -7375,6 +7404,16 @@
      VirtualRegister destination, SpeculatedType prediction, Node* base, CacheableIdentifier identifier, unsigned identifierNumber,
      GetByStatus getByStatus, AccessType type, BytecodeIndex osrExitIndex)
  {
@@ -173,7 +223,7 @@ diff --git a/Source/JavaScriptCore/dfg/DFGByteCodeParser.cpp b/Source/JavaScript
      Node* unwrapped = base;
      if (getByStatus.viaGlobalProxy())
          unwrapped = addToGraph(UnwrapGlobalProxy, Edge(base, GlobalProxyUse));
-@@ -10645,6 +10683,14 @@
+@@ -10645,6 +10684,14 @@
              case GlobalPropertyWithVarInjectionChecks: {
                  if (!m_graph.watchGlobalProperty(globalObject, identifierNumber))
                      addToGraph(ForceOSRExit);
