@@ -216,6 +216,68 @@ impl NetworkTranslator {
                     }),
                 ))
             }
+            // WebSockets: the shapes Chrome sends (and Playwright's crPage reads).
+            NetEvent::WebSocketCreated { id, url, .. } => Some((
+                "Network.webSocketCreated",
+                json!({ "requestId": id.to_string(), "url": url, "initiator": { "type": "other" } }),
+            )),
+            NetEvent::WebSocketWillSendHandshakeRequest { id, headers, timestamp, wall_time } => Some((
+                "Network.webSocketWillSendHandshakeRequest",
+                json!({
+                    "requestId": id.to_string(),
+                    "timestamp": timestamp,
+                    "wallTime": wall_time,
+                    "request": { "headers": headers_json(headers) },
+                }),
+            )),
+            NetEvent::WebSocketHandshakeResponseReceived {
+                id,
+                status,
+                status_text,
+                headers,
+                request_headers,
+                timestamp,
+            } => Some((
+                "Network.webSocketHandshakeResponseReceived",
+                json!({
+                    "requestId": id.to_string(),
+                    "timestamp": timestamp,
+                    "response": {
+                        "status": status,
+                        "statusText": status_text,
+                        "headers": headers_json(headers),
+                        "requestHeaders": headers_json(request_headers),
+                    },
+                }),
+            )),
+            NetEvent::WebSocketFrameSent { id, opcode, mask, payload, timestamp }
+            | NetEvent::WebSocketFrameReceived { id, opcode, mask, payload, timestamp } => {
+                let method = if matches!(event, NetEvent::WebSocketFrameSent { .. }) {
+                    "Network.webSocketFrameSent"
+                } else {
+                    "Network.webSocketFrameReceived"
+                };
+                // Text frames carry their text, others base64 (Chrome's `payloadData`).
+                let data = match (*opcode, std::str::from_utf8(payload)) {
+                    (1, Ok(text)) => text.to_owned(),
+                    _ => base64_encode(payload),
+                };
+                Some((
+                    method,
+                    json!({
+                        "requestId": id.to_string(),
+                        "timestamp": timestamp,
+                        "response": { "opcode": opcode, "mask": mask, "payloadData": data },
+                    }),
+                ))
+            }
+            NetEvent::WebSocketFrameError { id, message, timestamp } => Some((
+                "Network.webSocketFrameError",
+                json!({ "requestId": id.to_string(), "timestamp": timestamp, "errorMessage": message }),
+            )),
+            NetEvent::WebSocketClosed { id, timestamp } => {
+                Some(("Network.webSocketClosed", json!({ "requestId": id.to_string(), "timestamp": timestamp })))
+            }
         }
     }
 
@@ -403,7 +465,7 @@ impl BodyStore {
                 }
             }
             NetEvent::LoadingFailed { id, .. } => self.remove(*id),
-            NetEvent::RequestWillBeSent { .. } => {}
+            _ => {}
         }
     }
 

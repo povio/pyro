@@ -87,13 +87,20 @@ struct Staged {
 }
 
 fn request_id(event: &NetEvent) -> RequestId {
-    match event {
-        NetEvent::RequestWillBeSent { id, .. }
-        | NetEvent::ResponseReceived { id, .. }
-        | NetEvent::DataReceived { id, .. }
-        | NetEvent::LoadingFinished { id, .. }
-        | NetEvent::LoadingFailed { id, .. } => *id,
-    }
+    event.id()
+}
+
+/// WebSocket events are not tied to a binding's delivery frontier: they are
+/// published as they come, as request announcements are.
+fn websocket(event: &NetEvent) -> bool {
+    !matches!(
+        event,
+        NetEvent::RequestWillBeSent { .. }
+            | NetEvent::ResponseReceived { .. }
+            | NetEvent::DataReceived { .. }
+            | NetEvent::LoadingFinished { .. }
+            | NetEvent::LoadingFailed { .. }
+    )
 }
 
 impl Staged {
@@ -132,7 +139,7 @@ impl Staged {
         }
         let bytes_reserved = event.retained_bytes() + std::mem::size_of::<Pending>() - std::mem::size_of::<NetEvent>();
         let observed = Observed { event, _charge: budget.reserve(bytes_reserved)? };
-        if owner_task || matches!(observed.event, NetEvent::RequestWillBeSent { .. }) {
+        if owner_task || matches!(observed.event, NetEvent::RequestWillBeSent { .. }) || websocket(&observed.event) {
             self.ready.push_back(observed);
         } else {
             self.pending.push_back(Pending { observed, identity, bytes });
@@ -157,7 +164,7 @@ impl Staged {
                     NetEvent::ResponseReceived { .. } => response,
                     NetEvent::DataReceived { .. } => item.bytes <= bytes,
                     NetEvent::LoadingFinished { .. } | NetEvent::LoadingFailed { .. } => terminal,
-                    NetEvent::RequestWillBeSent { .. } => false,
+                    _ => false,
                 };
             if eligible {
                 self.ready.push_back(item.observed);
@@ -337,6 +344,7 @@ mod tests {
                 NetEvent::DataReceived { id, data, .. } => format!("data {} {}", id.0, data.len()),
                 NetEvent::LoadingFinished { id, .. } => format!("finished {}", id.0),
                 NetEvent::LoadingFailed { id, .. } => format!("failed {}", id.0),
+                other => format!("{other:?}"),
             })
             .collect()
     }

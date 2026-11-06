@@ -166,9 +166,11 @@ Also covered:
   unless `updateContent: 'embed'`)
 - with a `page.on('dialog')` listener, a dialog an action opens waits for its
   answer as in Chrome; without one it is dismissed
+- WebSockets (`page.on('websocket')`, `url()`, `isClosed()`, `framesent`,
+  `framereceived`, `socketerror`, `close`, `waitForEvent`); an open socket
+  does not hold up an action's settling
 
-Not supported (a clear error): `page.on('websocket')`, as lightningpanda
-pages have no `WebSocket` API yet; the deprecated layout pseudo-classes
+Not supported (a clear error): the deprecated layout pseudo-classes
 (`:left-of()`, `:right-of()`, `:above()`, `:below()`, `:near()`); a `+` or `~`
 combinator right after a Playwright pseudo-class.
 

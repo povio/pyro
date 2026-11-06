@@ -1230,6 +1230,8 @@ export class Page extends Scope {
   _targetId = '';
   private _attaching?: Promise<Attachment>;
   private _requests = new Map<string, Request>();
+  /** Open sockets by CDP requestId, from `Network.webSocket*` events. */
+  private _sockets = new Map<string, WebSocket>();
   private _off: (() => void)[] = [];
   private _events = new EventEmitter();
   private _navigations = new EventEmitter();
@@ -1317,6 +1319,21 @@ export class Page extends Scope {
       req._failure = p.errorText ?? 'failed';
       req._finish();
       this._events.emit('requestfailed', req);
+    });
+    // Chrome's order: created, handshake request (the page's `websocket`
+    // event, as in Playwright), frames, then closed (after `socketerror` on a failure).
+    on('Network.webSocketCreated', (p) => this._sockets.set(p.requestId, new WebSocket(this, p.url)));
+    on('Network.webSocketWillSendHandshakeRequest', (p) => {
+      const ws = this._sockets.get(p.requestId);
+      if (ws && ws._markNotified()) this._events.emit('websocket', ws);
+    });
+    on('Network.webSocketFrameSent', (p) => this._sockets.get(p.requestId)?._frame('framesent', p.response));
+    on('Network.webSocketFrameReceived', (p) => this._sockets.get(p.requestId)?._frame('framereceived', p.response));
+    on('Network.webSocketFrameError', (p) => this._sockets.get(p.requestId)?._error(p.errorMessage));
+    on('Network.webSocketClosed', (p) => {
+      const ws = this._sockets.get(p.requestId);
+      this._sockets.delete(p.requestId);
+      ws?._closed();
     });
     on('Runtime.consoleAPICalled', (p) => {
       const text = (p.args ?? []).map((a: any) => (a.value !== undefined ? String(a.value) : (a.description ?? a.type))).join(' ');
@@ -1588,7 +1605,7 @@ export class Page extends Scope {
     return this;
   }
   private enableFor(event: string) {
-    if (['request', 'response', 'requestfinished', 'requestfailed'].includes(event)) void this._enableNetwork();
+    if (['request', 'response', 'requestfinished', 'requestfailed', 'websocket'].includes(event)) void this._enableNetwork();
     if (['console', 'pageerror'].includes(event)) {
       if (!this._isAttached) this._wants.runtime = true;
       else this._runtime ??= this._send('Runtime.enable').then(() => undefined);
@@ -1600,9 +1617,6 @@ export class Page extends Scope {
     if (event === 'worker' && !this._wants.workers) {
       this._wants.workers = true;
       if (this._isAttached) void this._send('Target.setAutoAttach', WORKER_AUTO_ATTACH).catch(() => {});
-    }
-    if (event === 'websocket') {
-      throw notSupported("page.on('websocket'): lightningpanda pages have no WebSocket API yet, so no socket can open");
     }
   }
   workers(): Worker[] {
@@ -2271,6 +2285,109 @@ export class Worker {
         resolve(v);
       });
     });
+  }
+}
+
+/**
+ * Playwright's `WebSocket`: a page's socket as `Network.webSocket*` events
+ * report it. `framesent` / `framereceived` get `{ payload }` (a string for
+ * text, a Buffer for binary), `socketerror` the error message, `close` the socket.
+ */
+export class WebSocket {
+  private _events = new EventEmitter();
+  private _isClosed = false;
+  private _notified = false;
+  constructor(
+    private _page: Page,
+    private _url: string,
+  ) {
+    this._events.setMaxListeners(0);
+  }
+  url(): string {
+    return this._url;
+  }
+  isClosed(): boolean {
+    return this._isClosed;
+  }
+  _markNotified(): boolean {
+    if (this._notified) return false;
+    this._notified = true;
+    return true;
+  }
+  _frame(event: 'framesent' | 'framereceived', response: { opcode: number; payloadData: string }): void {
+    // As Playwright: empty frames are not reported, binary ones are base64.
+    if (!response?.payloadData) return;
+    const payload = response.opcode === 2 ? Buffer.from(response.payloadData, 'base64') : response.payloadData;
+    this._events.emit(event, { payload });
+  }
+  _error(message: string): void {
+    this._events.emit('socketerror', message);
+  }
+  _closed(): void {
+    if (this._isClosed) return;
+    this._isClosed = true;
+    this._events.emit('close', this);
+  }
+  on(event: string, listener: (...args: any[]) => void): this {
+    this._events.on(event, listener);
+    return this;
+  }
+  addListener(event: string, listener: (...args: any[]) => void): this {
+    return this.on(event, listener);
+  }
+  once(event: string, listener: (...args: any[]) => void): this {
+    this._events.once(event, listener);
+    return this;
+  }
+  off(event: string, listener: (...args: any[]) => void): this {
+    this._events.off(event, listener);
+    return this;
+  }
+  removeListener(event: string, listener: (...args: any[]) => void): this {
+    return this.off(event, listener);
+  }
+  removeAllListeners(event?: string): this {
+    this._events.removeAllListeners(event);
+    return this;
+  }
+  /**
+   * Resolves with the next `event` the predicate accepts. Rejects if the
+   * socket closes first (unless waiting for `close`), or with a socket error
+   * (unless waiting for `socketerror`), as Playwright does.
+   */
+  waitForEvent(event: string, optionsOrPredicate?: ((arg: any) => boolean | Promise<boolean>) | (Timeout & { predicate?: (arg: any) => boolean | Promise<boolean> })): Promise<any> {
+    const o = typeof optionsOrPredicate === 'function' ? { predicate: optionsOrPredicate } : (optionsOrPredicate ?? {});
+    const predicate = o.predicate ?? (() => true);
+    const ms = this._page._timeout(o.timeout);
+    const api = `webSocket.waitForEvent(${quote(event)})`;
+    return new Promise((resolve, reject) => {
+      const done = (fn: () => void) => {
+        clearTimeout(timer);
+        this._events.off(event, listener);
+        this._events.off('close', closed);
+        this._events.off('socketerror', failed);
+        fn();
+      };
+      const listener = async (arg: unknown) => {
+        try {
+          if (await predicate(arg)) done(() => resolve(arg));
+        } catch (e) {
+          done(() => reject(e));
+        }
+      };
+      const closed = () => event !== 'close' && done(() => reject(new Error(`${api}: Socket closed`)));
+      const failed = (message: string) => event !== 'socketerror' && done(() => reject(new Error(`${api}: Socket error: ${message}`)));
+      const timer = setTimeout(() => done(() => reject(new TimeoutError(`${api}: Timeout ${ms}ms exceeded while waiting for event "${event}"`))), ms);
+      this._events.on(event, listener);
+      this._events.on('close', closed);
+      this._events.on('socketerror', failed);
+    });
+  }
+  waitForFrameSent(o?: Timeout & { predicate?: (frame: { payload: string | Buffer }) => boolean }): Promise<any> {
+    return this.waitForEvent('framesent', o);
+  }
+  waitForFrameReceived(o?: Timeout & { predicate?: (frame: { payload: string | Buffer }) => boolean }): Promise<any> {
+    return this.waitForEvent('framereceived', o);
   }
 }
 

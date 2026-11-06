@@ -37,6 +37,7 @@ pub enum EventInterface {
     HashChangeEvent,
     PageTransitionEvent,
     MessageEvent,
+    CloseEvent,
     StorageEvent,
     MediaQueryListEvent,
     TouchEvent,
@@ -161,6 +162,10 @@ pub struct EventFields {
     /// `elapsedTime` (seconds) and `pseudoElement` of both.
     pub elapsed_time: f64,
     pub pseudo_element: String,
+    /// `CloseEvent.wasClean` / `.code` / `.reason`.
+    pub was_clean: bool,
+    pub close_code: u16,
+    pub close_reason: String,
 }
 
 pub struct EventCore {
@@ -329,6 +334,7 @@ pub fn wrap_event<'s>(s: &Scope<'s>, core: &EventData) -> JsResult<Object<'s>> {
         EventInterface::HashChangeEvent => s.wrap::<HashChangeEvent>(d, Some(key)),
         EventInterface::PageTransitionEvent => s.wrap::<PageTransitionEvent>(d, Some(key)),
         EventInterface::MessageEvent => s.wrap::<MessageEvent>(d, Some(key)),
+        EventInterface::CloseEvent => s.wrap::<CloseEvent>(d, Some(key)),
         EventInterface::StorageEvent => s.wrap::<StorageEvent>(d, Some(key)),
         EventInterface::MediaQueryListEvent => s.wrap::<MediaQueryListEvent>(d, Some(key)),
         EventInterface::TouchEvent => s.wrap::<TouchEvent>(d, Some(key)),
@@ -790,6 +796,15 @@ fn fill_message<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>
         f.message_data = Some(Persistent::new(s, o.get("data")?));
     }
     f.origin = get_str(init, "origin")?;
+    Ok(())
+}
+
+fn fill_close<'s>(_: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
+    f.was_clean = get_bool(init, "wasClean")?;
+    // `unsigned short`: ToNumber, then modulo 2^16.
+    let code = get_num(init, "code", 0.0)?;
+    f.close_code = if code.is_finite() { (code.trunc().rem_euclid(65536.0)) as u16 } else { 0 };
+    f.close_reason = get_str(init, "reason")?;
     Ok(())
 }
 
@@ -1630,6 +1645,20 @@ impl JsClass for MessageEvent {
     }
 }
 
+/// `CloseEvent` (HTML §10.4), fired by `WebSocket`.
+pub struct CloseEvent;
+impl JsClass for CloseEvent {
+    const NAME: &'static str = "CloseEvent";
+    type Data = EventData;
+    type Parent = Event;
+    fn define(def: &mut ClassDef<Self>) {
+        def.constructor(1, |s, nt, a| construct::<CloseEvent>(s, nt, a, EventInterface::CloseEvent, fill_close));
+        def.getter("wasClean", |s, e| Ok(s.boolean(e.fields.borrow().was_clean)));
+        def.getter("code", |s, e| Ok(s.number(e.fields.borrow().close_code as f64)));
+        def.getter("reason", |s, e| Ok(s.string(&e.fields.borrow().close_reason)));
+    }
+}
+
 /// Registers all event classes on the engine.
 /// The events a worker's realm exposes.
 pub(crate) fn register_for_worker(engine: &lp_js::Engine) {
@@ -1668,6 +1697,7 @@ pub(crate) fn register(engine: &lp_js::Engine) {
     engine.register::<StorageEvent>();
     engine.register::<MediaQueryListEvent>();
     engine.register::<Touch>();
+    engine.register::<CloseEvent>();
     engine.register::<TouchEvent>();
     engine.register::<AnimationEvent>();
     engine.register::<TransitionEvent>();

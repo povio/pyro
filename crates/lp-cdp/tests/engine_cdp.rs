@@ -3345,6 +3345,9 @@ mod tier3_g2;
 #[path = "engine_cdp/tier3_g1.rs"]
 mod tier3_g1;
 
+#[path = "engine_cdp/websocket.rs"]
+mod websocket;
+
 #[test]
 fn links_and_window_open_targeting_blank_open_paused_popups() {
     let mut h = Harness::new();

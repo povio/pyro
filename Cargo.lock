@@ -1717,6 +1717,7 @@ dependencies = [
  "hyper-util",
  "lp-psl",
  "percent-encoding",
+ "ring",
  "rustc-hash 2.1.3",
  "rustls",
  "tokio",

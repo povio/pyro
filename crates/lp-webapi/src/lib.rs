@@ -64,6 +64,7 @@ pub mod url;
 pub mod url_search_params;
 pub mod util;
 pub mod validity;
+pub mod websocket;
 pub mod window;
 pub mod worker;
 mod worker_scope;
@@ -111,6 +112,7 @@ pub fn register(engine: &lp_js::Engine) {
     range::register(engine);
     abort::register(engine);
     message_channel::register(engine);
+    websocket::register(engine);
     media_source::register(engine);
     worker::register(engine);
     custom::register(engine);

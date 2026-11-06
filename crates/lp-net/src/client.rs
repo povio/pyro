@@ -31,6 +31,8 @@ use crate::proxy::{basic_authorization, ProxyConfig, ProxyConnector, ProxyError,
 use crate::request::*;
 use crate::subscription::{NetSubscription, NetWake, SubscriptionLimits, Subscriptions};
 
+pub mod websocket;
+
 /// Consumer of one request's events; wrap it to post to the browser loop.
 ///
 /// Guarantees: every sink passed to [`NetClient::fetch`] receives exactly one
@@ -169,6 +171,75 @@ pub enum NetEvent {
         destination: Destination,
         timestamp: f64,
     },
+    /// A page opened a WebSocket (CDP `Network.webSocketCreated`).
+    WebSocketCreated {
+        id: RequestId,
+        url: String,
+        frame_id: Option<String>,
+        loader_id: Option<String>,
+        timestamp: f64,
+    },
+    WebSocketWillSendHandshakeRequest {
+        id: RequestId,
+        headers: Box<HeaderMap>,
+        timestamp: f64,
+        wall_time: f64,
+    },
+    WebSocketHandshakeResponseReceived {
+        id: RequestId,
+        status: u16,
+        status_text: String,
+        headers: Box<HeaderMap>,
+        request_headers: Box<HeaderMap>,
+        timestamp: f64,
+    },
+    /// A whole message written (`opcode` 1 text, 2 binary).
+    WebSocketFrameSent {
+        id: RequestId,
+        opcode: u8,
+        mask: bool,
+        payload: Bytes,
+        timestamp: f64,
+    },
+    /// A whole message received.
+    WebSocketFrameReceived {
+        id: RequestId,
+        opcode: u8,
+        mask: bool,
+        payload: Bytes,
+        timestamp: f64,
+    },
+    /// The connection failed (handshake or protocol error), Chrome's wording.
+    WebSocketFrameError {
+        id: RequestId,
+        message: String,
+        timestamp: f64,
+    },
+    /// Always the last event of a socket.
+    WebSocketClosed {
+        id: RequestId,
+        timestamp: f64,
+    },
+}
+
+impl NetEvent {
+    /// The request (or socket) the event belongs to.
+    pub fn id(&self) -> RequestId {
+        match self {
+            NetEvent::RequestWillBeSent { id, .. }
+            | NetEvent::ResponseReceived { id, .. }
+            | NetEvent::DataReceived { id, .. }
+            | NetEvent::LoadingFinished { id, .. }
+            | NetEvent::LoadingFailed { id, .. }
+            | NetEvent::WebSocketCreated { id, .. }
+            | NetEvent::WebSocketWillSendHandshakeRequest { id, .. }
+            | NetEvent::WebSocketHandshakeResponseReceived { id, .. }
+            | NetEvent::WebSocketFrameSent { id, .. }
+            | NetEvent::WebSocketFrameReceived { id, .. }
+            | NetEvent::WebSocketFrameError { id, .. }
+            | NetEvent::WebSocketClosed { id, .. } => *id,
+        }
+    }
 }
 
 /// A request paused for CDP Fetch interception (request stage).
@@ -275,6 +346,7 @@ pub trait Interceptor: Send + Sync {
 enum Cmd {
     Fetch(RequestId, Box<Request>, ResponseSink),
     Cancel(RequestId),
+    WebSocket(Box<websocket::WsJob>),
 }
 
 struct Inner {
@@ -497,6 +569,18 @@ impl NetClient {
     /// Counts a started request for `loader` (synchronously, on the caller's
     /// thread) and ties the matching decrement to the sink's lifetime.
     fn track(&self, loader: String, mut sink: ResponseSink) -> ResponseSink {
+        let mut guard = self.start_activity(loader);
+        Box::new(move |ev| {
+            if matches!(&ev, ResponseEvent::Response(head) if head.status.is_success() && head.mime == "text/event-stream")
+            {
+                guard.mark_event_stream();
+            }
+            sink(ev)
+        })
+    }
+
+    /// Counts one more request of `loader` until the returned guard drops.
+    fn start_activity(&self, loader: String) -> ActivityGuard {
         let generation = {
             let mut map = self.inner.activity.lock().unwrap();
             let next = map.generation + 1;
@@ -514,21 +598,7 @@ impl NetClient {
             }
             generation
         };
-        let mut guard = ActivityGuard { event_stream: false, map: self.inner.activity.clone(), loader, generation };
-        Box::new(move |ev| {
-            if !guard.event_stream
-                && matches!(&ev, ResponseEvent::Response(head) if head.status.is_success() && head.mime == "text/event-stream")
-            {
-                let mut map = guard.map.lock().unwrap();
-                if let Some((generation, activity)) = map.loaders.get_mut(&guard.loader) {
-                    if *generation == guard.generation {
-                        activity.event_streams += 1;
-                        guard.event_stream = true;
-                    }
-                }
-            }
-            sink(ev)
-        })
+        ActivityGuard { event_stream: false, map: self.inner.activity.clone(), loader, generation }
     }
 
     /// Current activity of a loader, `None` if it never started a request on
@@ -772,6 +842,9 @@ fn io_main(mut rx: mpsc::UnboundedReceiver<Cmd>, shared: Arc<Shared>, cookies: A
                         tasks2.borrow_mut().remove(&id);
                     });
                     tasks.borrow_mut().insert(id, Task { handle, sink, destination });
+                }
+                Cmd::WebSocket(job) => {
+                    tokio::task::spawn_local(websocket::run(io.shared.clone(), io.cookies.clone(), *job));
                 }
                 Cmd::Cancel(id) => {
                     // Release the map borrow before awaiting task destruction.
