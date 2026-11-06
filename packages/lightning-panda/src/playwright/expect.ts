@@ -330,22 +330,17 @@ function poll(fn: () => unknown, cfg: ExpectConfig, o: { timeout?: number; inter
   );
 }
 
-export type Expect = {
-  <T = unknown>(actual: T, messageOrOptions?: string | { message?: string }): any;
-  soft: <T = unknown>(actual: T, messageOrOptions?: string | { message?: string }) => any;
-  poll: <T = unknown>(fn: () => T | Promise<T>, options?: { timeout?: number; intervals?: number[]; message?: string }) => any;
-  configure: (o: ExpectConfig) => Expect;
-  extend: (m: Record<string, Custom>) => Expect;
-  [asymmetric: string]: any;
-};
+export type { Expect } from './expect-types.js';
+/** The implementation's view of `expect` (the public type is `Expect`). */
+type AnyExpect = any;
 
-function make(cfg: ExpectConfig): Expect {
+function make(cfg: ExpectConfig): AnyExpect {
   const message = (m?: string | { message?: string }) => (typeof m === 'string' ? m : m?.message);
-  const fn = ((actual: unknown, m?: string | { message?: string }) => matchers(actual, { ...cfg, message: message(m) ?? cfg.message }, false)) as Expect;
-  fn.soft = (actual, m) => matchers(actual, { ...cfg, soft: true, message: message(m) ?? cfg.message }, false);
-  fn.poll = (getter, o) => poll(getter, cfg, o);
-  fn.configure = (o) => make({ ...cfg, ...o });
-  fn.extend = (m) => {
+  const fn = ((actual: unknown, m?: string | { message?: string }) => matchers(actual, { ...cfg, message: message(m) ?? cfg.message }, false)) as AnyExpect;
+  fn.soft = (actual: unknown, m?: string | { message?: string }) => matchers(actual, { ...cfg, soft: true, message: message(m) ?? cfg.message }, false);
+  fn.poll = (getter: () => unknown, o?: string | { timeout?: number; intervals?: number[]; message?: string }) => poll(getter, cfg, typeof o === 'string' ? { message: o } : o);
+  fn.configure = (o: ExpectConfig) => make({ ...cfg, ...o });
+  fn.extend = (m: Record<string, Custom>) => {
     Object.assign(customMatchers, m);
     return fn;
   };
@@ -360,7 +355,7 @@ function make(cfg: ExpectConfig): Expect {
   return fn;
 }
 
-export const expect: Expect = make({});
+export const expect: import('./expect-types.js').Expect = make({});
 /** Loads Bun's expect (the runner awaits it before tests run). */
 export const ready = (globalThis as any).Bun ? jest().then(() => undefined) : Promise.resolve();
 if ((globalThis as any).Bun) bunExpect = require('bun:test').expect as unknown as BunExpect;

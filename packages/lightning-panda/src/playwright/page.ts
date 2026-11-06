@@ -25,7 +25,8 @@ import {
   urlMatches,
 } from './match.js';
 import type { BrowserContext } from './browser.js';
-import { callDeclaration, Download, ElementHandle, hasHandles, JSHandle, serializeArg, valueOf, type Sender } from './handles.js';
+import { callDeclaration, Download, ElementHandle, hasHandles, JSHandle, serializeArg, valueOf, type PageElement, type PageFunction, type PageFunctionOn, type Sender, type SmartHandle } from './handles.js';
+import { APIRequestContext } from './request.js';
 
 const SENT = new WeakMap<Cdp, Map<string, string>>();
 
@@ -99,7 +100,7 @@ export class Request {
   postDataBuffer(): Buffer | null {
     return this._data.postData === undefined ? null : Buffer.from(this._data.postData);
   }
-  postDataJSON(): unknown {
+  postDataJSON(): any {
     const d = this._data.postData;
     if (d === undefined) return null;
     try {
@@ -266,11 +267,23 @@ type ClickOptions = Timeout & {
   delay?: number;
   force?: boolean;
   modifiers?: string[];
-  noWaitAfter?: boolean;
   position?: { x: number; y: number };
   trial?: boolean;
 };
-type RoleOptions = { name?: TextMatch; exact?: boolean; [k: string]: unknown };
+/** The ARIA roles `getByRole` takes (Playwright's list). */
+export type AriaRole = 'alert'|'alertdialog'|'application'|'article'|'banner'|'blockquote'|'button'|'caption'|'cell'|'checkbox'|'code'|'columnheader'|'combobox'|'complementary'|'contentinfo'|'definition'|'deletion'|'dialog'|'directory'|'document'|'emphasis'|'feed'|'figure'|'form'|'generic'|'grid'|'gridcell'|'group'|'heading'|'img'|'insertion'|'link'|'list'|'listbox'|'listitem'|'log'|'main'|'marquee'|'math'|'meter'|'menu'|'menubar'|'menuitem'|'menuitemcheckbox'|'menuitemradio'|'navigation'|'none'|'note'|'option'|'paragraph'|'presentation'|'progressbar'|'radio'|'radiogroup'|'region'|'row'|'rowgroup'|'rowheader'|'scrollbar'|'search'|'searchbox'|'separator'|'slider'|'spinbutton'|'status'|'strong'|'subscript'|'superscript'|'switch'|'tab'|'table'|'tablist'|'tabpanel'|'term'|'textbox'|'time'|'timer'|'toolbar'|'tooltip'|'tree'|'treegrid'|'treeitem';
+type RoleOptions = {
+  name?: TextMatch;
+  exact?: boolean;
+  /** `aria-checked` / a checkbox's state; `'mixed'` for indeterminate. */
+  checked?: boolean | 'mixed';
+  pressed?: boolean | 'mixed';
+  disabled?: boolean;
+  expanded?: boolean;
+  selected?: boolean;
+  level?: number;
+  includeHidden?: boolean;
+};
 type FilePayload = { name: string; mimeType: string; buffer: Buffer };
 
 /** What `getBy*` and `locator()` build on: a page, frame, locator or frame locator. */
@@ -286,9 +299,9 @@ abstract class Scope {
         : this._child(selectorOrLocator._spec, selectorOrLocator._desc);
     return Object.keys(options).length ? loc.filter(options) : loc;
   }
-  getByRole(role: string, options: RoleOptions = {}): Locator {
+  getByRole(role: AriaRole, options: RoleOptions = {}): Locator {
     const { name, exact, checked, pressed, disabled, expanded, selected, level, includeHidden, ...rest } = options;
-    const extra = Object.keys(rest).filter((k) => rest[k] !== undefined);
+    const extra = Object.keys(rest).filter((k) => (rest as Record<string, unknown>)[k] !== undefined);
     if (extra.length) throw notSupported(`getByRole option ${extra.join(', ')}`);
     const states = clean({ checked, pressed, disabled, expanded, selected, level, includeHidden }) as Partial<LocatorSpec>;
     // `false` is a state to match, not an absent option.
@@ -401,15 +414,15 @@ export class Locator extends Scope {
     return Array.from({ length: n }, (_, i) => this.nth(i));
   }
   /** The element (waiting for exactly one), as a handle. */
-  async elementHandle(options: Timeout = {}): Promise<ElementHandle> {
+  async elementHandle(options: Timeout = {}): Promise<ElementHandle<PageElement>> {
     const h = await this._page._handleFrom('locator.elementHandle', '(el) => el', { locator: this._spec, timeout: options.timeout }, this._desc);
-    return h.asElement()!;
+    return h.asElement() as ElementHandle<PageElement>;
   }
-  async elementHandles(): Promise<ElementHandle[]> {
+  async elementHandles(): Promise<ElementHandle<PageElement>[]> {
     const list = await this._page._handleFrom('locator.elementHandles', '(els) => els', { locator: this._spec, all: true }, this._desc);
     const props = await list.getProperties();
     await list.dispose();
-    return [...props.values()].map((h) => h.asElement()).filter((h): h is ElementHandle => !!h);
+    return [...props.values()].map((h) => h.asElement()).filter((h): h is ElementHandle<PageElement> => !!h);
   }
 
   // ---- actions ----
@@ -425,7 +438,6 @@ export class Locator extends Scope {
       ...(o.button && o.button !== 'left' ? { button: o.button } : {}),
       ...(o.position ? { position: o.position } : {}),
       ...(o.force ? { force: true } : {}),
-      ...(o.noWaitAfter ? { settle: false } : {}),
     };
   }
   async click(options: ClickOptions = {}): Promise<void> {
@@ -453,21 +465,17 @@ export class Locator extends Scope {
     ];
     await this._page._run('locator.click', checks, this._desc);
   }
-  async fill(value: string, options: Timeout & { force?: boolean; noWaitAfter?: boolean } = {}): Promise<void> {
-    return this.act('fill', 'fill', options.timeout, { value: String(value), ...(options.noWaitAfter ? { settle: false } : {}) });
+  async fill(value: string, options: Timeout & { force?: boolean } = {}): Promise<void> {
+    return this.act('fill', 'fill', options.timeout, { value: String(value) });
   }
   async clear(options: Timeout = {}): Promise<void> {
     return this.act('clear', 'fill', options.timeout, { value: '' });
   }
-  async press(key: string, options: Timeout & { delay?: number; noWaitAfter?: boolean } = {}): Promise<void> {
-    return this.act('press', 'press', options.timeout, { value: key, ...(options.noWaitAfter ? { settle: false } : {}) });
+  async press(key: string, options: Timeout & { delay?: number } = {}): Promise<void> {
+    return this.act('press', 'press', options.timeout, { value: key });
   }
   async pressSequentially(text: string, options: Timeout & { delay?: number } = {}): Promise<void> {
     return this.act('pressSequentially', 'type', options.timeout, { value: text });
-  }
-  /** @deprecated Playwright's old name for `pressSequentially`. */
-  async type(text: string, options: Timeout & { delay?: number } = {}): Promise<void> {
-    return this.act('type', 'type', options.timeout, { value: text });
   }
   async check(options: Timeout & { force?: boolean; trial?: boolean } = {}): Promise<void> {
     if (options.trial) return this.trial(options.timeout);
@@ -506,7 +514,7 @@ export class Locator extends Scope {
     const wanted = list.map((v) => (typeof v === 'string' ? { valueOrLabel: v } : v));
     return this._page._call('locator.selectOption', SELECT_OPTION, { locator: this._spec, arg: wanted, timeout: options.timeout }, this._desc);
   }
-  async selectText(options: Timeout = {}): Promise<void> {
+  async selectText(options: Timeout & { force?: boolean } = {}): Promise<void> {
     await this.evaluate((el: any) => (el.select ? el.select() : getSelection()?.selectAllChildren(el)), undefined, options);
   }
   async scrollIntoViewIfNeeded(options: Timeout = {}): Promise<void> {
@@ -575,18 +583,24 @@ export class Locator extends Scope {
   async boundingBox(options: Timeout = {}): Promise<{ x: number; y: number; width: number; height: number } | null> {
     return this.read('boundingBox', 'box', options.timeout);
   }
-  async evaluate<R, A = unknown>(fn: string | ((el: any, arg: A) => R | Promise<R>), arg?: A, options: Timeout = {}): Promise<R> {
-    return this._page._call('locator.evaluate', source(fn), { locator: this._spec, arg, timeout: options.timeout }, this._desc);
+  evaluate<R, Arg, E extends PageElement = PageElement>(pageFunction: PageFunctionOn<E, Arg, R>, arg: Arg, options?: Timeout): Promise<R>;
+  evaluate<R, E extends PageElement = PageElement>(pageFunction: PageFunctionOn<E, void, R>, options?: Timeout): Promise<R>;
+  async evaluate<R, Arg, E extends PageElement = PageElement>(pageFunction: PageFunctionOn<E, Arg, R>, arg?: Arg, options: Timeout = {}): Promise<R> {
+    return this._page._call('locator.evaluate', source(pageFunction), { locator: this._spec, arg, timeout: options.timeout }, this._desc);
   }
-  async evaluateAll<R, A = unknown>(fn: string | ((els: any[], arg: A) => R | Promise<R>), arg?: A): Promise<R> {
-    return this._page._call('locator.evaluateAll', source(fn), { locator: this._spec, all: true, arg, timeout: 0 }, this._desc);
+  evaluateAll<R, Arg, E extends PageElement = PageElement>(pageFunction: PageFunctionOn<E[], Arg, R>, arg: Arg): Promise<R>;
+  evaluateAll<R, E extends PageElement = PageElement>(pageFunction: PageFunctionOn<E[], void, R>): Promise<R>;
+  async evaluateAll<R, Arg, E extends PageElement = PageElement>(pageFunction: PageFunctionOn<E[], Arg, R>, arg?: Arg): Promise<R> {
+    return this._page._call('locator.evaluateAll', source(pageFunction), { locator: this._spec, all: true, arg, timeout: 0 }, this._desc);
   }
   /** One of this module's in-page function sources, on all matches. */
   _evaluateAll<R>(fn: string, arg?: unknown): Promise<R> {
     return this._page._call('expect', fn, { locator: this._spec, all: true, arg, timeout: 0 }, this._desc);
   }
-  async evaluateHandle<A = unknown>(fn: string | ((el: any, arg: A) => unknown), arg?: A, options: Timeout = {}): Promise<JSHandle> {
-    return this._page._handleFrom('locator.evaluateHandle', source(fn), { locator: this._spec, arg, timeout: options.timeout }, this._desc);
+  evaluateHandle<R, Arg, E extends PageElement = PageElement>(pageFunction: PageFunctionOn<E, Arg, R>, arg: Arg, options?: Timeout): Promise<SmartHandle<R>>;
+  evaluateHandle<R, E extends PageElement = PageElement>(pageFunction: PageFunctionOn<E, void, R>, options?: Timeout): Promise<SmartHandle<R>>;
+  async evaluateHandle<R, Arg, E extends PageElement = PageElement>(pageFunction: PageFunctionOn<E, Arg, R>, arg?: Arg, options: Timeout = {}): Promise<SmartHandle<R>> {
+    return this._page._handleFrom('locator.evaluateHandle', source(pageFunction), { locator: this._spec, arg, timeout: options.timeout }, this._desc) as Promise<SmartHandle<R>>;
   }
   async waitFor(options: Timeout & { state?: 'attached' | 'detached' | 'visible' | 'hidden' } = {}): Promise<void> {
     const timeout = this._page._timeout(options.timeout);
@@ -647,7 +661,7 @@ export class FrameLocator {
   locator(selectorOrLocator: string | Locator, options?: FilterOptions): Locator {
     return this.scoped((s) => s.locator(selectorOrLocator, options));
   }
-  getByRole(role: string, options?: RoleOptions): Locator {
+  getByRole(role: AriaRole, options?: RoleOptions): Locator {
     return this.scoped((s) => s.getByRole(role, options));
   }
   getByText(text: TextMatch, options?: { exact?: boolean }): Locator {
@@ -673,15 +687,6 @@ export class FrameLocator {
   }
   owner(): Locator {
     return this._owner;
-  }
-  first(): FrameLocator {
-    return new FrameLocator(this._page, this._owner.first());
-  }
-  last(): FrameLocator {
-    return new FrameLocator(this._page, this._owner.last());
-  }
-  nth(index: number): FrameLocator {
-    return new FrameLocator(this._page, this._owner.nth(index));
   }
 }
 
@@ -993,7 +998,7 @@ export class Frame extends Scope {
   isDetached(): boolean {
     return this._id ? this._detached : this._page.isClosed();
   }
-  async frameElement(): Promise<ElementHandle> {
+  async frameElement(): Promise<ElementHandle<HTMLIFrameElement | HTMLFrameElement>> {
     if (!this._owner) throw new Error('frame.frameElement: the main frame has no element');
     const h = await this._page._handleFrom('frame.frameElement', '(el) => el', { locator: this._owner });
     return h.asElement()!;
@@ -1009,8 +1014,11 @@ export class Frame extends Scope {
     await this.waitForLoadState(options.waitUntil === 'domcontentloaded' || options.waitUntil === 'commit' ? 'domcontentloaded' : 'load', { timeout: ms });
     return null;
   }
-  async evaluate<R, A>(fn: string | ((arg: A) => R | Promise<R>), arg?: A): Promise<R> {
-    if (!this._owner) return this._page.evaluate(fn, arg);
+  evaluate<R, Arg>(pageFunction: PageFunction<Arg, R>, arg: Arg): Promise<R>;
+  evaluate<R>(pageFunction: PageFunction<void, R>, arg?: any): Promise<R>;
+  async evaluate<R, Arg>(pageFunction: PageFunction<Arg, R>, arg?: Arg): Promise<R> {
+    const fn = pageFunction as string | ((arg: unknown) => unknown);
+    if (!this._owner) return this._page.evaluate(pageFunction as PageFunction<unknown, R>, arg as unknown);
     const expression = typeof fn === 'string';
     return this._page._call('frame.evaluate', IN_FRAME, { locator: this._owner, arg: [expression ? fn : fn.toString(), arg ?? null, expression] });
   }
@@ -1048,14 +1056,14 @@ export class Frame extends Scope {
       await this.waitForLoadState(options.waitUntil === 'domcontentloaded' ? 'domcontentloaded' : 'load', { timeout: Math.max(1, deadline - Date.now()) });
     }
   }
-  async waitForSelector(selector: string, options: Timeout & { state?: 'attached' | 'detached' | 'visible' | 'hidden' } = {}): Promise<ElementHandle | null> {
+  async waitForSelector(selector: string, options: Timeout & { state?: 'attached' | 'detached' | 'visible' | 'hidden'; strict?: boolean } = {}): Promise<ElementHandle<PageElement> | null> {
     if (!this._id) return this._page.waitForSelector(selector, options);
     const state = options.state ?? 'visible';
     const loc = this.locator(selector);
     await (state === 'visible' ? loc.filter({ visible: true }).first() : loc.first()).waitFor(options);
     if (state === 'hidden' || state === 'detached') return null;
     const h = await this._page._handleFrom('frame.waitForSelector', state === 'visible' ? VISIBLE_FIRST : '(els) => els[0] ?? null', { locator: loc._spec, all: true });
-    return h.asElement();
+    return h.asElement() as ElementHandle<PageElement> | null;
   }
   async waitForFunction<R, A>(fn: string | ((arg: A) => R | Promise<R>), arg?: A, options: Timeout & { polling?: number | 'raf' } = {}): Promise<{ jsonValue(): Promise<R> }> {
     if (!this._id) return this._page.waitForFunction(fn, arg, options);
@@ -1068,29 +1076,32 @@ export class Frame extends Scope {
   waitForTimeout(ms: number) {
     return this._page.waitForTimeout(ms);
   }
-  async $(selector: string): Promise<ElementHandle | null> {
+  async $(selector: string): Promise<ElementHandle<PageElement> | null> {
     if (!this._id) return this._page.$(selector);
     const h = await this._page._handleFrom('frame.$', '(els) => els[0] ?? null', { locator: this.locator(selector)._spec, all: true });
-    return h.asElement();
+    return h.asElement() as ElementHandle<PageElement> | null;
   }
-  $$(selector: string): Promise<ElementHandle[]> {
+  $$(selector: string): Promise<ElementHandle<PageElement>[]> {
     if (!this._id) return this._page.$$(selector);
     return this.locator(selector).elementHandles();
   }
-  $eval<R, A>(selector: string, fn: (el: any, arg: A) => R | Promise<R>, arg?: A): Promise<R> {
-    return this.locator(selector).first().evaluate(fn, arg);
+  $eval<R, Arg, E extends PageElement = PageElement>(selector: string, pageFunction: PageFunctionOn<E, Arg, R>, arg?: Arg): Promise<R> {
+    return this.locator(selector).first().evaluate(pageFunction as PageFunctionOn<E, unknown, R>, arg as unknown);
   }
-  $$eval<R, A>(selector: string, fn: (els: any[], arg: A) => R | Promise<R>, arg?: A): Promise<R> {
-    return this.locator(selector).evaluateAll(fn, arg);
+  $$eval<R, Arg, E extends PageElement = PageElement>(selector: string, pageFunction: PageFunctionOn<E[], Arg, R>, arg?: Arg): Promise<R> {
+    return this.locator(selector).evaluateAll(pageFunction as PageFunctionOn<E[], unknown, R>, arg as unknown);
   }
-  evaluateHandle<A>(fn: string | ((arg: A) => unknown), arg?: A): Promise<JSHandle> {
-    if (!this._owner) return this._page.evaluateHandle(fn, arg);
+  evaluateHandle<R, Arg>(pageFunction: PageFunction<Arg, R>, arg: Arg): Promise<SmartHandle<R>>;
+  evaluateHandle<R>(pageFunction: PageFunction<void, R>, arg?: any): Promise<SmartHandle<R>>;
+  evaluateHandle<R, Arg>(pageFunction: PageFunction<Arg, R>, arg?: Arg): Promise<SmartHandle<R>> {
+    const fn = pageFunction as string | ((arg: unknown) => unknown);
+    if (!this._owner) return this._page.evaluateHandle(pageFunction as PageFunction<unknown, R>, arg as unknown);
     const src = typeof fn === 'function' ? fn.toString() : `() => (${fn})`;
     return this._page._handleFrom('frame.evaluateHandle', `(iframe, [src, arg]) => iframe.contentWindow.eval('(' + src + '\\n)')(arg)`, {
       locator: this._owner,
       arg: [src, arg ?? null],
       inFrame: true,
-    });
+    }) as Promise<SmartHandle<R>>;
   }
 
   /** `expect(page).toHaveURL()` and `.toHaveTitle()` from `@playwright/test`. */
@@ -1305,14 +1316,14 @@ export class Page extends Scope {
       const req = this._requests.get(p.requestId);
       if (!req) return;
       req._response = new Response(this, req, p.response);
-      this._events.emit('response', req._response);
+      this._fire('response', req._response);
     });
     on('Network.loadingFinished', (p) => {
       const req = this._requests.get(p.requestId);
       if (!req) return;
       this._requests.delete(p.requestId);
       req._finish();
-      this._events.emit('requestfinished', req);
+      this._fire('requestfinished', req);
     });
     on('Network.loadingFailed', (p) => {
       const req = this._requests.get(p.requestId);
@@ -1320,7 +1331,7 @@ export class Page extends Scope {
       this._requests.delete(p.requestId);
       req._failure = p.errorText ?? 'failed';
       req._finish();
-      this._events.emit('requestfailed', req);
+      this._fire('requestfailed', req);
     });
     // Chrome's order: created, handshake request (the page's `websocket`
     // event, as in Playwright), frames, then closed (after `socketerror` on a failure).
@@ -1340,7 +1351,7 @@ export class Page extends Scope {
     on('Runtime.consoleAPICalled', (p) => {
       const text = (p.args ?? []).map((a: any) => (a.value !== undefined ? String(a.value) : (a.description ?? a.type))).join(' ');
       const frame = p.stackTrace?.callFrames?.[0];
-      this._events.emit('console', new ConsoleMessage(this, p.type, text, { url: frame?.url ?? '', lineNumber: frame?.lineNumber ?? 0, columnNumber: frame?.columnNumber ?? 0 }));
+      this._fire('console', new ConsoleMessage(this, p.type, text, { url: frame?.url ?? '', lineNumber: frame?.lineNumber ?? 0, columnNumber: frame?.columnNumber ?? 0 }));
     });
     on('Runtime.exceptionThrown', (p) => {
       const d = p.exceptionDetails ?? {};
@@ -1478,8 +1489,8 @@ export class Page extends Scope {
     if (prev && p.redirectResponse) {
       prev._response = new Response(this, prev, p.redirectResponse);
       prev._finish();
-      this._events.emit('response', prev._response);
-      this._events.emit('requestfinished', prev);
+      this._fire('response', prev._response);
+      this._fire('requestfinished', prev);
     }
     const req = new Request(this, p.requestId, p.request, p.type ?? 'Other');
     if (prev && p.redirectResponse) {
@@ -1487,7 +1498,7 @@ export class Page extends Scope {
       prev._redirectedTo = req;
     }
     this._requests.set(p.requestId, req);
-    this._events.emit('request', req);
+    this._fire('request', req);
   }
 
   private markClosed() {
@@ -1574,25 +1585,30 @@ export class Page extends Scope {
 
   // ---- events ----
 
-  on(event: string, listener: (...args: any[]) => void): this {
+  on<K extends keyof PageEvents>(event: K, listener: (arg: PageEvents[K]) => unknown): this {
     this.enableFor(event);
-    this._events.on(event, listener);
+    this._events.on(event, listener as (...args: any[]) => void);
     if (event === 'dialog') this._syncDialogs();
     return this;
   }
-  addListener(event: string, listener: (...args: any[]) => void): this {
+  addListener<K extends keyof PageEvents>(event: K, listener: (arg: PageEvents[K]) => unknown): this {
     return this.on(event, listener);
   }
-  once(event: string, listener: (...args: any[]) => void): this {
+  once<K extends keyof PageEvents>(event: K, listener: (arg: PageEvents[K]) => unknown): this {
     this.enableFor(event);
-    this._events.once(event, listener);
+    this._events.once(event, listener as (...args: any[]) => void);
     if (event === 'dialog') this._syncDialogs();
     return this;
   }
-  off(event: string, listener: (...args: any[]) => void): this {
-    this._events.off(event, listener);
+  off<K extends keyof PageEvents>(event: K, listener: (arg: PageEvents[K]) => unknown): this {
+    this._events.off(event, listener as (...args: any[]) => void);
     if (event === 'dialog') this._syncDialogs();
     return this;
+  }
+  /** A page event that the context emits too (requests, responses, console). */
+  private _fire(event: 'request' | 'response' | 'requestfinished' | 'requestfailed' | 'console', arg: unknown): void {
+    this._events.emit(event, arg);
+    this._context._emit(event, arg);
   }
   /** Emits a page event (popups and downloads come from the browser connection). */
   _emit(event: string, arg: unknown): void {
@@ -1611,7 +1627,7 @@ export class Page extends Scope {
   get _wantsDialogs(): boolean {
     return this._dialogsBlock;
   }
-  removeListener(event: string, listener: (...args: any[]) => void): this {
+  removeListener<K extends keyof PageEvents>(event: K, listener: (arg: PageEvents[K]) => unknown): this {
     return this.off(event, listener);
   }
   removeAllListeners(event?: string): this {
@@ -1662,7 +1678,10 @@ export class Page extends Scope {
     return (this._fetch ??= this._send('Fetch.enable', { patterns: [{ urlPattern: '*' }] }).then(() => undefined));
   }
 
-  async waitForEvent(event: string, optionsOrPredicate?: ((arg: any) => boolean | Promise<boolean>) | (Timeout & { predicate?: (arg: any) => boolean | Promise<boolean> })): Promise<any> {
+  async waitForEvent<K extends keyof PageEvents>(
+    event: K,
+    optionsOrPredicate?: ((arg: PageEvents[K]) => boolean | Promise<boolean>) | (Timeout & { predicate?: (arg: PageEvents[K]) => boolean | Promise<boolean> }),
+  ): Promise<PageEvents[K]> {
     const o = typeof optionsOrPredicate === 'function' ? { predicate: optionsOrPredicate } : (optionsOrPredicate ?? {});
     this.enableFor(event);
     return this.waitEvent(`page.waitForEvent(${quote(event)})`, event, o.predicate ?? (() => true), o.timeout);
@@ -1672,7 +1691,7 @@ export class Page extends Scope {
     return new Promise<T>((resolve, reject) => {
       const done = (fn: () => void) => {
         clearTimeout(timer);
-        this._events.off(event, listener);
+        this._events.off(event, listener as (...args: any[]) => void);
         this._events.off('close', closed);
         fn();
       };
@@ -1685,11 +1704,11 @@ export class Page extends Scope {
       };
       const closed = () => event !== 'close' && done(() => reject(new Error(`${api}: Target page, context or browser has been closed`)));
       const timer = setTimeout(() => done(() => reject(new TimeoutError(`${api}: Timeout ${ms}ms exceeded while waiting for event "${event}"`))), ms);
-      this._events.on(event, listener);
+      this._events.on(event, listener as (...args: any[]) => void);
       this._events.on('close', closed);
     });
   }
-  async waitForResponse(urlOrPredicate: UrlMatch | ((r: Response) => boolean | Promise<boolean>), options: Timeout = {}): Promise<Response> {
+  async waitForResponse(urlOrPredicate: string | RegExp | ((response: Response) => boolean | Promise<boolean>), options: Timeout = {}): Promise<Response> {
     const enabled = this._enableNetwork();
     const base = this._context._options.baseURL;
     const predicate =
@@ -1701,7 +1720,7 @@ export class Page extends Scope {
     await enabled;
     return wait;
   }
-  async waitForRequest(urlOrPredicate: UrlMatch | ((r: Request) => boolean | Promise<boolean>), options: Timeout = {}): Promise<Request> {
+  async waitForRequest(urlOrPredicate: string | RegExp | ((request: Request) => boolean | Promise<boolean>), options: Timeout = {}): Promise<Request> {
     const enabled = this._enableNetwork();
     const base = this._context._options.baseURL;
     const predicate =
@@ -1817,13 +1836,13 @@ export class Page extends Scope {
   async waitForTimeout(ms: number): Promise<void> {
     await delay(ms);
   }
-  async waitForSelector(selector: string, options: Timeout & { state?: 'attached' | 'detached' | 'visible' | 'hidden' } = {}): Promise<ElementHandle | null> {
+  async waitForSelector(selector: string, options: Timeout & { state?: 'attached' | 'detached' | 'visible' | 'hidden'; strict?: boolean } = {}): Promise<ElementHandle<PageElement> | null> {
     const state = options.state ?? 'visible';
     const loc = this.locator(selector);
     await (state === 'visible' ? loc.filter({ visible: true }).first() : loc.first()).waitFor(options);
     if (state === 'hidden' || state === 'detached') return null;
     const h = await this._handleFrom('page.waitForSelector', state === 'visible' ? VISIBLE_FIRST : '(els) => els[0] ?? null', { locator: loc._spec, all: true });
-    return h.asElement();
+    return h.asElement() as ElementHandle<PageElement> | null;
   }
   async waitForFunction<R, A>(fn: string | ((arg: A) => R | Promise<R>), arg?: A, options: Timeout & { polling?: number | 'raf' } = {}): Promise<{ jsonValue(): Promise<R> }> {
     const interval = typeof options.polling === 'number' ? options.polling : 16;
@@ -1835,7 +1854,10 @@ export class Page extends Scope {
 
   // ---- content ----
 
-  async evaluate<R, A = unknown>(fn: string | ((arg: A) => R | Promise<R>), arg?: A): Promise<R> {
+  evaluate<R, Arg>(pageFunction: PageFunction<Arg, R>, arg: Arg): Promise<R>;
+  evaluate<R>(pageFunction: PageFunction<void, R>, arg?: any): Promise<R>;
+  async evaluate<R, Arg>(pageFunction: PageFunction<Arg, R>, arg?: Arg): Promise<R> {
+    const fn = pageFunction as string | ((arg: unknown) => unknown);
     if (hasHandles(arg)) return this._callOn(null, fn, arg, true) as Promise<R>;
     if (typeof fn === 'string') {
       const r = await this._run('page.evaluate', [{ eval: { expression: fn, as: 'v', timeout: this._timeout() } }]);
@@ -1843,12 +1865,15 @@ export class Page extends Scope {
     }
     return this._call('page.evaluate', fn.toString(), { arg });
   }
-  async evaluateHandle<A = unknown>(fn: string | ((arg: A) => unknown), arg?: A): Promise<JSHandle> {
-    if (hasHandles(arg)) return this._callOn(null, fn, arg, false) as Promise<JSHandle>;
+  evaluateHandle<R, Arg>(pageFunction: PageFunction<Arg, R>, arg: Arg): Promise<SmartHandle<R>>;
+  evaluateHandle<R>(pageFunction: PageFunction<void, R>, arg?: any): Promise<SmartHandle<R>>;
+  async evaluateHandle<R, Arg>(pageFunction: PageFunction<Arg, R>, arg?: Arg): Promise<SmartHandle<R>> {
+    const fn = pageFunction as string | ((arg: unknown) => unknown);
+    if (hasHandles(arg)) return this._callOn(null, fn, arg, false) as Promise<SmartHandle<R>>;
     const expression = typeof fn === 'string' ? fn : `(${fn.toString()}\n)(${arg === undefined ? 'undefined' : JSON.stringify(arg)})`;
     const r = await this._send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: false });
     if (r.exceptionDetails) throw new Error(`page.evaluateHandle: ${r.exceptionDetails.exception?.description ?? r.exceptionDetails.text}`);
-    return this._handle(r.result);
+    return this._handle(r.result) as SmartHandle<R>;
   }
   /** A remote object as a handle (an element handle for a DOM node). */
   _handle(remote: any, frame?: LocatorSpec, via?: Sender): JSHandle {
@@ -1911,18 +1936,18 @@ export class Page extends Scope {
     if (r.exceptionDetails) throw new Error(`evaluate: ${r.exceptionDetails.exception?.description ?? r.exceptionDetails.text}`);
     return byValue ? valueOf(r.result) : this._handle(r.result, self?._frame, self?._via);
   }
-  async $eval<R, A>(selector: string, fn: (el: any, arg: A) => R | Promise<R>, arg?: A): Promise<R> {
-    return this.locator(selector).first().evaluate(fn, arg);
+  async $eval<R, Arg, E extends PageElement = PageElement>(selector: string, pageFunction: PageFunctionOn<E, Arg, R>, arg?: Arg): Promise<R> {
+    return this.locator(selector).first().evaluate(pageFunction as PageFunctionOn<E, unknown, R>, arg as unknown);
   }
-  async $$eval<R, A>(selector: string, fn: (els: any[], arg: A) => R | Promise<R>, arg?: A): Promise<R> {
-    return this.locator(selector).evaluateAll(fn, arg);
+  async $$eval<R, Arg, E extends PageElement = PageElement>(selector: string, pageFunction: PageFunctionOn<E[], Arg, R>, arg?: Arg): Promise<R> {
+    return this.locator(selector).evaluateAll(pageFunction as PageFunctionOn<E[], unknown, R>, arg as unknown);
   }
   /** The first match (no waiting), or null. */
-  async $(selector: string): Promise<ElementHandle | null> {
+  async $(selector: string): Promise<ElementHandle<PageElement> | null> {
     const h = await this._handleFrom('page.$', '(els) => els[0] ?? null', { locator: this.locator(selector)._spec, all: true });
-    return h.asElement();
+    return h.asElement() as ElementHandle<PageElement> | null;
   }
-  async $$(selector: string): Promise<ElementHandle[]> {
+  async $$(selector: string): Promise<ElementHandle<PageElement>[]> {
     return this.locator(selector).elementHandles();
   }
   async title(): Promise<string> {
@@ -1942,8 +1967,8 @@ export class Page extends Scope {
       { loaded: { timeout } },
     ]);
   }
-  async addInitScript(script: string | Function | { path?: string; content?: string }, arg?: unknown): Promise<void> {
-    const source = initScriptSource(script, arg);
+  async addInitScript<Arg>(script: PageFunction<Arg, any> | { path?: string; content?: string }, arg?: Arg): Promise<void> {
+    const source = initScriptSource(script as string | Function | { path?: string; content?: string }, arg);
     if (!this._isAttached) this._pendingScripts.push(source);
     else await this._send('Page.addScriptToEvaluateOnNewDocument', { source });
   }
@@ -2078,8 +2103,17 @@ export class Page extends Scope {
   }
   async bringToFront(): Promise<void> {}
   async pause(): Promise<void> {}
-  video(): null {
+  /** Always null: lightningpanda records no video. */
+  video(): Video | null {
     return null;
+  }
+  /** API requests sharing this page's context settings (base URL, extra headers). */
+  get request(): APIRequestContext {
+    return this._context.request;
+  }
+  async setExtraHTTPHeaders(headers: { [key: string]: string }): Promise<void> {
+    await this._enableNetwork();
+    await this._send('Network.setExtraHTTPHeaders', { headers });
   }
   async opener(): Promise<null> {
     return null;
@@ -2242,6 +2276,45 @@ export class Route {
   }
 }
 
+/** Playwright's Video; `page.video()` is always null here. */
+export interface Video {
+  path(): Promise<string>;
+  saveAs(path: string): Promise<void>;
+  delete(): Promise<void>;
+}
+
+// ---- event maps ----
+
+export interface PageEvents {
+  close: Page;
+  console: ConsoleMessage;
+  dialog: Dialog;
+  domcontentloaded: Page;
+  download: Download;
+  filechooser: FileChooser;
+  frameattached: Frame;
+  framedetached: Frame;
+  framenavigated: Frame;
+  load: Page;
+  pageerror: Error;
+  popup: Page;
+  request: Request;
+  requestfailed: Request;
+  requestfinished: Request;
+  response: Response;
+  websocket: WebSocket;
+  worker: Worker;
+}
+export interface WorkerEvents {
+  close: Worker;
+}
+export interface WebSocketEvents {
+  close: WebSocket;
+  framereceived: { payload: string | Buffer };
+  framesent: { payload: string | Buffer };
+  socketerror: string;
+}
+
 // ---- workers and file choosers ----
 
 const WORKER_AUTO_ATTACH = { autoAttach: true, waitForDebuggerOnStart: false, flatten: true, filter: [{ type: 'worker', exclude: false }] };
@@ -2259,12 +2332,16 @@ export class Worker {
     return this._url;
   }
   private send = (method: string, params: object = {}) => this._cdp.send(method, params, this._sessionId);
-  async evaluate<R, A = unknown>(fn: string | ((arg: A) => R | Promise<R>), arg?: A): Promise<R> {
-    const r = await this.run(fn, arg, true);
+  evaluate<R, Arg>(pageFunction: PageFunction<Arg, R>, arg: Arg): Promise<R>;
+  evaluate<R>(pageFunction: PageFunction<void, R>, arg?: any): Promise<R>;
+  async evaluate<R, Arg>(pageFunction: PageFunction<Arg, R>, arg?: Arg): Promise<R> {
+    const r = await this.run(pageFunction as string | Function, arg, true);
     return valueOf(r) as R;
   }
-  async evaluateHandle<A = unknown>(fn: string | ((arg: A) => unknown), arg?: A): Promise<JSHandle> {
-    return this._page._handle(await this.run(fn, arg, false), undefined, this.send);
+  evaluateHandle<R, Arg>(pageFunction: PageFunction<Arg, R>, arg: Arg): Promise<SmartHandle<R>>;
+  evaluateHandle<R>(pageFunction: PageFunction<void, R>, arg?: any): Promise<SmartHandle<R>>;
+  async evaluateHandle<R, Arg>(pageFunction: PageFunction<Arg, R>, arg?: Arg): Promise<SmartHandle<R>> {
+    return this._page._handle(await this.run(pageFunction as string | Function, arg, false), undefined, this.send) as SmartHandle<R>;
   }
   private async run(fn: string | Function, arg: unknown, byValue: boolean) {
     const expression = typeof fn === 'string' ? fn : `(${fn.toString()}\n)(${arg === undefined ? 'undefined' : JSON.stringify(arg)})`;
@@ -2279,19 +2356,19 @@ export class Worker {
   isClosed(): boolean {
     return this._isClosed;
   }
-  on(event: string, listener: (...args: any[]) => void): this {
-    this._events.on(event, listener);
+  on<K extends keyof WorkerEvents>(event: K, listener: (arg: WorkerEvents[K]) => unknown): this {
+    this._events.on(event, listener as (...args: any[]) => void);
     return this;
   }
-  once(event: string, listener: (...args: any[]) => void): this {
-    this._events.once(event, listener);
+  once<K extends keyof WorkerEvents>(event: K, listener: (arg: WorkerEvents[K]) => unknown): this {
+    this._events.once(event, listener as (...args: any[]) => void);
     return this;
   }
-  off(event: string, listener: (...args: any[]) => void): this {
-    this._events.off(event, listener);
+  off<K extends keyof WorkerEvents>(event: K, listener: (arg: WorkerEvents[K]) => unknown): this {
+    this._events.off(event, listener as (...args: any[]) => void);
     return this;
   }
-  waitForEvent(event: string, o: Timeout = {}): Promise<any> {
+  waitForEvent<K extends keyof WorkerEvents>(event: K, o: Timeout = {}): Promise<WorkerEvents[K]> {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new TimeoutError(`worker.waitForEvent: Timeout exceeded waiting for "${event}"`)), o.timeout ?? 30_000);
       this._events.once(event, (v) => {
@@ -2342,22 +2419,22 @@ export class WebSocket {
     this._isClosed = true;
     this._events.emit('close', this);
   }
-  on(event: string, listener: (...args: any[]) => void): this {
-    this._events.on(event, listener);
+  on<K extends keyof WebSocketEvents>(event: K, listener: (arg: WebSocketEvents[K]) => unknown): this {
+    this._events.on(event, listener as (...args: any[]) => void);
     return this;
   }
-  addListener(event: string, listener: (...args: any[]) => void): this {
+  addListener<K extends keyof WebSocketEvents>(event: K, listener: (arg: WebSocketEvents[K]) => unknown): this {
     return this.on(event, listener);
   }
-  once(event: string, listener: (...args: any[]) => void): this {
-    this._events.once(event, listener);
+  once<K extends keyof WebSocketEvents>(event: K, listener: (arg: WebSocketEvents[K]) => unknown): this {
+    this._events.once(event, listener as (...args: any[]) => void);
     return this;
   }
-  off(event: string, listener: (...args: any[]) => void): this {
-    this._events.off(event, listener);
+  off<K extends keyof WebSocketEvents>(event: K, listener: (arg: WebSocketEvents[K]) => unknown): this {
+    this._events.off(event, listener as (...args: any[]) => void);
     return this;
   }
-  removeListener(event: string, listener: (...args: any[]) => void): this {
+  removeListener<K extends keyof WebSocketEvents>(event: K, listener: (arg: WebSocketEvents[K]) => unknown): this {
     return this.off(event, listener);
   }
   removeAllListeners(event?: string): this {
@@ -2369,7 +2446,10 @@ export class WebSocket {
    * socket closes first (unless waiting for `close`), or with a socket error
    * (unless waiting for `socketerror`), as Playwright does.
    */
-  waitForEvent(event: string, optionsOrPredicate?: ((arg: any) => boolean | Promise<boolean>) | (Timeout & { predicate?: (arg: any) => boolean | Promise<boolean> })): Promise<any> {
+  waitForEvent<K extends keyof WebSocketEvents>(
+    event: K,
+    optionsOrPredicate?: ((arg: WebSocketEvents[K]) => boolean | Promise<boolean>) | (Timeout & { predicate?: (arg: WebSocketEvents[K]) => boolean | Promise<boolean> }),
+  ): Promise<WebSocketEvents[K]> {
     const o = typeof optionsOrPredicate === 'function' ? { predicate: optionsOrPredicate } : (optionsOrPredicate ?? {});
     const predicate = o.predicate ?? (() => true);
     const ms = this._page._timeout(o.timeout);
@@ -2377,12 +2457,12 @@ export class WebSocket {
     return new Promise((resolve, reject) => {
       const done = (fn: () => void) => {
         clearTimeout(timer);
-        this._events.off(event, listener);
+        this._events.off(event, listener as (...args: any[]) => void);
         this._events.off('close', closed);
         this._events.off('socketerror', failed);
         fn();
       };
-      const listener = async (arg: unknown) => {
+      const listener = async (arg: WebSocketEvents[K]) => {
         try {
           if (await predicate(arg)) done(() => resolve(arg));
         } catch (e) {
@@ -2392,7 +2472,7 @@ export class WebSocket {
       const closed = () => event !== 'close' && done(() => reject(new Error(`${api}: Socket closed`)));
       const failed = (message: string) => event !== 'socketerror' && done(() => reject(new Error(`${api}: Socket error: ${message}`)));
       const timer = setTimeout(() => done(() => reject(new TimeoutError(`${api}: Timeout ${ms}ms exceeded while waiting for event "${event}"`))), ms);
-      this._events.on(event, listener);
+      this._events.on(event, listener as (...args: any[]) => void);
       this._events.on('close', closed);
       this._events.on('socketerror', failed);
     });

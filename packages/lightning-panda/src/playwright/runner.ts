@@ -17,6 +17,10 @@ import { devices, globalSetup, loadConfig, projectFor, runFiles, startWebServers
 import { expect, ready, setExpectDefaults } from './expect.js';
 import { TimeoutError } from './page.js';
 import { APIRequestContext, request } from './request.js';
+import type { PlaywrightTestArgs, PlaywrightTestOptions, PlaywrightWorkerArgs, PlaywrightWorkerOptions, TestDetails, TestType } from './types.js';
+
+/** The implementation's view of `test` (the public one is `TestType`). */
+type AnyTest = any;
 
 type BunTest = typeof import('bun:test');
 // Synchronous: no top-level await, so CommonJS loaders can import this module too.
@@ -525,42 +529,6 @@ function allHook(kind: 'beforeAll' | 'afterAll', fn: Function, defs: Defs, s: Sc
 
 // ---- the `test` object ----
 
-type Fixtures = Record<string, unknown>;
-type TestFn<A> = (args: A, info: TestInfo) => unknown;
-type Details = { tag?: string | string[]; annotation?: { type: string; description?: string } | { type: string; description?: string }[] };
-
-export type TestType<A = any, W = any> = {
-  (title: string, fn: TestFn<A & W>): void;
-  (title: string, details: Details, fn: TestFn<A & W>): void;
-  only: (title: string, a: any, b?: any) => void;
-  skip: (...args: any[]) => void;
-  fixme: (...args: any[]) => void;
-  fail: ((...args: any[]) => void) & { only: (...args: any[]) => void };
-  slow: (...args: any[]) => void;
-  describe: Describe;
-  beforeEach: (a: string | TestFn<A & W>, b?: TestFn<A & W>) => void;
-  afterEach: (a: string | TestFn<A & W>, b?: TestFn<A & W>) => void;
-  beforeAll: (a: string | TestFn<W>, b?: TestFn<W>) => void;
-  afterAll: (a: string | TestFn<W>, b?: TestFn<W>) => void;
-  use: (options: Partial<A & W> & Record<string, unknown>) => void;
-  step: <T>(title: string, body: (step: { skip: (c?: boolean, d?: string) => void }) => T | Promise<T>, options?: { box?: boolean; timeout?: number; location?: unknown }) => Promise<T>;
-  extend: <T extends Fixtures = {}, U extends Fixtures = {}>(fixtures: Record<string, unknown>) => TestType<A & T, W & U>;
-  info: () => TestInfo;
-  setTimeout: (ms: number) => void;
-  expect: typeof expect;
-};
-type Describe = {
-  (title: string, fn: () => void): void;
-  (fn: () => void): void;
-  (title: string, details: Details, fn: () => void): void;
-  only: Describe;
-  skip: Describe;
-  fixme: Describe;
-  serial: Describe & { only: Describe; skip: Describe };
-  parallel: Describe & { only: Describe };
-  configure: (o: { mode?: 'default' | 'serial' | 'parallel'; retries?: number; timeout?: number }) => void;
-};
-
 /** Tests declared per file: a parallel test goes to worker (its index % LP_WORKERS). */
 const declared = new Map<string, number>();
 /**
@@ -582,11 +550,11 @@ function owned(s: Scope): boolean {
   return owner === WORKER_INDEX;
 }
 
-function make(defs: Defs): TestType {
+function make(defs: Defs): AnyTest {
   const declare = (variant: 'normal' | 'only' | 'skip' | 'fixme' | 'fail', title: string, a: unknown, b?: unknown) => {
     if (!bun) throw new Error('lightning-panda: run tests with `bun test`');
     const fn = (typeof a === 'function' ? a : b) as Function;
-    const details = (typeof a === 'object' ? a : undefined) as Details | undefined;
+    const details = (typeof a === 'object' ? a : undefined) as TestDetails | undefined;
     const s = scope();
     const entry: Entry = { title, fn, scope: s, defs, details, expectFail: variant === 'fail' };
     const tags = ([] as string[]).concat(details?.tag ?? []);
@@ -629,8 +597,8 @@ function make(defs: Defs): TestType {
     scope().conditions.push({ cond: typeof cond === 'string' ? true : cond, reason: typeof cond === 'string' ? cond : reason, kind });
   };
 
-  const t = ((title: string, a: unknown, b?: unknown) => declare('normal', title, a, b)) as unknown as TestType;
-  t.only = ((title: string, a: unknown, b?: unknown) => declare('only', title, a, b)) as TestType['only'];
+  const t = ((title: string, a: unknown, b?: unknown) => declare('normal', title, a, b)) as AnyTest;
+  t.only = ((title: string, a: unknown, b?: unknown) => declare('only', title, a, b));
   t.skip = conditional('skip');
   t.fixme = conditional('fixme');
   t.fail = Object.assign(conditional('fail'), { only: (title: string, a: unknown, b?: unknown) => declare('only', title, a, b) });
@@ -655,13 +623,13 @@ function make(defs: Defs): TestType {
     if (title) bun.describe(title, body);
     else body();
   };
-  const d = describe('normal') as unknown as Describe;
-  d.only = describe('only') as unknown as Describe;
-  d.skip = describe('skip') as unknown as Describe;
-  d.fixme = describe('skip') as unknown as Describe;
-  d.serial = Object.assign(describe('serial'), { only: describe('only'), skip: describe('skip') }) as unknown as Describe['serial'];
-  d.parallel = Object.assign(describe('parallel'), { only: describe('only') }) as unknown as Describe['parallel'];
-  d.configure = (o) => {
+  const d = describe('normal') as AnyTest;
+  d.only = describe('only') as AnyTest;
+  d.skip = describe('skip') as AnyTest;
+  d.fixme = describe('skip') as AnyTest;
+  d.serial = Object.assign(describe('serial'), { only: describe('only'), skip: describe('skip') }) as AnyTest;
+  d.parallel = Object.assign(describe('parallel'), { only: describe('only') }) as AnyTest;
+  d.configure = (o: { mode?: 'default' | 'serial' | 'parallel'; retries?: number; timeout?: number }) => {
     const s = scope();
     if (o.mode) s.mode = o.mode;
     if (o.retries !== undefined) s.retries = o.retries;
@@ -675,18 +643,19 @@ function make(defs: Defs): TestType {
     if (kind === 'beforeAll' || kind === 'afterAll') allHook(kind, fn, defs, s);
     else s.hooks.push({ kind, fn, title: typeof a === 'string' ? a : undefined });
   };
-  t.beforeEach = hook('beforeEach') as TestType['beforeEach'];
-  t.afterEach = hook('afterEach') as TestType['afterEach'];
-  t.beforeAll = hook('beforeAll') as TestType['beforeAll'];
-  t.afterAll = hook('afterAll') as TestType['afterAll'];
-  t.use = (options) => Object.assign(scope().use, options);
-  t.step = async (title, body, o = {}) => {
+  t.beforeEach = hook('beforeEach');
+  t.afterEach = hook('afterEach');
+  t.beforeAll = hook('beforeAll');
+  t.afterAll = hook('afterAll');
+  t.use = (options: Record<string, unknown>) => Object.assign(scope().use, options);
+  t.step = async <T>(title: string, body: (step: { skip(c?: boolean, d?: string): void }) => T | Promise<T>, o: { timeout?: number; box?: boolean } = {}) => {
     const info = currentTest();
-    const run = () => Promise.resolve(body({ skip: (c = true, r) => info?.skip(c, r) }));
+    const run = () => Promise.resolve(body({ skip: (c = true, r?: string) => info?.skip(c, r) }));
     if (!o.timeout) return run();
     return Promise.race([run(), new Promise<never>((_, reject) => setTimeout(() => reject(new TimeoutError(`Step timeout of ${o.timeout}ms exceeded: ${title}`)), o.timeout))]);
   };
-  t.extend = (fixtures) => {
+  t.step.skip = async () => undefined;
+  t.extend = (fixtures: Record<string, unknown>) => {
     const next: Defs = new Map([...defs].map(([k, v]) => [k, [...v]]));
     for (const [name, v] of Object.entries(fixtures)) {
       const stackOf = next.get(name) ?? [];
@@ -702,7 +671,7 @@ function make(defs: Defs): TestType {
     if (!info) throw new Error('test.info() can only be called while a test is running');
     return info;
   };
-  t.setTimeout = (ms) => {
+  t.setTimeout = (ms: number) => {
     const info = currentTest();
     if (info) info.setTimeout(ms);
     else scope().timeout = ms;
@@ -712,5 +681,5 @@ function make(defs: Defs): TestType {
 }
 
 const base: Defs = new Map(Object.entries(builtins).map(([k, v]) => [k, [toDef(v)]]));
-export const test: TestType = make(base);
+export const test: TestType<PlaywrightTestArgs & PlaywrightTestOptions, PlaywrightWorkerArgs & PlaywrightWorkerOptions> = make(base);
 export { expect };

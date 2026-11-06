@@ -10,6 +10,38 @@ import { dirname } from 'node:path';
 import type { LocatorSpec } from '../steps.js';
 import type { Frame, Locator, Page } from './page.js';
 
+// ---- Playwright's function-argument typing (PageFunction, Unboxed, SmartHandle) ----
+
+type NoHandles<Arg> = Arg extends JSHandle ? never : Arg extends object ? { [Key in keyof Arg]: NoHandles<Arg[Key]> } : Arg;
+/** What a handle in an `evaluate` argument becomes in the page: its value. */
+export type Unboxed<Arg> = Arg extends ElementHandle<infer T>
+  ? T
+  : Arg extends JSHandle<infer T>
+    ? T
+    : Arg extends NoHandles<Arg>
+      ? Arg
+      : Arg extends [infer A0]
+        ? [Unboxed<A0>]
+        : Arg extends [infer A0, infer A1]
+          ? [Unboxed<A0>, Unboxed<A1>]
+          : Arg extends [infer A0, infer A1, infer A2]
+            ? [Unboxed<A0>, Unboxed<A1>, Unboxed<A2>]
+            : Arg extends [infer A0, infer A1, infer A2, infer A3]
+              ? [Unboxed<A0>, Unboxed<A1>, Unboxed<A2>, Unboxed<A3>]
+              : Arg extends Array<infer T>
+                ? Array<Unboxed<T>>
+                : Arg extends object
+                  ? { [Key in keyof Arg]: Unboxed<Arg[Key]> }
+                  : Arg;
+/** A function run in the page with `arg` (or a string expression). */
+export type PageFunction<Arg, R> = string | ((arg: Unboxed<Arg>) => R | Promise<R>);
+/** A function run in the page on `on` (an element, elements, a value) with `arg2`. */
+export type PageFunctionOn<On, Arg2, R> = string | ((on: On, arg2: Unboxed<Arg2>) => R | Promise<R>);
+/** A handle to `T`: an ElementHandle for a node, else a JSHandle. */
+export type SmartHandle<T> = T extends Node ? ElementHandle<T> : JSHandle<T>;
+/** The elements locators and element handles evaluate on. */
+export type PageElement = SVGElement | HTMLElement;
+
 /** Where a handle's CDP commands go: its page's session, or a worker's. */
 export type Sender = (method: string, params?: object) => Promise<any>;
 
@@ -56,7 +88,12 @@ export function callDeclaration(fn: string | Function, self: boolean): string {
   }`;
 }
 
-export class JSHandle {
+// The value's type, compile time only (an interface, not a `declare` field,
+// which Playwright's and other Babel transforms reject).
+export interface JSHandle<T = any> {
+  readonly __type?: T;
+}
+export class JSHandle<T = any> {
   private _disposed = false;
   constructor(
     readonly _page: Page,
@@ -72,18 +109,18 @@ export class JSHandle {
   get _objectId(): string | undefined {
     return this._remote.objectId;
   }
-  async evaluate<R, A = unknown>(fn: string | ((self: any, arg: A) => R | Promise<R>), arg?: A): Promise<R> {
-    return this._page._callOn(this, fn, arg, true) as Promise<R>;
+  async evaluate<R, Arg, O extends T = T>(pageFunction: PageFunctionOn<O, Arg, R>, arg?: Arg): Promise<R> {
+    return this._page._callOn(this, pageFunction, arg, true) as Promise<R>;
   }
-  async evaluateHandle<A = unknown>(fn: string | ((self: any, arg: A) => unknown), arg?: A): Promise<JSHandle> {
-    return this._page._callOn(this, fn, arg, false) as Promise<JSHandle>;
+  async evaluateHandle<R, Arg, O extends T = T>(pageFunction: PageFunctionOn<O, Arg, R>, arg?: Arg): Promise<SmartHandle<R>> {
+    return this._page._callOn(this, pageFunction, arg, false) as Promise<SmartHandle<R>>;
   }
-  async jsonValue(): Promise<any> {
-    if (!this._objectId) return valueOf(this._remote);
-    return this.evaluate((v: unknown) => v);
+  async jsonValue(): Promise<T> {
+    if (!this._objectId) return valueOf(this._remote) as T;
+    return this._page._callOn(this, (v: unknown) => v, undefined, true) as Promise<T>;
   }
   async getProperty(name: string): Promise<JSHandle> {
-    return this.evaluateHandle((o: any, n: string) => o[n], name);
+    return this._page._callOn(this, (o: any, n: string) => o[n], name, false) as Promise<JSHandle>;
   }
   async getProperties(): Promise<Map<string, JSHandle>> {
     const map = new Map<string, JSHandle>();
@@ -94,8 +131,15 @@ export class JSHandle {
     }
     return map;
   }
-  asElement(): ElementHandle | null {
+  asElement(): ElementHandle<any> | null {
     return null;
+  }
+  /** `fn` on this value, its JSON value (internal). */
+  protected _eval<R>(fn: (on: any, arg: any) => R, arg?: unknown): Promise<Awaited<R>> {
+    return this._page._callOn(this, fn, arg, true) as Promise<Awaited<R>>;
+  }
+  protected _evalHandle(fn: (on: any, arg: any) => unknown, arg?: unknown): Promise<JSHandle> {
+    return this._page._callOn(this, fn, arg, false) as Promise<JSHandle>;
   }
   async dispose(): Promise<void> {
     if (this._disposed || !this._objectId) return;
@@ -112,8 +156,8 @@ export class JSHandle {
 
 let marks = 0;
 
-export class ElementHandle extends JSHandle {
-  override asElement(): ElementHandle {
+export class ElementHandle<T = Node> extends JSHandle<T> {
+  override asElement(): ElementHandle<T> {
     return this;
   }
   override toString(): string {
@@ -123,7 +167,7 @@ export class ElementHandle extends JSHandle {
   /** Runs `fn` with a locator for this element (it carries a marker attribute meanwhile). */
   private async marked<T>(fn: (loc: Locator) => Promise<T>): Promise<T> {
     const id = `h${++marks}`;
-    const connected = await this.evaluate((el: Element, mark: string) => {
+    const connected = await this._eval((el: Element, mark: string) => {
       if (!el.isConnected || el.nodeType !== 1) return false;
       el.setAttribute('data-lp-handle', mark);
       return true;
@@ -132,7 +176,7 @@ export class ElementHandle extends JSHandle {
     try {
       return await fn(this._page._locatorFor({ css: `[data-lp-handle="${id}"]`, ...(this._frame ? { frame: this._frame } : {}) }, `elementHandle(${id})`));
     } finally {
-      await this.evaluate((el: Element) => el.removeAttribute('data-lp-handle')).catch(() => {});
+      await this._eval((el: Element) => el.removeAttribute('data-lp-handle')).catch(() => {});
     }
   }
 
@@ -144,7 +188,6 @@ export class ElementHandle extends JSHandle {
   hover(o?: Parameters<Locator['hover']>[0]) { return this.marked((l) => l.hover(o)); }
   fill(value: string, o?: Timeout) { return this.marked((l) => l.fill(value, o)); }
   press(key: string, o?: Timeout) { return this.marked((l) => l.press(key, o)); }
-  type(text: string, o?: Timeout) { return this.marked((l) => l.type(text, o)); }
   pressSequentially(text: string, o?: Timeout) { return this.marked((l) => l.pressSequentially(text, o)); }
   check(o?: Timeout) { return this.marked((l) => l.check(o)); }
   uncheck(o?: Timeout) { return this.marked((l) => l.uncheck(o)); }
@@ -154,7 +197,7 @@ export class ElementHandle extends JSHandle {
   selectText(o?: Timeout) { return this.marked((l) => l.selectText(o)); }
   setInputFiles(files: Parameters<Locator['setInputFiles']>[0], o?: Timeout) { return this.marked((l) => l.setInputFiles(files, o)); }
   dispatchEvent(type: string, init?: Record<string, unknown>) { return this.marked((l) => l.dispatchEvent(type, init)); }
-  scrollIntoViewIfNeeded() { return this.evaluate((el: Element) => el.scrollIntoView({ block: 'nearest', inline: 'nearest' })); }
+  scrollIntoViewIfNeeded() { return this._eval((el: Element) => el.scrollIntoView({ block: 'nearest', inline: 'nearest' })); }
   screenshot(o?: Parameters<Locator['screenshot']>[0]) { return this.marked((l) => l.screenshot(o)); }
   isVisible() { return this.marked((l) => l.isVisible()); }
   async isHidden() { return !(await this.isVisible()); }
@@ -167,19 +210,19 @@ export class ElementHandle extends JSHandle {
   // ---- reads ----
 
   getAttribute(name: string): Promise<string | null> {
-    return this.evaluate((el: Element, n: string) => el.getAttribute(n), name);
+    return this._eval((el: Element, n: string) => el.getAttribute(n), name);
   }
   textContent(): Promise<string | null> {
-    return this.evaluate((el: Node) => el.textContent);
+    return this._eval((el: Node) => el.textContent);
   }
   innerText(): Promise<string> {
-    return this.evaluate((el: HTMLElement) => el.innerText ?? el.textContent ?? '');
+    return this._eval((el: HTMLElement) => el.innerText ?? el.textContent ?? '');
   }
   innerHTML(): Promise<string> {
-    return this.evaluate((el: Element) => el.innerHTML);
+    return this._eval((el: Element) => el.innerHTML);
   }
   async boundingBox(): Promise<{ x: number; y: number; width: number; height: number } | null> {
-    return this.evaluate((el: Element) => {
+    return this._eval((el: Element) => {
       const r = el.getBoundingClientRect();
       return r.width === 0 && r.height === 0 ? null : { x: r.x, y: r.y, width: r.width, height: r.height };
     });
@@ -189,7 +232,7 @@ export class ElementHandle extends JSHandle {
   }
   /** The frame of an `<iframe>` element, else null. */
   async contentFrame(): Promise<Frame | null> {
-    const isFrame = await this.evaluate((el: Element) => el.localName === 'iframe' || el.localName === 'frame');
+    const isFrame = await this._eval((el: Element) => el.localName === 'iframe' || el.localName === 'frame');
     if (!isFrame) return null;
     await this._page._markFrames();
     const id = await this.getAttribute('data-lp-frame');
@@ -211,27 +254,27 @@ export class ElementHandle extends JSHandle {
 
   // ---- queries inside the element (CSS) ----
 
-  async $(selector: string): Promise<ElementHandle | null> {
-    const h = await this.evaluateHandle((el: Element, s: string) => el.querySelector(s), selector);
+  async $(selector: string): Promise<ElementHandle<PageElement> | null> {
+    const h = await this._evalHandle((el: Element, s: string) => el.querySelector(s), selector);
     return h.asElement();
   }
-  async $$(selector: string): Promise<ElementHandle[]> {
-    const list = await this.evaluateHandle((el: Element, s: string) => Array.from(el.querySelectorAll(s)), selector);
+  async $$(selector: string): Promise<ElementHandle<PageElement>[]> {
+    const list = await this._evalHandle((el: Element, s: string) => Array.from(el.querySelectorAll(s)), selector);
     const props = await list.getProperties();
     await list.dispose();
-    return [...props.values()].map((h) => h.asElement()).filter((h): h is ElementHandle => !!h);
+    return [...props.values()].map((h) => h.asElement()).filter((h): h is ElementHandle<PageElement> => !!h);
   }
-  async $eval<R, A>(selector: string, fn: (el: any, arg: A) => R | Promise<R>, arg?: A): Promise<R> {
+  async $eval<R, Arg, E extends PageElement = PageElement>(selector: string, fn: PageFunctionOn<E, Arg, R>, arg?: Arg): Promise<R> {
     const h = await this.$(selector);
     if (!h) throw new Error(`elementHandle.$eval: Failed to find element matching selector "${selector}"`);
     try {
-      return await h.evaluate(fn, arg);
+      return await h.evaluate(fn as PageFunctionOn<Node, Arg, R>, arg);
     } finally {
       await h.dispose();
     }
   }
-  async $$eval<R, A>(selector: string, fn: (els: any[], arg: A) => R | Promise<R>, arg?: A): Promise<R> {
-    const list = await this.evaluateHandle((el: Element, s: string) => Array.from(el.querySelectorAll(s)), selector);
+  async $$eval<R, Arg, E extends PageElement = PageElement>(selector: string, fn: PageFunctionOn<E[], Arg, R>, arg?: Arg): Promise<R> {
+    const list = await this._evalHandle((el: Element, s: string) => Array.from(el.querySelectorAll(s)), selector);
     try {
       return (await list.evaluate(fn as any, arg)) as R;
     } finally {

@@ -6,9 +6,15 @@ import { join } from 'node:path';
 import { Lightningpanda, type ConnectOptions } from '../index.js';
 import { CdpError } from '../cdp.js';
 import { urlMatches, resolveUrl, type UrlMatch } from './match.js';
-import { Download } from './handles.js';
+import { Download, type PageFunction } from './handles.js';
+import { APIRequestContext } from './request.js';
 import { HarRecorder } from './har.js';
+import { CDPSession } from './cdp-session.js';
 import {
+  Frame,
+  type ConsoleMessage,
+  type Request,
+  type Response,
   bindingName,
   bindingScript,
   harHandler,
@@ -34,20 +40,61 @@ type Cookie = {
   sameSite?: 'Strict' | 'Lax' | 'None';
 };
 type StorageState = { cookies?: Cookie[]; origins?: { origin: string; localStorage: { name: string; value: string }[] }[] };
+/** What `storageState()` returns: both lists, always. */
+type SavedState = { cookies: Cookie[]; origins: { origin: string; localStorage: { name: string; value: string }[] }[] };
 
-/** The `browser.newContext()` options this client acts on; the rest are ignored. */
-export type ContextOptions = {
+/**
+ * `browser.newContext()` options: Playwright's. The ones lightningpanda does not
+ * emulate (geolocation, permissions, locale, ...) are accepted and have no effect.
+ */
+export type BrowserContextOptions = {
   baseURL?: string;
   viewport?: { width: number; height: number } | null;
+  screen?: { width: number; height: number };
   storageState?: string | StorageState;
-  extraHTTPHeaders?: Record<string, string>;
+  extraHTTPHeaders?: { [key: string]: string };
   userAgent?: string;
   colorScheme?: 'light' | 'dark' | 'no-preference' | null;
   reducedMotion?: 'reduce' | 'no-preference' | null;
-  [option: string]: unknown;
+  forcedColors?: 'active' | 'none' | null;
+  acceptDownloads?: boolean;
+  bypassCSP?: boolean;
+  deviceScaleFactor?: number;
+  geolocation?: { latitude: number; longitude: number; accuracy?: number };
+  hasTouch?: boolean;
+  httpCredentials?: { username: string; password: string; origin?: string; send?: 'unauthorized' | 'always' };
+  ignoreHTTPSErrors?: boolean;
+  isMobile?: boolean;
+  javaScriptEnabled?: boolean;
+  locale?: string;
+  offline?: boolean;
+  permissions?: string[];
+  proxy?: { server: string; bypass?: string; username?: string; password?: string };
+  serviceWorkers?: 'allow' | 'block';
+  strictSelectors?: boolean;
+  timezoneId?: string;
+  /** Accepted; lightningpanda records no video. */
+  recordVideo?: { dir: string; size?: { width: number; height: number } };
+  /** Recorded as `routeFromHAR(path, { update: true })` does. */
+  recordHar?: { path: string; content?: 'omit' | 'embed' | 'attach'; mode?: 'full' | 'minimal'; urlFilter?: string | RegExp; omitContent?: boolean };
 };
+/** @internal */
+export type ContextOptions = BrowserContextOptions;
 
 const DEFAULT_VIEWPORT = { width: 1280, height: 720 };
+
+export interface BrowserEvents {
+  disconnected: Browser;
+}
+export interface BrowserContextEvents {
+  close: BrowserContext;
+  console: ConsoleMessage;
+  page: Page;
+  request: Request;
+  requestfailed: Request;
+  requestfinished: Request;
+  response: Response;
+}
 
 /**
  * Pages booted ahead (`use: { lightningpanda: { boot: [...] } }`): a test
@@ -183,16 +230,16 @@ export class Browser {
   browserType() {
     return { name: () => 'chromium' };
   }
-  on(event: string, listener: (...args: any[]) => void): this {
-    this._events.on(event, listener);
+  on<K extends keyof BrowserEvents>(event: K, listener: (arg: BrowserEvents[K]) => unknown): this {
+    this._events.on(event, listener as (...args: any[]) => void);
     return this;
   }
-  once(event: string, listener: (...args: any[]) => void): this {
-    this._events.once(event, listener);
+  once<K extends keyof BrowserEvents>(event: K, listener: (arg: BrowserEvents[K]) => unknown): this {
+    this._events.once(event, listener as (...args: any[]) => void);
     return this;
   }
-  off(event: string, listener: (...args: any[]) => void): this {
-    this._events.off(event, listener);
+  off<K extends keyof BrowserEvents>(event: K, listener: (arg: BrowserEvents[K]) => unknown): this {
+    this._events.off(event, listener as (...args: any[]) => void);
     return this;
   }
   async close(): Promise<void> {
@@ -233,6 +280,11 @@ export class BrowserContext {
   }
 
   async _init(): Promise<void> {
+    const har = this._options.recordHar;
+    if (har) {
+      const content = har.omitContent ? 'omit' : (har.content ?? (har.path.endsWith('.zip') ? 'attach' : 'embed'));
+      await this._recordHar(har.path, { update: true, updateContent: content, updateMode: har.mode, ...(har.urlFilter ? { url: har.urlFilter } : {}) });
+    }
     const state = this._options.storageState;
     if (!state) return;
     const s: StorageState = typeof state === 'string' ? JSON.parse(readFileSync(state, 'utf8')) : state;
@@ -318,7 +370,8 @@ export class BrowserContext {
     const viewport = page.viewportSize();
     if (fresh && viewport) setup.push(send('Emulation.setDeviceMetricsOverride', { ...viewport, deviceScaleFactor: 1, mobile: false }));
     if (o.userAgent) setup.push(send('Emulation.setUserAgentOverride', { userAgent: o.userAgent }));
-    if (this._har.some((r) => r.covers(page))) page._wants.network = true;
+    if (this._har.some((r) => r.covers(page)) || this._wants.network) page._wants.network = true;
+    if (this._wants.runtime) page._wants.runtime = true;
     if (page._wants.network || o.extraHTTPHeaders) setup.push((page._network = send('Network.enable').then(() => undefined)));
     if (o.extraHTTPHeaders) setup.push(send('Network.setExtraHTTPHeaders', { headers: o.extraHTTPHeaders }));
     if (page._wants.runtime) setup.push((page._runtime = send('Runtime.enable').then(() => undefined)));
@@ -374,8 +427,8 @@ export class BrowserContext {
     return this._browser;
   }
 
-  async addInitScript(script: string | Function | { path?: string; content?: string }, arg?: unknown): Promise<void> {
-    const source = initScriptSource(script, arg);
+  async addInitScript<Arg>(script: PageFunction<Arg, any> | { path?: string; content?: string }, arg?: Arg): Promise<void> {
+    const source = initScriptSource(script as string | Function | { path?: string; content?: string }, arg);
     this._initScripts.push(source);
     await Promise.all(this.attached().map((p) => p._send('Page.addScriptToEvaluateOnNewDocument', { source })));
   }
@@ -400,7 +453,7 @@ export class BrowserContext {
     const page = this.attached()[0];
     if (page) await page._send('Network.clearBrowserCookies');
   }
-  async storageState(o: { path?: string } = {}): Promise<StorageState> {
+  async storageState(o: { path?: string; indexedDB?: boolean } = {}): Promise<SavedState> {
     const cookies = await this.cookies();
     const origins: NonNullable<StorageState['origins']> = [];
     for (const page of this.pages()) {
@@ -466,31 +519,66 @@ export class BrowserContext {
     const noop = async () => {};
     return { start: noop, stop: noop, startChunk: noop, stopChunk: noop, group: noop, groupEnd: noop };
   }
-  async waitForEvent(event: string, o: { timeout?: number; predicate?: (arg: any) => boolean } = {}): Promise<any> {
+  async waitForEvent<K extends keyof BrowserContextEvents>(
+    event: K,
+    optionsOrPredicate: ((arg: BrowserContextEvents[K]) => boolean) | { timeout?: number; predicate?: (arg: BrowserContextEvents[K]) => boolean } = {},
+  ): Promise<BrowserContextEvents[K]> {
+    const o = typeof optionsOrPredicate === 'function' ? { predicate: optionsOrPredicate } : optionsOrPredicate;
+    this.enableFor(event);
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error(`browserContext.waitForEvent: Timeout ${o.timeout ?? 30_000}ms exceeded`)), o.timeout ?? 30_000);
       const listener = (arg: any) => {
         if (o.predicate && !o.predicate(arg)) return;
         clearTimeout(timer);
-        this._events.off(event, listener);
+        this._events.off(event, listener as (...args: any[]) => void);
         resolve(arg);
       };
-      this._events.on(event, listener);
+      this._events.on(event, listener as (...args: any[]) => void);
     });
   }
-  on(event: string, listener: (...args: any[]) => void): this {
-    this._events.on(event, listener);
+  on<K extends keyof BrowserContextEvents>(event: K, listener: (arg: BrowserContextEvents[K]) => unknown): this {
+    this.enableFor(event);
+    this._events.on(event, listener as (...args: any[]) => void);
     return this;
   }
-  once(event: string, listener: (...args: any[]) => void): this {
-    this._events.once(event, listener);
+  /** Request and console events of every page, now and later. */
+  private enableFor(event: string): void {
+    if (['request', 'response', 'requestfinished', 'requestfailed'].includes(event)) {
+      this._wants.network = true;
+      for (const p of this.pages()) void p._enableNetwork();
+    }
+    if (event === 'console') {
+      this._wants.runtime = true;
+      for (const p of this.pages()) p.on('console', () => {});
+    }
+  }
+  _wants = { network: false, runtime: false };
+  /** A page's event, re-emitted by its context. */
+  _emit(event: string, arg: unknown): void {
+    this._events.emit(event, arg);
+  }
+  once<K extends keyof BrowserContextEvents>(event: K, listener: (arg: BrowserContextEvents[K]) => unknown): this {
+    this.enableFor(event);
+    this._events.once(event, listener as (...args: any[]) => void);
     return this;
   }
-  off(event: string, listener: (...args: any[]) => void): this {
-    this._events.off(event, listener);
+  off<K extends keyof BrowserContextEvents>(event: K, listener: (arg: BrowserContextEvents[K]) => unknown): this {
+    this._events.off(event, listener as (...args: any[]) => void);
     return this;
   }
-  async close(): Promise<void> {
+  private _request?: APIRequestContext;
+  /** API requests with this context's base URL and extra headers (`context.request`, `page.request`). */
+  get request(): APIRequestContext {
+    const o = this._options;
+    return (this._request ??= new APIRequestContext({ baseURL: o.baseURL, extraHTTPHeaders: o.extraHTTPHeaders, httpCredentials: o.httpCredentials, ignoreHTTPSErrors: o.ignoreHTTPSErrors, userAgent: o.userAgent, storageState: o.storageState }));
+  }
+  /** A raw CDP session on `page` (lightningpanda's CDP: its commands, not all of Chrome's). */
+  async newCDPSession(page: Page | Frame): Promise<CDPSession> {
+    const p = page instanceof Page ? page : page.page();
+    await p._attach();
+    return new CDPSession(this.cdp, p._sessionId);
+  }
+  async close(_options: { reason?: string } = {}): Promise<void> {
     if (this._closed) return;
     this._closed = true;
     for (const recorder of this._har) await recorder.save();
@@ -524,11 +612,11 @@ export const chromium = {
   async launch(o: ConnectOptions & { bin?: string; args?: string[]; boot?: BootSpec[] } = {}): Promise<Browser> {
     return new Browser(await Lightningpanda.launch(o), true, o.boot);
   },
-  async connectOverCDP(wsEndpoint: string | { wsEndpoint: string }): Promise<Browser> {
-    const url = typeof wsEndpoint === 'string' ? wsEndpoint : wsEndpoint.wsEndpoint;
-    return new Browser(await Lightningpanda.connect(await wsUrl(url)));
+  /** A running lightningpanda's CDP endpoint (`ws://…` or `http://host:port`). */
+  async connectOverCDP(endpointURL: string, _options: { timeout?: number; headers?: Record<string, string> } = {}): Promise<Browser> {
+    return new Browser(await Lightningpanda.connect(await wsUrl(endpointURL)));
   },
-  async connect(wsEndpoint: string | { wsEndpoint: string }): Promise<Browser> {
+  async connect(wsEndpoint: string, _options: { timeout?: number; headers?: Record<string, string> } = {}): Promise<Browser> {
     return this.connectOverCDP(wsEndpoint);
   },
 };

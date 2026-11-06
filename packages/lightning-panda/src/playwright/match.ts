@@ -125,7 +125,7 @@ const unsupported = (what: string) =>
  */
 function value(body: string): { pattern: Pattern; exact: boolean } {
   const v = body.trim();
-  const re = /^\/(.*)\/([a-z]*)$/s.exec(v);
+  const re = /^\/([\s\S]*)\/([a-z]*)$/.exec(v);
   if (re) return { pattern: pattern(new RegExp(re[1], re[2].replace(/[gy]/g, ''))), exact: false };
   const q = /^(["'])((?:\\.|(?!\1)[\s\S])*)\1([is])?$/.exec(v);
   if (q) {
@@ -210,7 +210,7 @@ function roleAttrs(spec: LocatorSpec, attrs: string): LocatorSpec {
 
 /** `[placeholder="x"i]` (Playwright's `internal:attr` and `internal:testid`). */
 function attrSpec(body: string): LocatorSpec {
-  const m = /^\[\s*([a-zA-Z_:-][\w:.-]*)\s*=\s*(.*)\]$/s.exec(body.trim());
+  const m = /^\[\s*([a-zA-Z_:-][\w:.-]*)\s*=\s*([\s\S]*)\]$/.exec(body.trim());
   if (!m) throw unsupported(`attribute selector ${body}`);
   const [, name, raw] = m;
   const { pattern: p, exact } = value(raw);
@@ -384,7 +384,7 @@ function cssPart(sel: string, testIdAttribute: string): LocatorSpec {
 function part(prev: LocatorSpec | undefined, sel: string, testIdAttribute: string): LocatorSpec {
   const s = sel.trim();
   const nested = (body: string) => parseSelector(JSON.parse(body.trim()), testIdAttribute);
-  const engine = /^([a-zA-Z_:-]+)=(.*)$/s.exec(s);
+  const engine = /^([a-zA-Z_:-]+)=([\s\S]*)$/.exec(s);
   const fresh = (next: LocatorSpec) => (prev ? { ...next, within: prev } : next);
   if (engine && !/^[a-z-]+\[/.test(s)) {
     const [, name, body] = engine;
@@ -407,7 +407,7 @@ function part(prev: LocatorSpec | undefined, sel: string, testIdAttribute: strin
         return fresh({ testId: value(body).pattern as string, testIdAttribute: name });
       case 'role':
       case 'internal:role': {
-        const m = /^([a-z]+)(.*)$/s.exec(body.trim());
+        const m = /^([a-z]+)([\s\S]*)$/.exec(body.trim());
         if (!m) throw unsupported(`${name}=${body}`);
         return fresh(roleAttrs({ role: m[1] }, m[2].trim()));
       }
@@ -418,7 +418,7 @@ function part(prev: LocatorSpec | undefined, sel: string, testIdAttribute: strin
       case 'internal:attr':
         return fresh(attrSpec(body));
       case 'internal:testid': {
-        const m = /^\[\s*([^=\s]+)\s*=\s*(.*)\]$/s.exec(body.trim());
+        const m = /^\[\s*([^=\s]+)\s*=\s*([\s\S]*)\]$/.exec(body.trim());
         if (!m) throw unsupported(`${name}=${body}`);
         const id = value(m[2]).pattern;
         if (typeof id !== 'string') throw unsupported('a RegExp test id');
@@ -452,7 +452,7 @@ function part(prev: LocatorSpec | undefined, sel: string, testIdAttribute: strin
     }
   }
   if (s.startsWith('//') || s.startsWith('..') || s.startsWith('(//')) return fresh({ xpath: s });
-  if (/^["'].*["'][is]?$/s.test(s)) return fresh(textSpec(s));
+  if (/^["'][\s\S]*["'][is]?$/.test(s)) return fresh(textSpec(s));
   return fresh(cssPart(s, testIdAttribute));
 }
 

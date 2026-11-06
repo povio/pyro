@@ -8,9 +8,15 @@
     "url": "git+https://github.com/povio/lightningpanda.git",
     "directory": "packages/lightning-panda"
   },
-  "engines": { "node": ">=22" },
-  "publishConfig": { "access": "public" },
-  "bin": { "lightningpanda": "./dist/cli.js" },
+  "engines": {
+    "node": ">=22"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "bin": {
+    "lightningpanda": "./dist/cli.js"
+  },
   "type": "module",
   "exports": {
     ".": {
@@ -44,7 +50,8 @@
     "test:package": "bun test test/binary.test.ts && node --test ../../scripts/npm/release.test.mjs",
     "test": "bun test ./test",
     "test:playwright": "bun src/cli.ts test -c test/playwright/playwright.config.ts",
-    "test:parity": "PW_ENGINE=chromium-cdp playwright test -c test/playwright"
+    "test:parity": "PW_ENGINE=chromium-cdp playwright test -c test/playwright",
+    "test:types": "tsc -p tsconfig.types.json"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

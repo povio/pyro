@@ -9,7 +9,7 @@
 // Playwright.
 import { TimeoutError } from './page.js';
 
-export { chromium, Browser, BrowserContext, type BootSpec, type ContextOptions } from './browser.js';
+export { chromium, Browser, BrowserContext, type BootSpec, type BrowserContextOptions } from './browser.js';
 export {
   Page,
   Frame,
@@ -30,8 +30,9 @@ export {
 export { JSHandle, ElementHandle, Download } from './handles.js';
 export { APIRequestContext, APIResponse, request } from './request.js';
 export { TestInfo } from './context.js';
-export { defineConfig, devices, type PlaywrightTestConfig } from './config.js';
-export { test, expect, type TestType } from './runner.js';
+export { defineConfig, devices } from './config.js';
+export { test, expect } from './runner.js';
+export type * from './types.js';
 export const errors = { TimeoutError };
 /** Playwright's `selectors`: the test id attribute is the `testIdAttribute` option here. */
 export const selectors = {
@@ -41,4 +42,3 @@ export const selectors = {
   },
 };
 export type BrowserType = typeof import('./browser.js').chromium;
-export type Config = import('./config.js').PlaywrightTestConfig;

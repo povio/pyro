@@ -9,6 +9,7 @@ import { existsSync, readdirSync, statSync } from 'node:fs';
 import { connect } from 'node:net';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import type { KeyValue, PlaywrightTestConfig as Typed } from './types.js';
 
 export type WebServer = {
   command: string;
@@ -36,8 +37,8 @@ export type PlaywrightTestConfig = Project & {
 };
 
 /** Playwright's `defineConfig`: later configs override earlier ones (`use` and `expect` merged). */
-export function defineConfig(...configs: PlaywrightTestConfig[]): PlaywrightTestConfig {
-  return configs.reduce<PlaywrightTestConfig>((a, b) => ({ ...a, ...b, use: { ...(a.use ?? {}), ...(b.use ?? {}) }, expect: { ...(a.expect ?? {}), ...(b.expect ?? {}) } }), {});
+export function defineConfig<T extends KeyValue = {}, W extends KeyValue = {}>(config: Typed<T, W>, ...overrides: Typed<T, W>[]): Typed<T, W> {
+  return [config, ...overrides].reduce<Typed<T, W>>((a, b) => ({ ...a, ...b, use: { ...(a.use ?? {}), ...(b.use ?? {}) } as Typed<T, W>['use'], expect: { ...(a.expect ?? {}), ...(b.expect ?? {}) } }), {} as Typed<T, W>);
 }
 
 const chromeUA = (v: string) => `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${v} Safari/537.36`;

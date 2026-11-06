@@ -217,6 +217,20 @@ Also covered:
   `framereceived`, `socketerror`, `close`, `waitForEvent`); an open socket
   does not hold up an action's settling
 
+- `context.newCDPSession(page)`, `page.request`/`context.request`, context
+  events (`request`, `response`, `console`, `page`, `close`) and
+  `recordHar` in the context options
+
+Types are Playwright's own shapes, checked by `bun run test:types`:
+`expect()` offers Locator, Page or APIResponse matchers by what it is given
+(`toPass` only on functions), `expect.extend` matchers are typed from their
+arguments, `getByRole` takes the ARIA role union, and `evaluate`/`$eval`
+infer argument and return types. Deprecated APIs (`locator.type`,
+`elementHandle.type`, `noWaitAfter`, `page.accessibility`, FrameLocator
+`first`/`last`/`nth`) are left out, so using one is a type error. Not
+implemented yet: `page.clock`, `page.coverage`, `toMatchSnapshot` and ARIA
+snapshots.
+
 Not supported (a clear error): the deprecated layout pseudo-classes
 (`:left-of()`, `:right-of()`, `:above()`, `:below()`, `:near()`); a `+` or `~`
 combinator right after a Playwright pseudo-class.
