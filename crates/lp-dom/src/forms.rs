@@ -380,7 +380,7 @@ impl Dom {
                 }
                 false
             }
-            _ => false,
+            _ => self.face_disabled_idx(idx),
         }
     }
     pub fn is_disabled(&self, id: NodeId) -> DomResult<bool> {
@@ -1242,6 +1242,7 @@ impl Dom {
                 e.attr_local(&local_name!("type")).map(|t| t.to_ascii_lowercase()).as_deref(),
                 Some("reset" | "button")
             ),
+            _ if self.is_face_idx(i) => return Ok(self.face_will_validate_idx(i)),
             _ => false,
         };
         if !listed
@@ -1268,6 +1269,9 @@ impl Dom {
             return Ok(v);
         }
         let i = self.check(id)?;
+        if self.is_face_idx(i) {
+            return Ok(self.face_validity_idx(i));
+        }
         let e = self.n(i).element().unwrap();
         let local = self.html_local(i).map(|l| l.to_string()).unwrap_or_default();
         v.custom_error =

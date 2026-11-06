@@ -185,6 +185,8 @@ pub struct Dom {
     pub(crate) iframes: crate::iframe::IframeQueue,
     /// Custom element callback reactions awaiting the bindings (`custom`).
     pub(crate) reactions: crate::custom::ReactionQueue,
+    /// `ElementInternals` state (`internals`).
+    pub(crate) internals: crate::internals::InternalsStore,
     /// Modal dialogs and showing popovers (`top_layer`).
     pub(crate) top_layer: crate::top_layer::TopLayer,
     /// Nonces hidden from content attributes (`nonce`).
@@ -246,6 +248,7 @@ impl Dom {
             resources: Default::default(),
             iframes: Default::default(),
             reactions: Default::default(),
+            internals: Default::default(),
             top_layer: Default::default(),
             nonces: Default::default(),
             natural_sizes: Default::default(),
@@ -976,7 +979,13 @@ impl Dom {
         Ok(self.id_of(sr))
     }
 
-    fn new_shadow_root(&mut self, h: u32, mode: ShadowRootMode, flags: u8) -> u32 {
+    fn new_shadow_root(&mut self, h: u32, mode: ShadowRootMode, mut flags: u8) -> u32 {
+        // A custom host makes it available to its internals; a
+        // precustomized one (its constructor running) is the bindings' to
+        // tell, with the flag.
+        if self.n(h).element().is_some_and(|e| e.flags & element_flags::CUSTOM_DEFINED != 0) {
+            flags |= shadow_flags::AVAILABLE_TO_INTERNALS;
+        }
         let owner = self.n(h).owner_doc;
         let sr = self.alloc(NodeKind::Fragment(FragmentData::new(h, Some(mode), flags)), owner);
         let tree = self.shadow_root_flags_for(h);
@@ -1923,6 +1932,9 @@ impl Dom {
         for &k in nodes {
             self.resources_after_insert(k);
             self.picture_images_changed(parent, k);
+            if self.internals.faces != 0 {
+                self.faces_after_tree_change(k);
+            }
             if connected {
                 self.note_connected_listeners(k);
                 self.enqueue_custom_reactions(k, crate::custom::CustomReaction::Connected);
@@ -2004,9 +2016,7 @@ impl Dom {
         self.picture_images_changed(parent, node);
         self.options_before_remove(node);
         self.top_layer_before_remove(node);
-        if self.reactions.any_custom && self.is_connected_idx(parent) {
-            self.enqueue_custom_reactions(node, crate::custom::CustomReaction::Disconnected);
-        }
+        let disconnect = self.reactions.any_custom && self.is_connected_idx(parent);
         self.note_removal(node);
         self.add_transient_observers(parent, node);
         if !self.live_ranges.is_empty() {
@@ -2016,6 +2026,13 @@ impl Dom {
             self.iterators_before_remove(node);
         }
         self.unlink(node);
+        // Removing steps (form owners) come before disconnectedCallback.
+        if self.internals.faces != 0 {
+            self.faces_after_tree_change(node);
+        }
+        if disconnect {
+            self.enqueue_custom_reactions(node, crate::custom::CustomReaction::Disconnected);
+        }
         self.slots_after_child_change(parent, &[node]);
         self.unfocus_removed(node);
         self.bump_tree();
@@ -2094,6 +2111,9 @@ impl Dom {
                 // Attr nodes share their element's node document.
                 stack.extend_from_slice(self.attr_nodes_of(i));
             }
+        }
+        if self.reactions.any_custom {
+            self.enqueue_adopted(node, old, doc);
         }
         self.doc_data_mut(old).owned -= moved;
         self.doc_data_mut(doc).owned += moved;
@@ -2309,7 +2329,7 @@ impl Dom {
         if src_sr != NIL {
             if let NodeKind::Fragment(FragmentData { shadow: Some(mode), flags, .. }) = self.n(src_sr).kind {
                 if flags & shadow_flags::CLONABLE != 0 {
-                    let dst_sr = self.new_shadow_root(copy, mode, flags);
+                    let dst_sr = self.new_shadow_root(copy, mode, flags & !shadow_flags::AVAILABLE_TO_INTERNALS);
                     let kids: Vec<u32> = self.child_idx_iter(src_sr).collect();
                     for k in kids {
                         let kc = self.clone_idx(k, doc, true)?;
@@ -2511,6 +2531,10 @@ impl Dom {
             self.note(Change::attr(i, &name));
         }
         self.queue_attribute(i, &name, Some(&old));
+        self.attribute_changed(i, &name, Some(&old), Some(value));
+        if self.internals.faces != 0 {
+            self.faces_after_attr(&name);
+        }
         self.announce_named_attr(i, &name);
         if !drives_element_behaviour(&name) {
             return;
@@ -2527,6 +2551,10 @@ impl Dom {
         self.bump_tree();
         self.note(Change::attr(i, &name));
         self.queue_attribute(i, &name, None);
+        self.attribute_changed(i, &name, None, Some(value));
+        if self.internals.faces != 0 {
+            self.faces_after_attr(&name);
+        }
         self.announce_named_attr(i, &name);
         if !drives_element_behaviour(&name) {
             return;
@@ -2567,6 +2595,10 @@ impl Dom {
         self.bump_tree();
         self.note(Change::attr(i, &attr.name));
         self.queue_attribute(i, &attr.name, Some(&attr.value));
+        self.attribute_changed(i, &attr.name, Some(&attr.value), None);
+        if self.internals.faces != 0 {
+            self.faces_after_attr(&attr.name);
+        }
         if !drives_element_behaviour(&attr.name) {
             return;
         }
@@ -3196,6 +3228,9 @@ impl Dom {
         self.mutation.forget_node(i);
         self.events.forget(crate::events::TargetKey::Node(i));
         self.forget_attr_nodes(i);
+        if !self.internals.is_empty() {
+            self.forget_internals(i);
+        }
         if !self.creation_docs.is_empty() {
             self.creation_docs.remove(&i);
         }

@@ -504,6 +504,7 @@ impl<'a, C: CxSource<'a>> selectors::Element for SNode<'a, C> {
             N::Modal => self.matches(PseudoClass::Modal),
             N::PopoverOpen => self.cx().popovers.contains(&self.i()) || self.matches(PseudoClass::PopoverOpen),
             N::Lang(lang) => self.match_element_lang(None, lang),
+            N::CustomState(state) => self.cx().dom.has_custom_state_idx(self.i(), &state.0 .0),
             _ => false,
         }
     }
@@ -563,8 +564,8 @@ impl<'a, C: CxSource<'a>> selectors::Element for SNode<'a, C> {
         let p = self.node().parent;
         p != NIL && matches!(self.cx().dom.n(p).kind, NodeKind::Document(_))
     }
-    fn has_custom_state(&self, _name: &AtomIdent) -> bool {
-        false
+    fn has_custom_state(&self, name: &AtomIdent) -> bool {
+        self.cx().dom.has_custom_state_idx(self.i(), &name.0)
     }
     fn add_element_unique_hashes(&self, filter: &mut BloomFilter) -> bool {
         each_relevant_element_hash(*self, |hash| filter.insert_hash(hash & BLOOM_HASH_MASK));

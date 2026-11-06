@@ -387,6 +387,13 @@ impl Dom {
                             valueless: false,
                         });
                     }
+                    if let Some(states) = self.render_custom_states(n) {
+                        attrs.push(RAttr {
+                            name: Cow::Owned(QualName::new(None, STATE_NS.into(), "custom-states".into())),
+                            value: Cow::Owned(states),
+                            valueless: false,
+                        });
+                    }
                     let tag = self.serialized_tag(n);
                     let void = html && is_void(local);
                     sink.open(render_key(id), &tag, &e.name, &attrs, mark == Some(n), void);
@@ -676,7 +683,8 @@ impl Dom {
         let kind = e.is_html()
             && (control
                 || matches!(local, "form" | "fieldset" | "option" | "optgroup" | "details" | "dialog")
-                || e.attr("popover").is_some());
+                || e.attr("popover").is_some()
+                || e.flags & crate::node::element_flags::FORM_ASSOCIATED != 0);
         let editable = e.attr("contenteditable").is_some();
         // An image button (`<input type=image>`) is laid out like `<img>`:
         // its natural size travels the same way.

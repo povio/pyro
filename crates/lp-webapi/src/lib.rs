@@ -43,6 +43,7 @@ mod image_decode;
 pub mod indexeddb;
 pub mod input;
 mod integrity;
+mod internals;
 pub mod intersection_observer;
 pub mod layout_api;
 pub mod lifecycle;
@@ -124,6 +125,7 @@ pub fn register(engine: &lp_js::Engine) {
     media_source::register(engine);
     worker::register(engine);
     custom::register(engine);
+    internals::register(engine);
     file::register(engine);
     engine.register::<file_reader::FileReader>();
     data_transfer::register(engine);

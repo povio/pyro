@@ -188,6 +188,10 @@ pub mod shadow_flags {
     pub const MANUAL_SLOTS: u8 = 8;
     /// Made by the parser and not yet claimed by `attachShadow`.
     pub const DECLARATIVE: u8 = 16;
+    /// "Available to element internals": attached while the host was a
+    /// custom element (state "precustomized" or "custom"), so
+    /// `ElementInternals.shadowRoot` returns it.
+    pub const AVAILABLE_TO_INTERNALS: u8 = 32;
 }
 
 /// Mutable form-control state that is not reflected in attributes.
@@ -250,6 +254,15 @@ pub mod element_flags {
     pub const FRAGMENT_PARSED: u8 = 4;
     /// Custom element has been defined/upgraded (`:defined`).
     pub const CUSTOM_DEFINED: u8 = 8;
+    /// The element's custom element definition observes attributes
+    /// (`observedAttributes` with an `attributeChangedCallback`): attribute
+    /// changes queue reactions. Unset, an attribute change pays one test.
+    pub const OBSERVES_ATTRIBUTES: u8 = 16;
+    /// Custom element state "failed": its constructor threw, so it is
+    /// never upgraded again.
+    pub const CUSTOM_FAILED: u8 = 32;
+    /// A form-associated custom element (`static formAssociated = true`).
+    pub const FORM_ASSOCIATED: u8 = 64;
 }
 
 impl ElementData {

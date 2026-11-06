@@ -6,6 +6,7 @@ mod activation_js;
 mod attr_nodes_js;
 mod collections_js;
 mod crypto_js;
+mod custom_elements_js;
 mod document_root_element_js;
 mod dom_js;
 mod error_events_js;

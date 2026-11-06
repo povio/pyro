@@ -194,6 +194,7 @@ fn form_entries_with_charset(
                 let v = dom.value(c).unwrap_or_default().replace('\n', "\r\n");
                 out.push((name, EntryValue::Text(v)));
             }
+            _ if dom.is_form_associated(c) => crate::internals::face_entries(&dom, c, &mut out),
             _ => {}
         }
     }

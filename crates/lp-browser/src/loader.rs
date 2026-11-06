@@ -843,27 +843,33 @@ impl Browser {
     /// Runs the parser until it blocks on a script or finishes.
     fn continue_parsing(&mut self, page: FrameKey) {
         loop {
-            let step = {
+            // The parser runs with no borrow of the frame state held: it
+            // runs custom element constructors and callbacks (HTML "create
+            // an element for a token"), which may reach the frame tree.
+            let (mut parser, phase, loader_id) = {
                 let Some(mut guard) = self.load_mut(page) else { return };
                 let load = &mut *guard;
-                if load.blocked || load.parsing_done {
+                if load.blocked || load.parsing_done || matches!(load.phase, ParsePhase::Done) {
                     return;
                 }
-                let Some(parser) = load.parser.as_mut() else { return };
-                match std::mem::replace(&mut load.phase, ParsePhase::Resume) {
-                    ParsePhase::Feed(body) => parser.feed_bytes(&body),
-                    ParsePhase::Resume => parser.resume(),
-                    ParsePhase::Finish => {
-                        load.phase = ParsePhase::FinishResume;
-                        parser.finish_bytes()
-                    }
-                    ParsePhase::FinishResume => {
-                        load.phase = ParsePhase::FinishResume;
-                        parser.resume()
-                    }
-                    ParsePhase::Done => return,
-                }
+                let Some(parser) = load.parser.take() else { return };
+                let next = match load.phase {
+                    ParsePhase::Finish | ParsePhase::FinishResume => ParsePhase::FinishResume,
+                    _ => ParsePhase::Resume,
+                };
+                (parser, std::mem::replace(&mut load.phase, next), load.loader_id.clone())
             };
+            let step = match phase {
+                ParsePhase::Feed(body) => parser.feed_bytes(&body),
+                ParsePhase::Resume | ParsePhase::FinishResume => parser.resume(),
+                ParsePhase::Finish => parser.finish_bytes(),
+                ParsePhase::Done => unreachable!("checked above"),
+            };
+            match self.load_mut(page) {
+                // A constructor may have started another document's load.
+                Some(mut load) if load.loader_id == loader_id => load.parser = Some(parser),
+                _ => return,
+            }
             self.drain_dom_resources(page);
             match step {
                 ParseStep::Script(node) => self.parser_reached_script(page, node),

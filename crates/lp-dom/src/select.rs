@@ -141,6 +141,8 @@ pub enum PseudoClass {
     Open,
     Modal,
     PopoverOpen,
+    /// `:state(ident)`: a custom state of the element's `CustomStateSet`.
+    State(Atom),
 }
 
 impl ToCss for PseudoClass {
@@ -149,10 +151,15 @@ impl ToCss for PseudoClass {
         match self {
             Lang(r) => return write!(dest, ":lang({r})"),
             Dir(d) => return write!(dest, ":dir({d})"),
+            State(s) => {
+                dest.write_str(":state(")?;
+                cssparser::serialize_identifier(s, dest)?;
+                return dest.write_str(")");
+            }
             _ => {}
         }
         dest.write_str(match self {
-            Lang(_) | Dir(_) => unreachable!(),
+            Lang(_) | Dir(_) | State(_) => unreachable!(),
             AnyLink => ":any-link",
             Link => ":link",
             Visited => ":visited",
@@ -298,6 +305,9 @@ impl<'i> selectors::parser::Parser<'i> for SelParser<'_> {
         if name.eq_ignore_ascii_case("dir") {
             let d = parser.expect_ident()?.to_ascii_lowercase();
             return Ok(PseudoClass::Dir(d.into()));
+        }
+        if name.eq_ignore_ascii_case("state") {
+            return Ok(PseudoClass::State(Atom::from(parser.expect_ident()?.as_ref())));
         }
         Err(ParseError::custom(SelectorParseErrorKind::UnsupportedPseudoClassOrElement))
     }
@@ -753,8 +763,8 @@ impl selectors::Element for ElemRef<'_> {
             CaseSensitivity::AsciiCaseInsensitive => classes.iter().any(|c| c.eq_ignore_ascii_case(&name.0)),
         }
     }
-    fn has_custom_state(&self, _name: &CssIdent) -> bool {
-        false
+    fn has_custom_state(&self, name: &CssIdent) -> bool {
+        self.dom.has_custom_state_idx(self.idx, &name.0)
     }
     fn imported_part(&self, _name: &CssIdent) -> Option<CssIdent> {
         None
@@ -819,7 +829,8 @@ impl Dom {
             Checked => self.checkedness_idx(idx) || self.option_selected_idx(idx),
             Indeterminate => e.control.as_ref().is_some_and(|c| c.indeterminate),
             Disabled => self.is_disabled_idx(idx),
-            Enabled => self.is_form_control_idx(idx) && !self.is_disabled_idx(idx),
+            Enabled => (self.is_form_control_idx(idx) || self.is_face_idx(idx)) && !self.is_disabled_idx(idx),
+            State(s) => self.has_custom_state_idx(idx, s),
             Required => self.is_form_control_idx(idx) && e.attr_local(&local_name!("required")).is_some(),
             Optional => self.is_form_control_idx(idx) && e.attr_local(&local_name!("required")).is_none(),
             ReadWrite => self.is_mutable_text_idx(idx),

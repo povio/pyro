@@ -44,6 +44,16 @@ struct Sink<A: DomAccess> {
     doc: u32,
     /// Flags applied to every created element.
     elem_flags: u8,
+    /// The main document parser (scripting enabled): elements of defined
+    /// custom element names are constructed synchronously and the
+    /// reactions its insertions queue run at once (HTML "create an element
+    /// for a token", "insert an element at the adjusted insertion location").
+    sync_custom: bool,
+    /// Elements of a defined name created for a token, with the token's
+    /// attributes: constructed (or, in inert template contents, given their
+    /// attributes) when the parser inserts them, which is when their
+    /// intended parent, and so their node document, is known.
+    pending_custom: RefCell<Vec<(u32, Vec<Attribute>)>>,
     quirks: Cell<Option<QuirksMode>>,
     /// First element created (the fragment parser's context element).
     first_created: Cell<u32>,
@@ -56,7 +66,7 @@ struct Sink<A: DomAccess> {
 }
 
 impl<A: DomAccess> Sink<A> {
-    fn new(dom: A, doc: u32, elem_flags: u8) -> Self {
+    fn new(dom: A, doc: u32, elem_flags: u8, sync_custom: bool) -> Self {
         let id = dom.with(|d| {
             let id = d.id_of(doc);
             d.add_ref(id).expect("parser document");
@@ -66,6 +76,8 @@ impl<A: DomAccess> Sink<A> {
             dom,
             doc,
             elem_flags,
+            sync_custom,
+            pending_custom: RefCell::new(Vec::new()),
             quirks: Cell::new(None),
             first_created: Cell::new(NIL),
             pins: RefCell::new(vec![id]),
@@ -74,6 +86,16 @@ impl<A: DomAccess> Sink<A> {
     }
 
     fn release_pins(&self) {
+        // Elements of defined names the parser never inserted keep their
+        // token's attributes.
+        let pending = self.pending_custom.take();
+        if !pending.is_empty() {
+            self.dom.with(|d| {
+                for (n, attrs) in pending {
+                    d.set_parsed_attributes(n, attrs.into_iter().map(|a| (a.name, a.value.to_string())).collect());
+                }
+            });
+        }
         let pins = self.pins.take();
         self.dom.with(|d| d.release_parser_pins(pins));
     }
@@ -126,6 +148,14 @@ fn insert_node(dom: &mut Dom, parent: u32, before: u32, child: NodeOrText<u32>) 
             dom.link_raw(n, parent, before);
             dom.queue_child_list(parent, &[n], &[], prev, before);
             dom.resources_after_parser_insert(n);
+            if dom.internals.faces != 0 {
+                dom.faces_after_tree_change(n);
+            }
+            // Elements of defined names were constructed before their
+            // insertion (`Sink::settle_custom`): no upgrade candidates here.
+            if dom.is_connected_idx(parent) {
+                dom.enqueue_custom_reactions(n, crate::custom::CustomReaction::Connected);
+            }
         }
     }
 }
@@ -147,6 +177,8 @@ impl<A: DomAccess> TreeSink for Sink<A> {
         ElemNameRef(self.dom.with(|d| d.n(*target).element().map(|e| e.name.clone())).expect("element"))
     }
     fn create_element(&self, name: QualName, attrs: Vec<Attribute>, flags: ElementFlags) -> u32 {
+        let custom = self.sync_custom && !flags.template && self.dom.with(|d| d.parser_may_construct(self.doc, &name));
+        let (attrs, held) = if custom { (Vec::new(), Some(attrs)) } else { (attrs, None) };
         let created = self.dom.with(|d| {
             let owner = self.doc_owner(d);
             d.base_seen |= name.local == local_name!("base");
@@ -170,6 +202,9 @@ impl<A: DomAccess> TreeSink for Sink<A> {
         if self.first_created.get() == NIL {
             self.first_created.set(created);
         }
+        if let Some(attrs) = held {
+            self.pending_custom.borrow_mut().push((created, attrs));
+        }
         created
     }
     fn create_comment(&self, text: StrTendril) -> u32 {
@@ -191,7 +226,9 @@ impl<A: DomAccess> TreeSink for Sink<A> {
         })
     }
     fn append(&self, parent: &u32, child: NodeOrText<u32>) {
+        self.settle_custom(*parent, &child);
         self.dom.with(|d| insert_node(d, *parent, NIL, child));
+        self.run_custom_reactions();
     }
     fn append_based_on_parent_node(&self, element: &u32, prev_element: &u32, child: NodeOrText<u32>) {
         let has_parent = self.dom.with(|d| d.n(*element).parent != NIL);
@@ -252,12 +289,19 @@ impl<A: DomAccess> TreeSink for Sink<A> {
         });
     }
     fn append_before_sibling(&self, sibling: &u32, new_node: NodeOrText<u32>) {
+        let parent = self.dom.with(|d| d.n(*sibling).parent);
+        if parent == NIL {
+            return;
+        }
+        self.settle_custom(parent, &new_node);
         self.dom.with(|d| {
+            // The constructor may have moved the sibling.
             let parent = d.n(*sibling).parent;
             if parent != NIL {
                 insert_node(d, parent, *sibling, new_node);
             }
         });
+        self.run_custom_reactions();
     }
     fn add_attrs_if_missing(&self, target: &u32, attrs: Vec<Attribute>) {
         self.dom.with(|d| {
@@ -331,6 +375,55 @@ impl<A: DomAccess> TreeSink for Sink<A> {
 impl<A: DomAccess> Sink<A> {
     fn doc_owner(&self, d: &Dom) -> u32 {
         d.n(self.doc).owner_doc
+    }
+
+    /// HTML "create an element for a token" for an element of a defined
+    /// name, run as the parser inserts it into `parent`: in the document
+    /// (not inert template contents), its definition's constructor runs now
+    /// (no DOM borrow is held), then the token's attributes are appended
+    /// and their reactions run; elsewhere it just gets its attributes.
+    fn settle_custom(&self, parent: u32, child: &NodeOrText<u32>) {
+        let NodeOrText::AppendNode(n) = child else { return };
+        let attrs = {
+            let mut pending = self.pending_custom.borrow_mut();
+            if pending.is_empty() {
+                return;
+            }
+            let Some(k) = pending.iter().position(|(p, _)| p == n) else { return };
+            pending.swap_remove(k).1
+        };
+        let n = *n;
+        let attrs: Vec<(QualName, String)> = attrs.into_iter().map(|a| (a.name, a.value.to_string())).collect();
+        let hooks = self.dom.with(|d| {
+            let name = d.n(n).element().map(|e| e.name.clone())?;
+            (d.n(parent).owner_doc == self.doc).then(|| d.parser_custom_elements(self.doc, &name)).flatten()
+        });
+        let constructed = match hooks {
+            Some(hooks) => {
+                let el = self.dom.with(|d| d.id_of(n));
+                matches!(hooks.construct(el, &attrs), crate::custom::ParserConstruct::Constructed)
+            }
+            None => false,
+        };
+        if !constructed {
+            self.dom.with(|d| d.set_parsed_attributes(n, attrs));
+        }
+    }
+
+    /// The element queue of a parser insertion: the reactions it queued
+    /// run before parsing goes on (main document parser only).
+    fn run_custom_reactions(&self) {
+        if !self.sync_custom {
+            return;
+        }
+        let doc = self.doc;
+        let hooks = self.dom.with(|d| {
+            let hooks = d.parser_reactions_pending(doc)?;
+            matches!(&d.n(doc).kind, NodeKind::Document(data) if data.active).then_some(hooks)
+        });
+        if let Some(hooks) = hooks {
+            hooks.run_reactions();
+        }
     }
 }
 
@@ -424,7 +517,7 @@ fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
 impl DocumentParser {
     pub fn new(dom: DomRef, doc: NodeId, scripting: bool) -> DomResult<Self> {
         let d = dom.borrow().check(doc)?;
-        let sink = Sink::new(dom.clone(), d, element_flags::PARSER_INSERTED);
+        let sink = Sink::new(dom.clone(), d, element_flags::PARSER_INSERTED, scripting);
         let tb_opts = TreeBuilderOpts { scripting_enabled: scripting, ..Default::default() };
         let tb = TreeBuilder::new(sink, tb_opts);
         let tok = Tokenizer::new(tb, TokenizerOpts::default());
@@ -720,7 +813,7 @@ fn parse_fragment_with(
 
     let context_copy;
     {
-        let sink = Sink::new(Borrowed(RefCell::new(&mut *dom)), tmp, flags);
+        let sink = Sink::new(Borrowed(RefCell::new(&mut *dom)), tmp, flags, false);
         let opts = html5ever::driver::ParseOpts {
             tree_builder: TreeBuilderOpts { scripting_enabled: true, ..Default::default() },
             ..Default::default()
