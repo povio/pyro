@@ -674,24 +674,134 @@ fn update(m: &mut DocumentMutator<'_>, id: NodeId, kind: &TreeKind) -> bool {
 
 /// Makes `want` the children of `parent`, moving as few nodes as it can
 /// (an insertion, removal or move costs one operation). Children that do
-/// not belong here any more are detached; their new parent places them.
+/// not belong here any more are detached first; their new parent places
+/// them. Of the children that stay, the longest run already in the wanted
+/// order (a longest increasing subsequence of their current positions)
+/// stays put and every other wanted node is placed right before its wanted
+/// successor, from the end backwards: a rotation by one is one move, not
+/// one per node it shifted.
 fn reorder(m: &mut DocumentMutator<'_>, parent: NodeId, want: &[u64], nodes: &FxHashMap<u64, Entry>) -> u32 {
-    // Blitz's own child list, read in place after each move: a move detaches
-    // the node from where it was before inserting it.
-    let child_at = |m: &DocumentMutator<'_>, i: usize| m.doc.get_node(parent).and_then(|p| p.children.get(i).copied());
+    let want: Vec<NodeId> = want.iter().map(|k| nodes[k].id).collect();
+    let wanted: FxHashSet<NodeId> = want.iter().copied().collect();
     let mut ops = 0;
-    for (i, key) in want.iter().enumerate() {
-        let id = nodes[key].id;
-        match child_at(m, i) {
-            Some(at) if at == id => continue,
-            Some(anchor) => m.insert_nodes_before(anchor, &[id]),
-            None => m.append_children(parent, &[id]),
+    // Position of each staying child among the staying children.
+    let mut current: FxHashMap<NodeId, usize> = FxHashMap::default();
+    for id in m.child_ids(parent) {
+        if wanted.contains(&id) {
+            let next = current.len();
+            current.insert(id, next);
+        } else {
+            m.remove_node(id);
+            ops += 1;
+        }
+    }
+    let at: Vec<Option<usize>> = want.iter().map(|id| current.get(id).copied()).collect();
+    let keep = longest_increasing(&at);
+    for i in (0..want.len()).rev() {
+        if keep[i] {
+            continue;
+        }
+        match want.get(i + 1) {
+            Some(&next) => m.insert_nodes_before(next, &[want[i]]),
+            None => m.append_children(parent, &[want[i]]),
         }
         ops += 1;
     }
-    while let Some(extra) = child_at(m, want.len()) {
-        m.remove_node(extra);
-        ops += 1;
-    }
+    debug_assert_eq!(m.child_ids(parent).as_slice(), want.as_slice());
     ops
+}
+
+/// Marks the entries (among the `Some`s, which are distinct) that form one
+/// longest strictly increasing subsequence.
+fn longest_increasing(at: &[Option<usize>]) -> Vec<bool> {
+    // tails[k]: index into `at` of the smallest tail of an increasing run of
+    // length k + 1; prev[i]: the entry before `i` in its run.
+    let mut tails: Vec<usize> = Vec::new();
+    let mut prev: Vec<Option<usize>> = vec![None; at.len()];
+    for (i, v) in at.iter().enumerate() {
+        let Some(v) = *v else { continue };
+        let k = tails.partition_point(|&t| at[t].expect("tail") < v);
+        prev[i] = k.checked_sub(1).map(|k| tails[k]);
+        if k == tails.len() {
+            tails.push(i);
+        } else {
+            tails[k] = i;
+        }
+    }
+    let mut keep = vec![false; at.len()];
+    let mut next = tails.last().copied();
+    while let Some(i) = next {
+        keep[i] = true;
+        next = prev[i];
+    }
+    keep
+}
+
+#[cfg(test)]
+mod reorder_tests {
+    use super::*;
+
+    #[test]
+    fn longest_increasing_keeps_one_longest_run() {
+        let keep = |at: &[Option<usize>]| -> Vec<usize> {
+            longest_increasing(at).iter().enumerate().filter(|(_, k)| **k).map(|(i, _)| i).collect()
+        };
+        assert_eq!(keep(&[]), Vec::<usize>::new());
+        assert_eq!(keep(&[Some(0), Some(1), Some(2)]), vec![0, 1, 2]);
+        // A rotation: all but the moved one stay.
+        assert_eq!(keep(&[Some(3), Some(0), Some(1), Some(2)]), vec![1, 2, 3]);
+        assert_eq!(keep(&[Some(1), Some(2), Some(3), Some(0)]), vec![0, 1, 2]);
+        // New nodes (`None`) are never kept and do not break a run.
+        assert_eq!(keep(&[None, Some(0), None, Some(1)]), vec![1, 3]);
+        assert_eq!(keep(&[Some(2), Some(1), Some(0)]).len(), 1);
+        assert_eq!(keep(&[Some(0), Some(4), Some(1), Some(2), Some(5), Some(3)]), vec![0, 2, 3, 5]);
+    }
+
+    /// Every permutation of five children (plus a new one and a dropped
+    /// one) reaches the wanted order, with one operation per node outside
+    /// the kept run.
+    #[test]
+    fn reorder_reaches_every_order_with_the_fewest_moves() {
+        fn permutations(n: usize) -> Vec<Vec<usize>> {
+            if n == 0 {
+                return vec![vec![]];
+            }
+            let mut out = Vec::new();
+            for p in permutations(n - 1) {
+                for at in 0..=p.len() {
+                    let mut q = p.clone();
+                    q.insert(at, n - 1);
+                    out.push(q);
+                }
+            }
+            out
+        }
+        for perm in permutations(5) {
+            let mut doc = BaseDocument::new(DocumentConfig::default());
+            let root = doc.root_node().id;
+            let mut m = doc.mutate();
+            let parent = m.create_element(blitz_dom::qual_name!("div"), vec![]);
+            m.append_children(root, &[parent]);
+            let mut nodes: FxHashMap<u64, Entry> = FxHashMap::default();
+            let mut entry = |m: &mut DocumentMutator<'_>, key: u64| {
+                let id = m.create_element(blitz_dom::qual_name!("span"), vec![]);
+                nodes.insert(key, Entry { id, name: None, parent: None, children: Vec::new() });
+                id
+            };
+            // Children 0..5 and 9 (dropped); 7 is new.
+            let old: Vec<NodeId> = (0..5).chain([9]).map(|k| entry(&mut m, k)).collect();
+            m.append_children(parent, &old);
+            entry(&mut m, 7);
+            let mut want: Vec<u64> = perm.iter().map(|&k| k as u64).collect();
+            want.insert(2, 7);
+            let ops = reorder(&mut m, parent, &want, &nodes);
+            let ids: Vec<NodeId> = want.iter().map(|k| nodes[k].id).collect();
+            assert_eq!(m.child_ids(parent).to_vec(), ids, "{perm:?}");
+            assert!(m.doc.get_node(old[5]).unwrap().parent.is_none(), "dropped child detached");
+            let at: Vec<Option<usize>> = perm.iter().map(|&k| Some(k)).collect();
+            let kept = longest_increasing(&at).iter().filter(|k| **k).count() as u32;
+            // One removal, the new node, and every moved node.
+            assert_eq!(ops, 1 + 1 + (5 - kept), "{perm:?}");
+        }
+    }
 }
