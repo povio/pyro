@@ -83,7 +83,7 @@ impl StyloData {
 
     /// Borrow the primary computed style directly (rather than the `Arc` containing it).
     pub fn computed_styles(&self) -> Option<ComputedStyleRef<'_>> {
-        self.primary_styles().map(|primary| ComputedStyleRef { primary, layout: None })
+        self.primary_styles().map(|primary| ComputedStyleRef { primary })
     }
 
     /// Get a mutable reference to the data
@@ -133,40 +133,59 @@ impl Deref for StyleDataRef<'_> {
 /// in [`stylo_taffy::TaffyStyloStyle`].
 pub struct ComputedStyleRef<'a> {
     primary: StyleDataRef<'a>,
-    // Layout-derived table internals never replace the authored primary style.
-    layout: Option<Box<style::properties::ComputedValues>>,
 }
 
 impl ComputedStyleRef<'_> {
-    pub(crate) fn for_table_cell_layout(mut self, collapsed_border: Option<[f32; 4]>) -> Self {
+    /// The layout-derived replacements of a table cell's style: the primary style is never
+    /// copied or changed, `TaffyStyloStyle`'s `size` and `border` getters read these instead.
+    pub(crate) fn table_cell_override(&self, collapsed_border: Option<[f32; 4]>) -> stylo_taffy::CellOverride {
+        use style::computed_values::border_collapse::T as BorderCollapse;
+        use style::values::specified::box_::DisplayInside;
+        if self.get_box().display.inside() != DisplayInside::TableCell {
+            return stylo_taffy::CellOverride::default();
+        }
+        // TableCell retains this length as an intrinsic border-box minimum.
+        // A definite height here would prevent the cell from growing to fit.
+        let auto_height = stylo_taffy::convert::dimension(&self.get_position().height).into_option().is_some();
+        // Collapsed borders live in the table's grid gutters. They must not
+        // also consume space inside the cell's own formatting context.
+        // In a table without uniform borders a cell keeps half of the ones around it.
+        let border = (self.get_inherited_table().border_collapse == BorderCollapse::Collapse).then(|| {
+            // Rounded to app units, as a width stored in the style would be.
+            collapsed_border.unwrap_or_default().map(|px| app_units::Au::from_f32_px(px).to_f32_px())
+        });
+        stylo_taffy::CellOverride { auto_height, border }
+    }
+
+    /// The style `table_cell_override` stands for: the primary style copied with the cell's
+    /// height and borders replaced. Only for checking the override against.
+    #[cfg(test)]
+    pub(crate) fn derived_table_cell_style(
+        &self,
+        collapsed_border: Option<[f32; 4]>,
+    ) -> Option<style::properties::ComputedValues> {
         use style::computed_values::border_collapse::T as BorderCollapse;
         use style::values::specified::box_::DisplayInside;
         if self.clone_display().inside() != DisplayInside::TableCell {
-            return self;
+            return None;
         }
         let numeric_height = stylo_taffy::convert::dimension(&self.clone_height()).into_option().is_some();
         let collapsed = self.clone_border_collapse() == BorderCollapse::Collapse;
         if !numeric_height && !collapsed {
-            return self;
+            return None;
         }
-        let mut derived = Box::new((*self).clone());
-        // TableCell retains this length as an intrinsic border-box minimum.
-        // A definite height here would prevent the cell from growing to fit.
+        let mut derived = (**self).clone();
         if numeric_height {
             derived.mutate_position().height = style::values::computed::Size::auto();
         }
-        // Collapsed borders live in the table's grid gutters. They must not
-        // also consume space inside the cell's own formatting context.
         if collapsed {
             let border = derived.mutate_border();
-            // In a table without uniform borders a cell keeps half of the ones around it.
             let [top, right, bottom, left] = collapsed_border.unwrap_or_default();
             let au = app_units::Au::from_f32_px;
             border.border_top_width.0 = au(top);
             border.border_right_width.0 = au(right);
             border.border_bottom_width.0 = au(bottom);
             border.border_left_width.0 = au(left);
-            // Stylo's widths mean nothing without a style.
             if collapsed_border.is_some() {
                 use style::values::computed::BorderStyle;
                 border.border_top_style = BorderStyle::Solid;
@@ -175,8 +194,7 @@ impl ComputedStyleRef<'_> {
                 border.border_left_style = BorderStyle::Solid;
             }
         }
-        self.layout = Some(derived);
-        self
+        Some(derived)
     }
 }
 
@@ -184,6 +202,92 @@ impl Deref for ComputedStyleRef<'_> {
     type Target = style::properties::ComputedValues;
 
     fn deref(&self) -> &Self::Target {
-        self.layout.as_deref().unwrap_or_else(|| self.primary.0.styles.get_primary().unwrap())
+        self.primary.0.styles.get_primary().unwrap()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{Attribute, BaseDocument, DocumentConfig, qual_name};
+    use blitz_traits::shell::{ColorScheme, Viewport};
+    use taffy::CoreStyle;
+
+    /// Every styled node's layout style reads the same `size` and `border` as the copied cell
+    /// style it replaced: separate and collapsed tables, uniform and per-cell collapsed borders,
+    /// fixed, percentage and auto cell heights, and a vertical cell.
+    #[test]
+    fn a_table_cell_override_reads_as_the_copied_style_did() {
+        let mut doc = BaseDocument::new(DocumentConfig {
+            viewport: Some(Viewport::new(800, 600, 1.0, ColorScheme::Light)),
+            ..Default::default()
+        });
+        let root_id = doc.root_node().id;
+        let style = |value: &str| Attribute { name: qual_name!("style"), value: value.to_string() };
+        let tables = [
+            ("border-collapse:collapse", ["height:30px;border:2px solid", "border:2px solid", "height:10%;border:2px solid"]),
+            ("border-collapse:collapse", ["height:30px;border:3px solid", "border:1px dotted", "border:5px double;writing-mode:vertical-rl"]),
+            ("border-collapse:collapse;border:4px solid", ["border:none", "height:auto", "height:12.5px;border:1.5px solid"]),
+            ("border-collapse:separate", ["height:30px;border:2px solid", "border:1px solid", "height:min-content"]),
+        ];
+        let mut mutator = doc.mutate();
+        let html = mutator.create_element(qual_name!("html"), vec![]);
+        let body = mutator.create_element(qual_name!("body"), vec![]);
+        for (table_style, cells) in tables {
+            let table = mutator.create_element(qual_name!("table"), vec![style(&format!("display:table;{table_style}"))]);
+            let tbody = mutator.create_element(qual_name!("tbody"), vec![style("display:table-row-group")]);
+            for _ in 0..2 {
+                let tr = mutator.create_element(qual_name!("tr"), vec![style("display:table-row")]);
+                for cell in cells {
+                    let td = mutator.create_element(qual_name!("td"), vec![style(&format!("display:table-cell;{cell}"))]);
+                    let text = mutator.create_text_node("cell");
+                    mutator.append_children(td, &[text]);
+                    mutator.append_children(tr, &[td]);
+                }
+                mutator.append_children(tbody, &[tr]);
+            }
+            mutator.append_children(table, &[tbody]);
+            mutator.append_children(body, &[table]);
+        }
+        mutator.append_children(html, &[body]);
+        mutator.append_children(root_id, &[html]);
+        drop(mutator);
+        doc.resolve(0.0);
+
+        let (mut overridden, mut per_cell, mut uniform) = (0, 0, 0);
+        for (_, node) in doc.nodes.iter() {
+            let Some(primary) = node.try_stylo_element_data().and_then(|data| data.computed_styles()) else {
+                continue;
+            };
+            let collapsed_border = node.collapsed_border();
+            let layout = node.layout_style();
+            let Some(derived) = primary.derived_table_cell_style(collapsed_border) else {
+                assert_eq!(layout.cell, stylo_taffy::CellOverride::default(), "{}", node.node_debug_str());
+                continue;
+            };
+            overridden += 1;
+            if layout.cell.border.is_some() {
+                if collapsed_border.is_some() { per_cell += 1 } else { uniform += 1 }
+            }
+            let mut reference = stylo_taffy::TaffyStyloStyle::new(&derived, layout.flags);
+            #[cfg(feature = "writing-mode")]
+            {
+                reference.layout_wm = layout.layout_wm;
+            }
+            let what = node.node_debug_str();
+            assert_eq!(layout.size(), reference.size(), "{what}");
+            assert_eq!(layout.border(), reference.border(), "{what}");
+            assert_eq!(layout.min_size(), reference.min_size(), "{what}");
+            assert_eq!(layout.max_size(), reference.max_size(), "{what}");
+            assert_eq!(layout.padding(), reference.padding(), "{what}");
+            let (layout, reference): (taffy::Style<style::Atom>, taffy::Style<style::Atom>) =
+                (layout.into(), reference.into());
+            assert_eq!(layout.size, reference.size, "{what}");
+            assert_eq!(layout.border, reference.border, "{what}");
+        }
+        eprintln!("{overridden} overridden, {per_cell} per-cell borders, {uniform} uniform");
+        // The first table's borders are uniform, the next two's per cell; the last only has heights.
+        assert!(overridden >= 20, "{overridden}");
+        assert!(per_cell >= 12, "{per_cell}");
+        assert!(uniform >= 6, "{uniform}");
     }
 }

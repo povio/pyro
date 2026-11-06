@@ -1157,8 +1157,8 @@ impl Node {
         let styles = self
             .try_stylo_element_data()
             .and_then(|stylo| stylo.computed_styles())
-            .expect("layout_style() called on a node without computed styles")
-            .for_table_cell_layout(self.collapsed_border());
+            .expect("layout_style() called on a node without computed styles");
+        let cell = styles.table_cell_override(self.collapsed_border());
 
         let mut flags = stylo_taffy::StyleFlags::empty();
         if let Some(el) = self.data.downcast_element() {
@@ -1180,16 +1180,20 @@ impl Node {
         {
             // Own-layout_wm by default: the node's own algorithm reads its style in its own axes
             let layout_wm = styles.writing_mode;
-            stylo_taffy::TaffyStyloStyle::new_in(styles, flags, layout_wm)
+            let mut style = stylo_taffy::TaffyStyloStyle::new_in(styles, flags, layout_wm);
+            style.cell = cell;
+            style
         }
         #[cfg(not(feature = "writing-mode"))]
         {
-            stylo_taffy::TaffyStyloStyle::new(styles, flags)
+            let mut style = stylo_taffy::TaffyStyloStyle::new(styles, flags);
+            style.cell = cell;
+            style
         }
     }
 
     /// The half collapsed borders of a cell in a table without uniform ones.
-    fn collapsed_border(&self) -> Option<[f32; 4]> {
+    pub(crate) fn collapsed_border(&self) -> Option<[f32; 4]> {
         match &self.data {
             NodeData::Element(data) | NodeData::AnonymousBlock(data) => data.layout_data().collapsed_border,
             _ => None,

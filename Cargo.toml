@@ -182,6 +182,8 @@ taffy = { path = "vendor/taffy" }
 parley_engine = { path = "vendor/parley_engine" }
 # Built layouts reused for identical text and styles; see vendor/parley/README.lightningpanda.md.
 parley = { path = "vendor/parley" }
+# Table cell height/border overrides without a ComputedValues copy; see vendor/stylo_taffy/README.lightningpanda.md.
+stylo_taffy = { path = "vendor/stylo_taffy" }
 # Style sharing; see vendor/stylo/README.lightningpanda.md.
 stylo = { path = "vendor/stylo" }
 # ASCII hosts with invalid xn-- labels pass through; see vendor/idna/README.lightningpanda.md.

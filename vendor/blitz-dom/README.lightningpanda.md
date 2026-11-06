@@ -140,7 +140,14 @@ printing. The servo build of Stylo parses neither `size` nor `page`, so the pars
 `src/layout/table.rs` (`CollapsedEdges`), `src/node/stylo_data.rs`, `src/node/element.rs`: upstream has one gutter, from the
 first cell's borders. A table whose collapsed borders are not one uniform grid now resolves them by the spec's conflict
 rules: each cell keeps half of the borders around it (`LayoutData::collapsed_border`, read through
-`for_table_cell_layout`) and the table half of its outer ones, as Chromium's boxes do. Uniform tables keep the gutter.
+`ComputedStyleRef::table_cell_override`) and the table half of its outer ones, as Chromium's boxes do. Uniform tables keep the gutter.
 Values in `bench/pdf/fixtures/chrome-156/table-collapse.json`, tests in `crates/lp-render/tests/table_collapsed_borders.rs`.
+
+A cell's layout style does not copy its `ComputedValues`: `Node::layout_style` hands `TaffyStyloStyle` a
+`stylo_taffy::CellOverride` (height read as `auto`, collapsed border widths in px), which its `size` and `border`
+getters read in place of the style's (see `vendor/stylo_taffy/README.lightningpanda.md`). Upstream's
+`for_table_cell_layout` boxed a clone and copied the position and border structs on every child-style read of a
+fixed-height or collapsed-border cell. `a_table_cell_override_reads_as_the_copied_style_did` checks every getter
+against that copy.
 
 Time inputs use the existing text-editor construction and intrinsic measurement paths so captured values are painted.
