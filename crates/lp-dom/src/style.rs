@@ -779,7 +779,7 @@ pub struct StyleEngine {
     /// The constructed sheets each document or shadow root adopts
     /// (`adoptedStyleSheets`), by sheet id, in order; empty unless a
     /// script adopted one.
-    adopted: Vec<(NodeId, Vec<u64>)>,
+    adopted: std::collections::BTreeMap<NodeId, Vec<u64>>,
     /// The text of each adopted constructed sheet.
     constructed: rustc_hash::FxHashMap<u64, Rc<str>>,
 }
@@ -811,7 +811,7 @@ impl StyleEngine {
             gecko_rules: RefCell::new(None),
             revisions: 0,
             sheets_key: Cell::new(None),
-            adopted: Vec::new(),
+            adopted: Default::default(),
             constructed: Default::default(),
         }
     }
@@ -1020,23 +1020,20 @@ impl StyleEngine {
     /// `scope.adoptedStyleSheets = sheets` (a document or shadow root):
     /// each constructed sheet's id and text, in order.
     pub fn set_adopted(&mut self, scope: NodeId, sheets: Vec<(u64, Rc<str>)>) {
-        let had = self.adopted.iter().position(|(s, _)| *s == scope);
-        if had.is_none() && sheets.is_empty() {
+        if sheets.is_empty() && !self.adopted.contains_key(&scope) {
             return;
         }
         let ids: Vec<u64> = sheets.iter().map(|(id, _)| *id).collect();
         for (id, text) in sheets {
             self.constructed.insert(id, text);
         }
-        match had {
-            Some(i) if ids.is_empty() => {
-                self.adopted.remove(i);
+        let old = if ids.is_empty() { self.adopted.remove(&scope) } else { self.adopted.insert(scope, ids) };
+        // Texts no scope adopts any more are dropped.
+        for id in old.unwrap_or_default() {
+            if !self.adopted.values().any(|ids| ids.contains(&id)) {
+                self.constructed.remove(&id);
             }
-            Some(i) => self.adopted[i].1 = ids,
-            None => self.adopted.push((scope, ids)),
         }
-        let adopted = &self.adopted;
-        self.constructed.retain(|id, _| adopted.iter().any(|(_, ids)| ids.contains(id)));
         // Rendered as elements the render delta does not track: a whole sync.
         self.invalidate();
     }
@@ -1052,7 +1049,7 @@ impl StyleEngine {
 
     /// The texts of the constructed sheets `scope` adopts, in order.
     pub fn adopted_sheets(&self, scope: NodeId) -> Vec<Rc<str>> {
-        let Some((_, ids)) = self.adopted.iter().find(|(s, _)| *s == scope) else { return Vec::new() };
+        let Some(ids) = self.adopted.get(&scope) else { return Vec::new() };
         ids.iter().filter_map(|id| self.constructed.get(id).cloned()).collect()
     }
 

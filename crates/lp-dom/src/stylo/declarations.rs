@@ -22,6 +22,7 @@ impl DeclarationBlock {
         if text.trim().is_empty() {
             return DeclarationBlock(PropertyDeclarationBlock::new());
         }
+        super::enable_features();
         let url = url_data();
         DeclarationBlock(style::properties::parse_style_attribute(
             text,
@@ -73,6 +74,7 @@ impl DeclarationBlock {
     /// block is unchanged; else whether the block changed.
     pub fn set(&mut self, name: &str, value: &str, important: bool) -> Option<bool> {
         let id = property_id(name)?;
+        super::enable_features();
         let mut source = SourcePropertyDeclaration::default();
         let url = url_data();
         style::properties::parse_one_declaration_into(

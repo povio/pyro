@@ -16,6 +16,36 @@ use style::servo_arc::Arc;
 use style::stylesheets::UrlExtraData;
 use style::values::computed::CSSPixelLength;
 
+/// Turns on the Stylo features the layout engine (Blitz) turns on when it
+/// makes its first document. Prefs are process-wide and read while parsing:
+/// without this, a property or value lp-dom parsed before the first layout
+/// (an `element.style` write, say `gridTemplateColumns`) would be unknown,
+/// and the property cached as such. Values as in blitz-dom's
+/// `BaseDocument::new`.
+pub(crate) fn enable_features() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        style_config::set_pref!("layout.grid.enabled", true);
+        style_config::set_pref!("layout.css.has-selector.enabled", true);
+        style_config::set_pref!("layout.flexbox.balance", true);
+        style_config::set_pref!("layout.unimplemented", true);
+        style_config::set_pref!("layout.columns.enabled", true);
+        style_config::set_pref!("layout.css.basic-shape-shape.enabled", true);
+        style_config::set_pref!("layout.css.tree-counting-functions.enabled", true);
+        style_config::set_pref!("layout.css.progress-function.enabled", true);
+        style_config::set_pref!("layout.variable_fonts.enabled", true);
+        style_config::set_pref!("layout.writing-mode.enabled", true);
+        style_config::set_pref!("layout.container-queries.enabled", true);
+        style_config::set_pref!("layout.css.nth-child-of.enabled", true);
+        style_config::set_pref!("layout.css.starting-style-at-rules.enabled", true);
+        style_config::set_pref!("layout.css.at-scope.enabled", true);
+        style_config::set_pref!("layout.css.style-queries.enabled", true);
+        style_config::set_pref!("layout.css.line-clamp.enabled", true);
+        style_config::set_pref!("layout.css.fit-content-function.enabled", true);
+        style_config::set_pref!("layout.css.supports.at-rule.enabled", true);
+    });
+}
+
 /// The property `name` names, if Stylo knows it (parsed once per name).
 pub(crate) fn property_id(name: &str) -> Option<style::properties::PropertyId> {
     use style::properties::PropertyId;
@@ -27,6 +57,7 @@ pub(crate) fn property_id(name: &str) -> Option<style::properties::PropertyId> {
         if let Some(id) = ids.borrow().get(name) {
             return id.clone();
         }
+        enable_features();
         let id = PropertyId::parse_enabled_for_all_content(name).ok();
         let mut ids = ids.borrow_mut();
         if ids.len() < 4096 {

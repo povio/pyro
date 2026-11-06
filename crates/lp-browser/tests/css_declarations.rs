@@ -81,6 +81,18 @@ fn named_access_knows_real_properties_only() {
         eval(&root, "const e = document.createElement('div'); e.style.foo = 'x'; [e.style.foo, e.getAttribute('style')].join('|')"),
         "x|"
     );
+    // Features the layout turns on (grid, columns) parse before any layout;
+    // webkit-cased names are the webkit ones.
+    assert_eq!(
+        eval(
+            &root,
+            "const g = document.createElement('div');
+             g.style.gridTemplateColumns = '1fr 2fr'; g.style.columnCount = '2'; g.style.WebkitTransform = 'none';
+             [g.style.gridTemplateColumns, g.style.columnCount, g.style.webkitTransform, 'WebkitTransform' in g.style]
+               .join('|')"
+        ),
+        "1fr 2fr|2|none|true"
+    );
     // Properties Chrome has and the engine's Stylo does not parse are kept.
     assert_eq!(
         eval(

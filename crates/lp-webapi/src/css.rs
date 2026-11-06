@@ -143,6 +143,7 @@ pub fn camel_to_css(name: &str) -> String {
 /// Properties Chrome supports that the engine's Stylo (servo build) may not
 /// parse: their declarations are kept as written, so scripts that set and
 /// read them back keep working. Only the names Stylo does not know count.
+/// Sorted (binary search).
 const UNPARSED: &[&str] = &[
     "-webkit-appearance",
     "-webkit-backdrop-filter",
@@ -164,6 +165,7 @@ const UNPARSED: &[&str] = &[
     "-webkit-print-color-adjust",
     "-webkit-tap-highlight-color",
     "-webkit-text-fill-color",
+    "-webkit-text-size-adjust",
     "-webkit-text-stroke",
     "-webkit-text-stroke-color",
     "-webkit-text-stroke-width",
@@ -175,15 +177,32 @@ const UNPARSED: &[&str] = &[
     "box-decoration-break",
     "caret-color",
     "color-scheme",
+    "column-fill",
+    "column-rule",
+    "column-rule-color",
+    "column-rule-style",
+    "column-rule-width",
     "contain-intrinsic-height",
     "contain-intrinsic-size",
     "contain-intrinsic-width",
     "content-visibility",
+    "counter-set",
+    "dominant-baseline",
     "field-sizing",
+    "flood-color",
+    "flood-opacity",
+    "font-synthesis",
     "forced-color-adjust",
     "hyphens",
+    "image-orientation",
+    "initial-letter",
     "interpolate-size",
+    "lighting-color",
     "line-clamp",
+    "marker",
+    "marker-end",
+    "marker-mid",
+    "marker-start",
     "mask",
     "mask-clip",
     "mask-composite",
@@ -229,13 +248,17 @@ const UNPARSED: &[&str] = &[
     "shape-image-threshold",
     "shape-margin",
     "shape-outside",
+    "stop-color",
+    "stop-opacity",
     "tab-size",
     "text-anchor",
+    "text-combine-upright",
     "text-emphasis",
     "text-emphasis-color",
     "text-emphasis-position",
     "text-emphasis-style",
     "text-orientation",
+    "text-size-adjust",
     "text-underline-position",
     "text-wrap",
     "text-wrap-mode",
@@ -261,6 +284,10 @@ fn css_property(name: &str) -> bool {
 /// (`background-color`, as Chrome also exposes). Methods and attributes on
 /// the prototype win because the named hook does not override builtins.
 fn named_property(name: &str) -> Option<String> {
+    // The webkit-cased attributes (`WebkitTransform`) as the lowercase ones.
+    if let Some(rest) = name.strip_prefix("Webkit").filter(|r| r.starts_with(|c: char| c.is_ascii_uppercase())) {
+        return named_property(&format!("webkit{rest}"));
+    }
     if !name.chars().next().is_some_and(|c| c.is_ascii_lowercase() || c == '-') {
         return None;
     }
@@ -646,7 +673,8 @@ impl RuleNode {
     fn css_text(&self) -> String {
         match &self.kind {
             RuleKind::Style { selector, block } => {
-                let decls = serialize_declarations(&parse_declarations(&block.borrow()));
+                // As the rule's `style.cssText` serializes the block.
+                let decls = Block::parse(&block.borrow()).css_text();
                 if decls.is_empty() {
                     format!("{} {{ }}", selector.borrow())
                 } else {
@@ -1610,5 +1638,6 @@ mod tests {
         assert_eq!(camel_to_css("backgroundColor"), "background-color");
         assert_eq!(camel_to_css("webkitTransform"), "-webkit-transform");
         assert_eq!(serialize_declarations(&d[..1]), "color: red;");
+        assert!(UNPARSED.windows(2).all(|w| w[0] < w[1]), "UNPARSED is sorted");
     }
 }
