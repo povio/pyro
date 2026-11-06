@@ -57,6 +57,10 @@ bitflags! {
         const IS_TABLE_ROOT = 0b00000010;
         /// Whether the node is "in the document" (~= has a parent and isn't a template node)
         const IS_IN_DOCUMENT = 0b00000100;
+        /// lightningpanda: the node had damage of its own (a mutation or a restyle), not only its
+        /// descendants', when this pass propagated damage. Set by `propagate_damage_flags`, cleared
+        /// with the damage; tables read it to rebuild only the rows and cells that changed.
+        const OWN_DAMAGE = 0b00001000;
     }
 }
 
@@ -262,12 +266,18 @@ impl Node {
     /// Writes this node's unrounded layout, the only way to. A change is marked on the node and
     /// its ancestors: their rounding (`RoundTree::rounded_unchanged`) and cached scrollable overflow
     /// read those flags, and a relayout can move a box that no style change touched.
+    ///
+    /// lightningpanda: a box that only moved keeps its own scrollable overflow and transform (both in
+    /// its own coordinates), and its rounding is keyed on its layout and offset: only its ancestors,
+    /// whose overflow it is part of, are marked.
     pub fn update_unrounded_layout(&mut self, update: impl FnOnce(&mut Layout)) {
         let layout = &mut self.layout_data_mut().unrounded_layout;
         let before = *layout;
         update(layout);
-        if *layout != before {
-            self.mark_layout_changed();
+        let after = *layout;
+        if after != before {
+            let moved_only = Layout { location: before.location, ..after } == before;
+            self.mark_layout_changed(if moved_only { self.parent } else { Some(self.id) });
         }
     }
 
@@ -668,8 +678,9 @@ impl Node {
 
     /// [`Self::mark_damaged`], all the way up: a flag can outlast its ancestors' (a node moved
     /// while flagged), and rounding must never miss a change.
-    fn mark_layout_changed(&self) {
-        let mut current = Some(self.id);
+    /// Marks `from` and its ancestors as having damaged descendants.
+    fn mark_layout_changed(&self, from: Option<NodeId>) {
+        let mut current = from;
         while let Some(id) = current {
             let node = &self.tree()[id];
             if let Some(flag) = node.damaged_descendants_flag() {

@@ -429,6 +429,17 @@ fn collect_layout_children_with_wrap(
         *doc.nodes[container_node_id].display_constructed_as_mut() = display;
     }
 
+    // lightningpanda: a table built as another box now: its row groups and rows were parts of the
+    // table, never boxes of their own, and are built as boxes now.
+    let was_table = doc.nodes[container_node_id].flags.is_table_root();
+    if was_table
+        && doc.nodes[container_node_id]
+            .display_style()
+            .is_some_and(|display| display.inside() != DisplayInside::Table)
+    {
+        super::table::damage_former_table_parts(doc, container_node_id);
+    }
+
     // Reset construction flags
     // TODO: make incremental and only remove this if the element is no longer an inline root
     doc.nodes[container_node_id]

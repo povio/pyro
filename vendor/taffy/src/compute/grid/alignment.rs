@@ -99,7 +99,7 @@ pub(super) fn align_and_position_item(
     container_border: Rect<f32>,
     #[cfg(feature = "content_size")] container_is_scroll_container: bool,
     bubbled_candidates: &mut OofCandidates,
-) -> (Rect<f32>, f32, f32, Option<f32>) {
+) -> PositionedItem {
     let grid_area_size = Size { width: grid_area.right - grid_area.left, height: grid_area.bottom - grid_area.top };
 
     let style = tree.get_grid_child_style(node);
@@ -374,7 +374,7 @@ pub(super) fn align_and_position_item(
     // Resolve final size
     let Size { width, height } = size.unwrap_or(layout_output.size).maybe_clamp(min_size, max_size);
 
-    let (x, x_margin) = align_item_within_area(
+    let (x, x_margin, _) = align_item_within_area(
         Line { start: grid_area.left, end: grid_area.right },
         alignment_styles.horizontal,
         width,
@@ -384,7 +384,7 @@ pub(super) fn align_and_position_item(
         0.0,
         direction,
     );
-    let (y_without_relative_offset, y_margin) = align_item_within_area(
+    let (y_without_relative_offset, y_margin, y_offset) = align_item_within_area(
         Line { start: grid_area.top, end: grid_area.bottom },
         alignment_styles.vertical,
         height,
@@ -397,7 +397,8 @@ pub(super) fn align_and_position_item(
     // A relative offset moves the item, but does not affect the container's baseline (which is computed from the
     // returned y position, without the offset)
     let x = x + relative_offset(position, inset_horizontal, direction);
-    let y = y_without_relative_offset + relative_offset(position, inset_vertical, Direction::Ltr);
+    let y_relative = relative_offset(position, inset_vertical, Direction::Ltr);
+    let y = y_without_relative_offset + y_relative;
 
     let scrollbar_size = Size {
         width: if overflow.y == Overflow::Scroll { scrollbar_width } else { 0.0 },
@@ -414,44 +415,104 @@ pub(super) fn align_and_position_item(
         bubbled_candidates.append(&mut item_candidates);
     }
 
-    tree.set_unrounded_layout(
-        node,
-        &Layout {
-            order,
-            location: Point { x, y },
-            size: Size { width, height },
-            #[cfg(feature = "content_size")]
-            scrollable_overflow_rect: layout_output.scrollable_overflow_rect,
-            scrollbar_size,
-            padding,
-            border,
-            margin: resolved_margin,
-        },
-    );
-
-    #[cfg(feature = "content_size")]
-    let contribution = {
-        // Contributions to the container's scrollable overflow rect are measured from the
-        // container's padding-box origin (mirrored for RTL), matching the scrollable overflow region.
-        let contribution_location = if direction.is_rtl() {
-            Point { x: container_border_box_width - (x + width) - container_border.right, y: y - container_border.top }
-        } else {
-            Point { x: x - container_border.left, y: y - container_border.top }
-        };
-        compute_scrollable_overflow_contribution(
-            contribution_location,
-            Size { width, height },
-            layout_output.scrollable_overflow_rect,
-            overflow,
-            contain,
-            container_is_scroll_container,
-        )
+    let layout = Layout {
+        order,
+        location: Point { x, y },
+        size: Size { width, height },
+        #[cfg(feature = "content_size")]
+        scrollable_overflow_rect: layout_output.scrollable_overflow_rect,
+        scrollbar_size,
+        padding,
+        border,
+        margin: resolved_margin,
     };
-    #[cfg(not(feature = "content_size"))]
-    let contribution = Rect::ZERO;
+    tree.set_unrounded_layout(node, &layout);
 
-    let baseline = child_first_baseline(layout_output.baselines.first, height, overflow.y);
-    (contribution, y_without_relative_offset, height, baseline)
+    // Contributions to the container's scrollable overflow rect are measured from the
+    // container's padding-box origin (mirrored for RTL), matching the scrollable overflow region.
+    let contribution_x = if direction.is_rtl() {
+        container_border_box_width - (x + width) - container_border.right
+    } else {
+        x - container_border.left
+    };
+    let mut positioned = PositionedItem {
+        contribution: Rect::ZERO,
+        y_position: y_without_relative_offset,
+        height,
+        baseline: child_first_baseline(layout_output.baselines.first, height, overflow.y),
+        layout,
+        area: grid_area,
+        y_offset,
+        y_relative,
+        contribution_x,
+        border_top: container_border.top,
+        #[cfg(feature = "content_size")]
+        overflow,
+        #[cfg(feature = "content_size")]
+        contain,
+        #[cfg(feature = "content_size")]
+        parent_is_scroll_container: container_is_scroll_container,
+    };
+    positioned.contribution = positioned.compute_contribution();
+    positioned
+}
+
+/// lightningpanda: an item as `align_and_position_item` positioned it, with what positioning it again in
+/// an area of the same size elsewhere takes (`TableGridState`): only its block position changes.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct PositionedItem {
+    /// Its contribution to the container's scrollable overflow
+    pub contribution: Rect<f32>,
+    /// Its block position without its relative offset, its height and its first baseline
+    pub y_position: f32,
+    pub height: f32,
+    pub baseline: Option<f32>,
+    /// The layout it was given, and the grid area it was positioned in
+    pub layout: Layout,
+    pub area: Rect<f32>,
+    /// Its block offset within the area (`align_item_within_area`) and its relative offset
+    pub y_offset: f32,
+    pub y_relative: f32,
+    /// The inline position and the container's top border its overflow contribution is measured with
+    pub contribution_x: f32,
+    pub border_top: f32,
+    #[cfg(feature = "content_size")]
+    overflow: Point<Overflow>,
+    #[cfg(feature = "content_size")]
+    contain: crate::style::Contain,
+    #[cfg(feature = "content_size")]
+    parent_is_scroll_container: bool,
+}
+
+impl PositionedItem {
+    #[cfg(feature = "content_size")]
+    fn compute_contribution(&self) -> Rect<f32> {
+        compute_scrollable_overflow_contribution(
+            Point { x: self.contribution_x, y: self.layout.location.y - self.border_top },
+            self.layout.size,
+            self.layout.scrollable_overflow_rect,
+            self.overflow,
+            self.contain,
+            self.parent_is_scroll_container,
+        )
+    }
+
+    #[cfg(not(feature = "content_size"))]
+    fn compute_contribution(&self) -> Rect<f32> {
+        Rect::ZERO
+    }
+
+    /// The item positioned as `align_and_position_item` positions it in `area`, the same size as
+    /// the area it was positioned in, at another block position: the same arithmetic.
+    pub fn moved_to(&self, area: Rect<f32>) -> Self {
+        let y_position = area.top + self.y_offset;
+        let mut moved = *self;
+        moved.area = area;
+        moved.y_position = y_position;
+        moved.layout.location.y = y_position + self.y_relative;
+        moved.contribution = moved.compute_contribution();
+        moved
+    }
 }
 
 /// Align and size a grid item along a single axis
@@ -465,7 +526,7 @@ pub(super) fn align_item_within_area(
     margin: Line<Option<f32>>,
     baseline_shim: f32,
     direction: Direction,
-) -> (f32, Line<f32>) {
+) -> (f32, Line<f32>, f32) {
     // Calculate grid area dimension in the axis
     let non_auto_margin = Line { start: margin.start.unwrap_or(0.0) + baseline_shim, end: margin.end.unwrap_or(0.0) };
     let grid_area_size = f32_max(grid_area.end - grid_area.start, 0.0);
@@ -527,7 +588,7 @@ pub(super) fn align_item_within_area(
         alignment_based_offset
     };
 
-    (grid_area.start + offset_within_area, resolved_margin)
+    (grid_area.start + offset_within_area, resolved_margin, offset_within_area)
 }
 
 /// The offset applied to an item in a single axis by its `inset` if it is `position: relative`

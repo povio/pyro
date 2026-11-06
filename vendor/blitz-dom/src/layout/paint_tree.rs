@@ -324,6 +324,12 @@ impl BaseDocument {
             }
         }
 
+        // lightningpanda: a table whose cells are all plain boxes in it visits again only the cells
+        // that changed (`TableContext::placed`).
+        if self.table_paint_children_kept(node_id) {
+            return;
+        }
+
         let Some(display) = self.nodes[node_id].display_style() else {
             return;
         };
@@ -432,6 +438,7 @@ impl BaseDocument {
             paint_children
                 .sort_by_cached_key(|id| node_to_paint_order(&self.nodes[*id], is_flex_or_grid));
 
+            self.note_table_paint_children(node_id, &children, &paint_children, entries.is_empty());
             let node = &self.nodes[node_id];
             *node.paint_children.borrow_mut() = Some(paint_children);
             *node.layout_children.borrow_mut() = Some(children);
@@ -446,6 +453,98 @@ impl BaseDocument {
             node.sc_contribution_cache.borrow_mut().clear();
             node.stacking_context = Some(Box::new(StackingContext::from_children(entries)));
         }
+    }
+
+    /// The table `node_id` (with `TableContext::placed` holding what changed) whose cells were all
+    /// plain boxes in it when the paint tree last visited it: no stacking context, nothing hoisted out
+    /// of their subtrees, one paint order. The cells damaged or appended since are visited again, and
+    /// if they still are plain boxes its paint children are the same, plus the appended cells, and it
+    /// adds nothing to the stacking context. `false`: the table is to be visited as any box.
+    fn table_paint_children_kept(&mut self, node_id: NodeId) -> bool {
+        use crate::node::{NodeFlags, SpecialElementData};
+        let node = &self.nodes[node_id];
+        if !node.flags.is_table_root()
+            || node.flags.contains(NodeFlags::OWN_DAMAGE)
+            || node.before().is_some()
+            || node.after().is_some()
+            || !node.hoisted_children.borrow().is_empty()
+        {
+            return false;
+        }
+        let Some(SpecialElementData::TableRoot(ctx)) = node.data.downcast_element().map(|e| &e.special_data) else {
+            return false;
+        };
+        if !crate::layout::table::keeps_cells(ctx) {
+            return false;
+        }
+        let ctx = std::sync::Arc::clone(ctx);
+        let (cells, order) = {
+            let mut placed = ctx.placed.borrow_mut();
+            let order = placed.plain_paint_order;
+            match (placed.take_paint(), order) {
+                (Some(cells), Some(order)) => (cells, order),
+                _ => return false,
+            }
+        };
+        let Some(mut paint_children) = node.paint_children.borrow_mut().take() else { return false };
+        let kept = paint_children.len() <= ctx.cells.len()
+            && paint_children.iter().zip(&ctx.cells).all(|(&id, cell)| id == cell.node_id);
+        let appended = paint_children.len()..ctx.cells.len();
+        let mut entries = ThinVec::new();
+        let plain = kept
+            && cells.iter().copied().chain(appended.clone()).all(|index| {
+                let Some(cell) = ctx.cells.get(index) else { return false };
+                let child = &self.nodes[cell.node_id];
+                if child.is_stacking_context_root(false) || node_to_paint_order(child, false) != order {
+                    return false;
+                }
+                self.build_paint_tree_impl(cell.node_id, Some(&mut entries));
+                entries.is_empty()
+            });
+        if plain {
+            paint_children.extend(ctx.cells[appended].iter().map(|cell| cell.node_id));
+        }
+        *self.nodes[node_id].paint_children.borrow_mut() = Some(paint_children);
+        if !plain {
+            ctx.placed.borrow_mut().plain_paint_order = None;
+        }
+        plain
+    }
+
+    /// After the paint tree visited the table `node_id` as any box: whether its cells are plain boxes
+    /// in it (see `table_paint_children_kept`), and the cells changed since are none.
+    fn note_table_paint_children(
+        &self,
+        node_id: NodeId,
+        children: &[NodeId],
+        paint_children: &[NodeId],
+        no_entries: bool,
+    ) {
+        use crate::node::SpecialElementData;
+        let node = &self.nodes[node_id];
+        if !node.flags.is_table_root() {
+            return;
+        }
+        let Some(SpecialElementData::TableRoot(ctx)) = node.data.downcast_element().map(|e| &e.special_data) else {
+            return;
+        };
+        let mut placed = ctx.placed.borrow_mut();
+        placed.take_paint();
+        let first = children.first().map(|&id| node_to_paint_order(&self.nodes[id], false));
+        let plain = crate::layout::table::keeps_cells(ctx)
+            && no_entries
+            && node.before().is_none()
+            && node.after().is_none()
+            && node.hoisted_children.borrow().is_empty()
+            && children.len() == ctx.cells.len()
+            && paint_children.len() == children.len()
+            && children.iter().zip(&ctx.cells).all(|(&id, cell)| id == cell.node_id)
+            && paint_children.iter().zip(children).all(|(a, b)| a == b)
+            && children.iter().all(|&id| {
+                let child = &self.nodes[id];
+                !child.is_stacking_context_root(false) && Some(node_to_paint_order(child, false)) == first
+            });
+        placed.plain_paint_order = if plain { first } else { None };
     }
 
     /// The layout child of `node_id` whose subtree contains `id`, following

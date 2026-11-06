@@ -144,3 +144,53 @@ rules: each cell keeps half of the borders around it (`LayoutData::collapsed_bor
 Values in `bench/pdf/fixtures/chrome-156/table-collapse.json`, tests in `crates/lp-render/tests/table_collapsed_borders.rs`.
 
 Time inputs use the existing text-editor construction and intrinsic measurement paths so captured values are painted.
+
+## Incremental tables
+
+A change inside a table updates what it touched instead of building the table again. What a table keeps is its
+`TableContext` (`src/layout/table.rs`), updated from what changed; nothing in it is a memo of a computation keyed on
+its inputs.
+
+- `src/layout/damage.rs`, `src/node/node.rs`: `propagate_damage_flags` sets `NodeFlags::OWN_DAMAGE` on a node with
+  damage of its own (a mutation or a restyle, not only its descendants'), cleared with the damage, and notes every
+  damaged cell in its table (`LayoutData::table_cell_index`, the cell's index in `TableContext::cells`).
+- `src/resolve.rs`, `src/layout/table.rs` (`update_table_context`): a table whose rows or cells changed collects
+  again only the rows with damage of their own or a cell with it, and rows added to or removed from a row group
+  between rows it keeps; the other rows and cells stay. Its layout children are listed again only when cells were
+  added or removed, and `resolve_layout_children` visits only the cells that changed. A change it cannot place (a
+  `rowspan`, an out-of-flow part, a new column, a change to the first row, which gives the columns their widths and
+  the first cell the gutters, the table's own damage, ...) builds the table again.
+- The collapsed borders (`CollapsedEdges`) are resolved again only on the grid lines of the rows collected again and
+  the cells beside them (`offer_box` with an `EdgeRange`); a uniform table keeps its edges too (`spare_edges`) to
+  tell when it stops being uniform.
+- `TableTreeWrapper::auto_column_widths`: each cell's min-content and max-content widths are kept with the table's
+  content width they were measured for (`CellWidths`), and so are the columns' widths summed from them. A cell that
+  changed is measured again; a column's widths are summed again only when a cell that set them got narrower.
+- The grid is laid out again from its last layout when the columns are the same (see "Table grids laid out again
+  from their last layout" in `vendor/taffy/README.lightningpanda.md`): `take_table_grid_state` gives back the cells
+  that changed (`TableContext::changed_cells`) and the rows replaced since (`grid_splice`: one replacement between
+  two layouts; more lay the grid out whole). The indices the table keeps (changed cells, cells to measure, round,
+  transform and visit in the paint tree, the cells' overflow, a plain table's paint children) move with the cells
+  (`splice_indices`, `PlacedCells::splice`).
+- `src/layout/writing_mode.rs`, `src/resolve.rs` (`table_cells_overflow`): rounding and `resolve_transforms` visit
+  again only the cells the grid placed or that changed since (`TableContext::placed`), with each cell's overflow in
+  the table kept; the others' are as they were. Horizontal tables without out-of-flow parts only.
+- `src/layout/paint_tree.rs` (`table_paint_children_kept`): a table whose cells were all plain boxes in it (no
+  stacking context, nothing hoisted out of them, one paint order) visits again only the cells damaged or appended
+  since, and keeps its paint children while they stay plain.
+- `src/node/node.rs` (`update_unrounded_layout`): a box that only moved (its layout the same but for its location)
+  marks only its ancestors as having changed: its own scrollable overflow and transform are in its own coordinates,
+  and its rounding is keyed on its location. The rows below a cell that grew move without their cells' subtrees
+  being transformed again.
+- `src/layout/damage.rs` (`compute_layout_damage`): a layout change in the style of a table part or a table (from a
+  style sheet as from an attribute) builds its box again, as a mutation does: the table keeps its parts' layout
+  styles. Restyles used to relayout with the styles the table was built with.
+- `src/layout/construct.rs`, `src/layout/table.rs` (`damage_former_table_parts`, `drop_part_box`): a table built as
+  another box (`display: block`) builds its row groups and rows as boxes, which they never were in the table, and a
+  table built in place of another box drops the boxes its parts had.
+
+`crates/lp-render/tests/mirror.rs` compares the incremental document with fresh builds after cell edits, row appends,
+inserts and removals, spans, collapsed borders, nested and vertical tables, stacking contexts in cells and `display`
+changes (`table_*_match_fresh_builds`), and counts what an edit, an append, a removal and an insert collect and lay
+out (`a_cell_edit_collects_only_its_row`). `blitz_tables` and `blitz_table_grids` (lp-render) report tables built, cells
+collected and grids laid out whole or again.

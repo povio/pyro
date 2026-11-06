@@ -105,6 +105,18 @@ pub fn blitz_rounding() -> (u64, u64) {
     blitz_dom::phase_profile::rounding()
 }
 
+/// Tables Blitz built from scratch on this thread, and the table cells it read from their styles
+/// (by those builds and by updates of the rows that changed).
+pub fn blitz_tables() -> (u64, u64) {
+    blitz_dom::phase_profile::tables()
+}
+
+/// Table grids Blitz laid out on this thread: whole, and again from their last layout in the rows
+/// that changed.
+pub fn blitz_table_grids() -> (u64, u64) {
+    blitz_dom::phase_profile::table_grids()
+}
+
 pub fn blitz_phases() -> [f64; 9] {
     blitz_dom::phase_profile::peek()
 }

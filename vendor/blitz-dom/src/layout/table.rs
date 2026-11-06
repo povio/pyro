@@ -26,6 +26,7 @@ use taffy::{
 
 use crate::BaseDocument;
 use crate::layout::LayoutPassState;
+use crate::node::{NodeFlags, SpecialElementData};
 
 use super::damage::{CONSTRUCT_BOX, CONSTRUCT_DESCENDENT, CONSTRUCT_FC};
 use super::resolve_calc_value;
@@ -130,18 +131,31 @@ impl TableTreeWrapper<'_, '_> {
             _ => 0.0,
         }).collect();
         let mut max = min.clone();
-        let mut spanning = Vec::new();
-        for (idx, cell) in ctx.cells.iter().enumerate() {
-            let column = cell.column as usize;
-            let lo = measure(self, idx, taffy::AvailableSpace::MinContent);
-            let hi = measure(self, idx, taffy::AvailableSpace::MaxContent).max(lo);
-            if cell.colspan == 1 && column < n {
-                min[column] = min[column].max(lo);
-                max[column] = max[column].max(hi);
-            } else {
-                spanning.push((column, (cell.colspan as usize).max(1), lo, hi));
-            }
+        // lightningpanda: the cells' widths are those last measured, but for the cells that changed
+        // (`CellWidths`); a column's are summed again only when a cell that set them got narrower.
+        let mut widths = ctx.widths.borrow_mut();
+        if widths.cells.len() != ctx.cells.len() || widths.inner != inner {
+            *widths = CellWidths { inner, cells: vec![None; ctx.cells.len()], ..CellWidths::default() };
         }
+        widths.update(&ctx, n, |idx| {
+            let lo = measure(self, idx, taffy::AvailableSpace::MinContent);
+            (lo, measure(self, idx, taffy::AvailableSpace::MaxContent).max(lo))
+        });
+        let columns = widths.columns.as_ref().unwrap();
+        for c in 0..n {
+            min[c] = min[c].max(columns.min[c]);
+            max[c] = max[c].max(columns.max[c]);
+        }
+        let spanning: Vec<(usize, usize, f32, f32)> = columns
+            .spanning
+            .iter()
+            .map(|&idx| {
+                let cell = &ctx.cells[idx];
+                let (lo, hi) = widths.cells[idx].unwrap_or_default();
+                (cell.column as usize, (cell.colspan as usize).max(1), lo, hi)
+            })
+            .collect();
+        drop(widths);
         // A spanning cell wider than the columns it spans: leave it to the grid.
         for (column, span, lo, hi) in spanning {
             let end = (column + span).min(n);
@@ -218,10 +232,7 @@ impl TableTreeWrapper<'_, '_> {
 
     /// Whether a cell or `<col>` of an auto table has a percentage `width`.
     fn has_percent_cell(&self, ctx: &TableContext) -> bool {
-        ctx.column_percents.iter().any(Option::is_some)
-            || ctx.cells.iter().any(|cell| {
-                self.cell_width(cell).is_some_and(|width| width.tag() == taffy::CompactLength::PERCENT_TAG)
-            })
+        ctx.column_percents.iter().any(Option::is_some) || ctx.percent_cells > 0
     }
 
     /// The column widths of an auto table with percentage columns, as Blink
@@ -486,13 +497,234 @@ pub struct TableContext {
     /// half of the borders around them as their own, and the table half of its outer ones. A
     /// uniform table instead has them as gutters of the grid (`style.gap`) and this is `None`.
     pub collapsed_edges: Option<CollapsedEdges>,
+    /// lightningpanda: the collapsed borders of a collapsed table that has them as gutters (when
+    /// `collapsed_edges` is `None`), kept so that a change can be resolved locally, and the
+    /// gutters the first cell's borders give.
+    spare_edges: Option<CollapsedEdges>,
+    collapse_gap: (f32, f32),
     /// Laid out with the fixed table layout algorithm: cell contents don't size
     /// the columns, so cells have no intrinsic width.
     pub is_fixed: bool,
+    /// lightningpanda: what `update_table_context` checks a change against: whether it can update
+    /// the table at all (no cell spans rows, no box is out of flow, each row's cells follow those of
+    /// the rows before), the columns the cells reach, and the cells spanning one column, per column.
+    incremental: bool,
+    cursor_columns: u16,
+    single_cell_columns: Vec<u32>,
+    /// The cells with a percentage `width`.
+    percent_cells: usize,
+    /// lightningpanda: the cells that changed (their subtree, or their entry) since the grid was last
+    /// laid out (indices into `cells`; damage propagation and `update_table_context` add to it), the
+    /// grid's last layout (`taffy::TableGridState`), and each cell's min-content and max-content
+    /// widths as the automatic table layout last measured them: the data a layout of the table starts
+    /// from, so that it measures and lays out again only the cells that changed.
+    pub(crate) changed_cells: AtomicRefCell<Vec<usize>>,
+    grid_state: AtomicRefCell<Option<Box<taffy::TableGridState>>>,
+    /// The rows replaced by others since the grid's last layout, if any (`update_rows`).
+    grid_splice: AtomicRefCell<Option<taffy::TableGridSplice>>,
+    pub(crate) widths: AtomicRefCell<CellWidths>,
+    /// lightningpanda: the cells the grid placed since rounding and `resolve_transforms` last
+    /// visited the table, and where the table was then (`TableTreeWrapper::set_unrounded_layout`): a
+    /// cell neither placed nor damaged since is rounded and transformed as it was.
+    pub(crate) placed: AtomicRefCell<PlacedCells>,
     /// Backing storage for `calc()` track sizes synthesised by the table layout code.
     /// Taffy stores calc values as raw pointers, so these must outlive the `style`.
     #[allow(dead_code)]
     calc_values: Vec<LengthPercentage>,
+}
+
+/// The cells a table's grid placed since its last rounding and transform pass (`TableContext::placed`).
+#[derive(Debug, Default)]
+pub(crate) struct PlacedCells {
+    /// Cells placed since the last rounding (all of them when `None`), and where the table was then
+    round: Option<Vec<usize>>,
+    rounded_at: Option<(taffy::Point<f32>, taffy::Point<f32>)>,
+    /// Cells placed or damaged since the last transform pass (all of them when `None`), and each
+    /// cell's overflow in the table as the last pass computed it, at its scale
+    transform: Option<Vec<usize>>,
+    pub(crate) overflow: Vec<kurbo::Rect>,
+    pub(crate) overflow_scale: f64,
+    /// Cells damaged or appended since the paint tree last visited the table (all of them when
+    /// `None`), and, when every cell then was a plain box in it (no stacking context, nothing
+    /// hoisted out of its subtree), their paint order (`build_paint_tree_impl`).
+    paint: Option<Vec<usize>>,
+    pub(crate) plain_paint_order: Option<(i32, i32)>,
+}
+
+impl PlacedCells {
+    fn placed(&mut self, index: usize, cells: usize) {
+        for list in [&mut self.round, &mut self.transform] {
+            if let Some(cells_placed) = list {
+                cells_placed.push(index);
+                if cells_placed.len() > cells {
+                    *list = None;
+                }
+            }
+        }
+    }
+
+    /// A cell whose subtree changed (`propagate_damage_flags`).
+    pub(crate) fn damaged(&mut self, index: usize, cells: usize) {
+        for list in [&mut self.transform, &mut self.paint] {
+            if let Some(cells_damaged) = list {
+                cells_damaged.push(index);
+                if cells_damaged.len() > cells {
+                    *list = None;
+                }
+            }
+        }
+    }
+
+    /// The cells `removed` replaced by `inserted` others (`update_rows`): the indices after them move,
+    /// and the new cells are to be transformed and visited in the paint tree.
+    fn splice(&mut self, removed: Range<usize>, inserted: usize, cells: usize) {
+        for list in [&mut self.round, &mut self.transform, &mut self.paint].into_iter().flatten() {
+            splice_indices(list, removed.clone(), inserted);
+        }
+        if !self.overflow.is_empty() {
+            self.overflow.splice(removed.clone(), std::iter::repeat_n(kurbo::Rect::ZERO, inserted));
+        }
+        for index in removed.start..removed.start + inserted {
+            self.damaged(index, cells);
+        }
+    }
+
+    /// The cells to visit again in the paint tree (all of them: `None`), and the next ones.
+    pub(crate) fn take_paint(&mut self) -> Option<Vec<usize>> {
+        std::mem::replace(&mut self.paint, Some(Vec::new())).map(|mut cells| {
+            cells.sort_unstable();
+            cells.dedup();
+            cells
+        })
+    }
+
+    /// The cells to round again for a table now at `at` (all of them: `None`), and the next ones.
+    pub(crate) fn take_round(&mut self, at: (taffy::Point<f32>, taffy::Point<f32>)) -> Option<Vec<usize>> {
+        let same_place = self.rounded_at == Some(at);
+        self.rounded_at = Some(at);
+        let cells = std::mem::replace(&mut self.round, Some(Vec::new()));
+        cells.filter(|_| same_place).map(|mut cells| {
+            cells.sort_unstable();
+            cells.dedup();
+            cells
+        })
+    }
+
+    /// The cells to transform again (all of them: `None`), and the next ones.
+    pub(crate) fn take_transform(&mut self) -> Option<Vec<usize>> {
+        std::mem::replace(&mut self.transform, Some(Vec::new())).map(|mut cells| {
+            cells.sort_unstable();
+            cells.dedup();
+            cells
+        })
+    }
+}
+
+/// Indices into a list whose items `removed` were replaced by `inserted` others: those of the removed
+/// items are dropped, those after them moved.
+fn splice_indices(list: &mut Vec<usize>, removed: Range<usize>, inserted: usize) {
+    list.retain_mut(|index| {
+        if *index < removed.start {
+            true
+        } else if *index < removed.end {
+            false
+        } else {
+            *index = *index + inserted - removed.len();
+            true
+        }
+    });
+}
+
+/// The widths of a table's cells (`TableContext::widths`), measured for a table content width.
+#[derive(Debug, Default)]
+pub(crate) struct CellWidths {
+    inner: f32,
+    cells: Vec<Option<(f32, f32)>>,
+    /// The cells to measure again (they changed, or are new): their last widths, if any, are still
+    /// in `cells`.
+    pending: Vec<usize>,
+    /// What the column widths are computed from: for each column, the largest widths of the cells
+    /// spanning it alone, and the cells spanning several. `None`: to be summed again from `cells`
+    /// (cells were removed or moved to other columns).
+    columns: Option<ColumnWidths>,
+}
+
+#[derive(Debug)]
+struct ColumnWidths {
+    min: Vec<f32>,
+    max: Vec<f32>,
+    spanning: Vec<usize>,
+}
+
+impl CellWidths {
+    /// A cell whose subtree changed (`propagate_damage_flags`), or that was collected again.
+    pub(crate) fn changed(&mut self, index: usize) {
+        if self.pending.len() >= self.cells.len() {
+            // Never measured (yet), or more changes than cells: all of them again.
+            *self = CellWidths::default();
+            return;
+        }
+        self.pending.push(index);
+    }
+
+    /// Brings the column widths up to date for the cells of `ctx`, measuring those that changed
+    /// with `measure`: a column's widths are summed again only when a cell that set them got
+    /// narrower.
+    fn update(
+        &mut self,
+        ctx: &TableContext,
+        columns: usize,
+        mut measure: impl FnMut(usize) -> (f32, f32),
+    ) {
+        let mut pending = std::mem::take(&mut self.pending);
+        pending.sort_unstable();
+        pending.dedup();
+        let mut stale = false;
+        for idx in pending {
+            let Some(cell) = ctx.cells.get(idx) else { continue };
+            let old = self.cells[idx];
+            let new = measure(idx);
+            self.cells[idx] = Some(new);
+            let Some(widths) = self.columns.as_mut() else { continue };
+            let column = cell.column as usize;
+            if cell.colspan != 1 || column >= columns {
+                stale |= !widths.spanning.contains(&idx);
+                continue;
+            }
+            for (width, new, old) in [(&mut widths.min[column], new.0, old.map(|o| o.0)), (&mut widths.max[column], new.1, old.map(|o| o.1))] {
+                if new >= *width {
+                    *width = new;
+                } else if old.is_some_and(|old| old >= *width) {
+                    // It may have been the widest.
+                    stale = true;
+                }
+            }
+        }
+        if stale {
+            self.columns = None;
+        }
+        if self.columns.is_none() {
+            let mut widths = ColumnWidths { min: vec![0.0; columns], max: vec![0.0; columns], spanning: Vec::new() };
+            for (idx, cell) in ctx.cells.iter().enumerate() {
+                let (lo, hi) = match self.cells[idx] {
+                    Some(width) => width,
+                    None => {
+                        let width = measure(idx);
+                        self.cells[idx] = Some(width);
+                        width
+                    }
+                };
+                let column = cell.column as usize;
+                if cell.colspan == 1 && column < columns {
+                    widths.min[column] = widths.min[column].max(lo);
+                    widths.max[column] = widths.max[column].max(hi);
+                } else {
+                    widths.spanning.push(idx);
+                }
+            }
+            self.columns = Some(widths);
+        }
+    }
 }
 
 // #[derive(Debug, Clone, Eq, PartialEq)]
@@ -509,6 +741,16 @@ pub struct CollapsedEdge {
     rank: u8,
     priority: u8,
     hidden: bool,
+}
+
+impl CollapsedEdge {
+    const NONE: Self = CollapsedEdge {
+        width: 0.0,
+        color: style::color::AbsoluteColor::TRANSPARENT_BLACK,
+        rank: 0,
+        priority: 0,
+        hidden: false,
+    };
 }
 
 /// The collapsed borders of a table's grid lines, in the order of `css-tables-3` conflict resolution.
@@ -531,13 +773,7 @@ impl CollapsedEdges {
     }
 
     fn new(rows: usize, columns: usize) -> Self {
-        let none = CollapsedEdge {
-            width: 0.0,
-            color: style::color::AbsoluteColor::TRANSPARENT_BLACK,
-            rank: 0,
-            priority: 0,
-            hidden: false,
-        };
+        let none = CollapsedEdge::NONE;
         Self { rows, columns, vertical: vec![none; rows * (columns + 1)], horizontal: vec![none; (rows + 1) * columns] }
     }
 
@@ -627,50 +863,92 @@ fn cell_areas(cells: &[TableCell], nrows: usize, ncols: usize) -> Vec<(usize, us
         .collect()
 }
 
-/// Resolves the collapsed borders of the table's cells, rows, row groups and the table.
+/// Resolves the collapsed borders of the table's cells (in `areas`), rows, row groups and the table.
 fn resolve_collapsed_edges(
     doc: &BaseDocument,
     table: NodeId,
     cells: &[TableCell],
+    areas: &[(usize, usize, usize, usize)],
     rows: &[TableRow],
     columns: usize,
 ) -> CollapsedEdges {
     let mut edges = CollapsedEdges::new(rows.len(), columns);
-    let (nrows, ncols) = (rows.len(), columns);
-    let mut offer = |id: NodeId, r0: usize, c0: usize, r1: usize, c1: usize, priority: u8| {
-        let Some(styles) = doc.nodes[id].primary_styles() else { return };
-        let border = styles.get_border();
-        let color = styles.clone_color();
-        for c in c0..c1 {
-            offer_edge(&mut edges.horizontal[r0 * ncols + c], border, 0, &color, priority);
-            offer_edge(&mut edges.horizontal[r1 * ncols + c], border, 2, &color, priority);
-        }
-        for r in r0..r1 {
-            offer_edge(&mut edges.vertical[r * (ncols + 1) + c0], border, 3, &color, priority);
-            offer_edge(&mut edges.vertical[r * (ncols + 1) + c1], border, 1, &color, priority);
-        }
-    };
-    for (cell, (r0, c0, r1, c1)) in cells.iter().zip(cell_areas(cells, nrows, ncols)) {
+    let all = EdgeRange { lines: 0..rows.len() + 1, rows: 0..rows.len() };
+    for (cell, &(r0, c0, r1, c1)) in cells.iter().zip(areas) {
         if r0 < r1 && c0 < c1 {
-            offer(cell.node_id, r0, c0, r1, c1, 3);
+            offer_box(&mut edges, doc, cell.node_id, (r0, c0, r1, c1), 3, &all);
         }
     }
-    for (r, row) in rows.iter().enumerate() {
-        offer(row.node_id, r, 0, r + 1, ncols, 2);
+    offer_rows_groups_and_table(&mut edges, doc, table, rows, 0..rows.len(), &all);
+    edges
+}
+
+/// The segments a partial resolution resets and resolves again: the horizontal ones on `lines`
+/// and the vertical ones of `rows`.
+struct EdgeRange {
+    lines: Range<usize>,
+    rows: Range<usize>,
+}
+
+/// Offers the borders of the box `id` around its grid area to the segments of `range`.
+fn offer_box(
+    edges: &mut CollapsedEdges,
+    doc: &BaseDocument,
+    id: NodeId,
+    (r0, c0, r1, c1): (usize, usize, usize, usize),
+    priority: u8,
+    range: &EdgeRange,
+) {
+    let Some(styles) = doc.nodes[id].primary_styles() else { return };
+    let border = styles.get_border();
+    let color = styles.clone_color();
+    let ncols = edges.columns;
+    for (line, side) in [(r0, 0), (r1, 2)] {
+        if range.lines.contains(&line) {
+            for c in c0..c1 {
+                offer_edge(&mut edges.horizontal[line * ncols + c], border, side, &color, priority);
+            }
+        }
     }
-    let mut r = 0;
-    while r < nrows {
+    for r in r0.max(range.rows.start)..r1.min(range.rows.end) {
+        offer_edge(&mut edges.vertical[r * (ncols + 1) + c0], border, 3, &color, priority);
+        offer_edge(&mut edges.vertical[r * (ncols + 1) + c1], border, 1, &color, priority);
+    }
+}
+
+/// Offers the borders of `rows[span]`, of the row groups they are in (each whole) and of the table
+/// to the segments of `range`, after the cells' (the order of conflict resolution).
+fn offer_rows_groups_and_table(
+    edges: &mut CollapsedEdges,
+    doc: &BaseDocument,
+    table: NodeId,
+    rows: &[TableRow],
+    span: Range<usize>,
+    range: &EdgeRange,
+) {
+    let (nrows, ncols) = (rows.len(), edges.columns);
+    for r in span.clone() {
+        offer_box(edges, doc, rows[r].node_id, (r, 0, r + 1, ncols), 2, range);
+    }
+    if span.is_empty() {
+        return;
+    }
+    // The groups of `span`, from the start of the first one.
+    let mut r = span.start;
+    while r > 0 && rows[r - 1].group == rows[span.start].group {
+        r -= 1;
+    }
+    while r < span.end {
         let group = rows[r].group;
         let end = rows[r..].iter().take_while(|row| row.group == group).count() + r;
         if let Some(group) = group {
-            offer(group, r, 0, end, ncols, 1);
+            offer_box(edges, doc, group, (r, 0, end, ncols), 1, range);
         }
         r = end;
     }
     if nrows > 0 && ncols > 0 {
-        offer(table, 0, 0, nrows, ncols, 0);
+        offer_box(edges, doc, table, (0, 0, nrows, ncols), 0, range);
     }
-    edges
 }
 
 #[derive(Debug, Clone)]
@@ -682,6 +960,10 @@ pub struct TableCell {
     /// Index of the column the cell originates in
     pub column: u16,
     colspan: u16,
+    /// The `rowspan` attribute (before a rowspan is cut at the end of its row group).
+    rowspan: u16,
+    /// Whether its computed `width` is a percentage (`TableTreeWrapper::has_percent_cell`).
+    percent_width: bool,
     /// In the auto table layout algorithm, the larger of the cell's and its column's
     /// length `width`. That width is a minimum: the column still grows to fit the
     /// min-content width of its cells, but not to their max-content width. Both of the
@@ -692,6 +974,12 @@ pub struct TableCell {
     min_height: Option<f32>,
     /// `height` as a border box before collapsed borders, and whether they add to it (`content-box`).
     height_base: Option<(f32, bool)>,
+    /// lightningpanda: the cell's own length `width` as a border box (auto tables), and `min_width`
+    /// and `min_height` before the halves of collapsed borders are added: what a cell rebuilt on its
+    /// own starts from (`update_table_context`).
+    length_width: Option<f32>,
+    min_width_base: Option<f32>,
+    min_height_base: Option<f32>,
     style: taffy::Style<Atom>,
 }
 
@@ -756,6 +1044,10 @@ pub struct TableRow {
     /// specified length `height`. Such rows do not receive excess table height when there
     /// are unconstrained rows to receive it instead.
     pub is_constrained: bool,
+    /// lightningpanda: the number of cells originating in the row (they follow those of the rows
+    /// before it in `TableContext::cells`), and the column after its last cell.
+    pub cell_count: u32,
+    pub columns: u16,
 }
 
 /// The used width of one border side: border widths are not adjusted for
@@ -821,6 +1113,33 @@ fn percent_plus_length(
     };
     calc_values.push(value);
     dim.into()
+}
+
+/// The table's row tracks. A row's `height` is a minimum: the row grows to fit the content of its
+/// cells. Excess table height is distributed to unconstrained rows (via the stretching of `auto`
+/// tracks) if there are any, and to all rows otherwise. So constrained rows use a `max-content`
+/// (rather than `auto`) maximum when there are unconstrained rows.
+fn row_tracks(rows: &[TableRow]) -> Vec<taffy::GridTemplateComponent<Atom>> {
+    let has_unconstrained_rows = rows.iter().any(|row| !row.is_constrained);
+    rows.iter()
+        .map(|row| {
+            let min = match row.height {
+                Some(height) => style_helpers::length(height),
+                // Table rows retain their cells' intrinsic minimum even when
+                // a cell clips overflow. Grid's `auto` minimum would use zero
+                // for that cell, allowing a column-flex ancestor to compress
+                // the row below its content and authored cell-height minimum.
+                None => style_helpers::min_content(),
+            };
+            let max = if row.is_constrained && has_unconstrained_rows {
+                style_helpers::max_content()
+            } else {
+                style_helpers::auto()
+            };
+            let track: TrackSizingFunction = style_helpers::minmax(min, max);
+            track.into()
+        })
+        .collect()
 }
 
 pub(crate) fn build_table_context(
@@ -946,6 +1265,11 @@ pub(crate) fn build_table_context(
     }
     let num_columns = cursor.num_columns.max(column_sizes.len() as u16);
     column_sizes.resize(num_columns as usize, remaining_column);
+    let mut single_cell_columns = vec![0u32; num_columns as usize];
+    for cell in cells.iter().filter(|cell| cell.colspan == 1) {
+        single_cell_columns[cell.column as usize] += 1;
+    }
+    let has_rowspan = cells.iter().any(|cell| cell.rowspan > 1);
     if is_fixed {
         // In the fixed table layout algorithm, percentage column widths resolve against
         // the table's content width minus the horizontal border-spacing between columns,
@@ -1012,6 +1336,7 @@ pub(crate) fn build_table_context(
                 continue;
             };
             cell.min_width = Some(cell.min_width.map_or(width, |w| w.max(width)));
+            cell.min_width_base = cell.min_width;
             minimum_widths[column] = Some(width);
         }
         for (column, width) in column_sizes.iter_mut().zip(minimum_widths) {
@@ -1025,30 +1350,7 @@ pub(crate) fn build_table_context(
     }
 
     style.grid_template_columns = column_sizes.into_iter().map(|dim| dim.into()).collect();
-    // A row's `height` is a minimum: the row grows to fit the content of its cells.
-    // Excess table height is distributed to unconstrained rows (via the stretching of
-    // `auto` tracks) if there are any, and to all rows otherwise. So constrained rows
-    // use a `max-content` (rather than `auto`) maximum when there are unconstrained rows.
-    let has_unconstrained_rows = rows.iter().any(|row| !row.is_constrained);
-    style.grid_template_rows = rows
-        .iter()
-        .map(|row| {
-            let min = match row.height {
-                Some(height) => style_helpers::length(height),
-                // Table rows retain their cells' intrinsic minimum even when
-                // a cell clips overflow. Grid's `auto` minimum would use zero
-                // for that cell, allowing a column-flex ancestor to compress
-                // the row below its content and authored cell-height minimum.
-                None => style_helpers::min_content(),
-            };
-            let max = if row.is_constrained && has_unconstrained_rows {
-                style_helpers::max_content()
-            } else {
-                style_helpers::auto()
-            };
-            style_helpers::minmax(min, max)
-        })
-        .collect();
+    style.grid_template_rows = row_tracks(&rows);
 
     style.gap = match border_collapse {
         BorderCollapse::Separate => {
@@ -1096,45 +1398,23 @@ pub(crate) fn build_table_context(
 
     // lightningpanda: a table whose collapsed borders are not one uniform grid has each cell keep half
     // of the borders around it, and the table half of its outer ones, as Chromium's boxes do.
-    let collapsed_edges = (border_collapse == BorderCollapse::Collapse && !wm.is_vertical())
-        .then(|| resolve_collapsed_edges(doc, table_root_node_id, &cells, &rows, style.grid_template_columns.len()))
-        .filter(|edges| {
-            let gap = (style.gap.width.into_raw().value(), style.gap.height.into_raw().value());
-            !edges.is_empty() && edges.uniform() != Some(gap) || (edges.is_empty() && gap != (0.0, 0.0))
-        });
+    let collapse_gap = (style.gap.width.into_raw().value(), style.gap.height.into_raw().value());
+    let ncols = style.grid_template_columns.len();
+    let edges = (border_collapse == BorderCollapse::Collapse && !wm.is_vertical()).then(|| {
+        let areas = cell_areas(&cells, rows.len(), ncols);
+        resolve_collapsed_edges(doc, table_root_node_id, &cells, &areas, &rows, ncols)
+    });
+    let (collapsed_edges, spare_edges) = match edges {
+        Some(edges) if edges_in_use(&edges, collapse_gap) => (Some(edges), None),
+        edges => (None, edges),
+    };
     if let Some(edges) = &collapsed_edges {
         let zero = style_helpers::length(0.0);
         style.gap = taffy::Size { width: zero, height: zero };
-        let half_max = |it: &mut dyn Iterator<Item = f32>| style_helpers::length(it.fold(0.0f32, f32::max) / 2.0);
-        let (r, c) = (edges.rows, edges.columns);
-        style.border = taffy::Rect {
-            left: half_max(&mut (0..r).map(|i| edges.vertical_at(i, 0).width)),
-            right: half_max(&mut (0..r).map(|i| edges.vertical_at(i, c).width)),
-            top: half_max(&mut (0..c).map(|i| edges.horizontal_at(0, i).width)),
-            bottom: half_max(&mut (0..c).map(|i| edges.horizontal_at(r, i).width)),
-        };
-        let areas = cell_areas(&cells, r, c);
-        for (cell, (r0, c0, r1, c1)) in cells.iter_mut().zip(areas) {
-            if r0 >= r1 || c0 >= c1 {
-                continue;
-            }
-            let top = (c0..c1).map(|i| edges.horizontal_at(r0, i).width).fold(0.0, f32::max) / 2.0;
-            let bottom = (c0..c1).map(|i| edges.horizontal_at(r1, i).width).fold(0.0, f32::max) / 2.0;
-            let left = (r0..r1).map(|i| edges.vertical_at(i, c0).width).fold(0.0, f32::max) / 2.0;
-            let right = (r0..r1).map(|i| edges.vertical_at(i, c1).width).fold(0.0, f32::max) / 2.0;
-            cell.style.border = taffy::Rect {
-                left: style_helpers::length(left),
-                right: style_helpers::length(right),
-                top: style_helpers::length(top),
-                bottom: style_helpers::length(bottom),
-            };
-            if let Some((height, content_box)) = cell.height_base {
-                cell.min_height = Some(if content_box { height + top + bottom } else { height });
-            }
-            if let Some(width) = cell.min_width.as_mut() {
-                *width += left + right;
-            }
-            doc.nodes[cell.node_id].layout_data_mut().collapsed_border = Some([top, right, bottom, left]);
+        style.border = collapsed_table_border(edges);
+        let areas = cell_areas(&cells, edges.rows, edges.columns);
+        for (cell, area) in cells.iter_mut().zip(areas) {
+            apply_collapsed_borders(doc, cell, area, edges);
         }
     } else {
         for cell in cells.iter() {
@@ -1149,6 +1429,12 @@ pub(crate) fn build_table_context(
         .collect();
     let root_node = &mut doc.nodes[table_root_node_id];
     root_node.children = children;
+    crate::resolve::phase_profile::table_built();
+    let incremental = !has_rowspan && oof_children.is_empty() && cells_follow_rows(&rows, &cells, 0);
+    let cells_percent = cells.iter().filter(|cell| cell.percent_width).count();
+    for (at, cell) in cells.iter().enumerate() {
+        doc.nodes[cell.node_id].layout_data_mut().table_cell_index = at as u32;
+    }
 
     (
         TableContext {
@@ -1158,15 +1444,663 @@ pub(crate) fn build_table_context(
             rows,
             columns,
             column_percents,
-        computed_grid_info: AtomicRefCell::new(None),
+            computed_grid_info: AtomicRefCell::new(None),
             border_collapse,
             border_style: first_cell_border,
             collapsed_edges,
+            spare_edges,
+            collapse_gap,
             is_fixed,
+            incremental,
+            cursor_columns: cursor.num_columns,
+            single_cell_columns,
+            percent_cells: cells_percent,
+            changed_cells: AtomicRefCell::new(Vec::new()),
+            grid_state: AtomicRefCell::new(None),
+            grid_splice: AtomicRefCell::new(None),
+            widths: AtomicRefCell::new(CellWidths::default()),
+            placed: AtomicRefCell::new(PlacedCells::default()),
             calc_values,
         },
         layout_children,
     )
+}
+
+/// Whether a collapsed table's borders are cells' and the table's own (not one uniform grid of
+/// gutters as wide as the first cell's borders).
+fn edges_in_use(edges: &CollapsedEdges, gap: (f32, f32)) -> bool {
+    !edges.is_empty() && edges.uniform() != Some(gap) || (edges.is_empty() && gap != (0.0, 0.0))
+}
+
+/// The table's border: half of the widest collapsed border on each of its sides.
+fn collapsed_table_border(edges: &CollapsedEdges) -> taffy::Rect<taffy::LengthPercentage> {
+    let half_max = |it: &mut dyn Iterator<Item = f32>| style_helpers::length(it.fold(0.0f32, f32::max) / 2.0);
+    let (r, c) = (edges.rows, edges.columns);
+    taffy::Rect {
+        left: half_max(&mut (0..r).map(|i| edges.vertical_at(i, 0).width)),
+        right: half_max(&mut (0..r).map(|i| edges.vertical_at(i, c).width)),
+        top: half_max(&mut (0..c).map(|i| edges.horizontal_at(0, i).width)),
+        bottom: half_max(&mut (0..c).map(|i| edges.horizontal_at(r, i).width)),
+    }
+}
+
+/// Gives `cell` (in grid `area`) half of the collapsed borders around it, adding them to its
+/// minimum sizes. Returns whether that changed the cell's box.
+fn apply_collapsed_borders(
+    doc: &mut BaseDocument,
+    cell: &mut TableCell,
+    (r0, c0, r1, c1): (usize, usize, usize, usize),
+    edges: &CollapsedEdges,
+) -> bool {
+    if r0 >= r1 || c0 >= c1 {
+        return false;
+    }
+    let top = (c0..c1).map(|i| edges.horizontal_at(r0, i).width).fold(0.0, f32::max) / 2.0;
+    let bottom = (c0..c1).map(|i| edges.horizontal_at(r1, i).width).fold(0.0, f32::max) / 2.0;
+    let left = (r0..r1).map(|i| edges.vertical_at(i, c0).width).fold(0.0, f32::max) / 2.0;
+    let right = (r0..r1).map(|i| edges.vertical_at(i, c1).width).fold(0.0, f32::max) / 2.0;
+    let border = taffy::Rect {
+        left: style_helpers::length(left),
+        right: style_helpers::length(right),
+        top: style_helpers::length(top),
+        bottom: style_helpers::length(bottom),
+    };
+    let min_height = match cell.height_base {
+        Some((height, content_box)) => Some(if content_box { height + top + bottom } else { height }),
+        None => cell.min_height_base,
+    };
+    let min_width = cell.min_width_base.map(|width| width + left + right);
+    let changed = cell.style.border != border || cell.min_height != min_height || cell.min_width != min_width;
+    cell.style.border = border;
+    cell.min_height = min_height;
+    cell.min_width = min_width;
+    doc.nodes[cell.node_id].layout_data_mut().collapsed_border = Some([top, right, bottom, left]);
+    changed
+}
+
+/// Whether each row's cells follow those of the rows before it in `cells` (`TableRow::cell_count`),
+/// the rows numbered from `first`: what `update_table_context` relies on to find a row's cells.
+fn cells_follow_rows(rows: &[TableRow], cells: &[TableCell], first: usize) -> bool {
+    let mut at = 0;
+    for (r, row) in rows.iter().enumerate() {
+        let end = at + row.cell_count as usize;
+        if end > cells.len() || cells[at..end].iter().any(|cell| cell.row as usize != first + r) {
+            return false;
+        }
+        at = end;
+    }
+    at == cells.len()
+}
+
+/// Rows `old` of the table, to be replaced by what `rows` (row nodes, in order) collect to.
+struct RowChange {
+    old: Range<usize>,
+    rows: Vec<NodeId>,
+    group: Option<NodeId>,
+}
+
+/// Whether the node or its subtree changed in this pass (a restyle damages a node without marking
+/// it as having damaged descendants).
+fn changed(node: &crate::Node) -> bool {
+    node.flags.contains(NodeFlags::OWN_DAMAGE) || node.has_damaged_descendants()
+}
+
+/// Whether a row needs collecting again: it, or a cell in it, changed (a mutation or a restyle of its
+/// own). `None`: a change the row's cells can't be told from (in a `display: contents` box).
+fn row_changed(doc: &BaseDocument, row: NodeId) -> Option<bool> {
+    let node = &doc.nodes[row];
+    if node.flags.contains(NodeFlags::OWN_DAMAGE) {
+        return Some(true);
+    }
+    for &child in node.children.iter() {
+        let child = &doc.nodes[child];
+        if !child.is_element() {
+            continue;
+        }
+        // (A restyle damages a cell without marking it as having damaged descendants.)
+        if child.flags.contains(NodeFlags::OWN_DAMAGE) {
+            return Some(true);
+        }
+        if !child.has_damaged_descendants() {
+            continue;
+        }
+        if child.display_style().is_some_and(|d| d.inside() == DisplayInside::Contents) {
+            return None;
+        }
+    }
+    Some(false)
+}
+
+/// The changes to the rows of `group` (`rows[g0..g1]` of the table). A group with damage of its own
+/// may have rows added, removed or replaced: those between the rows it starts and ends with as before.
+fn group_changes(
+    doc: &BaseDocument,
+    ctx: &TableContext,
+    group: NodeId,
+    own: bool,
+    changes: &mut Vec<RowChange>,
+) -> bool {
+    let Some(g0) = ctx.rows.iter().position(|row| row.group == Some(group)) else { return false };
+    let g1 = g0 + ctx.rows[g0..].iter().take_while(|row| row.group == Some(group)).count();
+    let children = &doc.nodes[group].children;
+    let single = |at: usize, changes: &mut Vec<RowChange>| -> bool {
+        let row = ctx.rows[at].node_id;
+        if !changed(&doc.nodes[row]) {
+            return true;
+        }
+        match row_changed(doc, row) {
+            Some(true) => changes.push(RowChange { old: at..at + 1, rows: vec![row], group: Some(group) }),
+            Some(false) => {}
+            None => return false,
+        }
+        true
+    };
+    if !own {
+        // The same children: the rows in order, among boxes the table ignores.
+        let mut at = g0;
+        for &child in children.iter() {
+            if !doc.nodes[child].is_element() {
+                continue;
+            }
+            if at < g1 && ctx.rows[at].node_id == child {
+                if !single(at, changes) {
+                    return false;
+                }
+                at += 1;
+            } else if doc.nodes[child].flags.contains(NodeFlags::OWN_DAMAGE) {
+                // It may have become a row.
+                return false;
+            }
+        }
+        return at == g1;
+    }
+    let mut rows = Vec::new();
+    for &child in children.iter() {
+        let node = &doc.nodes[child];
+        if !node.is_element() {
+            continue;
+        }
+        let Some(display) = node.display_style() else { continue };
+        if display.outside() == DisplayOutside::None {
+            continue;
+        }
+        if node.primary_styles().is_some_and(|s| s.clone_position().is_absolutely_positioned()) {
+            return false;
+        }
+        match display.inside() {
+            DisplayInside::TableRow => rows.push(child),
+            DisplayInside::Flow
+            | DisplayInside::FlowRoot
+            | DisplayInside::Flex
+            | DisplayInside::Grid
+            | DisplayInside::TableColumnGroup
+            | DisplayInside::TableColumn
+            | DisplayInside::Table
+            | DisplayInside::None => {}
+            _ => return false,
+        }
+    }
+    let old = &ctx.rows[g0..g1];
+    let prefix = old.iter().zip(&rows).take_while(|(a, b)| a.node_id == **b).count();
+    let most = old.len().min(rows.len()) - prefix;
+    let suffix = old.iter().rev().zip(rows.iter().rev()).take(most).take_while(|(a, b)| a.node_id == **b).count();
+    for at in (g0..g0 + prefix).chain(g1 - suffix..g1) {
+        if !single(at, changes) {
+            return false;
+        }
+    }
+    if prefix + suffix < old.len().max(rows.len()) {
+        changes.push(RowChange {
+            old: g0 + prefix..g1 - suffix,
+            rows: rows[prefix..rows.len() - suffix].to_vec(),
+            group: Some(group),
+        });
+    }
+    true
+}
+
+/// The cells of `table` (at `at`, its position and rounded position) whose rounding may have changed
+/// since it was last rounded: those its grid placed since, if it is where it was then (`None`: all).
+pub(crate) fn table_cells_to_round(
+    doc: &BaseDocument,
+    table: NodeId,
+    at: (taffy::Point<f32>, taffy::Point<f32>),
+) -> Option<Vec<NodeId>> {
+    let node = &doc.nodes[table];
+    if !node.flags.is_table_root() {
+        return None;
+    }
+    let SpecialElementData::TableRoot(ctx) = &node.data.downcast_element()?.special_data else { return None };
+    if !ctx.incremental || !ctx.oof_children.is_empty() {
+        return None;
+    }
+    let cells = ctx.placed.borrow_mut().take_round(at)?;
+    Some(cells.into_iter().filter_map(|index| ctx.cells.get(index).map(|cell| cell.node_id)).collect())
+}
+
+/// Whether `resolve_transforms` keeps the overflow of `ctx`'s cells between passes
+/// (`table_cells_overflow`): a table whose layout children are its cells and pseudo-elements.
+pub(crate) fn keeps_cells(ctx: &TableContext) -> bool {
+    ctx.incremental && ctx.oof_children.is_empty()
+}
+
+/// Whether `table` is a table whose `TableContext` `update_table_context` can update.
+pub(crate) fn is_incremental(doc: &BaseDocument, table: NodeId) -> bool {
+    let node = &doc.nodes[table];
+    node.flags.is_table_root()
+        && node.data.downcast_element().is_some_and(|element| {
+            matches!(&element.special_data, SpecialElementData::TableRoot(ctx) if ctx.incremental)
+        })
+}
+
+/// lightningpanda: brings the table's `TableContext` up to date when only some of its rows changed
+/// (a cell's content or style, rows added to or removed from a row group): those rows are collected
+/// again and the collapsed borders around them resolved again; the other rows and cells stay as they
+/// are. `false`: the change is not one of those, and the table is to be built again.
+///
+/// The cells whose layout children may need building again: `Some(None)`, all of them (rows were
+/// added or removed), else those that changed (with damage of their own or in their subtree, or
+/// collected again).
+pub(crate) fn update_table_context(doc: &mut BaseDocument, table: NodeId) -> Option<Option<Vec<NodeId>>> {
+    let node = &doc.nodes[table];
+    if !node.flags.is_table_root() || node.flags.contains(NodeFlags::OWN_DAMAGE) {
+        return None;
+    }
+    if [node.before(), node.after()]
+        .into_iter()
+        .flatten()
+        .any(|id| doc.nodes[id].flags.contains(NodeFlags::OWN_DAMAGE))
+    {
+        return None;
+    }
+    let element = doc.nodes[table].data.downcast_element_mut()?;
+    let mut data = std::mem::take(&mut element.special_data);
+    let updated = match &mut data {
+        SpecialElementData::TableRoot(ctx) => Arc::get_mut(ctx).and_then(|ctx| {
+            let boxes_changed = update_rows(doc, table, ctx)?;
+            // (`changed_cells` holds the cells damage propagation noted, and those collected again
+            // whose box changed; the others collected again are cells with damage of their own.)
+            Some((!boxes_changed).then(|| {
+                let cells = ctx.changed_cells.get_mut();
+                cells.sort_unstable();
+                cells.dedup();
+                cells.iter().filter_map(|&index| ctx.cells.get(index).map(|cell| cell.node_id)).collect()
+            }))
+        }),
+        _ => None,
+    };
+    doc.nodes[table].data.downcast_element_mut().unwrap().special_data = data;
+    updated
+}
+
+fn update_rows(doc: &mut BaseDocument, table: NodeId, ctx: &mut TableContext) -> Option<bool> {
+    if !ctx.incremental {
+        return None;
+    }
+    let Some(first_cell_row) = ctx.cells.first().map(|cell| cell.row as usize) else { return None };
+
+    // 1. The rows that changed.
+    let mut changes: Vec<RowChange> = Vec::new();
+    for &child in doc.nodes[table].children.iter() {
+        let node = &doc.nodes[child];
+        if !node.is_element() || !changed(node) {
+            continue;
+        }
+        let own = node.flags.contains(NodeFlags::OWN_DAMAGE);
+        let Some(display) = node.display_style() else {
+            if own {
+                return None;
+            }
+            continue;
+        };
+        let absolute = node.primary_styles().is_some_and(|s| s.clone_position().is_absolutely_positioned());
+        if display.outside() == DisplayOutside::None || absolute {
+            if own {
+                return None;
+            }
+            continue;
+        }
+        match display.inside() {
+            DisplayInside::TableRowGroup => {
+                if !group_changes(doc, ctx, child, own, &mut changes) {
+                    return None;
+                }
+            }
+            DisplayInside::TableHeaderGroup | DisplayInside::TableFooterGroup if !own => {
+                if !group_changes(doc, ctx, child, false, &mut changes) {
+                    return None;
+                }
+            }
+            DisplayInside::TableRow => {
+                let Some(at) = ctx.rows.iter().position(|row| row.node_id == child) else { return None };
+                match row_changed(doc, child) {
+                    Some(true) => changes.push(RowChange { old: at..at + 1, rows: vec![child], group: ctx.rows[at].group }),
+                    Some(false) => {}
+                    None => return None,
+                }
+            }
+            DisplayInside::Flow | DisplayInside::FlowRoot | DisplayInside::Flex | DisplayInside::Grid if !own => {}
+            _ => return None,
+        }
+    }
+    changes.sort_by_key(|change| (change.old.start, change.old.end));
+    // The first row's cells give the columns their widths, and the first cell the gutters.
+    if changes.first().is_some_and(|change| change.old.start <= first_cell_row)
+        || changes.windows(2).any(|pair| pair[0].old.end > pair[1].old.start)
+    {
+        return None;
+    }
+    if changes.is_empty() {
+        return Some(false);
+    }
+
+    // 2. Collect the changed rows again.
+    let wm = table_wm(doc, table);
+    let mut collected: Vec<(Vec<TableRow>, Vec<TableCell>)> = Vec::with_capacity(changes.len());
+    for change in &changes {
+        let mut row = change.old.start as u16;
+        let mut cursor = ColumnCursor::default();
+        let (mut cells, mut oof, mut rows) = (Vec::new(), Vec::new(), Vec::new());
+        let (mut columns, mut percent_columns) = (Vec::new(), Vec::new());
+        let mut first_cell_border = ctx.border_style.clone();
+        for &node_id in &change.rows {
+            let node = &doc.nodes[node_id];
+            let structural = node.is_element()
+                && node.display_style().is_some_and(|display| {
+                    display.outside() != DisplayOutside::None
+                        && matches!(
+                            display.inside(),
+                            DisplayInside::TableRowGroup
+                                | DisplayInside::TableHeaderGroup
+                                | DisplayInside::TableFooterGroup
+                                | DisplayInside::Contents
+                                | DisplayInside::TableCell
+                        )
+                });
+            if structural {
+                return None;
+            }
+            collect_table_cells(
+                doc,
+                node_id,
+                wm,
+                ctx.is_fixed,
+                ctx.border_collapse,
+                &mut row,
+                &mut cursor,
+                &mut cells,
+                &mut oof,
+                &mut rows,
+                &mut columns,
+                &mut first_cell_border,
+                &mut percent_columns,
+            );
+        }
+        if !oof.is_empty()
+            || !columns.is_empty()
+            || !percent_columns.is_empty()
+            || cells.iter().any(|cell| cell.rowspan > 1)
+            || !cells_follow_rows(&rows, &cells, change.old.start)
+        {
+            return None;
+        }
+        for row in rows.iter_mut() {
+            row.group = change.group;
+        }
+        collected.push((rows, cells));
+    }
+
+    // The columns the cells reach, and the columns with cells of their own, stay the same.
+    let mut columns = 0u16;
+    let mut r = 0;
+    for change in &changes {
+        columns = ctx.rows[r..change.old.start].iter().map(|row| row.columns).fold(columns, u16::max);
+        r = change.old.end;
+    }
+    columns = ctx.rows[r..].iter().map(|row| row.columns).fold(columns, u16::max);
+    let mut single_cell_columns = ctx.single_cell_columns.clone();
+    for (change, (rows, cells)) in changes.iter().zip(&collected) {
+        columns = rows.iter().map(|row| row.columns).fold(columns, u16::max);
+        for cell in cells_of(&ctx.cells, change.old.clone()).iter().filter(|cell| cell.colspan == 1) {
+            single_cell_columns[cell.column as usize] -= 1;
+        }
+        for cell in cells.iter().filter(|cell| cell.colspan == 1) {
+            let Some(count) = single_cell_columns.get_mut(cell.column as usize) else { return None };
+            *count += 1;
+        }
+    }
+    if columns != ctx.cursor_columns
+        || single_cell_columns.iter().zip(&ctx.single_cell_columns).any(|(new, old)| (*new > 0) != (*old > 0))
+    {
+        return None;
+    }
+    ctx.single_cell_columns = single_cell_columns;
+
+    // 3. Replace the rows, the last first so that the earlier ones keep their indices.
+    let ncols = ctx.style.grid_template_columns.len();
+    let lengths: Vec<usize> = collected.iter().map(|(rows, _)| rows.len()).collect();
+    let old_rows = ctx.rows.len();
+    let appended_only = changes.iter().all(|change| change.old.is_empty() && change.old.start == old_rows);
+    let mut removed: Vec<TableCell> = Vec::new();
+    let mut boxes_changed = false;
+    let mut renumber = false;
+    let mut first_moved = usize::MAX;
+    let old_cells = ctx.cells.len();
+    let widths_kept = ctx.widths.get_mut().cells.len() == ctx.cells.len();
+    // The cells replaced by others (the grid lays out again from its last layout across one such change).
+    let mut splices: Vec<taffy::TableGridSplice> = Vec::new();
+    for (change, (rows, cells)) in changes.iter().zip(collected).rev() {
+        let (a, b) = (change.old.start, change.old.end);
+        let (ca, cb) = cell_range(&ctx.cells, a..b);
+        let same_boxes = cb - ca == cells.len()
+            && ctx.cells[ca..cb].iter().zip(&cells).all(|(old, new)| old.node_id == new.node_id);
+        let same_columns = same_boxes
+            && ctx.cells[ca..cb].iter().zip(&cells).all(|(old, new)| (old.column, old.colspan) == (new.column, new.colspan));
+        if !same_boxes {
+            boxes_changed = true;
+            if cb - ca != cells.len() {
+                first_moved = first_moved.min(ca);
+            }
+        }
+        renumber |= rows.len() != b - a;
+        let (new_rows, new_cells) = (rows.len(), cells.len());
+        let percent = |cells: &[TableCell]| cells.iter().filter(|cell| cell.percent_width).count();
+        ctx.percent_cells = ctx.percent_cells + percent(&cells) - percent(&ctx.cells[ca..cb]);
+        removed.extend(ctx.cells.splice(ca..cb, cells));
+        ctx.rows.splice(a..b, rows);
+        if !same_boxes {
+            splices.push(taffy::TableGridSplice {
+                items: ca..cb,
+                inserted: new_cells,
+                rows: a as u16..b as u16,
+                inserted_rows: new_rows as u16,
+            });
+            // The indices after the replaced cells move.
+            splice_indices(ctx.changed_cells.get_mut(), ca..cb, new_cells);
+            splice_indices(&mut ctx.widths.get_mut().pending, ca..cb, new_cells);
+            ctx.placed.get_mut().splice(ca..cb, new_cells, ctx.cells.len());
+            // (A plain table's paint children are its cells: `table_paint_children_kept`.)
+            if ctx.placed.get_mut().plain_paint_order.is_some() {
+                if let Some(paint) = doc.nodes[table].paint_children.get_mut().as_mut() {
+                    if paint.len() == ctx.cells.len() + (cb - ca) - new_cells {
+                        paint.splice(ca..cb, ctx.cells[ca..ca + new_cells].iter().map(|cell| cell.node_id));
+                    }
+                }
+            }
+        }
+        if widths_kept {
+            // Measured again; the column widths stand while the cells keep their columns, or the
+            // rows were appended.
+            let widths = ctx.widths.get_mut();
+            if !same_columns {
+                widths.cells.splice(ca..cb, std::iter::repeat_n(None, new_cells));
+                if !appended_only {
+                    widths.columns = None;
+                }
+            }
+            for index in ca..ca + new_cells {
+                widths.changed(index);
+            }
+        }
+        if let Some(edges) = ctx.collapsed_edges.as_mut().or(ctx.spare_edges.as_mut()) {
+            let none = CollapsedEdge::NONE;
+            edges.vertical.splice(a * (ncols + 1)..b * (ncols + 1), std::iter::repeat_n(none, new_rows * (ncols + 1)));
+            edges.horizontal.splice(a * ncols..(b + 1) * ncols, std::iter::repeat_n(none, (new_rows + 1) * ncols));
+            edges.rows = edges.rows + new_rows - (b - a);
+        }
+    }
+    if renumber {
+        let mut at = 0;
+        for (r, row) in ctx.rows.iter().enumerate() {
+            for cell in &mut ctx.cells[at..at + row.cell_count as usize] {
+                cell.row = r as u16;
+                cell.style.grid_row.start = style_helpers::line(r as i16 + 1);
+            }
+            at += row.cell_count as usize;
+        }
+    }
+    // The grid laid out last time has the same items but for those of the rows replaced (see
+    // `take_table_grid_state`): across one replacement since its last layout (appended rows are one,
+    // at its end).
+    if !splices.is_empty() {
+        let pending = ctx.grid_splice.get_mut();
+        if splices.len() > 1 || pending.is_some() {
+            *ctx.grid_state.get_mut() = None;
+            *pending = None;
+            ctx.changed_cells.get_mut().clear();
+        } else if splices[0].items.start < old_cells || splices[0].rows.start as usize != old_rows {
+            *pending = splices.pop();
+        }
+    }
+    // Where the changed rows are now.
+    let mut spans = Vec::with_capacity(changes.len());
+    let mut shift = 0isize;
+    for (change, &len) in changes.iter().zip(&lengths) {
+        let start = (change.old.start as isize + shift) as usize;
+        spans.push(start..start + len);
+        shift += len as isize - change.old.len() as isize;
+    }
+    // Each cell's index, on its node: the cells moved and those collected again.
+    for at in first_moved..ctx.cells.len() {
+        doc.nodes[ctx.cells[at].node_id].layout_data_mut().table_cell_index = at as u32;
+    }
+    for span in &spans {
+        let (ca, cb) = cell_range(&ctx.cells, span.clone());
+        for at in ca..cb.min(first_moved) {
+            doc.nodes[ctx.cells[at].node_id].layout_data_mut().table_cell_index = at as u32;
+        }
+    }
+
+    // A cell's minimum width from its column's (auto tables; see `build_table_context`).
+    if !ctx.is_fixed {
+        for span in &spans {
+            let (ca, cb) = cell_range(&ctx.cells, span.clone());
+            for cell in ctx.cells[ca..cb].iter_mut().filter(|cell| cell.colspan == 1) {
+                let Some(taffy::GridTemplateComponent::Single(track)) =
+                    ctx.style.grid_template_columns.get(cell.column as usize)
+                else {
+                    continue;
+                };
+                if track.max.into_raw().tag() == taffy::CompactLength::FIT_CONTENT_PX_TAG {
+                    let width = track.max.into_raw().value();
+                    cell.min_width_base = Some(cell.length_width.map_or(width, |w| w.max(width)));
+                    cell.min_width = cell.min_width_base;
+                }
+            }
+        }
+    }
+
+    // 4. The collapsed borders around the changed rows, and the cells beside them.
+    let nrows = ctx.rows.len();
+    let mut touched = Vec::new();
+    if let Some(edges) = ctx.collapsed_edges.as_mut().or(ctx.spare_edges.as_mut()) {
+        for span in &spans {
+            let range = EdgeRange { lines: span.start..span.end + 1, rows: span.clone() };
+            let around = span.start.saturating_sub(1)..(span.end + 1).min(nrows);
+            let (ca, cb) = cell_range(&ctx.cells, around.clone());
+            for cell in &ctx.cells[ca..cb] {
+                let area = cell_area(cell, ncols);
+                if area.0 < area.2 && area.1 < area.3 {
+                    offer_box(edges, doc, cell.node_id, area, 3, &range);
+                }
+            }
+            offer_rows_groups_and_table(edges, doc, table, &ctx.rows, around, &range);
+            touched.push((ca, cb));
+        }
+        if edges_in_use(edges, ctx.collapse_gap) != ctx.collapsed_edges.is_some() {
+            return None;
+        }
+    }
+    let changed_cells = ctx.changed_cells.get_mut();
+    if let Some(edges) = &ctx.collapsed_edges {
+        ctx.style.border = collapsed_table_border(edges);
+        for &(ca, cb) in &touched {
+            for (at, cell) in ctx.cells[ca..cb].iter_mut().enumerate() {
+                let area = cell_area(cell, ncols);
+                // (Those collected again are compared with what they were below.)
+                let collected = spans.iter().any(|span| span.contains(&(cell.row as usize)));
+                if apply_collapsed_borders(doc, cell, area, edges) && !collected {
+                    doc.nodes[cell.node_id].invalidate_layout_cache();
+                    changed_cells.push(ca + at);
+                }
+            }
+        }
+    } else {
+        for span in &spans {
+            let (ca, cb) = cell_range(&ctx.cells, span.clone());
+            for cell in &ctx.cells[ca..cb] {
+                doc.nodes[cell.node_id].layout_data_mut().collapsed_border = None;
+            }
+        }
+    }
+    // A cell collected again whose box is not what it was (it, or a cell beside it, changed) lays out
+    // again, and is measured and positioned again.
+    for span in &spans {
+        let (ca, cb) = cell_range(&ctx.cells, span.clone());
+        for (at, cell) in ctx.cells[ca..cb].iter().enumerate() {
+            let same = removed.iter().find(|old| old.node_id == cell.node_id).is_some_and(|old| {
+                old.style == cell.style
+                    && old.min_width == cell.min_width
+                    && old.min_height == cell.min_height
+                    && old.column == cell.column
+            });
+            if !same {
+                doc.nodes[cell.node_id].invalidate_layout_cache();
+                changed_cells.push(ca + at);
+            }
+        }
+    }
+
+    ctx.style.grid_template_rows = row_tracks(&ctx.rows);
+    if boxes_changed {
+        let (before, after) = (doc.nodes[table].before(), doc.nodes[table].after());
+        let layout_children = before
+            .into_iter()
+            .chain(ctx.cells.iter().map(|cell| cell.node_id))
+            .chain(ctx.oof_children.iter().map(|(node_id, _)| *node_id))
+            .chain(after)
+            .collect();
+        *doc.nodes[table].layout_children.borrow_mut() = Some(layout_children);
+    }
+    Some(boxes_changed)
+}
+
+/// The indices in `cells` of the cells of `rows`.
+fn cell_range(cells: &[TableCell], rows: Range<usize>) -> (usize, usize) {
+    let start = cells.partition_point(|cell| (cell.row as usize) < rows.start);
+    let end = start + cells[start..].partition_point(|cell| (cell.row as usize) < rows.end);
+    (start, end)
+}
+
+fn cells_of(cells: &[TableCell], rows: Range<usize>) -> &[TableCell] {
+    let (start, end) = cell_range(cells, rows);
+    &cells[start..end]
+}
+
+/// The grid area of a cell spanning one row (`cell_areas` for a table without rowspans).
+fn cell_area(cell: &TableCell, ncols: usize) -> (usize, usize, usize, usize) {
+    let (r, c) = (cell.row as usize, (cell.column as usize).min(ncols));
+    (r, c, r + 1, (c + cell.colspan as usize).min(ncols))
 }
 
 /// Collect `<col>` elements (and `display: table-column` elements) along with their
@@ -1245,6 +2179,42 @@ fn collect_columns(
     }
 }
 
+/// The row groups and rows (through `display: contents` boxes) of a table that is now built as
+/// another box: built as boxes in their turn (`collect_layout_children_with_wrap`).
+pub(crate) fn damage_former_table_parts(doc: &mut BaseDocument, node_id: NodeId) {
+    let children = std::mem::take(&mut doc.nodes[node_id].children);
+    for &child in children.iter() {
+        let node = &mut doc.nodes[child];
+        let part = node.is_element()
+            && node.display_style().is_some_and(|display| {
+                matches!(
+                    display.inside(),
+                    DisplayInside::TableRowGroup
+                        | DisplayInside::TableHeaderGroup
+                        | DisplayInside::TableFooterGroup
+                        | DisplayInside::TableRow
+                        | DisplayInside::Contents
+                )
+            });
+        if part {
+            node.insert_damage(super::damage::ALL_DAMAGE);
+            node.invalidate_layout_cache();
+            damage_former_table_parts(doc, child);
+        }
+    }
+    doc.nodes[node_id].children = children;
+}
+
+/// A row group or row is a part of its table, not a box: it has no layout children of its own
+/// (those of a box it was before: a table built in place of a block).
+fn drop_part_box(doc: &mut BaseDocument, node_id: NodeId) {
+    *doc.nodes[node_id].layout_children.borrow_mut() = None;
+    *doc.nodes[node_id].paint_children.borrow_mut() = None;
+    for anonymous in std::mem::take(&mut doc.nodes[node_id].anonymous_blocks) {
+        doc.deallocate_anonymous_block(anonymous);
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn collect_table_cells(
     doc: &mut BaseDocument,
@@ -1291,6 +2261,7 @@ fn collect_table_cells(
         | DisplayInside::TableHeaderGroup
         | DisplayInside::TableFooterGroup
         | DisplayInside::Contents => {
+            drop_part_box(doc, node_id);
             let first_row = rows.len();
             let children = std::mem::take(&mut doc.nodes[node_id].children);
             for child_id in children.iter().copied() {
@@ -1333,7 +2304,12 @@ fn collect_table_cells(
                 group: None,
                 height,
                 is_constrained: height.is_some(),
+                cell_count: 0,
+                columns: 0,
             });
+            drop_part_box(doc, node_id);
+            let row_index = rows.len() - 1;
+            let first_cell = cells.len();
 
             let children = std::mem::take(&mut doc.nodes[node_id].children);
             for child_id in children.iter().copied() {
@@ -1354,10 +2330,13 @@ fn collect_table_cells(
                 );
             }
             doc.nodes[node_id].children = children;
+            rows[row_index].cell_count = (cells.len() - first_cell) as u32;
+            rows[row_index].columns = cursor.col;
         }
         DisplayInside::TableCell => {
             // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
             let stylo_style = &node.primary_styles().unwrap();
+            let percent_width = stylo_taffy::convert::dimension(&stylo_style.clone_width()).tag() == taffy::CompactLength::PERCENT_TAG;
             let colspan: u16 = node
                 .attr(local_name!("colspan"))
                 .and_then(|val| val.parse().ok())
@@ -1496,14 +2475,21 @@ fn collect_table_cells(
                 style.size.height = style_helpers::auto();
             }
             style.size.width = style_helpers::auto();
+            crate::resolve::phase_profile::table_cell_collected();
+            let length_width = if is_fixed { None } else { length_width };
             cells.push(TableCell {
                 node_id,
                 row: row.saturating_sub(1),
                 column: col,
                 colspan,
-                min_width: if is_fixed { None } else { length_width },
+                rowspan,
+                percent_width,
+                min_width: length_width,
                 min_height,
                 height_base,
+                length_width,
+                min_width_base: length_width,
+                min_height_base: min_height,
                 style,
             });
 
@@ -1581,7 +2567,9 @@ impl taffy::LayoutPartialTree for TableTreeWrapper<'_, '_> {
     }
 
     fn set_unrounded_layout(&mut self, node_id: taffy::NodeId, layout: &taffy::Layout) {
-        let node_id = crate::taffy_node_id(self.ctx.cells[usize::from(node_id)].node_id);
+        let index = usize::from(node_id);
+        self.ctx.placed.borrow_mut().placed(index, self.ctx.cells.len());
+        let node_id = crate::taffy_node_id(self.ctx.cells[index].node_id);
         self.doc.set_unrounded_layout(node_id, layout)
     }
 
@@ -1658,6 +2646,20 @@ impl taffy::LayoutGridContainer for TableTreeWrapper<'_, '_> {
 
     fn grid_rows_are_table_rows(&self, _node_id: taffy::NodeId) -> bool {
         true
+    }
+
+    fn take_table_grid_state(&mut self, _node_id: taffy::NodeId) -> Option<taffy::TableGridReuse> {
+        let mut changed = std::mem::take(&mut *self.ctx.changed_cells.borrow_mut());
+        let splice = self.ctx.grid_splice.borrow_mut().take();
+        let state = self.ctx.grid_state.borrow_mut().take()?;
+        changed.sort_unstable();
+        changed.dedup();
+        Some(taffy::TableGridReuse { state, changed, splice })
+    }
+
+    fn store_table_grid_state(&mut self, _node_id: taffy::NodeId, state: Box<taffy::TableGridState>) {
+        crate::resolve::phase_profile::table_grid_laid_out(state.laid_out_again());
+        *self.ctx.grid_state.borrow_mut() = Some(state);
     }
 
     fn set_detailed_grid_info(
