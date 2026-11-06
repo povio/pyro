@@ -260,7 +260,13 @@ impl BlitzGeometry {
         let sheets = RefCell::new(HashMap::new());
         let tree = {
             let (style_text, stylesheet_href) = Self::render_opts(dom, style, &base_url, Some(&sheets));
-            let opts = RenderHtml { style_text: &style_text, stylesheet_href: &stylesheet_href, mark: None };
+            let adopted = |scope: NodeId| style.adopted_sheets(scope);
+            let opts = RenderHtml {
+                style_text: &style_text,
+                stylesheet_href: &stylesheet_href,
+                mark: None,
+                adopted: style.has_adopted().then_some(&adopted as _),
+            };
             Arc::new(convert(dom.render_tree(style.document(), &opts).ok()?))
         };
         let v = style.viewport();
@@ -327,7 +333,13 @@ impl BlitzGeometry {
                 let t = Instant::now();
                 let base_url = self.base_url.borrow().clone();
                 let (style_text, stylesheet_href) = Self::render_opts(dom, style, &base_url, None);
-                let opts = RenderHtml { style_text: &style_text, stylesheet_href: &stylesheet_href, mark: None };
+                let adopted = |scope: NodeId| style.adopted_sheets(scope);
+                let opts = RenderHtml {
+                    style_text: &style_text,
+                    stylesheet_href: &stylesheet_href,
+                    mark: None,
+                    adopted: style.has_adopted().then_some(&adopted as _),
+                };
                 let delta = dom.render_delta(style.document(), version, &opts).map(|mut delta| {
                     delta.ops.extend(restyled.iter().filter_map(|&owner| dom.render_style_text(owner, &opts)));
                     delta

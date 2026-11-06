@@ -65,12 +65,14 @@ impl JsClass for DomRect {
 
 pub(crate) fn bounding_rect<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
     let page = n.page();
+    crate::animation_events::style_flush(page);
     let r = page.layout().bounding_client_rect(&page.dom.borrow(), n.id);
     rect_value(s, r.layout_units())
 }
 
 pub(crate) fn client_rects<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
     let page = n.page();
+    crate::animation_events::style_flush(page);
     let rects = page.layout().client_rects(&page.dom.borrow(), n.id);
     let mut vals = lp_js::RootedVec::new();
     for r in rects {
@@ -390,6 +392,7 @@ pub(crate) fn scroll_to<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>, by: bool) 
 
 pub(crate) fn scroll_get<'s>(s: &Scope<'s>, n: &NodeData, top: bool) -> JsResult<Value<'s>> {
     // Reading a scroll offset sees the current layout (clamped to it).
+    crate::animation_events::style_flush(n.page());
     clamp_scrolls(n.page(), false);
     let viewport = scrolls_viewport(n.page(), n.id);
     let layout = n.page().layout();
@@ -423,6 +426,7 @@ pub(crate) fn scroll_set(_s: &Scope<'_>, n: &NodeData, v: Value<'_>, top: bool) 
 
 pub(crate) fn metric<'s>(s: &Scope<'s>, n: &NodeData, which: &str) -> JsResult<Value<'s>> {
     let page = n.page();
+    crate::animation_events::style_flush(page);
     let dom = page.dom.borrow();
     let l = page.layout();
     let metric = match which {

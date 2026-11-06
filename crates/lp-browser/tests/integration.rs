@@ -6,6 +6,8 @@ mod bindings;
 mod cache_disabled;
 mod child_frame_network;
 mod child_frames;
+mod constructable_stylesheets;
+mod css_declarations;
 mod cssom_and_attributes;
 mod custom_elements_parser;
 mod detached_frame_script;
@@ -43,6 +45,7 @@ mod stylesheets_http;
 mod subresources;
 mod user_agent;
 mod viewport;
+mod web_animations;
 
 /// Loads nothing: the pages' sub-resources come from the loader.
 struct NoFetch;

@@ -229,6 +229,9 @@ pub struct PageDom {
     /// over: a later attribute change wins, as it updates the internal slot.
     nonces: RefCell<FxHashMap<NodeId, (Option<String>, String)>>,
     pub(crate) sheet_models: RefCell<FxHashMap<NodeId, Rc<crate::css::SheetModel>>>,
+    /// The constructed sheets each document or shadow root adopts
+    /// (`adoptedStyleSheets`), in order; empty unless a script adopted one.
+    pub(crate) adopted_sheets: RefCell<FxHashMap<NodeId, Vec<Rc<crate::css::Constructed>>>>,
     /// Files selected into `<input type=file>` (CDP DOM.setFileInputFiles).
     pub(crate) files: RefCell<FxHashMap<NodeId, Vec<crate::file::FileEntry>>>,
     /// Faux layout + style engine of the displayed document. Read it with
@@ -574,6 +577,7 @@ impl PageDom {
             popover: Default::default(),
             nonces: RefCell::new(FxHashMap::default()),
             sheet_models: RefCell::new(FxHashMap::default()),
+            adopted_sheets: RefCell::new(FxHashMap::default()),
             files: RefCell::new(FxHashMap::default()),
             layout: RefCell::new(lp_dom::layout::Layout::new(document)),
             frame_viewport: RefCell::new(None),
@@ -1124,6 +1128,11 @@ impl PageDom {
         if self.quiet_since_last_task() {
             return;
         }
+        // The DOM as this checkpoint saw it (the checkpoint's idle check
+        // asks first, so asking does not consume a change).
+        if let Ok(dom) = self.dom.try_borrow() {
+            self.after_task_stamp.set(Some((dom.version(), dom.removal_count())));
+        }
         self.flush_iframe_events();
         self.update_render_blocking();
         crate::custom::run_reactions(self);
@@ -1167,9 +1176,7 @@ impl PageDom {
             return false;
         }
         let Ok(dom) = self.dom.try_borrow() else { return false };
-        let stamp = (dom.version(), dom.removal_count());
-        if self.after_task_stamp.get() != Some(stamp) {
-            self.after_task_stamp.set(Some(stamp));
+        if self.after_task_stamp.get() != Some((dom.version(), dom.removal_count())) {
             return false;
         }
         !dom.has_iframe_events()
@@ -1486,6 +1493,17 @@ impl PageDom {
     }
     pub(crate) fn set_nonce(&self, el: NodeId, attr: Option<&str>, value: String) {
         self.nonces.borrow_mut().insert(el, (attr.map(str::to_owned), value));
+    }
+
+    /// The style engine applies `sheets` (constructed sheets' ids and
+    /// texts) where `scope` adopts them.
+    pub(crate) fn set_adopted_sheets(&self, scope: NodeId, sheets: Vec<(u64, Rc<str>)>) {
+        self.layout.borrow_mut().style_mut().set_adopted(scope, sheets);
+    }
+
+    /// A constructed sheet's applied text changed.
+    pub(crate) fn set_constructed_sheet_text(&self, id: u64, text: &str) {
+        self.layout.borrow_mut().style_mut().set_constructed_text(id, text);
     }
 
     /// A `<style>` element's sheet is read from the DOM again, after CSSOM edits.

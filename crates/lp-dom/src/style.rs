@@ -802,6 +802,12 @@ pub struct StyleEngine {
     /// DOM's tree version it was computed at (`<style>` texts only change
     /// with the tree).
     sheets_key: Cell<Option<((u64, u64), u64)>>,
+    /// The constructed sheets each document or shadow root adopts
+    /// (`adoptedStyleSheets`), by sheet id, in order; empty unless a
+    /// script adopted one.
+    adopted: std::collections::BTreeMap<NodeId, Vec<u64>>,
+    /// The text of each adopted constructed sheet.
+    constructed: rustc_hash::FxHashMap<u64, Rc<str>>,
     /// The document's `CSS.registerProperty()` registrations, in order.
     registered_properties: Vec<RegisteredProperty>,
 }
@@ -844,6 +850,8 @@ impl StyleEngine {
             revisions: 0,
             sheets_key: Cell::new(None),
             registered_properties: Vec::new(),
+            adopted: Default::default(),
+            constructed: Default::default(),
         }
     }
 
@@ -1066,7 +1074,8 @@ impl StyleEngine {
     }
 
     /// Calls `f` with the text of each author sheet whose owner is connected,
-    /// in cascade order (CSSOM edits included).
+    /// in cascade order (CSSOM edits included), then of the constructed
+    /// sheets connected documents and shadow roots adopt.
     pub fn for_each_author_sheet(&self, dom: &Dom, f: &mut dyn FnMut(&str)) {
         for sheet in &self.sheets {
             if !dom.is_alive(sheet.owner) || !dom.is_connected(sheet.owner).unwrap_or(false) {
@@ -1077,6 +1086,55 @@ impl StyleEngine {
                 SheetSource::StyleElement => f(&dom.text_content(sheet.owner).ok().flatten().unwrap_or_default()),
             }
         }
+        for (scope, ids) in &self.adopted {
+            if !dom.is_alive(*scope) || !dom.is_connected(*scope).unwrap_or(false) {
+                continue;
+            }
+            for text in ids.iter().filter_map(|id| self.constructed.get(id)) {
+                f(text);
+            }
+        }
+    }
+
+    /// `scope.adoptedStyleSheets = sheets` (a document or shadow root):
+    /// each constructed sheet's id and text, in order.
+    pub fn set_adopted(&mut self, scope: NodeId, sheets: Vec<(u64, Rc<str>)>) {
+        if sheets.is_empty() && !self.adopted.contains_key(&scope) {
+            return;
+        }
+        let ids: Vec<u64> = sheets.iter().map(|(id, _)| *id).collect();
+        for (id, text) in sheets {
+            self.constructed.insert(id, text);
+        }
+        let old = if ids.is_empty() { self.adopted.remove(&scope) } else { self.adopted.insert(scope, ids) };
+        // Texts no scope adopts any more are dropped.
+        for id in old.unwrap_or_default() {
+            if !self.adopted.values().any(|ids| ids.contains(&id)) {
+                self.constructed.remove(&id);
+            }
+        }
+        // Rendered as elements the render delta does not track: a whole sync.
+        self.invalidate();
+    }
+
+    /// A constructed sheet's text changed (`replaceSync`, `insertRule`, ...).
+    pub fn set_constructed_text(&mut self, id: u64, text: &str) {
+        let Some(old) = self.constructed.get_mut(&id) else { return };
+        if **old != *text {
+            *old = text.into();
+            self.invalidate();
+        }
+    }
+
+    /// The constructed sheets (id and text) `scope` adopts, in order.
+    pub fn adopted_sheets(&self, scope: NodeId) -> Vec<(u64, Rc<str>)> {
+        let Some(ids) = self.adopted.get(&scope) else { return Vec::new() };
+        ids.iter().filter_map(|id| Some((*id, self.constructed.get(id)?.clone()))).collect()
+    }
+
+    /// Whether any document or shadow root adopts a constructed sheet.
+    pub fn has_adopted(&self) -> bool {
+        !self.adopted.is_empty()
     }
 
     /// A key that changes when the author sheets' texts may have: the sheet

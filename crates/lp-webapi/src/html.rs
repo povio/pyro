@@ -876,10 +876,14 @@ pub(crate) fn define_element_extras(def: &mut ClassDef<Element>) {
     def.method("setPointerCapture", 1, crate::pointer_capture::set_pointer_capture);
     def.method("releasePointerCapture", 1, crate::pointer_capture::release_pointer_capture);
     def.method("hasPointerCapture", 1, crate::pointer_capture::has_pointer_capture);
-    def.method("animate", 0, |s, _n, _a| {
-        s.eval("({finished: Promise.resolve(), cancel(){}, finish(){}, play(){}, pause(){}, addEventListener(){}, removeEventListener(){}, onfinish: null, playState: 'finished'})", None, 1)
+    def.method("animate", 1, |s, n, a| {
+        let el = crate::node::wrap_node(s, n.page(), n.id)?.value();
+        crate::animations::animate(s, n.page(), el, &a)
     });
-    def.method("getAnimations", 0, |s, _n, _a| Ok(s.array(&[])?.value()));
+    def.method("getAnimations", 0, |s, n, a| {
+        let el = crate::node::wrap_node(s, n.page(), n.id)?.value();
+        crate::animations::element_animations(s, n.page(), el, &a)
+    });
     // ARIA reflection (ARIAMixin) for the attributes Playwright/Testing
     // Library read through properties.
     reflect_aria(def);

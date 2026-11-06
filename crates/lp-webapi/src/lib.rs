@@ -17,6 +17,7 @@
 
 pub mod abort;
 mod animation_events;
+mod animations;
 pub mod canvas;
 mod clipboard;
 pub mod collections;

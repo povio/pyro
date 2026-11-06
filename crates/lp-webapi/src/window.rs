@@ -190,6 +190,7 @@ where
         },
         |s, w, value| css_namespace_property(s, w.page(), value),
     );
+    crate::animations::define_globals(def);
     def.getter("screen", |s, w| {
         let key = lp_js::IdentityKey(w.page().id() | (1 << 57), 1);
         same_object(s, w.page(), key, || s.wrap::<Screen>(w.page().clone(), Some(key)))
