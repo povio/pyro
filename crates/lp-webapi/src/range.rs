@@ -706,6 +706,18 @@ pub(crate) fn new_range<'s>(s: &Scope<'s>, page: &Rc<PageDom>, doc: NodeId) -> J
     Ok(s.wrap::<Range>(RangeData::new(page, doc)?, None)?.value())
 }
 
+/// A new Range from `start` to `end` (`caretRangeFromPoint`).
+pub(crate) fn range_value<'s>(s: &Scope<'s>, page: &Rc<PageDom>, start: Point, end: Point) -> JsResult<Value<'s>> {
+    Ok(s.wrap::<Range>(RangeData::from_owner(RangeOwner::new(page, start, end)?), None)?.value())
+}
+
+/// The markup of a copy of [start, end)'s contents (copying a selection).
+pub(crate) fn html_between(page: &PageDom, start: Point, end: Point) -> Option<String> {
+    let mut dom = page.dom.borrow_mut();
+    let frag = contents(&mut dom, start, end, false).ok()?;
+    dom.inner_html(frag).ok()
+}
+
 // ----- Selection ------------------------------------------------------------------
 
 /// A realm's view of the document selection (`crate::editing`): every
@@ -934,7 +946,12 @@ impl JsClass for Selection {
             }
             Ok(s.undefined())
         });
-        def.method("modify", 0, |s, _sel, _a| Ok(s.undefined()));
+        def.method("modify", 0, |s, sel, a| {
+            let arg = |i: usize| if a.get(i).is_undefined() { Ok(String::new()) } else { dom_string(a.get(i)) };
+            let (alter, direction, granularity) = (arg(0)?, arg(1)?, arg(2)?);
+            crate::edit_commands::selection_modify(&sel.page, &alter, &direction, &granularity);
+            Ok(s.undefined())
+        });
     }
 }
 

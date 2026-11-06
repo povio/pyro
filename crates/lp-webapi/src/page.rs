@@ -179,6 +179,8 @@ pub struct PageDom {
     /// The document selection (`crate::editing`), shared by every world.
     pub(crate) selection: RefCell<Option<crate::editing::DocSelection>>,
     pub(crate) selectionchange_pending: Cell<bool>,
+    /// Undo/redo steps of user edits (`crate::edit_commands`).
+    pub(crate) undo: RefCell<crate::edit_commands::UndoHistory>,
     /// The native drag-and-drop session in progress, if any.
     pub(crate) drag: RefCell<Option<crate::input::DragSession>>,
     /// `document.open()`'s script-created parser (`crate::html` document
@@ -517,6 +519,7 @@ impl PageDom {
             drag: RefCell::new(None),
             selection: RefCell::new(None),
             selectionchange_pending: Cell::new(false),
+            undo: RefCell::new(Default::default()),
             script_parser: RefCell::new(None),
             script_parser_active: Cell::new(false),
             script_parser_close: Cell::new(false),

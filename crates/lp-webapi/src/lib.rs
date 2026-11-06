@@ -18,13 +18,16 @@
 pub mod abort;
 mod animation_events;
 pub mod canvas;
+mod clipboard;
 pub mod collections;
 pub mod crypto;
 pub mod css;
 pub mod custom;
 pub mod data_transfer;
 pub mod dom_parser;
+mod edit_commands;
 pub mod editing;
+mod editing_globals;
 pub mod encoding;
 pub mod event;
 pub mod fetch;

@@ -916,6 +916,9 @@ pub struct KeyInput {
     pub location: u32,
     pub auto_repeat: bool,
     pub key_code: u32,
+    /// CDP `commands`: the macOS editing commands of the key (Playwright
+    /// sends them on macOS), run in place of its default action.
+    pub commands: Vec<String>,
 }
 
 /// Element receiving key events: focused element, else body/document element.
@@ -968,7 +971,13 @@ pub fn dispatch_key(page: &Rc<PageDom>, kind: KeyKind, k: &KeyInput) {
                 // it on the matching keyup (Blink KeyboardClickableInputTypeView).
                 page.space_target.set(Some(target));
             }
-            if kind == KeyKind::KeyDown && !k.text.is_empty() {
+            if k.text.is_empty()
+                && !k.commands.is_empty()
+                && crate::edit_commands::run_commands(page, target, &k.commands)
+            {
+                return;
+            }
+            if kind == KeyKind::KeyDown && !k.text.is_empty() && !shortcut(k) {
                 press_char(page, target, k);
             } else {
                 default_key_action(page, target, k);
@@ -991,7 +1000,16 @@ pub fn dispatch_key(page: &Rc<PageDom>, kind: KeyKind, k: &KeyInput) {
     }
 }
 
+/// Ctrl or Meta (without Alt) makes a key a shortcut: no keypress and no
+/// text, as in Chromium.
+fn shortcut(k: &KeyInput) -> bool {
+    (k.modifiers.ctrl || k.modifiers.meta) && !k.modifiers.alt
+}
+
 fn press_char(page: &Rc<PageDom>, target: NodeId, k: &KeyInput) {
+    if shortcut(k) {
+        return;
+    }
     let code = k.text.chars().next().map_or(0, |c| c as u32);
     let ev = key_event(page, "keypress", k, code);
     let Some(tkey) = key_of(page, target) else { return };
@@ -1004,7 +1022,9 @@ fn press_char(page: &Rc<PageDom>, target: NodeId, k: &KeyInput) {
         return;
     }
     if let Some(host) = editing_host_of(page, target) {
-        if k.text == "\r" || k.text == "\n" {
+        if (k.text == "\r" || k.text == "\n") && k.modifiers.shift {
+            crate::editing::insert_line_break(page, host);
+        } else if k.text == "\r" || k.text == "\n" {
             crate::editing::insert_paragraph(page, host);
         } else {
             crate::editing::insert_text(page, host, &k.text);
@@ -1039,6 +1059,11 @@ fn editing_key_action(page: &Rc<PageDom>, host: NodeId, k: &KeyInput) {
 
 /// Default actions for non-text keys on the focused element.
 fn default_key_action(page: &Rc<PageDom>, target: NodeId, k: &KeyInput) {
+    // Word/line movement and deletion, clipboard and undo shortcuts,
+    // Shift+Enter and line keys in editable content.
+    if crate::edit_commands::key_action(page, target, k) {
+        return;
+    }
     if let Some(host) = editing_host_of(page, target) {
         editing_key_action(page, host, k);
         return;
@@ -1201,6 +1226,7 @@ fn delete(page: &Rc<PageDom>, el: NodeId, input_type: &str, backward: bool) {
     {
         return;
     }
+    crate::edit_commands::record_control_edit(page, el, input_type);
     let changed = {
         let mut dom = page.dom.borrow_mut();
         if backward {
@@ -1209,6 +1235,7 @@ fn delete(page: &Rc<PageDom>, el: NodeId, input_type: &str, backward: bool) {
             dom.delete_forward(el).unwrap_or(false)
         }
     };
+    crate::edit_commands::note_control_edited(page, el);
     if changed {
         fire_input_event(page, el, "input", input_type, None, false);
     }
@@ -1257,7 +1284,9 @@ fn insert_text_at(page: &Rc<PageDom>, el: NodeId, text: &str) {
     {
         return;
     }
+    crate::edit_commands::record_control_edit(page, el, input_type);
     let changed = page.dom.borrow_mut().insert_text(el, text).unwrap_or(false);
+    crate::edit_commands::note_control_edited(page, el);
     if changed {
         crate::editing::queue_control_selectionchange(page, el);
         fire_input_event(page, el, "input", input_type, data, false);
@@ -1818,6 +1847,10 @@ fn dispatch_mouse_inner(
             page.text_drag.set(None);
             if place_caret && source.is_none() {
                 text_select_press(page, target, m);
+            }
+            // A double press selects a word, a triple one a line or block.
+            if place_caret && source.is_none() && m.click_count >= 2 && !page.is_disposed() {
+                crate::edit_commands::multi_click(page, target, m.x, m.y, m.click_count);
             }
         }
         MouseKind::Released => {
