@@ -216,3 +216,30 @@ fn shadow_roots_and_documents_list_their_own_animations() {
         "a,b,a,a"
     );
 }
+
+#[test]
+fn transitions_start_after_a_layout_read_or_a_frame_without_get_computed_style() {
+    let (mut t, root) = page();
+    eval(
+        &root,
+        "const style = document.head.appendChild(document.createElement('style'));
+         style.textContent = '.box { width: 100px; transition: width 2ms } .box.open { width: 200px }';
+         globalThis.log = [];
+         globalThis.a = document.body.appendChild(document.createElement('div'));
+         globalThis.b = document.body.appendChild(document.createElement('div'));
+         a.className = b.className = 'box';
+         setTimeout(() => {
+           a.addEventListener('transitionend', e => log.push('a:' + e.propertyName));
+           b.addEventListener('transitionend', e => log.push('b:' + e.propertyName));
+           // A forced layout is the before-change style.
+           a.offsetHeight;
+           a.classList.add('open');
+         }, 0); 0",
+    );
+    run_until(&mut t, &root, "log.includes('a:width')");
+    // A change in a later task: the frame after the last change was b's
+    // style change event.
+    eval(&root, "setTimeout(() => b.classList.add('open'), 30); 0");
+    run_until(&mut t, &root, "log.includes('b:width')");
+    assert_eq!(eval(&root, "log.join()"), "a:width,b:width");
+}

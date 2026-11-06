@@ -51,6 +51,8 @@ pub struct ListenerStore {
     windows: FxHashMap<u32, u64>,
     /// A listener for a CSS animation or transition event was ever added.
     animation_listeners: bool,
+    /// A listener for a transition event was ever added.
+    transition_listeners: bool,
 }
 
 impl ListenerStore {
@@ -193,8 +195,9 @@ impl Dom {
             return false;
         }
         st.next_id = st.next_id.wrapping_add(1);
-        if !st.animation_listeners && is_animation_event_type(ty) {
+        if !st.transition_listeners && is_animation_event_type(ty) {
             st.animation_listeners = true;
+            st.transition_listeners = ty.contains("ransition");
         }
         list.push(Listener {
             id: st.next_id,
@@ -230,6 +233,13 @@ impl Dom {
     /// events worth working out.
     pub fn has_animation_listeners(&self) -> bool {
         self.events.animation_listeners
+    }
+
+    /// Whether a listener for a transition event (or `webkitTransitionEnd`)
+    /// was ever added in this tree: only then do style changes need a
+    /// before-change style.
+    pub fn has_transition_listeners(&self) -> bool {
+        self.events.transition_listeners
     }
 
     /// Identity of one registration, distinct from the reusable callback slot.

@@ -1072,6 +1072,11 @@ impl PageDom {
         if self.quiet_since_last_task() {
             return;
         }
+        // The DOM as this checkpoint saw it (the checkpoint's idle check
+        // asks first, so asking does not consume a change).
+        if let Ok(dom) = self.dom.try_borrow() {
+            self.after_task_stamp.set(Some((dom.version(), dom.removal_count())));
+        }
         self.flush_iframe_events();
         self.update_render_blocking();
         crate::custom::run_reactions(self);
@@ -1115,9 +1120,7 @@ impl PageDom {
             return false;
         }
         let Ok(dom) = self.dom.try_borrow() else { return false };
-        let stamp = (dom.version(), dom.removal_count());
-        if self.after_task_stamp.get() != Some(stamp) {
-            self.after_task_stamp.set(Some(stamp));
+        if self.after_task_stamp.get() != Some((dom.version(), dom.removal_count())) {
             return false;
         }
         !dom.has_iframe_events()
