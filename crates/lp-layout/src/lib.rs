@@ -553,6 +553,15 @@ impl GeometrySource for BlitzGeometry {
         RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.element_style(self.page, key))
     }
 
+    fn element_pseudo_style(
+        &self,
+        key: u64,
+        pseudo: &style::selector_parser::PseudoElement,
+        generated_only: bool,
+    ) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
+        RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.element_pseudo_style(self.page, key, pseudo, generated_only))
+    }
+
     fn has_sticky(&self) -> bool {
         RENDERER.with(|r| r.try_borrow().ok().and_then(|r| Some(r.as_ref()?.has_sticky(self.page))).unwrap_or(false))
     }

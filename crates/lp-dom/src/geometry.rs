@@ -155,6 +155,18 @@ pub trait GeometrySource {
     fn element_style(&self, _key: u64) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
         None
     }
+    /// The computed style of one element's pseudo-element `pseudo`
+    /// (`getComputedStyle(el, pseudo)`) as of the last sync; with
+    /// `generated_only`, only a stored style of a pseudo-element its rules
+    /// generate.
+    fn element_pseudo_style(
+        &self,
+        _key: u64,
+        _pseudo: &style::selector_parser::PseudoElement,
+        _generated_only: bool,
+    ) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
+        None
+    }
 }
 
 /// An element's boxes (document coordinates; viewport ones inside a fixed

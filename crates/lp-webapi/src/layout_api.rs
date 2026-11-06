@@ -541,6 +541,26 @@ pub(crate) fn elements_from_point<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) 
 /// Read-only computed style (`getComputedStyle`).
 pub struct ComputedData {
     el: crate::collections::NodeHold,
+    /// The `pseudoElt` argument, parsed.
+    pseudo: lp_dom::stylo::PseudoArg,
+}
+
+impl ComputedData {
+    /// The computed value of `name` for the element or its pseudo-element.
+    fn value(&self, name: &str) -> String {
+        use lp_dom::stylo::PseudoArg;
+        let page = &self.el.page;
+        match &self.pseudo {
+            PseudoArg::Element => {
+                crate::animation_events::observe(page, self.el.id);
+                page.layout().computed_style_value(&page.dom.borrow(), self.el.id, name)
+            }
+            PseudoArg::Pseudo(pseudo) => {
+                page.layout().computed_pseudo_style_value(&page.dom.borrow(), self.el.id, pseudo, name)
+            }
+            PseudoArg::Invalid => String::new(),
+        }
+    }
 }
 
 pub struct ComputedStyle;
@@ -552,10 +572,7 @@ impl JsClass for ComputedStyle {
         def.not_exposed();
         def.method("getPropertyValue", 1, |s, c, a| {
             let name = arg_string(&a, 0, "CSSStyleDeclaration.getPropertyValue")?;
-            let page = &c.el.page;
-            crate::animation_events::observe(page, c.el.id);
-            let v = page.layout().computed_style_value(&page.dom.borrow(), c.el.id, &name);
-            Ok(s.string(&v))
+            Ok(s.string(&c.value(&name)))
         });
         def.method("getPropertyPriority", 1, |s, _c, _a| Ok(s.string("")));
         // The longhands, as indexed properties; an element without computed
@@ -591,16 +608,16 @@ impl JsClass for ComputedStyle {
             } else {
                 crate::css::camel_to_css(name)
             };
-            let page = &c.el.page;
-            crate::animation_events::observe(page, c.el.id);
-            let v = page.layout().computed_style_value(&page.dom.borrow(), c.el.id, &prop);
-            Ok(Some(s.string(&v)))
+            Ok(Some(s.string(&c.value(&prop))))
         });
     }
 }
 
 /// The property names a computed style lists.
 fn computed_names(c: &ComputedData) -> &'static [&'static str] {
+    if c.pseudo == lp_dom::stylo::PseudoArg::Invalid {
+        return &[];
+    }
     let page = &c.el.page;
     let dom = page.dom.borrow();
     if page.layout().computed_style_value(&dom, c.el.id, "display").is_empty() {
@@ -609,9 +626,19 @@ fn computed_names(c: &ComputedData) -> &'static [&'static str] {
     lp_dom::stylo::longhand_names()
 }
 
-/// `window.getComputedStyle(el)`.
-pub fn get_computed_style<'s>(s: &Scope<'s>, page: &Rc<PageDom>, el: NodeId) -> JsResult<Object<'s>> {
-    s.wrap::<ComputedStyle>(ComputedData { el: crate::collections::NodeHold::new(page, el)? }, None)
+/// `window.getComputedStyle(el, pseudoElt)`.
+pub fn get_computed_style<'s>(
+    s: &Scope<'s>,
+    page: &Rc<PageDom>,
+    el: NodeId,
+    pseudo_elt: Value<'s>,
+) -> JsResult<Object<'s>> {
+    let pseudo = if pseudo_elt.is_undefined() || pseudo_elt.is_null() {
+        lp_dom::stylo::PseudoArg::Element
+    } else {
+        lp_dom::stylo::parse_pseudo_arg(&dom_string(pseudo_elt)?)
+    };
+    s.wrap::<ComputedStyle>(ComputedData { el: crate::collections::NodeHold::new(page, el)?, pseudo }, None)
 }
 
 /// A live `MediaQueryList` (`PageDom::media_queries`): its target, query

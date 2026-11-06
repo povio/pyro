@@ -802,6 +802,18 @@ pub struct StyleEngine {
     /// DOM's tree version it was computed at (`<style>` texts only change
     /// with the tree).
     sheets_key: Cell<Option<((u64, u64), u64)>>,
+    /// The document's `CSS.registerProperty()` registrations, in order.
+    registered_properties: Vec<RegisteredProperty>,
+}
+
+/// One `CSS.registerProperty()` registration (validated by
+/// [`crate::stylo::validate_property_registration`]).
+#[derive(Clone, Debug)]
+pub struct RegisteredProperty {
+    pub name: String,
+    pub syntax: String,
+    pub inherits: bool,
+    pub initial_value: Option<String>,
 }
 
 /// [`StyleEngine::observation_stamp`]: DOM version, sheet generation,
@@ -831,6 +843,7 @@ impl StyleEngine {
             gecko_rules: RefCell::new(None),
             revisions: 0,
             sheets_key: Cell::new(None),
+            registered_properties: Vec::new(),
         }
     }
 
@@ -843,6 +856,36 @@ impl StyleEngine {
     ) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
         self.owns(dom, el)?;
         self.external_style(dom, el)
+    }
+
+    /// Records a `CSS.registerProperty()` registration; `false` (and nothing
+    /// changes) when the name is registered already.
+    pub fn register_property(&mut self, property: RegisteredProperty) -> bool {
+        if self.registered_property(&property.name).is_some() {
+            return false;
+        }
+        self.registered_properties.push(property);
+        true
+    }
+
+    /// The registration of custom property `name`, if script made one.
+    pub fn registered_property(&self, name: &str) -> Option<&RegisteredProperty> {
+        self.registered_properties.iter().find(|p| p.name == name)
+    }
+
+    /// The layout engine's style of `el`'s pseudo-element `pseudo` (see
+    /// [`crate::geometry::GeometrySource::element_pseudo_style`]).
+    pub fn stylo_pseudo_style(
+        &self,
+        dom: &Dom,
+        el: NodeId,
+        pseudo: &style::selector_parser::PseudoElement,
+        generated_only: bool,
+    ) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
+        self.owns(dom, el)?;
+        self.engine_styled(dom)?;
+        let external = self.external.borrow();
+        external.as_ref()?.0.element_pseudo_style(crate::snapshot::render_key(el), pseudo, generated_only)
     }
 
     /// The layout engine's style of `el` (its styles brought up to `dom`).

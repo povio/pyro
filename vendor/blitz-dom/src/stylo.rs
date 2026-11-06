@@ -220,6 +220,82 @@ impl crate::document::BaseDocument {
     /// (styling any unstyled ancestors along the way) without storing it on the
     /// node. Returns `None` for non-elements and elements outside the document.
     pub fn resolve_undisplayed_style(&self, node_id: NodeId) -> Option<Arc<ComputedValues>> {
+        Some(self.resolve_undisplayed_styles(node_id)?.primary().clone())
+    }
+
+    /// lightningpanda: the style `getComputedStyle(element, pseudo)` reads
+    /// for the element `node_id`: an eagerly cascaded pseudo-element's
+    /// (`::before`, `::after`, `::first-letter`, `::selection`) as the
+    /// traversal kept it (resolved on demand inside `display: none`), a
+    /// lazily cascaded one's computed from its rules, and otherwise (no rule
+    /// generates it) a style with no rules of its own, inheriting from the
+    /// element. `None` for non-elements and elements outside the document.
+    /// With `generated_only`, only a stored eagerly cascaded style (a
+    /// generated `::before` / `::after` of a rendered element), and no
+    /// work otherwise.
+    pub fn pseudo_element_style(
+        &self,
+        node_id: NodeId,
+        pseudo: &style::selector_parser::PseudoElement,
+        generated_only: bool,
+    ) -> Option<Arc<ComputedValues>> {
+        let node = self.nodes.get(node_id)?;
+        if !node.is_element() || !node.flags.is_in_document() {
+            return None;
+        }
+        let stored = node.try_stylo_element_data().and_then(|d| d.get()).and_then(|d| {
+            let primary = d.styles.get_primary()?.clone();
+            let eager = if pseudo.is_eager() { d.styles.pseudos.get(pseudo).cloned() } else { None };
+            Some((primary, eager))
+        });
+        if generated_only {
+            return stored.and_then(|(_, eager)| eager);
+        }
+        let (primary, eager) = match stored {
+            Some(styles) => styles,
+            None => {
+                let styles = self.resolve_undisplayed_styles(node_id)?;
+                let eager = if pseudo.is_eager() { styles.pseudos.get(pseudo).cloned() } else { None };
+                (styles.primary().clone(), eager)
+            }
+        };
+        if eager.is_some() {
+            return eager;
+        }
+        if pseudo.is_lazy() {
+            let _layout_thread_scope = LayoutThreadScope::enter();
+            let guard = &self.guard;
+            let guards = StylesheetGuards {
+                author: &guard.read(),
+                ua_or_user: &guard.read(),
+            };
+            let lazy = self.stylist.lazily_compute_pseudo_element_style(
+                &guards,
+                node,
+                pseudo,
+                RuleInclusion::All,
+                &primary,
+                false,
+                None,
+            );
+            if lazy.is_some() {
+                return lazy;
+            }
+        }
+        Some(
+            style::properties::StyleBuilder::for_inheritance(
+                self.stylist.device(),
+                Some(&self.stylist),
+                Some(&primary),
+                Some(pseudo),
+            )
+            .build(),
+        )
+    }
+
+    /// The styles [`Self::resolve_undisplayed_style`] resolves, eagerly
+    /// cascaded pseudo-elements included.
+    fn resolve_undisplayed_styles(&self, node_id: NodeId) -> Option<style::data::ElementStyles> {
         let node = self.nodes.get(node_id)?;
         if !node.is_element() || !node.flags.is_in_document() {
             return None;
@@ -248,9 +324,7 @@ impl crate::document::BaseDocument {
             shared: &shared,
             thread_local: &mut thread_local,
         };
-        let styles = resolve_style(&mut context, node, RuleInclusion::All, None, None);
-
-        Some(styles.primary().clone())
+        Some(resolve_style(&mut context, node, RuleInclusion::All, None, None))
     }
 }
 

@@ -173,7 +173,7 @@ where
     });
     def.method("getComputedStyle", 1, |s, w, a| {
         let el = crate::node::node_arg(s, a.get(0), "Window.getComputedStyle")?;
-        Ok(crate::layout_api::get_computed_style(s, w.page(), el)?.value())
+        Ok(crate::layout_api::get_computed_style(s, w.page(), el, a.get(1))?.value())
     });
     def.method("matchMedia", 1, |s, w, a| {
         let q = arg_string(&a, 0, "Window.matchMedia")?;
@@ -595,7 +595,7 @@ fn css_namespace_property<'s>(s: &Scope<'s>, page: &crate::page::PageDom, value:
     Ok(())
 }
 
-/// `CSS` namespace object (supports/escape).
+/// `CSS` namespace object (supports/escape/registerProperty).
 pub fn css_namespace<'s>(s: &Scope<'s>) -> JsResult<Value<'s>> {
     let o = s.object();
     let supports = s.function("supports", |s, _this, a| {
@@ -626,6 +626,48 @@ pub fn css_namespace<'s>(s: &Scope<'s>) -> JsResult<Value<'s>> {
         Ok(s.string(&out))
     })?;
     o.set_atom("escape", escape.value())?;
+    let register = s.function("registerProperty", |s, _this, a| {
+        let page = crate::target::page_of(s)?;
+        let def = a.get(0);
+        let def = if def.is_undefined() || def.is_null() { None } else { Some(def) };
+        let def = match def {
+            Some(v) => Some(v.as_object().ok_or_else(|| {
+                JsError::type_error(
+                    "Failed to execute 'registerProperty' on 'CSS': The provided value is not of type 'PropertyDefinition'.",
+                )
+            })?),
+            None => None,
+        };
+        // PropertyDefinition members, in WebIDL dictionary order.
+        let member = |k: &str| def.map_or(Ok(s.undefined()), |d| d.get(k));
+        let inherits = member("inherits")?;
+        if inherits.is_undefined() {
+            return Err(JsError::type_error(
+                "Failed to execute 'registerProperty' on 'CSS': required member inherits is undefined.",
+            ));
+        }
+        let inherits = inherits.to_bool();
+        let initial = member("initialValue")?;
+        let initial = if initial.is_undefined() { None } else { Some(dom_string(initial)?) };
+        let name = member("name")?;
+        if name.is_undefined() {
+            return Err(JsError::type_error(
+                "Failed to execute 'registerProperty' on 'CSS': required member name is undefined.",
+            ));
+        }
+        let name = dom_string(name)?;
+        let syntax = member("syntax")?;
+        let syntax = if syntax.is_undefined() { "*".to_owned() } else { dom_string(syntax)? };
+        let initial_value = lp_dom::stylo::validate_property_registration(&name, &syntax, initial.as_deref())
+            .map_err(|message| JsError::dom("SyntaxError", message))?;
+        let property = lp_dom::style::RegisteredProperty { name, syntax, inherits, initial_value };
+        let fresh = page.layout.borrow_mut().style_mut().register_property(property);
+        if !fresh {
+            return Err(JsError::dom("InvalidModificationError", "The name provided has already been registered."));
+        }
+        Ok(s.undefined())
+    })?;
+    o.set_atom("registerProperty", register.value())?;
     Ok(o.value())
 }
 

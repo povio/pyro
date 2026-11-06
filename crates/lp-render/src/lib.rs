@@ -1075,6 +1075,21 @@ impl Renderer {
         }
     }
 
+    /// The computed style of pseudo-element `pseudo` of the element keyed
+    /// `key` in `page`'s persistent document (`getComputedStyle(el,
+    /// pseudo)`; see `BaseDocument::pseudo_element_style`, which
+    /// `generated_only` is passed to). `None`: not mirrored.
+    pub fn element_pseudo_style(
+        &self,
+        page: u64,
+        key: u64,
+        pseudo: &style::selector_parser::PseudoElement,
+        generated_only: bool,
+    ) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
+        let m = self.mirrors.get(&page)?;
+        m.doc.pseudo_element_style(m.node(key)?, pseudo, generated_only)
+    }
+
     /// The box of the element keyed `key` in `page`'s persistent document,
     /// as of the last [`Renderer::sync_layout`] (see [`LayoutBox`]).
     pub fn element_box(&self, page: u64, key: u64) -> Option<LayoutBox> {

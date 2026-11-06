@@ -226,3 +226,66 @@ fn css_supports_parses_with_stylo() {
     );
     e.page.dispose();
 }
+
+#[test]
+fn get_computed_style_reads_pseudo_elements() {
+    let e = env("<style>#t{width:100px;color:rgb(255,0,0)}#t::before{content:'icon';color:rgb(0,128,0);display:block}\
+         #t::after{content:attr(data-x)}#n{display:none}#n::before{content:'Foo'}\
+         li::marker{color:rgb(0,0,255)}input::placeholder{color:rgb(1,2,3)}</style>\
+         <div id=t data-x=tail>x</div><div id=n></div><p id=p>p</p><ul><li id=l>i</li></ul><input id=i placeholder=a>");
+    let v = |js: &str| eval(&e.main, js);
+    assert_eq!(
+        v("[getComputedStyle(t,'::before').content,getComputedStyle(t,':before').color,getComputedStyle(t,'::before').display,\
+           getComputedStyle(t,'::after').content,getComputedStyle(t,'::after').color].join('|')"),
+        // Stylo substitutes attr() at computed-value time (Chrome serializes `attr(data-x)`).
+        "\"icon\"|rgb(0, 128, 0)|block|\"tail\"|rgb(255, 0, 0)"
+    );
+    // No rule generates these: content none, other values inherited or initial.
+    assert_eq!(
+        v("[getComputedStyle(p,'::before').content,getComputedStyle(p,'::after').display,getComputedStyle(p,'::before').position].join('|')"),
+        "none|inline|static"
+    );
+    assert_eq!(v("getComputedStyle(n,'::before').content"), "\"Foo\"");
+    assert_eq!(v("getComputedStyle(l,'::marker').color"), "rgb(0, 0, 255)");
+    assert_eq!(v("getComputedStyle(i,'::placeholder').color"), "rgb(1, 2, 3)");
+    // Without a colon the argument is ignored; an unknown or malformed one is an empty style.
+    assert_eq!(
+        v("[getComputedStyle(t,'before').width,getComputedStyle(t,'nope').color].join('|')"),
+        "100px|rgb(255, 0, 0)"
+    );
+    assert_eq!(
+        v("['::nope',':nope','::before ','::before,::after','::\"before\"',':marker','::before0'].map(p=>{const s=getComputedStyle(t,p);return s.length+':'+s.color}).join()"),
+        "0:,0:,0:,0:,0:,0:,0:"
+    );
+    assert_eq!(
+        v("[getComputedStyle(t,':bef\\\\oRE').color,getComputedStyle(t,'::\\\\000041fter').content].join('|')"),
+        "rgb(0, 128, 0)|\"tail\""
+    );
+    assert_eq!(v("getComputedStyle(t,'::before').length>0"), "true");
+    e.page.dispose();
+}
+
+#[test]
+fn css_register_property_validates_and_supplies_initial_values() {
+    let e = env("<div id=t style='--set:4px'></div>");
+    let v = |js: &str| eval(&e.main, js);
+    let err = |def: &str| v(&format!("try{{CSS.registerProperty({def});'ok'}}catch(err){{err.name}}"));
+    assert_eq!(err("{name:'--gap',syntax:'<length>',inherits:false,initialValue:'0px'}"), "ok");
+    assert_eq!(err("{name:'--gap',syntax:'<length>',inherits:false,initialValue:'1px'}"), "InvalidModificationError");
+    assert_eq!(err("{name:'--any',inherits:true}"), "ok");
+    assert_eq!(err("{name:'nodash',inherits:false}"), "SyntaxError");
+    assert_eq!(err("{name:'--bad-syntax',syntax:'<nope>',inherits:false,initialValue:'1'}"), "SyntaxError");
+    assert_eq!(err("{name:'--no-initial',syntax:'<length>',inherits:false}"), "SyntaxError");
+    assert_eq!(err("{name:'--wrong',syntax:'<length>',inherits:false,initialValue:'red'}"), "SyntaxError");
+    assert_eq!(err("{name:'--relative',syntax:'<length>',inherits:false,initialValue:'1em'}"), "SyntaxError");
+    assert_eq!(err("{name:'--keyword',syntax:'<length>',inherits:false,initialValue:'inherit'}"), "SyntaxError");
+    assert_eq!(err("{syntax:'*',inherits:false}"), "TypeError");
+    assert_eq!(err("{name:'--x'}"), "TypeError");
+    assert_eq!(err("{name:'--set',syntax:'<length>',inherits:false,initialValue:'1px'}"), "ok");
+    // An unset registered property reads its initial value; a set one its own.
+    assert_eq!(
+        v("const cs=getComputedStyle(t);[cs.getPropertyValue('--gap'),cs.getPropertyValue('--set'),cs.getPropertyValue('--any'),cs.getPropertyValue('--unregistered')].join('|')"),
+        "0px|4px||"
+    );
+    e.page.dispose();
+}

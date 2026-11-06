@@ -105,6 +105,11 @@ lp-render's mirror tests (incremental documents against fresh builds after rando
 - `src/layout/table.rs`: table rows grow under a rowspan cell as in Chromium (through taffy's
   `grid_rows_are_table_rows`), and a rowspan stops at the end of its row group instead of adding implicit
   rows past it.
+- `src/stylo.rs`: `BaseDocument::pseudo_element_style` answers `getComputedStyle(el, pseudo)`: the stored
+  eager `::before`/`::after`/`::first-letter`/`::selection` style (resolved on demand under `display: none`,
+  like `resolve_undisplayed_style`), Stylo's lazy cascade for `::marker`, `::placeholder` and the other lazy
+  pseudo-elements, else a rule-less style inheriting from the element. `generated_only` limits it to the
+  stored eager style (no work otherwise), for accessible names.
 - `assets/default.css`: only a `<select>`'s options and optgroups are `display: none` (the control paints
   them); an `<option>` elsewhere and every other `<optgroup>` are blocks, as in Chromium (Blitz hid every
   option and left optgroup inline).

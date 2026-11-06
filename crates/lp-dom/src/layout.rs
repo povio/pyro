@@ -2052,6 +2052,51 @@ impl Layout {
 
     // ----- getComputedStyle --------------------------------------------------
 
+    /// The text a generated `::before` / `::after` of `el` adds to its
+    /// accessible name (Playwright's `getPseudoContent`): the string of a
+    /// `content` that is one string, padded with spaces unless the box is
+    /// inline; "" when nothing is generated, or it is `display: none` /
+    /// `visibility: hidden`. Pseudo-elements no rule generates cost a lookup.
+    pub fn pseudo_name_content(&self, dom: &Dom, el: NodeId, pseudo: &style::selector_parser::PseudoElement) -> String {
+        let Some(style) = self.style.stylo_pseudo_style(dom, el, pseudo, true) else { return String::new() };
+        let display = crate::stylo::serialize(&style, "display").unwrap_or_default();
+        let visibility = crate::stylo::serialize(&style, "visibility").unwrap_or_default();
+        if display == "none" || visibility == "hidden" {
+            return String::new();
+        }
+        let content = crate::stylo::serialize(&style, "content").unwrap_or_default();
+        let Some(text) = parse_css_string(&content) else { return String::new() };
+        if display.is_empty() || display == "inline" {
+            text
+        } else {
+            format!(" {text} ")
+        }
+    }
+
+    /// `getComputedStyle(el, pseudo).getPropertyValue(name)`: the computed
+    /// value in the pseudo-element's style (Stylo's, from the layout
+    /// engine). A `::before` / `::after` no rule generates reads `content:
+    /// none`, as in Chromium. Lengths are the computed values: pseudo boxes
+    /// have no resolved geometry here. "" where the element has no style.
+    pub fn computed_pseudo_style_value(
+        &self,
+        dom: &Dom,
+        el: NodeId,
+        pseudo: &style::selector_parser::PseudoElement,
+        name: &str,
+    ) -> String {
+        if self.owned(dom, el).is_none() || !dom.is_connected(el).unwrap_or(false) {
+            return String::new();
+        }
+        let Some(style) = self.style.stylo_pseudo_style(dom, el, pseudo, false) else { return String::new() };
+        let name = if name.starts_with("--") { name.to_owned() } else { name.to_ascii_lowercase() };
+        let value = crate::stylo::serialize(&style, &name).unwrap_or_default();
+        if name == "content" && pseudo.is_before_or_after() && value == "normal" {
+            return "none".into();
+        }
+        value
+    }
+
     /// `getComputedStyle(el).getPropertyValue(name)`
     /// (CSSStyleDeclaration.zig:76-151): display / visibility /
     /// pointer-events / text-transform from the cascade, custom properties,
@@ -2088,7 +2133,12 @@ impl Layout {
             _ => {}
         }
         if custom {
-            return self.style.custom_property_value(dom, el, &name).unwrap_or_default();
+            // A registered property no declaration sets has its initial value.
+            return self
+                .style
+                .custom_property_value(dom, el, &name)
+                .or_else(|| self.style.registered_property(&name)?.initial_value.clone())
+                .unwrap_or_default();
         }
         if name == "font-size" {
             // The cascade (stylesheets, em/%/rem, keywords) when any author value applies; else the inline/attribute walk.
@@ -2746,4 +2796,14 @@ mod scroll_to_origin {
         assert_eq!(layout.scroll_y(), 0);
         assert_eq!(source.0.get(), 1);
     }
+}
+
+/// The value of `text` when it is exactly one CSS string token.
+fn parse_css_string(text: &str) -> Option<String> {
+    let mut parser = cssparser::Parser::new(text);
+    let value = match parser.next() {
+        Ok(cssparser::Token::QuotedString(s)) => s.to_string(),
+        _ => return None,
+    };
+    parser.is_exhausted().then_some(value)
 }

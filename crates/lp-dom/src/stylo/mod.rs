@@ -206,3 +206,93 @@ pub fn supports_condition(text: &str) -> bool {
         None => parse(&format!("({text})")).is_some_and(|condition| condition.eval(&context)),
     }
 }
+
+pub use style::selector_parser::PseudoElement;
+
+/// What `getComputedStyle(el, pseudoElt)`'s second argument selects.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PseudoArg {
+    /// No colon first (or empty): the element's own style.
+    Element,
+    /// A pseudo-element the engine styles.
+    Pseudo(PseudoElement),
+    /// Starts with a colon but is no supported pseudo-element: an empty
+    /// style (CSSOM: `obj` is null).
+    Invalid,
+}
+
+/// Parses `getComputedStyle`'s `pseudoElt` (CSSOM): text without a leading
+/// colon is ignored; otherwise exactly one `<pseudo-element-selector>` with
+/// nothing after it, the legacy single-colon forms of `::before`, `::after`
+/// and `::first-letter` included.
+pub fn parse_pseudo_arg(text: &str) -> PseudoArg {
+    if !text.starts_with(':') {
+        return PseudoArg::Element;
+    }
+    let mut parser = cssparser::Parser::new(text);
+    let mut next = || parser.next_including_whitespace_and_comments().ok().cloned();
+    let _ = next(); // the leading colon
+    let (double, ident) = match next() {
+        Some(cssparser::Token::Colon) => (true, next()),
+        other => (false, other),
+    };
+    let Some(cssparser::Token::Ident(name)) = ident else { return PseudoArg::Invalid };
+    if next().is_some() {
+        return PseudoArg::Invalid;
+    }
+    let name = name.to_ascii_lowercase();
+    let pseudo = match name.as_str() {
+        "before" => PseudoElement::Before,
+        "after" => PseudoElement::After,
+        "first-letter" => PseudoElement::FirstLetter,
+        "selection" if double => PseudoElement::Selection,
+        "marker" if double => PseudoElement::Marker,
+        "placeholder" if double => PseudoElement::Placeholder,
+        "backdrop" if double => PseudoElement::Backdrop,
+        "file-selector-button" if double => PseudoElement::FileSelectorButton,
+        _ => return PseudoArg::Invalid,
+    };
+    PseudoArg::Pseudo(pseudo)
+}
+
+/// Validates a `CSS.registerProperty()` definition (CSS Properties and
+/// Values API, "registerProperty"): `name` a custom property name, `syntax`
+/// a syntax definition, and `initial` present, parsing per `syntax` and
+/// computationally independent unless `syntax` is `*`. Returns the initial
+/// value's text; `Err` carries the SyntaxError message.
+pub fn validate_property_registration(
+    name: &str,
+    syntax: &str,
+    initial: Option<&str>,
+) -> Result<Option<String>, &'static str> {
+    use style::properties_and_values::registry::PropertyRegistration;
+    use style::properties_and_values::rule::PropertyRegistrationError;
+    use style::properties_and_values::syntax::Descriptor;
+    ensure_parse_prefs();
+    if style::custom_properties::parse_name(name).is_err() {
+        return Err("The name provided is not a valid custom property name.");
+    }
+    let syntax = Descriptor::from_str(syntax, false)
+        .map_err(|_| "The syntax provided is not a valid custom property syntax.")?;
+    let value = match initial {
+        Some(text) => {
+            let mut parser = cssparser::Parser::new(text);
+            let url = url_data();
+            let value = parser
+                .parse_entirely(|p| style::custom_properties::SpecifiedValue::parse(p, None, &url))
+                .map_err(|_| "The initial value provided does not parse for the given syntax.")?;
+            Some(value)
+        }
+        None => None,
+    };
+    PropertyRegistration::validate_initial_value(&syntax, value.as_ref()).map_err(|e| match e {
+        PropertyRegistrationError::NoInitialValue => "An initial value must be provided if the syntax is not '*'",
+        PropertyRegistrationError::InvalidInitialValue => {
+            "The initial value provided does not parse for the given syntax."
+        }
+        PropertyRegistrationError::InitialValueNotComputationallyIndependent => {
+            "The initial value provided is not computationally independent."
+        }
+    })?;
+    Ok(initial.map(|t| t.trim_matches(|c: char| c.is_ascii_whitespace()).to_owned()))
+}
