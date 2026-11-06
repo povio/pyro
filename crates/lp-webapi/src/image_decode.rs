@@ -81,10 +81,13 @@ pub(crate) fn reject_all(page: &PageDom, el: NodeId) {
 }
 
 impl PageDom {
-    /// Embedder: an `<img>` that is not in the document started (`keep`) or
-    /// finished a request. Its wrappers, which hold its listeners, stay
-    /// alive meanwhile, so `new Image()` that script dropped still fires
-    /// `load`. A connected element's wrappers are kept by the connection.
+    /// Embedder: an `<img>` started (`keep`) or finished (or dropped) a
+    /// request. Its wrappers, which hold its listeners, stay alive
+    /// meanwhile, so `new Image()` that script dropped, or an `<img>`
+    /// removed while loading, still fires `load`: a connected element's
+    /// wrappers are kept by the connection, and `reconcile_pins` leaves them
+    /// kept when it is removed while [`PageDom::image_loading`]. Call it
+    /// after the request's `load`/`error` was dispatched.
     pub fn keep_loading_image(&self, el: NodeId, keep: bool) {
         if self.dom.borrow().is_in_active_document(el) {
             return;
@@ -93,7 +96,21 @@ impl PageDom {
             self.keep_node(el.index());
         } else {
             self.unkeep_node(None, el.index());
+            // Identity-map worlds' wrappers pinned for listeners added meanwhile.
+            let key = lp_dom::events::TargetKey::Node(el.index());
+            let mut pinned = self.pinned.borrow_mut();
+            if !pinned.is_empty() {
+                for realm in self.realms.borrow().keys() {
+                    pinned.remove(&(*realm, key));
+                }
+            }
         }
+    }
+
+    /// Whether `el` has an image request in flight: its wrappers stay kept
+    /// while it is not in the document.
+    pub(crate) fn image_loading(&self, el: NodeId) -> bool {
+        self.images.borrow().get(&el).is_some_and(|e| e.1)
     }
 
     /// Embedder: the `<img>`'s current request (for the `src` value `src`)

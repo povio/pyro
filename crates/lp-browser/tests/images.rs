@@ -246,3 +246,28 @@ fn decode_of_srcset_and_detached_picture_images() {
         "srcset:ok|srcset2:ok|srcsetMissing:EncodingError|picture:ok"
     );
 }
+
+#[test]
+fn images_removed_or_given_expandos_while_loading_still_fire_load() {
+    let (mut thread, page, loader) = setup("<p>gc</p>");
+    loader.insert_bytes("http://site.test/r.png", "image/png", &png(1, 1), Duration::from_millis(20));
+    loader.insert_bytes("http://site.test/x.png", "image/png", &png(1, 1), Duration::from_millis(20));
+    thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    settle(&mut thread);
+    eval(
+        &thread,
+        page,
+        "globalThis.gc = [];
+         (() => {
+           const r = document.createElement('img'); r.onload = () => gc.push('removed');
+           r.src = '/r.png'; document.body.append(r);
+           const x = new Image(); x.onload = () => gc.push('expando'); x.src = '/x.png'; x.custom = 1;
+         })(); 1",
+    );
+    thread.browser.checkpoint();
+    eval(&thread, page, "document.querySelector('img[src=\"/r.png\"]').remove(); 1");
+    thread.browser.checkpoint();
+    thread.browser.engine.collect_garbage_now();
+    settle(&mut thread);
+    assert_eq!(eval(&thread, page, "gc.sort().join('|')"), "expando|removed");
+}
