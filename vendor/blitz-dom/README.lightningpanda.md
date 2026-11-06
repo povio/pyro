@@ -71,6 +71,9 @@ these additional local changes are covered by lp-render's rendering tests.
   itself: what it holds in its own coordinates (scrollable overflow, its subtree's layouts) is unchanged, so
   `resolve_layout_children`, `resolve_transforms` and `clear_damage_and_dirty_flags` no longer descend into every
   moved subtree. Its rounding still follows the move: the `rounded_from` key holds its location.
+  A transform resolves against the rounded size (`Node::set_transform`), which a fractional move of the box or an
+  ancestor can change: `LayoutPassState::set_final_layout` marks a box with a transform whose rounded size changed
+  (`Node::mark_layout_changed`), so `resolve_transforms` resolves it again instead of reusing the old one.
 - `src/resolve.rs` (`resolve_layout`): no Taffy pass or rounding with nothing damaged and the same viewport.
   `BaseDocument::needs_resolve` tells a caller whether a `resolve` could change anything.
 

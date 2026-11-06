@@ -688,7 +688,7 @@ impl Node {
 
     /// [`Self::mark_damaged`], all the way up: a flag can outlast its ancestors' (a node moved
     /// while flagged), and rounding must never miss a change.
-    fn mark_layout_changed(&self) {
+    pub(crate) fn mark_layout_changed(&self) {
         let mut current = Some(self.id);
         while let Some(id) = current {
             let node = &self.tree()[id];

@@ -1315,3 +1315,76 @@ fn deltas_on_long_tables_and_lists_match_fresh_builds() {
     }
     assert!(deltas * 2 > steps.len(), "most steps sync as deltas ({deltas} of {})", steps.len());
 }
+
+/// A transform resolves against the box's rounded size, and rounding follows
+/// the box's absolute position: a transformed box that only moved by a
+/// fractional amount (or sits inside one) can round to a different size with
+/// no unrounded layout of its own changing. Delta-synced boxes, quads,
+/// document size and paint must match a fresh build after each move.
+#[test]
+fn transformed_boxes_that_only_moved_match_fresh_builds() {
+    let cases: [(&str, &str, [&str; 3]); 5] = [
+        (
+            r#"<div id=a style="height:3.3px"></div><div id=tb style="transform:rotate(45deg);width:5.5px;height:5.5px"></div>"#,
+            "#a",
+            ["height:3.7px", "height:0.4px", "height:3.7px"],
+        ),
+        (
+            r#"<div style="display:flex;gap:2.5px"><div id=a style="width:10.5px">a</div><div id=tb style="transform:scale(1.5);width:5.5px;height:5.5px"></div></div>"#,
+            "#a",
+            ["width:30.25px", "width:2.2px", "width:30.25px"],
+        ),
+        // A transformed descendant of a box that only moved: its own position
+        // in its parent is unchanged, its absolute position (and rounding) is not.
+        (
+            r#"<div id=a style="height:3.3px"></div><div id=m><div id=tb style="transform:translate(50%,25%) rotate(20deg);width:7.5px;height:5.5px"></div></div>"#,
+            "#a",
+            ["height:3.7px", "height:0.4px", "height:3.7px"],
+        ),
+        (
+            r#"<table style="width:200.5px"><tr><td id=a style="height:3.3px">a</td></tr><tr><td style="transform:rotate(30deg);width:5.5px;height:5.5px">r</td></tr></table>"#,
+            "#a",
+            ["height:23.7px", "height:20.4px", "height:23.7px"],
+        ),
+        (
+            r#"<div style="overflow:auto;height:20px"><div id=a style="height:3.3px"></div><div id=tb style="transform:translateY(50%) scale(2);width:5.5px;height:15.5px"></div></div>"#,
+            "#a",
+            ["height:3.7px", "height:0.4px", "height:3.7px"],
+        ),
+    ];
+    let quads = |r: &Renderer, page: &Page| -> Vec<(u64, String)> {
+        page.tree()
+            .nodes
+            .iter()
+            .filter(|n| matches!(n.kind, TreeKind::Element { .. }))
+            .map(|n| (n.key, format!("{:?}", r.element_quads(1, n.key))))
+            .collect()
+    };
+    for (body, sel, values) in cases {
+        let page = Page::new(&format!("{PAINT_BOXES}{body}</body></html>"));
+        let mut r = Renderer::new();
+        r.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
+        let mut painted = Renderer::new();
+        paint(&mut painted, &page.snapshot(1, page.tree()));
+        for value in values {
+            let since = page.dom.borrow().version();
+            let n = page.find(sel);
+            page.dom.borrow_mut().set_attribute(n, "style", value).unwrap();
+            let delta = page.dom.borrow().render_delta(page.doc, since, &Page::opts()).expect("a delta");
+            r.sync_delta(1, &delta_ops(delta), (640, 480, 1.0, false, false), false).unwrap();
+            let mut fresh = Renderer::new();
+            fresh.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
+            let what = format!("{body}: {sel} {{ {value} }}");
+            for ((k, a), (_, b)) in boxes(&r, &page).into_iter().zip(boxes(&fresh, &page)) {
+                assert_eq!(a, b, "box {k:x} after {what}");
+            }
+            assert_eq!(quads(&r, &page), quads(&fresh, &page), "quads after {what}");
+            let size = |r: &Renderer| r.page_layout(1).map(|l| (l.document_width, l.document_height));
+            assert_eq!(size(&r), size(&fresh), "document size after {what}");
+            let tree = page.tree();
+            let mirrored = paint(&mut painted, &page.snapshot(1, tree.clone()));
+            let freshp = paint(&mut Renderer::new(), &page.snapshot(1, tree));
+            assert_eq!(mirrored.hash, freshp.hash, "paint after {what}");
+        }
+    }
+}

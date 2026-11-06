@@ -1066,7 +1066,18 @@ impl RoundTree for LayoutPassState<'_> {
     }
 
     fn set_final_layout(&mut self, node_id: NodeId, layout: &Layout) {
-        *self.node_from_id_mut(node_id).final_layout_mut() = *layout;
+        let node = self.node_from_id_mut(node_id);
+        let size_changed = node.final_layout().size != layout.size;
+        *node.final_layout_mut() = *layout;
+        // lightningpanda: a transform resolves against the rounded size
+        // (`Node::set_transform`), and rounding moves with the box's absolute
+        // position: a box that only moved (or sits inside one) can change its
+        // rounded size with no unrounded layout of its own changing. Mark it, so
+        // `resolve_transforms` resolves its transform again instead of reusing
+        // the one for the old size.
+        if size_changed && node.transform().is_some() {
+            node.mark_layout_changed();
+        }
     }
 
     fn is_out_of_flow(&self, node_id: NodeId) -> bool {
