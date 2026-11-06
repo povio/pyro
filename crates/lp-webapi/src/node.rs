@@ -382,19 +382,26 @@ impl JsClass for Node {
             },
             |_s, n, v| {
                 // `DOMString?`: undefined converts to null, which sets "".
-                let set = |text: &str| {
-                    crate::input::blur_before_removal(n.page(), n.id, true);
-                    n.page().dom.borrow_mut().set_text_content(n.id, text).js()
-                };
+                // The value converts first (an object's toString runs before
+                // the blur, as in the spec), then a focused element inside
+                // loses focus, which runs script. A string's characters are
+                // borrowed only after that: a handler that uses the string
+                // as a property key can swap its buffer for an atom's, and a
+                // GC can then free the old one.
+                let blur = || crate::input::blur_before_removal(n.page(), n.id, true);
+                let set = |text: &str| n.page().dom.borrow_mut().set_text_content(n.id, text).js();
                 // A string (the usual value) needs no nullish test first.
-                if let Some(text) = ascii_str(&v) {
-                    return set(text);
+                if v.is_string() {
+                    blur();
+                    return with_str(v, set);
                 }
                 if v.is_nullish() {
-                    set("")
-                } else {
-                    with_str(v, set)
+                    blur();
+                    return set("");
                 }
+                let text = dom_string(v)?;
+                blur();
+                set(&text)
             },
         );
         def.pure_getter_typed("parentNode", lp_js::GetterResult::ObjectOrNull, |s, n| {

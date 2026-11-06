@@ -5740,6 +5740,29 @@ fn removing_the_focused_element_fires_blur_and_focusout_first() {
     );
 }
 
+/// `textContent =` converts its value before the focused element inside
+/// loses focus (an object's `toString` runs first), and reads a string's
+/// characters only after the blur handlers ran. A handler that uses the
+/// string as a property key while an equal atom exists swaps the string's
+/// buffer for the atom's; a collection keeps the old buffer only while it
+/// finds the string on the stack, so a read of it can't be relied on. This
+/// checks the text after such a handler and its allocations; it can't force
+/// the collection to drop the old buffer.
+#[test]
+fn text_content_converts_before_the_blur_and_reads_the_string_after() {
+    let e = env("<body><div id=cell></div></body>");
+    let r = &e.main;
+    eval(r, "window.log = []; window.cell = document.getElementById('cell'); window.focusIn = (onBlur) => { const i = document.createElement('input'); cell.appendChild(i); i.focus(); i.addEventListener('blur', () => { log.push('blur'); onBlur(); }, { once: true }); };");
+    assert_eq!(
+        eval(r, "focusIn(() => {}); cell.textContent = { toString() { log.push('toString'); return 'object'; } }; log.join() + '|' + cell.textContent"),
+        "toString,blur|object"
+    );
+    assert_eq!(
+        eval(r, "log.length = 0; const tail = 'x'.repeat(4000) + Math.random(); window.atom = 'text-' + tail; ({})[atom] = 1; window.key = 'text-' + tail; focusIn(() => { ({})[key] = 1; let a; for (let n = 0; n < 200000; n++) a = [n, n]; }); cell.textContent = key; [log.join(), cell.textContent === atom, cell.firstChild.data.length === atom.length].join()"),
+        "blur,true,true"
+    );
+}
+
 /// Chromium's compatibility mouse events: a canceled `pointerdown` holds
 /// back `mousedown` and the `mouseup` of that press (not `click`); a
 /// canceled `pointerup` holds back nothing (React Aria's press handlers
