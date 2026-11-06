@@ -1323,7 +1323,40 @@ fn deltas_on_long_tables_and_lists_match_fresh_builds() {
 /// document size and paint must match a fresh build after each move.
 #[test]
 fn transformed_boxes_that_only_moved_match_fresh_builds() {
-    let cases: [(&str, &str, [&str; 3]); 5] = [
+    let cases: &[(&str, &str, [&str; 3])] = &[
+        // Identity at the first rounded size (`translateY(100%)` of a 0px
+        // high box is stored as no transform), not after the move.
+        (
+            r#"<div id=a style="height:3.7px"></div><div id=tb style="transform:translateY(100%);width:10px;height:0.4px"></div>"#,
+            "#a",
+            ["height:3.3px", "height:3.7px", "height:3.3px"],
+        ),
+        // The individual transform properties, percentages and a percentage origin.
+        (
+            r#"<div id=a style="height:3.3px"></div><div id=tb style="translate:50% 25%;rotate:15deg;scale:1.25;transform-origin:0 100%;width:7.5px;height:5.5px"></div>"#,
+            "#a",
+            ["height:3.7px", "height:0.4px", "height:3.7px"],
+        ),
+        // Nested transforms in a moved box: both resolve against sizes that
+        // follow the move.
+        (
+            r#"<div id=a style="height:3.3px"></div><div style="transform:rotate(10deg) translate(10%,30%);width:20.5px;height:9.5px"><div style="transform:scale(2) translate(50%,50%);width:5.5px;height:3.5px"><div style="transform:rotate(-30deg);height:2.5px"></div></div></div>"#,
+            "#a",
+            ["height:3.7px", "height:0.4px", "height:3.7px"],
+        ),
+        // Moved horizontally by a fractional amount (a flex sibling that grew).
+        (
+            r#"<div style="display:flex"><div id=a style="width:3.3px"></div><div style="transform:translateX(-50%) rotate(45deg);width:7.5px;height:7.5px"></div><div style="transform:translate(25%,0);width:2.5px;height:2.5px"></div></div>"#,
+            "#a",
+            ["width:3.7px", "width:0.4px", "width:12.6px"],
+        ),
+        // Out of flow: an absolutely positioned transformed box placed after a
+        // static sibling in its containing block moves with that sibling.
+        (
+            r#"<div style="position:relative"><div id=a style="height:3.3px"></div><div style="position:absolute;transform:rotate(30deg) translateY(50%);width:6.5px;height:4.5px"></div></div>"#,
+            "#a",
+            ["height:3.7px", "height:0.4px", "height:3.7px"],
+        ),
         (
             r#"<div id=a style="height:3.3px"></div><div id=tb style="transform:rotate(45deg);width:5.5px;height:5.5px"></div>"#,
             "#a",

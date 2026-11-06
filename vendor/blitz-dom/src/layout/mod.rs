@@ -1074,8 +1074,9 @@ impl RoundTree for LayoutPassState<'_> {
         // position: a box that only moved (or sits inside one) can change its
         // rounded size with no unrounded layout of its own changing. Mark it, so
         // `resolve_transforms` resolves its transform again instead of reusing
-        // the one for the old size.
-        if size_changed && node.transform().is_some() {
+        // the one for the old size. The style decides, not `transform()`: one
+        // that was the identity at the old size is stored as `None`.
+        if size_changed && node.has_transform_style() {
             node.mark_layout_changed();
         }
     }

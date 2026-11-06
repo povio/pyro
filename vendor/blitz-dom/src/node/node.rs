@@ -449,6 +449,22 @@ impl Node {
         }
     }
 
+    /// lightningpanda: whether a `transform`, `translate`, `rotate` or `scale` style applies,
+    /// which [`Self::set_transform`] resolves against the rounded size. A transform that
+    /// resolves to the identity at one size (`translate: 50%` at width 0) is stored as
+    /// `None`, so `transform().is_some()` alone does not tell whether a new size changes it.
+    pub(crate) fn has_transform_style(&self) -> bool {
+        use style::values::computed::Rotate;
+        use style::values::generics::transform::{Scale, Translate};
+        self.primary_styles().is_some_and(|s| {
+            let b = s.get_box();
+            !b.transform.0.is_empty()
+                || !matches!(b.translate, Translate::None)
+                || !matches!(b.rotate, Rotate::None)
+                || !matches!(b.scale, Scale::None)
+        })
+    }
+
     pub fn set_transform(&mut self, scale: f32) -> Option<Affine> {
         let transform = self.primary_styles().and_then(|s| {
             let size = self.final_layout().size;

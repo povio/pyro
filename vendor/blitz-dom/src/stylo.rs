@@ -1433,6 +1433,12 @@ impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
     }
 }
 
+/// lightningpanda: whether `node`'s primary style is `position: sticky`.
+pub(crate) fn is_sticky(node: &Node) -> bool {
+    node.primary_styles()
+        .is_some_and(|style| style.clone_position() == style::computed_values::position::T::Sticky)
+}
+
 /// Flush updated pseudo-element (`::before`/`::after`) styles from the owning
 /// element's freshly-computed stylo data to the pseudo-element's anonymous node.
 ///
@@ -1455,12 +1461,6 @@ impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
 /// not themselves visited by the traversal), so mutating the pseudo node's
 /// stylo data here cannot race with any other traversal thread.
 #[allow(unsafe_code)]
-/// lightningpanda: whether `node`'s primary style is `position: sticky`.
-pub(crate) fn is_sticky(node: &Node) -> bool {
-    node.primary_styles()
-        .is_some_and(|style| style.clone_position() == style::computed_values::position::T::Sticky)
-}
-
 fn sync_pseudo_element_styles(
     el: &Node,
     data: &style::data::ElementData,

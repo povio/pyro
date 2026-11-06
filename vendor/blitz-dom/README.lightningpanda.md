@@ -72,16 +72,20 @@ these additional local changes are covered by lp-render's rendering tests.
   `resolve_layout_children`, `resolve_transforms` and `clear_damage_and_dirty_flags` no longer descend into every
   moved subtree. Its rounding still follows the move: the `rounded_from` key holds its location.
   A transform resolves against the rounded size (`Node::set_transform`), which a fractional move of the box or an
-  ancestor can change: `LayoutPassState::set_final_layout` marks a box with a transform whose rounded size changed
-  (`Node::mark_layout_changed`), so `resolve_transforms` resolves it again instead of reusing the old one.
+  ancestor can change: `LayoutPassState::set_final_layout` marks a box with a transform style
+  (`Node::has_transform_style`; one that was the identity at the old size is stored as no transform) whose rounded
+  size changed (`Node::mark_layout_changed`), so `resolve_transforms` resolves it again instead of reusing the old
+  one. Nothing else the passes after layout keep depends on the rounded size or the absolute position: scrollable
+  overflow uses unrounded sizes, and paint (radii, backgrounds), sticky offsets and lp-render's geometry derive
+  positions from the layouts when they are used.
 - `src/resolve.rs` (`resolve_layout`): no Taffy pass or rounding with nothing damaged and the same viewport.
   `BaseDocument::needs_resolve` tells a caller whether a `resolve` could change anything.
-
 - `src/node/node.rs`, `src/resolve.rs` (`resolve_layout_children`): `Node::layout_child_of` names the node whose
   `layout_children` list holds a node, entered and left where those lists are rebuilt (a child another container
   collected in the same pass keeps pointing there). A node is a box of the current layout when it equals its
-  `layout_parent`, which inline content of an inline root also has without being listed: lp-render answers that in
-  O(1) instead of indexing the parent's list (a table's cells) after every sync.
+  `layout_parent`, which inline content of an inline root also has without being listed, or when it is a hoisted
+  (out-of-flow) box whose `oof_containing_block` is its `layout_parent`: lp-render answers that in O(1) instead of
+  indexing the parent's list (a table's cells) after every sync.
 - `src/layout/paint_tree.rs` (`build_paint_tree_impl`): a rebuilt paint list already in paint order (tree order with
   no positioned, floated or z-indexed children: a table's cells) is not sorted again.
 - `src/stylo.rs`, `src/document.rs` (`BaseDocument::has_sticky`): the style traversal records the elements it styles
