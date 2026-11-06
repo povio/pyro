@@ -126,7 +126,7 @@ impl BaseDocument {
 
         let root_node_id = self.root_element().id;
         debug_timer!(timer, feature = "log-phase-times");
-        let mut phase_t = std::time::Instant::now();
+        let mut phase_t = phase_profile::start();
 
         // Apply any device changes (viewport resize, zoom, color-scheme, etc)
         // accumulated since the last resolve as a single device rebuild.
@@ -758,14 +758,30 @@ fn unite_overflow(overflow: Rect, child: Rect) -> Rect {
 
 /// lightningpanda: cumulative time per `resolve` phase (style, damage,
 /// construct, pconstruct, layout, transform, paint_tree, c_damage, subdocs),
-/// for profiling incremental relayout.
+/// for profiling incremental relayout. The phases are timed only while
+/// [`set_timing`] has turned timing on; the counters below always count.
 pub mod phase_profile {
     use std::cell::Cell;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::Instant;
     std::thread_local! {
         static NS: Cell<[u64; 9]> = const { Cell::new([0; 9]) };
     }
-    pub(crate) fn mark(i: usize, t: &mut Instant) {
+    static TIMING: AtomicBool = AtomicBool::new(false);
+    /// Turns the phase timers on or off for the whole process.
+    pub fn set_timing(on: bool) {
+        TIMING.store(on, Ordering::Relaxed);
+    }
+    /// Whether the phase timers are on.
+    pub fn timing() -> bool {
+        TIMING.load(Ordering::Relaxed)
+    }
+    /// The start of a `resolve`'s first phase, when timing is on.
+    pub(crate) fn start() -> Option<Instant> {
+        timing().then(Instant::now)
+    }
+    pub(crate) fn mark(i: usize, t: &mut Option<Instant>) {
+        let Some(t) = t else { return };
         let now = Instant::now();
         let d = (now - *t).as_nanos() as u64;
         *t = now;

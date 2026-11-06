@@ -7950,6 +7950,26 @@ fn performance_get_metrics_reports_chrome_names() {
     assert!(metrics["LayoutCount"] >= 1.0, "geometryStats ({stats}) did not reset it: {r}");
 }
 
+#[cfg(feature = "render")]
+#[test]
+fn geometry_stats_time_layouts_once_requested() {
+    let mut h = Harness::new();
+    load_html(&mut h, "<!doctype html><div><p>a</p><p>b</p></div>");
+    // The first call turns the timers on (and resets the counters).
+    h.page("LP.geometryStats", json!({}));
+    eval_value(
+        &mut h,
+        "for (const w of [10, 20, 30]) { document.querySelector('p').style.width = w + 'px'; \
+         document.querySelector('p').getBoundingClientRect(); } 0",
+    );
+    let r = h.page("LP.geometryStats", json!({}));
+    let stats = &r["result"];
+    assert!(stats["layouts"].as_u64().unwrap_or(0) >= 3, "{r}");
+    assert!(stats["layoutMs"].as_f64().unwrap_or(0.0) > 0.0, "layout time reads zero: {r}");
+    assert!(stats["resolveMs"].as_f64().unwrap_or(0.0) > 0.0, "resolve time reads zero: {r}");
+    assert!(stats["blitzCumulative"]["phasesMs"]["layout"].as_f64().unwrap_or(0.0) > 0.0, "{r}");
+}
+
 #[test]
 fn fetch_response_stage_pauses_reads_and_overrides_responses() {
     let (address, server) = serve_html(5, "<!doctype html><p>payload</p>");
