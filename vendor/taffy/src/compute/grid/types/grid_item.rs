@@ -98,6 +98,12 @@ pub(in super::super) struct GridItem {
     pub minimum_contribution_cache: Size<Option<f32>>,
     /// Cache for the max-content size
     pub max_content_contribution_cache: Size<Option<f32>>,
+    /// lightningpanda: whether a contribution of this item in the inline axis was computed that can depend on the
+    /// item's content or on the size of its grid area (a min-content or max-content contribution, or a minimum
+    /// contribution that resolves a percentage or transfers a size through an aspect ratio). Set as the first
+    /// column sizing pass reads the contributions. When it is false the column sizes from that pass do not depend
+    /// on the item, so the item cannot be the reason to re-run column sizing once the row sizes are known.
+    pub inline_contribution_consumed: bool,
 
     /// Final y position, excluding any relative offset (which does not affect the container's baseline).
     /// Used to compute baseline alignment for the container.
@@ -151,6 +157,7 @@ impl GridItem {
             max_content_contribution_cache: Size::NONE,
             known_dimensions_cache: None,
             minimum_contribution_cache: Size::NONE,
+            inline_contribution_consumed: false,
             y_position: 0.0,
             height: 0.0,
             oof_candidates: OofCandidates::NONE,
@@ -584,6 +591,7 @@ impl GridItem {
         self.min_content_contribution_cache.get(axis).unwrap_or_else(|| {
             let size = self.min_content_contribution(axis, tree, grid_area_size, available_space);
             self.min_content_contribution_cache.set(axis, Some(size));
+            self.inline_contribution_consumed |= axis == AbstractAxis::Inline;
             size
         })
     }
@@ -689,6 +697,7 @@ impl GridItem {
         self.max_content_contribution_cache.get(axis).unwrap_or_else(|| {
             let size = self.max_content_contribution(axis, tree, grid_area_size, available_space);
             self.max_content_contribution_cache.set(axis, Some(size));
+            self.inline_contribution_consumed |= axis == AbstractAxis::Inline;
             size
         })
     }
@@ -802,6 +811,22 @@ impl GridItem {
             })
     }
 
+    /// lightningpanda: whether the item's minimum contribution in `axis` can depend on the size of its grid area,
+    /// short of reading its min-content contribution: a percentage (or `calc()` with one) in its preferred, minimum
+    /// or maximum size or in its padding or border, or an aspect ratio, which transfers a size from the other axis.
+    #[inline(always)]
+    fn minimum_contribution_depends_on_grid_area(&self, axis: AbstractAxis) -> bool {
+        let rect_uses_percentage = |rect: &Rect<LengthPercentage>| {
+            [rect.left, rect.right, rect.top, rect.bottom].iter().any(|side| side.0.uses_percentage())
+        };
+        self.aspect_ratio.is_some()
+            || self.size.get(axis).0.uses_percentage()
+            || self.min_size.get(axis).0.uses_percentage()
+            || self.max_size.get(axis).0.uses_percentage()
+            || rect_uses_percentage(&self.padding)
+            || rect_uses_percentage(&self.border)
+    }
+
     /// Retrieve the item's minimum contribution from the cache or compute it using the provided parameters
     #[inline(always)]
     pub fn minimum_contribution_cached(
@@ -815,6 +840,9 @@ impl GridItem {
         self.minimum_contribution_cache.get(axis).unwrap_or_else(|| {
             let size = self.minimum_contribution(tree, axis, axis_tracks, grid_area_size, inner_node_size);
             self.minimum_contribution_cache.set(axis, Some(size));
+            // A content-based minimum reads the min-content contribution, which records the read itself
+            self.inline_contribution_consumed |=
+                axis == AbstractAxis::Inline && self.minimum_contribution_depends_on_grid_area(axis);
             size
         })
     }

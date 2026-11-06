@@ -885,6 +885,25 @@ fn grid_parity_tailwind_columns() {
 }
 
 #[test]
+fn grid_fr_columns_with_min_width_0_items_ignore_their_content() {
+    // Column sizing reads nothing of a `min-width: 0` item in an `fr` column, so Taffy skips its
+    // min-content re-check after row sizing (vendor/taffy README); the columns stay an even split
+    // however wide the content is, and an `auto` column beside them still takes its content's width.
+    let word = "x".repeat(80);
+    let html = format!(
+        "<!doctype html><body style=\"margin:0\"><div style=\"display:grid;grid-template-columns:1fr 1fr;width:400px\"><div id=a style=\"min-width:0\">{word}</div><div id=b style=\"min-width:0\">short</div></div><div style=\"display:grid;grid-template-columns:auto 1fr;width:400px\"><div id=c><span id=cs>auto</span></div><div id=d style=\"min-width:0\">{word}</div></div></body>"
+    );
+    let p = page(&html);
+    let result = p.layout.layout_result(&p.dom);
+    let rect = |id: &str| result.get(p.id(id)).unwrap().rect;
+    assert_eq!((rect("a").x, rect("a").width), (0.0, 200.0));
+    assert_eq!((rect("b").x, rect("b").width), (200.0, 200.0));
+    let (c, cs, d) = (rect("c"), rect("cs"), rect("d"));
+    assert!((c.width - cs.width).abs() < 0.01, "auto column {c:?} is its content {cs:?}");
+    assert!((d.x - c.width).abs() < 0.01 && (c.width + d.width - 400.0).abs() < 0.01, "{c:?} {d:?}");
+}
+
+#[test]
 fn grid_parity_calendar_fr_rows_with_min_height() {
     let cells = |n: usize| "<div></div>".repeat(n);
     let html = format!(

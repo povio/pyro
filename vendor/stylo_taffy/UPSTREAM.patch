@@ -1,0 +1,114 @@
+diff --git a/packages/stylo_taffy/src/lib.rs b/packages/stylo_taffy/src/lib.rs
+index fcf5580..e604113 100644
+--- a/packages/stylo_taffy/src/lib.rs
++++ b/packages/stylo_taffy/src/lib.rs
+@@ -4,7 +4,7 @@
+ //! used standalone, and serves as useful reference for anyone wanting to integrate [`stylo`](::style) with [`taffy`]
+ 
+ mod wrapper;
+-pub use wrapper::{StyleFlags, TaffyStyloStyle};
++pub use wrapper::{CellOverride, StyleFlags, TaffyStyloStyle};
+ 
+ pub mod convert;
+ #[doc(inline)]
+diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrapper.rs
+index aaa531b..7b130b3 100644
+--- a/packages/stylo_taffy/src/wrapper.rs
++++ b/packages/stylo_taffy/src/wrapper.rs
+@@ -36,6 +36,18 @@ bitflags! {
+     }
+ }
+ 
++/// Layout-derived replacements for a table cell's `height` and border widths, applied by
++/// [`TaffyStyloStyle`]'s `size` and `border` getters (and its `taffy::Style` conversion) instead of
++/// a modified copy of the cell's [`ComputedValues`].
++#[derive(Copy, Clone, Debug, Default, PartialEq)]
++pub struct CellOverride {
++    /// The physical `height` is read as `auto`.
++    pub auto_height: bool,
++    /// Physical border widths in px, `[top, right, bottom, left]`, read in place of the style's
++    /// (whatever its border styles).
++    pub border: Option<[f32; 4]>,
++}
++
+ /// A wrapper struct for anything that `Deref`s to a [`stylo::ComputedValues`](ComputedValues) (can be pointed to by an `&` reference, [`Arc`](std::sync::Arc),
+ /// [`Ref`](std::cell::Ref), etc). It implements [`taffy`]'s [layout traits](taffy::traits) and can used with Taffy's [layout algorithms](taffy::compute).
+ pub struct TaffyStyloStyle<T: Deref<Target = ComputedValues>> {
+@@ -43,6 +55,8 @@ pub struct TaffyStyloStyle<T: Deref<Target = ComputedValues>> {
+     pub style: T,
+     /// Extra node-derived flags that are not part of the stylo style
+     pub flags: StyleFlags,
++    /// Layout-derived table cell overrides of the stylo style
++    pub cell: CellOverride,
+     /// The writing mode of the algorithm laying this box out, whose inline/block axes the Taffy
+     /// getters are expressed in (see [`crate::writing_mode`]). Defaults to the style's own.
+     #[cfg(feature = "writing-mode")]
+@@ -79,6 +93,7 @@ impl<T: Deref<Target = ComputedValues>> TaffyStyloStyle<T> {
+         Self {
+             style,
+             flags,
++            cell: CellOverride::default(),
+             #[cfg(feature = "writing-mode")]
+             layout_wm,
+             #[cfg(feature = "writing-mode")]
+@@ -95,6 +110,7 @@ impl<T: Deref<Target = ComputedValues>> TaffyStyloStyle<T> {
+         Self {
+             style,
+             flags,
++            cell: CellOverride::default(),
+             #[cfg(feature = "writing-mode")]
+             layout_wm,
+             #[cfg(feature = "writing-mode")]
+@@ -165,12 +181,29 @@ impl<T: Deref<Target = ComputedValues>> From<T> for TaffyStyloStyle<T> {
+ impl<T: Deref<Target = ComputedValues>> From<TaffyStyloStyle<T>> for taffy::Style<Atom> {
+     fn from(value: TaffyStyloStyle<T>) -> Self {
+         let mut style = convert::to_taffy_style(&value.style);
++        if value.cell.auto_height {
++            style.size.height = taffy::Dimension::auto();
++        }
++        if let Some(border) = value.cell.border {
++            style.border = physical_border(border);
++        }
+         value.layout_wm().transpose_style(&mut style);
+         style.item_is_replaced = value.flags.contains(StyleFlags::IS_REPLACED);
+         style
+     }
+ }
+ 
++/// `[top, right, bottom, left]` px widths as a physical Taffy border rect
++#[inline]
++fn physical_border([top, right, bottom, left]: [f32; 4]) -> taffy::Rect<taffy::LengthPercentage> {
++    taffy::Rect {
++        left: taffy::style_helpers::length(left),
++        right: taffy::style_helpers::length(right),
++        top: taffy::style_helpers::length(top),
++        bottom: taffy::style_helpers::length(bottom),
++    }
++}
++
+ // CoreStyle impl
+ impl<T: Deref<Target = ComputedValues>> taffy::CoreStyle for TaffyStyloStyle<T> {
+     type CustomIdent = Atom;
+@@ -251,7 +284,11 @@ impl<T: Deref<Target = ComputedValues>> taffy::CoreStyle for TaffyStyloStyle<T>
+         let position_styles = self.style.get_position();
+         self.size(taffy::Size {
+             width: convert::dimension(&position_styles.width),
+-            height: convert::dimension(&position_styles.height),
++            height: if self.cell.auto_height {
++                taffy::Dimension::auto()
++            } else {
++                convert::dimension(&position_styles.height)
++            },
+         })
+     }
+ 
+@@ -317,6 +354,9 @@ impl<T: Deref<Target = ComputedValues>> taffy::CoreStyle for TaffyStyloStyle<T>
+ 
+     #[inline]
+     fn border(&self) -> taffy::Rect<taffy::LengthPercentage> {
++        if let Some(border) = self.cell.border {
++            return self.rect(physical_border(border));
++        }
+         let border_styles = self.style.get_border();
+         self.rect(taffy::Rect {
+             left: convert::border(
