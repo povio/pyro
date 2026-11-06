@@ -181,6 +181,7 @@ fn a_container_query_that_toggles_display_reads_consistently() {
     let r = p.layout.bounding_client_rect(&p.dom, cq);
     let display = p.layout.style().stylo_value(&p.dom, cq, "display");
     let hidden = display.as_deref() == Some("none");
+    assert!(hidden, "a 150px container hides #cq: display {display:?}");
     assert_eq!(p.take(), (1, 0));
     // The rect agrees with the style the query answered from.
     assert_eq!(hidden, r == Default::default(), "display {display:?}, rect {r:?}");
