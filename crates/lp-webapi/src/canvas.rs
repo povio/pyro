@@ -992,7 +992,7 @@ impl JsClass for CanvasRenderingContext2D {
             a.require(6, "CanvasRenderingContext2D.transform")?;
             if let Some(v) = finite_args(&a, 6)? {
                 let mut state = c.state.borrow_mut();
-                state.transform = state.transform * Affine::new([v[0], v[1], v[2], v[3], v[4], v[5]]);
+                state.transform *= Affine::new([v[0], v[1], v[2], v[3], v[4], v[5]]);
             }
             Ok(s.undefined())
         });
@@ -1000,7 +1000,7 @@ impl JsClass for CanvasRenderingContext2D {
             a.require(2, "CanvasRenderingContext2D.translate")?;
             if let Some(v) = finite_args(&a, 2)? {
                 let mut state = c.state.borrow_mut();
-                state.transform = state.transform * Affine::translate((v[0], v[1]));
+                state.transform *= Affine::translate((v[0], v[1]));
             }
             Ok(s.undefined())
         });
@@ -1008,7 +1008,7 @@ impl JsClass for CanvasRenderingContext2D {
             a.require(1, "CanvasRenderingContext2D.rotate")?;
             if let Some(v) = finite_args(&a, 1)? {
                 let mut state = c.state.borrow_mut();
-                state.transform = state.transform * Affine::rotate(v[0]);
+                state.transform *= Affine::rotate(v[0]);
             }
             Ok(s.undefined())
         });
@@ -1016,7 +1016,7 @@ impl JsClass for CanvasRenderingContext2D {
             a.require(2, "CanvasRenderingContext2D.scale")?;
             if let Some(v) = finite_args(&a, 2)? {
                 let mut state = c.state.borrow_mut();
-                state.transform = state.transform * Affine::scale_non_uniform(v[0], v[1]);
+                state.transform *= Affine::scale_non_uniform(v[0], v[1]);
             }
             Ok(s.undefined())
         });
@@ -1053,7 +1053,7 @@ impl JsClass for CanvasRenderingContext2D {
             a.require(5, "CanvasRenderingContext2D.arcTo")?;
             let Some(v) = finite_args(&a, 5)? else { return Ok(s.undefined()) };
             if v[4] < 0.0 {
-                return Err(JsError::dom("IndexSizeError", &format!("The radius provided ({}) is negative.", v[4])));
+                return Err(JsError::dom("IndexSizeError", format!("The radius provided ({}) is negative.", v[4])));
             }
             let t = c.state.borrow().transform;
             Builder { path: &mut c.path.borrow_mut(), t }.arc_to(v[0], v[1], v[2], v[3], v[4]);
@@ -1063,7 +1063,7 @@ impl JsClass for CanvasRenderingContext2D {
             a.require(5, "CanvasRenderingContext2D.arc")?;
             let Some(v) = finite_args(&a, 5)? else { return Ok(s.undefined()) };
             if v[2] < 0.0 {
-                return Err(JsError::dom("IndexSizeError", &format!("The radius provided ({}) is negative.", v[2])));
+                return Err(JsError::dom("IndexSizeError", format!("The radius provided ({}) is negative.", v[2])));
             }
             let ccw = a.get(5).to_bool();
             let t = c.state.borrow().transform;
@@ -1078,7 +1078,7 @@ impl JsClass for CanvasRenderingContext2D {
                 let r = if v[2] < 0.0 { v[2] } else { v[3] };
                 return Err(JsError::dom(
                     "IndexSizeError",
-                    &format!("The {which}-axis radius provided ({r}) is negative."),
+                    format!("The {which}-axis radius provided ({r}) is negative."),
                 ));
             }
             let ccw = a.get(7).to_bool();
@@ -1163,7 +1163,7 @@ impl JsClass for CanvasRenderingContext2D {
             let v = doubles(&a, 6, "CanvasRenderingContext2D.createRadialGradient")?;
             if v[2] < 0.0 || v[5] < 0.0 {
                 let r = if v[2] < 0.0 { v[2] } else { v[5] };
-                return Err(JsError::dom("IndexSizeError", &format!("The radius provided ({r}) is negative.")));
+                return Err(JsError::dom("IndexSizeError", format!("The radius provided ({r}) is negative.")));
             }
             gradient(s, c, "radial", &v)
         });
@@ -1189,7 +1189,7 @@ impl JsClass for CanvasRenderingContext2D {
                 other => {
                     return Err(JsError::dom(
                         "SyntaxError",
-                        &format!("The provided type ('{other}') is not one of 'repeat', 'no-repeat', 'repeat-x', or 'repeat-y'."),
+                        format!("The provided type ('{other}') is not one of 'repeat', 'no-repeat', 'repeat-x', or 'repeat-y'."),
                     ))
                 }
             };
@@ -1245,7 +1245,7 @@ impl JsClass for CanvasRenderingContext2D {
             if w == 0 || h == 0 {
                 return Err(JsError::dom(
                     "IndexSizeError",
-                    &format!("The source {} is 0.", if w == 0 { "width" } else { "height" }),
+                    format!("The source {} is 0.", if w == 0 { "width" } else { "height" }),
                 ));
             }
             module_helper(s, c, "imageData", &[s.number(w.abs() as f64), s.number(h.abs() as f64), a.get(2)])
@@ -1256,7 +1256,7 @@ impl JsClass for CanvasRenderingContext2D {
             if w == 0 || h == 0 {
                 return Err(JsError::dom(
                     "IndexSizeError",
-                    &format!("The source {} is 0.", if w == 0 { "width" } else { "height" }),
+                    format!("The source {} is 0.", if w == 0 { "width" } else { "height" }),
                 ));
             }
             if c.drawn.get() {

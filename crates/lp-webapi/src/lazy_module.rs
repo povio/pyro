@@ -57,12 +57,6 @@ impl LazyModule {
         module.as_object().ok_or_else(unavailable)
     }
 
-    /// The module only when this realm already made it.
-    pub(crate) fn existing<'s>(&self, s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Option<Object<'s>>> {
-        let navigator = crate::window::navigator(s, page)?.as_object().ok_or_else(unavailable)?;
-        Ok(s.get_hidden(navigator, self.key)?.and_then(|v| v.as_object()))
-    }
-
     /// Calls module helper `name`.
     pub(crate) fn helper<'s>(
         &self,
