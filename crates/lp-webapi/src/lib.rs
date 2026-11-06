@@ -172,14 +172,19 @@ pub fn install(scope: &Scope<'_>, page: Rc<PageDom>) -> JsResult<()> {
     let global = scope.global();
     global.set_atom("CSS", window::css_namespace(scope)?)?;
     // A window's `document` and `window` ([LegacyUnforgeable]) never change:
-    // made once with the realm, they are the global's own constant
-    // attributes (not members of Window.prototype, see
-    // `window::has_window_constants`), which read with no callback and which
-    // compiled code holds as constants, `window.document` included. The
-    // realm releases them when it is disposed. Without the patched
-    // JavaScriptCore the interface's getters serve them.
-    let document = node::wrap_node(scope, &page, page.document())?;
-    if scope.define_global_constant("document", document.value()) {
+    // they are the global's own constant attributes (not members of
+    // Window.prototype, see `window::has_window_constants`), which read with
+    // no callback and which compiled code holds as constants,
+    // `window.document` included. The realm releases them when it is
+    // disposed. `document` is made on its first read: its wrapper installs
+    // the Document, Node and EventTarget interfaces, which a realm whose
+    // script never reads it (an initial about:blank document, a blank
+    // iframe, an isolated world) does not need. It is the document the
+    // realm was installed for, whatever the page displays by then. Without
+    // the patched JavaScriptCore the interface's getters serve them.
+    let document = page.document();
+    let make: lp_js::LazyGlobalConstant = Rc::new(move |s: &Scope<'_>| window_document(s, document));
+    if scope.define_lazy_global_constant("document", make) {
         scope.define_global_constant("window", global.value());
     }
     // [Unscopable] members of ChildNode and ParentNode, defined with each
@@ -208,6 +213,13 @@ pub fn install(scope: &Scope<'_>, page: Rc<PageDom>) -> JsResult<()> {
     scope.after_populate::<node::Document>(hook(3)?)?;
     scope.after_populate::<node::DocumentFragment>(hook(4)?)?;
     Ok(())
+}
+
+/// The value of a window's `document` constant, made on its first read: the
+/// wrapper of `document`, the page's document when the realm was installed.
+fn window_document<'s>(scope: &Scope<'s>, document: lp_dom::NodeId) -> JsResult<Value<'s>> {
+    let page = target::page_of(scope)?;
+    Ok(node::wrap_node(scope, &page, document)?.value())
 }
 
 /// Resolves a JS value to its native node (CDP DOM.describeNode etc.).
