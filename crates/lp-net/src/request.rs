@@ -29,6 +29,8 @@ pub enum Destination {
     Fetch,
     EventSource,
     WebSocket,
+    /// `navigator.sendBeacon`.
+    Beacon,
     Other,
 }
 
@@ -45,6 +47,7 @@ impl Destination {
             Destination::Fetch => "Fetch",
             Destination::EventSource => "EventSource",
             Destination::WebSocket => "WebSocket",
+            Destination::Beacon => "Ping",
             Destination::Other => "Other",
         }
     }
@@ -107,7 +110,11 @@ pub struct Request {
     /// Serialized origin of the requesting document ("null" for opaque);
     /// None for browser-initiated navigations.
     pub origin: Option<String>,
+    /// The referrer source (document or init URL) before its policy, which
+    /// the client applies per hop; a navigation with none is browser-initiated.
     pub referrer: Option<Url>,
+    /// Updated by a redirect's `Referrer-Policy` header.
+    pub referrer_policy: crate::referrer::ReferrerPolicy,
     /// Frame / loader identifiers for CDP correlation.
     pub frame_id: Option<String>,
     pub loader_id: Option<String>,
@@ -169,6 +176,7 @@ impl Request {
             redirect: RedirectMode::Follow,
             origin: None,
             referrer: None,
+            referrer_policy: Default::default(),
             frame_id: None,
             loader_id: None,
             max_body: None,

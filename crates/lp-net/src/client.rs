@@ -28,6 +28,7 @@ use crate::auth::auth_challenge;
 use crate::cookies::{site_context, CookieJar, SiteContext};
 use crate::cors::{self, PreflightCache};
 use crate::proxy::{basic_authorization, ProxyConfig, ProxyConnector, ProxyError, ProxyState};
+use crate::referrer::FetchSite;
 use crate::request::*;
 use crate::subscription::{NetSubscription, NetWake, SubscriptionLimits, Subscriptions};
 
@@ -1083,6 +1084,22 @@ impl Decoder {
     }
 }
 
+const SEC_FETCH_SITE: header::HeaderName = header::HeaderName::from_static("sec-fetch-site");
+const SEC_FETCH_MODE: header::HeaderName = header::HeaderName::from_static("sec-fetch-mode");
+const SEC_FETCH_DEST: header::HeaderName = header::HeaderName::from_static("sec-fetch-dest");
+const SEC_FETCH_USER: header::HeaderName = header::HeaderName::from_static("sec-fetch-user");
+
+/// The `Sec-Fetch-Site` relation of one hop: to the requesting document's
+/// origin, else (a navigation a document started) its referrer, else none
+/// (one the browser or automation started).
+fn hop_site(req: &Request, origin_url: Option<&Url>) -> FetchSite {
+    match (&req.origin, &req.referrer) {
+        (Some(_), _) => FetchSite::of(origin_url, &req.url),
+        (None, Some(referrer)) => FetchSite::of(Some(referrer), &req.url),
+        (None, None) => FetchSite::None,
+    }
+}
+
 /// The rustls certificate error inside `io` (hyper-rustls wraps the TLS
 /// stream's `io::Error` in another one).
 fn certificate_error(io: &std::io::Error) -> Option<String> {
@@ -1169,7 +1186,8 @@ impl Io {
         }
     }
 
-    fn build_headers(&self, req: &Request, origin_url: Option<&Url>, cors_cross: bool) -> HeaderMap {
+    /// The request headers of one hop; `site` is its `Sec-Fetch-Site`.
+    fn build_headers(&self, req: &Request, origin_url: Option<&Url>, cors_cross: bool, site: FetchSite) -> HeaderMap {
         let settings = self.shared.settings.lock().unwrap().clone();
         let cfg = &self.shared.config;
         let mut h = req.headers.clone();
@@ -1198,19 +1216,19 @@ impl Io {
             }
         }
         if let Some(r) = &req.referrer {
-            let mut r = r.clone();
-            r.set_fragment(None);
-            let _ = r.set_username("");
-            let _ = r.set_password(None);
-            // strict-origin-when-cross-origin.
-            let value = if origin_url.is_some_and(|o| !cors::same_origin(o, &req.url)) || r.origin() != req.url.origin()
+            if let Some(v) = crate::referrer::referrer_for(r, &req.url, req.referrer_policy)
+                .and_then(|v| HeaderValue::from_str(&v).ok())
             {
-                r.origin().ascii_serialization() + "/"
-            } else {
-                r.to_string()
-            };
-            if let Ok(v) = HeaderValue::from_str(&value) {
                 h.entry(header::REFERER).or_insert(v);
+            }
+        }
+        // Fetch Metadata, to potentially trustworthy URLs as in Chrome.
+        if crate::cookies::is_trustworthy(&req.url) {
+            h.insert(SEC_FETCH_SITE, HeaderValue::from_static(site.as_str()));
+            h.insert(SEC_FETCH_MODE, HeaderValue::from_static(crate::referrer::fetch_mode(req.mode, req.destination)));
+            h.insert(SEC_FETCH_DEST, HeaderValue::from_static(crate::referrer::fetch_dest(req.destination)));
+            if site == FetchSite::None && req.destination == Destination::Document {
+                h.insert(SEC_FETCH_USER, HeaderValue::from_static("?1"));
             }
         }
         // Cookies.
@@ -1296,6 +1314,8 @@ impl Io {
         let origin_url = req.origin.as_deref().and_then(|o| Url::parse(o).ok());
         let max_body = req.max_body.unwrap_or(self.shared.config.max_body);
         let mut redirects = 0u32;
+        // `Sec-Fetch-Site`: the most cross-site relation of the chain so far.
+        let mut site = FetchSite::None;
         let mut redirect_response: Option<ResponseHead> = None;
         let mut tainted = false; // cross-origin redirect in cors mode => Origin "null"
         let mut unconditional = false; // a 304 no longer matched its entry: refetch without validators
@@ -1305,7 +1325,8 @@ impl Io {
                 req.origin = Some("null".into());
             }
             let cors_cross = self.shared.config.enforce_cors && cors::is_cors_request(&req, origin_url.as_ref());
-            let mut headers = self.build_headers(&req, origin_url.as_ref(), cors_cross);
+            site = site.max(hop_site(&req, origin_url.as_ref()));
+            let mut headers = self.build_headers(&req, origin_url.as_ref(), cors_cross, site);
             let cache_mode = self.cache_mode(&req, &mut headers);
             let info = RequestInfo {
                 url: req.url.clone(),
@@ -1392,7 +1413,12 @@ impl Io {
                 let origin = req.origin.clone().unwrap_or_else(|| "null".into());
                 let covered = self.preflight.lock().unwrap().covers(&req, &origin);
                 if !covered {
-                    let ph = cors::preflight_request_headers(&req, &origin);
+                    let mut ph = cors::preflight_request_headers(&req, &origin);
+                    for name in [header::REFERER, SEC_FETCH_SITE, SEC_FETCH_MODE, SEC_FETCH_DEST] {
+                        if let Some(v) = headers.get(&name) {
+                            ph.insert(name, v.clone());
+                        }
+                    }
                     let _permit = self.origin_semaphore(&url).acquire_owned().await;
                     let resp = self.send(Method::OPTIONS, &url, ph, None).await?;
                     let status = resp.status().as_u16();
@@ -1636,6 +1662,12 @@ impl Io {
                         if cors_cross {
                             tainted = true;
                         }
+                    }
+                    // Referrer Policy: a redirect's header sets the next hop's.
+                    if let Some(policy) = crate::referrer::ReferrerPolicy::from_header(
+                        head.headers.get_all("referrer-policy").iter().filter_map(|v| v.to_str().ok()),
+                    ) {
+                        req.referrer_policy = policy;
                     }
                     req.url = target;
                     redirect_response = Some(head);
