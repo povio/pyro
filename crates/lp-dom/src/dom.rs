@@ -2808,6 +2808,8 @@ impl Dom {
         let (mut doc, mut firsts) = (NIL, 0);
         for (k, &id) in ids.iter().enumerate() {
             let Ok(i) = self.check(id) else {
+                // Undo: each node returns to its count before the call, so
+                // none becomes a collection candidate (unlike `release`).
                 self.add_held(doc, firsts);
                 for done in &ids[..k] {
                     self.ext_ref_dec(done.idx);

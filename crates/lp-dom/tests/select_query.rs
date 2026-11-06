@@ -49,6 +49,9 @@ const SELECTORS: &[&str] = &[
     ".x.y",
     "div.x",
     "span#b.x",
+    "span#a",
+    "span#a.X",
+    "rect#b",
     "[data-k]",
     "[data-k='1']",
     "[data-k^='1']",
@@ -127,6 +130,44 @@ fn an_id_in_an_ancestor_compound_bounds_the_walk() {
     assert_eq!(all(d, "#u span"), [out]);
     assert_eq!(all(d, "#u > span#out"), [out]);
     assert_eq!(all(d, "#gone span"), Vec::<NodeId>::new());
+}
+
+#[test]
+fn query_first_with_a_duplicated_id() {
+    let (dom, d) = doc(r#"<!doctype html><body><div id=d class=a></div>
+        <section><span id=d class=b></span><p id=d class=b></p></section></body>"#);
+    let first = |root: NodeId, css: &str| dom.borrow().query_first(root, &parse_query(css).unwrap()).unwrap();
+    let check = |root: NodeId, css: &str| agree(&dom.borrow(), root, css);
+    let div = first(d, "div").unwrap();
+    let section = first(d, "section").unwrap();
+    let (span, p) = (first(d, "span").unwrap(), first(d, "p").unwrap());
+    // The first element with the id matches: it is the answer.
+    assert_eq!(first(d, "#d"), Some(div));
+    // It does not match the whole selector, or is outside the root: walk.
+    assert_eq!(first(d, ".b#d"), Some(span));
+    assert_eq!(first(d, "p#d"), Some(p));
+    assert_eq!(first(section, "#d"), Some(span));
+    assert_eq!(first(div, "#d"), None, "the root itself is the first");
+    for css in ["#d", ".b#d", "p#d", "section > #d", "#d.a", "i#d"] {
+        check(d, css);
+        check(section, css);
+        check(div, css);
+    }
+    // The index's first follows id changes and insertions.
+    dom.borrow_mut().remove_attribute(div, "id").unwrap();
+    assert_eq!(first(d, "#d"), Some(span));
+    let body = dom.borrow().body(d).unwrap().unwrap();
+    let early = dom.borrow_mut().create_element(d, "b").unwrap();
+    dom.borrow_mut().set_attribute(early, "id", "d").unwrap();
+    dom.borrow_mut().insert_before(body, early, Some(div)).unwrap();
+    assert_eq!(first(d, "#d"), Some(early));
+    assert_eq!(first(d, "span#d"), Some(span));
+    dom.borrow_mut().set_attribute(span, "id", "e").unwrap();
+    assert_eq!(first(section, "#d"), Some(p));
+    for css in ["#d", "span#d", "section #d", "b#d"] {
+        check(d, css);
+        check(section, css);
+    }
 }
 
 #[test]
@@ -226,4 +267,12 @@ fn selector_cache_by_characters() {
     }
     assert_eq!(cache.with_latin1(b"div", count).unwrap(), 1);
     assert_eq!(cache.with_latin1(b"p, div", count).unwrap(), 2);
+    // Distinct lone surrogates convert to one text: the UTF-16 map is
+    // bounded by itself, not by the text map.
+    let mut cache = SelectorCache::default();
+    for k in 0..4000u16 {
+        let units = [0xD800 + (k & 1023), 0xD800 + (k >> 10)];
+        assert_eq!(cache.with_utf16(&units, count).unwrap(), 0);
+    }
+    assert!(cache.entry_count() <= 3 * 512, "{} entries", cache.entry_count());
 }

@@ -327,8 +327,9 @@ impl Dom {
     }
 
     /// Calls `found` for each element below `r` matching `list`, in tree
-    /// order, while it returns true.
-    pub(crate) fn fast_select(&self, r: u32, list: &FastList, mut found: impl FnMut(u32) -> bool) {
+    /// order, while it returns true (`first_only`: it returns false on the
+    /// first, as `querySelector`'s does).
+    pub(crate) fn fast_select(&self, r: u32, list: &FastList, first_only: bool, mut found: impl FnMut(u32) -> bool) {
         let cx = Cx::new(self, list, self.n(r).owner_doc);
         let mut start = r;
         if let (Some((id, subject)), false) = (&list.anchor, cx.quirks) {
@@ -337,17 +338,23 @@ impl Dom {
             match self.indexed_by_id_count(self.root_idx(r), id) {
                 None => {}
                 Some((_, 0)) => return,
-                Some((e, 1)) if *subject => {
-                    // The one element that can match.
+                Some((e, count)) if *subject && (count == 1 || first_only) => {
+                    // The one element that can match; or, of several with the
+                    // id, the first in the scope: every match has the id, so
+                    // that one is the first match when it is below `r` and
+                    // matches (otherwise walk).
                     if e != r && self.is_inclusive_ancestor(r, e) {
                         let n = self.n(e);
                         if let NodeKind::Element(data) = &n.kind {
                             if cx.matches(list, n, data) {
                                 found(e);
+                                return;
                             }
                         }
                     }
-                    return;
+                    if count == 1 {
+                        return;
+                    }
                 }
                 Some((e, 1)) => {
                     // Every match is below the one element with the id.

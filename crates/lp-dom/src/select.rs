@@ -461,7 +461,7 @@ impl Dom {
         if let Some(fast) = &q.fast {
             let r = self.check(root)?;
             let mut first = NIL;
-            self.fast_select(r, fast, |i| {
+            self.fast_select(r, fast, true, |i| {
                 first = i;
                 false
             });
@@ -489,7 +489,7 @@ impl Dom {
     pub fn query_all_into(&self, root: NodeId, q: &Query, out: &mut Vec<NodeId>) -> DomResult<()> {
         if let Some(fast) = &q.fast {
             let r = self.check(root)?;
-            self.fast_select(r, fast, |i| {
+            self.fast_select(r, fast, false, |i| {
                 out.push(self.id_of(i));
                 true
             });
@@ -567,14 +567,27 @@ impl SelectorCache {
             return Ok(s.clone());
         }
         let s = parse_query(text)?;
-        if self.map.len() >= SELECTOR_CACHE_CAP {
+        self.make_room(self.map.len());
+        self.map.insert(text.into(), s.clone());
+        Ok(s)
+    }
+
+    /// Empties the cache when a map about to gain an entry (holding `len`)
+    /// is full. Each map is checked: several UTF-16 keys (lone surrogates)
+    /// convert to one text, so `utf16` can outgrow `map`.
+    fn make_room(&mut self, len: usize) {
+        if len >= SELECTOR_CACHE_CAP {
             self.map.clear();
             self.latin1.clear();
             self.utf16.clear();
             self.last = None;
         }
-        self.map.insert(text.into(), s.clone());
-        Ok(s)
+    }
+
+    /// Entries in the cache's maps (tests).
+    #[doc(hidden)]
+    pub fn entry_count(&self) -> usize {
+        self.map.len() + self.latin1.len() + self.utf16.len()
     }
 
     /// `f` on the query of a selector given as Latin-1 characters, without
@@ -589,6 +602,7 @@ impl SelectorCache {
             Some((key, q)) => (key.clone(), q.clone()),
             None => {
                 let q = Rc::new(self.get(&chars.iter().map(|&c| char::from(c)).collect::<String>())?);
+                self.make_room(self.latin1.len());
                 let key: Rc<[u8]> = chars.into();
                 self.latin1.insert(key.clone(), q.clone());
                 (key, q)
@@ -606,6 +620,7 @@ impl SelectorCache {
         }
         let q = self.get(&String::from_utf16_lossy(units))?;
         let r = f(&q);
+        self.make_room(self.utf16.len());
         self.utf16.insert(units.into(), q);
         Ok(r)
     }

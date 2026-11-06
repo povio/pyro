@@ -41,7 +41,9 @@ struct IdEntry {
     /// The first element with the id in tree order; NIL once the first of
     /// several left (found again by the next lookup).
     first: Cell<u32>,
-    /// Elements of the scope with the id.
+    /// Elements of the scope with the id. Compiled queries rely on it (one:
+    /// the only candidate or the subtree to walk; none: no match), so every
+    /// tree or `id` write must go through `id_added` / `id_removed`.
     count: u32,
 }
 
