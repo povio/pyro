@@ -22,24 +22,15 @@ implement `new Worker(url)`. A worker runs its script off the page's thread.
   `AbortController`, `URL`/`URLSearchParams`, `TextEncoder`/`TextDecoder`,
   `MessageChannel`, `Event` and its message, error, progress and rejection
   subclasses, `XMLHttpRequest` without `responseXML` (see [XHR](XHR.md)),
+  `EventSource` (see [Fetch](FETCH.md)), `WebSocket`/`CloseEvent` (see
+  [WebSocket](WEBSOCKET.md)), `indexedDB` with the `IDB*` interfaces, over the
+  owner context's databases (see [IndexedDB](INDEXEDDB.md)),
   `navigator.storage` (`StorageManager`), and the [streams](STREAMS.md)
   (`ReadableStream`, `WritableStream`, `TransformStream`, the queuing
   strategies, `TextEncoderStream`/`TextDecoderStream`,
   `CompressionStream`/`DecompressionStream`, `response.body`), which, as on a
   window, are made on the realm's first use of one of their names. Everything
-  else is undefined, including `document`, `indexedDB`, `FileReaderSync` and
-  `Worker`.
-  `atob`/`btoa`, `structuredClone`, `crypto`, `performance.now()`, `console`,
-  `fetch` with `Headers`/`Response`/`FormData`/`Blob`/`File`, `AbortController`,
-  `URL`/`URLSearchParams`, `TextEncoder`/`TextDecoder`, `MessageChannel`, `Event`
-  and its message, error, progress and rejection subclasses, `XMLHttpRequest`
-  without `responseXML` (see [XHR](XHR.md)), `WebSocket`/`CloseEvent` (see
-  [WebSocket](WEBSOCKET.md)). Everything else is undefined,
-  including `document`, `indexedDB` and `Worker`.
-  without `responseXML` (see [XHR](XHR.md)), and `indexedDB` with the `IDB*`
-  interfaces, over the owner context's databases (see
-  [IndexedDB](INDEXEDDB.md)). Everything else is undefined, including
-  `document` and `Worker`.
+  else is undefined, including `document`, `FileReaderSync` and `Worker`.
 - **Script fetch.** On the worker's thread, blocking only it, through the page's
   context `NetClient` (cookies, interception, Network events) with the page's
   user agent, extra headers and cache setting. The URL must be same-origin with
@@ -110,8 +101,8 @@ times out.
 - `SharedWorker` and `ServiceWorker` stay undefined, as does `navigator.serviceWorker`:
   `typeof` feature detection is what sites use, and a constructor that throws would
   send them down a path that then fails.
-- Transferring anything but an ArrayBuffer (MessagePort) throws NotSupportedError,
-  as does cloning what `structuredClone` rejects (Blob, File and other host objects).
+- Transferring a MessagePort throws NotSupportedError. Host objects other than
+  Blob, File and FileList (a `CryptoKey` included) do not cross.
 - Nested workers. `Worker` is undefined inside a worker.
 - `importScripts` of a page-created `blob:` URL (the store is the owner document's).
 - A worker whose wrapper became unreachable runs until its document goes.

@@ -9,16 +9,6 @@ once, exceptions propagate, and properties are recreated as writable data
 properties. Symbols and non-enumerable properties are omitted. RegExp.lastIndex
 resets. Construction uses captured destination-realm intrinsics.
 
-Platform objects the script does not recognize go to one native hook before
-they are rejected: `guard(value, true)` (`crypto::clone_platform_object`)
-returns their copy or undefined. It copies a `CryptoKey` of the realm (see
-[Web Crypto](CRYPTO.md)); it runs only on that rejection path, so ordinary
-graphs pay nothing. Worker messages do not carry CryptoKeys.
-
-Functions, symbol values, proxies, native host wrappers/globals, shared buffers,
-Error objects and other normally tagged unsupported types are rejected. Nonempty
-transfer lists throw NotSupportedError without detaching anything. Custom
-Symbol.toStringTag properties/accessors are outside this initial subset and are
 Error objects clone as HTML serializes them, with Chrome's extras: the
 constructor is the one their `name` names when that is Error, EvalError,
 RangeError, ReferenceError, SyntaxError, TypeError or URIError (otherwise
@@ -33,6 +23,12 @@ wrapper of the base class (a subclass instance loses its subclass) over the
 same immutable bytes, with its type, name and lastModified; a FileList becomes
 a new FileList of such Files. Other host wrappers (nodes, Response, ...)
 throw DataCloneError.
+
+Platform objects the script does not recognize go to one native hook before
+they are rejected: `guard(value, true)` (`crypto::clone_platform_object`)
+returns their copy or undefined. It copies a `CryptoKey` of the realm (see
+[Web Crypto](CRYPTO.md)); it runs only on that rejection path, so ordinary
+graphs pay nothing. Worker messages do not carry CryptoKeys.
 
 Transfer lists (`{transfer}`) take ArrayBuffers and MessagePorts. Entries are
 validated first: a duplicate, a detached ArrayBuffer, an already transferred
