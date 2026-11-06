@@ -33,6 +33,7 @@ pub enum EventInterface {
     ErrorEvent,
     PromiseRejectionEvent,
     SubmitEvent,
+    FormDataEvent,
     PopStateEvent,
     HashChangeEvent,
     PageTransitionEvent,
@@ -136,6 +137,8 @@ pub struct EventFields {
     pub reason: Option<Persistent>,
     pub submitter: Option<TargetKey>,
     pub state: Option<Persistent>,
+    /// `FormDataEvent.formData`.
+    pub form_data: Option<Persistent>,
     pub old_url: String,
     pub new_url: String,
     pub persisted: bool,
@@ -325,6 +328,7 @@ pub fn wrap_event<'s>(s: &Scope<'s>, core: &EventData) -> JsResult<Object<'s>> {
         EventInterface::ErrorEvent => s.wrap::<ErrorEvent>(d, Some(key)),
         EventInterface::PromiseRejectionEvent => s.wrap::<PromiseRejectionEvent>(d, Some(key)),
         EventInterface::SubmitEvent => s.wrap::<SubmitEvent>(d, Some(key)),
+        EventInterface::FormDataEvent => s.wrap::<FormDataEvent>(d, Some(key)),
         EventInterface::PopStateEvent => s.wrap::<PopStateEvent>(d, Some(key)),
         EventInterface::HashChangeEvent => s.wrap::<HashChangeEvent>(d, Some(key)),
         EventInterface::PageTransitionEvent => s.wrap::<PageTransitionEvent>(d, Some(key)),
@@ -1467,6 +1471,36 @@ impl JsClass for SubmitEvent {
     }
 }
 
+/// HTML `FormDataEvent` (`formdata`, fired while a form's entry list is
+/// constructed): `formData` is required in its init dictionary.
+pub struct FormDataEvent;
+impl JsClass for FormDataEvent {
+    const NAME: &'static str = "FormDataEvent";
+    type Data = EventData;
+    type Parent = Event;
+    fn define(def: &mut ClassDef<Self>) {
+        def.constructor(2, |s, nt, a| {
+            a.require(2, "FormDataEvent")?;
+            construct::<FormDataEvent>(s, nt, a, EventInterface::FormDataEvent, fill_formdata)
+        });
+        def.getter("formData", |s, e| Ok(e.fields.borrow().form_data.as_ref().map_or(s.null(), |p| p.get(s))));
+    }
+}
+
+fn fill_formdata<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
+    let data = match init {
+        Some(o) => o.get_atom("formData")?,
+        None => s.undefined(),
+    };
+    if s.unwrap::<crate::form_data::FormData>(data).is_none() {
+        return Err(JsError::Type(
+            "Failed to construct 'FormDataEvent': member formData is not of type 'FormData'.".into(),
+        ));
+    }
+    f.form_data = Some(Persistent::new(s, data));
+    Ok(())
+}
+
 pub struct PopStateEvent;
 impl JsClass for PopStateEvent {
     const NAME: &'static str = "PopStateEvent";
@@ -1661,6 +1695,7 @@ pub(crate) fn register(engine: &lp_js::Engine) {
     engine.register::<ErrorEvent>();
     engine.register::<PromiseRejectionEvent>();
     engine.register::<SubmitEvent>();
+    engine.register::<FormDataEvent>();
     engine.register::<PopStateEvent>();
     engine.register::<HashChangeEvent>();
     engine.register::<PageTransitionEvent>();

@@ -2,7 +2,7 @@
 
 use std::rc::Rc;
 
-use lp_dom::forms::Validity;
+use lp_dom::forms::{InputType, Validity};
 use lp_dom::NodeId;
 use lp_js::{ClassDef, JsClass, JsResult, NoParent, Scope, Value};
 
@@ -50,35 +50,101 @@ pub(crate) fn message(page: &PageDom, id: NodeId) -> String {
     if v.value_missing {
         return "Please fill out this field.".into();
     }
+    let ty = dom.input_type(id).ok();
     if v.type_mismatch {
+        let value = dom.value(id).unwrap_or_default();
+        return match ty {
+            Some(InputType::Email) => email_message(&value),
+            Some(InputType::Url) => "Please enter a URL.".into(),
+            _ => "Please enter a valid value.".into(),
+        };
+    }
+    if v.bad_input {
+        return match ty {
+            Some(InputType::Number) => "Please enter a number.".into(),
+            _ => "Please enter a valid value.".into(),
+        };
+    }
+    if v.pattern_mismatch {
+        return "Please match the requested format.".into();
+    }
+    let numeric = matches!(ty, Some(InputType::Number | InputType::Range));
+    let attr = |name: &str| dom.get_attribute(id, name).ok().flatten().unwrap_or("").to_owned();
+    if v.range_underflow {
+        return if numeric {
+            format!("Value must be greater than or equal to {}.", attr("min"))
+        } else {
+            format!("Value must be {} or later.", attr("min"))
+        };
+    }
+    if v.range_overflow {
+        return if numeric {
+            format!("Value must be less than or equal to {}.", attr("max"))
+        } else {
+            format!("Value must be {} or earlier.", attr("max"))
+        };
+    }
+    if v.step_mismatch {
         return "Please enter a valid value.".into();
     }
-    if v.range_underflow || v.range_overflow {
-        return "Value is out of range.".into();
-    }
     if v.too_long || v.too_short {
-        return "Please match the requested length.".into();
+        let len = lp_dom::dom::utf16_len(&dom.value(id).unwrap_or_default());
+        return if v.too_short {
+            format!(
+                "Please lengthen this text to {} characters or more (you are currently using {len} characters).",
+                attr("minlength").trim()
+            )
+        } else {
+            format!(
+                "Please shorten this text to {} characters or less (you are currently using {len} characters).",
+                attr("maxlength").trim()
+            )
+        };
     }
     String::new()
+}
+
+/// Chrome's message for an invalid e-mail address.
+fn email_message(value: &str) -> String {
+    match value.split_once('@') {
+        None => format!("Please include an '@' in the email address. '{value}' is missing an '@'."),
+        Some(("", _)) => format!("Please enter a part followed by '@'. '{value}' is incomplete."),
+        Some((_, "")) => format!("Please enter a part following '@'. '{value}' is incomplete."),
+        Some(_) => "Please enter an email address.".into(),
+    }
 }
 
 pub(crate) fn set_custom(page: &PageDom, id: NodeId, msg: String) {
     let _ = page.dom.borrow_mut().set_custom_validity(id, &msg);
 }
 
-/// `checkValidity()` / `reportValidity()`: fires `invalid` when invalid.
-pub(crate) fn check(page: &Rc<PageDom>, id: NodeId, _report: bool) -> bool {
+/// Statically validates `id`: Some(handled) when invalid, after firing
+/// `invalid` (handled: a listener canceled it).
+fn check_one(page: &Rc<PageDom>, id: NodeId) -> Option<bool> {
     let valid = {
         let dom = page.dom.borrow();
         !dom.will_validate(id).unwrap_or(false) || dom.validity(id).map(|v| v.valid()).unwrap_or(true)
     };
-    if !valid {
-        crate::input::fire_simple(page, id, "invalid", false, true);
-    }
-    valid
+    (!valid).then(|| !crate::input::fire_simple(page, id, "invalid", false, true))
 }
 
-/// Form-level check over its submittable controls.
+/// `checkValidity()` / `reportValidity()`: fires `invalid` when invalid;
+/// reporting focuses the control unless the event was canceled.
+pub(crate) fn check(page: &Rc<PageDom>, id: NodeId, report: bool) -> bool {
+    match check_one(page, id) {
+        None => true,
+        Some(handled) => {
+            if report && !handled {
+                crate::input::focus_element(page, id);
+            }
+            false
+        }
+    }
+}
+
+/// Form-level check over its submittable controls; reporting (interactive
+/// validation) focuses the first invalid control whose `invalid` event was
+/// not canceled, as Chrome does.
 pub(crate) fn check_form(page: &Rc<PageDom>, form: NodeId, report: bool) -> bool {
     let controls: Vec<NodeId> = {
         let dom = page.dom.borrow();
@@ -88,8 +154,17 @@ pub(crate) fn check_form(page: &Rc<PageDom>, form: NodeId, report: bool) -> bool
             .unwrap_or_default()
     };
     let mut ok = true;
+    let mut first_unhandled = None;
     for c in controls {
-        ok &= check(page, c, report);
+        if let Some(handled) = check_one(page, c) {
+            ok = false;
+            if !handled && first_unhandled.is_none() {
+                first_unhandled = Some(c);
+            }
+        }
+    }
+    if let Some(c) = first_unhandled.filter(|_| report) {
+        crate::input::focus_element(page, c);
     }
     ok
 }

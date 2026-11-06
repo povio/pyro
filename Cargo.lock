@@ -1903,6 +1903,7 @@ dependencies = [
  "markup5ever",
  "precomputed-hash",
  "quick-xml",
+ "regress",
  "rustc-hash 2.1.3",
  "selectors",
  "serde_json",

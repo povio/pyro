@@ -12,7 +12,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use lp_dom::{attr_name_hash, CollectionWatch, Dom, NodeId};
-use lp_js::{ClassDef, IdentityKey, JsClass, JsError, JsResult, NoParent, Object, Scope, Value};
+use lp_js::{Args, ClassDef, IdentityKey, JsClass, JsError, JsResult, NoParent, Object, Scope, Value};
 
 use crate::node::{wrap_node, NodeData};
 use crate::page::PageDom;
@@ -563,6 +563,57 @@ impl JsClass for HtmlCollection {
     }
 }
 
+/// `HTMLOptionsCollection.add(element, before)` and `HTMLSelectElement.add`
+/// (HTML §2.7.3): `before` is an element, an index into the options or
+/// null; `element` must not be an ancestor of the select, and an element
+/// `before` must be a descendant of it.
+pub(crate) fn options_add<'s>(
+    s: &Scope<'s>,
+    page: &Rc<PageDom>,
+    select: NodeId,
+    a: Args<'s>,
+    iface: &str,
+) -> JsResult<()> {
+    let el = crate::node::node_arg(s, a.get(0), &format!("{iface}.add"))?;
+    let before = a.get(1);
+    let mut dom = page.dom.borrow_mut();
+    let is_html = |dom: &lp_dom::Dom, n: NodeId, names: &[&str]| {
+        dom.element(n).is_ok_and(|e| e.is_html() && names.contains(&&*e.name.local))
+    };
+    if !is_html(&dom, el, &["option", "optgroup"]) {
+        return Err(JsError::Type(format!(
+            "Failed to execute 'add' on '{iface}': The provided value is not of type '(HTMLOptGroupElement or HTMLOptionElement)'."
+        )));
+    }
+    if dom.contains(el, select).js()? {
+        return Err(JsError::dom("HierarchyRequestError", "The new child element contains the parent."));
+    }
+    let reference = if let Some(n) = s.unwrap::<crate::node::Node>(before) {
+        if n.id == select || !dom.contains(select, n.id).js()? {
+            return Err(JsError::dom(
+                "NotFoundError",
+                "The node before which the new node is to be inserted is not a child of this node.",
+            ));
+        }
+        Some(n.id)
+    } else if before.is_nullish() {
+        None
+    } else {
+        let index = to_i32(before)?;
+        let opts = dom.select_options(select).js()?;
+        usize::try_from(index).ok().and_then(|i| opts.get(i).copied())
+    };
+    if reference == Some(el) {
+        return Ok(());
+    }
+    let parent = match reference {
+        Some(r) => dom.parent(r).js()?.unwrap_or(select),
+        None => select,
+    };
+    dom.insert_before(parent, el, reference).js()?;
+    Ok(())
+}
+
 pub struct HtmlOptionsCollection;
 impl JsClass for HtmlOptionsCollection {
     const NAME: &'static str = "HTMLOptionsCollection";
@@ -578,22 +629,7 @@ impl JsClass for HtmlOptionsCollection {
             },
         );
         def.method("add", 1, |s, c, a| {
-            let el = crate::node::node_arg(s, a.get(0), "HTMLOptionsCollection.add")?;
-            let before = a.get(1);
-            let mut dom = c.root.page.dom.borrow_mut();
-            let reference = if let Some(n) = s.unwrap::<crate::node::Node>(before) {
-                Some(n.id)
-            } else if before.is_number() {
-                let opts = dom.select_options(c.root.id).js()?;
-                opts.get(to_u32(before)? as usize).copied()
-            } else {
-                None
-            };
-            let parent = match reference {
-                Some(r) => dom.parent(r).js()?.unwrap_or(c.root.id),
-                None => c.root.id,
-            };
-            dom.insert_before(parent, el, reference).js()?;
+            options_add(s, &c.root.page, c.root.id, a, "HTMLOptionsCollection")?;
             Ok(s.undefined())
         });
         def.method("remove", 1, |s, c, a| {

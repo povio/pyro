@@ -51,6 +51,8 @@ pub struct ListenerStore {
     windows: FxHashMap<u32, u64>,
     /// A listener for a CSS animation or transition event was ever added.
     animation_listeners: bool,
+    /// A `formdata` listener was ever added.
+    formdata_listeners: bool,
 }
 
 impl ListenerStore {
@@ -196,6 +198,9 @@ impl Dom {
         if !st.animation_listeners && is_animation_event_type(ty) {
             st.animation_listeners = true;
         }
+        if !st.formdata_listeners && ty == "formdata" {
+            st.formdata_listeners = true;
+        }
         list.push(Listener {
             id: st.next_id,
             ty: LocalName::from(ty),
@@ -230,6 +235,12 @@ impl Dom {
     /// events worth working out.
     pub fn has_animation_listeners(&self) -> bool {
         self.events.animation_listeners
+    }
+
+    /// Whether a `formdata` listener was ever added in this tree: only then
+    /// does constructing a form's entry list fire the event.
+    pub fn has_formdata_listeners(&self) -> bool {
+        self.events.formdata_listeners
     }
 
     /// Identity of one registration, distinct from the reusable callback slot.

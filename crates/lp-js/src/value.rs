@@ -700,6 +700,15 @@ impl<'s> Scope<'s> {
         check(self.ctx, exc)?;
         Ok(unsafe { Object::from_raw(self.ctx, o) })
     }
+    /// `new Date(time)` with the realm's intrinsic `Date`.
+    pub fn date(&self, time: f64) -> JsResult<Object<'s>> {
+        let arg = self.number(time);
+        let raw = RawArgs::new(std::slice::from_ref(&arg));
+        let mut exc = ptr::null();
+        let o = unsafe { sys::JSObjectMakeDate(self.ctx, raw.len(), raw.as_ptr(), &mut exc) };
+        check(self.ctx, exc)?;
+        Ok(unsafe { Object::from_raw(self.ctx, o) })
+    }
     /// `JSON.parse`; `None` when `json` is not valid JSON.
     pub fn parse_json(&self, json: &str) -> Option<Value<'s>> {
         let v = unsafe { sys::JSValueMakeFromJSONString(self.ctx, JsString::new(json).as_raw()) };
