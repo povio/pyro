@@ -9,12 +9,44 @@ once, exceptions propagate, and properties are recreated as writable data
 properties. Symbols and non-enumerable properties are omitted. RegExp.lastIndex
 resets. Construction uses captured destination-realm intrinsics.
 
-Functions, symbol values, proxies, native host wrappers/globals, shared buffers,
-Error objects and other normally tagged unsupported types are rejected. Nonempty
-transfer lists throw NotSupportedError without detaching anything. Custom
-Symbol.toStringTag properties/accessors are outside this initial subset and are
+Error objects clone as HTML serializes them, with Chrome's extras: the
+constructor is the one their `name` names when that is Error, EvalError,
+RangeError, ReferenceError, SyntaxError, TypeError or URIError (otherwise
+Error); the own data `message` (converted to a string), the own data `cause`
+(cloned, cycles included) and the own `stack` string are kept as
+non-enumerable properties; other properties are not copied. A DOMException
+clones as a DOMException with its name and message (and `stack`); an object
+that only inherits from DOMException.prototype is rejected.
+
+Serializable host objects are cloned natively: a Blob or File becomes a new
+wrapper of the base class (a subclass instance loses its subclass) over the
+same immutable bytes, with its type, name and lastModified; a FileList becomes
+a new FileList of such Files. Other host wrappers (nodes, Response, ...)
+throw DataCloneError.
+
+Transfer lists (`{transfer}`) take ArrayBuffers and MessagePorts. Entries are
+validated first: a duplicate, a detached ArrayBuffer, an already transferred
+port or any other object throws DataCloneError, a non-object TypeError. Nothing
+is detached unless the whole value clones. A transferred ArrayBuffer is copied
+into the clone and then detached with `ArrayBuffer.prototype.transfer` (the
+bytes are copied, not moved); a resizable one stays resizable. A transferred
+MessagePort is replaced by a new port in the destination realm that takes over
+its entanglement and undelivered messages, and the original is detached
+([MESSAGE_CHANNEL](MESSAGE_CHANNEL.md)). A length-tracking typed array or
+DataView becomes a fixed-length view.
+
+Functions, symbol values, proxies, other native host wrappers/globals, shared
+buffers and other normally tagged unsupported types are rejected. Custom
+Symbol.toStringTag properties/accessors are outside this subset and are
 rejected without invoking their getters. The native proxy/host checks require
 capability-gated JSC SPI and fail explicitly if unavailable.
+
+Users: `structuredClone`, MessagePort and `window.postMessage` (cloned straight
+into the receiving realm, which may be another frame or page of the thread's
+VM). The cross-VM format (`worker_wire.js`: workers, BroadcastChannel and
+history state) encodes the same types, Error, DOMException, Blob, File and
+FileList included; Blob bytes travel beside the text, shared rather than
+copied. MessagePorts cannot cross VMs (NotSupportedError).
 
 A remaining conformance limitation is significant: JSC's available C API does
 not provide a complete exotic-object classifier. An exotic object deliberately

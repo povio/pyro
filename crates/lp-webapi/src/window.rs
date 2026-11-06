@@ -232,34 +232,17 @@ where
         w.page().close_window();
         Ok(s.undefined())
     });
-    def.method("postMessage", 1, |s, w, a| {
-        // Same-window postMessage: queue a MessageEvent on the window.
-        let page = w.page().clone();
-        let key = w.event_target().key;
-        let data = lp_js::Persistent::new(s, a.get(0));
-        let origin = {
-            let url = page.dom.borrow().document_data(page.document()).map(|d| d.url.to_string()).unwrap_or_default();
-            lp_net::Url::parse(&url).map(|u| u.origin().ascii_serialization()).unwrap_or_else(|_| "null".into())
-        };
-        let p2 = page.clone();
-        page.post_task(Box::new(move || {
-            let ev = crate::event::EventCore::trusted(
-                &p2,
-                crate::event::EventInterface::MessageEvent,
-                "message",
-                false,
-                false,
-            );
-            {
-                let mut f = ev.fields.borrow_mut();
-                f.message_data = Some(data);
-                f.message_source = Some(key);
-                f.origin = origin;
-            }
-            crate::target::fire(&p2, key, &ev);
-        }));
-        Ok(s.undefined())
-    });
+    def.method("postMessage", 1, |s, w, a| post_message_to_self(s, w.page(), &a).map(|()| s.undefined()));
+}
+
+/// `postMessage` of a window outside a frame tree, which only reaches
+/// itself (the embedder's Window class replaces it with a frame-aware one).
+pub fn post_message_to_self<'s>(s: &Scope<'s>, page: &Rc<PageDom>, a: &lp_js::Args<'s>) -> JsResult<()> {
+    let origin = crate::storage::document_origin(page).unwrap_or_else(|| "null".into());
+    let (message, target_origin, options) = crate::window_message::post_message_args(s, a, &origin)?;
+    let realm = page.main_world_realm().unwrap_or_else(|| s.realm());
+    let deliver = target_origin.allows(&origin);
+    crate::window_message::send_window_message(message, options, page, &realm, origin, None, deliver)
 }
 
 /// A Window [SameObject] attribute value for this realm: looked up by

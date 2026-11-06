@@ -30,8 +30,10 @@ implement `new Worker(url)`. A worker runs its script off the page's thread.
 - **Messages.** `postMessage` validates and copies with the realm's original
   `structuredClone`, then encodes the copy to text plus ArrayBuffer bytes
   (`worker_wire.js`), which cross as a task of the other side's event loop and
-  are rebuilt there; failing to rebuild fires `messageerror`. Transferring an
-  ArrayBuffer copies it and detaches the sender's. Messages to a worker wait until
+  are rebuilt there; failing to rebuild fires `messageerror`. Errors,
+  DOMExceptions, Blobs, Files and FileLists cross too (Blob bytes are shared,
+  not copied). Transferring an ArrayBuffer copies it and detaches the
+  sender's; transferring a MessagePort throws NotSupportedError. Messages to a worker wait until
   its script has run. A navigation drops messages on their way to the old document.
 - **Errors.** An uncaught exception fires `ErrorEvent` at the global and, if not
   canceled, at the `Worker`, with message `Uncaught <text>`. It does not continue

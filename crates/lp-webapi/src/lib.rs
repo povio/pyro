@@ -65,6 +65,7 @@ pub mod url_search_params;
 pub mod util;
 pub mod validity;
 pub mod window;
+pub mod window_message;
 pub mod worker;
 mod worker_scope;
 pub mod xhr;
@@ -85,6 +86,7 @@ pub use page::{
     NavigationRequest, PageDom, PageHooks, RemotePoster,
 };
 pub use popup::{PopupCommand, PopupState, PopupTicket};
+pub use structured_clone::{decode_message as deserialize_message, encode_message as serialize_message, WireMessage};
 pub use render_blocking::RenderBlocker;
 pub use storage::{StorageNamespace, StorageSeed};
 pub use target::{EventTarget, EventTargetData};
