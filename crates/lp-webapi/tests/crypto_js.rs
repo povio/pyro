@@ -35,11 +35,12 @@ fn crypto_key_is_a_lazy_global_with_cached_slots() {
           key.algorithm===key.algorithm, key.usages===key.usages, JSON.stringify(key.algorithm), key.usages.join());
         out.push(Object.keys(CryptoKey.prototype).join());
         out.push(crypto.subtle.importKey.length, crypto.subtle.unwrapKey.length, crypto.subtle.deriveBits.length);
+        out.push(CryptoKey.length);
         return out.join('|');"#,
     );
     assert_eq!(
         out,
-        "function|true|TypeError|true|[object CryptoKey]|secret|true|true|true|{\"name\":\"AES-CTR\",\"length\":256}|encrypt|type,extractable,algorithm,usages|5|7|2"
+        "function|true|TypeError|true|[object CryptoKey]|secret|true|true|true|{\"name\":\"AES-CTR\",\"length\":256}|encrypt|type,extractable,algorithm,usages|5|7|2|0"
     );
 }
 
@@ -151,6 +152,13 @@ fn subtle_reports_spec_error_names_in_spec_order() {
         out.push(await fails(s.deriveBits({name:'HKDF',hash:'SHA-256',salt:raw,info:raw},hkdf,NaN)));
         out.push((await s.deriveBits({name:'HKDF',hash:'SHA-256',salt:raw,info:raw},hkdf,0)).byteLength);
         out.push(await fails(s.importKey('raw',raw,'AES-GCM',false)));
+        // The hash is normalized after the dictionary: a missing salt comes first.
+        out.push(await fails(s.deriveBits({name:'HKDF',hash:'SHA-999',info:raw},hkdf,256)));
+        out.push(await fails(s.deriveBits({name:'HKDF',hash:'SHA-999',info:raw,salt:raw},hkdf,256)));
+        // Enumerable Object.prototype members are not algorithm names.
+        Object.prototype.FAKE='';
+        out.push(await fails(s.generateKey({name:'HMAC',hash:'FAKE'},false,['sign'])), await fails(s.generateKey('FAKE',false,['sign'])));
+        delete Object.prototype.FAKE;
         // Key data is copied after the algorithm is normalized.
         const data=new Uint8Array(16); data[0]=9;
         const key=await s.importKey('raw',data,{get name(){data[0]=1;return 'AES-GCM'}},true,['encrypt']);
@@ -184,6 +192,10 @@ fn subtle_reports_spec_error_names_in_spec_order() {
         "TypeError",
         "0",
         "TypeError",
+        "TypeError",
+        "NotSupportedError",
+        "NotSupportedError",
+        "NotSupportedError",
         "1",
     ];
     assert_eq!(out, expected.join("|"));
@@ -352,10 +364,13 @@ fn navigator_storage_reports_usage_and_no_persistence() {
         out.push(Object.keys(e).join(), e.usage, e.quota>1e9, await navigator.storage.persisted(), await navigator.storage.persist());
         out.push(await fails(StorageManager.prototype.estimate.call({})));
         try { new StorageManager(); } catch (err) { out.push(err.name); }
-        out.push(Object.keys(StorageManager.prototype).join());
+        out.push(Object.keys(StorageManager.prototype).join(), StorageManager.length);
         return out.join('|');"#,
     );
-    assert_eq!(out, "true|true|quota,usage|8|true|false|false|TypeError|TypeError|estimate,persisted,persist");
+    assert_eq!(
+        out,
+        "true|true|quota,usage,usageDetails|8|true|false|false|TypeError|TypeError|estimate,persisted,persist|0"
+    );
 }
 
 #[test]
@@ -377,7 +392,7 @@ fn dedicated_workers_expose_streams_file_reader_crypto_keys_and_storage() {
         }));
         const key = await crypto.subtle.generateKey({name: 'HMAC', hash: 'SHA-256'}, false, ['sign']);
         out.push(key instanceof CryptoKey, (await crypto.subtle.sign('HMAC', key, new Uint8Array(1))).byteLength);
-        out.push(navigator.storage instanceof StorageManager, await navigator.storage.persisted());
+        out.push(navigator.storage instanceof StorageManager, await navigator.storage.persisted(), 'persist' in navigator.storage);
         postMessage(out.join());
       })().catch((e) => postMessage('error ' + e));"#;
     env.eval(&format!(
@@ -388,7 +403,7 @@ fn dedicated_workers_expose_streams_file_reader_crypto_keys_and_storage() {
     env.until("msgs.length >= 1");
     assert_eq!(
         env.eval("msgs[0]"),
-        "function,function,function,function,function,function,function,function,function,AB,zip,read,true,32,true,false"
+        "function,function,function,function,function,function,function,function,function,AB,zip,read,true,32,true,false,false"
     );
     env.eval("w.terminate()");
     assert!(join_stopped(Duration::from_secs(5)), "the worker thread ends after terminate()");

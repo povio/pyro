@@ -51,7 +51,11 @@ invalid length) with `OperationError`. Key data is copied after the algorithm
 is normalized. Operations run synchronously and settle the returned promise.
 
 RSA generation accepts the public exponents 3 and 65537 and modulus lengths
-that are multiples of 8 from 256 to 16384, as Chromium does. JWK export orders
+that are multiples of 8 from 256 to 16384, as Chromium does, and public keys
+of up to 16384 bits import (generation of large keys runs synchronously on the
+page's thread). Hash members are normalized after their dictionary is
+converted, so a missing required member is reported before an unknown hash.
+JWK export orders
 members alphabetically (a dictionary converted to JS); EC and X25519 JWKs carry
 no `alg`, Ed25519 JWKs carry `alg: "Ed25519"`.
 

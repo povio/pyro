@@ -553,9 +553,24 @@ fn rsa_private(der: &[u8]) -> JsResult<RsaPrivateKey> {
     Ok(key)
 }
 
+/// The largest modulus generateKey makes (Chromium's limit); the rsa crate's
+/// own public key parsers stop at 4096 bits.
+const RSA_MAX_BITS: usize = 16384;
+
+fn rsa_public_key(n: BigUint, e: BigUint) -> JsResult<RsaPublicKey> {
+    RsaPublicKey::new_with_max_size(n, e, RSA_MAX_BITS).map_err(|_| data_error("Invalid RSA public key"))
+}
+
 fn rsa_public(der: &[u8]) -> JsResult<RsaPublicKey> {
-    use rsa::pkcs8::DecodePublicKey;
-    RsaPublicKey::from_public_key_der(der).map_err(|_| data_error("Invalid RSA public key"))
+    use rsa::pkcs8::der::{asn1::Null, Decode};
+    let invalid = || data_error("Invalid RSA public key");
+    let spki = rsa::pkcs8::SubjectPublicKeyInfoRef::from_der(der).map_err(|_| invalid())?;
+    if spki.algorithm.oid != rsa::pkcs1::ALGORITHM_OID || spki.algorithm.parameters_any().ok() != Some(Null.into()) {
+        return Err(invalid());
+    }
+    let key = rsa::pkcs1::RsaPublicKey::from_der(spki.subject_public_key.as_bytes().ok_or_else(invalid)?)
+        .map_err(|_| invalid())?;
+    rsa_public_key(big(key.modulus.as_bytes()), big(key.public_exponent.as_bytes()))
 }
 
 fn rsa_pkcs8(key: &RsaPrivateKey) -> JsResult<Vec<u8>> {
@@ -673,7 +688,7 @@ fn import_asym<'s>(s: &Scope<'s>, kind: &str, curve: &str, format: &str, data: V
             let e = big(&required(&p[1], "e")?);
             match &p[2] {
                 None => {
-                    let key = RsaPublicKey::new(n, e).map_err(|_| data_error("Invalid RSA public key"))?;
+                    let key = rsa_public_key(n, e)?;
                     imported(s, false, &rsa_spki(&key)?, Some(&key))
                 }
                 Some(d) => {
@@ -1129,5 +1144,18 @@ mod tests {
         let c = rsa_oaep(true, Hash::Sha1, b"label", &public, b"secret").unwrap();
         assert_eq!(rsa_oaep(false, Hash::Sha1, b"label", &private, &c).unwrap(), b"secret");
         assert!(rsa_generate(1024, &[1, 0, 0]).is_err());
+    }
+
+    #[test]
+    fn rsa_public_keys_import_up_to_the_generation_limit() {
+        use rsa::pkcs8::EncodePublicKey;
+        // An 8192-bit modulus: beyond the rsa crate's 4096-bit parser limit.
+        let mut n = vec![0xffu8; 1024];
+        n[1023] = 0xfd;
+        let key = RsaPublicKey::new_unchecked(big(&n), big(&[1, 0, 1]));
+        let der = key.to_public_key_der().unwrap();
+        assert_eq!(rsa_public(der.as_bytes()).unwrap().n().bits(), 8192);
+        assert!(rsa_public_key(big(&[0xff; 2049]), big(&[1, 0, 1])).is_err());
+        assert!(rsa_public(&der.as_bytes()[..der.as_bytes().len() - 1]).is_err());
     }
 }

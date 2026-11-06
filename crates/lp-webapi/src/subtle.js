@@ -20,6 +20,7 @@
   const apply = Reflect.apply;
   const defineProperty = Object.defineProperty;
   const getOwnPropertyNames = Object.getOwnPropertyNames;
+  const objectKeys = Object.keys;
   const isView = ArrayBuffer.isView;
   const abLength = Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, 'byteLength').get;
   const abSlice = ArrayBuffer.prototype.slice;
@@ -228,14 +229,20 @@
     const registered = REGISTRY[op];
     const upper = asciiUpper(name);
     let found;
-    for (const key in registered) {
-      if (asciiUpper(key) === upper) found = key;
+    // Own keys only: page code may add enumerable members to Object.prototype.
+    const names = objectKeys(registered);
+    for (let i = 0; i < names.length; i++) {
+      if (asciiUpper(names[i]) === upper) found = names[i];
     }
     if (found === undefined) throw notSupported(`Algorithm '${name}' is not supported for ${op}`);
     const type = registered[found];
     const out = { name: found };
     if (type === '') return out;
     algorithmName(alg);
+    // HashAlgorithmIdentifier members are converted with the dictionary and
+    // normalized after it (WebCrypto "normalize an algorithm"), so a missing
+    // required member is a TypeError before an unknown hash is NotSupported.
+    let hashes;
     for (const [member, kind] of DICTIONARIES[type]) {
       const value = alg[member];
       if (value === undefined) {
@@ -245,7 +252,10 @@
       const what = `${type}.${member}`;
       switch (kind) {
         case BS: case BS_OPT: out[member] = bytesOf(value, what); break;
-        case HASH: out[member] = normalize(value, 'digest'); break;
+        case HASH:
+          out[member] = isObject(value) ? value : toString(value);
+          (hashes || (hashes = [])).push(member);
+          break;
         case ULONG: case ULONG_OPT: out[member] = enforceRange(value, 0xffffffff, what); break;
         case USHORT: out[member] = enforceRange(value, 0xffff, what); break;
         case OCTET: case OCTET_OPT: out[member] = enforceRange(value, 0xff, what); break;
@@ -260,6 +270,7 @@
           break;
       }
     }
+    if (hashes) for (let i = 0; i < hashes.length; i++) out[hashes[i]] = normalize(out[hashes[i]], 'digest');
     return out;
   }
   // wrapKey/unwrapKey: the algorithm's own operation, else encrypt/decrypt.
@@ -276,9 +287,10 @@
   let slotsOf;
   class CryptoKey {
     #k;
-    constructor(t, k) {
-      if (t !== token) throw new TypeErrorC('Illegal constructor');
-      this.#k = k;
+    // A rest parameter keeps the interface object's length at 0.
+    constructor(...a) {
+      if (a[0] !== token) throw new TypeErrorC('Illegal constructor');
+      this.#k = a[1];
     }
     get type() {
       return this.#k.type;

@@ -194,6 +194,17 @@ impl Decompressor {
         let mut out = Vec::new();
         while !input.is_empty() {
             match &mut self.phase {
+                // A header within one chunk is read in place, without copying the chunk.
+                Phase::Header(seen) if seen.is_empty() => match gzip_header_length(input)? {
+                    Some(length) => {
+                        input = &input[length..];
+                        self.phase = Phase::Body;
+                    }
+                    None => {
+                        seen.extend_from_slice(input);
+                        input = &[];
+                    }
+                },
                 Phase::Header(seen) => {
                     let had = seen.len();
                     seen.extend_from_slice(input);
