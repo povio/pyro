@@ -797,6 +797,7 @@ impl BreakerState {
             layout_max_advance: self.layout_max_advance,
             line_max_advance: self.line_max_advance,
             line_max_height: self.line_max_height,
+            read_end: 0,
         }
     }
 
@@ -887,6 +888,9 @@ pub struct BreakLines<'a, B: Brush> {
     /// Whether this break can be repeated from its recorded line starts: the caller neither
     /// placed boxes nor reverted mid-line. When not, no line starts are kept.
     resumable: bool,
+    /// The end of the shaped clusters the breaker has read so far (exclusive): every line ended
+    /// so far was decided by clusters before it. Recorded in each [`LineStart`].
+    read_end: u32,
 }
 
 impl<'a, B: Brush> BreakLines<'a, B> {
@@ -917,6 +921,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
             adopted,
             line_open: false,
             resumable: true,
+            read_end: 0,
         };
         this.reset_line();
         this
@@ -972,6 +977,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
         state.line_max_advance = start.line_max_advance;
         state.items = self.lines.line_items.len();
         state.lines = kept;
+        self.read_end = start.read_end;
         self.reset_line();
         kept
     }
@@ -1177,7 +1183,9 @@ impl<'a, B: Brush> BreakLines<'a, B> {
         if !self.line_open {
             self.line_open = true;
             if self.resumable {
-                self.lines.line_starts.push(self.state.line_start());
+                let mut start = self.state.line_start();
+                start.read_end = self.read_end;
+                self.lines.line_starts.push(start);
             }
         }
         match &mut self.prev_state {
@@ -1205,6 +1213,8 @@ impl<'a, B: Brush> BreakLines<'a, B> {
 
             match item.kind {
                 LayoutItemKind::InlineBox => {
+                    // Inline boxes are sized by the caller: no line is kept past one.
+                    self.read_end = u32::MAX;
                     let inline_box = &self.layout.data.inline_boxes[item.index].inline_box;
 
                     // In-flow boxes are aligned relative to their containing style's span box
@@ -1271,6 +1281,9 @@ impl<'a, B: Brush> BreakLines<'a, B> {
 
                     // Iterate over the remaining atoms in the Run
                     for atom in slice.atoms_from(self.state.cluster_idx) {
+                        // The breaker reads the atom and, to find where it ends, the first
+                        // cluster after it.
+                        self.read_end = self.read_end.max(atom.shaped_clusters_range().end + 1);
                         // Retrieve metadata about the atom
                         let first_character = &atom.characters()[0];
                         let whitespace = first_character.whitespace;
@@ -1428,6 +1441,8 @@ impl<'a, B: Brush> BreakLines<'a, B> {
         if self.state.line.items.end == 0 {
             self.state.line.items.end = 1;
         }
+        // The end of the content was read.
+        self.read_end = u32::MAX;
         self.done = true;
         self.start_new_line(BreakReason::None, max_advance, line_indent)
     }
