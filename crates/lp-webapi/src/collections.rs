@@ -759,11 +759,11 @@ impl TokenListData {
         }
         self.tokens_in(dom).get(i).map(|x| s.string(x))
     }
-    /// The attribute's value (`value`, `toString`): `class` is the element's atom.
+    /// The attribute's value (`value`, `toString`): `class` as `className`.
     fn value<'s>(&self, s: &Scope<'s>) -> JsResult<Value<'s>> {
         let dom = self.el.page.dom.borrow();
         if self.attr == "class" {
-            return Ok(atom_or_empty(s, dom.element(self.el.id).js()?.class_atom()));
+            return Ok(crate::util::class_name(s, dom.element(self.el.id).js()?));
         }
         Ok(s.string(dom.get_attribute(self.el.id, self.attr).js()?.unwrap_or("")))
     }

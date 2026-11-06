@@ -47,18 +47,19 @@ fn reads_return_one_string_while_it_is_referenced() {
     assert_eq!(r2.interned_string_count(), 1);
 }
 
+#[inline(never)]
+fn read_all(r: &Realm, texts: &[String], first: usize) {
+    let s = r.scope().unwrap();
+    for (i, t) in texts.iter().enumerate() {
+        read(&s, (first + i) as u64, t);
+    }
+}
+
 #[test]
 fn reclaimed_strings_are_made_again_and_their_entries_swept() {
     let (e, r) = realm();
     let texts: Vec<String> = (0..20_000).map(|i| format!("unique-element-id-{i}")).collect();
-    #[inline(never)]
-    fn read_all(r: &Realm, texts: &[String], first: usize) {
-        let s = r.scope().unwrap();
-        for (i, t) in texts.iter().enumerate() {
-            read(&s, (first + i) as u64, t);
-        }
-    }
-    // Ids read once, with collections in between: the first insert after a
+    // Ids read once, with collections in between: an insert after a
     // collection drops the entries of reclaimed strings, so the table keeps
     // about one batch, not 20000.
     for (b, batch) in texts.chunks(2000).enumerate() {
@@ -87,4 +88,57 @@ fn dispose_releases_every_entry() {
     assert_eq!(r.interned_string_count(), 100);
     r.dispose();
     assert_eq!(r.interned_string_count(), 0);
+}
+
+#[test]
+fn the_safe_point_after_a_collection_sweeps_without_new_reads() {
+    let (e, r) = realm();
+    // A burst of reads, then none: the entries go at the engine's safe point
+    // after the next collection, not at the next insert.
+    let texts: Vec<String> = (0..5000).map(|i| format!("burst-element-id-{i}")).collect();
+    read_all(&r, &texts, 0);
+    assert!(r.interned_string_count() > 0);
+    e.collect_garbage_now();
+    e.drain_finalized();
+    let n = r.interned_string_count();
+    assert!(n <= 16, "{n} entries left after a collection and a safe point");
+}
+
+#[test]
+fn strings_that_die_later_are_swept_within_a_few_collections() {
+    let (e, r) = realm();
+    {
+        let s = r.scope().unwrap();
+        for i in 0..100 {
+            let text = format!("kept-value-{i}");
+            s.global().set(&text, read(&s, i, &text)).unwrap();
+        }
+    }
+    e.collect_garbage_now();
+    e.drain_finalized();
+    assert_eq!(r.interned_string_count(), 100, "referenced strings stay");
+    // Their references go, and nothing is read since: a table not swept for
+    // a few collections is swept at a safe point all the same.
+    {
+        let s = r.scope().unwrap();
+        for i in 0..100 {
+            s.global().set(&format!("kept-value-{i}"), s.undefined()).unwrap();
+        }
+    }
+    for _ in 0..10 {
+        e.collect_garbage_now();
+        e.drain_finalized();
+    }
+    let n = r.interned_string_count();
+    assert!(n <= 4, "{n} entries of dead strings left");
+    // An idle settle sweeps at once.
+    {
+        let s = r.scope().unwrap();
+        for i in 0..100 {
+            read(&s, 1000 + i, &format!("settled-value-{i}"));
+        }
+    }
+    e.settle();
+    let n = r.interned_string_count();
+    assert!(n <= 4, "{n} entries left after settle");
 }

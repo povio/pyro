@@ -2284,7 +2284,7 @@ impl Dom {
         Ok(self.find_attr_qualified(i, name).map(|k| &*el.attrs[k].value))
     }
     /// [`Dom::get_attribute_qualified`] with the atom the element keeps for
-    /// that value, if any (`id`, `class`: see [`ElementData::attr_atom`]).
+    /// that value, if any (`id`: see [`ElementData::attr_atom`]).
     pub fn get_attribute_qualified_atom(&self, id: NodeId, name: &str) -> DomResult<Option<(&str, Option<&Atom>)>> {
         let (i, el) = self.el(id)?;
         Ok(self.find_attr_qualified(i, name).map(|k| (&*el.attrs[k].value, el.attr_atom(k))))
@@ -2501,15 +2501,15 @@ impl Dom {
         Ok(s)
     }
 
-    /// An element's name as `tagName` spells it: its qualified name,
+    /// An unprefixed element's name as `tagName` spells it: its local name,
     /// uppercased when the flag is set (an HTML element in an HTML document).
-    /// `None` for other nodes.
+    /// `None` for other nodes and prefixed names ([`Dom::tag_name_shared`]).
     #[inline]
-    pub fn tag_name_parts(&self, id: NodeId) -> DomResult<Option<(&QualName, bool)>> {
+    pub fn tag_name_parts(&self, id: NodeId) -> DomResult<Option<(&LocalName, bool)>> {
         let (_, node) = self.live(id)?;
-        Ok(node
-            .element()
-            .map(|el| (&el.name, el.is_html() && self.doc_data(node.owner_doc).kind == DocumentKind::Html)))
+        Ok(node.element().filter(|el| el.name.prefix.as_ref().is_none_or(|p| p.is_empty())).map(|el| {
+            (&el.name.local, el.is_html() && self.doc_data(node.owner_doc).kind == DocumentKind::Html)
+        }))
     }
 
     /// `nodeName` as a shared string (see [`Dom::tag_name_shared`]).

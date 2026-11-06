@@ -139,6 +139,8 @@ pub(crate) struct EngineInner {
     /// `JSObjectMakeFunctionWithCallbackAndData`, which have no finalizer:
     /// they live as long as the engine, which outlives every realm.
     pub(crate) member_payloads: RefCell<Vec<Box<class::MemberPayload>>>,
+    /// Garbage collections seen, for sweeping the realms' interned strings.
+    pub(crate) collections: crate::interned::Collections,
 }
 
 /// Decides when a closed page's garbage is worth a full collection: once the
@@ -292,6 +294,7 @@ impl EngineInner {
         }
         drop(realms);
         class::drain_finalized(self);
+        self.collections.release(self.group);
         self.shut_down.set(true);
         // SAFETY: no realm, scope or callback remains; the root context and
         // group are owned here. Releasing the group destroys the VM, which
@@ -421,6 +424,7 @@ impl Engine {
             owner_dropped: Cell::new(false),
             release_gate: ReleaseGate::new(ReleaseGate::growth_from_env()),
             member_payloads: RefCell::new(Vec::new()),
+            collections: crate::interned::Collections::new(),
         });
         if caps.termination {
             // Poll the termination flag every 50 ms of continuous JS execution.
@@ -487,7 +491,9 @@ impl Engine {
     /// Releases payloads of wrappers finalized by the GC. Call at safe points
     /// (the event loop does this after each task).
     pub fn drain_finalized(&self) -> usize {
-        class::drain_finalized(&self.inner)
+        let n = class::drain_finalized(&self.inner);
+        crate::interned::sweep_realms(&self.inner, false);
+        n
     }
 
     /// Frees what a closed page (or a navigated-away document) left behind,
@@ -531,7 +537,8 @@ impl Engine {
         // compile. One still running holds its realm until the next settle.
         self.complete_jit_plans(false);
         self.synchronous_gc();
-        self.drain_finalized();
+        class::drain_finalized(&self.inner);
+        crate::interned::sweep_realms(&self.inner, true);
         release_memory();
         // The collection freed the closed page's blocks to JSC's allocator,
         // whose scavenger returns them to the system only later, if at all

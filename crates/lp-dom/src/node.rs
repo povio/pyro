@@ -227,9 +227,6 @@ pub struct ElementData {
     /// The `class` attribute (no namespace) split on ASCII whitespace,
     /// parsed when written.
     classes: Box<[Atom]>,
-    /// The `class` attribute's whole value as an atom (`className`), made
-    /// when written: the single token's atom when the value is just that.
-    class: Option<Atom>,
     pub(crate) template_contents: u32,
     pub(crate) shadow_root: u32,
     pub(crate) control: Option<Box<ControlState>>,
@@ -255,7 +252,6 @@ impl ElementData {
             attrs: Vec::new(),
             id: None,
             classes: Box::default(),
-            class: None,
             template_contents: NIL,
             shadow_root: NIL,
             control: None,
@@ -298,25 +294,29 @@ impl ElementData {
     pub fn classes(&self) -> &[Atom] {
         &self.classes
     }
-    /// The `class` attribute's value as an atom.
-    #[inline]
-    pub fn class_atom(&self) -> Option<&Atom> {
-        self.class.as_ref()
-    }
-    /// The atom this element keeps for attribute `k`'s value: its `id` or
-    /// `class` atom when `k` is that attribute (no namespace).
+    /// The atom this element keeps for attribute `k`'s value, if any: its
+    /// `id` atom when `k` is `id` (no namespace).
     #[inline]
     pub fn attr_atom(&self, k: usize) -> Option<&Atom> {
         let name = &self.attrs.get(k)?.name;
-        if name.ns != markup5ever::ns!() {
-            None
-        } else if name.local == local_name!("id") {
+        if name.local == local_name!("id") && name.ns == markup5ever::ns!() {
             self.id.as_ref()
-        } else if name.local == local_name!("class") {
-            self.class.as_ref()
         } else {
             None
         }
+    }
+    /// The `class` attribute (no namespace), with its token's atom when the
+    /// value is one token and nothing else (`className`).
+    #[inline]
+    pub fn class_value(&self) -> Option<(&str, Option<&Atom>)> {
+        let value = self.attr_local(&local_name!("class"))?;
+        // The token is the value less ASCII whitespace: one as long is the
+        // whole value (and the value's text need not be read).
+        let only = match &*self.classes {
+            [only] if only.len() == value.len() => Some(only),
+            _ => None,
+        };
+        Some((value, only))
     }
     /// Whether `class` contains the token `name` (case-sensitive).
     #[inline]
@@ -330,10 +330,7 @@ impl ElementData {
         if *local == local_name!("id") {
             self.id = self.attr_local(&local_name!("id")).map(Atom::from);
         } else if *local == local_name!("class") {
-            let value = self.attr_local(&local_name!("class"));
-            let classes: Box<[Atom]> = value.map(parse_classes).unwrap_or_default();
-            let class = value.map(|v| class_value(v, &classes));
-            (self.classes, self.class) = (classes, class);
+            self.classes = self.attr_local(&local_name!("class")).map(parse_classes).unwrap_or_default();
         }
     }
     /// Replaces every attribute (element creation, cloning).
@@ -345,14 +342,13 @@ impl ElementData {
     /// The attributes with their parsed atoms, for [`ElementData::set_attr_state`]
     /// (cloning: nothing is parsed again).
     pub(crate) fn attr_state(&self) -> AttrState {
-        AttrState(self.attrs.clone(), self.id.clone(), self.classes.clone(), self.class.clone())
+        AttrState(self.attrs.clone(), self.id.clone(), self.classes.clone())
     }
     pub(crate) fn set_attr_state(&mut self, state: AttrState) {
-        let AttrState(attrs, id, classes, class) = state;
+        let AttrState(attrs, id, classes) = state;
         self.attrs = attrs;
         self.id = id;
         self.classes = classes;
-        self.class = class;
     }
     pub(crate) fn push_attr(&mut self, attr: Attr) {
         let refresh = derives(&attr.name).then(|| attr.name.local.clone());
@@ -394,13 +390,12 @@ impl ElementData {
     pub fn derived_in_step(&self) -> bool {
         let id = self.attr_local(&local_name!("id")).map(Atom::from);
         let classes: Box<[Atom]> = self.attr_local(&local_name!("class")).map(parse_classes).unwrap_or_default();
-        let class = self.attr_local(&local_name!("class")).map(Atom::from);
-        self.id == id && self.classes == classes && self.class == class
+        self.id == id && self.classes == classes
     }
 }
 
-/// An element's attributes with their parsed id, classes and class value.
-pub(crate) struct AttrState(Vec<Attr>, Option<Atom>, Box<[Atom]>, Option<Atom>);
+/// An element's attributes with their parsed id and classes.
+pub(crate) struct AttrState(Vec<Attr>, Option<Atom>, Box<[Atom]>);
 
 /// Whether an attribute of this name feeds `ElementData::id` or `classes`.
 #[inline]
@@ -410,15 +405,6 @@ fn derives(name: &QualName) -> bool {
 
 fn parse_classes(value: &str) -> Box<[Atom]> {
     value.split_ascii_whitespace().map(Atom::from).collect()
-}
-
-/// `value` (a `class` attribute) as an atom, given its tokens: a value that
-/// is one token and nothing else is that token's atom, interned once.
-fn class_value(value: &str, classes: &[Atom]) -> Atom {
-    match classes {
-        [only] if **only == *value => only.clone(),
-        _ => Atom::from(value),
-    }
 }
 
 #[derive(Debug)]

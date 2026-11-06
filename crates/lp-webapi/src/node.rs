@@ -968,17 +968,11 @@ impl JsClass for ShadowRoot {
 /// `tagName` from [`lp_dom::Dom::tag_name_parts`]: the local name's string
 /// (the same as `localName`'s), or its uppercased form, one per realm too.
 #[inline]
-fn tag_name<'s>(s: &Scope<'s>, name: &markup5ever::QualName, upper: bool) -> Value<'s> {
-    match &name.prefix {
-        Some(p) if !p.is_empty() => {
-            let mut q = format!("{}:{}", p, name.local);
-            if upper {
-                q.make_ascii_uppercase();
-            }
-            s.string(&q)
-        }
-        _ if upper => upper_local_name(s, &name.local),
-        _ => name.local.js(s),
+fn tag_name<'s>(s: &Scope<'s>, local: &markup5ever::LocalName, upper: bool) -> Value<'s> {
+    if upper {
+        upper_local_name(s, local)
+    } else {
+        local.js(s)
     }
 }
 
@@ -998,8 +992,9 @@ impl JsClass for Element {
                 None => s.shared_string(&dom.tag_name_shared(n.id).js()?),
             })
         });
-        // Names, id and class are the element's atoms: one string each per
-        // realm (`AtomJs`), not a new one per read.
+        // Names and id are the element's atoms, class its attribute value:
+        // one string each per realm (`AtomJs`, `attr_value`), not a new one
+        // per read.
         def.pure_getter_typed("localName", lp_js::GetterResult::String, |s, n| {
             Ok(n.page().dom.borrow().element(n.id).js()?.local_name().js(s))
         });
@@ -1024,7 +1019,7 @@ impl JsClass for Element {
         def.pure_accessor_typed(
             "className",
             lp_js::GetterResult::String,
-            |s, n| Ok(atom_or_empty(s, n.page().dom.borrow().element(n.id).js()?.class_atom())),
+            |s, n| Ok(class_name(s, n.page().dom.borrow().element(n.id).js()?)),
             |_s, n, v| with_str(v, |class| n.page().dom.borrow_mut().set_attribute(n.id, "class", class).js()),
         );
         def.pure_accessor_typed(
@@ -1097,8 +1092,7 @@ impl JsClass for Element {
             crate::util::with_arg_str(&a, 0, "Element.getAttribute", |name| {
                 let dom = n.page().dom.borrow();
                 Ok(match dom.get_attribute_qualified_atom(n.id, name).js()? {
-                    Some((_, Some(atom))) => atom.js(s),
-                    Some((value, None)) => s.string(value),
+                    Some((value, atom)) => attr_value(s, value, atom),
                     None => s.null(),
                 })
             })

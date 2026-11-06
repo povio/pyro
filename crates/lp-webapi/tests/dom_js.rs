@@ -6739,6 +6739,25 @@ fn atom_valued_reads_follow_every_change() {
         eval(r, "d.className = 'k'; const c = d.cloneNode(); d.className = 'm'; c.className + '|' + d.className"),
         "k|m"
     );
+    // Values of the same length one after another (the new value may take
+    // the old one's allocation), read between writes.
+    assert_eq!(
+        eval(r, "const seen = []; for (const v of ['aa bb', 'cc dd', 'aa bb', 'ee ff']) { d.className = v; seen.push(d.className, d.getAttribute('class'), d.classList.value); } seen.join()"),
+        "aa bb,aa bb,aa bb,cc dd,cc dd,cc dd,aa bb,aa bb,aa bb,ee ff,ee ff,ee ff"
+    );
+    assert_eq!(
+        eval(r, "const dx = []; for (const v of ['one two', 'one twx', '', 'x']) { d.setAttribute('data-x', v); dx.push(d.getAttribute('data-x'), d.getAttribute('data-x')); } d.removeAttribute('data-x'); dx.push(d.getAttribute('data-x')); JSON.stringify(dx)"),
+        r#"["one two","one two","one twx","one twx","","","x","x",null]"#
+    );
+    // Long values (no table entry over 1 KB) and non-ASCII text.
+    assert_eq!(
+        eval(r, "const out = []; for (const v of ['y'.repeat(1024), 'z'.repeat(1025), 'z'.repeat(1024) + 'w', '\\u00e9t\\u00e9 \\u65e5\\u672c', '\\u00e9t\\u00e9 \\u65e5\\u672d']) { d.setAttribute('data-v', v); const a = d.getAttribute('data-v'), b = d.getAttribute('data-v'); out.push(a === v && b === v); } out.join()"),
+        "true,true,true,true,true"
+    );
+    assert_eq!(
+        eval(r, "d.className = 'solo'; d.className + '|' + d.getAttribute('class') + '|' + d.classList.value"),
+        "solo|solo|solo"
+    );
     // getAttribute('id') is the first attribute with that qualified name: here
     // a namespaced one, not the element's id.
     assert_eq!(
@@ -6757,11 +6776,15 @@ fn atom_valued_reads_follow_every_change() {
         eval(r, "const g = document.createElementNS('http://www.w3.org/2000/svg', 'x:svg'); [g.localName, g.prefix, g.namespaceURI, g.tagName].join()"),
         "svg,x,http://www.w3.org/2000/svg,x:svg"
     );
+    assert_eq!(
+        eval(r, "const h = document.createElementNS('http://www.w3.org/1999/xhtml', 'h:Div'); [h.tagName, h.nodeName, h.tagName, h.localName, document.body.tagName, document.body.nodeName].join()"),
+        "H:DIV,H:DIV,H:DIV,Div,BODY,BODY"
+    );
     // Strings are per realm; the isolated world reads the same values.
     let iso = new_realm(&e.engine, e.engine.register::<TestWindow>(), &e.page, "isolated");
     assert_eq!(
         eval(&iso, "const o = document.querySelector('div'); o.id + '|' + o.className + '|' + o.localName"),
-        "|m|div"
+        "|solo|div"
     );
     assert_eq!(eval(r, "d.id = 'from-main'; d.id"), "from-main");
     assert_eq!(eval(&iso, "o.id"), "from-main");
@@ -6784,7 +6807,7 @@ fn ids_read_once_do_not_accumulate() {
     }
     let n = e.main.interned_string_count();
     assert!(n <= 6000, "{n} interned strings for 40000 distinct values read once");
-    assert_eq!(eval(r, "list.lastChild.id + '|' + list.lastChild.className"), "row-9-1999|cell cell-9-1999");
+    assert_eq!(eval(r, "const last = document.getElementById('list').lastChild; last.id + '|' + last.className"), "row-9-1999|cell cell-9-1999");
     lp_webapi::lifecycle::realm_disposed(&e.page, e.main.id());
     e.main.dispose();
     assert_eq!(e.main.interned_string_count(), 0);

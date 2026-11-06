@@ -65,11 +65,34 @@ pub(crate) fn upper_local_name<'s>(s: &Scope<'s>, local: &markup5ever::LocalName
     })
 }
 
-/// An element's id or class atom as a string: `""` when it has none.
+/// An element's id atom as a string: `""` when it has none.
 #[inline]
 pub(crate) fn atom_or_empty<'s>(s: &Scope<'s>, atom: Option<&lp_dom::Atom>) -> Value<'s> {
     match atom {
         Some(a) => a.js(s),
+        None => lp_dom::Atom::default().js(s),
+    }
+}
+
+/// An attribute's value as a string: the atom the element keeps for it
+/// ([`lp_dom::node::ElementData::attr_atom`]), else the realm's string for
+/// that text ([`Scope::text_string`]: one per distinct value, by its hash).
+/// Nothing is done when the attribute is written.
+#[inline]
+pub(crate) fn attr_value<'s>(s: &Scope<'s>, value: &str, atom: Option<&lp_dom::Atom>) -> Value<'s> {
+    match atom {
+        Some(a) => a.js(s),
+        None => s.text_string(value),
+    }
+}
+
+/// `className` (and the class list's `value`): `""` without the attribute.
+/// A one-token value is its token's atom, any other its text (interning the
+/// value when written made every class write dearer).
+#[inline]
+pub(crate) fn class_name<'s>(s: &Scope<'s>, el: &lp_dom::node::ElementData) -> Value<'s> {
+    match el.class_value() {
+        Some((value, atom)) => attr_value(s, value, atom),
         None => lp_dom::Atom::default().js(s),
     }
 }
