@@ -23,7 +23,7 @@ pub use accessors::slot_usage as accessor_slot_usage;
 pub use class::{ClassDef, ClassId, GetterResult, GetterThisFn, JsClass, MethodThisFn, NoParent};
 pub use engine::{
     ImpureNames,
-    configure_process, prepare_process_for_fork, Capabilities, ConsoleLevel, Engine, EngineHooks, TerminateHandle,
+    configure_process, entry_realm, prepare_process_for_fork, Capabilities, ConsoleLevel, Engine, EngineHooks, TerminateHandle,
     WrapperPropertyHook,
 };
 pub use engine::set_allocator_release;

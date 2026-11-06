@@ -757,6 +757,12 @@ impl<'s> Scope<'s> {
         self.realm.id
     }
 
+    /// This realm's original `DOMException` constructor (unaffected by
+    /// page reassignment of the global).
+    pub fn dom_exception(&self) -> Option<Object<'s>> {
+        self.realm.dom_exception_ctor(self)
+    }
+
     pub(crate) fn realm_inner(&self) -> &RealmInner {
         self.realm
     }
@@ -773,6 +779,7 @@ impl<'s> Scope<'s> {
     /// Evaluates a classic script.
     pub fn eval(&self, source: &str, url: Option<&str>, line: i32) -> JsResult<Value<'s>> {
         let _pool = crate::autorelease::Pool::new();
+        let _entry = crate::engine::EntryGuard::enter(self.ctx);
         let src = JsString::new(source);
         let url = url.map(JsString::new);
         let mut exc = ptr::null();
