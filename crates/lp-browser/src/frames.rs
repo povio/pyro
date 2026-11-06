@@ -1043,7 +1043,11 @@ impl Browser {
                     .unwrap_or_else(|_| raw.clone())
             };
             if url == "about:blank" && frame.url == "about:blank" && !frame.dom_content_loaded {
-                self.finish_blank_document(key);
+                // A script that opened the initial document since (append,
+                // then `contentDocument.open()`) finishes it with `close()`.
+                if host.nav(key).map_or(true, |nav| nav.is_initial_blank()) {
+                    self.finish_blank_document(key);
+                }
                 Ok(())
             } else {
                 self.navigate_frame_with_handling(
