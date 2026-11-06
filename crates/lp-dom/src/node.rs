@@ -188,6 +188,10 @@ pub mod shadow_flags {
     pub const MANUAL_SLOTS: u8 = 8;
     /// Made by the parser and not yet claimed by `attachShadow`.
     pub const DECLARATIVE: u8 = 16;
+    /// "Available to element internals": attached while the host was a
+    /// custom element (state "precustomized" or "custom"), so
+    /// `ElementInternals.shadowRoot` returns it.
+    pub const AVAILABLE_TO_INTERNALS: u8 = 32;
 }
 
 /// Mutable form-control state that is not reflected in attributes.

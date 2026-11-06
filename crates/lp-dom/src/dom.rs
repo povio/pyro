@@ -979,7 +979,13 @@ impl Dom {
         Ok(self.id_of(sr))
     }
 
-    fn new_shadow_root(&mut self, h: u32, mode: ShadowRootMode, flags: u8) -> u32 {
+    fn new_shadow_root(&mut self, h: u32, mode: ShadowRootMode, mut flags: u8) -> u32 {
+        // A custom host makes it available to its internals; a
+        // precustomized one (its constructor running) is the bindings' to
+        // tell, with the flag.
+        if self.n(h).element().is_some_and(|e| e.flags & element_flags::CUSTOM_DEFINED != 0) {
+            flags |= shadow_flags::AVAILABLE_TO_INTERNALS;
+        }
         let owner = self.n(h).owner_doc;
         let sr = self.alloc(NodeKind::Fragment(FragmentData::new(h, Some(mode), flags)), owner);
         let tree = self.shadow_root_flags_for(h);
@@ -2323,7 +2329,7 @@ impl Dom {
         if src_sr != NIL {
             if let NodeKind::Fragment(FragmentData { shadow: Some(mode), flags, .. }) = self.n(src_sr).kind {
                 if flags & shadow_flags::CLONABLE != 0 {
-                    let dst_sr = self.new_shadow_root(copy, mode, flags);
+                    let dst_sr = self.new_shadow_root(copy, mode, flags & !shadow_flags::AVAILABLE_TO_INTERNALS);
                     let kids: Vec<u32> = self.child_idx_iter(src_sr).collect();
                     for k in kids {
                         let kc = self.clone_idx(k, doc, true)?;

@@ -77,7 +77,9 @@ second call. The form members throw `NotSupportedError` on internals of an
 element that is not form-associated. `shadowRoot`, `states`, `role` and the
 `aria*` string attributes work on any custom element's internals; the ARIA
 values are stored on the internals (default semantics), not reflected to
-attributes.
+attributes. `shadowRoot` returns only a root attached while the host was
+custom or its upgrade constructor ran ("available to element internals"), not
+one it had before its upgrade.
 
 ## Custom states
 
@@ -111,7 +113,6 @@ whether any name is defined at all before it looks one up.
 - `CustomStateSet.prototype` gets its iteration members when the realm makes
   its first set.
 - `ElementInternals` has no element-reference ARIA attributes
-  (`ariaLabelledByElements`, ...), and `shadowRoot` skips the "available to
-  element internals" check.
+  (`ariaLabelledByElements`, ...).
 - A disabled form-associated custom element matches `:disabled` in queries;
   the renderer's styles do not see that state yet.

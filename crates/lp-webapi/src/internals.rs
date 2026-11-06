@@ -158,7 +158,14 @@ impl JsClass for ElementInternals {
     type Parent = NoParent;
     fn define(def: &mut ClassDef<Self>) {
         def.getter("shadowRoot", |s, d| {
-            let root = d.page().dom.borrow().shadow_root(d.id()).unwrap_or(None);
+            // Only a root attached while the host was custom (not one it had
+            // before its upgrade, which may be closed).
+            let root = {
+                let dom = d.page().dom.borrow();
+                dom.shadow_root(d.id()).unwrap_or(None).filter(|&r| {
+                    dom.shadow_root_flags(r).is_ok_and(|f| f & lp_dom::shadow_flags::AVAILABLE_TO_INTERNALS != 0)
+                })
+            };
             node_value(s, d.page(), root)
         });
         def.method("setFormValue", 1, |s, d, a| {

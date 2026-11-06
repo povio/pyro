@@ -177,6 +177,7 @@ fn clones_of_defined_elements_are_upgraded_by_the_cloning_call() {
     eval(r, "customElements.define('x-clone', class extends HTMLElement { constructor() { super(); this.made = true; } }); var src = document.createElement('div'); src.innerHTML = '<x-clone></x-clone>';");
     assert_eq!(eval(r, "const c = src.cloneNode(true); [c.firstChild.made, c.isConnected].join()"), "true,false");
     assert_eq!(eval(r, "document.importNode(src, true).firstChild.made"), "true");
+    assert_eq!(eval(r, "src.firstChild.cloneNode().made"), "true");
 }
 
 const FACE: &str = "class Field extends HTMLElement { \
@@ -283,6 +284,15 @@ fn attach_internals_rules() {
     assert_eq!(name("pi.setFormValue('a')"), "NotSupportedError");
     assert_eq!(eval(r, "pi.role = 'button'; pi.ariaLabel = 'Go'; [pi.role, pi.ariaLabel, p.getAttribute('role'), pi.ariaPressed].join()"), "button,Go,,");
     assert_eq!(eval(r, "const sr = p.attachShadow({mode: 'closed'}); pi.shadowRoot === sr"), "true");
+    // A root attached before the upgrade is not revealed; one the upgrade
+    // constructor attaches is.
+    assert_eq!(
+        eval(r, "var pre = document.createElement('x-pre'); pre.attachShadow({mode: 'closed'}); var up = document.createElement('x-up'); \
+            customElements.define('x-pre', class extends HTMLElement { constructor() { super(); this.i = this.attachInternals(); } }); \
+            customElements.define('x-up', class extends HTMLElement { constructor() { super(); this.sr = this.attachShadow({mode: 'closed'}); this.i = this.attachInternals(); } }); \
+            customElements.upgrade(pre); customElements.upgrade(up); [pre.i.shadowRoot, up.i.shadowRoot === up.sr].join()"),
+        ",true"
+    );
 }
 
 #[test]
