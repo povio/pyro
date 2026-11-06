@@ -1252,6 +1252,10 @@ impl Io {
                 return self.serve_blob(id, &req, sink);
             }
             if req.url.scheme() == "file" && self.shared.config.file_urls {
+                // Chrome refuses redirects into local files.
+                if redirects > 0 {
+                    return Err(NetError::Blocked("net::ERR_UNSAFE_REDIRECT".into()));
+                }
                 return self.serve_file(id, &req, sink).await;
             }
             match req.url.scheme() {

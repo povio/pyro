@@ -152,3 +152,26 @@ fn file_urls_serve_local_files_like_chrome() {
     let err = off.fetch_blocking(request(&url("page.html"), Method::GET, Destination::Document)).unwrap_err();
     assert_eq!(err.error_text(), "net::ERR_UNKNOWN_URL_SCHEME");
 }
+
+#[test]
+fn redirects_into_file_urls_are_refused() {
+    use std::io::{Read, Write};
+    let dir = TempDir::new();
+    std::fs::write(dir.0.join("secret.txt"), "local").unwrap();
+    let target = Url::from_file_path(dir.0.join("secret.txt")).unwrap().to_string();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut buf = [0u8; 4096];
+        let _ = stream.read(&mut buf);
+        let response =
+            format!("HTTP/1.1 302 Found\r\nLocation: {target}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+        stream.write_all(response.as_bytes()).unwrap();
+    });
+    let client = NetClient::new(NetConfig::default()).unwrap();
+    let url = format!("http://127.0.0.1:{port}/");
+    let err = client.fetch_blocking(request(&url, Method::GET, Destination::Document)).unwrap_err();
+    assert_eq!(err.error_text(), "net::ERR_UNSAFE_REDIRECT");
+    server.join().unwrap();
+}
