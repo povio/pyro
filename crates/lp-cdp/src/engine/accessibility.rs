@@ -78,6 +78,13 @@ impl AxNode {
     }
 }
 
+/// Outside the topmost modal dialog: neither it, inside it, nor one of its
+/// ancestors (Chromium leaves what a modal dialog blocks out of the tree).
+/// One empty-set check without a modal dialog.
+fn blocked_by_modal(dom: &Dom, el: NodeId) -> bool {
+    dom.topmost_modal().is_some_and(|m| !dom.contains(el, m).unwrap_or(true) && !dom.contains(m, el).unwrap_or(true))
+}
+
 /// Inherited walk state.
 #[derive(Clone, Copy, Default)]
 struct Ctx {
@@ -492,8 +499,8 @@ impl<'a> Builder<'a> {
             return;
         }
         ctx.invisible = false;
-        let hidden_root =
-            ctx.hidden.is_none() && (aria_true(dom, el, "aria-hidden") || attr(dom, el, "inert").is_some());
+        let hidden_root = ctx.hidden.is_none()
+            && (aria_true(dom, el, "aria-hidden") || attr(dom, el, "inert").is_some() || blocked_by_modal(dom, el));
         if hidden_root {
             ctx.hidden = Some(el);
         }
