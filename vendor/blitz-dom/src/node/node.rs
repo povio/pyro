@@ -259,19 +259,6 @@ impl Node {
         }
     }
 
-    /// Clear this node's taffy layout cache and any cached inline
-    /// `content_widths`, forcing a full relayout of it on the next pass.
-    pub fn invalidate_layout_cache(&mut self) {
-        self.clear_layout_cache();
-        if let Some(inline_layout) = self
-            .data
-            .downcast_element_mut()
-            .and_then(|el| el.inline_layout_data.as_mut())
-        {
-            inline_layout.content_widths = None;
-        }
-    }
-
     #[inline]
     pub fn cache(&self) -> &Cache {
         &self.layout_data().cache
@@ -1305,14 +1292,14 @@ impl Node {
     /// table-part Taffy style does not depend on them and stays.
     ///
     /// lightningpanda: the cell's own layout reads its layout style, so a change clears what its
-    /// last layout measured (`invalidate_layout_cache`), whichever path changed it: a table built
+    /// last layout measured (`clear_layout_cache`), whichever path changed it: a table built
     /// again (`build_table_context`) leaves its undamaged cells' layouts in place otherwise.
     pub(crate) fn set_collapsed_border(&mut self, collapsed_border: Option<[f32; 4]>) {
         if self.collapsed_border() == collapsed_border {
             return;
         }
         self.layout_data_mut().collapsed_border = collapsed_border;
-        self.invalidate_layout_cache();
+        self.clear_layout_cache();
         let Some(stylo) = self.try_stylo_element_data_mut() else {
             return;
         };

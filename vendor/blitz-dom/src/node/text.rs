@@ -4,7 +4,7 @@ use blitz_traits::{
     shell::ShellProvider,
 };
 use keyboard_types::{Key, Modifiers, NamedKey};
-use parley::{ContentWidths, FontContext, LayoutContext};
+use parley::{FontContext, LayoutContext};
 
 use crate::util::ACTION_MOD;
 
@@ -24,7 +24,6 @@ impl TextBrush {
 #[derive(Clone, Default)]
 pub struct TextLayout {
     pub text: String,
-    pub content_widths: Option<ContentWidths>,
     pub layout: parley::layout::Layout<TextBrush>,
     /// Block-axis offset (in CSS px) of the line boxes from the top of the container's content
     /// box, as applied by `align-content`.
@@ -51,12 +50,6 @@ pub struct TextLayout {
 impl TextLayout {
     pub fn new() -> Self {
         Default::default()
-    }
-
-    pub fn content_widths(&mut self) -> ContentWidths {
-        *self
-            .content_widths
-            .get_or_insert_with(|| self.layout.calculate_content_widths())
     }
 }
 

@@ -2108,7 +2108,7 @@ fn update_rows(doc: &mut BaseDocument, table: NodeId, ctx: &mut TableContext) ->
                 // (Those collected again are compared with what they were below.)
                 let collected = spans.iter().any(|span| span.contains(&(cell.row as usize)));
                 if apply_collapsed_borders(doc, cell, area, edges) && !collected {
-                    doc.nodes[cell.node_id].invalidate_layout_cache();
+                    doc.nodes[cell.node_id].clear_layout_cache();
                     changed_cells.push(ca + at);
                 }
             }
@@ -2133,7 +2133,7 @@ fn update_rows(doc: &mut BaseDocument, table: NodeId, ctx: &mut TableContext) ->
                     && old.column == cell.column
             });
             if !same {
-                doc.nodes[cell.node_id].invalidate_layout_cache();
+                doc.nodes[cell.node_id].clear_layout_cache();
                 changed_cells.push(ca + at);
             }
         }
@@ -2295,7 +2295,7 @@ pub(crate) fn damage_former_table_parts(doc: &mut BaseDocument, node_id: NodeId)
         for part in parts {
             let node = &mut doc.nodes[part];
             node.insert_damage(super::damage::ALL_DAMAGE);
-            node.invalidate_layout_cache();
+            node.clear_layout_cache();
         }
     }
     // The children the table ignored (captions, columns, empty row groups): no pass built their
@@ -2320,7 +2320,7 @@ fn enter_layout_tree(doc: &mut BaseDocument, node_id: NodeId) {
         if node.is_element() {
             node.insert_damage(super::damage::ALL_DAMAGE);
         }
-        node.invalidate_layout_cache();
+        node.clear_layout_cache();
     });
 }
 

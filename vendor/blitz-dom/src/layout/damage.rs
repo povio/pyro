@@ -214,7 +214,7 @@ impl BaseDocument {
         // have changed, then we should clear it's layout cache.
         let mut invalidate_anonymous_ancestors = false;
         if damage.intersects(ONLY_RELAYOUT | CONSTRUCT_BOX | CONSTRUCT_FC) {
-            node.invalidate_layout_cache();
+            node.clear_layout_cache();
             invalidate_anonymous_ancestors = true;
             damage.remove(ONLY_RELAYOUT);
         }
@@ -247,7 +247,7 @@ impl BaseDocument {
                 if !ancestor.is_anonymous() {
                     break;
                 }
-                ancestor.invalidate_layout_cache();
+                ancestor.clear_layout_cache();
                 current = ancestor.layout_parent.get();
             }
         }
@@ -402,7 +402,7 @@ impl BaseDocument {
             // Invalidate cached layout and consume only the relayout bit.
             let node = &mut self.nodes[anonymous_id];
             if damage.intersects(ONLY_RELAYOUT | CONSTRUCT_BOX) {
-                node.invalidate_layout_cache();
+                node.clear_layout_cache();
                 damage.remove(ONLY_RELAYOUT);
             }
 

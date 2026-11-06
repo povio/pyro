@@ -183,7 +183,7 @@ impl BaseDocument {
             self.nodes[root_node_id]
                 .set_restyle_hint(style::invalidation::element::restyle_hints::RestyleHint::restyle_subtree());
             for (_, node) in self.nodes.iter_mut() {
-                node.invalidate_layout_cache();
+                node.clear_layout_cache();
             }
             self.mark_all_damaged();
         }
@@ -745,12 +745,6 @@ impl BaseDocument {
                     {
                         LAYOUT_CTX.set(Some(layout_ctx));
                     }
-
-                    // If layout doesn't contain any inline boxes, then it is safe to populate the content_widths
-                    // cache during this parallelized stage.
-                    // if layout.layout.inline_boxes().is_empty() {
-                    //     layout.content_widths();
-                    // }
 
                     ConstructionTaskResult {
                         node_id: task.node_id,
