@@ -1149,15 +1149,35 @@ impl StyleEngine {
 
     /// isHidden (StyleManager.zig:627-631). Elements without a style (stale,
     /// other document) are hidden.
+    ///
+    /// The `display: none` part comes from the layout engine's styles on
+    /// the rendered tree ([`StyleEngine::engine_displayed`]) when it can
+    /// tell, so the common query (no visibility or opacity check) derives
+    /// no [`ComputedStyle`] up the ancestor chain.
     pub fn is_hidden(&self, dom: &Dom, el: NodeId, opts: CheckVisibilityOptions) -> bool {
+        match self.engine_displayed(dom, el) {
+            Some(false) => return true,
+            Some(true) if !opts.check_visibility && !opts.check_opacity => return false,
+            _ => {}
+        }
         self.computed(dom, el).is_none_or(|c| c.is_hidden(opts))
+    }
+
+    /// Whether the layout engine has `el` outside every `display: none`
+    /// subtree of the rendered (flat) tree, as of its styles brought up to
+    /// `dom`; `None` when there is no engine or it cannot tell.
+    fn engine_displayed(&self, dom: &Dom, el: NodeId) -> Option<bool> {
+        self.owns(dom, el)?;
+        self.engine_styled(dom)?;
+        let external = self.external.borrow();
+        external.as_ref()?.0.element_displayed(crate::snapshot::render_key(el))
     }
 
     /// StyleManager.zig:638-644.
     pub fn rendering(&self, dom: &Dom, el: NodeId) -> Rendering {
         match self.computed(dom, el) {
             None => Rendering::Visible,
-            Some(c) if c.is_hidden(CheckVisibilityOptions::default()) => Rendering::None,
+            Some(_) if self.is_hidden(dom, el, CheckVisibilityOptions::default()) => Rendering::None,
             Some(c) if c.visibility_hidden => Rendering::Invisible,
             Some(_) => Rendering::Visible,
         }

@@ -1088,6 +1088,44 @@ impl Renderer {
         }
     }
 
+    /// Whether the element keyed `key` in `page`'s persistent document is
+    /// outside every `display: none` subtree of the rendered (flat) tree, as
+    /// of the last style sync, read from the styles Stylo keeps on the nodes
+    /// instead of deriving a computed style per ancestor.
+    ///
+    /// Stylo styles an element only when its parent is displayed, and drops
+    /// the styles under an element it styles `display: none`; an element
+    /// moved under a hidden parent keeps its old styles, which the traversal
+    /// does not reach. So the walk goes all the way up: some element on the
+    /// way with `display: none` hides it. When none is found but an element
+    /// on the way has no styles, the styles cannot tell, and this answers
+    /// `None`, as it does for elements that are not mirrored or not in the
+    /// document.
+    pub fn element_displayed(&self, page: u64, key: u64) -> Option<bool> {
+        let m = self.mirrors.get(&page)?;
+        let mut id = m.node(key)?;
+        let mut unstyled = false;
+        loop {
+            let node = m.doc.get_node(id)?;
+            if !node.is_element() {
+                break;
+            }
+            if !node.flags.is_in_document() {
+                return None;
+            }
+            match node.primary_styles() {
+                Some(s) if s.clone_display().is_none() => return Some(false),
+                Some(_) => {}
+                None => unstyled = true,
+            }
+            match node.parent {
+                Some(p) => id = p,
+                None => break,
+            }
+        }
+        (!unstyled).then_some(true)
+    }
+
     /// The box of the element keyed `key` in `page`'s persistent document,
     /// as of the last [`Renderer::sync_layout`] (see [`LayoutBox`]).
     pub fn element_box(&self, page: u64, key: u64) -> Option<LayoutBox> {

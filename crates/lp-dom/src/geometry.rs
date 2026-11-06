@@ -155,6 +155,13 @@ pub trait GeometrySource {
     fn element_style(&self, _key: u64) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
         None
     }
+    /// Whether the element is outside every `display: none` subtree of the
+    /// rendered tree, from the styles the engine keeps as of the last style
+    /// sync (`None`: the engine cannot tell, and the derived
+    /// [`crate::style::ComputedStyle`] answers).
+    fn element_displayed(&self, _key: u64) -> Option<bool> {
+        None
+    }
 }
 
 /// An element's boxes (document coordinates; viewport ones inside a fixed
