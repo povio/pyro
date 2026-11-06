@@ -25,6 +25,9 @@ import {
   urlMatches,
 } from './match.js';
 import type { BrowserContext } from './browser.js';
+import { Coverage } from './coverage.js';
+import type { Clock } from './clock.js';
+import { renderAria, type AriaNode } from './aria.js';
 import { callDeclaration, Download, ElementHandle, hasHandles, JSHandle, serializeArg, valueOf, type PageElement, type PageFunction, type PageFunctionOn, type Sender, type SmartHandle } from './handles.js';
 import { APIRequestContext } from './request.js';
 
@@ -535,6 +538,17 @@ export class Locator extends Scope {
   async count(): Promise<number> {
     return this.read('count', 'count', 0);
   }
+  /** The element's ARIA tree as Playwright's YAML (its default mode). */
+  async ariaSnapshot(options: Timeout & { depth?: number; mode?: 'default' } = {}): Promise<string> {
+    if ((options.mode as string | undefined) === 'ai') throw notSupported('ariaSnapshot({ mode: "ai" })');
+    return renderAria(await this._ariaTree(options.timeout), options.depth);
+  }
+  /** The engine's ARIA tree of the element (waits for it, as reads do). */
+  async _ariaTree(timeout?: number): Promise<AriaNode> {
+    const tree = await this.read('ariaSnapshot', 'aria', timeout);
+    if (tree?.error) throw new Error(`locator.ariaSnapshot: ${tree.error}`);
+    return tree as AriaNode;
+  }
   async textContent(options: Timeout = {}): Promise<string | null> {
     return this.evaluate((el: Node) => el.textContent, undefined, options);
   }
@@ -616,10 +630,6 @@ export class Locator extends Scope {
     if (!box) throw new Error(`locator.screenshot: ${this._desc} is not visible`);
     return this._page.screenshot({ ...options, clip: box });
   }
-  async ariaSnapshot(): Promise<never> {
-    throw notSupported('ariaSnapshot');
-  }
-
   /** What `expect(locator).toX()` from `@playwright/test` calls. */
   async _expect(expression: string, options: ExpectOptions): Promise<ExpectResult> {
     return expectLocator(this, expression, options);
@@ -1217,6 +1227,11 @@ export class Page extends Scope {
   readonly _page = this;
   readonly keyboard = new Keyboard(this);
   readonly mouse = new Mouse(this);
+  readonly coverage: Coverage = new Coverage(this);
+  /** The context's fake clock. */
+  get clock(): Clock {
+    return this.context().clock;
+  }
   private _url = 'about:blank';
   private _mainFrameId?: string;
   private _mainFrame = new Frame(this);
@@ -1504,7 +1519,8 @@ export class Page extends Scope {
   private markClosed() {
     if (this._closed) return;
     this._closed = true;
-    for (const off of this._off) off();
+    // Taken out first: an `off` may remove itself from `_off` (coverage does).
+    for (const off of this._off.splice(0)) off();
     this._context._pageClosed(this);
     this._events.emit('close', this);
   }
@@ -1949,6 +1965,10 @@ export class Page extends Scope {
   }
   async $$(selector: string): Promise<ElementHandle<PageElement>[]> {
     return this.locator(selector).elementHandles();
+  }
+  /** The page's ARIA tree as Playwright's YAML (from `<body>`). */
+  async ariaSnapshot(options: Timeout & { depth?: number; mode?: 'default' } = {}): Promise<string> {
+    return this.locator('body').ariaSnapshot(options);
   }
   async title(): Promise<string> {
     return this._call('page.title', '() => document.title', {});

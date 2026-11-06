@@ -335,6 +335,8 @@ enum Read {
     Name,
     Focused,
     Enabled,
+    /// The ARIA tree (aria_snapshot.rs), for `ariaSnapshot()`.
+    Aria,
 }
 
 /// Which requests a `request` step looks for in the run's log.
@@ -659,8 +661,8 @@ pub(super) struct ShotStep {
     pub(super) scene_hash: Option<u64>,
     /// 0..1: per-channel difference a pixel may have and still match.
     pub(super) threshold: f64,
-    pub(super) max_diff_pixels: u64,
-    pub(super) max_diff_pixel_ratio: f64,
+    pub(super) max_diff_pixels: Option<u64>,
+    pub(super) max_diff_pixel_ratio: Option<f64>,
     /// CSS px, relative to the document.
     pub(super) clip: Option<(f64, f64, f64, f64)>,
     pub(super) full_page: bool,
@@ -1564,12 +1566,231 @@ pub(super) fn id_refs(dom: &Dom, doc: NodeId, id: NodeId, name: &str) -> Option<
     Some(out)
 }
 
-/// Implicit ARIA role, by Playwright's `kImplicitRoleByTagName`, or the
-/// first token of an explicit `role`.
-pub(super) fn role_of(dom: &Dom, id: NodeId) -> Option<String> {
-    if let Some(role) = attr(dom, id, "role").and_then(|r| r.split_whitespace().next()) {
-        return Some(role.to_ascii_lowercase());
+/// Playwright's `validRoles`: the roles an explicit `role` may name.
+const VALID_ROLES: &[&str] = &[
+    "alert",
+    "alertdialog",
+    "application",
+    "article",
+    "banner",
+    "blockquote",
+    "button",
+    "caption",
+    "cell",
+    "checkbox",
+    "code",
+    "columnheader",
+    "combobox",
+    "complementary",
+    "contentinfo",
+    "definition",
+    "deletion",
+    "dialog",
+    "directory",
+    "document",
+    "emphasis",
+    "feed",
+    "figure",
+    "form",
+    "generic",
+    "grid",
+    "gridcell",
+    "group",
+    "heading",
+    "img",
+    "insertion",
+    "link",
+    "list",
+    "listbox",
+    "listitem",
+    "log",
+    "main",
+    "mark",
+    "marquee",
+    "math",
+    "meter",
+    "menu",
+    "menubar",
+    "menuitem",
+    "menuitemcheckbox",
+    "menuitemradio",
+    "navigation",
+    "none",
+    "note",
+    "option",
+    "paragraph",
+    "presentation",
+    "progressbar",
+    "radio",
+    "radiogroup",
+    "region",
+    "row",
+    "rowgroup",
+    "rowheader",
+    "scrollbar",
+    "search",
+    "searchbox",
+    "separator",
+    "slider",
+    "spinbutton",
+    "status",
+    "strong",
+    "subscript",
+    "superscript",
+    "switch",
+    "tab",
+    "table",
+    "tablist",
+    "tabpanel",
+    "term",
+    "textbox",
+    "time",
+    "timer",
+    "toolbar",
+    "tooltip",
+    "tree",
+    "treegrid",
+    "treeitem",
+];
+
+/// Roles that may not be named: Playwright's prohibited roles for
+/// `aria-label` / `aria-labelledby` in `kGlobalAriaAttributes`.
+const LABEL_PROHIBITED: &[&str] = &[
+    "caption",
+    "code",
+    "deletion",
+    "emphasis",
+    "generic",
+    "insertion",
+    "paragraph",
+    "presentation",
+    "strong",
+    "subscript",
+    "superscript",
+];
+
+/// Playwright's `hasGlobalAriaAttribute(element, forRole)`.
+fn has_global_aria(dom: &Dom, id: NodeId, role: &str) -> bool {
+    const ANY: &[&str] = &[
+        "aria-atomic",
+        "aria-busy",
+        "aria-controls",
+        "aria-current",
+        "aria-describedby",
+        "aria-details",
+        "aria-dropeffect",
+        "aria-flowto",
+        "aria-grabbed",
+        "aria-hidden",
+        "aria-keyshortcuts",
+        "aria-live",
+        "aria-owns",
+        "aria-relevant",
+    ];
+    ANY.iter().any(|a| attr(dom, id, a).is_some())
+        || (!LABEL_PROHIBITED.contains(&role)
+            && (attr(dom, id, "aria-label").is_some() || attr(dom, id, "aria-labelledby").is_some()))
+        || (role != "generic" && attr(dom, id, "aria-roledescription").is_some())
+}
+
+/// JavaScript's `Number(s)` for an attribute value: whitespace trimmed, ""
+/// is 0, hex/octal/binary prefixes and exponents allowed, NaN otherwise.
+pub(super) fn js_number(s: &str) -> f64 {
+    let t = s.trim_matches(|c: char| c.is_whitespace() || c == '\u{feff}');
+    if t.is_empty() {
+        return 0.0;
     }
+    for (prefix, radix) in [("0x", 16), ("0X", 16), ("0o", 8), ("0O", 8), ("0b", 2), ("0B", 2)] {
+        if let Some(digits) = t.strip_prefix(prefix) {
+            return if !digits.is_empty() && digits.chars().all(|c| c.is_digit(radix)) {
+                digits.chars().fold(0.0, |acc, c| acc * radix as f64 + c.to_digit(radix).unwrap_or(0) as f64)
+            } else {
+                f64::NAN
+            };
+        }
+    }
+    let unsigned = t.strip_prefix(['+', '-']).unwrap_or(t);
+    if unsigned == "Infinity" {
+        return if t.starts_with('-') { f64::NEG_INFINITY } else { f64::INFINITY };
+    }
+    // A decimal literal: digits, an optional fraction, an optional exponent.
+    let b = unsigned.as_bytes();
+    let mut i = 0;
+    let int = b.iter().take_while(|c| c.is_ascii_digit()).count();
+    i += int;
+    let mut frac = 0;
+    if b.get(i) == Some(&b'.') {
+        i += 1;
+        frac = b[i..].iter().take_while(|c| c.is_ascii_digit()).count();
+        i += frac;
+    }
+    if int + frac == 0 {
+        return f64::NAN;
+    }
+    if matches!(b.get(i), Some(b'e' | b'E')) {
+        i += 1;
+        if matches!(b.get(i), Some(b'+' | b'-')) {
+            i += 1;
+        }
+        let exp = b[i..].iter().take_while(|c| c.is_ascii_digit()).count();
+        if exp == 0 {
+            return f64::NAN;
+        }
+        i += exp;
+    }
+    if i != b.len() {
+        return f64::NAN;
+    }
+    t.parse::<f64>().unwrap_or(f64::NAN)
+}
+
+/// Playwright's `isNativelyDisabled`: a native form control that is
+/// disabled, or in a disabled `<optgroup>` / `<fieldset>`.
+pub(super) fn natively_disabled(dom: &Dom, id: NodeId) -> bool {
+    if !matches!(local(dom, id), Some("button" | "input" | "select" | "textarea" | "option" | "optgroup")) {
+        return false;
+    }
+    dom.is_disabled(id).unwrap_or(false) || attr(dom, id, "disabled").is_some()
+}
+
+/// Playwright's `isFocusable`: not natively disabled, and natively
+/// focusable or with a numeric `tabindex`.
+fn pw_focusable(dom: &Dom, id: NodeId) -> bool {
+    if natively_disabled(dom, id) {
+        return false;
+    }
+    let native = match local(dom, id) {
+        Some("button" | "details" | "select" | "textarea") => true,
+        Some("a" | "area") => attr(dom, id, "href").is_some(),
+        Some("input") => attr(dom, id, "hidden").is_none(),
+        _ => false,
+    };
+    native || attr(dom, id, "tabindex").is_some_and(|t| !js_number(t).is_nan())
+}
+
+/// Playwright's `getAriaRole`: the first valid token of an explicit `role`
+/// (case-sensitive), else the implicit role. `none` / `presentation` give
+/// way to the implicit role on a focusable element or one with a global
+/// `aria-*` attribute (`hasPresentationConflictResolution`).
+pub(super) fn role_of(dom: &Dom, id: NodeId) -> Option<String> {
+    let explicit = attr(dom, id, "role").and_then(|r| r.split(' ').map(str::trim).find(|t| VALID_ROLES.contains(t)));
+    match explicit {
+        Some(r @ ("none" | "presentation")) => {
+            let implicit = implicit_role(dom, id);
+            let conflict = implicit.as_deref().unwrap_or("");
+            if has_global_aria(dom, id, conflict) || pw_focusable(dom, id) {
+                implicit
+            } else {
+                Some(r.into())
+            }
+        }
+        Some(r) => Some(r.into()),
+        None => implicit_role(dom, id),
+    }
+}
+
+/// Implicit ARIA role, by Playwright's `kImplicitRoleByTagName`.
+fn implicit_role(dom: &Dom, id: NodeId) -> Option<String> {
     let ty = || attr(dom, id, "type").unwrap_or("").to_ascii_lowercase();
     // `<header>`/`<footer>` are landmarks only outside sectioning content.
     let in_sectioning = || {
@@ -1798,40 +2019,84 @@ fn label_text(dom: &Dom, doc: NodeId, id: NodeId) -> Option<String> {
 }
 
 /// Playwright's `isElementHiddenForAria`: scripts and templates, elements
-/// not rendered (`display:none`, `visibility:hidden`), and anything inside
-/// an `aria-hidden="true"` or `inert` subtree. `ancestors` walks up for the
-/// subtree rules (a descendant traversal has already passed its parents).
-fn hidden_for_aria(dom: &Dom, layout: &Layout, id: NodeId, ancestors: bool) -> bool {
+/// not rendered (`display:none`, `visibility:hidden`), light-DOM children of
+/// a shadow host assigned to no slot, and anything inside an
+/// `aria-hidden="true"` or `inert` subtree. `ancestors` walks up (through
+/// shadow hosts) for the subtree rules; a descendant traversal has already
+/// passed its parents.
+pub(super) fn hidden_for_aria(dom: &Dom, layout: &Layout, id: NodeId, ancestors: bool) -> bool {
     if matches!(local(dom, id), Some("style" | "script" | "noscript" | "template")) {
         return true;
     }
-    let in_select =
-        || local(dom, id) == Some("option") && self_and_ancestors(dom, id).any(|a| local(dom, a) == Some("select"));
+    let select = || {
+        if local(dom, id) == Some("option") {
+            self_and_ancestors(dom, id).find(|a| local(dom, *a) == Some("select"))
+        } else {
+            None
+        }
+    };
+    let in_select = || select().is_some();
     let style = layout.style();
+    // Playwright's `isOptionInsideSelect` skips only the box check: an
+    // option's own `hidden` still hides it. (lp-dom computes every option
+    // as display:none, author or not, so its display cannot tell.)
+    if in_select() && attr(dom, id, "hidden").is_some() {
+        return true;
+    }
+    // Chromium gives an optgroup of a drop-down <select> no box
+    // (`checkVisibility()` is false), and Playwright has no exception for
+    // it: it and its options are left out.
+    if local(dom, id) == Some("optgroup") && closed_select(dom, id) {
+        return true;
+    }
     if ancestors {
         // An option of a closed <select> has no box of its own: as in
         // Playwright, it is as visible as its select.
-        let boxed = if in_select() {
-            self_and_ancestors(dom, id).find(|a| local(dom, *a) == Some("select")).unwrap_or(id)
-        } else {
-            id
-        };
-        if !layout.is_visible(dom, boxed) {
+        if !layout.is_visible(dom, select().unwrap_or(id)) {
             return true;
         }
-    } else if style.has_display_none(dom, id) {
+    } else if !in_select() && style.has_display_none(dom, id) {
         return true;
     }
     if style.has_visibility_hidden_inherited(dom, id) && !in_select() {
         return true;
     }
-    let mut chain = self_and_ancestors(dom, id);
-    let hidden = |n: NodeId| aria_true(dom, n, "aria-hidden") || attr(dom, n, "inert").is_some();
+    // No `inert` rule: Playwright's isElementHiddenForAria has none, and
+    // `checkVisibility()` ignores inert, so getByRole finds inert content.
+    let hidden = |n: NodeId| aria_true(dom, n, "aria-hidden") || non_slotted(dom, n);
     if ancestors {
-        chain.any(hidden)
+        aria_ancestors(dom, id).any(hidden)
     } else {
-        chain.next().is_some_and(hidden)
+        hidden(id)
     }
+}
+
+/// A light-DOM child of a shadow host that no slot shows
+/// (Playwright's `belongsToDisplayNoneOrAriaHiddenOrNonSlotted`).
+fn non_slotted(dom: &Dom, id: NodeId) -> bool {
+    dom.parent_element(id).ok().flatten().is_some_and(|p| dom.shadow_root(p).ok().flatten().is_some())
+        && dom.assigned_slot(id).ok().flatten().is_none()
+}
+
+/// An `<optgroup>` of a drop-down (combobox) `<select>`.
+fn closed_select(dom: &Dom, id: NodeId) -> bool {
+    self_and_ancestors(dom, id).find(|a| local(dom, *a) == Some("select")).is_some_and(|s| {
+        let sized = attr(dom, s, "size").is_some_and(|v| v.trim().parse::<u32>().is_ok_and(|n| n > 1));
+        attr(dom, s, "multiple").is_none() && !sized
+    })
+}
+
+/// `id` and its ancestors, crossing from a shadow root to its host
+/// (Playwright's `parentElementOrShadowHost`).
+fn aria_ancestors(dom: &Dom, id: NodeId) -> impl Iterator<Item = NodeId> + '_ {
+    std::iter::successors(Some(id), move |n| {
+        let p = dom.parent(*n).ok().flatten()?;
+        if dom.element(p).is_ok() {
+            Some(p)
+        } else {
+            dom.fragment_host(p).ok().flatten().filter(|_| dom.is_shadow_root(p).unwrap_or(false))
+        }
+    })
 }
 
 /// How the element being named relates to the one whose text alternative
@@ -1982,7 +2247,12 @@ impl Names<'_> {
             self.visited.borrow_mut().insert(id);
             return label.to_owned();
         }
-        // 2E: native text alternatives.
+        // 2E: native text alternatives. A form control is visited before its
+        // labels are read, as in Playwright, so a label wrapping it does not
+        // read the control's own placeholder or title into its name.
+        if matches!(tag, "input" | "textarea" | "select" | "button" | "output") {
+            self.visited.borrow_mut().insert(id);
+        }
         if !matches!(role.as_str(), "presentation" | "none") {
             if let Some(name) = self.native_alternative(id, tag, labelledby.is_some(), opts, child_opts) {
                 self.visited.borrow_mut().insert(id);
@@ -2082,9 +2352,9 @@ impl Names<'_> {
             "textarea" if !has_labelledby => Some(
                 from_labels().or_else(|| attr_text("title")).or_else(|| attr_text("placeholder")).unwrap_or_default(),
             ),
-            "select" | "meter" | "progress" if !has_labelledby => {
-                Some(from_labels().or_else(|| attr_text("title")).unwrap_or_default())
-            }
+            // Playwright has no branch for <meter> / <progress>: their labels
+            // never name them; they fall through to content and title.
+            "select" if !has_labelledby => Some(from_labels().or_else(|| attr_text("title")).unwrap_or_default()),
             "fieldset" if !has_labelledby => {
                 Some(child_named("legend").or_else(|| attr_text("title")).unwrap_or_default())
             }
@@ -3426,8 +3696,8 @@ impl MatchScreenshotParams {
         if !(0.0..=1.0).contains(&threshold) {
             return Err(CdpError::invalid_params("threshold must be between 0 and 1"));
         }
-        let ratio = self.max_diff_pixel_ratio.unwrap_or(0.0);
-        if !(0.0..=1.0).contains(&ratio) {
+        let ratio = self.max_diff_pixel_ratio;
+        if ratio.is_some_and(|r| !(0.0..=1.0).contains(&r)) {
             return Err(CdpError::invalid_params("maxDiffPixelRatio must be between 0 and 1"));
         }
         if let Some(c) = &self.clip {
@@ -3445,7 +3715,7 @@ impl MatchScreenshotParams {
             baseline,
             scene_hash,
             threshold,
-            max_diff_pixels: self.max_diff_pixels.unwrap_or(0),
+            max_diff_pixels: self.max_diff_pixels,
             max_diff_pixel_ratio: ratio,
             clip: self.clip.map(|c| (c.x, c.y, c.width, c.height)),
             full_page: self.full_page,
@@ -3825,9 +4095,10 @@ impl QueryParams {
             "name" => Read::Name,
             "focused" => Read::Focused,
             "enabled" => Read::Enabled,
+            "aria" => Read::Aria,
             _ => {
                 return Err(CdpError::invalid_params(
-                    "read must be count, text, value, visible, box, css, name, focused or enabled",
+                    "read must be count, text, value, visible, box, css, name, focused, enabled or aria",
                 ));
             }
         })
@@ -3909,6 +4180,10 @@ fn read_value(page: &PageDom, el: NodeId, read: Read, property: Option<&str>) ->
         }
         Read::Focused => json!(page.dom.borrow().focused(page.document()).ok().flatten() == Some(el)),
         Read::Enabled => json!(!disabled(&page.dom.borrow(), el)),
+        Read::Aria => match super::aria_snapshot::aria_tree(&page.dom.borrow(), &page.layout(), page.document(), el) {
+            Ok(tree) => tree,
+            Err(e) => json!({ "error": e }),
+        },
         Read::Text => json!(normalize(&text_of(&page.dom.borrow(), el))),
         Read::Value => json!(page.dom.borrow().value(el).unwrap_or_default()),
         Read::Visible => json!(visible_box(page, el).is_some()),

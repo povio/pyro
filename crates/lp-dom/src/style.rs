@@ -776,7 +776,15 @@ pub struct StyleEngine {
     /// DOM's tree version it was computed at (`<style>` texts only change
     /// with the tree).
     sheets_key: Cell<Option<((u64, u64), u64)>>,
+    /// Called before the layout engine computes styles anew (CSS rule
+    /// usage tracking, `CSS.startRuleUsageTracking`), with the stamp it last
+    /// ran for.
+    recalc_hook: RefCell<Option<RecalcHook>>,
+    recalc_hooked_at: Cell<Option<ObservationStamp>>,
 }
+
+/// [`StyleEngine::set_recalc_hook`].
+pub type RecalcHook = Rc<dyn Fn(&Dom, &StyleEngine)>;
 
 /// [`StyleEngine::observation_stamp`]: DOM version, sheet generation,
 /// focused and hovered elements.
@@ -805,6 +813,28 @@ impl StyleEngine {
             gecko_rules: RefCell::new(None),
             revisions: 0,
             sheets_key: Cell::new(None),
+            recalc_hook: RefCell::new(None),
+            recalc_hooked_at: Cell::new(None),
+        }
+    }
+
+    /// Calls `hook` before each style recalculation of the layout engine
+    /// (a style or layout query after the document changed); `None`: no more.
+    pub fn set_recalc_hook(&self, hook: Option<RecalcHook>) {
+        *self.recalc_hook.borrow_mut() = hook;
+        self.recalc_hooked_at.set(None);
+    }
+
+    pub fn has_recalc_hook(&self) -> bool {
+        self.recalc_hook.borrow().is_some()
+    }
+
+    /// Runs the recalc hook, once per observation stamp.
+    pub(crate) fn before_recalc(&self, dom: &Dom) {
+        let Some(hook) = self.recalc_hook.borrow().clone() else { return };
+        let stamp = self.observation_stamp(dom);
+        if self.recalc_hooked_at.replace(Some(stamp)) != Some(stamp) {
+            hook(dom, self);
         }
     }
 
@@ -863,6 +893,7 @@ impl StyleEngine {
             }
             source.clone()
         };
+        self.before_recalc(dom);
         self.external_syncing.set(true);
         source.sync_styles(dom, self);
         self.external_syncing.set(false);

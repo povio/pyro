@@ -26,7 +26,12 @@ export type WebServer = {
 export type Project = { name?: string; use?: Record<string, unknown>; timeout?: number; retries?: number; testDir?: string; outputDir?: string; metadata?: Record<string, unknown>; [k: string]: unknown };
 export type PlaywrightTestConfig = Project & {
   projects?: Project[];
-  expect?: { timeout?: number };
+  expect?: {
+    timeout?: number;
+    /** Playwright's `expect.toMatchAriaSnapshot`: the default `/children` mode and the snapshot path template. */
+    toMatchAriaSnapshot?: { children?: 'contain' | 'equal' | 'deep-equal'; pathTemplate?: string };
+    [k: string]: unknown;
+  };
   webServer?: WebServer | WebServer[];
   globalSetup?: string | string[];
   globalTeardown?: string | string[];
@@ -63,6 +68,12 @@ export type ResolvedProject = {
   timeout: number;
   retries: number;
   metadata: Record<string, unknown>;
+  /** Where snapshots live (`snapshotDir`, else testDir) and their path template. */
+  snapshotDir: string;
+  snapshotPathTemplate?: string;
+  /** The config file's directory: snapshot paths resolve against it, as in Playwright. */
+  configDir: string;
+  expect: Record<string, any>;
 };
 type Matcher = string | RegExp | (string | RegExp)[];
 export type Loaded = {
@@ -175,6 +186,11 @@ export async function loadConfig(): Promise<Loaded> {
     timeout: (p.timeout ?? config.timeout ?? 30_000) as number,
     retries: Number(process.env.LP_RETRIES ?? p.retries ?? config.retries ?? 0),
     metadata: { ...((config.metadata as object) ?? {}), ...(p.metadata ?? {}) },
+    snapshotDir: resolve(dir, (p.snapshotDir ?? config.snapshotDir ?? p.testDir ?? config.testDir ?? '.') as string),
+    snapshotPathTemplate: (p.snapshotPathTemplate ?? config.snapshotPathTemplate) as string | undefined,
+    configDir: dir,
+    // Playwright's takeFirst: a project's `expect` replaces the top-level one.
+    expect: { ...(((p.expect ?? config.expect) as object) ?? {}) },
   });
   const projects = config.projects?.length ? config.projects.map(resolveProject) : [resolveProject({}, 0)];
   const want = process.env.LP_PROJECT;

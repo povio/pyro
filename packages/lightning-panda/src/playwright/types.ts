@@ -248,7 +248,11 @@ export interface TestProject<TestArgs = {}, WorkerArgs = {}> {
   snapshotDir?: string;
   snapshotPathTemplate?: string;
   teardown?: string;
-  expect?: { timeout?: number };
+  expect?: {
+    timeout?: number;
+    /** Playwright's `expect.toMatchAriaSnapshot`: the default `/children` mode and the snapshot path template. */
+    toMatchAriaSnapshot?: { children?: 'contain' | 'equal' | 'deep-equal'; pathTemplate?: string };
+  };
 }
 
 export interface PlaywrightTestConfig<TestArgs = {}, WorkerArgs = {}> extends Omit<TestProject<TestArgs, WorkerArgs>, 'dependencies' | 'teardown'> {

@@ -491,7 +491,8 @@ async function runTest(entry: Entry): Promise<void> {
         record({ file: entry.scope.file, titlePath, status: 'passed', expectedFailure: true, duration: Date.now() - started, retries: attempt });
         return;
       }
-      if (attempt < retries) {
+      // A missing snapshot written in "missing" mode is not retried, as in Playwright.
+      if (attempt < retries && !info._hasNonRetriableError) {
         if (!process.env.LP_RESULTS) console.log(`  ↳ retry ${attempt + 1}/${retries}: ${entry.title}`);
         continue;
       }

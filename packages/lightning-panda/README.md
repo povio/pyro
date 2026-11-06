@@ -227,9 +227,28 @@ Types are Playwright's own shapes, checked by `bun run test:types`:
 arguments, `getByRole` takes the ARIA role union, and `evaluate`/`$eval`
 infer argument and return types. Deprecated APIs (`locator.type`,
 `elementHandle.type`, `noWaitAfter`, `page.accessibility`, FrameLocator
-`first`/`last`/`nth`) are left out, so using one is a type error. Not
-implemented yet: `page.clock`, `page.coverage`, `toMatchSnapshot` and ARIA
-snapshots.
+`first`/`last`/`nth`) are left out, so using one is a type error.
+
+- `page.clock` / `context.clock`: `install`, `pauseAt`, `resume`,
+  `fastForward`, `runFor`, `setFixedTime`, `setSystemTime`. Date, timers,
+  `requestAnimationFrame`, `requestIdleCallback` and `performance.now` are
+  faked in every document, new ones included; a paused clock does not hold
+  up an action's settling
+- `locator.ariaSnapshot()`, `page.ariaSnapshot()` and
+  `expect(locator).toMatchAriaSnapshot()`, with a template or a `.aria.yml`
+  file: partial matching, regexes, `/children` and the state attributes. The
+  tree is built in the browser from the same role and name code `getByRole`
+  uses. `mode: 'ai'` is not supported
+- `expect(value).toMatchSnapshot()` for strings and Buffers, at Playwright's
+  paths (`snapshotPathTemplate`, `testInfo.snapshotPath(name, { kind })`).
+  PNGs compare by pixel (`threshold`, `maxDiffPixels`,
+  `maxDiffPixelRatio`), the rest by bytes. A missing snapshot is written and
+  fails the test; `lightningpanda test -u [all|changed|missing|none]` rewrites
+- `toHaveScreenshot(name)`: baselines at Playwright's snapshot path
+  (`<test file>-snapshots/<name>-<platform>.png`, or `snapshotPathTemplate`),
+  rendered by lightningpanda; a mismatch writes `-actual`, `-expected` and
+  `-diff` images into the test's output directory. With both
+  `maxDiffPixels` and `maxDiffPixelRatio`, the stricter limit applies
 
 Not supported (a clear error): the deprecated layout pseudo-classes
 (`:left-of()`, `:right-of()`, `:above()`, `:below()`, `:near()`); a `+` or `~`

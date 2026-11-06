@@ -511,7 +511,8 @@ pub mod spi {
         unsafe extern "C" fn(group: JSContextGroupRef, object: JSObjectRef, keep_alive: *const u8) -> JSWeakRef;
     pub type JSWeakReleaseFn = unsafe extern "C" fn(group: JSContextGroupRef, weak: JSWeakRef);
     /// `JSWeakRelease` of `count` handles under one lock (patched JSC).
-    pub type JSWeakReleaseManyFn = unsafe extern "C" fn(group: JSContextGroupRef, weaks: *const JSWeakRef, count: usize);
+    pub type JSWeakReleaseManyFn =
+        unsafe extern "C" fn(group: JSContextGroupRef, weaks: *const JSWeakRef, count: usize);
     pub type JSWeakGetObjectFn = unsafe extern "C" fn(weak: JSWeakRef) -> JSObjectRef;
     /// The structure of new wrappers of a class with one prototype in one
     /// global object (patched JSC, `JSWrapperShapeCreate`); null if the class
@@ -723,6 +724,61 @@ pub mod spi {
     pub type JSStringGetStoredCharactersFn =
         unsafe extern "C" fn(string: JSStringRef, length: *mut usize, is_8bit: *mut bool) -> *const c_void;
 
+    /// A source of block coverage (patched JSC, `webkit/patches/0019-block-coverage.patch`):
+    /// its id, the global object it first ran in (an identity only), URL (a
+    /// `//# sourceURL=` comment wins), the URL of the code that made it (eval,
+    /// `new Function`; may be null), text (null from `JSContextGroupTakeCoverage`)
+    /// and whether it is a module. Valid for the callback only.
+    #[repr(C)]
+    #[derive(Debug, Clone, Copy)]
+    pub struct JSCoverageSource {
+        pub source_id: isize,
+        pub global: JSGlobalContextRef,
+        pub url: JSStringRef,
+        pub origin_url: JSStringRef,
+        pub source: JSStringRef,
+        pub is_module: bool,
+    }
+    /// One basic block: UTF-16 source offsets, `end` inclusive, and how often it ran.
+    #[repr(C)]
+    #[derive(Debug, Clone, Copy)]
+    pub struct JSCoverageBlock {
+        pub start: i32,
+        pub end: i32,
+        pub count: u64,
+    }
+    /// A function declared by code compiled while coverage was on: `end` is
+    /// its closing brace; `name` is null when anonymous.
+    #[repr(C)]
+    #[derive(Debug, Clone, Copy)]
+    pub struct JSCoverageFunction {
+        pub start: u32,
+        pub end: u32,
+        pub executed: bool,
+        pub name: JSStringRef,
+    }
+    pub type JSCoverageSourceCallback = unsafe extern "C" fn(
+        data: *mut c_void,
+        source: *const JSCoverageSource,
+        blocks: *const JSCoverageBlock,
+        block_count: usize,
+        functions: *const JSCoverageFunction,
+        function_count: usize,
+    );
+    /// Counted on/off of block coverage for a VM; the first enable and the
+    /// last disable recompile all code once no JavaScript runs.
+    pub type JSContextGroupSetCoverageEnabledFn = unsafe extern "C" fn(group: JSContextGroupRef, enabled: bool);
+    /// The sources first compiled after the first `*cursor` ones, with text.
+    pub type JSContextGroupCoverageNewSourcesFn = unsafe extern "C" fn(
+        group: JSContextGroupRef,
+        cursor: *mut usize,
+        callback: JSCoverageSourceCallback,
+        data: *mut c_void,
+    );
+    /// Every source with what ran, without text.
+    pub type JSContextGroupTakeCoverageFn =
+        unsafe extern "C" fn(group: JSContextGroupRef, callback: JSCoverageSourceCallback, data: *mut c_void);
+
     /// Runtime-resolved SPI table. Each entry is `None` when the running
     /// JavaScriptCore does not export the symbol.
     #[derive(Debug, Clone, Copy)]
@@ -771,6 +827,9 @@ pub mod spi {
         pub make_string_utf16: Option<JSValueMakeStringUTF16Fn>,
         pub string_create_latin1: Option<JSStringCreateWithLatin1CharactersFn>,
         pub string_stored_characters: Option<JSStringGetStoredCharactersFn>,
+        pub set_coverage_enabled: Option<JSContextGroupSetCoverageEnabledFn>,
+        pub coverage_new_sources: Option<JSContextGroupCoverageNewSourcesFn>,
+        pub take_coverage: Option<JSContextGroupTakeCoverageFn>,
     }
 
     impl Spi {
@@ -793,6 +852,17 @@ pub mod spi {
                 create_latin1: self.string_create_latin1?,
                 stored_characters: self.string_stored_characters?,
             })
+        }
+
+        /// Block coverage (patch 0019) needs all three entry points.
+        pub fn coverage(
+            &self,
+        ) -> Option<(
+            JSContextGroupSetCoverageEnabledFn,
+            JSContextGroupCoverageNewSourcesFn,
+            JSContextGroupTakeCoverageFn,
+        )> {
+            Some((self.set_coverage_enabled?, self.coverage_new_sources?, self.take_coverage?))
         }
 
         /// fork() support needs all three entry points.
@@ -886,6 +956,9 @@ pub mod spi {
             make_string_utf16: resolve!("JSValueMakeStringUTF16"),
             string_create_latin1: resolve!("JSStringCreateWithLatin1Characters"),
             string_stored_characters: resolve!("JSStringGetStoredCharacters"),
+            set_coverage_enabled: resolve!("JSContextGroupSetCoverageEnabled"),
+            coverage_new_sources: resolve!("JSContextGroupCoverageNewSources"),
+            take_coverage: resolve!("JSContextGroupTakeCoverage"),
         })
     }
 }

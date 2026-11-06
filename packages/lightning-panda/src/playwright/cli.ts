@@ -20,6 +20,8 @@ type Args = {
   retries?: string;
   timeout?: string;
   update: boolean;
+  /** `-u [mode]`: all, changed (the default), missing or none. */
+  updateMode?: string;
   list: boolean;
   fullyParallel: boolean;
   reporter: 'list' | 'dot' | 'line';
@@ -40,7 +42,9 @@ with bun test, in worker processes, as \`playwright test\` does.
       --grep-invert <re>  skip tests whose title path matches
       --retries <n>       retries of a failing test
       --timeout <ms>      test timeout
-  -u, --update-snapshots  write screenshot baselines
+  -u, --update-snapshots [mode]
+                          rewrite snapshots and screenshot baselines: changed
+                          (the default), all, missing or none
       --fully-parallel    run every file's tests in parallel
   -x                      stop after the first failure (as --max-failures=1)
       --max-failures <n>  stop after n failures
@@ -87,9 +91,15 @@ function parse(argv: string[]): Args {
         a.timeout = value();
         break;
       case '-u':
-      case '--update-snapshots':
+      case '--update-snapshots': {
         a.update = true;
+        const next = inline ?? argv[i + 1];
+        if (['all', 'changed', 'missing', 'none'].includes(next ?? '')) {
+          a.updateMode = next;
+          if (inline === undefined) i++;
+        }
         break;
+      }
       case '--fully-parallel':
         a.fullyParallel = true;
         break;
@@ -249,7 +259,7 @@ export async function main(argv: string[]): Promise<number> {
             ...(args.grep ? { LP_GREP: args.grep } : {}),
             ...(args.grepInvert ? { LP_GREP_INVERT: args.grepInvert } : {}),
             ...(args.list ? { LP_LIST: '1' } : {}),
-            ...(args.update ? { LP_UPDATE_SNAPSHOTS: '1' } : {}),
+            ...(args.update ? { LP_UPDATE_SNAPSHOTS: args.updateMode ?? 'changed' } : {}),
           },
           stdio: ['ignore', args.quiet ? 'ignore' : 'pipe', 'pipe'],
         });

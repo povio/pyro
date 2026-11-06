@@ -37,6 +37,8 @@ export interface LocatorAssertions {
   toHaveText(expected: string | RegExp | ReadonlyArray<string | RegExp>, options?: TextOptions): Promise<void>;
   toHaveValue(value: string | RegExp, options?: Timeout): Promise<void>;
   toHaveValues(values: ReadonlyArray<string | RegExp>, options?: Timeout): Promise<void>;
+  toMatchAriaSnapshot(expected: string, options?: Timeout): Promise<void>;
+  toMatchAriaSnapshot(options?: Timeout & { name?: string }): Promise<void>;
   not: LocatorAssertions;
 }
 
@@ -82,6 +84,9 @@ export interface GenericMatchers<R> {
   toStrictEqual(expected: unknown): R;
   toThrow(error?: unknown): R;
   toThrowError(error?: unknown): R;
+  /** A string or Buffer against its file at Playwright's snapshot path. */
+  toMatchSnapshot(name: string | ReadonlyArray<string>, options?: { maxDiffPixels?: number; maxDiffPixelRatio?: number; threshold?: number }): R;
+  toMatchSnapshot(options?: { name?: string | ReadonlyArray<string>; maxDiffPixels?: number; maxDiffPixelRatio?: number; threshold?: number }): R;
 }
 
 /** What a matcher added with `expect.extend` returns. */

@@ -1,7 +1,8 @@
 // The running test, for `test.info()`, `test.step()` and `expect.soft()`.
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { mkdirSync, readFileSync } from 'node:fs';
-import { dirname, join, basename } from 'node:path';
+import { join, basename, relative } from 'node:path';
+import { anonymousName, snapshotPath, type SnapshotKind } from './snapshot.js';
 
 export type Annotation = { type: string; description?: string };
 export type Attachment = { name: string; contentType: string; path?: string; body?: Buffer };
@@ -20,8 +21,11 @@ export class TestInfo {
   readonly repeatEachIndex = 0;
   readonly column = 0;
   readonly line = 0;
-  readonly snapshotSuffix = '';
+  /** `{snapshotSuffix}` in the snapshot template: the platform, as Playwright's page fixture sets it; '' drops it. */
+  snapshotSuffix: string = process.platform;
   _softErrors: Error[] = [];
+  /** A missing snapshot was written ("missing" mode): the test fails and is not retried. */
+  _hasNonRetriableError = false;
   /** Set by `test.skip()` / `test.fixme()` in the body: the run stops there. */
   _skipped?: string;
   _onTimeout?: (ms: number) => void;
@@ -31,7 +35,7 @@ export class TestInfo {
     readonly title: string,
     readonly titlePath: string[],
     readonly file: string,
-    readonly project: { name: string; use: Record<string, unknown>; outputDir: string; testDir: string; timeout: number; retries: number; metadata: Record<string, unknown> },
+    readonly project: { name: string; use: Record<string, unknown>; outputDir: string; testDir: string; timeout: number; retries: number; metadata: Record<string, unknown>; snapshotDir?: string; configDir?: string },
     readonly config: Record<string, any>,
     public timeout: number,
     readonly retry: number,
@@ -47,11 +51,24 @@ export class TestInfo {
     mkdirSync(this.outputDir, { recursive: true });
     return join(this.outputDir, ...parts);
   }
+  /** As Playwright's: `<project.snapshotDir>/<test file path>-snapshots`. */
   get snapshotDir(): string {
-    return join(dirname(this.file), '__screenshots__');
+    return join(this.project.snapshotDir ?? this.project.testDir, relative(this.project.testDir, this.file) + '-snapshots');
   }
-  snapshotPath(...parts: string[]): string {
-    return join(this.snapshotDir, ...parts);
+  /** Playwright's snapshot path for `name` (`snapshotPathTemplate`). */
+  snapshotPath(...parts: string[]): string;
+  snapshotPath(name: string, options: { kind: 'snapshot' | 'screenshot' | 'aria' }): string;
+  snapshotPath(...args: any[]): string {
+    let kind = 'snapshot';
+    const last = args[args.length - 1];
+    if (last && typeof last === 'object') {
+      kind = last.kind ?? kind;
+      args = args.slice(0, -1);
+    }
+    if (!['snapshot', 'screenshot', 'aria'].includes(kind)) throw new Error(`testInfo.snapshotPath: unknown kind "${kind}", must be one of "snapshot", "screenshot" or "aria"`);
+    const k = kind as SnapshotKind;
+    const name = args.length > 1 ? args : args[0] || anonymousName(this, { aria: '.aria.yml', screenshot: '.png', snapshot: '.txt' }[k], k, false);
+    return snapshotPath(this, name, k);
   }
   setTimeout(ms: number): void {
     this.timeout = ms;

@@ -1,0 +1,419 @@
+diff --git a/Source/JavaScriptCore/API/JSCoverage.cpp b/Source/JavaScriptCore/API/JSCoverage.cpp
+new file mode 100644
+index 0000000000..dc8b692920
+--- /dev/null
++++ b/Source/JavaScriptCore/API/JSCoverage.cpp
+@@ -0,0 +1,151 @@
++/*
++ * Lightningpanda: see JSCoveragePrivate.h.
++ */
++
++#include "config.h"
++#include "JSCoveragePrivate.h"
++
++#include "APICast.h"
++#include "ControlFlowProfiler.h"
++#include "DeleteAllCodeEffort.h"
++#include "JSCInlines.h"
++#include "JSGlobalObject.h"
++#include "JSLock.h"
++#include "OpaqueJSString.h"
++#include "SourceProvider.h"
++#include "VM.h"
++#include <wtf/HashMap.h>
++#include <wtf/Lock.h>
++#include <wtf/NeverDestroyed.h>
++
++using namespace JSC;
++
++namespace {
++
++// The enables of each VM not yet matched by a disable. The VM keeps its own count of
++// profiler users, which must never go below zero.
++UncheckedKeyHashMap<VM*, unsigned>& coverageUsers()
++{
++    static NeverDestroyed<UncheckedKeyHashMap<VM*, unsigned>> users;
++    return users;
++}
++Lock coverageUsersLock;
++
++} // namespace
++
++void JSContextGroupSetCoverageEnabled(JSContextGroupRef group, bool enabled)
++{
++    if (!group)
++        return;
++    VM& vm = *toJS(group);
++    JSLockHolder locker(vm);
++    {
++        Locker lock { coverageUsersLock };
++        auto& users = coverageUsers();
++        auto it = users.find(&vm);
++        unsigned count = it == users.end() ? 0 : it->value;
++        if (!enabled && !count)
++            return;
++        count = enabled ? count + 1 : count - 1;
++        if (count)
++            users.set(&vm, count);
++        else
++            users.remove(&vm);
++    }
++    // As Web Inspector's Runtime.enableControlFlowProfiler: no code may be on the stack
++    // while the profiler (whose counters compiled code points at) comes or goes.
++    vm.whenIdle([&vm, enabled] {
++        bool recompile = enabled ? vm.enableControlFlowProfiler() : vm.disableControlFlowProfiler();
++        if (recompile)
++            vm.deleteAllCode(PreventCollectionAndDeleteAllCode);
++    });
++}
++
++static JSStringRef copyString(const String& string)
++{
++    if (string.isNull())
++        return nullptr;
++    return OpaqueJSString::tryCreate(String { string }).leakRef();
++}
++
++static void release(JSStringRef string)
++{
++    if (string)
++        string->deref();
++}
++
++// Calls `callback` for one source; the strings it makes are released after.
++template<typename Body>
++static void withSource(SourceID sourceID, const ControlFlowProfiler::CoverageSource& entry, bool withText, const Body& body)
++{
++    SourceProvider& provider = *entry.provider;
++    // A `//# sourceURL=` comment names the script, as in V8.
++    const String& directive = provider.sourceURLDirective();
++    JSCoverageSource source {
++        sourceID,
++        reinterpret_cast<JSGlobalContextRef>(entry.globalObject),
++        copyString(directive.isEmpty() ? provider.sourceURL() : directive),
++        provider.sourceOrigin().isNull() ? nullptr : copyString(provider.sourceOrigin().url().string()),
++        withText ? copyString(provider.source().toString()) : nullptr,
++        provider.sourceType() == SourceProviderSourceType::Module,
++    };
++    body(source);
++    release(source.url);
++    release(source.originURL);
++    release(source.source);
++}
++
++void JSContextGroupCoverageNewSources(JSContextGroupRef group, size_t* cursor, JSCoverageSourceCallback callback, void* data)
++{
++    if (!group || !cursor || !callback)
++        return;
++    VM& vm = *toJS(group);
++    JSLockHolder locker(vm);
++    ControlFlowProfiler* profiler = vm.controlFlowProfiler();
++    if (!profiler)
++        return;
++    Vector<std::pair<SourceID, ControlFlowProfiler::CoverageSource>> sources;
++    const Vector<SourceID>& order = profiler->coverageSourceOrder();
++    for (size_t i = *cursor; i < order.size(); ++i)
++        sources.append({ order[i], profiler->coverageSources().get(order[i]) });
++    *cursor = std::max(*cursor, order.size());
++    for (auto& [sourceID, entry] : sources) {
++        withSource(sourceID, entry, true, [&](const JSCoverageSource& source) {
++            callback(data, &source, nullptr, 0, nullptr, 0);
++        });
++    }
++}
++
++void JSContextGroupTakeCoverage(JSContextGroupRef group, JSCoverageSourceCallback callback, void* data)
++{
++    if (!group || !callback)
++        return;
++    VM& vm = *toJS(group);
++    JSLockHolder locker(vm);
++    ControlFlowProfiler* profiler = vm.controlFlowProfiler();
++    if (!profiler)
++        return;
++
++    // Copied first: the callback may run code that compiles more.
++    Vector<std::pair<SourceID, ControlFlowProfiler::CoverageSource>> sources;
++    for (SourceID id : profiler->coverageSourceOrder())
++        sources.append({ id, profiler->coverageSources().get(id) });
++
++    for (auto& [sourceID, entry] : sources) {
++        Vector<JSCoverageBlock> blocks;
++        for (const BasicBlockRange& range : profiler->coverageBlocks(sourceID)) {
++            if (range.m_endOffset < range.m_startOffset)
++                continue;
++            blocks.append(JSCoverageBlock { range.m_startOffset, range.m_endOffset, static_cast<uint64_t>(range.m_executionCount) });
++        }
++        Vector<JSCoverageFunction> functions;
++        for (auto& function : profiler->coverageFunctions(sourceID))
++            functions.append(JSCoverageFunction { function.start, function.end, function.executed, function.name.isEmpty() ? nullptr : copyString(function.name) });
++
++        withSource(sourceID, entry, false, [&](const JSCoverageSource& source) {
++            callback(data, &source, blocks.span().data(), blocks.size(), functions.span().data(), functions.size());
++        });
++        for (auto& function : functions)
++            release(function.name);
++    }
++}
+diff --git a/Source/JavaScriptCore/API/JSCoveragePrivate.h b/Source/JavaScriptCore/API/JSCoveragePrivate.h
+new file mode 100644
+index 0000000000..c6a5b1fd4c
+--- /dev/null
++++ b/Source/JavaScriptCore/API/JSCoveragePrivate.h
+@@ -0,0 +1,78 @@
++/*
++ * Lightningpanda: block coverage, for CDP's precise coverage (Playwright's
++ * page.coverage.startJSCoverage). Built on the control flow profiler that Web Inspector
++ * uses: with it on, code is compiled with a counter at the start of every basic block.
++ * Off (the default) it costs nothing; turning it on or off recompiles all code.
++ */
++
++#ifndef JSCoveragePrivate_h
++#define JSCoveragePrivate_h
++
++#include <JavaScriptCore/JSBase.h>
++#include <stdbool.h>
++#include <stddef.h>
++#include <stdint.h>
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++/* Counted: block coverage is on while the enables outnumber the disables (a disable
++   without an enable is ignored). The first enable and the last disable drop all
++   compiled code of `group`, which recompiles on its next run (with or without the
++   counters); they take effect once no JavaScript of `group` is running. Disabling
++   forgets what was counted. Code that ran before coverage was on is reported only
++   for the functions that run again. */
++JS_EXPORT void JSContextGroupSetCoverageEnabled(JSContextGroupRef group, bool enabled);
++
++/* A source that has code compiled since coverage was turned on: its id (unique in the
++   process), the global object it first ran in (an identity only: it may be gone), its
++   URL (its `//# sourceURL=` comment, else the URL given to JSEvaluateScript or the
++   module's), the URL of the code that created it (for eval and new Function, which have
++   no URL of their own; NULL when none), its text (NULL where noted) and whether it is a
++   module. */
++typedef struct {
++    intptr_t sourceID;
++    JSGlobalContextRef globalObject;
++    JSStringRef url;
++    JSStringRef originURL;
++    JSStringRef source;
++    bool isModule;
++} JSCoverageSource;
++
++/* One basic block (or the part of it between the functions it encloses): source
++   offsets in UTF-16 units, `end` inclusive, and how many times it ran. */
++typedef struct {
++    int32_t start;
++    int32_t end;
++    uint64_t count;
++} JSCoverageBlock;
++
++/* A function declared by code compiled while coverage was on: offsets as in
++   JSCoverageBlock (`end` is its closing brace), whether it ran, and its name (NULL
++   when anonymous). */
++typedef struct {
++    uint32_t start;
++    uint32_t end;
++    bool executed;
++    JSStringRef name;
++} JSCoverageFunction;
++
++/* The strings and arrays live for the duration of the call. */
++typedef void (*JSCoverageSourceCallback)(void* data, const JSCoverageSource* source,
++    const JSCoverageBlock* blocks, size_t blockCount, const JSCoverageFunction* functions, size_t functionCount);
++
++/* Calls `callback` (with its text, and no blocks or functions) for each source first
++   compiled after the first `*cursor` ones, in that order, and advances `*cursor`. Start
++   at 0 each time coverage is turned on. Nothing when coverage is off. */
++JS_EXPORT void JSContextGroupCoverageNewSources(JSContextGroupRef group, size_t* cursor, JSCoverageSourceCallback callback, void* data);
++
++/* Calls `callback` (with no text) for every source of `group` that has code compiled
++   since coverage was turned on, with what ran. Nothing when coverage is off. */
++JS_EXPORT void JSContextGroupTakeCoverage(JSContextGroupRef group, JSCoverageSourceCallback callback, void* data);
++
++#ifdef __cplusplus
++}
++#endif
++
++#endif /* JSCoveragePrivate_h */
+diff --git a/Source/JavaScriptCore/Sources.txt b/Source/JavaScriptCore/Sources.txt
+index adc25aae48..0073fbe84e 100644
+--- a/Source/JavaScriptCore/Sources.txt
++++ b/Source/JavaScriptCore/Sources.txt
+@@ -31,6 +31,7 @@ API/JSCallbackFunction.cpp
+ API/JSCallbackObject.cpp
+ API/JSClassRef.cpp
+ API/JSContextRef.cpp
++API/JSCoverage.cpp
+ API/JSFork.cpp
+ API/JSHeapFinalizerPrivate.cpp
+ API/JSLockRef.cpp
+diff --git a/Source/JavaScriptCore/bytecode/CodeBlock.cpp b/Source/JavaScriptCore/bytecode/CodeBlock.cpp
+index fdb63a69d9..f7dab00dad 100644
+--- a/Source/JavaScriptCore/bytecode/CodeBlock.cpp
++++ b/Source/JavaScriptCore/bytecode/CodeBlock.cpp
+@@ -434,11 +434,24 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
+     }
+ 
+     bool shouldUpdateFunctionHasExecutedCache = m_unlinkedCode->wasCompiledWithTypeProfilerOpcodes() || m_unlinkedCode->wasCompiledWithControlFlowProfilerOpcodes();
++    // Lightningpanda: block coverage (JSCoveragePrivate.h) keeps the source, and the functions
++    // this code declares, named.
++    ControlFlowProfiler* coverage = m_unlinkedCode->wasCompiledWithControlFlowProfilerOpcodes() ? vm.controlFlowProfiler() : nullptr;
++    if (coverage) {
++        coverage->noteCoverageSource(ownerExecutable->source().provider(), globalObject());
++        if (auto* function = dynamicDowncast<FunctionExecutable>(ownerExecutable))
++            coverage->noteCoverageFunction(ownerExecutable->sourceID(), function->functionStart(), function->functionEnd(), function->ecmaName().string(), true);
++    }
++    auto noteCoverageFunction = [&](UnlinkedFunctionExecutable* unlinkedExecutable) {
++        if (coverage)
++            coverage->noteCoverageFunction(ownerExecutable->sourceID(), unlinkedExecutable->unlinkedFunctionStart(), unlinkedExecutable->unlinkedFunctionEnd(), unlinkedExecutable->ecmaName().string(), false);
++    };
+     m_functionDecls = FixedVector<WriteBarrier<FunctionExecutable>>(unlinkedCodeBlock->numberOfFunctionDecls());
+     for (size_t count = unlinkedCodeBlock->numberOfFunctionDecls(), i = 0; i < count; ++i) {
+         UnlinkedFunctionExecutable* unlinkedExecutable = unlinkedCodeBlock->functionDecl(i);
+         if (shouldUpdateFunctionHasExecutedCache)
+             vm.functionHasExecutedCache()->insertUnexecutedRange(ownerExecutable->sourceID(), unlinkedExecutable->unlinkedFunctionStart(), unlinkedExecutable->unlinkedFunctionEnd());
++        noteCoverageFunction(unlinkedExecutable);
+         FunctionExecutable* executable = moduleEnvironment ? instantiatedModuleFunctionExecutable(moduleEnvironment, topLevelExecutable, unlinkedExecutable) : nullptr;
+         if (!executable)
+             executable = unlinkedExecutable->link(vm, topLevelExecutable, ownerExecutable->source(), std::nullopt, NoIntrinsic, ownerExecutable->isInsideOrdinaryFunction());
+@@ -450,6 +463,7 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
+         UnlinkedFunctionExecutable* unlinkedExecutable = unlinkedCodeBlock->functionExpr(i);
+         if (shouldUpdateFunctionHasExecutedCache)
+             vm.functionHasExecutedCache()->insertUnexecutedRange(ownerExecutable->sourceID(), unlinkedExecutable->unlinkedFunctionStart(), unlinkedExecutable->unlinkedFunctionEnd());
++        noteCoverageFunction(unlinkedExecutable);
+         m_functionExprs[i].set(vm, this, unlinkedExecutable->link(vm, topLevelExecutable, ownerExecutable->source(), std::nullopt, NoIntrinsic, ownerExecutable->isInsideOrdinaryFunction()));
+     }
+ 
+diff --git a/Source/JavaScriptCore/runtime/ControlFlowProfiler.cpp b/Source/JavaScriptCore/runtime/ControlFlowProfiler.cpp
+index 63a88a986e..9065803ab7 100644
+--- a/Source/JavaScriptCore/runtime/ControlFlowProfiler.cpp
++++ b/Source/JavaScriptCore/runtime/ControlFlowProfiler.cpp
+@@ -27,6 +27,7 @@
+ #include "config.h"
+ #include "ControlFlowProfiler.h"
+ 
++#include "SourceProvider.h"
+ #include "VM.h"
+ #include <wtf/TZoneMallocInlines.h>
+ 
+@@ -104,6 +105,58 @@ Vector<BasicBlockRange> ControlFlowProfiler::getBasicBlocksForSourceID(SourceID
+     return result;
+ }
+ 
++void ControlFlowProfiler::noteCoverageSource(SourceProvider* provider, JSGlobalObject* globalObject)
++{
++    if (!provider)
++        return;
++    SourceID id = provider->asID();
++    if (id <= 0)
++        return;
++    if (m_coverageSources.add(id, CoverageSource { provider, globalObject }).isNewEntry)
++        m_coverageSourceOrder.append(id);
++}
++
++void ControlFlowProfiler::noteCoverageFunction(SourceID sourceID, unsigned start, unsigned end, const String& name, bool executed)
++{
++    if (start == UINT_MAX || end == UINT_MAX || end < start)
++        return;
++    auto& functions = m_coverageFunctions.add(sourceID, UncheckedKeyHashMap<uint64_t, CoverageFunction> { }).iterator->value;
++    uint64_t key = ((static_cast<uint64_t>(start) << 32) | end) + 1;
++    auto result = functions.add(key, CoverageFunction { start, end, executed, name });
++    if (!result.isNewEntry) {
++        // A function is first seen unexecuted (declared by its parent's code) and marked
++        // executed once its own code is compiled; it never goes back.
++        result.iterator->value.executed |= executed;
++        if (result.iterator->value.name.isEmpty())
++            result.iterator->value.name = name;
++    }
++}
++
++Vector<ControlFlowProfiler::CoverageFunction> ControlFlowProfiler::coverageFunctions(SourceID sourceID) const
++{
++    Vector<CoverageFunction> result;
++    auto it = m_coverageFunctions.find(sourceID);
++    if (it == m_coverageFunctions.end())
++        return result;
++    for (auto& function : it->value.values())
++        result.append(function);
++    return result;
++}
++
++Vector<BasicBlockRange> ControlFlowProfiler::coverageBlocks(SourceID sourceID) const
++{
++    Vector<BasicBlockRange> result;
++    auto bucket = m_sourceIDBuckets.find(sourceID);
++    if (bucket == m_sourceIDBuckets.end())
++        return result;
++    for (const BasicBlockLocation* block : bucket->value.values()) {
++        size_t executionCount = block->executionCount();
++        for (BasicBlockLocation::Gap gap : block->getExecutedRanges())
++            result.append(BasicBlockRange { gap.first, gap.second, executionCount > 0, executionCount });
++    }
++    return result;
++}
++
+ static BasicBlockRange LEGACY_NODELETE findBasicBlockAtTextOffset(int offset, const Vector<BasicBlockRange>& blocks)
+ {
+     int bestDistance = INT_MAX;
+diff --git a/Source/JavaScriptCore/runtime/ControlFlowProfiler.h b/Source/JavaScriptCore/runtime/ControlFlowProfiler.h
+index 2a63a9f37e..ed6ad65960 100644
+--- a/Source/JavaScriptCore/runtime/ControlFlowProfiler.h
++++ b/Source/JavaScriptCore/runtime/ControlFlowProfiler.h
+@@ -29,10 +29,14 @@
+ #include <JavaScriptCore/BasicBlockLocation.h>
+ #include <JavaScriptCore/SourceID.h>
+ #include <wtf/HashMap.h>
++#include <wtf/RefPtr.h>
++#include <wtf/text/WTFString.h>
+ #include <wtf/TZoneMalloc.h>
+ 
+ namespace JSC {
+ 
++class JSGlobalObject;
++class SourceProvider;
+ class VM;
+ 
+ struct BasicBlockKey {
+@@ -92,12 +96,38 @@ public:
+     JS_EXPORT_PRIVATE bool hasBasicBlockAtTextOffsetBeenExecuted(int, SourceID, VM&); // This function exists for testing.
+     JS_EXPORT_PRIVATE size_t basicBlockExecutionCountAtTextOffset(int, SourceID, VM&); // This function exists for testing.
+ 
++    // Lightningpanda: what block coverage (JSCoveragePrivate.h) reports. Every source that has
++    // code compiled while the profiler is on, the global object it first ran in (an identity,
++    // never dereferenced: it may be dead), and the functions its compiled code declares.
++    struct CoverageSource {
++        RefPtr<SourceProvider> provider;
++        JSGlobalObject* globalObject;
++    };
++    struct CoverageFunction {
++        unsigned start;
++        unsigned end; // Inclusive, as the profiler's offsets.
++        bool executed;
++        String name;
++    };
++    void noteCoverageSource(SourceProvider*, JSGlobalObject*);
++    void noteCoverageFunction(SourceID, unsigned start, unsigned end, const String& name, bool executed);
++    const UncheckedKeyHashMap<SourceID, CoverageSource>& coverageSources() const LIFETIME_BOUND { return m_coverageSources; }
++    // The sources in the order they were first noted.
++    const Vector<SourceID>& coverageSourceOrder() const LIFETIME_BOUND { return m_coverageSourceOrder; }
++    Vector<CoverageFunction> coverageFunctions(SourceID) const;
++    // Basic blocks only (no function ranges), each split around the functions it encloses.
++    Vector<BasicBlockRange> coverageBlocks(SourceID) const;
++
+ private:
+     typedef UncheckedKeyHashMap<BasicBlockKey, BasicBlockLocation*> BlockLocationCache;
+     typedef UncheckedKeyHashMap<SourceID, BlockLocationCache> SourceIDBuckets;
+ 
+     SourceIDBuckets m_sourceIDBuckets;
+     BasicBlockLocation m_dummyBasicBlock;
++    UncheckedKeyHashMap<SourceID, CoverageSource> m_coverageSources;
++    Vector<SourceID> m_coverageSourceOrder;
++    // Keyed by (start << 32 | end) + 1: zero is the empty key.
++    UncheckedKeyHashMap<SourceID, UncheckedKeyHashMap<uint64_t, CoverageFunction>> m_coverageFunctions;
+ };
+ 
+ } // namespace JSC

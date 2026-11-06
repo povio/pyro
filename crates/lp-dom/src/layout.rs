@@ -252,6 +252,7 @@ impl Layout {
         let source = self.external.as_ref().filter(|s| s.active())?;
         let key = self.sync_key(dom);
         if self.external_synced.get() != Some(key) || source.stale() {
+            self.style.before_recalc(dom);
             source.sync(dom, self);
             self.external_synced.set(Some(key));
             self.syncs.set(self.syncs.get() + 1);

@@ -2656,7 +2656,10 @@ fn emulated_media_flips_match_media_and_fires_change() {
 #[test]
 fn scrollable_overflow_of_body_overflow_fixed_and_empty_boxes() {
     let mut h = Harness::new();
-    h.page("Emulation.setDeviceMetricsOverride", json!({"width":800,"height":600,"deviceScaleFactor":1,"mobile":false}));
+    h.page(
+        "Emulation.setDeviceMetricsOverride",
+        json!({"width":800,"height":600,"deviceScaleFactor":1,"mobile":false}),
+    );
     let wide = r#"<div style="width:2000px;height:50px"></div>"#;
     let tall = r#"<div style="width:50px;height:1000px"></div>"#;
     let far = "left:1900px;top:2000px";
@@ -2665,21 +2668,41 @@ fn scrollable_overflow_of_body_overflow_fixed_and_empty_boxes() {
         (format!(r#"<body style="margin:0;overflow:hidden;width:300px">{wide}"#), [2000, 600]),
         (format!(r#"<body style="margin:0;overflow:hidden;height:100px">{tall}"#), [800, 1000]),
         // Stays on `body`: the root has its own.
-        (format!(r#"<html style="overflow:hidden"><body style="margin:0;overflow:hidden;width:300px">{wide}"#), [800, 600]),
-        (format!(r#"<html style="overflow:hidden"><body style="margin:0;overflow:hidden;height:100px">{tall}"#), [800, 600]),
+        (
+            format!(r#"<html style="overflow:hidden"><body style="margin:0;overflow:hidden;width:300px">{wide}"#),
+            [800, 600],
+        ),
+        (
+            format!(r#"<html style="overflow:hidden"><body style="margin:0;overflow:hidden;height:100px">{tall}"#),
+            [800, 600],
+        ),
         // Empty boxes count for nothing, wherever they are.
         (r#"<body style="margin:0"><div style="width:2000px;height:0"></div>"#.into(), [800, 600]),
-        (format!(r#"<body style="margin:0"><div style="position:absolute;{far};width:0;height:10px"></div>"#), [800, 600]),
+        (
+            format!(r#"<body style="margin:0"><div style="position:absolute;{far};width:0;height:10px"></div>"#),
+            [800, 600],
+        ),
         // Fixed does not count, absolute does.
-        (format!(r#"<body style="margin:0"><div style="position:fixed;{far};width:50px;height:10px"></div>"#), [800, 600]),
-        (format!(r#"<body style="margin:0"><div style="position:absolute;{far};width:50px;height:10px"></div>"#), [1950, 2010]),
+        (
+            format!(r#"<body style="margin:0"><div style="position:fixed;{far};width:50px;height:10px"></div>"#),
+            [800, 600],
+        ),
+        (
+            format!(r#"<body style="margin:0"><div style="position:absolute;{far};width:50px;height:10px"></div>"#),
+            [1950, 2010],
+        ),
     ] {
         load_html(&mut h, &format!("<!doctype html>{doc}"));
-        let scroll = eval_value(&mut h, "[document.documentElement.scrollWidth, document.documentElement.scrollHeight]");
+        let scroll =
+            eval_value(&mut h, "[document.documentElement.scrollWidth, document.documentElement.scrollHeight]");
         assert_eq!(scroll, json!(chrome), "{doc}");
         let metrics = h.page("Page.getLayoutMetrics", json!({}));
         let content = &metrics["result"]["cssContentSize"];
-        assert_eq!([content["width"].as_f64().unwrap(), content["height"].as_f64().unwrap()], chrome.map(f64::from), "{doc}");
+        assert_eq!(
+            [content["width"].as_f64().unwrap(), content["height"].as_f64().unwrap()],
+            chrome.map(f64::from),
+            "{doc}"
+        );
     }
     // `body` keeps its own scroll sizes, 2000 px wide inside 300 px, either way.
     load_html(&mut h, &format!(r#"<!doctype html><body style="margin:0;overflow:hidden;width:300px">{wide}"#));
@@ -3347,6 +3370,12 @@ mod tier3_g1;
 
 #[path = "engine_cdp/websocket.rs"]
 mod websocket;
+
+#[path = "engine_cdp/aria_snapshot.rs"]
+mod aria_snapshot;
+
+#[path = "engine_cdp/coverage.rs"]
+mod coverage;
 
 #[test]
 fn links_and_window_open_targeting_blank_open_paused_popups() {
@@ -5562,7 +5591,7 @@ fn driver_accessible_name_labelledby_uses_aria_label_and_dedupes() {
 /// Elements in an `inert` or `aria-hidden` subtree are hidden for ARIA: role
 /// locators skip them and names from content do not read them.
 #[test]
-fn driver_role_locators_skip_inert_and_aria_hidden_subtrees() {
+fn driver_role_locators_skip_aria_hidden_but_not_inert_subtrees() {
     let mut h = Harness::new();
     load_html(
         &mut h,
@@ -5578,15 +5607,15 @@ fn driver_role_locators_skip_inert_and_aria_hidden_subtrees() {
         &[
             ("headers", "count", json!({"role": "columnheader", "name": "Name", "exact": true})),
             ("buttons", "count", json!({"role": "button"})),
-            ("goName", "name", json!({"role": "button"})),
         ],
     );
-    assert_eq!(reads, json!({"headers": 1, "buttons": 1, "goName": "Go"}));
-    let r = h.page(
-        "LP.run",
-        json!({"steps": [{"check": {"locator": {"role": "columnheader", "name": "Name", "exact": true}, "assert": "text", "expected": "Name"}}]}),
-    );
-    assert!(r.get("error").is_none(), "{r}");
+    // Playwright's isElementHiddenForAria has no inert rule (and
+    // checkVisibility() ignores inert): inert content keeps its role and
+    // its text stays in names; aria-hidden content does not.
+    assert_eq!(reads["headers"], 2, "{reads}");
+    assert_eq!(reads["buttons"], 2, "{reads}");
+    let r = h.page("LP.query", json!({"locator": {"role": "button", "name": "Go (y)", "exact": true}, "read": "name"}));
+    assert_eq!(r["result"]["value"], "Go (y)", "{r}");
 }
 
 /// `checked` honours `aria-checked` on checkbox-like roles (and `mixed`);

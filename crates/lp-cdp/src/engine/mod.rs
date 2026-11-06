@@ -8,7 +8,9 @@
 
 #[cfg(feature = "render")]
 mod accessibility;
+mod aria_snapshot;
 mod blitz_geometry;
+mod coverage;
 #[cfg(feature = "render")]
 pub(crate) use blitz_geometry::set_fork_template;
 mod dialog;
@@ -437,6 +439,8 @@ pub struct EngineHost {
     /// The time zone in effect in this connection's VM: that of the pages
     /// which set one (None: the host's).
     timezone: Option<String>,
+    /// JavaScript and CSS coverage of the pages (`coverage.rs`).
+    coverage: coverage::Coverage,
 }
 
 /// A page booted on a thread before any connection, with its context.
@@ -628,6 +632,7 @@ impl EngineHost {
             waiters: driver::Waiters::default(),
             virtual_time: None,
             virtual_ticks_base: 0.0,
+            coverage: coverage::Coverage::default(),
         })
     }
 
@@ -831,6 +836,7 @@ impl EngineHost {
         self.drain_collector();
         self.flush_network();
         self.flush_fetch();
+        self.poll_coverage();
         // `LP.run` request steps wait on the log these observations fill.
         if self.waiters.log_changed {
             self.service_waiters();
@@ -905,6 +911,9 @@ impl EngineHost {
             "Input" => self.input_domain(action, cmd),
             "Security" => self.security_domain(action, cmd),
             "Accessibility" => self.accessibility_domain(action, cmd),
+            "Profiler" => self.profiler_domain(action, cmd),
+            "Debugger" => self.debugger_domain(action, cmd),
+            "CSS" => self.css_domain(action, cmd),
             // Blitz-backed layout queries since the last call.
             #[cfg(feature = "render")]
             "LP" if action == "geometryStats" => {
@@ -1392,6 +1401,7 @@ impl Host for EngineHost {
     }
 
     fn close_page(&mut self, page: PageKey) {
+        self.coverage_page_closed(page);
         let Some(state) = self.pages.remove(&page) else { return };
         // The last page with an override gives the VM back its host zone.
         if state.timezone_override.is_some() && !self.pages.values().any(|s| s.timezone_override.is_some()) {
@@ -1496,6 +1506,7 @@ impl Host for EngineHost {
         // pending promise reactions are still referenced by JavaScript.
         self.pending.cancel_session(session_id);
         self.disable_fetch(session_id);
+        self.coverage_session_detached(page, session_id);
         if let Some(session) = self.sessions.remove(session_id) {
             session.handles.borrow_mut().clear();
         }

@@ -1,4 +1,5 @@
 // Playwright's Browser and BrowserContext on one lightningpanda connection.
+import { Clock } from './clock.js';
 import { EventEmitter } from 'node:events';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -250,6 +251,8 @@ export class Browser {
 }
 
 export class BrowserContext {
+  /** The fake clock this context's pages share (`page.clock` too). */
+  readonly clock: Clock = new Clock(this);
   _routes: RouteEntry[] = [];
   /** `routeFromHAR(…, { update: true })` recorders: written when the context closes. */
   _har: HarRecorder[] = [];
@@ -380,6 +383,9 @@ export class BrowserContext {
     }
     if (fresh && this._cookies.length) setup.push(send('Network.setCookies', { cookies: this._cookies.map(cdpCookie) }));
     for (const source of scripts) setup.push(send('Page.addScriptToEvaluateOnNewDocument', { source }));
+    // The clock's init scripts only reach the next document: catch up the current one.
+    const clock = this.clock._bundle();
+    if (clock) setup.push(send('Runtime.evaluate', { expression: clock }).catch(() => {}));
     const m = media(o);
     if (fresh && m) setup.push(send('LP.run', { steps: [{ media: m }] }));
     if (page._wantsDialogs) setup.push(send('LP.dialogs', { block: true }));

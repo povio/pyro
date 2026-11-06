@@ -28,6 +28,8 @@ export {
   TimeoutError,
 } from './page.js';
 export { JSHandle, ElementHandle, Download } from './handles.js';
+export { Clock } from './clock.js';
+export { Coverage, type JSCoverageEntry, type CSSCoverageEntry } from './coverage.js';
 export { APIRequestContext, APIResponse, request } from './request.js';
 export { TestInfo } from './context.js';
 export { defineConfig, devices } from './config.js';

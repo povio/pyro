@@ -21,8 +21,8 @@ test('types', async ({ page, request }) => {
   await expect(async () => {}).toPass();
   // @ts-expect-error toPass needs a function
   await expect(1).toPass();
-  // @ts-expect-error snapshots are not supported
-  expect('x').toMatchSnapshot();
+  expect('x').toMatchSnapshot('x.txt');
+  expect(Buffer.from('x')).toMatchSnapshot({ name: 'x.png', maxDiffPixels: 2 });
   const ext = expect.extend({ toBeEven(r: number, by?: number) { return { pass: r % (by ?? 2) === 0, message: () => '' }; } });
   ext(4).toBeEven();
   ext(4).not.toBeEven(3);
@@ -36,6 +36,18 @@ test('types', async ({ page, request }) => {
   await l.type('x');
   // @ts-expect-error deprecated, removed
   page.accessibility;
+  await page.clock.install({ time: new Date('2024-01-01') });
+  await page.clock.runFor('01:00');
+  // @ts-expect-error ticks are a number or "hh:mm:ss"
+  await page.clock.fastForward(new Date());
+  const yaml: string = await l.ariaSnapshot({ depth: 2 });
+  await expect(l).toMatchAriaSnapshot(`- button "Go"`);
+  await expect(l).toMatchAriaSnapshot({ name: 'go.aria.yml' });
+  // @ts-expect-error aria snapshots are for locators
+  await expect(page).toMatchAriaSnapshot('- button');
+  const cov = await page.coverage.stopJSCoverage();
+  const firstUrl: string | undefined = cov[0]?.url;
+  void [yaml, firstUrl];
   const el = await page.$('div');
   const tag: string | undefined = await el?.evaluate((e) => e.tagName);
   void [n, s, bad, tag, (p: Page) => p];

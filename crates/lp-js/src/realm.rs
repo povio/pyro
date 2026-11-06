@@ -1891,6 +1891,9 @@ pub(crate) fn create(engine: &Rc<EngineInner>, options: RealmOptions) -> JsResul
         inner.global_target.set(t as sys::JSObjectRef);
     }
     engine.realms.borrow_mut().insert(ctx as usize, Rc::downgrade(&inner));
+    if let Some(history) = engine.coverage_realms.borrow_mut().as_mut() {
+        history.insert(ctx as usize, id);
+    }
     let realm = Realm { inner };
     {
         let _watchdog = crate::engine::WatchdogPause::new(engine);
@@ -2126,7 +2129,8 @@ pub(crate) fn populate_class(scope: &Scope<'_>, id: ClassId) -> JsResult<()> {
         // Marked first: member installation does not re-enter population
         // (it defines on the prototype and the proxy target directly).
         realm.populated.borrow_mut()[c as usize] = true;
-        let done = materialize(scope, c).and_then(|()| install_members(scope, c)).and_then(|()| mirror_populated(scope, c));
+        let done =
+            materialize(scope, c).and_then(|()| install_members(scope, c)).and_then(|()| mirror_populated(scope, c));
         if let Err(e) = done {
             realm.populated.borrow_mut()[c as usize] = false;
             return Err(e);
@@ -2433,7 +2437,14 @@ impl<'h> MemberBatch<'h> {
         let mut exc = ptr::null();
         // SAFETY: `args[..len]` are live values of `ctx` (see the type).
         unsafe {
-            sys::JSObjectCallAsFunction(self.ctx, self.helper.raw, ptr::null_mut(), self.len, self.args.as_ptr(), &mut exc)
+            sys::JSObjectCallAsFunction(
+                self.ctx,
+                self.helper.raw,
+                ptr::null_mut(),
+                self.len,
+                self.args.as_ptr(),
+                &mut exc,
+            )
         };
         self.len = self.lead;
         check(self.ctx, exc)

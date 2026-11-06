@@ -593,8 +593,12 @@ export class ScreenshotStep implements StepLike {
     readonly opts: ScreenshotOptions & { locator?: LocatorSpec },
     /** Directory of the test file that built the step. */
     readonly testDir: string,
+    /** Off for Playwright's snapshot paths, already resolved to `opts.dir` + `name`. */
+    checkName = true,
+    /** Path stem a mismatch writes `-actual.png`, `-expected.png` and `-diff.png` to (Playwright's test output dir); beside the baseline when unset. */
+    readonly outputStem?: string,
   ) {
-    if (!/^[\w.@-][\w.@/-]*$/.test(name) || name.includes('..')) {
+    if (checkName && (!/^[\w.@-][\w.@/-]*$/.test(name) || name.includes('..'))) {
       throw new Error(`screenshot name '${name}': use letters, digits, '.', '-', '_', '@' and '/'`);
     }
   }

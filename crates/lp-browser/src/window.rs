@@ -219,20 +219,25 @@ impl JsClass for Window {
             },
         );
         def.getter("history", |s, w| Ok(s.wrap::<History>(w.nav.clone(), Some(IdentityKey(KEY_HISTORY, 0)))?.value()));
-        def.getter("performance", |s, w| {
-            if let Some(o) = w.performance.get().and_then(|identity| s.lookup_identity(identity)) {
-                return Ok(o.value());
-            }
-            // [SameObject] and an EventTarget: the wrapper carries its event
-            // listeners, so the realm keeps it.
-            let data = PerformanceData::new(w.nav.clone(), &w.target.page);
-            let identity = data.wrapper_identity().unwrap_or(IdentityKey(KEY_PERFORMANCE, 0));
-            let key = data.event_target().key;
-            let performance = s.wrap::<Performance>(data, Some(identity))?;
-            lp_webapi::target::pin_target(s, &w.target.page, key, performance);
-            w.performance.set(Some(identity));
-            Ok(performance.value())
-        });
+        // [Replaceable], as in Chrome: assignment shadows it on the window.
+        def.accessor(
+            "performance",
+            |s, w| {
+                if let Some(o) = w.performance.get().and_then(|identity| s.lookup_identity(identity)) {
+                    return Ok(o.value());
+                }
+                // [SameObject] and an EventTarget: the wrapper carries its event
+                // listeners, so the realm keeps it.
+                let data = PerformanceData::new(w.nav.clone(), &w.target.page);
+                let identity = data.wrapper_identity().unwrap_or(IdentityKey(KEY_PERFORMANCE, 0));
+                let key = data.event_target().key;
+                let performance = s.wrap::<Performance>(data, Some(identity))?;
+                lp_webapi::target::pin_target(s, &w.target.page, key, performance);
+                w.performance.set(Some(identity));
+                Ok(performance.value())
+            },
+            |s, w, v| lp_webapi::window::replace_window_attribute(s, &w.target.page, "performance", v),
+        );
         def.getter("top", |s, w| match (w.frames.upgrade(), w.frame) {
             (Some(host), Some(key)) => host.relation(s, key, true),
             _ => Ok(s.global().value()),
