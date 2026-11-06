@@ -526,6 +526,20 @@ impl BaseDocument {
             if damage.intersects(CONSTRUCT_FC | CONSTRUCT_BOX) {
                 //} || flags.contains(NodeFlags::IS_INLINE_ROOT) {
 
+                // lightningpanda: the previous layout children leave the list
+                // (`Node::layout_child_of`); the new ones are entered below. A
+                // child already collected by another container this pass points
+                // there and is left alone.
+                if let Some(old) = doc.nodes[node_id].layout_children.borrow().as_ref() {
+                    for &child_id in old.iter() {
+                        if let Some(child) = doc.nodes.get(child_id) {
+                            if child.layout_child_of.get() == Some(node_id) {
+                                child.layout_child_of.set(None);
+                            }
+                        }
+                    }
+                }
+
                 // Deallocate the anonymous blocks created for this node in the
                 // previous construction round. They live only in the slab, so
                 // reconstructing without freeing them would leak a slab entry per
@@ -544,6 +558,7 @@ impl BaseDocument {
                 for child_id in layout_children.iter().copied() {
                     resolve_layout_children_recursive(doc, child_id);
                     doc.nodes[child_id].layout_parent.set(Some(node_id));
+                    doc.nodes[child_id].layout_child_of.set(Some(node_id));
                     if let Some(mut data) = doc.nodes[child_id].try_stylo_element_data_mut().and_then(|s| s.get_mut()) {
                         data.damage.remove(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
                     }

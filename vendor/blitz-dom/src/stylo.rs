@@ -182,6 +182,15 @@ impl crate::document::BaseDocument {
             style::driver::traverse_dom(&traverser, token, rayon_pool);
             nodes_needing_style_image_flush =
                 std::mem::take(traverser.nodes_needing_style_image_flush.get_mut().unwrap());
+            self.sticky_nodes
+                .extend(std::mem::take(traverser.sticky_nodes.get_mut().unwrap()));
+        }
+        // lightningpanda: restyled nodes that stopped being sticky, and
+        // removed ones, leave the set (only nodes that were sticky are in it).
+        if !self.sticky_nodes.is_empty() {
+            let nodes = &self.nodes;
+            self.sticky_nodes
+                .retain(|id| nodes.get(*id).is_some_and(|node| is_sticky(node)));
         }
         self.pending_style_image_nodes
             .extend(nodes_needing_style_image_flush);
@@ -1338,6 +1347,9 @@ pub struct RecalcStyle<'a> {
     /// dedicated storage on the node (see `flush_image_layers_from_style`)
     /// because their style changed during this traversal.
     nodes_needing_style_image_flush: Mutex<Vec<NodeId>>,
+    /// lightningpanda: elements styled `position: sticky` in this traversal
+    /// (`BaseDocument::sticky_nodes`).
+    sticky_nodes: Mutex<Vec<NodeId>>,
 }
 
 impl<'a> RecalcStyle<'a> {
@@ -1345,6 +1357,7 @@ impl<'a> RecalcStyle<'a> {
         RecalcStyle {
             context,
             nodes_needing_style_image_flush: Mutex::new(Vec::new()),
+            sticky_nodes: Mutex::new(Vec::new()),
         }
     }
 }
@@ -1372,6 +1385,12 @@ impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
             ]);
 
             sync_pseudo_element_styles(el, &data, &self.nodes_needing_style_image_flush);
+
+            if data.styles.get_primary().is_some_and(|style| {
+                style.clone_position() == style::computed_values::position::T::Sticky
+            }) {
+                self.sticky_nodes.lock().unwrap().push(el.id);
+            }
 
             if !data.damage.is_empty() {
                 // Mark the ancestor chain so that the damage propagation pass
@@ -1436,6 +1455,12 @@ impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
 /// not themselves visited by the traversal), so mutating the pseudo node's
 /// stylo data here cannot race with any other traversal thread.
 #[allow(unsafe_code)]
+/// lightningpanda: whether `node`'s primary style is `position: sticky`.
+pub(crate) fn is_sticky(node: &Node) -> bool {
+    node.primary_styles()
+        .is_some_and(|style| style.clone_position() == style::computed_values::position::T::Sticky)
+}
+
 fn sync_pseudo_element_styles(
     el: &Node,
     data: &style::data::ElementData,

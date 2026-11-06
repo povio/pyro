@@ -1148,3 +1148,170 @@ fn rounding_skips_what_a_change_did_not_touch() {
     assert!(after.1 - before.1 >= 190, "skipped {} subtrees", after.1 - before.1);
     assert!(after.0 - before.0 < whole / 2, "reached {} of {whole} nodes", after.0 - before.0);
 }
+
+/// Boxes that only move (the rows below a cell that grew, the blocks below a
+/// block that grew by a fraction of a pixel) are marked on their ancestors only:
+/// their rounding and overflow still follow the move. (A transformed box that
+/// moves paints differently from a fresh build, whether or not it is marked
+/// itself: a known gap of blitz-dom's incremental passes, left out here.)
+#[test]
+fn rounding_follows_boxes_that_only_moved() {
+    let rows: String = (0..12)
+        .map(|i| format!("<tr><td id=c{i} style=\"font-size:13.3px\">cell {i}</td><td><div style=\"overflow:auto;height:10.5px\"><p style=\"margin:0;height:30px\">s</p></div></td></tr>"))
+        .collect();
+    let blocks: String = (0..12)
+        .map(|i| format!("<div id=d{i} style=\"height:7.3px\"><span style=\"display:inline-block;width:5.5px;height:3.3px\"></span>b{i}<p style=\"margin:0;width:20.5px;height:2.5px\"></p></div>"))
+        .collect();
+    rounds_as_a_fresh_build(
+        &format!("<table id=t style=\"width:300.5px\">{rows}</table><div id=top style=\"height:3.3px\"></div>{blocks}"),
+        vec![
+            (
+                "a taller cell".into(),
+                Box::new(|p| {
+                    let n = p.find("#c1");
+                    p.dom.borrow_mut().set_text_content(n, "a taller cell that wraps onto lines of its own").unwrap();
+                }),
+            ),
+            style("#top", "height:4.7px"),
+            style("#top", "height:4.7px;margin-bottom:0.4px"),
+            style("#c3", "font-size:13.3px;padding-top:2.25px"),
+        ],
+    );
+}
+
+/// Layout queries synced from lp-dom's change journal on a long table and long
+/// lists: cell text edits, rows appended, moved and removed, spans, collapsed
+/// borders, display flips of cells, rows and children of a long list
+/// (layout-tree membership, `Node::layout_child_of`) and `position: sticky`
+/// turned on and off (`BaseDocument::has_sticky`) report what a fresh build
+/// of the same tree does.
+#[test]
+fn deltas_on_long_tables_and_lists_match_fresh_builds() {
+    let rows: String =
+        (0..24).map(|i| format!("<tr id=r{i}><td id=a{i}>a{i}</td><td id=b{i}>cell {i}</td></tr>")).collect();
+    let items: String = (0..24).map(|i| format!("<p id=p{i}>para {i} <span id=s{i}>in</span> text</p>")).collect();
+    let others: String = (0..20).map(|i| format!("<div id=q{i}>q{i}</div>")).collect();
+    let page = Page::new(&format!(
+        "<!doctype html><html><head><style>body {{ margin: 0; font: 14px sans-serif }} td {{ padding: 2px }}</style></head><body>\
+         <table id=t style=\"width:400px\"><thead><tr><th id=h>head</th><th>h2</th></tr></thead><tbody id=tb>{rows}</tbody></table>\
+         <div id=list>{items}</div><div id=other>{others}</div></body></html>"
+    ));
+    type Step = (&'static str, Box<dyn Fn(&Page)>);
+    let attr = |sel: &'static str, name: &'static str, value: &'static str| -> Box<dyn Fn(&Page)> {
+        Box::new(move |p: &Page| {
+            let n = p.find(sel);
+            p.dom.borrow_mut().set_attribute(n, name, value).unwrap();
+        })
+    };
+    let text = |sel: &'static str, value: &'static str| -> Box<dyn Fn(&Page)> {
+        Box::new(move |p: &Page| {
+            let n = p.find(sel);
+            p.dom.borrow_mut().set_text_content(n, value).unwrap();
+        })
+    };
+    let steps: Vec<Step> = vec![
+        ("cell text", text("#b7", "a much longer cell text that wraps over several lines in the cell")),
+        ("another cell text", text("#a3", "x")),
+        (
+            "row appended",
+            Box::new(|p| {
+                let tb = p.find("#tb");
+                let mut d = p.dom.borrow_mut();
+                let tr = d.create_element(p.doc, "tr").unwrap();
+                for s in ["new", "row"] {
+                    let td = d.create_element(p.doc, "td").unwrap();
+                    let t = d.create_text(p.doc, s).unwrap();
+                    d.append_child(td, t).unwrap();
+                    d.append_child(tr, td).unwrap();
+                }
+                d.append_child(tb, tr).unwrap();
+            }),
+        ),
+        (
+            "row moved to the top",
+            Box::new(|p| {
+                let (tb, r, first) = (p.find("#tb"), p.find("#r20"), p.find("#r0"));
+                p.dom.borrow_mut().insert_before(tb, r, Some(first)).unwrap();
+            }),
+        ),
+        (
+            "row removed",
+            Box::new(|p| {
+                let (tb, r) = (p.find("#tb"), p.find("#r5"));
+                p.dom.borrow_mut().remove_child(tb, r).unwrap();
+            }),
+        ),
+        ("colspan", attr("#a9", "colspan", "2")),
+        ("rowspan", attr("#a11", "rowspan", "2")),
+        ("collapsed borders", attr("#t", "style", "width:400px;border-collapse:collapse;border:2px solid")),
+        ("cell border", attr("#b12", "style", "border:3px solid red")),
+        ("cell hidden", attr("#b13", "style", "display:none")),
+        ("cell shown", attr("#b13", "style", "display:table-cell")),
+        ("row hidden", attr("#r14", "style", "display:none")),
+        ("row shown", attr("#r14", "style", "")),
+        ("sticky header", attr("#h", "style", "position:sticky;top:0")),
+        ("sticky cell text", text("#b2", "edited under a sticky header")),
+        ("sticky off", attr("#h", "style", "position:relative")),
+        ("sticky list item", attr("#p10", "style", "position:sticky;top:5px")),
+        (
+            "sticky item removed",
+            Box::new(|p| {
+                let (list, item) = (p.find("#list"), p.find("#p10"));
+                p.dom.borrow_mut().remove_child(list, item).unwrap();
+            }),
+        ),
+        // (A block among blocks made inline is left out: blitz-dom's
+        // incremental layout misplaces the boxes after it, before and after
+        // this change.)
+        ("span made an inline block", attr("#s4", "style", "display:inline-block;width:30px")),
+        ("span made a block", attr("#s6", "style", "display:block")),
+        ("span made inline again", attr("#s4", "style", "")),
+        ("other span made inline again", attr("#s6", "style", "")),
+        ("paragraph hidden", attr("#p8", "style", "display:none")),
+        ("paragraph contents", attr("#p9", "style", "display:contents")),
+        (
+            "paragraph moved to the other list",
+            Box::new(|p| {
+                let (other, item) = (p.find("#other"), p.find("#p12"));
+                p.dom.borrow_mut().append_child(other, item).unwrap();
+            }),
+        ),
+        (
+            "paragraph appended",
+            Box::new(|p| {
+                let list = p.find("#list");
+                let mut d = p.dom.borrow_mut();
+                let e = d.create_element(p.doc, "p").unwrap();
+                let t = d.create_text(p.doc, "appended").unwrap();
+                d.append_child(e, t).unwrap();
+                d.append_child(list, e).unwrap();
+            }),
+        ),
+        ("list made inline", attr("#other", "style", "display:inline")),
+        ("list made a block again", attr("#other", "style", "")),
+    ];
+    let mut r = Renderer::new();
+    r.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
+    let mut deltas = 0;
+    for (what, step) in &steps {
+        let since = page.dom.borrow().version();
+        step(&page);
+        let delta = page.dom.borrow().render_delta(page.doc, since, &Page::opts());
+        if delta.is_some_and(|d| r.sync_delta(1, &delta_ops(d), (640, 480, 1.0, false, false), false).is_ok()) {
+            deltas += 1;
+        } else {
+            r.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
+        }
+        let mut fresh = Renderer::new();
+        fresh.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
+        let sticky_now = matches!(*what, "sticky header" | "sticky cell text" | "sticky list item");
+        assert_eq!(r.has_sticky(1), sticky_now, "sticky after {what}");
+        assert_eq!(fresh.has_sticky(1), sticky_now, "sticky in a fresh build after {what}");
+        for ((k, a), (_, b)) in boxes(&r, &page).into_iter().zip(boxes(&fresh, &page)) {
+            assert_eq!(a, b, "box {k:x} after {what}");
+        }
+        let sticky = |r: &Renderer| r.page_layout(1).map(|l| l.sticky.len());
+        assert_eq!(sticky(&r), sticky(&fresh), "sticky boxes after {what}");
+    }
+    assert!(deltas * 2 > steps.len(), "most steps sync as deltas ({deltas} of {})", steps.len());
+}

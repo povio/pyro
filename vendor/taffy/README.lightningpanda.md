@@ -72,7 +72,8 @@ without the feature. Taffy's side is unchanged, as is `UPSTREAM.patch`. A subtre
   chain (`Node::update_unrounded_layout`, the only writer). Inline layout used to write these layouts
   directly, so an inline-block or float could move, beside a resizing float, inside a box with no damage;
 - the same `LayoutData::rounded_from` key: the root's *physical* unrounded layout (a `vertical-rl` box's x
-  depends on its placer's width) and absolute offset.
+  depends on its placer's width) and absolute offset. A box that only moved is marked on its ancestors, not
+  itself (`Node::update_unrounded_layout`): the key's location tells its rounding to follow the move.
 
 Debug builds round the whole tree again after each pass and assert that it matches
 (`assert_rounding_is_current`), so every test checks the skip. `rounding_skips_what_a_change_did_not_touch`

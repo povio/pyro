@@ -66,9 +66,25 @@ these additional local changes are covered by lp-render's rendering tests.
   `RECALCULATE_OVERFLOW`).
 - `src/layout/writing_mode.rs`, `src/layout/mod.rs`, `src/node/element.rs`: incremental rounding, keyed by
   `LayoutData::rounded_from` (see "Incremental rounding" in `vendor/taffy/README.lightningpanda.md`).
-  `Node::update_unrounded_layout` is the only writer of unrounded layouts, and marks changes as damage.
+  `Node::update_unrounded_layout` is the only writer of unrounded layouts, and marks changes as damage. A box that
+  only moved (its location alone changed: the rows below a table cell that grew) is marked on its ancestors, not on
+  itself: what it holds in its own coordinates (scrollable overflow, its subtree's layouts) is unchanged, so
+  `resolve_layout_children`, `resolve_transforms` and `clear_damage_and_dirty_flags` no longer descend into every
+  moved subtree. Its rounding still follows the move: the `rounded_from` key holds its location.
 - `src/resolve.rs` (`resolve_layout`): no Taffy pass or rounding with nothing damaged and the same viewport.
   `BaseDocument::needs_resolve` tells a caller whether a `resolve` could change anything.
+
+- `src/node/node.rs`, `src/resolve.rs` (`resolve_layout_children`): `Node::layout_child_of` names the node whose
+  `layout_children` list holds a node, entered and left where those lists are rebuilt (a child another container
+  collected in the same pass keeps pointing there). A node is a box of the current layout when it equals its
+  `layout_parent`, which inline content of an inline root also has without being listed: lp-render answers that in
+  O(1) instead of indexing the parent's list (a table's cells) after every sync.
+- `src/layout/paint_tree.rs` (`build_paint_tree_impl`): a rebuilt paint list already in paint order (tree order with
+  no positioned, floated or z-indexed children: a table's cells) is not sorted again.
+- `src/stylo.rs`, `src/document.rs` (`BaseDocument::has_sticky`): the style traversal records the elements it styles
+  `position: sticky`, and drops the entries whose node is gone or no longer sticky after each traversal, so whether a
+  document has sticky boxes is not a scan of every node per sync. Pseudo-elements are not recorded (lightningpanda
+  reports sticky offsets for elements only).
 
 lp-render's mirror tests (incremental documents against fresh builds after random mutations) cover them.
 - `assets/default.css`: text inputs take Chromium's UA box (`border: 2px inset`, `padding: 1px 2px`; a

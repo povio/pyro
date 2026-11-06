@@ -366,6 +366,10 @@ pub struct BaseDocument {
     /// Boxes laid out by an out-of-flow containing block (`oof_containing_block`
     /// set), so paint-tree passes visit them instead of every node.
     pub(crate) oof_hoisted: HashSet<NodeId>,
+    /// lightningpanda: nodes the style traversal gave a `position: sticky`
+    /// style (`BaseDocument::has_sticky`). Entries whose node is gone or no
+    /// longer sticky are dropped after each traversal.
+    pub(crate) sticky_nodes: HashSet<NodeId>,
 
     /// Nodes that contain custom widgets
     #[cfg(feature = "custom-widget")]
@@ -551,6 +555,7 @@ impl BaseDocument {
             changed_nodes: HashSet::new(),
             deferred_construction_nodes: Vec::new(),
             oof_hoisted: HashSet::new(),
+            sticky_nodes: HashSet::new(),
             image_cache: HashMap::new(),
             pending_images: HashMap::new(),
             pending_style_image_nodes: Vec::new(),
@@ -1337,6 +1342,15 @@ impl BaseDocument {
             DocumentEvent::ResourceLoad(resource) => self.load_resource(resource),
             DocumentEvent::NavigateIframe { node_id, url } => self.navigate_iframe(node_id, url),
         }
+    }
+
+    /// lightningpanda: whether any node of the document (attached or not) is
+    /// styled `position: sticky`, from the set the style traversal keeps
+    /// (O(sticky nodes), not a scan of the document).
+    pub fn has_sticky(&self) -> bool {
+        self.sticky_nodes
+            .iter()
+            .any(|id| self.nodes.get(*id).is_some_and(crate::stylo::is_sticky))
     }
 
     /// lightningpanda: whether a `resolve` could change anything: a resource arrived (it is
