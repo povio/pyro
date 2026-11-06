@@ -312,6 +312,31 @@ fn aborts_roll_back_data_generators_and_upgrades() {
 }
 
 #[test]
+fn aborted_clear_restores_records_indexes_and_generator() {
+    let env = Env::new();
+    let d = env.doc("http://idb.test/");
+    d.eval(HELPERS);
+    let got = env.run(
+        &d,
+        r#"
+        const db = await openDb('clear', 1, db => db.createObjectStore('s', {keyPath: 'id', autoIncrement: true}).createIndex('v', 'v', {unique: true}));
+        const fill = db.transaction('s', 'readwrite');
+        fill.objectStore('s').put({v: 'x'}); fill.objectStore('s').put({v: 'y'});
+        await done(fill);
+        const tx = db.transaction('s', 'readwrite');
+        const s = tx.objectStore('s');
+        s.clear();
+        const during = [await req(s.count()), await req(s.index('v').count()), await req(s.put({v: 'x'}))];
+        tx.abort();
+        const r = db.transaction('s', 'readwrite').objectStore('s');
+        out = [during.join(), JSON.stringify(await req(r.index('v').getAllKeys())), await req(r.put({v: 'z'}))].join('|');
+    "#,
+    );
+    // The index kept its entries and its uniqueness, the generator went back to 3.
+    assert_eq!(got, "0,0,3|[1,2]|3");
+}
+
+#[test]
 fn indexes_cursors_and_directions() {
     let env = Env::new();
     let d = env.doc("http://idb.test/");

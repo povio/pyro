@@ -1384,11 +1384,21 @@ fn natives<'s>(
         let (name, store, tx) = (a.get(0).to_string()?, a.get(1).to_string()?, a.get(2).to_number()? as u64);
         ctx.db(&name, |db| {
             let st = db.store(&store)?;
-            let mut emptied = st.clone();
-            emptied.records.clear();
-            for ix in emptied.indexes.values_mut() {
-                ix.entries.clear();
-            }
+            // The schema without the data (cloning the records only to drop them is O(n)).
+            let indexes = st
+                .indexes
+                .iter()
+                .map(|(name, ix)| {
+                    (name.clone(), Index { entries: BTreeSet::new(), key_path: ix.key_path.clone(), ..*ix })
+                })
+                .collect();
+            let emptied = Store {
+                key_path: st.key_path.clone(),
+                auto_increment: st.auto_increment,
+                current: st.current,
+                records: BTreeMap::new(),
+                indexes,
+            };
             let old = std::mem::replace(st, emptied);
             db.log(tx, || Undo::Store { name: store.clone(), old: Box::new(old) });
             Ok(())
