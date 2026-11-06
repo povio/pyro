@@ -4,6 +4,7 @@
 
 mod br_flex_item;
 mod container_queries;
+mod containing_block_chain;
 mod font_optical_sizing;
 mod fractional_scroll_overflow;
 mod image_input_replaced;

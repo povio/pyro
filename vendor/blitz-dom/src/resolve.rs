@@ -1036,3 +1036,99 @@ pub mod phase_profile {
         NS.with(|ns| ns.get().map(|n| n as f64 / 1e6))
     }
 }
+
+#[cfg(test)]
+mod layout_children_owner_tests {
+    use crate::{Attribute, BaseDocument, DocumentConfig, Node, qual_name};
+    use blitz_traits::shell::{ColorScheme, Viewport};
+
+    /// Whether the node is in its `layout_parent`'s `layout_children` list, by the list owner it
+    /// records (`Node::layout_child_of`).
+    pub(super) fn is_layout_child(node: &Node) -> bool {
+        node.layout_parent.get().is_some() && node.layout_child_of.get() == node.layout_parent.get()
+    }
+
+    /// `Node::layout_child_of` agrees with a scan of every node's layout
+    /// parent's `layout_children` list.
+    fn assert_owners_match_lists(doc: &BaseDocument, when: &str) {
+        let mut members = 0;
+        for (id, node) in doc.tree().iter() {
+            let parent = node.layout_parent.get().and_then(|p| doc.get_node(p));
+            let scan = parent.is_some_and(|p| p.layout_children.borrow().as_ref().is_some_and(|c| c.contains(&id)));
+            assert_eq!(is_layout_child(node) && parent.is_some(), scan, "{when}: node {id:?}");
+            members += scan as usize;
+        }
+        assert!(members > 3, "{when}: the document has layout children ({members})");
+    }
+
+    #[test]
+    fn owner_tracks_list_membership_through_reconstruction() {
+        let mut doc = BaseDocument::new(DocumentConfig {
+            viewport: Some(Viewport::new(400, 300, 1.0, ColorScheme::Light)),
+            ..Default::default()
+        });
+        let root_id = doc.root_node().id;
+        let style = |value: &str| Attribute { name: qual_name!("style"), value: value.to_string() };
+        let mut m = doc.mutate();
+        let html = m.create_element(qual_name!("html"), vec![style("display:block")]);
+        let body = m.create_element(qual_name!("body"), vec![style("display:block")]);
+        let outer = m.create_element(qual_name!("div"), vec![style("display:block")]);
+        let x = m.create_element(qual_name!("div"), vec![style("display:block")]);
+        let x_text = m.create_text_node("x");
+        let span = m.create_element(qual_name!("span"), vec![]);
+        let inner = m.create_element(qual_name!("div"), vec![style("display:inline-block")]);
+        let inner_text = m.create_text_node("inner");
+        let y = m.create_element(qual_name!("div"), vec![style("display:block")]);
+        let abs = m.create_element(qual_name!("div"), vec![style("display:block;position:absolute")]);
+        m.append_children(x, &[x_text]);
+        m.append_children(inner, &[inner_text]);
+        m.append_children(span, &[inner]);
+        m.append_children(outer, &[x, span, y, abs]);
+        m.append_children(body, &[outer]);
+        m.append_children(html, &[body]);
+        m.append_children(root_id, &[html]);
+        drop(m);
+        doc.resolve(0.0);
+        assert_owners_match_lists(&doc, "first layout");
+
+        // Children leave `outer`'s list while keeping it as layout parent:
+        // one is no longer displayed, the rest become its inline content.
+        let mut m = doc.mutate();
+        m.set_attribute(x, qual_name!("style"), "display:none");
+        m.set_attribute(y, qual_name!("style"), "display:inline");
+        m.set_attribute(abs, qual_name!("style"), "display:none");
+        drop(m);
+        doc.resolve(0.0);
+        assert_owners_match_lists(&doc, "children leave the list");
+        assert_eq!(doc.nodes[y].layout_parent.get(), Some(outer));
+        assert!(!is_layout_child(&doc.nodes[y]));
+
+        // A block turns inline: it leaves `outer`'s list for an anonymous
+        // block's inline content, and the inline-block becomes a block.
+        let mut m = doc.mutate();
+        m.set_attribute(x, qual_name!("style"), "display:inline");
+        m.set_attribute(inner, qual_name!("style"), "display:block");
+        drop(m);
+        doc.resolve(0.0);
+        assert_owners_match_lists(&doc, "display changes");
+
+        // A container turns inline with a block child left in its old list,
+        // a child is dropped, and a new block arrives.
+        let mut m = doc.mutate();
+        m.set_attribute(outer, qual_name!("style"), "display:inline");
+        m.remove_and_drop_node(y);
+        let z = m.create_element(qual_name!("div"), vec![style("display:block")]);
+        m.append_children(body, &[z]);
+        drop(m);
+        doc.resolve(0.0);
+        assert_owners_match_lists(&doc, "container turns inline");
+
+        // And back, so the old lists are replaced again.
+        let mut m = doc.mutate();
+        m.set_attribute(outer, qual_name!("style"), "display:block");
+        m.set_attribute(x, qual_name!("style"), "display:block");
+        drop(m);
+        doc.resolve(0.0);
+        assert_owners_match_lists(&doc, "restored");
+    }
+}
