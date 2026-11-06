@@ -163,6 +163,7 @@ impl Dom {
 
     /// Called after `node` was inserted (tree mutation or parser).
     pub(crate) fn resources_after_insert(&mut self, node: u32) {
+        self.details_after_insert(node);
         self.iframes_after_insert(node);
         if !self.resources.enabled || !self.connected_for_resources(node) {
             return;
@@ -183,6 +184,7 @@ impl Dom {
         if n.first_child != NIL || n.element().is_some_and(|e| e.shadow_root != NIL) {
             return self.resources_after_insert(node);
         }
+        self.details_after_insert(node);
         self.iframe_after_parser_insert(node);
         if !self.resources.enabled || !self.connected_for_resources(node) {
             return;

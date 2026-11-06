@@ -144,3 +144,7 @@ rules: each cell keeps half of the borders around it (`LayoutData::collapsed_bor
 Values in `bench/pdf/fixtures/chrome-156/table-collapse.json`, tests in `crates/lp-render/tests/table_collapsed_borders.rs`.
 
 Time inputs use the existing text-editor construction and intrinsic measurement paths so captured values are painted.
+
+- `assets/default.css`: the popover rules (`[popover]` is `position: fixed`, centered, with a border and
+  padding, `:popover-open` is in the top layer) are not behind Gecko's `dom.element.popover.enabled` pref,
+  which no embedder sets: a showing popover is laid out as Chrome lays it out.

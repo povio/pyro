@@ -187,6 +187,8 @@ pub struct Dom {
     pub(crate) reactions: crate::custom::ReactionQueue,
     /// Modal dialogs and showing popovers (`top_layer`).
     pub(crate) top_layer: crate::top_layer::TopLayer,
+    /// Queued `<details>` toggles and whether accordions are in use.
+    pub(crate) details: crate::details::DetailsState,
     /// Nonces hidden from content attributes (`nonce`).
     pub(crate) nonces: crate::nonce::NonceState,
     /// Natural sizes of loaded `<img>` elements, set by the embedder.
@@ -247,6 +249,7 @@ impl Dom {
             iframes: Default::default(),
             reactions: Default::default(),
             top_layer: Default::default(),
+            details: Default::default(),
             nonces: Default::default(),
             natural_sizes: Default::default(),
             window_names: Default::default(),
@@ -2518,6 +2521,7 @@ impl Dom {
         self.resources_after_attr(i, &name.local, false);
         if *old != *value {
             self.slots_after_attr_change(i, &name.local);
+            self.details_after_attr(i, &name, None);
         }
     }
     pub(crate) fn append_attr(&mut self, i: u32, name: QualName, value: &str) {
@@ -2533,6 +2537,7 @@ impl Dom {
         }
         self.slots_after_attr_change(i, &name.local);
         self.resources_after_attr(i, &name.local, true);
+        self.details_after_attr(i, &name, Some(true));
     }
 
     /// `removeAttribute(qualifiedName)`. Returns whether an attribute was removed.
@@ -2572,6 +2577,7 @@ impl Dom {
         }
         self.resources_after_attr(i, &attr.name.local, false);
         self.slots_after_attr_change(i, &attr.name.local);
+        self.details_after_attr(i, &attr.name, Some(false));
     }
 
     /// `toggleAttribute(name, force)`.

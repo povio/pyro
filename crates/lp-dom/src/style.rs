@@ -893,7 +893,17 @@ impl StyleEngine {
         let parent = flat_tree_parent_element(dom, idx).map(|p| dom.id_of(p));
         let above = parent.and_then(|p| self.computed_stylo(dom, p)).unwrap_or_default();
         let e = dom.n(idx).element().expect("element");
-        let c = derive_computed(&style, e, &above);
+        let mut c = derive_computed(&style, e, &above);
+        // A modal dialog blocks its document: the root is inert and the
+        // topmost modal dialog's subtree is not (HTML "blocked by a modal
+        // dialog"). One empty-set check when there is no modal dialog.
+        if let Some(modal) = dom.topmost_modal() {
+            if modal == el {
+                c.inert = e.is_html() && e.attr("inert").is_some();
+            } else if parent.is_none() && dom.check(modal).is_ok_and(|m| dom.n(m).owner_doc == dom.n(idx).owner_doc) {
+                c.inert = true;
+            }
+        }
         self.memo.borrow_mut().insert(el, c);
         Some(c)
     }
