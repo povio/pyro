@@ -131,6 +131,20 @@ the grid gives without the skipped item, and the same as css-grid-1 §12.1 step 
 changed min-content contribution. `an_unread_item_does_not_change_the_other_columns` pins this. Covered by the `rerun_tests` module at the end of `compute/grid/mod.rs` (run them from a
 copy of this directory with an empty `[workspace]` table, as the crate is not a workspace member).
 
+## A tree placing its own grid items
+
+`compute/grid/mod.rs` and `tree/traits.rs`: a tree can place a grid's items itself.
+`LayoutGridContainer::track_counts` (default `None`) answers how many columns and rows the placed items reach,
+and `resolved_placement` each in-flow item's area in origin-zero lines. The grid then skips named-line
+resolution, the grid size estimate, auto-placement and its occupancy matrix, and sizes the explicit tracks
+plus whatever the items reach past them (no negative implicit tracks). Empty `auto-fit` tracks are found from
+the items' areas. blitz-dom's tables answer it from `TableContext::placement`, computed once as the table is
+built (`place_cells` in `layout/table.rs`, the same `row dense` placement). A table grid laid out again from
+its last layout (`table_reuse::prepare`) takes the inserted rows' items from it as well, instead of placing them
+over an occupancy matrix of the whole grid. In debug builds `debug_assert_tree_placement` runs the grid's own
+placement as well and asserts the areas and track counts are equal, and the replay asserts the same for the
+inserted items.
+
 ## Moving from v0.15.1 to main
 
 The local commit was cherry-picked onto main (base `v0.15.1`, a release branch). Upstream has none of the

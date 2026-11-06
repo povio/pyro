@@ -281,7 +281,7 @@ index b84e8751..adc2f827 100644
  
  /// The offset applied to an item in a single axis by its `inset` if it is `position: relative`
 diff --git a/src/compute/grid/mod.rs b/src/compute/grid/mod.rs
-index f0109c6e..950af2fe 100644
+index f0109c6e..63e4fe5f 100644
 --- a/src/compute/grid/mod.rs
 +++ b/src/compute/grid/mod.rs
 @@ -39,12 +39,15 @@ mod alignment;
@@ -311,9 +311,15 @@ index f0109c6e..950af2fe 100644
      let style = tree.get_grid_container_style(node);
      let constants = compute_container_constants(tree, &style, inputs);
      let GridContainerConstants {
-@@ -337,104 +343,142 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -336,105 +342,197 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+     // Absolutely positioned children do not take part in grid placement and do not create implicit tracks,
      // so they are excluded here. Each child's style is read and its named lines resolved exactly once; the
      // results drive both the grid size estimate and item placement below.
++    //
++    // lightningpanda: a tree that places the items itself (a table, which places its cells as it builds them)
++    // answers each item's area instead. Named-line resolution, the size estimate and auto-placement are then
++    // skipped (see `LayoutGridContainer::track_counts`).
++    let tree_extent = tree.track_counts(node);
      let child_count = tree.child_count(node);
 -    let mut items: Vec<GridItem> = Vec::with_capacity(child_count);
 -    let mut placements: Vec<ItemPlacement> = Vec::with_capacity(child_count);
@@ -363,43 +369,97 @@ index f0109c6e..950af2fe 100644
 +        ),
 +        None => {
 +        let mut items: Vec<GridItem> = Vec::with_capacity(child_count);
-+        let mut placements: Vec<ItemPlacement> = Vec::with_capacity(child_count);
++        let mut placements: Vec<ItemPlacement> =
++            Vec::with_capacity(if tree_extent.is_some() { 0 } else { child_count });
 +        for (index, child_node) in tree.child_ids(node).enumerate() {
 +            let child_style = tree.get_grid_child_style(child_node);
 +            if child_style.box_generation_mode() == BoxGenerationMode::None || child_style.position().is_out_of_flow() {
 +                continue;
 +            }
-+            placements.push(InBothAbsAxis {
-+                horizontal: name_resolver
-+                    .resolve_column_names(&child_style.grid_column())
-+                    .into_origin_zero(explicit_col_count),
-+                vertical: name_resolver.resolve_row_names(&child_style.grid_row()).into_origin_zero(explicit_row_count),
-+            });
-+            items.push(GridItem::new_with_style_and_order(
-+                child_node,
-+                child_style,
-+                align_items,
-+                justify_items,
-+                index as u16,
-+            ));
++            let tree_area = match tree_extent {
++                Some(_) => Some(
++                    tree.resolved_placement(node, child_node)
++                        .expect("a tree answering track_counts answers resolved_placement for every in-flow child"),
++                ),
++                None => {
++                    placements.push(InBothAbsAxis {
++                        horizontal: name_resolver
++                            .resolve_column_names(&child_style.grid_column())
++                            .into_origin_zero(explicit_col_count),
++                        vertical: name_resolver
++                            .resolve_row_names(&child_style.grid_row())
++                            .into_origin_zero(explicit_row_count),
++                    });
++                    None
++                }
++            };
++            let mut item =
++                GridItem::new_with_style_and_order(child_node, child_style, align_items, justify_items, index as u16);
++            if let Some(area) = tree_area {
++                item.column = area.width.map(|line| OriginZeroLine(line as i16));
++                item.row = area.height.map(|line| OriginZeroLine(line as i16));
++            }
++            items.push(item);
 +        }
-+
+ 
+-    // 4. Implicit Grid: Estimate Track Counts
+-    // Estimate the number of rows and columns in the implicit grid (= the entire grid)
+-    // This is necessary as part of placement. Doing it early here is a perf optimisation to reduce allocations.
+-    let (est_col_counts, est_row_counts) =
+-        compute_grid_size_estimate(explicit_col_count, explicit_row_count, &placements);
 +        // 4. Implicit Grid: Estimate Track Counts
-+        // Estimate the number of rows and columns in the implicit grid (= the entire grid)
-+        // This is necessary as part of placement. Doing it early here is a perf optimisation to reduce allocations.
-+        let (est_col_counts, est_row_counts) =
-+            compute_grid_size_estimate(explicit_col_count, explicit_row_count, &placements);
-+
 +        // 5. Grid Item Placement
-+        // Match items (children) to a definite grid position (row start/end and column start/end position)
-+        let mut cell_occupancy_matrix = CellOccupancyMatrix::with_track_counts(est_col_counts, est_row_counts);
++        // Match items (children) to a definite grid position (row start/end and column start/end position).
 +        // `items` is in document order from here on (placement only fills in each item's grid area). The track
 +        // sizing and baseline passes sort references to the items rather than the items themselves.
-+        place_grid_items(&mut cell_occupancy_matrix, &mut items, &placements, style.grid_auto_flow());
-+
-+        // Extract track counts from previous step (auto-placement can expand the number of tracks)
-+        let final_col_counts = *cell_occupancy_matrix.track_counts(AbsoluteAxis::Horizontal);
-+        let final_row_counts = *cell_occupancy_matrix.track_counts(AbsoluteAxis::Vertical);
++        let (final_col_counts, final_row_counts, cell_occupancy_matrix) = match tree_extent {
++            Some(extent) => {
++                // The tree's items start at the first explicit line, so there are no negative implicit tracks, and
++                // the items reach `extent` tracks: the implicit grid is whatever of that lies past the explicit grid.
++                let counts =
++                    |explicit: u16, extent: u16| TrackCounts::from_raw(0, explicit, extent.saturating_sub(explicit));
++                let col_counts = counts(explicit_col_count, extent.width);
++                let row_counts = counts(explicit_row_count, extent.height);
++                #[cfg(debug_assertions)]
++                debug_assert_tree_placement(
++                    tree,
++                    node,
++                    &name_resolver,
++                    (explicit_col_count, explicit_row_count),
++                    style.grid_auto_flow(),
++                    &items,
++                    (col_counts, row_counts),
++                );
++                (col_counts, row_counts, None)
++            }
++            None => {
++                // Estimate the number of rows and columns in the implicit grid (= the entire grid)
++                // This is necessary as part of placement. Doing it early here is a perf optimisation to reduce allocations.
++                let (est_col_counts, est_row_counts) =
++                    compute_grid_size_estimate(explicit_col_count, explicit_row_count, &placements);
++                let mut cell_occupancy_matrix = CellOccupancyMatrix::with_track_counts(est_col_counts, est_row_counts);
++                place_grid_items(&mut cell_occupancy_matrix, &mut items, &placements, style.grid_auto_flow());
++                // Extract track counts from previous step (auto-placement can expand the number of tracks)
++                let final_col_counts = *cell_occupancy_matrix.track_counts(AbsoluteAxis::Horizontal);
++                let final_row_counts = *cell_occupancy_matrix.track_counts(AbsoluteAxis::Vertical);
++                (final_col_counts, final_row_counts, Some(cell_occupancy_matrix))
++            }
++        };
++        // Whether a track has items, for collapsing empty `auto-fit` tracks. Without an occupancy matrix (the tree
++        // placed the items, starting at track 0) a track has items when an item's area covers it.
++        let track_has_items = |index: usize, axis: AbsoluteAxis| match &cell_occupancy_matrix {
++            Some(matrix) => match axis {
++                AbsoluteAxis::Horizontal => matrix.column_is_occupied(index),
++                AbsoluteAxis::Vertical => matrix.row_is_occupied(index),
++            },
++            None => items.iter().any(|item| {
++                let area = match axis {
++                    AbsoluteAxis::Horizontal => item.column,
++                    AbsoluteAxis::Vertical => item.row,
++                };
++                (area.start.0 as isize) <= index as isize && (index as isize) < area.end.0 as isize
++            }),
++        };
 +
 +        // 5. Initialize Tracks
 +        // Initialize (explicit and implicit) grid tracks (and gutters)
@@ -412,7 +472,7 @@ index f0109c6e..950af2fe 100644
 +            &style,
 +            AbsoluteAxis::Horizontal,
 +            col_auto_repetition_count,
-+            |column_index| cell_occupancy_matrix.column_is_occupied(column_index),
++            |column_index| track_has_items(column_index, AbsoluteAxis::Horizontal),
 +        );
 +        initialize_grid_tracks(
 +            &mut rows,
@@ -420,15 +480,9 @@ index f0109c6e..950af2fe 100644
 +            &style,
 +            AbsoluteAxis::Vertical,
 +            row_auto_repetition_count,
-+            |row_index| cell_occupancy_matrix.row_is_occupied(row_index),
++            |row_index| track_has_items(row_index, AbsoluteAxis::Vertical),
 +        );
  
--    // 4. Implicit Grid: Estimate Track Counts
--    // Estimate the number of rows and columns in the implicit grid (= the entire grid)
--    // This is necessary as part of placement. Doing it early here is a perf optimisation to reduce allocations.
--    let (est_col_counts, est_row_counts) =
--        compute_grid_size_estimate(explicit_col_count, explicit_row_count, &placements);
--
 -    // 5. Grid Item Placement
 -    // Match items (children) to a definite grid position (row start/end and column start/end position)
 -    let mut cell_occupancy_matrix = CellOccupancyMatrix::with_track_counts(est_col_counts, est_row_counts);
@@ -538,7 +592,7 @@ index f0109c6e..950af2fe 100644
      let initial_column_sum = columns.iter().map(|track| track.base_size).sum::<f32>();
      inner_node_size.width = inner_node_size.width.or_else(|| initial_column_sum.into());
  
-@@ -448,9 +492,18 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -448,9 +546,18 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
          return LayoutOutput::from_outer_size(Size { width, height: 0.0 });
      }
  
@@ -558,7 +612,7 @@ index f0109c6e..950af2fe 100644
      track_sizing_algorithm(
          tree,
          AbstractAxis::Block,
-@@ -465,6 +518,9 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -465,6 +572,9 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
          &mut items,
          |track: &GridTrack, _, _| Some(track.base_size),
          false, // TODO: Support baseline alignment in the vertical axis
@@ -568,7 +622,7 @@ index f0109c6e..950af2fe 100644
      );
      let initial_row_sum = rows.iter().map(|track| track.base_size).sum::<f32>();
  
-@@ -517,6 +573,19 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -517,6 +627,19 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
          // Note: every item must be visited (no short-circuiting) as the closure updates each item's caches
          intrinsic_column_contribution_changed =
              items.iter_mut().filter(|item| item.crosses_intrinsic_column).fold(false, |any_changed, item| {
@@ -588,7 +642,7 @@ index f0109c6e..950af2fe 100644
                  let grid_area_size = item.grid_area_size(
                      AbstractAxis::Inline,
                      &columns,
-@@ -567,6 +636,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -567,6 +690,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
          });
      }
  
@@ -596,7 +650,7 @@ index f0109c6e..950af2fe 100644
      if rerun_column_sizing {
          // Re-run track sizing algorithm for Inline axis
          track_sizing_algorithm(
-@@ -583,6 +653,9 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -583,6 +707,9 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
              &mut items,
              |track: &GridTrack, _, _| Some(track.base_size),
              has_baseline_aligned_item,
@@ -606,7 +660,7 @@ index f0109c6e..950af2fe 100644
          );
  
          // The column widths may have changed, so the items' intrinsic height contributions need to be recomputed
-@@ -632,6 +705,9 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -632,6 +759,9 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
              &mut items,
              |track: &GridTrack, _, _| Some(track.base_size),
              false, // TODO: Support baseline alignment in the vertical axis
@@ -616,7 +670,7 @@ index f0109c6e..950af2fe 100644
          );
      }
  
-@@ -721,6 +797,13 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -721,6 +851,13 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
      };
  
      // Position in-flow children (stored in items vector)
@@ -630,7 +684,7 @@ index f0109c6e..950af2fe 100644
      for (index, item) in items.iter_mut().enumerate() {
          // Tracks are stored in logical order. In RTL the physical offsets are assigned
          // right-to-left, so an item's physical left edge is derived from its logical end
-@@ -739,25 +822,65 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -739,25 +876,65 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
                  columns[item.column_indexes.end as usize].offset
              },
          };
@@ -714,7 +768,7 @@ index f0109c6e..950af2fe 100644
  
          #[cfg(feature = "content_size")]
          {
-@@ -765,6 +888,24 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -765,6 +942,24 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
          }
      }
  
@@ -739,7 +793,7 @@ index f0109c6e..950af2fe 100644
      // Position hidden and absolutely positioned children, merging in the candidates bubbled out
      // of in-flow children's subtrees (`items` is sorted by `source_order`, i.e. child index)
      let mut order = items.len() as u32;
-@@ -980,6 +1121,23 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -980,9 +1175,80 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
      );
      output.oof_candidates = oof_candidates;
      output.oof_positioning_area = oof_positioning_area;
@@ -763,7 +817,64 @@ index f0109c6e..950af2fe 100644
      output
  }
  
-@@ -1454,3 +1612,131 @@ impl DetailedGridItemsInfo {
++/// lightningpanda: checks the areas and track counts a tree answered through `LayoutGridContainer::track_counts`
++/// and `resolved_placement` against what this module's own placement gives for the same items: named-line
++/// resolution, the grid size estimate and the auto-placement algorithm over an occupancy matrix.
++#[cfg(debug_assertions)]
++fn debug_assert_tree_placement<Tree: LayoutGridContainer>(
++    tree: &Tree,
++    node: NodeId,
++    name_resolver: &NamedLineResolver<Tree::CustomIdent>,
++    (explicit_col_count, explicit_row_count): (u16, u16),
++    grid_auto_flow: crate::GridAutoFlow,
++    items: &[GridItem],
++    (col_counts, row_counts): (TrackCounts, TrackCounts),
++) {
++    let mut placed: Vec<GridItem> = Vec::with_capacity(items.len());
++    let mut placements: Vec<ItemPlacement> = Vec::with_capacity(items.len());
++    for (index, child_node) in tree.child_ids(node).enumerate() {
++        let child_style = tree.get_grid_child_style(child_node);
++        if child_style.box_generation_mode() == BoxGenerationMode::None || child_style.position().is_out_of_flow() {
++            continue;
++        }
++        placements.push(InBothAbsAxis {
++            horizontal: name_resolver
++                .resolve_column_names(&child_style.grid_column())
++                .into_origin_zero(explicit_col_count),
++            vertical: name_resolver.resolve_row_names(&child_style.grid_row()).into_origin_zero(explicit_row_count),
++        });
++        placed.push(GridItem::new_with_style_and_order(
++            child_node,
++            child_style,
++            AlignItems::START,
++            AlignItems::START,
++            index as u16,
++        ));
++    }
++    let (est_col_counts, est_row_counts) =
++        compute_grid_size_estimate(explicit_col_count, explicit_row_count, &placements);
++    let mut matrix = CellOccupancyMatrix::with_track_counts(est_col_counts, est_row_counts);
++    place_grid_items(&mut matrix, &mut placed, &placements, grid_auto_flow);
++    assert_eq!(items.len(), placed.len(), "the tree placed a different number of grid items");
++    for (item, expected) in items.iter().zip(placed.iter()) {
++        assert_eq!(
++            (item.column, item.row),
++            (expected.column, expected.row),
++            "the tree's placement of grid item {:?} (columns, rows) differs from the grid's",
++            item.node
++        );
++    }
++    assert_eq!(
++        (col_counts, row_counts),
++        (*matrix.track_counts(AbsoluteAxis::Horizontal), *matrix.track_counts(AbsoluteAxis::Vertical)),
++        "the tree's grid track counts (columns, rows) differ from the grid's"
++    );
++}
++
+ /// Resolve the static-position rectangle (the grid area determined by the grid-placement
+ /// properties) for an out-of-flow child of a positioned grid container.
+ ///
+@@ -1454,3 +1720,131 @@ impl DetailedGridItemsInfo {
          }
      }
  }
@@ -897,10 +1008,10 @@ index f0109c6e..950af2fe 100644
 +}
 diff --git a/src/compute/grid/table_reuse.rs b/src/compute/grid/table_reuse.rs
 new file mode 100644
-index 00000000..e422e0bb
+index 00000000..acd0755c
 --- /dev/null
 +++ b/src/compute/grid/table_reuse.rs
-@@ -0,0 +1,318 @@
+@@ -0,0 +1,365 @@
 +//! lightningpanda: a table's grid laid out again from its last layout.
 +//!
 +//! A table's rows are a grid's (`LayoutGridContainer::grid_rows_are_table_rows`). After a full layout
@@ -920,7 +1031,7 @@ index 00000000..e422e0bb
 +use super::explicit_grid::initialize_grid_tracks;
 +use super::placement::{place_grid_items, ItemPlacement};
 +use super::track_sizing::{determine_if_item_crosses_flexible_or_intrinsic_tracks, resolve_item_track_indexes};
-+use super::types::{CellOccupancyMatrix, GridItem, GridTrack, GridTrackKind, NamedLineResolver, TrackCounts};
++use super::types::{CellOccupancyMatrix, GridItem, GridTrack, GridTrackKind, NamedLineResolver, OriginZeroLine, TrackCounts};
 +use super::GridContainerConstants;
 +use crate::geometry::{AbsoluteAxis, InBothAbsAxis};
 +use crate::style::{AlignItems, GridAutoFlow};
@@ -1111,29 +1222,76 @@ index 00000000..e422e0bb
 +    old_items.truncate(splice.items.start);
 +    let mut items = old_items;
 +    let mut inserted: Vec<GridItem> = Vec::with_capacity(splice.inserted);
-+    let mut placements: Vec<ItemPlacement> = Vec::with_capacity(splice.inserted);
++    // A tree that places the items itself (`LayoutGridContainer::track_counts`) answers the inserted
++    // items' areas as well; otherwise they are placed as the whole grid's placement places them.
++    let tree_extent = tree.track_counts(node);
++    let mut placements: Vec<ItemPlacement> = Vec::with_capacity(if tree_extent.is_some() { 0 } else { splice.inserted });
 +    for index in splice.items.start..after {
 +        let child_style = tree.get_grid_child_style(child_id(index));
 +        if child_style.box_generation_mode() == BoxGenerationMode::None || child_style.position().is_out_of_flow() {
 +            return None;
 +        }
-+        placements.push(InBothAbsAxis {
-+            horizontal: name_resolver.resolve_column_names(&child_style.grid_column()).into_origin_zero(explicit_col_count),
-+            vertical: name_resolver.resolve_row_names(&child_style.grid_row()).into_origin_zero(explicit_row_count),
-+        });
-+        inserted.push(GridItem::new_with_style_and_order(child_id(index), child_style, align_items, justify_items, index as u16));
++        if tree_extent.is_none() {
++            placements.push(InBothAbsAxis {
++                horizontal: name_resolver.resolve_column_names(&child_style.grid_column()).into_origin_zero(explicit_col_count),
++                vertical: name_resolver.resolve_row_names(&child_style.grid_row()).into_origin_zero(explicit_row_count),
++            });
++        }
++        let mut item = GridItem::new_with_style_and_order(child_id(index), child_style, align_items, justify_items, index as u16);
++        if tree_extent.is_some() {
++            let area = tree
++                .resolved_placement(node, child_id(index))
++                .expect("a tree answering track_counts answers resolved_placement for every in-flow child");
++            item.column = area.width.map(|line| OriginZeroLine(line as i16));
++            item.row = area.height.map(|line| OriginZeroLine(line as i16));
++        }
++        inserted.push(item);
 +        changed[index] = true;
 +    }
 +    if !inserted.is_empty() {
-+        // The inserted items go to the inserted rows, which no other item reaches: they are placed
-+        // there as the whole grid's placement places them.
-+        let mut matrix = CellOccupancyMatrix::with_track_counts(col_counts, row_counts);
-+        place_grid_items(&mut matrix, &mut inserted, &placements, grid_auto_flow);
++        // The inserted items go to the inserted rows, which no other item reaches, and make no
++        // implicit track.
++        match tree_extent {
++            Some(extent) => {
++                if extent.width > explicit_col_count || extent.height > explicit_row_count {
++                    return None;
++                }
++                #[cfg(debug_assertions)]
++                {
++                    let mut placed: Vec<GridItem> = Vec::with_capacity(inserted.len());
++                    let mut placements: Vec<ItemPlacement> = Vec::with_capacity(inserted.len());
++                    for item in &inserted {
++                        let child_style = tree.get_grid_child_style(item.node);
++                        placements.push(InBothAbsAxis {
++                            horizontal: name_resolver.resolve_column_names(&child_style.grid_column()).into_origin_zero(explicit_col_count),
++                            vertical: name_resolver.resolve_row_names(&child_style.grid_row()).into_origin_zero(explicit_row_count),
++                        });
++                        placed.push(GridItem::new_with_style_and_order(item.node, child_style, align_items, justify_items, item.source_order));
++                    }
++                    let mut matrix = CellOccupancyMatrix::with_track_counts(col_counts, row_counts);
++                    place_grid_items(&mut matrix, &mut placed, &placements, grid_auto_flow);
++                    for (item, expected) in inserted.iter().zip(&placed) {
++                        debug_assert_eq!(
++                            (item.column, item.row),
++                            (expected.column, expected.row),
++                            "the tree's placement of inserted grid item {:?} (columns, rows) differs from the grid's",
++                            item.node
++                        );
++                    }
++                }
++            }
++            None => {
++                let mut matrix = CellOccupancyMatrix::with_track_counts(col_counts, row_counts);
++                place_grid_items(&mut matrix, &mut inserted, &placements, grid_auto_flow);
++                if *matrix.track_counts(AbsoluteAxis::Horizontal) != col_counts
++                    || *matrix.track_counts(AbsoluteAxis::Vertical) != row_counts
++                {
++                    return None;
++                }
++            }
++        }
 +        let rows_inserted = first_row..first_row + splice.inserted_rows as i16;
-+        if *matrix.track_counts(AbsoluteAxis::Horizontal) != col_counts
-+            || *matrix.track_counts(AbsoluteAxis::Vertical) != row_counts
-+            || inserted.iter().any(|item| !rows_inserted.contains(&item.row.start.0) || item.row.end.0 > rows_inserted.end)
-+        {
++        if inserted.iter().any(|item| !rows_inserted.contains(&item.row.start.0) || item.row.end.0 > rows_inserted.end) {
 +            return None;
 +        }
 +        resolve_item_track_indexes(&mut inserted, col_counts, row_counts);
@@ -1583,7 +1741,7 @@ index c18fa644..50154417 100644
  #[doc(inline)]
  pub use crate::style::Style;
 diff --git a/src/tree/traits.rs b/src/tree/traits.rs
-index 7d4adf22..5cab6e3e 100644
+index 7d4adf22..c19abd0c 100644
 --- a/src/tree/traits.rs
 +++ b/src/tree/traits.rs
 @@ -290,6 +290,16 @@ pub trait RoundTree: TraverseTree {
@@ -1603,7 +1761,7 @@ index 7d4adf22..5cab6e3e 100644
  }
  
  /// Trait used by the `print_tree` method which prints a debug representation
-@@ -344,6 +354,25 @@ pub trait LayoutGridContainer: LayoutPartialTree {
+@@ -344,6 +354,42 @@ pub trait LayoutGridContainer: LayoutPartialTree {
      /// Interpreted in the container's axes (see [`LayoutPartialTree::get_core_container_style`]).
      fn get_grid_child_style(&self, child_node_id: NodeId) -> Self::GridItemStyle<'_>;
  
@@ -1625,11 +1783,28 @@ index 7d4adf22..5cab6e3e 100644
 +
 +    /// lightningpanda: keeps a table's grid layout for the next [`take_table_grid_state`](Self::take_table_grid_state).
 +    fn store_table_grid_state(&mut self, _node_id: NodeId, _state: crate::util::sys::Box<crate::compute::grid::TableGridState>) {}
++    /// Whether the tree places `node_id`'s in-flow children itself (lightningpanda: a table places its cells
++    /// in rows and columns as it builds them). `Some(extent)`: the number of tracks the placed items reach from
++    /// the grid's first explicit line, in each axis (`width`: columns, `height`: rows). The grid then reads each
++    /// item's area from [`Self::resolved_placement`] instead of resolving named lines, estimating the grid's size
++    /// and running the auto-placement algorithm over an occupancy matrix. The areas must be what that algorithm
++    /// gives for the children's `grid-row`/`grid-column` styles and the container's `grid-auto-flow`, and no
++    /// area may start before the first explicit line. `None` (the default): the grid places the items.
++    fn track_counts(&self, _node_id: NodeId) -> Option<Size<u16>> {
++        None
++    }
++
++    /// The grid area of the in-flow child `child_node_id` of `node_id`, as origin-zero lines (0 is the first
++    /// explicit line; `width`: column lines, `height`: row lines). Read only when [`Self::track_counts`] answers
++    /// `Some`, and then it must answer for every in-flow child.
++    fn resolved_placement(&self, _node_id: NodeId, _child_node_id: NodeId) -> Option<Size<Line<u16>>> {
++        None
++    }
 +
      /// Set the node's detailed grid information
      ///
      /// Implementing this method is optional. Doing so allows you to access details about the the grid such as
-@@ -373,6 +402,13 @@ pub trait LayoutBlockContainer: LayoutPartialTree {
+@@ -373,6 +419,13 @@ pub trait LayoutBlockContainer: LayoutPartialTree {
      /// Interpreted in the container's axes (see [`LayoutPartialTree::get_core_container_style`]).
      fn get_block_child_style(&self, child_node_id: NodeId) -> Self::BlockItemStyle<'_>;
  

@@ -157,6 +157,19 @@ rules: each cell keeps half of the borders around it (`LayoutData::collapsed_bor
 `LayoutStyles::cell`) and the table half of its outer ones, as Chromium's boxes do. Uniform tables keep the gutter.
 Values in `bench/pdf/fixtures/chrome-156/table-collapse.json`, tests in `crates/lp-render/tests/table_collapsed_borders.rs`.
 
+`src/layout/table.rs`: the table places its cells once, as it is built (`place_cells`, stored as
+`TableContext::placement`), and hands the areas to the grid through taffy's `LayoutGridContainer::track_counts`
+and `resolved_placement` (see `vendor/taffy/README.lightningpanda.md`). It runs the grid's `row dense`
+placement over each row's occupied column ranges, which is not always the column `ColumnCursor` gave the cell
+(`TableCell::column`): a colspan cell that does not fit beside a rowspan hole moves past it and a later cell
+backfills the hole. Upstream ran taffy's placement on every layout of the table. A cell whose `grid-row` is
+not a positive line and a span (or whose `colspan` is 0) leaves the placement to the grid.
+`table_cell_placement_is_the_grids` compares the grid info and every box's layout with the grid placing the cells.
+An incremental table (see "Incremental tables": no cell spans rows) keeps the placement up to date in `update_rows`:
+the areas of the rows collected again are spliced in from the cells' rows and cursor columns (`unspanned_cell_area`,
+where dense placement puts a cell when nothing spans rows), and the rows after them are renumbered with the cells.
+`updated_rows_keep_the_cells_placement` checks appends, inserts and removals against `place_cells`.
+
 Time inputs use the existing text-editor construction and intrinsic measurement paths so captured values are painted.
 
 ## Layout styles written with the style
