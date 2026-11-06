@@ -1145,16 +1145,7 @@ impl JsClass for HtmlElement {
             crate::input::blur_element(n.page(), n.id);
             Ok(s.undefined())
         });
-        def.method("attachInternals", 0, |s, n, _a| {
-            let id = n.id;
-            let root = s.function("shadowRoot", move |s, _this, _a| {
-                let page = crate::target::page_of(s)?;
-                let root = page.dom.borrow().shadow_root(id).unwrap_or(None);
-                node_value(s, &page, root)
-            })?;
-            let make = s.eval("(function(root){return {get shadowRoot(){return root()}, setFormValue(){}, setValidity(){}, states: new Set(), form: null, labels: [], willValidate: false, checkValidity(){return true}, reportValidity(){return true}}})", None, 1)?;
-            make.as_object().ok_or_else(|| JsError::Type("attachInternals".into()))?.call(None, &[root.value()])
-        });
+        def.method("attachInternals", 0, |s, n, _a| crate::internals::attach(s, n.page(), n.id));
         def.method("showPopover", 0, |s, n, _a| {
             set_popover_showing(n, true)?;
             Ok(s.undefined())
@@ -2054,7 +2045,8 @@ pub fn labeled_control(dom: &Dom, label: NodeId) -> Option<NodeId> {
             e.is_html()
                 && (matches!(&*e.name.local, "button" | "meter" | "output" | "progress" | "select" | "textarea")
                     || (&*e.name.local == "input"
-                        && dom.input_type(id).map(|t| t != InputType::Hidden).unwrap_or(false)))
+                        && dom.input_type(id).map(|t| t != InputType::Hidden).unwrap_or(false))
+                    || dom.is_form_associated(id))
         })
     };
     if let Ok(Some(f)) = dom.get_attribute(label, "for") {
@@ -2977,6 +2969,7 @@ pub(crate) fn document_open<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsR
         return open.call(None, &[a.get(0), a.get(1), a.get(2)]);
     }
     html_document(page, n.id)?;
+    crate::custom::check_dynamic_markup(page, n.id)?;
     let document = node_value(s, page, Some(n.id))?;
     // From a script the active parser is running: no-op.
     if (page.script_parser_active.get() || writes_to_network_parser(page, n.id)) && page.script_nesting.get() > 0 {
@@ -3029,6 +3022,7 @@ fn open_document(page: &Rc<PageDom>, doc: NodeId) -> JsResult<()> {
 pub(crate) fn document_write<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>, ln: bool) -> JsResult<Value<'s>> {
     let page = n.page();
     html_document(page, n.id)?;
+    crate::custom::check_dynamic_markup(page, n.id)?;
     let mut text = String::new();
     for i in 0..a.len() {
         text.push_str(&dom_string(a.get(i))?);
@@ -3068,6 +3062,7 @@ pub(crate) fn document_write<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>, ln: b
 pub(crate) fn document_close<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
     let page = n.page();
     html_document(page, n.id)?;
+    crate::custom::check_dynamic_markup(page, n.id)?;
     if !page.script_parser_active.get() {
         return Ok(s.undefined());
     }

@@ -79,10 +79,24 @@ impl Node {
     /// attribute (written by lp-dom's render tree) lists `state`: the
     /// pseudo-classes Blitz cannot derive itself (validity, placeholder
     /// shown, read-write, ...).
+    /// `:state(name)`: lightningpanda's custom states attribute (names
+    /// separated by U+001F).
+    fn has_lp_custom_state(&self, state: &str) -> bool {
+        self.element_data().is_some_and(|e| {
+            e.attrs.iter().any(|a| {
+                &*a.name.ns == "urn:x-lightningpanda:state"
+                    && &*a.name.local == "custom-states"
+                    && a.value.split('\u{1f}').any(|s| s == state)
+            })
+        })
+    }
+
     fn has_lp_state(&self, state: &str) -> bool {
         self.element_data().is_some_and(|e| {
             e.attrs.iter().any(|a| {
-                &*a.name.ns == "urn:x-lightningpanda:state" && a.value.split_ascii_whitespace().any(|s| s == state)
+                &*a.name.ns == "urn:x-lightningpanda:state"
+                    && &*a.name.local == "state"
+                    && a.value.split_ascii_whitespace().any(|s| s == state)
             })
         })
     }
@@ -505,7 +519,7 @@ impl selectors::Element for BlitzNode<'_> {
             NonTSPseudoClass::Hover => self.element_state().contains(ElementState::HOVER),
             NonTSPseudoClass::Indeterminate => self.has_lp_state("indeterminate"),
             NonTSPseudoClass::Lang(_) => false,
-            NonTSPseudoClass::CustomState(_) => false,
+            NonTSPseudoClass::CustomState(ref state) => self.has_lp_custom_state(&state.0),
             NonTSPseudoClass::Link => self.element_state().contains(ElementState::UNVISITED),
             NonTSPseudoClass::PlaceholderShown => self.has_lp_state("placeholder-shown"),
             NonTSPseudoClass::ReadWrite => self.has_lp_state("read-write"),

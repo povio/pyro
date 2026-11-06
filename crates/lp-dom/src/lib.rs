@@ -17,6 +17,7 @@ mod window_names;
 pub mod image;
 pub mod cssom;
 pub mod custom;
+mod internals;
 mod moving;
 mod nonce;
 pub mod picture;

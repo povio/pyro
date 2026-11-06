@@ -388,7 +388,8 @@ fn matches_kind(dom: &Dom, root: NodeId, id: NodeId, kind: &CollectionKind) -> b
         CollectionKind::Anchors => html && local == "a" && e.attr("name").is_some(),
         CollectionKind::Empty => false,
         CollectionKind::FormElements => {
-            html && matches!(local, "button" | "fieldset" | "input" | "object" | "output" | "select" | "textarea")
+            html && (matches!(local, "button" | "fieldset" | "input" | "object" | "output" | "select" | "textarea")
+                || e.flags & lp_dom::node::element_flags::FORM_ASSOCIATED != 0)
                 && !(local == "input" && e.attr("type").is_some_and(|t| t.eq_ignore_ascii_case("image")))
                 && dom.form_owner(id).ok().flatten() == Some(root)
         }

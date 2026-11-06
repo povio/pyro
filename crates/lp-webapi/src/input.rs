@@ -877,6 +877,8 @@ pub fn reset_form(page: &Rc<PageDom>, form: NodeId) {
             *st = Default::default();
         }
     }
+    // Form-associated custom elements reset themselves (formResetCallback).
+    let _ = dom.enqueue_form_reset(form);
 }
 
 // ----- keyboard ---------------------------------------------------------------------

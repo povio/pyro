@@ -490,6 +490,7 @@ impl JsClass for Node {
         def.method("cloneNode", 0, |s, n, a| {
             let deep = a.get(0).to_bool();
             let c = n.page().dom.borrow_mut().clone_node(n.id, deep, None).js()?;
+            crate::custom::upgrade_clone(s, n.page(), c);
             Ok(wrap_node(s, n.page(), c)?.value())
         });
         def.pure_method("contains", 1, |s, n, a| {
@@ -1779,6 +1780,7 @@ impl JsClass for Document {
                 None => a.get(1).to_bool(),
             };
             let c = n.page().dom.borrow_mut().clone_node(src, deep, Some(n.id)).js()?;
+            crate::custom::upgrade_clone(s, n.page(), c);
             Ok(wrap_node(s, n.page(), c)?.value())
         });
         def.method("adoptNode", 1, |s, n, a| {

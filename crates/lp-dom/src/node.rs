@@ -250,6 +250,15 @@ pub mod element_flags {
     pub const FRAGMENT_PARSED: u8 = 4;
     /// Custom element has been defined/upgraded (`:defined`).
     pub const CUSTOM_DEFINED: u8 = 8;
+    /// The element's custom element definition observes attributes
+    /// (`observedAttributes` with an `attributeChangedCallback`): attribute
+    /// changes queue reactions. Unset, an attribute change pays one test.
+    pub const OBSERVES_ATTRIBUTES: u8 = 16;
+    /// Custom element state "failed": its constructor threw, so it is
+    /// never upgraded again.
+    pub const CUSTOM_FAILED: u8 = 32;
+    /// A form-associated custom element (`static formAssociated = true`).
+    pub const FORM_ASSOCIATED: u8 = 64;
 }
 
 impl ElementData {
