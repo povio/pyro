@@ -354,7 +354,8 @@ fn parse_frame(buf: &mut BytesMut, max: usize) -> Result<Option<Frame>, Violatio
     }
     let len = len as usize;
     if buf.len() < header + len {
-        buf.reserve(header + len - buf.len());
+        // A hint only, capped: the declared length is the server's claim.
+        buf.reserve((header + len - buf.len()).min(1 << 20));
         return Ok(None);
     }
     buf.advance(header);
