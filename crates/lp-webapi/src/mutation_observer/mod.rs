@@ -271,8 +271,7 @@ pub fn checkpoint(page: &Rc<PageDom>) {
             scheduling_realm = Some(realm.clone());
         }
     }
-    if (!page.mutations.pending_roots.borrow().is_empty() || slots_signaled) && page.mutations.queued.get().is_none()
-    {
+    if (!page.mutations.pending_roots.borrow().is_empty() || slots_signaled) && page.mutations.queued.get().is_none() {
         let realm = scheduling_realm
             .or_else(|| {
                 page.mutations
@@ -416,8 +415,11 @@ fn notify(page: &Rc<PageDom>) {
         }
     }
     drop(roots);
-    for slot in slots {
-        crate::input::fire_simple(page, slot, "slotchange", true, false);
+    // A callback may have disposed the page (a navigation).
+    if !page.is_disposed() {
+        for slot in slots {
+            crate::input::fire_simple(page, slot, "slotchange", true, false);
+        }
     }
     drop(slot_holds);
     // Native-only embedders can cause mutations inside a callback without a

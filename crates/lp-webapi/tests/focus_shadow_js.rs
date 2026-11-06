@@ -290,6 +290,8 @@ fn mouse_pointer_capture_retargets_and_releases_after_pointerup() {
            log.push('has:' + t0.hasPointerCapture(ev.pointerId) + ',' + t1.hasPointerCapture(ev.pointerId)); });",
     );
     assert_eq!(eval(r, "try { t0.setPointerCapture(-5) } catch (e) { e.name }"), "NotFoundError");
+    // WebIDL `long` wraps: this is -157381632, not a clamped large id.
+    assert_eq!(eval(r, "try { t0.releasePointerCapture(314159265358973923) } catch (e) { e.name }"), "NotFoundError");
     assert_eq!(
         eval(r, "try { document.createElement('i').setPointerCapture(1) } catch (e) { e.name }"),
         "InvalidStateError"

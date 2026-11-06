@@ -575,18 +575,14 @@ impl JsClass for CssStyleRule {
                 if let Some(o) = s.lookup_identity(key) {
                     return Ok(o.value());
                 }
-                let source = StyleSource::Rule {
-                    owner: NodeHold::new(&r.owner.page, r.owner.id)?,
-                    node: r.node.clone(),
-                };
+                let source =
+                    StyleSource::Rule { owner: NodeHold::new(&r.owner.page, r.owner.id)?, node: r.node.clone() };
                 Ok(s.wrap::<CssStyleDeclaration>(StyleData { source }, Some(key))?.value())
             },
             |_s, r, v| {
                 let decls = parse_declarations(&dom_string(v)?);
-                let source = StyleSource::Rule {
-                    owner: NodeHold::new(&r.owner.page, r.owner.id)?,
-                    node: r.node.clone(),
-                };
+                let source =
+                    StyleSource::Rule { owner: NodeHold::new(&r.owner.page, r.owner.id)?, node: r.node.clone() };
                 StyleData { source }.write(&decls)
             },
         );

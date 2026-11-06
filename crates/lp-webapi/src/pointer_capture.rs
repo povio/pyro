@@ -70,14 +70,15 @@ pub(crate) fn process_pending_capture(page: &Rc<PageDom>, m: &MouseInput) {
     }
 }
 
-/// The `pointerId` argument; ids below 1 are never active pointers.
+/// The `pointerId` argument (a WebIDL `long`, wrapping modulo 2^32); ids
+/// below 1 are never active pointers.
 fn pointer_id_arg(a: &Args<'_>, method: &str) -> JsResult<i32> {
     a.require(1, method)?;
-    let id = a.get(0).to_number()?;
-    if !(id >= 1.0) {
+    let id = crate::util::to_i32(a.get(0))?;
+    if id < 1 {
         return Err(JsError::dom("NotFoundError", "No active pointer with the given id is found."));
     }
-    Ok(id.min(i32::MAX as f64) as i32)
+    Ok(id)
 }
 
 /// `Element.setPointerCapture(pointerId)` for the mouse; other (touch)
@@ -107,6 +108,6 @@ pub(crate) fn release_pointer_capture<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'
 
 pub(crate) fn has_pointer_capture<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value<'s>> {
     a.require(1, "Element.hasPointerCapture")?;
-    let id = a.get(0).to_number()?;
-    Ok(s.boolean(id == MOUSE_POINTER_ID as f64 && n.page().mouse_capture.get().pending == Some(n.id)))
+    let id = crate::util::to_i32(a.get(0))?;
+    Ok(s.boolean(id == MOUSE_POINTER_ID && n.page().mouse_capture.get().pending == Some(n.id)))
 }

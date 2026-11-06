@@ -86,15 +86,12 @@ pub fn set_selection(page: &Rc<PageDom>, anchor: Point, focus: Point) {
     };
     let cross_tree = (!same_tree).then_some((anchor, focus));
     let Ok(range) = crate::range::RangeOwner::new(page, start, end) else { return };
-    let origin = match (
-        crate::collections::NodeHold::new(page, anchor.0),
-        crate::collections::NodeHold::new(page, focus.0),
-    ) {
-        (Ok(a), Ok(f)) => Some((a, f)),
-        _ => None,
-    };
-    let old =
-        page.selection.replace(Some(DocSelection { range, backward, wrappers: Vec::new(), origin, cross_tree }));
+    let origin =
+        match (crate::collections::NodeHold::new(page, anchor.0), crate::collections::NodeHold::new(page, focus.0)) {
+            (Ok(a), Ok(f)) => Some((a, f)),
+            _ => None,
+        };
+    let old = page.selection.replace(Some(DocSelection { range, backward, wrappers: Vec::new(), origin, cross_tree }));
     drop(old);
     if changed {
         queue_selectionchange(page);
@@ -108,8 +105,13 @@ pub(crate) fn set_selection_range(
     range: Rc<crate::range::RangeOwner>,
     wrapper: Option<(lp_js::RealmId, lp_js::Persistent)>,
 ) {
-    let selection =
-        DocSelection { range, backward: false, wrappers: wrapper.into_iter().collect(), origin: None, cross_tree: None };
+    let selection = DocSelection {
+        range,
+        backward: false,
+        wrappers: wrapper.into_iter().collect(),
+        origin: None,
+        cross_tree: None,
+    };
     let old = page.selection.replace(Some(selection));
     drop(old);
     queue_selectionchange(page);

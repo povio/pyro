@@ -119,7 +119,7 @@ impl PageDom {
         if found {
             self.release_render_blocking_ref(el);
             self.render_blocking.dirty.set(true);
-        self.mutations.touch();
+            self.mutations.touch();
             self.update_render_blocking();
         }
     }

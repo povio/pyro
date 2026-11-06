@@ -73,7 +73,10 @@ fn env(html: &str) -> Env {
         .expect("realm");
     let key = page.window_target().unwrap_or_else(|| page.create_window_target(page.document()));
     realm
-        .set_global_data::<TestWindow>(TestWindowData { page: page.clone(), target: EventTargetData::window(&page, key) })
+        .set_global_data::<TestWindow>(TestWindowData {
+            page: page.clone(),
+            target: EventTargetData::window(&page, key),
+        })
         .unwrap();
     install(&realm.scope().unwrap(), page.clone()).unwrap();
     Env { engine, page, main: realm }
@@ -169,7 +172,10 @@ fn exec_command_insert_text_types_into_the_focused_editable() {
            for (const t of ['textInput', 'beforeinput', 'input']) el.addEventListener(t, ev => log.push(id + ':' + t + ':' + ev.data + ':' + ev.inputType + ':' + ev.isTrusted)); }",
     );
     // Nothing focused: not handled. Unknown commands: not handled.
-    assert_eq!(eval(r, "[document.execCommand('insertText', false, 'a'), document.execCommand('bold'), log.length].join()"), "false,false,0");
+    assert_eq!(
+        eval(r, "[document.execCommand('insertText', false, 'a'), document.execCommand('bold'), log.length].join()"),
+        "false,false,0"
+    );
     // The input's caret starts at the end of its value; execCommand types there.
     assert_eq!(eval(r, "i.focus(); document.execCommand('insertText', false, 'a') + ':' + i.value"), "true:xa");
     assert_eq!(eval(r, "ta.focus(); document.execCommand('InsertText', false, 'b') + ':' + ta.value"), "true:yb");
@@ -199,9 +205,15 @@ fn exec_command_insert_text_types_into_the_focused_editable() {
     );
     // A focused text control wins over the selection still inside the host;
     // with a checkbox focused that selection is the target, as in Chromium.
-    assert_eq!(eval(r, "i.focus(); document.execCommand('insertText', false, 'e'); i.value + ':' + ce.textContent"), "xae:c");
     assert_eq!(
-        eval(r, "cb.focus(); [document.execCommand('insertText', false, 'z'), cb.checked, i.value, ce.textContent].join()"),
+        eval(r, "i.focus(); document.execCommand('insertText', false, 'e'); i.value + ':' + ce.textContent"),
+        "xae:c"
+    );
+    assert_eq!(
+        eval(
+            r,
+            "cb.focus(); [document.execCommand('insertText', false, 'z'), cb.checked, i.value, ce.textContent].join()"
+        ),
         "true,false,xae,cz"
     );
 }
@@ -217,7 +229,10 @@ fn focus_crossing_a_frame_owner_has_no_related_target() {
     );
     // Same-document moves keep the related element; moves into or out of the
     // frame owner (another document's focus) report null, as in Chromium.
-    assert_eq!(eval(r, "a.focus(); b.focus(); evs.join()"), "focus@a:null,focusin@a:null,blur@a:b,focusout@a:b,focus@b:a,focusin@b:a");
+    assert_eq!(
+        eval(r, "a.focus(); b.focus(); evs.join()"),
+        "focus@a:null,focusin@a:null,blur@a:b,focusout@a:b,focus@b:a,focusin@b:a"
+    );
     assert_eq!(eval(r, "evs.length = 0; f.focus(); evs.join()"), "blur@b:null,focusout@b:null");
     assert_eq!(eval(r, "evs.length = 0; a.focus(); evs.join()"), "focus@a:null,focusin@a:null");
 }

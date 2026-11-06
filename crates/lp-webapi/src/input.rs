@@ -447,14 +447,8 @@ fn is_text_control(dom: &Dom, el: NodeId) -> bool {
 #[derive(Debug)]
 enum LegacyPreActivation {
     None,
-    Checkbox {
-        checked: bool,
-        indeterminate: bool,
-    },
-    Radio {
-        was_checked: bool,
-        previously_checked: Vec<NodeId>,
-    },
+    Checkbox { checked: bool, indeterminate: bool },
+    Radio { was_checked: bool, previously_checked: Vec<NodeId> },
 }
 
 /// The one activation target of a click (DOM "dispatch" steps 6.5 and 6.9).
@@ -1287,10 +1281,9 @@ fn enter_key(page: &Rc<PageDom>, target: NodeId) {
                 let form = dom.form_owner(target).ok().flatten();
                 let button = form.and_then(|f| {
                     let root = dom.root_node(f, false).ok()?;
-                    dom.descendants(root).ok()?.find(|&n| {
-                        dom.form_owner(n).ok().flatten() == Some(f)
-                            && is_enabled_submit_button(&dom, n)
-                    })
+                    dom.descendants(root)
+                        .ok()?
+                        .find(|&n| dom.form_owner(n).ok().flatten() == Some(f) && is_enabled_submit_button(&dom, n))
                 });
                 (form, button)
             };
