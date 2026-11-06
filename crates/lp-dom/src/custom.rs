@@ -239,7 +239,13 @@ impl Dom {
         if self.reactions.queued.is_empty() {
             return None;
         }
-        self.reactions.parser.get(&self.id_of(document)).cloned()
+        // Only this document's window runs them here: another document's
+        // queue (one whose window is gone, say) costs no call per insertion.
+        let document = self.id_of(document);
+        if !self.reactions.queued.contains_key(&document) {
+            return None;
+        }
+        self.reactions.parser.get(&document).cloned()
     }
 
     /// Sets the flags of an element about to be upgraded or constructed

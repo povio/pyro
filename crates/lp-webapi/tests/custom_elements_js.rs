@@ -309,4 +309,9 @@ fn custom_states_match_state_pseudo_class() {
         "--two,true,0"
     );
     assert_eq!(eval(r, "st.add('b'); st.add('a'); st.add('b'); const out = []; st.forEach(v => out.push(v)); [[...st].join(' '), out.join(' '), [...st.entries()][0].join(':')].join()"), "b a,b a,b:b");
+    // A set made again after its wrapper was collected iterates the
+    // element's states.
+    eval(r, "var el2 = document.body.appendChild(document.createElement('x-plain')); el2.i.states.add('x'); el2.i.states.add('y'); 0");
+    e.engine.collect_garbage_now();
+    assert_eq!(eval(r, "[[...el2.i.states].join(' '), el2.i.states.size].join()"), "x y,2");
 }

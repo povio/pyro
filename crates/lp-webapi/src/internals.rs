@@ -368,17 +368,23 @@ fn states<'s>(s: &Scope<'s>, page: &Rc<PageDom>, el: NodeId) -> JsResult<Value<'
 /// iterated before), so a page that never uses custom states runs none of it.
 fn complete_prototype(s: &Scope<'_>, proto: Object<'_>) -> JsResult<()> {
     let complete = s.eval(
-        r#"(proto => {
+        r#"((proto, states) => {
         const define = Object.defineProperty, apply = Reflect.apply, TypeError_ = TypeError, Set_ = Set;
         const setValues = Set.prototype.values, setEntries = Set.prototype.entries, setAdd = Set.prototype.add,
             setDelete = Set.prototype.delete, setClear = Set.prototype.clear, mapGet = WeakMap.prototype.get,
             mapSet = WeakMap.prototype.set;
         const nativeAdd = proto.add, nativeDelete = proto.delete, nativeClear = proto.clear, nativeHas = proto.has;
         const mirrors = new WeakMap();
-        // Each set is new when first used here: its mirror starts empty.
+        // A set's mirror starts with the element's states: a wrapper made
+        // again after the last one was collected sees the states it had.
         const mirror = (o) => {
             let m = apply(mapGet, mirrors, [o]);
-            if (m === undefined) { m = new Set_(); apply(mapSet, mirrors, [o, m]); }
+            if (m === undefined) {
+                m = new Set_();
+                const current = states(o);
+                for (let i = 0; i < current.length; i++) apply(setAdd, m, [current[i]]);
+                apply(mapSet, mirrors, [o, m]);
+            }
             return m;
         };
         const method = (name, length, fn) => {
@@ -419,7 +425,16 @@ fn complete_prototype(s: &Scope<'_>, proto: Object<'_>) -> JsResult<()> {
         1,
     )?;
     let complete = complete.as_object().ok_or_else(|| JsError::Type("CustomStateSet setlike".into()))?;
-    complete.call(None, &[proto.value()])?;
+    // The element's states, in insertion order (kept private to the closure).
+    let states = s.function("states", |s, _this, a| {
+        let Some(set) = s.unwrap::<CustomStateSet>(a.get(0)) else {
+            return Err(JsError::Type("Illegal invocation".into()));
+        };
+        let states = set.page.dom.borrow().custom_states(set.id);
+        let items: Vec<Value<'_>> = states.iter().map(|st| s.string(st)).collect();
+        Ok(s.array(&items)?.value())
+    })?;
+    complete.call(None, &[proto.value(), states.value()])?;
     Ok(())
 }
 
