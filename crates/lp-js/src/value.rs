@@ -391,6 +391,7 @@ impl<'s> Object<'s> {
     /// the heap); JSC roots them for the duration of the call.
     pub fn call(&self, this: Option<Object<'_>>, args: &[Value<'_>]) -> JsResult<Value<'s>> {
         let _pool = crate::autorelease::Pool::new();
+        let _entry = crate::engine::EntryGuard::enter(self.ctx);
         let raw_args = RawArgs::new(args);
         let mut exc = ptr::null();
         let this_raw = this.map_or(ptr::null_mut(), |o| o.raw);
@@ -411,6 +412,7 @@ impl<'s> Object<'s> {
     /// many arguments that were produced one by one (each conversion may GC).
     pub fn call_rooted(&self, this: Option<Object<'_>>, args: &crate::RootedVec) -> JsResult<Value<'s>> {
         let _pool = crate::autorelease::Pool::new();
+        let _entry = crate::engine::EntryGuard::enter(self.ctx);
         let raw = args.raw();
         let mut exc = ptr::null();
         let this_raw = this.map_or(ptr::null_mut(), |o| o.raw);
@@ -421,6 +423,7 @@ impl<'s> Object<'s> {
 
     pub fn construct(&self, args: &[Value<'_>]) -> JsResult<Object<'s>> {
         let _pool = crate::autorelease::Pool::new();
+        let _entry = crate::engine::EntryGuard::enter(self.ctx);
         let raw_args = RawArgs::new(args);
         let mut exc = ptr::null();
         let o =

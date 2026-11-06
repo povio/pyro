@@ -21,11 +21,18 @@
 //! is collected, and every pin is released with the page. A queued but
 //! unstarted port is not pinned.
 //!
-//! Gaps (explicit): transferring anything, including MessagePorts, throws
-//! NotSupportedError (`postMessage(m, [port])` or `{transfer}`), so ports never
-//! leave their realm; a MessagePort is not cloneable as data
-//! (DataCloneError); there is no `messageerror` source because same-realm
-//! deserialization cannot fail.
+//! Transfer: a MessagePort in a transfer list (`postMessage(m, [port])`,
+//! `{transfer}`, `structuredClone`, `window.postMessage`) moves to the
+//! receiving realm, which may be another frame or page of this thread's VM: a
+//! new port there takes over the entanglement and the undelivered messages,
+//! and the original is detached (posts on it are dropped; transferring it
+//! again throws DataCloneError). ArrayBuffers in the list are detached.
+//! Messages are cloned into the receiving port's realm when posted.
+//!
+//! Gaps (explicit): ports cannot be transferred to or from a worker (another
+//! VM: NotSupportedError); a MessagePort is not cloneable as data
+//! (DataCloneError); there is no `messageerror` source because deserialization
+//! in the same VM cannot fail.
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::rc::{Rc, Weak};
@@ -41,9 +48,13 @@ pub(crate) struct PortInner {
     target: EventTargetData,
     realm: WeakRealm,
     peer: RefCell<Weak<PortInner>>,
-    queue: RefCell<VecDeque<Persistent>>,
+    /// Undelivered messages: data and the event's `ports` array, both already
+    /// in this port's realm.
+    queue: RefCell<VecDeque<(Persistent, Option<Persistent>)>>,
     started: Cell<bool>,
     closed: Cell<bool>,
+    /// Transferred away: this object no longer stands for the port.
+    detached: Cell<bool>,
     /// Whether the wrapper is currently pinned (see `update_pin`).
     pinned: Cell<bool>,
 }
@@ -54,11 +65,11 @@ impl PortInner {
     }
 
     /// Queues `data` (already cloned into this port's realm).
-    fn enqueue(self: &Rc<Self>, data: Persistent) {
+    fn enqueue(self: &Rc<Self>, data: Persistent, ports: Option<Persistent>) {
         if self.closed.get() {
             return;
         }
-        self.queue.borrow_mut().push_back(data);
+        self.queue.borrow_mut().push_back((data, ports));
         if self.started.get() {
             self.schedule_one();
         }
@@ -106,11 +117,12 @@ impl PortInner {
         if self.closed.get() || self.page().is_disposed() {
             return;
         }
-        let Some(data) = self.queue.borrow_mut().pop_front() else { return };
+        let Some((data, ports)) = self.queue.borrow_mut().pop_front() else { return };
         let ev = EventCore::trusted(self.page(), EventInterface::MessageEvent, "message", false, false);
         {
             let mut f = ev.fields.borrow_mut();
             f.message_data = Some(data);
+            f.message_ports = ports;
             f.origin = String::new();
         }
         fire(self.page(), self.target.key, &ev);
@@ -123,7 +135,8 @@ impl PortInner {
         }
         self.started.set(true);
         self.update_pin();
-        for _ in 0..self.queue.borrow().len() {
+        let queued = self.queue.borrow().len();
+        for _ in 0..queued {
             self.schedule_one();
         }
     }
@@ -180,24 +193,34 @@ impl JsClass for MessagePort {
         def.upcast(|d: &PortData| &d.0.target);
         def.method("postMessage", 1, |s, d, a| {
             a.require(1, "MessagePort.postMessage")?;
-            let options = match a.opt(1) {
-                // `postMessage(message, transfer)`: a sequence is the transfer list.
-                Some(v) if v.is_array() => {
-                    let o = s.object();
-                    o.set_atom("transfer", v)?;
-                    o.value()
-                }
-                Some(v) => v,
-                None => s.undefined(),
-            };
-            // Clone even when the message will be dropped, as in the spec
-            // (errors are reported regardless of entanglement).
-            let cloned = crate::structured_clone::clone_value(s, a.get(0), options)?;
-            if d.0.closed.get() {
-                return Ok(s.undefined());
+            let options = crate::structured_clone::transfer_options(s, a.opt(1))?;
+            if lists_port(s, options, &d.0)? {
+                return Err(JsError::dom("DataCloneError", "A port cannot be transferred through itself."));
             }
-            if let Some(peer) = d.0.peer.borrow().upgrade() {
-                peer.enqueue(Persistent::new(s, cloned));
+            // Clone even when the message will be dropped, as in the spec
+            // (errors are reported regardless of entanglement), into the
+            // realm of the port that receives it.
+            let peer = if d.0.closed.get() { None } else { d.0.peer.borrow().upgrade() };
+            // Posting the entangled port through this one loses the channel:
+            // the transfer happens, the message is not delivered.
+            let doomed = match &peer {
+                Some(p) => lists_port(s, options, p)?,
+                None => false,
+            };
+            let receiver = peer.as_ref().and_then(|p| p.realm.upgrade());
+            match receiver.as_ref().map(|r| r.scope()).transpose()? {
+                Some(rs) => {
+                    let (cloned, ports) =
+                        crate::structured_clone::clone_with_ports(&rs, rs.rehome(a.get(0)), rs.rehome(options))?;
+                    let ports =
+                        (ports.get_atom("length")?.to_number()? > 0.0).then(|| Persistent::new(&rs, ports.value()));
+                    if let Some(peer) = peer.filter(|_| !doomed) {
+                        peer.enqueue(Persistent::new(&rs, cloned), ports);
+                    }
+                }
+                None => {
+                    crate::structured_clone::clone_value(s, a.get(0), options)?;
+                }
             }
             Ok(s.undefined())
         });
@@ -240,9 +263,78 @@ fn new_port<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<(Object<'s>, Rc<P
         queue: RefCell::new(VecDeque::new()),
         started: Cell::new(false),
         closed: Cell::new(false),
+        detached: Cell::new(false),
         pinned: Cell::new(false),
     });
     Ok((s.wrap::<MessagePort>(PortData(inner.clone()), Some(key))?, inner))
+}
+
+/// Whether the transfer list of `options` (an array) holds `port`.
+fn lists_port(s: &Scope<'_>, options: lp_js::Value<'_>, port: &Rc<PortInner>) -> JsResult<bool> {
+    let Some(list) = options.as_object().map(|o| o.get_atom("transfer")).transpose()?.and_then(|l| l.as_object())
+    else {
+        return Ok(false);
+    };
+    if !list.value().is_array() {
+        return Ok(false);
+    }
+    let count = list.get_atom("length")?.to_number()? as u32;
+    for i in 0..count {
+        if s.unwrap::<MessagePort>(list.get_index(i)?).is_some_and(|p| Rc::ptr_eq(&p.0, port)) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Structured clone's transfer step 1 for `value`: a new, unentangled port
+/// in `s`'s realm when `value` is a MessagePort (DataCloneError if it was
+/// transferred already), `None` when it is not transferable. Nothing changes
+/// until [`complete_transfer`], so a clone that fails leaves the port as is.
+pub(crate) fn prepare_transfer<'s>(s: &Scope<'s>, value: lp_js::Value<'s>) -> JsResult<Option<lp_js::Value<'s>>> {
+    let Some(port) = s.unwrap::<MessagePort>(value) else { return Ok(None) };
+    if port.0.detached.get() {
+        return Err(JsError::dom("DataCloneError", "A MessagePort could not be cloned because it was detached."));
+    }
+    let page = page_of(s)?;
+    if page.is_disposed() {
+        return Err(JsError::ContextDestroyed);
+    }
+    Ok(Some(new_port(s, &page)?.0.value()))
+}
+
+/// Moves port `from` into `to` (made by [`prepare_transfer`] in `s`'s
+/// realm): `to` takes over the entanglement and the undelivered messages
+/// (cloned into `s`'s realm when it is another one), and `from` is detached.
+pub(crate) fn complete_transfer(s: &Scope<'_>, from: lp_js::Value<'_>, to: lp_js::Value<'_>) -> JsResult<()> {
+    let (Some(from), Some(to)) = (s.unwrap::<MessagePort>(from), s.unwrap::<MessagePort>(to)) else {
+        return Err(JsError::dom("DataCloneError", "Invalid MessagePort transfer"));
+    };
+    let (from, to) = (from.0.clone(), to.0.clone());
+    if from.detached.replace(true) {
+        return Err(JsError::dom("DataCloneError", "A MessagePort could not be cloned because it was detached."));
+    }
+    let same_realm = from.realm.upgrade().is_some_and(|r| r.id() == s.realm_id());
+    let queued: Vec<_> = from.queue.borrow_mut().drain(..).collect();
+    {
+        let mut queue = to.queue.borrow_mut();
+        for (data, ports) in queued {
+            if same_realm {
+                queue.push_back((data, ports));
+            } else if let Ok(copy) = crate::structured_clone::clone_value(s, s.rehome(data.get(s)), s.undefined()) {
+                queue.push_back((Persistent::new(s, copy), ports));
+            }
+        }
+    }
+    // A closed port moves closed: nothing reaches it any more.
+    to.closed.set(from.closed.replace(true));
+    if let Some(peer) = from.peer.take().upgrade() {
+        peer.peer.replace(Rc::downgrade(&to));
+        to.peer.replace(Rc::downgrade(&peer));
+    }
+    from.update_pin();
+    to.update_pin();
+    Ok(())
 }
 
 /// The channel references its ports only through traced hidden properties

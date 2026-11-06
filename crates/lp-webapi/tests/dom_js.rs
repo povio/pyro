@@ -2130,10 +2130,10 @@ fn structured_clone_rejects_unsupported_values_without_proxy_traps_or_detachment
           getPrototypeOf(){traps++;throw 3}});
         const revoked=Proxy.revocable({},{});revoked.revoke();
         const values=[proxy,revoked.proxy,document,window,()=>{},Symbol('x'),new WeakMap(),Promise.resolve(1),
-          new URL('https://example.test/'),new Error('not yet supported')];
+          new URL('https://example.test/')];
         const errors=values.map(v=>{try{structuredClone(v);return 'accepted'}catch(e){return e.name}});
         const buffer=new ArrayBuffer(4);let transfer;
-        try {structuredClone({buffer},{transfer:[buffer]})}catch(e){transfer=e.name}
+        try {structuredClone({buffer,f(){}},{transfer:[buffer]})}catch(e){transfer=e.name}
         let custom=0;const tagged={get [Symbol.toStringTag](){custom++;return 'Object'}};
         let customError;try{structuredClone(tagged)}catch(e){customError=e.name}
         return [errors.every(n=>n==='DataCloneError'),traps,transfer,buffer.byteLength,
@@ -2141,7 +2141,7 @@ fn structured_clone_rejects_unsupported_values_without_proxy_traps_or_detachment
       })()
     "#
         ),
-        "true|0|NotSupportedError|4|1|0|NotSupportedError"
+        "true|0|DataCloneError|4|1|0|NotSupportedError"
     );
 }
 
@@ -3616,7 +3616,8 @@ fn message_port_start_close_transfer_and_clone_errors() {
     eval(r, "log = []; a.port1.onmessage = (ev) => log.push('back:' + ev.data); a.port2.postMessage('b'); a.port1.postMessage('pending'); a.port2.close(); a.port1.postMessage('after'); a.port2.postMessage('afterClose');");
     tasks.drain();
     assert_eq!(eval(r, "log.join()"), "back:b");
-    // Transfers are explicitly unsupported; non-cloneable data and ports throw.
+    // Transfers work (posting the peer port loses the channel); non-cloneable
+    // data and ports as data throw.
     assert_eq!(
         eval(
             r,
@@ -3625,7 +3626,7 @@ fn message_port_start_close_transfer_and_clone_errors() {
               err(() => c.port1.postMessage(() => 1)), err(() => c.port1.postMessage({p: c.port2})), err(() => c.port1.postMessage()),
               err(() => c.port1.postMessage(1, [])), err(() => c.port1.postMessage(1, {}))].join()",
         ),
-        "NotSupportedError,NotSupportedError,DataCloneError,DataCloneError,TypeError,ok,ok"
+        "ok,ok,DataCloneError,DataCloneError,TypeError,ok,ok"
     );
     // Page reassignment of structuredClone does not affect port cloning.
     eval(r, "log = []; structuredClone = () => { throw Error('page clone'); }; const d = new MessageChannel(); d.port2.onmessage = (ev) => log.push(ev.data.k); d.port1.postMessage({k: 'native'});");

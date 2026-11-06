@@ -618,6 +618,7 @@ impl BrowserThread {
         let engine = Engine::new()?;
         lp_webapi::register(&engine);
         engine.register::<frames::CrossWindow>();
+        engine.register::<frames::CrossLocation>();
         engine.register::<Window>();
         engine.register::<Location>();
         engine.register::<History>();
@@ -1026,6 +1027,7 @@ impl Browser {
         p.main_frame.name = ticket.name().to_owned();
         if let Some((frames, origin)) = opener_state {
             *p.frames.opener.borrow_mut() = Some(frames);
+            *p.frames.popup.borrow_mut() = Some(ticket.clone());
             // The initial about:blank document is the opener's creation.
             if p.main_frame.url == "about:blank" {
                 p.main_frame.origin = origin.0.clone();

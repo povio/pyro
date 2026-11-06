@@ -173,6 +173,9 @@ pub(crate) struct FrameHost {
     /// The page that opened this one as a popup with its opener kept
     /// (`Browser::adopt_popup`): the top-level window's `opener`.
     pub(crate) opener: RefCell<Option<std::rc::Weak<FrameHost>>>,
+    /// For such a popup, the ticket through which the opener's document
+    /// reaches it (its `window.open` result is `event.source` there).
+    pub(crate) popup: RefCell<Option<Rc<lp_webapi::PopupTicket>>>,
 }
 impl FrameHost {
     pub fn new(browser: &Browser, page: PageId, context: ContextId, root: Frame, nav: Rc<PageNav>) -> Rc<Self> {
@@ -206,6 +209,7 @@ impl FrameHost {
             retired: RefCell::new(Vec::new()),
             class: Cell::new(browser.engine.register::<Window>()),
             opener: RefCell::new(None),
+            popup: RefCell::new(None),
             focus: RefCell::new(crate::focus::FocusState::new(page)),
         })
     }
@@ -717,7 +721,7 @@ impl FrameHost {
             let value = lp_js::Persistent::new(&scope, scope.global().value());
             return Ok(value.get(s));
         }
-        let data = CrossWindowData { host: Rc::downgrade(self), source: Some(source), target };
+        let data = CrossWindowData { host: Rc::downgrade(self), source: Some(source), from: None, target };
         Ok(s.wrap::<CrossWindow>(data, Some(lp_js::IdentityKey(0x4652414d45505258, target.child.unwrap_or(0))))?
             .value())
     }
@@ -748,7 +752,7 @@ impl FrameHost {
             let value = lp_js::Persistent::new(&scope, scope.global().value());
             return Ok(value.get(s));
         }
-        opener_proxy(s, &opener)
+        opener_proxy(s, &opener, Some((Rc::downgrade(self), key)))
     }
     pub fn relation<'s>(
         self: &Rc<Self>,
@@ -778,14 +782,86 @@ impl FrameHost {
     }
 }
 
-/// The cross-origin stand-in for `opener`'s top-level window (one per realm).
-fn opener_proxy<'s>(s: &lp_js::Scope<'s>, opener: &Rc<FrameHost>) -> lp_js::JsResult<lp_js::Value<'s>> {
+/// The cross-origin stand-in for `opener`'s top-level window (one per
+/// realm), as frame `from` (the popup's top-level frame) sees it.
+fn opener_proxy<'s>(
+    s: &lp_js::Scope<'s>,
+    opener: &Rc<FrameHost>,
+    from: Option<(std::rc::Weak<FrameHost>, FrameKey)>,
+) -> lp_js::JsResult<lp_js::Value<'s>> {
     let key = lp_js::IdentityKey(0x4f50454e45525758, u64::from(opener.page.0));
     if let Some(o) = s.lookup_identity(key) {
         return Ok(o.value());
     }
-    let data = CrossWindowData { host: Rc::downgrade(opener), source: None, target: opener.page.into() };
+    let data = CrossWindowData { host: Rc::downgrade(opener), source: None, from, target: opener.page.into() };
     Ok(s.wrap::<CrossWindow>(data, Some(key))?.value())
+}
+
+/// The window whose script is running (HTML's incumbent global, as
+/// [`lp_js::entry_realm`] approximates it): its frame host and key.
+pub(crate) fn incumbent_window() -> Option<(Rc<FrameHost>, FrameKey)> {
+    let realm = lp_js::entry_realm()?;
+    let scope = realm.scope().ok()?;
+    let window = scope.global_data::<Window>()?;
+    Some((window.frame_host()?, window.frame_key()?))
+}
+
+/// `event.source` of a message from window `source` to window `target`,
+/// resolved in the realm reading it: the source's WindowProxy as the target
+/// sees it (its global, a cross-origin stand-in, the popup's `opener`, or
+/// the opener's `window.open` result). Null for a pair this cannot name (a
+/// frame inside a popup or its opener), or once either side is gone.
+fn message_source(
+    target_host: &Rc<FrameHost>,
+    target: FrameKey,
+    source_host: &Rc<FrameHost>,
+    source: FrameKey,
+) -> lp_webapi::event::MessageSource {
+    let (th, sh) = (Rc::downgrade(target_host), Rc::downgrade(source_host));
+    Rc::new(move |s| {
+        let (Some(th), Some(sh)) = (th.upgrade(), sh.upgrade()) else { return Ok(s.null()) };
+        let opener_of = |h: &FrameHost| h.opener.borrow().as_ref().and_then(std::rc::Weak::upgrade);
+        let value = if Rc::ptr_eq(&th, &sh) {
+            th.window_value(s, target, source)
+        } else if source.child.is_none() && opener_of(&th).is_some_and(|o| Rc::ptr_eq(&o, &sh)) {
+            th.opener_window(s, target)
+        } else if target.child.is_none()
+            && source.child.is_none()
+            && opener_of(&sh).is_some_and(|o| Rc::ptr_eq(&o, &th))
+        {
+            let ticket = sh.popup.borrow().clone();
+            match (ticket, th.page_dom(target)) {
+                (Some(ticket), Some(dom)) => ticket.window_in(s, &dom),
+                _ => Ok(s.null()),
+            }
+        } else {
+            Ok(s.null())
+        };
+        Ok(value.unwrap_or_else(|_| s.null()))
+    })
+}
+
+/// `postMessage` on window `target` of `host` (HTML "window post message
+/// steps"), from window `source` (`None`: the target itself). The message
+/// is cloned into the target's main-world realm now and delivered as a
+/// task if the target's origin matches `targetOrigin`.
+pub(crate) fn post_message<'s>(
+    s: &lp_js::Scope<'s>,
+    a: &lp_js::Args<'s>,
+    source: Option<(Rc<FrameHost>, FrameKey)>,
+    host: &Rc<FrameHost>,
+    target: FrameKey,
+) -> lp_js::JsResult<()> {
+    let (source_host, source) = source.unwrap_or_else(|| (host.clone(), target));
+    let incumbent = source_host.with_frame(source, |f| f.origin.clone()).unwrap_or_else(|| "null".into());
+    let (message, target_origin, options) = lp_webapi::window_message::post_message_args(s, a, &incumbent)?;
+    let found = host.with_frame(target, |f| Some((f.page_dom.clone()?, f.main_realm()?.clone(), f.origin.clone())));
+    // A window whose document is gone receives nothing.
+    let Some((page, realm, origin)) = found.flatten() else { return Ok(()) };
+    let deliver = target_origin.allows(&origin);
+    let window = (!Rc::ptr_eq(&source_host, host) || source != target)
+        .then(|| message_source(host, target, &source_host, source));
+    lp_webapi::window_message::send_window_message(message, options, &page, &realm, incumbent, window, deliver)
 }
 
 pub(crate) struct CrossWindow;
@@ -795,7 +871,78 @@ pub(crate) struct CrossWindowData {
     /// popup's view of its opener (another page), which is always
     /// cross-origin and whose target is its own top and parent.
     source: Option<FrameKey>,
+    /// For a popup's view of its opener: the popup's frame host and frame.
+    from: Option<(std::rc::Weak<FrameHost>, FrameKey)>,
     target: FrameKey,
+}
+
+impl CrossWindowData {
+    /// The accessing window: its frame host and frame.
+    fn accessor(&self, host: &Rc<FrameHost>) -> Option<(Rc<FrameHost>, FrameKey)> {
+        match (self.source, &self.from) {
+            (Some(source), _) => Some((host.clone(), source)),
+            (None, Some((from, key))) => Some((from.upgrade()?, *key)),
+            (None, None) => None,
+        }
+    }
+}
+
+/// `location` of a cross-origin window: only `href` (set) and `replace()`.
+pub(crate) struct CrossLocation;
+pub(crate) struct CrossLocationData {
+    host: std::rc::Weak<FrameHost>,
+    target: FrameKey,
+    /// Base URL of the accessing document, which relative URLs resolve against.
+    base: String,
+}
+impl CrossLocationData {
+    fn navigate(&self, value: lp_js::Value<'_>, replace: bool) -> lp_js::JsResult<()> {
+        let nav = self.host.upgrade().and_then(|h| h.nav(self.target)).ok_or(JsError::ContextDestroyed)?;
+        crate::nav::navigate_cross_origin(&nav, &self.base, value, replace)
+    }
+}
+impl lp_js::JsClass for CrossLocation {
+    const NAME: &'static str = "CrossOriginLocation";
+    type Data = CrossLocationData;
+    type Parent = lp_js::NoParent;
+    fn define(def: &mut lp_js::ClassDef<Self>) {
+        def.not_exposed();
+        // Every name goes through here (no prototype reads cross-origin).
+        def.named(true, |s, d, name| {
+            if name != "replace" {
+                return Err(JsError::dom(
+                    "SecurityError",
+                    "Blocked a frame from accessing a cross-origin frame's location.",
+                ));
+            }
+            let data = CrossLocationData { host: d.host.clone(), target: d.target, base: d.base.clone() };
+            let replace = s.function("replace", move |s, _, a| {
+                a.require(1, "replace")?;
+                data.navigate(a.get(0), true)?;
+                Ok(s.undefined())
+            })?;
+            Ok(Some(replace.value()))
+        });
+        def.named_setter(|_, d, name, value| match name {
+            "href" => d.navigate(value, false).map(|()| true),
+            _ => Err(JsError::dom("SecurityError", "Blocked a cross-origin location write")),
+        });
+        def.named_deleter(|_, _, _| Err(JsError::dom("SecurityError", "Blocked a cross-origin location delete")));
+    }
+}
+
+/// `w.location` of cross-origin window `w`, for the accessing window.
+fn cross_location<'s>(
+    s: &lp_js::Scope<'s>,
+    w: &CrossWindowData,
+    host: &Rc<FrameHost>,
+) -> lp_js::JsResult<lp_js::Value<'s>> {
+    let base = w
+        .accessor(host)
+        .and_then(|(h, key)| h.with_frame(key, |f| f.base_url.clone()))
+        .unwrap_or_else(|| "about:blank".into());
+    let data = CrossLocationData { host: Rc::downgrade(host), target: w.target, base };
+    Ok(s.wrap::<CrossLocation>(data, None)?.value())
 }
 impl lp_js::JsClass for CrossWindow {
     const NAME: &'static str = "CrossOriginWindow";
@@ -808,7 +955,7 @@ impl lp_js::JsClass for CrossWindow {
                 return if name == "closed" { Ok(Some(s.boolean(true))) } else { Err(JsError::ContextDestroyed) };
             };
             let value = match (name, w.source) {
-                ("window" | "self" | "frames" | "parent" | "top", None) => opener_proxy(s, &host)?,
+                ("window" | "self" | "frames" | "parent" | "top", None) => opener_proxy(s, &host, w.from.clone())?,
                 ("window" | "self" | "frames", Some(source)) => host.window_value(s, source, w.target)?,
                 ("parent", Some(source)) => host.window_value(s, source, host.parent_key(w.target))?,
                 ("top", Some(source)) => host.window_value(s, source, host.page.into())?,
@@ -826,11 +973,41 @@ impl lp_js::JsClass for CrossWindow {
                     .value()
                 }
                 ("close" | "blur", _) => s.function(name, |s, _, _| Ok(s.undefined()))?.value(),
+                ("postMessage", _) => {
+                    let (weak, target) = (w.host.clone(), w.target);
+                    let source = w.accessor(&host).map(|(h, key)| (Rc::downgrade(&h), key));
+                    s.function(name, move |s, _, a| {
+                        let Some(host) = weak.upgrade() else { return Ok(s.undefined()) };
+                        let source = source.as_ref().and_then(|(h, key)| Some((h.upgrade()?, *key)));
+                        post_message(s, &a, source, &host, target)?;
+                        Ok(s.undefined())
+                    })?
+                    .value()
+                }
+                ("location", _) => cross_location(s, w, &host)?,
                 _ => return Err(JsError::dom("SecurityError", "Blocked cross-origin frame access")),
             };
             Ok(Some(value))
         });
-        def.named_setter(|_, _, _, _| Err(JsError::dom("SecurityError", "Blocked cross-origin frame write")));
+        // `frames[i]` of a cross-origin window: its child windows, as the
+        // accessing frame sees them.
+        def.indexed(|s, w, index| {
+            let (Some(host), Some(source)) = (w.host.upgrade(), w.source) else { return Ok(None) };
+            let child = host.child_keys(w.target).get(index as usize).copied();
+            child.map(|child| host.window_value(s, source, child)).transpose()
+        });
+        def.named_setter(|s, w, name, value| {
+            // `w.location = url` navigates it, as `w.location.href = url` does.
+            if name == "location" {
+                if let Some(host) = w.host.upgrade() {
+                    let location = cross_location(s, w, &host)?;
+                    let data = s.unwrap::<CrossLocation>(location).ok_or(JsError::ContextDestroyed)?;
+                    data.navigate(value, false)?;
+                    return Ok(true);
+                }
+            }
+            Err(JsError::dom("SecurityError", "Blocked cross-origin frame write"))
+        });
         def.named_deleter(|_, _, _| Err(JsError::dom("SecurityError", "Blocked cross-origin frame delete")));
     }
 }

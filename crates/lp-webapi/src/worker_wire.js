@@ -6,9 +6,16 @@
 // JSON text plus the bytes of its ArrayBuffers. Lone surrogates stay escaped in
 // the text. Only strings go through JSON.stringify, so a `toJSON` on a
 // prototype cannot affect the output.
-((fail) => {
+//
+// `host` is native: `host(value, 0)` describes a Blob or File (['F', bytes
+// index, type, name or null, lastModified]) or a FileList (['L', ...files]),
+// else undefined; `host(tree, 1)` makes the Blob or File of an 'F' tree and
+// `host(files, 2)` the FileList of decoded files. Blob bytes travel beside
+// the text, shared, not copied.
+((fail, host, DOMExceptionC) => {
     const O = Object, A = Array, M = Map, S = Set, D = Date, R = RegExp;
     const AB = ArrayBuffer, DV = DataView, U8 = Uint8Array, TE = TypeError;
+    const errors = {Error, EvalError, RangeError, ReferenceError, SyntaxError, TypeError, URIError};
     const stringify = JSON.stringify, parse = JSON.parse;
     const apply = Reflect.apply, keys = O.keys, descriptor = O.getOwnPropertyDescriptor;
     const prototype = O.getPrototypeOf, define = O.defineProperty, create = O.create;
@@ -24,6 +31,8 @@
     const abMax = getter(AB.prototype, 'maxByteLength'), abTransfer = AB.prototype.transfer;
     const dvBuffer = getter(DV.prototype, 'buffer'), dvOffset = getter(DV.prototype, 'byteOffset');
     const dvLength = getter(DV.prototype, 'byteLength');
+    const domName = getter(DOMExceptionC.prototype, 'name'), domMessage = getter(DOMExceptionC.prototype, 'message');
+    const data = (object, key) => { const d = descriptor(object, key); return d && descriptor(d, 'value') ? d : undefined; };
     const typedProto = prototype(U8.prototype), typedName = getter(typedProto, tag);
     const typedBuffer = getter(typedProto, 'buffer'), typedOffset = getter(typedProto, 'byteOffset');
     const typedLength = getter(typedProto, 'length');
@@ -36,6 +45,7 @@
     const call = (fn, self, args = []) => apply(fn, self, args);
     const put = (object, key, value) => define(object, key,
         {value, enumerable: true, writable: true, configurable: true});
+    const hide = (object, key, value) => define(object, key, {value, writable: true, configurable: true});
     const isBuffer = (value) => {
         try { call(abLength, value); return true; } catch (_) { return false; }
     };
@@ -130,6 +140,29 @@
                     return text + ']';
                 }
                 case '[object Object]': return '["o"' + entries(source) + ']';
+                case '[object Error]': {
+                    // The clone made these own data properties.
+                    const message = data(source, 'message'), stack = data(source, 'stack');
+                    const cause = data(source, 'cause'), name = source.name;
+                    return '["e",' + stringify(typeof name === 'string' && descriptor(errors, name) ? name : 'Error')
+                        + ',' + node(message && message.value) + ',' + node(stack && stack.value)
+                        + (cause ? ',' + node(cause.value) : '') + ']';
+                }
+                case '[object DOMException]': {
+                    const stack = data(source, 'stack');
+                    return '["E",' + stringify(call(domName, source)) + ',' + stringify(call(domMessage, source))
+                        + ',' + node(stack && stack.value) + ']';
+                }
+            }
+            const parts = host(source, 0);
+            if (parts !== undefined) {
+                if (parts[0] === 'F') {
+                    return '["F",' + parts[1] + ',' + stringify(parts[2]) + ','
+                        + (parts[3] === null ? 'null' : stringify(parts[3])) + ',' + node(parts[4]) + ']';
+                }
+                let text = '["L"';
+                for (let i = 1; i < parts.length; ++i) text += ',' + node(parts[i]);
+                return text + ']';
             }
             const name = call(stringSlice, kind, [8, -1]);
             if (!descriptor(boxed, name)) fail('Object type is not supported');
@@ -186,6 +219,26 @@
                     return set;
                 }
                 case 'B': return remember(id, O(node(tree[2])));
+                case 'e': {
+                    const C = descriptor(errors, tree[1]) ? errors[tree[1]] : Error, message = node(tree[2]);
+                    const error = remember(id, message === undefined ? new C() : new C(message));
+                    const stack = node(tree[3]);
+                    if (typeof stack === 'string') hide(error, 'stack', stack);
+                    if (tree.length > 4) hide(error, 'cause', node(tree[4]));
+                    return error;
+                }
+                case 'E': {
+                    const error = remember(id, new DOMExceptionC(tree[2], tree[1]));
+                    const stack = node(tree[3]);
+                    if (typeof stack === 'string') hide(error, 'stack', stack);
+                    return error;
+                }
+                case 'F': return remember(id, host(tree, 1));
+                case 'L': {
+                    const files = [];
+                    for (let i = 1; i < tree.length; ++i) put(files, files.length, node(tree[i]));
+                    return remember(id, host(files, 2));
+                }
             }
             fail('Malformed worker message');
         }

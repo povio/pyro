@@ -20,8 +20,11 @@ the CDP layer when the target exists):
 
 - **`window.opener`**: the opener's top-level window — the real global when
   same-origin, otherwise a cross-origin stand-in (`closed`, `close()`,
-  `focus()`, `blur()`, `window`/`self`/`top`/`parent`, `length`; anything else
-  throws `SecurityError`). Assigning it (e.g. `null`) shadows it.
+  `focus()`, `blur()`, `window`/`self`/`top`/`parent`, `length`,
+  `postMessage`, `location` with `href` setting and `replace()`; anything else
+  throws `SecurityError`). Assigning it (e.g. `null`) shadows it. Messages the
+  popup posts to its opener arrive with `source` the object `window.open`
+  returned (see [MESSAGE_CHANNEL](MESSAGE_CHANNEL.md)).
 - **session storage**: a new namespace holding a copy of the opener's session
   storage area, taken when `window.open` ran (HTML copies it into the new
   top-level traversable). Changes diverge from then on and the opener gets no
@@ -52,11 +55,13 @@ Always available:
   throws `SecurityError` once the popup's origin differs from the opener's.
 - `window`, `self`, `frames`, `top`, `parent` (the object itself), `opener`
   (the opener's global), `name`.
-- `postMessage(message, targetOrigin, transfer)`: structured-clones the
-  message in the opener (DataCloneError propagates) and fires a trusted
-  `MessageEvent` in the popup's document as a task, `origin` the opener's,
-  `source` null. Dropped when the popup page does not exist yet or
-  `targetOrigin` does not match its origin.
+- `postMessage(message, targetOrigin, transfer)` (or `(message, {targetOrigin,
+  transfer})`): structured-clones the message in the opener (DataCloneError
+  propagates; transferring a MessagePort throws NotSupportedError here) and
+  fires a trusted `MessageEvent` in the popup's document as a task, `origin`
+  the opener's, `source` null. Dropped when the popup page does not exist yet
+  or `targetOrigin` does not match its origin (an opaque-origin URL never
+  does).
 - `fetch(...)`: the popup's own `fetch` once its page exists; before that it
   runs in the opener's realm (the initial about:blank document shares the
   opener's origin and base URL, so only the Response's realm differs).

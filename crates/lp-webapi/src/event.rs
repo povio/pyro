@@ -146,6 +146,11 @@ pub struct EventFields {
     /// Same-document Window source, resolved in the observing world without
     /// an event-to-global persistent root. Port messages have no source.
     pub message_source: Option<TargetKey>,
+    /// Another window's `source` (a frame or popup posting here), resolved
+    /// in the observing realm when read, so the event holds no root of it.
+    pub message_source_window: Option<MessageSource>,
+    /// `ports`: the transferred MessagePorts' new ports, in the receiver's realm.
+    pub message_ports: Option<Persistent>,
     pub origin: String,
     /// MessageEvent `lastEventId` (EventSource); None reads as "".
     pub last_event_id: Option<Box<str>>,
@@ -167,6 +172,9 @@ pub struct EventFields {
     pub elapsed_time: f64,
     pub pseudo_element: String,
 }
+
+/// Resolves a `MessageEvent.source` window in the realm reading it.
+pub type MessageSource = Rc<dyn for<'s> Fn(&Scope<'s>) -> JsResult<Value<'s>>>;
 
 pub struct EventCore {
     pub id: u64,
@@ -796,6 +804,26 @@ fn fill_media_query<'s>(_: &Scope<'s>, f: &mut EventFields, init: Option<Object<
 fn fill_message<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
     if let Some(o) = init {
         f.message_data = Some(Persistent::new(s, o.get_atom("data")?));
+        let ports = o.get_atom("ports")?;
+        if let Some(list) = ports.as_object() {
+            // sequence<MessagePort>: copied into a new array.
+            let copy = s.array(&[])?;
+            let count = list.get_atom("length")?.to_number()? as u32;
+            for i in 0..count {
+                let port = list.get_index(i)?;
+                if s.unwrap::<crate::message_channel::MessagePort>(port).is_none() {
+                    return Err(JsError::Type(
+                        "Failed to construct 'MessageEvent': Failed to read the 'ports' property from 'MessageEventInit': Failed to convert value to 'MessagePort'.".into(),
+                    ));
+                }
+                copy.set_index(i, port)?;
+            }
+            f.message_ports = Some(Persistent::new(s, copy.value()));
+        } else if !ports.is_undefined() {
+            return Err(JsError::Type(
+                "Failed to construct 'MessageEvent': The provided value cannot be converted to a sequence.".into(),
+            ));
+        }
     }
     f.origin = get_str(init, "origin")?;
     let last_event_id = get_str(init, "lastEventId")?;
@@ -1664,10 +1692,17 @@ impl JsClass for MessageEvent {
         def.getter("origin", |s, e| Ok(s.string(&e.fields.borrow().origin)));
         def.getter("lastEventId", |s, e| Ok(s.string(e.fields.borrow().last_event_id.as_deref().unwrap_or(""))));
         def.getter("source", |s, e| {
+            let window = e.fields.borrow().message_source_window.clone();
+            if let Some(window) = window {
+                return window(s);
+            }
             let source = e.fields.borrow().message_source;
             crate::target::target_value(s, &e.page, source)
         });
-        def.getter("ports", |s, _e| Ok(s.array(&[])?.value()));
+        def.getter("ports", |s, e| match e.fields.borrow().message_ports.as_ref() {
+            Some(ports) => Ok(s.rehome(ports.get(s))),
+            None => Ok(s.array(&[])?.value()),
+        });
     }
 }
 

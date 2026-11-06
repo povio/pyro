@@ -1,6 +1,15 @@
-((guard, fail) => {
+// `guard(value)` is native: whether `value` is an ordinary object. With a
+// mode it is `host(value, mode, extra)`: mode 0 clones a serializable host
+// object (Blob, File, FileList) into this realm or returns undefined; mode 1
+// prepares the transfer of a transferable one (a MessagePort: its new port
+// here, undefined if the value is not transferable, DataCloneError if it is
+// detached); mode 2 completes the transfer prepared for `value` as `extra`;
+// mode 3 copies a platform object made in JS (CryptoKey) or returns undefined.
+((guard, fail, DOMExceptionC) => {
+    const host = (value, mode, extra) => guard(value, mode, extra);
     const O = Object, A = Array, M = Map, S = Set, D = Date, R = RegExp, TE = TypeError;
     const AB = ArrayBuffer, U8 = Uint8Array, DV = DataView;
+    const errors = {Error, EvalError, RangeError, ReferenceError, SyntaxError, TypeError, URIError};
     const apply = Reflect.apply, keys = O.keys, descriptor = O.getOwnPropertyDescriptor;
     const prototype = O.getPrototypeOf, define = O.defineProperty, create = O.create;
     const tag = Symbol.toStringTag, iteratorKey = Symbol.iterator, objectTag = O.prototype.toString;
@@ -15,7 +24,8 @@
     const flagGetters = flags.map(name => descriptor(R.prototype, name)?.get);
     const getter = (proto, key) => descriptor(proto, key)?.get;
     const abLength = getter(AB.prototype, 'byteLength'), abResizable = getter(AB.prototype, 'resizable');
-    const abMax = getter(AB.prototype, 'maxByteLength');
+    const abMax = getter(AB.prototype, 'maxByteLength'), abTransfer = AB.prototype.transfer;
+    const domName = getter(DOMExceptionC.prototype, 'name'), domMessage = getter(DOMExceptionC.prototype, 'message');
     const dvBuffer = getter(DV.prototype, 'buffer'), dvOffset = getter(DV.prototype, 'byteOffset');
     const dvLength = getter(DV.prototype, 'byteLength');
     const typedProto = prototype(U8.prototype), typedName = getter(typedProto, tag);
@@ -30,34 +40,66 @@
     const call = (fn, self, args = []) => apply(fn, self, args);
     const put = (object, key, value) => define(object, key,
         {value, enumerable:true, writable:true, configurable:true});
-    return function structuredClone(value, options = undefined) {
-        if (!arguments.length) throw new TE('structuredClone requires a value');
+    const hide = (object, key, value) => define(object, key, {value, writable:true, configurable:true});
+    const own = (object, key) => { const d = descriptor(object, key); return d && descriptor(d, 'value') ? d : undefined; };
+    // Data properties an Error keeps (its own `stack`, as Chrome does).
+    function errorParts(source, result) {
+        const stack = own(source, 'stack');
+        if (stack && typeof stack.value === 'string') hide(result, 'stack', stack.value);
+        return result;
+    }
+    // `ports` (internal callers) receives the transferred MessagePorts' new ports.
+    function clone(value, options, ports) {
+        const memory = new M(), buffers = [], moved = [];
         if (options != null) {
             if (typeof options !== 'object' && typeof options !== 'function')
                 throw new TE('structuredClone options must be an object');
             const transfer = options.transfer;
             if (transfer !== undefined) {
-                // No detachment occurs, including when validation throws.
                 if (transfer == null || typeof transfer[iteratorKey] !== 'function')
                     throw new TE('transfer must be iterable');
+                const list = [];
                 for (const entry of transfer) {
                     if (entry === null || (typeof entry !== 'object' && typeof entry !== 'function'))
                         throw new TE('transfer entries must be objects');
-                    fail('Transfer lists are not implemented', true);
+                    put(list, list.length, entry);
+                }
+                // Nothing is detached unless the whole value clones.
+                const listed = new M();
+                for (let i = 0; i < list.length; ++i) {
+                    const entry = list[i];
+                    if (call(mapHas, listed, [entry])) fail('An object is listed twice in the transfer list');
+                    call(mapSet, listed, [entry, true]);
+                    let length = -1;
+                    try { length = call(abLength, entry); } catch (_) {}
+                    if (length >= 0) {
+                        try { new U8(entry); } catch (_) { fail('An ArrayBuffer is detached and could not be transferred'); }
+                        if (!abTransfer) fail('ArrayBuffer transfer is not available', true);
+                        put(buffers, buffers.length, entry);
+                        continue;
+                    }
+                    const port = guard(entry) ? undefined : host(entry, 1);
+                    if (port === undefined) fail('Value is not transferable');
+                    call(mapSet, memory, [entry, port]);
+                    put(moved, moved.length, entry);
+                    put(moved, moved.length, port);
                 }
             }
         }
-        const memory = new M();
         let nodes = 0, bytes = 0;
         const remember = (source, copy) => { call(mapSet, memory, [source, copy]); return copy; };
         function copy(source, depth) {
             const type = typeof source;
             if (type === 'symbol' || type === 'function') fail('Value is not cloneable');
             if (source === null || type !== 'object') return source;
-            if (!guard(source)) fail('Proxy and host objects are not cloneable');
+            if (call(mapHas, memory, [source])) return call(mapGet, memory, [source]);
+            if (!guard(source)) {
+                const copy = host(source, 0);
+                if (copy === undefined) fail('Proxy and host objects are not cloneable');
+                return remember(source, copy);
+            }
             let array;
             try { array = arrayIsArray(source); } catch (_) { fail('Revoked proxy is not cloneable'); }
-            if (call(mapHas, memory, [source])) return call(mapGet, memory, [source]);
             if (++nodes > 65536 || depth > 512) fail('Clone graph limit exceeded', true);
             let result;
             if (array) {
@@ -95,6 +137,22 @@
                         if (flagGetters[i] && call(flagGetters[i], source)) text += flagLetters[i];
                     return remember(source, new R(call(regexpSource, source), text));
                 }
+                if (kind === '[object Error]') {
+                    // HTML: the name if it is a standard one, the own data
+                    // `message`, and (as Chrome) the own data `cause`.
+                    const name = source.name, message = own(source, 'message');
+                    const C = typeof name === 'string' && descriptor(errors, name) ? errors[name] : Error;
+                    result = remember(source, message ? new C(`${message.value}`) : new C());
+                    const cause = own(source, 'cause');
+                    if (cause) hide(result, 'cause', copy(cause.value, depth + 1));
+                    return errorParts(source, result);
+                }
+                if (kind === '[object DOMException]') {
+                    let name, message;
+                    try { name = call(domName, source); message = call(domMessage, source); }
+                    catch (_) { fail('Object type is not supported'); }
+                    return errorParts(source, remember(source, new DOMExceptionC(message, name)));
+                }
                 if (kind === '[object ArrayBuffer]') {
                     let length, view;
                     try { length = call(abLength, source); view = new U8(source); }
@@ -127,7 +185,7 @@
                 const name = call(stringSlice, kind, [8, -1]);
                 if (descriptor(boxed, name)) return remember(source, O(call(boxed[name], source)));
                 if (kind !== '[object Object]') {
-                    const platformCopy = guard(source, true);
+                    const platformCopy = host(source, 3);
                     if (platformCopy !== undefined) return remember(source, platformCopy);
                     fail('Object type is not supported');
                 }
@@ -141,6 +199,17 @@
             }
             return result;
         }
-        return copy(value, 0);
-    };
+        const result = copy(value, 0);
+        for (let i = 0; i < buffers.length; ++i) call(abTransfer, buffers[i]);
+        for (let i = 0; i < moved.length; i += 2) {
+            host(moved[i], 2, moved[i + 1]);
+            if (ports) put(ports, ports.length, moved[i + 1]);
+        }
+        return result;
+    }
+    function structuredClone(value, options = undefined) {
+        if (!arguments.length) throw new TE('structuredClone requires a value');
+        return clone(value, options, undefined);
+    }
+    return [structuredClone, clone];
 })

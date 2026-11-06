@@ -5,8 +5,9 @@
 //! that needs `&mut Browser` (cross-document navigation, events) is posted as
 //! a task, as navigation is asynchronous in browsers too.
 //!
-//! Known gaps (see docs/PARITY.md): history state is stored as JSON (not a
-//! full structured clone); traversal across documents re-fetches (no bfcache).
+//! History state is a structured serialization (`lp_webapi::WireMessage`),
+//! deserialized once per activation in each realm that reads it. Known gap
+//! (see docs/PARITY.md): traversal across documents re-fetches (no bfcache).
 //! As in browsers, the first navigation replaces the initial about:blank
 //! entry.
 
@@ -23,11 +24,28 @@ use std::rc::Rc;
 use std::time::Instant;
 use url::Url;
 
+/// A history entry's serialized state (StructuredSerializeForStorage).
+/// Entries compare by identity of their state, never by its content.
+#[derive(Clone)]
+struct HistoryState(Rc<lp_webapi::WireMessage>);
+
+impl PartialEq for HistoryState {
+    fn eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.0, &other.0)
+    }
+}
+impl Eq for HistoryState {}
+impl std::fmt::Debug for HistoryState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("HistoryState")
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Entry {
     url: String,
-    /// `JSON.stringify` of the history state (`None` = null).
-    state: Option<String>,
+    /// The serialized history state (`None` = null).
+    state: Option<HistoryState>,
     /// Document sequence number: entries of the same document traverse
     /// without reloading.
     doc: u64,
@@ -248,7 +266,7 @@ impl PageNav {
     }
 
     /// Same-document navigation (pushState/replaceState/fragment).
-    fn same_document(&self, url: &str, state: Option<String>, kind: SameDocumentKind) {
+    fn same_document(&self, url: &str, state: Option<HistoryState>, kind: SameDocumentKind) {
         {
             let mut st = self.state.borrow_mut();
             st.state_version += 1;
@@ -355,7 +373,7 @@ impl PageNav {
                 let old_url = nav.url();
                 nav.set_url_sync(&entry.url);
                 b.same_document_committed(page, entry.url.clone(), SameDocumentKind::Push);
-                b.fire_popstate(page, entry.state.as_deref(), &old_url, &entry.url);
+                b.fire_popstate(page, entry.state.is_some(), &old_url, &entry.url);
             } else {
                 let opts = NavigateOpts {
                     post: None,
@@ -410,7 +428,7 @@ impl PageNav {
         });
     }
 
-    fn state_json(&self) -> Option<String> {
+    fn active_state(&self) -> Option<HistoryState> {
         let st = self.state.borrow();
         st.entries.get(st.index).and_then(|e| e.state.clone())
     }
@@ -431,7 +449,11 @@ impl PageNav {
                 return Ok(cached);
             }
         }
-        let value = nav.state_json().and_then(|j| s.parse_json(&j)).unwrap_or_else(|| s.null());
+        let value = match nav.active_state() {
+            // A state that cannot be deserialized here reads as null.
+            Some(state) => lp_webapi::deserialize_message(s, &state.0).unwrap_or_else(|_| s.null()),
+            None => s.null(),
+        };
         s.set_hidden(history, VALUE, value)?;
         s.set_hidden(history, VERSION, s.number(version))?;
         Ok(value)
@@ -488,16 +510,14 @@ impl Browser {
     /// Same-document traversal: `popstate` with the entry's state, then a
     /// queued `hashchange` when only the fragment changed (HTML "update
     /// document for history step application").
-    fn fire_popstate(&mut self, page: crate::frames::FrameKey, state: Option<&str>, old_url: &str, new_url: &str) {
+    fn fire_popstate(&mut self, page: crate::frames::FrameKey, state: bool, old_url: &str, new_url: &str) {
         let Some(p) = self.doc(page) else { return };
         let Some(dom) = p.main_frame.page_dom.clone() else { return };
         // The event's state is the history state object itself (browsers:
         // `event.state === history.state`).
         let nav = p.nav.clone();
         let state = match (state, p.main_frame.main_realm().and_then(|r| r.scope().ok())) {
-            (Some(_), Some(scope)) => {
-                PageNav::state_value(&nav, &scope).ok().map(|v| lp_js::Persistent::new(&scope, v))
-            }
+            (true, Some(scope)) => PageNav::state_value(&nav, &scope).ok().map(|v| lp_js::Persistent::new(&scope, v)),
             _ => None,
         };
         drop(p);
@@ -558,7 +578,28 @@ fn same_document_except_fragment(a: &Url, b: &Url) -> bool {
 
 /// Location assignment: fragment-only changes are same-document.
 fn assign(nav: &PageNav, input: Value<'_>, replace: bool) -> JsResult<()> {
-    let target = parse(nav, input)?;
+    assign_url(nav, parse(nav, input)?, replace);
+    Ok(())
+}
+
+/// A cross-origin `location.href = url` or `location.replace(url)` on the
+/// frame of `nav`: `url` is resolved against `base`, the base URL of the
+/// document doing it (HTML: relative to the entry settings object). A
+/// `javascript:` URL is ignored, as it would run in the other origin.
+pub(crate) fn navigate_cross_origin(nav: &PageNav, base: &str, input: Value<'_>, replace: bool) -> JsResult<()> {
+    let href = input.to_string()?;
+    let base = Url::parse(base).ok();
+    let target = Url::options()
+        .base_url(base.as_ref())
+        .parse(&href)
+        .map_err(|_| JsError::dom("SyntaxError", format!("Failed to resolve URL '{href}'")))?;
+    if target.scheme() != "javascript" {
+        assign_url(nav, target, replace);
+    }
+    Ok(())
+}
+
+fn assign_url(nav: &PageNav, target: Url, replace: bool) {
     let current = Url::parse(&nav.url()).ok();
     match current {
         Some(cur) if target.fragment().is_some() && same_document_except_fragment(&cur, &target) => {
@@ -568,7 +609,6 @@ fn assign(nav: &PageNav, input: Value<'_>, replace: bool) -> JsResult<()> {
         }
         _ => nav.navigate(target.to_string(), if replace { HistoryHandling::Replace } else { HistoryHandling::Push }),
     }
-    Ok(())
 }
 
 fn url_part(nav: &PageNav, f: impl Fn(&Url) -> String) -> String {
@@ -685,10 +725,11 @@ impl JsClass for History {
 
 fn change_state<'s>(s: &Scope<'s>, n: &PageNav, a: lp_js::Args<'s>, kind: SameDocumentKind) -> JsResult<Value<'s>> {
     a.require(2, if kind == SameDocumentKind::Push { "pushState" } else { "replaceState" })?;
-    // Approximates StructuredSerialize with JSON (functions/cycles throw).
+    // StructuredSerializeForStorage: functions, DOM nodes and ports throw
+    // DataCloneError; Date, Map, Set, typed arrays, cycles, Blob, ... survive.
     let state = match a.get(0) {
         v if v.is_nullish() => None,
-        v => Some(v.to_json(0)?.ok_or_else(|| JsError::dom("DataCloneError", "state could not be cloned"))?),
+        v => Some(HistoryState(Rc::new(lp_webapi::serialize_message(s, v, s.undefined())?))),
     };
     let url = match a.opt(2).filter(|v| !v.is_nullish()) {
         Some(v) => {
