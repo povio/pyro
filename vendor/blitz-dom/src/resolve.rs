@@ -951,3 +951,95 @@ mod layout_children_owner_tests {
         assert_owners_match_lists(&doc, "restored");
     }
 }
+
+#[cfg(test)]
+mod layout_children_owner_reparent_tests {
+    use crate::{Attribute, BaseDocument, DocumentConfig, qual_name};
+    use blitz_traits::shell::{ColorScheme, Viewport};
+
+    fn scan(doc: &BaseDocument, id: crate::NodeId) -> bool {
+        let node = &doc.nodes[id];
+        node.layout_parent
+            .get()
+            .and_then(|p| doc.get_node(p))
+            .is_some_and(|p| p.layout_children.borrow().as_ref().is_some_and(|c| c.contains(&id)))
+    }
+
+    fn check(doc: &BaseDocument, when: &str) {
+        for (id, node) in doc.tree().iter() {
+            assert_eq!(node.is_layout_child(), scan(doc, id), "{when}: node {id:?}");
+        }
+    }
+
+    /// A node moved between layout containers, in both traversal orders (its
+    /// new container visited before and after its old one), and a node
+    /// detached but kept alive.
+    #[test]
+    fn owner_follows_nodes_moved_between_containers() {
+        let mut doc = BaseDocument::new(DocumentConfig {
+            viewport: Some(Viewport::new(400, 300, 1.0, ColorScheme::Light)),
+            ..Default::default()
+        });
+        let root_id = doc.root_node().id;
+        let block = || vec![Attribute { name: qual_name!("style"), value: "display:block".to_string() }];
+        let mut m = doc.mutate();
+        let html = m.create_element(qual_name!("html"), block());
+        let body = m.create_element(qual_name!("body"), block());
+        let a = m.create_element(qual_name!("div"), block());
+        let b = m.create_element(qual_name!("div"), block());
+        let x = m.create_element(qual_name!("div"), block());
+        let y = m.create_element(qual_name!("div"), block());
+        let z = m.create_element(qual_name!("div"), block());
+        m.append_children(a, &[x, y]);
+        m.append_children(b, &[z]);
+        m.append_children(body, &[a, b]);
+        m.append_children(html, &[body]);
+        m.append_children(root_id, &[html]);
+        drop(m);
+        doc.resolve(0.0);
+        check(&doc, "first layout");
+        assert!(doc.nodes[x].is_layout_child());
+
+        // Later sibling container: `a` (old) is visited before `b` (new).
+        let mut m = doc.mutate();
+        m.append_children(b, &[x]);
+        drop(m);
+        doc.resolve(0.0);
+        check(&doc, "moved to a later container");
+        assert_eq!(doc.nodes[x].layout_parent.get(), Some(b));
+        assert!(doc.nodes[x].is_layout_child());
+
+        // Back: `a` (new) is visited before `b` (old).
+        let mut m = doc.mutate();
+        m.append_children(a, &[x]);
+        drop(m);
+        doc.resolve(0.0);
+        check(&doc, "moved to an earlier container");
+        assert!(doc.nodes[x].is_layout_child());
+
+        // Up to the ancestor, before and after its old container.
+        let mut m = doc.mutate();
+        m.insert_nodes_before(a, &[x]);
+        drop(m);
+        doc.resolve(0.0);
+        check(&doc, "moved up before its old container");
+        let mut m = doc.mutate();
+        m.append_children(a, &[x]);
+        drop(m);
+        doc.resolve(0.0);
+        let mut m = doc.mutate();
+        m.append_children(body, &[x]);
+        drop(m);
+        doc.resolve(0.0);
+        check(&doc, "moved up after its old container");
+        assert_eq!(doc.nodes[x].layout_parent.get(), Some(body));
+
+        // Detached but alive: in no list.
+        let mut m = doc.mutate();
+        m.remove_node(y);
+        drop(m);
+        doc.resolve(0.0);
+        check(&doc, "detached");
+        assert!(!doc.nodes[y].is_layout_child());
+    }
+}
