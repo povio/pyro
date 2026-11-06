@@ -1133,7 +1133,9 @@ fn control_key_action(page: &Rc<PageDom>, el: NodeId, key: &str) -> bool {
             return false;
         }
         let ty = dom.input_type(el).ok();
-        let mutable = !dom.is_disabled(el).unwrap_or(true) && !dom.has_attribute(el, "readonly").unwrap_or(false);
+        // `readonly` does not apply to a select.
+        let readonly = name == "input" && dom.has_attribute(el, "readonly").unwrap_or(false);
+        let mutable = !dom.is_disabled(el).unwrap_or(true) && !readonly;
         (name, ty, mutable)
     };
     let changed = match (name.as_str(), ty) {

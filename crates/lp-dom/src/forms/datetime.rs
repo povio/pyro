@@ -238,10 +238,15 @@ pub(crate) fn format_local_datetime(ms: f64) -> Option<String> {
 }
 
 /// A Date's time value (ms, UTC) → the year and month it falls in, as
-/// months since 1970-01.
-pub(crate) fn months_of_date(ms: f64) -> f64 {
-    let (y, m, _) = civil_from_days((ms / MS_PER_DAY).floor() as i64);
-    ((y - 1970) * 12 + m as i64 - 1) as f64
+/// months since 1970-01 (None outside the representable dates: a script's
+/// `valueOf` can return any number).
+pub(crate) fn months_of_date(ms: f64) -> Option<f64> {
+    let days = (ms / MS_PER_DAY).floor() as i64;
+    if !in_date_range(days) {
+        return None;
+    }
+    let (y, m, _) = civil_from_days(days);
+    Some(((y - 1970) * 12 + m as i64 - 1) as f64)
 }
 
 /// Months since 1970-01 → ms since the epoch of the month's first day.
@@ -267,6 +272,8 @@ mod tests {
         assert_eq!(format_week(parse_date("2021-01-01").unwrap()).as_deref(), Some("2020-W53"));
         assert_eq!(parse_month("1970-02"), Some(1.0));
         assert_eq!(format_month(-1.0).as_deref(), Some("1969-12"));
+        assert_eq!(months_of_date(1e300), None);
+        assert_eq!(months_of_date(parse_date("2020-03-15").unwrap()), parse_month("2020-03"));
         assert_eq!(parse_time("00:00:00.0000"), None);
         assert_eq!(parse_time("12:00:00.5"), Some(43_200_500.0));
         assert_eq!(format_time(43_200_010.0).as_deref(), Some("12:00:00.01"));

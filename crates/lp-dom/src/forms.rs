@@ -215,12 +215,42 @@ fn format_float(x: f64, decimals: Option<usize>) -> String {
                 s
             }
         }
-        None => format!("{x}"),
+        None => js_number(x),
     };
     if s == "-0" {
         "0".into()
     } else {
         s
+    }
+}
+
+/// ECMAScript Number::toString of a finite `x`, which "best representation
+/// as a floating-point number" means: exponent notation below 1e-6 and
+/// from 1e21 ("1e+21", as Chrome's `valueAsNumber` setter writes).
+fn js_number(x: f64) -> String {
+    if x == 0.0 {
+        return "0".into();
+    }
+    // Shortest round-trip digits, in exponent form: "1.5e-7".
+    let sci = format!("{:e}", x.abs());
+    let (mantissa, exp) = sci.split_once('e').unwrap_or((&sci, "0"));
+    let digits: String = mantissa.chars().filter(char::is_ascii_digit).collect();
+    let k = digits.len() as i32;
+    let n = exp.parse::<i32>().unwrap_or(0) + 1;
+    let body = if k <= n && n <= 21 {
+        format!("{digits}{}", "0".repeat((n - k) as usize))
+    } else if 0 < n && n <= 21 {
+        format!("{}.{}", &digits[..n as usize], &digits[n as usize..])
+    } else if -6 < n && n <= 0 {
+        format!("0.{}{digits}", "0".repeat((-n) as usize))
+    } else {
+        let rest = if k > 1 { format!(".{}", &digits[1..]) } else { String::new() };
+        format!("{}{rest}e{}{}", &digits[..1], if n > 0 { '+' } else { '-' }, (n - 1).abs())
+    };
+    if x < 0.0 {
+        format!("-{body}")
+    } else {
+        body
     }
 }
 
@@ -244,8 +274,14 @@ impl StepRange {
     fn mismatch(&self, v: f64) -> bool {
         let Some(step) = self.step else { return false };
         let d = v - self.base;
+        let q = d / step;
+        // A step too small (or too large) to count steps in binary floating
+        // point: no value can be shown to mismatch it.
+        if !q.is_finite() || !(step * q.round()).is_finite() {
+            return false;
+        }
         // Chrome's tolerance for binary rounding (StepRange::StepMismatch).
-        (d - step * (d / step).round()).abs() > step / 2f64.powi(46)
+        (d - step * q.round()).abs() > step / 2f64.powi(46)
     }
     /// The aligned value at or below `v`.
     fn floor(&self, v: f64, step: f64) -> f64 {
@@ -907,7 +943,7 @@ impl Dom {
         let text = ms
             .filter(|m| m.is_finite())
             .and_then(|ms| match ty {
-                InputType::Month => datetime::format_month(datetime::months_of_date(ms)),
+                InputType::Month => datetime::months_of_date(ms).and_then(datetime::format_month),
                 _ => ty.number_to_string(ms),
             })
             .unwrap_or_default();

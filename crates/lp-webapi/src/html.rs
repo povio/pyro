@@ -1565,11 +1565,10 @@ fn define_text_selection<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
     });
     def.method("setRangeText", 1, |s, n, a| {
         let text = arg_string(&a, 0, "setRangeText")?;
-        if !has_selection(n) {
-            return Err(JsError::dom("InvalidStateError", "The input element's type does not support selection."));
-        }
-        let (start, end, mode) = if a.len() >= 2 {
+        // The arguments convert (in order) before the type is checked.
+        let range = if a.len() >= 2 {
             a.require(3, "setRangeText")?;
+            let (start, end) = (to_u32(a.get(1))?, to_u32(a.get(2))?);
             let mode = match a.get(3) {
                 v if v.is_undefined() => lp_dom::forms::RangeMode::Preserve,
                 v => match dom_string(v)?.as_str() {
@@ -1584,10 +1583,19 @@ fn define_text_selection<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
                     }
                 },
             };
-            (to_u32(a.get(1))?, to_u32(a.get(2))?, mode)
+            Some((start, end, mode))
         } else {
-            let (st, en) = n.page().dom.borrow().selection(n.id).js()?;
-            (st, en, lp_dom::forms::RangeMode::Preserve)
+            None
+        };
+        if !has_selection(n) {
+            return Err(JsError::dom("InvalidStateError", "The input element's type does not support selection."));
+        }
+        let (start, end, mode) = match range {
+            Some(r) => r,
+            None => {
+                let (st, en) = n.page().dom.borrow().selection(n.id).js()?;
+                (st, en, lp_dom::forms::RangeMode::Preserve)
+            }
         };
         if start > end {
             return Err(JsError::dom("IndexSizeError", "The provided start value is larger than the end value."));

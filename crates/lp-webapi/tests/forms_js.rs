@@ -384,3 +384,32 @@ fn numeric_value_members_and_validation() {
     assert_eq!(e.eval("document.getElementById('m').value"), "1234");
     e.page.dispose();
 }
+
+#[test]
+fn numeric_edge_cases_and_argument_order() {
+    let e = env(r#"<body><input type=month id=mo value=2020-01><input type=range id=r step=1e-320 value=50>
+        <input type=number id=n><select id=s readonly><option>a</option><option>b</option></select></body>"#);
+    assert_eq!(
+        e.eval(
+            "const out = [], n = document.getElementById('n'), mo = document.getElementById('mo');
+             // A Date whose valueOf leaves the representable range empties the value.
+             const d = new Date(0); d.valueOf = () => 1e300;
+             mo.valueAsDate = d; out.push(JSON.stringify(mo.value));
+             mo.valueAsDate = new Date('2021-07-15T00:00:00Z'); out.push(mo.value);
+             // A step too small to count in doubles does not snap the value.
+             out.push(document.getElementById('r').value);
+             for (const x of [1e21, 1.5e-7, 0.5, -1.5, 123, 1e-6]) { n.valueAsNumber = x; out.push(n.value); }
+             // The arguments convert before the type check.
+             const c = document.createElement('input'); c.type = 'color';
+             try { c.setRangeText('a', 1); } catch (err) { out.push(err.name); }
+             try { c.setRangeText('a', 0, 1); } catch (err) { out.push(err.name); }
+             out.join()"
+        ),
+        "\"\",2021-07,50,1e+21,1.5e-7,0.5,-1.5,123,0.000001,TypeError,InvalidStateError"
+    );
+    // `readonly` does not apply to a select: the arrows still change it.
+    e.eval("document.getElementById('s').focus()");
+    e.key("ArrowDown", "");
+    assert_eq!(e.eval("document.getElementById('s').value"), "b");
+    e.page.dispose();
+}
