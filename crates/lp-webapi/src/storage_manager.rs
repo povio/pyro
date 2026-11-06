@@ -18,7 +18,7 @@ const KEY: &str = "lpStorageManager";
 /// grants an origin on a typical disk.
 const QUOTA: f64 = 10.0 * 1024.0 * 1024.0 * 1024.0;
 
-const SCRIPT: &str = r#"((estimate) => {
+const SCRIPT: &str = r#"((estimate, window) => {
   'use strict';
   const token = Symbol('lightningpanda');
   const PromiseC = Promise;
@@ -26,15 +26,17 @@ const SCRIPT: &str = r#"((estimate) => {
   const defineProperty = Object.defineProperty;
   class StorageManager {
     #brand;
-    constructor(t) {
-      if (t !== token) throw new TypeErrorC('Illegal constructor');
+    // A rest parameter keeps the interface object's length at 0.
+    constructor(...t) {
+      if (t[0] !== token) throw new TypeErrorC('Illegal constructor');
       this.#brand = true;
     }
     estimate() {
       try {
         if (!(#brand in this)) throw new TypeErrorC("Failed to execute 'estimate' on 'StorageManager': Illegal invocation");
-        const [usage, quota] = estimate();
-        return PromiseC.resolve({ quota, usage });
+        const result = estimate();
+        // usageDetails as in Chrome (an empty record: nothing is broken down).
+        return PromiseC.resolve({ quota: result[1], usage: result[0], usageDetails: {} });
       } catch (e) {
         return PromiseC.reject(e);
       }
@@ -56,7 +58,9 @@ const SCRIPT: &str = r#"((estimate) => {
     }
   }
   const proto = StorageManager.prototype;
-  for (const name of ['estimate', 'persisted', 'persist']) {
+  // persist() is [Exposed=Window].
+  if (!window) delete proto.persist;
+  for (const name of window ? ['estimate', 'persisted', 'persist'] : ['estimate', 'persisted']) {
     const desc = Object.getOwnPropertyDescriptor(proto, name);
     desc.enumerable = true;
     defineProperty(proto, name, desc);
@@ -83,7 +87,8 @@ fn module<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Object<'s>> {
     })?;
     let estimate = Persistent::new(s, estimate.value());
     let factory = s.eval(SCRIPT, Some("lightningpanda://internal/storage-manager.js"), 1)?;
-    let module = factory.as_object().ok_or_else(unavailable)?.call(None, &[estimate.get(s)])?;
+    let window = s.boolean(!crate::worker_scope::is_worker(s));
+    let module = factory.as_object().ok_or_else(unavailable)?.call(None, &[estimate.get(s), window])?;
     s.set_hidden(holder, KEY, module)?;
     module.as_object().ok_or_else(unavailable)
 }
