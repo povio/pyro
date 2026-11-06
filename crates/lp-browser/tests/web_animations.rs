@@ -243,3 +243,45 @@ fn transitions_start_after_a_layout_read_or_a_frame_without_get_computed_style()
     run_until(&mut t, &root, "log.includes('b:width')");
     assert_eq!(eval(&root, "log.join()"), "a:width,b:width");
 }
+
+#[test]
+fn get_animations_lists_css_animations_and_transitions() {
+    let (mut t, root) = page();
+    eval(
+        &root,
+        "const style = document.head.appendChild(document.createElement('style'));
+         style.textContent = '@keyframes spin { to { opacity: 0.5 } } .spin { animation: spin 10s 2 }' +
+           ' .box { width: 100px; transition: width 10s 1s } .box.open { width: 200px }';
+         globalThis.spinner = document.body.appendChild(document.createElement('div'));
+         spinner.className = 'spin';
+         globalThis.box = document.body.appendChild(document.createElement('div'));
+         box.className = 'box';
+         0",
+    );
+    t.run_until_idle(Some(Instant::now() + Duration::from_millis(20)));
+    eval(
+        &root,
+        // The first call keeps CSS animations and transitions from now on.
+        "globalThis.first = document.getAnimations();
+         // A change in a task: the frame after it starts the transition.
+         setTimeout(() => { box.offsetHeight; box.classList.add('open'); }, 0);
+         0",
+    );
+    t.run_until_idle(Some(Instant::now() + Duration::from_millis(60)));
+    assert_eq!(
+        eval(
+            &root,
+            "const list = document.getAnimations();
+             const anim = list.find(a => a instanceof CSSAnimation), tr = list.find(a => a instanceof CSSTransition);
+             [first.length, list.length, list[0] === tr, anim.animationName, anim.playState,
+              anim.effect.getTiming().duration, anim.effect.getTiming().iterations, tr.transitionProperty,
+              tr.effect.getTiming().delay, document.getAnimations()[1] === anim,
+              spinner.getAnimations()[0] === anim, box.getAnimations().length].join()"
+        ),
+        "1,2,true,spin,running,10000,2,width,1000,true,true,1"
+    );
+    // A removed animation name leaves the list.
+    eval(&root, "setTimeout(() => { spinner.className = ''; }, 0); 0");
+    t.run_until_idle(Some(Instant::now() + Duration::from_millis(60)));
+    assert_eq!(eval(&root, "document.getAnimations().map(a => a.constructor.name).join()"), "CSSTransition");
+}

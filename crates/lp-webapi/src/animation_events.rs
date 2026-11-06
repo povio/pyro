@@ -28,6 +28,10 @@
 //! `transitionend` after the duration. So the usual
 //! `el.offsetHeight; el.classList.add('open')` starts a transition, as does
 //! a change made in a task after the element was first rendered.
+//!
+//! Once script called `getAnimations()` the timelines are kept the same way
+//! without listeners, and `getAnimations()` lists them as `CSSAnimation` and
+//! `CSSTransition` objects ([`runs`]).
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -51,6 +55,14 @@ type Stamp = (u64, u64, u32, u32);
 
 /// An animation or transition whose events are (or were) scheduled.
 struct Timeline {
+    /// Its identity for `getAnimations()`.
+    id: u64,
+    /// The page clock when it started (its style change), in ms.
+    start_ms: f64,
+    delay_ms: f64,
+    duration_ms: f64,
+    /// 1 for a transition.
+    iterations: f64,
     el: NodeId,
     /// The animation's name, or the transitioning longhand.
     name: String,
@@ -83,9 +95,39 @@ pub(crate) struct State {
     /// The style stamp of the last style change event of every element that
     /// may transition.
     flushed: Cell<Option<Stamp>>,
+    /// Script called `getAnimations()`: timelines are kept without listeners.
+    listed: Cell<bool>,
+    /// The last timeline id handed out.
+    ids: Cell<u64>,
+}
+
+/// A CSS animation or transition `getAnimations()` lists.
+pub(crate) struct Run {
+    pub id: u64,
+    pub el: NodeId,
+    pub transition: bool,
+    /// The animation's name, or the transitioning property.
+    pub name: String,
+    pub start_ms: f64,
+    pub delay_ms: f64,
+    pub duration_ms: f64,
+    pub iterations: f64,
 }
 
 impl State {
+    /// Whether timelines are kept: a listener could observe their events, or
+    /// `getAnimations()` lists them.
+    fn tracking(&self, dom: &lp_dom::Dom) -> bool {
+        dom.has_animation_listeners() || self.listed.get()
+    }
+    fn transitions_tracked(&self, dom: &lp_dom::Dom) -> bool {
+        dom.has_transition_listeners() || self.listed.get()
+    }
+    fn next_id(&self) -> u64 {
+        self.ids.set(self.ids.get() + 1);
+        self.ids.get()
+    }
+
     pub(crate) fn clear(&self) {
         for timeline in self.animations.take().into_iter().chain(self.transitions.take()) {
             timeline.live.set(false);
@@ -143,7 +185,7 @@ pub(crate) fn after_task(page: &Rc<PageDom>) {
     }
     {
         let Ok(dom) = page.dom.try_borrow() else { return };
-        if !dom.has_animation_listeners() {
+        if !state.tracking(&dom) {
             return;
         }
         let Some(layout) = page.try_layout() else { return };
@@ -158,14 +200,15 @@ pub(crate) fn after_task(page: &Rc<PageDom>) {
         Box::new(move || {
             if let Some(page) = weak.upgrade() {
                 page.animation_events.queued.set(false);
-                update(&page);
+                update(&page, false);
             }
         }),
     );
 }
 
 /// A frame: the document's animations and the observed elements' transitions.
-fn update(page: &Rc<PageDom>) {
+/// `defer`: events due now fire in a task of their own.
+fn update(page: &Rc<PageDom>, defer: bool) {
     if page.is_disposed() || page.scripting_disabled() {
         return;
     }
@@ -186,6 +229,7 @@ fn update(page: &Rc<PageDom>) {
                 wanted.extend(rules.element(&dom, el).animations.into_iter().map(|a| (el, a)));
             }
         }
+        let now_ms = crate::event::page_now_ms(page);
         let mut animations = state.animations.borrow_mut();
         animations.retain(|known| {
             let keep = wanted.iter().any(|(el, a)| *el == known.el && known.timing.as_ref() == Some(a));
@@ -211,6 +255,11 @@ fn update(page: &Rc<PageDom>) {
                 continue;
             }
             let timeline = Timeline {
+                id: state.next_id(),
+                start_ms: now_ms,
+                delay_ms: animation.delay_ms,
+                duration_ms: animation.duration_ms,
+                iterations: animation.iterations,
                 el,
                 name: animation.name.clone(),
                 live: Rc::new(Cell::new(true)),
@@ -251,14 +300,55 @@ fn update(page: &Rc<PageDom>) {
                 state.observed.borrow_mut().remove(&el);
                 continue;
             }
-            style_change(state, &dom, style, &rules, el, &mut planned);
+            style_change(state, &dom, style, &rules, el, now_ms, &mut planned);
         }
-        if dom.has_transition_listeners() {
-            transition_candidates_changed(state, &dom, style, &rules, page.document(), &mut planned);
+        if state.transitions_tracked(&dom) {
+            transition_candidates_changed(state, &dom, style, &rules, page.document(), now_ms, &mut planned);
         }
         state.transitions.borrow_mut().retain(|t| t.live.get() && !t.ended.get() && dom.is_alive(t.el));
     }
-    schedule(page, planned, false);
+    schedule(page, planned, defer);
+}
+
+/// `getAnimations()`: the CSS animations and transitions of the document,
+/// its style brought up to date first (as a style flush would; their
+/// events due now fire in a task of their own). From the first call on,
+/// they are kept without listeners.
+pub(crate) fn runs(page: &Rc<PageDom>) -> Vec<Run> {
+    let state = &page.animation_events;
+    if page.is_disposed() || page.scripting_disabled() {
+        return Vec::new();
+    }
+    state.listed.set(true);
+    let current = {
+        let Ok(dom) = page.dom.try_borrow() else { return Vec::new() };
+        let Some(layout) = page.try_layout() else { return Vec::new() };
+        let style = layout.style();
+        style.engine_styled(&dom);
+        state.stamp.get() == Some(style.observation_stamp(&dom))
+    };
+    if !current {
+        update(page, true);
+    }
+    let dom = page.dom.borrow();
+    let animations = state.animations.borrow();
+    let transitions = state.transitions.borrow();
+    transitions
+        .iter()
+        .map(|t| (t, true))
+        .chain(animations.iter().map(|t| (t, false)))
+        .filter(|(t, _)| t.live.get() && dom.is_alive(t.el) && dom.is_connected(t.el).unwrap_or(false))
+        .map(|(t, transition)| Run {
+            id: t.id,
+            el: t.el,
+            transition,
+            name: t.name.clone(),
+            start_ms: t.start_ms,
+            delay_ms: t.delay_ms,
+            duration_ms: t.duration_ms,
+            iterations: t.iterations,
+        })
+        .collect()
 }
 
 /// Script read `el`'s computed style: a style change event of the element
@@ -268,7 +358,7 @@ pub(crate) fn observe(page: &Rc<PageDom>, el: NodeId) {
     let mut planned = Vec::new();
     {
         let Ok(dom) = page.dom.try_borrow() else { return };
-        if !dom.has_animation_listeners() || page.is_disposed() || page.scripting_disabled() {
+        if !state.tracking(&dom) || page.is_disposed() || page.scripting_disabled() {
             return;
         }
         let Some(layout) = page.try_layout() else { return };
@@ -276,16 +366,17 @@ pub(crate) fn observe(page: &Rc<PageDom>, el: NodeId) {
         style.engine_styled(&dom);
         let stamp = style.observation_stamp(&dom);
         let seen = state.observed.borrow().get(&el).is_some_and(|(_, at)| *at == stamp);
-        let flushed = state.flushed.get() == Some(stamp) || !dom.has_transition_listeners();
+        let flushed = state.flushed.get() == Some(stamp) || !state.transitions_tracked(&dom);
         if seen && flushed {
             return;
         }
         let rules = state.rules(&dom, style);
+        let now_ms = crate::event::page_now_ms(page);
         if !seen && dom.is_connected(el).unwrap_or(false) {
-            style_change(state, &dom, style, &rules, el, &mut planned);
+            style_change(state, &dom, style, &rules, el, now_ms, &mut planned);
         }
         if !flushed {
-            transition_candidates_changed(state, &dom, style, &rules, page.document(), &mut planned);
+            transition_candidates_changed(state, &dom, style, &rules, page.document(), now_ms, &mut planned);
         }
     }
     // Events never fire inside the read itself.
@@ -300,7 +391,7 @@ pub(crate) fn style_flush(page: &Rc<PageDom>) {
     let mut planned = Vec::new();
     {
         let Ok(dom) = page.dom.try_borrow() else { return };
-        if !dom.has_transition_listeners() || page.is_disposed() || page.scripting_disabled() {
+        if !state.transitions_tracked(&dom) || page.is_disposed() || page.scripting_disabled() {
             return;
         }
         let Some(layout) = page.try_layout() else { return };
@@ -311,7 +402,8 @@ pub(crate) fn style_flush(page: &Rc<PageDom>) {
             return;
         }
         let rules = state.rules(&dom, style);
-        transition_candidates_changed(state, &dom, style, &rules, page.document(), &mut planned);
+        let now_ms = crate::event::page_now_ms(page);
+        transition_candidates_changed(state, &dom, style, &rules, page.document(), now_ms, &mut planned);
     }
     schedule(page, planned, true);
 }
@@ -324,6 +416,7 @@ fn transition_candidates_changed(
     style: &lp_dom::style::StyleEngine,
     rules: &TimingRules,
     doc: NodeId,
+    now_ms: f64,
     planned: &mut Vec<Planned>,
 ) {
     let stamp = style.observation_stamp(dom);
@@ -335,7 +428,7 @@ fn transition_candidates_changed(
             continue;
         }
         if dom.is_connected(el).unwrap_or(false) {
-            style_change(state, dom, style, rules, el, planned);
+            style_change(state, dom, style, rules, el, now_ms, planned);
         }
     }
 }
@@ -349,6 +442,7 @@ fn style_change(
     style: &lp_dom::style::StyleEngine,
     rules: &TimingRules,
     el: NodeId,
+    now_ms: f64,
     planned: &mut Vec<Planned>,
 ) {
     let Some(now) = style.stylo_style(dom, el) else { return };
@@ -392,6 +486,11 @@ fn style_change(
                 !same
             });
             let timeline = Timeline {
+                id: state.next_id(),
+                start_ms: now_ms,
+                delay_ms: transition.delay_ms,
+                duration_ms: transition.duration_ms,
+                iterations: 1.0,
                 el,
                 name: longhand.to_owned(),
                 live: Rc::new(Cell::new(true)),

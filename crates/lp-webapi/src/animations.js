@@ -1188,16 +1188,43 @@
     updateFinished(a, false, false);
   }
 
-  // CSSAnimation and CSSTransition: the interfaces exist so feature checks
-  // and `instanceof` work; CSS animations and transitions are not listed by
-  // getAnimations() (the layout settles them at their end state).
+  // CSSAnimation and CSSTransition: the CSS animations and transitions the
+  // engine keeps (animation_events.rs), made when getAnimations() first
+  // lists them. Their effects have the CSS timing and no keyframes: the
+  // layout settles CSS animations at their end state.
+  const CSS_TRANSITION = 0, CSS_ANIMATION = 1;
+  const cssRuns = new Map();
   class CSSAnimation extends Animation {
     constructor() { throw illegal(); }
-    get animationName() { return ''; }
+    get animationName() { return brand(animations, this, 'a CSSAnimation').cssName; }
   }
   class CSSTransition extends Animation {
     constructor() { throw illegal(); }
-    get transitionProperty() { return ''; }
+    get transitionProperty() { return brand(animations, this, 'a CSSTransition').cssName; }
+  }
+  function cssRun([id, target, transition, name, start, delay, duration, iterations]) {
+    const timing = { delay, duration, iterations, fill: transition ? 'backwards' : 'none' };
+    const effect = new KeyframeEffect(target, null, timing);
+    const object = Reflect.construct(Animation, [effect, documentTimeline], transition ? CSSTransition : CSSAnimation);
+    const a = animations.get(object);
+    a.css = transition ? CSS_TRANSITION : CSS_ANIMATION;
+    a.cssName = name;
+    object.startTime = start;
+    return object;
+  }
+  // The engine's runs now ([id, target, transition, name, start, delay,
+  // duration, iterations]); those it dropped (canceled) leave the list.
+  function cssSync(runs) {
+    const seen = new Set();
+    for (const run of runs) {
+      seen.add(run[0]);
+      if (!cssRuns.has(run[0])) cssRuns.set(run[0], cssRun(run));
+    }
+    for (const [id, object] of cssRuns) {
+      if (seen.has(id)) continue;
+      cssRuns.delete(id);
+      live.delete(object);
+    }
   }
   Object.defineProperty(CSSAnimation.prototype, Symbol.toStringTag, { value: 'CSSAnimation', configurable: true });
   Object.defineProperty(CSSTransition.prototype, Symbol.toStringTag, { value: 'CSSTransition', configurable: true });
@@ -1230,7 +1257,9 @@
       const target = a.effect.target;
       if (target && filter(target, a)) out.push(a);
     }
-    out.sort((x, y) => x.seq - y.seq);
+    // CSS transitions, then CSS animations, then script animations.
+    const rank = a => (a.css === undefined ? 2 : a.css);
+    out.sort((x, y) => rank(x) - rank(y) || x.seq - y.seq);
     return out.map(a => a.self);
   }
 
@@ -1251,6 +1280,6 @@
   return {
     Animation, AnimationEffect, KeyframeEffect, AnimationTimeline, DocumentTimeline, AnimationPlaybackEvent,
     CSSAnimation, CSSTransition,
-    animate, elementAnimations, rootAnimations, timeline: () => documentTimeline,
+    animate, elementAnimations, rootAnimations, cssSync, timeline: () => documentTimeline,
   };
 })

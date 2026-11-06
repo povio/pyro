@@ -2,7 +2,9 @@
 //! `document.timeline` and `getAnimations()`, made in JS (animations.js) on
 //! a realm's first use of any of them, as streams.js is. Realms that never
 //! animate pay one global accessor pair per interface name, and
-//! `getAnimations()` answers `[]` without making the module.
+//! `getAnimations()` answers `[]` without making the module unless CSS
+//! animations or transitions run (`CSSAnimation`/`CSSTransition`, kept by
+//! animation_events.rs from the first `getAnimations()` on).
 //!
 //! The script gets the page clock (`now`, which follows CDP virtual time),
 //! one-shot timers on the page's event loop (`schedule`) and Stylo's
@@ -150,6 +152,36 @@ pub(crate) fn animate<'s>(s: &Scope<'s>, page: &Rc<PageDom>, el: Value<'s>, a: &
     call(module, "animate", &[el, a.get(0), a.get(1)])
 }
 
+/// Hands this realm's module the CSS animations and transitions the engine
+/// keeps; `None` when there are none and the module was never made.
+fn with_css_runs<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Option<Object<'s>>> {
+    let runs = crate::animation_events::runs(page);
+    let module = match existing(s, page)? {
+        Some(module) => module,
+        None if runs.is_empty() => return Ok(None),
+        None => module(s, page)?,
+    };
+    let mut list = Vec::with_capacity(runs.len());
+    for run in runs {
+        let target = crate::node::wrap_node(s, page, run.el)?.value();
+        list.push(
+            s.array(&[
+                s.number(run.id as f64),
+                target,
+                s.boolean(run.transition),
+                s.string(&run.name),
+                s.number(run.start_ms),
+                s.number(run.delay_ms),
+                s.number(run.duration_ms),
+                s.number(run.iterations),
+            ])?
+            .value(),
+        );
+    }
+    call(module, "cssSync", &[s.array(&list)?.value()])?;
+    Ok(Some(module))
+}
+
 /// `Element.getAnimations(options)`.
 pub(crate) fn element_animations<'s>(
     s: &Scope<'s>,
@@ -157,7 +189,7 @@ pub(crate) fn element_animations<'s>(
     el: Value<'s>,
     a: &Args<'s>,
 ) -> JsResult<Value<'s>> {
-    match existing(s, page)? {
+    match with_css_runs(s, page)? {
         Some(module) => call(module, "elementAnimations", &[el, a.get(0)]),
         None => Ok(s.array(&[])?.value()),
     }
@@ -165,7 +197,7 @@ pub(crate) fn element_animations<'s>(
 
 /// `Document.getAnimations()` and `ShadowRoot.getAnimations()`.
 pub(crate) fn root_animations<'s>(s: &Scope<'s>, page: &Rc<PageDom>, root: Value<'s>) -> JsResult<Value<'s>> {
-    match existing(s, page)? {
+    match with_css_runs(s, page)? {
         Some(module) => call(module, "rootAnimations", &[root]),
         None => Ok(s.array(&[])?.value()),
     }
