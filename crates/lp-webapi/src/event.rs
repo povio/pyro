@@ -147,6 +147,8 @@ pub struct EventFields {
     /// an event-to-global persistent root. Port messages have no source.
     pub message_source: Option<TargetKey>,
     pub origin: String,
+    /// MessageEvent `lastEventId` (EventSource); None reads as "".
+    pub last_event_id: Option<Box<str>>,
     pub(crate) data_transfer: Option<crate::data_transfer::DataTransferRef>,
     pub storage_key: Option<String>,
     pub storage_old: Option<String>,
@@ -596,7 +598,9 @@ fn fill_pointer<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>
         for i in 0..len {
             let event = events.get_index(i)?;
             if s.unwrap::<PointerEvent>(event).is_none() {
-                return Err(JsError::Type(format!("Failed to construct 'PointerEvent': {name} must hold PointerEvents.")));
+                return Err(JsError::Type(format!(
+                    "Failed to construct 'PointerEvent': {name} must hold PointerEvents."
+                )));
             }
             into.push(Persistent::new(s, event));
         }
@@ -794,6 +798,8 @@ fn fill_message<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>
         f.message_data = Some(Persistent::new(s, o.get_atom("data")?));
     }
     f.origin = get_str(init, "origin")?;
+    let last_event_id = get_str(init, "lastEventId")?;
+    f.last_event_id = (!last_event_id.is_empty()).then(|| last_event_id.into());
     Ok(())
 }
 
@@ -1124,10 +1130,7 @@ fn modifier_state(f: &EventFields, key: &str) -> bool {
         "Shift" => f.shift_key,
         "Alt" => f.alt_key,
         "Meta" => f.meta_key,
-        _ => EXTRA_MODIFIERS
-            .iter()
-            .position(|(_, k)| *k == key)
-            .is_some_and(|bit| f.extra_modifiers & (1 << bit) != 0),
+        _ => EXTRA_MODIFIERS.iter().position(|(_, k)| *k == key).is_some_and(|bit| f.extra_modifiers & (1 << bit) != 0),
     }
 }
 
@@ -1538,7 +1541,11 @@ impl JsClass for StorageEvent {
             }
             init_event_state(e, &ty, a.get(1).to_bool(), a.get(2).to_bool());
             let nullable = |v: lp_js::Value<'_>| -> JsResult<Option<String>> {
-                if v.is_undefined() || v.is_null() { Ok(None) } else { Ok(Some(dom_string(v)?)) }
+                if v.is_undefined() || v.is_null() {
+                    Ok(None)
+                } else {
+                    Ok(Some(dom_string(v)?))
+                }
             };
             let area = a.get(7);
             let area = if area.is_undefined() || area.is_null() {
@@ -1655,7 +1662,7 @@ impl JsClass for MessageEvent {
         def.constructor(1, |s, nt, a| construct::<MessageEvent>(s, nt, a, EventInterface::MessageEvent, fill_message));
         def.getter("data", |s, e| Ok(e.fields.borrow().message_data.as_ref().map_or(s.null(), |p| p.get(s))));
         def.getter("origin", |s, e| Ok(s.string(&e.fields.borrow().origin)));
-        def.getter("lastEventId", |s, _e| Ok(s.string("")));
+        def.getter("lastEventId", |s, e| Ok(s.string(e.fields.borrow().last_event_id.as_deref().unwrap_or(""))));
         def.getter("source", |s, e| {
             let source = e.fields.borrow().message_source;
             crate::target::target_value(s, &e.page, source)

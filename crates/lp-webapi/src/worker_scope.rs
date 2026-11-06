@@ -416,8 +416,16 @@ fn load_main_script(page: &Rc<PageDom>, start: &WorkerStart) -> Option<String> {
         (Some(bytes), _) => bytes.clone(),
         // A revoked or unknown object URL.
         (None, "blob") => return None,
-        _ => fetch_script(page, &start.net, &start.shared, &start.origin, start.url.clone(), RequestMode::SameOrigin)
-            .ok()?,
+        _ => fetch_script(
+            page,
+            &start.net,
+            &start.shared,
+            &start.origin,
+            start.url.clone(),
+            RequestMode::SameOrigin,
+            true,
+        )
+        .ok()?,
     };
     Some(script_text(&bytes))
 }
@@ -444,7 +452,8 @@ fn tear_down(event_loop: EventLoop<WorkerLoop>, state: WorkerLoop) {
 }
 
 /// Fetches a script, blocking this worker's thread until it ends or the worker
-/// is told to stop.
+/// is told to stop. The `main` script's `Referrer-Policy` header becomes the
+/// worker's policy; an imported script's does not.
 fn fetch_script(
     page: &Rc<PageDom>,
     net: &NetClient,
@@ -452,6 +461,7 @@ fn fetch_script(
     origin: &Option<String>,
     url: lp_net::Url,
     mode: RequestMode,
+    main: bool,
 ) -> Result<Bytes, String> {
     let mut request = Request::get(url, Destination::Script);
     request.mode = mode;
@@ -475,6 +485,11 @@ fn fetch_script(
                 if !head.status.is_success() && !matches!(head.kind, ResponseKind::Opaque) {
                     net.cancel(id);
                     return Err(format!("HTTP status {}", head.status.as_u16()));
+                }
+                if main {
+                    page.set_referrer_policy_header(lp_net::ReferrerPolicy::from_header(
+                        head.headers.get_all("referrer-policy").iter().filter_map(|v| v.to_str().ok()),
+                    ));
                 }
             }
             Ok(ResponseEvent::Data(bytes)) => body.extend_from_slice(&bytes),
@@ -632,15 +647,18 @@ impl JsClass for WorkerGlobalScope {
             let mut scripts = Vec::with_capacity(urls.len());
             for url in urls {
                 let name = url.to_string();
-                let bytes = match page.blob_url(&name) {
-                    Some((bytes, _)) => bytes,
-                    None => fetch_script(page, &net, &g.shared, &origin, url, RequestMode::NoCors).map_err(|e| {
-                        JsError::dom(
+                let bytes =
+                    match page.blob_url(&name) {
+                        Some((bytes, _)) => bytes,
+                        None => fetch_script(page, &net, &g.shared, &origin, url, RequestMode::NoCors, false).map_err(
+                            |e| {
+                                JsError::dom(
                             "NetworkError",
                             format!("Failed to execute 'importScripts': The script at '{name}' failed to load: {e}."),
                         )
-                    })?,
-                };
+                            },
+                        )?,
+                    };
                 scripts.push((script_text(&bytes), name));
             }
             for (text, name) in scripts {
@@ -652,6 +670,12 @@ impl JsClass for WorkerGlobalScope {
             "onerror",
             |s, g| crate::target::event_handler(s, &g.target, "error"),
             |s, g, value| crate::target::set_event_handler(s, &g.target, "error", value),
+        );
+        // Made on first use, as in a window.
+        def.accessor(
+            "EventSource",
+            |s, g| crate::event_source::global(s, &g.target.page, "EventSource"),
+            |s, g, value| crate::event_source::replace(s, &g.target.page, "EventSource", value),
         );
     }
 }

@@ -1168,7 +1168,9 @@ impl JsClass for HtmlElement {
             let force = match a.get(0) {
                 v if v.is_undefined() => None,
                 v => match v.as_object() {
-                    Some(options) => Some(options.get_atom("force")?).filter(|f| !f.is_undefined()).map(|f| f.to_bool()),
+                    Some(options) => {
+                        Some(options.get_atom("force")?).filter(|f| !f.is_undefined()).map(|f| f.to_bool())
+                    }
                     None => Some(v.to_bool()),
                 },
             };
@@ -1192,15 +1194,21 @@ impl JsClass for HtmlElement {
 fn check_popover_validity(n: &NodeData, expect_showing: bool) -> JsResult<bool> {
     let dom = n.page().dom.borrow();
     if !dom.has_attribute(n.id, "popover").js()? {
-        return Err(JsError::dom("NotSupportedError", "Not supported on elements that do not have a valid value for the 'popover' attribute."));
+        return Err(JsError::dom(
+            "NotSupportedError",
+            "Not supported on elements that do not have a valid value for the 'popover' attribute.",
+        ));
     }
     if !dom.is_connected(n.id).js()? {
         return Err(JsError::dom("InvalidStateError", "Invalid on disconnected popover elements."));
     }
-    let open_dialog =
-        dom.element(n.id).js()?.local_name() == &lp_dom::LocalName::from("dialog") && dom.has_attribute(n.id, "open").js()?;
+    let open_dialog = dom.element(n.id).js()?.local_name() == &lp_dom::LocalName::from("dialog")
+        && dom.has_attribute(n.id, "open").js()?;
     if !expect_showing && open_dialog {
-        return Err(JsError::dom("InvalidStateError", "The dialog is already open as a dialog, and therefore cannot be opened as a popover."));
+        return Err(JsError::dom(
+            "InvalidStateError",
+            "The dialog is already open as a dialog, and therefore cannot be opened as a popover.",
+        ));
     }
     Ok(dom.is_popover_showing(n.id) == expect_showing)
 }
@@ -2246,7 +2254,14 @@ fn delete_member(n: &NodeData, a: &Args<'_>, kind: &CollectionKind, operation: &
 
 /// `insertRow(index)` on a section, `insertCell(index)` on a row: a new `tag`
 /// child at `index` of the element's `kind` collection.
-fn insert_member<'s>(s: &Scope<'s>, n: &NodeData, a: &Args<'_>, kind: &CollectionKind, tag: &str, what: &str) -> JsResult<Value<'s>> {
+fn insert_member<'s>(
+    s: &Scope<'s>,
+    n: &NodeData,
+    a: &Args<'_>,
+    kind: &CollectionKind,
+    tag: &str,
+    what: &str,
+) -> JsResult<Value<'s>> {
     let mut dom = n.page().dom.borrow_mut();
     let members = table_collection(&dom, n.id, kind);
     let before = insertion_index(a, members.len(), what)?.map(|i| members[i]);
@@ -2350,7 +2365,6 @@ simple_class!(HtmlTableRowElement, "HTMLTableRowElement", HtmlElement, |def| {
     def.method("insertCell", 0, |s, n, a| insert_member(s, n, &a, &CollectionKind::RowCells, "td", "index"));
     def.method("deleteCell", 1, |s, n, a| {
         delete_member(n, &a, &CollectionKind::RowCells, "deleteCell").map(|()| s.undefined())
-
     });
 
     def.getter("rowIndex", |s, n| {
@@ -3313,7 +3327,8 @@ impl JsClass for DomImplementation {
             a.require(2, "DOMImplementation.createDocument")?;
             let ns = opt_dom_string(a.get(0))?;
             let q = null_to_empty(a.get(1))?;
-            let doctype = if a.get(2).is_nullish() { None } else { Some(crate::node::node_arg(s, a.get(2), "createDocument")?) };
+            let doctype =
+                if a.get(2).is_nullish() { None } else { Some(crate::node::node_arg(s, a.get(2), "createDocument")?) };
             let mut dom = h.page.dom.borrow_mut();
             let doc = dom.create_document(lp_dom::DocumentKind::Xml, "about:blank");
             let element = if q.is_empty() { None } else { Some(dom.create_element_ns(doc, ns.as_deref(), &q).js()?) };

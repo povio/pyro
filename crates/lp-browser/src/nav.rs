@@ -306,7 +306,8 @@ impl PageNav {
                 url,
                 reason: NavigationReason::Script,
                 cdp_request_id: None,
-                referrer: None,
+                // The document that navigates (`location`, `window.open`).
+                referrer: b.doc(page).map(|p| p.main_frame.url.clone()),
             };
             if let Err(e) = b.navigate_frame_with_handling(page, opts, history) {
                 b.report_navigation_error(page, &e);

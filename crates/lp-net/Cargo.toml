@@ -11,7 +11,6 @@ autotests = false
 base64 = "0.23.1"
 brotli-decompressor = "6.1.0"
 bytes = "1"
-cookie = { version = "0.18", default-features = false, features = ["percent-encode"] }
 encoding_rs = "0.8.42"
 flate2 = "1.1.10"
 http = "1"

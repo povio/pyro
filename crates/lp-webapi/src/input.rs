@@ -394,14 +394,8 @@ fn is_text_control(dom: &Dom, el: NodeId) -> bool {
 #[derive(Debug)]
 enum LegacyPreActivation {
     None,
-    Checkbox {
-        checked: bool,
-        indeterminate: bool,
-    },
-    Radio {
-        was_checked: bool,
-        previously_checked: Vec<NodeId>,
-    },
+    Checkbox { checked: bool, indeterminate: bool },
+    Radio { was_checked: bool, previously_checked: Vec<NodeId> },
 }
 
 /// The one activation target of a click (DOM "dispatch" steps 6.5 and 6.9).

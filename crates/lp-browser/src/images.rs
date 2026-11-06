@@ -192,6 +192,7 @@ impl Browser {
                     content_disposition: None,
                     header_csp: false,
                     refresh: None,
+                    referrer_policy: None,
                 })
                 .ok_or_else(|| "revoked or unknown blob URL".to_owned());
             self.scheduler().post(TaskSource::Networking, move |b| finish(b, result));

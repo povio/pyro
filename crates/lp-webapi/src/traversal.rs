@@ -146,8 +146,8 @@ fn call_filter(s: &Scope<'_>, filter: Object<'_>, node: Value<'_>) -> JsResult<u
     let cs = realm.scope()?;
     // A callback of a document that left its browsing context (a removed
     // iframe) is no longer runnable: it throws without being called.
-    let runnable =
-        crate::target::page_of(&cs).is_ok_and(|p| !p.is_disposed() && p.hooks().is_none_or(|h| h.focus_document_is_live()));
+    let runnable = crate::target::page_of(&cs)
+        .is_ok_and(|p| !p.is_disposed() && p.hooks().is_none_or(|h| h.focus_document_is_live()));
     if !runnable {
         return Err(JsError::Type(
             "Failed to execute 'acceptNode' on 'NodeFilter': The provided callback is no longer runnable.".into(),
@@ -172,8 +172,12 @@ fn is_revoked_proxy(s: &Scope<'_>, o: Object<'_>) -> bool {
     if !o.value().has_proxy_target().unwrap_or(false) {
         return false;
     }
-    let is_array = s.global().get_atom("Array").ok().and_then(|a| a.as_object()).and_then(|a| a.get_atom("isArray").ok());
-    is_array.and_then(|f| f.as_object()).filter(|f| f.is_function()).is_some_and(|f| f.call(None, &[o.value()]).is_err())
+    let is_array =
+        s.global().get_atom("Array").ok().and_then(|a| a.as_object()).and_then(|a| a.get_atom("isArray").ok());
+    is_array
+        .and_then(|f| f.as_object())
+        .filter(|f| f.is_function())
+        .is_some_and(|f| f.call(None, &[o.value()]).is_err())
 }
 
 fn run_filter(s: &Scope<'_>, filter: Object<'_>, node: Value<'_>) -> JsResult<u16> {

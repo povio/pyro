@@ -9,6 +9,7 @@ pub mod cors;
 pub mod data_url;
 pub mod proxy;
 pub mod range;
+pub mod referrer;
 pub mod request;
 pub mod static_files;
 mod subscription;
@@ -24,6 +25,7 @@ pub use cookies::CookieJar;
 /// HTTP types used by Request/ResponseHead for native consumers.
 pub use http;
 pub use proxy::ProxyConfig;
+pub use referrer::ReferrerPolicy;
 pub use request::*;
 pub use static_files::{StaticFile, StaticFiles, StaticHit, StaticMemoryHit};
 pub use url::Url;

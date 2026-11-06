@@ -381,8 +381,13 @@ fn matches_kind(dom: &Dom, root: NodeId, id: NodeId, kind: &CollectionKind) -> b
                 || (html && matches!(local, "embed" | "form" | "img" | "object") && e.attr("name") == Some(n.as_str()))
         }
         CollectionKind::DocumentNamed(n) => {
-            (html && matches!(local, "embed" | "form" | "iframe" | "img" | "object") && e.attr("name") == Some(n.as_str()))
-                || (html && local == "img" && e.id() == Some(n.as_str()) && e.attr("name").is_some_and(|v| !v.is_empty()))
+            (html
+                && matches!(local, "embed" | "form" | "iframe" | "img" | "object")
+                && e.attr("name") == Some(n.as_str()))
+                || (html
+                    && local == "img"
+                    && e.id() == Some(n.as_str())
+                    && e.attr("name").is_some_and(|v| !v.is_empty()))
         }
         CollectionKind::Links => html && matches!(local, "a" | "area") && e.attr("href").is_some(),
         CollectionKind::Anchors => html && local == "a" && e.attr("name").is_some(),
@@ -658,7 +663,6 @@ impl JsClass for HtmlOptionsCollection {
                 return Ok(true);
             }
             if v.is_nullish() {
-
                 if let Some(&option) = options.get(index) {
                     dom.remove_node(option).js()?;
                 }
@@ -669,7 +673,10 @@ impl JsClass for HtmlOptionsCollection {
                 .map(|n| n.id)
                 .filter(|&id| dom.element(id).is_ok_and(|e| e.is_html() && &*e.name.local == "option"))
                 .ok_or_else(|| {
-                    JsError::Type("Failed to set an indexed property on 'HTMLOptionsCollection': not an HTMLOptionElement.".into())
+                    JsError::Type(
+                        "Failed to set an indexed property on 'HTMLOptionsCollection': not an HTMLOptionElement."
+                            .into(),
+                    )
                 })?;
             match options.get(index) {
                 Some(&old) => {
@@ -692,7 +699,6 @@ impl JsClass for HtmlOptionsCollection {
         });
     }
 }
-
 
 fn kind_slot(kind: &CollectionKind) -> Option<u64> {
     Some(match kind {
@@ -775,7 +781,12 @@ impl TokenListData {
                 e.classes().iter().for_each(|c| add(c));
             }
         } else {
-            dom.get_attribute(self.el.id, self.attr).ok().flatten().unwrap_or("").split_ascii_whitespace().for_each(add);
+            dom.get_attribute(self.el.id, self.attr)
+                .ok()
+                .flatten()
+                .unwrap_or("")
+                .split_ascii_whitespace()
+                .for_each(add);
         }
         out
     }
@@ -945,16 +956,48 @@ impl JsClass for DomTokenList {
             let tok = dom_string(a.get(0))?;
             let supported: &[&str] = match t.attr {
                 "rel" => &[
-                    "alternate", "canonical", "author", "bookmark", "dns-prefetch", "expect", "external", "help",
-                    "icon", "manifest", "modulepreload", "license", "next", "nofollow", "noopener", "noreferrer",
-                    "opener", "pingback", "preconnect", "prefetch", "preload", "prev", "privacy-policy", "search",
-                    "stylesheet", "tag", "terms-of-service",
+                    "alternate",
+                    "canonical",
+                    "author",
+                    "bookmark",
+                    "dns-prefetch",
+                    "expect",
+                    "external",
+                    "help",
+                    "icon",
+                    "manifest",
+                    "modulepreload",
+                    "license",
+                    "next",
+                    "nofollow",
+                    "noopener",
+                    "noreferrer",
+                    "opener",
+                    "pingback",
+                    "preconnect",
+                    "prefetch",
+                    "preload",
+                    "prev",
+                    "privacy-policy",
+                    "search",
+                    "stylesheet",
+                    "tag",
+                    "terms-of-service",
                 ],
                 "sandbox" => &[
-                    "allow-downloads", "allow-forms", "allow-modals", "allow-orientation-lock",
-                    "allow-pointer-lock", "allow-popups", "allow-popups-to-escape-sandbox", "allow-presentation",
-                    "allow-same-origin", "allow-scripts", "allow-top-navigation",
-                    "allow-top-navigation-by-user-activation", "allow-top-navigation-to-custom-protocols",
+                    "allow-downloads",
+                    "allow-forms",
+                    "allow-modals",
+                    "allow-orientation-lock",
+                    "allow-pointer-lock",
+                    "allow-popups",
+                    "allow-popups-to-escape-sandbox",
+                    "allow-presentation",
+                    "allow-same-origin",
+                    "allow-scripts",
+                    "allow-top-navigation",
+                    "allow-top-navigation-by-user-activation",
+                    "allow-top-navigation-to-custom-protocols",
                 ],
                 "blocking" => &["render"],
                 _ => {
@@ -1116,7 +1159,6 @@ impl JsClass for NamedNodeMap {
         def.indexed_iterator();
         def.legacy_platform_object();
     }
-
 }
 
 fn attr_at<'s>(s: &Scope<'s>, m: &NamedNodeMapData, i: usize) -> JsResult<Option<Value<'s>>> {

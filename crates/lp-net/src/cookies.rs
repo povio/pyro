@@ -16,12 +16,13 @@ pub const MAX_COOKIE_ATTRIBUTE_BYTES: usize = 1024;
 pub const MAX_PER_DOMAIN: usize = 180;
 pub const MAX_TOTAL: usize = 3300;
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub enum SameSite {
     Strict,
     Lax,
     None,
     /// Attribute absent: treated as Lax for cross-site requests (Chrome default).
+    #[default]
     Unspecified,
 }
 
@@ -150,10 +151,179 @@ fn valid_name_value(name: &str, value: &str) -> bool {
         && !value.bytes().any(|b| b.is_ascii_control() || b == b';')
 }
 
+/// Whether `s` starts with `prefix`, ignoring ASCII case.
+fn starts_with_ci(s: &str, prefix: &str) -> bool {
+    s.len() >= prefix.len() && s.as_bytes()[..prefix.len()].eq_ignore_ascii_case(prefix.as_bytes())
+}
+
+/// Cookie name prefixes match case-insensitively (RFC 6265bis 5.7).
 fn valid_prefix(name: &str, secure: bool, host_only: bool, path: &str, site: SameSite) -> bool {
     (site != SameSite::None || secure)
-        && (!name.starts_with("__Secure-") || secure)
-        && (!name.starts_with("__Host-") || (secure && host_only && path == "/"))
+        && (!starts_with_ci(name, "__Secure-") || secure)
+        && (!starts_with_ci(name, "__Host-") || (secure && host_only && path == "/"))
+}
+
+/// Longest cookie lifetime: Chrome caps Expires and Max-Age at 400 days
+/// (RFC 6265bis).
+const MAX_COOKIE_AGE_SECS: f64 = 400.0 * 86400.0;
+
+/// A `Set-Cookie` string split per RFC 6265bis section 5.6.
+#[derive(Debug, Default, PartialEq)]
+struct ParsedSetCookie<'a> {
+    name: &'a str,
+    value: &'a str,
+    /// Seconds since the Unix epoch of the last valid Expires.
+    expires: Option<i64>,
+    /// The last valid Max-Age.
+    max_age: Option<i64>,
+    /// The last non-empty Domain.
+    domain: Option<&'a str>,
+    path: Option<&'a str>,
+    secure: bool,
+    http_only: bool,
+    same_site: SameSite,
+}
+
+fn trim_wsp(s: &str) -> &str {
+    s.trim_matches([' ', '\t'])
+}
+
+/// Parses a `Set-Cookie` header value or `document.cookie` assignment (RFC
+/// 6265bis 5.6): a pair without `=` is a nameless cookie, unknown or
+/// malformed attributes are ignored, and a control character other than
+/// tab rejects the whole string.
+fn parse_set_cookie(header: &str) -> Option<ParsedSetCookie<'_>> {
+    if header.bytes().any(|b| (b < 0x20 && b != b'\t') || b == 0x7f) {
+        return None;
+    }
+    let (pair, attributes) = header.split_once(';').unwrap_or((header, ""));
+    let (name, value) = match pair.split_once('=') {
+        Some((n, v)) => (trim_wsp(n), trim_wsp(v)),
+        None => ("", trim_wsp(pair)),
+    };
+    if (name.is_empty() && value.is_empty()) || name.len() + value.len() > MAX_COOKIE_BYTES {
+        return None;
+    }
+    // A nameless cookie must not pass for a prefixed one.
+    if name.is_empty() && (starts_with_ci(value, "__Secure-") || starts_with_ci(value, "__Host-")) {
+        return None;
+    }
+    let mut out = ParsedSetCookie { name, value, ..Default::default() };
+    for av in attributes.split(';') {
+        let (key, val) = match av.split_once('=') {
+            Some((k, v)) => (trim_wsp(k), trim_wsp(v)),
+            None => (trim_wsp(av), ""),
+        };
+        if val.len() > MAX_COOKIE_ATTRIBUTE_BYTES {
+            continue;
+        }
+        if key.eq_ignore_ascii_case("expires") {
+            if let Some(t) = parse_cookie_date(val) {
+                out.expires = Some(t);
+            }
+        } else if key.eq_ignore_ascii_case("max-age") {
+            let digits = val.strip_prefix('-').unwrap_or(val);
+            if !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()) {
+                // Out of range saturates: a huge age is capped anyway.
+                let n = digits.parse::<i64>().unwrap_or(i64::MAX);
+                out.max_age = Some(if val.starts_with('-') { -n } else { n });
+            }
+        } else if key.eq_ignore_ascii_case("domain") {
+            if !val.is_empty() {
+                out.domain = Some(val);
+            }
+        } else if key.eq_ignore_ascii_case("path") {
+            out.path = Some(val);
+        } else if key.eq_ignore_ascii_case("secure") {
+            out.secure = true;
+        } else if key.eq_ignore_ascii_case("httponly") {
+            out.http_only = true;
+        } else if key.eq_ignore_ascii_case("samesite") {
+            out.same_site = if val.eq_ignore_ascii_case("strict") {
+                SameSite::Strict
+            } else if val.eq_ignore_ascii_case("lax") {
+                SameSite::Lax
+            } else if val.eq_ignore_ascii_case("none") {
+                SameSite::None
+            } else {
+                SameSite::Unspecified
+            };
+        }
+    }
+    Some(out)
+}
+
+/// The RFC 6265 section 5.1.1 cookie-date algorithm, in seconds since the
+/// Unix epoch. Accepts what browsers accept: any delimiters, any token
+/// order, `UTC` or a numeric zone instead of `GMT`, two-digit years.
+pub fn parse_cookie_date(s: &str) -> Option<i64> {
+    fn is_delimiter(b: u8) -> bool {
+        matches!(b, 0x09 | 0x20..=0x2f | 0x3b..=0x40 | 0x5b..=0x60 | 0x7b..=0x7e)
+    }
+    /// `min` to `max` digits at the start of `t`, then the end or a non-digit.
+    fn digits(t: &[u8], min: usize, max: usize) -> Option<(u32, &[u8])> {
+        let n = t.iter().take_while(|b| b.is_ascii_digit()).count();
+        if n < min || n > max {
+            return None;
+        }
+        let v = t[..n].iter().fold(0u32, |a, b| a * 10 + u32::from(b - b'0'));
+        Some((v, &t[n..]))
+    }
+    const MONTHS: [&[u8]; 12] =
+        [b"jan", b"feb", b"mar", b"apr", b"may", b"jun", b"jul", b"aug", b"sep", b"oct", b"nov", b"dec"];
+    let (mut time, mut day, mut month, mut year) = (None, None, None, None);
+    for token in s.as_bytes().split(|&b| is_delimiter(b)).filter(|t| !t.is_empty()) {
+        if time.is_none() {
+            let hms = digits(token, 1, 2).and_then(|(h, r)| {
+                let (m, r) = digits(r.strip_prefix(b":")?, 1, 2)?;
+                let (s, _) = digits(r.strip_prefix(b":")?, 1, 2)?;
+                Some((h, m, s))
+            });
+            if hms.is_some() {
+                time = hms;
+                continue;
+            }
+        }
+        if day.is_none() {
+            if let Some((d, _)) = digits(token, 1, 2) {
+                day = Some(d);
+                continue;
+            }
+        }
+        if month.is_none() && token.len() >= 3 {
+            if let Some(i) = MONTHS.iter().position(|m| token[..3].eq_ignore_ascii_case(m)) {
+                month = Some(i as u32 + 1);
+                continue;
+            }
+        }
+        if year.is_none() {
+            if let Some((y, _)) = digits(token, 2, 4) {
+                year = Some(y);
+            }
+        }
+    }
+    let ((hour, minute, second), day, month, mut year) = (time?, day?, month?, year?);
+    if (70..=99).contains(&year) {
+        year += 1900;
+    } else if year <= 69 {
+        year += 2000;
+    }
+    if !(1..=31).contains(&day) || year < 1601 || hour > 23 || minute > 59 || second > 59 {
+        return None;
+    }
+    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let month_days = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    if day > month_days[month as usize - 1] {
+        return None;
+    }
+    // Days from the civil date (Howard Hinnant's algorithm).
+    let (y, m) = (i64::from(year) - i64::from(month <= 2), i64::from(month));
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + i64::from(day) - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146_097 + doe - 719_468;
+    Some(days * 86400 + i64::from(hour) * 3600 + i64::from(minute) * 60 + i64::from(second))
 }
 
 fn canonical_domain(domain: &str) -> Option<(String, bool)> {
@@ -189,13 +359,10 @@ impl CookieJar {
     /// Processes one `Set-Cookie` header value (or a `document.cookie`
     /// assignment when `access == Script`). Returns whether it was stored.
     pub fn set_from_header(&mut self, url: &Url, header: &str, access: Access, now: f64) -> bool {
-        let Ok(parsed) = cookie::Cookie::parse(header.to_owned()) else { return false };
+        let Some(parsed) = parse_set_cookie(header) else { return false };
         let Some(host) = host_str(url) else { return false };
-        if !valid_name_value(parsed.name(), parsed.value()) {
-            return false;
-        }
-        let (domain, host_only) = match parsed.domain() {
-            Some(d) if !d.is_empty() => {
+        let (domain, host_only) = match parsed.domain {
+            Some(d) => {
                 let d = d.trim_start_matches('.').trim_end_matches('.').to_ascii_lowercase();
                 let public_suffix = !is_ip(&d) && lp_psl::suffix_str(&d) == Some(d.as_str());
                 if public_suffix && d != host {
@@ -218,34 +385,31 @@ impl CookieJar {
                 }
                 (d, public_suffix)
             }
-            _ => (host.clone(), true),
+            None => (host.clone(), true),
         };
-        let path = match parsed.path() {
+        let path = match parsed.path {
             Some(p) if p.starts_with('/') => p.to_owned(),
             _ => default_path(url),
         };
-        let secure = parsed.secure().unwrap_or(false);
+        let secure = parsed.secure;
         if secure && !is_trustworthy(url) {
             return false;
         }
-        let http_only = parsed.http_only().unwrap_or(false);
+        let http_only = parsed.http_only;
         if http_only && access == Access::Script {
             return false;
         }
-        let same_site = match parsed.same_site() {
-            Some(cookie::SameSite::Strict) => SameSite::Strict,
-            Some(cookie::SameSite::Lax) => SameSite::Lax,
-            Some(cookie::SameSite::None) => SameSite::None,
-            None => SameSite::Unspecified,
-        };
-        let name = parsed.name();
+        let same_site = parsed.same_site;
+        let name = parsed.name;
         if !valid_prefix(name, secure, host_only, &path, same_site) {
             return false;
         }
-        let expires = if let Some(max_age) = parsed.max_age() {
-            Some(now + max_age.whole_seconds() as f64)
-        } else {
-            parsed.expires_datetime().map(|t| t.unix_timestamp() as f64)
+        // Max-Age wins over Expires; both are capped at 400 days like Chrome.
+        let expires = match (parsed.max_age, parsed.expires) {
+            (Some(max_age), _) if max_age <= 0 => Some(f64::MIN),
+            (Some(max_age), _) => Some(now + (max_age as f64).min(MAX_COOKIE_AGE_SECS)),
+            (None, Some(at)) => Some((at as f64).min(now + MAX_COOKIE_AGE_SECS)),
+            (None, None) => None,
         };
         // An insecure response must not overlay an existing Secure cookie,
         // including a narrower path or a domain/host-only variant.
@@ -263,8 +427,8 @@ impl CookieJar {
         }
         self.seq += 1;
         let c = Cookie {
-            name: parsed.name().to_owned(),
-            value: parsed.value().to_owned(),
+            name: name.to_owned(),
+            value: parsed.value.to_owned(),
             domain,
             host_only,
             path,
@@ -615,5 +779,88 @@ mod tests {
         let suffix_host = Url::parse("https://co.uk/").unwrap();
         assert!(jar.set_from_header(&suffix_host, "x=1; Domain=co.uk", Access::Http, 1.0));
         assert!(jar.all()[0].host_only);
+    }
+    fn doc_cookie_after(sets: &[&str]) -> String {
+        let mut jar = CookieJar::new();
+        let url = Url::parse("https://example.com/dir/page").unwrap();
+        let now = 1_700_000_000.0;
+        for s in sets {
+            jar.set_from_header(&url, s, Access::Script, now);
+        }
+        jar.document_cookie(&url, now)
+    }
+
+    /// RFC 6265 5.1.1: browsers accept any delimiters, token order, `UTC`
+    /// or a zone suffix, and two-digit years.
+    #[test]
+    fn cookie_dates_follow_rfc_6265() {
+        let epoch_2038 = Some(2_145_916_800); // 2038-01-01T00:00:00Z
+        for s in [
+            "Fri, 01 Jan 2038 00:00:00 GMT",
+            "Fri, 01 Jan 2038 00:00:00 UTC",
+            "Fri 01 Jan 2038 00:00:00 GMT, baz=qux",
+            "Fri Jan 01 2038 00:00:00 GMT+0000 (Coordinated Universal Time)",
+            "Friday, 01-Jan-38 00:00:00 GMT",
+            "Jan 1 00:00:00 2038",
+            "01 january 2038 0:0:0",
+        ] {
+            assert_eq!(parse_cookie_date(s), epoch_2038, "{s}");
+        }
+        assert_eq!(parse_cookie_date("Thu, 01 Jan 1970 00:00:00 UTC"), Some(0));
+        assert_eq!(parse_cookie_date("Thu, 29 Feb 2024 12:34:56 GMT"), Some(1_709_210_096));
+        for bad in [
+            "",
+            "garbage",
+            "Fri, 01 Jan 2038",
+            "Thu, 30 Feb 2023 00:00:00 GMT",
+            "01 Jan 1600 00:00:00",
+            "01 Jan 2038 24:00:00",
+            "32 Jan 2038 00:00:00",
+        ] {
+            assert_eq!(parse_cookie_date(bad), None, "{bad}");
+        }
+    }
+
+    /// The common deletion idioms delete; invalid Max-Age and Expires are
+    /// ignored rather than rejecting the cookie.
+    #[test]
+    fn expires_and_max_age_parsing() {
+        assert_eq!(doc_cookie_after(&["a=1", "a=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/dir"]), "");
+        assert_eq!(doc_cookie_after(&["b=1", "b=; expires=Thu Jan 01 1970 01:00:00 GMT+0100 (CET)"]), "");
+        assert_eq!(doc_cookie_after(&["test=1; Max-Age=50,399"]), "test=1");
+        assert_eq!(doc_cookie_after(&["test=3; max-age=0"]), "");
+        assert_eq!(doc_cookie_after(&["test=4; max-age=-1"]), "");
+        assert_eq!(doc_cookie_after(&["test=10; Expires=Thu Apr 10 1980 16:33:12 GMT; Max-Age=1000"]), "test=10");
+        assert_eq!(doc_cookie_after(&["test=7; Expires=Thu Apr 10 1980 16:33:12 GMT"]), "");
+        let mut jar = CookieJar::new();
+        let url = Url::parse("https://example.com/").unwrap();
+        assert!(jar.set_from_header(&url, "far=1; Expires=Fri, 01 Jan 9999 00:00:00 GMT", Access::Http, 100.0));
+        assert!(jar.set_from_header(&url, "age=1; Max-Age=999999999999999999999", Access::Http, 100.0));
+        for c in jar.by_domain.values().flatten() {
+            assert_eq!(c.expires, Some(100.0 + MAX_COOKIE_AGE_SECS), "{}", c.name);
+        }
+    }
+
+    /// RFC 6265bis 5.6: no `=` is a nameless cookie; whitespace is trimmed;
+    /// unknown attributes are ignored.
+    #[test]
+    fn nameless_cookies_and_lenient_attributes() {
+        assert_eq!(doc_cookie_after(&["=test=2"]), "test=2");
+        assert_eq!(doc_cookie_after(&["===test=2b"]), "==test=2b");
+        assert_eq!(doc_cookie_after(&["test6;cool=dude"]), "test6");
+        assert_eq!(doc_cookie_after(&["test11", "test11a", "=test11b", "test=11c"]), "test11b; test=11c");
+        assert_eq!(doc_cookie_after(&["testA=16", "=test16", "testB=16"]), "testA=16; test16; testB=16");
+        assert_eq!(doc_cookie_after(&["  test  = 12  ;foo;;;   bar"]), "test=12");
+        assert_eq!(doc_cookie_after(&["test test=8"]), "test test=8");
+        assert_eq!(doc_cookie_after(&["t\tx=1"]), "t\tx=1");
+        assert_eq!(doc_cookie_after(&["=", "", "   ", "; x"]), "");
+        assert_eq!(doc_cookie_after(&["=__Secure-abc=123", "__Host-abc", "__HoSt-abc", "__SeCuRe-x=1"]), "");
+        assert_eq!(doc_cookie_after(&["t\x01=1", "u=\x7f"]), "");
+        assert_eq!(doc_cookie_after(&["test=5; Path=/; lol="]), "test=5");
+        assert_eq!(doc_cookie_after(&["s=1; SameSite=bogus; Secure"]), "s=1");
+        assert_eq!(doc_cookie_after(&["p=1; Path=relative"]), "p=1");
+        assert_eq!(doc_cookie_after(&["q=1; Path=/other"]), "");
+        assert_eq!(doc_cookie_after(&["d=1; domain=.parser.test"]), "");
+        assert_eq!(doc_cookie_after(&["e=1; Domain="]), "e=1");
     }
 }

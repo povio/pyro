@@ -26,6 +26,7 @@ mod network_delivery;
 mod network_idle;
 mod node_realms;
 mod popups;
+mod referrer;
 mod remote_ordering;
 mod runloop_idle_finalization;
 mod script_inserted;

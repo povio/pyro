@@ -250,6 +250,7 @@ fn detached_pending_navigation_is_cancelled_and_late_completion_cannot_resurrect
             content_disposition: None,
             header_csp: false,
             refresh: None,
+            referrer_policy: None,
         }),
     );
     settle(&mut t);

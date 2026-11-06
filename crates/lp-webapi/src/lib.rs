@@ -29,6 +29,7 @@ pub mod dom_parser;
 pub mod editing;
 pub mod encoding;
 pub mod event;
+mod event_source;
 pub mod fetch;
 pub mod file;
 pub mod file_reader;
@@ -41,6 +42,7 @@ pub mod identity;
 mod image_decode;
 pub mod indexeddb;
 pub mod input;
+mod integrity;
 pub mod intersection_observer;
 pub mod layout_api;
 pub mod lifecycle;
@@ -49,14 +51,14 @@ pub mod message_channel;
 pub mod mutation_observer;
 pub mod navigator_extras;
 pub mod node;
+pub mod observable;
 pub mod page;
 mod popup;
 pub mod range;
 pub mod render_blocking;
 pub mod render_snapshot;
-pub mod resize_observer;
 pub mod request;
-pub mod observable;
+pub mod resize_observer;
 pub mod response;
 pub mod sri;
 pub mod storage;
@@ -168,7 +170,9 @@ pub fn install(scope: &Scope<'_>, page: Rc<PageDom>) -> JsResult<()> {
     form_data::install(scope)?;
     fetch::install(scope)?;
     structured_clone::install(scope, &page)?;
-    if let Some(define) = scope.global().get_atom("Object")?.as_object().map(|o| o.get_atom("defineProperty")).transpose()? {
+    if let Some(define) =
+        scope.global().get_atom("Object")?.as_object().map(|o| o.get_atom("defineProperty")).transpose()?
+    {
         page.define_properties.borrow_mut().insert(scope.realm_id(), lp_js::Persistent::new(scope, define));
     }
     if page.max_touch_points() > 0 {

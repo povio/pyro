@@ -152,6 +152,7 @@ where
     crate::observable::define_globals(def);
     crate::crypto::define_globals(def);
     crate::storage_manager::define_globals(def);
+    crate::event_source::define_globals(def);
     def.getter("screen", |s, w| {
         let key = lp_js::IdentityKey(w.page().id() | (1 << 57), 1);
         same_object(s, w.page(), key, || s.wrap::<Screen>(w.page().clone(), Some(key)))
@@ -359,15 +360,14 @@ impl JsClass for Navigator {
         def.getter("doNotTrack", |s, _p| Ok(s.null()));
         def.getter("pdfViewerEnabled", |s, _p| Ok(s.boolean(false)));
         def.method("javaEnabled", 0, |s, _p, _a| Ok(s.boolean(false)));
-        // Queues nothing: only the URL checks are observable.
         def.method("sendBeacon", 1, |s, p, a| {
             a.require(1, "Navigator.sendBeacon")?;
             let url = crate::util::dom_string(a.get(0))?;
             let url = crate::html::resolve_url(&p.dom.borrow(), p.document(), &url);
-            if !lp_net::Url::parse(&url).is_ok_and(|u| matches!(u.scheme(), "http" | "https")) {
+            let Some(url) = lp_net::Url::parse(&url).ok().filter(|u| matches!(u.scheme(), "http" | "https")) else {
                 return Err(JsError::Type(format!("Failed to execute 'sendBeacon': invalid URL '{url}'.")));
-            }
-            Ok(s.boolean(true))
+            };
+            Ok(s.boolean(crate::fetch::send_beacon(s, p, url, a.get(1))?))
         });
         def.method("vibrate", 0, |s, _p, _a| Ok(s.boolean(false)));
     }
