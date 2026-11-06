@@ -1191,10 +1191,10 @@ fn overwrite_dead_stack() -> u64 {
 fn a_disposed_realms_global_constants_die_with_it() {
     let e = engine();
     e.register::<Element>();
-    let holder = e.create_realm(RealmOptions::default()).unwrap();
     for (constant, held) in [(false, false), (true, false), (true, true)] {
         let drops = Rc::new(Cell::new(0));
-        let installed = global_holding_a_wrapper(&e, &drops, constant, held.then_some(&holder));
+        let holder = held.then(|| e.create_realm(RealmOptions::default()).unwrap());
+        let installed = global_holding_a_wrapper(&e, &drops, constant, holder.as_ref());
         if constant && !installed {
             // The system framework has no constant accessors: nothing new to check.
             continue;
@@ -1205,14 +1205,14 @@ fn a_disposed_realms_global_constants_die_with_it() {
             e.drain_finalized();
         }
         assert_eq!(drops.get(), 1, "constant {constant}, global held {held}: the wrapper outlived its realm");
-        if held {
+        if let Some(holder) = &holder {
             // The global outlives its realm, its constant does not: reads
             // throw, as the callbacks of a disposed realm do.
             assert_eq!(
-                eval_str(&holder, "try { stale.held; 'read' } catch (e) { e.message }"),
+                eval_str(holder, "try { stale.held; 'read' } catch (e) { e.message }"),
                 "Execution context was destroyed."
             );
-            assert_eq!(eval_str(&holder, "Object.getOwnPropertyDescriptor(stale, 'held').configurable"), "false");
+            assert_eq!(eval_str(holder, "Object.getOwnPropertyDescriptor(stale, 'held').configurable"), "false");
         }
     }
 }
