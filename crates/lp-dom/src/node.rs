@@ -301,6 +301,30 @@ impl ElementData {
     pub fn classes(&self) -> &[Atom] {
         &self.classes
     }
+    /// The atom this element keeps for attribute `k`'s value, if any: its
+    /// `id` atom when `k` is `id` (no namespace).
+    #[inline]
+    pub fn attr_atom(&self, k: usize) -> Option<&Atom> {
+        let name = &self.attrs.get(k)?.name;
+        if name.local == local_name!("id") && name.ns == markup5ever::ns!() {
+            self.id.as_ref()
+        } else {
+            None
+        }
+    }
+    /// The `class` attribute (no namespace), with its token's atom when the
+    /// value is one token and nothing else (`className`).
+    #[inline]
+    pub fn class_value(&self) -> Option<(&str, Option<&Atom>)> {
+        let value = self.attr_local(&local_name!("class"))?;
+        // The token is the value less ASCII whitespace: one as long is the
+        // whole value (and the value's text need not be read).
+        let only = match &*self.classes {
+            [only] if only.len() == value.len() => Some(only),
+            _ => None,
+        };
+        Some((value, only))
+    }
     /// Whether `class` contains the token `name` (case-sensitive).
     #[inline]
     pub fn has_class(&self, name: &Atom) -> bool {

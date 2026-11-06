@@ -218,6 +218,9 @@ pub(crate) struct RealmInner {
     /// fresh JSString each time was most of their cost. The `Arc` keeps the
     /// key's address from being reused.
     pub(crate) shared_strings: RefCell<rustc_hash::FxHashMap<usize, (std::sync::Arc<str>, sys::JSValueRef)>>,
+    /// One weakly held JavaScript string per interned host string (atoms:
+    /// ids, class values, local names), see `crate::interned`.
+    pub(crate) interned: RefCell<crate::interned::InternedStrings>,
     /// The realm's owned wrappers (`IdentityKey::OWNED`), linked through
     /// their payload headers: `dispose` releases their weak handles, which
     /// must not outlive the VM.
@@ -407,6 +410,7 @@ impl RealmInner {
             // SAFETY: protected by `shared_string` on this still-live context.
             unsafe { sys::JSValueUnprotect(ctx, v) };
         }
+        self.interned.borrow_mut().clear(self.engine.group());
         self.embedder.borrow_mut().take();
         self.named_properties.borrow_mut().take();
         if self.global_constants.replace(false) {
@@ -1602,6 +1606,7 @@ pub(crate) fn create(engine: &Rc<EngineInner>, options: RealmOptions) -> JsResul
         populated: RefCell::new(Vec::new()),
         identity: RefCell::new(rustc_hash::FxHashMap::default()),
         shared_strings: RefCell::new(rustc_hash::FxHashMap::default()),
+        interned: RefCell::new(crate::interned::InternedStrings::new()),
         owned_head: Cell::new(ptr::null_mut()),
         member_fns: RefCell::new(Vec::new()),
         helpers: RefCell::new(None),

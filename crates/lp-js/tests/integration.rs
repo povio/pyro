@@ -7,6 +7,7 @@ mod callback_hook;
 mod callback_lock;
 mod class_lengths;
 mod host_strings;
+mod interned_strings;
 mod lazy_interfaces;
 mod legacy_platform_object;
 mod redefined_accessor;
