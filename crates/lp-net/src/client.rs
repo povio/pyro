@@ -675,20 +675,69 @@ fn http_client(config: &NetConfig, tls: &rustls::ClientConfig, proxy: Option<Arc
 /// Every client of the process, for [`suspend_for_fork`].
 static CLIENTS: Mutex<Vec<std::sync::Weak<Inner>>> = Mutex::new(Vec::new());
 
-/// Run on an I/O thread once it has had no request for [`IO_IDLE_RELEASE`]
+/// Run on an I/O thread once it has been quiet for [`IO_IDLE_RELEASE`]
 /// ([`set_idle_release`]).
 static IDLE_RELEASE: std::sync::OnceLock<fn()> = std::sync::OnceLock::new();
 
-/// How long an I/O thread waits without a request before it runs the
-/// [`set_idle_release`] hook.
+/// How long an I/O thread stays quiet (no command, no request finishing)
+/// before it runs the [`set_idle_release`] hook.
 const IO_IDLE_RELEASE: Duration = Duration::from_secs(1);
 
-/// Registers what an I/O thread runs once its requests are done and none
-/// came for a second: an allocator with per-thread heaps (the executable's)
-/// returns the pages of the response buffers the browser freed, which only
-/// the thread that allocated them can (a loaded mid-size SPA: 3 MB less).
+/// Registers what an I/O thread runs once a second has passed since its
+/// last command or finished request: an allocator with per-thread heaps
+/// (the executable's) returns the pages of the response buffers the browser
+/// freed, which only the thread that allocated them can (a loaded mid-size
+/// SPA: 3 MB less).
 pub fn set_idle_release(release: fn()) {
     let _ = IDLE_RELEASE.set(release);
+}
+
+/// Runs the [`set_idle_release`] hook once per quiet spell of an I/O
+/// thread, [`IO_IDLE_RELEASE`] after its last activity, whether or not a
+/// request is still open (a long poll or a stream may stay open for good;
+/// the hook only returns what is already free). No timer runs while the
+/// thread stays quiet after that.
+struct IdleRelease {
+    /// The thread's last command or finished request.
+    last: std::cell::Cell<tokio::time::Instant>,
+    /// Whether a release is due (activity since the last one).
+    due: std::cell::Cell<bool>,
+    wake: tokio::sync::Notify,
+}
+
+impl IdleRelease {
+    /// Starts the releasing task on this thread's `LocalSet`.
+    fn start(release: fn()) -> std::rc::Rc<IdleRelease> {
+        let idle = std::rc::Rc::new(IdleRelease {
+            last: std::cell::Cell::new(tokio::time::Instant::now()),
+            due: std::cell::Cell::new(false),
+            wake: tokio::sync::Notify::new(),
+        });
+        let task = idle.clone();
+        tokio::task::spawn_local(async move {
+            loop {
+                task.wake.notified().await;
+                loop {
+                    let at = task.last.get() + IO_IDLE_RELEASE;
+                    if at <= tokio::time::Instant::now() {
+                        break;
+                    }
+                    tokio::time::sleep_until(at).await;
+                }
+                task.due.set(false);
+                release();
+            }
+        });
+        idle
+    }
+
+    /// A command came or a request finished.
+    fn touch(&self) {
+        self.last.set(tokio::time::Instant::now());
+        if !self.due.replace(true) {
+            self.wake.notify_one();
+        }
+    }
 }
 
 /// Stops the I/O thread of every client in the process, so that the process
@@ -765,29 +814,16 @@ fn io_main(mut rx: mpsc::UnboundedReceiver<Cmd>, shared: Arc<Shared>, cookies: A
             h2_origins: Mutex::new(HashSet::new()),
         });
         let tasks: std::rc::Rc<std::cell::RefCell<HashMap<RequestId, Task>>> = Default::default();
-        // Whether the idle hook ran since the last request.
-        let mut released = true;
-        loop {
-            let cmd = match (released, IDLE_RELEASE.get()) {
-                (false, Some(release)) => match tokio::time::timeout(IO_IDLE_RELEASE, rx.recv()).await {
-                    Ok(cmd) => cmd,
-                    Err(_) => {
-                        if tasks.borrow().is_empty() {
-                            release();
-                            released = true;
-                        }
-                        continue;
-                    }
-                },
-                _ => rx.recv().await,
-            };
-            let Some(cmd) = cmd else { break };
-            released = false;
+        let idle = IDLE_RELEASE.get().map(|release| IdleRelease::start(*release));
+        while let Some(cmd) = rx.recv().await {
+            if let Some(idle) = &idle {
+                idle.touch();
+            }
             match cmd {
                 Cmd::Fetch(id, req, sink) => {
                     let destination = req.destination;
                     let sink = std::rc::Rc::new(std::cell::RefCell::new(Some(sink)));
-                    let (io2, tasks2, sink2) = (io.clone(), tasks.clone(), sink.clone());
+                    let (io2, tasks2, sink2, idle2) = (io.clone(), tasks.clone(), sink.clone(), idle.clone());
                     let handle = tokio::task::spawn_local(async move {
                         let dest = req.destination;
                         let result = io2.run(id, *req, &sink2).await;
@@ -803,6 +839,9 @@ fn io_main(mut rx: mpsc::UnboundedReceiver<Cmd>, shared: Arc<Shared>, cookies: A
                         }
                         sink2.borrow_mut().take();
                         tasks2.borrow_mut().remove(&id);
+                        if let Some(idle) = idle2 {
+                            idle.touch();
+                        }
                     });
                     tasks.borrow_mut().insert(id, Task { handle, sink, destination });
                 }
