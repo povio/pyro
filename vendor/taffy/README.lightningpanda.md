@@ -113,6 +113,19 @@ sizing. Otherwise, or with other inputs, the grid is laid out whole. blitz-dom's
 tables" in `vendor/blitz-dom/README.lightningpanda.md`). `crates/lp-render/tests/mirror.rs` checks replayed layouts
 against fresh builds (`table_*_match_fresh_builds`) and that edits, appends, removals and inserts replay (`a_cell_edit_collects_only_its_row`).
 
+## The grid's min-content re-check
+
+`compute/grid/mod.rs` and `compute/grid/types/grid_item.rs`: the re-check of the items' min-content widths
+after row sizing skips an item the first column pass read nothing from that depends on its content or its
+grid area (`GridItem::inline_contribution_consumed`, set when a min-content or max-content contribution is
+computed in the inline axis, or a minimum contribution that resolves a percentage or uses an aspect ratio).
+Upstream measured every item crossing an intrinsic column and compared it with a cache the first pass never
+filled for such items, so an `fr` column holding a `min-width: 0` item re-ran column sizing on every layout.
+The columns of the first pass do not depend on a skipped item, so the outcome only changes when nothing else
+asks for the re-run; that is limited to grids of a definite width, where the re-run's inputs are otherwise
+the first pass's. Covered by the `rerun_tests` module at the end of `compute/grid/mod.rs` (run them from a
+copy of this directory with an empty `[workspace]` table, as the crate is not a workspace member).
+
 ## Moving from v0.15.1 to main
 
 The local commit was cherry-picked onto main (base `v0.15.1`, a release branch). Upstream has none of the

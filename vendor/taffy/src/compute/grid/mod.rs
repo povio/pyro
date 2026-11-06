@@ -573,6 +573,19 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
         // Note: every item must be visited (no short-circuiting) as the closure updates each item's caches
         intrinsic_column_contribution_changed =
             items.iter_mut().filter(|item| item.crosses_intrinsic_column).fold(false, |any_changed, item| {
+                // lightningpanda: the first column pass read nothing of this item that depends on its content or
+                // grid area (an `fr` column it does not size, with `min-width: 0` say), so the columns cannot
+                // change with it and measuring it here would only force a re-run on the empty cache. A definite
+                // container width is required as well: with an indefinite one the re-run expands `fr` tracks
+                // into the width found by the first pass, which the item does not take part in either, but is
+                // left as upstream had it. Its caches are still reset in case another item forces the re-run.
+                if !item.inline_contribution_consumed && !parent_width_indefinite {
+                    item.grid_area_size_cache = None;
+                    item.min_content_contribution_cache.width = None;
+                    item.max_content_contribution_cache.width = None;
+                    item.minimum_contribution_cache.width = None;
+                    return any_changed;
+                }
                 let grid_area_size = item.grid_area_size(
                     AbstractAxis::Inline,
                     &columns,
@@ -1597,5 +1610,112 @@ impl DetailedGridItemsInfo {
             column_start: to_one_indexed_grid_line(grid_item.column_indexes.start),
             column_end: to_one_indexed_grid_line(grid_item.column_indexes.end),
         }
+    }
+}
+
+/// lightningpanda: the re-check of the items' min-content widths after row sizing.
+#[cfg(all(test, feature = "taffy_tree"))]
+mod rerun_tests {
+    use crate::prelude::*;
+    use crate::style::Style;
+    use crate::LayoutOutput;
+
+    /// How a test leaf reports its size
+    #[derive(Clone, Copy)]
+    enum Leaf {
+        /// 300 wide (max-content) or 100 wide (min-content), 10 tall
+        Text,
+        /// 20 wide once its height is known, 50 wide before, 10 tall
+        HeightDependent,
+    }
+
+    /// Lay out a 200px-wide grid with the given columns and one item per column, returning the item widths
+    /// and the number of times a leaf was measured for an intrinsic width (no known width, min- or max-content available).
+    fn layout(columns: Vec<GridTemplateComponent<String>>, items: &[(Leaf, Style)]) -> (Vec<f32>, usize) {
+        let mut taffy: TaffyTree<Leaf> = TaffyTree::new();
+        let children: Vec<NodeId> =
+            items.iter().map(|(leaf, style)| taffy.new_leaf_with_context(style.clone(), *leaf).unwrap()).collect();
+        let grid = taffy
+            .new_with_children(
+                Style {
+                    display: Display::Grid,
+                    size: Size { width: length(200.0), height: auto() },
+                    grid_template_columns: columns,
+                    justify_content: JustifyContent::START,
+                    ..Default::default()
+                },
+                &children,
+            )
+            .unwrap();
+        let mut inline_measures = 0;
+        taffy
+            .compute_layout_with_measure(grid, Size::MAX_CONTENT, |inputs, _, context, style| {
+                let Some(leaf) = context.map(|leaf| *leaf) else { return LayoutOutput::HIDDEN };
+                crate::compute_leaf_layout(
+                    inputs,
+                    style,
+                    |_, _| 0.0,
+                    |known, available| {
+                        if known.width.is_none() && !matches!(available.width, AvailableSpace::Definite(_)) {
+                            inline_measures += 1;
+                        }
+                        let width = match leaf {
+                            Leaf::Text => match available.width {
+                                AvailableSpace::MinContent => 100.0,
+                                AvailableSpace::MaxContent => 300.0,
+                                AvailableSpace::Definite(width) => width.clamp(100.0, 300.0),
+                            },
+                            Leaf::HeightDependent => {
+                                if known.height.is_some() {
+                                    20.0
+                                } else {
+                                    50.0
+                                }
+                            }
+                        };
+                        Size { width: known.width.unwrap_or(width), height: known.height.unwrap_or(10.0) }
+                    },
+                )
+            })
+            .unwrap();
+        let widths = children.iter().map(|child| taffy.layout(*child).unwrap().size.width).collect();
+        (widths, inline_measures)
+    }
+
+    fn min_width_zero() -> Style {
+        Style { min_size: Size { width: length(0.0), height: auto() }, ..Default::default() }
+    }
+
+    #[test]
+    fn an_fr_column_with_a_min_width_0_item_is_not_rechecked() {
+        let (widths, inline_measures) = layout(vec![fr(1.0)], &[(Leaf::Text, min_width_zero())]);
+        assert_eq!(widths, vec![200.0]);
+        // Column sizing read nothing of the item's width, so neither the re-check nor a re-run measures it
+        assert_eq!(inline_measures, 0);
+    }
+
+    #[test]
+    fn a_percentage_min_width_is_still_rechecked() {
+        // The minimum contribution resolves against the grid area, so the item counts as read
+        let style = Style { min_size: Size { width: percent(0.25), height: auto() }, ..Default::default() };
+        let (widths, inline_measures) = layout(vec![fr(1.0)], &[(Leaf::Text, style)]);
+        assert_eq!(widths, vec![200.0]);
+        assert!(inline_measures > 0);
+    }
+
+    #[test]
+    fn an_auto_column_whose_item_changes_with_its_row_still_reruns() {
+        // Before row sizing the item's height is unknown and it is 50 wide; once its row is sized it is 20 wide,
+        // so the re-check sees a changed min-content width and column sizing runs again.
+        let (widths, inline_measures) = layout(vec![auto()], &[(Leaf::HeightDependent, Style::default())]);
+        assert_eq!(widths, vec![20.0]);
+        assert!(inline_measures > 0);
+    }
+
+    #[test]
+    fn a_skipped_item_is_resized_when_another_item_forces_the_rerun() {
+        let (widths, _) =
+            layout(vec![auto(), fr(1.0)], &[(Leaf::HeightDependent, Style::default()), (Leaf::Text, min_width_zero())]);
+        assert_eq!(widths, vec![20.0, 180.0]);
     }
 }
