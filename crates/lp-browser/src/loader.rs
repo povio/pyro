@@ -1345,6 +1345,9 @@ impl Browser {
         if let Some(dom) = frame.page_dom {
             lp_webapi::lifecycle::load(&dom, dom.document());
         }
+        if let Some(nav) = self.doc(page).map(|d| d.nav.clone()) {
+            nav.notify_timeline("navigation");
+        }
         if !host.matches(page, &frame.loader_id) {
             return;
         }

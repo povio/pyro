@@ -15,6 +15,13 @@ pub fn set_ready_state(page: &Rc<PageDom>, doc: NodeId, state: &'static str) {
         return;
     }
     page.set_ready_state(doc, state);
+    if doc == page.document() {
+        match state {
+            "interactive" => page.note_timing(|t| &mut t.dom_interactive),
+            "complete" => page.note_timing(|t| &mut t.dom_complete),
+            _ => {}
+        }
+    }
     crate::input::fire_simple(page, doc, "readystatechange", false, false);
 }
 
@@ -22,7 +29,9 @@ pub fn set_ready_state(page: &Rc<PageDom>, doc: NodeId, state: &'static str) {
 pub fn dom_content_loaded(page: &Rc<PageDom>, doc: NodeId) {
     set_ready_state(page, doc, "interactive");
     flush_autofocus(page, doc);
+    page.note_timing(|t| &mut t.dom_content_loaded_start);
     crate::input::fire_simple(page, doc, "DOMContentLoaded", true, false);
+    page.note_timing(|t| &mut t.dom_content_loaded_end);
 }
 
 /// HTML "flush autofocus candidates" (simplified): the first `autofocus`
@@ -49,8 +58,10 @@ fn flush_autofocus(page: &Rc<PageDom>, doc: NodeId) {
 pub fn load(page: &Rc<PageDom>, doc: NodeId) {
     set_ready_state(page, doc, "complete");
     if let Some(w) = window_key(page, doc) {
+        page.note_timing(|t| &mut t.load_start);
         let ev = EventCore::trusted(page, EventInterface::Event, "load", false, false);
         fire(page, w, &ev);
+        page.note_timing(|t| &mut t.load_end);
         let ev = EventCore::trusted(page, EventInterface::PageTransitionEvent, "pageshow", false, false);
         fire(page, w, &ev);
     }

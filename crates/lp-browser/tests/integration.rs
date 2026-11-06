@@ -26,6 +26,7 @@ mod navigation_tasks;
 mod network_delivery;
 mod network_idle;
 mod node_realms;
+mod performance_timeline;
 mod popups;
 mod remote_ordering;
 mod runloop_idle_finalization;

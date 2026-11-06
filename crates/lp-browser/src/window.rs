@@ -165,6 +165,21 @@ impl lp_webapi::WindowHost for WindowData {
     }
 }
 
+/// The realm's `performance` ([SameObject] and an EventTarget: the wrapper
+/// carries its event listeners, so the realm keeps it).
+fn performance_object<'s>(s: &lp_js::Scope<'s>, w: &WindowData) -> JsResult<lp_js::Object<'s>> {
+    if let Some(o) = w.performance.get().and_then(|identity| s.lookup_identity(identity)) {
+        return Ok(o);
+    }
+    let data = PerformanceData::new(w.nav.clone(), &w.target.page);
+    let identity = data.wrapper_identity().unwrap_or(IdentityKey(KEY_PERFORMANCE, 0));
+    let key = data.event_target().key;
+    let performance = s.wrap::<Performance>(data, Some(identity))?;
+    lp_webapi::target::pin_target(s, &w.target.page, key, performance);
+    w.performance.set(Some(identity));
+    Ok(performance)
+}
+
 pub struct Window;
 
 impl JsClass for Window {
@@ -219,20 +234,20 @@ impl JsClass for Window {
             },
         );
         def.getter("history", |s, w| Ok(s.wrap::<History>(w.nav.clone(), Some(IdentityKey(KEY_HISTORY, 0)))?.value()));
-        def.getter("performance", |s, w| {
-            if let Some(o) = w.performance.get().and_then(|identity| s.lookup_identity(identity)) {
-                return Ok(o.value());
-            }
-            // [SameObject] and an EventTarget: the wrapper carries its event
-            // listeners, so the realm keeps it.
-            let data = PerformanceData::new(w.nav.clone(), &w.target.page);
-            let identity = data.wrapper_identity().unwrap_or(IdentityKey(KEY_PERFORMANCE, 0));
-            let key = data.event_target().key;
-            let performance = s.wrap::<Performance>(data, Some(identity))?;
-            lp_webapi::target::pin_target(s, &w.target.page, key, performance);
-            w.performance.set(Some(identity));
-            Ok(performance.value())
-        });
+        def.getter("performance", |s, w| Ok(performance_object(s, w)?.value()));
+        // Performance Timeline observers, made on the realm's first use.
+        def.accessor(
+            "PerformanceObserver",
+            |s, w| crate::nav::observer_module(s, performance_object(s, w)?, &w.nav)?.get("PerformanceObserver"),
+            |s, w, v| lp_webapi::window::replace_window_attribute(s, &w.target.page, "PerformanceObserver", v),
+        );
+        def.accessor(
+            "PerformanceObserverEntryList",
+            |s, w| {
+                crate::nav::observer_module(s, performance_object(s, w)?, &w.nav)?.get("PerformanceObserverEntryList")
+            },
+            |s, w, v| lp_webapi::window::replace_window_attribute(s, &w.target.page, "PerformanceObserverEntryList", v),
+        );
         def.getter("top", |s, w| match (w.frames.upgrade(), w.frame) {
             (Some(host), Some(key)) => host.relation(s, key, true),
             _ => Ok(s.global().value()),

@@ -92,6 +92,12 @@ pub struct PageNav {
     /// When the current document first had a rendering opportunity
     /// (`now_ms`): its Paint Timing entries.
     first_paint: Cell<Option<f64>>,
+    /// `PerformanceNavigationTiming.type` of the current document.
+    nav_type: Cell<&'static str>,
+    /// The realms with a PerformanceObserver (performance_observer.js) and
+    /// the function each queues new timeline entries with. Empty unless a
+    /// page observes, which is all the timeline costs otherwise.
+    timeline_watchers: RefCell<Vec<(lp_js::RealmId, lp_js::WeakRealm, Rc<Persistent>)>>,
 }
 
 impl PageNav {
@@ -123,6 +129,8 @@ impl PageNav {
             page_dom: RefCell::new(std::rc::Weak::new()),
             time_origin: Cell::new(crate::clock::now()),
             first_paint: Cell::new(None),
+            nav_type: Cell::new("navigate"),
+            timeline_watchers: RefCell::new(Vec::new()),
         })
     }
 
@@ -238,6 +246,11 @@ impl PageNav {
         *self.document.borrow_mut() = document;
         self.time_origin.set(crate::clock::now());
         self.first_paint.set(None);
+        self.nav_type.set(match history {
+            HistoryHandling::Reload => "reload",
+            HistoryHandling::Traverse => "back_forward",
+            _ => "navigate",
+        });
     }
 
     pub(crate) fn set_document(&self, document: Option<(DomRef, NodeId)>) {
@@ -497,6 +510,57 @@ impl PageNav {
     pub(crate) fn note_first_paint(&self) {
         if self.first_paint.get().is_none() {
             self.first_paint.set(Some(self.now_ms()));
+            self.notify_timeline("paint");
+        }
+    }
+
+    /// The document's entry of `entry_type` (`paint`, `navigation`) is in
+    /// the timeline now: every observing realm looks for it. Nothing runs
+    /// unless a realm observes.
+    pub(crate) fn notify_timeline(&self, entry_type: &'static str) {
+        if self.timeline_watchers.borrow().is_empty() {
+            return;
+        }
+        let watchers: Vec<_> = {
+            let mut watchers = self.timeline_watchers.borrow_mut();
+            watchers.retain(|(_, realm, _)| realm.upgrade().is_some_and(|r| !r.is_disposed()));
+            watchers.iter().map(|(_, realm, f)| (realm.clone(), f.clone())).collect()
+        };
+        for (realm, f) in watchers {
+            let Some(realm) = realm.upgrade() else { continue };
+            let Ok(s) = realm.scope() else { continue };
+            if let Some(f) = f.get(&s).as_object() {
+                if let Err(e) = f.call(None, &[s.string(entry_type)]) {
+                    s.report_exception(&e);
+                }
+            }
+        }
+    }
+
+    /// A mark or measure was added in `s`'s realm: its observers queue it.
+    fn notify_entry<'s>(&self, s: &Scope<'s>, entry_type: &'static str, entry: Value<'s>) -> JsResult<()> {
+        let f = {
+            let watchers = self.timeline_watchers.borrow();
+            if watchers.is_empty() {
+                return Ok(());
+            }
+            let id = s.realm_id();
+            watchers.iter().find(|(realm, ..)| *realm == id).map(|(.., f)| f.clone())
+        };
+        if let Some(f) = f.and_then(|f| f.get(s).as_object()) {
+            f.call(None, &[s.string(entry_type), entry])?;
+        }
+        Ok(())
+    }
+
+    /// `natives.watch(queue)` of performance_observer.js: `queue` (or null
+    /// to stop) gets the entries of `s`'s realm.
+    fn watch_timeline(&self, s: &Scope<'_>, queue: Value<'_>) {
+        let id = s.realm_id();
+        let mut watchers = self.timeline_watchers.borrow_mut();
+        watchers.retain(|(realm, ..)| *realm != id);
+        if queue.as_object().is_some_and(|f| f.is_function()) {
+            watchers.push((id, s.realm().downgrade(), Rc::new(Persistent::new(s, queue))));
         }
     }
 }
@@ -902,6 +966,13 @@ fn timeline_entries<'s>(
     entry_type: Option<&str>,
 ) -> JsResult<Value<'s>> {
     let mut entries: Vec<(f64, Value<'s>)> = Vec::new();
+    if entry_type.is_none_or(|t| t == "navigation") {
+        if let Some(entry) = navigation_entry(p) {
+            if name.is_none_or(|n| n == entry.name) {
+                entries.push((0.0, s.wrap::<PerformanceNavigationTiming>(entry, None)?.value()));
+            }
+        }
+    }
     if let Some(start) = p.nav.first_paint().filter(|_| entry_type.is_none_or(|t| t == "paint")) {
         for entry_name in ["first-paint", "first-contentful-paint"] {
             if name.is_none_or(|n| n == entry_name) {
@@ -929,12 +1000,68 @@ pub struct PerformanceEntryData {
     duration: f64,
     /// `detail` of a mark or measure (a structured clone), null when absent.
     detail: Option<Persistent>,
+    /// The document's Navigation Timing (`navigation` entries only).
+    navigation: Option<Box<NavigationValues>>,
 }
 
 impl PerformanceEntryData {
     fn new(name: &str, entry_type: &'static str, start: f64, duration: f64) -> PerformanceEntryData {
-        PerformanceEntryData { name: name.to_owned(), entry_type, start, duration, detail: None }
+        PerformanceEntryData { name: name.to_owned(), entry_type, start, duration, detail: None, navigation: None }
     }
+}
+
+/// A document's Navigation Timing as its `navigation` entry reports it, in
+/// milliseconds since the time origin; 0 for a step that has not run. The
+/// time origin is when the document's response committed, so the fetch
+/// phases (fetchStart .. responseEnd) and unloading come out as 0.
+#[derive(Clone, Copy)]
+struct NavigationValues {
+    dom_interactive: f64,
+    dom_content_loaded_start: f64,
+    dom_content_loaded_end: f64,
+    dom_complete: f64,
+    load_start: f64,
+    load_end: f64,
+    nav_type: &'static str,
+}
+
+impl NavigationValues {
+    const EMPTY: NavigationValues = NavigationValues {
+        dom_interactive: 0.0,
+        dom_content_loaded_start: 0.0,
+        dom_content_loaded_end: 0.0,
+        dom_complete: 0.0,
+        load_start: 0.0,
+        load_end: 0.0,
+        nav_type: "navigate",
+    };
+
+    fn of(page: &lp_webapi::PageDom, nav: &PageNav) -> NavigationValues {
+        let t = page.timing();
+        NavigationValues {
+            dom_interactive: t.dom_interactive.unwrap_or(0.0),
+            dom_content_loaded_start: t.dom_content_loaded_start.unwrap_or(0.0),
+            dom_content_loaded_end: t.dom_content_loaded_end.unwrap_or(0.0),
+            dom_complete: t.dom_complete.unwrap_or(0.0),
+            load_start: t.load_start.unwrap_or(0.0),
+            load_end: t.load_end.unwrap_or(0.0),
+            nav_type: nav.nav_type.get(),
+        }
+    }
+}
+
+/// The document's `navigation` entry. Chrome adds it to the timeline as the
+/// document starts loading and fills it in as it goes; an `about:` document
+/// (the initial one, `setContent`) has none.
+fn navigation_entry(p: &PerformanceData) -> Option<PerformanceEntryData> {
+    let url = p.nav.url();
+    if !(url.starts_with("http:") || url.starts_with("https:") || url.starts_with("file:")) {
+        return None;
+    }
+    let values = NavigationValues::of(&p.target.page, &p.nav);
+    let mut entry = PerformanceEntryData::new(&url, "navigation", 0.0, values.load_end);
+    entry.navigation = Some(Box::new(values));
+    Some(entry)
 }
 
 fn entry_json<'s>(s: &Scope<'s>, e: &PerformanceEntryData, detail: bool) -> JsResult<Value<'s>> {
@@ -946,7 +1073,59 @@ fn entry_json<'s>(s: &Scope<'s>, e: &PerformanceEntryData, detail: bool) -> JsRe
     if detail {
         o.set("detail", e.detail.as_ref().map_or(s.null(), |d| d.get(s)))?;
     }
+    if let Some(n) = &e.navigation {
+        o.set("initiatorType", s.string("navigation"))?;
+        o.set("deliveryType", s.string(""))?;
+        o.set("nextHopProtocol", s.string(""))?;
+        o.set("renderBlockingStatus", s.string("non-blocking"))?;
+        o.set("contentType", s.string(""))?;
+        for key in RESOURCE_TIMES.iter().chain(&RESOURCE_SIZES) {
+            o.set(key, s.number(0.0))?;
+        }
+        o.set("serverTiming", s.array(&[])?.value())?;
+        for (key, value) in navigation_fields(n) {
+            o.set(key, s.number(value))?;
+        }
+        o.set("type", s.string(n.nav_type))?;
+        o.set("redirectCount", s.number(0.0))?;
+    }
     Ok(o.value())
+}
+
+/// PerformanceResourceTiming's times: all 0 for the navigation entry (see
+/// [`NavigationValues`]).
+const RESOURCE_TIMES: [&str; 14] = [
+    "workerStart",
+    "redirectStart",
+    "redirectEnd",
+    "fetchStart",
+    "domainLookupStart",
+    "domainLookupEnd",
+    "connectStart",
+    "connectEnd",
+    "secureConnectionStart",
+    "requestStart",
+    "responseStart",
+    "firstInterimResponseStart",
+    "finalResponseHeadersStart",
+    "responseEnd",
+];
+/// Sizes and status: not recorded (0).
+const RESOURCE_SIZES: [&str; 4] = ["transferSize", "encodedBodySize", "decodedBodySize", "responseStatus"];
+
+fn navigation_fields(n: &NavigationValues) -> [(&'static str, f64); 10] {
+    [
+        ("unloadEventStart", 0.0),
+        ("unloadEventEnd", 0.0),
+        ("domInteractive", n.dom_interactive),
+        ("domContentLoadedEventStart", n.dom_content_loaded_start),
+        ("domContentLoadedEventEnd", n.dom_content_loaded_end),
+        ("domComplete", n.dom_complete),
+        ("loadEventStart", n.load_start),
+        ("loadEventEnd", n.load_end),
+        ("activationStart", 0.0),
+        ("criticalCHRestart", 0.0),
+    ]
 }
 
 pub struct PerformanceEntry;
@@ -974,6 +1153,134 @@ impl JsClass for PerformancePaintTiming {
     type Parent = PerformanceEntry;
 
     fn define(_def: &mut ClassDef<Self>) {}
+}
+
+/// Resource Timing. Only the document's `navigation` entry is one: no
+/// `resource` entries are recorded for sub-resources, fetch or XHR.
+pub struct PerformanceResourceTiming;
+
+impl JsClass for PerformanceResourceTiming {
+    const NAME: &'static str = "PerformanceResourceTiming";
+    type Data = PerformanceEntryData;
+    type Parent = PerformanceEntry;
+
+    fn define(def: &mut ClassDef<Self>) {
+        for key in RESOURCE_TIMES.iter().chain(&RESOURCE_SIZES) {
+            def.getter(key, |s, _e| Ok(s.number(0.0)));
+        }
+        def.getter("initiatorType", |s, e| Ok(s.string(if e.navigation.is_some() { "navigation" } else { "" })));
+        def.getter("nextHopProtocol", |s, _e| Ok(s.string("")));
+        def.getter("deliveryType", |s, _e| Ok(s.string("")));
+        def.getter("renderBlockingStatus", |s, _e| Ok(s.string("non-blocking")));
+        def.getter("contentType", |s, _e| Ok(s.string("")));
+        def.getter("serverTiming", |s, _e| Ok(s.array(&[])?.value()));
+        def.method("toJSON", 0, |s, e, _a| entry_json(s, e, false));
+    }
+}
+
+/// Navigation Timing Level 2: the document's `navigation` entry.
+pub struct PerformanceNavigationTiming;
+
+impl JsClass for PerformanceNavigationTiming {
+    const NAME: &'static str = "PerformanceNavigationTiming";
+    type Data = PerformanceEntryData;
+    type Parent = PerformanceResourceTiming;
+
+    fn define(def: &mut ClassDef<Self>) {
+        macro_rules! fields {
+            ($($i:literal),*) => {$(
+                def.getter(navigation_fields(&NavigationValues::EMPTY)[$i].0, |s, e| {
+                    Ok(s.number(e.navigation.as_ref().map_or(0.0, |n| navigation_fields(n)[$i].1)))
+                });
+            )*};
+        }
+        fields!(0, 1, 2, 3, 4, 5, 6, 7, 8, 9);
+        def.getter("type", |s, e| Ok(s.string(e.navigation.as_ref().map_or("navigate", |n| n.nav_type))));
+        def.getter("redirectCount", |s, _e| Ok(s.number(0.0)));
+        def.getter("notRestoredReasons", |s, _e| Ok(s.null()));
+        def.method("toJSON", 0, |s, e, _a| entry_json(s, e, false));
+    }
+}
+
+/// The legacy `performance.timing`: the document's Navigation Timing in
+/// milliseconds since the epoch, 0 for a step that has not run (and for the
+/// unload, redirect and secure-connection steps, which never do here).
+pub struct PerformanceTiming;
+
+pub struct TimingData {
+    origin_wall_ms: f64,
+    page: Rc<lp_webapi::PageDom>,
+    nav: Rc<PageNav>,
+}
+
+/// `performance.timing[name]` (epoch milliseconds, 0 when not reached).
+fn legacy_timing(origin: f64, n: &NavigationValues, name: &str) -> f64 {
+    let at = |t: f64| if t > 0.0 { (origin + t).round() } else { 0.0 };
+    match name {
+        "navigationStart" | "fetchStart" | "domainLookupStart" | "domainLookupEnd" | "connectStart" | "connectEnd"
+        | "requestStart" | "responseStart" | "responseEnd" | "domLoading" => origin.round(),
+        "domInteractive" => at(n.dom_interactive),
+        "domContentLoadedEventStart" => at(n.dom_content_loaded_start),
+        "domContentLoadedEventEnd" => at(n.dom_content_loaded_end),
+        "domComplete" => at(n.dom_complete),
+        "loadEventStart" => at(n.load_start),
+        "loadEventEnd" => at(n.load_end),
+        _ => 0.0,
+    }
+}
+
+impl JsClass for PerformanceTiming {
+    const NAME: &'static str = "PerformanceTiming";
+    type Data = TimingData;
+    type Parent = NoParent;
+
+    fn define(def: &mut ClassDef<Self>) {
+        macro_rules! attributes {
+            ($($i:literal),*) => {$(
+                def.getter(TIMING_ATTRIBUTES[$i], |s, t| {
+                    let n = NavigationValues::of(&t.page, &t.nav);
+                    Ok(s.number(legacy_timing(t.origin_wall_ms, &n, TIMING_ATTRIBUTES[$i])))
+                });
+            )*};
+        }
+        attributes!(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20);
+        def.method("toJSON", 0, |s, t, _a| {
+            let o = s.object();
+            let n = NavigationValues::of(&t.page, &t.nav);
+            for name in TIMING_ATTRIBUTES {
+                o.set(name, s.number(legacy_timing(t.origin_wall_ms, &n, name)))?;
+            }
+            Ok(o.value())
+        });
+    }
+}
+
+/// The legacy `performance.navigation`.
+pub struct PerformanceNavigation;
+
+impl JsClass for PerformanceNavigation {
+    const NAME: &'static str = "PerformanceNavigation";
+    type Data = Rc<PageNav>;
+    type Parent = NoParent;
+
+    fn define(def: &mut ClassDef<Self>) {
+        def.getter("type", |s, n| Ok(s.number(legacy_navigation_type(n))));
+        def.getter("redirectCount", |s, _n| Ok(s.number(0.0)));
+        def.method("toJSON", 0, |s, n, _a| {
+            let o = s.object();
+            o.set("type", s.number(legacy_navigation_type(n)))?;
+            o.set("redirectCount", s.number(0.0))?;
+            Ok(o.value())
+        });
+    }
+}
+
+fn legacy_navigation_type(n: &PageNav) -> f64 {
+    match n.nav_type.get() {
+        "reload" => 1.0,
+        "back_forward" => 2.0,
+        _ => 0.0,
+    }
 }
 
 /// Navigation Timing's `PerformanceTiming` attribute names: not usable as
@@ -1044,7 +1351,14 @@ fn mark_data<'s>(s: &Scope<'s>, name: &str, options: Value<'s>, now: f64) -> JsR
         None => now,
     };
     let detail = clone_detail(s, member(options, "detail")?)?;
-    Ok(PerformanceEntryData { name: name.to_owned(), entry_type: "mark", start, duration: 0.0, detail })
+    Ok(PerformanceEntryData {
+        name: name.to_owned(),
+        entry_type: "mark",
+        start,
+        duration: 0.0,
+        detail,
+        navigation: None,
+    })
 }
 
 pub struct PerformanceMark;
@@ -1092,6 +1406,20 @@ fn mark_timestamp(p: &PerformanceData, mark: Value<'_>) -> JsResult<f64> {
     if name == "navigationStart" {
         return Ok(0.0);
     }
+    // User Timing "convert a name to a timestamp": a PerformanceTiming
+    // attribute is its time relative to navigationStart, an error while it
+    // is 0 (the step has not run).
+    if TIMING_ATTRIBUTES.contains(&name.as_str()) {
+        let n = NavigationValues::of(&p.target.page, &p.nav);
+        if legacy_timing(p.origin_wall_ms, &n, &name) == 0.0 {
+            return Err(JsError::dom(
+                "InvalidAccessError",
+                format!("'{name}' is empty: either the event hasn't happened yet, or it would provide cross-origin timing information."),
+            ));
+        }
+        // The fetch phases are at the time origin (see `NavigationValues`).
+        return Ok(navigation_fields(&n).into_iter().find(|(key, _)| *key == name).map_or(0.0, |(_, t)| t));
+    }
     let found = p.user_entries.borrow().iter().rev().find(|e| e.mark && e.name == name).map(|e| e.start);
     found.ok_or_else(|| JsError::dom("SyntaxError", format!("The mark '{name}' does not exist.")))
 }
@@ -1136,6 +1464,7 @@ fn measure<'s>(s: &Scope<'s>, p: &PerformanceData, a: &lp_js::Args<'s>) -> JsRes
         start: start_time,
         duration: end_time - start_time,
         detail: clone_detail(s, detail)?,
+        navigation: None,
     };
     let object = s.wrap::<PerformanceMeasure>(data, None)?.value();
     p.user_entries.borrow_mut().push(UserEntry {
@@ -1144,6 +1473,7 @@ fn measure<'s>(s: &Scope<'s>, p: &PerformanceData, a: &lp_js::Args<'s>) -> JsRes
         start: start_time,
         object: Persistent::new(s, object),
     });
+    p.nav.notify_entry(s, "measure", object)?;
     Ok(object)
 }
 
@@ -1178,6 +1508,7 @@ impl JsClass for Performance {
             let start = data.start;
             let object = s.wrap::<PerformanceMark>(data, None)?.value();
             p.user_entries.borrow_mut().push(UserEntry { name, mark: true, start, object: Persistent::new(s, object) });
+            p.nav.notify_entry(s, "mark", object)?;
             Ok(object)
         });
         def.method("measure", 1, |s, p, a| measure(s, p, &a));
@@ -1203,10 +1534,69 @@ impl JsClass for Performance {
             let ty = a.get(0).to_string()?;
             timeline_entries(s, p, None, Some(&ty))
         });
+        def.getter("timing", timing_object);
+        def.getter("navigation", navigation_object);
         def.method("toJSON", 0, |s, p, _a| {
             let o = s.object();
             o.set("timeOrigin", s.number(p.origin_wall_ms))?;
+            o.set("timing", timing_object(s, p)?)?;
+            o.set("navigation", navigation_object(s, p)?)?;
             Ok(o.value())
         });
     }
+}
+
+/// `performance.timing`: one object per realm.
+fn timing_object<'s>(s: &Scope<'s>, p: &PerformanceData) -> JsResult<Value<'s>> {
+    let key = lp_js::IdentityKey(KEY_TIMING, 0);
+    if let Some(o) = s.lookup_identity(key) {
+        return Ok(o.value());
+    }
+    let data = TimingData { origin_wall_ms: p.origin_wall_ms, page: p.target.page.clone(), nav: p.nav.clone() };
+    Ok(s.wrap::<PerformanceTiming>(data, Some(key))?.value())
+}
+
+/// `performance.navigation`: one object per realm.
+fn navigation_object<'s>(s: &Scope<'s>, p: &PerformanceData) -> JsResult<Value<'s>> {
+    Ok(s.wrap::<PerformanceNavigation>(p.nav.clone(), Some(lp_js::IdentityKey(KEY_NAVIGATION, 0)))?.value())
+}
+
+/// Identity keys of `performance.timing` and `performance.navigation` (one
+/// per realm).
+const KEY_TIMING: u64 = 0x5065_7254_696d_6e00;
+const KEY_NAVIGATION: u64 = 0x5065_724e_6176_6900;
+
+/// This realm's performance_observer.js module (`PerformanceObserver`,
+/// `PerformanceObserverEntryList`), made on first use and kept on the
+/// realm's `performance` object.
+pub(crate) fn observer_module<'s>(
+    s: &Scope<'s>,
+    performance: lp_js::Object<'s>,
+    nav: &Rc<PageNav>,
+) -> JsResult<lp_js::Object<'s>> {
+    const KEY: &str = "lpPerformanceObserver";
+    if let Some(module) = s.get_hidden(performance, KEY)?.and_then(|v| v.as_object()) {
+        return Ok(module);
+    }
+    let unavailable = || JsError::Type("PerformanceObserver is unavailable".into());
+    let natives = s.object();
+    let watched = Rc::downgrade(nav);
+    let watch = s.function("watch", move |s, _this, a| {
+        if let Some(nav) = watched.upgrade() {
+            nav.watch_timeline(s, a.get(0));
+        }
+        Ok(s.undefined())
+    })?;
+    natives.set_atom("watch", watch.value())?;
+    let report = s.function("reportException", |s, _this, a| {
+        s.report_exception(&JsError::Thrown(Persistent::new(s, a.get(0))));
+        Ok(s.undefined())
+    })?;
+    natives.set_atom("reportException", report.value())?;
+    let root = Persistent::new(s, natives.value());
+    let make =
+        s.eval(include_str!("performance_observer.js"), Some("lightningpanda://internal/performance-observer.js"), 1)?;
+    let module = make.as_object().ok_or_else(unavailable)?.call(None, &[performance.value(), root.get(s)])?;
+    s.set_hidden(performance, KEY, module)?;
+    module.as_object().ok_or_else(unavailable)
 }
