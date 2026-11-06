@@ -62,7 +62,7 @@ struct Timeline {
 #[derive(Default)]
 pub(crate) struct State {
     /// The sheets' key and the rules read from them.
-    rules: RefCell<Option<(u64, Rc<TimingRules>)>>,
+    rules: RefCell<Option<(lp_dom::style::AuthorSheetsKey, Rc<TimingRules>)>>,
     /// The style stamp the rules' key was last computed at.
     rules_stamp: Cell<Option<Stamp>>,
     /// The style stamp of the last frame update.

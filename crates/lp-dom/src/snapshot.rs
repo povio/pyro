@@ -396,8 +396,7 @@ impl Dom {
                     tags.push(tag);
                     stack.push(Step::Close);
                     if html && local == "style" {
-                        let text = (opts.style_text)(id)
-                            .unwrap_or_else(|| self.text_content(id).ok().flatten().unwrap_or_default());
+                        let text = (opts.style_text)(id).unwrap_or_else(|| self.child_text_content(id).into_owned());
                         stack.push(Step::Synthetic(n, text, TextKind::Style));
                         continue;
                     }
@@ -525,7 +524,8 @@ impl Dom {
             }
         };
         // The `<style>` element `i` is or is in: its render content is its
-        // sheet's text, which a change inside it replaces.
+        // sheet's text, its child text content, which only a change of its
+        // own children replaces (nothing deeper in it is rendered).
         let style_owner = |mut i: u32| -> Option<u32> {
             while i != NIL && i != d {
                 if let NodeKind::Element(e) = &self.n(i).kind {
@@ -556,7 +556,12 @@ impl Dom {
         for &p in &parents {
             match rendered(p) {
                 Err(()) => {
-                    styles.push(style_owner(p)?);
+                    // A child of the `<style>` came or went; deeper in it,
+                    // nothing rendered changed.
+                    let owner = style_owner(p)?;
+                    if owner == p {
+                        styles.push(owner);
+                    }
                     continue;
                 }
                 Ok(false) => continue,
@@ -603,7 +608,11 @@ impl Dom {
                 // Inside a `<style>`: its sheet text.
                 Err(()) => match style_owner(i).filter(|&owner| owner != i) {
                     Some(owner) => {
-                        styles.push(owner);
+                        // A child's data: the sheet text. Deeper: nothing
+                        // rendered.
+                        if self.n(i).parent == owner {
+                            styles.push(owner);
+                        }
                         continue;
                     }
                     None if covered(i) || inserted.contains(&i) => continue,
@@ -645,8 +654,7 @@ impl Dom {
                 Err(()) => return None,
             }
             let id = self.id_of(owner);
-            let text =
-                (opts.style_text)(id).unwrap_or_else(|| self.text_content(id).ok().flatten().unwrap_or_default());
+            let text = (opts.style_text)(id).unwrap_or_else(|| self.child_text_content(id).into_owned());
             ops.push(DeltaOp::Node { key: render_key(id) | SYNTHETIC_TEXT, kind: RenderNodeKind::Text(text) });
         }
         Some(RenderDelta { ops })
@@ -659,8 +667,7 @@ impl Dom {
         if !(e.is_html() && &*e.name.local == "style") {
             return None;
         }
-        let text =
-            (opts.style_text)(owner).unwrap_or_else(|| self.text_content(owner).ok().flatten().unwrap_or_default());
+        let text = (opts.style_text)(owner).unwrap_or_else(|| self.child_text_content(owner).into_owned());
         Some(DeltaOp::Node { key: render_key(owner) | SYNTHETIC_TEXT, kind: RenderNodeKind::Text(text) })
     }
 
