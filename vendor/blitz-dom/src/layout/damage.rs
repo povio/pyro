@@ -142,7 +142,7 @@ impl BaseDocument {
         let mut pos_child = false;
         if damage_from_children.contains(POS_CHILD_RELAYOUT) {
             damage_from_children.remove(POS_CHILD_RELAYOUT);
-            if is_containing_block_for_some(&self.nodes[node_id]) {
+            if self.is_containing_block_for_some(node_id) {
                 damage_from_children.insert(RestyleDamage::RELAYOUT);
             } else {
                 pos_child = true;
@@ -311,6 +311,25 @@ impl BaseDocument {
             && node
                 .display_style()
                 .is_some_and(|d| d.inside() != DisplayInside::Contents && d != Display::None)
+    }
+
+    /// Whether the node, or an anonymous box it owns, can be the containing
+    /// block of an out-of-flow box below it. A superset of what any Taffy
+    /// layout claims, not narrowed by position kind: its style claims
+    /// (`style_claims_out_of_flow`), or it or an anonymous inline root it owns
+    /// claims for a span (`inline_root_claims_out_of_flow`; the spans
+    /// themselves are DOM ancestors of the boxes inside them and claim by
+    /// style).
+    fn is_containing_block_for_some(&self, node_id: NodeId) -> bool {
+        fn owns_claiming_inline_root(doc: &BaseDocument, node: &Node) -> bool {
+            inline_root_claims_out_of_flow(node)
+                || node.anonymous_blocks.iter().any(|&id| {
+                    // Owners can list anonymous boxes freed by construction.
+                    doc.nodes.get(id).is_some_and(|anon| owns_claiming_inline_root(doc, anon))
+                })
+        }
+        let node = &self.nodes[node_id];
+        style_claims_out_of_flow(node) || owns_claiming_inline_root(self, node)
     }
 
     /// Refresh owned anonymous boxes without revisiting their DOM children.
@@ -495,16 +514,25 @@ fn forwards_construction(node: &Node) -> bool {
     }
 }
 
-/// Whether the node can be the containing block of an out-of-flow box below
-/// it: positioned, or establishing one for `absolute` or `fixed` boxes
-/// (transforms, filters, containment, `will-change`, size containers). A
-/// superset of what any Taffy layout claims (the inline-box claims of a
-/// positioned span included), not narrowed by position kind.
-fn is_containing_block_for_some(node: &Node) -> bool {
+/// Whether the node's style makes it the containing block of out-of-flow
+/// boxes below it: positioned, or establishing one for `absolute` or `fixed`
+/// boxes (transforms, filters, containment, `will-change`, size containers).
+fn style_claims_out_of_flow(node: &Node) -> bool {
     node.primary_styles().is_some_and(|style| {
         let claims = stylo_taffy::convert::containing_block_claims(&style);
         claims.absolute || claims.fixed
     })
+}
+
+/// Whether the node is an inline root that claims the out-of-flow boxes of its
+/// subtree for a positioned (or filtered) span with an inline box below it
+/// (`TextLayout::span_cb_flags`, set by its last layout and added to its
+/// layout style). The claim covers every out-of-flow box of the inline root,
+/// also those outside the span, whose DOM ancestors may claim nothing.
+fn inline_root_claims_out_of_flow(node: &Node) -> bool {
+    node.element_data()
+        .and_then(|element| element.inline_layout_data.as_deref())
+        .is_some_and(|layout| !layout.span_cb_flags.is_empty())
 }
 
 /// Table-internal boxes which are not layout children: the table reads them
