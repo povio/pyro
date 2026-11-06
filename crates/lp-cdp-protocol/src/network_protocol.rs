@@ -313,6 +313,7 @@ pub fn fetch_resource_type(destination: lp_net::Destination) -> ResourceType {
         D::Font => ResourceType::Font,
         D::Xhr | D::Fetch | D::EventSource => ResourceType::XHR,
         D::WebSocket => ResourceType::WebSocket,
+        D::Beacon => ResourceType::Ping,
         D::Other => ResourceType::Other,
     }
 }

@@ -105,7 +105,7 @@ pub struct WireMessage {
 impl WireMessage {
     #[cfg(test)]
     pub(crate) fn empty() -> Self {
-        WireMessage { text: String::new(), buffers: Vec::new() }
+        WireMessage { text: String::new(), buffers: Vec::new(), blobs: Vec::new() }
     }
     /// What the message holds in memory while queued.
     pub(crate) fn size(&self) -> usize {
