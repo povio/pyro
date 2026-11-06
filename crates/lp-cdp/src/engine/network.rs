@@ -316,6 +316,7 @@ impl RequestLog {
                     (e.error, e.done, e.end) = (Some(error.to_string()), true, Some(*timestamp));
                 }
             }
+            NetEvent::WebSocket { .. } => {}
         }
     }
 }
@@ -559,11 +560,21 @@ impl EngineHost {
             | NetEvent::ResponseReceived { id, .. }
             | NetEvent::DataReceived { id, .. }
             | NetEvent::LoadingFinished { id, .. }
-            | NetEvent::LoadingFailed { id, .. } => *id,
+            | NetEvent::LoadingFailed { id, .. }
+            | NetEvent::WebSocket { id, .. } => *id,
         };
-        if let NetEvent::RequestWillBeSent { request, .. } = &event {
+        // A connection is routed by the frame that created it, like a request.
+        let starting_frame = match &event {
+            NetEvent::RequestWillBeSent { request, .. } => Some(request.frame_id.as_ref()),
+            NetEvent::WebSocket { activity, .. } => match &**activity {
+                lp_net::WebSocketActivity::Created { frame_id, .. } => Some(frame_id.as_ref()),
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some(frame_id) = starting_frame {
             let page = self.pages.iter().find_map(|(key, page)| {
-                (page.context == context && self.owns_frame(page.id, request.frame_id.as_ref())).then_some(*key)
+                (page.context == context && self.owns_frame(page.id, frame_id)).then_some(*key)
             });
             let Some(page) = page else { return };
             let logged = self.pages.get(&page).is_some_and(|p| p.network.log.is_some());
@@ -578,7 +589,12 @@ impl EngineHost {
             context.routes.insert(id, page);
         }
         let Some(page) = self.contexts.get(&context).and_then(|c| c.routes.get(&id)).copied() else { return };
-        if matches!(event, NetEvent::LoadingFinished { .. } | NetEvent::LoadingFailed { .. }) {
+        let ended = match &event {
+            NetEvent::LoadingFinished { .. } | NetEvent::LoadingFailed { .. } => true,
+            NetEvent::WebSocket { activity, .. } => matches!(**activity, lp_net::WebSocketActivity::Closed),
+            _ => false,
+        };
+        if ended {
             self.contexts.get_mut(&context).expect("subscribed context").routes.remove(&id);
         }
         let Some(state) = self.pages.get_mut(&page) else { return };
