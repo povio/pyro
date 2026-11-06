@@ -174,6 +174,8 @@ pub struct PageDom {
     images_sweep_at: Cell<usize>,
     /// Pending `HTMLImageElement.decode()` promises (`crate::image_decode`).
     pub(crate) image_decodes: RefCell<FxHashMap<NodeId, Vec<crate::image_decode::PendingDecode>>>,
+    /// HTMLMediaElement state of the elements script or a load touched.
+    pub(crate) media: crate::media::MediaElements,
     /// The last mouse input's position and state, for boundary events when
     /// content under a stationary pointer changes.
     pub(crate) pointer: RefCell<Option<crate::input::MouseInput>>,
@@ -551,6 +553,7 @@ impl PageDom {
             images: RefCell::new(FxHashMap::default()),
             images_sweep_at: Cell::new(64),
             image_decodes: RefCell::new(FxHashMap::default()),
+            media: Default::default(),
             pointer: RefCell::new(None),
             hover_update_queued: Cell::new(false),
             press_target: Cell::new(None),
@@ -752,6 +755,7 @@ impl PageDom {
                 crate::popover::flush_details_toggles(&this);
             }
         }
+        crate::media::flush(self, &self.this);
         if self.is_disposed() || self.flushing_iframes.replace(true) {
             return;
         }

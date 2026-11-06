@@ -662,6 +662,24 @@ impl Browser {
         // `document.open()` does not stop.
         let script = opts.cdp_request_id.is_none()
             && !matches!(opts.reason, crate::NavigationReason::AddressBar | crate::NavigationReason::History);
+        // Chrome: web content cannot navigate a frame to a local file ("Not
+        // allowed to load local resource"), whatever its referrer policy.
+        // The initiator is the parent document for a child frame, else the
+        // frame's current document.
+        if script && opts.url.get(..5).is_some_and(|s| s.eq_ignore_ascii_case("file:")) {
+            let initiator = match page.child {
+                Some(_) => self
+                    .doc(page)
+                    .and_then(|p| p.main_frame.parent.clone())
+                    .and_then(|parent| self.frame(page.page, &parent))
+                    .map(|f| f.origin),
+                None => self.doc(page).map(|p| p.main_frame.origin.clone()),
+            };
+            if initiator.is_some_and(|o| o.starts_with("http:") || o.starts_with("https:")) {
+                self.navigation_failed(page, &opts, loader_id, "net::ERR_ACCESS_DENIED".into());
+                return Ok(());
+            }
+        }
         if let Some(mut p) = self.doc_mut(page) {
             p.pending_loader = Some(loader_id.clone());
             p.pending_script = script.then(|| (loader_id.clone(), opts.url.clone()));

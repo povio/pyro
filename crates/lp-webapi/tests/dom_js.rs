@@ -2923,7 +2923,7 @@ fn canvas_2d_measures_text_without_pixels() {
     );
     assert_eq!(eval(&e.main, "x.save(); x.font = '20px monospace'; x.restore(); x.font"), "32px system-ui");
     assert_eq!(
-        eval(&e.main, "try { x.getImageData(0, 0, 1, 1); 'returned' } catch (err) { err.name }"),
+        eval(&e.main, "x.fillText('9', 0, 10); try { x.getImageData(0, 0, 1, 1); 'returned' } catch (err) { err.name }"),
         "NotSupportedError"
     );
     // The TOS pattern: drawing.font = getComputedStyle(input).font.

@@ -183,6 +183,7 @@ impl<A: DomAccess> TreeSink for Sink<A> {
             let owner = self.doc_owner(d);
             d.base_seen |= name.local == local_name!("base");
             let is_details = name.local == local_name!("details") && name.ns == markup5ever::ns!(html);
+            d.media_seen |= matches!(name.local, local_name!("audio") | local_name!("video"));
             let mut el = ElementData::new(name);
             el.set_attrs(
                 attrs.into_iter().map(|a| crate::node::Attr { name: a.name, value: (&*a.value).into() }).collect(),

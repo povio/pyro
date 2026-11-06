@@ -46,6 +46,7 @@ impl Dom {
     /// Releases queued nodes for a replaced/disposed browsing context.
     pub fn unwatch_iframes(&mut self, document: NodeId) {
         self.iframes.documents.remove(&document);
+        self.drop_media_events(document);
         for event in self.take_iframe_events(document) {
             self.release(event.node);
         }

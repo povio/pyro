@@ -51,6 +51,8 @@ mod internals;
 pub mod intersection_observer;
 pub mod layout_api;
 pub mod lifecycle;
+pub(crate) mod lazy_module;
+pub(crate) mod media;
 pub mod media_source;
 pub mod message_channel;
 pub mod mutation_observer;

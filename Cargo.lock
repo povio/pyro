@@ -2016,6 +2016,7 @@ dependencies = [
  "ghash",
  "hkdf",
  "hmac",
+ "kurbo",
  "lp-dom",
  "lp-js",
  "lp-layout",

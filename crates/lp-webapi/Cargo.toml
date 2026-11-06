@@ -23,6 +23,8 @@ getrandom = "0.3"
 ghash = "0.5"
 hkdf = "0.12"
 hmac = "0.12"
+# Canvas path geometry (isPointInPath, Path2D SVG data); already in the tree via lp-render/blitz.
+kurbo = "0.13.1"
 lp-dom = { workspace = true }
 lp-js = { workspace = true }
 lp-net = { workspace = true }

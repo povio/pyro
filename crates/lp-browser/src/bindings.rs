@@ -453,7 +453,7 @@ impl Browser {
         // Runs at every checkpoint: leave early when nothing is queued.
         let (iframe_events, resource_events) = {
             let dom = host.dom.borrow();
-            (dom.has_iframe_events(), dom.has_resource_events())
+            (dom.has_iframe_events() || dom.has_media_events(), dom.has_resource_events())
         };
         if !iframe_events && !resource_events {
             return;

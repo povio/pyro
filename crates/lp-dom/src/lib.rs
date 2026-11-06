@@ -29,6 +29,7 @@ pub mod layout;
 pub mod live_iterator;
 pub mod live_range;
 pub mod media;
+pub mod media_element;
 pub mod mutation;
 pub mod node;
 pub mod parse;

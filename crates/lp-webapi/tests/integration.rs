@@ -4,6 +4,7 @@
 
 mod activation_js;
 mod attr_nodes_js;
+mod canvas_js;
 mod collections_js;
 mod crypto_js;
 mod custom_elements_js;

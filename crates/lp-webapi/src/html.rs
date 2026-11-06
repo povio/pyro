@@ -2479,8 +2479,23 @@ simple_class!(HtmlSlotElement, "HTMLSlotElement", HtmlElement, |def| {
     def.method("assignedElements", 0, |s, n, a| slot_assigned(s, n, a, true));
 });
 simple_class!(HtmlCanvasElement, "HTMLCanvasElement", HtmlElement, |def| {
-    reflect_ulong!(def, "width", "width", 300);
-    reflect_ulong!(def, "height", "height", 150);
+    // Setting either dimension clears the bitmap and resets the context.
+    def.accessor(
+        "width",
+        |s, n| Ok(s.number(int_attr(n, "width", 0, 300)?)),
+        |s, n, v| {
+            set_ulong(n, "width", to_u32(v)?, 300)?;
+            crate::canvas::canvas_resized(s, n.page(), n.id)
+        },
+    );
+    def.accessor(
+        "height",
+        |s, n| Ok(s.number(int_attr(n, "height", 0, 150)?)),
+        |s, n, v| {
+            set_ulong(n, "height", to_u32(v)?, 150)?;
+            crate::canvas::canvas_resized(s, n.page(), n.id)
+        },
+    );
     // "2d": text measurement and state without a rasterizer (canvas.rs);
     // other context types are unsupported (null).
     def.method("getContext", 1, |s, n, a| {
@@ -2488,13 +2503,13 @@ simple_class!(HtmlCanvasElement, "HTMLCanvasElement", HtmlElement, |def| {
         crate::canvas::get_context(s, n.page(), n.id, &kind)
     });
     def.method("toDataURL", 0, |s, _n, _a| Ok(s.string("data:,")));
+    def.method("toBlob", 1, |s, n, a| crate::canvas::to_blob(s, n.page(), a));
 });
 simple_class!(HtmlMediaElement, "HTMLMediaElement", HtmlElement, |def| {
     reflect_url!(def, "src", "src");
     reflect_bool!(def, "autoplay", "autoplay");
     reflect_bool!(def, "loop", "loop");
     reflect_bool!(def, "controls", "controls");
-    reflect_bool!(def, "muted", "muted");
     reflect_bool!(def, "defaultMuted", "muted");
     reflect_cors!(def, "crossOrigin", "crossorigin");
     reflect_enum!(def, "loading", "loading", LOADING);
@@ -2512,16 +2527,7 @@ simple_class!(HtmlMediaElement, "HTMLMediaElement", HtmlElement, |def| {
         },
         |_s, n, v| set_attr(n, "preload", &dom_string(v)?),
     );
-    def.getter("paused", |s, _n| Ok(s.boolean(true)));
-    def.getter("currentTime", |s, _n| Ok(s.number(0.0)));
-    def.getter("duration", |s, _n| Ok(s.number(f64::NAN)));
-    def.getter("readyState", |s, _n| Ok(s.number(0.0)));
-    def.method("play", 0, |s, _n, _a| {
-        s.eval("Promise.reject(new DOMException('Media playback is not supported', 'NotSupportedError'))", None, 1)
-    });
-    def.method("pause", 0, |s, _n, _a| Ok(s.undefined()));
-    def.method("load", 0, |s, _n, _a| Ok(s.undefined()));
-    def.method("canPlayType", 1, |s, _n, _a| Ok(s.string("")));
+    crate::media::define(def);
 });
 simple_class!(HtmlVideoElement, "HTMLVideoElement", HtmlMediaElement, |def| {
     reflect_ulong!(def, "width", "width", 0);
