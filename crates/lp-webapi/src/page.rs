@@ -151,6 +151,9 @@ pub struct PageDom {
     pub(crate) reflected_url_base: RefCell<Option<crate::html::ReflectedUrlBase>>,
     hooks: RefCell<Option<Rc<dyn PageHooks>>>,
     ready: RefCell<FxHashMap<NodeId, &'static str>>,
+    /// HTML "visibility state" of the document is "hidden": set as it is
+    /// unloaded (`lifecycle::unload`).
+    hidden: Cell<bool>,
     pub(crate) focus_values: RefCell<FxHashMap<NodeId, String>>,
     pub(crate) focus_transition: RefCell<Option<FocusTransition>>,
     pub(crate) editing_target: Cell<Option<NodeId>>,
@@ -501,6 +504,7 @@ impl PageDom {
             reflected_url_base: RefCell::new(None),
             hooks: RefCell::new(None),
             ready: RefCell::new(FxHashMap::default()),
+            hidden: Cell::new(false),
             focus_values: RefCell::new(FxHashMap::default()),
             focus_transition: RefCell::new(None),
             editing_target: Cell::new(None),
@@ -1315,6 +1319,14 @@ impl PageDom {
     }
     pub fn ready_state(&self, doc: NodeId) -> &'static str {
         self.ready.borrow().get(&doc).copied().unwrap_or("complete")
+    }
+
+    /// `document.visibilityState` is "hidden" (`document.hidden`).
+    pub fn is_hidden(&self) -> bool {
+        self.hidden.get()
+    }
+    pub(crate) fn set_hidden(&self, hidden: bool) {
+        self.hidden.set(hidden);
     }
 
     pub(crate) fn remember_focus_value(&self, el: NodeId) {

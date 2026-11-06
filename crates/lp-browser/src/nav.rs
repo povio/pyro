@@ -85,6 +85,9 @@ pub struct PageNav {
     state: RefCell<NavState>,
     /// Current document in the page's DOM (keeps `document.URL` in sync).
     document: RefCell<Option<(DomRef, NodeId)>>,
+    /// The current document's bindings: the target of the `popstate` a
+    /// fragment navigation fires synchronously.
+    page_dom: RefCell<std::rc::Weak<lp_webapi::PageDom>>,
     time_origin: Cell<Instant>,
     /// When the current document first had a rendering opportunity
     /// (`now_ms`): its Paint Timing entries.
@@ -117,6 +120,7 @@ impl PageNav {
                 stops: 0,
             }),
             document: RefCell::new(None),
+            page_dom: RefCell::new(std::rc::Weak::new()),
             time_origin: Cell::new(crate::clock::now()),
             first_paint: Cell::new(None),
         })
@@ -238,6 +242,45 @@ impl PageNav {
 
     pub(crate) fn set_document(&self, document: Option<(DomRef, NodeId)>) {
         *self.document.borrow_mut() = document;
+    }
+
+    /// The bindings of the document [`PageNav::commit_document`] recorded.
+    pub(crate) fn set_page_dom(&self, page: &Rc<lp_webapi::PageDom>) {
+        *self.page_dom.borrow_mut() = Rc::downgrade(page);
+    }
+
+    /// HTML "update document for history step application" for a fragment
+    /// navigation: `popstate` (state null) at the window right away, before
+    /// the queued `hashchange`. Dispatch runs script, so when the DOM is
+    /// borrowed (never the case for a binding call) it moves to a task. A
+    /// window without listeners pays one lookup.
+    fn fire_fragment_popstate(&self) {
+        let Some(page) = self.page_dom.borrow().upgrade() else { return };
+        if page.is_disposed() || page.scripting_disabled() {
+            return;
+        }
+        let Some(window) = page.window_target() else { return };
+        match page.dom.try_borrow() {
+            Ok(dom) if !dom.has_listeners(window) => return,
+            Ok(_) => {}
+            Err(_) => {
+                let weak = Rc::downgrade(&page);
+                let document = self.state.borrow().doc_seq;
+                let frame_id = self.frame_id.clone();
+                let page_id = self.page;
+                self.sched.post(TaskSource::Navigation, move |b| {
+                    let Some(key) = b.page(page_id).and_then(|p| p.frames.key(&frame_id)) else { return };
+                    if !b.doc(key).is_some_and(|p| p.nav.state.borrow().doc_seq == document) {
+                        return;
+                    }
+                    if let Some(page) = weak.upgrade() {
+                        lp_webapi::lifecycle::popstate(&page, None);
+                    }
+                });
+                return;
+            }
+        }
+        lp_webapi::lifecycle::popstate(&page, None);
     }
 
     fn set_url_sync(&self, url: &str) {
@@ -382,6 +425,7 @@ impl PageNav {
         }
         let kind = if current == target { SameDocumentKind::Replace } else { SameDocumentKind::Fragment };
         self.same_document(target.as_str(), None, kind);
+        self.fire_fragment_popstate();
         self.queue_hashchange(current.as_str(), target.as_str());
         true
     }
@@ -561,8 +605,10 @@ fn assign(nav: &PageNav, input: Value<'_>, replace: bool) -> JsResult<()> {
     let current = Url::parse(&nav.url()).ok();
     match current {
         Some(cur) if target.fragment().is_some() && same_document_except_fragment(&cur, &target) => {
-            let kind = if replace { SameDocumentKind::Replace } else { SameDocumentKind::Fragment };
+            // HTML "navigate": the document's own URL is a replace.
+            let kind = if replace || cur == target { SameDocumentKind::Replace } else { SameDocumentKind::Fragment };
             nav.same_document(target.as_str(), None, kind);
+            nav.fire_fragment_popstate();
             nav.queue_hashchange(cur.as_str(), target.as_str());
         }
         _ => nav.navigate(target.to_string(), if replace { HistoryHandling::Replace } else { HistoryHandling::Push }),
@@ -572,6 +618,16 @@ fn assign(nav: &PageNav, input: Value<'_>, replace: bool) -> JsResult<()> {
 
 fn url_part(nav: &PageNav, f: impl Fn(&Url) -> String) -> String {
     Url::parse(&nav.url()).map(|u| f(&u)).unwrap_or_default()
+}
+
+/// A Location setter: `change` edits a copy of the URL and says whether to
+/// navigate to it (HTML "Location-object navigate").
+fn set_url_part(s: &Scope<'_>, nav: &PageNav, change: impl FnOnce(&mut Url) -> JsResult<bool>) -> JsResult<()> {
+    let mut url = Url::parse(&nav.url()).map_err(|_| JsError::Type("invalid current URL".into()))?;
+    if change(&mut url)? {
+        assign(nav, s.string(url.as_str()), false)?;
+    }
+    Ok(())
 }
 
 pub struct Location;
@@ -604,23 +660,97 @@ impl JsClass for Location {
                 url::Origin::Opaque(_) => "null".into(),
             })))
         });
-        def.getter("protocol", |s, n| Ok(s.string(&url_part(n, |u| format!("{}:", u.scheme())))));
-        def.getter("host", |s, n| {
-            Ok(s.string(&url_part(n, |u| match (u.host_str(), u.port()) {
-                (Some(h), Some(p)) => format!("{h}:{p}"),
-                (Some(h), None) => h.to_string(),
-                _ => String::new(),
-            })))
-        });
-        def.getter("hostname", |s, n| Ok(s.string(&url_part(n, |u| u.host_str().unwrap_or("").to_string()))));
-        def.getter("port", |s, n| Ok(s.string(&url_part(n, |u| u.port().map(|p| p.to_string()).unwrap_or_default()))));
-        def.getter("pathname", |s, n| Ok(s.string(&url_part(n, |u| u.path().to_string()))));
-        def.getter("search", |s, n| {
-            Ok(s.string(&url_part(n, |u| match u.query() {
-                Some(q) if !q.is_empty() => format!("?{q}"),
-                _ => String::new(),
-            })))
-        });
+        def.accessor(
+            "protocol",
+            |s, n| Ok(s.string(&url_part(n, |u| format!("{}:", u.scheme())))),
+            |s, n, v| {
+                let value = v.to_string()?;
+                set_url_part(s, n, |u| {
+                    // URL "scheme state" with a state override: tabs and
+                    // newlines are dropped, everything from the first `:` on
+                    // is ignored, and anything else that is no scheme fails.
+                    let value: String = value.chars().filter(|c| !matches!(c, '\t' | '\n' | '\r')).collect();
+                    let scheme = value.split(':').next().unwrap_or("");
+                    let mut chars = scheme.chars();
+                    let valid = chars.next().is_some_and(|c| c.is_ascii_alphabetic())
+                        && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'));
+                    if !valid {
+                        return Err(JsError::dom("SyntaxError", format!("'{value}' is an invalid protocol.")));
+                    }
+                    // A switch between special and other schemes leaves the
+                    // URL as it was, as the URL parser does.
+                    let _ = u.set_scheme(&scheme.to_ascii_lowercase());
+                    // Only HTTP(S) navigates.
+                    Ok(matches!(u.scheme(), "http" | "https"))
+                })
+            },
+        );
+        def.accessor(
+            "host",
+            |s, n| {
+                Ok(s.string(&url_part(n, |u| match (u.host_str(), u.port()) {
+                    (Some(h), Some(p)) => format!("{h}:{p}"),
+                    (Some(h), None) => h.to_string(),
+                    _ => String::new(),
+                })))
+            },
+            |s, n, v| {
+                let value = v.to_string()?;
+                set_url_part(s, n, |u| Ok(!u.cannot_be_a_base() && url::quirks::set_host(u, &value).is_ok()))
+            },
+        );
+        def.accessor(
+            "hostname",
+            |s, n| Ok(s.string(&url_part(n, |u| u.host_str().unwrap_or("").to_string()))),
+            |s, n, v| {
+                let value = v.to_string()?;
+                set_url_part(s, n, |u| Ok(!u.cannot_be_a_base() && url::quirks::set_hostname(u, &value).is_ok()))
+            },
+        );
+        def.accessor(
+            "port",
+            |s, n| Ok(s.string(&url_part(n, |u| u.port().map(|p| p.to_string()).unwrap_or_default()))),
+            |s, n, v| {
+                let value = v.to_string()?;
+                set_url_part(s, n, |u| {
+                    // A URL that cannot have a port (no host, `file:`) is left alone.
+                    if u.host_str().is_none_or(str::is_empty) || u.scheme() == "file" {
+                        return Ok(false);
+                    }
+                    Ok(url::quirks::set_port(u, &value).is_ok())
+                })
+            },
+        );
+        def.accessor(
+            "pathname",
+            |s, n| Ok(s.string(&url_part(n, |u| u.path().to_string()))),
+            |s, n, v| {
+                let value = v.to_string()?;
+                set_url_part(s, n, |u| {
+                    if u.cannot_be_a_base() {
+                        return Ok(false);
+                    }
+                    url::quirks::set_pathname(u, &value);
+                    Ok(true)
+                })
+            },
+        );
+        def.accessor(
+            "search",
+            |s, n| {
+                Ok(s.string(&url_part(n, |u| match u.query() {
+                    Some(q) if !q.is_empty() => format!("?{q}"),
+                    _ => String::new(),
+                })))
+            },
+            |s, n, v| {
+                let value = v.to_string()?;
+                set_url_part(s, n, |u| {
+                    url::quirks::set_search(u, &value);
+                    Ok(true)
+                })
+            },
+        );
         def.accessor(
             "hash",
             |s, n| {
@@ -632,7 +762,13 @@ impl JsClass for Location {
             |s, n, v| {
                 let mut u = Url::parse(&n.url()).map_err(|_| JsError::Type("invalid current URL".into()))?;
                 let h = v.to_string()?;
+                let current = u.fragment().unwrap_or("").to_owned();
                 u.set_fragment(Some(h.strip_prefix('#').unwrap_or(&h)));
+                // The same fragment (no fragment counts as an empty one, as
+                // in Chrome) navigates nowhere: no event, no history entry.
+                if u.fragment() == Some(current.as_str()) {
+                    return Ok(());
+                }
                 assign(n, s.string(u.as_str()), false)
             },
         );
@@ -1002,7 +1138,12 @@ fn measure<'s>(s: &Scope<'s>, p: &PerformanceData, a: &lp_js::Args<'s>) -> JsRes
         detail: clone_detail(s, detail)?,
     };
     let object = s.wrap::<PerformanceMeasure>(data, None)?.value();
-    p.user_entries.borrow_mut().push(UserEntry { name, mark: false, start: start_time, object: Persistent::new(s, object) });
+    p.user_entries.borrow_mut().push(UserEntry {
+        name,
+        mark: false,
+        start: start_time,
+        object: Persistent::new(s, object),
+    });
     Ok(object)
 }
 

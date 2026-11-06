@@ -1558,8 +1558,8 @@ impl JsClass for Document {
         def.getter("inputEncoding", |s, n| Ok(s.string(n.page().dom.borrow().document_data(n.id).js()?.charset)));
         def.getter("contentType", |s, n| Ok(s.string(&n.page().dom.borrow().document_data(n.id).js()?.content_type)));
         def.getter("readyState", |s, n| Ok(s.string(crate::html::ready_state(n.page(), n.id))));
-        def.getter("visibilityState", |s, _n| Ok(s.string("visible")));
-        def.getter("hidden", |s, _n| Ok(s.boolean(false)));
+        def.getter("visibilityState", |s, n| Ok(s.string(if n.page().is_hidden() { "hidden" } else { "visible" })));
+        def.getter("hidden", |s, n| Ok(s.boolean(n.page().is_hidden())));
         def.getter("defaultView", |s, n| Ok(if n.page().document() == n.id { s.global().value() } else { s.null() }));
         def.getter("activeElement", |s, n| {
             let dom = n.page().dom.borrow();

@@ -75,6 +75,42 @@ pub fn before_unload(page: &Rc<PageDom>) -> bool {
     canceled || asked
 }
 
+/// HTML "unload" of a document being navigated away from or closed, as
+/// Chrome runs it (no back/forward cache): `pagehide` (persisted false) at
+/// the Window, the visibility state becomes "hidden" with
+/// `visibilitychange` at the document (bubbling to the Window), then
+/// `unload` at the Window. Runs once per document. Documents without
+/// listeners for any of them only get the flag set: no event is made.
+/// The embedder calls it for a navigable's descendants first, and keeps
+/// the network running afterwards, so keepalive requests made by the
+/// listeners (`sendBeacon`, `fetch(.., {keepalive})`) go out.
+pub fn unload(page: &Rc<PageDom>) {
+    if page.is_disposed() || page.is_hidden() {
+        return;
+    }
+    let window = page.window_target().filter(|_| !page.scripting_disabled());
+    let Some(window) = window else { return page.set_hidden(true) };
+    let doc = page.document();
+    let listens = |page: &PageDom| match page.dom.try_borrow() {
+        Ok(dom) => (dom.has_listeners(window), dom.node_key(doc).is_some_and(|key| dom.has_listeners(key))),
+        Err(_) => (false, false),
+    };
+    if listens(page).0 {
+        let ev = EventCore::trusted(page, EventInterface::PageTransitionEvent, "pagehide", false, false);
+        fire(page, window, &ev);
+    }
+    page.set_hidden(true);
+    let (window_listens, document_listens) = listens(page);
+    if document_listens || window_listens {
+        crate::input::fire_simple(page, doc, "visibilitychange", true, false);
+    }
+    // A listener may have added an `unload` one: look again.
+    if page.dom.try_borrow().is_ok_and(|dom| dom.has_listeners(window)) {
+        let ev = EventCore::trusted(page, EventInterface::Event, "unload", false, false);
+        fire(page, window, &ev);
+    }
+}
+
 fn window_key(page: &PageDom, _doc: NodeId) -> Option<lp_dom::events::TargetKey> {
     page.window_target()
 }
