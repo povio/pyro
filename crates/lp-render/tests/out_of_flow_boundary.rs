@@ -273,6 +273,31 @@ fn content_dependent_static_positions_and_span_containing_blocks() {
 }
 
 #[test]
+fn an_inline_root_claiming_for_a_positioned_span_elsewhere_in_it() {
+    // An inline root with a positioned span holding an inline box claims
+    // every out-of-flow box of its subtree (`SPAN_*_CB` in its layout style),
+    // also one outside the span, whose DOM ancestors are none of them
+    // positioned. That box is relaid by the inline root's out-of-flow pass,
+    // which runs only inside the inline root's own layout.
+    let cases: Vec<(&str, String)> = vec![
+        ("abspos sibling of the span, p", r#"<style>body{margin:0;font:14px sans-serif} .r{position:relative} .ib{display:inline-block} #m{position:absolute;top:20px;left:0}</style><p>text <span class=r>s <span class=ib>ib</span></span> more <b id=m><i id=first>measured</i></b></p>"#.into()),
+        ("abspos sibling of the span, anonymous root", r#"<style>body{margin:0;font:14px sans-serif} .r{position:relative} .ib{display:inline-block} #m{position:absolute;top:20px;left:0}</style><div>text <span class=r>s <span class=ib>ib</span></span> more <b id=m><i id=first>measured</i></b><div>block</div></div>"#.into()),
+        ("abspos in another span, anonymous root", r#"<style>body{margin:0;font:14px sans-serif} .r{position:relative} .ib{display:inline-block} #m{position:absolute;top:20px;left:0}</style><div>text <span class=r>s <span class=ib>ib</span></span> more <span>in <b id=m><i id=first>measured</i></b></span><div>block</div></div>"#.into()),
+        ("fixed sibling of a filtered span, p", r#"<style>body{margin:0;font:14px sans-serif} .r{filter:blur(0)} .ib{display:inline-block} #m{position:fixed;top:20px;left:0}</style><p>text <span class=r>s <span class=ib>ib</span></span> more <b id=m><i id=first>measured</i></b></p>"#.into()),
+    ];
+    for (what, html) in &cases {
+        let html = format!("<!doctype html>{html}");
+        check(&format!("{what}: text edited"), &html, &|p| {
+            let t = p.text("#first");
+            p.dom.borrow_mut().replace_data(t, 0, 8, "measured again, and much wider than before").unwrap();
+        });
+        check(&format!("{what}: paragraph appended"), &html, &|p| {
+            append_paragraph(p, "#m", "a far longer paragraph which wraps over more than one line of the box");
+        });
+    }
+}
+
+#[test]
 fn an_ancestor_becoming_or_ceasing_to_be_a_containing_block() {
     for (what, css, class) in [
         (
