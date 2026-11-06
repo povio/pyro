@@ -442,6 +442,7 @@ impl FrameHost {
         let result = (|| {
             let dom = bindings::create(self, key, "about:blank", &lid)?;
             nav.commit_document("about:blank", HistoryHandling::Replace, Some((self.dom.clone(), dom.document())));
+            nav.set_page_dom(&dom);
             {
                 let mut children = self.children.borrow_mut();
                 let child = children.get_mut(&id).ok_or(JsError::ContextDestroyed)?;

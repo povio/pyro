@@ -47,6 +47,13 @@ implement `new Worker(url)`. A worker runs its script off the page's thread.
   at construction). Non-2xx or a failed load fires a plain `error` Event at the
   `Worker`. The MIME type is not checked. Requests carry the owner's frame id and
   no loader id: they appear on the owner's page and do not delay its network idle.
+- **Modules.** `new Worker(url, {type: 'module'})` evaluates the script as a module:
+  static imports, top-level `await` and `import.meta.url`. Every worker's realm has
+  a module fetcher, so `import()` works in classic workers too. Each module is
+  fetched in a task of the worker's loop the way `importScripts` fetches (CORS mode,
+  `blob:` URLs of the worker's own store). A module that fails to load or throws at
+  its top level reports the error (`error` at the `Worker`). `importScripts` throws
+  TypeError in a module worker.
 - **Messages.** `postMessage` validates and copies with the realm's original
   `structuredClone`, then encodes the copy to text plus ArrayBuffer bytes
   (`worker_wire.js`), which cross as a task of the other side's event loop and
@@ -97,8 +104,9 @@ times out.
 
 ## Not supported
 
-- `new Worker(url, {type: 'module'})` throws NotSupportedError. `import()` in a worker
-  rejects, since no module loader is installed there.
+- Module workers have no import maps of their own, and `import.meta.resolve` follows
+  the engine. Without the engine's module loader (system JavaScriptCore),
+  `{type: 'module'}` throws NotSupportedError.
 - `SharedWorker` and `ServiceWorker` stay undefined, as does `navigator.serviceWorker`:
   `typeof` feature detection is what sites use, and a constructor that throws would
   send them down a path that then fails.

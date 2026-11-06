@@ -154,6 +154,12 @@ pub struct PageDom {
     pub(crate) reflected_url_base: RefCell<Option<crate::html::ReflectedUrlBase>>,
     hooks: RefCell<Option<Rc<dyn PageHooks>>>,
     ready: RefCell<FxHashMap<NodeId, &'static str>>,
+    /// HTML "visibility state" of the document is "hidden": set as it is
+    /// unloaded (`lifecycle::unload`).
+    hidden: Cell<bool>,
+    /// Navigation Timing of the document, recorded as the lifecycle steps
+    /// run (`lifecycle`).
+    timing: Cell<DocumentTiming>,
     pub(crate) focus_values: RefCell<FxHashMap<NodeId, String>>,
     pub(crate) focus_transition: RefCell<Option<FocusTransition>>,
     pub(crate) editing_target: Cell<Option<NodeId>>,
@@ -244,6 +250,18 @@ pub struct PageDom {
 /// Computes a child frame's viewport from its iframe; `None`: unknown yet,
 /// keep the current one.
 pub type FrameViewportSource = Rc<dyn Fn() -> Option<lp_dom::media::Viewport>>;
+
+/// Navigation Timing marks of a document, in the event clock's
+/// milliseconds (`performance.now()`); `None` until the step ran.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct DocumentTiming {
+    pub dom_interactive: Option<f64>,
+    pub dom_content_loaded_start: Option<f64>,
+    pub dom_content_loaded_end: Option<f64>,
+    pub dom_complete: Option<f64>,
+    pub load_start: Option<f64>,
+    pub load_end: Option<f64>,
+}
 
 /// A navigation requested by the document (link activation, form
 /// submission, `location` assignment is lp-browser's own).
@@ -519,6 +537,8 @@ impl PageDom {
             reflected_url_base: RefCell::new(None),
             hooks: RefCell::new(None),
             ready: RefCell::new(FxHashMap::default()),
+            hidden: Cell::new(false),
+            timing: Cell::new(DocumentTiming::default()),
             focus_values: RefCell::new(FxHashMap::default()),
             focus_transition: RefCell::new(None),
             editing_target: Cell::new(None),
@@ -1348,6 +1368,29 @@ impl PageDom {
     }
     pub fn ready_state(&self, doc: NodeId) -> &'static str {
         self.ready.borrow().get(&doc).copied().unwrap_or("complete")
+    }
+
+    /// `document.visibilityState` is "hidden" (`document.hidden`).
+    pub fn is_hidden(&self) -> bool {
+        self.hidden.get()
+    }
+    pub(crate) fn set_hidden(&self, hidden: bool) {
+        self.hidden.set(hidden);
+    }
+
+    /// The document's Navigation Timing marks so far.
+    pub fn timing(&self) -> DocumentTiming {
+        self.timing.get()
+    }
+    /// Records `mark` at the event clock's current time (once per document).
+    pub(crate) fn note_timing(&self, mark: fn(&mut DocumentTiming) -> &mut Option<f64>) {
+        let Some(now) = self.event_time() else { return };
+        let mut timing = self.timing.get();
+        let slot = mark(&mut timing);
+        if slot.is_none() {
+            *slot = Some(now);
+            self.timing.set(timing);
+        }
     }
 
     pub(crate) fn remember_focus_value(&self, el: NodeId) {

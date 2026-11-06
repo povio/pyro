@@ -390,12 +390,15 @@ impl JsClass for Worker {
             }
             let input = dom_string(a.get(0))?;
             let mut name = String::new();
+            let mut module = false;
             let options = a.get(1);
             if let Some(options) = options.as_object() {
                 let kind = options.get_atom("type")?;
                 if !kind.is_undefined() {
                     match dom_string(kind)?.as_str() {
                         "classic" => {}
+                        // Needs the engine's module loader.
+                        "module" if lp_js::Capabilities::detect().modules => module = true,
                         "module" => {
                             return Err(JsError::dom(
                                 "NotSupportedError",
@@ -436,7 +439,10 @@ impl JsClass for Worker {
                 down_bytes: AtomicUsize::new(0),
                 up_bytes: AtomicUsize::new(0),
             });
-            let start = WorkerStart::new(id, &page, s, url, name, shared.clone());
+            let start = WorkerStart::new(id, &page, s, url, name, shared.clone()).map(|mut start| {
+                start.module = module;
+                start
+            });
             let full = page.workers.borrow().len() >= MAX_WORKERS_PER_DOCUMENT
                 || LIVE.with(|live| live.borrow().len()) >= MAX_WORKERS_PER_THREAD;
             let inner = Rc::new(WorkerInner {

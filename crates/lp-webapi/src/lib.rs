@@ -97,7 +97,7 @@ pub use identity::UserAgentOverride;
 pub use navigator_extras::{ContextServices, GeolocationFix, PermissionSetting, UserAgentMetadata};
 pub use node::{wrap_node, NodeData};
 pub use page::{
-    DialogAnswer, DownloadRequest, FocusTarget, FocusTransition, FrameViewportSource, IframeAttribute,
+    DialogAnswer, DocumentTiming, DownloadRequest, FocusTarget, FocusTransition, FrameViewportSource, IframeAttribute,
     NavigationRequest, PageDom, PageHooks, RemotePoster,
 };
 pub use popup::{PopupCommand, PopupState, PopupTicket};

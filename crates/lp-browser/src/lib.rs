@@ -627,6 +627,10 @@ impl BrowserThread {
         engine.register::<nav::PerformancePaintTiming>();
         engine.register::<nav::PerformanceMark>();
         engine.register::<nav::PerformanceMeasure>();
+        engine.register::<nav::PerformanceResourceTiming>();
+        engine.register::<nav::PerformanceNavigationTiming>();
+        engine.register::<nav::PerformanceTiming>();
+        engine.register::<nav::PerformanceNavigation>();
         let event_loop = EventLoop::new();
         // The system JavaScriptCore binds this VM's timers to this thread's
         // run loop; the loop services it at a bounded interval for the VM's
@@ -1309,6 +1313,27 @@ impl Browser {
         self.navigate_with_history(page, opts, false)
     }
 
+    /// HTML "unload a document and its descendants" for the active document
+    /// of `frame`: its child frames' documents first, then its own
+    /// (`lp_webapi::lifecycle::unload`). A frame tree without listeners
+    /// costs a walk over its frames.
+    fn unload_documents(&mut self, frame: FrameKey) {
+        let Some(host) = self.page(frame.page).map(|p| p.frames.clone()) else { return };
+        fn collect(b: &Browser, host: &frames::FrameHost, key: FrameKey, out: &mut Vec<Rc<lp_webapi::PageDom>>) {
+            for child in host.child_keys(key) {
+                collect(b, host, child, out);
+            }
+            if let Some(dom) = b.doc(key).and_then(|d| d.main_frame.page_dom.clone()) {
+                out.push(dom);
+            }
+        }
+        let mut documents = Vec::new();
+        collect(self, &host, frame, &mut documents);
+        for dom in documents {
+            lp_webapi::lifecycle::unload(&dom);
+        }
+    }
+
     /// Replaces the frame's realms with fresh ones for the new document, runs
     /// init scripts, then emits `FrameNavigated`.
     pub(crate) fn commit_document(
@@ -1319,6 +1344,8 @@ impl Browser {
         origin: &str,
         history: HistoryHandling,
     ) -> Result<(), JsError> {
+        // The document being replaced (and its frames) unloads first.
+        self.unload_documents(page);
         let host = self.page(page.page).ok_or(JsError::ContextDestroyed)?.frames.clone();
         self.cancel_pending_document(page);
         host.invalidate_focus(page, false);
@@ -1417,6 +1444,7 @@ impl Browser {
             p.main_frame.loader_id = loader_id.clone();
             p.nav.commit_document(&opts.url, history, None);
             p.nav.set_document(Some((page_dom.dom.clone(), page_dom.document())));
+            p.nav.set_page_dom(&page_dom);
             (p.main_frame.id.clone(), old, scripts.clone(), p.nav.clone(), (old_dom, replaced))
         };
         let (old_dom, replaced) = old_dom;
@@ -1491,8 +1519,18 @@ impl Browser {
         self.isolated_world_in_frame(page, &frame, name)
     }
 
-    /// Closes a page, disposing its realms and cancelling timers.
+    /// Closes a page, disposing its realms and cancelling timers. Its
+    /// documents unload first (`pagehide`, `visibilitychange`, `unload`), as
+    /// a tab Chrome closes.
     pub fn close_page(&mut self, page: PageId) -> bool {
+        if self.page_index(page).is_none() {
+            return false;
+        }
+        self.unload_documents(page.into());
+        self.dispose_page(page)
+    }
+
+    fn dispose_page(&mut self, page: PageId) -> bool {
         let Some(pos) = self.page_index(page) else { return false };
         self.cancel_pending_document(page.into());
         let host = self.pages[pos].frames.clone();
@@ -1522,11 +1560,11 @@ impl Browser {
         true
     }
 
-    /// Disposes every page (connection teardown).
+    /// Disposes every page (connection teardown): no script runs.
     pub fn close_all(&mut self) {
         let ids: Vec<PageId> = self.pages.iter().map(|p| p.id).collect();
         for id in ids {
-            self.close_page(id);
+            self.dispose_page(id);
         }
         frames::drop_spare_realm();
         self.engine.drain_finalized();

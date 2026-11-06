@@ -2727,7 +2727,8 @@ fn navigation_history_traverses_same_document_entries_with_popstate() {
         location.hash = 'x';"#,
     );
     h.run_for(50);
-    assert_eq!(eval_value(&mut h, "seen"), json!([["hashchange", "", "#x"]]));
+    // A fragment navigation fires popstate (state null) before hashchange, as Chrome does.
+    assert_eq!(eval_value(&mut h, "seen"), json!([["popstate", "/two#x", null], ["hashchange", "", "#x"]]));
     let (index, entries) = history(&mut h);
     let urls: Vec<_> = entries.iter().map(|(_, u)| u.as_str()).collect();
     let base = format!("http://{address}");
@@ -2746,7 +2747,7 @@ fn navigation_history_traverses_same_document_entries_with_popstate() {
     let within = position(&messages, "navigatedWithinDocument", |m| m["method"] == "Page.navigatedWithinDocument");
     assert_eq!(messages[within]["params"]["url"], format!("{base}/one"));
     assert!(!messages.iter().any(|m| m["method"] == "Page.frameNavigated"), "same-document: {messages:#?}");
-    assert_eq!(eval_value(&mut h, "seen.slice(1)"), json!([["popstate", "/one", {"n": 1}]]));
+    assert_eq!(eval_value(&mut h, "seen.slice(2)"), json!([["popstate", "/one", {"n": 1}]]));
     assert_eq!(history(&mut h).0, 1);
 
     // Forward to the fragment entry of the same pushState entry: popstate (no
@@ -2759,11 +2760,11 @@ fn navigation_history_traverses_same_document_entries_with_popstate() {
     let frame = h.page("Page.getFrameTree", json!({}));
     assert_eq!(frame["result"]["frameTree"]["frame"]["url"], format!("{base}/two#x"));
     // /one -> /two#x is not a fragment-only change: no hashchange.
-    assert_eq!(eval_value(&mut h, "seen.slice(2)"), json!([["popstate", "/two#x", null]]));
+    assert_eq!(eval_value(&mut h, "seen.slice(3)"), json!([["popstate", "/two#x", null]]));
     // history.back() over a fragment entry fires both events.
     eval_value(&mut h, "history.back()");
     h.run_for(50);
-    assert_eq!(eval_value(&mut h, "seen.slice(3)"), json!([["popstate", "/two", {"n": 2}], ["hashchange", "#x", ""]]));
+    assert_eq!(eval_value(&mut h, "seen.slice(4)"), json!([["popstate", "/two", {"n": 2}], ["hashchange", "#x", ""]]));
 }
 
 /// Cross-document traversal re-fetches the entry (no bfcache) and commits as an

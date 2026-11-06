@@ -1,5 +1,5 @@
 //! `navigator.userAgentData`, `navigator.permissions`, `navigator.clipboard`,
-//! `navigator.geolocation` and `ClipboardItem`. Their classes are made in JS (navigator_extras.js) on
+//! `navigator.geolocation`, `ClipboardItem` and `Notification`. Their classes are made in JS (navigator_extras.js) on
 //! a realm's first use of any of them, so realms that never touch them pay
 //! nothing. Permissions and the clipboard belong to the browser context
 //! ([`ContextServices`], shared by its pages); client hints come from the

@@ -52,6 +52,11 @@ struct Entry {
     /// Unique within the page; identifies the entry to automation clients
     /// (CDP `NavigationEntry.id`).
     id: u64,
+    /// Navigation API key: the history slot, kept when the entry is
+    /// replaced.
+    key: u64,
+    /// Navigation API state (`JSON.stringify`; `None` = undefined).
+    nav_state: Option<String>,
 }
 
 /// A session-history entry as reported to automation clients.
@@ -103,10 +108,36 @@ pub struct PageNav {
     state: RefCell<NavState>,
     /// Current document in the page's DOM (keeps `document.URL` in sync).
     document: RefCell<Option<(DomRef, NodeId)>>,
+    /// The current document's bindings: the target of the `popstate` a
+    /// fragment navigation fires synchronously.
+    page_dom: RefCell<std::rc::Weak<lp_webapi::PageDom>>,
     time_origin: Cell<Instant>,
     /// When the current document first had a rendering opportunity
     /// (`now_ms`): its Paint Timing entries.
     first_paint: Cell<Option<f64>>,
+    /// `PerformanceNavigationTiming.type` of the current document.
+    nav_type: Cell<&'static str>,
+    /// The realms with a PerformanceObserver (performance_observer.js) and
+    /// the function each queues new timeline entries with. Empty unless a
+    /// page observes, which is all the timeline costs otherwise.
+    timeline_watchers: RefCell<Vec<(lp_js::RealmId, lp_js::WeakRealm, Rc<Persistent>)>>,
+    /// The realms with a `navigation` object (navigation.js) and the hook
+    /// each fires the Navigation API's events with. Empty unless a page
+    /// reads `navigation`, which is all navigations cost otherwise.
+    navigation_hooks: RefCell<Vec<(lp_js::RealmId, lp_js::WeakRealm, Rc<Persistent>)>>,
+    /// A navigation that navigation.js started (and fired `navigate` for)
+    /// is running: the native paths fire no event of their own.
+    navigation_api_call: Cell<bool>,
+}
+
+/// What the listeners of a Navigation API `navigate` event decided.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum NavigateDecision {
+    Proceed,
+    /// `preventDefault()`: the navigation does not happen.
+    Cancel,
+    /// `intercept()`: the navigation becomes a same-document one.
+    Intercept,
 }
 
 impl PageNav {
@@ -135,8 +166,13 @@ impl PageNav {
                 stops: 0,
             }),
             document: RefCell::new(None),
+            page_dom: RefCell::new(std::rc::Weak::new()),
             time_origin: Cell::new(crate::clock::now()),
             first_paint: Cell::new(None),
+            nav_type: Cell::new("navigate"),
+            timeline_watchers: RefCell::new(Vec::new()),
+            navigation_hooks: RefCell::new(Vec::new()),
+            navigation_api_call: Cell::new(false),
         })
     }
 
@@ -207,10 +243,15 @@ impl PageNav {
         let mut st = self.state.borrow_mut();
         st.doc_seq += 1;
         let id = st.next_entry_id();
-        let entry = Entry { url: url.to_string(), state: None, doc: st.doc_seq, id };
         // A push to the current entry's URL replaces it (HTML navigate step:
         // "url equals the active document's URL" -> replace).
         let same_url = st.entries.get(st.index).is_some_and(|e| e.url == url);
+        let replaces = matches!(history, HistoryHandling::Replace) || same_url;
+        let key = match st.entries.get(st.index) {
+            Some(current) if replaces => current.key,
+            _ => st.next_entry_id(),
+        };
+        let entry = Entry { url: url.to_string(), state: None, doc: st.doc_seq, id, key, nav_state: None };
         let initial = std::mem::take(&mut st.initial);
         st.first_blank = false;
         match history {
@@ -250,12 +291,61 @@ impl PageNav {
         st.url = url.to_string();
         drop(st);
         *self.document.borrow_mut() = document;
+        // The previous document's realms are disposed with it: drop their
+        // hooks now, so a frame whose later documents never fire an event
+        // does not keep their globals protected.
+        self.timeline_watchers.borrow_mut().clear();
+        self.navigation_hooks.borrow_mut().clear();
         self.time_origin.set(crate::clock::now());
         self.first_paint.set(None);
+        self.nav_type.set(match history {
+            HistoryHandling::Reload => "reload",
+            HistoryHandling::Traverse => "back_forward",
+            _ => "navigate",
+        });
     }
 
     pub(crate) fn set_document(&self, document: Option<(DomRef, NodeId)>) {
         *self.document.borrow_mut() = document;
+    }
+
+    /// The bindings of the document [`PageNav::commit_document`] recorded.
+    pub(crate) fn set_page_dom(&self, page: &Rc<lp_webapi::PageDom>) {
+        *self.page_dom.borrow_mut() = Rc::downgrade(page);
+    }
+
+    /// HTML "update document for history step application" for a fragment
+    /// navigation: `popstate` (state null) at the window right away, before
+    /// the queued `hashchange`. Dispatch runs script, so when the DOM is
+    /// borrowed (never the case for a binding call) it moves to a task. A
+    /// window without listeners pays one lookup.
+    fn fire_fragment_popstate(&self) {
+        let Some(page) = self.page_dom.borrow().upgrade() else { return };
+        if page.is_disposed() || page.scripting_disabled() {
+            return;
+        }
+        let Some(window) = page.window_target() else { return };
+        match page.dom.try_borrow() {
+            Ok(dom) if !dom.has_listeners(window) => return,
+            Ok(_) => {}
+            Err(_) => {
+                let weak = Rc::downgrade(&page);
+                let document = self.state.borrow().doc_seq;
+                let frame_id = self.frame_id.clone();
+                let page_id = self.page;
+                self.sched.post(TaskSource::Navigation, move |b| {
+                    let Some(key) = b.page(page_id).and_then(|p| p.frames.key(&frame_id)) else { return };
+                    if !b.doc(key).is_some_and(|p| p.nav.state.borrow().doc_seq == document) {
+                        return;
+                    }
+                    if let Some(page) = weak.upgrade() {
+                        lp_webapi::lifecycle::popstate(&page, None);
+                    }
+                });
+                return;
+            }
+        }
+        lp_webapi::lifecycle::popstate(&page, None);
     }
 
     fn set_url_sync(&self, url: &str) {
@@ -272,7 +362,15 @@ impl PageNav {
             st.state_version += 1;
             let doc = st.entries.get(st.index).map_or(st.doc_seq, |e| e.doc);
             let id = st.next_entry_id();
-            let entry = Entry { url: url.to_string(), state, doc, id };
+            // The Navigation API state carries over (HTML "URL and history
+            // update steps"); a replace keeps the slot's key.
+            let current = st.entries.get(st.index);
+            let nav_state = current.and_then(|e| e.nav_state.clone());
+            let key = match current {
+                Some(e) if kind == SameDocumentKind::Replace => e.key,
+                _ => st.next_entry_id(),
+            };
+            let entry = Entry { url: url.to_string(), state, doc, id, key, nav_state };
             st.initial = false;
             if st.entries.is_empty() {
                 st.entries.push(entry);
@@ -358,6 +456,15 @@ impl PageNav {
         self.sched.post(TaskSource::Navigation, move |b| {
             let Some(page) = b.page(page).and_then(|p| p.frames.key(&frame_id)) else { return };
             let Some(nav) = b.doc(page).map(|p| p.nav.clone()) else { return };
+            if nav.state.borrow().doc_seq == current_doc && nav.state.borrow().entries.get(index) == Some(&entry) {
+                // Only a same-document traversal can be canceled or intercepted.
+                let same = entry.doc == current_doc;
+                if nav.navigate_event_to("traverse", &entry.url, same, Some(entry.key)) == NavigateDecision::Cancel
+                    && same
+                {
+                    return;
+                }
+            }
             {
                 let mut state = nav.state.borrow_mut();
                 // Navigation can replace the document, or pushState can replace
@@ -373,6 +480,7 @@ impl PageNav {
                 let old_url = nav.url();
                 nav.set_url_sync(&entry.url);
                 b.same_document_committed(page, entry.url.clone(), SameDocumentKind::Push);
+                nav.navigation_committed("traverse");
                 b.fire_popstate(page, entry.state.is_some(), &old_url, &entry.url);
             } else {
                 let opts = NavigateOpts {
@@ -400,7 +508,18 @@ impl PageNav {
             return false;
         }
         let kind = if current == target { SameDocumentKind::Replace } else { SameDocumentKind::Fragment };
+        let navigation_type = if kind == SameDocumentKind::Replace { "replace" } else { "push" };
+        match self.navigate_event(navigation_type, target.as_str(), true) {
+            NavigateDecision::Cancel => return true,
+            NavigateDecision::Intercept => {
+                self.commit_intercepted(target.as_str(), navigation_type);
+                return true;
+            }
+            NavigateDecision::Proceed => {}
+        }
         self.same_document(target.as_str(), None, kind);
+        self.navigation_committed(navigation_type);
+        self.fire_fragment_popstate();
         self.queue_hashchange(current.as_str(), target.as_str());
         true
     }
@@ -476,6 +595,167 @@ impl PageNav {
     pub(crate) fn note_first_paint(&self) {
         if self.first_paint.get().is_none() {
             self.first_paint.set(Some(self.now_ms()));
+            self.notify_timeline("paint");
+        }
+    }
+
+    /// The document's entry of `entry_type` (`paint`, `navigation`) is in
+    /// the timeline now: every observing realm looks for it. Nothing runs
+    /// unless a realm observes.
+    pub(crate) fn notify_timeline(&self, entry_type: &'static str) {
+        if self.timeline_watchers.borrow().is_empty() {
+            return;
+        }
+        let watchers: Vec<_> = {
+            let mut watchers = self.timeline_watchers.borrow_mut();
+            watchers.retain(|(_, realm, _)| realm.upgrade().is_some_and(|r| !r.is_disposed()));
+            watchers.iter().map(|(_, realm, f)| (realm.clone(), f.clone())).collect()
+        };
+        for (realm, f) in watchers {
+            let Some(realm) = realm.upgrade() else { continue };
+            let Ok(s) = realm.scope() else { continue };
+            if let Some(f) = f.get(&s).as_object() {
+                if let Err(e) = f.call(None, &[s.string(entry_type)]) {
+                    s.report_exception(&e);
+                }
+            }
+        }
+    }
+
+    /// A mark or measure was added in `s`'s realm: its observers queue it.
+    fn notify_entry<'s>(&self, s: &Scope<'s>, entry_type: &'static str, entry: Value<'s>) -> JsResult<()> {
+        let f = {
+            let watchers = self.timeline_watchers.borrow();
+            if watchers.is_empty() {
+                return Ok(());
+            }
+            let id = s.realm_id();
+            watchers.iter().find(|(realm, ..)| *realm == id).map(|(.., f)| f.clone())
+        };
+        if let Some(f) = f.and_then(|f| f.get(s).as_object()) {
+            f.call(None, &[s.string(entry_type), entry])?;
+        }
+        Ok(())
+    }
+
+    /// The live realms' Navigation API hooks.
+    fn navigation_hooks(&self) -> Vec<(lp_js::WeakRealm, Rc<Persistent>)> {
+        let mut hooks = self.navigation_hooks.borrow_mut();
+        hooks.retain(|(_, realm, _)| realm.upgrade().is_some_and(|r| !r.is_disposed()));
+        hooks.iter().map(|(_, realm, f)| (realm.clone(), f.clone())).collect()
+    }
+
+    /// Navigation API "fire a navigate event" for a navigation to `url` of
+    /// `navigation_type` (push, replace, reload, traverse), at each realm's
+    /// `navigation`. Free unless a realm made one; skipped while the DOM is
+    /// borrowed (listeners run script) and for a navigation navigation.js
+    /// started itself (it fired the event).
+    pub(crate) fn navigate_event(
+        &self,
+        navigation_type: &'static str,
+        url: &str,
+        cancelable: bool,
+    ) -> NavigateDecision {
+        self.navigate_event_to(navigation_type, url, cancelable, None)
+    }
+
+    /// [`PageNav::navigate_event`] for a traversal to the entry with `key`.
+    fn navigate_event_to(
+        &self,
+        navigation_type: &'static str,
+        url: &str,
+        cancelable: bool,
+        key: Option<u64>,
+    ) -> NavigateDecision {
+        if self.navigation_hooks.borrow().is_empty() || self.navigation_api_call.get() {
+            return NavigateDecision::Proceed;
+        }
+        let Some(page) = self.page_dom.borrow().upgrade() else { return NavigateDecision::Proceed };
+        if page.is_disposed() || page.dom.try_borrow_mut().is_err() {
+            return NavigateDecision::Proceed;
+        }
+        let (current, target) = (Url::parse(&self.url()).ok(), Url::parse(url).ok());
+        let (hash_change, can_intercept) = match (&current, &target) {
+            (Some(c), Some(t)) => (
+                t.fragment().is_some() && c.fragment() != t.fragment() && same_document_except_fragment(c, t),
+                // A traversal to another document cannot be intercepted.
+                can_rewrite_url(c, t) && (navigation_type != "traverse" || cancelable),
+            ),
+            _ => (false, false),
+        };
+        let mut decision = NavigateDecision::Proceed;
+        for (realm, hook) in self.navigation_hooks() {
+            let Some(realm) = realm.upgrade() else { continue };
+            let Ok(s) = realm.scope() else { continue };
+            let Some(f) = hook.get(&s).as_object() else { continue };
+            let args = [
+                s.string("navigate"),
+                s.string(navigation_type),
+                s.string(url),
+                s.boolean(hash_change),
+                s.boolean(cancelable),
+                s.boolean(can_intercept),
+                s.string(&key.map(|k| k.to_string()).unwrap_or_default()),
+            ];
+            match f.call(None, &args).and_then(|v| v.to_string()) {
+                Ok(answer) if answer == "cancel" => decision = NavigateDecision::Cancel,
+                Ok(answer) if answer == "intercept" && decision != NavigateDecision::Cancel => {
+                    decision = NavigateDecision::Intercept
+                }
+                Ok(_) => {}
+                Err(e) => s.report_exception(&e),
+            }
+        }
+        decision
+    }
+
+    /// The navigation the last `navigate` event was for committed in this
+    /// document (its URL and entry changed, or an intercepted reload):
+    /// `currententrychange`, then the intercept handlers or
+    /// `navigatesuccess`.
+    pub(crate) fn navigation_committed(&self, navigation_type: &'static str) {
+        if self.navigation_hooks.borrow().is_empty() || self.navigation_api_call.get() {
+            return;
+        }
+        for (realm, hook) in self.navigation_hooks() {
+            let Some(realm) = realm.upgrade() else { continue };
+            let Ok(s) = realm.scope() else { continue };
+            if let Some(f) = hook.get(&s).as_object() {
+                if let Err(e) = f.call(None, &[s.string("commit"), s.string(navigation_type)]) {
+                    s.report_exception(&e);
+                }
+            }
+        }
+    }
+
+    /// An intercepted navigation to `url` (HTML "navigate", Navigation API
+    /// intercept): the document stays and its URL changes, as pushState
+    /// does, then the handlers run.
+    pub(crate) fn commit_intercepted(&self, url: &str, navigation_type: &'static str) {
+        let kind = if navigation_type == "replace" { SameDocumentKind::Replace } else { SameDocumentKind::Push };
+        if navigation_type != "reload" {
+            self.same_document(url, None, kind);
+        }
+        self.navigation_committed(navigation_type);
+    }
+
+    /// Sets the current entry's Navigation API state (`None`: undefined).
+    fn set_navigation_state(&self, state: Option<String>) {
+        let mut st = self.state.borrow_mut();
+        let i = st.index;
+        if let Some(entry) = st.entries.get_mut(i) {
+            entry.nav_state = state;
+        }
+    }
+
+    /// `natives.watch(queue)` of performance_observer.js: `queue` (or null
+    /// to stop) gets the entries of `s`'s realm.
+    fn watch_timeline(&self, s: &Scope<'_>, queue: Value<'_>) {
+        let id = s.realm_id();
+        let mut watchers = self.timeline_watchers.borrow_mut();
+        watchers.retain(|(realm, ..)| *realm != id);
+        if queue.as_object().is_some_and(|f| f.is_function()) {
+            watchers.push((id, s.realm().downgrade(), Rc::new(Persistent::new(s, queue))));
         }
     }
 }
@@ -578,7 +858,7 @@ fn same_document_except_fragment(a: &Url, b: &Url) -> bool {
 
 /// Location assignment: fragment-only changes are same-document.
 fn assign(nav: &PageNav, input: Value<'_>, replace: bool) -> JsResult<()> {
-    assign_url(nav, parse(nav, input)?, replace);
+    navigate_to(nav, parse(nav, input)?, replace);
     Ok(())
 }
 
@@ -594,25 +874,55 @@ pub(crate) fn navigate_cross_origin(nav: &PageNav, base: &str, input: Value<'_>,
         .parse(&href)
         .map_err(|_| JsError::dom("SyntaxError", format!("Failed to resolve URL '{href}'")))?;
     if target.scheme() != "javascript" {
-        assign_url(nav, target, replace);
+        navigate_to(nav, target, replace);
     }
     Ok(())
 }
 
-fn assign_url(nav: &PageNav, target: Url, replace: bool) {
+/// HTML "navigate" from script (Location, `navigation.navigate`): a
+/// fragment change is same-document, anything else loads. Returns whether
+/// it stayed in the document.
+fn navigate_to(nav: &PageNav, target: Url, replace: bool) -> bool {
     let current = Url::parse(&nav.url()).ok();
+    let same_url = current.as_ref() == Some(&target);
+    let navigation_type = if replace || same_url { "replace" } else { "push" };
+    match nav.navigate_event(navigation_type, target.as_str(), true) {
+        NavigateDecision::Cancel => return false,
+        NavigateDecision::Intercept => {
+            nav.commit_intercepted(target.as_str(), navigation_type);
+            return true;
+        }
+        NavigateDecision::Proceed => {}
+    }
     match current {
         Some(cur) if target.fragment().is_some() && same_document_except_fragment(&cur, &target) => {
-            let kind = if replace { SameDocumentKind::Replace } else { SameDocumentKind::Fragment };
+            // HTML "navigate": the document's own URL is a replace.
+            let kind = if replace || same_url { SameDocumentKind::Replace } else { SameDocumentKind::Fragment };
             nav.same_document(target.as_str(), None, kind);
+            nav.navigation_committed(navigation_type);
+            nav.fire_fragment_popstate();
             nav.queue_hashchange(cur.as_str(), target.as_str());
+            true
         }
-        _ => nav.navigate(target.to_string(), if replace { HistoryHandling::Replace } else { HistoryHandling::Push }),
+        _ => {
+            nav.navigate(target.to_string(), if replace { HistoryHandling::Replace } else { HistoryHandling::Push });
+            false
+        }
     }
 }
 
 fn url_part(nav: &PageNav, f: impl Fn(&Url) -> String) -> String {
     Url::parse(&nav.url()).map(|u| f(&u)).unwrap_or_default()
+}
+
+/// A Location setter: `change` edits a copy of the URL and says whether to
+/// navigate to it (HTML "Location-object navigate").
+fn set_url_part(s: &Scope<'_>, nav: &PageNav, change: impl FnOnce(&mut Url) -> JsResult<bool>) -> JsResult<()> {
+    let mut url = Url::parse(&nav.url()).map_err(|_| JsError::Type("invalid current URL".into()))?;
+    if change(&mut url)? {
+        assign(nav, s.string(url.as_str()), false)?;
+    }
+    Ok(())
 }
 
 pub struct Location;
@@ -636,7 +946,12 @@ impl JsClass for Location {
             Ok(s.undefined())
         });
         def.method("reload", 0, |s, n, _a| {
-            n.navigate(n.url(), HistoryHandling::Reload);
+            let url = n.url();
+            match n.navigate_event("reload", &url, true) {
+                NavigateDecision::Cancel => {}
+                NavigateDecision::Intercept => n.commit_intercepted(&url, "reload"),
+                NavigateDecision::Proceed => n.navigate(url, HistoryHandling::Reload),
+            }
             Ok(s.undefined())
         });
         def.getter("origin", |s, n| {
@@ -645,23 +960,97 @@ impl JsClass for Location {
                 url::Origin::Opaque(_) => "null".into(),
             })))
         });
-        def.getter("protocol", |s, n| Ok(s.string(&url_part(n, |u| format!("{}:", u.scheme())))));
-        def.getter("host", |s, n| {
-            Ok(s.string(&url_part(n, |u| match (u.host_str(), u.port()) {
-                (Some(h), Some(p)) => format!("{h}:{p}"),
-                (Some(h), None) => h.to_string(),
-                _ => String::new(),
-            })))
-        });
-        def.getter("hostname", |s, n| Ok(s.string(&url_part(n, |u| u.host_str().unwrap_or("").to_string()))));
-        def.getter("port", |s, n| Ok(s.string(&url_part(n, |u| u.port().map(|p| p.to_string()).unwrap_or_default()))));
-        def.getter("pathname", |s, n| Ok(s.string(&url_part(n, |u| u.path().to_string()))));
-        def.getter("search", |s, n| {
-            Ok(s.string(&url_part(n, |u| match u.query() {
-                Some(q) if !q.is_empty() => format!("?{q}"),
-                _ => String::new(),
-            })))
-        });
+        def.accessor(
+            "protocol",
+            |s, n| Ok(s.string(&url_part(n, |u| format!("{}:", u.scheme())))),
+            |s, n, v| {
+                let value = v.to_string()?;
+                set_url_part(s, n, |u| {
+                    // URL "scheme state" with a state override: tabs and
+                    // newlines are dropped, everything from the first `:` on
+                    // is ignored, and anything else that is no scheme fails.
+                    let value: String = value.chars().filter(|c| !matches!(c, '\t' | '\n' | '\r')).collect();
+                    let scheme = value.split(':').next().unwrap_or("");
+                    let mut chars = scheme.chars();
+                    let valid = chars.next().is_some_and(|c| c.is_ascii_alphabetic())
+                        && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'));
+                    if !valid {
+                        return Err(JsError::dom("SyntaxError", format!("'{value}' is an invalid protocol.")));
+                    }
+                    // A switch between special and other schemes leaves the
+                    // URL as it was, as the URL parser does.
+                    let _ = u.set_scheme(&scheme.to_ascii_lowercase());
+                    // Only HTTP(S) navigates.
+                    Ok(matches!(u.scheme(), "http" | "https"))
+                })
+            },
+        );
+        def.accessor(
+            "host",
+            |s, n| {
+                Ok(s.string(&url_part(n, |u| match (u.host_str(), u.port()) {
+                    (Some(h), Some(p)) => format!("{h}:{p}"),
+                    (Some(h), None) => h.to_string(),
+                    _ => String::new(),
+                })))
+            },
+            |s, n, v| {
+                let value = v.to_string()?;
+                set_url_part(s, n, |u| Ok(!u.cannot_be_a_base() && url::quirks::set_host(u, &value).is_ok()))
+            },
+        );
+        def.accessor(
+            "hostname",
+            |s, n| Ok(s.string(&url_part(n, |u| u.host_str().unwrap_or("").to_string()))),
+            |s, n, v| {
+                let value = v.to_string()?;
+                set_url_part(s, n, |u| Ok(!u.cannot_be_a_base() && url::quirks::set_hostname(u, &value).is_ok()))
+            },
+        );
+        def.accessor(
+            "port",
+            |s, n| Ok(s.string(&url_part(n, |u| u.port().map(|p| p.to_string()).unwrap_or_default()))),
+            |s, n, v| {
+                let value = v.to_string()?;
+                set_url_part(s, n, |u| {
+                    // A URL that cannot have a port (no host, `file:`) is left alone.
+                    if u.host_str().is_none_or(str::is_empty) || u.scheme() == "file" {
+                        return Ok(false);
+                    }
+                    Ok(url::quirks::set_port(u, &value).is_ok())
+                })
+            },
+        );
+        def.accessor(
+            "pathname",
+            |s, n| Ok(s.string(&url_part(n, |u| u.path().to_string()))),
+            |s, n, v| {
+                let value = v.to_string()?;
+                set_url_part(s, n, |u| {
+                    if u.cannot_be_a_base() {
+                        return Ok(false);
+                    }
+                    url::quirks::set_pathname(u, &value);
+                    Ok(true)
+                })
+            },
+        );
+        def.accessor(
+            "search",
+            |s, n| {
+                Ok(s.string(&url_part(n, |u| match u.query() {
+                    Some(q) if !q.is_empty() => format!("?{q}"),
+                    _ => String::new(),
+                })))
+            },
+            |s, n, v| {
+                let value = v.to_string()?;
+                set_url_part(s, n, |u| {
+                    url::quirks::set_search(u, &value);
+                    Ok(true)
+                })
+            },
+        );
         def.accessor(
             "hash",
             |s, n| {
@@ -673,7 +1062,13 @@ impl JsClass for Location {
             |s, n, v| {
                 let mut u = Url::parse(&n.url()).map_err(|_| JsError::Type("invalid current URL".into()))?;
                 let h = v.to_string()?;
+                let current = u.fragment().unwrap_or("").to_owned();
                 u.set_fragment(Some(h.strip_prefix('#').unwrap_or(&h)));
+                // The same fragment (no fragment counts as an empty one, as
+                // in Chrome) navigates nowhere: no event, no history entry.
+                if u.fragment() == Some(current.as_str()) {
+                    return Ok(());
+                }
                 assign(n, s.string(u.as_str()), false)
             },
         );
@@ -753,7 +1148,12 @@ fn change_state<'s>(s: &Scope<'s>, n: &PageNav, a: lp_js::Args<'s>, kind: SameDo
         }
         None => n.url(),
     };
+    let navigation_type = if kind == SameDocumentKind::Push { "push" } else { "replace" };
+    if n.navigate_event(navigation_type, &url, true) == NavigateDecision::Cancel {
+        return Ok(s.undefined());
+    }
     n.same_document(&url, state, kind);
+    n.navigation_committed(navigation_type);
     Ok(s.undefined())
 }
 
@@ -808,6 +1208,13 @@ fn timeline_entries<'s>(
     entry_type: Option<&str>,
 ) -> JsResult<Value<'s>> {
     let mut entries: Vec<(f64, Value<'s>)> = Vec::new();
+    if entry_type.is_none_or(|t| t == "navigation") {
+        if let Some(entry) = navigation_entry(p) {
+            if name.is_none_or(|n| n == entry.name) {
+                entries.push((0.0, s.wrap::<PerformanceNavigationTiming>(entry, None)?.value()));
+            }
+        }
+    }
     if let Some(start) = p.nav.first_paint().filter(|_| entry_type.is_none_or(|t| t == "paint")) {
         for entry_name in ["first-paint", "first-contentful-paint"] {
             if name.is_none_or(|n| n == entry_name) {
@@ -835,12 +1242,68 @@ pub struct PerformanceEntryData {
     duration: f64,
     /// `detail` of a mark or measure (a structured clone), null when absent.
     detail: Option<Persistent>,
+    /// The document's Navigation Timing (`navigation` entries only).
+    navigation: Option<Box<NavigationValues>>,
 }
 
 impl PerformanceEntryData {
     fn new(name: &str, entry_type: &'static str, start: f64, duration: f64) -> PerformanceEntryData {
-        PerformanceEntryData { name: name.to_owned(), entry_type, start, duration, detail: None }
+        PerformanceEntryData { name: name.to_owned(), entry_type, start, duration, detail: None, navigation: None }
     }
+}
+
+/// A document's Navigation Timing as its `navigation` entry reports it, in
+/// milliseconds since the time origin; 0 for a step that has not run. The
+/// time origin is when the document's response committed, so the fetch
+/// phases (fetchStart .. responseEnd) and unloading come out as 0.
+#[derive(Clone, Copy)]
+struct NavigationValues {
+    dom_interactive: f64,
+    dom_content_loaded_start: f64,
+    dom_content_loaded_end: f64,
+    dom_complete: f64,
+    load_start: f64,
+    load_end: f64,
+    nav_type: &'static str,
+}
+
+impl NavigationValues {
+    const EMPTY: NavigationValues = NavigationValues {
+        dom_interactive: 0.0,
+        dom_content_loaded_start: 0.0,
+        dom_content_loaded_end: 0.0,
+        dom_complete: 0.0,
+        load_start: 0.0,
+        load_end: 0.0,
+        nav_type: "navigate",
+    };
+
+    fn of(page: &lp_webapi::PageDom, nav: &PageNav) -> NavigationValues {
+        let t = page.timing();
+        NavigationValues {
+            dom_interactive: t.dom_interactive.unwrap_or(0.0),
+            dom_content_loaded_start: t.dom_content_loaded_start.unwrap_or(0.0),
+            dom_content_loaded_end: t.dom_content_loaded_end.unwrap_or(0.0),
+            dom_complete: t.dom_complete.unwrap_or(0.0),
+            load_start: t.load_start.unwrap_or(0.0),
+            load_end: t.load_end.unwrap_or(0.0),
+            nav_type: nav.nav_type.get(),
+        }
+    }
+}
+
+/// The document's `navigation` entry. Chrome adds it to the timeline as the
+/// document starts loading and fills it in as it goes; an `about:` document
+/// (the initial one, `setContent`) has none.
+fn navigation_entry(p: &PerformanceData) -> Option<PerformanceEntryData> {
+    let url = p.nav.url();
+    if !(url.starts_with("http:") || url.starts_with("https:") || url.starts_with("file:")) {
+        return None;
+    }
+    let values = NavigationValues::of(&p.target.page, &p.nav);
+    let mut entry = PerformanceEntryData::new(&url, "navigation", 0.0, values.load_end);
+    entry.navigation = Some(Box::new(values));
+    Some(entry)
 }
 
 fn entry_json<'s>(s: &Scope<'s>, e: &PerformanceEntryData, detail: bool) -> JsResult<Value<'s>> {
@@ -852,7 +1315,59 @@ fn entry_json<'s>(s: &Scope<'s>, e: &PerformanceEntryData, detail: bool) -> JsRe
     if detail {
         o.set("detail", e.detail.as_ref().map_or(s.null(), |d| d.get(s)))?;
     }
+    if let Some(n) = &e.navigation {
+        o.set("initiatorType", s.string("navigation"))?;
+        o.set("deliveryType", s.string(""))?;
+        o.set("nextHopProtocol", s.string(""))?;
+        o.set("renderBlockingStatus", s.string("non-blocking"))?;
+        o.set("contentType", s.string(""))?;
+        for key in RESOURCE_TIMES.iter().chain(&RESOURCE_SIZES) {
+            o.set(key, s.number(0.0))?;
+        }
+        o.set("serverTiming", s.array(&[])?.value())?;
+        for (key, value) in navigation_fields(n) {
+            o.set(key, s.number(value))?;
+        }
+        o.set("type", s.string(n.nav_type))?;
+        o.set("redirectCount", s.number(0.0))?;
+    }
     Ok(o.value())
+}
+
+/// PerformanceResourceTiming's times: all 0 for the navigation entry (see
+/// [`NavigationValues`]).
+const RESOURCE_TIMES: [&str; 14] = [
+    "workerStart",
+    "redirectStart",
+    "redirectEnd",
+    "fetchStart",
+    "domainLookupStart",
+    "domainLookupEnd",
+    "connectStart",
+    "connectEnd",
+    "secureConnectionStart",
+    "requestStart",
+    "responseStart",
+    "firstInterimResponseStart",
+    "finalResponseHeadersStart",
+    "responseEnd",
+];
+/// Sizes and status: not recorded (0).
+const RESOURCE_SIZES: [&str; 4] = ["transferSize", "encodedBodySize", "decodedBodySize", "responseStatus"];
+
+fn navigation_fields(n: &NavigationValues) -> [(&'static str, f64); 10] {
+    [
+        ("unloadEventStart", 0.0),
+        ("unloadEventEnd", 0.0),
+        ("domInteractive", n.dom_interactive),
+        ("domContentLoadedEventStart", n.dom_content_loaded_start),
+        ("domContentLoadedEventEnd", n.dom_content_loaded_end),
+        ("domComplete", n.dom_complete),
+        ("loadEventStart", n.load_start),
+        ("loadEventEnd", n.load_end),
+        ("activationStart", 0.0),
+        ("criticalCHRestart", 0.0),
+    ]
 }
 
 pub struct PerformanceEntry;
@@ -880,6 +1395,134 @@ impl JsClass for PerformancePaintTiming {
     type Parent = PerformanceEntry;
 
     fn define(_def: &mut ClassDef<Self>) {}
+}
+
+/// Resource Timing. Only the document's `navigation` entry is one: no
+/// `resource` entries are recorded for sub-resources, fetch or XHR.
+pub struct PerformanceResourceTiming;
+
+impl JsClass for PerformanceResourceTiming {
+    const NAME: &'static str = "PerformanceResourceTiming";
+    type Data = PerformanceEntryData;
+    type Parent = PerformanceEntry;
+
+    fn define(def: &mut ClassDef<Self>) {
+        for key in RESOURCE_TIMES.iter().chain(&RESOURCE_SIZES) {
+            def.getter(key, |s, _e| Ok(s.number(0.0)));
+        }
+        def.getter("initiatorType", |s, e| Ok(s.string(if e.navigation.is_some() { "navigation" } else { "" })));
+        def.getter("nextHopProtocol", |s, _e| Ok(s.string("")));
+        def.getter("deliveryType", |s, _e| Ok(s.string("")));
+        def.getter("renderBlockingStatus", |s, _e| Ok(s.string("non-blocking")));
+        def.getter("contentType", |s, _e| Ok(s.string("")));
+        def.getter("serverTiming", |s, _e| Ok(s.array(&[])?.value()));
+        def.method("toJSON", 0, |s, e, _a| entry_json(s, e, false));
+    }
+}
+
+/// Navigation Timing Level 2: the document's `navigation` entry.
+pub struct PerformanceNavigationTiming;
+
+impl JsClass for PerformanceNavigationTiming {
+    const NAME: &'static str = "PerformanceNavigationTiming";
+    type Data = PerformanceEntryData;
+    type Parent = PerformanceResourceTiming;
+
+    fn define(def: &mut ClassDef<Self>) {
+        macro_rules! fields {
+            ($($i:literal),*) => {$(
+                def.getter(navigation_fields(&NavigationValues::EMPTY)[$i].0, |s, e| {
+                    Ok(s.number(e.navigation.as_ref().map_or(0.0, |n| navigation_fields(n)[$i].1)))
+                });
+            )*};
+        }
+        fields!(0, 1, 2, 3, 4, 5, 6, 7, 8, 9);
+        def.getter("type", |s, e| Ok(s.string(e.navigation.as_ref().map_or("navigate", |n| n.nav_type))));
+        def.getter("redirectCount", |s, _e| Ok(s.number(0.0)));
+        def.getter("notRestoredReasons", |s, _e| Ok(s.null()));
+        def.method("toJSON", 0, |s, e, _a| entry_json(s, e, false));
+    }
+}
+
+/// The legacy `performance.timing`: the document's Navigation Timing in
+/// milliseconds since the epoch, 0 for a step that has not run (and for the
+/// unload, redirect and secure-connection steps, which never do here).
+pub struct PerformanceTiming;
+
+pub struct TimingData {
+    origin_wall_ms: f64,
+    page: Rc<lp_webapi::PageDom>,
+    nav: Rc<PageNav>,
+}
+
+/// `performance.timing[name]` (epoch milliseconds, 0 when not reached).
+fn legacy_timing(origin: f64, n: &NavigationValues, name: &str) -> f64 {
+    let at = |t: f64| if t > 0.0 { (origin + t).round() } else { 0.0 };
+    match name {
+        "navigationStart" | "fetchStart" | "domainLookupStart" | "domainLookupEnd" | "connectStart" | "connectEnd"
+        | "requestStart" | "responseStart" | "responseEnd" | "domLoading" => origin.round(),
+        "domInteractive" => at(n.dom_interactive),
+        "domContentLoadedEventStart" => at(n.dom_content_loaded_start),
+        "domContentLoadedEventEnd" => at(n.dom_content_loaded_end),
+        "domComplete" => at(n.dom_complete),
+        "loadEventStart" => at(n.load_start),
+        "loadEventEnd" => at(n.load_end),
+        _ => 0.0,
+    }
+}
+
+impl JsClass for PerformanceTiming {
+    const NAME: &'static str = "PerformanceTiming";
+    type Data = TimingData;
+    type Parent = NoParent;
+
+    fn define(def: &mut ClassDef<Self>) {
+        macro_rules! attributes {
+            ($($i:literal),*) => {$(
+                def.getter(TIMING_ATTRIBUTES[$i], |s, t| {
+                    let n = NavigationValues::of(&t.page, &t.nav);
+                    Ok(s.number(legacy_timing(t.origin_wall_ms, &n, TIMING_ATTRIBUTES[$i])))
+                });
+            )*};
+        }
+        attributes!(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20);
+        def.method("toJSON", 0, |s, t, _a| {
+            let o = s.object();
+            let n = NavigationValues::of(&t.page, &t.nav);
+            for name in TIMING_ATTRIBUTES {
+                o.set(name, s.number(legacy_timing(t.origin_wall_ms, &n, name)))?;
+            }
+            Ok(o.value())
+        });
+    }
+}
+
+/// The legacy `performance.navigation`.
+pub struct PerformanceNavigation;
+
+impl JsClass for PerformanceNavigation {
+    const NAME: &'static str = "PerformanceNavigation";
+    type Data = Rc<PageNav>;
+    type Parent = NoParent;
+
+    fn define(def: &mut ClassDef<Self>) {
+        def.getter("type", |s, n| Ok(s.number(legacy_navigation_type(n))));
+        def.getter("redirectCount", |s, _n| Ok(s.number(0.0)));
+        def.method("toJSON", 0, |s, n, _a| {
+            let o = s.object();
+            o.set("type", s.number(legacy_navigation_type(n)))?;
+            o.set("redirectCount", s.number(0.0))?;
+            Ok(o.value())
+        });
+    }
+}
+
+fn legacy_navigation_type(n: &PageNav) -> f64 {
+    match n.nav_type.get() {
+        "reload" => 1.0,
+        "back_forward" => 2.0,
+        _ => 0.0,
+    }
 }
 
 /// Navigation Timing's `PerformanceTiming` attribute names: not usable as
@@ -950,7 +1593,14 @@ fn mark_data<'s>(s: &Scope<'s>, name: &str, options: Value<'s>, now: f64) -> JsR
         None => now,
     };
     let detail = clone_detail(s, member(options, "detail")?)?;
-    Ok(PerformanceEntryData { name: name.to_owned(), entry_type: "mark", start, duration: 0.0, detail })
+    Ok(PerformanceEntryData {
+        name: name.to_owned(),
+        entry_type: "mark",
+        start,
+        duration: 0.0,
+        detail,
+        navigation: None,
+    })
 }
 
 pub struct PerformanceMark;
@@ -998,6 +1648,20 @@ fn mark_timestamp(p: &PerformanceData, mark: Value<'_>) -> JsResult<f64> {
     if name == "navigationStart" {
         return Ok(0.0);
     }
+    // User Timing "convert a name to a timestamp": a PerformanceTiming
+    // attribute is its time relative to navigationStart, an error while it
+    // is 0 (the step has not run).
+    if TIMING_ATTRIBUTES.contains(&name.as_str()) {
+        let n = NavigationValues::of(&p.target.page, &p.nav);
+        if legacy_timing(p.origin_wall_ms, &n, &name) == 0.0 {
+            return Err(JsError::dom(
+                "InvalidAccessError",
+                format!("'{name}' is empty: either the event hasn't happened yet, or it would provide cross-origin timing information."),
+            ));
+        }
+        // The fetch phases are at the time origin (see `NavigationValues`).
+        return Ok(navigation_fields(&n).into_iter().find(|(key, _)| *key == name).map_or(0.0, |(_, t)| t));
+    }
     let found = p.user_entries.borrow().iter().rev().find(|e| e.mark && e.name == name).map(|e| e.start);
     found.ok_or_else(|| JsError::dom("SyntaxError", format!("The mark '{name}' does not exist.")))
 }
@@ -1042,6 +1706,7 @@ fn measure<'s>(s: &Scope<'s>, p: &PerformanceData, a: &lp_js::Args<'s>) -> JsRes
         start: start_time,
         duration: end_time - start_time,
         detail: clone_detail(s, detail)?,
+        navigation: None,
     };
     let object = s.wrap::<PerformanceMeasure>(data, None)?.value();
     p.user_entries.borrow_mut().push(UserEntry {
@@ -1050,6 +1715,7 @@ fn measure<'s>(s: &Scope<'s>, p: &PerformanceData, a: &lp_js::Args<'s>) -> JsRes
         start: start_time,
         object: Persistent::new(s, object),
     });
+    p.nav.notify_entry(s, "measure", object)?;
     Ok(object)
 }
 
@@ -1084,6 +1750,7 @@ impl JsClass for Performance {
             let start = data.start;
             let object = s.wrap::<PerformanceMark>(data, None)?.value();
             p.user_entries.borrow_mut().push(UserEntry { name, mark: true, start, object: Persistent::new(s, object) });
+            p.nav.notify_entry(s, "mark", object)?;
             Ok(object)
         });
         def.method("measure", 1, |s, p, a| measure(s, p, &a));
@@ -1109,10 +1776,205 @@ impl JsClass for Performance {
             let ty = a.get(0).to_string()?;
             timeline_entries(s, p, None, Some(&ty))
         });
+        def.getter("timing", timing_object);
+        def.getter("navigation", navigation_object);
         def.method("toJSON", 0, |s, p, _a| {
             let o = s.object();
             o.set("timeOrigin", s.number(p.origin_wall_ms))?;
+            o.set("timing", timing_object(s, p)?)?;
+            o.set("navigation", navigation_object(s, p)?)?;
             Ok(o.value())
         });
     }
+}
+
+/// `performance.timing`: one object per realm.
+fn timing_object<'s>(s: &Scope<'s>, p: &PerformanceData) -> JsResult<Value<'s>> {
+    let key = lp_js::IdentityKey(KEY_TIMING, 0);
+    if let Some(o) = s.lookup_identity(key) {
+        return Ok(o.value());
+    }
+    let data = TimingData { origin_wall_ms: p.origin_wall_ms, page: p.target.page.clone(), nav: p.nav.clone() };
+    Ok(s.wrap::<PerformanceTiming>(data, Some(key))?.value())
+}
+
+/// `performance.navigation`: one object per realm.
+fn navigation_object<'s>(s: &Scope<'s>, p: &PerformanceData) -> JsResult<Value<'s>> {
+    Ok(s.wrap::<PerformanceNavigation>(p.nav.clone(), Some(lp_js::IdentityKey(KEY_NAVIGATION, 0)))?.value())
+}
+
+/// Identity keys of `performance.timing` and `performance.navigation` (one
+/// per realm).
+const KEY_TIMING: u64 = 0x5065_7254_696d_6e00;
+const KEY_NAVIGATION: u64 = 0x5065_724e_6176_6900;
+
+/// This realm's performance_observer.js module (`PerformanceObserver`,
+/// `PerformanceObserverEntryList`), made on first use and kept on the
+/// realm's `performance` object.
+pub(crate) fn observer_module<'s>(
+    s: &Scope<'s>,
+    performance: lp_js::Object<'s>,
+    nav: &Rc<PageNav>,
+) -> JsResult<lp_js::Object<'s>> {
+    const KEY: &str = "lpPerformanceObserver";
+    if let Some(module) = s.get_hidden(performance, KEY)?.and_then(|v| v.as_object()) {
+        return Ok(module);
+    }
+    let unavailable = || JsError::Type("PerformanceObserver is unavailable".into());
+    let natives = s.object();
+    let watched = Rc::downgrade(nav);
+    let watch = s.function("watch", move |s, _this, a| {
+        if let Some(nav) = watched.upgrade() {
+            nav.watch_timeline(s, a.get(0));
+        }
+        Ok(s.undefined())
+    })?;
+    natives.set_atom("watch", watch.value())?;
+    let report = s.function("reportException", |s, _this, a| {
+        s.report_exception(&JsError::Thrown(Persistent::new(s, a.get(0))));
+        Ok(s.undefined())
+    })?;
+    natives.set_atom("reportException", report.value())?;
+    let root = Persistent::new(s, natives.value());
+    let make =
+        s.eval(include_str!("performance_observer.js"), Some("lightningpanda://internal/performance-observer.js"), 1)?;
+    let module = make.as_object().ok_or_else(unavailable)?.call(None, &[performance.value(), root.get(s)])?;
+    s.set_hidden(performance, KEY, module)?;
+    module.as_object().ok_or_else(unavailable)
+}
+
+/// The realm's Navigation API module (navigation.js): `navigation` and
+/// its interfaces, made on the realm's first use and kept on the realm's
+/// History object (one per realm).
+pub(crate) fn navigation_module<'s>(s: &Scope<'s>, nav: &Rc<PageNav>) -> JsResult<lp_js::Object<'s>> {
+    const KEY: &str = "lpNavigation";
+    let history = s.wrap::<History>(nav.clone(), Some(lp_js::IdentityKey(crate::window::KEY_HISTORY, 0)))?;
+    if let Some(module) = s.get_hidden(history, KEY)?.and_then(|v| v.as_object()) {
+        return Ok(module);
+    }
+    let unavailable = || JsError::Type("navigation is unavailable".into());
+    let natives = s.object();
+    let weak = Rc::downgrade(nav);
+    let with_nav = move || weak.upgrade().ok_or(JsError::ContextDestroyed);
+    macro_rules! native {
+        ($name:literal, |$s:ident, $nav:ident, $a:ident| $body:expr) => {{
+            let with_nav = with_nav.clone();
+            let f = s.function($name, move |$s, _this, $a| {
+                let $nav = with_nav()?;
+                $body
+            })?;
+            natives.set_atom($name, f.value())?;
+        }};
+    }
+    // watch(hook | null): hook(kind, ...) fires the realm's events.
+    native!("watch", |s, nav, a| {
+        let id = s.realm_id();
+        let mut hooks = nav.navigation_hooks.borrow_mut();
+        hooks.retain(|(realm, ..)| *realm != id);
+        if a.get(0).is_function() {
+            hooks.push((id, s.realm().downgrade(), Rc::new(Persistent::new(s, a.get(0)))));
+        }
+        Ok(s.undefined())
+    });
+    // entries() -> [index, [key, id, url, sameDocument, stateJSON]...]: the
+    // same-origin entries around the current one.
+    native!("entries", |s, nav, _a| {
+        let st = nav.state.borrow();
+        let origin = |url: &str| Url::parse(url).ok().map(|u| u.origin());
+        let Some(current) = st.entries.get(st.index) else { return Ok(s.array(&[s.number(-1.0)])?.value()) };
+        let here = origin(&current.url);
+        let same =
+            |e: &Entry| (here.as_ref().is_some_and(|o| o.is_tuple()) && origin(&e.url) == here) || e.doc == current.doc;
+        let mut start = st.index;
+        while start > 0 && same(&st.entries[start - 1]) {
+            start -= 1;
+        }
+        let mut end = st.index + 1;
+        while end < st.entries.len() && same(&st.entries[end]) {
+            end += 1;
+        }
+        let mut values = vec![s.number((st.index - start) as f64)];
+        for e in &st.entries[start..end] {
+            let state = e.nav_state.as_deref().map_or(s.undefined(), |j| s.string(j));
+            let row = [
+                s.string(&e.key.to_string()),
+                s.string(&e.id.to_string()),
+                s.string(&e.url),
+                s.boolean(e.doc == current.doc),
+                state,
+            ];
+            values.push(s.array(&row)?.value());
+        }
+        Ok(s.array(&values)?.value())
+    });
+    // resolve(url) -> the absolute URL, or SyntaxError.
+    native!("resolve", |s, nav, a| Ok(s.string(parse(&nav, a.get(0))?.as_str())));
+    // navigate(url, replace, stateJSON?) -> whether it stayed in the
+    // document. Its `navigate` event was fired by the caller.
+    native!("navigate", |s, nav, a| {
+        let target = Url::parse(&a.get(0).to_string()?).map_err(|_| JsError::dom("SyntaxError", "Invalid URL"))?;
+        let replace = a.get(1).to_bool();
+        let state = a.opt(2).filter(|v| !v.is_undefined()).map(|v| v.to_string()).transpose()?;
+        let outer = nav.navigation_api_call.replace(true);
+        let same = navigate_to(&nav, target, replace);
+        nav.navigation_api_call.set(outer);
+        if same {
+            nav.set_navigation_state(state);
+        }
+        Ok(s.boolean(same))
+    });
+    // commit(url, type, stateJSON?): an intercepted navigation's
+    // same-document commit.
+    native!("commit", |s, nav, a| {
+        let url = a.get(0).to_string()?;
+        let navigation_type = match a.get(1).to_string()?.as_str() {
+            "replace" => "replace",
+            "reload" => "reload",
+            _ => "push",
+        };
+        let state = a.opt(2).filter(|v| !v.is_undefined()).map(|v| v.to_string()).transpose()?;
+        let outer = nav.navigation_api_call.replace(true);
+        nav.commit_intercepted(&url, navigation_type);
+        nav.navigation_api_call.set(outer);
+        if navigation_type != "reload" || state.is_some() {
+            nav.set_navigation_state(state);
+        }
+        Ok(s.undefined())
+    });
+    native!("reload", |s, nav, _a| {
+        nav.navigate(nav.url(), HistoryHandling::Reload);
+        Ok(s.undefined())
+    });
+    // traverse(key) -> 'missing', 'current' or 'queued' (its events come
+    // with the traversal task).
+    native!("traverse", |s, nav, a| {
+        let key = a.get(0).to_string()?;
+        let delta = {
+            let st = nav.state.borrow();
+            st.entries.iter().position(|e| e.key.to_string() == key).map(|i| i as i64 - st.index as i64)
+        };
+        Ok(s.string(match delta {
+            None => "missing",
+            Some(0) => "current",
+            Some(delta) => {
+                nav.traverse(delta);
+                "queued"
+            }
+        }))
+    });
+    native!("updateState", |s, nav, a| {
+        let state = a.opt(0).filter(|v| !v.is_undefined()).map(|v| v.to_string()).transpose()?;
+        nav.set_navigation_state(state);
+        Ok(s.undefined())
+    });
+    let report = s.function("reportException", |s, _this, a| {
+        s.report_exception(&JsError::Thrown(Persistent::new(s, a.get(0))));
+        Ok(s.undefined())
+    })?;
+    natives.set_atom("reportException", report.value())?;
+    let root = Persistent::new(s, natives.value());
+    let make = s.eval(include_str!("navigation.js"), Some("lightningpanda://internal/navigation.js"), 1)?;
+    let module = make.as_object().ok_or_else(unavailable)?.call(None, &[root.get(s)])?;
+    s.set_hidden(history, KEY, module)?;
+    module.as_object().ok_or_else(unavailable)
 }

@@ -170,6 +170,7 @@ where
     def.getter("crypto", |s, _w| crate::crypto::crypto_value(s));
     def.getter("clientInformation", |s, w| navigator(s, w.page()));
     def.getter("ClipboardItem", |s, w| crate::navigator_extras::member(s, w.page(), "ClipboardItem"));
+    def.getter("Notification", |s, w| crate::navigator_extras::member(s, w.page(), "Notification"));
     crate::streams::define_globals(def);
     crate::observable::define_globals(def);
     crate::crypto::define_globals(def);
