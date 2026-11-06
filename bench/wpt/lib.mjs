@@ -1,4 +1,5 @@
 // Shared by run.mjs and gate.mjs: test discovery, the baseline format, shard planning and the coverage comparison.
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -55,62 +56,81 @@ export function discover(wpt, dirs, { sampleEncoding = 1 } = {}) {
 
 // ---------- results ----------
 export const readJson = (f) => JSON.parse(fs.readFileSync(f, 'utf8'));
-export const passing = (t) => (t.subtests ?? []).filter((s) => s.status === 'Pass').map((s) => s.name);
+// The subtest names a page reported, once each, and those that passed. The report shim keys subtests by name, so a
+// name appears once; if one ever appears twice, it passes only if every report of it passed.
+export const names = (t) => [...new Set((t.subtests ?? []).map((s) => s.name))];
+export function passing(t) {
+  const ok = new Map();
+  for (const s of t.subtests ?? []) ok.set(s.name, (ok.get(s.name) ?? true) && s.status === 'Pass');
+  return [...ok].filter(([, v]) => v).map(([n]) => n);
+}
+// A short hash of a set of subtest names (order-independent).
+export const namesHash = (list) => crypto.createHash('sha1').update([...new Set(list)].sort().join('\n')).digest('hex').slice(0, 8);
 
 // ---------- baseline ----------
-// baseline.json: { wpt: {repo, revision}, dirs, source, tests: { url: entry } }, one entry per page:
-//   { status, ms, n, pass: [names] }   n subtests reported, these passed
-//   { status, ms, n, fail: [names] }   n subtests reported, all but these passed: used for a completed page where
-//                                       that list is shorter. Most pages pass most subtests, and naming every pass
-//                                       would make the file ~38 MB instead of ~0.5 MB.
+// baseline.json: { wpt: {repo, revision}, dirs, tests: { url: entry } }, one entry per page, lists sorted:
+//   { status: 'complete', ms, n, fail: [names], h }  a completed page that reported these n subtests (h: namesHash
+//       of their names) and passed all but `fail`. Used when that list is shorter: most pages pass most subtests,
+//       and naming every pass would make the file ~38 MB instead of ~0.5 MB. The passes are "every other name", so
+//       they can be checked by name only against a run that reported the same names (same h).
+//   { status, ms, n, pass: [names] }                  any page: these passed (of n reported). Used for pages that did
+//       not complete, when it is shorter, and when the runs that made the entry disagreed on the names.
 // ms is the page's duration (rounded), only used to balance shards and to bound a page's timeout in the gate.
 export const roundMs = (ms) => (ms < 1000 ? Math.round(ms / 10) * 10 : Math.round(ms / 100) * 100);
-export function entryFromResult(t) {
-  const names = (t.subtests ?? []).map((s) => s.name);
-  const pass = passing(t);
-  const e = { status: t.status, ms: roundMs(t.ms ?? 0), n: names.length };
-  if (t.status === 'complete' && pass.length > names.length - pass.length) {
-    e.fail = (t.subtests ?? []).filter((s) => s.status !== 'Pass').map((s) => s.name);
-  } else e.pass = pass;
-  return e;
+export function entryOf(status, ms, all, pass, n) {
+  const e = { status, ms: roundMs(ms ?? 0), n: all ? all.length : n ?? pass.length };
+  if (status === 'complete' && all && pass.length > all.length - pass.length) {
+    const p = new Set(pass);
+    return { ...e, fail: all.filter((x) => !p.has(x)).sort(), h: namesHash(all) };
+  }
+  return { ...e, pass: [...pass].sort() };
 }
 export const passCount = (e) => (e.pass ? e.pass.length : e.n - e.fail.length);
 
-// Merges a new result into an old entry without losing passes: a subtest that passed in either still passes, and a
-// page that completed in either still completes.
+// What every run of a page agrees on (a run and its reruns): it completed only if every run did, a subtest passed
+// only if it passed in every run, and `all` is its set of names when every run completed with the same one.
+// ms: the first completed run's duration (a timed-out run's says nothing about the page).
+export function consensus(runs) {
+  const done = runs.filter((t) => t.status === 'complete');
+  const sets = done.map(names);
+  const hashes = sets.map(namesHash);
+  const all = done.length === runs.length && hashes.every((x) => x === hashes[0]) ? sets[0] : null;
+  const passSets = runs.map((t) => new Set(passing(t)));
+  const pass = [...passSets[0]].filter((n) => passSets.every((s) => s.has(n)));
+  const status = done.length === runs.length ? 'complete' : runs.find((t) => t.status !== 'complete').status;
+  return { status, ms: (done[0] ?? runs[0]).ms, all, pass, n: new Set(runs.flatMap(names)).size };
+}
+
+// The entry after a page's runs (their consensus), given its old entry, without losing anything: a subtest passes if
+// it passed before or in every run, and the page completes if it did before or in every run. `ignore`: subtest names
+// (flaky.json) whose passes are not added. Call it only for pages whose runs are not a regression (judge()).
 // Durations only balance shards and bound timeouts, and a refresh should not touch every line of the file, so
 // `ms` says when an old entry's duration changes: 'keep' (never: gate runs, which skip and bound pages), 'moved'
 // (when it moved by 2x and 1 s or more: full runs), 'all' (always).
 export const movedMs = (old, now) => Math.abs(now - old) >= 1000 && (now >= 2 * old || now <= old / 2);
 export const newMs = (old, now, ms) => (ms === 'all' || (ms === 'moved' && movedMs(old, now)) ? now : old);
-export function mergeEntry(old, t, { ms = 'moved' } = {}) {
-  const now = entryFromResult(t);
-  if (!old) return now;
-  const keepMs = (e) => ({ ...e, ms: newMs(old.ms, e.ms, ms) });
-  if (t.status !== 'complete') {
-    if (old.status === 'complete') return old;
-    const pass = [...new Set([...(old.pass ?? []), ...now.pass])];
-    return keepMs({ ...now, n: Math.max(now.n, pass.length), pass });
-  }
-  // Completed now: the new result names every subtest it reported; add back the old passes.
-  const nowNames = new Set(t.subtests.map((s) => s.name));
-  // A fail-list entry names only its failures: its passes are "everything else", which can be matched against this
-  // run only when the page reported the same number of subtests. Otherwise keep the entry that passes more.
-  if (old.fail && nowNames.size !== old.n) return passCount(now) >= passCount(old) ? keepMs(now) : old;
-  const passedBefore = old.pass ? new Set(old.pass) : null;
-  const failedBefore = old.fail ? new Set(old.fail) : null;
-  const passes = (s) => s.status === 'Pass' || (passedBefore ? passedBefore.has(s.name) : !failedBefore.has(s.name));
-  const merged = { ...t, subtests: t.subtests.map((s) => (passes(s) ? { ...s, status: 'Pass' } : s)) };
-  // Old passes the new run did not report at all (pass-list form only) stay as passes.
-  if (passedBefore) for (const n of passedBefore) if (!nowNames.has(n)) merged.subtests.push({ name: n, status: 'Pass' });
-  return keepMs(entryFromResult(merged));
+export function mergeEntry(old, con, { ms = 'moved', ignore } = {}) {
+  const gain = new Set(ignore ? con.pass.filter((n) => !ignore.has(n)) : con.pass);
+  if (!old) return entryOf(con.status, con.ms, con.all, [...gain], con.n);
+  const msNow = newMs(old.ms, roundMs(con.ms ?? 0), ms);
+  // A fail-list entry keeps its names (h): a subtest it lists that passed in every run leaves the list.
+  if (old.fail) return { ...old, ms: msNow, fail: old.fail.filter((n) => !gain.has(n)) };
+  const pass = [...new Set([...old.pass, ...gain])];
+  const status = old.status === 'complete' || con.status === 'complete' ? 'complete' : old.status;
+  if (pass.length === old.pass.length && status === old.status) return { ...old, ms: msNow };
+  // The runs' names, when they agree and include every pass, allow the shorter fail-list form.
+  const conAll = con.all && new Set(con.all);
+  const all = conAll && pass.every((n) => conAll.has(n)) ? con.all : null;
+  return entryOf(status, msNow, all, pass, Math.max(old.n, con.n));
 }
 
 // ---------- planning ----------
+// A baseline page with no coverage to protect: it never completed and never passed a subtest, or it completed
+// without passing anything after 5 s or more (testharness's own timeout ended it; checking that it still does costs
+// ~10 s per page and protects nothing). The gate's plan skips it; `check` applies the same rule.
+export const skippable = (b) => !passCount(b) && (b.status !== 'complete' || b.ms >= 5000);
 // Estimated cost (ms) of each page, and in gate mode (a baseline and `gate`) which pages run and their timeout:
-//   skipped: pages with no coverage to protect: never completed and never passed a subtest, or completed without
-//     passing anything after 5 s or more (testharness's own timeout ended them; checking that it still does costs
-//     ~10 s per page and protects nothing)
+//   skipped: skippable() pages
 //   limit: a page that completed gets 10x its baseline duration, at least 10 s and at most the normal timeout, so a
 //     page that normally takes 0.5 s and now hangs (or flakes) costs 10 s instead of 15-45 s. Reruns use the normal
 //     timeout.
@@ -121,8 +141,7 @@ export function plan(tests, baseline, { gate = false, timeout, longTimeout }) {
     const def = t.long ? longTimeout : timeout;
     const p = { ...t, limit: def, est: b ? Math.max(b.ms, 20) : t.long ? 3000 : 500 };
     if (gate && b) {
-      const pc = passCount(b);
-      if (!pc && (b.status !== 'complete' || b.ms >= 5000)) { skipped.push(t.url); continue; }
+      if (skippable(b)) { skipped.push(t.url); continue; }
       if (b.status === 'complete') p.limit = Math.min(def, Math.max(10 * b.ms, 10000));
     }
     out.push(p);
@@ -147,69 +166,124 @@ export function shard(tests, index, count) {
 }
 
 // ---------- flaky list ----------
-// flaky.json: { tests: { url: { reason, subtests?: [names] } } }: the whole page, or only the listed subtests, is
-// not gated. Every entry needs a reason.
+// flaky.json: { tests: { key: { reason, subtests?: [names], allowIncomplete?: true } } }. A key is a page URL, or a
+// pattern where * matches anything (an exact URL wins). Every entry needs a reason.
+//   { reason }                    the page is not gated
+//   { reason, subtests }          these subtests are not gated (the page must still report them: a page whose
+//                                 subtests come and go needs a whole-page entry)
+//   { reason, allowIncomplete }   a run of the page that did not complete (timeout, hang, crash) is ignored; the
+//                                 page is checked as usual when a run completes. check() fails if more than
+//                                 MAX_IGNORED_INCOMPLETE pages did not complete in any run: that is not a flake.
+export const MAX_IGNORED_INCOMPLETE = 3;
+const FLAKY_KEYS = new Set(['reason', 'subtests', 'allowIncomplete']);
 export function readFlaky(file) {
-  if (!fs.existsSync(file)) return {};
-  const f = readJson(file).tests ?? {};
-  for (const [url, e] of Object.entries(f)) if (!e.reason?.trim()) throw new Error(`flaky.json: ${url} needs a reason`);
-  return f;
+  const entries = file && fs.existsSync(file) ? (readJson(file).tests ?? {}) : {};
+  const patterns = [];
+  for (const [key, e] of Object.entries(entries)) {
+    if (!e || typeof e.reason !== 'string' || !e.reason.trim()) throw new Error(`flaky.json: ${key} needs a reason`);
+    const bad = Object.keys(e).filter((k) => !FLAKY_KEYS.has(k));
+    if (bad.length) throw new Error(`flaky.json: ${key}: unknown field(s) ${bad.join(', ')} (allowed: ${[...FLAKY_KEYS].join(', ')})`);
+    if (e.subtests && !(Array.isArray(e.subtests) && e.subtests.length && e.subtests.every((s) => typeof s === 'string'))) throw new Error(`flaky.json: ${key}: subtests must be a non-empty list of names`);
+    if (e.subtests && e.allowIncomplete) throw new Error(`flaky.json: ${key}: use subtests or allowIncomplete, not both`);
+    if (key.includes('*')) patterns.push([new RegExp(`^${key.split('*').map((s) => s.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*')}$`), e]);
+  }
+  return { entries, get: (url) => entries[url] ?? patterns.find(([re]) => re.test(url))?.[1] };
 }
+export const wholePage = (f) => !!f && !f.subtests && !f.allowIncomplete;
 
 // ---------- comparison ----------
-// One page against its baseline entry:
-//   lost: subtests that passed in the baseline and do not pass now (named when the page reported them; lostUnnamed
-//     counts passes of a fail-list entry that the page no longer reports at all)
-//   gained: subtests that pass now and did not in the baseline (gainedUnnamed: a fail-list page reporting more passes)
-//   broke: the page completed in the baseline and does not now (timeout, hang, crash, navigation error)
-export function compareTest(b, t, flaky) {
-  const f = flaky?.[t.url];
-  const base = { url: t.url, status: t.status, was: b?.status, lost: [], lostUnnamed: 0, gained: [], gainedUnnamed: 0, broke: false };
-  if (f && !f.subtests) return { ...base, flaky: true };
-  const now = new Set(passing(t));
-  if (!b) return { ...base, isNew: true, gained: [...now] };
+// One page's runs (its run, and its reruns if any) against its baseline entry. A subtest is lost if it passed in the
+// baseline and passed in no run; a page broke if it completed in the baseline and in no run. A subtest is gained if
+// it passed in every run and not in the baseline; a page is fixed if it completes in every run and did not in the
+// baseline. So a flake that passes once neither fails the gate nor enters the baseline.
+//   lost: names (for a fail-list entry, those its runs reported); lostUnnamed: how many passes of a fail-list entry
+//     no run reported, when no run reported its names (a lower bound)
+//   setChanged: a fail-list page completed, but no run reported the baseline's names (h), so which of its passes
+//     are gone is unknown: a regression until the entry is replaced (gate.mjs update --replace --match)
+//   unstable: the runs disagreed (status or passes): a flaky.json candidate
+export function judge(b, runs, flaky) {
+  const url = runs[0].url;
+  const f = flaky?.get(url);
+  const c = {
+    url, status: runs[runs.length - 1].status, was: b?.status, runs: runs.length,
+    lost: [], lostUnnamed: 0, gained: [], broke: false, fixed: false, setChanged: false, unstable: unstable(runs),
+  };
+  if (wholePage(f)) return { ...c, flaky: true };
   const ignore = new Set(f?.subtests ?? []);
-  const c = { ...base, before: passCount(b), after: now.size };
+  if (!b) return { ...c, isNew: true, gained: consensus(runs).pass.filter((n) => !ignore.has(n)) };
+  let use = runs;
+  if (f?.allowIncomplete && b.status === 'complete') {
+    use = runs.filter((t) => t.status === 'complete');
+    if (!use.length) return { ...c, ignoredIncomplete: true };
+  }
+  const passSets = use.map((t) => new Set(passing(t)));
+  const passedAny = (n) => passSets.some((s) => s.has(n));
+  const passedAll = (n) => passSets.every((s) => s.has(n));
+  const done = use.filter((t) => t.status === 'complete');
+  c.broke = b.status === 'complete' && !done.length;
+  c.fixed = b.status !== 'complete' && done.length === use.length;
   if (b.pass) {
     const was = new Set(b.pass);
-    c.lost = b.pass.filter((n) => !now.has(n) && !ignore.has(n));
-    c.gained = [...now].filter((n) => !was.has(n));
-  } else {
-    const fail = new Set(b.fail);
-    const still = [...now].filter((n) => !fail.has(n)).length;
-    const nonPass = (t.subtests ?? []).filter((s) => s.status !== 'Pass' && !fail.has(s.name));
-    c.lost = nonPass.filter((s) => !ignore.has(s.name)).map((s) => s.name);
-    c.lostUnnamed = Math.max(0, passCount(b) - still - nonPass.length);
-    c.gained = [...now].filter((n) => fail.has(n));
-    c.gainedUnnamed = Math.max(0, still - passCount(b));
+    c.lost = b.pass.filter((n) => !passedAny(n) && !ignore.has(n));
+    c.gained = [...passSets[0]].filter((n) => !was.has(n) && passedAll(n) && !ignore.has(n));
+    return c;
   }
-  c.broke = b.status === 'complete' && t.status !== 'complete';
+  const fail = new Set(b.fail);
+  c.gained = b.fail.filter((n) => passedAll(n) && !ignore.has(n));
+  const exact = done.find((t) => namesHash(names(t)) === b.h);
+  if (exact) {
+    c.lost = names(exact).filter((n) => !fail.has(n) && !passedAny(n) && !ignore.has(n));
+    return c;
+  }
+  // No run reported the baseline's names. Named: what no run passed and the baseline does not list as failing (a
+  // lost pass, or a new subtest that fails); unnamed: baseline passes beyond every name the runs reported.
+  const seen = new Set(use.flatMap(names));
+  c.lost = [...seen].filter((n) => !fail.has(n) && !passedAny(n) && !ignore.has(n));
+  c.lostUnnamed = Math.max(0, passCount(b) - [...seen].filter((n) => !fail.has(n)).length);
+  c.setChanged = done.length > 0;
   return c;
 }
+function unstable(runs) {
+  if (runs.length < 2) return false;
+  const key = (t) => `${t.status === 'complete'}|${passing(t).sort().join('\n')}`;
+  return runs.some((t) => key(t) !== key(runs[0]));
+}
 export const lostCount = (c) => c.lost.length + c.lostUnnamed;
-export const gainedCount = (c) => c.gained.length + c.gainedUnnamed;
-export const isRegression = (c) => lostCount(c) > 0 || c.broke;
-export const differs = (c) => isRegression(c) || gainedCount(c) > 0;
+export const isRegression = (c) => lostCount(c) > 0 || c.broke || c.setChanged;
+export const isImprovement = (c) => c.gained.length > 0 || c.fixed;
+// Pages the gate runs again: anything that may be a regression or an improvement, and a page allowed not to
+// complete that did not.
+export const differs = (c) => isRegression(c) || isImprovement(c) || !!c.ignoredIncomplete;
 
-// A page that ran twice (the gate reruns every page whose first result differs from the baseline): a subtest is
-// lost only if it was lost both times, gained only if it was gained both times, and the page broke only if it broke
-// both times. `result` is what the baseline update takes: the second run, with passes only where both runs passed.
-export function combine(b, first, again, flaky) {
-  const c1 = compareTest(b, first, flaky);
-  if (!again) return { ...c1, result: first };
-  const c2 = compareTest(b, again, flaky);
-  const both = (x, y) => { const s = new Set(y); return x.filter((n) => s.has(n)); };
-  const pass1 = new Set(passing(first));
-  const result = { ...again, subtests: (again.subtests ?? []).map((s) => (s.status === 'Pass' && !pass1.has(s.name) ? { ...s, status: 'Fail', msg: 'passed only in the rerun' } : s)) };
-  return {
-    ...c2,
-    status: again.status,
-    lost: both(c1.lost, c2.lost),
-    lostUnnamed: Math.min(c1.lostUnnamed, c2.lostUnnamed),
-    gained: both(c1.gained, c2.gained),
-    gainedUnnamed: Math.min(c1.gainedUnnamed, c2.gainedUnnamed),
-    broke: c1.broke && c2.broke,
-    rerun: { first: first.status, firstRegression: isRegression(c1), firstGained: gainedCount(c1) },
-    result,
-  };
+// Coverage the base branch's baseline and flaky list protect that this branch's no longer do: passes an entry
+// dropped, a page that completed and is now recorded as not completing, a removed page, a fail-list entry whose
+// names changed (unverifiable), and flaky.json entries added or widened.
+export function weakening(baseB, b, baseFlaky, flaky) {
+  const out = [];
+  for (const [url, o] of Object.entries(baseB.tests)) {
+    const e = b.tests[url];
+    if (!e) { if (passCount(o) || o.status === 'complete') out.push({ url, what: `removed (${passCount(o)} passing subtests, ${o.status})` }); continue; }
+    const why = [];
+    if (o.status === 'complete' && e.status !== 'complete') why.push(`complete → ${e.status}`);
+    let lost = [];
+    if (o.pass && e.pass) { const s = new Set(e.pass); lost = o.pass.filter((n) => !s.has(n)); }
+    else if (o.fail && e.fail && o.h === e.h) { const s = new Set(o.fail); lost = e.fail.filter((n) => !s.has(n)); }
+    else if (o.fail && e.fail) why.push(`subtest names changed (${o.n} → ${e.n}; passes ${passCount(o)} → ${passCount(e)})`);
+    else if (o.pass && e.fail) { const f = new Set(e.fail); lost = o.pass.filter((n) => f.has(n)); }
+    if (lost.length) why.push(`${lost.length} pass(es) dropped: ${lost.slice(0, 3).join(' / ').slice(0, 200)}`);
+    else if (!(o.fail && e.fail) && passCount(e) < passCount(o)) why.push(`passes ${passCount(o)} → ${passCount(e)}`);
+    if (why.length) out.push({ url, what: why.join('; ') });
+  }
+  for (const [key, e] of Object.entries(flaky.entries)) {
+    const o = baseFlaky.entries[key];
+    if (!o) out.push({ url: key, what: `flaky.json entry added (${e.reason})` });
+    else if (wholePage(e) && !wholePage(o)) out.push({ url: key, what: 'flaky.json entry widened to the whole page' });
+    else if (e.allowIncomplete && !o.allowIncomplete) out.push({ url: key, what: 'flaky.json entry now allows the page not to complete' });
+    else if (e.subtests && o.subtests) {
+      const s = new Set(o.subtests);
+      const more = e.subtests.filter((n) => !s.has(n));
+      if (more.length) out.push({ url: key, what: `flaky.json entry ignores ${more.length} more subtest(s)` });
+    }
+  }
+  return out;
 }

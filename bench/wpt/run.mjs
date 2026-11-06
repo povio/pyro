@@ -3,8 +3,9 @@
 //          [--base http://127.0.0.1:9415]   (default: start serve.mjs on a free port)
 //          [--dirs dom,url,...] [--jobs 6] [--timeout 15000] [--long-timeout 45000]
 //          [--sample-encoding N] [--match REGEX] [--tests FILE] [--list]
-//          [--baseline baseline.json [--gate]] [--shard I/N] [--reuse-context]
+//          [--baseline baseline.json [--gate]] [--shard I/N] [--reuse-context] [--repeat N]
 // --tests FILE: only these URLs (a JSON array of URLs, or a results or baseline file).
+// --repeat N: run every selected page N times (the gate's reruns), one result each; copies run side by side.
 // --baseline: per-page durations order the run longest first and balance --shard I/N (0-based).
 // --gate: the PR gate's plan (lib.mjs plan()): skip pages with no coverage to protect, and bound the timeout of a
 //   page that completed in the baseline by 10x its duration (at least 10 s).
@@ -38,10 +39,12 @@ const GATE = argv.includes('--gate');
 const BASELINE = opt('--baseline') && readJson(opt('--baseline'));
 const [SHARD, SHARDS] = (opt('--shard', '0/1')).split('/').map(Number);
 const REUSE = argv.includes('--reuse-context');
+const REPEAT = Number(opt('--repeat', 1));
 // A run over part of the suite: the gate does not report baseline pages it did not run as missing.
 const RESTRICTED = DIRS.join(',') !== DEFAULT_DIRS.join(',') || !!opt('--match') || !!opt('--tests') || SAMPLE !== 1;
 if (GATE && !BASELINE) throw new Error('--gate needs --baseline');
 if (!(SHARD >= 0 && SHARD < SHARDS)) throw new Error(`--shard ${opt('--shard')}: expected I/N with 0 <= I < N`);
+if (!(REPEAT >= 1)) throw new Error(`--repeat ${opt('--repeat')}: expected N >= 1`);
 
 function selectTests() {
   const { tests, excluded } = discover(WPT, DIRS, { sampleEncoding: SAMPLE });
@@ -54,7 +57,9 @@ function selectTests() {
     sel = sel.filter((t) => urls.has(t.url));
   }
   const p = plan(sel, BASELINE, { gate: GATE, timeout: TIMEOUT, longTimeout: LONG });
-  return { tests: shard(p.tests, SHARD, SHARDS), excluded, skipped: p.skipped, discovered: sel.length };
+  const mine = shard(p.tests, SHARD, SHARDS);
+  // Copies interleaved (a b c a b c): with few pages and enough jobs, a page's copies run side by side.
+  return { tests: Array.from({ length: REPEAT }, () => mine.map((t) => ({ ...t }))).flat(), excluded, skipped: p.skipped, discovered: sel.length };
 }
 const { tests, excluded, skipped, discovered } = selectTests();
 if (argv.includes('--list')) {
