@@ -15,7 +15,7 @@ default = ["render"]
 perf-trace = ["lp-cdp/perf-trace"]
 # Blitz (lp-render): layout geometry, screenshots and PDFs. Without it
 # nothing is laid out.
-render = ["lp-cdp/render"]
+render = ["lp-cdp/render", "dep:lp-render"]
 
 [dependencies]
 lp-js.workspace = true
@@ -23,6 +23,8 @@ lp-runtime.workspace = true
 lp-browser.workspace = true
 lp-net.workspace = true
 lp-cdp.workspace = true
+lp-render = { workspace = true, optional = true }
+mimalloc = { version = "0.1.52", default-features = false }
 
 [dev-dependencies]
 serde_json = "1"

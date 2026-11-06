@@ -186,7 +186,7 @@ impl JsClass for DataTransfer {
             }
             drop(entries);
             let array = s.array(&types)?;
-            let freeze = s.global().get("Object")?.as_object().map(|o| o.get("freeze")).transpose()?;
+            let freeze = s.global().get_atom("Object")?.as_object().map(|o| o.get_atom("freeze")).transpose()?;
             if let Some(f) = freeze.and_then(|f| f.as_object()) {
                 f.call(None, &[array.value()])?;
             }

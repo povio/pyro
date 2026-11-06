@@ -385,7 +385,9 @@ impl EngineHost {
         for info in self.thread.browser.frames(page_id) {
             // An earlier script can synchronously remove a later frame from
             // this snapshot. Skip it without failing future installation.
-            let Some(frame) = self.thread.browser.frame(page_id, &info.id) else { continue };
+            let Some(main) = self.thread.browser.with_frame(page_id, &info.id, |f| f.main_realm().cloned()) else {
+                continue;
+            };
             let realm = match world {
                 Some(name) => Some(
                     self.thread
@@ -393,7 +395,7 @@ impl EngineHost {
                         .isolated_world_in_frame(page_id, &info.id, name)
                         .map_err(|e| CdpError::server(format!("cannot create isolated world: {e}")))?,
                 ),
-                None => frame.main_realm().cloned(),
+                None => main,
             };
             if let Some(realm) = realm {
                 if let Ok(scope) = realm.scope() {
@@ -479,7 +481,7 @@ impl EngineHost {
         let all = self.sessions_of(page, |s| s.page_enabled);
         let lifecycle = self.sessions_of(page, |s| s.page_enabled && s.lifecycle_events);
         let runtime = self.sessions_of(page, |s| s.runtime_enabled);
-        let root = self.main_frame(page).ok().map(|(id, _, _)| FrameId(id));
+        let root = self.pages.get(&page).and_then(|p| self.thread.browser.page(p.id)).map(|p| p.main_frame.id.clone());
         match event {
             PageEvent::FrameNavigate { frame_id, loader_id, url, reason, cdp_request_id, .. } => {
                 if let Some(state) = self.pages.get_mut(&page) {
@@ -559,9 +561,7 @@ impl EngineHost {
                     }
                 } else {
                     let context = context_description(realm, world.as_deref(), &origin, &frame_id.0);
-                    for s in &runtime {
-                        self.event("Runtime.executionContextCreated", &json!({ "context": context }), s);
-                    }
+                    self.event_to("Runtime.executionContextCreated", &json!({ "context": context }), &runtime);
                 }
             }
             PageEvent::FrameNavigated { frame_id, loader_id, url, reason, cdp_request_id, timestamp } => {
@@ -600,23 +600,21 @@ impl EngineHost {
                     }
                     None => (None, Vec::new()),
                 };
-                let info = self.pages.get(&page).and_then(|p| self.thread.browser.frame(p.id, &frame_id));
+                let info = self.pages.get(&page).and_then(|p| {
+                    self.thread.browser.with_frame(p.id, &frame_id, |f| (f.origin.clone(), f.name.clone()))
+                });
                 let origin = pending
                     .iter()
                     .find(|(_, world, _)| world.is_none())
                     .map(|(_, _, origin)| origin.as_str())
-                    .or_else(|| info.as_ref().map(|f| f.origin.as_str()))
+                    .or_else(|| info.as_ref().map(|(origin, _)| origin.as_str()))
                     .unwrap_or("null");
-                let name = info.as_ref().map_or("", |f| f.name.as_str());
+                let name = info.as_ref().map_or("", |(_, name)| name.as_str());
                 let frame = frame_description(&frame_id.0, parent.as_ref(), &loader_id.0, &url, name, origin);
-                for s in &all {
-                    self.event("Page.frameNavigated", &json!({"frame":frame,"type":"Navigation"}), s);
-                }
+                self.event_to("Page.frameNavigated", &json!({"frame":frame,"type":"Navigation"}), &all);
                 for (realm, world, origin) in pending {
                     let context = context_description(realm, world.as_deref(), &origin, &frame_id.0);
-                    for s in &runtime {
-                        self.event("Runtime.executionContextCreated", &json!({ "context": context }), s);
-                    }
+                    self.event_to("Runtime.executionContextCreated", &json!({ "context": context }), &runtime);
                 }
             }
             PageEvent::FrameNavigateFailed { frame_id, loader_id, error, cdp_request_id, .. } => {

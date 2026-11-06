@@ -12,6 +12,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use serde::{Deserialize, Serialize};
+use serde_json::value::RawValue;
 use serde_json::Value;
 
 use crate::msg::{CdpError, CdpResult};
@@ -204,27 +205,30 @@ pub fn v8_style_description(name: &str, message: &str, frames: &[CallFrame]) -> 
 }
 
 /// An argument of `Runtime.callFunctionOn`.
-#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CallArgument {
-    /// `Some(Value::Null)` for an explicit `"value": null`, `None` when absent.
+    /// The JSON text of `value`, kept as sent: the engine parses it once
+    /// (`JSON.parse`), with no intermediate value tree. `Some("null")` for an
+    /// explicit `"value": null`, `None` when absent.
     #[serde(default, deserialize_with = "present")]
-    pub value: Option<Value>,
+    pub value: Option<Box<RawValue>>,
     #[serde(default)]
     pub unserializable_value: Option<String>,
     #[serde(default)]
     pub object_id: Option<String>,
 }
 
-fn present<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Value>, D::Error> {
-    Value::deserialize(d).map(Some)
+fn present<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Box<RawValue>>, D::Error> {
+    Box::<RawValue>::deserialize(d).map(Some)
 }
 
 /// Decoded argument, ready to convert into an engine value.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum Argument<'a> {
     Undefined,
-    Json(&'a Value),
+    /// JSON text (already validated by the message parser).
+    Json(&'a RawValue),
     Number(f64),
     BigInt(&'a str),
     Object(&'a str),
@@ -266,9 +270,23 @@ fn is_bigint_literal(digits: &str) -> bool {
 /// context is recognizably invalid rather than aliasing a newer object.
 /// The table is bounded so a client that never releases handles gets errors
 /// instead of growing memory without limit.
+///
+/// Storage is a slab: `n` encodes the slot index (low 32 bits, 1-based) and
+/// the slot's generation (high 32 bits), so a lookup parses two integers and
+/// indexes a vector, and a released slot's old ids stay invalid when it is
+/// reused. Every entry is threaded on two intrusive lists, one per execution
+/// context and one per object group, so releasing a context or group visits
+/// only the entries it releases.
 pub struct HandleTable<H> {
-    entries: HashMap<String, Entry<H>>,
-    next: u64,
+    slots: Vec<Slot<H>>,
+    free: Vec<u32>,
+    len: usize,
+    /// First entry of each execution context's list.
+    contexts: HashMap<ExecutionContextId, u32>,
+    /// Interned object groups; a group's slot is freed with its last entry.
+    groups: Vec<Option<Group>>,
+    free_groups: Vec<u32>,
+    group_ids: HashMap<Rc<str>, u32>,
     budget: HandleBudget,
 }
 
@@ -318,78 +336,317 @@ impl HandleBudget {
     }
 }
 
+const NIL: u32 = u32::MAX;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Link {
+    prev: u32,
+    next: u32,
+}
+
+const UNLINKED: Link = Link { prev: NIL, next: NIL };
+
+struct Slot<H> {
+    generation: u32,
+    entry: Option<Entry<H>>,
+}
+
 struct Entry<H> {
     context: ExecutionContextId,
-    group: Option<String>,
+    /// Index into `groups`, or `NIL`.
+    group: u32,
     handle: H,
+    in_context: Link,
+    in_group: Link,
+}
+
+struct Group {
+    name: Rc<str>,
+    head: u32,
+    len: usize,
+}
+
+/// What [`HandleTable::lookup`] finds for an `objectId`.
+pub struct Found<'a, H> {
+    pub context: ExecutionContextId,
+    pub handle: &'a H,
+    pub group: Option<&'a Rc<str>>,
+}
+
+/// Splits `"<context>.<n>"` into its two integers, accepting only the
+/// canonical spelling the table hands out (no `+`, no leading zeros).
+fn parse_object_id(id: &str) -> Option<(ExecutionContextId, u64)> {
+    fn digits(s: &str) -> bool {
+        !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()) && (s.len() == 1 || !s.starts_with('0'))
+    }
+    let (context, n) = id.split_once('.')?;
+    let unsigned = context.strip_prefix('-').unwrap_or(context);
+    if !digits(unsigned) || !digits(n) || context == "-0" {
+        return None;
+    }
+    Some((context.parse().ok()?, n.parse().ok()?))
+}
+
+fn not_found() -> CdpError {
+    CdpError::server("Could not find object with given id")
+}
+
+fn too_many() -> CdpError {
+    CdpError::server("Too many remote objects; release unused handles")
 }
 
 impl<H> HandleTable<H> {
     pub fn new(budget: HandleBudget) -> Self {
-        Self { entries: HashMap::new(), next: 1, budget }
+        Self {
+            slots: Vec::new(),
+            free: Vec::new(),
+            len: 0,
+            contexts: HashMap::new(),
+            groups: Vec::new(),
+            free_groups: Vec::new(),
+            group_ids: HashMap::new(),
+            budget,
+        }
     }
 
     pub fn len(&self) -> usize {
-        self.entries.len()
+        self.len
     }
 
     pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
+        self.len == 0
     }
 
     pub fn insert(&mut self, context: ExecutionContextId, group: Option<&str>, handle: H) -> CdpResult<String> {
         if !self.budget.take() {
-            return Err(CdpError::server("Too many remote objects; release unused handles"));
+            return Err(too_many());
         }
-        let id = format!("{context}.{}", self.next);
-        self.next += 1;
-        self.entries.insert(id.clone(), Entry { context, group: group.map(str::to_owned), handle });
-        Ok(id)
+        let index = match self.free.pop() {
+            Some(index) => index,
+            None => {
+                let Some(index) = u32::try_from(self.slots.len()).ok().filter(|&i| i < NIL - 1) else {
+                    self.budget.give_back(1);
+                    return Err(too_many());
+                };
+                self.slots.push(Slot { generation: 0, entry: None });
+                index
+            }
+        };
+        let group = group.map_or(NIL, |name| self.intern_group(name));
+        let mut entry = Entry { context, group, handle, in_context: UNLINKED, in_group: UNLINKED };
+        let head = self.contexts.entry(context).or_insert(NIL);
+        entry.in_context.next = std::mem::replace(head, index);
+        if entry.in_context.next != NIL {
+            self.entry_mut(entry.in_context.next).in_context.prev = index;
+        }
+        if group != NIL {
+            let g = self.groups[group as usize].as_mut().expect("interned group");
+            entry.in_group.next = std::mem::replace(&mut g.head, index);
+            g.len += 1;
+            if entry.in_group.next != NIL {
+                self.entry_mut(entry.in_group.next).in_group.prev = index;
+            }
+        }
+        let slot = &mut self.slots[index as usize];
+        slot.entry = Some(entry);
+        self.len += 1;
+        let n = (u64::from(slot.generation) << 32) | u64::from(index + 1);
+        Ok(format!("{context}.{n}"))
+    }
+
+    fn intern_group(&mut self, name: &str) -> u32 {
+        if let Some(&id) = self.group_ids.get(name) {
+            return id;
+        }
+        let name: Rc<str> = Rc::from(name);
+        let group = Group { name: name.clone(), head: NIL, len: 0 };
+        let id = match self.free_groups.pop() {
+            Some(id) => {
+                self.groups[id as usize] = Some(group);
+                id
+            }
+            None => {
+                self.groups.push(Some(group));
+                (self.groups.len() - 1) as u32
+            }
+        };
+        self.group_ids.insert(name, id);
+        id
+    }
+
+    fn entry_mut(&mut self, index: u32) -> &mut Entry<H> {
+        self.slots[index as usize].entry.as_mut().expect("linked entries are live")
+    }
+
+    fn group_mut(&mut self, group: u32) -> &mut Group {
+        self.groups[group as usize].as_mut().expect("groups with entries are live")
+    }
+
+    /// The live slot an id names, if any.
+    fn index_of(&self, object_id: &str) -> Option<u32> {
+        let (context, n) = parse_object_id(object_id)?;
+        let generation = u32::try_from(n >> 32).ok()?;
+        let index = (n as u32).checked_sub(1)?;
+        let slot = self.slots.get(index as usize)?;
+        let entry = slot.entry.as_ref()?;
+        (slot.generation == generation && entry.context == context).then_some(index)
+    }
+
+    /// The context, handle and object group of `object_id`.
+    pub fn lookup(&self, object_id: &str) -> CdpResult<Found<'_, H>> {
+        let index = self.index_of(object_id).ok_or_else(not_found)?;
+        let entry = self.slots[index as usize].entry.as_ref().expect("index_of checks liveness");
+        let group = (entry.group != NIL).then(|| &self.groups[entry.group as usize].as_ref().expect("live group").name);
+        Ok(Found { context: entry.context, handle: &entry.handle, group })
     }
 
     pub fn get(&self, object_id: &str) -> CdpResult<(ExecutionContextId, &H)> {
-        self.entries
-            .get(object_id)
-            .map(|e| (e.context, &e.handle))
-            .ok_or_else(|| CdpError::server("Could not find object with given id"))
+        self.lookup(object_id).map(|f| (f.context, f.handle))
     }
 
     pub fn group_of(&self, object_id: &str) -> Option<&str> {
-        self.entries.get(object_id).and_then(|e| e.group.as_deref())
+        self.lookup(object_id).ok().and_then(|f| f.group).map(|g| &**g)
     }
 
     pub fn release(&mut self, object_id: &str) -> Option<H> {
-        let entry = self.entries.remove(object_id)?;
+        let index = self.index_of(object_id)?;
+        let handle = self.remove(index, true);
         self.budget.give_back(1);
-        Some(entry.handle)
+        Some(handle)
     }
 
     pub fn release_group(&mut self, group: &str) -> usize {
-        self.release_where(|e| e.group.as_deref() == Some(group))
+        let Some(&id) = self.group_ids.get(group) else { return 0 };
+        let mut index = self.group_mut(id).head;
+        let mut released = 0;
+        while index != NIL {
+            let next = self.entry_mut(index).in_group.next;
+            drop(self.remove(index, true));
+            released += 1;
+            index = next;
+        }
+        self.budget.give_back(released);
+        released
     }
 
     /// Drops every handle of a destroyed execution context.
     pub fn release_context(&mut self, context: ExecutionContextId) -> usize {
-        self.release_where(|e| e.context == context)
+        let Some(mut index) = self.contexts.remove(&context) else { return 0 };
+        let mut released = 0;
+        while index != NIL {
+            let next = self.entry_mut(index).in_context.next;
+            drop(self.remove(index, false));
+            released += 1;
+            index = next;
+        }
+        self.budget.give_back(released);
+        released
     }
 
     pub fn clear(&mut self) {
-        self.budget.give_back(self.entries.len());
-        self.entries.clear();
+        self.budget.give_back(self.len);
+        for (index, slot) in self.slots.iter_mut().enumerate() {
+            if slot.entry.take().is_some() {
+                slot.generation = slot.generation.wrapping_add(1);
+                self.free.push(index as u32);
+            }
+        }
+        self.len = 0;
+        self.contexts.clear();
+        self.groups.clear();
+        self.free_groups.clear();
+        self.group_ids.clear();
     }
 
-    fn release_where(&mut self, mut pred: impl FnMut(&Entry<H>) -> bool) -> usize {
-        let before = self.entries.len();
-        self.entries.retain(|_, e| !pred(e));
-        let released = before - self.entries.len();
-        self.budget.give_back(released);
-        released
+    /// Frees slot `index` and unlinks it from its group list and, unless the
+    /// caller is dropping that whole list from its head, its context list.
+    fn remove(&mut self, index: u32, unlink_context: bool) -> H {
+        let slot = &mut self.slots[index as usize];
+        let entry = slot.entry.take().expect("removing a live entry");
+        slot.generation = slot.generation.wrapping_add(1);
+        self.free.push(index);
+        self.len -= 1;
+        let Link { prev, next } = entry.in_context;
+        if unlink_context {
+            match (prev, next) {
+                (NIL, NIL) => drop(self.contexts.remove(&entry.context)),
+                (NIL, next) => drop(self.contexts.insert(entry.context, next)),
+                (prev, next) => self.entry_mut(prev).in_context.next = next,
+            }
+        }
+        if next != NIL {
+            self.entry_mut(next).in_context.prev = if unlink_context { prev } else { NIL };
+        }
+        if entry.group != NIL {
+            let Link { prev, next } = entry.in_group;
+            if prev == NIL {
+                self.group_mut(entry.group).head = next;
+            } else {
+                self.entry_mut(prev).in_group.next = next;
+            }
+            if next != NIL {
+                self.entry_mut(next).in_group.prev = prev;
+            }
+            let g = self.group_mut(entry.group);
+            g.len -= 1;
+            if g.len == 0 {
+                let name = self.groups[entry.group as usize].take().expect("live group").name;
+                self.group_ids.remove(&name);
+                self.free_groups.push(entry.group);
+            }
+        }
+        entry.handle
+    }
+
+    /// Recomputes the context and group lists from the slots and checks the
+    /// maintained ones against them.
+    #[cfg(test)]
+    fn validate(&self) {
+        use std::collections::BTreeSet;
+        let live: Vec<u32> = (0..self.slots.len() as u32).filter(|&i| self.slots[i as usize].entry.is_some()).collect();
+        assert_eq!(live.len(), self.len);
+        let mut by_context: HashMap<ExecutionContextId, BTreeSet<u32>> = HashMap::new();
+        let mut by_group: HashMap<u32, BTreeSet<u32>> = HashMap::new();
+        for &i in &live {
+            let e = self.slots[i as usize].entry.as_ref().unwrap();
+            by_context.entry(e.context).or_default().insert(i);
+            if e.group != NIL {
+                by_group.entry(e.group).or_default().insert(i);
+            }
+        }
+        let walk = |mut i: u32, link: fn(&Entry<H>) -> Link| {
+            let mut seen = BTreeSet::new();
+            let mut prev = NIL;
+            while i != NIL {
+                let e = self.slots[i as usize].entry.as_ref().expect("lists hold live entries");
+                assert_eq!(link(e).prev, prev, "back link");
+                assert!(seen.insert(i), "no cycles");
+                prev = i;
+                i = link(e).next;
+            }
+            seen
+        };
+        assert_eq!(self.contexts.len(), by_context.len());
+        for (context, expected) in &by_context {
+            assert_eq!(&walk(self.contexts[context], |e| e.in_context), expected);
+        }
+        assert_eq!(self.groups.iter().filter(|g| g.is_some()).count(), by_group.len());
+        assert_eq!(self.group_ids.len(), by_group.len());
+        for (group, expected) in &by_group {
+            let g = self.groups[*group as usize].as_ref().unwrap();
+            assert_eq!(g.len, expected.len());
+            assert_eq!(self.group_ids[&g.name], *group);
+            assert_eq!(&walk(g.head, |e| e.in_group), expected);
+        }
+        let free: BTreeSet<u32> = self.free.iter().copied().collect();
+        assert_eq!(free.len(), self.free.len());
+        assert_eq!(free.len() + live.len(), self.slots.len());
     }
 }
 
 impl<H> Drop for HandleTable<H> {
     fn drop(&mut self) {
-        self.budget.give_back(self.entries.len());
+        self.budget.give_back(self.len);
     }
 }
 
@@ -453,20 +710,21 @@ mod tests {
 
     #[test]
     fn decodes_call_arguments() {
-        let arg = |v: Value| serde_json::from_value::<CallArgument>(v).unwrap();
-        assert_eq!(arg(json!({})).decode().unwrap(), Argument::Undefined);
-        assert_eq!(
-            arg(json!({"value":null})).decode().unwrap(),
-            Argument::Json(&Value::Null),
-            "explicit null is not undefined"
-        );
-        let a = arg(json!({"value":{"a":1}}));
-        assert_eq!(a.decode().unwrap(), Argument::Json(&json!({"a":1})));
+        let arg = |v: &str| serde_json::from_str::<CallArgument>(v).unwrap();
+        let json = |a: Argument<'_>| match a {
+            Argument::Json(raw) => Some(raw.get().to_owned()),
+            _ => None,
+        };
+        assert!(matches!(arg("{}").decode().unwrap(), Argument::Undefined));
+        assert_eq!(json(arg("{\"value\":null}").decode().unwrap()).as_deref(), Some("null"), "explicit null");
+        let a = arg("{\"value\":{\"b\":1,\"a\":[2]}}");
+        assert_eq!(json(a.decode().unwrap()).as_deref(), Some("{\"b\":1,\"a\":[2]}"), "kept as sent");
         assert!(
-            matches!(arg(json!({"unserializableValue":"-0"})).decode().unwrap(), Argument::Number(n) if n == 0.0 && n.is_sign_negative())
+            matches!(arg("{\"unserializableValue\":\"-0\"}").decode().unwrap(), Argument::Number(n) if n == 0.0 && n.is_sign_negative())
         );
-        assert_eq!(arg(json!({"unserializableValue":"-12n"})).decode().unwrap(), Argument::BigInt("-12"));
-        assert_eq!(arg(json!({"objectId":"1.2"})).decode().unwrap(), Argument::Object("1.2"));
+        assert!(matches!(arg("{\"unserializableValue\":\"-12n\"}").decode().unwrap(), Argument::BigInt("-12")));
+        assert!(matches!(arg("{\"objectId\":\"1.2\"}").decode().unwrap(), Argument::Object("1.2")));
+        let arg = |v: Value| serde_json::from_value::<CallArgument>(v).unwrap();
         assert!(arg(json!({"unserializableValue":"1e3n"})).decode().is_err());
         assert!(arg(json!({"value":1,"objectId":"1.2"})).decode().is_err());
     }
@@ -510,5 +768,101 @@ mod tests {
         assert_ne!(d, a, "ids are never reused");
         assert_eq!(t.release(&d), Some("d"));
         assert_eq!(t.release(&d), None);
+        t.validate();
+    }
+
+    #[test]
+    fn object_ids_parse_strictly_and_stay_invalid_after_release() {
+        let mut t = HandleTable::new(HandleBudget::new(10));
+        let a = t.insert(7, Some("g"), "a").unwrap();
+        assert_eq!(a, "7.1", "first generation ids read like before");
+        let lookup = t.lookup(&a).unwrap();
+        assert_eq!((lookup.context, *lookup.handle, lookup.group.map(|g| &**g)), (7, "a", Some("g")));
+        for bad in ["7.01", "07.1", "+7.1", "7.+1", "8.1", "7.0", "7", ".1", "7.1.1", "-0.1", "7.4294967297"] {
+            assert!(t.get(bad).is_err(), "{bad}");
+        }
+        t.release(&a);
+        let b = t.insert(7, None, "b").unwrap();
+        assert_ne!(a, b, "a reused slot gets a new generation");
+        assert!(t.get(&a).is_err());
+        assert_eq!(t.get(&b).unwrap(), (7, &"b"));
+        let c = t.insert(-3, None, "c").unwrap();
+        assert_eq!(t.get(&c).unwrap(), (-3, &"c"));
+        t.clear();
+        assert!(t.get(&b).is_err() && t.get(&c).is_err());
+        t.validate();
+    }
+
+    /// Random operations checked against a plain map and the recomputed
+    /// context and group lists.
+    #[test]
+    fn handle_table_matches_a_model() {
+        let mut t = HandleTable::new(HandleBudget::new(64));
+        let mut model: HashMap<String, (ExecutionContextId, Option<String>, u32)> = HashMap::new();
+        let mut seed = 0x2545_f491_4f6c_dd1du64;
+        let mut rand = |n: u64| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed % n
+        };
+        let mut ids: Vec<String> = Vec::new();
+        for step in 0..20_000u32 {
+            match rand(10) {
+                0..=4 => {
+                    let context = rand(4) as ExecutionContextId;
+                    let group = match rand(4) {
+                        0 => None,
+                        g => Some(format!("g{g}")),
+                    };
+                    match t.insert(context, group.as_deref(), step) {
+                        Ok(id) => {
+                            assert!(model.insert(id.clone(), (context, group, step)).is_none(), "fresh id");
+                            ids.push(id);
+                        }
+                        Err(_) => assert_eq!(model.len(), 64),
+                    }
+                }
+                5 | 6 if !ids.is_empty() => {
+                    let id = ids[rand(ids.len() as u64) as usize].clone();
+                    assert_eq!(t.release(&id), model.remove(&id).map(|e| e.2));
+                }
+                7 => {
+                    let group = format!("g{}", rand(4));
+                    let before = model.len();
+                    model.retain(|_, e| e.1.as_deref() != Some(&group));
+                    assert_eq!(t.release_group(&group), before - model.len());
+                }
+                8 => {
+                    let context = rand(4) as ExecutionContextId;
+                    let before = model.len();
+                    model.retain(|_, e| e.0 != context);
+                    assert_eq!(t.release_context(context), before - model.len());
+                }
+                _ => {
+                    if rand(50) == 0 {
+                        t.clear();
+                        model.clear();
+                    }
+                }
+            }
+            assert_eq!(t.len(), model.len());
+            if step % 97 == 0 {
+                t.validate();
+                for id in &ids {
+                    match model.get(id) {
+                        Some((context, group, value)) => {
+                            let f = t.lookup(id).unwrap();
+                            assert_eq!(
+                                (f.context, f.group.map(|g| &**g), *f.handle),
+                                (*context, group.as_deref(), *value)
+                            );
+                        }
+                        None => assert!(t.lookup(id).is_err()),
+                    }
+                }
+            }
+        }
+        t.validate();
     }
 }

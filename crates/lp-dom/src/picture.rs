@@ -85,9 +85,8 @@ impl Dom {
     pub fn picture_source(&self, img: NodeId, viewport: &Viewport) -> Option<String> {
         let i = self.check(img).ok()?;
         let parent = self.n(i).parent;
-        let html = |idx: u32, local: &str| {
-            self.n(idx).element().is_some_and(|e| e.is_html() && &*e.name.local == local)
-        };
+        let html =
+            |idx: u32, local: &str| self.n(idx).element().is_some_and(|e| e.is_html() && &*e.name.local == local);
         if parent == NIL || !html(parent, "picture") {
             return self.own_srcset_source(i, viewport);
         }
@@ -95,14 +94,19 @@ impl Dom {
         while child != NIL && child != i {
             if html(child, "source") {
                 let e = self.n(child).element().expect("source element");
-                let media_ok = e.attr("media").is_none_or(|m| m.trim().is_empty() || crate::media::matches(m, viewport));
-                let type_ok = e.attr("type").is_none_or(|t| {
+                let media_ok = e
+                    .attr_local(&markup5ever::local_name!("media"))
+                    .is_none_or(|m| m.trim().is_empty() || crate::media::matches(m, viewport));
+                let type_ok = e.attr_local(&markup5ever::local_name!("type")).is_none_or(|t| {
                     let t = t.trim().to_ascii_lowercase();
                     t.is_empty() || t.starts_with("image/")
                 });
                 if media_ok && type_ok {
-                    if let Some(srcset) = e.attr("srcset") {
-                        let candidates = parse_srcset(srcset, source_size(e.attr("sizes"), viewport));
+                    if let Some(srcset) = e.attr_local(&markup5ever::local_name!("srcset")) {
+                        let candidates = parse_srcset(
+                            srcset,
+                            source_size(e.attr_local(&markup5ever::local_name!("sizes")), viewport),
+                        );
                         if let Some(c) = pick_candidate(&candidates, viewport.device_scale_factor) {
                             return Some(c.url.clone());
                         }
@@ -118,10 +122,11 @@ impl Dom {
     /// a 1x candidate when the set has no 1x one and no width descriptors.
     fn own_srcset_source(&self, img: u32, viewport: &Viewport) -> Option<String> {
         let e = self.n(img).element()?;
-        let srcset = e.attr("srcset")?;
-        let mut candidates = parse_srcset(srcset, source_size(e.attr("sizes"), viewport));
+        let srcset = e.attr_local(&markup5ever::local_name!("srcset"))?;
+        let mut candidates =
+            parse_srcset(srcset, source_size(e.attr_local(&markup5ever::local_name!("sizes")), viewport));
         let has_width = srcset_has_width_descriptor(srcset);
-        if let Some(src) = e.attr("src").filter(|src| !src.is_empty()) {
+        if let Some(src) = e.attr_local(&markup5ever::local_name!("src")).filter(|src| !src.is_empty()) {
             if !has_width && !candidates.iter().any(|c| c.density == 1.0) {
                 candidates.push(Candidate { url: src.to_owned(), density: 1.0 });
             }
@@ -133,9 +138,10 @@ impl Dom {
 /// Whether a candidate of `srcset` has a width descriptor.
 fn srcset_has_width_descriptor(srcset: &str) -> bool {
     srcset.split(',').any(|candidate| {
-        candidate.split_ascii_whitespace().skip(1).any(|d| {
-            d.strip_suffix('w').is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
-        })
+        candidate
+            .split_ascii_whitespace()
+            .skip(1)
+            .any(|d| d.strip_suffix('w').is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit())))
     })
 }
 

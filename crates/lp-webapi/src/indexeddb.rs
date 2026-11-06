@@ -52,8 +52,8 @@ impl JsClass for IdbFactory {
                     // resolving promises; no namespace borrow crosses JS entry.
                     for info in data.namespace.databases(origin) {
                         let row = s.object();
-                        row.set("name", s.string(&info.name))?;
-                        row.set("version", s.number(info.version as f64))?;
+                        row.set_atom("name", s.string(&info.name))?;
+                        row.set_atom("version", s.number(info.version as f64))?;
                         rows.push(s, row.value());
                     }
                     promise.resolve(s, s.array(&rows.iter(s).collect::<Vec<_>>())?.value())?;

@@ -26,7 +26,7 @@ pub(crate) fn install(s: &Scope<'_>, page: &crate::page::PageDom) -> JsResult<()
     // Native users (MessagePort) keep the original, unaffected by page
     // reassignment of `structuredClone`; released with the realm/page.
     page.structured_clones.borrow_mut().insert(s.realm_id(), Persistent::new(s, clone));
-    s.global().set("structuredClone", clone)
+    s.global().set_atom("structuredClone", clone)
 }
 
 /// StructuredSerialize + deserialize into the same realm, with `options`
@@ -102,7 +102,7 @@ pub(crate) fn encode_message<'s>(
     let text = pair.get_index(0)?.to_string()?;
     let list = pair.get_index(1)?;
     let list = list.as_object().expect("buffer list");
-    let count = list.get("length")?.to_number()? as u32;
+    let count = list.get_atom("length")?.to_number()? as u32;
     let mut buffers = Vec::with_capacity(count as usize);
     for i in 0..count {
         let bytes = crate::encoding::buffer_source_bytes(s, list.get_index(i)?)?;

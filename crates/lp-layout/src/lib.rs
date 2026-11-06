@@ -153,7 +153,8 @@ pub struct BlitzGeometry {
     /// [`RESOURCES`] when its document was built.
     resources: std::cell::Cell<u64>,
     /// Each style sheet's owner, whether it is a `<style>`, and its text's
-    /// hash, as last synced (see [`BlitzGeometry::changed_style_sheets`]).
+    /// revision (`StyleEngine::sheet_revision`), as last synced (see
+    /// [`BlitzGeometry::changed_style_sheets`]).
     sheets: RefCell<Vec<(NodeId, bool, u64)>>,
 }
 
@@ -229,13 +230,14 @@ impl BlitzGeometry {
         self.page
     }
 
-    /// Linked sheet texts by absolute URL, and the link-to-URL resolver the
-    /// render tree uses.
+    /// The `<style>` text and link-to-URL resolvers the render tree uses;
+    /// with `sheets`, linked sheet texts are collected by absolute URL (a
+    /// whole-tree snapshot carries them, a delta does not).
     fn render_opts<'a>(
         dom: &'a Dom,
         style: &'a StyleEngine,
         base_url: &str,
-        sheets: &'a RefCell<HashMap<String, String>>,
+        sheets: Option<&'a RefCell<HashMap<String, String>>>,
     ) -> (impl Fn(NodeId) -> Option<String> + 'a, impl Fn(NodeId) -> Option<String> + 'a) {
         let base = url::Url::parse(base_url).ok();
         let style_text = move |owner: NodeId| style.sheet_text(owner).map(str::to_owned);
@@ -243,7 +245,9 @@ impl BlitzGeometry {
             let text = style.sheet_text(link)?;
             let href = dom.get_attribute(link, "href").ok().flatten()?;
             let url = base.as_ref()?.join(href.trim()).ok()?.to_string();
-            sheets.borrow_mut().insert(url.clone(), text.to_owned());
+            if let Some(sheets) = sheets {
+                sheets.borrow_mut().insert(url.clone(), text.to_owned());
+            }
             Some(url)
         };
         (style_text, stylesheet_href)
@@ -255,7 +259,7 @@ impl BlitzGeometry {
         let base_url = self.base_url.borrow().clone();
         let sheets = RefCell::new(HashMap::new());
         let tree = {
-            let (style_text, stylesheet_href) = Self::render_opts(dom, style, &base_url, &sheets);
+            let (style_text, stylesheet_href) = Self::render_opts(dom, style, &base_url, Some(&sheets));
             let opts = RenderHtml { style_text: &style_text, stylesheet_href: &stylesheet_href, mark: None };
             Arc::new(convert(dom.render_tree(style.document(), &opts).ok()?))
         };
@@ -320,8 +324,7 @@ impl BlitzGeometry {
             if let (Some(restyled), true) = (restyled, vp == viewport) {
                 let t = Instant::now();
                 let base_url = self.base_url.borrow().clone();
-                let sheets = RefCell::new(HashMap::new());
-                let (style_text, stylesheet_href) = Self::render_opts(dom, style, &base_url, &sheets);
+                let (style_text, stylesheet_href) = Self::render_opts(dom, style, &base_url, None);
                 let opts = RenderHtml { style_text: &style_text, stylesheet_href: &stylesheet_href, mark: None };
                 let delta = dom.render_delta(style.document(), version, &opts).map(|mut delta| {
                     delta.ops.extend(restyled.iter().filter_map(|&owner| dom.render_style_text(owner, &opts)));
@@ -369,9 +372,9 @@ impl BlitzGeometry {
 }
 
 impl BlitzGeometry {
-    /// Each style sheet's owner, whether it is a `<style>`, and its text's hash.
+    /// Each style sheet's owner, whether it is a `<style>`, and its text's
+    /// revision: loader and CSSOM texts are not copied or hashed again.
     fn sheet_hashes(dom: &Dom, style: &StyleEngine) -> Vec<(NodeId, bool, u64)> {
-        use std::hash::{Hash, Hasher};
         style
             .sheet_owners()
             .into_iter()
@@ -381,12 +384,7 @@ impl BlitzGeometry {
                     .ok()
                     .and_then(|n| n.element())
                     .is_some_and(|e| e.is_html() && &*e.name.local == "style");
-                let mut h = std::hash::DefaultHasher::new();
-                match style.sheet_text(owner) {
-                    Some(text) => text.hash(&mut h),
-                    None => dom.text_content(owner).ok().flatten().hash(&mut h),
-                }
-                (owner, is_style, h.finish())
+                (owner, is_style, style.sheet_revision(dom, owner).unwrap_or_default())
             })
             .collect()
     }
@@ -596,4 +594,159 @@ pub fn paint_pdf(
                 .map_err(|e| e.to_string()),
         )
     })
+}
+
+#[cfg(test)]
+mod tests {
+    //! lp-dom reads hot computed values typed (`StyleEngine::computed`) and
+    //! hit tests from per-box derived data: both checked here against the
+    //! serialized values and the stacking order.
+
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    use lp_dom::layout::Layout;
+    use lp_dom::parse::{parse_document, DomRef};
+    use lp_dom::select::parse_selectors;
+    use lp_dom::style::{Display, UserSelect};
+    use lp_dom::{Dom, NodeId};
+
+    struct NoFetch;
+    impl lp_render::Fetcher for NoFetch {
+        fn fetch(&self, url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
+            done(Err(format!("{url}: offline")));
+        }
+    }
+
+    fn page(html: &str) -> (DomRef, NodeId, Layout) {
+        super::install(std::sync::Arc::new(NoFetch));
+        let dom: DomRef = Rc::new(RefCell::new(Dom::new()));
+        let doc = parse_document(&dom, "http://test/", html);
+        dom.borrow_mut().set_document_active(doc, true).unwrap();
+        let mut layout = Layout::new(doc);
+        layout.style_mut().discover_style_elements(&dom.borrow());
+        (dom, doc, layout)
+    }
+
+    fn find(dom: &Dom, doc: NodeId, css: &str) -> NodeId {
+        dom.query_selector(doc, &parse_selectors(css).unwrap()).unwrap().unwrap()
+    }
+
+    #[test]
+    fn typed_computed_values_match_their_serialization() {
+        let (dom, doc, layout) = page(
+            r#"<!doctype html><html><head><style>
+              .a { position: relative; z-index: 3; opacity: 0.5 }
+              .b { position: absolute; transform: translateX(2px); isolation: isolate }
+              .c { position: fixed; z-index: -2; user-select: none }
+              .d { position: sticky; top: 0; -webkit-user-select: text }
+              .e { display: contents; user-select: all }
+              .f { display: inline-flex } .g { display: inline-grid } .h { display: inline-table }
+              .i { display: inline-block; user-select: contain } .j { display: inline list-item }
+              .k { display: grid } .l { display: table-header-group } .m { display: none }
+              .n { opacity: 0.9999 } .o { z-index: 7 }
+            </style></head><body>
+            <div class=a><span class=b>b</span><p class=c>c</p></div>
+            <div class=d><i class=e><b class=f>f</b></i><b class=g>g</b><b class=h>h</b></div>
+            <ul><li id=li>x</li><li id=li2 style="display: block">y</li><li class=j>j</li></ul>
+            <div class=k><span class=o>o</span><span class=i>i</span></div>
+            <table><tbody class=l><tr id=tr><td>t</td></tr></tbody></table>
+            <div class=m><div class=n>n</div></div>
+            </body></html>"#,
+        );
+        let dom = dom.borrow();
+        let style = layout.style();
+        let mut checked = 0;
+        for el in dom.query_selector_all(doc, &parse_selectors("*").unwrap()).unwrap() {
+            let Some(c) = style.computed(&dom, el) else { continue };
+            let value = |name: &str| style.stylo_value(&dom, el, name).unwrap();
+            let display = value("display");
+            assert_eq!(c.position.keyword(), value("position"), "{display}");
+            assert_eq!(c.display_contents, display == "contents");
+            assert_eq!(
+                c.atomic_inline,
+                matches!(display.as_str(), "inline-block" | "inline-flex" | "inline-grid" | "inline-table"),
+                "{display}"
+            );
+            assert_eq!(
+                c.table_row_or_group,
+                matches!(
+                    display.as_str(),
+                    "table-row" | "table-row-group" | "table-header-group" | "table-footer-group"
+                )
+            );
+            let expected = match display.as_str() {
+                "none" => Display::None,
+                "flex" | "inline-flex" => Display::Flex,
+                "grid" | "inline-grid" => Display::Grid,
+                _ => Display::Other,
+            };
+            assert_eq!(c.display, expected, "{display}");
+            assert_eq!(c.block_flex_or_grid, matches!(display.as_str(), "flex" | "grid"), "{display}");
+            assert_eq!(c.z_index, value("z-index").parse::<i32>().ok());
+            assert_eq!(c.transformed, value("transform") != "none");
+            assert_eq!(c.translucent, value("opacity").parse::<f64>().unwrap() < 1.0);
+            assert_eq!(c.isolated, value("isolation") == "isolate");
+            let select = match value("user-select").as_str() {
+                "none" => UserSelect::None,
+                "text" => UserSelect::Text,
+                "all" => UserSelect::All,
+                "contain" => UserSelect::Contain,
+                _ => UserSelect::Auto,
+            };
+            assert_eq!(c.user_select, select);
+            checked += 1;
+        }
+        assert!(checked > 20, "{checked} elements styled");
+        // The UA display (read without allocating) against an author one.
+        let c = |css: &str| style.computed(&dom, find(&dom, doc, css)).unwrap();
+        assert!(!c("#li").author_display);
+        assert!(c("#li2").author_display);
+        assert_eq!(
+            c(".j").author_display,
+            style.stylo_value(&dom, find(&dom, doc, ".j"), "display").unwrap() != "list-item"
+        );
+        assert!(!c("#tr").author_display);
+        assert!(!c("table").author_display);
+        assert!(c(".l").author_display);
+        assert!(c(".m").author_display);
+    }
+
+    #[test]
+    fn hit_testing_follows_stacking_order_and_clips() {
+        let (dom, doc, layout) = page(
+            r#"<!doctype html><html><head><style>
+              body { margin: 0; height: 600px }
+              div { width: 100px; height: 100px }
+              #low { position: absolute; left: 0; top: 0; z-index: 1 }
+              #high { position: absolute; left: 50px; top: 0; z-index: 2 }
+              #neg { position: absolute; left: 200px; top: 0; z-index: -1 }
+              #flow { position: absolute; left: 200px; top: 0; z-index: 0; opacity: 0.5 }
+              #clip { position: absolute; left: 0; top: 200px; overflow: hidden; width: 50px; height: 50px }
+              #escape { position: fixed; left: 0; top: 200px; width: 100px; height: 20px }
+              #ctx { position: absolute; left: 300px; top: 0; z-index: 5 }
+              #deep { position: absolute; left: 0; top: 0; z-index: 100; width: 10px; height: 10px }
+              #over { position: absolute; left: 300px; top: 0; z-index: 6; width: 50px; height: 50px }
+            </style></head><body>
+            <div id=low></div><div id=high></div><div id=neg></div><div id=flow></div>
+            <div id=clip><div id=inner></div><div id=escape></div></div>
+            <div id=ctx><div id=deep></div></div><div id=over></div>
+            </body></html>"#,
+        );
+        let dom = dom.borrow();
+        let at = |x: f64, y: f64| layout.element_from_point(&dom, x, y);
+        let id = |css: &str| Some(find(&dom, doc, css));
+        assert_eq!(at(25.0, 50.0), id("#low"));
+        assert_eq!(at(75.0, 50.0), id("#high"), "z-index 2 over 1");
+        assert_eq!(at(250.0, 50.0), id("#flow"), "z 0 over z -1");
+        assert_eq!(at(25.0, 230.0), id("#inner"));
+        assert_eq!(at(75.0, 230.0), id("body"), "clipped by #clip's overflow");
+        assert_eq!(at(75.0, 210.0), id("#escape"), "fixed escapes the clip");
+        assert_eq!(at(5.0, 205.0), id("#escape"), "a later fixed box paints above");
+        assert_eq!(at(305.0, 5.0), id("#over"), "z 100 is atomic inside its z 5 context");
+        // Hit tests of the same layout read the per-box data again.
+        assert_eq!(at(305.0, 5.0), id("#over"));
+        assert_eq!(at(75.0, 50.0), id("#high"));
+        assert_eq!(at(75.0, 230.0), id("body"));
+    }
 }

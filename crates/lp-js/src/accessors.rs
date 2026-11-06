@@ -14,7 +14,7 @@
 //! dispatcher here. Slots are process-wide, keyed by the class type and the
 //! attribute name: every engine registers the same (class, name) with the same
 //! callbacks, so the first registration's entry serves them all.
-use crate::class::{guard, GetterResult, Header, InvokeHFn, Kind, MemberCall, PayloadTag};
+use crate::class::{guard_in, GetterResult, Header, InvokeHFn, Kind, MemberCall, PayloadTag, SetHFn};
 use crate::error::JsError;
 use crate::value::Args;
 use lp_jsc_sys as sys;
@@ -69,6 +69,8 @@ static PURE: [AtomicBool; SLOTS] = [const { AtomicBool::new(false) }; SLOTS];
 static RESULT: [AtomicUsize; SLOTS] = [const { AtomicUsize::new(0) }; SLOTS];
 /// Each pure getter's invoker from a payload header (`InvokeHFn`; 0: none).
 static GETTER_H: [AtomicUsize; SLOTS] = [const { AtomicUsize::new(0) }; SLOTS];
+/// Each setter's invoker from a payload header (`SetHFn`; 0: none).
+static SETTER_H: [AtomicUsize; SLOTS] = [const { AtomicUsize::new(0) }; SLOTS];
 
 /// Attributes that found no free slot (see [`slot_usage`]).
 static OVERFLOWED: AtomicUsize = AtomicUsize::new(0);
@@ -100,16 +102,21 @@ pub(crate) fn slot_for(
     pure: bool,
     result: GetterResult,
     get_h: Option<InvokeHFn>,
+    set_h: Option<SetHFn>,
 ) -> Option<u16> {
     if !supported() {
         return None;
     }
     let mut table = SLOT_TABLE.lock().unwrap_or_else(|e| e.into_inner());
     let table = table.get_or_insert_with(HashMap::new);
-    // A class that defines an attribute twice (shared members, then its own)
-    // gets the later definition, as the prototype property it installs last.
     let slot = match table.get(&(class, name)) {
-        Some(&slot) => usize::from(slot),
+        // Written once, by the first registration: every later one has the
+        // same callbacks, and a slot that never changes cannot give a
+        // dispatch on another thread one definition's invoker with another's
+        // callback (`GETTER_H`, `SETTER_H` and the calls are separate words).
+        // A class that defines an attribute twice registers its later
+        // definition first (`class::register`).
+        Some(&slot) => return Some(slot),
         None if table.len() >= SLOTS => {
             OVERFLOWED.fetch_add(1, Ordering::Relaxed);
             return None;
@@ -122,6 +129,7 @@ pub(crate) fn slot_for(
         None => SETTER_CALLS[slot].clear(),
     }
     GETTER_H[slot].store(get_h.map_or(0, |f| f as usize), Ordering::Release);
+    SETTER_H[slot].store(set_h.map_or(0, |f| f as usize), Ordering::Release);
     PURE[slot].store(pure, Ordering::Release);
     RESULT[slot].store(
         match result {
@@ -179,7 +187,7 @@ pub(crate) unsafe extern "C" fn fast_getter_dispatch(
     context: *mut c_void,
 ) -> sys::JSValueRef {
     let slot = context as usize;
-    if let Some(v) = unsafe { lean_getter_h(slot, private_data as *mut Header) } {
+    if let Some(v) = unsafe { lean_getter_h(slot, private_data as *mut Header, this) } {
         return v;
     }
     unsafe { custom_getter_dispatch(slot, ctx, this as sys::JSValueRef, ptr::null()) }
@@ -193,7 +201,7 @@ pub(crate) unsafe extern "C" fn fast_getter_dispatch(
 /// script or mutate. `None` sends the call through the full dispatch: not a
 /// wrapper instance, a disposed realm, an error, a panic.
 #[inline]
-unsafe fn lean_getter_h(slot: usize, h: *mut Header) -> Option<sys::JSValueRef> {
+unsafe fn lean_getter_h(slot: usize, h: *mut Header, this: sys::JSObjectRef) -> Option<sys::JSValueRef> {
     unsafe {
         if h.is_null() || (*h).tag != PayloadTag::Wrapper || (*h).kind != Kind::Instance {
             return None;
@@ -211,7 +219,7 @@ unsafe fn lean_getter_h(slot: usize, h: *mut Header) -> Option<sys::JSValueRef> 
             return None;
         }
         let scope = crate::realm::Scope::new(ctx, &realm);
-        match catch_unwind(AssertUnwindSafe(|| invoke(&scope, h, f))) {
+        match catch_unwind(AssertUnwindSafe(|| invoke(&scope, h, this, f))) {
             Ok(Ok(v)) if !v.is_null() => Some(v),
             _ => None,
         }
@@ -225,7 +233,22 @@ unsafe fn lean_getter(slot: usize, this: sys::JSValueRef) -> Option<sys::JSValue
     if this.is_null() {
         return None;
     }
-    unsafe { lean_getter_h(slot, sys::JSObjectGetPrivate(this) as *mut Header) }
+    unsafe { lean_getter_h(slot, sys::JSObjectGetPrivate(this) as *mut Header, this) }
+}
+
+/// [`lean_getter`] for a member of the realm's global (`window.document`,
+/// or a bare `document`): the global's payload is the realm's, found from
+/// `ctx`, as the full dispatch finds it.
+unsafe fn lean_global_getter(slot: usize, ctx: sys::JSContextRef, this: sys::JSValueRef) -> Option<sys::JSValueRef> {
+    let this = receiver(this)?;
+    let realm = crate::realm::realm_for_ctx(ctx)?;
+    let scope = crate::realm::Scope::new(ctx, &realm);
+    if !this.is_null() && !scope.is_global_object(this) {
+        return None;
+    }
+    let h = scope.global_payload();
+    // SAFETY: the realm's global payload (or null, refused), live for this call.
+    unsafe { lean_getter_h(slot, h, if this.is_null() { scope.global_object_raw() } else { this }) }
 }
 
 unsafe fn custom_getter_dispatch(
@@ -235,13 +258,24 @@ unsafe fn custom_getter_dispatch(
     _uid: *const c_void,
 ) -> sys::JSValueRef {
     if PURE[slot].load(Ordering::Relaxed) {
-        if let Some(v) = unsafe { lean_getter(slot, this) } {
+        // A global variable read (`document`) gets the global object itself,
+        // which is the context: no private data to read (which, for an
+        // object that is not a wrapper, costs JSC a class walk).
+        let global_read = this as usize == ctx as usize;
+        if !global_read {
+            if let Some(v) = unsafe { lean_getter(slot, this) } {
+                return v;
+            }
+        }
+        if let Some(v) = unsafe { lean_global_getter(slot, ctx, this) } {
             return v;
         }
     }
     unsafe {
         let mut exc: sys::JSValueRef = ptr::null();
-        let result = guard(ctx, &mut exc, ptr::null(), |scope| {
+        // A wrapper receiver's realm is usually the caller's (`ctx`).
+        let candidate = receiver(this).and_then(|o| crate::class::wrapper_realm(o));
+        let result = guard_in(ctx, candidate, &mut exc, ptr::null(), |scope| {
             let Some(call) = GETTER_CALLS[slot].load() else { return Err(JsError::Type("Illegal invocation".into())) };
             let Some(this) = receiver(this) else { return Err(JsError::Type("Illegal invocation".into())) };
             (call.invoke)(scope, this, Args::from_raw(ctx, 0, ptr::null()), call.f)
@@ -266,7 +300,27 @@ unsafe fn custom_setter_dispatch(
 ) -> bool {
     unsafe {
         let mut exc: sys::JSValueRef = ptr::null();
-        let stands = guard(ctx, &mut exc, false, |scope| {
+        // A wrapper instance's payload header, read once: it gives the
+        // candidate realm and, in that realm, the setter's data.
+        let h = match receiver(this) {
+            Some(o) if !o.is_null() => {
+                let h = sys::JSObjectGetPrivate(o) as *mut Header;
+                (!h.is_null() && (*h).tag == PayloadTag::Wrapper).then_some(h)
+            }
+            _ => None,
+        };
+        let candidate = h.map(|h| &(*h).realm_ref);
+        let stands = guard_in(ctx, candidate, &mut exc, false, |scope| {
+            if let Some(h) = h.filter(|&h| (*h).kind == Kind::Instance) {
+                let set_h = SETTER_H[slot].load(Ordering::Relaxed);
+                if set_h != 0 && crate::realm::is_scope_realm(&(*h).realm_ref, scope) {
+                    // SAFETY: stored from a `SetHFn` by `slot_for`.
+                    let set_h = std::mem::transmute::<usize, SetHFn>(set_h);
+                    if set_h(scope, h, value, SETTER_CALLS[slot].f.load(Ordering::Relaxed) as *const ())? {
+                        return Ok(true);
+                    }
+                }
+            }
             let Some(call) = SETTER_CALLS[slot].load() else { return Err(JsError::Type("Illegal invocation".into())) };
             let Some(this) = receiver(this) else { return Err(JsError::Type("Illegal invocation".into())) };
             (call.invoke)(scope, this, Args::from_raw(ctx, 1, &value), call.f)?;

@@ -13,6 +13,10 @@ use crate::msg::{CdpError, CdpResult};
 use crate::target::{PageCommand, PageKey};
 
 const MAX_BACKEND_NODES: usize = 4096;
+
+/// A frame's parent frame and owner element: what walking up to the main
+/// frame needs.
+pub(super) type FrameLink = (Option<lp_browser::FrameId>, Option<NodeId>);
 const MAX_DESCRIPTION_NODES: usize = 1024;
 
 struct BackendNode {
@@ -107,7 +111,7 @@ impl EngineHost {
             (data.page().clone(), data.id)
         };
         // A surviving remote wrapper does not make a replaced document live.
-        self.frame_for_document(cmd.page, &page).ok_or_else(stale)?;
+        self.with_frame_of_document(cmd.page, &page, |_| ()).ok_or_else(stale)?;
         page.dom.borrow().node(node).map_err(dom_error)?;
         Ok((page, node))
     }
@@ -159,12 +163,14 @@ impl EngineHost {
         let state = self.pages.get(&key).ok_or_else(stale)?;
         let page_id = state.id;
         if owns_frame {
-            value["frameId"] = json!(self.frame_for_document(key, page).ok_or_else(stale)?.id.0);
+            value["frameId"] = json!(self.with_frame_of_document(key, page, |f| f.id.0.clone()).ok_or_else(stale)?);
         }
         if let Some(child_id) = self.thread.browser.frame_of_owner(page_id, node) {
             value["frameId"] = json!(child_id.0);
             if depth > 0 {
-                if let Some(child) = self.thread.browser.frame(page_id, &child_id).and_then(|f| f.page_dom) {
+                if let Some(child) =
+                    self.thread.browser.with_frame(page_id, &child_id, |f| f.page_dom.clone()).flatten()
+                {
                     value["contentDocument"] =
                         self.describe_dom_node(key, &child, child.document(), depth - 1, remaining)?;
                 }
@@ -275,15 +281,15 @@ impl EngineHost {
                     object_group: Option<String>,
                 }
                 let p: P = cmd.command.params()?;
-                let frame = self.frame_for_document(cmd.page, &page).ok_or_else(stale)?;
+                let realms = self.with_frame_of_document(cmd.page, &page, |f| f.realms.clone()).ok_or_else(stale)?;
                 let realm = if let Some(id) = p.execution_context_id {
                     let realm = self.target_realm(cmd.page, Some(id))?;
-                    if !frame.realms.iter().any(|r| r.realm.id() == realm.id()) {
+                    if !realms.iter().any(|r| r.realm.id() == realm.id()) {
                         return Err(CdpError::server("Execution context belongs to a different frame"));
                     }
                     realm
                 } else {
-                    frame.main_realm().cloned().ok_or_else(stale)?
+                    realms.iter().find(|r| r.world.is_none()).map(|r| r.realm.clone()).ok_or_else(stale)?
                 };
                 let scope = realm.scope().map_err(remote::js_to_cdp)?;
                 let object = lp_webapi::wrap_node(&scope, &page, node).map_err(remote::js_to_cdp)?;
@@ -292,7 +298,8 @@ impl EngineHost {
                 json!({"object":remote::register(described,&handles,context_id(realm.id()),p.object_group.as_deref())?})
             }
             _ => {
-                let frame = self.frame_for_document(cmd.page, &page).ok_or_else(stale)?;
+                let frame = self.with_frame_of_document(cmd.page, &page, |f| (f.parent.clone(), f.owner));
+                let frame = frame.ok_or_else(stale)?;
                 // Child frames report main-frame viewport coordinates, as Chrome
                 // does for same-process iframes.
                 let (ox, oy) = if action == "focus" { (0.0, 0.0) } else { self.frame_offset(cmd.page, &frame)? };
@@ -375,12 +382,16 @@ impl EngineHost {
                         // Then each owning iframe inside its parent document.
                         let page_id = self.pages.get(&cmd.page).ok_or_else(stale)?.id;
                         let mut cur = frame;
-                        while let (Some(parent_id), Some(owner)) = (cur.parent.clone(), cur.owner) {
-                            let Some(parent) = self.thread.browser.frame(page_id, &parent_id) else { break };
-                            if let Some(parent_dom) = parent.page_dom.as_ref() {
+                        while let (Some(parent_id), Some(owner)) = cur {
+                            let parent = self
+                                .thread
+                                .browser
+                                .with_frame(page_id, &parent_id, |f| (f.parent.clone(), f.owner, f.page_dom.clone()));
+                            let Some((parent, parent_owner, parent_dom)) = parent else { break };
+                            if let Some(parent_dom) = parent_dom.as_ref() {
                                 reveal(parent_dom, owner);
                             }
-                            cur = parent;
+                            cur = (parent, parent_owner);
                         }
                         json!({})
                     }
@@ -484,13 +495,18 @@ fn reveal_area(page: &Rc<PageDom>, node: NodeId, x: f64, y: f64, width: f64, hei
 impl EngineHost {
     /// The viewport origin of `frame`'s document in main-frame viewport
     /// coordinates: the sum of its owning iframes' content box origins.
-    pub(super) fn frame_offset(&self, page: PageKey, frame: &lp_browser::Frame) -> CdpResult<(f64, f64)> {
+    /// `frame` is the frame's parent id and owner element.
+    pub(super) fn frame_offset(&self, page: PageKey, frame: &FrameLink) -> CdpResult<(f64, f64)> {
         let page_id = self.pages.get(&page).ok_or_else(stale)?.id;
         let (mut x, mut y) = (0.0, 0.0);
         let mut cur = frame.clone();
-        while let (Some(parent_id), Some(owner)) = (cur.parent.clone(), cur.owner) {
-            let parent = self.thread.browser.frame(page_id, &parent_id).ok_or_else(stale)?;
-            let dom = parent.page_dom.clone().ok_or_else(stale)?;
+        while let (Some(parent_id), Some(owner)) = cur {
+            let parent = self
+                .thread
+                .browser
+                .with_frame(page_id, &parent_id, |f| (f.parent.clone(), f.owner, f.page_dom.clone()));
+            let (parent, parent_owner, dom) = parent.ok_or_else(stale)?;
+            let dom = dom.ok_or_else(stale)?;
             let (r, inset) = {
                 let layout = dom.layout();
                 let tree = dom.dom.borrow();
@@ -502,7 +518,7 @@ impl EngineHost {
             // Each frame's offset in layout units (Chromium sums them).
             x += lp_dom::layout::layout_unit(r.x + inset.0);
             y += lp_dom::layout::layout_unit(r.y + inset.1);
-            cur = parent;
+            cur = (parent, parent_owner);
         }
         Ok((x, y))
     }
@@ -521,7 +537,10 @@ impl EngineHost {
             return;
         }
         let Some(state) = self.pages.get(&page) else { return };
-        let Some(document) = self.thread.browser.frame(state.id, frame_id).and_then(|f| f.page_dom) else { return };
+        let Some(document) = self.thread.browser.with_frame(state.id, frame_id, |f| f.page_dom.clone()).flatten()
+        else {
+            return;
+        };
         let Some(state) = self.pages.get_mut(&page) else { return };
         let Ok(backend) = state.dom_nodes.identify(&document, input, &mut self.next_backend_node) else { return };
         let mode = if multiple { "selectMultiple" } else { "selectSingle" };

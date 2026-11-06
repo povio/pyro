@@ -563,3 +563,291 @@ fn a_closed_page_is_released_whether_or_not_close_collected_it() {
     t.browser.engine.settle();
     assert!(!t.browser.engine.release_pending());
 }
+
+fn eval_string(t: &BrowserThread, page: PageId, src: &str) -> String {
+    let realm = t.browser.page(page).unwrap().main_frame.main_realm().unwrap().clone();
+    let s = realm.scope().unwrap();
+    let value = s.eval(src, Some("test.js"), 1).unwrap_or_else(|e| panic!("{src}: {}", e.details(&s).text()));
+    value.to_string().unwrap()
+}
+
+/// Serves `http://next.test/` (a page's next document) and child frame documents.
+fn serve_next_documents(t: &mut BrowserThread) {
+    let loader = Rc::new(StaticLoader::default());
+    loader.insert("http://next.test/", "text/html", "<p id=next>next</p>", Duration::ZERO);
+    loader.insert("http://next.test/child", "text/html", "<p>child</p>", Duration::ZERO);
+    loader.insert("http://next.test/written", "text/html", "<p>next</p>", Duration::ZERO);
+    t.browser.set_loader(Some(loader));
+}
+
+/// Navigates the page to another document and runs the loop until it committed.
+fn goto_next_document(t: &mut BrowserThread, page: PageId) {
+    goto(t, page, "http://next.test/");
+    assert_eq!(eval_string(t, page, "document.querySelector('#next').textContent"), "next");
+}
+
+/// Navigates the page (as `Page.navigate` does) to a URL it is not at, and
+/// runs the loop until that document loaded.
+fn goto(t: &mut BrowserThread, page: PageId, url: &str) {
+    t.browser.navigate(page, NavigateOpts::address_bar(url)).unwrap();
+    wait_for_url(t, page, url);
+}
+
+fn wait_for_url(t: &mut BrowserThread, page: PageId, url: &str) {
+    let committed = t.run_until(Some(Instant::now() + Duration::from_secs(5)), |b| {
+        b.page(page).is_some_and(|p| p.main_frame.url == url && p.main_frame.loaded)
+    });
+    assert_eq!(committed, RunOutcome::Done, "the navigation to {url} did not commit");
+}
+
+/// Sets the release gate due at every reading, or never: the footprint it
+/// reads is the test process's, which the tests running alongside move.
+fn release_gate_due(t: &BrowserThread, due: bool) {
+    let (min, percent) = if due { (0, 0) } else { (u64::MAX, 0) };
+    t.browser.engine.set_release_growth(min, percent);
+}
+
+#[test]
+fn replacing_the_untouched_initial_document_leaves_nothing_to_release() {
+    // A page's first navigation (a test's first `goto`): its blank document
+    // and two realms are not worth a full collection, and the initial
+    // about:blank entry is replaced. Not even past the gate.
+    let (mut t, _rec, page) = setup();
+    serve_next_documents(&mut t);
+    release_gate_due(&t, true);
+    eval(&t, page, "globalThis.kept = [1, 2, 3]");
+    goto_next_document(&mut t, page);
+    assert!(!t.browser.engine.release_pending(), "an untouched initial document was released");
+    assert_eq!(eval_string(&t, page, "history.length"), "1");
+}
+
+#[test]
+fn blank_document_content_counts_the_nodes_about_blank_is_made_with() {
+    let (t, _rec, page) = setup();
+    let blank = t.browser.page(page).unwrap().main_frame.page_dom.clone().unwrap();
+    assert!(!bindings::blank_document_has_content(&blank));
+    eval(&t, page, "globalThis.meta = document.head.appendChild(document.createElement('meta'))");
+    assert!(bindings::blank_document_has_content(&blank), "one more node is content");
+    eval(&t, page, "meta.remove(); document.body.setAttribute('class', 'x')");
+    assert!(!bindings::blank_document_has_content(&blank), "an attribute is not");
+    // Not among the document's descendants.
+    eval(&t, page, "document.body.attachShadow({ mode: 'closed' })");
+    assert!(bindings::blank_document_has_content(&blank), "a shadow tree is");
+}
+
+#[test]
+fn an_initial_document_given_content_is_released_once_the_gate_is_due() {
+    // Each way the initial about:blank document gains content before the
+    // first navigation: the commit that replaces it leaves a collection
+    // pending (`Engine::defer_release_if_due`) when the process has grown
+    // past the gate, and only then. A pending collection is what the idle
+    // loop runs after a quiet second, dropping the live page's compiled code
+    // with it: an init script's `<style>` or a small `setContent` must not.
+    let (mut t, _rec, _page) = setup();
+    serve_next_documents(&mut t);
+    let written =
+        "'<div>' + '<p>row</p>'.repeat(200) + '</div><script>globalThis.big = new Array(1e5).fill(7)</script>'";
+    let cases = [
+        // page.setContent / Page.setDocumentContent.
+        ("document.open/write", format!("document.open(); document.write({written}); document.close();")),
+        // An implicit open: write() on a document with no parser.
+        ("document.write", format!("document.write({written}); document.close();")),
+        // Runtime.evaluate or a script filling the document through DOM APIs.
+        ("innerHTML", format!("document.body.innerHTML = {written};")),
+        ("appendChild", "document.body.appendChild(document.createElement('p')).textContent = 'x';".into()),
+        ("shadow root", format!("document.body.attachShadow({{ mode: 'open' }}).innerHTML = {written};")),
+        // context.addInitScript, which runs on the initial document too.
+        ("style", "document.head.appendChild(document.createElement('style')).textContent = 'p {}';".into()),
+        // A child frame (and its own documents) is the old document's too.
+        ("iframe", "document.body.appendChild(document.createElement('iframe'));".into()),
+    ];
+    for due in [false, true] {
+        release_gate_due(&t, due);
+        for (what, script) in &cases {
+            let page = t.browser.create_page().unwrap();
+            eval(&t, page, script);
+            t.run_until_idle(Some(Instant::now() + Duration::from_secs(2)));
+            assert!(!t.browser.engine.release_pending(), "{what}: pending before the navigation");
+            goto_next_document(&mut t, page);
+            assert_eq!(t.browser.engine.release_pending(), due, "{what}: gate due {due}");
+            t.browser.engine.settle();
+            // A loaded document is released whatever the gate.
+            goto(&mut t, page, "http://next.test/child");
+            assert!(t.browser.engine.release_pending(), "{what}: the loaded document was not released");
+            t.browser.engine.settle();
+            assert!(t.browser.close_page(page));
+            t.browser.engine.settle();
+        }
+    }
+}
+
+#[test]
+fn document_open_makes_the_initial_document_an_ordinary_history_entry() {
+    // HTML "document open steps": the document is no longer the initial
+    // about:blank one, so the next navigation pushes an entry instead of
+    // replacing it (Chrome: history.length 2 after setContent + goto).
+    let (mut t, _rec, page) = setup();
+    serve_next_documents(&mut t);
+    eval(&t, page, "document.open(); document.write('<p>written</p>'); document.close();");
+    t.run_until_idle(Some(Instant::now() + Duration::from_secs(2)));
+    goto_next_document(&mut t, page);
+    assert_eq!(eval_string(&t, page, "history.length"), "2");
+    // A document made with DOM APIs is still the initial one for history.
+    let page = t.browser.create_page().unwrap();
+    eval(&t, page, "document.body.innerHTML = '<p>inner</p>'");
+    goto_next_document(&mut t, page);
+    assert_eq!(eval_string(&t, page, "history.length"), "1");
+    // open() on a document of no frame leaves the frame's document alone.
+    t.browser.engine.settle();
+    let page = t.browser.create_page().unwrap();
+    eval(
+        &t,
+        page,
+        "const d = document.implementation.createHTMLDocument(''); d.open(); d.write('<p>x</p>'); d.close();",
+    );
+    goto_next_document(&mut t, page);
+    assert_eq!(eval_string(&t, page, "history.length"), "1");
+    assert!(!t.browser.engine.release_pending(), "a document of no frame made the frame's document released");
+}
+
+#[test]
+fn open_and_close_of_a_document_of_no_frame_leave_the_frames_lifecycle_alone() {
+    let (mut t, rec, page) = setup();
+    t.run_until_idle(Some(Instant::now() + Duration::from_secs(2)));
+    eval(
+        &t,
+        page,
+        "document.addEventListener('DOMContentLoaded', () => console.log('frame dcl'));
+         addEventListener('load', () => console.log('frame load'));
+         const d = document.implementation.createHTMLDocument('');
+         d.addEventListener('DOMContentLoaded', () => console.log('own dcl'));
+         d.open(); d.write('<p>x</p>'); d.close();
+         console.log('written ' + d.body.innerHTML);",
+    );
+    rec.events.borrow_mut().clear();
+    t.run_until_idle(Some(Instant::now() + Duration::from_secs(2)));
+    assert_eq!(*rec.console.borrow(), ["log:written <p>x</p>"]);
+    assert!(!rec.events.borrow().iter().any(|e| e == "dcl" || e == "load"), "{:?}", rec.events.borrow());
+}
+
+#[test]
+fn a_child_frames_written_initial_document_is_released_when_replaced() {
+    let (mut t, _rec, page) = setup();
+    serve_next_documents(&mut t);
+    release_gate_due(&t, true);
+    // The usual iframe: appended, then given a URL. Its initial document is
+    // replaced untouched.
+    eval(&t, page, "globalThis.f = document.body.appendChild(document.createElement('iframe'));");
+    eval(&t, page, "f.src = 'http://next.test/child'");
+    let loaded = t.run_until(Some(Instant::now() + Duration::from_secs(5)), |b| {
+        b.frames(page).iter().any(|f| f.url == "http://next.test/child")
+    });
+    assert_eq!(loaded, RunOutcome::Done);
+    assert!(!t.browser.engine.release_pending(), "an untouched child initial document was released");
+    // One written to (an editor's or an ad's iframe), then navigated.
+    eval(&t, page, "globalThis.g = document.body.appendChild(document.createElement('iframe'));");
+    t.run_until_idle(Some(Instant::now() + Duration::from_secs(2)));
+    let written = eval_string(
+        &t,
+        page,
+        "g.contentDocument.open(); g.contentDocument.write('<p>written</p>'); g.contentDocument.close();
+         g.contentDocument.body.innerHTML",
+    );
+    assert_eq!(written, "<p>written</p>");
+    t.run_until_idle(Some(Instant::now() + Duration::from_secs(2)));
+    assert!(!t.browser.engine.release_pending());
+    eval(&t, page, "g.src = 'http://next.test/written'");
+    let loaded = t.run_until(Some(Instant::now() + Duration::from_secs(5)), |b| {
+        b.frames(page).iter().any(|f| f.url == "http://next.test/written")
+    });
+    assert_eq!(loaded, RunOutcome::Done);
+    assert!(t.browser.engine.release_pending(), "the child's written initial document was not released");
+}
+
+/// Serves `http://next.test/` at once and `http://next.test/slow` after
+/// 300 ms, so a navigation to it is still fetching for a while.
+fn serve_a_slow_document(t: &mut BrowserThread) {
+    let loader = Rc::new(StaticLoader::default());
+    loader.insert("http://next.test/", "text/html", "<p id=next>next</p>", Duration::ZERO);
+    loader.insert("http://next.test/slow", "text/html", "<p>slow</p>", Duration::from_millis(300));
+    t.browser.set_loader(Some(loader));
+}
+
+const WRITE: &str = "document.open(); document.write('<p>w</p>'); document.close();";
+
+fn history_url_body(t: &BrowserThread, page: PageId) -> String {
+    eval_string(t, page, "[history.length, location.href, document.body.innerHTML].join(' ')")
+}
+
+/// Runs the loop past the slow document's response.
+fn run_past_the_slow_response(t: &mut BrowserThread) {
+    t.run_until(Some(Instant::now() + Duration::from_millis(500)), |_| false);
+}
+
+#[test]
+fn document_open_stops_a_navigation_its_scripts_started() {
+    // HTML document open steps, "stop loading", as Chrome does: a script's
+    // navigation that has not committed is dropped, queued or fetching, and
+    // the written document stays (Chrome: history.length 1, about:blank,
+    // the written markup, for a queued one; the same 150 ms into a fetch).
+    let (mut t, rec, _page) = setup();
+    serve_a_slow_document(&mut t);
+    // Queued by the same script.
+    let page = t.browser.create_page().unwrap();
+    eval(&t, page, &format!("location.href = 'http://next.test/'; {WRITE}"));
+    run_past_the_slow_response(&mut t);
+    assert_eq!(history_url_body(&t, page), "1 about:blank <p>w</p>");
+    // Fetching.
+    let page = t.browser.create_page().unwrap();
+    eval(&t, page, "location.href = 'http://next.test/slow'");
+    let fetching = t.run_until(Some(Instant::now() + Duration::from_secs(2)), |b| {
+        b.page(page).is_some_and(|p| p.pending_loader().is_some())
+    });
+    assert_eq!(fetching, RunOutcome::Done);
+    rec.events.borrow_mut().clear();
+    eval(&t, page, WRITE);
+    run_past_the_slow_response(&mut t);
+    assert_eq!(history_url_body(&t, page), "1 about:blank <p>w</p>");
+    assert!(rec.events.borrow().iter().any(|e| e == "failed:net::ERR_ABORTED"), "{:?}", rec.events.borrow());
+    assert!(!rec.events.borrow().iter().any(|e| e == "navigated"), "{:?}", rec.events.borrow());
+    // A loaded document's, a link's.
+    let page = t.browser.create_page().unwrap();
+    goto_next_document(&mut t, page);
+    eval(
+        &t,
+        page,
+        &format!(
+            "const a = document.body.appendChild(document.createElement('a'));
+             a.href = 'http://next.test/slow'; a.click(); {WRITE}"
+        ),
+    );
+    run_past_the_slow_response(&mut t);
+    assert_eq!(history_url_body(&t, page), "1 http://next.test/ <p>w</p>");
+    // A child frame's, still fetching when its document is opened.
+    eval(&t, page, "globalThis.g = document.body.appendChild(document.createElement('iframe'));");
+    t.run_until_idle(Some(Instant::now() + Duration::from_secs(2)));
+    eval(&t, page, "g.src = 'http://next.test/slow'");
+    t.run_until(Some(Instant::now() + Duration::from_millis(50)), |_| false);
+    eval(&t, page, &WRITE.replace("document.", "g.contentDocument."));
+    run_past_the_slow_response(&mut t);
+    assert_eq!(eval_string(&t, page, "g.contentDocument.body.innerHTML"), "<p>w</p>");
+    assert!(!t.browser.frames(page).iter().any(|f| f.url == "http://next.test/slow"));
+}
+
+#[test]
+fn document_open_leaves_a_navigation_started_after_it_or_by_the_client() {
+    let (mut t, _rec, page) = setup();
+    serve_a_slow_document(&mut t);
+    // Opened, then navigated by the same script: an ordinary entry is left.
+    eval(&t, page, &format!("{WRITE} location.href = 'http://next.test/';"));
+    wait_for_url(&mut t, page, "http://next.test/");
+    assert_eq!(history_url_body(&t, page), "2 http://next.test/ <p id=\"next\">next</p>");
+    // Page.navigate goes on (Chrome too), and it replaces the initial
+    // entry: that was decided when it started.
+    let page = t.browser.create_page().unwrap();
+    t.browser.navigate(page, NavigateOpts::address_bar("http://next.test/slow")).unwrap();
+    t.run_until(Some(Instant::now() + Duration::from_millis(50)), |_| false);
+    eval(&t, page, WRITE);
+    wait_for_url(&mut t, page, "http://next.test/slow");
+    assert_eq!(history_url_body(&t, page), "1 http://next.test/slow <p>slow</p>");
+}

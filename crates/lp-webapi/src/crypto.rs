@@ -120,7 +120,7 @@ impl JsClass for Crypto {
 
 fn digest_name(s: &Scope<'_>, v: Value<'_>) -> JsResult<String> {
     let name = match v.as_object() {
-        Some(o) if !v.is_string() => o.get("name")?,
+        Some(o) if !v.is_string() => o.get_atom("name")?,
         _ => v,
     };
     if name.is_undefined() {

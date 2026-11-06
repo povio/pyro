@@ -4,6 +4,9 @@ description = "Page snapshot to pixels with Blitz (Stylo + Taffy + Parley, paint
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+# One integration test binary (tests/integration.rs): each test executable links
+# the whole renderer, so one per file made `cargo test` mostly link time.
+autotests = false
 
 [features]
 # GPU raster (vello on wgpu/Metal). Off: the CPU backend (vello_cpu) is the
@@ -44,3 +47,7 @@ miniz_oxide = "0.8"
 
 [lints]
 workspace = true
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"

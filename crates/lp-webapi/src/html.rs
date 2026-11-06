@@ -1168,7 +1168,7 @@ impl JsClass for HtmlElement {
             let force = match a.get(0) {
                 v if v.is_undefined() => None,
                 v => match v.as_object() {
-                    Some(options) => Some(options.get("force")?).filter(|f| !f.is_undefined()).map(|f| f.to_bool()),
+                    Some(options) => Some(options.get_atom("force")?).filter(|f| !f.is_undefined()).map(|f| f.to_bool()),
                     None => Some(v.to_bool()),
                 },
             };
@@ -2003,7 +2003,7 @@ simple_class!(HtmlFormElement, "HTMLFormElement", HtmlElement, |def| {
     );
     def.getter("length", |s, n| {
         let c = collections::collection(s, n.page(), n.id, CollectionKind::FormElements)?;
-        c.get("length")
+        c.get_atom("length")
     });
     def.indexed(|s, n, i| {
         let c = collections::collection(s, n.page(), n.id, CollectionKind::FormElements)?;
@@ -2454,7 +2454,7 @@ simple_class!(HtmlTemplateElement, "HTMLTemplateElement", HtmlElement, |def| {
 
 fn slot_assigned<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>, elements_only: bool) -> JsResult<Value<'s>> {
     let flatten = match a.get(0).as_object() {
-        Some(o) => o.get("flatten")?.to_bool(),
+        Some(o) => o.get_atom("flatten")?.to_bool(),
         None => false,
     };
     let nodes = n.page().dom.borrow().assigned_nodes(n.id, flatten).js()?;
@@ -2924,8 +2924,8 @@ pub(crate) fn elements_from_point<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) 
     crate::layout_api::elements_from_point(s, n, a)
 }
 
-pub(crate) fn upgrade_if_custom<'s>(s: &Scope<'s>, page: &Rc<PageDom>, el: NodeId) -> JsResult<Value<'s>> {
-    crate::custom::create_element_value(s, page, el)
+pub(crate) fn upgrade_if_custom<'s>(s: &Scope<'s>, page: &Rc<PageDom>, doc: NodeId, el: NodeId) -> JsResult<Value<'s>> {
+    crate::custom::create_element_value(s, page, doc, el)
 }
 
 // ----- document.open / write / close ----------------------------------------
@@ -2972,7 +2972,7 @@ fn writes_blocked(page: &PageDom, doc: NodeId) -> bool {
 pub(crate) fn document_open<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value<'s>> {
     let page = n.page();
     if a.len() >= 3 {
-        let open = s.global().get("open")?;
+        let open = s.global().get_atom("open")?;
         let open = open.as_object().ok_or_else(|| JsError::Type("window.open is not a function".into()))?;
         return open.call(None, &[a.get(0), a.get(1), a.get(2)]);
     }
@@ -3016,7 +3016,10 @@ fn open_document(page: &Rc<PageDom>, doc: NodeId) -> JsResult<()> {
     *page.script_parser.borrow_mut() = Some(parser);
     page.script_parser_active.set(true);
     page.script_parser_close.set(false);
-    if let Some(hooks) = page.hooks() {
+    // The frame's document only: one made with createHTMLDocument (or
+    // DOMParser) is no frame's, which neither loads again nor stops being
+    // the initial about:blank document.
+    if let Some(hooks) = page.hooks().filter(|_| doc == page.document()) {
         hooks.document_reopened();
     }
     Ok(())
@@ -3091,7 +3094,8 @@ fn close_document(page: &Rc<PageDom>, doc: NodeId) {
     parser.end();
     page.script_parser_active.set(false);
     crate::lifecycle::set_ready_state(page, doc, "interactive");
-    if !page.hooks().is_some_and(|h| h.document_closed()) {
+    // The frame's document only, as for `document_reopened`.
+    if !page.hooks().filter(|_| doc == page.document()).is_some_and(|h| h.document_closed()) {
         let p = page.clone();
         page.post_task(Box::new(move || {
             if p.is_disposed() || p.document() != doc {
@@ -3396,7 +3400,7 @@ fn focus_element<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value
         value
             .as_object()
             .ok_or_else(|| JsError::Type("Focus options must be an object".into()))?
-            .get("preventScroll")?
+            .get_atom("preventScroll")?
             .to_bool()
     };
     crate::input::focus_element_with_options(n.page(), n.id, prevent_scroll);

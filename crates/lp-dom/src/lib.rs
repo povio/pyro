@@ -31,6 +31,7 @@ pub mod node;
 pub mod parse;
 pub mod script;
 pub mod select;
+mod select_query;
 pub mod serialize;
 mod slots;
 pub mod snapshot;
@@ -40,6 +41,7 @@ pub mod svg_geometry;
 pub mod text_metrics;
 pub mod upgrade;
 pub mod timing;
+mod tree_scope;
 pub mod xml;
 pub mod xpath;
 
@@ -47,7 +49,7 @@ pub use dom::{attr_name_hash, position, CollectionWatch, Dom};
 pub use window_names::window_name_hash;
 pub use error::{DomError, DomErrorKind, DomResult};
 pub use node::{
-    shadow_flags, Attr, AttrNodeData, ControlState, DocumentKind, NodeId, NodeKind, NodeType, QuirksMode, ShadowRootMode,
+    shadow_flags, Atom, Attr, AttrNodeData, ControlState, DocumentKind, NodeId, NodeKind, NodeType, QuirksMode, ShadowRootMode,
 };
 
 pub use markup5ever::{LocalName, Namespace, Prefix, QualName};

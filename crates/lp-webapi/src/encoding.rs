@@ -157,7 +157,7 @@ pub fn uint8_array<'s>(s: &Scope<'s>, bytes: &[u8]) -> JsResult<Value<'s>> {
 /// New `ArrayBuffer` holding a copy of `bytes`.
 pub fn array_buffer<'s>(s: &Scope<'s>, bytes: &[u8]) -> JsResult<Value<'s>> {
     let arr = uint8_array(s, bytes)?;
-    arr.as_object().expect("typed array").get("buffer")
+    arr.as_object().expect("typed array").get_atom("buffer")
 }
 
 pub struct TextEncoder;
@@ -176,7 +176,7 @@ impl JsClass for TextEncoder {
             let text = dom_string(a.get(0))?;
             let dest =
                 a.get(1).as_object().ok_or_else(|| JsError::Type("parameter 2 is not of type 'Uint8Array'.".into()))?;
-            let cap = dest.get("length")?.to_number()? as usize;
+            let cap = dest.get_atom("length")?.to_number()? as usize;
             // Largest prefix of whole code points that fits.
             let mut end = 0;
             let mut read16 = 0;
@@ -191,8 +191,8 @@ impl JsClass for TextEncoder {
                 dest.set_index(i as u32, s.number(*b as f64))?;
             }
             let r = s.object();
-            r.set("read", s.number(read16 as f64))?;
-            r.set("written", s.number(end as f64))?;
+            r.set_atom("read", s.number(read16 as f64))?;
+            r.set_atom("written", s.number(end as f64))?;
             Ok(r.value())
         });
     }
@@ -217,7 +217,7 @@ impl JsClass for TextDecoder {
             let encoding = encoding_rs::Encoding::for_label(label.as_bytes())
                 .ok_or_else(|| JsError::Range(format!("The encoding label provided ('{label}') is invalid.")))?;
             let (fatal, ignore_bom) = match a.get(1).as_object() {
-                Some(o) => (o.get("fatal")?.to_bool(), o.get("ignoreBOM")?.to_bool()),
+                Some(o) => (o.get_atom("fatal")?.to_bool(), o.get_atom("ignoreBOM")?.to_bool()),
                 None => (false, false),
             };
             s.wrap_new::<TextDecoder>(
@@ -238,7 +238,7 @@ impl JsClass for TextDecoder {
                 })?
             };
             let last = match a.get(1).as_object() {
-                Some(o) => !o.get("stream")?.to_bool(),
+                Some(o) => !o.get_atom("stream")?.to_bool(),
                 None => true,
             };
             let mut slot = d.decoder.borrow_mut();

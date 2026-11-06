@@ -148,7 +148,7 @@ pub fn install(scope: &Scope<'_>, page: Rc<PageDom>) -> JsResult<()> {
         return Err(lp_js::JsError::ContextDestroyed);
     }
     let realm = scope.realm();
-    page.realms.borrow_mut().insert(realm.id(), realm.downgrade());
+    page.register_realm(&realm);
     // Document named properties (`document.formName`): the engine drops its
     // caches of a name when an element that may be named it appears.
     let names = scope.impure_names();
@@ -165,30 +165,63 @@ pub fn install(scope: &Scope<'_>, page: Rc<PageDom>) -> JsResult<()> {
     form_data::install(scope)?;
     fetch::install(scope)?;
     structured_clone::install(scope, &page)?;
-    if let Some(define) = scope.global().get("Object")?.as_object().map(|o| o.get("defineProperty")).transpose()? {
+    if let Some(define) = scope.global().get_atom("Object")?.as_object().map(|o| o.get_atom("defineProperty")).transpose()? {
         page.define_properties.borrow_mut().insert(scope.realm_id(), lp_js::Persistent::new(scope, define));
     }
     if page.max_touch_points() > 0 {
         handlers::define_touch_handlers(scope)?;
     }
     let global = scope.global();
-    global.set("CSS", window::css_namespace(scope)?)?;
-    // [Unscopable] members of ChildNode and ParentNode.
-    scope.eval(
+    global.set_atom("CSS", window::css_namespace(scope)?)?;
+    // A window's `document` and `window` ([LegacyUnforgeable]) never change:
+    // they are the global's own constant attributes (not members of
+    // Window.prototype, see `window::has_window_constants`), which read with
+    // no callback and which compiled code holds as constants,
+    // `window.document` included. The realm releases them when it is
+    // disposed. `document` is made on its first read: its wrapper installs
+    // the Document, Node and EventTarget interfaces, which a realm whose
+    // script never reads it (an initial about:blank document, a blank
+    // iframe, an isolated world) does not need. It is the document the
+    // realm was installed for, whatever the page displays by then. Without
+    // the patched JavaScriptCore the interface's getters serve them.
+    let document = page.document();
+    let make: lp_js::LazyGlobalConstant = Rc::new(move |s: &Scope<'_>| window_document(s, document));
+    if scope.define_lazy_global_constant("document", make) {
+        scope.define_global_constant("window", global.value());
+    }
+    // [Unscopable] members of ChildNode and ParentNode, defined with each
+    // interface's members: reading `Element.prototype` here would install
+    // Element, Node, Document and the rest in every new realm.
+    let unscopables = scope.eval(
         r#"(() => {
-        const u = (proto, names) => { const o = Object.create(null); for (const n of names) o[n] = true;
-            Object.defineProperty(proto, Symbol.unscopables, { value: o, configurable: true }); };
+        const create = Object.create, define = Object.defineProperty, symbol = Symbol.unscopables;
+        // Runs when a page first uses the interface: no iteration, no
+        // descriptor that could inherit from a changed Object.prototype.
+        const u = (names) => (proto) => { const o = create(null); for (let i = 0; i < names.length; i++) o[names[i]] = true;
+            define(proto, symbol, { __proto__: null, value: o, configurable: true }); };
         const child = ['before', 'after', 'replaceWith', 'remove'], parent = ['prepend', 'append', 'replaceChildren'];
-        u(Element.prototype, [...child, ...parent]);
-        u(CharacterData.prototype, child);
-        u(DocumentType.prototype, child);
-        u(Document.prototype, parent);
-        u(DocumentFragment.prototype, parent);
+        return [u([...child, ...parent]), u(child), u(child), u(parent), u(parent)];
     })()"#,
         Some("lightningpanda://internal/unscopables.js"),
         1,
     )?;
+    let unscopables = unscopables.as_object().expect("unscopables hooks");
+    let hook = |i: u32| -> JsResult<lp_js::Object<'_>> {
+        unscopables.get_index(i)?.as_object().ok_or_else(|| lp_js::JsError::Type("unscopables hook".into()))
+    };
+    scope.after_populate::<node::Element>(hook(0)?)?;
+    scope.after_populate::<node::CharacterData>(hook(1)?)?;
+    scope.after_populate::<node::DocumentType>(hook(2)?)?;
+    scope.after_populate::<node::Document>(hook(3)?)?;
+    scope.after_populate::<node::DocumentFragment>(hook(4)?)?;
     Ok(())
+}
+
+/// The value of a window's `document` constant, made on its first read: the
+/// wrapper of `document`, the page's document when the realm was installed.
+fn window_document<'s>(scope: &Scope<'s>, document: lp_dom::NodeId) -> JsResult<Value<'s>> {
+    let page = target::page_of(scope)?;
+    Ok(node::wrap_node(scope, &page, document)?.value())
 }
 
 /// Resolves a JS value to its native node (CDP DOM.describeNode etc.).

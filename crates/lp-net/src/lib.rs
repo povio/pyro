@@ -15,6 +15,7 @@ mod subscription;
 pub use subscription::{NetSubscription, NetWake, SubscriptionError, SubscriptionLimits};
 
 pub use cache::{SharedAssetCache, SHARED_ASSET_CACHE_ENV};
+pub use client::set_idle_release;
 pub use client::websocket::{
     accept_key as websocket_accept_key, WebSocketHandle, WsEvent, WsMessage, WsRequest, WsSink,
 };

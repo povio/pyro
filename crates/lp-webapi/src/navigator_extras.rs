@@ -339,13 +339,13 @@ fn make<'s>(s: &Scope<'s>) -> JsResult<lp_js::Object<'s>> {
         let page = crate::target::page_of(s)?;
         Ok(s.string(&user_agent_json(&page)))
     })?;
-    native.set("uaData", ua.value())?;
+    native.set_atom("uaData", ua.value())?;
     let state = s.function("permissionState", |s, _, args| {
         let page = crate::target::page_of(s)?;
         let name = args.get(0).to_string()?;
         Ok(s.string(permission_state(&page, &name).as_str()))
     })?;
-    native.set("permissionState", state.value())?;
+    native.set_atom("permissionState", state.value())?;
     let watch = s.function("watchPermissions", |s, _, args| {
         let page = crate::target::page_of(s)?;
         let refresh = args.get(0);
@@ -353,7 +353,7 @@ fn make<'s>(s: &Scope<'s>) -> JsResult<lp_js::Object<'s>> {
         page.context_services().watch(&page);
         Ok(s.undefined())
     })?;
-    native.set("watchPermissions", watch.value())?;
+    native.set_atom("watchPermissions", watch.value())?;
     let read = s.function("clipboardRead", |s, _, _| {
         let page = crate::target::page_of(s)?;
         if permission_state(&page, "clipboard-read") != PermissionSetting::Granted {
@@ -369,18 +369,18 @@ fn make<'s>(s: &Scope<'s>) -> JsResult<lp_js::Object<'s>> {
         out.push(']');
         Ok(s.string(&out))
     })?;
-    native.set("clipboardRead", read.value())?;
+    native.set_atom("clipboardRead", read.value())?;
     let writable = s.function("clipboardWritable", |s, _, _| {
         let page = crate::target::page_of(s)?;
         Ok(s.boolean(permission_state(&page, "clipboard-write") != PermissionSetting::Denied))
     })?;
-    native.set("clipboardWritable", writable.value())?;
+    native.set_atom("clipboardWritable", writable.value())?;
     let write = s.function("clipboardWrite", |s, _, args| {
         let page = crate::target::page_of(s)?;
         let parsed = s.parse_json(&args.get(0).to_string()?).and_then(|v| v.as_object());
         let parsed = parsed.ok_or_else(|| JsError::Type("invalid clipboard data".into()))?;
         let mut entries = Vec::new();
-        for i in 0..parsed.get("length")?.to_number()? as u32 {
+        for i in 0..parsed.get_atom("length")?.to_number()? as u32 {
             let entry =
                 parsed.get_index(i)?.as_object().ok_or_else(|| JsError::Type("invalid clipboard data".into()))?;
             entries.push((
@@ -392,24 +392,24 @@ fn make<'s>(s: &Scope<'s>) -> JsResult<lp_js::Object<'s>> {
         *page.context_services().clipboard.borrow_mut() = entries;
         Ok(s.undefined())
     })?;
-    native.set("clipboardWrite", write.value())?;
+    native.set_atom("clipboardWrite", write.value())?;
     let position = s.function("geolocationPosition", |s, _, _| {
         let page = crate::target::page_of(s)?;
         let services = page.context_services();
         let fix = services.geolocation.borrow();
         let Some(Some(fix)) = fix.as_ref() else { return Ok(s.null()) };
         let result = s.object();
-        result.set("latitude", s.number(fix.latitude))?;
-        result.set("longitude", s.number(fix.longitude))?;
-        result.set("accuracy", s.number(fix.accuracy))?;
+        result.set_atom("latitude", s.number(fix.latitude))?;
+        result.set_atom("longitude", s.number(fix.longitude))?;
+        result.set_atom("accuracy", s.number(fix.accuracy))?;
         let optional = |v: Option<f64>| v.map_or(s.null(), |v| s.number(v));
-        result.set("altitude", optional(fix.altitude))?;
-        result.set("altitudeAccuracy", optional(fix.altitude_accuracy))?;
-        result.set("heading", optional(fix.heading))?;
-        result.set("speed", optional(fix.speed))?;
+        result.set_atom("altitude", optional(fix.altitude))?;
+        result.set_atom("altitudeAccuracy", optional(fix.altitude_accuracy))?;
+        result.set_atom("heading", optional(fix.heading))?;
+        result.set_atom("speed", optional(fix.speed))?;
         Ok(result.value())
     })?;
-    native.set("geolocationPosition", position.value())?;
+    native.set_atom("geolocationPosition", position.value())?;
     // Rooted while the factory runs (the functions are only referenced by
     // `native`, itself an argument).
     let root = Persistent::new(s, native.value());

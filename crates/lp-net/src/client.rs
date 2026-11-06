@@ -745,6 +745,71 @@ fn http_client(config: &NetConfig, tls: &rustls::ClientConfig, proxy: Option<Arc
 /// Every client of the process, for [`suspend_for_fork`].
 static CLIENTS: Mutex<Vec<std::sync::Weak<Inner>>> = Mutex::new(Vec::new());
 
+/// Run on an I/O thread once it has been quiet for [`IO_IDLE_RELEASE`]
+/// ([`set_idle_release`]).
+static IDLE_RELEASE: std::sync::OnceLock<fn()> = std::sync::OnceLock::new();
+
+/// How long an I/O thread stays quiet (no command, no request finishing)
+/// before it runs the [`set_idle_release`] hook.
+const IO_IDLE_RELEASE: Duration = Duration::from_secs(1);
+
+/// Registers what an I/O thread runs once a second has passed since its
+/// last command or finished request: an allocator with per-thread heaps
+/// (the executable's) returns the pages of the response buffers the browser
+/// freed, which only the thread that allocated them can (a loaded mid-size
+/// SPA: 3 MB less).
+pub fn set_idle_release(release: fn()) {
+    let _ = IDLE_RELEASE.set(release);
+}
+
+/// Runs the [`set_idle_release`] hook once per quiet spell of an I/O
+/// thread, [`IO_IDLE_RELEASE`] after its last activity, whether or not a
+/// request is still open (a long poll or a stream may stay open for good;
+/// the hook only returns what is already free). No timer runs while the
+/// thread stays quiet after that.
+struct IdleRelease {
+    /// The thread's last command or finished request.
+    last: std::cell::Cell<tokio::time::Instant>,
+    /// Whether a release is due (activity since the last one).
+    due: std::cell::Cell<bool>,
+    wake: tokio::sync::Notify,
+}
+
+impl IdleRelease {
+    /// Starts the releasing task on this thread's `LocalSet`.
+    fn start(release: fn()) -> std::rc::Rc<IdleRelease> {
+        let idle = std::rc::Rc::new(IdleRelease {
+            last: std::cell::Cell::new(tokio::time::Instant::now()),
+            due: std::cell::Cell::new(false),
+            wake: tokio::sync::Notify::new(),
+        });
+        let task = idle.clone();
+        tokio::task::spawn_local(async move {
+            loop {
+                task.wake.notified().await;
+                loop {
+                    let at = task.last.get() + IO_IDLE_RELEASE;
+                    if at <= tokio::time::Instant::now() {
+                        break;
+                    }
+                    tokio::time::sleep_until(at).await;
+                }
+                task.due.set(false);
+                release();
+            }
+        });
+        idle
+    }
+
+    /// A command came or a request finished.
+    fn touch(&self) {
+        self.last.set(tokio::time::Instant::now());
+        if !self.due.replace(true) {
+            self.wake.notify_one();
+        }
+    }
+}
+
 /// Stops the I/O thread of every client in the process, so that the process
 /// can `fork()` (only the calling thread survives a fork). Requests still in
 /// flight fail with `Aborted`; cookies, cache and observers are kept. Call
@@ -819,12 +884,16 @@ fn io_main(mut rx: mpsc::UnboundedReceiver<Cmd>, shared: Arc<Shared>, cookies: A
             h2_origins: Mutex::new(HashSet::new()),
         });
         let tasks: std::rc::Rc<std::cell::RefCell<HashMap<RequestId, Task>>> = Default::default();
+        let idle = IDLE_RELEASE.get().map(|release| IdleRelease::start(*release));
         while let Some(cmd) = rx.recv().await {
+            if let Some(idle) = &idle {
+                idle.touch();
+            }
             match cmd {
                 Cmd::Fetch(id, req, sink) => {
                     let destination = req.destination;
                     let sink = std::rc::Rc::new(std::cell::RefCell::new(Some(sink)));
-                    let (io2, tasks2, sink2) = (io.clone(), tasks.clone(), sink.clone());
+                    let (io2, tasks2, sink2, idle2) = (io.clone(), tasks.clone(), sink.clone(), idle.clone());
                     let handle = tokio::task::spawn_local(async move {
                         let dest = req.destination;
                         let result = io2.run(id, *req, &sink2).await;
@@ -840,6 +909,9 @@ fn io_main(mut rx: mpsc::UnboundedReceiver<Cmd>, shared: Arc<Shared>, cookies: A
                         }
                         sink2.borrow_mut().take();
                         tasks2.borrow_mut().remove(&id);
+                        if let Some(idle) = idle2 {
+                            idle.touch();
+                        }
                     });
                     tasks.borrow_mut().insert(id, Task { handle, sink, destination });
                 }
@@ -935,34 +1007,65 @@ impl Decoder {
             Some(other) => return Err(NetError::Decode(format!("unsupported content-encoding {other}"))),
         })
     }
-    /// Feeds an encoded chunk, returning any decoded output.
-    fn push(&mut self, chunk: Bytes) -> Result<Bytes, NetError> {
+    /// Feeds an encoded chunk. Its decoded output is the chunk itself
+    /// (`None`, identity) or what the decoder wrote to its output vector,
+    /// which the caller empties.
+    fn write(&mut self, chunk: &[u8]) -> Result<Option<&mut Vec<u8>>, NetError> {
         let err = |e: std::io::Error| NetError::Decode(e.to_string());
-        let out = match self {
-            Decoder::Identity => return Ok(chunk),
+        Ok(Some(match self {
+            Decoder::Identity => return Ok(None),
             Decoder::Gzip(d) => {
-                d.write_all(&chunk).map_err(err)?;
-                std::mem::take(d.get_mut())
+                d.write_all(chunk).map_err(err)?;
+                d.get_mut()
             }
             Decoder::Deflate(d) => {
-                d.write_all(&chunk).map_err(err)?;
-                std::mem::take(d.get_mut())
+                d.write_all(chunk).map_err(err)?;
+                d.get_mut()
             }
             Decoder::Brotli(d) => {
-                d.write_all(&chunk).map_err(err)?;
-                std::mem::take(d.get_mut())
+                d.write_all(chunk).map_err(err)?;
+                d.get_mut()
             }
-        };
-        Ok(Bytes::from(out))
+        }))
     }
-    fn finish(self) -> Result<Bytes, NetError> {
+
+    /// Feeds an encoded chunk, returning the decoded output in an
+    /// allocation of exactly its size, which the response's readers then
+    /// share (the sink, the Network body store, the HTTP caches). A network
+    /// chunk is a slice of the connection's read buffer, all of which stays
+    /// allocated while the slice lives (a SPA's 3.5 MB of bodies held
+    /// 7.2 MB of read buffers); copied, the buffer is free for the next
+    /// read at once. The decoder's output vector grows by doubling and
+    /// stays the decoder's.
+    fn push(&mut self, chunk: &[u8]) -> Result<Bytes, NetError> {
+        Ok(match self.write(chunk)? {
+            None => Bytes::copy_from_slice(chunk),
+            Some(out) => {
+                let decoded = Bytes::copy_from_slice(out);
+                out.clear();
+                decoded
+            }
+        })
+    }
+
+    /// Feeds an encoded chunk, appending the decoded output to `out`.
+    fn push_into(&mut self, chunk: &[u8], out: &mut Vec<u8>) -> Result<(), NetError> {
+        match self.write(chunk)? {
+            None => out.extend_from_slice(chunk),
+            Some(decoded) => out.append(decoded),
+        }
+        Ok(())
+    }
+
+    /// The output the decoder still held at the end of the stream.
+    fn finish(self) -> Result<Vec<u8>, NetError> {
         let err = |e: std::io::Error| NetError::Decode(e.to_string());
-        Ok(Bytes::from(match self {
+        Ok(match self {
             Decoder::Identity => Vec::new(),
             Decoder::Gzip(d) => d.finish().map_err(err)?,
             Decoder::Deflate(d) => d.finish().map_err(err)?,
             Decoder::Brotli(d) => d.into_inner().map_err(|_| NetError::Decode("truncated brotli stream".into()))?,
-        }))
+        })
     }
 }
 
@@ -1594,7 +1697,8 @@ impl Io {
                 let frame = frame.map_err(|e| NetError::Other(e.to_string()))?;
                 let Ok(data) = frame.into_data() else { continue };
                 encoded += data.len() as u64;
-                let out = decoder.push(data)?;
+                let out = decoder.push(&data)?;
+                drop(data);
                 if !out.is_empty() {
                     decoded += out.len() as u64;
                     if decoded as usize > max_body {
@@ -1616,7 +1720,7 @@ impl Io {
                     deliver(sink, ResponseEvent::Data(out));
                 }
             }
-            let tail = decoder.finish()?;
+            let tail = Bytes::copy_from_slice(&decoder.finish()?);
             if !tail.is_empty() {
                 decoded += tail.len() as u64;
                 if decoded as usize > max_body {
@@ -1943,21 +2047,18 @@ async fn read_whole_body(
     let mut decoder = Decoder::for_encoding(encoding)?;
     let mut body = resp.into_body();
     let mut out = Vec::new();
-    let push = |out: &mut Vec<u8>, chunk: Bytes| {
-        out.extend_from_slice(&chunk);
-        if out.len() > max_body {
-            return Err(NetError::TooLarge);
-        }
-        Ok(())
-    };
     while let Some(frame) = body.frame().await {
         let frame = frame.map_err(|e| NetError::Other(e.to_string()))?;
         let Ok(data) = frame.into_data() else { continue };
-        let decoded = decoder.push(data)?;
-        push(&mut out, decoded)?;
+        decoder.push_into(&data, &mut out)?;
+        if out.len() > max_body {
+            return Err(NetError::TooLarge);
+        }
     }
-    let tail = decoder.finish()?;
-    push(&mut out, tail)?;
+    out.append(&mut decoder.finish()?);
+    if out.len() > max_body {
+        return Err(NetError::TooLarge);
+    }
     Ok(Bytes::from(out))
 }
 
@@ -2071,4 +2172,31 @@ fn cdp_reason(r: &str) -> String {
         _ => "net::ERR_FAILED",
     }
     .to_owned()
+}
+
+#[cfg(test)]
+mod decoder_tests {
+    use super::*;
+
+    /// A network chunk leaves the decoder in an allocation of its own, so
+    /// what keeps the output does not keep the connection's read buffer.
+    #[test]
+    fn decoded_output_does_not_share_the_chunk() {
+        let read_buffer = Bytes::from(vec![7u8; 4096]);
+        let chunk = read_buffer.slice(100..200);
+        let out = Decoder::Identity.push(&chunk).unwrap();
+        assert_eq!(out, chunk);
+        assert!(!read_buffer.as_ptr_range().contains(&out.as_ptr()));
+
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        gz.write_all(&[b'a'; 100_000]).unwrap();
+        let encoded = gz.finish().unwrap();
+        let mut decoder = Decoder::for_encoding(Some("gzip")).unwrap();
+        let mut decoded = Vec::new();
+        for part in encoded.chunks(1000) {
+            decoded.extend_from_slice(&decoder.push(part).unwrap());
+        }
+        decoded.extend_from_slice(&decoder.finish().unwrap());
+        assert_eq!(decoded, vec![b'a'; 100_000]);
+    }
 }

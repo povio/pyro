@@ -60,10 +60,10 @@ fn replace(s: &Scope<'_>, page: &Rc<PageDom>, name: &str, value: Value<'_>) -> J
     let define = page.define_properties.borrow().get(&s.realm_id()).map(|p| p.get(s));
     let define = define.and_then(|v| v.as_object()).ok_or_else(unavailable)?;
     let desc = s.object();
-    desc.set("value", value)?;
-    desc.set("writable", s.boolean(true))?;
-    desc.set("enumerable", s.boolean(false))?;
-    desc.set("configurable", s.boolean(true))?;
+    desc.set_atom("value", value)?;
+    desc.set_atom("writable", s.boolean(true))?;
+    desc.set_atom("enumerable", s.boolean(false))?;
+    desc.set_atom("configurable", s.boolean(true))?;
     define.call(None, &[s.global().value(), s.string(name), desc.value()])?;
     Ok(())
 }
@@ -106,11 +106,11 @@ pub(crate) fn fetch_stream_body<'s>(s: &Scope<'s>, input: Value<'s>, init: Value
     if existing(s, &page)?.is_none() {
         return Ok(None);
     }
-    let body = options.get("body")?;
+    let body = options.get_atom("body")?;
     if !is_stream(s, body)? {
         return Ok(None);
     }
-    if options.get("duplex")?.as_string().as_deref() != Some("half") {
+    if options.get_atom("duplex")?.as_string().as_deref() != Some("half") {
         return Err(JsError::Type("The `duplex` member must be specified for a request with a streaming body".into()));
     }
     helper(s, &page, "fetchBuffered", &[input, init, body]).map(Some)
@@ -124,5 +124,5 @@ pub(crate) fn is_stream<'s>(s: &Scope<'s>, value: Value<'s>) -> JsResult<bool> {
     }
     let page = crate::target::page_of(s)?;
     let Some(module) = existing(s, &page)? else { return Ok(false) };
-    Ok(module.get("isStream")?.as_object().ok_or_else(unavailable)?.call(None, &[value])?.to_bool())
+    Ok(module.get_atom("isStream")?.as_object().ok_or_else(unavailable)?.call(None, &[value])?.to_bool())
 }

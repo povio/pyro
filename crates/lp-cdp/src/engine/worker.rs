@@ -94,7 +94,7 @@ struct Call {
 
 struct WorkerSession {
     enabled: Cell<bool>,
-    handles: Rc<RefCell<HandleTable<Persistent>>>,
+    handles: Rc<remote::Handles>,
 }
 
 /// One worker's inspector, on its thread. Promise reactions hold it weakly: they
@@ -260,8 +260,8 @@ impl WorkerRuntime {
                 let (this, inherited) = match &p.object_id {
                     Some(object_id) => {
                         let table = session.handles.borrow();
-                        let (_, handle) = table.get(object_id)?;
-                        (Some(handle.clone()), table.group_of(object_id).map(str::to_owned))
+                        let found = table.lookup(object_id)?;
+                        (Some(found.handle.clone()), found.group.map(|g| g.to_string()))
                     }
                     None if p.execution_context_id.is_some() => {
                         self.check_context(p.execution_context_id)?;
@@ -286,7 +286,7 @@ impl WorkerRuntime {
                     preview: p.generate_preview,
                     group: p.object_group.or(inherited),
                 };
-                let called = scope.call_function_rooted(&p.function_declaration, this.as_ref(), &args);
+                let called = scope.call_function_rooted(&p.function_declaration, this.as_deref(), &args);
                 self.finish(&scope, called, p.await_promise, options);
                 Ok(None)
             }

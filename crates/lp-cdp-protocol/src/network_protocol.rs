@@ -394,6 +394,8 @@ pub const MAX_RETAINED_BODIES: usize = 4096;
 /// - Capture is lazy: the engine only feeds events while a session of the page
 ///   has `Network` enabled, and nothing is retained before a response arrives.
 /// - Bodies are shared `Bytes` chunks (no copy) charged to a [`BodyBudget`].
+///   lp-net hands out chunks of their own exact size (never slices of its
+///   read buffers), and a cache hit shares the cache's body.
 ///   When the budget is full the store evicts its own oldest bodies; if that is
 ///   not enough, the new body is not retained and asking for it returns an
 ///   explicit error instead of stale or partial data.

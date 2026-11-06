@@ -32,7 +32,8 @@ pub(crate) fn handles(name: &str) -> bool {
 
 /// A style rule declaring one of [`PROPERTIES`].
 pub(crate) struct Rule {
-    selectors: List,
+    /// Each selector of the rule's list on its own, with its specificity.
+    selectors: Vec<(List, u32)>,
     /// (property, value, important).
     declarations: Vec<(&'static str, String, bool)>,
 }
@@ -132,7 +133,8 @@ fn style_rule(selectors: &str, body: &str, out: &mut Vec<Rule>) {
     if declarations.is_empty() {
         return;
     }
-    if let Some(selectors) = crate::stylo::select::parse(selectors) {
+    if let Some(list) = crate::stylo::select::parse(selectors) {
+        let selectors = list.slice().iter().map(|s| (List::from_one(s.clone()), s.specificity())).collect();
         out.push(Rule { selectors, declarations });
     }
 }
@@ -194,10 +196,9 @@ fn cascaded(
         };
         let specificity = rule
             .selectors
-            .slice()
             .iter()
-            .filter(|s| crate::stylo::select::matches(dom, idx, &List::from_one((*s).clone())))
-            .map(|s| s.specificity())
+            .filter(|(s, _)| crate::stylo::select::matches(dom, idx, s))
+            .map(|&(_, specificity)| specificity)
             .max();
         let Some(specificity) = specificity else { continue };
         let key = (important, specificity, order);

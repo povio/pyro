@@ -147,8 +147,8 @@ impl JsClass for Response {
                 None,
             )?;
             d.source_made.set(true);
-            let read = source.get("read")?;
-            let cancel = source.get("cancel")?;
+            let read = source.get_atom("read")?;
+            let cancel = source.get_atom("cancel")?;
             let stream = crate::streams::helper(s, &page, "fromBody", &[source.value(), read, cancel])?;
             let realm = d.realm.upgrade().ok_or(JsError::ContextDestroyed)?;
             let owner = realm.scope()?;
@@ -313,7 +313,7 @@ fn wrap_script<'s>(
 fn opaque(kind: ResponseKind) -> bool {
     matches!(kind, ResponseKind::Opaque | ResponseKind::OpaqueRedirect)
 }
-fn hidden<'s>(s: &Scope<'s>, data: &ResponseData, key: &str) -> JsResult<Value<'s>> {
+fn hidden<'s>(s: &Scope<'s>, data: &ResponseData, key: &'static str) -> JsResult<Value<'s>> {
     // A method borrowed from another same-VM realm still addresses the original
     // wrapper's traced properties. Do not root the wrapper in its own payload.
     let realm = data.realm.upgrade().ok_or(JsError::ContextDestroyed)?;

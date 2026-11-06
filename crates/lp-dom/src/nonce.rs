@@ -51,7 +51,8 @@ impl Dom {
             .shadow_including_subtree(root)
             .into_iter()
             .filter_map(|i| {
-                let nonce = self.n(i).element()?.attr("nonce").filter(|v| !v.is_empty())?;
+                let nonce =
+                    self.n(i).element()?.attr_local(&markup5ever::local_name!("nonce")).filter(|v| !v.is_empty())?;
                 Some((self.id_of(i), nonce.into()))
             })
             .collect();
@@ -60,7 +61,8 @@ impl Dom {
         }
         // Entries of collected elements go when the map has grown.
         if self.nonces.hidden.len() >= 1024 {
-            let stale: Vec<NodeId> = self.nonces.hidden.keys().filter(|id| self.check(**id).is_err()).copied().collect();
+            let stale: Vec<NodeId> =
+                self.nonces.hidden.keys().filter(|id| self.check(**id).is_err()).copied().collect();
             for id in stale {
                 self.nonces.hidden.remove(&id);
             }

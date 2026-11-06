@@ -184,7 +184,7 @@ impl JsClass for MessagePort {
                 // `postMessage(message, transfer)`: a sequence is the transfer list.
                 Some(v) if v.is_array() => {
                     let o = s.object();
-                    o.set("transfer", v)?;
+                    o.set_atom("transfer", v)?;
                     o.value()
                 }
                 Some(v) => v,
@@ -253,7 +253,7 @@ pub struct ChannelData {
     identity: lp_js::IdentityKey,
 }
 
-fn channel_port<'s>(s: &Scope<'s>, c: &ChannelData, name: &str) -> JsResult<lp_js::Value<'s>> {
+fn channel_port<'s>(s: &Scope<'s>, c: &ChannelData, name: &'static str) -> JsResult<lp_js::Value<'s>> {
     let realm = c.realm.upgrade().ok_or(JsError::ContextDestroyed)?;
     let owner = realm.scope()?;
     let object = owner.lookup_identity(c.identity).ok_or(JsError::ContextDestroyed)?;

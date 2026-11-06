@@ -286,8 +286,8 @@ pub(crate) fn check_visibility<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Valu
 
 fn scroll_args(a: &Args<'_>) -> JsResult<(Option<i32>, Option<i32>)> {
     if let Some(o) = a.get(0).as_object() {
-        let l = o.get("left")?;
-        let t = o.get("top")?;
+        let l = o.get_atom("left")?;
+        let t = o.get_atom("top")?;
         Ok((
             (!l.is_undefined()).then(|| to_scroll_offset(l)).transpose()?,
             (!t.is_undefined()).then(|| to_scroll_offset(t)).transpose()?,

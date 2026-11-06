@@ -300,7 +300,7 @@ fn compile(s: &Scope<'_>, source: &str, resolver: Value<'_>) -> JsResult<Compile
             let uri = if obj.is_function() {
                 obj.call(None, &[arg])?
             } else {
-                let f = obj.get("lookupNamespaceURI")?;
+                let f = obj.get_atom("lookupNamespaceURI")?;
                 let f = f.as_object().filter(|f| f.is_function()).ok_or_else(not_resolver)?;
                 f.call(Some(obj), &[arg])?
             };

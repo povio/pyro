@@ -179,10 +179,11 @@ pub fn realm_disposed(page: &PageDom, realm: RealmId) {
     crate::mutation_observer::cancel_realm(page, realm);
     crate::intersection_observer::cancel_realm(page, realm);
     crate::resize_observer::cancel_realm(page, realm);
-    page.realms.borrow_mut().remove(&realm);
+    page.unregister_realm(realm);
     page.data_view_readers.borrow_mut().remove(&realm);
     page.header_helpers.borrow_mut().remove(&realm);
     page.url_params_helpers.borrow_mut().remove(&realm);
+    crate::custom::realm_disposed(page, realm);
     page.window_holders.borrow_mut().remove(&realm);
     drop(page.same_objects.borrow_mut().remove(&realm));
     drop(page.structured_clones.borrow_mut().remove(&realm));

@@ -62,12 +62,20 @@ impl ListenerStore {
     }
 
     pub(crate) fn forget(&mut self, key: TargetKey) {
-        if let Some(list) = self.map.remove(&key) {
-            self.released.extend(list.into_iter().map(|l| (key, l.callback)));
+        // Called for every freed node (a closed document's whole tree), most
+        // of which never had a listener: skip the lookups in empty tables.
+        if !self.map.is_empty() {
+            if let Some(list) = self.map.remove(&key) {
+                self.released.extend(list.into_iter().map(|l| (key, l.callback)));
+            }
         }
         if let TargetKey::Node(i) = key {
-            self.windows.remove(&i);
-            self.pin_on_connect.remove(&i);
+            if !self.windows.is_empty() {
+                self.windows.remove(&i);
+            }
+            if !self.pin_on_connect.is_empty() {
+                self.pin_on_connect.remove(&i);
+            }
         }
     }
 }
@@ -279,17 +287,12 @@ impl Dom {
         if self.events.map.is_empty() && self.events.pin_on_connect.is_empty() {
             return;
         }
-        let mut stack = vec![root];
-        while let Some(i) = stack.pop() {
+        let mut i = root;
+        while i != NIL {
             if self.events.map.contains_key(&TargetKey::Node(i)) || self.events.pin_on_connect.contains(&i) {
                 self.events.reconnected.push(i);
             }
-            stack.extend(self.child_idx_iter(i));
-            if let Some(e) = self.n(i).element() {
-                if e.shadow_root != NIL {
-                    stack.push(e.shadow_root);
-                }
-            }
+            i = self.next_shadow_including_rev(i, root);
         }
     }
 

@@ -108,10 +108,10 @@ pub(crate) fn from_init(s: &Scope<'_>, init: Value<'_>) -> JsResult<HeadersData>
         let convert = s.function("byteString", |s, _this, args| Ok(s.string(&byte_string(args.get(0))?)))?;
         let converted = helper(s, "fill")?.as_object().unwrap().call(None, &[init, convert.value()])?;
         let entries = converted.as_object().expect("converted sequence");
-        let len = entries.get("length")?.to_number()? as u32;
+        let len = entries.get_atom("length")?.to_number()? as u32;
         for i in 0..len {
             let entry = entries.get_index(i)?.as_object().expect("converted entry");
-            if entry.get("length")?.to_number()? != 2.0 {
+            if entry.get_atom("length")?.to_number()? != 2.0 {
                 return Err(JsError::Type("Header entry must have two items".into()));
             }
             let name = header_name(entry.get_index(0)?)?;
@@ -235,7 +235,7 @@ fn iterator<'s>(s: &Scope<'s>, data: &HeadersData, kind: IterKind) -> JsResult<V
         let entries = list.borrow_mut().entries();
         let entry = (!done.get()).then(|| entries.get(index.get())).flatten();
         let out = s.object();
-        out.set("done", s.boolean(entry.is_none()))?;
+        out.set_atom("done", s.boolean(entry.is_none()))?;
         let value = match entry {
             Some((key, value)) => {
                 index.set(index.get() + 1);
@@ -254,7 +254,7 @@ fn iterator<'s>(s: &Scope<'s>, data: &HeadersData, kind: IterKind) -> JsResult<V
                 s.undefined()
             }
         };
-        out.set("value", value)?;
+        out.set_atom("value", value)?;
         Ok(out.value())
     })?;
     helper(s, "iterator")?.as_object().unwrap().call(None, &[next.value()])
@@ -277,18 +277,24 @@ pub(crate) fn cors_safelisted(name: &str, value: &str) -> bool {
 }
 
 pub(crate) fn install(s: &Scope<'_>) -> JsResult<()> {
-    let helpers = s.eval(
+    // [helpers, the step that completes Headers.prototype once its members
+    // are installed (`after_populate`)].
+    let pair = s.eval(
         r#"(() => {
         const symbol = Symbol.iterator, keys = Reflect.ownKeys;
         const descriptor = Object.getOwnPropertyDescriptor, define = Object.defineProperty;
-        const apply = Reflect.apply, entries = Headers.prototype.entries, TypeError_ = TypeError;
-        define(Headers.prototype, symbol, {value: entries, writable: true, configurable: true});
-        define(Headers.prototype, 'forEach', {value: function(callback, thisArg) {
-            const iterator = apply(entries, this, []);
-            if (typeof callback !== 'function') throw new TypeError_('callback must be callable');
-            for (const pair of iterator) apply(callback, thisArg, [pair[1], pair[0], this]);
-        }, writable: true, enumerable: true, configurable: true});
-        return {
+        const apply = Reflect.apply, TypeError_ = TypeError;
+        // Runs when a page first uses Headers: descriptors without a prototype.
+        const populated = (proto) => {
+            const entries = proto.entries;
+            define(proto, symbol, {__proto__: null, value: entries, writable: true, configurable: true});
+            define(proto, 'forEach', {__proto__: null, value: function(callback, thisArg) {
+                const iterator = apply(entries, this, []);
+                if (typeof callback !== 'function') throw new TypeError_('callback must be callable');
+                for (const pair of iterator) apply(callback, thisArg, [pair[1], pair[0], this]);
+            }, writable: true, enumerable: true, configurable: true});
+        };
+        return [{
             iterator(next) { return {next, [symbol]() { return this; }}; },
             fill(init, convert) {
                 const result = [];
@@ -315,11 +321,13 @@ pub(crate) fn install(s: &Scope<'_>) -> JsResult<()> {
                 }
                 return result;
             }
-        };
+        }, populated];
     })()"#,
         Some("lp-headers.js"),
         1,
     )?;
+    let pair = pair.as_object().expect("headers helpers");
+    let helpers = pair.get_index(0)?;
     page_of(s)?.header_helpers.borrow_mut().insert(s.realm_id(), Persistent::new(s, helpers));
-    Ok(())
+    s.after_populate::<Headers>(pair.get_index(1)?.as_object().expect("headers hook"))
 }

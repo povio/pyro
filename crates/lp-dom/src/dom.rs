@@ -97,9 +97,6 @@ impl Change {
     }
 }
 
-/// Per root (slot index), the first element in tree order for each id.
-type IdIndex = rustc_hash::FxHashMap<u32, RootIds>;
-
 /// Shared `tagName`/`nodeName` strings (see `Dom::tag_name_shared`).
 struct NameCache {
     tags: rustc_hash::FxHashMap<(Option<Prefix>, LocalName, bool), std::sync::Arc<str>>,
@@ -122,26 +119,6 @@ impl Default for NameCache {
     }
 }
 
-/// One root's id map and what it is valid for.
-struct RootIds {
-    /// Slot generation of the root it was built for.
-    gen: u32,
-    /// `Dom::version` it is known valid at.
-    version: u64,
-    /// Nodes the build walked: the most journal entries worth scanning
-    /// instead of rebuilding.
-    walked: usize,
-    ids: rustc_hash::FxHashMap<String, u32>,
-}
-
-enum IdIndexCheck {
-    Valid,
-    /// More changes than the root's walk: cheaper to rebuild just this root.
-    TooLong,
-    /// An id-affecting change or a journal gap since then.
-    Changed,
-}
-
 pub struct Dom {
     /// Process-unique id (caches keyed by DOM identity and `version`).
     uid: u64,
@@ -152,10 +129,12 @@ pub struct Dom {
     version: u64,
     /// See `tree_version()`.
     tree_version: u64,
-    /// Bumped whenever something the embedder's post-callback hook acts on
-    /// may have changed: a mutation, a queued observer, a queued iframe
-    /// event. The hook compares it against the value it last found nothing
-    /// at, instead of checking every queue after every native callback.
+    /// Bumped whenever one of the queues the embedder's post-callback hook
+    /// drains gets an entry: a queued observer, iframe event, custom element
+    /// reaction, upgrade candidate or slot change. A mutation alone does not
+    /// bump it (what follows every mutation compares `version`), so the hook
+    /// compares it against the value it last found nothing at, instead of
+    /// checking every queue after every native callback.
     hook_epoch: u64,
     /// Told each name a Document may start to answer as a named property
     /// (`Dom::set_named_item_hook`).
@@ -167,8 +146,6 @@ pub struct Dom {
     candidates: Vec<u32>,
     /// A `<base>` element was created; until then no document walks for one.
     pub(crate) base_seen: bool,
-    /// Documents with a computed `html_base`, reset on the next mutation.
-    html_base_docs: std::cell::RefCell<Vec<NodeId>>,
     live: u32,
     /// Bumped whenever a node is removed from its parent.
     removals: u64,
@@ -214,14 +191,10 @@ pub struct Dom {
     pub(crate) nonces: crate::nonce::NonceState,
     /// Natural sizes of loaded `<img>` elements, set by the embedder.
     natural_sizes: rustc_hash::FxHashMap<NodeId, (f64, f64)>,
-    /// `getElementById` index (see `get_element_by_id`).
-    id_index: std::cell::RefCell<IdIndex>,
     /// Named access on the Window, per document (see `window_names`).
     pub(crate) window_names: std::cell::RefCell<rustc_hash::FxHashMap<u32, crate::window_names::WindowNames>>,
     /// Attr nodes of an element's attributes, by element slot (see `attr_node`).
     pub(crate) attr_nodes: rustc_hash::FxHashMap<u32, Vec<u32>>,
-    #[cfg(test)]
-    id_index_builds: std::cell::Cell<u64>,
 }
 
 impl Default for Dom {
@@ -263,7 +236,6 @@ impl Dom {
             shadow_roots: 0,
             pending_inline_handlers: Vec::new(),
             base_seen: false,
-            html_base_docs: Default::default(),
             mutation: MutationState::default(),
             live_ranges: Vec::new(),
             live_iterators: Vec::new(),
@@ -277,11 +249,8 @@ impl Dom {
             top_layer: Default::default(),
             nonces: Default::default(),
             natural_sizes: Default::default(),
-            id_index: Default::default(),
             window_names: Default::default(),
             attr_nodes: Default::default(),
-            #[cfg(test)]
-            id_index_builds: Default::default(),
         }
     }
 
@@ -310,6 +279,18 @@ impl Dom {
             _ => Err(DomError::StaleNode),
         }
     }
+    /// [`Dom::check`] and the node in one slot lookup.
+    #[inline]
+    pub(crate) fn live(&self, id: NodeId) -> DomResult<(u32, &Node)> {
+        match self.slots.get(id.idx as usize) {
+            Some(Slot { gen, node: Some(n) }) if *gen == id.gen => Ok((id.idx, n)),
+            _ => Err(DomError::StaleNode),
+        }
+    }
+    /// Number of slots, live or free (`verify_tree_state`).
+    pub(crate) fn slot_count(&self) -> u32 {
+        self.slots.len() as u32
+    }
 
     pub(crate) fn generation_at(&self, idx: u32) -> u32 {
         self.slots.get(idx as usize).map_or(0, |s| s.gen)
@@ -326,8 +307,7 @@ impl Dom {
         self.check(id).is_ok()
     }
     pub fn node(&self, id: NodeId) -> DomResult<&Node> {
-        let i = self.check(id)?;
-        Ok(self.n(i))
+        Ok(self.live(id)?.1)
     }
     /// Natural (intrinsic) size of a loaded image element, in CSS px.
     pub fn natural_size(&self, el: NodeId) -> Option<(f64, f64)> {
@@ -351,8 +331,9 @@ impl Dom {
     pub fn version(&self) -> u64 {
         self.version
     }
-    /// See the `hook_epoch` field: changes whenever a post-callback hook may
-    /// have work (conservative; never misses a change).
+    /// See the `hook_epoch` field: changes whenever a queue the
+    /// post-callback hook drains may have work (conservative; never misses
+    /// one). Work that follows any mutation follows `version` instead.
     pub fn hook_epoch(&self) -> u64 {
         self.hook_epoch
     }
@@ -367,10 +348,6 @@ impl Dom {
     #[track_caller]
     pub(crate) fn bump(&mut self) {
         self.version = self.version.wrapping_add(1);
-        self.hook_epoch = self.hook_epoch.wrapping_add(1);
-        if self.base_seen {
-            self.reset_html_bases();
-        }
         // Unknown until a precise `note` refines it: an un-annotated bump
         // (forms, parser, script state) makes consumers invalidate fully.
         self.push_change(Change::Unknown(std::panic::Location::caller()));
@@ -564,23 +541,18 @@ impl Dom {
             return None;
         }
         let mut nodes = Vec::new();
-        let mut stack: Vec<u32> = Vec::new();
         for &root in self.removal_log.iter().skip(self.removal_log.len() - count as usize) {
             if root == NIL {
                 return None;
             }
-            stack.push(root);
-            while let Some(i) = stack.pop() {
-                if !self.slot_live(i) {
-                    continue;
-                }
+            // A freed root lists nothing (a reused slot: its node's subtree).
+            if !self.slot_live(root) {
+                continue;
+            }
+            let mut i = root;
+            while i != NIL {
                 nodes.push(self.id_of(i));
-                stack.extend(self.child_idx_iter(i));
-                if let Some(e) = self.n(i).element() {
-                    if e.shadow_root != NIL {
-                        stack.push(e.shadow_root);
-                    }
-                }
+                i = self.next_shadow_including(i, root);
             }
         }
         Some(nodes)
@@ -680,17 +652,24 @@ impl Dom {
             url: url.into(),
             base_url: None,
             html_base: Default::default(),
+            url_target: url_target(url),
+            ids: Default::default(),
             inert_doc: NIL,
             owned: 0,
             held: 0,
             active: false,
             allow_declarative_shadow_roots: false,
+            fragment_parse_host: false,
             focused: NIL,
             hovered: NIL,
+            document_element: NIL,
+            head: NIL,
+            body: NIL,
         };
         let idx = self.alloc(NodeKind::Document(Box::new(data)), NIL);
-        // A document owns itself.
+        // A document owns itself, and is connected.
         self.n_mut(idx).owner_doc = idx;
+        self.n_mut(idx).set_tree_flags(tree_flags::CONNECTED);
         self.doc_data_mut(idx).owned = 1;
         self.id_of(idx)
     }
@@ -724,19 +703,20 @@ impl Dom {
     pub fn set_document_url(&mut self, doc: NodeId, url: &str) -> DomResult<()> {
         let i = self.check(doc)?;
         match &mut self.n_mut(i).kind {
-            NodeKind::Document(d) => d.url = url.into(),
+            NodeKind::Document(d) => {
+                d.url = url.into();
+                d.url_target = url_target(url);
+            }
             _ => return Err(DomError::Type("not a document")),
         }
-        self.reset_html_bases();
+        self.html_base_changed(i);
         Ok(())
     }
-    fn reset_html_bases(&mut self) {
-        for doc in std::mem::take(self.html_base_docs.get_mut()) {
-            if let Ok(i) = self.check(doc) {
-                if let NodeKind::Document(d) = &mut self.n_mut(i).kind {
-                    d.html_base = Default::default();
-                }
-            }
+    /// What `doc`'s `<base>` resolves to may have changed: a `<base>` came
+    /// or went, a connected one's `href` changed, or the fallback base URL.
+    pub(crate) fn html_base_changed(&mut self, doc: u32) {
+        if let NodeKind::Document(d) = &mut self.n_mut(doc).kind {
+            d.html_base.take();
         }
     }
     /// Sets an inherited, already-resolved base URL without changing URL/origin.
@@ -747,17 +727,14 @@ impl Dom {
             NodeKind::Document(d) => d.base_url = base.map(Into::into),
             _ => return Err(DomError::Type("not a document")),
         }
-        self.reset_html_bases();
+        self.html_base_changed(i);
         Ok(())
     }
     /// The document base URL: its first `<base href>`, else the fallback.
     pub fn document_base_url(&self, doc: NodeId) -> DomResult<&str> {
         let d = self.document_data(doc)?;
         if self.base_seen {
-            let html_base = d.html_base.get_or_init(|| {
-                self.html_base_docs.borrow_mut().push(doc);
-                self.first_base_href(doc)
-            });
+            let html_base = d.html_base.get_or_init(|| self.first_base_href(doc));
             if let Some(base) = html_base {
                 return Ok(base);
             }
@@ -823,7 +800,7 @@ impl Dom {
         let idx = self.alloc_raw(NodeKind::Element(Box::new(ElementData::new(name))), owner);
         if is_template {
             let inert = self.inert_doc_for(owner);
-            let frag = self.alloc(NodeKind::Fragment(FragmentData { host: idx, shadow: None, flags: 0 }), inert);
+            let frag = self.alloc(NodeKind::Fragment(FragmentData::new(idx, None, 0)), inert);
             self.n_mut(idx).element_mut().unwrap().template_contents = frag;
         }
         self.candidates.push(idx);
@@ -836,7 +813,13 @@ impl Dom {
         let owner = self.owner_for(doc)?;
         let html = self.doc_data(owner).kind == DocumentKind::Html;
         let (local, ns) = if html {
-            (LocalName::from(local.to_ascii_lowercase()), ns!(html))
+            // Script mostly passes lowercase names: no lowercased copy then.
+            let local = if local.bytes().any(|b| b.is_ascii_uppercase()) {
+                LocalName::from(local.to_ascii_lowercase())
+            } else {
+                LocalName::from(local)
+            };
+            (local, ns!(html))
         } else {
             // XML documents: "application/xhtml+xml" gets the HTML namespace.
             let ns = if &*self.doc_data(owner).content_type == "application/xhtml+xml" { ns!(html) } else { ns!() };
@@ -883,7 +866,7 @@ impl Dom {
     }
     pub fn create_fragment(&mut self, doc: NodeId) -> DomResult<NodeId> {
         let owner = self.owner_for(doc)?;
-        Ok(self.alloc_id(NodeKind::Fragment(FragmentData { host: NIL, shadow: None, flags: 0 }), owner))
+        Ok(self.alloc_id(NodeKind::Fragment(FragmentData::new(NIL, None, 0)), owner))
     }
     pub fn create_doctype(&mut self, doc: NodeId, name: &str, public_id: &str, system_id: &str) -> DomResult<NodeId> {
         let owner = self.owner_for(doc)?;
@@ -995,7 +978,9 @@ impl Dom {
 
     fn new_shadow_root(&mut self, h: u32, mode: ShadowRootMode, flags: u8) -> u32 {
         let owner = self.n(h).owner_doc;
-        let sr = self.alloc(NodeKind::Fragment(FragmentData { host: h, shadow: Some(mode), flags }), owner);
+        let sr = self.alloc(NodeKind::Fragment(FragmentData::new(h, Some(mode), flags)), owner);
+        let tree = self.shadow_root_flags_for(h);
+        self.n_mut(sr).set_tree_flags(tree);
         self.n_mut(h).element_mut().unwrap().shadow_root = sr;
         self.shadow_roots = self.shadow_roots.saturating_add(1);
         self.bump();
@@ -1031,6 +1016,17 @@ impl Dom {
         self.doc_data_mut(d).allow_declarative_shadow_roots = allow;
         Ok(())
     }
+    /// Makes the new, empty document `doc` the fragment parser's host:
+    /// not connected (see `DocumentData::fragment_parse_host`).
+    pub(crate) fn make_fragment_parse_host(&mut self, doc: u32) {
+        debug_assert_eq!(self.n(doc).first_child, NIL, "an empty document");
+        self.doc_data_mut(doc).fragment_parse_host = true;
+        self.n_mut(doc).set_tree_flags(0);
+    }
+    /// Whether `doc` is the fragment parser's host document.
+    pub(crate) fn is_fragment_parse_host(&self, doc: u32) -> bool {
+        self.doc_data(doc).fragment_parse_host
+    }
     pub(crate) fn allows_declarative_shadow_roots(&self, doc: u32) -> bool {
         self.doc_data(doc).allow_declarative_shadow_roots
     }
@@ -1038,11 +1034,15 @@ impl Dom {
     // ----- slots -------------------------------------------------------
 
     pub(crate) fn is_slot(&self, i: u32) -> bool {
-        self.n(i).element().is_some_and(|e| e.is_html() && &*e.name.local == "slot")
+        self.n(i).element().is_some_and(|e| e.name.local == local_name!("slot") && e.is_html())
     }
 
+    /// Whether `i`'s root is a shadow root (a bit kept by `tree_scope`).
+    #[inline]
     pub(crate) fn in_shadow_tree(&self, i: u32) -> bool {
-        matches!(&self.n(self.root_idx(i)).kind, NodeKind::Fragment(f) if f.shadow.is_some())
+        let r = self.n(i).in_shadow_tree();
+        debug_assert_eq!(r, matches!(&self.n(self.root_idx(i)).kind, NodeKind::Fragment(f) if f.shadow.is_some()));
+        r
     }
 
     /// DOM "find a slot" (named assignment; manual slots hold no state yet).
@@ -1062,10 +1062,12 @@ impl Dom {
         if f.flags & shadow_flags::MANUAL_SLOTS != 0 || (open_only && f.shadow == Some(ShadowRootMode::Closed)) {
             return None;
         }
-        let name = self.n(i).element().and_then(|e| e.attr("slot")).unwrap_or("");
+        let name = self.n(i).element().and_then(|e| e.attr_local(&local_name!("slot"))).unwrap_or("");
         let mut cur = self.n(sr).first_child;
         while cur != NIL {
-            if self.is_slot(cur) && self.n(cur).element().and_then(|e| e.attr("name")).unwrap_or("") == name {
+            if self.is_slot(cur)
+                && self.n(cur).element().and_then(|e| e.attr_local(&local_name!("name"))).unwrap_or("") == name
+            {
                 return Some(cur);
             }
             cur = self.following_in(cur, sr);
@@ -1182,7 +1184,7 @@ impl Dom {
     }
     pub fn child_count(&self, id: NodeId) -> DomResult<u32> {
         let i = self.check(id)?;
-        Ok(self.n(i).child_count)
+        Ok(self.n(i).child_count())
     }
     pub fn owner_document(&self, id: NodeId) -> DomResult<Option<NodeId>> {
         let i = self.check(id)?;
@@ -1221,10 +1223,10 @@ impl Dom {
     pub fn child_at(&self, id: NodeId, index: u32) -> DomResult<Option<NodeId>> {
         let i = self.check(id)?;
         let n = self.n(i);
-        if index >= n.child_count {
+        if index >= n.child_count() {
             return Ok(None);
         }
-        if index <= n.child_count / 2 {
+        if index <= n.child_count() / 2 {
             let mut c = n.first_child;
             for _ in 0..index {
                 c = self.n(c).next;
@@ -1232,7 +1234,7 @@ impl Dom {
             Ok(Some(self.id_of(c)))
         } else {
             let mut c = n.last_child;
-            for _ in 0..(n.child_count - 1 - index) {
+            for _ in 0..(n.child_count() - 1 - index) {
                 c = self.n(c).prev;
             }
             Ok(Some(self.id_of(c)))
@@ -1273,6 +1275,103 @@ impl Dom {
         NIL
     }
 
+    /// The node after `idx` in `root`'s shadow-including subtree, in
+    /// shadow-including tree order with an element's shadow tree before its
+    /// children (the order of post-connection steps), or NIL. Follows the
+    /// tree's own links, so a walk needs no stack.
+    pub(crate) fn next_shadow_including(&self, idx: u32, root: u32) -> u32 {
+        let n = self.n(idx);
+        if let NodeKind::Element(e) = &n.kind {
+            if e.shadow_root != NIL {
+                return e.shadow_root;
+            }
+        }
+        if n.first_child != NIL {
+            return n.first_child;
+        }
+        self.climb_shadow_including(idx, root, false)
+    }
+
+    /// [`Dom::next_shadow_including`] reading every child list from its last
+    /// child to its first (an element's shadow tree still comes first): the
+    /// order of a walk that pushes each node's children onto a stack in order.
+    pub(crate) fn next_shadow_including_rev(&self, idx: u32, root: u32) -> u32 {
+        let n = self.n(idx);
+        if let NodeKind::Element(e) = &n.kind {
+            if e.shadow_root != NIL {
+                return e.shadow_root;
+            }
+        }
+        if n.last_child != NIL {
+            return n.last_child;
+        }
+        self.climb_shadow_including(idx, root, true)
+    }
+
+    /// [`Dom::next_shadow_including`] with an element's shadow tree after
+    /// its children instead of before them.
+    pub(crate) fn next_shadow_including_light_first(&self, idx: u32, root: u32) -> u32 {
+        let n = self.n(idx);
+        if n.first_child != NIL {
+            return n.first_child;
+        }
+        if let NodeKind::Element(e) = &n.kind {
+            if e.shadow_root != NIL {
+                return e.shadow_root;
+            }
+        }
+        let mut cur = idx;
+        loop {
+            if cur == root {
+                return NIL;
+            }
+            let n = self.n(cur);
+            if n.next != NIL {
+                return n.next;
+            }
+            if n.parent != NIL {
+                // The parent's children are done: its shadow tree is next.
+                cur = n.parent;
+                if let NodeKind::Element(e) = &self.n(cur).kind {
+                    if e.shadow_root != NIL {
+                        return e.shadow_root;
+                    }
+                }
+                continue;
+            }
+            // A shadow root is done, and with it its host.
+            let NodeKind::Fragment(FragmentData { host, shadow: Some(_), .. }) = &n.kind else { return NIL };
+            cur = *host;
+        }
+    }
+
+    /// The next node once `cur`'s subtree is done (see `next_shadow_including`).
+    fn climb_shadow_including(&self, mut cur: u32, root: u32, rev: bool) -> u32 {
+        loop {
+            if cur == root {
+                return NIL;
+            }
+            let n = self.n(cur);
+            let sibling = if rev { n.prev } else { n.next };
+            if sibling != NIL {
+                return sibling;
+            }
+            if n.parent != NIL {
+                cur = n.parent;
+                continue;
+            }
+            // A shadow root is done: its host's children come next.
+            let NodeKind::Fragment(FragmentData { host, shadow: Some(_), .. }) = &n.kind else { return NIL };
+            let host = *host;
+            let h = self.n(host);
+            let first = if rev { h.last_child } else { h.first_child };
+            if first != NIL {
+                return first;
+            }
+            cur = host;
+        }
+    }
+
     /// Pre-order iterator over the inclusive descendants of `id`.
     pub fn descendants(&self, id: NodeId) -> DomResult<Descendants<'_>> {
         let i = self.check(id)?;
@@ -1302,34 +1401,26 @@ impl Dom {
             return Ok(self.id_of(i));
         }
     }
-    pub(crate) fn is_connected_idx(&self, mut i: u32) -> bool {
-        loop {
-            i = self.root_idx(i);
-            match &self.n(i).kind {
-                NodeKind::Document(_) => return true,
-                NodeKind::Fragment(FragmentData { host, shadow: Some(_), .. }) => i = *host,
-                _ => return false,
-            }
-        }
+    /// Shadow-including connectedness: a bit `tree_scope` keeps.
+    #[inline]
+    pub(crate) fn is_connected_idx(&self, i: u32) -> bool {
+        let r = self.n(i).is_connected();
+        debug_assert_eq!(r, self.connected_by_walk(i));
+        r
     }
 
-    /// Connected to a document that a browsing context currently displays.
+    /// Connected to a document that a browsing context currently displays
+    /// (a connected node's node document is the document it is in).
     pub fn is_in_active_document(&self, id: NodeId) -> bool {
-        let Ok(mut i) = self.check(id) else { return false };
-        loop {
-            i = self.root_idx(i);
-            match &self.n(i).kind {
-                NodeKind::Document(d) => return d.active,
-                NodeKind::Fragment(FragmentData { host, shadow: Some(_), .. }) => i = *host,
-                _ => return false,
-            }
-        }
+        let Ok((_, n)) = self.live(id) else { return false };
+        n.is_connected() && self.doc_data(n.owner_doc).active
     }
 
     /// `Node.isConnected` (shadow-including).
     pub fn is_connected(&self, id: NodeId) -> DomResult<bool> {
-        let root = self.root_node(id, true)?;
-        Ok(matches!(self.n(root.idx).kind, NodeKind::Document(_)))
+        let (i, n) = self.live(id)?;
+        debug_assert_eq!(n.is_connected(), self.connected_by_walk(i));
+        Ok(n.is_connected())
     }
 
     pub(crate) fn is_inclusive_ancestor(&self, anc: u32, mut node: u32) -> bool {
@@ -1416,38 +1507,58 @@ impl Dom {
         }
     }
 
-    /// True if `x` precedes `y` in tree order (same tree assumed).
+    /// True if `x` precedes `y` in tree order, or is `y` (same tree assumed;
+    /// false for nodes of different trees). Climbs to the children of the
+    /// common ancestor without allocating, then walks their siblings both
+    /// ways from `x`'s side, so the walk stops at whichever of `y`'s side or
+    /// a list end comes first.
     pub(crate) fn tree_order_before(&self, x: u32, y: u32) -> bool {
-        let path = |mut n: u32| {
-            let mut v = Vec::with_capacity(16);
+        let depth = |mut n: u32| {
+            let mut d = 0usize;
             while n != NIL {
-                v.push(n);
+                d += 1;
                 n = self.n(n).parent;
             }
-            v.reverse();
-            v
+            d
         };
-        let px = path(x);
-        let py = path(y);
-        let mut k = 0;
-        while k < px.len() && k < py.len() && px[k] == py[k] {
-            k += 1;
+        let (dx, dy) = (depth(x), depth(y));
+        let (mut a, mut b) = (x, y);
+        for _ in dy..dx {
+            a = self.n(a).parent;
         }
-        if k == px.len() {
-            return true; // x is ancestor of y
+        for _ in dx..dy {
+            b = self.n(b).parent;
         }
-        if k == py.len() {
-            return false;
+        if a == b {
+            // One is an inclusive ancestor of the other.
+            return dx <= dy;
         }
-        // Siblings px[k] and py[k]: walk forward from px[k].
-        let mut c = self.n(px[k]).next;
-        while c != NIL {
-            if c == py[k] {
+        loop {
+            let (pa, pb) = (self.n(a).parent, self.n(b).parent);
+            if pa == pb {
+                break;
+            }
+            a = pa;
+            b = pb;
+        }
+        if self.n(a).parent == NIL {
+            return false; // different trees
+        }
+        // Siblings `a` and `b`.
+        let (mut fwd, mut back) = (self.n(a).next, self.n(a).prev);
+        loop {
+            if fwd == b {
                 return true;
             }
-            c = self.n(c).next;
+            if back == b || fwd == NIL {
+                return false;
+            }
+            if back == NIL {
+                return true;
+            }
+            fwd = self.n(fwd).next;
+            back = self.n(back).prev;
         }
-        false
     }
 
     // ----- tree mutation -----------------------------------------------
@@ -1757,7 +1868,10 @@ impl Dom {
             None => NIL,
         };
         let removed: Vec<u32> = self.child_idx_iter(p).collect();
+        // The record's list of added nodes, only when an observer may want it.
+        let observed = self.mutation.any_registration();
         let added: Vec<u32> = match n {
+            _ if !observed => Vec::new(),
             NIL => Vec::new(),
             n if matches!(self.n(n).kind, NodeKind::Fragment(_)) => self.child_idx_iter(n).collect(),
             n => vec![n],
@@ -1768,7 +1882,7 @@ impl Dom {
         if n != NIL {
             self.insert(n, p, NIL, true);
         }
-        if !added.is_empty() || !removed.is_empty() {
+        if observed && (!added.is_empty() || !removed.is_empty()) {
             self.queue_child_list(p, &added, &removed, NIL, NIL);
         }
         Ok(())
@@ -1776,36 +1890,37 @@ impl Dom {
 
     /// Core insert: `node` (or fragment children) into `parent` before `child`.
     fn insert(&mut self, node: u32, parent: u32, child: u32, suppress: bool) {
-        let nodes: Vec<u32> = if matches!(self.n(node).kind, NodeKind::Fragment(_)) {
+        if matches!(self.n(node).kind, NodeKind::Fragment(_)) {
             let kids: Vec<u32> = self.child_idx_iter(node).collect();
             for &k in &kids {
                 self.remove(k, true);
             }
             if !kids.is_empty() {
                 self.queue_child_list(node, &[], &kids, NIL, NIL);
+                self.insert_nodes(&kids, parent, child, suppress);
             }
-            kids
         } else {
             if self.n(node).parent != NIL {
                 self.remove(node, false);
             }
-            vec![node]
-        };
-        if nodes.is_empty() {
-            return;
+            self.insert_nodes(&[node], parent, child, suppress);
         }
+    }
+
+    /// The rest of `insert` for `nodes` (not empty), already parentless.
+    fn insert_nodes(&mut self, nodes: &[u32], parent: u32, child: u32, suppress: bool) {
         if child != NIL && !self.live_ranges.is_empty() {
             self.ranges_before_insert(parent, child, nodes.len() as u32);
         }
         let prev = if child == NIL { self.n(parent).last_child } else { self.n(child).prev };
         let doc = self.n(parent).owner_doc;
-        for &k in &nodes {
+        for &k in nodes {
             self.adopt_idx(k, doc);
             self.link(k, parent, child);
         }
         let connected = self.is_connected_idx(parent);
         self.script_children_inserted(parent);
-        for &k in &nodes {
+        for &k in nodes {
             self.resources_after_insert(k);
             self.picture_images_changed(parent, k);
             if connected {
@@ -1814,20 +1929,20 @@ impl Dom {
                 self.upgrades_after_insert(k);
             }
         }
-        self.slots_after_child_change(parent, &nodes);
+        self.slots_after_child_change(parent, nodes);
         self.bump_tree();
         self.note(Change::Inserted(parent, nodes[0]));
         for &k in &nodes[1..] {
             self.note_more(Change::Inserted(parent, k));
         }
-        for &k in &nodes {
+        for &k in nodes {
             self.announce_named_items(k);
         }
         if !suppress {
-            self.queue_child_list(parent, &nodes, &[], prev, child);
+            self.queue_child_list(parent, nodes, &[], prev, child);
         }
         if connected {
-            for &k in &nodes {
+            for &k in nodes {
                 self.hide_nonces(k);
             }
         }
@@ -1851,10 +1966,14 @@ impl Dom {
         } else {
             self.n_mut(before).prev = node;
         }
-        self.n_mut(parent).child_count += 1;
+        self.n_mut(parent).add_child_count();
+        self.tree_linked(node);
     }
 
+    /// Every unlink (DOM, parsers, moves) goes through here and every link
+    /// through `link`, which keep `tree_scope`'s flags and id maps.
     fn unlink(&mut self, node: u32) {
+        self.tree_unlinking(node);
         let (parent, prev, next) = {
             let n = self.n(node);
             (n.parent, n.prev, n.next)
@@ -1869,7 +1988,7 @@ impl Dom {
         } else {
             self.n_mut(next).prev = prev;
         }
-        self.n_mut(parent).child_count -= 1;
+        self.n_mut(parent).sub_child_count();
         let n = self.n_mut(node);
         n.parent = NIL;
         n.prev = NIL;
@@ -2119,7 +2238,7 @@ impl Dom {
             }
             NodeKind::Element(e) => {
                 let name = e.name.clone();
-                let attrs = e.attrs.clone();
+                let attrs = e.attr_state();
                 let control = e.control.as_ref().map(|c| {
                     // Clone steps copy value/checkedness for input elements.
                     Box::new(ControlState { selection: (0, 0), ..(**c).clone() })
@@ -2128,7 +2247,7 @@ impl Dom {
                 let started = e.flags & crate::node::element_flags::SCRIPT_ALREADY_STARTED;
                 let id = self.create_element_raw(self.id_of(doc), name)?;
                 let el = self.n_mut(id.idx).element_mut().unwrap();
-                el.attrs = attrs;
+                el.set_attr_state(attrs);
                 el.control = control;
                 el.flags |= started;
                 self.note_inline_handlers(id.idx);
@@ -2158,9 +2277,7 @@ impl Dom {
                 };
                 self.alloc(NodeKind::Doctype(Box::new(d)), doc)
             }
-            NodeKind::Fragment(_) => {
-                self.alloc(NodeKind::Fragment(FragmentData { host: NIL, shadow: None, flags: 0 }), doc)
-            }
+            NodeKind::Fragment(_) => self.alloc(NodeKind::Fragment(FragmentData::new(NIL, None, 0)), doc),
             NodeKind::Attr(a) => {
                 let name = a.name.clone();
                 let value = self.attr_value_idx(n).unwrap_or("").to_owned();
@@ -2209,17 +2326,19 @@ impl Dom {
     // ----- attributes --------------------------------------------------
 
     fn el(&self, id: NodeId) -> DomResult<(u32, &ElementData)> {
-        let i = self.check(id)?;
-        self.n(i).element().map(|e| (i, e)).ok_or(DomError::Type("not an element"))
+        let (i, n) = self.live(id)?;
+        n.element().map(|e| (i, e)).ok_or(DomError::Type("not an element"))
     }
     pub fn element(&self, id: NodeId) -> DomResult<&ElementData> {
         Ok(self.el(id)?.1)
     }
 
     fn html_lower<'a>(&self, el: &ElementData, owner: u32, name: &'a str) -> std::borrow::Cow<'a, str> {
-        if el.is_html()
+        // Names are mostly lowercase already: test that before reading the
+        // owner document.
+        if name.bytes().any(|b| b.is_ascii_uppercase())
+            && el.is_html()
             && self.doc_data(owner).kind == DocumentKind::Html
-            && name.bytes().any(|b| b.is_ascii_uppercase())
         {
             std::borrow::Cow::Owned(name.to_ascii_lowercase())
         } else {
@@ -2271,6 +2390,12 @@ impl Dom {
         let (i, el) = self.el(id)?;
         Ok(self.find_attr_qualified(i, name).map(|k| &*el.attrs[k].value))
     }
+    /// [`Dom::get_attribute_qualified`] with the atom the element keeps for
+    /// that value, if any (`id`: see [`ElementData::attr_atom`]).
+    pub fn get_attribute_qualified_atom(&self, id: NodeId, name: &str) -> DomResult<Option<(&str, Option<&Atom>)>> {
+        let (i, el) = self.el(id)?;
+        Ok(self.find_attr_qualified(i, name).map(|k| (&*el.attrs[k].value, el.attr_atom(k))))
+    }
     /// Position in `attributes()` of the first attribute with that qualified name.
     pub fn attribute_index_qualified(&self, id: NodeId, name: &str) -> DomResult<Option<usize>> {
         let (i, _) = self.el(id)?;
@@ -2301,6 +2426,18 @@ impl Dom {
                 let qn = QualName::new(None, ns!(), LocalName::from(&*local));
                 self.append_attr(i, qn, value);
             }
+        }
+        Ok(())
+    }
+
+    /// Sets the attribute in no namespace named `local`, as a reflected IDL
+    /// attribute does (`className`, `id`, `slot`): the name is a valid,
+    /// lowercase atom already, so nothing is validated, lowercased or looked up.
+    pub fn set_attribute_local(&mut self, id: NodeId, local: &LocalName, value: &str) -> DomResult<()> {
+        let (i, el) = self.el(id)?;
+        match el.attrs.iter().position(|a| a.name.local == *local && a.name.ns == ns!()) {
+            Some(k) => self.change_attr(i, k, value),
+            None => self.append_attr(i, QualName::new(None, ns!(), local.clone()), value),
         }
         Ok(())
     }
@@ -2337,10 +2474,30 @@ impl Dom {
         }
     }
 
+    /// Every write of element `i`'s attribute list goes through here (`name`:
+    /// the attribute written), so what is derived from attributes elsewhere
+    /// follows.
+    pub(crate) fn edit_attrs<R>(&mut self, i: u32, name: &QualName, f: impl FnOnce(&mut ElementData) -> R) -> R {
+        let plain = name.ns == ns!();
+        let el = self.n_mut(i).element_mut().expect("element");
+        let old_id = (plain && name.local == local_name!("id")).then(|| el.id_atom().cloned());
+        let r = f(el);
+        debug_assert!(el.derived_in_step());
+        let base = plain && name.local == local_name!("href") && el.is_html() && el.name.local == local_name!("base");
+        if let Some(old) = old_id {
+            self.id_attr_changed(i, old);
+        }
+        if base && self.n(i).in_document_tree() {
+            let doc = self.n(i).owner_doc;
+            self.html_base_changed(doc);
+        }
+        r
+    }
+
     pub(crate) fn change_attr(&mut self, i: u32, k: usize, value: &str) {
         let el = self.n(i).element().unwrap();
         let name = el.attrs[k].name.clone();
-        let old = std::mem::replace(&mut self.n_mut(i).element_mut().unwrap().attrs[k].value, value.into());
+        let old = self.edit_attrs(i, &name, |el| el.replace_attr_value(k, value.into()));
         if *old != *value {
             self.note_style_attr(i, &name, Some(&old));
         }
@@ -2365,7 +2522,8 @@ impl Dom {
     }
     pub(crate) fn append_attr(&mut self, i: u32, name: QualName, value: &str) {
         self.note_style_attr(i, &name, None);
-        self.n_mut(i).element_mut().unwrap().attrs.push(Attr { name: name.clone(), value: value.into() });
+        let attr = Attr { name: name.clone(), value: value.into() };
+        self.edit_attrs(i, &name, |el| el.push_attr(attr));
         self.bump_tree();
         self.note(Change::attr(i, &name));
         self.queue_attribute(i, &name, None);
@@ -2400,7 +2558,8 @@ impl Dom {
         }
     }
     fn remove_attr_at(&mut self, i: u32, k: usize) {
-        let attr = self.n_mut(i).element_mut().unwrap().attrs.remove(k);
+        let name = self.n(i).element().unwrap().attrs[k].name.clone();
+        let attr = self.edit_attrs(i, &name, |el| el.remove_attr(k));
         if !self.attr_nodes.is_empty() {
             self.attr_removed(i, &attr.name, &attr.value);
         }
@@ -2461,6 +2620,17 @@ impl Dom {
         Ok(s)
     }
 
+    /// An unprefixed element's name as `tagName` spells it: its local name,
+    /// uppercased when the flag is set (an HTML element in an HTML document).
+    /// `None` for other nodes and prefixed names ([`Dom::tag_name_shared`]).
+    #[inline]
+    pub fn tag_name_parts(&self, id: NodeId) -> DomResult<Option<(&LocalName, bool)>> {
+        let (_, node) = self.live(id)?;
+        Ok(node.element().filter(|el| el.name.prefix.as_ref().is_none_or(|p| p.is_empty())).map(|el| {
+            (&el.name.local, el.is_html() && self.doc_data(node.owner_doc).kind == DocumentKind::Html)
+        }))
+    }
+
     /// `nodeName` as a shared string (see [`Dom::tag_name_shared`]).
     pub fn node_name_shared(&self, id: NodeId) -> DomResult<std::sync::Arc<str>> {
         let i = self.check(id)?;
@@ -2497,17 +2667,52 @@ impl Dom {
 
     /// `Node.textContent` getter (None for documents and doctypes).
     pub fn text_content(&self, id: NodeId) -> DomResult<Option<String>> {
-        let i = self.check(id)?;
-        Ok(match &self.n(i).kind {
+        Ok(self.text_content_ref(id)?.map(std::borrow::Cow::into_owned))
+    }
+
+    /// [`Dom::text_content`], borrowed from the node holding it when one
+    /// node's data is all of it (character data, an attribute's value, an
+    /// element with one text node).
+    pub fn text_content_ref(&self, id: NodeId) -> DomResult<Option<std::borrow::Cow<'_, str>>> {
+        let (i, n) = self.live(id)?;
+        Ok(match &n.kind {
             NodeKind::Document(_) | NodeKind::Doctype(_) => None,
-            NodeKind::Attr(_) => self.attr_value_idx(i).map(str::to_owned),
-            k if k.char_data().is_some() => Some(k.char_data().unwrap().to_owned()),
-            _ => {
-                let mut out = String::new();
-                self.collect_text(i, &mut out);
-                Some(out)
-            }
+            NodeKind::Attr(_) => self.attr_value_idx(i).map(std::borrow::Cow::Borrowed),
+            k => match k.char_data() {
+                Some(d) => Some(std::borrow::Cow::Borrowed(d)),
+                None => Some(self.descendant_text(i)),
+            },
         })
+    }
+
+    /// The concatenated data of the Text descendants of `root` (light tree)
+    /// in one walk: borrowed while at most one of them is non-empty.
+    pub(crate) fn descendant_text(&self, root: u32) -> std::borrow::Cow<'_, str> {
+        let r = self.n(root);
+        if r.first_child != NIL && r.first_child == r.last_child {
+            if let NodeKind::Text(s) | NodeKind::CData(s) = &self.n(r.first_child).kind {
+                return std::borrow::Cow::Borrowed(s);
+            }
+        }
+        let mut first: &str = "";
+        let mut out: Option<String> = None;
+        let mut cur = r.first_child;
+        while cur != NIL {
+            if let NodeKind::Text(s) | NodeKind::CData(s) = &self.n(cur).kind {
+                if let Some(out) = &mut out {
+                    out.push_str(s);
+                } else if first.is_empty() {
+                    first = s;
+                } else if !s.is_empty() {
+                    let mut o = String::with_capacity(2 * (first.len() + s.len()));
+                    o.push_str(first);
+                    o.push_str(s);
+                    out = Some(o);
+                }
+            }
+            cur = self.following_in(cur, root);
+        }
+        out.map_or(std::borrow::Cow::Borrowed(first), std::borrow::Cow::Owned)
     }
 
     /// Concatenated data of descendant Text nodes (light tree).
@@ -2671,119 +2876,83 @@ impl Dom {
 
     // ----- lookups -----------------------------------------------------
 
-    /// `getElementById` over the light tree rooted at `root` (tree order).
+    /// `getElementById` over the light tree under `root`, in tree order. A
+    /// document or shadow root answers from its id map (kept by every link,
+    /// unlink and `id` write, see `tree_scope`); anything else is walked.
     pub fn get_element_by_id(&self, root: NodeId, id: &str) -> DomResult<Option<NodeId>> {
-        if id.is_empty() {
-            return Ok(None);
-        }
         let r = self.check(root)?;
-        // Chromium keeps an id map; a tree walk per call made accessible-name
-        // computation (aria-labelledby/-describedby lookups) quadratic on
-        // large pages. The index is rebuilt lazily after a mutation that can
-        // change it.
-        let mut index = self.id_index.borrow_mut();
-        // A freed root's slot can be reused by a new node without a mutation
-        // being journaled: maps are only valid for the generation they were
-        // built for. (A live root keeps its whole subtree, and every node that
-        // leaves it is journaled as removed.)
-        let gen = self.slots[r as usize].gen;
-        let stale = match index.get(&r) {
-            None => false,
-            Some(e) if e.gen != gen => true,
-            Some(e) if e.version == self.version => false,
-            Some(e) => match self.id_index_check(e.version, e.walked) {
-                IdIndexCheck::Valid => false,
-                IdIndexCheck::TooLong => true,
-                IdIndexCheck::Changed => {
-                    // Every map validated at or before this one spans the same
-                    // id-affecting change: drop them all, which also bounds
-                    // maps of roots that are never looked up again.
-                    let since = e.version;
-                    index.retain(|_, o| o.version > since);
-                    true
-                }
-            },
-        };
-        if stale {
-            index.remove(&r);
-        }
-        let entry = index.entry(r).or_insert_with(|| self.build_id_map(r, gen));
-        entry.version = self.version;
-        Ok(entry.ids.get(id).map(|&i| self.id_of(i)))
-    }
-
-    fn build_id_map(&self, r: u32, gen: u32) -> RootIds {
-        #[cfg(test)]
-        self.id_index_builds.set(self.id_index_builds.get() + 1);
-        let mut ids = rustc_hash::FxHashMap::default();
-        let mut walked = 0;
-        let mut cur = self.n(r).first_child;
-        while cur != NIL {
-            walked += 1;
-            if let Some(v) = self.n(cur).element().and_then(|e| e.id()) {
-                if !v.is_empty() {
-                    ids.entry(v.to_owned()).or_insert(cur);
-                }
-            }
-            cur = self.following_in(cur, r);
-        }
-        RootIds { gen, version: self.version, walked, ids }
-    }
-
-    /// Whether an id map validated at `since` is still valid. The journal must
-    /// cover every change since then, and none of them can add, remove or
-    /// reorder an id: text, form-control state, focus/hover and attributes
-    /// other than `id` keep it. Insertions, removals, `id` changes, unknown
-    /// changes and journal gaps invalidate it. More changes than the nodes
-    /// its build walked (`walked`) rebuild it too, so a scan never costs
-    /// more than walking that root again.
-    fn id_index_check(&self, since: u64, walked: usize) -> IdIndexCheck {
-        let Some(changes) = self.changes_since(since) else { return IdIndexCheck::Changed };
-        if changes.size_hint().1.is_none_or(|n| n > walked) {
-            return IdIndexCheck::TooLong;
-        }
-        let id_hash = local_name!("id").get_hash();
-        let mut changes = changes;
-        let valid = changes.all(|c| match c {
-            Change::Text(_) | Change::State(_) | Change::Pseudo => true,
-            Change::Attr(_, hash, _) => hash != id_hash,
-            Change::Inserted(..) | Change::Removed(..) | Change::Unknown(_) => false,
-        });
-        if valid {
-            IdIndexCheck::Valid
-        } else {
-            IdIndexCheck::Changed
-        }
+        Ok(self.opt_id(self.first_by_id(r, id)))
     }
 
     /// `document.documentElement`.
     pub fn document_element(&self, doc: NodeId) -> DomResult<Option<NodeId>> {
         let d = self.check(doc)?;
-        Ok(self.child_idx_iter(d).find(|&c| self.n(c).is_element()).map(|c| self.id_of(c)))
+        let e = match &self.n(d).kind {
+            NodeKind::Document(data) => data.document_element,
+            _ => self.first_element_child_idx(d),
+        };
+        Ok((e != NIL).then(|| self.id_of(e)))
+    }
+    /// First element child of `parent` (NIL for none).
+    pub(crate) fn first_element_child_idx(&self, parent: u32) -> u32 {
+        self.child_idx_iter(parent).find(|&c| self.n(c).is_element()).unwrap_or(NIL)
     }
     pub fn doctype(&self, doc: NodeId) -> DomResult<Option<NodeId>> {
         let d = self.check(doc)?;
         Ok(self.child_idx_iter(d).find(|&c| matches!(self.n(c).kind, NodeKind::Doctype(_))).map(|c| self.id_of(c)))
     }
-    fn html_child(&self, parent: u32, name: &LocalName) -> Option<u32> {
-        self.child_idx_iter(parent).find(|&c| self.n(c).element().is_some_and(|e| e.is_html() && &e.name.local == name))
-    }
     /// `document.head`.
     pub fn head(&self, doc: NodeId) -> DomResult<Option<NodeId>> {
-        let Some(html) = self.document_element(doc)? else { return Ok(None) };
-        Ok(self.html_child(html.idx, &local_name!("head")).map(|c| self.id_of(c)))
+        let d = self.check(doc)?;
+        let h = match &self.n(d).kind {
+            NodeKind::Document(data) => data.head,
+            _ => match self.first_element_child_idx(d) {
+                html if html != NIL && self.is_html_root(html) => self.head_child_idx(html, NIL),
+                _ => NIL,
+            },
+        };
+        Ok((h != NIL).then(|| self.id_of(h)))
     }
     /// `document.body` (first body or frameset child of the html element).
     pub fn body(&self, doc: NodeId) -> DomResult<Option<NodeId>> {
-        let Some(html) = self.document_element(doc)? else { return Ok(None) };
-        Ok(self
-            .child_idx_iter(html.idx)
-            .find(|&c| {
-                self.n(c).element().is_some_and(|e| {
-                    e.is_html() && (e.name.local == local_name!("body") || e.name.local == local_name!("frameset"))
-                })
-            })
-            .map(|c| self.id_of(c)))
+        let d = self.check(doc)?;
+        let b = match &self.n(d).kind {
+            NodeKind::Document(data) => data.body,
+            _ => match self.first_element_child_idx(d) {
+                html if html != NIL && self.is_html_root(html) => self.body_child_idx(html, NIL),
+                _ => NIL,
+            },
+        };
+        Ok((b != NIL).then(|| self.id_of(b)))
+    }
+    /// Whether element `e` is an HTML `html` element: only such a document
+    /// element has a `head` and a `body` (HTML "the html element").
+    pub(crate) fn is_html_root(&self, e: u32) -> bool {
+        self.n(e).element().is_some_and(|el| el.is_html() && el.name.local == local_name!("html"))
+    }
+    /// The first HTML `body` or `frameset` child of `html` after `after`
+    /// (NIL: from the first child); NIL for none.
+    pub(crate) fn body_child_idx(&self, html: u32, after: u32) -> u32 {
+        let mut c = if after == NIL { self.n(html).first_child } else { self.n(after).next };
+        while c != NIL {
+            if self.n(c).element().is_some_and(|e| e.is_html() && is_body_name(&e.name.local)) {
+                return c;
+            }
+            c = self.n(c).next;
+        }
+        NIL
+    }
+    /// The first HTML `head` child of `html` after `after` (NIL: from the
+    /// first child); NIL for none.
+    pub(crate) fn head_child_idx(&self, html: u32, after: u32) -> u32 {
+        let mut c = if after == NIL { self.n(html).first_child } else { self.n(after).next };
+        while c != NIL {
+            if self.n(c).element().is_some_and(|e| e.is_html() && e.name.local == local_name!("head")) {
+                return c;
+            }
+            c = self.n(c).next;
+        }
+        NIL
     }
 
     // ----- control state -----------------------------------------------
@@ -2807,6 +2976,43 @@ impl Dom {
         let i = self.check(id)?;
         self.ext_ref_inc(i);
         Ok(())
+    }
+
+    /// [`Dom::add_ref`] for each of `ids` (a node listed twice gets two), in
+    /// one pass that counts the first references of a run of nodes of one
+    /// document at once; none is added when one is stale.
+    pub fn add_refs(&mut self, ids: &[NodeId]) -> DomResult<()> {
+        let (mut doc, mut firsts) = (NIL, 0);
+        for (k, &id) in ids.iter().enumerate() {
+            let Ok(i) = self.check(id) else {
+                // Undo: each node returns to its count before the call, so
+                // none becomes a collection candidate (unlike `release`).
+                self.add_held(doc, firsts);
+                for done in &ids[..k] {
+                    self.ext_ref_dec(done.idx);
+                }
+                return Err(DomError::StaleNode);
+            };
+            let n = self.n_mut(i);
+            n.ext_refs += 1;
+            if n.ext_refs == 1 {
+                let owner = n.owner_doc;
+                if owner != doc {
+                    self.add_held(doc, firsts);
+                    (doc, firsts) = (owner, 0);
+                }
+                firsts += 1;
+            }
+        }
+        self.add_held(doc, firsts);
+        Ok(())
+    }
+
+    /// Counts `firsts` nodes of document `doc` as newly held.
+    fn add_held(&mut self, doc: u32, firsts: u32) {
+        if firsts > 0 && doc != NIL && self.slots[doc as usize].node.is_some() {
+            self.doc_data_mut(doc).held += firsts;
+        }
     }
 
     /// Adds an external reference to node `i`, counting it in its document
@@ -2851,6 +3057,29 @@ impl Dom {
     pub(crate) fn release_candidate(&mut self, idx: u32) {
         self.candidates.push(idx);
     }
+
+    /// Drops the references an HTML parser held on the nodes it made. A
+    /// connected node lives exactly as long as its document, so that document
+    /// is the one collection candidate for all of them; only detached nodes
+    /// are candidates of their own. Releasing them one by one made every
+    /// parsed element a candidate, each a walk to its root at the next
+    /// `collect_garbage`.
+    pub(crate) fn release_parser_pins(&mut self, pins: Vec<NodeId>) {
+        let mut last = NIL;
+        for id in pins {
+            let Ok(i) = self.check(id) else { continue };
+            debug_assert!(self.n(i).ext_refs > 0, "unbalanced release");
+            if !self.ext_ref_dec(i) {
+                continue;
+            }
+            let n = self.n(i);
+            let candidate = if n.is_connected() && n.owner_doc != NIL { n.owner_doc } else { i };
+            if candidate != last {
+                self.candidates.push(candidate);
+                last = candidate;
+            }
+        }
+    }
     pub fn ext_refs(&self, id: NodeId) -> DomResult<u32> {
         Ok(self.node(id)?.ext_refs)
     }
@@ -2868,21 +3097,31 @@ impl Dom {
         }
     }
 
-    fn component_nodes(&self, root: u32, out: &mut Vec<u32>) {
-        let mut stack = vec![root];
-        while let Some(i) = stack.pop() {
-            out.push(i);
-            stack.extend(self.child_idx_iter(i));
+    /// The nodes of the component rooted at `root` (its tree, shadow trees,
+    /// template contents and Attr nodes) into `out`, which is also the walk's
+    /// work list; `false`, and `out` incomplete, as soon as one of them is
+    /// referenced (a wrapper, a queued mutation record): that component stays,
+    /// and a detached tree whose root has a wrapper is not walked at all.
+    fn unreferenced_component(&self, root: u32, out: &mut Vec<u32>) -> bool {
+        out.push(root);
+        let mut k = 0;
+        while let Some(&i) = out.get(k) {
+            k += 1;
+            if self.n(i).ext_refs > 0 || self.mutation.pins(i) {
+                return false;
+            }
+            out.extend(self.child_idx_iter(i));
             if let Some(e) = self.n(i).element() {
                 if e.shadow_root != NIL {
-                    stack.push(e.shadow_root);
+                    out.push(e.shadow_root);
                 }
                 if e.template_contents != NIL {
-                    stack.push(e.template_contents);
+                    out.push(e.template_contents);
                 }
-                stack.extend_from_slice(self.attr_nodes_of(i));
+                out.extend_from_slice(self.attr_nodes_of(i));
             }
         }
+        true
     }
 
     /// Frees every detached component that has no external references, no
@@ -2893,6 +3132,7 @@ impl Dom {
     pub fn collect_garbage(&mut self) -> usize {
         let mut freed_total = 0;
         let mut seen: FxHashSet<u32> = FxHashSet::default();
+        let mut last_root = NIL;
         let mut nodes = Vec::new();
         while let Some(c) = self.candidates.pop() {
             if self.slots.get(c as usize).is_none_or(|s| s.node.is_none()) {
@@ -2906,19 +3146,26 @@ impl Dom {
                 continue;
             }
             let root = self.component_root(c);
-            if !seen.insert(root) {
+            // Candidates come in runs of one component (a removed tree's
+            // nodes, the nodes made for it): the previous root needs no hash.
+            if root == last_root {
                 continue;
             }
+            last_root = root;
             if let NodeKind::Document(d) = &self.n(root).kind {
                 // A document with a referenced node (in its tree or not)
-                // stays: no need to walk the tree to find that out.
+                // stays: no need to walk the tree to find that out (nor to
+                // remember it in `seen`, which candidates of live documents
+                // only grew).
                 if d.active || d.held > 0 {
                     continue;
                 }
             }
+            if !seen.insert(root) {
+                continue;
+            }
             nodes.clear();
-            self.component_nodes(root, &mut nodes);
-            if nodes.iter().any(|&i| self.n(i).ext_refs > 0 || self.mutation.pins(i)) {
+            if !self.unreferenced_component(root, &mut nodes) {
                 continue;
             }
             if matches!(self.n(root).kind, NodeKind::Document(_)) {
@@ -2935,6 +3182,7 @@ impl Dom {
             nodes = batch;
             // Freeing may orphan other documents; re-examine them.
             seen.clear();
+            last_root = NIL;
         }
         freed_total
     }
@@ -3010,6 +3258,21 @@ impl Iterator for Descendants<'_> {
 }
 
 // ----- helpers -----------------------------------------------------------
+
+/// `body` or `frameset`: the local names of a document's body element.
+pub(crate) fn is_body_name(local: &LocalName) -> bool {
+    *local == local_name!("body") || *local == local_name!("frameset")
+}
+
+/// The id `:target` matches for a document at `url`: its fragment,
+/// percent-decoded (`None` without one, or when it is not UTF-8, which no id is).
+fn url_target(url: &str) -> Option<Atom> {
+    let (_, frag) = url.split_once('#')?;
+    if frag.is_empty() {
+        return None;
+    }
+    String::from_utf8(crate::select::percent_decode(frag)).ok().map(|s| Atom::from(s.as_str()))
+}
 
 pub fn utf16_len(s: &str) -> u32 {
     if s.is_ascii() {
@@ -3105,12 +3368,20 @@ pub fn validate_doctype_name(name: &str) -> DomResult<()> {
 
 /// `createElement(localName)` name check.
 pub fn validate_element_name(name: &str) -> DomResult<()> {
-    if is_valid_element_local_name(name) { Ok(()) } else { Err(invalid_character()) }
+    if is_valid_element_local_name(name) {
+        Ok(())
+    } else {
+        Err(invalid_character())
+    }
 }
 
 /// `setAttribute(qualifiedName)` / `createAttribute(localName)` name check.
 pub fn validate_attribute_name(name: &str) -> DomResult<()> {
-    if is_valid_attribute_local_name(name) { Ok(()) } else { Err(invalid_character()) }
+    if is_valid_attribute_local_name(name) {
+        Ok(())
+    } else {
+        Err(invalid_character())
+    }
 }
 
 /// What a namespaced qualified name names.
@@ -3153,136 +3424,84 @@ pub fn validate_and_extract(namespace: Option<&str>, qualified: &str, context: N
 }
 
 #[cfg(test)]
-mod id_index_tests {
-    //! Reuse of the `getElementById` index, observed through the test-only
-    //! build counter. Behaviour is covered differentially in
-    //! tests/id_index.rs.
-    use std::cell::RefCell;
-    use std::rc::Rc;
-
+mod walk_tests {
     use super::*;
-    use crate::parse::{parse_document, DomRef};
 
-    fn doc(html: &str) -> (DomRef, NodeId) {
-        let dom: DomRef = Rc::new(RefCell::new(Dom::new()));
-        let d = parse_document(&dom, "http://test/", html);
-        dom.borrow_mut().set_document_active(d, true).unwrap();
-        (dom, d)
+    /// The stack walks the stackless ones replace: children pushed last to
+    /// first (mode 0) or first to last (mode 1) with the shadow root pushed
+    /// last, or the shadow root pushed first and children last to first (2).
+    fn stack_order(dom: &Dom, root: u32, mode: u8) -> Vec<u32> {
+        let mut out = Vec::new();
+        let mut stack = vec![root];
+        while let Some(i) = stack.pop() {
+            out.push(i);
+            let kids: Vec<u32> = dom.child_idx_iter(i).collect();
+            let sr = dom.n(i).element().map_or(NIL, |e| e.shadow_root);
+            if mode == 2 && sr != NIL {
+                stack.push(sr);
+            }
+            if mode == 1 {
+                stack.extend(kids);
+            } else {
+                stack.extend(kids.into_iter().rev());
+            }
+            if mode != 2 && sr != NIL {
+                stack.push(sr);
+            }
+        }
+        out
     }
 
-    /// Full-walk reference for one lookup.
-    fn walk(dom: &Dom, root: NodeId, id: &str) -> Option<NodeId> {
-        dom.descendants(root).unwrap().skip(1).find(|&k| {
-            dom.node_type(k).unwrap() == NodeType::Element && dom.get_attribute_ns(k, None, "id").unwrap() == Some(id)
-        })
+    fn walk(dom: &Dom, root: u32, mode: u8) -> Vec<u32> {
+        let mut out = Vec::new();
+        let mut i = root;
+        while i != NIL {
+            out.push(i);
+            i = match mode {
+                0 => dom.next_shadow_including(i, root),
+                1 => dom.next_shadow_including_rev(i, root),
+                _ => dom.next_shadow_including_light_first(i, root),
+            };
+        }
+        out
     }
 
     #[test]
-    fn the_index_is_reused_across_irrelevant_changes_and_rebuilt_otherwise() {
-        let mut html = String::from("<body><input id=field>");
-        for i in 0..200 {
-            html.push_str(&format!("<div id=n{i}>x</div>"));
-        }
-        let (dom, d) = doc(&html);
-        let mut dom = dom.borrow_mut();
-        let field = dom.get_element_by_id(d, "field").unwrap().unwrap();
-        let mid = dom.get_element_by_id(d, "n100").unwrap().unwrap();
-        let text = dom.first_child(mid).unwrap().unwrap();
-        let builds = dom.id_index_builds.get();
-        let lookup = |dom: &Dom| assert_eq!(dom.get_element_by_id(d, "n199").unwrap(), walk(dom, d, "n199"));
-
-        // One irrelevant change of each kind between lookups: no rebuild.
-        for i in 0..50 {
-            dom.set_attribute(mid, "data-x", &i.to_string()).unwrap();
-            lookup(&dom);
-            dom.set_char_data(text, &format!("y{i}")).unwrap();
-            lookup(&dom);
-            dom.set_value(field, &format!("v{i}")).unwrap();
-            lookup(&dom);
-            dom.set_focused(d, Some(if i % 2 == 0 { field } else { mid })).unwrap();
-            lookup(&dom);
-        }
-        // Many irrelevant changes between two lookups, within the document's walk.
-        for i in 0..150 {
-            dom.set_attribute(mid, "class", &format!("k{i}")).unwrap();
-        }
-        lookup(&dom);
-        assert_eq!(dom.id_index_builds.get(), builds, "irrelevant changes rebuilt the index");
-
-        // Each id-affecting change rebuilds once.
-        let mut expect = builds;
-        let mut step = |dom: &mut Dom, f: &dyn Fn(&mut Dom)| {
-            f(dom);
-            lookup(dom);
-            lookup(dom);
-            expect += 1;
-            assert_eq!(dom.id_index_builds.get(), expect);
-        };
-        step(&mut dom, &|dom| dom.set_attribute(mid, "id", "renamed").unwrap());
-        step(&mut dom, &|dom| {
-            dom.remove_attribute(mid, "id").unwrap();
-        });
-        step(&mut dom, &|dom| {
-            let e = dom.create_element(d, "p").unwrap();
-            let body = dom.body(d).unwrap().unwrap();
-            dom.append_child(body, e).unwrap();
-        });
-        step(&mut dom, &|dom| dom.remove_node(mid).unwrap());
-        // More changes than the document walk visited: rebuilt rather than scanned.
-        step(&mut dom, &|dom| {
-            for i in 0..2000 {
-                dom.set_attribute(field, "data-y", &i.to_string()).unwrap();
+    fn stackless_walks_keep_the_stack_orders() {
+        let mut dom = Dom::new();
+        let doc = dom.create_document(DocumentKind::Html, "about:blank");
+        let el = |dom: &mut Dom, name: &str| dom.create_element(doc, name).unwrap();
+        let root = el(&mut dom, "div");
+        let a = el(&mut dom, "section");
+        let b = el(&mut dom, "span");
+        let c = el(&mut dom, "p");
+        let host = el(&mut dom, "div");
+        dom.append_child(root, a).unwrap();
+        dom.append_child(root, host).unwrap();
+        dom.append_child(root, c).unwrap();
+        dom.append_child(a, b).unwrap();
+        let sr = dom.attach_shadow(host, ShadowRootMode::Open).unwrap();
+        let s1 = el(&mut dom, "slot");
+        let s2 = el(&mut dom, "em");
+        let inner_host = el(&mut dom, "span");
+        dom.append_child(sr, s1).unwrap();
+        dom.append_child(sr, inner_host).unwrap();
+        dom.append_child(s1, s2).unwrap();
+        let inner = dom.attach_shadow(inner_host, ShadowRootMode::Closed).unwrap();
+        let deep = el(&mut dom, "i");
+        dom.append_child(inner, deep).unwrap();
+        let light = el(&mut dom, "u");
+        dom.append_child(host, light).unwrap();
+        let t = dom.create_text(doc, "x").unwrap();
+        dom.append_child(light, t).unwrap();
+        for start in [root, a, host, c, light] {
+            let r = dom.check(start).unwrap();
+            for mode in [0, 1, 2] {
+                assert_eq!(walk(&dom, r, mode), stack_order(&dom, r, mode), "start {start:?} mode {mode}");
             }
-        });
-        // Journal overflow hides an id change: rebuilt.
-        step(&mut dom, &|dom| {
-            dom.set_attribute(field, "id", "field2").unwrap();
-            for i in 0..(JOURNAL_CAPACITY * 2) {
-                dom.set_attribute(field, "data-z", &i.to_string()).unwrap();
-            }
-        });
-        assert_eq!(dom.get_element_by_id(d, "field").unwrap(), None);
-        assert_eq!(dom.get_element_by_id(d, "field2").unwrap(), Some(field));
-    }
-
-    #[test]
-    fn a_tiny_root_rebuilds_instead_of_scanning_a_long_journal() {
-        let mut html = String::from("<body>");
-        for i in 0..200 {
-            html.push_str(&format!("<div id=n{i}>x</div>"));
         }
-        let (dom, d) = doc(&html);
-        let mut dom = dom.borrow_mut();
-        let mid = dom.get_element_by_id(d, "n100").unwrap().unwrap();
-        let frag = dom.create_fragment(d).unwrap();
-        let t = dom.create_element(d, "i").unwrap();
-        dom.set_attribute(t, "id", "t").unwrap();
-        dom.append_child(frag, t).unwrap();
-        assert_eq!(dom.get_element_by_id(frag, "t").unwrap(), Some(t));
-        assert_eq!(dom.get_element_by_id(d, "n199").unwrap(), walk(&dom, d, "n199"));
-        let builds = dom.id_index_builds.get();
-        // One irrelevant change: within both roots' bounds, both reused.
-        dom.set_attribute(mid, "data-x", "0").unwrap();
-        assert_eq!(dom.get_element_by_id(frag, "t").unwrap(), Some(t));
-        assert_eq!(dom.get_element_by_id(d, "n199").unwrap(), walk(&dom, d, "n199"));
-        assert_eq!(dom.id_index_builds.get(), builds);
-        // More irrelevant changes than the fragment's walk (1 node) but fewer
-        // than the document's: only the fragment rebuilds.
-        for i in 0..50 {
-            dom.set_attribute(mid, "data-x", &i.to_string()).unwrap();
-        }
-        assert_eq!(dom.get_element_by_id(frag, "t").unwrap(), Some(t));
-        assert_eq!(dom.id_index_builds.get(), builds + 1);
-        assert_eq!(dom.get_element_by_id(d, "n199").unwrap(), walk(&dom, d, "n199"));
-        assert_eq!(dom.id_index_builds.get(), builds + 1);
-        // An insertion invalidates both; the first lookup drops every map
-        // validated at or before its own.
-        let body = dom.body(d).unwrap().unwrap();
-        let p = dom.create_element(d, "p").unwrap();
-        dom.append_child(body, p).unwrap();
-        assert_eq!(dom.get_element_by_id(d, "n199").unwrap(), walk(&dom, d, "n199"));
-        assert!(!dom.id_index.borrow().contains_key(&frag.idx), "the fragment's map spans the insertion");
-        assert_eq!(dom.get_element_by_id(frag, "t").unwrap(), Some(t));
-        assert_eq!(dom.id_index_builds.get(), builds + 3);
+        // root, section, span, host, its shadow root, slot, em, the inner
+        // host, its shadow root, i, u, the text, p.
+        assert_eq!(walk(&dom, dom.check(root).unwrap(), 0).len(), 13);
     }
 }

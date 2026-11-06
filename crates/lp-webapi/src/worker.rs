@@ -392,7 +392,7 @@ impl JsClass for Worker {
             let mut name = String::new();
             let options = a.get(1);
             if let Some(options) = options.as_object() {
-                let kind = options.get("type")?;
+                let kind = options.get_atom("type")?;
                 if !kind.is_undefined() {
                     match dom_string(kind)?.as_str() {
                         "classic" => {}
@@ -409,7 +409,7 @@ impl JsClass for Worker {
                         }
                     }
                 }
-                let value = options.get("name")?;
+                let value = options.get_atom("name")?;
                 if !value.is_undefined() {
                     name = dom_string(value)?;
                 }

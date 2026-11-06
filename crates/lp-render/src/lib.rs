@@ -240,7 +240,7 @@ fn whole_px_up(units: i64) -> f64 {
 }
 
 /// Paper and margins as Chrome's print settings hold them, whole points, for
-/// [`PageArea::holds`].
+/// [`PageArea::layout_sizes`].
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PageArea {
     paper: (f32, f32),
@@ -257,37 +257,31 @@ pub fn chrome_page_area(paper_in: (f64, f64), margins_in: [f64; 4]) -> PageArea 
 }
 
 impl PageArea {
-    /// The whole CSS px a page holds, wide and tall, when layout is scaled up
-    /// by `factor` (1 / scale, times any shrink to fit). As Blink computes it
-    /// (`PageBoxDefaultSize`, `ResolvePageBoxGeometry`,
-    /// `CreateConstraintSpaceForPageArea`), in `f32` and layout units of 1/64 px:
-    /// the paper in CSS px rounds to a unit, then the paper and each margin are
-    /// scaled and truncate to a unit, and what the margins leave rounds up.
-    ///
-    /// A4 with 0.4 in margins is 1048 px by the numbers, but 842 pt is 1122.671875
-    /// in units and 28 pt is 37.328125, which leave 1048.015625: a page holds
-    /// 1049 px. Measured on Chrome 156 by what fits in a page: 400 of 400 sizes
-    /// (5 papers, 10 margins, 8 scales), and 198 of 198 overflow widths.
-    fn holds(&self, factor: f32) -> (f64, f64) {
-        let (w, h) = self.units(factor);
-        (whole_px_up(w), whole_px_up(h))
-    }
-
-    /// What layout gets at `factor` (CSS px): the page area rounded up
-    /// ([`PageArea::holds`]), which block-level content fills and percentages of it
+    /// What layout gets at `factor` (CSS px): the page area rounded up, which
+    /// is the whole CSS px a page holds and what block-level content fills and percentages of it
     /// resolve against, and rounded down, which viewport units and what the initial
     /// containing block holds see (`LayoutView::GetLayoutSize`). Measured on Chrome 156
     /// by markers at 50% of each, on 192 papers, margins, scales and shrinks: A4 with
     /// no margins is 794.67 px, so 795 and 794; with 0.4 in margins 720.02, so 721
     /// and 720. A full-width link still ends at the page's 741.33 px on Letter with
     /// 0.4 in margins: it is 742 px wide, and clipped at what the page shows.
+    ///
+    /// The page area, as Blink computes it (`PageBoxDefaultSize`,
+    /// `ResolvePageBoxGeometry`, `CreateConstraintSpaceForPageArea`), is in `f32`
+    /// and layout units of 1/64 px: the paper in CSS px rounds to a unit, then
+    /// the paper and each margin are scaled and truncate to a unit, and what the
+    /// margins leave rounds up. A4 with 0.4 in margins is 1048 px by the numbers,
+    /// but 842 pt is 1122.671875 in units and 28 pt is 37.328125, which leave
+    /// 1048.015625: a page holds 1049 px. Measured on Chrome 156 by what fits in a
+    /// page: 400 of 400 sizes (5 papers, 10 margins, 8 scales), and 198 of 198
+    /// overflow widths.
     fn layout_sizes(&self, factor: f32) -> ((f64, f64), (f64, f64)) {
         let (w, h) = self.units(factor);
         let down = |units: i64| (units as f64 / UNITS_PER_PX).floor();
         ((whole_px_up(w), whole_px_up(h)), (down(w), down(h)))
     }
 
-    /// How far down a page shows, before [`PageArea::holds`] rounds up (CSS px).
+    /// How far down a page shows, before [`PageArea::layout_sizes`] rounds up (CSS px).
     /// Less than a unit on paper shows nothing, and a link in it has no
     /// annotation: measured 1 row in 1310.015625 px at scale 0.8 (0.0125 px on
     /// paper) is dropped, in 1048.015625 at scale 1 (0.015625) it is kept.
@@ -1126,7 +1120,6 @@ impl Renderer {
         let m = self.mirrors.get(&page)?;
         let g = self.geometry.get(&page)?;
         let doc = &m.doc;
-        let keys = m.keys();
         let mut boxes = Vec::new();
         let mut sticky = Vec::new();
         // Tree order (paint order among equals for hit testing).
@@ -1142,13 +1135,13 @@ impl Renderer {
             if !rendered {
                 continue;
             }
-            let (Some(&key), Some(b)) = (keys.get(&id), g.element_box(doc, id)) else { continue };
+            let (Some(key), Some(b)) = (m.key_of(id), g.element_box(doc, id)) else { continue };
             if b.position == BoxPosition::Sticky {
                 sticky.push((key, g.sticky_box(doc, id)));
             }
             boxes.push((key, b));
         }
-        let words = g.text_words(doc).into_iter().filter_map(|w| Some((*keys.get(&w.node)?, w))).collect();
+        let words = g.text_words(doc).into_iter().filter_map(|w| Some((m.key_of(w.node)?, w))).collect();
         let (document_width, document_height) = self.document_size(page)?;
         Some(LayoutBoxes {
             boxes,
@@ -1184,11 +1177,10 @@ impl Renderer {
     /// the first is `elementFromPoint`'s).
     pub fn elements_from_point(&self, page: u64, x: f64, y: f64) -> Vec<u64> {
         let Some(m) = self.mirrors.get(&page) else { return Vec::new() };
-        let keys = m.keys();
         let mut out = Vec::new();
         let mut cur = m.doc.element_from_point(x as f32, y as f32);
         while let Some(id) = cur {
-            if let Some(&k) = keys.get(&id) {
+            if let Some(k) = m.key_of(id) {
                 out.push(k);
             }
             cur = m.doc.get_node(id).and_then(|n| n.parent);

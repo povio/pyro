@@ -765,7 +765,7 @@ fn register(engine: &Engine) -> lp_js::ClassId {
 /// The part of `crate::install` that applies without a window.
 fn install(s: &Scope<'_>, page: &Rc<PageDom>) -> JsResult<()> {
     let realm = s.realm();
-    page.realms.borrow_mut().insert(realm.id(), realm.downgrade());
+    page.register_realm(&realm);
     realm.set_embedder(page.clone());
     realm.set_unhandled_rejection_handler(crate::event::dispatch_unhandled_rejection);
     crate::encoding::install(s)?;
@@ -790,6 +790,6 @@ fn install(s: &Scope<'_>, page: &Rc<PageDom>) -> JsResult<()> {
         "now",
         s.function("now", move |s, _, _| Ok(s.number(started.elapsed().as_secs_f64() * 1000.0)))?.value(),
     )?;
-    performance.set("timeOrigin", s.number(epoch_ms()))?;
-    s.global().set("performance", performance.value())
+    performance.set_atom("timeOrigin", s.number(epoch_ms()))?;
+    s.global().set_atom("performance", performance.value())
 }

@@ -112,7 +112,11 @@ impl TimingRules {
         }
         if let Ok(descendants) = dom.descendants(doc) {
             for id in descendants {
-                let inline = dom.element(id).ok().and_then(|e| e.attr("style")).is_some_and(|s| s.contains("animation"));
+                let inline = dom
+                    .element(id)
+                    .ok()
+                    .and_then(|e| e.attr_local(&markup5ever::local_name!("style")))
+                    .is_some_and(|s| s.contains("animation"));
                 if inline && seen.insert(id.index()) {
                     out.push(id);
                 }
@@ -128,10 +132,11 @@ impl TimingRules {
         if !dom.n(idx).is_element() {
             return out;
         }
-        let inline: Vec<Declared> = match dom.element(el).ok().and_then(|e| e.attr("style")) {
-            Some(style) if mentions(style) => declarations(style),
-            _ => Vec::new(),
-        };
+        let inline: Vec<Declared> =
+            match dom.element(el).ok().and_then(|e| e.attr_local(&markup5ever::local_name!("style"))) {
+                Some(style) if mentions(style) => declarations(style),
+                _ => Vec::new(),
+            };
         // The rules that match, with their specificity, once for all longhands.
         let matching: Vec<(u32, usize, &Rule)> = self
             .rules
@@ -352,7 +357,8 @@ fn declarations(body: &str) -> Vec<Declared> {
         };
         match name {
             "animation" => {
-                let (mut names, mut durations, mut delays, mut counts) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+                let (mut names, mut durations, mut delays, mut counts) =
+                    (Vec::new(), Vec::new(), Vec::new(), Vec::new());
                 for item in split_commas(value) {
                     let item = animation_item(item);
                     names.push(item.name);
@@ -533,7 +539,10 @@ mod tests {
     #[test]
     fn shorthands_expand_to_their_longhands() {
         let item = animation_item("anim 100s -99.9s 2");
-        assert_eq!((item.name.as_str(), item.duration.as_str(), item.delay.as_str(), item.count.as_str()), ("anim", "100s", "-99.9s", "2"));
+        assert_eq!(
+            (item.name.as_str(), item.duration.as_str(), item.delay.as_str(), item.count.as_str()),
+            ("anim", "100s", "-99.9s", "2")
+        );
         let item = animation_item("1ms ease-in infinite alternate both spin");
         assert_eq!((item.name.as_str(), item.duration.as_str(), item.count.as_str()), ("spin", "1ms", "infinite"));
         // A keyword already given names the animation.

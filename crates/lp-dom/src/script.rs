@@ -97,6 +97,15 @@ impl Dom {
         }
     }
 
+    /// Connected, for the resource hooks, or owned by the fragment parser's
+    /// host document. That document is not connected (so its tree needs no
+    /// tree flags or id map), but its nodes report their resources as a
+    /// connected document's would: the loader resolves each event's document
+    /// when it handles it, after the parsed nodes moved to their real one.
+    fn connected_for_resources(&self, i: u32) -> bool {
+        self.is_connected_idx(i) || self.is_fragment_parse_host(self.n(i).owner_doc)
+    }
+
     /// Whether `take_resource_events` would return anything.
     pub fn has_resource_events(&self) -> bool {
         !self.resources.events.is_empty()
@@ -120,49 +129,42 @@ impl Dom {
         if !e.is_html() {
             return None;
         }
-        Some(match &*e.name.local {
-            "script" => ResourceKind::Script,
-            "style" => ResourceKind::StyleText,
-            "link"
-                if e.attr("rel")
+        // Atoms compare as integers: no string comparison per name.
+        Some(match e.name.local {
+            local_name!("script") => ResourceKind::Script,
+            local_name!("style") => ResourceKind::StyleText,
+            local_name!("link")
+                if e.attr_local(&local_name!("rel"))
                     .is_some_and(|r| r.split_ascii_whitespace().any(|t| t.eq_ignore_ascii_case("stylesheet"))) =>
             {
                 ResourceKind::Stylesheet
             }
-            "link"
-                if e.attr("rel").is_some_and(|r| {
+            local_name!("link")
+                if e.attr_local(&local_name!("rel")).is_some_and(|r| {
                     r.split_ascii_whitespace()
                         .any(|t| t.eq_ignore_ascii_case("modulepreload") || t.eq_ignore_ascii_case("preload"))
                 }) =>
             {
                 ResourceKind::Preload
             }
-            "iframe" | "frame" => ResourceKind::Iframe,
-            "img" => ResourceKind::Img,
+            local_name!("iframe") | local_name!("frame") => ResourceKind::Iframe,
+            local_name!("img") => ResourceKind::Img,
             // An image button fetches its `src` like `<img>` (its natural
             // size is its layout size); `type` is a relevant attribute, so
             // becoming one starts the load.
-            "input" if e.attr("type").is_some_and(|t| t.eq_ignore_ascii_case("image")) => ResourceKind::Img,
+            local_name!("input")
+                if e.attr_local(&local_name!("type")).is_some_and(|t| t.eq_ignore_ascii_case("image")) =>
+            {
+                ResourceKind::Img
+            }
             _ => return None,
         })
-    }
-
-    fn connected_idx(&self, idx: u32) -> bool {
-        let mut i = idx;
-        loop {
-            i = self.root_idx(i);
-            match &self.n(i).kind {
-                NodeKind::Document(_) => return true,
-                NodeKind::Fragment(f) if f.shadow.is_some() => i = f.host,
-                _ => return false,
-            }
-        }
     }
 
     /// Called after `node` was inserted (tree mutation or parser).
     pub(crate) fn resources_after_insert(&mut self, node: u32) {
         self.iframes_after_insert(node);
-        if !self.resources.enabled || !self.connected_idx(node) {
+        if !self.resources.enabled || !self.connected_for_resources(node) {
             return;
         }
         let parent = self.n(node).parent;
@@ -170,6 +172,33 @@ impl Dom {
             self.push_resource(parent, ResourceKind::StyleText, ResourceReason::ChildrenChanged);
         }
         self.scan_subtree(node, ResourceReason::Connected);
+    }
+
+    /// `resources_after_insert` for a node the HTML parser inserted: nearly
+    /// always one it just made, with no children or shadow root yet, whose
+    /// subtree is itself. That case is checked without the subtree walks and
+    /// their two stacks per parsed node.
+    pub(crate) fn resources_after_parser_insert(&mut self, node: u32) {
+        let n = self.n(node);
+        if n.first_child != NIL || n.element().is_some_and(|e| e.shadow_root != NIL) {
+            return self.resources_after_insert(node);
+        }
+        self.iframe_after_parser_insert(node);
+        if !self.resources.enabled || !self.connected_for_resources(node) {
+            return;
+        }
+        let parent = self.n(node).parent;
+        if parent != NIL && self.resource_kind(parent) == Some(ResourceKind::StyleText) {
+            self.push_resource(parent, ResourceKind::StyleText, ResourceReason::ChildrenChanged);
+        }
+        // `scan_subtree` of the node alone.
+        if let Some(k) = self.resource_kind(node) {
+            let parser_script = k == ResourceKind::Script
+                && self.n(node).element().is_some_and(|e| e.flags & element_flags::PARSER_INSERTED != 0);
+            if !parser_script {
+                self.push_resource(node, k, ResourceReason::Connected);
+            }
+        }
     }
 
     /// HTML's script "children changed steps", for an insertion into
@@ -184,7 +213,7 @@ impl Dom {
     /// Called before `node` is unlinked from a connected parent.
     pub(crate) fn resources_before_remove(&mut self, node: u32) {
         self.iframes_before_remove(node);
-        if !self.resources.enabled || !self.connected_idx(node) {
+        if !self.resources.enabled || !self.connected_for_resources(node) {
             return;
         }
         let parent = self.n(node).parent;
@@ -192,17 +221,12 @@ impl Dom {
             self.push_resource(parent, ResourceKind::StyleText, ResourceReason::ChildrenChanged);
         }
         // Only stylesheet owners need removal notifications.
-        let mut stack = vec![node];
-        while let Some(i) = stack.pop() {
+        let mut i = node;
+        while i != NIL {
             if let Some(k @ (ResourceKind::Stylesheet | ResourceKind::StyleText)) = self.resource_kind(i) {
                 self.push_resource(i, k, ResourceReason::Removed);
             }
-            stack.extend(self.child_idx_iter(i));
-            if let Some(e) = self.n(i).element() {
-                if e.shadow_root != NIL {
-                    stack.push(e.shadow_root);
-                }
-            }
+            i = self.next_shadow_including_rev(i, node);
         }
     }
 
@@ -218,7 +242,7 @@ impl Dom {
             return;
         }
         let relevant = matches!(local, "src" | "href" | "rel" | "media" | "srcset" | "type" | "disabled");
-        if !relevant || !self.connected_idx(idx) {
+        if !relevant || !self.connected_for_resources(idx) {
             return;
         }
         if let Some(k) = self.resource_kind(idx) {
@@ -239,14 +263,16 @@ impl Dom {
             return;
         }
         let p = self.n(text_node).parent;
-        if p != NIL && self.resource_kind(p) == Some(ResourceKind::StyleText) && self.connected_idx(p) {
+        if p != NIL && self.resource_kind(p) == Some(ResourceKind::StyleText) && self.connected_for_resources(p) {
             self.push_resource(p, ResourceKind::StyleText, ResourceReason::ChildrenChanged);
         }
     }
 
     fn scan_subtree(&mut self, node: u32, reason: ResourceReason) {
-        let mut stack = vec![node];
-        while let Some(i) = stack.pop() {
+        // Shadow trees first, then children from the last: the order this
+        // walk had with a stack, kept without one.
+        let mut i = node;
+        while i != NIL {
             if let Some(k) = self.resource_kind(i) {
                 // Parser-inserted scripts are driven by ParseStep::Script.
                 let parser_script = k == ResourceKind::Script
@@ -255,12 +281,7 @@ impl Dom {
                     self.push_resource(i, k, reason);
                 }
             }
-            stack.extend(self.child_idx_iter(i));
-            if let Some(e) = self.n(i).element() {
-                if e.shadow_root != NIL {
-                    stack.push(e.shadow_root);
-                }
-            }
+            i = self.next_shadow_including_rev(i, node);
         }
     }
 
@@ -276,7 +297,9 @@ impl Dom {
     /// Parser hook: an element was closed (end tag / EOF). `<style>` content
     /// is complete at this point.
     pub(crate) fn resources_element_popped(&mut self, idx: u32) {
-        if self.resources.enabled && self.resource_kind(idx) == Some(ResourceKind::StyleText) && self.connected_idx(idx)
+        if self.resources.enabled
+            && self.resource_kind(idx) == Some(ResourceKind::StyleText)
+            && self.connected_for_resources(idx)
         {
             self.push_resource(idx, ResourceKind::StyleText, ResourceReason::ChildrenChanged);
         }
@@ -286,8 +309,8 @@ impl Dom {
     pub fn script_info(&self, script: NodeId) -> DomResult<ScriptInfo> {
         let i = self.check(script)?;
         let e = self.n(i).element().ok_or(DomError::Type("not an element"))?;
-        let ty = e.attr("type");
-        let lang = e.attr("language");
+        let ty = e.attr_local(&local_name!("type"));
+        let lang = e.attr_local(&local_name!("language"));
         let kind = match ty {
             Some(t) if !t.is_empty() => {
                 let t = t.trim().to_ascii_lowercase();
@@ -322,15 +345,15 @@ impl Dom {
         }
         Ok(ScriptInfo {
             kind,
-            src: e.attr("src").map(str::to_owned),
-            async_: e.attr("async").is_some(),
-            defer: e.attr("defer").is_some(),
-            nomodule: e.attr("nomodule").is_some(),
+            src: e.attr_local(&local_name!("src")).map(str::to_owned),
+            async_: e.attr_local(&local_name!("async")).is_some(),
+            defer: e.attr_local(&local_name!("defer")).is_some(),
+            nomodule: e.attr_local(&local_name!("nomodule")).is_some(),
             parser_inserted: e.flags & element_flags::PARSER_INSERTED != 0,
             already_started: e.flags & element_flags::SCRIPT_ALREADY_STARTED != 0,
             inline_text,
-            crossorigin: e.attr("crossorigin").map(str::to_owned),
-            integrity: e.attr("integrity").map(str::to_owned),
+            crossorigin: e.attr_local(&local_name!("crossorigin")).map(str::to_owned),
+            integrity: e.attr_local(&local_name!("integrity")).map(str::to_owned),
         })
     }
 

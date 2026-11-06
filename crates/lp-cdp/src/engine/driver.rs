@@ -4835,8 +4835,8 @@ impl EngineHost {
         nodes: &[NodeId],
     ) -> CdpResult<Evaluated> {
         let realm = self
-            .frame_for_document(page, doc)
-            .and_then(|f| f.main_realm().cloned())
+            .with_frame_of_document(page, doc, |f| f.main_realm().cloned())
+            .flatten()
             .ok_or_else(|| CdpError::server("the element's frame has no realm"))?;
         let value = {
             let scope = realm.scope().map_err(super::remote::js_to_cdp)?;

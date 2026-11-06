@@ -21,7 +21,7 @@ use std::rc::{Rc, Weak};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use lp_js::{ClassDef, IdentityKey, JsClass, JsError, JsResult, JsString, NoParent, Scope, Value};
+use lp_js::{ClassDef, IdentityKey, JsClass, JsError, JsResult, NoParent, Scope, Value};
 use rustc_hash::FxHashMap;
 
 use crate::page::PageDom;
@@ -41,13 +41,17 @@ fn lossy(units: &[u16]) -> String {
     String::from_utf16_lossy(units)
 }
 
-/// ToString of a JS value kept as UTF-16 (may run user `toString`).
+/// ToString of a JS value kept as UTF-16 (may run user `toString`). A
+/// string's units are read in place (patched JSC).
 fn dom_wtf16(v: Value<'_>) -> JsResult<Wtf16> {
+    if let Some(units) = v.string_units() {
+        return Ok(units.to_units().into_vec());
+    }
     Ok(v.to_js_string()?.utf16().to_vec())
 }
 
 fn js_wtf16<'s>(s: &Scope<'s>, units: &[u16]) -> Value<'s> {
-    s.js_string(&JsString::from_utf16(units))
+    s.string_utf16(units)
 }
 
 static NEXT_AREA: AtomicU64 = AtomicU64::new(1);

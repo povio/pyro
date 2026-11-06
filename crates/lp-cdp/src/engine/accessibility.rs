@@ -1141,18 +1141,18 @@ impl EngineHost {
 
     /// The tree of one document, plus its frame id.
     fn build_ax(&self, cmd: &PageCommand<'_, '_>, page: &Rc<PageDom>, track: bool) -> CdpResult<BuiltTree> {
-        let frame = self
-            .frame_for_document(cmd.page, page)
+        let (frame_id, frame_url) = self
+            .with_frame_of_document(cmd.page, page, |f| (f.id.0.clone(), f.url.clone()))
             .ok_or_else(|| CdpError::server("Could not find node with given id"))?;
         let title = page.document_title();
         let dom = page.dom.borrow();
         let layout = page.layout();
         let mut b = Builder::new(&dom, &layout, page.document(), track);
-        b.build(title, Some(frame.url.clone()).filter(|u| !u.is_empty()));
+        b.build(title, Some(frame_url).filter(|u| !u.is_empty()));
         if b.over_budget {
             return Err(CdpError::server("Accessibility tree exceeds node budget"));
         }
-        Ok((b.nodes, b.flattened, Some(frame.id.0)))
+        Ok((b.nodes, b.flattened, Some(frame_id)))
     }
 
     fn full_ax_tree(&mut self, cmd: &PageCommand<'_, '_>) -> CdpResult<Value> {

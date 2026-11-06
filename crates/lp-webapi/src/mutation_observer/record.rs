@@ -38,7 +38,7 @@ impl JsClass for MutationRecord {
 /// `addedNodes` / `removedNodes`: built on first access (most observers
 /// never read them) and kept on the record, so every access returns the
 /// same NodeList.
-fn list<'s>(s: &Scope<'s>, data: &RecordData, name: &str) -> JsResult<Value<'s>> {
+fn list<'s>(s: &Scope<'s>, data: &RecordData, name: &'static str) -> JsResult<Value<'s>> {
     let realm = data.realm.upgrade().ok_or(JsError::ContextDestroyed)?;
     let owner = realm.scope()?;
     let object = owner.lookup_identity(data.identity).ok_or(JsError::ContextDestroyed)?;

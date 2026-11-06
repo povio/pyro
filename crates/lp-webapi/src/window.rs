@@ -59,8 +59,8 @@ impl lp_js::NamedProperties for WindowNamedProperties {
 
 fn scroll_xy(a: &lp_js::Args<'_>) -> JsResult<(Option<i32>, Option<i32>)> {
     if let Some(o) = a.get(0).as_object() {
-        let l = o.get("left")?;
-        let t = o.get("top")?;
+        let l = o.get_atom("left")?;
+        let t = o.get_atom("top")?;
         Ok((
             (!l.is_undefined()).then(|| to_scroll_offset(l)).transpose()?,
             (!t.is_undefined()).then(|| to_scroll_offset(t)).transpose()?,
@@ -102,12 +102,19 @@ pub fn replace_window_attribute<'s>(
         .and_then(|v| v.as_object())
         .ok_or_else(|| lp_js::JsError::Type(format!("window.{name} cannot be replaced in this realm")))?;
     let desc = s.object();
-    desc.set("value", value)?;
+    desc.set_atom("value", value)?;
     for k in ["writable", "enumerable", "configurable"] {
         desc.set(k, s.boolean(true))?;
     }
     define.call(None, &[s.global().value(), s.string(name), desc.value()])?;
     Ok(())
+}
+
+/// Whether [`crate::install`] makes `document` and `window` the global's own
+/// constant attributes (patched JavaScriptCore). A Window class then leaves
+/// them out of its prototype, as WebIDL does for [LegacyUnforgeable] members.
+pub fn has_window_constants() -> bool {
+    lp_js::Capabilities::detect().global_constants
 }
 
 /// Adds lp-webapi's Window members to lp-browser's `Window` class.
@@ -117,7 +124,15 @@ where
     W::Data: WindowHost,
 {
     crate::handlers::define_window(def);
-    def.getter("document", |s, w| Ok(crate::node::wrap_node(s, w.page(), w.page().document())?.value()));
+    // `install` makes `document` the global's own constant attribute where
+    // the JavaScriptCore can (`has_window_constants`). Otherwise (the system
+    // framework) this getter serves it: the lean dispatch, which finds the
+    // window's node wrapper in the document's slot.
+    if !has_window_constants() {
+        def.pure_getter_typed("document", lp_js::GetterResult::ObjectOrNull, |s, w| {
+            Ok(crate::node::wrap_node(s, w.page(), w.page().document())?.value())
+        });
+    }
     // `window.event` (DOM "current event"), [Replaceable]: assignment shadows
     // it with an own data property.
     def.accessor(
@@ -575,14 +590,14 @@ pub fn css_namespace<'s>(s: &Scope<'s>) -> JsResult<Value<'s>> {
         };
         Ok(s.boolean(ok))
     })?;
-    o.set("supports", supports.value())?;
+    o.set_atom("supports", supports.value())?;
     let escape = s.function("escape", |s, _this, a| {
         let v = arg_string(&a, 0, "CSS.escape")?;
         let mut out = String::new();
         cssparser::serialize_identifier(&v, &mut out).map_err(|_| JsError::Type("CSS.escape failed".into()))?;
         Ok(s.string(&out))
     })?;
-    o.set("escape", escape.value())?;
+    o.set_atom("escape", escape.value())?;
     Ok(o.value())
 }
 
@@ -679,9 +694,9 @@ fn copy_session_storage(s: &Scope<'_>, page: &Rc<PageDom>) -> crate::storage::St
         let Some(origin) = crate::storage::tuple_origin(s, page) else { return Ok(None) };
         let storage = crate::storage::window_storage(s, page, true)?;
         let Some(storage) = storage.as_object() else { return Ok(None) };
-        let key = storage.get("key")?.as_object().ok_or(JsError::ContextDestroyed)?;
-        let get = storage.get("getItem")?.as_object().ok_or(JsError::ContextDestroyed)?;
-        let length = storage.get("length")?.to_number()? as u32;
+        let key = storage.get_atom("key")?.as_object().ok_or(JsError::ContextDestroyed)?;
+        let get = storage.get_atom("getItem")?.as_object().ok_or(JsError::ContextDestroyed)?;
+        let length = storage.get_atom("length")?.to_number()? as u32;
         let mut entries = Vec::with_capacity(length as usize);
         for i in 0..length {
             let name = key.call(Some(storage), &[s.number(f64::from(i))])?;
