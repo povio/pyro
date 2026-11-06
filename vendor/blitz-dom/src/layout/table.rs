@@ -973,13 +973,12 @@ const PLACEMENT_LINE_LIMIT: u16 = 10_000;
 /// Places the cells as the grid's `row dense` auto-placement does: each cell, in order, has the rows its
 /// `grid-row` gives and the first columns, scanning from the first, that are free in all of those rows.
 /// Taffy runs that same algorithm over an occupancy matrix on every layout of the table; this runs it once, as
-/// the table is built, over each row's occupied column ranges. `None` (the grid then places the cells) for a
-/// cell whose `grid-row` is not a positive line and a span, whose `grid-column` is not `auto` and a span, or
-/// whose area would reach past Taffy's limited grid.
+/// the table is built, over each row's occupied column ranges ([`OccupiedColumns`]). `None` (the grid then
+/// places the cells) for a cell whose `grid-row` is not a positive line and a span, whose `grid-column` is not
+/// `auto` and a span, or whose area would reach past Taffy's limited grid.
 fn place_cells(cells: &[TableCell]) -> Option<CellPlacement> {
     use taffy::GridPlacement::{Auto, Line, Span};
-    // For each row, the column ranges its cells occupy, in placement order
-    let mut occupied: Vec<Vec<Range<u16>>> = Vec::new();
+    let mut occupied = OccupiedColumns::default();
     let mut extent = taffy::Size { width: 0u16, height: 0u16 };
     let mut areas = Vec::with_capacity(cells.len());
     for cell in cells {
@@ -995,32 +994,11 @@ fn place_cells(cells: &[TableCell]) -> Option<CellPlacement> {
         }
         let r0 = (start - 1) as u16;
         let r1 = r0.checked_add(rowspan).filter(|end| *end <= PLACEMENT_LINE_LIMIT)?;
-        if occupied.len() < r1 as usize {
-            occupied.resize_with(r1 as usize, Vec::new);
-        }
-        let rows = &mut occupied[r0 as usize..r1 as usize];
-        let mut c0 = 0u16;
-        let c1 = loop {
-            let c1 = c0.checked_add(colspan).filter(|end| *end <= PLACEMENT_LINE_LIMIT)?;
-            // Jump past the furthest occupied range the columns overlap (in any of the rows)
-            let collision = rows
-                .iter()
-                .flat_map(|row| row.iter())
-                .filter(|range| range.start < c1 && range.end > c0)
-                .map(|range| range.end)
-                .max();
-            match collision {
-                Some(end) => c0 = end,
-                None => break c1,
-            }
-        };
-        for row in rows.iter_mut() {
-            row.push(c0..c1);
-        }
-        extent.width = extent.width.max(c1);
+        let columns = occupied.place(r0..r1, colspan)?;
+        extent.width = extent.width.max(columns.end);
         extent.height = extent.height.max(r1);
         areas.push(taffy::Size {
-            width: taffy::Line { start: c0, end: c1 },
+            width: taffy::Line { start: columns.start, end: columns.end },
             height: taffy::Line { start: r0, end: r1 },
         });
     }
@@ -1046,6 +1024,52 @@ fn unspanned_cell_area(cell: &TableCell) -> Option<taffy::Size<taffy::Line<u16>>
         width: taffy::Line { start: cell.column, end },
         height: taffy::Line { start: cell.row, end: cell.row + 1 },
     })
+}
+
+/// For each row, the columns its cells occupy: disjoint ranges in column order, adjacent ranges merged, so a
+/// row of contiguous cells is one range and placing a cell jumps over each run of occupied columns at once.
+#[derive(Debug, Default)]
+struct OccupiedColumns {
+    rows: Vec<Vec<Range<u16>>>,
+}
+
+impl OccupiedColumns {
+    /// Occupies, in `rows`, the first `colspan` columns from the first that are free in all of them, and
+    /// returns them; `None` past [`PLACEMENT_LINE_LIMIT`].
+    fn place(&mut self, rows: Range<u16>, colspan: u16) -> Option<Range<u16>> {
+        if self.rows.len() < rows.end as usize {
+            self.rows.resize_with(rows.end as usize, Vec::new);
+        }
+        let rows = &mut self.rows[rows.start as usize..rows.end as usize];
+        let mut c0 = 0u16;
+        let c1 = 'fit: loop {
+            let c1 = c0.checked_add(colspan).filter(|end| *end <= PLACEMENT_LINE_LIMIT)?;
+            for row in rows.iter() {
+                // The first range that ends after `c0`; it overlaps the columns if it starts before `c1`
+                let next = row.partition_point(|range| range.end <= c0);
+                if let Some(range) = row.get(next).filter(|range| range.start < c1) {
+                    c0 = range.end;
+                    continue 'fit;
+                }
+            }
+            break c1;
+        };
+        for row in rows.iter_mut() {
+            let at = row.partition_point(|range| range.end <= c0);
+            let joins_previous = at > 0 && row[at - 1].end == c0;
+            let joins_next = row.get(at).is_some_and(|range| range.start == c1);
+            match (joins_previous, joins_next) {
+                (true, true) => {
+                    row[at - 1].end = row[at].end;
+                    row.remove(at);
+                }
+                (true, false) => row[at - 1].end = c1,
+                (false, true) => row[at].start = c0,
+                (false, false) => row.insert(at, c0..c1),
+            }
+        }
+        Some(c0..c1)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -3170,6 +3194,72 @@ pub(crate) mod tests {
         doc.resolve(0.0);
         check(&doc, "a removal");
         assert_eq!(crate::resolve::phase_profile::tables().0, built, "the table was updated, not built again");
+    }
+
+    /// The row-dense placement over a matrix of occupied cells, one column at a time, as the grid's
+    /// auto-placement defines it: what `OccupiedColumns::place` must give.
+    fn place_in_matrix(matrix: &mut Vec<Vec<bool>>, rows: std::ops::Range<u16>, colspan: u16) -> std::ops::Range<u16> {
+        let (rows, colspan) = (rows.start as usize..rows.end as usize, colspan as usize);
+        if matrix.len() < rows.end {
+            matrix.resize_with(rows.end, Vec::new);
+        }
+        let free = |matrix: &Vec<Vec<bool>>, c: usize| rows.clone().all(|r| !matrix[r].get(c).copied().unwrap_or(false));
+        let c0 = (0..).find(|&c0| (c0..c0 + colspan).all(|c| free(matrix, c))).unwrap();
+        for r in rows.clone() {
+            if matrix[r].len() < c0 + colspan {
+                matrix[r].resize(c0 + colspan, false);
+            }
+            matrix[r][c0..c0 + colspan].fill(true);
+        }
+        c0 as u16..(c0 + colspan) as u16
+    }
+
+    /// `OccupiedColumns` places cells where the matrix placement does, over random tables of rowspans and
+    /// colspans that leave holes for later cells to backfill.
+    #[test]
+    fn occupied_columns_place_as_the_matrix() {
+        let mut seed = 0x2545_f491_4f6c_dd1du64;
+        let mut next = |n: u64| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed % n) as u16
+        };
+        for _ in 0..300 {
+            let (mut occupied, mut matrix) = (super::OccupiedColumns::default(), Vec::new());
+            let row_count = 1 + next(8);
+            for row in 0..row_count {
+                for _ in 0..next(7) {
+                    let rows = row..row + 1 + next(4);
+                    let colspan = 1 + next(3);
+                    assert_eq!(occupied.place(rows.clone(), colspan), Some(place_in_matrix(&mut matrix, rows, colspan)));
+                }
+            }
+            // Each row's ranges are disjoint, in column order, and not adjacent (merged)
+            for row in &occupied.rows {
+                assert!(row.windows(2).all(|pair| pair[0].end < pair[1].start), "{row:?}");
+            }
+        }
+    }
+
+    /// A row of contiguous cells is one occupied range, so placing its k-th cell is one jump rather than a
+    /// scan over the k earlier cells per column stepped (cubic in the row's cells), and a wide row is placed
+    /// in linear-logarithmic work.
+    #[test]
+    fn occupied_columns_merge_contiguous_cells() {
+        let mut occupied = super::OccupiedColumns::default();
+        for column in 0..5000u16 {
+            assert_eq!(occupied.place(0..1, 1), Some(column..column + 1));
+        }
+        assert_eq!(occupied.rows, vec![vec![0..5000]]);
+        // A rowspan hole beside it: the next row's cells fill around it and merge across it once filled
+        let mut occupied = super::OccupiedColumns::default();
+        assert_eq!(occupied.place(0..2, 1), Some(0..1));
+        assert_eq!(occupied.place(0..1, 1), Some(1..2));
+        assert_eq!(occupied.place(0..2, 1), Some(2..3));
+        assert_eq!(occupied.place(1..2, 1), Some(1..2));
+        assert_eq!(occupied.rows, vec![vec![0..3], vec![0..3]]);
+        assert_eq!(occupied.place(1..2, 10_000), None);
     }
 
     /// The table's own cell placement (`place_cells`) is what the grid's placement gives: the grid areas

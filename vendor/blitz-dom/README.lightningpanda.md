@@ -160,7 +160,8 @@ Values in `bench/pdf/fixtures/chrome-156/table-collapse.json`, tests in `crates/
 `src/layout/table.rs`: the table places its cells once, as it is built (`place_cells`, stored as
 `TableContext::placement`), and hands the areas to the grid through taffy's `LayoutGridContainer::track_counts`
 and `resolved_placement` (see `vendor/taffy/README.lightningpanda.md`). It runs the grid's `row dense`
-placement over each row's occupied column ranges, which is not always the column `ColumnCursor` gave the cell
+placement over each row's occupied column ranges (`OccupiedColumns`: sorted, adjacent ranges merged, so a
+row of contiguous cells is one range and a wide row is not rescanned per cell), which is not always the column `ColumnCursor` gave the cell
 (`TableCell::column`): a colspan cell that does not fit beside a rowspan hole moves past it and a later cell
 backfills the hole. Upstream ran taffy's placement on every layout of the table. A cell whose `grid-row` is
 not a positive line and a span (or whose `colspan` is 0) leaves the placement to the grid.
