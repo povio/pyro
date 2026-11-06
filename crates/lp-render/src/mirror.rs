@@ -626,12 +626,10 @@ fn update(m: &mut DocumentMutator<'_>, id: NodeId, kind: &TreeKind) -> bool {
     match kind {
         TreeKind::Text(t) => m.set_node_text(id, t),
         TreeKind::Element { name: tag, attrs } => {
-            let current: Vec<(QualName, String)> = m
-                .doc
-                .get_node(id)
-                .and_then(|n| n.element_data())
-                .map(|e| e.attrs.iter().map(|a| (a.name.clone(), a.value.clone())).collect())
-                .unwrap_or_default();
+            let el = m.doc.get_node(id).and_then(|n| n.element_data());
+            let current: Vec<(QualName, String)> =
+                el.map(|e| e.attrs.iter().map(|a| (a.name.clone(), a.value.clone())).collect()).unwrap_or_default();
+            let has_checkbox = el.is_some_and(|e| e.checkbox_input_checked().is_some());
             for (name, _) in &current {
                 if !attrs.iter().any(|(n, _)| n == name) {
                     m.clear_attribute(id, name.clone());
@@ -639,9 +637,16 @@ fn update(m: &mut DocumentMutator<'_>, id: NodeId, kind: &TreeKind) -> bool {
             }
             for (name, value) in attrs {
                 if !current.iter().any(|(n, v)| n == name && v == value) {
-                    if tag.local == blitz_dom::local_name!("input") && name.local == blitz_dom::local_name!("checked") {
-                        // blitz-dom checks a box only for a value that parses
-                        // as a bool, while a parsed `checked=""` checks it.
+                    if has_checkbox
+                        && tag.local == blitz_dom::local_name!("input")
+                        && name.local == blitz_dom::local_name!("checked")
+                    {
+                        // blitz-dom checks a built box only for a value that
+                        // parses as a bool, while a parsed `checked=""` checks
+                        // it. Before the box is built the attribute is what it
+                        // reads, and a bool there would make blitz-dom push a
+                        // second, HTML-namespaced `checked` that the next sync
+                        // would take away again.
                         m.set_attribute(id, name.clone(), "true");
                     }
                     m.set_attribute(id, name.clone(), value);
