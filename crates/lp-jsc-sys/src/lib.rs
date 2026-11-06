@@ -645,6 +645,27 @@ pub mod spi {
         length: *mut usize,
         is_8bit: *mut bool,
     ) -> *const c_void;
+    /// A string value made from `length` Latin-1 bytes, copied once into the
+    /// string (patched JSC, `webkit/patches/0016-direct-strings.patch`):
+    /// `JSValueMakeString` without the `JSStringRef` and its two copies. Null
+    /// when `length` exceeds JavaScript's longest string. Takes the API lock
+    /// only when the caller does not hold it.
+    pub type JSValueMakeStringLatin1Fn =
+        unsafe extern "C" fn(ctx: JSContextRef, characters: *const u8, length: usize) -> JSValueRef;
+    /// [`JSValueMakeStringLatin1Fn`] for UTF-16 code units (unpaired
+    /// surrogates kept).
+    pub type JSValueMakeStringUTF16Fn =
+        unsafe extern "C" fn(ctx: JSContextRef, characters: *const JSChar, length: usize) -> JSValueRef;
+    /// `JSStringCreateWithCharacters` for Latin-1 bytes: an 8-bit string,
+    /// nothing decoded (patched JSC, 0016).
+    pub type JSStringCreateWithLatin1CharactersFn =
+        unsafe extern "C" fn(characters: *const u8, length: usize) -> JSStringRef;
+    /// A string's characters as it stores them (patched JSC, 0016): `length`
+    /// units, Latin-1 bytes when `is_8bit`, else UTF-16, valid while the
+    /// string is retained (`JSStringGetCharactersPtr` widens an 8-bit string
+    /// into a second copy the string keeps). May be null when empty.
+    pub type JSStringGetStoredCharactersFn =
+        unsafe extern "C" fn(string: JSStringRef, length: *mut usize, is_8bit: *mut bool) -> *const c_void;
 
     /// Runtime-resolved SPI table. Each entry is `None` when the running
     /// JavaScriptCore does not export the symbol.
@@ -682,6 +703,10 @@ pub mod spi {
         pub delete_all_code: Option<JSContextGroupDeleteAllCodeFn>,
         pub set_decommit_replaces_pages: Option<JSSetDecommitReplacesPagesFn>,
         pub value_string_characters: Option<JSValueGetStringCharactersFn>,
+        pub make_string_latin1: Option<JSValueMakeStringLatin1Fn>,
+        pub make_string_utf16: Option<JSValueMakeStringUTF16Fn>,
+        pub string_create_latin1: Option<JSStringCreateWithLatin1CharactersFn>,
+        pub string_stored_characters: Option<JSStringGetStoredCharactersFn>,
     }
 
     impl Spi {
@@ -690,10 +715,43 @@ pub mod spi {
             Some((self.weak_create?, self.weak_release?, self.weak_get_object?))
         }
 
+        /// Strings to and from host characters without a `JSStringRef` in
+        /// between (patch 0016), all or nothing. Its JavaScriptCore also makes
+        /// `value_string_characters` safe anywhere: a flat string is read with
+        /// no lock and no exception check, and a rope is resolved under the API
+        /// lock, taken when the caller does not hold it; a failure there (out of
+        /// memory) leaves no exception pending.
+        pub fn direct_strings(&self) -> Option<DirectStrings> {
+            self.value_string_characters?;
+            Some(DirectStrings {
+                make_latin1: self.make_string_latin1?,
+                make_utf16: self.make_string_utf16?,
+                create_latin1: self.string_create_latin1?,
+                stored_characters: self.string_stored_characters?,
+            })
+        }
+
         /// fork() support needs all three entry points.
         pub fn fork(&self) -> Option<(JSPrepareForForkFn, JSDidForkFn, JSGlobalContextReseedRandomFn)> {
             Some((self.prepare_for_fork?, self.did_fork?, self.reseed_random?))
         }
+    }
+
+    /// The entry points of [`Spi::direct_strings`].
+    #[derive(Debug, Clone, Copy)]
+    pub struct DirectStrings {
+        pub make_latin1: JSValueMakeStringLatin1Fn,
+        pub make_utf16: JSValueMakeStringUTF16Fn,
+        pub create_latin1: JSStringCreateWithLatin1CharactersFn,
+        pub stored_characters: JSStringGetStoredCharactersFn,
+    }
+
+    /// [`Spi::direct_strings`], resolved once per process: one load on the
+    /// paths that make every string.
+    #[inline]
+    pub fn direct_strings() -> Option<&'static DirectStrings> {
+        static DIRECT: OnceLock<Option<DirectStrings>> = OnceLock::new();
+        DIRECT.get_or_init(|| get().direct_strings()).as_ref()
     }
 
     unsafe extern "C" {
@@ -752,6 +810,10 @@ pub mod spi {
             delete_all_code: resolve!("JSContextGroupDeleteAllCode"),
             set_decommit_replaces_pages: resolve!("JSSetDecommitReplacesPages"),
             value_string_characters: resolve!("JSValueGetStringCharacters"),
+            make_string_latin1: resolve!("JSValueMakeStringLatin1"),
+            make_string_utf16: resolve!("JSValueMakeStringUTF16"),
+            string_create_latin1: resolve!("JSStringCreateWithLatin1Characters"),
+            string_stored_characters: resolve!("JSStringGetStoredCharacters"),
         })
     }
 }

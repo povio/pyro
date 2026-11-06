@@ -11,7 +11,7 @@
 
 use crate::error::{JsError, JsResult};
 use crate::realm::Scope;
-use crate::string::{to_rust_string, JsString};
+use crate::string::{latin1_to_string, to_rust_string, utf16_to_string, with_host_units, HostUnits, JsString};
 use lp_jsc_sys as sys;
 use std::marker::PhantomData;
 use std::ptr;
@@ -115,6 +115,16 @@ impl<'s> Value<'s> {
             StringUnits::Utf16(unsafe { std::slice::from_raw_parts(p.cast::<u16>(), len) })
         })
     }
+
+    /// [`Value::string_units`] for any caller, inside a native callback or
+    /// not: patch 0016's JavaScriptCore reads a flat string with no lock and
+    /// no trap check, and takes the API lock only to resolve a rope outside a
+    /// callback, where a failure leaves no exception pending. `None` without
+    /// that patch.
+    fn string_units_anywhere(&self) -> Option<StringUnits<'_>> {
+        sys::spi::direct_strings()?;
+        self.string_units()
+    }
     pub fn is_symbol(&self) -> bool {
         unsafe { sys::JSValueIsSymbol(self.ctx, self.raw) }
     }
@@ -176,6 +186,14 @@ impl<'s> Value<'s> {
 
     /// ToString converted to UTF-8.
     pub fn to_string(&self) -> JsResult<String> {
+        // A string's own characters, copied once (patched JSC): no
+        // `JSStringRef` copy, no UTF-16 widening of an 8-bit string. While a
+        // termination propagates, `check` below reports it, as every call does.
+        if !crate::engine::callback_tls().terminating.get() {
+            if let Some(units) = self.string_units_anywhere() {
+                return Ok(units.to_string_lossy());
+            }
+        }
         let _pool = crate::autorelease::Pool::new();
         let mut exc = ptr::null();
         let s = unsafe { sys::JSValueToStringCopy(self.ctx, self.raw, &mut exc) };
@@ -190,6 +208,9 @@ impl<'s> Value<'s> {
 
     /// If this is a string, its UTF-8 contents; no user code runs.
     pub fn as_string(&self) -> Option<String> {
+        if sys::spi::direct_strings().is_some() && !crate::engine::callback_tls().terminating.get() {
+            return self.string_units_anywhere().map(|u| u.to_string_lossy());
+        }
         if self.is_string() {
             self.to_string().ok()
         } else {
@@ -462,7 +483,6 @@ pub(crate) fn check(ctx: sys::JSContextRef, exc: sys::JSValueRef) -> JsResult<()
     }
 }
 
-/// Arguments of a native callback.
 /// A JavaScript string's characters as JSC keeps them ([`Value::string_units`]).
 #[derive(Clone, Copy, Debug)]
 pub enum StringUnits<'a> {
@@ -498,12 +518,13 @@ impl StringUnits<'_> {
 
     pub fn to_string_lossy(&self) -> String {
         match self {
-            StringUnits::Latin1(b) => b.iter().map(|&c| char::from(c)).collect(),
-            StringUnits::Utf16(u) => String::from_utf16_lossy(u),
+            StringUnits::Latin1(b) => latin1_to_string(b),
+            StringUnits::Utf16(u) => utf16_to_string(u),
         }
     }
 }
 
+/// Arguments of a native callback.
 #[derive(Clone, Copy)]
 pub struct Args<'s> {
     pub(crate) ctx: sys::JSContextRef,
@@ -623,7 +644,34 @@ impl<'s> Scope<'s> {
         unsafe { Value::from_raw(self.ctx, sys::JSValueMakeNumber(self.ctx, n)) }
     }
     pub fn string(&self, s: &str) -> Value<'s> {
+        // Patched JSC makes the value from the characters: one copy into the
+        // string, where `JSValueMakeString` needs a `JSStringRef` made and
+        // released around it, copies twice and takes the API lock.
+        if let Some(d) = sys::spi::direct_strings() {
+            // SAFETY: a live context of this thread; JSC copies the slice.
+            let v = with_host_units(s, |units| unsafe {
+                match units {
+                    HostUnits::Latin1(b) => (d.make_latin1)(self.ctx, b.as_ptr(), b.len()),
+                    HostUnits::Utf16(u) => (d.make_utf16)(self.ctx, u.as_ptr(), u.len()),
+                }
+            });
+            if !v.is_null() {
+                return unsafe { Value::from_raw(self.ctx, v) };
+            }
+        }
         self.js_string(&JsString::new(s))
+    }
+    /// A string of UTF-16 code units, unpaired surrogates kept (what a
+    /// `DOMString` may hold and `&str` cannot).
+    pub fn string_utf16(&self, units: &[u16]) -> Value<'s> {
+        if let Some(d) = sys::spi::direct_strings() {
+            // SAFETY: as in `string`.
+            let v = unsafe { (d.make_utf16)(self.ctx, units.as_ptr(), units.len()) };
+            if !v.is_null() {
+                return unsafe { Value::from_raw(self.ctx, v) };
+            }
+        }
+        self.js_string(&JsString::from_utf16(units))
     }
     /// The realm's one JavaScript string for a shared host string (see
     /// `RealmInner::shared_strings`): for values with few distinct contents
