@@ -145,9 +145,16 @@ pub(crate) struct EngineInner {
     /// When [`Engine::release_closed`] actually collects.
     release_gate: ReleaseGate,
     /// Payloads of the member functions made with the patched JSC's
-    /// `JSObjectMakeFunctionWithCallbackAndData`, which have no finalizer:
-    /// they live as long as the engine, which outlives every realm.
+    /// `JSObjectMakeFunctionWithCallbackAndData`, which have no finalizer, and
+    /// for no live realm: they live as long as the engine, which outlives
+    /// every realm. A live realm owns its functions' payloads
+    /// (`RealmInner::member_fns`) and retires them when it is disposed.
     pub(crate) member_payloads: RefCell<Vec<Box<class::MemberPayload>>>,
+    /// Disposed realms' member payloads, each realm's with a weak handle to
+    /// its global object: freed once the collector finds that global dead
+    /// ([`EngineInner::release_dead_members`]). Every function points at its
+    /// realm's global (its structure does), so none of them is alive then.
+    retired_members: RefCell<Vec<RetiredMembers>>,
     /// Garbage collections seen, for sweeping the realms' interned strings.
     pub(crate) collections: crate::interned::Collections,
 }
@@ -250,7 +257,79 @@ fn process_footprint() -> Option<u64> {
     }
 }
 
+/// The member payloads of one disposed realm (`EngineInner::retired_members`).
+struct RetiredMembers {
+    /// The realm's global object.
+    global: sys::JSWeakRef,
+    payloads: Vec<Box<class::MemberPayload>>,
+}
+
 impl EngineInner {
+    /// Takes the member payloads of a realm being disposed, whose global
+    /// object `global` is still alive: they go with it (see
+    /// `retired_members`), or with the engine when no weak handle can watch
+    /// it.
+    pub(crate) fn retire_members(&self, global: sys::JSObjectRef, payloads: Vec<Box<class::MemberPayload>>) {
+        if payloads.is_empty() {
+            return;
+        }
+        match sys::spi::get().weak() {
+            Some((create, _, _)) if !global.is_null() && !self.is_shut_down() => {
+                // SAFETY: a live object of this engine's VM.
+                let weak = unsafe { create(self.group, global) };
+                self.retired_members.borrow_mut().push(RetiredMembers { global: weak, payloads });
+            }
+            _ => self.member_payloads.borrow_mut().extend(payloads),
+        }
+    }
+
+    /// Frees the member payloads of disposed realms whose global object the
+    /// collector found dead: no function that holds one is alive to be
+    /// called. Without this, every realm that installed an interface kept
+    /// 48 bytes per member for the engine's life (about 250 members, 12 KB,
+    /// for a realm whose script read `document`, every navigation). A safe
+    /// point: after a task, after a settle.
+    pub(crate) fn release_dead_members(&self) {
+        let Ok(mut retired) = self.retired_members.try_borrow_mut() else { return };
+        if retired.is_empty() || self.is_shut_down() {
+            return;
+        }
+        let Some((_, release, get)) = sys::spi::get().weak() else { return };
+        let mut dead = Vec::new();
+        retired.retain_mut(|r| {
+            // SAFETY: handles owned here, released once.
+            if !unsafe { get(r.global) }.is_null() {
+                return true;
+            }
+            unsafe { release(self.group, r.global) };
+            dead.push(std::mem::take(&mut r.payloads));
+            false
+        });
+        drop(retired);
+        drop(dead);
+    }
+
+    /// The payloads waiting for their realm's global to die (tests).
+    #[cfg(test)]
+    pub(crate) fn retired_payloads(&self) -> impl Iterator<Item = *const class::MemberPayload> {
+        let retired = self.retired_members.borrow();
+        let all: Vec<_> = retired.iter().flat_map(|r| r.payloads.iter().map(|p| &**p as *const _)).collect();
+        all.into_iter()
+    }
+
+    /// The retired payloads' handles go before the VM; the payloads stay
+    /// with the engine (engine shutdown).
+    fn release_retired_members(&self) {
+        let retired = std::mem::take(&mut *self.retired_members.borrow_mut());
+        let Some((_, release, _)) = sys::spi::get().weak() else { return };
+        let mut kept = self.member_payloads.borrow_mut();
+        for r in retired {
+            // SAFETY: handles owned here; the VM is still alive.
+            unsafe { release(self.group, r.global) };
+            kept.extend(r.payloads);
+        }
+    }
+
     pub(crate) fn group(&self) -> sys::JSContextGroupRef {
         self.group
     }
@@ -310,6 +389,7 @@ impl EngineInner {
         drop(realms);
         class::drain_finalized(self);
         self.collections.release(self.group);
+        self.release_retired_members();
         self.shut_down.set(true);
         // SAFETY: no realm, scope or callback remains; the root context and
         // group are owned here. Releasing the group destroys the VM, which
@@ -439,6 +519,7 @@ impl Engine {
             owner_dropped: Cell::new(false),
             release_gate: ReleaseGate::new(ReleaseGate::growth_from_env()),
             member_payloads: RefCell::new(Vec::new()),
+            retired_members: RefCell::new(Vec::new()),
             collections: crate::interned::Collections::new(),
         });
         if caps.termination {
@@ -508,6 +589,7 @@ impl Engine {
     pub fn drain_finalized(&self) -> usize {
         let n = class::drain_finalized(&self.inner);
         crate::interned::sweep_realms(&self.inner, false);
+        self.inner.release_dead_members();
         n
     }
 
@@ -567,6 +649,7 @@ impl Engine {
         self.synchronous_gc();
         class::drain_finalized(&self.inner);
         crate::interned::sweep_realms(&self.inner, true);
+        self.inner.release_dead_members();
         release_memory();
         // The collection freed the closed page's blocks to JSC's allocator,
         // whose scavenger returns them to the system only later, if at all
