@@ -185,6 +185,14 @@ impl NetClient {
         {
             let mut sink = start.sink;
             sink(WsEvent::Closed { clean: false, code: 1006, reason: String::new(), failed: true });
+            // End the CDP connection too, so its route is released.
+            if shared.observed() {
+                shared.emit(NetEvent::WebSocket {
+                    id,
+                    activity: Box::new(WebSocketActivity::Closed),
+                    timestamp: shared.now(),
+                });
+            }
         }
         (id, WebSocketHandle { tx })
     }
