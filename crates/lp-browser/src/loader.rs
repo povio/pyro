@@ -349,17 +349,15 @@ impl ResourceLoader for StaticLoader {
         let id = browser.register_completion(done);
         browser.scheduler().set_timer(delay, false, true, move |b| {
             let result = match entry.clone() {
-                Some((mime, body, _)) => {
-                    Ok(Resource {
-                        url: url.clone(),
-                        status: 200,
-                        mime,
-                        charset: None,
-                        body,
-                        content_disposition: None,
-                        header_csp: false,
-                    })
-                }
+                Some((mime, body, _)) => Ok(Resource {
+                    url: url.clone(),
+                    status: 200,
+                    mime,
+                    charset: None,
+                    body,
+                    content_disposition: None,
+                    header_csp: false,
+                }),
                 None => Err(format!("net::ERR_FILE_NOT_FOUND {url}")),
             };
             b.complete_fetch(id, result);

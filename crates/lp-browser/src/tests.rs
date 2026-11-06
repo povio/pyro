@@ -1002,3 +1002,26 @@ fn secure_context_follows_potentially_trustworthy_urls_of_the_frame_chain() {
     // An https frame of an http page is not secure (Chrome).
     assert!(rec.console.borrow().contains(&"log:child https: false".to_owned()), "{:?}", rec.console.borrow());
 }
+
+#[test]
+fn idle_callbacks_requested_in_an_idle_period_wait_for_the_next() {
+    let (mut t, rec, page) = setup();
+    // A self-rescheduling idle loop (idle work queues) must not spin: a
+    // callback requested during an idle period runs in the next one, which
+    // starts once this one's deadline (at most 50 ms) passed, as in Chrome.
+    eval(
+        &t,
+        page,
+        "let n = 0; const start = performance.now();
+         function work(d) {
+             n++;
+             if (performance.now() - start < 200) requestIdleCallback(work);
+             else console.log('runs', n);
+         }
+         requestIdleCallback(work);",
+    );
+    t.run_until_idle(Some(Instant::now() + Duration::from_secs(5)));
+    let log = rec.console.borrow().clone();
+    let runs: u32 = log[0].strip_prefix("log:runs ").unwrap().parse().unwrap();
+    assert!((2..=8).contains(&runs), "{runs}");
+}

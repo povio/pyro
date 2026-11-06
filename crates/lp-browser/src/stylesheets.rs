@@ -142,9 +142,8 @@ impl Browser {
             let dom = bindings.dom.borrow();
             let attr = |name| dom.get_attribute(node, name).ok().flatten();
             let media = attr("media").unwrap_or("");
-            let parser_inserted = dom
-                .element(node)
-                .is_ok_and(|e| e.flags & lp_dom::node::element_flags::PARSER_INSERTED != 0);
+            let parser_inserted =
+                dom.element(node).is_ok_and(|e| e.flags & lp_dom::node::element_flags::PARSER_INSERTED != 0);
             let explicit =
                 attr("blocking").is_some_and(|v| v.split_ascii_whitespace().any(|t| t.eq_ignore_ascii_case("render")));
             if !(media.is_empty() || lp_dom::media::matches(media, &bindings.viewport())) {

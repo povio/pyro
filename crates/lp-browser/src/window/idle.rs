@@ -61,8 +61,18 @@ pub(super) fn request<'s>(s: &Scope<'s>, w: &WindowData, a: Args<'s>) -> JsResul
     w.next_handle.set(handle.wrapping_add(1).max(1));
     // Timers must not keep a disposed realm alive: hold it weakly.
     let realm = s.realm().downgrade();
-    let on_idle = realm.clone();
-    let idle = w.sched.set_idle_timer(true, move |_browser| run(&on_idle, handle, false));
+    // Requested during an idle period (from an idle callback or its
+    // microtasks): it waits for the next period, which starts when this one
+    // ends, as in Chrome. A self-rescheduling idle loop then runs about
+    // every 50 ms instead of spinning the event loop.
+    let wait = w.idle_period_end.get().map(|end| end.saturating_duration_since(Instant::now()));
+    let idle = match wait.filter(|d| !d.is_zero()) {
+        Some(wait) => {
+            let on_period = realm.clone();
+            w.sched.set_timer(wait, false, true, move |_browser| arm(&on_period, handle))
+        }
+        None => arm_idle(w, realm.clone(), handle),
+    };
     let timeout = (timeout > 0).then(|| {
         w.sched.set_timer(Duration::from_millis(u64::from(timeout)), false, true, move |_browser| {
             run(&realm, handle, true)
@@ -95,6 +105,26 @@ fn clear(w: &WindowData, entry: &IdleCallback) {
     }
 }
 
+fn arm_idle(w: &WindowData, realm: WeakRealm, handle: u32) -> TimerId {
+    w.sched.set_idle_timer(true, move |_browser| run(&realm, handle, false))
+}
+
+/// The idle period a callback waited for began: it now waits for the loop
+/// to be idle.
+fn arm(realm: &WeakRealm, handle: u32) {
+    let Some(strong) = realm.upgrade() else { return };
+    let Ok(scope) = strong.scope() else { return };
+    let Some(w) = scope.global_data::<Window>() else { return };
+    let idle = arm_idle(w, realm.clone(), handle);
+    let mut callbacks = w.idle_callbacks.borrow_mut();
+    match callbacks.get_mut(&handle) {
+        Some(entry) => entry.idle = idle,
+        None => {
+            w.sched.clear_timer(idle);
+        }
+    }
+}
+
 fn run(realm: &WeakRealm, handle: u32, did_timeout: bool) {
     let Some(realm) = realm.upgrade() else { return };
     let Ok(scope) = realm.scope() else { return };
@@ -121,6 +151,10 @@ fn run(realm: &WeakRealm, handle: u32, did_timeout: bool) {
             .map_or(MAX_IDLE_MS, |at| at.saturating_duration_since(Instant::now()).as_secs_f64() * 1000.0);
         now + until_timer.min(MAX_IDLE_MS)
     };
+    // Idle callbacks requested from here on wait for the next idle period.
+    let outer = w
+        .idle_period_end
+        .replace((!did_timeout).then(|| Instant::now() + Duration::from_secs_f64((deadline - now).max(0.0) / 1000.0)));
     let result = (|| {
         let make = module(&scope, w)?.get("make")?;
         let make = make.as_object().ok_or(JsError::ContextDestroyed)?;
@@ -128,6 +162,7 @@ fn run(realm: &WeakRealm, handle: u32, did_timeout: bool) {
         let callback = entry.callback.get(&scope).as_object().ok_or(JsError::ContextDestroyed)?;
         callback.call(None, &[deadline])
     })();
+    w.idle_period_end.set(outer);
     if let Err(e) = result {
         scope.report_exception(&e);
     }

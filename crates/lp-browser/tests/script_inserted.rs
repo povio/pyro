@@ -284,10 +284,7 @@ note('order:' + (w && d && (w.compareDocumentPosition(d) & 4) ? 'ok' : 'bad'));
 #[test]
 fn inserted_inline_script_writes_at_parser_insertion_point() {
     let log = load(WRITE_PAGE, &[]);
-    assert_before(
-        &log,
-        &[("inserted-ran:d-unseen", "outer-end"), ("outer-end", "w:BODY"), ("w:BODY", "order:ok")],
-    );
+    assert_before(&log, &[("inserted-ran:d-unseen", "outer-end"), ("outer-end", "w:BODY"), ("w:BODY", "order:ok")]);
     assert!(log.iter().any(|l| l == "event:load"), "{log:?}");
     assert!(!log.iter().any(|l| l.starts_with("exception")), "{log:?}");
 }

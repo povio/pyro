@@ -91,6 +91,8 @@ pub struct WindowData {
     idle_callbacks: RefCell<HashMap<u32, idle::IdleCallback>>,
     /// idle.js (`IdleDeadline`), once made.
     idle_module: RefCell<Option<Persistent>>,
+    /// End of the idle period whose callback is running now, if any.
+    idle_period_end: Cell<Option<Instant>>,
     /// Calls a timer callback whose nesting resets for microtasks, made on
     /// the first deeply nested timer ([`call_nested_timer`]).
     nested_timer_call: RefCell<Option<Persistent>>,
@@ -128,6 +130,7 @@ impl WindowData {
             timer_nesting: Cell::new(0),
             idle_callbacks: RefCell::new(HashMap::new()),
             idle_module: RefCell::new(None),
+            idle_period_end: Cell::new(None),
             nested_timer_call: RefCell::new(None),
         }
     }
