@@ -13,6 +13,7 @@ mod error_events;
 mod event_realms;
 mod extra_headers;
 mod fetch;
+mod file_urls;
 mod frame_focus;
 mod history_rewrite;
 mod images;

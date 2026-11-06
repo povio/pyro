@@ -80,6 +80,11 @@ pub struct NetConfig {
     /// HTTP forward proxy for this client's requests (`serve --proxy`,
     /// `Target.createBrowserContext proxyServer`).
     pub proxy: Option<ProxyConfig>,
+    /// Serve `file:` URLs from the local filesystem (navigations and the
+    /// subresources of `file:` documents), as Chrome does. Default true;
+    /// `LIGHTNINGPANDA_FILE_URLS=0` turns it off (`file:` then fails with
+    /// `net::ERR_UNKNOWN_URL_SCHEME`).
+    pub file_urls: bool,
 }
 
 impl Default for NetConfig {
@@ -100,6 +105,7 @@ impl Default for NetConfig {
             static_files: Default::default(),
             static_direct: std::env::var("LIGHTNINGPANDA_STATIC_DIRECT").map_or(true, |v| v != "0"),
             proxy: None,
+            file_urls: std::env::var("LIGHTNINGPANDA_FILE_URLS").map_or(true, |v| v != "0"),
         }
     }
 }
@@ -1245,6 +1251,9 @@ impl Io {
             if req.url.scheme() == "blob" {
                 return self.serve_blob(id, &req, sink);
             }
+            if req.url.scheme() == "file" && self.shared.config.file_urls {
+                return self.serve_file(id, &req, sink).await;
+            }
             match req.url.scheme() {
                 "http" | "https" => {}
                 s => return Err(NetError::UnsupportedScheme(s.to_owned())),
@@ -1932,6 +1941,56 @@ impl Io {
         let head = self.head(&req.url, StatusCode::OK, headers, ResponseKind::Basic, false);
         // A HEAD response has no body, as for any other scheme.
         let body = if req.method == Method::HEAD { Bytes::new() } else { body };
+        self.deliver_body(id, req, sink, head, body)
+    }
+
+    /// `file:` from the local filesystem, as Chrome serves it: a 200 typed
+    /// by the file's extension. Like Chrome, web pages cannot reach local
+    /// files (a request made for an `http(s)` document is denied), `fetch`,
+    /// XHR, EventSource and WebSocket do not support the scheme, and module
+    /// scripts (CORS mode, opaque `null` origin) are refused. A missing file
+    /// or a directory is `net::ERR_FILE_NOT_FOUND`.
+    async fn serve_file(&self, id: RequestId, req: &Request, sink: &SharedSink) -> Result<(), NetError> {
+        let web_requester = req
+            .origin
+            .as_deref()
+            .and_then(|o| Url::parse(o).ok())
+            .or_else(|| req.referrer.clone())
+            .is_some_and(|u| matches!(u.scheme(), "http" | "https"));
+        if web_requester {
+            return Err(NetError::Blocked("net::ERR_ACCESS_DENIED".into()));
+        }
+        if matches!(
+            req.destination,
+            Destination::Fetch | Destination::Xhr | Destination::EventSource | Destination::WebSocket
+        ) {
+            return Err(NetError::UnsupportedScheme("file".into()));
+        }
+        if req.mode == RequestMode::Cors && req.destination == Destination::Script {
+            return Err(NetError::Cors("Cross origin requests are not supported for the file: scheme".into()));
+        }
+        if req.method != Method::GET && req.method != Method::HEAD {
+            return Err(NetError::Other("file: URLs can only be fetched with GET".into()));
+        }
+        let not_found = || NetError::Blocked("net::ERR_FILE_NOT_FOUND".into());
+        let path = req.url.to_file_path().map_err(|_| not_found())?;
+        let meta = tokio::fs::metadata(&path).await.map_err(|_| not_found())?;
+        if !meta.is_file() {
+            return Err(not_found());
+        }
+        let max_body = req.max_body.unwrap_or(self.shared.config.max_body);
+        if meta.len() > max_body as u64 {
+            return Err(NetError::TooLarge);
+        }
+        let body = if req.method == Method::HEAD {
+            Bytes::new()
+        } else {
+            Bytes::from(tokio::fs::read(&path).await.map_err(|_| not_found())?)
+        };
+        let mut headers = HeaderMap::new();
+        headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(crate::static_files::content_type(&path)));
+        headers.insert(header::CONTENT_LENGTH, HeaderValue::from(meta.len()));
+        let head = self.head(&req.url, StatusCode::OK, headers, ResponseKind::Basic, false);
         self.deliver_body(id, req, sink, head, body)
     }
 

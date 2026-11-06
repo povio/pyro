@@ -114,3 +114,41 @@ fn static_files_satisfy_cross_origin_cors_requests() {
     assert_eq!(head.headers[http::header::ACCESS_CONTROL_ALLOW_ORIGIN], "http://other.test");
     assert_eq!(head.headers[http::header::ACCESS_CONTROL_ALLOW_CREDENTIALS], "true");
 }
+
+#[test]
+fn file_urls_serve_local_files_like_chrome() {
+    let dir = TempDir::new();
+    std::fs::write(dir.0.join("page.html"), "<p>local</p>").unwrap();
+    std::fs::write(dir.0.join("app.js"), "1").unwrap();
+    let client = NetClient::new(NetConfig::default()).unwrap();
+    let url = |name: &str| Url::from_file_path(dir.0.join(name)).unwrap().to_string();
+
+    let (head, body) = client.fetch_blocking(request(&url("page.html"), Method::GET, Destination::Document)).unwrap();
+    assert_eq!((head.status.as_u16(), &body[..]), (200, &b"<p>local</p>"[..]));
+    assert_eq!(head.mime, "text/html");
+    let (head, body) = client.fetch_blocking(request(&url("app.js"), Method::HEAD, Destination::Script)).unwrap();
+    assert_eq!((head.status.as_u16(), body.len()), (200, 0));
+    assert_eq!(head.headers[http::header::CONTENT_LENGTH], "1");
+
+    // Missing files and directories.
+    let err = client.fetch_blocking(request(&url("missing.html"), Method::GET, Destination::Document)).unwrap_err();
+    assert_eq!(err.error_text(), "net::ERR_FILE_NOT_FOUND");
+    let dir_url = Url::from_directory_path(&dir.0).unwrap().to_string();
+    let err = client.fetch_blocking(request(&dir_url, Method::GET, Destination::Document)).unwrap_err();
+    assert_eq!(err.error_text(), "net::ERR_FILE_NOT_FOUND");
+
+    // fetch/XHR do not support the scheme; web pages cannot reach local files.
+    let err = client.fetch_blocking(request(&url("app.js"), Method::GET, Destination::Fetch)).unwrap_err();
+    assert_eq!(err.error_text(), "net::ERR_UNKNOWN_URL_SCHEME");
+    let mut from_web = request(&url("app.js"), Method::GET, Destination::Script);
+    from_web.origin = Some("https://example.com".into());
+    assert_eq!(client.fetch_blocking(from_web).unwrap_err().error_text(), "net::ERR_ACCESS_DENIED");
+    let mut from_file = request(&url("app.js"), Method::GET, Destination::Script);
+    from_file.origin = Some("null".into());
+    assert!(client.fetch_blocking(from_file).is_ok());
+
+    // Off: the scheme is unknown, as before.
+    let off = NetClient::new(NetConfig { file_urls: false, ..NetConfig::default() }).unwrap();
+    let err = off.fetch_blocking(request(&url("page.html"), Method::GET, Destination::Document)).unwrap_err();
+    assert_eq!(err.error_text(), "net::ERR_UNKNOWN_URL_SCHEME");
+}
