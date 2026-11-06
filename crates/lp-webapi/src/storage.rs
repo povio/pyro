@@ -236,6 +236,12 @@ impl StorageNamespace {
         value
     }
 
+    /// UTF-16 bytes stored under `origin` (keys and values), as counted
+    /// against the quota; `navigator.storage.estimate()` reports it.
+    pub(crate) fn usage(&self, origin: &str) -> usize {
+        self.0.origins.borrow().get(origin).map_or(0, |area| area.borrow().bytes)
+    }
+
     /// Registers a page that uses this namespace (for `storage` events).
     pub(crate) fn attach(&self, page: &Rc<PageDom>) {
         let mut pages = self.0.pages.borrow_mut();

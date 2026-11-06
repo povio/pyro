@@ -9,6 +9,12 @@ once, exceptions propagate, and properties are recreated as writable data
 properties. Symbols and non-enumerable properties are omitted. RegExp.lastIndex
 resets. Construction uses captured destination-realm intrinsics.
 
+Platform objects the script does not recognize go to one native hook before
+they are rejected: `guard(value, true)` (`crypto::clone_platform_object`)
+returns their copy or undefined. It copies a `CryptoKey` of the realm (see
+[Web Crypto](CRYPTO.md)); it runs only on that rejection path, so ordinary
+graphs pay nothing. Worker messages do not carry CryptoKeys.
+
 Functions, symbol values, proxies, native host wrappers/globals, shared buffers,
 Error objects and other normally tagged unsupported types are rejected. Nonempty
 transfer lists throw NotSupportedError without detaching anything. Custom

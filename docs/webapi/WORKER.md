@@ -14,12 +14,19 @@ implement `new Worker(url)`. A worker runs its script off the page's thread.
   `self`, `location`, `navigator` (subset), `name`, `origin`, `isSecureContext`,
   `postMessage`, `close`, `onmessage`, `onmessageerror`, `onerror`,
   `importScripts`, `setTimeout`/`setInterval` and their clears, `queueMicrotask`,
-  `atob`/`btoa`, `structuredClone`, `crypto`, `performance.now()`, `console`,
-  `fetch` with `Headers`/`Response`/`FormData`/`Blob`/`File`, `AbortController`,
-  `URL`/`URLSearchParams`, `TextEncoder`/`TextDecoder`, `MessageChannel`, `Event`
-  and its message, error, progress and rejection subclasses, `XMLHttpRequest`
-  without `responseXML` (see [XHR](XHR.md)). Everything else is undefined,
-  including `document`, `indexedDB` and `Worker`.
+  `atob`/`btoa`, `structuredClone`, `crypto` with `CryptoKey` (see
+  [Web Crypto](CRYPTO.md)), `performance.now()`, `console`,
+  `fetch` with `Headers`/`Response`/`FormData`/`Blob`/`File`, `FileReader`,
+  `AbortController`, `URL`/`URLSearchParams`, `TextEncoder`/`TextDecoder`,
+  `MessageChannel`, `Event` and its message, error, progress and rejection
+  subclasses, `XMLHttpRequest` without `responseXML` (see [XHR](XHR.md)),
+  `navigator.storage` (`StorageManager`), and the [streams](STREAMS.md)
+  (`ReadableStream`, `WritableStream`, `TransformStream`, the queuing
+  strategies, `TextEncoderStream`/`TextDecoderStream`,
+  `CompressionStream`/`DecompressionStream`, `response.body`), which, as on a
+  window, are made on the realm's first use of one of their names. Everything
+  else is undefined, including `document`, `indexedDB`, `FileReaderSync` and
+  `Worker`.
 - **Script fetch.** On the worker's thread, blocking only it, through the page's
   context `NetClient` (cookies, interception, Network events) with the page's
   user agent, extra headers and cache setting. The URL must be same-origin with

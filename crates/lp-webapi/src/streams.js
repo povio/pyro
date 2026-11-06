@@ -1,15 +1,17 @@
 // WHATWG Streams for one realm, made on first use: ReadableStream (default and
-// byte), WritableStream, TransformStream, the queuing strategies and
-// TextEncoderStream/TextDecoderStream, plus the helpers streams.rs calls for
+// byte), WritableStream, TransformStream, the queuing strategies,
+// TextEncoderStream/TextDecoderStream and CompressionStream/DecompressionStream
+// (over `natives.zlib`, compression.rs), plus the helpers streams.rs calls for
 // Response bodies and Blob.stream(). Operations follow the spec's abstract
 // operations and keep their names, shortened; public classes hold a state
 // object in a private field, so page code cannot reach the internals.
 //
 // Byte streams are simplified: chunks are copied rather than transferred, and
 // `byobRequest` views a private buffer whose bytes are enqueued on respond().
-(function () {
+(function (natives) {
   'use strict';
   const token = Symbol('lightningpanda');
+  const zlib = natives.zlib;
   const PromiseC = Promise;
   const promiseThen = PromiseC.prototype.then;
   const promiseAll = PromiseC.all.bind(PromiseC);
@@ -1604,10 +1606,69 @@
     }
   }
 
+  // ----- Compression streams ---------------------------------------------
+
+  const FORMATS = ['deflate', 'deflate-raw', 'gzip'];
+  // A transform over a native codec: each chunk must be a BufferSource; the
+  // codec's TypeErrors (corrupt or truncated data) error both sides.
+  const codecTransform = (kind, format, compress) => {
+    const name = `${format}`;
+    if (FORMATS.indexOf(name) < 0) {
+      throw new TypeErrorC(`Failed to construct '${kind}': The provided value '${name}' is not a valid enum value of type CompressionFormat.`);
+    }
+    const codec = zlib(name, compress);
+    const push = codec.push, finish = codec.finish;
+    const t = makeTransform(undefined, (chunk) => {
+      try {
+        const out = push(chunk);
+        if (out.length > 0) tcEnqueue(t.controller, out);
+        return resolved();
+      } catch (e) {
+        return rejected(e);
+      }
+    }, () => {
+      try {
+        const out = finish();
+        if (out.length > 0) tcEnqueue(t.controller, out);
+        return resolved();
+      } catch (e) {
+        return rejected(e);
+      }
+    }, () => resolved(), 1, () => 1, 0, () => 1);
+    return t;
+  };
+  class CompressionStream {
+    #t;
+    constructor(format) {
+      if (arguments.length < 1) throw new TypeErrorC("Failed to construct 'CompressionStream': 1 argument required, but only 0 present.");
+      this.#t = codecTransform('CompressionStream', format, true);
+    }
+    get readable() {
+      return this.#t.readable.wrapper;
+    }
+    get writable() {
+      return this.#t.writable.wrapper;
+    }
+  }
+  class DecompressionStream {
+    #t;
+    constructor(format) {
+      if (arguments.length < 1) throw new TypeErrorC("Failed to construct 'DecompressionStream': 1 argument required, but only 0 present.");
+      this.#t = codecTransform('DecompressionStream', format, false);
+    }
+    get readable() {
+      return this.#t.readable.wrapper;
+    }
+    get writable() {
+      return this.#t.writable.wrapper;
+    }
+  }
+
   for (const C of [
     ReadableStream, ReadableStreamDefaultReader, ReadableStreamBYOBReader, ReadableStreamDefaultController, ReadableByteStreamController,
     ReadableStreamBYOBRequest, WritableStream, WritableStreamDefaultWriter, WritableStreamDefaultController, TransformStream,
     TransformStreamDefaultController, ByteLengthQueuingStrategy, CountQueuingStrategy, TextEncoderStream, TextDecoderStream,
+    CompressionStream, DecompressionStream,
   ]) {
     idl(C, C.name);
   }
@@ -1662,6 +1723,7 @@
     ReadableStream, ReadableStreamDefaultReader, ReadableStreamBYOBReader, ReadableStreamDefaultController, ReadableByteStreamController,
     ReadableStreamBYOBRequest, WritableStream, WritableStreamDefaultWriter, WritableStreamDefaultController, TransformStream,
     TransformStreamDefaultController, ByteLengthQueuingStrategy, CountQueuingStrategy, TextEncoderStream, TextDecoderStream,
+    CompressionStream, DecompressionStream,
     isStream: isRS,
     // Body "unusable" check.
     isLocked: (s) => rsLocked(rsOf(s)),

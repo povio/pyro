@@ -8,21 +8,38 @@ license.workspace = true
 autotests = false
 
 [dependencies]
+# Web Crypto (crypto_subtle.rs) uses the RustCrypto primitives below; the
+# AES modes (GCM with any IV and tag length, CBC, CTR) are built on aes + ghash.
+aes = "0.8"
+aes-kw = { version = "0.2", features = ["alloc"] }
 base64 = "0.23.1"
 bytes = "1"
 cssparser = "0.38"
+ed25519-dalek = "2"
 encoding_rs = "0.8"
+# CompressionStream / DecompressionStream; already lp-net's.
+flate2 = "1.1.10"
 getrandom = "0.3"
+ghash = "0.5"
+hkdf = "0.12"
+hmac = "0.12"
 lp-dom = { workspace = true }
 lp-js = { workspace = true }
 lp-net = { workspace = true }
 lp-runtime = { workspace = true }
 markup5ever = "0.40"
+p256 = { version = "0.13", features = ["ecdh", "ecdsa", "pkcs8"] }
+p384 = { version = "0.13", features = ["ecdh", "ecdsa", "pkcs8"] }
+p521 = { version = "0.13.3", features = ["ecdh", "ecdsa", "pkcs8"] }
+pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
 percent-encoding = "2.3.2"
+rand_core = { version = "0.6", features = ["getrandom"] }
+rsa = { version = "0.9", features = ["sha2"] }
 rustc-hash = "2"
-sha1 = "0.10"
-sha2 = "0.10"
+sha1 = { version = "0.10", features = ["oid"] }
+sha2 = { version = "0.10", features = ["oid"] }
 url = "2"
+x25519-dalek = { version = "2", features = ["static_secrets"] }
 
 [[test]]
 name = "integration"

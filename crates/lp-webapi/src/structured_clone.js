@@ -126,7 +126,11 @@
                 }
                 const name = call(stringSlice, kind, [8, -1]);
                 if (descriptor(boxed, name)) return remember(source, O(call(boxed[name], source)));
-                if (kind !== '[object Object]') fail('Object type is not supported');
+                if (kind !== '[object Object]') {
+                    const platformCopy = guard(source, true);
+                    if (platformCopy !== undefined) return remember(source, platformCopy);
+                    fail('Object type is not supported');
+                }
                 result = remember(source, create(O.prototype));
             }
             const names = keys(source);

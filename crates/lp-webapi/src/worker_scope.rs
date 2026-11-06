@@ -11,8 +11,10 @@
 //! `onmessage`/`onmessageerror`/`onerror`, `importScripts`, timers,
 //! `queueMicrotask`, `fetch` and its classes, `XMLHttpRequest` (without
 //! `responseXML`; relative URLs resolve against the script URL), `console`,
-//! `TextEncoder`/`Decoder`, `URL`, `atob`/`btoa`, `structuredClone`, `crypto`,
-//! `performance.now()`.
+//! `TextEncoder`/`Decoder`, `URL`, `atob`/`btoa`, `structuredClone`, `crypto`
+//! (with `CryptoKey`), `performance.now()`, `FileReader`, `navigator.storage`
+//! and, made on first use as on a window, the streams (`ReadableStream`,
+//! `TransformStream`, `CompressionStream`, ...).
 //!
 //! Scripts are fetched here, blocking this thread only, through the page's
 //! context `NetClient`: cookies, interception and Network events are the
@@ -535,6 +537,15 @@ fn set_timer<'s>(s: &Scope<'s>, g: &ScopeData, a: Args<'s>, repeat: bool) -> JsR
     Ok(s.number(handle as f64))
 }
 
+impl crate::window::WindowHost for ScopeData {
+    fn page(&self) -> &Rc<PageDom> {
+        &self.target.page
+    }
+    fn event_target(&self) -> &EventTargetData {
+        &self.target
+    }
+}
+
 fn clear_timer<'s>(s: &Scope<'s>, g: &ScopeData, a: Args<'s>) -> JsResult<Value<'s>> {
     let handle = a.get(0).to_number()?;
     if let Some(id) = g.timers.borrow_mut().remove(&(handle as u32)) {
@@ -560,18 +571,16 @@ impl JsClass for WorkerGlobalScope {
             }
             Ok(s.wrap::<WorkerLocation>(g.url.clone(), Some(IdentityKey(KEY_LOCATION, 0)))?.value())
         });
-        def.getter("navigator", |s, g| {
-            if let Some(o) = s.lookup_identity(IdentityKey(KEY_NAVIGATOR, 0)) {
-                return Ok(o.value());
-            }
-            Ok(s.wrap::<WorkerNavigator>(g.user_agent.clone(), Some(IdentityKey(KEY_NAVIGATOR, 0)))?.value())
-        });
+        def.getter("navigator", |s, g| Ok(navigator(s, g)?.value()));
         def.getter("origin", |s, _g| Ok(s.string(s.realm().origin().as_deref().unwrap_or("null"))));
         def.getter("isSecureContext", |s, g| {
             let secure = g.url.scheme() == "https" || matches!(g.url.host_str(), Some("localhost" | "127.0.0.1"));
             Ok(s.boolean(secure))
         });
         def.getter("crypto", |s, _g| crate::crypto::crypto_value(s));
+        crate::crypto::define_globals(def);
+        crate::streams::define_globals(def);
+        crate::storage_manager::define_globals(def);
         def.method("setTimeout", 1, |s, g, a| set_timer(s, g, a, false));
         def.method("setInterval", 1, |s, g, a| set_timer(s, g, a, true));
         def.method("clearTimeout", 0, clear_timer);
@@ -729,6 +738,24 @@ impl JsClass for WorkerNavigator {
         def.getter("hardwareConcurrency", |s, _ua| Ok(s.number(4.0)));
         def.getter("onLine", |s, _ua| Ok(s.boolean(true)));
         def.getter("language", |s, _ua| Ok(s.string("en-US")));
+        def.getter("storage", |s, _ua| crate::storage_manager::storage(s, &crate::target::page_of(s)?));
+    }
+}
+
+fn navigator<'s>(s: &Scope<'s>, g: &ScopeData) -> JsResult<lp_js::Object<'s>> {
+    if let Some(o) = s.lookup_identity(IdentityKey(KEY_NAVIGATOR, 0)) {
+        return Ok(o);
+    }
+    s.wrap::<WorkerNavigator>(g.user_agent.clone(), Some(IdentityKey(KEY_NAVIGATOR, 0)))
+}
+
+/// The per-realm object the lazily made script modules (streams, Web Crypto,
+/// StorageManager) hang from as hidden properties: the realm's `navigator`.
+pub(crate) fn module_holder<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<lp_js::Object<'s>> {
+    let unavailable = || JsError::Type("this realm has no navigator".into());
+    match s.global_data::<DedicatedWorkerGlobalScope>() {
+        Some(g) => navigator(s, g),
+        None => crate::window::navigator(s, page)?.as_object().ok_or_else(unavailable),
     }
 }
 
@@ -745,6 +772,7 @@ fn register(engine: &Engine) -> lp_js::ClassId {
     crate::abort::register(engine);
     crate::message_channel::register(engine);
     crate::file::register(engine);
+    engine.register::<crate::file_reader::FileReader>();
     crate::encoding::register(engine);
     crate::crypto::register(engine);
     crate::form_data::register(engine);
@@ -775,6 +803,12 @@ fn install(s: &Scope<'_>, page: &Rc<PageDom>) -> JsResult<()> {
     crate::fetch::install(s)?;
     crate::xhr::install(s, page)?;
     crate::structured_clone::install(s, page)?;
+    // What the lazy globals (streams, CryptoKey) replace themselves with.
+    if let Some(define) =
+        s.global().get_atom("Object")?.as_object().map(|o| o.get_atom("defineProperty")).transpose()?
+    {
+        page.define_properties.borrow_mut().insert(s.realm_id(), Persistent::new(s, define));
+    }
     // Before the worker's script can change the intrinsics they capture.
     crate::structured_clone::prepare_wire(s)?;
     // The global is JSC's default one, whose prototype cannot be replaced

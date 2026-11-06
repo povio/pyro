@@ -9,7 +9,8 @@ use lp_js::{ClassDef, JsClass, JsError, JsResult, Object, Scope, Value};
 use crate::page::PageDom;
 use crate::window::WindowHost;
 
-/// Kept on the realm's `navigator` (a hidden property), itself kept per realm.
+/// Kept on the realm's `navigator` (a hidden property), itself kept per realm;
+/// a worker's realm has the same names on its global.
 const KEY: &str = "lpStreams";
 
 macro_rules! lazy_globals {
@@ -22,7 +23,8 @@ macro_rules! lazy_globals {
     };
 }
 
-/// Adds the lazy interface names to lp-browser's `Window` class.
+/// Adds the lazy interface names to lp-browser's `Window` class and to the
+/// worker global scope.
 pub(crate) fn define_globals<W>(def: &mut ClassDef<W>)
 where
     W: JsClass,
@@ -45,6 +47,8 @@ where
         "CountQueuingStrategy",
         "TextEncoderStream",
         "TextDecoderStream",
+        "CompressionStream",
+        "DecompressionStream",
     );
 }
 
@@ -74,12 +78,15 @@ fn unavailable() -> JsError {
 
 /// This realm's streams module, made on first use.
 pub(crate) fn module<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Object<'s>> {
-    let navigator = crate::window::navigator(s, page)?.as_object().ok_or_else(unavailable)?;
+    let navigator = crate::worker_scope::module_holder(s, page)?;
     if let Some(module) = s.get_hidden(navigator, KEY)?.and_then(|v| v.as_object()) {
         return Ok(module);
     }
+    let natives = s.object();
+    natives.set_atom("zlib", crate::compression::zlib_function(s)?.value())?;
+    let natives = lp_js::Persistent::new(s, natives.value());
     let factory = s.eval(include_str!("streams.js"), Some("lightningpanda://internal/streams.js"), 1)?;
-    let module = factory.as_object().ok_or_else(unavailable)?.call(None, &[])?;
+    let module = factory.as_object().ok_or_else(unavailable)?.call(None, &[natives.get(s)])?;
     s.set_hidden(navigator, KEY, module)?;
     module.as_object().ok_or_else(unavailable)
 }
@@ -87,7 +94,7 @@ pub(crate) fn module<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Object<'
 /// The module only when this realm already made it: without it, no value can
 /// be a stream.
 fn existing<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Option<Object<'s>>> {
-    let navigator = crate::window::navigator(s, page)?.as_object().ok_or_else(unavailable)?;
+    let navigator = crate::worker_scope::module_holder(s, page)?;
     Ok(s.get_hidden(navigator, KEY)?.and_then(|v| v.as_object()))
 }
 
