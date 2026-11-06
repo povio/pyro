@@ -97,6 +97,11 @@ impl WindowData {
         self.frame
     }
 
+    /// The frame tree this window belongs to, while it exists.
+    pub(crate) fn frame_host(&self) -> Option<Rc<crate::frames::FrameHost>> {
+        self.frames.upgrade()
+    }
+
     pub fn new(sched: Scheduler<Browser>, nav: Rc<PageNav>, page: &Rc<lp_webapi::PageDom>) -> WindowData {
         let key = page.window_target().expect("document window target");
         // `Event.timeStamp` reads the clock `performance.now()` reads.
@@ -335,6 +340,16 @@ impl JsClass for Window {
             ))
         });
         def.method("__lpNow", 0, |s, w, _a| Ok(s.number(w.now_ms())));
+        // Window post message steps: from the window whose script is running.
+        def.method("postMessage", 1, |s, w, a| {
+            match (w.frames.upgrade(), w.frame) {
+                (Some(host), Some(key)) => {
+                    crate::frames::post_message(s, &a, crate::frames::incumbent_window(), &host, key)?
+                }
+                _ => lp_webapi::window::post_message_to_self(s, &w.target.page, &a)?,
+            }
+            Ok(s.undefined())
+        });
     }
 }
 

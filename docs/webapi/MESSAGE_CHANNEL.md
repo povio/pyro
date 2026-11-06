@@ -1,8 +1,9 @@
 # MessageChannel and MessagePort
 
 `crates/lp-webapi/src/message_channel.rs` implements HTML §9.4 channel
-messaging within one realm. The behaviour follows upstream Lightpanda
-(`MessagePort.zig`) and Chromium, except for the transfer gap below.
+messaging between the realms of a browser thread's VM (frames, popups,
+isolated worlds). The behaviour follows upstream Lightpanda (`MessagePort.zig`)
+and Chromium, except for the gaps below.
 
 - **Construction.** `new MessageChannel()` creates two entangled ports.
   `port1`/`port2` always return the same objects. Ports are `EventTarget`s with
@@ -10,16 +11,29 @@ messaging within one realm. The behaviour follows upstream Lightpanda
 - **Posting.** `postMessage(message, transferOrOptions)` structured-clones the
   message.
   - It uses the realm's original `structuredClone`, so page reassignment of
-    `structuredClone` has no effect.
-  - Non-cloneable values throw DataCloneError, including functions and host
-    objects such as a MessagePort.
-  - The message is queued on the entangled port. Posting on a closed or
-    disentangled port clones and then drops the message.
+    `structuredClone` has no effect. The message is cloned into the realm of
+    the entangled port, which differs from the sender's once a port was
+    transferred to another frame or page.
+  - Non-cloneable values throw DataCloneError, including functions and a
+    MessagePort that is not in the transfer list.
+  - The transfer list takes ArrayBuffers (detached) and MessagePorts. Listing
+    the posting port itself throws DataCloneError; listing its entangled peer
+    transfers it but drops the message (the channel is lost, as in HTML).
+  - The message is queued on the entangled port. Posting on a closed,
+    disentangled or detached port clones and then drops the message.
+- **Transfer.** A transferred port (through `postMessage`, `structuredClone`
+  or `window.postMessage`) is replaced in the receiving realm by a new port
+  that takes over the entanglement and the undelivered messages (cloned into
+  the new realm when it is another one), starts unstarted, and arrives in the
+  data where the original was and in `event.ports`, in transfer-list order.
+  The original is detached: it is closed, its posts are dropped and
+  transferring it again throws DataCloneError.
 - **Delivery.**
   - A started port delivers each message in its own task, in FIFO order, after
     the current task's microtasks.
   - Each message arrives as a trusted `MessageEvent` with `origin` `""`,
-    `source` `null` and an empty `ports`.
+    `source` `null` and `ports` holding the transferred ports (the same array
+    on every read).
   - Messages wait until the port is started. `start()` or assigning a function to
     `onmessage` starts it; `addEventListener('message', …)` does not.
 - **Closing.** `close()` disentangles both ports and drops the closed port's
@@ -68,32 +82,63 @@ Tests: `crates/lp-browser/tests/popups.rs`
 (`broadcast_channel_reaches_same_origin_documents_of_the_browser_context`).
 
 Gaps of MessageChannel, all explicit:
-- Transferring anything throws NotSupportedError, whether as
-  `postMessage(m, [port])` or `{transfer: [...]}`. This includes MessagePorts,
-  so ports never leave their realm and are never shipped to workers or frames.
-- No `messageerror` events: same-realm deserialization cannot fail.
-- `window.postMessage` still passes values without cloning; see
-  [STRUCTURED_CLONE](STRUCTURED_CLONE.md).
+- Ports cannot be transferred to or from a worker (another VM): such a
+  transfer throws NotSupportedError.
+- No `messageerror` events: deserialization in the same VM cannot fail.
+- `new MessageEvent(type, {ports})` keeps the ports; `source` in the init
+  dictionary is ignored.
+
+## window.postMessage
+
+`crates/lp-webapi/src/window_message.rs` and `crates/lp-browser/src/frames.rs`
+(`post_message`) implement HTML's window post message steps for frames and
+popups of a browser thread:
+
+- Arguments follow WebIDL overload resolution: `(message, targetOrigin,
+  transfer)` with three arguments, otherwise an object (or nullish) second
+  argument is the `{targetOrigin, transfer}` dictionary. `targetOrigin` is `*`,
+  `/` (the source's origin) or an absolute URL whose origin must match the
+  target document's; anything else throws SyntaxError (from the realm of the
+  `postMessage` called). An opaque-origin URL never matches.
+- The message is structured-cloned straight into the target window's
+  main-world realm (DataCloneError and getter exceptions propagate), with
+  transfers; a mismatched target origin clones, transfers and then drops it.
+  A primitive message without a transfer list is not cloned, so pages using
+  `postMessage` as a macrotask scheduler pay one task per message, as before.
+- Delivery is a task on the target document: a trusted `MessageEvent` with
+  `origin` the source's serialized origin, `ports` the transferred ports, and
+  `source` the source's WindowProxy as the reading realm sees it (its global
+  when same-origin, the cross-origin stand-in otherwise, the popup's `opener`,
+  or in an opener the object its `window.open` returned). The event keeps no
+  root of the source window: `source` is resolved when read.
+- The source is the incumbent window: the realm of the innermost script,
+  listener, timer or other native-to-JavaScript entry that is running
+  (`lp_js::entry_realm`). Calling a function of another realm directly from
+  script does not change it, so a message posted from a function defined in
+  another frame names the caller's window, where HTML would name the
+  function's.
+- Cross-origin windows (frames, and a popup's cross-origin opener) expose
+  `postMessage`, `location` (only setting `href`, assigning `location`, and
+  `replace()`; URLs resolve against the accessing document, `javascript:` is
+  ignored), `frames[i]` / indexed access to their child windows, `closed`,
+  `length`, `window`/`self`/`frames`/`parent`/`top`, `focus`, `blur` and
+  `close`; everything else throws SecurityError.
+- Gaps: a message between a frame inside a popup (or inside its opener) and
+  the other page has `source` null; messages from the opener through the
+  `window.open` result (see [POPUP_WINDOW](POPUP_WINDOW.md)) have `source`
+  null; opaque origins compare by their serialization ("null"), not their
+  identity; `opener` is not exposed on cross-origin windows; a popup's view of
+  its cross-origin opener has no indexed access.
 
 Same-window `window.postMessage` events expose the receiving world's Window
 as `event.source`. The source is stored as a native window target key, with no
 event-to-global JavaScript persistent root. This supports schedulers that accept
 only messages where `event.source === window`, including JSZip's `setImmediate`
 fallback. Delivery uses the embedder's queued `PageHooks::post_task`; embedders
-without hooks retain the existing inline fallback. Port events and constructed
-MessageEvents without a source continue to return `null`.
+without hooks retain the existing inline fallback.
 
-This does not add cross-window messaging, target-origin enforcement, transfer
-support, or `MessageEventInit.source` handling. It does not change message-data
-retention or cloning semantics.
-
-Tests (`crates/lp-webapi/tests/dom_js.rs`):
-- `message_channel_delivers_cloned_messages_fifo_as_tasks`
-- `message_port_start_close_transfer_and_clone_errors`
-- `message_port_lifetime_pins_started_ports_until_close`
-- `message_channel_with_self_referencing_listener_is_collected_after_close`
-- `message_port_keeps_queued_messages_across_gc_when_the_peer_closes`
-- `message_port_started_late_with_a_collected_peer_still_delivers_across_gc`
-- `message_port_unstarted_queued_ports_and_disposal_hold_no_roots`
-- `message_port_receiver_is_released_when_its_sender_becomes_unreachable`
-- `message_port_peer_collection_is_reconciled_at_after_task_without_hooks`
+Tests: `crates/lp-webapi/tests/dom_js.rs` (`message_channel_*`,
+`message_port_*`), `crates/lp-webapi/tests/messaging_js.rs` (clone types,
+transfers, event ports, same-window postMessage, the cross-VM format) and
+`crates/lp-browser/tests/messaging.rs` (frames, cross-origin windows, popups,
+history state).
