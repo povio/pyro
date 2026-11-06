@@ -511,3 +511,49 @@ fn dedicated_workers_share_the_owner_partition() {
     assert_eq!(env.eval("msgs.join('|')"), r#"function,true,1|[{"name":"from-worker","version":3}]"#);
     env.eval("w.terminate()");
 }
+
+#[test]
+fn upgrade_lifecycle_and_exception_order() {
+    let env = Env::new();
+    let d = env.doc("http://idb.test/");
+    d.eval(HELPERS);
+    let got = env.run(
+        &d,
+        r#"
+        const log = [];
+        const err = f => { try { f(); return 'ok'; } catch (e) { return e.name; } };
+        const open = indexedDB.open('life', 1);
+        open.onupgradeneeded = () => {
+          const db = open.result, tx = open.transaction;
+          log.push(open.readyState, tx.mode, tx.db === db, db.version);
+          db.createObjectStore('s');
+          tx.oncomplete = () => log.push('complete:' + err(() => db.createObjectStore('late')) + ':' + (open.transaction === tx));
+        };
+        const db = await req(open);
+        log.push('success:' + open.transaction, err(() => db.createObjectStore('x')));
+        db.close();
+        log.push(err(() => db.transaction('s')));
+        const again = indexedDB.open('life', 2);
+        again.onupgradeneeded = () => {
+          const tx = again.transaction, db2 = again.result;
+          tx.abort();
+          log.push('aborted:' + err(() => db2.createObjectStore('y')) + ':' + err(() => tx.abort()));
+          tx.onabort = () => log.push('onabort:' + err(() => db2.createObjectStore('z')) + ':' + (again.transaction === tx) + ':' + db2.version);
+        };
+        log.push(await req(again).catch(e => e.name + ':' + again.transaction));
+        // State checks precede argument checks; IDL conversions precede both.
+        const db3 = await openDb('life');
+        const store = db3.transaction('s').objectStore('s');
+        await req(store.count());
+        await new Promise(ok => db3.transaction('s').oncomplete = ok);
+        log.push(err(() => store.get({})), err(() => store.getAll(1, -1)), err(() => store.openCursor(null, 'sideways')),
+          err(() => store.put(1, 1)), err(() => db3.transaction('missing')), err(() => db3.transaction([])),
+          err(() => db3.transaction('s', 'versionchange')), store.put.length, store.getAll.length);
+        out = log.join('|');
+    "#,
+    );
+    assert_eq!(
+        got,
+        "done|versionchange|true|1|complete:InvalidStateError:true|success:null|InvalidStateError|InvalidStateError|aborted:TransactionInactiveError:InvalidStateError|onabort:InvalidStateError:true:1|AbortError:null|TransactionInactiveError|TypeError|TypeError|TransactionInactiveError|NotFoundError|InvalidAccessError|TypeError|1|0"
+    );
+}

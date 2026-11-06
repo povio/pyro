@@ -843,13 +843,7 @@
     x.state = 'committing';
     N.commit(x.conn.name, x.id);
     finish(x);
-    post(() => ({
-      t: x.obj,
-      e: plainEvent('complete', false, false),
-      a: () => {
-        if (x.upgrade) upgradeFinished(x, true);
-      },
-    }));
+    post(() => finishedEvent(x, 'complete', true));
   }
   function abortTx(x, error) {
     if (x.state === 'finished') return;
@@ -861,13 +855,19 @@
       post(() => ({ t: r.request, e: plainEvent('error', true, true) }));
     }
     finish(x);
-    post(() => ({
+    post(() => finishedEvent(x, 'abort', false));
+  }
+  // `complete` or `abort`. An upgrade no longer runs while its listeners do
+  // (the open request keeps its transaction until after them).
+  function finishedEvent(x, type, committed) {
+    if (x.upgrade) x.conn.upgrade = null;
+    return {
       t: x.obj,
-      e: plainEvent('abort', true, false),
+      e: plainEvent(type, !committed, false),
       a: () => {
-        if (x.upgrade) upgradeFinished(x, false);
+        if (x.upgrade) upgradeFinished(x, committed);
       },
-    }));
+    };
   }
   // "Abort an upgrade transaction": the connection's metadata as it was.
   function revertUpgrade(x) {
@@ -955,7 +955,7 @@
   function addOrPut(store, args, noOverwrite, what) {
     if (!args.length) throw new TE(`Failed to execute '${what}' on 'IDBObjectStore': 1 argument required.`);
     const h = storeOf(store);
-    const [value, key] = args;
+    const value = args[0], key = args[1];
     check(h, true);
     const m = h.m, kp = m.keyPath;
     if (kp !== null && key !== undefined) {
@@ -979,27 +979,35 @@
     }
     return request(h.x, store, () => storeRecord(h, clone, k, noOverwrite));
   }
-  // getAll(queryOrOptions, count) and getAllRecords(options).
+  // getAll(queryOrOptions, count) and getAllRecords(options): the Web IDL
+  // conversions, before the state checks; the query is converted after them.
   function getAllArgs(args, records) {
     const first = args[0];
     if (!records && potentiallyRange(first)) {
-      return { range: toRange(first, false), count: unsignedLong(args[1], 'count'), dir: 0 };
+      return { query: first, count: unsignedLong(args[1], 'count'), dir: 0 };
     }
     const o = dictionary(first);
     const count = unsignedLong(o.count, 'count');
     const dir = direction(o.direction);
-    return { range: toRange(o.query, false), count, dir };
+    return { query: o.query, count, dir };
   }
-  function getAll(h, index, a, kind) {
-    const name = h.x.conn.name;
-    const flat = N.getAll(name, h.m.name, index, ...a.range, a.count, a.dir, kind !== 1);
-    const out = [];
-    for (let i = 0; i < flat.length; i += 3) {
-      if (kind === 0) out.push(flat[i + 2]);
-      else if (kind === 1) out.push(decodeKey(flat[i + 1]));
-      else out.push(new IDBRecord(token, decodeKey(flat[i]), decodeKey(flat[i + 1]), flat[i + 2]));
-    }
-    return out;
+  // kind: 0 values, 1 primary keys, 2 records.
+  function getAllRequest(source, h, index, args, records, kind) {
+    const a = getAllArgs(args, records);
+    if (index) indexCheck(index);
+    else check(h, false);
+    const range = toRange(a.query, false);
+    const name = index ? index.im.name : null;
+    return request(h.x, source, () => {
+      const flat = N.getAll(h.x.conn.name, h.m.name, name, ...range, a.count, a.dir, kind !== 1);
+      const out = [];
+      for (let i = 0; i < flat.length; i += 3) {
+        if (kind === 0) out.push(flat[i + 2]);
+        else if (kind === 1) out.push(decodeKey(flat[i + 1]));
+        else out.push(new IDBRecord(token, decodeKey(flat[i]), decodeKey(flat[i + 1]), flat[i + 2]));
+      }
+      return out;
+    });
   }
   class IDBObjectStore {
     #h;
@@ -1037,11 +1045,11 @@
     get autoIncrement() {
       return this.#h.m.ai;
     }
-    put(...args) {
-      return addOrPut(this, args, false, 'put');
+    put(value, key = undefined) {
+      return addOrPut(this, arguments, false, 'put');
     }
-    add(...args) {
-      return addOrPut(this, args, true, 'add');
+    add(value, key = undefined) {
+      return addOrPut(this, arguments, true, 'add');
     }
     delete(query) {
       if (!arguments.length) throw new TE("Failed to execute 'delete' on 'IDBObjectStore': 1 argument required.");
@@ -1081,23 +1089,14 @@
         return r ? decodeKey(r[1]) : undefined;
       });
     }
-    getAll(...args) {
-      const h = this.#h;
-      const a = getAllArgs(args, false);
-      check(h, false);
-      return request(h.x, this, () => getAll(h, null, a, 0));
+    getAll(query = undefined, count = undefined) {
+      return getAllRequest(this, this.#h, null, arguments, false, 0);
     }
-    getAllKeys(...args) {
-      const h = this.#h;
-      const a = getAllArgs(args, false);
-      check(h, false);
-      return request(h.x, this, () => getAll(h, null, a, 1));
+    getAllKeys(query = undefined, count = undefined) {
+      return getAllRequest(this, this.#h, null, arguments, false, 1);
     }
     getAllRecords(options = undefined) {
-      const h = this.#h;
-      const a = getAllArgs([options], true);
-      check(h, false);
-      return request(h.x, this, () => getAll(h, null, a, 2));
+      return getAllRequest(this, this.#h, null, [options], true, 2);
     }
     count(query = undefined) {
       const h = this.#h;
@@ -1232,23 +1231,14 @@
         return r ? decodeKey(r[1]) : undefined;
       });
     }
-    getAll(...args) {
-      const d = this.#d;
-      const a = getAllArgs(args, false);
-      indexCheck(d);
-      return request(d.h.x, this, () => getAll(d.h, d.im.name, a, 0));
+    getAll(query = undefined, count = undefined) {
+      return getAllRequest(this, this.#d.h, this.#d, arguments, false, 0);
     }
-    getAllKeys(...args) {
-      const d = this.#d;
-      const a = getAllArgs(args, false);
-      indexCheck(d);
-      return request(d.h.x, this, () => getAll(d.h, d.im.name, a, 1));
+    getAllKeys(query = undefined, count = undefined) {
+      return getAllRequest(this, this.#d.h, this.#d, arguments, false, 1);
     }
     getAllRecords(options = undefined) {
-      const d = this.#d;
-      const a = getAllArgs([options], true);
-      indexCheck(d);
-      return request(d.h.x, this, () => getAll(d.h, d.im.name, a, 2));
+      return getAllRequest(this, this.#d.h, this.#d, [options], true, 2);
     }
     count(query = undefined) {
       const d = this.#d;
@@ -1534,7 +1524,6 @@
   // After the upgrade transaction's complete or abort event.
   function upgradeFinished(x, committed) {
     const item = x.openItem, c = x.conn, s = requestState(item.request);
-    c.upgrade = null;
     maybeClose(c);
     post(() => {
       s.tx = null;
