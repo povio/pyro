@@ -163,7 +163,10 @@ fn handle(page: &Rc<PageDom>, event: &MediaEvent) {
             let (network, awaiting, generation) =
                 peek(page, node, |st| (st.network, st.awaiting_source, st.generation));
             if network == NETWORK_EMPTY {
-                resource_selection(page, node);
+                // HTML: only for a media element without a `src` attribute.
+                if !has_src(page, node) {
+                    resource_selection(page, node);
+                }
             } else if awaiting {
                 // The waiting resource selection tries the new candidate.
                 with(page, node, |st| st.network = NETWORK_LOADING);

@@ -73,15 +73,24 @@ impl Dom {
     }
 
     /// After `node` was inserted into `parent`: media elements in its
-    /// subtree, and a `<source>` child of a media element.
+    /// subtree when it is connected, and a `<source>` child of a media
+    /// element.
     pub(crate) fn media_after_insert(&mut self, node: u32) {
         if !self.media_seen {
+            return;
+        }
+        let document = self.id_of(self.n(node).owner_doc);
+        if !self.is_watched_document(document) {
             return;
         }
         let parent = self.n(node).parent;
         if parent != NIL && self.is_source_idx(node) && self.is_media_idx(parent) {
             let source = self.id_of(node);
             self.media_event(parent, MediaChange::SourceInserted(source));
+        }
+        // Only an insertion into a document starts resource selection.
+        if !self.is_connected_idx(node) {
+            return;
         }
         let mut i = node;
         while i != NIL {
@@ -147,10 +156,12 @@ mod tests {
         let source = dom.create_element(doc, "source").unwrap();
         dom.append_child(video, source).unwrap();
         dom.append_child(div, video).unwrap();
-        assert_eq!(
-            changes(&mut dom, doc),
-            [(video, MediaChange::SourceInserted(source)), (video, MediaChange::Inserted)]
-        );
+        // `div` is not in the document: no insertion steps for the element.
+        assert_eq!(changes(&mut dom, doc), [(video, MediaChange::SourceInserted(source))]);
+        let body = dom.create_element(doc, "body").unwrap();
+        dom.append_child(doc, body).unwrap();
+        dom.append_child(body, div).unwrap();
+        assert_eq!(changes(&mut dom, doc), [(video, MediaChange::Inserted)]);
         // Documents without a browsing context queue nothing.
         let other = dom.create_document(DocumentKind::Html, "about:blank");
         let audio = dom.create_element(other, "audio").unwrap();
