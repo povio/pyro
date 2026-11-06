@@ -149,6 +149,14 @@ impl PageNav {
         self.state.borrow().initial
     }
 
+    /// HTML "document open steps": `document.open()` (or a `write()` that
+    /// opens) on the active document makes it no longer the initial
+    /// about:blank one. The next navigation then pushes an entry, and its
+    /// commit releases what was written (`page.setContent`, then `goto`).
+    pub(crate) fn document_opened(&self) {
+        self.state.borrow_mut().initial = false;
+    }
+
     /// Records a committed cross-document navigation.
     pub(crate) fn commit_document(&self, url: &str, history: HistoryHandling, document: Option<(DomRef, NodeId)>) {
         self.pending_frame_url.borrow_mut().take();

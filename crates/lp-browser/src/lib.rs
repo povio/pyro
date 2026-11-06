@@ -1365,8 +1365,13 @@ impl Browser {
             p.preloads = Default::default();
             let old_dom = p.main_frame.page_dom.replace(page_dom.clone());
             // What the commit replaces: nothing (a new frame's first
-            // document), the initial about:blank one, or a loaded document.
-            let replaces_loaded = old_dom.is_some() && !p.nav.is_initial_blank();
+            // document), the initial about:blank one as it was made, or a
+            // document with content: a loaded one, or the initial one written
+            // with document.open() (which is not initial any more) or filled
+            // through DOM APIs.
+            let replaces_loaded = old_dom
+                .as_ref()
+                .is_some_and(|old| !p.nav.is_initial_blank() || bindings::blank_document_has_content(old));
             p.main_frame.dom = Some(page_dom.dom.clone());
             p.main_frame.document = Some(page_dom.document());
             p.main_frame.url = opts.url.clone();
@@ -1395,10 +1400,12 @@ impl Browser {
         // it before the next one boots instead of waiting for JSC's heuristics.
         // Measured on 80 navigations of a 2 MB React bundle: the process
         // plateaus at 218 MB instead of 629 MB, for about 5 ms per navigation.
-        // A page's first document and its initial about:blank one leave
-        // nothing that pays for a full collection: a test's first `goto`
+        // A page's first document and its untouched initial about:blank one
+        // leave nothing that pays for a full collection: a test's first `goto`
         // collected the whole heap for a blank page's two realms. Its
-        // footprint still counts as a low point for later closes.
+        // footprint still counts as a low point for later closes. (What a
+        // script kept on the blank document's window alone, with no node, is
+        // left to the next release or JavaScriptCore's own collections.)
         drop(old_dom);
         if replaces_loaded {
             self.engine.release_closed();

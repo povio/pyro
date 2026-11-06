@@ -378,8 +378,9 @@ pub trait PageHooks {
     ) -> Option<DialogAnswer> {
         None
     }
-    /// `document.open()` replaced the loaded document's content: the frame is
-    /// loading again, so DOMContentLoaded/load can be reported anew.
+    /// `document.open()` replaced the frame's document's content: the frame
+    /// is loading again, so DOMContentLoaded/load can be reported anew, and
+    /// the document is no longer the initial about:blank one.
     fn document_reopened(&self) {}
     /// `document.close()` finished the script-created parser (readyState is
     /// already "interactive"): fire DOMContentLoaded, then load once nothing

@@ -243,6 +243,16 @@ impl PageHooks for Hooks {
     }
 
     fn document_reopened(&self) {
+        // At once, not in the task below: a navigation the same script
+        // starts commits against the opened document.
+        let nav = self
+            .frames
+            .upgrade()
+            .filter(|host| host.matches(self.page, &self.loader))
+            .and_then(|host| host.nav(self.page));
+        if let Some(nav) = nav {
+            nav.document_opened();
+        }
         let page = self.page;
         let loader = self.loader.clone();
         self.sched.post(TaskSource::DomManipulation, move |b| {
@@ -485,6 +495,19 @@ fn javascript_url_source(url: &str) -> Option<String> {
     Some(percent_encoding::percent_decode_str(rest).decode_utf8_lossy().into_owned())
 }
 
+/// Every about:blank document's markup.
+const BLANK_MARKUP: &str = "<!doctype html><html><head></head><body></body></html>";
+/// The nodes `BLANK_MARKUP` makes: the document, the doctype, html, head, body.
+const BLANK_NODES: usize = 5;
+
+/// An about:blank document has nodes beyond the ones it was made with: a
+/// script or `Runtime.evaluate` filled it through DOM APIs (an inserted
+/// iframe, whose documents are its own, included).
+pub(crate) fn blank_document_has_content(page_dom: &PageDom) -> bool {
+    let dom = page_dom.dom.borrow();
+    dom.descendants(page_dom.document()).map_or(true, |mut nodes| nodes.nth(BLANK_NODES).is_some())
+}
+
 pub(crate) fn create(
     host: &Rc<crate::frames::FrameHost>,
     page: FrameKey,
@@ -495,7 +518,7 @@ pub(crate) fn create(
     let settings = host.settings.borrow().clone();
     let dom = host.dom.clone();
     let doc = if url == "about:blank" {
-        lp_dom::parse::parse_document(&dom, url, "<!doctype html><html><head></head><body></body></html>")
+        lp_dom::parse::parse_document(&dom, url, BLANK_MARKUP)
     } else {
         dom.borrow_mut().create_document(lp_dom::DocumentKind::Html, url)
     };
