@@ -224,6 +224,16 @@ fn meta_refresh_inserted_by_script_applies_but_not_in_shadow_trees_or_sandboxes(
 }
 
 #[test]
+fn meta_refresh_to_a_javascript_url_is_refused() {
+    let (mut thread, page, _loader) =
+        setup("http://site.test/", "<meta http-equiv=refresh content='0; url=javascript:window.ran=1'><p>x</p>");
+    thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    settle(&mut thread);
+    assert_eq!(url_of(&thread, page), "http://site.test/");
+    assert_eq!(eval(&thread, page, "String(window.ran)"), "undefined");
+}
+
+#[test]
 fn http_refresh_header_navigates() {
     use std::io::{BufRead, BufReader, Write};
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();

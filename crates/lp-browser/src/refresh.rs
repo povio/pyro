@@ -10,7 +10,8 @@
 //!   (or after the insertion, when that is later), then navigates the frame
 //!   to the URL (the document's URL when none is given). As in Chromium, a
 //!   delay of at most one second replaces the history entry.
-//! - Frames sandboxed without `allow-scripts` do not refresh.
+//! - Frames sandboxed without `allow-scripts` do not refresh, nor does a
+//!   refresh to a `javascript:` URL (as in Chromium).
 //! - A navigation commits a new document, which drops the scheduled
 //!   refresh: its timer finds a different loader and does nothing.
 use lp_dom::NodeId;
@@ -126,6 +127,11 @@ impl Browser {
                 }
             }
         };
+        // Chromium refuses a refresh to a `javascript:` URL (it does not
+        // claim the document's refresh either).
+        if target.get(..11).is_some_and(|p| p.eq_ignore_ascii_case("javascript:")) {
+            return;
+        }
         doc.refresh.claimed = true;
         let loader = doc.main_frame.loader_id.clone();
         if doc.main_frame.loaded {
