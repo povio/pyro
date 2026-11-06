@@ -586,6 +586,47 @@ where
         );
         matching_context.extra_data.originating_element_style = Some(originating_element_style);
 
+        // lightningpanda: no rule that can generate a `::before`/`::after` box matches, so the
+        // style matched and cascaded below would be dropped by
+        // `eager_pseudo_is_definitely_not_generated`. Only for the unvisited pass: when it goes
+        // on, the visited pass matches every rule, as upstream.
+        if visited_handling == VisitedHandlingMode::AllLinksUnvisited
+            && !matches!(self.pseudo_resolution, PseudoElementResolution::Force)
+            && !stylist.may_generate_box_for_pseudo(
+                self.element,
+                pseudo_element,
+                &mut applicable_declarations,
+                &mut matching_context,
+            )
+        {
+            #[cfg(debug_assertions)]
+            {
+                stylist.push_applicable_declarations(
+                    self.element,
+                    Some(pseudo_element),
+                    None,
+                    None,
+                    Default::default(),
+                    self.rule_inclusion,
+                    &mut applicable_declarations,
+                    &mut matching_context,
+                );
+                let guards = &self.context.shared.guards;
+                for block in applicable_declarations.iter() {
+                    let guard = guards.for_origin(block.level().origin().origin());
+                    debug_assert!(
+                        !crate::stylist::declarations_may_generate_pseudo_box(
+                            block.source.read(guard)
+                        ),
+                        "a rule that can generate {:?} for {:?} is missing from the index",
+                        pseudo_element,
+                        self.element,
+                    );
+                }
+            }
+            return None;
+        }
+
         // NB: We handle animation rules for ::before and ::after when
         // traversing them.
         stylist.push_applicable_declarations(

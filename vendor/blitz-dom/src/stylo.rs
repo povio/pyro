@@ -1562,3 +1562,184 @@ fn parse_inline() {
 
     // let val = CSSInlineStyleDeclaration();
 }
+
+/// lightningpanda: Stylo skips the eager `::before`/`::after` match and cascade when no rule
+/// that can generate a box matches (`Stylist::may_generate_box_for_pseudo`). What generates,
+/// and the styles Stylo keeps, must not change.
+#[cfg(test)]
+mod box_generating_pseudo_tests {
+    use super::*;
+    use crate::{Attribute, BaseDocument, DocumentConfig, QualName, UserAgentStylesheet, qual_name};
+    use blitz_traits::shell::{ColorScheme, Viewport};
+    use style::stylist::RuleInclusion;
+    use style::traversal::resolve_style;
+
+    struct Doc {
+        doc: BaseDocument,
+        style: NodeId,
+        body: NodeId,
+    }
+
+    /// `<html><head><style>{css}</style></head><body>` with a `div` per `(id class, class)`.
+    /// A per-test `tag` keeps the sheet text apart from other tests' (author sheets are shared
+    /// per thread by text, and one test edits its sheet through the CSSOM).
+    fn make_doc(ua: Option<&str>, css: &str, tag: &str, divs: &[(&str, &str)]) -> (Doc, Vec<NodeId>) {
+        let mut doc = BaseDocument::new(DocumentConfig {
+            viewport: Some(Viewport::new(400, 300, 1.0, ColorScheme::Light)),
+            ..Default::default()
+        });
+        if let Some(ua) = ua {
+            doc.add_user_agent_stylesheet(UserAgentStylesheet::parse(ua));
+        }
+        let root_id = doc.root_node().id;
+        let attr = |name, value: &str| Attribute { name, value: value.to_string() };
+        let mut ids = Vec::new();
+        let mut m = doc.mutate();
+        let html = m.create_element(qual_name!("html"), vec![]);
+        let head = m.create_element(qual_name!("head"), vec![]);
+        let style = m.create_element(qual_name!("style"), vec![]);
+        let text = m.create_text_node(&format!("/* {tag} */ {css}"));
+        m.append_children(style, &[text]);
+        m.append_children(head, &[style]);
+        let body = m.create_element(qual_name!("body"), vec![]);
+        for (tag, class) in divs {
+            let local = LocalName::from(*tag);
+            let name = QualName::new(None, ns!(html), local);
+            let el = m.create_element(name, vec![attr(qual_name!("class"), class)]);
+            m.append_children(body, &[el]);
+            ids.push(el);
+        }
+        m.append_children(html, &[head, body]);
+        m.append_children(root_id, &[html]);
+        drop(m);
+        doc.resolve(0.0);
+        (Doc { doc, style, body }, ids)
+    }
+
+    /// The eager (`before`, `after`) styles Stylo kept for `id`.
+    fn kept(doc: &BaseDocument, id: NodeId) -> (bool, bool) {
+        let data = doc.nodes[id].stylo_element_data().get().unwrap();
+        let pseudos = data.styles.pseudos.as_array();
+        (pseudos[1].is_some(), pseudos[0].is_some())
+    }
+
+    /// The (`::before`, `::after`) boxes of `id`.
+    fn boxes(doc: &BaseDocument, id: NodeId) -> (bool, bool) {
+        let node = &doc.nodes[id];
+        (node.before().is_some(), node.after().is_some())
+    }
+
+    #[test]
+    fn non_generating_rules_keep_no_pseudo_style() {
+        let css = "*::before, *::after { box-sizing: border-box; color: red } \
+                   .x::before { content: '' } .y::after { content: 'y' } \
+                   .d::before { display: inherit } .v::before { content: var(--c) } \
+                   .all::after { all: inherit } .an::before { animation-name: a }";
+        let (d, ids) = make_doc(
+            Some("q:before { content: open-quote } q:after { content: close-quote }"),
+            css,
+            "non-generating",
+            &[("div", ""), ("div", "x"), ("div", "y"), ("q", ""), ("div", "d"), ("div", "v"), ("div", "all"), ("div", "an")],
+        );
+        let doc = &d.doc;
+        assert_eq!(kept(doc, ids[0]), (false, false), "box-sizing and color alone generate nothing");
+        assert_eq!(boxes(doc, ids[0]), (false, false));
+        assert_eq!(boxes(doc, ids[1]), (true, false), ".x::before");
+        assert_eq!(boxes(doc, ids[2]), (false, true), ".y::after");
+        assert_eq!(boxes(doc, ids[3]), (true, true), "q's UA quotes");
+        // `display: inherit` and `content: var()` keep the style as upstream does
+        // (`DISPLAY_OR_CONTENT_DEPEND_ON_INHERITED_STYLE`); `content` stays `normal`, no box.
+        assert_eq!(kept(doc, ids[4]), (true, false), "display: inherit");
+        assert_eq!(boxes(doc, ids[4]), (false, false));
+        assert_eq!(kept(doc, ids[5]), (true, false), "content: var(--c)");
+        assert_eq!(kept(doc, ids[6]), (false, true), "all: inherit");
+        assert_eq!(kept(doc, ids[7]), (false, false), "animation-name alone: content is normal");
+    }
+
+    /// `PseudoElementResolution::Force` (out-of-document styles) still resolves every eager
+    /// pseudo-element any rule matches.
+    #[test]
+    fn forced_resolution_keeps_non_generating_pseudo_styles() {
+        let (mut d, ids) = make_doc(
+            None,
+            "div::before { color: red } .h { display: none }",
+            "forced",
+            &[("div", ""), ("div", "h")],
+        );
+        assert_eq!(kept(&d.doc, ids[0]), (false, false));
+        // An element in a `display: none` subtree is left unstyled, as `resolve_style` wants.
+        let mut m = d.doc.mutate();
+        let hidden = m.create_element(qual_name!("div"), vec![]);
+        m.append_children(ids[1], &[hidden]);
+        drop(m);
+        d.doc.resolve(0.0);
+        let doc = &d.doc;
+
+        let _layout_thread_scope = LayoutThreadScope::enter();
+        let guard = &doc.guard;
+        let guards = StylesheetGuards { author: &guard.read(), ua_or_user: &guard.read() };
+        let shared = SharedStyleContext {
+            traversal_flags: TraversalFlags::empty(),
+            stylist: &doc.stylist,
+            options: GLOBAL_STYLE_DATA.options.clone(),
+            guards,
+            visited_styles_enabled: false,
+            animations: doc.animations.clone(),
+            current_time_for_animations: 0.0,
+            snapshot_map: &doc.snapshots,
+            registered_speculative_painters: &RegisteredPaintersImpl,
+        };
+        let mut thread_local = ThreadLocalStyleContext::new();
+        let mut context = StyleContext { shared: &shared, thread_local: &mut thread_local };
+        let node = &doc.nodes[hidden];
+        let styles = resolve_style(&mut context, node, RuleInclusion::All, None, None);
+        assert!(styles.pseudos.get(&PseudoElement::Before).is_some(), "forced ::before");
+        assert!(styles.pseudos.get(&PseudoElement::After).is_none(), "nothing matches ::after");
+    }
+
+    /// The index is rebuilt with the rules: a CSSOM edit that adds `content` makes the box
+    /// appear. This fails if `RuleChangeKind::StyleRuleDeclarations` stops rebuilding the
+    /// cascade data (stylesheet_set.rs).
+    #[test]
+    fn cssom_declaration_edit_makes_the_pseudo_appear() {
+        let (mut d, ids) = make_doc(None, ".c::before { color: red }", "cssom", &[("div", "c")]);
+        assert_eq!(boxes(&d.doc, ids[0]), (false, false));
+        d.doc
+            .stylesheet_rule_style_set_property(d.style, &[0], "content", "\"a\"", false)
+            .unwrap();
+        d.doc.resolve(0.0);
+        assert_eq!(boxes(&d.doc, ids[0]), (true, false), "content set through the CSSOM");
+        d.doc.stylesheet_rule_style_remove_property(d.style, &[0], "content").unwrap();
+        d.doc.resolve(0.0);
+        assert_eq!(boxes(&d.doc, ids[0]), (false, false), "and removed");
+    }
+
+    /// Selector flags from the index's own match drive sibling invalidation.
+    #[test]
+    fn last_child_after_follows_appends_and_removals() {
+        let (mut d, ids) = make_doc(
+            None,
+            ".a:last-child::after { content: '' } .a::after { color: red }",
+            "last-child",
+            &[("div", "a"), ("div", "a")],
+        );
+        assert_eq!(boxes(&d.doc, ids[0]), (false, false));
+        assert_eq!(boxes(&d.doc, ids[1]), (false, true));
+
+        let body = d.body;
+        let mut m = d.doc.mutate();
+        let attr = Attribute { name: qual_name!("class"), value: "a".into() };
+        let added = m.create_element(qual_name!("div"), vec![attr]);
+        m.append_children(body, &[added]);
+        drop(m);
+        d.doc.resolve(0.0);
+        assert_eq!(boxes(&d.doc, ids[1]), (false, false), "no longer the last child");
+        assert_eq!(boxes(&d.doc, added), (false, true), "the new last child");
+
+        let mut m = d.doc.mutate();
+        m.remove_node(added);
+        drop(m);
+        d.doc.resolve(0.0);
+        assert_eq!(boxes(&d.doc, ids[1]), (false, true), "the last child again");
+    }
+}
