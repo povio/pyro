@@ -279,17 +279,12 @@ impl Dom {
         if self.events.map.is_empty() && self.events.pin_on_connect.is_empty() {
             return;
         }
-        let mut stack = vec![root];
-        while let Some(i) = stack.pop() {
+        let mut i = root;
+        while i != NIL {
             if self.events.map.contains_key(&TargetKey::Node(i)) || self.events.pin_on_connect.contains(&i) {
                 self.events.reconnected.push(i);
             }
-            stack.extend(self.child_idx_iter(i));
-            if let Some(e) = self.n(i).element() {
-                if e.shadow_root != NIL {
-                    stack.push(e.shadow_root);
-                }
-            }
+            i = self.next_shadow_including_rev(i, root);
         }
     }
 

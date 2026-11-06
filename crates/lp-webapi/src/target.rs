@@ -444,7 +444,17 @@ pub(crate) fn reconcile_pins(page: &PageDom, dom: &mut Dom) {
         let mut pinned = page.pinned.borrow_mut();
         match dom.nodes_removed_since(last) {
             Some(nodes) => {
-                let realms: Vec<RealmId> = page.realms.borrow().keys().copied().collect();
+                // Pins (the identity-map worlds' wrappers) are few: checked
+                // where they are rather than looked up for every removed node.
+                let realms: Vec<RealmId> = if pinned.len() <= nodes.len() {
+                    pinned.retain(|(_, key), _| match key {
+                        TargetKey::Node(_) => dom.key_node(*key).is_some_and(|id| dom.is_in_active_document(id)),
+                        TargetKey::Other(_) => true,
+                    });
+                    Vec::new()
+                } else {
+                    page.realms.borrow().keys().copied().collect()
+                };
                 for id in nodes {
                     let key = TargetKey::Node(id.index());
                     let kept = page.node_kept(id.index());

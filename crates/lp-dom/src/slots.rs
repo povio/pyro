@@ -82,7 +82,9 @@ impl Dom {
     /// The children of `parent` changed (`nodes` were inserted or removed,
     /// already linked or unlinked).
     pub(crate) fn slots_after_child_change(&mut self, parent: u32, nodes: &[u32]) {
-        if parent == NIL {
+        // Every step below concerns a shadow tree or a shadow host: none
+        // without a shadow root.
+        if parent == NIL || self.shadow_root_count() == 0 {
             return;
         }
         self.signal_fallback_change(parent);

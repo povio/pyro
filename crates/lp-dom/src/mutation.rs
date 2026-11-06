@@ -83,6 +83,11 @@ pub(crate) struct MutationState {
 }
 
 impl MutationState {
+    /// Whether any node has an observer registration: no record is queued
+    /// without one.
+    pub(crate) fn any_registration(&self) -> bool {
+        !self.regs.is_empty()
+    }
     pub(crate) fn pins(&self, idx: u32) -> bool {
         self.pinned.contains_key(&idx)
     }

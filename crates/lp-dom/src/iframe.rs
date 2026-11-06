@@ -1,6 +1,7 @@
 //! Document-scoped iframe lifecycle notifications, independent of loader events.
 use crate::node::NIL;
 use crate::{Dom, DomResult, NodeId};
+use markup5ever::local_name;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -65,7 +66,9 @@ impl Dom {
     }
     fn iframe_element(&self, idx: u32) -> bool {
         // `<frame>` creates a child navigable like `<iframe>` does.
-        self.n(idx).element().is_some_and(|e| e.is_html() && matches!(&*e.name.local, "iframe" | "frame"))
+        self.n(idx)
+            .element()
+            .is_some_and(|e| matches!(e.name.local, local_name!("iframe") | local_name!("frame")) && e.is_html())
     }
     fn iframe_event(&mut self, document: NodeId, idx: u32, change: IframeChange) {
         let node = self.id_of(idx);
@@ -75,22 +78,13 @@ impl Dom {
     }
     fn iframe_subtree(&self, root: u32) -> Vec<u32> {
         let mut frames = Vec::new();
-        let mut stack = vec![root];
-        while let Some(idx) = stack.pop() {
+        // Children before shadow trees, in tree order.
+        let mut idx = root;
+        while idx != NIL {
             if self.iframe_element(idx) {
                 frames.push(idx);
             }
-            // Push siblings backwards without allocating a child list per node.
-            if let Some(e) = self.n(idx).element() {
-                if e.shadow_root != NIL {
-                    stack.push(e.shadow_root);
-                }
-            }
-            let mut child = self.n(idx).last_child;
-            while child != NIL {
-                stack.push(child);
-                child = self.n(child).prev;
-            }
+            idx = self.next_shadow_including_light_first(idx, root);
         }
         frames
     }
@@ -99,7 +93,7 @@ impl Dom {
     fn preparable_script(&self, idx: u32) -> bool {
         use crate::node::element_flags::{PARSER_INSERTED, SCRIPT_ALREADY_STARTED};
         self.n(idx).element().is_some_and(|e| {
-            &*e.name.local == "script"
+            e.name.local == local_name!("script")
                 && (e.is_html() || e.name.ns == markup5ever::ns!(svg))
                 && e.flags & (PARSER_INSERTED | SCRIPT_ALREADY_STARTED) == 0
         })
@@ -108,24 +102,14 @@ impl Dom {
     /// shadow-including tree order: the order of their post-connection steps.
     fn post_connection_subtree(&self, root: u32) -> Vec<(u32, IframeChange)> {
         let mut found = Vec::new();
-        let mut stack = vec![root];
-        while let Some(idx) = stack.pop() {
+        let mut idx = root;
+        while idx != NIL {
             if self.iframe_element(idx) {
                 found.push((idx, IframeChange::Connected));
             } else if self.preparable_script(idx) {
                 found.push((idx, IframeChange::Script));
             }
-            let mut child = self.n(idx).last_child;
-            while child != NIL {
-                stack.push(child);
-                child = self.n(child).prev;
-            }
-            // Pushed last, so the shadow tree is visited before the children.
-            if let Some(e) = self.n(idx).element() {
-                if e.shadow_root != NIL {
-                    stack.push(e.shadow_root);
-                }
-            }
+            idx = self.next_shadow_including(idx, root);
         }
         found
     }

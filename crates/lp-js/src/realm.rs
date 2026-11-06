@@ -193,6 +193,20 @@ pub type NativeCallbackHook = Rc<dyn for<'s> Fn(&Scope<'s>)>;
 /// Browser notification for a rejected promise; true cancels default reporting.
 pub type UnhandledRejectionHandler = for<'s> fn(&Scope<'s>, Value<'s>, Value<'s>) -> JsResult<bool>;
 
+/// How a new wrapper gets its prototype (`Scope::make_wrapper`).
+#[derive(Clone, Copy)]
+enum WrapperProto<'a> {
+    /// Its class's shape in the realm (the class's own prototype).
+    Shape(sys::spi::JSWrapperShapeRef),
+    /// Any prototype, set after the object is made.
+    Value(Value<'a>),
+}
+
+/// The `RealmInner::shapes` entry of a class whose wrappers are made without
+/// a shape (no patched JSC, or it made none): the shape is not asked for
+/// again. No shape has this address.
+const NO_SHAPE: sys::spi::JSWrapperShapeRef = ptr::dangling_mut::<c_void>();
+
 /// Embedder step of [`Scope::report_exception`] (HTML "report an exception"
 /// fires an `error` event at the Window); true means the exception was
 /// handled and the engine hooks are not told.
@@ -205,6 +219,11 @@ pub(crate) struct RealmInner {
     pub(crate) engine: Rc<EngineInner>,
     pub(crate) ctx: Cell<sys::JSGlobalContextRef>,
     protos: RefCell<Vec<Option<Persistent>>>,
+    /// The structure of each class's wrappers with its prototype of this
+    /// realm (patched JSC, `JSWrapperShapeCreate`), by class id: made with
+    /// the first wrapper, which every later one then starts with (null: not
+    /// made yet; [`NO_SHAPE`]: none). Released by `dispose`.
+    shapes: RefCell<Vec<sys::spi::JSWrapperShapeRef>>,
     /// Interface objects as seen by script (proxies over `targets`).
     ctors: RefCell<Vec<Option<Persistent>>>,
     /// The constructor functions behind the interface proxies.
@@ -361,6 +380,13 @@ impl RealmInner {
         self.exception_reporter.set(None);
         drop(self.native_callback_pending.take());
         self.protos.borrow_mut().clear();
+        let shapes = std::mem::take(&mut *self.shapes.borrow_mut());
+        if let Some(release) = sys::spi::get().wrapper_shape_release {
+            for shape in shapes.into_iter().filter(|&s| !s.is_null() && s != NO_SHAPE) {
+                // SAFETY: made by `JSWrapperShapeCreate` in this realm's group.
+                unsafe { release(self.engine.group(), shape) };
+            }
+        }
         self.ctors.borrow_mut().clear();
         self.targets.borrow_mut().clear();
         self.populated.borrow_mut().clear();
@@ -1005,9 +1031,52 @@ impl<'s> Scope<'s> {
             }
         }
         let id = self.class_id::<C>()?;
+        // A shape is asked for once the class was populated in this realm.
+        let shape = self.shape_entry(id);
+        if !shape.is_null() && shape != NO_SHAPE {
+            return self.make_wrapper::<C>(id, data, key, WrapperProto::Shape(shape));
+        }
         populate_class(self, id)?;
         let proto = self.proto(id)?;
-        self.make_wrapper::<C>(id, data, key, proto)
+        let made = match shape.is_null().then(|| self.make_shape(id, proto)).flatten() {
+            Some(shape) => WrapperProto::Shape(shape),
+            None => WrapperProto::Value(proto),
+        };
+        self.make_wrapper::<C>(id, data, key, made)
+    }
+
+    /// Class `id`'s entry in this realm's wrapper shapes: null until one is
+    /// asked for, [`NO_SHAPE`] when there is none.
+    #[inline]
+    fn shape_entry(&self, id: ClassId) -> sys::spi::JSWrapperShapeRef {
+        self.realm.shapes.borrow().get(id as usize).copied().unwrap_or(ptr::null_mut())
+    }
+
+    /// Makes the wrapper shape of class `id` (populated), whose prototype in
+    /// this realm is `proto`, and records it, or [`NO_SHAPE`] when there is
+    /// none: once per class and realm.
+    #[cold]
+    fn make_shape(&self, id: ClassId, proto: Value<'_>) -> Option<sys::spi::JSWrapperShapeRef> {
+        let shape = self.create_shape(id, proto).unwrap_or(NO_SHAPE);
+        let mut shapes = self.realm.shapes.borrow_mut();
+        if shapes.len() <= id as usize {
+            shapes.resize(id as usize + 1, ptr::null_mut());
+        }
+        shapes[id as usize] = shape;
+        (shape != NO_SHAPE).then_some(shape)
+    }
+
+    /// `JSWrapperShapeCreate` for class `id` with prototype `proto` (patched
+    /// JSC); `None` without it, or when JSC makes none.
+    fn create_shape(&self, id: ClassId, proto: Value<'_>) -> Option<sys::spi::JSWrapperShapeRef> {
+        let spi = sys::spi::get();
+        let create = spi.wrapper_shape_create?;
+        spi.object_make_wrapper?;
+        let proto = proto.as_object()?;
+        let class = self.realm.engine.classes.borrow().classes[id as usize].instance_class;
+        // SAFETY: a live class and an object of this context.
+        let shape = unsafe { create(self.ctx, class, proto.raw) };
+        (!shape.is_null()).then_some(shape)
     }
 
     /// Creates a wrapper whose prototype comes from `new_target` (constructors,
@@ -1025,7 +1094,7 @@ impl<'s> Scope<'s> {
             None => self.proto(id)?,
         };
         let proto = unsafe { Value::from_raw(self.ctx, proto.raw) };
-        self.make_wrapper::<C>(id, data, key, proto)
+        self.make_wrapper::<C>(id, data, key, WrapperProto::Value(proto))
     }
 
     /// Whether [`IdentityKey::OWNED`] wrappers can be made (patched
@@ -1075,28 +1144,62 @@ impl<'s> Scope<'s> {
         id: ClassId,
         data: C::Data,
         key: Option<IdentityKey>,
-        proto: Value<'_>,
+        proto: WrapperProto<'_>,
     ) -> JsResult<Object<'s>> {
-        let class = self.realm.engine.classes.borrow().classes[id as usize].instance_class;
         let owned = key.filter(|k| k.is_owned());
         let key = key.filter(|k| !k.is_owned());
+        let spi = sys::spi::get();
         let kept_while = match owned {
-            Some(_) => {
-                Some(sys::spi::get().weak_create_kept_while.ok_or(JsError::Unsupported("JSWeakCreateKeptWhile"))?)
-            }
+            Some(_) => Some(spi.weak_create_kept_while.ok_or(JsError::Unsupported("JSWeakCreateKeptWhile"))?),
             None => None,
         };
         let h = class::new_payload(&self.realm.engine, id, Kind::Instance, self.realm, key, data);
-        let obj = unsafe { sys::JSObjectMake(self.ctx, class, h as *mut c_void) };
+        if let Some(mode) = owned {
+            // Before the handle exists: the collector reads it from then on.
+            // SAFETY: h is the payload just made.
+            unsafe {
+                (*h).keep_alive.store(u8::from(mode == IdentityKey::OWNED_KEPT), std::sync::atomic::Ordering::Relaxed)
+            };
+        }
+        let (obj, mut weak) = match proto {
+            WrapperProto::Shape(shape) => {
+                // Object, prototype and handle in one call (patched JSC).
+                let make = spi.object_make_wrapper.expect("shapes are made with JSObjectMakeWrapper present");
+                let mut weak: sys::JSWeakRef = ptr::null();
+                // SAFETY: the flag byte lives as long as the payload, which
+                // outlives the handle (see below).
+                let keep = if owned.is_some() { unsafe { (*h).keep_alive.as_ptr() as *const u8 } } else { ptr::null() };
+                // SAFETY: a shape made in this realm.
+                let obj = unsafe { make(self.ctx, shape, h as *mut c_void, keep, &mut weak) };
+                if !obj.is_null() {
+                    (obj, weak)
+                } else {
+                    // JSC refused the shape: another global object made it
+                    // (never so while a realm's scopes run in its context).
+                    // The old way, then.
+                    match self.proto(id) {
+                        // SAFETY: no object holds the payload yet.
+                        Ok(proto) => (unsafe { self.make_object(id, h, proto.raw) }, ptr::null()),
+                        Err(e) => {
+                            // SAFETY: as above; dropped once.
+                            unsafe { ((*h).drop_fn)(h) };
+                            return Err(e);
+                        }
+                    }
+                }
+            }
+            // SAFETY: no object holds the payload yet.
+            WrapperProto::Value(proto) => (unsafe { self.make_object(id, h, proto.raw) }, ptr::null()),
+        };
         let obj = unsafe { Object::from_raw(self.ctx, obj) };
-        obj.set_prototype(proto);
-        if let (Some(mode), Some(kept_while)) = (owned, kept_while) {
+        if let (Some(_), Some(kept_while)) = (owned, kept_while) {
             // SAFETY: h is the live payload of obj; its flag byte lives as
             // long as the payload, which outlives the handle (released in
             // `class::release_owned` or `RealmInner::dispose`).
             unsafe {
-                (*h).keep_alive.store(u8::from(mode == IdentityKey::OWNED_KEPT), std::sync::atomic::Ordering::Relaxed);
-                let weak = kept_while(self.realm.engine.group(), obj.raw, (*h).keep_alive.as_ptr());
+                if weak.is_null() {
+                    weak = kept_while(self.realm.engine.group(), obj.raw, (*h).keep_alive.as_ptr());
+                }
                 (*h).weak.set(weak);
                 let head = self.realm.owned_head.get();
                 (*h).owned_next.set(head);
@@ -1114,6 +1217,23 @@ impl<'s> Scope<'s> {
             }
         }
         Ok(obj)
+    }
+
+    /// A class `id` wrapper with payload `h` by `JSObjectMake`, then given
+    /// its prototype `proto`. A new object's prototype runs no script and
+    /// makes no Objective-C temporaries, so no autorelease pool is pushed
+    /// (`Object::set_prototype` pushes one).
+    ///
+    /// # Safety
+    /// `h` is a payload of class `id` that no object holds yet, and `proto`
+    /// an object of this context.
+    unsafe fn make_object(&self, id: ClassId, h: *mut Header, proto: sys::JSValueRef) -> sys::JSObjectRef {
+        let class = self.realm.engine.classes.borrow().classes[id as usize].instance_class;
+        unsafe {
+            let obj = sys::JSObjectMake(self.ctx, class, h as *mut c_void);
+            sys::JSObjectSetPrototype(self.ctx, obj, proto);
+            obj
+        }
     }
 
     /// Borrows the payload of a `C` (or subclass) wrapper. The returned guard
@@ -1601,6 +1721,7 @@ pub(crate) fn create(engine: &Rc<EngineInner>, options: RealmOptions) -> JsResul
         engine: engine.clone(),
         ctx: Cell::new(ctx),
         protos: RefCell::new(Vec::new()),
+        shapes: RefCell::new(Vec::new()),
         ctors: RefCell::new(Vec::new()),
         targets: RefCell::new(Vec::new()),
         populated: RefCell::new(Vec::new()),

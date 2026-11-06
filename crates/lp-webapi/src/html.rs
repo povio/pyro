@@ -2924,8 +2924,8 @@ pub(crate) fn elements_from_point<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) 
     crate::layout_api::elements_from_point(s, n, a)
 }
 
-pub(crate) fn upgrade_if_custom<'s>(s: &Scope<'s>, page: &Rc<PageDom>, el: NodeId) -> JsResult<Value<'s>> {
-    crate::custom::create_element_value(s, page, el)
+pub(crate) fn upgrade_if_custom<'s>(s: &Scope<'s>, page: &Rc<PageDom>, doc: NodeId, el: NodeId) -> JsResult<Value<'s>> {
+    crate::custom::create_element_value(s, page, doc, el)
 }
 
 // ----- document.open / write / close ----------------------------------------

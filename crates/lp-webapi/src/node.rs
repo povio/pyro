@@ -71,6 +71,40 @@ pub fn wrap_node<'s>(s: &Scope<'s>, page: &PageDom, id: NodeId) -> JsResult<Obje
         }
         (ty, class, connected)
     };
+    make_node_wrapper(s, page, page_rc, id, ty, class, connected)
+}
+
+/// [`wrap_node`] for a node the calling DOM operation just made in `doc`
+/// (`createElement`, `createTextNode`): no world has a wrapper of it yet,
+/// and when `doc` is the document of `page`, the page of `s`, the node
+/// belongs to `s`'s realm. Then the searches for an existing wrapper, in
+/// this world and its siblings, and for the node's home realm are skipped.
+pub fn wrap_created_node<'s>(s: &Scope<'s>, page: &Rc<PageDom>, doc: NodeId, id: NodeId) -> JsResult<Object<'s>> {
+    let page_rc = page_of(s)?;
+    if doc != page.document() || page_rc.id() != page.id() {
+        return wrap_node(s, page, id);
+    }
+    let (ty, class) = {
+        let mut dom = page.dom.borrow_mut();
+        dom.add_ref(id).js()?;
+        let ty = dom.node(id).js()?.kind.node_type();
+        (ty, crate::html::class_for(&dom, id))
+    };
+    // Not in a document yet: nothing to pin.
+    make_node_wrapper(s, page, page_rc, id, ty, class, false)
+}
+
+/// The wrapper of `id` in `s`'s realm, which has none: `page` holds the
+/// node's new reference already.
+fn make_node_wrapper<'s>(
+    s: &Scope<'s>,
+    page: &PageDom,
+    page_rc: Rc<PageDom>,
+    id: NodeId,
+    ty: NodeType,
+    class: crate::html::ElClass,
+    connected: bool,
+) -> JsResult<Object<'s>> {
     let data = NodeData {
         target: EventTargetData { page: page_rc, key: TargetKey::Node(id.index()) },
         id,
@@ -101,7 +135,10 @@ fn register_node_wrapper(s: &Scope<'_>, page: &PageDom, id: NodeId, wrapper: Obj
     if owned {
         if let Some(r) = s.wrapper_ref(wrapper) {
             page.remember_wrapper(s.realm_id(), id.index(), r);
-            if let Some(node) = s.unwrap::<Node>(wrapper.value()) {
+            // SAFETY: the wrapper was made just now and nothing that could
+            // collect it runs before the payload is written (no allocation
+            // in between): no protect/unprotect pair is needed.
+            if let Some(node) = unsafe { s.unwrap_rooted::<Node>(wrapper.value()) } {
                 node.wrapper.set(r.to_raw());
             }
         }
@@ -157,9 +194,15 @@ pub fn node_value<'s>(s: &Scope<'s>, page: &PageDom, id: Option<NodeId>) -> JsRe
 
 /// Extracts a Node argument (WebIDL `Node`), with a TypeError otherwise.
 pub fn node_arg(s: &Scope<'_>, v: Value<'_>, what: &str) -> JsResult<NodeId> {
-    s.unwrap::<Node>(v)
-        .map(|n| n.id)
+    node_id_of(s, v)
         .ok_or_else(|| JsError::Type(format!("Failed to execute '{what}': parameter is not of type 'Node'.")))
+}
+
+/// The node of a Node wrapper value: its id is read at once, so no
+/// protect/unprotect pair keeps the wrapper alive meanwhile (`Scope::unwrap`).
+fn node_id_of(s: &Scope<'_>, v: Value<'_>) -> Option<NodeId> {
+    // SAFETY: the payload is read before anything can run a collection.
+    unsafe { s.unwrap_rooted::<Node>(v) }.map(|n| n.id)
 }
 
 pub fn opt_node_arg(s: &Scope<'_>, v: Value<'_>, what: &str) -> JsResult<Option<NodeId>> {
@@ -189,8 +232,8 @@ impl NodeArgs {
     fn collect(s: &Scope<'_>, a: &Args<'_>) -> JsResult<Self> {
         let mut items = Vec::with_capacity(a.len());
         for v in a.iter() {
-            items.push(match s.unwrap::<Node>(v) {
-                Some(nd) => NodeArg::Node(nd.id),
+            items.push(match node_id_of(s, v) {
+                Some(id) => NodeArg::Node(id),
                 None => NodeArg::Text(dom_string(v)?),
             });
         }
@@ -344,15 +387,26 @@ impl JsClass for Node {
             },
             |_s, n, v| {
                 // `DOMString?`: undefined converts to null, which sets "".
-                let set = |text: &str| {
-                    crate::input::blur_before_removal(n.page(), n.id, true);
-                    n.page().dom.borrow_mut().set_text_content(n.id, text).js()
-                };
-                if v.is_nullish() {
-                    set("")
-                } else {
-                    with_str(v, set)
+                // The value converts first (an object's toString runs before
+                // the blur, as in the spec), then a focused element inside
+                // loses focus, which runs script. A string's characters are
+                // borrowed only after that: a handler that uses the string
+                // as a property key can swap its buffer for an atom's, and a
+                // GC can then free the old one.
+                let blur = || crate::input::blur_before_removal(n.page(), n.id, true);
+                let set = |text: &str| n.page().dom.borrow_mut().set_text_content(n.id, text).js();
+                // A string (the usual value) needs no nullish test first.
+                if v.is_string() {
+                    blur();
+                    return with_str(v, set);
                 }
+                if v.is_nullish() {
+                    blur();
+                    return set("");
+                }
+                let text = dom_string(v)?;
+                blur();
+                set(&text)
             },
         );
         def.pure_getter_typed("parentNode", lp_js::GetterResult::ObjectOrNull, |s, n| {
@@ -1032,13 +1086,21 @@ impl JsClass for Element {
             "id",
             lp_js::GetterResult::String,
             |s, n| Ok(atom_or_empty(s, n.page().dom.borrow().element(n.id).js()?.id_atom())),
-            |_s, n, v| with_str(v, |id| n.page().dom.borrow_mut().set_attribute(n.id, "id", id).js()),
+            |_s, n, v| {
+                with_str(v, |id| {
+                    n.page().dom.borrow_mut().set_attribute_local(n.id, &markup5ever::local_name!("id"), id).js()
+                })
+            },
         );
         def.pure_accessor_typed(
             "className",
             lp_js::GetterResult::String,
             |s, n| Ok(class_name(s, n.page().dom.borrow().element(n.id).js()?)),
-            |_s, n, v| with_str(v, |class| n.page().dom.borrow_mut().set_attribute(n.id, "class", class).js()),
+            |_s, n, v| {
+                with_str(v, |class| {
+                    n.page().dom.borrow_mut().set_attribute_local(n.id, &markup5ever::local_name!("class"), class).js()
+                })
+            },
         );
         def.pure_accessor_typed(
             "slot",
@@ -1047,14 +1109,22 @@ impl JsClass for Element {
                 let dom = n.page().dom.borrow();
                 Ok(s.string(dom.element(n.id).js()?.attr_local(&markup5ever::local_name!("slot")).unwrap_or("")))
             },
-            |_s, n, v| with_str(v, |slot| n.page().dom.borrow_mut().set_attribute(n.id, "slot", slot).js()),
+            |_s, n, v| {
+                with_str(v, |slot| {
+                    n.page().dom.borrow_mut().set_attribute_local(n.id, &markup5ever::local_name!("slot"), slot).js()
+                })
+            },
         );
         def.pure_accessor_typed(
             "classList",
             lp_js::GetterResult::ObjectOrNull,
             |s, n| Ok(collections::token_list(s, n.page(), n.id, "class")?.value()),
             // [PutForwards=value]
-            |_s, n, v| with_str(v, |value| n.page().dom.borrow_mut().set_attribute(n.id, "class", value).js()),
+            |_s, n, v| {
+                with_str(v, |value| {
+                    n.page().dom.borrow_mut().set_attribute_local(n.id, &markup5ever::local_name!("class"), value).js()
+                })
+            },
         );
         def.getter("part", |s, n| Ok(collections::token_list(s, n.page(), n.id, "part")?.value()));
         def.getter("attributes", |s, n| Ok(collections::named_node_map(s, n.page(), n.id)?.value()));
@@ -1628,27 +1698,36 @@ impl JsClass for Document {
             let el = with_arg_str(&a, 0, "Document.createElement", |name| {
                 n.page().dom.borrow_mut().create_element(n.id, name).js()
             })?;
-            if let Some(is) = a.get(1).as_object().map(|o| o.get_atom("is")).transpose()?.filter(|v| !v.is_undefined()) {
+            if let Some(is) = a
+                .opt(1)
+                .and_then(|o| o.as_object())
+                .map(|o| o.get_atom("is"))
+                .transpose()?
+                .filter(|v| !v.is_undefined())
+            {
                 let arg0 = dom_string(is)?;
                 n.page().dom.borrow_mut().set_attribute(el, "is", &arg0).js()?;
             }
-            crate::html::upgrade_if_custom(s, n.page(), el)
+            crate::html::upgrade_if_custom(s, n.page(), n.id, el)
         });
         def.method("createElementNS", 2, |s, n, a| {
             a.require(2, "Document.createElementNS")?;
             let ns = opt_dom_string(a.get(0))?;
             let q = dom_string(a.get(1))?;
             let el = n.page().dom.borrow_mut().create_element_ns(n.id, ns.as_deref(), &q).js()?;
-            crate::html::upgrade_if_custom(s, n.page(), el)
+            crate::html::upgrade_if_custom(s, n.page(), n.id, el)
         });
         def.method("createTextNode", 1, |s, n, a| {
-            let t = with_arg_str(&a, 0, "Document.createTextNode", |d| n.page().dom.borrow_mut().create_text(n.id, d).js())?;
-            Ok(wrap_node(s, n.page(), t)?.value())
+            let t = with_arg_str(&a, 0, "Document.createTextNode", |d| {
+                n.page().dom.borrow_mut().create_text(n.id, d).js()
+            })?;
+            Ok(wrap_created_node(s, n.page(), n.id, t)?.value())
         });
         def.method("createComment", 1, |s, n, a| {
-            let t =
-                with_arg_str(&a, 0, "Document.createComment", |d| n.page().dom.borrow_mut().create_comment(n.id, d).js())?;
-            Ok(wrap_node(s, n.page(), t)?.value())
+            let t = with_arg_str(&a, 0, "Document.createComment", |d| {
+                n.page().dom.borrow_mut().create_comment(n.id, d).js()
+            })?;
+            Ok(wrap_created_node(s, n.page(), n.id, t)?.value())
         });
         def.method("createAttribute", 1, |s, n, a| {
             let name = arg_string(&a, 0, "Document.createAttribute")?;
@@ -1681,7 +1760,7 @@ impl JsClass for Document {
         });
         def.method("createDocumentFragment", 0, |s, n, _a| {
             let f = n.page().dom.borrow_mut().create_fragment(n.id).js()?;
-            Ok(wrap_node(s, n.page(), f)?.value())
+            Ok(wrap_created_node(s, n.page(), n.id, f)?.value())
         });
         def.method("createEvent", 1, |s, n, a| {
             let iface = arg_string(&a, 0, "Document.createEvent")?;
