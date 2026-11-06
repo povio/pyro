@@ -194,10 +194,12 @@ impl BaseDocument {
         timer.record_time("transform");
         phase_profile::mark(5, &mut phase_t);
 
-        // Build paint children / stacking contexts for damaged subtrees. Runs
-        // after layout and transforms so that stacking-context roots created by
-        // this frame's transforms are picked up, and before damage is cleared.
-        self.build_paint_tree(root_node_id);
+        // Paint children / stacking contexts are rebuilt lazily, by the first
+        // paint or hit test after this resolve (`ensure_paint_tree`), for the
+        // nodes `clear_damage_and_dirty_flags` flags `PAINT_TREE_DIRTY` below.
+        // Forced layouts (`getBoundingClientRect` and the like) never read
+        // them, so a run of them builds the tree once, not once per resolve.
+        self.paint_tree_dirty = true;
         timer.record_time("paint_tree");
         phase_profile::mark(6, &mut phase_t);
 

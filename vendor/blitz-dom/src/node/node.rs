@@ -64,6 +64,17 @@ bitflags! {
         /// descendants', when this pass propagated damage. Set by `propagate_damage_flags`, cleared
         /// with the damage; tables read it to rebuild only the rows and cells that changed.
         const OWN_DAMAGE = 0b00010000;
+        /// The node's `paint_children`, `stacking_context` or
+        /// `sc_contribution_cache` may be out of date: some resolve since the
+        /// last paint-tree build stored `REBUILD_STACKING_CONTEXT` damage on it
+        /// (set by `clear_damage_and_dirty_flags`, removed when
+        /// `ensure_paint_tree` rebuilds the node). New nodes start dirty.
+        const PAINT_TREE_DIRTY = 0b00100000;
+        /// The node itself had damage that reaches the paint tree (`OWN_DAMAGE` with
+        /// `REBUILD_STACKING_CONTEXT`) in some resolve since the last paint-tree build: a table
+        /// reads it where it used to read `OWN_DAMAGE`, which each resolve clears
+        /// (`table_paint_children_kept`). Set and cleared with `PAINT_TREE_DIRTY`.
+        const PAINT_TREE_OWN_DAMAGE = 0b01000000;
     }
 }
 
@@ -449,7 +460,7 @@ impl Node {
             stacking_context: None,
             sc_contribution_cache: RefCell::new(ThinVec::new()),
 
-            flags: NodeFlags::empty(),
+            flags: NodeFlags::PAINT_TREE_DIRTY,
             out_of_flow: AtomicBool::new(false),
             data,
         }
