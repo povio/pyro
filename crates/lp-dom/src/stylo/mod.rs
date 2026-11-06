@@ -3,6 +3,7 @@
 //! ([`serialize`]). Computed styles themselves come from the layout
 //! engine's cascade (Blitz), whose `ComputedValues` are Stylo's too.
 
+pub mod declarations;
 mod hints;
 mod node;
 pub mod select;

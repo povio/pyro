@@ -2,15 +2,20 @@
 //! `style` attribute, and `CSSStyleSheet` for `<style>`/`<link>`, whose rules
 //! are parsed from the sheet text when a script first asks for them.
 //!
-//! Shorthand expansion (e.g. `margin` -> `margin-top`) is not modelled:
-//! declarations are kept as written. Computed styles come from lp-dom's style
-//! engine via `getComputedStyle`.
+//! Declaration blocks are Stylo's (`lp_dom::stylo::declarations`), as the
+//! cascade parses them: invalid values are dropped, shorthands expand into
+//! their longhands (`margin` sets `margin-top`, ...), values serialize as
+//! CSSOM says (`#f00` reads back `rgb(255, 0, 0)`), and a write serializes
+//! the whole block back. Properties Chrome has that the engine's Stylo does
+//! not parse ([`UNPARSED`]) are kept as written. Computed styles come from
+//! lp-dom's style engine via `getComputedStyle`.
 
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use lp_dom::cssom::{normalize_selector, parse_rules, Namespaces, ParsedRule};
+use lp_dom::stylo::declarations::{self, DeclarationBlock};
 use lp_dom::NodeId;
 use lp_js::{ClassDef, IdentityKey, JsClass, JsError, JsResult, NoParent, Object, Scope, Value};
 
@@ -27,76 +32,82 @@ pub struct Declaration {
 }
 
 /// Splits a declaration block respecting quotes, parentheses and comments.
+/// The delimiters are ASCII, so the scan runs over bytes; a segment is
+/// copied only for what it keeps.
 pub fn parse_declarations(text: &str) -> Vec<Declaration> {
     let mut out: Vec<Declaration> = Vec::new();
+    let bytes = text.as_bytes();
     let mut depth = 0i32;
-    let mut quote: Option<char> = None;
+    let mut quote: Option<u8> = None;
     let mut start = 0;
-    let bytes: Vec<(usize, char)> = text.char_indices().collect();
-    let mut segments = Vec::new();
     let mut i = 0;
     while i < bytes.len() {
-        let (pos, c) = bytes[i];
+        let c = bytes[i];
         match quote {
             Some(q) => {
-                if c == '\\' {
+                if c == b'\\' {
                     i += 1;
                 } else if c == q {
                     quote = None;
                 }
             }
             None => match c {
-                '"' | '\'' => quote = Some(c),
-                '(' => depth += 1,
-                ')' => depth -= 1,
-                ';' if depth <= 0 => {
-                    segments.push(&text[start..pos]);
-                    start = pos + 1;
+                b'"' | b'\'' => quote = Some(c),
+                b'(' => depth += 1,
+                b')' => depth -= 1,
+                b';' if depth <= 0 => {
+                    push_declaration(&mut out, &text[start..i]);
+                    start = i + 1;
                 }
                 _ => {}
             },
         }
         i += 1;
     }
-    segments.push(&text[start..]);
-    for seg in segments {
-        let seg = strip_comments(seg);
-        let Some((name, value)) = seg.split_once(':') else { continue };
-        let name = name.trim();
-        if name.is_empty() {
-            continue;
-        }
-        let name = if name.starts_with("--") { name.to_owned() } else { name.to_ascii_lowercase() };
-        let mut value = value.trim().to_owned();
-        let mut important = false;
-        if let Some(idx) = value.to_ascii_lowercase().rfind("!important") {
-            if value[idx + 10..].trim().is_empty() {
-                value.truncate(idx);
-                value = value.trim().to_owned();
-                important = true;
-            }
-        }
-        if value.is_empty() {
-            continue;
-        }
-        out.retain(|d| d.name != name);
-        out.push(Declaration { name, value, important });
-    }
+    push_declaration(&mut out, &text[start..]);
     out
 }
 
-fn strip_comments(s: &str) -> String {
+/// One `name: value [!important]` segment of [`parse_declarations`].
+fn push_declaration(out: &mut Vec<Declaration>, seg: &str) {
+    let seg = strip_comments(seg);
+    let Some((name, value)) = seg.split_once(':') else { return };
+    let name = name.trim();
+    if name.is_empty() {
+        return;
+    }
+    let name = if name.starts_with("--") { name.to_owned() } else { name.to_ascii_lowercase() };
+    let mut value = value.trim();
+    let mut important = false;
+    if value.len() >= 10 && value.is_char_boundary(value.len() - 10) {
+        let (rest, flag) = value.split_at(value.len() - 10);
+        if flag.eq_ignore_ascii_case("!important") {
+            value = rest.trim_end();
+            important = true;
+        }
+    }
+    if value.is_empty() {
+        return;
+    }
+    out.retain(|d| d.name != name);
+    out.push(Declaration { name, value: value.to_owned(), important });
+}
+
+fn strip_comments(s: &str) -> std::borrow::Cow<'_, str> {
+    if !s.contains("/*") {
+        return std::borrow::Cow::Borrowed(s);
+    }
     let mut out = String::with_capacity(s.len());
     let mut rest = s;
     while let Some(i) = rest.find("/*") {
         out.push_str(&rest[..i]);
         match rest[i + 2..].find("*/") {
             Some(j) => rest = &rest[i + 2 + j + 2..],
-            None => return out,
+            None => return std::borrow::Cow::Owned(out),
         }
     }
     out.push_str(rest);
-    out
+    std::borrow::Cow::Owned(out)
 }
 
 pub fn serialize_declarations(decls: &[Declaration]) -> String {
@@ -129,17 +140,188 @@ pub fn camel_to_css(name: &str) -> String {
     out
 }
 
-fn known_property(name: &str) -> bool {
-    // Property names accepted through named access: anything that looks like
-    // a CSS property in camelCase. Methods/attributes on the prototype win
-    // because the named hook does not override builtins.
-    !name.is_empty()
-        && name.chars().all(|c| c.is_ascii_alphanumeric())
-        && name.chars().next().is_some_and(|c| c.is_ascii_lowercase())
+/// Properties Chrome supports that the engine's Stylo (servo build) may not
+/// parse: their declarations are kept as written, so scripts that set and
+/// read them back keep working. Only the names Stylo does not know count.
+const UNPARSED: &[&str] = &[
+    "-webkit-appearance",
+    "-webkit-backdrop-filter",
+    "-webkit-box-align",
+    "-webkit-box-decoration-break",
+    "-webkit-box-direction",
+    "-webkit-box-flex",
+    "-webkit-box-ordinal-group",
+    "-webkit-box-orient",
+    "-webkit-box-pack",
+    "-webkit-font-smoothing",
+    "-webkit-hyphens",
+    "-webkit-line-clamp",
+    "-webkit-mask",
+    "-webkit-mask-image",
+    "-webkit-mask-position",
+    "-webkit-mask-repeat",
+    "-webkit-mask-size",
+    "-webkit-print-color-adjust",
+    "-webkit-tap-highlight-color",
+    "-webkit-text-fill-color",
+    "-webkit-text-stroke",
+    "-webkit-text-stroke-color",
+    "-webkit-text-stroke-width",
+    "-webkit-user-drag",
+    "accent-color",
+    "anchor-name",
+    "appearance",
+    "backdrop-filter",
+    "box-decoration-break",
+    "caret-color",
+    "color-scheme",
+    "contain-intrinsic-height",
+    "contain-intrinsic-size",
+    "contain-intrinsic-width",
+    "content-visibility",
+    "field-sizing",
+    "forced-color-adjust",
+    "hyphens",
+    "interpolate-size",
+    "line-clamp",
+    "mask",
+    "mask-clip",
+    "mask-composite",
+    "mask-image",
+    "mask-mode",
+    "mask-origin",
+    "mask-position",
+    "mask-repeat",
+    "mask-size",
+    "mask-type",
+    "offset-distance",
+    "offset-path",
+    "offset-rotate",
+    "overflow-anchor",
+    "overflow-clip-margin",
+    "overscroll-behavior",
+    "overscroll-behavior-x",
+    "overscroll-behavior-y",
+    "paint-order",
+    "position-anchor",
+    "position-area",
+    "position-try",
+    "print-color-adjust",
+    "resize",
+    "ruby-position",
+    "scroll-behavior",
+    "scroll-margin",
+    "scroll-margin-bottom",
+    "scroll-margin-left",
+    "scroll-margin-right",
+    "scroll-margin-top",
+    "scroll-padding",
+    "scroll-padding-bottom",
+    "scroll-padding-left",
+    "scroll-padding-right",
+    "scroll-padding-top",
+    "scroll-snap-align",
+    "scroll-snap-stop",
+    "scroll-snap-type",
+    "scrollbar-color",
+    "scrollbar-gutter",
+    "scrollbar-width",
+    "shape-image-threshold",
+    "shape-margin",
+    "shape-outside",
+    "tab-size",
+    "text-anchor",
+    "text-emphasis",
+    "text-emphasis-color",
+    "text-emphasis-position",
+    "text-emphasis-style",
+    "text-orientation",
+    "text-underline-position",
+    "text-wrap",
+    "text-wrap-mode",
+    "text-wrap-style",
+    "view-transition-name",
+    "white-space-collapse",
+    "zoom",
+];
+
+/// A property Chrome has and Stylo does not parse (kept as written).
+fn unparsed(name: &str) -> bool {
+    UNPARSED.binary_search(&name).is_ok() && !lp_dom::stylo::is_property(name)
+}
+
+/// A CSS property name `CSSStyleDeclaration` reads and writes: one Stylo
+/// knows, a custom property, or an [`UNPARSED`] one.
+fn css_property(name: &str) -> bool {
+    lp_dom::stylo::is_property(name) || unparsed(name)
+}
+
+/// The property a named member stands for: the camelCase IDL attribute
+/// (`backgroundColor`, `webkitTransform`) or the dashed name itself
+/// (`background-color`, as Chrome also exposes). Methods and attributes on
+/// the prototype win because the named hook does not override builtins.
+fn named_property(name: &str) -> Option<String> {
+    if !name.chars().next().is_some_and(|c| c.is_ascii_lowercase() || c == '-') {
+        return None;
+    }
+    let css = if name.contains('-') {
+        if name.starts_with("--") || !name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-') {
+            return None;
+        }
+        name.to_owned()
+    } else {
+        if !name.chars().all(|c| c.is_ascii_alphanumeric()) {
+            return None;
+        }
+        camel_to_css(name)
+    };
+    css_property(&css).then_some(css)
+}
+
+/// A property name as `getPropertyValue`/`setProperty` take it: custom
+/// properties case-sensitive, others ASCII-lowercased.
+fn property_arg(name: String) -> String {
+    if name.starts_with("--") {
+        name
+    } else {
+        name.to_ascii_lowercase()
+    }
 }
 
 pub struct StyleData {
     source: StyleSource,
+}
+
+/// A declaration block as CSSOM sees it: Stylo's declarations, then the
+/// [`UNPARSED`] ones kept as written.
+struct Block {
+    parsed: DeclarationBlock,
+    kept: Vec<Declaration>,
+}
+
+impl Block {
+    fn parse(text: &str) -> Block {
+        let kept = if text.is_empty() {
+            Vec::new()
+        } else {
+            parse_declarations(text).into_iter().filter(|d| unparsed(&d.name)).collect()
+        };
+        Block { parsed: DeclarationBlock::parse(text), kept }
+    }
+    fn names(&self) -> Vec<String> {
+        let mut names = self.parsed.names();
+        names.extend(self.kept.iter().map(|d| d.name.clone()));
+        names
+    }
+    fn css_text(&self) -> String {
+        let parsed = self.parsed.css_text();
+        let kept = serialize_declarations(&self.kept);
+        match (parsed.is_empty(), kept.is_empty()) {
+            (_, true) => parsed,
+            (true, false) => kept,
+            (false, false) => format!("{parsed} {kept}"),
+        }
+    }
 }
 
 /// What a CSSStyleDeclaration reads and writes.
@@ -151,47 +333,162 @@ enum StyleSource {
 }
 
 impl StyleData {
-    fn decls(&self) -> Vec<Declaration> {
+    /// The block's text: the `style` attribute, or the rule's block.
+    fn text(&self) -> String {
         match &self.source {
             StyleSource::Inline(el) => {
-                let dom = el.page.dom.borrow();
-                parse_declarations(dom.get_attribute(el.id, "style").ok().flatten().unwrap_or(""))
+                el.page.dom.borrow().get_attribute(el.id, "style").ok().flatten().unwrap_or("").to_owned()
             }
             StyleSource::Rule { node, .. } => match &node.kind {
-                RuleKind::Style { block, .. } => parse_declarations(&block.borrow()),
-                _ => Vec::new(),
+                RuleKind::Style { block, .. } => block.borrow().clone(),
+                _ => String::new(),
             },
         }
     }
-    fn write(&self, decls: &[Declaration]) -> JsResult<()> {
+    fn block(&self) -> Block {
+        Block::parse(&self.text())
+    }
+    /// Serializes `block` back into the attribute or the rule.
+    fn write(&self, block: &Block) -> JsResult<()> {
+        self.write_raw(block.css_text())
+    }
+    /// Writes `text` unless it is what the block already holds (`before`):
+    /// an unchanged block is no attribute mutation.
+    fn write_text(&self, before: &str, text: String) -> JsResult<()> {
+        if text == before {
+            return Ok(());
+        }
+        self.write_raw(text)
+    }
+    fn write_raw(&self, text: String) -> JsResult<()> {
         match &self.source {
-            StyleSource::Inline(el) => {
-                el.page.dom.borrow_mut().set_attribute(el.id, "style", &serialize_declarations(decls)).js()
-            }
+            StyleSource::Inline(el) => el.page.dom.borrow_mut().set_attribute(el.id, "style", &text).js(),
             StyleSource::Rule { owner, node } => {
                 if let RuleKind::Style { block, .. } = &node.kind {
-                    *block.borrow_mut() = serialize_declarations(decls);
+                    *block.borrow_mut() = text;
                     commit_edit(&owner.page, owner.id, &sheet_model(&owner.page, owner.id));
                 }
                 Ok(())
             }
         }
     }
-    fn get(&self, name: &str) -> String {
-        self.decls().into_iter().find(|d| d.name == name).map(|d| d.value).unwrap_or_default()
+    /// The declarations of `text` that can change what `name` reads (those
+    /// setting one of its longhands), as a block's text.
+    fn relevant(text: &str, name: &str) -> Option<String> {
+        let relevant: Vec<Declaration> =
+            parse_declarations(text).into_iter().filter(|d| declarations::overlaps(&d.name, name)).collect();
+        (!relevant.is_empty()).then(|| serialize_declarations(&relevant))
     }
+    /// `getPropertyValue(name)`. Only the declarations that can change the
+    /// answer are parsed.
+    fn get(&self, name: &str) -> String {
+        let text = self.text();
+        if text.is_empty() {
+            return String::new();
+        }
+        if unparsed(name) {
+            return parse_declarations(&text).into_iter().find(|d| d.name == name).map(|d| d.value).unwrap_or_default();
+        }
+        Self::relevant(&text, name).map(|text| DeclarationBlock::parse(&text).value(name)).unwrap_or_default()
+    }
+    /// `getPropertyPriority(name) == "important"`.
+    fn important(&self, name: &str) -> bool {
+        let text = self.text();
+        if unparsed(name) {
+            return parse_declarations(&text).iter().any(|d| d.name == name && d.important);
+        }
+        Self::relevant(&text, name).is_some_and(|text| DeclarationBlock::parse(&text).important(name))
+    }
+    /// The declarations of `text` as written, but those of no property.
+    fn written(text: &str) -> Vec<Declaration> {
+        let mut decls = parse_declarations(text);
+        decls.retain(|d| css_property(&d.name));
+        decls
+    }
+    /// `setProperty(name, value, priority)`: an empty value removes the
+    /// property; an invalid one, or a name that is no property, changes
+    /// nothing. When no other declaration sets a longhand of `name`, the new
+    /// declaration replaces its own in place and the others stay as written;
+    /// otherwise the whole block is parsed, updated and serialized.
     fn set(&self, name: &str, value: &str, important: bool) -> JsResult<()> {
-        let mut decls = self.decls();
         let value = value.trim();
         if value.is_empty() {
-            decls.retain(|d| d.name != name);
-        } else if let Some(d) = decls.iter_mut().find(|d| d.name == name) {
-            d.value = value.to_owned();
-            d.important = important;
-        } else {
-            decls.push(Declaration { name: name.to_owned(), value: value.to_owned(), important });
+            self.remove(name)?;
+            return Ok(());
         }
-        self.write(&decls)
+        if !css_property(name) {
+            return Ok(());
+        }
+        let text = self.text();
+        if unparsed(name) {
+            let mut decls = Self::written(&text);
+            match decls.iter_mut().find(|d| d.name == name) {
+                Some(d) => {
+                    d.value = value.to_owned();
+                    d.important = important;
+                }
+                None => decls.push(Declaration { name: name.to_owned(), value: value.to_owned(), important }),
+            }
+            return self.write_text(&text, serialize_declarations(&decls));
+        }
+        let decls = Self::written(&text);
+        if decls.iter().any(|d| d.name != name && !unparsed(&d.name) && declarations::overlaps(&d.name, name)) {
+            let mut block = Block::parse(&text);
+            return match block.parsed.set(name, value, important) {
+                Some(true) => self.write(&block),
+                _ => Ok(()),
+            };
+        }
+        let Some(declaration) = declarations::declaration_text(name, value, important) else { return Ok(()) };
+        let mut out = Vec::with_capacity(decls.len() + 1);
+        let mut replaced = false;
+        for d in &decls {
+            if d.name == name {
+                if !replaced {
+                    out.push(declaration.clone());
+                }
+                replaced = true;
+            } else {
+                out.push(serialize_declarations(std::slice::from_ref(d)));
+            }
+        }
+        if !replaced {
+            out.push(declaration);
+        }
+        self.write_text(&text, out.join(" "))
+    }
+    /// `removeProperty(name)`: the value it had.
+    fn remove(&self, name: &str) -> JsResult<String> {
+        let text = self.text();
+        if !text.contains(':') {
+            return Ok(String::new());
+        }
+        let mut decls = Self::written(&text);
+        if unparsed(name) {
+            let Some(i) = decls.iter().position(|d| d.name == name) else { return Ok(String::new()) };
+            let old = decls.remove(i).value;
+            self.write_text(&text, serialize_declarations(&decls))?;
+            return Ok(old);
+        }
+        if !decls.iter().any(|d| declarations::overlaps(&d.name, name)) {
+            return Ok(String::new());
+        }
+        if decls.iter().all(|d| d.name == name || unparsed(&d.name) || !declarations::overlaps(&d.name, name)) {
+            let old = Self::relevant(&text, name).map(|t| DeclarationBlock::parse(&t).value(name)).unwrap_or_default();
+            decls.retain(|d| d.name != name);
+            self.write_text(&text, serialize_declarations(&decls))?;
+            return Ok(old);
+        }
+        let mut block = Block::parse(&text);
+        let old = block.parsed.value(name);
+        if block.parsed.remove(name) {
+            self.write(&block)?;
+        }
+        Ok(old)
+    }
+    /// `cssText = text`: the block parsed from `text`, serialized.
+    fn set_css_text(&self, text: &str) -> JsResult<()> {
+        self.write(&Block::parse(text))
     }
 }
 
@@ -203,13 +500,10 @@ impl JsClass for CssStyleDeclaration {
     fn define(def: &mut ClassDef<Self>) {
         def.accessor(
             "cssText",
-            |s, st| Ok(s.string(&serialize_declarations(&st.decls()))),
-            |_s, st, v| {
-                let decls = parse_declarations(&dom_string(v)?);
-                st.write(&decls)
-            },
+            |s, st| Ok(s.string(&st.block().css_text())),
+            |_s, st, v| st.set_css_text(&dom_string(v)?),
         );
-        def.getter("length", |s, st| Ok(s.number(st.decls().len() as f64)));
+        def.getter("length", |s, st| Ok(s.number(st.block().names().len() as f64)));
         def.getter("parentRule", |s, st| match &st.source {
             StyleSource::Inline(_) => Ok(s.null()),
             StyleSource::Rule { owner, node } => Ok(rule_wrapper(s, node, owner)?.value()),
@@ -221,22 +515,19 @@ impl JsClass for CssStyleDeclaration {
         );
         def.method("item", 1, |s, st, a| {
             let i = to_u32(a.get(0))? as usize;
-            Ok(s.string(st.decls().get(i).map(|d| d.name.as_str()).unwrap_or("")))
+            Ok(s.string(st.block().names().get(i).map(String::as_str).unwrap_or("")))
         });
-        def.indexed(|s, st, i| Ok(st.decls().get(i as usize).map(|d| s.string(&d.name))));
+        def.indexed(|s, st, i| Ok(st.block().names().get(i as usize).map(|name| s.string(name))));
         def.method("getPropertyValue", 1, |s, st, a| {
-            let name = arg_string(&a, 0, "CSSStyleDeclaration.getPropertyValue")?;
-            let name = if name.starts_with("--") { name } else { name.to_ascii_lowercase() };
+            let name = property_arg(arg_string(&a, 0, "CSSStyleDeclaration.getPropertyValue")?);
             Ok(s.string(&st.get(&name)))
         });
         def.method("getPropertyPriority", 1, |s, st, a| {
-            let name = arg_string(&a, 0, "CSSStyleDeclaration.getPropertyPriority")?.to_ascii_lowercase();
-            let imp = st.decls().iter().any(|d| d.name == name && d.important);
-            Ok(s.string(if imp { "important" } else { "" }))
+            let name = property_arg(arg_string(&a, 0, "CSSStyleDeclaration.getPropertyPriority")?);
+            Ok(s.string(if st.important(&name) { "important" } else { "" }))
         });
         def.method("setProperty", 2, |s, st, a| {
-            let name = arg_string(&a, 0, "CSSStyleDeclaration.setProperty")?;
-            let name = if name.starts_with("--") { name } else { name.to_ascii_lowercase() };
+            let name = property_arg(arg_string(&a, 0, "CSSStyleDeclaration.setProperty")?);
             let value = null_to_empty(a.get(1))?;
             let prio = if a.get(2).is_undefined() { String::new() } else { dom_string(a.get(2))? };
             if !prio.is_empty() && !prio.eq_ignore_ascii_case("important") {
@@ -246,26 +537,20 @@ impl JsClass for CssStyleDeclaration {
             Ok(s.undefined())
         });
         def.method("removeProperty", 1, |s, st, a| {
-            let name = arg_string(&a, 0, "CSSStyleDeclaration.removeProperty")?.to_ascii_lowercase();
-            let old = st.get(&name);
-            st.set(&name, "", false)?;
-            Ok(s.string(&old))
+            let name = property_arg(arg_string(&a, 0, "CSSStyleDeclaration.removeProperty")?);
+            Ok(s.string(&st.remove(&name)?))
         });
         def.named(false, |s, st, name| {
-            if !known_property(name) {
-                return Ok(None);
-            }
-            Ok(Some(s.string(&st.get(&camel_to_css(name)))))
+            let Some(property) = named_property(name) else { return Ok(None) };
+            Ok(Some(s.string(&st.get(&property))))
         });
         def.named_setter(|_s, st, name, v| {
-            if !known_property(name) {
-                return Ok(false);
-            }
+            let Some(property) = named_property(name) else { return Ok(false) };
             let value = if v.is_null() { String::new() } else { dom_string(v)? };
-            st.set(&camel_to_css(name), &value, false)?;
+            st.set(&property, &value, false)?;
             Ok(true)
         });
-        def.property_names(|_s, st| Ok(st.decls().into_iter().map(|d| d.name).collect()));
+        def.property_names(|_s, st| Ok(st.block().names()));
     }
 }
 
@@ -575,19 +860,14 @@ impl JsClass for CssStyleRule {
                 if let Some(o) = s.lookup_identity(key) {
                     return Ok(o.value());
                 }
-                let source = StyleSource::Rule {
-                    owner: NodeHold::new(&r.owner.page, r.owner.id)?,
-                    node: r.node.clone(),
-                };
+                let source =
+                    StyleSource::Rule { owner: NodeHold::new(&r.owner.page, r.owner.id)?, node: r.node.clone() };
                 Ok(s.wrap::<CssStyleDeclaration>(StyleData { source }, Some(key))?.value())
             },
             |_s, r, v| {
-                let decls = parse_declarations(&dom_string(v)?);
-                let source = StyleSource::Rule {
-                    owner: NodeHold::new(&r.owner.page, r.owner.id)?,
-                    node: r.node.clone(),
-                };
-                StyleData { source }.write(&decls)
+                let source =
+                    StyleSource::Rule { owner: NodeHold::new(&r.owner.page, r.owner.id)?, node: r.node.clone() };
+                StyleData { source }.set_css_text(&dom_string(v)?)
             },
         );
         def.accessor(

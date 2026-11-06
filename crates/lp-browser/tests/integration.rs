@@ -6,6 +6,7 @@ mod bindings;
 mod cache_disabled;
 mod child_frame_network;
 mod child_frames;
+mod css_declarations;
 mod cssom_and_attributes;
 mod detached_frame_script;
 mod document_write;
