@@ -3489,3 +3489,30 @@ fn adv_min_two_cells_moved_small_collapsed_table() {
 fn adv_min_cell_holding_a_table_made_a_block_and_back() {
     adv_min("", vec![set_style("#oa", "display: block; border: 1px solid"), set_style("#oa", "border: 1px solid")]);
 }
+
+/// A checkbox checked while it has no box (inside `display: none`): blitz-dom
+/// would push a second, HTML-namespaced `checked` for a value that parses as
+/// a bool, which the mirror then takes away on the next sync of the same
+/// tree. Nothing is left to sync: the unchanged tree mutates nothing, and the
+/// box built later shows the state the tree has.
+#[test]
+fn a_checkbox_checked_without_a_box_leaves_nothing_to_sync() {
+    let page = Page::new(
+        r#"<!doctype html><html><body><div id="h" style="display:none"><input id="c" type="checkbox"></div><p>x</p></body></html>"#,
+    );
+    let mut r = Renderer::new();
+    check(&mut r, &page, "the first render");
+    let (c, h) = (page.find("#c"), page.find("#h"));
+    page.dom.borrow_mut().set_checked(c, true).unwrap();
+    assert!(check(&mut r, &page, "checked").mutations > 0);
+    assert_eq!(check(&mut r, &page, "checked, unchanged").mutations, 0, "checked, unchanged");
+    page.dom.borrow_mut().remove_attribute(h, "style").unwrap();
+    check(&mut r, &page, "shown checked");
+    page.dom.borrow_mut().set_attribute(h, "style", "display:none").unwrap();
+    check(&mut r, &page, "hidden again");
+    page.dom.borrow_mut().set_checked(c, false).unwrap();
+    check(&mut r, &page, "unchecked");
+    assert_eq!(check(&mut r, &page, "unchecked, unchanged").mutations, 0, "unchecked, unchanged");
+    page.dom.borrow_mut().remove_attribute(h, "style").unwrap();
+    check(&mut r, &page, "shown unchecked");
+}
