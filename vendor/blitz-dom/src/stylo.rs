@@ -1373,8 +1373,14 @@ impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
                 (None, None) => false,
                 _ => true,
             };
+            // Stylo diffs the old and new style into `data.damage` (nothing when there was no old
+            // style, so a first style is always derived). A replacement without layout damage
+            // (colour, background, :hover, a class that changes only paint) leaves the derived
+            // layout styles as they are.
+            let derive =
+                replaced && (old_primary.is_none() || LayoutStyles::affected_by(data.damage));
             drop(old_primary);
-            if replaced {
+            if derive {
                 let derived = match new_primary {
                     Some(style) => LayoutStyles::derive(style, el.collapsed_border()),
                     None => LayoutStyles::default(),
@@ -1383,6 +1389,13 @@ impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
                 // layout styles while it runs.
                 if let Some(stylo) = el.try_stylo_element_data() {
                     unsafe { stylo.set_layout_styles(derived) };
+                }
+            } else if replaced {
+                #[cfg(debug_assertions)]
+                if let (Some(style), Some(stylo)) = (new_primary, el.try_stylo_element_data()) {
+                    stylo
+                        .layout_styles()
+                        .assert_current(style, el.collapsed_border(), el.id);
                 }
             }
             let after = &context.thread_local.statistics;
@@ -1508,9 +1521,16 @@ fn sync_pseudo_element_styles(
                     .push(pe_node_id);
             }
         }
-        let derived = LayoutStyles::derive(&pe_style, pe_node.collapsed_border());
-        // SAFETY: as for `pe_data` above (only the owner's `process_preorder` reaches it).
-        unsafe { stylo_data.set_layout_styles(derived) };
+        if LayoutStyles::affected_by(diff.damage) {
+            let derived = LayoutStyles::derive(&pe_style, pe_node.collapsed_border());
+            // SAFETY: as for `pe_data` above (only the owner's `process_preorder` reaches it).
+            unsafe { stylo_data.set_layout_styles(derived) };
+        } else {
+            #[cfg(debug_assertions)]
+            stylo_data
+                .layout_styles()
+                .assert_current(&pe_style, pe_node.collapsed_border(), pe_node_id);
+        }
         pe_data.styles.primary = Some(pe_style);
         pe_data.set_restyled();
     }

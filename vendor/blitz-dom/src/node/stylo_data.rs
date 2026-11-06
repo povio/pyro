@@ -31,9 +31,11 @@ impl Default for StyloData {
 }
 
 /// lightningpanda: what layout reads of a node's primary style, derived from it when it is
-/// written instead of on every layout pass. `Node::update_layout_styles` (and, in the style
-/// traversal, `RecalcStyle::process_preorder`) rewrites it each time the primary style is
-/// replaced, and table construction when a cell's collapsed borders change.
+/// written instead of on every layout pass. The style traversal (`RecalcStyle::process_preorder`,
+/// `sync_pseudo_element_styles`) rewrites it when a primary style is replaced with restyle damage
+/// that reaches layout ([`LayoutStyles::affected_by`]); `Node::update_layout_styles` wherever a
+/// primary style is set outside the traversal; and `Node::set_collapsed_border` a cell's
+/// [`LayoutStyles::cell`] when table construction changes its collapsed borders.
 #[derive(Default)]
 pub(crate) struct LayoutStyles {
     /// The physical Taffy style of a table, table row, column or cell
@@ -52,21 +54,58 @@ impl LayoutStyles {
         style: &style::properties::ComputedValues,
         collapsed_border: Option<[f32; 4]>,
     ) -> Self {
-        use style::values::specified::box_::DisplayInside;
-        let inside = style.clone_display().inside();
-        let table_part = matches!(
-            inside,
-            DisplayInside::Table
-                | DisplayInside::TableRow
-                | DisplayInside::TableColumn
-                | DisplayInside::TableCell
-        )
-        .then(|| Box::new(stylo_taffy::to_taffy_style(style)));
         Self {
-            table_part,
+            table_part: table_part_style(style),
             cell: cell_layout_style(style, collapsed_border),
         }
     }
+
+    /// Whether a restyle with `damage` can change the layout styles derived from the primary
+    /// style. Every property they read (the ones `stylo_taffy` converts, `border-collapse`,
+    /// `height`, the border widths and styles) gives Stylo's `RELAYOUT` damage when it changes;
+    /// paint-only changes (colour, background, outline, opacity, transforms) do not, and leave
+    /// the stored layout styles equal to what the new style gives.
+    #[inline]
+    pub(crate) fn affected_by(damage: style::selector_parser::RestyleDamage) -> bool {
+        damage.intersects(crate::layout::damage::ONLY_RELAYOUT)
+    }
+
+    /// Debug builds: these are the layout styles `style` and `collapsed_border` give.
+    #[cfg(debug_assertions)]
+    pub(crate) fn assert_current(
+        &self,
+        style: &style::properties::ComputedValues,
+        collapsed_border: Option<[f32; 4]>,
+        node_id: blitz_traits::node_id::NodeId,
+    ) {
+        let fresh = Self::derive(style, collapsed_border);
+        assert_eq!(
+            self.table_part, fresh.table_part,
+            "stale table-part Taffy style on node {node_id:?}"
+        );
+        let as_taffy = |cell: &Option<Box<style::properties::ComputedValues>>| {
+            cell.as_deref().map(stylo_taffy::to_taffy_style)
+        };
+        assert_eq!(
+            as_taffy(&self.cell),
+            as_taffy(&fresh.cell),
+            "stale table-cell layout style on node {node_id:?}"
+        );
+    }
+}
+
+/// The physical Taffy style of a table part (table, row, column or cell) whose primary style is
+/// `style`, or `None` for any other box. Stored as [`LayoutStyles::table_part`].
+fn table_part_style(style: &style::properties::ComputedValues) -> Option<Box<taffy::Style<style::Atom>>> {
+    use style::values::specified::box_::DisplayInside;
+    matches!(
+        style.clone_display().inside(),
+        DisplayInside::Table
+            | DisplayInside::TableRow
+            | DisplayInside::TableColumn
+            | DisplayInside::TableCell
+    )
+    .then(|| Box::new(stylo_taffy::to_taffy_style(style)))
 }
 
 impl fmt::Debug for StyloData {

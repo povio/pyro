@@ -1212,13 +1212,21 @@ impl Node {
         *stylo.layout_styles_mut() = derived;
     }
 
-    /// Set a table cell's half collapsed borders, and its layout style with them.
+    /// Set a table cell's half collapsed borders, and its layout style with them. The cell's
+    /// table-part Taffy style does not depend on them and stays.
     pub(crate) fn set_collapsed_border(&mut self, collapsed_border: Option<[f32; 4]>) {
         if self.collapsed_border() == collapsed_border {
             return;
         }
         self.layout_data_mut().collapsed_border = collapsed_border;
-        self.update_layout_styles();
+        let Some(stylo) = self.try_stylo_element_data_mut() else {
+            return;
+        };
+        let cell = match stylo.get().as_ref().and_then(|data| data.styles.get_primary()) {
+            Some(style) => super::stylo_data::cell_layout_style(style, collapsed_border),
+            None => None,
+        };
+        stylo.layout_styles_mut().cell = cell;
     }
 
     /// The physical Taffy style of a table, table row, column or cell, converted when its style
@@ -1232,29 +1240,16 @@ impl Node {
 
     /// Debug builds: the stored layout styles are those the primary style gives now.
     #[cfg(debug_assertions)]
-    fn assert_layout_styles_are_current(&self) {
+    pub(crate) fn assert_layout_styles_are_current(&self) {
         let Some(stylo) = self.try_stylo_element_data() else {
             return;
         };
         let Some(primary) = stylo.primary_styles() else {
             return;
         };
-        let fresh = LayoutStyles::derive(&primary, self.collapsed_border());
-        let stored = stylo.layout_styles();
-        assert_eq!(
-            stored.table_part, fresh.table_part,
-            "stale table-part Taffy style on node {}",
-            self.id
-        );
-        let as_taffy = |cell: &Option<Box<ComputedValues>>| {
-            cell.as_deref().map(stylo_taffy::to_taffy_style)
-        };
-        assert_eq!(
-            as_taffy(&stored.cell),
-            as_taffy(&fresh.cell),
-            "stale table-cell layout style on node {}",
-            self.id
-        );
+        stylo
+            .layout_styles()
+            .assert_current(&primary, self.collapsed_border(), self.id);
     }
 
     /// The node's style for Taffy, expressed in the axes of the writing mode `layout_wm` (the writing
