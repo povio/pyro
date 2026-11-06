@@ -50,7 +50,31 @@ pub use hash::scene_hash;
 pub use mirror::{DeltaOp, MirrorStats, Rebuild, Tree, TreeKind, TreeNode, TOP};
 pub use net::Fetcher;
 
-/// Where document syncs spend their time (diagnostics, `LP.geometryStats`).
+/// Whether the diagnostic timers run (`LP.geometryStats`,
+/// `Performance.getMetrics` durations): off until a client asks for them, so
+/// layout syncs read no clocks only to add their readings up. Counters, and
+/// the clocks behaviour depends on (fetch deadlines), are not affected.
+pub mod profiling {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    static ON: AtomicBool = AtomicBool::new(false);
+
+    /// Turns the timers on for the rest of the process, Blitz's phase timers
+    /// included.
+    pub fn enable() {
+        ON.store(true, Ordering::Relaxed);
+        blitz_dom::phase_profile::set_timing(true);
+    }
+
+    /// Whether the timers are on.
+    #[inline]
+    pub fn on() -> bool {
+        ON.load(Ordering::Relaxed)
+    }
+}
+
+/// Where document syncs spend their time (diagnostics, `LP.geometryStats`;
+/// only while [`profiling`] is on).
 pub mod sync_profile {
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::Duration;
@@ -65,14 +89,14 @@ pub mod sync_profile {
         RESOLVE.fetch_add(resolve.as_nanos() as u64, Ordering::Relaxed);
     }
 
-    /// Milliseconds applying node lists, settling sub-resources and resolving
-    /// (style + layout) since the last call.
     /// As [`take`], without resetting.
     pub fn peek() -> (f64, f64, f64) {
         let ms = |a: &AtomicU64| a.load(Ordering::Relaxed) as f64 / 1e6;
         (ms(&MIRROR), ms(&SETTLE), ms(&RESOLVE))
     }
 
+    /// Milliseconds applying node lists, settling sub-resources and resolving
+    /// (style + layout) since the last call.
     pub fn take() -> (f64, f64, f64) {
         let ms = |a: &AtomicU64| a.swap(0, Ordering::Relaxed) as f64 / 1e6;
         (ms(&MIRROR), ms(&SETTLE), ms(&RESOLVE))
@@ -851,19 +875,19 @@ impl Renderer {
                 (doc, &*bridge, clip)
             }
         };
-        let mirrored = started.elapsed();
+        let profiling = profiling::on();
+        let mirrored = profiling.then(|| started.elapsed());
         let (fetch, passes, resolved_latest) =
             bridge.settle(doc, started + self.fetch_timeout, self.first_layout_wait, false);
         timings.layout_passes = passes;
-        let resolving = Instant::now();
+        let resolving = profiling.then(Instant::now);
         if !resolved_latest {
             doc.resolve(0.0);
         }
-        sync_profile::record(
-            mirrored,
-            started.elapsed().saturating_sub(mirrored + resolving.elapsed()),
-            resolving.elapsed(),
-        );
+        if let (Some(mirrored), Some(resolving)) = (mirrored, resolving) {
+            let resolved = resolving.elapsed();
+            sync_profile::record(mirrored, started.elapsed().saturating_sub(mirrored + resolved), resolved);
+        }
         timings.fetch = fetch;
         timings.layout = started.elapsed().saturating_sub(fetch);
         Ok((doc, clip))
@@ -978,7 +1002,8 @@ impl Renderer {
     /// [`Renderer::sync_layout`] from the changes since the page's last tree
     /// or delta (lp-dom's change journal) instead of the whole tree. `Err`
     /// (nothing applied) when the page has no document at this viewport or
-    /// the delta does not fit it: sync the whole tree instead.
+    /// the delta does not fit it: sync the whole tree instead. The returned
+    /// [`Timings::layout`] is measured only while [`profiling`] is on.
     pub fn sync_delta(
         &mut self,
         page: u64,
@@ -994,26 +1019,28 @@ impl Renderer {
             return Err(RenderError::BadArea("the viewport changed".into()));
         }
         m.apply_delta(ops).map_err(|_| RenderError::BadArea("the delta does not fit the document".into()))?;
-        let mirrored = started.elapsed();
+        let profiling = profiling::on();
+        let mirrored = profiling.then(|| started.elapsed());
         let mirror::Mirror { doc, bridge, .. } = m;
         let geometry_generation = doc.root_node().tree().geometry_generation();
         let (fetch, passes, resolved_latest) =
             bridge.settle(doc, started + self.fetch_timeout, self.first_layout_wait, style_only);
-        let resolving = Instant::now();
+        let resolving = profiling.then(Instant::now);
         if !resolved_latest {
             match style_only {
                 true => doc.resolve_style(0.0),
                 false => doc.resolve(0.0),
             }
         }
-        sync_profile::record(
-            mirrored,
-            started.elapsed().saturating_sub(mirrored + resolving.elapsed()),
-            resolving.elapsed(),
-        );
         timings.layout_passes = passes;
         timings.fetch = fetch;
-        timings.layout = started.elapsed().saturating_sub(fetch);
+        // Diagnostics only (`LP.geometryStats`): zero while profiling is off.
+        if let (Some(mirrored), Some(resolving)) = (mirrored, resolving) {
+            let resolved = resolving.elapsed();
+            let total = started.elapsed();
+            sync_profile::record(mirrored, total.saturating_sub(mirrored + resolved), resolved);
+            timings.layout = total.saturating_sub(fetch);
+        }
         if !style_only || doc.root_node().tree().geometry_generation() != geometry_generation {
             self.geometry.entry(page).or_default().clear();
         }
@@ -1073,6 +1100,44 @@ impl Renderer {
             Some(s) => Some((*s).clone()),
             None => m.doc.resolve_undisplayed_style(id),
         }
+    }
+
+    /// Whether the element keyed `key` in `page`'s persistent document is
+    /// outside every `display: none` subtree of the rendered (flat) tree, as
+    /// of the last style sync, read from the styles Stylo keeps on the nodes
+    /// instead of deriving a computed style per ancestor.
+    ///
+    /// Stylo styles an element only when its parent is displayed, and drops
+    /// the styles under an element it styles `display: none`; an element
+    /// moved under a hidden parent keeps its old styles, which the traversal
+    /// does not reach. So the walk goes all the way up: some element on the
+    /// way with `display: none` hides it. When none is found but an element
+    /// on the way has no styles, the styles cannot tell, and this answers
+    /// `None`, as it does for elements that are not mirrored or not in the
+    /// document.
+    pub fn element_displayed(&self, page: u64, key: u64) -> Option<bool> {
+        let m = self.mirrors.get(&page)?;
+        let mut id = m.node(key)?;
+        let mut unstyled = false;
+        loop {
+            let node = m.doc.get_node(id)?;
+            if !node.is_element() {
+                break;
+            }
+            if !node.flags.is_in_document() {
+                return None;
+            }
+            match node.primary_styles() {
+                Some(s) if s.get_box().clone_display().is_none() => return Some(false),
+                Some(_) => {}
+                None => unstyled = true,
+            }
+            match node.parent {
+                Some(p) => id = p,
+                None => break,
+            }
+        }
+        (!unstyled).then_some(true)
     }
 
     /// The box of the element keyed `key` in `page`'s persistent document,

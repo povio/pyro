@@ -12,12 +12,10 @@
 use std::collections::HashMap;
 
 use rustc_hash::{FxHashMap, FxHashSet};
-use std::hash::Hasher;
 use std::sync::Arc;
 
 use blitz_dom::node::Attribute;
 use blitz_dom::{BaseDocument, DocumentConfig, DocumentMutator, NodeId, QualName};
-use xxhash_rust::xxh3::Xxh3;
 
 /// A document as lp-dom serializes it for rendering: nodes in document order.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -84,7 +82,6 @@ struct Entry {
     id: NodeId,
     /// Element name; `None` for text.
     name: Option<QualName>,
-    hash: u64,
     parent: Option<u64>,
     children: Vec<u64>,
 }
@@ -105,31 +102,6 @@ pub(crate) struct Mirror {
     top: Vec<u64>,
     /// Nodes given a scroll offset by [`Mirror::set_element_scroll`].
     scrolled: Vec<NodeId>,
-}
-
-fn hash_kind(kind: &TreeKind) -> u64 {
-    let mut h = Xxh3::new();
-    match kind {
-        TreeKind::Text(t) => {
-            h.write_u8(0);
-            h.write(t.as_bytes());
-        }
-        TreeKind::Element { name, attrs } => {
-            h.write_u8(1);
-            h.write(name.ns.as_bytes());
-            h.write_u8(0);
-            h.write(name.local.as_bytes());
-            for (n, v) in attrs {
-                h.write_u8(0);
-                h.write(n.ns.as_bytes());
-                h.write_u8(0);
-                h.write(n.local.as_bytes());
-                h.write_u8(0);
-                h.write(v.as_bytes());
-            }
-        }
-    }
-    h.finish()
 }
 
 thread_local! {
@@ -224,7 +196,6 @@ impl Mirror {
                 let entry = Entry {
                     id,
                     name: name_of(&n.kind),
-                    hash: hash_kind(&n.kind),
                     parent: parent_key,
                     children: kids.get(&n.key).cloned().unwrap_or_default(),
                 };
@@ -303,7 +274,6 @@ impl Mirror {
         }
         let (kids, top) = children_of(tree);
 
-        let hashes: Vec<u64> = new.iter().map(|n| hash_kind(&n.kind)).collect();
         // Gone, or now a node of another kind under the same key.
         let mut removed: FxHashSet<u64> = self
             .nodes
@@ -323,7 +293,7 @@ impl Mirror {
         for (i, n) in new.iter().enumerate() {
             let dirty = match self.nodes.get(&n.key) {
                 None => true,
-                Some(e) => e.hash != hashes[i] || e.children != *kids.get(&n.key).unwrap_or(&empty),
+                Some(e) => differs(&self.doc, e.id, &n.kind) || e.children != *kids.get(&n.key).unwrap_or(&empty),
             };
             if !dirty {
                 continue;
@@ -393,21 +363,16 @@ impl Mirror {
 
         // 2. Create new nodes (detached; placed below), update changed ones.
         let mut created = FxHashSet::default();
-        for (n, &hash) in new.iter().zip(&hashes) {
-            match nodes.get_mut(&n.key) {
+        for n in new {
+            match nodes.get(&n.key) {
                 None => {
                     created.insert(n.key);
                     let id = create(&mut m, &n.kind);
-                    nodes.insert(n.key, Entry { id, name: name_of(&n.kind), hash, parent: None, children: Vec::new() });
+                    nodes.insert(n.key, Entry { id, name: name_of(&n.kind), parent: None, children: Vec::new() });
                     set_key(keys, id, Some(n.key));
                     mutations += 1;
                 }
-                Some(e) if e.hash != hash => {
-                    e.hash = hash;
-                    update(&mut m, e.id, &n.kind);
-                    mutations += 1;
-                }
-                Some(_) => {}
+                Some(e) => mutations += update(&mut m, e.id, &n.kind) as u32,
             }
         }
 
@@ -510,34 +475,22 @@ impl Mirror {
         for op in ops {
             match op {
                 DeltaOp::Node { key, kind } => {
-                    let e = nodes.get_mut(key).expect("checked");
-                    let hash = hash_kind(kind);
-                    if e.hash != hash {
-                        e.hash = hash;
-                        update(&mut m, e.id, kind);
-                        mutations += 1;
-                    }
+                    mutations += update(&mut m, nodes[key].id, kind) as u32;
                 }
                 DeltaOp::Children { parent, kids, nodes: sub } => {
                     // The inserted subtrees: new nodes created, moved ones updated.
                     for n in sub {
-                        let hash = hash_kind(&n.kind);
-                        match nodes.get_mut(&n.key) {
+                        match nodes.get(&n.key) {
                             None => {
                                 let id = create(&mut m, &n.kind);
                                 nodes.insert(
                                     n.key,
-                                    Entry { id, name: name_of(&n.kind), hash, parent: None, children: Vec::new() },
+                                    Entry { id, name: name_of(&n.kind), parent: None, children: Vec::new() },
                                 );
                                 set_key(keys, id, Some(n.key));
                                 mutations += 1;
                             }
-                            Some(e) if e.hash != hash => {
-                                e.hash = hash;
-                                update(&mut m, e.id, &n.kind);
-                                mutations += 1;
-                            }
-                            Some(_) => {}
+                            Some(e) => mutations += update(&mut m, e.id, &n.kind) as u32,
                         }
                     }
                     let mut kids_of: FxHashMap<u64, Vec<u64>> = FxHashMap::default();
@@ -646,18 +599,37 @@ fn set_key(keys: &mut Vec<(NodeId, u64)>, id: NodeId, key: Option<u64>) {
     }
 }
 
-/// Brings an existing node to `kind` (same element name or both text).
-fn update(m: &mut DocumentMutator<'_>, id: NodeId, kind: &TreeKind) {
+/// Whether Blitz node `id` differs from `kind`: its text, or its attributes
+/// (one not wanted, or a wanted name and value missing), as [`update`]
+/// brings them over. A node of the other kind differs.
+fn differs(doc: &BaseDocument, id: NodeId, kind: &TreeKind) -> bool {
+    let Some(node) = doc.get_node(id) else { return true };
+    match kind {
+        TreeKind::Text(t) => node.text_data().is_none_or(|text| text.content != *t),
+        TreeKind::Element { attrs, .. } => match node.element_data() {
+            None => true,
+            Some(el) => {
+                el.attrs.iter().any(|a| !attrs.iter().any(|(n, _)| *n == a.name))
+                    || attrs.iter().any(|(n, v)| !el.attrs.iter().any(|a| a.name == *n && a.value == *v))
+            }
+        },
+    }
+}
+
+/// Brings an existing node to `kind` (same element name or both text),
+/// comparing against what Blitz holds now. Returns whether it changed it.
+fn update(m: &mut DocumentMutator<'_>, id: NodeId, kind: &TreeKind) -> bool {
+    if !differs(m.doc, id, kind) {
+        return false;
+    }
     note_sprite(kind);
     match kind {
         TreeKind::Text(t) => m.set_node_text(id, t),
         TreeKind::Element { name: tag, attrs } => {
-            let current: Vec<(QualName, String)> = m
-                .doc
-                .get_node(id)
-                .and_then(|n| n.element_data())
-                .map(|e| e.attrs.iter().map(|a| (a.name.clone(), a.value.clone())).collect())
-                .unwrap_or_default();
+            let el = m.doc.get_node(id).and_then(|n| n.element_data());
+            let current: Vec<(QualName, String)> =
+                el.map(|e| e.attrs.iter().map(|a| (a.name.clone(), a.value.clone())).collect()).unwrap_or_default();
+            let has_checkbox = el.is_some_and(|e| e.checkbox_input_checked().is_some());
             for (name, _) in &current {
                 if !attrs.iter().any(|(n, _)| n == name) {
                     m.clear_attribute(id, name.clone());
@@ -665,9 +637,16 @@ fn update(m: &mut DocumentMutator<'_>, id: NodeId, kind: &TreeKind) {
             }
             for (name, value) in attrs {
                 if !current.iter().any(|(n, v)| n == name && v == value) {
-                    if tag.local == blitz_dom::local_name!("input") && name.local == blitz_dom::local_name!("checked") {
-                        // blitz-dom checks a box only for a value that parses
-                        // as a bool, while a parsed `checked=""` checks it.
+                    if has_checkbox
+                        && tag.local == blitz_dom::local_name!("input")
+                        && name.local == blitz_dom::local_name!("checked")
+                    {
+                        // blitz-dom checks a built box only for a value that
+                        // parses as a bool, while a parsed `checked=""` checks
+                        // it. Before the box is built the attribute is what it
+                        // reads, and a bool there would make blitz-dom push a
+                        // second, HTML-namespaced `checked` that the next sync
+                        // would take away again.
                         m.set_attribute(id, name.clone(), "true");
                     }
                     m.set_attribute(id, name.clone(), value);
@@ -675,30 +654,27 @@ fn update(m: &mut DocumentMutator<'_>, id: NodeId, kind: &TreeKind) {
             }
         }
     }
+    true
 }
 
 /// Makes `want` the children of `parent`, moving as few nodes as it can
 /// (an insertion, removal or move costs one operation). Children that do
 /// not belong here any more are detached; their new parent places them.
 fn reorder(m: &mut DocumentMutator<'_>, parent: NodeId, want: &[u64], nodes: &FxHashMap<u64, Entry>) -> u32 {
-    let want: Vec<NodeId> = want.iter().map(|k| nodes[k].id).collect();
-    let mut current: Vec<NodeId> = m.child_ids(parent).to_vec();
+    // Blitz's own child list, read in place after each move: a move detaches
+    // the node from where it was before inserting it.
+    let child_at = |m: &DocumentMutator<'_>, i: usize| m.doc.get_node(parent).and_then(|p| p.children.get(i).copied());
     let mut ops = 0;
-    for (i, &id) in want.iter().enumerate() {
-        if current.get(i) == Some(&id) {
-            continue;
-        }
-        if let Some(pos) = current.iter().position(|&c| c == id) {
-            current.remove(pos);
-        }
-        match current.get(i) {
-            Some(&anchor) => m.insert_nodes_before(anchor, &[id]),
+    for (i, key) in want.iter().enumerate() {
+        let id = nodes[key].id;
+        match child_at(m, i) {
+            Some(at) if at == id => continue,
+            Some(anchor) => m.insert_nodes_before(anchor, &[id]),
             None => m.append_children(parent, &[id]),
         }
-        current.insert(i, id);
         ops += 1;
     }
-    for &extra in &current[want.len()..] {
+    while let Some(extra) = child_at(m, want.len()) {
         m.remove_node(extra);
         ops += 1;
     }

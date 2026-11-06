@@ -876,6 +876,61 @@ fn a_pass_without_damage_runs_no_layout() {
     assert!(blitz_passes().1 > after.1, "damage runs layout");
 }
 
+/// A node brought back to what Blitz holds (text set and reset, attributes
+/// removed and set again in another order) changes nothing in the document,
+/// by delta or by whole tree: the mirror compares against Blitz's own text
+/// and attributes.
+#[test]
+fn a_node_set_back_to_what_blitz_holds_changes_nothing() {
+    let page = Page::new(PAGE);
+    let (mut r, mut w) = (Renderer::new(), Renderer::new());
+    check(&mut w, &page, "the first render");
+    r.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
+    let text = page.dom.borrow().first_child(page.find("#panel p")).unwrap().unwrap();
+    let el = page.find("#list");
+    let delta = |r: &mut Renderer, step: &dyn Fn(&mut Dom)| {
+        let since = page.dom.borrow().version();
+        step(&mut page.dom.borrow_mut());
+        let ops = delta_ops(page.dom.borrow().render_delta(page.doc, since, &Page::opts()).expect("a delta"));
+        assert!(!ops.is_empty(), "the journal records the change");
+        r.sync_delta(1, &ops, (640, 480, 1.0, false, false), false).unwrap();
+    };
+    let attr_names = |page: &Page| -> Vec<String> {
+        let key = lp_dom::snapshot::render_key(el);
+        let tree = page.tree();
+        let n = tree.nodes.iter().find(|n| n.key == key).unwrap();
+        let TreeKind::Element { attrs, .. } = &n.kind else { unreachable!() };
+        attrs.iter().map(|(a, _)| a.local.to_string()).collect()
+    };
+
+    // Synced with `class` before `title`.
+    delta(&mut r, &|d| {
+        d.set_attribute(el, "class", "on").unwrap();
+        d.set_attribute(el, "title", "t").unwrap();
+    });
+    assert!(check(&mut w, &page, "class and title set").mutations > 0);
+    assert_eq!(attr_names(&page), ["id", "class", "title"]);
+
+    let steps: [(&str, &dyn Fn(&mut Dom)); 2] = [
+        ("text set and reset", &|d| {
+            d.set_text_content(text, "changed").unwrap();
+            d.set_text_content(text, "one").unwrap();
+        }),
+        ("attributes reordered", &|d| {
+            d.remove_attribute(el, "class").unwrap();
+            d.set_attribute(el, "class", "on").unwrap();
+        }),
+    ];
+    for (what, step) in steps {
+        let before = blitz_passes();
+        delta(&mut r, step);
+        assert_eq!(blitz_passes().1, before.1, "{what}: the delta lays nothing out");
+        assert_eq!(check(&mut w, &page, what).mutations, 0, "{what}: the whole tree mutates nothing");
+        assert_eq!(r.mirrored_html(1), w.mirrored_html(1), "{what}");
+    }
+    assert_eq!(attr_names(&page), ["id", "title", "class"]);
+}
+
 // Incremental rounding: a persistent document must round as a fresh build does, whatever a
 // relayout moved. Every box paints, and sizes are fractional so that rounding shows.
 
@@ -1147,4 +1202,31 @@ fn rounding_skips_what_a_change_did_not_touch() {
     assert_eq!(painted.hash, Renderer::new().paint(&page.snapshot(1, tree), Area::Viewport, &fetcher()).unwrap().hash);
     assert!(after.1 - before.1 >= 190, "skipped {} subtrees", after.1 - before.1);
     assert!(after.0 - before.0 < whole / 2, "reached {} of {whole} nodes", after.0 - before.0);
+}
+
+/// A checkbox checked while it has no box (inside `display: none`): blitz-dom
+/// would push a second, HTML-namespaced `checked` for a value that parses as
+/// a bool, which the mirror then takes away on the next sync of the same
+/// tree. Nothing is left to sync: the unchanged tree mutates nothing, and the
+/// box built later shows the state the tree has.
+#[test]
+fn a_checkbox_checked_without_a_box_leaves_nothing_to_sync() {
+    let page = Page::new(
+        r#"<!doctype html><html><body><div id="h" style="display:none"><input id="c" type="checkbox"></div><p>x</p></body></html>"#,
+    );
+    let mut r = Renderer::new();
+    check(&mut r, &page, "the first render");
+    let (c, h) = (page.find("#c"), page.find("#h"));
+    page.dom.borrow_mut().set_checked(c, true).unwrap();
+    assert!(check(&mut r, &page, "checked").mutations > 0);
+    assert_eq!(check(&mut r, &page, "checked, unchanged").mutations, 0, "checked, unchanged");
+    page.dom.borrow_mut().remove_attribute(h, "style").unwrap();
+    check(&mut r, &page, "shown checked");
+    page.dom.borrow_mut().set_attribute(h, "style", "display:none").unwrap();
+    check(&mut r, &page, "hidden again");
+    page.dom.borrow_mut().set_checked(c, false).unwrap();
+    check(&mut r, &page, "unchecked");
+    assert_eq!(check(&mut r, &page, "unchecked, unchanged").mutations, 0, "unchecked, unchanged");
+    page.dom.borrow_mut().remove_attribute(h, "style").unwrap();
+    check(&mut r, &page, "shown unchecked");
 }

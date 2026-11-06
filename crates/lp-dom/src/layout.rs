@@ -260,6 +260,15 @@ impl Layout {
         Some(source)
     }
 
+    /// A rect query lays the document out anyway: sync the engine before
+    /// the visibility check, so that check reads the styles of that one
+    /// sync (it stamps the style engine) instead of running a style-only
+    /// pass first and the full sync right after. Without an active
+    /// geometry source this does nothing.
+    fn sync_before_rect_query(&self, dom: &Dom) {
+        self.synced_geometry_source(dom);
+    }
+
     fn sync_key(&self, dom: &Dom) -> ((u64, u64, u32, u32), (u32, u32)) {
         let v = self.viewport();
         (self.style.observation_stamp(dom), (v.width, v.height))
@@ -671,6 +680,7 @@ impl Layout {
     /// `getBoundingClientRect` values (Element.zig:1724-1742): all zero when
     /// the element isn't rendered.
     pub fn bounding_client_rect(&self, dom: &Dom, el: NodeId) -> Rect {
+        self.sync_before_rect_query(dom);
         if !self.is_visible(dom, el) {
             return Rect::default();
         }
@@ -851,6 +861,7 @@ impl Layout {
 
     /// The bounding rect, or `None` when the element isn't rendered.
     pub fn client_rect(&self, dom: &Dom, el: NodeId) -> Option<Rect> {
+        self.sync_before_rect_query(dom);
         self.is_visible(dom, el).then(|| self.bounding_client_rect_for_visible(dom, el))
     }
 
@@ -859,6 +870,7 @@ impl Layout {
     /// same scroll and sticky offsets as its client rect. `None` when it is
     /// not rendered, has no CSS box (SVG content) or the engine reports none.
     pub fn box_quads(&self, dom: &Dom, el: NodeId) -> Option<ExternalQuads> {
+        self.sync_before_rect_query(dom);
         if !self.is_visible(dom, el) || self.svg_client_rect(dom, el).is_some() {
             return None;
         }
