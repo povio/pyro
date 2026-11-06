@@ -22,7 +22,7 @@ and Playwright's `storageState({indexedDB: true})` work as in Chrome.
 - `indexedDB.databases()` lists the partition's databases with a version.
 - Opaque origins (`data:`, sandboxed documents) throw `SecurityError` from
   `open`/`deleteDatabase` and reject `databases()`; the `IDB*` interfaces still
-  exist for feature detection.
+  exist for feature detection, and `cmp` works (it touches no storage).
 
 ## Behaviour
 
@@ -33,7 +33,8 @@ and Playwright's `storageState({indexedDB: true})` work as in Chrome.
 - Events propagate request → transaction → connection (capture and bubble).
   An `error` event that is not canceled aborts the transaction with the
   request's error; an exception thrown by a `success`/`error`/`upgradeneeded`
-  listener aborts it with `AbortError`.
+  listener aborts it with `AbortError` (an exception in a listener of another
+  event that such a listener dispatches does not).
 - Transactions auto-commit once inactive with no pending requests;
   `commit()`, `abort()` and `durability` are supported. Aborting rolls back
   records, key generator values and, for upgrades, the version and the whole
@@ -65,6 +66,8 @@ check of an empty thread-local table.
 
 ## Gaps
 
+- An upgrade snapshots the database's stores for rollback, so a version
+  change copies the record index (values are shared, not copied).
 - No disk persistence and no CDP `IndexedDB` domain or
   `Storage.clearDataForOrigin` for IndexedDB.
 - Blob/File values (above).
