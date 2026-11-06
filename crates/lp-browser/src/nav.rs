@@ -34,6 +34,11 @@ struct Entry {
     /// Unique within the page; identifies the entry to automation clients
     /// (CDP `NavigationEntry.id`).
     id: u64,
+    /// Navigation API key: the history slot, kept when the entry is
+    /// replaced.
+    key: u64,
+    /// Navigation API state (`JSON.stringify`; `None` = undefined).
+    nav_state: Option<String>,
 }
 
 /// A session-history entry as reported to automation clients.
@@ -98,6 +103,23 @@ pub struct PageNav {
     /// the function each queues new timeline entries with. Empty unless a
     /// page observes, which is all the timeline costs otherwise.
     timeline_watchers: RefCell<Vec<(lp_js::RealmId, lp_js::WeakRealm, Rc<Persistent>)>>,
+    /// The realms with a `navigation` object (navigation.js) and the hook
+    /// each fires the Navigation API's events with. Empty unless a page
+    /// reads `navigation`, which is all navigations cost otherwise.
+    navigation_hooks: RefCell<Vec<(lp_js::RealmId, lp_js::WeakRealm, Rc<Persistent>)>>,
+    /// A navigation that navigation.js started (and fired `navigate` for)
+    /// is running: the native paths fire no event of their own.
+    navigation_api_call: Cell<bool>,
+}
+
+/// What the listeners of a Navigation API `navigate` event decided.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum NavigateDecision {
+    Proceed,
+    /// `preventDefault()`: the navigation does not happen.
+    Cancel,
+    /// `intercept()`: the navigation becomes a same-document one.
+    Intercept,
 }
 
 impl PageNav {
@@ -131,6 +153,8 @@ impl PageNav {
             first_paint: Cell::new(None),
             nav_type: Cell::new("navigate"),
             timeline_watchers: RefCell::new(Vec::new()),
+            navigation_hooks: RefCell::new(Vec::new()),
+            navigation_api_call: Cell::new(false),
         })
     }
 
@@ -201,10 +225,15 @@ impl PageNav {
         let mut st = self.state.borrow_mut();
         st.doc_seq += 1;
         let id = st.next_entry_id();
-        let entry = Entry { url: url.to_string(), state: None, doc: st.doc_seq, id };
         // A push to the current entry's URL replaces it (HTML navigate step:
         // "url equals the active document's URL" -> replace).
         let same_url = st.entries.get(st.index).is_some_and(|e| e.url == url);
+        let replaces = matches!(history, HistoryHandling::Replace) || same_url;
+        let key = match st.entries.get(st.index) {
+            Some(current) if replaces => current.key,
+            _ => st.next_entry_id(),
+        };
+        let entry = Entry { url: url.to_string(), state: None, doc: st.doc_seq, id, key, nav_state: None };
         let initial = std::mem::take(&mut st.initial);
         st.first_blank = false;
         match history {
@@ -310,7 +339,15 @@ impl PageNav {
             st.state_version += 1;
             let doc = st.entries.get(st.index).map_or(st.doc_seq, |e| e.doc);
             let id = st.next_entry_id();
-            let entry = Entry { url: url.to_string(), state, doc, id };
+            // The Navigation API state carries over (HTML "URL and history
+            // update steps"); a replace keeps the slot's key.
+            let current = st.entries.get(st.index);
+            let nav_state = current.and_then(|e| e.nav_state.clone());
+            let key = match current {
+                Some(e) if kind == SameDocumentKind::Replace => e.key,
+                _ => st.next_entry_id(),
+            };
+            let entry = Entry { url: url.to_string(), state, doc, id, key, nav_state };
             st.initial = false;
             if st.entries.is_empty() {
                 st.entries.push(entry);
@@ -395,6 +432,15 @@ impl PageNav {
         self.sched.post(TaskSource::Navigation, move |b| {
             let Some(page) = b.page(page).and_then(|p| p.frames.key(&frame_id)) else { return };
             let Some(nav) = b.doc(page).map(|p| p.nav.clone()) else { return };
+            if nav.state.borrow().doc_seq == current_doc && nav.state.borrow().entries.get(index) == Some(&entry) {
+                // Only a same-document traversal can be canceled or intercepted.
+                let same = entry.doc == current_doc;
+                if nav.navigate_event_to("traverse", &entry.url, same, Some(entry.key)) == NavigateDecision::Cancel
+                    && same
+                {
+                    return;
+                }
+            }
             {
                 let mut state = nav.state.borrow_mut();
                 // Navigation can replace the document, or pushState can replace
@@ -410,6 +456,7 @@ impl PageNav {
                 let old_url = nav.url();
                 nav.set_url_sync(&entry.url);
                 b.same_document_committed(page, entry.url.clone(), SameDocumentKind::Push);
+                nav.navigation_committed("traverse");
                 b.fire_popstate(page, entry.state.as_deref(), &old_url, &entry.url);
             } else {
                 let opts = NavigateOpts {
@@ -437,7 +484,17 @@ impl PageNav {
             return false;
         }
         let kind = if current == target { SameDocumentKind::Replace } else { SameDocumentKind::Fragment };
+        let navigation_type = if kind == SameDocumentKind::Replace { "replace" } else { "push" };
+        match self.navigate_event(navigation_type, target.as_str(), true) {
+            NavigateDecision::Cancel => return true,
+            NavigateDecision::Intercept => {
+                self.commit_intercepted(target.as_str(), navigation_type);
+                return true;
+            }
+            NavigateDecision::Proceed => {}
+        }
         self.same_document(target.as_str(), None, kind);
+        self.navigation_committed(navigation_type);
         self.fire_fragment_popstate();
         self.queue_hashchange(current.as_str(), target.as_str());
         true
@@ -553,6 +610,116 @@ impl PageNav {
         Ok(())
     }
 
+    /// The live realms' Navigation API hooks.
+    fn navigation_hooks(&self) -> Vec<(lp_js::WeakRealm, Rc<Persistent>)> {
+        let mut hooks = self.navigation_hooks.borrow_mut();
+        hooks.retain(|(_, realm, _)| realm.upgrade().is_some_and(|r| !r.is_disposed()));
+        hooks.iter().map(|(_, realm, f)| (realm.clone(), f.clone())).collect()
+    }
+
+    /// Navigation API "fire a navigate event" for a navigation to `url` of
+    /// `navigation_type` (push, replace, reload, traverse), at each realm's
+    /// `navigation`. Free unless a realm made one; skipped while the DOM is
+    /// borrowed (listeners run script) and for a navigation navigation.js
+    /// started itself (it fired the event).
+    pub(crate) fn navigate_event(
+        &self,
+        navigation_type: &'static str,
+        url: &str,
+        cancelable: bool,
+    ) -> NavigateDecision {
+        self.navigate_event_to(navigation_type, url, cancelable, None)
+    }
+
+    /// [`PageNav::navigate_event`] for a traversal to the entry with `key`.
+    fn navigate_event_to(
+        &self,
+        navigation_type: &'static str,
+        url: &str,
+        cancelable: bool,
+        key: Option<u64>,
+    ) -> NavigateDecision {
+        if self.navigation_hooks.borrow().is_empty() || self.navigation_api_call.get() {
+            return NavigateDecision::Proceed;
+        }
+        let Some(page) = self.page_dom.borrow().upgrade() else { return NavigateDecision::Proceed };
+        if page.is_disposed() || page.dom.try_borrow_mut().is_err() {
+            return NavigateDecision::Proceed;
+        }
+        let (current, target) = (Url::parse(&self.url()).ok(), Url::parse(url).ok());
+        let (hash_change, can_intercept) = match (&current, &target) {
+            (Some(c), Some(t)) => (
+                t.fragment().is_some() && c.fragment() != t.fragment() && same_document_except_fragment(c, t),
+                // A traversal to another document cannot be intercepted.
+                can_rewrite_url(c, t) && (navigation_type != "traverse" || cancelable),
+            ),
+            _ => (false, false),
+        };
+        let mut decision = NavigateDecision::Proceed;
+        for (realm, hook) in self.navigation_hooks() {
+            let Some(realm) = realm.upgrade() else { continue };
+            let Ok(s) = realm.scope() else { continue };
+            let Some(f) = hook.get(&s).as_object() else { continue };
+            let args = [
+                s.string("navigate"),
+                s.string(navigation_type),
+                s.string(url),
+                s.boolean(hash_change),
+                s.boolean(cancelable),
+                s.boolean(can_intercept),
+                s.string(&key.map(|k| k.to_string()).unwrap_or_default()),
+            ];
+            match f.call(None, &args).and_then(|v| v.to_string()) {
+                Ok(answer) if answer == "cancel" => decision = NavigateDecision::Cancel,
+                Ok(answer) if answer == "intercept" && decision != NavigateDecision::Cancel => {
+                    decision = NavigateDecision::Intercept
+                }
+                Ok(_) => {}
+                Err(e) => s.report_exception(&e),
+            }
+        }
+        decision
+    }
+
+    /// The navigation the last `navigate` event was for committed in this
+    /// document (its URL and entry changed, or an intercepted reload):
+    /// `currententrychange`, then the intercept handlers or
+    /// `navigatesuccess`.
+    pub(crate) fn navigation_committed(&self, navigation_type: &'static str) {
+        if self.navigation_hooks.borrow().is_empty() || self.navigation_api_call.get() {
+            return;
+        }
+        for (realm, hook) in self.navigation_hooks() {
+            let Some(realm) = realm.upgrade() else { continue };
+            let Ok(s) = realm.scope() else { continue };
+            if let Some(f) = hook.get(&s).as_object() {
+                if let Err(e) = f.call(None, &[s.string("commit"), s.string(navigation_type)]) {
+                    s.report_exception(&e);
+                }
+            }
+        }
+    }
+
+    /// An intercepted navigation to `url` (HTML "navigate", Navigation API
+    /// intercept): the document stays and its URL changes, as pushState
+    /// does, then the handlers run.
+    pub(crate) fn commit_intercepted(&self, url: &str, navigation_type: &'static str) {
+        let kind = if navigation_type == "replace" { SameDocumentKind::Replace } else { SameDocumentKind::Push };
+        if navigation_type != "reload" {
+            self.same_document(url, None, kind);
+        }
+        self.navigation_committed(navigation_type);
+    }
+
+    /// Sets the current entry's Navigation API state (`None`: undefined).
+    fn set_navigation_state(&self, state: Option<String>) {
+        let mut st = self.state.borrow_mut();
+        let i = st.index;
+        if let Some(entry) = st.entries.get_mut(i) {
+            entry.nav_state = state;
+        }
+    }
+
     /// `natives.watch(queue)` of performance_observer.js: `queue` (or null
     /// to stop) gets the entries of `s`'s realm.
     fn watch_timeline(&self, s: &Scope<'_>, queue: Value<'_>) {
@@ -666,18 +833,40 @@ fn same_document_except_fragment(a: &Url, b: &Url) -> bool {
 /// Location assignment: fragment-only changes are same-document.
 fn assign(nav: &PageNav, input: Value<'_>, replace: bool) -> JsResult<()> {
     let target = parse(nav, input)?;
+    navigate_to(nav, target, replace);
+    Ok(())
+}
+
+/// HTML "navigate" from script (Location, `navigation.navigate`): a
+/// fragment change is same-document, anything else loads. Returns whether
+/// it stayed in the document.
+fn navigate_to(nav: &PageNav, target: Url, replace: bool) -> bool {
     let current = Url::parse(&nav.url()).ok();
+    let same_url = current.as_ref() == Some(&target);
+    let navigation_type = if replace || same_url { "replace" } else { "push" };
+    match nav.navigate_event(navigation_type, target.as_str(), true) {
+        NavigateDecision::Cancel => return false,
+        NavigateDecision::Intercept => {
+            nav.commit_intercepted(target.as_str(), navigation_type);
+            return true;
+        }
+        NavigateDecision::Proceed => {}
+    }
     match current {
         Some(cur) if target.fragment().is_some() && same_document_except_fragment(&cur, &target) => {
             // HTML "navigate": the document's own URL is a replace.
-            let kind = if replace || cur == target { SameDocumentKind::Replace } else { SameDocumentKind::Fragment };
+            let kind = if replace || same_url { SameDocumentKind::Replace } else { SameDocumentKind::Fragment };
             nav.same_document(target.as_str(), None, kind);
+            nav.navigation_committed(navigation_type);
             nav.fire_fragment_popstate();
             nav.queue_hashchange(cur.as_str(), target.as_str());
+            true
         }
-        _ => nav.navigate(target.to_string(), if replace { HistoryHandling::Replace } else { HistoryHandling::Push }),
+        _ => {
+            nav.navigate(target.to_string(), if replace { HistoryHandling::Replace } else { HistoryHandling::Push });
+            false
+        }
     }
-    Ok(())
 }
 
 fn url_part(nav: &PageNav, f: impl Fn(&Url) -> String) -> String {
@@ -715,7 +904,12 @@ impl JsClass for Location {
             Ok(s.undefined())
         });
         def.method("reload", 0, |s, n, _a| {
-            n.navigate(n.url(), HistoryHandling::Reload);
+            let url = n.url();
+            match n.navigate_event("reload", &url, true) {
+                NavigateDecision::Cancel => {}
+                NavigateDecision::Intercept => n.commit_intercepted(&url, "reload"),
+                NavigateDecision::Proceed => n.navigate(url, HistoryHandling::Reload),
+            }
             Ok(s.undefined())
         });
         def.getter("origin", |s, n| {
@@ -911,7 +1105,12 @@ fn change_state<'s>(s: &Scope<'s>, n: &PageNav, a: lp_js::Args<'s>, kind: SameDo
         }
         None => n.url(),
     };
+    let navigation_type = if kind == SameDocumentKind::Push { "push" } else { "replace" };
+    if n.navigate_event(navigation_type, &url, true) == NavigateDecision::Cancel {
+        return Ok(s.undefined());
+    }
     n.same_document(&url, state, kind);
+    n.navigation_committed(navigation_type);
     Ok(s.undefined())
 }
 
@@ -1598,5 +1797,141 @@ pub(crate) fn observer_module<'s>(
         s.eval(include_str!("performance_observer.js"), Some("lightningpanda://internal/performance-observer.js"), 1)?;
     let module = make.as_object().ok_or_else(unavailable)?.call(None, &[performance.value(), root.get(s)])?;
     s.set_hidden(performance, KEY, module)?;
+    module.as_object().ok_or_else(unavailable)
+}
+
+/// The realm's Navigation API module (navigation.js): `navigation` and
+/// its interfaces, made on the realm's first use and kept on the realm's
+/// History object (one per realm).
+pub(crate) fn navigation_module<'s>(s: &Scope<'s>, nav: &Rc<PageNav>) -> JsResult<lp_js::Object<'s>> {
+    const KEY: &str = "lpNavigation";
+    let history = s.wrap::<History>(nav.clone(), Some(lp_js::IdentityKey(crate::window::KEY_HISTORY, 0)))?;
+    if let Some(module) = s.get_hidden(history, KEY)?.and_then(|v| v.as_object()) {
+        return Ok(module);
+    }
+    let unavailable = || JsError::Type("navigation is unavailable".into());
+    let natives = s.object();
+    let weak = Rc::downgrade(nav);
+    let with_nav = move || weak.upgrade().ok_or(JsError::ContextDestroyed);
+    macro_rules! native {
+        ($name:literal, |$s:ident, $nav:ident, $a:ident| $body:expr) => {{
+            let with_nav = with_nav.clone();
+            let f = s.function($name, move |$s, _this, $a| {
+                let $nav = with_nav()?;
+                $body
+            })?;
+            natives.set_atom($name, f.value())?;
+        }};
+    }
+    // watch(hook | null): hook(kind, ...) fires the realm's events.
+    native!("watch", |s, nav, a| {
+        let id = s.realm_id();
+        let mut hooks = nav.navigation_hooks.borrow_mut();
+        hooks.retain(|(realm, ..)| *realm != id);
+        if a.get(0).is_function() {
+            hooks.push((id, s.realm().downgrade(), Rc::new(Persistent::new(s, a.get(0)))));
+        }
+        Ok(s.undefined())
+    });
+    // entries() -> [index, [key, id, url, sameDocument, stateJSON]...]: the
+    // same-origin entries around the current one.
+    native!("entries", |s, nav, _a| {
+        let st = nav.state.borrow();
+        let origin = |url: &str| Url::parse(url).ok().map(|u| u.origin());
+        let Some(current) = st.entries.get(st.index) else { return Ok(s.array(&[s.number(-1.0)])?.value()) };
+        let here = origin(&current.url);
+        let same =
+            |e: &Entry| (here.as_ref().is_some_and(|o| o.is_tuple()) && origin(&e.url) == here) || e.doc == current.doc;
+        let mut start = st.index;
+        while start > 0 && same(&st.entries[start - 1]) {
+            start -= 1;
+        }
+        let mut end = st.index + 1;
+        while end < st.entries.len() && same(&st.entries[end]) {
+            end += 1;
+        }
+        let mut values = vec![s.number((st.index - start) as f64)];
+        for e in &st.entries[start..end] {
+            let state = e.nav_state.as_deref().map_or(s.undefined(), |j| s.string(j));
+            let row = [
+                s.string(&e.key.to_string()),
+                s.string(&e.id.to_string()),
+                s.string(&e.url),
+                s.boolean(e.doc == current.doc),
+                state,
+            ];
+            values.push(s.array(&row)?.value());
+        }
+        Ok(s.array(&values)?.value())
+    });
+    // resolve(url) -> the absolute URL, or SyntaxError.
+    native!("resolve", |s, nav, a| Ok(s.string(parse(&nav, a.get(0))?.as_str())));
+    // navigate(url, replace, stateJSON?) -> whether it stayed in the
+    // document. Its `navigate` event was fired by the caller.
+    native!("navigate", |s, nav, a| {
+        let target = Url::parse(&a.get(0).to_string()?).map_err(|_| JsError::dom("SyntaxError", "Invalid URL"))?;
+        let replace = a.get(1).to_bool();
+        let state = a.opt(2).filter(|v| !v.is_undefined()).map(|v| v.to_string()).transpose()?;
+        nav.navigation_api_call.set(true);
+        let same = navigate_to(&nav, target, replace);
+        nav.navigation_api_call.set(false);
+        if same {
+            nav.set_navigation_state(state);
+        }
+        Ok(s.boolean(same))
+    });
+    // commit(url, type, stateJSON?): an intercepted navigation's
+    // same-document commit.
+    native!("commit", |s, nav, a| {
+        let url = a.get(0).to_string()?;
+        let navigation_type = match a.get(1).to_string()?.as_str() {
+            "replace" => "replace",
+            "reload" => "reload",
+            _ => "push",
+        };
+        let state = a.opt(2).filter(|v| !v.is_undefined()).map(|v| v.to_string()).transpose()?;
+        nav.navigation_api_call.set(true);
+        nav.commit_intercepted(&url, navigation_type);
+        nav.navigation_api_call.set(false);
+        if navigation_type != "reload" || state.is_some() {
+            nav.set_navigation_state(state);
+        }
+        Ok(s.undefined())
+    });
+    native!("reload", |s, nav, _a| {
+        nav.navigate(nav.url(), HistoryHandling::Reload);
+        Ok(s.undefined())
+    });
+    // traverse(key) -> 'missing', 'current' or 'queued' (its events come
+    // with the traversal task).
+    native!("traverse", |s, nav, a| {
+        let key = a.get(0).to_string()?;
+        let delta = {
+            let st = nav.state.borrow();
+            st.entries.iter().position(|e| e.key.to_string() == key).map(|i| i as i64 - st.index as i64)
+        };
+        Ok(s.string(match delta {
+            None => "missing",
+            Some(0) => "current",
+            Some(delta) => {
+                nav.traverse(delta);
+                "queued"
+            }
+        }))
+    });
+    native!("updateState", |s, nav, a| {
+        let state = a.opt(0).filter(|v| !v.is_undefined()).map(|v| v.to_string()).transpose()?;
+        nav.set_navigation_state(state);
+        Ok(s.undefined())
+    });
+    let report = s.function("reportException", |s, _this, a| {
+        s.report_exception(&JsError::Thrown(Persistent::new(s, a.get(0))));
+        Ok(s.undefined())
+    })?;
+    natives.set_atom("reportException", report.value())?;
+    let root = Persistent::new(s, natives.value());
+    let make = s.eval(include_str!("navigation.js"), Some("lightningpanda://internal/navigation.js"), 1)?;
+    let module = make.as_object().ok_or_else(unavailable)?.call(None, &[root.get(s)])?;
+    s.set_hidden(history, KEY, module)?;
     module.as_object().ok_or_else(unavailable)
 }

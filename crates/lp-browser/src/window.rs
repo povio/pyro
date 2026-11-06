@@ -234,6 +234,25 @@ impl JsClass for Window {
             },
         );
         def.getter("history", |s, w| Ok(s.wrap::<History>(w.nav.clone(), Some(IdentityKey(KEY_HISTORY, 0)))?.value()));
+        // Navigation API, made on the realm's first use.
+        def.getter("navigation", |s, w| crate::nav::navigation_module(s, &w.nav)?.get("navigation"));
+        macro_rules! navigation_interfaces {
+            ($($name:literal),*) => {$(
+                def.accessor(
+                    $name,
+                    |s, w| crate::nav::navigation_module(s, &w.nav)?.get($name),
+                    |s, w, v| lp_webapi::window::replace_window_attribute(s, &w.target.page, $name, v),
+                );
+            )*};
+        }
+        navigation_interfaces!(
+            "Navigation",
+            "NavigateEvent",
+            "NavigationHistoryEntry",
+            "NavigationDestination",
+            "NavigationTransition",
+            "NavigationCurrentEntryChangeEvent"
+        );
         def.getter("performance", |s, w| Ok(performance_object(s, w)?.value()));
         // Performance Timeline observers, made on the realm's first use.
         def.accessor(

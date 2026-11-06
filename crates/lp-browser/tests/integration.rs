@@ -20,6 +20,7 @@ mod link_fragment;
 mod loading;
 mod microtask_species;
 mod named_access;
+mod navigation_api;
 mod navigation_lifecycle;
 mod navigation_supersession;
 mod navigation_tasks;

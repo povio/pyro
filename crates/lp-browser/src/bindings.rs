@@ -80,6 +80,15 @@ impl PageHooks for Hooks {
             if nav.as_ref().is_some_and(|nav| nav.navigate_to_fragment(&request.url)) {
                 return;
             }
+            // Navigation API: the document's `navigate` event may cancel
+            // or intercept the load.
+            if let Some(nav) = nav.as_ref().filter(|_| !request.url.starts_with("javascript:")) {
+                match nav.navigate_event("push", &request.url, true) {
+                    crate::nav::NavigateDecision::Cancel => return,
+                    crate::nav::NavigateDecision::Intercept => return nav.commit_intercepted(&request.url, "push"),
+                    crate::nav::NavigateDecision::Proceed => {}
+                }
+            }
         }
         // `document.open()` before the task runs drops it (stop loading).
         let stops = nav.map(|nav| nav.stop_count());
