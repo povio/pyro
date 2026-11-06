@@ -2482,8 +2482,12 @@ mod settle_resolution_tests {
         let doc = parse_document(&dom, "http://test/", html);
         let d = dom.borrow();
         let target = render_key(d.get_element_by_id(doc, "box").unwrap().unwrap());
-        let tree =
-            d.render_tree(doc, &RenderHtml { style_text: &|_| None, stylesheet_href: &|_| None, mark: None }).unwrap();
+        let tree = d
+            .render_tree(
+                doc,
+                &RenderHtml { style_text: &|_| None, stylesheet_href: &|_| None, mark: None, adopted: None },
+            )
+            .unwrap();
         let tree = Tree {
             nodes: tree
                 .nodes

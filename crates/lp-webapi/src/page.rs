@@ -206,6 +206,9 @@ pub struct PageDom {
     /// over: a later attribute change wins, as it updates the internal slot.
     nonces: RefCell<FxHashMap<NodeId, (Option<String>, String)>>,
     pub(crate) sheet_models: RefCell<FxHashMap<NodeId, Rc<crate::css::SheetModel>>>,
+    /// The constructed sheets each document or shadow root adopts
+    /// (`adoptedStyleSheets`), in order; empty unless a script adopted one.
+    pub(crate) adopted_sheets: RefCell<FxHashMap<NodeId, Vec<Rc<crate::css::Constructed>>>>,
     /// Files selected into `<input type=file>` (CDP DOM.setFileInputFiles).
     pub(crate) files: RefCell<FxHashMap<NodeId, Vec<crate::file::FileEntry>>>,
     /// Faux layout + style engine of the displayed document. Read it with
@@ -530,6 +533,7 @@ impl PageDom {
             dialog_returns: RefCell::new(FxHashMap::default()),
             nonces: RefCell::new(FxHashMap::default()),
             sheet_models: RefCell::new(FxHashMap::default()),
+            adopted_sheets: RefCell::new(FxHashMap::default()),
             files: RefCell::new(FxHashMap::default()),
             layout: RefCell::new(lp_dom::layout::Layout::new(document)),
             frame_viewport: RefCell::new(None),
@@ -1403,6 +1407,17 @@ impl PageDom {
     }
     pub(crate) fn set_nonce(&self, el: NodeId, attr: Option<&str>, value: String) {
         self.nonces.borrow_mut().insert(el, (attr.map(str::to_owned), value));
+    }
+
+    /// The style engine applies `sheets` (constructed sheets' ids and
+    /// texts) where `scope` adopts them.
+    pub(crate) fn set_adopted_sheets(&self, scope: NodeId, sheets: Vec<(u64, Rc<str>)>) {
+        self.layout.borrow_mut().style_mut().set_adopted(scope, sheets);
+    }
+
+    /// A constructed sheet's applied text changed.
+    pub(crate) fn set_constructed_sheet_text(&self, id: u64, text: &str) {
+        self.layout.borrow_mut().style_mut().set_constructed_text(id, text);
     }
 
     /// A `<style>` element's sheet is read from the DOM again, after CSSOM edits.

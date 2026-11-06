@@ -41,6 +41,11 @@ pub struct RenderHtml<'a> {
     pub stylesheet_href: &'a dyn Fn(NodeId) -> Option<String>,
     /// Element to mark with `mark.1` (a valueless attribute).
     pub mark: Option<(NodeId, &'a str)>,
+    /// The texts of the constructed sheets a document or shadow root adopts
+    /// (`adoptedStyleSheets`), in order; `None` when nothing adopts any.
+    /// They render as `<style>` elements after the document element's
+    /// children and after a shadow tree's.
+    pub adopted: Option<&'a dyn Fn(NodeId) -> Vec<std::rc::Rc<str>>>,
 }
 
 /// Changes to a [`RenderTree`] ([`Dom::render_delta`]).
@@ -105,6 +110,8 @@ const NONE: Scope = usize::MAX;
 
 enum Step {
     Enter(u32, Scope),
+    /// An adopted sheet, as a `<style>` element of that key.
+    Adopted(u64, std::rc::Rc<str>),
     Close,
     /// Text standing for element `.0`'s children.
     Synthetic(u32, String, TextKind),
@@ -265,13 +272,25 @@ impl Dom {
 
     fn render_walk(&self, doc: NodeId, opts: &RenderHtml<'_>, sink: &mut dyn Sink) -> DomResult<()> {
         let d = self.check(doc)?;
-        self.render_walk_from(self.child_idx_iter(d).collect(), opts, sink);
+        let root = self.child_idx_iter(d).find(|&c| self.n(c).is_element()).unwrap_or(NIL);
+        self.render_walk_from(self.child_idx_iter(d).collect(), opts, sink, root);
         Ok(())
     }
 
+    /// Pushes the `<style>` steps of the sheets `scope` adopts (rendered
+    /// after what `stack` holds above them).
+    fn push_adopted(&self, stack: &mut Vec<Step>, opts: &RenderHtml<'_>, scope: u32) {
+        let Some(adopted) = opts.adopted else { return };
+        let sheets = adopted(self.id_of(scope));
+        for (i, text) in sheets.into_iter().enumerate().rev() {
+            stack.push(Step::Adopted(adopted_key(scope, i), text));
+        }
+    }
+
     /// The render walk over the subtrees of `roots` (in order), outside any
-    /// shadow tree.
-    fn render_walk_from(&self, roots: Vec<u32>, opts: &RenderHtml<'_>, sink: &mut dyn Sink) {
+    /// shadow tree. `root` is the document element (whose rendered children
+    /// end with the document's adopted sheets), `NIL` when not walked.
+    fn render_walk_from(&self, roots: Vec<u32>, opts: &RenderHtml<'_>, sink: &mut dyn Sink, root: u32) {
         let mark = opts.mark.and_then(|(id, _)| self.check(id).ok());
         // Shadow hosts entered: (host, the host's own scope).
         let mut hosts: Vec<(u32, Scope)> = Vec::new();
@@ -288,6 +307,13 @@ impl Dom {
                 Step::Close => {
                     let tag = tags.pop().unwrap_or_default();
                     sink.close(&tag);
+                    continue;
+                }
+                Step::Adopted(key, text) => {
+                    let name = QualName::new(None, ns!(html), markup5ever::local_name!("style"));
+                    sink.open(key, "style", &name, &[], false, false);
+                    sink.text(key | SYNTHETIC_TEXT, &text, TextKind::Style);
+                    sink.close("style");
                     continue;
                 }
                 Step::Enter(n, scope) => (n, scope),
@@ -410,8 +436,12 @@ impl Dom {
                     }
                     if e.shadow_root != NIL {
                         hosts.push((n, scope));
+                        self.push_adopted(&mut stack, opts, e.shadow_root);
                         push_children(&mut stack, self.child_idx_iter(e.shadow_root).collect(), hosts.len() - 1);
                     } else {
+                        if n == root && self.n(n).parent != NIL {
+                            self.push_adopted(&mut stack, opts, self.n(n).parent);
+                        }
                         push_children(&mut stack, self.child_idx_iter(n).collect(), scope);
                     }
                 }
@@ -429,7 +459,7 @@ impl Dom {
     /// content gives its sheet text.
     pub fn render_delta(&self, doc: NodeId, since: u64, opts: &RenderHtml<'_>) -> Option<RenderDelta> {
         let d = self.check(doc).ok()?;
-        if self.shadow_root_count() != 0 || opts.mark.is_some() {
+        if self.shadow_root_count() != 0 || opts.mark.is_some() || opts.adopted.is_some() {
             return None;
         }
         let mut changed: Vec<u32> = Vec::new();
@@ -569,7 +599,7 @@ impl Dom {
             let kids: Vec<u32> = self.child_idx_iter(p).filter(|&k| self.render_child(k)).collect();
             let fresh: Vec<u32> = kids.iter().copied().filter(|k| inserted.contains(k)).collect();
             let mut sink = TreeSink::default();
-            self.render_walk_from(fresh, opts, &mut sink);
+            self.render_walk_from(fresh, opts, &mut sink, NIL);
             ops.push(DeltaOp::Children {
                 parent: (p != d).then(|| render_key(self.id_of(p))),
                 kids: kids.iter().map(|&k| render_key(self.id_of(k))).collect(),
@@ -617,7 +647,7 @@ impl Dom {
             }
             // The node alone (its subtree walk, first node).
             let mut sink = TreeSink::default();
-            self.render_walk_from(vec![i], opts, &mut sink);
+            self.render_walk_from(vec![i], opts, &mut sink, NIL);
             let Some(first) = sink.tree.nodes.into_iter().next() else { continue };
             if first.key != render_key(self.id_of(i)) {
                 return None;
@@ -768,6 +798,12 @@ impl Dom {
             })
             .collect()
     }
+}
+
+/// The render key of the `index`th sheet adopted by the document or shadow
+/// root at slot `scope`: bit 62 marks it apart from node keys.
+fn adopted_key(scope: u32, index: usize) -> u64 {
+    (1 << 62) | (((index as u64) & 0x3fff_ffff) << 32) | u64::from(scope)
 }
 
 fn push_children(stack: &mut Vec<Step>, kids: Vec<u32>, scope: Scope) {

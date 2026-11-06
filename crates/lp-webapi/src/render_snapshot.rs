@@ -107,7 +107,13 @@ fn snapshot_of(
             sheets.borrow_mut().insert(url.clone(), text.to_owned());
             Some(url)
         };
-        let opts = RenderHtml { style_text: &style_text, stylesheet_href: &stylesheet_href, mark };
+        let adopted = |scope: NodeId| style.adopted_sheets(scope);
+        let opts = RenderHtml {
+            style_text: &style_text,
+            stylesheet_href: &stylesheet_href,
+            mark,
+            adopted: style.has_adopted().then_some(&adopted as _),
+        };
         let (html, tree) = match form {
             Form::Html => {
                 (dom.render_html_scrolled(document, &opts, &layout.scrolled_elements()).unwrap_or_default(), None)
