@@ -536,6 +536,7 @@ impl BaseDocument {
                 }
 
                 let mut collected = LayoutChildren::default();
+                phase_profile::collected();
                 collect_layout_children(doc, node_id, &mut collected);
                 let layout_children = collected.children;
                 doc.nodes[node_id].anonymous_blocks = collected.anonymous_blocks;
@@ -788,6 +789,21 @@ pub mod phase_profile {
     /// Inline layouts built on this thread so far, and their text bytes.
     pub fn rebuilds() -> (u64, u64) {
         REBUILDS.with(|r| r.get())
+    }
+    std::thread_local! {
+        static CONSTRUCTED: Cell<(u64, u64)> = const { Cell::new((0, 0)) };
+    }
+    /// A container's layout children were collected again.
+    pub(crate) fn collected() {
+        CONSTRUCTED.with(|c| c.set((c.get().0 + 1, c.get().1)));
+    }
+    /// A table's `TableContext` was built again.
+    pub(crate) fn table_built() {
+        CONSTRUCTED.with(|c| c.set((c.get().0, c.get().1 + 1)));
+    }
+    /// Layout-children collections and table context builds on this thread so far.
+    pub fn constructions() -> (u64, u64) {
+        CONSTRUCTED.with(|c| c.get())
     }
     std::thread_local! {
         static RESTYLED: Cell<u64> = const { Cell::new(0) };

@@ -574,6 +574,7 @@ fn collect_layout_children_with_wrap(
         }
 
         DisplayInside::Table => {
+            crate::resolve::phase_profile::table_built();
             let (table_context, tlayout_children) = build_table_context(doc, container_node_id);
             #[allow(clippy::arc_with_non_send_sync)]
             let data = SpecialElementData::TableRoot(Arc::new(table_context));

@@ -16,8 +16,11 @@ use style::shared_lock::StylesheetGuards;
 use style::url::ComputedUrl;
 use style::values::generics::image::Image as StyloImage;
 use style::values::specified::align::AlignFlags;
+use style::values::computed::Display;
 use style::values::specified::box_::DisplayInside;
 use style::values::specified::box_::DisplayOutside;
+
+use super::replaced::is_inline_box_element;
 use thin_vec::ThinVec;
 
 // Blitz-specific damage bits, in increasing order of severity above Servo's
@@ -28,17 +31,31 @@ pub(crate) const ONLY_RELAYOUT: RestyleDamage =
 
 /// The node's `order` changed: its flex/grid container must re-collect its
 /// `layout_children` (which sorts them). Consumed by the container in
-/// `propagate_damage_flags`, which marks itself `CONSTRUCT_BOX` without
+/// `propagate_damage_flags`, which marks itself `CONSTRUCT_FC` without
 /// forwarding that further up. Deliberately not part of `ALL_DAMAGE`.
 pub(crate) const REORDER_CHILDREN: RestyleDamage =
     RestyleDamage::from_bits_retain(0b_0000_0000_0001_0000);
 
+/// The node's own box changed (its style, attributes, or it is new): it is
+/// reconstructed, and so is the box that contains it, whose layout children
+/// it is one of.
 pub(crate) const CONSTRUCT_BOX: RestyleDamage =
     RestyleDamage::from_bits_retain(0b_0000_0000_0010_0000);
+/// The node's children changed (inserted, removed, text edited, or a child's
+/// own box changed): it re-collects its layout children. Unlike
+/// `CONSTRUCT_BOX`, this stops at the node unless its children are laid out
+/// by an ancestor (see `forwards_construction`); the mutator marks a parent
+/// with it alone (`CHILDREN_CHANGED`).
 pub(crate) const CONSTRUCT_FC: RestyleDamage =
     RestyleDamage::from_bits_retain(0b_0000_0000_0100_0000);
+/// Something below the node is reconstructed (a traversal hint only).
 pub(crate) const CONSTRUCT_DESCENDENT: RestyleDamage =
     RestyleDamage::from_bits_retain(0b_0000_0000_1000_0000);
+
+/// What the mutator marks a parent with when its child list or a child's
+/// text changes: re-collect this node's layout children, nothing above.
+/// `propagate_damage_flags` adds the relayout it implies.
+pub(crate) const CHILDREN_CHANGED: RestyleDamage = CONSTRUCT_FC;
 
 pub(crate) const ALL_DAMAGE: RestyleDamage =
     RestyleDamage::from_bits_retain(0b_0000_0000_1110_1111);
@@ -88,11 +105,10 @@ impl BaseDocument {
         }
 
         // A child's `order` changed: this container re-collects (and so re-sorts)
-        // its layout children. Only the direct parent consumes the flag, and the
-        // resulting `CONSTRUCT_BOX` is not forwarded further up: the container's
-        // own box is unchanged, so ancestors need only `RELAYOUT` (always set
-        // alongside `REORDER_CHILDREN`) plus `CONSTRUCT_DESCENDENT` so that a
-        // traversal gated on it still reaches this container.
+        // its layout children. Only the direct parent consumes the flag; like
+        // any other change to its children, it reaches ancestors only as
+        // `RELAYOUT` (always set alongside `REORDER_CHILDREN`) plus
+        // `CONSTRUCT_DESCENDENT`.
         let reorder = damage_from_children.contains(REORDER_CHILDREN)
             && matches!(
                 self.nodes[node_id].display_constructed_as().inside(),
@@ -104,16 +120,39 @@ impl BaseDocument {
         // Put children back
         self.nodes[node_id].children = children;
 
-        if damage.contains(CONSTRUCT_BOX) {
+        if reorder {
+            damage.insert(CONSTRUCT_FC);
+        }
+
+        // A table copies its own style, and the width, padding, border and
+        // height of its parts, into its `TableContext`: a style change that
+        // only relayouts any of them still rebuilds it. (Parts forward it
+        // below; here the table itself.)
+        let display = self.nodes[node_id].display_style();
+        if own_damage.contains(ONLY_RELAYOUT)
+            && display.is_some_and(|d| d.inside() == DisplayInside::Table)
+        {
+            damage.insert(CONSTRUCT_FC);
+        }
+
+        let reconstructs = damage.intersects(CONSTRUCT_BOX | CONSTRUCT_FC);
+        if reconstructs {
             damage.insert(RestyleDamage::RELAYOUT);
         }
 
-        // Compute damage to propagate to parent
-        let mut damage_for_parent = damage; // & RestyleDamage::RELAYOUT;
-
-        if reorder {
-            damage.insert(CONSTRUCT_BOX);
+        // Compute damage to propagate to parent. Reconstruction stops at the
+        // box that owns it: the parent re-collects its layout children only
+        // when this box itself changed, or when this node's children are
+        // laid out by the parent (or further up).
+        let mut damage_for_parent = damage - (CONSTRUCT_BOX | CONSTRUCT_FC);
+        if reconstructs {
             damage_for_parent.insert(CONSTRUCT_DESCENDENT);
+            if own_damage.contains(CONSTRUCT_BOX) || forwards_construction(&self.nodes[node_id]) {
+                damage_for_parent.insert(CONSTRUCT_FC);
+            }
+        }
+        if own_damage.contains(ONLY_RELAYOUT) && display.is_some_and(is_table_part) {
+            damage_for_parent.insert(CONSTRUCT_FC);
         }
 
         // An inline `<svg>` is rendered from a snapshot of its subtree (with
@@ -140,7 +179,7 @@ impl BaseDocument {
         // If the node or any of it's children have been mutated or their layout styles
         // have changed, then we should clear it's layout cache.
         let mut invalidate_anonymous_ancestors = false;
-        if damage.intersects(ONLY_RELAYOUT | CONSTRUCT_BOX) {
+        if damage.intersects(ONLY_RELAYOUT | CONSTRUCT_BOX | CONSTRUCT_FC) {
             node.invalidate_layout_cache();
             invalidate_anonymous_ancestors = true;
             damage.remove(ONLY_RELAYOUT);
@@ -329,6 +368,59 @@ impl BaseDocument {
         node.unset_damaged_descendants();
         node.unset_dirty_descendants();
     }
+}
+
+/// Whether the node's layout children are collected by an ancestor's
+/// construction rather than (only) its own, so that construction damage on it
+/// must reconstruct its parent too:
+/// - non-atomic inline boxes: their content is part of the inline root's
+///   inline layout (`find_inline_layout_embedded_boxes`), and a block among it
+///   changes how the container partitions its children (`is_or_contains_block`);
+/// - `display: contents`: its children are hoisted into the parent's box;
+/// - table rows, row groups, columns and column groups: they are never layout
+///   children; the table collects their cells into its `TableContext`;
+/// - list items: their markers are numbered by the list's construction
+///   (`collect_list_item_children`).
+///
+/// Forwarding repeats at each such ancestor, so damage reaches the first box
+/// that owns the content (the inline root, the table, the first non-contents
+/// ancestor).
+fn forwards_construction(node: &Node) -> bool {
+    let Some(display) = node.display_style() else {
+        return false;
+    };
+    if display.is_list_item() {
+        return true;
+    }
+    match display.inside() {
+        DisplayInside::Contents => true,
+        DisplayInside::Flow => {
+            display.outside() == DisplayOutside::Inline
+                && !node
+                    .element_data()
+                    .is_some_and(|el| is_inline_box_element(&el.name.local))
+        }
+        inside => is_table_part_inside(inside),
+    }
+}
+
+/// Table-internal boxes whose style is copied into the table's `TableContext`.
+fn is_table_part(display: Display) -> bool {
+    is_table_part_inside(display.inside()) || display.inside() == DisplayInside::TableCell
+}
+
+/// Table-internal boxes which are not layout children: the table reads them
+/// (and their cells) directly.
+fn is_table_part_inside(inside: DisplayInside) -> bool {
+    matches!(
+        inside,
+        DisplayInside::TableRow
+            | DisplayInside::TableRowGroup
+            | DisplayInside::TableHeaderGroup
+            | DisplayInside::TableFooterGroup
+            | DisplayInside::TableColumn
+            | DisplayInside::TableColumnGroup
+    )
 }
 
 // fn is_fc_root(style: &ComputedValues) -> bool {

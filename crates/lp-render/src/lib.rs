@@ -95,6 +95,11 @@ pub fn blitz_style_stats() -> [u64; 4] {
     blitz_dom::phase_profile::style_stats_peek()
 }
 
+/// Layout-children collections and table context builds Blitz made on this thread.
+pub fn blitz_constructions() -> (u64, u64) {
+    blitz_dom::phase_profile::constructions()
+}
+
 /// `resolve` calls Blitz made on this thread, and how many of their layout passes ran Taffy.
 pub fn blitz_passes() -> (u64, u64) {
     blitz_dom::phase_profile::passes()
