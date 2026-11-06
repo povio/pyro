@@ -34,7 +34,8 @@ pub struct Capabilities {
     /// fork() support (patched JavaScriptCore): [`Engine::prepare_for_fork`].
     pub fork: bool,
     /// Constant attributes of a realm's global (patched JavaScriptCore):
-    /// [`crate::Scope::define_global_constant`].
+    /// [`crate::Scope::define_global_constant`] and
+    /// [`crate::Scope::define_lazy_global_constant`].
     pub global_constants: bool,
 }
 
@@ -54,6 +55,8 @@ impl Capabilities {
             object_global_context: spi.get_object_global_context.is_some(),
             fork: spi.fork().is_some(),
             global_constants: spi.set_constant_accessor.is_some()
+                && spi.set_lazy_constant_accessor.is_some()
+                && spi.set_constant_accessor_initializer.is_some()
                 && spi.clear_constant_accessors.is_some()
                 && spi.get_proxy_target.is_some(),
         }

@@ -291,6 +291,9 @@ pub(crate) struct RealmInner {
     /// The global has constant attributes ([`Scope::define_global_constant`]),
     /// whose values `dispose` releases.
     global_constants: Cell<bool>,
+    /// What makes each lazy constant attribute's value on its first read
+    /// ([`Scope::define_lazy_global_constant`]).
+    lazy_constants: RefCell<Vec<(&'static str, LazyGlobalConstant)>>,
 }
 
 impl RealmInner {
@@ -464,10 +467,12 @@ impl RealmInner {
                 // SAFETY: the live global behind this realm's proxy, on its
                 // still-retained context. Its constants (a window's document)
                 // would otherwise live as long as the global object, which
-                // script elsewhere may hold (a stale `contentWindow`).
+                // script elsewhere may hold (a stale `contentWindow`); a lazy
+                // one not read yet is never made.
                 unsafe { clear(ctx, self.global_target.get()) };
             }
         }
+        drop(std::mem::take(&mut *self.lazy_constants.borrow_mut()));
         // SAFETY: we owned one retain on the global context.
         unsafe { sys::JSGlobalContextRelease(ctx) };
         if let Some(h) = self.engine.hooks() {
@@ -1463,6 +1468,46 @@ impl<'s> Scope<'s> {
         set
     }
 
+    /// [`Scope::define_global_constant`] with the value made on first use:
+    /// the property is the same non-configurable, read-only accessor from
+    /// the start, and the first read of it (a bare `name`, `globalThis.name`,
+    /// the reified getter) calls `make` in this realm and keeps its value as
+    /// the constant from then on. A realm whose script never reads it never
+    /// pays for the value (a window's `document`: its wrapper installs the
+    /// Document interfaces). An error from `make` is the read's, and the next
+    /// read calls it again. Disposed before the first read, the realm never
+    /// calls it: reads throw. False, as for `define_global_constant`, when
+    /// the property exists or the JavaScriptCore lacks the entry points.
+    pub fn define_lazy_global_constant(&self, name: &'static str, make: LazyGlobalConstant) -> bool {
+        let spi = sys::spi::get();
+        let (Some(set), Some(initializer), Some(_), target) = (
+            spi.set_lazy_constant_accessor,
+            spi.set_constant_accessor_initializer,
+            spi.clear_constant_accessors,
+            self.realm.global_target.get(),
+        ) else {
+            return false;
+        };
+        if target.is_null() {
+            return false;
+        }
+        static INITIALIZER: std::sync::Once = std::sync::Once::new();
+        // SAFETY: a function for the process's life.
+        INITIALIZER.call_once(|| unsafe { initializer(Some(make_lazy_global_constant)) });
+        // Listed first: nothing reads the property before it exists, and a
+        // refused one is unlisted again.
+        self.realm.lazy_constants.borrow_mut().push((name, make));
+        let n = JsString::new(name);
+        // SAFETY: the live global behind this realm's proxy.
+        let set = unsafe { set(self.ctx, target, n.as_raw(), None, sys::kJSPropertyAttributeNone) };
+        if set {
+            self.realm.global_constants.set(true);
+        } else {
+            self.realm.lazy_constants.borrow_mut().pop();
+        }
+        set
+    }
+
     /// Whether `obj` is the realm's global: its proxy (what script sees) or
     /// the object behind it (what a global variable's getter receives).
     pub(crate) fn is_global_object(&self, obj: sys::JSObjectRef) -> bool {
@@ -1705,6 +1750,37 @@ impl Deferred {
     }
 }
 
+/// What makes the value of a lazy global constant
+/// ([`Scope::define_lazy_global_constant`]), in the realm it belongs to.
+pub type LazyGlobalConstant = Rc<dyn for<'a> Fn(&Scope<'a>) -> JsResult<Value<'a>>>;
+
+/// The process's initializer of lazy constant accessors
+/// (`JSSetConstantAccessorInitializer`): the first read of one in `ctx`'s
+/// realm. JavaScriptCore keeps the value as the constant.
+unsafe extern "C" fn make_lazy_global_constant(
+    ctx: sys::JSContextRef,
+    object: sys::JSObjectRef,
+    name: sys::JSStringRef,
+    exc: *mut sys::JSValueRef,
+) -> sys::JSValueRef {
+    unsafe {
+        class::guard(ctx, exc, ptr::null(), |scope| {
+            // SAFETY: the property's name, alive during the call.
+            let name = JsString::from_raw_borrowed(name);
+            // Cloned out: `make` may define or read other lazy constants.
+            let make = {
+                let table = scope.realm.lazy_constants.borrow();
+                table.iter().find(|(n, _)| name.eq_str(n)).map(|(_, m)| m.clone())
+            };
+            // Only this realm's global holds its lazy constants.
+            match make {
+                Some(make) if scope.is_global_object(object) => Ok(make(scope)?.raw),
+                _ => Err(JsError::ContextDestroyed),
+            }
+        })
+    }
+}
+
 type ClosureData = Box<dyn for<'a> Fn(&Scope<'a>, Value<'a>, Args<'a>) -> JsResult<Value<'a>>>;
 
 pub(crate) unsafe extern "C" fn closure_call(
@@ -1796,6 +1872,7 @@ pub(crate) fn create(engine: &Rc<EngineInner>, options: RealmOptions) -> JsResul
         global_object: Cell::new(unsafe { sys::JSContextGetGlobalObject(ctx) }),
         global_target: Cell::new(ptr::null_mut()),
         global_constants: Cell::new(false),
+        lazy_constants: RefCell::new(Vec::new()),
     });
     if let Some(target) = sys::spi::get().get_proxy_target {
         // SAFETY: the cached global proxy of a live context.

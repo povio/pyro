@@ -1216,3 +1216,126 @@ fn a_disposed_realms_global_constants_die_with_it() {
         }
     }
 }
+
+/// A lazy constant's maker for the tests below: wraps a node (id 1), counts
+/// its calls in `made`, and fails while `fail` is set.
+fn lazy_wrapper_maker(made: &Rc<Cell<u32>>, fail: &Rc<Cell<bool>>, drops: &Rc<Cell<u32>>) -> LazyGlobalConstant {
+    let (made, fail, drops) = (made.clone(), fail.clone(), drops.clone());
+    Rc::new(move |s| {
+        made.set(made.get() + 1);
+        if fail.get() {
+            return Err(JsError::Type("not yet".into()));
+        }
+        Ok(s.wrap::<Node>(node(1, &drops), None)?.value())
+    })
+}
+
+#[test]
+fn a_lazy_global_constant_is_made_on_its_first_read_only() {
+    let e = engine();
+    e.register::<Element>();
+    let realm = e.create_realm(RealmOptions::default()).unwrap();
+    let (made, fail, drops) = (Rc::new(Cell::new(0)), Rc::new(Cell::new(false)), Rc::new(Cell::new(0)));
+    let installed =
+        realm.scope().unwrap().define_lazy_global_constant("held", lazy_wrapper_maker(&made, &fail, &drops));
+    if !installed {
+        // The system framework has no constant accessors.
+        assert!(!e.capabilities().global_constants);
+        return;
+    }
+    // The property is the constant's from the start; looking at it makes nothing.
+    assert_eq!(
+        eval_str(
+            &realm,
+            "const d = Object.getOwnPropertyDescriptor(globalThis, 'held'); \
+             [typeof d.get, d.set, d.enumerable, d.configurable, 'held' in globalThis, delete globalThis.held, \
+              Object.keys(globalThis).includes('held')].join()"
+        ),
+        "function,,true,false,true,false,true"
+    );
+    assert_eq!(eval_str(&realm, "try { d.get.call({}) } catch (e) { e.constructor.name }"), "TypeError");
+    assert_eq!(made.get(), 0, "nothing read the constant yet");
+    assert_eq!(
+        eval_str(&realm, "try { Object.defineProperty(globalThis, 'held', { value: 1 }); 'redefined' } catch (e) { e.constructor.name }"),
+        "TypeError"
+    );
+    assert_eq!(made.get(), 0);
+    // An error is the read's; the next read tries again.
+    fail.set(true);
+    assert_eq!(eval_str(&realm, "try { held; 'read' } catch (e) { e.message }"), "not yet");
+    assert_eq!(made.get(), 1);
+    fail.set(false);
+    assert_eq!(
+        eval_str(&realm, "[held.nodeId, globalThis.held === held, d.get.call(undefined) === held].join()"),
+        "1,true,true"
+    );
+    assert_eq!(made.get(), 2);
+    // Made once: later reads, compiled code folding it, the getter reified
+    // before it was made.
+    assert_eq!(eval_str(&realm, "let n = 0; for (let i = 0; i < 200000; i++) n += held.nodeId; n"), "200000");
+    assert_eq!(eval_str(&realm, "d.get.call(globalThis) === held"), "true");
+    assert_eq!(made.get(), 2);
+    let s = realm.scope().unwrap();
+    assert!(!s.define_lazy_global_constant("held", lazy_wrapper_maker(&made, &fail, &drops)), "set once");
+    assert!(!s.define_global_constant("held", s.object().value()), "set once");
+}
+
+#[inline(never)]
+fn lazy_constant_of_a_disposed_realm(
+    e: &Engine,
+    holder: &Realm,
+    made: &Rc<Cell<u32>>,
+    drops: &Rc<Cell<u32>>,
+    read_first: bool,
+) -> bool {
+    let realm = e.create_realm(RealmOptions::default()).unwrap();
+    let installed = realm
+        .scope()
+        .unwrap()
+        .define_lazy_global_constant("held", lazy_wrapper_maker(made, &Rc::new(Cell::new(false)), drops));
+    if !installed {
+        return false;
+    }
+    if read_first {
+        assert_eq!(eval_str(&realm, "let n = 0; for (let i = 0; i < 200000; i++) n += held.nodeId; n"), "200000");
+    }
+    {
+        let s = realm.scope().unwrap();
+        let global = Persistent::new(&s, s.global().value());
+        let hs = holder.scope().unwrap();
+        hs.global().set("stale", global.get(&hs)).unwrap();
+    }
+    realm.dispose();
+    true
+}
+
+#[test]
+fn a_disposed_realms_lazy_constant_throws_and_releases_its_value() {
+    let e = engine();
+    e.register::<Element>();
+    for read_first in [false, true] {
+        let holder = e.create_realm(RealmOptions::default()).unwrap();
+        let (made, drops) = (Rc::new(Cell::new(0)), Rc::new(Cell::new(0)));
+        if !lazy_constant_of_a_disposed_realm(&e, &holder, &made, &drops, read_first) {
+            return;
+        }
+        // Reads after the realm is gone throw, as for a constant that was
+        // made, and one that was not never is.
+        assert_eq!(
+            eval_str(&holder, "try { stale.held; 'read' } catch (e) { e.message }"),
+            "Execution context was destroyed."
+        );
+        assert_eq!(
+            eval_str(&holder, "try { Object.getOwnPropertyDescriptor(stale, 'held').get.call(stale); 'read' } catch (e) { e.message }"),
+            "Execution context was destroyed."
+        );
+        assert_eq!(eval_str(&holder, "Object.getOwnPropertyDescriptor(stale, 'held').configurable"), "false");
+        assert_eq!(made.get(), u32::from(read_first), "read first: {read_first}");
+        overwrite_dead_stack();
+        for _ in 0..6 {
+            e.collect_garbage_now();
+            e.drain_finalized();
+        }
+        assert_eq!(drops.get(), u32::from(read_first), "read first {read_first}: the value outlived its realm");
+    }
+}
