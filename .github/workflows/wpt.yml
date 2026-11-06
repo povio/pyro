@@ -2,13 +2,15 @@ name: WPT
 
 # Coverage gate over our WPT subset (bench/wpt/README.md). Pull requests run the gate's plan: every page that passed a
 # subtest or completed in bench/wpt/baseline.json, split across shards by recorded duration. The `gate` job fails if a
-# subtest that passes in the baseline no longer does, or a page that completed no longer completes (each confirmed by
-# one rerun). Pushes to main and manual runs run every page. Every run that changes the baseline (improvements, a full
-# run, or the first run before a baseline exists) uploads the refreshed bench/wpt/baseline.json as `wpt-baseline`.
+# subtest that passes in the baseline passes in no run of its page (each differing page reruns twice or more), if a
+# page that completed completes in no run, if confirmed improvements are not in the baseline yet, or if the pull
+# request's baseline.json or flaky.json drops coverage the base branch's protect (unless it has the `wpt-accept-loss`
+# label). Pushes to main and manual runs run every page. A run whose gate passes, or fails only for a stale or
+# missing baseline, uploads the refreshed bench/wpt/baseline.json as `wpt-baseline` when it changed.
 #
 # The browser is the fork build (patched JavaScriptCore, as the npm package ships for arm64): with the system
 # framework, window named properties and import maps are missing and ~3,200 subtests on ~150 pages fail for that
-# reason alone.
+# reason alone. It is cached by its inputs, so a pull request that changes none of them skips both macOS builds.
 
 on:
   pull_request:
@@ -25,7 +27,7 @@ on:
         type: boolean
         default: false
       runner-args:
-        description: Extra gate.mjs run arguments for every shard (e.g. --reuse-context), to compare runs with gate.mjs diff
+        description: Extra gate.mjs run arguments for every shard (e.g. --reuse-context or --jobs 1), to compare runs with gate.mjs diff
         type: string
         default: ''
 
@@ -41,20 +43,78 @@ env:
   FULL: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.full) }}
 
 jobs:
-  # The patched JavaScriptCore, from the Actions cache (about 15 s) or built on a miss (about 7 minutes).
+  # Cache keys, and whether the Actions cache already holds the browser and the patched JavaScriptCore (a Linux job,
+  # seconds), so the macOS jobs that make them run only when needed.
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read # gh cache list
+    outputs:
+      jsc-dir: ${{ steps.keys.outputs.jsc-dir }}
+      jsc-cached: ${{ steps.keys.outputs.jsc-cached }}
+      browser-key: ${{ steps.keys.outputs.browser-key }}
+      browser-cached: ${{ steps.keys.outputs.browser-cached }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            crates/lp-jsc-sys/webkit
+            scripts/jsc
+      - name: Cache keys
+        id: keys
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          jsc_dir="$(scripts/jsc/cache-key.sh)"
+          # Every input of the browser build, by git object id: sources, build configuration, the bundling script and
+          # this workflow (its build steps); plus the stable toolchain (its manifest's hash) and the JavaScriptCore.
+          inputs="$(git rev-parse HEAD:crates HEAD:vendor HEAD:Cargo.toml HEAD:Cargo.lock HEAD:.cargo HEAD:scripts/macos \
+            HEAD:scripts/release/bundle-jsc.sh HEAD:.github/workflows/wpt.yml)"
+          toolchain="$(curl -fsS --retry 3 https://static.rust-lang.org/dist/channel-rust-stable.toml.sha256)" || toolchain=unknown
+          browser_key="wpt-browser-macos-arm64-$(printf '%s\n' "$inputs" "${toolchain%% *}" "$jsc_dir" | sha256sum | cut -c1-16)"
+          # An entry this run can restore: saved on its own ref, its base branch or main. A failed lookup is a miss.
+          cached() {
+            gh cache list --repo "$GITHUB_REPOSITORY" --key "$1" --limit 100 --json key,ref \
+              --jq ".[] | select(.key == \"$1\") | .ref" 2>/dev/null \
+              | grep -qxF -e "$GITHUB_REF" -e "refs/heads/${BASE_REF:-main}" -e refs/heads/main && echo true || echo false
+          }
+          {
+            echo "jsc-dir=$jsc_dir"
+            echo "jsc-cached=$(cached "patched-jsc-macos-arm64-$jsc_dir")"
+            echo "browser-key=$browser_key"
+            echo "browser-cached=$(cached "$browser_key")"
+          } | tee -a "$GITHUB_OUTPUT"
+
+  # The patched JavaScriptCore, built (about 7 minutes) only when neither it nor the browser is cached.
   jsc:
+    needs: prepare
+    if: needs.prepare.outputs.browser-cached != 'true' && needs.prepare.outputs.jsc-cached != 'true'
     uses: ./.github/workflows/jsc.yml
 
   build:
-    needs: jsc
+    needs: [prepare, jsc]
+    if: ${{ !cancelled() && !failure() && needs.prepare.outputs.browser-cached != 'true' }}
     runs-on: macos-15
     timeout-minutes: 45
+    env:
+      JSC_DIR: ${{ needs.prepare.outputs.jsc-dir }}
     steps:
       - uses: actions/checkout@v6
+      # The patched JavaScriptCore: the jsc job's artifact when it ran, otherwise the Actions cache.
       - uses: actions/download-artifact@v4
+        if: needs.jsc.result == 'success'
         with:
           name: patched-jsc
           path: patched-jsc
+      - uses: actions/cache/restore@v4
+        if: needs.jsc.result != 'success'
+        with:
+          path: ~/Library/Caches/lightningpanda/jsc/${{ needs.prepare.outputs.jsc-dir }}
+          key: patched-jsc-macos-arm64-${{ needs.prepare.outputs.jsc-dir }}
+          fail-on-cache-miss: true
       - name: Install Rust
         run: rustup toolchain install stable --profile minimal --no-self-update
       # Dependencies only (workspace crates always rebuild). Only main saves: pull requests restore main's cache, and
@@ -66,17 +126,15 @@ jobs:
       # release-fast: the release profile with lp-cdp and lp-dom split into more codegen units (Cargo.toml), so the
       # end of the build is not one core's work.
       - name: Build the browser against the patched JavaScriptCore
-        env:
-          JSC_DIR: ${{ needs.jsc.outputs.dir }}
         run: |
           # At the path it was built at: its install name is absolute.
           export LP_JSC_DIR="$HOME/Library/Caches/lightningpanda/jsc/$JSC_DIR"
-          mkdir -p "$(dirname "$LP_JSC_DIR")"
-          mv patched-jsc "$LP_JSC_DIR"
+          if [ -d patched-jsc ]; then
+            mkdir -p "$(dirname "$LP_JSC_DIR")"
+            mv patched-jsc "$LP_JSC_DIR"
+          fi
           cargo +stable build --locked --profile release-fast --package lightningpanda
       - name: Bundle the patched JavaScriptCore with the browser
-        env:
-          JSC_DIR: ${{ needs.jsc.outputs.dir }}
         run: |
           mkdir browser
           cp target/release-fast/lightningpanda browser/
@@ -88,15 +146,22 @@ jobs:
             | grep -q "$PWD/browser/lib/libJavaScriptCore.dylib"
           browser/lightningpanda eval -e 'console.log("ok")' | grep -Fx ok
           tar -czf browser.tgz browser
+      # For later runs with the same inputs (pull requests restore their own entries and main's).
+      - uses: actions/cache/save@v4
+        with:
+          path: browser.tgz
+          key: ${{ needs.prepare.outputs.browser-key }}
       - uses: actions/upload-artifact@v4
         with:
           name: wpt-browser
           path: browser.tgz
           if-no-files-found: error
           retention-days: 3
+          overwrite: true
 
   wpt:
-    needs: build
+    needs: [prepare, build]
+    if: ${{ !cancelled() && !failure() }}
     runs-on: macos-15
     timeout-minutes: 30
     strategy:
@@ -123,15 +188,24 @@ jobs:
       - name: Fetch WPT
         if: steps.wpt-cache.outputs.cache-hit != 'true'
         run: bench/wpt/fetch-wpt.sh wpt
+      # The browser: this run's build, or the cached one when its inputs did not change.
       - uses: actions/download-artifact@v4
+        if: needs.build.result == 'success'
         with:
           name: wpt-browser
+      - uses: actions/cache/restore@v4
+        if: needs.build.result != 'success'
+        with:
+          path: browser.tgz
+          key: ${{ needs.prepare.outputs.browser-key }}
+          fail-on-cache-miss: true
       - run: tar -xzf browser.tgz
       - name: Run shard ${{ strategy.job-index }} of ${{ strategy.job-total }}
         env:
           SHARD: ${{ strategy.job-index }}/${{ strategy.job-total }}
           RUNNER_ARGS: ${{ inputs.runner-args }}
           # macos-15 arm64 runners have 3 CPUs; one page more than CPUs keeps them busy while a page waits on a timer.
+          # Reruns use the same --jobs, padded with copies of the pages they rerun.
           JOBS: '4'
           OUT: wpt-shard-${{ strategy.job-index }}.json
         run: |
@@ -148,16 +222,22 @@ jobs:
           path: wpt-shard-${{ strategy.job-index }}.json
           if-no-files-found: error
           retention-days: 14
+          overwrite: true
 
   gate:
-    needs: wpt
+    needs: [prepare, jsc, build, wpt]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read # the wpt-accept-loss label
     steps:
       - uses: actions/checkout@v6
         with:
           sparse-checkout: bench
+          # A pull request's merge commit and its first parent, the base branch (its baseline.json and flaky.json).
+          fetch-depth: 2
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: '1.4.3'
@@ -166,15 +246,48 @@ jobs:
           pattern: wpt-shard-*
           merge-multiple: true
       - name: Check coverage against bench/wpt/baseline.json
-        run: bun bench/wpt/gate.mjs check wpt-shard-*.json --summary "$GITHUB_STEP_SUMMARY"
+        id: check
+        env:
+          EVENT: ${{ github.event_name }}
+          PR: ${{ github.event.pull_request.number }}
+          GH_TOKEN: ${{ github.token }}
+          JOBS_BEFORE: 'prepare: ${{ needs.prepare.result }}, jsc: ${{ needs.jsc.result }}, build: ${{ needs.build.result }}, shards: ${{ needs.wpt.result }}'
+        run: |
+          shopt -s nullglob
+          files=(wpt-shard-*.json)
+          if [ ${#files[@]} -eq 0 ]; then
+            msg="No shard results, so nothing was checked: the jobs before this one failed or did not run ($JOBS_BEFORE). See their logs."
+            echo "::error title=WPT gate::$msg"
+            printf '## WPT coverage gate: FAIL\n\n%s\n' "$msg" >> "$GITHUB_STEP_SUMMARY"
+            echo "verdict=fail" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          args=()
+          if [ "$EVENT" = pull_request ]; then
+            # What the base branch protects: this pull request's baseline.json and flaky.json may drop it only with the
+            # label (read now, so adding it and re-running this job is enough).
+            if git show HEAD^1:bench/wpt/baseline.json > "$RUNNER_TEMP/base-baseline.json" 2>/dev/null; then
+              args+=(--base-baseline "$RUNNER_TEMP/base-baseline.json")
+              if git show HEAD^1:bench/wpt/flaky.json > "$RUNNER_TEMP/base-flaky.json" 2>/dev/null; then
+                args+=(--base-flaky "$RUNNER_TEMP/base-flaky.json")
+              fi
+            fi
+            if labels="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" --jq '.labels[].name')"; then
+              if grep -qx wpt-accept-loss <<< "$labels"; then args+=(--accept-loss); fi
+            else
+              echo "::warning title=WPT gate::could not read the pull request's labels; checking as if it had none"
+            fi
+          fi
+          bun bench/wpt/gate.mjs check "${files[@]}" --summary "$GITHUB_STEP_SUMMARY" "${args[@]}"
+      # Only from a run whose gate passed, or failed only because the baseline is stale or missing: a baseline made
+      # from a failing run would carry its losses.
       - name: Refresh the baseline
         id: refresh
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && contains(fromJSON('["pass", "stale", "bootstrap", "rebaseline"]'), steps.check.outputs.verdict) }}
         env:
           DURATIONS: ${{ inputs.durations }}
         run: |
           flags=()
-          if [ "$FULL" = true ]; then flags+=(--prune); fi
           if [ "$DURATIONS" = true ]; then flags+=(--durations); fi
           bun bench/wpt/gate.mjs update wpt-shard-*.json --out baseline.json "${flags[@]}"
           if cmp -s baseline.json bench/wpt/baseline.json; then
@@ -182,6 +295,8 @@ jobs:
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
             git diff --no-index --stat bench/wpt/baseline.json baseline.json || true
+            echo "The refreshed baseline is the \`wpt-baseline\` artifact: \`gh run download $GITHUB_RUN_ID -n wpt-baseline -D bench/wpt\`." \
+              >> "$GITHUB_STEP_SUMMARY"
           fi
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() && steps.refresh.outputs.changed == 'true' }}
@@ -189,3 +304,4 @@ jobs:
           name: wpt-baseline
           path: baseline.json
           retention-days: 30
+          overwrite: true

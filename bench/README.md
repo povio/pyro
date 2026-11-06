@@ -242,7 +242,7 @@ shim around Chrome). Pull requests run it as a coverage gate against a committed
 
 ```sh
 (cd bench && bun install)
-bench/wpt/fetch-wpt.sh /abs/wpt                   # the pinned upstream revision, only the paths the runner needs
+bench/wpt/fetch-wpt.sh /abs/wpt   # a new directory: the pinned upstream revision, only the paths the runner needs
 bun bench/wpt/run.mjs --wpt /abs/wpt --bin lp=$PWD/target/release/lightningpanda --sample-encoding 10 --out /tmp/lp.json
 bun bench/wpt/aggregate.mjs /tmp/lp.json [/tmp/other.json ...]                 # markdown table
 ```
