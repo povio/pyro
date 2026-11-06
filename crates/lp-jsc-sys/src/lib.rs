@@ -596,9 +596,32 @@ pub mod spi {
         setter: Option<JSCustomSetterCallback>,
         attributes: JSPropertyAttributes,
     ) -> bool;
+    /// What makes a lazy constant accessor's value on its first read
+    /// (`JSConstantAccessorInitializer`): `ctx` is the realm of `object`, the
+    /// holder. The value, or null with `*exception` set.
+    pub type JSConstantAccessorInitializer = unsafe extern "C" fn(
+        ctx: JSContextRef,
+        object: JSObjectRef,
+        name: JSStringRef,
+        exception: *mut JSValueRef,
+    ) -> JSValueRef;
+    /// Sets the process's initializer of lazy constant accessors (patched JSC,
+    /// `JSSetConstantAccessorInitializer`).
+    pub type JSSetConstantAccessorInitializerFn =
+        unsafe extern "C" fn(initializer: Option<JSConstantAccessorInitializer>);
+    /// A constant accessor whose value the initializer makes on the first
+    /// read (patched JSC, `JSObjectSetLazyConstantAccessor`): the same
+    /// non-configurable property from the start. Set once.
+    pub type JSObjectSetLazyConstantAccessorFn = unsafe extern "C" fn(
+        ctx: JSContextRef,
+        object: JSObjectRef,
+        name: JSStringRef,
+        setter: Option<JSCustomSetterCallback>,
+        attributes: JSPropertyAttributes,
+    ) -> bool;
     /// Releases the values of `object`'s constant accessors as its realm is
     /// torn down (patched JSC, `JSObjectClearConstantAccessors`): reads of
-    /// them throw from then on.
+    /// them throw from then on, lazy ones' too.
     pub type JSObjectClearConstantAccessorsFn = unsafe extern "C" fn(ctx: JSContextRef, object: JSObjectRef);
     pub type JSContextThrowExceptionFn = unsafe extern "C" fn(ctx: JSContextRef, exception: JSValueRef);
     /// A fast getter (patched JSC, `JSObjectSetFastGetter`): what the JITs
@@ -733,6 +756,8 @@ pub mod spi {
         pub set_custom_accessor: Option<JSObjectSetCustomAccessorFn>,
         pub set_fast_getter: Option<JSObjectSetFastGetterFn>,
         pub set_constant_accessor: Option<JSObjectSetConstantAccessorFn>,
+        pub set_lazy_constant_accessor: Option<JSObjectSetLazyConstantAccessorFn>,
+        pub set_constant_accessor_initializer: Option<JSSetConstantAccessorInitializerFn>,
         pub clear_constant_accessors: Option<JSObjectClearConstantAccessorsFn>,
         pub throw_exception: Option<JSContextThrowExceptionFn>,
         pub class_set_indexed_callbacks: Option<JSClassSetIndexedCallbacksFn>,
@@ -846,6 +871,8 @@ pub mod spi {
             set_custom_accessor: resolve!("JSObjectSetCustomAccessor"),
             set_fast_getter: resolve!("JSObjectSetFastGetter"),
             set_constant_accessor: resolve!("JSObjectSetConstantAccessor"),
+            set_lazy_constant_accessor: resolve!("JSObjectSetLazyConstantAccessor"),
+            set_constant_accessor_initializer: resolve!("JSSetConstantAccessorInitializer"),
             clear_constant_accessors: resolve!("JSObjectClearConstantAccessors"),
             throw_exception: resolve!("JSContextThrowException"),
             class_set_indexed_callbacks: resolve!("JSClassSetIndexedCallbacks"),
