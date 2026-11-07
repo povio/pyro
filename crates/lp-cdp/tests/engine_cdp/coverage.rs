@@ -242,16 +242,60 @@ fn precise_coverage_is_per_page_when_pages_share_the_vm() {
     let late = result.iter().find(|s| s["url"] == "late.js").unwrap_or_else(|| panic!("{take:#}"));
     let f = late["functions"].as_array().unwrap().iter().find(|f| f["functionName"] == "late").unwrap();
     assert_eq!(f["ranges"][0]["count"], 1, "the call before the start is not counted: {f}");
-    // A take resets the counts, as V8's.
+    // A take resets the counts, as V8's: nothing of it ran since, so V8
+    // leaves the script out.
+    let r = h.page("Runtime.evaluate", json!({"expression": "late(1)"}));
+    assert_eq!(r["result"]["result"]["value"], 1);
     let take = h.page("Profiler.takePreciseCoverage", json!({}));
     let result = take["result"]["result"].as_array().expect("result").clone();
-    let late = result.iter().find(|s| s["url"] == "late.js").unwrap();
+    let late = result.iter().find(|s| s["url"] == "late.js").unwrap_or_else(|| panic!("{take:#}"));
     let f = late["functions"].as_array().unwrap().iter().find(|f| f["functionName"] == "late").unwrap();
-    assert_eq!(f["ranges"][0]["count"], 0, "{f}");
+    assert_eq!(f["ranges"][0]["count"], 1, "{f}");
+    let take = h.page("Profiler.takePreciseCoverage", json!({}));
+    let result = take["result"]["result"].as_array().expect("result").clone();
+    assert!(!result.iter().any(|s| s["url"] == "late.js"), "{take:#}");
 
     // The first page has none of it.
     h.session = first;
     let take = h.page("Profiler.takePreciseCoverage", json!({}));
     let result = take["result"]["result"].as_array().expect("result");
     assert!(!result.iter().any(|s| s["url"] == "late.js"), "{take:#}");
+}
+
+#[test]
+fn precise_coverage_started_after_the_page_ran_reports_what_runs_since() {
+    if !lp_js::Engine::has_coverage() {
+        eprintln!("skipped: JavaScriptCore without block coverage (patch 0019)");
+        return;
+    }
+    let mut h = Harness::new();
+    h.page("Page.enable", json!({}));
+    let html = "<!doctype html><script>\nfunction used(x) { if (x > 0) { return 1; } else { return 2; } }\nfunction unused() { return 3; }\nfunction outer() { function inner() { return 4; } return 5; }\nused(1);\n//# sourceURL=app.js</script><script>function other() { return 1; } other();\n//# sourceURL=other.js</script>";
+    let mut seen = h.page_with_events("Page.navigate", json!({ "url": html_url(html) }));
+    if !seen.iter().any(|m| m["method"] == "Page.loadEventFired") {
+        seen.push(h.until_event(|m| m["method"] == "Page.loadEventFired"));
+    }
+
+    // As Chrome when coverage starts after the page loaded: counts start at
+    // zero, and only what runs again is reported (with the functions it
+    // declares); the top level and scripts none of whose code ran since are
+    // left out.
+    start_precise(&mut h);
+    let r = h.page("Runtime.evaluate", json!({"expression": "used(-1) + used(-2) + outer()"}));
+    assert_eq!(r["result"]["result"]["value"], 9);
+    let take = h.page("Profiler.takePreciseCoverage", json!({}));
+    let result = take["result"]["result"].as_array().expect("result").clone();
+    assert!(!result.iter().any(|s| s["url"] == "other.js"), "{take:#}");
+    let app = result.iter().find(|s| s["url"] == "app.js").unwrap_or_else(|| panic!("{take:#}"));
+    let functions = app["functions"].as_array().unwrap();
+    let names: Vec<&str> = functions.iter().map(|f| f["functionName"].as_str().unwrap()).collect();
+    assert_eq!(names, ["used", "outer", "inner"], "{app:#}");
+    let used = &functions[0];
+    assert_eq!(used["ranges"][0]["count"], 2, "{used}");
+    let source = html.split("<script>").nth(1).unwrap().split("</script>").next().unwrap();
+    let zero: Vec<String> = used["ranges"].as_array().unwrap()[1..].iter().map(|r| text(source, r)).collect();
+    assert!(zero.iter().any(|t| t.contains("return 1")), "{zero:?}");
+    assert!(!zero.iter().any(|t| t.contains("return 2")), "{zero:?}");
+    assert_eq!(functions[1]["ranges"][0]["count"], 1);
+    assert_eq!(functions[2]["ranges"][0]["count"], 0);
 }

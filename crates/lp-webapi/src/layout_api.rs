@@ -492,6 +492,43 @@ pub(crate) fn elements_from_point<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) 
 /// Read-only computed style (`getComputedStyle`).
 pub struct ComputedData {
     el: crate::collections::NodeHold,
+    pseudo: ComputedTarget,
+}
+
+/// Whose computed style a [`ComputedData`] reads.
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum ComputedTarget {
+    Element,
+    Pseudo(lp_dom::style::PseudoElement),
+    /// A pseudo-element the engine does not compute (or an invalid one):
+    /// every property reads "", as for an invalid `pseudoElt` in Chromium.
+    Unsupported,
+}
+
+impl ComputedTarget {
+    /// `getComputedStyle`'s `pseudoElt` argument: one not starting with a
+    /// colon (or absent) names the element itself (CSSOM).
+    pub fn parse(pseudo: Option<&str>) -> ComputedTarget {
+        match pseudo {
+            Some(p) if p.starts_with(':') => {
+                lp_dom::style::PseudoElement::parse(p).map_or(ComputedTarget::Unsupported, ComputedTarget::Pseudo)
+            }
+            _ => ComputedTarget::Element,
+        }
+    }
+}
+
+/// `getPropertyValue(name)` of a computed style.
+fn computed_value(c: &ComputedData, name: &str) -> String {
+    let page = &c.el.page;
+    match c.pseudo {
+        ComputedTarget::Element => {
+            crate::animation_events::observe(page, c.el.id);
+            page.layout().computed_style_value(&page.dom.borrow(), c.el.id, name)
+        }
+        ComputedTarget::Pseudo(p) => page.layout().pseudo_computed_style_value(&page.dom.borrow(), c.el.id, p, name),
+        ComputedTarget::Unsupported => String::new(),
+    }
 }
 
 pub struct ComputedStyle;
@@ -503,10 +540,7 @@ impl JsClass for ComputedStyle {
         def.not_exposed();
         def.method("getPropertyValue", 1, |s, c, a| {
             let name = arg_string(&a, 0, "CSSStyleDeclaration.getPropertyValue")?;
-            let page = &c.el.page;
-            crate::animation_events::observe(page, c.el.id);
-            let v = page.layout().computed_style_value(&page.dom.borrow(), c.el.id, &name);
-            Ok(s.string(&v))
+            Ok(s.string(&computed_value(c, &name)))
         });
         def.method("getPropertyPriority", 1, |s, _c, _a| Ok(s.string("")));
         // The longhands, as indexed properties; an element without computed
@@ -542,10 +576,7 @@ impl JsClass for ComputedStyle {
             } else {
                 crate::css::camel_to_css(name)
             };
-            let page = &c.el.page;
-            crate::animation_events::observe(page, c.el.id);
-            let v = page.layout().computed_style_value(&page.dom.borrow(), c.el.id, &prop);
-            Ok(Some(s.string(&v)))
+            Ok(Some(s.string(&computed_value(c, &prop))))
         });
     }
 }
@@ -553,16 +584,24 @@ impl JsClass for ComputedStyle {
 /// The property names a computed style lists.
 fn computed_names(c: &ComputedData) -> &'static [&'static str] {
     let page = &c.el.page;
-    let dom = page.dom.borrow();
-    if page.layout().computed_style_value(&dom, c.el.id, "display").is_empty() {
+    let display = match c.pseudo {
+        ComputedTarget::Element => page.layout().computed_style_value(&page.dom.borrow(), c.el.id, "display"),
+        _ => computed_value(c, "display"),
+    };
+    if display.is_empty() {
         return &[];
     }
     lp_dom::stylo::longhand_names()
 }
 
 /// `window.getComputedStyle(el)`.
-pub fn get_computed_style<'s>(s: &Scope<'s>, page: &Rc<PageDom>, el: NodeId) -> JsResult<Object<'s>> {
-    s.wrap::<ComputedStyle>(ComputedData { el: crate::collections::NodeHold::new(page, el)? }, None)
+pub fn get_computed_style<'s>(
+    s: &Scope<'s>,
+    page: &Rc<PageDom>,
+    el: NodeId,
+    pseudo: ComputedTarget,
+) -> JsResult<Object<'s>> {
+    s.wrap::<ComputedStyle>(ComputedData { el: crate::collections::NodeHold::new(page, el)?, pseudo }, None)
 }
 
 /// A live `MediaQueryList` (`PageDom::media_queries`): its target, query

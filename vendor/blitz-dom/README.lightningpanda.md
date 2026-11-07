@@ -96,9 +96,14 @@ lp-render's mirror tests (incremental documents against fresh builds after rando
   (64 images, 64 MB of pixels): a template's logo is decoded once, not once per document.
 - `assets/default.css`, `src/layout/mod.rs`: a drop-down `<select>` is an inline-block box with a 1px
   border and `line-height: normal`, sized from its longest option label (about half an em per character)
-  plus the arrow, a line of its font tall (Chromium's menu list). It had no box at all: its options are
-  hidden because Blitz paints the control. Its baseline is its text line's, centred in the content box
-  (as for text inputs), not its bottom edge.
+  plus the arrow, a line of its font tall (Chromium's menu list). Its baseline is its text line's, centred
+  in the content box (as for text inputs), not its bottom edge.
+- `assets/default.css`, `src/layout/construct.rs`: `option` and `optgroup` compute as Chromium's (`display:
+  block`; Blitz had `option { display: none }`). A drop-down select's children generate no boxes (Chromium's
+  menu list); a list box's (`multiple`, `size` > 1) and loose options are laid out.
+- `src/stylo.rs`: `BaseDocument::pseudo_style` reads an element's `::before` / `::after` style (resolved on
+  demand inside `display: none`, or for one the traversal did not keep), for `getComputedStyle(el, pseudo)`
+  and the generated content of accessible names.
 - `src/layout/mod.rs`: a text input in system-ui on macOS (SF Text) is `ceil(0.525em x size) +
   round(0.4375em)` wide, Chromium's width there (measured at 10-16px); other fonts keep the
   `(size / 2 + 0.4)em` approximation.

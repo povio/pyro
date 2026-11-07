@@ -21,6 +21,11 @@
 //! `:focus`, `:focus-within`, `:focus-visible`, `:visited`, `:target`) or a
 //! pseudo-element are skipped (StyleManager.zig:1198-1235).
 //!
+//! In lightningpanda the cascade itself is the layout engine's (Stylo in
+//! Blitz, [`StyleEngine::stylo_style`]): pseudo-element rules apply, and
+//! [`StyleEngine::pseudo_style`] reads `::before` / `::after` styles
+//! ([`StyleEngine::css_content`] for their generated text).
+//!
 //! The UA stylesheet subset (`display: none` for unrendered tags, `[hidden]`,
 //! `input[type=hidden i]`, closed `<dialog>`, closed popovers, closed
 //! `<details>` content) is applied only when no author rule set `display`
@@ -63,6 +68,28 @@ pub enum Display {
     Grid,
     #[default]
     Other,
+}
+
+/// The tree-abiding pseudo-elements the style engine computes styles for.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum PseudoElement {
+    Before,
+    After,
+}
+
+impl PseudoElement {
+    /// `getComputedStyle`'s `pseudoElt` argument: `::before` / `::after`
+    /// (and the legacy `:before` / `:after`), ASCII case-insensitively.
+    pub fn parse(text: &str) -> Option<PseudoElement> {
+        let name = text.strip_prefix("::").or_else(|| text.strip_prefix(':'))?;
+        if name.eq_ignore_ascii_case("before") {
+            Some(PseudoElement::Before)
+        } else if name.eq_ignore_ascii_case("after") {
+            Some(PseudoElement::After)
+        } else {
+            None
+        }
+    }
 }
 
 /// The case-changing part of `text-transform` (StyleManager.zig:1321-1376).
@@ -908,6 +935,73 @@ impl StyleEngine {
         crate::stylo::serialize(&style, name)
     }
 
+    /// The computed style of `el`'s `::before` / `::after` from the layout
+    /// engine: `None` when no rule gives it a style that could generate a
+    /// box (`content: none | normal` or `display: none`), unless
+    /// `synthesize`, which then answers with the style of a pseudo-element
+    /// without rules (`getComputedStyle(el, '::before')`).
+    pub fn pseudo_style(
+        &self,
+        dom: &Dom,
+        el: NodeId,
+        pseudo: PseudoElement,
+        synthesize: bool,
+    ) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
+        self.owns(dom, el)?;
+        self.engine_styled(dom)?;
+        let external = self.external.borrow();
+        external.as_ref()?.0.pseudo_style(crate::snapshot::render_key(el), pseudo == PseudoElement::After, synthesize)
+    }
+
+    /// `getComputedStyle(el, pseudo).getPropertyValue(name)` for `::before`
+    /// and `::after`; `None` as for [`Self::stylo_value`]. `content: normal`
+    /// computes to `none` on these pseudo-elements (CSS Content 3 §2), as
+    /// Chromium reports it.
+    pub fn pseudo_value(&self, dom: &Dom, el: NodeId, pseudo: PseudoElement, name: &str) -> Option<String> {
+        let style = self.pseudo_style(dom, el, pseudo, true)?;
+        let value = crate::stylo::serialize(&style, name)?;
+        Some(if value == "normal" && name.eq_ignore_ascii_case("content") { "none".into() } else { value })
+    }
+
+    /// Playwright's `getCSSContent`: the text CSS `content` puts in
+    /// `pseudo` (`None`: the element's own `content`, which counts only
+    /// for its alternative text after `/`). `None` when there is none:
+    /// `content: none | normal`, a `display: none` or `visibility: hidden`
+    /// box, or content that is not all strings and `attr()` (counters,
+    /// quotes and images give nothing, as Playwright's parser rejects
+    /// them). A `::before` / `::after` that is not `display: inline` is
+    /// padded with a space on each side.
+    pub fn css_content(&self, dom: &Dom, el: NodeId, pseudo: Option<PseudoElement>) -> Option<String> {
+        use style::values::generics::counters::{Content, ContentItem};
+        use style::values::specified::box_::Display as D;
+        let style = match pseudo {
+            Some(p) => self.pseudo_style(dom, el, p, false)?,
+            None => self.stylo_style(dom, el)?,
+        };
+        let Content::Items(items) = &style.get_counters().content else { return None };
+        let b = style.get_box();
+        if b.display == D::None || style.get_inherited_box().visibility == style::computed_values::visibility::T::Hidden
+        {
+            return None;
+        }
+        let (main, alt) = items.items.split_at(items.alt_start.min(items.items.len()));
+        let chosen = if !alt.is_empty() {
+            alt
+        } else if pseudo.is_some() {
+            main
+        } else {
+            return None;
+        };
+        let mut text = String::new();
+        for item in chosen {
+            match item {
+                ContentItem::String(s) => text.push_str(s),
+                _ => return None,
+            }
+        }
+        Some(if pseudo.is_some() && b.display != D::Inline { format!(" {text} ") } else { text })
+    }
+
     /// [`ComputedStyle`] from Stylo's computed values, memoized per style
     /// stamp.
     fn computed_stylo(&self, dom: &Dom, el: NodeId) -> Option<ComputedStyle> {
@@ -924,7 +1018,12 @@ impl StyleEngine {
         let parent = flat_tree_parent_element(dom, idx).map(|p| dom.id_of(p));
         let above = parent.and_then(|p| self.computed_stylo(dom, p)).unwrap_or_default();
         let e = dom.n(idx).element().expect("element");
-        let c = derive_computed(&style, e, &above);
+        let mut c = derive_computed(&style, e, &above);
+        // A drop-down select's children (its options) keep their computed
+        // `display` but generate no box, as in Chromium's menu list.
+        if parent.is_some_and(|p| dom.element(p).is_ok_and(is_menu_list)) {
+            c.in_display_none = true;
+        }
         self.memo.borrow_mut().insert(el, c);
         Some(c)
     }
@@ -1489,6 +1588,15 @@ fn hash_text_content(dom: &Dom, el: NodeId, hasher: &mut impl std::hash::Hasher)
         cur = dom.following_in(cur, root);
     }
     hasher.write_u8(0xff);
+}
+
+/// Whether `e` is a drop-down `<select>` (Chromium's menu list: neither
+/// `multiple` nor a `size` above 1), whose children generate no boxes.
+pub fn is_menu_list(e: &crate::node::ElementData) -> bool {
+    e.is_html()
+        && &*e.name.local == "select"
+        && e.attr("multiple").is_none()
+        && !e.attr("size").and_then(|s| s.trim().parse::<u32>().ok()).is_some_and(|s| s > 1)
 }
 
 /// flatTreeParentElement (webapi/Node.zig:1756-1775): shadow content takes

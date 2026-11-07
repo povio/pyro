@@ -288,6 +288,19 @@ index fdb63a69d9..f7dab00dad 100644
          m_functionExprs[i].set(vm, this, unlinkedExecutable->link(vm, topLevelExecutable, ownerExecutable->source(), std::nullopt, NoIntrinsic, ownerExecutable->isInsideOrdinaryFunction()));
      }
  
+diff --git a/Source/JavaScriptCore/bytecompiler/NodesCodegen.cpp b/Source/JavaScriptCore/bytecompiler/NodesCodegen.cpp
+index e1a0dd6b35..b772887861 100644
+--- a/Source/JavaScriptCore/bytecompiler/NodesCodegen.cpp
++++ b/Source/JavaScriptCore/bytecompiler/NodesCodegen.cpp
+@@ -5304,6 +5304,8 @@ void EvalNode::emitBytecode(BytecodeGenerator& generator, RegisterID*)
+ 
+     RefPtr<RegisterID> dstRegister = generator.newTemporary();
+     generator.emitLoad(dstRegister.get(), jsUndefined());
++    // Lightningpanda: as a program's, eval code's first basic block is counted (block coverage).
++    generator.emitProfileControlFlow(startStartOffset());
+ 
+     generator.emitBodyWithUsingIfNeeded(usingDeclarationCount(), hasAwaitUsingDeclaration(),
+         [&](BytecodeGenerator& generator) {
 diff --git a/Source/JavaScriptCore/runtime/ControlFlowProfiler.cpp b/Source/JavaScriptCore/runtime/ControlFlowProfiler.cpp
 index 63a88a986e..9065803ab7 100644
 --- a/Source/JavaScriptCore/runtime/ControlFlowProfiler.cpp

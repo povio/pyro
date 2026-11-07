@@ -41,13 +41,17 @@ test('types', async ({ page, request }) => {
   // @ts-expect-error ticks are a number or "hh:mm:ss"
   await page.clock.fastForward(new Date());
   const yaml: string = await l.ariaSnapshot({ depth: 2 });
+  const ai: string = await page.ariaSnapshot({ mode: 'ai', depth: 3 }) + (await l.ariaSnapshot({ mode: 'default' }));
+  await page.locator('aria-ref=e5').click();
+  // @ts-expect-error mode is 'ai' or 'default'
+  await l.ariaSnapshot({ mode: 'codegen' });
   await expect(l).toMatchAriaSnapshot(`- button "Go"`);
   await expect(l).toMatchAriaSnapshot({ name: 'go.aria.yml' });
   // @ts-expect-error aria snapshots are for locators
   await expect(page).toMatchAriaSnapshot('- button');
   const cov = await page.coverage.stopJSCoverage();
   const firstUrl: string | undefined = cov[0]?.url;
-  void [yaml, firstUrl];
+  void [yaml, ai, firstUrl];
   const el = await page.$('div');
   const tag: string | undefined = await el?.evaluate((e) => e.tagName);
   void [n, s, bad, tag, (p: Page) => p];

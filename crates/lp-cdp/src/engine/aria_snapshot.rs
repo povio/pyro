@@ -8,10 +8,19 @@
 //! selected?, props: {url?, placeholder?}, children: [string | node]}`. The
 //! root is a `fragment` holding the element's own node (or its content when
 //! it has no role).
-use std::collections::HashSet;
+//!
+//! `mode: "ai"` (`aria_tree_ai`) is Playwright's AI snapshot: elements
+//! hidden for ARIA but visible on screen are kept, elements without a role
+//! are `generic`, and visible elements that receive pointer events get a
+//! ref (`ref: "e5"`, `f1e5` in a child frame) that the `ariaRef` locator
+//! finds again; nodes also carry `active` and `cursor: "pointer"`.
+use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
+use std::rc::{Rc, Weak};
 
 use lp_dom::layout::Layout;
 use lp_dom::{Dom, NodeId, NodeKind};
+use lp_webapi::PageDom;
 use serde_json::{json, Map, Value};
 
 use super::driver::{accessible_name, attr, hidden_for_aria, js_number, local, natively_disabled, role_of};
@@ -92,15 +101,66 @@ struct Node {
     states: Map<String, Value>,
     props: Map<String, Value>,
     children: Vec<Child>,
+    /// AI mode: the element's ref, whether it is the document's
+    /// `activeElement`, and whether its cursor is `pointer`.
+    aria_ref: Option<String>,
+    active: bool,
+    pointer: bool,
 }
 
 impl Node {
     fn new(role: &str, name: String) -> Node {
-        Node { role: role.into(), name, states: Map::new(), props: Map::new(), children: Vec::new() }
+        Node {
+            role: role.into(),
+            name,
+            states: Map::new(),
+            props: Map::new(),
+            children: Vec::new(),
+            aria_ref: None,
+            active: false,
+            pointer: false,
+        }
     }
 }
 
-struct Walk<'a> {
+/// A document's refs: Playwright keeps one on each element (`_ariaRef`,
+/// kept while its role and name stay the same) and the last AI snapshot's
+/// ref → element map, which the `aria-ref` selector engine reads.
+struct DocRefs {
+    page: Weak<PageDom>,
+    last_ref: u64,
+    by_node: HashMap<NodeId, (String, String, String)>,
+    last: HashMap<String, NodeId>,
+}
+
+thread_local! {
+    static REFS: RefCell<Vec<DocRefs>> = const { RefCell::new(Vec::new()) };
+}
+
+fn is_page(w: &Weak<PageDom>, page: &PageDom) -> bool {
+    w.strong_count() > 0 && std::ptr::eq(w.as_ptr(), page)
+}
+
+/// The element the last AI snapshot of `page` gave the ref `r`, if it is
+/// still in that document (Playwright's `aria-ref` engine).
+pub(super) fn ref_node(page: &PageDom, r: &str) -> Option<NodeId> {
+    let node =
+        REFS.with(|refs| refs.borrow().iter().find(|d| is_page(&d.page, page)).and_then(|d| d.last.get(r).copied()))?;
+    let dom = page.dom.borrow();
+    (dom.root_node(node, true).ok() == Some(page.document())).then_some(node)
+}
+
+/// AI mode's state for one walk.
+struct Ai<'p> {
+    prefix: &'p str,
+    refs: DocRefs,
+    /// `document.activeElement`: the focused element, else the body.
+    active: Option<NodeId>,
+    /// `<iframe>`s given a ref, in tree order.
+    iframes: Vec<(String, NodeId)>,
+}
+
+struct Walk<'a, 'p> {
     dom: &'a Dom,
     layout: &'a Layout,
     doc: NodeId,
@@ -108,6 +168,12 @@ struct Walk<'a> {
     /// Playwright's `visited`: each node once, so an `aria-owns` target is
     /// not shown twice and an ownership cycle ends.
     visited: HashSet<NodeId>,
+    ai: Option<Ai<'p>>,
+    /// AI mode: whether the element being walked is shown (its text
+    /// counts), and whether it is visible for ARIA (so its children need
+    /// not look at their ancestors again).
+    parent_visible: bool,
+    parent_aria_visible: bool,
 }
 
 /// Playwright's `normalizeWhiteSpace`.
@@ -122,22 +188,73 @@ fn squash(s: &str) -> String {
 
 /// The tree under `root`, or an error past the node budget.
 pub(super) fn aria_tree(dom: &Dom, layout: &Layout, doc: NodeId, root: NodeId) -> Result<Value, String> {
-    let mut w = Walk { dom, layout, doc, count: 0, visited: HashSet::new() };
+    let mut w = Walk::new(dom, layout, doc, None);
     let mut top = Node::new("fragment", String::new());
     // The root is checked against its ancestors too: inside a display:none
     // or aria-hidden subtree it gives an empty snapshot, as in Playwright.
     if !(dom.element(root).is_ok() && hidden_for_aria(dom, layout, root, true)) {
         w.visit(&mut top, root);
     }
-    if w.count > MAX_NODES {
-        return Err(format!("the aria snapshot has more than {MAX_NODES} nodes"));
-    }
-    normalize_text(&mut top);
-    normalize_generic(&mut top);
-    Ok(to_json(top))
+    w.finish(top)
 }
 
-impl Walk<'_> {
+/// The AI-mode tree under `root` (`ariaSnapshot({ mode: "ai" })`), new refs
+/// named `{prefix}e{n}`, and the `<iframe>`s it gave a ref. It becomes the
+/// document's last snapshot for `ref_node`.
+pub(super) fn aria_tree_ai(
+    page: &Rc<PageDom>,
+    root: NodeId,
+    prefix: &str,
+) -> Result<(Value, Vec<(String, NodeId)>), String> {
+    let refs = REFS.with(|r| {
+        let mut r = r.borrow_mut();
+        r.retain(|d| d.page.strong_count() > 0);
+        match r.iter().position(|d| is_page(&d.page, page)) {
+            Some(i) => r.swap_remove(i),
+            None => DocRefs { page: Rc::downgrade(page), last_ref: 0, by_node: HashMap::new(), last: HashMap::new() },
+        }
+    });
+    let dom = page.dom.borrow();
+    let layout = page.layout();
+    let doc = page.document();
+    let active = dom.focused(doc).ok().flatten().or_else(|| dom.body(doc).ok().flatten());
+    let mut w = Walk::new(&dom, &layout, doc, Some(Ai { prefix, refs, active, iframes: Vec::new() }));
+    if let Some(ai) = &mut w.ai {
+        ai.refs.last.clear();
+    }
+    // Playwright checks the root against its ancestors as any element.
+    w.parent_aria_visible = false;
+    let mut top = Node::new("fragment", String::new());
+    w.visit(&mut top, root);
+    let ai = w.ai.take().expect("ai walk");
+    REFS.with(|r| r.borrow_mut().push(ai.refs));
+    let tree = w.finish(top)?;
+    Ok((tree, ai.iframes))
+}
+
+impl<'a, 'p> Walk<'a, 'p> {
+    fn new(dom: &'a Dom, layout: &'a Layout, doc: NodeId, ai: Option<Ai<'p>>) -> Self {
+        Walk {
+            dom,
+            layout,
+            doc,
+            count: 0,
+            visited: HashSet::new(),
+            ai,
+            parent_visible: true,
+            parent_aria_visible: true,
+        }
+    }
+
+    fn finish(&self, mut top: Node) -> Result<Value, String> {
+        if self.count > MAX_NODES {
+            return Err(format!("the aria snapshot has more than {MAX_NODES} nodes"));
+        }
+        normalize_text(&mut top);
+        normalize_generic(&mut top);
+        Ok(to_json(top))
+    }
+
     fn visit(&mut self, parent: &mut Node, id: NodeId) {
         if !self.visited.insert(id) {
             return;
@@ -149,7 +266,7 @@ impl Walk<'_> {
         let dom = self.dom;
         match dom.node(id).map(|n| &n.kind) {
             Ok(NodeKind::Text(t) | NodeKind::CData(t)) => {
-                if parent.role != "textbox" && !t.is_empty() {
+                if self.parent_visible && parent.role != "textbox" && !t.is_empty() {
                     parent.children.push(Child::Text(t.to_string()));
                 }
                 return;
@@ -157,32 +274,99 @@ impl Walk<'_> {
             Ok(NodeKind::Element(_)) => {}
             _ => return,
         }
-        if hidden_for_aria(dom, self.layout, id, false) {
+        // AI mode ("ariaOrVisible"): an element hidden for ARIA but shown
+        // on screen stays, and a hidden one's children are still walked.
+        let (visible, aria_visible) = if self.ai.is_some() {
+            let aria_visible = !hidden_for_aria(dom, self.layout, id, !self.parent_aria_visible);
+            (aria_visible || self.box_visible(id), aria_visible)
+        } else if hidden_for_aria(dom, self.layout, id, false) {
             return;
-        }
+        } else {
+            (true, true)
+        };
         let owned: Vec<NodeId> = attr(dom, id, "aria-owns")
             .map(|v| v.split_whitespace().filter_map(|i| dom.get_element_by_id(self.doc, i).ok().flatten()).collect())
             .unwrap_or_default();
         // An owned element can sit anywhere: like Playwright's
         // isElementHiddenForAria, its display:none / aria-hidden ancestors
-        // hide it too, not only its own style.
-        let owned: Vec<NodeId> = owned.into_iter().filter(|&o| !hidden_for_aria(dom, self.layout, o, true)).collect();
-        match self.node_for(id) {
+        // hide it too, not only its own style. (AI mode checks each one as
+        // it visits it.)
+        let owned: Vec<NodeId> = if self.ai.is_some() {
+            owned
+        } else {
+            owned.into_iter().filter(|&o| !hidden_for_aria(dom, self.layout, o, true)).collect()
+        };
+        let saved = (self.parent_visible, self.parent_aria_visible);
+        (self.parent_visible, self.parent_aria_visible) = (visible, aria_visible);
+        match if visible { self.node_for(id) } else { None } {
             Some(mut node) => {
                 self.content(&mut node, id, &owned);
                 parent.children.push(Child::Node(node));
             }
             None => self.content(parent, id, &owned),
         }
+        (self.parent_visible, self.parent_aria_visible) = saved;
+    }
+
+    /// Playwright's `computeBox(element).visible`: shown (`checkVisibility()`
+    /// and `visibility: visible`) with an area; a `display: contents`
+    /// element through its children.
+    fn box_visible(&self, id: NodeId) -> bool {
+        let (dom, layout) = (self.dom, self.layout);
+        if layout.computed_style_value(dom, id, "display") == "contents" {
+            return dom.children(id).into_iter().flatten().any(|c| match dom.node(c).map(|n| &n.kind) {
+                Ok(NodeKind::Element(_)) => self.box_visible(c),
+                Ok(NodeKind::Text(t)) => !t.trim().is_empty() && layout.is_visible(dom, id),
+                _ => false,
+            });
+        }
+        layout.is_visible(dom, id)
+            && !layout.style().has_visibility_hidden_inherited(dom, id)
+            && layout.client_rect(dom, id).is_some_and(|r| r.width > 0.0 && r.height > 0.0)
+    }
+
+    /// Playwright's `computeAriaRef` (refs "interactable"), `active` and
+    /// the cursor, for a node of the AI tree.
+    fn ai_fields(&mut self, node: &mut Node, id: NodeId, pointer_events: bool) {
+        let Some(ai) = &self.ai else { return };
+        node.active = ai.active == Some(id);
+        if !pointer_events || !self.box_visible(id) {
+            return;
+        }
+        let pointer = self.layout.computed_style_value(self.dom, id, "cursor") == "pointer";
+        let ai = self.ai.as_mut().expect("ai walk");
+        let refs = &mut ai.refs;
+        let r = match refs.by_node.get(&id) {
+            Some((role, name, r)) if *role == node.role && *name == node.name => r.clone(),
+            _ => {
+                refs.last_ref += 1;
+                let r = format!("{}e{}", ai.prefix, refs.last_ref);
+                refs.by_node.insert(id, (node.role.clone(), node.name.clone(), r.clone()));
+                r
+            }
+        };
+        refs.last.insert(r.clone(), id);
+        if node.role == "iframe" {
+            ai.iframes.push((r.clone(), id));
+        }
+        node.aria_ref = Some(r);
+        node.pointer = pointer;
     }
 
     /// Playwright's `toAriaNode`: `None` for elements without a role.
-    fn node_for(&self, id: NodeId) -> Option<Node> {
+    fn node_for(&mut self, id: NodeId) -> Option<Node> {
         let dom = self.dom;
         if local(dom, id) == Some("iframe") {
-            return Some(Node::new("iframe", String::new()));
+            let mut n = Node::new("iframe", String::new());
+            self.ai_fields(&mut n, id, true);
+            return Some(n);
         }
-        let role = role_of(dom, id)?;
+        // AI mode's `includeGenericRole`: no role is `generic`.
+        let role = match role_of(dom, id) {
+            Some(r) => r,
+            None if self.ai.is_some() => "generic".into(),
+            None => return None,
+        };
         if matches!(role.as_str(), "presentation" | "none") {
             return None;
         }
@@ -194,6 +378,8 @@ impl Walk<'_> {
         }
         let name = squash(&accessible_name(dom, self.layout, self.doc, id));
         let mut n = Node::new(r, name);
+        let pointer_events = !self.layout.style().has_pointer_events_none(dom, id);
+        self.ai_fields(&mut n, id, pointer_events);
         if CHECKED_ROLES.contains(&r) {
             n.states.insert("checked".into(), checked(dom, id));
         }
@@ -241,6 +427,12 @@ impl Walk<'_> {
         if block {
             node.children.push(Child::Text(" ".into()));
         }
+        // CSS generated content (Playwright's `getCSSContent`).
+        let pseudo = |p| self.layout.style().css_content(dom, id, Some(p)).filter(|t| !t.is_empty());
+        if let Some(before) = pseudo(lp_dom::style::PseudoElement::Before) {
+            node.children.push(Child::Text(before));
+        }
+        let after = pseudo(lp_dom::style::PseudoElement::After);
         let assigned =
             if local(dom, id) == Some("slot") { dom.assigned_nodes(id, false).unwrap_or_default() } else { vec![] };
         if !assigned.is_empty() {
@@ -263,8 +455,17 @@ impl Walk<'_> {
                 }
             }
         }
+        // AI mode: an owned element's ancestors are not this element's.
+        let saved = self.parent_aria_visible;
+        if self.ai.is_some() {
+            self.parent_aria_visible = false;
+        }
         for &c in owned {
             self.visit(node, c);
+        }
+        self.parent_aria_visible = saved;
+        if let Some(after) = after {
+            node.children.push(Child::Text(after));
         }
         if block {
             node.children.push(Child::Text(" ".into()));
@@ -384,22 +585,42 @@ fn normalize_text(node: &mut Node) {
     node.children = out;
 }
 
-/// Playwright's `normalizeGenericRoles` (refs off): an unnamed `generic`
-/// left with no children is dropped.
+/// Playwright's `normalizeGenericRoles`: an unnamed `generic` with no
+/// children, or (AI mode) with only one child that has a ref, gives way to
+/// its children.
 fn normalize_generic(node: &mut Node) {
-    node.children.retain_mut(|c| match c {
-        Child::Text(_) => true,
-        Child::Node(n) => {
-            normalize_generic(n);
-            !(n.role == "generic" && n.name.is_empty() && n.children.is_empty())
+    let mut out = Vec::with_capacity(node.children.len());
+    for c in std::mem::take(&mut node.children) {
+        match c {
+            Child::Text(t) => out.push(Child::Text(t)),
+            Child::Node(mut n) => {
+                normalize_generic(&mut n);
+                let lone_refs = n.children.len() <= 1
+                    && n.children.iter().all(|c| matches!(c, Child::Node(m) if m.aria_ref.is_some()));
+                if n.role == "generic" && n.name.is_empty() && lone_refs {
+                    out.append(&mut n.children);
+                } else {
+                    out.push(Child::Node(n));
+                }
+            }
         }
-    });
+    }
+    node.children = out;
 }
 
 fn to_json(n: Node) -> Value {
     let mut o = Map::new();
     o.insert("role".into(), json!(n.role));
     o.insert("name".into(), json!(n.name));
+    if n.active {
+        o.insert("active".into(), json!(true));
+    }
+    if let Some(r) = n.aria_ref {
+        o.insert("ref".into(), json!(r));
+        if n.pointer {
+            o.insert("cursor".into(), json!("pointer"));
+        }
+    }
     o.extend(n.states);
     o.insert("props".into(), Value::Object(n.props));
     o.insert(

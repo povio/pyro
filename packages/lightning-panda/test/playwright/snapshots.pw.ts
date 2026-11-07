@@ -111,10 +111,7 @@ test.describe('aria snapshots', () => {
 
   test('options of a select are in the tree; a drop-down\'s optgroups are not', async ({ page }) => {
     // Playwright exempts an option of a <select> from the box check, but
-    // still drops one whose computed display is none: our engine reports
-    // every option as display:none (Chromium says block), so stock
-    // Playwright on it shows no options at all.
-    test.skip(!!process.env.PW_ENGINE, "lightningpanda's computed display of an <option> differs from Chromium's");
+    // still drops one whose computed display is none.
     await page.goto('/simple');
     await page.setContent(`<select aria-label="Size"><option>S</option><option selected>M</option><optgroup label="G"><option>L</option></optgroup></select>
       <select aria-label="Pick" multiple><optgroup label="G"><option>A</option></optgroup><option>B</option></select>`);
@@ -492,5 +489,58 @@ test.describe('snapshot paths', () => {
     } finally {
       spRm(dir, { recursive: true, force: true });
     }
+  });
+});
+
+test.describe('generated content and options', () => {
+  test('::before / ::after text joins names and snapshots', async ({ page }) => {
+    await page.goto('/simple');
+    await page.setContent(`<style>
+      #a::before { content: "Hello " } #a::after { content: attr(data-x) }
+      #b::before { content: "\\2605" / "star"; display: block }
+      #c::before { content: counter(n) "x" }
+      #d::before { content: "gone"; visibility: hidden }
+      #e::before { content: "gone"; display: none }
+      #p::before { content: "Note: " } #p::after { content: "!" }
+    </style>
+    <div id="r"><button id="a" data-x="!">World</button><button id="b">Go</button><button id="c">Count</button>
+    <button id="d">Vis</button><button id="e">Disp</button><p id="p">Text</p></div>`);
+    expect(await page.locator('#r').ariaSnapshot()).toBe(
+      ['- button "Hello World!"', '- button "star Go"', '- button "Count"', '- button "Vis"', '- button "Disp"', '- paragraph: "Note: Text!"'].join('\n'),
+    );
+    await expect(page.getByRole('button', { name: 'Hello World!', exact: true })).toHaveCount(1);
+    expect(
+      await page.evaluate(() => {
+        const [a, b, p, c, e] = ['a', 'b', 'p', 'c', 'e'].map((id) => document.getElementById(id)!);
+        return [
+          getComputedStyle(a, '::before').content,
+          getComputedStyle(b, ':before').display,
+          getComputedStyle(p, '::after').getPropertyValue('content'),
+          getComputedStyle(c).content,
+          getComputedStyle(e, '::before').display,
+          getComputedStyle(a, 'before').content,
+        ];
+      }),
+    ).toEqual(['"Hello "', 'block', '"!"', 'normal', 'none', 'normal']);
+  });
+
+  test('options compute as block: a loose one is a box, a drop-down one is not', async ({ page }) => {
+    await page.goto('/simple');
+    await page.setContent(`<select id="s"><option id="o1">a</option><option id="oh" hidden>h</option><option id="oc" style="display:none">c</option></select>
+      <select id="lb" multiple aria-label="Pick"><option id="o2">b</option></select>
+      <div id="loose"><option id="o3">loose</option></div>`);
+    const probe = (id: string) =>
+      page.evaluate((id) => {
+        const e = document.getElementById(id)!;
+        return [getComputedStyle(e).display, e.checkVisibility(), e.getBoundingClientRect().height > 0];
+      }, id);
+    expect(await probe('o3')).toEqual(['block', true, true]);
+    expect(await probe('o1')).toEqual(['block', false, false]);
+    expect(await probe('oh')).toEqual(['none', false, false]);
+    expect(await probe('o2')).toEqual(['block', true, true]);
+    await expect(page.getByRole('option')).toHaveCount(3);
+    await expect(page.getByRole('option', { name: 'loose' })).toBeVisible();
+    expect(await page.locator('#loose').ariaSnapshot()).toBe('- option "loose"');
+    expect(await page.locator('#s').ariaSnapshot()).toBe('- combobox:\n  - option "a" [selected]');
   });
 });

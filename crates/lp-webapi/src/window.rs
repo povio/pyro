@@ -162,7 +162,9 @@ where
     });
     def.method("getComputedStyle", 1, |s, w, a| {
         let el = crate::node::node_arg(s, a.get(0), "Window.getComputedStyle")?;
-        Ok(crate::layout_api::get_computed_style(s, w.page(), el)?.value())
+        let pseudo = crate::util::opt_dom_string(a.get(1))?;
+        let target = crate::layout_api::ComputedTarget::parse(pseudo.as_deref());
+        Ok(crate::layout_api::get_computed_style(s, w.page(), el, target)?.value())
     });
     def.method("matchMedia", 1, |s, w, a| {
         let q = arg_string(&a, 0, "Window.matchMedia")?;

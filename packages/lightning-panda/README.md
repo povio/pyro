@@ -238,7 +238,12 @@ infer argument and return types. Deprecated APIs (`locator.type`,
   `expect(locator).toMatchAriaSnapshot()`, with a template or a `.aria.yml`
   file: partial matching, regexes, `/children` and the state attributes. The
   tree is built in the browser from the same role and name code `getByRole`
-  uses. `mode: 'ai'` is not supported
+  uses, CSS `::before` / `::after` text included (strings, `attr()` and alt
+  text after `/`; counters, quotes and images add nothing, as in
+  Playwright). `mode: 'ai'` as Playwright's: `[ref=e5]`, `[active]`,
+  `[cursor=pointer]`, generic containers and the snapshots of iframes
+  (refs `f1e5` inside them); `locator('aria-ref=e5')` finds the element of
+  a ref from the last AI snapshot of its frame
 - `expect(value).toMatchSnapshot()` for strings and Buffers, at Playwright's
   paths (`snapshotPathTemplate`, `testInfo.snapshotPath(name, { kind })`).
   PNGs compare by pixel (`threshold`, `maxDiffPixels`,
@@ -249,6 +254,15 @@ infer argument and return types. Deprecated APIs (`locator.type`,
   rendered by lightningpanda; a mismatch writes `-actual`, `-expected` and
   `-diff` images into the test's output directory. With both
   `maxDiffPixels` and `maxDiffPixelRatio`, the stricter limit applies
+- `page.coverage`: JS block coverage in V8's format (`startJSCoverage`
+  options `resetOnNavigation`, `reportAnonymousScripts`) and CSS rule usage.
+  Started after the page ran, it reports what Chrome does: counts start at
+  zero, and a function is listed only when it ran since (or the listed
+  function around it did), so a script's top level and functions that do
+  not run again are left out. Start it before `goto` for whole scripts.
+  One gap: an async function or generator that was suspended when coverage
+  started and resumes after it is not reported (it resumes in code compiled
+  without the profiler)
 
 Not supported (a clear error): the deprecated layout pseudo-classes
 (`:left-of()`, `:right-of()`, `:above()`, `:below()`, `:near()`); a `+` or `~`

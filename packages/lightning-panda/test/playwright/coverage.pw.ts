@@ -187,9 +187,31 @@ test('JS coverage: per page, with scripts a page ran before it started', async (
   expect(app, JSON.stringify(theirs.map((e) => e.url))).toBeTruthy();
   expect(app.source).toBe(APP_JS);
   expect(fn(app.functions, 'used').ranges[0].count).toBeGreaterThan(0);
-  expect(fn(app.functions, 'unused').ranges[0].count).toBe(0);
+  // Ran before it started, not since: left out, as V8 does.
+  expect(app.functions.some((f) => f.functionName === 'unused')).toBe(false);
   expect(theirs.some((e) => e.url.endsWith('/cov/other.js'))).toBe(false);
   await other.close();
+});
+
+test('JS coverage: started after goto, what runs since', async ({ page }) => {
+  await serve(page);
+  await page.goto('/cov/page.html');
+  await expect(page.locator('#out')).toHaveText('positivepositive');
+  await page.coverage.startJSCoverage();
+  await page.evaluate(() => (window as any).used(-1) + (window as any).used(-2));
+  const entries = await page.coverage.stopJSCoverage();
+  // As Chrome: counts start at zero and V8 reports a function only when it
+  // ran since, or the reported function around it did. The script's top
+  // level and `unused` ran (or were declared) before: left out, and so is
+  // a script none of whose code ran since.
+  expect(entries.some((e) => e.url.endsWith('/cov/module.js')), JSON.stringify(entries.map((e) => e.url))).toBe(false);
+  const app = entries.find((e) => e.url.endsWith('/cov/app.js'))!;
+  expect(app, JSON.stringify(entries.map((e) => e.url))).toBeTruthy();
+  expect(app.source).toBe(APP_JS);
+  expect(app.functions.map((f) => f.functionName)).toEqual(['used']);
+  const used = fn(app.functions, 'used');
+  expect(used.ranges[0].count).toBe(2);
+  expect(slice(APP_JS, used.ranges[0])).toMatch(/^function used/);
 });
 
 test('CSS coverage: a rule matched by a style recalculation of an element gone since', async ({ page }) => {

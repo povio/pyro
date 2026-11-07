@@ -23,6 +23,8 @@ export type LocatorSpec = {
   name?: Pattern;
   label?: Pattern;
   placeholder?: Pattern;
+  /** Playwright's `aria-ref=e5`: the element an AI-mode `ariaSnapshot()` gave this ref. */
+  ariaRef?: string;
   exact?: boolean;
   within?: LocatorSpec;
   filter?: {

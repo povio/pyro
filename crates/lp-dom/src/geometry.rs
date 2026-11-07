@@ -155,6 +155,18 @@ pub trait GeometrySource {
     fn element_style(&self, _key: u64) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
         None
     }
+    /// The computed style of one element's `::before` (`after: false`) or
+    /// `::after` as of the last sync: `None` when no rule gives it one that
+    /// could generate a box, unless `synthesize` (the style of a
+    /// pseudo-element without rules).
+    fn pseudo_style(
+        &self,
+        _key: u64,
+        _after: bool,
+        _synthesize: bool,
+    ) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
+        None
+    }
 }
 
 /// An element's boxes (document coordinates; viewport ones inside a fixed

@@ -100,6 +100,11 @@ pub(super) struct Locator {
     include_hidden: bool,
     label: Option<Pattern>,
     placeholder: Option<Pattern>,
+    /// Playwright's `aria-ref=e5` selector: the element the document's last
+    /// AI-mode ARIA snapshot gave this ref (`f1e5`: in the frame whose
+    /// snapshot used the `f1` prefix).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    aria_ref: Option<String>,
     /// Whole-string, case-sensitive match for text, name, label and
     /// placeholder (after whitespace normalization); otherwise a
     /// case-insensitive substring. A `{"regex"}` pattern ignores it.
@@ -643,6 +648,8 @@ enum Step {
         key: Option<String>,
         /// `css`: the property name.
         property: Option<String>,
+        /// `aria` in AI mode: frame seqs by frame id (`QueryParams`).
+        ai: Option<Box<std::collections::HashMap<String, u32>>>,
     },
     /// Renders the page (or an area, or an element) and compares it with a
     /// baseline image (`screenshot.rs`).
@@ -1827,6 +1834,8 @@ fn implicit_role(dom: &Dom, id: NodeId) -> Option<String> {
         "em" => "emphasis",
         "fieldset" => "group",
         "figure" => "figure",
+        // Playwright's kImplicitRoleByTagName: SVG is an img.
+        "svg" => "img",
         "footer" if in_sectioning() => return None,
         "footer" => "contentinfo",
         "form" if has_explicit_name(dom, id) => "form",
@@ -2028,38 +2037,40 @@ pub(super) fn hidden_for_aria(dom: &Dom, layout: &Layout, id: NodeId, ancestors:
     if matches!(local(dom, id), Some("style" | "script" | "noscript" | "template")) {
         return true;
     }
-    let select = || {
-        if local(dom, id) == Some("option") {
-            self_and_ancestors(dom, id).find(|a| local(dom, *a) == Some("select"))
-        } else {
-            None
-        }
-    };
-    let in_select = || select().is_some();
     let style = layout.style();
-    // Playwright's `isOptionInsideSelect` skips only the box check: an
-    // option's own `hidden` still hides it. (lp-dom computes every option
-    // as display:none, author or not, so its display cannot tell.)
-    if in_select() && attr(dom, id, "hidden").is_some() {
-        return true;
-    }
-    // Chromium gives an optgroup of a drop-down <select> no box
-    // (`checkVisibility()` is false), and Playwright has no exception for
-    // it: it and its options are left out.
-    if local(dom, id) == Some("optgroup") && closed_select(dom, id) {
-        return true;
-    }
-    if ancestors {
-        // An option of a closed <select> has no box of its own: as in
-        // Playwright, it is as visible as its select.
-        if !layout.is_visible(dom, select().unwrap_or(id)) {
+    let select =
+        (local(dom, id) == Some("option")).then(|| self_and_ancestors(dom, id).find(|a| local(dom, *a) == Some("select")));
+    if let Some(Some(select)) = select {
+        // Playwright's `isOptionInsideSelect` skips only the box and
+        // visibility check (an option of a drop-down select has no box):
+        // its own `display: none` (the `hidden` attribute, author CSS) or an
+        // ancestor's still hides it.
+        if style.has_display_none(dom, id) {
             return true;
         }
-    } else if !in_select() && style.has_display_none(dom, id) {
-        return true;
-    }
-    if style.has_visibility_hidden_inherited(dom, id) && !in_select() {
-        return true;
+        // Up the tree only display:none counts (belongsToDisplayNoneOrAriaHidden),
+        // not whether the select itself has a box.
+        let _ = select;
+        if ancestors && aria_ancestors(dom, id).skip(1).any(|a| style.has_display_none(dom, a)) {
+            return true;
+        }
+    } else {
+        // Chromium gives an optgroup of a drop-down <select> no box
+        // (`checkVisibility()` is false), and Playwright has no exception
+        // for it: it and its options are left out.
+        if local(dom, id) == Some("optgroup") && closed_select(dom, id) {
+            return true;
+        }
+        if ancestors {
+            if !layout.is_visible(dom, id) {
+                return true;
+            }
+        } else if style.has_display_none(dom, id) {
+            return true;
+        }
+        if style.has_visibility_hidden_inherited(dom, id) {
+            return true;
+        }
     }
     // No `inert` rule: Playwright's isElementHiddenForAria has none, and
     // `checkVisibility()` ignores inert, so getByRole finds inert content.
@@ -2393,8 +2404,18 @@ impl Names<'_> {
     /// Playwright's `innerAccumulatedElementText`: child text with a space
     /// around every child that is not `display:inline` (and `<br>`).
     fn inner_text(&self, id: NodeId, opts: NameOpts) -> String {
+        use lp_dom::style::PseudoElement;
         let dom = self.dom;
-        let mut out = String::new();
+        let style = self.layout.style();
+        // CSS generated content around the element's (Playwright's
+        // `getCSSContent`); the element's own `content` alternative text
+        // replaces its children.
+        let mut out = style.css_content(dom, id, Some(PseudoElement::Before)).unwrap_or_default();
+        if let Some(content) = style.css_content(dom, id, None) {
+            out.push_str(&content);
+            out.push_str(&style.css_content(dom, id, Some(PseudoElement::After)).unwrap_or_default());
+            return out;
+        }
         for c in dom.children(id).into_iter().flatten() {
             match dom.node(c).map(|n| &n.kind) {
                 Ok(NodeKind::Text(t)) => out.push_str(t),
@@ -2412,6 +2433,7 @@ impl Names<'_> {
                 _ => {}
             }
         }
+        out.push_str(&style.css_content(dom, id, Some(PseudoElement::After)).unwrap_or_default());
         out
     }
 }
@@ -2538,10 +2560,11 @@ impl Locator {
             self.role.is_some(),
             self.label.is_some(),
             self.placeholder.is_some(),
+            self.aria_ref.is_some(),
         ];
         if kinds.iter().filter(|k| **k).count() != 1 {
             return Err(CdpError::invalid_params(
-                "locator needs exactly one of css, xpath, testId, text, role, label, placeholder, of",
+                "locator needs exactly one of css, xpath, testId, text, role, label, placeholder, ariaRef, of",
             ));
         }
         if self.has_role_states() && self.role.is_none() {
@@ -2676,6 +2699,11 @@ impl Locator {
                 .filter(|n| matches!(local(&dom, *n), Some("input" | "textarea")))
                 .filter(|n| attr(&dom, *n, "placeholder").is_some_and(|p| want.matches(p, self.exact)))
                 .collect();
+        } else if let Some(r) = &self.aria_ref {
+            // As Playwright's `aria-ref` engine: the scope is not searched,
+            // the ref names the element.
+            drop(dom);
+            found = super::aria_snapshot::ref_node(page, r).into_iter().collect();
         }
         Ok(found)
     }
@@ -3611,6 +3639,11 @@ struct QueryParams {
     key: Option<String>,
     /// `css`: the property name.
     property: Option<String>,
+    /// `aria`: `"ai"` for Playwright's AI snapshot (`"default"` otherwise).
+    mode: Option<String>,
+    /// `aria` in AI mode: each frame's Playwright `seq` by frame id; refs
+    /// in a frame with seq `n > 0` are named `f{n}e…`.
+    frame_seqs: Option<std::collections::HashMap<String, u32>>,
     timeout: Option<u64>,
 }
 
@@ -4162,10 +4195,22 @@ impl StepParams {
             StepParams::Check(p) => p.step(),
             StepParams::Read(p) => {
                 let read = p.read()?;
-                Ok((Step::Read { locator: p.locator, read, key: p.key, property: p.property }, p.timeout))
+                let ai = match p.mode.as_deref() {
+                    None | Some("default") => None,
+                    Some("ai") if read == Read::Aria => Some(Box::new(p.frame_seqs.unwrap_or_default())),
+                    Some(_) => return Err(CdpError::invalid_params("mode must be default, or ai for an aria read")),
+                };
+                Ok((Step::Read { locator: p.locator, read, key: p.key, property: p.property, ai }, p.timeout))
             }
         }
     }
+}
+
+/// A child frame's aria ref (`f1e5`, Playwright's `/^f(\d+)e\d+$/`).
+fn frame_ref(r: &str) -> bool {
+    r.strip_prefix('f')
+        .and_then(|r| r.split_once('e'))
+        .is_some_and(|(f, e)| [f, e].iter().all(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit())))
 }
 
 fn read_value(page: &PageDom, el: NodeId, read: Read, property: Option<&str>) -> Value {
@@ -4218,6 +4263,15 @@ impl EngineHost {
         page: &Rc<PageDom>,
         locator: &Locator,
     ) -> CdpResult<Result<Rc<PageDom>, Attempt>> {
+        // Playwright's `_jumpToAriaRefFrameIfNeeded`: `aria-ref=f1e5` is
+        // looked up in the frame whose snapshot named it, wherever the
+        // locator is scoped.
+        if let Some(r) = locator.aria_ref.as_deref().filter(|r| frame_ref(r)) {
+            let docs = self.page_documents(pid);
+            if let Some((_, doc)) = docs.into_iter().find(|(_, d)| super::aria_snapshot::ref_node(d, r).is_some()) {
+                return Ok(Ok(doc));
+            }
+        }
         let Some(frame_locator) = &locator.frame else { return Ok(Ok(page.clone())) };
         let parent = match self.scope_page(pid, page, frame_locator)? {
             Ok(p) => p,
@@ -4255,8 +4309,58 @@ impl EngineHost {
             Ok(p) => p,
             Err(retry) => return Ok((retry, page.clone())),
         };
+        if let Step::Read { read: Read::Aria, ai: Some(seqs), .. } = step {
+            let attempt = self.read_aria_ai(pid, &page, locator, seqs)?;
+            return Ok((attempt, page));
+        }
         let attempt = self.attempt_in(&page, step)?;
         Ok((attempt, page))
+    }
+
+    /// The live documents of a page's frames, with their frame ids.
+    fn page_documents(&self, pid: PageId) -> Vec<(String, Rc<PageDom>)> {
+        let browser = &self.thread.browser;
+        browser
+            .frames(pid)
+            .into_iter()
+            .filter_map(|f| browser.frame(pid, &f.id).and_then(|f| f.page_dom.map(|d| (f.id.0, d))))
+            .filter(|(_, d)| !d.is_disposed())
+            .collect()
+    }
+
+    /// `ariaSnapshot({ mode: "ai" })` of the locator's element: refs named
+    /// after the document's frame seq; each `<iframe>` with a ref carries
+    /// its frame's id (`frameId`) so the client can snapshot it next.
+    fn read_aria_ai(
+        &mut self,
+        pid: PageId,
+        page: &Rc<PageDom>,
+        locator: &Locator,
+        seqs: &std::collections::HashMap<String, u32>,
+    ) -> CdpResult<Attempt> {
+        let found = locator.resolve(page, &self.waiters.selectors)?;
+        let Some(el) = single(&found, &page.dom.borrow(), locator)? else {
+            return Ok(Attempt::Retry(format!("{} matched no element", locator.describe())));
+        };
+        let docs = self.page_documents(pid);
+        let seq = docs.iter().find(|(_, d)| Rc::ptr_eq(d, page)).and_then(|(id, _)| seqs.get(id)).copied();
+        let prefix = match seq {
+            Some(n) if n > 0 => format!("f{n}"),
+            _ => String::new(),
+        };
+        let (mut tree, iframes) = match super::aria_snapshot::aria_tree_ai(page, el, &prefix) {
+            Ok(t) => t,
+            Err(e) => return Ok(Attempt::Done(json!({ "error": e }))),
+        };
+        let frames: Vec<Value> = iframes
+            .into_iter()
+            .filter_map(|(r, owner)| {
+                let id = self.thread.browser.frame_of_owner(pid, owner)?;
+                Some(json!({ "ref": r, "frameId": id.0 }))
+            })
+            .collect();
+        tree["iframes"] = Value::Array(frames);
+        Ok(Attempt::Done(tree))
     }
 
     fn attempt_in(&mut self, page: &Rc<PageDom>, step: &Step) -> CdpResult<Attempt> {
@@ -5283,6 +5387,17 @@ impl EngineHost {
         let p: QueryParams = cmd.command.params()?;
         let read = p.read()?;
         let page = self.main_document(cmd.page)?;
+        match p.mode.as_deref() {
+            None | Some("default") => {}
+            Some("ai") if read == Read::Aria => {
+                let pid = self.pages.get(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?.id;
+                return match self.read_aria_ai(pid, &page, &p.locator, &p.frame_seqs.unwrap_or_default())? {
+                    Attempt::Done(v) => Ok(json!({ "value": v })),
+                    _ => Err(CdpError::server(format!("{} matched no element", p.locator.describe()))),
+                };
+            }
+            Some(_) => return Err(CdpError::invalid_params("mode must be default, or ai for an aria read")),
+        }
         let found = p.locator.resolve(&page, &self.waiters.selectors)?;
         if read == Read::Count {
             return Ok(json!({ "value": found.len() }));

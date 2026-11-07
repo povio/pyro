@@ -538,9 +538,17 @@ export class Locator extends Scope {
   async count(): Promise<number> {
     return this.read('count', 'count', 0);
   }
-  /** The element's ARIA tree as Playwright's YAML (its default mode). */
-  async ariaSnapshot(options: Timeout & { depth?: number; mode?: 'default' } = {}): Promise<string> {
-    if ((options.mode as string | undefined) === 'ai') throw notSupported('ariaSnapshot({ mode: "ai" })');
+  /**
+   * The element's ARIA tree as Playwright's YAML; `mode: 'ai'` adds refs
+   * (`[ref=e5]`, for `locator('aria-ref=e5')`), `[active]`,
+   * `[cursor=pointer]` and the snapshots of `<iframe>`s.
+   */
+  async ariaSnapshot(options: Timeout & { depth?: number; mode?: 'ai' | 'default' } = {}): Promise<string> {
+    if (options.mode === 'ai') {
+      // As Playwright: the AI mode does not wait for the locator, it fails at once.
+      if ((await this.count()) === 0) throw new Error(`locator.ariaSnapshot: Selector "${this._desc}" does not match any element`);
+      return this._page._aiSnapshot('locator.ariaSnapshot', this._spec, options.depth, options.timeout, this._desc);
+    }
     return renderAria(await this._ariaTree(options.timeout), options.depth);
   }
   /** The engine's ARIA tree of the element (waits for it, as reads do). */
@@ -1250,6 +1258,8 @@ export class Page extends Scope {
   _routes: RouteEntry[] = [];
   /** Child frames by id, from Page events (or the frame tree when attaching to a booted page). */
   private _frames = new Map<string, Frame>();
+  /** Child frames' seqs (`f1e5` refs), by frame id, never reused. */
+  private _frameSeqs = new Map<string, number>();
   private _marking = new Map<string, Promise<void>>();
   /** `exposeBinding` callbacks by binding name. */
   _bindings = new Map<string, { name: string; callback: (source: any, ...args: any[]) => unknown; script: string }>();
@@ -1409,8 +1419,11 @@ export class Page extends Scope {
   private childFrame(id: string, parentId: string): Frame {
     let f = this._frames.get(id);
     const parent = parentId === this._mainFrameId || !this._frames.has(parentId) ? this._mainFrame : this._frames.get(parentId)!;
-    if (!f) this._frames.set(id, (f = new Frame(this, id, parent)));
-    else f._parent = parent;
+    if (!f) {
+      this._frames.set(id, (f = new Frame(this, id, parent)));
+      // Playwright's `frame.seq`: the page's frames in the order they appear (the main frame is 0).
+      if (!this._frameSeqs.has(id)) this._frameSeqs.set(id, this._frameSeqs.size + 1);
+    } else f._parent = parent;
     return f;
   }
   get _mainFrameIdValue(): string | undefined {
@@ -1966,9 +1979,46 @@ export class Page extends Scope {
   async $$(selector: string): Promise<ElementHandle<PageElement>[]> {
     return this.locator(selector).elementHandles();
   }
-  /** The page's ARIA tree as Playwright's YAML (from `<body>`). */
-  async ariaSnapshot(options: Timeout & { depth?: number; mode?: 'default' } = {}): Promise<string> {
+  /**
+   * The page's ARIA tree as Playwright's YAML: from the main frame's
+   * `<body>`, as Playwright's `ariaSnapshotForFrame` (in both modes).
+   */
+  async ariaSnapshot(options: Timeout & { depth?: number; mode?: 'ai' | 'default' } = {}): Promise<string> {
+    if (options.mode === 'ai') return this._aiSnapshot('page.ariaSnapshot', { css: 'body' }, options.depth, options.timeout);
     return this.locator('body').ariaSnapshot(options);
+  }
+  /** Playwright's `ariaSnapshotForFrame` in AI mode: the tree under `spec`, then each shown `<iframe>`'s, nested under it. */
+  async _aiSnapshot(api: string, spec: LocatorSpec, depth: number | undefined, timeout: number | undefined, desc?: string): Promise<string> {
+    return (await this.aiLines(api, spec, depth, timeout, desc)).join('\n');
+  }
+  private async aiLines(api: string, spec: LocatorSpec, depth: number | undefined, timeout: number | undefined, desc?: string): Promise<string[]> {
+    const frameSeqs = Object.fromEntries(this._frameSeqs);
+    if (this._mainFrameId) frameSeqs[this._mainFrameId] = 0;
+    const step = { read: { locator: spec, read: 'aria', mode: 'ai', frameSeqs, as: 'v', timeout: this._timeout(timeout) } };
+    const tree = (await this._run(api, [step], desc)).reads.v as AriaNode & { error?: string; iframes?: { ref: string; frameId: string }[] };
+    if (tree?.error) throw new Error(`${api}: ${tree.error}`);
+    const iframeDepths: Record<string, number> = {};
+    const text = renderAria(tree, depth, false, true, iframeDepths);
+    const children = new Map<string, string[]>();
+    for (const { ref } of tree.iframes ?? []) {
+      if (!(ref in iframeDepths)) continue;
+      // Playwright: `depth - iframeDepth - 1`, and no limit when that is 0.
+      const childDepth = depth ? depth - iframeDepths[ref] - 1 : undefined;
+      const child: LocatorSpec = { css: 'body', frame: { ariaRef: ref, ...(spec.frame ? { frame: spec.frame } : {}) } };
+      children.set(ref, await this.aiLines(api, child, childDepth, timeout).catch(() => []));
+    }
+    const out: string[] = [];
+    for (const line of text.split('\n')) {
+      const m = /^(\s*)- iframe (?:\[active\] )?\[ref=([^\]]*)\]/.exec(line);
+      if (!m) {
+        out.push(line);
+        continue;
+      }
+      const lines = children.get(m[2]) ?? [];
+      out.push(lines.length ? line + ':' : line);
+      out.push(...lines.map((l) => m[1] + '  ' + l));
+    }
+    return out;
   }
   async title(): Promise<string> {
     return this._call('page.title', '() => document.title', {});

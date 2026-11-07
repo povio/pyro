@@ -426,6 +426,9 @@ function part(prev: LocatorSpec | undefined, sel: string, testIdAttribute: strin
       }
       case 'xpath':
         return fresh({ xpath: body });
+      case 'aria-ref':
+        // Playwright's engine ignores the scope: the ref names the element.
+        return { ariaRef: body.trim() };
       case 'nth':
         return { ...base(need()), nth: Number(body) };
       case 'visible':
@@ -467,7 +470,7 @@ function hasTextPattern(body: string): Pattern {
 /**
  * A Playwright selector string as a locator spec: `a >> b` chains, engines
  * (`css=`, `text=`, `role=`, `id=`, `xpath=`, `data-testid=`, `nth=`,
- * `visible=`) and the `internal:` ones Playwright's locators serialize to
+ * `visible=`, `aria-ref=`) and the `internal:` ones Playwright's locators serialize to
  * (`internal:role`, `internal:text`, `internal:label`, `internal:attr`,
  * `internal:testid`, `internal:has`, `internal:has-not`, `internal:has-text`,
  * `internal:has-not-text`, `internal:and`, `internal:or`, `internal:chain`,

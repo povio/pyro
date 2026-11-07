@@ -220,6 +220,55 @@ impl crate::document::BaseDocument {
     /// (styling any unstyled ancestors along the way) without storing it on the
     /// node. Returns `None` for non-elements and elements outside the document.
     pub fn resolve_undisplayed_style(&self, node_id: NodeId) -> Option<Arc<ComputedValues>> {
+        Some(self.resolve_undisplayed_styles(node_id, None)?.primary().clone())
+    }
+
+    /// lightningpanda: the computed style of an element's `::before`
+    /// (`after: false`) or `::after` pseudo-element: the one the traversal
+    /// stored, else (inside a `display: none` subtree) one resolved now.
+    /// `None` when no rule gives it a style that could generate a box
+    /// (`content: none | normal`, `display: none`), unless `synthesize`,
+    /// which then returns the style a pseudo-element without rules has
+    /// (`getComputedStyle(el, '::before')` always answers).
+    pub fn pseudo_style(&self, node_id: NodeId, after: bool, synthesize: bool) -> Option<Arc<ComputedValues>> {
+        let pseudo = if after { PseudoElement::After } else { PseudoElement::Before };
+        let node = self.nodes.get(node_id)?;
+        if !node.is_element() {
+            return None;
+        }
+        let stored = node.try_stylo_element_data().and_then(|d| {
+            let d = d.get()?;
+            d.styles.get_primary()?;
+            Some(d.styles.pseudos.get(&pseudo).cloned())
+        });
+        match stored {
+            Some(Some(style)) => return Some(style),
+            Some(None) if !synthesize => return None,
+            _ => {}
+        }
+        // Styled now: the traversal stores only pseudo-elements that may
+        // generate a box, and none inside `display: none`.
+        let styles = self.resolve_undisplayed_styles(node_id, Some(&pseudo))?;
+        if let Some(style) = styles.pseudos.get(&pseudo) {
+            return Some(style.clone());
+        }
+        synthesize.then(|| {
+            style::properties::StyleBuilder::for_inheritance(
+                self.stylist.device(),
+                Some(&self.stylist),
+                Some(styles.primary()),
+                Some(&pseudo),
+            )
+            .build()
+        })
+    }
+
+    /// [`Self::resolve_undisplayed_style`] with the eager pseudo-elements.
+    fn resolve_undisplayed_styles(
+        &self,
+        node_id: NodeId,
+        pseudo: Option<&PseudoElement>,
+    ) -> Option<style::data::ElementStyles> {
         let node = self.nodes.get(node_id)?;
         if !node.is_element() || !node.flags.is_in_document() {
             return None;
@@ -248,9 +297,7 @@ impl crate::document::BaseDocument {
             shared: &shared,
             thread_local: &mut thread_local,
         };
-        let styles = resolve_style(&mut context, node, RuleInclusion::All, None, None);
-
-        Some(styles.primary().clone())
+        Some(resolve_style(&mut context, node, RuleInclusion::All, pseudo, None))
     }
 }
 

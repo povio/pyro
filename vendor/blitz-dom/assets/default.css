@@ -43,6 +43,8 @@
 a[href] {
     color: rgb(0, 0, 238);
     text-decoration: underline;
+    /* lightningpanda: Chromium's `a:-webkit-any-link { cursor: pointer }`. */
+    cursor: pointer;
 }
 
 /* https://html.spec.whatwg.org/#bidi-rendering */
@@ -187,8 +189,22 @@ legend {
     padding-inline-end: 2px;
 }
 
+/* lightningpanda: Chromium's computed style for options and groups. A
+   drop-down select's children generate no boxes (layout/construct.rs); a
+   list box's and loose ones do. */
 option {
-    display: none;
+    display: block;
+    padding-block: 0 1px;
+    padding-inline: 2px;
+    white-space: nowrap;
+    min-block-size: 1.2em;
+    /* Chromium: not the bolder weight of an enclosing optgroup. */
+    font-weight: normal;
+}
+
+optgroup {
+    display: block;
+    font-weight: bolder;
 }
 
 picture {

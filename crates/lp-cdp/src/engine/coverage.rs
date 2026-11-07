@@ -14,6 +14,10 @@
 //! block coverage: per function its whole range with how often it ran, and
 //! inside it the blocks that never ran. Counts are the page's own: what ran
 //! since it started coverage or since its last take (V8 resets them then).
+//! As V8, a function is reported only when it ran since, or the reported
+//! function around it did: coverage started after a script ran reports the
+//! functions that ran again (with what they enclose), not its top level, and
+//! leaves out a script none of whose code ran since, as Chrome does.
 //!
 //! CSS: a rule counts as used when one of its selectors matches an element of
 //! its document while tracking is on. Documents are looked at when tracking
@@ -489,10 +493,15 @@ impl EngineHost {
             let known = &self.coverage.scripts[index];
             unprefix(&mut script, known.prefix);
             let length = known.source.encode_utf16().count();
+            let functions = v8_functions(&script, length, &known.source);
+            // Nothing of it ran since coverage started: V8 leaves it out.
+            if functions.is_empty() {
+                continue;
+            }
             result.push(json!({
                 "scriptId": script.source_id.to_string(),
                 "url": known.url,
-                "functions": v8_functions(&script, length),
+                "functions": functions,
             }));
         }
         if let Some(state) = self.coverage.pages.get_mut(&page) {
@@ -804,7 +813,7 @@ fn unprefix(script: &mut ScriptCoverage, prefix: u32) {
 /// each function in source order. A function's first range is the function
 /// with how often it ran; the ranges after it are the blocks in it (not in
 /// nested functions) that never ran. Offsets are UTF-16, ends exclusive.
-fn v8_functions(script: &ScriptCoverage, length: usize) -> Vec<Value> {
+fn v8_functions(script: &ScriptCoverage, length: usize, source: &str) -> Vec<Value> {
     struct Function {
         start: u32,
         end: u32,
@@ -829,6 +838,26 @@ fn v8_functions(script: &ScriptCoverage, length: usize) -> Vec<Value> {
         .collect();
     functions.sort_by_key(|f| (f.start, std::cmp::Reverse(f.end)));
     functions.dedup_by_key(|f| (f.start, f.end));
+    // JSC compiles a generator's or async function's body as a second
+    // function of the same name, ending where the wrapper ends; V8 has one.
+    // Fold it into the wrapper (its blocks then count for the wrapper).
+    let mut folded = vec![false; functions.len()];
+    for i in 0..functions.len() {
+        let enclosing = (0..i).rev().find(|&j| {
+            !folded[j] && functions[j].start <= functions[i].start && functions[j].end >= functions[i].end
+        });
+        if let Some(j) = enclosing {
+            if functions[j].end == functions[i].end && functions[j].name == functions[i].name {
+                folded[i] = true;
+                functions[j].executed |= functions[i].executed;
+            }
+        }
+    }
+    let mut index = 0;
+    functions.retain(|_| {
+        index += 1;
+        !folded[index - 1]
+    });
     // The script itself: index `functions.len()` below.
     let mut top_entry: Option<(i32, u64)> = None;
     let mut top_unexecuted: Vec<(u32, u32)> = Vec::new();
@@ -868,6 +897,36 @@ fn v8_functions(script: &ScriptCoverage, length: usize) -> Vec<Value> {
         }
     }
 
+    // A concise arrow (`() => expr`) that ran also ran its body expression,
+    // though JSC leaves that block uncounted: drop the false 0 range.
+    if !source.is_empty() {
+        let text: Vec<u16> = source.encode_utf16().collect();
+        for f in &mut functions {
+            if !f.executed || f.unexecuted.is_empty() || f.end as usize >= text.len() {
+                continue;
+            }
+            let own = String::from_utf16_lossy(&text[f.start as usize..=f.end as usize]);
+            let Some(arrow) = own.find("=>") else { continue };
+            let after = &own[arrow + 2..];
+            let body = after.trim_start();
+            if body.starts_with('{') {
+                continue;
+            }
+            let body_start =
+                f.start + own[..arrow + 2 + (after.len() - body.len())].encode_utf16().count() as u32;
+            f.unexecuted.retain(|&(s, e)| !(s <= body_start + 1 && e >= f.end.saturating_sub(1)));
+        }
+        // JSC's block for the implicit return after a `return` covers only
+        // the closing brace: nothing that could run, and V8 has no range there.
+        let only_brace = |s: u32, e: u32| {
+            (e as usize) < text.len()
+                && String::from_utf16_lossy(&text[s as usize..=e as usize]).trim_matches(|c: char| c.is_whitespace() || c == ';') == "}"
+        };
+        for f in &mut functions {
+            f.unexecuted.retain(|&(s, e)| !(e == f.end && only_brace(s, e)));
+        }
+    }
+
     let ranges = |start: u32, end_inclusive: u32, count: u64, unexecuted: &[(u32, u32)]| {
         let mut ranges = vec![json!({ "startOffset": start, "endOffset": end_inclusive + 1, "count": count })];
         if count > 0 {
@@ -877,26 +936,40 @@ fn v8_functions(script: &ScriptCoverage, length: usize) -> Vec<Value> {
         }
         ranges
     };
-    let top_count = match top_entry {
-        Some((_, count)) => count,
-        // The script ran before coverage was on: only functions ran since.
-        None => 1,
-    };
-    let mut out = vec![json!({
-        "functionName": "",
-        "isBlockCoverage": true,
-        "ranges": ranges(0, length.saturating_sub(1) as u32, top_count.max(1), &top_unexecuted),
-    })];
+    // A script whose top level ran before coverage was on (its code was not
+    // compiled again, or its counts are from before) did not run since: 0,
+    // as V8 resets the counts when precise coverage starts.
+    let top_count = top_entry.map_or(0, |(_, count)| count);
+    let top_end = length.saturating_sub(1) as u32;
+    let mut candidates = vec![(0, top_end, top_count, "", &top_unexecuted)];
     for f in &functions {
         let count = match (f.executed, f.entry) {
             (false, _) => 0,
             (true, Some((_, count))) => count.max(1),
             (true, None) => 1,
         };
+        candidates.push((f.start, f.end, count, f.name.as_str(), &f.unexecuted));
+    }
+    // V8 (`Coverage::CollectPrecise`) reports a function only when it ran, or
+    // the function around it that is reported ran: code that ran before
+    // coverage started and not since is left out, as in Chrome when
+    // coverage starts after the page loaded. A script left with nothing is
+    // left out ([`take_precise_coverage`]).
+    let mut out = Vec::new();
+    let mut nesting: Vec<(u32, u64)> = Vec::new();
+    for (start, end, count, name, unexecuted) in candidates {
+        while nesting.last().is_some_and(|&(parent_end, _)| parent_end < start) {
+            nesting.pop();
+        }
+        let parent_ran = nesting.last().is_some_and(|&(_, c)| c > 0);
+        if count == 0 && !parent_ran {
+            continue;
+        }
+        nesting.push((end, count));
         out.push(json!({
-            "functionName": f.name,
+            "functionName": name,
             "isBlockCoverage": true,
-            "ranges": ranges(f.start, f.end, count, &f.unexecuted),
+            "ranges": ranges(start, end, count, unexecuted),
         }));
     }
     out
@@ -1290,7 +1363,7 @@ mod tests {
             vec![(0, 9, 1), (51, 59, 1), (91, 99, 1), (10, 29, 2), (30, 39, 0), (40, 50, 2), (60, 90, 0)],
             vec![(10, 50, true, "f"), (60, 90, false, "g")],
         );
-        let f = v8_functions(&s, 100);
+        let f = v8_functions(&s, 100, "");
         assert_eq!(f.len(), 3);
         assert_eq!(f[0]["ranges"], json!([{ "startOffset": 0, "endOffset": 100, "count": 1 }]));
         assert_eq!(f[1]["functionName"], "f");
@@ -1299,6 +1372,41 @@ mod tests {
             json!([{ "startOffset": 10, "endOffset": 51, "count": 2 }, { "startOffset": 30, "endOffset": 40, "count": 0 }])
         );
         assert_eq!(f[2]["ranges"], json!([{ "startOffset": 60, "endOffset": 91, "count": 0 }]));
+    }
+
+    #[test]
+    fn v8_shape_folds_generator_bodies_and_counts_concise_arrow_bodies() {
+        // `function* g(){}` and its body function 13..15 (JSC's second
+        // function of the same name): one entry, as V8.
+        let src = "function* g(){} const a = () => 7; a(); g();";
+        let s = script(
+            vec![(0, 43, 1), (0, 14, 1), (13, 14, 1), (26, 32, 1), (32, 32, 0)],
+            vec![(0, 14, true, "g"), (13, 14, true, "g"), (26, 32, true, "a")],
+        );
+        let f = v8_functions(&s, src.encode_utf16().count(), src);
+        let names: Vec<&str> = f.iter().map(|f| f["functionName"].as_str().unwrap()).collect();
+        assert_eq!(names.iter().filter(|n| **n == "g").count(), 1, "{f:?}");
+        // The arrow ran, so its body did: no count-0 range for `7`.
+        assert_eq!(f.last().unwrap()["ranges"], json!([{ "startOffset": 26, "endOffset": 33, "count": 1 }]));
+    }
+
+    #[test]
+    fn v8_shape_leaves_out_what_did_not_run_since_coverage_started() {
+        // The script ran before coverage started (no top-level blocks); f =
+        // 10..50 ran since and declares h = 20..30 (never ran); g = 60..90
+        // ran before only; k = 70..80 inside g never ran.
+        let s = script(
+            vec![(10, 19, 1), (31, 50, 1), (20, 30, 0)],
+            vec![(10, 50, true, "f"), (20, 30, false, "h"), (60, 90, false, "g"), (70, 80, false, "k")],
+        );
+        let f = v8_functions(&s, 100, "");
+        let names: Vec<&str> = f.iter().map(|f| f["functionName"].as_str().unwrap()).collect();
+        assert_eq!(names, ["f", "h"]);
+        assert_eq!(f[0]["ranges"], json!([{ "startOffset": 10, "endOffset": 51, "count": 1 }]));
+        assert_eq!(f[1]["ranges"], json!([{ "startOffset": 20, "endOffset": 31, "count": 0 }]));
+        // Nothing ran since: nothing to report.
+        let idle = script(vec![(0, 99, 0)], vec![(10, 50, false, "f")]);
+        assert!(v8_functions(&idle, 100, "").is_empty());
     }
 
     #[test]

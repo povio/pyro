@@ -102,3 +102,177 @@ fn aria_read_hides_unslotted_light_dom() {
     assert!(!text.contains("light"), "{text}");
     assert!(text.contains("shadow") && text.contains("slotted"), "{text}");
 }
+
+#[test]
+fn options_compute_as_in_chromium() {
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<!doctype html><body>
+<select id="s"><option id="o1">a</option><optgroup id="g" label="G"><option id="o2">b</option></optgroup><option id="oh" hidden>h</option><option id="oc" style="display:none">c</option></select>
+<select id="lb" multiple><option id="o3">d</option></select>
+<option id="loose">loose</option>
+</body>"#,
+    );
+    let probe = |h: &mut Harness, id: &str| {
+        eval_value(
+            h,
+            &format!(
+                "(() => {{ const e = document.getElementById('{id}'); \
+                 return [getComputedStyle(e).display, e.checkVisibility(), e.getBoundingClientRect().height > 0]; }})()"
+            ),
+        )
+    };
+    assert_eq!(probe(&mut h, "loose"), json!(["block", true, true]), "a loose option is a block box");
+    assert_eq!(probe(&mut h, "o1"), json!(["block", false, false]), "a drop-down's option: block, no box");
+    assert_eq!(probe(&mut h, "g"), json!(["block", false, false]));
+    assert_eq!(probe(&mut h, "o2"), json!(["block", false, false]));
+    assert_eq!(probe(&mut h, "oh"), json!(["none", false, false]));
+    assert_eq!(probe(&mut h, "o3"), json!(["block", true, true]), "a list box lays its options out");
+    // Playwright's getByRole: an option inside a select skips the box check,
+    // but its own display:none (hidden, author CSS) still hides it.
+    let r = h.page("LP.query", json!({"locator": {"role": "option"}, "read": "count"}));
+    assert_eq!(r["result"]["value"], 4, "o1, o2, o3 and the loose option: {r}");
+    let loose = aria(&mut h, "#loose");
+    assert_eq!(loose["children"][0]["role"], "option", "{loose}");
+    assert_eq!(loose["children"][0]["name"], "loose", "{loose}");
+    // A drop-down turned list box at run time lays its options' text out.
+    let w = eval_value(
+        &mut h,
+        "(() => { s.setAttribute('multiple', ''); document.body.offsetWidth;          const r = o1.getBoundingClientRect(); return [r.width > 6, r.height > 0, getComputedStyle(o2).fontWeight]; })()",
+    );
+    assert_eq!(w, json!([true, true, "400"]), "options get text boxes; an option is not bold in its optgroup");
+}
+
+#[test]
+fn generated_content_names_and_snapshots() {
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<!doctype html><head><style>
+#a::before { content: "Hello " } #a::after { content: attr(data-x) }
+#b::before { content: "\2605" / "star"; display: block }
+#c::before { content: counter(n) "x" }
+#d::before { content: "gone"; visibility: hidden }
+#e::before { content: "gone"; display: none }
+#p::before { content: "Note: " } #p::after { content: "!" }
+#f::before { content: var(--unset) }
+</style></head><body>
+<button id="a" data-x="!">World</button><button id="b">Go</button><button id="c">Count</button>
+<button id="d">Vis</button><button id="e">Disp</button><button id="f">Var</button>
+<p id="p">Text</p>
+</body>"#,
+    );
+    let name = |h: &mut Harness, css: &str| aria(h, css)["children"][0]["name"].clone();
+    assert_eq!(name(&mut h, "#a"), "Hello World!");
+    assert_eq!(name(&mut h, "#b"), "star Go", "alt text, padded as a block");
+    assert_eq!(name(&mut h, "#c"), "Count", "a counter is content Playwright does not read");
+    assert_eq!(name(&mut h, "#d"), "Vis");
+    assert_eq!(name(&mut h, "#e"), "Disp");
+    assert_eq!(name(&mut h, "#f"), "Var");
+    assert_eq!(aria(&mut h, "#p")["children"][0]["children"], json!(["Note: Text!"]));
+    let r = h.page("LP.query", json!({"locator": {"role": "button", "name": "Hello World!", "exact": true}, "read": "count"}));
+    assert_eq!(r["result"]["value"], 1, "{r}");
+    assert_eq!(
+        eval_value(
+            &mut h,
+            "[getComputedStyle(a, '::before').content, getComputedStyle(b, ':before').display, \
+              getComputedStyle(p, '::after').getPropertyValue('content'), getComputedStyle(c).content, \
+              getComputedStyle(d, '::after').content, getComputedStyle(e, '::before').display, \
+              getComputedStyle(a, '::bogus').content, getComputedStyle(a, 'before').content]"
+        ),
+        json!(["\"Hello \"", "block", "\"!\"", "normal", "none", "none", "", "normal"])
+    );
+}
+
+fn run_read(h: &mut Harness, read: Value) -> Value {
+    let r = h.page("LP.run", json!({"steps": [{"read": read}]}));
+    assert!(r.get("error").is_none(), "{r}");
+    r["result"]["reads"]["v"].clone()
+}
+
+/// The refs of an AI tree, in order.
+fn refs(tree: &Value, out: &mut Vec<String>) {
+    if let Some(r) = tree["ref"].as_str() {
+        out.push(r.to_owned());
+    }
+    for c in tree["children"].as_array().into_iter().flatten() {
+        refs(c, out);
+    }
+}
+
+#[test]
+fn aria_ai_mode_gives_refs_and_aria_ref_finds_them() {
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<!doctype html><body>
+<div><div><button id="b">Buy</button></div></div>
+<span aria-hidden="true">decor</span><div hidden>secret</div>
+<div style="cursor:pointer"><span>Card</span> <b>x</b></div>
+<p style="pointer-events:none">np <button>Inert</button></p>
+</body>"#,
+    );
+    let read = json!({"locator": {"css": "body"}, "read": "aria", "mode": "ai", "as": "v"});
+    let tree = run_read(&mut h, read.clone());
+    let body = &tree["children"][0];
+    assert_eq!(body["role"], "generic", "{tree}");
+    assert_eq!(body["active"], true, "the body is document.activeElement: {tree}");
+    let kids = body["children"].as_array().unwrap();
+    assert_eq!(kids[0]["role"], "button", "a generic with one ref'd child gives way to it: {tree}");
+    assert_eq!(kids[1], "decor", "aria-hidden but visible text stays: {tree}");
+    assert_eq!(kids[2]["cursor"], "pointer", "{tree}");
+    assert!(kids[3].get("ref").is_none() && kids[3]["children"][1].get("ref").is_none(), "pointer-events:none: {tree}");
+    assert!(!serde_json::to_string(&tree).unwrap().contains("secret"));
+    let mut first = Vec::new();
+    refs(&tree, &mut first);
+    assert_eq!(first, ["e1", "e4", "e5"], "{tree}");
+
+    // Refs stay with their elements across snapshots.
+    let mut again = Vec::new();
+    refs(&run_read(&mut h, read.clone()), &mut again);
+    assert_eq!(first, again);
+    let count = |h: &mut Harness, r: &str| {
+        h.page("LP.query", json!({"locator": {"ariaRef": r}, "read": "count"}))["result"]["value"].clone()
+    };
+    assert_eq!(count(&mut h, "e4"), 1);
+    assert_eq!(count(&mut h, "e99"), 0);
+    let id = run_read(&mut h, json!({"locator": {"ariaRef": "e4"}, "read": "name", "as": "v"}));
+    assert_eq!(id, "Buy");
+    // A removed element is not found any more.
+    eval_value(&mut h, "document.getElementById('b').remove()");
+    assert_eq!(count(&mut h, "e4"), 0);
+    // LP.query takes the mode too, and rejects an unknown one.
+    let q = h.page("LP.query", json!({"locator": {"css": "body"}, "read": "aria", "mode": "ai"}));
+    assert_eq!(q["result"]["value"]["children"][0]["ref"], "e1", "{q}");
+    let bad = h.page("LP.query", json!({"locator": {"css": "body"}, "read": "aria", "mode": "codegen"}));
+    assert!(bad.get("error").is_some(), "{bad}");
+}
+
+#[test]
+fn aria_ai_mode_names_frame_refs_by_seq() {
+    let mut h = Harness::new();
+    load_html(&mut h, r#"<!doctype html><body><p>top</p><iframe srcdoc="<button>Inner</button>"></iframe></body>"#);
+    let r = h.page(
+        "LP.run",
+        json!({"steps": [{"check": {"locator": {"role": "button", "frame": {"css": "iframe"}}, "assert": "visible"}}]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    let top = run_read(&mut h, json!({"locator": {"css": "body"}, "read": "aria", "mode": "ai", "as": "v"}));
+    let iframe = &top["iframes"][0];
+    let (iref, frame_id) = (iframe["ref"].as_str().unwrap().to_owned(), iframe["frameId"].as_str().unwrap().to_owned());
+    assert_eq!(top["children"][0]["children"][1]["role"], "iframe", "{top}");
+    assert_eq!(top["children"][0]["children"][1]["ref"], iref.as_str());
+    let child = run_read(
+        &mut h,
+        json!({"locator": {"css": "body", "frame": {"ariaRef": iref}}, "read": "aria", "mode": "ai",
+               "frameSeqs": {frame_id: 3}, "as": "v"}),
+    );
+    let mut got = Vec::new();
+    refs(&child, &mut got);
+    // The body (f3e1) gives way to its one ref'd child.
+    assert_eq!(got, ["f3e2"], "{child}");
+    // A frame ref is looked up in its frame from the page.
+    let name = run_read(&mut h, json!({"locator": {"ariaRef": "f3e2"}, "read": "name", "as": "v"}));
+    assert_eq!(name, "Inner");
+}

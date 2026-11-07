@@ -12,6 +12,10 @@ export type AriaNode = {
   level?: number;
   pressed?: boolean | 'mixed';
   selected?: boolean;
+  /** AI mode: the element's ref, `document.activeElement`, a pointer cursor. */
+  ref?: string;
+  active?: boolean;
+  cursor?: 'pointer';
   props: Record<string, string>;
   children: (AriaNode | string)[];
 };
@@ -121,7 +125,7 @@ function textContributesInfo(n: AriaNode, text: string): boolean {
   return filtered.trim().length / text.length > 0.1;
 }
 
-function key(n: AriaNode, str: (s: string) => string): string {
+function key(n: AriaNode, str: (s: string) => string, ai: boolean, cursor: boolean): string {
   let k = n.role;
   if (n.name && n.name.length <= 900) {
     const name = str(n.name);
@@ -131,10 +135,15 @@ function key(n: AriaNode, str: (s: string) => string): string {
   if (n.checked === true) k += ' [checked]';
   if (n.disabled) k += ' [disabled]';
   if (n.expanded) k += ' [expanded]';
+  if (n.active && ai) k += ' [active]';
   if (n.level) k += ` [level=${n.level}]`;
   if (n.pressed === 'mixed') k += ' [pressed=mixed]';
   if (n.pressed === true) k += ' [pressed]';
   if (n.selected === true) k += ' [selected]';
+  if (n.ref) {
+    k += ` [ref=${n.ref}]`;
+    if (cursor && n.cursor === 'pointer') k += ' [cursor=pointer]';
+  }
   return k;
 }
 
@@ -142,8 +151,11 @@ function key(n: AriaNode, str: (s: string) => string): string {
  * Playwright's YAML for a tree (the root `fragment` is not shown). `regex`
  * is its `codegen` mode, which `toMatchAriaSnapshot` writes to a snapshot
  * file: numbers and the like as regexes, text that repeats a name left out.
+ * `ai` is its AI mode: `[active]`, `[ref=…]` and `[cursor=pointer]` (not
+ * repeated under a node that already shows it); `iframeDepths` gets the
+ * depth of each `<iframe>` with a ref that is shown.
  */
-export function renderAria(root: AriaNode, depth?: number, regex = false): string {
+export function renderAria(root: AriaNode, depth?: number, regex = false, ai = false, iframeDepths?: Record<string, number>): string {
   const lines: string[] = [];
   const pad = (d: number) => '  '.repeat(d);
   const str = regex ? bestGuessRegex : (s: string) => s;
@@ -153,9 +165,10 @@ export function renderAria(root: AriaNode, depth?: number, regex = false): strin
     const v = escapeValue(str(t));
     if (v) lines.push(`${pad(d)}- text: ${v}`);
   };
-  const visit = (n: AriaNode, d: number) => {
+  const visit = (n: AriaNode, d: number, cursor: boolean) => {
     if (depth && d > depth) return;
-    const k = `${pad(d)}- ${escapeKey(key(n, str))}`;
+    if (n.role === 'iframe' && n.ref && iframeDepths) iframeDepths[n.ref] = d;
+    const k = `${pad(d)}- ${escapeKey(key(n, str, ai, cursor))}`;
     const props = Object.entries(n.props);
     const only = n.children.length === 1 && typeof n.children[0] === 'string' && !props.length ? (n.children[0] as string) : undefined;
     const atLimit = !!depth && d === depth;
@@ -164,10 +177,11 @@ export function renderAria(root: AriaNode, depth?: number, regex = false): strin
     else {
       lines.push(`${k}:`);
       for (const [name, value] of props) lines.push(`${pad(d + 1)}- /${name}: ${escapeValue(value)}`);
-      for (const c of n.children) typeof c === 'string' ? text(includeText(n, c) ? c : '', d + 1) : visit(c, d + 1);
+      const inCursor = !!n.ref && cursor && n.cursor === 'pointer';
+      for (const c of n.children) typeof c === 'string' ? text(includeText(n, c) ? c : '', d + 1) : visit(c, d + 1, cursor && !inCursor);
     }
   };
-  for (const c of root.role === 'fragment' ? root.children : [root]) typeof c === 'string' ? text(c, 0) : visit(c, 0);
+  for (const c of root.role === 'fragment' ? root.children : [root]) typeof c === 'string' ? text(c, 0) : visit(c, 0, ai);
   return lines.join('\n');
 }
 

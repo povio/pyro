@@ -1080,6 +1080,21 @@ impl Renderer {
         }
     }
 
+    /// The computed style of the `::before` (`after: false`) or `::after`
+    /// pseudo-element of the element keyed `key` in `page`'s persistent
+    /// document (see `BaseDocument::pseudo_style`); `synthesize` answers for
+    /// one no rule generates too. `None`: not mirrored, or no such style.
+    pub fn pseudo_style(
+        &self,
+        page: u64,
+        key: u64,
+        after: bool,
+        synthesize: bool,
+    ) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
+        let m = self.mirrors.get(&page)?;
+        m.doc.pseudo_style(m.node(key)?, after, synthesize)
+    }
+
     /// The box of the element keyed `key` in `page`'s persistent document,
     /// as of the last [`Renderer::sync_layout`] (see [`LayoutBox`]).
     pub fn element_box(&self, page: u64, key: u64) -> Option<LayoutBox> {

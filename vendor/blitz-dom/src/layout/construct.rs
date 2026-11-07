@@ -440,6 +440,22 @@ fn collect_layout_children_with_wrap(
 
     flush_pseudo_elements(doc, container_node_id);
 
+    // lightningpanda: a select that was a drop-down had its options'
+    // construct damage cleared (below); as a list box they must build their
+    // boxes again.
+    let listbox_select = doc.nodes[container_node_id].data.downcast_element().is_some_and(|el| {
+        el.name.local == local_name!("select")
+            && (el.attr(local_name!("multiple")).is_some()
+                || el.attr(local_name!("size")).and_then(|s| s.trim().parse::<u32>().ok()).is_some_and(|s| s > 1))
+    });
+    if listbox_select {
+        doc.iter_subtree_mut(container_node_id, |id: NodeId, doc: &mut BaseDocument| {
+            if id != container_node_id {
+                doc.nodes[id].insert_damage(CONSTRUCT_BOX | CONSTRUCT_DESCENDENT | CONSTRUCT_FC);
+            }
+        });
+    }
+
     if let Some(el) = doc.nodes[container_node_id].data.downcast_element() {
         // Handle text inputs
         let tag_name = el.name.local.as_ref();
@@ -461,6 +477,25 @@ fn collect_layout_children_with_wrap(
                 create_checkbox_input(doc, container_node_id);
                 return;
             }
+        }
+
+        // lightningpanda: a drop-down select is an atomic box sized from its
+        // options (layout/mod.rs); as in Chromium's menu list, its children
+        // generate no boxes (their computed `display` stays `block`). A list
+        // box (`multiple`, or `size` above 1) lays its options out.
+        if tag_name == "select" {
+            let listbox = el.attr(local_name!("multiple")).is_some()
+                || el
+                    .attr(local_name!("size"))
+                    .and_then(|s| s.trim().parse::<u32>().ok())
+                    .is_some_and(|s| s > 1);
+            if !listbox {
+                doc.iter_subtree_mut(container_node_id, |id: NodeId, doc: &mut BaseDocument| {
+                    doc.nodes[id].remove_damage(CONSTRUCT_BOX | CONSTRUCT_DESCENDENT | CONSTRUCT_FC);
+                });
+                return;
+            }
+
         }
 
         #[cfg(feature = "svg")]

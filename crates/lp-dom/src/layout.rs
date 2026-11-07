@@ -2107,6 +2107,25 @@ impl Layout {
         }
         default_property_value(dom, el, &name).to_owned()
     }
+
+    /// `getComputedStyle(el, '::before' | '::after').getPropertyValue(name)`:
+    /// Stylo's computed value for the pseudo-element (one without rules
+    /// inherits from `el`), "" where `el` has no computed style. Layout-
+    /// dependent values (used sizes, insets) are not resolved: they read as
+    /// computed.
+    pub fn pseudo_computed_style_value(
+        &self,
+        dom: &Dom,
+        el: NodeId,
+        pseudo: crate::style::PseudoElement,
+        name: &str,
+    ) -> String {
+        if self.owned(dom, el).is_none() || !dom.is_connected(el).unwrap_or(false) {
+            return String::new();
+        }
+        let name = if name.starts_with("--") { name.to_owned() } else { name.to_ascii_lowercase() };
+        self.style.pseudo_value(dom, el, pseudo, &name).unwrap_or_default()
+    }
 }
 
 impl Layout {
