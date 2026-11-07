@@ -37,7 +37,18 @@ self.addEventListener('fetch', (e) => {
     }));
   }
 });
-self.addEventListener('message', (e) => {
+self.addEventListener('message', async (e) => {
+  if (e.data && e.data.kind === 'wire') {
+    // A CryptoKey and a WritableStream in, a TransformStream back on the port.
+    const { key, writable } = e.data;
+    const raw = await crypto.subtle.exportKey('raw', key);
+    const writer = writable.getWriter();
+    await writer.write('sw wrote');
+    await writer.close();
+    const upper = new TransformStream({ transform(chunk, c) { c.enqueue(String(chunk).toUpperCase()); } });
+    e.ports[0].postMessage({ key, bytes: raw.byteLength, upper }, [upper]);
+    return;
+  }
   const reply = { echo: e.data, source: typeof e.source.id, frameType: e.source.frameType, ports: e.ports.length };
   if (e.ports.length) e.ports[0].postMessage(reply);
   else e.source.postMessage(reply);
@@ -316,6 +327,27 @@ fn service_worker_messages_and_ports() {
         eval(&thread, page, "viaPort"),
         r#"{"echo":"with port","source":"string","frameType":"top-level","ports":1}"#
     );
+    // The shared cross-VM format: a CryptoKey, a transferred WritableStream
+    // and a port go to the worker; the key and a TransformStream come back.
+    eval(
+        &thread,
+        page,
+        "globalThis.written = [];
+         var writable = new WritableStream({ write(chunk) { written.push(chunk); } });
+         var wireChannel = new MessageChannel();
+         wireChannel.port1.onmessage = async (e) => {
+           const { key, bytes, upper } = e.data;
+           const w = upper.writable.getWriter();
+           w.write('abc');
+           const { value } = await upper.readable.getReader().read();
+           globalThis.wire = [key instanceof CryptoKey, key.algorithm.name, bytes, value].join();
+         };
+         crypto.subtle.generateKey({ name: 'AES-GCM', length: 128 }, true, ['encrypt'])
+           .then((key) => navigator.serviceWorker.controller.postMessage(
+             { kind: 'wire', key, writable }, [wireChannel.port2, writable])); 'ok'",
+    );
+    until(&mut thread, page, "globalThis.wire !== undefined && written.length === 1");
+    assert_eq!(eval(&thread, page, "wire + '|' + written.join()"), "true,AES-GCM,16,ABC|sw wrote");
 }
 
 #[test]
