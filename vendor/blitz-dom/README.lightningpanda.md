@@ -275,7 +275,28 @@ its inputs.
   element or below one (the nearest styled element from the new parent up is `display: none`) drops its style data,
   inline layout and construction flags, as Stylo keeps none there (it clears descendants when an element becomes
   `display: none` and never visits the children of one). The moved element kept its styles, and lp-render reported
-  the box its old inline layout gave it. Only moves of styled elements look up the ancestors.
+  the box its old inline layout gave it. Its pseudo-elements and layout tree (`leave_layout_tree`) go too. Every
+  insertion looks up the ancestors, not only one of a styled element: lp-dom builds a new wrapper by moving styled
+  children into the new, unstyled element before inserting it, and the paragraph so moved under a hidden element was
+  never laid out once shown.
+- `src/document.rs` (`leave_layout_tree`, `left_layout_lists`), `src/resolve.rs`: a box that left its container's list
+  in a pass (`resolve_layout_children`, `update_rows`, `drop_part_box`) and that no container collected again by the
+  pass's end is out of the layout tree, with what its subtree built: its layout children leave its list in turn, and
+  its anonymous blocks are freed. A fresh build has none there; the stale lists kept boxes under a `display: none`
+  element (and in a cell made a block) in lp-render's layout tree, and tripped `assert_layout_parents_consistent`
+  (a float moved out of an element hidden in the same pass). A box that comes back is built again: styled from
+  scratch, added (`process_added_subtree`), or damaged on its way in (`enter_layout_tree`, `damage_former_table_parts`).
+  A table with no layout children (it left) is built again, not updated (`is_incremental`).
+- `src/layout/table.rs` (`damage_former_table_parts`): the children a table ignored (captions, columns) have their
+  subtrees built when the table becomes another box: no pass had built them (`collect_table_cells` drops their
+  damage), and a caption was 0px tall.
+- `src/layout/table.rs` (`TableContext::group_borders`, `group_border_kept`): a collapsed table whose row group is
+  restyled with another border is built again: `update_rows` collects only the group's rows, and the collapsed
+  borders kept the group's old border.
+- `src/layout/table.rs` (`apply_collapsed_borders`): a cell outside the grid's columns has no collapsed borders, not
+  those it had where it was before (a cell pushed past the last column by a rowspan laid out 1px wider).
+- `src/layout/list.rs` (`marker_changed`): a list item whose marker changed (its number, after an item before it was
+  moved) is built and laid out again: an `inside` marker is text of its inline layout, which kept the old number.
 
 `crates/lp-render/tests/mirror.rs` compares the incremental document with fresh builds after cell edits, row appends,
 inserts and removals, spans, collapsed borders, nested and vertical tables, stacking contexts in cells and `display`

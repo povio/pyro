@@ -494,6 +494,10 @@ pub struct TableContext {
     /// half of the borders around them as their own, and the table half of its outer ones. A
     /// uniform table instead has them as gutters of the grid (`style.gap`) and this is `None`.
     pub collapsed_edges: Option<CollapsedEdges>,
+    /// lightningpanda: the borders of a collapsed table's row groups its collapsed borders were
+    /// resolved with: a row group restyled with others is built again (`update_rows` collects only
+    /// the rows of a group).
+    group_borders: Vec<(NodeId, ServoArc<Border>)>,
     /// lightningpanda: the collapsed borders of a collapsed table that has them as gutters (when
     /// `collapsed_edges` is `None`), kept so that a change can be resolved locally, and the
     /// gutters the first cell's borders give.
@@ -1460,6 +1464,17 @@ pub(crate) fn build_table_context(
     if let Some(former) = former {
         release_former_cells(doc, table_root_node_id, &former.cells, &cells);
     }
+    let mut group_borders: Vec<(NodeId, ServoArc<Border>)> = Vec::new();
+    if border_collapse == BorderCollapse::Collapse {
+        for group in rows.iter().filter_map(|row| row.group) {
+            if group_borders.last().is_some_and(|(last, _)| *last == group) {
+                continue;
+            }
+            if let Some(styles) = doc.nodes[group].primary_styles() {
+                group_borders.push((group, styles.clone_border()));
+            }
+        }
+    }
 
     (
         TableContext {
@@ -1473,6 +1488,7 @@ pub(crate) fn build_table_context(
             border_collapse,
             border_style: first_cell_border,
             collapsed_edges,
+            group_borders,
             spare_edges,
             collapse_gap,
             is_fixed,
@@ -1518,6 +1534,9 @@ fn apply_collapsed_borders(
     edges: &CollapsedEdges,
 ) -> bool {
     if r0 >= r1 || c0 >= c1 {
+        // lightningpanda: a cell outside the grid's columns has no collapsed borders, as in a
+        // fresh build (not those it had where it was before).
+        doc.nodes[cell.node_id].set_collapsed_border(None);
         return false;
     }
     let top = (c0..c1).map(|i| edges.horizontal_at(r0, i).width).fold(0.0, f32::max) / 2.0;
@@ -1566,6 +1585,20 @@ struct RowChange {
 
 /// Whether the node or its subtree changed in this pass (a restyle damages a node without marking
 /// it as having damaged descendants).
+/// lightningpanda: whether a row group of a collapsed table has the border its collapsed borders
+/// were resolved with (`TableContext::group_borders`).
+fn group_border_kept(ctx: &TableContext, group: &crate::Node) -> bool {
+    if ctx.border_collapse != BorderCollapse::Collapse {
+        return true;
+    }
+    let Some(styles) = group.primary_styles() else { return false };
+    let border = styles.get_border();
+    ctx.group_borders
+        .iter()
+        .find(|(id, _)| *id == group.id)
+        .is_some_and(|(_, kept)| std::ptr::eq(&**kept, border) || **kept == *border)
+}
+
 fn changed(node: &crate::Node) -> bool {
     node.flags.contains(NodeFlags::OWN_DAMAGE) || node.has_damaged_descendants()
 }
@@ -1712,7 +1745,9 @@ pub(crate) fn keeps_cells(ctx: &TableContext) -> bool {
 /// Whether `table` is a table whose `TableContext` `update_table_context` can update.
 pub(crate) fn is_incremental(doc: &BaseDocument, table: NodeId) -> bool {
     let node = &doc.nodes[table];
+    // (A table that left the layout tree, `BaseDocument::leave_layout_tree`, lists no cells.)
     node.flags.is_table_root()
+        && node.layout_children.borrow().is_some()
         && node.data.downcast_element().is_some_and(|element| {
             matches!(&element.special_data, SpecialElementData::TableRoot(ctx) if ctx.incremental)
         })
@@ -1787,6 +1822,10 @@ fn update_rows(doc: &mut BaseDocument, table: NodeId, ctx: &mut TableContext) ->
         }
         match display.inside() {
             DisplayInside::TableRowGroup => {
+                // A collapsed table resolves its borders with its row groups'.
+                if own && !group_border_kept(ctx, node) {
+                    return None;
+                }
                 if !group_changes(doc, ctx, child, own, &mut changes) {
                     return None;
                 }
@@ -2248,11 +2287,22 @@ pub(crate) fn damage_former_table_parts(doc: &mut BaseDocument, node_id: NodeId)
         }
         Vec::new()
     };
+    let mut row_parts = std::collections::HashSet::new();
     for row in &ctx.rows {
-        for part in below_table(doc, row.node_id) {
+        let parts = below_table(doc, row.node_id);
+        row_parts.extend(parts.last().copied());
+        for part in parts {
             let node = &mut doc.nodes[part];
             node.insert_damage(super::damage::ALL_DAMAGE);
             node.invalidate_layout_cache();
+        }
+    }
+    // The children the table ignored (captions, columns, empty row groups): no pass built their
+    // subtrees (`collect_table_cells` drops their damage), which are boxes now.
+    let children = doc.nodes[node_id].children.clone();
+    for child in children {
+        if doc.nodes[child].is_element() && !row_parts.contains(&child) {
+            enter_layout_tree(doc, child);
         }
     }
     release_former_cells(doc, node_id, &ctx.cells, &[]);
@@ -2300,12 +2350,14 @@ fn release_former_cells(doc: &mut BaseDocument, table: NodeId, old: &[TableCell]
 
 /// lightningpanda: `node_id`'s layout children that are still listed there (`Node::layout_child_of`)
 /// leave its list; one another container collected since points there and is left alone.
-fn leave_layout_children(doc: &BaseDocument, node_id: NodeId) {
-    if let Some(children) = doc.nodes[node_id].layout_children.borrow().as_ref() {
-        for &child in children.iter() {
-            if let Some(child) = doc.nodes.get(child) {
+fn leave_layout_children(doc: &mut BaseDocument, node_id: NodeId) {
+    let BaseDocument { nodes, left_layout_lists, .. } = doc;
+    if let Some(children) = nodes[node_id].layout_children.borrow().as_ref() {
+        for &child_id in children.iter() {
+            if let Some(child) = nodes.get(child_id) {
                 if child.layout_child_of.get() == Some(node_id) {
                     child.layout_child_of.set(None);
+                    left_layout_lists.push(child_id);
                 }
             }
         }

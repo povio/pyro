@@ -819,9 +819,9 @@ impl DocumentMutator<'_> {
         }
 
         // lightningpanda: whether the children land under a `display: none` element (see below).
-        // Only children styled before need it (a new node has no style data).
-        let under_display_none = child_ids.iter().any(|&id| self.doc.nodes[id].primary_styles().is_some())
-            && self.is_under_display_none(parent_id);
+        // Any child may hold styled elements: a new element (no style data) may hold a moved
+        // one (lp-dom builds a new wrapper by moving children into it before inserting it).
+        let under_display_none = self.is_under_display_none(parent_id);
         for child_id in child_ids.iter().copied() {
             let child = &mut self.doc.nodes[child_id];
             let child_was_in_doc = child.flags.is_in_document();
@@ -851,14 +851,23 @@ impl DocumentMutator<'_> {
             // it has none, as a fresh build has, and is styled and built from scratch if shown.
             if under_display_none {
                 self.doc.iter_subtree_mut(child_id, |id, doc| {
+                    doc.nodes[id].flags.reset_construction_flags();
+                    // Nor pseudo-elements, built from its styles: built again if it is shown.
+                    for idx in 0..2 {
+                        if let Some(pe) = doc.nodes[id].pe_by_index(idx) {
+                            doc.nodes[id].set_pe_by_index(idx, None);
+                            doc.remove_and_drop_pe(pe);
+                        }
+                    }
                     let node = &mut doc.nodes[id];
-                    node.flags.reset_construction_flags();
                     if let Some(element) = node.element_data_mut() {
                         element.take_inline_layout();
                         // SAFETY: no style traversal is running while the DOM is mutated.
                         unsafe { element.stylo_element_data.clear() };
                     }
                 });
+                // Nor a layout tree (its old container takes it out of its own list).
+                self.doc.leave_layout_tree(child_id);
             }
 
             if new_parent_is_in_document && !child_was_in_doc {

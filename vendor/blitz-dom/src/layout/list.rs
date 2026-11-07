@@ -27,17 +27,35 @@ pub(super) fn collect_list_item_children(
     for child in children.into_iter() {
         if let Some(layout) = node_list_item_child(doc, child, *index) {
             let node = &mut doc.nodes[child];
-            node.element_data_mut().unwrap().list_item_data = Some(Box::new(layout));
+            let element_data = node.element_data_mut().unwrap();
+            let inside = matches!(layout.position, ListItemLayoutPosition::Inside);
+            let same = element_data.list_item_data.as_ref().is_some_and(|old| {
+                old.marker == layout.marker && matches!(old.position, ListItemLayoutPosition::Inside) == inside
+            });
+            element_data.list_item_data = Some(Box::new(layout));
+            if !same {
+                marker_changed(node);
+            }
             *index += 1;
             collect_list_item_children(doc, index, reversed, child);
         } else {
             // Unset marker in case it was previously set
             let node = &mut doc.nodes[child];
             if let Some(element_data) = node.element_data_mut() {
-                element_data.list_item_data = None;
+                if element_data.list_item_data.take().is_some() {
+                    marker_changed(node);
+                }
             }
         }
     }
+}
+
+/// lightningpanda: a list item whose marker changed (its number, after an item was added, moved or
+/// removed before it) is built and laid out again: an `inside` marker is text of its inline layout,
+/// and an `outside` one sizes its line.
+fn marker_changed(node: &mut crate::Node) {
+    node.insert_damage(super::damage::ALL_DAMAGE);
+    node.invalidate_layout_cache();
 }
 
 // Return a child node which is of display: list-item

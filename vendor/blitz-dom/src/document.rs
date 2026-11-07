@@ -370,6 +370,10 @@ pub struct BaseDocument {
     /// style (`BaseDocument::has_sticky`). Entries whose node is gone or no
     /// longer sticky are dropped after each traversal.
     pub(crate) sticky_nodes: HashSet<NodeId>,
+    /// lightningpanda: the boxes that left a container's list (`Node::layout_child_of`) during
+    /// `resolve_layout_children`; those no container collected again by its end leave the layout
+    /// tree with their subtrees (`BaseDocument::leave_layout_tree`). Empty between passes.
+    pub(crate) left_layout_lists: Vec<NodeId>,
 
     /// Nodes that contain custom widgets
     #[cfg(feature = "custom-widget")]
@@ -556,6 +560,7 @@ impl BaseDocument {
             deferred_construction_nodes: Vec::new(),
             oof_hoisted: HashSet::new(),
             sticky_nodes: HashSet::new(),
+            left_layout_lists: Vec::new(),
             image_cache: HashMap::new(),
             pending_images: HashMap::new(),
             pending_style_image_nodes: Vec::new(),
@@ -1071,6 +1076,30 @@ impl BaseDocument {
         }
 
         self.remove_node_from_tree(anon_id);
+    }
+
+    /// lightningpanda: `node_id` is out of the layout tree (no container lists it: it is
+    /// `display: none` or below one, a part a table ignores, or out of the document), and so is
+    /// what its subtree built, as a fresh build has none there: its layout children that still
+    /// point at it leave its list (`Node::layout_child_of`), and theirs in turn, and its anonymous
+    /// blocks are freed. A box that comes back is built again: styled from scratch (below
+    /// `display: none`), added (`process_added_subtree`), or damaged on its way in (a table's
+    /// cells, `enter_layout_tree`; a former table's other children, `damage_former_table_parts`).
+    pub(crate) fn leave_layout_tree(&mut self, node_id: NodeId) {
+        let Some(node) = self.nodes.get(node_id) else { return };
+        let children = node.layout_children.borrow_mut().take();
+        for child_id in children.into_iter().flatten() {
+            let Some(child) = self.nodes.get(child_id) else { continue };
+            if child.layout_child_of.get() != Some(node_id) {
+                continue;
+            }
+            child.layout_child_of.set(None);
+            self.leave_layout_tree(child_id);
+        }
+        let anonymous_blocks = std::mem::take(&mut self.nodes[node_id].anonymous_blocks);
+        for anon_id in anonymous_blocks {
+            self.deallocate_anonymous_block(anon_id);
+        }
     }
 
     /// Whether the document has been mutated

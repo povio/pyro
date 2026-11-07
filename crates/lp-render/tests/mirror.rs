@@ -2661,3 +2661,776 @@ fn hp_collapsed_borders_become_uniform() {
         vec![hp_remove("#t0")],
     );
 }
+
+// ---------------- adversarial review: table parts, moves and sheets (C1-C7 variants) ----------------
+
+fn adv_leak(s: String) -> &'static str {
+    Box::leak(s.into_boxed_str())
+}
+
+/// Moves `node` into `to` (before `before`, or last).
+fn adv_mv(node: &'static str, to: &'static str, before: Option<&'static str>) -> (String, Mutate) {
+    (
+        format!("{node} moved into {to} before {before:?}"),
+        Box::new(move |p| {
+            let (n, t) = (p.find(node), p.find(to));
+            let b = before.map(|b| p.find(b));
+            p.dom.borrow_mut().insert_before(t, n, b).unwrap();
+        }),
+    )
+}
+
+fn adv_rm(node: &'static str) -> (String, Mutate) {
+    (
+        format!("{node} removed"),
+        Box::new(move |p| {
+            let n = p.find(node);
+            let parent = p.dom.borrow().parent(n).unwrap().unwrap();
+            p.dom.borrow_mut().remove_child(parent, n).unwrap();
+        }),
+    )
+}
+
+/// A new `<style id>` appended to `<head>`.
+fn adv_sheet(id: &'static str, css: &'static str) -> (String, Mutate) {
+    (
+        format!("<style id={id}> {css:?} added"),
+        Box::new(move |p| {
+            let head = p.find("head");
+            let mut d = p.dom.borrow_mut();
+            let s = d.create_element(p.doc, "style").unwrap();
+            d.set_attribute(s, "id", id).unwrap();
+            let t = d.create_text(p.doc, css).unwrap();
+            d.append_child(s, t).unwrap();
+            d.append_child(head, s).unwrap();
+        }),
+    )
+}
+
+/// Several steps applied as one (one delta, one pass).
+fn adv_all(steps: Vec<(String, Mutate)>) -> (String, Mutate) {
+    let what = steps.iter().map(|(w, _)| w.clone()).collect::<Vec<_>>().join(" + ");
+    (what, Box::new(move |p| steps.iter().for_each(|(_, m)| m(p))))
+}
+
+fn adv_html(table_style: &str) -> String {
+    let rows: String = (0..4)
+        .map(|i| format!("<tr id=k{i}><td>cell {i} a</td><td>text {i} b with some words</td><td>{i}.5</td></tr>"))
+        .collect();
+    format!(
+        r#"<!doctype html><html><head><style id=st>
+  body {{ margin: 0; font: 13px sans-serif }} td, th {{ padding: 2.5px 3.25px }} tr {{ border-bottom: 1px solid #ccc }}
+  .b td {{ border: 1px solid #888 }} .x {{ border: 2.5px solid #0a0 }}
+</style></head><body>
+<div id=wrap><table id=k style="{table_style}"><caption id=cap>caption text</caption>
+<colgroup id=cg><col id=c0 style="width: 60.5px"><col id=c1><col id=c2></colgroup>
+<thead id=kh><tr id=h0><th>h a</th><th>h b</th><th>h c</th></tr></thead>
+<tbody id=kb>{rows}<tr id=kr class=b><td id=rs rowspan=2 style="border: 2px solid">rs</td><td id=rx>x</td><td>y</td></tr><tr id=kr2><td id=rz>z</td><td>w</td></tr></tbody>
+<tfoot id=kf><tr id=f0><td id=fa>f1</td><td colspan=2>f2</td></tr></tfoot></table></div>
+<table id=o style="border-collapse: collapse"><tr id=o0><td id=oa style="border: 1px solid">outer a<table id=n><tr id=n0><td id=na>inner a</td><td>inner b</td></tr><tr id=n1><td id=nc>inner c</td><td>inner d</td></tr></table></td><td id=ob style="border: 3px solid">outer b</td></tr></table>
+<div id=hid style="display: none"><div id=hidin><p>hidden</p></div></div><div id=shown>shown</div><p id=after>after</p>
+</body></html>"#
+    )
+}
+
+const ADV_STYLES: [&str; 6] = [
+    "",
+    "border-collapse: collapse",
+    "border-collapse: collapse; width: 300.5px",
+    "border-collapse: collapse; direction: rtl",
+    "border-collapse: collapse; writing-mode: vertical-rl",
+    "border-spacing: 2px 3px; direction: rtl; position: relative",
+];
+
+fn adv_scenarios(steps: impl Fn(&'static str) -> Vec<(String, Mutate)>) -> Vec<Scenario> {
+    ADV_STYLES.iter().map(|t| (format!("table style={t:?}"), adv_html(t), steps(t))).collect()
+}
+
+fn adv_display(t: &'static str, display: &str) -> &'static str {
+    adv_leak(format!("{t}; display: {display}"))
+}
+
+#[test]
+fn adv_row_groups_caption_and_cols_flip_display() {
+    adv_match_fresh_builds(adv_scenarios(|_| {
+        vec![
+            set_style("#kh", "display: contents"),
+            set_style("#kh", ""),
+            set_style("#kf", "display: block"),
+            set_style("#kf", ""),
+            set_style("#cap", "display: none"),
+            set_style("#cap", ""),
+            set_style("#c0", "display: none"),
+            set_style("#c0", "width: 60.5px"),
+            set_style("#kh", "display: table-footer-group"),
+            set_style("#kh", ""),
+            set_style("#kb", "display: contents"),
+            set_style("#kh", "display: contents"),
+            set_style("#kb", ""),
+            set_style("#kh", ""),
+        ]
+    }));
+}
+
+#[test]
+fn adv_rows_flip_display_repeatedly() {
+    adv_match_fresh_builds(adv_scenarios(|_| {
+        vec![
+            set_style("#k1", "display: contents"),
+            set_style("#k1", "display: none"),
+            set_style("#k1", "display: table-row"),
+            set_style("#k1", "display: contents"),
+            set_text("#k1 td", "edited hoisted"),
+            set_style("#k1", ""),
+            set_style("#kr", "display: contents"),
+            set_style("#kr", ""),
+            set_style("#kr2", "display: contents"),
+            set_style("#kr2", ""),
+            set_style("#h0", "display: contents"),
+            set_style("#f0", "display: contents"),
+            set_style("#h0", ""),
+            set_style("#f0", ""),
+            set_style("#k0", "display: block"),
+            set_style("#k0", ""),
+        ]
+    }));
+}
+
+#[test]
+fn adv_table_display_chain() {
+    adv_match_fresh_builds(adv_scenarios(|t| {
+        vec![
+            set_style("#k", adv_display(t, "block")),
+            set_style("#k", adv_display(t, "flex")),
+            set_style("#k", adv_display(t, "grid")),
+            set_style("#k", adv_display(t, "none")),
+            set_style("#k", adv_display(t, "contents")),
+            set_style("#k", adv_display(t, "inline-table")),
+            set_style("#k", t),
+            set_style("#k", adv_display(t, "block")),
+            set_text("#k2 td", "edited while a block"),
+            set_style("#k", t),
+        ]
+    }));
+}
+
+#[test]
+fn adv_table_parts_combined_in_one_pass() {
+    adv_match_fresh_builds(adv_scenarios(|t| {
+        vec![
+            adv_all(vec![set_style("#k", adv_display(t, "block")), set_style("#kb", "display: contents")]),
+            adv_all(vec![set_style("#k", t), set_style("#k1", "display: contents")]),
+            adv_all(vec![set_style("#kb", ""), set_style("#k1", ""), set_style("#rs", "border: 4px solid")]),
+            adv_all(vec![adv_mv("#k2", "#kh", None), set_style("#k", adv_display(t, "flex"))]),
+            set_style("#k", t),
+        ]
+    }));
+}
+
+#[test]
+fn adv_rows_and_cells_moved_between_groups_and_tables() {
+    adv_match_fresh_builds(adv_scenarios(|_| {
+        vec![
+            adv_mv("#k3", "#kh", None),
+            adv_mv("#k0", "#kf", Some("#f0")),
+            adv_mv("#rs", "#k1", None),
+            adv_mv("#fa", "#k2", Some("#k2 td")),
+            adv_mv("#k1", "#n", None),
+            adv_mv("#na", "#k0", None),
+            adv_mv("#k1", "#kb", Some("#kr")),
+            adv_rm("#kr2"),
+            adv_rm("#h0"),
+        ]
+    }));
+}
+
+#[test]
+fn adv_rows_and_cells_moved_through_display_none() {
+    adv_match_fresh_builds(adv_scenarios(|_| {
+        vec![
+            adv_mv("#k2", "#hidin", None),
+            set_text("#k2 td", "edited while hidden"),
+            adv_mv("#k2", "#kb", Some("#k0")),
+            adv_mv("#rx", "#hid", None),
+            adv_mv("#rx", "#kr", None),
+            adv_mv("#kb", "#hid", None),
+            adv_mv("#kb", "#k", Some("#kf")),
+            adv_all(vec![adv_mv("#k3", "#hid", None), set_style("#hid", "")]),
+            adv_all(vec![adv_mv("#k3", "#kb", None), set_style("#hid", "display: none")]),
+            adv_mv("#wrap", "#hidin", None),
+            set_style("#hid", ""),
+            adv_mv("#wrap", "#shown", None),
+            set_style("#hid", "display: none"),
+        ]
+    }));
+}
+
+#[test]
+fn adv_cells_positioned_floated_and_blockified() {
+    adv_match_fresh_builds(adv_scenarios(|_| {
+        vec![
+            set_style("#rs", "position: absolute; top: 3px; left: 5px; border: 2px solid"),
+            set_style("#rs", "border: 2px solid"),
+            set_style("#rx", "position: absolute; border: 3px solid red"),
+            set_style("#k", "position: relative; border-collapse: collapse"),
+            set_style("#rx", "position: relative; border: 3px solid red"),
+            set_style("#rx", "position: fixed; bottom: 0"),
+            set_style("#rx", ""),
+            set_style("#k0 td", "float: right; border: 2px solid"),
+            set_text("#k0 td:nth-child(2)", "edited beside"),
+            set_style("#k0 td", ""),
+            set_style("#k1 td", "display: block; border: 2px solid"),
+            set_style("#k1 td", "display: none"),
+            set_style("#k1 td", "display: inline-block"),
+            set_style("#k1 td", ""),
+            set_style("#fa", "position: absolute"),
+            set_style("#fa", ""),
+        ]
+    }));
+}
+
+#[test]
+fn adv_abs_cell_with_containing_block_inside_table() {
+    adv_match_fresh_builds(adv_scenarios(|_| {
+        vec![
+            set_style("#kb", "position: relative"),
+            set_style("#rz", "position: absolute; right: 0; bottom: 0; border: 4px solid"),
+            set_style("#kr2", "position: relative"),
+            set_style("#rz", ""),
+            set_style("#k2 td", "position: relative"),
+            adv_sheet("abs", "#k2 td::after { content: 'ABS'; position: absolute; top: 0; left: 0 }"),
+            adv_rm("#abs"),
+        ]
+    }));
+}
+
+#[test]
+fn adv_style_sheets_inserted_edited_removed() {
+    adv_match_fresh_builds(adv_scenarios(|_| {
+        vec![
+            adv_sheet("s2", "td { border: 2px solid green }"),
+            set_text("#s2", "td { height: 30.5px } #k { border-collapse: separate }"),
+            set_text("#s2", "td { border: 1.5px dashed } #k { border-collapse: collapse }"),
+            adv_rm("#s2"),
+            adv_sheet("s3", "tr:first-child td { border-top: 5px solid } tbody { border: 3px solid }"),
+            adv_mv("#k3", "#kb", Some("#k0")),
+            adv_rm("#s3"),
+            adv_sheet("s4", "#kb { display: contents } #k1 { display: none }"),
+            adv_rm("#s4"),
+        ]
+    }));
+}
+
+#[test]
+fn adv_pseudo_elements_in_tables() {
+    adv_match_fresh_builds(adv_scenarios(|_| {
+        vec![
+            adv_sheet("ps", "td::after { content: 'A' } tr::before { content: 'R' } #k::before { content: 'T'; display: block }"),
+            set_text("#k2 td", "edited"),
+            set_text("#ps", "tr::after { content: 'cell'; display: table-cell; border: 2px solid } tbody::before { content: 'row'; display: table-row }"),
+            set_style("#k1", "display: contents"),
+            set_style("#k1", ""),
+            adv_rm("#ps"),
+        ]
+    }));
+}
+
+#[test]
+fn adv_nested_tables() {
+    adv_match_fresh_builds(adv_scenarios(|_| {
+        vec![
+            set_style("#n", "display: block"),
+            set_style("#n", ""),
+            set_style("#n0", "display: contents"),
+            set_style("#n0", ""),
+            set_style("#oa", "display: block; border: 1px solid"),
+            set_style("#oa", "border: 1px solid"),
+            set_style("#n", "border-collapse: collapse"),
+            set_style("#o", "border-collapse: separate"),
+            set_style("#o", "border-collapse: collapse"),
+            adv_mv("#n", "#rx", None),
+            adv_mv("#n", "#oa", None),
+            adv_mv("#k", "#ob", None),
+            set_style("#k", "display: block"),
+            set_style("#k", ""),
+            adv_mv("#k", "#wrap", None),
+        ]
+    }));
+}
+
+/// C6 variants: inline and block content (with pseudo-elements) moved into and below hidden
+/// elements, the hidden element shown in the same pass, and moved back out.
+#[test]
+fn adv_content_moved_into_hidden_elements() {
+    let html = ADV_C6;
+    let n = std::cell::Cell::new(0);
+    let scen = |steps: Vec<(String, Mutate)>| {
+        n.set(n.get() + 1);
+        (format!("c6 scenario {}", n.get()), html.to_string(), steps)
+    };
+    adv_match_fresh_builds(vec![
+        scen(vec![
+            adv_mv("#p1", "#hid", None),
+            adv_mv("#s1", "#hs", None),
+            set_style("#hid", ""),
+            adv_mv("#p1", "#new", None),
+            adv_mv("#s1", "#td", None),
+        ]),
+        scen(vec![
+            adv_mv("#l2", "#hid", None),
+            adv_mv("#l2", "#ul", Some("#l1")),
+            adv_mv("#fl", "#hp", None),
+            adv_all(vec![set_style("#hid", ""), adv_mv("#p2", "#hid", None)]),
+            adv_all(vec![set_style("#hid", "display: none"), adv_mv("#fl", "#list", None)]),
+        ]),
+        scen(vec![
+            // A move into an element that becomes hidden in the same pass, then shown again.
+            adv_all(vec![class("#cls", "gone"), adv_mv("#p1", "#cls", None)]),
+            class("#cls", ""),
+            adv_all(vec![adv_mv("#i2", "#cp", None), class("#cls", "gone")]),
+            adv_mv("#i2", "#p2", None),
+            class("#cls", ""),
+        ]),
+        scen(vec![
+            // A new element (no styles) holding a styled one, inserted into the hidden element.
+            edit("new div with #p1 into #hid", |p| {
+                let (hid, p1) = (p.find("#hid"), p.find("#p1"));
+                let mut d = p.dom.borrow_mut();
+                let div = d.create_element(p.doc, "div").unwrap();
+                d.append_child(div, p1).unwrap();
+                d.append_child(hid, div).unwrap();
+            }),
+            set_style("#hid", ""),
+            adv_mv("#p1", "#list", None),
+            // A new element holding a styled one, inserted, then its container hidden, in one pass.
+            edit("new div with #p2 into #list, then #list hidden", |p| {
+                let (list, p2) = (p.find("#list"), p.find("#p2"));
+                let mut d = p.dom.borrow_mut();
+                let div = d.create_element(p.doc, "div").unwrap();
+                d.append_child(list, div).unwrap();
+                d.append_child(div, p2).unwrap();
+                d.set_attribute(list, "style", "display: none").unwrap();
+            }),
+            set_style("#list", ""),
+        ]),
+        scen(vec![adv_mv("#td", "#hid", None), set_style("#hid", ""), adv_mv("#td", "#t tr", None)]),
+    ]);
+}
+
+/// `<tag#id>` of the element of `key` (for failure messages).
+fn adv_name(page: &Page, key: u64) -> String {
+    let tree = page.tree();
+    let Some(n) = tree.nodes.iter().find(|n| n.key == key) else { return format!("{key:x}") };
+    match &n.kind {
+        TreeKind::Element { name, attrs } => {
+            let id = attrs.iter().find(|(a, _)| &*a.local == "id").map(|(_, v)| format!("#{v}")).unwrap_or_default();
+            format!("<{}{id}>", &*name.local)
+        }
+        TreeKind::Text(_) => "text".into(),
+    }
+}
+
+fn adv_rect(b: &Option<LayoutBox>) -> String {
+    match b {
+        Some(b) => format!("({}, {}, {}x{} border {:?})", b.x, b.y, b.width, b.height, b.border),
+        None => "none".into(),
+    }
+}
+
+/// `display_flip_failures` with every differing element named (all of them, not the first).
+fn adv_failures(html: &str, steps: Vec<(String, Mutate)>) -> Vec<String> {
+    let page = Page::new(html);
+    let mut d = Renderer::new();
+    d.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
+    let mut live = Renderer::new();
+    check(&mut live, &page, "the first render");
+    let size = |r: &Renderer| r.page_layout(1).map(|l| (l.document_width, l.document_height));
+    let mut failures = Vec::new();
+    for (what, mutate) in steps {
+        let since = page.dom.borrow().version();
+        mutate(&page);
+        let delta = page.dom.borrow().render_delta(page.doc, since, &Page::opts());
+        let via_delta =
+            delta.is_some_and(|dd| d.sync_delta(1, &delta_ops(dd), (640, 480, 1.0, false, false), false).is_ok());
+        if !via_delta {
+            failures.push(format!("{what}: not synced as a delta"));
+            d.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
+        }
+        let mut fresh = Renderer::new();
+        fresh.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
+        let fresh_boxes = boxes(&fresh, &page);
+        let tree = page.tree();
+        let fresh_paint = paint(&mut Renderer::new(), &page.snapshot(1, tree.clone())).hash;
+        for (name, r) in [("delta", &mut d), ("live", &mut live)] {
+            if name == "live" && paint(r, &page.snapshot(1, tree.clone())).hash != fresh_paint {
+                failures.push(format!("{what}: {name} paint differs"));
+            }
+            if name == "live" {
+                r.sync_layout(&page.snapshot(1, tree.clone()), &fetcher()).unwrap();
+            }
+            let differ: Vec<String> = boxes(r, &page)
+                .into_iter()
+                .zip(fresh_boxes.iter().cloned())
+                .filter(|((_, a), (_, b))| a != b)
+                .map(|((k, a), (_, b))| format!("{} {} vs fresh {}", adv_name(&page, k), adv_rect(&a), adv_rect(&b)))
+                .collect();
+            if !differ.is_empty() {
+                failures.push(format!("{what}: {name} {} boxes differ: {}", differ.len(), differ.join("; ")));
+            }
+            if size(r) != size(&fresh) {
+                failures.push(format!("{what}: {name} document size {:?} vs fresh {:?}", size(r), size(&fresh)));
+            }
+            if name == "delta" && paint(r, &page.snapshot(1, tree.clone())).hash != fresh_paint {
+                failures.push(format!("{what}: {name} paint differs"));
+            }
+        }
+    }
+    failures
+}
+
+#[track_caller]
+fn adv_match_fresh_builds(scenarios: Vec<Scenario>) {
+    let mut failures = Vec::new();
+    for (name, html, steps) in scenarios {
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| adv_failures(&html, steps))) {
+            Ok(f) => failures.extend(f.into_iter().map(|f| format!("[{name}] {f}"))),
+            Err(e) => {
+                let msg = e.downcast_ref::<String>().cloned().or_else(|| e.downcast_ref::<&str>().map(|s| s.to_string()));
+                failures.push(format!("[{name}] panicked: {}", msg.unwrap_or_default()));
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+const ADV_C6: &str = r#"<!doctype html><html><head><style>body { margin: 0; font: 14px sans-serif }
+  .pb::before { content: 'B4 '; color: red } .pa::after { content: ' AF'; display: block } .gone { display: none }
+  li { list-style: decimal inside }</style></head><body>
+<div id=list><p id=p1 class=pb>para <span id=s1 class=pa>in<b id=b1>bold</b></span> text</p><p id=p2>two <i id=i2>it</i></p>
+<ul id=ul><li id=l1>one</li><li id=l2>two</li></ul><div id=fl style="float: left; width: 50.5px">float <span>x</span></div></div>
+<div id=hid style="display: none"><p id=hp>already hidden <span id=hs>x</span></p></div><div id=cls><p id=cp>class host</p></div>
+<div id=after>after</div><div id=new></div><table id=t><tr><td id=td>cell</td></tr></table>
+</body></html>"#;
+
+/// One scenario on `adv_html(table style)` from a fresh page.
+#[track_caller]
+fn adv_min(table_style: &'static str, steps: Vec<(String, Mutate)>) {
+    adv_match_fresh_builds(vec![(format!("table style={table_style:?}"), adv_html(table_style), steps)]);
+}
+
+#[track_caller]
+fn adv_min_c6(steps: Vec<(String, Mutate)>) {
+    adv_match_fresh_builds(vec![("c6".into(), ADV_C6.into(), steps)]);
+}
+
+/// A table with a caption made a block: the caption's content is laid out again (fresh: 15px tall).
+#[test]
+fn adv_min_table_with_caption_made_a_block() {
+    adv_min("", vec![set_style("#k", "display: block")]);
+}
+
+/// The same without the caption (removed in an earlier pass).
+#[test]
+fn adv_min_table_without_caption_made_a_block() {
+    adv_min("", vec![adv_rm("#cap"), set_style("#k", "display: block")]);
+}
+
+/// A table hidden and shown: its `<col>`s.
+#[test]
+fn adv_min_table_hidden_and_shown() {
+    adv_min("", vec![set_style("#k", "display: none"), set_style("#k", "")]);
+}
+
+/// A hidden element shown and hidden again: its descendants report no box.
+#[test]
+fn adv_min_hidden_element_shown_and_hidden_again() {
+    adv_min("", vec![set_style("#hid", ""), set_style("#hid", "display: none")]);
+}
+
+/// A whole table moved into a hidden element.
+#[test]
+fn adv_min_table_moved_into_a_hidden_element() {
+    adv_min("", vec![adv_mv("#wrap", "#hidin", None)]);
+}
+
+/// A footer cell moved to the front of a body row of a collapsed table.
+#[test]
+fn adv_min_footer_cell_moved_into_a_body_row_collapsed() {
+    adv_min("border-collapse: collapse", vec![adv_mv("#fa", "#k2", Some("#k2 td"))]);
+}
+
+#[test]
+fn adv_min_footer_cell_moved_into_a_body_row_separate() {
+    adv_min("", vec![adv_mv("#fa", "#k2", Some("#k2 td"))]);
+}
+
+/// A sheet giving row groups a border: the nested collapsed outer table `#o` (its tbody now 3px).
+#[test]
+fn adv_min_sheet_giving_row_groups_a_border() {
+    adv_min("", vec![adv_sheet("s3", "tbody { border: 3px solid }")]);
+}
+
+/// A cell holding a nested table made a block.
+#[test]
+fn adv_min_cell_holding_a_table_made_a_block() {
+    adv_min("", vec![set_style("#oa", "display: block; border: 1px solid")]);
+}
+
+/// A table made a block and its row group `display: contents` in one pass.
+#[test]
+fn adv_min_table_block_and_group_contents_in_one_pass() {
+    adv_min("", vec![adv_all(vec![set_style("#k", "display: block"), set_style("#kb", "display: contents")])]);
+}
+
+/// A row group made `display: contents`, then a row too.
+#[test]
+fn adv_min_group_contents_then_row_contents() {
+    adv_min("", vec![set_style("#kb", "display: contents"), set_style("#k1", "display: contents")]);
+}
+
+/// A table moved into a cell of a collapsed table, then made a block.
+#[test]
+fn adv_min_table_moved_into_a_cell_then_made_a_block() {
+    adv_min("border-collapse: collapse", vec![adv_mv("#k", "#ob", None), set_style("#k", "display: block")]);
+}
+
+/// C6: a span with a block `::after` moved into a hidden element, which is then shown.
+#[test]
+fn adv_min_c6_span_with_after_moved_into_hidden_then_shown() {
+    adv_min_c6(vec![adv_mv("#s1", "#hs", None), set_style("#hid", "")]);
+}
+
+/// C6: a span moved into a hidden element, which is then shown.
+#[test]
+fn adv_min_c6_plain_span_moved_into_hidden_then_shown() {
+    adv_min_c6(vec![adv_mv("#i2", "#hs", None), set_style("#hid", "")]);
+}
+
+/// C6: a list item moved into a hidden element and back.
+#[test]
+fn adv_min_c6_list_item_into_hidden_and_back() {
+    adv_min_c6(vec![adv_mv("#l2", "#hid", None), adv_mv("#l2", "#ul", Some("#l1"))]);
+}
+
+/// C6: a float moved below a hidden element.
+#[test]
+fn adv_min_c6_float_moved_below_hidden() {
+    adv_min_c6(vec![adv_mv("#fl", "#hp", None)]);
+}
+
+/// C6: a float moved below a hidden element, then shown with another move in the same pass.
+#[test]
+fn adv_min_c6_float_below_hidden_then_shown() {
+    adv_min_c6(vec![adv_mv("#fl", "#hp", None), adv_all(vec![set_style("#hid", ""), adv_mv("#p2", "#hid", None)])]);
+}
+
+/// C6: a new (unstyled) element holding a styled one inserted into a hidden element.
+#[test]
+fn adv_min_c6_new_wrapper_into_hidden() {
+    adv_min_c6(vec![edit("new div with #p1 into #hid", |p| {
+        let (hid, p1) = (p.find("#hid"), p.find("#p1"));
+        let mut d = p.dom.borrow_mut();
+        let div = d.create_element(p.doc, "div").unwrap();
+        d.append_child(div, p1).unwrap();
+        d.append_child(hid, div).unwrap();
+    })]);
+}
+
+/// C6: a container hidden in the same pass as a new wrapper takes one of its children.
+#[test]
+fn adv_min_c6_container_hidden_with_new_wrapper() {
+    adv_min_c6(vec![edit("new div with #p2 into #list, then #list hidden", |p| {
+        let (list, p2) = (p.find("#list"), p.find("#p2"));
+        let mut d = p.dom.borrow_mut();
+        let div = d.create_element(p.doc, "div").unwrap();
+        d.append_child(list, div).unwrap();
+        d.append_child(div, p2).unwrap();
+        d.set_attribute(list, "style", "display: none").unwrap();
+    })]);
+}
+
+/// C6: a container hidden (no move): its descendants report no box.
+#[test]
+fn adv_min_c6_container_hidden() {
+    adv_min_c6(vec![set_style("#list", "display: none")]);
+}
+
+/// C6: an element moved into a container hidden by a class in the same pass.
+#[test]
+fn adv_min_c6_moved_into_container_hidden_same_pass() {
+    adv_min_c6(vec![adv_all(vec![class("#cls", "gone"), adv_mv("#p1", "#cls", None)]), class("#cls", "")]);
+}
+
+/// C6: a cell moved into a hidden element, shown, then moved back into a table row.
+#[test]
+fn adv_min_c6_cell_through_hidden() {
+    adv_min_c6(vec![adv_mv("#td", "#hid", None), set_style("#hid", ""), adv_mv("#td", "#t tr", None)]);
+}
+
+fn adv_new_wrapper_into_hidden() -> (String, Mutate) {
+    edit("new div holding #p1 appended to #hid", |p| {
+        let (hid, p1) = (p.find("#hid"), p.find("#p1"));
+        let mut d = p.dom.borrow_mut();
+        let div = d.create_element(p.doc, "div").unwrap();
+        d.append_child(div, p1).unwrap();
+        d.append_child(hid, div).unwrap();
+    })
+}
+
+/// C6 (delta path): a styled paragraph moved into a new, detached `<div>` that is then appended to a
+/// hidden element keeps its style data (the moved child, the new div, has none, so
+/// `add_children_to_parent` does not look); once the hidden element is shown the paragraph is not
+/// laid out (0x0 vs 640x16 fresh).
+#[test]
+fn adv_min_c6_new_wrapper_into_hidden_then_shown() {
+    adv_min_c6(vec![adv_new_wrapper_into_hidden(), set_style("#hid", "")]);
+}
+
+/// The C6 debug assertion (resolve.rs `layout_parent ... does not point at its layout container`):
+/// a float moved below a hidden element, the element shown, then hidden again as the float moves
+/// back out.
+#[test]
+fn adv_min_c6_list_item_and_float_through_hidden_panics() {
+    adv_min_c6(vec![
+        adv_mv("#l2", "#hid", None),
+        adv_mv("#l2", "#ul", Some("#l1")),
+        adv_mv("#fl", "#hp", None),
+        adv_all(vec![set_style("#hid", ""), adv_mv("#p2", "#hid", None)]),
+        adv_all(vec![set_style("#hid", "display: none"), adv_mv("#fl", "#list", None)]),
+    ]);
+}
+
+#[test]
+fn adv_min_c6_float_through_hidden_panics() {
+    adv_min_c6(vec![
+        adv_mv("#fl", "#hp", None),
+        set_style("#hid", ""),
+        adv_all(vec![set_style("#hid", "display: none"), adv_mv("#fl", "#list", None)]),
+    ]);
+}
+
+#[test]
+fn adv_min_c6_float_shown_then_hidden_while_moved_out() {
+    adv_min_c6(vec![adv_all(vec![set_style("#hid", "display: none"), adv_mv("#fl", "#hp", None)]), set_style("#hid", ""), adv_all(vec![set_style("#hid", "display: none"), adv_mv("#fl", "#list", None)])]);
+}
+
+#[test]
+fn adv_min_c6_list_item_and_float_through_hidden_3() {
+    adv_min_c6(vec![adv_mv("#l2", "#hid", None), adv_mv("#l2", "#ul", Some("#l1")), adv_mv("#fl", "#hp", None)]);
+}
+
+#[test]
+fn adv_min_c6_list_item_through_hidden_then_shown() {
+    adv_min_c6(vec![adv_mv("#l2", "#hid", None), adv_mv("#l2", "#ul", Some("#l1")), set_style("#hid", "")]);
+}
+
+/// Control: the list item moved directly (no hidden element on the way).
+#[test]
+fn adv_min_c6_list_item_moved_directly() {
+    adv_min_c6(vec![adv_mv("#l2", "#ul", Some("#l1"))]);
+}
+
+/// Control: the span with a block `::after` moved to a shown element.
+#[test]
+fn adv_min_c6_span_with_after_moved_to_shown() {
+    adv_min_c6(vec![adv_mv("#s1", "#new", None)]);
+}
+
+/// Control: the span's container hidden and shown again (no move).
+#[test]
+fn adv_min_c6_container_with_after_hidden_and_shown() {
+    adv_min_c6(vec![set_style("#list", "display: none"), set_style("#list", "")]);
+}
+
+/// Rows moved into the header and footer groups, a rowspan cell into another row, then a footer cell
+/// moved into a body row (collapsed borders).
+#[test]
+fn adv_min_cells_moved_across_groups_collapsed() {
+    adv_min(
+        "border-collapse: collapse",
+        vec![
+            adv_mv("#k3", "#kh", None),
+            adv_mv("#k0", "#kf", Some("#f0")),
+            adv_mv("#rs", "#k1", None),
+            adv_mv("#fa", "#k2", Some("#k2 td")),
+        ],
+    );
+}
+
+#[test]
+fn adv_min_rowspan_cell_moved_then_footer_cell_collapsed() {
+    adv_min("border-collapse: collapse", vec![adv_mv("#rs", "#k1", None), adv_mv("#fa", "#k2", Some("#k2 td"))]);
+}
+
+#[test]
+fn adv_min_rowspan_cell_moved_collapsed() {
+    adv_min("border-collapse: collapse", vec![adv_mv("#rs", "#k1", None)]);
+}
+
+/// A table made a block with its row group `display: contents`, then the table back.
+#[test]
+fn adv_min_table_block_with_group_contents_then_back() {
+    adv_min(
+        "",
+        vec![
+            adv_all(vec![set_style("#k", "display: block"), set_style("#kb", "display: contents")]),
+            set_style("#k", ""),
+        ],
+    );
+}
+
+/// A table without caption or columns made a block (cols are the only other difference).
+#[test]
+fn adv_min_plain_table_made_a_block_and_back() {
+    adv_min("", vec![adv_rm("#cap"), adv_rm("#cg"), set_style("#k", "display: block"), set_style("#k", "")]);
+}
+
+/// A table with only a caption (no cols) made a block.
+#[test]
+fn adv_min_table_with_caption_no_cols_made_a_block() {
+    adv_min("", vec![adv_rm("#cg"), set_style("#k", "display: block")]);
+}
+
+#[test]
+fn adv_min_rowspan_cell_moved_then_unrelated_edit_collapsed() {
+    adv_min("border-collapse: collapse", vec![adv_mv("#rs", "#k1", None), set_text("#after", "after edited")]);
+}
+
+#[test]
+fn adv_min_rowspan_cell_moved_then_cell_text_edit_collapsed() {
+    adv_min("border-collapse: collapse", vec![adv_mv("#rs", "#k1", None), set_text("#k2 td", "edited")]);
+}
+
+#[test]
+fn adv_min_rowspan_and_footer_cells_moved_in_one_pass_collapsed() {
+    adv_min("border-collapse: collapse", vec![adv_all(vec![adv_mv("#rs", "#k1", None), adv_mv("#fa", "#k2", Some("#k2 td"))])]);
+}
+
+#[test]
+fn adv_min_footer_then_rowspan_cell_moved_collapsed() {
+    adv_min("border-collapse: collapse", vec![adv_mv("#fa", "#k2", Some("#k2 td")), adv_mv("#rs", "#k1", None)]);
+}
+
+#[test]
+fn adv_min_rowspan_cell_moved_then_footer_cell_separate() {
+    adv_min("", vec![adv_mv("#rs", "#k1", None), adv_mv("#fa", "#k2", Some("#k2 td"))]);
+}
+
+/// `adv_min_rowspan_cell_moved_then_footer_cell_collapsed` on a smaller table (no caption, columns
+/// or header).
+#[test]
+fn adv_min_two_cells_moved_small_collapsed_table() {
+    let html = r#"<!doctype html><html><head><style>body { margin: 0; font: 13px sans-serif } td { padding: 2.5px 3.25px } tr { border-bottom: 1px solid #ccc }</style></head><body>
+<table id=k style="border-collapse: collapse"><tbody><tr id=k1><td>a</td><td>b</td></tr><tr id=k2><td>c</td><td>d</td></tr><tr id=kr><td id=rs rowspan=2 style="border: 2px solid">rs</td><td>x</td></tr><tr><td>z</td></tr></tbody>
+<tfoot><tr><td id=fa>f1</td><td>f2</td></tr></tfoot></table></body></html>"#;
+    adv_match_fresh_builds(vec![(
+        "small".into(),
+        html.into(),
+        vec![adv_mv("#rs", "#k1", None), adv_mv("#fa", "#k2", Some("#k2 td"))],
+    )]);
+}
+
+#[test]
+fn adv_min_cell_holding_a_table_made_a_block_and_back() {
+    adv_min("", vec![set_style("#oa", "display: block; border: 1px solid"), set_style("#oa", "border: 1px solid")]);
+}

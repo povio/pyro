@@ -517,7 +517,15 @@ impl BaseDocument {
 
     /// Ensure that the layout_children field is populated for all nodes
     pub fn resolve_layout_children(&mut self) {
+        // lightningpanda: the boxes that left a container's list this pass and that no container
+        // collected again are out of the layout tree, with what their subtrees built
+        // (`BaseDocument::leave_layout_tree`).
         resolve_layout_children_recursive(self, self.root_node().id);
+        for node_id in std::mem::take(&mut self.left_layout_lists) {
+            if self.nodes.get(node_id).is_some_and(|node| node.layout_child_of.get().is_none()) {
+                self.leave_layout_tree(node_id);
+            }
+        }
 
         fn resolve_layout_children_recursive(doc: &mut BaseDocument, node_id: NodeId) {
             // Anonymous blocks and pseudo-elements can be removed from the slab
@@ -597,6 +605,7 @@ impl BaseDocument {
                         if let Some(child) = doc.nodes.get(child_id) {
                             if child.layout_child_of.get() == Some(node_id) {
                                 child.layout_child_of.set(None);
+                                doc.left_layout_lists.push(child_id);
                             }
                         }
                     }

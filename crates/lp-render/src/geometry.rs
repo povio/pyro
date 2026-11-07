@@ -352,6 +352,11 @@ impl Geometry {
         if doc.get_node(table)?.primary_styles()?.writing_mode.is_vertical() {
             return None;
         }
+        // A table out of the layout tree (in a cell made a block) keeps the context of its last
+        // layout, which places no row now.
+        if !self.in_layout_tree(doc, table) {
+            return None;
+        }
         // Table/ancestor transforms are handled below. Keep the old child
         // projection for independently transformed row parts.
         let mut ancestor = id;
