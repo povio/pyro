@@ -426,12 +426,26 @@ fn accepts_keyboard(page: &PageDom) -> bool {
 /// Text controls fire `change` on commit when their value differs from the
 /// value at focus time.
 fn fire_change_if_dirty(page: &Rc<PageDom>, el: NodeId) {
+    // Leaving a control the user edited commits the edit: it gets user
+    // validity (`:user-valid` / `:user-invalid`) even when the value ends up
+    // as it was at focus time.
+    let edited = page.dom.borrow().control_state(el).ok().flatten().is_some_and(|c| c.user_edited);
+    if edited {
+        let _ = page.dom.borrow_mut().set_user_validity(el, true);
+    }
     let current = page.dom.borrow().value(el).ok();
     if let (Some(cur), Some(old)) = (current, page.take_focus_value(el)) {
         if cur != old && is_text_control(&page.dom.borrow(), el) {
-            fire_simple(page, el, "change", true, false);
+            fire_user_change(page, el);
         }
     }
+}
+
+/// `change` for a value the user committed: the control gets user validity
+/// first (HTML §4.10.18.6), so `change` listeners and `:user-invalid` agree.
+pub fn fire_user_change(page: &Rc<PageDom>, el: NodeId) {
+    let _ = page.dom.borrow_mut().set_user_validity(el, true);
+    fire_simple(page, el, "change", true, false);
 }
 
 fn is_text_control(dom: &Dom, el: NodeId) -> bool {
@@ -638,7 +652,7 @@ fn run_activation_behavior(
                     let unchanged = matches!(legacy, LegacyPreActivation::Radio { was_checked: true, .. });
                     if connected && !unchanged {
                         fire_input_event(page, el, "input", "", None, false);
-                        fire_simple(page, el, "change", true, false);
+                        fire_user_change(page, el);
                     }
                 }
                 _ if disabled => {}
@@ -906,6 +920,11 @@ pub fn submit_form(page: &Rc<PageDom>, form: NodeId, submitter: Option<NodeId>, 
             dom.has_attribute(form, "novalidate").unwrap_or(false)
                 || submitter.is_some_and(|s| dom.has_attribute(s, "formnovalidate").unwrap_or(false))
         };
+        // Validating the form gives its controls user validity, so the
+        // invalid ones match `:user-invalid` from here on.
+        if !novalidate {
+            let _ = page.dom.borrow_mut().set_form_user_validity(form);
+        }
         if !novalidate && !crate::validity::check_form(page, form, true) {
             false
         } else {
@@ -1294,7 +1313,7 @@ fn control_key_action(page: &Rc<PageDom>, el: NodeId, key: &str) -> bool {
 /// stepped or picked it): blurring later fires no second `change`.
 fn fire_control_change(page: &Rc<PageDom>, el: NodeId) {
     fire_input_event(page, el, "input", "", None, false);
-    fire_simple(page, el, "change", true, false);
+    fire_user_change(page, el);
     if page.focus_values.borrow().contains_key(&el) {
         page.remember_focus_value(el);
     }

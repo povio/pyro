@@ -727,7 +727,7 @@ impl Dom {
         let control = matches!(local, "input" | "textarea" | "select" | "button" | "output");
         let kind = e.is_html()
             && (control
-                || matches!(local, "form" | "fieldset" | "option" | "optgroup" | "details" | "dialog")
+                || matches!(local, "form" | "fieldset" | "option" | "optgroup" | "details" | "dialog" | "progress")
                 || e.attr("popover").is_some()
                 || e.flags & crate::node::element_flags::FORM_ASSOCIATED != 0);
         let editable = e.attr("contenteditable").is_some();
@@ -755,6 +755,10 @@ impl Dom {
             (Open, "open"),
             (Modal, "modal"),
             (PopoverOpen, "popover-open"),
+            (InRange, "in-range"),
+            (OutOfRange, "out-of-range"),
+            (UserValid, "user-valid"),
+            (UserInvalid, "user-invalid"),
         ] {
             if self.matches_state(n, &pc) {
                 if !out.is_empty() {

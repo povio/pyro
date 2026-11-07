@@ -1370,6 +1370,62 @@ impl Dom {
         Ok(true)
     }
 
+    /// `:in-range` (`Some(true)`) or `:out-of-range` (`Some(false)`): an
+    /// input that is a candidate for constraint validation and has range
+    /// limitations (a minimum or maximum), by whether its value underflows or
+    /// overflows them; `None` for other elements.
+    pub(crate) fn range_state_idx(&self, i: u32) -> Option<bool> {
+        if !self.is_input(i) {
+            return None;
+        }
+        let ty = self.input_type_idx(i);
+        if !ty.is_numeric() {
+            return None;
+        }
+        let r = self.step_range(i, ty);
+        if r.min.is_none() && r.max.is_none() {
+            return None;
+        }
+        let id = self.id_of(i);
+        if !self.will_validate(id).ok()? {
+            return None;
+        }
+        let v = self.validity(id).ok()?;
+        Some(!(v.range_underflow || v.range_overflow))
+    }
+
+    /// Sets a control's user validity (HTML §4.10.18.6, `:user-valid` /
+    /// `:user-invalid`); nothing changes (and nothing restyles) when it
+    /// already has that value.
+    pub fn set_user_validity(&mut self, id: NodeId, v: bool) -> DomResult<()> {
+        let current = self.control_state(id)?.is_some_and(|c| c.user_validity);
+        if current != v {
+            self.control_state_mut(id)?.user_validity = v;
+        }
+        Ok(())
+    }
+
+    /// A submission validates `form`: each of its listed `input`, `select`
+    /// and `textarea` elements gets user validity (HTML form submission,
+    /// "interactively validate the constraints").
+    pub fn set_form_user_validity(&mut self, form: NodeId) -> DomResult<()> {
+        let f = self.check(form)?;
+        let root = self.root_idx(f);
+        let mut controls = Vec::new();
+        let mut n = root;
+        while n != NIL {
+            let control = self.html_local(n).is_some_and(|l| matches!(&**l, "input" | "select" | "textarea"));
+            if control && self.form_owner_idx(n) == f {
+                controls.push(self.id_of(n));
+            }
+            n = self.following_in(n, root);
+        }
+        for c in controls {
+            self.set_user_validity(c, true)?;
+        }
+        Ok(())
+    }
+
     /// `ValidityState` flags (constraint validation, HTML §4.10.20.1).
     pub fn validity(&self, id: NodeId) -> DomResult<Validity> {
         let mut v = Validity::default();

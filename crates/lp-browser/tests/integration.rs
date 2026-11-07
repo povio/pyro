@@ -18,6 +18,7 @@ mod extra_headers;
 mod fetch;
 mod file_urls;
 mod frame_focus;
+mod has_state;
 mod history_rewrite;
 mod images;
 mod link_fragment;

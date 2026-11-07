@@ -399,6 +399,11 @@ pub struct AdditionalRelativeSelectorInvalidationMap {
     pub used: bool,
     /// Flag indicating if invalidating a relative selector requires ancestor traversal.
     pub needs_ancestors_traversal: bool,
+    /// lightningpanda: every element state some relative selector's
+    /// argument depends on (the union of `state_affecting_selectors`' states
+    /// in the relative selector map), so an embedder can tell with one flag
+    /// test that a state change cannot change any `:has()` match.
+    pub state_dependencies: ElementState,
 }
 
 impl Default for AdditionalRelativeSelectorInvalidationMap {
@@ -416,6 +421,7 @@ impl AdditionalRelativeSelectorInvalidationMap {
             any_to_selector: SmallVec::default(),
             used: false,
             needs_ancestors_traversal: false,
+            state_dependencies: ElementState::empty(),
         }
     }
 
@@ -424,6 +430,7 @@ impl AdditionalRelativeSelectorInvalidationMap {
         self.ts_state_to_selector.clear();
         self.type_to_selector.clear();
         self.any_to_selector.clear();
+        self.state_dependencies = ElementState::empty();
     }
 
     /// Shrink the capacity of hash maps if needed.
@@ -595,6 +602,11 @@ trait Collector {
     fn this_scope_dependencies(&mut self) -> &mut Option<Vec<Dependency>>;
     fn update_states(&mut self, element_state: ElementState, document_state: DocumentState);
 
+    /// lightningpanda: `element_state` goes into `state_map()`; a relative
+    /// selector map records the union
+    /// (`AdditionalRelativeSelectorInvalidationMap::state_dependencies`).
+    fn note_state_dependency(&mut self, element_state: ElementState);
+
     // In normal invalidations, type-based dependencies don't need to be explicitly tracked;
     // elements don't change their types, and mutations cause invalidations to go descendant
     // (Where they are about to be styled anyway), and/or later-sibling direction (Where they
@@ -721,6 +733,7 @@ fn add_pseudo_class_dependency<C: Collector>(
     if element_state.is_empty() {
         return Ok(());
     }
+    collector.note_state_dependency(element_state);
     let dependency = collector.dependency();
     collector.state_map().insert(
         StateDependency {
@@ -911,6 +924,13 @@ impl<'a, 'b, 'c> Collector for SelectorDependencyCollector<'a, 'b, 'c> {
             &mut self
                 .relative_selector_invalidation_map
                 .state_affecting_selectors
+        }
+    }
+
+    fn note_state_dependency(&mut self, element_state: ElementState) {
+        if self.relative_inner_collector.is_some() {
+            self.additional_relative_selector_invalidation_map
+                .state_dependencies |= element_state;
         }
     }
 
@@ -1437,6 +1457,11 @@ impl<'a, 'b> Collector for RelativeSelectorDependencyCollector<'a, 'b> {
         &mut self
             .relative_selector_invalidation_map
             .state_affecting_selectors
+    }
+
+    fn note_state_dependency(&mut self, element_state: ElementState) {
+        self.additional_relative_selector_invalidation_map
+            .state_dependencies |= element_state;
     }
 
     fn attribute_map(&mut self) -> &mut LocalNameDependencyMap {

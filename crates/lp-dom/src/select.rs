@@ -141,6 +141,10 @@ pub enum PseudoClass {
     Open,
     Modal,
     PopoverOpen,
+    InRange,
+    OutOfRange,
+    UserValid,
+    UserInvalid,
     /// `:state(ident)`: a custom state of the element's `CustomStateSet`.
     State(Atom),
 }
@@ -186,6 +190,10 @@ impl ToCss for PseudoClass {
             Open => ":open",
             Modal => ":modal",
             PopoverOpen => ":popover-open",
+            InRange => ":in-range",
+            OutOfRange => ":out-of-range",
+            UserValid => ":user-valid",
+            UserInvalid => ":user-invalid",
         })
     }
 }
@@ -282,6 +290,10 @@ impl<'i> selectors::parser::Parser<'i> for SelParser<'_> {
                 ("open", Open),
                 ("modal", Modal),
                 ("popover-open", PopoverOpen),
+                ("in-range", InRange),
+                ("out-of-range", OutOfRange),
+                ("user-valid", UserValid),
+                ("user-invalid", UserInvalid),
             ],
         );
         pc.ok_or_else(|| ParseError::custom(SelectorParseErrorKind::UnsupportedPseudoClassOrElement))
@@ -831,7 +843,13 @@ impl Dom {
             }
             Target => self.is_url_target(idx),
             Checked => self.checkedness_idx(idx) || self.option_selected_idx(idx),
-            Indeterminate => e.control.as_ref().is_some_and(|c| c.indeterminate),
+            Indeterminate => {
+                e.control.as_ref().is_some_and(|c| c.indeterminate)
+                    // A progress bar without a value (HTML §4.16.3).
+                    || (e.is_html()
+                        && e.name.local == local_name!("progress")
+                        && e.attr_local(&local_name!("value")).is_none())
+            }
             Disabled => self.is_disabled_idx(idx),
             Enabled => (self.is_form_control_idx(idx) || self.is_face_idx(idx)) && !self.is_disabled_idx(idx),
             State(s) => self.has_custom_state_idx(idx, s),
@@ -865,6 +883,14 @@ impl Dom {
                         && e.attr_local(&local_name!("selected")).is_some())
             }
             Empty => false,
+            InRange | OutOfRange => self.range_state_idx(idx).is_some_and(|in_range| in_range == (*pc == InRange)),
+            // User validity (HTML §4.10.18.6): set once the user commits a
+            // change or a submission validates the form, cleared by reset.
+            // Only controls get it, so `Valid`/`Invalid` see a candidate.
+            UserValid | UserInvalid => {
+                e.control.as_ref().is_some_and(|c| c.user_validity)
+                    && self.matches_state(idx, if *pc == UserValid { &Valid } else { &Invalid })
+            }
             Valid | Invalid => {
                 let id = self.id_of(idx);
                 let is_form = e.is_html() && matches!(&*e.name.local, "form" | "fieldset");

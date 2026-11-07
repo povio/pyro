@@ -266,6 +266,17 @@ impl DocumentMutator<'_> {
     }
 
     pub fn set_attribute(&mut self, node_id: NodeId, name: QualName, value: &str) {
+        // lightningpanda: `:has()` anchors that can see the element follow
+        // the change (`has_invalidation`); `None` (one flag test) when no
+        // `:has()` search visited it.
+        let change = crate::has_invalidation::AttributeChange::before(self.doc, node_id, &name);
+        self.set_attribute_impl(node_id, name, value);
+        if let Some(change) = change.and_then(|c| c.after(self.doc, node_id)) {
+            self.doc.invalidate_relative_attribute(node_id, change);
+        }
+    }
+
+    fn set_attribute_impl(&mut self, node_id: NodeId, name: QualName, value: &str) {
         let node_is_in_document = self.doc.nodes[node_id].flags.is_in_document();
         if node_is_in_document {
             self.doc.snapshot_node(node_id);
@@ -324,6 +335,9 @@ impl DocumentMutator<'_> {
         }
 
         element.attrs.set(name.clone(), value);
+        if is_state_attribute(&element.name, &name) {
+            element.sync_lp_attribute_state();
+        }
 
         // Focusability is cached on the element and comes from these
         // attributes, so it has to follow a change to one of them: a widget
@@ -407,6 +421,15 @@ impl DocumentMutator<'_> {
     }
 
     pub fn clear_attribute(&mut self, node_id: NodeId, name: QualName) {
+        // lightningpanda: as in `set_attribute`.
+        let change = crate::has_invalidation::AttributeChange::before(self.doc, node_id, &name);
+        self.clear_attribute_impl(node_id, name);
+        if let Some(change) = change.and_then(|c| c.after(self.doc, node_id)) {
+            self.doc.invalidate_relative_attribute(node_id, change);
+        }
+    }
+
+    fn clear_attribute_impl(&mut self, node_id: NodeId, name: QualName) {
         let node_is_in_document = self.doc.nodes[node_id].flags.is_in_document();
         if node_is_in_document {
             self.doc.snapshot_node(node_id);
@@ -443,6 +466,9 @@ impl DocumentMutator<'_> {
         let had_attr = removed_attr.is_some();
         if !had_attr {
             return;
+        }
+        if is_state_attribute(&element.name, &name) {
+            element.sync_lp_attribute_state();
         }
         self.mutations_occurred |= node_is_in_document;
 
@@ -1422,6 +1448,14 @@ impl<'doc> DocumentMutator<'doc> {
             self.append_children(button_id, &[button_text_id]);
         }
     }
+}
+
+/// lightningpanda: attributes whose value is element state
+/// ([`ElementData::sync_lp_attribute_state`]): lp-dom's `state` tokens and an
+/// `<option>`'s `selected`.
+fn is_state_attribute(element: &QualName, name: &QualName) -> bool {
+    (&*name.ns == crate::LP_STATE_NS && &*name.local == "state")
+        || (element.local == local_name!("option") && name.local == local_name!("selected"))
 }
 
 /// Set 'checked' state on an input based on given attributevalue
