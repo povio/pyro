@@ -75,10 +75,16 @@ impl Dom {
     /// After `node` was inserted into `parent`: media elements in its
     /// subtree when it is connected, and a `<source>` child of a media
     /// element.
+    /// Inlined: until a media element exists, one flag test per insertion.
+    #[inline(always)]
     pub(crate) fn media_after_insert(&mut self, node: u32) {
-        if !self.media_seen {
-            return;
+        if self.media_seen {
+            self.media_inserted(node);
         }
+    }
+
+    #[inline(never)]
+    fn media_inserted(&mut self, node: u32) {
         let document = self.id_of(self.n(node).owner_doc);
         if !self.is_watched_document(document) {
             return;
