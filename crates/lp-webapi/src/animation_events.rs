@@ -430,7 +430,7 @@ fn transition_candidates_changed(
             continue;
         }
         if dom.is_connected(el).unwrap_or(false) {
-            style_change(state, dom, style, rules, el, now_ms, planned);
+            style_change(state, dom, style, Some(rules), el, now_ms, planned);
         }
     }
 }
