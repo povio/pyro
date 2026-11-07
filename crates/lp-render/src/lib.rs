@@ -154,6 +154,21 @@ pub struct Snapshot {
     /// Straight RGBA painted under the document where it has no background
     /// (CDP `Emulation.setDefaultBackgroundColorOverride`); `None`: white.
     pub background: Option<[u8; 4]>,
+    /// Bitmaps of the drawn canvases of a [`Live`] document, painted as
+    /// their elements' content (other canvases paint nothing).
+    pub canvases: Vec<CanvasImage>,
+}
+
+/// A canvas element's bitmap ([`Snapshot::canvases`]).
+#[derive(Clone, Debug)]
+pub struct CanvasImage {
+    /// The canvas element's render key.
+    pub key: u64,
+    pub width: u32,
+    pub height: u32,
+    /// Straight-alpha RGBA rows. The same `Arc` as the previous render's
+    /// means the pixels did not change.
+    pub rgba: Arc<Vec<u8>>,
 }
 
 /// A snapshot of a page whose Blitz document the renderer keeps between
@@ -743,6 +758,7 @@ impl Renderer {
                         if let Some(offsets) = &snap.element_scroll {
                             m.set_element_scroll(offsets);
                         }
+                        m.set_canvases(&snap.canvases);
                         let clip = live.clip.and_then(|k| m.node(k));
                         (&mut m.doc, &m.bridge, clip)
                     }

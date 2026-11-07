@@ -105,6 +105,8 @@ pub(crate) struct Mirror {
     top: Vec<u64>,
     /// Nodes given a scroll offset by [`Mirror::set_element_scroll`].
     scrolled: Vec<NodeId>,
+    /// Canvas elements given a bitmap by [`Mirror::set_canvases`], with it.
+    canvases: Vec<(NodeId, Arc<Vec<u8>>)>,
 }
 
 fn hash_kind(kind: &TreeKind) -> u64 {
@@ -235,7 +237,7 @@ impl Mirror {
             }
         }
         let mirror =
-            Mirror { doc, bridge, scope, base_url, viewport, sheets, tree, nodes, keys, top, scrolled: Vec::new() };
+            Mirror { doc, bridge, scope, base_url, viewport, sheets, tree, nodes, keys, top, scrolled: Vec::new(), canvases: Vec::new() };
         mirror.debug_check_keys();
         Ok(mirror)
     }
@@ -261,6 +263,41 @@ impl Mirror {
                 *node.scroll_offset_mut() = blitz_dom::Point { x, y };
                 self.scrolled.push(id);
             }
+        }
+    }
+
+    /// Gives the canvases in `canvases` their bitmap as their content (a
+    /// raster image, painted like an `<img>`'s) and takes it from those
+    /// given one last time and absent now. Unchanged bitmaps (the same
+    /// `Arc`) are left as they are.
+    pub(crate) fn set_canvases(&mut self, canvases: &[crate::CanvasImage]) {
+        use blitz_dom::node::{ImageData, RasterImageData, SpecialElementData};
+        if canvases.is_empty() && self.canvases.is_empty() {
+            return;
+        }
+        let now: Vec<(NodeId, &crate::CanvasImage)> =
+            canvases.iter().filter_map(|c| Some((self.node(c.key)?, c))).collect();
+        for (id, _) in std::mem::take(&mut self.canvases) {
+            if !now.iter().any(|(n, _)| *n == id) {
+                if let Some(element) = self.doc.get_node_mut(id).and_then(|n| n.element_data_mut()) {
+                    element.special_data = SpecialElementData::None;
+                }
+            }
+        }
+        for (id, canvas) in now {
+            let Some(element) = self.doc.get_node_mut(id).and_then(|n| n.element_data_mut()) else { continue };
+            if &*element.name.local != "canvas" || canvas.rgba.len() != canvas.width as usize * canvas.height as usize * 4
+            {
+                continue;
+            }
+            let same = matches!(&element.special_data, SpecialElementData::Image(image)
+                if matches!(&**image, ImageData::Raster(r) if r.width == canvas.width && r.height == canvas.height
+                    && std::ptr::eq(r.data.data().as_ptr(), canvas.rgba.as_ptr())));
+            if !same {
+                let raster = RasterImageData::new(canvas.width, canvas.height, canvas.rgba.clone());
+                element.special_data = SpecialElementData::Image(Box::new(ImageData::Raster(raster)));
+            }
+            self.canvases.push((id, canvas.rgba.clone()));
         }
     }
 
