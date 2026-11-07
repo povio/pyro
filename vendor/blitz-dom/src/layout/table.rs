@@ -1886,7 +1886,6 @@ fn update_rows(doc: &mut BaseDocument, table: NodeId, ctx: &mut TableContext) ->
     let mut renumber = false;
     let mut first_moved = usize::MAX;
     let old_cells = ctx.cells.len();
-    let widths_kept = ctx.widths.get_mut().cells.len() == ctx.cells.len();
     // The cells replaced by others (the grid lays out again from its last layout across one such change).
     let mut splices: Vec<taffy::TableGridSplice> = Vec::new();
     for (change, (rows, cells)) in changes.iter().zip(collected).rev() {
@@ -1904,6 +1903,10 @@ fn update_rows(doc: &mut BaseDocument, table: NodeId, ctx: &mut TableContext) ->
         }
         renumber |= rows.len() != b - a;
         let (new_rows, new_cells) = (rows.len(), cells.len());
+        // The cell widths follow the cells while they are kept: `CellWidths::changed` drops them
+        // all (to measure every cell again) once more cells changed than it holds, which an
+        // earlier change of this loop may have done.
+        let widths_kept = ctx.widths.get_mut().cells.len() == ctx.cells.len();
         let percent = |cells: &[TableCell]| cells.iter().filter(|cell| cell.percent_width).count();
         ctx.percent_cells = ctx.percent_cells + percent(&cells) - percent(&ctx.cells[ca..cb]);
         removed.extend(ctx.cells.splice(ca..cb, cells));

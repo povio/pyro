@@ -165,7 +165,9 @@ its inputs.
   tell when it stops being uniform.
 - `TableTreeWrapper::auto_column_widths`: each cell's min-content and max-content widths are kept with the table's
   content width they were measured for (`CellWidths`), and so are the columns' widths summed from them. A cell that
-  changed is measured again; a column's widths are summed again only when a cell that set them got narrower.
+  changed is measured again; a column's widths are summed again only when a cell that set them got narrower. Once
+  more cells changed than it holds widths for, it drops them all (every cell is measured again), possibly halfway
+  through `update_rows`, so each row replacement checks again whether the widths still follow the cells.
 - The grid is laid out again from its last layout when the columns are the same (see "Table grids laid out again
   from their last layout" in `vendor/taffy/README.lightningpanda.md`): `take_table_grid_state` gives back the cells
   that changed (`TableContext::changed_cells`) and the rows replaced since (`grid_splice`: one replacement between

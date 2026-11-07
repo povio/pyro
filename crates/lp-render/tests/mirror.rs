@@ -1597,3 +1597,53 @@ fn table_known_gaps_match_fresh_builds() {
     ];
     table_steps_match_fresh_builds(&page, steps);
 }
+
+/// More cells changed than a table has measured widths for, then rows replaced in the same pass:
+/// a row inserted into a striped table restyles every row after it.
+#[test]
+fn table_rows_restyled_and_inserted_match_fresh_builds() {
+    let page = Page::new(&format!(
+        r#"<!doctype html><html><head><style>
+  body {{ margin: 0; font: 13px sans-serif }} td {{ padding: 2.5px 3.25px }}
+  #z tr:nth-child(odd) td {{ background: #eee }}
+  #h.sp tr:nth-child(odd) td {{ height: 30px }}
+</style></head><body>
+<table id=z><tbody id=zb>{}</tbody></table>
+<table id=h><tbody id=hb>{}</tbody></table>
+</body></html>"#,
+        table_rows("z", 10),
+        table_rows("h", 6),
+    ));
+    let insert = |group: &'static str, before: &'static str, what: &'static str| -> (String, Mutate) {
+        (
+            format!("a row inserted into {group} before {before}"),
+            Box::new(move |p| {
+                let tbody = p.find(group);
+                let at = p.find(before);
+                let tr = new_row(p, what);
+                p.dom.borrow_mut().insert_before(tbody, tr, Some(at)).unwrap();
+            }),
+        )
+    };
+    let remove = |row: &'static str| -> (String, Mutate) {
+        (
+            format!("{row} removed"),
+            Box::new(move |p| {
+                let tr = p.find(row);
+                let parent = p.dom.borrow().parent(tr).unwrap().unwrap();
+                p.dom.borrow_mut().remove_child(parent, tr).unwrap();
+            }),
+        )
+    };
+    let steps: Vec<(String, Mutate)> = vec![
+        insert("#zb", "#z1", "inserted"),
+        text("#z5 td", "after"),
+        remove("#z2"),
+        insert("#zb", "#z0", "first"),
+        attr("#h", "class", "sp"),
+        insert("#hb", "#h1", "shifts odd"),
+        text("#h4 td", "edited"),
+        remove("#h0"),
+    ];
+    table_steps_match_fresh_builds(&page, steps);
+}
