@@ -213,6 +213,14 @@ impl Browser {
                             b.report_console_error(page, &e);
                             Err(e)
                         }
+                        // A modulepreload is a JavaScript module script:
+                        // strict MIME check, UTF-8 whatever the charset.
+                        None if module => {
+                            match lp_webapi::module_script::mime_error(lp_js::ModuleType::JavaScript, &r.mime, &r.url) {
+                                Some(e) => Err(e),
+                                None => Ok(lp_webapi::module_script::utf8_decode(&r.body)),
+                            }
+                        }
                         None => Ok(r.text()),
                     }
                 }

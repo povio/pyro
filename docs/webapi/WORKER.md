@@ -36,7 +36,7 @@ implement `new Worker(url)`. A worker runs its script off the page's thread.
   user agent, extra headers and cache setting. The URL must be same-origin with
   the document (SecurityError otherwise), or `data:`, or `blob:` (bytes captured
   at construction). Non-2xx or a failed load fires a plain `error` Event at the
-  `Worker`. The MIME type is not checked. Requests carry the owner's frame id and
+  `Worker`. A classic script's MIME type is not checked. Requests carry the owner's frame id and
   no loader id: they appear on the owner's page and do not delay its network idle.
 - **Modules.** `new Worker(url, {type: 'module'})` evaluates the script as a module:
   static imports, top-level `await` and `import.meta.url`. Every worker's realm has
@@ -44,7 +44,11 @@ implement `new Worker(url)`. A worker runs its script off the page's thread.
   fetched in a task of the worker's loop the way `importScripts` fetches (CORS mode,
   `blob:` URLs of the worker's own store). A module that fails to load or throws at
   its top level reports the error (`error` at the `Worker`). `importScripts` throws
-  TypeError in a module worker.
+  TypeError in a module worker. Import attributes work as in a window (patched
+  JavaScriptCore): `with { type: "json" }` loads a JSON module, while a CSS module
+  (`type: "css"`) fails with TypeError before any fetch, since workers have no
+  `CSSStyleSheet`. Module responses (the module worker's own script included, over
+  http) must have the MIME type of their module type, and decode as UTF-8.
 - **Messages.** `postMessage` validates and copies with the realm's original
   `structuredClone`, then encodes the copy to text plus ArrayBuffer bytes
   (`worker_wire.js`), which cross as a task of the other side's event loop and

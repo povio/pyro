@@ -234,6 +234,16 @@ Optional extras: `JSReportExtraMemoryCost` and `JSSynchronousGarbageCollectForDe
   - **Bare specifiers and import maps:** `webkit/patches/0005-import-maps.patch` adds `JSGlobalContextAddImportMap`, which
     feeds JSC's own `ImportMap` (HTML parse, resolve and merge), and consults it in `moduleLoaderResolve` once a context
     has a map. It also adds `import.meta.resolve`. The system framework has no such hook: there these stay unsupported.
+  - **Import attributes (JSON and CSS module scripts):** `webkit/patches/0020-module-import-attributes.patch` adds
+    `JSGlobalContextSetTypedModuleLoader`, whose fetch callback gets the request's `type` attribute (JSC keys its
+    module map by URL and type), and `JSModuleSourceCreateWithType` for JSON sources. A CSS request is resolved with
+    the embedder's `CSSStyleSheet`, which becomes the module's `default` export; JSC's `moduleTypeIsAllowed` host hook
+    allows `css`, and the patch flips the generated JSC option defaults so `css` parses (`useCSSModuleScripts`) and
+    `text` does not (`useImportText`, not an HTML module type). `ModuleRequest::module_type` carries the type to the
+    fetchers (`lp-browser` `PageModuleFetcher`, `lp-webapi` `WorkerModuleFetcher`), which check the response MIME type
+    (`lp_webapi::module_script`) and complete with `resolve`, `resolve_json` or `resolve_object`. The system framework's
+    delegate never sees the attribute: every request looks like JavaScript, and a JSON or CSS response fails the MIME
+    check with a message naming the missing patch.
   - **Inline modules:** the registry is keyed by URL, so each inline module script needs a distinct URL. The browser
     appends a fragment.
   - **Linux:** WebKitGTK's JSC has no module loader, so **ESM on Linux is unsupported** until a tested alternative

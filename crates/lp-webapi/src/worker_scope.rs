@@ -438,16 +438,24 @@ fn load_main_script(page: &Rc<PageDom>, start: &WorkerStart) -> Option<String> {
         (Some(bytes), _) => bytes.clone(),
         // A revoked or unknown object URL.
         (None, "blob") => return None,
-        _ => fetch_script(
-            page,
-            &start.net,
-            &start.shared,
-            &start.origin,
-            start.url.clone(),
-            RequestMode::SameOrigin,
-            true,
-        )
-        .ok()?,
+        _ => {
+            let (bytes, mime) = fetch_script(
+                page,
+                &start.net,
+                &start.shared,
+                &start.origin,
+                start.url.clone(),
+                RequestMode::SameOrigin,
+                true,
+            )
+            .ok()?;
+            // A module worker's script is a module script: strict MIME
+            // checking (HTML "fetch a single module script").
+            if start.module && crate::module_script::mime_error(lp_js::ModuleType::JavaScript, &mime, "").is_some() {
+                return None;
+            }
+            bytes
+        }
     };
     Some(script_text(&bytes))
 }
@@ -502,15 +510,25 @@ impl lp_js::ModuleFetcher for WorkerModuleFetcher {
             let Some(request) = request.borrow_mut().take() else { return };
             let Some(realm) = realm.upgrade().filter(|r| !r.is_disposed()) else { return };
             let Ok(s) = realm.scope() else { return };
+            // A worker has no CSSStyleSheet: a CSS module fails unfetched.
+            if let Some(e) = crate::module_script::disallowed(request.module_type(), false) {
+                if let Err(e) = request.reject(&s, &e) {
+                    s.report_exception(&e);
+                }
+                return;
+            }
             let source = match (page.upgrade(), lp_net::Url::parse(&url)) {
                 (Some(page), Ok(parsed)) => match page.blob_url(&url) {
-                    Some((bytes, _)) => Ok(bytes),
+                    Some((bytes, mime)) => Ok((bytes, lp_net::parse_content_type(&mime).0)),
                     None => fetch_script(&page, &net, &shared, &origin, parsed, RequestMode::Cors, false),
                 },
                 _ => Err("invalid URL".to_owned()),
             };
             let done = match source {
-                Ok(bytes) => request.resolve(&s, &script_text(&bytes)),
+                Ok((bytes, mime)) => match crate::module_script::mime_error(request.module_type(), &mime, &url) {
+                    None => crate::module_script::complete(&s, request, &script_text(&bytes)),
+                    Some(e) => request.reject(&s, &JsError::Type(e)),
+                },
                 Err(_) => request.reject(&s, &JsError::Type(format!("Failed to fetch module: {url}"))),
             };
             if let Err(e) = done {
@@ -530,8 +548,9 @@ fn tear_down(event_loop: EventLoop<WorkerLoop>, state: WorkerLoop) {
 }
 
 /// Fetches a script, blocking this worker's thread until it ends or the worker
-/// is told to stop. The `main` script's `Referrer-Policy` header becomes the
-/// worker's policy; an imported script's does not.
+/// is told to stop, with its MIME type essence. The `main` script's
+/// `Referrer-Policy` header becomes the worker's policy; an imported
+/// script's does not.
 fn fetch_script(
     page: &Rc<PageDom>,
     net: &NetClient,
@@ -540,7 +559,7 @@ fn fetch_script(
     url: lp_net::Url,
     mode: RequestMode,
     main: bool,
-) -> Result<Bytes, String> {
+) -> Result<(Bytes, String), String> {
     let mut request = Request::get(url, Destination::Script);
     request.mode = mode;
     request.credentials = Credentials::SameOrigin;
@@ -556,10 +575,12 @@ fn fetch_script(
         }),
     );
     let mut body: Vec<u8> = Vec::new();
+    let mut mime = String::new();
     loop {
         match rx.recv_timeout(CLOSING_POLL) {
             Ok(ResponseEvent::Redirect { .. }) => {}
             Ok(ResponseEvent::Response(head)) => {
+                mime = head.mime.clone();
                 if !head.status.is_success() && !matches!(head.kind, ResponseKind::Opaque) {
                     net.cancel(id);
                     return Err(format!("HTTP status {}", head.status.as_u16()));
@@ -571,7 +592,7 @@ fn fetch_script(
                 }
             }
             Ok(ResponseEvent::Data(bytes)) => body.extend_from_slice(&bytes),
-            Ok(ResponseEvent::Finished { .. }) => return Ok(Bytes::from(body)),
+            Ok(ResponseEvent::Finished { .. }) => return Ok((Bytes::from(body), mime)),
             Ok(ResponseEvent::Failed(error)) => return Err(error.to_string()),
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 if shared.closing.load(Ordering::Acquire) {
@@ -746,7 +767,7 @@ impl JsClass for WorkerGlobalScope {
                 let bytes =
                     match page.blob_url(&name) {
                         Some((bytes, _)) => bytes,
-                        None => fetch_script(page, &net, &g.shared, &origin, url, RequestMode::NoCors, false).map_err(
+                        None => fetch_script(page, &net, &g.shared, &origin, url, RequestMode::NoCors, false).map(|(b, _)| b).map_err(
                             |e| {
                                 JsError::dom(
                             "NetworkError",

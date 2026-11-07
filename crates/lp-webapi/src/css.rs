@@ -1186,6 +1186,17 @@ impl JsClass for MediaList {
     }
 }
 
+/// The `default` export of a CSS module script (HTML "create a CSS module
+/// script"): a constructed sheet of the realm's document holding `text`'s
+/// rules, as `new CSSStyleSheet()` + `replaceSync(text)` makes it.
+pub fn module_sheet<'s>(s: &Scope<'s>, text: &str) -> JsResult<Object<'s>> {
+    let page = crate::target::page_of(s)?;
+    let sheet = Constructed::new(&page, String::new(), false);
+    sheet.replace(text);
+    let key = sheet.identity;
+    s.wrap::<CssStyleSheet>(SheetData { owner: SheetOwner::Constructed(sheet) }, Some(key))
+}
+
 fn constructed_wrapper<'s>(s: &Scope<'s>, c: &Rc<Constructed>) -> JsResult<Object<'s>> {
     if let Some(o) = s.lookup_identity(c.identity) {
         return Ok(o);

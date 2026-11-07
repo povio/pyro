@@ -332,10 +332,90 @@ pub fn parse_content_type(v: &str) -> (String, Option<String>) {
     (essence, charset)
 }
 
+/// MIME Sniffing "JavaScript MIME type essence match" for a lowercased
+/// essence (as [`parse_content_type`] returns it).
+pub fn is_javascript_mime(essence: &str) -> bool {
+    matches!(
+        essence,
+        "application/ecmascript"
+            | "application/javascript"
+            | "application/x-ecmascript"
+            | "application/x-javascript"
+            | "text/ecmascript"
+            | "text/javascript"
+            | "text/javascript1.0"
+            | "text/javascript1.1"
+            | "text/javascript1.2"
+            | "text/javascript1.3"
+            | "text/javascript1.4"
+            | "text/javascript1.5"
+            | "text/jscript"
+            | "text/livescript"
+            | "text/x-ecmascript"
+            | "text/x-javascript"
+    )
+}
+
+/// MIME Sniffing "JSON MIME type" for a lowercased essence: a valid MIME type
+/// whose essence is `application/json` or `text/json`, or whose subtype ends
+/// in `+json`.
+pub fn is_json_mime(essence: &str) -> bool {
+    // HTTP token code points (RFC 9110 tchar).
+    let token =
+        |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b));
+    let Some((ty, subtype)) = essence.split_once('/') else { return false };
+    if !token(ty) || !token(subtype) {
+        return false;
+    }
+    essence == "application/json" || essence == "text/json" || subtype.ends_with("+json")
+}
+
 /// Decodes a body to UTF-8 using the response charset (BOM wins), falling
 /// back to UTF-8 with replacement. Borrowed when no transcoding is needed.
 pub fn decode_text<'a>(body: &'a [u8], charset: Option<&str>) -> std::borrow::Cow<'a, str> {
     let enc = charset.and_then(|c| encoding_rs::Encoding::for_label(c.as_bytes())).unwrap_or(encoding_rs::UTF_8);
     let (text, _, _) = enc.decode(body);
     text
+}
+
+#[cfg(test)]
+mod mime_tests {
+    use super::{is_javascript_mime, is_json_mime, parse_content_type};
+
+    fn essence(content_type: &str) -> String {
+        parse_content_type(content_type).0
+    }
+
+    #[test]
+    fn json_mime_types_follow_mime_sniffing() {
+        for ok in ["application/json", "text/json", "application/vnd.api+json", "Application/LD+JSON; charset=utf-8"] {
+            assert!(is_json_mime(&essence(ok)), "{ok}");
+        }
+        for bad in [
+            "application/json+protobuf",
+            "text/x-json",
+            "image/json",
+            "text+json",
+            "json+json",
+            "text/json/json+json",
+            "text/html;+json",
+            "applic ation/vnd.api+json",
+            "applic\"ation/vnd.api+json",
+            "application/vnd.api\u{2122}+json",
+            "/vnd.api+json",
+            "",
+            "text/javascript",
+        ] {
+            assert!(!is_json_mime(&essence(bad)), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn javascript_mime_types_are_the_mime_sniffing_list() {
+        assert!(is_javascript_mime(&essence("text/javascript; charset=utf-8")));
+        assert!(is_javascript_mime(&essence("Application/X-JavaScript")));
+        for bad in ["", "text/plain", "application/json", "text/css", "text/javascript2"] {
+            assert!(!is_javascript_mime(&essence(bad)), "{bad}");
+        }
+    }
 }
