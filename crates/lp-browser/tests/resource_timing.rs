@@ -300,3 +300,55 @@ fn the_buffer_fills_fires_its_event_and_observers_see_every_entry() {
         "n5,n6,n7"
     );
 }
+
+#[test]
+fn only_the_containers_navigation_of_an_iframe_is_the_parents() {
+    let (server, other) = (Server::new(page_route), Server::new(other_route));
+    let (mut thread, page) = open(&server, &other);
+    eval(
+        &thread,
+        page,
+        "globalThis.loads = 0; globalThis.f = document.createElement('iframe'); f.onload = () => loads++; \
+         f.src = '/frame?src'; document.body.append(f);",
+    );
+    until(&mut thread, page, "loads == 1");
+    // The frame's own navigation (a script in it, a link, a form): its URL
+    // is not the parent's to read.
+    eval(&thread, page, "f.contentWindow.location.href = '/frame?own';");
+    until(&mut thread, page, "loads == 2");
+    // The container's again (`src` set by the parent): the parent's.
+    eval(&thread, page, "f.src = '/frame?again';");
+    until(&mut thread, page, "loads == 3");
+    thread.run_until_idle(Some(Instant::now() + Duration::from_millis(100)));
+    assert_eq!(
+        eval(
+            &thread,
+            page,
+            "performance.getEntriesByType('resource').filter(e => e.name.includes('/frame?')) \
+               .map(e => e.initiatorType + ':' + e.name.split('?').pop()).join()"
+        ),
+        "iframe:src,iframe:again"
+    );
+}
+
+#[test]
+fn an_aborted_fetchs_report_does_not_hold_back_later_entries() {
+    let (server, other) = (Server::new(page_route), Server::new(other_route));
+    let (mut thread, page) = open(&server, &other);
+    // The fetch ends on the I/O thread while this task runs, and the abort
+    // removes it before its task does: that task still adds the report, so
+    // the next one (the image's) is announced to observers.
+    eval(
+        &thread,
+        page,
+        "globalThis.seen = []; \
+         new PerformanceObserver(list => seen.push(...list.getEntries().map(e => e.name.split('/').pop()))) \
+           .observe({ type: 'resource' }); \
+         const c = new AbortController(); fetch('/aborted', { signal: c.signal }).catch(() => {}); \
+         const t = Date.now(); while (Date.now() - t < 300); \
+         c.abort();",
+    );
+    thread.run_until_idle(Some(Instant::now() + Duration::from_millis(100)));
+    eval(&thread, page, "const i = new Image(); i.src = '/img.png?late';");
+    until(&mut thread, page, "seen.includes('img.png?late')");
+}

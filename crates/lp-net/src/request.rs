@@ -118,6 +118,10 @@ pub struct Request {
     /// Serialized origin of the requesting document ("null" for opaque);
     /// None for browser-initiated navigations.
     pub origin: Option<String>,
+    /// Resource Timing: the serialized origin of the document that gets this
+    /// fetch's entry, for the TAO check, when it is not `origin` (an iframe's
+    /// navigation: its parent's). None: `origin`.
+    pub timing_origin: Option<String>,
     /// The referrer source (document or init URL) before its policy, which
     /// the client applies per hop; a navigation with none is browser-initiated.
     pub referrer: Option<Url>,
@@ -183,6 +187,7 @@ impl Request {
             credentials: Credentials::SameOrigin,
             redirect: RedirectMode::Follow,
             origin: None,
+            timing_origin: None,
             referrer: None,
             referrer_policy: Default::default(),
             frame_id: None,

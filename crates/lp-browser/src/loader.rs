@@ -289,6 +289,14 @@ impl ResourceLoader for NetLoader {
                 .and_then(|id| browser.frame(request.page, &crate::FrameId(id.clone())))
                 .map(|f| f.origin);
         }
+        // Resource Timing: an iframe navigation's entry goes to the parent,
+        // so its TAO check runs against the parent's origin, not `origin`
+        // (a POST's: the frame's own document).
+        if request.kind == ResourceKind::Iframe && timed.is_some() {
+            req.timing_origin = Some(
+                parent_origin(browser, request.page, request.frame_id.as_deref()).unwrap_or_else(|| "null".into()),
+            );
+        }
         req.referrer = request.referrer.as_deref().and_then(|r| url::Url::parse(r).ok());
         // The requesting document's policy (for a navigation: the frame's
         // current document, which started it).
@@ -431,6 +439,13 @@ fn requesting_document(browser: &Browser, request: &FetchRequest) -> Option<Rc<l
         _ => key,
     };
     frames.page_dom(key)
+}
+
+/// The serialized origin of the parent of frame `frame_id`.
+fn parent_origin(browser: &Browser, page: PageId, frame_id: Option<&str>) -> Option<String> {
+    let key = browser.page(page)?.frames.key_of(frame_id?)?;
+    let parent = browser.doc(key)?.main_frame.parent.clone()?;
+    browser.frame(page, &parent).map(|f| f.origin)
 }
 
 /// (MIME, body, response delay) per URL.
@@ -791,7 +806,12 @@ impl Browser {
             frame_id,
             loader_id: Some(loader_id.0.clone()),
             crossorigin: None,
-            initiator: page.child.map(|_| lp_webapi::resource_timing::Initiator::Iframe),
+            // Resource Timing: only the container's navigation of its frame
+            // (`src` processing) is reported, to the parent. One the frame's
+            // document starts, a reload or a traversal stays the frame's own:
+            // its URLs are not the parent's to read.
+            initiator: (page.child.is_some() && opts.reason == crate::NavigationReason::InitialFrameNavigation)
+                .then_some(lp_webapi::resource_timing::Initiator::Iframe),
             module: None,
         };
         let pending_id = loader_id.clone();
