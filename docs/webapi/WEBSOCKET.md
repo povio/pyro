@@ -23,7 +23,8 @@ browser context's I/O thread. Where the spec and Chrome differ, Chrome wins.
 - **Handshake.**
   - The handshake goes over the context's connector: the context proxy as a
     CONNECT tunnel (for `ws:` as well), and rustls with the context's certificate
-    policy for `wss:`. Only HTTP/1.1 is offered by ALPN.
+    policy for `wss:`. A new connection offers only HTTP/1.1 by ALPN; a `wss:`
+    socket can instead run on a pooled HTTP/2 connection (below).
   - The request carries Chrome's headers: `Origin`, `User-Agent`,
     `Accept-Language`, `Sec-WebSocket-Version: 13`, `Sec-WebSocket-Key`,
     `Sec-WebSocket-Extensions: permessage-deflate; client_max_window_bits`
@@ -31,14 +32,40 @@ browser context's I/O thread. Where the spec and Chrome differ, Chrome wins.
     `http(s)` form of the URL (credentials mode "include"), the context's and
     page's extra headers, and Basic credentials taken from URL user info. No
     `Referer` is sent.
-  - The connection fails when the response is not 101, the Upgrade, Connection
-    or Accept headers are wrong, or the extension negotiation is bad (see
+  - The connection fails when the response is not 101 (200 over HTTP/2), the
+    Upgrade, Connection or Accept headers are wrong (HTTP/1.1 only), or the extension negotiation is bad (see
     permessage-deflate below).
   - It also fails on a subprotocol the client did not offer, or on no
     subprotocol when the client offered some. That last case is Chrome's rule.
   - Redirects are not followed.
   - The response's `Set-Cookie` headers are stored when the `open` task runs, so
     script never sees them earlier (WPT `cookies/007`).
+- **HTTP/2 (RFC 8441).** `crates/lp-net/src/h2_probe.rs`.
+  - As in Chrome, a `wss:` socket uses HTTP/2 only when the context's pool
+    already holds an HTTP/2 connection to the origin (made by an earlier
+    request) whose server sent `SETTINGS_ENABLE_CONNECT_PROTOCOL = 1`. No
+    HTTP/2 connection is opened for a WebSocket; `ws:` always uses HTTP/1.1
+    (no cleartext HTTP/2).
+  - The pool does not expose its connections, so the connector registers
+    each connection that negotiated `h2` by ALPN and reads the server's
+    first SETTINGS frame on its way to hyper. After that frame the stream is
+    a plain pass-through (HTTP/1.1 connections are never inspected). The
+    registry holds weak references and forgets a connection when hyper
+    drops it.
+  - The handshake is an extended CONNECT stream on that connection
+    (`:method CONNECT`, `:protocol websocket`, `:scheme https`, `:path`,
+    `:authority`) with the same headers as over HTTP/1.1 minus `Host`,
+    `Connection`, `Upgrade` and `Sec-WebSocket-Key`; connection-specific
+    extra headers are dropped. The server answers 200, with no
+    `Sec-WebSocket-Accept`. Subprotocol and extension checks are the same.
+  - Frames run as the stream's DATA, through the same code as over
+    HTTP/1.1, so framing, permessage-deflate, close handling, cookies, the
+    proxy tunnel (the connection's own) and CDP events are identical. The
+    CDP handshake response reports status 200.
+  - If the stream cannot be opened (the connection went away, or the pool
+    picked a new connection that had not allowed it), the socket falls back
+    to a new HTTP/1.1 connection, as Chrome does. A non-200 answer from the
+    server fails the connection, without a retry.
 - **Events.**
   - Every network event is its own task on the owner's event loop. The I/O
     thread posts it through the page's remote poster; nothing polls.
@@ -149,7 +176,11 @@ browser context's I/O thread. Where the spec and Chrome differ, Chrome wins.
   yield between them, so other network work interleaves with a large
   message, but the I/O thread still spends the whole CPU cost of it.
 - Extra HTTP headers cannot replace the `Sec-WebSocket-Extensions` offer.
-- WebSockets over HTTP/2 (RFC 8441) are not supported.
+- WebSockets over HTTP/3 (RFC 9220) and cleartext HTTP/2 are not
+  supported. Only the server's first SETTINGS frame is read, so a server
+  that enables the extended CONNECT later in the connection is not used.
+- With the HTTP/2 path, CDP request headers do not include the pseudo
+  headers (`:method`, `:protocol`, ...).
 - Connections in shared and service workers are not supported (those workers
   do not exist).
 - `WebSocketStream` is not implemented.

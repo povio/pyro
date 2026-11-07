@@ -4,21 +4,30 @@
 //! transport through the context's connector stack (TCP, the context proxy as
 //! a CONNECT tunnel, rustls for `wss:`), sends the opening handshake with the
 //! context's cookies, user agent and extra headers over hyper's HTTP/1.1
-//! upgrade, then reads frames and writes the owner's messages until the
-//! closing handshake ends. The owner (a page or a worker) only sees
+//! upgrade (or an HTTP/2 extended CONNECT, below), then reads frames and
+//! writes the owner's messages until the closing handshake ends. The owner (a page or a worker) only sees
 //! [`WsEvent`]s through its sink, which posts them to its event loop, and
 //! talks back through a [`WebSocketHandle`]; nothing polls.
 //!
 //! permessage-deflate (RFC 7692) is offered as Chrome offers it and runs in
 //! [`crate::ws_deflate`] when the server accepts it. Not implemented: other
-//! extensions and HTTP/2 WebSockets (RFC 8441). Redirects fail the
-//! connection, as in browsers.
+//! extensions, and WebSockets over HTTP/3 or cleartext HTTP/2. Redirects fail
+//! the connection, as in browsers.
+//!
+//! WebSockets over HTTP/2 (RFC 8441), as Chrome does them: when the context's
+//! pool already holds an HTTP/2 connection to a `wss:` origin whose server
+//! sent `SETTINGS_ENABLE_CONNECT_PROTOCOL = 1` ([`crate::h2_probe`]), the
+//! handshake is an extended CONNECT stream on that connection (`:protocol
+//! websocket`, answered with 200) and the frames run on the stream.
+//! Otherwise, or when that stream cannot be opened, the connection is
+//! HTTP/1.1 (a new connection that offers only `http/1.1` by ALPN). Framing,
+//! deflate, close handling, cookies and events are the same on both.
 
 use std::time::Duration;
 
 use bytes::{Buf, Bytes, BytesMut};
 use http::{header, HeaderMap, HeaderValue, Method};
-use http_body_util::Empty;
+use http_body_util::{Empty, Full};
 use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::rt::TokioIo;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -479,8 +488,11 @@ impl Io {
             .wrap_connector(proxy)
     }
 
-    /// The handshake request's headers, Chrome's set and order.
-    fn ws_headers(&self, req: &WebSocketRequest, http_url: &Url, key: &str) -> HeaderMap {
+    /// The handshake request's headers, Chrome's set and order. `key` is the
+    /// HTTP/1.1 `Sec-WebSocket-Key`; without it the headers are for an HTTP/2
+    /// extended CONNECT, which has no `Host`, `Connection`, `Upgrade` or key
+    /// (RFC 8441 §5).
+    fn ws_headers(&self, req: &WebSocketRequest, http_url: &Url, key: Option<&str>) -> HeaderMap {
         let settings = self.shared.settings.lock().unwrap().clone();
         let config = &self.shared.config;
         let mut h = HeaderMap::new();
@@ -488,17 +500,21 @@ impl Io {
             Some(port) => format!("{}:{port}", http_url.host_str().unwrap_or("")),
             None => http_url.host_str().unwrap_or("").to_owned(),
         };
-        if let Ok(v) = HeaderValue::from_str(&host) {
-            h.insert(header::HOST, v);
+        if key.is_some() {
+            if let Ok(v) = HeaderValue::from_str(&host) {
+                h.insert(header::HOST, v);
+            }
+            h.insert(header::CONNECTION, HeaderValue::from_static("Upgrade"));
         }
-        h.insert(header::CONNECTION, HeaderValue::from_static("Upgrade"));
         h.insert(header::PRAGMA, HeaderValue::from_static("no-cache"));
         h.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
         let ua = settings.user_agent.as_deref().unwrap_or(&config.user_agent);
         if let Some(v) = req.defaults.user_agent.clone().or_else(|| HeaderValue::from_str(ua).ok()) {
             h.insert(header::USER_AGENT, v);
         }
-        h.insert(header::UPGRADE, HeaderValue::from_static("websocket"));
+        if key.is_some() {
+            h.insert(header::UPGRADE, HeaderValue::from_static("websocket"));
+        }
         if let Ok(v) = HeaderValue::from_str(&req.origin) {
             h.insert(header::ORIGIN, v);
         }
@@ -533,7 +549,7 @@ impl Io {
                 h.insert(header::AUTHORIZATION, v);
             }
         }
-        if let Ok(v) = HeaderValue::from_str(key) {
+        if let Some(v) = key.and_then(|key| HeaderValue::from_str(key).ok()) {
             h.insert(header::SEC_WEBSOCKET_KEY, v);
         }
         h.insert(header::SEC_WEBSOCKET_EXTENSIONS, HeaderValue::from_static(ws_deflate::OFFER));
@@ -543,6 +559,10 @@ impl Io {
             }
         }
         for (k, v) in settings.extra_headers.iter().chain(req.defaults.extra_headers.iter()) {
+            // Connection-specific headers are not allowed in HTTP/2.
+            if key.is_none() && is_connection_specific(k) {
+                continue;
+            }
             h.insert(k.clone(), v.clone());
         }
         // The response is validated against this offer, so extra headers do
@@ -590,13 +610,20 @@ impl Io {
         if self.shared.settings.lock().unwrap().offline {
             return Err("net::ERR_INTERNET_DISCONNECTED".into());
         }
+        if secure {
+            match self.ws_open_h2(req, &http_url, delivery).await {
+                H2Attempt::Opened(opened) => return Ok(opened),
+                H2Attempt::Failed(message) => return Err(message),
+                H2Attempt::Unavailable => {}
+            }
+        }
         let key = {
             use base64::Engine;
             let mut nonce = [0u8; 16];
             let _ = getrandom::fill(&mut nonce);
             base64::engine::general_purpose::STANDARD.encode(nonce)
         };
-        let headers = self.ws_headers(req, &http_url, &key);
+        let headers = self.ws_headers(req, &http_url, Some(&key));
         delivery.observe(|| WebSocketActivity::WillSendHandshakeRequest {
             headers: headers.clone(),
             wall_time: wall_time(),
@@ -651,36 +678,124 @@ impl Io {
         if accept != Some(accept_key(&key).as_str()) {
             return Err("Error during WebSocket handshake: Incorrect 'Sec-WebSocket-Accept' header value".into());
         }
-        let mut protocols = h.get_all(header::SEC_WEBSOCKET_PROTOCOL).iter();
-        let protocol = match (protocols.next(), protocols.next()) {
-            (None, _) => String::new(),
-            (Some(_), Some(_)) => {
-                return Err("Error during WebSocket handshake: 'Sec-WebSocket-Protocol' header must not appear more than once in a response".into())
-            }
-            (Some(v), None) => v.to_str().unwrap_or("").to_owned(),
-        };
-        if protocol.is_empty() && !req.protocols.is_empty() {
-            return Err(
-                "Error during WebSocket handshake: Sent non-empty 'Sec-WebSocket-Protocol' header but no response was received"
-                    .into(),
-            );
-        }
-        if !protocol.is_empty() && !req.protocols.contains(&protocol) {
-            return Err("Error during WebSocket handshake: 'Sec-WebSocket-Protocol' header value '".to_owned()
-                + &protocol
-                + "' in response does not match any of sent values");
-        }
-        // Chromium checks the extensions after the subprotocol.
-        let (deflate, extensions) = match ws_deflate::negotiate(h)? {
-            Some((params, descriptor)) => (Some(Box::new(Deflate::new(params))), descriptor),
-            None => (None, String::new()),
-        };
+        let (protocol, extensions, deflate) = negotiate(req, h)?;
         let response_headers = h.clone();
         let upgraded =
             hyper::upgrade::on(response).await.map_err(|e| format!("Error during WebSocket handshake: {e}"))?;
         Ok(Opened { io: TokioIo::new(upgraded), protocol, extensions, headers: response_headers, deflate })
     }
 
+    /// The opening handshake as an extended CONNECT on a pooled HTTP/2
+    /// connection (RFC 8441), when the pool has one that allows it.
+    async fn ws_open_h2(&self, req: &WebSocketRequest, http_url: &Url, delivery: &Observer) -> H2Attempt {
+        let Ok(uri) = http_url.as_str().parse::<http::Uri>() else { return H2Attempt::Unavailable };
+        let (client, sessions) = self.pooled();
+        let Some(session) = sessions.websocket_session(&uri) else { return H2Attempt::Unavailable };
+        let headers = self.ws_headers(req, http_url, None);
+        let mut request = http::Request::new(Full::new(Bytes::new()));
+        *request.method_mut() = Method::CONNECT;
+        *request.uri_mut() = uri;
+        // HTTP/2 only: a pooled HTTP/1.1 connection refuses it before sending.
+        *request.version_mut() = http::Version::HTTP_2;
+        *request.headers_mut() = headers.clone();
+        request.extensions_mut().insert(hyper::ext::Protocol::from_static("websocket"));
+        delivery.observe(|| WebSocketActivity::WillSendHandshakeRequest {
+            headers: headers.clone(),
+            wall_time: wall_time(),
+        });
+        // The stream could not be opened (the connection went away, or the
+        // pool connected anew): try HTTP/1.1, as Chrome does.
+        let Ok(response) = client.request(request).await else { return H2Attempt::Unavailable };
+        let on_session = response
+            .extensions()
+            .get::<crate::h2_probe::SessionTag>()
+            .is_some_and(|tag| std::sync::Arc::ptr_eq(&tag.0, &session));
+        let status = response.status();
+        // A refusal from a connection that never allowed the extended
+        // CONNECT (the pool replaced the one found) is not the server's answer.
+        if !on_session && status != http::StatusCode::OK {
+            return H2Attempt::Unavailable;
+        }
+        delivery.observe(|| WebSocketActivity::HandshakeResponseReceived {
+            status: status.as_u16(),
+            status_text: status.canonical_reason().unwrap_or("").to_owned(),
+            headers: response.headers().clone(),
+            request_headers: headers.clone(),
+        });
+        if status != http::StatusCode::OK {
+            return H2Attempt::Failed(format!(
+                "Error during WebSocket handshake: Unexpected response code: {}",
+                status.as_u16()
+            ));
+        }
+        let h = response.headers();
+        let (protocol, extensions, deflate) = match negotiate(req, h) {
+            Ok(negotiated) => negotiated,
+            Err(message) => return H2Attempt::Failed(message),
+        };
+        let response_headers = h.clone();
+        match hyper::upgrade::on(response).await {
+            Ok(upgraded) => H2Attempt::Opened(Opened {
+                io: TokioIo::new(upgraded),
+                protocol,
+                extensions,
+                headers: response_headers,
+                deflate,
+            }),
+            Err(e) => H2Attempt::Failed(format!("Error during WebSocket handshake: {e}")),
+        }
+    }
+}
+
+/// How an HTTP/2 opening handshake ended.
+enum H2Attempt {
+    Opened(Opened),
+    /// The handshake failed: the connection fails.
+    Failed(String),
+    /// No HTTP/2 connection took it: use HTTP/1.1.
+    Unavailable,
+}
+
+/// Headers HTTP/2 forbids (RFC 9113 §8.2.2).
+fn is_connection_specific(name: &header::HeaderName) -> bool {
+    matches!(
+        name.as_str(),
+        "connection" | "keep-alive" | "proxy-connection" | "transfer-encoding" | "upgrade" | "host" | "te"
+    )
+}
+
+/// The subprotocol, `extensions` and deflate state a handshake response
+/// selects, checked as Chromium checks them (subprotocol first).
+#[allow(clippy::type_complexity)]
+fn negotiate(req: &WebSocketRequest, h: &HeaderMap) -> Result<(String, String, Option<Box<Deflate>>), String> {
+    let mut protocols = h.get_all(header::SEC_WEBSOCKET_PROTOCOL).iter();
+    let protocol = match (protocols.next(), protocols.next()) {
+        (None, _) => String::new(),
+        (Some(_), Some(_)) => {
+            return Err("Error during WebSocket handshake: 'Sec-WebSocket-Protocol' header must not appear more than once in a response".into())
+        }
+        (Some(v), None) => v.to_str().unwrap_or("").to_owned(),
+    };
+    if protocol.is_empty() && !req.protocols.is_empty() {
+        return Err(
+            "Error during WebSocket handshake: Sent non-empty 'Sec-WebSocket-Protocol' header but no response was received"
+                .into(),
+        );
+    }
+    if !protocol.is_empty() && !req.protocols.contains(&protocol) {
+        return Err("Error during WebSocket handshake: 'Sec-WebSocket-Protocol' header value '".to_owned()
+            + &protocol
+            + "' in response does not match any of sent values");
+    }
+    // Chromium checks the extensions after the subprotocol.
+    let (deflate, extensions) = match ws_deflate::negotiate(h)? {
+        Some((params, descriptor)) => (Some(Box::new(Deflate::new(params))), descriptor),
+        None => (None, String::new()),
+    };
+    Ok((protocol, extensions, deflate))
+}
+
+impl Io {
     /// Frames in and out until the connection ends.
     async fn ws_run(
         &self,
