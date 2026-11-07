@@ -23,7 +23,7 @@ pub use accessors::slot_usage as accessor_slot_usage;
 pub use class::{ClassDef, ClassId, GetterResult, GetterThisFn, JsClass, MethodThisFn, NoParent};
 pub use engine::{
     ImpureNames,
-    configure_process, prepare_process_for_fork, Capabilities, ConsoleLevel, Engine, EngineHooks, TerminateHandle,
+    configure_process, entry_realm, prepare_process_for_fork, Capabilities, ConsoleLevel, Engine, EngineHooks, TerminateHandle,
     WrapperPropertyHook,
 };
 pub use engine::set_allocator_release;
@@ -31,7 +31,7 @@ pub use error::{JsError, JsException, JsResult};
 pub use interned::InternedId;
 pub use persistent::{Persistent, RootedVec};
 pub use realm::{
-    Deferred, IdentityKey, LazyGlobalConstant, ModuleFetcher, ModuleRequest, NameUnits, NamedProperties,
+    Deferred, IdentityKey, LazyGlobalConstant, ModuleFetcher, ModuleRequest, ModuleType, NameUnits, NamedProperties,
     NativeCallbackHook, Realm, RealmId, RealmOptions, Scope, UnhandledRejectionHandler, ValueDescription, WeakRealm,
     WrapperRef,
 };

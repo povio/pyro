@@ -22,7 +22,7 @@ use markup5ever::ns;
 use crate::dom::Dom;
 use crate::error::{DomError, DomErrorKind, DomResult};
 use crate::node::{NodeId, NodeKind, NIL};
-use crate::style::{CheckVisibilityOptions, StyleEngine, TextTransform, WhiteSpace};
+use crate::style::{BoxKind, CheckVisibilityOptions, StyleEngine, TextTransform, WhiteSpace};
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum TextDisplay {
@@ -56,6 +56,29 @@ fn inner_text_display(tag: &str) -> TextDisplay {
         | "param" | "area" | "datalist" | "noscript" => Skip,
         t if is_inner_text_block_tag(t) => Block,
         _ => Inline,
+    }
+}
+
+/// The [`TextDisplay`] of a child whose computed `display` differs from its
+/// tag's HTML default (author CSS, or blockification of a flex/grid item,
+/// float or absolutely positioned box): the HTML innerText algorithm reads
+/// the used display, not the tag. `p` keeps its two required line breaks,
+/// replaced elements their skipped contents, and `template` / `noscript` /
+/// columns stay unrendered whatever their display.
+fn computed_text_display(tag: &str, by_tag: TextDisplay, kind: BoxKind) -> TextDisplay {
+    use TextDisplay::*;
+    match by_tag {
+        Replaced | BlockP => return by_tag,
+        Skip if matches!(tag, "template" | "noscript" | "col" | "colgroup") => return Skip,
+        _ => {}
+    }
+    match kind {
+        BoxKind::None | BoxKind::TableColumn => Skip,
+        BoxKind::Contents | BoxKind::TableRowGroup => Transparent,
+        BoxKind::Inline => Inline,
+        BoxKind::Block => Block,
+        BoxKind::TableCell => TableCell,
+        BoxKind::TableRow => TableRow,
     }
 }
 
@@ -305,6 +328,9 @@ impl Dom {
         };
         // Inside table containers, inter-cell/row whitespace text is not rendered.
         let table_ctx = matches!(self_tag, "table" | "tbody" | "thead" | "tfoot" | "tr");
+        // A closed <details> renders only its first <summary> child.
+        let closed_details = self_tag == "details" && e.is_html() && e.attr("open").is_none();
+        let mut summary_seen = false;
         let mut saw_row = false;
         let mut saw_cell = false;
         // The text of an invisible element isn't included, but its children
@@ -314,6 +340,13 @@ impl Dom {
         let mut c = self.n(idx).first_child;
         while c != NIL {
             match &self.n(c).kind {
+                NodeKind::Element(ce) if closed_details => {
+                    if !summary_seen && ce.is_html() && &*ce.name.local == "summary" {
+                        summary_seen = true;
+                        self.handle_child_element(c, "summary", state, &mut saw_cell, &mut saw_row);
+                    }
+                }
+                NodeKind::Text(_) if closed_details => {}
                 NodeKind::Element(ce) => {
                     if ce.name.ns != ns!(svg) {
                         let tag: &str = &ce.name.local;
@@ -369,11 +402,24 @@ impl Dom {
             state.trim_left = true;
             return;
         }
-        let display = inner_text_display(tag);
+        let computed = state.style.computed(self, id);
+        let display = match computed {
+            Some(c) if c.author_display && !in_select => {
+                computed_text_display(tag, inner_text_display(tag), c.box_kind)
+            }
+            _ => inner_text_display(tag),
+        };
         if display == TextDisplay::Skip {
             return;
         }
-        let computed = state.style.computed(self, id);
+        // A block-level replaced element (`<img style=display:block>`) is a
+        // block boundary with no text of its own.
+        if display == TextDisplay::Replaced
+            && computed.is_some_and(|c| c.author_display && c.box_kind == BoxKind::Block)
+        {
+            state.require_breaks(1);
+            return;
+        }
         // An atomic inline box (replaced element, inline-block and the like)
         // keeps the collapsible spaces on both of its sides, as Chrome's
         // rendered text does.

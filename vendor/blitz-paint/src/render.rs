@@ -125,6 +125,12 @@ pub struct BlitzDomPainter<'dom, 'a> {
     pub(crate) initial_y: f64,
     /// The id of the document's root element (cached to avoid re-resolving it for every element)
     pub(crate) root_element_id: Option<NodeId>,
+    /// lightningpanda: the document's top layer, bottom first (usually
+    /// empty). Its elements are skipped where the tree puts them and painted
+    /// above everything, each over its `::backdrop`.
+    pub(crate) top_layer: Vec<NodeId>,
+    /// The top-layer element being painted as such (not skipped).
+    pub(crate) top_layer_root: std::cell::Cell<Option<NodeId>>,
     /// Scrollbar hover/drag state, resolved once per scene like the root element
     #[cfg(feature = "scrollbars")]
     pub(crate) hovered_scrollbar: Option<blitz_dom::node::ScrollbarRef>,
@@ -173,6 +179,12 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             initial_x,
             initial_y,
             root_element_id,
+            top_layer: if dom.has_top_layer() {
+                dom.top_layer_nodes().collect()
+            } else {
+                Vec::new()
+            },
+            top_layer_root: std::cell::Cell::new(None),
             #[cfg(feature = "scrollbars")]
             hovered_scrollbar: dom.hovered_scrollbar(),
             #[cfg(feature = "scrollbars")]
@@ -263,6 +275,10 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             viewport_clip_rect,
         );
 
+        if !self.top_layer.is_empty() {
+            self.paint_top_layer(scene, root_id, viewport_scroll, viewport_clip_rect);
+        }
+
         // Render debug overlay
         if self.dom.devtools().highlight_hover {
             if let Some(node_id) = self.dom.as_ref().get_hover_node_id() {
@@ -294,6 +310,136 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                 );
             }
         }
+    }
+
+    /// lightningpanda: paints the top layer above the document, bottom
+    /// first: each element's `::backdrop` (a viewport-sized box: its
+    /// background color, `opacity` and `backdrop-filter`), then the element
+    /// in its own root stacking context, positioned as a box hoisted to the
+    /// root element, unclipped and unaffected by its ancestors' effects.
+    fn paint_top_layer(
+        &self,
+        scene: &mut impl PaintScene,
+        root_id: NodeId,
+        viewport_scroll: blitz_dom::Point<f64>,
+        clip_rect: Rect,
+    ) {
+        let tree = self.dom.as_ref().tree();
+        let root = &tree[root_id];
+        let root_location = root.final_layout().location;
+        // The transform `paint_scene` gives the root element.
+        let root_transform = Affine::translate(Vec2 {
+            x: self.initial_x - (viewport_scroll.x * self.scale),
+            y: self.initial_y - (viewport_scroll.y * self.scale),
+        });
+        // The transform `draw_children` gives the root element's children.
+        let root_children = (root_transform * Affine::translate(Vec2::new(
+            root_location.x as f64 * self.scale,
+            root_location.y as f64 * self.scale,
+        )) * root.transform().as_deref().copied().unwrap_or_default())
+        .then_translate(Vec2 {
+            x: -root.scroll_offset().x * self.scale,
+            y: -root.scroll_offset().y * self.scale,
+        });
+        for &id in &self.top_layer {
+            let node = &tree[id];
+            // An element not rendered (its own or an ancestor's `display:
+            // none`, which the layout gives no box) has no backdrop either.
+            if matches!(node.taffy_display(), taffy::Display::None)
+                || node.primary_styles().is_none()
+                || !self.rendered(id)
+            {
+                continue;
+            }
+            self.paint_backdrop(scene, id);
+            // The root element paints where the document pass would have
+            // put it (`render_element` applies its own location, transform
+            // and scroll); anything else is hoisted to the root element.
+            let transform = if id == root_id {
+                root_transform
+            } else {
+                let position = self.dom.top_layer_position(id);
+                root_children.pre_translate(Vec2::new(
+                    position.x as f64 * self.scale,
+                    position.y as f64 * self.scale,
+                ))
+            };
+            self.top_layer_root.set(Some(id));
+            self.render_element(scene, id, transform, clip_rect);
+            self.top_layer_root.set(None);
+        }
+    }
+
+    /// Whether `id` and its ancestors are styled and not `display: none`
+    /// (the style traversal keeps stale styles under a `display: none`
+    /// ancestor).
+    fn rendered(&self, id: NodeId) -> bool {
+        let mut cur = self.dom.get_node(id);
+        while let Some(node) = cur {
+            if node.is_element() {
+                match node.primary_styles() {
+                    Some(s) if s.get_box().display.is_none() => return false,
+                    Some(_) => {}
+                    None => return false,
+                }
+            }
+            cur = node.parent.and_then(|p| self.dom.get_node(p));
+        }
+        true
+    }
+
+    /// The `::backdrop` of top-layer element `id`: a box filling the painted
+    /// area below the element (UA style: `position: fixed; inset: 0`).
+    fn paint_backdrop(&self, scene: &mut impl PaintScene, id: NodeId) {
+        use style::selector_parser::PseudoElement;
+        let Some(style) = self
+            .dom
+            .pseudo_element_style(id, &PseudoElement::Backdrop, false)
+        else {
+            return;
+        };
+        if style.get_box().display.is_none()
+            || style.get_inherited_box().visibility != StyloVisibility::Visible
+        {
+            return;
+        }
+        let effects = style.get_effects();
+        let opacity = effects.opacity;
+        let color = style
+            .slow_clone_background_color()
+            .resolve_to_absolute(&style.clone_color());
+        let backdrop_filter = convert_filters(&effects.backdrop_filter.0).map(Arc::new);
+        let visible_color = color.alpha > 0.0 && self.backgrounds;
+        if opacity <= 0.0 || (!visible_color && backdrop_filter.is_none()) {
+            return;
+        }
+        let rect = Rect::new(
+            self.initial_x,
+            self.initial_y,
+            self.initial_x + self.width as f64,
+            self.initial_y + self.height as f64,
+        );
+        self.layer_manager.maybe_with_layer(
+            scene,
+            opacity < 1.0 || backdrop_filter.is_some(),
+            BlendMode::default(),
+            opacity,
+            Affine::IDENTITY,
+            &rect,
+            None,
+            backdrop_filter,
+            |scene| {
+                if visible_color {
+                    scene.fill(
+                        Fill::NonZero,
+                        Affine::IDENTITY,
+                        color.as_srgb_color(),
+                        None,
+                        &rect,
+                    );
+                }
+            },
+        );
     }
 
     fn node_transform(&self, node: &Node, parent: Affine) -> Affine {
@@ -428,6 +574,15 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
 
         // Early return if the element is hidden
         if matches!(node.taffy_display(), taffy::Display::None) {
+            return;
+        }
+
+        // lightningpanda: a top-layer element paints above the document
+        // (`paint_top_layer`), not here.
+        if !self.top_layer.is_empty()
+            && self.top_layer_root.get() != Some(node_id)
+            && self.dom.is_in_top_layer(node_id)
+        {
             return;
         }
 

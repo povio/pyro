@@ -47,6 +47,15 @@ crate (`diff -ruN`).
   edit rebuilds the index with the rules (`RuleChangeKind::StyleRuleDeclarations` is
   `FullyInvalid`); debug builds check, on every skip, that no matched rule could generate a box.
 
+- `invalidation/element/invalidation_map.rs`: `AdditionalRelativeSelectorInvalidationMap::state_dependencies`
+  is the union of the element states the relative selector map depends on (every `:has()` argument's
+  pseudo-classes), kept as dependencies are added and reset by `clear`. Blitz reads it to tell with one
+  flag test that a state change cannot change any `:has()` match before it runs the relative selector
+  invalidation (`vendor/blitz-dom/src/has_invalidation.rs`).
+
+- `servo/selector_parser.rs`: `:in-range` parses (upstream has the pseudo-class, its state flag and
+  serialization, but left it out of the parser, so a rule using it was dropped).
+
 ## Container queries, typed values
 
 - `stylesheets/rule_parser.rs`, `properties/shorthands.rs`, `properties/shorthands.toml`: `@container` rules

@@ -51,6 +51,13 @@ pub struct ListenerStore {
     windows: FxHashMap<u32, u64>,
     /// A listener for a CSS animation or transition event was ever added.
     animation_listeners: bool,
+    /// A `formdata` listener was ever added.
+    formdata_listeners: bool,
+    /// Non-node target -> its event path parent (an IndexedDB request's
+    /// transaction, a transaction's connection). Empty unless such targets exist.
+    other_parents: FxHashMap<u64, u64>,
+    /// A listener for a transition event was ever added.
+    transition_listeners: bool,
 }
 
 impl ListenerStore {
@@ -67,6 +74,11 @@ impl ListenerStore {
         if !self.map.is_empty() {
             if let Some(list) = self.map.remove(&key) {
                 self.released.extend(list.into_iter().map(|l| (key, l.callback)));
+            }
+        }
+        if let TargetKey::Other(k) = key {
+            if !self.other_parents.is_empty() {
+                self.other_parents.remove(&k);
             }
         }
         if let TargetKey::Node(i) = key {
@@ -160,6 +172,20 @@ impl Dom {
         TargetKey::Other(self.events.next_key)
     }
 
+    /// Makes `parent` the event path parent of the non-node target `child`
+    /// ("get the parent"), or removes its parent. Node targets are ignored.
+    pub fn set_target_parent(&mut self, child: TargetKey, parent: Option<TargetKey>) {
+        let TargetKey::Other(c) = child else { return };
+        match parent {
+            Some(TargetKey::Other(p)) => {
+                self.events.other_parents.insert(c, p);
+            }
+            _ => {
+                self.events.other_parents.remove(&c);
+            }
+        }
+    }
+
     /// Associates a document with its Window target (event path parent).
     pub fn set_document_window(&mut self, doc: NodeId, window: Option<TargetKey>) {
         if let Ok(i) = self.check(doc) {
@@ -193,8 +219,12 @@ impl Dom {
             return false;
         }
         st.next_id = st.next_id.wrapping_add(1);
-        if !st.animation_listeners && is_animation_event_type(ty) {
+        if !st.transition_listeners && is_animation_event_type(ty) {
             st.animation_listeners = true;
+            st.transition_listeners = ty.contains("ransition");
+        }
+        if !st.formdata_listeners && ty == "formdata" {
+            st.formdata_listeners = true;
         }
         list.push(Listener {
             id: st.next_id,
@@ -230,6 +260,19 @@ impl Dom {
     /// events worth working out.
     pub fn has_animation_listeners(&self) -> bool {
         self.events.animation_listeners
+    }
+
+    /// Whether a `formdata` listener was ever added in this tree: only then
+    /// does constructing a form's entry list fire the event.
+    pub fn has_formdata_listeners(&self) -> bool {
+        self.events.formdata_listeners
+    }
+
+    /// Whether a listener for a transition event (or `webkitTransitionEnd`)
+    /// was ever added in this tree: only then do style changes need a
+    /// before-change style.
+    pub fn has_transition_listeners(&self) -> bool {
+        self.events.transition_listeners
     }
 
     /// Identity of one registration, distinct from the reusable callback slot.
@@ -339,7 +382,14 @@ impl Dom {
 
     /// Shadow-including parent for event paths ("get the parent").
     fn event_parent(&self, key: TargetKey, ev_ty: &LocalName, composed: bool, origin_root: u32) -> Option<TargetKey> {
-        let TargetKey::Node(i) = key else { return None };
+        let TargetKey::Node(i) = key else {
+            let TargetKey::Other(k) = key else { return None };
+            // Nearly always empty: no hashing for XHR, AbortSignal, Window.
+            if self.events.other_parents.is_empty() {
+                return None;
+            }
+            return self.events.other_parents.get(&k).map(|&p| TargetKey::Other(p));
+        };
         let n = self.n(i);
         // A slottable assigned to a slot: the slot comes next.
         if let Some(slot) = self.find_slot(i, false) {
@@ -402,6 +452,56 @@ impl Dom {
             let r = self.root_idx(node);
             match &self.n(r).kind {
                 NodeKind::Fragment(f) if f.shadow.is_some() => node = f.host,
+                _ => return false,
+            }
+        }
+    }
+
+    /// `Event.composedPath()`: the dispatch path without the nodes of
+    /// closed shadow trees the current target cannot see (the "unclosed
+    /// node" relation Chrome applies). Empty when not dispatching.
+    pub fn composed_path(&self, ev: &EventState) -> Vec<TargetKey> {
+        let Some(cur) = ev.current_target else { return Vec::new() };
+        let closed_root = |k: &TargetKey| {
+            matches!(*k, TargetKey::Node(i) if self.slot_live(i)
+                && matches!(&self.n(i).kind, NodeKind::Fragment(f) if f.shadow == Some(crate::ShadowRootMode::Closed)))
+        };
+        // Every shadow tree the path passes through has its root on the
+        // path, so a path without a closed root (nearly all) hides nothing.
+        if !ev.path.iter().any(closed_root) {
+            return ev.path.clone();
+        }
+        // A non-node current target (the Window) sees what its document does.
+        let viewer = match cur {
+            TargetKey::Node(i) if self.slot_live(i) => i,
+            _ => match ev.path.iter().rev().find_map(|k| match *k {
+                TargetKey::Node(i) if self.slot_live(i) => Some(i),
+                _ => None,
+            }) {
+                Some(i) => i,
+                None => return ev.path.clone(),
+            },
+        };
+        ev.path
+            .iter()
+            .copied()
+            .filter(|&k| match k {
+                TargetKey::Node(i) if self.slot_live(i) => self.is_unclosed_node_of(i, viewer),
+                _ => true,
+            })
+            .collect()
+    }
+
+    /// `a` is an unclosed node of `b`: `a`'s root is a shadow-including
+    /// inclusive ancestor of `b`, or an open shadow root whose host is.
+    fn is_unclosed_node_of(&self, mut a: u32, b: u32) -> bool {
+        loop {
+            let root = self.root_idx(a);
+            if self.shadow_including_ancestor(root, b) {
+                return true;
+            }
+            match &self.n(root).kind {
+                NodeKind::Fragment(f) if f.shadow == Some(crate::ShadowRootMode::Open) => a = f.host,
                 _ => return false,
             }
         }

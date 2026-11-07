@@ -71,7 +71,10 @@ fn env(html: &str) -> Env {
         .expect("realm");
     let key = page.window_target().unwrap_or_else(|| page.create_window_target(page.document()));
     realm
-        .set_global_data::<TestWindow>(TestWindowData { page: page.clone(), target: EventTargetData::window(&page, key) })
+        .set_global_data::<TestWindow>(TestWindowData {
+            page: page.clone(),
+            target: EventTargetData::window(&page, key),
+        })
         .unwrap();
     install(&realm.scope().unwrap(), page.clone()).unwrap();
     Env { engine, page, main: realm }
@@ -93,13 +96,13 @@ fn media_source_is_closed_and_its_object_url_is_unfetchable() {
         eval(r, "const ms = new MediaSource(); [ms instanceof EventTarget, ms.readyState, ms.duration, ms.sourceBuffers.length, MediaSource.isTypeSupported('video/mp4'), typeof ms.onsourceopen].join()"),
         "true,closed,NaN,0,false,object"
     );
-    assert_eq!(
-        eval(r, "try { ms.addSourceBuffer('video/mp4'); 'no' } catch (e) { e.name }"),
-        "NotSupportedError"
-    );
+    assert_eq!(eval(r, "try { ms.addSourceBuffer('video/mp4'); 'no' } catch (e) { e.name }"), "NotSupportedError");
     assert_eq!(eval(r, "try { ms.endOfStream(); 'no' } catch (e) { e.name }"), "InvalidStateError");
     assert_eq!(
-        eval(r, "const u = URL.createObjectURL(ms); [u.startsWith('blob:http://localhost:5173/'), u.length > 30].join()"),
+        eval(
+            r,
+            "const u = URL.createObjectURL(ms); [u.startsWith('blob:http://localhost:5173/'), u.length > 30].join()"
+        ),
         "true,true"
     );
     // Not a blob entry: fetch and XHR resolve nothing for it.

@@ -279,7 +279,13 @@ impl BlitzGeometry {
         let sheets = RefCell::new(HashMap::new());
         let tree = {
             let (style_text, stylesheet_href) = Self::render_opts(dom, style, base.parsed.as_ref(), Some(&sheets));
-            let opts = RenderHtml { style_text: &style_text, stylesheet_href: &stylesheet_href, mark: None };
+            let adopted = |scope: NodeId| style.adopted_sheets(scope);
+            let opts = RenderHtml {
+                style_text: &style_text,
+                stylesheet_href: &stylesheet_href,
+                mark: None,
+                adopted: style.has_adopted().then_some(&adopted as _),
+            };
             Arc::new(convert(dom.render_tree(style.document(), &opts).ok()?))
         };
         let v = style.viewport();
@@ -297,6 +303,7 @@ impl BlitzGeometry {
             resource_scope: format!("geometry-{}", self.page),
             live: Some(Live { page: self.page, tree, clip: None, interaction: None }),
             background: None,
+            canvases: Vec::new(),
             element_scroll: None,
         };
         if let Some(t) = t {
@@ -310,10 +317,12 @@ impl BlitzGeometry {
         let doc = style.document();
         let hovered = dom.hovered(doc).map(lp_dom::snapshot::render_key);
         let focused = dom.focused(doc).ok().flatten().map(lp_dom::snapshot::render_key);
+        let active = dom.activated(doc).map(lp_dom::snapshot::render_key);
+        let focus_visible = dom.focus_visible(doc);
         RENDERER.with(|r| {
             if let Ok(mut r) = r.try_borrow_mut() {
                 if let Some(r) = r.as_mut() {
-                    r.set_interaction(self.page, hovered, focused, style_only);
+                    r.set_interaction_states(self.page, hovered, focused, active, focus_visible, style_only);
                 }
             }
         });
@@ -348,7 +357,13 @@ impl BlitzGeometry {
                 let delta = {
                     let base = self.base_url.borrow();
                     let (style_text, stylesheet_href) = Self::render_opts(dom, style, base.parsed.as_ref(), None);
-                    let opts = RenderHtml { style_text: &style_text, stylesheet_href: &stylesheet_href, mark: None };
+                    let adopted = |scope: NodeId| style.adopted_sheets(scope);
+                    let opts = RenderHtml {
+                        style_text: &style_text,
+                        stylesheet_href: &stylesheet_href,
+                        mark: None,
+                        adopted: style.has_adopted().then_some(&adopted as _),
+                    };
                     dom.render_delta(style.document(), version, &opts).map(|mut delta| {
                         delta.ops.extend(restyled.iter().filter_map(|&owner| dom.render_style_text(owner, &opts)));
                         delta
@@ -600,8 +615,30 @@ impl GeometrySource for BlitzGeometry {
         RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.element_displayed(self.page, key))
     }
 
+    fn element_pseudo_style(
+        &self,
+        key: u64,
+        pseudo: &style::selector_parser::PseudoElement,
+        generated_only: bool,
+    ) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
+        RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.element_pseudo_style(self.page, key, pseudo, generated_only))
+    }
+
+    fn may_have_generated_before_after(&self) -> bool {
+        RENDERER.with(|r| {
+            r.try_borrow()
+                .ok()
+                .and_then(|r| Some(r.as_ref()?.may_have_generated_before_after(self.page)))
+                .unwrap_or(true)
+        })
+    }
+
     fn has_sticky(&self) -> bool {
         RENDERER.with(|r| r.try_borrow().ok().and_then(|r| Some(r.as_ref()?.has_sticky(self.page))).unwrap_or(false))
+    }
+
+    fn styles_depend_on_active(&self) -> bool {
+        RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.styles_depend_on_active(self.page)).unwrap_or(true)
     }
 }
 

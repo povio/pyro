@@ -140,7 +140,8 @@ impl Browser {
             (connected && (module || preload))
                 .then(|| {
                     let href = attr("href").filter(|v| !v.trim().is_empty())?;
-                    let url = url::Url::parse(&frame.base_url).ok()?.join(href.trim()).ok()?.to_string();
+                    let base = crate::loader::node_base_url(&dom, node).unwrap_or_else(|| frame.base_url.clone());
+                    let url = url::Url::parse(&base).ok()?.join(href.trim()).ok()?.to_string();
                     let kind = if module {
                         ResourceKind::ModuleScript
                     } else {
@@ -150,13 +151,14 @@ impl Browser {
                             _ => ResourceKind::Image,
                         }
                     };
-                    Some((url, kind, attr("crossorigin")))
+                    let integrity = attr("integrity").filter(|v| !lp_webapi::sri::is_empty(v));
+                    Some((url, kind, attr("crossorigin"), integrity))
                 })
                 .flatten()
         };
         let current = state.preloads.entries.get(&node).cloned();
         drop(state);
-        let Some((url, kind, crossorigin)) = config else {
+        let Some((url, kind, crossorigin, integrity)) = config else {
             if let Some(mut doc) = self.doc_mut(page) {
                 doc.preloads.entries.remove(&node);
             }
@@ -199,10 +201,29 @@ impl Browser {
             }
         }
         let finish_url = url.clone();
+        let cors = module || crossorigin.is_some();
         let finish = move |b: &mut Browser, result: Result<crate::Resource, String>| {
             let _hold = hold;
             let result = match result {
-                Ok(r) if (200..300).contains(&r.status) => Ok(r.text()),
+                Ok(r) if (200..300).contains(&r.status) => {
+                    // SRI: a mismatching (or opaque) response is a network error.
+                    let origin = b.doc(page).map(|p| p.main_frame.origin.clone()).unwrap_or_default();
+                    match crate::loader::integrity_error(&r, integrity.as_deref(), cors, &origin) {
+                        Some(e) => {
+                            b.report_console_error(page, &e);
+                            Err(e)
+                        }
+                        // A modulepreload is a JavaScript module script:
+                        // strict MIME check, UTF-8 whatever the charset.
+                        None if module => {
+                            match lp_webapi::module_script::mime_error(lp_js::ModuleType::JavaScript, &r.mime, &r.url) {
+                                Some(e) => Err(e),
+                                None => Ok(lp_webapi::module_script::utf8_decode(&r.body)),
+                            }
+                        }
+                        None => Ok(r.text()),
+                    }
+                }
                 Ok(r) => Err(format!("HTTP {} for {}", r.status, r.url)),
                 Err(e) => Err(e),
             };
@@ -229,6 +250,9 @@ impl Browser {
             frame_id: Some(frame.id.0.clone()),
             loader_id: Some(frame.loader_id.0.clone()),
             crossorigin,
+            initiator: Some(lp_webapi::resource_timing::Initiator::Link),
+            module: None,
+            part: None,
         };
         resource_loader.fetch(self, request, Box::new(finish));
     }

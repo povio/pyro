@@ -114,7 +114,6 @@ fn eval(realm: &Realm, src: &str) -> String {
     }
 }
 
-
 #[test]
 fn is_trusted_is_an_own_unforgeable_accessor_with_one_getter() {
     let e = env("<body></body>");

@@ -3,7 +3,9 @@
 //! sheet text, the emulated viewport and the window scroll position. Plain
 //! data, so another thread can render it.
 //!
-//! Not captured: canvas and video pixels, iframe contents (empty boxes),
+//! Canvas bitmaps and `<video>` frames travel beside the document
+//! ([`RenderSnapshot::canvases`]).
+//! Not captured: video pixels, iframe contents (empty boxes),
 //! `:active` state (the hovered
 //! and focused elements are carried as render keys for the renderer to
 //! apply), selection and caret, CSS animations/transitions (rendered at
@@ -41,6 +43,9 @@ pub struct RenderSnapshot {
     /// pointer and the focused element, in every form.
     pub hovered: Option<u64>,
     pub focused: Option<u64>,
+    /// Bitmaps of the canvases drawn on (`PageDom::canvas_bitmaps`), in
+    /// every form.
+    pub canvases: Vec<crate::canvas::CanvasBitmap>,
 }
 
 /// How a snapshot carries the document.
@@ -81,9 +86,11 @@ impl PageDom {
     }
 
     fn snapshot_as(&self, base_url: &str, mark: Option<(NodeId, &str)>, form: Form) -> RenderSnapshot {
+        let mut canvases = self.canvas_bitmaps();
+        canvases.extend(self.video_bitmaps());
         let dom = self.dom.borrow();
         let layout = self.layout();
-        snapshot_of(&dom, &layout, self.document(), base_url, mark, form)
+        RenderSnapshot { canvases, ..snapshot_of(&dom, &layout, self.document(), base_url, mark, form) }
     }
 }
 
@@ -107,7 +114,13 @@ fn snapshot_of(
             sheets.borrow_mut().insert(url.clone(), text.to_owned());
             Some(url)
         };
-        let opts = RenderHtml { style_text: &style_text, stylesheet_href: &stylesheet_href, mark };
+        let adopted = |scope: NodeId| style.adopted_sheets(scope);
+        let opts = RenderHtml {
+            style_text: &style_text,
+            stylesheet_href: &stylesheet_href,
+            mark,
+            adopted: style.has_adopted().then_some(&adopted as _),
+        };
         let (html, tree) = match form {
             Form::Html => {
                 (dom.render_html_scrolled(document, &opts, &layout.scrolled_elements()).unwrap_or_default(), None)
@@ -130,6 +143,7 @@ fn snapshot_of(
             element_scroll: layout.scrolled_elements(),
             hovered: dom.hovered(document).map(lp_dom::snapshot::render_key),
             focused: dom.focused(document).ok().flatten().map(lp_dom::snapshot::render_key),
+            canvases: Vec::new(),
         }
     }
 }

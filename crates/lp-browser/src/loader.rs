@@ -36,7 +36,7 @@ use crate::{Browser, HistoryHandling, LoaderId, NavigateOpts, PageEvent, PageId}
 use lp_dom::parse::{DocumentParser, DomRef, ParseStep};
 use lp_dom::script::ScriptKind;
 use lp_dom::NodeId;
-use lp_js::{JsError, ModuleFetcher, ModuleRequest, Persistent, Realm};
+use lp_js::{JsError, ModuleFetcher, ModuleRequest, ModuleType, Persistent, Realm};
 use lp_runtime::TaskSource;
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -74,6 +74,10 @@ pub enum ResourceKind {
     Image,
     /// A web font (a renderer's `@font-face` source).
     Font,
+    /// An `<audio>` element's media resource.
+    Audio,
+    /// A `<video>` element's media resource.
+    Video,
     /// A hyperlink download (`<a download>`).
     Download,
 }
@@ -90,6 +94,34 @@ pub struct FetchRequest {
     pub loader_id: Option<String>,
     /// HTML crossorigin attribute (absent uses the resource default).
     pub crossorigin: Option<String>,
+    /// Resource Timing: the `initiatorType` of the requesting document's
+    /// entry for this fetch (`None`: no entry, as for a document's own
+    /// navigation or a renderer's fetch). An iframe's navigation reports to
+    /// the parent document.
+    pub initiator: Option<lp_webapi::resource_timing::Initiator>,
+    /// The module type of a [`ResourceKind::ModuleScript`] fetch, which
+    /// picks its destination: a CSS module is fetched as a style, a JSON
+    /// one as `json` (`None`: JavaScript).
+    pub module: Option<ModuleType>,
+    /// Only part of the body is needed (a media element's headers):
+    /// `Resource::partial` says when the body was cut.
+    pub part: Option<lp_webapi::BodyPart>,
+}
+
+/// Where a `BodyPart` fetch cuts `body` (a prefix of the response body of
+/// `total` bytes, if known): the length to keep, if any. `checked` is the
+/// size `enough` is next asked at; it doubles past `body`'s length.
+fn body_cut(part: &lp_webapi::BodyPart, body: &[u8], total: Option<u64>, checked: &mut usize) -> Option<usize> {
+    if body.len() >= part.limit {
+        return Some(part.limit);
+    }
+    if body.len() < *checked {
+        return None;
+    }
+    while *checked <= body.len() {
+        *checked = checked.saturating_mul(2);
+    }
+    (part.enough)(body, total).then_some(body.len())
 }
 
 #[derive(Debug, Clone)]
@@ -106,6 +138,16 @@ pub struct Resource {
     /// The response carried a `Content-Security-Policy` header (the policy
     /// itself is not enforced; a document delivered with one hides nonces).
     pub header_csp: bool,
+    /// The `Refresh` response header (HTML declarative refresh), if any.
+    pub refresh: Option<String>,
+    /// The response's `Referrer-Policy` header (a document's default policy).
+    pub referrer_policy: Option<lp_net::ReferrerPolicy>,
+    /// A navigation's fetch as the network saw it (Navigation Timing of the
+    /// document it commits); `None` for other kinds and other loaders.
+    pub timing: Option<Box<lp_webapi::resource_timing::FetchReport>>,
+    /// `Some`: `body` is a prefix of the response body, cut as the
+    /// request's `part` asked (the transfer stopped there).
+    pub partial: Option<lp_webapi::Partial>,
 }
 
 impl Resource {
@@ -213,13 +255,22 @@ impl ResourceLoader for NetLoader {
         let destination = match request.kind {
             ResourceKind::Document => lp_net::Destination::Document,
             ResourceKind::Script => lp_net::Destination::Script,
-            ResourceKind::ModuleScript => lp_net::Destination::Script,
+            ResourceKind::ModuleScript => match request.module {
+                Some(ModuleType::Css) => lp_net::Destination::Style,
+                Some(ModuleType::Json) => lp_net::Destination::Json,
+                _ => lp_net::Destination::Script,
+            },
             ResourceKind::Stylesheet => lp_net::Destination::Style,
             ResourceKind::Iframe => lp_net::Destination::Iframe,
             ResourceKind::Image => lp_net::Destination::Image,
             ResourceKind::Font => lp_net::Destination::Font,
+            ResourceKind::Audio => lp_net::Destination::Audio,
+            ResourceKind::Video => lp_net::Destination::Video,
             ResourceKind::Download => lp_net::Destination::Other,
         };
+        // Resource Timing: the document that gets this fetch's entry.
+        let timed = request.initiator.and_then(|i| Some((i, requesting_document(browser, &request)?)));
+        let render_blocking = request.kind == ResourceKind::Stylesheet;
         let mut req = lp_net::Request::get(url, destination);
         if let Some(page) = browser.page(request.page) {
             req.defaults = page.request_defaults.clone();
@@ -229,6 +280,9 @@ impl ResourceLoader for NetLoader {
         }
         if request.crossorigin.as_deref().is_some_and(|v| v.eq_ignore_ascii_case("use-credentials")) {
             req.credentials = lp_net::Credentials::Include;
+        }
+        if req.url.scheme() == "blob" {
+            req.blob = blob_body(browser, request.page, req.url.as_str());
         }
         if !matches!(request.kind, ResourceKind::Document | ResourceKind::Iframe) {
             req.origin = Some(
@@ -245,6 +299,12 @@ impl ResourceLoader for NetLoader {
             }
             req.max_body = Some(crate::stylesheets::MAX_SHEET_BYTES.min(self.client.config().max_body));
         }
+        let part = request.part;
+        if let Some(start) = part.map(|p| p.start).filter(|&s| s > 0) {
+            if let Ok(value) = lp_net::http::HeaderValue::from_str(&format!("bytes={start}-")) {
+                req.headers.insert(lp_net::http::header::RANGE, value);
+            }
+        }
         if let Some((body, content_type)) = request.post {
             req.method = lp_net::http::Method::POST;
             req.body = Some(body.into());
@@ -257,16 +317,58 @@ impl ResourceLoader for NetLoader {
                 .and_then(|id| browser.frame(request.page, &crate::FrameId(id.clone())))
                 .map(|f| f.origin);
         }
+        // Resource Timing: an iframe navigation's entry goes to the parent,
+        // so its TAO check runs against the parent's origin, not `origin`
+        // (a POST's: the frame's own document).
+        if request.kind == ResourceKind::Iframe && timed.is_some() {
+            req.timing_origin = Some(
+                parent_origin(browser, request.page, request.frame_id.as_deref()).unwrap_or_else(|| "null".into()),
+            );
+        }
         req.referrer = request.referrer.as_deref().and_then(|r| url::Url::parse(r).ok());
+        // The requesting document's policy (for a navigation: the frame's
+        // current document, which started it).
+        if req.referrer.is_some() {
+            if let Some(policy) = request
+                .frame_id
+                .as_deref()
+                .and_then(|id| browser.page(request.page)?.frames.key_of(id))
+                .and_then(|key| browser.page(request.page)?.frames.page_dom(key))
+                .map(|page_dom| page_dom.referrer_policy())
+            {
+                req.referrer_policy = policy;
+            }
+        }
         req.frame_id = request.frame_id;
         req.loader_id = request.loader_id;
+        let document = matches!(request.kind, ResourceKind::Document | ResourceKind::Iframe);
+        // A service worker's `fetch` event first, in a context with
+        // registrations; one emptiness test otherwise.
+        let service_worker = service_worker_route(browser, request.page, &req, document);
         // A preloaded static file: answered here, on the browser thread, with
         // no I/O-thread round trip. Observers still get the Network events.
-        if let Some(hit) = self.client.static_direct(&req) {
+        if let Some(hit) = self.client.static_direct(&req).filter(|_| service_worker.is_none()) {
             if request.kind == ResourceKind::ModuleScript {
                 module_trace!("served from the static directory {}", req.url);
             }
+            let start = std::time::Instant::now();
             let head = self.client.report_local(&req, &hit);
+            let report = (timed.is_some() || document).then(|| {
+                let mut response = lp_webapi::resource_timing::ReportedResponse::of(&head);
+                response.encoded = hit.file.body.len() as u64;
+                response.decoded = response.encoded;
+                lp_webapi::resource_timing::FetchReport {
+                    url: req.url.as_str().to_owned(),
+                    initiator: timed.as_ref().map_or(lp_webapi::resource_timing::Initiator::Other, |t| t.0),
+                    start,
+                    end: std::time::Instant::now(),
+                    response: Some(response),
+                    render_blocking,
+                }
+            });
+            if let (Some((_, page)), Some(report)) = (&timed, &report) {
+                page.queue_resource_timing(report.clone());
+            }
             let resource = Resource {
                 url: head.url.to_string(),
                 status: 200,
@@ -274,7 +376,11 @@ impl ResourceLoader for NetLoader {
                 charset: head.charset,
                 content_disposition: None,
                 header_csp: false,
+                refresh: None,
+                referrer_policy: None,
                 body: hit.file.body.to_vec(),
+                timing: report.filter(|_| document).map(Box::new),
+                partial: None,
             };
             browser.scheduler().post(TaskSource::Networking, move |b| b.complete_fetch(id, Ok(resource)));
             return None;
@@ -284,41 +390,164 @@ impl ResourceLoader for NetLoader {
         }
         let mut head: Option<lp_net::ResponseHead> = None;
         let mut body: Vec<u8> = Vec::new();
-        let native_id = self.client.fetch(
-            req,
-            Box::new(move |ev| match ev {
-                lp_net::ResponseEvent::Redirect { .. } => {}
-                lp_net::ResponseEvent::Response(h) => head = Some(h),
-                lp_net::ResponseEvent::Data(chunk) => body.extend_from_slice(&chunk),
-                lp_net::ResponseEvent::Finished { .. } => {
-                    let result = match head.take() {
-                        Some(h) => Ok(Resource {
-                            url: h.url.to_string(),
-                            status: h.status.as_u16(),
-                            mime: h.mime,
-                            charset: h.charset,
-                            content_disposition: h
-                                .headers
-                                .get(http::header::CONTENT_DISPOSITION)
-                                .and_then(|v| v.to_str().ok())
-                                .map(str::to_owned),
-                            header_csp: h.headers.contains_key(http::header::CONTENT_SECURITY_POLICY),
-                            body: std::mem::take(&mut body),
-                        }),
-                        None => Err("net::ERR_EMPTY_RESPONSE".to_string()),
-                    };
-                    // Err: the browser thread has exited; nothing to deliver.
-                    let _ = handle.post(move |b: &mut Browser| b.complete_fetch(id, result));
+        // Navigation Timing of the document this fetch commits.
+        let start = std::time::Instant::now();
+        let navigation_url = document.then(|| req.url.as_str().to_owned());
+        let url = req.url.clone();
+        let native_id = self.client.next_request_id();
+        // A `part` fetch: the length of the whole body, when known; when
+        // `enough` is next asked; whether the body was already delivered.
+        let mut total: Option<u64> = None;
+        let mut checked = lp_webapi::BodyPart::FIRST_CHECK;
+        let mut cut = false;
+        let net = self.client.clone();
+        let sink: lp_net::ResponseSink = Box::new(move |ev| match ev {
+            // A cut body was delivered: the rest (and the cancellation's
+            // failure) is dropped.
+            _ if cut => {}
+            lp_net::ResponseEvent::Redirect { .. } => {}
+            lp_net::ResponseEvent::Response(h) => {
+                if part.is_some() && !h.headers.contains_key(http::header::CONTENT_ENCODING) {
+                    total =
+                        h.headers.get(http::header::CONTENT_LENGTH).and_then(|v| v.to_str().ok()?.trim().parse().ok());
                 }
-                lp_net::ResponseEvent::Failed(e) => {
-                    let msg = e.to_string();
-                    let _ = handle.post(move |b: &mut Browser| b.complete_fetch(id, Err(msg)));
-                }
-            }),
-        );
+                head = Some(h);
+            }
+            lp_net::ResponseEvent::Data(chunk) => {
+                body.extend_from_slice(&chunk);
+                let Some(part) = part.as_ref() else { return };
+                let Some(keep) = body_cut(part, &body, total, &mut checked) else { return };
+                let Some(h) = head.take() else { return };
+                body.truncate(keep);
+                cut = true;
+                let whole = total == Some(body.len() as u64);
+                let resource = Resource {
+                    url: h.url.to_string(),
+                    status: h.status.as_u16(),
+                    mime: h.mime,
+                    charset: h.charset,
+                    body: std::mem::take(&mut body),
+                    content_disposition: None,
+                    header_csp: false,
+                    refresh: None,
+                    referrer_policy: None,
+                    timing: None,
+                    partial: (!whole).then_some(lp_webapi::Partial { total }),
+                };
+                let _ = handle.post(move |b: &mut Browser| b.complete_fetch(id, Ok(resource)));
+                // Stop the transfer: a live stream never ends.
+                net.cancel(native_id);
+            }
+            lp_net::ResponseEvent::Finished { encoded_len, decoded_len } => {
+                let timing = |h: &lp_net::ResponseHead| {
+                    let url = navigation_url.clone()?;
+                    let mut response = lp_webapi::resource_timing::ReportedResponse::of(h);
+                    response.encoded = encoded_len;
+                    response.decoded = decoded_len;
+                    // The document's own timing is not cross-origin to
+                    // it (an iframe's TAO check was for its parent).
+                    response.timing.timing_allow_failed = false;
+                    Some(Box::new(lp_webapi::resource_timing::FetchReport {
+                        url,
+                        initiator: lp_webapi::resource_timing::Initiator::Other,
+                        start,
+                        end: std::time::Instant::now(),
+                        response: Some(response),
+                        render_blocking: false,
+                    }))
+                };
+                let result = match head.take() {
+                    Some(h) => Ok(Resource {
+                        timing: timing(&h),
+                        partial: None,
+                        url: h.url.to_string(),
+                        status: h.status.as_u16(),
+                        mime: h.mime,
+                        charset: h.charset,
+                        content_disposition: h
+                            .headers
+                            .get(http::header::CONTENT_DISPOSITION)
+                            .and_then(|v| v.to_str().ok())
+                            .map(str::to_owned),
+                        header_csp: h.headers.contains_key(http::header::CONTENT_SECURITY_POLICY),
+                        // Only a document honours it; other kinds skip the lookup.
+                        refresh: document
+                            .then(|| h.headers.get(http::header::REFRESH)?.to_str().ok().map(str::to_owned))
+                            .flatten(),
+                        referrer_policy: lp_net::ReferrerPolicy::from_header(
+                            h.headers.get_all("referrer-policy").iter().filter_map(|v| v.to_str().ok()),
+                        ),
+                        body: std::mem::take(&mut body),
+                    }),
+                    None => Err("net::ERR_EMPTY_RESPONSE".to_string()),
+                };
+                // Err: the browser thread has exited; nothing to deliver.
+                let _ = handle.post(move |b: &mut Browser| b.complete_fetch(id, result));
+            }
+            lp_net::ResponseEvent::Failed(e) => {
+                let msg = e.to_string();
+                let _ = handle.post(move |b: &mut Browser| b.complete_fetch(id, Err(msg)));
+            }
+        });
+        let sink = match &timed {
+            Some((initiator, page)) => {
+                lp_webapi::resource_timing::timed_sink(page, *initiator, &url, render_blocking, sink)
+            }
+            None => sink,
+        };
+        match service_worker {
+            Some(route) => route.dispatch(&self.client, native_id, req, sink),
+            None => self.client.fetch_with_id(native_id, req, sink),
+        }
         let client = self.client.clone();
         Some(ResourceCancellation::new(move || client.cancel(native_id)))
     }
+}
+
+/// The service worker route of a loader fetch: a navigation goes to the
+/// worker whose registration its URL matches (unless the page bypasses
+/// service workers), any other request to the requesting document's
+/// controller. `None` at the cost of one emptiness test when the context has
+/// no registrations.
+fn service_worker_route(
+    browser: &Browser,
+    page: PageId,
+    req: &lp_net::Request,
+    document: bool,
+) -> Option<lp_webapi::LoadRoute> {
+    let page = browser.page(page)?;
+    let settings = page.frames.settings.borrow();
+    if !settings.services.may_route_loads() {
+        return None;
+    }
+    if document {
+        if page.bypass_service_worker {
+            return None;
+        }
+        return lp_webapi::navigation_route(&settings.services, req);
+    }
+    let key = page.frames.key_of(req.frame_id.as_deref()?)?;
+    lp_webapi::subresource_route(&*page.frames.page_dom(key)?, req)
+}
+
+/// The document whose timeline gets the Resource Timing entry of `request`:
+/// the requesting frame's current document, or for an iframe's navigation
+/// the document of the frame's parent.
+fn requesting_document(browser: &Browser, request: &FetchRequest) -> Option<Rc<lp_webapi::PageDom>> {
+    let frames = &browser.page(request.page)?.frames;
+    let key = frames.key_of(request.frame_id.as_deref()?)?;
+    let key = match request.kind {
+        ResourceKind::Iframe => frames.key_of(&browser.doc(key)?.main_frame.parent.clone()?.0)?,
+        _ => key,
+    };
+    frames.page_dom(key)
+}
+
+/// The serialized origin of the parent of frame `frame_id`.
+fn parent_origin(browser: &Browser, page: PageId, frame_id: Option<&str>) -> Option<String> {
+    let key = browser.page(page)?.frames.key_of(frame_id?)?;
+    let parent = browser.doc(key)?.main_frame.parent.clone()?;
+    browser.frame(page, &parent).map(|f| f.origin)
 }
 
 /// (MIME, body, response delay) per URL.
@@ -342,22 +571,54 @@ impl StaticLoader {
 
 impl ResourceLoader for StaticLoader {
     fn fetch(&self, browser: &mut Browser, request: FetchRequest, done: FetchDone) {
-        self.log.borrow_mut().push(request.url.clone());
+        let start = request.part.map_or(0, |p| p.start);
+        self.log.borrow_mut().push(if start > 0 {
+            format!("{} bytes={start}-", request.url)
+        } else {
+            request.url.clone()
+        });
         let entry = self.entries.borrow().get(&request.url).cloned();
         let url = request.url;
+        let part = request.part;
         let delay = entry.as_ref().map_or(Duration::ZERO, |e| e.2);
         let id = browser.register_completion(done);
         browser.scheduler().set_timer(delay, false, true, move |b| {
             let result = match entry.clone() {
-                Some((mime, body, _)) => {
+                Some((mime, mut body, _)) => {
+                    // A `part` request: the range, cut as the network
+                    // loader cuts it (all bytes arrive at once here).
+                    let status = if start > 0 && (start as usize) < body.len() {
+                        body.drain(..start as usize);
+                        206
+                    } else {
+                        200
+                    };
+                    let total = body.len() as u64;
+                    let mut checked = lp_webapi::BodyPart::FIRST_CHECK;
+                    let mut keep = None;
+                    if let Some(part) = &part {
+                        while keep.is_none() && checked <= body.len().min(part.limit) {
+                            let at = checked;
+                            keep = body_cut(part, &body[..at], Some(total), &mut checked);
+                        }
+                        keep = keep.or_else(|| (body.len() > part.limit).then_some(part.limit));
+                    }
+                    let partial = keep.filter(|&k| k < body.len()).map(|k| {
+                        body.truncate(k);
+                        lp_webapi::Partial { total: Some(total) }
+                    });
                     Ok(Resource {
                         url: url.clone(),
-                        status: 200,
+                        status,
                         mime,
                         charset: None,
                         body,
                         content_disposition: None,
                         header_csp: false,
+                        refresh: None,
+                        referrer_policy: None,
+                        timing: None,
+                        partial,
                     })
                 }
                 None => Err(format!("net::ERR_FILE_NOT_FOUND {url}")),
@@ -437,6 +698,15 @@ impl ModuleFetcher for PageModuleFetcher {
     }
 
     fn fetch(&self, realm: &Realm, url: String, request: ModuleRequest) {
+        let ty = request.module_type();
+        if let Some(e) = lp_webapi::module_script::disallowed(ty, true) {
+            if let Ok(scope) = realm.scope() {
+                if let Err(e) = request.reject(&scope, &e) {
+                    scope.report_exception(&e);
+                }
+            }
+            return;
+        }
         // Called from inside JS: defer the network request to a task, where
         // `&mut Browser` is available.
         let realm = realm.downgrade();
@@ -468,7 +738,7 @@ impl ModuleFetcher for PageModuleFetcher {
                     return;
                 };
                 let r = match res {
-                    Ok(text) => request.resolve(&scope, &text),
+                    Ok(text) => lp_webapi::module_script::complete(&scope, request, &text),
                     Err(e) => request.reject(&scope, &JsError::Type(e)),
                 };
                 match &r {
@@ -479,8 +749,12 @@ impl ModuleFetcher for PageModuleFetcher {
                     scope.report_exception(&e);
                 }
             };
-            // A modulepreload of this URL already fetched (or is fetching) it.
-            if let Some(complete) = b.preloaded_module(page, &url, Box::new(complete)) {
+            // A modulepreload of this URL already fetched (or is fetching) it
+            // as a JavaScript module.
+            if ty != ModuleType::JavaScript {
+                let opts = ScriptFetch { module: Some(ty), ..ScriptFetch::default() };
+                b.fetch_script(page, url, ResourceKind::ModuleScript, opts, complete);
+            } else if let Some(complete) = b.preloaded_module(page, &url, Box::new(complete)) {
                 b.fetch_text(page, url, ResourceKind::ModuleScript, complete);
             }
         });
@@ -500,6 +774,78 @@ pub(crate) fn origin_of(url: &str) -> String {
 
 fn resolve_url(base: &str, href: &str) -> Option<String> {
     url::Url::parse(base).ok()?.join(href).ok().map(|u| u.to_string())
+}
+
+/// The object a `blob:` URL names, from the blob URL store of a document of
+/// `page` with the URL's origin: the requesting document's own, or a parent's
+/// or child's for a same-origin frame (a parent's blob as an iframe `src`).
+fn blob_body(browser: &Browser, page: PageId, url: &str) -> Option<lp_net::BlobBody> {
+    let host = browser.page(page)?.frames.clone();
+    let origin = origin_of(url);
+    host.keys().into_iter().find_map(|key| {
+        let page_dom = browser.doc(key).filter(|d| d.main_frame.origin == origin)?.main_frame.page_dom.clone()?;
+        let (bytes, mime) = page_dom.blob_url(url)?;
+        Some(lp_net::BlobBody { bytes, mime })
+    })
+}
+
+/// The base URL `node`'s document resolves its URLs against: its first
+/// `<base href>`, else the document's fallback base URL.
+pub(crate) fn node_base_url(dom: &lp_dom::Dom, node: NodeId) -> Option<String> {
+    let doc = dom.node_document(node).ok()?;
+    dom.document_base_url(doc).ok().map(str::to_owned)
+}
+
+/// The `integrity` and `crossorigin` attributes a script fetch honours.
+#[derive(Clone, Default)]
+pub(crate) struct ScriptFetch {
+    pub integrity: Option<String>,
+    pub crossorigin: Option<String>,
+    /// The module type of a [`ResourceKind::ModuleScript`] fetch, whose
+    /// response MIME type must match it (`None`: JavaScript).
+    pub module: Option<ModuleType>,
+}
+
+impl ScriptFetch {
+    fn of(info: &lp_dom::script::ScriptInfo) -> ScriptFetch {
+        ScriptFetch {
+            integrity: info.integrity.clone().filter(|v| !lp_webapi::sri::is_empty(v)),
+            crossorigin: info.crossorigin.clone(),
+            module: None,
+        }
+    }
+}
+
+/// SRI for a fetched response: `None` when it may be used, else the
+/// console message. A cross-origin response fetched without CORS is opaque
+/// and never matches (Fetch: integrity metadata on a no-cors request).
+pub(crate) fn integrity_error(
+    resource: &Resource,
+    integrity: Option<&str>,
+    cors: bool,
+    document_origin: &str,
+) -> Option<String> {
+    let integrity = integrity.filter(|v| !lp_webapi::sri::is_empty(v))?;
+    let opaque = !cors && {
+        let origin = origin_of(&resource.url);
+        origin != "null" && origin != document_origin
+    };
+    if opaque {
+        return Some(format!(
+            "Subresource Integrity: The resource '{}' has an integrity attribute, but the resource requires the \
+             request to be CORS enabled to check the integrity, and it is not. The resource has been blocked \
+             because the integrity cannot be enforced.",
+            resource.url
+        ));
+    }
+    (!lp_webapi::sri::matches(integrity, &resource.body)).then(|| {
+        format!(
+            "Failed to find a valid digest in the 'integrity' attribute for resource '{}' with computed SHA-256 \
+             integrity '{}'. The resource has been blocked.",
+            resource.url,
+            lp_webapi::sri::sha256_expression(&resource.body)
+        )
+    })
 }
 
 impl Browser {
@@ -562,6 +908,24 @@ impl Browser {
         // `document.open()` does not stop.
         let script = opts.cdp_request_id.is_none()
             && !matches!(opts.reason, crate::NavigationReason::AddressBar | crate::NavigationReason::History);
+        // Chrome: web content cannot navigate a frame to a local file ("Not
+        // allowed to load local resource"), whatever its referrer policy.
+        // The initiator is the parent document for a child frame, else the
+        // frame's current document.
+        if script && opts.url.get(..5).is_some_and(|s| s.eq_ignore_ascii_case("file:")) {
+            let initiator = match page.child {
+                Some(_) => self
+                    .doc(page)
+                    .and_then(|p| p.main_frame.parent.clone())
+                    .and_then(|parent| self.frame(page.page, &parent))
+                    .map(|f| f.origin),
+                None => self.doc(page).map(|p| p.main_frame.origin.clone()),
+            };
+            if initiator.is_some_and(|o| o.starts_with("http:") || o.starts_with("https:")) {
+                self.navigation_failed(page, &opts, loader_id, "net::ERR_ACCESS_DENIED".into());
+                return Ok(());
+            }
+        }
         if let Some(mut p) = self.doc_mut(page) {
             p.pending_loader = Some(loader_id.clone());
             p.pending_script = script.then(|| (loader_id.clone(), opts.url.clone()));
@@ -575,6 +939,14 @@ impl Browser {
             frame_id,
             loader_id: Some(loader_id.0.clone()),
             crossorigin: None,
+            // Resource Timing: only the container's navigation of its frame
+            // (`src` processing) is reported, to the parent. One the frame's
+            // document starts, a reload or a traversal stays the frame's own:
+            // its URLs are not the parent's to read.
+            initiator: (page.child.is_some() && opts.reason == crate::NavigationReason::InitialFrameNavigation)
+                .then_some(lp_webapi::resource_timing::Initiator::Iframe),
+            module: None,
+            part: None,
         };
         let pending_id = loader_id.clone();
         let cancel = loader.fetch_cancellable(
@@ -678,16 +1050,35 @@ impl Browser {
         page: FrameKey,
         opts: &NavigateOpts,
         loader_id: LoaderId,
-        resource: Resource,
+        mut resource: Resource,
         history: HistoryHandling,
     ) -> Result<(), JsError> {
         let origin = origin_of(&resource.url);
-        self.commit_document(page, opts, loader_id.clone(), &origin, history)?;
+        // The policy the navigation request was sent with (its initiator's).
+        let policy = match &opts.referrer {
+            Some(_) => self.doc(page).and_then(|p| p.main_frame.page_dom.as_ref().map(|d| d.referrer_policy())),
+            None => None,
+        };
+        // Navigation Timing: the commit takes the fetch's phases (and a
+        // failed commit must not leave them for the next one).
+        let nav = self.doc(page).map(|p| p.nav.clone());
+        if let Some(nav) = &nav {
+            nav.set_incoming_fetch(resource.timing.take());
+        }
+        let committed = self.commit_document(page, opts, loader_id.clone(), &origin, history);
+        if let Some(nav) = &nav {
+            nav.set_incoming_fetch(None);
+        }
+        committed?;
         let page_dom = self.doc(page).and_then(|p| p.main_frame.page_dom.clone()).ok_or(JsError::ContextDestroyed)?;
+        page_dom.set_document_referrer(opts.referrer.as_deref(), policy.unwrap_or_default(), resource.referrer_policy);
         let dom = page_dom.dom.clone();
         let doc = page_dom.document();
         if resource.header_csp {
             let _ = dom.borrow_mut().set_header_csp(doc, true);
+        }
+        if let Some(refresh) = resource.refresh.as_deref() {
+            self.refresh_header(page, refresh);
         }
         let mut parser = if resource.mime == "text/plain" {
             DocumentParser::new_plaintext(dom.clone(), doc)
@@ -734,27 +1125,33 @@ impl Browser {
     /// Runs the parser until it blocks on a script or finishes.
     fn continue_parsing(&mut self, page: FrameKey) {
         loop {
-            let step = {
+            // The parser runs with no borrow of the frame state held: it
+            // runs custom element constructors and callbacks (HTML "create
+            // an element for a token"), which may reach the frame tree.
+            let (mut parser, phase, loader_id) = {
                 let Some(mut guard) = self.load_mut(page) else { return };
                 let load = &mut *guard;
-                if load.blocked || load.parsing_done {
+                if load.blocked || load.parsing_done || matches!(load.phase, ParsePhase::Done) {
                     return;
                 }
-                let Some(parser) = load.parser.as_mut() else { return };
-                match std::mem::replace(&mut load.phase, ParsePhase::Resume) {
-                    ParsePhase::Feed(body) => parser.feed_bytes(&body),
-                    ParsePhase::Resume => parser.resume(),
-                    ParsePhase::Finish => {
-                        load.phase = ParsePhase::FinishResume;
-                        parser.finish_bytes()
-                    }
-                    ParsePhase::FinishResume => {
-                        load.phase = ParsePhase::FinishResume;
-                        parser.resume()
-                    }
-                    ParsePhase::Done => return,
-                }
+                let Some(parser) = load.parser.take() else { return };
+                let next = match load.phase {
+                    ParsePhase::Finish | ParsePhase::FinishResume => ParsePhase::FinishResume,
+                    _ => ParsePhase::Resume,
+                };
+                (parser, std::mem::replace(&mut load.phase, next), load.loader_id.clone())
             };
+            let step = match phase {
+                ParsePhase::Feed(body) => parser.feed_bytes(&body),
+                ParsePhase::Resume | ParsePhase::FinishResume => parser.resume(),
+                ParsePhase::Finish => parser.finish_bytes(),
+                ParsePhase::Done => unreachable!("checked above"),
+            };
+            match self.load_mut(page) {
+                // A constructor may have started another document's load.
+                Some(mut load) if load.loader_id == loader_id => load.parser = Some(parser),
+                _ => return,
+            }
             self.drain_dom_resources(page);
             match step {
                 ParseStep::Script(node) => self.parser_reached_script(page, node),
@@ -863,10 +1260,14 @@ impl Browser {
             _ => return,
         };
         let src_url = match info.src.as_deref() {
-            Some(s) => match resolve_url(&base, s) {
-                Some(u) => Some(u),
-                None => return, // spec: error event (needs lp-webapi)
-            },
+            Some(s) => {
+                // `<base href>` aware; the inline-script URL stays `base`.
+                let src_base = node_base_url(&element.dom.borrow(), node).unwrap_or_else(|| base.clone());
+                match resolve_url(&src_base, s) {
+                    Some(u) => Some(u),
+                    None => return, // spec: error event (needs lp-webapi)
+                }
+            }
             None => None,
         };
         if src_url.is_some() {
@@ -875,8 +1276,12 @@ impl Browser {
         }
         match (ty, src_url) {
             (ScriptType::Classic, None) => self.execute_at_insertion_point(page, &info.inline_text, &base, &element),
-            (ScriptType::Classic, Some(url)) if info.async_ => self.fetch_async(page, ty, url, element),
-            (ScriptType::Classic, Some(url)) if info.defer => self.fetch_deferred(page, ty, url, element),
+            (ScriptType::Classic, Some(url)) if info.async_ => {
+                self.fetch_async(page, ty, url, element, ScriptFetch::of(&info))
+            }
+            (ScriptType::Classic, Some(url)) if info.defer => {
+                self.fetch_deferred(page, ty, url, element, ScriptFetch::of(&info))
+            }
             (ScriptType::Classic, Some(url)) => {
                 // Parser-blocking: pause until fetched and executed.
                 let loader_id = self.current_loader(page);
@@ -884,7 +1289,7 @@ impl Browser {
                     l.blocked = true;
                 }
                 let u = url.clone();
-                self.fetch_text(page, url, ResourceKind::Script, move |b, res| {
+                self.fetch_script(page, url, ResourceKind::Script, ScriptFetch::of(&info), move |b, res| {
                     if b.current_loader(page) != loader_id {
                         return;
                     }
@@ -904,8 +1309,10 @@ impl Browser {
                     b.continue_parsing(page);
                 });
             }
-            (ScriptType::Module, Some(url)) if info.async_ => self.fetch_async(page, ty, url, element),
-            (ScriptType::Module, Some(url)) => self.fetch_deferred(page, ty, url, element),
+            (ScriptType::Module, Some(url)) if info.async_ => {
+                self.fetch_async(page, ty, url, element, ScriptFetch::of(&info))
+            }
+            (ScriptType::Module, Some(url)) => self.fetch_deferred(page, ty, url, element, ScriptFetch::of(&info)),
             (ScriptType::Module, None) => {
                 let url = {
                     let mut l = self.load_mut(page).expect("load");
@@ -931,6 +1338,19 @@ impl Browser {
         kind: ResourceKind,
         done: impl FnOnce(&mut Browser, Result<String, String>) + 'static,
     ) {
+        self.fetch_script(page, url, kind, ScriptFetch::default(), done);
+    }
+
+    /// [`Browser::fetch_text`] honouring a script's `crossorigin` (CORS
+    /// mode) and `integrity` (a mismatch is an error).
+    pub(crate) fn fetch_script(
+        &mut self,
+        page: FrameKey,
+        url: String,
+        kind: ResourceKind,
+        opts: ScriptFetch,
+        done: impl FnOnce(&mut Browser, Result<String, String>) + 'static,
+    ) {
         let Some(loader) = self.loader_for(page) else {
             self.scheduler().post(TaskSource::Networking, move |b| done(b, Err("no resource loader".into())));
             return;
@@ -939,14 +1359,44 @@ impl Browser {
         let frame_id = self.doc(page).map(|p| p.main_frame.id.0.clone());
         // Subresources carry the document's loader id (CDP Network.* routing).
         let loader_id = self.doc(page).map(|p| p.main_frame.loader_id.0.clone());
-        let req =
-            FetchRequest { post: None, url, kind, page: page.page, referrer, frame_id, loader_id, crossorigin: None };
+        let ScriptFetch { integrity, crossorigin, module } = opts;
+        let module = (kind == ResourceKind::ModuleScript).then(|| module.unwrap_or(ModuleType::JavaScript));
+        let cors = kind == ResourceKind::ModuleScript || crossorigin.is_some();
+        let initiator = Some(lp_webapi::resource_timing::Initiator::Script);
+        let req = FetchRequest {
+            post: None,
+            url,
+            kind,
+            page: page.page,
+            referrer,
+            frame_id,
+            loader_id,
+            crossorigin,
+            initiator,
+            module,
+            part: None,
+        };
         loader.fetch(
             self,
             req,
             Box::new(move |b, res| {
                 let res = match res {
-                    Ok(r) if (200..300).contains(&r.status) => Ok(r.text()),
+                    Ok(r) if (200..300).contains(&r.status) => {
+                        let blocked = integrity
+                            .as_deref()
+                            .and_then(|i| {
+                                let origin = b.doc(page).map(|p| p.main_frame.origin.clone()).unwrap_or_default();
+                                integrity_error(&r, Some(i), cors, &origin)
+                            })
+                            .or_else(|| module.and_then(|ty| lp_webapi::module_script::mime_error(ty, &r.mime, &r.url)));
+                        match blocked {
+                            Some(e) => Err(e),
+                            // A module script is UTF-8 whatever its charset
+                            // says (HTML "fetch a single module script").
+                            None if module.is_some() => Ok(lp_webapi::module_script::utf8_decode(&r.body)),
+                            None => Ok(r.text()),
+                        }
+                    }
                     Ok(r) => Err(format!("HTTP {} for {}", r.status, r.url)),
                     Err(e) => Err(e),
                 };
@@ -955,12 +1405,19 @@ impl Browser {
         );
     }
 
-    fn fetch_deferred(&mut self, page: FrameKey, ty: ScriptType, url: String, element: Rc<ResourceNode>) {
+    fn fetch_deferred(
+        &mut self,
+        page: FrameKey,
+        ty: ScriptType,
+        url: String,
+        element: Rc<ResourceNode>,
+        opts: ScriptFetch,
+    ) {
         let ps = Rc::new(RefCell::new(PendingScript { element, ty, url: url.clone(), source: None }));
         self.load_mut(page).expect("load").deferred.push_back(ps.clone());
         let kind = if ty == ScriptType::Module { ResourceKind::ModuleScript } else { ResourceKind::Script };
         let loader_id = self.current_loader(page);
-        self.fetch_text(page, url, kind, move |b, res| {
+        self.fetch_script(page, url, kind, opts, move |b, res| {
             if b.current_loader(page) != loader_id {
                 return;
             }
@@ -974,7 +1431,14 @@ impl Browser {
     /// runs it when it arrives. While it is in flight it delays the `load`
     /// event of a document that is still loading; a document without a
     /// `DocumentLoad` (about:blank, a written document) has no such gate.
-    fn fetch_async(&mut self, page: FrameKey, ty: ScriptType, url: String, element: Rc<ResourceNode>) {
+    fn fetch_async(
+        &mut self,
+        page: FrameKey,
+        ty: ScriptType,
+        url: String,
+        element: Rc<ResourceNode>,
+        opts: ScriptFetch,
+    ) {
         let loader_id = self.frame_loader(page);
         if loader_id.is_none() {
             return;
@@ -988,7 +1452,7 @@ impl Browser {
         };
         let kind = if ty == ScriptType::Module { ResourceKind::ModuleScript } else { ResourceKind::Script };
         let u = url.clone();
-        self.fetch_text(page, url, kind, move |b, res| {
+        self.fetch_script(page, url, kind, opts, move |b, res| {
             if b.frame_loader(page) != loader_id {
                 return;
             }
@@ -1109,13 +1573,16 @@ impl Browser {
                 self.script_loaded(page, &element, false);
                 return;
             }
-            Some(s) => match resolve_url(&base, s) {
-                Some(u) => Some(u),
-                None => {
-                    self.script_loaded(page, &element, false);
-                    return;
+            Some(s) => {
+                let src_base = node_base_url(&element.dom.borrow(), node).unwrap_or_else(|| base.clone());
+                match resolve_url(&src_base, s) {
+                    Some(u) => Some(u),
+                    None => {
+                        self.script_loaded(page, &element, false);
+                        return;
+                    }
                 }
-            },
+            }
         };
         match (ty, src_url) {
             // Spec: runs immediately, at insertion; here once the inserting
@@ -1137,7 +1604,7 @@ impl Browser {
             // `defer` is ignored and they run as soon as they arrive.
             (ScriptType::Classic, Some(url)) | (ScriptType::Module, Some(url)) => {
                 self.block_rendering_on_script(page, node, false);
-                self.fetch_async(page, ty, url, element)
+                self.fetch_async(page, ty, url, element, ScriptFetch::of(&info))
             }
             (ScriptType::Module, None) => {
                 let url = dynamic_inline_module_url(&base);
@@ -1217,6 +1684,9 @@ impl Browser {
                     frame_id: Some(frame_id.0.clone()),
                     loader_id,
                     crossorigin: None,
+                    initiator: None,
+                    module: None,
+                    part: None,
                 };
                 loader.fetch(
                     self,
@@ -1329,6 +1799,7 @@ impl Browser {
             || !state.main_frame.dom_content_loaded
             || state.stylesheets.pending() != 0
             || state.images.blocking_load() != 0
+            || state.main_frame.page_dom.as_ref().is_some_and(|d| d.media_delays_load())
         {
             return;
         }
@@ -1345,6 +1816,9 @@ impl Browser {
         if let Some(dom) = frame.page_dom {
             lp_webapi::lifecycle::load(&dom, dom.document());
         }
+        if let Some(nav) = self.doc(page).map(|d| d.nav.clone()) {
+            nav.notify_timeline("navigation");
+        }
         if !host.matches(page, &frame.loader_id) {
             return;
         }
@@ -1356,6 +1830,7 @@ impl Browser {
                 timestamp: self.timestamp(),
             },
         );
+        self.start_pending_refresh(page, frame.loader_id.clone());
         self.watch_network_idle(page, frame.loader_id);
         if let Some(parent) = frame.parent.and_then(|id| host.key(&id)) {
             if let Some(owner) = frame.owner {
@@ -1487,7 +1962,10 @@ impl Browser {
             info
         };
         let base = self.doc(page).map(|p| p.main_frame.base_url.clone()).unwrap_or_default();
-        let src_url = info.src.as_deref().and_then(|s| resolve_url(&base, s));
+        let src_url = info.src.as_deref().and_then(|s| {
+            let src_base = node_base_url(&dom.borrow(), node).unwrap_or_else(|| base.clone());
+            resolve_url(&src_base, s)
+        });
         let blocking = bindings.written_script_pending() == Some(node);
         let Some(url) = src_url else {
             if blocking {
@@ -1503,7 +1981,7 @@ impl Browser {
         if blocking {
             let bindings = bindings.clone();
             let u = url.clone();
-            self.fetch_text(page, url, ResourceKind::Script, move |_, res| {
+            self.fetch_script(page, url, ResourceKind::Script, ScriptFetch::of(&info), move |_, res| {
                 lp_webapi::lifecycle::written_script_fetched(&bindings, node, &u, res);
             });
             return;
@@ -1516,7 +1994,7 @@ impl Browser {
         let kind = if module { ResourceKind::ModuleScript } else { ResourceKind::Script };
         let u = url.clone();
         let current = bindings.clone();
-        self.fetch_text(page, url, kind, move |b, res| {
+        self.fetch_script(page, url, kind, ScriptFetch::of(&info), move |b, res| {
             if !b.doc(page).and_then(|p| p.main_frame.page_dom.clone()).is_some_and(|d| Rc::ptr_eq(&d, &current)) {
                 return;
             }
@@ -1626,6 +2104,13 @@ impl Browser {
         let Some(realm) = self.main_realm(page) else { return };
         let Ok(scope) = realm.scope() else { return };
         lp_webapi::lifecycle::report_diagnostic(&scope, &JsError::Type(format!("Failed to load script: {error}")));
+    }
+
+    /// A subresource failure the console reports (no `error` event at the Window).
+    pub(crate) fn report_console_error(&mut self, page: FrameKey, error: &str) {
+        let Some(realm) = self.main_realm(page) else { return };
+        let Ok(scope) = realm.scope() else { return };
+        lp_webapi::lifecycle::report_diagnostic(&scope, &JsError::Type(error.to_owned()));
     }
 }
 

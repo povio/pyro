@@ -1,6 +1,83 @@
+diff --color -ruN -x README.lightningpanda.md -x UPSTREAM.patch -x .cargo_vcs_info.json -x .cargo-ok -x Cargo.toml.orig a/invalidation/element/invalidation_map.rs b/invalidation/element/invalidation_map.rs
+--- a/invalidation/element/invalidation_map.rs	2006-07-24 03:21:28
++++ b/invalidation/element/invalidation_map.rs	2026-11-07 14:08:05
+@@ -399,6 +399,11 @@
+     pub used: bool,
+     /// Flag indicating if invalidating a relative selector requires ancestor traversal.
+     pub needs_ancestors_traversal: bool,
++    /// lightningpanda: every element state some relative selector's
++    /// argument depends on (the union of `state_affecting_selectors`' states
++    /// in the relative selector map), so an embedder can tell with one flag
++    /// test that a state change cannot change any `:has()` match.
++    pub state_dependencies: ElementState,
+ }
+ 
+ impl Default for AdditionalRelativeSelectorInvalidationMap {
+@@ -416,6 +421,7 @@
+             any_to_selector: SmallVec::default(),
+             used: false,
+             needs_ancestors_traversal: false,
++            state_dependencies: ElementState::empty(),
+         }
+     }
+ 
+@@ -424,6 +430,7 @@
+         self.ts_state_to_selector.clear();
+         self.type_to_selector.clear();
+         self.any_to_selector.clear();
++        self.state_dependencies = ElementState::empty();
+     }
+ 
+     /// Shrink the capacity of hash maps if needed.
+@@ -595,6 +602,11 @@
+     fn this_scope_dependencies(&mut self) -> &mut Option<Vec<Dependency>>;
+     fn update_states(&mut self, element_state: ElementState, document_state: DocumentState);
+ 
++    /// lightningpanda: `element_state` goes into `state_map()`; a relative
++    /// selector map records the union
++    /// (`AdditionalRelativeSelectorInvalidationMap::state_dependencies`).
++    fn note_state_dependency(&mut self, element_state: ElementState);
++
+     // In normal invalidations, type-based dependencies don't need to be explicitly tracked;
+     // elements don't change their types, and mutations cause invalidations to go descendant
+     // (Where they are about to be styled anyway), and/or later-sibling direction (Where they
+@@ -720,6 +732,7 @@
+     if element_state.is_empty() {
+         return Ok(());
+     }
++    collector.note_state_dependency(element_state);
+     let dependency = collector.dependency();
+     collector.state_map().insert(
+         StateDependency {
+@@ -913,6 +926,13 @@
+         }
+     }
+ 
++    fn note_state_dependency(&mut self, element_state: ElementState) {
++        if self.relative_inner_collector.is_some() {
++            self.additional_relative_selector_invalidation_map
++                .state_dependencies |= element_state;
++        }
++    }
++
+     fn attribute_map(&mut self) -> &mut LocalNameDependencyMap {
+         if self.relative_inner_collector.is_none() {
+             &mut self.map.other_attribute_affecting_selectors
+@@ -1436,6 +1456,11 @@
+         &mut self
+             .relative_selector_invalidation_map
+             .state_affecting_selectors
++    }
++
++    fn note_state_dependency(&mut self, element_state: ElementState) {
++        self.additional_relative_selector_invalidation_map
++            .state_dependencies |= element_state;
+     }
+ 
+     fn attribute_map(&mut self) -> &mut LocalNameDependencyMap {
 diff --color -ruN -x README.lightningpanda.md -x UPSTREAM.patch -x .cargo_vcs_info.json -x .cargo-ok -x Cargo.toml.orig a/properties/counted_unknown_properties.py b/properties/counted_unknown_properties.py
---- a/properties/counted_unknown_properties.py	2026-11-07 14:17:49
-+++ b/properties/counted_unknown_properties.py	2026-11-07 14:17:49
+--- a/properties/counted_unknown_properties.py	2006-07-24 03:21:28
++++ b/properties/counted_unknown_properties.py	2026-11-04 14:07:40
 @@ -7,8 +7,6 @@
      "speak",
      "text-size-adjust",
@@ -11,8 +88,8 @@ diff --color -ruN -x README.lightningpanda.md -x UPSTREAM.patch -x .cargo_vcs_in
      "-webkit-margin-before",
      "-webkit-margin-after",
 diff --color -ruN -x README.lightningpanda.md -x UPSTREAM.patch -x .cargo_vcs_info.json -x .cargo-ok -x Cargo.toml.orig a/properties/helpers.mako.rs b/properties/helpers.mako.rs
---- a/properties/helpers.mako.rs	2026-11-07 14:17:49
-+++ b/properties/helpers.mako.rs	2026-11-07 14:17:49
+--- a/properties/helpers.mako.rs	2006-07-24 03:21:28
++++ b/properties/helpers.mako.rs	2026-11-07 14:08:05
 @@ -64,7 +64,17 @@
                      % endif
                      CSSWideKeyword::Inherit => {
@@ -32,8 +109,8 @@ diff --color -ruN -x README.lightningpanda.md -x UPSTREAM.patch -x .cargo_vcs_in
                          % if property.is_zoom_dependent():
                              if !context.builder.effective_zoom_for_inheritance.is_one() {
 diff --color -ruN -x README.lightningpanda.md -x UPSTREAM.patch -x .cargo_vcs_info.json -x .cargo-ok -x Cargo.toml.orig a/properties/longhands.toml b/properties/longhands.toml
---- a/properties/longhands.toml	2026-11-07 14:17:49
-+++ b/properties/longhands.toml	2026-11-07 14:17:49
+--- a/properties/longhands.toml	2006-07-24 03:21:28
++++ b/properties/longhands.toml	2026-11-07 14:08:05
 @@ -474,7 +474,6 @@
  type = "BreakBetween"
  initial = "computed::BreakBetween::Auto"
@@ -79,8 +156,8 @@ diff --color -ruN -x README.lightningpanda.md -x UPSTREAM.patch -x .cargo_vcs_in
  
  [caption-side]
 diff --color -ruN -x README.lightningpanda.md -x UPSTREAM.patch -x .cargo_vcs_info.json -x .cargo-ok -x Cargo.toml.orig a/properties/shorthands.rs b/properties/shorthands.rs
---- a/properties/shorthands.rs	2026-11-07 14:17:49
-+++ b/properties/shorthands.rs	2026-11-07 14:17:49
+--- a/properties/shorthands.rs	2006-07-24 03:21:28
++++ b/properties/shorthands.rs	2026-11-07 14:08:05
 @@ -542,7 +542,6 @@
      }
  }
@@ -90,8 +167,8 @@ diff --color -ruN -x README.lightningpanda.md -x UPSTREAM.patch -x .cargo_vcs_in
      use super::*;
      pub use crate::properties::generated::shorthands::container::*;
 diff --color -ruN -x README.lightningpanda.md -x UPSTREAM.patch -x .cargo_vcs_info.json -x .cargo-ok -x Cargo.toml.orig a/properties/shorthands.toml b/properties/shorthands.toml
---- a/properties/shorthands.toml	2026-11-07 14:17:49
-+++ b/properties/shorthands.toml	2026-11-07 14:17:49
+--- a/properties/shorthands.toml	2006-07-24 03:21:28
++++ b/properties/shorthands.toml	2026-11-07 14:08:05
 @@ -209,7 +209,7 @@
  kind = "two_properties"
  
@@ -122,8 +199,8 @@ diff --color -ruN -x README.lightningpanda.md -x UPSTREAM.patch -x .cargo_vcs_in
  sub_properties = ["break-inside"]
  spec = "https://drafts.csswg.org/css-break-3/#page-break-properties"
 diff --color -ruN -x README.lightningpanda.md -x UPSTREAM.patch -x .cargo_vcs_info.json -x .cargo-ok -x Cargo.toml.orig a/rule_cache.rs b/rule_cache.rs
---- a/rule_cache.rs	2026-11-07 14:17:49
-+++ b/rule_cache.rs	2026-11-07 14:17:49
+--- a/rule_cache.rs	2006-07-24 03:21:28
++++ b/rule_cache.rs	2026-11-07 14:08:05
 @@ -26,9 +26,53 @@
      line_height: Option<NonNegativeLength>,
      writing_mode: Option<WritingMode>,
@@ -205,60 +282,20 @@ diff --color -ruN -x README.lightningpanda.md -x UPSTREAM.patch -x .cargo_vcs_in
          };
          self.map
              .entry(rules)
-diff --color -ruN -x README.lightningpanda.md -x UPSTREAM.patch -x .cargo_vcs_info.json -x .cargo-ok -x Cargo.toml.orig a/style_resolver.rs b/style_resolver.rs
---- a/style_resolver.rs	2026-11-07 14:17:49
-+++ b/style_resolver.rs	2026-11-07 14:17:49
-@@ -586,6 +586,47 @@
-         );
-         matching_context.extra_data.originating_element_style = Some(originating_element_style);
- 
-+        // lightningpanda: no rule that can generate a `::before`/`::after` box matches, so the
-+        // style matched and cascaded below would be dropped by
-+        // `eager_pseudo_is_definitely_not_generated`. Only for the unvisited pass: when it goes
-+        // on, the visited pass matches every rule, as upstream.
-+        if visited_handling == VisitedHandlingMode::AllLinksUnvisited
-+            && !matches!(self.pseudo_resolution, PseudoElementResolution::Force)
-+            && !stylist.may_generate_box_for_pseudo(
-+                self.element,
-+                pseudo_element,
-+                &mut applicable_declarations,
-+                &mut matching_context,
-+            )
-+        {
-+            #[cfg(debug_assertions)]
-+            {
-+                stylist.push_applicable_declarations(
-+                    self.element,
-+                    Some(pseudo_element),
-+                    None,
-+                    None,
-+                    Default::default(),
-+                    self.rule_inclusion,
-+                    &mut applicable_declarations,
-+                    &mut matching_context,
-+                );
-+                let guards = &self.context.shared.guards;
-+                for block in applicable_declarations.iter() {
-+                    let guard = guards.for_origin(block.level().origin().origin());
-+                    debug_assert!(
-+                        !crate::stylist::declarations_may_generate_pseudo_box(
-+                            block.source.read(guard)
-+                        ),
-+                        "a rule that can generate {:?} for {:?} is missing from the index",
-+                        pseudo_element,
-+                        self.element,
-+                    );
-+                }
-+            }
-+            return None;
-+        }
-+
-         // NB: We handle animation rules for ::before and ::after when
-         // traversing them.
-         stylist.push_applicable_declarations(
+diff --color -ruN -x README.lightningpanda.md -x UPSTREAM.patch -x .cargo_vcs_info.json -x .cargo-ok -x Cargo.toml.orig a/servo/selector_parser.rs b/servo/selector_parser.rs
+--- a/servo/selector_parser.rs	2006-07-24 03:21:28
++++ b/servo/selector_parser.rs	2026-11-07 14:08:05
+@@ -629,6 +629,7 @@
+             "focus-within" => NonTSPseudoClass::FocusWithin,
+             "fullscreen" => NonTSPseudoClass::Fullscreen,
+             "hover" => NonTSPseudoClass::Hover,
++            "in-range" => NonTSPseudoClass::InRange,
+             "indeterminate" => NonTSPseudoClass::Indeterminate,
+             "invalid" => NonTSPseudoClass::Invalid,
+             "link" => NonTSPseudoClass::Link,
 diff --color -ruN -x README.lightningpanda.md -x UPSTREAM.patch -x .cargo_vcs_info.json -x .cargo-ok -x Cargo.toml.orig a/stylesheets/rule_parser.rs b/stylesheets/rule_parser.rs
---- a/stylesheets/rule_parser.rs	2026-11-07 14:17:49
-+++ b/stylesheets/rule_parser.rs	2026-11-07 14:17:49
+--- a/stylesheets/rule_parser.rs	2006-07-24 03:21:28
++++ b/stylesheets/rule_parser.rs	2026-11-07 14:08:05
 @@ -282,7 +282,7 @@
              "counter-style" if cfg!(feature = "gecko") => Self::CounterStyle,
              "media" => Self::Media,
@@ -269,19 +306,8 @@ diff --color -ruN -x README.lightningpanda.md -x UPSTREAM.patch -x .cargo_vcs_in
              "keyframes" => Self::Keyframes(None),
              "-webkit-keyframes" => Self::Keyframes(Some(VendorPrefix::WebKit)),
 diff --color -ruN -x README.lightningpanda.md -x UPSTREAM.patch -x .cargo_vcs_info.json -x .cargo-ok -x Cargo.toml.orig a/stylist.rs b/stylist.rs
---- a/stylist.rs	2026-11-07 14:17:49
-+++ b/stylist.rs	2026-11-07 14:17:49
-@@ -32,8 +32,8 @@
- #[cfg(feature = "gecko")]
- use crate::properties::StyleBuilder;
- use crate::properties::{
--    self, AnimationDeclarations, CascadeMode, ComputedValues, FirstLineReparenting,
--    PropertyDeclarationBlock, PropertyIdRef,
-+    self, AnimationDeclarations, CascadeMode, ComputedValues, FirstLineReparenting, LonghandId,
-+    PropertyDeclarationBlock, PropertyDeclarationId, PropertyIdRef,
- };
- use crate::properties_and_values::registry::{
-     PropertyRegistration, ScriptRegistry as CustomPropertyScriptRegistry,
+--- a/stylist.rs	2006-07-24 03:21:28
++++ b/stylist.rs	2026-11-07 14:08:05
 @@ -999,6 +999,13 @@
          ExtraStyleDataIterator(self.cascade_data.iter_origins_rev())
      }
@@ -296,243 +322,9 @@ diff --color -ruN -x README.lightningpanda.md -x UPSTREAM.patch -x .cargo_vcs_in
      /// Returns the number of selectors.
      pub fn num_selectors(&self) -> usize {
          self.cascade_data
-@@ -1176,6 +1183,62 @@
-         doc_author_rules_apply && f(&self.cascade_data.author)
-     }
- 
-+    /// lightningpanda: whether a rule that can make `pseudo` (`::before` or `::after`, eagerly
-+    /// cascaded for `element`) generate a box matches `element`, so that the full match and
-+    /// cascade of the pseudo-element can give a style that is kept. When this is `false`, every
-+    /// rule that matches leaves `content` at `normal` (it is not inherited) and declares neither
-+    /// `display` nor `content` (so `DISPLAY_OR_CONTENT_DEPEND_ON_INHERITED_STYLE` stays unset),
-+    /// and `eager_pseudo_is_definitely_not_generated` would drop the style.
-+    ///
-+    /// The index covers the document's origins. Elements that shadow-tree, `::slotted()`,
-+    /// `:host` or `::part()` rules could reach for `pseudo` answer `true`, as do pseudo-elements
-+    /// of pseudo-elements. Matching the index is a subset of what the full match does with the
-+    /// same `context`, so the selector flags it sets are ones the full match would set; the
-+    /// ones it leaves unset belong to rules that cannot generate a box.
-+    ///
-+    /// `scratch` must be empty, and is left empty.
-+    pub fn may_generate_box_for_pseudo<E>(
-+        &self,
-+        element: E,
-+        pseudo: &PseudoElement,
-+        scratch: &mut ApplicableDeclarationList,
-+        context: &mut MatchingContext<E::Impl>,
-+    ) -> bool
-+    where
-+        E: TElement,
-+    {
-+        debug_assert!(scratch.is_empty());
-+        if !pseudo.is_before_or_after()
-+            || element.implemented_pseudo_element().is_some()
-+            || element.has_part_attr()
-+        {
-+            return true;
-+        }
-+        let mut in_shadow_rules = false;
-+        element.each_applicable_non_document_style_rule_data(|data, _| {
-+            in_shadow_rules = in_shadow_rules || data.has_rules_for_pseudo(pseudo);
-+        });
-+        if in_shadow_rules {
-+            return true;
-+        }
-+        for (data, origin) in self.cascade_data.iter_origins() {
-+            let Some(map) = data.box_generating_pseudo_rules(pseudo) else {
-+                continue;
-+            };
-+            let level = match origin {
-+                Origin::UserAgent => CascadeLevel::new(CascadeOrigin::UA),
-+                Origin::User => CascadeLevel::new(CascadeOrigin::User),
-+                Origin::Author => CascadeLevel::same_tree_author_normal(),
-+            };
-+            map.get_all_matching_rules(element, element, scratch, context, level, data, self);
-+            if !scratch.is_empty() {
-+                scratch.clear();
-+                return true;
-+            }
-+        }
-+        false
-+    }
-+
-     /// Execute callback for all applicable style rule data.
-     pub fn for_each_cascade_data_with_scope<'a, E, F>(&'a self, element: E, mut f: F)
-     where
-@@ -2814,6 +2877,82 @@
-     }
- }
- 
-+/// lightningpanda: the `::before` and `::after` rules (one pseudo-element level, in
-+/// `normal_rules`) whose declarations can make the pseudo-element generate a box: they declare
-+/// `content`, `display` or `animation-name`, looked up on the block's longhand set, so `all`,
-+/// `var()` and the CSS-wide keywords count. Without one of them matching, `content` is `normal`
-+/// and `display` is not inherited, so the style `match_pseudo` would compute is dropped by
-+/// `eager_pseudo_is_definitely_not_generated` (see `Stylist::may_generate_box_for_pseudo`).
-+///
-+/// A copy of the rules kept in `normal_rules`, filled by the same `add_styles` and cleared with
-+/// it; a CSSOM declaration edit rebuilds both (`RuleChangeKind::StyleRuleDeclarations` is
-+/// `DataValidity::FullyInvalid`).
-+/// lightningpanda: whether a `::before`/`::after` rule with these declarations can make the
-+/// pseudo-element generate a box (see `BoxGeneratingPseudoRules`).
-+pub fn declarations_may_generate_pseudo_box(block: &PropertyDeclarationBlock) -> bool {
-+    BoxGeneratingPseudoRules::declarations_may_generate_box(block)
-+}
-+
-+#[derive(Clone, Debug, Default, MallocSizeOf)]
-+struct BoxGeneratingPseudoRules {
-+    before: SelectorMap<Rule>,
-+    after: SelectorMap<Rule>,
-+}
-+
-+impl BoxGeneratingPseudoRules {
-+    /// Whether a rule with these declarations goes in the index (when it is a single-level
-+    /// `::before` or `::after` rule).
-+    ///
-+    /// `content: normal | none` and `animation-name: none` cannot make the box appear, so they
-+    /// do not count: lightningpanda's UA `*::before, *::after { animation: none !important }`
-+    /// would otherwise put a rule matching every element in the index. Their CSS-wide keyword
-+    /// and `var()` forms still count.
-+    fn declarations_may_generate_box(block: &PropertyDeclarationBlock) -> bool {
-+        use crate::properties::PropertyDeclaration;
-+        use crate::values::generics::counters::GenericContent;
-+        block.declarations().iter().any(|decl| match decl {
-+            PropertyDeclaration::AnimationName(names) => !names.0.iter().all(|n| n.is_none()),
-+            PropertyDeclaration::Content(GenericContent::Normal | GenericContent::None) => false,
-+            other => matches!(
-+                other.id(),
-+                PropertyDeclarationId::Longhand(
-+                    LonghandId::Content | LonghandId::Display | LonghandId::AnimationName
-+                )
-+            ),
-+        })
-+    }
-+
-+    fn map(&self, pseudo: &PseudoElement) -> Option<&SelectorMap<Rule>> {
-+        if pseudo.is_before() {
-+            Some(&self.before)
-+        } else if pseudo.is_after() {
-+            Some(&self.after)
-+        } else {
-+            None
-+        }
-+    }
-+
-+    fn map_mut(&mut self, pseudo: &PseudoElement) -> Option<&mut SelectorMap<Rule>> {
-+        if pseudo.is_before() {
-+            Some(&mut self.before)
-+        } else if pseudo.is_after() {
-+            Some(&mut self.after)
-+        } else {
-+            None
-+        }
-+    }
-+
-+    fn clear(&mut self) {
-+        self.before.clear();
-+        self.after.clear();
-+    }
-+
-+    fn shrink_if_needed(&mut self) {
-+        self.before.shrink_if_needed();
-+        self.after.shrink_if_needed();
-+    }
-+}
-+
- /// The id of a given layer, a sequentially-increasing identifier.
- #[derive(Clone, Copy, Debug, Eq, MallocSizeOf, PartialEq, PartialOrd, Ord)]
- pub struct LayerId(u16);
-@@ -3238,6 +3377,10 @@
-     /// cascade level.
-     normal_rules: ElementAndPseudoRules,
- 
-+    /// lightningpanda: the rules of `normal_rules` that can make a `::before` or `::after`
-+    /// generate a box.
-+    box_generating_pseudo_rules: BoxGeneratingPseudoRules,
-+
-     /// The `:host` pseudo rules that are the rightmost selector (without
-     /// accounting for pseudo-elements), or `:scope` rules that may match
-     /// the featureless host.
-@@ -3401,6 +3544,7 @@
-     pub fn new() -> Self {
-         Self {
-             normal_rules: ElementAndPseudoRules::default(),
-+            box_generating_pseudo_rules: BoxGeneratingPseudoRules::default(),
-             featureless_host_rules: None,
-             slotted_rules: None,
-             part_rules: None,
-@@ -3594,6 +3738,25 @@
-         self.normal_rules.rules(pseudo_elements)
-     }
- 
-+    /// lightningpanda: the rules of `normal_rules(&[pseudo])` that can make `pseudo` (`::before`
-+    /// or `::after`) generate a box. `None` for other pseudo-elements.
-+    #[inline]
-+    pub fn box_generating_pseudo_rules(&self, pseudo: &PseudoElement) -> Option<&SelectorMap<Rule>> {
-+        self.box_generating_pseudo_rules.map(pseudo)
-+    }
-+
-+    /// lightningpanda: whether any rule here is for `pseudo`, in any of the maps the rule
-+    /// collector reads for it.
-+    fn has_rules_for_pseudo(&self, pseudo: &PseudoElement) -> bool {
-+        let pseudos = std::slice::from_ref(pseudo);
-+        self.normal_rules(pseudos).is_some_and(|m| !m.is_empty())
-+            || self
-+                .featureless_host_rules(pseudos)
-+                .is_some_and(|m| !m.is_empty())
-+            || self.slotted_rules(pseudos).is_some_and(|m| !m.is_empty())
-+            || self.part_rules(pseudos).is_some_and(|m| !m.is_empty())
-+    }
-+
-     /// Returns the featureless pseudo rule map for a given pseudo-element.
-     #[inline]
-     pub fn featureless_host_rules(
-@@ -3712,6 +3875,7 @@
- 
-     fn shrink_maps_if_needed(&mut self) {
-         self.normal_rules.shrink_if_needed();
-+        self.box_generating_pseudo_rules.shrink_if_needed();
-         if let Some(ref mut host_rules) = self.featureless_host_rules {
-             host_rules.shrink_if_needed();
-         }
-@@ -3848,7 +4012,9 @@
-         quirks_mode: QuirksMode,
-         mut collected_scope_dependencies: Option<&mut Vec<Dependency>>,
-     ) -> Result<(), AllocErr> {
--        self.num_declarations += declarations.read_with(guard).len();
-+        let block = declarations.read_with(guard);
-+        self.num_declarations += block.len();
-+        let may_generate_box = BoxGeneratingPseudoRules::declarations_may_generate_box(block);
-         for selector in selectors.slice() {
-             self.num_selectors += 1;
- 
-@@ -4003,6 +4169,15 @@
-                 // :scope may match featureless shadow host if the scope
-                 // root is the shadow root.
-                 // See https://github.com/w3c/csswg-drafts/issues/9025
-+                let in_normal_rules = !matches_featureless_host_only && !rule.selector.is_slotted();
-+                if in_normal_rules && may_generate_box && pseudo_elements.len() == 1 {
-+                    if let Some(map) = self
-+                        .box_generating_pseudo_rules
-+                        .map_mut(pseudo_elements[0])
-+                    {
-+                        map.insert(rule.clone(), quirks_mode)?;
-+                    }
-+                }
-                 let rules = if matches_featureless_host_only {
-                     self.featureless_host_rules.get_or_insert_with(Box::default)
-                 } else if rule.selector.is_slotted() {
-@@ -4701,6 +4876,7 @@
-     /// Clears the cascade data, but not the invalidation data.
-     fn clear_cascade_data(&mut self) {
-         self.normal_rules.clear();
-+        self.box_generating_pseudo_rules.clear();
-         if let Some(ref mut slotted_rules) = self.slotted_rules {
-             slotted_rules.clear();
-         }
 diff --color -ruN -x README.lightningpanda.md -x UPSTREAM.patch -x .cargo_vcs_info.json -x .cargo-ok -x Cargo.toml.orig a/values/generics/mod.rs b/values/generics/mod.rs
---- a/values/generics/mod.rs	2026-11-07 14:17:49
-+++ b/values/generics/mod.rs	2026-11-07 14:17:49
+--- a/values/generics/mod.rs	2006-07-24 03:21:28
++++ b/values/generics/mod.rs	2026-11-07 14:08:05
 @@ -110,6 +110,7 @@
      ToCss,
      ToResolvedValue,
@@ -542,8 +334,8 @@ diff --color -ruN -x README.lightningpanda.md -x UPSTREAM.patch -x .cargo_vcs_in
  #[repr(transparent)]
  pub struct GreaterThanOrEqualToOne<T>(pub T);
 diff --color -ruN -x README.lightningpanda.md -x UPSTREAM.patch -x .cargo_vcs_info.json -x .cargo-ok -x Cargo.toml.orig a/values/specified/box.rs b/values/specified/box.rs
---- a/values/specified/box.rs	2026-11-07 14:17:49
-+++ b/values/specified/box.rs	2026-11-07 14:17:49
+--- a/values/specified/box.rs	2006-07-24 03:21:28
++++ b/values/specified/box.rs	2026-11-07 14:08:05
 @@ -2013,6 +2013,8 @@
      Auto,
      Page,

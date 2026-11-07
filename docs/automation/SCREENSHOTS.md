@@ -108,9 +108,17 @@ text inputs retain their current values. Time inputs render their saved value in
 empty. The comparison worker accepts embedded `data:` resources without fetching them, while
 retaining origin and filesystem-root checks for external resources.
 
+## Top layer
+
+Modal dialogs and showing popovers are painted above the document in top-layer order, each over its `::backdrop`
+(see [POPOVER_DIALOG.md](../webapi/POPOVER_DIALOG.md#painting-screenshots-pdf)). Deferred HTML captures do not carry
+the top layer.
+
 ## Not captured
 
-- Canvas, video and WebGL pixels.
+- Video and WebGL pixels. (2D canvases are captured: their bitmaps travel
+  with the snapshot and paint as the canvas element's content; see
+  [CANVAS.md](../webapi/CANVAS.md).)
 - Iframe contents (frames render as empty boxes).
 - `:active` state, the caret, the selection. (`:hover` and `:focus` follow the page's pointer and focus.)
 - Running CSS animations and transitions (rendered at their computed values).

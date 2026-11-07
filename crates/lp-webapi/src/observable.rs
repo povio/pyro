@@ -21,12 +21,12 @@ where
     W: JsClass,
     W::Data: WindowHost,
 {
-    def.accessor(
+    def.global_value_accessor(
         "Observable",
         |s, w| global(s, w.page(), "Observable"),
         |s, w, value| replace(s, w.page(), "Observable", value),
     );
-    def.accessor(
+    def.global_value_accessor(
         "Subscriber",
         |s, w| global(s, w.page(), "Subscriber"),
         |s, w, value| replace(s, w.page(), "Subscriber", value),
@@ -74,7 +74,7 @@ const INTERNAL_URLS: [&str; 2] = ["lightningpanda://", "lightpanda://"];
 /// HTML "report an exception" with `value`. An Error carries the location it
 /// was made at; any other value (`subscriber.error("text")`) is reported at
 /// the script that is running, where a `throw` of it would have been.
-fn report_exception<'s>(s: &Scope<'s>, value: Value<'s>) {
+pub(crate) fn report_exception<'s>(s: &Scope<'s>, value: Value<'s>) {
     let mut details = JsException::from_value(s, value);
     if details.line.is_none() {
         if let Some((url, line, column)) = running_script_location(s) {
@@ -117,7 +117,8 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
     natives.set_atom("reportException", report.value())?;
     // Whether the realm's document is fully active: a Subscriber does
     // nothing once its document is detached.
-    let active = s.function("fullyActive", |s, _this, _a| Ok(s.boolean(page_of(s).is_ok_and(|p| p.is_fully_active()))))?;
+    let active =
+        s.function("fullyActive", |s, _this, _a| Ok(s.boolean(page_of(s).is_ok_and(|p| p.is_fully_active()))))?;
     natives.set_atom("fullyActive", active.value())?;
     let is_signal =
         s.function("isAbortSignal", |s, _this, a| Ok(s.boolean(s.unwrap::<AbortSignal>(a.get(0)).is_some())))?;
@@ -127,8 +128,7 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
     // (the GC sees what they reach); the signal only holds the key. Returns
     // the hook's identity for `removeAbortHook`.
     let add = s.function("addAbortHook", |s, _this, a| {
-        let signal =
-            s.unwrap::<AbortSignal>(a.get(0)).ok_or_else(|| JsError::Type("not an AbortSignal".into()))?;
+        let signal = s.unwrap::<AbortSignal>(a.get(0)).ok_or_else(|| JsError::Type("not an AbortSignal".into()))?;
         let key = a.get(1).to_number()?;
         let realm = s.realm().downgrade();
         let wrapper = signal.wrapper.clone();

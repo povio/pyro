@@ -33,6 +33,7 @@ pub enum EventInterface {
     ErrorEvent,
     PromiseRejectionEvent,
     SubmitEvent,
+    FormDataEvent,
     PopStateEvent,
     HashChangeEvent,
     PageTransitionEvent,
@@ -42,6 +43,11 @@ pub enum EventInterface {
     TouchEvent,
     AnimationEvent,
     TransitionEvent,
+    ToggleEvent,
+    CommandEvent,
+    /// Made in JS on first use (`crate::editing_globals`): natively an
+    /// Event wrapper with ClipboardEvent.prototype.
+    ClipboardEvent,
 }
 
 /// One touch point (`Touch`): its target and viewport/screen position.
@@ -134,8 +140,12 @@ pub struct EventFields {
     pub error: Option<Persistent>,
     pub promise: Option<Persistent>,
     pub reason: Option<Persistent>,
+    /// `SubmitEvent.submitter`, and the `source` of `ToggleEvent` and
+    /// `CommandEvent` (one event never has both).
     pub submitter: Option<TargetKey>,
     pub state: Option<Persistent>,
+    /// `FormDataEvent.formData`.
+    pub form_data: Option<Persistent>,
     pub old_url: String,
     pub new_url: String,
     pub persisted: bool,
@@ -143,7 +153,14 @@ pub struct EventFields {
     /// Same-document Window source, resolved in the observing world without
     /// an event-to-global persistent root. Port messages have no source.
     pub message_source: Option<TargetKey>,
+    /// Another window's `source` (a frame or popup posting here), resolved
+    /// in the observing realm when read, so the event holds no root of it.
+    pub message_source_window: Option<MessageSource>,
+    /// `ports`: the transferred MessagePorts' new ports, in the receiver's realm.
+    pub message_ports: Option<Persistent>,
     pub origin: String,
+    /// MessageEvent `lastEventId` (EventSource); None reads as "".
+    pub last_event_id: Option<Box<str>>,
     pub(crate) data_transfer: Option<crate::data_transfer::DataTransferRef>,
     pub storage_key: Option<String>,
     pub storage_old: Option<String>,
@@ -161,7 +178,15 @@ pub struct EventFields {
     /// `elapsedTime` (seconds) and `pseudoElement` of both.
     pub elapsed_time: f64,
     pub pseudo_element: String,
+    /// `ToggleEvent.oldState` / `.newState`.
+    pub old_state: String,
+    pub new_state: String,
+    /// `CommandEvent.command`.
+    pub command: String,
 }
+
+/// Resolves a `MessageEvent.source` window in the realm reading it.
+pub type MessageSource = Rc<dyn for<'s> Fn(&Scope<'s>) -> JsResult<Value<'s>>>;
 
 pub struct EventCore {
     pub id: u64,
@@ -183,6 +208,12 @@ thread_local! {
 /// one (no embedder) counts from the first event of the thread.
 fn now_ms(page: &PageDom) -> f64 {
     page.event_time().unwrap_or_else(|| TIME_ORIGIN.with(|t| t.elapsed().as_secs_f64() * 1000.0))
+}
+
+/// The document's clock now (`performance.now()`'s), as `Event.timeStamp`
+/// reads it.
+pub(crate) fn page_now_ms(page: &PageDom) -> f64 {
+    now_ms(page)
 }
 
 impl EventCore {
@@ -325,6 +356,7 @@ pub fn wrap_event<'s>(s: &Scope<'s>, core: &EventData) -> JsResult<Object<'s>> {
         EventInterface::ErrorEvent => s.wrap::<ErrorEvent>(d, Some(key)),
         EventInterface::PromiseRejectionEvent => s.wrap::<PromiseRejectionEvent>(d, Some(key)),
         EventInterface::SubmitEvent => s.wrap::<SubmitEvent>(d, Some(key)),
+        EventInterface::FormDataEvent => s.wrap::<FormDataEvent>(d, Some(key)),
         EventInterface::PopStateEvent => s.wrap::<PopStateEvent>(d, Some(key)),
         EventInterface::HashChangeEvent => s.wrap::<HashChangeEvent>(d, Some(key)),
         EventInterface::PageTransitionEvent => s.wrap::<PageTransitionEvent>(d, Some(key)),
@@ -334,6 +366,9 @@ pub fn wrap_event<'s>(s: &Scope<'s>, core: &EventData) -> JsResult<Object<'s>> {
         EventInterface::TouchEvent => s.wrap::<TouchEvent>(d, Some(key)),
         EventInterface::AnimationEvent => s.wrap::<AnimationEvent>(d, Some(key)),
         EventInterface::TransitionEvent => s.wrap::<TransitionEvent>(d, Some(key)),
+        EventInterface::ToggleEvent => s.wrap::<ToggleEvent>(d, Some(key)),
+        EventInterface::CommandEvent => s.wrap::<CommandEvent>(d, Some(key)),
+        EventInterface::ClipboardEvent => crate::editing_globals::wrap_clipboard_event(s, d, key),
     }?;
     define_unforgeables(s, &core.page, wrapper)?;
     core.trace_targets(s, wrapper)?;
@@ -592,7 +627,9 @@ fn fill_pointer<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>
         for i in 0..len {
             let event = events.get_index(i)?;
             if s.unwrap::<PointerEvent>(event).is_none() {
-                return Err(JsError::Type(format!("Failed to construct 'PointerEvent': {name} must hold PointerEvents.")));
+                return Err(JsError::Type(format!(
+                    "Failed to construct 'PointerEvent': {name} must hold PointerEvents."
+                )));
             }
             into.push(Persistent::new(s, event));
         }
@@ -788,8 +825,30 @@ fn fill_media_query<'s>(_: &Scope<'s>, f: &mut EventFields, init: Option<Object<
 fn fill_message<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
     if let Some(o) = init {
         f.message_data = Some(Persistent::new(s, o.get_atom("data")?));
+        let ports = o.get_atom("ports")?;
+        if let Some(list) = ports.as_object() {
+            // sequence<MessagePort>: copied into a new array.
+            let copy = s.array(&[])?;
+            let count = list.get_atom("length")?.to_number()? as u32;
+            for i in 0..count {
+                let port = list.get_index(i)?;
+                if s.unwrap::<crate::message_channel::MessagePort>(port).is_none() {
+                    return Err(JsError::Type(
+                        "Failed to construct 'MessageEvent': Failed to read the 'ports' property from 'MessageEventInit': Failed to convert value to 'MessagePort'.".into(),
+                    ));
+                }
+                copy.set_index(i, port)?;
+            }
+            f.message_ports = Some(Persistent::new(s, copy.value()));
+        } else if !ports.is_undefined() {
+            return Err(JsError::Type(
+                "Failed to construct 'MessageEvent': The provided value cannot be converted to a sequence.".into(),
+            ));
+        }
     }
     f.origin = get_str(init, "origin")?;
+    let last_event_id = get_str(init, "lastEventId")?;
+    f.last_event_id = (!last_event_id.is_empty()).then(|| last_event_id.into());
     Ok(())
 }
 
@@ -887,7 +946,7 @@ impl JsClass for Event {
             Ok(s.undefined())
         });
         def.method("composedPath", 0, |s, e, _a| {
-            let path = e.state.borrow().path.clone();
+            let path = e.page.dom.borrow().composed_path(&e.state.borrow());
             let mut vals = lp_js::RootedVec::new();
             for k in path {
                 vals.push(s, target_value(s, &e.page, Some(k))?);
@@ -1120,10 +1179,7 @@ fn modifier_state(f: &EventFields, key: &str) -> bool {
         "Shift" => f.shift_key,
         "Alt" => f.alt_key,
         "Meta" => f.meta_key,
-        _ => EXTRA_MODIFIERS
-            .iter()
-            .position(|(_, k)| *k == key)
-            .is_some_and(|bit| f.extra_modifiers & (1 << bit) != 0),
+        _ => EXTRA_MODIFIERS.iter().position(|(_, k)| *k == key).is_some_and(|bit| f.extra_modifiers & (1 << bit) != 0),
     }
 }
 
@@ -1361,7 +1417,14 @@ impl JsClass for InputEvent {
         def.getter("data", |s, e| Ok(e.fields.borrow().data.as_deref().map_or(s.null(), |d| s.string(d))));
         def.getter("inputType", |s, e| Ok(s.string(&e.fields.borrow().input_type)));
         def.getter("isComposing", |s, e| Ok(s.boolean(e.fields.borrow().is_composing)));
-        def.getter("dataTransfer", |s, _e| Ok(s.null()));
+        // Set on paste and insertHTML in editable content.
+        def.getter("dataTransfer", |s, e| {
+            let reference = e.fields.borrow().data_transfer.clone();
+            Ok(match reference {
+                Some(reference) => reference.get(s)?.value(),
+                None => s.null(),
+            })
+        });
         def.method("getTargetRanges", 0, |s, _e, _a| Ok(s.array(&[])?.value()));
     }
 }
@@ -1467,6 +1530,101 @@ impl JsClass for SubmitEvent {
     }
 }
 
+/// HTML `FormDataEvent` (`formdata`, fired while a form's entry list is
+/// constructed): `formData` is required in its init dictionary.
+pub struct FormDataEvent;
+impl JsClass for FormDataEvent {
+    const NAME: &'static str = "FormDataEvent";
+    type Data = EventData;
+    type Parent = Event;
+    fn define(def: &mut ClassDef<Self>) {
+        def.constructor(2, |s, nt, a| {
+            a.require(2, "FormDataEvent")?;
+            construct::<FormDataEvent>(s, nt, a, EventInterface::FormDataEvent, fill_formdata)
+        });
+        def.getter("formData", |s, e| Ok(e.fields.borrow().form_data.as_ref().map_or(s.null(), |p| p.get(s))));
+    }
+}
+
+fn fill_formdata<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
+    let data = match init {
+        Some(o) => o.get_atom("formData")?,
+        None => s.undefined(),
+    };
+    if s.unwrap::<crate::form_data::FormData>(data).is_none() {
+        return Err(JsError::Type(
+            "Failed to construct 'FormDataEvent': member formData is not of type 'FormData'.".into(),
+        ));
+    }
+    f.form_data = Some(Persistent::new(s, data));
+    Ok(())
+}
+
+/// `source` of a ToggleEventInit or CommandEventInit: an Element or null.
+fn fill_source<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>, iface: &str) -> JsResult<()> {
+    let Some(o) = init else { return Ok(()) };
+    let v = o.get_atom("source")?;
+    if v.is_undefined() || v.is_null() {
+        return Ok(());
+    }
+    let element = s.unwrap::<crate::node::Node>(v).filter(|n| n.page().dom.borrow().element(n.id).is_ok());
+    match element {
+        Some(n) => {
+            f.submitter = Some(n.target.key);
+            Ok(())
+        }
+        None => Err(JsError::Type(format!(
+            "Failed to construct '{iface}': Failed to read the 'source' property from '{iface}Init': Failed to convert value to 'Element'."
+        ))),
+    }
+}
+
+fn fill_toggle<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
+    f.old_state = get_str(init, "oldState")?;
+    f.new_state = get_str(init, "newState")?;
+    fill_source(s, f, init, "ToggleEvent")
+}
+
+fn fill_command<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
+    f.command = get_str(init, "command")?;
+    fill_source(s, f, init, "CommandEvent")
+}
+
+/// `ToggleEvent` (HTML): details, popover and dialog `beforetoggle` /
+/// `toggle`.
+pub struct ToggleEvent;
+impl JsClass for ToggleEvent {
+    const NAME: &'static str = "ToggleEvent";
+    type Data = EventData;
+    type Parent = Event;
+    fn define(def: &mut ClassDef<Self>) {
+        def.constructor(1, |s, nt, a| construct::<ToggleEvent>(s, nt, a, EventInterface::ToggleEvent, fill_toggle));
+        def.getter("oldState", |s, e| Ok(s.string(&e.fields.borrow().old_state)));
+        def.getter("newState", |s, e| Ok(s.string(&e.fields.borrow().new_state)));
+        def.getter("source", |s, e| {
+            let k = e.fields.borrow().submitter;
+            target_value(s, &e.page, k)
+        });
+    }
+}
+
+/// `CommandEvent` (HTML invokers): what a `commandfor` button asks of its
+/// target.
+pub struct CommandEvent;
+impl JsClass for CommandEvent {
+    const NAME: &'static str = "CommandEvent";
+    type Data = EventData;
+    type Parent = Event;
+    fn define(def: &mut ClassDef<Self>) {
+        def.constructor(1, |s, nt, a| construct::<CommandEvent>(s, nt, a, EventInterface::CommandEvent, fill_command));
+        def.getter("command", |s, e| Ok(s.string(&e.fields.borrow().command)));
+        def.getter("source", |s, e| {
+            let k = e.fields.borrow().submitter;
+            target_value(s, &e.page, k)
+        });
+    }
+}
+
 pub struct PopStateEvent;
 impl JsClass for PopStateEvent {
     const NAME: &'static str = "PopStateEvent";
@@ -1504,7 +1662,11 @@ impl JsClass for StorageEvent {
             }
             init_event_state(e, &ty, a.get(1).to_bool(), a.get(2).to_bool());
             let nullable = |v: lp_js::Value<'_>| -> JsResult<Option<String>> {
-                if v.is_undefined() || v.is_null() { Ok(None) } else { Ok(Some(dom_string(v)?)) }
+                if v.is_undefined() || v.is_null() {
+                    Ok(None)
+                } else {
+                    Ok(Some(dom_string(v)?))
+                }
             };
             let area = a.get(7);
             let area = if area.is_undefined() || area.is_null() {
@@ -1621,12 +1783,19 @@ impl JsClass for MessageEvent {
         def.constructor(1, |s, nt, a| construct::<MessageEvent>(s, nt, a, EventInterface::MessageEvent, fill_message));
         def.getter("data", |s, e| Ok(e.fields.borrow().message_data.as_ref().map_or(s.null(), |p| p.get(s))));
         def.getter("origin", |s, e| Ok(s.string(&e.fields.borrow().origin)));
-        def.getter("lastEventId", |s, _e| Ok(s.string("")));
+        def.getter("lastEventId", |s, e| Ok(s.string(e.fields.borrow().last_event_id.as_deref().unwrap_or(""))));
         def.getter("source", |s, e| {
+            let window = e.fields.borrow().message_source_window.clone();
+            if let Some(window) = window {
+                return window(s);
+            }
             let source = e.fields.borrow().message_source;
             crate::target::target_value(s, &e.page, source)
         });
-        def.getter("ports", |s, _e| Ok(s.array(&[])?.value()));
+        def.getter("ports", |s, e| match e.fields.borrow().message_ports.as_ref() {
+            Some(ports) => Ok(s.rehome(ports.get(s))),
+            None => Ok(s.array(&[])?.value()),
+        });
     }
 }
 
@@ -1661,6 +1830,7 @@ pub(crate) fn register(engine: &lp_js::Engine) {
     engine.register::<ErrorEvent>();
     engine.register::<PromiseRejectionEvent>();
     engine.register::<SubmitEvent>();
+    engine.register::<FormDataEvent>();
     engine.register::<PopStateEvent>();
     engine.register::<HashChangeEvent>();
     engine.register::<PageTransitionEvent>();
@@ -1671,6 +1841,8 @@ pub(crate) fn register(engine: &lp_js::Engine) {
     engine.register::<TouchEvent>();
     engine.register::<AnimationEvent>();
     engine.register::<TransitionEvent>();
+    engine.register::<ToggleEvent>();
+    engine.register::<CommandEvent>();
 }
 
 /// A `Touch` wrapper's state.

@@ -83,7 +83,7 @@ Methods: 122 (Playwright 1.59.1's static list plus the session methods it sends 
 | `Network.clearBrowserCookies` | yes | engine | empties the page's browser context's jar |
 | `Network.deleteCookies` | yes | engine | by `name` and `url` or `domain`, optionally `path` |
 | `Network.emulateNetworkConditions` | yes | engine | `offline` for the page's browser context (Chrome scopes it to the target): requests fail with net::ERR_INTERNET_DISCONNECTED and navigator.onLine is false; latency and throughput are accepted and ignored |
-| `Network.enable` | yes | engine | subscribes to bounded per-context events; filters by page/session; buffer options unsupported |
+| `Network.enable` | yes | engine | subscribes to bounded per-context events; filters by page/session; buffer options unsupported; page WebSockets report `webSocketCreated`, `webSocketWillSendHandshakeRequest`, `webSocketHandshakeResponseReceived`, `webSocketFrameSent`/`webSocketFrameReceived` (one per data message), `webSocketFrameError` and `webSocketClosed` (see [WebSocket](../webapi/WEBSOCKET.md)) |
 | `Network.getCookies` | yes | engine | `urls` (default: the page's frame URLs) through the page's browser context's jar, as HTTP sees them |
 | `Network.getRequestPostData` | yes | engine | request bodies of the page's requests while a session has Network enabled, up to 1 MiB each and 8 MiB per page (oldest dropped); `hasPostData` stays true past 64 KiB |
 | `Network.getResponseBody` | yes | engine | text/base64 completed captures; explicit errors for unavailable or evicted bodies |

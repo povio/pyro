@@ -35,11 +35,17 @@ use crate::ws::OutFrame;
 
 impl EngineHost {
     pub(super) fn on_worker_event(&mut self, page: Option<PageKey>, event: WorkerEvent) {
+        enum Kind {
+            Dedicated,
+            Service,
+        }
+        let event_kind = if matches!(event, WorkerEvent::ServiceCreated(_)) { Kind::Service } else { Kind::Dedicated };
         match event {
-            WorkerEvent::Created(handle) => {
+            WorkerEvent::Created(handle) | WorkerEvent::ServiceCreated(handle) => {
                 let Some(page) = page else { return };
+                let service = matches!(event_kind, Kind::Service);
                 let worker = handle.id();
-                self.worker_changes.push(WorkerChange::Started { worker, page, url: handle.url().to_owned() });
+                self.worker_changes.push(WorkerChange::Started { worker, page, url: handle.url().to_owned(), service });
                 self.workers.insert(worker, handle);
             }
             WorkerEvent::Destroyed(worker) => {

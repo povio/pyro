@@ -304,6 +304,8 @@ pub(crate) struct Session {
     pub(crate) extra_headers: http::HeaderMap,
     /// `Network.setCacheDisabled` of this session (page-scoped in Chrome).
     pub(crate) cache_disabled: bool,
+    /// `Network.setBypassServiceWorker` of this session (page-scoped in Chrome).
+    pub(crate) bypass_service_worker: bool,
     /// Page.setInterceptFileChooserDialog: file inputs report
     /// Page.fileChooserOpened to this session.
     pub(crate) intercept_file_chooser: bool,
@@ -1447,6 +1449,7 @@ impl Host for EngineHost {
                 network_enabled: false,
                 extra_headers: http::HeaderMap::new(),
                 cache_disabled: false,
+                bypass_service_worker: false,
                 intercept_file_chooser: false,
                 bindings: Vec::new(),
                 fetch: fetch::FetchSession::default(),

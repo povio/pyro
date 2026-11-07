@@ -481,6 +481,12 @@ impl ElementData {
         {
             data.element_state.insert(ElementState::CHECKED);
         }
+        // lightningpanda: a selected `<option>` is `:checked` (lp-dom's render
+        // tree writes `selected` for the current selectedness), and the form
+        // states lp-dom mirrors as `urn:x-lightningpanda:state` tokens are
+        // element states, so Stylo's state invalidation (and `:has()`'s)
+        // follows them.
+        data.sync_lp_attribute_state();
 
         // The element state needs to be modified if the element can be disabled.
         if data.can_be_disabled() {
@@ -657,6 +663,24 @@ impl ElementData {
             *is_checked = checked;
         }
         self.element_state.set(ElementState::CHECKED, checked);
+    }
+
+    /// lightningpanda: brings the element states that mirror attributes
+    /// lp-dom's render tree writes up to the attributes: `:checked` of a
+    /// selected `<option>`, and the [`crate::LP_STATE_NS`] `state` tokens.
+    pub(crate) fn sync_lp_attribute_state(&mut self) {
+        let lp = self
+            .attrs
+            .iter()
+            .find(|a| &*a.name.ns == crate::LP_STATE_NS && &*a.name.local == "state")
+            .map(|a| a.value.as_str());
+        let bits = crate::has_invalidation::lp_state_bits(lp);
+        self.element_state.remove(crate::has_invalidation::LP_STATES);
+        self.element_state.insert(bits);
+        if self.name.local == local_name!("option") {
+            let selected = self.has_attr(local_name!("selected"));
+            self.element_state.set(ElementState::CHECKED, selected);
+        }
     }
 
     #[cfg(feature = "file-input")]

@@ -1,6 +1,7 @@
 //! lp-render: renders a page [`Snapshot`] to pixels with Blitz (html5ever,
 //! Stylo, Taffy, Parley; painted by Vello) and compares the result against a
-//! baseline. No JS engine and no lightningpanda crate: the browser thread
+//! baseline. No JS engine and no lightningpanda crate but lp-canvas (the
+//! process's fonts, shared with canvas text): the browser thread
 //! builds the snapshot (`lp_webapi::PageDom::render_snapshot`), this crate
 //! renders it on a [`worker::RenderWorker`] thread.
 //!
@@ -31,7 +32,9 @@ pub mod worker;
 
 use stylo_taffy::CopyStyleGetters;
 use std::collections::HashMap;
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::Arc;
+#[cfg(test)]
+use std::sync::Mutex;
 
 use std::time::{Duration, Instant};
 
@@ -41,7 +44,7 @@ use anyrender_vello_cpu::VelloCpuImageRenderer;
 use blitz_dom::{DocumentConfig, StyleThreading};
 use blitz_traits::shell::{ColorScheme, Viewport as BlitzViewport};
 use kurbo::{Affine, Rect};
-use parley::fontique::{Blob, Collection, CollectionOptions, SourceCache};
+use parley::fontique::Blob;
 use parley::FontContext;
 use peniko::{Color, Fill};
 
@@ -208,6 +211,21 @@ pub struct Snapshot {
     /// Straight RGBA painted under the document where it has no background
     /// (CDP `Emulation.setDefaultBackgroundColorOverride`); `None`: white.
     pub background: Option<[u8; 4]>,
+    /// Bitmaps of the drawn canvases of a [`Live`] document, painted as
+    /// their elements' content (other canvases paint nothing).
+    pub canvases: Vec<CanvasImage>,
+}
+
+/// A canvas element's bitmap ([`Snapshot::canvases`]).
+#[derive(Clone, Debug)]
+pub struct CanvasImage {
+    /// The canvas element's render key.
+    pub key: u64,
+    pub width: u32,
+    pub height: u32,
+    /// Straight-alpha RGBA rows. The same `Arc` as the previous render's
+    /// means the pixels did not change.
+    pub rgba: Arc<Vec<u8>>,
 }
 
 /// A snapshot of a page whose Blitz document the renderer keeps between
@@ -551,107 +569,25 @@ impl std::fmt::Display for RenderError {
 
 impl std::error::Error for RenderError {}
 
-/// The process's fonts: the system font scan (fontique, tens of ms) runs
-/// once, and every [`Renderer`] works on a clone. Clones share the scanned
-/// system fonts and the loaded font data; fonts a renderer registers stay its
-/// own.
-static FONTS: LazyLock<Mutex<FontContext>> = LazyLock::new(|| {
-    let mut font_ctx = FontContext {
-        source_cache: SourceCache::new_shared(),
-        collection: if FORK_SAFE_FONTS.load(std::sync::atomic::Ordering::Relaxed) {
-            fork_safe_collection()
-        } else {
-            Collection::new(CollectionOptions { shared: false, system_fonts: true })
-        },
-    };
-    font_ctx.collection.register_fonts(Blob::new(Arc::new(blitz_dom::BULLET_FONT) as _), None);
-    Mutex::new(font_ctx)
-});
-
-static FORK_SAFE_FONTS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
 /// Loads system fonts without the platform font API, now, on this thread
-/// (`serve --fork`). macOS's CoreText starts dispatch threads and Objective-C
-/// initializers that a later `fork()` cannot survive ("+[NSFontCollection
-/// initialize] may have been in progress"); a fork template, and children
-/// that fork again, must not use it. Fonts are read from the system font
-/// directories instead (memory-mapped), with the generic families and
-/// script fallbacks the platform backend would pick. Call before any render.
+/// (`serve --fork`): see [`lp_canvas::fonts::use_fork_safe_fonts`]. Call
+/// before any render.
 pub fn use_fork_safe_fonts() {
-    FORK_SAFE_FONTS.store(true, std::sync::atomic::Ordering::Relaxed);
+    lp_canvas::fonts::use_fork_safe_fonts();
     drop(process_fonts());
 }
 
 /// Whether [`use_fork_safe_fonts`] was called (fonts never touch CoreText).
 pub fn fork_safe_fonts() -> bool {
-    FORK_SAFE_FONTS.load(std::sync::atomic::Ordering::Relaxed)
+    lp_canvas::fonts::fork_safe_fonts()
 }
 
-/// The system fonts by directory scan: see [`use_fork_safe_fonts`].
-fn fork_safe_collection() -> Collection {
-    use parley::fontique::{GenericFamily, Script};
-    let mut c = Collection::new(CollectionOptions { shared: false, system_fonts: false });
-    let mut dirs: Vec<std::path::PathBuf> = if cfg!(target_os = "macos") {
-        ["/System/Library/Fonts", "/Library/Fonts"].iter().map(Into::into).collect()
-    } else {
-        ["/usr/share/fonts", "/usr/local/share/fonts"].iter().map(Into::into).collect()
-    };
-    if let Some(home) = std::env::var_os("HOME") {
-        let home = std::path::PathBuf::from(home);
-        dirs.push(if cfg!(target_os = "macos") { home.join("Library/Fonts") } else { home.join(".local/share/fonts") });
-    }
-    c.load_fonts_from_paths(dirs.iter().filter(|d| d.is_dir()));
-    let ids = |c: &mut Collection, names: &[&str]| -> Vec<parley::fontique::FamilyId> {
-        names.iter().filter_map(|n| c.family_id(n)).collect()
-    };
-    // As fontique's CoreText backend (Chromium's macOS defaults), then
-    // common Linux families.
-    let generics: &[(GenericFamily, &[&str])] = &[
-        (GenericFamily::Serif, &["Times", "Times New Roman", "DejaVu Serif", "Liberation Serif"]),
-        (GenericFamily::SansSerif, &["Helvetica", "Arial", "DejaVu Sans", "Liberation Sans"]),
-        (GenericFamily::Monospace, &["Courier", "Courier New", "Menlo", "DejaVu Sans Mono", "Liberation Mono"]),
-        (GenericFamily::Cursive, &["Apple Chancery"]),
-        (GenericFamily::Fantasy, &["Papyrus"]),
-        (GenericFamily::SystemUi, &["System Font", ".SF NS", "SF Pro", "Helvetica Neue", "Helvetica", "DejaVu Sans"]),
-        (GenericFamily::UiSansSerif, &["System Font", ".SF NS", "SF Pro", "Helvetica Neue", "Helvetica"]),
-        (GenericFamily::UiSerif, &["New York", "Times"]),
-        (GenericFamily::UiMonospace, &["SF Mono", "Menlo", "Courier"]),
-        (GenericFamily::Emoji, &["Apple Color Emoji", "Noto Color Emoji"]),
-        (GenericFamily::Math, &["STIX Two Math"]),
-    ];
-    for (generic, names) in generics {
-        let families = ids(&mut c, names);
-        c.set_generic_families(*generic, families.into_iter());
-    }
-    // Script fallbacks CoreText would answer for the usual scripts.
-    let fallbacks: &[(&[u8; 4], &[&str])] = &[
-        (b"Latn", &["Helvetica", "Lucida Grande", "Arial Unicode MS", "DejaVu Sans"]),
-        (b"Grek", &["Helvetica", "Lucida Grande", "Arial Unicode MS", "DejaVu Sans"]),
-        (b"Cyrl", &["Helvetica", "Lucida Grande", "Arial Unicode MS", "DejaVu Sans"]),
-        (b"Hani", &["PingFang SC", "Heiti SC", "Hiragino Sans GB", "Noto Sans CJK SC"]),
-        (b"Hans", &["PingFang SC", "Heiti SC", "Hiragino Sans GB", "Noto Sans CJK SC"]),
-        (b"Hant", &["PingFang TC", "Heiti TC", "Noto Sans CJK TC"]),
-        (b"Jpan", &["Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans CJK JP"]),
-        (b"Hira", &["Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans CJK JP"]),
-        (b"Kana", &["Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans CJK JP"]),
-        (b"Hang", &["Apple SD Gothic Neo", "Noto Sans CJK KR"]),
-        (b"Kore", &["Apple SD Gothic Neo", "Noto Sans CJK KR"]),
-        (b"Arab", &["Geeza Pro", "Noto Sans Arabic", "DejaVu Sans"]),
-        (b"Hebr", &["Arial Hebrew", "Noto Sans Hebrew", "DejaVu Sans"]),
-        (b"Thai", &["Thonburi", "Noto Sans Thai"]),
-        (b"Deva", &["Kohinoor Devanagari", "Devanagari Sangam MN", "Noto Sans Devanagari"]),
-        (b"Zsym", &["Apple Symbols", "Apple Color Emoji", "Noto Color Emoji"]),
-        (b"Zsye", &["Apple Color Emoji", "Noto Color Emoji"]),
-    ];
-    for (script, names) in fallbacks {
-        let families = ids(&mut c, names);
-        c.set_fallbacks(Script::from_bytes(**script), families.into_iter());
-    }
-    c
-}
-
+/// The process's fonts (`lp_canvas::fonts`, shared with canvas text), with
+/// Blitz's list bullet font added once: every [`Renderer`] works on a clone.
 fn process_fonts() -> FontContext {
-    FONTS.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    static BULLET: std::sync::Once = std::sync::Once::new();
+    BULLET.call_once(|| lp_canvas::fonts::register_fonts(Blob::new(Arc::new(blitz_dom::BULLET_FONT) as _)));
+    lp_canvas::fonts::font_context()
 }
 
 /// Warms the process-wide state a first render would otherwise pay for, on a
@@ -876,6 +812,7 @@ impl Renderer {
                         if let Some(offsets) = &snap.element_scroll {
                             m.set_element_scroll(offsets);
                         }
+                        m.set_canvases(&snap.canvases);
                         let clip = live.clip.and_then(|k| m.node(k));
                         (&mut m.doc, &m.bridge, clip)
                     }
@@ -1084,6 +1021,35 @@ impl Renderer {
     /// changes.
     pub fn set_interaction(&mut self, page: u64, hovered: Option<u64>, focused: Option<u64>, style_only: bool) {
         let changed = self.mark_interaction(page, hovered, focused);
+        self.settle_interaction(page, changed, style_only);
+    }
+
+    /// [`Renderer::set_interaction`] with `:active` on the element keyed
+    /// `active` (and its ancestors) and whether the focused element matches
+    /// `:focus-visible`.
+    pub fn set_interaction_states(
+        &mut self,
+        page: u64,
+        hovered: Option<u64>,
+        focused: Option<u64>,
+        active: Option<u64>,
+        focus_visible: bool,
+        style_only: bool,
+    ) {
+        // The ring first, so a newly focused node gets it as it is focused.
+        let changed = match self.mirrors.get_mut(&page) {
+            Some(m) => {
+                let active = active.and_then(|k| m.node(k));
+                let ring = m.doc.set_focus_ring(focus_visible);
+                m.doc.set_active_to(active) || ring
+            }
+            None => false,
+        };
+        let changed = self.mark_interaction(page, hovered, focused) || changed;
+        self.settle_interaction(page, changed, style_only);
+    }
+
+    fn settle_interaction(&mut self, page: u64, changed: bool, style_only: bool) {
         let Some(m) = self.mirrors.get_mut(&page) else { return };
         // Called on every geometry read: without news a pass would change nothing.
         let changed = changed || m.doc.needs_resolve();
@@ -1171,6 +1137,29 @@ impl Renderer {
         (!unstyled).then_some(true)
     }
 
+    /// The computed style of pseudo-element `pseudo` of the element keyed
+    /// `key` in `page`'s persistent document (`getComputedStyle(el,
+    /// pseudo)`; see `BaseDocument::pseudo_element_style`, which
+    /// `generated_only` is passed to). `None`: not mirrored.
+    pub fn element_pseudo_style(
+        &self,
+        page: u64,
+        key: u64,
+        pseudo: &style::selector_parser::PseudoElement,
+        generated_only: bool,
+    ) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
+        let m = self.mirrors.get(&page)?;
+        m.doc.pseudo_element_style(m.node(key)?, pseudo, generated_only)
+    }
+
+    /// `false` while no element of `page`'s persistent document has been
+    /// styled with a generated `::before` / `::after`: then
+    /// [`Renderer::element_pseudo_style`] with `generated_only` answers
+    /// `None` for every element.
+    pub fn may_have_generated_before_after(&self, page: u64) -> bool {
+        self.mirrors.get(&page).is_some_and(|m| m.doc.may_have_generated_before_after())
+    }
+
     /// The box of the element keyed `key` in `page`'s persistent document,
     /// as of the last [`Renderer::sync_layout`] (see [`LayoutBox`]).
     pub fn element_box(&self, page: u64, key: u64) -> Option<LayoutBox> {
@@ -1253,6 +1242,13 @@ impl Renderer {
             (root.final_layout().size, root.scrollable_overflow().scale_from_origin(1.0 / doc.viewport().scale_f64()));
         let (vw, vh) = (m.viewport.0 as f64, m.viewport.1 as f64);
         Some(((size.width as f64).max(overflow.x1).max(vw), (size.height as f64).max(overflow.y1).max(vh)))
+    }
+
+    /// Whether a style rule of `page`'s document depends on `:active`
+    /// (Stylo's state dependencies, kept as sheets are flushed). `None`:
+    /// not mirrored.
+    pub fn styles_depend_on_active(&self, page: u64) -> Option<bool> {
+        Some(self.mirrors.get(&page)?.doc.style_depends_on_state(style_dom::ElementState::ACTIVE))
     }
 
     /// Whether any element of `page`'s document is `position: sticky`.
@@ -2578,8 +2574,12 @@ mod settle_resolution_tests {
         let doc = parse_document(&dom, "http://test/", html);
         let d = dom.borrow();
         let target = render_key(d.get_element_by_id(doc, "box").unwrap().unwrap());
-        let tree =
-            d.render_tree(doc, &RenderHtml { style_text: &|_| None, stylesheet_href: &|_| None, mark: None }).unwrap();
+        let tree = d
+            .render_tree(
+                doc,
+                &RenderHtml { style_text: &|_| None, stylesheet_href: &|_| None, mark: None, adopted: None },
+            )
+            .unwrap();
         let tree = Tree {
             nodes: tree
                 .nodes

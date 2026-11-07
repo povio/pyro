@@ -385,7 +385,8 @@ fn maybe_pin(s: &Scope<'_>, page: &PageDom, key: TargetKey, obj: Object<'_>) {
     if let TargetKey::Node(_) = key {
         let connected = {
             let d = page.dom.borrow();
-            d.key_node(key).is_some_and(|id| d.is_in_active_document(id))
+            // A detached `<img>` loading keeps its listeners until `load`.
+            d.key_node(key).is_some_and(|id| d.is_in_active_document(id) || page.image_loading(id))
         };
         if !connected {
             return;
@@ -428,11 +429,18 @@ pub(crate) fn pin_wrapper_with_properties(s: &Scope<'_>, object: Object<'_>) {
     }
 }
 
+/// Whether node `id`'s wrappers stay kept: it is in the active document, or
+/// it is an `<img>` whose request is in flight (`PageDom::keep_loading_image`
+/// releases them once it fired `load`/`error`).
+fn still_kept(page: &PageDom, dom: &Dom, id: NodeId) -> bool {
+    dom.is_in_active_document(id) || page.image_loading(id)
+}
+
 /// Safe-point maintenance (see `PageDom::after_task`).
 pub(crate) fn reconcile_pins(page: &PageDom, dom: &mut Dom) {
     for (realm, id) in page.new_property_pins.take() {
         dom.mark_pin_on_connect(id);
-        if !dom.is_in_active_document(id) {
+        if !dom.is_in_active_document(id) && !page.image_loading(id) {
             page.pinned.borrow_mut().remove(&(realm, TargetKey::Node(id.index())));
             page.unkeep_node(Some(realm), id.index());
         }
@@ -448,7 +456,7 @@ pub(crate) fn reconcile_pins(page: &PageDom, dom: &mut Dom) {
                 // where they are rather than looked up for every removed node.
                 let realms: Vec<RealmId> = if pinned.len() <= nodes.len() {
                     pinned.retain(|(_, key), _| match key {
-                        TargetKey::Node(_) => dom.key_node(*key).is_some_and(|id| dom.is_in_active_document(id)),
+                        TargetKey::Node(_) => dom.key_node(*key).is_some_and(|id| still_kept(page, dom, id)),
                         TargetKey::Other(_) => true,
                     });
                     Vec::new()
@@ -458,9 +466,7 @@ pub(crate) fn reconcile_pins(page: &PageDom, dom: &mut Dom) {
                 for id in nodes {
                     let key = TargetKey::Node(id.index());
                     let kept = page.node_kept(id.index());
-                    if (kept || realms.iter().any(|&r| pinned.contains_key(&(r, key))))
-                        && !dom.is_in_active_document(id)
-                    {
+                    if (kept || realms.iter().any(|&r| pinned.contains_key(&(r, key)))) && !still_kept(page, dom, id) {
                         for &r in &realms {
                             pinned.remove(&(r, key));
                         }
@@ -472,11 +478,11 @@ pub(crate) fn reconcile_pins(page: &PageDom, dom: &mut Dom) {
             }
             None => {
                 pinned.retain(|(_, key), _| match key {
-                    TargetKey::Node(_) => dom.key_node(*key).is_some_and(|id| dom.is_in_active_document(id)),
+                    TargetKey::Node(_) => dom.key_node(*key).is_some_and(|id| still_kept(page, dom, id)),
                     TargetKey::Other(_) => true,
                 });
                 for idx in page.kept_nodes() {
-                    if !dom.key_node(TargetKey::Node(idx)).is_some_and(|id| dom.is_in_active_document(id)) {
+                    if !dom.key_node(TargetKey::Node(idx)).is_some_and(|id| still_kept(page, dom, id)) {
                         page.unkeep_node(None, idx);
                     }
                 }
@@ -536,7 +542,6 @@ struct Invoker<'a> {
     in_shadow: Vec<TargetKey>,
 }
 
-
 /// ECMAScript IsArray throws for a revoked Proxy and runs no trap of a live
 /// one, so it tells the two apart without side effects. JavaScriptCore throws
 /// the TypeError of calling a revoked Proxy in the Proxy's own realm; a
@@ -545,7 +550,8 @@ fn is_revoked_proxy(s: &Scope<'_>, value: Value<'_>) -> bool {
     if !value.has_proxy_target().unwrap_or(false) {
         return false;
     }
-    let is_array = s.global().get_atom("Array").ok().and_then(|a| a.as_object()).and_then(|a| a.get_atom("isArray").ok());
+    let is_array =
+        s.global().get_atom("Array").ok().and_then(|a| a.as_object()).and_then(|a| a.get_atom("isArray").ok());
     is_array.and_then(|f| f.as_object()).is_some_and(|f| f.call(None, &[s.rehome(value)]).is_err())
 }
 
@@ -642,6 +648,12 @@ impl ListenerInvoker for Invoker<'_> {
         // The exception is reported while the event is still the current
         // one: the `error` event's listeners see it as `window.event`.
         if let Err(e) = result {
+            WATCHED.with(|w| {
+                let (watched, _) = w.get();
+                if std::ptr::eq(watched, Rc::as_ptr(self.event)) {
+                    w.set((watched, true));
+                }
+            });
             cs.report_exception(&e);
         }
         if swapped {
@@ -651,6 +663,23 @@ impl ListenerInvoker for Invoker<'_> {
             }
         }
     }
+}
+
+thread_local! {
+    /// The event whose dispatch [`fire_noting_exceptions`] runs, and whether
+    /// one of its listeners threw. Touched only on the exception path.
+    static WATCHED: std::cell::Cell<(*const crate::event::EventCore, bool)> =
+        const { std::cell::Cell::new((std::ptr::null(), false)) };
+}
+
+/// [`fire`], also telling whether a listener of this event threw (IndexedDB
+/// aborts the transaction then). Exceptions of other events dispatched by
+/// those listeners do not count.
+pub(crate) fn fire_noting_exceptions(page: &PageDom, target: TargetKey, event: &EventData) -> (bool, bool) {
+    let outer = WATCHED.replace((Rc::as_ptr(event), false));
+    let not_canceled = fire(page, target, event);
+    let (_, threw) = WATCHED.replace(outer);
+    (not_canceled, threw)
 }
 
 /// Key of the realm's current event on its traced window holder.

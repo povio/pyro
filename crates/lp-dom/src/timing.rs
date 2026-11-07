@@ -94,14 +94,25 @@ impl TimingRules {
     /// declaring an animation name matches, and those whose `style`
     /// attribute declares one.
     pub fn animation_candidates(&self, dom: &Dom, doc: NodeId) -> Vec<NodeId> {
+        if self.keyframes.is_empty() {
+            return Vec::new();
+        }
+        self.candidates(dom, doc, Longhand::AnimationName, "animation")
+    }
+
+    /// The elements of `doc` that may transition: those a rule declaring a
+    /// transition duration matches (no other has a positive one), and those
+    /// whose `style` attribute declares a transition.
+    pub fn transition_candidates(&self, dom: &Dom, doc: NodeId) -> Vec<NodeId> {
+        self.candidates(dom, doc, Longhand::TransitionDuration, "transition")
+    }
+
+    fn candidates(&self, dom: &Dom, doc: NodeId, longhand: Longhand, inline_word: &str) -> Vec<NodeId> {
         let mut seen = FxHashSet::default();
         let mut out = Vec::new();
-        if self.keyframes.is_empty() {
-            return out;
-        }
         let Ok(root) = dom.check(doc) else { return out };
         for rule in &self.rules {
-            if !rule.declarations.iter().any(|d| d.0 == Longhand::AnimationName) {
+            if !rule.declarations.iter().any(|d| d.0 == longhand) {
                 continue;
             }
             for idx in crate::stylo::select::query(dom, root, &rule.selectors, false) {
@@ -116,7 +127,7 @@ impl TimingRules {
                     .element(id)
                     .ok()
                     .and_then(|e| e.attr_local(&markup5ever::local_name!("style")))
-                    .is_some_and(|s| s.contains("animation"));
+                    .is_some_and(|s| s.contains(inline_word));
                 if inline && seen.insert(id.index()) {
                     out.push(id);
                 }

@@ -14,7 +14,7 @@ use crate::event::{EventCore, EventData, EventInterface};
 use crate::page::{FocusTarget, FocusTransition, PageDom};
 use crate::target::fire;
 
-fn key_of(page: &PageDom, id: NodeId) -> Option<TargetKey> {
+pub(crate) fn key_of(page: &PageDom, id: NodeId) -> Option<TargetKey> {
     page.dom.borrow().node_key(id)
 }
 
@@ -120,6 +120,15 @@ fn request_focus(page: &Rc<PageDom>, target: FocusTarget, prevent_scroll: bool) 
     (apply && live_document(page, doc, &token)).then_some(token)
 }
 
+/// A focusable area, or the dialog its focusing steps focus, that a modal
+/// dialog does not make inert. Without a modal dialog this is one
+/// empty-set check more than before.
+fn can_focus(page: &PageDom, el: NodeId) -> bool {
+    let dom = page.dom.borrow();
+    (dom.is_focusable(el).unwrap_or(false) || page.popover.forced_focus(el))
+        && !(dom.topmost_modal().is_some() && dom.is_inert(el))
+}
+
 /// HTML focusing steps, coordinated with the browsing-context owner.
 pub fn focus_element(page: &Rc<PageDom>, el: NodeId) {
     focus_element_with_options(page, el, false);
@@ -131,9 +140,27 @@ pub fn focus_element_with_options(page: &Rc<PageDom>, el: NodeId, prevent_scroll
         return focus_element_with_options(&owner, el, prevent_scroll);
     }
     let doc = page.document();
-    if !live_element(page, doc, el) || !page.dom.borrow().is_focusable(el).unwrap_or(false) {
+    if !live_element(page, doc, el) {
         return;
     }
+    // HTML focusing steps: a `delegatesFocus` host forwards focus to its
+    // focus delegate (none when focus is already inside it), and only a
+    // focusable area (not inert, being rendered) takes focus.
+    let el = {
+        let layout = page.layout();
+        let dom = page.dom.borrow();
+        if dom.is_delegates_focus_host(el) {
+            let inside = dom.focused(doc).ok().flatten().is_some_and(|f| dom.shadow_including_contains(el, f));
+            match (!inside).then(|| dom.focus_delegate(el, &|n| is_focusable_area(&layout, &dom, n))).flatten() {
+                Some(d) => d,
+                None => return,
+            }
+        } else if is_focusable_area(&layout, &dom, el) || page.popover.forced_focus(el) {
+            el
+        } else {
+            return;
+        }
+    };
     if let Some(token) = request_focus(page, FocusTarget::Element(el), prevent_scroll) {
         focus_element_with_transition(page, el, &token);
     }
@@ -146,7 +173,7 @@ pub fn focus_element_with_transition(page: &Rc<PageDom>, el: NodeId, token: &Foc
     }
     adopt_transition(page, token);
     let doc = page.document();
-    if !live_element(page, doc, el) || !page.dom.borrow().is_focusable(el).unwrap_or(false) {
+    if !live_element(page, doc, el) || !can_focus(page, el) {
         return;
     }
     let prev = page.dom.borrow().focused(doc).ok().flatten();
@@ -161,13 +188,19 @@ pub fn focus_element_with_transition(page: &Rc<PageDom>, el: NodeId, token: &Foc
     if let Some(prev) = prev {
         run_blur(page, doc, prev, blur_related, token);
     }
-    if !live_document(page, doc, token)
-        || !live_element(page, doc, el)
-        || !page.dom.borrow().is_focusable(el).unwrap_or(false)
-    {
+    if !live_document(page, doc, token) || !live_element(page, doc, el) || !can_focus(page, el) {
         return;
     }
-    let _ = page.dom.borrow_mut().set_focused(doc, Some(el));
+    {
+        // `:focus-visible` as Chrome decides it: after keyboard input (and
+        // for script focus before any pointer press) the focused element
+        // shows its ring; after a pointer press only an element that takes
+        // typed text does.
+        let mut dom = page.dom.borrow_mut();
+        let visible = !page.pointer_modality.get() || takes_typed_text(&dom, el);
+        let _ = dom.set_focus_visible(doc, visible);
+        let _ = dom.set_focused(doc, Some(el));
+    }
     if is_text_control(&page.dom.borrow(), el) {
         page.editing_target.set(Some(el));
     }
@@ -199,9 +232,21 @@ pub fn focus_element_with_transition(page: &Rc<PageDom>, el: NodeId, token: &Foc
     }
 }
 
+/// Sets the element being activated (`:active`); restyles only when a sheet
+/// depends on `:active` (none does unless the page's own CSS uses it).
+fn set_active(page: &PageDom, doc: NodeId, el: Option<NodeId>) {
+    let restyle = page.layout.try_borrow().map_or(true, |l| l.style().active_styled());
+    let _ = page.dom.borrow_mut().set_activated(doc, el, restyle);
+}
+
 fn run_blur(page: &Rc<PageDom>, doc: NodeId, el: NodeId, related: Option<NodeId>, token: &FocusTransition) {
     let _ = page.dom.borrow_mut().set_focused(doc, None);
-    page.space_target.set(None);
+    if page.space_target.take().is_some() {
+        // A Space-activated control stops being `:active` when it blurs.
+        if page.dom.borrow().activated(doc) == Some(el) {
+            set_active(page, doc, None);
+        }
+    }
     if !live_element(page, doc, el) {
         return;
     }
@@ -277,6 +322,26 @@ pub(crate) fn schedule_focus_fixup(page: &Rc<PageDom>) {
             run_focus_fixup(&page);
         }
     }));
+}
+
+/// Elements that take typed text (text controls, editable content): mouse
+/// focus on them still matches `:focus-visible`, as in Chrome.
+fn takes_typed_text(dom: &Dom, el: NodeId) -> bool {
+    is_text_control(dom, el) || crate::editing::editing_host(dom, el).is_some()
+}
+
+/// HTML "focusable area": focusable, not inert, and being rendered (not in
+/// a `display: none` subtree nor `visibility: hidden`, as Chrome's
+/// focusable-style check). An `<area>` is rendered through its image map.
+pub(crate) fn is_focusable_area(layout: &lp_dom::layout::Layout, dom: &Dom, el: NodeId) -> bool {
+    if !dom.is_focusable(el).unwrap_or(false) || dom.is_inert(el) {
+        return false;
+    }
+    if dom.element(el).is_ok_and(|e| e.is_html() && &*e.name.local == "area") {
+        return true;
+    }
+    let opts = lp_dom::style::CheckVisibilityOptions { check_visibility: true, check_opacity: false };
+    layout.check_visibility(dom, el, opts)
 }
 
 /// Blurs the focused element when it is not a focusable area any more:
@@ -361,12 +426,26 @@ fn accepts_keyboard(page: &PageDom) -> bool {
 /// Text controls fire `change` on commit when their value differs from the
 /// value at focus time.
 fn fire_change_if_dirty(page: &Rc<PageDom>, el: NodeId) {
+    // Leaving a control the user edited commits the edit: it gets user
+    // validity (`:user-valid` / `:user-invalid`) even when the value ends up
+    // as it was at focus time.
+    let edited = page.dom.borrow().control_state(el).ok().flatten().is_some_and(|c| c.user_edited);
+    if edited {
+        let _ = page.dom.borrow_mut().set_user_validity(el, true);
+    }
     let current = page.dom.borrow().value(el).ok();
     if let (Some(cur), Some(old)) = (current, page.take_focus_value(el)) {
         if cur != old && is_text_control(&page.dom.borrow(), el) {
-            fire_simple(page, el, "change", true, false);
+            fire_user_change(page, el);
         }
     }
+}
+
+/// `change` for a value the user committed: the control gets user validity
+/// first (HTML §4.10.18.6), so `change` listeners and `:user-invalid` agree.
+pub fn fire_user_change(page: &Rc<PageDom>, el: NodeId) {
+    let _ = page.dom.borrow_mut().set_user_validity(el, true);
+    fire_simple(page, el, "change", true, false);
 }
 
 fn is_text_control(dom: &Dom, el: NodeId) -> bool {
@@ -394,14 +473,8 @@ fn is_text_control(dom: &Dom, el: NodeId) -> bool {
 #[derive(Debug)]
 enum LegacyPreActivation {
     None,
-    Checkbox {
-        checked: bool,
-        indeterminate: bool,
-    },
-    Radio {
-        was_checked: bool,
-        previously_checked: Vec<NodeId>,
-    },
+    Checkbox { checked: bool, indeterminate: bool },
+    Radio { was_checked: bool, previously_checked: Vec<NodeId> },
 }
 
 /// The one activation target of a click (DOM "dispatch" steps 6.5 and 6.9).
@@ -439,18 +512,12 @@ fn has_activation_behavior(dom: &Dom, el: NodeId) -> bool {
     }
 }
 
-/// An enabled HTML submit button: `input` in the Submit or Image state, or a
-/// `button` that is neither a reset nor a plain button.
-fn is_enabled_submit_button(dom: &Dom, el: NodeId) -> bool {
-    if dom.is_disabled(el).unwrap_or(false) {
-        return false;
-    }
+/// An HTML submit button, enabled or not: `input` in the Submit or Image
+/// state, or a `button` that is neither a reset nor a plain button.
+fn is_submit_button(dom: &Dom, el: NodeId) -> bool {
     match local(dom, el).as_deref() {
         Some("input") => matches!(dom.input_type(el), Ok(InputType::Submit | InputType::Image)),
-        Some("button") => !matches!(
-            dom.get_attribute(el, "type").ok().flatten().map(|t| t.to_ascii_lowercase()).as_deref(),
-            Some("reset" | "button")
-        ),
+        Some("button") => crate::popover::button_is_submit(dom, el),
         _ => false,
     }
 }
@@ -585,7 +652,7 @@ fn run_activation_behavior(
                     let unchanged = matches!(legacy, LegacyPreActivation::Radio { was_checked: true, .. });
                     if connected && !unchanged {
                         fire_input_event(page, el, "input", "", None, false);
-                        fire_simple(page, el, "change", true, false);
+                        fire_user_change(page, el);
                     }
                 }
                 _ if disabled => {}
@@ -614,6 +681,9 @@ fn run_activation_behavior(
                 }
                 _ => {}
             }
+            if !disabled && matches!(ty, InputType::Submit | InputType::Image | InputType::Reset | InputType::Button) {
+                crate::popover::popover_target_activation(page, el, target);
+            }
         }
         "button" => {
             let (disabled, form, ty) = {
@@ -624,12 +694,24 @@ fn run_activation_behavior(
                     dom.get_attribute(el, "type").ok().flatten().map(|t| t.to_ascii_lowercase()),
                 )
             };
-            let Some(f) = form.filter(|_| !disabled) else { return };
-            match ty.as_deref() {
-                Some("reset") => reset_form(page, f),
-                Some("button") => {}
-                _ => submit_form(page, f, Some(el), true),
+            if disabled {
+                return;
             }
+            // With a form owner, a submit or reset button does only that and
+            // the Auto state (no valid `type`) does nothing; only
+            // `type=button` goes on to its command.
+            if let Some(f) = form {
+                match ty.as_deref() {
+                    Some("reset") => return reset_form(page, f),
+                    Some("button") => {}
+                    _ if crate::popover::button_is_submit(&page.dom.borrow(), el) => {
+                        return submit_form(page, f, Some(el), true);
+                    }
+                    _ => return,
+                }
+            }
+            // `commandfor`, else `popovertarget`.
+            crate::popover::button_activation(page, el, target);
         }
         "a" | "area" => follow_hyperlink(page, el),
         "label" => {
@@ -659,9 +741,9 @@ fn run_activation_behavior(
                 return;
             }
             let details = page.dom.borrow().parent(el).ok().flatten();
+            // lp-dom queues the `toggle` event of the attribute change.
             if let Some(d) = details {
                 let _ = page.dom.borrow_mut().toggle_attribute(d, "open", None);
-                queue_simple(page, d, "toggle", false, false);
             }
         }
         _ => {}
@@ -838,6 +920,11 @@ pub fn submit_form(page: &Rc<PageDom>, form: NodeId, submitter: Option<NodeId>, 
             dom.has_attribute(form, "novalidate").unwrap_or(false)
                 || submitter.is_some_and(|s| dom.has_attribute(s, "formnovalidate").unwrap_or(false))
         };
+        // Validating the form gives its controls user validity, so the
+        // invalid ones match `:user-invalid` from here on.
+        if !novalidate {
+            let _ = page.dom.borrow_mut().set_form_user_validity(form);
+        }
         if !novalidate && !crate::validity::check_form(page, form, true) {
             false
         } else {
@@ -851,7 +938,10 @@ pub fn submit_form(page: &Rc<PageDom>, form: NodeId, submitter: Option<NodeId>, 
     } else {
         true
     };
-    if proceed {
+    let dialog = proceed && crate::popover::is_dialog_method(&page.dom.borrow(), form, submitter);
+    if dialog {
+        crate::popover::submit_dialog(page, form, submitter);
+    } else if proceed {
         let req = crate::formdata::form_submission(page, form, submitter);
         if let Some(req) = req {
             page.navigate(req);
@@ -865,18 +955,42 @@ pub fn reset_form(page: &Rc<PageDom>, form: NodeId) {
     if !fire_simple(page, form, "reset", true, true) {
         return;
     }
+    // The form's resettable elements: those it owns anywhere in its tree
+    // (`form=` associates controls outside it), and the options of its
+    // selects.
     let controls: Vec<NodeId> = {
         let dom = page.dom.borrow();
-        dom.descendants(form)
-            .map(|d| d.filter(|&n| dom.form_owner(n).ok().flatten() == Some(form)).collect())
-            .unwrap_or_default()
+        let Ok(root) = dom.root_node(form, false) else { return };
+        let mut out = Vec::new();
+        for n in dom.descendants(root).into_iter().flatten() {
+            let resettable = matches!(local(&dom, n).as_deref(), Some("input" | "select" | "textarea"));
+            if resettable && dom.form_owner(n).ok().flatten() == Some(form) {
+                out.push(n);
+                if local(&dom, n).as_deref() == Some("select") {
+                    out.extend(dom.select_options(n).unwrap_or_default());
+                }
+            }
+        }
+        out
     };
     let mut dom = page.dom.borrow_mut();
     for c in controls {
-        if let Ok(st) = dom.control_state_mut(c) {
-            *st = Default::default();
+        // Back to the default value, checkedness and selectedness; a
+        // custom validity message is not part of that.
+        if dom.control_state(c).ok().flatten().is_some() {
+            if let Ok(st) = dom.control_state_mut(c) {
+                let custom_validity = st.custom_validity.take();
+                *st = Default::default();
+                st.custom_validity = custom_validity;
+            }
+        }
+        // A file input's selected files are emptied.
+        if dom.input_type(c).ok() == Some(InputType::File) && local(&dom, c).as_deref() == Some("input") {
+            page.files.borrow_mut().remove(&c);
         }
     }
+    // Form-associated custom elements reset themselves (formResetCallback).
+    let _ = dom.enqueue_form_reset(form);
 }
 
 // ----- keyboard ---------------------------------------------------------------------
@@ -916,6 +1030,9 @@ pub struct KeyInput {
     pub location: u32,
     pub auto_repeat: bool,
     pub key_code: u32,
+    /// CDP `commands`: the macOS editing commands of the key (Playwright
+    /// sends them on macOS), run in place of its default action.
+    pub commands: Vec<String>,
 }
 
 /// Element receiving key events: focused element, else body/document element.
@@ -955,8 +1072,17 @@ pub fn dispatch_key(page: &Rc<PageDom>, kind: KeyKind, k: &KeyInput) {
     let doc = page.document();
     let Some(target) = key_target(page) else { return };
     let Some(tkey) = key_of(page, target) else { return };
+    // HTML activation-triggering input: a keydown other than Escape.
+    if matches!(kind, KeyKind::KeyDown | KeyKind::RawKeyDown) && k.key != "Escape" {
+        page.notify_user_activation();
+    }
     match kind {
         KeyKind::KeyDown | KeyKind::RawKeyDown => {
+            if !(k.modifiers.ctrl || k.modifiers.meta || k.modifiers.alt) {
+                // Keyboard use makes focus visible, the current focus too.
+                page.pointer_modality.set(false);
+                let _ = page.dom.borrow_mut().set_focus_visible(doc, true);
+            }
             let ev = key_event(page, "keydown", k, 0);
             let ok = fire(page, tkey, &ev);
             if !ok || page.document() != doc || !accepts_keyboard(page) {
@@ -967,8 +1093,15 @@ pub fn dispatch_key(page: &Rc<PageDom>, kind: KeyKind, k: &KeyInput) {
                 // Browsers mark the control active on Space keydown and click
                 // it on the matching keyup (Blink KeyboardClickableInputTypeView).
                 page.space_target.set(Some(target));
+                set_active(page, doc, Some(target));
             }
-            if kind == KeyKind::KeyDown && !k.text.is_empty() {
+            if k.text.is_empty()
+                && !k.commands.is_empty()
+                && crate::edit_commands::run_commands(page, target, &k.commands)
+            {
+                return;
+            }
+            if kind == KeyKind::KeyDown && !k.text.is_empty() && !shortcut(k) {
                 press_char(page, target, k);
             } else {
                 default_key_action(page, target, k);
@@ -978,6 +1111,9 @@ pub fn dispatch_key(page: &Rc<PageDom>, kind: KeyKind, k: &KeyInput) {
         KeyKind::KeyUp => {
             let ev = key_event(page, "keyup", k, 0);
             let ok = fire(page, tkey, &ev);
+            if k.key == " " && page.space_target.get().is_some() {
+                set_active(page, doc, None);
+            }
             if k.key == " "
                 && page.space_target.take() == Some(target)
                 && ok
@@ -991,7 +1127,16 @@ pub fn dispatch_key(page: &Rc<PageDom>, kind: KeyKind, k: &KeyInput) {
     }
 }
 
+/// Ctrl or Meta (without Alt) makes a key a shortcut: no keypress and no
+/// text, as in Chromium.
+fn shortcut(k: &KeyInput) -> bool {
+    (k.modifiers.ctrl || k.modifiers.meta) && !k.modifiers.alt
+}
+
 fn press_char(page: &Rc<PageDom>, target: NodeId, k: &KeyInput) {
+    if shortcut(k) {
+        return;
+    }
     let code = k.text.chars().next().map_or(0, |c| c as u32);
     let ev = key_event(page, "keypress", k, code);
     let Some(tkey) = key_of(page, target) else { return };
@@ -1004,7 +1149,9 @@ fn press_char(page: &Rc<PageDom>, target: NodeId, k: &KeyInput) {
         return;
     }
     if let Some(host) = editing_host_of(page, target) {
-        if k.text == "\r" || k.text == "\n" {
+        if (k.text == "\r" || k.text == "\n") && k.modifiers.shift {
+            crate::editing::insert_line_break(page, host);
+        } else if k.text == "\r" || k.text == "\n" {
             crate::editing::insert_paragraph(page, host);
         } else {
             crate::editing::insert_text(page, host, &k.text);
@@ -1013,7 +1160,7 @@ fn press_char(page: &Rc<PageDom>, target: NodeId, k: &KeyInput) {
     }
     if k.text == "\r" || k.text == "\n" {
         enter_key(page, target);
-    } else {
+    } else if !select_typeahead(page, target, &k.text) {
         insert_text_at(page, target, &k.text);
     }
 }
@@ -1039,8 +1186,20 @@ fn editing_key_action(page: &Rc<PageDom>, host: NodeId, k: &KeyInput) {
 
 /// Default actions for non-text keys on the focused element.
 fn default_key_action(page: &Rc<PageDom>, target: NodeId, k: &KeyInput) {
+    // A close request: the newest open dialog or auto popover closes.
+    if k.key == "Escape" && crate::popover::close_request(page) {
+        return;
+    }
+    // Word/line movement and deletion, clipboard and undo shortcuts,
+    // Shift+Enter and line keys in editable content.
+    if crate::edit_commands::key_action(page, target, k) {
+        return;
+    }
     if let Some(host) = editing_host_of(page, target) {
         editing_key_action(page, host, k);
+        return;
+    }
+    if !(k.modifiers.alt || k.modifiers.ctrl || k.modifiers.meta) && control_key_action(page, target, &k.key) {
         return;
     }
     let editable = is_text_control(&page.dom.borrow(), target);
@@ -1078,8 +1237,213 @@ fn default_key_action(page: &Rc<PageDom>, target: NodeId, k: &KeyInput) {
     }
 }
 
-/// Text controls whose caret ArrowUp/ArrowDown move. Number, date/time, range
-/// and color inputs step or pick values instead, which is not modelled.
+/// The value-changing keys of form controls (Chrome's default handlers):
+/// ArrowUp/ArrowDown step a number input; arrows, PageUp/PageDown, Home and
+/// End move a range slider; arrows move the checked radio button (and
+/// focus) within its group; arrows, Home and End change a single-selection
+/// `<select>`'s option. A change fires `input` and `change`. Returns
+/// whether the key was such an action (handled, even when nothing changed).
+fn control_key_action(page: &Rc<PageDom>, el: NodeId, key: &str) -> bool {
+    let (name, ty, mutable) = {
+        let dom = page.dom.borrow();
+        let Some(name) = local(&dom, el) else { return false };
+        if !matches!(name.as_str(), "input" | "select") {
+            return false;
+        }
+        let ty = dom.input_type(el).ok();
+        // `readonly` does not apply to a select.
+        let readonly = name == "input" && dom.has_attribute(el, "readonly").unwrap_or(false);
+        let mutable = !dom.is_disabled(el).unwrap_or(true) && !readonly;
+        (name, ty, mutable)
+    };
+    let changed = match (name.as_str(), ty) {
+        ("input", Some(InputType::Number)) => {
+            let up = match key {
+                "ArrowUp" => true,
+                "ArrowDown" => false,
+                _ => return false,
+            };
+            mutable && step_by_key(page, el, |dom| dom.step_value(el, 1.0, up))
+        }
+        ("input", Some(InputType::Range)) => {
+            if !matches!(
+                key,
+                "ArrowUp" | "ArrowRight" | "ArrowDown" | "ArrowLeft" | "PageUp" | "PageDown" | "Home" | "End"
+            ) {
+                return false;
+            }
+            mutable && step_by_key(page, el, |dom| range_key(dom, el, key))
+        }
+        ("input", Some(InputType::Radio)) => {
+            let forward = match key {
+                "ArrowDown" | "ArrowRight" => true,
+                "ArrowUp" | "ArrowLeft" => false,
+                _ => return false,
+            };
+            let next = next_radio(&page.dom.borrow(), el, forward);
+            if let Some(next) = next {
+                focus_element(page, next);
+                keyboard_click(page, next);
+            }
+            // The click fired the events.
+            false
+        }
+        ("select", _) => {
+            if !matches!(key, "ArrowUp" | "ArrowDown" | "Home" | "End")
+                || page.dom.borrow().has_attribute(el, "multiple").unwrap_or(true)
+            {
+                return false;
+            }
+            mutable
+                && select_by_key(page, el, |options, current| {
+                    let pos = current.and_then(|c| options.iter().position(|&o| o == c));
+                    match (key, pos) {
+                        ("ArrowDown", Some(p)) => options.get(p + 1).copied(),
+                        ("ArrowUp", Some(p)) => p.checked_sub(1).map(|p| options[p]),
+                        ("ArrowDown" | "Home", _) => options.first().copied(),
+                        _ => options.last().copied(),
+                    }
+                })
+        }
+        _ => return false,
+    };
+    if changed {
+        fire_control_change(page, el);
+    }
+    true
+}
+
+/// `input` and `change` for a value the user committed at once (a key
+/// stepped or picked it): blurring later fires no second `change`.
+fn fire_control_change(page: &Rc<PageDom>, el: NodeId) {
+    fire_input_event(page, el, "input", "", None, false);
+    fire_user_change(page, el);
+    if page.focus_values.borrow().contains_key(&el) {
+        page.remember_focus_value(el);
+    }
+}
+
+/// Runs a value change of `el` and tells whether its value changed.
+fn step_by_key(page: &Rc<PageDom>, el: NodeId, f: impl FnOnce(&mut Dom) -> lp_dom::DomResult<()>) -> bool {
+    let mut dom = page.dom.borrow_mut();
+    let before = dom.value(el).ok();
+    let _ = f(&mut dom);
+    dom.value(el).ok() != before
+}
+
+/// A range slider key: one step for an arrow, a tenth of the range (at
+/// least a step) for PageUp/PageDown, the ends for Home/End.
+fn range_key(dom: &mut Dom, el: NodeId, key: &str) -> lp_dom::DomResult<()> {
+    let attr = |dom: &Dom, name: &str| dom.get_attribute(el, name).ok().flatten().and_then(lp_dom::forms::parse_float);
+    let min = attr(dom, "min").unwrap_or(0.0);
+    let max = attr(dom, "max").unwrap_or(100.0).max(min);
+    match key {
+        "Home" => dom.set_value_as_number(el, min),
+        "End" => dom.set_value_as_number(el, max),
+        "PageUp" | "PageDown" => {
+            let step = dom
+                .get_attribute(el, "step")
+                .ok()
+                .flatten()
+                .and_then(lp_dom::forms::parse_float)
+                .filter(|&s| s > 0.0)
+                .unwrap_or(1.0);
+            let big = step.max((max - min) / 10.0);
+            let v = dom.value_as_number(el)?;
+            dom.set_value_as_number(el, if key == "PageUp" { v + big } else { v - big })
+        }
+        _ => {
+            let up = matches!(key, "ArrowUp" | "ArrowRight");
+            match dom.step_value(el, 1.0, up) {
+                // step=any: a hundredth of the range.
+                Err(_) => {
+                    let v = dom.value_as_number(el)?;
+                    let delta = (max - min) / 100.0;
+                    dom.set_value_as_number(el, if up { v + delta } else { v - delta })
+                }
+                ok => ok,
+            }
+        }
+    }
+}
+
+/// The enabled radio button after (or before) `el` in its group, wrapping.
+fn next_radio(dom: &Dom, el: NodeId, forward: bool) -> Option<NodeId> {
+    let name = dom.get_attribute(el, "name").ok().flatten().filter(|n| !n.is_empty())?.to_owned();
+    let root = dom.root_node(el, false).ok()?;
+    let form = dom.form_owner(el).ok().flatten();
+    let group: Vec<NodeId> = dom
+        .descendants(root)
+        .ok()?
+        .filter(|&n| {
+            (n == el || !dom.is_disabled(n).unwrap_or(true))
+                && local(dom, n).as_deref() == Some("input")
+                && dom.input_type(n).ok() == Some(InputType::Radio)
+                && dom.get_attribute(n, "name").ok().flatten() == Some(name.as_str())
+                && dom.form_owner(n).ok().flatten() == form
+        })
+        .collect();
+    let pos = group.iter().position(|&n| n == el)?;
+    let next = if forward { (pos + 1) % group.len() } else { (pos + group.len() - 1) % group.len() };
+    (group[next] != el).then_some(group[next])
+}
+
+/// Selects the option `pick` chooses among a select's enabled options,
+/// given the selected one; tells whether the selection changed.
+fn select_by_key(
+    page: &Rc<PageDom>,
+    select: NodeId,
+    pick: impl FnOnce(&[NodeId], Option<NodeId>) -> Option<NodeId>,
+) -> bool {
+    let mut dom = page.dom.borrow_mut();
+    let Ok(options) = dom.select_options(select) else { return false };
+    let enabled: Vec<NodeId> = options.into_iter().filter(|&o| !dom.is_disabled(o).unwrap_or(true)).collect();
+    let current = dom.selected_options(select).ok().and_then(|s| s.first().copied());
+    let current_enabled = current.filter(|c| enabled.contains(c));
+    match pick(&enabled, current_enabled) {
+        Some(next) if Some(next) != current => dom.set_option_selected(next, true).is_ok(),
+        _ => false,
+    }
+}
+
+/// Typeahead in a focused single-selection `<select>`: the next enabled
+/// option (after the selected one, wrapping) whose label starts with the
+/// typed character. Returns whether `el` is such a select.
+fn select_typeahead(page: &Rc<PageDom>, el: NodeId, text: &str) -> bool {
+    {
+        let dom = page.dom.borrow();
+        if local(&dom, el).as_deref() != Some("select") || dom.has_attribute(el, "multiple").unwrap_or(true) {
+            return false;
+        }
+        if dom.is_disabled(el).unwrap_or(true) {
+            return true;
+        }
+    }
+    let prefix = text.to_lowercase();
+    if prefix.trim().is_empty() {
+        return true;
+    }
+    let labels: Vec<(NodeId, String)> = {
+        let dom = page.dom.borrow();
+        dom.select_options(el)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|o| (o, dom.option_text(o).unwrap_or_default().to_lowercase()))
+            .collect()
+    };
+    let changed = select_by_key(page, el, |options, current| {
+        let start = current.and_then(|c| options.iter().position(|&o| o == c)).map_or(0, |p| p + 1);
+        (0..options.len())
+            .map(|k| options[(start + k) % options.len()])
+            .find(|o| labels.iter().any(|(id, label)| id == o && label.starts_with(&prefix)))
+    });
+    if changed {
+        fire_control_change(page, el);
+    }
+    true
+}
+
+/// Text controls whose caret ArrowUp/ArrowDown move.
 fn vertical_caret_control(dom: &Dom, el: NodeId) -> bool {
     match local(dom, el).as_deref() {
         Some("textarea") => true,
@@ -1201,6 +1565,7 @@ fn delete(page: &Rc<PageDom>, el: NodeId, input_type: &str, backward: bool) {
     {
         return;
     }
+    crate::edit_commands::record_control_edit(page, el, input_type);
     let changed = {
         let mut dom = page.dom.borrow_mut();
         if backward {
@@ -1209,6 +1574,7 @@ fn delete(page: &Rc<PageDom>, el: NodeId, input_type: &str, backward: bool) {
             dom.delete_forward(el).unwrap_or(false)
         }
     };
+    crate::edit_commands::note_control_edited(page, el);
     if changed {
         fire_input_event(page, el, "input", input_type, None, false);
     }
@@ -1219,27 +1585,69 @@ fn enter_key(page: &Rc<PageDom>, target: NodeId) {
     match l.as_deref() {
         Some("textarea") => insert_text_at(page, target, "\n"),
         Some("input") => {
-            // Implicit submission: click the default button, else submit.
-            let (form, default_button) = {
-                let dom = page.dom.borrow();
-                let form = dom.form_owner(target).ok().flatten();
-                let button = form.and_then(|f| {
-                    let root = dom.root_node(f, false).ok()?;
-                    dom.descendants(root).ok()?.find(|&n| {
-                        dom.form_owner(n).ok().flatten() == Some(f)
-                            && is_enabled_submit_button(&dom, n)
-                    })
-                });
-                (form, button)
-            };
-            match (form, default_button) {
-                (_, Some(b)) => element_click(page, b),
-                (Some(f), None) => submit_form(page, f, None, true),
-                _ => {}
+            let ty = page.dom.borrow().input_type(target).ok();
+            // Enter activates a button input itself.
+            if matches!(ty, Some(InputType::Submit | InputType::Image | InputType::Reset | InputType::Button)) {
+                keyboard_click(page, target);
+                return;
+            }
+            let action = implicit_submission(&page.dom.borrow(), target);
+            match action {
+                ImplicitSubmission::Click(b) => element_click(page, b),
+                ImplicitSubmission::Submit(f) => submit_form(page, f, None, true),
+                ImplicitSubmission::Nothing => {}
             }
         }
         Some("a") | Some("button") => element_click(page, target),
         _ => {}
+    }
+}
+
+enum ImplicitSubmission {
+    Click(NodeId),
+    Submit(NodeId),
+    Nothing,
+}
+
+/// A field that blocks implicit submission (HTML §4.10.21.2): Enter in one
+/// submits a form that has no submit button only when it is the only one.
+fn blocks_implicit_submission(ty: InputType) -> bool {
+    use InputType::*;
+    matches!(ty, Text | Search | Tel | Url | Email | Password | Date | Month | Week | Time | DateTimeLocal | Number)
+}
+
+/// What Enter in the input `field` does, as in Chrome
+/// (HTMLFormElement::SubmitImplicitly): the form's default button (its
+/// first submit button, disabled or not) is clicked when enabled, and a
+/// disabled one blocks submission; without one, a field that blocks
+/// implicit submission submits the form when it is the only such field.
+/// Other inputs (checkboxes, radios, ...) click the first enabled submit
+/// button and never submit without one.
+fn implicit_submission(dom: &Dom, field: NodeId) -> ImplicitSubmission {
+    let Some(form) = dom.form_owner(field).ok().flatten() else { return ImplicitSubmission::Nothing };
+    let Ok(root) = dom.root_node(form, false) else { return ImplicitSubmission::Nothing };
+    let trigger = dom.input_type(field).is_ok_and(blocks_implicit_submission);
+    let mut blocking = 0;
+    for n in dom.descendants(root).into_iter().flatten() {
+        let Some(name) = local(dom, n) else { continue };
+        if !matches!(name.as_str(), "input" | "button") || dom.form_owner(n).ok().flatten() != Some(form) {
+            continue;
+        }
+        if is_submit_button(dom, n) {
+            if !dom.is_disabled(n).unwrap_or(false) {
+                return ImplicitSubmission::Click(n);
+            }
+            if trigger {
+                return ImplicitSubmission::Nothing;
+            }
+        } else if name == "input" && dom.input_type(n).is_ok_and(blocks_implicit_submission) {
+            blocking += 1;
+        }
+    }
+    if trigger && blocking == 1 {
+        ImplicitSubmission::Submit(form)
+    } else {
+        ImplicitSubmission::Nothing
     }
 }
 
@@ -1257,7 +1665,9 @@ fn insert_text_at(page: &Rc<PageDom>, el: NodeId, text: &str) {
     {
         return;
     }
+    crate::edit_commands::record_control_edit(page, el, input_type);
     let changed = page.dom.borrow_mut().insert_text(el, text).unwrap_or(false);
+    crate::edit_commands::note_control_edited(page, el);
     if changed {
         crate::editing::queue_control_selectionchange(page, el);
         fire_input_event(page, el, "input", input_type, data, false);
@@ -1293,35 +1703,32 @@ pub fn insert_text(page: &Rc<PageDom>, text: &str) {
     insert_text_at(page, target, text);
 }
 
-/// Sequential focus navigation in tree order (tabindex >= 0 or naturally
-/// focusable; positive tabindex ordering is not modelled).
-fn focus_next(page: &Rc<PageDom>, from: NodeId, backward: bool) {
+/// Sequential focus navigation (Tab / Shift+Tab) from the focused element
+/// through the flattened tabindex-ordered scopes of the document, its
+/// shadow trees and slots (see `lp_dom::focus_nav`), over focusable areas.
+fn focus_next(page: &Rc<PageDom>, _from: NodeId, backward: bool) {
     let next = {
+        let layout = page.layout();
         let dom = page.dom.borrow();
         let doc = page.document();
-        let Ok(all) = dom.descendants(doc) else { return };
-        let candidates: Vec<NodeId> = all
-            .filter(|&n| {
-                dom.is_focusable(n).unwrap_or(false)
-                    && dom
-                        .get_attribute(n, "tabindex")
-                        .ok()
-                        .flatten()
-                        .and_then(|t| t.trim().parse::<i32>().ok())
-                        .unwrap_or(0)
-                        >= 0
-            })
-            .collect();
-        let pos = candidates.iter().position(|&c| c == from);
-        match (pos, backward) {
-            (Some(p), false) => candidates.get(p + 1).copied(),
-            (Some(p), true) => p.checked_sub(1).and_then(|i| candidates.get(i).copied()),
-            (None, false) => candidates.first().copied(),
-            (None, true) => candidates.last().copied(),
-        }
+        let current = dom.focused(doc).ok().flatten();
+        dom.sequential_focus_target(doc, current, backward, &|n| is_focusable_area(&layout, &dom, n))
     };
     if let Some(n) = next {
         focus_element(page, n);
+    }
+}
+
+/// The parent element in the flat tree: a slottable's slot, a shadow
+/// root's host, else the parent element.
+fn flat_parent_element(dom: &Dom, el: NodeId) -> Option<NodeId> {
+    if let Some(slot) = dom.assigned_slot_any(el) {
+        return Some(slot);
+    }
+    match dom.parent(el).ok().flatten() {
+        Some(p) if dom.is_shadow_root(p).unwrap_or(false) => dom.fragment_host(p).ok().flatten(),
+        Some(p) if dom.element(p).is_ok() => Some(p),
+        _ => None,
     }
 }
 
@@ -1370,7 +1777,13 @@ pub struct MouseInput {
     pub delta_y: f64,
 }
 
-fn mouse_event(page: &Rc<PageDom>, iface: EventInterface, ty: &str, m: &MouseInput, cancelable: bool) -> EventData {
+pub(crate) fn mouse_event(
+    page: &Rc<PageDom>,
+    iface: EventInterface,
+    ty: &str,
+    m: &MouseInput,
+    cancelable: bool,
+) -> EventData {
     let ev = EventCore::trusted(
         page,
         iface,
@@ -1725,6 +2138,10 @@ pub fn dispatch_mouse_intercepting_drags(
     m: &MouseInput,
     intercept_drags: bool,
 ) -> Result<Option<DragData>, String> {
+    // HTML activation-triggering input: mousedown (and pointerup).
+    if matches!(kind, MouseKind::Pressed | MouseKind::Released) {
+        page.notify_user_activation();
+    }
     dispatch_mouse_inner(page, kind, m, intercept_drags, None)
 }
 
@@ -1739,7 +2156,16 @@ fn dispatch_mouse_inner(
     touch: Option<i32>,
 ) -> Result<Option<DragData>, String> {
     // Empty viewport space targets the root element, as Chromium hit-tests it.
-    let target = pointer_target(page, m.x, m.y, true).ok_or_else(|| "no element at point".to_owned())?;
+    let hit = pointer_target(page, m.x, m.y, true).ok_or_else(|| "no element at point".to_owned())?;
+    // Mouse pointer events (and their compatibility mouse events) go to the
+    // capture target while there is one.
+    let captured = match (touch, kind) {
+        (None, MouseKind::Pressed | MouseKind::Moved | MouseKind::Released) => {
+            crate::pointer_capture::capture_target(page, m)
+        }
+        _ => None,
+    };
+    let target = captured.unwrap_or(hit);
     let Some(tkey) = key_of(page, target) else { return Err("stale target".into()) };
     match kind {
         MouseKind::Moved => {
@@ -1762,6 +2188,16 @@ fn dispatch_mouse_inner(
             }
         }
         MouseKind::Pressed => {
+            crate::popover::light_dismiss(page, target, m.x, m.y, true);
+            page.pointer_modality.set(true);
+            if touch.is_none() {
+                let mut c = page.mouse_capture.get();
+                c.buttons_down = true;
+                page.mouse_capture.set(c);
+            }
+            if m.button == MouseButton::Left {
+                set_active(page, page.document(), Some(target));
+            }
             let pd = touch.is_some()
                 || fire(page, tkey, &mouse_event(page, EventInterface::PointerEvent, "pointerdown", m, true));
             let md = !pd || fire(page, tkey, &mouse_event(page, EventInterface::MouseEvent, "mousedown", m, true));
@@ -1780,11 +2216,13 @@ fn dispatch_mouse_inner(
                     let mut cur = Some(target);
                     let mut found = None;
                     while let Some(c) = cur {
-                        if dom.is_focusable(c).unwrap_or(false) {
+                        // A host that delegates focus takes it for a press
+                        // anywhere in it (its delegate, see focus()).
+                        if dom.is_focusable(c).unwrap_or(false) || dom.is_delegates_focus_host(c) {
                             found = Some(c);
                             break;
                         }
-                        cur = dom.parent_element(c).ok().flatten();
+                        cur = flat_parent_element(&dom, c);
                     }
                     found
                 };
@@ -1819,22 +2257,39 @@ fn dispatch_mouse_inner(
             if place_caret && source.is_none() {
                 text_select_press(page, target, m);
             }
+            // A double press selects a word, a triple one a line or block.
+            if place_caret && source.is_none() && m.click_count >= 2 && !page.is_disposed() {
+                crate::edit_commands::multi_click(page, target, m.x, m.y, m.click_count);
+            }
         }
         MouseKind::Released => {
             note_buttons(page, m);
             page.drag_candidate.set(None);
             page.text_drag.set(None);
+            if m.button == MouseButton::Left {
+                set_active(page, page.document(), None);
+            }
             if touch.is_none() {
                 fire(page, tkey, &mouse_event(page, EventInterface::PointerEvent, "pointerup", m, true));
+                // Implicit release right after pointerup: lostpointercapture
+                // before the compatibility mouseup and the click.
+                let mut c = page.mouse_capture.get();
+                c.pending = None;
+                c.buttons_down = m.buttons != 0;
+                page.mouse_capture.set(c);
+                crate::pointer_capture::process_pending_capture(page, m);
             }
+            crate::popover::light_dismiss(page, target, m.x, m.y, false);
             // Only a canceled pointerdown holds back the mouseup (an app's
             // pointerup handler that calls preventDefault does not).
             if !page.compat_mouse_suppressed.replace(false) {
                 fire(page, tkey, &mouse_event(page, EventInterface::MouseEvent, "mouseup", m, true));
             }
             let pressed = page.take_press_target();
-            // click targets the common ancestor of press and release targets.
+            // click targets the common ancestor of press and release targets;
+            // under capture, the capture target (as in Chrome).
             let click_target = match pressed {
+                Some(_) if captured.is_some() => captured,
                 Some(p) if p == target => Some(target),
                 Some(p) => common_ancestor(&page.dom.borrow(), p, target),
                 None => None,
@@ -2151,6 +2606,10 @@ pub fn dispatch_touch(
     points: &[TouchInput],
     modifiers: Modifiers,
 ) -> Result<(), String> {
+    // HTML activation-triggering input: touchend.
+    if kind == TouchKind::End {
+        page.notify_user_activation();
+    }
     // A navigation since the sequence began leaves its touches behind.
     if seq.doc.is_some_and(|d| d != page.document()) {
         seq.reset();

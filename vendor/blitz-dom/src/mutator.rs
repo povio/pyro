@@ -168,6 +168,11 @@ impl DocumentMutator<'_> {
     }
 
     pub fn create_element(&mut self, name: QualName, attrs: Vec<Attribute>) -> NodeId {
+        // lightningpanda: the top layer is marked in lp-dom's state attribute.
+        let lp_state = attrs
+            .iter()
+            .find(|a| is_lp_state(&a.name))
+            .map(|a| a.value.clone());
         let mut data = ElementData::new(name, attrs);
         data.flush_style_attribute(self.doc.guard(), &self.doc.url.url_extra_data());
 
@@ -180,6 +185,9 @@ impl DocumentMutator<'_> {
             ..Default::default()
         };
 
+        if let Some(state) = lp_state {
+            self.doc.note_lp_state(id, Some(&state));
+        }
         id
     }
 
@@ -322,6 +330,20 @@ impl DocumentMutator<'_> {
     }
 
     pub fn set_attribute(&mut self, node_id: NodeId, name: QualName, value: &str) {
+        if is_lp_state(&name) && self.doc.nodes[node_id].is_element() {
+            self.doc.note_lp_state(node_id, Some(value));
+        }
+        // lightningpanda: `:has()` anchors that can see the element follow
+        // the change (`has_invalidation`); `None` (one flag test) when no
+        // `:has()` search visited it.
+        let change = crate::has_invalidation::AttributeChange::before(self.doc, node_id, &name);
+        self.set_attribute_impl(node_id, name, value);
+        if let Some(change) = change.and_then(|c| c.after(self.doc, node_id)) {
+            self.doc.invalidate_relative_attribute(node_id, change);
+        }
+    }
+
+    fn set_attribute_impl(&mut self, node_id: NodeId, name: QualName, value: &str) {
         let node_is_in_document = self.doc.nodes[node_id].flags.is_in_document();
         if node_is_in_document {
             self.doc.snapshot_node(node_id, &name.local);
@@ -359,6 +381,9 @@ impl DocumentMutator<'_> {
         }
 
         element.attrs.set(name.clone(), value);
+        if is_state_attribute(&element.name, &name) {
+            element.sync_lp_attribute_state();
+        }
         if node_is_in_document {
             devtools!(
                 self,
@@ -451,6 +476,8 @@ impl DocumentMutator<'_> {
                 && crate::layout::replaced::is_image_input(element))
         {
             self.load_image(node_id);
+        } else if (tag, attr) == tag_and_attr!("video", "poster") {
+            self.load_image(node_id);
         } else if (tag, attr) == tag_and_attr!("canvas", "src") {
             self.load_custom_paint_src(node_id);
         } else if (tag, attr) == tag_and_attr!("link", "href")
@@ -465,6 +492,18 @@ impl DocumentMutator<'_> {
     }
 
     pub fn clear_attribute(&mut self, node_id: NodeId, name: QualName) {
+        if is_lp_state(&name) {
+            self.doc.note_lp_state(node_id, None);
+        }
+        // lightningpanda: as in `set_attribute`.
+        let change = crate::has_invalidation::AttributeChange::before(self.doc, node_id, &name);
+        self.clear_attribute_impl(node_id, name);
+        if let Some(change) = change.and_then(|c| c.after(self.doc, node_id)) {
+            self.doc.invalidate_relative_attribute(node_id, change);
+        }
+    }
+
+    fn clear_attribute_impl(&mut self, node_id: NodeId, name: QualName) {
         let node_is_in_document = self.doc.nodes[node_id].flags.is_in_document();
         if node_is_in_document {
             self.doc.snapshot_node(node_id, &name.local);
@@ -492,6 +531,9 @@ impl DocumentMutator<'_> {
         let had_attr = removed_attr.is_some();
         if !had_attr {
             return;
+        }
+        if is_state_attribute(&element.name, &name) {
+            element.sync_lp_attribute_state();
         }
         self.mutations_occurred |= node_is_in_document;
         if node_is_in_document {
@@ -721,19 +763,18 @@ impl DocumentMutator<'_> {
     /// whose selectors depend on the attribute. `style`, `class` and `id` reach layout only
     /// through the computed style (whose diff yields the damage); other attributes may not.
     /// lightningpanda: restyles the siblings of `node_id` (and their subtrees) for an attribute
-    /// change Stylo's snapshot invalidation cannot follow to them:
-    /// - a selector list of `:nth-child(... of S)` (the parent carries
-    ///   `HAS_SLOW_SELECTOR_NTH_OF`): Stylo leaves those to the embedder, as Gecko's
-    ///   `RestyleSiblingsForNthOf` does;
-    /// - lightningpanda's form-state attribute (`urn:x-lightningpanda:state`): the pseudo-classes
-    ///   it carries (`:invalid`, `:checked` groups, ...) are not element states, so a snapshot
-    ///   sees no state change and sibling combinators after them (`.r:invalid + .l`) would keep
-    ///   their old match. Its `natural=W,H` token (an image's natural size) is read by layout,
-    ///   so a change to it is layout damage.
+    /// change Stylo's snapshot invalidation cannot follow to them: a selector list of
+    /// `:nth-child(... of S)` (the parent carries `HAS_SLOW_SELECTOR_NTH_OF`), which Stylo
+    /// leaves to the embedder, as Gecko's `RestyleSiblingsForNthOf` does. The pseudo-classes
+    /// lightningpanda's state attribute (`urn:x-lightningpanda:state`) carries are element
+    /// states ([`ElementData::sync_lp_attribute_state`]), so the snapshot sees them change and
+    /// Stylo's state invalidation reaches the siblings and descendants (`.r:invalid + .l`)
+    /// itself; only its `natural=W,H` token (an image's natural size), which layout reads, is
+    /// layout damage here when it changes.
     /// Upstream restyled the parent's subtree on every attribute change; it now hints the element
     /// alone (blitz#1276).
     fn restyle_siblings_for_attribute_change(&mut self, node_id: NodeId, name: &QualName, value: Option<&str>) {
-        if &*name.ns == "urn:x-lightningpanda:state" {
+        if is_lp_state(name) {
             let natural =
                 |v: &str| v.split_ascii_whitespace().find(|t| t.starts_with("natural=")).map(str::to_owned);
             let node = &mut self.doc.nodes[node_id];
@@ -751,18 +792,17 @@ impl DocumentMutator<'_> {
             return;
         };
         let parent = &self.doc.nodes[parent_id];
-        let lp_state = &*name.ns == "urn:x-lightningpanda:state";
         let nth_of = parent.is_element()
             && parent
                 .selector_flags()
                 .get()
                 .contains(ElementSelectorFlags::HAS_SLOW_SELECTOR_NTH_OF);
-        if !lp_state && !nth_of {
+        if !nth_of {
             return;
         }
         for &id in parent.children.clone().iter() {
             let sibling = &mut self.doc.nodes[id];
-            if (lp_state || id != node_id) && sibling.is_element() && sibling.primary_styles().is_some() {
+            if id != node_id && sibling.is_element() && sibling.primary_styles().is_some() {
                 sibling.set_restyle_hint(RestyleHint::restyle_subtree());
             }
         }
@@ -1435,6 +1475,9 @@ impl<'doc> DocumentMutator<'doc> {
                 _ if has_custom_widget => {}
                 "link" => self.eager_op_queue.push(SpecialOp::LoadStylesheet(node_id)),
                 "img" => self.eager_op_queue.push(SpecialOp::LoadImage(node_id)),
+                // lightningpanda: a `<video>` paints its poster image (no
+                // video frame is ever decoded).
+                "video" => self.eager_op_queue.push(SpecialOp::LoadImage(node_id)),
                 // lightningpanda: an image button is replaced content showing
                 // its `src` image, so it loads like `<img>` (and is a form
                 // control like any other input).
@@ -1647,10 +1690,32 @@ impl<'doc> DocumentMutator<'doc> {
 
     fn load_image(&mut self, target_id: NodeId) {
         let node = &self.doc.nodes[target_id];
-        if let Some(raw_src) = node.attr(local_name!("src")) {
-            if !raw_src.is_empty()
-                && let Some(src) = self.doc.resolve_url(raw_src)
-            {
+        // lightningpanda: a `<video>`'s image is its poster; without one it
+        // paints nothing.
+        let is_video = node
+            .element_data()
+            .is_some_and(|e| e.name.local == local_name!("video"));
+        let attr = if is_video {
+            local_name!("poster")
+        } else {
+            local_name!("src")
+        };
+        if is_video && node.attr(attr.clone()).is_none_or(|v| v.trim().is_empty()) {
+            let node = &mut self.doc.nodes[target_id];
+            if let Some(element) = node.element_data_mut() {
+                if matches!(element.special_data, SpecialElementData::Image(_)) {
+                    element.special_data = SpecialElementData::None;
+                    node.clear_layout_cache();
+                    node.insert_damage(ALL_DAMAGE);
+                }
+            }
+            return;
+        }
+        if let Some(raw_src) = node.attr(attr) {
+            if !raw_src.is_empty() {
+                let Some(src) = self.doc.resolve_url(raw_src) else {
+                    return;
+                };
                 let src_string = src.as_str();
 
                 // Check cache first
@@ -1799,6 +1864,20 @@ impl<'doc> DocumentMutator<'doc> {
             self.append_children(button_id, &[button_text_id]);
         }
     }
+}
+
+/// lightningpanda: attributes whose value is element state
+/// ([`ElementData::sync_lp_attribute_state`]): lp-dom's `state` tokens and an
+/// `<option>`'s `selected`.
+fn is_state_attribute(element: &QualName, name: &QualName) -> bool {
+    (&*name.ns == crate::LP_STATE_NS && &*name.local == "state")
+        || (element.local == local_name!("option") && name.local == local_name!("selected"))
+}
+
+/// lightningpanda: lp-dom's `urn:x-lightningpanda:state` `state` attribute.
+#[inline]
+fn is_lp_state(name: &QualName) -> bool {
+    &*name.local == "state" && &*name.ns == crate::LP_STATE_NS
 }
 
 /// Set 'checked' state on an input based on given attributevalue
@@ -2597,6 +2676,50 @@ mod test {
             assert_eq!(in_rule_tree.read_with(&guard).declarations().len(), 2);
             assert_eq!(after_remove.read_with(&guard).declarations().len(), 1);
         }
+    }
+
+    /// lightningpanda: the top layer follows `top-layer=N` state tokens by
+    /// rank (re-ranking, leaving, many entries) and forgets dropped elements.
+    #[test]
+    fn top_layer_follows_state_tokens_and_drops() {
+        use markup5ever::{LocalName, Namespace, QualName};
+        let state = || QualName::new(None, Namespace::from(crate::LP_STATE_NS), LocalName::from("state"));
+        let mut document = BaseDocument::new(DocumentConfig::default());
+        let ids: Vec<_> = {
+            let mut mutator = document.mutate();
+            (0..2000).map(|_| mutator.create_element(qual_name!("div"), vec![])).collect()
+        };
+        let order = |doc: &BaseDocument| doc.top_layer.iter().collect::<Vec<_>>();
+        {
+            let mut mutator = document.mutate();
+            // Enter top first: ranks, not arrival, give the order.
+            for (rank, &id) in ids.iter().enumerate().rev() {
+                mutator.set_attribute(id, state(), &format!("popover-open top-layer={rank}"));
+            }
+        }
+        assert_eq!(order(&document), ids);
+        assert!(ids.iter().all(|&id| document.is_in_top_layer(id)));
+        {
+            // The bottom one leaves; the rest move down a rank.
+            let mut mutator = document.mutate();
+            mutator.set_attribute(ids[0], state(), "popover-open");
+            for (rank, &id) in ids[1..].iter().enumerate() {
+                mutator.set_attribute(id, state(), &format!("popover-open top-layer={rank}"));
+            }
+            // An element re-entering goes on top.
+            mutator.set_attribute(ids[0], state(), &format!("modal top-layer={}", ids.len() - 1));
+        }
+        let mut expected = ids[1..].to_vec();
+        expected.push(ids[0]);
+        assert_eq!(order(&document), expected);
+        {
+            let mut mutator = document.mutate();
+            mutator.clear_attribute(ids[5], state());
+            mutator.remove_and_drop_node(ids[6]);
+        }
+        assert!(!document.is_in_top_layer(ids[5]) && !document.is_in_top_layer(ids[6]));
+        expected.retain(|&id| id != ids[5] && id != ids[6]);
+        assert_eq!(order(&document), expected);
     }
 
     fn qual_name(name: &str) -> crate::QualName {

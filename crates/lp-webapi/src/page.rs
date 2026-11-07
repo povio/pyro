@@ -19,12 +19,40 @@ static NEXT_PAGE: AtomicU64 = AtomicU64::new(1);
 pub(crate) const OTHER_NS: u64 = 1 << 63;
 pub(crate) const EVENT_NS: u64 = 1 << 62;
 
+/// Most encoded image bytes a document keeps for canvas use.
+pub const MAX_IMAGE_BYTES_KEPT: usize = 64 * 1024 * 1024;
+/// Most decoded image bytes a document keeps cached for canvas use: images
+/// decoded past it are decoded again on each use.
+pub const MAX_IMAGE_DECODED_KEPT: usize = 256 * 1024 * 1024;
+
+/// A loaded `<img>`'s encoded bytes ([`PageDom::set_image_bytes`]).
+struct ImageBytes {
+    bytes: Vec<u8>,
+    clean: bool,
+    /// The decoded pixels once a canvas used them (`Some(None)`: they do
+    /// not decode).
+    decoded: Option<Option<lp_canvas::Bitmap>>,
+}
+
+impl ImageBytes {
+    /// The bytes this entry counts: (encoded, decoded and cached).
+    fn counted(&self) -> (usize, usize) {
+        (self.bytes.len(), self.decoded.as_ref().and_then(Option::as_ref).map_or(0, |b| b.byte_len()))
+    }
+}
+
 pub struct PageDom {
     pub dom: DomRef,
     id: u64,
     disposed: Cell<bool>,
     document: Cell<NodeId>,
     scripting_disabled: Cell<bool>,
+    /// The document's origin is opaque although its URL's is not (a sandboxed
+    /// frame without `allow-same-origin`). Set by the embedder before the
+    /// context services.
+    opaque_origin: Cell<bool>,
+    /// HTML "sticky activation": the user interacted with the document.
+    sticky_activation: Cell<bool>,
     flushing_iframes: Cell<bool>,
     /// The document's render-blocking element set (see `render_blocking`).
     pub(crate) render_blocking: crate::render_blocking::RenderBlocking,
@@ -90,6 +118,13 @@ pub struct PageDom {
     pub(crate) worker_wire: RefCell<FxHashMap<RealmId, Persistent>>,
     /// Workers this document started that have not ended (`crate::worker`).
     pub(crate) workers: RefCell<Vec<Rc<crate::worker::WorkerInner>>>,
+    /// This document as a service worker client, once it is one.
+    pub(crate) sw_client: RefCell<Option<Rc<crate::service_worker::ClientInner>>>,
+    /// A service worker controls this document: its requests go there
+    /// (`service_worker::route`). The one test uncontrolled requests pay.
+    pub(crate) sw_controlled: Cell<bool>,
+    /// The document is shown in a child frame (a client's `frameType`).
+    nested_frame: Cell<bool>,
     /// Each realm's original `Object.defineProperty` ([Replaceable] setters).
     pub(crate) define_properties: RefCell<FxHashMap<RealmId, Persistent>>,
     /// MessagePorts whose peer was collected; their pins are reconciled at
@@ -148,9 +183,20 @@ pub struct PageDom {
     /// creating document; revocation, document replacement and disposal drop
     /// the entries (and their bytes).
     pub(crate) blob_urls: RefCell<FxHashMap<String, (bytes::Bytes, String)>>,
+    /// `document.referrer` and the `Referrer-Policy` header of the document's
+    /// response, set by the embedder at commit (`crate::fetch`).
+    pub(crate) referrer: crate::fetch::DocumentReferrer,
     pub(crate) reflected_url_base: RefCell<Option<crate::html::ReflectedUrlBase>>,
     hooks: RefCell<Option<Rc<dyn PageHooks>>>,
     ready: RefCell<FxHashMap<NodeId, &'static str>>,
+    /// HTML "visibility state" of the document is "hidden": set as it is
+    /// unloaded (`lifecycle::unload`).
+    hidden: Cell<bool>,
+    /// Navigation Timing of the document, recorded as the lifecycle steps
+    /// run (`lifecycle`).
+    timing: Cell<DocumentTiming>,
+    /// Resource Timing: the document's entry buffer (`resource_timing`).
+    pub(crate) resource_timings: crate::resource_timing::ResourceTimings,
     pub(crate) focus_values: RefCell<FxHashMap<NodeId, String>>,
     pub(crate) focus_transition: RefCell<Option<FocusTransition>>,
     pub(crate) editing_target: Cell<Option<NodeId>>,
@@ -158,8 +204,36 @@ pub struct PageDom {
     submitting: RefCell<Vec<NodeId>>,
     hovered: Cell<Option<NodeId>>,
     /// `<img>` resource state set by the embedder: the `src` value the
-    /// current load is for, and whether it is still loading.
-    images: RefCell<FxHashMap<NodeId, (String, bool)>>,
+    /// current load is for, whether it is still loading, and whether the
+    /// finished load is decodable (`decode()` resolves).
+    pub(crate) images: RefCell<FxHashMap<NodeId, (String, bool, bool)>>,
+    /// `images` size at which entries of collected elements are dropped.
+    images_sweep_at: Cell<usize>,
+    /// Pending `HTMLImageElement.decode()` promises (`crate::image_decode`).
+    pub(crate) image_decodes: RefCell<FxHashMap<NodeId, Vec<crate::image_decode::PendingDecode>>>,
+    /// Encoded bytes of loaded `<img>`s the embedder kept for canvas use
+    /// ([`PageDom::set_image_bytes`]), decoded on first use.
+    image_bytes: RefCell<FxHashMap<NodeId, ImageBytes>>,
+    /// Bytes `image_bytes` holds: (encoded, decoded), kept as entries come
+    /// and go.
+    image_bytes_kept: Cell<(usize, usize)>,
+    /// Loads refused for the encoded budget since `image_bytes` was last
+    /// swept for collected elements (a sweep per that many: amortized O(1)).
+    image_bytes_refused: Cell<usize>,
+    /// Bitmaps of canvas elements with a 2D context (`canvas.rs`), for
+    /// painting them.
+    pub(crate) canvas_surfaces: RefCell<Vec<(NodeId, std::rc::Weak<RefCell<lp_canvas::Surface>>)>>,
+    /// Canvas elements whose control went to an `OffscreenCanvas`
+    /// (`transferControlToOffscreen`), with the frame it shows there.
+    pub(crate) canvas_placeholders: RefCell<Vec<(NodeId, std::sync::Arc<crate::canvas::Placeholder>)>>,
+    /// This thread's offscreen contexts drawing for a placeholder: their
+    /// frame is committed after each task (`canvas::commit_frames`).
+    pub(crate) canvas_commits: RefCell<Vec<crate::canvas::FrameCommit>>,
+    /// A 2D context, `OffscreenCanvas` or `createImageBitmap` was used:
+    /// image bytes are worth keeping ([`PageDom::wants_image_bytes`]).
+    pub(crate) canvas_used: Cell<bool>,
+    /// HTMLMediaElement state of the elements script or a load touched.
+    pub(crate) media: crate::media::MediaElements,
     /// The last mouse input's position and state, for boundary events when
     /// content under a stationary pointer changes.
     pub(crate) pointer: RefCell<Option<crate::input::MouseInput>>,
@@ -179,6 +253,8 @@ pub struct PageDom {
     /// The document selection (`crate::editing`), shared by every world.
     pub(crate) selection: RefCell<Option<crate::editing::DocSelection>>,
     pub(crate) selectionchange_pending: Cell<bool>,
+    /// Undo/redo steps of user edits (`crate::edit_commands`).
+    pub(crate) undo: RefCell<crate::edit_commands::UndoHistory>,
     /// The native drag-and-drop session in progress, if any.
     pub(crate) drag: RefCell<Option<crate::input::DragSession>>,
     /// `document.open()`'s script-created parser (`crate::html` document
@@ -201,11 +277,21 @@ pub struct PageDom {
     pub(crate) ignore_destructive_writes: Cell<u32>,
     /// Control activated by a Space keydown, clicked on the matching keyup.
     pub(crate) space_target: Cell<Option<NodeId>>,
+    /// The last input that can move focus was a pointer press (a key press
+    /// clears it): Chrome's `:focus-visible` modality.
+    pub(crate) pointer_modality: Cell<bool>,
+    /// Pointer capture of the mouse (pointerId 1), see `crate::input`.
+    pub(crate) mouse_capture: Cell<crate::pointer_capture::MouseCapture>,
     dialog_returns: RefCell<FxHashMap<NodeId, String>>,
+    /// Popovers, dialogs and invokers (`popover.rs`).
+    pub(crate) popover: crate::popover::PopoverState,
     /// `nonce` IDL values, keyed with the content attribute they were set
     /// over: a later attribute change wins, as it updates the internal slot.
     nonces: RefCell<FxHashMap<NodeId, (Option<String>, String)>>,
     pub(crate) sheet_models: RefCell<FxHashMap<NodeId, Rc<crate::css::SheetModel>>>,
+    /// The constructed sheets each document or shadow root adopts
+    /// (`adoptedStyleSheets`), in order; empty unless a script adopted one.
+    pub(crate) adopted_sheets: RefCell<FxHashMap<NodeId, Vec<Rc<crate::css::Constructed>>>>,
     /// Files selected into `<input type=file>` (CDP DOM.setFileInputFiles).
     pub(crate) files: RefCell<FxHashMap<NodeId, Vec<crate::file::FileEntry>>>,
     /// Faux layout + style engine of the displayed document. Read it with
@@ -227,6 +313,77 @@ pub struct PageDom {
 /// Computes a child frame's viewport from its iframe; `None`: unknown yet,
 /// keep the current one.
 pub type FrameViewportSource = Rc<dyn Fn() -> Option<lp_dom::media::Viewport>>;
+
+/// Navigation Timing marks of a document, in the event clock's
+/// milliseconds (`performance.now()`); `None` until the step ran.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct DocumentTiming {
+    pub dom_interactive: Option<f64>,
+    pub dom_content_loaded_start: Option<f64>,
+    pub dom_content_loaded_end: Option<f64>,
+    pub dom_complete: Option<f64>,
+    pub load_start: Option<f64>,
+    pub load_end: Option<f64>,
+}
+
+/// A media element's resource request (`PageHooks::fetch_media`).
+#[derive(Clone, Debug)]
+pub struct MediaRequest {
+    pub url: String,
+    /// `<video>` (else `<audio>`): the request's destination.
+    pub video: bool,
+    /// The element's `crossorigin` attribute.
+    pub crossorigin: Option<String>,
+    /// How much of the body the element needs.
+    pub part: BodyPart,
+}
+
+/// A fetch that needs only part of a response body (a media element reads
+/// container headers): it completes with a prefix and stops the transfer
+/// once `enough` or `limit` says so, instead of buffering the whole body
+/// (which a live stream never finishes).
+#[derive(Clone, Copy, Debug)]
+pub struct BodyPart {
+    /// Request the body from this offset (`Range: bytes=start-`; 0 sends no
+    /// `Range`). A server may ignore it and answer 200 with the whole body.
+    pub start: u64,
+    /// At most this many body bytes are kept: reaching it completes the
+    /// fetch with them.
+    pub limit: usize,
+    /// Asked at doubling sizes with the body so far and the response's
+    /// length (`Content-Length` of an unencoded body, when sent): `true`
+    /// completes the fetch with those bytes.
+    pub enough: fn(&[u8], Option<u64>) -> bool,
+}
+
+impl BodyPart {
+    /// The body size `enough` is first asked at; then at each doubling.
+    pub const FIRST_CHECK: usize = 16 * 1024;
+}
+
+/// A response body cut short by `BodyPart`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Partial {
+    /// The whole body's length, when the response said.
+    pub total: Option<u64>,
+}
+
+/// A media resource's response: the body, or the prefix of it that the
+/// request's `BodyPart` asked for.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MediaResponse {
+    pub status: u16,
+    pub mime: String,
+    pub body: Vec<u8>,
+    /// `Some`: `body` is a prefix of the response body.
+    pub partial: Option<Partial>,
+    /// The response may be read back by script (same origin, or CORS):
+    /// `drawImage` of the video keeps a canvas origin-clean.
+    pub clean: bool,
+}
+
+/// A media fetch in flight: dropping it cancels the request.
+pub type MediaFetchHandle = Box<dyn std::any::Any>;
 
 /// A navigation requested by the document (link activation, form
 /// submission, `location` assignment is lp-browser's own).
@@ -340,6 +497,31 @@ pub trait PageHooks {
     fn post_delayed_task(&self, _delay: std::time::Duration, task: Box<dyn FnOnce()>) {
         self.post_task(task)
     }
+    /// Fetches a media element's resource. `done` runs as a later task on
+    /// the owner thread, without binding borrows. Dropping the returned
+    /// handle cancels the request (`done` may then never run).
+    fn fetch_media(
+        &self,
+        _request: MediaRequest,
+        done: Box<dyn FnOnce(Result<MediaResponse, String>)>,
+    ) -> Option<MediaFetchHandle> {
+        self.post_task(Box::new(move || done(Err("no media loader".into()))));
+        None
+    }
+    /// A media playback timer: runs `task` after `delay` unless cleared
+    /// with the returned id. It does not keep the event loop busy.
+    fn set_media_timer(&self, delay: std::time::Duration, task: Box<dyn FnOnce()>) -> Option<u64> {
+        self.post_delayed_task(delay, task);
+        None
+    }
+    fn clear_media_timer(&self, _id: u64) {}
+    /// The document's media elements stopped delaying its load event
+    /// (`PageDom::media_delays_load` turned false): check it again.
+    fn media_load_delay_released(&self) {}
+    /// Runs an animation frame of the document soon (its
+    /// `requestVideoFrameCallback` callbacks run with it,
+    /// [`crate::media::run_video_frame_callbacks`]).
+    fn request_animation_frame(&self) {}
     /// Starts a navigation of the frame showing the document.
     fn navigate(&self, request: NavigationRequest);
     /// The document's `window.open` result asked something of its popup,
@@ -353,6 +535,13 @@ pub trait PageHooks {
     /// embedder cannot post across threads (network APIs then fail).
     fn remote_poster(&self) -> Option<RemotePoster> {
         None
+    }
+    /// As `remote_poster`, but not tied to this document: its tasks still run
+    /// after the frame navigated or the page closed (while the browser thread
+    /// lives). For what outlives the document, such as service worker versions,
+    /// whose tasks find their state by id and drop themselves when it is gone.
+    fn thread_poster(&self) -> Option<RemotePoster> {
+        self.remote_poster()
     }
     /// Transport progress made visible by fetch/XHR on the owner thread.
     /// Called after the delivery snapshot and before any resulting JS, with
@@ -438,6 +627,9 @@ impl PageDom {
         Rc::new_cyclic(|this| PageDom {
             this: this.clone(),
             frame_sized: Cell::new(false),
+            sw_client: RefCell::new(None),
+            sw_controlled: Cell::new(false),
+            nested_frame: Cell::new(false),
             frame_resize_queued: Cell::new(false),
             frame_resize_next: Cell::new(None),
             frame_resize_wake: Cell::new(false),
@@ -446,6 +638,8 @@ impl PageDom {
             disposed: Cell::new(false),
             document: Cell::new(document),
             scripting_disabled: Cell::new(false),
+            opaque_origin: Cell::new(false),
+            sticky_activation: Cell::new(false),
             flushing_iframes: Cell::new(false),
             render_blocking: Default::default(),
             connected_iframes: RefCell::new(FxHashSet::default()),
@@ -498,9 +692,13 @@ impl PageDom {
             opaque_storage: Default::default(),
             popups: RefCell::new(Vec::new()),
             blob_urls: RefCell::new(FxHashMap::default()),
+            referrer: Default::default(),
             reflected_url_base: RefCell::new(None),
             hooks: RefCell::new(None),
             ready: RefCell::new(FxHashMap::default()),
+            hidden: Cell::new(false),
+            timing: Cell::new(DocumentTiming::default()),
+            resource_timings: Default::default(),
             focus_values: RefCell::new(FxHashMap::default()),
             focus_transition: RefCell::new(None),
             editing_target: Cell::new(None),
@@ -508,6 +706,16 @@ impl PageDom {
             submitting: RefCell::new(Vec::new()),
             hovered: Cell::new(None),
             images: RefCell::new(FxHashMap::default()),
+            images_sweep_at: Cell::new(64),
+            image_decodes: RefCell::new(FxHashMap::default()),
+            image_bytes: RefCell::new(FxHashMap::default()),
+            image_bytes_kept: Cell::new((0, 0)),
+            image_bytes_refused: Cell::new(0),
+            canvas_surfaces: RefCell::new(Vec::new()),
+            canvas_placeholders: RefCell::new(Vec::new()),
+            canvas_commits: RefCell::new(Vec::new()),
+            canvas_used: Cell::new(false),
+            media: Default::default(),
             pointer: RefCell::new(None),
             hover_update_queued: Cell::new(false),
             press_target: Cell::new(None),
@@ -517,6 +725,7 @@ impl PageDom {
             drag: RefCell::new(None),
             selection: RefCell::new(None),
             selectionchange_pending: Cell::new(false),
+            undo: RefCell::new(Default::default()),
             script_parser: RefCell::new(None),
             script_parser_active: Cell::new(false),
             script_parser_close: Cell::new(false),
@@ -527,9 +736,13 @@ impl PageDom {
             written_pending: Cell::new(None),
             ignore_destructive_writes: Cell::new(0),
             space_target: Cell::new(None),
+            pointer_modality: Cell::new(false),
+            mouse_capture: Cell::new(Default::default()),
             dialog_returns: RefCell::new(FxHashMap::default()),
+            popover: Default::default(),
             nonces: RefCell::new(FxHashMap::default()),
             sheet_models: RefCell::new(FxHashMap::default()),
+            adopted_sheets: RefCell::new(FxHashMap::default()),
             files: RefCell::new(FxHashMap::default()),
             layout: RefCell::new(lp_dom::layout::Layout::new(document)),
             frame_viewport: RefCell::new(None),
@@ -551,8 +764,23 @@ impl PageDom {
     }
 
     /// Shares the browser context's permissions and clipboard.
+    /// Also where a new document of a context with service worker
+    /// registrations finds its controller (one emptiness test otherwise).
     pub fn set_context_services(&self, services: Rc<crate::navigator_extras::ContextServices>) {
+        let registrations = services.service_workers.has_registrations();
         *self.context_services.borrow_mut() = services;
+        if registrations {
+            if let Some(this) = self.this.upgrade() {
+                crate::service_worker::document_created(&this);
+            }
+        }
+    }
+    /// The document is shown in a child frame (set before the context services).
+    pub fn set_nested_frame(&self, nested: bool) {
+        self.nested_frame.set(nested);
+    }
+    pub(crate) fn is_nested_frame(&self) -> bool {
+        self.nested_frame.get()
     }
     pub fn context_services(&self) -> Rc<crate::navigator_extras::ContextServices> {
         self.context_services.borrow().clone()
@@ -614,12 +842,18 @@ impl PageDom {
         self.dom.borrow_mut().unwatch_iframes(self.document());
         self.connected_iframes.borrow_mut().clear();
         crate::fetch::dispose(self);
+        crate::websocket::dispose(self);
         crate::xhr::dispose(self);
+        crate::resource_timing::dispose(self);
         crate::file_reader::dispose(self);
         crate::mutation_observer::dispose(self);
         crate::intersection_observer::dispose(self);
         crate::resize_observer::dispose(self);
         crate::worker::dispose(self);
+        crate::message_channel::dispose(self);
+        crate::service_worker::client_gone(self);
+        crate::indexeddb::dispose(self);
+        crate::media::dispose(self);
         self.realms.borrow_mut().clear();
         drop(self.main_world.take());
         // Drop roots and embedder hooks outside RefCell borrows: destructors
@@ -689,6 +923,26 @@ impl PageDom {
     pub fn scripting_disabled(&self) -> bool {
         self.scripting_disabled.get()
     }
+    /// Browser-owned sandbox policy: the document's origin is opaque (its
+    /// realm's origin is "null") whatever its URL. Set before the context
+    /// services, which may already make the document a service worker client.
+    pub fn set_opaque_origin(&self, opaque: bool) {
+        self.opaque_origin.set(opaque);
+    }
+    pub(crate) fn has_opaque_origin(&self) -> bool {
+        self.opaque_origin.get()
+    }
+
+    /// HTML "activation notification": trusted user input reached the
+    /// document (or a CDP evaluation ran with `userGesture`). Media may then
+    /// play unmuted.
+    pub fn notify_user_activation(&self) {
+        self.sticky_activation.set(true);
+    }
+    /// HTML "sticky activation".
+    pub fn has_sticky_activation(&self) -> bool {
+        self.sticky_activation.get()
+    }
 
     /// Flush after parser/native mutation before entering page script. Native
     /// binding callbacks call this automatically after releasing their borrows.
@@ -696,6 +950,13 @@ impl PageDom {
     /// defers work until the next safe point.
     pub fn flush_iframe_events(&self) {
         use lp_dom::iframe::IframeChange;
+        // `<details>` toggles lp-dom queued: one empty check otherwise.
+        if self.dom.try_borrow().is_ok_and(|d| d.has_details_toggles()) {
+            if let Some(this) = self.this.upgrade() {
+                crate::popover::flush_details_toggles(&this);
+            }
+        }
+        crate::media::flush(self, &self.this);
         if self.is_disposed() || self.flushing_iframes.replace(true) {
             return;
         }
@@ -1069,8 +1330,16 @@ impl PageDom {
     /// listener-holding wrappers of disconnected nodes, re-pins reconnected
     /// ones, and frees unreachable DOM nodes.
     pub fn after_task(self: &Rc<Self>) {
+        // Drawing changes no DOM: offscreen frames are committed whether or
+        // not the task was otherwise quiet (one empty-list check without).
+        crate::canvas::commit_frames(self);
         if self.quiet_since_last_task() {
             return;
+        }
+        // The DOM as this checkpoint saw it (the checkpoint's idle check
+        // asks first, so asking does not consume a change).
+        if let Ok(dom) = self.dom.try_borrow() {
+            self.after_task_stamp.set(Some((dom.version(), dom.removal_count())));
         }
         self.flush_iframe_events();
         self.update_render_blocking();
@@ -1115,12 +1384,11 @@ impl PageDom {
             return false;
         }
         let Ok(dom) = self.dom.try_borrow() else { return false };
-        let stamp = (dom.version(), dom.removal_count());
-        if self.after_task_stamp.get() != Some(stamp) {
-            self.after_task_stamp.set(Some(stamp));
+        if self.after_task_stamp.get() != Some((dom.version(), dom.removal_count())) {
             return false;
         }
         !dom.has_iframe_events()
+            && !dom.has_details_toggles()
             && !self.render_blocking_pending(&dom)
             && !dom.has_pending_mutations()
             && !dom.has_gc_candidates()
@@ -1238,6 +1506,9 @@ impl PageDom {
     pub fn remote_poster(&self) -> Option<RemotePoster> {
         self.hooks().and_then(|h| h.remote_poster())
     }
+    pub(crate) fn thread_poster(&self) -> Option<RemotePoster> {
+        self.hooks().and_then(|h| h.thread_poster())
+    }
     pub(crate) fn frame_document(&self, iframe: NodeId) -> Option<NodeId> {
         self.hooks().and_then(|h| h.frame_document(iframe))
     }
@@ -1317,6 +1588,29 @@ impl PageDom {
         self.ready.borrow().get(&doc).copied().unwrap_or("complete")
     }
 
+    /// `document.visibilityState` is "hidden" (`document.hidden`).
+    pub fn is_hidden(&self) -> bool {
+        self.hidden.get()
+    }
+    pub(crate) fn set_hidden(&self, hidden: bool) {
+        self.hidden.set(hidden);
+    }
+
+    /// The document's Navigation Timing marks so far.
+    pub fn timing(&self) -> DocumentTiming {
+        self.timing.get()
+    }
+    /// Records `mark` at the event clock's current time (once per document).
+    pub(crate) fn note_timing(&self, mark: fn(&mut DocumentTiming) -> &mut Option<f64>) {
+        let Some(now) = self.event_time() else { return };
+        let mut timing = self.timing.get();
+        let slot = mark(&mut timing);
+        if slot.is_none() {
+            *slot = Some(now);
+            self.timing.set(timing);
+        }
+    }
+
     pub(crate) fn remember_focus_value(&self, el: NodeId) {
         if let Ok(v) = self.dom.borrow().value(el) {
             self.focus_values.borrow_mut().insert(el, v);
@@ -1352,12 +1646,116 @@ impl PageDom {
     pub fn set_image_state(&self, el: NodeId, src: Option<&str>, pending: bool) {
         match src {
             Some(src) => {
-                self.images.borrow_mut().insert(el, (src.to_owned(), pending));
+                let mut images = self.images.borrow_mut();
+                // Elements collected since (`new Image()` beacons): amortized O(1).
+                if images.len() >= self.images_sweep_at.get() {
+                    if let Ok(dom) = self.dom.try_borrow() {
+                        images.retain(|id, _| dom.is_alive(*id));
+                        self.images_sweep_at.set((images.len() * 2).max(64));
+                    }
+                }
+                images.insert(el, (src.to_owned(), pending, false));
             }
             None => {
                 self.images.borrow_mut().remove(&el);
+                crate::image_decode::reject_all(self, el);
             }
         }
+        // A new load, or none: the old bytes are not the image's any more.
+        if pending || src.is_none() {
+            self.forget_image_bytes(el);
+        }
+    }
+
+    /// Whether loaded images' bytes should be kept for canvas use
+    /// ([`PageDom::set_image_bytes`]): the document has a `<canvas>`, or a
+    /// canvas API was used. A flag test for pages without canvases.
+    pub fn wants_image_bytes(&self) -> bool {
+        self.canvas_used.get() || self.dom.borrow().canvas_seen()
+    }
+
+    /// Embedder: the encoded bytes of `el`'s loaded image, kept so canvas
+    /// `drawImage`/`createPattern`/`createImageBitmap` can decode it (on
+    /// first use). `clean`: the response was same-origin (or CORS), so its
+    /// pixels may be read back. At most [`MAX_IMAGE_BYTES_KEPT`] are kept
+    /// per document; images past that draw nothing.
+    pub fn set_image_bytes(&self, el: NodeId, bytes: Vec<u8>, clean: bool) {
+        self.forget_image_bytes(el);
+        let mut map = self.image_bytes.borrow_mut();
+        if self.image_bytes_kept.get().0 + bytes.len() > MAX_IMAGE_BYTES_KEPT {
+            // Room held by collected elements: swept once per so many
+            // refusals, so a document at its budget does not pay O(n) per
+            // load.
+            let refused = self.image_bytes_refused.get() + 1;
+            self.image_bytes_refused.set(refused);
+            if refused > map.len() / 8 {
+                if let Ok(dom) = self.dom.try_borrow() {
+                    self.image_bytes_refused.set(0);
+                    map.retain(|id, entry| {
+                        let alive = dom.is_alive(*id);
+                        if !alive {
+                            self.uncount_image_bytes(entry);
+                        }
+                        alive
+                    });
+                }
+            }
+            if self.image_bytes_kept.get().0 + bytes.len() > MAX_IMAGE_BYTES_KEPT {
+                return;
+            }
+        }
+        let (encoded, decoded) = self.image_bytes_kept.get();
+        self.image_bytes_kept.set((encoded + bytes.len(), decoded));
+        if let Some(old) = map.insert(el, ImageBytes { bytes, clean, decoded: None }) {
+            self.uncount_image_bytes(&old);
+        }
+    }
+
+    fn forget_image_bytes(&self, el: NodeId) {
+        if let Ok(mut map) = self.image_bytes.try_borrow_mut() {
+            if !map.is_empty() {
+                if let Some(old) = map.remove(&el) {
+                    self.uncount_image_bytes(&old);
+                }
+            }
+        }
+    }
+
+    fn uncount_image_bytes(&self, entry: &ImageBytes) {
+        let (encoded, decoded) = self.image_bytes_kept.get();
+        let (e, d) = entry.counted();
+        self.image_bytes_kept.set((encoded - e, decoded - d));
+    }
+
+    /// Bytes kept for canvas use: (encoded, decoded and cached).
+    #[doc(hidden)]
+    pub fn image_bytes_kept(&self) -> (usize, usize) {
+        self.image_bytes_kept.get()
+    }
+
+    /// `el`'s image pixels (premultiplied) and whether they are
+    /// origin-clean; decoded on first use, and cached while the document's
+    /// decoded images fit [`MAX_IMAGE_DECODED_KEPT`]. `None`: no bytes were
+    /// kept, they do not decode (SVG included), or the process has no room
+    /// for the pixels.
+    pub(crate) fn image_pixmap(&self, el: NodeId) -> Option<(lp_canvas::Bitmap, bool)> {
+        let mut map = self.image_bytes.borrow_mut();
+        let entry = map.get_mut(&el)?;
+        if let Some(decoded) = &entry.decoded {
+            return decoded.clone().map(|b| (b, entry.clean));
+        }
+        let Some(pixmap) = lp_canvas::codec::decode(&entry.bytes) else {
+            entry.decoded = Some(None);
+            return None;
+        };
+        // Over the process's bitmap budget: nothing drawn now, not cached.
+        let bitmap = lp_canvas::Bitmap::new(pixmap)?;
+        let (encoded, decoded) = self.image_bytes_kept.get();
+        if decoded + bitmap.byte_len() <= MAX_IMAGE_DECODED_KEPT {
+            self.image_bytes_kept.set((encoded, decoded + bitmap.byte_len()));
+            entry.decoded = Some(Some(bitmap.clone()));
+        }
+        Some((bitmap, entry.clean))
     }
     /// HTMLImageElement.complete: no `src`, or the current `src` has
     /// finished loading (successfully or not). A `src` set since the last
@@ -1366,7 +1764,8 @@ impl PageDom {
         let src = self.dom.borrow().get_attribute(el, "src").ok().flatten().map(str::to_owned);
         let Some(src) = src else { return true };
         match self.images.borrow().get(&el) {
-            Some((loading, pending)) if *loading == src => !pending,
+            Some((loading, pending, _)) if *loading == src => !pending,
+
             // Empty or unresolvable sources are complete (broken).
             _ => src.trim().is_empty(),
         }
@@ -1400,6 +1799,17 @@ impl PageDom {
     }
     pub(crate) fn set_nonce(&self, el: NodeId, attr: Option<&str>, value: String) {
         self.nonces.borrow_mut().insert(el, (attr.map(str::to_owned), value));
+    }
+
+    /// The style engine applies `sheets` (constructed sheets' ids and
+    /// texts) where `scope` adopts them.
+    pub(crate) fn set_adopted_sheets(&self, scope: NodeId, sheets: Vec<(u64, Rc<str>)>) {
+        self.layout.borrow_mut().style_mut().set_adopted(scope, sheets);
+    }
+
+    /// A constructed sheet's applied text changed.
+    pub(crate) fn set_constructed_sheet_text(&self, id: u64, text: &str) {
+        self.layout.borrow_mut().style_mut().set_constructed_text(id, text);
     }
 
     /// A `<style>` element's sheet is read from the DOM again, after CSSOM edits.
@@ -1530,6 +1940,18 @@ impl PageDom {
         self.node_wrappers.borrow().get(idx as usize).is_some_and(|entry| {
             entry.iter().any(|(_, raw)| unsafe { lp_js::WrapperRef::from_raw(*raw).is_some_and(|r| r.is_kept()) })
         })
+    }
+
+    /// Keeps node `idx`'s live wrappers (of every world) from collection.
+    pub(crate) fn keep_node(&self, idx: u32) {
+        if let Some(entry) = self.node_wrappers.borrow().get(idx as usize) {
+            for (_, raw) in entry {
+                // SAFETY: a live table entry.
+                if let Some(w) = unsafe { lp_js::WrapperRef::from_raw(*raw) } {
+                    unsafe { w.set_kept(true) };
+                }
+            }
+        }
     }
 
     /// Stops keeping node `idx`'s wrappers (of `realm`, or of every world).

@@ -133,6 +133,15 @@ lp-render's mirror tests (incremental documents against fresh builds after rando
 - `src/layout/table.rs`: table rows grow under a rowspan cell as in Chromium (through taffy's
   `grid_rows_are_table_rows`), and a rowspan stops at the end of its row group instead of adding implicit
   rows past it.
+- `src/stylo.rs`: `BaseDocument::pseudo_element_style` answers `getComputedStyle(el, pseudo)`: the stored
+  eager `::before`/`::after`/`::first-letter`/`::selection` style (resolved on demand under `display: none`,
+  like `resolve_undisplayed_style`; a `::before`/`::after` the traversal dropped for having no `content` is matched
+  against its rules on demand), Stylo's lazy cascade for `::marker`, `::placeholder` and the other lazy
+  pseudo-elements, else a rule-less style inheriting from the element. `generated_only` limits it to the
+  stored eager style (no work otherwise), for accessible names.
+- `assets/default.css`: only a `<select>`'s options and optgroups are `display: none` (the control paints
+  them); an `<option>` elsewhere and every other `<optgroup>` are blocks, as in Chromium (Blitz hid every
+  option and left optgroup inline).
 - `assets/default.css`: checkboxes and radios are Chromium's 13x13 border boxes (radios with Chromium's
   `3px 3px 0 5px` margin); Blitz had 14x14.
 - `src/layout/mod.rs`: a textarea or select with a percentage width contributes zero to min-content sizing,
@@ -191,6 +200,45 @@ where dense placement puts a cell when nothing spans rows), and the rows after t
 `updated_rows_keep_the_cells_placement` checks appends, inserts and removals against `place_cells`.
 
 Time inputs use the existing text-editor construction and intrinsic measurement paths so captured values are painted.
+
+- `assets/default.css`: the popover rules (`[popover]` is `position: fixed`, centered, with a border and
+  padding, `:popover-open` is in the top layer) are not behind Gecko's `dom.element.popover.enabled` pref,
+  which no embedder sets: a showing popover is laid out as Chrome lays it out.
+
+## `:has()` invalidation for state and attribute changes
+
+- `src/has_invalidation.rs`, `src/document.rs` (`snapshot_node_and`), `src/mutator.rs` (`set_attribute`,
+  `clear_attribute`): a state change or attribute change runs Stylo's `RelativeSelectorInvalidator`, as
+  Gecko's restyle manager does, with the dependencies the relative selector invalidation map has for what
+  changed (state bits, attribute name, ids, classes, custom states). Only the anchors whose `:has()`
+  argument depends on the change, that a `:has()` search reached and whose own compound matches restyle,
+  as far as the rule needs. The element's selector flags gate it (no `:has()` search visited it: one flag
+  test), then `relative_state_dependency` (the union of the relative map's states, a vendored Stylo
+  change). A search the relative-selector bloom filter fast-rejects visits (and flags) nothing, so
+  `add_element_unique_hashes` (`src/stylo.rs`) flags every element it adds to such a filter as searched
+  in both directions; otherwise a change under an anchor whose earlier `:has()` matched early would never
+  reach it. This replaces `invalidate_has_anchors` for those changes, which restyled every anchor that
+  could see the element with its whole subtree; DOM insertions and removals still use it.
+- `src/node/element.rs` (`sync_lp_attribute_state`), `src/stylo.rs`: the tokens of lp-dom's
+  `urn:x-lightningpanda:state` `state` attribute are `ElementState` bits (`VALID`, `INVALID`,
+  `PLACEHOLDER_SHOWN`, `INRANGE`, `USER_INVALID`, ...; `READONLY` unless `read-write`), set when the
+  attribute is written, and the pseudo-classes match the bits. Stylo's snapshot invalidation and style
+  sharing compare element states, so they follow these like `:checked`. A selected `<option>` (lp-dom
+  writes `selected` for the current selectedness) is `CHECKED`. `each_custom_state` lists the
+  `custom-states` attribute instead of panicking.
+
+Covered by `crates/lp-layout/tests/has_state.rs` and `crates/lp-browser/tests/has_state.rs`.
+
+## Top layer
+
+- `src/layout/paint_tree.rs` (`note_lp_state`, `top_layer_nodes`, `top_layer_position`), `src/mutator.rs`
+  (`create_element`, `set_attribute`, `clear_attribute`, node drops), `src/document.rs` (`top_layer`): elements whose
+  `urn:x-lightningpanda:state` `state` attribute has a `top-layer=N` token (lp-dom's render tree) are kept by `N`
+  (`TopLayer`: a rank-ordered map plus each element's rank, so entering, leaving, re-ranking, membership tests
+  and drops cost no scan however many popovers show), maintained when that attribute changes and when a node
+  leaves the slab. A top-layer element always roots a stacking context in the paint tree
+  (`is_paint_stacking_context_root`), so its z-indexed and fixed descendants paint with it. blitz-paint paints
+  them above the document.
 
 ## Layout styles written with the style
 
@@ -435,12 +483,13 @@ parent's subtree and damaged the element:
 
 - `src/mutator.rs` (`restyle_siblings_for_attribute_change`): an attribute change restyles the element's
   siblings when the parent carries `HAS_SLOW_SELECTOR_NTH_OF` (Stylo leaves `:nth-child(of S)` to the
-  embedder, as Gecko's `RestyleSiblingsForNthOf`), and a change of lightningpanda's form-state attribute
-  (`urn:x-lightningpanda:state`) restyles the element and its siblings (its pseudo-classes are not element
-  states, so snapshots cannot see them change) and is layout damage when its `natural=W,H` token changes.
-  Covered by `sibling_and_fragment_invalidation_stays_exact`, `radio_group_changes_invalidate_selectively_*`,
-  `form_state_writes_invalidate_selectively_*` and `loaded_image_natural_size_reaches_flow_through_the_dom`
-  (lp-layout).
+  embedder, as Gecko's `RestyleSiblingsForNthOf`), and a change of lightningpanda's state attribute
+  (`urn:x-lightningpanda:state`) is layout damage when its `natural=W,H` token changes. Its pseudo-classes
+  are element states (`sync_lp_attribute_state`, "`:has()` invalidation for state and attribute changes"
+  above), so the snapshot sees them change and Stylo's state invalidation reaches the siblings; nothing
+  restyles them here. Covered by `sibling_and_fragment_invalidation_stays_exact`,
+  `radio_group_changes_invalidate_selectively_*`, `form_state_writes_invalidate_selectively_*` and
+  `loaded_image_natural_size_reaches_flow_through_the_dom` (lp-layout).
 - `src/stylo.rs` (`RecalcStyle::process_preorder`): a paint-only restyle of a table part in a
   `border-collapse: collapse` table that changes its borders or `color` is damage on it: the collapsed
   edges (`CollapsedEdges`) hold resolved colours, collected again with the part's row. Covered by

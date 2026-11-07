@@ -18,10 +18,11 @@ see [PARITY.md](PARITY.md) for what exists today.
 | `lightningpanda` (bin) | W1 | all | CLI: `version`, `eval`; `serve`/`fetch` once CDP/loading land. |
 | `lp-dom` | W2 DOM/net | — (no JS) | Arena DOM, `NodeId`, html5ever parsing, selectors, events, serialization. Unit-testable without JS. |
 | `lp-net` | W2 | — (no JS) | hyper/tokio HTTP client on an I/O thread, cookies, CORS, fetch model, request observers. |
-| `lp-webapi` | W2 | lp-js, lp-dom, lp-net | JS bindings for DOM/network WebAPIs using `lp_js::JsClass`. |
+| `lp-webapi` | W2 | lp-js, lp-dom, lp-net, lp-canvas | JS bindings for DOM/network WebAPIs using `lp_js::JsClass`. |
+| `lp-canvas` | W2 | — (no JS, no lp crate) | Canvas 2D surfaces rasterized with vello_cpu (batched source-over, per-pixel compositing for the other operators, shadows, clip masks), canvas text with Parley, image decode/encode, and the process's system fonts (shared with lp-render). |
 | `lp-cdp-protocol` | W3 automation | lp-net | CDP wire protocol without the engine: WebSocket/HTTP server, messages, `Target` domain, `Network`/`Fetch`/`Runtime` translation helpers. Builds in parallel with lp-dom/lp-webapi/lp-browser. |
 | `lp-cdp` | W3 automation | lp-cdp-protocol, lp-browser, lp-js, lp-webapi | CDP domains on the engine (`engine/`), the per-connection browser thread (`serve`, `conn`); re-exports lp-cdp-protocol's modules. Runtime remote objects implemented natively. |
-| `lp-render` | W3 automation | — (no JS, no lp crate) | Screenshots: a page snapshot (HTML with form state, live sheets, viewport) rendered by Blitz (html5ever, Stylo, Taffy, Parley; vello_cpu, optional vello/wgpu) on a render thread per connection; display-list hash, pixel compare, PNG. Built only with the `render` feature. |
+| `lp-render` | W3 automation | lp-canvas (fonts) | Screenshots: a page snapshot (HTML with form state, live sheets, viewport) rendered by Blitz (html5ever, Stylo, Taffy, Parley; vello_cpu, optional vello/wgpu) on a render thread per connection; display-list hash, pixel compare, PNG. Built only with the `render` feature. |
 | `tests/e2e`, `bench/` | W3 | binary | Real TOS E2E compatibility and benchmarks. |
 
 W1 owns the root `Cargo.toml`, `Cargo.lock`, `.cargo/config.toml` and integration branches. Workers add dependencies
@@ -234,6 +235,16 @@ Optional extras: `JSReportExtraMemoryCost` and `JSSynchronousGarbageCollectForDe
   - **Bare specifiers and import maps:** `webkit/patches/0005-import-maps.patch` adds `JSGlobalContextAddImportMap`, which
     feeds JSC's own `ImportMap` (HTML parse, resolve and merge), and consults it in `moduleLoaderResolve` once a context
     has a map. It also adds `import.meta.resolve`. The system framework has no such hook: there these stay unsupported.
+  - **Import attributes (JSON and CSS module scripts):** `webkit/patches/0020-module-import-attributes.patch` adds
+    `JSGlobalContextSetTypedModuleLoader`, whose fetch callback gets the request's `type` attribute (JSC keys its
+    module map by URL and type), and `JSModuleSourceCreateWithType` for JSON sources. A CSS request is resolved with
+    the embedder's `CSSStyleSheet`, which becomes the module's `default` export; JSC's `moduleTypeIsAllowed` host hook
+    allows `css`, and the patch flips the generated JSC option defaults so `css` parses (`useCSSModuleScripts`) and
+    `text` does not (`useImportText`, not an HTML module type). `ModuleRequest::module_type` carries the type to the
+    fetchers (`lp-browser` `PageModuleFetcher`, `lp-webapi` `WorkerModuleFetcher`), which check the response MIME type
+    (`lp_webapi::module_script`) and complete with `resolve`, `resolve_json` or `resolve_object`. The system framework's
+    delegate never sees the attribute: every request looks like JavaScript, and a JSON or CSS response fails the MIME
+    check with a message naming the missing patch.
   - **Inline modules:** the registry is keyed by URL, so each inline module script needs a distinct URL. The browser
     appends a fragment.
   - **Linux:** WebKitGTK's JSC has no module loader, so **ESM on Linux is unsupported** until a tested alternative

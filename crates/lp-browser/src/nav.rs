@@ -5,8 +5,9 @@
 //! that needs `&mut Browser` (cross-document navigation, events) is posted as
 //! a task, as navigation is asynchronous in browsers too.
 //!
-//! Known gaps (see docs/PARITY.md): history state is stored as JSON (not a
-//! full structured clone); traversal across documents re-fetches (no bfcache).
+//! History state is a structured serialization (`lp_webapi::WireMessage`),
+//! deserialized once per activation in each realm that reads it. Known gap
+//! (see docs/PARITY.md): traversal across documents re-fetches (no bfcache).
 //! As in browsers, the first navigation replaces the initial about:blank
 //! entry.
 
@@ -18,22 +19,49 @@ use lp_dom::parse::DomRef;
 use lp_dom::NodeId;
 use lp_js::{ClassDef, JsClass, JsError, JsResult, NoParent, Persistent, Scope, Value};
 use lp_runtime::{Scheduler, TaskSource};
+use lp_webapi::performance::{
+    self as perf, navigation_fields, resource_object, NavigationValues, PerformanceEntryData,
+    PerformanceNavigationTiming, PerformancePaintTiming, UserTiming, RESOURCE_TIMES, TIMING_ATTRIBUTES,
+};
+use lp_webapi::resource_timing::ResourceEntry;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::Instant;
 use url::Url;
 
+/// A history entry's serialized state (StructuredSerializeForStorage).
+/// Entries compare by identity of their state, never by its content.
+#[derive(Clone)]
+struct HistoryState(Rc<lp_webapi::WireMessage>);
+
+impl PartialEq for HistoryState {
+    fn eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.0, &other.0)
+    }
+}
+impl Eq for HistoryState {}
+impl std::fmt::Debug for HistoryState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("HistoryState")
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Entry {
     url: String,
-    /// `JSON.stringify` of the history state (`None` = null).
-    state: Option<String>,
+    /// The serialized history state (`None` = null).
+    state: Option<HistoryState>,
     /// Document sequence number: entries of the same document traverse
     /// without reloading.
     doc: u64,
     /// Unique within the page; identifies the entry to automation clients
     /// (CDP `NavigationEntry.id`).
     id: u64,
+    /// Navigation API key: the history slot, kept when the entry is
+    /// replaced.
+    key: u64,
+    /// Navigation API state (`JSON.stringify`; `None` = undefined).
+    nav_state: Option<String>,
 }
 
 /// A session-history entry as reported to automation clients.
@@ -85,10 +113,42 @@ pub struct PageNav {
     state: RefCell<NavState>,
     /// Current document in the page's DOM (keeps `document.URL` in sync).
     document: RefCell<Option<(DomRef, NodeId)>>,
+    /// The current document's bindings: the target of the `popstate` a
+    /// fragment navigation fires synchronously.
+    page_dom: RefCell<std::rc::Weak<lp_webapi::PageDom>>,
     time_origin: Cell<Instant>,
     /// When the current document first had a rendering opportunity
     /// (`now_ms`): its Paint Timing entries.
     first_paint: Cell<Option<f64>>,
+    /// `PerformanceNavigationTiming.type` of the current document.
+    nav_type: Cell<&'static str>,
+    /// The fetch of the document about to commit (`begin_document`): its
+    /// start becomes the time origin, its phases the Navigation Timing.
+    incoming_fetch: RefCell<Option<Box<lp_webapi::resource_timing::FetchReport>>>,
+    /// The current document's fetch phases, in milliseconds since its time
+    /// origin (`None`: no network fetch, as for `about:blank`).
+    fetch_timing: RefCell<Option<Rc<lp_webapi::resource_timing::ResourceEntry>>>,
+    /// The realms with a PerformanceObserver (performance_observer.js) and
+    /// the function each queues new timeline entries with. Empty unless a
+    /// page observes, which is all the timeline costs otherwise.
+    timeline_watchers: RefCell<Vec<(lp_js::RealmId, lp_js::WeakRealm, Rc<Persistent>)>>,
+    /// The realms with a `navigation` object (navigation.js) and the hook
+    /// each fires the Navigation API's events with. Empty unless a page
+    /// reads `navigation`, which is all navigations cost otherwise.
+    navigation_hooks: RefCell<Vec<(lp_js::RealmId, lp_js::WeakRealm, Rc<Persistent>)>>,
+    /// A navigation that navigation.js started (and fired `navigate` for)
+    /// is running: the native paths fire no event of their own.
+    navigation_api_call: Cell<bool>,
+}
+
+/// What the listeners of a Navigation API `navigate` event decided.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum NavigateDecision {
+    Proceed,
+    /// `preventDefault()`: the navigation does not happen.
+    Cancel,
+    /// `intercept()`: the navigation becomes a same-document one.
+    Intercept,
 }
 
 impl PageNav {
@@ -117,8 +177,15 @@ impl PageNav {
                 stops: 0,
             }),
             document: RefCell::new(None),
+            page_dom: RefCell::new(std::rc::Weak::new()),
             time_origin: Cell::new(crate::clock::now()),
             first_paint: Cell::new(None),
+            nav_type: Cell::new("navigate"),
+            incoming_fetch: RefCell::new(None),
+            fetch_timing: RefCell::new(None),
+            timeline_watchers: RefCell::new(Vec::new()),
+            navigation_hooks: RefCell::new(Vec::new()),
+            navigation_api_call: Cell::new(false),
         })
     }
 
@@ -189,10 +256,15 @@ impl PageNav {
         let mut st = self.state.borrow_mut();
         st.doc_seq += 1;
         let id = st.next_entry_id();
-        let entry = Entry { url: url.to_string(), state: None, doc: st.doc_seq, id };
         // A push to the current entry's URL replaces it (HTML navigate step:
         // "url equals the active document's URL" -> replace).
         let same_url = st.entries.get(st.index).is_some_and(|e| e.url == url);
+        let replaces = matches!(history, HistoryHandling::Replace) || same_url;
+        let key = match st.entries.get(st.index) {
+            Some(current) if replaces => current.key,
+            _ => st.next_entry_id(),
+        };
+        let entry = Entry { url: url.to_string(), state: None, doc: st.doc_seq, id, key, nav_state: None };
         let initial = std::mem::take(&mut st.initial);
         st.first_blank = false;
         match history {
@@ -232,12 +304,85 @@ impl PageNav {
         st.url = url.to_string();
         drop(st);
         *self.document.borrow_mut() = document;
-        self.time_origin.set(crate::clock::now());
+        // The previous document's realms are disposed with it: drop their
+        // hooks now, so a frame whose later documents never fire an event
+        // does not keep their globals protected.
+        self.timeline_watchers.borrow_mut().clear();
+        self.navigation_hooks.borrow_mut().clear();
+        // The time origin is the start of the document's fetch (Chrome:
+        // the navigation's start), so its phases have their own times.
+        let now = crate::clock::now();
+        let fetch = self.incoming_fetch.take();
+        let origin = fetch
+            .as_ref()
+            .and_then(|f| now.checked_sub(Instant::now().saturating_duration_since(f.start)))
+            .unwrap_or(now);
+        self.time_origin.set(origin);
+        *self.fetch_timing.borrow_mut() = fetch.map(|f| {
+            let mut entry = lp_webapi::resource_timing::entry_of(&f, f.start, 0.0);
+            // Navigation Timing hides redirects through other origins.
+            if f.response.as_ref().is_some_and(|r| r.timing.cross_origin_redirect) {
+                entry.redirect_start = 0.0;
+                entry.redirect_end = 0.0;
+                entry.redirect_count = 0;
+            }
+            Rc::new(entry)
+        });
         self.first_paint.set(None);
+        self.nav_type.set(match history {
+            HistoryHandling::Reload => "reload",
+            HistoryHandling::Traverse => "back_forward",
+            _ => "navigate",
+        });
+    }
+
+    /// The fetch of the document that commits next (see `incoming_fetch`);
+    /// `None` clears one a failed commit left.
+    pub(crate) fn set_incoming_fetch(&self, fetch: Option<Box<lp_webapi::resource_timing::FetchReport>>) {
+        *self.incoming_fetch.borrow_mut() = fetch;
     }
 
     pub(crate) fn set_document(&self, document: Option<(DomRef, NodeId)>) {
         *self.document.borrow_mut() = document;
+    }
+
+    /// The bindings of the document [`PageNav::commit_document`] recorded.
+    pub(crate) fn set_page_dom(&self, page: &Rc<lp_webapi::PageDom>) {
+        *self.page_dom.borrow_mut() = Rc::downgrade(page);
+    }
+
+    /// HTML "update document for history step application" for a fragment
+    /// navigation: `popstate` (state null) at the window right away, before
+    /// the queued `hashchange`. Dispatch runs script, so when the DOM is
+    /// borrowed (never the case for a binding call) it moves to a task. A
+    /// window without listeners pays one lookup.
+    fn fire_fragment_popstate(&self) {
+        let Some(page) = self.page_dom.borrow().upgrade() else { return };
+        if page.is_disposed() || page.scripting_disabled() {
+            return;
+        }
+        let Some(window) = page.window_target() else { return };
+        match page.dom.try_borrow() {
+            Ok(dom) if !dom.has_listeners(window) => return,
+            Ok(_) => {}
+            Err(_) => {
+                let weak = Rc::downgrade(&page);
+                let document = self.state.borrow().doc_seq;
+                let frame_id = self.frame_id.clone();
+                let page_id = self.page;
+                self.sched.post(TaskSource::Navigation, move |b| {
+                    let Some(key) = b.page(page_id).and_then(|p| p.frames.key(&frame_id)) else { return };
+                    if !b.doc(key).is_some_and(|p| p.nav.state.borrow().doc_seq == document) {
+                        return;
+                    }
+                    if let Some(page) = weak.upgrade() {
+                        lp_webapi::lifecycle::popstate(&page, None);
+                    }
+                });
+                return;
+            }
+        }
+        lp_webapi::lifecycle::popstate(&page, None);
     }
 
     fn set_url_sync(&self, url: &str) {
@@ -248,13 +393,21 @@ impl PageNav {
     }
 
     /// Same-document navigation (pushState/replaceState/fragment).
-    fn same_document(&self, url: &str, state: Option<String>, kind: SameDocumentKind) {
+    fn same_document(&self, url: &str, state: Option<HistoryState>, kind: SameDocumentKind) {
         {
             let mut st = self.state.borrow_mut();
             st.state_version += 1;
             let doc = st.entries.get(st.index).map_or(st.doc_seq, |e| e.doc);
             let id = st.next_entry_id();
-            let entry = Entry { url: url.to_string(), state, doc, id };
+            // The Navigation API state carries over (HTML "URL and history
+            // update steps"); a replace keeps the slot's key.
+            let current = st.entries.get(st.index);
+            let nav_state = current.and_then(|e| e.nav_state.clone());
+            let key = match current {
+                Some(e) if kind == SameDocumentKind::Replace => e.key,
+                _ => st.next_entry_id(),
+            };
+            let entry = Entry { url: url.to_string(), state, doc, id, key, nav_state };
             st.initial = false;
             if st.entries.is_empty() {
                 st.entries.push(entry);
@@ -306,7 +459,8 @@ impl PageNav {
                 url,
                 reason: NavigationReason::Script,
                 cdp_request_id: None,
-                referrer: None,
+                // The document that navigates (`location`, `window.open`).
+                referrer: b.doc(page).map(|p| p.main_frame.url.clone()),
             };
             if let Err(e) = b.navigate_frame_with_handling(page, opts, history) {
                 b.report_navigation_error(page, &e);
@@ -339,6 +493,15 @@ impl PageNav {
         self.sched.post(TaskSource::Navigation, move |b| {
             let Some(page) = b.page(page).and_then(|p| p.frames.key(&frame_id)) else { return };
             let Some(nav) = b.doc(page).map(|p| p.nav.clone()) else { return };
+            if nav.state.borrow().doc_seq == current_doc && nav.state.borrow().entries.get(index) == Some(&entry) {
+                // Only a same-document traversal can be canceled or intercepted.
+                let same = entry.doc == current_doc;
+                if nav.navigate_event_to("traverse", &entry.url, same, Some(entry.key)) == NavigateDecision::Cancel
+                    && same
+                {
+                    return;
+                }
+            }
             {
                 let mut state = nav.state.borrow_mut();
                 // Navigation can replace the document, or pushState can replace
@@ -354,7 +517,8 @@ impl PageNav {
                 let old_url = nav.url();
                 nav.set_url_sync(&entry.url);
                 b.same_document_committed(page, entry.url.clone(), SameDocumentKind::Push);
-                b.fire_popstate(page, entry.state.as_deref(), &old_url, &entry.url);
+                nav.navigation_committed("traverse");
+                b.fire_popstate(page, entry.state.is_some(), &old_url, &entry.url);
             } else {
                 let opts = NavigateOpts {
                     post: None,
@@ -381,7 +545,18 @@ impl PageNav {
             return false;
         }
         let kind = if current == target { SameDocumentKind::Replace } else { SameDocumentKind::Fragment };
+        let navigation_type = if kind == SameDocumentKind::Replace { "replace" } else { "push" };
+        match self.navigate_event(navigation_type, target.as_str(), true) {
+            NavigateDecision::Cancel => return true,
+            NavigateDecision::Intercept => {
+                self.commit_intercepted(target.as_str(), navigation_type);
+                return true;
+            }
+            NavigateDecision::Proceed => {}
+        }
         self.same_document(target.as_str(), None, kind);
+        self.navigation_committed(navigation_type);
+        self.fire_fragment_popstate();
         self.queue_hashchange(current.as_str(), target.as_str());
         true
     }
@@ -409,7 +584,7 @@ impl PageNav {
         });
     }
 
-    fn state_json(&self) -> Option<String> {
+    fn active_state(&self) -> Option<HistoryState> {
         let st = self.state.borrow();
         st.entries.get(st.index).and_then(|e| e.state.clone())
     }
@@ -430,7 +605,11 @@ impl PageNav {
                 return Ok(cached);
             }
         }
-        let value = nav.state_json().and_then(|j| s.parse_json(&j)).unwrap_or_else(|| s.null());
+        let value = match nav.active_state() {
+            // A state that cannot be deserialized here reads as null.
+            Some(state) => lp_webapi::deserialize_message(s, &state.0).unwrap_or_else(|_| s.null()),
+            None => s.null(),
+        };
         s.set_hidden(history, VALUE, value)?;
         s.set_hidden(history, VERSION, s.number(version))?;
         Ok(value)
@@ -453,6 +632,201 @@ impl PageNav {
     pub(crate) fn note_first_paint(&self) {
         if self.first_paint.get().is_none() {
             self.first_paint.set(Some(self.now_ms()));
+            self.notify_timeline("paint");
+        }
+    }
+
+    /// The document's entry of `entry_type` (`paint`, `navigation`) is in
+    /// the timeline now: every observing realm looks for it. Nothing runs
+    /// unless a realm observes.
+    pub(crate) fn notify_timeline(&self, entry_type: &'static str) {
+        if self.timeline_watchers.borrow().is_empty() {
+            return;
+        }
+        let watchers: Vec<_> = {
+            let mut watchers = self.timeline_watchers.borrow_mut();
+            watchers.retain(|(_, realm, _)| realm.upgrade().is_some_and(|r| !r.is_disposed()));
+            watchers.iter().map(|(_, realm, f)| (realm.clone(), f.clone())).collect()
+        };
+        for (realm, f) in watchers {
+            let Some(realm) = realm.upgrade() else { continue };
+            let Ok(s) = realm.scope() else { continue };
+            if let Some(f) = f.get(&s).as_object() {
+                if let Err(e) = f.call(None, &[s.string(entry_type)]) {
+                    s.report_exception(&e);
+                }
+            }
+        }
+    }
+
+    /// A mark or measure was added in `s`'s realm: its observers queue it.
+    fn notify_entry<'s>(&self, s: &Scope<'s>, entry_type: &'static str, entry: Value<'s>) -> JsResult<()> {
+        let f = {
+            let watchers = self.timeline_watchers.borrow();
+            if watchers.is_empty() {
+                return Ok(());
+            }
+            let id = s.realm_id();
+            watchers.iter().find(|(realm, ..)| *realm == id).map(|(.., f)| f.clone())
+        };
+        if let Some(f) = f.and_then(|f| f.get(s).as_object()) {
+            f.call(None, &[s.string(entry_type), entry])?;
+        }
+        Ok(())
+    }
+
+    /// The live realms' Navigation API hooks.
+    fn navigation_hooks(&self) -> Vec<(lp_js::WeakRealm, Rc<Persistent>)> {
+        let mut hooks = self.navigation_hooks.borrow_mut();
+        hooks.retain(|(_, realm, _)| realm.upgrade().is_some_and(|r| !r.is_disposed()));
+        hooks.iter().map(|(_, realm, f)| (realm.clone(), f.clone())).collect()
+    }
+
+    /// Navigation API "fire a navigate event" for a navigation to `url` of
+    /// `navigation_type` (push, replace, reload, traverse), at each realm's
+    /// `navigation`. Free unless a realm made one; skipped while the DOM is
+    /// borrowed (listeners run script) and for a navigation navigation.js
+    /// started itself (it fired the event).
+    pub(crate) fn navigate_event(
+        &self,
+        navigation_type: &'static str,
+        url: &str,
+        cancelable: bool,
+    ) -> NavigateDecision {
+        self.navigate_event_to(navigation_type, url, cancelable, None)
+    }
+
+    /// [`PageNav::navigate_event`] for a traversal to the entry with `key`.
+    fn navigate_event_to(
+        &self,
+        navigation_type: &'static str,
+        url: &str,
+        cancelable: bool,
+        key: Option<u64>,
+    ) -> NavigateDecision {
+        if self.navigation_hooks.borrow().is_empty() || self.navigation_api_call.get() {
+            return NavigateDecision::Proceed;
+        }
+        let Some(page) = self.page_dom.borrow().upgrade() else { return NavigateDecision::Proceed };
+        if page.is_disposed() || page.dom.try_borrow_mut().is_err() {
+            return NavigateDecision::Proceed;
+        }
+        let (current, target) = (Url::parse(&self.url()).ok(), Url::parse(url).ok());
+        let (hash_change, can_intercept) = match (&current, &target) {
+            (Some(c), Some(t)) => (
+                t.fragment().is_some() && c.fragment() != t.fragment() && same_document_except_fragment(c, t),
+                // A traversal to another document cannot be intercepted.
+                can_rewrite_url(c, t) && (navigation_type != "traverse" || cancelable),
+            ),
+            _ => (false, false),
+        };
+        let mut decision = NavigateDecision::Proceed;
+        for (realm, hook) in self.navigation_hooks() {
+            let Some(realm) = realm.upgrade() else { continue };
+            let Ok(s) = realm.scope() else { continue };
+            let Some(f) = hook.get(&s).as_object() else { continue };
+            let args = [
+                s.string("navigate"),
+                s.string(navigation_type),
+                s.string(url),
+                s.boolean(hash_change),
+                s.boolean(cancelable),
+                s.boolean(can_intercept),
+                s.string(&key.map(|k| k.to_string()).unwrap_or_default()),
+            ];
+            match f.call(None, &args).and_then(|v| v.to_string()) {
+                Ok(answer) if answer == "cancel" => decision = NavigateDecision::Cancel,
+                Ok(answer) if answer == "intercept" && decision != NavigateDecision::Cancel => {
+                    decision = NavigateDecision::Intercept
+                }
+                Ok(_) => {}
+                Err(e) => s.report_exception(&e),
+            }
+        }
+        decision
+    }
+
+    /// The navigation the last `navigate` event was for committed in this
+    /// document (its URL and entry changed, or an intercepted reload):
+    /// `currententrychange`, then the intercept handlers or
+    /// `navigatesuccess`.
+    pub(crate) fn navigation_committed(&self, navigation_type: &'static str) {
+        if self.navigation_hooks.borrow().is_empty() || self.navigation_api_call.get() {
+            return;
+        }
+        for (realm, hook) in self.navigation_hooks() {
+            let Some(realm) = realm.upgrade() else { continue };
+            let Ok(s) = realm.scope() else { continue };
+            if let Some(f) = hook.get(&s).as_object() {
+                if let Err(e) = f.call(None, &[s.string("commit"), s.string(navigation_type)]) {
+                    s.report_exception(&e);
+                }
+            }
+        }
+    }
+
+    /// An intercepted navigation to `url` (HTML "navigate", Navigation API
+    /// intercept): the document stays and its URL changes, as pushState
+    /// does, then the handlers run.
+    pub(crate) fn commit_intercepted(&self, url: &str, navigation_type: &'static str) {
+        let kind = if navigation_type == "replace" { SameDocumentKind::Replace } else { SameDocumentKind::Push };
+        if navigation_type != "reload" {
+            self.same_document(url, None, kind);
+        }
+        self.navigation_committed(navigation_type);
+    }
+
+    /// Sets the current entry's Navigation API state (`None`: undefined).
+    fn set_navigation_state(&self, state: Option<String>) {
+        let mut st = self.state.borrow_mut();
+        let i = st.index;
+        if let Some(entry) = st.entries.get_mut(i) {
+            entry.nav_state = state;
+        }
+    }
+
+    /// `natives.watch(queue)` of performance_observer.js: `queue` (or null
+    /// to stop) gets the entries of `s`'s realm.
+    fn watch_timeline(self: &Rc<Self>, s: &Scope<'_>, queue: Value<'_>) {
+        let id = s.realm_id();
+        let watched = {
+            let mut watchers = self.timeline_watchers.borrow_mut();
+            watchers.retain(|(realm, ..)| *realm != id);
+            if queue.as_object().is_some_and(|f| f.is_function()) {
+                watchers.push((id, s.realm().downgrade(), Rc::new(Persistent::new(s, queue))));
+            }
+            !watchers.is_empty()
+        };
+        // New resource entries reach the observers only while some watch:
+        // otherwise adding one is a buffer push.
+        let Some(page) = self.page_dom.borrow().upgrade() else { return };
+        let listener = watched.then(|| {
+            let nav = Rc::downgrade(self);
+            Rc::new(move |entry: &Rc<ResourceEntry>| {
+                if let Some(nav) = nav.upgrade() {
+                    nav.notify_resource(entry);
+                }
+            }) as lp_webapi::resource_timing::EntryListener
+        });
+        page.resource_timings().set_listener(listener);
+    }
+
+    /// A `resource` entry was added: every observing realm queues its
+    /// object for that entry.
+    fn notify_resource(&self, entry: &Rc<ResourceEntry>) {
+        let watchers: Vec<_> = {
+            let mut watchers = self.timeline_watchers.borrow_mut();
+            watchers.retain(|(_, realm, _)| realm.upgrade().is_some_and(|r| !r.is_disposed()));
+            watchers.iter().map(|(_, realm, f)| (realm.clone(), f.clone())).collect()
+        };
+        for (realm, f) in watchers {
+            let Some(realm) = realm.upgrade() else { continue };
+            let Ok(s) = realm.scope() else { continue };
+            let Some(f) = f.get(&s).as_object() else { continue };
+            let queued = resource_object(&s, entry.clone()).and_then(|o| f.call(None, &[s.string("resource"), o]));
+            if let Err(e) = queued {
+                s.report_exception(&e);
+            }
         }
     }
 }
@@ -487,16 +861,14 @@ impl Browser {
     /// Same-document traversal: `popstate` with the entry's state, then a
     /// queued `hashchange` when only the fragment changed (HTML "update
     /// document for history step application").
-    fn fire_popstate(&mut self, page: crate::frames::FrameKey, state: Option<&str>, old_url: &str, new_url: &str) {
+    fn fire_popstate(&mut self, page: crate::frames::FrameKey, state: bool, old_url: &str, new_url: &str) {
         let Some(p) = self.doc(page) else { return };
         let Some(dom) = p.main_frame.page_dom.clone() else { return };
         // The event's state is the history state object itself (browsers:
         // `event.state === history.state`).
         let nav = p.nav.clone();
         let state = match (state, p.main_frame.main_realm().and_then(|r| r.scope().ok())) {
-            (Some(_), Some(scope)) => {
-                PageNav::state_value(&nav, &scope).ok().map(|v| lp_js::Persistent::new(&scope, v))
-            }
+            (true, Some(scope)) => PageNav::state_value(&nav, &scope).ok().map(|v| lp_js::Persistent::new(&scope, v)),
             _ => None,
         };
         drop(p);
@@ -557,21 +929,71 @@ fn same_document_except_fragment(a: &Url, b: &Url) -> bool {
 
 /// Location assignment: fragment-only changes are same-document.
 fn assign(nav: &PageNav, input: Value<'_>, replace: bool) -> JsResult<()> {
-    let target = parse(nav, input)?;
-    let current = Url::parse(&nav.url()).ok();
-    match current {
-        Some(cur) if target.fragment().is_some() && same_document_except_fragment(&cur, &target) => {
-            let kind = if replace { SameDocumentKind::Replace } else { SameDocumentKind::Fragment };
-            nav.same_document(target.as_str(), None, kind);
-            nav.queue_hashchange(cur.as_str(), target.as_str());
-        }
-        _ => nav.navigate(target.to_string(), if replace { HistoryHandling::Replace } else { HistoryHandling::Push }),
+    navigate_to(nav, parse(nav, input)?, replace);
+    Ok(())
+}
+
+/// A cross-origin `location.href = url` or `location.replace(url)` on the
+/// frame of `nav`: `url` is resolved against `base`, the base URL of the
+/// document doing it (HTML: relative to the entry settings object). A
+/// `javascript:` URL is ignored, as it would run in the other origin.
+pub(crate) fn navigate_cross_origin(nav: &PageNav, base: &str, input: Value<'_>, replace: bool) -> JsResult<()> {
+    let href = input.to_string()?;
+    let base = Url::parse(base).ok();
+    let target = Url::options()
+        .base_url(base.as_ref())
+        .parse(&href)
+        .map_err(|_| JsError::dom("SyntaxError", format!("Failed to resolve URL '{href}'")))?;
+    if target.scheme() != "javascript" {
+        navigate_to(nav, target, replace);
     }
     Ok(())
 }
 
+/// HTML "navigate" from script (Location, `navigation.navigate`): a
+/// fragment change is same-document, anything else loads. Returns whether
+/// it stayed in the document.
+fn navigate_to(nav: &PageNav, target: Url, replace: bool) -> bool {
+    let current = Url::parse(&nav.url()).ok();
+    let same_url = current.as_ref() == Some(&target);
+    let navigation_type = if replace || same_url { "replace" } else { "push" };
+    match nav.navigate_event(navigation_type, target.as_str(), true) {
+        NavigateDecision::Cancel => return false,
+        NavigateDecision::Intercept => {
+            nav.commit_intercepted(target.as_str(), navigation_type);
+            return true;
+        }
+        NavigateDecision::Proceed => {}
+    }
+    match current {
+        Some(cur) if target.fragment().is_some() && same_document_except_fragment(&cur, &target) => {
+            // HTML "navigate": the document's own URL is a replace.
+            let kind = if replace || same_url { SameDocumentKind::Replace } else { SameDocumentKind::Fragment };
+            nav.same_document(target.as_str(), None, kind);
+            nav.navigation_committed(navigation_type);
+            nav.fire_fragment_popstate();
+            nav.queue_hashchange(cur.as_str(), target.as_str());
+            true
+        }
+        _ => {
+            nav.navigate(target.to_string(), if replace { HistoryHandling::Replace } else { HistoryHandling::Push });
+            false
+        }
+    }
+}
+
 fn url_part(nav: &PageNav, f: impl Fn(&Url) -> String) -> String {
     Url::parse(&nav.url()).map(|u| f(&u)).unwrap_or_default()
+}
+
+/// A Location setter: `change` edits a copy of the URL and says whether to
+/// navigate to it (HTML "Location-object navigate").
+fn set_url_part(s: &Scope<'_>, nav: &PageNav, change: impl FnOnce(&mut Url) -> JsResult<bool>) -> JsResult<()> {
+    let mut url = Url::parse(&nav.url()).map_err(|_| JsError::Type("invalid current URL".into()))?;
+    if change(&mut url)? {
+        assign(nav, s.string(url.as_str()), false)?;
+    }
+    Ok(())
 }
 
 pub struct Location;
@@ -595,7 +1017,12 @@ impl JsClass for Location {
             Ok(s.undefined())
         });
         def.method("reload", 0, |s, n, _a| {
-            n.navigate(n.url(), HistoryHandling::Reload);
+            let url = n.url();
+            match n.navigate_event("reload", &url, true) {
+                NavigateDecision::Cancel => {}
+                NavigateDecision::Intercept => n.commit_intercepted(&url, "reload"),
+                NavigateDecision::Proceed => n.navigate(url, HistoryHandling::Reload),
+            }
             Ok(s.undefined())
         });
         def.getter("origin", |s, n| {
@@ -604,23 +1031,97 @@ impl JsClass for Location {
                 url::Origin::Opaque(_) => "null".into(),
             })))
         });
-        def.getter("protocol", |s, n| Ok(s.string(&url_part(n, |u| format!("{}:", u.scheme())))));
-        def.getter("host", |s, n| {
-            Ok(s.string(&url_part(n, |u| match (u.host_str(), u.port()) {
-                (Some(h), Some(p)) => format!("{h}:{p}"),
-                (Some(h), None) => h.to_string(),
-                _ => String::new(),
-            })))
-        });
-        def.getter("hostname", |s, n| Ok(s.string(&url_part(n, |u| u.host_str().unwrap_or("").to_string()))));
-        def.getter("port", |s, n| Ok(s.string(&url_part(n, |u| u.port().map(|p| p.to_string()).unwrap_or_default()))));
-        def.getter("pathname", |s, n| Ok(s.string(&url_part(n, |u| u.path().to_string()))));
-        def.getter("search", |s, n| {
-            Ok(s.string(&url_part(n, |u| match u.query() {
-                Some(q) if !q.is_empty() => format!("?{q}"),
-                _ => String::new(),
-            })))
-        });
+        def.accessor(
+            "protocol",
+            |s, n| Ok(s.string(&url_part(n, |u| format!("{}:", u.scheme())))),
+            |s, n, v| {
+                let value = v.to_string()?;
+                set_url_part(s, n, |u| {
+                    // URL "scheme state" with a state override: tabs and
+                    // newlines are dropped, everything from the first `:` on
+                    // is ignored, and anything else that is no scheme fails.
+                    let value: String = value.chars().filter(|c| !matches!(c, '\t' | '\n' | '\r')).collect();
+                    let scheme = value.split(':').next().unwrap_or("");
+                    let mut chars = scheme.chars();
+                    let valid = chars.next().is_some_and(|c| c.is_ascii_alphabetic())
+                        && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'));
+                    if !valid {
+                        return Err(JsError::dom("SyntaxError", format!("'{value}' is an invalid protocol.")));
+                    }
+                    // A switch between special and other schemes leaves the
+                    // URL as it was, as the URL parser does.
+                    let _ = u.set_scheme(&scheme.to_ascii_lowercase());
+                    // Only HTTP(S) navigates.
+                    Ok(matches!(u.scheme(), "http" | "https"))
+                })
+            },
+        );
+        def.accessor(
+            "host",
+            |s, n| {
+                Ok(s.string(&url_part(n, |u| match (u.host_str(), u.port()) {
+                    (Some(h), Some(p)) => format!("{h}:{p}"),
+                    (Some(h), None) => h.to_string(),
+                    _ => String::new(),
+                })))
+            },
+            |s, n, v| {
+                let value = v.to_string()?;
+                set_url_part(s, n, |u| Ok(!u.cannot_be_a_base() && url::quirks::set_host(u, &value).is_ok()))
+            },
+        );
+        def.accessor(
+            "hostname",
+            |s, n| Ok(s.string(&url_part(n, |u| u.host_str().unwrap_or("").to_string()))),
+            |s, n, v| {
+                let value = v.to_string()?;
+                set_url_part(s, n, |u| Ok(!u.cannot_be_a_base() && url::quirks::set_hostname(u, &value).is_ok()))
+            },
+        );
+        def.accessor(
+            "port",
+            |s, n| Ok(s.string(&url_part(n, |u| u.port().map(|p| p.to_string()).unwrap_or_default()))),
+            |s, n, v| {
+                let value = v.to_string()?;
+                set_url_part(s, n, |u| {
+                    // A URL that cannot have a port (no host, `file:`) is left alone.
+                    if u.host_str().is_none_or(str::is_empty) || u.scheme() == "file" {
+                        return Ok(false);
+                    }
+                    Ok(url::quirks::set_port(u, &value).is_ok())
+                })
+            },
+        );
+        def.accessor(
+            "pathname",
+            |s, n| Ok(s.string(&url_part(n, |u| u.path().to_string()))),
+            |s, n, v| {
+                let value = v.to_string()?;
+                set_url_part(s, n, |u| {
+                    if u.cannot_be_a_base() {
+                        return Ok(false);
+                    }
+                    url::quirks::set_pathname(u, &value);
+                    Ok(true)
+                })
+            },
+        );
+        def.accessor(
+            "search",
+            |s, n| {
+                Ok(s.string(&url_part(n, |u| match u.query() {
+                    Some(q) if !q.is_empty() => format!("?{q}"),
+                    _ => String::new(),
+                })))
+            },
+            |s, n, v| {
+                let value = v.to_string()?;
+                set_url_part(s, n, |u| {
+                    url::quirks::set_search(u, &value);
+                    Ok(true)
+                })
+            },
+        );
         def.accessor(
             "hash",
             |s, n| {
@@ -632,7 +1133,13 @@ impl JsClass for Location {
             |s, n, v| {
                 let mut u = Url::parse(&n.url()).map_err(|_| JsError::Type("invalid current URL".into()))?;
                 let h = v.to_string()?;
+                let current = u.fragment().unwrap_or("").to_owned();
                 u.set_fragment(Some(h.strip_prefix('#').unwrap_or(&h)));
+                // The same fragment (no fragment counts as an empty one, as
+                // in Chrome) navigates nowhere: no event, no history entry.
+                if u.fragment() == Some(current.as_str()) {
+                    return Ok(());
+                }
                 assign(n, s.string(u.as_str()), false)
             },
         );
@@ -684,10 +1191,11 @@ impl JsClass for History {
 
 fn change_state<'s>(s: &Scope<'s>, n: &PageNav, a: lp_js::Args<'s>, kind: SameDocumentKind) -> JsResult<Value<'s>> {
     a.require(2, if kind == SameDocumentKind::Push { "pushState" } else { "replaceState" })?;
-    // Approximates StructuredSerialize with JSON (functions/cycles throw).
+    // StructuredSerializeForStorage: functions, DOM nodes and ports throw
+    // DataCloneError; Date, Map, Set, typed arrays, cycles, Blob, ... survive.
     let state = match a.get(0) {
         v if v.is_nullish() => None,
-        v => Some(v.to_json(0)?.ok_or_else(|| JsError::dom("DataCloneError", "state could not be cloned"))?),
+        v => Some(HistoryState(Rc::new(lp_webapi::serialize_message(s, v, s.undefined())?))),
     };
     let url = match a.opt(2).filter(|v| !v.is_nullish()) {
         Some(v) => {
@@ -711,7 +1219,12 @@ fn change_state<'s>(s: &Scope<'s>, n: &PageNav, a: lp_js::Args<'s>, kind: SameDo
         }
         None => n.url(),
     };
+    let navigation_type = if kind == SameDocumentKind::Push { "push" } else { "replace" };
+    if n.navigate_event(navigation_type, &url, true) == NavigateDecision::Cancel {
+        return Ok(s.undefined());
+    }
     n.same_document(&url, state, kind);
+    n.navigation_committed(navigation_type);
     Ok(s.undefined())
 }
 
@@ -721,29 +1234,17 @@ pub struct PerformanceData {
     origin_wall_ms: f64,
     /// `Performance` is an EventTarget (`resourcetimingbufferfull`).
     target: lp_webapi::EventTargetData,
-    /// User Timing: the marks and measures of the performance entry buffer,
-    /// in the order they were added.
-    user_entries: RefCell<Vec<UserEntry>>,
-}
-
-/// A `PerformanceMark` or `PerformanceMeasure` in the entry buffer.
-struct UserEntry {
-    name: String,
-    mark: bool,
-    start: f64,
-    object: Persistent,
+    /// User Timing: the marks and measures of the performance entry buffer.
+    user: UserTiming,
 }
 
 impl PerformanceData {
     pub(crate) fn new(nav: Rc<PageNav>, page: &Rc<lp_webapi::PageDom>) -> PerformanceData {
         let now_wall = crate::clock::wall_ms();
         let origin_wall_ms = now_wall - nav.now_ms();
-        PerformanceData {
-            nav,
-            origin_wall_ms,
-            target: lp_webapi::EventTargetData::new(page),
-            user_entries: RefCell::new(Vec::new()),
-        }
+        let target = lp_webapi::EventTargetData::new(page);
+        page.resource_timings().add_target(target.key);
+        PerformanceData { nav, origin_wall_ms, target, user: UserTiming::default() }
     }
     /// The identity its wrapper is made with (event dispatch looks it up).
     pub(crate) fn wrapper_identity(&self) -> Option<lp_js::IdentityKey> {
@@ -751,6 +1252,12 @@ impl PerformanceData {
     }
     pub(crate) fn event_target(&self) -> &lp_webapi::EventTargetData {
         &self.target
+    }
+}
+
+impl Drop for PerformanceData {
+    fn drop(&mut self) {
+        self.target.page.resource_timings().remove_target(self.target.key);
     }
 }
 
@@ -766,6 +1273,13 @@ fn timeline_entries<'s>(
     entry_type: Option<&str>,
 ) -> JsResult<Value<'s>> {
     let mut entries: Vec<(f64, Value<'s>)> = Vec::new();
+    if entry_type.is_none_or(|t| t == "navigation") {
+        if let Some(entry) = navigation_entry(p) {
+            if name.is_none_or(|n| n == entry.name) {
+                entries.push((0.0, s.wrap::<PerformanceNavigationTiming>(entry, None)?.value()));
+            }
+        }
+    }
     if let Some(start) = p.nav.first_paint().filter(|_| entry_type.is_none_or(|t| t == "paint")) {
         for entry_name in ["first-paint", "first-contentful-paint"] {
             if name.is_none_or(|n| n == entry_name) {
@@ -774,249 +1288,158 @@ fn timeline_entries<'s>(
             }
         }
     }
-    for entry in p.user_entries.borrow().iter() {
-        let ty = if entry.mark { "mark" } else { "measure" };
-        if name.is_none_or(|n| n == entry.name) && entry_type.is_none_or(|t| t == ty) {
-            entries.push((entry.start, entry.object.get(s)));
-        }
+    p.user.collect(s, name, entry_type, &mut entries);
+    if entry_type.is_none_or(|t| t == "resource") {
+        perf::collect_resources(s, &p.target.page, name, &mut entries)?;
     }
-    // Stable: entries with equal start times keep the order they were added.
-    entries.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
-    let values: Vec<Value<'s>> = entries.into_iter().map(|(_, v)| v).collect();
-    Ok(s.array(&values)?.value())
+    perf::sorted_entries(s, entries)
 }
 
-pub struct PerformanceEntryData {
-    name: String,
-    entry_type: &'static str,
-    start: f64,
-    duration: f64,
-    /// `detail` of a mark or measure (a structured clone), null when absent.
-    detail: Option<Persistent>,
-}
-
-impl PerformanceEntryData {
-    fn new(name: &str, entry_type: &'static str, start: f64, duration: f64) -> PerformanceEntryData {
-        PerformanceEntryData { name: name.to_owned(), entry_type, start, duration, detail: None }
+fn navigation_values(page: &lp_webapi::PageDom, nav: &PageNav) -> NavigationValues {
+    let t = page.timing();
+    NavigationValues {
+        dom_interactive: t.dom_interactive.unwrap_or(0.0),
+        dom_content_loaded_start: t.dom_content_loaded_start.unwrap_or(0.0),
+        dom_content_loaded_end: t.dom_content_loaded_end.unwrap_or(0.0),
+        dom_complete: t.dom_complete.unwrap_or(0.0),
+        load_start: t.load_start.unwrap_or(0.0),
+        load_end: t.load_end.unwrap_or(0.0),
+        nav_type: nav.nav_type.get(),
+        fetch: nav.fetch_timing.borrow().clone(),
     }
 }
 
-fn entry_json<'s>(s: &Scope<'s>, e: &PerformanceEntryData, detail: bool) -> JsResult<Value<'s>> {
-    let o = s.object();
-    o.set("name", s.string(&e.name))?;
-    o.set("entryType", s.string(e.entry_type))?;
-    o.set("startTime", s.number(e.start))?;
-    o.set("duration", s.number(e.duration))?;
-    if detail {
-        o.set("detail", e.detail.as_ref().map_or(s.null(), |d| d.get(s)))?;
+/// The document's `navigation` entry. Chrome adds it to the timeline as the
+/// document starts loading and fills it in as it goes; an `about:` document
+/// (the initial one, `setContent`) has none.
+fn navigation_entry(p: &PerformanceData) -> Option<PerformanceEntryData> {
+    let url = p.nav.url();
+    if !(url.starts_with("http:") || url.starts_with("https:") || url.starts_with("file:")) {
+        return None;
     }
-    Ok(o.value())
+    let values = navigation_values(&p.target.page, &p.nav);
+    let mut entry = PerformanceEntryData::new(&url, "navigation", 0.0, values.load_end);
+    entry.navigation = Some(Box::new(values));
+    Some(entry)
 }
 
-pub struct PerformanceEntry;
+/// User Timing "convert a name to a timestamp" in a Window: a
+/// PerformanceTiming attribute is its time relative to navigationStart, an
+/// error while it is 0 (the step has not run).
+fn timing_attribute_timestamp(p: &PerformanceData, name: &str) -> Option<JsResult<f64>> {
+    if name == "navigationStart" {
+        return Some(Ok(0.0));
+    }
+    if !TIMING_ATTRIBUTES.contains(&name) {
+        return None;
+    }
+    let n = navigation_values(&p.target.page, &p.nav);
+    if legacy_timing(p.origin_wall_ms, &n, name) == 0.0 {
+        return Some(Err(JsError::dom(
+            "InvalidAccessError",
+            format!("'{name}' is empty: either the event hasn't happened yet, or it would provide cross-origin timing information."),
+        )));
+    }
+    // Relative to navigationStart, the time origin.
+    let fetch_phase = if name == "domLoading" { "responseStart" } else { name };
+    if let Some((_, value)) = RESOURCE_TIMES.iter().find(|(key, _)| *key == fetch_phase) {
+        return Some(Ok(n.fetch.as_deref().map_or(0.0, value)));
+    }
+    Some(Ok(navigation_fields(&n).into_iter().find(|(key, _)| *key == name).map_or(0.0, |(_, t)| t)))
+}
 
-impl JsClass for PerformanceEntry {
-    const NAME: &'static str = "PerformanceEntry";
-    type Data = PerformanceEntryData;
+/// The legacy `performance.timing`: the document's Navigation Timing in
+/// milliseconds since the epoch, 0 for a step that has not run (and for the
+/// unload, redirect and secure-connection steps, which never do here).
+pub struct PerformanceTiming;
+
+pub struct TimingData {
+    origin_wall_ms: f64,
+    page: Rc<lp_webapi::PageDom>,
+    nav: Rc<PageNav>,
+}
+
+/// `performance.timing[name]` (epoch milliseconds, 0 when not reached). A
+/// document without a fetch reports its fetch phases at `navigationStart`.
+fn legacy_timing(origin: f64, n: &NavigationValues, name: &str) -> f64 {
+    let at = |t: f64| if t > 0.0 { (origin + t).round() } else { 0.0 };
+    // A phase of the fetch: at or after the time origin, so never 0 itself.
+    let phase = |f: fn(&ResourceEntry) -> f64| (origin + n.fetch.as_deref().map_or(0.0, f)).round();
+    match name {
+        "navigationStart" => origin.round(),
+        "fetchStart" => phase(|f| f.fetch_start),
+        "domainLookupStart" => phase(|f| f.domain_lookup_start),
+        "domainLookupEnd" => phase(|f| f.domain_lookup_end),
+        "connectStart" => phase(|f| f.connect_start),
+        "connectEnd" => phase(|f| f.connect_end),
+        "requestStart" => phase(|f| f.request_start),
+        "responseStart" | "domLoading" => phase(|f| f.response_start),
+        "responseEnd" => phase(|f| f.response_end),
+        "secureConnectionStart" => n.fetch.as_ref().map_or(0.0, |f| at(f.secure_connection_start)),
+        "redirectStart" => n.fetch.as_ref().filter(|f| f.redirect_count > 0).map_or(0.0, |_| origin.round()),
+        "redirectEnd" => n.fetch.as_ref().map_or(0.0, |f| at(f.redirect_end)),
+        "domInteractive" => at(n.dom_interactive),
+        "domContentLoadedEventStart" => at(n.dom_content_loaded_start),
+        "domContentLoadedEventEnd" => at(n.dom_content_loaded_end),
+        "domComplete" => at(n.dom_complete),
+        "loadEventStart" => at(n.load_start),
+        "loadEventEnd" => at(n.load_end),
+        _ => 0.0,
+    }
+}
+
+impl JsClass for PerformanceTiming {
+    const NAME: &'static str = "PerformanceTiming";
+    type Data = TimingData;
     type Parent = NoParent;
 
     fn define(def: &mut ClassDef<Self>) {
-        def.getter("name", |s, e| Ok(s.string(&e.name)));
-        def.getter("entryType", |s, e| Ok(s.string(e.entry_type)));
-        def.getter("startTime", |s, e| Ok(s.number(e.start)));
-        def.getter("duration", |s, e| Ok(s.number(e.duration)));
-        def.method("toJSON", 0, |s, e, _a| entry_json(s, e, false));
-    }
-}
-
-/// Paint Timing: `first-paint` / `first-contentful-paint`.
-pub struct PerformancePaintTiming;
-
-impl JsClass for PerformancePaintTiming {
-    const NAME: &'static str = "PerformancePaintTiming";
-    type Data = PerformanceEntryData;
-    type Parent = PerformanceEntry;
-
-    fn define(_def: &mut ClassDef<Self>) {}
-}
-
-/// Navigation Timing's `PerformanceTiming` attribute names: not usable as
-/// mark names in a Window (User Timing).
-const TIMING_ATTRIBUTES: &[&str] = &[
-    "navigationStart",
-    "unloadEventStart",
-    "unloadEventEnd",
-    "redirectStart",
-    "redirectEnd",
-    "fetchStart",
-    "domainLookupStart",
-    "domainLookupEnd",
-    "connectStart",
-    "connectEnd",
-    "secureConnectionStart",
-    "requestStart",
-    "responseStart",
-    "responseEnd",
-    "domLoading",
-    "domInteractive",
-    "domContentLoadedEventStart",
-    "domContentLoadedEventEnd",
-    "domComplete",
-    "loadEventStart",
-    "loadEventEnd",
-];
-
-/// A member of an options dictionary, `None` when absent or undefined.
-fn member<'s>(options: Option<lp_js::Object<'s>>, name: &str) -> JsResult<Option<Value<'s>>> {
-    match options {
-        Some(o) => Ok(Some(o.get(name)?).filter(|v| !v.is_undefined())),
-        None => Ok(None),
-    }
-}
-
-/// The structured clone of a `detail` member (null when absent).
-fn clone_detail<'s>(s: &Scope<'s>, detail: Option<Value<'s>>) -> JsResult<Option<Persistent>> {
-    let Some(detail) = detail.filter(|v| !v.is_null()) else { return Ok(None) };
-    let clone = s.global().get("structuredClone")?;
-    let clone = clone.as_object().ok_or_else(|| JsError::Type("structuredClone is unavailable".into()))?;
-    Ok(Some(Persistent::new(s, clone.call(None, &[detail])?)))
-}
-
-/// User Timing "create a PerformanceMark": `now` is the current time.
-fn mark_data<'s>(s: &Scope<'s>, name: &str, options: Value<'s>, now: f64) -> JsResult<PerformanceEntryData> {
-    if TIMING_ATTRIBUTES.contains(&name) {
-        return Err(JsError::dom(
-            "SyntaxError",
-            format!("'{name}' is part of the PerformanceTiming interface, and cannot be used as a mark name."),
-        ));
-    }
-    if !options.is_nullish() && options.as_object().is_none() {
-        return Err(JsError::Type("The mark options are not an object.".into()));
-    }
-    let options = options.as_object();
-    let start = match member(options, "startTime")? {
-        Some(v) => {
-            let t = v.to_number()?;
-            if !t.is_finite() {
-                return Err(JsError::Type("startTime is not a finite number.".into()));
-            }
-            if t < 0.0 {
-                return Err(JsError::Type(format!("'{name}' cannot have a negative start time.")));
-            }
-            t
+        macro_rules! attributes {
+            ($($i:literal),*) => {$(
+                def.getter(TIMING_ATTRIBUTES[$i], |s, t| {
+                    let n = navigation_values(&t.page, &t.nav);
+                    Ok(s.number(legacy_timing(t.origin_wall_ms, &n, TIMING_ATTRIBUTES[$i])))
+                });
+            )*};
         }
-        None => now,
-    };
-    let detail = clone_detail(s, member(options, "detail")?)?;
-    Ok(PerformanceEntryData { name: name.to_owned(), entry_type: "mark", start, duration: 0.0, detail })
-}
-
-pub struct PerformanceMark;
-
-impl JsClass for PerformanceMark {
-    const NAME: &'static str = "PerformanceMark";
-    type Data = PerformanceEntryData;
-    type Parent = PerformanceEntry;
-
-    fn define(def: &mut ClassDef<Self>) {
-        def.constructor(1, |s, nt, a| {
-            a.require(1, "PerformanceMark")?;
-            let name = a.get(0).to_string()?;
-            let now = s.global_data::<crate::window::Window>().map_or(0.0, |w| w.now_ms());
-            s.wrap_new::<PerformanceMark>(mark_data(s, &name, a.get(1), now)?, nt, None)
+        attributes!(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20);
+        def.method("toJSON", 0, |s, t, _a| {
+            let o = s.object();
+            let n = navigation_values(&t.page, &t.nav);
+            for name in TIMING_ATTRIBUTES {
+                o.set(name, s.number(legacy_timing(t.origin_wall_ms, &n, name)))?;
+            }
+            Ok(o.value())
         });
-        def.getter("detail", |s, e| Ok(e.detail.as_ref().map_or(s.null(), |d| d.get(s))));
-        def.method("toJSON", 0, |s, e, _a| entry_json(s, e, true));
     }
 }
 
-pub struct PerformanceMeasure;
+/// The legacy `performance.navigation`.
+pub struct PerformanceNavigation;
 
-impl JsClass for PerformanceMeasure {
-    const NAME: &'static str = "PerformanceMeasure";
-    type Data = PerformanceEntryData;
-    type Parent = PerformanceEntry;
+impl JsClass for PerformanceNavigation {
+    const NAME: &'static str = "PerformanceNavigation";
+    type Data = Rc<PageNav>;
+    type Parent = NoParent;
 
     fn define(def: &mut ClassDef<Self>) {
-        def.getter("detail", |s, e| Ok(e.detail.as_ref().map_or(s.null(), |d| d.get(s))));
-        def.method("toJSON", 0, |s, e, _a| entry_json(s, e, true));
+        def.getter("type", |s, n| Ok(s.number(legacy_navigation_type(n))));
+        def.getter("redirectCount", |s, _n| Ok(s.number(0.0)));
+        def.method("toJSON", 0, |s, n, _a| {
+            let o = s.object();
+            o.set("type", s.number(legacy_navigation_type(n)))?;
+            o.set("redirectCount", s.number(0.0))?;
+            Ok(o.value())
+        });
     }
 }
 
-/// User Timing "convert a mark to a timestamp".
-fn mark_timestamp(p: &PerformanceData, mark: Value<'_>) -> JsResult<f64> {
-    if mark.is_number() {
-        let t = mark.to_number()?;
-        if t < 0.0 {
-            return Err(JsError::Type("A measure cannot start or end at a negative time.".into()));
-        }
-        return Ok(t);
-    }
-    let name = mark.to_string()?;
-    if name == "navigationStart" {
-        return Ok(0.0);
-    }
-    let found = p.user_entries.borrow().iter().rev().find(|e| e.mark && e.name == name).map(|e| e.start);
-    found.ok_or_else(|| JsError::dom("SyntaxError", format!("The mark '{name}' does not exist.")))
-}
-
-/// `performance.measure(name, startOrOptions, endMark)`.
-fn measure<'s>(s: &Scope<'s>, p: &PerformanceData, a: &lp_js::Args<'s>) -> JsResult<Value<'s>> {
-    a.require(1, "Performance.measure")?;
-    let name = a.get(0).to_string()?;
-    let end_mark = a.opt(2).filter(|v| !v.is_undefined());
-    // A dictionary only when it is an object (a string or number is a mark).
-    let options = a.get(1).as_object();
-    let (start, end, duration) = (member(options, "start")?, member(options, "end")?, member(options, "duration")?);
-    let detail = member(options, "detail")?;
-    let is_options = start.is_some() || end.is_some() || duration.is_some() || detail.is_some();
-    if is_options {
-        if end_mark.is_some() {
-            return Err(JsError::Type("If a non-empty measure options object is given, endMark must not be.".into()));
-        }
-        if start.is_none() && end.is_none() {
-            return Err(JsError::Type("The measure options need at least one of start and end.".into()));
-        }
-        if start.is_some() && end.is_some() && duration.is_some() {
-            return Err(JsError::Type("The measure options cannot have all of start, duration and end.".into()));
-        }
-    }
-    let duration = duration.map(|d| d.to_number()).transpose()?;
-    let end_time = match (end_mark, end, start, duration) {
-        (Some(mark), ..) => mark_timestamp(p, mark)?,
-        (None, Some(end), ..) => mark_timestamp(p, end)?,
-        (None, None, Some(start), Some(duration)) => mark_timestamp(p, start)? + duration,
-        _ => p.nav.now_ms(),
-    };
-    let start_time = match (start, duration, end) {
-        (Some(start), ..) => mark_timestamp(p, start)?,
-        (None, Some(duration), Some(end)) => mark_timestamp(p, end)? - duration,
-        _ if !is_options && !a.get(1).is_nullish() => mark_timestamp(p, a.get(1))?,
+fn legacy_navigation_type(n: &PageNav) -> f64 {
+    match n.nav_type.get() {
+        "reload" => 1.0,
+        "back_forward" => 2.0,
         _ => 0.0,
-    };
-    let data = PerformanceEntryData {
-        name: name.clone(),
-        entry_type: "measure",
-        start: start_time,
-        duration: end_time - start_time,
-        detail: clone_detail(s, detail)?,
-    };
-    let object = s.wrap::<PerformanceMeasure>(data, None)?.value();
-    p.user_entries.borrow_mut().push(UserEntry { name, mark: false, start: start_time, object: Persistent::new(s, object) });
-    Ok(object)
-}
-
-/// `clearMarks(name)` / `clearMeasures(name)`.
-fn clear_entries(p: &PerformanceData, marks: bool, name: Option<String>) {
-    let removed: Vec<UserEntry> = {
-        let mut entries = p.user_entries.borrow_mut();
-        let (gone, kept) = std::mem::take(&mut *entries)
-            .into_iter()
-            .partition(|e| e.mark == marks && name.as_ref().is_none_or(|n| *n == e.name));
-        *entries = kept;
-        gone
-    };
-    drop(removed);
+    }
 }
 
 pub struct Performance;
@@ -1031,25 +1454,17 @@ impl JsClass for Performance {
         def.method("now", 0, |s, p, _a| Ok(s.number(p.nav.now_ms())));
         def.getter("timeOrigin", |s, p| Ok(s.number(p.origin_wall_ms)));
         def.method("mark", 1, |s, p, a| {
-            a.require(1, "Performance.mark")?;
-            let name = a.get(0).to_string()?;
-            let data = mark_data(s, &name, a.get(1), p.nav.now_ms())?;
-            let start = data.start;
-            let object = s.wrap::<PerformanceMark>(data, None)?.value();
-            p.user_entries.borrow_mut().push(UserEntry { name, mark: true, start, object: Persistent::new(s, object) });
+            let object = p.user.mark(s, &a, p.nav.now_ms())?;
+            p.nav.notify_entry(s, "mark", object)?;
             Ok(object)
         });
-        def.method("measure", 1, |s, p, a| measure(s, p, &a));
-        def.method("clearMarks", 0, |s, p, a| {
-            let name = a.opt(0).filter(|v| !v.is_undefined()).map(|v| v.to_string()).transpose()?;
-            clear_entries(p, true, name);
-            Ok(s.undefined())
+        def.method("measure", 1, |s, p, a| {
+            let object = p.user.measure(s, &a, p.nav.now_ms(), &|name| timing_attribute_timestamp(p, name))?;
+            p.nav.notify_entry(s, "measure", object)?;
+            Ok(object)
         });
-        def.method("clearMeasures", 0, |s, p, a| {
-            let name = a.opt(0).filter(|v| !v.is_undefined()).map(|v| v.to_string()).transpose()?;
-            clear_entries(p, false, name);
-            Ok(s.undefined())
-        });
+        def.method("clearMarks", 0, |s, p, a| p.user.clear(true, &a).map(|()| s.undefined()));
+        def.method("clearMeasures", 0, |s, p, a| p.user.clear(false, &a).map(|()| s.undefined()));
         def.method("getEntries", 0, |s, p, _a| timeline_entries(s, p, None, None));
         def.method("getEntriesByName", 1, |s, p, a| {
             a.require(1, "Performance.getEntriesByName")?;
@@ -1062,10 +1477,206 @@ impl JsClass for Performance {
             let ty = a.get(0).to_string()?;
             timeline_entries(s, p, None, Some(&ty))
         });
+        def.method("setResourceTimingBufferSize", 1, |s, p, a| {
+            perf::set_buffer_size(&p.target.page, &a).map(|()| s.undefined())
+        });
+        def.method("clearResourceTimings", 0, |s, p, _a| {
+            perf::clear_resources(&p.target.page);
+            Ok(s.undefined())
+        });
+        def.accessor(
+            "onresourcetimingbufferfull",
+            |s, p| lp_webapi::resource_timing::buffer_full_handler(s, &p.target),
+            |s, p, v| lp_webapi::resource_timing::set_buffer_full_handler(s, &p.target, v),
+        );
+        def.getter("timing", timing_object);
+        def.getter("navigation", navigation_object);
         def.method("toJSON", 0, |s, p, _a| {
             let o = s.object();
             o.set("timeOrigin", s.number(p.origin_wall_ms))?;
+            o.set("timing", timing_object(s, p)?)?;
+            o.set("navigation", navigation_object(s, p)?)?;
             Ok(o.value())
         });
     }
+}
+
+/// `performance.timing`: one object per realm.
+fn timing_object<'s>(s: &Scope<'s>, p: &PerformanceData) -> JsResult<Value<'s>> {
+    let key = lp_js::IdentityKey(KEY_TIMING, 0);
+    if let Some(o) = s.lookup_identity(key) {
+        return Ok(o.value());
+    }
+    let data = TimingData { origin_wall_ms: p.origin_wall_ms, page: p.target.page.clone(), nav: p.nav.clone() };
+    Ok(s.wrap::<PerformanceTiming>(data, Some(key))?.value())
+}
+
+/// `performance.navigation`: one object per realm.
+fn navigation_object<'s>(s: &Scope<'s>, p: &PerformanceData) -> JsResult<Value<'s>> {
+    Ok(s.wrap::<PerformanceNavigation>(p.nav.clone(), Some(lp_js::IdentityKey(KEY_NAVIGATION, 0)))?.value())
+}
+
+/// Identity keys of `performance.timing` and `performance.navigation` (one
+/// per realm).
+const KEY_TIMING: u64 = 0x5065_7254_696d_6e00;
+const KEY_NAVIGATION: u64 = 0x5065_724e_6176_6900;
+
+/// Entry types a Window's observers take.
+const WINDOW_ENTRY_TYPES: &[&str] = &["mark", "measure", "navigation", "paint", "resource"];
+
+/// This realm's performance_observer.js module (`PerformanceObserver`,
+/// `PerformanceObserverEntryList`), made on first use and kept on the
+/// realm's `performance` object.
+pub(crate) fn observer_module<'s>(
+    s: &Scope<'s>,
+    performance: lp_js::Object<'s>,
+    nav: &Rc<PageNav>,
+) -> JsResult<lp_js::Object<'s>> {
+    let page = s
+        .unwrap::<Performance>(performance.value())
+        .map(|p| p.target.page.clone())
+        .ok_or_else(|| JsError::Type("PerformanceObserver is unavailable".into()))?;
+    let watched = Rc::downgrade(nav);
+    let watch = move |s: &Scope<'_>, queue: Value<'_>| {
+        if let Some(nav) = watched.upgrade() {
+            nav.watch_timeline(s, queue);
+        }
+    };
+    perf::observer_module(s, performance, &page, watch, WINDOW_ENTRY_TYPES)
+}
+
+/// The realm's Navigation API module (navigation.js): `navigation` and
+/// its interfaces, made on the realm's first use and kept on the realm's
+/// History object (one per realm).
+pub(crate) fn navigation_module<'s>(s: &Scope<'s>, nav: &Rc<PageNav>) -> JsResult<lp_js::Object<'s>> {
+    const KEY: &str = "lpNavigation";
+    let history = s.wrap::<History>(nav.clone(), Some(lp_js::IdentityKey(crate::window::KEY_HISTORY, 0)))?;
+    if let Some(module) = s.get_hidden(history, KEY)?.and_then(|v| v.as_object()) {
+        return Ok(module);
+    }
+    let unavailable = || JsError::Type("navigation is unavailable".into());
+    let natives = s.object();
+    let weak = Rc::downgrade(nav);
+    let with_nav = move || weak.upgrade().ok_or(JsError::ContextDestroyed);
+    macro_rules! native {
+        ($name:literal, |$s:ident, $nav:ident, $a:ident| $body:expr) => {{
+            let with_nav = with_nav.clone();
+            let f = s.function($name, move |$s, _this, $a| {
+                let $nav = with_nav()?;
+                $body
+            })?;
+            natives.set_atom($name, f.value())?;
+        }};
+    }
+    // watch(hook | null): hook(kind, ...) fires the realm's events.
+    native!("watch", |s, nav, a| {
+        let id = s.realm_id();
+        let mut hooks = nav.navigation_hooks.borrow_mut();
+        hooks.retain(|(realm, ..)| *realm != id);
+        if a.get(0).is_function() {
+            hooks.push((id, s.realm().downgrade(), Rc::new(Persistent::new(s, a.get(0)))));
+        }
+        Ok(s.undefined())
+    });
+    // entries() -> [index, [key, id, url, sameDocument, stateJSON]...]: the
+    // same-origin entries around the current one.
+    native!("entries", |s, nav, _a| {
+        let st = nav.state.borrow();
+        let origin = |url: &str| Url::parse(url).ok().map(|u| u.origin());
+        let Some(current) = st.entries.get(st.index) else { return Ok(s.array(&[s.number(-1.0)])?.value()) };
+        let here = origin(&current.url);
+        let same =
+            |e: &Entry| (here.as_ref().is_some_and(|o| o.is_tuple()) && origin(&e.url) == here) || e.doc == current.doc;
+        let mut start = st.index;
+        while start > 0 && same(&st.entries[start - 1]) {
+            start -= 1;
+        }
+        let mut end = st.index + 1;
+        while end < st.entries.len() && same(&st.entries[end]) {
+            end += 1;
+        }
+        let mut values = vec![s.number((st.index - start) as f64)];
+        for e in &st.entries[start..end] {
+            let state = e.nav_state.as_deref().map_or(s.undefined(), |j| s.string(j));
+            let row = [
+                s.string(&e.key.to_string()),
+                s.string(&e.id.to_string()),
+                s.string(&e.url),
+                s.boolean(e.doc == current.doc),
+                state,
+            ];
+            values.push(s.array(&row)?.value());
+        }
+        Ok(s.array(&values)?.value())
+    });
+    // resolve(url) -> the absolute URL, or SyntaxError.
+    native!("resolve", |s, nav, a| Ok(s.string(parse(&nav, a.get(0))?.as_str())));
+    // navigate(url, replace, stateJSON?) -> whether it stayed in the
+    // document. Its `navigate` event was fired by the caller.
+    native!("navigate", |s, nav, a| {
+        let target = Url::parse(&a.get(0).to_string()?).map_err(|_| JsError::dom("SyntaxError", "Invalid URL"))?;
+        let replace = a.get(1).to_bool();
+        let state = a.opt(2).filter(|v| !v.is_undefined()).map(|v| v.to_string()).transpose()?;
+        let outer = nav.navigation_api_call.replace(true);
+        let same = navigate_to(&nav, target, replace);
+        nav.navigation_api_call.set(outer);
+        if same {
+            nav.set_navigation_state(state);
+        }
+        Ok(s.boolean(same))
+    });
+    // commit(url, type, stateJSON?): an intercepted navigation's
+    // same-document commit.
+    native!("commit", |s, nav, a| {
+        let url = a.get(0).to_string()?;
+        let navigation_type = match a.get(1).to_string()?.as_str() {
+            "replace" => "replace",
+            "reload" => "reload",
+            _ => "push",
+        };
+        let state = a.opt(2).filter(|v| !v.is_undefined()).map(|v| v.to_string()).transpose()?;
+        let outer = nav.navigation_api_call.replace(true);
+        nav.commit_intercepted(&url, navigation_type);
+        nav.navigation_api_call.set(outer);
+        if navigation_type != "reload" || state.is_some() {
+            nav.set_navigation_state(state);
+        }
+        Ok(s.undefined())
+    });
+    native!("reload", |s, nav, _a| {
+        nav.navigate(nav.url(), HistoryHandling::Reload);
+        Ok(s.undefined())
+    });
+    // traverse(key) -> 'missing', 'current' or 'queued' (its events come
+    // with the traversal task).
+    native!("traverse", |s, nav, a| {
+        let key = a.get(0).to_string()?;
+        let delta = {
+            let st = nav.state.borrow();
+            st.entries.iter().position(|e| e.key.to_string() == key).map(|i| i as i64 - st.index as i64)
+        };
+        Ok(s.string(match delta {
+            None => "missing",
+            Some(0) => "current",
+            Some(delta) => {
+                nav.traverse(delta);
+                "queued"
+            }
+        }))
+    });
+    native!("updateState", |s, nav, a| {
+        let state = a.opt(0).filter(|v| !v.is_undefined()).map(|v| v.to_string()).transpose()?;
+        nav.set_navigation_state(state);
+        Ok(s.undefined())
+    });
+    let report = s.function("reportException", |s, _this, a| {
+        s.report_exception(&JsError::Thrown(Persistent::new(s, a.get(0))));
+        Ok(s.undefined())
+    })?;
+    natives.set_atom("reportException", report.value())?;
+    let root = Persistent::new(s, natives.value());
+    let make = s.eval(include_str!("navigation.js"), Some("lightningpanda://internal/navigation.js"), 1)?;
+    let module = make.as_object().ok_or_else(unavailable)?.call(None, &[root.get(s)])?;
+    s.set_hidden(history, KEY, module)?;
+    module.as_object().ok_or_else(unavailable)
 }

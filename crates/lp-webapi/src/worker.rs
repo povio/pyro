@@ -25,9 +25,10 @@
 //! takes a connection (`release_after_fork`). A page that waits for a worker's
 //! reply during template boot waits until then.
 //!
-//! Gaps (explicit): `{type: 'module'}` throws NotSupportedError; `SharedWorker`
+//! Gaps (explicit): `{type: 'module'}` throws NotSupportedError on the system
+//! JavaScriptCore framework (module workers need the patched build); `SharedWorker`
 //! and `ServiceWorker` are undefined so feature detection takes the no-worker
-//! path; workers cannot start workers; only ArrayBuffers can be transferred. See
+//! path; workers cannot start workers. ArrayBuffers and MessagePorts transfer. See
 //! docs/webapi/WORKER.md.
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
@@ -35,13 +36,13 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use lp_js::{ClassDef, JsClass, JsError, JsResult, Persistent, Scope, TerminateHandle, WeakRealm};
+use lp_js::{ClassDef, JsClass, JsError, JsResult, Scope, TerminateHandle, WeakRealm};
 use lp_runtime::LoopHandle;
 use rustc_hash::FxHashMap;
 
 use crate::event::{EventCore, EventInterface};
 use crate::page::PageDom;
-use crate::structured_clone::{decode_message, encode_message, WireMessage};
+use crate::structured_clone::{encode_message, WireMessage};
 use crate::target::{fire, page_of, pin_target, unpin_target, EventTarget, EventTargetData};
 use crate::util::dom_string;
 use crate::worker_scope::{self, WorkerContext, WorkerLoop, WorkerStart};
@@ -66,6 +67,29 @@ thread_local! {
     static HELD: RefCell<Vec<Weak<WorkerInner>>> = const { RefCell::new(Vec::new()) };
     /// Worker threads this browser thread started and has not joined.
     static THREADS: RefCell<Vec<std::thread::JoinHandle<()>>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Whether this process is a template that must not start threads.
+pub(crate) fn is_held() -> bool {
+    HOLD.load(Ordering::Relaxed)
+}
+
+/// Remembers a worker thread for [`join_stopped`].
+pub(crate) fn track_thread(thread: std::thread::JoinHandle<()>) {
+    THREADS.with(|threads| {
+        let mut threads = threads.borrow_mut();
+        threads.retain(|t| !t.is_finished());
+        threads.push(thread);
+    });
+}
+
+pub(crate) fn new_shared() -> Arc<Shared> {
+    Arc::new(Shared {
+        closing: AtomicBool::new(false),
+        terminate: Mutex::new(None),
+        down_bytes: AtomicUsize::new(0),
+        up_bytes: AtomicUsize::new(0),
+    })
 }
 
 /// Makes workers wait for the fork: call before a template creates any page.
@@ -153,24 +177,46 @@ pub(crate) struct WorkerInner {
 
 /// The embedder's handle on a live worker.
 #[derive(Clone)]
-pub struct WorkerHandle(Rc<WorkerInner>);
+pub struct WorkerHandle(HandleKind);
+
+#[derive(Clone)]
+enum HandleKind {
+    Dedicated(Rc<WorkerInner>),
+    Service { id: u64, url: Rc<str>, thread: Option<LoopHandle<WorkerLoop>> },
+}
 
 impl WorkerHandle {
+    pub(crate) fn service(id: u64, url: String, thread: Option<LoopHandle<WorkerLoop>>) -> WorkerHandle {
+        WorkerHandle(HandleKind::Service { id, url: url.into(), thread })
+    }
     pub fn id(&self) -> u64 {
-        self.0.id
+        match &self.0 {
+            HandleKind::Dedicated(worker) => worker.id,
+            HandleKind::Service { id, .. } => *id,
+        }
     }
     pub fn url(&self) -> &str {
-        &self.0.url
+        match &self.0 {
+            HandleKind::Dedicated(worker) => &worker.url,
+            HandleKind::Service { url, .. } => url,
+        }
     }
     /// Runs `task` on the worker's thread, after the worker's initial script
     /// and whatever was queued before it. Dropped once the worker is gone.
     pub fn inspect(&self, task: InspectTask) {
-        match &mut *self.0.state.borrow_mut() {
-            State::Held(start) => start.early.push(Early::Inspect(task)),
-            State::Running(handle) => {
-                let _ = handle.post(move |state| state.inspect(task));
+        match &self.0 {
+            HandleKind::Dedicated(worker) => match &mut *worker.state.borrow_mut() {
+                State::Held(start) => start.early.push(Early::Inspect(task)),
+                State::Running(handle) => {
+                    let _ = handle.post(move |state| state.inspect(task));
+                }
+                State::Failed | State::Closed => {}
+            },
+            HandleKind::Service { thread, .. } => {
+                if let Some(thread) = thread {
+                    let _ = thread.post(move |state| state.inspect(task));
+                }
             }
-            State::Failed | State::Closed => {}
         }
     }
 }
@@ -178,6 +224,9 @@ impl WorkerHandle {
 /// A worker's lifecycle, for the embedder (`PageHooks::worker_event`).
 pub enum WorkerEvent {
     Created(WorkerHandle),
+    /// A service worker version started; told to the hooks of the document
+    /// that registered it, though it belongs to the browser context.
+    ServiceCreated(WorkerHandle),
     Destroyed(u64),
 }
 
@@ -194,11 +243,7 @@ impl WorkerInner {
         let page = self.target.page.clone();
         match worker_scope::spawn(*start) {
             Ok((handle, thread, early)) => {
-                THREADS.with(|threads| {
-                    let mut threads = threads.borrow_mut();
-                    threads.retain(|t| !t.is_finished());
-                    threads.push(thread);
-                });
+                track_thread(thread);
                 for item in early {
                     let _ = handle.post(move |state| match item {
                         Early::Message(message) => state.receive(message),
@@ -312,22 +357,7 @@ pub(crate) fn stop_thread(shared: &Shared) {
 
 /// Fires `message` or, if it cannot be rebuilt, `messageerror` at `target`.
 pub(crate) fn fire_message(s: &Scope<'_>, page: &Rc<PageDom>, target: TargetKey, message: &WireMessage) {
-    match decode_message(s, message) {
-        Ok(value) => {
-            let ev = EventCore::trusted(page, EventInterface::MessageEvent, "message", false, false);
-            {
-                let mut fields = ev.fields.borrow_mut();
-                fields.message_data = Some(Persistent::new(s, value));
-                fields.origin = String::new();
-            }
-            fire(page, target, &ev);
-        }
-        Err(JsError::Terminated) => {}
-        Err(_) => {
-            let ev = EventCore::trusted(page, EventInterface::MessageEvent, "messageerror", false, false);
-            fire(page, target, &ev);
-        }
-    }
+    crate::message_channel::fire_wire_message(s, page, target, message, String::new());
 }
 
 /// Runs on the page's thread, as a task of its loop.
@@ -390,12 +420,15 @@ impl JsClass for Worker {
             }
             let input = dom_string(a.get(0))?;
             let mut name = String::new();
+            let mut module = false;
             let options = a.get(1);
             if let Some(options) = options.as_object() {
                 let kind = options.get_atom("type")?;
                 if !kind.is_undefined() {
                     match dom_string(kind)?.as_str() {
                         "classic" => {}
+                        // Needs the engine's module loader.
+                        "module" if lp_js::Capabilities::detect().modules => module = true,
                         "module" => {
                             return Err(JsError::dom(
                                 "NotSupportedError",
@@ -436,7 +469,10 @@ impl JsClass for Worker {
                 down_bytes: AtomicUsize::new(0),
                 up_bytes: AtomicUsize::new(0),
             });
-            let start = WorkerStart::new(id, &page, s, url, name, shared.clone());
+            let start = WorkerStart::new(id, &page, s, url, name, shared.clone()).map(|mut start| {
+                start.module = module;
+                start
+            });
             let full = page.workers.borrow().len() >= MAX_WORKERS_PER_DOCUMENT
                 || LIVE.with(|live| live.borrow().len()) >= MAX_WORKERS_PER_THREAD;
             let inner = Rc::new(WorkerInner {
@@ -462,7 +498,7 @@ impl JsClass for Worker {
             }
             if let Some(hooks) = page.hooks() {
                 inner.announced.set(true);
-                hooks.worker_event(WorkerEvent::Created(WorkerHandle(inner.clone())));
+                hooks.worker_event(WorkerEvent::Created(WorkerHandle(HandleKind::Dedicated(inner.clone()))));
             }
             if HOLD.load(Ordering::Relaxed) {
                 HELD.with(|held| held.borrow_mut().push(Rc::downgrade(&inner)));

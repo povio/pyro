@@ -26,9 +26,11 @@ impl Dom {
     /// Whether `i` could be upgraded: an HTML element with a custom element
     /// name (a hyphen in it) that is not custom yet.
     fn upgrade_candidate(&self, i: u32) -> bool {
-        self.n(i)
-            .element()
-            .is_some_and(|e| e.flags & element_flags::CUSTOM_DEFINED == 0 && e.is_html() && e.name.local.contains('-'))
+        self.n(i).element().is_some_and(|e| {
+            e.flags & (element_flags::CUSTOM_DEFINED | element_flags::CUSTOM_FAILED) == 0
+                && e.is_html()
+                && e.name.local.contains('-')
+        })
     }
 
     /// `root` was inserted and is connected: queues the candidates among it

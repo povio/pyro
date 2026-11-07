@@ -1191,7 +1191,9 @@ impl Layout {
                 break chain.clone();
             }
             pending.push(node);
-            cur = dom.parent_element(node).ok().flatten();
+            // A shadow tree's top-level elements paint within their host.
+            cur =
+                dom.check(node).ok().and_then(|i| crate::style::flat_tree_parent_element(dom, i)).map(|i| dom.id_of(i));
         };
         let reached_root = cur.is_none();
         for (i, &node) in pending.iter().enumerate().rev() {
@@ -1207,6 +1209,16 @@ impl Layout {
 
     /// [`Self::paint_chain`]'s step for one box.
     fn paint_step(&self, dom: &Dom, node: NodeId, order: u32, is_root: bool, mut state: PaintChain) -> PaintChain {
+        // A top-layer element (modal dialog, showing popover) paints above
+        // the whole document in its own root context, by its rank in the
+        // top layer, whatever its ancestors' stacking contexts. One empty
+        // check when the top layer is empty.
+        if let Some(rank) = dom.top_layer_rank(node) {
+            state.contexts = Rc::from([(5, rank as i32, 0)].as_slice());
+            state.positioned_layer = None;
+            state.own_layer = true;
+            return state;
+        }
         let c = self.computed(dom, node);
         let positioned = c.position.is_positioned();
         let flex_or_grid_item = dom
@@ -1325,10 +1337,11 @@ impl Layout {
                 let same_layer = key.len() == top_key.len()
                     && key[..key.len() - 1] == top_key[..top_key.len() - 1]
                     && key.last().map(|value| (value.0, value.1)) == top_key.last().map(|value| (value.0, value.1));
-                if same_layer && dom.contains(el, *top_node).unwrap_or(false) {
+                // Shadow-including: a host's shadow content paints over it.
+                if same_layer && dom.shadow_including_contains(el, *top_node) {
                     continue;
                 }
-                if *top_key > key && !(same_layer && dom.contains(*top_node, el).unwrap_or(false)) {
+                if *top_key > key && !(same_layer && dom.shadow_including_contains(*top_node, el)) {
                     continue;
                 }
             }
@@ -1345,7 +1358,13 @@ impl Layout {
                 best = Some((key, el));
             }
         }
-        best.map(|(_, node)| node)
+        // Outside the topmost modal dialog everything is inert: the point
+        // hits the dialog's ::backdrop, whose events go to the dialog.
+        best.map(|(_, node)| node).or_else(|| {
+            dom.topmost_modal().filter(|&m| {
+                dom.node_document(m).ok() == Some(self.document()) && result.get(m).is_some() && self.is_visible(dom, m)
+            })
+        })
     }
 
     /// A table row or row group, which Chromium hits only through its
@@ -1402,8 +1421,17 @@ impl Layout {
         let mut out = Vec::new();
         let mut cur = self.element_from_point(dom, x, y);
         while let Some(el) = cur {
-            let parent = dom.parent_element(el).ok().flatten();
-            if parent.is_none() || self.style.is_hit_testable(dom, el) {
+            // Flat-tree ancestors: a slottable's slot (boxless, so not
+            // listed), a shadow root's host.
+            let parent = match dom.assigned_slot_any(el) {
+                Some(slot) => Some(slot),
+                None => match dom.parent(el).ok().flatten() {
+                    Some(p) if dom.is_shadow_root(p).unwrap_or(false) => dom.fragment_host(p).ok().flatten(),
+                    _ => dom.parent_element(el).ok().flatten(),
+                },
+            };
+            let slot = dom.element(el).is_ok_and(|e| e.is_html() && &*e.name.local == "slot");
+            if parent.is_none() || (self.style.is_hit_testable(dom, el) && !slot) {
                 out.push(el);
             }
             cur = parent;
@@ -1953,7 +1981,25 @@ impl Layout {
     fn scroll_into_view_aligned_targets(&mut self, dom: &Dom, el: NodeId, center: bool) -> Vec<ScrollTarget> {
         let offset: fn(f64, f64, f64, u32) -> Option<i32> =
             if center { centered_scroll_offset } else { center_if_needed_offset };
-        self.scroll_into_view_offset_targets(dom, el, offset, false)
+        self.scroll_into_view_offset_targets(dom, el, offset, offset, false)
+    }
+
+    /// Script-facing `Element.scrollIntoView(options)` with an explicit
+    /// alignment per axis (`block` vertical, `inline` horizontal; CSSOM View
+    /// "scroll an element into view"), changed targets in delivery order.
+    /// The default `{block: start, inline: nearest}` keeps
+    /// [`Layout::scroll_into_view_targets`]'s policy.
+    pub fn scroll_into_view_aligned_script_targets(
+        &mut self,
+        dom: &Dom,
+        el: NodeId,
+        block: ScrollAlign,
+        inline: ScrollAlign,
+    ) -> Vec<ScrollTarget> {
+        if block == ScrollAlign::Start && inline == ScrollAlign::Nearest {
+            return self.scroll_into_view_targets(dom, el);
+        }
+        self.scroll_into_view_offset_targets(dom, el, inline.offset_fn(), block.offset_fn(), true)
     }
 
     /// Script-facing `Element.scrollIntoViewIfNeeded(centerIfNeeded)`.
@@ -1967,14 +2013,16 @@ impl Layout {
     ) -> Vec<ScrollTarget> {
         let offset: fn(f64, f64, f64, u32) -> Option<i32> =
             if center_if_needed { center_if_needed_offset } else { nearest_scroll_offset };
-        self.scroll_into_view_offset_targets(dom, el, offset, true)
+        self.scroll_into_view_offset_targets(dom, el, offset, offset, true)
     }
 
+    /// `offset_x` aligns the horizontal axis, `offset_y` the vertical one.
     fn scroll_into_view_offset_targets(
         &mut self,
         dom: &Dom,
         el: NodeId,
-        offset: fn(f64, f64, f64, u32) -> Option<i32>,
+        offset_x: fn(f64, f64, f64, u32) -> Option<i32>,
+        offset_y: fn(f64, f64, f64, u32) -> Option<i32>,
         script: bool,
     ) -> Vec<ScrollTarget> {
         if !self.is_visible(dom, el) {
@@ -2005,7 +2053,7 @@ impl Layout {
                 let container = self.bounding_client_rect(dom, node);
                 let left = (axes.x || explicit)
                     .then(|| {
-                        offset(
+                        offset_x(
                             target.left() - container.left() - if script { self.client_left(dom, node) } else { 0.0 },
                             target.width,
                             self.client_width(dom, node),
@@ -2015,7 +2063,7 @@ impl Layout {
                     .flatten();
                 let top = (axes.y || explicit)
                     .then(|| {
-                        offset(
+                        offset_y(
                             target.top() - container.top() - if script { self.client_top(dom, node) } else { 0.0 },
                             target.height,
                             self.client_height(dom, node),
@@ -2034,8 +2082,8 @@ impl Layout {
             return moved;
         }
         let target = self.bounding_client_rect(dom, el);
-        let left = offset(target.left(), target.width, self.inner_width() as f64, self.window_scroll.0);
-        let top = offset(target.top(), target.height, self.inner_height() as f64, self.window_scroll.1);
+        let left = offset_x(target.left(), target.width, self.inner_width() as f64, self.window_scroll.0);
+        let top = offset_y(target.top(), target.height, self.inner_height() as f64, self.window_scroll.1);
         if self.window_scroll_to(dom, left, top) {
             moved.push(ScrollTarget::Viewport);
         }
@@ -2043,6 +2091,51 @@ impl Layout {
     }
 
     // ----- getComputedStyle --------------------------------------------------
+
+    /// The text a generated `::before` / `::after` of `el` adds to its
+    /// accessible name (Playwright's `getPseudoContent`): the string of a
+    /// `content` that is one string, padded with spaces unless the box is
+    /// inline; "" when nothing is generated, or it is `display: none` /
+    /// `visibility: hidden`. Pseudo-elements no rule generates cost a lookup.
+    pub fn pseudo_name_content(&self, dom: &Dom, el: NodeId, pseudo: &style::selector_parser::PseudoElement) -> String {
+        let Some(style) = self.style.stylo_pseudo_style(dom, el, pseudo, true) else { return String::new() };
+        let display = crate::stylo::serialize(&style, "display").unwrap_or_default();
+        let visibility = crate::stylo::serialize(&style, "visibility").unwrap_or_default();
+        if display == "none" || visibility == "hidden" {
+            return String::new();
+        }
+        let content = crate::stylo::serialize(&style, "content").unwrap_or_default();
+        let Some(text) = parse_css_string(&content) else { return String::new() };
+        if display.is_empty() || display == "inline" {
+            text
+        } else {
+            format!(" {text} ")
+        }
+    }
+
+    /// `getComputedStyle(el, pseudo).getPropertyValue(name)`: the computed
+    /// value in the pseudo-element's style (Stylo's, from the layout
+    /// engine). A `::before` / `::after` no rule generates reads `content:
+    /// none`, as in Chromium. Lengths are the computed values: pseudo boxes
+    /// have no resolved geometry here. "" where the element has no style.
+    pub fn computed_pseudo_style_value(
+        &self,
+        dom: &Dom,
+        el: NodeId,
+        pseudo: &style::selector_parser::PseudoElement,
+        name: &str,
+    ) -> String {
+        if self.owned(dom, el).is_none() || !dom.is_connected(el).unwrap_or(false) {
+            return String::new();
+        }
+        let Some(style) = self.style.stylo_pseudo_style(dom, el, pseudo, false) else { return String::new() };
+        let name = if name.starts_with("--") { name.to_owned() } else { name.to_ascii_lowercase() };
+        let value = crate::stylo::serialize(&style, &name).unwrap_or_default();
+        if name == "content" && pseudo.is_before_or_after() && value == "normal" {
+            return "none".into();
+        }
+        value
+    }
 
     /// `getComputedStyle(el).getPropertyValue(name)`
     /// (CSSStyleDeclaration.zig:76-151): display / visibility /
@@ -2080,7 +2173,12 @@ impl Layout {
             _ => {}
         }
         if custom {
-            return self.style.custom_property_value(dom, el, &name).unwrap_or_default();
+            // A registered property no declaration sets has its initial value.
+            return self
+                .style
+                .custom_property_value(dom, el, &name)
+                .or_else(|| self.style.registered_property(&name)?.initial_value.clone())
+                .unwrap_or_default();
         }
         if name == "font-size" {
             // The cascade (stylesheets, em/%/rem, keywords) when any author value applies; else the inline/attribute walk.
@@ -2273,6 +2371,45 @@ fn nearest_scroll_offset(start: f64, size: f64, viewport: f64, current: u32) -> 
     let delta =
         if (start < 0.0 && size <= viewport) || (end > viewport && size > viewport) { start } else { end - viewport };
     Some((current as f64 + delta).round().clamp(0.0, i32::MAX as f64) as i32)
+}
+
+/// A `ScrollLogicalPosition` (`scrollIntoView` `block` / `inline`).
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum ScrollAlign {
+    Start,
+    Center,
+    End,
+    Nearest,
+}
+
+impl ScrollAlign {
+    /// The `ScrollLogicalPosition` enum value `s`.
+    pub fn parse(s: &str) -> Option<Self> {
+        Some(match s {
+            "start" => ScrollAlign::Start,
+            "center" => ScrollAlign::Center,
+            "end" => ScrollAlign::End,
+            "nearest" => ScrollAlign::Nearest,
+            _ => return None,
+        })
+    }
+
+    fn offset_fn(self) -> fn(f64, f64, f64, u32) -> Option<i32> {
+        match self {
+            ScrollAlign::Start => start_scroll_offset,
+            ScrollAlign::Center => centered_scroll_offset,
+            ScrollAlign::End => end_scroll_offset,
+            ScrollAlign::Nearest => nearest_scroll_offset,
+        }
+    }
+}
+
+fn start_scroll_offset(start: f64, _size: f64, _viewport: f64, current: u32) -> Option<i32> {
+    Some((current as f64 + start).round().clamp(0.0, i32::MAX as f64) as i32)
+}
+
+fn end_scroll_offset(start: f64, size: f64, viewport: f64, current: u32) -> Option<i32> {
+    Some((current as f64 + start + size - viewport).round().clamp(0.0, i32::MAX as f64) as i32)
 }
 
 fn centered_scroll_offset(start: f64, size: f64, viewport: f64, current: u32) -> Option<i32> {
@@ -2699,4 +2836,14 @@ mod scroll_to_origin {
         assert_eq!(layout.scroll_y(), 0);
         assert_eq!(source.0.get(), 1);
     }
+}
+
+/// The value of `text` when it is exactly one CSS string token.
+fn parse_css_string(text: &str) -> Option<String> {
+    let mut parser = cssparser::Parser::new(text);
+    let value = match parser.next() {
+        Ok(cssparser::Token::QuotedString(s)) => s.to_string(),
+        _ => return None,
+    };
+    parser.is_exhausted().then_some(value)
 }

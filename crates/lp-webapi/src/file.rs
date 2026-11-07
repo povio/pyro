@@ -203,6 +203,72 @@ impl JsClass for FileList {
     }
 }
 
+/// A new wrapper in `s`'s realm over the same bytes (Blob and File are
+/// immutable): a File stays a File, any subclass becomes its base class.
+fn wrap_blob<'s>(s: &Scope<'s>, b: &BlobData) -> JsResult<Object<'s>> {
+    let data = BlobData { bytes: b.bytes.clone(), mime: b.mime.clone(), file: b.file.clone() };
+    if b.file.is_some() {
+        s.wrap::<File>(data, None)
+    } else {
+        s.wrap::<Blob>(data, None)
+    }
+}
+
+/// Structured clone of a serializable host object (Blob, File, FileList)
+/// into `s`'s realm; `None` for anything else. The bytes are shared.
+pub(crate) fn clone_host<'s>(s: &Scope<'s>, value: Value<'s>) -> JsResult<Option<Value<'s>>> {
+    if let Some(b) = s.unwrap::<Blob>(value) {
+        return Ok(Some(wrap_blob(s, &b)?.value()));
+    }
+    let Some(list) = s.unwrap::<FileList>(value) else { return Ok(None) };
+    let mut files = FileListBuilder::new(s)?;
+    for i in 0..list.len {
+        if let Some(f) = list.get(s, i)?.and_then(|v| s.unwrap::<Blob>(v)) {
+            files.push(wrap_blob(s, &f)?.value())?;
+        }
+    }
+    Ok(Some(files.finish(s)?))
+}
+
+/// What the cross-VM message format keeps of a Blob or File: its bytes,
+/// type, and for a File its name and last modification time.
+pub(crate) fn blob_parts_of(s: &Scope<'_>, value: Value<'_>) -> Option<(Bytes, String, Option<(String, f64)>)> {
+    s.unwrap::<Blob>(value).map(|b| (b.bytes.clone(), b.mime.clone(), b.file.clone()))
+}
+
+/// A Blob (or, with `file`, a File) in `s`'s realm.
+pub(crate) fn make_blob<'s>(
+    s: &Scope<'s>,
+    bytes: Bytes,
+    mime: String,
+    file: Option<(String, f64)>,
+) -> JsResult<Value<'s>> {
+    Ok(wrap_blob(s, &BlobData { bytes, mime, file })?.value())
+}
+
+/// `FileList` of `files` (File wrappers of `s`'s realm).
+pub(crate) fn make_file_list<'s>(s: &Scope<'s>, files: lp_js::Object<'s>) -> JsResult<Value<'s>> {
+    let mut list = FileListBuilder::new(s)?;
+    let count = files.get_atom("length")?.to_number()? as u32;
+    for i in 0..count {
+        let file = files.get_index(i)?;
+        if s.unwrap::<File>(file).is_some() {
+            list.push(file)?;
+        }
+    }
+    list.finish(s)
+}
+
+/// The length of FileList `value` (0 for anything else).
+pub(crate) fn file_list_len(s: &Scope<'_>, value: Value<'_>) -> usize {
+    s.unwrap::<FileList>(value).map_or(0, |l| l.len)
+}
+
+/// Whether `value` is a FileList.
+pub(crate) fn is_file_list(s: &Scope<'_>, value: Value<'_>) -> bool {
+    s.unwrap::<FileList>(value).is_some()
+}
+
 /// `input.files` (null for non-file inputs).
 pub(crate) fn input_files<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
     if n.page().dom.borrow().input_type(n.id).js()? != lp_dom::forms::InputType::File {

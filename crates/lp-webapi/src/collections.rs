@@ -12,7 +12,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use lp_dom::{attr_name_hash, CollectionWatch, Dom, NodeId};
-use lp_js::{ClassDef, IdentityKey, JsClass, JsError, JsResult, NoParent, Object, Scope, Value};
+use lp_js::{Args, ClassDef, IdentityKey, JsClass, JsError, JsResult, NoParent, Object, Scope, Value};
 
 use crate::node::{wrap_node, NodeData};
 use crate::page::PageDom;
@@ -381,14 +381,20 @@ fn matches_kind(dom: &Dom, root: NodeId, id: NodeId, kind: &CollectionKind) -> b
                 || (html && matches!(local, "embed" | "form" | "img" | "object") && e.attr("name") == Some(n.as_str()))
         }
         CollectionKind::DocumentNamed(n) => {
-            (html && matches!(local, "embed" | "form" | "iframe" | "img" | "object") && e.attr("name") == Some(n.as_str()))
-                || (html && local == "img" && e.id() == Some(n.as_str()) && e.attr("name").is_some_and(|v| !v.is_empty()))
+            (html
+                && matches!(local, "embed" | "form" | "iframe" | "img" | "object")
+                && e.attr("name") == Some(n.as_str()))
+                || (html
+                    && local == "img"
+                    && e.id() == Some(n.as_str())
+                    && e.attr("name").is_some_and(|v| !v.is_empty()))
         }
         CollectionKind::Links => html && matches!(local, "a" | "area") && e.attr("href").is_some(),
         CollectionKind::Anchors => html && local == "a" && e.attr("name").is_some(),
         CollectionKind::Empty => false,
         CollectionKind::FormElements => {
-            html && matches!(local, "button" | "fieldset" | "input" | "object" | "output" | "select" | "textarea")
+            html && (matches!(local, "button" | "fieldset" | "input" | "object" | "output" | "select" | "textarea")
+                || e.flags & lp_dom::node::element_flags::FORM_ASSOCIATED != 0)
                 && !(local == "input" && e.attr("type").is_some_and(|t| t.eq_ignore_ascii_case("image")))
                 && dom.form_owner(id).ok().flatten() == Some(root)
         }
@@ -563,6 +569,57 @@ impl JsClass for HtmlCollection {
     }
 }
 
+/// `HTMLOptionsCollection.add(element, before)` and `HTMLSelectElement.add`
+/// (HTML §2.7.3): `before` is an element, an index into the options or
+/// null; `element` must not be an ancestor of the select, and an element
+/// `before` must be a descendant of it.
+pub(crate) fn options_add<'s>(
+    s: &Scope<'s>,
+    page: &Rc<PageDom>,
+    select: NodeId,
+    a: Args<'s>,
+    iface: &str,
+) -> JsResult<()> {
+    let el = crate::node::node_arg(s, a.get(0), &format!("{iface}.add"))?;
+    let before = a.get(1);
+    let mut dom = page.dom.borrow_mut();
+    let is_html = |dom: &lp_dom::Dom, n: NodeId, names: &[&str]| {
+        dom.element(n).is_ok_and(|e| e.is_html() && names.contains(&&*e.name.local))
+    };
+    if !is_html(&dom, el, &["option", "optgroup"]) {
+        return Err(JsError::Type(format!(
+            "Failed to execute 'add' on '{iface}': The provided value is not of type '(HTMLOptGroupElement or HTMLOptionElement)'."
+        )));
+    }
+    if dom.contains(el, select).js()? {
+        return Err(JsError::dom("HierarchyRequestError", "The new child element contains the parent."));
+    }
+    let reference = if let Some(n) = s.unwrap::<crate::node::Node>(before) {
+        if n.id == select || !dom.contains(select, n.id).js()? {
+            return Err(JsError::dom(
+                "NotFoundError",
+                "The node before which the new node is to be inserted is not a child of this node.",
+            ));
+        }
+        Some(n.id)
+    } else if before.is_nullish() {
+        None
+    } else {
+        let index = to_i32(before)?;
+        let opts = dom.select_options(select).js()?;
+        usize::try_from(index).ok().and_then(|i| opts.get(i).copied())
+    };
+    if reference == Some(el) {
+        return Ok(());
+    }
+    let parent = match reference {
+        Some(r) => dom.parent(r).js()?.unwrap_or(select),
+        None => select,
+    };
+    dom.insert_before(parent, el, reference).js()?;
+    Ok(())
+}
+
 pub struct HtmlOptionsCollection;
 impl JsClass for HtmlOptionsCollection {
     const NAME: &'static str = "HTMLOptionsCollection";
@@ -578,22 +635,7 @@ impl JsClass for HtmlOptionsCollection {
             },
         );
         def.method("add", 1, |s, c, a| {
-            let el = crate::node::node_arg(s, a.get(0), "HTMLOptionsCollection.add")?;
-            let before = a.get(1);
-            let mut dom = c.root.page.dom.borrow_mut();
-            let reference = if let Some(n) = s.unwrap::<crate::node::Node>(before) {
-                Some(n.id)
-            } else if before.is_number() {
-                let opts = dom.select_options(c.root.id).js()?;
-                opts.get(to_u32(before)? as usize).copied()
-            } else {
-                None
-            };
-            let parent = match reference {
-                Some(r) => dom.parent(r).js()?.unwrap_or(c.root.id),
-                None => c.root.id,
-            };
-            dom.insert_before(parent, el, reference).js()?;
+            options_add(s, &c.root.page, c.root.id, a, "HTMLOptionsCollection")?;
             Ok(s.undefined())
         });
         def.method("remove", 1, |s, c, a| {
@@ -622,7 +664,6 @@ impl JsClass for HtmlOptionsCollection {
                 return Ok(true);
             }
             if v.is_nullish() {
-
                 if let Some(&option) = options.get(index) {
                     dom.remove_node(option).js()?;
                 }
@@ -633,7 +674,10 @@ impl JsClass for HtmlOptionsCollection {
                 .map(|n| n.id)
                 .filter(|&id| dom.element(id).is_ok_and(|e| e.is_html() && &*e.name.local == "option"))
                 .ok_or_else(|| {
-                    JsError::Type("Failed to set an indexed property on 'HTMLOptionsCollection': not an HTMLOptionElement.".into())
+                    JsError::Type(
+                        "Failed to set an indexed property on 'HTMLOptionsCollection': not an HTMLOptionElement."
+                            .into(),
+                    )
                 })?;
             match options.get(index) {
                 Some(&old) => {
@@ -656,7 +700,6 @@ impl JsClass for HtmlOptionsCollection {
         });
     }
 }
-
 
 fn kind_slot(kind: &CollectionKind) -> Option<u64> {
     Some(match kind {
@@ -739,7 +782,12 @@ impl TokenListData {
                 e.classes().iter().for_each(|c| add(c));
             }
         } else {
-            dom.get_attribute(self.el.id, self.attr).ok().flatten().unwrap_or("").split_ascii_whitespace().for_each(add);
+            dom.get_attribute(self.el.id, self.attr)
+                .ok()
+                .flatten()
+                .unwrap_or("")
+                .split_ascii_whitespace()
+                .for_each(add);
         }
         out
     }
@@ -909,16 +957,48 @@ impl JsClass for DomTokenList {
             let tok = dom_string(a.get(0))?;
             let supported: &[&str] = match t.attr {
                 "rel" => &[
-                    "alternate", "canonical", "author", "bookmark", "dns-prefetch", "expect", "external", "help",
-                    "icon", "manifest", "modulepreload", "license", "next", "nofollow", "noopener", "noreferrer",
-                    "opener", "pingback", "preconnect", "prefetch", "preload", "prev", "privacy-policy", "search",
-                    "stylesheet", "tag", "terms-of-service",
+                    "alternate",
+                    "canonical",
+                    "author",
+                    "bookmark",
+                    "dns-prefetch",
+                    "expect",
+                    "external",
+                    "help",
+                    "icon",
+                    "manifest",
+                    "modulepreload",
+                    "license",
+                    "next",
+                    "nofollow",
+                    "noopener",
+                    "noreferrer",
+                    "opener",
+                    "pingback",
+                    "preconnect",
+                    "prefetch",
+                    "preload",
+                    "prev",
+                    "privacy-policy",
+                    "search",
+                    "stylesheet",
+                    "tag",
+                    "terms-of-service",
                 ],
                 "sandbox" => &[
-                    "allow-downloads", "allow-forms", "allow-modals", "allow-orientation-lock",
-                    "allow-pointer-lock", "allow-popups", "allow-popups-to-escape-sandbox", "allow-presentation",
-                    "allow-same-origin", "allow-scripts", "allow-top-navigation",
-                    "allow-top-navigation-by-user-activation", "allow-top-navigation-to-custom-protocols",
+                    "allow-downloads",
+                    "allow-forms",
+                    "allow-modals",
+                    "allow-orientation-lock",
+                    "allow-pointer-lock",
+                    "allow-popups",
+                    "allow-popups-to-escape-sandbox",
+                    "allow-presentation",
+                    "allow-same-origin",
+                    "allow-scripts",
+                    "allow-top-navigation",
+                    "allow-top-navigation-by-user-activation",
+                    "allow-top-navigation-to-custom-protocols",
                 ],
                 "blocking" => &["render"],
                 _ => {
@@ -1080,7 +1160,6 @@ impl JsClass for NamedNodeMap {
         def.indexed_iterator();
         def.legacy_platform_object();
     }
-
 }
 
 fn attr_at<'s>(s: &Scope<'s>, m: &NamedNodeMapData, i: usize) -> JsResult<Option<Value<'s>>> {
@@ -1215,43 +1294,41 @@ pub struct StringMapData {
 }
 
 fn camel_to_data_attr(name: &str) -> Option<String> {
-    let mut out = String::from("data-");
-    let b = name.as_bytes();
-    for (i, &c) in b.iter().enumerate() {
-        if c == b'-' && b.get(i + 1).is_some_and(|n| n.is_ascii_lowercase()) {
+    let mut out = String::with_capacity(name.len() + 5);
+    out.push_str("data-");
+    let mut chars = name.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '-' && chars.peek().is_some_and(|n| n.is_ascii_lowercase()) {
             return None; // SyntaxError per spec for setter; getter: absent
         }
         if c.is_ascii_uppercase() {
             out.push('-');
-            out.push(c.to_ascii_lowercase() as char);
+            out.push(c.to_ascii_lowercase());
         } else {
-            out.push(c as char);
+            out.push(c);
         }
     }
     Some(out)
 }
 
 fn data_attr_to_camel(attr: &str) -> Option<String> {
+    // HTML "supported property names" of DOMStringMap: names after `data-`
+    // without ASCII upper alphas; each `-` followed by an ASCII lower alpha
+    // is removed and that letter uppercased.
     let rest = attr.strip_prefix("data-")?;
-    let mut out = String::new();
-    let mut up = false;
-    for c in rest.chars() {
-        if c == '-' {
-            up = true;
-            continue;
-        }
-        if up && c.is_ascii_lowercase() {
-            out.push(c.to_ascii_uppercase());
-        } else {
-            if up {
-                out.push('-');
-            }
-            out.push(c);
-        }
-        up = false;
+    if rest.bytes().any(|b| b.is_ascii_uppercase()) {
+        return None;
     }
-    if up {
-        out.push('-');
+    let mut out = String::with_capacity(rest.len());
+    let mut chars = rest.chars().peekable();
+    while let Some(c) = chars.next() {
+        match chars.peek() {
+            Some(&n) if c == '-' && n.is_ascii_lowercase() => {
+                out.push(n.to_ascii_uppercase());
+                chars.next();
+            }
+            _ => out.push(c),
+        }
     }
     Some(out)
 }
@@ -1314,5 +1391,13 @@ mod tests {
         assert_eq!(camel_to_data_attr("fooBar").as_deref(), Some("data-foo-bar"));
         assert_eq!(data_attr_to_camel("data-foo-bar").as_deref(), Some("fooBar"));
         assert_eq!(data_attr_to_camel("data-x").as_deref(), Some("x"));
+        assert_eq!(data_attr_to_camel("data-foo--bar").as_deref(), Some("foo-Bar"));
+        assert_eq!(data_attr_to_camel("data--").as_deref(), Some("-"));
+        assert_eq!(data_attr_to_camel("data-Foo"), None);
+        assert_eq!(data_attr_to_camel("data-\u{e9}t\u{e9}").as_deref(), Some("\u{e9}t\u{e9}"));
+        assert_eq!(camel_to_data_attr("\u{e0}").as_deref(), Some("data-\u{e0}"));
+        assert_eq!(camel_to_data_attr("\u{37e}foo").as_deref(), Some("data-\u{37e}foo"));
+        assert_eq!(camel_to_data_attr("a-b"), None);
+        assert_eq!(camel_to_data_attr("a-\u{e9}").as_deref(), Some("data-a-\u{e9}"));
     }
 }

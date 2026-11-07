@@ -478,7 +478,7 @@ impl BaseDocument {
 
             for (index, &child_id) in children.iter().enumerate() {
                 if owned_here(self, child_id) {
-                    let is_sc_root = self.nodes[child_id].is_stacking_context_root(is_flex_or_grid);
+                    let is_sc_root = self.is_paint_stacking_context_root(child_id, is_flex_or_grid);
                     let first_entry = entries.len();
                     self.build_paint_tree_impl(
                         child_id,
@@ -563,6 +563,15 @@ impl BaseDocument {
             node.sc_contribution_cache.borrow_mut().clear();
             node.stacking_context = Some(Box::new(StackingContext::from_children(entries)));
         }
+    }
+
+    /// Whether `id` roots a stacking context for painting: by its style, or
+    /// (lightningpanda) because it is in the top layer, which always forms
+    /// one (CSS Positioned Layout 4 §4), so its z-indexed and fixed
+    /// descendants stay in its subtree and paint with it above the document.
+    #[inline]
+    fn is_paint_stacking_context_root(&self, id: NodeId, is_flex_or_grid_item: bool) -> bool {
+        self.nodes[id].is_stacking_context_root(is_flex_or_grid_item) || self.is_in_top_layer(id)
     }
 
     /// The table `node_id` (with `TableContext::placed` holding what changed) whose cells were all
@@ -684,7 +693,7 @@ impl BaseDocument {
     ) {
         self.build_paint_tree_impl(
             child_id,
-            match self.nodes[child_id].is_stacking_context_root(false) {
+            match self.is_paint_stacking_context_root(child_id, false) {
                 true => None,
                 false => Some(entries),
             },
@@ -796,5 +805,108 @@ fn node_to_paint_order(node: &Node, is_flex_or_grid: bool) -> (i32, i32) {
             position_to_order(position) + float_to_order(style.clone_float()),
             0,
         )
+    }
+}
+
+
+/// The rank of a `top-layer=N` token in a state attribute value.
+fn top_layer_rank(value: &str) -> Option<u32> {
+    value
+        .split_ascii_whitespace()
+        .find_map(|t| t.strip_prefix("top-layer="))
+        .and_then(|n| n.parse().ok())
+}
+
+/// lightningpanda: the top layer as the embedder marks it: elements by rank
+/// (bottom first, ties in id order) and each element's rank. Membership
+/// tests, entering, leaving and re-ranking are logarithmic or constant, so
+/// a page with many showing popovers costs no quadratic work per snapshot,
+/// drop or painted box.
+#[derive(Default)]
+pub(crate) struct TopLayer {
+    by_rank: std::collections::BTreeMap<(u32, u64), NodeId>,
+    rank_of: std::collections::HashMap<NodeId, u32>,
+}
+
+impl TopLayer {
+    #[inline]
+    pub(crate) fn is_empty(&self) -> bool {
+        self.rank_of.is_empty()
+    }
+
+    #[inline]
+    pub(crate) fn contains(&self, id: NodeId) -> bool {
+        self.rank_of.contains_key(&id)
+    }
+
+    /// Takes `id` out of the top layer (if it is in it).
+    pub(crate) fn remove(&mut self, id: NodeId) {
+        if let Some(rank) = self.rank_of.remove(&id) {
+            self.by_rank.remove(&(rank, id.as_u64()));
+        }
+    }
+
+    /// Puts `id` in the top layer at `rank`, or takes it out (`None`).
+    fn set(&mut self, id: NodeId, rank: Option<u32>) {
+        if self.rank_of.get(&id).copied() == rank {
+            return;
+        }
+        self.remove(id);
+        if let Some(rank) = rank {
+            self.rank_of.insert(id, rank);
+            self.by_rank.insert((rank, id.as_u64()), id);
+        }
+    }
+
+    /// The elements, bottom first.
+    pub(crate) fn iter(&self) -> impl Iterator<Item = NodeId> + '_ {
+        self.by_rank.values().copied()
+    }
+}
+
+impl BaseDocument {
+    /// lightningpanda: element `id`'s state attribute is now `value` (`None`:
+    /// removed). Keeps [`Self::top_layer_nodes`] in step: an element with a
+    /// `top-layer=N` token is in the top layer at rank `N`.
+    pub(crate) fn note_lp_state(&mut self, id: NodeId, value: Option<&str>) {
+        let rank = value.and_then(top_layer_rank);
+        if self.top_layer.is_empty() && rank.is_none() {
+            return;
+        }
+        self.top_layer.set(id, rank);
+    }
+
+    /// lightningpanda: whether any element is in the top layer (one length
+    /// check).
+    #[inline]
+    pub fn has_top_layer(&self) -> bool {
+        !self.top_layer.is_empty()
+    }
+
+    /// lightningpanda: whether `id` is in the top layer: painted above the
+    /// whole document (see [`Self::top_layer_nodes`]), not in its place.
+    #[inline]
+    pub fn is_in_top_layer(&self, id: NodeId) -> bool {
+        !self.top_layer.is_empty() && self.top_layer.contains(id)
+    }
+
+    /// lightningpanda: the elements of the top layer that are in the
+    /// document, bottom first.
+    pub fn top_layer_nodes(&self) -> impl Iterator<Item = NodeId> + '_ {
+        self.top_layer.iter().filter(|&id| {
+            self.nodes
+                .get(id)
+                .is_some_and(|n| n.flags.is_in_document() && n.is_element())
+        })
+    }
+
+    /// lightningpanda: the offset of top-layer element `id` from the root
+    /// element's border box (with the root's scroll applied), excluding its
+    /// own location: where it paints, hoisted to the root's stacking context.
+    pub fn top_layer_position(&self, id: NodeId) -> Point<f32> {
+        match self.try_root_element() {
+            Some(root) => hoisted_child_position(self.tree(), root.id, id),
+            None => Point::ZERO,
+        }
     }
 }

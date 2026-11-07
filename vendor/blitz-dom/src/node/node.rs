@@ -827,8 +827,8 @@ impl Node {
 
     pub fn focus(&mut self, shell_provider: Arc<dyn ShellProvider>) {
         if let Some(data) = self.element_data_mut() {
-            data.element_state
-                .insert(ElementState::FOCUS | ElementState::FOCUSRING);
+            // FOCUSRING (`:focus-visible`) is the document's call.
+            data.element_state.insert(ElementState::FOCUS);
         }
         self.mark_ancestors_dirty();
 

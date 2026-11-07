@@ -46,7 +46,8 @@ fn start_server() -> u16 {
                         }
                     }
                     if path == "/open" {
-                        let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n");
+                        let _ =
+                            stream.write_all(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n");
                         std::thread::sleep(Duration::from_secs(600));
                         return;
                     }

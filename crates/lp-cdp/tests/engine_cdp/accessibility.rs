@@ -314,3 +314,25 @@ fn large_pages_keep_stable_ids_past_the_backend_budget() {
     assert!(first[..100].iter().all(|(_, b)| b.is_u64()));
     assert_eq!(ids(&mut h), first, "a second call reports identical ids");
 }
+
+#[test]
+fn modal_dialog_leaves_the_blocked_document_out_of_the_tree() {
+    let mut h = Harness::new();
+    load_html(&mut h, "<button>Outside</button><dialog id=d><button>Inside</button></dialog>");
+    let unignored_buttons = |h: &mut Harness| {
+        let tree = nodes(&h.page("Accessibility.getFullAXTree", json!({})));
+        let mut names: Vec<String> = tree
+            .iter()
+            .filter(|n| n["role"]["value"] == "button" && n["ignored"] == false)
+            .map(|n| n["name"]["value"].as_str().unwrap_or("").to_owned())
+            .collect();
+        names.sort();
+        names
+    };
+    eval_value(&mut h, "document.getElementById('d').show(); 1");
+    assert_eq!(unignored_buttons(&mut h), ["Inside", "Outside"]);
+    eval_value(&mut h, "const d = document.getElementById('d'); d.close(); d.showModal(); 1");
+    assert_eq!(unignored_buttons(&mut h), ["Inside"]);
+    eval_value(&mut h, "document.getElementById('d').close(); 1");
+    assert_eq!(unignored_buttons(&mut h), ["Outside"]);
+}

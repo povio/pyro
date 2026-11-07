@@ -110,6 +110,28 @@ pub fn replace_window_attribute<'s>(
     Ok(())
 }
 
+/// Makes `name` the global's own interface-object property (writable,
+/// configurable, not enumerable) with `value`: what a lazily made
+/// interface's accessor turns into on its first read or an assignment.
+pub fn define_global_interface<'s>(
+    s: &lp_js::Scope<'s>,
+    page: &crate::page::PageDom,
+    name: &str,
+    value: lp_js::Value<'s>,
+) -> lp_js::JsResult<()> {
+    let define = page.define_properties.borrow().get(&s.realm_id()).map(|p| p.get(s));
+    let define = define
+        .and_then(|v| v.as_object())
+        .ok_or_else(|| lp_js::JsError::Type(format!("{name} is unavailable in this realm")))?;
+    let desc = s.object();
+    desc.set_atom("value", value)?;
+    desc.set_atom("writable", s.boolean(true))?;
+    desc.set_atom("enumerable", s.boolean(false))?;
+    desc.set_atom("configurable", s.boolean(true))?;
+    define.call(None, &[s.global().value(), s.string(name), desc.value()])?;
+    Ok(())
+}
+
 /// Whether [`crate::install`] makes `document` and `window` the global's own
 /// constant attributes (patched JavaScriptCore). A Window class then leaves
 /// them out of its prototype, as WebIDL does for [LegacyUnforgeable] members.
@@ -141,6 +163,7 @@ where
         |s, w, value| replace_window_attribute(s, w.page(), "event", value),
     );
     def.getter("indexedDB", |s, w| crate::indexeddb::window_factory(s, w.page()));
+    def.getter("caches", |s, w| crate::cache_storage::caches(s, w.page()));
     def.getter("localStorage", |s, w| crate::storage::window_storage(s, w.page(), false));
     def.getter("sessionStorage", |s, w| crate::storage::window_storage(s, w.page(), true));
     def.getter("customElements", |s, w| crate::custom::registry(s, w.page()));
@@ -148,8 +171,32 @@ where
     def.getter("crypto", |s, _w| crate::crypto::crypto_value(s));
     def.getter("clientInformation", |s, w| navigator(s, w.page()));
     def.getter("ClipboardItem", |s, w| crate::navigator_extras::member(s, w.page(), "ClipboardItem"));
+    def.getter("Notification", |s, w| crate::navigator_extras::member(s, w.page(), "Notification"));
     crate::streams::define_globals(def);
     crate::observable::define_globals(def);
+    crate::crypto::define_globals(def);
+    crate::storage_manager::define_globals(def);
+    crate::service_worker::define_globals(def);
+    crate::cache_storage::define_globals(def);
+    crate::event_source::define_globals(def);
+    crate::websocket::define_globals(def);
+    crate::indexeddb::define_globals(def);
+    crate::editing_globals::define_globals(def);
+    // The `CSS` namespace object, made on its first read (most realms never
+    // read it); assignment shadows it with a data property.
+    def.accessor(
+        "CSS",
+        |s, w| {
+            let value = css_namespace(s)?;
+            css_namespace_property(s, w.page(), value)?;
+            Ok(value)
+        },
+        |s, w, value| css_namespace_property(s, w.page(), value),
+    );
+    crate::animations::define_globals(def);
+    crate::canvas::define_globals(def);
+    crate::media::define_globals(def);
+    crate::webaudio::define_globals(def);
     def.getter("screen", |s, w| {
         let key = lp_js::IdentityKey(w.page().id() | (1 << 57), 1);
         same_object(s, w.page(), key, || s.wrap::<Screen>(w.page().clone(), Some(key)))
@@ -162,7 +209,7 @@ where
     });
     def.method("getComputedStyle", 1, |s, w, a| {
         let el = crate::node::node_arg(s, a.get(0), "Window.getComputedStyle")?;
-        Ok(crate::layout_api::get_computed_style(s, w.page(), el)?.value())
+        Ok(crate::layout_api::get_computed_style(s, w.page(), el, a.get(1))?.value())
     });
     def.method("matchMedia", 1, |s, w, a| {
         let q = arg_string(&a, 0, "Window.matchMedia")?;
@@ -232,34 +279,17 @@ where
         w.page().close_window();
         Ok(s.undefined())
     });
-    def.method("postMessage", 1, |s, w, a| {
-        // Same-window postMessage: queue a MessageEvent on the window.
-        let page = w.page().clone();
-        let key = w.event_target().key;
-        let data = lp_js::Persistent::new(s, a.get(0));
-        let origin = {
-            let url = page.dom.borrow().document_data(page.document()).map(|d| d.url.to_string()).unwrap_or_default();
-            lp_net::Url::parse(&url).map(|u| u.origin().ascii_serialization()).unwrap_or_else(|_| "null".into())
-        };
-        let p2 = page.clone();
-        page.post_task(Box::new(move || {
-            let ev = crate::event::EventCore::trusted(
-                &p2,
-                crate::event::EventInterface::MessageEvent,
-                "message",
-                false,
-                false,
-            );
-            {
-                let mut f = ev.fields.borrow_mut();
-                f.message_data = Some(data);
-                f.message_source = Some(key);
-                f.origin = origin;
-            }
-            crate::target::fire(&p2, key, &ev);
-        }));
-        Ok(s.undefined())
-    });
+    def.method("postMessage", 1, |s, w, a| post_message_to_self(s, w.page(), &a).map(|()| s.undefined()));
+}
+
+/// `postMessage` of a window outside a frame tree, which only reaches
+/// itself (the embedder's Window class replaces it with a frame-aware one).
+pub fn post_message_to_self<'s>(s: &Scope<'s>, page: &Rc<PageDom>, a: &lp_js::Args<'s>) -> JsResult<()> {
+    let origin = crate::storage::document_origin(page).unwrap_or_else(|| "null".into());
+    let (message, target_origin, options) = crate::window_message::post_message_args(s, a, &origin)?;
+    let realm = page.main_world_realm().unwrap_or_else(|| s.realm());
+    let deliver = target_origin.allows(&origin);
+    crate::window_message::send_window_message(s, message, options, page, &realm, origin, None, deliver)
 }
 
 /// A Window [SameObject] attribute value for this realm: looked up by
@@ -352,19 +382,20 @@ impl JsClass for Navigator {
         def.getter("geolocation", |s, p| crate::navigator_extras::member(s, p, "geolocation"));
         def.getter("permissions", |s, p| crate::navigator_extras::member(s, p, "permissions"));
         def.getter("clipboard", |s, p| crate::navigator_extras::member(s, p, "clipboard"));
+        def.getter("storage", |s, p| crate::storage_manager::storage(s, p));
+        def.getter("serviceWorker", |s, p| crate::service_worker::container(s, p));
         def.getter("webdriver", |s, _p| Ok(s.boolean(true)));
         def.getter("doNotTrack", |s, _p| Ok(s.null()));
         def.getter("pdfViewerEnabled", |s, _p| Ok(s.boolean(false)));
         def.method("javaEnabled", 0, |s, _p, _a| Ok(s.boolean(false)));
-        // Queues nothing: only the URL checks are observable.
         def.method("sendBeacon", 1, |s, p, a| {
             a.require(1, "Navigator.sendBeacon")?;
             let url = crate::util::dom_string(a.get(0))?;
             let url = crate::html::resolve_url(&p.dom.borrow(), p.document(), &url);
-            if !lp_net::Url::parse(&url).is_ok_and(|u| matches!(u.scheme(), "http" | "https")) {
+            let Some(url) = lp_net::Url::parse(&url).ok().filter(|u| matches!(u.scheme(), "http" | "https")) else {
                 return Err(JsError::Type(format!("Failed to execute 'sendBeacon': invalid URL '{url}'.")));
-            }
-            Ok(s.boolean(true))
+            };
+            Ok(s.boolean(crate::fetch::send_beacon(s, p, url, a.get(1))?))
         });
         def.method("vibrate", 0, |s, _p, _a| Ok(s.boolean(false)));
     }
@@ -570,25 +601,42 @@ fn screen(p: &PageDom) -> (u32, u32) {
     (v.screen_width.unwrap_or(v.width), v.screen_height.unwrap_or(v.height))
 }
 
-/// `CSS` namespace object (supports/escape).
+/// Replaces the lazy `CSS` accessor with the namespace's own data property
+/// (writable, configurable, not enumerable, as WebIDL defines a namespace).
+fn css_namespace_property<'s>(s: &Scope<'s>, page: &crate::page::PageDom, value: Value<'s>) -> JsResult<()> {
+    let define = page.define_properties.borrow().get(&s.realm_id()).map(|p| p.get(s));
+    let define = define.and_then(|v| v.as_object()).ok_or_else(|| JsError::type_error("CSS is unavailable"))?;
+    let desc = s.object();
+    desc.set_atom("value", value)?;
+    desc.set_atom("writable", s.boolean(true))?;
+    desc.set_atom("enumerable", s.boolean(false))?;
+    desc.set_atom("configurable", s.boolean(true))?;
+    define.call(None, &[s.global().value(), s.string("CSS"), desc.value()])?;
+    Ok(())
+}
+
+/// `CSS` namespace object (supports/escape/registerProperty).
 pub fn css_namespace<'s>(s: &Scope<'s>) -> JsResult<Value<'s>> {
     let o = s.object();
     let supports = s.function("supports", |s, _this, a| {
-        if a.len() == 1 {
-            let text = dom_string(a.get(0))?;
-            let selector = text.trim().strip_prefix("selector(").and_then(|t| t.strip_suffix(')'));
-            if let Some(selector) = selector {
-                return Ok(s.boolean(lp_dom::cssom::normalize_selector(selector, &Vec::new()).is_some()));
+        if a.len() == 0 {
+            return Err(JsError::type_error(
+                "Failed to execute 'supports' on 'CSS': 1 argument required, but only 0 present.",
+            ));
+        }
+        if a.len() >= 2 {
+            let property = dom_string(a.get(0))?;
+            let value = dom_string(a.get(1))?;
+            return Ok(s.boolean(lp_dom::stylo::supports_declaration(&property, &value)));
+        }
+        let text = dom_string(a.get(0))?;
+        let selector = text.trim().strip_prefix("selector(").and_then(|t| t.strip_suffix(')'));
+        if let Some(selector) = selector {
+            if lp_dom::cssom::normalize_selector(selector, &Vec::new()).is_some() {
+                return Ok(s.boolean(true));
             }
         }
-        // Syntax-level check only: property names and values are accepted.
-        let ok = if a.len() >= 2 {
-            !dom_string(a.get(0))?.is_empty()
-        } else {
-            let cond = dom_string(a.get(0))?;
-            cond.contains(':') || cond.trim_start().starts_with("selector(")
-        };
-        Ok(s.boolean(ok))
+        Ok(s.boolean(lp_dom::stylo::supports_condition(&text)))
     })?;
     o.set_atom("supports", supports.value())?;
     let escape = s.function("escape", |s, _this, a| {
@@ -598,6 +646,48 @@ pub fn css_namespace<'s>(s: &Scope<'s>) -> JsResult<Value<'s>> {
         Ok(s.string(&out))
     })?;
     o.set_atom("escape", escape.value())?;
+    let register = s.function("registerProperty", |s, _this, a| {
+        let page = crate::target::page_of(s)?;
+        let def = a.get(0);
+        let def = if def.is_undefined() || def.is_null() { None } else { Some(def) };
+        let def = match def {
+            Some(v) => Some(v.as_object().ok_or_else(|| {
+                JsError::type_error(
+                    "Failed to execute 'registerProperty' on 'CSS': The provided value is not of type 'PropertyDefinition'.",
+                )
+            })?),
+            None => None,
+        };
+        // PropertyDefinition members, in WebIDL dictionary order.
+        let member = |k: &str| def.map_or(Ok(s.undefined()), |d| d.get(k));
+        let inherits = member("inherits")?;
+        if inherits.is_undefined() {
+            return Err(JsError::type_error(
+                "Failed to execute 'registerProperty' on 'CSS': required member inherits is undefined.",
+            ));
+        }
+        let inherits = inherits.to_bool();
+        let initial = member("initialValue")?;
+        let initial = if initial.is_undefined() { None } else { Some(dom_string(initial)?) };
+        let name = member("name")?;
+        if name.is_undefined() {
+            return Err(JsError::type_error(
+                "Failed to execute 'registerProperty' on 'CSS': required member name is undefined.",
+            ));
+        }
+        let name = dom_string(name)?;
+        let syntax = member("syntax")?;
+        let syntax = if syntax.is_undefined() { "*".to_owned() } else { dom_string(syntax)? };
+        let initial_value = lp_dom::stylo::validate_property_registration(&name, &syntax, initial.as_deref())
+            .map_err(|message| JsError::dom("SyntaxError", message))?;
+        let property = lp_dom::style::RegisteredProperty { name, syntax, inherits, initial_value };
+        let fresh = page.layout.borrow_mut().style_mut().register_property(property);
+        if !fresh {
+            return Err(JsError::dom("InvalidModificationError", "The name provided has already been registered."));
+        }
+        Ok(s.undefined())
+    })?;
+    o.set_atom("registerProperty", register.value())?;
     Ok(o.value())
 }
 

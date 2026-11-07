@@ -405,7 +405,7 @@ pub(super) fn set_file_input(page: &Rc<PageDom>, id: NodeId, files: &[UploadFile
         .collect();
     page.set_input_files(id, entries).map_err(|e| format!("{e:?}"))?;
     input::fire_simple(page, id, "input", true, false);
-    input::fire_simple(page, id, "change", true, false);
+    input::fire_user_change(page, id);
     Ok(())
 }
 
@@ -1744,9 +1744,23 @@ struct Names<'a> {
     layout: &'a Layout,
     doc: NodeId,
     visited: RefCell<HashSet<NodeId>>,
+    /// Whether any element may have a generated `::before` / `::after`
+    /// (asked on first use, once per [`PseudoContent`] scope: `false` skips
+    /// the per-element lookups).
+    pseudo_content: &'a PseudoContent,
 }
 
 impl Names<'_> {
+    /// Playwright's `getPseudoContent` of `id`'s `pseudo`; "" without a
+    /// generated one.
+    fn pseudo_content(&self, id: NodeId, pseudo: &lp_dom::stylo::PseudoElement) -> String {
+        let any = *self.pseudo_content.get_or_init(|| self.layout.style().may_have_generated_before_after(self.dom));
+        if !any {
+            return String::new();
+        }
+        self.layout.pseudo_name_content(self.dom, id, pseudo)
+    }
+
     fn alternative(&self, id: NodeId, opts: NameOpts) -> String {
         let dom = self.dom;
         if self.visited.borrow().contains(&id) {
@@ -1997,7 +2011,9 @@ impl Names<'_> {
     /// around every child that is not `display:inline` (and `<br>`).
     fn inner_text(&self, id: NodeId, opts: NameOpts) -> String {
         let dom = self.dom;
-        let mut out = String::new();
+        // Generated `::before` / `::after` text counts (Playwright's
+        // `getPseudoContent`).
+        let mut out = self.pseudo_content(id, &lp_dom::stylo::PseudoElement::Before);
         for c in dom.children(id).into_iter().flatten() {
             match dom.node(c).map(|n| &n.kind) {
                 Ok(NodeKind::Text(t)) => out.push_str(t),
@@ -2015,12 +2031,30 @@ impl Names<'_> {
                 _ => {}
             }
         }
+        out.push_str(&self.pseudo_content(id, &lp_dom::stylo::PseudoElement::After));
         out
     }
 }
 
+/// Whether the document may have a generated `::before` / `::after`, asked
+/// once for every name computed with it (one DOM state: no mutation between
+/// the names).
+pub(super) type PseudoContent = std::cell::OnceCell<bool>;
+
 /// The accessible name of an element, whitespace-normalized.
 pub(super) fn accessible_name(dom: &Dom, layout: &Layout, doc: NodeId, id: NodeId) -> String {
+    accessible_name_in(dom, layout, doc, id, &PseudoContent::new())
+}
+
+/// [`accessible_name`] for one of many elements named in one DOM state,
+/// sharing `pseudo_content`.
+pub(super) fn accessible_name_in(
+    dom: &Dom,
+    layout: &Layout,
+    doc: NodeId,
+    id: NodeId,
+    pseudo_content: &PseudoContent,
+) -> String {
     // Playwright's `getElementAccessibleName`: these roles prohibit naming.
     let prohibits = matches!(
         role_of(dom, id).as_deref(),
@@ -2046,7 +2080,7 @@ pub(super) fn accessible_name(dom: &Dom, layout: &Layout, doc: NodeId, id: NodeI
     if prohibits {
         return String::new();
     }
-    let names = Names { dom, layout, doc, visited: RefCell::new(HashSet::new()) };
+    let names = Names { dom, layout, doc, visited: RefCell::new(HashSet::new()), pseudo_content };
     normalize(&names.alternative(id, NameOpts { target: Target::Own, ..NameOpts::default() }))
 }
 
@@ -2217,12 +2251,15 @@ impl Locator {
         } else if let Some(role) = &self.role {
             let role = role.to_ascii_lowercase();
             let layout = page.layout();
+            let pseudo_content = PseudoContent::new();
             found = elements(&dom, root)
                 .filter(inside)
                 .filter(|n| role_of(&dom, *n).as_deref() == Some(role.as_str()))
                 .filter(|n| !hidden_for_aria(&dom, &layout, *n, true))
                 .filter(|n| match &self.name {
-                    Some(want) => want.matches(&accessible_name(&dom, &layout, doc, *n), self.exact),
+                    Some(want) => {
+                        want.matches(&accessible_name_in(&dom, &layout, doc, *n, &pseudo_content), self.exact)
+                    }
                     None => true,
                 })
                 .collect();
@@ -2485,7 +2522,7 @@ fn act(page: &Rc<PageDom>, id: NodeId, action: Action, value: &str, opts: Pointe
                     return Attempt::Retry(format!("{error:?}"));
                 }
                 input::fire_simple(page, id, "input", true, false);
-                input::fire_simple(page, id, "change", true, false);
+                input::fire_user_change(page, id);
                 return Attempt::Done(json!({}));
             }
             if is_control {

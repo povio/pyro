@@ -122,4 +122,25 @@ fn animation_and_transition_declarations_cascade_from_rules_and_the_style_attrib
     let mut expected = vec![el("a"), el("b")];
     expected.sort();
     assert_eq!(candidates, expected);
+
+    // Transition candidates: elements a rule declaring a transition duration
+    // matches (`.base`, `#c`), and the inline one.
+    let mut candidates = rules.transition_candidates(&dm, d);
+    candidates.sort();
+    let mut expected = vec![el("a"), el("b"), el("c"), el("d")];
+    expected.sort();
+    assert_eq!(candidates, expected);
+}
+
+#[test]
+fn transition_listeners_are_noted_apart_from_animation_ones() {
+    let (dom, d) = doc("<div id=a></div>");
+    let options = AddOptions { capture: false, once: false, passive: None };
+    let mut dm = dom.borrow_mut();
+    let a = dm.get_element_by_id(d, "a").unwrap().unwrap();
+    let a = dm.node_key(a).unwrap();
+    dm.add_listener(a, "animationend", ListenerHandle(1), options);
+    assert!(dm.has_animation_listeners() && !dm.has_transition_listeners());
+    dm.add_listener(a, "webkitTransitionEnd", ListenerHandle(2), options);
+    assert!(dm.has_transition_listeners());
 }
