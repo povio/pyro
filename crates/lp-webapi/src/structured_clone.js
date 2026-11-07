@@ -49,8 +49,11 @@
         return result;
     }
     // `ports` (internal callers) receives the transferred MessagePorts' new ports.
-    function clone(value, options, ports) {
+    // `keep` (worker_wire.js) lists MessagePorts, already validated, that stay
+    // themselves in the copy: the cross-VM format transfers them afterwards.
+    function clone(value, options, ports, keep) {
         const memory = new M(), buffers = [], moved = [];
+        if (keep) for (let i = 0; i < keep.length; ++i) call(mapSet, memory, [keep[i], keep[i]]);
         if (options != null) {
             if (typeof options !== 'object' && typeof options !== 'function')
                 throw new TE('structuredClone options must be an object');

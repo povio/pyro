@@ -142,19 +142,28 @@ pub struct WireMessage {
     buffers: Vec<Vec<u8>>,
     /// Bytes of the Blobs and Files it holds (shared, immutable).
     blobs: Vec<bytes::Bytes>,
+    /// The MessagePorts it transfers, in transfer-list order: each is
+    /// claimed by the deserialization that makes its new port, and closed
+    /// if the message is dropped first.
+    ports: Vec<crate::port_link::TransitEnd>,
 }
 
 impl WireMessage {
     #[cfg(test)]
     pub(crate) fn empty() -> Self {
-        WireMessage { text: String::new(), buffers: Vec::new(), blobs: Vec::new() }
+        WireMessage { text: String::new(), buffers: Vec::new(), blobs: Vec::new(), ports: Vec::new() }
     }
     /// What the message holds in memory while queued.
     pub(crate) fn size(&self) -> usize {
         self.text.len()
             + self.buffers.iter().map(Vec::len).sum::<usize>()
             + self.blobs.iter().map(bytes::Bytes::len).sum::<usize>()
-            + 64
+            + 64 * (1 + self.ports.len())
+    }
+    /// Whether it transfers the port on the other side of `link` (posting
+    /// a port's entangled peer through it loses the message, as in HTML).
+    pub(crate) fn carries_peer_of(&self, link: &crate::port_link::Link) -> bool {
+        self.ports.iter().any(|p| p.is_peer_of(link))
     }
 }
 
@@ -193,6 +202,9 @@ fn wire_host<'s>(s: &Scope<'s>, args: &lp_js::Args<'s>) -> JsResult<lp_js::Value
                 }
                 return Ok(files.value());
             }
+            if let Some(parts) = crate::crypto::serialize_key(s, value)? {
+                return Ok(s.array(&[s.string("K"), parts])?.value());
+            }
             Ok(s.undefined())
         }
         1 => {
@@ -205,10 +217,12 @@ fn wire_host<'s>(s: &Scope<'s>, args: &lp_js::Args<'s>) -> JsResult<lp_js::Value
             let file = if name.is_null() { None } else { Some((name.to_string()?, tree.get_index(4)?.to_number()?)) };
             crate::file::make_blob(s, bytes, mime, file)
         }
-        _ => {
+        2 => {
             let files = value.as_object().ok_or_else(|| JsError::dom("DataCloneError", "Malformed message"))?;
             crate::file::make_file_list(s, files)
         }
+        3 => crate::crypto::deserialize_key(s, value),
+        _ => Ok(s.boolean(crate::message_channel::is_transferable_port(s, value)?)),
     }
 }
 
@@ -267,18 +281,68 @@ pub fn encode_message<'s>(s: &Scope<'s>, value: lp_js::Value<'s>, options: lp_js
         let bytes = crate::encoding::buffer_source_bytes(s, list.get_index(i)?)?;
         buffers.push(bytes.ok_or_else(|| JsError::dom("DataCloneError", "Detached ArrayBuffer"))?);
     }
-    Ok(WireMessage { text, buffers, blobs })
+    // The whole message serialized: only now are its ports detached (each
+    // was checked by the transfer-list step, so this cannot fail half way).
+    let list = pair.get_index(2)?;
+    let list = list.as_object().expect("port list");
+    let count = list.get_atom("length")?.to_number()? as u32;
+    let mut ports = Vec::with_capacity(count as usize);
+    for i in 0..count {
+        ports.push(crate::message_channel::export_port(s, list.get_index(i)?)?);
+    }
+    Ok(WireMessage { text, buffers, blobs, ports })
 }
 
 /// StructuredDeserialize into `s`'s realm.
 pub fn decode_message<'s>(s: &Scope<'s>, message: &WireMessage) -> JsResult<lp_js::Value<'s>> {
+    decode_with_ports(s, message).map(|(value, _)| value)
+}
+
+/// [`decode_message`] that also returns the new ports of the MessagePorts
+/// the message transfers, in transfer-list order (a `MessageEvent`'s
+/// `ports`), or `None` when it transfers none. A message's ports are
+/// claimed by its first deserialization: a second one fails.
+pub(crate) fn decode_with_ports<'s>(
+    s: &Scope<'s>,
+    message: &WireMessage,
+) -> JsResult<(lp_js::Value<'s>, Option<lp_js::Object<'s>>)> {
     let (_, decode) = wire_functions(s)?;
     let list = s.array(&[])?;
     for (i, bytes) in message.buffers.iter().enumerate() {
         list.set_index(i as u32, crate::encoding::array_buffer(s, bytes)?)?;
     }
-    let saved = WIRE_BLOBS.with(|b| b.replace(message.blobs.clone()));
-    let result = decode.call(None, &[s.string(&message.text), list.value()]);
-    WIRE_BLOBS.with(|b| *b.borrow_mut() = saved);
-    result
+    let ports = s.array(&[])?;
+    let mut made = Vec::with_capacity(message.ports.len());
+    let mut result = Ok(());
+    for (i, transit) in message.ports.iter().enumerate() {
+        match crate::message_channel::import_port(s, transit) {
+            Ok((port, inner)) => {
+                made.push(inner);
+                if let Err(e) = ports.set_index(i as u32, port) {
+                    result = Err(e);
+                    break;
+                }
+            }
+            Err(e) => {
+                result = Err(e);
+                break;
+            }
+        }
+    }
+    let result = result.and_then(|()| {
+        let saved = WIRE_BLOBS.with(|b| b.replace(message.blobs.clone()));
+        let result = decode.call(None, &[s.string(&message.text), list.value(), ports.value()]);
+        WIRE_BLOBS.with(|b| *b.borrow_mut() = saved);
+        result
+    });
+    match result {
+        Ok(value) => Ok((value, (!made.is_empty()).then_some(ports))),
+        Err(error) => {
+            // No one can reach the ports made so far: let their partners go.
+            for port in made {
+                crate::message_channel::close_inner(&port);
+            }
+            Err(error)
+        }
+    }
 }

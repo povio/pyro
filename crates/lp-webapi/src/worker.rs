@@ -28,7 +28,7 @@
 //! Gaps (explicit): `{type: 'module'}` throws NotSupportedError on the system
 //! JavaScriptCore framework (module workers need the patched build); `SharedWorker`
 //! and `ServiceWorker` are undefined so feature detection takes the no-worker
-//! path; workers cannot start workers; only ArrayBuffers can be transferred. See
+//! path; workers cannot start workers. ArrayBuffers and MessagePorts transfer. See
 //! docs/webapi/WORKER.md.
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
@@ -42,7 +42,7 @@ use rustc_hash::FxHashMap;
 
 use crate::event::{EventCore, EventInterface};
 use crate::page::PageDom;
-use crate::structured_clone::{decode_message, encode_message, WireMessage};
+use crate::structured_clone::{decode_with_ports, encode_message, WireMessage};
 use crate::target::{fire, page_of, pin_target, unpin_target, EventTarget, EventTargetData};
 use crate::util::dom_string;
 use crate::worker_scope::{self, WorkerContext, WorkerLoop, WorkerStart};
@@ -313,12 +313,13 @@ pub(crate) fn stop_thread(shared: &Shared) {
 
 /// Fires `message` or, if it cannot be rebuilt, `messageerror` at `target`.
 pub(crate) fn fire_message(s: &Scope<'_>, page: &Rc<PageDom>, target: TargetKey, message: &WireMessage) {
-    match decode_message(s, message) {
-        Ok(value) => {
+    match decode_with_ports(s, message) {
+        Ok((value, ports)) => {
             let ev = EventCore::trusted(page, EventInterface::MessageEvent, "message", false, false);
             {
                 let mut fields = ev.fields.borrow_mut();
                 fields.message_data = Some(Persistent::new(s, value));
+                fields.message_ports = ports.map(|p| Persistent::new(s, p.value()));
                 fields.origin = String::new();
             }
             fire(page, target, &ev);

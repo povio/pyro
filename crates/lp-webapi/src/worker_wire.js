@@ -8,10 +8,15 @@
 // prototype cannot affect the output.
 //
 // `host` is native: `host(value, 0)` describes a Blob or File (['F', bytes
-// index, type, name or null, lastModified]) or a FileList (['L', ...files]),
-// else undefined; `host(tree, 1)` makes the Blob or File of an 'F' tree and
-// `host(files, 2)` the FileList of decoded files. Blob bytes travel beside
-// the text, shared, not copied.
+// index, type, name or null, lastModified]), a FileList (['L', ...files]) or
+// a CryptoKey (['K', [type, extractable, algorithm, usages, key bytes]]),
+// else undefined; `host(tree, 1)` makes the Blob or File of an 'F' tree,
+// `host(files, 2)` the FileList of decoded files and `host(parts, 3)` the
+// CryptoKey of decoded key parts; `host(value, 4)` says whether `value` is a
+// MessagePort that can be transferred (DataCloneError if it was already).
+// Blob bytes travel beside the text, shared, not copied. Transferred
+// MessagePorts travel beside it too: `encode` returns them in transfer-list
+// order, the caller detaches them, and `decode` receives their new ports.
 ((fail, host, DOMExceptionC) => {
     const O = Object, A = Array, M = Map, S = Set, D = Date, R = RegExp;
     const AB = ArrayBuffer, DV = DataView, U8 = Uint8Array, TE = TypeError;
@@ -51,33 +56,49 @@
     };
 
     // The buffers `postMessage(message, transfer)` detaches once the message is
-    // encoded. Worker messages always cross a VM, so transferring is a copy
-    // followed by a detach, which is what the sender can observe.
+    // encoded, and the MessagePorts it transfers. Worker messages always cross
+    // a VM, so transferring a buffer is a copy followed by a detach, which is
+    // what the sender can observe.
+    const none = [[], []];
     function transferList(options) {
-        if (options === undefined || options === null) return [];
+        if (options === undefined || options === null) return none;
         let list;
         if (isArray(options)) list = options;
         else if (typeof options !== 'object' && typeof options !== 'function')
             throw new TE('postMessage options must be an object or a sequence');
         else list = options.transfer;
-        if (list === undefined) return [];
+        if (list === undefined) return none;
         if (list === null || typeof list[iteratorKey] !== 'function') throw new TE('transfer must be iterable');
-        const buffers = [], seen = new M();
+        const entries = [];
         for (const entry of list) {
             if (entry === null || (typeof entry !== 'object' && typeof entry !== 'function'))
                 throw new TE('transfer entries must be objects');
-            if (!isBuffer(entry)) fail('Only ArrayBuffers can be transferred to or from a worker', true);
-            if (call(mapHas, seen, [entry])) fail('ArrayBuffer listed twice in the transfer list');
+            put(entries, entries.length, entry);
+        }
+        const buffers = [], ports = [], seen = new M();
+        for (let i = 0; i < entries.length; ++i) {
+            const entry = entries[i];
+            if (call(mapHas, seen, [entry])) fail('An object is listed twice in the transfer list');
             call(mapSet, seen, [entry, true]);
-            put(buffers, buffers.length, entry);
+            if (isBuffer(entry)) {
+                try { new U8(entry); } catch (_) { fail('An ArrayBuffer is detached and could not be transferred'); }
+                put(buffers, buffers.length, entry);
+            } else if (host(entry, 4)) {
+                put(ports, ports.length, entry);
+            } else {
+                fail('Value is not transferable');
+            }
         }
         if (buffers.length && !abTransfer) fail('ArrayBuffer transfer is not available', true);
-        return buffers;
+        return [buffers, ports];
     }
 
     function encode(clone, value, options) {
-        const transfer = transferList(options);
-        const copy = clone(value);
+        const lists = transferList(options), transfer = lists[0], ports = lists[1];
+        // Listed ports stay themselves in the copy; the walk numbers them.
+        const copy = clone(value, undefined, undefined, ports.length ? ports : undefined);
+        const portIndex = new M();
+        for (let i = 0; i < ports.length; ++i) call(mapSet, portIndex, [ports[i], i]);
         const buffers = [], memory = new M();
         let next = 0;
         const entries = (source) => {
@@ -102,6 +123,7 @@
                     return '' + source;
             }
             if (source === null) return 'null';
+            if (call(mapHas, portIndex, [source])) return '["P",' + call(mapGet, portIndex, [source]) + ']';
             if (call(mapHas, memory, [source])) return '["r",' + call(mapGet, memory, [source]) + ']';
             call(mapSet, memory, [source, next++]);
             if (isArray(source)) return '["a",' + source.length + entries(source) + ']';
@@ -156,6 +178,7 @@
             }
             const parts = host(source, 0);
             if (parts !== undefined) {
+                if (parts[0] === 'K') return '["K",' + node(parts[1]) + ']';
                 if (parts[0] === 'F') {
                     return '["F",' + parts[1] + ',' + stringify(parts[2]) + ','
                         + (parts[3] === null ? 'null' : stringify(parts[3])) + ',' + node(parts[4]) + ']';
@@ -170,10 +193,10 @@
         }
         const text = node(copy);
         for (let i = 0; i < transfer.length; ++i) call(abTransfer, transfer[i]);
-        return [text, buffers];
+        return [text, buffers, ports];
     }
 
-    function decode(text, buffers) {
+    function decode(text, buffers, ports) {
         const memory = new M();
         let next = 0;
         const remember = (id, value) => { call(mapSet, memory, [id, value]); return value; };
@@ -189,6 +212,11 @@
                 case 'n': return tree[1] === 'NaN' ? NaN : tree[1] === 'Infinity' ? Infinity
                     : tree[1] === '-Infinity' ? -Infinity : -0;
                 case 'r': return call(mapGet, memory, [tree[1]]);
+                case 'P': {
+                    const port = ports[tree[1]];
+                    if (port === undefined) fail('Malformed worker message');
+                    return port;
+                }
             }
             const id = next++;
             switch (tree[0]) {
@@ -234,6 +262,11 @@
                     return error;
                 }
                 case 'F': return remember(id, host(tree, 1));
+                case 'K': {
+                    // Nothing can refer back into the key's parts.
+                    const key = host(node(tree[1]), 3);
+                    return remember(id, key);
+                }
                 case 'L': {
                     const files = [];
                     for (let i = 1; i < tree.length; ++i) put(files, files.length, node(tree[i]));

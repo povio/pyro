@@ -672,6 +672,7 @@ impl PageDom {
         crate::intersection_observer::dispose(self);
         crate::resize_observer::dispose(self);
         crate::worker::dispose(self);
+        crate::message_channel::dispose(self);
         crate::indexeddb::dispose(self);
         self.realms.borrow_mut().clear();
         drop(self.main_world.take());

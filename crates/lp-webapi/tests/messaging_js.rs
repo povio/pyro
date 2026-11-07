@@ -170,3 +170,33 @@ fn wire_format_carries_errors_dom_exceptions_and_files() {
     env.until("out !== null");
     assert_eq!(env.eval("out"), "true|r|1||true|AbortError|m|true|n|5|q|false|a/b|true|true|0");
 }
+
+#[test]
+fn wire_format_carries_crypto_keys_but_not_untransferred_ports() {
+    let env = env();
+    env.eval(
+        r#"globalThis.out = null;
+          const tx = new BroadcastChannel('keys'), rx = new BroadcastChannel('keys');
+          rx.onmessage = async (e) => {
+            const {secret, pair, again} = e.data;
+            const signed = await crypto.subtle.sign('HMAC', secret, new Uint8Array([1]));
+            const ok = await crypto.subtle.verify('HMAC', original, signed, new Uint8Array([1]));
+            const sig = await crypto.subtle.sign({name: 'ECDSA', hash: 'SHA-256'}, pair.privateKey, new Uint8Array([2]));
+            const ec = await crypto.subtle.verify({name: 'ECDSA', hash: 'SHA-256'}, keys.publicKey, sig, new Uint8Array([2]));
+            out = [secret instanceof CryptoKey, secret !== original, secret.extractable, secret.algorithm.hash.name,
+              secret.algorithm.length, secret.usages.join('+'), again === secret, ok, pair.privateKey.type,
+              pair.publicKey.algorithm.namedCurve, ec].join('|');
+          };
+          let failed = '';
+          try { tx.postMessage(new MessageChannel().port1); } catch (e) { failed = e.name; }
+          globalThis.cloneError = failed;
+          (async () => {
+            globalThis.original = await crypto.subtle.generateKey({name: 'HMAC', hash: 'SHA-384'}, false, ['sign', 'verify']);
+            globalThis.keys = await crypto.subtle.generateKey({name: 'ECDSA', namedCurve: 'P-256'}, true, ['sign', 'verify']);
+            tx.postMessage({secret: original, pair: keys, again: original});
+          })();"#,
+    );
+    env.until("out !== null");
+    assert_eq!(env.eval("cloneError"), "DataCloneError");
+    assert_eq!(env.eval("out"), "true|true|false|SHA-384|1024|sign+verify|true|true|private|P-256|true");
+}

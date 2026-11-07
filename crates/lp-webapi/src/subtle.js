@@ -19,6 +19,7 @@
   const NumberC = Number;
   const apply = Reflect.apply;
   const defineProperty = Object.defineProperty;
+  const ownDescriptor = Object.getOwnPropertyDescriptor;
   const getOwnPropertyNames = Object.getOwnPropertyNames;
   const objectKeys = Object.keys;
   const isView = ArrayBuffer.isView;
@@ -825,6 +826,46 @@
       const alg = { ...k.alg };
       if (alg.publicExponent !== undefined) alg.publicExponent = apply(u8Slice, alg.publicExponent, []);
       return makeKey(k.type, k.extractable, alg, k.usages, apply(u8Slice, k.material, []));
+    },
+    // The cross-VM form of a CryptoKey of this realm (plain data), else undefined.
+    serializeKey(value) {
+      const k = slotsOf(value);
+      if (k === undefined) return undefined;
+      const alg = { name: k.alg.name };
+      for (const field of ['length', 'namedCurve', 'modulusLength', 'hash']) {
+        if (k.alg[field] !== undefined) alg[field] = k.alg[field];
+      }
+      if (k.alg.publicExponent !== undefined) alg.publicExponent = apply(u8Slice, k.alg.publicExponent, []);
+      return [k.type, k.extractable, alg, [...k.usages], apply(u8Slice, k.material, [])];
+    },
+    // A CryptoKey of this realm from `serializeKey`'s parts (made by
+    // another VM's copy of this script, so only their shape is checked).
+    deserializeKey(parts) {
+      const bad = () => new DOMExceptionC('Malformed CryptoKey', 'DataCloneError');
+      if (!isObject(parts) || parts.length !== 5) throw bad();
+      const type = parts[0], extractable = parts[1], source = parts[2], usages = parts[3], material = parts[4];
+      if (type !== 'secret' && type !== 'public' && type !== 'private') throw bad();
+      if (typeof extractable !== 'boolean' || !isObject(source)) throw bad();
+      const named = ownDescriptor(source, 'name');
+      if (!named || typeof named.value !== 'string') throw bad();
+      if (!isObject(usages) || !(material instanceof Uint8ArrayC)) throw bad();
+      const list = [];
+      for (let i = 0; i < usages.length; i++) {
+        if (!has(USAGES, usages[i])) throw bad();
+        list.push(usages[i]);
+      }
+      // Own data properties only: nothing the receiving realm's prototypes add.
+      const field = (key) => {
+        const d = ownDescriptor(source, key);
+        return d && 'value' in d ? d.value : undefined;
+      };
+      const alg = { name: named.value };
+      if (typeof field('length') === 'number') alg.length = field('length');
+      if (typeof field('namedCurve') === 'string') alg.namedCurve = field('namedCurve');
+      if (typeof field('modulusLength') === 'number') alg.modulusLength = field('modulusLength');
+      if (typeof field('hash') === 'string') alg.hash = field('hash');
+      if (field('publicExponent') instanceof Uint8ArrayC) alg.publicExponent = field('publicExponent');
+      return makeKey(type, extractable, alg, list, material);
     },
   };
 })
