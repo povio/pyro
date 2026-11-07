@@ -232,13 +232,19 @@ pub fn focus_element_with_transition(page: &Rc<PageDom>, el: NodeId, token: &Foc
     }
 }
 
+/// Sets the element being activated (`:active`); restyles only when a sheet
+/// depends on `:active` (none does unless the page's own CSS uses it).
+fn set_active(page: &PageDom, doc: NodeId, el: Option<NodeId>) {
+    let restyle = page.layout.try_borrow().map_or(true, |l| l.style().active_styled());
+    let _ = page.dom.borrow_mut().set_activated(doc, el, restyle);
+}
+
 fn run_blur(page: &Rc<PageDom>, doc: NodeId, el: NodeId, related: Option<NodeId>, token: &FocusTransition) {
     let _ = page.dom.borrow_mut().set_focused(doc, None);
     if page.space_target.take().is_some() {
         // A Space-activated control stops being `:active` when it blurs.
-        let mut dom = page.dom.borrow_mut();
-        if dom.activated(doc) == Some(el) {
-            let _ = dom.set_activated(doc, None);
+        if page.dom.borrow().activated(doc) == Some(el) {
+            set_active(page, doc, None);
         }
     }
     if !live_element(page, doc, el) {
@@ -1064,7 +1070,7 @@ pub fn dispatch_key(page: &Rc<PageDom>, kind: KeyKind, k: &KeyInput) {
                 // Browsers mark the control active on Space keydown and click
                 // it on the matching keyup (Blink KeyboardClickableInputTypeView).
                 page.space_target.set(Some(target));
-                let _ = page.dom.borrow_mut().set_activated(doc, Some(target));
+                set_active(page, doc, Some(target));
             }
             if k.text.is_empty()
                 && !k.commands.is_empty()
@@ -1083,7 +1089,7 @@ pub fn dispatch_key(page: &Rc<PageDom>, kind: KeyKind, k: &KeyInput) {
             let ev = key_event(page, "keyup", k, 0);
             let ok = fire(page, tkey, &ev);
             if k.key == " " && page.space_target.get().is_some() {
-                let _ = page.dom.borrow_mut().set_activated(doc, None);
+                set_active(page, doc, None);
             }
             if k.key == " "
                 && page.space_target.take() == Some(target)
@@ -2163,7 +2169,7 @@ fn dispatch_mouse_inner(
                 page.mouse_capture.set(c);
             }
             if m.button == MouseButton::Left {
-                let _ = page.dom.borrow_mut().set_activated(page.document(), Some(target));
+                set_active(page, page.document(), Some(target));
             }
             let pd = touch.is_some()
                 || fire(page, tkey, &mouse_event(page, EventInterface::PointerEvent, "pointerdown", m, true));
@@ -2234,7 +2240,7 @@ fn dispatch_mouse_inner(
             page.drag_candidate.set(None);
             page.text_drag.set(None);
             if m.button == MouseButton::Left {
-                let _ = page.dom.borrow_mut().set_activated(page.document(), None);
+                set_active(page, page.document(), None);
             }
             if touch.is_none() {
                 fire(page, tkey, &mouse_event(page, EventInterface::PointerEvent, "pointerup", m, true));

@@ -1989,6 +1989,7 @@ dependencies = [
  "serde_json",
  "skrifa 0.42.1",
  "stylo",
+ "stylo_dom",
  "url",
  "xxhash-rust",
 ]

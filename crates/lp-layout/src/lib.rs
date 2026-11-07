@@ -588,6 +588,10 @@ impl GeometrySource for BlitzGeometry {
     fn has_sticky(&self) -> bool {
         RENDERER.with(|r| r.try_borrow().ok().and_then(|r| Some(r.as_ref()?.has_sticky(self.page))).unwrap_or(false))
     }
+
+    fn styles_depend_on_active(&self) -> bool {
+        RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.styles_depend_on_active(self.page)).unwrap_or(true)
+    }
 }
 
 /// `Page.printToPDF` from the page document's own Blitz document (the one
