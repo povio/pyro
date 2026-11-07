@@ -181,6 +181,9 @@ pub(crate) struct Body {
     stream_reads: RefCell<Vec<(WeakRealm, Deferred)>>,
     /// The stream holds a consumer until it closes, errors or is canceled.
     stream_open: Cell<bool>,
+    /// Bytes the stream delivered while another consumer (a clone that will
+    /// read the whole body) kept the chunks: they stay buffered for it.
+    stream_cursor: Cell<usize>,
     consumers: Cell<usize>,
     abort_registration: RefCell<Option<AbortRegistration>>,
     /// The aborting signal's own wrapper reference, for its reason. None without a signal.
@@ -715,6 +718,7 @@ pub(crate) fn install(s: &Scope<'_>) -> JsResult<()> {
                     readers: RefCell::new(Vec::new()),
                     stream_reads: RefCell::new(Vec::new()),
                     stream_open: Cell::new(false),
+                    stream_cursor: Cell::new(0),
                     consumers: Cell::new(0),
                     abort_registration: RefCell::new(None),
                     abort_signal: RefCell::new(None),
@@ -764,7 +768,9 @@ pub(crate) fn install(s: &Scope<'_>) -> JsResult<()> {
                     &request.url,
                     sink,
                 );
-                net.fetch_with_id(id, request, sink);
+                // A controlled page's request goes to its service worker
+                // first; any other is one flag test away from the network.
+                crate::service_worker::route(&page, &net, id, request, sink);
             }
         }
         Ok(promise)
@@ -983,6 +989,7 @@ impl Body {
             readers: RefCell::new(Vec::new()),
             stream_reads: RefCell::new(Vec::new()),
             stream_open: Cell::new(false),
+            stream_cursor: Cell::new(0),
             consumers: Cell::new(0),
             abort_registration: RefCell::new(None),
             abort_signal: RefCell::new(None),
@@ -1247,20 +1254,38 @@ impl Body {
             let (weak, deferred) = self.stream_reads.borrow_mut().remove(0);
             let Some(realm) = weak.upgrade() else { continue };
             let Ok(s) = realm.scope() else { continue };
+            // A clone of the Response still reads the whole body: the stream
+            // copies what it has not delivered and leaves the chunks buffered.
+            let shared = self.consumers.get() > 1;
             let chunk = {
                 let mut wire = self.wire.lock().unwrap();
-                if wire.chunks.is_empty() {
+                let skip = self.stream_cursor.get();
+                if wire.chunks.is_empty() || wire.bytes <= skip {
                     None
+                } else if shared {
+                    let mut bytes = Vec::with_capacity(wire.bytes - skip);
+                    let mut offset = 0;
+                    for c in &wire.chunks {
+                        let end = offset + c.len();
+                        if end > skip {
+                            bytes.extend_from_slice(&c[skip.saturating_sub(offset)..]);
+                        }
+                        offset = end;
+                    }
+                    self.stream_cursor.set(wire.bytes);
+                    Some(bytes)
                 } else {
                     let chunks = std::mem::take(&mut wire.chunks);
                     let len: usize = chunks.iter().map(Bytes::len).sum();
                     wire.bytes = wire.bytes.saturating_sub(len);
                     wire.budget.used.fetch_sub(len, Ordering::AcqRel);
+                    self.stream_cursor.set(0);
                     let mut bytes = Vec::with_capacity(len);
                     for c in &chunks {
                         bytes.extend_from_slice(c);
                     }
-                    Some(bytes)
+                    bytes.drain(..skip.min(bytes.len()));
+                    (!bytes.is_empty()).then_some(bytes)
                 }
             };
             let error = self.error(&s);

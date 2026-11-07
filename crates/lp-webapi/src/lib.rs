@@ -75,6 +75,8 @@ pub mod request;
 pub mod resize_observer;
 pub mod resource_timing;
 pub mod response;
+mod service_worker;
+mod service_worker_scope;
 pub mod sri;
 pub mod storage;
 mod storage_manager;

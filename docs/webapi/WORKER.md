@@ -107,9 +107,10 @@ times out.
 - Module workers have no import maps of their own, and `import.meta.resolve` follows
   the engine. Without the engine's module loader (system JavaScriptCore),
   `{type: 'module'}` throws NotSupportedError.
-- `SharedWorker` and `ServiceWorker` stay undefined, as does `navigator.serviceWorker`:
-  `typeof` feature detection is what sites use, and a constructor that throws would
-  send them down a path that then fails.
+- `SharedWorker` stays undefined: `typeof` feature detection is what sites use, and
+  a constructor that throws would send them down a path that then fails. Service
+  workers reuse this machinery (threads, the cross-VM message format and
+  cross-thread ports): see [Service workers](SERVICE_WORKER.md).
 - Host objects other than Blob, File, FileList and CryptoKey do not cross
   (DataCloneError). There is no ImageBitmap or OffscreenCanvas to transfer.
 - Nested workers. `Worker` is undefined inside a worker.

@@ -3,7 +3,7 @@
 `crates/lp-webapi/src/message_channel.rs` implements HTML §9.4 channel
 messaging between the realms of a browser thread's VM (frames, popups,
 isolated worlds) and, through `port_link.rs`, between threads (the page and
-its dedicated workers, or two workers). The behaviour follows upstream
+its dedicated or service workers, or two workers). The behaviour follows upstream
 Lightpanda (`MessagePort.zig`) and Chromium, except for the gaps below.
 
 - **Construction.** `new MessageChannel()` creates two entangled ports.
@@ -30,8 +30,9 @@ Lightpanda (`MessagePort.zig`) and Chromium, except for the gaps below.
   The original is detached: it is closed, its posts are dropped and
   transferring it again throws DataCloneError.
 - **Across threads.** A port transferred through `Worker.postMessage`, the
-  worker global's `postMessage`, a port that is itself entangled across
-  threads, or a popup's `postMessage` leaves the VM. The first time one port
+  worker global's `postMessage`, `ServiceWorker.postMessage`,
+  `Client.postMessage` (from a service worker), a port that is itself
+  entangled across threads, or a popup's `postMessage` leaves the VM. The first time one port
   of a pair does, the pair switches to a thread-safe pipe: each side has an
   inbox of serialized messages (the [cross-VM format](STRUCTURED_CLONE.md))
   and an owner, the poster of the thread whose port stands for it and that

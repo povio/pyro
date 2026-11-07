@@ -42,6 +42,7 @@ mod resource_timing;
 mod runloop_idle_finalization;
 mod script_inserted;
 mod selection_pointer_timing;
+mod service_worker;
 mod static_plaintext;
 mod storage_events;
 mod stylesheets;

@@ -30,6 +30,8 @@ pub struct RequestData {
     pub(crate) referrer_policy: String,
     pub(crate) integrity: String,
     pub(crate) keepalive: bool,
+    /// Set only on a service worker's FetchEvent request; "" otherwise.
+    pub(crate) destination: String,
     pub(crate) body: Rc<Body>,
     used: Rc<Cell<bool>>,
     /// `body` was read: its source holds this Request's body consumer.
@@ -144,7 +146,7 @@ impl JsClass for Request {
         def.getter("method", |s, d| Ok(s.string(&d.method)));
         def.getter("url", |s, d| Ok(s.string(&d.url)));
         def.getter("headers", |s, d| hidden(s, d, HEADERS));
-        def.getter("destination", |s, _d| Ok(s.string("")));
+        def.getter("destination", |s, d| Ok(s.string(&d.destination)));
         def.getter("referrer", |s, d| {
             Ok(s.string(match d.referrer.as_str() {
                 "no-referrer" => "",
@@ -215,6 +217,7 @@ struct Fields {
     referrer_policy: String,
     integrity: String,
     keepalive: bool,
+    destination: String,
 }
 impl Fields {
     fn copy(d: &RequestData) -> Fields {
@@ -229,6 +232,7 @@ impl Fields {
             referrer_policy: d.referrer_policy.clone(),
             integrity: d.integrity.clone(),
             keepalive: d.keepalive,
+            destination: d.destination.clone(),
         }
     }
 }
@@ -286,6 +290,7 @@ fn construct<'s>(
                     referrer_policy: String::new(),
                     integrity: String::new(),
                     keepalive: false,
+                    destination: String::new(),
                 },
                 Vec::new(),
                 None,
@@ -431,6 +436,44 @@ fn construct<'s>(
     wrap(s, new_target, fields, headers, body_bytes, body_mime, signal)
 }
 
+/// A service worker's view of an intercepted request (FetchEvent `request`):
+/// its fields as the client's fetch resolved them, `navigate` mode and a
+/// cross-origin referrer included, which `new Request` would refuse.
+pub(crate) struct Intercepted {
+    pub method: String,
+    pub url: String,
+    pub mode: &'static str,
+    pub credentials: &'static str,
+    pub cache: &'static str,
+    pub redirect: &'static str,
+    pub referrer: String,
+    pub referrer_policy: String,
+    pub integrity: String,
+    pub keepalive: bool,
+    pub destination: &'static str,
+    pub headers: Vec<(String, String)>,
+    pub body: Option<Bytes>,
+}
+
+pub(crate) fn intercepted<'s>(s: &Scope<'s>, r: Intercepted) -> JsResult<Value<'s>> {
+    let mime = r.headers.iter().find(|(n, _)| n.eq_ignore_ascii_case("content-type")).map(|(_, v)| v.clone());
+    let headers = HeadersData::from_pairs(r.headers, false).guard_request(r.mode == "no-cors");
+    let fields = Fields {
+        method: r.method,
+        url: r.url,
+        mode: r.mode.into(),
+        credentials: r.credentials.into(),
+        cache: r.cache.into(),
+        redirect: r.redirect.into(),
+        referrer: r.referrer,
+        referrer_policy: r.referrer_policy,
+        integrity: r.integrity,
+        keepalive: r.keepalive,
+        destination: r.destination.into(),
+    };
+    wrap(s, None, fields, headers, r.body, mime.unwrap_or_default(), None)
+}
+
 fn wrap<'s>(
     s: &Scope<'s>,
     new_target: Option<Object<'s>>,
@@ -456,6 +499,7 @@ fn wrap<'s>(
         referrer_policy: fields.referrer_policy,
         integrity: fields.integrity,
         keepalive: fields.keepalive,
+        destination: fields.destination,
         body,
         used: Rc::new(Cell::new(false)),
         source_made: Cell::new(false),

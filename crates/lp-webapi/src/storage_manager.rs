@@ -104,7 +104,7 @@ where
     W: JsClass,
     W::Data: WindowHost,
 {
-    def.accessor(
+    def.global_value_accessor(
         "StorageManager",
         |s, w| {
             let value = module(s, w.page())?.get_atom("StorageManager")?;

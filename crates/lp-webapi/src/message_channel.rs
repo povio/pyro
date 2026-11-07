@@ -29,8 +29,9 @@
 //! again throws DataCloneError). ArrayBuffers in the list are detached.
 //! Messages are cloned into the receiving port's realm when posted.
 //!
-//! Across threads (to or from a dedicated worker, through `Worker`'s or the
-//! worker global's `postMessage` or another port already there), the pair
+//! Across threads (to or from a dedicated or service worker, through
+//! `Worker`'s, the worker global's, `ServiceWorker`'s or `Client`'s
+//! `postMessage` or another port already there), the pair
 //! switches to a `port_link::Pipe`: messages are serialized
 //! (`structured_clone::encode_message`), queued on the pipe and announced to
 //! the receiving thread's loop by one posted task each; the receiving port
@@ -623,6 +624,36 @@ pub(crate) fn import_port<'s>(s: &Scope<'s>, transit: &TransitEnd) -> JsResult<(
         return Err(JsError::dom("DataCloneError", "This realm cannot receive a MessagePort from another thread."));
     }
     Ok((object.value(), inner))
+}
+
+/// Fires `message` at `target` (a worker, a worker global, a window, a
+/// service worker container or global), its `ports` the MessagePorts it
+/// transferred, or `messageerror` if it cannot be deserialized into `s`'s
+/// realm. Nothing fires once the realm is terminating.
+pub(crate) fn fire_wire_message(
+    s: &Scope<'_>,
+    page: &Rc<PageDom>,
+    target: TargetKey,
+    message: &crate::structured_clone::WireMessage,
+    origin: String,
+) {
+    match crate::structured_clone::decode_with_ports(s, message) {
+        Ok((value, ports)) => {
+            let ev = EventCore::trusted(page, EventInterface::MessageEvent, "message", false, false);
+            {
+                let mut fields = ev.fields.borrow_mut();
+                fields.message_data = Some(Persistent::new(s, value));
+                fields.message_ports = ports.map(|p| Persistent::new(s, p.value()));
+                fields.origin = origin;
+            }
+            fire(page, target, &ev);
+        }
+        Err(JsError::Terminated) => {}
+        Err(_) => {
+            let ev = EventCore::trusted(page, EventInterface::MessageEvent, "messageerror", false, false);
+            fire(page, target, &ev);
+        }
+    }
 }
 
 /// Closes a port [`import_port`] made that will never be reachable.

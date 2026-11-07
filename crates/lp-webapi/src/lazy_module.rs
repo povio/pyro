@@ -25,7 +25,7 @@ pub(crate) struct LazyModule {
 /// pair each, served by the `static` [`LazyModule`] `$module`.
 macro_rules! lazy_globals {
     ($def:ident, $module:path, $($name:literal),+ $(,)?) => {
-        $($def.accessor(
+        $($def.global_value_accessor(
             $name,
             |s, w| $module.global(s, crate::window::WindowHost::page(w), $name),
             |s, w, value| crate::lazy_module::replace(s, crate::window::WindowHost::page(w), $name, value),
