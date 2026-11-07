@@ -82,9 +82,11 @@ fn bit_length(bytes: &[u8]) -> u32 {
 }
 
 /// `bytes` as an integer of `precision` bits, or None when it does not fit.
+/// A zero precision is None too: a limbless BoxedUint panics in `Odd::new`
+/// and `NonZero::new`.
 fn uint(bytes: &[u8], precision: u32) -> Option<BoxedUint> {
     let bytes = trim(bytes);
-    if bit_length(bytes) > precision {
+    if precision == 0 || bit_length(bytes) > precision {
         return None;
     }
     BoxedUint::from_be_slice(bytes, precision).ok()
@@ -261,9 +263,10 @@ impl PrivateKey {
             return Err(invalid());
         }
         // Neither prime may be longer than the modulus (this also bounds the
-        // work a hostile key can cause).
-        let prime_precision = bit_length(p).max(bit_length(q));
-        if prime_precision > public.bits() {
+        // work a hostile key can cause), and each must be at least 3.
+        let (p_bits, q_bits) = (bit_length(p), bit_length(q));
+        let prime_precision = p_bits.max(q_bits);
+        if p_bits < 2 || q_bits < 2 || prime_precision > public.bits() {
             return Err(invalid());
         }
         let p = uint(p, prime_precision).ok_or_else(invalid)?;
@@ -829,6 +832,11 @@ mod tests {
         assert!(PrivateKey::from_components(part(0), part(1), &d, part(3), part(4), None).is_err());
         assert!(import(part(3), part(3), None).is_err());
         assert!(import(&[1], part(0), None).is_err());
+        // Empty or zero primes are a DataError, not a panic on a limbless integer.
+        assert!(import(&[], &[], Some([part(5), part(6), part(7)])).is_err());
+        assert!(import(&[0], &[0], None).is_err());
+        assert!(import(&[], part(4), None).is_err());
+        assert!(uint(&[], 0).is_none());
         // Truncated DER and a multi-prime-version key fail as DataError.
         let der = hex(kat::PKCS8);
         assert!(PrivateKey::from_pkcs8(&der[..der.len() - 1]).is_err());
