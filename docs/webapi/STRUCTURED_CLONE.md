@@ -73,8 +73,11 @@ transfer list takes ArrayBuffers (copied, then detached), MessagePorts and
 streams: transferred ports travel beside the text as sides of a thread-safe
 pipe (`port_link.rs`, see [MESSAGE_CHANNEL](MESSAGE_CHANNEL.md)), listed ports
 first, then each stream's ports, and only the listed ones become the event's
-`ports`. A message's ports are claimed by its first deserialization; a
-message dropped before that closes them. BroadcastChannel, IndexedDB and
+`ports`. Every transferable is checked again after the value is walked
+(getters may have detached a buffer, transferred a port or locked a
+stream) and before any is consumed, so a post that throws leaves its
+transfer list as it was. A message's ports are claimed by its first
+deserialization; a message dropped before that closes them. BroadcastChannel, IndexedDB and
 history state transfer nothing, so a port or stream in their values throws
 DataCloneError.
 

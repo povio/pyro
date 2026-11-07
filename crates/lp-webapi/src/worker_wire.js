@@ -215,9 +215,14 @@
             return '["B",' + stringify(name) + ',' + node(call(boxed[name], source)) + ']';
         }
         const text = node(copy);
-        for (let i = 0; i < transfer.length; ++i) call(abTransfer, transfer[i]);
-        // A stream locked while the value was walked fails before any is piped.
+        // Getters ran during the clone: every transferable is checked again
+        // before any is consumed, so a failure leaves them all as they were.
+        for (let i = 0; i < transfer.length; ++i) {
+            try { new U8(transfer[i]); } catch (_) { fail('An ArrayBuffer is detached and could not be transferred'); }
+        }
+        for (let i = 0; i < ports.length; ++i) host(ports[i], 4);
         for (let i = 0; i < streams.length; ++i) host(streams[i], 5);
+        for (let i = 0; i < transfer.length; ++i) call(abTransfer, transfer[i]);
         const listed = ports.length, sent = [];
         for (let i = 0; i < listed; ++i) put(sent, i, ports[i]);
         for (let i = 0; i < streams.length; ++i) {

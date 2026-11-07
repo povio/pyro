@@ -53,10 +53,20 @@ Lightpanda (`MessagePort.zig`) and Chromium, except for the gaps below.
     pin is re-evaluated. The same happens when the port is collected, when
     its document goes away (the worker ends, or the page navigates), and
     when a message carrying a side is dropped before it was deserialized.
+    Closing a side drops the sides its queued messages carry one at a
+    time, not recursively, so a chain of any length is torn down in
+    constant stack.
+  - When a page goes away, the sides of the pipes it made that are in
+    transit and reachable only from each other's queued messages (a cycle
+    no thread can receive) are closed. A side on its way to another
+    thread, or carried by a side that is, stays open with its messages,
+    even when its partner has closed.
   - Posting the entangled port through a port drops the message (the
     channel is lost), as within a thread.
-  - One side's inbox holds at most 64 MiB of messages: past that, posting
-    throws DataCloneError (unless the inbox is empty).
+  - One side's inbox holds about 64 MiB of messages: once it holds that
+    much, posting throws DataCloneError before the message is serialized,
+    so its transfer list is left as it was (a single message may overshoot
+    the limit).
 - **Delivery.**
   - A started port delivers each message in its own task, in FIFO order, after
     the current task's microtasks.

@@ -48,7 +48,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use lp_js::{ClassDef, JsClass, JsError, JsResult, NoParent, Object, Persistent, Scope, WeakRealm};
 use rustc_hash::FxHashMap;
 
-use crate::port_link::{Link, Owner, Sent, TransitEnd, WeakPipe};
+use crate::port_link::{Link, Owner, TransitEnd, WeakPipe};
 
 use crate::event::{EventCore, EventInterface};
 use crate::page::PageDom;
@@ -79,7 +79,7 @@ thread_local! {
     /// target of the tasks other threads post for them.
     static REMOTE: RefCell<FxHashMap<u64, Weak<PortInner>>> = RefCell::default();
     /// The pipes this thread's pages made, by page id: swept when the page
-    /// goes (`WeakPipe::close_if_orphaned`).
+    /// goes (`port_link::close_orphans`).
     static MADE: RefCell<Vec<(u64, WeakPipe)>> = const { RefCell::new(Vec::new()) };
 }
 static NEXT_REMOTE: AtomicU64 = AtomicU64::new(1);
@@ -299,8 +299,9 @@ pub(crate) fn dispose(page: &PageDom) {
             link.close();
         }
     }
-    // The pipes the page made whose sides no port owns any more: travelling
-    // ports that only each other's undelivered messages hold.
+    // The pipes the page made: their travelling sides that only each other's
+    // undelivered messages hold close (a side on its way to another thread
+    // keeps its messages).
     let made: Vec<WeakPipe> = MADE.with(|m| {
         let mut m = m.borrow_mut();
         if m.is_empty() {
@@ -310,8 +311,8 @@ pub(crate) fn dispose(page: &PageDom) {
         *m = rest;
         mine.into_iter().map(|(_, pipe)| pipe).collect()
     });
-    for pipe in made {
-        pipe.close_if_orphaned();
+    if !made.is_empty() {
+        crate::port_link::close_orphans(&made);
     }
 }
 
@@ -333,17 +334,19 @@ impl JsClass for MessagePort {
             let remote = d.0.remote.borrow().clone();
             if let Some(link) = remote {
                 // The receiving port is on another thread: serialize here,
-                // deserialize there when it is delivered.
+                // deserialize there when it is delivered. A full inbox throws
+                // before anything in the transfer list is consumed.
+                if !link.has_room() {
+                    return Err(JsError::dom("DataCloneError", "The port's message queue is full"));
+                }
                 let message = crate::structured_clone::encode_message(s, a.get(0), options)?;
                 // Closed or transferred away while the message was cloned, or
                 // posting the entangled port through this one: dropped.
                 if d.0.closed.get() || message.carries_peer_of(&link) {
                     return Ok(s.undefined());
                 }
-                return match link.send(message) {
-                    Ok(Sent::Queued) | Ok(Sent::Dropped) => Ok(s.undefined()),
-                    Err((_message, why)) => Err(JsError::dom("DataCloneError", why)),
-                };
+                link.send(message);
+                return Ok(s.undefined());
             }
             // Clone even when the message will be dropped, as in the spec
             // (errors are reported regardless of entanglement), into the
