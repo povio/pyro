@@ -423,6 +423,21 @@ fn parse_request<'s>(
         "cors" => RequestMode::Cors,
         "same-origin" => RequestMode::SameOrigin,
         "no-cors" => RequestMode::NoCors,
+        // A navigation request a service worker got (`fetch(event.request)`):
+        // it stays one with no init, and becomes same-origin with one.
+        "navigate" if request_input.as_ref().is_some_and(|r| r.mode == "navigate")
+            && string_option(s, init, "mode", "")?.is_empty() =>
+        {
+            if init.is_nullish() {
+                request.destination = match request_input.as_ref().map(|r| r.destination.as_str()) {
+                    Some("iframe") => Destination::Iframe,
+                    _ => Destination::Document,
+                };
+                RequestMode::Navigate
+            } else {
+                RequestMode::SameOrigin
+            }
+        }
         _ => return Err(JsError::Type("Invalid fetch mode".into())),
     };
     request.credentials =

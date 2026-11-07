@@ -18,13 +18,15 @@ implement `new Worker(url)`. A worker runs its script off the page's thread.
   `importScripts`, `setTimeout`/`setInterval` and their clears, `queueMicrotask`,
   `atob`/`btoa`, `structuredClone`, `crypto` with `CryptoKey` (see
   [Web Crypto](CRYPTO.md)), `performance.now()`, `console`,
-  `fetch` with `Headers`/`Response`/`FormData`/`Blob`/`File`, `FileReader`,
+  `fetch` with `Headers`/`Request`/`Response`/`FormData`/`Blob`/`File`, `FileReader`,
   `AbortController`, `URL`/`URLSearchParams`, `TextEncoder`/`TextDecoder`,
   `MessageChannel`, `Event` and its message, error, progress and rejection
   subclasses, `XMLHttpRequest` without `responseXML` (see [XHR](XHR.md)),
   `EventSource` (see [Fetch](FETCH.md)), `WebSocket`/`CloseEvent` (see
   [WebSocket](WEBSOCKET.md)), `indexedDB` with the `IDB*` interfaces, over the
-  owner context's databases (see [IndexedDB](INDEXEDDB.md)),
+  owner context's databases (see [IndexedDB](INDEXEDDB.md)), `caches`
+  (`Cache`, `CacheStorage`) over the owner context's Cache Storage (see
+  [Service workers](SERVICE_WORKER.md)),
   `navigator.storage` (`StorageManager`), and the [streams](STREAMS.md)
   (`ReadableStream`, `WritableStream`, `TransformStream`, the queuing
   strategies, `TextEncoderStream`/`TextDecoderStream`,

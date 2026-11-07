@@ -637,7 +637,6 @@ pub(crate) fn create(
     }
     bindings.set_nested_frame(page.child.is_some());
     bindings.set_opaque_origin(frame.sandbox.opaque);
-    bindings.set_context_services(settings.services);
     bindings.set_max_touch_points(settings.max_touch_points);
     bindings
         .set_user_agent_override(settings.user_agent)
@@ -650,6 +649,9 @@ pub(crate) fn create(
         frame_id: Some(frame.id.0),
         loader_id: Some(loader.0.clone()),
     });
+    // After the frame id: a navigation a service worker handled reserved
+    // the new client's id under it.
+    bindings.set_context_services(settings.services);
     bindings.create_window_target(doc);
     bindings.set_ready_state(doc, "loading");
     *bindings.net.borrow_mut() = settings.net;
