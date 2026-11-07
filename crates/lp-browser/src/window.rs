@@ -620,6 +620,15 @@ pub fn request_native_frame(realm: &Realm) -> JsResult<Rc<Cell<bool>>> {
     Ok(ready)
 }
 
+/// Runs an animation frame of the realm's window soon, for native work done
+/// in it (`requestVideoFrameCallback`).
+pub(crate) fn request_frame(realm: &Realm) {
+    let Ok(scope) = realm.scope() else { return };
+    let Some(window) = scope.global_data::<Window>() else { return };
+    let mut frame = window.animation.borrow_mut();
+    schedule_animation_frame(&scope, window, &mut frame);
+}
+
 fn run_animation_frame(scope: &Scope<'_>) {
     let Some(w) = scope.global_data::<Window>() else { return };
     // A render-blocked document (a pending render-blocking stylesheet or
@@ -650,7 +659,10 @@ fn run_animation_frame(scope: &Scope<'_>) {
         frame.timer = None;
         (frame.callbacks.iter().map(|(h, _, _)| *h).collect(), std::mem::take(&mut frame.native_callbacks))
     };
-    let now = scope.number(w.now_ms());
+    let now_ms = w.now_ms();
+    // HTML video frame callbacks run before the animation frame callbacks.
+    lp_webapi::media::run_video_frame_callbacks(&w.target.page, now_ms);
+    let now = scope.number(now_ms);
     for handle in handles {
         // A callback may cancel a later one of the same frame.
         let cb = {

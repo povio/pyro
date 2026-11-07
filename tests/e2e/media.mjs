@@ -4,7 +4,10 @@
 // duration and video size before the window load event, play() (from
 // page.evaluate, a user gesture) advances currentTime on the page clock
 // until `ended`, garbage fails with MEDIA_ERR_SRC_NOT_SUPPORTED, and a
-// screenshot paints the poster.
+// screenshot paints the poster. Real AV1 and H.264 files (lp-media's
+// fixtures: frame N of ten is rgb(N*25, 255-N*25, 128)) paint their current
+// frame in screenshots, draw on a canvas and run requestVideoFrameCallback;
+// Web Audio renders offline and decodes an MP3.
 //
 // Usage: bun tests/e2e/media.mjs /abs/path/to/lightningpanda
 // Requires `bun install` in bench/ for the pinned playwright-core.
@@ -15,6 +18,7 @@ import net from 'node:net';
 import path from 'node:path';
 import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
+import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -83,7 +87,11 @@ function firstPixel(shot) {
   return [raw[1], raw[2], raw[3]];
 }
 
+const fixture = (name) => readFileSync(path.join(here, '..', '..', 'crates', 'lp-media', 'tests', 'fixtures', name));
 const FILES = {
+  '/frames-h264.mp4': ['video/mp4', fixture('frames-h264.mp4')],
+  '/frames-av1.webm': ['video/webm', fixture('frames-av1.webm')],
+  '/sine.mp3': ['audio/mpeg', fixture('sine.mp3')],
   '/movie.mp4': ['video/mp4', mp4(1.5, 320, 180)],
   '/short.mp4': ['video/mp4', mp4(0.4, 64, 48)],
   '/ding.wav': ['audio/wav', wav(0.25)],
@@ -96,6 +104,12 @@ for (const type of ['loadstart', 'durationchange', 'resize', 'loadedmetadata', '
   document.addEventListener(type, (e) => events.push(e.target.id + ':' + type), true);
 addEventListener('load', () => events.push('window:load:' + document.getElementById('v').readyState));
 </script></head><body><video id="v" poster="/poster.png" src="/movie.mp4"></video><audio id="a" src="/ding.wav"></audio></body></html>`;
+
+// A 64x48 video at the top left and a canvas; `?` names the file.
+const FRAMES_PAGE = (query) => `<!doctype html><html><head><style>body { margin: 0 } video { display: block; width: 64px; height: 48px }</style></head>
+<body><video id="f" muted src="/${query.split('?')[1]}"></video><canvas id="c" width="64" height="48"></canvas></body></html>`;
+// The frame index of an RGB pixel.
+const frameOf = ([r, g]) => Math.round((r / 25 + (255 - g) / 25) / 2);
 
 const port = await freePort();
 const child = spawn(
@@ -121,7 +135,7 @@ for (;;) {
 const server = http.createServer((req, res) => {
   const file = FILES[req.url];
   res.writeHead(200, { 'content-type': file ? file[0] : 'text/html' });
-  res.end(file ? file[1] : PAGE);
+  res.end(file ? file[1] : req.url.startsWith('/frames') ? FRAMES_PAGE(req.url.slice(1)) : PAGE);
 });
 await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
 const origin = `http://127.0.0.1:${server.address().port}`;
@@ -186,7 +200,8 @@ await check('seeking fires seeking/seeked and moves currentTime', async () => {
 
 await check('canPlayType answers like Chrome', async () => {
   const answers = await page.evaluate(() => ['video/mp4', 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"', 'audio/mpeg', 'video/webm; codecs="vp9, opus"', 'audio/ogg; codecs=opus', 'video/ogg; codecs=theora', 'application/octet-stream'].map((t) => document.createElement('video').canPlayType(t)));
-  assert.deepEqual(answers, ['maybe', 'probably', 'probably', 'probably', 'probably', '', '']);
+  // No VP9 decoder: Chrome's answers for the codecs this build decodes.
+  assert.deepEqual(answers, ['maybe', 'probably', 'probably', '', 'probably', '', '']);
 });
 
 await check('garbage fails with MEDIA_ERR_SRC_NOT_SUPPORTED', async () => {
@@ -213,6 +228,53 @@ await check('screenshot paints the poster', async () => {
   const shot = await page.screenshot({ clip: { x: 80, y: 45, width: 1, height: 1 } });
   const [r, g, b] = firstPixel(shot);
   assert.ok(r > 200 && g < 50 && b < 50, `poster pixel ${[r, g, b]}`);
+});
+
+for (const file of ['frames-h264.mp4', 'frames-av1.webm']) {
+  await check(`${file}: screenshots, drawImage and requestVideoFrameCallback show the current frame`, async () => {
+    await page.goto(`${origin}/frames?${file}`);
+    const shot = async () => frameOf(firstPixel(await page.screenshot({ clip: { x: 32, y: 24, width: 1, height: 1 } })));
+    assert.equal(await shot(), 0);
+    const seeked = await page.evaluate(() => new Promise((resolve) => {
+      const v = document.getElementById('f');
+      v.requestVideoFrameCallback((now, meta) => resolve([meta.mediaTime, meta.width, meta.height]));
+      v.currentTime = 0.55;
+    }));
+    assert.deepEqual(seeked, [0.5, 64, 48]);
+    assert.equal(await shot(), 5);
+    const drawn = await page.evaluate(() => {
+      const c = document.getElementById('c').getContext('2d');
+      c.drawImage(document.getElementById('f'), 0, 0);
+      return [...c.getImageData(32, 24, 1, 1).data];
+    });
+    assert.equal(frameOf(drawn), 5);
+    // Playback presents later frames to the frame callbacks.
+    const times = await page.evaluate(() => new Promise((resolve) => {
+      const v = document.getElementById('f');
+      const seen = [];
+      const each = (now, meta) => { seen.push(meta.mediaTime); if (seen.length < 3) v.requestVideoFrameCallback(each); else resolve(seen); };
+      v.requestVideoFrameCallback(each);
+      v.play();
+    }));
+    assert.ok(times[0] < times[1] && times[1] < times[2], JSON.stringify(times));
+  });
+}
+
+await check('Web Audio renders offline and decodes an MP3', async () => {
+  const out = await page.evaluate(async () => {
+    const ctx = new OfflineAudioContext(1, 4410, 44100);
+    const osc = new OscillatorNode(ctx, { frequency: 441 });
+    const gain = new GainNode(ctx, { gain: 0.5 });
+    osc.connect(gain).connect(ctx.destination);
+    osc.start();
+    const rendered = await ctx.startRendering();
+    const d = rendered.getChannelData(0);
+    let up = 0;
+    for (let i = 1; i < d.length; i++) if (d[i - 1] <= 0 && d[i] > 0) up++;
+    const mp3 = await new AudioContext().decodeAudioData(await (await fetch('/sine.mp3')).arrayBuffer());
+    return [ctx.state, up >= 44 && up <= 45, Math.round(Math.max(...d) * 100) / 100, mp3.sampleRate, mp3.numberOfChannels, Math.round(mp3.duration * 10) / 10];
+  });
+  assert.deepEqual(out, ['closed', true, 0.5, 48000, 1, 0.5]);
 });
 
 await check('close', async () => {

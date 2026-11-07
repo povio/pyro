@@ -32,6 +32,9 @@ kurbo = "0.13.1"
 lp-canvas = { workspace = true }
 lp-dom = { workspace = true }
 lp-js = { workspace = true }
+# Audio (decodeAudioData) and video frame decoding; codecs are cargo
+# features of lp-media (on in the lightningpanda binary).
+lp-media = { workspace = true }
 lp-net = { workspace = true }
 lp-runtime = { workspace = true }
 markup5ever = "0.40"
@@ -61,6 +64,8 @@ name = "payload_cycles"
 path = "tests/payload_cycles.rs"
 
 [dev-dependencies]
+# Every codec in this crate's tests.
+lp-media = { workspace = true, features = ["av1", "h264"] }
 # Geometry for the layout tests (Blitz).
 lp-layout = { workspace = true }
 lp-render = { workspace = true }

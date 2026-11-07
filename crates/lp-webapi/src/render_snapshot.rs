@@ -3,7 +3,8 @@
 //! sheet text, the emulated viewport and the window scroll position. Plain
 //! data, so another thread can render it.
 //!
-//! Canvas bitmaps travel beside the document ([`RenderSnapshot::canvases`]).
+//! Canvas bitmaps and `<video>` frames travel beside the document
+//! ([`RenderSnapshot::canvases`]).
 //! Not captured: video pixels, iframe contents (empty boxes),
 //! `:active` state (the hovered
 //! and focused elements are carried as render keys for the renderer to
@@ -85,7 +86,8 @@ impl PageDom {
     }
 
     fn snapshot_as(&self, base_url: &str, mark: Option<(NodeId, &str)>, form: Form) -> RenderSnapshot {
-        let canvases = self.canvas_bitmaps();
+        let mut canvases = self.canvas_bitmaps();
+        canvases.extend(self.video_bitmaps());
         let dom = self.dom.borrow();
         let layout = self.layout();
         RenderSnapshot { canvases, ..snapshot_of(&dom, &layout, self.document(), base_url, mark, form) }

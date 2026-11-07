@@ -2539,6 +2539,7 @@ simple_class!(HtmlVideoElement, "HTMLVideoElement", HtmlMediaElement, |def| {
     reflect_bool!(def, "playsInline", "playsinline");
     def.getter("videoWidth", |s, n| Ok(s.number(f64::from(crate::media::video_size(n).0))));
     def.getter("videoHeight", |s, n| Ok(s.number(f64::from(crate::media::video_size(n).1))));
+    crate::media::define_video(def);
 });
 simple_class!(HtmlAudioElement, "HTMLAudioElement", HtmlMediaElement, |def| {
     // [LegacyFactoryFunction=Audio(optional DOMString src)]

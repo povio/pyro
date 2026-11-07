@@ -76,7 +76,9 @@ accessor with the usual data property.
 - `drawImage` (3, 5 and 9 arguments) and `createPattern` from: a loaded
   `<img>` (decoded on first use: PNG, JPEG, GIF first frame, WebP), a
   `<canvas>` (its bitmap now, itself included), an `ImageBitmap`, an
-  `OffscreenCanvas`. An `<img>` still loading draws nothing and a broken one
+  `OffscreenCanvas`, a `<video>` (the frame shown now, decoded by lp-media
+  for AV1 and H.264; nothing before `HAVE_CURRENT_DATA` or for other codecs;
+  cross-origin video without CORS taints). An `<img>` still loading draws nothing and a broken one
   throws `InvalidStateError`; a zero-sized canvas throws; a closed
   `ImageBitmap` throws.
 - `createImageData`, `getImageData` (negative sizes, outside areas read
@@ -149,8 +151,9 @@ canvases pay a flag test per image load.
 
 - An `<img>` that finished loading before the document had a `<canvas>` or
   used a canvas API, and images past the 64 MiB budget, draw nothing.
-- SVG images and video frames draw nothing (`createPattern` returns null
-  for them); `<img crossorigin>` CORS loads are not made, so every
+- SVG images, and video frames of codecs without a decoder (VP8, VP9,
+  HEVC), draw nothing (`createPattern` returns null for them);
+  `<img crossorigin>` CORS loads are not made, so every
   cross-origin image taints.
 - `filter` is kept but not applied; `imageSmoothingQuality` does not change
   the (bilinear) filter; `fontKerning`, `fontStretch`, `fontVariantCaps`,

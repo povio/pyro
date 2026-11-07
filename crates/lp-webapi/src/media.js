@@ -1,6 +1,6 @@
-// TimeRanges, MediaError and TextTrackList for one realm, made on first use
-// (media.rs). TimeRanges hold what media.rs computed; no text track is ever
-// added.
+// TimeRanges, MediaError, TextTrackList and VideoPlaybackQuality for one
+// realm, made on first use (media.rs). TimeRanges hold what media.rs
+// computed; no text track is ever added.
 (function () {
   'use strict';
   const secret = Symbol('lightningpanda');
@@ -108,8 +108,28 @@
   }
   webidl(TextTrackList, 'TextTrackList');
 
+  // HTMLVideoElement.getVideoPlaybackQuality(): nothing is ever dropped.
+  const qualities = new WeakMap();
+  function qualityOf(self) {
+    const q = qualities.get(self);
+    if (!q) throw new TypeErrorC('Illegal invocation');
+    return q;
+  }
+  class VideoPlaybackQuality {
+    constructor(token, creationTime, total) {
+      if (token !== secret) throw illegal();
+      qualities.set(this, { creationTime, total });
+    }
+    get creationTime() { return qualityOf(this).creationTime; }
+    get droppedVideoFrames() { qualityOf(this); return 0; }
+    get totalVideoFrames() { return qualityOf(this).total; }
+    get corruptedVideoFrames() { qualityOf(this); return 0; }
+  }
+  webidl(VideoPlaybackQuality, 'VideoPlaybackQuality');
+
   return {
-    TimeRanges, MediaError, TextTrackList,
+    TimeRanges, MediaError, TextTrackList, VideoPlaybackQuality,
+    playbackQuality(creationTime, total) { return new VideoPlaybackQuality(secret, creationTime, total); },
     timeRanges(flat) {
       const list = [];
       for (let i = 0; i + 1 < flat.length; i += 2) list.push([flat[i], flat[i + 1]]);

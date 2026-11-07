@@ -377,6 +377,9 @@ pub struct MediaResponse {
     pub body: Vec<u8>,
     /// `Some`: `body` is a prefix of the response body.
     pub partial: Option<Partial>,
+    /// The response may be read back by script (same origin, or CORS):
+    /// `drawImage` of the video keeps a canvas origin-clean.
+    pub clean: bool,
 }
 
 /// A media fetch in flight: dropping it cancels the request.
@@ -515,6 +518,10 @@ pub trait PageHooks {
     /// The document's media elements stopped delaying its load event
     /// (`PageDom::media_delays_load` turned false): check it again.
     fn media_load_delay_released(&self) {}
+    /// Runs an animation frame of the document soon (its
+    /// `requestVideoFrameCallback` callbacks run with it,
+    /// [`crate::media::run_video_frame_callbacks`]).
+    fn request_animation_frame(&self) {}
     /// Starts a navigation of the frame showing the document.
     fn navigate(&self, request: NavigationRequest);
     /// The document's `window.open` result asked something of its popup,

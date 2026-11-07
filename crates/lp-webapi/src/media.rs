@@ -1,10 +1,15 @@
-//! `HTMLMediaElement` as a browser that reads media containers but decodes
-//! nothing runs it. The resource is fetched through the embedder (a Media
-//! request, so CDP and request interception see it) and its container
-//! headers are read (`media_format`): duration, video size and tracks. A
-//! playable resource then walks the ready states with their events
-//! (`durationchange`, `resize`, `loadedmetadata`, `loadeddata`, `canplay`,
-//! `canplaythrough`); one that is not fails with MEDIA_ERR_SRC_NOT_SUPPORTED.
+//! `HTMLMediaElement` as a browser without an audio device runs it. The
+//! resource is fetched through the embedder (a Media request, so CDP and
+//! request interception see it) and its container headers are read
+//! (`media_format`): duration, video size and tracks. A playable resource
+//! then walks the ready states with their events (`durationchange`,
+//! `resize`, `loadedmetadata`, `loadeddata`, `canplay`, `canplaythrough`);
+//! one that is not fails with MEDIA_ERR_SRC_NOT_SUPPORTED.
+//!
+//! A `<video>` keeps its resource's bytes when this build decodes video
+//! (lp-media): the frame at the playback position is decoded when a
+//! screenshot, `drawImage`, `createImageBitmap` or a
+//! `requestVideoFrameCallback` step needs it ([`current_frame`]).
 //!
 //! Playback runs a clock on the document's time (`performance.now()`, so
 //! virtual time moves it too): `currentTime` advances at `playbackRate`
@@ -30,7 +35,7 @@ use std::time::Duration;
 use bytes::Bytes;
 use lp_dom::media_element::{MediaChange, MediaEvent};
 use lp_dom::NodeId;
-use lp_js::{ClassDef, Deferred, JsClass, JsError, JsResult, Scope, Value, WeakRealm};
+use lp_js::{ClassDef, Deferred, JsClass, JsError, JsResult, Persistent, Scope, Value, WeakRealm};
 use rustc_hash::FxHashMap;
 
 use crate::html::HtmlMediaElement;
@@ -54,7 +59,7 @@ where
     W: JsClass,
     W::Data: WindowHost,
 {
-    lazy_globals!(def, MODULE, "TimeRanges", "MediaError", "TextTrackList");
+    lazy_globals!(def, MODULE, "TimeRanges", "MediaError", "TextTrackList", "VideoPlaybackQuality");
 }
 
 const NETWORK_EMPTY: u8 = 0;
@@ -137,6 +142,37 @@ struct MediaState {
     pinned: bool,
     /// Played ranges, merged and sorted.
     played: Vec<(f64, f64)>,
+    /// HTML "show poster flag": a `<video>` with a poster paints it until
+    /// playback or a seek.
+    show_poster: bool,
+    /// A `<video>`'s frames, while its resource has a video track.
+    frames: Option<Box<VideoFrames>>,
+    /// `requestVideoFrameCallback` callbacks: handle, realm, callback.
+    frame_callbacks: Vec<(u32, WeakRealm, Persistent)>,
+    next_frame_callback: u32,
+    /// The frame (its index, or the position for a video without a
+    /// decoder) last presented to frame callbacks, and how many were.
+    presented: Option<f64>,
+    presented_frames: u32,
+}
+
+/// A `<video>`'s resource, kept to decode frames from: the bytes until the
+/// player (made on the first frame asked for) takes them.
+struct VideoFrames {
+    bytes: Option<Bytes>,
+    player: Option<lp_media::video::Player>,
+    /// The response may be read back (`drawImage` keeps a canvas clean).
+    clean: bool,
+}
+
+impl VideoFrames {
+    fn player(&mut self) -> Option<&mut lp_media::video::Player> {
+        if self.player.is_none() {
+            // No decoder for the codec, or no samples: the bytes go.
+            self.player = lp_media::video::Player::open(self.bytes.take()?);
+        }
+        self.player.as_mut()
+    }
 }
 
 impl Default for MediaState {
@@ -174,6 +210,12 @@ impl Default for MediaState {
             delaying_load: false,
             pinned: false,
             played: Vec::new(),
+            show_poster: true,
+            frames: None,
+            frame_callbacks: Vec::new(),
+            next_frame_callback: 1,
+            presented: None,
+            presented_frames: 0,
         }
     }
 }
@@ -556,6 +598,7 @@ fn sync_clock(page: &Rc<PageDom>, node: NodeId) {
     if let (Some(id), Some(hooks)) = (old, &hooks) {
         hooks.clear_media_timer(id);
     }
+    want_frame(page, node);
     let Some((delay, serial)) = plan else { return };
     let weak = Rc::downgrade(page);
     let task: Box<dyn FnOnce()> = Box::new(move || {
@@ -646,6 +689,7 @@ fn seek(page: &Rc<PageDom>, node: NodeId, to: f64) {
         let max = if st.duration.is_finite() { st.duration } else { f64::MAX };
         st.position = to.clamp(0.0, max.max(0.0));
         st.seeking = true;
+        st.show_poster = false;
         st.seek_serial = st.seek_serial.wrapping_add(1);
         (st.seek_serial, st.generation)
     });
@@ -727,6 +771,9 @@ fn load(page: &Rc<PageDom>, node: NodeId) {
         st.current_src.clear();
         st.can_autoplay = true;
         st.pointer = None;
+        st.show_poster = true;
+        st.frames = None;
+        st.presented = None;
     });
     update_pin(page, node);
     resource_selection(page, node);
@@ -882,14 +929,21 @@ fn start_fetch(
     };
     match resource {
         Resource::Bytes(body) => {
-            let response = MediaResponse { status: 200, mime: String::new(), body: body.to_vec(), partial: None };
+            let response =
+                MediaResponse { status: 200, mime: String::new(), body: body.to_vec(), partial: None, clean: true };
             page.post_task(Box::new(move || done(Ok(response))));
         }
         Resource::Unreadable => page.post_task(Box::new(move || done(Err("unreadable srcObject".into())))),
         Resource::Url(url) if url.starts_with("blob:") => {
             let result = page
                 .blob_url(&url)
-                .map(|(bytes, mime)| MediaResponse { status: 200, mime, body: bytes.to_vec(), partial: None })
+                .map(|(bytes, mime)| MediaResponse {
+                    status: 200,
+                    mime,
+                    body: bytes.to_vec(),
+                    partial: None,
+                    clean: true,
+                })
                 .ok_or_else(|| "revoked or unknown blob URL".to_owned());
             page.post_task(Box::new(move || done(result)));
         }
@@ -929,12 +983,19 @@ fn fetched(
         st.fetch = None;
     });
     update_pin(page, node);
+    let mut body = None;
     let probed = match result {
         // A server that ignored the `Range` answers 200 from the start.
         Ok(r) if seek.start > 0 && r.status != 206 => Err(FORMAT_ERROR),
         Ok(r) if (200..300).contains(&r.status) && !r.body.is_empty() => {
             match media_format::probe_part(&r.body, r.partial.map(|p| p.total), seek.start) {
-                PartProbe::Done(probe) => probe.map_err(|e| e.message()),
+                PartProbe::Done(probe) => {
+                    // From the start of the resource: what frames decode from.
+                    if seek.start == 0 {
+                        body = Some((r.body, r.clean));
+                    }
+                    probe.map_err(|e| e.message())
+                }
                 // An MP4 with its `moov` after the media data.
                 PartProbe::Seek(offset) if seek.count < media_format::MAX_SEEKS => {
                     let url = peek(page, node, |st| st.current_src.clone());
@@ -948,7 +1009,17 @@ fn fetched(
         _ => Err(FORMAT_ERROR),
     };
     match probed {
-        Ok(info) => media_ready(page, node, generation, info),
+        Ok(info) => {
+            // A video track a decoder of this build may read: its bytes
+            // stay for the frames (decoded on first use).
+            let decoders = lp_media::video::AV1 || lp_media::video::H264;
+            if let Some((bytes, clean)) = body.filter(|_| decoders && info.video.is_some() && is_video(page, node)) {
+                with(page, node, |st| {
+                    st.frames = Some(Box::new(VideoFrames { bytes: Some(Bytes::from(bytes)), player: None, clean }))
+                });
+            }
+            media_ready(page, node, generation, info)
+        }
         Err(message) => match source {
             // Children mode: this candidate failed; try the next one.
             Some(source) => {
@@ -994,6 +1065,7 @@ fn media_ready(page: &Rc<PageDom>, node: NodeId, generation: u32, info: MediaInf
     queue(page, node, generation, move |page| {
         with(page, node, |st| st.ready = HAVE_CURRENT_DATA);
         set_delaying(page, node, false);
+        want_frame(page, node);
         fire(page, node, generation, "loadeddata");
     });
     queue(page, node, generation, move |page| {
@@ -1019,7 +1091,10 @@ fn media_ready(page: &Rc<PageDom>, node: NodeId, generation: u32, info: MediaInf
         let autoplay =
             peek(page, node, |st| st.can_autoplay && st.paused) && attr(page, node, "autoplay") && may_play(page, node);
         if autoplay {
-            with(page, node, |st| st.paused = false);
+            with(page, node, |st| {
+                st.paused = false;
+                st.show_poster = false;
+            });
             update_pin(page, node);
             sync_clock(page, node);
             if fire(page, node, generation, "play") {
@@ -1081,6 +1156,150 @@ fn finite(v: Value<'_>, what: &str) -> JsResult<f64> {
 
 fn page_rc(n: &NodeData) -> Rc<PageDom> {
     n.page().clone()
+}
+
+/// The frame a `<video>` shows now, decoded (lp-media), and whether its
+/// pixels may be read back: `None` before `HAVE_CURRENT_DATA`, or without a
+/// decoder for its video. `drawImage`, `createImageBitmap` and screenshots
+/// use it.
+pub(crate) fn current_frame(page: &PageDom, node: NodeId) -> Option<(lp_media::video::Frame, bool)> {
+    let t = now(page);
+    let mut elements = page.media.elements.borrow_mut();
+    let st = elements.get_mut(&node)?;
+    if st.ready < HAVE_CURRENT_DATA {
+        return None;
+    }
+    let position = st.position_at(t);
+    let frames = st.frames.as_mut()?;
+    let clean = frames.clean;
+    frames.player()?.frame_at(position).map(|f| (f, clean))
+}
+
+impl PageDom {
+    /// The current frames of this document's `<video>` elements, for a
+    /// render snapshot (painted as their content): those that show a frame
+    /// (not their poster) and have one decoded. Unchanged frames keep their
+    /// `Arc`. Documents that never loaded a video pay one map scan.
+    pub fn video_bitmaps(&self) -> Vec<crate::canvas::CanvasBitmap> {
+        let candidates: Vec<(NodeId, bool)> = {
+            let elements = self.media.elements.borrow();
+            if elements.is_empty() {
+                return Vec::new();
+            }
+            elements
+                .iter()
+                .filter(|(_, st)| st.frames.is_some() && st.ready >= HAVE_CURRENT_DATA)
+                .map(|(&node, st)| (node, st.show_poster))
+                .collect()
+        };
+        let mut out = Vec::new();
+        for (node, show_poster) in candidates {
+            let poster = {
+                let dom = self.dom.borrow();
+                if !dom.is_connected(node).unwrap_or(false) {
+                    continue;
+                }
+                dom.get_attribute(node, "poster").ok().flatten().is_some_and(|p| !p.trim().is_empty())
+            };
+            // HTML: the poster frame while the show poster flag is set.
+            if show_poster && poster {
+                continue;
+            }
+            if let Some((frame, _)) = current_frame(self, node) {
+                out.push((node, frame.width, frame.height, frame.rgba));
+            }
+        }
+        out
+    }
+}
+
+// ---- requestVideoFrameCallback ------------------------------------------------
+
+/// Asks the embedder for an animation frame when `node` has frame
+/// callbacks waiting and may present a new frame.
+fn want_frame(page: &PageDom, node: NodeId) {
+    if peek(page, node, |st| !st.frame_callbacks.is_empty()) {
+        if let Some(hooks) = page.hooks() {
+            hooks.request_animation_frame();
+        }
+    }
+}
+
+/// What a video presents now: a key that changes with the frame (its index,
+/// or the position for a video without a decoder), the frame's media time
+/// and the frame size.
+fn presented_frame(page: &PageDom, node: NodeId, t: f64) -> Option<(f64, f64, (u32, u32))> {
+    let mut elements = page.media.elements.borrow_mut();
+    let st = elements.get_mut(&node)?;
+    if st.ready < HAVE_CURRENT_DATA {
+        return None;
+    }
+    let position = st.position_at(t);
+    let size = st.video;
+    match st.frames.as_mut().and_then(|f| f.player()) {
+        Some(player) => {
+            let index = player.index_at(position);
+            Some((index as f64, player.frame_time(index), size))
+        }
+        None => Some((position, position, size)),
+    }
+}
+
+/// The `requestVideoFrameCallback` step of an animation frame (before the
+/// `requestAnimationFrame` callbacks): each video that presents a frame it
+/// did not present to its callbacks yet runs them with the frame's
+/// metadata. Another frame is asked for while a video with callbacks plays.
+pub fn run_video_frame_callbacks(page: &Rc<PageDom>, now_ms: f64) {
+    let waiting: Vec<NodeId> = {
+        let elements = page.media.elements.borrow();
+        if elements.is_empty() {
+            return;
+        }
+        elements.iter().filter(|(_, st)| !st.frame_callbacks.is_empty()).map(|(&n, _)| n).collect()
+    };
+    if waiting.is_empty() {
+        return;
+    }
+    let t = now(page);
+    let mut again = false;
+    for node in waiting {
+        let Some((key, media_time, (w, h))) = presented_frame(page, node, t) else { continue };
+        let due = with(page, node, |st| {
+            if st.presented == Some(key) {
+                again |= st.potentially_playing();
+                return None;
+            }
+            st.presented = Some(key);
+            st.presented_frames += 1;
+            Some((std::mem::take(&mut st.frame_callbacks), st.presented_frames))
+        });
+        let Some((callbacks, presented)) = due else { continue };
+        for (_, realm, callback) in callbacks {
+            let Some(realm) = realm.upgrade() else { continue };
+            let Ok(s) = realm.scope() else { continue };
+            let call = || -> JsResult<()> {
+                let meta = s.object();
+                meta.set_atom("presentationTime", s.number(now_ms))?;
+                meta.set_atom("expectedDisplayTime", s.number(now_ms + 1000.0 / 60.0))?;
+                meta.set_atom("width", s.number(f64::from(w)))?;
+                meta.set_atom("height", s.number(f64::from(h)))?;
+                meta.set_atom("mediaTime", s.number(media_time))?;
+                meta.set_atom("presentedFrames", s.number(f64::from(presented)))?;
+                let Some(f) = callback.get(&s).as_object() else { return Ok(()) };
+                f.call(None, &[s.number(now_ms), meta.value()])?;
+                Ok(())
+            };
+            if let Err(e) = call() {
+                s.report_exception(&e);
+            }
+        }
+        again |= peek(page, node, |st| !st.frame_callbacks.is_empty() && st.potentially_playing());
+    }
+    if again {
+        if let Some(hooks) = page.hooks() {
+            hooks.request_animation_frame();
+        }
+    }
 }
 
 /// `videoWidth`/`videoHeight`: the video track's size once its metadata is known.
@@ -1366,6 +1585,7 @@ pub(crate) fn define(def: &mut ClassDef<HtmlMediaElement>) {
             let was_paused = st.paused;
             st.paused = false;
             st.can_autoplay = false;
+            st.show_poster = false;
             (was_paused, st.ready)
         });
         if let Some((resource, source)) = suspended {
@@ -1400,6 +1620,42 @@ pub(crate) fn define(def: &mut ClassDef<HtmlMediaElement>) {
         a.require(1, "HTMLMediaElement.canPlayType")?;
         let ty = dom_string(a.get(0))?;
         Ok(s.string(media_format::can_play_type(&ty).as_str()))
+    });
+}
+
+/// The HTMLVideoElement members of frames (`html.rs` keeps the others).
+pub(crate) fn define_video(def: &mut ClassDef<crate::html::HtmlVideoElement>) {
+    def.method("requestVideoFrameCallback", 1, |s, n, a| {
+        a.require(1, "HTMLVideoElement.requestVideoFrameCallback")?;
+        let callback = a.get(0);
+        if !callback.is_function() {
+            return Err(JsError::Type(
+                "Failed to execute 'requestVideoFrameCallback' on 'HTMLVideoElement': The callback provided as parameter 1 is not a function."
+                    .into(),
+            ));
+        }
+        let page = page_rc(n);
+        let persistent = Persistent::new(s, callback);
+        let handle = with(&page, n.id, |st| {
+            let handle = st.next_frame_callback;
+            st.next_frame_callback = st.next_frame_callback.wrapping_add(1).max(1);
+            st.frame_callbacks.push((handle, s.realm().downgrade(), persistent));
+            handle
+        });
+        want_frame(&page, n.id);
+        Ok(s.number(f64::from(handle)))
+    });
+    def.method("cancelVideoFrameCallback", 1, |s, n, a| {
+        a.require(1, "HTMLVideoElement.cancelVideoFrameCallback")?;
+        let handle = a.get(0).to_number()?;
+        if peek(n.page(), n.id, |st| !st.frame_callbacks.is_empty()) {
+            with(n.page(), n.id, |st| st.frame_callbacks.retain(|(h, _, _)| f64::from(*h) != handle));
+        }
+        Ok(s.undefined())
+    });
+    def.method("getVideoPlaybackQuality", 0, |s, n, _a| {
+        let total = peek(n.page(), n.id, |st| st.presented_frames);
+        MODULE.helper(s, n.page(), "playbackQuality", &[s.number(now(n.page())), s.number(f64::from(total))])
     });
 }
 

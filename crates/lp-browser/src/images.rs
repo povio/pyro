@@ -289,7 +289,7 @@ impl Browser {
     /// HTML "origin-clean" for an image response at `url` (no CORS mode:
     /// images load without `crossorigin`): same-origin with the document,
     /// or a `data:`/`blob:` URL.
-    fn image_origin_clean(&self, page: FrameKey, url: &str) -> bool {
+    pub(crate) fn image_origin_clean(&self, page: FrameKey, url: &str) -> bool {
         if url.starts_with("data:") || url.starts_with("blob:") {
             return true;
         }
