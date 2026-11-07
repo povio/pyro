@@ -110,7 +110,9 @@ retaining origin and filesystem-root checks for external resources.
 
 ## Not captured
 
-- Canvas, video and WebGL pixels.
+- Video and WebGL pixels. (2D canvases are captured: their bitmaps travel
+  with the snapshot and paint as the canvas element's content; see
+  [CANVAS.md](../webapi/CANVAS.md).)
 - Iframe contents (frames render as empty boxes).
 - `:active` state, the caret, the selection. (`:hover` and `:focus` follow the page's pointer and focus.)
 - Running CSS animations and transitions (rendered at their computed values).

@@ -15,7 +15,7 @@ parley = { version = "0.12", default-features = false, features = ["system", "by
 peniko = "0.6.0"
 png = "0.18"
 skrifa = "0.44"
-vello_cpu = "0.3.0"
+vello_cpu = { version = "0.3.0", default-features = false, features = ["std", "text", "u8_pipeline"] }
 
 [lints]
 workspace = true

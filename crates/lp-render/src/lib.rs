@@ -1,6 +1,7 @@
 //! lp-render: renders a page [`Snapshot`] to pixels with Blitz (html5ever,
 //! Stylo, Taffy, Parley; painted by Vello) and compares the result against a
-//! baseline. No JS engine and no lightningpanda crate: the browser thread
+//! baseline. No JS engine and no lightningpanda crate but lp-canvas (the
+//! process's fonts, shared with canvas text): the browser thread
 //! builds the snapshot (`lp_webapi::PageDom::render_snapshot`), this crate
 //! renders it on a [`worker::RenderWorker`] thread.
 //!
