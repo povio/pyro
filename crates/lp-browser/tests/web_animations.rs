@@ -248,19 +248,22 @@ fn transitions_start_after_a_layout_read_or_a_frame_without_get_computed_style()
 fn a_descendant_restyled_through_its_ancestor_transitions_without_being_read() {
     // The elements whose style changed come from the style traversal, not
     // from reading them: a class on the ancestor changes the box's width
-    // through `.open .box`, and the next flush starts its transition. A
+    // through `.open .box`, and the next flush starts its transition; so does
+    // a logical property (`inline-size`, mapped to `width` to be animated). A
     // width that was never a length (`auto`) transitions nothing.
     let (mut t, root) = page();
     eval(
         &root,
         "const style = document.head.appendChild(document.createElement('style'));
-         style.textContent = '.box { width: 100px; transition: width 2ms } .open .box { width: 200px } .open .sized { width: 50px; transition: width 2ms }';
+         style.textContent = '.box { width: 100px; transition: width 2ms } .open .box { width: 200px } .open .sized { width: 50px; transition: width 2ms } .logical { inline-size: 100px; transition: inline-size 2ms } .open .logical { inline-size: 200px }';
          globalThis.log = [];
          globalThis.wrap = document.body.appendChild(document.createElement('div'));
          globalThis.box = wrap.appendChild(document.createElement('div'));
          box.className = 'box';
          globalThis.sized = wrap.appendChild(document.createElement('div'));
          sized.className = 'sized';
+         globalThis.logical = wrap.appendChild(document.createElement('div'));
+         logical.className = 'logical';
          addEventListener('transitionend', e => log.push(e.target.className + ':' + e.propertyName));
          setTimeout(() => {
            // A flush that reads nothing of the boxes: their first styles.
@@ -269,9 +272,9 @@ fn a_descendant_restyled_through_its_ancestor_transitions_without_being_read() {
            document.body.offsetHeight;
          }, 0); 0",
     );
-    run_until(&mut t, &root, "log.length > 0");
+    run_until(&mut t, &root, "log.length > 1");
     t.run_until_idle(Some(Instant::now() + Duration::from_millis(30)));
-    assert_eq!(eval(&root, "log.join()"), "box:width");
+    assert_eq!(eval(&root, "log.sort().join()"), "box:width,logical:inline-size");
 }
 
 #[test]
