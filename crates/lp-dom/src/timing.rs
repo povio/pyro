@@ -100,13 +100,6 @@ impl TimingRules {
         self.candidates(dom, doc, Longhand::AnimationName, "animation")
     }
 
-    /// The elements of `doc` that may transition: those a rule declaring a
-    /// transition duration matches (no other has a positive one), and those
-    /// whose `style` attribute declares a transition.
-    pub fn transition_candidates(&self, dom: &Dom, doc: NodeId) -> Vec<NodeId> {
-        self.candidates(dom, doc, Longhand::TransitionDuration, "transition")
-    }
-
     fn candidates(&self, dom: &Dom, doc: NodeId, longhand: Longhand, inline_word: &str) -> Vec<NodeId> {
         let mut seen = FxHashSet::default();
         let mut out = Vec::new();
@@ -241,10 +234,18 @@ pub type StyleSnapshot = style::servo_arc::Arc<style::properties::ComputedValues
 /// computed value differs between `before` and `after`: the ones a
 /// transition of `property` starts for.
 pub fn changed_longhands(before: &StyleSnapshot, after: &StyleSnapshot, property: &str) -> Vec<&'static str> {
+    use style::properties::animated_properties::AnimationValue;
     use style::properties::{PropertyDeclarationId, ShorthandId};
+    use style::values::animated::{Animate, Procedure};
+    // Different, and interpolable (CSS Transitions §3: `width: auto` to a
+    // length, or a discrete property without `allow-discrete`, starts none).
     let differs = |longhand: style::properties::LonghandId| {
         let id = PropertyDeclarationId::Longhand(longhand);
         before.computed_value_to_string(id) != after.computed_value_to_string(id)
+            && match (AnimationValue::from_computed_values(id, before), AnimationValue::from_computed_values(id, after)) {
+                (Some(a), Some(b)) => a.animate(&b, Procedure::Interpolate { progress: 0.5 }).is_ok(),
+                _ => false,
+            }
     };
     let shorthand = if property == "all" {
         Some(ShorthandId::All)

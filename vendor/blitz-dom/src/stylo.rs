@@ -184,9 +184,11 @@ impl crate::document::BaseDocument {
         let token = RecalcStyle::pre_traverse(root, &context);
 
         let mut nodes_needing_style_image_flush = Vec::new();
+        let mut style_changes = Vec::new();
         if token.should_traverse() {
             // Style the elements, resolving their data
             let mut traverser = RecalcStyle::new(context);
+            traverser.track_style_changes = self.track_style_changes;
             // `Sequential` bypasses Stylo's global pool. See `StyleThreading`.
             let parallel = matches!(self.style_threading, StyleThreading::Parallel);
             let _traversal_lock = parallel.then(|| {
@@ -201,6 +203,7 @@ impl crate::document::BaseDocument {
                 std::mem::take(traverser.nodes_needing_style_image_flush.get_mut().unwrap());
             self.sticky_nodes
                 .extend(std::mem::take(traverser.sticky_nodes.get_mut().unwrap()));
+            style_changes = std::mem::take(traverser.style_changes.get_mut().unwrap());
             // Sticky: set once an element is styled with a generated
             // `::before` / `::after`, never cleared.
             if traverser.generated_before_after.into_inner() {
@@ -216,6 +219,9 @@ impl crate::document::BaseDocument {
         }
         self.pending_style_image_nodes
             .extend(nodes_needing_style_image_flush);
+        if !style_changes.is_empty() {
+            crate::document::note_style_changes(&mut self.style_changes, &mut self.style_change_index, style_changes);
+        }
 
         for opaque in self.snapshots.keys() {
             let id = NodeId::from_u64(opaque.id() as u64);
@@ -1627,6 +1633,10 @@ pub struct RecalcStyle<'a> {
     /// lightningpanda: elements styled `position: sticky` in this traversal
     /// (`BaseDocument::sticky_nodes`).
     sticky_nodes: Mutex<Vec<NodeId>>,
+    /// lightningpanda: the elements whose primary style this traversal replaced, with the old
+    /// and new style, when `track_style_changes` (`BaseDocument::style_changes`).
+    style_changes: Mutex<Vec<crate::StyleChange>>,
+    track_style_changes: bool,
 }
 
 impl<'a> RecalcStyle<'a> {
@@ -1636,6 +1646,8 @@ impl<'a> RecalcStyle<'a> {
             nodes_needing_style_image_flush: Mutex::new(Vec::new()),
             generated_before_after: std::sync::atomic::AtomicBool::new(false),
             sticky_nodes: Mutex::new(Vec::new()),
+            style_changes: Mutex::new(Vec::new()),
+            track_style_changes: false,
         }
     }
 }
@@ -1823,6 +1835,17 @@ impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
                 (None, None) => false,
                 _ => true,
             };
+            // lightningpanda: the embedder's transitions want the style before and after a
+            // replacement; a first style, or styles dropped, is no change.
+            if self.track_style_changes && replaced {
+                if let (Some(old), Some(new)) = (&old_primary, new_primary) {
+                    self.style_changes.lock().unwrap().push(crate::StyleChange {
+                        node: el.id,
+                        before: old.clone(),
+                        after: new.clone(),
+                    });
+                }
+            }
             // Stylo diffs the old and new style into `data.damage` (nothing when there was no old
             // style, so a first style is always derived). A replacement without layout damage
             // (colour, background, :hover, a class that changes only paint) leaves the derived
@@ -2497,6 +2520,83 @@ mod relative_selector_invalidation_tests {
 /// lightningpanda: Stylo skips the eager `::before`/`::after` match and cascade when no rule
 /// that can generate a box matches (`Stylist::may_generate_box_for_pseudo`). What generates,
 /// and the styles Stylo keeps, must not change.
+#[cfg(test)]
+mod style_change_tests {
+    use super::*;
+    use crate::{Attribute, BaseDocument, DocumentConfig, qual_name};
+    use blitz_traits::shell::{ColorScheme, Viewport};
+
+    /// `<html><head><style>{css}</style></head><body><div class=a>`, resolved.
+    fn make_doc(css: &str, tag: &str) -> (BaseDocument, NodeId) {
+        let mut doc = BaseDocument::new(DocumentConfig {
+            viewport: Some(Viewport::new(400, 300, 1.0, ColorScheme::Light)),
+            ..Default::default()
+        });
+        let root_id = doc.root_node().id;
+        let mut m = doc.mutate();
+        let html = m.create_element(qual_name!("html"), vec![]);
+        let head = m.create_element(qual_name!("head"), vec![]);
+        let style = m.create_element(qual_name!("style"), vec![]);
+        let text = m.create_text_node(&format!("/* {tag} */ {css}"));
+        m.append_children(style, &[text]);
+        m.append_children(head, &[style]);
+        let body = m.create_element(qual_name!("body"), vec![]);
+        let div = m.create_element(qual_name!("div"), vec![Attribute { name: qual_name!("class"), value: "a".into() }]);
+        m.append_children(body, &[div]);
+        m.append_children(html, &[head, body]);
+        m.append_children(root_id, &[html]);
+        drop(m);
+        doc.resolve(0.0);
+        (doc, div)
+    }
+
+    fn set_class(doc: &mut BaseDocument, id: NodeId, class: &str) {
+        let mut m = doc.mutate();
+        m.set_attribute(id, qual_name!("class"), class);
+        drop(m);
+    }
+
+    fn order(style: &style::properties::ComputedValues) -> i32 {
+        style.get_position().order
+    }
+
+    #[test]
+    fn replaced_styles_are_recorded_once_tracked_with_the_first_old_and_last_new() {
+        let (mut d, div) = make_doc(".a { order: 1 } .b { order: 2 } .c { order: 3 }", "style-changes");
+        // Nothing is recorded until asked: the first styles above are no change either way.
+        set_class(&mut d, div, "b");
+        d.resolve(0.0);
+        assert!(d.take_style_changes().is_empty(), "not tracked");
+        d.set_track_style_changes(true);
+        set_class(&mut d, div, "c");
+        d.resolve(0.0);
+        let changes = d.take_style_changes();
+        assert_eq!(changes.len(), 1);
+        assert_eq!((changes[0].node, order(&changes[0].before), order(&changes[0].after)), (div, 2, 3));
+        assert!(d.take_style_changes().is_empty(), "taken");
+        // Two restyles before a take: the style before the first and after the last.
+        set_class(&mut d, div, "a");
+        d.resolve(0.0);
+        set_class(&mut d, div, "b");
+        d.resolve(0.0);
+        let changes = d.take_style_changes();
+        assert_eq!(changes.len(), 1);
+        assert_eq!((order(&changes[0].before), order(&changes[0].after)), (3, 2));
+        // A first style is no change: a new element appears in no entry.
+        let mut m = d.mutate();
+        let fresh = m.create_element(qual_name!("div"), vec![Attribute { name: qual_name!("class"), value: "c".into() }]);
+        m.append_children(div, &[fresh]);
+        drop(m);
+        d.resolve(0.0);
+        assert!(d.take_style_changes().is_empty(), "a first style");
+        // Turning tracking off drops what was recorded.
+        set_class(&mut d, div, "c");
+        d.resolve(0.0);
+        d.set_track_style_changes(false);
+        assert!(d.take_style_changes().is_empty());
+    }
+}
+
 #[cfg(test)]
 mod box_generating_pseudo_tests {
     use super::*;

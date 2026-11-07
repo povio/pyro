@@ -122,14 +122,6 @@ fn animation_and_transition_declarations_cascade_from_rules_and_the_style_attrib
     let mut expected = vec![el("a"), el("b")];
     expected.sort();
     assert_eq!(candidates, expected);
-
-    // Transition candidates: elements a rule declaring a transition duration
-    // matches (`.base`, `#c`), and the inline one.
-    let mut candidates = rules.transition_candidates(&dm, d);
-    candidates.sort();
-    let mut expected = vec![el("a"), el("b"), el("c"), el("d")];
-    expected.sort();
-    assert_eq!(candidates, expected);
 }
 
 #[test]

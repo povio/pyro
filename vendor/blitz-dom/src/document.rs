@@ -288,6 +288,34 @@ pub enum DocumentEvent {
     },
 }
 
+/// lightningpanda: files a traversal's replaced styles into `changes`
+/// (`BaseDocument::style_changes`): an element already there keeps its
+/// first old style and takes the new one.
+pub(crate) fn note_style_changes(
+    changes: &mut Vec<StyleChange>,
+    index: &mut HashMap<NodeId, usize>,
+    new: Vec<StyleChange>,
+) {
+    for change in new {
+        match index.get(&change.node) {
+            Some(&i) => changes[i].after = change.after,
+            None => {
+                index.insert(change.node, changes.len());
+                changes.push(change);
+            }
+        }
+    }
+}
+
+/// lightningpanda: an element whose primary style a style traversal replaced
+/// ([`BaseDocument::take_style_changes`]).
+#[derive(Clone)]
+pub struct StyleChange {
+    pub node: NodeId,
+    pub before: style::servo_arc::Arc<style::properties::ComputedValues>,
+    pub after: style::servo_arc::Arc<style::properties::ComputedValues>,
+}
+
 pub struct BaseDocument {
     /// ID of the document
     id: usize,
@@ -436,6 +464,15 @@ pub struct BaseDocument {
     /// style (`BaseDocument::has_sticky`). Entries whose node is gone or no
     /// longer sticky are dropped after each traversal.
     pub(crate) sticky_nodes: HashSet<NodeId>,
+    /// lightningpanda: the elements whose primary style the style traversals
+    /// replaced since [`BaseDocument::take_style_changes`], with the style
+    /// before and after (a transition's before-change and after-change
+    /// styles), kept while `track_style_changes` is on. `style_change_index`
+    /// finds an element's entry, so one restyled twice keeps its first old and
+    /// its last new style.
+    pub(crate) style_changes: Vec<StyleChange>,
+    pub(crate) style_change_index: HashMap<NodeId, usize>,
+    pub(crate) track_style_changes: bool,
     /// lightningpanda: the boxes that left a container's list (`Node::layout_child_of`) during
     /// `resolve_layout_children`; those no container collected again by its end leave the layout
     /// tree with their subtrees (`BaseDocument::leave_layout_tree`). Empty between passes.
@@ -639,6 +676,9 @@ impl BaseDocument {
             deferred_construction_nodes: Vec::new(),
             oof_hoisted: HashSet::new(),
             sticky_nodes: HashSet::new(),
+            style_changes: Vec::new(),
+            style_change_index: HashMap::new(),
+            track_style_changes: false,
             left_layout_lists: Vec::new(),
             paint_tree_dirty: true,
             image_cache: HashMap::new(),
@@ -1508,6 +1548,28 @@ impl BaseDocument {
             DocumentEvent::ResourceLoad(resource) => self.load_resource(resource),
             DocumentEvent::NavigateIframe { node_id, url } => self.navigate_iframe(node_id, url),
         }
+    }
+
+    /// lightningpanda: whether the style traversals record the elements whose
+    /// primary style they replace ([`Self::take_style_changes`]); off until an
+    /// embedder wants them (transition events). Turning it off drops what was
+    /// recorded.
+    pub fn set_track_style_changes(&mut self, on: bool) {
+        self.track_style_changes = on;
+        if !on {
+            self.style_changes.clear();
+            self.style_change_index.clear();
+        }
+    }
+
+    /// lightningpanda: the elements whose primary style a traversal replaced
+    /// since the last call (while tracked), each once, with its style before
+    /// the first replacement and after the last: a transition's before-change
+    /// and after-change styles. An element styled for the first time, or whose
+    /// styles were dropped, is no change. O(elements restyled), not a scan.
+    pub fn take_style_changes(&mut self) -> Vec<StyleChange> {
+        self.style_change_index.clear();
+        std::mem::take(&mut self.style_changes)
     }
 
     /// lightningpanda: whether any node of the document (attached or not) is
