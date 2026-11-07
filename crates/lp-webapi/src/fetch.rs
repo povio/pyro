@@ -272,6 +272,10 @@ impl PageDom {
         }
         policy.unwrap_or_default()
     }
+    /// The document's URL, parsed (see `Dom::document_url_parsed`).
+    pub(crate) fn document_url_parsed(&self) -> Option<lp_net::Url> {
+        self.dom.borrow().document_url_parsed(self.document()).ok().flatten().cloned()
+    }
     pub(crate) fn document_url(&self) -> String {
         self.dom.borrow().document_data(self.document()).map(|d| d.url.to_string()).unwrap_or_default()
     }
@@ -494,10 +498,9 @@ fn parse_request<'s>(
         v if v.is_undefined() => request_input.as_ref().map_or_else(|| "client".to_owned(), |r| r.referrer.clone()),
         v => crate::request::parse_referrer(page, &dom_string(v)?).map_err(JsError::Type)?,
     };
-    let document_url = page.document_url();
     request.referrer = match referrer.as_str() {
         "no-referrer" => None,
-        "client" => lp_net::Url::parse(&document_url).ok(),
+        "client" => page.document_url_parsed(),
         url => lp_net::Url::parse(url).ok(),
     };
     let policy = match option(s, init, "referrerPolicy")? {
@@ -564,7 +567,7 @@ fn parse_request<'s>(
         Some(Persistent::new(s, signal))
     };
     request.origin = Some(s.realm().origin().unwrap_or_else(|| {
-        lp_net::Url::parse(&document_url).map(|u| u.origin().ascii_serialization()).unwrap_or_else(|_| "null".into())
+        page.document_url_parsed().map(|u| u.origin().ascii_serialization()).unwrap_or_else(|| "null".into())
     }));
     let context = page.fetch_state.context.borrow();
     request.frame_id = context.frame_id.clone();
@@ -620,11 +623,11 @@ pub(crate) fn send_beacon(s: &Scope<'_>, page: &PageDom, url: lp_net::Url, data:
         request.headers.insert(header::CONTENT_TYPE, value);
     }
     request.body = Some(body);
-    let document_url = page.document_url();
+    let document_url = page.document_url_parsed();
     request.origin = Some(s.realm().origin().unwrap_or_else(|| {
-        lp_net::Url::parse(&document_url).map(|u| u.origin().ascii_serialization()).unwrap_or_else(|_| "null".into())
+        document_url.as_ref().map(|u| u.origin().ascii_serialization()).unwrap_or_else(|| "null".into())
     }));
-    request.referrer = lp_net::Url::parse(&document_url).ok();
+    request.referrer = document_url;
     request.referrer_policy = page.referrer_policy();
     let context = page.request_context();
     request.frame_id = context.frame_id;

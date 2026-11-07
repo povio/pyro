@@ -163,11 +163,11 @@ fn start(
             request.headers.insert(header::HeaderName::from_static("last-event-id"), v);
         }
     }
-    let document_url = page.document_url();
+    let document_url = page.document_url_parsed();
     request.origin = Some(s.realm().origin().unwrap_or_else(|| {
-        lp_net::Url::parse(&document_url).map(|u| u.origin().ascii_serialization()).unwrap_or_else(|_| "null".into())
+        document_url.as_ref().map(|u| u.origin().ascii_serialization()).unwrap_or_else(|| "null".into())
     }));
-    request.referrer = lp_net::Url::parse(&document_url).ok();
+    request.referrer = document_url;
     request.referrer_policy = page.referrer_policy();
     let context = page.request_context();
     request.frame_id = context.frame_id;

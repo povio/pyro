@@ -662,6 +662,7 @@ impl Dom {
             content_type: content_type.into(),
             charset: "UTF-8",
             url: url.into(),
+            parsed_url: Default::default(),
             base_url: None,
             html_base: Default::default(),
             url_target: url_target(url),
@@ -714,11 +715,19 @@ impl Dom {
             _ => Err(DomError::Type("not a document")),
         }
     }
+    /// `doc`'s URL parsed (`None` if it does not parse): made on the first
+    /// request for it and dropped when the URL changes, so a document's
+    /// requests (each one's referrer) do not parse it again.
+    pub fn document_url_parsed(&self, doc: NodeId) -> DomResult<Option<&url::Url>> {
+        let d = self.document_data(doc)?;
+        Ok(d.parsed_url.get_or_init(|| url::Url::parse(&d.url).ok()).as_ref())
+    }
     pub fn set_document_url(&mut self, doc: NodeId, url: &str) -> DomResult<()> {
         let i = self.check(doc)?;
         match &mut self.n_mut(i).kind {
             NodeKind::Document(d) => {
                 d.url = url.into();
+                d.parsed_url.take();
                 d.url_target = url_target(url);
             }
             _ => return Err(DomError::Type("not a document")),
