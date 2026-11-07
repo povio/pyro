@@ -211,7 +211,15 @@ who needs a binary without it builds
 H.264 videos paint their poster.
 
 Release binary size (macOS arm64, `cargo build --release -p
-lightningpanda`, unstripped as shipped): BINARY_SIZES
+lightningpanda`, unstripped as shipped), measured on this change:
+
+| Build | Size | Delta |
+| --- | --- | --- |
+| Before (no decoding) | 47.80 MB | |
+| `--no-default-features --features render` (Symphonia, opus-pure, Web Audio, video plumbing; no video codec) | 50.48 MB | +2.67 MB |
+| `--features render,av1` (+ rav1d) | 51.90 MB | +1.42 MB |
+| default (`render,av1,h264`; + OpenH264) | 52.45 MB | +0.56 MB |
+| Total | | +4.65 MB (+9.7%) |
 
 ## Web Audio
 
