@@ -732,6 +732,52 @@ fn two_workers_talk_over_a_channel_the_page_made() {
 }
 
 #[test]
+fn streams_transfer_to_and_from_a_worker() {
+    let (mut t, rec, page) = worker_setup();
+    // The worker reads the page's stream, writes into the page's sink, and
+    // hands the page a TransformStream that runs in the worker.
+    let script = data_url(
+        "onmessage = async (e) => {
+           const {readable, writable} = e.data;
+           const parts = [];
+           for await (const chunk of readable) parts.push(chunk);
+           const writer = writable.getWriter();
+           await writer.write('w:' + parts.join('+'));
+           await writer.close();
+           const upper = new TransformStream({transform(chunk, c) { c.enqueue(self.name + ':' + chunk.toUpperCase()); }});
+           postMessage({upper, ports: e.ports.length}, [upper]);
+         };",
+    );
+    eval(
+        &t,
+        page,
+        &format!(
+            r#"const w = new Worker({script:?}, {{name: 'in-worker'}});
+            globalThis.w = w;
+            const readable = new ReadableStream({{start(c) {{ c.enqueue('a'); c.enqueue('b'); c.close(); }}}});
+            const writable = new WritableStream({{write(chunk) {{ console.log('sink:' + chunk); }}, close() {{ console.log('sink-closed'); }}}});
+            w.onmessage = async (e) => {{
+                const {{upper, ports}} = e.data;
+                const writer = upper.writable.getWriter();
+                writer.write('hey');
+                writer.close();
+                const reader = upper.readable.getReader();
+                console.log('upper:' + (await reader.read()).value + ':' + (await reader.read()).done + ':' + ports + ':' + e.ports.length);
+            }};
+            w.postMessage({{readable, writable}}, [readable, writable]);
+            console.log('locked:' + readable.locked + ':' + writable.locked);"#
+        ),
+    );
+    until_console(&mut t, &rec, "locked:true:true");
+    until_console(&mut t, &rec, "sink:w:a+b");
+    until_console(&mut t, &rec, "sink-closed");
+    until_console(&mut t, &rec, "upper:in-worker:HEY:true:0:0");
+    assert!(rec.errors.borrow().is_empty(), "{:?}", rec.errors.borrow());
+    t.browser.close_all();
+    assert!(lp_webapi::join_stopped(Duration::from_secs(5)), "worker threads end");
+}
+
+#[test]
 fn crypto_keys_cross_to_a_worker_and_back() {
     let (mut t, rec, page) = worker_setup();
     let script = data_url(

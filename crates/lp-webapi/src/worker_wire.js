@@ -13,10 +13,15 @@
 // else undefined; `host(tree, 1)` makes the Blob or File of an 'F' tree,
 // `host(files, 2)` the FileList of decoded files and `host(parts, 3)` the
 // CryptoKey of decoded key parts; `host(value, 4)` says whether `value` is a
-// MessagePort that can be transferred (DataCloneError if it was already).
+// MessagePort that can be transferred (DataCloneError if it was already);
+// `host(value, 5)` is 'R', 'W' or 'T' for a ReadableStream, WritableStream or
+// TransformStream of this realm (DataCloneError if locked), `host(stream, 6)`
+// pipes it through new channels and returns the ports to send, and
+// `host([kind, ports], 7)` makes the stream of a decoded 'S' tree.
 // Blob bytes travel beside the text, shared, not copied. Transferred
 // MessagePorts travel beside it too: `encode` returns them in transfer-list
-// order, the caller detaches them, and `decode` receives their new ports.
+// order, then the ports of the transferred streams, with the count of the
+// former; the caller detaches them, and `decode` receives their new ports.
 ((fail, host, DOMExceptionC) => {
     const O = Object, A = Array, M = Map, S = Set, D = Date, R = RegExp;
     const AB = ArrayBuffer, DV = DataView, U8 = Uint8Array, TE = TypeError;
@@ -59,7 +64,7 @@
     // encoded, and the MessagePorts it transfers. Worker messages always cross
     // a VM, so transferring a buffer is a copy followed by a detach, which is
     // what the sender can observe.
-    const none = [[], []];
+    const none = [[], [], [], []];
     function transferList(options) {
         if (options === undefined || options === null) return none;
         let list;
@@ -75,7 +80,7 @@
                 throw new TE('transfer entries must be objects');
             put(entries, entries.length, entry);
         }
-        const buffers = [], ports = [], seen = new M();
+        const buffers = [], ports = [], streams = [], kinds = [], seen = new M();
         for (let i = 0; i < entries.length; ++i) {
             const entry = entries[i];
             if (call(mapHas, seen, [entry])) fail('An object is listed twice in the transfer list');
@@ -86,19 +91,34 @@
             } else if (host(entry, 4)) {
                 put(ports, ports.length, entry);
             } else {
-                fail('Value is not transferable');
+                // A ReadableStream, WritableStream or TransformStream ('R',
+                // 'W', 'T'; DataCloneError when locked).
+                const kind = host(entry, 5);
+                if (kind === undefined) fail('Value is not transferable');
+                put(streams, streams.length, entry);
+                put(kinds, kinds.length, kind);
             }
         }
         if (buffers.length && !abTransfer) fail('ArrayBuffer transfer is not available', true);
-        return [buffers, ports];
+        return [buffers, ports, streams, kinds];
     }
 
     function encode(clone, value, options) {
         const lists = transferList(options), transfer = lists[0], ports = lists[1];
-        // Listed ports stay themselves in the copy; the walk numbers them.
-        const copy = clone(value, undefined, undefined, ports.length ? ports : undefined);
-        const portIndex = new M();
+        const streams = lists[2], kinds = lists[3];
+        // Listed ports and streams stay themselves in the copy; the walk
+        // numbers them. A stream's ports follow the listed ports, in order.
+        const keep = [];
+        for (let i = 0; i < ports.length; ++i) put(keep, keep.length, ports[i]);
+        for (let i = 0; i < streams.length; ++i) put(keep, keep.length, streams[i]);
+        const copy = clone(value, undefined, undefined, keep.length ? keep : undefined);
+        const portIndex = new M(), streamTrees = new M();
         for (let i = 0; i < ports.length; ++i) call(mapSet, portIndex, [ports[i], i]);
+        for (let i = 0, at = ports.length; i < streams.length; ++i) {
+            const two = kinds[i] === 'T';
+            call(mapSet, streamTrees, [streams[i], '["S",' + stringify(kinds[i]) + ',' + at + (two ? ',' + (at + 1) : '') + ']']);
+            at += two ? 2 : 1;
+        }
         const buffers = [], memory = new M();
         let next = 0;
         const entries = (source) => {
@@ -126,6 +146,7 @@
             if (call(mapHas, portIndex, [source])) return '["P",' + call(mapGet, portIndex, [source]) + ']';
             if (call(mapHas, memory, [source])) return '["r",' + call(mapGet, memory, [source]) + ']';
             call(mapSet, memory, [source, next++]);
+            if (call(mapHas, streamTrees, [source])) return call(mapGet, streamTrees, [source]);
             if (isArray(source)) return '["a",' + source.length + entries(source) + ']';
             if (isView(source)) {
                 const name = call(typedName, source);
@@ -193,7 +214,15 @@
         }
         const text = node(copy);
         for (let i = 0; i < transfer.length; ++i) call(abTransfer, transfer[i]);
-        return [text, buffers, ports];
+        // A stream locked while the value was walked fails before any is piped.
+        for (let i = 0; i < streams.length; ++i) host(streams[i], 5);
+        const listed = ports.length, sent = [];
+        for (let i = 0; i < listed; ++i) put(sent, i, ports[i]);
+        for (let i = 0; i < streams.length; ++i) {
+            const out = host(streams[i], 6);
+            for (let j = 0; j < out.length; ++j) put(sent, sent.length, out[j]);
+        }
+        return [text, buffers, sent, listed];
     }
 
     function decode(text, buffers, ports) {
@@ -262,6 +291,13 @@
                     return error;
                 }
                 case 'F': return remember(id, host(tree, 1));
+                case 'S': {
+                    const streamPorts = [ports[tree[2]]];
+                    if (tree.length > 3) put(streamPorts, 1, ports[tree[3]]);
+                    for (let i = 0; i < streamPorts.length; ++i)
+                        if (streamPorts[i] === undefined) fail('Malformed worker message');
+                    return remember(id, host([tree[1], streamPorts], 7));
+                }
                 case 'K': {
                     // Nothing can refer back into the key's parts.
                     const key = host(node(tree[1]), 3);

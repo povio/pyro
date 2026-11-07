@@ -15,6 +15,8 @@ pub(crate) fn install(s: &Scope<'_>, page: &crate::page::PageDom) -> JsResult<()
                 // A platform object the script does not know (CryptoKey), or
                 // undefined; asked only for a value it would otherwise reject.
                 3 => crate::crypto::clone_platform_object(s, value),
+                5 => prepare_stream_transfer(s, value),
+                6 => complete_stream_transfer(s, value, args.get(2)).map(|()| s.undefined()),
                 _ => crate::message_channel::complete_transfer(s, value, args.get(2)).map(|()| s.undefined()),
             };
         }
@@ -79,6 +81,69 @@ pub(crate) fn clone_with_ports<'s>(
     Ok((value, ports))
 }
 
+thread_local! {
+    /// The poster's realm while [`clone_into`] clones its first copy into
+    /// the receiver: the streams that copy holds are the poster realm's, so
+    /// that realm's streams module transfers them.
+    static CLONE_SOURCE: std::cell::RefCell<Option<lp_js::WeakRealm>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Runs `f` with the scope of the realm whose streams module knows `value`
+/// (`s`'s, or the poster's during [`clone_into`]'s second pass) and that
+/// module's transfer kind, or returns `None`.
+fn with_stream_realm<'s, T>(
+    s: &Scope<'s>,
+    value: lp_js::Value<'s>,
+    f: impl for<'x> FnOnce(&Scope<'x>, lp_js::Value<'x>, String) -> JsResult<T>,
+) -> JsResult<Option<T>> {
+    if let Some(kind) = crate::streams::transfer_kind(s, value)? {
+        let kind = kind.to_string()?;
+        return f(s, value, kind).map(Some);
+    }
+    let source = CLONE_SOURCE.with(|c| c.borrow().as_ref().and_then(|w| w.upgrade()));
+    let Some(source) = source.filter(|r| r.id() != s.realm_id()) else { return Ok(None) };
+    let ss = source.scope()?;
+    let value = ss.rehome(value);
+    match crate::streams::transfer_kind(&ss, value)? {
+        Some(kind) => {
+            let kind = kind.to_string()?;
+            f(&ss, value, kind).map(Some)
+        }
+        None => Ok(None),
+    }
+}
+
+/// Clone mode 5: for a transferable stream, `[new stream, ...its ports]` in
+/// `s`'s realm, the ports not yet entangled; undefined for anything else.
+fn prepare_stream_transfer<'s>(s: &Scope<'s>, value: lp_js::Value<'s>) -> JsResult<lp_js::Value<'s>> {
+    let Some(kind) = with_stream_realm(s, value, |_, _, kind| Ok(kind))? else { return Ok(s.undefined()) };
+    let info = s.array(&[])?;
+    let ports = s.array(&[])?;
+    for i in 0..if kind == "T" { 2 } else { 1 } {
+        let port = crate::message_channel::fresh_port(s)?;
+        ports.set_index(i, port)?;
+        info.set_index(i + 1, port)?;
+    }
+    info.set_index(0, crate::streams::transfer_in(s, s.string(&kind), ports.value())?)?;
+    Ok(info.value())
+}
+
+/// Clone mode 6: pipes `value` through new channels in its realm, whose
+/// other ports move into the ports `info` (from mode 5) holds.
+fn complete_stream_transfer<'s>(s: &Scope<'s>, value: lp_js::Value<'s>, info: lp_js::Value<'s>) -> JsResult<()> {
+    let info = info.as_object().ok_or_else(|| JsError::dom("DataCloneError", "Invalid stream transfer"))?;
+    let done = with_stream_realm(s, value, |ss, value, _| {
+        let out = crate::streams::transfer_out(ss, value)?;
+        let count = out.get_atom("length")?.to_number()? as u32;
+        for i in 0..count {
+            let from = s.rehome(out.get_index(i)?);
+            crate::message_channel::complete_transfer(s, from, info.get_index(i + 1)?)?;
+        }
+        Ok(())
+    })?;
+    done.ok_or_else(|| JsError::dom("DataCloneError", "Value is not transferable"))
+}
+
 /// [`clone_with_ports`] of a message posted from `s`'s realm into `rs`'s
 /// (a window or MessagePort of another realm). Whatever the clone throws at
 /// the poster (a getter's exception, a transfer-list TypeError, a
@@ -105,20 +170,33 @@ pub(crate) fn clone_into<'s, 'r>(
             _ => JsError::dom("DataCloneError", "The message could not be cloned into the receiving realm."),
         })
     };
-    if realm_clone(s).is_err() {
+    let from_source = |value: lp_js::Value<'r>, options: lp_js::Value<'r>| {
+        let saved = CLONE_SOURCE.with(|c| c.replace(Some(s.realm().downgrade())));
+        let result = second(value, options);
+        CLONE_SOURCE.with(|c| *c.borrow_mut() = saved);
+        result
+    };
+    let Ok(clone) = realm_clone(s) else {
         // No clone function in the poster's realm (an internal one): clone
         // straight into the receiver, still without leaking its errors.
-        return second(rs.rehome(value), rs.rehome(options));
-    }
-    let (copy, ports) = clone_with_ports(s, value, options)?;
-    let options = if ports.get_atom("length")?.to_number()? > 0.0 {
+        return from_source(rs.rehome(value), rs.rehome(options));
+    };
+    let (ports, streams) = (s.array(&[])?, s.array(&[])?);
+    let copy = clone.call(None, &[value, options, ports.value(), s.undefined(), streams.value()])?;
+    // The second pass transfers what the first one made: ports, then streams.
+    let port_count = ports.get_atom("length")?.to_number()? as u32;
+    let stream_count = streams.get_atom("length")?.to_number()? as u32;
+    let options = if port_count + stream_count > 0 {
+        for i in 0..stream_count {
+            ports.set_index(port_count + i, streams.get_index(i)?)?;
+        }
         let o = rs.object();
         o.set_atom("transfer", rs.rehome(ports.value()))?;
         o.value()
     } else {
         rs.undefined()
     };
-    second(rs.rehome(copy), options)
+    from_source(rs.rehome(copy), options)
 }
 
 /// `postMessage(message, transfer)` / `postMessage(message, options)` as the
@@ -146,12 +224,15 @@ pub struct WireMessage {
     /// claimed by the deserialization that makes its new port, and closed
     /// if the message is dropped first.
     ports: Vec<crate::port_link::TransitEnd>,
+    /// How many of `ports` the sender listed (the event's `ports`); the
+    /// rest carry the transferred streams.
+    listed_ports: usize,
 }
 
 impl WireMessage {
     #[cfg(test)]
     pub(crate) fn empty() -> Self {
-        WireMessage { text: String::new(), buffers: Vec::new(), blobs: Vec::new(), ports: Vec::new() }
+        WireMessage { text: String::new(), buffers: Vec::new(), blobs: Vec::new(), ports: Vec::new(), listed_ports: 0 }
     }
     /// What the message holds in memory while queued.
     pub(crate) fn size(&self) -> usize {
@@ -222,7 +303,13 @@ fn wire_host<'s>(s: &Scope<'s>, args: &lp_js::Args<'s>) -> JsResult<lp_js::Value
             crate::file::make_file_list(s, files)
         }
         3 => crate::crypto::deserialize_key(s, value),
-        _ => Ok(s.boolean(crate::message_channel::is_transferable_port(s, value)?)),
+        4 => Ok(s.boolean(crate::message_channel::is_transferable_port(s, value)?)),
+        5 => Ok(crate::streams::transfer_kind(s, value)?.unwrap_or_else(|| s.undefined())),
+        6 => Ok(crate::streams::transfer_out(s, value)?.value()),
+        _ => {
+            let parts = value.as_object().ok_or_else(|| JsError::dom("DataCloneError", "Malformed message"))?;
+            crate::streams::transfer_in(s, parts.get_index(0)?, parts.get_index(1)?)
+        }
     }
 }
 
@@ -290,7 +377,8 @@ pub fn encode_message<'s>(s: &Scope<'s>, value: lp_js::Value<'s>, options: lp_js
     for i in 0..count {
         ports.push(crate::message_channel::export_port(s, list.get_index(i)?)?);
     }
-    Ok(WireMessage { text, buffers, blobs, ports })
+    let listed_ports = (pair.get_index(3)?.to_number()? as usize).min(ports.len());
+    Ok(WireMessage { text, buffers, blobs, ports, listed_ports })
 }
 
 /// StructuredDeserialize into `s`'s realm.
@@ -336,7 +424,16 @@ pub(crate) fn decode_with_ports<'s>(
         result
     });
     match result {
-        Ok(value) => Ok((value, (!made.is_empty()).then_some(ports))),
+        Ok(value) if message.listed_ports == 0 => Ok((value, None)),
+        Ok(value) if message.listed_ports == made.len() => Ok((value, Some(ports))),
+        Ok(value) => {
+            // The event's `ports` are the listed ones, not the streams' ports.
+            let listed = s.array(&[])?;
+            for i in 0..message.listed_ports {
+                listed.set_index(i as u32, ports.get_index(i as u32)?)?;
+            }
+            Ok((value, Some(listed)))
+        }
         Err(error) => {
             // No one can reach the ports made so far: let their partners go.
             for port in made {

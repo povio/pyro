@@ -431,7 +431,16 @@ pub(crate) fn prepare_transfer<'s>(s: &Scope<'s>, value: lp_js::Value<'s>) -> Js
     if page.is_disposed() {
         return Err(JsError::ContextDestroyed);
     }
-    Ok(Some(new_port(s, &page)?.0.value()))
+    Ok(Some(fresh_port(s)?))
+}
+
+/// A new, unentangled port in `s`'s realm, for [`complete_transfer`] to fill.
+pub(crate) fn fresh_port<'s>(s: &Scope<'s>) -> JsResult<lp_js::Value<'s>> {
+    let page = page_of(s)?;
+    if page.is_disposed() {
+        return Err(JsError::ContextDestroyed);
+    }
+    Ok(new_port(s, &page)?.0.value())
 }
 
 /// Moves port `from` into `to` (made by [`prepare_transfer`] in `s`'s

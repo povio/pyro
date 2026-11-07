@@ -123,6 +123,34 @@ pub(crate) fn fetch_stream_body<'s>(s: &Scope<'s>, input: Value<'s>, init: Value
     helper(s, &page, "fetchBuffered", &[input, init, body]).map(Some)
 }
 
+/// Structured clone's transfer-list check: `"R"`, `"W"` or `"T"` when
+/// `value` is a ReadableStream, WritableStream or TransformStream of this
+/// realm (DataCloneError when it is locked), else `None`. A realm that never
+/// made its streams answers `None` at the cost of one lookup.
+pub(crate) fn transfer_kind<'s>(s: &Scope<'s>, value: Value<'s>) -> JsResult<Option<Value<'s>>> {
+    if value.as_object().is_none() {
+        return Ok(None);
+    }
+    let page = crate::target::page_of(s)?;
+    let Some(module) = existing(s, &page)? else { return Ok(None) };
+    let kind = module.get_atom("transferKind")?.as_object().ok_or_else(unavailable)?.call(None, &[value])?;
+    Ok((!kind.is_undefined()).then_some(kind))
+}
+
+/// The transfer steps of a stream [`transfer_kind`] accepted: the original
+/// is piped through new MessageChannels; returns the ports to transfer.
+pub(crate) fn transfer_out<'s>(s: &Scope<'s>, value: Value<'s>) -> JsResult<Object<'s>> {
+    let page = crate::target::page_of(s)?;
+    helper(s, &page, "transferOut", &[value])?.as_object().ok_or_else(unavailable)
+}
+
+/// The transfer-receiving steps: a stream of this realm of `kind` over the
+/// MessagePorts in `ports` (this realm's).
+pub(crate) fn transfer_in<'s>(s: &Scope<'s>, kind: Value<'s>, ports: Value<'s>) -> JsResult<Value<'s>> {
+    let page = crate::target::page_of(s)?;
+    helper(s, &page, "transferIn", &[kind, ports])
+}
+
 /// `value` is a ReadableStream of this realm. Cheap for primitives and for
 /// realms that have no streams.
 pub(crate) fn is_stream<'s>(s: &Scope<'s>, value: Value<'s>) -> JsResult<bool> {
