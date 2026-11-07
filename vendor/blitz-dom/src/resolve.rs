@@ -351,7 +351,13 @@ impl BaseDocument {
 
         let layout_children = std::mem::take(self.nodes[node_id].layout_children.get_mut());
 
-        if let Some(ref children) = layout_children {
+        // lightningpanda: a table's cells, transformed again only where its grid placed them or
+        // they changed since the last pass (`TableContext::placed`); the others' overflow stands.
+        if let Some(cells_overflow) = self.table_cells_overflow(node_id, scale) {
+            if let Some(cells_overflow) = cells_overflow {
+                overflow = overflow.union(cells_overflow);
+            }
+        } else if let Some(ref children) = layout_children {
             for &child_id in children {
                 // Out-of-flow children are laid out relative to their containing
                 // block, not their DOM parent: they are visited (and their overflow
@@ -522,6 +528,47 @@ impl BaseDocument {
 
             let mut damage = doc.nodes[node_id].damage().unwrap_or(ALL_DAMAGE);
             let _flags = doc.nodes[node_id].flags;
+
+            // lightningpanda: a table whose rows or cells changed (their damage reaches it) updates
+            // the rows that did and keeps its layout children; what it can't update is built again.
+            let table_changed =
+                damage.intersects(CONSTRUCT_FC | CONSTRUCT_BOX) || damage.contains(style::selector_parser::RestyleDamage::RELAYOUT);
+            let updated = if table_changed && crate::layout::table::is_incremental(doc, node_id) {
+                let updated = crate::layout::table::update_table_context(doc, node_id);
+                if updated.is_none() {
+                    damage.insert(CONSTRUCT_BOX);
+                }
+                updated
+            } else {
+                None
+            };
+            if let Some(changed_cells) = updated {
+                let layout_children = doc.nodes[node_id].layout_children.borrow_mut().take().unwrap_or_default();
+                // The cells that changed and the pseudo-elements, or all of them.
+                let pseudos = [doc.nodes[node_id].before(), doc.nodes[node_id].after()];
+                let visit: Vec<NodeId> = match changed_cells {
+                    Some(cells) => cells.into_iter().chain(pseudos.into_iter().flatten()).collect(),
+                    None => layout_children.to_vec(),
+                };
+                for child_id in visit {
+                    let child = &doc.nodes[child_id];
+                    if !child.has_damaged_descendants()
+                        && !child.is_anonymous()
+                        && child.layout_parent.get() == Some(node_id)
+                    {
+                        continue;
+                    }
+                    resolve_layout_children_recursive(doc, child_id);
+                    doc.nodes[child_id].layout_parent.set(Some(node_id));
+                    if let Some(mut data) = doc.nodes[child_id].try_stylo_element_data_mut().and_then(|s| s.get_mut()) {
+                        data.damage.remove(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
+                    }
+                }
+                *doc.nodes[node_id].layout_children.borrow_mut() = Some(layout_children);
+                damage.remove(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
+                doc.nodes[node_id].set_damage(damage);
+                return;
+            }
 
             if damage.intersects(CONSTRUCT_FC | CONSTRUCT_BOX) {
                 //} || flags.contains(NodeFlags::IS_INLINE_ROOT) {
@@ -763,6 +810,51 @@ impl BaseDocument {
 /// lightningpanda: `overflow` with what a child adds to it. An empty rect (a
 /// box of no width or no height, with nothing reaching out of it) adds nothing,
 /// wherever it is: a 2000 x 0 px box does not make a page scroll.
+impl BaseDocument {
+    /// The union of the overflow of `table`'s cells in it (see `resolve_transforms`; `None` inside:
+    /// none has any), or `None` if `table` is not a table whose cells it keeps (its layout children
+    /// are visited as any others').
+    fn table_cells_overflow(&mut self, table: NodeId, scale: f64) -> Option<Option<Rect>> {
+        use crate::node::SpecialElementData;
+        let node = &self.nodes[table];
+        if !node.flags.is_table_root() {
+            return None;
+        }
+        let SpecialElementData::TableRoot(ctx) = &node.data.downcast_element()?.special_data else { return None };
+        if !crate::layout::table::keeps_cells(ctx) {
+            return None;
+        }
+        let ctx = std::sync::Arc::clone(ctx);
+        let cells = ctx.cells.len();
+        let mut placed = ctx.placed.borrow_mut();
+        let again = placed.take_transform().filter(|_| placed.overflow.len() == cells && placed.overflow_scale == scale);
+        let mut overflow = std::mem::take(&mut placed.overflow);
+        drop(placed);
+        match again {
+            Some(again) => {
+                for index in again {
+                    overflow[index] = self.resolve_transforms(ctx.cells[index].node_id);
+                }
+            }
+            None => {
+                overflow.clear();
+                for cell in &ctx.cells {
+                    overflow.push(self.resolve_transforms(cell.node_id));
+                }
+            }
+        }
+        // `unite_overflow` in any order: a union of the cells that are not empty.
+        let united = overflow
+            .iter()
+            .filter(|cell| cell.width() > 0.0 && cell.height() > 0.0)
+            .fold(None, |united: Option<Rect>, &cell| Some(united.map_or(cell, |united| united.union(cell))));
+        let mut placed = ctx.placed.borrow_mut();
+        placed.overflow = overflow;
+        placed.overflow_scale = scale;
+        Some(united)
+    }
+}
+
 fn unite_overflow(overflow: Rect, child: Rect) -> Rect {
     if child.width() > 0.0 && child.height() > 0.0 {
         overflow.union(child)
@@ -856,6 +948,34 @@ pub mod phase_profile {
     /// reached, the nodes under it not).
     pub fn rounding() -> (u64, u64) {
         ROUNDING.with(|r| r.get())
+    }
+    std::thread_local! {
+        static TABLES: Cell<(u64, u64)> = const { Cell::new((0, 0)) };
+    }
+    pub(crate) fn table_built() {
+        TABLES.with(|t| t.set((t.get().0 + 1, t.get().1)));
+    }
+    pub(crate) fn table_cell_collected() {
+        TABLES.with(|t| t.set((t.get().0, t.get().1 + 1)));
+    }
+    /// Tables whose structure was built from scratch on this thread so far, and table cells read
+    /// from their styles (by those builds and by the updates of the rows that changed).
+    pub fn tables() -> (u64, u64) {
+        TABLES.with(|t| t.get())
+    }
+    std::thread_local! {
+        static TABLE_GRIDS: Cell<(u64, u64)> = const { Cell::new((0, 0)) };
+    }
+    pub(crate) fn table_grid_laid_out(again: bool) {
+        TABLE_GRIDS.with(|t| {
+            let (whole, again_count) = t.get();
+            t.set(if again { (whole, again_count + 1) } else { (whole + 1, again_count) });
+        });
+    }
+    /// Table grids laid out (and kept for the next layout) on this thread so far: whole, and again
+    /// from their last layout in the rows that changed.
+    pub fn table_grids() -> (u64, u64) {
+        TABLE_GRIDS.with(|t| t.get())
     }
     /// Milliseconds per phase on this thread so far.
     pub fn peek() -> [f64; 9] {

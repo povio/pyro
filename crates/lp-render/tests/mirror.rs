@@ -1271,6 +1271,505 @@ fn rounding_skips_what_a_change_did_not_touch() {
     assert!(after.0 - before.0 < whole / 2, "reached {} of {whole} nodes", after.0 - before.0);
 }
 
+// Tables update the rows that changed (blitz-dom's `update_table_context`) instead of collecting every
+// row again: every change below must paint and lay out as a fresh build does.
+
+fn table_rows(prefix: &str, n: usize) -> String {
+    (0..n)
+        .map(|i| format!("<tr id={prefix}{i}><td>cell {i} a</td><td>text {i} b with some words</td><td>{i}.5</td></tr>"))
+        .collect()
+}
+
+fn table_page() -> Page {
+    Page::new(&format!(
+        r#"<!doctype html><html><head><style>
+  body {{ margin: 0; font: 13px sans-serif }} td, th {{ padding: 2.5px 3.25px }}
+  #c {{ border-collapse: collapse; width: 400.5px }} #c tr {{ border-bottom: 1px solid #ccc }}
+  .hl {{ border: 2px solid red }} .thick {{ border-bottom: 3px solid blue }}
+  #s {{ border-spacing: 3px }} #f {{ table-layout: fixed; width: 300px }} .wide {{ width: 120px }}
+  #u, .nb {{ border-collapse: collapse }} #u td {{ border: 1px solid #000 }}
+  .hidden {{ display: none }}
+</style></head><body>
+<table id=c><thead><tr><th>h1</th><th>h2</th><th>h3</th></tr></thead>
+<tbody id=cb>{}</tbody><tfoot><tr><td>f1</td><td colspan=2>f2</td></tr></tfoot></table>
+<table id=s><tbody id=sb>{}</tbody></table>
+<table id=f><colgroup><col class=wide></colgroup><tbody id=fb>{}</tbody></table>
+<table id=u><tbody id=ub>{}</tbody></table>
+<table id=r style="border-collapse:collapse"><tr><td rowspan=2 style="border:1px solid">a</td><td>b</td></tr><tr><td id=rc>c</td></tr></table>
+</body></html>"#,
+        table_rows("c", 8),
+        table_rows("s", 6),
+        table_rows("f", 5),
+        table_rows("u", 5),
+    ))
+}
+
+/// A new row of three cells.
+fn new_row(p: &Page, text: &str) -> NodeId {
+    let mut d = p.dom.borrow_mut();
+    let tr = d.create_element(p.doc, "tr").unwrap();
+    for i in 0..3 {
+        let td = d.create_element(p.doc, "td").unwrap();
+        let t = d.create_text(p.doc, &format!("{text} {i}")).unwrap();
+        d.append_child(td, t).unwrap();
+        d.append_child(tr, td).unwrap();
+    }
+    tr
+}
+
+fn text(selector: &'static str, value: &'static str) -> (String, Mutate) {
+    (
+        format!("{selector} text {value:?}"),
+        Box::new(move |p| {
+            let n = p.find(selector);
+            p.dom.borrow_mut().set_text_content(n, value).unwrap();
+        }),
+    )
+}
+
+fn attr(selector: &'static str, name: &'static str, value: &'static str) -> (String, Mutate) {
+    (
+        format!("{selector} [{name}={value:?}]"),
+        Box::new(move |p| {
+            let n = p.find(selector);
+            p.dom.borrow_mut().set_attribute(n, name, value).unwrap();
+        }),
+    )
+}
+
+/// Each step checked against a fresh build: the painted page and every element's box.
+#[track_caller]
+fn table_steps_match_fresh_builds(page: &Page, steps: Vec<(String, Mutate)>) {
+    let mut r = Renderer::new();
+    check(&mut r, page, "the first render");
+    for (what, mutate) in steps {
+        mutate(page);
+        let before = blitz_tables();
+        check(&mut r, page, &what);
+        let after = blitz_tables();
+        eprintln!("TABLESTEP {what}: built {} cells {}", after.0 - before.0, after.1 - before.1);
+        r.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
+        let mut fresh = Renderer::new();
+        fresh.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
+        for ((k, a), (_, b)) in boxes(&r, page).into_iter().zip(boxes(&fresh, page)) {
+            assert_eq!(a, b, "box {k:x} after {what}");
+        }
+    }
+}
+
+#[test]
+fn table_cell_and_row_changes_match_fresh_builds() {
+    let page = table_page();
+    let steps: Vec<(String, Mutate)> = vec![
+        text("#c4 td", "edited"),
+        text("#c4 td:nth-child(2)", "a much longer text in the middle cell that wraps over lines"),
+        text("#c6 td:nth-child(3)", "averyveryverylongwordwithoutbreaksthatwidensitscolumn"),
+        text("#c6 td:nth-child(3)", "1"),
+        text("#s3 td", "spaced"),
+        text("#f2 td:nth-child(2)", "fixed layout text that is long enough to wrap"),
+        text("#u2 td", "uniform"),
+        attr("#c3 td:nth-child(2)", "class", "hl"),
+        attr("#c3 td:nth-child(2)", "class", ""),
+        attr("#c5", "class", "thick"),
+        attr("#c5", "style", "height: 40.5px"),
+        attr("#c5 td", "style", "padding: 7.25px"),
+        attr("#c7 td", "style", "height: 33.3px"),
+        attr("#u3 td", "style", "border: 3px dashed green"),
+        attr("#s2 td", "style", "width: 150px"),
+        attr("#c2 td", "colspan", "2"),
+        attr("#c2 td", "colspan", "1"),
+        attr("#c4", "class", "hidden"),
+        attr("#c4", "class", ""),
+        attr("#c3 td:nth-child(3)", "class", "hidden"),
+        attr("#c3 td:nth-child(3)", "class", ""),
+        text("#rc", "rowspan neighbour"),
+        text("thead th", "header"),
+        text("tfoot td", "footer"),
+        // Rows below a row that grows move; cells aligned, offset or overflowing in it.
+        text("#c2 td:nth-child(2)", "a text long enough to wrap over three or four lines of the middle column here"),
+        attr("#c3 td", "style", "vertical-align: bottom"),
+        attr("#c3 td:nth-child(2)", "style", "position: relative; top: 3.5px"),
+        text("#c2 td:nth-child(2)", "short again"),
+        attr("#s4 td", "style", "vertical-align: middle; height: 30.5px"),
+        text("#s4 td:nth-child(2)", "spaced and wrapping text in the middle cell of the spaced table"),
+        attr("#c5 td:nth-child(3)", "style", "white-space: nowrap; overflow: visible"),
+        text("#c5 td:nth-child(3)", "a nowrap text much wider than its column"),
+        attr("#c6", "style", "height: 51.25px"),
+        text("#f1 td", "fixed"),
+        text("#u1 td:nth-child(2)", "uniform borders, a longer text that wraps in the cell"),
+        // Cells that become stacking contexts, or have boxes hoisted out of them, and back
+        // (the paint tree visits again only the cells that changed while they are plain boxes).
+        attr("#c4 td:nth-child(2)", "style", "opacity: 0.5"),
+        attr("#c4 td:nth-child(2)", "style", "position: relative; z-index: 2; background: yellow"),
+        attr("#c4 td:nth-child(2)", "style", "position: relative; z-index: -1; background: yellow"),
+        attr("#c4 td:nth-child(2)", "style", ""),
+        attr("#c5 td", "style", "float: left; position: relative"),
+        attr("#c5 td", "style", ""),
+        (
+            "an absolutely positioned box in a cell of a positioned table".into(),
+            Box::new(|p| {
+                let table = p.find("#c");
+                let td = p.find("#c6 td");
+                let mut d = p.dom.borrow_mut();
+                d.set_attribute(table, "style", "position: relative").unwrap();
+                let span = d.create_element(p.doc, "span").unwrap();
+                d.set_attribute(span, "id", "abs").unwrap();
+                d.set_attribute(span, "style", "position: absolute; top: 2px; right: 3px; background: red").unwrap();
+                let t = d.create_text(p.doc, "abs").unwrap();
+                d.append_child(span, t).unwrap();
+                d.append_child(td, span).unwrap();
+            }),
+        ),
+        text("#c2 td", "after the hoisted box"),
+        attr("#abs", "style", "position: static"),
+        text("#c3 td", "after it went static"),
+        attr("#c6 td:nth-child(2)", "style", "background: blue"),
+        text("#c7 td", "plain again"),
+    ];
+    table_steps_match_fresh_builds(&page, steps);
+}
+
+/// Nested tables, vertical tables, spans and `display` changes of table parts.
+#[test]
+fn table_structure_changes_match_fresh_builds() {
+    let page = Page::new(&format!(
+        r#"<!doctype html><html><head><style>
+  body {{ margin: 0; font: 13px sans-serif }} td {{ padding: 2px 3.5px }}
+  table {{ border-collapse: collapse }} tr {{ border-bottom: 1px solid #888 }}
+  #v {{ writing-mode: vertical-rl; height: 300px }}
+  .x {{ border: 2px solid green }}
+</style></head><body>
+<table id=o><tbody id=ob><tr id=o0><td>outer a</td><td><table id=i><tbody id=ib>{}</tbody></table></td></tr>{}</tbody></table>
+<table id=v><tbody id=vb>{}</tbody></table>
+<table id=p><tbody id=pb>
+<tr id=p0><td rowspan=2 id=pr>span rows</td><td colspan=2 id=pc>span columns</td></tr>
+<tr id=p1><td>b</td><td>c</td></tr>
+<tr id=p2><td>d</td><td>e</td><td>f</td></tr>
+</tbody></table>
+<table id=d><tbody id=db>{}</tbody></table>
+</body></html>"#,
+        table_rows("i", 3),
+        table_rows("o", 4),
+        table_rows("v", 4),
+        table_rows("d", 5),
+    ));
+    let steps: Vec<(String, Mutate)> = vec![
+        text("#i1 td", "inner edited with a longer text"),
+        text("#o2 td:nth-child(2)", "outer edited"),
+        attr("#i2 td", "class", "x"),
+        (
+            "a row appended to the inner table".into(),
+            Box::new(|p| {
+                let tbody = p.find("#ib");
+                let tr = new_row(p, "inner new");
+                p.dom.borrow_mut().append_child(tbody, tr).unwrap();
+            }),
+        ),
+        text("#v2 td:nth-child(2)", "vertical text that is long enough"),
+        attr("#v1 td", "class", "x"),
+        (
+            "a row appended to the vertical table".into(),
+            Box::new(|p| {
+                let tbody = p.find("#vb");
+                let tr = new_row(p, "vertical new");
+                p.dom.borrow_mut().append_child(tbody, tr).unwrap();
+            }),
+        ),
+        text("#pr", "rowspan cell with more text"),
+        text("#pc", "colspan"),
+        text("#p2 td:nth-child(2)", "below the spans"),
+        attr("#pr", "rowspan", "3"),
+        attr("#pc", "colspan", "1"),
+        attr("#p1 td", "rowspan", "2"),
+        text("#d1 td", "display flips"),
+        attr("#d2 td", "style", "display: none"),
+        attr("#d2 td", "style", ""),
+        attr("#d3", "style", "display: none"),
+        attr("#d3", "style", ""),
+        attr("#db", "style", "display: none"),
+        attr("#db", "style", ""),
+        attr("#d1 td:nth-child(2)", "style", "position: absolute"),
+        attr("#d1 td:nth-child(2)", "style", ""),
+    ];
+    table_steps_match_fresh_builds(&page, steps);
+}
+
+#[test]
+fn table_rows_added_and_removed_match_fresh_builds() {
+    let page = table_page();
+    let append = |group: &'static str, what: &'static str| -> (String, Mutate) {
+        (
+            format!("a row appended to {group}"),
+            Box::new(move |p| {
+                let tbody = p.find(group);
+                let tr = new_row(p, what);
+                p.dom.borrow_mut().append_child(tbody, tr).unwrap();
+            }),
+        )
+    };
+    let insert = |group: &'static str, before: &'static str| -> (String, Mutate) {
+        (
+            format!("a row inserted in {group} before {before}"),
+            Box::new(move |p| {
+                let tbody = p.find(group);
+                let at = p.find(before);
+                let tr = new_row(p, "inserted");
+                p.dom.borrow_mut().insert_before(tbody, tr, Some(at)).unwrap();
+            }),
+        )
+    };
+    let remove = |row: &'static str| -> (String, Mutate) {
+        (
+            format!("{row} removed"),
+            Box::new(move |p| {
+                let tr = p.find(row);
+                let parent = p.dom.borrow().parent(tr).unwrap().unwrap();
+                p.dom.borrow_mut().remove_child(parent, tr).unwrap();
+            }),
+        )
+    };
+    let steps: Vec<(String, Mutate)> = vec![
+        append("#cb", "appended"),
+        append("#cb", "again"),
+        insert("#cb", "#c3"),
+        remove("#c5"),
+        remove("#c7"),
+        append("#sb", "spaced"),
+        remove("#s0"),
+        insert("#sb", "#s4"),
+        append("#fb", "fixed"),
+        remove("#f3"),
+        append("#ub", "uniform"),
+        remove("#u4"),
+        append("thead", "head"),
+        append("#cb", "after the head"),
+        (
+            "a row moved to another table".into(),
+            Box::new(|p| {
+                let tr = p.find("#s3");
+                let tbody = p.find("#cb");
+                let at = p.find("#c2");
+                p.dom.borrow_mut().insert_before(tbody, tr, Some(at)).unwrap();
+            }),
+        ),
+        (
+            "a fourth cell".into(),
+            Box::new(|p| {
+                let tr = p.find("#c6");
+                let mut d = p.dom.borrow_mut();
+                let td = d.create_element(p.doc, "td").unwrap();
+                d.append_child(tr, td).unwrap();
+            }),
+        ),
+        (
+            "rows of a table without a body".into(),
+            Box::new(|p| {
+                let body = p.dom.borrow().body(p.doc).unwrap().unwrap();
+                let table = p.dom.borrow_mut().create_element(p.doc, "table").unwrap();
+                p.dom.borrow_mut().set_attribute(table, "id", "nb").unwrap();
+                p.dom.borrow_mut().set_attribute(table, "class", "nb").unwrap();
+                for i in 0..4 {
+                    let tr = new_row(p, &format!("direct {i}"));
+                    p.dom.borrow_mut().set_attribute(tr, "style", "border-bottom: 1px solid").unwrap();
+                    p.dom.borrow_mut().append_child(table, tr).unwrap();
+                }
+                p.dom.borrow_mut().append_child(body, table).unwrap();
+            }),
+        ),
+        (
+            "a row removed and a cell after it edited at once".into(),
+            Box::new(|p| {
+                let tbody = p.find("#cb");
+                let tr = p.find("#c1");
+                let td = p.find("#c6 td:nth-child(2)");
+                let mut d = p.dom.borrow_mut();
+                d.remove_child(tbody, tr).unwrap();
+                d.set_text_content(td, "edited after a removal, long enough to wrap in its column").unwrap();
+            }),
+        ),
+        (
+            "two rows removed and one inserted at once".into(),
+            Box::new(|p| {
+                let tbody = p.find("#sb");
+                let (a, b, at) = (p.find("#s1"), p.find("#s4"), p.find("#s2"));
+                let tr = new_row(p, "between");
+                let mut d = p.dom.borrow_mut();
+                d.remove_child(tbody, a).unwrap();
+                d.remove_child(tbody, b).unwrap();
+                d.insert_before(tbody, tr, Some(at)).unwrap();
+            }),
+        ),
+        text("#s2 td", "after two changes"),
+        (
+            "a row inserted with a taller cell".into(),
+            Box::new(|p| {
+                let tbody = p.find("#cb");
+                let at = p.find("#c4");
+                let tr = new_row(p, "a taller inserted row whose cells wrap over a few lines of the column");
+                p.dom.borrow_mut().insert_before(tbody, tr, Some(at)).unwrap();
+            }),
+        ),
+        text("#nb tr:nth-child(3) td", "edited direct row"),
+        attr("#nb tr:nth-child(2)", "style", "border-bottom: 4px solid red"),
+        append("#nb", "direct"),
+    ];
+    table_steps_match_fresh_builds(&page, steps);
+}
+
+/// A cell's text edit collects the cells of its row again, not the table's, and lays out the grid
+/// again from its last layout; appending a row collects only its cells and lays out the grid again too,
+/// and so does removing a row, which collects no cell.
+#[test]
+fn a_cell_edit_collects_only_its_row() {
+    let rows = table_rows("c", 50);
+    let page = Page::new(&format!(
+        r#"<!doctype html><html><head><style>table {{ border-collapse: collapse }} tr {{ border-bottom: 1px solid }}</style></head><body><table><tbody id=b>{rows}</tbody></table></body></html>"#
+    ));
+    let mut r = Renderer::new();
+    check(&mut r, &page, "the first render");
+    // Tables built, cells collected; grids laid out whole, again.
+    let edit = |what: &str, page: &Page, r: &mut Renderer, step: &dyn Fn(&Page)| -> ((u64, u64), (u64, u64)) {
+        step(page);
+        let tree = page.tree();
+        let (tables, grids) = (blitz_tables(), blitz_table_grids());
+        let painted = paint(r, &page.snapshot(1, tree.clone()));
+        let delta = |a: (u64, u64), b: (u64, u64)| (b.0 - a.0, b.1 - a.1);
+        let counts = (delta(tables, blitz_tables()), delta(grids, blitz_table_grids()));
+        assert_eq!(painted.hash, paint(&mut Renderer::new(), &page.snapshot(1, tree)).hash, "{what}");
+        counts
+    };
+    let (tables, grids) = edit("a text edit", &page, &mut r, &|p| {
+        let td = p.find("#c20 td:nth-child(2)");
+        p.dom.borrow_mut().set_text_content(td, "edited").unwrap();
+    });
+    assert_eq!(tables, (0, 3), "a text edit");
+    assert_eq!(grids, (0, 1), "a text edit");
+    let (tables, grids) = edit("an append", &page, &mut r, &|p| {
+        let tbody = p.find("#b");
+        let tr = new_row(p, "n");
+        p.dom.borrow_mut().append_child(tbody, tr).unwrap();
+    });
+    assert_eq!(tables, (0, 3), "an append");
+    assert_eq!(grids, (0, 1), "an append");
+    let (tables, grids) = edit("a removal", &page, &mut r, &|p| {
+        let tbody = p.find("#b");
+        let tr = p.find("#c30");
+        p.dom.borrow_mut().remove_child(tbody, tr).unwrap();
+    });
+    assert_eq!(tables, (0, 0), "a removal");
+    assert_eq!(grids, (0, 1), "a removal");
+    let (tables, grids) = edit("an insert", &page, &mut r, &|p| {
+        let tbody = p.find("#b");
+        let at = p.find("#c10");
+        let tr = new_row(p, "i");
+        p.dom.borrow_mut().insert_before(tbody, tr, Some(at)).unwrap();
+    });
+    assert_eq!(tables, (0, 3), "an insert");
+    assert_eq!(grids, (0, 1), "an insert");
+    let (_, grids) = edit("a text edit after", &page, &mut r, &|p| {
+        let td = p.find("#c40 td");
+        p.dom.borrow_mut().set_text_content(td, "x").unwrap();
+    });
+    assert_eq!(grids, (0, 1), "a text edit after");
+
+    // Rounding reaches the cells the grid placed again, not the table's others.
+    let td = page.find("#c41 td");
+    page.dom.borrow_mut().set_text_content(td, "y").unwrap();
+    let before = blitz_rounding();
+    paint(&mut r, &page.snapshot(1, page.tree()));
+    let reached = blitz_rounding().0 - before.0;
+    assert!(reached < 60, "rounding reached {reached} nodes");
+    let tbody = page.find("#b");
+    let tr = new_row(&page, "n");
+    page.dom.borrow_mut().append_child(tbody, tr).unwrap();
+    let before = blitz_rounding();
+    let painted = paint(&mut r, &page.snapshot(1, page.tree()));
+    let reached = blitz_rounding().0 - before.0;
+    assert!(reached < 60, "rounding reached {reached} nodes after an append");
+    assert_eq!(painted.hash, paint(&mut Renderer::new(), &page.snapshot(1, page.tree())).hash);
+}
+
+/// Changes incremental documents got wrong before tables were updated in place.
+#[test]
+fn table_known_gaps_match_fresh_builds() {
+    let page = Page::new(&format!(
+        r#"<!doctype html><html><head><style id=st>
+  body {{ margin: 0; font: 13px sans-serif }} td {{ padding: 2px }}
+</style></head><body>
+<table id=k style="border-collapse: collapse"><tbody id=kb>{}</tbody></table>
+<table id=b><tbody>{}</tbody></table>
+</body></html>"#,
+        table_rows("k", 4),
+        table_rows("b", 3),
+    ));
+    let steps: Vec<(String, Mutate)> = vec![
+        attr("#k1", "style", "display: contents"),
+        attr("#k1", "style", "display: table-row"),
+        text("#st", "body { margin: 0; font: 13px sans-serif } td { padding: 2px; height: 30px; border: 3px solid red }"),
+        text("#st", "body { margin: 0; font: 13px sans-serif } td { padding: 2px } #k { border-collapse: separate }"),
+        text("#st", "body { margin: 0; font: 13px sans-serif } td { padding: 2px }"),
+        attr("#k2 td", "style", "float: left"),
+        attr("#k2 td", "style", ""),
+        attr("#k3 td", "style", "position: absolute"),
+        attr("#k3 td", "style", ""),
+        attr("#k0 td", "style", "display: block"),
+        attr("#k0 td", "style", ""),
+        attr("#b", "style", "display: block"),
+        attr("#b", "style", ""),
+    ];
+    table_steps_match_fresh_builds(&page, steps);
+}
+
+/// More cells changed than a table has measured widths for, then rows replaced in the same pass:
+/// a row inserted into a striped table restyles every row after it.
+#[test]
+fn table_rows_restyled_and_inserted_match_fresh_builds() {
+    let page = Page::new(&format!(
+        r#"<!doctype html><html><head><style>
+  body {{ margin: 0; font: 13px sans-serif }} td {{ padding: 2.5px 3.25px }}
+  #z tr:nth-child(odd) td {{ background: #eee }}
+  #h.sp tr:nth-child(odd) td {{ height: 30px }}
+</style></head><body>
+<table id=z><tbody id=zb>{}</tbody></table>
+<table id=h><tbody id=hb>{}</tbody></table>
+</body></html>"#,
+        table_rows("z", 10),
+        table_rows("h", 6),
+    ));
+    let insert = |group: &'static str, before: &'static str, what: &'static str| -> (String, Mutate) {
+        (
+            format!("a row inserted into {group} before {before}"),
+            Box::new(move |p| {
+                let tbody = p.find(group);
+                let at = p.find(before);
+                let tr = new_row(p, what);
+                p.dom.borrow_mut().insert_before(tbody, tr, Some(at)).unwrap();
+            }),
+        )
+    };
+    let remove = |row: &'static str| -> (String, Mutate) {
+        (
+            format!("{row} removed"),
+            Box::new(move |p| {
+                let tr = p.find(row);
+                let parent = p.dom.borrow().parent(tr).unwrap().unwrap();
+                p.dom.borrow_mut().remove_child(parent, tr).unwrap();
+            }),
+        )
+    };
+    let steps: Vec<(String, Mutate)> = vec![
+        insert("#zb", "#z1", "inserted"),
+        text("#z5 td", "after"),
+        remove("#z2"),
+        insert("#zb", "#z0", "first"),
+        attr("#h", "class", "sp"),
+        insert("#hb", "#h1", "shifts odd"),
+        text("#h4 td", "edited"),
+        remove("#h0"),
+    ];
+    table_steps_match_fresh_builds(&page, steps);
+}
+
 /// Boxes that only move (the rows below a cell that grew, the blocks below a
 /// block that grew by a fraction of a pixel) are marked on their ancestors only:
 /// their rounding and overflow still follow the move. (A transformed box that

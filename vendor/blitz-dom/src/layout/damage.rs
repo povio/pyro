@@ -63,6 +63,7 @@ impl BaseDocument {
             return RestyleDamage::empty();
         };
         let mut damage = own_damage;
+        self.nodes[node_id].flags.set(NodeFlags::OWN_DAMAGE, !own_damage.is_empty());
 
         // Skip subtrees which contain no damage. Anonymous nodes are never
         // skipped themselves because damage marking walks the DOM parent
@@ -149,6 +150,12 @@ impl BaseDocument {
         // Store damage for current node
         node.set_damage(damage);
 
+        // lightningpanda: a table cell whose subtree changed is measured and laid out again
+        // (`TableContext::changed_cells`).
+        if !damage.is_empty() {
+            self.note_changed_table_cell(node_id);
+        }
+
         // Anonymous boxes between this node and its nearest element ancestor
         // are not visited by the DOM walk, so invalidate them here by walking
         // `layout_parent`. Stop at the first non-anonymous node: elements are
@@ -192,6 +199,31 @@ impl BaseDocument {
 
         // Propagate damage to parent
         damage_for_parent
+    }
+
+    /// Adds `node_id` to its table's changed cells if it is a table cell.
+    fn note_changed_table_cell(&self, node_id: NodeId) {
+        let node = &self.nodes[node_id];
+        let index = node.layout_data().table_cell_index;
+        if index == u32::MAX {
+            return;
+        }
+        let Some(table) = node.layout_parent.get().and_then(|id| self.nodes.get(id)) else { return };
+        let Some(element) = table.data.downcast_element() else { return };
+        if let crate::node::SpecialElementData::TableRoot(ctx) = &element.special_data {
+            if ctx.cells.get(index as usize).is_some_and(|cell| cell.node_id == node_id) {
+                let mut changed = ctx.changed_cells.borrow_mut();
+                changed.push(index as usize);
+                // (A table that is not laid out keeps them: no more than one per cell.)
+                if changed.len() > 2 * ctx.cells.len() {
+                    changed.sort_unstable();
+                    changed.dedup();
+                }
+                drop(changed);
+                ctx.widths.borrow_mut().changed(index as usize);
+                ctx.placed.borrow_mut().damaged(index as usize, ctx.cells.len());
+            }
+        }
     }
 
     /// Refresh owned anonymous boxes without revisiting their DOM children.
@@ -334,6 +366,7 @@ impl BaseDocument {
         node.anonymous_blocks = anonymous_blocks;
         node.children = children;
         node.clear_damage_mut();
+        node.flags.remove(NodeFlags::OWN_DAMAGE);
         node.unset_damaged_descendants();
         node.unset_dirty_descendants();
     }
@@ -416,6 +449,14 @@ pub(crate) fn compute_layout_damage(old: &ComputedValues, new: &ComputedValues) 
         }
 
         if new.is_pseudo_style() && old.get_counters().content != new.get_counters().content {
+            return true;
+        }
+
+        // lightningpanda: a table keeps the layout styles of its parts in its `TableContext`, built
+        // with its box: a part's (or the table's) layout change builds it again, as a mutation does.
+        if new_box.display.outside() == DisplayOutside::InternalTable
+            || new_box.display.inside() == DisplayInside::Table
+        {
             return true;
         }
 

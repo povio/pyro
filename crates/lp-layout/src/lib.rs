@@ -336,14 +336,16 @@ impl BlitzGeometry {
                     let dpr = v.device_scale_factor;
                     let timings = RENDERER.with(|r| {
                         let mut r = r.try_borrow_mut().ok()?;
-                        r.as_mut()?
-                            .sync_delta(
+                        let r = r.as_mut()?;
+                        guarded(r, self.page, |r| {
+                            r.sync_delta(
                                 self.page,
                                 &ops,
                                 (viewport.0, viewport.1, dpr, viewport.3, viewport.4),
                                 style_only,
                             )
                             .ok()
+                        })
                     });
                     if let Some(t) = timings {
                         CALLS.fetch_add(1, Ordering::Relaxed);
@@ -361,7 +363,7 @@ impl BlitzGeometry {
         let fetcher = self.fetcher.clone();
         let timings = RENDERER.with(|r| {
             let mut r = r.try_borrow_mut().ok()?;
-            r.get_or_insert_with(Renderer::new).sync_layout(&snap, &fetcher).ok()
+            guarded(r.get_or_insert_with(Renderer::new), self.page, |r| r.sync_layout(&snap, &fetcher).ok())
         });
         if let Some(t) = timings {
             CALLS.fetch_add(1, Ordering::Relaxed);
@@ -369,6 +371,16 @@ impl BlitzGeometry {
             LAYOUT_NS.fetch_add((t.fetch + t.layout).as_nanos() as u64, Ordering::Relaxed);
         }
     }
+}
+
+/// Runs a sync of `page`'s persistent document; a panic drops that document (it may be half
+/// updated, for example a table missing its context) so that the next sync builds it afresh,
+/// instead of every later layout query of the page failing.
+fn guarded<T>(r: &mut Renderer, page: u64, f: impl FnOnce(&mut Renderer) -> Option<T>) -> Option<T> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(&mut *r))).unwrap_or_else(|_| {
+        r.forget(page);
+        None
+    })
 }
 
 impl BlitzGeometry {

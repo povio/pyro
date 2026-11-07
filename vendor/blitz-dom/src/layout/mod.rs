@@ -1077,7 +1077,7 @@ impl RoundTree for LayoutPassState<'_> {
         // the one for the old size. The style decides, not `transform()`: one
         // that was the identity at the old size is stored as `None`.
         if size_changed && node.has_transform_style() {
-            node.mark_layout_changed();
+            node.mark_layout_changed(Some(node.id));
         }
     }
 

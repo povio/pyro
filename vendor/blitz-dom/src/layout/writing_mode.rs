@@ -244,6 +244,26 @@ impl LayoutPassState<'_> {
         self.node_from_id_mut(node_id)
             .layout_data_mut()
             .writing_mode = wm;
+        // lightningpanda: a table where it was rounds again only the cells its grid placed since:
+        // the others' layouts and offsets, all their rounding reads, are the same.
+        let table_cells = (self.nodes[dom_node_id(node_id)].flags.is_table_root() && !wm.is_vertical())
+            .then(|| crate::layout::table::table_cells_to_round(self, dom_node_id(node_id), (pos, rounded_pos)))
+            .flatten();
+        if let Some(cells) = table_cells {
+            let node = &self.nodes[dom_node_id(node_id)];
+            let pseudos = [node.before(), node.after()];
+            for child in cells.into_iter().chain(pseudos.into_iter().flatten()) {
+                let child = crate::taffy_node_id(child);
+                if !self.is_out_of_flow(child) {
+                    self.physicalise_and_round_inner(child, wm, size, pos, rounded_pos);
+                }
+            }
+            for index in 0..self.hoisted_child_count(node_id) {
+                let child = self.get_hoisted_child_id(node_id, index);
+                self.physicalise_and_round_inner(child, wm, size, pos, rounded_pos);
+            }
+            return;
+        }
         for index in 0..self.child_count(node_id) {
             let child = self.get_child_id(node_id, index);
             if !self.is_out_of_flow(child) {

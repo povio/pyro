@@ -361,6 +361,18 @@ pub trait LayoutGridContainer: LayoutPartialTree {
         false
     }
 
+    /// lightningpanda: a table's grid as its last full layout left it (see `TableGridState`), and the
+    /// items that changed since, for `compute_grid_layout` to lay out again only the rows those are in.
+    /// Asked once per layout (`RunMode::PerformLayout`) of a grid whose rows are a table's. `None`
+    /// (the default): lay out the whole grid. A layout that can be done again this way offers its state
+    /// to [`store_table_grid_state`](Self::store_table_grid_state).
+    fn take_table_grid_state(&mut self, _node_id: NodeId) -> Option<crate::compute::grid::TableGridReuse> {
+        None
+    }
+
+    /// lightningpanda: keeps a table's grid layout for the next [`take_table_grid_state`](Self::take_table_grid_state).
+    fn store_table_grid_state(&mut self, _node_id: NodeId, _state: crate::util::sys::Box<crate::compute::grid::TableGridState>) {}
+
     /// Set the node's detailed grid information
     ///
     /// Implementing this method is optional. Doing so allows you to access details about the the grid such as

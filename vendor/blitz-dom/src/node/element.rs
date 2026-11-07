@@ -135,6 +135,8 @@ pub struct LayoutData {
     /// lightningpanda: the half collapsed borders of a cell in a table without uniform ones (top,
     /// right, bottom, left; see `CollapsedEdges`).
     pub collapsed_border: Option<[f32; 4]>,
+    /// lightningpanda: a table cell's index in its table's `TableContext::cells` (`u32::MAX`: none).
+    pub table_cell_index: u32,
     /// The writing mode this node's layout algorithm ran in (the root takes it from `<body>`),
     /// recorded by the layout pass for CSSOM geometry lookups.
     #[cfg(feature = "writing-mode")]
@@ -151,6 +153,7 @@ impl LayoutData {
             scrollable_overflow: KurboRect::ZERO,
             rounded_from: None,
             collapsed_border: None,
+            table_cell_index: u32::MAX,
             #[cfg(feature = "writing-mode")]
             writing_mode: stylo_taffy::WritingMode::empty(),
         }

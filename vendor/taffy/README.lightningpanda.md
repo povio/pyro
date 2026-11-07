@@ -80,4 +80,35 @@ Debug builds round the whole tree again after each pass and assert that it match
 in `crates/lp-render/tests/mirror.rs` fails if the skip stops firing; `LP.geometryStats` reports
 `roundedNodes` and `roundingSkips`.
 
-`compute/mod.rs`: `compute_root_layout_in` takes an initial containing block of another size than the root's available space (print: Blink's rounds down, the page area up). The `UPSTREAM.patch` hunk for it is at the end of that file.
+`compute/mod.rs`: `compute_root_layout_in` takes an initial containing block of another size than the root's available space (print: Blink's rounds down, the page area up). The `UPSTREAM.patch` hunk for it is the second `src/compute/mod.rs` section, before the `src/lib.rs` one.
+
+## Table grids laid out again from their last layout
+
+`compute/grid/table_reuse.rs` (new), `compute/grid/mod.rs`, `compute/grid/track_sizing.rs`, `compute/grid/alignment.rs`
+and `tree/traits.rs`: a grid whose rows are a table's (`grid_rows_are_table_rows`) can be laid out again from its last
+layout, sizing again only the rows of the items that changed. Two `LayoutGridContainer` methods, both defaulting to
+the whole layout:
+
+- `store_table_grid_state` is offered a `TableGridState` after a `PerformLayout` that can be replayed: its inputs and
+  container constants, the columns as sized, the rows as their items sized them (11.5) and as finally sized, the
+  items, and where each item was positioned (`alignment::PositionedItem`).
+- `take_table_grid_state` hands it back with the indices of the items that changed since (their subtree or their
+  style) and the rows replaced since, if any (`TableGridSplice`: rows inserted or removed with their items; rows
+  appended at the end need none). The inserted items are placed as the whole grid places them.
+
+With the same inputs, constants and columns, `table_reuse::prepare` keeps the old items and the rows' item-sized
+tracks (those after the replaced rows moved to their new indices), makes the changed items again from their style,
+and marks their rows (and inserted or re-specified rows) as affected. The inline axis is not sized again: every column is fixed, so the columns depend on no item. The block axis
+sizes only the affected rows from their items (`track_sizing_algorithm`'s `only_tracks`), then runs the rest of track
+sizing on every row as before. An item that did not change keeps its layout when its grid area is the same, and is
+moved (`PositionedItem::moved_to`, its block offset and overflow contribution with it) when only its block position
+changed; the others are positioned again.
+
+A state is recorded only where nothing else depends on the items: no intrinsic, percentage or (in an indefinite
+width) flexible column, no percentage row, no content-alignment gutter, no collapsed track, no implicit track, no
+baseline-aligned item, no item spanning rows or with out-of-flow descendants bubbling up, and no re-run of track
+sizing. Otherwise, or with other inputs, the grid is laid out whole. blitz-dom's tables use it (see "Incremental
+tables" in `vendor/blitz-dom/README.lightningpanda.md`). `crates/lp-render/tests/mirror.rs` checks replayed layouts
+against fresh builds (`table_*_match_fresh_builds`) and that edits, appends, removals and inserts replay (`a_cell_edit_collects_only_its_row`).
+The `UPSTREAM.patch` sections for it are the last ones (`src/compute/grid/alignment.rs` to `src/tree/traits.rs`), made
+against the tree the sections before them give.
