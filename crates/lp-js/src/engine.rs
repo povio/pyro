@@ -21,6 +21,9 @@ pub struct Capabilities {
     pub modules: bool,
     /// Import maps, bare specifiers and `import.meta.resolve` (patched JavaScriptCore).
     pub import_maps: bool,
+    /// JSON and CSS module scripts (`with { type: "json" }`): the fetcher sees
+    /// each request's [`crate::ModuleType`] (patched JavaScriptCore).
+    pub typed_modules: bool,
     /// `JSGlobalContextSetUnhandledRejectionCallback`.
     pub unhandled_rejections: bool,
     /// `JSContextGroupSetExecutionTimeLimit`: termination of running scripts.
@@ -48,6 +51,8 @@ impl Capabilities {
             modules: unsafe { sys::modules::lp_jsc_modules_available() } == 1,
             // SAFETY: plain capability probe without arguments.
             import_maps: unsafe { sys::modules::lp_jsc_import_maps_available() } == 1,
+            // SAFETY: plain capability probe without arguments.
+            typed_modules: unsafe { sys::modules::lp_jsc_typed_modules_available() } == 1,
             unhandled_rejections: spi.set_unhandled_rejection_callback.is_some(),
             termination: spi.set_execution_time_limit.is_some() && spi.clear_execution_time_limit.is_some(),
             hidden_properties: spi.get_private_property.is_some() && spi.set_private_property.is_some(),

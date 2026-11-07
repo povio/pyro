@@ -18,17 +18,20 @@ JSStringRef JSStringCreateWithUTF8CString(const char *string);
 JSStringRef JSValueToStringCopy(JSContextRef ctx, JSValueRef value, JSValueRef *exception);
 void JSStringRelease(JSStringRef string);
 
-typedef void (*JSModuleLoaderFetchCallback)(JSGlobalContextRef ctx, JSStringRef identifier, JSObjectRef resolve,
-                                            JSObjectRef reject, void *info);
-bool JSGlobalContextSetModuleLoader(JSGlobalContextRef ctx, JSModuleLoaderFetchCallback callback, void *info);
-JSValueRef JSModuleSourceCreate(JSContextRef ctx, JSStringRef source, JSStringRef url, JSValueRef *exception);
+// JSModuleType (patch 0020-module-import-attributes): 0 JavaScript, 1 JSON,
+// 2 CSS, 3 WebAssembly, 4 text.
+typedef void (*JSModuleLoaderTypedFetchCallback)(JSGlobalContextRef ctx, JSStringRef identifier, int type,
+                                                 JSObjectRef resolve, JSObjectRef reject, void *info);
+bool JSGlobalContextSetTypedModuleLoader(JSGlobalContextRef ctx, JSModuleLoaderTypedFetchCallback callback, void *info);
+JSValueRef JSModuleSourceCreateWithType(JSContextRef ctx, JSStringRef source, JSStringRef url, int type,
+                                        JSValueRef *exception);
 JSObjectRef JSLoadAndEvaluateModule(JSContextRef ctx, JSStringRef url, JSValueRef *exception);
 bool JSGlobalContextAddImportMap(JSGlobalContextRef ctx, JSStringRef source, JSStringRef baseURL, JSStringRef *messages);
 typedef JSStringRef (*lp_module_base_url_cb)(JSGlobalContextRef ctx);
 bool JSGlobalContextSetModuleBaseURLCallback(JSGlobalContextRef ctx, lp_module_base_url_cb callback);
 
-typedef void (*lp_module_fetch_cb)(void *userdata, JSGlobalContextRef ctx, JSStringRef identifier, JSObjectRef resolve,
-                                   JSObjectRef reject);
+typedef void (*lp_module_fetch_cb)(void *userdata, JSGlobalContextRef ctx, JSStringRef identifier, int module_type,
+                                   JSObjectRef resolve, JSObjectRef reject);
 
 struct lp_module_loader {
     JSGlobalContextRef ctx;
@@ -38,11 +41,14 @@ struct lp_module_loader {
 
 int lp_jsc_modules_available(void) { return 1; }
 int lp_jsc_import_maps_available(void) { return 1; }
+// The fetch callback sees each request's `type` import attribute, and JSON and
+// CSS module scripts load.
+int lp_jsc_typed_modules_available(void) { return 1; }
 
-static void lp_fetch(JSGlobalContextRef ctx, JSStringRef identifier, JSObjectRef resolve, JSObjectRef reject,
+static void lp_fetch(JSGlobalContextRef ctx, JSStringRef identifier, int type, JSObjectRef resolve, JSObjectRef reject,
                      void *info) {
     struct lp_module_loader *loader = info;
-    loader->callback(loader->userdata, ctx, identifier, resolve, reject);
+    loader->callback(loader->userdata, ctx, identifier, type, resolve, reject);
 }
 
 void *lp_jsc_module_loader_install(JSGlobalContextRef ctx, lp_module_fetch_cb cb, lp_module_base_url_cb base_url,
@@ -51,14 +57,14 @@ void *lp_jsc_module_loader_install(JSGlobalContextRef ctx, lp_module_fetch_cb cb
     loader->ctx = ctx;
     loader->callback = cb;
     loader->userdata = userdata;
-    JSGlobalContextSetModuleLoader(ctx, lp_fetch, loader);
+    JSGlobalContextSetTypedModuleLoader(ctx, lp_fetch, loader);
     JSGlobalContextSetModuleBaseURLCallback(ctx, base_url);
     return loader;
 }
 
 void lp_jsc_module_loader_release(void *handle) {
     struct lp_module_loader *loader = handle;
-    JSGlobalContextSetModuleLoader(loader->ctx, NULL, NULL);
+    JSGlobalContextSetTypedModuleLoader(loader->ctx, NULL, NULL);
     JSGlobalContextSetModuleBaseURLCallback(loader->ctx, NULL);
     free(loader);
 }
@@ -90,12 +96,13 @@ int lp_jsc_import_map_add(JSGlobalContextRef ctx, const char *src, size_t src_le
     return merged;
 }
 
+// `type` is 0 (JavaScript) or 1 (JSON).
 JSValueRef lp_jsc_module_script_create(JSGlobalContextRef ctx, const char *src, size_t src_len, const char *url,
-                                       size_t url_len, JSStringRef *error) {
+                                       size_t url_len, int type, JSStringRef *error) {
     JSStringRef source = lp_string(src, src_len);
     JSStringRef sourceURL = lp_string(url, url_len);
     JSValueRef exception = NULL;
-    JSValueRef script = JSModuleSourceCreate(ctx, source, sourceURL, &exception);
+    JSValueRef script = JSModuleSourceCreateWithType(ctx, source, sourceURL, type, &exception);
     JSStringRelease(source);
     JSStringRelease(sourceURL);
     if (!script) *error = lp_error(ctx, exception, "module creation failed");

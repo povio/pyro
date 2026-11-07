@@ -1,0 +1,277 @@
+diff --git a/Source/JavaScriptCore/API/JSAPIGlobalObject.cpp b/Source/JavaScriptCore/API/JSAPIGlobalObject.cpp
+index 2c79990057..a4c1fd36fc 100644
+--- a/Source/JavaScriptCore/API/JSAPIGlobalObject.cpp
++++ b/Source/JavaScriptCore/API/JSAPIGlobalObject.cpp
+@@ -66,7 +66,7 @@ const GlobalObjectMethodTable* JSAPIGlobalObject::globalObjectMethodTable()
+         &shouldInterruptScript,
+         &javaScriptRuntimeFlags,
+         &shouldInterruptScriptBeforeTimeout,
+-        nullptr, // moduleTypeIsAllowed
++        &moduleTypeIsAllowed,
+         &moduleLoaderImportModule,
+         &moduleLoaderResolve,
+         &moduleLoaderFetch,
+@@ -207,7 +207,50 @@ JSPromise* JSAPIGlobalObject::moduleLoaderImportModule(JSGlobalObject* globalObj
+     return result;
+ }
+ 
+-JSPromise* JSAPIGlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject, JSModuleLoader*, JSValue key, const String&, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>)
++// JSC allows JavaScript, WebAssembly, JSON and text itself and asks the host
++// about the rest. CSS module scripts are the host's (the embedder makes the
++// CSSStyleSheet); a loader without a typed callback rejects them when fetched.
++bool JSAPIGlobalObject::moduleTypeIsAllowed(ScriptFetchParameters::Type type)
++{
++    return type == ScriptFetchParameters::Type::CSS;
++}
++
++static JSModuleType toModuleType(const RefPtr<ScriptFetchParameters>& parameters)
++{
++    switch (parameters ? parameters->type() : ScriptFetchParameters::Type::None) {
++    case ScriptFetchParameters::Type::None:
++    case ScriptFetchParameters::Type::JavaScript:
++        return kJSModuleTypeJavaScript;
++    case ScriptFetchParameters::Type::JSON:
++        return kJSModuleTypeJSON;
++    case ScriptFetchParameters::Type::CSS:
++        return kJSModuleTypeCSS;
++    case ScriptFetchParameters::Type::WebAssembly:
++        return kJSModuleTypeWebAssembly;
++    case ScriptFetchParameters::Type::Text:
++        return kJSModuleTypeText;
++    }
++    return kJSModuleTypeText;
++}
++
++static ASCIILiteral moduleTypeName(JSModuleType type)
++{
++    switch (type) {
++    case kJSModuleTypeJavaScript:
++        return "JavaScript"_s;
++    case kJSModuleTypeJSON:
++        return "JSON"_s;
++    case kJSModuleTypeCSS:
++        return "CSS"_s;
++    case kJSModuleTypeWebAssembly:
++        return "WebAssembly"_s;
++    case kJSModuleTypeText:
++        return "text"_s;
++    }
++    return "unknown"_s;
++}
++
++JSPromise* JSAPIGlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject, JSModuleLoader*, JSValue key, const String&, RefPtr<ScriptFetchParameters> parameters, RefPtr<ScriptFetcher>)
+ {
+     VM& vm = globalObject->vm();
+     auto scope = DECLARE_THROW_SCOPE(vm);
+@@ -218,18 +261,37 @@ JSPromise* JSAPIGlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject, JS
+     Identifier moduleKey = key.toPropertyKey(globalObject);
+     RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(vm, scope));
+ 
+-    auto callback = reinterpret_cast<JSModuleLoaderFetchCallback>(thisObject->m_moduleLoaderCallback);
+-    if (!callback) [[unlikely]] {
++    if (!thisObject->m_moduleLoaderCallback) [[unlikely]] {
+         scope.release();
+         promise->reject(vm, createError(globalObject, "No module loader provided."_s));
+         return promise;
+     }
+ 
+-    auto* resolve = JSNativeStdFunction::create(vm, globalObject, 1, "resolve"_s, [promise, moduleKey] (JSGlobalObject* globalObject, CallFrame* callFrame) {
++    JSModuleType type = toModuleType(parameters);
++    if (type != kJSModuleTypeJavaScript && !thisObject->m_moduleLoaderTyped) [[unlikely]] {
++        scope.release();
++        promise->reject(vm, createTypeError(globalObject, makeString(moduleTypeName(type), " module scripts are not supported by this module loader: "_s, moduleKey.string())));
++        return promise;
++    }
++
++    auto* resolve = JSNativeStdFunction::create(vm, globalObject, 1, "resolve"_s, [promise, moduleKey, type] (JSGlobalObject* globalObject, CallFrame* callFrame) {
+         VM& vm = globalObject->vm();
+-        auto* source = dynamicDowncast<JSSourceCode>(callFrame->argument(0));
+-        if (!source || source->sourceCode().provider()->sourceType() != SourceProviderSourceType::Module) [[unlikely]] {
+-            promise->reject(vm, createTypeError(globalObject, "First argument of resolution callback is not a module source"_s));
++        JSValue argument = callFrame->argument(0);
++        auto* source = dynamicDowncast<JSSourceCode>(argument);
++        if (type == kJSModuleTypeCSS) {
++            // The module's default export, made by the embedder.
++            if (!argument.isObject() || source) [[unlikely]] {
++                promise->reject(vm, createTypeError(globalObject, "First argument of a CSS module's resolution callback is not a style sheet object"_s));
++                return encodedJSUndefined();
++            }
++            // fulfill, not resolve: a `then` on the object must not make it a thenable.
++            if (promise->status() == JSPromise::Status::Pending)
++                promise->fulfill(vm, argument);
++            return encodedJSUndefined();
++        }
++        auto expected = type == kJSModuleTypeJSON ? SourceProviderSourceType::JSON : SourceProviderSourceType::Module;
++        if (!source || source->sourceCode().provider()->sourceType() != expected) [[unlikely]] {
++            promise->reject(vm, createTypeError(globalObject, makeString("First argument of resolution callback is not a "_s, moduleTypeName(type), " module source"_s)));
+             return encodedJSUndefined();
+         }
+         const String& sourceURL = source->sourceCode().provider()->sourceURL();
+@@ -247,7 +309,13 @@ JSPromise* JSAPIGlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject, JS
+     }, promise);
+ 
+     auto identifier = OpaqueJSString::tryCreate(moduleKey.string());
+-    callback(toGlobalRef(globalObject), identifier.get(), toRef(resolve), toRef(reject), thisObject->m_moduleLoaderInfo);
++    if (thisObject->m_moduleLoaderTyped) {
++        auto callback = reinterpret_cast<JSModuleLoaderTypedFetchCallback>(thisObject->m_moduleLoaderCallback);
++        callback(toGlobalRef(globalObject), identifier.get(), type, toRef(resolve), toRef(reject), thisObject->m_moduleLoaderInfo);
++    } else {
++        auto callback = reinterpret_cast<JSModuleLoaderFetchCallback>(thisObject->m_moduleLoaderCallback);
++        callback(toGlobalRef(globalObject), identifier.get(), toRef(resolve), toRef(reject), thisObject->m_moduleLoaderInfo);
++    }
+     return promise;
+ }
+ 
+@@ -336,6 +404,17 @@ bool JSGlobalContextSetModuleLoader(JSGlobalContextRef ctx, JSModuleLoaderFetchC
+     return true;
+ }
+ 
++bool JSGlobalContextSetTypedModuleLoader(JSGlobalContextRef ctx, JSModuleLoaderTypedFetchCallback callback, void* info)
++{
++    JSGlobalObject* globalObject = toJS(ctx);
++    JSLockHolder locker(globalObject->vm());
++    auto* apiGlobalObject = dynamicDowncast<JSAPIGlobalObject>(globalObject);
++    if (!apiGlobalObject)
++        return false;
++    apiGlobalObject->setModuleLoader(reinterpret_cast<void*>(callback), info, true);
++    return true;
++}
++
+ namespace {
+ 
+ class ImportMapMessages final : public ImportMap::Reporter {
+@@ -391,11 +470,21 @@ bool JSGlobalContextAddImportMap(JSGlobalContextRef ctx, JSStringRef source, JSS
+ }
+ 
+ JSValueRef JSModuleSourceCreate(JSContextRef ctx, JSStringRef source, JSStringRef url, JSValueRef* exception)
++{
++    return JSModuleSourceCreateWithType(ctx, source, url, kJSModuleTypeJavaScript, exception);
++}
++
++JSValueRef JSModuleSourceCreateWithType(JSContextRef ctx, JSStringRef source, JSStringRef url, JSModuleType type, JSValueRef* exception)
+ {
+     JSGlobalObject* globalObject = toJS(ctx);
+     VM& vm = globalObject->vm();
+     JSLockHolder locker(vm);
+ 
++    if (type != kJSModuleTypeJavaScript && type != kJSModuleTypeJSON) {
++        if (exception)
++            *exception = toRef(globalObject, createTypeError(globalObject, "module sources can only be JavaScript or JSON"_s));
++        return nullptr;
++    }
+     String urlString = url->string();
+     URL sourceURL { { }, urlString };
+     if (!sourceURL.isValid()) {
+@@ -403,7 +492,8 @@ JSValueRef JSModuleSourceCreate(JSContextRef ctx, JSStringRef source, JSStringRe
+             *exception = toRef(globalObject, createTypeError(globalObject, "invalid module URL"_s));
+         return nullptr;
+     }
+-    auto sourceCode = makeSource(source->string(), SourceOrigin { sourceURL }, SourceTaintedOrigin::Untainted, urlString, TextPosition(), SourceProviderSourceType::Module);
++    auto sourceType = type == kJSModuleTypeJSON ? SourceProviderSourceType::JSON : SourceProviderSourceType::Module;
++    auto sourceCode = makeSource(source->string(), SourceOrigin { sourceURL }, SourceTaintedOrigin::Untainted, urlString, TextPosition(), sourceType);
+     return toRef(globalObject, JSSourceCode::create(vm, WTF::move(sourceCode)));
+ }
+ 
+diff --git a/Source/JavaScriptCore/API/JSAPIGlobalObject.h b/Source/JavaScriptCore/API/JSAPIGlobalObject.h
+index c1c5a8808b..45fb916f58 100644
+--- a/Source/JavaScriptCore/API/JSAPIGlobalObject.h
++++ b/Source/JavaScriptCore/API/JSAPIGlobalObject.h
+@@ -58,10 +58,11 @@ public:
+ 
+ #if !JSC_OBJC_API_ENABLED
+     // C module loader (JSModuleLoaderRefPrivate.h). The callback is a JSModuleLoaderFetchCallback.
+-    void setModuleLoader(void* callback, void* info)
++    void setModuleLoader(void* callback, void* info, bool typed = false)
+     {
+         m_moduleLoaderCallback = callback;
+         m_moduleLoaderInfo = info;
++        m_moduleLoaderTyped = typed && callback;
+     }
+     JSValue loadAndEvaluateModule(const JSLockHolder&, const String& url);
+     // The callback is a JSModuleLoaderBaseURLCallback.
+@@ -75,6 +76,7 @@ private:
+     static const GlobalObjectMethodTable* globalObjectMethodTable();
+     JSAPIGlobalObject(VM&, Structure*);
+ 
++    static bool moduleTypeIsAllowed(ScriptFetchParameters::Type);
+     static JSPromise* moduleLoaderImportModule(JSGlobalObject*, JSModuleLoader*, JSString* moduleNameValue, RefPtr<ScriptFetchParameters>, const SourceOrigin&, bool deferred);
+     static Identifier moduleLoaderResolve(JSGlobalObject*, JSModuleLoader*, JSValue keyValue, JSValue referrerValue, RefPtr<ScriptFetcher>, bool useImportMap);
+     static JSPromise* moduleLoaderFetch(JSGlobalObject*, JSModuleLoader*, JSValue, const String&, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>);
+@@ -86,6 +88,8 @@ private:
+     void* m_moduleLoaderInfo { nullptr };
+     void* m_moduleBaseURLCallback { nullptr };
+     bool m_hasImportMap { false };
++    // m_moduleLoaderCallback is a JSModuleLoaderTypedFetchCallback.
++    bool m_moduleLoaderTyped { false };
+ #endif
+ };
+ 
+diff --git a/Source/JavaScriptCore/API/JSModuleLoaderRefPrivate.h b/Source/JavaScriptCore/API/JSModuleLoaderRefPrivate.h
+index 9a5afd2f32..cc7ee2fd56 100644
+--- a/Source/JavaScriptCore/API/JSModuleLoaderRefPrivate.h
++++ b/Source/JavaScriptCore/API/JSModuleLoaderRefPrivate.h
+@@ -25,6 +25,29 @@ typedef void (*JSModuleLoaderFetchCallback)(JSGlobalContextRef ctx, JSStringRef
+    when the context does not support module loading. */
+ JS_EXPORT bool JSGlobalContextSetModuleLoader(JSGlobalContextRef ctx, JSModuleLoaderFetchCallback callback, void* info);
+ 
++/* The `type` import attribute of a module request (HTML "module type"). */
++typedef enum {
++    kJSModuleTypeJavaScript = 0, /* no `type` attribute */
++    kJSModuleTypeJSON = 1,
++    kJSModuleTypeCSS = 2,
++    kJSModuleTypeWebAssembly = 3,
++    kJSModuleTypeText = 4,
++} JSModuleType;
++
++/* Like JSModuleLoaderFetchCallback, with the request's module type. Resolve a
++   JavaScript request with JSModuleSourceCreate, a JSON one with
++   JSModuleSourceCreateWithType(kJSModuleTypeJSON) and a CSS one with the
++   object to export as `default` (a CSSStyleSheet); any other value rejects
++   the import with a TypeError. Module map entries are keyed by (URL, type), so
++   one URL can be fetched once per type. */
++typedef void (*JSModuleLoaderTypedFetchCallback)(JSGlobalContextRef ctx, JSStringRef identifier, JSModuleType type, JSObjectRef resolve, JSObjectRef reject, void* info);
++
++/* Installs (or, with a NULL callback, removes) a typed fetch callback; it
++   replaces any JSGlobalContextSetModuleLoader callback. Without one, requests
++   with a `type` attribute are rejected with a TypeError instead of being
++   fetched as JavaScript. */
++JS_EXPORT bool JSGlobalContextSetTypedModuleLoader(JSGlobalContextRef ctx, JSModuleLoaderTypedFetchCallback callback, void* info);
++
+ /* Supplies the document base URL for specifiers whose script has no URL to
+    resolve against. Returns a string the caller owns, or NULL. It runs during
+    module resolution and must not run script. */
+@@ -41,6 +64,12 @@ JS_EXPORT bool JSGlobalContextAddImportMap(JSGlobalContextRef ctx, JSStringRef s
+ /* Creates the module source value passed to a fetch `resolve` function. */
+ JS_EXPORT JSValueRef JSModuleSourceCreate(JSContextRef ctx, JSStringRef source, JSStringRef url, JSValueRef* exception);
+ 
++/* JSModuleSourceCreate for a module type: kJSModuleTypeJavaScript makes a
++   module source, kJSModuleTypeJSON a JSON source (parsed when the module is
++   instantiated; invalid JSON fails it with a SyntaxError). Other types return
++   NULL with a TypeError in *exception. */
++JS_EXPORT JSValueRef JSModuleSourceCreateWithType(JSContextRef ctx, JSStringRef source, JSStringRef url, JSModuleType type, JSValueRef* exception);
++
+ /* Loads `url` through the fetch callback and evaluates it. Returns a promise for
+    the evaluation, or NULL (with *exception set) when the context does not
+    support module loading. */
+diff --git a/Source/WTF/Scripts/Preferences/UnifiedWebPreferences.yaml b/Source/WTF/Scripts/Preferences/UnifiedWebPreferences.yaml
+index f2b4b7e2e6..5b9dbf4f28 100644
+--- a/Source/WTF/Scripts/Preferences/UnifiedWebPreferences.yaml
++++ b/Source/WTF/Scripts/Preferences/UnifiedWebPreferences.yaml
+@@ -1068,7 +1068,7 @@ CSSModuleScriptsEnabled:
+   humanReadableDescription: "Enable importing CSS into JavaScript using 'import'"
+   jscOptionName: useCSSModuleScripts
+   sharedPreferenceForWebProcess: true
+-  defaultValue: false
++  defaultValue: true
+ 
+ CSSObjectViewBoxEnabled:
+   type: bool
+@@ -3035,7 +3035,7 @@ ImportTextEnabled:
+   jscOptionName: useImportText
+   sharedPreferenceForWebProcess: true
+   excludeFrom: [ WebKitLegacy, WebCore ]
+-  defaultValue: true
++  defaultValue: false
+ 
+ InactiveMediaCaptureStreamRepromptIntervalInMinutes:
+   type: double

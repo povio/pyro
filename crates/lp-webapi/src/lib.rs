@@ -55,6 +55,7 @@ pub(crate) mod lazy_module;
 pub(crate) mod media;
 pub mod media_source;
 pub mod message_channel;
+pub mod module_script;
 pub mod mutation_observer;
 pub mod navigator_extras;
 pub mod node;

@@ -29,7 +29,9 @@
 
 enum { kLPScriptTypeProgram = 0, kLPScriptTypeModule = 1 };
 
-typedef void (*lp_module_fetch_cb)(void *userdata, JSGlobalContextRef ctx, JSStringRef identifier,
+// `module_type` is always 0 (JavaScript): the system framework's delegate does
+// not see import attributes (lp_jsc_typed_modules_available).
+typedef void (*lp_module_fetch_cb)(void *userdata, JSGlobalContextRef ctx, JSStringRef identifier, int module_type,
                                    JSObjectRef resolve, JSObjectRef reject);
 
 @interface LPModuleLoader : NSObject
@@ -46,7 +48,7 @@ typedef void (*lp_module_fetch_cb)(void *userdata, JSGlobalContextRef ctx, JSStr
     JSGlobalContextRef g = context.JSGlobalContextRef;
     JSStringRef ident = JSValueToStringCopy(g, identifier.JSValueRef, NULL);
     if (!ident) return;
-    self.callback(self.userdata, g, ident, (JSObjectRef)resolve.JSValueRef, (JSObjectRef)reject.JSValueRef);
+    self.callback(self.userdata, g, ident, 0, (JSObjectRef)resolve.JSValueRef, (JSObjectRef)reject.JSValueRef);
     JSStringRelease(ident);
 }
 @end
@@ -67,6 +69,11 @@ int lp_jsc_modules_available(void) {
 // Import maps need the resolve hook of the source-built JavaScriptCore; the system
 // framework's loader rejects bare specifiers before asking the delegate.
 int lp_jsc_import_maps_available(void) { return 0; }
+
+// The system framework passes no import attributes to the delegate, so JSON
+// and CSS module scripts cannot load: every request looks like a JavaScript
+// one, and the embedder rejects JSON and CSS responses to those.
+int lp_jsc_typed_modules_available(void) { return 0; }
 
 int lp_jsc_import_map_add(JSGlobalContextRef ctx, const char *src, size_t src_len, const char *base, size_t base_len,
                           JSStringRef *messages) {
@@ -113,7 +120,11 @@ void lp_jsc_module_loader_release(void *handle) {
 // Creates a module record source for `resolve`. Returns NULL (and an owned error
 // JSStringRef in *error) when the URL or source cannot be converted.
 JSValueRef lp_jsc_module_script_create(JSGlobalContextRef ctx, const char *src, size_t src_len,
-                                       const char *url, size_t url_len, JSStringRef *error) {
+                                       const char *url, size_t url_len, int type, JSStringRef *error) {
+    if (type != 0) {
+        *error = JSStringCreateWithUTF8CString("JSON module scripts need the source-built JavaScriptCore");
+        return NULL;
+    }
     @autoreleasepool {
         JSContext *context = [JSContext contextWithJSGlobalContextRef:ctx];
         NSString *source = lp_nsstring(src, src_len);

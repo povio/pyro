@@ -36,7 +36,7 @@ use crate::{Browser, HistoryHandling, LoaderId, NavigateOpts, PageEvent, PageId}
 use lp_dom::parse::{DocumentParser, DomRef, ParseStep};
 use lp_dom::script::ScriptKind;
 use lp_dom::NodeId;
-use lp_js::{JsError, ModuleFetcher, ModuleRequest, Persistent, Realm};
+use lp_js::{JsError, ModuleFetcher, ModuleRequest, ModuleType, Persistent, Realm};
 use lp_runtime::TaskSource;
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -469,6 +469,15 @@ impl ModuleFetcher for PageModuleFetcher {
     }
 
     fn fetch(&self, realm: &Realm, url: String, request: ModuleRequest) {
+        let ty = request.module_type();
+        if let Some(e) = lp_webapi::module_script::disallowed(ty, true) {
+            if let Ok(scope) = realm.scope() {
+                if let Err(e) = request.reject(&scope, &e) {
+                    scope.report_exception(&e);
+                }
+            }
+            return;
+        }
         // Called from inside JS: defer the network request to a task, where
         // `&mut Browser` is available.
         let realm = realm.downgrade();
@@ -500,7 +509,7 @@ impl ModuleFetcher for PageModuleFetcher {
                     return;
                 };
                 let r = match res {
-                    Ok(text) => request.resolve(&scope, &text),
+                    Ok(text) => lp_webapi::module_script::complete(&scope, request, &text),
                     Err(e) => request.reject(&scope, &JsError::Type(e)),
                 };
                 match &r {
@@ -511,8 +520,12 @@ impl ModuleFetcher for PageModuleFetcher {
                     scope.report_exception(&e);
                 }
             };
-            // A modulepreload of this URL already fetched (or is fetching) it.
-            if let Some(complete) = b.preloaded_module(page, &url, Box::new(complete)) {
+            // A modulepreload of this URL already fetched (or is fetching) it
+            // as a JavaScript module.
+            if ty != ModuleType::JavaScript {
+                let opts = ScriptFetch { module: Some(ty), ..ScriptFetch::default() };
+                b.fetch_script(page, url, ResourceKind::ModuleScript, opts, complete);
+            } else if let Some(complete) = b.preloaded_module(page, &url, Box::new(complete)) {
                 b.fetch_text(page, url, ResourceKind::ModuleScript, complete);
             }
         });
@@ -559,6 +572,9 @@ pub(crate) fn node_base_url(dom: &lp_dom::Dom, node: NodeId) -> Option<String> {
 pub(crate) struct ScriptFetch {
     pub integrity: Option<String>,
     pub crossorigin: Option<String>,
+    /// The module type of a [`ResourceKind::ModuleScript`] fetch, whose
+    /// response MIME type must match it (`None`: JavaScript).
+    pub module: Option<ModuleType>,
 }
 
 impl ScriptFetch {
@@ -566,6 +582,7 @@ impl ScriptFetch {
         ScriptFetch {
             integrity: info.integrity.clone().filter(|v| !lp_webapi::sri::is_empty(v)),
             crossorigin: info.crossorigin.clone(),
+            module: None,
         }
     }
 }
@@ -1095,7 +1112,8 @@ impl Browser {
         let frame_id = self.doc(page).map(|p| p.main_frame.id.0.clone());
         // Subresources carry the document's loader id (CDP Network.* routing).
         let loader_id = self.doc(page).map(|p| p.main_frame.loader_id.0.clone());
-        let ScriptFetch { integrity, crossorigin } = opts;
+        let ScriptFetch { integrity, crossorigin, module } = opts;
+        let module = (kind == ResourceKind::ModuleScript).then(|| module.unwrap_or(ModuleType::JavaScript));
         let cors = kind == ResourceKind::ModuleScript || crossorigin.is_some();
         let req = FetchRequest { post: None, url, kind, page: page.page, referrer, frame_id, loader_id, crossorigin };
         loader.fetch(
@@ -1104,12 +1122,18 @@ impl Browser {
             Box::new(move |b, res| {
                 let res = match res {
                     Ok(r) if (200..300).contains(&r.status) => {
-                        let blocked = integrity.as_deref().and_then(|i| {
-                            let origin = b.doc(page).map(|p| p.main_frame.origin.clone()).unwrap_or_default();
-                            integrity_error(&r, Some(i), cors, &origin)
-                        });
+                        let blocked = integrity
+                            .as_deref()
+                            .and_then(|i| {
+                                let origin = b.doc(page).map(|p| p.main_frame.origin.clone()).unwrap_or_default();
+                                integrity_error(&r, Some(i), cors, &origin)
+                            })
+                            .or_else(|| module.and_then(|ty| lp_webapi::module_script::mime_error(ty, &r.mime, &r.url)));
                         match blocked {
                             Some(e) => Err(e),
+                            // A module script is UTF-8 whatever its charset
+                            // says (HTML "fetch a single module script").
+                            None if module.is_some() => Ok(lp_webapi::module_script::utf8_decode(&r.body)),
                             None => Ok(r.text()),
                         }
                     }

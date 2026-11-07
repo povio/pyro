@@ -24,6 +24,7 @@ mod indexeddb_js;
 mod layout_text_js;
 mod media_source_js;
 mod messaging_js;
+mod module_scripts_js;
 mod move_before_js;
 mod observable_js;
 mod popover_dialog_js;

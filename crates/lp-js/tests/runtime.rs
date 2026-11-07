@@ -563,6 +563,89 @@ fn es_modules_through_fetcher() {
     );
 }
 
+/// Import attributes reach the fetcher (patched JavaScriptCore): JSON and CSS
+/// module scripts, the (URL, type) module map, and the TypeErrors for types
+/// and attributes HTML does not allow.
+#[test]
+fn typed_module_requests_reach_the_fetcher() {
+    let e = engine();
+    if !e.capabilities().typed_modules {
+        eprintln!("import attributes need the patched JavaScriptCore; skipping");
+        return;
+    }
+    struct Fetcher {
+        requested: RefCell<Vec<(String, ModuleType)>>,
+    }
+    impl ModuleFetcher for Fetcher {
+        fn fetch(&self, realm: &Realm, url: String, request: ModuleRequest) {
+            let ty = request.module_type();
+            self.requested.borrow_mut().push((url.clone(), ty));
+            let s = realm.scope().unwrap();
+            match (url.as_str(), ty) {
+                ("http://site.test/d.json", ModuleType::Json) => request.resolve_json(&s, r#"{"a": 1, "b": [2]}"#),
+                ("http://site.test/bad.json", ModuleType::Json) => request.resolve_json(&s, "{oops"),
+                ("http://site.test/s.css", ModuleType::Css) => {
+                    let sheet = s.eval("({ sheet: 'css' })", None, 1).unwrap().as_object().unwrap();
+                    request.resolve_object(&s, sheet)
+                }
+                // A CSS request resolved with source text is refused.
+                ("http://site.test/wrong.css", ModuleType::Css) => request.resolve(&s, "export default 1"),
+                _ => request.reject(&s, &JsError::Type(format!("not a {ty:?} module: {url}"))),
+            }
+            .unwrap();
+        }
+    }
+    let r = e.create_realm(RealmOptions { origin: Some("http://site.test".into()), ..Default::default() }).unwrap();
+    let fetcher = Rc::new(Fetcher { requested: RefCell::new(vec![]) });
+    r.set_module_fetcher(Some(fetcher.clone()));
+    let s = r.scope().unwrap();
+    let outcome = |src: &str| format!("import({src}).then(m => m.default, e => e.constructor.name + ': ' + e.message)");
+    s.eval_module(
+        &format!(
+            "import data from './d.json' with {{ type: 'json' }}; \
+             globalThis.out = [JSON.stringify(data)]; \
+             const again = await import('./d.json', {{ with: {{ type: 'json' }} }}); \
+             out.push(again.default === data); \
+             out.push((await import('./s.css', {{ with: {{ type: 'css' }} }})).default.sheet); \
+             for (const r of [{}, {}, {}, {}, {}, {}, {}]) out.push(await r);",
+            outcome("'./d.json'"),
+            outcome("'./bad.json', { with: { type: 'json' } }"),
+            outcome("'./wrong.css', { with: { type: 'css' } }"),
+            outcome("'./t.txt', { with: { type: 'text' } }"),
+            outcome("'./x.js', { with: { type: 'javascript' } }"),
+            outcome("'./x.js', { with: { unknown: 'x' } }"),
+            outcome("'./w.wasm', { with: { type: 'webassembly' } }"),
+        ),
+        "http://site.test/main.js",
+    )
+    .unwrap();
+    let out = eval_str(&r, "JSON.stringify(out)");
+    let out: Vec<serde_json::Value> = serde_json::from_str(&out).unwrap_or_else(|_| panic!("{out}"));
+    assert_eq!(out[0], r#"{"a":1,"b":[2]}"#);
+    assert_eq!(out[1], true, "one module per (URL, type)");
+    assert_eq!(out[2], "css");
+    // The same URL without a type is a separate JavaScript request.
+    assert_eq!(out[3], "TypeError: not a JavaScript module: http://site.test/d.json");
+    assert!(out[4].as_str().unwrap().starts_with("SyntaxError"), "{}", out[4]);
+    assert!(out[5].as_str().unwrap().starts_with("TypeError"), "{}", out[5]);
+    for (i, what) in [(6, "text"), (7, "javascript"), (8, "unknown attribute")] {
+        assert!(out[i].as_str().unwrap().starts_with("TypeError"), "{what}: {}", out[i]);
+    }
+    // "webassembly" parses in JavaScriptCore; the fetcher sees it unsupported.
+    assert_eq!(out[9], "TypeError: not a Unsupported module: http://site.test/w.wasm");
+    assert_eq!(
+        *fetcher.requested.borrow(),
+        vec![
+            ("http://site.test/d.json".to_string(), ModuleType::Json),
+            ("http://site.test/s.css".to_string(), ModuleType::Css),
+            ("http://site.test/d.json".to_string(), ModuleType::JavaScript),
+            ("http://site.test/bad.json".to_string(), ModuleType::Json),
+            ("http://site.test/wrong.css".to_string(), ModuleType::Css),
+            ("http://site.test/w.wasm".to_string(), ModuleType::Unsupported),
+        ]
+    );
+}
+
 #[test]
 fn import_meta_url_is_set_for_entry_and_fetched_modules() {
     let e = engine();
