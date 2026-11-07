@@ -1194,9 +1194,12 @@ impl Dom {
         self.opt_id(self.activated_idx(d))
     }
 
-    /// Sets the element being activated (`:active`); a change restyles like
-    /// a hover change.
-    pub fn set_activated(&mut self, doc: NodeId, el: Option<NodeId>) -> DomResult<()> {
+    /// Sets the element being activated (`:active`). With `restyle` (some
+    /// style can depend on `:active`, [`crate::style::StyleEngine::active_styled`])
+    /// a change restyles like a hover change; without, only the state
+    /// changes: nothing computed from the document is invalidated, and the
+    /// layout engine reads the state at its next sync.
+    pub fn set_activated(&mut self, doc: NodeId, el: Option<NodeId>, restyle: bool) -> DomResult<()> {
         let d = self.check(doc)?;
         let new = match el {
             Some(e) => self.check(e)?,
@@ -1208,8 +1211,10 @@ impl Dom {
         if let NodeKind::Document(dd) = &mut self.n_mut(d).kind {
             dd.activated = new;
         }
-        self.bump();
-        self.note(crate::dom::Change::Pseudo);
+        if restyle {
+            self.bump();
+            self.note(crate::dom::Change::Pseudo);
+        }
         Ok(())
     }
 

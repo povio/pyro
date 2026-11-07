@@ -792,6 +792,9 @@ pub struct StyleEngine {
     external: RefCell<Option<Engine>>,
     /// Set while the engine syncs (it reads the sheets here, not styles).
     external_syncing: Cell<bool>,
+    /// Whether a style rule of the engine's sheets depends on `:active`, as
+    /// of its last sync (true until one tells otherwise).
+    active_styled: Cell<bool>,
     /// The rules declaring properties the engine's Stylo does not parse
     /// ([`crate::gecko_only`]), for an observation stamp.
     /// for the [`StyleEngine::author_sheets_key`] they were parsed at.
@@ -846,6 +849,7 @@ impl StyleEngine {
             memo_at: Cell::new(None),
             external: RefCell::new(None),
             external_syncing: Cell::new(false),
+            active_styled: Cell::new(true),
             gecko_rules: RefCell::new(None),
             revisions: 0,
             sheets_key: Cell::new(None),
@@ -916,8 +920,21 @@ impl StyleEngine {
     /// The layout engine synced `dom` (styles and layout).
     pub fn engine_synced(&self, dom: &Dom) {
         let stamp = self.observation_stamp(dom);
-        if let Some((_, at)) = self.external.borrow_mut().as_mut() {
+        if let Some((source, at)) = self.external.borrow_mut().as_mut() {
             *at = Some(stamp);
+            self.active_styled.set(source.styles_depend_on_active());
+        }
+    }
+
+    /// Whether which element is `:active` can change a computed style: some
+    /// sheet depends on it, or no layout engine answers for the sheets (see
+    /// [`crate::Dom::set_activated`]). Sheets change only with the DOM
+    /// version or the sheet generation, both in the observation stamp, so
+    /// the engine syncs for a change before styles are read again.
+    pub fn active_styled(&self) -> bool {
+        match self.external.borrow().as_ref() {
+            Some((source, _)) if source.active() => self.active_styled.get(),
+            _ => true,
         }
     }
 

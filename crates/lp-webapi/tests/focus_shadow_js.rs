@@ -367,3 +367,30 @@ fn focus_visible_follows_input_modality_and_active_tracks_the_press() {
         "false,false"
     );
 }
+
+#[test]
+fn active_restyles_only_when_a_sheet_uses_it() {
+    let e = env("<!DOCTYPE html><style>button{position:absolute;width:50px;height:30px;border:0}</style>\
+         <body style='margin:0'><button id=b style='left:0;top:0'>b</button></body>");
+    let r = &e.main;
+    eval(r, "b.focus(); b.getBoundingClientRect()");
+    // No sheet reads `:active`: the press changes the state, nothing else.
+    let before = e.page.dom.borrow().version();
+    mouse(&e.page, input::MouseKind::Pressed, 10.0, 10.0, 1);
+    assert_eq!(e.page.dom.borrow().version(), before);
+    assert_eq!(eval(r, "[b.matches(':active'), document.body.matches(':active')].join()"), "true,true");
+    // A sheet that reads it, added during the press, sees the pressed state.
+    eval(
+        r,
+        "const s = document.createElement('style'); s.textContent = '#b:active{color:rgb(4, 5, 6)}'; \
+         document.head.append(s)",
+    );
+    assert_eq!(eval(r, "getComputedStyle(b).color"), "rgb(4, 5, 6)");
+    mouse(&e.page, input::MouseKind::Released, 10.0, 10.0, 0);
+    assert_eq!(eval(r, "[b.matches(':active'), getComputedStyle(b).color === 'rgb(4, 5, 6)'].join()"), "false,false");
+    // From now on a press restyles.
+    mouse(&e.page, input::MouseKind::Pressed, 10.0, 10.0, 1);
+    assert_eq!(eval(r, "getComputedStyle(b).color"), "rgb(4, 5, 6)");
+    mouse(&e.page, input::MouseKind::Released, 10.0, 10.0, 0);
+    assert_ne!(eval(r, "getComputedStyle(b).color"), "rgb(4, 5, 6)");
+}

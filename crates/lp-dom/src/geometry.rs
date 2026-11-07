@@ -145,6 +145,11 @@ pub trait GeometrySource {
     fn active(&self) -> bool {
         true
     }
+    /// Whether a style rule of the engine's sheets depends on `:active`
+    /// (as of the last sync); true when the engine cannot tell.
+    fn styles_depend_on_active(&self) -> bool {
+        true
+    }
     /// Whether the engine must sync again although the document did not
     /// change (a sub-resource it laid out without arrived since).
     fn stale(&self) -> bool {

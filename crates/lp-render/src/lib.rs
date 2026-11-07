@@ -1203,6 +1203,13 @@ impl Renderer {
         Some(((size.width as f64).max(overflow.x1).max(vw), (size.height as f64).max(overflow.y1).max(vh)))
     }
 
+    /// Whether a style rule of `page`'s document depends on `:active`
+    /// (Stylo's state dependencies, kept as sheets are flushed). `None`:
+    /// not mirrored.
+    pub fn styles_depend_on_active(&self, page: u64) -> Option<bool> {
+        Some(self.mirrors.get(&page)?.doc.style_depends_on_state(style_dom::ElementState::ACTIVE))
+    }
+
     /// Whether any element of `page`'s document is `position: sticky`.
     pub fn has_sticky(&self, page: u64) -> bool {
         match (self.mirrors.get(&page), self.geometry.get(&page)) {
