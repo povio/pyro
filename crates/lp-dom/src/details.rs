@@ -184,11 +184,17 @@ impl Dom {
     }
 
     /// HTML details insertion steps, for the details elements of the
-    /// inserted subtree `node`. Nothing to do until a details has a name.
+    /// inserted subtree `node`. Nothing to do until a details has a name:
+    /// inlined, every insertion pays one flag test.
+    #[inline(always)]
     pub(crate) fn details_after_insert(&mut self, node: u32) {
-        if !self.details.named {
-            return;
+        if self.details.named {
+            self.close_inserted_named_details(node);
         }
+    }
+
+    #[inline(never)]
+    fn close_inserted_named_details(&mut self, node: u32) {
         let mut found = Vec::new();
         let mut cur = node;
         while cur != NIL {

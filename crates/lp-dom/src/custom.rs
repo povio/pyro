@@ -234,6 +234,14 @@ impl Dom {
         self.reactions.parser.get(&self.id_of(document)).cloned()
     }
 
+    /// Whether custom element reactions are queued (for any document): the
+    /// parser's test, under the borrow of its insertion, for whether to
+    /// look for its document's.
+    #[inline(always)]
+    pub(crate) fn custom_reactions_queued(&self) -> bool {
+        !self.reactions.queued.is_empty()
+    }
+
     /// The parser hooks of `document`, when its insertion queued reactions.
     pub(crate) fn parser_reactions_pending(&self, document: u32) -> Option<Rc<dyn ParserCustomElements>> {
         if self.reactions.queued.is_empty() {
@@ -280,6 +288,7 @@ impl Dom {
 
     /// Whether the parser of `document` may construct an element named
     /// `name` (a window defined that name and gave its hooks).
+    #[inline]
     pub(crate) fn parser_may_construct(&self, document: u32, name: &QualName) -> bool {
         !self.reactions.defined.is_empty()
             && name.ns == markup5ever::ns!(html)
