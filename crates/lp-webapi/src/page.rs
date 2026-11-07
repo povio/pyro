@@ -223,6 +223,12 @@ pub struct PageDom {
     /// Bitmaps of canvas elements with a 2D context (`canvas.rs`), for
     /// painting them.
     pub(crate) canvas_surfaces: RefCell<Vec<(NodeId, std::rc::Weak<RefCell<lp_canvas::Surface>>)>>,
+    /// Canvas elements whose control went to an `OffscreenCanvas`
+    /// (`transferControlToOffscreen`), with the frame it shows there.
+    pub(crate) canvas_placeholders: RefCell<Vec<(NodeId, std::sync::Arc<crate::canvas::Placeholder>)>>,
+    /// This thread's offscreen contexts drawing for a placeholder: their
+    /// frame is committed after each task (`canvas::commit_frames`).
+    pub(crate) canvas_commits: RefCell<Vec<crate::canvas::FrameCommit>>,
     /// A 2D context, `OffscreenCanvas` or `createImageBitmap` was used:
     /// image bytes are worth keeping ([`PageDom::wants_image_bytes`]).
     pub(crate) canvas_used: Cell<bool>,
@@ -699,6 +705,8 @@ impl PageDom {
             image_bytes_kept: Cell::new((0, 0)),
             image_bytes_refused: Cell::new(0),
             canvas_surfaces: RefCell::new(Vec::new()),
+            canvas_placeholders: RefCell::new(Vec::new()),
+            canvas_commits: RefCell::new(Vec::new()),
             canvas_used: Cell::new(false),
             media: Default::default(),
             pointer: RefCell::new(None),
@@ -1315,6 +1323,9 @@ impl PageDom {
     /// listener-holding wrappers of disconnected nodes, re-pins reconnected
     /// ones, and frees unreachable DOM nodes.
     pub fn after_task(self: &Rc<Self>) {
+        // Drawing changes no DOM: offscreen frames are committed whether or
+        // not the task was otherwise quiet (one empty-list check without).
+        crate::canvas::commit_frames(self);
         if self.quiet_since_last_task() {
             return;
         }

@@ -18,6 +18,11 @@
 // TransformStream of this realm (DataCloneError if locked), `host(stream, 6)`
 // pipes it through new channels and returns the ports to send, and
 // `host([kind, ports], 7)` makes the stream of a decoded 'S' tree.
+// `host(value, 0)` also describes an ImageBitmap or OffscreenCanvas as
+// ['C', index] (its pixels or placeholder travel beside the text);
+// `host(value, 8)` is 'C' for one that can be transferred (DataCloneError
+// if detached), `host(value, 9)` detaches it and `host(index, 10)` makes the
+// one of a decoded 'C' tree.
 // Blob bytes travel beside the text, shared, not copied. Transferred
 // MessagePorts travel beside it too: `encode` returns them in transfer-list
 // order, then the ports of the transferred streams, with the count of the
@@ -64,7 +69,7 @@
     // encoded, and the MessagePorts it transfers. Worker messages always cross
     // a VM, so transferring a buffer is a copy followed by a detach, which is
     // what the sender can observe.
-    const none = [[], [], [], []];
+    const none = [[], [], [], [], []];
     function transferList(options) {
         if (options === undefined || options === null) return none;
         let list;
@@ -80,7 +85,7 @@
                 throw new TE('transfer entries must be objects');
             put(entries, entries.length, entry);
         }
-        const buffers = [], ports = [], streams = [], kinds = [], seen = new M();
+        const buffers = [], ports = [], streams = [], kinds = [], canvases = [], seen = new M();
         for (let i = 0; i < entries.length; ++i) {
             const entry = entries[i];
             if (call(mapHas, seen, [entry])) fail('An object is listed twice in the transfer list');
@@ -90,6 +95,9 @@
                 put(buffers, buffers.length, entry);
             } else if (host(entry, 4)) {
                 put(ports, ports.length, entry);
+            } else if (host(entry, 8) !== undefined) {
+                // An ImageBitmap or OffscreenCanvas.
+                put(canvases, canvases.length, entry);
             } else {
                 // A ReadableStream, WritableStream or TransformStream ('R',
                 // 'W', 'T'; DataCloneError when locked).
@@ -100,17 +108,18 @@
             }
         }
         if (buffers.length && !abTransfer) fail('ArrayBuffer transfer is not available', true);
-        return [buffers, ports, streams, kinds];
+        return [buffers, ports, streams, kinds, canvases];
     }
 
     function encode(clone, value, options) {
         const lists = transferList(options), transfer = lists[0], ports = lists[1];
-        const streams = lists[2], kinds = lists[3];
-        // Listed ports and streams stay themselves in the copy; the walk
-        // numbers them. A stream's ports follow the listed ports, in order.
+        const streams = lists[2], kinds = lists[3], canvases = lists[4];
+        // Listed ports, streams and canvases stay themselves in the copy;
+        // the walk numbers them. A stream's ports follow the listed ports.
         const keep = [];
         for (let i = 0; i < ports.length; ++i) put(keep, keep.length, ports[i]);
         for (let i = 0; i < streams.length; ++i) put(keep, keep.length, streams[i]);
+        for (let i = 0; i < canvases.length; ++i) put(keep, keep.length, canvases[i]);
         const copy = clone(value, undefined, undefined, keep.length ? keep : undefined);
         // Only a message that transfers something pays for these lookups.
         const portIndex = ports.length ? new M() : undefined;
@@ -202,6 +211,7 @@
             const parts = host(source, 0);
             if (parts !== undefined) {
                 if (parts[0] === 'K') return '["K",' + node(parts[1]) + ']';
+                if (parts[0] === 'C') return '["C",' + parts[1] + ']';
                 if (parts[0] === 'F') {
                     return '["F",' + parts[1] + ',' + stringify(parts[2]) + ','
                         + (parts[3] === null ? 'null' : stringify(parts[3])) + ',' + node(parts[4]) + ']';
@@ -222,7 +232,9 @@
         }
         for (let i = 0; i < ports.length; ++i) host(ports[i], 4);
         for (let i = 0; i < streams.length; ++i) host(streams[i], 5);
+        for (let i = 0; i < canvases.length; ++i) host(canvases[i], 8);
         for (let i = 0; i < transfer.length; ++i) call(abTransfer, transfer[i]);
+        for (let i = 0; i < canvases.length; ++i) host(canvases[i], 9);
         const listed = ports.length, sent = [];
         for (let i = 0; i < listed; ++i) put(sent, i, ports[i]);
         for (let i = 0; i < streams.length; ++i) {
@@ -298,6 +310,7 @@
                     return error;
                 }
                 case 'F': return remember(id, host(tree, 1));
+                case 'C': return remember(id, host(tree[1], 10));
                 case 'S': {
                     const streamPorts = [ports[tree[2]]];
                     if (tree.length > 3) put(streamPorts, 1, ports[tree[3]]);

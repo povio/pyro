@@ -21,14 +21,20 @@
 //!   (`getImageData`, `toDataURL`, `toBlob`, `convertToBlob`) then throw
 //!   `SecurityError`.
 //!
+//! - `ImageBitmap`s are serializable and transferable, `OffscreenCanvas`es
+//!   (without a context) transferable, within a thread and to and from
+//!   workers ([`CanvasObject`]). `transferControlToOffscreen` makes an
+//!   `OffscreenCanvas` whose frames show on its `<canvas>` ([`Placeholder`]):
+//!   the thread drawing on it commits each changed frame after its task.
+//!
 //! The value types (`CanvasGradient`, `CanvasPattern`, `Path2D`, `ImageData`,
 //! `TextMetrics`, `ImageBitmap`, `OffscreenCanvas`, `DOMMatrix`, `DOMPoint`)
 //! and `createImageBitmap` are made in JS (canvas2d.js) on a realm's first
-//! use of any of them.
+//! use of any of them, in a window or a worker.
 
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use kurbo::{Affine, BezPath, Point, Rect};
 use lp_canvas::{Bitmap, ClipPath, Color, Composite, DrawState, Paint, Pixmap, Surface};
@@ -81,6 +87,31 @@ where
     );
 }
 
+/// The same names on a worker's global (no `WebKitCSSMatrix` there).
+pub(crate) fn define_worker_globals<W>(def: &mut ClassDef<W>)
+where
+    W: JsClass,
+    W::Data: WindowHost,
+{
+    lazy_globals!(
+        def,
+        MODULE,
+        "DOMPointReadOnly",
+        "DOMPoint",
+        "DOMMatrixReadOnly",
+        "DOMMatrix",
+        "Path2D",
+        "ImageData",
+        "CanvasGradient",
+        "CanvasPattern",
+        "TextMetrics",
+        "ImageBitmap",
+        "OffscreenCanvas",
+        "OffscreenCanvasRenderingContext2D",
+        "createImageBitmap",
+    );
+}
+
 fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
     let natives = s.object();
     let parse = s.function("parseColor", |s, _this, a| {
@@ -101,6 +132,15 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         let context = new_context(s, &page, Target::Offscreen, size_u32(w), size_u32(h))?;
         s.set_hidden(context, OFFSCREEN, a.get(0))?;
         page.canvas_used.set(true);
+        // An OffscreenCanvas of `transferControlToOffscreen`: its frames go
+        // to the placeholder `<canvas>`.
+        if let (Some(placeholder), Some(c)) =
+            (placeholder_of(a.get(3))?, s.unwrap::<CanvasRenderingContext2D>(context.value()))
+        {
+            let mut commits = page.canvas_commits.borrow_mut();
+            commits.retain(|c| c.surface.strong_count() > 0);
+            commits.push(FrameCommit { surface: Rc::downgrade(&c.surface), placeholder, committed: Cell::new(None) });
+        }
         Ok(context.value())
     })?;
     natives.set_atom("offscreenContext", offscreen.value())?;
@@ -385,6 +425,12 @@ fn new_context<'s>(s: &Scope<'s>, page: &Rc<PageDom>, target: Target, w: u32, h:
 /// `HTMLCanvasElement.getContext(type)`: one 2D context per canvas; other
 /// context types are unsupported (null).
 pub fn get_context<'s>(s: &Scope<'s>, page: &Rc<PageDom>, canvas: NodeId, kind: &str) -> JsResult<Value<'s>> {
+    if placeholder_frame(page, canvas).is_some() {
+        return Err(JsError::dom(
+            "InvalidStateError",
+            "Failed to execute 'getContext' on 'HTMLCanvasElement': Cannot get context from a canvas that has transferred its control to offscreen.",
+        ));
+    }
     if kind != "2d" {
         return Ok(s.null());
     }
@@ -436,10 +482,13 @@ fn encode_canvas(
             c.sync_size();
             c.surface.borrow_mut().encode(encoding)
         }
-        None => {
-            let (w, h) = canvas_size(page, canvas);
-            Surface::new(w, h).encode(encoding)
-        }
+        None => match placeholder_frame(page, canvas) {
+            Some(frame) => frame.surface().encode(encoding),
+            None => {
+                let (w, h) = canvas_size(page, canvas);
+                Surface::new(w, h).encode(encoding)
+            }
+        },
     };
     Ok(bytes.map(|b| (b, mime)))
 }
@@ -599,7 +648,13 @@ fn image_source(
                         let pixmap = c.surface.borrow_mut().snapshot();
                         ImageHandle { pixmap, width: w, height: h, clean: c.clean.get() }
                     }
-                    None => ImageHandle { pixmap: None, width: w, height: h, clean: true },
+                    // A placeholder shows its OffscreenCanvas's last frame.
+                    None => match placeholder_frame(&source_page, n.id) {
+                        Some(frame) => {
+                            ImageHandle { pixmap: frame.bitmap, width: frame.width, height: frame.height, clean: true }
+                        }
+                        None => ImageHandle { pixmap: None, width: w, height: h, clean: true },
+                    },
                 };
                 Ok(Some(handle))
             }
@@ -1738,6 +1793,222 @@ pub(crate) fn register(engine: &lp_js::Engine) {
     engine.register::<CanvasRenderingContext2D>();
 }
 
+// ---- Transfer and placeholders ----------------------------------------------
+
+/// The last frame an `OffscreenCanvas` committed to its placeholder
+/// `<canvas>` (HTML "update the rendering" of the offscreen canvas). Shared
+/// between the thread drawing (a worker's, or the page's own) and the
+/// page's, which paints it.
+#[derive(Default)]
+pub struct Placeholder {
+    frame: Mutex<PlaceholderFrame>,
+}
+
+/// A committed frame, premultiplied; its straight-alpha rows are made once
+/// per frame, when the page is painted.
+#[derive(Clone, Default)]
+pub(crate) struct PlaceholderFrame {
+    bitmap: Option<Bitmap>,
+    width: u32,
+    height: u32,
+    straight: Option<Arc<Vec<u8>>>,
+}
+
+impl PlaceholderFrame {
+    /// A surface holding the frame (to encode it).
+    fn surface(&self) -> Surface {
+        let mut surface = Surface::new(self.width, self.height);
+        if let Some(bitmap) = &self.bitmap {
+            let rect = Rect::new(0.0, 0.0, f64::from(self.width), f64::from(self.height));
+            surface.draw_image(bitmap, rect, rect, &State::new().draw_state());
+        }
+        surface
+    }
+}
+
+impl Placeholder {
+    fn frame(&self) -> std::sync::MutexGuard<'_, PlaceholderFrame> {
+        self.frame.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn commit(&self, bitmap: Option<Bitmap>, width: u32, height: u32) {
+        *self.frame() = PlaceholderFrame { bitmap, width, height, straight: None };
+    }
+
+    /// The frame's straight RGBA rows, `None` while it has no pixels.
+    fn rgba(&self) -> Option<(u32, u32, Arc<Vec<u8>>)> {
+        let mut frame = self.frame();
+        let bitmap = frame.bitmap.as_ref()?;
+        if frame.straight.is_none() {
+            let mut data = bitmap.data_as_u8_slice().to_vec();
+            lp_canvas::unpremultiply(&mut data);
+            frame.straight = Some(Arc::new(data));
+        }
+        Some((frame.width, frame.height, frame.straight.clone()?))
+    }
+}
+
+/// An offscreen context of this thread whose frames go to a placeholder.
+pub(crate) struct FrameCommit {
+    surface: Weak<RefCell<Surface>>,
+    placeholder: Arc<Placeholder>,
+    /// The surface's generation and size last committed.
+    committed: Cell<Option<(u64, u32, u32)>>,
+}
+
+/// After a task: each offscreen context drawing for a placeholder whose
+/// bitmap changed commits it (the pixels are shared, not copied). Free on a
+/// thread without one.
+pub(crate) fn commit_frames(page: &PageDom) {
+    let Ok(commits) = page.canvas_commits.try_borrow() else { return };
+    if commits.is_empty() {
+        return;
+    }
+    let mut gone = false;
+    for commit in commits.iter() {
+        let Some(surface) = commit.surface.upgrade() else {
+            gone = true;
+            continue;
+        };
+        let Ok(mut surface) = surface.try_borrow_mut() else { continue };
+        surface.flush();
+        let now = (surface.generation(), surface.width(), surface.height());
+        if commit.committed.get() != Some(now) {
+            commit.committed.set(Some(now));
+            commit.placeholder.commit(surface.snapshot(), now.1, now.2);
+        }
+    }
+    drop(commits);
+    if gone {
+        page.canvas_commits.borrow_mut().retain(|c| c.surface.strong_count() > 0);
+    }
+}
+
+/// The frame shown on `canvas` if its control was transferred.
+fn placeholder_frame(page: &PageDom, canvas: NodeId) -> Option<PlaceholderFrame> {
+    let list = page.canvas_placeholders.borrow();
+    if list.is_empty() {
+        return None;
+    }
+    list.iter().find(|(id, _)| *id == canvas).map(|(_, p)| p.frame().clone())
+}
+
+thread_local! {
+    static PLACEHOLDER_HANDED: RefCell<Option<Arc<Placeholder>>> = const { RefCell::new(None) };
+}
+
+/// A JS value holding `placeholder` (canvas2d.js keeps it private on the
+/// OffscreenCanvas), as [`handle_object`] holds pixels.
+fn placeholder_object<'s>(s: &Scope<'s>, placeholder: Arc<Placeholder>) -> JsResult<Value<'s>> {
+    Ok(s.function("", move |s, _this, _a| {
+        PLACEHOLDER_HANDED.with(|h| *h.borrow_mut() = Some(placeholder.clone()));
+        Ok(s.undefined())
+    })?
+    .value())
+}
+
+fn placeholder_of(v: Value<'_>) -> JsResult<Option<Arc<Placeholder>>> {
+    let Some(f) = v.as_object().filter(|_| v.is_function()) else { return Ok(None) };
+    PLACEHOLDER_HANDED.with(|h| h.borrow_mut().take());
+    f.call(None, &[])?;
+    Ok(PLACEHOLDER_HANDED.with(|h| h.borrow_mut().take()))
+}
+
+/// `HTMLCanvasElement.transferControlToOffscreen()`: an OffscreenCanvas of
+/// the canvas's size whose committed frames the canvas shows.
+pub(crate) fn transfer_control_to_offscreen<'s>(
+    s: &Scope<'s>,
+    page: &Rc<PageDom>,
+    canvas: NodeId,
+) -> JsResult<Value<'s>> {
+    if element_context(s, page, canvas)?.is_some() {
+        return Err(JsError::dom(
+            "InvalidStateError",
+            "Failed to execute 'transferControlToOffscreen' on 'HTMLCanvasElement': Cannot transfer control from a canvas that has a rendering context.",
+        ));
+    }
+    if placeholder_frame(page, canvas).is_some() {
+        return Err(JsError::dom(
+            "InvalidStateError",
+            "Failed to execute 'transferControlToOffscreen' on 'HTMLCanvasElement': Cannot transfer control from a canvas for more than one time.",
+        ));
+    }
+    let placeholder = Arc::new(Placeholder::default());
+    page.canvas_placeholders.borrow_mut().push((canvas, placeholder.clone()));
+    page.canvas_used.set(true);
+    let (w, h) = canvas_size(page, canvas);
+    let handle = placeholder_object(s, placeholder)?;
+    MODULE.helper(s, page, "offscreenOf", &[s.number(f64::from(w)), s.number(f64::from(h)), handle])
+}
+
+/// An `ImageBitmap` or `OffscreenCanvas` on its way to another realm or
+/// thread (StructuredSerialize, or its transfer).
+#[derive(Clone)]
+pub(crate) enum CanvasObject {
+    Bitmap { pixmap: Option<Bitmap>, width: u32, height: u32 },
+    Offscreen { width: f64, height: f64, placeholder: Option<Arc<Placeholder>> },
+}
+
+/// The [`CanvasObject`] of `value` if it is an ImageBitmap (or, being
+/// transferred, an OffscreenCanvas) of `s`'s realm. DataCloneError for a
+/// detached one or a bitmap that is not origin-clean; InvalidStateError for
+/// an OffscreenCanvas with a context. A realm that never made a canvas
+/// value costs one lookup.
+pub(crate) fn canvas_object_of(s: &Scope<'_>, value: Value<'_>, transfer: bool) -> JsResult<Option<CanvasObject>> {
+    if !value.is_object() {
+        return Ok(None);
+    }
+    let page = crate::target::page_of(s)?;
+    let Some(module) = MODULE.existing(s, &page)? else { return Ok(None) };
+    let describe = module.get("describeTransferable")?;
+    let describe = describe.as_object().ok_or(JsError::ContextDestroyed)?;
+    let parts = describe.call(None, &[value, s.boolean(transfer)])?;
+    let Some(parts) = parts.as_object().filter(|_| parts.is_array()) else { return Ok(None) };
+    if parts.get_index(0)?.to_number()? == 0.0 {
+        let handle =
+            handle_of(parts.get_index(1)?)?.ok_or_else(|| JsError::dom("DataCloneError", "Invalid ImageBitmap"))?;
+        if !handle.clean {
+            return Err(JsError::dom("DataCloneError", "An ImageBitmap that is not origin-clean could not be cloned."));
+        }
+        return Ok(Some(CanvasObject::Bitmap { pixmap: handle.pixmap, width: handle.width, height: handle.height }));
+    }
+    Ok(Some(CanvasObject::Offscreen {
+        width: parts.get_index(1)?.to_number()?,
+        height: parts.get_index(2)?.to_number()?,
+        placeholder: placeholder_of(parts.get_index(3)?)?,
+    }))
+}
+
+/// Detaches a transferred ImageBitmap or OffscreenCanvas of `s`'s realm;
+/// false when `value` is neither.
+pub(crate) fn detach_canvas_object(s: &Scope<'_>, value: Value<'_>) -> JsResult<bool> {
+    let page = crate::target::page_of(s)?;
+    let Some(module) = MODULE.existing(s, &page)? else { return Ok(false) };
+    let detach = module.get("detachTransferable")?;
+    let detach = detach.as_object().ok_or(JsError::ContextDestroyed)?;
+    Ok(detach.call(None, &[value])?.to_bool())
+}
+
+/// The ImageBitmap or OffscreenCanvas of `object` in `s`'s realm.
+pub(crate) fn make_canvas_object<'s>(s: &Scope<'s>, object: &CanvasObject) -> JsResult<Value<'s>> {
+    let page = crate::target::page_of(s)?;
+    page.canvas_used.set(true);
+    match object {
+        CanvasObject::Bitmap { pixmap, width, height } => {
+            let handle = ImageHandle { pixmap: pixmap.clone(), width: *width, height: *height, clean: true };
+            let made = bitmap_triple(s, handle)?;
+            MODULE.helper(s, &page, "bitmapOf", &[made])
+        }
+        CanvasObject::Offscreen { width, height, placeholder } => {
+            let handle = match placeholder {
+                Some(p) => placeholder_object(s, p.clone())?,
+                None => s.null(),
+            };
+            MODULE.helper(s, &page, "offscreenOf", &[s.number(*width), s.number(*height), handle])
+        }
+    }
+}
+
 /// A canvas bitmap for rendering: its element, size and straight RGBA rows.
 pub type CanvasBitmap = (NodeId, u32, u32, Arc<Vec<u8>>);
 
@@ -1762,6 +2033,13 @@ impl PageDom {
                 continue;
             }
             if let Some(rgba) = surface.straight_rgba() {
+                out.push((*canvas, w, h, rgba));
+            }
+        }
+        drop(list);
+        // Canvases whose control went offscreen show the committed frame.
+        for (canvas, placeholder) in self.canvas_placeholders.borrow().iter() {
+            if let Some((w, h, rgba)) = placeholder.rgba() {
                 out.push((*canvas, w, h, rgba));
             }
         }

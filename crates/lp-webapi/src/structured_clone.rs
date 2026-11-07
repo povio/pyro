@@ -12,9 +12,26 @@ pub(crate) fn install(s: &Scope<'_>, page: &crate::page::PageDom) -> JsResult<()
             return match args.get(1).to_number()? as u32 {
                 0 => Ok(crate::file::clone_host(s, value)?.unwrap_or_else(|| s.undefined())),
                 1 => Ok(crate::message_channel::prepare_transfer(s, value)?.unwrap_or_else(|| s.undefined())),
-                // A platform object the script does not know (CryptoKey), or
-                // undefined; asked only for a value it would otherwise reject.
-                3 => crate::crypto::clone_platform_object(s, value),
+                // A platform object the script does not know (CryptoKey,
+                // ImageBitmap), or undefined; asked only for a value it would
+                // otherwise reject.
+                3 => {
+                    let copy = crate::crypto::clone_platform_object(s, value)?;
+                    if !copy.is_undefined() {
+                        return Ok(copy);
+                    }
+                    match canvas_object(s, value, false)? {
+                        Some(object) => crate::canvas::make_canvas_object(s, &object),
+                        None => Ok(s.undefined()),
+                    }
+                }
+                // A transferable ImageBitmap or OffscreenCanvas: its copy
+                // here (the original is detached by mode 9), else undefined.
+                8 => match canvas_object(s, value, true)? {
+                    Some(object) => crate::canvas::make_canvas_object(s, &object),
+                    None => Ok(s.undefined()),
+                },
+                9 => detach_canvas_object(s, value).map(|()| s.undefined()),
                 5 => prepare_stream_transfer(s, value),
                 6 => complete_stream_transfer(s, value, args.get(2)).map(|()| s.undefined()),
                 _ => crate::message_channel::complete_transfer(s, value, args.get(2)).map(|()| s.undefined()),
@@ -113,6 +130,36 @@ fn with_stream_realm<'s, T>(
     }
 }
 
+/// The ImageBitmap or OffscreenCanvas `value` as a [`crate::canvas::CanvasObject`]:
+/// of `s`'s realm, or of the poster's during [`clone_into`]'s second pass.
+fn canvas_object(
+    s: &Scope<'_>,
+    value: lp_js::Value<'_>,
+    transfer: bool,
+) -> JsResult<Option<crate::canvas::CanvasObject>> {
+    if let Some(object) = crate::canvas::canvas_object_of(s, value, transfer)? {
+        return Ok(Some(object));
+    }
+    let source = CLONE_SOURCE.with(|c| c.borrow().as_ref().and_then(|w| w.upgrade()));
+    let Some(source) = source.filter(|r| r.id() != s.realm_id()) else { return Ok(None) };
+    let ss = source.scope()?;
+    crate::canvas::canvas_object_of(&ss, ss.rehome(value), transfer)
+}
+
+/// Clone mode 9: detaches a transferred ImageBitmap or OffscreenCanvas in
+/// its realm.
+fn detach_canvas_object(s: &Scope<'_>, value: lp_js::Value<'_>) -> JsResult<()> {
+    if crate::canvas::detach_canvas_object(s, value)? {
+        return Ok(());
+    }
+    let source = CLONE_SOURCE.with(|c| c.borrow().as_ref().and_then(|w| w.upgrade()));
+    if let Some(source) = source.filter(|r| r.id() != s.realm_id()) {
+        let ss = source.scope()?;
+        crate::canvas::detach_canvas_object(&ss, ss.rehome(value))?;
+    }
+    Ok(())
+}
+
 /// Clone mode 5: for a transferable stream, `[new stream, ...its ports]` in
 /// `s`'s realm, the ports not yet entangled; undefined for anything else.
 fn prepare_stream_transfer<'s>(s: &Scope<'s>, value: lp_js::Value<'s>) -> JsResult<lp_js::Value<'s>> {
@@ -181,14 +228,19 @@ pub(crate) fn clone_into<'s, 'r>(
         // straight into the receiver, still without leaking its errors.
         return from_source(rs.rehome(value), rs.rehome(options));
     };
-    let (ports, streams) = (s.array(&[])?, s.array(&[])?);
-    let copy = clone.call(None, &[value, options, ports.value(), s.undefined(), streams.value()])?;
-    // The second pass transfers what the first one made: ports, then streams.
+    let (ports, streams, canvases) = (s.array(&[])?, s.array(&[])?, s.array(&[])?);
+    let copy = clone.call(None, &[value, options, ports.value(), s.undefined(), streams.value(), canvases.value()])?;
+    // The second pass transfers what the first one made: ports, streams,
+    // then ImageBitmaps and OffscreenCanvases.
     let port_count = ports.get_atom("length")?.to_number()? as u32;
     let stream_count = streams.get_atom("length")?.to_number()? as u32;
-    let options = if port_count + stream_count > 0 {
+    let canvas_count = canvases.get_atom("length")?.to_number()? as u32;
+    let options = if port_count + stream_count + canvas_count > 0 {
         for i in 0..stream_count {
             ports.set_index(port_count + i, streams.get_index(i)?)?;
+        }
+        for i in 0..canvas_count {
+            ports.set_index(port_count + stream_count + i, canvases.get_index(i)?)?;
         }
         let o = rs.object();
         o.set_atom("transfer", rs.rehome(ports.value()))?;
@@ -227,12 +279,22 @@ pub struct WireMessage {
     /// How many of `ports` the sender listed (the event's `ports`); the
     /// rest carry the transferred streams.
     listed_ports: usize,
+    /// The ImageBitmaps (pixels shared, not copied) and transferred
+    /// OffscreenCanvases it holds.
+    canvases: Vec<crate::canvas::CanvasObject>,
 }
 
 impl WireMessage {
     #[cfg(test)]
     pub(crate) fn empty() -> Self {
-        WireMessage { text: String::new(), buffers: Vec::new(), blobs: Vec::new(), ports: Vec::new(), listed_ports: 0 }
+        WireMessage {
+            text: String::new(),
+            buffers: Vec::new(),
+            blobs: Vec::new(),
+            ports: Vec::new(),
+            listed_ports: 0,
+            canvases: Vec::new(),
+        }
     }
     #[cfg(test)]
     pub(crate) fn carrying(port: crate::port_link::TransitEnd) -> Self {
@@ -243,7 +305,7 @@ impl WireMessage {
         self.text.len()
             + self.buffers.iter().map(Vec::len).sum::<usize>()
             + self.blobs.iter().map(bytes::Bytes::len).sum::<usize>()
-            + 64 * (1 + self.ports.len())
+            + 64 * (1 + self.ports.len() + self.canvases.len())
     }
     /// The pipe sides it carries.
     pub(crate) fn transit_ends(&self) -> &[crate::port_link::TransitEnd] {
@@ -264,6 +326,9 @@ thread_local! {
     /// Blob bytes of the message being encoded or decoded on this thread
     /// (saved and restored around each, so nested messages keep their own).
     static WIRE_BLOBS: std::cell::RefCell<Vec<bytes::Bytes>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// As `WIRE_BLOBS`, for ImageBitmaps and OffscreenCanvases.
+    static WIRE_CANVASES: std::cell::RefCell<Vec<crate::canvas::CanvasObject>> =
+        const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// `host` of worker_wire.js.
@@ -298,6 +363,16 @@ fn wire_host<'s>(s: &Scope<'s>, args: &lp_js::Args<'s>) -> JsResult<lp_js::Value
             if let Some(parts) = crate::crypto::serialize_key(s, value)? {
                 return Ok(s.array(&[s.string("K"), parts])?.value());
             }
+            // An ImageBitmap, or an OffscreenCanvas (the copy holds one only
+            // when it is transferred).
+            if let Some(object) = crate::canvas::canvas_object_of(s, value, true)? {
+                let index = WIRE_CANVASES.with(|c| {
+                    let mut c = c.borrow_mut();
+                    c.push(object);
+                    c.len() - 1
+                });
+                return Ok(s.array(&[s.string("C"), s.number(index as f64)])?.value());
+            }
             Ok(s.undefined())
         }
         1 => {
@@ -318,6 +393,17 @@ fn wire_host<'s>(s: &Scope<'s>, args: &lp_js::Args<'s>) -> JsResult<lp_js::Value
         4 => Ok(s.boolean(crate::message_channel::is_transferable_port(s, value)?)),
         5 => Ok(crate::streams::transfer_kind(s, value)?.unwrap_or_else(|| s.undefined())),
         6 => Ok(crate::streams::transfer_out(s, value)?.value()),
+        8 => Ok(match crate::canvas::canvas_object_of(s, value, true)? {
+            Some(_) => s.string("C"),
+            None => s.undefined(),
+        }),
+        9 => crate::canvas::detach_canvas_object(s, value).map(|_| s.undefined()),
+        10 => {
+            let index = value.to_number()? as usize;
+            let object = WIRE_CANVASES.with(|c| c.borrow().get(index).cloned());
+            let object = object.ok_or_else(|| JsError::dom("DataCloneError", "Malformed message"))?;
+            crate::canvas::make_canvas_object(s, &object)
+        }
         _ => {
             let parts = value.as_object().ok_or_else(|| JsError::dom("DataCloneError", "Malformed message"))?;
             crate::streams::transfer_in(s, parts.get_index(0)?, parts.get_index(1)?)
@@ -367,8 +453,10 @@ pub fn encode_message<'s>(s: &Scope<'s>, value: lp_js::Value<'s>, options: lp_js
     let clone = clone.ok_or_else(|| JsError::dom("NotSupportedError", "structured clone is unavailable"))?;
     let (encode, _) = wire_functions(s)?;
     let saved = WIRE_BLOBS.with(|b| b.take());
+    let saved_canvases = WIRE_CANVASES.with(|c| c.take());
     let pair = encode.call(None, &[clone, value, options]);
     let blobs = WIRE_BLOBS.with(|b| b.replace(saved));
+    let canvases = WIRE_CANVASES.with(|c| c.replace(saved_canvases));
     let pair = pair?;
     let pair = pair.as_object().expect("encoded pair");
     let text = pair.get_index(0)?.to_string()?;
@@ -399,7 +487,7 @@ pub fn encode_message<'s>(s: &Scope<'s>, value: lp_js::Value<'s>, options: lp_js
         ports.push(crate::message_channel::export_port(s, port)?);
     }
     let listed_ports = (pair.get_index(3)?.to_number()? as usize).min(ports.len());
-    Ok(WireMessage { text, buffers, blobs, ports, listed_ports })
+    Ok(WireMessage { text, buffers, blobs, ports, listed_ports, canvases })
 }
 
 /// StructuredDeserialize into `s`'s realm.
@@ -422,8 +510,10 @@ pub(crate) fn decode_with_ports<'s>(
     }
     let run = |ports: lp_js::Value<'s>| {
         let saved = WIRE_BLOBS.with(|b| b.replace(message.blobs.clone()));
+        let saved_canvases = WIRE_CANVASES.with(|c| c.replace(message.canvases.clone()));
         let result = decode.call(None, &[s.string(&message.text), list.value(), ports]);
         WIRE_BLOBS.with(|b| *b.borrow_mut() = saved);
+        WIRE_CANVASES.with(|c| *c.borrow_mut() = saved_canvases);
         result
     };
     if message.ports.is_empty() {

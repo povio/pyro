@@ -823,6 +823,89 @@ fn crypto_keys_cross_to_a_worker_and_back() {
 }
 
 #[test]
+fn image_bitmaps_and_offscreen_canvases_cross_to_a_worker_and_back() {
+    let (mut t, rec, page) = worker_setup();
+    let script = data_url(
+        "onmessage = (e) => {
+           const d = e.data;
+           if (d.offscreen) {
+             const o = d.offscreen;
+             const x = o.getContext('2d');
+             x.fillStyle = 'blue'; x.fillRect(0, 0, 2, 2);
+             postMessage('drawn:' + [o instanceof OffscreenCanvas, o.width, o.height].join());
+             return;
+           }
+           const {bm, copy} = d;
+           const o = new OffscreenCanvas(4, 4);
+           const x = o.getContext('2d');
+           x.drawImage(bm, 0, 0);
+           const seen = [bm instanceof ImageBitmap, bm.width, copy.width, Array.from(x.getImageData(1, 1, 1, 1).data).join('-')].join();
+           x.fillStyle = 'red'; x.fillRect(0, 0, 4, 4);
+           const back = o.transferToImageBitmap();
+           postMessage({seen, back}, [back]);
+           postMessage('after:' + back.width);
+         };",
+    );
+    eval(
+        &t,
+        page,
+        &format!(
+            r#"const w = new Worker({script:?});
+            globalThis.w = w;
+            (async () => {{
+                const src = new OffscreenCanvas(4, 4);
+                const sx = src.getContext('2d');
+                sx.fillStyle = 'lime'; sx.fillRect(0, 0, 4, 4);
+                const bm = await createImageBitmap(src);
+                const copy = await createImageBitmap(src);
+                const c = document.createElement('canvas');
+                c.width = 4; c.height = 4;
+                document.body.append(c);
+                const x = c.getContext('2d');
+                w.onmessage = (e) => {{
+                    if (typeof e.data === 'string') return console.log(e.data);
+                    x.drawImage(e.data.back, 0, 0);
+                    console.log('seen:' + e.data.seen);
+                    console.log('back:' + [e.data.back.width, Array.from(x.getImageData(1, 1, 1, 1).data).join('-')].join());
+                }};
+                w.postMessage({{bm, copy}}, [bm]);
+                console.log('sent:' + [bm.width, copy.width].join());
+                const placeholder = document.createElement('canvas');
+                placeholder.id = 'p';
+                placeholder.width = 6; placeholder.height = 3;
+                document.body.append(placeholder);
+                const offscreen = placeholder.transferControlToOffscreen();
+                w.postMessage({{offscreen}}, [offscreen]);
+                console.log('moved:' + [offscreen.width, offscreen.height].join());
+            }})();"#
+        ),
+    );
+    until_console(&mut t, &rec, "back:");
+    until_console(&mut t, &rec, "drawn:");
+    let console = rec.console.borrow().join("\n");
+    assert!(console.contains("log:sent:0,4"), "{console}");
+    assert!(console.contains("log:seen:true,4,4,0-255-0-255"), "{console}");
+    assert!(console.contains("log:back:4,255-0-0-255"), "{console}");
+    assert!(console.contains("log:after:0"), "{console}");
+    assert!(console.contains("log:moved:0,0"), "{console}");
+    assert!(console.contains("log:drawn:true,6,3"), "{console}");
+    drop(console);
+    // The worker committed its frame after the task that drew it: the
+    // placeholder shows it, in screenshots too.
+    let dom = t.browser.page(page).unwrap().main_frame.page_dom.clone().unwrap();
+    let r = t.run_until(Some(Instant::now() + Duration::from_secs(5)), |_| dom.canvas_bitmaps().len() == 2);
+    assert_eq!(r, lp_runtime::RunOutcome::Done);
+    let snapshot = dom.render_snapshot("about:blank", None);
+    let (_, w, h, rgba) = snapshot.canvases.iter().find(|(_, w, _, _)| *w == 6).expect("placeholder frame");
+    assert_eq!((*w, *h), (6, 3));
+    assert_eq!(&rgba[..4], &[0, 0, 255, 255]);
+    assert_eq!(&rgba[2 * 4..3 * 4], &[0, 0, 0, 0]);
+    assert!(rec.errors.borrow().is_empty(), "{:?}", rec.errors.borrow());
+    t.browser.close_all();
+    assert!(lp_webapi::join_stopped(Duration::from_secs(5)), "worker threads end");
+}
+
+#[test]
 fn navigating_away_ends_a_documents_workers() {
     let (mut t, rec, page) = worker_setup();
     let script = data_url("postMessage('up'); setInterval(() => postMessage('tick'), 1);");

@@ -821,6 +821,7 @@ impl JsClass for WorkerGlobalScope {
         );
         crate::crypto::define_globals(def);
         crate::streams::define_globals(def);
+        crate::canvas::define_worker_globals(def);
         crate::storage_manager::define_globals(def);
         crate::websocket::define_worker_globals(def);
         def.getter("indexedDB", |s, g| crate::indexeddb::window_factory(s, &g.target.page));
@@ -1085,6 +1086,7 @@ fn register(engine: &Engine, service: bool) -> lp_js::ClassId {
     engine.register::<WorkerLocation>();
     engine.register::<WorkerNavigator>();
     crate::performance::register_for_worker(engine);
+    crate::canvas::register(engine);
     engine.register::<WorkerGlobalScope>();
     if service {
         engine.register::<crate::request::Request>();

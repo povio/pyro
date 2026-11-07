@@ -728,11 +728,19 @@
   // ---- OffscreenCanvas -------------------------------------------------
   // Its 2D context is a CanvasRenderingContext2D (canvas.rs) drawing into
   // its own bitmap; `OffscreenCanvasRenderingContext2D` recognizes it.
+  // `placeholder` is the native handle of the `<canvas>` it shows on (made
+  // by `transferControlToOffscreen`), or null. A transferred OffscreenCanvas
+  // is detached: its size reads 0 and using it throws InvalidStateError.
   const offscreens = new WeakMap();
   const offscreenContexts = new WeakSet();
   function oc(self) {
     const o = offscreens.get(self);
     if (!o) throw new TypeErrorC('Illegal invocation');
+    return o;
+  }
+  function live(self) {
+    const o = oc(self);
+    if (o.detached) throw domError('InvalidStateError', 'OffscreenCanvas object is detached.');
     return o;
   }
   function offscreenSize(value, what) {
@@ -746,12 +754,12 @@
   class OffscreenCanvas {
     constructor(width, height) {
       if (arguments.length < 2) throw new TypeErrorC(`Failed to construct 'OffscreenCanvas': 2 arguments required, but only ${arguments.length} present.`);
-      offscreens.set(this, { width: offscreenSize(width, 'width'), height: offscreenSize(height, 'height'), context: null, detached: false });
+      offscreens.set(this, { width: offscreenSize(width, 'width'), height: offscreenSize(height, 'height'), context: null, detached: false, placeholder: null });
     }
     get width() { return oc(this).width; }
-    set width(v) { const o = oc(this); o.width = offscreenSize(v, 'width'); if (o.context) natives.resizeContext(o.context, o.width, o.height); }
+    set width(v) { const o = live(this); o.width = offscreenSize(v, 'width'); if (o.context) natives.resizeContext(o.context, o.width, o.height); }
     get height() { return oc(this).height; }
-    set height(v) { const o = oc(this); o.height = offscreenSize(v, 'height'); if (o.context) natives.resizeContext(o.context, o.width, o.height); }
+    set height(v) { const o = live(this); o.height = offscreenSize(v, 'height'); if (o.context) natives.resizeContext(o.context, o.width, o.height); }
     getContext(type, options) {
       const o = oc(this);
       if (arguments.length < 1) throw new TypeErrorC(`Failed to execute 'getContext' on 'OffscreenCanvas': 1 argument required, but only 0 present.`);
@@ -762,7 +770,7 @@
       if (o.detached) throw domError('InvalidStateError', 'OffscreenCanvas object is detached.');
       if (type !== '2d') return null;
       if (!o.context) {
-        o.context = natives.offscreenContext(this, o.width, o.height);
+        o.context = natives.offscreenContext(this, o.width, o.height, o.placeholder);
         offscreenContexts.add(o.context);
       }
       return o.context;
@@ -832,6 +840,43 @@
       const o = Object.create(ImageData.prototype);
       images.set(o, { width, height, data, colorSpace: space });
       return o;
+    },
+    // Structured serialization and transfer (canvas.rs `canvas_object_of`):
+    // [0, handle] for an ImageBitmap, [1, width, height, placeholder] for an
+    // OffscreenCanvas that may be transferred (`transfer`), undefined for
+    // anything else; DataCloneError for a detached source or an
+    // OffscreenCanvas with a context.
+    describeTransferable(value, transfer) {
+      const b = bitmaps.get(value);
+      if (b) {
+        if (!b.image) throw domError('DataCloneError', 'An ImageBitmap is detached and could not be cloned.');
+        return [0, b.image];
+      }
+      const o = offscreens.get(value);
+      if (!o || !transfer) return undefined;
+      if (o.detached) throw domError('DataCloneError', 'An OffscreenCanvas is detached and could not be transferred.');
+      if (o.context) throw domError('InvalidStateError', 'An OffscreenCanvas could not be transferred because it had a rendering context.');
+      return [1, o.width, o.height, o.placeholder];
+    },
+    // A transferred ImageBitmap or OffscreenCanvas: detached here.
+    detachTransferable(value) {
+      const b = bitmaps.get(value);
+      if (b) { b.image = null; return true; }
+      const o = offscreens.get(value);
+      if (!o) return false;
+      o.detached = true;
+      o.width = 0;
+      o.height = 0;
+      o.placeholder = null;
+      return true;
+    },
+    // The ImageBitmap of `made` ([handle, width, height]).
+    bitmapOf(made) { return newBitmap(made); },
+    // An OffscreenCanvas showing on `placeholder` (a native handle or null).
+    offscreenOf(width, height, placeholder) {
+      const canvas = new OffscreenCanvas(width, height);
+      oc(canvas).placeholder = placeholder;
+      return canvas;
     },
     // [width, height, data] of an ImageData, or null.
     imageInfo(value) { const s = images.get(value); return s ? [s.width, s.height, s.data] : null; },

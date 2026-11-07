@@ -27,12 +27,21 @@ throw DataCloneError.
 Platform objects the script does not recognize go to one native hook before
 they are rejected: `guard(value, true)` (`crypto::clone_platform_object`)
 returns their copy or undefined. It copies a `CryptoKey` of the realm (see
-[Web Crypto](CRYPTO.md)); it runs only on that rejection path, so ordinary
-graphs pay nothing. The cross-VM format carries CryptoKeys too (see
+[Web Crypto](CRYPTO.md)) and an `ImageBitmap` (a new one over the same
+pixels; DataCloneError when it is closed or not origin-clean); it runs only
+on that rejection path, so ordinary graphs pay nothing. The cross-VM format carries CryptoKeys too (see
 [Web Crypto](CRYPTO.md)).
 
-Transfer lists (`{transfer}`) take ArrayBuffers, MessagePorts and
-ReadableStream, WritableStream and TransformStream. Entries are validated
+Transfer lists (`{transfer}`) take ArrayBuffers, MessagePorts,
+ReadableStream, WritableStream and TransformStream, ImageBitmaps and
+OffscreenCanvases. A transferred ImageBitmap becomes a new one over the same
+pixels and the original is closed (width and height 0); a transferred
+OffscreenCanvas becomes a new one of its size (and placeholder `<canvas>`, if
+any) and the original is detached: its size reads 0 and `getContext`, the
+size setters, `transferToImageBitmap`, `convertToBlob` and drawing it throw
+InvalidStateError. An OffscreenCanvas that has a context throws
+InvalidStateError, a detached one DataCloneError, and an OffscreenCanvas
+outside the transfer list DataCloneError (it is transferable only). Entries are validated
 first: a duplicate, a detached ArrayBuffer, an already transferred port, a
 locked stream or any other object throws DataCloneError, a non-object
 TypeError. Nothing is detached unless the whole value clones. A transferred ArrayBuffer is copied
@@ -67,8 +76,11 @@ into the receiving realm, which may be another frame or page of the thread's
 VM). The cross-VM format (`worker_wire.js`: dedicated and service workers
 and their clients, MessagePorts entangled across threads, popups,
 BroadcastChannel, IndexedDB and history state) encodes
-the same types, Error, DOMException, Blob, File, FileList and CryptoKey
-included; Blob bytes travel beside the text, shared rather than copied. Its
+the same types, Error, DOMException, Blob, File, FileList, CryptoKey and
+ImageBitmap included; Blob bytes and bitmap pixels travel beside the text,
+shared rather than copied. Its transfer list also takes ImageBitmaps and
+OffscreenCanvases (the canvas's size and placeholder travel beside the
+text). Its
 transfer list takes ArrayBuffers (copied, then detached), MessagePorts and
 streams: transferred ports travel beside the text as sides of a thread-safe
 pipe (`port_link.rs`, see [MESSAGE_CHANNEL](MESSAGE_CHANNEL.md)), listed ports

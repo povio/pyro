@@ -106,6 +106,27 @@ accessor with the usual data property.
   `getImageData`, `toDataURL`, `toBlob` and `convertToBlob` throw
   `SecurityError`.
 - `getContextAttributes()`, `isContextLost()` (false).
+- Workers: `OffscreenCanvas` with its 2D context, `ImageBitmap`,
+  `createImageBitmap`, `ImageData`, `Path2D`, the gradient, pattern and
+  text-metric types and the geometry interfaces, made on the worker realm's
+  first use as on a window. Text uses the same system fonts.
+- Structured clone and transfer: an `ImageBitmap` clones (a new one over
+  the same pixels, also across threads) unless it is closed or not
+  origin-clean; in a transfer list it moves and the original is closed. An
+  `OffscreenCanvas` without a context transfers (`postMessage` to or from a
+  worker, a `MessagePort`, `structuredClone`): the new one has its size, and
+  the original is detached (size 0, InvalidStateError on use). See
+  [STRUCTURED_CLONE](STRUCTURED_CLONE.md).
+- `transferControlToOffscreen()`: the `<canvas>` (which must have no context;
+  a second call throws InvalidStateError) becomes a placeholder for a new
+  `OffscreenCanvas` of its size, on this thread or transferred to a worker.
+  After each task of the thread drawing on it, a changed bitmap (or a
+  resize) is committed to the placeholder: the pixels are shared, not
+  copied. The placeholder shows the last committed frame in screenshots
+  (`PageDom::canvas_bitmaps`, at the frame's own size, scaled by CSS), to
+  `drawImage`/`createPattern`/`createImageBitmap` and to `toDataURL`/`toBlob`;
+  its `getContext` throws InvalidStateError. A page without placeholders
+  pays one empty-list check per task.
 - Screenshots: render snapshots carry the bitmaps of drawn canvases
   (`PageDom::canvas_bitmaps`), and the render mirror gives each canvas
   element its bitmap as raster content, so `Page.captureScreenshot` (and
@@ -137,10 +158,12 @@ canvases pay a flag test per image load.
 - `measureText`'s em-height and hanging/ideographic baselines are derived
   from ascent/descent, not from the font's BASE table.
 - Shadow offsets are rounded to whole pixels.
-- No WebGL, `bitmaprenderer`, `transferControlToOffscreen`, or
-  `OffscreenCanvas` in workers. `drawFocusIfNeeded` draws nothing.
-- `display-p3` ImageData holds sRGB values. `ImageBitmap` and
-  `OffscreenCanvas` cannot be posted (`postMessage`, `structuredClone`).
+- No WebGL or `bitmaprenderer`. `drawFocusIfNeeded` draws nothing. Workers
+  have no `requestAnimationFrame`: an offscreen canvas commits after each
+  task instead. Setting a placeholder `<canvas>`'s `width`/`height` does not
+  throw. A frame cleared by a resize shows as no content.
+- `display-p3` ImageData holds sRGB values. `ImageData` is not
+  serializable (`postMessage`, `structuredClone` throw DataCloneError).
 - Path2D SVG data with an error draws nothing (browsers keep the part
   before the error). `isPointInStroke` ignores the dash pattern;
   `clip()` does not affect hit testing.
