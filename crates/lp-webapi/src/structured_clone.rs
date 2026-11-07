@@ -403,6 +403,16 @@ pub(crate) fn decode_with_ports<'s>(
     for (i, bytes) in message.buffers.iter().enumerate() {
         list.set_index(i as u32, crate::encoding::array_buffer(s, bytes)?)?;
     }
+    let run = |ports: lp_js::Value<'s>| {
+        let saved = WIRE_BLOBS.with(|b| b.replace(message.blobs.clone()));
+        let result = decode.call(None, &[s.string(&message.text), list.value(), ports]);
+        WIRE_BLOBS.with(|b| *b.borrow_mut() = saved);
+        result
+    };
+    if message.ports.is_empty() {
+        // Most messages transfer nothing: no ports array to make.
+        return run(s.undefined()).map(|value| (value, None));
+    }
     let ports = s.array(&[])?;
     let mut made = Vec::with_capacity(message.ports.len());
     let mut result = Ok(());
@@ -421,12 +431,7 @@ pub(crate) fn decode_with_ports<'s>(
             }
         }
     }
-    let result = result.and_then(|()| {
-        let saved = WIRE_BLOBS.with(|b| b.replace(message.blobs.clone()));
-        let result = decode.call(None, &[s.string(&message.text), list.value(), ports.value()]);
-        WIRE_BLOBS.with(|b| *b.borrow_mut() = saved);
-        result
-    });
+    let result = result.and_then(|()| run(ports.value()));
     match result {
         Ok(value) if message.listed_ports == 0 => Ok((value, None)),
         Ok(value) if message.listed_ports == made.len() => Ok((value, Some(ports))),
