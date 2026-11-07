@@ -193,6 +193,7 @@ impl Browser {
             frame_id: Some(frame.id.0.clone()),
             loader_id: Some(frame.loader_id.0.clone()),
             crossorigin,
+            initiator: Some(lp_webapi::resource_timing::Initiator::Link),
         };
         let cancel = resource_loader.fetch_cancellable(self, request, Box::new(finish));
         if let Some(mut sheet) = self.doc_mut(page).and_then(|p| p.filter_map(|p| p.stylesheets.entries.get_mut(&node)))

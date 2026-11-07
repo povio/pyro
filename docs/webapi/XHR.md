@@ -1,5 +1,9 @@
 # XMLHttpRequest
 
+Each HTTP(S) request adds a Resource Timing entry (`xmlhttprequest`) to its
+document's timeline when it ends, a synchronous one too by the time `send()`
+returns (see `PERFORMANCE_TIMELINE.md`).
+
 `lp-webapi::register` registers `XMLHttpRequest`; installed realms expose the
 native EventTarget subclass. Request configuration and lifecycle state remain
 on the browser thread. Native network callbacks retain bounded byte buffers and

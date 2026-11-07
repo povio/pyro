@@ -205,6 +205,8 @@ pub struct ResponseHead {
     pub remote_addr: Option<String>,
     /// HTTP version of the response (CDP `protocol`).
     pub protocol: http::Version,
+    /// When the fetch's phases happened (Resource Timing).
+    pub timing: crate::timing::NetTiming,
 }
 
 impl ResponseHead {

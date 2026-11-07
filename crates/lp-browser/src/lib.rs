@@ -927,6 +927,7 @@ impl Browser {
             frame_id: Some(frame.id.0.clone()),
             loader_id: Some(frame.loader_id.0.clone()),
             crossorigin: None,
+            initiator: None,
         };
         loader.fetch(self, request, done);
     }

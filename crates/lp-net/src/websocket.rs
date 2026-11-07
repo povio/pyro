@@ -461,7 +461,7 @@ fn connect_error(e: &(dyn std::error::Error + 'static)) -> String {
 impl Io {
     fn ws_connector(&self) -> hyper_rustls::HttpsConnector<ProxyConnector> {
         let config = &self.shared.config;
-        let mut tcp = HttpConnector::new();
+        let mut tcp = HttpConnector::new_with_resolver(crate::timing::TimedResolver::new());
         tcp.set_connect_timeout(Some(config.connect_timeout));
         tcp.set_nodelay(true);
         tcp.enforce_http(false);

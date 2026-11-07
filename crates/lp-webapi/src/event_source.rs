@@ -190,43 +190,42 @@ fn start(
         )
     });
     let mut decoder = encoding_rs::UTF_8.new_decoder_with_bom_removal();
-    net.fetch_with_id(
-        id,
-        request,
-        Box::new(move |event| {
-            let report = match event {
-                ResponseEvent::Redirect { .. } => return,
-                ResponseEvent::Response(head) => {
-                    Report::Open(head.status.as_u16(), head.mime.clone(), head.url.origin().ascii_serialization())
-                }
-                ResponseEvent::Data(bytes) => {
-                    let mut text = String::with_capacity(bytes.len() + 4);
-                    let _ = decoder.decode_to_string(&bytes, &mut text, false);
-                    if text.is_empty() {
-                        return;
-                    }
-                    Report::Text(text)
-                }
-                ResponseEvent::Finished { .. } => {
-                    let mut text = String::with_capacity(4);
-                    let _ = decoder.decode_to_string(&[], &mut text, true);
-                    if !text.is_empty() {
-                        queue.lock().unwrap().reports.push(Report::Text(text));
-                    }
-                    Report::End
-                }
-                ResponseEvent::Failed(error) => Report::Failed(fatal_scheme || matches!(error, NetError::Cors(_))),
-            };
-            let post = {
-                let mut q = queue.lock().unwrap();
-                q.reports.push(report);
-                !std::mem::replace(&mut q.scheduled, true)
-            };
-            if post {
-                poster(Box::new(move || pump(id)));
+    let url = request.url.clone();
+    let sink: lp_net::ResponseSink = Box::new(move |event| {
+        let report = match event {
+            ResponseEvent::Redirect { .. } => return,
+            ResponseEvent::Response(head) => {
+                Report::Open(head.status.as_u16(), head.mime.clone(), head.url.origin().ascii_serialization())
             }
-        }),
-    );
+            ResponseEvent::Data(bytes) => {
+                let mut text = String::with_capacity(bytes.len() + 4);
+                let _ = decoder.decode_to_string(&bytes, &mut text, false);
+                if text.is_empty() {
+                    return;
+                }
+                Report::Text(text)
+            }
+            ResponseEvent::Finished { .. } => {
+                let mut text = String::with_capacity(4);
+                let _ = decoder.decode_to_string(&[], &mut text, true);
+                if !text.is_empty() {
+                    queue.lock().unwrap().reports.push(Report::Text(text));
+                }
+                Report::End
+            }
+            ResponseEvent::Failed(error) => Report::Failed(fatal_scheme || matches!(error, NetError::Cors(_))),
+        };
+        let post = {
+            let mut q = queue.lock().unwrap();
+            q.reports.push(report);
+            !std::mem::replace(&mut q.scheduled, true)
+        };
+        if post {
+            poster(Box::new(move || pump(id)));
+        }
+    });
+    let sink = crate::resource_timing::timed_sink(page, crate::resource_timing::Initiator::Other, &url, false, sink);
+    net.fetch_with_id(id, request, sink);
     Ok(id)
 }
 

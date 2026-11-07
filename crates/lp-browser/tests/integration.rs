@@ -37,6 +37,7 @@ mod performance_timeline;
 mod popups;
 mod referrer;
 mod remote_ordering;
+mod resource_timing;
 mod runloop_idle_finalization;
 mod script_inserted;
 mod selection_pointer_timing;

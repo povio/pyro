@@ -9,6 +9,7 @@ mod h2;
 mod idle_release;
 mod proxy;
 mod static_files;
+mod timing;
 mod websocket;
 mod websocket_deflate;
 

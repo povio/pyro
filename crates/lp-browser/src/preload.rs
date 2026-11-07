@@ -250,6 +250,7 @@ impl Browser {
             frame_id: Some(frame.id.0.clone()),
             loader_id: Some(frame.loader_id.0.clone()),
             crossorigin,
+            initiator: Some(lp_webapi::resource_timing::Initiator::Link),
         };
         resource_loader.fetch(self, request, Box::new(finish));
     }
