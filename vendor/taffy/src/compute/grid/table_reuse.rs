@@ -23,7 +23,7 @@ use crate::geometry::{AbsoluteAxis, InBothAbsAxis};
 use crate::style::{AlignItems, GridAutoFlow};
 use crate::tree::{LayoutInput, NodeId};
 use crate::util::sys::{Box, GridTrackVec, Vec};
-use crate::{BoxGenerationMode, CoreStyle, GridContainerStyle, GridItemStyle, LayoutGridContainer};
+use crate::{BoxGenerationMode, CoreStyle, GridItemStyle, LayoutGridContainer};
 
 /// A table grid's last full layout (see the module documentation). Opaque to the tree, which keeps
 /// it between layouts.

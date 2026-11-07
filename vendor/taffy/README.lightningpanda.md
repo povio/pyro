@@ -1,13 +1,15 @@
-# taffy 0.15.1, patched
+# taffy main (4aca4f4), patched
 
-The published `taffy` 0.15.1 crate (crates.io; upstream tag `v0.15.1`, commit `0064bd5`, in
-[DioxusLabs/taffy](https://github.com/DioxusLabs/taffy)), used through `[patch.crates-io]` in the
-workspace `Cargo.toml`. License: MIT, as upstream. `.cargo_vcs_info.json`, `Cargo.toml.orig`, `benches/`
-and `tests/` were left out of the copy.
+[DioxusLabs/taffy](https://github.com/DioxusLabs/taffy) main at commit
+`4aca4f4933aa9cb7a3266050c788aad4c90288d2` (#1401, 40 commits past v0.15.1; its `Cargo.toml` still says
+0.15.0), the commit Blitz main pins, used through `[patch.crates-io]` in the workspace `Cargo.toml`.
+License: MIT, as upstream. `src/`, `examples/` (without `examples/parley`, a crate of its own), `README.md` and a `Cargo.toml` without the
+workspace, dev-dependency, bench and example sections were copied.
 
 ## The change
 
-`UPSTREAM.patch` (applies with `git apply` from the root of an upstream checkout) is the whole diff.
+`UPSTREAM.patch` (applies with `git apply` from the root of an upstream checkout at the commit above) is
+the whole diff.
 
 `compute/flexbox.rs`, `determine_container_main_size`: an auto-width row flex container in definite
 available space with a single line took the line's max-content length. CSS sizes it fit-content,
@@ -80,7 +82,7 @@ Debug builds round the whole tree again after each pass and assert that it match
 in `crates/lp-render/tests/mirror.rs` fails if the skip stops firing; `LP.geometryStats` reports
 `roundedNodes` and `roundingSkips`.
 
-`compute/mod.rs`: `compute_root_layout_in` takes an initial containing block of another size than the root's available space (print: Blink's rounds down, the page area up). The `UPSTREAM.patch` hunk for it is the second `src/compute/mod.rs` section, before the `src/lib.rs` one.
+`compute/mod.rs`: `compute_root_layout_in` takes an initial containing block of another size than the root's available space (print: Blink's rounds down, the page area up).
 
 ## Table grids laid out again from their last layout
 
@@ -110,5 +112,21 @@ baseline-aligned item, no item spanning rows or with out-of-flow descendants bub
 sizing. Otherwise, or with other inputs, the grid is laid out whole. blitz-dom's tables use it (see "Incremental
 tables" in `vendor/blitz-dom/README.lightningpanda.md`). `crates/lp-render/tests/mirror.rs` checks replayed layouts
 against fresh builds (`table_*_match_fresh_builds`) and that edits, appends, removals and inserts replay (`a_cell_edit_collects_only_its_row`).
-The `UPSTREAM.patch` sections for it are the last ones (`src/compute/grid/alignment.rs` to `src/tree/traits.rs`), made
-against the tree the sections before them give.
+
+## Moving from v0.15.1 to main
+
+The local commit was cherry-picked onto main (base `v0.15.1`, a release branch). Upstream has none of the
+changes above, so all are kept. Three places needed more than a merge:
+
+- `compute/block.rs` (`generate_item_list`): main caps the min-content contribution of compressible
+  replaced children (#1401, `min_content_width_cap`). `block_child_width_fits_content` still makes a
+  child's auto width its content size, but the cap stays with `is_compressible_replaced` as upstream
+  defines it, so form controls' contributions are what they were.
+- `compute/grid/alignment.rs` (`PositionedItem`): main measures an item's scrollable overflow contribution
+  from the container's padding-box inset and a `ScrollableOverflowContainer` (#1372, reversed scroll
+  origins). The kept item stores both instead of the old RTL x and top border, so `moved_to` measures as
+  `align_and_position_item` does. `ScrollableOverflowContainer` derives `Clone, Copy, Debug` for it.
+- `compute/grid/mod.rs`: the replayed table grid passes the new `align_and_position_item` arguments.
+
+Upstream's float and block-formatting-context fixes since v0.15.1 (#1384, #1385, #1386, #1387, #1389, #1392,
+#1394, #1395, #1397, #1401) and `ScrollableOverflow` (#1372) come with the update; blitz-dom main uses them.

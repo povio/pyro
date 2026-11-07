@@ -1,6 +1,6 @@
-diff -ruN a/properties/counted_unknown_properties.py b/properties/counted_unknown_properties.py
---- a/properties/counted_unknown_properties.py	2006-07-24 03:21:28
-+++ b/properties/counted_unknown_properties.py	2026-11-04 11:22:23
+diff --color -ruN -x README.lightningpanda.md -x UPSTREAM.patch -x .cargo_vcs_info.json -x .cargo-ok -x Cargo.toml.orig a/properties/counted_unknown_properties.py b/properties/counted_unknown_properties.py
+--- a/properties/counted_unknown_properties.py	2026-11-07 02:27:16
++++ b/properties/counted_unknown_properties.py	2026-11-07 02:27:17
 @@ -7,8 +7,6 @@
      "speak",
      "text-size-adjust",
@@ -10,9 +10,9 @@ diff -ruN a/properties/counted_unknown_properties.py b/properties/counted_unknow
      "-webkit-user-modify",
      "-webkit-margin-before",
      "-webkit-margin-after",
-diff -ruN a/properties/helpers.mako.rs b/properties/helpers.mako.rs
---- a/properties/helpers.mako.rs	2006-07-24 03:21:28
-+++ b/properties/helpers.mako.rs	2026-11-04 11:22:23
+diff --color -ruN -x README.lightningpanda.md -x UPSTREAM.patch -x .cargo_vcs_info.json -x .cargo-ok -x Cargo.toml.orig a/properties/helpers.mako.rs b/properties/helpers.mako.rs
+--- a/properties/helpers.mako.rs	2026-11-07 02:27:16
++++ b/properties/helpers.mako.rs	2026-11-07 02:27:17
 @@ -64,7 +64,17 @@
                      % endif
                      CSSWideKeyword::Inherit => {
@@ -20,7 +20,7 @@ diff -ruN a/properties/helpers.mako.rs b/properties/helpers.mako.rs
 +                            % if property.name in ("box-sizing", "baseline-shift", "baseline-source", "alignment-baseline"):
 +                            // lightningpanda: the parent's value is a cache condition.
 +                            {
-+                                let parent = context.builder.inherited_style.clone_${property.ident}();
++                                let parent = context.builder.inherited_style.slow_clone_${property.ident}();
 +                                context.rule_cache_conditions.borrow_mut().add_inherited_reset(
 +                                    crate::rule_cache::InheritedReset::${property.camel_case}(parent),
 +                                );
@@ -31,10 +31,10 @@ diff -ruN a/properties/helpers.mako.rs b/properties/helpers.mako.rs
                          % endif
                          % if property.is_zoom_dependent():
                              if !context.builder.effective_zoom_for_inheritance.is_one() {
-diff -ruN a/properties/longhands.toml b/properties/longhands.toml
---- a/properties/longhands.toml	2006-07-24 03:21:28
-+++ b/properties/longhands.toml	2026-11-04 11:22:23
-@@ -476,7 +476,6 @@
+diff --color -ruN -x README.lightningpanda.md -x UPSTREAM.patch -x .cargo_vcs_info.json -x .cargo-ok -x Cargo.toml.orig a/properties/longhands.toml b/properties/longhands.toml
+--- a/properties/longhands.toml	2026-11-07 02:27:16
++++ b/properties/longhands.toml	2026-11-07 02:27:17
+@@ -474,7 +474,6 @@
  type = "BreakBetween"
  initial = "computed::BreakBetween::Auto"
  struct = "box"
@@ -42,7 +42,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-break/#propdef-break-after"
  animation_type = "discrete"
  affects = "layout"
-@@ -485,7 +484,6 @@
+@@ -483,7 +482,6 @@
  type = "BreakBetween"
  initial = "computed::BreakBetween::Auto"
  struct = "box"
@@ -50,7 +50,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-break/#propdef-break-before"
  animation_type = "discrete"
  affects = "layout"
-@@ -494,9 +492,26 @@
+@@ -492,9 +490,26 @@
  type = "BreakWithin"
  initial = "computed::BreakWithin::Auto"
  struct = "box"
@@ -78,10 +78,10 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  affects = "layout"
  
  [caption-side]
-diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
---- a/properties/shorthands.rs	2006-07-24 03:21:28
-+++ b/properties/shorthands.rs	2026-11-04 11:22:23
-@@ -545,7 +545,6 @@
+diff --color -ruN -x README.lightningpanda.md -x UPSTREAM.patch -x .cargo_vcs_info.json -x .cargo-ok -x Cargo.toml.orig a/properties/shorthands.rs b/properties/shorthands.rs
+--- a/properties/shorthands.rs	2026-11-07 02:27:16
++++ b/properties/shorthands.rs	2026-11-07 02:27:17
+@@ -542,7 +542,6 @@
      }
  }
  
@@ -89,15 +89,15 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
  pub mod container {
      use super::*;
      pub use crate::properties::generated::shorthands::container::*;
-diff -ruN a/properties/shorthands.toml b/properties/shorthands.toml
---- a/properties/shorthands.toml	2006-07-24 03:21:28
-+++ b/properties/shorthands.toml	2026-11-04 11:22:23
+diff --color -ruN -x README.lightningpanda.md -x UPSTREAM.patch -x .cargo_vcs_info.json -x .cargo-ok -x Cargo.toml.orig a/properties/shorthands.toml b/properties/shorthands.toml
+--- a/properties/shorthands.toml	2026-11-07 02:27:16
++++ b/properties/shorthands.toml	2026-11-07 02:27:17
 @@ -209,7 +209,7 @@
  kind = "two_properties"
  
  [container]
 -engine = "gecko"
-+servo_pref = "layout.container-queries.enabled"
++servo_pref = "layout.css.container-queries.enabled"
  sub_properties = ["container-name", "container-type"]
  spec = "https://drafts.csswg.org/css-contain-3/#container-shorthand"
  
@@ -121,9 +121,9 @@ diff -ruN a/properties/shorthands.toml b/properties/shorthands.toml
  flags = "IS_LEGACY_SHORTHAND"
  sub_properties = ["break-inside"]
  spec = "https://drafts.csswg.org/css-break-3/#page-break-properties"
-diff -ruN a/rule_cache.rs b/rule_cache.rs
---- a/rule_cache.rs	2006-07-24 03:21:28
-+++ b/rule_cache.rs	2026-11-04 11:22:23
+diff --color -ruN -x README.lightningpanda.md -x UPSTREAM.patch -x .cargo_vcs_info.json -x .cargo-ok -x Cargo.toml.orig a/rule_cache.rs b/rule_cache.rs
+--- a/rule_cache.rs	2026-11-07 02:27:16
++++ b/rule_cache.rs	2026-11-07 02:27:17
 @@ -26,9 +26,53 @@
      line_height: Option<NonNegativeLength>,
      writing_mode: Option<WritingMode>,
@@ -159,10 +159,10 @@ diff -ruN a/rule_cache.rs b/rule_cache.rs
 +}
 +
 +inherited_resets! {
-+    BoxSizing, clone_box_sizing, crate::computed_values::box_sizing::T;
-+    BaselineShift, clone_baseline_shift, crate::computed_values::baseline_shift::T;
-+    BaselineSource, clone_baseline_source, crate::computed_values::baseline_source::T;
-+    AlignmentBaseline, clone_alignment_baseline, crate::computed_values::alignment_baseline::T;
++    BoxSizing, slow_clone_box_sizing, crate::computed_values::box_sizing::T;
++    BaselineShift, slow_clone_baseline_shift, crate::computed_values::baseline_shift::T;
++    BaselineSource, slow_clone_baseline_source, crate::computed_values::baseline_source::T;
++    AlignmentBaseline, slow_clone_alignment_baseline, crate::computed_values::alignment_baseline::T;
 +}
 +
  impl RuleCacheConditions {
@@ -197,7 +197,7 @@ diff -ruN a/rule_cache.rs b/rule_cache.rs
          true
      }
  }
-@@ -257,6 +306,7 @@
+@@ -256,6 +305,7 @@
              font_size: conditions.font_size,
              line_height: conditions.line_height,
              color_scheme: conditions.color_scheme,
@@ -205,9 +205,9 @@ diff -ruN a/rule_cache.rs b/rule_cache.rs
          };
          self.map
              .entry(rules)
-diff -ruN a/stylesheets/rule_parser.rs b/stylesheets/rule_parser.rs
---- a/stylesheets/rule_parser.rs	2006-07-24 03:21:28
-+++ b/stylesheets/rule_parser.rs	2026-11-04 11:22:23
+diff --color -ruN -x README.lightningpanda.md -x UPSTREAM.patch -x .cargo_vcs_info.json -x .cargo-ok -x Cargo.toml.orig a/stylesheets/rule_parser.rs b/stylesheets/rule_parser.rs
+--- a/stylesheets/rule_parser.rs	2026-11-07 02:27:17
++++ b/stylesheets/rule_parser.rs	2026-11-07 02:27:17
 @@ -282,7 +282,7 @@
              "counter-style" if cfg!(feature = "gecko") => Self::CounterStyle,
              "media" => Self::Media,
@@ -217,10 +217,10 @@ diff -ruN a/stylesheets/rule_parser.rs b/stylesheets/rule_parser.rs
              "supports" => Self::Supports,
              "keyframes" => Self::Keyframes(None),
              "-webkit-keyframes" => Self::Keyframes(Some(VendorPrefix::WebKit)),
-diff -ruN a/stylist.rs b/stylist.rs
---- a/stylist.rs	2006-07-24 03:21:28
-+++ b/stylist.rs	2026-11-04 11:22:23
-@@ -1004,6 +1004,13 @@
+diff --color -ruN -x README.lightningpanda.md -x UPSTREAM.patch -x .cargo_vcs_info.json -x .cargo-ok -x Cargo.toml.orig a/stylist.rs b/stylist.rs
+--- a/stylist.rs	2026-11-07 02:27:16
++++ b/stylist.rs	2026-11-07 02:27:17
+@@ -999,6 +999,13 @@
          ExtraStyleDataIterator(self.cascade_data.iter_origins_rev())
      }
  
@@ -234,9 +234,9 @@ diff -ruN a/stylist.rs b/stylist.rs
      /// Returns the number of selectors.
      pub fn num_selectors(&self) -> usize {
          self.cascade_data
-diff -ruN a/values/generics/mod.rs b/values/generics/mod.rs
---- a/values/generics/mod.rs	2006-07-24 03:21:28
-+++ b/values/generics/mod.rs	2026-11-04 11:22:23
+diff --color -ruN -x README.lightningpanda.md -x UPSTREAM.patch -x .cargo_vcs_info.json -x .cargo-ok -x Cargo.toml.orig a/values/generics/mod.rs b/values/generics/mod.rs
+--- a/values/generics/mod.rs	2026-11-07 02:27:16
++++ b/values/generics/mod.rs	2026-11-07 02:27:17
 @@ -110,6 +110,7 @@
      ToCss,
      ToResolvedValue,
@@ -245,10 +245,10 @@ diff -ruN a/values/generics/mod.rs b/values/generics/mod.rs
  )]
  #[repr(transparent)]
  pub struct GreaterThanOrEqualToOne<T>(pub T);
-diff -ruN a/values/specified/box.rs b/values/specified/box.rs
---- a/values/specified/box.rs	2006-07-24 03:21:28
-+++ b/values/specified/box.rs	2026-11-04 11:48:34
-@@ -2001,6 +2001,8 @@
+diff --color -ruN -x README.lightningpanda.md -x UPSTREAM.patch -x .cargo_vcs_info.json -x .cargo-ok -x Cargo.toml.orig a/values/specified/box.rs b/values/specified/box.rs
+--- a/values/specified/box.rs	2026-11-07 02:27:16
++++ b/values/specified/box.rs	2026-11-07 02:27:17
+@@ -2013,6 +2013,8 @@
      Auto,
      Page,
      Avoid,
@@ -257,7 +257,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
      Left,
      Right,
  }
-@@ -2018,7 +2020,9 @@
+@@ -2030,7 +2032,9 @@
              BreakBetween::Auto | BreakBetween::Avoid | BreakBetween::Left | BreakBetween::Right => {
                  Ok(break_value)
              },
@@ -268,7 +268,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
          }
      }
  
-@@ -2035,7 +2039,7 @@
+@@ -2047,7 +2051,7 @@
                  self.to_css(dest)
              },
              BreakBetween::Page => dest.write_str("always"),

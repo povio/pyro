@@ -14,6 +14,7 @@
 //! Boxes are computed per element on request; transforms along the
 //! containing-block chains are memoized until the document changes.
 
+use stylo_taffy::CopyStyleGetters;
 use std::cell::RefCell;
 
 use blitz_dom::{BaseDocument, NodeId};
@@ -249,10 +250,10 @@ impl Geometry {
             Some((px, (hundred - px) / 100.0))
         };
         let insets = [
-            inset(&style.clone_top()),
-            inset(&style.clone_right()),
-            inset(&style.clone_bottom()),
-            inset(&style.clone_left()),
+            inset(&style.slow_clone_top()),
+            inset(&style.slow_clone_right()),
+            inset(&style.slow_clone_bottom()),
+            inset(&style.slow_clone_left()),
         ];
         // Containing block: the table for table parts, else the parent.
         let mut cb = doc.get_node(id).and_then(|n| n.parent);
@@ -811,7 +812,7 @@ pub(crate) fn describe(doc: &BaseDocument, id: NodeId) -> String {
             let class: String = e.attr(blitz_dom::local_name!("class")).unwrap_or("").chars().take(300).collect();
             let s = n.primary_styles();
             let display = s.as_ref().map(|s| format!("{:?}", s.clone_display())).unwrap_or_default();
-            let height = s.as_ref().map(|s| format!("{:?}", s.clone_height())).unwrap_or_default();
+            let height = s.as_ref().map(|s| format!("{:?}", s.slow_clone_height())).unwrap_or_default();
             let l = n.unrounded_layout();
             let text: String = n.text_content().chars().take(40).collect();
             let kids: Vec<String> = n

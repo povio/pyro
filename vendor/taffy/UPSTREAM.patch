@@ -1,18 +1,38 @@
+diff --git a/src/compute/block.rs b/src/compute/block.rs
+index 3cd3e713..17ab5273 100644
 --- a/src/compute/block.rs
 +++ b/src/compute/block.rs
-@@ -905,7 +905,8 @@
+@@ -964,8 +964,11 @@ fn generate_item_list(
  
              let is_block = child_style.is_block();
              let is_table = child_style.is_table();
 -            let is_compressible_replaced = child_style.is_compressible_replaced();
+-            let min_content_width_cap = if is_compressible_replaced {
++            // lightningpanda: a tree may keep a block-level child at its content width
++            // (`block_child_width_fits_content`), as for compressible replaced elements.
 +            let is_compressible_replaced =
 +                child_style.is_compressible_replaced() || tree.block_child_width_fits_content(child_node_id);
-             let is_scroll_container = overflow.x.is_scroll_container() || overflow.y.is_scroll_container();
-             let contain = child_style.contain();
++            let min_content_width_cap = if child_style.is_compressible_replaced() {
+                 let calc = |val, basis| tree.calc(val, basis);
+                 let width = child_style.size().width.maybe_resolve(Some(0.0), calc);
+                 let max_width = child_style.max_size().width.maybe_resolve(Some(0.0), calc);
+diff --git a/src/compute/common/scrollable_overflow.rs b/src/compute/common/scrollable_overflow.rs
+index ec094c9e..2758e69f 100644
+--- a/src/compute/common/scrollable_overflow.rs
++++ b/src/compute/common/scrollable_overflow.rs
+@@ -5,6 +5,7 @@ use crate::tree::ScrollableOverflow;
+ use crate::util::sys::{f32_max, f32_min};
  
+ /// Container geometry shared by its children's scrollable overflow contributions.
++#[derive(Debug, Clone, Copy)]
+ pub(crate) struct ScrollableOverflowContainer {
+     /// Whether the parent clips unreachable overflow and includes end padding.
+     pub parent_is_scroll_container: bool,
+diff --git a/src/compute/flexbox.rs b/src/compute/flexbox.rs
+index a8dbbcf2..59b394ea 100644
 --- a/src/compute/flexbox.rs
 +++ b/src/compute/flexbox.rs
-@@ -1484,8 +1484,41 @@
+@@ -1542,8 +1542,41 @@ fn determine_container_main_size(
  
                  if lines.len() > 1 {
                      f32_max(size, main_axis_available_space)
@@ -55,7 +75,7 @@
                  }
              }
              AvailableSpace::MinContent if constants.is_wrap => {
-@@ -1549,6 +1582,14 @@
+@@ -1607,6 +1640,14 @@ fn determine_container_main_size(
                              style_max.maybe_min(flex_basis_max).or(flex_basis_max).unwrap_or(f32::INFINITY);
  
                          let content_contribution = match (min_main_size, style_preferred, max_main_size) {
@@ -70,308 +90,20 @@
                              // If the clamping values are such that max <= min, then we can avoid the expensive step of computing the content size
                              // as we know that the clamping values will override it anyway
                              (min, Some(pref), max) if max <= min || max <= pref => pref.min(max).max(min) + margin_sum,
---- a/src/compute/grid/mod.rs
-+++ b/src/compute/grid/mod.rs
-@@ -223,6 +223,7 @@
- ) -> LayoutOutput {
-     let LayoutInput { known_dimensions, run_mode, .. } = inputs;
- 
-+    let table_rows = tree.grid_rows_are_table_rows(node);
-     let style = tree.get_grid_container_style(node);
-     let constants = compute_container_constants(tree, &style, inputs);
-     let GridContainerConstants {
-@@ -432,6 +433,7 @@
-             track.max_track_sizing_function.definite_value(parent_size, |val, basis| tree.calc(val, basis))
-         },
-         has_baseline_aligned_item,
-+        false,
-     );
-     let initial_column_sum = columns.iter().map(|track| track.base_size).sum::<f32>();
-     inner_node_size.width = inner_node_size.width.or_else(|| initial_column_sum.into());
-@@ -463,6 +465,7 @@
-         &mut items,
-         |track: &GridTrack, _, _| Some(track.base_size),
-         false, // TODO: Support baseline alignment in the vertical axis
-+        table_rows,
-     );
-     let initial_row_sum = rows.iter().map(|track| track.base_size).sum::<f32>();
- 
-@@ -581,6 +584,7 @@
-             &mut items,
-             |track: &GridTrack, _, _| Some(track.base_size),
-             has_baseline_aligned_item,
-+            false,
-         );
- 
-         // The column widths may have changed, so the items' intrinsic height contributions need to be recomputed
-@@ -630,6 +634,7 @@
-             &mut items,
-             |track: &GridTrack, _, _| Some(track.base_size),
-             false, // TODO: Support baseline alignment in the vertical axis
-+            table_rows,
-         );
-     }
- 
---- a/src/compute/grid/track_sizing.rs
-+++ b/src/compute/grid/track_sizing.rs
-@@ -1,6 +1,6 @@
- //! Implements the track sizing algorithm
- //! <https://www.w3.org/TR/css-grid-1/#layout-algorithm>
--use super::types::{GridItem, GridTrack, TrackCounts};
-+use super::types::{GridItem, GridTrack, GridTrackKind, TrackCounts};
- use crate::compute::common::alignment::child_first_baseline;
- use crate::geometry::{AbstractAxis, Line, Size};
- use crate::style::{AlignContent, AlignContentKeyword, AvailableSpace};
-@@ -269,6 +269,7 @@
-     items: &mut [GridItem],
-     get_track_size_estimate: fn(&GridTrack, Option<f32>, &Tree) -> Option<f32>,
-     has_baseline_aligned_item: bool,
-+    table_rows: bool,
- ) {
-     // 11.4 Initialise Track sizes
-     // Initialize each track’s base size and growth limit.
-@@ -328,6 +329,7 @@
-         available_grid_space.get(axis),
-         inner_node_size,
-         get_track_size_estimate,
-+        table_rows && axis == AbstractAxis::Block,
-     );
- 
-     // 11.6. Maximise Tracks
-@@ -551,7 +553,20 @@
-     axis_available_grid_space: AvailableSpace,
-     inner_node_size: Size<Option<f32>>,
-     get_track_size_estimate: impl Fn(&GridTrack, Option<f32>, &Tree) -> Option<f32>,
-+    table_rows: bool,
- ) {
-+    // lightningpanda: the first tracks of the items spanning several table rows (rows where a
-+    // rowspan starts, for `distribute_rowspan_to_table_rows`).
-+    let rowspan_starts: Vec<usize> = if table_rows {
-+        items
-+            .iter()
-+            .filter(|item| item.span(axis) > 1)
-+            .map(|item| item.track_range_excluding_lines(axis).start)
-+            .collect()
-+    } else {
-+        Vec::new()
-+    };
-+
-     // Step 1. Shim baseline-aligned items so their intrinsic size contributions reflect their baseline alignment.
- 
-     // Already done at this point. See resolve_item_baselines function.
-@@ -601,6 +616,15 @@
-         // 2. Size tracks to fit non-spanning items: For each track with an intrinsic track sizing function and not a flexible sizing function,
-         // consider the items in it with a span of 1:
-         let batch_span = batch[0].placement(axis).span();
-+        // lightningpanda: a cell spanning several table rows grows them as in Chromium.
-+        if table_rows && !is_flex && batch_span > 1 {
-+            for item in batch.iter_mut() {
-+                let space = item_sizer.min_content_contribution(item, axis_tracks);
-+                let range = item.track_range_excluding_lines(axis);
-+                distribute_rowspan_to_table_rows(space, &mut axis_tracks[range.clone()], range.start, &rowspan_starts);
-+            }
-+            continue;
-+        }
-         if !is_flex && batch_span == 1 {
-             for item in batch.iter_mut() {
-                 let track_index = item.placement_indexes(axis).start + 1;
-@@ -998,6 +1022,56 @@
-         .for_each(|track| track.growth_limit = track.base_size);
- }
- 
-+/// lightningpanda: grows the table rows `tracks` (with the gutters between them; the first track is
-+/// `axis_tracks[first]`) to fit a cell of block size `space` spanning them, as Chromium's
-+/// `DistributeExcessBlockSizeToRows` does for a rowspan cell (percentage rows aside): the excess goes
-+/// to the rows where another rowspan starts, evenly; else to the unconstrained rows with a size, in
-+/// proportion to it; else, when every row is empty, to the last; else to the rows with a size, in
-+/// proportion to it. A constrained row has a fixed height: a length minimum, or the `max-content`
-+/// maximum blitz-dom gives a row whose cell has a length height among unconstrained rows.
-+fn distribute_rowspan_to_table_rows(space: f32, tracks: &mut [GridTrack], first: usize, rowspan_starts: &[usize]) {
-+    let excess = space - tracks.iter().map(|track| track.base_size).sum::<f32>();
-+    if excess <= 0.0 {
-+        return;
-+    }
-+    let rows: Vec<usize> = (0..tracks.len()).filter(|&i| tracks[i].kind == GridTrackKind::Track).collect();
-+    let Some(&last) = rows.last() else { return };
-+    let constrained = |track: &GridTrack| {
-+        track.max_track_sizing_function.is_max_content()
-+            || track.min_track_sizing_function.0.tag() == CompactLength::LENGTH_TAG
-+    };
-+    let originating: Vec<usize> =
-+        rows.iter().copied().skip(1).filter(|i| rowspan_starts.contains(&(first + i))).collect();
-+    let unconstrained: Vec<usize> =
-+        rows.iter().copied().filter(|&i| tracks[i].base_size > 0.0 && !constrained(&tracks[i])).collect();
-+    let non_empty: Vec<usize> = rows.iter().copied().filter(|&i| tracks[i].base_size > 0.0).collect();
-+    let mut grow = |targets: &[usize], weights: &dyn Fn(&GridTrack) -> f32| {
-+        let total: f32 = targets.iter().map(|&i| weights(&tracks[i])).sum();
-+        let mut remaining = excess;
-+        for &i in targets {
-+            let delta = excess * weights(&tracks[i]) / total;
-+            tracks[i].base_size += delta;
-+            remaining -= delta;
-+        }
-+        let i = *targets.last().unwrap();
-+        tracks[i].base_size += remaining;
-+    };
-+    if !originating.is_empty() {
-+        grow(&originating, &|_| 1.0);
-+    } else if !unconstrained.is_empty() {
-+        grow(&unconstrained, &|track| track.base_size);
-+    } else if non_empty.is_empty() {
-+        tracks[last].base_size += excess;
-+    } else {
-+        grow(&non_empty, &|track| track.base_size);
-+    }
-+    for track in tracks.iter_mut() {
-+        if track.growth_limit < track.base_size {
-+            track.growth_limit = track.base_size;
-+        }
-+    }
-+}
-+
- /// The sum of the flex factors of the flexible tracks in an item's spanned track range
- #[inline(always)]
- fn crossed_flex_factor_sum(tracks: &[GridTrack]) -> f32 {
-@@ -1334,9 +1408,20 @@
- 
-     // For each flexible track, if the product of the used flex fraction and the track’s flex factor is greater
-     // than the track’s base size, set its base size to that product.
-+    //
-+    // lightningpanda: as Chromium does (`ExpandFlexibleTracks`), the product is truncated to 1/64 px (a layout
-+    // unit) in f32 raw units, after an epsilon, and the fraction it loses carries into the next flexible track:
-+    // a third of 668px is 222.65625, 222.671875, 222.671875.
-+    let fr_raw = flex_fraction * 64.0;
-+    let mut leftover = 0.0f32;
-     for track in axis_tracks.iter_mut().filter(|track| track.max_track_sizing_function.is_fr()) {
-         let track_flex_factor = track.max_track_sizing_function.0.value();
--        track.base_size = f32_max(track.base_size, track_flex_factor * flex_fraction);
-+        let share = fr_raw * track_flex_factor + leftover;
-+        let expanded = (share + f32::EPSILON).trunc();
-+        if expanded.is_finite() && expanded / 64.0 >= track.base_size {
-+            track.base_size = expanded / 64.0;
-+            leftover = (share - expanded).max(0.0);
-+        }
-     }
- }
- 
---- a/src/compute/mod.rs
-+++ b/src/compute/mod.rs
-@@ -378,6 +378,9 @@
-     /// Recursive function to apply rounding to all descendents
-     fn round_layout_inner(tree: &mut impl RoundTree, node_id: NodeId, cumulative_x: f32, cumulative_y: f32) {
-         let unrounded_layout = tree.get_unrounded_layout(node_id);
-+        if tree.rounded_unchanged(node_id, &unrounded_layout, cumulative_x, cumulative_y) {
-+            return;
-+        }
-         let mut layout = unrounded_layout;
- 
-         let parent_x = cumulative_x;
-@@ -413,6 +416,7 @@
-         );
- 
-         tree.set_final_layout(node_id, &layout);
-+        tree.record_rounded(node_id, &unrounded_layout, parent_x, parent_y);
- 
-         // Recurse into in-flow children. Out-of-flow (absolute/fixed) children are skipped here:
-         // they are instead visited via their containing block's hoisted child list below, which
---- a/src/tree/traits.rs
-+++ b/src/tree/traits.rs
-@@ -290,6 +290,16 @@
-     /// Get the nth out-of-flow box whose containing block is `node_id`
-     /// (as recorded by [`LayoutContainingBlock::add_hoisted_children`])
-     fn get_hoisted_child_id(&self, node_id: NodeId, index: usize) -> NodeId;
-+    /// Whether `node_id`'s subtree is rounded as it was the last time: the tree knows the
-+    /// subtree's layout did not change and `round_layout` reached the node with the same
-+    /// unrounded layout at the same unrounded absolute offset. [`round_layout`](crate::round_layout)
-+    /// then skips the subtree. The default never skips.
-+    fn rounded_unchanged(&self, _node_id: NodeId, _unrounded: &Layout, _absolute_x: f32, _absolute_y: f32) -> bool {
-+        false
-+    }
-+    /// Records the unrounded layout and absolute offset `node_id` was just rounded from
-+    /// (for [`RoundTree::rounded_unchanged`]).
-+    fn record_rounded(&mut self, _node_id: NodeId, _unrounded: &Layout, _absolute_x: f32, _absolute_y: f32) {}
- }
- 
- /// Trait used by the `print_tree` method which prints a debug representation
-@@ -343,6 +353,13 @@
-     ///
-     /// Interpreted in the container's axes (see [`LayoutPartialTree::get_core_container_style`]).
-     fn get_grid_child_style(&self, child_node_id: NodeId) -> Self::GridItemStyle<'_>;
-+
-+    /// Whether `node_id`'s rows are a table's (lightningpanda): an item spanning several rows grows them
-+    /// as Chromium grows the rows under a rowspan cell (`DistributeExcessBlockSizeToRows`) rather than
-+    /// as a grid distributes a spanning item. The default is false.
-+    fn grid_rows_are_table_rows(&self, _node_id: NodeId) -> bool {
-+        false
-+    }
- 
-     /// Set the node's detailed grid information
-     ///
-@@ -373,6 +390,13 @@
-     /// Interpreted in the container's axes (see [`LayoutPartialTree::get_core_container_style`]).
-     fn get_block_child_style(&self, child_node_id: NodeId) -> Self::BlockItemStyle<'_>;
- 
-+    /// Whether a block-level child's `auto` width fits its content rather than stretching
-+    /// (form controls in browsers), as for tables and replaced elements.
-+    fn block_child_width_fits_content(&self, child_node_id: NodeId) -> bool {
-+        let _ = child_node_id;
-+        false
-+    }
-+
-     /// Compute the specified node's size or full layout given the specified constraints
-     #[cfg(feature = "block_layout")]
-     fn compute_block_child_layout(
---- a/src/compute/mod.rs
-+++ b/src/compute/mod.rs
-@@ -78,13 +78,24 @@ pub fn compute_root_layout(
-     tree: &mut (impl crate::tree::LayoutContainingBlock + CacheTree),
-     root: NodeId,
-     available_space: Size<AvailableSpace>,
-+) {
-+    compute_root_layout_in(tree, root, available_space, available_space)
-+}
-+
-+/// lightningpanda: [`compute_root_layout`] with an initial containing block of another size than the
-+/// space the root is laid out in: Blink's print layout has one rounded down and one rounded up.
-+pub fn compute_root_layout_in(
-+    tree: &mut (impl crate::tree::LayoutContainingBlock + CacheTree),
-+    root: NodeId,
-+    available_space: Size<AvailableSpace>,
-+    initial_containing_block: Size<AvailableSpace>,
- ) {
-     let style = tree.get_core_container_style(root);
-     let position = style.position();
-     let direction = style.direction();
-     drop(style);
- 
--    let icb_size = available_space.into_options();
-+    let icb_size = initial_containing_block.into_options();
-     let oof_root_area = match (position.is_out_of_flow(), icb_size.width, icb_size.height) {
-         (true, Some(width), Some(height)) => Some(Size { width, height }),
-         _ => None,
---- a/src/lib.rs
-+++ b/src/lib.rs
-@@ -110,7 +110,7 @@ pub use crate::compute::{compute_block_align_content_offset, compute_block_layou
- #[doc(inline)]
- pub use crate::compute::{
-     compute_cached_layout, compute_hidden_layout, compute_leaf_layout, compute_oof_layout, compute_oof_layout_for_area,
--    compute_root_layout, resolve_static_offset, round_layout, OofLayoutResult,
-+    compute_root_layout, compute_root_layout_in, resolve_static_offset, round_layout, OofLayoutResult,
- };
- #[doc(inline)]
- pub use crate::style::Style;
+diff --git a/src/compute/grid/alignment.rs b/src/compute/grid/alignment.rs
+index b84e8751..adc2f827 100644
 --- a/src/compute/grid/alignment.rs
 +++ b/src/compute/grid/alignment.rs
-@@ -99,7 +99,7 @@ pub(super) fn align_and_position_item(
-     container_border: Rect<f32>,
-     #[cfg(feature = "content_size")] container_is_scroll_container: bool,
+@@ -100,7 +100,7 @@ pub(super) fn align_and_position_item(
+     #[cfg(feature = "content_size")] padding_box_inset: Rect<f32>,
+     #[cfg(feature = "content_size")] overflow_container: &ScrollableOverflowContainer,
      bubbled_candidates: &mut OofCandidates,
 -) -> (Rect<f32>, f32, f32, Option<f32>) {
 +) -> PositionedItem {
      let grid_area_size = Size { width: grid_area.right - grid_area.left, height: grid_area.bottom - grid_area.top };
  
      let style = tree.get_grid_child_style(node);
-@@ -374,7 +374,7 @@ pub(super) fn align_and_position_item(
+@@ -375,7 +375,7 @@ pub(super) fn align_and_position_item(
      // Resolve final size
      let Size { width, height } = size.unwrap_or(layout_output.size).maybe_clamp(min_size, max_size);
  
@@ -380,7 +112,7 @@
          Line { start: grid_area.left, end: grid_area.right },
          alignment_styles.horizontal,
          width,
-@@ -384,7 +384,7 @@ pub(super) fn align_and_position_item(
+@@ -385,7 +385,7 @@ pub(super) fn align_and_position_item(
          0.0,
          direction,
      );
@@ -389,7 +121,7 @@
          Line { start: grid_area.top, end: grid_area.bottom },
          alignment_styles.vertical,
          height,
-@@ -397,7 +397,8 @@ pub(super) fn align_and_position_item(
+@@ -398,7 +398,8 @@ pub(super) fn align_and_position_item(
      // A relative offset moves the item, but does not affect the container's baseline (which is computed from the
      // returned y position, without the offset)
      let x = x + relative_offset(position, inset_horizontal, direction);
@@ -399,7 +131,7 @@
  
      let scrollbar_size = Size {
          width: if overflow.y == Overflow::Scroll { scrollbar_width } else { 0.0 },
-@@ -414,44 +415,104 @@ pub(super) fn align_and_position_item(
+@@ -415,40 +416,102 @@ pub(super) fn align_and_position_item(
          bubbled_candidates.append(&mut item_candidates);
      }
  
@@ -430,13 +162,6 @@
 +    };
 +    tree.set_unrounded_layout(node, &layout);
 +
-+    // Contributions to the container's scrollable overflow rect are measured from the
-+    // container's padding-box origin (mirrored for RTL), matching the scrollable overflow region.
-+    let contribution_x = if direction.is_rtl() {
-+        container_border_box_width - (x + width) - container_border.right
-+    } else {
-+        x - container_border.left
-+    };
 +    let mut positioned = PositionedItem {
 +        contribution: Rect::ZERO,
 +        y_position: y_without_relative_offset,
@@ -446,19 +171,19 @@
 +        area: grid_area,
 +        y_offset,
 +        y_relative,
-+        contribution_x,
-+        border_top: container_border.top,
++        #[cfg(feature = "content_size")]
++        padding_box_inset: Point { x: padding_box_inset.left, y: padding_box_inset.top },
 +        #[cfg(feature = "content_size")]
 +        overflow,
 +        #[cfg(feature = "content_size")]
 +        contain,
 +        #[cfg(feature = "content_size")]
-+        parent_is_scroll_container: container_is_scroll_container,
++        overflow_container: *overflow_container,
 +    };
 +    positioned.contribution = positioned.compute_contribution();
 +    positioned
 +}
- 
++
 +/// lightningpanda: an item as `align_and_position_item` positioned it, with what positioning it again in
 +/// an area of the same size elsewhere takes (`TableGridState`): only its block position changes.
 +#[derive(Debug, Clone, Copy)]
@@ -475,41 +200,42 @@
 +    /// Its block offset within the area (`align_item_within_area`) and its relative offset
 +    pub y_offset: f32,
 +    pub y_relative: f32,
-+    /// The inline position and the container's top border its overflow contribution is measured with
-+    pub contribution_x: f32,
-+    pub border_top: f32,
-     #[cfg(feature = "content_size")]
--    let contribution = {
--        // Contributions to the container's scrollable overflow rect are measured from the
--        // container's padding-box origin (mirrored for RTL), matching the scrollable overflow region.
--        let contribution_location = if direction.is_rtl() {
--            Point { x: container_border_box_width - (x + width) - container_border.right, y: y - container_border.top }
--        } else {
--            Point { x: x - container_border.left, y: y - container_border.top }
--        };
++    /// The container's padding box offset its overflow contribution is measured from
++    #[cfg(feature = "content_size")]
++    padding_box_inset: Point<f32>,
++    #[cfg(feature = "content_size")]
 +    overflow: Point<Overflow>,
 +    #[cfg(feature = "content_size")]
 +    contain: crate::style::Contain,
 +    #[cfg(feature = "content_size")]
-+    parent_is_scroll_container: bool,
++    overflow_container: ScrollableOverflowContainer,
 +}
-+
+ 
 +impl PositionedItem {
-+    #[cfg(feature = "content_size")]
+     #[cfg(feature = "content_size")]
+-    let contribution = {
+-        let contribution_location = Point { x: x - padding_box_inset.left, y: y - padding_box_inset.top };
 +    fn compute_contribution(&self) -> Rect<f32> {
          compute_scrollable_overflow_contribution(
 -            contribution_location,
 -            Size { width, height },
--            layout_output.scrollable_overflow_rect,
+-            layout_output.scrollable_overflow_rect.rect(),
+-            border,
 -            overflow,
 -            contain,
--            container_is_scroll_container,
-+            Point { x: self.contribution_x, y: self.layout.location.y - self.border_top },
+-            overflow_container,
+-            resolved_margin,
++            Point {
++                x: self.layout.location.x - self.padding_box_inset.x,
++                y: self.layout.location.y - self.padding_box_inset.y,
++            },
 +            self.layout.size,
-+            self.layout.scrollable_overflow_rect,
++            self.layout.scrollable_overflow_rect.rect(),
++            self.layout.border,
 +            self.overflow,
 +            self.contain,
-+            self.parent_is_scroll_container,
++            &self.overflow_container,
++            self.layout.margin,
          )
 -    };
 +    }
@@ -536,7 +262,7 @@
  }
  
  /// Align and size a grid item along a single axis
-@@ -465,7 +526,7 @@ pub(super) fn align_item_within_area(
+@@ -462,7 +525,7 @@ pub(super) fn align_item_within_area(
      margin: Line<Option<f32>>,
      baseline_shim: f32,
      direction: Direction,
@@ -545,7 +271,7 @@
      // Calculate grid area dimension in the axis
      let non_auto_margin = Line { start: margin.start.unwrap_or(0.0) + baseline_shim, end: margin.end.unwrap_or(0.0) };
      let grid_area_size = f32_max(grid_area.end - grid_area.start, 0.0);
-@@ -527,7 +588,7 @@ pub(super) fn align_item_within_area(
+@@ -524,7 +587,7 @@ pub(super) fn align_item_within_area(
          alignment_based_offset
      };
  
@@ -554,9 +280,11 @@
  }
  
  /// The offset applied to an item in a single axis by its `inset` if it is `position: relative`
+diff --git a/src/compute/grid/mod.rs b/src/compute/grid/mod.rs
+index f0109c6e..8e37fb7a 100644
 --- a/src/compute/grid/mod.rs
 +++ b/src/compute/grid/mod.rs
-@@ -37,12 +37,15 @@ mod alignment;
+@@ -39,12 +39,15 @@ mod alignment;
  mod explicit_grid;
  mod implicit_grid;
  mod placement;
@@ -573,16 +301,17 @@
  struct GridContainerConstants {
      /// The container's `direction` style
      direction: Direction,
-@@ -224,6 +227,8 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -225,6 +228,9 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+ ) -> LayoutOutput {
      let LayoutInput { known_dimensions, run_mode, .. } = inputs;
  
-     let table_rows = tree.grid_rows_are_table_rows(node);
++    let table_rows = tree.grid_rows_are_table_rows(node);
 +    // lightningpanda: a table's last layout, to lay out again only what changed since (`table_reuse`).
 +    let reuse = if table_rows && run_mode == RunMode::PerformLayout { tree.take_table_grid_state(node) } else { None };
      let style = tree.get_grid_container_style(node);
      let constants = compute_container_constants(tree, &style, inputs);
      let GridContainerConstants {
-@@ -336,105 +341,142 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -337,104 +343,142 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
      // so they are excluded here. Each child's style is read and its named lines resolved exactly once; the
      // results drive both the grid size estimate and item placement below.
      let child_count = tree.child_count(node);
@@ -781,7 +510,6 @@
 -            track.max_track_sizing_function.definite_value(parent_size, |val, basis| tree.calc(val, basis))
 -        },
 -        has_baseline_aligned_item,
--        false,
 -    );
 +    // (A table laid out again keeps its columns: they depend on no item.)
 +    let inner_width_is_definite = inner_node_size.width.is_some();
@@ -810,7 +538,7 @@
      let initial_column_sum = columns.iter().map(|track| track.base_size).sum::<f32>();
      inner_node_size.width = inner_node_size.width.or_else(|| initial_column_sum.into());
  
-@@ -448,9 +490,18 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -448,9 +492,18 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
          return LayoutOutput::from_outer_size(Size { width, height: 0.0 });
      }
  
@@ -830,16 +558,17 @@
      track_sizing_algorithm(
          tree,
          AbstractAxis::Block,
-@@ -466,6 +517,8 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -465,6 +518,9 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+         &mut items,
          |track: &GridTrack, _, _| Some(track.base_size),
          false, // TODO: Support baseline alignment in the vertical axis
-         table_rows,
++        table_rows,
 +        replay.as_ref().map(|replay| replay.affected_tracks.as_slice()),
 +        rows_sized.as_mut(),
      );
      let initial_row_sum = rows.iter().map(|track| track.base_size).sum::<f32>();
  
-@@ -568,6 +621,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -567,6 +623,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
          });
      }
  
@@ -847,26 +576,28 @@
      if rerun_column_sizing {
          // Re-run track sizing algorithm for Inline axis
          track_sizing_algorithm(
-@@ -585,6 +639,8 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -583,6 +640,9 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+             &mut items,
              |track: &GridTrack, _, _| Some(track.base_size),
              has_baseline_aligned_item,
-             false,
++            false,
 +            None,
 +            None,
          );
  
          // The column widths may have changed, so the items' intrinsic height contributions need to be recomputed
-@@ -635,6 +691,8 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -632,6 +692,9 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+             &mut items,
              |track: &GridTrack, _, _| Some(track.base_size),
              false, // TODO: Support baseline alignment in the vertical axis
-             table_rows,
++            table_rows,
 +            None,
 +            None,
          );
      }
  
-@@ -709,6 +767,13 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
-     let container_alignment_styles = InBothAbsAxis { horizontal: justify_items, vertical: align_items };
+@@ -721,6 +784,13 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+     };
  
      // Position in-flow children (stored in items vector)
 +    // lightningpanda: in a table laid out again, an item that did not change keeps its layout in the
@@ -879,7 +610,7 @@
      for (index, item) in items.iter_mut().enumerate() {
          // Tracks are stored in logical order. In RTL the physical offsets are assigned
          // right-to-left, so an item's physical left edge is derived from its logical end
-@@ -727,25 +792,65 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -739,25 +809,65 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
                  columns[item.column_indexes.end as usize].offset
              },
          };
@@ -925,10 +656,10 @@
 +                container_alignment_styles,
 +                item.baseline_shim,
 +                direction,
-+                container_border_box.width,
-+                border,
 +                #[cfg(feature = "content_size")]
-+                is_scroll_container,
++                padding_box_inset,
++                #[cfg(feature = "content_size")]
++                &overflow_container,
 +                &mut item.oof_candidates,
 +            ),
 +        };
@@ -942,10 +673,10 @@
 -            container_alignment_styles,
 -            item.baseline_shim,
 -            direction,
--            container_border_box.width,
--            border,
 -            #[cfg(feature = "content_size")]
--            is_scroll_container,
+-            padding_box_inset,
+-            #[cfg(feature = "content_size")]
+-            &overflow_container,
 -            &mut item.oof_candidates,
 -        );
 -        item.y_position = y_position;
@@ -963,7 +694,7 @@
  
          #[cfg(feature = "content_size")]
          {
-@@ -753,6 +858,24 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -765,6 +875,24 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
          }
      }
  
@@ -988,7 +719,7 @@
      // Position hidden and absolutely positioned children, merging in the candidates bubbled out
      // of in-flow children's subtrees (`items` is sorted by `source_order`, i.e. child index)
      let mut order = items.len() as u32;
-@@ -946,6 +1069,23 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -980,6 +1108,23 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
      );
      output.oof_candidates = oof_candidates;
      output.oof_positioning_area = oof_positioning_area;
@@ -1012,6 +743,9 @@
      output
  }
  
+diff --git a/src/compute/grid/table_reuse.rs b/src/compute/grid/table_reuse.rs
+new file mode 100644
+index 00000000..e422e0bb
 --- /dev/null
 +++ b/src/compute/grid/table_reuse.rs
 @@ -0,0 +1,318 @@
@@ -1040,7 +774,7 @@
 +use crate::style::{AlignItems, GridAutoFlow};
 +use crate::tree::{LayoutInput, NodeId};
 +use crate::util::sys::{Box, GridTrackVec, Vec};
-+use crate::{BoxGenerationMode, CoreStyle, GridContainerStyle, GridItemStyle, LayoutGridContainer};
++use crate::{BoxGenerationMode, CoreStyle, GridItemStyle, LayoutGridContainer};
 +
 +/// A table grid's last full layout (see the module documentation). Opaque to the tree, which keeps
 +/// it between layouts.
@@ -1333,9 +1067,17 @@
 +            item.span(crate::geometry::AbstractAxis::Block) == 1 && item.oof_candidates.is_empty()
 +        })
 +}
+diff --git a/src/compute/grid/track_sizing.rs b/src/compute/grid/track_sizing.rs
+index 18063621..dae69e35 100644
 --- a/src/compute/grid/track_sizing.rs
 +++ b/src/compute/grid/track_sizing.rs
-@@ -6,7 +6,7 @@ use crate::geometry::{AbstractAxis, Line, Size};
+@@ -1,12 +1,12 @@
+ //! Implements the track sizing algorithm
+ //! <https://www.w3.org/TR/css-grid-1/#layout-algorithm>
+-use super::types::{GridItem, GridTrack, TrackCounts};
++use super::types::{GridItem, GridTrack, GridTrackKind, TrackCounts};
+ use crate::compute::common::alignment::child_first_baseline;
+ use crate::geometry::{AbstractAxis, Line, Size};
  use crate::style::{AlignContent, AlignContentKeyword, AvailableSpace};
  use crate::style_helpers::TaffyMinContent;
  use crate::tree::{LayoutPartialTree, LayoutPartialTreeExt, SizingMode};
@@ -1362,10 +1104,11 @@
          item.crosses_flexible_column =
              item.track_range_excluding_lines(AbstractAxis::Inline).any(|i| columns[i].is_flexible());
          item.crosses_intrinsic_column =
-@@ -270,11 +274,22 @@ pub(super) fn track_sizing_algorithm<Tree: LayoutPartialTree>(
+@@ -269,11 +273,23 @@ pub(super) fn track_sizing_algorithm<Tree: LayoutPartialTree>(
+     items: &mut [GridItem],
      get_track_size_estimate: fn(&GridTrack, Option<f32>, &Tree) -> Option<f32>,
      has_baseline_aligned_item: bool,
-     table_rows: bool,
++    table_rows: bool,
 +    // lightningpanda: the tracks to size from their items (the others are as their items sized them
 +    // last time: `table_reuse`), and where to keep the tracks as their items sized them.
 +    only_tracks: Option<&[bool]>,
@@ -1386,7 +1129,7 @@
  
      // Resolve fit-content() limits against the container's inner size (these are fixed for the rest of this pass)
      let axis_inner_node_size = inner_node_size.get(axis);
-@@ -291,7 +306,8 @@ pub(super) fn track_sizing_algorithm<Tree: LayoutPartialTree>(
+@@ -290,7 +306,8 @@ pub(super) fn track_sizing_algorithm<Tree: LayoutPartialTree>(
      // then the track sizes are already final and we can skip the rest of this function.
      // Note that tracks with an intrinsic min track sizing function can still grow beyond
      // a fixed growth limit (e.g. minmax(auto, 0px)), so they cannot be skipped.
@@ -1396,10 +1139,11 @@
          track.base_size == track.growth_limit
              && track
                  .min_track_sizing_function
-@@ -330,7 +346,12 @@ pub(super) fn track_sizing_algorithm<Tree: LayoutPartialTree>(
+@@ -328,7 +345,13 @@ pub(super) fn track_sizing_algorithm<Tree: LayoutPartialTree>(
+         available_grid_space.get(axis),
          inner_node_size,
          get_track_size_estimate,
-         table_rows && axis == AbstractAxis::Block,
++        table_rows && axis == AbstractAxis::Block,
 +        only_tracks,
      );
 +    if let Some(sized) = sized {
@@ -1409,15 +1153,29 @@
  
      // 11.6. Maximise Tracks
      // Distributes free space (if any) to tracks with FINITE growth limits, up to their limits.
-@@ -554,6 +575,7 @@ fn resolve_intrinsic_track_sizes<Tree: LayoutPartialTree>(
+@@ -551,7 +574,21 @@ fn resolve_intrinsic_track_sizes<Tree: LayoutPartialTree>(
+     axis_available_grid_space: AvailableSpace,
      inner_node_size: Size<Option<f32>>,
      get_track_size_estimate: impl Fn(&GridTrack, Option<f32>, &Tree) -> Option<f32>,
-     table_rows: bool,
++    table_rows: bool,
 +    only_tracks: Option<&[bool]>,
  ) {
-     // lightningpanda: the first tracks of the items spanning several table rows (rows where a
-     // rowspan starts, for `distribute_rowspan_to_table_rows`).
-@@ -580,9 +602,12 @@ fn resolve_intrinsic_track_sizes<Tree: LayoutPartialTree>(
++    // lightningpanda: the first tracks of the items spanning several table rows (rows where a
++    // rowspan starts, for `distribute_rowspan_to_table_rows`).
++    let rowspan_starts: Vec<usize> = if table_rows {
++        items
++            .iter()
++            .filter(|item| item.span(axis) > 1)
++            .map(|item| item.track_range_excluding_lines(axis).start)
++            .collect()
++    } else {
++        Vec::new()
++    };
++
+     // Step 1. Shim baseline-aligned items so their intrinsic size contributions reflect their baseline alignment.
+ 
+     // Already done at this point. See resolve_item_baselines function.
+@@ -565,9 +602,12 @@ fn resolve_intrinsic_track_sizes<Tree: LayoutPartialTree>(
      // Items that cross a flexible track are all processed together in a single batch (regardless of their span), so
      // they only need to be moved to the end of the list. And the order in which items within a batch are processed
      // does not affect the result, so the remaining items only need to be sorted if any of them span more than one track.
@@ -1432,9 +1190,150 @@
          if item.crosses_flexible_track(axis) {
              partitioned_items.push_back(item);
          } else {
+@@ -601,6 +641,15 @@ fn resolve_intrinsic_track_sizes<Tree: LayoutPartialTree>(
+         // 2. Size tracks to fit non-spanning items: For each track with an intrinsic track sizing function and not a flexible sizing function,
+         // consider the items in it with a span of 1:
+         let batch_span = batch[0].placement(axis).span();
++        // lightningpanda: a cell spanning several table rows grows them as in Chromium.
++        if table_rows && !is_flex && batch_span > 1 {
++            for item in batch.iter_mut() {
++                let space = item_sizer.min_content_contribution(item, axis_tracks);
++                let range = item.track_range_excluding_lines(axis);
++                distribute_rowspan_to_table_rows(space, &mut axis_tracks[range.clone()], range.start, &rowspan_starts);
++            }
++            continue;
++        }
+         if !is_flex && batch_span == 1 {
+             for item in batch.iter_mut() {
+                 let track_index = item.placement_indexes(axis).start + 1;
+@@ -998,6 +1047,56 @@ fn resolve_intrinsic_track_sizes<Tree: LayoutPartialTree>(
+         .for_each(|track| track.growth_limit = track.base_size);
+ }
+ 
++/// lightningpanda: grows the table rows `tracks` (with the gutters between them; the first track is
++/// `axis_tracks[first]`) to fit a cell of block size `space` spanning them, as Chromium's
++/// `DistributeExcessBlockSizeToRows` does for a rowspan cell (percentage rows aside): the excess goes
++/// to the rows where another rowspan starts, evenly; else to the unconstrained rows with a size, in
++/// proportion to it; else, when every row is empty, to the last; else to the rows with a size, in
++/// proportion to it. A constrained row has a fixed height: a length minimum, or the `max-content`
++/// maximum blitz-dom gives a row whose cell has a length height among unconstrained rows.
++fn distribute_rowspan_to_table_rows(space: f32, tracks: &mut [GridTrack], first: usize, rowspan_starts: &[usize]) {
++    let excess = space - tracks.iter().map(|track| track.base_size).sum::<f32>();
++    if excess <= 0.0 {
++        return;
++    }
++    let rows: Vec<usize> = (0..tracks.len()).filter(|&i| tracks[i].kind == GridTrackKind::Track).collect();
++    let Some(&last) = rows.last() else { return };
++    let constrained = |track: &GridTrack| {
++        track.max_track_sizing_function.is_max_content()
++            || track.min_track_sizing_function.0.tag() == CompactLength::LENGTH_TAG
++    };
++    let originating: Vec<usize> =
++        rows.iter().copied().skip(1).filter(|i| rowspan_starts.contains(&(first + i))).collect();
++    let unconstrained: Vec<usize> =
++        rows.iter().copied().filter(|&i| tracks[i].base_size > 0.0 && !constrained(&tracks[i])).collect();
++    let non_empty: Vec<usize> = rows.iter().copied().filter(|&i| tracks[i].base_size > 0.0).collect();
++    let mut grow = |targets: &[usize], weights: &dyn Fn(&GridTrack) -> f32| {
++        let total: f32 = targets.iter().map(|&i| weights(&tracks[i])).sum();
++        let mut remaining = excess;
++        for &i in targets {
++            let delta = excess * weights(&tracks[i]) / total;
++            tracks[i].base_size += delta;
++            remaining -= delta;
++        }
++        let i = *targets.last().unwrap();
++        tracks[i].base_size += remaining;
++    };
++    if !originating.is_empty() {
++        grow(&originating, &|_| 1.0);
++    } else if !unconstrained.is_empty() {
++        grow(&unconstrained, &|track| track.base_size);
++    } else if non_empty.is_empty() {
++        tracks[last].base_size += excess;
++    } else {
++        grow(&non_empty, &|track| track.base_size);
++    }
++    for track in tracks.iter_mut() {
++        if track.growth_limit < track.base_size {
++            track.growth_limit = track.base_size;
++        }
++    }
++}
++
+ /// The sum of the flex factors of the flexible tracks in an item's spanned track range
+ #[inline(always)]
+ fn crossed_flex_factor_sum(tracks: &[GridTrack]) -> f32 {
+@@ -1334,9 +1433,20 @@ fn expand_flexible_tracks<Tree: LayoutPartialTree>(
+ 
+     // For each flexible track, if the product of the used flex fraction and the track’s flex factor is greater
+     // than the track’s base size, set its base size to that product.
++    //
++    // lightningpanda: as Chromium does (`ExpandFlexibleTracks`), the product is truncated to 1/64 px (a layout
++    // unit) in f32 raw units, after an epsilon, and the fraction it loses carries into the next flexible track:
++    // a third of 668px is 222.65625, 222.671875, 222.671875.
++    let fr_raw = flex_fraction * 64.0;
++    let mut leftover = 0.0f32;
+     for track in axis_tracks.iter_mut().filter(|track| track.max_track_sizing_function.is_fr()) {
+         let track_flex_factor = track.max_track_sizing_function.0.value();
+-        track.base_size = f32_max(track.base_size, track_flex_factor * flex_fraction);
++        let share = fr_raw * track_flex_factor + leftover;
++        let expanded = (share + f32::EPSILON).trunc();
++        if expanded.is_finite() && expanded / 64.0 >= track.base_size {
++            track.base_size = expanded / 64.0;
++            leftover = (share - expanded).max(0.0);
++        }
+     }
+ }
+ 
+diff --git a/src/compute/mod.rs b/src/compute/mod.rs
+index bb954acf..b41aef6f 100644
 --- a/src/compute/mod.rs
 +++ b/src/compute/mod.rs
-@@ -486,7 +486,8 @@ pub fn compute_hidden_layout(tree: &mut (impl LayoutPartialTree + CacheTree), no
+@@ -80,13 +80,24 @@ pub fn compute_root_layout(
+     tree: &mut (impl crate::tree::LayoutContainingBlock + CacheTree),
+     root: NodeId,
+     available_space: Size<AvailableSpace>,
++) {
++    compute_root_layout_in(tree, root, available_space, available_space)
++}
++
++/// lightningpanda: [`compute_root_layout`] with an initial containing block of another size than the
++/// space the root is laid out in: Blink's print layout has one rounded down and one rounded up.
++pub fn compute_root_layout_in(
++    tree: &mut (impl crate::tree::LayoutContainingBlock + CacheTree),
++    root: NodeId,
++    available_space: Size<AvailableSpace>,
++    initial_containing_block: Size<AvailableSpace>,
+ ) {
+     let style = tree.get_core_container_style(root);
+     let position = style.position();
+     let direction = style.direction();
+     drop(style);
+ 
+-    let icb_size = available_space.into_options();
++    let icb_size = initial_containing_block.into_options();
+     let oof_root_area = match (position.is_out_of_flow(), icb_size.width, icb_size.height) {
+         (true, Some(width), Some(height)) => Some(Size { width, height }),
+         _ => None,
+@@ -381,6 +392,9 @@ pub fn round_layout(tree: &mut impl RoundTree, node_id: NodeId) {
+     /// Recursive function to apply rounding to all descendents
+     fn round_layout_inner(tree: &mut impl RoundTree, node_id: NodeId, cumulative_x: f32, cumulative_y: f32) {
+         let unrounded_layout = tree.get_unrounded_layout(node_id);
++        if tree.rounded_unchanged(node_id, &unrounded_layout, cumulative_x, cumulative_y) {
++            return;
++        }
+         let mut layout = unrounded_layout;
+ 
+         let parent_x = cumulative_x;
+@@ -416,6 +430,7 @@ pub fn round_layout(tree: &mut impl RoundTree, node_id: NodeId) {
+         );
+ 
+         tree.set_final_layout(node_id, &layout);
++        tree.record_rounded(node_id, &unrounded_layout, parent_x, parent_y);
+ 
+         // Recurse into in-flow children. Out-of-flow (absolute/fixed) children are skipped here:
+         // they are instead visited via their containing block's hoisted child list below, which
+@@ -489,7 +504,8 @@ pub fn compute_hidden_layout(tree: &mut (impl LayoutPartialTree + CacheTree), no
  pub mod detailed_info {
      #[cfg(feature = "grid")]
      pub use super::grid::{
@@ -1444,12 +1343,51 @@
      };
  }
  
+diff --git a/src/lib.rs b/src/lib.rs
+index c18fa644..50154417 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -110,7 +110,7 @@ pub use crate::compute::{compute_block_align_content_offset, compute_block_layou
+ #[doc(inline)]
+ pub use crate::compute::{
+     compute_cached_layout, compute_hidden_layout, compute_leaf_layout, compute_oof_layout, compute_oof_layout_for_area,
+-    compute_root_layout, resolve_static_offset, round_layout, OofLayoutResult,
++    compute_root_layout, compute_root_layout_in, resolve_static_offset, round_layout, OofLayoutResult,
+ };
+ #[doc(inline)]
+ pub use crate::style::Style;
+diff --git a/src/tree/traits.rs b/src/tree/traits.rs
+index 7d4adf22..5cab6e3e 100644
 --- a/src/tree/traits.rs
 +++ b/src/tree/traits.rs
-@@ -361,6 +361,18 @@ pub trait LayoutGridContainer: LayoutPartialTree {
-         false
-     }
+@@ -290,6 +290,16 @@ pub trait RoundTree: TraverseTree {
+     /// Get the nth out-of-flow box whose containing block is `node_id`
+     /// (as recorded by [`LayoutContainingBlock::add_hoisted_children`])
+     fn get_hoisted_child_id(&self, node_id: NodeId, index: usize) -> NodeId;
++    /// Whether `node_id`'s subtree is rounded as it was the last time: the tree knows the
++    /// subtree's layout did not change and `round_layout` reached the node with the same
++    /// unrounded layout at the same unrounded absolute offset. [`round_layout`](crate::round_layout)
++    /// then skips the subtree. The default never skips.
++    fn rounded_unchanged(&self, _node_id: NodeId, _unrounded: &Layout, _absolute_x: f32, _absolute_y: f32) -> bool {
++        false
++    }
++    /// Records the unrounded layout and absolute offset `node_id` was just rounded from
++    /// (for [`RoundTree::rounded_unchanged`]).
++    fn record_rounded(&mut self, _node_id: NodeId, _unrounded: &Layout, _absolute_x: f32, _absolute_y: f32) {}
+ }
  
+ /// Trait used by the `print_tree` method which prints a debug representation
+@@ -344,6 +354,25 @@ pub trait LayoutGridContainer: LayoutPartialTree {
+     /// Interpreted in the container's axes (see [`LayoutPartialTree::get_core_container_style`]).
+     fn get_grid_child_style(&self, child_node_id: NodeId) -> Self::GridItemStyle<'_>;
+ 
++    /// Whether `node_id`'s rows are a table's (lightningpanda): an item spanning several rows grows them
++    /// as Chromium grows the rows under a rowspan cell (`DistributeExcessBlockSizeToRows`) rather than
++    /// as a grid distributes a spanning item. The default is false.
++    fn grid_rows_are_table_rows(&self, _node_id: NodeId) -> bool {
++        false
++    }
++
 +    /// lightningpanda: a table's grid as its last full layout left it (see `TableGridState`), and the
 +    /// items that changed since, for `compute_grid_layout` to lay out again only the rows those are in.
 +    /// Asked once per layout (`RunMode::PerformLayout`) of a grid whose rows are a table's. `None`
@@ -1465,3 +1403,17 @@
      /// Set the node's detailed grid information
      ///
      /// Implementing this method is optional. Doing so allows you to access details about the the grid such as
+@@ -373,6 +402,13 @@ pub trait LayoutBlockContainer: LayoutPartialTree {
+     /// Interpreted in the container's axes (see [`LayoutPartialTree::get_core_container_style`]).
+     fn get_block_child_style(&self, child_node_id: NodeId) -> Self::BlockItemStyle<'_>;
+ 
++    /// Whether a block-level child's `auto` width fits its content rather than stretching
++    /// (form controls in browsers), as for tables and replaced elements.
++    fn block_child_width_fits_content(&self, child_node_id: NodeId) -> bool {
++        let _ = child_node_id;
++        false
++    }
++
+     /// Compute the specified node's size or full layout given the specified constraints
+     #[cfg(feature = "block_layout")]
+     fn compute_block_child_layout(
