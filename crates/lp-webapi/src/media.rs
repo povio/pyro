@@ -380,13 +380,27 @@ pub(crate) fn flush(page: &PageDom, this: &Weak<PageDom>) {
             handle(&page, event);
         }
     }
+    release_events(page, events);
+}
+
+fn release_events(page: &PageDom, events: Vec<MediaEvent>) {
     let mut dom = page.dom.borrow_mut();
     for event in events {
-        if let MediaChange::SourceInserted(source) = event.change {
-            dom.release(source);
+        for held in event.change.held() {
+            dom.release(held);
         }
         dom.release(event.node);
     }
+}
+
+/// HTML keeps the source pointer's place when the `<source>` it is after
+/// is removed: it moves to after that node's previous sibling.
+fn source_removed(page: &PageDom, node: NodeId, source: NodeId, previous: Option<NodeId>) {
+    with(page, node, |st| {
+        if st.pointer == Some(source) {
+            st.pointer = previous;
+        }
+    });
 }
 
 /// Releases everything the page's media elements hold: timers, fetches,
@@ -433,6 +447,7 @@ fn handle(page: &Rc<PageDom>, event: &MediaEvent) {
                 internal_pause(page, node);
             }
         }
+        MediaChange::SourceRemoved { source, previous } => source_removed(page, node, source, previous),
         MediaChange::SourceInserted(_) => {
             let (network, awaiting, generation) =
                 peek(page, node, |st| (st.network, st.awaiting_source, st.generation));
@@ -771,10 +786,28 @@ fn resolve(page: &PageDom, node: NodeId, value: &str) -> Option<String> {
 /// each one that cannot be used gets an `error` event. Out of candidates,
 /// the element waits for another `<source>`.
 fn next_source(page: &Rc<PageDom>, node: NodeId, generation: u32) {
-    let sources = source_children(page, node);
+    // Removals since the pointer last moved (still queued) keep its place.
+    let removals = page.dom.borrow_mut().take_source_removals(node);
+    if !removals.is_empty() {
+        for event in &removals {
+            if let MediaChange::SourceRemoved { source, previous } = event.change {
+                source_removed(page, node, source, previous);
+            }
+        }
+        release_events(page, removals);
+    }
     let pointer = peek(page, node, |st| st.pointer);
-    let start = pointer.and_then(|p| sources.iter().position(|&s| s == p)).map_or(0, |i| i + 1);
-    for &source in &sources[start.min(sources.len())..] {
+    let sources = {
+        let dom = page.dom.borrow();
+        let first = match pointer {
+            Some(p) if dom.parent(p).ok().flatten() == Some(node) => dom.next_sibling(p).ok().flatten(),
+            _ => dom.first_child(node).ok().flatten(),
+        };
+        std::iter::successors(first, |&c| dom.next_sibling(c).ok().flatten())
+            .filter(|&c| dom.element(c).is_ok_and(|e| e.is_html() && &*e.name.local == "source"))
+            .collect::<Vec<_>>()
+    };
+    for &source in &sources {
         with(page, node, |st| st.pointer = Some(source));
         let (src, ty) = {
             let dom = page.dom.borrow();

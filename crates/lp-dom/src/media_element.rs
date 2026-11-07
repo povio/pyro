@@ -1,7 +1,8 @@
 //! The tree and attribute changes that start an HTML media element's load:
 //! `src` set or changed (the media element load algorithm), the element
 //! inserted or created by the parser, and a `<source>` child inserted (the
-//! resource selection algorithm, when the element's network state allows).
+//! resource selection algorithm, when the element's network state allows)
+//! or removed (the algorithm's source pointer keeps its place).
 //! Queued per watched (browsing-context) document, like the iframe events;
 //! the bindings decide what each one does from the element's media state.
 //!
@@ -21,9 +22,27 @@ pub enum MediaChange {
     Inserted,
     /// A `<source>` element was inserted as a child of the media element.
     SourceInserted(NodeId),
+    /// A `<source>` child is about to be removed; `previous` is its
+    /// previous sibling (any node) at that point. HTML keeps the resource
+    /// selection pointer's position across removals, like a live range
+    /// boundary: a pointer after `source` moves to after `previous`.
+    SourceRemoved { source: NodeId, previous: Option<NodeId> },
     /// The element is about to be removed from its document (it pauses
     /// unless it is back in a document when the queue is drained).
     Removed,
+}
+
+impl MediaChange {
+    /// The nodes besides the media element that the event holds a
+    /// reference to (released with it).
+    pub fn held(self) -> impl Iterator<Item = NodeId> {
+        let (a, b) = match self {
+            MediaChange::SourceInserted(source) => (Some(source), None),
+            MediaChange::SourceRemoved { source, previous } => (Some(source), previous),
+            _ => (None, None),
+        };
+        a.into_iter().chain(b)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -56,8 +75,8 @@ impl Dom {
         }
         let node = self.id_of(idx);
         self.add_ref(node).expect("live media element");
-        if let MediaChange::SourceInserted(source) = change {
-            self.add_ref(source).expect("live source element");
+        for held in change.held() {
+            self.add_ref(held).expect("live node");
         }
         self.media.events.entry(document).or_default().push(MediaEvent { node, change });
         self.touch_hook();
@@ -123,7 +142,19 @@ impl Dom {
     #[inline(never)]
     fn media_removing(&mut self, node: u32) {
         let document = self.id_of(self.n(node).owner_doc);
-        if !self.is_watched_document(document) || !self.is_connected_idx(node) {
+        if !self.is_watched_document(document) {
+            return;
+        }
+        let parent = self.n(node).parent;
+        if parent != NIL && self.is_source_idx(node) && self.is_media_idx(parent) {
+            let prev = self.n(node).prev;
+            let change = MediaChange::SourceRemoved {
+                source: self.id_of(node),
+                previous: (prev != NIL).then(|| self.id_of(prev)),
+            };
+            self.media_event(parent, change);
+        }
+        if !self.is_connected_idx(node) {
             return;
         }
         let mut i = node;
@@ -141,17 +172,40 @@ impl Dom {
     }
 
     /// Transfers `document`'s queued events to the caller, who calls
-    /// `release` once for each event's node and once for each
-    /// `SourceInserted` source, after handling them.
+    /// `release` once for each event's node and once for each node of
+    /// `MediaChange::held`, after handling them.
     pub fn take_media_events(&mut self, document: NodeId) -> Vec<MediaEvent> {
         self.media.events.remove(&document).unwrap_or_default()
+    }
+
+    /// Takes the queued `SourceRemoved` events of the media element
+    /// `media` (in order), for a resource selection that needs its pointer
+    /// now; the caller releases them as `take_media_events` says.
+    pub fn take_source_removals(&mut self, media: NodeId) -> Vec<MediaEvent> {
+        if self.media.events.is_empty() {
+            return Vec::new();
+        }
+        let Ok(document) = self.node_document(media) else { return Vec::new() };
+        let Some(events) = self.media.events.get_mut(&document) else { return Vec::new() };
+        let mut taken = Vec::new();
+        events.retain(|e| {
+            let removal = e.node == media && matches!(e.change, MediaChange::SourceRemoved { .. });
+            if removal {
+                taken.push(*e);
+            }
+            !removal
+        });
+        if events.is_empty() {
+            self.media.events.remove(&document);
+        }
+        taken
     }
 
     /// Drops `document`'s queue (its browsing context went away).
     pub(crate) fn drop_media_events(&mut self, document: NodeId) {
         for event in self.take_media_events(document) {
-            if let MediaChange::SourceInserted(source) = event.change {
-                self.release(source);
+            for held in event.change.held() {
+                self.release(held);
             }
             self.release(event.node);
         }
@@ -166,8 +220,8 @@ mod tests {
     fn changes(dom: &mut Dom, doc: NodeId) -> Vec<(NodeId, MediaChange)> {
         let events = dom.take_media_events(doc);
         for e in &events {
-            if let MediaChange::SourceInserted(source) = e.change {
-                dom.release(source);
+            for held in e.change.held() {
+                dom.release(held);
             }
             dom.release(e.node);
         }
@@ -198,6 +252,32 @@ mod tests {
         assert_eq!(changes(&mut dom, doc), [(video, MediaChange::Inserted)]);
         dom.remove_node(div).unwrap();
         assert_eq!(changes(&mut dom, doc), [(video, MediaChange::Removed)]);
+        // Removing a `<source>` child names its previous sibling.
+        let first = dom.create_element(doc, "source").unwrap();
+        dom.insert_before(video, first, Some(source)).unwrap();
+        let _ = changes(&mut dom, doc);
+        dom.remove_node(source).unwrap();
+        dom.remove_node(first).unwrap();
+        assert_eq!(
+            changes(&mut dom, doc),
+            [
+                (video, MediaChange::SourceRemoved { source, previous: Some(first) }),
+                (video, MediaChange::SourceRemoved { source: first, previous: None }),
+            ]
+        );
+        dom.append_child(video, first).unwrap();
+        dom.append_child(video, source).unwrap();
+        let _ = changes(&mut dom, doc);
+        dom.remove_node(source).unwrap();
+        let taken = dom.take_source_removals(video);
+        assert_eq!(taken.len(), 1);
+        for e in &taken {
+            for held in e.change.held() {
+                dom.release(held);
+            }
+            dom.release(e.node);
+        }
+        assert!(!dom.has_media_events());
         // Documents without a browsing context queue nothing.
         let other = dom.create_document(DocumentKind::Html, "about:blank");
         let audio = dom.create_element(other, "audio").unwrap();
