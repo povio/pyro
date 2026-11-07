@@ -99,6 +99,10 @@ pub struct FetchRequest {
     /// navigation or a renderer's fetch). An iframe's navigation reports to
     /// the parent document.
     pub initiator: Option<lp_webapi::resource_timing::Initiator>,
+    /// The module type of a [`ResourceKind::ModuleScript`] fetch, which
+    /// picks its destination: a CSS module is fetched as a style, a JSON
+    /// one as `json` (`None`: JavaScript).
+    pub module: Option<ModuleType>,
 }
 
 #[derive(Debug, Clone)]
@@ -229,7 +233,11 @@ impl ResourceLoader for NetLoader {
         let destination = match request.kind {
             ResourceKind::Document => lp_net::Destination::Document,
             ResourceKind::Script => lp_net::Destination::Script,
-            ResourceKind::ModuleScript => lp_net::Destination::Script,
+            ResourceKind::ModuleScript => match request.module {
+                Some(ModuleType::Css) => lp_net::Destination::Style,
+                Some(ModuleType::Json) => lp_net::Destination::Json,
+                _ => lp_net::Destination::Script,
+            },
             ResourceKind::Stylesheet => lp_net::Destination::Style,
             ResourceKind::Iframe => lp_net::Destination::Iframe,
             ResourceKind::Image => lp_net::Destination::Image,
@@ -784,6 +792,7 @@ impl Browser {
             loader_id: Some(loader_id.0.clone()),
             crossorigin: None,
             initiator: page.child.map(|_| lp_webapi::resource_timing::Initiator::Iframe),
+            module: None,
         };
         let pending_id = loader_id.clone();
         let cancel = loader.fetch_cancellable(
@@ -1210,6 +1219,7 @@ impl Browser {
             loader_id,
             crossorigin,
             initiator,
+            module,
         };
         loader.fetch(
             self,
@@ -1520,6 +1530,7 @@ impl Browser {
                     loader_id,
                     crossorigin: None,
                     initiator: None,
+                    module: None,
                 };
                 loader.fetch(
                     self,

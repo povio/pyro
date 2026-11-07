@@ -179,6 +179,7 @@ pub fn fetch_dest(destination: Destination) -> &'static str {
         Destination::Iframe => "iframe",
         Destination::Script => "script",
         Destination::Style => "style",
+        Destination::Json => "json",
         Destination::Image => "image",
         Destination::Font => "font",
         Destination::Audio => "audio",

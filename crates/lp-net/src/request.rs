@@ -23,6 +23,8 @@ pub enum Destination {
     Iframe,
     Script,
     Style,
+    /// A JSON module script (`import ... with { type: "json" }`).
+    Json,
     Image,
     /// An `<audio>` element's resource.
     Audio,
@@ -43,7 +45,8 @@ impl Destination {
     pub fn cdp_type(self) -> &'static str {
         match self {
             Destination::Document | Destination::Iframe => "Document",
-            Destination::Script => "Script",
+            // A JSON module script is still a script resource.
+            Destination::Script | Destination::Json => "Script",
             Destination::Style => "Stylesheet",
             Destination::Image => "Image",
             Destination::Audio | Destination::Video => "Media",

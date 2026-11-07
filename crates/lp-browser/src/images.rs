@@ -216,6 +216,7 @@ impl Browser {
             loader_id: Some(frame.loader_id.0.clone()),
             crossorigin: None,
             initiator: Some(lp_webapi::resource_timing::Initiator::Img),
+            module: None,
         };
         let cancel = resource_loader.fetch_cancellable(self, request, Box::new(finish));
         if let Some(mut image) = self.doc_mut(page).and_then(|p| p.filter_map(|p| p.images.entries.get_mut(&node))) {
