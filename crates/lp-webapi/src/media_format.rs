@@ -163,8 +163,9 @@ fn header_duration(payload: &[u8]) -> Option<(u32, u64)> {
             let d = be32(payload, 16)?;
             Some((be32(payload, 12)?, if d == u32::MAX { 0 } else { u64::from(d) }))
         }
+        // version/flags, creation (8), modification (8), timescale, duration (8).
         1 => {
-            let d = be64(payload, 28)?;
+            let d = be64(payload, 24)?;
             Some((be32(payload, 20)?, if d == u64::MAX { 0 } else { d }))
         }
         _ => None,
@@ -425,7 +426,6 @@ fn matroska_audio(codec: &str, webm: bool) -> bool {
 // Ogg
 
 struct OggStream {
-    serial: u32,
     /// Granule positions per second.
     rate: f64,
     /// Granules before the first sample (Opus pre-skip).
@@ -434,7 +434,10 @@ struct OggStream {
 }
 
 fn ogg(body: &[u8]) -> Probe {
-    let mut streams: Vec<OggStream> = Vec::new();
+    // Keyed by serial: every page looks its stream up, and a hostile body
+    // can begin any number of streams (one per ~40-byte page), so a linear
+    // search would be quadratic.
+    let mut streams: std::collections::HashMap<u32, OggStream> = std::collections::HashMap::new();
     let mut unsupported = 0usize;
     let mut at = 0;
     while at + 27 <= body.len() {
@@ -459,7 +462,9 @@ fn ogg(body: &[u8]) -> Probe {
         if flags & 0x02 != 0 {
             // Beginning of a stream: its first packet names the codec.
             match ogg_codec(data) {
-                Some((rate, skip)) if rate > 0.0 => streams.push(OggStream { serial, rate, skip, last_granule: None }),
+                Some((rate, skip)) if rate > 0.0 => {
+                    streams.entry(serial).or_insert(OggStream { rate, skip, last_granule: None });
+                }
                 _ => unsupported += 1,
             }
         } else if streams.is_empty() && unsupported == 0 {
@@ -467,7 +472,7 @@ fn ogg(body: &[u8]) -> Probe {
         }
         // -1: no packet ends on this page.
         if granule != u64::MAX {
-            if let Some(s) = streams.iter_mut().find(|s| s.serial == serial) {
+            if let Some(s) = streams.get_mut(&serial) {
                 s.last_granule = Some(granule);
             }
         }
@@ -477,7 +482,7 @@ fn ogg(body: &[u8]) -> Probe {
         return Err(if unsupported > 0 { ProbeError::NoSupportedStreams } else { ProbeError::Unrecognized });
     }
     let seconds = streams
-        .iter()
+        .values()
         .filter_map(|s| s.last_granule.map(|g| g.saturating_sub(s.skip) as f64 / s.rate))
         .fold(0.0, f64::max);
     Ok(MediaInfo { duration: finite_or_infinite(seconds), video: None, audio: true })
@@ -1099,6 +1104,64 @@ pub(crate) mod tests {
             data.extend((0..len).map(|_| next() as u8));
             let _ = probe(&data);
         }
+    }
+
+    #[test]
+    fn ogg_with_many_streams_is_linear() {
+        // 200k streams, each begun by a minimal Opus BOS page: a linear
+        // stream lookup per page made this quadratic (~2e10 comparisons).
+        let mut head = b"OpusHead\x01\x02".to_vec();
+        head.extend_from_slice(&[0; 9]);
+        let mut page = b"OggS\0\x02".to_vec();
+        page.extend_from_slice(&[0; 8]);
+        let serial_at = page.len();
+        page.extend_from_slice(&[0; 12]);
+        page.push(1);
+        page.push(head.len() as u8);
+        page.extend_from_slice(&head);
+        let mut body = Vec::with_capacity(page.len() * 200_000);
+        for serial in 0..200_000u32 {
+            page[serial_at..serial_at + 4].copy_from_slice(&serial.to_le_bytes());
+            body.extend_from_slice(&page);
+        }
+        let start = std::time::Instant::now();
+        assert_eq!(probe(&body).map(|i| i.audio), Ok(true));
+        assert!(start.elapsed() < std::time::Duration::from_secs(5), "{:?}", start.elapsed());
+    }
+
+    #[test]
+    fn version_1_movie_header_duration() {
+        // A v1 mvhd: version/flags, 64-bit creation and modification times,
+        // the timescale, a 64-bit duration, then the rate (0x00010000).
+        let mut v1 = vec![1, 0, 0, 0];
+        v1.extend_from_slice(&[0; 16]);
+        v1.extend_from_slice(&1000u32.to_be_bytes());
+        v1.extend_from_slice(&10_000u64.to_be_bytes());
+        v1.extend_from_slice(&0x0001_0000u32.to_be_bytes());
+        v1.extend_from_slice(&[0; 76]);
+        assert_eq!(header_duration(&v1), Some((1000, 10_000)));
+        // A fragmented file's zero duration stays zero (the mehd fallback).
+        v1[24..32].copy_from_slice(&0u64.to_be_bytes());
+        assert_eq!(header_duration(&v1), Some((1000, 0)));
+        // Swapped into a whole file.
+        let mut file = samples::mp4(2.5, (320, 240));
+        let at = file.windows(4).position(|w| w == b"mvhd").unwrap() - 4;
+        let old = u32::from_be_bytes(file[at..at + 4].try_into().unwrap()) as usize;
+        let mut v1 = vec![1, 0, 0, 0];
+        v1.extend_from_slice(&[0; 16]);
+        v1.extend_from_slice(&1000u32.to_be_bytes());
+        v1.extend_from_slice(&2_500u64.to_be_bytes());
+        v1.extend_from_slice(&0x0001_0000u32.to_be_bytes());
+        v1.extend_from_slice(&[0; 76]);
+        let mut mvhd = ((v1.len() + 8) as u32).to_be_bytes().to_vec();
+        mvhd.extend_from_slice(b"mvhd");
+        mvhd.extend_from_slice(&v1);
+        let grow = mvhd.len() - old;
+        file.splice(at..at + old, mvhd);
+        let moov = file.windows(4).position(|w| w == b"moov").unwrap() - 4;
+        let size = u32::from_be_bytes(file[moov..moov + 4].try_into().unwrap()) + grow as u32;
+        file[moov..moov + 4].copy_from_slice(&size.to_be_bytes());
+        assert_eq!(probe(&file).map(|i| i.duration), Ok(2.5));
     }
 
     #[test]
