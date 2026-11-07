@@ -9,9 +9,10 @@
 //! [`WsEvent`]s through its sink, which posts them to its event loop, and
 //! talks back through a [`WebSocketHandle`]; nothing polls.
 //!
-//! Not implemented: extensions (permessage-deflate is not offered, so
-//! `extensions` is always empty) and HTTP/2 WebSockets (RFC 8441). Redirects
-//! fail the connection, as in browsers.
+//! permessage-deflate (RFC 7692) is offered as Chrome offers it and runs in
+//! [`crate::ws_deflate`] when the server accepts it. Not implemented: other
+//! extensions and HTTP/2 WebSockets (RFC 8441). Redirects fail the
+//! connection, as in browsers.
 
 use std::time::Duration;
 
@@ -28,6 +29,7 @@ use super::{tls_config, tls_config_insecure, wall_time, Cmd, Io, NetClient, NetE
 use crate::cookies::{site_context, SiteContext};
 use crate::proxy::{ProxyConnector, ProxyError};
 use crate::request::{RequestDefaults, RequestId};
+use crate::ws_deflate::{self, Deflate, InflateError};
 
 /// How long the client waits for the server's Close frame after sending its
 /// own (Chromium's closing handshake timeout).
@@ -296,17 +298,21 @@ struct Violation(u16, String);
 
 struct Frame {
     fin: bool,
+    /// RSV1: the message is compressed (permessage-deflate only).
+    rsv1: bool,
     opcode: u8,
     payload: Bytes,
 }
 
-/// The next complete frame at the front of `buf`, if there is one.
-fn parse_frame(buf: &mut BytesMut, max: usize) -> Result<Option<Frame>, Violation> {
+/// The next complete frame at the front of `buf`, if there is one. RSV1 is
+/// allowed when `rsv1` (permessage-deflate was negotiated).
+fn parse_frame(buf: &mut BytesMut, max: usize, rsv1: bool) -> Result<Option<Frame>, Violation> {
     if buf.len() < 2 {
         return Ok(None);
     }
     let (b0, b1) = (buf[0], buf[1]);
-    if b0 & 0x70 != 0 {
+    let reserved = if rsv1 { 0x30 } else { 0x70 };
+    if b0 & reserved != 0 {
         return Err(Violation(
             1002,
             format!(
@@ -359,13 +365,13 @@ fn parse_frame(buf: &mut BytesMut, max: usize) -> Result<Option<Frame>, Violatio
         return Ok(None);
     }
     buf.advance(header);
-    Ok(Some(Frame { fin, opcode, payload: buf.split_to(len).freeze() }))
+    Ok(Some(Frame { fin, rsv1: b0 & 0x40 != 0, opcode, payload: buf.split_to(len).freeze() }))
 }
 
-/// A masked client frame.
-fn encode_frame(opcode: u8, payload: &[u8]) -> Vec<u8> {
+/// A masked client frame; `rsv1` marks a compressed message.
+fn encode_frame(opcode: u8, rsv1: bool, payload: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(payload.len() + 14);
-    out.push(0x80 | opcode);
+    out.push(0x80 | if rsv1 { 0x40 } else { 0 } | opcode);
     match payload.len() {
         n @ 0..=125 => out.push(0x80 | n as u8),
         n @ 126..=0xffff => {
@@ -530,6 +536,7 @@ impl Io {
         if let Ok(v) = HeaderValue::from_str(key) {
             h.insert(header::SEC_WEBSOCKET_KEY, v);
         }
+        h.insert(header::SEC_WEBSOCKET_EXTENSIONS, HeaderValue::from_static(ws_deflate::OFFER));
         if !req.protocols.is_empty() {
             if let Ok(v) = HeaderValue::from_str(&req.protocols.join(", ")) {
                 h.insert(header::SEC_WEBSOCKET_PROTOCOL, v);
@@ -538,6 +545,9 @@ impl Io {
         for (k, v) in settings.extra_headers.iter().chain(req.defaults.extra_headers.iter()) {
             h.insert(k.clone(), v.clone());
         }
+        // The response is validated against this offer, so extra headers do
+        // not replace it (it keeps its place in the order).
+        h.insert(header::SEC_WEBSOCKET_EXTENSIONS, HeaderValue::from_static(ws_deflate::OFFER));
         h
     }
 
@@ -555,19 +565,15 @@ impl Io {
             delivery.sink = None;
             return delivery.close(false, 1006, String::new(), false);
         };
-        let (io, protocol, headers) = match opened {
+        let Opened { io, protocol, extensions, headers, deflate } = match opened {
             Ok(opened) => opened,
             Err(message) => return delivery.fail(message),
         };
-        delivery.send(WsEvent::Open { protocol, extensions: String::new(), headers });
-        self.ws_run(io, &mut rx, &mut delivery).await;
+        delivery.send(WsEvent::Open { protocol, extensions, headers });
+        self.ws_run(io, deflate, &mut rx, &mut delivery).await;
     }
 
-    async fn ws_open(
-        &self,
-        req: &WebSocketRequest,
-        delivery: &Observer,
-    ) -> Result<(TokioIo<hyper::upgrade::Upgraded>, String, HeaderMap), String> {
+    async fn ws_open(&self, req: &WebSocketRequest, delivery: &Observer) -> Result<Opened, String> {
         let secure = match req.url.scheme() {
             "ws" => false,
             "wss" => true,
@@ -645,12 +651,6 @@ impl Io {
         if accept != Some(accept_key(&key).as_str()) {
             return Err("Error during WebSocket handshake: Incorrect 'Sec-WebSocket-Accept' header value".into());
         }
-        if h.contains_key(header::SEC_WEBSOCKET_EXTENSIONS) {
-            return Err(
-                "Error during WebSocket handshake: Response must not include 'Sec-WebSocket-Extensions' header if not present in request"
-                    .into(),
-            );
-        }
         let mut protocols = h.get_all(header::SEC_WEBSOCKET_PROTOCOL).iter();
         let protocol = match (protocols.next(), protocols.next()) {
             (None, _) => String::new(),
@@ -670,23 +670,30 @@ impl Io {
                 + &protocol
                 + "' in response does not match any of sent values");
         }
+        // Chromium checks the extensions after the subprotocol.
+        let (deflate, extensions) = match ws_deflate::negotiate(h)? {
+            Some((params, descriptor)) => (Some(Box::new(Deflate::new(params))), descriptor),
+            None => (None, String::new()),
+        };
         let response_headers = h.clone();
         let upgraded =
             hyper::upgrade::on(response).await.map_err(|e| format!("Error during WebSocket handshake: {e}"))?;
-        Ok((TokioIo::new(upgraded), protocol, response_headers))
+        Ok(Opened { io: TokioIo::new(upgraded), protocol, extensions, headers: response_headers, deflate })
     }
 
     /// Frames in and out until the connection ends.
     async fn ws_run(
         &self,
         mut io: TokioIo<hyper::upgrade::Upgraded>,
+        mut deflate: Option<Box<Deflate>>,
         rx: &mut mpsc::UnboundedReceiver<WsCommand>,
         delivery: &mut Delivery,
     ) {
         let max = self.shared.config.max_body;
         let mut inbuf = BytesMut::with_capacity(8 * 1024);
-        // An unfinished fragmented message: its opcode and bytes so far.
-        let mut fragment: Option<(u8, BytesMut)> = None;
+        // An unfinished fragmented message: its opcode, whether it is
+        // compressed, and its bytes so far.
+        let mut fragment: Option<(u8, bool, BytesMut)> = None;
         let mut close_sent = false;
         let mut close_received: Option<(u16, String)> = None;
         let mut deadline: Option<tokio::time::Instant> = None;
@@ -711,16 +718,25 @@ impl Io {
                         return;
                     }
                     loop {
-                        let frame = match parse_frame(&mut inbuf, max) {
+                        let frame = match parse_frame(&mut inbuf, max, deflate.is_some()) {
                             Ok(Some(frame)) => frame,
                             Ok(None) => break,
                             Err(Violation(code, message)) => {
                                 return self.ws_fail(&mut io, delivery, close_sent, code, message).await;
                             }
                         };
+                        // RSV1 is the "compressed" bit of a data message's first frame.
+                        if frame.rsv1 && !matches!(frame.opcode, 0x1 | 0x2) {
+                            let message = if frame.opcode == 0x0 {
+                                "Received a continuation frame with RSV1 set.".to_owned()
+                            } else {
+                                format!("Received a control frame with RSV1 set: opcode = {}", frame.opcode)
+                            };
+                            return self.ws_fail(&mut io, delivery, close_sent, 1002, message).await;
+                        }
                         let complete = match frame.opcode {
                             0x0 => {
-                                let Some((opcode, mut bytes)) = fragment.take() else {
+                                let Some((opcode, compressed, mut bytes)) = fragment.take() else {
                                     return self.ws_fail(&mut io, delivery, close_sent, 1002, "Received unexpected continuation frame.".into()).await;
                                 };
                                 if bytes.len() + frame.payload.len() > max {
@@ -728,9 +744,9 @@ impl Io {
                                 }
                                 bytes.extend_from_slice(&frame.payload);
                                 if frame.fin {
-                                    Some((opcode, bytes.freeze()))
+                                    Some((opcode, compressed, bytes.freeze()))
                                 } else {
-                                    fragment = Some((opcode, bytes));
+                                    fragment = Some((opcode, compressed, bytes));
                                     None
                                 }
                             }
@@ -739,9 +755,9 @@ impl Io {
                                     return self.ws_fail(&mut io, delivery, close_sent, 1002, "Received start of new message but previous message is unfinished.".into()).await;
                                 }
                                 if frame.fin {
-                                    Some((frame.opcode, frame.payload))
+                                    Some((frame.opcode, frame.rsv1, frame.payload))
                                 } else {
-                                    fragment = Some((frame.opcode, BytesMut::from(&frame.payload[..])));
+                                    fragment = Some((frame.opcode, frame.rsv1, BytesMut::from(&frame.payload[..])));
                                     None
                                 }
                             }
@@ -764,7 +780,7 @@ impl Io {
                                 if !close_sent {
                                     // Echo the code, as Chromium does.
                                     let echo = if code == 1005 { None } else { Some(code) };
-                                    let _ = write_frame(&mut io, 0x8, &close_payload(echo, "")).await;
+                                    let _ = write_frame(&mut io, 0x8, false, &close_payload(echo, "")).await;
                                     close_sent = true;
                                 }
                                 close_received = Some((code, reason));
@@ -773,7 +789,7 @@ impl Io {
                             }
                             0x9 => {
                                 if !close_sent {
-                                    let _ = write_frame(&mut io, 0xA, &frame.payload).await;
+                                    let _ = write_frame(&mut io, 0xA, false, &frame.payload).await;
                                 }
                                 None
                             }
@@ -782,10 +798,19 @@ impl Io {
                                 return self.ws_fail(&mut io, delivery, close_sent, 1002, format!("Unrecognized frame opcode: {other}")).await;
                             }
                         };
-                        let Some((opcode, payload)) = complete else { continue };
+                        let Some((opcode, compressed, payload)) = complete else { continue };
                         if close_received.is_some() {
                             continue;
                         }
+                        let payload = match (compressed, deflate.as_mut()) {
+                            (true, Some(deflate)) => match deflate.decompress(&payload, max) {
+                                Ok(inflated) => Bytes::from(inflated),
+                                Err(InflateError(code, message)) => {
+                                    return self.ws_fail(&mut io, delivery, close_sent, code, message).await;
+                                }
+                            },
+                            _ => payload,
+                        };
                         if opcode == 0x1 {
                             let Ok(text) = std::str::from_utf8(&payload) else {
                                 return self.ws_fail(&mut io, delivery, close_sent, 1007, "Could not decode a text frame as UTF-8.".into()).await;
@@ -818,7 +843,7 @@ impl Io {
                         WsCommand::Close(code, reason) => {
                             if !close_sent {
                                 close_sent = true;
-                                let _ = write_frame(&mut io, 0x8, &close_payload(code, &reason)).await;
+                                let _ = write_frame(&mut io, 0x8, false, &close_payload(code, &reason)).await;
                                 if deadline.is_none() {
                                     deadline = Some(tokio::time::Instant::now() + CLOSING_HANDSHAKE_TIMEOUT);
                                 }
@@ -829,7 +854,12 @@ impl Io {
                     if close_sent {
                         continue;
                     }
-                    if write_frame(&mut io, opcode, &payload).await.is_err() {
+                    let compressed = deflate.as_mut().and_then(|d| d.compress(&payload));
+                    let written = match &compressed {
+                        Some(wire) => write_frame(&mut io, opcode, true, wire).await,
+                        None => write_frame(&mut io, opcode, false, &payload).await,
+                    };
+                    if written.is_err() {
                         delivery.close(false, 1006, String::new(), false);
                         return;
                     }
@@ -858,16 +888,32 @@ impl Io {
         message: String,
     ) {
         if !close_sent {
-            let _ = write_frame(io, 0x8, &close_payload(Some(code), "")).await;
+            let _ = write_frame(io, 0x8, false, &close_payload(Some(code), "")).await;
         }
         let _ = io.shutdown().await;
         delivery.fail(message);
     }
 }
 
-async fn write_frame(io: &mut TokioIo<hyper::upgrade::Upgraded>, opcode: u8, payload: &[u8]) -> std::io::Result<()> {
-    io.write_all(&encode_frame(opcode, payload)).await?;
+async fn write_frame(
+    io: &mut TokioIo<hyper::upgrade::Upgraded>,
+    opcode: u8,
+    rsv1: bool,
+    payload: &[u8],
+) -> std::io::Result<()> {
+    io.write_all(&encode_frame(opcode, rsv1, payload)).await?;
     io.flush().await
+}
+
+/// A successful opening handshake.
+struct Opened {
+    io: TokioIo<hyper::upgrade::Upgraded>,
+    protocol: String,
+    /// `WebSocket.extensions`.
+    extensions: String,
+    headers: HeaderMap,
+    /// permessage-deflate state, when negotiated.
+    deflate: Option<Box<Deflate>>,
 }
 
 /// Resolves when the owner drops its handle (commands sent while the
@@ -889,26 +935,32 @@ mod tests {
 
     #[test]
     fn frames_round_trip_and_violations_are_reported() {
-        let encoded = encode_frame(0x1, b"hello");
+        let encoded = encode_frame(0x1, false, b"hello");
         assert_eq!(encoded[0], 0x81);
         assert_eq!(encoded[1], 0x80 | 5);
         // Server frames are unmasked.
         let mut buf = BytesMut::from(&[0x81u8, 3, b'a', b'b', b'c'][..]);
-        let frame = parse_frame(&mut buf, 100).ok().flatten().unwrap();
+        let frame = parse_frame(&mut buf, 100, false).ok().flatten().unwrap();
         assert!(frame.fin);
         assert_eq!(frame.opcode, 1);
         assert_eq!(&frame.payload[..], b"abc");
         assert!(buf.is_empty());
         let mut partial = BytesMut::from(&[0x82u8, 126, 0x01][..]);
-        assert!(parse_frame(&mut partial, 1000).ok().unwrap().is_none());
+        assert!(parse_frame(&mut partial, 1000, false).ok().unwrap().is_none());
         let mut masked = BytesMut::from(&[0x81u8, 0x81, 0, 0, 0, 0, b'a'][..]);
-        assert!(matches!(parse_frame(&mut masked, 100), Err(Violation(1002, _))));
+        assert!(matches!(parse_frame(&mut masked, 100, false), Err(Violation(1002, _))));
         let mut rsv = BytesMut::from(&[0xC1u8, 0][..]);
-        assert!(matches!(parse_frame(&mut rsv, 100), Err(Violation(1002, _))));
+        assert!(matches!(parse_frame(&mut rsv, 100, false), Err(Violation(1002, _))));
+        // With permessage-deflate RSV1 is allowed, RSV2 and RSV3 are not.
+        let mut rsv = BytesMut::from(&[0xC1u8, 0][..]);
+        assert!(parse_frame(&mut rsv, 100, true).ok().flatten().unwrap().rsv1);
+        let mut rsv = BytesMut::from(&[0xE1u8, 0][..]);
+        assert!(matches!(parse_frame(&mut rsv, 100, true), Err(Violation(1002, _))));
+        assert_eq!(encode_frame(0x2, true, b"")[0], 0xC2);
         let mut fragmented_ping = BytesMut::from(&[0x09u8, 0][..]);
-        assert!(matches!(parse_frame(&mut fragmented_ping, 100), Err(Violation(1002, _))));
+        assert!(matches!(parse_frame(&mut fragmented_ping, 100, false), Err(Violation(1002, _))));
         let mut big = BytesMut::from(&[0x82u8, 126, 0x01, 0x00][..]);
-        assert!(matches!(parse_frame(&mut big, 100), Err(Violation(1009, _))));
+        assert!(matches!(parse_frame(&mut big, 100, false), Err(Violation(1009, _))));
     }
 
     #[test]
