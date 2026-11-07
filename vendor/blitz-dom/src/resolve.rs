@@ -573,20 +573,6 @@ impl BaseDocument {
             if damage.intersects(CONSTRUCT_FC | CONSTRUCT_BOX) {
                 //} || flags.contains(NodeFlags::IS_INLINE_ROOT) {
 
-                // lightningpanda: the previous layout children leave the list
-                // (`Node::layout_child_of`); the new ones are entered below. A
-                // child already collected by another container this pass points
-                // there and is left alone.
-                if let Some(old) = doc.nodes[node_id].layout_children.borrow().as_ref() {
-                    for &child_id in old.iter() {
-                        if let Some(child) = doc.nodes.get(child_id) {
-                            if child.layout_child_of.get() == Some(node_id) {
-                                child.layout_child_of.set(None);
-                            }
-                        }
-                    }
-                }
-
                 // Deallocate the anonymous blocks created for this node in the
                 // previous construction round. They live only in the slab, so
                 // reconstructing without freeing them would leak a slab entry per
@@ -599,6 +585,22 @@ impl BaseDocument {
                 let mut collected = LayoutChildren::default();
                 collect_layout_children(doc, node_id, &mut collected);
                 let layout_children = collected.children;
+
+                // lightningpanda: the previous layout children leave the list
+                // (`Node::layout_child_of`); the new ones are entered below. A
+                // child already collected by another container this pass points
+                // there and is left alone. (Left after collecting: while it runs,
+                // a child that is still listed tells one that enters the layout
+                // tree again, see `table::enter_layout_tree`.)
+                if let Some(old) = doc.nodes[node_id].layout_children.borrow().as_ref() {
+                    for &child_id in old.iter() {
+                        if let Some(child) = doc.nodes.get(child_id) {
+                            if child.layout_child_of.get() == Some(node_id) {
+                                child.layout_child_of.set(None);
+                            }
+                        }
+                    }
+                }
                 doc.nodes[node_id].anonymous_blocks = collected.anonymous_blocks;
 
                 // Recurse into newly collected layout children

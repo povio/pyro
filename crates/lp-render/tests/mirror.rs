@@ -2042,3 +2042,617 @@ fn transformed_boxes_that_only_moved_match_fresh_builds() {
         }
     }
 }
+
+// ---------------- display changes of table parts (C1, C5) ----------------
+
+/// Each step applied to a renderer synced by lp-dom's deltas (the layout-query path) and to one
+/// synced by whole-tree paints; both compared with fresh builds: every element's box, the document
+/// size and the paint hash. Returns every difference rather than stopping at the first.
+fn display_flip_failures(html: &str, steps: Vec<(String, Mutate)>) -> Vec<String> {
+    let page = Page::new(html);
+    let mut d = Renderer::new();
+    d.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
+    let mut live = Renderer::new();
+    check(&mut live, &page, "the first render");
+    let size = |r: &Renderer| r.page_layout(1).map(|l| (l.document_width, l.document_height));
+    let mut failures = Vec::new();
+    for (what, mutate) in steps {
+        let since = page.dom.borrow().version();
+        mutate(&page);
+        let delta = page.dom.borrow().render_delta(page.doc, since, &Page::opts());
+        let via_delta =
+            delta.is_some_and(|dd| d.sync_delta(1, &delta_ops(dd), (640, 480, 1.0, false, false), false).is_ok());
+        if !via_delta {
+            failures.push(format!("{what}: not synced as a delta"));
+            d.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
+        }
+        let mut fresh = Renderer::new();
+        fresh.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
+        let fresh_boxes = boxes(&fresh, &page);
+        let tree = page.tree();
+        let fresh_paint = paint(&mut Renderer::new(), &page.snapshot(1, tree.clone())).hash;
+        // The delta renderer's layout is compared before anything paints it; the whole-tree one
+        // is painted (synced) first.
+        for (name, r) in [("delta", &mut d), ("live", &mut live)] {
+            if name == "live" && paint(r, &page.snapshot(1, tree.clone())).hash != fresh_paint {
+                failures.push(format!("{what}: {name} paint differs"));
+            }
+            if name == "live" {
+                // Layout queries answer from a document synced for them (no change left to apply).
+                r.sync_layout(&page.snapshot(1, tree.clone()), &fetcher()).unwrap();
+            }
+            for ((k, a), (_, b)) in boxes(r, &page).into_iter().zip(fresh_boxes.iter().cloned()) {
+                if a != b {
+                    failures.push(format!("{what}: {name} box {k:x} {a:?} vs fresh {b:?}"));
+                    break;
+                }
+            }
+            if size(r) != size(&fresh) {
+                failures.push(format!("{what}: {name} document size {:?} vs fresh {:?}", size(r), size(&fresh)));
+            }
+            if name == "delta" && paint(r, &page.snapshot(1, tree.clone())).hash != fresh_paint {
+                failures.push(format!("{what}: {name} paint differs"));
+            }
+        }
+    }
+    failures
+}
+
+type Scenario = (String, String, Vec<(String, Mutate)>);
+
+/// Every scenario run (a panic counts as its failure), then all differences reported together.
+#[track_caller]
+fn display_flips_match_fresh_builds(scenarios: Vec<Scenario>) {
+    let mut failures = Vec::new();
+    for (name, html, steps) in scenarios {
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| display_flip_failures(&html, steps))) {
+            Ok(f) => failures.extend(f.into_iter().map(|f| format!("[{name}] {f}"))),
+            Err(e) => {
+                let msg = e.downcast_ref::<String>().cloned().or_else(|| e.downcast_ref::<&str>().map(|s| s.to_string()));
+                failures.push(format!("[{name}] panicked: {}", msg.unwrap_or_default()));
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+fn set_style(selector: &'static str, value: &'static str) -> (String, Mutate) {
+    (
+        format!("{selector} style={value:?}"),
+        Box::new(move |p| {
+            let n = p.find(selector);
+            p.dom.borrow_mut().set_attribute(n, "style", value).unwrap();
+        }),
+    )
+}
+
+fn set_text(selector: &'static str, value: &'static str) -> (String, Mutate) {
+    (
+        format!("{selector} text {value:?}"),
+        Box::new(move |p| {
+            let n = p.find(selector);
+            p.dom.borrow_mut().set_text_content(n, value).unwrap();
+        }),
+    )
+}
+
+fn flip_html(table_style: &str) -> String {
+    let rows: String = (0..4)
+        .map(|i| format!("<tr id=k{i}><td>cell {i} a</td><td>text {i} b with some words</td><td>{i}.5</td></tr>"))
+        .collect();
+    format!(
+        r#"<!doctype html><html><head><style>
+  body {{ margin: 0; font: 13px sans-serif }} td {{ padding: 2.5px 3.25px }} tr {{ border-bottom: 1px solid #ccc }}
+</style></head><body>
+<table id=k style="{table_style}"><tbody id=kb>{rows}</tbody></table><p id=after>after</p>
+</body></html>"#
+    )
+}
+
+const TABLE_STYLES: [&str; 3] = ["", "border-collapse: collapse", "border-collapse: collapse; width: 300.5px"];
+
+/// The same steps on a separated table, a collapsed one and a collapsed one of a set width.
+fn per_table_style(steps: impl Fn(&'static str) -> Vec<(String, Mutate)>) -> Vec<Scenario> {
+    TABLE_STYLES.iter().map(|t| (format!("table style={t:?}"), flip_html(t), steps(t))).collect()
+}
+
+fn with_display(table_style: &str, display: &str) -> &'static str {
+    Box::leak(format!("{table_style}; display: {display}").into_boxed_str())
+}
+
+/// C1: a row that stops generating a box (`display: contents`, which Blitz's tables treat as
+/// `display: none`) and starts again.
+#[test]
+fn a_table_row_display_contents_and_back_matches_fresh_builds() {
+    display_flips_match_fresh_builds(per_table_style(|_| {
+        vec![set_style("#k1", "display: contents"), set_style("#k1", "display: table-row")]
+    }));
+}
+
+/// C1: a cell edited while its row is `display: contents`, then the row back.
+#[test]
+fn a_cell_edited_while_its_row_is_display_contents_matches_fresh_builds() {
+    display_flips_match_fresh_builds(per_table_style(|_| {
+        vec![set_style("#k2", "display: contents"), set_text("#k2 td", "edited while hoisted"), set_style("#k2", "")]
+    }));
+}
+
+/// C1: two adjacent rows hoisted into one anonymous row, and back one by one.
+#[test]
+fn adjacent_rows_display_contents_and_back_match_fresh_builds() {
+    display_flips_match_fresh_builds(per_table_style(|_| {
+        vec![
+            set_style("#k0", "display: contents"),
+            set_style("#k1", "display: contents"),
+            set_style("#k0", ""),
+            set_style("#k1", ""),
+        ]
+    }));
+}
+
+/// C1 for row groups: a tbody that stops and starts generating a box, its rows wrapped in an
+/// anonymous group meanwhile.
+#[test]
+fn a_row_group_display_contents_and_back_matches_fresh_builds() {
+    display_flips_match_fresh_builds(per_table_style(|_| vec![set_style("#kb", "display: contents"), set_style("#kb", "")]));
+}
+
+/// C5: a table that becomes a block (its row group then wrapped in an anonymous table) and back.
+#[test]
+fn a_table_display_block_and_back_matches_fresh_builds() {
+    display_flips_match_fresh_builds(per_table_style(|t| {
+        vec![set_style("#k", with_display(t, "block")), set_style("#k", t)]
+    }));
+}
+
+/// C5: a cell edited while its table is a block, then the table back.
+#[test]
+fn a_cell_edited_while_its_table_is_a_block_matches_fresh_builds() {
+    display_flips_match_fresh_builds(per_table_style(|t| {
+        vec![set_style("#k", with_display(t, "block")), set_text("#k1 td", "edited while a block"), set_style("#k", t)]
+    }));
+}
+
+/// C5: a table that becomes a flex container, an inline table, and back.
+#[test]
+fn a_table_display_flex_and_inline_table_matches_fresh_builds() {
+    display_flips_match_fresh_builds(per_table_style(|t| {
+        vec![
+            set_style("#k", with_display(t, "flex")),
+            set_style("#k", t),
+            set_style("#k", with_display(t, "inline-table")),
+            set_style("#k", t),
+        ]
+    }));
+}
+
+/// C5: a row group that becomes a block (wrapped in an anonymous table inside the table) and back.
+#[test]
+fn a_row_group_display_block_and_back_matches_fresh_builds() {
+    display_flips_match_fresh_builds(per_table_style(|_| vec![set_style("#kb", "display: block"), set_style("#kb", "")]));
+}
+
+// ---------------- cell styles changed incrementally (C2, C4) ----------------
+
+/// Each step synced as a delta (the layout-query path; a whole-tree sync when the journal has no
+/// delta), then compared with a fresh build: every element's box, the document size and the paint.
+#[track_caller]
+fn delta_steps_match_fresh_builds(html: &str, steps: Vec<(String, Mutate)>) {
+    let page = Page::new(html);
+    let mut r = Renderer::new();
+    r.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
+    let mut failures = Vec::new();
+    for (what, mutate) in steps {
+        let since = page.dom.borrow().version();
+        mutate(&page);
+        let delta = page.dom.borrow().render_delta(page.doc, since, &Page::opts());
+        let via_delta =
+            delta.is_some_and(|d| r.sync_delta(1, &delta_ops(d), (640, 480, 1.0, false, false), false).is_ok());
+        if !via_delta {
+            failures.push(format!("{what}: not synced as a delta"));
+            r.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
+        }
+        let mut fresh = Renderer::new();
+        fresh.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
+        for ((k, a), (_, b)) in boxes(&r, &page).into_iter().zip(boxes(&fresh, &page)) {
+            if a != b {
+                failures.push(format!("{what}: box {k:x} {a:?} vs fresh {b:?}"));
+                break;
+            }
+        }
+        if r.document_size(1) != fresh.document_size(1) {
+            failures.push(format!("{what}: size {:?} vs fresh {:?}", r.document_size(1), fresh.document_size(1)));
+        }
+        let tree = page.tree();
+        let painted = paint(&mut r, &page.snapshot(1, tree.clone()));
+        if painted.hash != paint(&mut Renderer::new(), &page.snapshot(1, tree)).hash {
+            failures.push(format!("{what}: paint differs"));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+fn cell_page(sheet: &str) -> String {
+    format!(
+        r#"<!doctype html><html><head><style id=st>{sheet}</style></head><body>
+<table id=k style="border-collapse: collapse"><tbody id=kb>{}</tbody></table>
+<table id=b><tbody>{}</tbody></table>
+</body></html>"#,
+        table_rows("k", 4),
+        table_rows("b", 3),
+    )
+}
+
+const CELL_SHEET: &str = "body { margin: 0; font: 13px sans-serif } td { padding: 2px }";
+
+/// C2: a `<style>` edit gives every cell a height and a border, then takes the collapsed borders away.
+#[test]
+fn a_sheet_edit_giving_cells_height_and_borders_matches_fresh_builds() {
+    delta_steps_match_fresh_builds(
+        &cell_page(CELL_SHEET),
+        vec![
+            text("#st", "body { margin: 0; font: 13px sans-serif } td { padding: 2px; height: 30px; border: 3px solid red }"),
+            text("#st", "body { margin: 0; font: 13px sans-serif } td { padding: 2px } #k { border-collapse: separate }"),
+            text("#st", "body { margin: 0; font: 13px sans-serif } td { padding: 2px }"),
+        ],
+    );
+}
+
+/// C2, one property at a time.
+#[test]
+fn a_sheet_edit_giving_cells_a_height_matches_fresh_builds() {
+    delta_steps_match_fresh_builds(
+        &cell_page(CELL_SHEET),
+        vec![text("#st", "body { margin: 0; font: 13px sans-serif } td { padding: 2px; height: 30px }")],
+    );
+}
+
+#[test]
+fn a_sheet_edit_giving_cells_a_border_matches_fresh_builds() {
+    delta_steps_match_fresh_builds(
+        &cell_page(CELL_SHEET),
+        vec![text("#st", "body { margin: 0; font: 13px sans-serif } td { padding: 2px; border: 3px solid red }")],
+    );
+}
+
+#[test]
+fn a_sheet_edit_separating_collapsed_borders_matches_fresh_builds() {
+    delta_steps_match_fresh_builds(
+        &cell_page(CELL_SHEET),
+        vec![
+            text("#st", "body { margin: 0; font: 13px sans-serif } td { padding: 2px } #k { border-collapse: separate }"),
+            text("#st", CELL_SHEET),
+        ],
+    );
+}
+
+/// C4: a cell taken out of flow and back.
+#[test]
+fn a_cell_positioned_absolutely_and_back_matches_fresh_builds() {
+    delta_steps_match_fresh_builds(
+        &cell_page(CELL_SHEET),
+        vec![attr("#k3 td", "style", "position: absolute"), attr("#k3 td", "style", "")],
+    );
+}
+
+/// C4: a cell made a block and back.
+#[test]
+fn a_cell_made_a_block_and_back_matches_fresh_builds() {
+    delta_steps_match_fresh_builds(
+        &cell_page(CELL_SHEET),
+        vec![attr("#k0 td", "style", "display: block"), attr("#k0 td", "style", "")],
+    );
+}
+
+/// The known-gaps sequence (`table_known_gaps_match_fresh_builds`) synced as deltas.
+#[test]
+fn table_known_gaps_match_fresh_builds_as_deltas() {
+    delta_steps_match_fresh_builds(
+        &cell_page(CELL_SHEET),
+        vec![
+            attr("#k1", "style", "display: contents"),
+            attr("#k1", "style", "display: table-row"),
+            text("#st", "body { margin: 0; font: 13px sans-serif } td { padding: 2px; height: 30px; border: 3px solid red }"),
+            text("#st", "body { margin: 0; font: 13px sans-serif } td { padding: 2px } #k { border-collapse: separate }"),
+            text("#st", CELL_SHEET),
+            attr("#k2 td", "style", "float: left"),
+            attr("#k2 td", "style", ""),
+            attr("#k3 td", "style", "position: absolute"),
+            attr("#k3 td", "style", ""),
+            attr("#k0 td", "style", "display: block"),
+            attr("#k0 td", "style", ""),
+        ],
+    );
+}
+
+/// A `border-collapse: collapse` table with a cell spanning rows, which a change inside builds again
+/// rather than updating in place (`TableContext::incremental`), as does an out-of-flow cell. `#rc`
+/// shares its left edge with `#ra` and its top edge with `#rb`.
+fn spanning_collapsed_table(rc: &str) -> String {
+    format!(
+        r#"<!doctype html><html><head><style>body {{ margin: 0; font: 13px sans-serif }} td {{ padding: 2.5px 3.25px }}</style></head><body>
+<table id=r style="border-collapse: collapse"><tr><td id=ra rowspan=2 style="border: 1px solid">a</td><td id=rb colspan=2>b</td></tr><tr><td id=rc {rc}>c</td><td>d</td></tr><tr><td>e</td><td>f</td><td>g</td></tr></table>
+</body></html>"#
+    )
+}
+
+/// C4 (residual): a cell's border changes the collapsed borders of the cells beside it, which the
+/// table built again gives them without laying them out again.
+#[test]
+fn a_cell_gaining_a_border_beside_a_rowspan_matches_fresh_builds() {
+    delta_steps_match_fresh_builds(&spanning_collapsed_table(""), vec![attr("#rc", "style", "border: 2px solid")]);
+}
+
+/// C4: a bordered cell made a block (its anonymous cell has no border) and back.
+#[test]
+fn a_bordered_cell_made_a_block_beside_a_rowspan_matches_fresh_builds() {
+    delta_steps_match_fresh_builds(
+        &spanning_collapsed_table(r#"style="border: 2px solid""#),
+        vec![attr("#rc", "style", "display: block; border: 2px solid"), attr("#rc", "style", "border: 2px solid")],
+    );
+}
+
+/// C4: a bordered cell taken out of flow (its borders leave the grid) and back.
+#[test]
+fn a_bordered_cell_positioned_absolutely_beside_a_rowspan_matches_fresh_builds() {
+    delta_steps_match_fresh_builds(
+        &spanning_collapsed_table(r#"style="border: 2px solid""#),
+        vec![attr("#rc", "style", "position: absolute; border: 2px solid"), attr("#rc", "style", "border: 2px solid")],
+    );
+}
+
+/// Each step synced as a delta (`sync_delta`, the layout-query path), then checked against a fresh
+/// build: every element's box, the document size and the painted page.
+#[track_caller]
+fn page_steps_match_fresh_builds(page: &Page, steps: Vec<(String, Mutate)>) {
+    let mut r = Renderer::new();
+    r.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
+    for (what, mutate) in steps {
+        let since = page.dom.borrow().version();
+        mutate(page);
+        let delta = page.dom.borrow().render_delta(page.doc, since, &Page::opts()).expect("a delta");
+        r.sync_delta(1, &delta_ops(delta), (640, 480, 1.0, false, false), false)
+            .unwrap_or_else(|e| panic!("{what}: {e:?}"));
+        let mut fresh = Renderer::new();
+        fresh.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
+        for ((k, a), (_, b)) in boxes(&r, page).into_iter().zip(boxes(&fresh, page)) {
+            assert_eq!(
+                a,
+                b,
+                "box {k:x} after {what}: {:?}\nFRESH {:?}",
+                r.describe_element(1, k),
+                fresh.describe_element(1, k)
+            );
+        }
+        let size = |r: &Renderer| r.page_layout(1).map(|l| (l.document_width, l.document_height));
+        assert_eq!(size(&r), size(&fresh), "document size after {what}");
+        let tree = page.tree();
+        let mirrored = paint(&mut r, &page.snapshot(1, tree.clone()));
+        assert_eq!(mirrored.hash, paint(&mut Renderer::new(), &page.snapshot(1, tree)).hash, "paint after {what}");
+    }
+}
+
+/// C3: a floated cell is blockified (CSS 2 §9.7) and wrapped in an anonymous cell; in a table with
+/// collapsed borders it must stay a float after an unrelated change and after losing the float.
+#[test]
+fn a_floated_cell_in_a_collapsed_table_matches_fresh_builds() {
+    let page = Page::new(&format!(
+        r#"<!doctype html><html><head><style id=st>
+  body {{ margin: 0; font: 13px sans-serif }} td {{ padding: 2px; border: 1px solid #000 }}
+</style></head><body>
+<table id=k style="border-collapse: collapse"><tbody id=kb>{}</tbody></table>
+</body></html>"#,
+        table_rows("k", 4),
+    ));
+    let steps: Vec<(String, Mutate)> = vec![
+        attr("#k2 td", "style", "float: left"),
+        text("#k1 td", "edited"),
+        text("#k2 td:nth-child(2)", "edited beside the float"),
+        attr("#k2 td", "style", "float: left; color: red"),
+        attr("#k2 td", "style", ""),
+        attr("#k2 td", "style", "float: left"),
+        text("#k2 td", "the float edited"),
+    ];
+    page_steps_match_fresh_builds(&page, steps);
+}
+
+/// C3, with the float in the markup from the start.
+#[test]
+fn a_cell_floated_from_the_start_in_a_collapsed_table_matches_fresh_builds() {
+    let page = Page::new(&format!(
+        r#"<!doctype html><html><head><style id=st>
+  body {{ margin: 0; font: 13px sans-serif }} td {{ padding: 2px; border: 1px solid #000 }}
+  #k2 td:first-child {{ float: left }}
+</style></head><body>
+<table id=k style="border-collapse: collapse"><tbody id=kb>{}</tbody></table>
+</body></html>"#,
+        table_rows("k", 4),
+    ));
+    let steps: Vec<(String, Mutate)> = vec![
+        text("#k1 td", "edited"),
+        text("#k2 td", "the float edited"),
+        attr("#k3 td", "style", "border: 3px solid red"),
+        attr("#k", "style", "border-collapse: collapse; width: 400px"),
+    ];
+    page_steps_match_fresh_builds(&page, steps);
+}
+
+/// C6: an element with inline children moved into a `display: none` container has no boxes. Stylo
+/// never visits a display:none element's children: the moved element drops the style data it had
+/// (and the inline layout built from it), or the moved `<span>` still reports the box it had.
+#[test]
+fn inline_content_moved_into_a_hidden_container_matches_fresh_builds() {
+    let page = Page::new(
+        r#"<!doctype html><html><head><style>body { margin: 0; font: 14px sans-serif }</style></head><body>
+<div id=list><p id=p1>para <span id=s1>in<b id=b1>bold</b></span> text</p><p id=p2>two <i id=i2>it</i></p></div>
+<div id=hid style="display:none"><p>already hidden <span>x</span></p></div><div id=after>after</div>
+</body></html>"#,
+    );
+    let mv = |what: &'static str, sel: &'static str| -> (String, Mutate) {
+        edit(what, move |p| {
+            let (hid, n) = (p.find("#hid"), p.find(sel));
+            p.dom.borrow_mut().append_child(hid, n).unwrap();
+        })
+    };
+    let steps: Vec<(String, Mutate)> = vec![
+        mv("a paragraph moved into the hidden container", "#p1"),
+        mv("an inline moved into the hidden container", "#i2"),
+        attr("#hid", "style", ""),
+    ];
+    page_steps_match_fresh_builds(&page, steps);
+}
+
+/// The known-gaps sequence (`table_known_gaps_match_fresh_builds`) synced as deltas. On 932f3d23
+/// the float step (C3) only failed after the `<style>` edit changing the cells' height and border
+/// (C2) had left the table stale; from a matching state it passed there too.
+#[test]
+fn table_known_gaps_as_deltas_match_fresh_builds() {
+    let page = Page::new(&format!(
+        r#"<!doctype html><html><head><style id=st>
+  body {{ margin: 0; font: 13px sans-serif }} td {{ padding: 2px }}
+</style></head><body>
+<table id=k style="border-collapse: collapse"><tbody id=kb>{}</tbody></table>
+<table id=b><tbody>{}</tbody></table>
+</body></html>"#,
+        table_rows("k", 4),
+        table_rows("b", 3),
+    ));
+    let steps: Vec<(String, Mutate)> = vec![
+        attr("#k1", "style", "display: contents"),
+        attr("#k1", "style", "display: table-row"),
+        text(
+            "#st",
+            "body { margin: 0; font: 13px sans-serif } td { padding: 2px; height: 30px; border: 3px solid red }",
+        ),
+        text("#st", "body { margin: 0; font: 13px sans-serif } td { padding: 2px } #k { border-collapse: separate }"),
+        text("#st", "body { margin: 0; font: 13px sans-serif } td { padding: 2px }"),
+        attr("#k2 td", "style", "float: left"),
+        attr("#k2 td", "style", ""),
+        attr("#k3 td", "style", "position: absolute"),
+        attr("#k3 td", "style", ""),
+    ];
+    page_steps_match_fresh_builds(&page, steps);
+}
+
+// ---------------- collapsed borders of cells kept across a table rebuild ----------------
+
+/// Each step: live renderer synced by deltas (layout-query path) and a second live renderer by
+/// whole-tree paints; both compared with fresh builds (boxes and paint hash).
+#[track_caller]
+fn hp_steps(html: &str, width: u32, steps: Vec<(String, Mutate)>) {
+    let page = Page::new(html);
+    let snap = |p: &Page, w: u32| {
+        let mut s = p.snapshot(1, p.tree());
+        s.width = w;
+        s
+    };
+    let mut d = Renderer::new();
+    d.sync_layout(&snap(&page, width), &fetcher()).unwrap();
+    let mut live = Renderer::new();
+    live.paint(&snap(&page, width), Area::Viewport, &fetcher()).unwrap();
+    let mut failures = Vec::new();
+    for (what, mutate) in steps {
+        eprintln!("RVSTEP {what}");
+        let since = page.dom.borrow().version();
+        mutate(&page);
+        let delta = page.dom.borrow().render_delta(page.doc, since, &Page::opts());
+        let via_delta = delta
+            .is_some_and(|dd| d.sync_delta(1, &delta_ops(dd), (width, 480, 1.0, false, false), false).is_ok());
+        if !via_delta {
+            d.sync_layout(&snap(&page, width), &fetcher()).unwrap();
+        }
+        let mirrored = live.paint(&snap(&page, width), Area::Viewport, &fetcher()).unwrap();
+        let mut fresh = Renderer::new();
+        let fresh_paint = fresh.paint(&snap(&page, width), Area::Viewport, &fetcher()).unwrap();
+        if mirrored.hash != fresh_paint.hash {
+            failures.push(format!("PAINT differs after {what}"));
+        }
+        let mut fresh = Renderer::new();
+        fresh.sync_layout(&snap(&page, width), &fetcher()).unwrap();
+        let fb = boxes(&fresh, &page);
+        for ((k, a), (_, b)) in boxes(&d, &page).into_iter().zip(fb.iter().cloned()) {
+            if a != b {
+                failures.push(format!("DELTA box {k:x} after {what}: {a:?} vs fresh {b:?}"));
+                break;
+            }
+        }
+        live.sync_layout(&snap(&page, width), &fetcher()).unwrap();
+        for ((k, a), (_, b)) in boxes(&live, &page).into_iter().zip(fb.iter().cloned()) {
+            if a != b {
+                failures.push(format!("LIVE box {k:x} after {what}: {a:?} vs fresh {b:?}"));
+                break;
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+fn hp_html(style: &str, body: &str) -> String {
+    format!(
+        "<!doctype html><html><head><style>body {{ margin: 0; font: 13px sans-serif }} td {{ padding: 2.5px 3.25px }} {style}</style></head><body>{body}</body></html>"
+    )
+}
+
+fn hp_rows(prefix: &str, n: usize) -> String {
+    table_rows(prefix, n)
+}
+
+fn hp_remove(row: &'static str) -> (String, Mutate) {
+    (
+        format!("{row} removed"),
+        Box::new(move |p| {
+            let tr = p.find(row);
+            let parent = p.dom.borrow().parent(tr).unwrap().unwrap();
+            p.dom.borrow_mut().remove_child(parent, tr).unwrap();
+        }),
+    )
+}
+
+fn hp_move(row: &'static str, group: &'static str, before: Option<&'static str>) -> (String, Mutate) {
+    (
+        format!("{row} moved before {before:?}"),
+        Box::new(move |p| {
+            let tr = p.find(row);
+            let tbody = p.find(group);
+            let at = before.map(|b| p.find(b));
+            p.dom.borrow_mut().insert_before(tbody, tr, at).unwrap();
+        }),
+    )
+}
+
+/// A collapsed table whose rows have a bottom border: the first row's cells have no top border half,
+/// the others 0.5px. Removing the first row (a change `update_rows` leaves to `build_table_context`)
+/// makes the second one first: its cells lose their 0.5px, and must lay out again.
+#[test]
+fn hp_collapsed_first_row_removed() {
+    hp_steps(
+        &hp_html("table { border-collapse: collapse } tr { border-bottom: 1px solid }", &format!("<table id=t><tbody id=tb>{}</tbody></table>", hp_rows("t", 3))),
+        640,
+        vec![hp_remove("#t0")],
+    );
+}
+
+/// The same with the first row moved down: the row now first loses its top border half, the moved
+/// one gains it.
+#[test]
+fn hp_collapsed_first_row_moved_down() {
+    hp_steps(
+        &hp_html("table { border-collapse: collapse } tr { border-bottom: 1px solid }", &format!("<table id=t><tbody id=tb>{}</tbody></table>", hp_rows("t", 3))),
+        640,
+        vec![hp_move("#t0", "#tb", Some("#t2"))],
+    );
+}
+
+/// A collapsed table whose borders become one uniform grid when its first row goes: rebuilt, its
+/// cells drop their half borders (`set_collapsed_border(None)`) for gutters.
+#[test]
+fn hp_collapsed_borders_become_uniform() {
+    hp_steps(
+        &hp_html(
+            "table { border-collapse: collapse } td { border: 1px solid } #t0 td { border-bottom: 3px solid }",
+            &format!("<table id=t><tbody id=tb>{}</tbody></table>", hp_rows("t", 3)),
+        ),
+        640,
+        vec![hp_remove("#t0")],
+    );
+}

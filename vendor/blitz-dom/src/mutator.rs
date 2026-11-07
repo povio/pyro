@@ -818,6 +818,10 @@ impl DocumentMutator<'_> {
             self.restyle_for_child_list_change(parent_id, start..end);
         }
 
+        let parent_is_unstyled = self.doc.nodes[parent_id].is_element()
+            && self.doc.nodes[parent_id]
+                .primary_styles()
+                .is_none_or(|style| style.get_box().display.is_none());
         for child_id in child_ids.iter().copied() {
             let child = &mut self.doc.nodes[child_id];
             let child_was_in_doc = child.flags.is_in_document();
@@ -838,6 +842,24 @@ impl DocumentMutator<'_> {
                     }
                 }
                 child.mark_ancestors_dirty();
+            }
+
+            // lightningpanda: Stylo keeps no style data under a `display: none` element (it drops
+            // it when an element becomes one, `clear_descendant_data`, and never visits the
+            // children of one), but a moved element kept its own: styles, inline layout and the
+            // flags built from them, which no pass would replace. Under a parent that the style
+            // traversal does not reach (display: none, or unstyled itself) it has none, as a
+            // fresh build has, and is styled and built from scratch if it is shown.
+            if parent_is_unstyled {
+                self.doc.iter_subtree_mut(child_id, |id, doc| {
+                    let node = &mut doc.nodes[id];
+                    node.flags.reset_construction_flags();
+                    if let Some(element) = node.element_data_mut() {
+                        element.take_inline_layout();
+                        // SAFETY: no style traversal is running while the DOM is mutated.
+                        unsafe { element.stylo_element_data.clear() };
+                    }
+                });
             }
 
             if new_parent_is_in_document && !child_was_in_doc {

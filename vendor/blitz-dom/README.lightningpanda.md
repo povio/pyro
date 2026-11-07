@@ -246,7 +246,35 @@ its inputs.
   styles. Restyles used to relayout with the styles the table was built with.
 - `src/layout/construct.rs`, `src/layout/table.rs` (`damage_former_table_parts`, `drop_part_box`): a table built as
   another box (`display: block`) builds its row groups and rows as boxes, which they never were in the table, and a
-  table built in place of another box drops the boxes its parts had.
+  table built in place of another box drops the boxes its parts had. The parts are those of the table's last
+  `TableContext` (its rows, and their row groups and `display: contents` boxes up to the table), whatever their
+  `display` is now: a row group of a table made a flex container is blockified into a block item, and its rows had
+  lost their boxes all the same. The context is dropped with them (the box is no table; lp-render reads a table's
+  collapsed borders from it).
+
+### Incremental layout that differed from fresh builds
+
+- `src/node/node.rs` (`Node::set_collapsed_border`): a change of a cell's half collapsed borders clears its layout
+  cache, as its layout style changed. `build_table_context` (a table built again: its first row changed, a rowspan,
+  an out-of-flow part) gave the cells beside a change their new borders without laying them out again: removing or
+  moving the first row of a table with row borders, or giving a cell beside a rowspan a border, left them 0.5-1.25px
+  off. Only `update_rows` invalidated them.
+- `src/layout/table.rs` (`release_cell`, `release_former_cells`): a node keeps half collapsed borders only while it is
+  a cell of a collapsed table. A cell taken out of flow, one no longer collected (made a block, its row removed or
+  `display: contents`), and the cells of a table built as another box lose them, and their `table_cell_index`: such a
+  box laid out with the table's borders, and paint, which draws a node's own borders only without them, dropped its
+  own. `build_table_context` compares the cells of the context it replaces, `update_rows` the cells it replaced; one
+  another container collected since (`Node::layout_child_of`) is left to it.
+- `src/layout/table.rs` (`enter_layout_tree`), `src/resolve.rs`: a cell collected while no container lists it is new,
+  or back in the layout tree from outside it (its row was `display: contents`, which Blitz's tables treat as
+  `display: none`, or it was a block the table ignored). Stylo styled it meanwhile, and `clear_damage_and_dirty_flags`
+  cleared the damage no pass consumed, so its subtree is damaged and its layout caches cleared: a cell edited while
+  its row was `display: contents` kept the text it had. For this `resolve_layout_children` takes the previous layout
+  children out of the list (`layout_child_of`) after collecting the new ones, not before.
+- `src/mutator.rs` (`add_children_to_parent`): an element moved under a `display: none` or unstyled parent drops its
+  style data, inline layout and construction flags, as Stylo keeps none under `display: none` (it clears descendants
+  when an element becomes `display: none` and never visits the children of one). The moved element kept its styles,
+  and lp-render reported the box its old inline layout gave it.
 
 `crates/lp-render/tests/mirror.rs` compares the incremental document with fresh builds after cell edits, row appends,
 inserts and removals, spans, collapsed borders, nested and vertical tables, stacking contexts in cells and `display`

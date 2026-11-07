@@ -1173,6 +1173,8 @@ pub(crate) fn build_table_context(
     let mut cursor = ColumnCursor::default();
 
     let wm = table_wm(doc, table_root_node_id);
+    // lightningpanda: the cells of the table built last time, released below if they are no longer.
+    let former = former_table_context(doc, table_root_node_id);
     let root_node = &mut doc.nodes[table_root_node_id];
 
     let children = std::mem::take(&mut root_node.children);
@@ -1454,6 +1456,9 @@ pub(crate) fn build_table_context(
     let cells_percent = cells.iter().filter(|cell| cell.percent_width).count();
     for (at, cell) in cells.iter().enumerate() {
         doc.nodes[cell.node_id].layout_data_mut().table_cell_index = at as u32;
+    }
+    if let Some(former) = former {
+        release_former_cells(doc, table_root_node_id, &former.cells, &cells);
     }
 
     (
@@ -2110,6 +2115,8 @@ fn update_rows(doc: &mut BaseDocument, table: NodeId, ctx: &mut TableContext) ->
             doc.nodes[child].layout_child_of.set(Some(table));
         }
         *doc.nodes[table].layout_children.borrow_mut() = Some(layout_children);
+        // The cells replaced and not collected again are no longer cells.
+        release_former_cells(doc, table, &removed, &ctx.cells);
     }
     Some(boxes_changed)
 }
@@ -2208,30 +2215,87 @@ fn collect_columns(
     }
 }
 
-/// The row groups and rows (through `display: contents` boxes) of a table that is now built as
-/// another box: built as boxes in their turn (`collect_layout_children_with_wrap`).
+/// lightningpanda: the `TableContext` `table` was last built with, if it was a table.
+fn former_table_context(doc: &BaseDocument, table: NodeId) -> Option<Arc<TableContext>> {
+    match &doc.nodes[table].data.downcast_element()?.special_data {
+        SpecialElementData::TableRoot(ctx) => Some(Arc::clone(ctx)),
+        _ => None,
+    }
+}
+
+/// The row groups and rows (and the `display: contents` boxes between them and the table) of a table
+/// that is now built as another box: built as boxes in their turn (`collect_layout_children_with_wrap`).
+/// They are those of the table's last `TableContext`, whatever their `display` is now (a row group of
+/// a table made a flex container is a block item now): table construction dropped the boxes they had
+/// (`drop_part_box`). Its cells are released (`release_cell`), and the context dropped: the box is no
+/// table (lp-render reads a table's collapsed borders from it).
 pub(crate) fn damage_former_table_parts(doc: &mut BaseDocument, node_id: NodeId) {
-    let children = std::mem::take(&mut doc.nodes[node_id].children);
-    for &child in children.iter() {
-        let node = &mut doc.nodes[child];
-        let part = node.is_element()
-            && node.display_style().is_some_and(|display| {
-                matches!(
-                    display.inside(),
-                    DisplayInside::TableRowGroup
-                        | DisplayInside::TableHeaderGroup
-                        | DisplayInside::TableFooterGroup
-                        | DisplayInside::TableRow
-                        | DisplayInside::Contents
-                )
-            });
-        if part {
+    let Some(element) = doc.nodes[node_id].data.downcast_element_mut() else { return };
+    if !matches!(element.special_data, SpecialElementData::TableRoot(_)) {
+        return;
+    }
+    let SpecialElementData::TableRoot(ctx) = std::mem::take(&mut element.special_data) else { return };
+    // A row and its ancestors below the table (one moved out of the table since is left alone).
+    let below_table = |doc: &BaseDocument, part: NodeId| -> Vec<NodeId> {
+        let mut parts = Vec::new();
+        let mut at = Some(part);
+        while let Some(id) = at {
+            if id == node_id {
+                return parts;
+            }
+            parts.push(id);
+            at = doc.nodes.get(id).and_then(|node| node.parent);
+        }
+        Vec::new()
+    };
+    for row in &ctx.rows {
+        for part in below_table(doc, row.node_id) {
+            let node = &mut doc.nodes[part];
             node.insert_damage(super::damage::ALL_DAMAGE);
             node.invalidate_layout_cache();
-            damage_former_table_parts(doc, child);
         }
     }
-    doc.nodes[node_id].children = children;
+    release_former_cells(doc, node_id, &ctx.cells, &[]);
+}
+
+/// lightningpanda: a cell collected while no container lists it (`Node::layout_child_of`): new, or
+/// back from outside the layout tree (its row was `display: contents`, it was a block the table
+/// ignored). Stylo styled it meanwhile and `clear_damage_and_dirty_flags` cleared the damage that no
+/// pass consumed (no pass reached it), so what its subtree built before is stale: built again, as a
+/// fresh build does.
+fn enter_layout_tree(doc: &mut BaseDocument, node_id: NodeId) {
+    doc.iter_subtree_mut(node_id, |id, doc| {
+        let node = &mut doc.nodes[id];
+        if node.is_element() {
+            node.insert_damage(super::damage::ALL_DAMAGE);
+        }
+        node.invalidate_layout_cache();
+    });
+}
+
+/// lightningpanda: a node that is no longer one of a table's cells (a box of its own, out of flow, or
+/// its table gone) has no half collapsed borders (its layout style and paint, which draws a node's
+/// own borders only without them, follow) and no index into the table's cells.
+fn release_cell(doc: &mut BaseDocument, node_id: NodeId) {
+    let Some(node) = doc.nodes.get_mut(node_id) else { return };
+    node.set_collapsed_border(None);
+    node.layout_data_mut().table_cell_index = u32::MAX;
+}
+
+/// lightningpanda: `table`'s former cells (`old`) that it lists no more (`cells`, whose nodes hold
+/// their index) are released (`release_cell`), except one another container collected since.
+fn release_former_cells(doc: &mut BaseDocument, table: NodeId, old: &[TableCell], cells: &[TableCell]) {
+    for cell in old {
+        let Some(node) = doc.nodes.get(cell.node_id) else { continue };
+        let index = node.layout_data().table_cell_index as usize;
+        if cells.get(index).is_some_and(|kept| kept.node_id == cell.node_id) {
+            continue;
+        }
+        if node.layout_child_of.get().is_some_and(|other| other != table) {
+            continue;
+        }
+        release_cell(doc, cell.node_id);
+    }
 }
 
 /// lightningpanda: `node_id`'s layout children that are still listed there (`Node::layout_child_of`)
@@ -2296,6 +2360,8 @@ fn collect_table_cells(
     // block rather than as part of the table grid.
     let position = node.primary_styles().unwrap().clone_position();
     if position.is_absolutely_positioned() {
+        // lightningpanda: a box of its own, laid out and painted with its own borders.
+        release_cell(doc, node_id);
         oof_children.push((node_id, stylo_taffy::convert::position(position)));
         return;
     }
@@ -2378,6 +2444,10 @@ fn collect_table_cells(
         }
         DisplayInside::TableCell => {
             // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
+            if node.layout_child_of.get().is_none() {
+                enter_layout_tree(doc, node_id);
+            }
+            let node = &mut doc.nodes[node_id];
             let stylo_style = &node.primary_styles().unwrap();
             let percent_width = stylo_taffy::convert::dimension(&stylo_style.clone_width()).tag() == taffy::CompactLength::PERCENT_TAG;
             let colspan: u16 = node
