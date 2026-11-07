@@ -329,8 +329,11 @@
   const constantValues = dataDescriptors(false, true, false);
   const defineData = (o, k, d, value) => { d.value = value; defineProperty(o, k, d); d.value = undefined; };
 
-  // The realm's interface table (`installInterfaces`), for `materialize`.
-  let interfaceSpec = null, interfaceObjectProto = null, interfaceLists = null;
+  // The realm's interface table (`installInterfaces`), for `materialize`:
+  // the names, and per interface [parent or -1, constructor length, flags]
+  // (class.rs `SPEC_*`).
+  let interfaceNames = null, interfaceData = null, interfaceObjectProto = null, interfaceLists = null;
+  const SPEC_EXPOSED = 1, SPEC_CALLBACK = 2, SPEC_STRIDE = 3;
   // [LegacyFactoryFunction]s by interface id: their `prototype` is the
   // interface prototype object, defined when it is made. No prototype: a
   // read of an interface without any, after page script, meets no getter
@@ -344,20 +347,25 @@
     hooks,
     DOMException,
     // Every interface of a new realm in one call (realm.rs install_classes):
-    // `spec[i]` is [name, parent index or -1, constructor length, exposed,
-    // callback interface]. Returns [protos, targets, ctors], indexed like
-    // `spec`; `protos[i]` stays empty until `materialize(i)`. A callback
+    // `names` are the interface names separated by newlines, `data` an
+    // Int32Array of [parent index or -1, constructor length, flags] per
+    // interface (SPEC_EXPOSED: a property of the global; SPEC_CALLBACK: a
+    // callback interface). Returns [protos, targets, ctors], indexed like
+    // the names; `protos[i]` stays empty until `materialize(i)`. A callback
     // interface (NodeFilter) is not a constructor and has no `prototype`
     // property, so `instanceof` on it throws
     // (https://webidl.spec.whatwg.org/#legacy-callback-interface-object).
-    installInterfaces(spec, natives, objectProto, global, populate) {
+    installInterfaces(names, data, natives, objectProto, global, populate) {
       populateClass = populate;
-      interfaceSpec = spec;
+      interfaceNames = names.split('\n');
+      interfaceData = data;
       interfaceObjectProto = objectProto;
       const protos = [], targets = [], ctors = [];
       interfaceLists = [protos, targets, ctors];
-      for (let i = 0; i < spec.length; i++) {
-        const [name, parent, length, exposed, callback] = spec[i];
+      for (let i = 0; i < interfaceNames.length; i++) {
+        const name = interfaceNames[i], k = i * SPEC_STRIDE;
+        const parent = data[k], length = data[k + 1], flags = data[k + 2];
+        const exposed = (flags & SPEC_EXPOSED) !== 0, callback = (flags & SPEC_CALLBACK) !== 0;
         const native = natives[i];
         const C = native
           ? nativeConstructor(name, native, length)
@@ -399,8 +407,8 @@
     materialize(id) {
       // Runs while page script may have changed Array.prototype: indexed
       // reads of own elements only (no destructuring, no iteration).
-      const entry = interfaceSpec[id];
-      const name = entry[0], parent = entry[1], callback = entry[4];
+      const name = interfaceNames[id], parent = interfaceData[id * SPEC_STRIDE];
+      const callback = (interfaceData[id * SPEC_STRIDE + 2] & SPEC_CALLBACK) !== 0;
       let proto = classProtos[id];
       if (proto === undefined) {
         proto = objectCreate(parent < 0 ? interfaceObjectProto : classProtos[parent]);

@@ -192,61 +192,12 @@ fn helper<'s>(s: &Scope<'s>, name: &str) -> JsResult<Value<'s>> {
     let helpers = page.url_params_helpers.borrow().get(&s.realm_id()).cloned().ok_or(JsError::ContextDestroyed)?;
     helpers.get(s).as_object().unwrap().get(name)
 }
-pub(crate) fn install(s: &Scope<'_>) -> JsResult<()> {
+/// `factory` is install.js `urlSearchParams`: given the native USVString
+/// conversion, [helpers, the steps completing URLSearchParams.prototype and
+/// the iterator prototype once their members are installed].
+pub(crate) fn install(s: &Scope<'_>, factory: lp_js::Value<'_>) -> JsResult<()> {
     let convert = s.function("usvString", |s, _, args| Ok(s.string(&dom_string(args.get(0))?)))?;
     let convert = Persistent::new(s, convert.value());
-    // Returns [helpers, the steps completing URLSearchParams.prototype and
-    // the iterator prototype once their members are installed].
-    let factory=s.eval(r#"(convert=>{
-        const symbol=Symbol.iterator,tag=Symbol.toStringTag,keys=Reflect.ownKeys;
-        const descriptor=Object.getOwnPropertyDescriptor,define=Object.defineProperty,create=Object.create;
-        const apply=Reflect.apply,TypeError_=TypeError,setPrototypeOf=Object.setPrototypeOf;
-        const iteratorPrototypeOfArrays=Object.getPrototypeOf(Object.getPrototypeOf([][symbol]()));
-        // Both run when a page first uses the interface: descriptors without a prototype.
-        const iteratorPopulated=(iteratorPrototype)=>{
-            delete iteratorPrototype.constructor;
-            setPrototypeOf(iteratorPrototype,iteratorPrototypeOfArrays);
-            define(iteratorPrototype,tag,{__proto__:null,value:'URLSearchParams Iterator',configurable:true});
-        };
-        const populated=(proto)=>{
-            const entries=proto.entries;
-            define(proto,symbol,{__proto__:null,value:entries,writable:true,configurable:true});
-            define(proto,'forEach',{__proto__:null,value:function(callback,thisArg){
-                const iterator=apply(entries,this,[]);
-                if(typeof callback!=='function')throw new TypeError_('callback must be callable');
-                for(const pair of iterator)apply(callback,thisArg,[pair[1],pair[0],this]);
-            },writable:true,enumerable:true,configurable:true});
-        };
-        const append=(array,value)=>define(array,array.length,{value,writable:true,enumerable:true,configurable:true});
-        return [{
-            result(value,done){return {value,done};},
-            fill(init){
-                if(init===undefined)return '';
-                if(init===null||(typeof init!=='object'&&typeof init!=='function'))return convert(init);
-                const method=init[symbol],result=[];
-                if(method!==undefined&&method!==null){
-                    if(typeof method!=='function')throw new TypeError_('Invalid iterator');
-                    for(const pair of {[symbol](){return apply(method,init,[]);}}){
-                        if(pair===null||(typeof pair!=='object'&&typeof pair!=='function'))throw new TypeError_('Expected iterable pair');
-                        const values=[];
-                        for(const value of pair)append(values,convert(value));
-                        if(values.length!==2)throw new TypeError_('URLSearchParams entry must have two items');
-                        append(result,values);
-                    }
-                }else{
-                    const positions=create(null);
-                    for(const key of keys(init)){
-                        if(descriptor(init,key)?.enumerable){
-                            const name=convert(key),value=convert(init[key]);
-                            if(positions[name]===undefined){positions[name]=result.length;append(result,[name,value]);}
-                            else result[positions[name]][1]=value;
-                        }
-                    }
-                }
-                return result;
-            }
-        },populated,iteratorPopulated];
-    })"#,Some("lp-url-search-params.js"),1)?;
     let parts = factory.as_object().unwrap().call(None, &[convert.get(s)])?;
     let parts = parts.as_object().expect("URLSearchParams helpers");
     let helper = parts.get_index(0)?;

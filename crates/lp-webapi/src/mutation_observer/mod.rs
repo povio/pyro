@@ -432,20 +432,9 @@ pub(crate) fn after_task(page: &PageDom) {
         checkpoint(&page)
     }
 }
-pub(crate) fn install(s: &Scope<'_>, page: &Rc<PageDom>) -> JsResult<()> {
+/// `helper` converts a MutationObserverInit (install.js `mutationOptions`).
+pub(crate) fn install(s: &Scope<'_>, page: &Rc<PageDom>, helper: lp_js::Value<'_>) -> JsResult<()> {
     *page.mutations.owner.borrow_mut() = Rc::downgrade(page);
-    let helper=s.eval(r#"(()=>{const str=String, TypeError_=TypeError, create=Object.create;
-        return options=>{
-            if(options==null)options={};
-            if(typeof options!=='object'&&typeof options!=='function')throw new TypeError_('Observer options must be a dictionary');
-            let filter=options.attributeFilter;
-            if(filter!==undefined){
-                if(filter===null||(typeof filter!=='object'&&typeof filter!=='function'))throw new TypeError_('attributeFilter must be a sequence');
-                const list=create(null);let n=0;for(const item of filter){if(typeof item==='symbol')throw new TypeError_('Cannot convert symbol to string');list[n++]=str(item);}list.length=n;filter=list;
-            }
-            const old=options.attributeOldValue, attributes=options.attributes, chars=options.characterData, charOld=options.characterDataOldValue;
-            return [filter,old===undefined?undefined:!!old,attributes===undefined?undefined:!!attributes,chars===undefined?undefined:!!chars,charOld===undefined?undefined:!!charOld,!!options.childList,!!options.subtree];
-        };})()"#,None,1)?;
     page.mutations.helpers.borrow_mut().insert(s.realm_id(), Persistent::new(s, helper));
     let weak = Rc::downgrade(page);
     s.realm().set_native_callback_hook(Some(Rc::new(move |_| {

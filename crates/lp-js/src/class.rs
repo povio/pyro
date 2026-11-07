@@ -803,11 +803,23 @@ pub(crate) struct ClassRegistry {
     /// callable objects whose private data is a `MemberCall`. Not a `base`
     /// subclass: their private pointer is not a `Header`.
     pub member: sys::JSClassRef,
-    /// `classes` as the JSON table `installInterfaces` takes (helpers.js),
-    /// one `[name, parent, ctor length, exposed, callback]` entry per class,
-    /// appended as each registers: every realm creation reads it as is.
-    spec: String,
+    /// `classes` as the table `installInterfaces` takes (helpers.js),
+    /// appended to as each registers, so every realm creation passes it as
+    /// is: the names, newline-separated (no class name contains one), and
+    /// per class `[parent or -1, constructor length, flags]` with
+    /// [`SPEC_EXPOSED`] and [`SPEC_CALLBACK`] the flags. Typed data costs a
+    /// realm one string and one Int32Array; the JSON text it replaced was
+    /// parsed by every realm (6% of its creation).
+    spec_names: String,
+    spec_data: Vec<i32>,
 }
+
+/// `installInterfaces` flags of a class: an exposed one (a property of the
+/// global); a callback interface (not a constructor, no `prototype`).
+pub(crate) const SPEC_EXPOSED: i32 = 1;
+pub(crate) const SPEC_CALLBACK: i32 = 2;
+/// Entries of `ClassRegistry::spec_data` per class.
+pub(crate) const SPEC_STRIDE: usize = 3;
 
 impl ClassRegistry {
     pub fn new() -> ClassRegistry {
@@ -837,28 +849,33 @@ impl ClassRegistry {
             base,
             closure,
             member,
-            spec: String::from("[]"),
+            spec_names: String::new(),
+            spec_data: Vec::new(),
         }
     }
 
-    /// See [`ClassRegistry::spec`].
-    pub fn spec_json(&self) -> &str {
-        &self.spec
+    /// See [`ClassRegistry::spec_names`]: (names, data).
+    pub fn spec(&self) -> (&str, &[i32]) {
+        (&self.spec_names, &self.spec_data)
     }
 
     fn push_spec(&mut self, name: &str, parent: Option<ClassId>, ctor_length: u32, exposed: bool, callback: bool) {
-        use std::fmt::Write;
-        self.spec.pop();
-        if self.spec.len() > 1 {
-            self.spec.push(',');
+        debug_assert!(!name.contains('\n'), "class name {name:?} contains the spec separator");
+        if !self.classes.is_empty() {
+            self.spec_names.push('\n');
         }
-        let name = serde_json::to_string(name).expect("class name serializes");
-        let parent = parent.map_or(-1, i64::from);
-        let _ = write!(self.spec, "[{name},{parent},{ctor_length},{exposed},{callback}]]");
+        self.spec_names.push_str(name);
+        let flags = if exposed { SPEC_EXPOSED } else { 0 } | if callback { SPEC_CALLBACK } else { 0 };
+        self.spec_data.extend([parent.map_or(-1, |p| p as i32), ctor_length as i32, flags]);
+        debug_assert_eq!(self.spec_data.len(), (self.classes.len() + 1) * SPEC_STRIDE);
     }
 
     pub fn id_of<C: JsClass>(&self) -> Option<ClassId> {
-        self.by_type.get(&TypeId::of::<C>()).copied()
+        self.id_of_type(TypeId::of::<C>())
+    }
+
+    pub fn id_of_type(&self, class: TypeId) -> Option<ClassId> {
+        self.by_type.get(&class).copied()
     }
 
     pub fn release_all(&mut self) {
@@ -871,7 +888,8 @@ impl ClassRegistry {
             sys::JSClassRelease(self.base);
         }
         self.classes.clear();
-        self.spec = String::from("[]");
+        self.spec_names.clear();
+        self.spec_data.clear();
         // The VM is gone, and the placeholder properties with it.
         let gone = std::mem::take(&mut self.placeholders).len();
         let _ = PLACEHOLDERS_PENDING.try_with(|p| p.set(p.get().saturating_sub(gone)));
@@ -1504,10 +1522,22 @@ unsafe fn this_data<'a, C: JsClass>(
         }
     }
     // Not a `C`: only the global receiver fallback is left, which needs the
-    // class's registry entry (a cold path).
+    // class's registry entry (a cold path, one copy for every class).
+    let p = this_data_global(scope, this, TypeId::of::<C>())?;
+    // SAFETY: the pointer refers to C::Data owned by the realm's global
+    // payload, which outlives this callback.
+    Ok((unsafe { &*(p as *const C::Data) }, None))
+}
+
+/// The global receiver fallback of [`this_data`]: the data of `class` the
+/// realm's global holds when `this` is that global (or `undefined`/`null`),
+/// else "Illegal invocation".
+#[cold]
+#[inline(never)]
+fn this_data_global(scope: &Scope<'_>, this: sys::JSObjectRef, class: TypeId) -> JsResult<*const u8> {
     let fallback = {
         let reg = scope.engine_inner().classes.borrow();
-        let want = reg.id_of::<C>().expect("class registered");
+        let want = reg.id_of_type(class).expect("class registered");
         reg.classes[want as usize].global_receiver
     };
     if let Some(f) = fallback {
@@ -1515,9 +1545,7 @@ unsafe fn this_data<'a, C: JsClass>(
         let global_receiver = this.is_null() || scope.is_global_object(this);
         if global_receiver {
             if let Some(p) = unsafe { f(scope) } {
-                // SAFETY: the pointer refers to C::Data owned by the realm's
-                // global payload, which outlives this callback.
-                return Ok((unsafe { &*(p as *const C::Data) }, None));
+                return Ok(p);
             }
         }
     }

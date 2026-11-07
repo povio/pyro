@@ -1108,13 +1108,14 @@ fn install(s: &Scope<'_>, page: &Rc<PageDom>, service: bool) -> JsResult<()> {
     page.register_realm(&realm);
     realm.set_embedder(page.clone());
     realm.set_unhandled_rejection_handler(crate::event::dispatch_unhandled_rejection);
-    crate::encoding::install(s)?;
-    crate::headers::install(s)?;
-    crate::url_search_params::install(s)?;
-    crate::form_data::install(s)?;
+    let helpers = crate::install_helpers(s)?;
+    crate::encoding::install(s, helpers.get_atom("dataView")?)?;
+    crate::headers::install(s, helpers.get_atom("headers")?)?;
+    crate::url_search_params::install(s, helpers.get_atom("urlSearchParams")?)?;
+    crate::form_data::install(s, helpers.get_atom("formData")?)?;
     crate::fetch::install(s)?;
     crate::xhr::install(s, page)?;
-    crate::structured_clone::install(s, page)?;
+    crate::structured_clone::install(s, page, helpers.get_atom("structuredClone")?)?;
     // What the lazy globals (streams, CryptoKey) replace themselves with.
     if let Some(define) =
         s.global().get_atom("Object")?.as_object().map(|o| o.get_atom("defineProperty")).transpose()?

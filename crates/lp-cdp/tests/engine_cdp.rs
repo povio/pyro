@@ -778,6 +778,59 @@ fn run_immediately_creates_the_isolated_world() {
 }
 
 #[test]
+fn playwright_utility_world_is_announced_at_commit_and_made_by_its_first_evaluation() {
+    // Playwright: an init script with no source names the utility world for
+    // every document, `Page.createIsolatedWorld` makes it for the first one,
+    // and after each navigation the world's `executionContextCreated` is
+    // what its actions wait for. The realm behind the announced id is made
+    // when first evaluated in.
+    let mut h = Harness::new();
+    h.page("Runtime.enable", json!({}));
+    h.page("Page.enable", json!({}));
+    h.page("Page.addScriptToEvaluateOnNewDocument", json!({"source":"","worldName":"__pw_utility"}));
+    let frame = h.frame_id.clone();
+    let first = h.page("Page.createIsolatedWorld", json!({"frameId":frame,"worldName":"__pw_utility"}))["result"]
+        ["executionContextId"]
+        .clone();
+    let events = h.page_with_events("Page.navigate", json!({ "url": html_url("<p>committed</p>") }));
+    let mut events = events;
+    if !events.iter().any(|e| e["method"] == "Page.loadEventFired") {
+        events.extend(h.run_for(100));
+    }
+    let created: Vec<&Value> =
+        events.iter().filter(|m| m["method"] == "Runtime.executionContextCreated").collect();
+    let utility = created
+        .iter()
+        .find(|m| m["params"]["context"]["name"] == "__pw_utility")
+        .unwrap_or_else(|| panic!("utility world announced for the new document: {events:#?}"));
+    let context = utility["params"]["context"]["id"].clone();
+    assert_ne!(context, first, "a new context per document");
+    assert_eq!(utility["params"]["context"]["auxData"]["isDefault"], false);
+    assert!(created.iter().any(|m| m["params"]["context"]["auxData"]["isDefault"] == true), "{events:#?}");
+    let destroyed = events.iter().position(|m| m["method"] == "Runtime.executionContextsCleared").unwrap();
+    let announced = events
+        .iter()
+        .position(|m| m["method"] == "Runtime.executionContextCreated" && m["params"]["context"]["id"] == context)
+        .unwrap();
+    assert!(announced > destroyed, "{events:#?}");
+    let frame = h.frame_id.clone();
+    let r = h.page("Page.createIsolatedWorld", json!({"frameId":frame,"worldName":"__pw_utility"}));
+    assert_eq!(r["result"]["executionContextId"], context, "the same world for this document");
+    let r = h.page(
+        "Runtime.evaluate",
+        json!({"expression":"document.querySelector('p').textContent + ':' + (globalThis.mark = 1)","contextId": context,"returnByValue":true}),
+    );
+    assert_eq!(r["result"]["result"]["value"], "committed:1", "{r}");
+    let r = h.page("Runtime.evaluate", json!({"expression":"typeof mark","returnByValue":true}));
+    assert_eq!(r["result"]["result"]["value"], "undefined", "main world untouched");
+    let r = h.page(
+        "Runtime.callFunctionOn",
+        json!({"functionDeclaration":"function() { return mark + 1 }","executionContextId": context,"returnByValue":true}),
+    );
+    assert_eq!(r["result"]["result"]["value"], 2, "{r}");
+}
+
+#[test]
 fn console_without_runtime_is_not_retained_and_floods_close_the_connection() {
     let mut h = Harness::new();
     h.page("Runtime.evaluate", json!({"expression":"for (let i = 0; i < 200000; i++) console.log(i, {i})"}));

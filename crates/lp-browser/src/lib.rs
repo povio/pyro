@@ -732,7 +732,8 @@ impl Browser {
             for page in &self.pages {
                 for info in self.frames(page.id) {
                     if let Some(frame) = self.frame(page.id, &info.id) {
-                        for realm in &frame.realms {
+                        // A deferred realm's setup reads the clock's state when it is made.
+                        for realm in frame.realms.iter().filter(|r| !r.realm.is_deferred()) {
                             realm.realm.scope()?.eval(
                                 clock::DATE_SCRIPT,
                                 Some("lightningpanda://internal/clock.js"),

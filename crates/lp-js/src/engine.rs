@@ -620,6 +620,19 @@ impl Engine {
         crate::realm::create(&inner, options)
     }
 
+    /// [`Engine::create_realm_in_current_thread`] for a realm made when it
+    /// is first entered: its id, name and origin exist now (so it can be
+    /// announced and found), its context, interfaces and `setup` are made
+    /// by the first [`Realm::scope`], wherever that happens. Disposing it
+    /// before then costs nothing.
+    pub fn defer_realm_in_current_thread(
+        options: RealmOptions,
+        setup: crate::realm::DeferredSetup,
+    ) -> Result<Realm, JsError> {
+        let inner = current_inner().ok_or(JsError::ContextDestroyed)?;
+        crate::realm::create_deferred(&inner, options, setup)
+    }
+
     /// Installs a check this thread runs at every watchdog poll (about every
     /// 50 ms) while JavaScript executes; when it returns true the running
     /// script is terminated as by [`TerminateHandle::terminate`]. Lets the

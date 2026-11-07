@@ -265,12 +265,25 @@ const NO_SHAPE: sys::spi::JSWrapperShapeRef = ptr::dangling_mut::<c_void>();
 /// handled and the engine hooks are not told.
 pub type ExceptionReporter = for<'s> fn(&Scope<'s>, &JsException) -> bool;
 
+/// The embedder's setup of a deferred realm ([`Engine::defer_realm_in_current_thread`]),
+/// run right after the realm's context and interfaces are made, when it is
+/// first entered.
+pub type DeferredSetup = Box<dyn FnOnce(&Realm) -> JsResult<()>>;
+
 pub(crate) struct RealmInner {
     pub(crate) id: RealmId,
     name: String,
     origin: RefCell<Option<String>>,
     pub(crate) engine: Rc<EngineInner>,
+    /// Null while the realm is deferred (`deferred` holds its setup) and
+    /// once it is disposed.
     pub(crate) ctx: Cell<sys::JSGlobalContextRef>,
+    /// A realm made with its id, name and origin but without a context yet:
+    /// the context, interfaces and this setup are made by the first
+    /// [`Realm::scope`]. Playwright's utility world is created for every
+    /// document and entered only by its actions, and a realm costs about
+    /// 1.3 ms of CPU.
+    deferred: RefCell<Option<DeferredSetup>>,
     /// Interface prototype objects by class id, null until the class is
     /// first populated (`materialize`) and past the classes this realm was
     /// created with. Kept alive by `interfaces[0]`, which only `materialize`
@@ -615,13 +628,23 @@ impl Realm {
     }
 
     pub fn is_disposed(&self) -> bool {
-        self.inner.ctx.get().is_null()
+        self.inner.ctx.get().is_null() && !self.is_deferred()
     }
 
-    /// Enters the realm. Fails after disposal or once the engine owner was
-    /// dropped. Everything derived from the scope borrows this handle, which
-    /// keeps the VM alive.
+    /// Whether the realm still waits for its first [`Realm::scope`] to be
+    /// made ([`Engine::defer_realm_in_current_thread`]): it has run no
+    /// script and holds no object.
+    pub fn is_deferred(&self) -> bool {
+        self.inner.deferred.borrow().is_some()
+    }
+
+    /// Enters the realm, making it first if it was deferred. Fails after
+    /// disposal or once the engine owner was dropped. Everything derived
+    /// from the scope borrows this handle, which keeps the VM alive.
     pub fn scope(&self) -> JsResult<Scope<'_>> {
+        if self.inner.ctx.get().is_null() && self.is_deferred() {
+            self.materialize_deferred()?;
+        }
         let ctx = self.inner.global_ctx()?;
         if self.inner.engine.is_shut_down() {
             return Err(JsError::ContextDestroyed);
@@ -629,11 +652,26 @@ impl Realm {
         Ok(Scope { ctx: ctx as sys::JSContextRef, realm: &self.inner })
     }
 
+    /// Makes a deferred realm: its context and interfaces, then the
+    /// embedder's setup. A failure disposes it.
+    #[cold]
+    #[inline(never)]
+    fn materialize_deferred(&self) -> JsResult<()> {
+        let setup = self.inner.deferred.borrow_mut().take().ok_or(JsError::ContextDestroyed)?;
+        let result = make_context(self).and_then(|()| setup(self));
+        if result.is_err() {
+            self.inner.dispose();
+        }
+        result
+    }
+
     /// Tears the realm down now: callbacks into its functions afterwards throw
     /// "Execution context was destroyed.", as reads of its global's constant
     /// attributes do (their values are released), persistent prototypes are
-    /// released and `EngineHooks::realm_destroyed` fires. Idempotent.
+    /// released and `EngineHooks::realm_destroyed` fires. Idempotent. A
+    /// deferred realm is never made.
     pub fn dispose(&self) {
+        drop(self.inner.deferred.borrow_mut().take());
         self.inner.dispose();
     }
 
@@ -1893,26 +1931,27 @@ pub(crate) unsafe extern "C" fn closure_call(
 const HELPERS_JS: &str = include_str!("helpers.js");
 
 pub(crate) fn create(engine: &Rc<EngineInner>, options: RealmOptions) -> JsResult<Realm> {
+    let realm = allocate(engine, options)?;
+    make_context(&realm)?;
+    Ok(realm)
+}
+
+/// A realm with its id, name and origin, whose context, interfaces and
+/// `setup` are made by its first [`Realm::scope`].
+pub(crate) fn create_deferred(engine: &Rc<EngineInner>, options: RealmOptions, setup: DeferredSetup) -> JsResult<Realm> {
+    let realm = allocate(engine, options)?;
+    *realm.inner.deferred.borrow_mut() = Some(setup);
+    Ok(realm)
+}
+
+/// The realm's state without a context: its id is taken now.
+fn allocate(engine: &Rc<EngineInner>, options: RealmOptions) -> JsResult<Realm> {
     if engine.is_shut_down() {
         return Err(JsError::ContextDestroyed);
     }
     if let Some(id) = options.global_class {
         if id as usize >= engine.classes.borrow().classes.len() {
             return Err(JsError::Type("unknown global class".into()));
-        }
-    }
-    // Always the default global implementation (JSAPIGlobalObject): only it
-    // supports the module loader. Its [[Prototype]] is immutable, so a host
-    // global class is emulated by copying its members onto the global
-    // (WebIDL puts [Global] interface members on the instance anyway).
-    let ctx = unsafe { sys::JSGlobalContextCreateInGroup(engine.group(), ptr::null()) };
-    // A window's chain gets a named properties object, as in the standard: own
-    // members and `var`s are found (and cached) first, and only a name the global
-    // lacks reaches it. The public API cannot change the global's prototype.
-    if options.global_class.is_some() {
-        if let Some(install) = sys::spi::get().install_named_properties {
-            // SAFETY: fresh context; nothing holds its global proxy yet.
-            unsafe { install(ctx, crate::class::named_properties_filter, Some(crate::class::named_properties_get)) };
         }
     }
     let id = RealmId(engine.next_realm_id.get());
@@ -1922,7 +1961,8 @@ pub(crate) fn create(engine: &Rc<EngineInner>, options: RealmOptions) -> JsResul
         name: options.name,
         origin: RefCell::new(options.origin),
         engine: engine.clone(),
-        ctx: Cell::new(ctx),
+        ctx: Cell::new(ptr::null_mut()),
+        deferred: RefCell::new(None),
         protos: RefCell::new(Vec::new()),
         shapes: RefCell::new(Vec::new()),
         interfaces: RefCell::new(None),
@@ -1950,8 +1990,7 @@ pub(crate) fn create(engine: &Rc<EngineInner>, options: RealmOptions) -> JsResul
         named_properties: RefCell::new(None),
         global_class: options.global_class,
         global_payload: Cell::new(ptr::null_mut()),
-        // SAFETY: fresh, retained global context.
-        global_object: Cell::new(unsafe { sys::JSContextGetGlobalObject(ctx) }),
+        global_object: Cell::new(ptr::null_mut()),
         global_target: Cell::new(ptr::null_mut()),
         global_constants: Cell::new(false),
         lazy_constants: RefCell::new(Vec::new()),
@@ -1959,13 +1998,40 @@ pub(crate) fn create(engine: &Rc<EngineInner>, options: RealmOptions) -> JsResul
         console_counts: RefCell::new(Default::default()),
         console_timers: RefCell::new(Default::default()),
     });
+    Ok(Realm { inner })
+}
+
+/// Makes the context of an allocated realm and installs the interfaces,
+/// console and module loader; `EngineHooks::realm_created` fires.
+fn make_context(realm: &Realm) -> JsResult<()> {
+    let inner = &realm.inner;
+    let engine = &inner.engine;
+    if engine.is_shut_down() {
+        return Err(JsError::ContextDestroyed);
+    }
+    // Always the default global implementation (JSAPIGlobalObject): only it
+    // supports the module loader. Its [[Prototype]] is immutable, so a host
+    // global class is emulated by copying its members onto the global
+    // (WebIDL puts [Global] interface members on the instance anyway).
+    let ctx = unsafe { sys::JSGlobalContextCreateInGroup(engine.group(), ptr::null()) };
+    // A window's chain gets a named properties object, as in the standard: own
+    // members and `var`s are found (and cached) first, and only a name the global
+    // lacks reaches it. The public API cannot change the global's prototype.
+    if inner.global_class.is_some() {
+        if let Some(install) = sys::spi::get().install_named_properties {
+            // SAFETY: fresh context; nothing holds its global proxy yet.
+            unsafe { install(ctx, crate::class::named_properties_filter, Some(crate::class::named_properties_get)) };
+        }
+    }
+    inner.ctx.set(ctx);
+    // SAFETY: fresh, retained global context.
+    inner.global_object.set(unsafe { sys::JSContextGetGlobalObject(ctx) });
     if let Some(target) = sys::spi::get().get_proxy_target {
         // SAFETY: the cached global proxy of a live context.
         let t = unsafe { target(inner.global_object.get()) };
         inner.global_target.set(t as sys::JSObjectRef);
     }
-    engine.realms.borrow_mut().insert(ctx as usize, Rc::downgrade(&inner));
-    let realm = Realm { inner };
+    engine.realms.borrow_mut().insert(ctx as usize, Rc::downgrade(inner));
     {
         let _watchdog = crate::engine::WatchdogPause::new(engine);
         let scope = realm.scope()?;
@@ -1989,9 +2055,9 @@ pub(crate) fn create(engine: &Rc<EngineInner>, options: RealmOptions) -> JsResul
         }
     }
     if let Some(h) = engine.hooks() {
-        h.realm_created(&realm);
+        h.realm_created(realm);
     }
-    Ok(realm)
+    Ok(())
 }
 
 /// Creates every interface object of the realm, with their inheritance.
@@ -2013,8 +2079,11 @@ fn install_classes(scope: &Scope<'_>) -> JsResult<()> {
     let n = reg.classes.len();
     // One call into JavaScript for all classes: per-class calls cost a VM
     // entry each, which dominated realm creation. The class table is the
-    // registry's, kept as JSON while classes register.
-    let spec = scope.parse_json(reg.spec_json()).expect("class spec is JSON");
+    // registry's, kept as it registers classes: one string of names and
+    // one Int32Array (`ClassRegistry::spec_names`).
+    let (spec_names, spec_data) = reg.spec();
+    let names = scope.string(spec_names);
+    let data = scope.int32_array(spec_data)?;
     // Filled in place: the array (on this stack) keeps each new function alive.
     let natives = scope.array(&[])?;
     for (i, info) in reg.classes.iter().enumerate() {
@@ -2027,7 +2096,8 @@ fn install_classes(scope: &Scope<'_>) -> JsResult<()> {
         };
         natives.set_index(i as u32, native)?;
     }
-    let result = install.call(None, &[spec, natives.value(), object_proto, global.value(), populate.value()])?;
+    let result =
+        install.call(None, &[names, data.value(), natives.value(), object_proto, global.value(), populate.value()])?;
     let result = result.as_object().expect("installInterfaces result");
     let lists: Vec<Object<'_>> = (0..3)
         .map(|k| result.get_index(k).map(|v| v.as_object().expect("installInterfaces list")))

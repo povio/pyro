@@ -48,6 +48,93 @@ fn isolated_world_event_reports_the_document_origin() {
 }
 
 #[test]
+fn an_isolated_world_nothing_fills_is_made_when_first_entered() {
+    // Playwright's utility world: an init script with no source for every
+    // document, then `Page.createIsolatedWorld`. The realm exists (id,
+    // origin, event) from the document's commit; its context is made by the
+    // first evaluation in it. A world with a script to run, or a binding,
+    // is made with the document, as before.
+    struct Worlds(RefCell<Vec<(Option<String>, String)>>);
+    impl PageObserver for Worlds {
+        fn on_page_event(&self, _page: PageId, event: &PageEvent) {
+            if let PageEvent::RealmCreated { world, origin, .. } = event {
+                self.0.borrow_mut().push((world.clone(), origin.clone()));
+            }
+        }
+    }
+    let mut thread = crate::browser_thread().unwrap();
+    let page = thread.browser.create_page().unwrap();
+    let worlds = Rc::new(Worlds(RefCell::new(Vec::new())));
+    thread.browser.set_observer(Some(worlds.clone()));
+    let script = |id: &str, world: &str, source: &str| InitScript {
+        id: id.into(),
+        world: Some(world.into()),
+        source: source.into(),
+    };
+    thread.browser.add_init_script(page, script("u", "utility", ""));
+    thread.browser.add_init_script(page, script("f", "filled", "globalThis.filled = 1"));
+    thread.browser.add_binding(page, lp_browser::Binding { name: "bound".into(), world: Some("bound".into()) });
+    thread.browser.add_init_script(page, script("b", "bound", ""));
+    let loader = Rc::new(StaticLoader::default());
+    loader.insert("http://site.test/path", "text/html", "<p>world</p><iframe></iframe>", Duration::ZERO);
+    thread.browser.set_loader(Some(loader));
+    worlds.0.borrow_mut().clear();
+    thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/path")).unwrap();
+    settle(&mut thread);
+    let announced: Vec<(Option<String>, String)> =
+        worlds.0.borrow().iter().filter(|(_, origin)| origin == "http://site.test").cloned().collect();
+    let named = |w: &str| (Some(w.to_owned()), "http://site.test".to_owned());
+    assert!(announced.contains(&(None, "http://site.test".to_owned())), "{announced:?}");
+    for world in ["utility", "filled", "bound"] {
+        assert!(announced.contains(&named(world)), "{world} announced at commit: {announced:?}");
+    }
+    let frame = thread.browser.page(page).unwrap().main_frame.clone();
+    let utility = frame.world("utility").unwrap().clone();
+    assert!(utility.is_deferred(), "nothing fills the utility world: deferred");
+    assert!(!utility.is_disposed());
+    assert!(!frame.world("filled").unwrap().is_deferred(), "a world with a script to run is made");
+    assert!(!frame.world("bound").unwrap().is_deferred(), "a world with a binding is made");
+    assert!(!frame.main_realm().unwrap().is_deferred());
+    // `Page.createIsolatedWorld` finds the deferred realm; a world nothing
+    // named is created on demand, deferred too, and announced.
+    let same = thread.browser.isolated_world(page, "utility").unwrap();
+    assert_eq!(same.id(), utility.id());
+    assert!(same.is_deferred());
+    let fresh = thread.browser.isolated_world(page, "fresh").unwrap();
+    assert!(fresh.is_deferred());
+    assert!(worlds.0.borrow().contains(&named("fresh")));
+    // Child frames come and go without making it.
+    eval(&thread, page, "document.body.appendChild(document.createElement('iframe')); 1");
+    settle(&mut thread);
+    assert!(utility.is_deferred());
+    // The first entry makes it: the Window, its document, its frames.
+    let read = utility
+        .scope()
+        .unwrap()
+        .eval(
+            "[document.querySelector('p').textContent, typeof filled, self === window, location.href, window.length, typeof window[1], typeof structuredClone].join()",
+            None,
+            1,
+        )
+        .unwrap()
+        .to_string()
+        .unwrap();
+    assert_eq!(read, "world,undefined,true,http://site.test/path,2,object,function");
+    assert!(!utility.is_deferred());
+    assert_eq!(thread.browser.page(page).unwrap().main_frame.world("utility").unwrap().id(), utility.id());
+    // Navigating away disposes the made one and the never-made one alike.
+    let loader = Rc::new(StaticLoader::default());
+    loader.insert("http://site.test/next", "text/html", "<p>next</p>", Duration::ZERO);
+    thread.browser.set_loader(Some(loader));
+    thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/next")).unwrap();
+    settle(&mut thread);
+    assert!(utility.is_disposed() && fresh.is_disposed());
+    let next = thread.browser.page(page).unwrap().main_frame.world("utility").unwrap().clone();
+    assert!(next.is_deferred() && next.id() != utility.id());
+    assert_eq!(eval(&thread, page, "document.querySelector('p').textContent"), "next");
+}
+
+#[test]
 fn bindings_exist_before_init_scripts_and_follow_document_lifecycle() {
     let mut thread = crate::browser_thread().unwrap();
     let page = thread.browser.create_page().unwrap();

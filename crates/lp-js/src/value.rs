@@ -703,6 +703,25 @@ impl<'s> Scope<'s> {
         check(self.ctx, exc)?;
         Ok(unsafe { Object::from_raw(self.ctx, o) })
     }
+    /// A new `Int32Array` holding a copy of `items`.
+    pub fn int32_array(&self, items: &[i32]) -> JsResult<Object<'s>> {
+        let mut exc = ptr::null();
+        // SAFETY: a zeroed array of `len` elements owned by JSC, filled
+        // before any script can see it.
+        unsafe {
+            let o = sys::JSObjectMakeTypedArray(self.ctx, sys::kJSTypedArrayTypeInt32Array, items.len(), &mut exc);
+            check(self.ctx, exc)?;
+            if !items.is_empty() {
+                let bytes = sys::JSObjectGetTypedArrayBytesPtr(self.ctx, o, &mut exc) as *mut i32;
+                check(self.ctx, exc)?;
+                if bytes.is_null() {
+                    return Err(JsError::Type("typed array without a backing store".into()));
+                }
+                ptr::copy_nonoverlapping(items.as_ptr(), bytes, items.len());
+            }
+            Ok(Object::from_raw(self.ctx, o))
+        }
+    }
     /// `new Date(time)` with the realm's intrinsic `Date`.
     pub fn date(&self, time: f64) -> JsResult<Object<'s>> {
         let arg = self.number(time);
