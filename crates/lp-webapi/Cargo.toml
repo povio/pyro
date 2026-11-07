@@ -15,6 +15,10 @@ aes-kw = { version = "0.2", features = ["alloc"] }
 base64 = "0.23.1"
 bytes = "1"
 cssparser = "0.38"
+# RSA (crypto_subtle/rsa.rs): constant-time big integers, prime generation and the
+# PKCS #1 key structures; the `rsa` crate itself carries RUSTSEC-2023-0071.
+crypto-bigint = { version = "0.7.10", features = ["alloc", "rand_core", "zeroize"] }
+crypto-primes = { version = "0.7.2", default-features = false }
 ed25519-dalek = "2"
 encoding_rs = "0.8"
 # CompressionStream / DecompressionStream; already lp-net's.
@@ -35,8 +39,9 @@ p384 = { version = "0.13", features = ["ecdh", "ecdsa", "pkcs8"] }
 p521 = { version = "0.13.3", features = ["ecdh", "ecdsa", "pkcs8"] }
 pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
 percent-encoding = "2.3.2"
+pkcs1 = { version = "0.7.5", features = ["alloc", "pkcs8"] }
+pkcs8 = { version = "0.10", features = ["alloc"] }
 rand_core = { version = "0.6", features = ["getrandom"] }
-rsa = { version = "0.9", features = ["sha2"] }
 rustc-hash = "2"
 sha1 = { version = "0.10", features = ["oid"] }
 sha2 = { version = "0.10", features = ["oid"] }

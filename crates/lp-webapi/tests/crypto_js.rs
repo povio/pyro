@@ -288,6 +288,66 @@ fn asymmetric_algorithms_sign_derive_and_round_trip_keys() {
     assert_eq!(out, expected.join("|"));
 }
 
+/// The WPT RSA vectors (one 2048-bit key) that rsa.rs's unit tests use.
+#[path = "../src/crypto_subtle/rsa/kat.rs"]
+#[allow(dead_code)]
+mod rsa_kat;
+
+#[test]
+fn rsa_matches_known_answers_through_subtle() {
+    let server = Server::new();
+    let env = Env::new(&server.url);
+    let body = format!(
+        r#"const s=crypto.subtle, out=[];
+        const pkcs8=unhex('{pkcs8}'), spki=unhex('{spki}'), msg=unhex('{signed}');
+        const pkcsAlg={{name:'RSASSA-PKCS1-v1_5',hash:'SHA-256'}}, pssAlg={{name:'RSA-PSS',hash:'SHA-256'}};
+        const pkcsKey=await s.importKey('pkcs8',pkcs8,pkcsAlg,true,['sign']);
+        const pkcsSig=await s.sign('RSASSA-PKCS1-v1_5',pkcsKey,msg);
+        const pkcsPub=await s.importKey('spki',spki,pkcsAlg,true,['verify']);
+        out.push(hex(pkcsSig)==='{pkcs1}', await s.verify('RSASSA-PKCS1-v1_5',pkcsPub,unhex('{pkcs1}'),msg),
+          pkcsKey.algorithm.modulusLength, hex(await s.exportKey('pkcs8',pkcsKey))===hex(pkcs8));
+        // The JWK round trip keeps every member, so it signs identically.
+        const jwk=await s.exportKey('jwk',pkcsKey);
+        const fromJwk=await s.importKey('jwk',jwk,pkcsAlg,true,['sign']);
+        out.push(hex(await s.sign('RSASSA-PKCS1-v1_5',fromJwk,msg))==='{pkcs1}', hex(await s.exportKey('pkcs8',fromJwk))===hex(pkcs8));
+        const badJwk={{...jwk,dp:jwk.dq}};
+        out.push(await fails(s.importKey('jwk',badJwk,pkcsAlg,true,['sign'])));
+        out.push(await fails(s.importKey('pkcs8',pkcs8.slice(0,-1),pkcsAlg,true,['sign'])));
+        // saltLength 0 makes RSA-PSS deterministic.
+        const pssKey=await s.importKey('pkcs8',pkcs8,pssAlg,false,['sign']);
+        const pssPub=await s.importKey('spki',spki,pssAlg,false,['verify']);
+        out.push(hex(await s.sign({{name:'RSA-PSS',saltLength:0}},pssKey,msg))==='{pss0}',
+          await s.verify({{name:'RSA-PSS',saltLength:32}},pssPub,unhex('{pss32}'),msg),
+          await s.verify({{name:'RSA-PSS',saltLength:31}},pssPub,unhex('{pss32}'),msg),
+          await fails(s.sign({{name:'RSA-PSS',saltLength:223}},pssKey,msg)));
+        const oaepAlg={{name:'RSA-OAEP',hash:'SHA-256'}};
+        const oaepKey=await s.importKey('pkcs8',pkcs8,oaepAlg,false,['decrypt']);
+        const oaepPub=await s.importKey('spki',spki,oaepAlg,false,['encrypt']);
+        out.push(hex(await s.decrypt({{name:'RSA-OAEP',label:unhex('{label}')}},oaepKey,unhex('{oaep}')))==='{plain}',
+          await fails(s.decrypt({{name:'RSA-OAEP'}},oaepKey,unhex('{oaep}'))));
+        // Labels need not be UTF-8.
+        const binary=new Uint8Array([0xff,0x00,0xfe]);
+        const c=await s.encrypt({{name:'RSA-OAEP',label:binary}},oaepPub,unhex('{plain}'));
+        out.push(c.byteLength, hex(await s.decrypt({{name:'RSA-OAEP',label:binary}},oaepKey,c))==='{plain}',
+          await fails(s.encrypt({{name:'RSA-OAEP'}},oaepPub,unhex('{plain}00'))));
+        return out.join('|');"#,
+        pkcs8 = rsa_kat::PKCS8,
+        spki = rsa_kat::SPKI,
+        signed = rsa_kat::SIGNED,
+        pkcs1 = rsa_kat::PKCS1_SIGNATURES[1],
+        pss0 = rsa_kat::PSS_UNSALTED_SIGNATURES[1],
+        pss32 = rsa_kat::PSS_SALTED_SIGNATURES[1],
+        label = rsa_kat::OAEP_LABEL,
+        oaep = rsa_kat::OAEP_LABELED_CIPHERTEXTS[1],
+        plain = rsa_kat::OAEP_PLAINTEXTS[1],
+    );
+    let out = run(&env, &body);
+    assert_eq!(
+        out,
+        "true|true|2048|true|true|true|DataError|DataError|true|true|false|OperationError|true|OperationError|256|true|OperationError"
+    );
+}
+
 #[test]
 fn crypto_keys_are_structured_cloneable() {
     let server = Server::new();

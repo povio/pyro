@@ -20,7 +20,7 @@ provides:
 normalization and the per-algorithm steps of the Web Crypto API) over the
 byte primitives of `crypto_subtle.rs` (RustCrypto: `aes`, `ghash`, `aes-kw`,
 `hmac`, `pbkdf2`, `hkdf`, `p256`/`p384`/`p521`, `ed25519-dalek`,
-`x25519-dalek`, `rsa`). The script is made on a realm's first SubtleCrypto
+`x25519-dalek`) and, for RSA, `crypto_subtle/rsa.rs` (below). The script is made on a realm's first SubtleCrypto
 call other than `digest`, or its first read of `CryptoKey`; a realm that never
 uses keys pays one global accessor.
 
@@ -59,6 +59,49 @@ JWK export orders
 members alphabetically (a dictionary converted to JS); EC and X25519 JWKs carry
 no `alg`, Ed25519 JWKs carry `alg: "Ed25519"`.
 
+## RSA implementation
+
+RSA is implemented in `crates/lp-webapi/src/crypto_subtle/rsa.rs` on
+`crypto-bigint` 0.7 (constant-time big integers) and `crypto-primes` 0.7
+(key generation), with the `pkcs1`/`pkcs8` crates for DER. We do not use the
+`rsa` crate: every release, including the 0.10 release candidates, carries
+RUSTSEC-2023-0071 (Marvin attack, a timing side channel in the private-key
+operation), and the advisory lists no fixed version. The alternatives were
+worse fits: `ring` cannot generate RSA keys or decrypt RSA-OAEP, and
+`aws-lc-rs` adds a C/assembly build and supports neither arbitrary RSA-PSS
+salt lengths nor modulus lengths other than 2048/3072/4096/8192 for
+generation.
+
+- Private-key operations (sign, decrypt) use CRT with crypto-bigint's
+  fixed-window Montgomery exponentiation, whose time depends only on the
+  operand sizes. The input is blinded with a fresh `r^e` each time, and the
+  result is checked against the public operation before it is used (a
+  faulty or inconsistent key fails with OperationError instead of leaking a
+  prime).
+- RSA-OAEP decoding examines every byte and fails with one OperationError
+  whatever was wrong. Web Crypto has no RSAES-PKCS1-v1_5 decryption, the
+  padding the Marvin attack targets.
+- Imported private keys are checked as BoringSSL's `RSA_check_key` does:
+  n = pq, de = 1 mod (p - 1) and mod (q - 1), and the given CRT values
+  (`dp`, `dq`, `qi`, in PKCS #8 and JWK alike) must be the ones the key
+  implies. Primality is not tested. Public keys need an odd modulus of at
+  most 16384 bits and an odd exponent from 3 to 2^33 - 1 (BoringSSL's
+  bounds). Multi-prime PKCS #8 keys reject with DataError, as in Chromium.
+- Generated keys have exactly the requested modulus length (two top bits
+  set in each prime) and d = e^-1 mod lcm(p - 1, q - 1). A 2048-bit
+  generation takes about 60 ms and a 2048-bit signature about 1.5 ms
+  (optimized build on an Apple Silicon laptop).
+- Known-answer tests: `crypto_subtle/rsa/kat.rs` holds the WPT RSA vectors
+  (PKCS #1 v1.5 and unsalted PSS signatures reproduced byte for byte, salted
+  PSS signatures verified, OAEP ciphertexts with and without a label
+  decrypted), used by the unit tests in `rsa.rs` and, through
+  `crypto.subtle`, by `tests/crypto_js.rs`.
+
+`cargo audit` still reports RUSTSEC-2026-0387 for `crypto-bigint` 0.5.5,
+which reaches the tree through `elliptic-curve` 0.13 (`p256`/`p384`/`p521`,
+ECDSA/ECDH); RSA uses crypto-bigint 0.7.10, which has the fix. Moving the EC
+crates to their 0.14 releases removes that one.
+
 ## CryptoKey
 
 `type`, `extractable`, `algorithm` and `usages` (the last two are the same
@@ -76,10 +119,9 @@ not made subtle.js has no keys, so this costs it nothing.
 - CryptoKeys do not cross to or from a worker by `postMessage` (the worker
   wire format has no CryptoKey): DataCloneError, as for other unsupported
   objects.
-- RSA-OAEP labels must be valid UTF-8 (the `rsa` crate keeps the label as a
-  string); other labels reject with `NotSupportedError`.
 - RSA JWKs need all CRT members (`p`, `q`, `dp`, `dq`, `qi`) for private
-  keys; multi-prime keys (`oth`) are not supported. JWK members are decoded
+  keys; multi-prime keys (`oth` in JWK, other-prime infos in PKCS #8) are
+  not supported. JWK members are decoded
   as unpadded base64url.
 - Not implemented: the `raw-secret`/`raw-public`/`raw-private` formats, Ed448,
   X448, and the modern algorithms (ML-KEM, ML-DSA, AES-OCB, ChaCha20-Poly1305,

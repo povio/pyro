@@ -14,11 +14,11 @@ use base64::Engine as _;
 use ghash::universal_hash::UniversalHash;
 use hmac::{Hmac, Mac};
 use lp_js::{JsError, JsResult, Object, Scope, Value};
-use rand_core::OsRng;
-use rsa::traits::{PrivateKeyParts, PublicKeyParts};
-use rsa::{BigUint, Oaep, Pkcs1v15Sign, Pss, RsaPrivateKey, RsaPublicKey};
+use rsa::{PrivateKey as RsaPrivateKey, PublicKey as RsaPublicKey};
 use sha1::Sha1;
 use sha2::{Digest, Sha256, Sha384, Sha512};
+
+mod rsa;
 
 fn data_error(message: impl Into<String>) -> JsError {
     JsError::dom("DataError", message)
@@ -544,59 +544,14 @@ fn okp_public_of(kind: &str, private: &[u8]) -> JsResult<Vec<u8>> {
     })
 }
 
-// ----- RSA ---------------------------------------------------------------
+// ----- RSA (rsa.rs) -------------------------------------------------------
 
 fn rsa_private(der: &[u8]) -> JsResult<RsaPrivateKey> {
-    use rsa::pkcs8::DecodePrivateKey;
-    let key = RsaPrivateKey::from_pkcs8_der(der).map_err(|_| data_error("Invalid RSA private key"))?;
-    key.validate().map_err(|_| data_error("Invalid RSA private key"))?;
-    Ok(key)
-}
-
-/// The largest modulus generateKey makes (Chromium's limit); the rsa crate's
-/// own public key parsers stop at 4096 bits.
-const RSA_MAX_BITS: usize = 16384;
-
-fn rsa_public_key(n: BigUint, e: BigUint) -> JsResult<RsaPublicKey> {
-    RsaPublicKey::new_with_max_size(n, e, RSA_MAX_BITS).map_err(|_| data_error("Invalid RSA public key"))
+    RsaPrivateKey::from_pkcs8(der)
 }
 
 fn rsa_public(der: &[u8]) -> JsResult<RsaPublicKey> {
-    use rsa::pkcs8::der::{asn1::Null, Decode};
-    let invalid = || data_error("Invalid RSA public key");
-    let spki = rsa::pkcs8::SubjectPublicKeyInfoRef::from_der(der).map_err(|_| invalid())?;
-    if spki.algorithm.oid != rsa::pkcs1::ALGORITHM_OID || spki.algorithm.parameters_any().ok() != Some(Null.into()) {
-        return Err(invalid());
-    }
-    let key = rsa::pkcs1::RsaPublicKey::from_der(spki.subject_public_key.as_bytes().ok_or_else(invalid)?)
-        .map_err(|_| invalid())?;
-    rsa_public_key(big(key.modulus.as_bytes()), big(key.public_exponent.as_bytes()))
-}
-
-fn rsa_pkcs8(key: &RsaPrivateKey) -> JsResult<Vec<u8>> {
-    use rsa::pkcs8::EncodePrivateKey;
-    Ok(key.to_pkcs8_der().map_err(|_| operation_error("cannot encode the key"))?.as_bytes().to_vec())
-}
-
-fn rsa_spki(key: &RsaPublicKey) -> JsResult<Vec<u8>> {
-    use rsa::pkcs8::EncodePublicKey;
-    Ok(key.to_public_key_der().map_err(|_| operation_error("cannot encode the key"))?.as_bytes().to_vec())
-}
-
-/// Ranges Chromium accepts for generation.
-fn rsa_generate(bits: u32, exponent: &[u8]) -> JsResult<RsaPrivateKey> {
-    let e = BigUint::from_bytes_be(exponent);
-    if e != BigUint::from(3u32) && e != BigUint::from(65537u32) {
-        return Err(operation_error("The RSA public exponent must be 3 or 65537"));
-    }
-    if !(256..=16384).contains(&bits) || !bits.is_multiple_of(8) {
-        return Err(operation_error("The RSA modulus length must be a multiple of 8 between 256 and 16384"));
-    }
-    RsaPrivateKey::new_with_exp(&mut OsRng, bits as usize, &e).map_err(|e| operation_error(e.to_string()))
-}
-
-fn big(bytes: &[u8]) -> BigUint {
-    BigUint::from_bytes_be(bytes)
+    RsaPublicKey::from_spki(der)
 }
 
 // ----- The natives object --------------------------------------------------
@@ -606,8 +561,8 @@ fn big(bytes: &[u8]) -> BigUint {
 fn imported<'s>(s: &Scope<'s>, private: bool, material: &[u8], rsa: Option<&RsaPublicKey>) -> JsResult<Value<'s>> {
     let mut items = vec![s.string(if private { "private" } else { "public" }), buffer(s, material)?];
     if let Some(key) = rsa {
-        items.push(s.number(key.n().bits() as f64));
-        items.push(buffer(s, &key.e().to_bytes_be())?);
+        items.push(s.number(key.bits() as f64));
+        items.push(buffer(s, &key.e_bytes())?);
     }
     Ok(s.array(&items)?.value())
 }
@@ -676,35 +631,27 @@ fn import_asym<'s>(s: &Scope<'s>, kind: &str, curve: &str, format: &str, data: V
         }
         ("RSA", "pkcs8") => {
             let key = rsa_private(&bytes_arg(s, data)?)?;
-            imported(s, true, &rsa_pkcs8(&key)?, Some(&key.to_public_key()))
+            imported(s, true, &key.to_pkcs8()?, Some(key.public()))
         }
         ("RSA", "spki") => {
             let key = rsa_public(&bytes_arg(s, data)?)?;
-            imported(s, false, &rsa_spki(&key)?, Some(&key))
+            imported(s, false, &key.to_spki()?, Some(&key))
         }
         ("RSA", "jwk") => {
             let p = jwk_parts(data, 8)?;
-            let n = big(&required(&p[0], "n")?);
-            let e = big(&required(&p[1], "e")?);
+            let n = required(&p[0], "n")?;
+            let e = required(&p[1], "e")?;
             match &p[2] {
                 None => {
-                    let key = rsa_public_key(n, e)?;
-                    imported(s, false, &rsa_spki(&key)?, Some(&key))
+                    let key = RsaPublicKey::from_components(&n, &e)?;
+                    imported(s, false, &key.to_spki()?, Some(&key))
                 }
                 Some(d) => {
                     let names = ["p", "q", "dp", "dq", "qi"];
-                    let crt: Vec<BigUint> =
-                        (0..5).map(|i| required(&p[3 + i], names[i]).map(|b| big(&b))).collect::<JsResult<_>>()?;
-                    let key = RsaPrivateKey::from_components(n, e, big(d), vec![crt[0].clone(), crt[1].clone()])
-                        .map_err(|_| data_error("Invalid RSA private key"))?;
-                    key.validate().map_err(|_| data_error("Invalid RSA private key"))?;
-                    let matches = key.dp() == Some(&crt[2])
-                        && key.dq() == Some(&crt[3])
-                        && key.crt_coefficient().as_ref() == Some(&crt[4]);
-                    if !matches {
-                        return Err(data_error("The JWK CRT members do not match the key"));
-                    }
-                    imported(s, true, &rsa_pkcs8(&key)?, Some(&key.to_public_key()))
+                    let crt: Vec<Vec<u8>> = (0..5).map(|i| required(&p[3 + i], names[i])).collect::<JsResult<_>>()?;
+                    let key =
+                        RsaPrivateKey::from_components(&n, &e, d, &crt[0], &crt[1], Some([&crt[2], &crt[3], &crt[4]]))?;
+                    imported(s, true, &key.to_pkcs8()?, Some(key.public()))
                 }
             }
         }
@@ -740,32 +687,12 @@ fn export_asym<'s>(
         ("Ed25519" | "X25519", "jwk", true) => strings(s, &[material, &okp_public_of(kind, material)?]),
         ("RSA", "jwk", false) => {
             let key = rsa_public(material)?;
-            strings(s, &[&key.n().to_bytes_be(), &key.e().to_bytes_be()])
+            strings(s, &[&key.n_bytes(), &key.e_bytes()])
         }
         ("RSA", "jwk", true) => {
-            let mut key = rsa_private(material)?;
-            key.precompute().map_err(|_| operation_error("cannot export the key"))?;
-            let primes = key.primes();
-            if primes.len() != 2 {
-                return Err(operation_error("Multi-prime RSA keys cannot be exported as JWK"));
-            }
-            let missing = || operation_error("cannot export the key");
-            let dp = key.dp().ok_or_else(missing)?.to_bytes_be();
-            let dq = key.dq().ok_or_else(missing)?.to_bytes_be();
-            let qi = key.crt_coefficient().ok_or_else(missing)?.to_bytes_be();
-            strings(
-                s,
-                &[
-                    &key.n().to_bytes_be(),
-                    &key.e().to_bytes_be(),
-                    &key.d().to_bytes_be(),
-                    &primes[0].to_bytes_be(),
-                    &primes[1].to_bytes_be(),
-                    &dp,
-                    &dq,
-                    &qi,
-                ],
-            )
+            let parts = rsa_private(material)?.components();
+            let parts: Vec<&[u8]> = parts.iter().map(Vec::as_slice).collect();
+            strings(s, &parts)
         }
         _ => Err(JsError::dom("InvalidAccessError", format!("The key cannot be exported as '{format}'"))),
     }
@@ -783,58 +710,21 @@ fn generate_asym<'s>(s: &Scope<'s>, kind: &str, curve: &str, bits: u32, exponent
             (seed.to_vec(), public)
         }
         "RSA" => {
-            let key = rsa_generate(bits, exponent)?;
-            (rsa_pkcs8(&key)?, rsa_spki(&key.to_public_key())?)
+            let key = RsaPrivateKey::generate(bits, exponent)?;
+            (key.to_pkcs8()?, key.public().to_spki()?)
         }
         _ => return Err(JsError::dom("NotSupportedError", "Unsupported algorithm")),
     };
     Ok(s.array(&[buffer(s, &private)?, buffer(s, &public)?])?.value())
 }
 
-/// `[scheme]` of an RSA signature: "PKCS1" or "PSS" with its salt length.
-fn rsa_sign(scheme: &str, hash: Hash, salt: usize, der: &[u8], data: &[u8]) -> JsResult<Vec<u8>> {
-    let key = rsa_private(der)?;
-    let hashed = hash.digest(data);
-    let result = with_hash!(hash, D => if scheme == "PSS" {
-        key.sign_with_rng(&mut OsRng, Pss::new_with_salt::<D>(salt), &hashed)
-    } else {
-        key.sign(Pkcs1v15Sign::new::<D>(), &hashed)
-    });
-    result.map_err(|e| operation_error(e.to_string()))
-}
-
-fn rsa_verify(scheme: &str, hash: Hash, salt: usize, der: &[u8], signature: &[u8], data: &[u8]) -> JsResult<bool> {
-    let key = rsa_public(der)?;
-    let hashed = hash.digest(data);
-    Ok(with_hash!(hash, D => if scheme == "PSS" {
-        key.verify(Pss::new_with_salt::<D>(salt), &hashed, signature)
-    } else {
-        key.verify(Pkcs1v15Sign::new::<D>(), &hashed, signature)
-    })
-    .is_ok())
-}
-
+/// RSA-OAEP: encrypt with an SPKI key or decrypt with a PKCS #8 key.
 fn rsa_oaep(encrypt: bool, hash: Hash, label: &[u8], der: &[u8], data: &[u8]) -> JsResult<Vec<u8>> {
-    // The rsa crate keeps the label as a String.
-    let label = if label.is_empty() {
-        None
+    if encrypt {
+        rsa::oaep_encrypt(hash, label, &rsa_public(der)?, data)
     } else {
-        Some(String::from_utf8(label.to_vec()).map_err(|_| {
-            JsError::dom("NotSupportedError", "RSA-OAEP labels that are not UTF-8 are not supported by lightningpanda")
-        })?)
-    };
-    let result = with_hash!(hash, D => {
-        let padding = match label {
-            Some(label) => Oaep::new_with_label::<D, String>(label),
-            None => Oaep::new::<D>(),
-        };
-        if encrypt {
-            rsa_public(der)?.encrypt(&mut OsRng, padding, data)
-        } else {
-            rsa_private(der)?.decrypt(padding, data)
-        }
-    });
-    result.map_err(|e| operation_error(e.to_string()))
+        rsa::oaep_decrypt(hash, label, &rsa_private(der)?, data)
+    }
 }
 
 fn sign_asym(kind: &str, curve: &str, hash: Hash, salt: usize, der: &[u8], data: &[u8]) -> JsResult<Vec<u8>> {
@@ -845,7 +735,7 @@ fn sign_asym(kind: &str, curve: &str, hash: Hash, salt: usize, der: &[u8], data:
             let seed: [u8; 32] = der.try_into().map_err(|_| data_error("Invalid Ed25519 private key"))?;
             Ok(ed25519_dalek::SigningKey::from_bytes(&seed).sign(data).to_bytes().to_vec())
         }
-        "PKCS1" | "PSS" => rsa_sign(kind, hash, salt, der, data),
+        "PKCS1" | "PSS" => rsa::sign(kind, hash, salt, &rsa_private(der)?, data),
         _ => Err(JsError::dom("NotSupportedError", "Unsupported algorithm")),
     }
 }
@@ -868,7 +758,7 @@ fn verify_asym(
             // Strict: small-order keys and R values do not verify, as in Chromium.
             Ok(key.verify_strict(data, &signature).is_ok())
         }
-        "PKCS1" | "PSS" => rsa_verify(kind, hash, salt, der, signature, data),
+        "PKCS1" | "PSS" => Ok(rsa::verify(kind, hash, salt, &rsa_public(der)?, signature, data)),
         _ => Err(JsError::dom("NotSupportedError", "Unsupported algorithm")),
     }
 }
@@ -973,7 +863,7 @@ pub(crate) fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         let (kind, curve, material) = (str_arg(a.get(0))?, str_arg(a.get(1))?, bytes_arg(s, a.get(2))?);
         let public = match kind.as_str() {
             "EC" => on_curve!(curve.as_str(), public_of(&material))?,
-            "RSA" => rsa_spki(&rsa_private(&material)?.to_public_key())?,
+            "RSA" => rsa_private(&material)?.public().to_spki()?,
             _ => okp_public_of(&kind, &material)?,
         };
         buffer(s, &public)
@@ -1133,9 +1023,9 @@ mod tests {
 
     #[test]
     fn rsa_signatures_and_oaep_round_trip() {
-        let key = rsa_generate(1024, &[1, 0, 1]).unwrap();
-        let private = rsa_pkcs8(&key).unwrap();
-        let public = rsa_spki(&key.to_public_key()).unwrap();
+        let key = RsaPrivateKey::generate(1024, &[1, 0, 1]).unwrap();
+        let private = key.to_pkcs8().unwrap();
+        let public = key.public().to_spki().unwrap();
         for scheme in ["PKCS1", "PSS"] {
             let signature = sign_asym(scheme, "", Hash::Sha256, 32, &private, b"data").unwrap();
             assert!(verify_asym(scheme, "", Hash::Sha256, 32, &public, &signature, b"data").unwrap());
@@ -1143,19 +1033,8 @@ mod tests {
         }
         let c = rsa_oaep(true, Hash::Sha1, b"label", &public, b"secret").unwrap();
         assert_eq!(rsa_oaep(false, Hash::Sha1, b"label", &private, &c).unwrap(), b"secret");
-        assert!(rsa_generate(1024, &[1, 0, 0]).is_err());
-    }
-
-    #[test]
-    fn rsa_public_keys_import_up_to_the_generation_limit() {
-        use rsa::pkcs8::EncodePublicKey;
-        // An 8192-bit modulus: beyond the rsa crate's 4096-bit parser limit.
-        let mut n = vec![0xffu8; 1024];
-        n[1023] = 0xfd;
-        let key = RsaPublicKey::new_unchecked(big(&n), big(&[1, 0, 1]));
-        let der = key.to_public_key_der().unwrap();
-        assert_eq!(rsa_public(der.as_bytes()).unwrap().n().bits(), 8192);
-        assert!(rsa_public_key(big(&[0xff; 2049]), big(&[1, 0, 1])).is_err());
-        assert!(rsa_public(&der.as_bytes()[..der.as_bytes().len() - 1]).is_err());
+        // A public key where a private key belongs (and the reverse) is a DataError.
+        assert!(sign_asym("PKCS1", "", Hash::Sha256, 0, &public, b"data").is_err());
+        assert!(rsa_oaep(true, Hash::Sha1, b"", &private, b"secret").is_err());
     }
 }
