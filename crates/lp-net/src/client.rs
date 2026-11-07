@@ -27,6 +27,7 @@ use url::Url;
 use crate::auth::auth_challenge;
 use crate::cookies::{site_context, CookieJar, SiteContext};
 use crate::cors::{self, PreflightCache};
+use crate::h2_probe::{H2Sessions, ProbeConnector};
 use crate::proxy::{basic_authorization, ProxyConfig, ProxyConnector, ProxyError, ProxyState};
 use crate::referrer::FetchSite;
 use crate::request::*;
@@ -599,7 +600,7 @@ impl NetClient {
 // ---------------------------------------------------------------------------
 // I/O thread
 
-type HttpClient = Client<hyper_rustls::HttpsConnector<ProxyConnector>, Full<Bytes>>;
+type HttpClient = Client<ProbeConnector<hyper_rustls::HttpsConnector<ProxyConnector>>, Full<Bytes>>;
 
 /// The TLS settings of every client: Mozilla's root certificates (webpki-roots),
 /// rustls on ring. Plain data, built once per process (a fork child keeps it;
@@ -676,8 +677,14 @@ impl rustls::client::danger::ServerCertVerifier for AnyCertificate {
     }
 }
 
-/// An HTTP(S) client over `tls`, with this context's connect settings.
-fn http_client(config: &NetConfig, tls: &rustls::ClientConfig, proxy: Option<Arc<ProxyState>>) -> HttpClient {
+/// An HTTP(S) client over `tls`, with this context's connect settings. Its
+/// HTTP/2 connections are registered in `sessions` (WebSockets over HTTP/2).
+fn http_client(
+    config: &NetConfig,
+    tls: &rustls::ClientConfig,
+    proxy: Option<Arc<ProxyState>>,
+    sessions: Arc<H2Sessions>,
+) -> HttpClient {
     let mut connector = HttpConnector::new_with_resolver(crate::timing::TimedResolver::new());
     connector.set_connect_timeout(Some(config.connect_timeout));
     connector.set_nodelay(true);
@@ -689,6 +696,7 @@ fn http_client(config: &NetConfig, tls: &rustls::ClientConfig, proxy: Option<Arc
         .enable_http1()
         .enable_http2()
         .wrap_connector(connector);
+    let connector = ProbeConnector::new(connector, sessions);
     Client::builder(TokioExecutor::new()).pool_idle_timeout(Duration::from_secs(30)).build(connector)
 }
 
@@ -801,6 +809,9 @@ struct Io {
     client: HttpClient,
     /// Built at the first request made while certificate errors are ignored.
     insecure: std::cell::OnceCell<HttpClient>,
+    /// The HTTP/2 connections of `client` and of `insecure`.
+    sessions: Arc<H2Sessions>,
+    insecure_sessions: Arc<H2Sessions>,
     preflight: Mutex<PreflightCache>,
     per_origin: Mutex<HashMap<String, Arc<Semaphore>>>,
     /// Origins whose semaphore grew to `max_per_h2_origin`.
@@ -823,12 +834,15 @@ fn io_main(mut rx: mpsc::UnboundedReceiver<Cmd>, shared: Arc<Shared>, cookies: A
     };
     let local = tokio::task::LocalSet::new();
     local.block_on(&rt, async move {
-        let client = http_client(&shared.config, &tls_config(), shared.proxy.clone());
+        let sessions = Arc::new(H2Sessions::default());
+        let client = http_client(&shared.config, &tls_config(), shared.proxy.clone(), sessions.clone());
         let io = std::rc::Rc::new(Io {
             shared,
             cookies,
             client,
             insecure: std::cell::OnceCell::new(),
+            sessions,
+            insecure_sessions: Arc::new(H2Sessions::default()),
             preflight: Mutex::new(PreflightCache::default()),
             per_origin: Mutex::new(HashMap::new()),
             h2_origins: Mutex::new(HashSet::new()),
@@ -1327,13 +1341,25 @@ impl Io {
             *h = headers;
         }
         let r = b.body(Full::new(body.unwrap_or_default())).map_err(|_| SendError::Net(NetError::InvalidUrl))?;
-        let client = if self.shared.ignore_certificate_errors.load(Ordering::Relaxed) {
-            self.insecure
-                .get_or_init(|| http_client(&self.shared.config, &tls_config_insecure(), self.shared.proxy.clone()))
+        self.pooled().0.request(r).await.map_err(|e| classify(&e))
+    }
+
+    /// The pooled client for the context's current certificate mode, and the
+    /// registry of its HTTP/2 connections.
+    fn pooled(&self) -> (&HttpClient, &Arc<H2Sessions>) {
+        if self.shared.ignore_certificate_errors.load(Ordering::Relaxed) {
+            let client = self.insecure.get_or_init(|| {
+                http_client(
+                    &self.shared.config,
+                    &tls_config_insecure(),
+                    self.shared.proxy.clone(),
+                    self.insecure_sessions.clone(),
+                )
+            });
+            (client, &self.insecure_sessions)
         } else {
-            &self.client
-        };
-        client.request(r).await.map_err(|e| classify(&e))
+            (&self.client, &self.sessions)
+        }
     }
 
     async fn run(&self, id: RequestId, mut req: Request, sink: &SharedSink) -> Result<(), NetError> {

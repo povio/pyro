@@ -166,7 +166,7 @@ fn request(port: u16, path: &str, protocols: &[&str]) -> WebSocketRequest {
     }
 }
 
-fn open(client: &NetClient, req: WebSocketRequest) -> (RequestId, WebSocketHandle, mpsc::Receiver<WsEvent>) {
+pub(crate) fn open(client: &NetClient, req: WebSocketRequest) -> (RequestId, WebSocketHandle, mpsc::Receiver<WsEvent>) {
     let (tx, rx) = mpsc::channel();
     let (id, handle) = client.websocket(
         req,
@@ -177,12 +177,12 @@ fn open(client: &NetClient, req: WebSocketRequest) -> (RequestId, WebSocketHandl
     (id, handle, rx)
 }
 
-fn next(rx: &mpsc::Receiver<WsEvent>) -> WsEvent {
+pub(crate) fn next(rx: &mpsc::Receiver<WsEvent>) -> WsEvent {
     rx.recv_timeout(Duration::from_secs(5)).expect("websocket event")
 }
 
 /// The next event that is not a `Sent` count.
-fn next_message(rx: &mpsc::Receiver<WsEvent>) -> WsEvent {
+pub(crate) fn next_message(rx: &mpsc::Receiver<WsEvent>) -> WsEvent {
     loop {
         match next(rx) {
             WsEvent::Sent(_) => continue,
