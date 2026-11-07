@@ -31,7 +31,7 @@ use std::rc::{Rc, Weak};
 use std::sync::Arc;
 
 use kurbo::{Affine, BezPath, Point, Rect};
-use lp_canvas::{ClipPath, Color, Composite, DrawState, Paint, Pixmap, Surface};
+use lp_canvas::{Bitmap, ClipPath, Color, Composite, DrawState, Paint, Pixmap, Surface};
 use lp_dom::text_metrics::{self, FontSpec};
 use lp_dom::NodeId;
 use lp_js::sys;
@@ -503,7 +503,7 @@ pub(crate) fn to_blob<'s>(s: &Scope<'s>, page: &Rc<PageDom>, canvas: NodeId, a: 
 #[derive(Clone)]
 struct ImageHandle {
     /// `None`: transparent black.
-    pixmap: Option<Arc<Pixmap>>,
+    pixmap: Option<Bitmap>,
     width: u32,
     height: u32,
     clean: bool,
@@ -635,15 +635,16 @@ fn image_source(
         2 => {
             let (w, h) = (size_u32(desc.get_index(2)?.to_number()?), size_u32(desc.get_index(3)?.to_number()?));
             let data = typed_bytes(s, desc.get_index(1)?)?;
-            let pixmap = lp_canvas::pixmap_from_straight(data, w, h).map(Arc::new);
+            let pixmap = lp_canvas::pixmap_from_straight(data, w, h).and_then(Bitmap::new);
             Ok(Some(ImageHandle { pixmap, width: w, height: h, clean: true }))
         }
         3 => {
             let blob = s.unwrap::<crate::file::Blob>(desc.get_index(1)?).ok_or_else(not_source)?;
             let pixmap = lp_canvas::codec::decode(&blob.bytes)
+                .and_then(Bitmap::new)
                 .ok_or_else(|| JsError::dom("InvalidStateError", "The source image could not be decoded."))?;
             let (w, h) = (u32::from(pixmap.width()), u32::from(pixmap.height()));
-            Ok(Some(ImageHandle { pixmap: Some(Arc::new(pixmap)), width: w, height: h, clean: true }))
+            Ok(Some(ImageHandle { pixmap: Some(pixmap), width: w, height: h, clean: true }))
         }
         _ => Err(not_source()),
     }
@@ -789,7 +790,7 @@ fn pattern_paint(record: Object<'_>) -> JsResult<Option<(Paint, bool)>> {
     let transform = if t.len() == 6 { Affine::new([t[0], t[1], t[2], t[3], t[4], t[5]]) } else { Affine::IDENTITY };
     // A transparent source paints nothing visible: a 1x1 transparent image
     // keeps the pattern's geometry rules simple.
-    let image = handle.pixmap.unwrap_or_else(|| Arc::new(Pixmap::new(1, 1)));
+    let Some(image) = handle.pixmap.or_else(|| Bitmap::new(Pixmap::new(1, 1))) else { return Ok(None) };
     let pattern = lp_canvas::Pattern {
         image,
         repeat_x: matches!(repetition.as_str(), "repeat" | "repeat-x"),

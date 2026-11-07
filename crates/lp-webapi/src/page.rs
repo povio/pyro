@@ -21,6 +21,9 @@ pub(crate) const EVENT_NS: u64 = 1 << 62;
 
 /// Most encoded image bytes a document keeps for canvas use.
 pub const MAX_IMAGE_BYTES_KEPT: usize = 64 * 1024 * 1024;
+/// Most decoded image bytes a document keeps cached for canvas use: images
+/// decoded past it are decoded again on each use.
+pub const MAX_IMAGE_DECODED_KEPT: usize = 256 * 1024 * 1024;
 
 /// A loaded `<img>`'s encoded bytes ([`PageDom::set_image_bytes`]).
 struct ImageBytes {
@@ -28,7 +31,14 @@ struct ImageBytes {
     clean: bool,
     /// The decoded pixels once a canvas used them (`Some(None)`: they do
     /// not decode).
-    decoded: Option<Option<std::sync::Arc<lp_canvas::Pixmap>>>,
+    decoded: Option<Option<lp_canvas::Bitmap>>,
+}
+
+impl ImageBytes {
+    /// The bytes this entry counts: (encoded, decoded and cached).
+    fn counted(&self) -> (usize, usize) {
+        (self.bytes.len(), self.decoded.as_ref().and_then(Option::as_ref).map_or(0, |b| b.byte_len()))
+    }
 }
 
 pub struct PageDom {
@@ -200,6 +210,12 @@ pub struct PageDom {
     /// Encoded bytes of loaded `<img>`s the embedder kept for canvas use
     /// ([`PageDom::set_image_bytes`]), decoded on first use.
     image_bytes: RefCell<FxHashMap<NodeId, ImageBytes>>,
+    /// Bytes `image_bytes` holds: (encoded, decoded), kept as entries come
+    /// and go.
+    image_bytes_kept: Cell<(usize, usize)>,
+    /// Loads refused for the encoded budget since `image_bytes` was last
+    /// swept for collected elements (a sweep per that many: amortized O(1)).
+    image_bytes_refused: Cell<usize>,
     /// Bitmaps of canvas elements with a 2D context (`canvas.rs`), for
     /// painting them.
     pub(crate) canvas_surfaces: RefCell<Vec<(NodeId, std::rc::Weak<RefCell<lp_canvas::Surface>>)>>,
@@ -633,6 +649,8 @@ impl PageDom {
             images_sweep_at: Cell::new(64),
             image_decodes: RefCell::new(FxHashMap::default()),
             image_bytes: RefCell::new(FxHashMap::default()),
+            image_bytes_kept: Cell::new((0, 0)),
+            image_bytes_refused: Cell::new(0),
             canvas_surfaces: RefCell::new(Vec::new()),
             canvas_used: Cell::new(false),
             media: Default::default(),
@@ -1587,38 +1605,80 @@ impl PageDom {
     pub fn set_image_bytes(&self, el: NodeId, bytes: Vec<u8>, clean: bool) {
         self.forget_image_bytes(el);
         let mut map = self.image_bytes.borrow_mut();
-        let total: usize = map.values().map(|i| i.bytes.len()).sum();
-        if total + bytes.len() > MAX_IMAGE_BYTES_KEPT {
-            if let Ok(dom) = self.dom.try_borrow() {
-                map.retain(|id, _| dom.is_alive(*id));
+        if self.image_bytes_kept.get().0 + bytes.len() > MAX_IMAGE_BYTES_KEPT {
+            // Room held by collected elements: swept once per so many
+            // refusals, so a document at its budget does not pay O(n) per
+            // load.
+            let refused = self.image_bytes_refused.get() + 1;
+            self.image_bytes_refused.set(refused);
+            if refused > map.len() / 8 {
+                if let Ok(dom) = self.dom.try_borrow() {
+                    self.image_bytes_refused.set(0);
+                    map.retain(|id, entry| {
+                        let alive = dom.is_alive(*id);
+                        if !alive {
+                            self.uncount_image_bytes(entry);
+                        }
+                        alive
+                    });
+                }
             }
-            let total: usize = map.values().map(|i| i.bytes.len()).sum();
-            if total + bytes.len() > MAX_IMAGE_BYTES_KEPT {
+            if self.image_bytes_kept.get().0 + bytes.len() > MAX_IMAGE_BYTES_KEPT {
                 return;
             }
         }
-        map.insert(el, ImageBytes { bytes, clean, decoded: None });
+        let (encoded, decoded) = self.image_bytes_kept.get();
+        self.image_bytes_kept.set((encoded + bytes.len(), decoded));
+        if let Some(old) = map.insert(el, ImageBytes { bytes, clean, decoded: None }) {
+            self.uncount_image_bytes(&old);
+        }
     }
 
     fn forget_image_bytes(&self, el: NodeId) {
         if let Ok(mut map) = self.image_bytes.try_borrow_mut() {
             if !map.is_empty() {
-                map.remove(&el);
+                if let Some(old) = map.remove(&el) {
+                    self.uncount_image_bytes(&old);
+                }
             }
         }
     }
 
+    fn uncount_image_bytes(&self, entry: &ImageBytes) {
+        let (encoded, decoded) = self.image_bytes_kept.get();
+        let (e, d) = entry.counted();
+        self.image_bytes_kept.set((encoded - e, decoded - d));
+    }
+
+    /// Bytes kept for canvas use: (encoded, decoded and cached).
+    #[doc(hidden)]
+    pub fn image_bytes_kept(&self) -> (usize, usize) {
+        self.image_bytes_kept.get()
+    }
+
     /// `el`'s image pixels (premultiplied) and whether they are
-    /// origin-clean; decoded on first use. `None`: no bytes were kept, or
-    /// they do not decode (SVG included).
-    pub(crate) fn image_pixmap(&self, el: NodeId) -> Option<(std::sync::Arc<lp_canvas::Pixmap>, bool)> {
+    /// origin-clean; decoded on first use, and cached while the document's
+    /// decoded images fit [`MAX_IMAGE_DECODED_KEPT`]. `None`: no bytes were
+    /// kept, they do not decode (SVG included), or the process has no room
+    /// for the pixels.
+    pub(crate) fn image_pixmap(&self, el: NodeId) -> Option<(lp_canvas::Bitmap, bool)> {
         let mut map = self.image_bytes.borrow_mut();
         let entry = map.get_mut(&el)?;
-        if entry.decoded.is_none() {
-            entry.decoded = Some(lp_canvas::codec::decode(&entry.bytes).map(std::sync::Arc::new));
+        if let Some(decoded) = &entry.decoded {
+            return decoded.clone().map(|b| (b, entry.clean));
         }
-        let pixmap = entry.decoded.clone().flatten()?;
-        Some((pixmap, entry.clean))
+        let Some(pixmap) = lp_canvas::codec::decode(&entry.bytes) else {
+            entry.decoded = Some(None);
+            return None;
+        };
+        // Over the process's bitmap budget: nothing drawn now, not cached.
+        let bitmap = lp_canvas::Bitmap::new(pixmap)?;
+        let (encoded, decoded) = self.image_bytes_kept.get();
+        if decoded + bitmap.byte_len() <= MAX_IMAGE_DECODED_KEPT {
+            self.image_bytes_kept.set((encoded, decoded + bitmap.byte_len()));
+            entry.decoded = Some(Some(bitmap.clone()));
+        }
+        Some((bitmap, entry.clean))
     }
     /// HTMLImageElement.complete: no `src`, or the current `src` has
     /// finished loading (successfully or not). A `src` set since the last

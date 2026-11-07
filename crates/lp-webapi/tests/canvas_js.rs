@@ -568,3 +568,31 @@ fn canvas_bitmaps_are_lazy_and_reported_for_rendering() {
     assert_eq!(eval(r, "c.setAttribute('width', '10'); px(0, 0)"), "0,0,0,0");
     assert!(e.page.canvas_bitmaps().is_empty());
 }
+
+#[test]
+fn kept_image_bytes_are_counted_as_they_come_and_go() {
+    let e = env("<!doctype html><canvas></canvas><img id=a src=/a.png><img id=b src=/b.png>");
+    let page = &e.page;
+    let id = |s: &str| page.dom.borrow().get_element_by_id(page.document(), s).unwrap().unwrap();
+    let (a, b) = (id("a"), id("b"));
+    let png = lp_canvas::Surface::new(2, 3).encode(lp_canvas::Encoding::Png).unwrap();
+    let n = png.len();
+    let load = |el, src: &str| {
+        page.set_image_state(el, Some(src), false);
+        page.dom.borrow_mut().set_natural_size(el, Some((2.0, 3.0)));
+        page.set_image_bytes(el, png.clone(), true);
+    };
+    load(a, "/a.png");
+    load(b, "/b.png");
+    assert_eq!(page.image_bytes_kept(), (2 * n, 0));
+    // Decoded on first draw, cached and counted once.
+    let draw = "var x = document.querySelector('canvas').getContext('2d'); \
+        x.drawImage(document.getElementById('a'), 0, 0); x.drawImage(document.getElementById('a'), 0, 0); 'ok'";
+    assert_eq!(eval(&e.main, draw), "ok");
+    assert_eq!(page.image_bytes_kept(), (2 * n, 2 * 3 * 4));
+    // A reload replaces the entry and its counts; a cleared src forgets it.
+    load(a, "/a.png");
+    assert_eq!(page.image_bytes_kept(), (2 * n, 0));
+    page.set_image_state(b, None, false);
+    assert_eq!(page.image_bytes_kept(), (n, 0));
+}

@@ -208,7 +208,11 @@ fn set_sat(c: [f32; 3], s: f32) -> [f32; 3] {
 /// blurred (Gaussian with sigma blur/2, as three box blurs) and painted with
 /// the shadow color. Premultiplied.
 pub(crate) fn shadow(src: &[u8], w: usize, h: usize, shadow: &Shadow) -> Vec<u8> {
-    let (ox, oy) = (shadow.offset.x.round() as i64, shadow.offset.y.round() as i64);
+    // An offset past the bitmap moves the shadow off it; clamped so the
+    // arithmetic below cannot overflow.
+    let (wf, hf) = (w as f64 + 1.0, h as f64 + 1.0);
+    let ox = shadow.offset.x.round().clamp(-wf, wf) as i64;
+    let oy = shadow.offset.y.round().clamp(-hf, hf) as i64;
     let mut alpha = vec![0f32; w * h];
     for y in 0..h as i64 {
         let sy = y - oy;

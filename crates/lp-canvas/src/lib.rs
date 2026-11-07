@@ -155,7 +155,7 @@ pub struct Gradient {
 
 #[derive(Clone, Debug)]
 pub struct Pattern {
-    pub image: Arc<Pixmap>,
+    pub image: Bitmap,
     pub repeat_x: bool,
     pub repeat_y: bool,
     /// `CanvasPattern.setTransform`.
@@ -226,31 +226,91 @@ pub struct Surface {
     width: u32,
     height: u32,
     /// Premultiplied RGBA; `None` until something is drawn. Shared with
-    /// snapshots (`drawImage` of this canvas, patterns, screenshots) and
+    /// snapshots (`drawImage` of this canvas, patterns, `ImageBitmap`s) and
     /// copied on the next write while one is alive.
-    pixmap: Option<Arc<Pixmap>>,
+    pixmap: Option<Bitmap>,
     batch: Option<Box<Batch>>,
     /// Bumped by every change of the pixels.
     generation: u64,
     /// The straight-alpha RGBA of [`Surface::straight_rgba`], for the
     /// generation it was made at.
     straight: Option<(u64, Arc<Vec<u8>>)>,
-    /// Bytes of [`ALLOCATED`] this surface holds (its bitmap, once drawing
-    /// started).
-    reserved: usize,
 }
 
-impl Drop for Surface {
-    fn drop(&mut self) {
-        self.release();
+/// Bytes of the process's live [`Bitmap`]s: surfaces' bitmaps and every
+/// snapshot, `ImageBitmap`, pattern and decoded image that outlives them.
+static ALLOCATED: AtomicUsize = AtomicUsize::new(0);
+/// Most bitmap bytes the process holds: past it, a draw that needs a new
+/// bitmap draws nothing and an image that needs one does not decode (as a
+/// browser's failed allocation).
+const MAX_TOTAL: usize = 2 << 30;
+
+/// [`ALLOCATED`] bytes, given back when the last handle to the pixels they
+/// count goes.
+#[derive(Debug)]
+struct Charge(usize);
+
+impl Charge {
+    fn new(bytes: usize) -> Option<Charge> {
+        let total = ALLOCATED.fetch_add(bytes, Ordering::Relaxed) + bytes;
+        if total > MAX_TOTAL {
+            ALLOCATED.fetch_sub(bytes, Ordering::Relaxed);
+            return None;
+        }
+        Some(Charge(bytes))
     }
 }
 
-/// Bitmap bytes of the process's drawn surfaces ([`Surface::reserve`]).
-static ALLOCATED: AtomicUsize = AtomicUsize::new(0);
-/// Most bitmap bytes the process's surfaces hold: past it, draws on a
-/// surface without a bitmap draw nothing (as a browser's failed allocation).
-const MAX_TOTAL: usize = 2 << 30;
+impl Drop for Charge {
+    fn drop(&mut self) {
+        ALLOCATED.fetch_sub(self.0, Ordering::Relaxed);
+    }
+}
+
+/// Premultiplied pixels counted toward the process's bitmap budget
+/// ([`MAX_TOTAL`]) for as long as any clone of the handle lives, whichever
+/// surface, snapshot or image made it.
+#[derive(Clone)]
+pub struct Bitmap {
+    pixmap: Arc<Pixmap>,
+    _charge: Arc<Charge>,
+}
+
+impl Bitmap {
+    /// `pixmap`, counted; `None` when the process's budget has no room.
+    pub fn new(pixmap: Pixmap) -> Option<Bitmap> {
+        let charge = Charge::new(pixmap.data_as_u8_slice().len())?;
+        Some(Bitmap { pixmap: Arc::new(pixmap), _charge: Arc::new(charge) })
+    }
+
+    /// The pixels as the rasterizer takes them.
+    pub fn pixmap(&self) -> &Arc<Pixmap> {
+        &self.pixmap
+    }
+
+    /// Bytes this bitmap counts.
+    pub fn byte_len(&self) -> usize {
+        self._charge.0
+    }
+}
+
+impl std::ops::Deref for Bitmap {
+    type Target = Pixmap;
+    fn deref(&self) -> &Pixmap {
+        &self.pixmap
+    }
+}
+
+impl std::fmt::Debug for Bitmap {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Bitmap({}x{})", self.pixmap.width(), self.pixmap.height())
+    }
+}
+
+/// Bitmap bytes the process holds now ([`Bitmap`]).
+pub fn allocated_bytes() -> usize {
+    ALLOCATED.load(Ordering::Relaxed)
+}
 
 fn settings(width: u16, height: u16) -> RenderContext {
     // One thread: a page's canvas work stays on its thread, like its JS.
@@ -269,7 +329,7 @@ pub fn valid_size(width: u32, height: u32) -> bool {
 
 impl Surface {
     pub fn new(width: u32, height: u32) -> Surface {
-        Surface { width, height, pixmap: None, batch: None, generation: 0, straight: None, reserved: 0 }
+        Surface { width, height, pixmap: None, batch: None, generation: 0, straight: None }
     }
 
     pub fn width(&self) -> u32 {
@@ -298,38 +358,35 @@ impl Surface {
         self.batch = None;
         self.straight = None;
         self.generation += 1;
-        self.release();
     }
 
     fn drawable(&self) -> Option<(u16, u16)> {
         valid_size(self.width, self.height).then_some((self.width as u16, self.height as u16))
     }
 
-    /// [`Surface::drawable`], once the process's canvas memory has room for
-    /// this bitmap (counted from the first draw until resized or dropped).
+    /// [`Surface::drawable`], once the bitmap exists (allocated on the
+    /// first draw, when the process's bitmap budget has room for it).
     fn reserve(&mut self) -> Option<(u16, u16)> {
-        let (w, h) = self.drawable()?;
-        if self.reserved == 0 {
-            let bytes = usize::from(w) * usize::from(h) * 4;
-            let total = ALLOCATED.fetch_add(bytes, Ordering::Relaxed) + bytes;
-            if total > MAX_TOTAL {
-                ALLOCATED.fetch_sub(bytes, Ordering::Relaxed);
-                return None;
-            }
-            self.reserved = bytes;
+        let size = self.drawable()?;
+        if self.pixmap.is_none() {
+            self.pixmap_mut()?;
         }
-        Some((w, h))
+        Some(size)
     }
 
-    fn release(&mut self) {
-        ALLOCATED.fetch_sub(std::mem::take(&mut self.reserved), Ordering::Relaxed);
-    }
-
-    /// The bitmap, allocated, for writing.
+    /// The bitmap, allocated, for writing. One a snapshot still shares is
+    /// copied first; the copy is counted, the snapshot keeps its own count.
     fn pixmap_mut(&mut self) -> Option<&mut Pixmap> {
-        let (w, h) = self.reserve()?;
-        let pixmap = self.pixmap.get_or_insert_with(|| Arc::new(Pixmap::new(w, h)));
-        Some(Arc::make_mut(pixmap))
+        let (w, h) = self.drawable()?;
+        let unique = self.pixmap.as_mut().is_some_and(|b| Arc::get_mut(&mut b.pixmap).is_some());
+        if !unique {
+            let pixmap = match &self.pixmap {
+                Some(shared) => Pixmap::clone(&shared.pixmap),
+                None => Pixmap::new(w, h),
+            };
+            self.pixmap = Some(Bitmap::new(pixmap)?);
+        }
+        Arc::get_mut(&mut self.pixmap.as_mut()?.pixmap)
     }
 
     /// Rasterizes batched draws onto the bitmap.
@@ -356,7 +413,7 @@ impl Surface {
 
     /// The bitmap as it is now (premultiplied), `None` while nothing was
     /// drawn (transparent black).
-    pub fn snapshot(&mut self) -> Option<Arc<Pixmap>> {
+    pub fn snapshot(&mut self) -> Option<Bitmap> {
         self.flush();
         self.pixmap.clone()
     }
@@ -401,7 +458,7 @@ impl Surface {
         // A pen wider than the canvas many times over covers what the
         // canvas shows; the stroker's work grows with the width.
         let scale = stretch(t);
-        let limit = 4.0 * f64::from(self.width + self.height) / scale.max(1e-9);
+        let limit = 4.0 * (f64::from(self.width) + f64::from(self.height)) / scale.max(1e-9);
         if stroke.width > limit {
             stroke.width = limit;
         }
@@ -421,7 +478,7 @@ impl Surface {
 
     /// `drawImage`: the `src` rectangle of `image` into the `dst` rectangle
     /// (user space). `src` is clipped to the image, `dst` with it.
-    pub fn draw_image(&mut self, image: &Arc<Pixmap>, src: Rect, dst: Rect, state: &DrawState<'_>) {
+    pub fn draw_image(&mut self, image: &Bitmap, src: Rect, dst: Rect, state: &DrawState<'_>) {
         let bounds = Rect::new(0.0, 0.0, f64::from(image.width()), f64::from(image.height()));
         let (src, dst) = (src.abs(), dst.abs());
         if src.width() == 0.0 || src.height() == 0.0 || dst.width() == 0.0 || dst.height() == 0.0 {
@@ -512,8 +569,11 @@ impl Surface {
                 batch.ctx.reset();
                 batch.ops = 0;
             }
-            if let Some(pixmap) = self.pixmap.as_mut() {
-                Arc::make_mut(pixmap).data_as_u8_slice_mut().fill(0);
+            match self.pixmap.as_mut().and_then(|b| Arc::get_mut(&mut b.pixmap)) {
+                Some(pixmap) => pixmap.data_as_u8_slice_mut().fill(0),
+                // Shared with a snapshot: no bitmap reads as transparent
+                // black, and the next draw allocates a new one.
+                None => self.pixmap = None,
             }
             self.changed();
             return;
@@ -621,10 +681,10 @@ impl Surface {
         geometry: Affine,
         draw: &mut dyn FnMut(&mut RenderContext, &mut Resources),
     ) {
-        let Some((w, h)) = self.reserve() else { return };
         if !state.alpha.is_finite() || state.alpha <= 0.0 && state.composite == Composite::SourceOver {
             return;
         }
+        let Some((w, h)) = self.reserve() else { return };
         let shadow = state.visible_shadow();
         if state.composite == Composite::SourceOver && shadow.is_none() {
             let full = self.batch.as_ref().is_some_and(|b| b.ops >= MAX_BATCH);
@@ -786,7 +846,7 @@ fn emit(
                 let quality = if state.smoothing { ImageQuality::Medium } else { ImageQuality::Low };
                 let extend = |repeat| if repeat { Extend::Repeat } else { Extend::Pad };
                 let image = Image {
-                    image: ImageSource::Pixmap(p.image.clone()),
+                    image: ImageSource::Pixmap(p.image.pixmap().clone()),
                     sampler: ImageSampler {
                         x_extend: extend(p.repeat_x),
                         y_extend: extend(p.repeat_y),

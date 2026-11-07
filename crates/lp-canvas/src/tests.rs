@@ -84,7 +84,7 @@ fn gradients_and_patterns() {
 
     let mut tile = Pixmap::new(2, 2);
     tile.data_as_u8_slice_mut()[..4].copy_from_slice(&[0, 255, 0, 255]);
-    let p = Pattern { image: Arc::new(tile), repeat_x: true, repeat_y: true, transform: Affine::IDENTITY };
+    let p = Pattern { image: Bitmap::new(tile).unwrap(), repeat_x: true, repeat_y: true, transform: Affine::IDENTITY };
     let mut s = Surface::new(10, 10);
     let mut st = state(&[]);
     st.smoothing = false;
@@ -162,7 +162,7 @@ fn hostile_geometry_finishes() {
     st.transform = Affine::new([1e-9, 0.0, 0.0, 1e9, 0.0, 0.0]);
     s.stroke(&(st.transform * line.clone()), &Stroke::new(1e9).with_caps(kurbo::Cap::Round), &rgb(0, 0, 255), &st);
     // drawImage into a huge, rotated rectangle.
-    let image = Arc::new(Pixmap::new(2, 2));
+    let image = Bitmap::new(Pixmap::new(2, 2)).unwrap();
     st.transform = Affine::rotate(0.3);
     s.draw_image(&image, Rect::new(0.0, 0.0, 2.0, 2.0), Rect::new(-1e12, -1e12, 1e12, 1e12), &st);
     // Text at an absurd scale.
@@ -217,4 +217,41 @@ fn text_has_ink_and_metrics() {
     let data = s.get_image_data(0, 0, 100, 40);
     assert!(data.chunks_exact(4).filter(|p| p[3] > 128).count() > 50);
     assert_eq!(text::layout("", &style).width, 0.0);
+}
+
+#[test]
+fn huge_sizes_and_offsets_do_not_overflow() {
+    // A canvas size no bitmap can have: the pen limit is computed in f64.
+    let mut s = Surface::new(u32::MAX, u32::MAX);
+    let mut line = BezPath::new();
+    line.move_to((0.0, 0.0));
+    line.line_to((1.0, 1.0));
+    s.stroke(&line, &Stroke::new(1.0), &rgb(0, 0, 0), &state(&[]));
+    assert!(!s.is_allocated());
+    // Shadow offsets far past the bitmap (saturating casts) draw no shadow.
+    let mut s = Surface::new(8, 8);
+    for offset in [Vec2::new(0.0, -1e300), Vec2::new(1e300, 0.0), Vec2::new(-1e300, 1e300)] {
+        let mut st = state(&[]);
+        st.shadow = Some(Shadow { color: Color::from_rgba8(0, 0, 0, 255), blur: 0.0, offset });
+        s.fill(&rect(2.0, 2.0, 2.0, 2.0), false, &rgb(255, 0, 0), &st);
+    }
+    assert_eq!(px(&mut s, 0, 0)[3], 0);
+    assert_eq!(px(&mut s, 3, 3), [255, 0, 0, 255]);
+}
+
+#[test]
+fn snapshots_keep_their_pixels_and_count() {
+    let mut s = Surface::new(4, 4);
+    s.fill(&rect(0.0, 0.0, 4.0, 4.0), false, &rgb(255, 0, 0), &state(&[]));
+    let snap = s.snapshot().unwrap();
+    assert_eq!(snap.byte_len(), 64);
+    // A write copies the shared bitmap; the snapshot is unchanged.
+    s.fill(&rect(0.0, 0.0, 4.0, 4.0), false, &rgb(0, 0, 255), &state(&[]));
+    assert_eq!(&snap.data_as_u8_slice()[..4], &[255, 0, 0, 255]);
+    assert_eq!(px(&mut s, 0, 0), [0, 0, 255, 255]);
+    // A full clear while shared drops the surface's bitmap, not the snapshot's.
+    let snap2 = s.snapshot().unwrap();
+    s.clear_rect(Rect::new(0.0, 0.0, 4.0, 4.0), Affine::IDENTITY, &[]);
+    assert_eq!(px(&mut s, 0, 0)[3], 0);
+    assert_eq!(&snap2.data_as_u8_slice()[..4], &[0, 0, 255, 255]);
 }
