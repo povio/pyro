@@ -6,6 +6,7 @@
 //! Domain cookies and schemeful sites use the embedded Public Suffix List
 //! (including private suffixes), pinned through the psl dependency lockfile.
 
+use std::borrow::Cow;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use rustc_hash::FxHashMap;
@@ -77,12 +78,20 @@ pub fn now_secs() -> f64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0)
 }
 
-fn host_str(url: &Url) -> Option<String> {
-    match url.host()? {
-        Host::Domain(d) => Some(d.trim_end_matches('.').to_ascii_lowercase()),
-        Host::Ipv4(ip) => Some(ip.to_string()),
-        Host::Ipv6(ip) => Some(format!("[{ip}]")),
-    }
+fn host_str(url: &Url) -> Option<Cow<'_, str>> {
+    Some(match url.host()? {
+        // A parsed domain is already ASCII lowercase; borrowed unless not.
+        Host::Domain(d) => {
+            let d = d.trim_end_matches('.');
+            if d.bytes().any(|b| b.is_ascii_uppercase()) {
+                Cow::Owned(d.to_ascii_lowercase())
+            } else {
+                Cow::Borrowed(d)
+            }
+        }
+        Host::Ipv4(ip) => Cow::Owned(ip.to_string()),
+        Host::Ipv6(ip) => Cow::Owned(format!("[{ip}]")),
+    })
 }
 
 fn is_ip(host: &str) -> bool {
@@ -385,7 +394,7 @@ impl CookieJar {
                 }
                 (d, public_suffix)
             }
-            None => (host.clone(), true),
+            None => (host.clone().into_owned(), true),
         };
         let path = match parsed.path {
             Some(p) if p.starts_with('/') => p.to_owned(),
@@ -494,31 +503,35 @@ impl CookieJar {
     /// Cookies applicable to `url`, sorted per RFC 6265 (longer paths first,
     /// then earlier creation). Expired cookies encountered are purged.
     pub fn matching(&mut self, url: &Url, access: Access, site: SiteContext, now: f64) -> Vec<&Cookie> {
+        // An empty jar (most contexts) matches nothing: no host or domain work.
+        if self.by_domain.is_empty() {
+            return Vec::new();
+        }
         let Some(host) = host_str(url) else { return Vec::new() };
         let secure_ok = is_trustworthy(url);
         let path = url.path();
         // Purge expired cookies in the candidate domains first.
-        let mut domains: Vec<String> = vec![host.clone()];
+        let mut domains: Vec<&str> = vec![&host];
         if !is_ip(&host) {
-            let mut rest = host.as_str();
+            let mut rest: &str = &host;
             while let Some(i) = rest.find('.') {
                 rest = &rest[i + 1..];
-                domains.push(rest.to_owned());
+                domains.push(rest);
             }
         }
         for d in &domains {
-            if let Some(l) = self.by_domain.get_mut(d) {
+            if let Some(l) = self.by_domain.get_mut(*d) {
                 let before = l.len();
                 l.retain(|c| c.expires.is_none_or(|e| e > now));
                 self.count -= before - l.len();
                 if l.is_empty() {
-                    self.by_domain.remove(d);
+                    self.by_domain.remove(*d);
                 }
             }
         }
         let mut out: Vec<&Cookie> = domains
             .iter()
-            .filter_map(|d| self.by_domain.get(d))
+            .filter_map(|d| self.by_domain.get(*d))
             .flat_map(|l| l.iter())
             .filter(|c| domain_match(&host, c))
             .filter(|c| path_match(path, &c.path))

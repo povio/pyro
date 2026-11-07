@@ -830,3 +830,69 @@ fn referrer_policy_and_fetch_metadata() {
     assert!(has(&lines, "sec-fetch-site: same-origin") && has(&lines, "sec-fetch-dest: iframe"), "{lines:?}");
     assert!(!lines.iter().any(|l| l.starts_with("sec-fetch-user")), "{lines:?}");
 }
+
+/// The I/O thread wakes an observer once per turn: a response answered in
+/// one go (its head, body and end) is one wake, not one per event, and a
+/// request whose response is pending still announces itself before the
+/// thread parks.
+#[test]
+fn observer_wakes_once_per_io_thread_turn() {
+    let s = start_server();
+    let c = NetClient::new(NetConfig::default()).unwrap();
+    // The consumer drains inside the wake, like the browser loop's task.
+    let drained: Arc<Mutex<Vec<String>>> = Arc::default();
+    let wakes = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let slot: Arc<Mutex<Option<NetSubscription>>> = Arc::default();
+    let (d, w, sl) = (drained.clone(), wakes.clone(), slot.clone());
+    let sub = c.subscribe_with(
+        SubscriptionLimits::default(),
+        Some(Arc::new(move || {
+            w.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if let Some(sub) = sl.lock().unwrap().as_ref() {
+                while let Ok(ev) = sub.try_recv() {
+                    d.lock().unwrap().push(match ev {
+                        NetEvent::RequestWillBeSent { .. } => "request".into(),
+                        NetEvent::ResponseReceived { .. } => "response".into(),
+                        NetEvent::DataReceived { .. } => "data".into(),
+                        NetEvent::LoadingFinished { .. } => "finished".into(),
+                        other => format!("{other:?}"),
+                    });
+                }
+            }
+        })),
+    );
+    *slot.lock().unwrap() = Some(sub);
+    let count = || wakes.load(std::sync::atomic::Ordering::SeqCst);
+    let wait_for = |n: usize| {
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while count() < n {
+            assert!(std::time::Instant::now() < deadline, "no wake {n} (got {})", count());
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    };
+
+    // Answered on the I/O thread in one task poll: four events, one wake.
+    let (k, _, body, _) = collect(&c, Request::get(Url::parse("data:text/plain,hi").unwrap(), Destination::Fetch));
+    assert_eq!((k.as_slice(), body.as_slice()), (&["response 200".to_string(), "finished".into()][..], &b"hi"[..]));
+    wait_for(1);
+    std::thread::sleep(Duration::from_millis(20));
+    assert_eq!(count(), 1, "one wake for the whole data: response");
+    assert_eq!(drained.lock().unwrap().as_slice(), ["request", "response", "data", "finished"]);
+    drained.lock().unwrap().clear();
+
+    // Held by the server: the request's announcement goes out when the
+    // thread parks for the response, not when the request ends.
+    let (tx, rx) = mpsc::channel();
+    c.fetch(Request::get(url(&s, "/gated"), Destination::Fetch), Box::new(move |ev| tx.send(ev).unwrap()));
+    wait_for(2);
+    assert_eq!(drained.lock().unwrap().as_slice(), ["request"], "announced before the gate opens");
+    drained.lock().unwrap().clear();
+    s.open_gate();
+    while !matches!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), ResponseEvent::Finished { .. }) {}
+    wait_for(3);
+    std::thread::sleep(Duration::from_millis(20));
+    // Head and body may arrive in one read or two: at most two wakes for
+    // the three events, never one each.
+    assert!(count() <= 4, "{} wakes for the response's three events", count() - 2);
+    assert_eq!(drained.lock().unwrap().as_slice(), ["response", "data", "finished"]);
+}

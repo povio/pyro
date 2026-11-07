@@ -272,6 +272,18 @@ pub struct LoadingFinished {
     timestamp: f64,
 }
 
+/// `Network.loadingFailed` (fields in sorted order, see [`ResponseJson`]).
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LoadingFailed<'a> {
+    canceled: bool,
+    error_text: &'a str,
+    request_id: String,
+    timestamp: f64,
+    #[serde(rename = "type")]
+    resource_type: &'static str,
+}
+
 /// Params of a translated `Network.*` event. The events every request has
 /// are written straight from the event they translate; the others go
 /// through a `Value`.
@@ -282,6 +294,7 @@ pub enum NetworkParams<'a> {
     ResponseReceived(ResponseReceived<'a>),
     DataReceived(DataReceived<'a>),
     LoadingFinished(LoadingFinished),
+    LoadingFailed(LoadingFailed<'a>),
     Value(Value),
 }
 
@@ -404,16 +417,14 @@ impl NetworkTranslator {
             NetEvent::LoadingFinished { id, encoded_len, timestamp } => {
                 let inflight = self.inflight.remove(id)?;
                 if inflight.download {
-                    return Some((
-                        "Network.loadingFailed",
-                        NetworkParams::Value(json!({
-                            "requestId": inflight.request_id,
-                            "timestamp": timestamp,
-                            "type": inflight.resource_type,
-                            "errorText": "net::ERR_ABORTED",
-                            "canceled": true,
-                        })),
-                    ));
+                    let params = LoadingFailed {
+                        canceled: true,
+                        error_text: "net::ERR_ABORTED",
+                        request_id: inflight.request_id,
+                        timestamp: *timestamp,
+                        resource_type: inflight.resource_type,
+                    };
+                    return Some(("Network.loadingFailed", NetworkParams::LoadingFailed(params)));
                 }
                 let params = LoadingFinished {
                     encoded_data_length: *encoded_len,
@@ -424,16 +435,14 @@ impl NetworkTranslator {
             }
             NetEvent::LoadingFailed { id, error, canceled, timestamp, .. } => {
                 let inflight = self.inflight.remove(id)?;
-                Some((
-                    "Network.loadingFailed",
-                    NetworkParams::Value(json!({
-                        "requestId": inflight.request_id,
-                        "timestamp": timestamp,
-                        "type": inflight.resource_type,
-                        "errorText": error.error_text(),
-                        "canceled": canceled,
-                    })),
-                ))
+                let params = LoadingFailed {
+                    canceled: *canceled,
+                    error_text: error.error_text(),
+                    request_id: inflight.request_id,
+                    timestamp: *timestamp,
+                    resource_type: inflight.resource_type,
+                };
+                Some(("Network.loadingFailed", NetworkParams::LoadingFailed(params)))
             }
             NetEvent::WebSocket { id, activity, timestamp } => {
                 let (method, params) = websocket_event(*id, activity, *timestamp);
@@ -1171,6 +1180,53 @@ mod tests {
         assert_eq!(m, "Network.loadingFailed");
         assert_eq!(p["errorText"], "net::ERR_CONNECTION_REFUSED");
         assert_eq!(p["type"], "Document");
+    }
+
+    /// `loadingFailed` is written out like the other per-request events:
+    /// the very text of the `Value` it replaced, for a failure and for a
+    /// download (a finished attachment navigation reported as aborted).
+    #[test]
+    fn loading_failed_text_matches_value_translation() {
+        let mut t = NetworkTranslator::default();
+        tr(&mut t, &request(1, Destination::Fetch));
+        let failed = NetEvent::LoadingFailed {
+            id: RequestId(1),
+            error: NetError::Blocked("net::ERR_BLOCKED_BY_CLIENT".into()),
+            canceled: true,
+            destination: Destination::Fetch,
+            timestamp: 9.5,
+        };
+        let text = serde_json::to_string(&t.translate(&failed).unwrap().1).unwrap();
+        let expected = json!({
+            "requestId": "1",
+            "timestamp": 9.5,
+            "type": "Fetch",
+            "errorText": "net::ERR_BLOCKED_BY_CLIENT",
+            "canceled": true,
+        });
+        assert_eq!(text, serde_json::to_string(&expected).unwrap());
+
+        tr(&mut t, &request(2, Destination::Document));
+        let mut attachment = response(2, "application/octet-stream");
+        if let NetEvent::ResponseReceived { head, .. } = &mut attachment {
+            head.headers.insert("content-disposition", "attachment; filename=x.bin".parse().unwrap());
+        }
+        tr(&mut t, &attachment).unwrap();
+        assert!(tr(&mut t, &data(2, b"x")).is_none(), "a download has no dataReceived");
+        let finished = finished(2);
+        let (m, text) = {
+            let (m, params) = t.translate(&finished).unwrap();
+            (m, serde_json::to_string(&params).unwrap())
+        };
+        assert_eq!(m, "Network.loadingFailed");
+        let expected = json!({
+            "requestId": "L",
+            "timestamp": 5.0,
+            "type": "Document",
+            "errorText": "net::ERR_ABORTED",
+            "canceled": true,
+        });
+        assert_eq!(text, serde_json::to_string(&expected).unwrap());
     }
 
     fn store(total: usize, per_body: usize) -> (BodyBudget, BodyStore) {

@@ -250,7 +250,7 @@ impl HttpCache {
         }
         self.tick += 1;
         let tick = self.tick;
-        let Some(entry) = self.entries.get_mut(&key(url)).and_then(|v| v.iter_mut().find(|e| e.matches(request)))
+        let Some(entry) = self.entries.get_mut(key(url)).and_then(|v| v.iter_mut().find(|e| e.matches(request)))
         else {
             return Lookup::Miss;
         };
@@ -331,7 +331,7 @@ impl HttpCache {
         let id = self.next_id;
         let used = self.tick;
         let entry = Entry { id, vary, status, headers, body, request_time, response_time, protocol, used, size };
-        let variants = self.entries.entry(k).or_default();
+        let variants = self.entries.entry(k.to_owned()).or_default();
         if let Some(i) = variants.iter().position(|e| e.vary == entry.vary) {
             self.bytes -= variants.remove(i).size;
         }
@@ -356,7 +356,7 @@ impl HttpCache {
         response_time: f64,
     ) -> Option<Cached> {
         let k = key(url);
-        let variants = self.entries.get_mut(&k)?;
+        let variants = self.entries.get_mut(k)?;
         let i = variants.iter().position(|e| e.id == id)?;
         let stored_etag = variants[i].headers.get(header::ETAG).cloned();
         if let (Some(new), Some(old)) = (not_modified.get(header::ETAG), stored_etag.as_ref()) {
@@ -391,7 +391,7 @@ impl HttpCache {
 
     /// Drops every stored response for `url` (RFC 9111 §4.4).
     pub fn invalidate(&mut self, url: &Url) {
-        if let Some(v) = self.entries.remove(&key(url)) {
+        if let Some(v) = self.entries.remove(key(url)) {
             self.bytes -= v.iter().map(|e| e.size).sum::<usize>();
         }
     }
@@ -509,10 +509,12 @@ impl SharedAssetCache {
     }
 }
 
-fn key(url: &Url) -> String {
-    let mut u = url.clone();
-    u.set_fragment(None);
-    u.into()
+/// The URL without its fragment, as serialized: `#` is percent-encoded
+/// everywhere else in a serialized URL, so the text up to the first one is
+/// what `set_fragment(None)` would leave, without the copy.
+fn key(url: &Url) -> &str {
+    let s = url.as_str();
+    &s[..s.find('#').unwrap_or(s.len())]
 }
 
 /// `Vary` field names, `None` for `Vary: *`.

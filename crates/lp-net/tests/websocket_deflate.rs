@@ -97,8 +97,13 @@ fn write_frame(stream: &mut TcpStream, first: u8, payload: &[u8]) {
 fn deflate(c: &mut Compress, data: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(data.len() + 1024);
     c.compress_vec(data, &mut out, FlushCompress::Sync).unwrap();
-    assert!(out.ends_with(&TAIL));
-    out.truncate(out.len() - 4);
+    if out.ends_with(&TAIL) {
+        out.truncate(out.len() - 4);
+    }
+    // RFC 7692 §7.2.3.6: an empty message is sent as one empty block.
+    if out.is_empty() {
+        out.push(0);
+    }
     out
 }
 

@@ -9,6 +9,7 @@
 //! 2-3 copies per body (HttpClient.zig:4241 -> Fetch.zig:302 / captured
 //! responses).
 
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -31,7 +32,9 @@ use crate::h2_probe::{H2Sessions, ProbeConnector};
 use crate::proxy::{basic_authorization, ProxyConfig, ProxyConnector, ProxyError, ProxyState};
 use crate::referrer::FetchSite;
 use crate::request::*;
-use crate::subscription::{NetSubscription, NetWake, SubscriptionLimits, Subscriptions};
+use crate::subscription::{
+    flush_deferred_wakes, DeferredWakes, NetSubscription, NetWake, SubscriptionLimits, Subscriptions,
+};
 
 #[path = "websocket.rs"]
 pub mod websocket;
@@ -813,9 +816,13 @@ struct Io {
     sessions: Arc<H2Sessions>,
     insecure_sessions: Arc<H2Sessions>,
     preflight: Mutex<PreflightCache>,
-    per_origin: Mutex<HashMap<String, Arc<Semaphore>>>,
+    per_origin: Mutex<HashMap<url::Origin, Arc<Semaphore>>>,
     /// Origins whose semaphore grew to `max_per_h2_origin`.
-    h2_origins: Mutex<HashSet<String>>,
+    h2_origins: Mutex<HashSet<url::Origin>>,
+    /// The configured `User-Agent` and `Accept-Language` as header values,
+    /// built once (a request without overrides sends them as they are).
+    default_user_agent: Option<HeaderValue>,
+    default_accept_language: Option<HeaderValue>,
 }
 
 fn io_main(mut rx: mpsc::UnboundedReceiver<Cmd>, shared: Arc<Shared>, cookies: Arc<Mutex<CookieJar>>) {
@@ -828,7 +835,16 @@ fn io_main(mut rx: mpsc::UnboundedReceiver<Cmd>, shared: Arc<Shared>, cookies: A
         }
     }
     let _close_observers = CloseObservers(shared.clone());
-    let rt = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
+    // Observer wakes of this thread go out once per turn: when the runtime
+    // is about to park (nothing left to run until I/O arrives) and before a
+    // request's terminal event reaches its sink (`deliver`). Dropped before
+    // the observers close.
+    let _deferred_wakes = DeferredWakes::enter();
+    let rt = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .on_thread_park(flush_deferred_wakes)
+        .build()
+    {
         Ok(rt) => rt,
         Err(_) => return,
     };
@@ -837,6 +853,8 @@ fn io_main(mut rx: mpsc::UnboundedReceiver<Cmd>, shared: Arc<Shared>, cookies: A
         let sessions = Arc::new(H2Sessions::default());
         let client = http_client(&shared.config, &tls_config(), shared.proxy.clone(), sessions.clone());
         let io = std::rc::Rc::new(Io {
+            default_user_agent: HeaderValue::from_str(&shared.config.user_agent).ok(),
+            default_accept_language: HeaderValue::from_str(&shared.config.accept_language).ok(),
             shared,
             cookies,
             client,
@@ -923,6 +941,7 @@ fn io_main(mut rx: mpsc::UnboundedReceiver<Cmd>, shared: Arc<Shared>, cookies: A
             deliver(&t.sink, ResponseEvent::Failed(NetError::Aborted));
             t.sink.borrow_mut().take();
         }
+        flush_deferred_wakes();
     });
 }
 
@@ -935,6 +954,14 @@ struct Task {
 type SharedSink = std::rc::Rc<std::cell::RefCell<Option<ResponseSink>>>;
 
 fn deliver(sink: &SharedSink, ev: ResponseEvent) {
+    // A terminal event completes the request on the consumer's loop: the
+    // observers' wake (of this and the events before it, deferred since the
+    // thread last parked) is posted first, so an owner task publishes them
+    // ahead of what the completion causes, as when every event woke at once;
+    // the completion's post then finds that loop awake (one wake-up for both).
+    if matches!(ev, ResponseEvent::Finished { .. } | ResponseEvent::Failed(_)) {
+        flush_deferred_wakes();
+    }
     if let Some(s) = sink.borrow_mut().as_mut() {
         s(ev);
     }
@@ -1208,35 +1235,52 @@ fn classify(e: &hyper_util::client::legacy::Error) -> SendError {
 
 impl Io {
     fn origin_semaphore(&self, url: &Url) -> Arc<Semaphore> {
-        let key = url.origin().ascii_serialization();
+        // Keyed by the origin itself (`Hash + Eq`), not its serialization.
         let mut m = self.per_origin.lock().unwrap();
-        m.entry(key).or_insert_with(|| Arc::new(Semaphore::new(self.shared.config.max_per_origin))).clone()
+        m.entry(url.origin()).or_insert_with(|| Arc::new(Semaphore::new(self.shared.config.max_per_origin))).clone()
     }
 
     /// An origin that answered over HTTP/2 multiplexes one connection: the
     /// six-connection limit no longer applies to it.
     fn multiplexing(&self, url: &Url) {
-        let key = url.origin().ascii_serialization();
-        if self.h2_origins.lock().unwrap().insert(key.clone()) {
+        let key = url.origin();
+        let mut h2_origins = self.h2_origins.lock().unwrap();
+        if !h2_origins.contains(&key) {
             let cfg = &self.shared.config;
             if let Some(semaphore) = self.per_origin.lock().unwrap().get(&key) {
                 semaphore.add_permits(cfg.max_per_h2_origin.saturating_sub(cfg.max_per_origin));
             }
+            h2_origins.insert(key);
         }
     }
 
-    /// The request headers of one hop; `site` is its `Sec-Fetch-Site`.
-    fn build_headers(&self, req: &Request, origin_url: Option<&Url>, cors_cross: bool, site: FetchSite) -> HeaderMap {
-        let settings = self.shared.settings.lock().unwrap().clone();
-        let cfg = &self.shared.config;
+    /// The request headers of one hop; `site` is its `Sec-Fetch-Site`,
+    /// `same_origin` whether the hop is same-origin to the requester.
+    fn build_headers(
+        &self,
+        req: &Request,
+        origin_url: Option<&Url>,
+        cors_cross: bool,
+        site: FetchSite,
+        same_origin: bool,
+    ) -> HeaderMap {
+        // Read under the lock: the settings are a header map and strings a
+        // request would otherwise copy to read them once.
+        let settings = self.shared.settings.lock().unwrap();
         let mut h = req.headers.clone();
-        let ua = settings.user_agent.as_deref().unwrap_or(&cfg.user_agent);
-        if let Some(v) = req.defaults.user_agent.clone().or_else(|| HeaderValue::from_str(ua).ok()) {
+        let ua = match &settings.user_agent {
+            Some(ua) => HeaderValue::from_str(ua).ok(),
+            None => self.default_user_agent.clone(),
+        };
+        if let Some(v) = req.defaults.user_agent.clone().or(ua) {
             h.entry(header::USER_AGENT).or_insert(v);
         }
         h.entry(header::ACCEPT).or_insert(HeaderValue::from_static(default_accept(req.destination)));
-        let lang = settings.accept_language.as_deref().unwrap_or(&cfg.accept_language);
-        if let Some(v) = req.defaults.accept_language.clone().or_else(|| HeaderValue::from_str(lang).ok()) {
+        let lang = match &settings.accept_language {
+            Some(lang) => HeaderValue::from_str(lang).ok(),
+            None => self.default_accept_language.clone(),
+        };
+        if let Some(v) = req.defaults.accept_language.clone().or(lang) {
             h.entry(header::ACCEPT_LANGUAGE).or_insert(v);
         }
         if let Some(hints) = &req.defaults.client_hints {
@@ -1274,7 +1318,7 @@ impl Io {
         // Cookies.
         let send_cookies = match req.credentials {
             Credentials::Include => true,
-            Credentials::SameOrigin => cors::is_same_origin_request(req),
+            Credentials::SameOrigin => same_origin,
             Credentials::Omit => false,
         };
         if send_cookies && !h.contains_key(header::COOKIE) {
@@ -1395,9 +1439,14 @@ impl Io {
             if tainted {
                 req.origin = Some("null".into());
             }
-            let cors_cross = self.shared.config.enforce_cors && cors::is_cors_request(&req, origin_url.as_ref());
+            // Same-origin to the requester (`cors::is_same_origin_request`),
+            // once per hop: a request without an initiator is browser-owned;
+            // a tainted ("null") or unparsable one is never same-origin.
+            let same_origin = req.origin.is_none()
+                || (!tainted && origin_url.as_ref().is_some_and(|o| cors::same_origin(o, &req.url)));
+            let cors_cross = self.shared.config.enforce_cors && req.mode == RequestMode::Cors && !same_origin;
             site = site.max(hop_site(&req, origin_url.as_ref()));
-            let mut headers = self.build_headers(&req, origin_url.as_ref(), cors_cross, site);
+            let mut headers = self.build_headers(&req, origin_url.as_ref(), cors_cross, site, same_origin);
             let cache_mode = self.cache_mode(&req, &mut headers);
             // The request as sent, made for each consumer (the observers here,
             // an interceptor below) instead of copied for both up front.
@@ -1440,7 +1489,7 @@ impl Io {
             if self.shared.settings.lock().unwrap().offline {
                 return Err(NetError::Blocked("net::ERR_INTERNET_DISCONNECTED".into()));
             }
-            if req.mode == RequestMode::SameOrigin && !cors::is_same_origin_request(&req) {
+            if req.mode == RequestMode::SameOrigin && !same_origin {
                 return Err(NetError::Cors("Cross-origin request in same-origin mode".into()));
             }
 
@@ -1485,7 +1534,7 @@ impl Io {
             if (method == Method::GET || method == Method::HEAD) && !self.shared.config.static_files.is_empty() {
                 let document = req.destination == Destination::Document;
                 if let Some(hit) = self.shared.config.static_files.resolve(&url, document) {
-                    return self.serve_static(id, &req, sink, &url, &method, hit, cors_cross).await;
+                    return self.serve_static(id, &req, sink, &url, &method, hit, cors_cross, same_origin).await;
                 }
             }
 
@@ -1525,7 +1574,8 @@ impl Io {
                     crate::cache::Lookup::Hit(cached) => {
                         // A stored response passes the TAO check a network one would.
                         crate::timing::note_timing_allow(&url, &cached.headers, timing_origin.as_deref());
-                        return self.serve_cached(id, &req, sink, &url, cached, cors_cross, redirects > 0, true, 0);
+                        let hop = Hop { cors_cross, same_origin, redirected: redirects > 0 };
+                        return self.serve_cached(id, &req, sink, &url, cached, hop, true, 0);
                     }
                     crate::cache::Lookup::Revalidate(cached) if !unconditional => {
                         for (name, value) in cached.validators() {
@@ -1548,7 +1598,8 @@ impl Io {
                 let lookup = store.with(|c| c.lookup(&url, &headers, cache_mode, request_time));
                 if let crate::cache::Lookup::Hit(cached) = lookup {
                     crate::timing::note_timing_allow(&url, &cached.headers, timing_origin.as_deref());
-                    return self.serve_cached(id, &req, sink, &url, cached, cors_cross, redirects > 0, true, 0);
+                    let hop = Hop { cors_cross, same_origin, redirected: redirects > 0 };
+                    return self.serve_cached(id, &req, sink, &url, cached, hop, true, 0);
                 }
             }
             if cache_mode == CacheMode::OnlyIfCached && revalidating.is_none() {
@@ -1661,7 +1712,7 @@ impl Io {
             }
             let cookies_allowed = match req.credentials {
                 Credentials::Include => true,
-                Credentials::SameOrigin => cors::is_same_origin_request(&req),
+                Credentials::SameOrigin => same_origin,
                 Credentials::Omit => false,
             };
             self.store_cookies(&url, &resp_headers, cookies_allowed);
@@ -1684,17 +1735,8 @@ impl Io {
                     );
                     match updated {
                         Some(updated) => {
-                            return self.serve_cached(
-                                id,
-                                &req,
-                                sink,
-                                &url,
-                                updated,
-                                cors_cross,
-                                redirects > 0,
-                                false,
-                                0,
-                            )
+                            let hop = Hop { cors_cross, same_origin, redirected: redirects > 0 };
+                            return self.serve_cached(id, &req, sink, &url, updated, hop, false, 0);
                         }
                         None => {
                             unconditional = true;
@@ -1783,7 +1825,7 @@ impl Io {
                 cors::cors_check(&resp_headers, req.origin.as_deref().unwrap_or("null"), req.credentials)
                     .map_err(NetError::Cors)?;
                 ResponseKind::Cors
-            } else if req.mode == RequestMode::NoCors && !cors::is_same_origin_request(&req) {
+            } else if req.mode == RequestMode::NoCors && !same_origin {
                 ResponseKind::Opaque
             } else {
                 ResponseKind::Basic
@@ -1814,6 +1856,8 @@ impl Io {
                 let head = self.head(&url, status, resp_headers, kind, redirects > 0).over(protocol);
                 return self.deliver_body(id, &req, sink, head, body);
             }
+            // Before the head takes the headers: the coding borrows them.
+            let mut decoder = Decoder::for_encoding(encoding.as_deref());
             let (store, mut max_entry) = {
                 let cache = self.shared.cache.lock().unwrap();
                 let store = sent.as_ref().is_some_and(|s| cache.storable(status, &resp_headers, s, cache_mode));
@@ -1839,7 +1883,6 @@ impl Io {
             deliver(sink, ResponseEvent::Response(head));
 
             // Body.
-            let mut decoder = Decoder::for_encoding(encoding.as_deref());
             let mut body = resp.into_body();
             let (mut encoded, mut decoded) = (0u64, 0u64);
             let observed = self.shared.observed();
@@ -1962,16 +2005,15 @@ impl Io {
         sink: &SharedSink,
         url: &Url,
         cached: crate::cache::Cached,
-        cors_cross: bool,
-        redirected: bool,
+        hop: Hop,
         from_cache: bool,
         encoded_len: u64,
     ) -> Result<(), NetError> {
-        let kind = if cors_cross {
+        let kind = if hop.cors_cross {
             cors::cors_check(&cached.headers, req.origin.as_deref().unwrap_or("null"), req.credentials)
                 .map_err(NetError::Cors)?;
             ResponseKind::Cors
-        } else if req.mode == RequestMode::NoCors && !cors::is_same_origin_request(req) {
+        } else if req.mode == RequestMode::NoCors && !hop.same_origin {
             ResponseKind::Opaque
         } else {
             ResponseKind::Basic
@@ -1981,7 +2023,7 @@ impl Io {
             return Err(NetError::TooLarge);
         }
         crate::timing::served_locally();
-        let mut head = self.head(url, cached.status, cached.headers, kind, redirected).over(cached.protocol);
+        let mut head = self.head(url, cached.status, cached.headers, kind, hop.redirected).over(cached.protocol);
         head.from_cache = from_cache;
         self.shared.emit(NetEvent::ResponseReceived {
             id,
@@ -2096,6 +2138,7 @@ impl Io {
         method: &Method,
         hit: crate::static_files::StaticHit,
         cors_cross: bool,
+        same_origin: bool,
     ) -> Result<(), NetError> {
         crate::timing::served_locally();
         let document = req.destination == Destination::Document;
@@ -2119,7 +2162,7 @@ impl Io {
             cors::cors_check(&headers, req.origin.as_deref().unwrap_or("null"), req.credentials)
                 .map_err(NetError::Cors)?;
             ResponseKind::Cors
-        } else if req.mode == RequestMode::NoCors && !cors::is_same_origin_request(req) {
+        } else if req.mode == RequestMode::NoCors && !same_origin {
             ResponseKind::Opaque
         } else {
             ResponseKind::Basic
@@ -2244,15 +2287,26 @@ impl Io {
     }
 }
 
-/// The response's `Content-Encoding`, its header lines joined by commas.
-fn content_encoding(headers: &HeaderMap) -> Option<String> {
+/// The response's `Content-Encoding`, its header lines joined by commas
+/// (borrowed when there is one line, as there nearly always is).
+fn content_encoding(headers: &HeaderMap) -> Option<Cow<'_, str>> {
     let mut lines = headers.get_all(header::CONTENT_ENCODING).iter().filter_map(|v| v.to_str().ok());
     let first = lines.next()?;
-    Some(lines.fold(first.to_owned(), |mut all, line| {
+    Some(lines.fold(Cow::Borrowed(first), |all, line| {
+        let mut all = all.into_owned();
         all.push(',');
         all.push_str(line);
-        all
+        Cow::Owned(all)
     }))
+}
+
+/// What of a hop a locally answered response (a cache hit, a static file)
+/// is served under: its CORS mode, same-origin relation and redirect history.
+#[derive(Clone, Copy)]
+struct Hop {
+    cors_cross: bool,
+    same_origin: bool,
+    redirected: bool,
 }
 
 /// Reads and decodes a whole response body (at most `max_body` bytes).
