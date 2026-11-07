@@ -31,7 +31,7 @@ use crate::{
         LayoutPassState,
         inline::build_inline_layout_into,
     },
-    node::TextBrush,
+    node::{TextBrush, TextLayout},
     BaseDocument,
 };
 
@@ -183,7 +183,7 @@ impl BaseDocument {
             self.nodes[root_node_id]
                 .set_restyle_hint(style::invalidation::element::restyle_hints::RestyleHint::restyle_subtree());
             for (_, node) in self.nodes.iter_mut() {
-                node.invalidate_layout_cache();
+                node.clear_layout_cache();
             }
             self.mark_all_damaged();
         }
@@ -194,10 +194,12 @@ impl BaseDocument {
         timer.record_time("transform");
         phase_profile::mark(5, &mut phase_t);
 
-        // Build paint children / stacking contexts for damaged subtrees. Runs
-        // after layout and transforms so that stacking-context roots created by
-        // this frame's transforms are picked up, and before damage is cleared.
-        self.build_paint_tree(root_node_id);
+        // Paint children / stacking contexts are rebuilt lazily, by the first
+        // paint or hit test after this resolve (`ensure_paint_tree`), for the
+        // nodes `clear_damage_and_dirty_flags` flags `PAINT_TREE_DIRTY` below.
+        // Forced layouts (`getBoundingClientRect` and the like) never read
+        // them, so a run of them builds the tree once, not once per resolve.
+        self.paint_tree_dirty = true;
         timer.record_time("paint_tree");
         phase_profile::mark(6, &mut phase_t);
 
@@ -593,6 +595,7 @@ impl BaseDocument {
                 }
 
                 let mut collected = LayoutChildren::default();
+                phase_profile::collected();
                 collect_layout_children(doc, node_id, &mut collected);
                 let layout_children = collected.children;
 
@@ -723,8 +726,11 @@ impl BaseDocument {
                     #[cfg(not(feature = "parallel-construct"))]
                     let font_ctx_mut = &mut *self.font_ctx.lock().unwrap();
 
-                    layout.content_widths = None;
-                    layout.last_break = None;
+                    // Only the parley layout carries over (see `build_inline_layout_into`).
+                    *layout = TextLayout {
+                        layout: std::mem::take(&mut layout.layout),
+                        ..TextLayout::new()
+                    };
                     build_inline_layout_into(
                         &self.nodes,
                         layout_ctx_mut,
@@ -739,12 +745,6 @@ impl BaseDocument {
                     {
                         LAYOUT_CTX.set(Some(layout_ctx));
                     }
-
-                    // If layout doesn't contain any inline boxes, then it is safe to populate the content_widths
-                    // cache during this parallelized stage.
-                    // if layout.layout.inline_boxes().is_empty() {
-                    //     layout.content_widths();
-                    // }
 
                     ConstructionTaskResult {
                         node_id: task.node_id,
@@ -926,6 +926,31 @@ pub mod phase_profile {
         REBUILDS.with(|r| r.get())
     }
     std::thread_local! {
+        static COLLECTED: Cell<u64> = const { Cell::new(0) };
+    }
+    /// A container's layout children were collected again.
+    pub(crate) fn collected() {
+        COLLECTED.with(|c| c.set(c.get() + 1));
+    }
+    /// Layout-children collections and table context builds (from scratch: `tables().0`) on
+    /// this thread so far.
+    pub fn constructions() -> (u64, u64) {
+        (COLLECTED.with(|c| c.get()), tables().0)
+    }
+    std::thread_local! {
+        static PERFORMED: Cell<(u64, u64)> = const { Cell::new((0, 0)) };
+    }
+    /// A box's layout algorithm ran to place its children (not a size
+    /// measurement, not a cache hit); `root` for the root element.
+    pub(crate) fn performed(root: bool) {
+        PERFORMED.with(|p| p.set((p.get().0 + 1, p.get().1 + root as u64)));
+    }
+    /// Layout algorithm runs that placed children on this thread so far, and
+    /// how many of them were the root element's.
+    pub fn performed_layouts() -> (u64, u64) {
+        PERFORMED.with(|p| p.get())
+    }
+    std::thread_local! {
         static RESTYLED: Cell<u64> = const { Cell::new(0) };
     }
     /// A node was visited by the style traversal.
@@ -1006,8 +1031,213 @@ pub mod phase_profile {
     pub fn table_grids() -> (u64, u64) {
         TABLE_GRIDS.with(|t| t.get())
     }
+    std::thread_local! {
+        static BREAKS: Cell<(u64, u64, u64)> = const { Cell::new((0, 0, 0)) };
+    }
+    /// An inline layout was broken into lines, continuing after `kept` lines of its last break
+    /// and going over `bytes` of its text.
+    pub(crate) fn broke(kept: usize, bytes: usize) {
+        BREAKS.with(|b| {
+            let (n, k, t) = b.get();
+            b.set((n + 1, k + kept as u64, t + bytes as u64));
+        });
+    }
+    /// Inline layouts broken into lines on this thread so far, the lines kept from their last
+    /// break (resumed), and the text bytes the line breaker went over.
+    pub fn line_breaks() -> (u64, u64, u64) {
+        BREAKS.with(|b| b.get())
+    }
     /// Milliseconds per phase on this thread so far.
     pub fn peek() -> [f64; 9] {
         NS.with(|ns| ns.get().map(|n| n as f64 / 1e6))
+    }
+}
+
+#[cfg(test)]
+mod layout_children_owner_tests {
+    use crate::{Attribute, BaseDocument, DocumentConfig, Node, qual_name};
+    use blitz_traits::shell::{ColorScheme, Viewport};
+
+    /// Whether the node is in its `layout_parent`'s `layout_children` list, by the list owner it
+    /// records (`Node::layout_child_of`).
+    pub(super) fn is_layout_child(node: &Node) -> bool {
+        node.layout_parent.get().is_some() && node.layout_child_of.get() == node.layout_parent.get()
+    }
+
+    /// `Node::layout_child_of` agrees with a scan of every node's layout
+    /// parent's `layout_children` list.
+    fn assert_owners_match_lists(doc: &BaseDocument, when: &str) {
+        let mut members = 0;
+        for (id, node) in doc.tree().iter() {
+            let parent = node.layout_parent.get().and_then(|p| doc.get_node(p));
+            let scan = parent.is_some_and(|p| p.layout_children.borrow().as_ref().is_some_and(|c| c.contains(&id)));
+            assert_eq!(is_layout_child(node) && parent.is_some(), scan, "{when}: node {id:?}");
+            members += scan as usize;
+        }
+        assert!(members > 3, "{when}: the document has layout children ({members})");
+    }
+
+    #[test]
+    fn owner_tracks_list_membership_through_reconstruction() {
+        let mut doc = BaseDocument::new(DocumentConfig {
+            viewport: Some(Viewport::new(400, 300, 1.0, ColorScheme::Light)),
+            ..Default::default()
+        });
+        let root_id = doc.root_node().id;
+        let style = |value: &str| Attribute { name: qual_name!("style"), value: value.to_string() };
+        let mut m = doc.mutate();
+        let html = m.create_element(qual_name!("html"), vec![style("display:block")]);
+        let body = m.create_element(qual_name!("body"), vec![style("display:block")]);
+        let outer = m.create_element(qual_name!("div"), vec![style("display:block")]);
+        let x = m.create_element(qual_name!("div"), vec![style("display:block")]);
+        let x_text = m.create_text_node("x");
+        let span = m.create_element(qual_name!("span"), vec![]);
+        let inner = m.create_element(qual_name!("div"), vec![style("display:inline-block")]);
+        let inner_text = m.create_text_node("inner");
+        let y = m.create_element(qual_name!("div"), vec![style("display:block")]);
+        let abs = m.create_element(qual_name!("div"), vec![style("display:block;position:absolute")]);
+        m.append_children(x, &[x_text]);
+        m.append_children(inner, &[inner_text]);
+        m.append_children(span, &[inner]);
+        m.append_children(outer, &[x, span, y, abs]);
+        m.append_children(body, &[outer]);
+        m.append_children(html, &[body]);
+        m.append_children(root_id, &[html]);
+        drop(m);
+        doc.resolve(0.0);
+        assert_owners_match_lists(&doc, "first layout");
+
+        // Children leave `outer`'s list while keeping it as layout parent:
+        // one is no longer displayed, the rest become its inline content.
+        let mut m = doc.mutate();
+        m.set_attribute(x, qual_name!("style"), "display:none");
+        m.set_attribute(y, qual_name!("style"), "display:inline");
+        m.set_attribute(abs, qual_name!("style"), "display:none");
+        drop(m);
+        doc.resolve(0.0);
+        assert_owners_match_lists(&doc, "children leave the list");
+        assert_eq!(doc.nodes[y].layout_parent.get(), Some(outer));
+        assert!(!is_layout_child(&doc.nodes[y]));
+
+        // A block turns inline: it leaves `outer`'s list for an anonymous
+        // block's inline content, and the inline-block becomes a block.
+        let mut m = doc.mutate();
+        m.set_attribute(x, qual_name!("style"), "display:inline");
+        m.set_attribute(inner, qual_name!("style"), "display:block");
+        drop(m);
+        doc.resolve(0.0);
+        assert_owners_match_lists(&doc, "display changes");
+
+        // A container turns inline with a block child left in its old list,
+        // a child is dropped, and a new block arrives.
+        let mut m = doc.mutate();
+        m.set_attribute(outer, qual_name!("style"), "display:inline");
+        m.remove_and_drop_node(y);
+        let z = m.create_element(qual_name!("div"), vec![style("display:block")]);
+        m.append_children(body, &[z]);
+        drop(m);
+        doc.resolve(0.0);
+        assert_owners_match_lists(&doc, "container turns inline");
+
+        // And back, so the old lists are replaced again.
+        let mut m = doc.mutate();
+        m.set_attribute(outer, qual_name!("style"), "display:block");
+        m.set_attribute(x, qual_name!("style"), "display:block");
+        drop(m);
+        doc.resolve(0.0);
+        assert_owners_match_lists(&doc, "restored");
+    }
+}
+
+#[cfg(test)]
+mod layout_children_owner_reparent_tests {
+    use super::layout_children_owner_tests::is_layout_child;
+    use crate::{Attribute, BaseDocument, DocumentConfig, qual_name};
+    use blitz_traits::shell::{ColorScheme, Viewport};
+
+    fn scan(doc: &BaseDocument, id: crate::NodeId) -> bool {
+        let node = &doc.nodes[id];
+        node.layout_parent
+            .get()
+            .and_then(|p| doc.get_node(p))
+            .is_some_and(|p| p.layout_children.borrow().as_ref().is_some_and(|c| c.contains(&id)))
+    }
+
+    fn check(doc: &BaseDocument, when: &str) {
+        for (id, node) in doc.tree().iter() {
+            assert_eq!(is_layout_child(node), scan(doc, id), "{when}: node {id:?}");
+        }
+    }
+
+    /// A node moved between layout containers, in both traversal orders (its
+    /// new container visited before and after its old one), and a node
+    /// detached but kept alive.
+    #[test]
+    fn owner_follows_nodes_moved_between_containers() {
+        let mut doc = BaseDocument::new(DocumentConfig {
+            viewport: Some(Viewport::new(400, 300, 1.0, ColorScheme::Light)),
+            ..Default::default()
+        });
+        let root_id = doc.root_node().id;
+        let block = || vec![Attribute { name: qual_name!("style"), value: "display:block".to_string() }];
+        let mut m = doc.mutate();
+        let html = m.create_element(qual_name!("html"), block());
+        let body = m.create_element(qual_name!("body"), block());
+        let a = m.create_element(qual_name!("div"), block());
+        let b = m.create_element(qual_name!("div"), block());
+        let x = m.create_element(qual_name!("div"), block());
+        let y = m.create_element(qual_name!("div"), block());
+        let z = m.create_element(qual_name!("div"), block());
+        m.append_children(a, &[x, y]);
+        m.append_children(b, &[z]);
+        m.append_children(body, &[a, b]);
+        m.append_children(html, &[body]);
+        m.append_children(root_id, &[html]);
+        drop(m);
+        doc.resolve(0.0);
+        check(&doc, "first layout");
+        assert!(is_layout_child(&doc.nodes[x]));
+
+        // Later sibling container: `a` (old) is visited before `b` (new).
+        let mut m = doc.mutate();
+        m.append_children(b, &[x]);
+        drop(m);
+        doc.resolve(0.0);
+        check(&doc, "moved to a later container");
+        assert_eq!(doc.nodes[x].layout_parent.get(), Some(b));
+        assert!(is_layout_child(&doc.nodes[x]));
+
+        // Back: `a` (new) is visited before `b` (old).
+        let mut m = doc.mutate();
+        m.append_children(a, &[x]);
+        drop(m);
+        doc.resolve(0.0);
+        check(&doc, "moved to an earlier container");
+        assert!(is_layout_child(&doc.nodes[x]));
+
+        // Up to the ancestor, before and after its old container.
+        let mut m = doc.mutate();
+        m.insert_nodes_before(a, &[x]);
+        drop(m);
+        doc.resolve(0.0);
+        check(&doc, "moved up before its old container");
+        let mut m = doc.mutate();
+        m.append_children(a, &[x]);
+        drop(m);
+        doc.resolve(0.0);
+        let mut m = doc.mutate();
+        m.append_children(body, &[x]);
+        drop(m);
+        doc.resolve(0.0);
+        check(&doc, "moved up after its old container");
+        assert_eq!(doc.nodes[x].layout_parent.get(), Some(body));
+
+        // Detached but alive: in no list.
+        let mut m = doc.mutate();
+        m.remove_node(y);
+        drop(m);
+        doc.resolve(0.0);
+        check(&doc, "detached");
+        assert!(!is_layout_child(&doc.nodes[y]));
     }
 }

@@ -56,7 +56,7 @@ pub(super) fn collect_list_item_children(
 /// and an `outside` one sizes its line.
 fn marker_changed(node: &mut crate::Node) {
     node.insert_damage(super::damage::ALL_DAMAGE);
-    node.invalidate_layout_cache();
+    node.clear_layout_cache();
 }
 
 // Return a child node which is of display: list-item

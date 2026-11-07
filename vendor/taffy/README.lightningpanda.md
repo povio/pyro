@@ -84,6 +84,14 @@ in `crates/lp-render/tests/mirror.rs` fails if the skip stops firing; `LP.geomet
 
 `compute/mod.rs`: `compute_root_layout_in` takes an initial containing block of another size than the root's available space (print: Blink's rounds down, the page area up).
 
+`compute/mod.rs`, the root positioning pass: a root whose own layout comes from its cache, and which claims no
+out-of-flow box itself, records this pass's hoisted boxes again instead of keeping the last run's. blitz-dom
+relays an out-of-flow box whose containing block is the initial containing block without relaying its
+ancestors (`POS_CHILD_RELAYOUT` in `layout/damage.rs`), so the root's layout is cached while the box, relaid
+here, can surface other candidates (a `position: fixed` box added inside it). A root that claims boxes is
+always relaid when one of them changes, and keeps its list. The hunk is in the `src/compute/mod.rs` section of
+`UPSTREAM.patch`. Covered by `crates/lp-render/tests/out_of_flow_boundary.rs`.
+
 ## Table grids laid out again from their last layout
 
 `compute/grid/table_reuse.rs` (new), `compute/grid/mod.rs`, `compute/grid/track_sizing.rs`, `compute/grid/alignment.rs`

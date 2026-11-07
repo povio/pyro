@@ -120,6 +120,23 @@ pub fn blitz_style_stats() -> [u64; 4] {
     blitz_dom::phase_profile::style_stats_peek()
 }
 
+/// Layout-children collections and table context builds Blitz made on this thread.
+pub fn blitz_constructions() -> (u64, u64) {
+    blitz_dom::phase_profile::constructions()
+}
+
+/// Inline layouts Blitz broke into lines on this thread, the lines it kept from their last
+/// break (resumed after text changed past them), and the text bytes the line breaker went over.
+pub fn blitz_line_breaks() -> (u64, u64, u64) {
+    blitz_dom::phase_profile::line_breaks()
+}
+
+/// Layout algorithm runs Blitz made to place children on this thread (cache
+/// misses, not size measurements), and how many were the root element's.
+pub fn blitz_performed_layouts() -> (u64, u64) {
+    blitz_dom::phase_profile::performed_layouts()
+}
+
 /// `resolve` calls Blitz made on this thread, and how many of their layout passes ran Taffy.
 pub fn blitz_passes() -> (u64, u64) {
     blitz_dom::phase_profile::passes()
@@ -682,7 +699,8 @@ pub struct Renderer {
     /// Persistent documents of [`Live`] snapshots, by page.
     mirrors: HashMap<u64, mirror::Mirror>,
     pdf_cache: pdf::PdfCache,
-    /// Layout-query memos of persistent documents, by page.
+    /// Layout queries of persistent documents, by page (present once the
+    /// page's document has been laid out for them).
     geometry: HashMap<u64, geometry::Geometry>,
     /// External SVG sprite files of persistent documents, by resource
     /// scope and URL.
@@ -1008,7 +1026,7 @@ impl Renderer {
         let mut timings = Timings::default();
         let mut fresh = None;
         self.prepare(snap, fetcher, &mut fresh, &mut timings)?;
-        self.geometry.entry(live.page).or_default().clear();
+        self.geometry.entry(live.page).or_default();
         Ok(timings)
     }
 
@@ -1055,7 +1073,7 @@ impl Renderer {
             timings.layout = total.saturating_sub(fetch);
         }
         if !style_only || doc.root_node().tree().geometry_generation() != geometry_generation {
-            self.geometry.entry(page).or_default().clear();
+            self.geometry.entry(page).or_default();
         }
         Ok(timings)
     }
@@ -1073,11 +1091,11 @@ impl Renderer {
             let generation = m.doc.root_node().tree().geometry_generation();
             m.doc.resolve_style(0.0);
             if m.doc.root_node().tree().geometry_generation() != generation {
-                self.geometry.entry(page).or_default().clear();
+                self.geometry.entry(page).or_default();
             }
         } else if changed {
             m.doc.resolve(0.0);
-            self.geometry.entry(page).or_default().clear();
+            self.geometry.entry(page).or_default();
         }
     }
 
@@ -1248,8 +1266,8 @@ impl Renderer {
     /// The keys of the elements at viewport point (`x`, `y`) of `page`'s
     /// persistent document, topmost first (`document.elementsFromPoint`;
     /// the first is `elementFromPoint`'s).
-    pub fn elements_from_point(&self, page: u64, x: f64, y: f64) -> Vec<u64> {
-        let Some(m) = self.mirrors.get(&page) else { return Vec::new() };
+    pub fn elements_from_point(&mut self, page: u64, x: f64, y: f64) -> Vec<u64> {
+        let Some(m) = self.mirrors.get_mut(&page) else { return Vec::new() };
         let mut out = Vec::new();
         let mut cur = m.doc.element_from_point(x as f32, y as f32);
         while let Some(id) = cur {
@@ -1309,7 +1327,7 @@ impl Renderer {
         let m = self.mirrors.get_mut(&page).ok_or(RenderError::NoElement)?;
         let paint = paint_document(&mut m.doc, viewport, dpr.clamp(0.1, 16.0), opts, Timings::default())?;
         if paint.relaid {
-            self.geometry.entry(page).or_default().clear();
+            self.geometry.entry(page).or_default();
         }
         Ok(paint)
     }
@@ -2826,6 +2844,87 @@ mod settle_resolution_tests {
         );
         eprintln!("clean full delta resolve generation advances={advances}");
         assert_eq!(advances, 1, "normal successful settling already resolved this mutation");
+    }
+
+    /// The blitz node of the element with `id` in `page`'s mirrored document.
+    fn blitz_by_id(renderer: &Renderer, page: u64, id: &str) -> blitz_dom::NodeId {
+        let doc = &renderer.mirrors[&page].doc;
+        let attr = blitz_dom::local_name!("id");
+        doc.root_node()
+            .tree()
+            .iter()
+            .find(|(_, node)| node.element_data().is_some_and(|el| el.attr(attr.clone()) == Some(id)))
+            .map(|(node_id, _)| node_id)
+            .unwrap()
+    }
+
+    fn set_style(renderer: &mut Renderer, page: u64, node: blitz_dom::NodeId, style: &str) {
+        let doc = &mut renderer.mirrors.get_mut(&page).unwrap().doc;
+        let name = blitz_dom::QualName::new(None, blitz_dom::ns!(), blitz_dom::local_name!("style"));
+        doc.mutate().set_attribute(node, name, style);
+    }
+
+    fn resolve(renderer: &mut Renderer, page: u64) {
+        renderer.mirrors.get_mut(&page).unwrap().doc.resolve(0.0);
+    }
+
+    const STACKED: &str = "<!doctype html><style>body{margin:0}div{position:absolute;left:0;top:0;width:50px;height:50px}</style>\
+        <div id=box style=z-index:1></div><div id=other style=z-index:2></div><p id=far style=margin-top:80px>x</p>";
+
+    #[test]
+    fn resolve_leaves_the_paint_tree_to_the_first_hit_test() {
+        let (snap, _) = fixture(STACKED);
+        let fetcher: Arc<dyn Fetcher> = Arc::new(NoFetch);
+        let mut renderer = Renderer::new();
+        renderer.sync_layout(&snap, &fetcher).unwrap();
+        let other = blitz_by_id(&renderer, 1, "other");
+        // `sync_layout` resolves but neither paints nor hit-tests.
+        let doc = &mut renderer.mirrors.get_mut(&1).unwrap().doc;
+        assert!(doc.get_node(other).unwrap().stacking_context.is_none(), "resolve built the paint tree");
+        doc.ensure_paint_tree();
+        assert!(doc.get_node(other).unwrap().stacking_context.is_some());
+        assert!(doc.paint_tree_matches_fresh_build());
+        // Further resolves leave the built tree as it was until the next build.
+        set_style(&mut renderer, 1, other, "z-index:2;opacity:0.5");
+        resolve(&mut renderer, 1);
+        let doc = &mut renderer.mirrors.get_mut(&1).unwrap().doc;
+        assert!(doc.get_node(other).unwrap().flags.contains(blitz_dom::node::NodeFlags::PAINT_TREE_DIRTY));
+        doc.ensure_paint_tree();
+        assert!(!doc.get_node(other).unwrap().flags.contains(blitz_dom::node::NodeFlags::PAINT_TREE_DIRTY));
+        assert!(doc.paint_tree_matches_fresh_build());
+    }
+
+    #[test]
+    fn element_from_point_sees_every_resolve_since_the_last_paint() {
+        let (snap, key) = fixture(STACKED);
+        let fetcher: Arc<dyn Fetcher> = Arc::new(NoFetch);
+        let mut renderer = Renderer::new();
+        renderer.paint(&snap, Area::Viewport, &fetcher).unwrap();
+        let (bx, other, far) =
+            (blitz_by_id(&renderer, 1, "box"), blitz_by_id(&renderer, 1, "other"), blitz_by_id(&renderer, 1, "far"));
+        let other_key = renderer.mirrors[&1].key_of(other).unwrap();
+        assert_eq!(renderer.elements_from_point(1, 10.0, 10.0).first(), Some(&other_key));
+
+        // Raise #box, then make an unrelated change in a second resolve: the
+        // hit test (no paint in between) must still see the first one.
+        set_style(&mut renderer, 1, bx, "z-index:3");
+        resolve(&mut renderer, 1);
+        set_style(&mut renderer, 1, far, "margin-top:81px");
+        resolve(&mut renderer, 1);
+        assert_eq!(renderer.elements_from_point(1, 10.0, 10.0).first(), Some(&key));
+        assert!(renderer.mirrors.get_mut(&1).unwrap().doc.paint_tree_matches_fresh_build());
+
+        // Lower it again across two resolves, then drop #other: #box is on top.
+        set_style(&mut renderer, 1, bx, "z-index:1");
+        resolve(&mut renderer, 1);
+        resolve(&mut renderer, 1);
+        assert_eq!(renderer.elements_from_point(1, 10.0, 10.0).first(), Some(&other_key));
+        renderer.mirrors.get_mut(&1).unwrap().doc.mutate().remove_node(other);
+        resolve(&mut renderer, 1);
+        set_style(&mut renderer, 1, far, "margin-top:82px");
+        resolve(&mut renderer, 1);
+        assert_eq!(renderer.elements_from_point(1, 10.0, 10.0).first(), Some(&key));
+        assert!(renderer.mirrors.get_mut(&1).unwrap().doc.paint_tree_matches_fresh_build());
     }
 }
 

@@ -236,7 +236,9 @@ its inputs.
   damaged cell in its table (`LayoutData::table_cell_index`, the cell's index in `TableContext::cells`).
 - `src/resolve.rs`, `src/layout/table.rs` (`update_table_context`): a table whose rows or cells changed collects
   again only the rows with damage of their own or a cell with it, and rows added to or removed from a row group
-  between rows it keeps; the other rows and cells stay. Its layout children are listed again only when cells were
+  between rows it keeps; the other rows and cells stay. A change inside a cell (its text, its children) reaches the
+  table as relayout only (`propagate_damage_flags` stops construction damage at the cell's box, see "Construction
+  damage stops at the box that owns it"): no row is collected again, the cell is noted as changed. Its layout children are listed again only when cells were
   added or removed, and `resolve_layout_children` visits only the cells that changed. A change it cannot place (a
   `rowspan`, an out-of-flow part, a new column, a change to the first row, which gives the columns their widths and
   the first cell the gutters, the table's own damage, ...) builds the table again.
@@ -325,6 +327,61 @@ inserts and removals, spans, collapsed borders, nested and vertical tables, stac
 changes (`table_*_match_fresh_builds`), and counts what an edit, an append, a removal and an insert collect and lay
 out (`a_cell_edit_collects_only_its_row`). `blitz_tables` and `blitz_table_grids` (lp-render) report tables built, cells
 collected and grids laid out whole or again.
+
+## Construction damage stops at the box that owns it
+
+`src/layout/damage.rs` (`propagate_damage_flags`, `forwards_construction`), `src/mutator.rs`: the mutator marks a
+parent whose child list or text changed with `CHILDREN_CHANGED` (`CONSTRUCT_FC`: collect its layout children again),
+not `ALL_DAMAGE`; `CONSTRUCT_BOX` means the node's own box changed. A reconstructing node forwards `RELAYOUT |
+CONSTRUCT_DESCENDENT` to its parent, plus `CONSTRUCT_FC` only when its own box changed or when its children are laid
+out by an ancestor: `display: inline` boxes (to the inline root, replaced ones included since `is_or_contains_block`
+looks through them), `display: contents`, table rows, row groups, columns and column groups (to the table) and list
+items (to the list). A paragraph appended deep in a page collects its container's children again, not every
+ancestor's. `phase_profile::constructions` counts the collections (and, with it, the tables built from scratch).
+Covered by `crates/lp-render/tests/incremental_construction.rs` (each change compared with a fresh build, boxes and
+pixels).
+
+## Out-of-flow boxes of the root containing block relaid without their ancestors
+
+`src/layout/damage.rs` (`POS_CHILD_RELAYOUT`, `is_relayout_boundary`, `is_containing_block_for_some`): a dirty
+absolutely or fixed positioned box (a box of its own, below the root element, whose own damage has no relayout or
+box change and which forwards no construction) returns `POS_CHILD_RELAYOUT` to its parent in place of
+`ONLY_RELAYOUT`, keeping `RECALCULATE_OVERFLOW`. Ancestors pass it on without clearing their layout caches; one
+that can be a containing block (positioned, transformed, filtered, contained, `will-change`, a size container, or an
+inline root claiming for a positioned span, `TextLayout::span_cb_flags`, also through the anonymous boxes it owns)
+turns it back into `RELAYOUT`, since its out-of-flow pass runs inside its cached layout. So only the initial
+containing block is a boundary: the root's in-flow layout hits its cache and the root positioning pass relays the
+dirty box. Taffy's side: a cached root that claims no out-of-flow box records the pass's hoisted boxes again (see
+`vendor/taffy/README.lightningpanda.md`). `phase_profile::performed_layouts` counts layout algorithm runs that place
+children. Covered by `crates/lp-render/tests/out_of_flow_boundary.rs`.
+
+## The paint tree is built when something paints or hit-tests
+
+`src/resolve.rs`, `src/layout/paint_tree.rs` (`ensure_paint_tree`), `src/layout/damage.rs`
+(`clear_damage_and_dirty_flags`), `src/document.rs`: a resolve no longer builds `paint_children` and the stacking
+contexts; it flags the nodes whose propagated damage reached `REBUILD_STACKING_CONTEXT` with
+`NodeFlags::PAINT_TREE_DIRTY` (and `PAINT_TREE_OWN_DAMAGE` when the damage was the node's own, which
+`table_paint_children_kept` reads in place of `OWN_DAMAGE`, cleared by every resolve) before dropping the damage,
+and sets `BaseDocument::paint_tree_dirty`. The first paint (blitz-paint's entry points) or hit test
+(`hit_with_scrollbar`, so `hit`, `element_from_point`, `find_text_position`, hover, the pointer handlers, which take
+`&mut self`) builds the tree once for all the resolves since the last build, in sub-documents too. A run of forced
+layouts (`getBoundingClientRect` and the like) builds it once, not once per resolve.
+`paint_tree_matches_fresh_build` (debug-asserted by `ensure_paint_tree`) compares the incremental tree with a fresh
+build of every node, tables visited as any box. Covered by lp-render's `settle_resolution_tests`
+(`resolve_leaves_the_paint_tree_to_the_first_hit_test`, `element_from_point_sees_every_resolve_since_the_last_paint`).
+
+## Line breaking resumes after the lines whose text did not change
+
+`src/layout/construct.rs`, `src/resolve.rs`, `src/layout/inline/build.rs`, `src/layout/inline/layout.rs`: an inline
+root built again keeps its parley layout (the rest of its `TextLayout` is reset), builds with
+`build_into_keeping_lines` (parley keeps the lines its last break decided over the shaped content that is the same,
+see `vendor/parley/README.lightningpanda.md`) and, with no floats involved and the text not justified, resumes the
+break after them (`BreakLines::resume` with main's `max_advance` for the lines after the first; the float
+bookkeeping of #1378/#1390 starts at the kept lines). `phase_profile::line_breaks` counts breaks, lines kept and
+the text bytes the breaker went over. Covered by `crates/lp-render/tests/line_break_resume.rs`.
+`TextLayout::content_widths`, a memo nothing read (intrinsic sizing and list markers call
+`calculate_content_widths`), is gone with `Node::invalidate_layout_cache`, which only cleared it besides the layout
+cache (`clear_layout_cache`).
 
 ## Moving from 0.3.0-beta.4 to main
 

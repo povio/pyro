@@ -115,6 +115,7 @@ fn build_inline_layout_with(
     // The strut goes before the first in-flow inline box: trailing white
     // space after it still hangs, leading white space before it still
     // collapses.
+    let strut_build = strut;
     let strut = &mut { strut };
 
     if let Some(before_id) = root_node.before() {
@@ -151,7 +152,13 @@ fn build_inline_layout_with(
         );
     }
 
-    text_layout.text = builder.build_into(&mut text_layout.layout);
+    // The first build keeps the lines of the layout's last break over the text that did not
+    // change, for `BreakLines::resume`. The strut build follows a build of the same content.
+    text_layout.text = if strut_build {
+        builder.build_into(&mut text_layout.layout)
+    } else {
+        builder.build_into_keeping_lines(&mut text_layout.layout)
+    };
     text_layout.text_nodes = std::mem::take(text_nodes);
     return;
 

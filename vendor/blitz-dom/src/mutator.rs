@@ -8,7 +8,7 @@ use std::collections::HashSet;
 use std::mem;
 use std::ops::{Deref, DerefMut, Range};
 
-use crate::layout::damage::ALL_DAMAGE;
+use crate::layout::damage::{ALL_DAMAGE, CHILDREN_CHANGED};
 use crate::net::{ImageHandler, ResourceHandler, StylesheetHandler};
 use crate::node::{CanvasData, NodeFlags, SpecialElementData};
 use crate::stylo_device::DeviceChanges;
@@ -266,7 +266,7 @@ impl DocumentMutator<'_> {
             // affect the parent's layout (text may wrap differently, change size, etc.)
             if let Some(parent_id) = parent_id {
                 let parent = &mut self.doc.nodes[parent_id];
-                parent.insert_damage(ALL_DAMAGE);
+                parent.insert_damage(CHILDREN_CHANGED);
             }
 
             self.maybe_record_node(parent_id);
@@ -294,7 +294,7 @@ impl DocumentMutator<'_> {
                     );
                 }
                 if let Some(parent_id) = parent_id {
-                    self.doc.nodes[parent_id].insert_damage(ALL_DAMAGE);
+                    self.doc.nodes[parent_id].insert_damage(CHILDREN_CHANGED);
                 }
                 Ok(())
             }
@@ -626,7 +626,7 @@ impl DocumentMutator<'_> {
         if let Some(parent_id) = node.parent.take() {
             self.mutations_occurred |= node_is_in_document;
             let parent = &mut self.doc.nodes[parent_id];
-            parent.insert_damage(ALL_DAMAGE);
+            parent.insert_damage(CHILDREN_CHANGED);
             let index = parent.index_of_child(node_id).unwrap_or(0);
             parent.children.retain(|id| *id != node_id);
             if node_is_in_document {
@@ -664,7 +664,7 @@ impl DocumentMutator<'_> {
         // Update child_idx values
         if let Some(parent_id) = node.as_ref().and_then(|node| node.parent) {
             let parent = &mut self.doc.nodes[parent_id];
-            parent.insert_damage(ALL_DAMAGE);
+            parent.insert_damage(CHILDREN_CHANGED);
             let parent_is_in_doc = parent.flags.is_in_document();
             let index = parent.index_of_child(node_id).unwrap_or(0);
             parent.children.retain(|id| *id != node_id);
@@ -1043,7 +1043,7 @@ impl DocumentMutator<'_> {
             };
 
             let old_parent = &mut self.doc.nodes[old_parent_id];
-            old_parent.insert_damage(ALL_DAMAGE);
+            old_parent.insert_damage(CHILDREN_CHANGED);
             let index = old_parent.index_of_child(child_id).unwrap_or(0);
             old_parent.children.retain(|id| *id != child_id);
 
@@ -1063,7 +1063,7 @@ impl DocumentMutator<'_> {
         }
 
         let new_parent = &mut self.doc.nodes[parent_id];
-        new_parent.insert_damage(ALL_DAMAGE);
+        new_parent.insert_damage(CHILDREN_CHANGED);
         let index = insert_children_fn(new_parent, child_ids);
 
         if new_parent_is_in_document {
