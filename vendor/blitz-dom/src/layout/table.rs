@@ -1,7 +1,6 @@
 use blitz_traits::node_id::NodeId;
 use std::{ops::Range, sync::Arc};
 use style::logical_geometry::WritingMode;
-use style::properties::ComputedValues;
 
 use atomic_refcell::AtomicRefCell;
 use markup5ever::local_name;
@@ -76,9 +75,8 @@ impl TableTreeWrapper<'_, '_> {
         // Keep percentage/calc cell sizing on the existing grid fallback
         // when extending allocation to previously unsupported hinted tracks.
         if all_hinted && ctx.cells.iter().any(|cell| {
-            self.doc.nodes[cell.node_id].primary_styles().is_some_and(|style| {
-                let width = stylo_taffy::convert::dimension(&style.clone_width());
-                !matches!(width.tag(), taffy::CompactLength::AUTO_TAG | taffy::CompactLength::LENGTH_TAG)
+            physical_size(&self.doc.nodes[cell.node_id]).is_some_and(|size| {
+                !matches!(size.width.tag(), taffy::CompactLength::AUTO_TAG | taffy::CompactLength::LENGTH_TAG)
             })
         }) {
             return None;
@@ -197,8 +195,7 @@ impl TableTreeWrapper<'_, '_> {
 impl TableTreeWrapper<'_, '_> {
     /// The cell's computed `width`.
     fn cell_width(&self, cell: &TableCell) -> Option<taffy::Dimension> {
-        let style = self.doc.nodes[cell.node_id].primary_styles()?;
-        Some(stylo_taffy::convert::dimension(&style.clone_width()))
+        physical_size(&self.doc.nodes[cell.node_id]).map(|size| size.width)
     }
 
     /// Whether the table is in a table cell.
@@ -779,8 +776,31 @@ fn table_wm(doc: &BaseDocument, table_root_node_id: NodeId) -> WritingMode {
 }
 
 /// Convert a table part's style into the table's writing mode
-fn table_taffy_style(style: &ComputedValues, table_wm: WritingMode) -> taffy::Style<Atom> {
-    stylo_taffy::to_taffy_style_in(style, table_wm)
+///
+/// lightningpanda: the physical Taffy style is the one converted when the node's style was
+/// written (`Node::table_part_taffy_style`); only a node that is not a table part by its own style
+/// is converted here.
+fn table_taffy_style(node: &crate::Node, table_wm: WritingMode) -> taffy::Style<Atom> {
+    use stylo_taffy::WritingModeExt as _;
+    match node.table_part_taffy_style() {
+        Some(style) => {
+            let mut style = style.clone();
+            table_wm.transpose_style(&mut style);
+            style
+        }
+        None => stylo_taffy::to_taffy_style_in(&node.primary_styles().unwrap(), table_wm),
+    }
+}
+
+/// A table part's computed physical `width` and `height` (`None` without styles).
+fn physical_size(node: &crate::Node) -> Option<taffy::Size<taffy::Dimension>> {
+    match node.table_part_taffy_style() {
+        Some(style) => Some(style.size),
+        None => node.primary_styles().map(|style| taffy::Size {
+            width: stylo_taffy::convert::dimension(&style.clone_width()),
+            height: stylo_taffy::convert::dimension(&style.clone_height()),
+        }),
+    }
 }
 
 fn side_width(width: app_units::Au, style: BorderStyle) -> f32 {
@@ -842,7 +862,7 @@ pub(crate) fn build_table_context(
         panic!("Ignoring table because it has no styles");
     };
 
-    let mut style = table_taffy_style(&stylo_styles, wm);
+    let mut style = table_taffy_style(root_node, wm);
     style.item_is_table = true;
     // Use `dense` row-flow so that each cell scans the row from its
     // leftmost column for the first free track. Without `dense`,
@@ -1134,11 +1154,11 @@ pub(crate) fn build_table_context(
             if let Some(width) = cell.min_width.as_mut() {
                 *width += left + right;
             }
-            doc.nodes[cell.node_id].layout_data_mut().collapsed_border = Some([top, right, bottom, left]);
+            doc.nodes[cell.node_id].set_collapsed_border(Some([top, right, bottom, left]));
         }
     } else {
         for cell in cells.iter() {
-            doc.nodes[cell.node_id].layout_data_mut().collapsed_border = None;
+            doc.nodes[cell.node_id].set_collapsed_border(None);
         }
     }
 
@@ -1200,7 +1220,7 @@ fn collect_columns(
             }
         }
         DisplayInside::TableColumn => {
-            let style = table_taffy_style(&node.primary_styles().unwrap(), wm);
+            let style = table_taffy_style(node, wm);
             let span: u16 = node
                 .attr(local_name!("span"))
                 .and_then(|val| val.parse::<u16>().ok())
@@ -1324,9 +1344,8 @@ fn collect_table_cells(
             *row += 1;
             cursor.start_row();
 
-            let height = node.primary_styles().and_then(|style| {
-                let height = stylo_taffy::convert::dimension(&style.clone_height());
-                (height.tag() == taffy::CompactLength::LENGTH_TAG).then(|| height.value())
+            let height = physical_size(node).and_then(|size| {
+                (size.height.tag() == taffy::CompactLength::LENGTH_TAG).then(|| size.height.value())
             });
             rows.push(TableRow {
                 node_id,
@@ -1367,7 +1386,7 @@ fn collect_table_cells(
                 .and_then(|val| val.parse::<u16>().ok())
                 .map(|v| v.clamp(1, 65534))
                 .unwrap_or(1);
-            let mut style = table_taffy_style(stylo_style, wm);
+            let mut style = table_taffy_style(node, wm);
             let col = cursor.next_free();
 
             // In the collapsed borders model the borders are laid out as gutters between

@@ -3,7 +3,7 @@ use blitz_traits::node_id::NodeId;
 use markup5ever::local_name;
 
 use crate::net::ResourceHandler;
-use crate::node::{Node, NodeFlags};
+use crate::node::{LayoutStyles, Node, NodeFlags};
 use crate::tree::NodeTree;
 use crate::{
     BaseDocument, net::ImageHandler, node::ImageResourceData, node::Status, util::ImageLayerKind,
@@ -219,7 +219,7 @@ impl BaseDocument {
         let anonymous_blocks = std::mem::take(&mut self.nodes[node_id].anonymous_blocks);
         let mut damage_for_parent = RestyleDamage::empty();
         for &anonymous_id in &anonymous_blocks {
-            let (mut damage, changed) = {
+            let (mut damage, changed, layout_changed) = {
                 // Skip boxes whose node, style data, or previous style is unavailable.
                 let Some(node) = self.nodes.get_mut(anonymous_id) else {
                     continue;
@@ -239,8 +239,16 @@ impl BaseDocument {
                     data.styles.primary = Some(style.clone());
                     data.set_restyled();
                 }
-                (data.damage | diff.damage, changed)
+                let layout_changed = changed && LayoutStyles::affected_by(diff.damage);
+                (data.damage | diff.damage, changed, layout_changed)
             };
+            // A paint-only change keeps the layout styles derived from the old style.
+            if layout_changed {
+                self.nodes[anonymous_id].update_layout_styles();
+            } else if changed {
+                #[cfg(debug_assertions)]
+                self.nodes[anonymous_id].assert_layout_styles_are_current();
+            }
 
             // Refresh nested owned boxes unless reconstruction will replace them.
             if changed && !damage.intersects(CONSTRUCT_BOX | CONSTRUCT_FC) {

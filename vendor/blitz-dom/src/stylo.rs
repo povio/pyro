@@ -10,6 +10,7 @@ use crate::StyleThreading;
 use crate::layout::damage::compute_layout_damage;
 use crate::node::Node;
 use crate::node::NodeData;
+use crate::node::LayoutStyles;
 use markup5ever::{LocalName, LocalNameStaticSet, Namespace, NamespaceStaticSet, local_name, ns};
 use selectors::bloom::BLOOM_HASH_MASK;
 use selectors::{
@@ -1375,7 +1376,41 @@ impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
             // let mut data = el.mutate_data().unwrap();
             let mut data = unsafe { el.ensure_data() };
             let before = context.thread_local.statistics.clone();
+            // Held (not just its address) so that a replacement cannot reuse the allocation.
+            let old_primary = data.styles.get_primary().cloned();
             recalc_style_at(self, context, el, &mut data, note_child);
+            // lightningpanda: a replaced primary style rewrites what layout reads of it.
+            let new_primary = data.styles.get_primary();
+            let replaced = match (&old_primary, new_primary) {
+                (Some(old), Some(new)) => !Arc::ptr_eq(old, new),
+                (None, None) => false,
+                _ => true,
+            };
+            // Stylo diffs the old and new style into `data.damage` (nothing when there was no old
+            // style, so a first style is always derived). A replacement without layout damage
+            // (colour, background, :hover, a class that changes only paint) leaves the derived
+            // layout styles as they are.
+            let derive =
+                replaced && (old_primary.is_none() || LayoutStyles::affected_by(data.damage));
+            drop(old_primary);
+            if derive {
+                let derived = match new_primary {
+                    Some(style) => LayoutStyles::derive(style, el.collapsed_border()),
+                    None => LayoutStyles::default(),
+                };
+                // SAFETY: the traversal has exclusive access to `el`, and nothing reads its
+                // layout styles while it runs.
+                if let Some(stylo) = el.try_stylo_element_data() {
+                    unsafe { stylo.set_layout_styles(derived) };
+                }
+            } else if replaced {
+                #[cfg(debug_assertions)]
+                if let (Some(style), Some(stylo)) = (new_primary, el.try_stylo_element_data()) {
+                    stylo
+                        .layout_styles()
+                        .assert_current(style, el.collapsed_border(), el.id);
+                }
+            }
             let after = &context.thread_local.statistics;
             crate::resolve::phase_profile::style_stats([
                 after.elements_styled - before.elements_styled,
@@ -1510,6 +1545,16 @@ fn sync_pseudo_element_styles(
                     .unwrap()
                     .push(pe_node_id);
             }
+        }
+        if LayoutStyles::affected_by(diff.damage) {
+            let derived = LayoutStyles::derive(&pe_style, pe_node.collapsed_border());
+            // SAFETY: as for `pe_data` above (only the owner's `process_preorder` reaches it).
+            unsafe { stylo_data.set_layout_styles(derived) };
+        } else {
+            #[cfg(debug_assertions)]
+            stylo_data
+                .layout_styles()
+                .assert_current(&pe_style, pe_node.collapsed_border(), pe_node_id);
         }
         pe_data.styles.primary = Some(pe_style);
         pe_data.set_restyled();

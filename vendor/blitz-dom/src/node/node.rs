@@ -38,7 +38,7 @@ use style_traits::values::ToCss;
 use taffy::{Cache, prelude::Layout};
 use thin_vec::ThinVec;
 
-use super::stylo_data::{ComputedStyleRef, StyloData};
+use super::stylo_data::{ComputedStyleRef, LayoutStyles, StyloData};
 use super::{Attribute, DocumentData, ElementData, LayoutData};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1192,9 +1192,10 @@ impl Node {
     pub fn layout_style(&self) -> stylo_taffy::TaffyStyloStyle<ComputedStyleRef<'_>> {
         let styles = self
             .try_stylo_element_data()
-            .and_then(|stylo| stylo.computed_styles())
-            .expect("layout_style() called on a node without computed styles")
-            .for_table_cell_layout(self.collapsed_border());
+            .and_then(|stylo| stylo.layout_computed_styles())
+            .expect("layout_style() called on a node without computed styles");
+        #[cfg(debug_assertions)]
+        self.assert_layout_styles_are_current();
 
         let mut flags = stylo_taffy::StyleFlags::empty();
         if let Some(el) = self.data.downcast_element() {
@@ -1225,11 +1226,66 @@ impl Node {
     }
 
     /// The half collapsed borders of a cell in a table without uniform ones.
-    fn collapsed_border(&self) -> Option<[f32; 4]> {
+    pub(crate) fn collapsed_border(&self) -> Option<[f32; 4]> {
         match &self.data {
             NodeData::Element(data) | NodeData::AnonymousBlock(data) => data.layout_data().collapsed_border,
             _ => None,
         }
+    }
+
+    /// lightningpanda: rewrite the layout styles derived from the node's primary style
+    /// ([`LayoutStyles`]). Called wherever the primary style is replaced outside the style
+    /// traversal, and when a cell's collapsed borders change.
+    pub(crate) fn update_layout_styles(&mut self) {
+        let collapsed_border = self.collapsed_border();
+        let Some(stylo) = self.try_stylo_element_data_mut() else {
+            return;
+        };
+        let derived = match stylo.get().as_ref().and_then(|data| data.styles.get_primary()) {
+            Some(style) => LayoutStyles::derive(style, collapsed_border),
+            None => LayoutStyles::default(),
+        };
+        *stylo.layout_styles_mut() = derived;
+    }
+
+    /// Set a table cell's half collapsed borders, and its layout style with them. The cell's
+    /// table-part Taffy style does not depend on them and stays.
+    pub(crate) fn set_collapsed_border(&mut self, collapsed_border: Option<[f32; 4]>) {
+        if self.collapsed_border() == collapsed_border {
+            return;
+        }
+        self.layout_data_mut().collapsed_border = collapsed_border;
+        let Some(stylo) = self.try_stylo_element_data_mut() else {
+            return;
+        };
+        let cell = match stylo.get().as_ref().and_then(|data| data.styles.get_primary()) {
+            Some(style) => super::stylo_data::cell_layout_style(style, collapsed_border),
+            None => None,
+        };
+        stylo.layout_styles_mut().cell = cell;
+    }
+
+    /// The physical Taffy style of a table, table row, column or cell, converted when its style
+    /// was written.
+    pub(crate) fn table_part_taffy_style(&self) -> Option<&taffy::Style<style::Atom>> {
+        let style = self.try_stylo_element_data()?.layout_styles().table_part.as_deref();
+        #[cfg(debug_assertions)]
+        self.assert_layout_styles_are_current();
+        style
+    }
+
+    /// Debug builds: the stored layout styles are those the primary style gives now.
+    #[cfg(debug_assertions)]
+    pub(crate) fn assert_layout_styles_are_current(&self) {
+        let Some(stylo) = self.try_stylo_element_data() else {
+            return;
+        };
+        let Some(primary) = stylo.primary_styles() else {
+            return;
+        };
+        stylo
+            .layout_styles()
+            .assert_current(&primary, self.collapsed_border(), self.id);
     }
 
     /// The node's style for Taffy, expressed in the axes of the writing mode `layout_wm` (the writing
