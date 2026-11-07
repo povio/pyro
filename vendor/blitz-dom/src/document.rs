@@ -391,6 +391,11 @@ pub struct BaseDocument {
     /// the style traversal and by pseudo-element box construction).
     pub(crate) pending_style_image_nodes: Vec<NodeId>,
 
+    /// lightningpanda: a style traversal kept a generated `::before` /
+    /// `::after` style for some element (sticky; see
+    /// `BaseDocument::may_have_generated_before_after`).
+    pub(crate) generated_before_after: bool,
+
     // Tracks in-flight "critical" resources (e.g. stylesheets linked from the `<head>`),
     // keyed by request id
     pub(crate) pending_critical_resources: HashSet<usize>,
@@ -558,6 +563,7 @@ impl BaseDocument {
             image_cache: HashMap::new(),
             pending_images: HashMap::new(),
             pending_style_image_nodes: Vec::new(),
+            generated_before_after: false,
             pending_critical_resources: HashSet::new(),
             controls_to_form: HashMap::new(),
             net_provider,

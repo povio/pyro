@@ -167,6 +167,12 @@ pub trait GeometrySource {
     ) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
         None
     }
+    /// `false` when [`Self::element_pseudo_style`] with `generated_only`
+    /// answers `None` for `::before` / `::after` of every element as of the
+    /// last sync (no element is styled with a generated one).
+    fn may_have_generated_before_after(&self) -> bool {
+        true
+    }
 }
 
 /// An element's boxes (document coordinates; viewport ones inside a fixed

@@ -896,6 +896,18 @@ impl StyleEngine {
         external.as_ref()?.0.element_pseudo_style(crate::snapshot::render_key(el), pseudo, generated_only)
     }
 
+    /// `false` when no element of the document has a generated `::before` /
+    /// `::after` (styles brought up to `dom` first): then
+    /// [`Self::stylo_pseudo_style`] with `generated_only` answers `None` for
+    /// both of every element. One flag read on the layout engine.
+    pub fn may_have_generated_before_after(&self, dom: &Dom) -> bool {
+        if self.engine_styled(dom).is_none() {
+            return false;
+        }
+        let external = self.external.borrow();
+        external.as_ref().is_some_and(|(source, _)| source.may_have_generated_before_after())
+    }
+
     /// The layout engine's style of `el` (its styles brought up to `dom`).
     fn external_style(
         &self,
