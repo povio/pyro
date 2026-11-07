@@ -510,6 +510,7 @@ fn load_main_script(page: &Rc<PageDom>, start: &WorkerStart) -> Option<String> {
                 &start.shared,
                 &start.origin,
                 start.url.clone(),
+                Destination::Script,
                 RequestMode::SameOrigin,
                 true,
             )
@@ -590,7 +591,15 @@ impl lp_js::ModuleFetcher for WorkerModuleFetcher {
             let source = match (page.upgrade(), lp_net::Url::parse(&url)) {
                 (Some(page), Ok(parsed)) => match page.blob_url(&url) {
                     Some((bytes, mime)) => Ok((bytes, lp_net::parse_content_type(&mime).0)),
-                    None => fetch_script(&page, &net, &shared, &origin, parsed, RequestMode::Cors, false),
+                    None => {
+                        // A JSON module is fetched with destination "json"
+                        // (CSS modules were rejected above).
+                        let destination = match request.module_type() {
+                            lp_js::ModuleType::Json => Destination::Json,
+                            _ => Destination::Script,
+                        };
+                        fetch_script(&page, &net, &shared, &origin, parsed, destination, RequestMode::Cors, false)
+                    }
                 },
                 _ => Err("invalid URL".to_owned()),
             };
@@ -628,10 +637,11 @@ fn fetch_script(
     shared: &Shared,
     origin: &Option<String>,
     url: lp_net::Url,
+    destination: Destination,
     mode: RequestMode,
     main: bool,
 ) -> Result<(Bytes, String), String> {
-    let mut request = Request::get(url, Destination::Script);
+    let mut request = Request::get(url, destination);
     request.mode = mode;
     request.credentials = Credentials::SameOrigin;
     request.origin = origin.clone();
@@ -838,7 +848,7 @@ impl JsClass for WorkerGlobalScope {
                 let bytes =
                     match page.blob_url(&name) {
                         Some((bytes, _)) => bytes,
-                        None => fetch_script(page, &net, &g.shared, &origin, url, RequestMode::NoCors, false).map(|(b, _)| b).map_err(
+                        None => fetch_script(page, &net, &g.shared, &origin, url, Destination::Script, RequestMode::NoCors, false).map(|(b, _)| b).map_err(
                             |e| {
                                 JsError::dom(
                             "NetworkError",

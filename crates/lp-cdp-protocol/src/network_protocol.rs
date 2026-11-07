@@ -510,7 +510,7 @@ pub fn fetch_resource_type(destination: lp_net::Destination) -> ResourceType {
     use lp_net::Destination as D;
     match destination {
         D::Document | D::Iframe => ResourceType::Document,
-        D::Script => ResourceType::Script,
+        D::Script | D::Json => ResourceType::Script,
         D::Style => ResourceType::Stylesheet,
         D::Image => ResourceType::Image,
         D::Audio | D::Video => ResourceType::Media,

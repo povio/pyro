@@ -57,6 +57,7 @@ impl Browser {
             } else {
                 lp_webapi::resource_timing::Initiator::Audio
             }),
+            module: None,
         };
         resource_loader.fetch_cancellable(
             self,

@@ -55,7 +55,12 @@ impl Server {
                 if path == "/stop" {
                     break;
                 }
+                // Content negotiation as a dev server does it: raw CSS only for
+                // an Accept naming text/css, a JavaScript wrapper otherwise.
+                let accepts_css = headers.iter().any(|(n, v)| n == "accept" && v.contains("text/css"));
                 let (mime, extra, body) = match path.split('?').next().unwrap_or("/") {
+                    "/m.css" if accepts_css => ("text/css", "", "p { color: red }"),
+                    "/m.css" => ("text/javascript", "", "export default 'p { color: red }';"),
                     "/a" => ("text/html", "", "<p>a</p>"),
                     "/b" => ("text/html", "Referrer-Policy: bogus, origin\r\n", "<p>b</p>"),
                     "/c" => (
@@ -145,4 +150,39 @@ fn document_referrer_policy_and_fetch_metadata() {
     let script = server.request("/s.js");
     assert_eq!(script.get("referer"), None, "{script:?}");
     assert_eq!((script.get("sec-fetch-dest"), script.get("sec-fetch-mode")), (Some("script"), Some("no-cors")));
+}
+
+/// CSS and JSON module scripts are fetched with destinations "style" and
+/// "json": their Accept and Sec-Fetch-Dest headers say so, and a server that
+/// negotiates on Accept returns the stylesheet rather than JavaScript.
+#[test]
+fn module_script_fetch_destinations() {
+    let server = Server::new();
+    let mut thread = crate::browser_thread().unwrap();
+    thread.enable_network(Default::default()).unwrap();
+    let page = thread.browser.create_page().unwrap();
+    let origin = server.origin.clone();
+    thread.browser.navigate(page, NavigateOpts::address_bar(format!("{origin}/a"))).unwrap();
+    until(&mut thread, page, "location.pathname === '/a' && document.readyState === 'complete'");
+    eval(
+        &thread,
+        page,
+        "globalThis.out = null; Promise.all([\
+           import('/m.css', { with: { type: 'css' } }),\
+           import('/m.json', { with: { type: 'json' } })])\
+         .then(([css, json]) => out = css.default.cssRules[0].selectorText + ' ' + json.default.ok,\
+               e => out = 'error: ' + e); 0",
+    );
+    until(&mut thread, page, "globalThis.out !== null");
+    assert_eq!(eval(&thread, page, "out"), "p true");
+    let css = server.request("/m.css");
+    assert_eq!(
+        (css.get("accept"), css.get("sec-fetch-dest"), css.get("sec-fetch-mode")),
+        (Some("text/css,*/*;q=0.1"), Some("style"), Some("cors"))
+    );
+    let json = server.request("/m.json");
+    assert_eq!(
+        (json.get("accept"), json.get("sec-fetch-dest"), json.get("sec-fetch-mode")),
+        (Some("application/json,*/*;q=0.5"), Some("json"), Some("cors"))
+    );
 }
