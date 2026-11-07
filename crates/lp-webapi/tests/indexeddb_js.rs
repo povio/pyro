@@ -631,3 +631,24 @@ fn upgrade_lifecycle_and_exception_order() {
         "done|versionchange|true|1|complete:InvalidStateError:true|success:null|InvalidStateError|InvalidStateError|aborted:TransactionInactiveError:InvalidStateError|onabort:InvalidStateError:true:1|AbortError:null|TransactionInactiveError|TypeError|TypeError|TransactionInactiveError|NotFoundError|InvalidAccessError|TypeError|1|0"
     );
 }
+
+#[test]
+fn crypto_keys_are_stored_and_read_back_as_usable_keys() {
+    let env = Env::new();
+    let a = env.doc("http://idb.test/keys");
+    a.eval(HELPERS);
+    let got = env.run(
+        &a,
+        r#"
+        const key = await crypto.subtle.generateKey({name: 'AES-GCM', length: 256}, false, ['encrypt', 'decrypt']);
+        const db = await openDb('keys', 1, (db) => db.createObjectStore('k'));
+        await req(db.transaction('k', 'readwrite').objectStore('k').put({key}, 'main'));
+        const back = (await req(db.transaction('k').objectStore('k').get('main'))).key;
+        const iv = new Uint8Array(12);
+        const sealed = await crypto.subtle.encrypt({name: 'AES-GCM', iv}, key, new Uint8Array([5]));
+        const open = await crypto.subtle.decrypt({name: 'AES-GCM', iv}, back, sealed);
+        out = [back instanceof CryptoKey, back !== key, back.extractable, back.algorithm.length, new Uint8Array(open)[0]].join();
+        "#,
+    );
+    assert_eq!(got, "true,true,false,256,5");
+}

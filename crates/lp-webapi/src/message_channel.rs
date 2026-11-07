@@ -47,7 +47,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use lp_js::{ClassDef, JsClass, JsError, JsResult, NoParent, Object, Persistent, Scope, WeakRealm};
 use rustc_hash::FxHashMap;
 
-use crate::port_link::{Link, Owner, Sent, TransitEnd};
+use crate::port_link::{Link, Owner, Sent, TransitEnd, WeakPipe};
 
 use crate::event::{EventCore, EventInterface};
 use crate::page::PageDom;
@@ -77,6 +77,9 @@ thread_local! {
     /// This thread's ports that stand for a side of a pipe, by id: the
     /// target of the tasks other threads post for them.
     static REMOTE: RefCell<FxHashMap<u64, Weak<PortInner>>> = RefCell::default();
+    /// The pipes this thread's pages made, by page id: swept when the page
+    /// goes (`WeakPipe::close_if_orphaned`).
+    static MADE: RefCell<Vec<(u64, WeakPipe)>> = const { RefCell::new(Vec::new()) };
 }
 static NEXT_REMOTE: AtomicU64 = AtomicU64::new(1);
 
@@ -294,6 +297,20 @@ pub(crate) fn dispose(page: &PageDom) {
         if let Some(link) = detach_remote(&port) {
             link.close();
         }
+    }
+    // The pipes the page made whose sides no port owns any more: travelling
+    // ports that only each other's undelivered messages hold.
+    let made: Vec<WeakPipe> = MADE.with(|m| {
+        let mut m = m.borrow_mut();
+        if m.is_empty() {
+            return Vec::new();
+        }
+        let (mine, rest): (Vec<_>, Vec<_>) = std::mem::take(&mut *m).into_iter().partition(|(id, _)| *id == page.id());
+        *m = rest;
+        mine.into_iter().map(|(_, pipe)| pipe).collect()
+    });
+    for pipe in made {
+        pipe.close_if_orphaned();
     }
 }
 
@@ -522,6 +539,15 @@ pub(crate) fn export_port(s: &Scope<'_>, value: lp_js::Value<'_>) -> JsResult<Tr
         Some(link) => link,
         None => {
             let (mine, theirs) = Link::pair();
+            let page = port.page().id();
+            MADE.with(|m| {
+                let mut m = m.borrow_mut();
+                // Pruned as it grows, so it stays proportional to live pipes.
+                if m.len() >= 64 && m.len().is_power_of_two() {
+                    m.retain(|(_, pipe)| !pipe.is_gone());
+                }
+                m.push((page, mine.downgrade()));
+            });
             match port.peer.take().upgrade() {
                 Some(peer) => {
                     peer.peer.replace(Weak::new());

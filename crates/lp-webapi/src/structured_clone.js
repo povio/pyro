@@ -58,7 +58,8 @@
     // transfers them afterwards. `streams` (internal callers) receives the
     // transferred streams' new streams.
     function clone(value, options, ports, keep, streams) {
-        const memory = new M(), buffers = [], moved = [], piped = [];
+        const memory = new M(), buffers = [], moved = [];
+        let piped;
         if (keep) for (let i = 0; i < keep.length; ++i) call(mapSet, memory, [keep[i], keep[i]]);
         if (options != null) {
             if (typeof options !== 'object' && typeof options !== 'function')
@@ -95,6 +96,7 @@
                         const stream = ordinary ? host(entry, 5) : undefined;
                         if (stream === undefined) fail('Value is not transferable');
                         call(mapSet, memory, [entry, stream[0]]);
+                        if (!piped) piped = [];
                         put(piped, piped.length, entry);
                         put(piped, piped.length, stream);
                         continue;
@@ -224,7 +226,7 @@
             host(moved[i], 2, moved[i + 1]);
             if (ports) put(ports, ports.length, moved[i + 1]);
         }
-        for (let i = 0; i < piped.length; i += 2) {
+        if (piped) for (let i = 0; i < piped.length; i += 2) {
             host(piped[i], 6, piped[i + 1]);
             if (streams) put(streams, streams.length, piped[i + 1][0]);
         }

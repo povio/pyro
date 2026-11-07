@@ -112,7 +112,9 @@
         for (let i = 0; i < ports.length; ++i) put(keep, keep.length, ports[i]);
         for (let i = 0; i < streams.length; ++i) put(keep, keep.length, streams[i]);
         const copy = clone(value, undefined, undefined, keep.length ? keep : undefined);
-        const portIndex = new M(), streamTrees = new M();
+        // Only a message that transfers something pays for these lookups.
+        const portIndex = ports.length ? new M() : undefined;
+        const streamTrees = streams.length ? new M() : undefined;
         for (let i = 0; i < ports.length; ++i) call(mapSet, portIndex, [ports[i], i]);
         for (let i = 0, at = ports.length; i < streams.length; ++i) {
             const two = kinds[i] === 'T';
@@ -143,10 +145,10 @@
                     return '' + source;
             }
             if (source === null) return 'null';
-            if (call(mapHas, portIndex, [source])) return '["P",' + call(mapGet, portIndex, [source]) + ']';
+            if (portIndex && call(mapHas, portIndex, [source])) return '["P",' + call(mapGet, portIndex, [source]) + ']';
             if (call(mapHas, memory, [source])) return '["r",' + call(mapGet, memory, [source]) + ']';
             call(mapSet, memory, [source, next++]);
-            if (call(mapHas, streamTrees, [source])) return call(mapGet, streamTrees, [source]);
+            if (streamTrees && call(mapHas, streamTrees, [source])) return call(mapGet, streamTrees, [source]);
             if (isArray(source)) return '["a",' + source.length + entries(source) + ']';
             if (isView(source)) {
                 const name = call(typedName, source);

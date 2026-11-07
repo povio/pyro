@@ -71,11 +71,16 @@ CryptoKeys are structured-cloneable within a realm (`structuredClone`,
 an object it does not know, which copies a CryptoKey's slots. A realm that has
 not made subtle.js has no keys, so this costs it nothing.
 
+They also cross VMs: the worker wire format asks `crypto::serialize_key` for
+a host object it does not know, which gives the key's slots as plain data
+(type, extractable, algorithm, usages, key bytes), and `deserialize_key`
+makes the CryptoKey in the receiving realm (making its subtle.js if needed;
+the parts are shape-checked). So keys reach and leave dedicated workers by
+`postMessage` and MessagePorts, cross BroadcastChannel, and are stored by
+IndexedDB.
+
 ## Limits
 
-- CryptoKeys do not cross to or from a worker by `postMessage` (the worker
-  wire format has no CryptoKey): DataCloneError, as for other unsupported
-  objects.
 - RSA-OAEP labels must be valid UTF-8 (the `rsa` crate keeps the label as a
   string); other labels reject with `NotSupportedError`.
 - RSA JWKs need all CRT members (`p`, `q`, `dp`, `dq`, `qi`) for private

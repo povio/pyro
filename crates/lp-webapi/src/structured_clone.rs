@@ -234,6 +234,10 @@ impl WireMessage {
     pub(crate) fn empty() -> Self {
         WireMessage { text: String::new(), buffers: Vec::new(), blobs: Vec::new(), ports: Vec::new(), listed_ports: 0 }
     }
+    #[cfg(test)]
+    pub(crate) fn carrying(port: crate::port_link::TransitEnd) -> Self {
+        WireMessage { ports: vec![port], listed_ports: 1, ..Self::empty() }
+    }
     /// What the message holds in memory while queued.
     pub(crate) fn size(&self) -> usize {
         self.text.len()

@@ -50,9 +50,14 @@ implement `new Worker(url)`. A worker runs its script off the page's thread.
   (`worker_wire.js`), which cross as a task of the other side's event loop and
   are rebuilt there; failing to rebuild fires `messageerror`. Errors,
   DOMExceptions, Blobs, Files and FileLists cross too (Blob bytes are shared,
-  not copied). Transferring an ArrayBuffer copies it and detaches the
-  sender's; transferring a MessagePort throws NotSupportedError. Messages to a worker wait until
-  its script has run. A navigation drops messages on their way to the old document.
+  not copied), and so do CryptoKeys. Transferring an ArrayBuffer copies it
+  and detaches the sender's. MessagePorts transfer both ways and stay
+  entangled across the threads (messages both ways, `start`/`onmessage`,
+  `close`, `messageerror`; see [MessageChannel](MESSAGE_CHANNEL.md)), and
+  arrive in `event.ports`; ReadableStream, WritableStream and TransformStream
+  transfer as the Streams standard specifies, over such ports (see
+  [Streams](STREAMS.md)). Messages to a worker wait until its script has
+  run. A navigation drops messages on their way to the old document.
 - **Errors.** An uncaught exception fires `ErrorEvent` at the global and, if not
   canceled, at the `Worker`, with message `Uncaught <text>`. It does not continue
   to the owner's window, and `error` is null on the page side.
@@ -101,8 +106,8 @@ times out.
 - `SharedWorker` and `ServiceWorker` stay undefined, as does `navigator.serviceWorker`:
   `typeof` feature detection is what sites use, and a constructor that throws would
   send them down a path that then fails.
-- Transferring a MessagePort throws NotSupportedError. Host objects other than
-  Blob, File and FileList (a `CryptoKey` included) do not cross.
+- Host objects other than Blob, File, FileList and CryptoKey do not cross
+  (DataCloneError). There is no ImageBitmap or OffscreenCanvas to transfer.
 - Nested workers. `Worker` is undefined inside a worker.
 - `importScripts` of a page-created `blob:` URL (the store is the owner document's).
 - A worker whose wrapper became unreachable runs until its document goes.
@@ -114,5 +119,7 @@ times out.
 - A worker started on a page prebooted by `serve --prepare` outside fork mode runs,
   but has no CDP target: the connection did not exist to record it.
 
-Tests: `crates/lp-browser/src/tests.rs` (`worker_*`), `crates/lp-webapi/tests/dom_js.rs`
+Tests: `crates/lp-browser/src/tests.rs` (`worker_*`, `message_ports_cross_*`,
+`a_port_from_a_worker_*`, `two_workers_talk_*`, `streams_transfer_*`,
+`crypto_keys_cross_*`), `crates/lp-webapi/tests/dom_js.rs`
 (`worker_*`), `tests/e2e/about-blank.mjs`.

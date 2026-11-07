@@ -187,6 +187,41 @@ impl Link {
     }
 }
 
+/// A pipe as the page that made it remembers it.
+pub(crate) struct WeakPipe(std::sync::Weak<Pipe>);
+
+impl Link {
+    pub(crate) fn downgrade(&self) -> WeakPipe {
+        WeakPipe(Arc::downgrade(&self.pipe))
+    }
+}
+
+impl WeakPipe {
+    pub(crate) fn is_gone(&self) -> bool {
+        self.0.strong_count() == 0
+    }
+
+    /// When neither side has an owner (each is closed or travelling), closes
+    /// both. Run when the page that made the pipe goes away: ports in transit
+    /// inside each other's undelivered messages would otherwise keep each
+    /// other alive for ever.
+    pub(crate) fn close_if_orphaned(&self) {
+        let Some(pipe) = self.0.upgrade() else { return };
+        let mut sides = pipe.lock();
+        if sides.iter().any(|side| side.owner.is_some()) {
+            return;
+        }
+        let mut dropped = Vec::new();
+        for side in sides.iter_mut() {
+            side.closed = true;
+            side.bytes = 0;
+            dropped.push(std::mem::take(&mut side.inbox));
+        }
+        drop(sides);
+        drop(dropped);
+    }
+}
+
 /// A side of a pipe inside a serialized message. Claimed once, by the
 /// deserialization that makes its port; closed if never claimed.
 pub(crate) struct TransitEnd(Mutex<Option<Link>>);
@@ -244,6 +279,22 @@ mod tests {
         assert!(matches!(b.send(WireMessage::empty()), Ok(Sent::Dropped)));
         b.close();
         assert_eq!(b.pending(), 0);
+    }
+
+    #[test]
+    fn orphaned_pipes_in_each_others_inboxes_are_released() {
+        // a2 travels inside b's inbox and b1 inside a's: a cycle of pipes.
+        let (a1, a2) = Link::pair();
+        let (b1, b2) = Link::pair();
+        let (weak_a, weak_b) = (a1.downgrade(), b1.downgrade());
+        assert!(matches!(a1.send(WireMessage::carrying(TransitEnd::new(b1))), Ok(Sent::Queued)));
+        assert!(matches!(b2.send(WireMessage::carrying(TransitEnd::new(a2))), Ok(Sent::Queued)));
+        a1.close();
+        b2.close();
+        drop((a1, b2));
+        assert!(!weak_a.is_gone() && !weak_b.is_gone(), "the cycle holds both pipes");
+        weak_a.close_if_orphaned();
+        assert!(weak_a.is_gone() && weak_b.is_gone());
     }
 
     #[test]
