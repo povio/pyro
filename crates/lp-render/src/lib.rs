@@ -1119,6 +1119,14 @@ impl Renderer {
         m.doc.pseudo_element_style(m.node(key)?, pseudo, generated_only)
     }
 
+    /// `false` while no element of `page`'s persistent document has been
+    /// styled with a generated `::before` / `::after`: then
+    /// [`Renderer::element_pseudo_style`] with `generated_only` answers
+    /// `None` for every element.
+    pub fn may_have_generated_before_after(&self, page: u64) -> bool {
+        self.mirrors.get(&page).is_some_and(|m| m.doc.may_have_generated_before_after())
+    }
+
     /// The box of the element keyed `key` in `page`'s persistent document,
     /// as of the last [`Renderer::sync_layout`] (see [`LayoutBox`]).
     pub fn element_box(&self, page: u64, key: u64) -> Option<LayoutBox> {

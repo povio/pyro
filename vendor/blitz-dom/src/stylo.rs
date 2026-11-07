@@ -196,6 +196,11 @@ impl crate::document::BaseDocument {
             style::driver::traverse_dom(&traverser, token, rayon_pool);
             nodes_needing_style_image_flush =
                 std::mem::take(traverser.nodes_needing_style_image_flush.get_mut().unwrap());
+            // Sticky: set once an element is styled with a generated
+            // `::before` / `::after`, never cleared.
+            if traverser.generated_before_after.into_inner() {
+                self.generated_before_after = true;
+            }
         }
         self.pending_style_image_nodes
             .extend(nodes_needing_style_image_flush);
@@ -235,6 +240,14 @@ impl crate::document::BaseDocument {
     /// node. Returns `None` for non-elements and elements outside the document.
     pub fn resolve_undisplayed_style(&self, node_id: NodeId) -> Option<Arc<ComputedValues>> {
         Some(self.resolve_undisplayed_styles(node_id)?.primary().clone())
+    }
+
+    /// lightningpanda: `false` while no style traversal has kept a
+    /// `::before` / `::after` style for any element, so
+    /// [`Self::pseudo_element_style`] with `generated_only` answers `None`
+    /// for every element (it may stay `true` after they are gone).
+    pub fn may_have_generated_before_after(&self) -> bool {
+        self.generated_before_after
     }
 
     /// lightningpanda: the style `getComputedStyle(element, pseudo)` reads
@@ -1478,6 +1491,9 @@ pub struct RecalcStyle<'a> {
     /// dedicated storage on the node (see `flush_image_layers_from_style`)
     /// because their style changed during this traversal.
     nodes_needing_style_image_flush: Mutex<Vec<NodeId>>,
+    /// lightningpanda: an element styled in this traversal kept a
+    /// `::before` / `::after` style (one its rules generate).
+    generated_before_after: std::sync::atomic::AtomicBool,
 }
 
 impl<'a> RecalcStyle<'a> {
@@ -1485,6 +1501,7 @@ impl<'a> RecalcStyle<'a> {
         RecalcStyle {
             context,
             nodes_needing_style_image_flush: Mutex::new(Vec::new()),
+            generated_before_after: std::sync::atomic::AtomicBool::new(false),
         }
     }
 }
@@ -1512,6 +1529,17 @@ impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
             ]);
 
             sync_pseudo_element_styles(el, &data, &self.nodes_needing_style_image_flush);
+
+            // One empty check for an element without eager pseudo styles.
+            if !data.styles.pseudos.is_empty() {
+                use style::selector_parser::PseudoElement;
+                if data.styles.pseudos.get(&PseudoElement::Before).is_some()
+                    || data.styles.pseudos.get(&PseudoElement::After).is_some()
+                {
+                    self.generated_before_after
+                        .store(true, std::sync::atomic::Ordering::Relaxed);
+                }
+            }
 
             if !data.damage.is_empty() {
                 // Mark the ancestor chain so that the damage propagation pass
