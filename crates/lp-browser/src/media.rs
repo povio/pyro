@@ -52,6 +52,11 @@ impl Browser {
             frame_id: Some(frame.id.0.clone()),
             loader_id: Some(frame.loader_id.0.clone()),
             crossorigin: request.crossorigin,
+            initiator: Some(if request.video {
+                lp_webapi::resource_timing::Initiator::Video
+            } else {
+                lp_webapi::resource_timing::Initiator::Audio
+            }),
         };
         resource_loader.fetch_cancellable(
             self,

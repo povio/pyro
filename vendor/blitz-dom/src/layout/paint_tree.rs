@@ -533,9 +533,6 @@ fn node_to_paint_order(node: &Node, is_flex_or_grid: bool) -> (i32, i32) {
     }
 }
 
-/// lightningpanda: the namespace of the state attribute lp-dom's render tree
-/// writes (see `BaseDocument::top_layer`).
-pub(crate) use crate::LP_STATE_NS;
 
 /// The rank of a `top-layer=N` token in a state attribute value.
 fn top_layer_rank(value: &str) -> Option<u32> {

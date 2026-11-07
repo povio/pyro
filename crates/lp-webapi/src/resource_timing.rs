@@ -47,6 +47,8 @@ pub enum Initiator {
     Css,
     Img,
     Iframe,
+    Video,
+    Audio,
     Other,
 }
 
@@ -61,6 +63,8 @@ impl Initiator {
             Initiator::Css => "css",
             Initiator::Img => "img",
             Initiator::Iframe => "iframe",
+            Initiator::Video => "video",
+            Initiator::Audio => "audio",
             Initiator::Other => "other",
         }
     }
