@@ -1656,6 +1656,35 @@ mod box_generating_pseudo_tests {
         assert_eq!(kept(doc, ids[7]), (false, false), "animation-name alone: content is normal");
     }
 
+    /// Which declaration blocks the index files: a value that cannot make the box appear
+    /// (`content: normal | none`, `animation-name: none`) keeps a rule out of it, so the UA
+    /// `*::before, *::after { animation: none !important }` does not match every element.
+    #[test]
+    fn index_ignores_declarations_that_cannot_generate_a_box() {
+        use style::properties::declaration_block::parse_style_attribute;
+        use style::stylesheets::CssRuleType;
+        use style::stylist::declarations_may_generate_pseudo_box;
+        let (d, _) = make_doc(None, "", "index-decls", &[]);
+        let url = d.doc.url.url_extra_data();
+        let generates = |css: &str| {
+            let block = parse_style_attribute(css, &url, None, QuirksMode::NoQuirks, CssRuleType::Style);
+            declarations_may_generate_pseudo_box(&block)
+        };
+        assert!(!generates("transition: none; animation: none"));
+        assert!(!generates("animation-name: none, none"));
+        assert!(!generates("content: normal"));
+        assert!(!generates("content: none; color: red"));
+        assert!(generates("animation-name: a"));
+        assert!(generates("animation-name: none, a"));
+        assert!(generates("animation: var(--a)"));
+        assert!(generates("animation-name: inherit"));
+        assert!(generates("content: ''"));
+        assert!(generates("content: var(--c)"));
+        assert!(generates("content: inherit"));
+        assert!(generates("display: none"));
+        assert!(generates("all: unset"));
+    }
+
     /// `PseudoElementResolution::Force` (out-of-document styles) still resolves every eager
     /// pseudo-element any rule matches.
     #[test]

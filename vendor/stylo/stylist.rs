@@ -2914,14 +2914,24 @@ struct BoxGeneratingPseudoRules {
 impl BoxGeneratingPseudoRules {
     /// Whether a rule with these declarations goes in the index (when it is a single-level
     /// `::before` or `::after` rule).
+    ///
+    /// `content: normal | none` and `animation-name: none` cannot make the box appear, so they
+    /// do not count: lightningpanda's UA `*::before, *::after { animation: none !important }`
+    /// would otherwise put a rule matching every element in the index. Their CSS-wide keyword
+    /// and `var()` forms still count.
     fn declarations_may_generate_box(block: &PropertyDeclarationBlock) -> bool {
-        [
-            LonghandId::Content,
-            LonghandId::Display,
-            LonghandId::AnimationName,
-        ]
-        .into_iter()
-        .any(|id| block.contains(PropertyDeclarationId::Longhand(id)))
+        use crate::properties::PropertyDeclaration;
+        use crate::values::generics::counters::GenericContent;
+        block.declarations().iter().any(|decl| match decl {
+            PropertyDeclaration::AnimationName(names) => !names.0.iter().all(|n| n.is_none()),
+            PropertyDeclaration::Content(GenericContent::Normal | GenericContent::None) => false,
+            other => matches!(
+                other.id(),
+                PropertyDeclarationId::Longhand(
+                    LonghandId::Content | LonghandId::Display | LonghandId::AnimationName
+                )
+            ),
+        })
     }
 
     fn map(&self, pseudo: &PseudoElement) -> Option<&SelectorMap<Rule>> {

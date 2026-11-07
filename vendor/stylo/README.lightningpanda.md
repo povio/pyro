@@ -32,7 +32,9 @@ crate (`diff -ruN`).
 
 - `stylist.rs`, `style_resolver.rs`: each origin's `CascadeData` also files its single-level
   `::before`/`::after` rules that declare `content`, `display` or `animation-name` (on the
-  block's longhand set, so `all`, `var()` and CSS-wide keywords count) in a second pair of
+  block's longhand set, so `all`, `var()` and CSS-wide keywords count; `content: normal | none`
+  and `animation-name: none` do not, so lightningpanda's UA
+  `*::before, *::after { animation: none !important }` stays out) in a second pair of
   `SelectorMap`s, filled by `add_styles` next to `normal_rules` and cleared with it.
   `match_pseudo` (unvisited pass, not `PseudoElementResolution::Force`) matches only those first
   and returns `None` when none matches: every other rule leaves `content` at `normal` without

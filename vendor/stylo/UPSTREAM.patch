@@ -1,6 +1,6 @@
 diff -ruN a/properties/counted_unknown_properties.py b/properties/counted_unknown_properties.py
---- a/properties/counted_unknown_properties.py	2006-07-24 03:21:28
-+++ b/properties/counted_unknown_properties.py	2026-11-04 11:22:23
+--- a/properties/counted_unknown_properties.py	2026-11-07 07:37:53
++++ b/properties/counted_unknown_properties.py	2026-11-07 07:37:53
 @@ -7,8 +7,6 @@
      "speak",
      "text-size-adjust",
@@ -11,8 +11,8 @@ diff -ruN a/properties/counted_unknown_properties.py b/properties/counted_unknow
      "-webkit-margin-before",
      "-webkit-margin-after",
 diff -ruN a/properties/helpers.mako.rs b/properties/helpers.mako.rs
---- a/properties/helpers.mako.rs	2006-07-24 03:21:28
-+++ b/properties/helpers.mako.rs	2026-11-04 11:22:23
+--- a/properties/helpers.mako.rs	2026-11-07 07:37:52
++++ b/properties/helpers.mako.rs	2026-11-07 07:37:53
 @@ -64,7 +64,17 @@
                      % endif
                      CSSWideKeyword::Inherit => {
@@ -32,8 +32,8 @@ diff -ruN a/properties/helpers.mako.rs b/properties/helpers.mako.rs
                          % if property.is_zoom_dependent():
                              if !context.builder.effective_zoom_for_inheritance.is_one() {
 diff -ruN a/properties/longhands.toml b/properties/longhands.toml
---- a/properties/longhands.toml	2006-07-24 03:21:28
-+++ b/properties/longhands.toml	2026-11-04 11:22:23
+--- a/properties/longhands.toml	2026-11-07 07:37:52
++++ b/properties/longhands.toml	2026-11-07 07:37:53
 @@ -476,7 +476,6 @@
  type = "BreakBetween"
  initial = "computed::BreakBetween::Auto"
@@ -79,8 +79,8 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  
  [caption-side]
 diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
---- a/properties/shorthands.rs	2006-07-24 03:21:28
-+++ b/properties/shorthands.rs	2026-11-04 11:22:23
+--- a/properties/shorthands.rs	2026-11-07 07:37:52
++++ b/properties/shorthands.rs	2026-11-07 07:37:53
 @@ -545,7 +545,6 @@
      }
  }
@@ -90,8 +90,8 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
      use super::*;
      pub use crate::properties::generated::shorthands::container::*;
 diff -ruN a/properties/shorthands.toml b/properties/shorthands.toml
---- a/properties/shorthands.toml	2006-07-24 03:21:28
-+++ b/properties/shorthands.toml	2026-11-04 11:22:23
+--- a/properties/shorthands.toml	2026-11-07 07:37:53
++++ b/properties/shorthands.toml	2026-11-07 07:37:53
 @@ -209,7 +209,7 @@
  kind = "two_properties"
  
@@ -122,8 +122,8 @@ diff -ruN a/properties/shorthands.toml b/properties/shorthands.toml
  sub_properties = ["break-inside"]
  spec = "https://drafts.csswg.org/css-break-3/#page-break-properties"
 diff -ruN a/rule_cache.rs b/rule_cache.rs
---- a/rule_cache.rs	2006-07-24 03:21:28
-+++ b/rule_cache.rs	2026-11-04 11:22:23
+--- a/rule_cache.rs	2026-11-07 07:37:53
++++ b/rule_cache.rs	2026-11-07 07:37:53
 @@ -26,9 +26,53 @@
      line_height: Option<NonNegativeLength>,
      writing_mode: Option<WritingMode>,
@@ -206,8 +206,8 @@ diff -ruN a/rule_cache.rs b/rule_cache.rs
          self.map
              .entry(rules)
 diff -ruN a/style_resolver.rs b/style_resolver.rs
---- a/style_resolver.rs	2006-07-24 03:21:28
-+++ b/style_resolver.rs	2026-11-06 12:00:00
+--- a/style_resolver.rs	2026-11-07 07:37:52
++++ b/style_resolver.rs	2026-11-07 07:37:53
 @@ -586,6 +586,47 @@
          );
          matching_context.extra_data.originating_element_style = Some(originating_element_style);
@@ -257,8 +257,8 @@ diff -ruN a/style_resolver.rs b/style_resolver.rs
          // traversing them.
          stylist.push_applicable_declarations(
 diff -ruN a/stylesheets/rule_parser.rs b/stylesheets/rule_parser.rs
---- a/stylesheets/rule_parser.rs	2006-07-24 03:21:28
-+++ b/stylesheets/rule_parser.rs	2026-11-04 11:22:23
+--- a/stylesheets/rule_parser.rs	2026-11-07 07:37:53
++++ b/stylesheets/rule_parser.rs	2026-11-07 07:37:53
 @@ -282,7 +282,7 @@
              "counter-style" if cfg!(feature = "gecko") => Self::CounterStyle,
              "media" => Self::Media,
@@ -269,8 +269,8 @@ diff -ruN a/stylesheets/rule_parser.rs b/stylesheets/rule_parser.rs
              "keyframes" => Self::Keyframes(None),
              "-webkit-keyframes" => Self::Keyframes(Some(VendorPrefix::WebKit)),
 diff -ruN a/stylist.rs b/stylist.rs
---- a/stylist.rs	2006-07-24 03:21:28
-+++ b/stylist.rs	2026-11-06 12:00:00
+--- a/stylist.rs	2026-11-07 07:37:53
++++ b/stylist.rs	2026-11-07 07:37:53
 @@ -29,8 +29,8 @@
  #[cfg(feature = "gecko")]
  use crate::properties::StyleBuilder;
@@ -359,7 +359,7 @@ diff -ruN a/stylist.rs b/stylist.rs
      /// Execute callback for all applicable style rule data.
      pub fn for_each_cascade_data_with_scope<'a, E, F>(&'a self, element: E, mut f: F)
      where
-@@ -2826,6 +2889,72 @@
+@@ -2826,6 +2889,82 @@
      }
  }
  
@@ -388,14 +388,24 @@ diff -ruN a/stylist.rs b/stylist.rs
 +impl BoxGeneratingPseudoRules {
 +    /// Whether a rule with these declarations goes in the index (when it is a single-level
 +    /// `::before` or `::after` rule).
++    ///
++    /// `content: normal | none` and `animation-name: none` cannot make the box appear, so they
++    /// do not count: lightningpanda's UA `*::before, *::after { animation: none !important }`
++    /// would otherwise put a rule matching every element in the index. Their CSS-wide keyword
++    /// and `var()` forms still count.
 +    fn declarations_may_generate_box(block: &PropertyDeclarationBlock) -> bool {
-+        [
-+            LonghandId::Content,
-+            LonghandId::Display,
-+            LonghandId::AnimationName,
-+        ]
-+        .into_iter()
-+        .any(|id| block.contains(PropertyDeclarationId::Longhand(id)))
++        use crate::properties::PropertyDeclaration;
++        use crate::values::generics::counters::GenericContent;
++        block.declarations().iter().any(|decl| match decl {
++            PropertyDeclaration::AnimationName(names) => !names.0.iter().all(|n| n.is_none()),
++            PropertyDeclaration::Content(GenericContent::Normal | GenericContent::None) => false,
++            other => matches!(
++                other.id(),
++                PropertyDeclarationId::Longhand(
++                    LonghandId::Content | LonghandId::Display | LonghandId::AnimationName
++                )
++            ),
++        })
 +    }
 +
 +    fn map(&self, pseudo: &PseudoElement) -> Option<&SelectorMap<Rule>> {
@@ -432,7 +442,7 @@ diff -ruN a/stylist.rs b/stylist.rs
  /// The id of a given layer, a sequentially-increasing identifier.
  #[derive(Clone, Copy, Debug, Eq, MallocSizeOf, PartialEq, PartialOrd, Ord)]
  pub struct LayerId(u16);
-@@ -3246,6 +3375,10 @@
+@@ -3246,6 +3385,10 @@
      /// cascade level.
      normal_rules: ElementAndPseudoRules,
  
@@ -443,7 +453,7 @@ diff -ruN a/stylist.rs b/stylist.rs
      /// The `:host` pseudo rules that are the rightmost selector (without
      /// accounting for pseudo-elements), or `:scope` rules that may match
      /// the featureless host.
-@@ -3409,6 +3542,7 @@
+@@ -3409,6 +3552,7 @@
      pub fn new() -> Self {
          Self {
              normal_rules: ElementAndPseudoRules::default(),
@@ -451,7 +461,7 @@ diff -ruN a/stylist.rs b/stylist.rs
              featureless_host_rules: None,
              slotted_rules: None,
              part_rules: None,
-@@ -3602,6 +3736,25 @@
+@@ -3602,6 +3746,25 @@
          self.normal_rules.rules(pseudo_elements)
      }
  
@@ -477,7 +487,7 @@ diff -ruN a/stylist.rs b/stylist.rs
      /// Returns the featureless pseudo rule map for a given pseudo-element.
      #[inline]
      pub fn featureless_host_rules(
-@@ -3720,6 +3873,7 @@
+@@ -3720,6 +3883,7 @@
  
      fn shrink_maps_if_needed(&mut self) {
          self.normal_rules.shrink_if_needed();
@@ -485,7 +495,7 @@ diff -ruN a/stylist.rs b/stylist.rs
          if let Some(ref mut host_rules) = self.featureless_host_rules {
              host_rules.shrink_if_needed();
          }
-@@ -3856,7 +4010,9 @@
+@@ -3856,7 +4020,9 @@
          quirks_mode: QuirksMode,
          mut collected_scope_dependencies: Option<&mut Vec<Dependency>>,
      ) -> Result<(), AllocErr> {
@@ -496,7 +506,7 @@ diff -ruN a/stylist.rs b/stylist.rs
          for selector in selectors.slice() {
              self.num_selectors += 1;
  
-@@ -4009,6 +4165,15 @@
+@@ -4009,6 +4175,15 @@
                  // :scope may match featureless shadow host if the scope
                  // root is the shadow root.
                  // See https://github.com/w3c/csswg-drafts/issues/9025
@@ -512,7 +522,7 @@ diff -ruN a/stylist.rs b/stylist.rs
                  let rules = if matches_featureless_host_only {
                      self.featureless_host_rules.get_or_insert_with(Box::default)
                  } else if rule.selector.is_slotted() {
-@@ -4707,6 +4872,7 @@
+@@ -4707,6 +4882,7 @@
      /// Clears the cascade data, but not the invalidation data.
      fn clear_cascade_data(&mut self) {
          self.normal_rules.clear();
@@ -521,8 +531,8 @@ diff -ruN a/stylist.rs b/stylist.rs
              slotted_rules.clear();
          }
 diff -ruN a/values/generics/mod.rs b/values/generics/mod.rs
---- a/values/generics/mod.rs	2006-07-24 03:21:28
-+++ b/values/generics/mod.rs	2026-11-04 11:22:23
+--- a/values/generics/mod.rs	2026-11-07 07:37:52
++++ b/values/generics/mod.rs	2026-11-07 07:37:53
 @@ -110,6 +110,7 @@
      ToCss,
      ToResolvedValue,
@@ -532,8 +542,8 @@ diff -ruN a/values/generics/mod.rs b/values/generics/mod.rs
  #[repr(transparent)]
  pub struct GreaterThanOrEqualToOne<T>(pub T);
 diff -ruN a/values/specified/box.rs b/values/specified/box.rs
---- a/values/specified/box.rs	2006-07-24 03:21:28
-+++ b/values/specified/box.rs	2026-11-04 11:48:34
+--- a/values/specified/box.rs	2026-11-07 07:37:52
++++ b/values/specified/box.rs	2026-11-07 07:37:53
 @@ -2001,6 +2001,8 @@
      Auto,
      Page,
