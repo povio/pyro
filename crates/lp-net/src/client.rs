@@ -1347,12 +1347,17 @@ impl Io {
         let mut pause_response: Option<RequestInfo> = None; // set by `PauseResponse`: the final hop's response is paused
 
         // Resource Timing's TAO check runs against the requesting document's
-        // origin (an iframe's navigation: its parent's, the referrer).
+        // origin. An iframe's navigation is checked against its parent, as
+        // the loader names it (else the referrer), never `req.origin`: that
+        // is the Origin header's, for a form POST the frame's own document.
         // An iframe whose parent is unknown fails closed (an opaque origin).
-        let timing_origin = req.origin.clone().or_else(|| {
-            (req.destination == Destination::Iframe)
-                .then(|| req.referrer.as_ref().map_or_else(|| "null".into(), |r| r.origin().ascii_serialization()))
-        });
+        let timing_origin = if req.destination == Destination::Iframe {
+            Some(req.timing_origin.clone().unwrap_or_else(|| {
+                req.referrer.as_ref().map_or_else(|| "null".into(), |r| r.origin().ascii_serialization())
+            }))
+        } else {
+            req.timing_origin.clone().or_else(|| req.origin.clone())
+        };
         loop {
             crate::timing::note(|t| {
                 t.fetch_start = if redirects == 0 { t.start } else { Some(Instant::now()) };
@@ -1491,6 +1496,8 @@ impl Io {
                 let lookup = self.shared.cache.lock().unwrap().lookup(&url, &headers, cache_mode, request_time);
                 match lookup {
                     crate::cache::Lookup::Hit(cached) => {
+                        // A stored response passes the TAO check a network one would.
+                        crate::timing::note_timing_allow(&url, &cached.headers, timing_origin.as_deref());
                         return self.serve_cached(id, &req, sink, &url, cached, cors_cross, redirects > 0, true, 0);
                     }
                     crate::cache::Lookup::Revalidate(cached) if !unconditional => {
@@ -1513,6 +1520,7 @@ impl Io {
             if let (Some(store), None) = (shared_assets, revalidating.as_ref()) {
                 let lookup = store.with(|c| c.lookup(&url, &headers, cache_mode, request_time));
                 if let crate::cache::Lookup::Hit(cached) = lookup {
+                    crate::timing::note_timing_allow(&url, &cached.headers, timing_origin.as_deref());
                     return self.serve_cached(id, &req, sink, &url, cached, cors_cross, redirects > 0, true, 0);
                 }
             }
@@ -1615,14 +1623,12 @@ impl Io {
                 .get::<crate::timing::ConnInfo>()
                 .map(crate::timing::ConnInfo::timing)
                 .filter(|c| c.start >= request_start);
-            let allowed =
-                timing_origin.as_deref().is_none_or(|o| crate::timing::timing_allowed(&url, &resp_headers, o));
             crate::timing::note(|t| {
                 t.response_start = Some(Instant::now());
                 t.connection = connection;
                 t.request_start = Some(connection.map_or(request_start, |c| c.end.max(request_start)));
-                t.timing_allow_failed |= !allowed;
             });
+            crate::timing::note_timing_allow(&url, &resp_headers, timing_origin.as_deref());
             if protocol == Version::HTTP_2 {
                 self.multiplexing(&url);
             }

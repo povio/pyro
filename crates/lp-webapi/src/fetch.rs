@@ -789,6 +789,18 @@ fn receive(
     let wake = {
         let mut wire = wire.lock().unwrap();
         if wire.closed {
+            // The body closed early (cancelled, too large, failed its
+            // integrity check) and no `pump` follows: the end's Resource
+            // Timing report (`timed_sink_carried`) needs a task of its own.
+            let reported = match &event {
+                ResponseEvent::Finished { .. } => true,
+                ResponseEvent::Failed(error) => *error != NetError::Aborted,
+                _ => false,
+            };
+            drop(wire);
+            if reported {
+                poster(Box::new(move || add_finished_fetches(page)));
+            }
             return;
         }
         let notify = match event {
@@ -845,16 +857,31 @@ fn receive(
     }
 }
 
+/// Adds the finished fetches' Resource Timing entries of page `page_id`.
+fn add_finished_fetches(page_id: u64) {
+    if let Some(page) = PAGES.with(|pages| pages.borrow().get(&page_id).and_then(Weak::upgrade)) {
+        page.add_finished_fetches();
+    }
+}
+
 fn pump(page_id: u64, id: RequestId) {
     let page = PAGES.with(|pages| pages.borrow().get(&page_id).and_then(Weak::upgrade));
     let Some(page) = page else { return };
     let job = page.fetch_state.jobs.borrow().get(&id).cloned();
-    let Some(job) = job else { return };
+    // A fetch gone since its end was queued (aborted, its realm destroyed)
+    // still leaves the end's Resource Timing report, which rides this task
+    // (`timed_sink_carried`): left queued, it would hold back every later one.
+    let Some(job) = job else {
+        page.add_finished_fetches();
+        return;
+    };
     let Some(realm) = job.realm.upgrade() else {
+        page.add_finished_fetches();
         cancel_realm(&page, job.realm_id);
         return;
     };
     let Ok(s) = realm.scope() else {
+        page.add_finished_fetches();
         cancel_realm(&page, job.realm_id);
         return;
     };

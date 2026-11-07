@@ -178,6 +178,15 @@ impl Service<Name> for TimedResolver {
     }
 }
 
+/// Records the TAO check of one hop (network or cache) on the current
+/// request task: once a hop fails, the fetch's details stay hidden. No
+/// requesting origin (a browser-initiated navigation): nothing to check.
+pub(crate) fn note_timing_allow(url: &url::Url, headers: &http::HeaderMap, origin: Option<&str>) {
+    if origin.is_some_and(|origin| !timing_allowed(url, headers, origin)) {
+        note(|t| t.timing_allow_failed = true);
+    }
+}
+
 /// Fetch "TAO check" of one hop: `url`'s response passes for `origin` (the
 /// requesting document's serialized origin) when it is same-origin or its
 /// `Timing-Allow-Origin` lists `*` or that origin.

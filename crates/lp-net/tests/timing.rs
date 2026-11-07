@@ -33,7 +33,10 @@ fn start() -> u16 {
                     let (status, extra) = match path.as_str() {
                         "/redirect" => ("302 Found", "Location: /final\r\n"),
                         "/tao" => ("200 OK", "Timing-Allow-Origin: https://other.test\r\n"),
-                        "/cached" => ("200 OK", "Cache-Control: max-age=600\r\n"),
+                        "/cached" | "/cached-other" => ("200 OK", "Cache-Control: max-age=600\r\n"),
+                        "/cached-tao" => {
+                            ("200 OK", "Cache-Control: max-age=600\r\nTiming-Allow-Origin: https://other.test\r\n")
+                        }
                         _ => ("200 OK", ""),
                     };
                     let body = "body";
@@ -114,4 +117,45 @@ fn a_cache_hit_has_no_network_phases() {
     let t = hit.timing;
     assert!(t.connection.is_none() && t.start.is_some());
     assert!(t.request_start.unwrap() >= t.fetch_start.unwrap());
+}
+
+#[test]
+fn a_cache_hit_passes_the_timing_allow_origin_check_too() {
+    let port = start();
+    let client = NetClient::new(NetConfig { shared_asset_cache: None, ..NetConfig::default() }).unwrap();
+    let same = format!("http://127.0.0.1:{port}");
+    for path in ["/cached-other", "/cached-tao"] {
+        let mut req = get(port, path);
+        req.origin = Some(same.clone());
+        let first = head(&client, req);
+        assert!(!first.from_cache && !first.timing.timing_allow_failed);
+    }
+    // Stored without the other origin in Timing-Allow-Origin: a hit hides
+    // its details from that origin's document, as the network would.
+    let mut req = get(port, "/cached-other");
+    req.origin = Some("https://other.test".into());
+    let hit = head(&client, req);
+    assert!(hit.from_cache && hit.timing.timing_allow_failed);
+    let mut req = get(port, "/cached-tao");
+    req.origin = Some("https://other.test".into());
+    let hit = head(&client, req);
+    assert!(hit.from_cache && !hit.timing.timing_allow_failed);
+}
+
+#[test]
+fn an_iframe_navigation_is_checked_against_its_parent() {
+    let port = start();
+    let client = NetClient::new(NetConfig { shared_asset_cache: None, ..NetConfig::default() }).unwrap();
+    let url = Url::parse(&format!("http://127.0.0.1:{port}/a")).unwrap();
+    // A form POST into the frame: the Origin header's origin is the frame's
+    // own document (the server's), the entry goes to a parent of another.
+    let mut req = Request::get(url.clone(), Destination::Iframe);
+    req.method = http::Method::POST;
+    req.body = Some(b"x=1".to_vec().into());
+    req.origin = Some(format!("http://127.0.0.1:{port}"));
+    req.timing_origin = Some("https://parent.test".into());
+    assert!(head(&client, req).timing.timing_allow_failed);
+    let mut req = Request::get(url, Destination::Iframe);
+    req.timing_origin = Some(format!("http://127.0.0.1:{port}"));
+    assert!(!head(&client, req).timing.timing_allow_failed);
 }

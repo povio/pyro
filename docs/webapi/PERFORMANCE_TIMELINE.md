@@ -13,8 +13,9 @@
   each HTTP(S) fetch of the document, named after the request URL, with
   `initiatorType` `fetch`, `xmlhttprequest`, `beacon`, `other`
   (EventSource), `script` (classic and module scripts, module imports),
-  `link` (stylesheets, preloads), `img` or `iframe` (the frame's
-  navigation, in the parent's timeline). See below.
+  `link` (stylesheets, preloads), `img` or `iframe` (the container's
+  navigation of the frame, from its `src`, in the parent's timeline; one
+  the frame's document starts, a reload or a traversal has none). See below.
 - Navigation Timing: one `PerformanceNavigationTiming` entry (`navigation`,
   named after the document URL) for HTTP(S) and file documents, with
   `type` (`navigate`, `reload`, `back_forward`), the document fetch's phases
@@ -51,8 +52,9 @@ connection being handed to hyper (`connectEnd`). A cache hit, a static file
 or an intercepted response has no connection and starts its request and
 response when it is answered.
 
-Timing-Allow-Origin (Fetch "TAO check") runs per hop in lp-net against the
-requesting document's origin (an iframe's navigation: its parent's): a
+Timing-Allow-Origin (Fetch "TAO check") runs per hop in lp-net, a stored
+response served from the HTTP cache included, against the requesting
+document's origin (an iframe's navigation: its parent's): a
 cross-origin hop passes when the header lists `*` or that origin. A failure
 keeps `startTime`, `fetchStart`, `responseEnd` and `duration`, and zeroes
 the redirect, lookup, connect, request and response times, the sizes and
