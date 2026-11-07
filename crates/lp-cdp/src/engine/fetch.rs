@@ -12,14 +12,14 @@ use lp_net::{
     AuthChallenge, AuthDecision, InterceptDecision, Interceptor, PausedRequest, PausedResponse, RequestId, RequestInfo,
     ResponseDecision,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::sync::oneshot;
 
 use super::EngineHost;
 use crate::fetch_protocol::{base64_decode, EnableParams, InterceptState, RequestStage, MAX_PAUSED};
 use crate::msg::{CdpError, CdpResult};
-use crate::network_protocol::{fetch_resource_type, headers_json, protocol_request_id, write_post_data};
+use crate::network_protocol::{fetch_resource_type, protocol_request_id, PausedRequestJson};
 use crate::outbox::Outbox;
 use crate::target::{ContextKey, PageCommand};
 
@@ -67,6 +67,28 @@ impl Decision {
 
 fn continue_unmodified() -> InterceptDecision {
     InterceptDecision::Continue { url: None, method: None, headers: None, body: None }
+}
+
+/// `Fetch.requestPaused` / `Fetch.authRequired`. Fields are declared in
+/// sorted order, the order a JSON object map writes them in.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Paused {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    auth_challenge: Option<Value>,
+    frame_id: Option<String>,
+    network_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    redirected_request_id: Option<String>,
+    request: Box<serde_json::value::RawValue>,
+    request_id: String,
+    resource_type: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    response_headers: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    response_status_code: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    response_status_text: Option<&'static str>,
 }
 
 enum Queued {
@@ -370,32 +392,37 @@ impl EngineHost {
                     }
                     continue;
                 };
-                let mut request_json = json!({"url":request.url.as_str(),"method":request.method.as_str(),"headers":headers_json(&request.headers),
-                    "hasPostData":false});
-                write_post_data(&mut request_json, request.post_data.as_ref());
-                let mut params = json!({"request":request_json,"frameId":request.frame_id,
-                    "resourceType":fetch_resource_type(request.destination).as_str()});
-                params["networkId"] =
-                    json!(protocol_request_id(native_id, request.destination, request.loader_id.as_deref()));
+                // The request is written out here: the item moves into the
+                // pending decision below.
+                let mut params = Paused {
+                    auth_challenge: None,
+                    frame_id: request.frame_id.clone(),
+                    network_id: protocol_request_id(native_id, request.destination, request.loader_id.as_deref()),
+                    redirected_request_id: None,
+                    request: serde_json::value::to_raw_value(&PausedRequestJson::new(request))
+                        .expect("CDP params serialize"),
+                    request_id: String::new(),
+                    resource_type: resource_type.as_str(),
+                    response_headers: None,
+                    response_status_code: None,
+                    response_status_text: None,
+                };
                 let (method, decision) = match item {
                     Queued::Request(_, tx) => ("Fetch.requestPaused", Decision::Request(tx)),
                     Queued::Response(response, tx) => {
-                        params["responseStatusCode"] = json!(response.status);
-                        if let Some(phrase) =
-                            StatusCode::from_u16(response.status).ok().and_then(|s| s.canonical_reason())
-                        {
-                            params["responseStatusText"] = json!(phrase);
-                        }
-                        params["responseHeaders"] = json!(response
+                        params.response_status_code = Some(response.status);
+                        params.response_status_text =
+                            StatusCode::from_u16(response.status).ok().and_then(|s| s.canonical_reason());
+                        params.response_headers = Some(json!(response
                             .headers
                             .iter()
                             .map(|(n, v)| json!({"name": n.as_str(), "value": String::from_utf8_lossy(v.as_bytes())}))
-                            .collect::<Vec<_>>());
+                            .collect::<Vec<_>>()));
                         ("Fetch.requestPaused", Decision::Response(tx, response))
                     }
                     Queued::Auth(challenge, tx) => {
-                        params["authChallenge"] = json!({"source":if challenge.proxy {"Proxy"} else {"Server"},
-                            "origin":challenge.origin,"scheme":challenge.scheme,"realm":challenge.realm});
+                        params.auth_challenge = Some(json!({"source":if challenge.proxy {"Proxy"} else {"Server"},
+                            "origin":challenge.origin,"scheme":challenge.scheme,"realm":challenge.realm}));
                         ("Fetch.authRequired", Decision::Auth(tx))
                     }
                 };
@@ -423,13 +450,11 @@ impl EngineHost {
                     };
                     // A redirect preserves Network.requestId, but each hop
                     // has a distinct Fetch id. Auth retries reuse that hop's id.
-                    if let Some(previous) = previous {
-                        params["redirectedRequestId"] = json!(previous);
-                    }
+                    params.redirected_request_id = previous;
                     fetch.ids.insert(native_id, id.clone());
                     id
                 };
-                params["requestId"] = json!(id);
+                params.request_id = id;
                 self.event(method, &params, &session_id);
             }
             if !queue.state.lock().unwrap().items.is_empty() {
