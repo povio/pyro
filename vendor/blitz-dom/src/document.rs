@@ -1577,10 +1577,9 @@ impl BaseDocument {
         self.snapshot_node_impl(node_id, false)
     }
 
-    /// lightningpanda: `:has()` invalidation. Stylo leaves it to the embedder
-    /// (Gecko runs its `RelativeSelectorInvalidator` on every DOM mutation),
-    /// so a change inside a `:has()` argument left the anchor's styles stale
-    /// until something else restyled it. Matching flags every element a
+    /// lightningpanda: `:has()` invalidation for DOM insertions and removals
+    /// (state and attribute changes go through Stylo's relative selector
+    /// invalidation instead, `has_invalidation`). Matching flags every element a
     /// `:has()` search visits (`RELATIVE_SELECTOR_SEARCH_DIRECTION_*`) and
     /// every anchor (`ANCHORS_RELATIVE_SELECTOR[_NON_SUBJECT]`); when `node_id` is in a
     /// search path, the anchors that can see it (its ancestors and their
@@ -1654,7 +1653,8 @@ impl BaseDocument {
     }
 
     fn snapshot_node_impl(&mut self, node_id: NodeId, capture_attrs: bool) {
-        self.invalidate_has_anchors(node_id);
+        // `:has()` anchors are invalidated after the change, from the
+        // relative selector map (`has_invalidation`).
         let node = &mut self.nodes[node_id];
 
         // Do not snapshot nodes that have never been styled. A snapshot records an element's
@@ -1765,10 +1765,18 @@ impl BaseDocument {
         state: ElementState,
         cb: impl FnOnce(&mut Node),
     ) {
-        if self.style_depends_on_state(state) {
-            self.snapshot_node_state_only(node_id);
+        if !self.style_depends_on_state(state) {
+            cb(&mut self.nodes[node_id]);
+            return;
         }
+        self.snapshot_node_state_only(node_id);
+        let state_of = |n: &Node| if n.is_element() { *n.element_state() } else { ElementState::empty() };
+        let before = state_of(&self.nodes[node_id]);
         cb(&mut self.nodes[node_id]);
+        // lightningpanda: the `:has()` anchors that can see the element (a
+        // flag test when no `:has()` depends on these states).
+        let changed = before ^ state_of(&self.nodes[node_id]);
+        self.invalidate_relative_state(node_id, changed);
     }
 
     // Takes (x, y) co-ordinates (relative to the )

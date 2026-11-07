@@ -86,20 +86,6 @@ impl Node {
             })
         })
     }
-
-    /// lightningpanda: whether the element's `urn:x-lightningpanda:state`
-    /// attribute (written by lp-dom's render tree) lists `state`: the
-    /// pseudo-classes Blitz cannot derive itself (validity, placeholder
-    /// shown, read-write, ...).
-    fn has_lp_state(&self, state: &str) -> bool {
-        self.element_data().is_some_and(|e| {
-            e.attrs.iter().any(|a| {
-                &*a.name.ns == "urn:x-lightningpanda:state"
-                    && &*a.name.local == "state"
-                    && a.value.split_ascii_whitespace().any(|s| s == state)
-            })
-        })
-    }
 }
 
 impl crate::document::BaseDocument {
@@ -646,8 +632,8 @@ impl selectors::Element for BlitzNode<'_> {
                 .element_state()
                 .intersects(ElementState::VISITED_OR_UNVISITED),
             NonTSPseudoClass::Checked => self.element_state().contains(ElementState::CHECKED),
-            NonTSPseudoClass::Valid => self.has_lp_state("valid"),
-            NonTSPseudoClass::Invalid => self.has_lp_state("invalid"),
+            NonTSPseudoClass::Valid => self.element_state().contains(ElementState::VALID),
+            NonTSPseudoClass::Invalid => self.element_state().contains(ElementState::INVALID),
             NonTSPseudoClass::Defined => false,
             NonTSPseudoClass::Disabled => self.element_state().contains(ElementState::DISABLED),
             NonTSPseudoClass::Enabled => self.element_state().contains(ElementState::ENABLED),
@@ -656,28 +642,36 @@ impl selectors::Element for BlitzNode<'_> {
             NonTSPseudoClass::FocusVisible => self.element_state().contains(ElementState::FOCUSRING),
             NonTSPseudoClass::Fullscreen => false,
             NonTSPseudoClass::Hover => self.element_state().contains(ElementState::HOVER),
-            NonTSPseudoClass::Indeterminate => self.has_lp_state("indeterminate"),
+            NonTSPseudoClass::Indeterminate => {
+                self.element_state().contains(ElementState::INDETERMINATE)
+            }
             NonTSPseudoClass::Lang(_) => false,
             NonTSPseudoClass::CustomState(ref state) => self.has_lp_custom_state(&state.0),
             NonTSPseudoClass::Link => self.element_state().contains(ElementState::UNVISITED),
-            NonTSPseudoClass::PlaceholderShown => self.has_lp_state("placeholder-shown"),
-            NonTSPseudoClass::ReadWrite => self.has_lp_state("read-write"),
-            NonTSPseudoClass::ReadOnly => !self.has_lp_state("read-write"),
+            NonTSPseudoClass::PlaceholderShown => {
+                self.element_state().contains(ElementState::PLACEHOLDER_SHOWN)
+            }
+            NonTSPseudoClass::ReadWrite => self.element_state().contains(ElementState::READWRITE),
+            NonTSPseudoClass::ReadOnly => self.element_state().contains(ElementState::READONLY),
             NonTSPseudoClass::ServoNonZeroBorder => false,
             NonTSPseudoClass::Target => false,
             NonTSPseudoClass::Visited => false,
             NonTSPseudoClass::Autofill => false,
-            NonTSPseudoClass::Default => self.has_lp_state("default"),
+            NonTSPseudoClass::Default => self.element_state().contains(ElementState::DEFAULT),
 
-            NonTSPseudoClass::InRange => false,
-            NonTSPseudoClass::Modal => self.has_lp_state("modal"),
-            NonTSPseudoClass::Open => self.has_lp_state("open"),
-            NonTSPseudoClass::Optional => self.has_lp_state("optional"),
-            NonTSPseudoClass::OutOfRange => false,
-            NonTSPseudoClass::PopoverOpen => self.has_lp_state("popover-open"),
-            NonTSPseudoClass::Required => self.has_lp_state("required"),
-            NonTSPseudoClass::UserInvalid => false,
-            NonTSPseudoClass::UserValid => false,
+            NonTSPseudoClass::InRange => self.element_state().contains(ElementState::INRANGE),
+            NonTSPseudoClass::Modal => self.element_state().contains(ElementState::MODAL),
+            NonTSPseudoClass::Open => self.element_state().contains(ElementState::OPEN),
+            NonTSPseudoClass::Optional => self.element_state().contains(ElementState::OPTIONAL_),
+            NonTSPseudoClass::OutOfRange => self.element_state().contains(ElementState::OUTOFRANGE),
+            NonTSPseudoClass::PopoverOpen => {
+                self.element_state().contains(ElementState::POPOVER_OPEN)
+            }
+            NonTSPseudoClass::Required => self.element_state().contains(ElementState::REQUIRED),
+            NonTSPseudoClass::UserInvalid => {
+                self.element_state().contains(ElementState::USER_INVALID)
+            }
+            NonTSPseudoClass::UserValid => self.element_state().contains(ElementState::USER_VALID),
             NonTSPseudoClass::MozMeterOptimum => false,
             NonTSPseudoClass::MozMeterSubOptimum => false,
             NonTSPseudoClass::MozMeterSubSubOptimum => false,
@@ -1396,11 +1390,21 @@ impl<'a> TElement for BlitzNode<'a> {
         self.tree().container_query_sizes.lock().unwrap().entry(self.id).or_default().size
     }
 
-    fn each_custom_state<F>(&self, _callback: F)
+    fn each_custom_state<F>(&self, mut callback: F)
     where
         F: FnMut(&AtomIdent),
     {
-        todo!()
+        // lightningpanda: lp-dom's render tree lists them (`has_lp_custom_state`).
+        let value = self.attrs().and_then(|attrs| {
+            attrs
+                .iter()
+                .find(|a| &*a.name.ns == crate::LP_STATE_NS && &*a.name.local == "custom-states")
+        });
+        if let Some(attr) = value {
+            for state in crate::has_invalidation::lp_custom_states(Some(&attr.value)) {
+                callback(AtomIdent::cast(&style::Atom::from(state)));
+            }
+        }
     }
 
     fn has_selector_flags(&self, flags: ElementSelectorFlags) -> bool {

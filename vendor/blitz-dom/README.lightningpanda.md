@@ -157,3 +157,24 @@ Time inputs use the existing text-editor construction and intrinsic measurement 
 - `assets/default.css`: the popover rules (`[popover]` is `position: fixed`, centered, with a border and
   padding, `:popover-open` is in the top layer) are not behind Gecko's `dom.element.popover.enabled` pref,
   which no embedder sets: a showing popover is laid out as Chrome lays it out.
+
+## `:has()` invalidation for state and attribute changes
+
+- `src/has_invalidation.rs`, `src/document.rs` (`snapshot_node_and`), `src/mutator.rs` (`set_attribute`,
+  `clear_attribute`): a state change or attribute change runs Stylo's `RelativeSelectorInvalidator`, as
+  Gecko's restyle manager does, with the dependencies the relative selector invalidation map has for what
+  changed (state bits, attribute name, ids, classes, custom states). Only the anchors whose `:has()`
+  argument depends on the change, that a `:has()` search reached and whose own compound matches restyle,
+  as far as the rule needs. The element's selector flags gate it (no `:has()` search visited it: one flag
+  test), then `relative_state_dependency` (the union of the relative map's states, a vendored Stylo
+  change). This replaces `invalidate_has_anchors` for those changes, which restyled every anchor that
+  could see the element with its whole subtree; DOM insertions and removals still use it.
+- `src/node/element.rs` (`sync_lp_attribute_state`), `src/stylo.rs`: the tokens of lp-dom's
+  `urn:x-lightningpanda:state` `state` attribute are `ElementState` bits (`VALID`, `INVALID`,
+  `PLACEHOLDER_SHOWN`, `INRANGE`, `USER_INVALID`, ...; `READONLY` unless `read-write`), set when the
+  attribute is written, and the pseudo-classes match the bits. Stylo's snapshot invalidation and style
+  sharing compare element states, so they follow these like `:checked`. A selected `<option>` (lp-dom
+  writes `selected` for the current selectedness) is `CHECKED`. `each_custom_state` lists the
+  `custom-states` attribute instead of panicking.
+
+Covered by `crates/lp-layout/tests/has_state.rs` and `crates/lp-browser/tests/has_state.rs`.

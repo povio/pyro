@@ -30,6 +30,15 @@ crate (`diff -ruN`).
   are added (upstream has neither; both were counted unknown properties), inherited, in
   `inherited_text`. lp-render's PDF output reads them to place page cuts of paper-cut documents.
 
+- `invalidation/element/invalidation_map.rs`: `AdditionalRelativeSelectorInvalidationMap::state_dependencies`
+  is the union of the element states the relative selector map depends on (every `:has()` argument's
+  pseudo-classes), kept as dependencies are added and reset by `clear`. Blitz reads it to tell with one
+  flag test that a state change cannot change any `:has()` match before it runs the relative selector
+  invalidation (`vendor/blitz-dom/src/has_invalidation.rs`).
+
+- `servo/selector_parser.rs`: `:in-range` parses (upstream has the pseudo-class, its state flag and
+  serialization, but left it out of the parser, so a rule using it was dropped).
+
 ## Updating or dropping the patch
 
 - When upstream has the change: delete this directory and the `[patch.crates-io]` entry.
