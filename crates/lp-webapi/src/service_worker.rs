@@ -53,7 +53,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::fmt::Write as _;
 use std::rc::{Rc, Weak};
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use bytes::Bytes;
@@ -120,6 +120,8 @@ pub(crate) enum SwUp {
     PostToClient {
         client: String,
         message: WireMessage,
+        /// Counted against the worker's budget until delivered or dropped.
+        queued: crate::service_worker_scope::Queued,
     },
 }
 
@@ -419,10 +421,20 @@ fn tuple_origin(url: &lp_net::Url) -> Option<String> {
     origin.is_tuple().then(|| origin.ascii_serialization())
 }
 
+/// A document whose origin is opaque although its URL's is not (a sandboxed
+/// frame without `allow-same-origin`): it is never a client, and its
+/// `navigator.serviceWorker` throws (as in Chromium).
+fn opaque_origin(page: &PageDom) -> bool {
+    page.has_opaque_origin() || page.main_world_realm().and_then(|r| r.origin()).is_some_and(|o| o == "null")
+}
+
 /// The page's client, made on first need.
 fn client_of(page: &Rc<PageDom>) -> Option<Rc<ClientInner>> {
     if let Some(client) = page.sw_client.borrow().clone() {
         return Some(client);
+    }
+    if opaque_origin(page) {
+        return None;
     }
     let url = page.document_url_parsed()?;
     let origin = tuple_origin(&url)?;
@@ -480,8 +492,13 @@ pub(crate) fn client_gone(page: &PageDom) {
     let controls = [&registration.installing, &registration.waiting, &registration.active]
         .iter()
         .any(|slot| slot.borrow().as_ref().is_some_and(|v| v.controls_any()));
-    if registration.uninstalling.get() && !controls {
-        registration.clear();
+    if registration.uninstalling.get() {
+        if !controls {
+            registration.clear();
+        }
+    } else if registration.waiting.borrow().is_some() {
+        // "Try activate": the waiting worker may have been waiting for this client.
+        try_activate(&registration);
     }
 }
 
@@ -523,7 +540,7 @@ pub(crate) fn deliver(version: u64, up: SwUp) {
             let result = query(&version, kind);
             version.run(move |s, _| crate::service_worker_scope::reply(s, id, result));
         }
-        SwUp::PostToClient { client, message } => post_to_client(&version, &client, message),
+        SwUp::PostToClient { client, message, queued } => post_to_client(&version, &client, message, queued),
     }
 }
 
@@ -616,7 +633,12 @@ fn query(version: &Rc<Version>, kind: QueryKind) -> Result<String, (String, Stri
     }
 }
 
-fn post_to_client(version: &Rc<Version>, client: &str, message: WireMessage) {
+fn post_to_client(
+    version: &Rc<Version>,
+    client: &str,
+    message: WireMessage,
+    queued: crate::service_worker_scope::Queued,
+) {
     let Some(registration) = version.registration.upgrade() else { return };
     let Some(context) = registration.context.upgrade() else { return };
     let Some(client) = context.service_workers.live_clients().into_iter().find(|c| c.id == client) else { return };
@@ -625,15 +647,18 @@ fn post_to_client(version: &Rc<Version>, client: &str, message: WireMessage) {
     }
     let Some(page) = client.page.upgrade() else { return };
     let (json, origin) = (version.json(), registration.origin.clone());
-    post_to_module(&page, true, move |s, glue| match crate::structured_clone::decode_with_ports(s, &message) {
-        Ok((data, ports)) => call(
-            s,
-            glue,
-            "message",
-            &[s.string(&json), data, ports.map_or_else(|| s.undefined(), |p| p.value()), s.string(&origin)],
-        ),
-        Err(JsError::Terminated) => {}
-        Err(_) => call(s, glue, "messageError", &[s.string(&json), s.string(&origin)]),
+    post_to_module(&page, true, move |s, glue| {
+        drop(queued);
+        match crate::structured_clone::decode_with_ports(s, &message) {
+            Ok((data, ports)) => call(
+                s,
+                glue,
+                "message",
+                &[s.string(&json), data, ports.map_or_else(|| s.undefined(), |p| p.value()), s.string(&origin)],
+            ),
+            Err(JsError::Terminated) => {}
+            Err(_) => call(s, glue, "messageError", &[s.string(&json), s.string(&origin)]),
+        }
     });
 }
 
@@ -939,7 +964,8 @@ fn update(page: &Rc<PageDom>, registration: &Rc<Registration>, script_url: lp_ne
         end_update(registration);
         return;
     };
-    let Some(poster) = page.remote_poster() else {
+    // Not the page's poster: the job outlives a navigation of the page.
+    let Some(poster) = page.thread_poster() else {
         settle.done(reply_error("InvalidStateError", "The page cannot receive tasks."));
         end_update(registration);
         return;
@@ -953,6 +979,8 @@ fn update(page: &Rc<PageDom>, registration: &Rc<Registration>, script_url: lp_ne
     request.referrer_policy = page.referrer_policy();
     request.frame_id = page.request_context().frame_id;
     request.max_body = Some(MAX_SCRIPT_BYTES);
+    // A redirect would take the body from a URL the max scope was not computed for.
+    request.redirect = lp_net::RedirectMode::Error;
     request.cache =
         if registration.update_via_cache == "all" { lp_net::CacheMode::Default } else { lp_net::CacheMode::NoCache };
     request.headers.insert("service-worker", lp_net::http::HeaderValue::from_static("script"));
@@ -964,12 +992,15 @@ fn update(page: &Rc<PageDom>, registration: &Rc<Registration>, script_url: lp_ne
         done: bool,
     }
     let fetched = Arc::new(Mutex::new(Fetched::default()));
-    let reported = Arc::new(AtomicBool::new(false));
     let (page_weak, registration_weak) = (Rc::downgrade(page), Rc::downgrade(registration));
     // The continuation runs on this thread; the sink, on the I/O thread.
     let finish: Finisher = Rc::new(RefCell::new(Some(Box::new(move |result| {
-        let (Some(page), Some(registration)) = (page_weak.upgrade(), registration_weak.upgrade()) else { return };
-        fetched_script(&page, &registration, script_url, result, settle);
+        let Some(registration) = registration_weak.upgrade() else { return };
+        match page_weak.upgrade().filter(|p| !p.is_disposed()) {
+            Some(page) => fetched_script(&page, &registration, script_url, result, settle),
+            // The page that started the job is gone: the job ends, and the next one runs.
+            None => end_update(&registration),
+        }
     }))));
     let token = FINISHERS.with(|f| {
         let mut f = f.borrow_mut();
@@ -978,6 +1009,8 @@ fn update(page: &Rc<PageDom>, registration: &Rc<Registration>, script_url: lp_ne
         token
     });
     let sink_state = fetched.clone();
+    // Answers the job once; a sink dropped unanswered fails it.
+    let mut report = Some(Report { poster, token, result: None });
     net.fetch(
         request,
         Box::new(move |event| {
@@ -987,7 +1020,10 @@ fn update(page: &Rc<PageDom>, registration: &Rc<Registration>, script_url: lp_ne
                     return;
                 }
                 match event {
-                    ResponseEvent::Redirect { .. } => return,
+                    ResponseEvent::Redirect { .. } => {
+                        state.done = true;
+                        Err("redirected".to_owned())
+                    }
                     ResponseEvent::Response(head) => {
                         state.head = Some(head);
                         return;
@@ -1009,17 +1045,31 @@ fn update(page: &Rc<PageDom>, registration: &Rc<Registration>, script_url: lp_ne
                     }
                 }
             };
-            if reported.swap(true, Ordering::AcqRel) {
-                return;
+            if let Some(mut report) = report.take() {
+                report.result = Some(result);
             }
-            poster(Box::new(move || {
-                let finish = FINISHERS.with(|f| f.borrow_mut().remove(&token));
-                if let Some(finish) = finish.and_then(|f| f.take()) {
-                    finish(result);
-                }
-            }));
         }),
     );
+}
+
+/// The end of a script fetch, posted to the browser thread when dropped.
+struct Report {
+    poster: crate::page::RemotePoster,
+    token: u64,
+    result: Option<Result<(lp_net::ResponseHead, Bytes), String>>,
+}
+
+impl Drop for Report {
+    fn drop(&mut self) {
+        let result = self.result.take().unwrap_or_else(|| Err("cancelled".to_owned()));
+        let token = self.token;
+        (self.poster)(Box::new(move || {
+            let finish = FINISHERS.with(|f| f.borrow_mut().remove(&token));
+            if let Some(finish) = finish.and_then(|f| f.take()) {
+                finish(result);
+            }
+        }));
+    }
 }
 
 type Finisher = Rc<RefCell<Option<Box<dyn FnOnce(Result<(lp_net::ResponseHead, Bytes), String>)>>>>;
@@ -1408,6 +1458,12 @@ pub(crate) fn container<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Value
         || !matches!(page.document_url_parsed().map(|u| u.scheme().to_owned()).as_deref(), Some("http" | "https"))
     {
         return Ok(s.undefined());
+    }
+    if opaque_origin(page) {
+        return Err(JsError::dom(
+            "SecurityError",
+            "Failed to read the 'serviceWorker' property from 'Navigator': Service worker is disabled because the context is sandboxed and lacks the 'allow-same-origin' flag.",
+        ));
     }
     module(s, page)?.get_atom("container")
 }

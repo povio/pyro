@@ -37,6 +37,10 @@ pub struct PageDom {
     disposed: Cell<bool>,
     document: Cell<NodeId>,
     scripting_disabled: Cell<bool>,
+    /// The document's origin is opaque although its URL's is not (a sandboxed
+    /// frame without `allow-same-origin`). Set by the embedder before the
+    /// context services.
+    opaque_origin: Cell<bool>,
     /// HTML "sticky activation": the user interacted with the document.
     sticky_activation: Cell<bool>,
     flushing_iframes: Cell<bool>,
@@ -468,6 +472,13 @@ pub trait PageHooks {
     fn remote_poster(&self) -> Option<RemotePoster> {
         None
     }
+    /// As `remote_poster`, but not tied to this document: its tasks still run
+    /// after the frame navigated or the page closed (while the browser thread
+    /// lives). For what outlives the document, such as service worker versions,
+    /// whose tasks find their state by id and drop themselves when it is gone.
+    fn thread_poster(&self) -> Option<RemotePoster> {
+        self.remote_poster()
+    }
     /// Transport progress made visible by fetch/XHR on the owner thread.
     /// Called after the delivery snapshot and before any resulting JS, with
     /// binding locks/borrows released. Default embedders need no observer.
@@ -563,6 +574,7 @@ impl PageDom {
             disposed: Cell::new(false),
             document: Cell::new(document),
             scripting_disabled: Cell::new(false),
+            opaque_origin: Cell::new(false),
             sticky_activation: Cell::new(false),
             flushing_iframes: Cell::new(false),
             render_blocking: Default::default(),
@@ -842,6 +854,15 @@ impl PageDom {
     }
     pub fn scripting_disabled(&self) -> bool {
         self.scripting_disabled.get()
+    }
+    /// Browser-owned sandbox policy: the document's origin is opaque (its
+    /// realm's origin is "null") whatever its URL. Set before the context
+    /// services, which may already make the document a service worker client.
+    pub fn set_opaque_origin(&self, opaque: bool) {
+        self.opaque_origin.set(opaque);
+    }
+    pub(crate) fn has_opaque_origin(&self) -> bool {
+        self.opaque_origin.get()
     }
 
     /// HTML "activation notification": trusted user input reached the
@@ -1413,6 +1434,9 @@ impl PageDom {
     }
     pub fn remote_poster(&self) -> Option<RemotePoster> {
         self.hooks().and_then(|h| h.remote_poster())
+    }
+    pub(crate) fn thread_poster(&self) -> Option<RemotePoster> {
+        self.hooks().and_then(|h| h.thread_poster())
     }
     pub(crate) fn frame_document(&self, iframe: NodeId) -> Option<NodeId> {
         self.hooks().and_then(|h| h.frame_document(iframe))

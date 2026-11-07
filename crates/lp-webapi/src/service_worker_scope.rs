@@ -17,6 +17,9 @@
 //! goes to the network.
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
+use std::time::Duration;
 
 use bytes::Bytes;
 use lp_js::{JsError, JsResult, Persistent, Scope, Value};
@@ -26,6 +29,7 @@ use rustc_hash::FxHashMap;
 
 use crate::page::{PageDom, RemotePoster};
 use crate::service_worker::{deliver, Lifecycle, QueryKind, SwUp};
+use crate::worker::{Shared, MAX_QUEUED_BYTES};
 
 /// What a service worker's thread is started with.
 #[derive(Clone)]
@@ -65,6 +69,31 @@ thread_local! {
     /// Fetch events waiting for their answer, by key.
     static PENDING: RefCell<FxHashMap<u64, FetchJob>> = RefCell::default();
     static NEXT_KEY: Cell<u64> = const { Cell::new(1) };
+    /// Queries sent to the browser thread and not answered yet.
+    static QUERIES: Cell<usize> = const { Cell::new(0) };
+}
+
+/// Queries (`clients.get`, `matchAll`, ...) a worker may have unanswered.
+const MAX_PENDING_QUERIES: usize = 4096;
+
+/// A message's bytes counted against the worker's upward budget
+/// (`Shared::up_bytes`) until it was delivered or dropped.
+pub(crate) struct Queued {
+    shared: Arc<Shared>,
+    size: usize,
+}
+
+impl Queued {
+    fn new(shared: Arc<Shared>, size: usize) -> Self {
+        shared.up_bytes.fetch_add(size, Ordering::AcqRel);
+        Queued { shared, size }
+    }
+}
+
+impl Drop for Queued {
+    fn drop(&mut self) {
+        self.shared.up_bytes.fetch_sub(self.size, Ordering::AcqRel);
+    }
 }
 
 /// Drops what holds handles into the VM, and the unanswered fetches (each
@@ -107,7 +136,7 @@ fn call(s: &Scope<'_>, name: &str, args: &[Value<'_>]) {
 }
 
 /// Makes the glue in a new service worker realm, before its script runs.
-pub(crate) fn install(s: &Scope<'_>, start: &ServiceStart, poster: RemotePoster) -> JsResult<()> {
+pub(crate) fn install(s: &Scope<'_>, start: &ServiceStart, poster: RemotePoster, shared: Arc<Shared>) -> JsResult<()> {
     let version = start.version;
     let native = s.object();
     let up = move |poster: &RemotePoster, message: SwUp| {
@@ -115,6 +144,9 @@ pub(crate) fn install(s: &Scope<'_>, start: &ServiceStart, poster: RemotePoster)
     };
     let (p, next_query) = (poster.clone(), Rc::new(Cell::new(1u64)));
     let query = s.function("query", move |s, _, a| {
+        if QUERIES.with(Cell::get) >= MAX_PENDING_QUERIES {
+            return Err(JsError::dom("QuotaExceededError", "Too many pending requests to the browser."));
+        }
         let id = next_query.get();
         next_query.set(id + 1);
         let kind = match a.get(0).to_string()?.as_str() {
@@ -126,6 +158,7 @@ pub(crate) fn install(s: &Scope<'_>, start: &ServiceStart, poster: RemotePoster)
             "update" => QueryKind::Update,
             other => return Err(JsError::Type(format!("unknown query {other}"))),
         };
+        QUERIES.with(|q| q.set(q.get() + 1));
         up(&p, SwUp::Query { id, kind });
         Ok(s.number(id as f64))
     })?;
@@ -135,7 +168,21 @@ pub(crate) fn install(s: &Scope<'_>, start: &ServiceStart, poster: RemotePoster)
         let client = a.get(0).to_string()?;
         let options = crate::structured_clone::transfer_options(s, a.opt(2))?;
         let message = crate::structured_clone::encode_message(s, a.get(1), options)?;
-        up(&p, SwUp::PostToClient { client, message });
+        // As a dedicated worker's postMessage: past the budget, wait for the
+        // browser thread to take what is queued. One message may exceed it alone.
+        let size = message.size();
+        loop {
+            if shared.closing.load(Ordering::Acquire) {
+                return Ok(s.undefined());
+            }
+            let queued = shared.up_bytes.load(Ordering::Acquire);
+            if queued == 0 || queued.saturating_add(size) <= MAX_QUEUED_BYTES {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let queued = Queued::new(shared.clone(), size);
+        up(&p, SwUp::PostToClient { client, message, queued });
         Ok(s.undefined())
     })?;
     native.set_atom("postToClient", post.value())?;
@@ -276,6 +323,7 @@ pub(crate) fn lifecycle(s: &Scope<'_>, kind: Lifecycle) {
 }
 
 pub(crate) fn reply(s: &Scope<'_>, id: u64, result: Result<String, (String, String)>) {
+    QUERIES.with(|q| q.set(q.get().saturating_sub(1)));
     match result {
         Ok(json) => call(s, "reply", &[s.number(id as f64), s.boolean(true), s.string(&json)]),
         Err((name, message)) => call(
