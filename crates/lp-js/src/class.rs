@@ -436,6 +436,29 @@ impl<C: JsClass> ClassDef<C> {
         self
     }
 
+    /// [`ClassDef::accessor`] for a global's value that browsers keep in a
+    /// data property (an interface object made on first use): it reads and
+    /// writes the current realm's global whatever the receiver, as a data
+    /// property's value is had regardless of `this`. Code that inspects the
+    /// property (`Object.getOwnPropertyDescriptor(self, 'X').get()`, which
+    /// calls the getter on the descriptor) then sees the value, not a
+    /// TypeError.
+    pub fn global_value_accessor(&mut self, name: &'static str, g: GetterFn<C>, s: SetterFn<C>) -> &mut Self {
+        let get = MemberCall { invoke: global_value_getter_invoke::<C>, f: g as *const () };
+        let set = MemberCall { invoke: global_value_setter_invoke::<C>, f: s as *const () };
+        self.accessors.push(AccessorSpec {
+            name,
+            get,
+            set: Some(set),
+            slot: None,
+            pure: false,
+            result: GetterResult::Any,
+            get_h: None,
+            set_h: Some(setter_invoke_h::<C>),
+        });
+        self
+    }
+
     /// [`ClassDef::accessor`] whose getter is pure (see
     /// [`ClassDef::pure_getter_typed`]): reads take the lean dispatch, writes
     /// the full one.
@@ -1677,6 +1700,29 @@ unsafe fn getter_invoke<C: JsClass>(
         return member_in_receiver_realm(scope, realm, |s| f(s, data).map(|v| v.raw));
     }
     f(scope, data).map(|v| v.raw)
+}
+
+/// [`getter_invoke`] that falls back to the realm's global for a receiver
+/// that is not a `C` (see [`ClassDef::global_value_accessor`]).
+unsafe fn global_value_getter_invoke<C: JsClass>(
+    scope: &Scope<'_>,
+    this: sys::JSObjectRef,
+    args: Args<'_>,
+    f: *const (),
+) -> JsResult<sys::JSValueRef> {
+    let this = if !this.is_null() && unsafe { this_data::<C>(scope, this) }.is_err() { ptr::null_mut() } else { this };
+    unsafe { getter_invoke::<C>(scope, this, args, f) }
+}
+
+/// [`setter_invoke`] with the fallback of [`global_value_getter_invoke`].
+unsafe fn global_value_setter_invoke<C: JsClass>(
+    scope: &Scope<'_>,
+    this: sys::JSObjectRef,
+    args: Args<'_>,
+    f: *const (),
+) -> JsResult<sys::JSValueRef> {
+    let this = if !this.is_null() && unsafe { this_data::<C>(scope, this) }.is_err() { ptr::null_mut() } else { this };
+    unsafe { setter_invoke::<C>(scope, this, args, f) }
 }
 
 /// [`setter_invoke`] from the receiver's payload header `h`, in the

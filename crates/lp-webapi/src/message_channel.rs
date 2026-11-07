@@ -369,7 +369,13 @@ fn lists_port(s: &Scope<'_>, options: lp_js::Value<'_>, port: &Rc<PortInner>) ->
 /// transferred already), `None` when it is not transferable. Nothing changes
 /// until [`complete_transfer`], so a clone that fails leaves the port as is.
 pub(crate) fn prepare_transfer<'s>(s: &Scope<'s>, value: lp_js::Value<'s>) -> JsResult<Option<lp_js::Value<'s>>> {
-    let Some(port) = s.unwrap::<MessagePort>(value) else { return Ok(None) };
+    let Some(port) = s.unwrap::<MessagePort>(value) else {
+        if crate::streams::is_stream(s, value)? {
+            let page = page_of(s)?;
+            return crate::streams::helper(s, &page, "transferPrepare", &[value]).map(Some);
+        }
+        return Ok(None);
+    };
     if port.0.detached.get() {
         return Err(JsError::dom("DataCloneError", "A MessagePort could not be cloned because it was detached."));
     }
@@ -384,6 +390,11 @@ pub(crate) fn prepare_transfer<'s>(s: &Scope<'s>, value: lp_js::Value<'s>) -> Js
 /// realm): `to` takes over the entanglement and the undelivered messages
 /// (cloned into `s`'s realm when it is another one), and `from` is detached.
 pub(crate) fn complete_transfer(s: &Scope<'_>, from: lp_js::Value<'_>, to: lp_js::Value<'_>) -> JsResult<()> {
+    if s.unwrap::<MessagePort>(from).is_none() && crate::streams::is_stream(s, from)? {
+        let page = page_of(s)?;
+        let (from, to) = (s.rehome(from), s.rehome(to));
+        return crate::streams::helper(s, &page, "transferComplete", &[from, to]).map(|_| ());
+    }
     let (Some(from), Some(to)) = (s.unwrap::<MessagePort>(from), s.unwrap::<MessagePort>(to)) else {
         return Err(JsError::dom("DataCloneError", "Invalid MessagePort transfer"));
     };
@@ -510,7 +521,7 @@ impl LinkEnd {
 
     /// Closes the link: later posts on either end are dropped, this end's
     /// undelivered messages go, and the other end is told (its pin).
-    fn close(&self) {
+    pub(crate) fn close(&self) {
         let wake = {
             let mut state = self.lock();
             state.closed = true;
@@ -651,6 +662,48 @@ pub(crate) fn transfer_out(s: &Scope<'_>, value: lp_js::Value<'_>) -> JsResult<L
     }
     port.update_pin();
     Ok(end)
+}
+
+/// Whether `value` is a ReadableStream that can be transferred
+/// (DataCloneError for a locked one).
+pub(crate) fn is_transferable_stream(s: &Scope<'_>, value: lp_js::Value<'_>) -> JsResult<bool> {
+    if !crate::streams::is_stream(s, value)? {
+        return Ok(false);
+    }
+    let page = page_of(s)?;
+    if crate::streams::helper(s, &page, "isLocked", &[value])?.to_bool() {
+        return Err(JsError::dom("DataCloneError", "A ReadableStream could not be cloned because it was locked"));
+    }
+    Ok(true)
+}
+
+/// The port's own `postMessage` and `close`, for the streams module's pumps.
+fn port_methods<'s>(object: lp_js::Object<'s>) -> JsResult<(lp_js::Value<'s>, lp_js::Value<'s>)> {
+    Ok((object.get_atom("postMessage")?, object.get_atom("close")?))
+}
+
+/// Transfers `stream` out of this thread: a new channel's first port pumps
+/// its chunks (`streams.js` `pumpToPort`), the second leaves as a link end.
+pub(crate) fn stream_out(s: &Scope<'_>, stream: lp_js::Value<'_>) -> JsResult<LinkEnd> {
+    let page = page_of(s)?;
+    if page.is_disposed() {
+        return Err(JsError::ContextDestroyed);
+    }
+    let (o1, p1) = new_port(s, &page)?;
+    let (o2, p2) = new_port(s, &page)?;
+    p1.peer.replace(Rc::downgrade(&p2));
+    p2.peer.replace(Rc::downgrade(&p1));
+    let (post, close) = port_methods(o1)?;
+    crate::streams::helper(s, &page, "pumpToPort", &[stream, o1.value(), post, close])?;
+    transfer_out(s, o2.value())
+}
+
+/// The ReadableStream that reads `port`, a transferred stream's link.
+pub(crate) fn stream_in<'s>(s: &Scope<'s>, port: lp_js::Value<'s>) -> JsResult<lp_js::Value<'s>> {
+    let page = page_of(s)?;
+    let object = port.as_object().ok_or_else(|| JsError::dom("DataCloneError", "Malformed message"))?;
+    let (post, close) = port_methods(object)?;
+    crate::streams::helper(s, &page, "fromPort", &[port, post, close])
 }
 
 /// The port a transferred link end becomes in `s`'s realm.

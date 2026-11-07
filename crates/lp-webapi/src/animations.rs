@@ -24,7 +24,7 @@ const KEY: &str = "lpAnimations";
 
 macro_rules! lazy_globals {
     ($def:ident, $($name:literal),+ $(,)?) => {
-        $($def.accessor(
+        $($def.global_value_accessor(
             $name,
             |s, w| global(s, w.page(), $name),
             |s, w, value| replace(s, w.page(), $name, value),

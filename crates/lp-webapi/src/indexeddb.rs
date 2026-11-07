@@ -717,7 +717,7 @@ impl<T: crate::window::WindowHost> PageOf for T {
 
 macro_rules! lazy_globals {
     ($def:ident, $($name:literal),+ $(,)?) => {
-        $($def.accessor(
+        $($def.global_value_accessor(
             $name,
             |s, g| global(s, PageOf::page_of(g), $name),
             |s, g, value| replace(s, PageOf::page_of(g), $name, value),

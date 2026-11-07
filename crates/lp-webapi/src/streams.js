@@ -1713,6 +1713,10 @@
     step();
     return d.promise;
   };
+  const transfers = new WeakMap();
+  const publicGetReader = ReadableStream.prototype.getReader;
+  const publicRead = ReadableStreamDefaultReader.prototype.read;
+  const publicCancel = ReadableStreamDefaultReader.prototype.cancel;
   const byteBody = (pull, cancel) => {
     const st = rsNew();
     st.wrapper = new ReadableStream(token, st);
@@ -1725,6 +1729,75 @@
     TransformStreamDefaultController, ByteLengthQueuingStrategy, CountQueuingStrategy, TextEncoderStream, TextDecoderStream,
     CompressionStream, DecompressionStream,
     isStream: isRS,
+    // Transferring a ReadableStream (structured clone). Within a VM the new
+    // stream reads from the transferred one, which is locked by the transfer;
+    // to another thread (a worker) it is pumped through a MessagePort link:
+    // {t: 'c', v} per chunk, then {t: 'd'} or {t: 'e', v}; the reader's
+    // cancel sends {t: 'x', v} back. Chunks are pushed, without backpressure
+    // beyond the link's queue limit.
+    transferPrepare(stream) {
+      const st = rsOf(stream);
+      if (rsLocked(st)) throw new DOMException('A ReadableStream could not be cloned because it was locked', 'DataCloneError');
+      const state = { reader: null };
+      const copy = new ReadableStream({
+        pull(c) {
+          return then(apply(publicRead, state.reader, []), (r) => {
+            if (r.done) c.close();
+            else c.enqueue(r.value);
+          });
+        },
+        cancel(reason) {
+          return apply(publicCancel, state.reader, [reason]);
+        },
+      }, { highWaterMark: 0 });
+      transfers.set(copy, state);
+      return copy;
+    },
+    transferComplete(from, to) {
+      const state = transfers.get(to);
+      if (state) state.reader = apply(publicGetReader, from, []);
+    },
+    pumpToPort(stream, port, post, close) {
+      const reader = apply(publicGetReader, stream, []);
+      port.onmessage = (e) => {
+        const m = e.data;
+        if (m && m.t === 'x') then(apply(publicCancel, reader, [m.v]), noop, noop);
+        apply(close, port, []);
+      };
+      const send = (m) => { try { apply(post, port, [m]); return true; } catch (_) { return false; } };
+      const step = () => then(apply(publicRead, reader, []), (r) => {
+        if (r.done) {
+          send({ t: 'd' });
+          return;
+        }
+        if (!send({ t: 'c', v: r.value })) {
+          then(apply(publicCancel, reader, [new TypeErrorC('The chunk could not be sent')]), noop, noop);
+          send({ t: 'e', v: new TypeErrorC('The chunk could not be sent') });
+          return;
+        }
+        step();
+      }, (error) => {
+        if (!send({ t: 'e', v: error })) send({ t: 'e', v: String(error) });
+      });
+      step();
+    },
+    fromPort(port, post, close) {
+      return new ReadableStream({
+        start(c) {
+          port.onmessage = (e) => {
+            const m = e.data;
+            if (!m) return;
+            if (m.t === 'c') c.enqueue(m.v);
+            else if (m.t === 'd') { c.close(); apply(close, port, []); }
+            else if (m.t === 'e') { c.error(m.v); apply(close, port, []); }
+          };
+        },
+        cancel(reason) {
+          try { apply(post, port, [{ t: 'x', v: String(reason) }]); } catch (_) {}
+          apply(close, port, []);
+        },
+      }, { highWaterMark: 0 });
+    },
     // Body "unusable" check.
     isLocked: (s) => rsLocked(rsOf(s)),
     isDisturbed: (s) => rsOf(s).disturbed,

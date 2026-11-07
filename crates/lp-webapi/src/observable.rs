@@ -21,12 +21,12 @@ where
     W: JsClass,
     W::Data: WindowHost,
 {
-    def.accessor(
+    def.global_value_accessor(
         "Observable",
         |s, w| global(s, w.page(), "Observable"),
         |s, w, value| replace(s, w.page(), "Observable", value),
     );
-    def.accessor(
+    def.global_value_accessor(
         "Subscriber",
         |s, w| global(s, w.page(), "Subscriber"),
         |s, w, value| replace(s, w.page(), "Subscriber", value),

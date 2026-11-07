@@ -190,7 +190,10 @@ fn is_submit_button(dom: &lp_dom::Dom, id: lp_dom::NodeId) -> bool {
         return false;
     }
     match &**e.local_name() {
-        "input" => matches!(dom.input_type(id), Ok(lp_dom::forms::InputType::Submit | lp_dom::forms::InputType::Image)),
+        "input" => matches!(
+            dom.input_type(id),
+            Ok(lp_dom::forms::InputType::Submit | lp_dom::forms::InputType::Image)
+        ),
         "button" => dom.button_is_submit(id),
         _ => false,
     }

@@ -1358,7 +1358,7 @@ where
 {
     macro_rules! lazy {
         ($($name:literal),+) => {$(
-            def.accessor(
+            def.global_value_accessor(
                 $name,
                 |s, w| {
                     let value = module(s, w.page())?.get($name)?;

@@ -27,6 +27,14 @@ self.addEventListener('fetch', (e) => {
     e.respondWith(Promise.reject(new Error('nope')));
   } else if (url.pathname === '/via-fetch') {
     e.respondWith(fetch('/real'));
+  } else if (url.pathname === '/teed') {
+    // The clone's body goes to the page as a transferred stream.
+    e.respondWith(fetch('/real').then(async (r) => {
+      const c = r.clone();
+      const client = await self.clients.get(e.clientId);
+      client.postMessage({ body: c.body }, [c.body]);
+      return r;
+    }));
   }
 });
 self.addEventListener('message', (e) => {
@@ -217,6 +225,26 @@ fn service_worker_lifecycle_and_fetch_interception() {
     until(&mut thread, page, "globalThis.real !== undefined");
     assert_eq!(eval(&thread, page, "real"), "from network");
     assert_eq!(server.hits("/real"), 1);
+
+    // A network body read whole while its clone's stream is read.
+    eval(
+        &thread,
+        page,
+        "fetch('/real').then((r) => { const c = r.clone(); const reader = c.body.getReader();
+           return reader.read().then((x) => r.arrayBuffer().then((b) => [b.byteLength, x.value.length])); })
+           .then((v) => globalThis.teed = v.join()); 'ok'",
+    );
+    until(&mut thread, page, "globalThis.teed !== undefined");
+    assert_eq!(eval(&thread, page, "teed"), "12,12");
+    eval(
+        &thread,
+        page,
+        "navigator.serviceWorker.onmessage = (e) => new Response(e.data.body).text().then((t) => globalThis.streamed = t);
+         fetch('/teed').then((r) => r.text()).then((t) => globalThis.teedBody = t); 'ok'",
+    );
+    until(&mut thread, page, "globalThis.teedBody !== undefined && globalThis.streamed !== undefined");
+    assert_eq!(eval(&thread, page, "teedBody + '|' + streamed"), "from network|from network");
+    eval(&thread, page, "navigator.serviceWorker.onmessage = null; 'ok'");
 
     // respondWith(fetch()) from the worker, and a rejected respondWith.
     eval(&thread, page, "fetch('/via-fetch').then((r) => r.text()).then((t) => globalThis.via = t); 'ok'");

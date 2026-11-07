@@ -49,12 +49,7 @@ pub enum Outbound {
 impl Outbox {
     pub fn channel(limit: usize) -> (Outbox, OutboundRx) {
         let (tx, rx) = mpsc::unbounded_channel();
-        let budget = Arc::new(Budget {
-            queued: AtomicUsize::new(0),
-            limit,
-            exceeded: AtomicBool::new(false),
-            waker: std::sync::OnceLock::new(),
-        });
+        let budget = Arc::new(Budget { queued: AtomicUsize::new(0), limit, exceeded: AtomicBool::new(false), waker: std::sync::OnceLock::new() });
         (Outbox { tx, budget: budget.clone() }, OutboundRx { rx, budget })
     }
 

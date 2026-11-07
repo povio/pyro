@@ -1688,7 +1688,9 @@ impl<H: Host> Browser<H> {
     fn worker_changed(&mut self, change: WorkerChange, out: &mut dyn Sink) {
         match change {
             WorkerChange::Started { worker, page, url, service } => {
-                let target_id = self.mint("");
+                // A service worker's target is a browser-level one, beside the
+                // pages, whose ids the host picks: a prefix keeps them apart.
+                let target_id = self.mint(if service { "SW" } else { "" });
                 let context_id = self.targets.iter().find(|t| t.page == page).map(|t| t.context_id.clone());
                 self.workers.push(WorkerEntry { key: worker, page, target_id, url, service, context_id });
                 let index = self.workers.len() - 1;

@@ -142,14 +142,32 @@ pub struct WireMessage {
     buffers: Vec<Vec<u8>>,
     /// Bytes of the Blobs and Files it holds (shared, immutable).
     blobs: Vec<bytes::Bytes>,
-    /// Transferred MessagePorts, in transfer-list order (the event's `ports`).
-    ports: Vec<crate::message_channel::LinkEnd>,
+    /// Transferred MessagePorts, in transfer-list order (the first `visible`
+    /// are the event's `ports`, the rest carry transferred streams); taken by
+    /// the decode that makes them. Ends never decoded close their links when
+    /// the message goes, so the ports left behind are released.
+    ports: std::sync::Mutex<Vec<crate::message_channel::LinkEnd>>,
+    visible: usize,
+}
+
+impl Drop for WireMessage {
+    fn drop(&mut self) {
+        for end in self.ports.get_mut().unwrap_or_else(|e| e.into_inner()).drain(..) {
+            end.close();
+        }
+    }
 }
 
 impl WireMessage {
     #[cfg(test)]
     pub(crate) fn empty() -> Self {
-        WireMessage { text: String::new(), buffers: Vec::new(), blobs: Vec::new(), ports: Vec::new() }
+        WireMessage {
+            text: String::new(),
+            buffers: Vec::new(),
+            blobs: Vec::new(),
+            ports: Default::default(),
+            visible: 0,
+        }
     }
     /// What the message holds in memory while queued.
     pub(crate) fn size(&self) -> usize {
@@ -205,6 +223,13 @@ fn wire_host<'s>(s: &Scope<'s>, args: &lp_js::Args<'s>) -> JsResult<lp_js::Value
             WIRE_PORTS.with(|p| p.borrow_mut().push(end));
             Ok(s.undefined())
         }
+        5 => Ok(s.boolean(crate::message_channel::is_transferable_stream(s, value)?)),
+        6 => {
+            let end = crate::message_channel::stream_out(s, value)?;
+            WIRE_PORTS.with(|p| p.borrow_mut().push(end));
+            Ok(s.undefined())
+        }
+        7 => crate::message_channel::stream_in(s, value),
         1 => {
             let tree = value.as_object().ok_or_else(|| JsError::dom("DataCloneError", "Malformed message"))?;
             let index = tree.get_index(1)?.to_number()? as usize;
@@ -268,7 +293,15 @@ pub fn encode_message<'s>(s: &Scope<'s>, value: lp_js::Value<'s>, options: lp_js
     let pair = encode.call(None, &[clone, value, options]);
     let blobs = WIRE_BLOBS.with(|b| b.replace(saved));
     let ports = WIRE_PORTS.with(|p| p.replace(saved_ports));
-    let pair = pair?;
+    let pair = match pair {
+        Ok(pair) => pair,
+        Err(error) => {
+            for end in ports {
+                end.close();
+            }
+            return Err(error);
+        }
+    };
     let pair = pair.as_object().expect("encoded pair");
     let text = pair.get_index(0)?.to_string()?;
     let list = pair.get_index(1)?;
@@ -279,7 +312,8 @@ pub fn encode_message<'s>(s: &Scope<'s>, value: lp_js::Value<'s>, options: lp_js
         let bytes = crate::encoding::buffer_source_bytes(s, list.get_index(i)?)?;
         buffers.push(bytes.ok_or_else(|| JsError::dom("DataCloneError", "Detached ArrayBuffer"))?);
     }
-    Ok(WireMessage { text, buffers, blobs, ports })
+    let visible = (pair.get_index(2)?.to_number()? as usize).min(ports.len());
+    Ok(WireMessage { text, buffers, blobs, ports: std::sync::Mutex::new(ports), visible })
 }
 
 /// StructuredDeserialize into `s`'s realm. The ports a message carries are
@@ -294,15 +328,34 @@ pub(crate) fn decode_message_with_ports<'s>(
     s: &Scope<'s>,
     message: &WireMessage,
 ) -> JsResult<(lp_js::Value<'s>, Option<lp_js::Value<'s>>)> {
-    if message.ports.is_empty() {
+    let ends = std::mem::take(&mut *message.ports.lock().unwrap_or_else(|e| e.into_inner()));
+    if ends.is_empty() {
         return Ok((decode_message(s, message)?, None));
     }
     let ports = s.array(&[])?;
-    for (i, end) in message.ports.iter().enumerate() {
-        ports.set_index(i as u32, crate::message_channel::transfer_in(s, end.clone())?)?;
+    let mut ends = ends.into_iter();
+    let mut i = 0;
+    while let Some(end) = ends.next() {
+        match crate::message_channel::transfer_in(s, end) {
+            Ok(port) => ports.set_index(i, port)?,
+            Err(error) => {
+                for end in ends {
+                    end.close();
+                }
+                return Err(error);
+            }
+        }
+        i += 1;
     }
     let value = decode(s, message, ports.value())?;
-    Ok((value, Some(ports.value())))
+    if message.visible == 0 {
+        return Ok((value, None));
+    }
+    let event_ports = s.array(&[])?;
+    for i in 0..message.visible as u32 {
+        event_ports.set_index(i, ports.get_index(i)?)?;
+    }
+    Ok((value, Some(event_ports.value())))
 }
 
 fn decode<'s>(s: &Scope<'s>, message: &WireMessage, ports: lp_js::Value<'s>) -> JsResult<lp_js::Value<'s>> {

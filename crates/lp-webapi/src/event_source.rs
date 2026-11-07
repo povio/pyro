@@ -22,7 +22,7 @@ where
     W: JsClass,
     W::Data: WindowHost,
 {
-    def.accessor(
+    def.global_value_accessor(
         "EventSource",
         |s, w| global(s, w.page(), "EventSource"),
         |s, w, value| replace(s, w.page(), "EventSource", value),

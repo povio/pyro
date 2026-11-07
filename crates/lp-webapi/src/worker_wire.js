@@ -15,6 +15,11 @@
 // MessagePort that can be transferred and `host(port, 4)` moves it out of this
 // thread (message_channel.rs `transfer_out`); transferred ports travel beside
 // the text too, and a ['P', index] node stands for one in the data.
+// `host(value, 5)` says whether `value` is a ReadableStream that can be
+// transferred (DataCloneError when locked), `host(stream, 6)` pumps it into a
+// new port that leaves this thread, and `host(port, 7)` makes the stream that
+// reads such a port: an ['S', index] node, whose port is not one of the
+// message's `ports`.
 ((fail, host, DOMExceptionC) => {
     const O = Object, A = Array, M = Map, S = Set, D = Date, R = RegExp;
     const AB = ArrayBuffer, DV = DataView, U8 = Uint8Array, TE = TypeError;
@@ -57,36 +62,39 @@
     // encoded. Worker messages always cross a VM, so transferring is a copy
     // followed by a detach, which is what the sender can observe.
     function transferList(options) {
-        if (options === undefined || options === null) return [[], []];
+        if (options === undefined || options === null) return [[], [], []];
         let list;
         if (isArray(options)) list = options;
         else if (typeof options !== 'object' && typeof options !== 'function')
             throw new TE('postMessage options must be an object or a sequence');
         else list = options.transfer;
-        if (list === undefined) return [[], []];
+        if (list === undefined) return [[], [], []];
         if (list === null || typeof list[iteratorKey] !== 'function') throw new TE('transfer must be iterable');
-        const buffers = [], ports = [], seen = new M();
+        const buffers = [], ports = [], streams = [], seen = new M();
         for (const entry of list) {
             if (entry === null || (typeof entry !== 'object' && typeof entry !== 'function'))
                 throw new TE('transfer entries must be objects');
             const port = host(entry, 3);
-            if (!port && !isBuffer(entry))
-                fail('Only ArrayBuffers and MessagePorts can be transferred to or from a worker', true);
+            const stream = !port && host(entry, 5);
+            if (!port && !stream && !isBuffer(entry))
+                fail('Only ArrayBuffers, MessagePorts and ReadableStreams can be transferred to or from a worker', true);
             if (call(mapHas, seen, [entry])) fail('An object is listed twice in the transfer list');
             call(mapSet, seen, [entry, true]);
             if (port) put(ports, ports.length, entry);
+            else if (stream) put(streams, streams.length, entry);
             else put(buffers, buffers.length, entry);
         }
         if (buffers.length && !abTransfer) fail('ArrayBuffer transfer is not available', true);
-        return [buffers, ports];
+        return [buffers, ports, streams];
     }
 
     function encode(clone, value, options) {
         const lists = transferList(options), transfer = lists[0], portList = lists[1];
-        // The realm's clone moves listed ports into same-thread copies (in
-        // list order), which then leave this thread.
+        // The realm's clone moves listed ports and streams into same-thread
+        // copies (in list order), which then leave this thread.
+        const movable = portList.concat(lists[2]);
         const moved = [], portIndex = new M();
-        const copy = portList.length ? clone(value, {transfer: portList}, moved) : clone(value);
+        const copy = movable.length ? clone(value, {transfer: movable}, moved) : clone(value);
         for (let i = 0; i < moved.length; ++i) call(mapSet, portIndex, [moved[i], i]);
         const buffers = [], memory = new M();
         let next = 0;
@@ -164,7 +172,10 @@
                         + ',' + node(stack && stack.value) + ']';
                 }
             }
-            if (call(mapHas, portIndex, [source])) return '["P",' + call(mapGet, portIndex, [source]) + ']';
+            if (call(mapHas, portIndex, [source])) {
+                const index = call(mapGet, portIndex, [source]);
+                return (index < portList.length ? '["P",' : '["S",') + index + ']';
+            }
             const parts = host(source, 0);
             if (parts !== undefined) {
                 if (parts[0] === 'F') {
@@ -181,8 +192,8 @@
         }
         const text = node(copy);
         for (let i = 0; i < transfer.length; ++i) call(abTransfer, transfer[i]);
-        for (let i = 0; i < moved.length; ++i) host(moved[i], 4);
-        return [text, buffers];
+        for (let i = 0; i < moved.length; ++i) host(moved[i], i < portList.length ? 4 : 6);
+        return [text, buffers, portList.length];
     }
 
     function decode(text, buffers, ports) {
@@ -250,6 +261,11 @@
                     const port = ports && ports[tree[1]];
                     if (port === undefined) break;
                     return remember(id, port);
+                }
+                case 'S': {
+                    const port = ports && ports[tree[1]];
+                    if (port === undefined) break;
+                    return remember(id, host(port, 7));
                 }
                 case 'L': {
                     const files = [];

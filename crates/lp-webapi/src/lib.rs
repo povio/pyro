@@ -50,8 +50,8 @@ mod integrity;
 mod internals;
 pub mod intersection_observer;
 pub mod layout_api;
-pub(crate) mod lazy_module;
 pub mod lifecycle;
+pub(crate) mod lazy_module;
 pub(crate) mod media;
 pub mod media_source;
 pub mod message_channel;
@@ -60,8 +60,8 @@ pub mod navigator_extras;
 pub mod node;
 pub mod observable;
 pub mod page;
-mod pointer_capture;
 mod popover;
+mod pointer_capture;
 mod popup;
 pub mod range;
 pub mod render_blocking;
@@ -106,9 +106,9 @@ pub use page::{
     NavigationRequest, PageDom, PageHooks, RemotePoster,
 };
 pub use popup::{PopupCommand, PopupState, PopupTicket};
+pub use structured_clone::{decode_message as deserialize_message, encode_message as serialize_message, WireMessage};
 pub use render_blocking::RenderBlocker;
 pub use storage::{StorageNamespace, StorageSeed};
-pub use structured_clone::{decode_message as deserialize_message, encode_message as serialize_message, WireMessage};
 pub use target::{EventTarget, EventTargetData};
 pub use window::{define_members, WindowHost};
 pub use worker::{

@@ -23,12 +23,12 @@ where
     W: JsClass,
     W::Data: WindowHost,
 {
-    def.accessor(
+    def.global_value_accessor(
         "ClipboardEvent",
         |s, w| global(s, w.page(), "ClipboardEvent"),
         |s, w, value| replace(s, w.page(), "ClipboardEvent", value),
     );
-    def.accessor(
+    def.global_value_accessor(
         "CaretPosition",
         |s, w| global(s, w.page(), "CaretPosition"),
         |s, w, value| replace(s, w.page(), "CaretPosition", value),

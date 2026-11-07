@@ -78,7 +78,8 @@
                         put(buffers, buffers.length, entry);
                         continue;
                     }
-                    const port = guard(entry) ? undefined : host(entry, 1);
+                    // A MessagePort, or a ReadableStream (an ordinary object to `guard`).
+                    const port = host(entry, 1);
                     if (port === undefined) fail('Value is not transferable');
                     call(mapSet, memory, [entry, port]);
                     put(moved, moved.length, entry);
