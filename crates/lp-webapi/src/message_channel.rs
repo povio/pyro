@@ -40,8 +40,8 @@
 //! holds at most `MAX_QUEUED_BYTES`; a post beyond that throws DataCloneError.
 //! Closing either end, or the collection of its port, closes the link.
 //!
-//! Gaps (explicit): a MessagePort is not cloneable as data (DataCloneError),
-//! including inside a worker message: only the transfer list carries ports there.
+//! Gaps (explicit): a MessagePort that is not in the transfer list is not
+//! cloneable as data (DataCloneError).
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::rc::{Rc, Weak};
