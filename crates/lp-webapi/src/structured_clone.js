@@ -8,7 +8,10 @@
 // mode 4 is unused here; mode 5 prepares the transfer of a stream ([its new
 // stream here, the new ports it reads or writes], undefined if the value is
 // not a stream, DataCloneError if it is locked) and mode 6 completes it (the
-// original is piped through a channel whose other ports become `extra`'s).
+// original is piped through a channel whose other ports become `extra`'s);
+// mode 8 prepares the transfer of an ImageBitmap or OffscreenCanvas (its copy
+// here, undefined for anything else, DataCloneError if it is detached) and
+// mode 9 detaches the original. Mode 3 also copies an ImageBitmap.
 ((guard, fail, DOMExceptionC) => {
     const host = (value, mode, extra) => guard(value, mode, extra);
     const O = Object, A = Array, M = Map, S = Set, D = Date, R = RegExp, TE = TypeError;
@@ -56,10 +59,11 @@
     // `keep` (worker_wire.js) lists MessagePorts and streams, already
     // validated, that stay themselves in the copy: the cross-VM format
     // transfers them afterwards. `streams` (internal callers) receives the
-    // transferred streams' new streams.
-    function clone(value, options, ports, keep, streams) {
+    // transferred streams' new streams, `canvases` the transferred
+    // ImageBitmaps' and OffscreenCanvases' copies.
+    function clone(value, options, ports, keep, streams, canvases) {
         const memory = new M(), buffers = [], moved = [];
-        let piped;
+        let piped, detached;
         if (keep) for (let i = 0; i < keep.length; ++i) call(mapSet, memory, [keep[i], keep[i]]);
         if (options != null) {
             if (typeof options !== 'object' && typeof options !== 'function')
@@ -91,6 +95,16 @@
                     const ordinary = guard(entry);
                     const port = ordinary ? undefined : host(entry, 1);
                     if (port === undefined) {
+                        // An ImageBitmap or OffscreenCanvas: its copy, the
+                        // original detached once the whole value cloned.
+                        const canvas = ordinary ? host(entry, 8) : undefined;
+                        if (canvas !== undefined) {
+                            call(mapSet, memory, [entry, canvas]);
+                            if (!detached) detached = [];
+                            put(detached, detached.length, entry);
+                            put(detached, detached.length, canvas);
+                            continue;
+                        }
                         // A stream: its new stream, over new ports that the
                         // original is piped into once the whole value cloned.
                         const stream = ordinary ? host(entry, 5) : undefined;
@@ -229,6 +243,10 @@
         if (piped) for (let i = 0; i < piped.length; i += 2) {
             host(piped[i], 6, piped[i + 1]);
             if (streams) put(streams, streams.length, piped[i + 1][0]);
+        }
+        if (detached) for (let i = 0; i < detached.length; i += 2) {
+            host(detached[i], 9);
+            if (canvases) put(canvases, canvases.length, detached[i + 1]);
         }
         return result;
     }

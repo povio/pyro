@@ -2504,6 +2504,9 @@ simple_class!(HtmlCanvasElement, "HTMLCanvasElement", HtmlElement, |def| {
     });
     def.method("toDataURL", 0, |s, n, a| crate::canvas::to_data_url(s, n.page(), n.id, a));
     def.method("toBlob", 1, |s, n, a| crate::canvas::to_blob(s, n.page(), n.id, a));
+    def.method("transferControlToOffscreen", 0, |s, n, _a| {
+        crate::canvas::transfer_control_to_offscreen(s, n.page(), n.id)
+    });
 });
 simple_class!(HtmlMediaElement, "HTMLMediaElement", HtmlElement, |def| {
     reflect_url!(def, "src", "src");

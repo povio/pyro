@@ -625,12 +625,12 @@ impl BrowserThread {
         engine.register::<Location>();
         engine.register::<History>();
         engine.register::<Performance>();
-        engine.register::<nav::PerformanceEntry>();
-        engine.register::<nav::PerformancePaintTiming>();
-        engine.register::<nav::PerformanceMark>();
-        engine.register::<nav::PerformanceMeasure>();
-        engine.register::<nav::PerformanceResourceTiming>();
-        engine.register::<nav::PerformanceNavigationTiming>();
+        engine.register::<lp_webapi::performance::PerformanceEntry>();
+        engine.register::<lp_webapi::performance::PerformancePaintTiming>();
+        engine.register::<lp_webapi::performance::PerformanceMark>();
+        engine.register::<lp_webapi::performance::PerformanceMeasure>();
+        engine.register::<lp_webapi::performance::PerformanceResourceTiming>();
+        engine.register::<lp_webapi::performance::PerformanceNavigationTiming>();
         engine.register::<nav::PerformanceTiming>();
         engine.register::<nav::PerformanceNavigation>();
         let event_loop = EventLoop::new();

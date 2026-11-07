@@ -17,12 +17,16 @@ implement `new Worker(url)`. A worker runs its script off the page's thread.
   `postMessage`, `close`, `onmessage`, `onmessageerror`, `onerror`,
   `importScripts`, `setTimeout`/`setInterval` and their clears, `queueMicrotask`,
   `atob`/`btoa`, `structuredClone`, `crypto` with `CryptoKey` (see
-  [Web Crypto](CRYPTO.md)), `performance.now()`, `console`,
+  [Web Crypto](CRYPTO.md)), `performance` (the worker's own timeline: User
+  Timing, Resource Timing for its fetches, `PerformanceObserver`; see
+  [Performance Timeline](PERFORMANCE_TIMELINE.md)), `console`,
   `fetch` with `Headers`/`Request`/`Response`/`FormData`/`Blob`/`File`, `FileReader`,
   `AbortController`, `URL`/`URLSearchParams`, `TextEncoder`/`TextDecoder`,
   `MessageChannel`, `Event` and its message, error, progress and rejection
   subclasses, `XMLHttpRequest` without `responseXML` (see [XHR](XHR.md)),
-  `EventSource` (see [Fetch](FETCH.md)), `WebSocket`/`CloseEvent` (see
+  `EventSource` (see [Fetch](FETCH.md)), `OffscreenCanvas` with its 2D
+  context, `ImageBitmap`, `createImageBitmap` and the other canvas value types
+  (made on first use; see [Canvas 2D](CANVAS.md)), `WebSocket`/`CloseEvent` (see
   [WebSocket](WEBSOCKET.md)), `indexedDB` with the `IDB*` interfaces, over the
   owner context's databases (see [IndexedDB](INDEXEDDB.md)), `caches`
   (`Cache`, `CacheStorage`) over the owner context's Cache Storage (see
@@ -56,7 +60,11 @@ implement `new Worker(url)`. A worker runs its script off the page's thread.
   (`worker_wire.js`), which cross as a task of the other side's event loop and
   are rebuilt there; failing to rebuild fires `messageerror`. Errors,
   DOMExceptions, Blobs, Files and FileLists cross too (Blob bytes are shared,
-  not copied), and so do CryptoKeys. Transferring an ArrayBuffer copies it
+  not copied), and so do CryptoKeys and ImageBitmaps (pixels shared, not
+  copied). An ImageBitmap or an OffscreenCanvas without a context in the
+  transfer list moves and the sender's is detached; an OffscreenCanvas from
+  `transferControlToOffscreen` keeps showing its frames on its `<canvas>`
+  (see [Canvas 2D](CANVAS.md)). Transferring an ArrayBuffer copies it
   and detaches the sender's. MessagePorts transfer both ways and stay
   entangled across the threads (messages both ways, `start`/`onmessage`,
   `close`, `messageerror`; see [MessageChannel](MESSAGE_CHANNEL.md)), and
@@ -113,8 +121,8 @@ times out.
   a constructor that throws would send them down a path that then fails. Service
   workers reuse this machinery (threads, the cross-VM message format and
   cross-thread ports): see [Service workers](SERVICE_WORKER.md).
-- Host objects other than Blob, File, FileList and CryptoKey do not cross
-  (DataCloneError). There is no ImageBitmap or OffscreenCanvas to transfer.
+- Host objects other than Blob, File, FileList, CryptoKey, ImageBitmap and
+  OffscreenCanvas do not cross (DataCloneError), ImageData included.
 - Nested workers. `Worker` is undefined inside a worker.
 - `importScripts` of a page-created `blob:` URL (the store is the owner document's).
 - A worker whose wrapper became unreachable runs until its document goes.

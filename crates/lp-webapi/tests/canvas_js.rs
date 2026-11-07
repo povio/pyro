@@ -596,3 +596,85 @@ fn kept_image_bytes_are_counted_as_they_come_and_go() {
     page.set_image_state(b, None, false);
     assert_eq!(page.image_bytes_kept(), (n, 0));
 }
+
+#[test]
+fn image_bitmaps_clone_and_transfer_and_offscreen_canvases_transfer() {
+    let e = env(CANVAS);
+    let r = &e.main;
+    eval(r, PX);
+    eval(r, "var o = new OffscreenCanvas(4, 4); var ox = o.getContext('2d'); ox.fillStyle = 'lime'; ox.fillRect(0, 0, 4, 4); var bm = o.transferToImageBitmap();");
+    // A clone shares the pixels and leaves the original as it was.
+    assert_eq!(
+        eval(r, "var copy = structuredClone(bm); x.drawImage(copy, 0, 0); [copy instanceof ImageBitmap, copy !== bm, copy.width, bm.width, px(1, 1)].join('|')"),
+        "true|true|4|4|0,255,0,255"
+    );
+    // A transfer detaches the original.
+    assert_eq!(
+        eval(r, "var moved = structuredClone({bm}, {transfer: [bm]}).bm; [moved.width, moved.height, bm.width, bm.height].join()"),
+        "4,4,0,0"
+    );
+    let error = "(f) => { try { f(); return 'ok'; } catch (e) { return e.name; } }";
+    assert_eq!(
+        eval(r, &format!("var err = {error}; [err(() => structuredClone(bm)), err(() => structuredClone(bm, {{transfer: [bm]}})), err(() => structuredClone(o)), err(() => structuredClone(o, {{transfer: [o]}}))].join()")),
+        "DataCloneError,DataCloneError,DataCloneError,InvalidStateError"
+    );
+    // An OffscreenCanvas without a context transfers and is detached.
+    assert_eq!(
+        eval(r, "var fresh = new OffscreenCanvas(3, 2); var t = structuredClone(fresh, {transfer: [fresh]}); \
+                 [t instanceof OffscreenCanvas, t.width, t.height, fresh.width, fresh.height, \
+                  err(() => fresh.getContext('2d')), err(() => { fresh.width = 5; }), err(() => fresh.transferToImageBitmap()), \
+                  err(() => structuredClone(fresh, {transfer: [fresh]})), t.getContext('2d') !== null].join()"),
+        "true,3,2,0,0,InvalidStateError,InvalidStateError,InvalidStateError,DataCloneError,true"
+    );
+    // Nothing is detached when the clone fails.
+    assert_eq!(
+        eval(r, "var keep = new OffscreenCanvas(2, 2); [err(() => structuredClone({keep, f() {}}, {transfer: [keep]})), keep.width].join()"),
+        "DataCloneError,2"
+    );
+}
+
+#[test]
+fn a_canvas_whose_control_went_offscreen_shows_its_frames() {
+    let e = env("<!doctype html><canvas id=c width=8 height=4></canvas><canvas id=d width=8 height=4></canvas>");
+    let r = &e.main;
+    let error = "var err = (f) => { try { f(); return 'ok'; } catch (e) { return e.name; } };";
+    eval(r, error);
+    assert_eq!(
+        eval(
+            r,
+            "var c = document.getElementById('c'); var o = c.transferControlToOffscreen(); \
+                 [o instanceof OffscreenCanvas, o.width, o.height, err(() => c.getContext('2d')), \
+                  err(() => c.transferControlToOffscreen())].join()"
+        ),
+        "true,8,4,InvalidStateError,InvalidStateError"
+    );
+    // A canvas with a context cannot give its control away.
+    assert_eq!(
+        eval(r, "var d = document.getElementById('d'); d.getContext('2d'); err(() => d.transferControlToOffscreen())"),
+        "InvalidStateError"
+    );
+    // Nothing drawn: nothing shown.
+    e.page.after_task();
+    assert!(e.page.canvas_bitmaps().is_empty());
+    // A frame is committed after the task that drew it.
+    eval(r, "var ox = o.getContext('2d'); ox.fillStyle = 'red'; ox.fillRect(0, 0, 1, 1);");
+    assert!(e.page.canvas_bitmaps().is_empty());
+    e.page.after_task();
+    let bitmaps = e.page.canvas_bitmaps();
+    assert_eq!(bitmaps.len(), 1);
+    let (_, w, h, rgba) = &bitmaps[0];
+    assert_eq!((*w, *h), (8, 4));
+    assert_eq!(&rgba[..8], &[255, 0, 0, 255, 0, 0, 0, 0]);
+    // An unchanged frame is the same bitmap; drawImage and toDataURL read it.
+    e.page.after_task();
+    assert!(std::sync::Arc::ptr_eq(&e.page.canvas_bitmaps()[0].3, rgba));
+    assert_eq!(
+        eval(r, "var dx = d.getContext('2d'); dx.drawImage(c, 0, 0); [Array.from(dx.getImageData(0, 0, 1, 1).data).join(), c.toDataURL().length > 30].join('|')"),
+        "255,0,0,255|true"
+    );
+    // A resize of the OffscreenCanvas is a new (cleared) frame of its size.
+    eval(r, "o.width = 2;");
+    e.page.after_task();
+    let bitmaps = e.page.canvas_bitmaps();
+    assert!(bitmaps.iter().all(|(_, w, _, _)| *w != 2), "a cleared frame has no pixels");
+}

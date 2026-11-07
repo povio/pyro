@@ -43,7 +43,7 @@ impl LazyModule {
 
     /// This realm's module, made on first use.
     pub(crate) fn module<'s>(&self, s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Object<'s>> {
-        let navigator = crate::window::navigator(s, page)?.as_object().ok_or_else(unavailable)?;
+        let navigator = crate::worker_scope::module_holder(s, page)?;
         if let Some(module) = s.get_hidden(navigator, self.key)?.and_then(|v| v.as_object()) {
             return Ok(module);
         }
@@ -55,6 +55,12 @@ impl LazyModule {
         let module = factory.as_object().ok_or_else(unavailable)?.call(None, &[natives])?;
         s.set_hidden(navigator, self.key, module)?;
         module.as_object().ok_or_else(unavailable)
+    }
+
+    /// This realm's module if it was made.
+    pub(crate) fn existing<'s>(&self, s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Option<Object<'s>>> {
+        let navigator = crate::worker_scope::module_holder(s, page)?;
+        Ok(s.get_hidden(navigator, self.key)?.and_then(|v| v.as_object()))
     }
 
     /// Calls module helper `name`.

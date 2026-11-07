@@ -19,6 +19,11 @@ use lp_dom::parse::DomRef;
 use lp_dom::NodeId;
 use lp_js::{ClassDef, JsClass, JsError, JsResult, NoParent, Persistent, Scope, Value};
 use lp_runtime::{Scheduler, TaskSource};
+use lp_webapi::performance::{
+    self as perf, navigation_fields, resource_object, NavigationValues, PerformanceEntryData,
+    PerformanceNavigationTiming, PerformancePaintTiming, UserTiming, RESOURCE_TIMES, TIMING_ATTRIBUTES,
+};
+use lp_webapi::resource_timing::ResourceEntry;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::Instant;
@@ -1229,17 +1234,8 @@ pub struct PerformanceData {
     origin_wall_ms: f64,
     /// `Performance` is an EventTarget (`resourcetimingbufferfull`).
     target: lp_webapi::EventTargetData,
-    /// User Timing: the marks and measures of the performance entry buffer,
-    /// in the order they were added.
-    user_entries: RefCell<Vec<UserEntry>>,
-}
-
-/// A `PerformanceMark` or `PerformanceMeasure` in the entry buffer.
-struct UserEntry {
-    name: String,
-    mark: bool,
-    start: f64,
-    object: Persistent,
+    /// User Timing: the marks and measures of the performance entry buffer.
+    user: UserTiming,
 }
 
 impl PerformanceData {
@@ -1248,7 +1244,7 @@ impl PerformanceData {
         let origin_wall_ms = now_wall - nav.now_ms();
         let target = lp_webapi::EventTargetData::new(page);
         page.resource_timings().add_target(target.key);
-        PerformanceData { nav, origin_wall_ms, target, user_entries: RefCell::new(Vec::new()) }
+        PerformanceData { nav, origin_wall_ms, target, user: UserTiming::default() }
     }
     /// The identity its wrapper is made with (event dispatch looks it up).
     pub(crate) fn wrapper_identity(&self) -> Option<lp_js::IdentityKey> {
@@ -1292,117 +1288,24 @@ fn timeline_entries<'s>(
             }
         }
     }
-    for entry in p.user_entries.borrow().iter() {
-        let ty = if entry.mark { "mark" } else { "measure" };
-        if name.is_none_or(|n| n == entry.name) && entry_type.is_none_or(|t| t == ty) {
-            entries.push((entry.start, entry.object.get(s)));
-        }
-    }
+    p.user.collect(s, name, entry_type, &mut entries);
     if entry_type.is_none_or(|t| t == "resource") {
-        p.target.page.add_finished_fetches();
-        for entry in p.target.page.resource_timings().entries() {
-            if name.is_none_or(|n| n == entry.name) {
-                entries.push((entry.start, resource_object(s, entry)?));
-            }
-        }
+        perf::collect_resources(s, &p.target.page, name, &mut entries)?;
     }
-    // Stable: entries with equal start times keep the order they were added.
-    entries.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
-    let values: Vec<Value<'s>> = entries.into_iter().map(|(_, v)| v).collect();
-    Ok(s.array(&values)?.value())
+    perf::sorted_entries(s, entries)
 }
 
-pub struct PerformanceEntryData {
-    name: String,
-    entry_type: &'static str,
-    start: f64,
-    duration: f64,
-    /// `detail` of a mark or measure (a structured clone), null when absent.
-    detail: Option<Persistent>,
-    /// The document's Navigation Timing (`navigation` entries only).
-    navigation: Option<Box<NavigationValues>>,
-    /// A `resource` entry's values (shared with the document's buffer).
-    resource: Option<Rc<ResourceEntry>>,
-}
-
-impl PerformanceEntryData {
-    fn new(name: &str, entry_type: &'static str, start: f64, duration: f64) -> PerformanceEntryData {
-        PerformanceEntryData {
-            name: name.to_owned(),
-            entry_type,
-            start,
-            duration,
-            detail: None,
-            navigation: None,
-            resource: None,
-        }
-    }
-    /// The fetch phases: a resource entry's, or the navigation entry's
-    /// document fetch.
-    fn fetch(&self) -> Option<&ResourceEntry> {
-        self.resource.as_deref().or_else(|| self.navigation.as_ref()?.fetch.as_deref())
-    }
-}
-
-use lp_webapi::resource_timing::ResourceEntry;
-
-/// The wrapper of a `resource` entry: one object per entry and realm while
-/// script holds it (identity by the entry's sequence number).
-fn resource_object<'s>(s: &Scope<'s>, entry: Rc<ResourceEntry>) -> JsResult<Value<'s>> {
-    let key = lp_js::IdentityKey(KEY_RESOURCE, entry.seq);
-    if let Some(o) = s.lookup_identity(key) {
-        return Ok(o.value());
-    }
-    let mut data = PerformanceEntryData::new("", "resource", entry.start, entry.duration());
-    data.name = entry.name.clone();
-    data.resource = Some(entry);
-    Ok(s.wrap::<PerformanceResourceTiming>(data, Some(key))?.value())
-}
-
-/// Identity key space of `resource` entry wrappers.
-const KEY_RESOURCE: u64 = 0x5265_736f_7572_6300;
-
-/// A document's Navigation Timing as its `navigation` entry reports it, in
-/// milliseconds since the time origin (the start of the document's fetch);
-/// 0 for a step that has not run. Unloading the previous document is not
-/// timed (0).
-#[derive(Clone)]
-struct NavigationValues {
-    dom_interactive: f64,
-    dom_content_loaded_start: f64,
-    dom_content_loaded_end: f64,
-    dom_complete: f64,
-    load_start: f64,
-    load_end: f64,
-    nav_type: &'static str,
-    /// The document's fetch (`None`: none, as for a document without one).
-    fetch: Option<Rc<ResourceEntry>>,
-}
-
-impl NavigationValues {
-    const EMPTY: NavigationValues = NavigationValues {
-        dom_interactive: 0.0,
-        dom_content_loaded_start: 0.0,
-        dom_content_loaded_end: 0.0,
-        dom_complete: 0.0,
-        load_start: 0.0,
-        load_end: 0.0,
-        nav_type: "navigate",
-        fetch: None,
-    };
-
-    fn of(page: &lp_webapi::PageDom, nav: &PageNav) -> NavigationValues {
-        let t = page.timing();
-        NavigationValues {
-            dom_interactive: t.dom_interactive.unwrap_or(0.0),
-            dom_content_loaded_start: t.dom_content_loaded_start.unwrap_or(0.0),
-            dom_content_loaded_end: t.dom_content_loaded_end.unwrap_or(0.0),
-            dom_complete: t.dom_complete.unwrap_or(0.0),
-            load_start: t.load_start.unwrap_or(0.0),
-            load_end: t.load_end.unwrap_or(0.0),
-            nav_type: nav.nav_type.get(),
-            fetch: nav.fetch_timing.borrow().clone(),
-        }
+fn navigation_values(page: &lp_webapi::PageDom, nav: &PageNav) -> NavigationValues {
+    let t = page.timing();
+    NavigationValues {
+        dom_interactive: t.dom_interactive.unwrap_or(0.0),
+        dom_content_loaded_start: t.dom_content_loaded_start.unwrap_or(0.0),
+        dom_content_loaded_end: t.dom_content_loaded_end.unwrap_or(0.0),
+        dom_complete: t.dom_complete.unwrap_or(0.0),
+        load_start: t.load_start.unwrap_or(0.0),
+        load_end: t.load_end.unwrap_or(0.0),
+        nav_type: nav.nav_type.get(),
+        fetch: nav.fetch_timing.borrow().clone(),
     }
 }
 
@@ -1414,182 +1317,35 @@ fn navigation_entry(p: &PerformanceData) -> Option<PerformanceEntryData> {
     if !(url.starts_with("http:") || url.starts_with("https:") || url.starts_with("file:")) {
         return None;
     }
-    let values = NavigationValues::of(&p.target.page, &p.nav);
+    let values = navigation_values(&p.target.page, &p.nav);
     let mut entry = PerformanceEntryData::new(&url, "navigation", 0.0, values.load_end);
     entry.navigation = Some(Box::new(values));
     Some(entry)
 }
 
-fn entry_json<'s>(s: &Scope<'s>, e: &PerformanceEntryData, detail: bool) -> JsResult<Value<'s>> {
-    let o = s.object();
-    o.set("name", s.string(&e.name))?;
-    o.set("entryType", s.string(e.entry_type))?;
-    o.set("startTime", s.number(e.start))?;
-    o.set("duration", s.number(e.duration))?;
-    if detail {
-        o.set("detail", e.detail.as_ref().map_or(s.null(), |d| d.get(s)))?;
+/// User Timing "convert a name to a timestamp" in a Window: a
+/// PerformanceTiming attribute is its time relative to navigationStart, an
+/// error while it is 0 (the step has not run).
+fn timing_attribute_timestamp(p: &PerformanceData, name: &str) -> Option<JsResult<f64>> {
+    if name == "navigationStart" {
+        return Some(Ok(0.0));
     }
-    if e.navigation.is_some() || e.resource.is_some() {
-        let f = e.fetch();
-        o.set("initiatorType", s.string(initiator_type(e)))?;
-        o.set("deliveryType", s.string(f.map_or("", |f| f.delivery_type)))?;
-        o.set("nextHopProtocol", s.string(f.map_or("", |f| f.next_hop_protocol)))?;
-        o.set("renderBlockingStatus", s.string(render_blocking_status(e)))?;
-        o.set("contentType", s.string(f.map_or("", |f| &f.content_type)))?;
-        for (key, value) in RESOURCE_TIMES.iter().chain(&RESOURCE_SIZES) {
-            o.set(key, s.number(f.map_or(0.0, value)))?;
-        }
-        o.set("serverTiming", s.array(&[])?.value())?;
+    if !TIMING_ATTRIBUTES.contains(&name) {
+        return None;
     }
-    if let Some(n) = &e.navigation {
-        for (key, value) in navigation_fields(n) {
-            o.set(key, s.number(value))?;
-        }
-        o.set("type", s.string(n.nav_type))?;
-        o.set("redirectCount", s.number(redirect_count(n)))?;
+    let n = navigation_values(&p.target.page, &p.nav);
+    if legacy_timing(p.origin_wall_ms, &n, name) == 0.0 {
+        return Some(Err(JsError::dom(
+            "InvalidAccessError",
+            format!("'{name}' is empty: either the event hasn't happened yet, or it would provide cross-origin timing information."),
+        )));
     }
-    Ok(o.value())
-}
-
-fn initiator_type(e: &PerformanceEntryData) -> &'static str {
-    match (&e.navigation, &e.resource) {
-        (Some(_), _) => "navigation",
-        (None, Some(r)) => r.initiator,
-        _ => "",
+    // Relative to navigationStart, the time origin.
+    let fetch_phase = if name == "domLoading" { "responseStart" } else { name };
+    if let Some((_, value)) = RESOURCE_TIMES.iter().find(|(key, _)| *key == fetch_phase) {
+        return Some(Ok(n.fetch.as_deref().map_or(0.0, value)));
     }
-}
-
-fn render_blocking_status(e: &PerformanceEntryData) -> &'static str {
-    if e.resource.as_ref().is_some_and(|r| r.render_blocking) {
-        "blocking"
-    } else {
-        "non-blocking"
-    }
-}
-
-fn redirect_count(n: &NavigationValues) -> f64 {
-    n.fetch.as_ref().map_or(0.0, |f| f64::from(f.redirect_count))
-}
-
-type FetchValue = fn(&ResourceEntry) -> f64;
-
-/// PerformanceResourceTiming's times (no service workers, no interim
-/// responses: those are 0).
-const RESOURCE_TIMES: [(&str, FetchValue); 14] = [
-    ("workerStart", |_| 0.0),
-    ("redirectStart", |f| f.redirect_start),
-    ("redirectEnd", |f| f.redirect_end),
-    ("fetchStart", |f| f.fetch_start),
-    ("domainLookupStart", |f| f.domain_lookup_start),
-    ("domainLookupEnd", |f| f.domain_lookup_end),
-    ("connectStart", |f| f.connect_start),
-    ("connectEnd", |f| f.connect_end),
-    ("secureConnectionStart", |f| f.secure_connection_start),
-    ("requestStart", |f| f.request_start),
-    ("responseStart", |f| f.response_start),
-    ("firstInterimResponseStart", |_| 0.0),
-    ("finalResponseHeadersStart", |f| f.response_start),
-    ("responseEnd", |f| f.response_end),
-];
-/// Sizes and status.
-const RESOURCE_SIZES: [(&str, FetchValue); 4] = [
-    ("transferSize", |f| f.transfer_size as f64),
-    ("encodedBodySize", |f| f.encoded_body_size as f64),
-    ("decodedBodySize", |f| f.decoded_body_size as f64),
-    ("responseStatus", |f| f64::from(f.response_status)),
-];
-
-fn navigation_fields(n: &NavigationValues) -> [(&'static str, f64); 10] {
-    [
-        ("unloadEventStart", 0.0),
-        ("unloadEventEnd", 0.0),
-        ("domInteractive", n.dom_interactive),
-        ("domContentLoadedEventStart", n.dom_content_loaded_start),
-        ("domContentLoadedEventEnd", n.dom_content_loaded_end),
-        ("domComplete", n.dom_complete),
-        ("loadEventStart", n.load_start),
-        ("loadEventEnd", n.load_end),
-        ("activationStart", 0.0),
-        ("criticalCHRestart", 0.0),
-    ]
-}
-
-pub struct PerformanceEntry;
-
-impl JsClass for PerformanceEntry {
-    const NAME: &'static str = "PerformanceEntry";
-    type Data = PerformanceEntryData;
-    type Parent = NoParent;
-
-    fn define(def: &mut ClassDef<Self>) {
-        def.getter("name", |s, e| Ok(s.string(&e.name)));
-        def.getter("entryType", |s, e| Ok(s.string(e.entry_type)));
-        def.getter("startTime", |s, e| Ok(s.number(e.start)));
-        def.getter("duration", |s, e| Ok(s.number(e.duration)));
-        def.method("toJSON", 0, |s, e, _a| entry_json(s, e, false));
-    }
-}
-
-/// Paint Timing: `first-paint` / `first-contentful-paint`.
-pub struct PerformancePaintTiming;
-
-impl JsClass for PerformancePaintTiming {
-    const NAME: &'static str = "PerformancePaintTiming";
-    type Data = PerformanceEntryData;
-    type Parent = PerformanceEntry;
-
-    fn define(_def: &mut ClassDef<Self>) {}
-}
-
-/// Resource Timing: the document's `resource` entries (lp-webapi
-/// `resource_timing`) and its `navigation` entry.
-pub struct PerformanceResourceTiming;
-
-impl JsClass for PerformanceResourceTiming {
-    const NAME: &'static str = "PerformanceResourceTiming";
-    type Data = PerformanceEntryData;
-    type Parent = PerformanceEntry;
-
-    fn define(def: &mut ClassDef<Self>) {
-        macro_rules! values {
-            ($table:ident: $($i:literal),*) => {$(
-                def.getter($table[$i].0, |s, e| Ok(s.number(e.fetch().map_or(0.0, $table[$i].1))));
-            )*};
-        }
-        values!(RESOURCE_TIMES: 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13);
-        values!(RESOURCE_SIZES: 0, 1, 2, 3);
-        def.getter("initiatorType", |s, e| Ok(s.string(initiator_type(e))));
-        def.getter("nextHopProtocol", |s, e| Ok(s.string(e.fetch().map_or("", |f| f.next_hop_protocol))));
-        def.getter("deliveryType", |s, e| Ok(s.string(e.fetch().map_or("", |f| f.delivery_type))));
-        def.getter("renderBlockingStatus", |s, e| Ok(s.string(render_blocking_status(e))));
-        def.getter("contentType", |s, e| Ok(s.string(e.fetch().map_or("", |f| &f.content_type))));
-        def.getter("serverTiming", |s, _e| Ok(s.array(&[])?.value()));
-        def.method("toJSON", 0, |s, e, _a| entry_json(s, e, false));
-    }
-}
-
-/// Navigation Timing Level 2: the document's `navigation` entry.
-pub struct PerformanceNavigationTiming;
-
-impl JsClass for PerformanceNavigationTiming {
-    const NAME: &'static str = "PerformanceNavigationTiming";
-    type Data = PerformanceEntryData;
-    type Parent = PerformanceResourceTiming;
-
-    fn define(def: &mut ClassDef<Self>) {
-        macro_rules! fields {
-            ($($i:literal),*) => {$(
-                def.getter(navigation_fields(&NavigationValues::EMPTY)[$i].0, |s, e| {
-                    Ok(s.number(e.navigation.as_ref().map_or(0.0, |n| navigation_fields(n)[$i].1)))
-                });
-            )*};
-        }
-        fields!(0, 1, 2, 3, 4, 5, 6, 7, 8, 9);
-        def.getter("type", |s, e| Ok(s.string(e.navigation.as_ref().map_or("navigate", |n| n.nav_type))));
-        def.getter("redirectCount", |s, e| Ok(s.number(e.navigation.as_deref().map_or(0.0, redirect_count))));
-        def.getter("notRestoredReasons", |s, _e| Ok(s.null()));
-        def.method("toJSON", 0, |s, e, _a| entry_json(s, e, false));
-    }
+    Some(Ok(navigation_fields(&n).into_iter().find(|(key, _)| *key == name).map_or(0.0, |(_, t)| t)))
 }
 
 /// The legacy `performance.timing`: the document's Navigation Timing in
@@ -1641,7 +1397,7 @@ impl JsClass for PerformanceTiming {
         macro_rules! attributes {
             ($($i:literal),*) => {$(
                 def.getter(TIMING_ATTRIBUTES[$i], |s, t| {
-                    let n = NavigationValues::of(&t.page, &t.nav);
+                    let n = navigation_values(&t.page, &t.nav);
                     Ok(s.number(legacy_timing(t.origin_wall_ms, &n, TIMING_ATTRIBUTES[$i])))
                 });
             )*};
@@ -1649,7 +1405,7 @@ impl JsClass for PerformanceTiming {
         attributes!(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20);
         def.method("toJSON", 0, |s, t, _a| {
             let o = s.object();
-            let n = NavigationValues::of(&t.page, &t.nav);
+            let n = navigation_values(&t.page, &t.nav);
             for name in TIMING_ATTRIBUTES {
                 o.set(name, s.number(legacy_timing(t.origin_wall_ms, &n, name)))?;
             }
@@ -1686,219 +1442,6 @@ fn legacy_navigation_type(n: &PageNav) -> f64 {
     }
 }
 
-/// Navigation Timing's `PerformanceTiming` attribute names: not usable as
-/// mark names in a Window (User Timing).
-const TIMING_ATTRIBUTES: &[&str] = &[
-    "navigationStart",
-    "unloadEventStart",
-    "unloadEventEnd",
-    "redirectStart",
-    "redirectEnd",
-    "fetchStart",
-    "domainLookupStart",
-    "domainLookupEnd",
-    "connectStart",
-    "connectEnd",
-    "secureConnectionStart",
-    "requestStart",
-    "responseStart",
-    "responseEnd",
-    "domLoading",
-    "domInteractive",
-    "domContentLoadedEventStart",
-    "domContentLoadedEventEnd",
-    "domComplete",
-    "loadEventStart",
-    "loadEventEnd",
-];
-
-/// A member of an options dictionary, `None` when absent or undefined.
-fn member<'s>(options: Option<lp_js::Object<'s>>, name: &str) -> JsResult<Option<Value<'s>>> {
-    match options {
-        Some(o) => Ok(Some(o.get(name)?).filter(|v| !v.is_undefined())),
-        None => Ok(None),
-    }
-}
-
-/// The structured clone of a `detail` member (null when absent).
-fn clone_detail<'s>(s: &Scope<'s>, detail: Option<Value<'s>>) -> JsResult<Option<Persistent>> {
-    let Some(detail) = detail.filter(|v| !v.is_null()) else { return Ok(None) };
-    let clone = s.global().get("structuredClone")?;
-    let clone = clone.as_object().ok_or_else(|| JsError::Type("structuredClone is unavailable".into()))?;
-    Ok(Some(Persistent::new(s, clone.call(None, &[detail])?)))
-}
-
-/// User Timing "create a PerformanceMark": `now` is the current time.
-fn mark_data<'s>(s: &Scope<'s>, name: &str, options: Value<'s>, now: f64) -> JsResult<PerformanceEntryData> {
-    if TIMING_ATTRIBUTES.contains(&name) {
-        return Err(JsError::dom(
-            "SyntaxError",
-            format!("'{name}' is part of the PerformanceTiming interface, and cannot be used as a mark name."),
-        ));
-    }
-    if !options.is_nullish() && options.as_object().is_none() {
-        return Err(JsError::Type("The mark options are not an object.".into()));
-    }
-    let options = options.as_object();
-    let start = match member(options, "startTime")? {
-        Some(v) => {
-            let t = v.to_number()?;
-            if !t.is_finite() {
-                return Err(JsError::Type("startTime is not a finite number.".into()));
-            }
-            if t < 0.0 {
-                return Err(JsError::Type(format!("'{name}' cannot have a negative start time.")));
-            }
-            t
-        }
-        None => now,
-    };
-    let detail = clone_detail(s, member(options, "detail")?)?;
-    Ok(PerformanceEntryData {
-        name: name.to_owned(),
-        entry_type: "mark",
-        start,
-        duration: 0.0,
-        detail,
-        navigation: None,
-        resource: None,
-    })
-}
-
-pub struct PerformanceMark;
-
-impl JsClass for PerformanceMark {
-    const NAME: &'static str = "PerformanceMark";
-    type Data = PerformanceEntryData;
-    type Parent = PerformanceEntry;
-
-    fn define(def: &mut ClassDef<Self>) {
-        def.constructor(1, |s, nt, a| {
-            a.require(1, "PerformanceMark")?;
-            let name = a.get(0).to_string()?;
-            let now = s.global_data::<crate::window::Window>().map_or(0.0, |w| w.now_ms());
-            s.wrap_new::<PerformanceMark>(mark_data(s, &name, a.get(1), now)?, nt, None)
-        });
-        def.getter("detail", |s, e| Ok(e.detail.as_ref().map_or(s.null(), |d| d.get(s))));
-        def.method("toJSON", 0, |s, e, _a| entry_json(s, e, true));
-    }
-}
-
-pub struct PerformanceMeasure;
-
-impl JsClass for PerformanceMeasure {
-    const NAME: &'static str = "PerformanceMeasure";
-    type Data = PerformanceEntryData;
-    type Parent = PerformanceEntry;
-
-    fn define(def: &mut ClassDef<Self>) {
-        def.getter("detail", |s, e| Ok(e.detail.as_ref().map_or(s.null(), |d| d.get(s))));
-        def.method("toJSON", 0, |s, e, _a| entry_json(s, e, true));
-    }
-}
-
-/// User Timing "convert a mark to a timestamp".
-fn mark_timestamp(p: &PerformanceData, mark: Value<'_>) -> JsResult<f64> {
-    if mark.is_number() {
-        let t = mark.to_number()?;
-        if t < 0.0 {
-            return Err(JsError::Type("A measure cannot start or end at a negative time.".into()));
-        }
-        return Ok(t);
-    }
-    let name = mark.to_string()?;
-    if name == "navigationStart" {
-        return Ok(0.0);
-    }
-    // User Timing "convert a name to a timestamp": a PerformanceTiming
-    // attribute is its time relative to navigationStart, an error while it
-    // is 0 (the step has not run).
-    if TIMING_ATTRIBUTES.contains(&name.as_str()) {
-        let n = NavigationValues::of(&p.target.page, &p.nav);
-        if legacy_timing(p.origin_wall_ms, &n, &name) == 0.0 {
-            return Err(JsError::dom(
-                "InvalidAccessError",
-                format!("'{name}' is empty: either the event hasn't happened yet, or it would provide cross-origin timing information."),
-            ));
-        }
-        // Relative to navigationStart, the time origin.
-        let fetch_phase = if name == "domLoading" { "responseStart" } else { name.as_str() };
-        if let Some((_, value)) = RESOURCE_TIMES.iter().find(|(key, _)| *key == fetch_phase) {
-            return Ok(n.fetch.as_deref().map_or(0.0, value));
-        }
-        return Ok(navigation_fields(&n).into_iter().find(|(key, _)| *key == name).map_or(0.0, |(_, t)| t));
-    }
-    let found = p.user_entries.borrow().iter().rev().find(|e| e.mark && e.name == name).map(|e| e.start);
-    found.ok_or_else(|| JsError::dom("SyntaxError", format!("The mark '{name}' does not exist.")))
-}
-
-/// `performance.measure(name, startOrOptions, endMark)`.
-fn measure<'s>(s: &Scope<'s>, p: &PerformanceData, a: &lp_js::Args<'s>) -> JsResult<Value<'s>> {
-    a.require(1, "Performance.measure")?;
-    let name = a.get(0).to_string()?;
-    let end_mark = a.opt(2).filter(|v| !v.is_undefined());
-    // A dictionary only when it is an object (a string or number is a mark).
-    let options = a.get(1).as_object();
-    let (start, end, duration) = (member(options, "start")?, member(options, "end")?, member(options, "duration")?);
-    let detail = member(options, "detail")?;
-    let is_options = start.is_some() || end.is_some() || duration.is_some() || detail.is_some();
-    if is_options {
-        if end_mark.is_some() {
-            return Err(JsError::Type("If a non-empty measure options object is given, endMark must not be.".into()));
-        }
-        if start.is_none() && end.is_none() {
-            return Err(JsError::Type("The measure options need at least one of start and end.".into()));
-        }
-        if start.is_some() && end.is_some() && duration.is_some() {
-            return Err(JsError::Type("The measure options cannot have all of start, duration and end.".into()));
-        }
-    }
-    let duration = duration.map(|d| d.to_number()).transpose()?;
-    let end_time = match (end_mark, end, start, duration) {
-        (Some(mark), ..) => mark_timestamp(p, mark)?,
-        (None, Some(end), ..) => mark_timestamp(p, end)?,
-        (None, None, Some(start), Some(duration)) => mark_timestamp(p, start)? + duration,
-        _ => p.nav.now_ms(),
-    };
-    let start_time = match (start, duration, end) {
-        (Some(start), ..) => mark_timestamp(p, start)?,
-        (None, Some(duration), Some(end)) => mark_timestamp(p, end)? - duration,
-        _ if !is_options && !a.get(1).is_nullish() => mark_timestamp(p, a.get(1))?,
-        _ => 0.0,
-    };
-    let data = PerformanceEntryData {
-        name: name.clone(),
-        entry_type: "measure",
-        start: start_time,
-        duration: end_time - start_time,
-        detail: clone_detail(s, detail)?,
-        navigation: None,
-        resource: None,
-    };
-    let object = s.wrap::<PerformanceMeasure>(data, None)?.value();
-    p.user_entries.borrow_mut().push(UserEntry {
-        name,
-        mark: false,
-        start: start_time,
-        object: Persistent::new(s, object),
-    });
-    p.nav.notify_entry(s, "measure", object)?;
-    Ok(object)
-}
-
-/// `clearMarks(name)` / `clearMeasures(name)`.
-fn clear_entries(p: &PerformanceData, marks: bool, name: Option<String>) {
-    let removed: Vec<UserEntry> = {
-        let mut entries = p.user_entries.borrow_mut();
-        let (gone, kept) = std::mem::take(&mut *entries)
-            .into_iter()
-            .partition(|e| e.mark == marks && name.as_ref().is_none_or(|n| *n == e.name));
-        *entries = kept;
-        gone
-    };
-    drop(removed);
-}
-
 pub struct Performance;
 
 impl JsClass for Performance {
@@ -1911,26 +1454,17 @@ impl JsClass for Performance {
         def.method("now", 0, |s, p, _a| Ok(s.number(p.nav.now_ms())));
         def.getter("timeOrigin", |s, p| Ok(s.number(p.origin_wall_ms)));
         def.method("mark", 1, |s, p, a| {
-            a.require(1, "Performance.mark")?;
-            let name = a.get(0).to_string()?;
-            let data = mark_data(s, &name, a.get(1), p.nav.now_ms())?;
-            let start = data.start;
-            let object = s.wrap::<PerformanceMark>(data, None)?.value();
-            p.user_entries.borrow_mut().push(UserEntry { name, mark: true, start, object: Persistent::new(s, object) });
+            let object = p.user.mark(s, &a, p.nav.now_ms())?;
             p.nav.notify_entry(s, "mark", object)?;
             Ok(object)
         });
-        def.method("measure", 1, |s, p, a| measure(s, p, &a));
-        def.method("clearMarks", 0, |s, p, a| {
-            let name = a.opt(0).filter(|v| !v.is_undefined()).map(|v| v.to_string()).transpose()?;
-            clear_entries(p, true, name);
-            Ok(s.undefined())
+        def.method("measure", 1, |s, p, a| {
+            let object = p.user.measure(s, &a, p.nav.now_ms(), &|name| timing_attribute_timestamp(p, name))?;
+            p.nav.notify_entry(s, "measure", object)?;
+            Ok(object)
         });
-        def.method("clearMeasures", 0, |s, p, a| {
-            let name = a.opt(0).filter(|v| !v.is_undefined()).map(|v| v.to_string()).transpose()?;
-            clear_entries(p, false, name);
-            Ok(s.undefined())
-        });
+        def.method("clearMarks", 0, |s, p, a| p.user.clear(true, &a).map(|()| s.undefined()));
+        def.method("clearMeasures", 0, |s, p, a| p.user.clear(false, &a).map(|()| s.undefined()));
         def.method("getEntries", 0, |s, p, _a| timeline_entries(s, p, None, None));
         def.method("getEntriesByName", 1, |s, p, a| {
             a.require(1, "Performance.getEntriesByName")?;
@@ -1944,17 +1478,10 @@ impl JsClass for Performance {
             timeline_entries(s, p, None, Some(&ty))
         });
         def.method("setResourceTimingBufferSize", 1, |s, p, a| {
-            a.require(1, "Performance.setResourceTimingBufferSize")?;
-            // WebIDL `unsigned long`.
-            let n = a.get(0).to_number()?;
-            let n = if n.is_finite() { n.trunc().rem_euclid(4_294_967_296.0) } else { 0.0 };
-            p.target.page.add_finished_fetches();
-            p.target.page.resource_timings().set_limit(n as usize);
-            Ok(s.undefined())
+            perf::set_buffer_size(&p.target.page, &a).map(|()| s.undefined())
         });
         def.method("clearResourceTimings", 0, |s, p, _a| {
-            p.target.page.add_finished_fetches();
-            p.target.page.resource_timings().clear();
+            perf::clear_resources(&p.target.page);
             Ok(s.undefined())
         });
         def.accessor(
@@ -1994,6 +1521,9 @@ fn navigation_object<'s>(s: &Scope<'s>, p: &PerformanceData) -> JsResult<Value<'
 const KEY_TIMING: u64 = 0x5065_7254_696d_6e00;
 const KEY_NAVIGATION: u64 = 0x5065_724e_6176_6900;
 
+/// Entry types a Window's observers take.
+const WINDOW_ENTRY_TYPES: &[&str] = &["mark", "measure", "navigation", "paint", "resource"];
+
 /// This realm's performance_observer.js module (`PerformanceObserver`,
 /// `PerformanceObserverEntryList`), made on first use and kept on the
 /// realm's `performance` object.
@@ -2002,45 +1532,17 @@ pub(crate) fn observer_module<'s>(
     performance: lp_js::Object<'s>,
     nav: &Rc<PageNav>,
 ) -> JsResult<lp_js::Object<'s>> {
-    const KEY: &str = "lpPerformanceObserver";
-    if let Some(module) = s.get_hidden(performance, KEY)?.and_then(|v| v.as_object()) {
-        return Ok(module);
-    }
-    let unavailable = || JsError::Type("PerformanceObserver is unavailable".into());
-    let natives = s.object();
-    let watched = Rc::downgrade(nav);
-    let watch = s.function("watch", move |s, _this, a| {
-        if let Some(nav) = watched.upgrade() {
-            nav.watch_timeline(s, a.get(0));
-        }
-        Ok(s.undefined())
-    })?;
-    natives.set_atom("watch", watch.value())?;
-    let report = s.function("reportException", |s, _this, a| {
-        s.report_exception(&JsError::Thrown(Persistent::new(s, a.get(0))));
-        Ok(s.undefined())
-    })?;
-    natives.set_atom("reportException", report.value())?;
-    let page = Rc::downgrade(&p_page(performance, s)?);
-    let dropped = s.function("droppedResources", move |s, _this, _a| {
-        let Some(page) = page.upgrade() else { return Ok(s.number(0.0)) };
-        page.add_finished_fetches();
-        Ok(s.number(page.resource_timings().dropped() as f64))
-    })?;
-    natives.set_atom("droppedResources", dropped.value())?;
-    let root = Persistent::new(s, natives.value());
-    let make =
-        s.eval(include_str!("performance_observer.js"), Some("lightningpanda://internal/performance-observer.js"), 1)?;
-    let module = make.as_object().ok_or_else(unavailable)?.call(None, &[performance.value(), root.get(s)])?;
-    s.set_hidden(performance, KEY, module)?;
-    module.as_object().ok_or_else(unavailable)
-}
-
-/// The document of the realm's `performance` object.
-fn p_page(performance: lp_js::Object<'_>, s: &Scope<'_>) -> JsResult<Rc<lp_webapi::PageDom>> {
-    s.unwrap::<Performance>(performance.value())
+    let page = s
+        .unwrap::<Performance>(performance.value())
         .map(|p| p.target.page.clone())
-        .ok_or_else(|| JsError::Type("PerformanceObserver is unavailable".into()))
+        .ok_or_else(|| JsError::Type("PerformanceObserver is unavailable".into()))?;
+    let watched = Rc::downgrade(nav);
+    let watch = move |s: &Scope<'_>, queue: Value<'_>| {
+        if let Some(nav) = watched.upgrade() {
+            nav.watch_timeline(s, queue);
+        }
+    };
+    perf::observer_module(s, performance, &page, watch, WINDOW_ENTRY_TYPES)
 }
 
 /// The realm's Navigation API module (navigation.js): `navigation` and
