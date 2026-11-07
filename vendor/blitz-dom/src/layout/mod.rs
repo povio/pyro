@@ -583,6 +583,13 @@ impl LayoutPassState<'_> {
                                     DEFAULT_OBJECT_SIZE,
                                 )
                             }
+                            // lightningpanda: a `<video>` whose poster did not load
+                            // keeps the default object size.
+                            ImageData::None
+                                if element_data.name.local == local_name!("video") =>
+                            {
+                                tag_intrinsic_sizes(element_data, attr_size)
+                            }
                             ImageData::None => (IntrinsicSizes::default(), taffy::Size::ZERO),
                         },
                         SpecialElementData::Canvas(_)
@@ -632,8 +639,11 @@ impl LayoutPassState<'_> {
                     // attribute (`natural=W,H`).
                     let loaded = matches!(&element_data.special_data, SpecialElementData::Image(d) if !matches!(&**d, ImageData::None));
                     let is_image = *element_data.name.local == *"img" || is_image_input(element_data);
+                    // A `<video>` with known metadata is sized by its video
+                    // track, whatever its poster's size.
+                    let is_video = element_data.name.local == local_name!("video");
                     let (intrinsic_sizes, default_object_size) = match lp_natural_size(element_data) {
-                        Some((width, height)) if !loaded && is_image => (
+                        Some((width, height)) if is_video || (!loaded && is_image) => (
                             IntrinsicSizes {
                                 width: Some(width),
                                 height: Some(height),

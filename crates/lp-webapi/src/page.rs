@@ -25,6 +25,8 @@ pub struct PageDom {
     disposed: Cell<bool>,
     document: Cell<NodeId>,
     scripting_disabled: Cell<bool>,
+    /// HTML "sticky activation": the user interacted with the document.
+    sticky_activation: Cell<bool>,
     flushing_iframes: Cell<bool>,
     /// The document's render-blocking element set (see `render_blocking`).
     pub(crate) render_blocking: crate::render_blocking::RenderBlocking,
@@ -270,6 +272,27 @@ pub struct DocumentTiming {
     pub load_end: Option<f64>,
 }
 
+/// A media element's resource request (`PageHooks::fetch_media`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MediaRequest {
+    pub url: String,
+    /// `<video>` (else `<audio>`): the request's destination.
+    pub video: bool,
+    /// The element's `crossorigin` attribute.
+    pub crossorigin: Option<String>,
+}
+
+/// A media resource's response: the whole body.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MediaResponse {
+    pub status: u16,
+    pub mime: String,
+    pub body: Vec<u8>,
+}
+
+/// A media fetch in flight: dropping it cancels the request.
+pub type MediaFetchHandle = Box<dyn std::any::Any>;
+
 /// A navigation requested by the document (link activation, form
 /// submission, `location` assignment is lp-browser's own).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -382,6 +405,27 @@ pub trait PageHooks {
     fn post_delayed_task(&self, _delay: std::time::Duration, task: Box<dyn FnOnce()>) {
         self.post_task(task)
     }
+    /// Fetches a media element's resource. `done` runs as a later task on
+    /// the owner thread, without binding borrows. Dropping the returned
+    /// handle cancels the request (`done` may then never run).
+    fn fetch_media(
+        &self,
+        _request: MediaRequest,
+        done: Box<dyn FnOnce(Result<MediaResponse, String>)>,
+    ) -> Option<MediaFetchHandle> {
+        self.post_task(Box::new(move || done(Err("no media loader".into()))));
+        None
+    }
+    /// A media playback timer: runs `task` after `delay` unless cleared
+    /// with the returned id. It does not keep the event loop busy.
+    fn set_media_timer(&self, delay: std::time::Duration, task: Box<dyn FnOnce()>) -> Option<u64> {
+        self.post_delayed_task(delay, task);
+        None
+    }
+    fn clear_media_timer(&self, _id: u64) {}
+    /// The document's media elements stopped delaying its load event
+    /// (`PageDom::media_delays_load` turned false): check it again.
+    fn media_load_delay_released(&self) {}
     /// Starts a navigation of the frame showing the document.
     fn navigate(&self, request: NavigationRequest);
     /// The document's `window.open` result asked something of its popup,
@@ -488,6 +532,7 @@ impl PageDom {
             disposed: Cell::new(false),
             document: Cell::new(document),
             scripting_disabled: Cell::new(false),
+            sticky_activation: Cell::new(false),
             flushing_iframes: Cell::new(false),
             render_blocking: Default::default(),
             connected_iframes: RefCell::new(FxHashSet::default()),
@@ -678,6 +723,7 @@ impl PageDom {
         crate::worker::dispose(self);
         crate::message_channel::dispose(self);
         crate::indexeddb::dispose(self);
+        crate::media::dispose(self);
         self.realms.borrow_mut().clear();
         drop(self.main_world.take());
         // Drop roots and embedder hooks outside RefCell borrows: destructors
@@ -746,6 +792,17 @@ impl PageDom {
     }
     pub fn scripting_disabled(&self) -> bool {
         self.scripting_disabled.get()
+    }
+
+    /// HTML "activation notification": trusted user input reached the
+    /// document (or a CDP evaluation ran with `userGesture`). Media may then
+    /// play unmuted.
+    pub fn notify_user_activation(&self) {
+        self.sticky_activation.set(true);
+    }
+    /// HTML "sticky activation".
+    pub fn has_sticky_activation(&self) -> bool {
+        self.sticky_activation.get()
     }
 
     /// Flush after parser/native mutation before entering page script. Native

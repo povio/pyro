@@ -418,6 +418,8 @@ impl DocumentMutator<'_> {
                 && crate::layout::replaced::is_image_input(element))
         {
             self.load_image(node_id);
+        } else if (tag, attr) == tag_and_attr!("video", "poster") {
+            self.load_image(node_id);
         } else if (tag, attr) == tag_and_attr!("canvas", "src") {
             self.load_custom_paint_src(node_id);
         } else if (tag, attr) == tag_and_attr!("link", "href")
@@ -1120,6 +1122,9 @@ impl<'doc> DocumentMutator<'doc> {
                 _ if has_custom_widget => {}
                 "link" => self.eager_op_queue.push(SpecialOp::LoadStylesheet(node_id)),
                 "img" => self.eager_op_queue.push(SpecialOp::LoadImage(node_id)),
+                // lightningpanda: a `<video>` paints its poster image (no
+                // video frame is ever decoded).
+                "video" => self.eager_op_queue.push(SpecialOp::LoadImage(node_id)),
                 // lightningpanda: an image button is replaced content showing
                 // its `src` image, so it loads like `<img>` (and is a form
                 // control like any other input).
@@ -1323,7 +1328,28 @@ impl<'doc> DocumentMutator<'doc> {
 
     fn load_image(&mut self, target_id: NodeId) {
         let node = &self.doc.nodes[target_id];
-        if let Some(raw_src) = node.attr(local_name!("src")) {
+        // lightningpanda: a `<video>`'s image is its poster; without one it
+        // paints nothing.
+        let is_video = node
+            .element_data()
+            .is_some_and(|e| e.name.local == local_name!("video"));
+        let attr = if is_video {
+            local_name!("poster")
+        } else {
+            local_name!("src")
+        };
+        if is_video && node.attr(attr.clone()).is_none_or(|v| v.trim().is_empty()) {
+            let node = &mut self.doc.nodes[target_id];
+            if let Some(element) = node.element_data_mut() {
+                if matches!(element.special_data, SpecialElementData::Image(_)) {
+                    element.special_data = SpecialElementData::None;
+                    node.clear_layout_cache();
+                    node.insert_damage(ALL_DAMAGE);
+                }
+            }
+            return;
+        }
+        if let Some(raw_src) = node.attr(attr) {
             if !raw_src.is_empty() {
                 let Some(src) = self.doc.resolve_url(raw_src) else {
                     return;

@@ -1,6 +1,6 @@
 // TimeRanges, MediaError and TextTrackList for one realm, made on first use
-// (media.rs). There is no media pipeline: every TimeRanges is empty and no
-// text track is ever added.
+// (media.rs). TimeRanges hold what media.rs computed; no text track is ever
+// added.
 (function () {
   'use strict';
   const secret = Symbol('lightningpanda');
@@ -110,7 +110,11 @@
 
   return {
     TimeRanges, MediaError, TextTrackList,
-    timeRanges() { return new TimeRanges(secret, []); },
+    timeRanges(flat) {
+      const list = [];
+      for (let i = 0; i + 1 < flat.length; i += 2) list.push([flat[i], flat[i + 1]]);
+      return new TimeRanges(secret, list);
+    },
     mediaError(code, message) { return new MediaError(secret, code, message); },
     textTrackList() { return new TextTrackList(secret); },
   };

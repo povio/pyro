@@ -739,8 +739,10 @@ impl Dom {
         let editable = e.attr("contenteditable").is_some();
         // An image button (`<input type=image>`) is laid out like `<img>`:
         // its natural size travels the same way.
-        let is_image =
-            local == "img" || (local == "input" && e.attr("type").is_some_and(|t| t.eq_ignore_ascii_case("image")));
+        // A `<video>` with known metadata reports its video size the same way.
+        let is_image = local == "img"
+            || local == "video"
+            || (local == "input" && e.attr("type").is_some_and(|t| t.eq_ignore_ascii_case("image")));
         let natural = (e.is_html() && is_image).then(|| self.natural_size(self.id_of(n))).flatten();
         if !kind && !editable && natural.is_none() {
             return None;

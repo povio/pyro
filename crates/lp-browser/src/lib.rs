@@ -12,6 +12,7 @@ mod focus;
 mod frames;
 mod images;
 mod loader;
+mod media;
 mod nav;
 mod network_idle;
 mod preload;

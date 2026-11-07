@@ -21,6 +21,9 @@ pub enum MediaChange {
     Inserted,
     /// A `<source>` element was inserted as a child of the media element.
     SourceInserted(NodeId),
+    /// The element is about to be removed from its document (it pauses
+    /// unless it is back in a document when the queue is drained).
+    Removed,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -107,6 +110,31 @@ impl Dom {
         }
     }
 
+    /// Before `node` is unlinked from a connected parent: the media
+    /// elements of its subtree. Inlined: one flag test until a media
+    /// element exists.
+    #[inline(always)]
+    pub(crate) fn media_before_remove(&mut self, node: u32) {
+        if self.media_seen {
+            self.media_removing(node);
+        }
+    }
+
+    #[inline(never)]
+    fn media_removing(&mut self, node: u32) {
+        let document = self.id_of(self.n(node).owner_doc);
+        if !self.is_watched_document(document) || !self.is_connected_idx(node) {
+            return;
+        }
+        let mut i = node;
+        while i != NIL {
+            if self.is_media_idx(i) {
+                self.media_event(i, MediaChange::Removed);
+            }
+            i = self.next_shadow_including(i, node);
+        }
+    }
+
     /// Whether any watched document has queued media events.
     pub fn has_media_events(&self) -> bool {
         !self.media.events.is_empty()
@@ -168,6 +196,8 @@ mod tests {
         dom.append_child(doc, body).unwrap();
         dom.append_child(body, div).unwrap();
         assert_eq!(changes(&mut dom, doc), [(video, MediaChange::Inserted)]);
+        dom.remove_node(div).unwrap();
+        assert_eq!(changes(&mut dom, doc), [(video, MediaChange::Removed)]);
         // Documents without a browsing context queue nothing.
         let other = dom.create_document(DocumentKind::Html, "about:blank");
         let audio = dom.create_element(other, "audio").unwrap();

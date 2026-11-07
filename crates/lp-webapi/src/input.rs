@@ -1072,6 +1072,10 @@ pub fn dispatch_key(page: &Rc<PageDom>, kind: KeyKind, k: &KeyInput) {
     let doc = page.document();
     let Some(target) = key_target(page) else { return };
     let Some(tkey) = key_of(page, target) else { return };
+    // HTML activation-triggering input: a keydown other than Escape.
+    if matches!(kind, KeyKind::KeyDown | KeyKind::RawKeyDown) && k.key != "Escape" {
+        page.notify_user_activation();
+    }
     match kind {
         KeyKind::KeyDown | KeyKind::RawKeyDown => {
             if !(k.modifiers.ctrl || k.modifiers.meta || k.modifiers.alt) {
@@ -2134,6 +2138,10 @@ pub fn dispatch_mouse_intercepting_drags(
     m: &MouseInput,
     intercept_drags: bool,
 ) -> Result<Option<DragData>, String> {
+    // HTML activation-triggering input: mousedown (and pointerup).
+    if matches!(kind, MouseKind::Pressed | MouseKind::Released) {
+        page.notify_user_activation();
+    }
     dispatch_mouse_inner(page, kind, m, intercept_drags, None)
 }
 
@@ -2598,6 +2606,10 @@ pub fn dispatch_touch(
     points: &[TouchInput],
     modifiers: Modifiers,
 ) -> Result<(), String> {
+    // HTML activation-triggering input: touchend.
+    if kind == TouchKind::End {
+        page.notify_user_activation();
+    }
     // A navigation since the sequence began leaves its touches behind.
     if seq.doc.is_some_and(|d| d != page.document()) {
         seq.reset();

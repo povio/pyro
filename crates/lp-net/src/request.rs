@@ -24,6 +24,10 @@ pub enum Destination {
     Script,
     Style,
     Image,
+    /// An `<audio>` element's resource.
+    Audio,
+    /// A `<video>` element's resource.
+    Video,
     Font,
     Xhr,
     Fetch,
@@ -42,6 +46,7 @@ impl Destination {
             Destination::Script => "Script",
             Destination::Style => "Stylesheet",
             Destination::Image => "Image",
+            Destination::Audio | Destination::Video => "Media",
             Destination::Font => "Font",
             Destination::Xhr => "XHR",
             Destination::Fetch => "Fetch",
