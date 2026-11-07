@@ -31,6 +31,7 @@ mod storage_js;
 mod support;
 mod traversal_js;
 mod uievents_js;
+mod url_conformance;
 mod url_params_js;
 mod webidl_js;
 mod websocket_js;
