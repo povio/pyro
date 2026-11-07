@@ -209,3 +209,32 @@ fn state_changes_no_has_depends_on_restyle_nothing_more() {
     assert_eq!(has.value("body", "outline-style"), "dotted");
     assert!(opened <= classed + 2, "the anchor restyles alone: {opened} (a class change: {classed})");
 }
+
+#[test]
+fn has_follows_changes_under_an_anchor_the_bloom_filter_fast_rejected() {
+    // `.card:has(.a)` matches at the span and stops searching; the second
+    // lookup for the same anchor builds a bloom filter that fast-rejects
+    // `.b` without visiting (or flagging) anything. Changes to elements only
+    // the filter saw still reach the anchor, for classes, other attributes
+    // and element state; and for a sibling search.
+    let cases: [(&str, &str, &str, fn(&mut Dom, NodeId)); 4] = [
+        (".card:has(.b)", "<i id=t></i>", ".card", |d, t| d.set_attribute(t, "class", "b").unwrap()),
+        (".card:has([data-x])", "<i id=t></i>", ".card", |d, t| d.set_attribute(t, "data-x", "").unwrap()),
+        (".card:has(input:checked)", "<input id=t type=checkbox>", ".card", |d, t| d.set_checked(t, true).unwrap()),
+        (".sib:has(~ .b)", "<i id=t></i>", ".sib", |d, t| d.set_attribute(t, "class", "b").unwrap()),
+    ];
+    for (rule, target, anchor, change) in cases {
+        let html = if anchor == ".sib" {
+            format!("<p class=sib></p><span class=a></span><b></b>{target}")
+        } else {
+            format!("<div class=card><span class=a></span><div>{target}</div></div>")
+        };
+        let p = Page::new(&format!(
+            "<!doctype html><style>.card:has(.a),.sib:has(~ .a){{outline-style:dotted}}{rule}{{color:rgb(1,0,0)}}</style>\
+             <body><main>{html}</main></body>"
+        ));
+        assert_eq!(p.color(anchor).0, BLACK, "{rule}");
+        let t = p.find("#t");
+        after(&p, rule, |d| change(d, t), anchor, "rgb(1, 0, 0)");
+    }
+}

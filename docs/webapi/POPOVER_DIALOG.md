@@ -111,11 +111,14 @@ not. Code: `crates/lp-webapi/src/popover.rs` (algorithms and bindings),
   `top-layer=N` token in the `urn:x-lightningpanda:state` `state`
   attribute, which only lp-dom writes: page-set attributes in that
   namespace are dropped from the snapshot). blitz-dom keeps the marked
-  elements in a small list when the attribute is set or cleared, so an empty
-  top layer costs one emptiness check per painted box.
+  elements by rank when the attribute is set or cleared (no scans, however
+  many popovers show), so an empty top layer costs one emptiness check per
+  painted box.
 - blitz-paint skips a top-layer element where the tree puts it and, after
   the whole document, paints the top layer bottom first: each element's
-  `::backdrop`, then the element in its own root stacking context, at the
+  `::backdrop`, then the element in its own root stacking context (a
+  top-layer element is always a stacking context, so its z-indexed and
+  fixed descendants paint with it whatever its own `position`), at the
   position its containing-block chain gives it (the viewport for the UA's
   `position: fixed`, not scrolled), unaffected by its ancestors' z-index,
   opacity, filters, clip-path and overflow clip. A popover shown inside a

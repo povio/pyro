@@ -19,6 +19,44 @@ fn by_id(dom: &Dom, d: NodeId, id: &str) -> NodeId {
     dom.get_element_by_id(d, id).unwrap().unwrap()
 }
 
+/// Many showing popovers: ranks (and the topmost modal dialog) follow
+/// entering, leaving from the top and from below, and re-entering, without
+/// scanning the top layer per element.
+#[test]
+fn many_popovers_keep_their_ranks_and_the_topmost_modal() {
+    let html: String = (0..500).map(|i| format!("<div id=p{i} popover=manual></div>")).collect::<String>()
+        + "<dialog id=m open></dialog>";
+    let (dom, d) = doc(&html);
+    let mut dom = dom.borrow_mut();
+    let ps: Vec<_> = (0..500).map(|i| by_id(&dom, d, &format!("p{i}"))).collect();
+    let m = by_id(&dom, d, "m");
+    for &p in &ps[..250] {
+        dom.set_popover_showing(p, true).unwrap();
+    }
+    dom.set_modal(m, true).unwrap();
+    for &p in &ps[250..] {
+        dom.set_popover_showing(p, true).unwrap();
+    }
+    assert_eq!(dom.topmost_modal(), Some(m));
+    // From the top, then from below, then re-entering on top.
+    dom.set_popover_showing(ps[499], false).unwrap();
+    for &p in &ps[..100] {
+        dom.set_popover_showing(p, false).unwrap();
+    }
+    dom.set_popover_showing(ps[0], true).unwrap();
+    let mut expected: Vec<_> = ps[100..250].to_vec();
+    expected.push(m);
+    expected.extend(&ps[250..499]);
+    expected.push(ps[0]);
+    assert_eq!(dom.top_layer(), expected);
+    assert_eq!(dom.topmost_modal(), Some(m));
+    dom.set_modal(m, false).unwrap();
+    assert_eq!(dom.topmost_modal(), None);
+    dom.set_modal(m, true).unwrap();
+    assert_eq!(dom.topmost_modal(), Some(m));
+    assert_eq!(dom.top_layer().last(), Some(&m));
+}
+
 #[test]
 fn the_topmost_modal_dialog_makes_the_rest_inert() {
     let (dom, d) = doc("<button id=out></button><dialog id=a open><button id=ina></button></dialog><dialog id=b open><button id=inb></button></dialog><div id=p popover></div>");

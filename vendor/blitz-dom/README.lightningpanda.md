@@ -167,7 +167,10 @@ Time inputs use the existing text-editor construction and intrinsic measurement 
   argument depends on the change, that a `:has()` search reached and whose own compound matches restyle,
   as far as the rule needs. The element's selector flags gate it (no `:has()` search visited it: one flag
   test), then `relative_state_dependency` (the union of the relative map's states, a vendored Stylo
-  change). This replaces `invalidate_has_anchors` for those changes, which restyled every anchor that
+  change). A search the relative-selector bloom filter fast-rejects visits (and flags) nothing, so
+  `add_element_unique_hashes` (`src/stylo.rs`) flags every element it adds to such a filter as searched
+  in both directions; otherwise a change under an anchor whose earlier `:has()` matched early would never
+  reach it. This replaces `invalidate_has_anchors` for those changes, which restyled every anchor that
   could see the element with its whole subtree; DOM insertions and removals still use it.
 - `src/node/element.rs` (`sync_lp_attribute_state`), `src/stylo.rs`: the tokens of lp-dom's
   `urn:x-lightningpanda:state` `state` attribute are `ElementState` bits (`VALID`, `INVALID`,
@@ -183,5 +186,9 @@ Covered by `crates/lp-layout/tests/has_state.rs` and `crates/lp-browser/tests/ha
 
 - `src/layout/paint_tree.rs` (`note_lp_state`, `top_layer_nodes`, `top_layer_position`), `src/mutator.rs`
   (`create_element`, `set_attribute`, `clear_attribute`, node drops), `src/document.rs` (`top_layer`): elements whose
-  `urn:x-lightningpanda:state` `state` attribute has a `top-layer=N` token (lp-dom's render tree) are kept in a list
-  sorted by `N`, maintained when that attribute changes. blitz-paint paints them above the document.
+  `urn:x-lightningpanda:state` `state` attribute has a `top-layer=N` token (lp-dom's render tree) are kept by `N`
+  (`TopLayer`: a rank-ordered map plus each element's rank, so entering, leaving, re-ranking, membership tests
+  and drops cost no scan however many popovers show), maintained when that attribute changes and when a node
+  leaves the slab. A top-layer element always roots a stacking context in the paint tree
+  (`is_paint_stacking_context_root`), so its z-indexed and fixed descendants paint with it. blitz-paint paints
+  them above the document.

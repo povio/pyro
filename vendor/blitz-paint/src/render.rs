@@ -314,11 +314,13 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         let tree = self.dom.as_ref().tree();
         let root = &tree[root_id];
         let root_location = root.final_layout().location;
-        // The transform `draw_children` gives the root element's children.
-        let root_children = (Affine::translate(Vec2 {
+        // The transform `paint_scene` gives the root element.
+        let root_transform = Affine::translate(Vec2 {
             x: self.initial_x - (viewport_scroll.x * self.scale),
             y: self.initial_y - (viewport_scroll.y * self.scale),
-        }) * Affine::translate(Vec2::new(
+        });
+        // The transform `draw_children` gives the root element's children.
+        let root_children = (root_transform * Affine::translate(Vec2::new(
             root_location.x as f64 * self.scale,
             root_location.y as f64 * self.scale,
         )) * root.transform().as_deref().copied().unwrap_or_default())
@@ -337,11 +339,18 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                 continue;
             }
             self.paint_backdrop(scene, id);
-            let position = self.dom.top_layer_position(id);
-            let transform = root_children.pre_translate(Vec2::new(
-                position.x as f64 * self.scale,
-                position.y as f64 * self.scale,
-            ));
+            // The root element paints where the document pass would have
+            // put it (`render_element` applies its own location, transform
+            // and scroll); anything else is hoisted to the root element.
+            let transform = if id == root_id {
+                root_transform
+            } else {
+                let position = self.dom.top_layer_position(id);
+                root_children.pre_translate(Vec2::new(
+                    position.x as f64 * self.scale,
+                    position.y as f64 * self.scale,
+                ))
+            };
             self.top_layer_root.set(Some(id));
             self.render_element(scene, id, transform, clip_rect);
             self.top_layer_root.set(None);
@@ -446,7 +455,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         // (`paint_top_layer`), not here.
         if !self.top_layer.is_empty()
             && self.top_layer_root.get() != Some(node_id)
-            && self.top_layer.contains(&node_id)
+            && self.dom.is_in_top_layer(node_id)
         {
             return;
         }

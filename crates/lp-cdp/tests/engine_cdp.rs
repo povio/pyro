@@ -6292,6 +6292,66 @@ mod screenshot {
         assert!(full.height >= 3000, "{}", full.height);
     }
 
+    /// A top-layer element is a stacking context whatever its style: an
+    /// author `position: absolute` popover (no z-index, opacity or
+    /// transform) keeps its z-indexed and fixed descendants, which paint
+    /// with it above the document, not in place under it.
+    #[test]
+    fn top_layer_element_keeps_its_z_indexed_and_fixed_descendants() {
+        let mut h = Harness::new();
+        h.page(
+            "Emulation.setDeviceMetricsOverride",
+            json!({"width": 400, "height": 300, "deviceScaleFactor": 1, "mobile": false}),
+        );
+        load_html(
+            &mut h,
+            r#"<!doctype html><style>
+              body { margin: 0; background: #fff; }
+              #cover { position: fixed; inset: 0; z-index: 2147483647; background: rgb(0, 0, 255); }
+              #p { position: absolute; inset: auto; left: 50px; top: 50px; width: 100px; height: 100px;
+                   margin: 0; padding: 0; border: 0; overflow: visible; background: rgb(255, 0, 0); }
+              #z { position: relative; z-index: 1; width: 40px; height: 40px; background: rgb(0, 255, 0); }
+              #f { position: fixed; left: 300px; top: 200px; width: 20px; height: 20px; background: rgb(255, 255, 0); }
+            </style>
+            <div id="p" popover="manual"><div id="z"></div><div id="f"></div></div>
+            <div id="cover"></div>"#,
+        );
+        let shot = |h: &mut Harness| png_of(&h.page("Page.captureScreenshot", json!({}))["result"]["data"]);
+        eval_value(&mut h, "p.showPopover()");
+        let img = shot(&mut h);
+        assert_eq!(pixel(&img, 120, 120), [255, 0, 0, 255], "the popover above the cover");
+        assert_eq!(pixel(&img, 70, 70), [0, 255, 0, 255], "its z-indexed child above it");
+        assert_eq!(pixel(&img, 310, 210), [255, 255, 0, 255], "its fixed child above the cover");
+        assert_eq!(pixel(&img, 10, 10), [0, 0, 255, 255], "the cover elsewhere");
+    }
+
+    /// The root element in the top layer (`<html popover>`) paints with its
+    /// own transform applied once, as in the document pass.
+    #[test]
+    fn root_element_in_the_top_layer_paints_its_transform_once() {
+        let mut h = Harness::new();
+        h.page(
+            "Emulation.setDeviceMetricsOverride",
+            json!({"width": 400, "height": 300, "deviceScaleFactor": 1, "mobile": false}),
+        );
+        load_html(
+            &mut h,
+            r#"<!doctype html><html popover="manual"><style>
+              html, html:popover-open { position: static; margin: 0; padding: 0; border: 0; width: auto; height: auto;
+                overflow: visible; inset: auto; background: rgb(0, 0, 255); transform: translateX(100px); }
+              body { margin: 0; }
+              #b { width: 50px; height: 50px; background: rgb(255, 0, 0); }
+            </style><div id="b"></div></html>"#,
+        );
+        let shot = |h: &mut Harness| png_of(&h.page("Page.captureScreenshot", json!({}))["result"]["data"]);
+        // (Hidden, the root popover is `display: none`.)
+        eval_value(&mut h, "document.documentElement.showPopover()");
+        assert_eq!(eval_value(&mut h, "document.documentElement.matches(':popover-open')"), json!(true));
+        let img = shot(&mut h);
+        assert_eq!(pixel(&img, 125, 25), [255, 0, 0, 255], "shown: still translated once");
+        assert_ne!(pixel(&img, 225, 25), [255, 0, 0, 255], "not translated twice");
+    }
+
     #[test]
     fn default_background_override_paints_under_the_document() {
         let mut h = Harness::new();
