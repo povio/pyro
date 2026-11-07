@@ -3571,3 +3571,165 @@ fn sticky_set_follows_style_changes_and_removals() {
         assert_eq!(w.has_sticky(1), *sticky, "whole-tree sync: {what}");
     }
 }
+
+/// The page of `paint_only_restyles_run_no_layout_and_match_fresh_builds`: a collapsed table, a
+/// separate-border table, a paragraph with a span, flex and grid items, a float and an absolutely
+/// positioned box, each with a border and text.
+const PAINT_ONLY_PAGE: &str = r#"<!doctype html><html><head><style>
+  body { margin: 0; font: 13px sans-serif } #c, #c td { border: 1px solid #888 }
+  #c { border-collapse: collapse; width: 300px } td { padding: 2px }
+  #p, #f1, #g1, #fl, #abs, #s1, #ps { border: 1px solid #444 }
+  .flex { display: flex; width: 300px } .grid { display: grid; grid-template-columns: 1fr 1fr; width: 300px }
+  #fl { float: left; width: 60px } #abs { position: absolute; left: 10px; top: 300px; width: 80px }
+  .dark td { color: #eee; background: #333 } .dark #p { color: #fff }
+</style></head><body>
+<table id=c><tr><td id=c1>first <span>row</span> text</td><td>x</td></tr><tr><td id=c2>second row with some words</td><td id=c3>y</td></tr></table>
+<table id=s><tr><td id=s1>sep cell</td><td>z</td></tr></table>
+<p id=p>A paragraph <span id=ps>with a span</span> in it</p>
+<div class=flex><div id=f1>flex one</div><div id=f2>flex two</div></div>
+<div class=grid><div id=g1>grid one</div><div id=g2>grid two</div></div>
+<div id=fl>float</div><p id=pf>text beside the float, long enough to wrap onto a second line</p>
+<div id=abs>abs box</div>
+</body></html>"#;
+
+/// Paint-only restyles (colour, background, outline, visibility, opacity, text decoration, box
+/// shadow, border colour) of cells, inline roots, flex and grid items, floats and absolutely
+/// positioned boxes run no layout and shape no text; changes to a box that leave its text as it is
+/// (padding, border width, a transform, a collapsed border's colour) shape no text either. Each
+/// step is synced as a delta and compared with a fresh build (boxes, document size, paint), and
+/// the paint changes when it should.
+#[test]
+fn paint_only_restyles_run_no_layout_and_match_fresh_builds() {
+    #[derive(Clone, Copy, PartialEq, Debug)]
+    enum Kind {
+        /// No layout algorithm runs, no text is shaped.
+        Paint,
+        /// Layout runs, no text is shaped.
+        Box,
+    }
+    let paint_props = [
+        "color: #c00",
+        "background: #eef",
+        "outline: 2px solid #f0f",
+        "visibility: hidden",
+        "opacity: .5",
+        "text-decoration: underline",
+        "box-shadow: 0 0 4px #000",
+        "border-color: #0c0",
+        "transform: translate(2px, 3px)",
+    ];
+    let box_props = ["padding: 6px", "border: 3px solid #000", "border: 3px solid #000; padding: 1px"];
+    let collapsed = ["#c", "#c2", "#c3"];
+    let targets = ["#c2", "#c3", "#c", "#s1", "#p", "#ps", "#f1", "#g1", "#fl", "#abs"];
+    let mut steps: Vec<(String, Mutate, Kind)> = Vec::new();
+    for target in targets {
+        for prop in paint_props {
+            // A transform makes a containing block for fixed boxes: Stylo relays it out. A
+            // collapsed table part's border colour is resolved into the table's edges when its
+            // row is collected: the part's box is built again.
+            let kind = if prop.starts_with("transform") || (prop.starts_with("border-color") && collapsed.contains(&target)) {
+                Kind::Box
+            } else {
+                Kind::Paint
+            };
+            let (what, mutate) = style(target, prop);
+            steps.push((what, mutate, kind));
+        }
+        for prop in box_props {
+            let (what, mutate) = style(target, prop);
+            steps.push((what, mutate, Kind::Box));
+        }
+        let (what, mutate) = style(target, "");
+        steps.push((what, mutate, Kind::Box));
+    }
+    let (what, mutate) = class("body", "dark");
+    steps.push((what, mutate, Kind::Paint));
+    let (what, mutate) = class("body", "");
+    steps.push((what, mutate, Kind::Paint));
+
+    let page = Page::new(PAINT_ONLY_PAGE);
+    let mut r = Renderer::new();
+    let mut hash = paint(&mut r, &page.snapshot(1, page.tree())).hash;
+    let mut failures = Vec::new();
+    for (what, mutate, kind) in steps {
+        let inline_unpainted = what.starts_with("#ps")
+            && ["opacity", "border", "transform", "padding", "visibility", "{  }"].iter().any(|prop| what.contains(prop));
+        let since = page.dom.borrow().version();
+        mutate(&page);
+        let (layouts, rebuilds, tables) = (blitz_performed_layouts().0, blitz_rebuilds().0, blitz_tables().0);
+        let delta = page.dom.borrow().render_delta(page.doc, since, &Page::opts());
+        let via_delta =
+            delta.is_some_and(|d| r.sync_delta(1, &delta_ops(d), (640, 480, 1.0, false, false), false).is_ok());
+        if !via_delta {
+            failures.push(format!("{what}: not synced as a delta"));
+            r.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
+        }
+        let tree = page.tree();
+        let painted = paint(&mut r, &page.snapshot(1, tree.clone()));
+        let layouts = blitz_performed_layouts().0 - layouts;
+        let rebuilds = blitz_rebuilds().0 - rebuilds;
+        let tables = blitz_tables().0 - tables;
+        let mut fresh = Renderer::new();
+        fresh.sync_layout(&page.snapshot(1, tree.clone()), &fetcher()).unwrap();
+        let fresh_painted = paint(&mut fresh, &page.snapshot(1, tree));
+        if painted.hash != fresh_painted.hash {
+            failures.push(format!("{what}: paint differs from a fresh build"));
+        }
+        // (Blitz paints no border, padding, opacity, transform or visibility of a non-atomic inline box.)
+        if painted.hash == hash && !inline_unpainted {
+            failures.push(format!("{what}: paint did not change"));
+        }
+        hash = painted.hash;
+        for ((k, a), (_, b)) in boxes(&r, &page).into_iter().zip(boxes(&fresh, &page)) {
+            if a != b {
+                failures.push(format!("{what}: box {k:x} {a:?} vs fresh {b:?}"));
+                break;
+            }
+        }
+        if r.document_size(1) != fresh.document_size(1) {
+            failures.push(format!("{what}: size {:?} vs fresh {:?}", r.document_size(1), fresh.document_size(1)));
+        }
+        if rebuilds != 0 {
+            failures.push(format!("{what}: shaped {rebuilds} inline layouts"));
+        }
+        if kind == Kind::Paint && (layouts != 0 || tables != 0) {
+            failures.push(format!("{what}: ran {layouts} layouts and built {tables} tables"));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// Changes to the styles text is shaped with that Stylo's damage alone did not reach the inline
+/// layout: `white-space: nowrap` (`text-wrap-mode`) and a span's `vertical-align`. Each shapes the
+/// text again and matches a fresh build.
+#[test]
+fn text_style_changes_shape_again_and_match_fresh_builds() {
+    let page = Page::new(PAINT_ONLY_PAGE);
+    let mut r = Renderer::new();
+    paint(&mut r, &page.snapshot(1, page.tree()));
+    let steps = [
+        style("#pf", "white-space: nowrap"),
+        style("#pf", ""),
+        style("#ps", "vertical-align: super"),
+        style("#ps", "vertical-align: -3px"),
+        style("#ps", ""),
+        style("#c2", "white-space: pre-wrap; text-wrap-mode: nowrap"),
+        style("#c2", ""),
+    ];
+    for (what, mutate) in steps {
+        let since = page.dom.borrow().version();
+        mutate(&page);
+        let rebuilds = blitz_rebuilds().0;
+        let delta = page.dom.borrow().render_delta(page.doc, since, &Page::opts()).expect("a delta");
+        r.sync_delta(1, &delta_ops(delta), (640, 480, 1.0, false, false), false).unwrap();
+        let tree = page.tree();
+        let painted = paint(&mut r, &page.snapshot(1, tree.clone()));
+        assert!(blitz_rebuilds().0 > rebuilds, "{what}: shaped no text again");
+        let mut fresh = Renderer::new();
+        fresh.sync_layout(&page.snapshot(1, tree.clone()), &fetcher()).unwrap();
+        assert_eq!(painted.hash, paint(&mut fresh, &page.snapshot(1, tree)).hash, "{what}: paint");
+        for ((k, a), (_, b)) in boxes(&r, &page).into_iter().zip(boxes(&fresh, &page)) {
+            assert_eq!(a, b, "{what}: box {k:x}");
+        }
+    }
+}

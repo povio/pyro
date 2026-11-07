@@ -56,6 +56,16 @@ crate (`diff -ruN`).
 - `servo/selector_parser.rs`: `:in-range` parses (upstream has the pseudo-class, its state flag and
   serialization, but left it out of the parser, so a rule using it was dropped).
 
+- `properties/data.py`: a longhand without an explicit `servo_restyle_damage` gets the damage its `affects` implies
+  (`layout` → `rebuild_box`, `overflow` → `recalculate_overflow`, `paint` and `""` → `repaint`). Upstream gave every
+  such property `rebuild_box`, so a change of `border-top-color`, `visibility`, `box-shadow`, a border radius, a mask
+  or `scrollbar-color` was relayout damage (`RELAYOUT`), and Blitz relaid out and rebuilt boxes for it. Explicit
+  annotations are unchanged. `servo/restyle_damage.rs`: `backdrop-filter` (now `recalculate_overflow`) makes a
+  containing block for fixed boxes as `filter` does, so a change between none and some stays `RELAYOUT`
+  (`augmented_restyle_damage_rebuild_box`). Blitz's `compute_layout_damage` runs only on `RELAYOUT`, so this is what
+  lets a paint-only restyle of a table cell run no layout (`vendor/blitz-dom/README.lightningpanda.md`, "Paint-only
+  restyles run no layout and shape no text").
+
 ## Container queries, typed values
 
 - `stylesheets/rule_parser.rs`, `properties/shorthands.rs`, `properties/shorthands.toml`: `@container` rules

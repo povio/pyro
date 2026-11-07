@@ -1722,14 +1722,15 @@ fn group_border_kept(ctx: &TableContext, group: &crate::Node) -> bool {
 }
 
 fn changed(node: &crate::Node) -> bool {
-    node.flags.contains(NodeFlags::OWN_DAMAGE) || node.has_damaged_descendants()
+    node.flags.contains(NodeFlags::OWN_LAYOUT_DAMAGE) || node.has_damaged_descendants()
 }
 
 /// Whether a row needs collecting again: it, or a cell in it, changed (a mutation or a restyle of its
-/// own). `None`: a change the row's cells can't be told from (in a `display: contents` box).
+/// own that reaches layout; a cell whose colour or background changed is no change to the row).
+/// `None`: a change the row's cells can't be told from (in a `display: contents` box).
 fn row_changed(doc: &BaseDocument, row: NodeId) -> Option<bool> {
     let node = &doc.nodes[row];
-    if node.flags.contains(NodeFlags::OWN_DAMAGE) {
+    if node.flags.contains(NodeFlags::OWN_LAYOUT_DAMAGE) {
         return Some(true);
     }
     for &child in node.children.iter() {
@@ -1738,7 +1739,7 @@ fn row_changed(doc: &BaseDocument, row: NodeId) -> Option<bool> {
             continue;
         }
         // (A restyle damages a cell without marking it as having damaged descendants.)
-        if child.flags.contains(NodeFlags::OWN_DAMAGE) {
+        if child.flags.contains(NodeFlags::OWN_LAYOUT_DAMAGE) {
             return Some(true);
         }
         if !child.has_damaged_descendants() {
@@ -1787,7 +1788,7 @@ fn group_changes(
                     return false;
                 }
                 at += 1;
-            } else if doc.nodes[child].flags.contains(NodeFlags::OWN_DAMAGE) {
+            } else if doc.nodes[child].flags.contains(NodeFlags::OWN_LAYOUT_DAMAGE) {
                 // It may have become a row.
                 return false;
             }
@@ -1885,13 +1886,13 @@ pub(crate) fn is_incremental(doc: &BaseDocument, table: NodeId) -> bool {
 /// collected again).
 pub(crate) fn update_table_context(doc: &mut BaseDocument, table: NodeId) -> Option<Option<Vec<NodeId>>> {
     let node = &doc.nodes[table];
-    if !node.flags.is_table_root() || node.flags.contains(NodeFlags::OWN_DAMAGE) {
+    if !node.flags.is_table_root() || node.flags.contains(NodeFlags::OWN_LAYOUT_DAMAGE) {
         return None;
     }
     if [node.before(), node.after()]
         .into_iter()
         .flatten()
-        .any(|id| doc.nodes[id].flags.contains(NodeFlags::OWN_DAMAGE))
+        .any(|id| doc.nodes[id].flags.contains(NodeFlags::OWN_LAYOUT_DAMAGE))
     {
         return None;
     }
@@ -1928,7 +1929,7 @@ fn update_rows(doc: &mut BaseDocument, table: NodeId, ctx: &mut TableContext) ->
         if !node.is_element() || !changed(node) {
             continue;
         }
-        let own = node.flags.contains(NodeFlags::OWN_DAMAGE);
+        let own = node.flags.contains(NodeFlags::OWN_LAYOUT_DAMAGE);
         let Some(display) = node.display_style() else {
             if own {
                 return None;

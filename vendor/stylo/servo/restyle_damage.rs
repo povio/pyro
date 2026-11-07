@@ -161,6 +161,9 @@ fn augmented_restyle_damage_rebuild_box(old: &ComputedValues, new: &ComputedValu
         || old_box.original_display != new_box.original_display
         || old_box.has_transform_or_perspective() != new_box.has_transform_or_perspective()
         || old.get_effects().filter.0.is_empty() != new.get_effects().filter.0.is_empty()
+        // lightningpanda: a `backdrop-filter` makes a containing block for fixed boxes, as a
+        // `filter` does; otherwise it is `recalculate_overflow` damage (it affects overflow).
+        || old.get_effects().backdrop_filter.0.is_empty() != new.get_effects().backdrop_filter.0.is_empty()
 }
 
 fn augmented_restyle_damage_rebuild_stacking_context(

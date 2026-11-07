@@ -343,9 +343,19 @@ class Longhand(Property):
         allow_quirks=False,
         ignored_when_colors_disabled=False,
         vector=None,
-        servo_restyle_damage="rebuild_box",
+        servo_restyle_damage=None,
         affects=None,
     ):
+        # lightningpanda: a property that names no restyle damage gets the one its `affects`
+        # implies (upstream: `rebuild_box` for every one, so a change of `border-top-color`,
+        # `visibility` or `box-shadow` relaid out). `affects` is required and checked below.
+        if servo_restyle_damage is None:
+            servo_restyle_damage = {
+                "layout": "rebuild_box",
+                "overflow": "recalculate_overflow",
+                "paint": "repaint",
+                "": "repaint",
+            }.get(affects, "rebuild_box")
         Property.__init__(
             self,
             name=name,
