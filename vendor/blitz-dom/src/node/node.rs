@@ -1248,11 +1248,16 @@ impl Node {
 
     /// Set a table cell's half collapsed borders, and its layout style with them. The cell's
     /// table-part Taffy style does not depend on them and stays.
+    ///
+    /// lightningpanda: the cell's own layout reads its layout style, so a change clears what its
+    /// last layout measured (`invalidate_layout_cache`), whichever path changed it: a table built
+    /// again (`build_table_context`) leaves its undamaged cells' layouts in place otherwise.
     pub(crate) fn set_collapsed_border(&mut self, collapsed_border: Option<[f32; 4]>) {
         if self.collapsed_border() == collapsed_border {
             return;
         }
         self.layout_data_mut().collapsed_border = collapsed_border;
+        self.invalidate_layout_cache();
         let Some(stylo) = self.try_stylo_element_data_mut() else {
             return;
         };

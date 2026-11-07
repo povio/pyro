@@ -517,7 +517,15 @@ impl BaseDocument {
 
     /// Ensure that the layout_children field is populated for all nodes
     pub fn resolve_layout_children(&mut self) {
+        // lightningpanda: the boxes that left a container's list this pass and that no container
+        // collected again are out of the layout tree, with what their subtrees built
+        // (`BaseDocument::leave_layout_tree`).
         resolve_layout_children_recursive(self, self.root_node().id);
+        for node_id in std::mem::take(&mut self.left_layout_lists) {
+            if self.nodes.get(node_id).is_some_and(|node| node.layout_child_of.get().is_none()) {
+                self.leave_layout_tree(node_id);
+            }
+        }
 
         fn resolve_layout_children_recursive(doc: &mut BaseDocument, node_id: NodeId) {
             // Anonymous blocks and pseudo-elements can be removed from the slab
@@ -573,20 +581,6 @@ impl BaseDocument {
             if damage.intersects(CONSTRUCT_FC | CONSTRUCT_BOX) {
                 //} || flags.contains(NodeFlags::IS_INLINE_ROOT) {
 
-                // lightningpanda: the previous layout children leave the list
-                // (`Node::layout_child_of`); the new ones are entered below. A
-                // child already collected by another container this pass points
-                // there and is left alone.
-                if let Some(old) = doc.nodes[node_id].layout_children.borrow().as_ref() {
-                    for &child_id in old.iter() {
-                        if let Some(child) = doc.nodes.get(child_id) {
-                            if child.layout_child_of.get() == Some(node_id) {
-                                child.layout_child_of.set(None);
-                            }
-                        }
-                    }
-                }
-
                 // Deallocate the anonymous blocks created for this node in the
                 // previous construction round. They live only in the slab, so
                 // reconstructing without freeing them would leak a slab entry per
@@ -599,6 +593,23 @@ impl BaseDocument {
                 let mut collected = LayoutChildren::default();
                 collect_layout_children(doc, node_id, &mut collected);
                 let layout_children = collected.children;
+
+                // lightningpanda: the previous layout children leave the list
+                // (`Node::layout_child_of`); the new ones are entered below. A
+                // child already collected by another container this pass points
+                // there and is left alone. (Left after collecting: while it runs,
+                // a child that is still listed tells one that enters the layout
+                // tree again, see `table::enter_layout_tree`.)
+                if let Some(old) = doc.nodes[node_id].layout_children.borrow().as_ref() {
+                    for &child_id in old.iter() {
+                        if let Some(child) = doc.nodes.get(child_id) {
+                            if child.layout_child_of.get() == Some(node_id) {
+                                child.layout_child_of.set(None);
+                                doc.left_layout_lists.push(child_id);
+                            }
+                        }
+                    }
+                }
                 doc.nodes[node_id].anonymous_blocks = collected.anonymous_blocks;
 
                 // Recurse into newly collected layout children

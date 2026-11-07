@@ -818,6 +818,10 @@ impl DocumentMutator<'_> {
             self.restyle_for_child_list_change(parent_id, start..end);
         }
 
+        // lightningpanda: whether the children land under a `display: none` element (see below).
+        // Any child may hold styled elements: a new element (no style data) may hold a moved
+        // one (lp-dom builds a new wrapper by moving children into it before inserting it).
+        let under_display_none = self.is_under_display_none(parent_id);
         for child_id in child_ids.iter().copied() {
             let child = &mut self.doc.nodes[child_id];
             let child_was_in_doc = child.flags.is_in_document();
@@ -840,6 +844,32 @@ impl DocumentMutator<'_> {
                 child.mark_ancestors_dirty();
             }
 
+            // lightningpanda: Stylo keeps no style data under a `display: none` element (it drops
+            // it when an element becomes one, `clear_descendant_data`, and never visits the
+            // children of one), but a moved element kept its own: styles, inline layout and the
+            // flags built from them, which no pass would replace. Under a `display: none` element
+            // it has none, as a fresh build has, and is styled and built from scratch if shown.
+            if under_display_none {
+                self.doc.iter_subtree_mut(child_id, |id, doc| {
+                    doc.nodes[id].flags.reset_construction_flags();
+                    // Nor pseudo-elements, built from its styles: built again if it is shown.
+                    for idx in 0..2 {
+                        if let Some(pe) = doc.nodes[id].pe_by_index(idx) {
+                            doc.nodes[id].set_pe_by_index(idx, None);
+                            doc.remove_and_drop_pe(pe);
+                        }
+                    }
+                    let node = &mut doc.nodes[id];
+                    if let Some(element) = node.element_data_mut() {
+                        element.take_inline_layout();
+                        // SAFETY: no style traversal is running while the DOM is mutated.
+                        unsafe { element.stylo_element_data.clear() };
+                    }
+                });
+                // Nor a layout tree (its old container takes it out of its own list).
+                self.doc.leave_layout_tree(child_id);
+            }
+
             if new_parent_is_in_document && !child_was_in_doc {
                 self.process_added_subtree(child_id);
             } else if !new_parent_is_in_document && child_was_in_doc {
@@ -848,6 +878,23 @@ impl DocumentMutator<'_> {
         }
 
         self.maybe_record_node(parent_id);
+    }
+
+    /// lightningpanda: whether `node_id` is or is inside a `display: none` element: the nearest
+    /// styled element from it up says so (the elements below one have no styles; an element not
+    /// styled yet below a shown one will be).
+    fn is_under_display_none(&self, node_id: NodeId) -> bool {
+        let mut at = Some(node_id);
+        while let Some(id) = at {
+            let node = &self.doc.nodes[id];
+            if node.is_element() {
+                if let Some(style) = node.primary_styles() {
+                    return style.get_box().display.is_none();
+                }
+            }
+            at = node.parent;
+        }
+        false
     }
 
     // Tree mutation methods (that defer to other methods)
