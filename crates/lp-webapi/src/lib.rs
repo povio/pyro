@@ -63,6 +63,7 @@ pub mod navigator_extras;
 pub mod node;
 pub mod observable;
 pub mod page;
+pub mod performance;
 mod popover;
 mod pointer_capture;
 mod popup;

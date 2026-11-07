@@ -28,12 +28,34 @@
   0. The legacy `performance.timing` (epoch milliseconds) and
   `performance.navigation` read the same values.
 - `PerformanceObserver` / `PerformanceObserverEntryList`
-  (crates/lp-browser/src/performance_observer.js), made on the realm's first
+  (crates/lp-webapi/src/performance_observer.js), made on the realm's first
   use: `observe({type, buffered})` and `observe({entryTypes})` with Chrome's
   errors, `takeRecords`, `disconnect`, `supportedEntryTypes`
   (`mark`, `measure`, `navigation`, `paint`, `resource`). Callbacks run in a
   task; the first one after `observe()` gets `droppedEntriesCount` (the
   resource entries the buffer dropped, when `resource` is observed, else 0).
+
+The entry interfaces and User Timing live in crates/lp-webapi/src/performance.rs,
+shared by a Window's `Performance` (lp-browser `nav`) and a worker's.
+
+## Workers
+
+A dedicated or service worker's `performance` (made on the realm's first
+read of it) is its own timeline, as in Chrome: the time origin is the
+worker's start (`timeOrigin`, `now()`, and the worker's `Event.timeStamp`),
+User Timing (`mark`, `measure`, `clearMarks`, `clearMeasures`; a
+`PerformanceTiming` attribute name is a TypeError as a mark to measure from),
+and a `resource` entry for each HTTP(S) fetch the worker makes (`fetch`,
+`XMLHttpRequest`, `EventSource`, `importScripts` and module imports), with the buffer, `setResourceTimingBufferSize`,
+`clearResourceTimings` and `resourcetimingbufferfull` as on a window.
+Recording is the window's (`timed_sink` over the worker's own `PageDom`), and
+Timing-Allow-Origin is checked against the worker's origin. A worker's fetches
+are not in its document's timeline. `PerformanceObserver` and
+`PerformanceObserverEntryList` are the window's script, made on first use;
+`supportedEntryTypes` is `mark`, `measure`, `resource`. The interfaces
+`Performance`, `PerformanceEntry`, `PerformanceResourceTiming`,
+`PerformanceMark` and `PerformanceMeasure` are exposed; `timing`,
+`navigation` and the navigation and paint entries are not (Window only).
 
 ## Resource Timing
 
@@ -93,7 +115,8 @@ room for moves into the buffer, and the rest is dropped and counted in
 
 ## Cost
 
-A realm that never touches `PerformanceObserver` has no module and no
+A worker that never reads `performance` makes no object for it; its
+fetches cost what a window's do. A realm that never touches `PerformanceObserver` has no module and no
 registration: `mark`/`measure` check one empty list, the loader one empty
 list at `load` and at first paint. The timing marks are six `Cell` writes
 per document. Each fetch costs a few `Instant::now()` calls in lp-net, one
@@ -118,6 +141,6 @@ case each new entry makes its object for the observing realms.
 - Navigation Timing hides redirects through another origin
   (`redirectCount` 0), but not the cross-origin redirect hops' own
   Timing-Allow-Origin.
-- Workers have `performance.now()` only (no timeline, no resource entries
-  for their fetches).
+- A worker's `importScripts` and module imports are in its timeline with
+  initiator type `other` (Chrome's); its WebSocket handshake has no entry.
 - No Event Timing, Largest Contentful Paint, Layout Shift or Long Tasks.

@@ -12,7 +12,8 @@
 //! `queueMicrotask`, `fetch` and its classes, `WebSocket`, `XMLHttpRequest` (without
 //! `responseXML`; relative URLs resolve against the script URL), `console`,
 //! `TextEncoder`/`Decoder`, `URL`, `atob`/`btoa`, `structuredClone`, `crypto`
-//! (with `CryptoKey`), `performance.now()`, `FileReader`, `navigator.storage`
+//! (with `CryptoKey`), `performance` (the worker's own timeline: User Timing,
+//! its fetches' Resource Timing, `PerformanceObserver`), `FileReader`, `navigator.storage`
 //! and, made on first use as on a window, the streams (`ReadableStream`,
 //! `TransformStream`, `CompressionStream`, ...).
 //!
@@ -430,6 +431,11 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
     let document = dom.borrow_mut().create_document(lp_dom::DocumentKind::Html, start.url.as_str());
     dom.borrow_mut().set_document_active(document, true).map_err(|e| JsError::Type(format!("{e:?}")))?;
     let page = PageDom::new(dom, document);
+    // The worker's time origin: `performance.now()`, `Event.timeStamp` and
+    // its Resource Timing entries count from here.
+    let started = Instant::now();
+    let origin_wall_ms = epoch_ms();
+    page.set_event_clock(Rc::new(move || crate::performance::now_since(started)));
     page.set_user_agent_override(start.user_agent.clone()).map_err(|e| JsError::Type(e.to_string()))?;
     page.set_extra_http_headers(start.extra_headers.clone());
     page.set_cache_disabled(start.cache_disabled);
@@ -456,6 +462,9 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
         next_timer: Cell::new(1),
         websocket_module: RefCell::new(None),
         module: start.module,
+        started,
+        origin_wall_ms,
+        performance: Cell::new(None),
     };
     if start.service.is_some() {
         realm.set_global_data::<ServiceWorkerGlobalScope>(scope)?;
@@ -651,12 +660,18 @@ fn fetch_script(
     request.max_body = Some(MAX_SCRIPT_BYTES);
     page.apply_request_defaults(&mut request);
     let (tx, rx) = mpsc::channel();
-    let id = net.fetch(
-        request,
-        Box::new(move |event| {
-            let _ = tx.send(event);
-        }),
-    );
+    let sink: lp_net::ResponseSink = Box::new(move |event| {
+        let _ = tx.send(event);
+    });
+    // An imported script is in the worker's timeline (the main one is in
+    // its document's); the entry is added when the timeline is next read.
+    let sink = if main {
+        sink
+    } else {
+        let url = request.url.clone();
+        crate::resource_timing::timed_sink(page, crate::resource_timing::Initiator::Other, &url, false, sink)
+    };
+    let id = net.fetch(request, sink);
     let mut body: Vec<u8> = Vec::new();
     let mut mime = String::new();
     loop {
@@ -704,6 +719,11 @@ pub struct ScopeData {
     pub(crate) websocket_module: RefCell<Option<Persistent>>,
     /// A module worker: `importScripts` throws.
     module: bool,
+    /// The time origin (`performance`), and its wall-clock time.
+    started: Instant,
+    origin_wall_ms: f64,
+    /// Identity of `performance` once made.
+    performance: Cell<Option<IdentityKey>>,
 }
 
 fn set_timer<'s>(s: &Scope<'s>, g: &ScopeData, a: Args<'s>, repeat: bool) -> JsResult<Value<'s>> {
@@ -784,6 +804,21 @@ impl JsClass for WorkerGlobalScope {
             crate::report_error::report_error(s, this, &a, "WorkerGlobalScope", false)
         });
         def.getter("crypto", |s, _g| crate::crypto::crypto_value(s));
+        def.getter("performance", |s, g| Ok(performance_of(s, g)?.value()));
+        // Performance Timeline observers, made on the realm's first use.
+        def.global_value_accessor(
+            "PerformanceObserver",
+            |s, g| crate::performance::worker_observer_module(s, performance_of(s, g)?)?.get("PerformanceObserver"),
+            |s, g, v| crate::lazy_module::replace(s, &g.target.page, "PerformanceObserver", v),
+        );
+        def.global_value_accessor(
+            "PerformanceObserverEntryList",
+            |s, g| {
+                crate::performance::worker_observer_module(s, performance_of(s, g)?)?
+                    .get("PerformanceObserverEntryList")
+            },
+            |s, g, v| crate::lazy_module::replace(s, &g.target.page, "PerformanceObserverEntryList", v),
+        );
         crate::crypto::define_globals(def);
         crate::streams::define_globals(def);
         crate::storage_manager::define_globals(def);
@@ -994,6 +1029,16 @@ impl JsClass for WorkerNavigator {
     }
 }
 
+fn performance_of<'s>(s: &Scope<'s>, g: &ScopeData) -> JsResult<lp_js::Object<'s>> {
+    crate::performance::worker_performance(s, &g.target.page, &g.performance, g.started, g.origin_wall_ms)
+}
+
+/// The worker realm's `performance`.
+pub(crate) fn performance<'s>(s: &Scope<'s>) -> JsResult<lp_js::Object<'s>> {
+    let g = s.global_data::<WorkerGlobalScope>().ok_or(JsError::ContextDestroyed)?;
+    performance_of(s, g)
+}
+
 fn navigator<'s>(s: &Scope<'s>, g: &ScopeData) -> JsResult<lp_js::Object<'s>> {
     if let Some(o) = s.lookup_identity(IdentityKey(KEY_NAVIGATOR, 0)) {
         return Ok(o);
@@ -1039,6 +1084,7 @@ fn register(engine: &Engine, service: bool) -> lp_js::ClassId {
     engine.register::<crate::indexeddb::IdbFactory>();
     engine.register::<WorkerLocation>();
     engine.register::<WorkerNavigator>();
+    crate::performance::register_for_worker(engine);
     engine.register::<WorkerGlobalScope>();
     if service {
         engine.register::<crate::request::Request>();
@@ -1076,12 +1122,5 @@ fn install(s: &Scope<'_>, page: &Rc<PageDom>, service: bool) -> JsResult<()> {
         Some("lightningpanda://internal/worker-scope.js"),
         1,
     )?;
-    let started = Instant::now();
-    let performance = s.object();
-    performance.set(
-        "now",
-        s.function("now", move |s, _, _| Ok(s.number(started.elapsed().as_secs_f64() * 1000.0)))?.value(),
-    )?;
-    performance.set_atom("timeOrigin", s.number(epoch_ms()))?;
-    s.global().set_atom("performance", performance.value())
+    Ok(())
 }

@@ -17,7 +17,9 @@ implement `new Worker(url)`. A worker runs its script off the page's thread.
   `postMessage`, `close`, `onmessage`, `onmessageerror`, `onerror`,
   `importScripts`, `setTimeout`/`setInterval` and their clears, `queueMicrotask`,
   `atob`/`btoa`, `structuredClone`, `crypto` with `CryptoKey` (see
-  [Web Crypto](CRYPTO.md)), `performance.now()`, `console`,
+  [Web Crypto](CRYPTO.md)), `performance` (the worker's own timeline: User
+  Timing, Resource Timing for its fetches, `PerformanceObserver`; see
+  [Performance Timeline](PERFORMANCE_TIMELINE.md)), `console`,
   `fetch` with `Headers`/`Response`/`FormData`/`Blob`/`File`, `FileReader`,
   `AbortController`, `URL`/`URLSearchParams`, `TextEncoder`/`TextDecoder`,
   `MessageChannel`, `Event` and its message, error, progress and rejection

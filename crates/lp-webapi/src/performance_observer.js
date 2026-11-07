@@ -1,6 +1,7 @@
 // PerformanceObserver and PerformanceObserverEntryList for one realm, made
 // on its first use (Performance Timeline). `performance` is the realm's
-// Performance object; `native`:
+// Performance object (a Window's or a worker's); `supported` its
+// supportedEntryTypes; `native`:
 //   watch(queue | null): queue(type, entry?) runs as entries are added to
 //     the realm's timeline: a mark or measure with its entry object, or the
 //     type ('paint', 'navigation') whose entries just became available.
@@ -8,8 +9,9 @@
 //     nothing per mark.
 //   reportException(error): HTML "report an exception" (a callback threw).
 //   droppedResources(): resource entries the buffer dropped so far.
+// A worker's timeline has no `paint` or `navigation` entries.
 // Callbacks run in a task after the entries were queued, as in Chrome.
-(function (performance, native) {
+(function (performance, native, supported) {
   'use strict';
   const token = Symbol('lightningpanda');
   const O = Object;
@@ -20,7 +22,7 @@
   const ArrayFrom = Array.from;
   const setTimeoutC = setTimeout;
   const getEntriesByType = performance.getEntriesByType;
-  const SUPPORTED = freeze(['mark', 'measure', 'navigation', 'paint', 'resource']);
+  const SUPPORTED = freeze(supported);
   const tag = (C, name) => defineProperty(C.prototype, Symbol.toStringTag, { value: name, configurable: true });
   const illegal = (name) => new TypeErrorC(`Failed to construct '${name}': Illegal constructor`);
   const observeError = (rest) => new TypeErrorC(`Failed to execute 'observe' on 'PerformanceObserver': ${rest}`);

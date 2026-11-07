@@ -95,11 +95,20 @@ fn page_route(path: &str, _me: &str) -> (u16, String, &'static str, Vec<u8>) {
         "/style.css" => ("text/css", b"p { color: red }"),
         "/script.js" => ("text/javascript", b"globalThis.scriptRan = true"),
         "/frame" => ("text/html", b"<p>frame</p>"),
+        "/worker.js" => ("text/javascript", WORKER_SCRIPT.as_bytes()),
         "/missing" => return (404, String::new(), "text/plain", b"gone".to_vec()),
         _ => ("application/json", b"{\"answer\":42}"),
     };
     (200, String::new(), mime, body.to_vec())
 }
+
+/// A worker that fetches what the page names in its message, then answers
+/// with what its own timeline says (`urls`), or runs `code` and answers with
+/// its result.
+const WORKER_SCRIPT: &str = "onmessage = async (e) => { \
+    if (e.data.code) { postMessage(await (0, eval)(e.data.code)); return; } \
+    for (const url of e.data.urls) await fetch(url).then(r => r.text()).catch(() => {}); \
+    postMessage(performance.getEntriesByType('resource').map(e => e.name.split('/').pop() + ':' + e.initiatorType)); }";
 
 fn other_route(path: &str, _me: &str) -> (u16, String, &'static str, Vec<u8>) {
     let headers = if path.starts_with("/tao") { "Timing-Allow-Origin: *\r\n".to_string() } else { String::new() };
@@ -351,4 +360,96 @@ fn an_aborted_fetchs_report_does_not_hold_back_later_entries() {
     thread.run_until_idle(Some(Instant::now() + Duration::from_millis(100)));
     eval(&thread, page, "const i = new Image(); i.src = '/img.png?late';");
     until(&mut thread, page, "seen.includes('img.png?late')");
+}
+
+/// Asks the page's worker `w` to run `code` and waits for its answer.
+fn in_worker(thread: &mut BrowserThread, page: PageId, code: &str) -> String {
+    eval(
+        thread,
+        page,
+        &format!(
+            "globalThis.answer = undefined; w.onmessage = e => answer = e.data; w.postMessage({{code: {code:?}}});"
+        ),
+    );
+    until(thread, page, "answer !== undefined");
+    eval(thread, page, "String(answer)")
+}
+
+#[test]
+fn a_workers_fetches_are_in_its_own_timeline() {
+    let (server, other) = (Server::new(page_route), Server::new(other_route));
+    let (mut thread, page) = open(&server, &other);
+    eval(
+        &thread,
+        page,
+        "globalThis.w = new Worker('/worker.js'); globalThis.answer = undefined; w.onmessage = e => answer = e.data; \
+         w.postMessage({urls: ['/w1', '/w2', other + '/plain', other + '/tao']});",
+    );
+    until(&mut thread, page, "answer !== undefined");
+    assert_eq!(eval(&thread, page, "answer.join()"), "w1:fetch,w2:fetch,plain:fetch,tao:fetch");
+    // The page's timeline has none of the worker's fetches.
+    assert_eq!(
+        eval(
+            &thread,
+            page,
+            "performance.getEntriesByType('resource').filter(e => /w1|w2|plain|tao/.test(e.name)).length"
+        ),
+        "0"
+    );
+    // Phases on the worker's clock, its interfaces, and Timing-Allow-Origin
+    // against the worker's origin.
+    assert_eq!(
+        in_worker(
+            &mut thread,
+            page,
+            "const e = performance.getEntriesByName(location.origin + '/w1')[0]; \
+             const plain = performance.getEntriesByType('resource').find(e => e.name.endsWith('/plain')); \
+             const tao = performance.getEntriesByType('resource').find(e => e.name.endsWith('/tao')); \
+             [e instanceof PerformanceResourceTiming, e instanceof PerformanceEntry, self.performance instanceof Performance, \
+              e.startTime > 0, e.responseEnd <= performance.now(), e.requestStart >= e.fetchStart, e.encodedBodySize, \
+              e.responseStatus, plain.requestStart, plain.transferSize, tao.requestStart > 0, tao.encodedBodySize, \
+              performance === self.performance, typeof performance.timing, \
+              PerformanceObserver.supportedEntryTypes.join(' ')].join()"
+        ),
+        "true,true,true,true,true,true,13,200,0,0,true,5,true,undefined,mark measure resource"
+    );
+    // User Timing, an observer, and the buffer with its full event.
+    assert_eq!(
+        in_worker(
+            &mut thread,
+            page,
+            "(async () => { \
+               const seen = []; let full = 0; \
+               new PerformanceObserver(list => seen.push(...list.getEntries().map(e => e.entryType + ':' + e.name.split('/').pop()))) \
+                 .observe({entryTypes: ['resource', 'mark']}); \
+               performance.mark('m'); \
+               performance.clearResourceTimings(); performance.setResourceTimingBufferSize(1); \
+               performance.onresourcetimingbufferfull = e => { full++; }; \
+               for (const n of ['a', 'b', 'c']) await fetch('/' + n).then(r => r.text()); \
+               await new Promise(r => setTimeout(r, 50)); \
+               const m = performance.measure('since', 'm'); \
+               return [seen.sort().join(' '), full > 0, \
+                 performance.getEntriesByType('resource').map(e => e.name.split('/').pop()).join(' '), \
+                 m.duration >= 0, performance.getEntriesByType('mark').length].join(); })()"
+        ),
+        "mark:m resource:a resource:b resource:c,true,a,true,1"
+    );
+    assert_eq!(
+        in_worker(
+            &mut thread,
+            page,
+            "(() => { try { performance.measure('x', 'requestStart'); } catch (e) { return e.name; } })()"
+        ),
+        "TypeError"
+    );
+    // An imported script is the worker's.
+    assert_eq!(
+        in_worker(
+            &mut thread,
+            page,
+            "performance.setResourceTimingBufferSize(10); importScripts('/script.js'); \
+             performance.getEntriesByType('resource').filter(e => e.name.endsWith('/script.js')).map(e => e.initiatorType).join()"
+        ),
+        "other"
+    );
 }
