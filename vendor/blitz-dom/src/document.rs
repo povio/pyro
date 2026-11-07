@@ -1718,25 +1718,16 @@ impl BaseDocument {
     /// search path, the anchors that can see it (its ancestors and their
     /// previous siblings, and its own previous siblings) restyle their
     /// subtrees.
+    /// Insertions and removals go through Stylo's relative selector invalidator instead
+    /// (`invalidate_relative_selectors_for_insertion`, stylo.rs).
     pub fn invalidate_has_anchors(&mut self, node_id: NodeId) {
-        self.invalidate_has_anchors_impl(node_id, true);
-    }
-
-    /// lightningpanda: as [`Self::invalidate_has_anchors`] for a node just
-    /// inserted at (or removed from) a position: the node carries no search
-    /// flags yet, so every anchor that can see the position restyles.
-    pub fn invalidate_has_anchors_around(&mut self, node_id: NodeId) {
-        self.invalidate_has_anchors_impl(node_id, false);
-    }
-
-    fn invalidate_has_anchors_impl(&mut self, node_id: NodeId, require_search_flags: bool) {
         use selectors::matching::ElementSelectorFlags as F;
         let search = F::RELATIVE_SELECTOR_SEARCH_DIRECTION_ANCESTOR
             | F::RELATIVE_SELECTOR_SEARCH_DIRECTION_SIBLING
             | F::RELATIVE_SELECTOR_SEARCH_DIRECTION_ANCESTOR_SIBLING;
         let flags = |n: &Node| if n.is_element() { n.selector_flags().get() } else { F::empty() };
         let Some(node) = self.nodes.get(node_id) else { return };
-        if require_search_flags && !flags(node).intersects(search) {
+        if !flags(node).intersects(search) {
             return;
         }
         let mut anchors = Vec::new();

@@ -40,6 +40,9 @@ use style::properties::ComputedValues;
 use style::properties::{Importance, PropertyDeclaration};
 use style::rule_tree::CascadeLevel;
 use style::rule_tree::CascadeOrigin;
+use style::invalidation::element::invalidation_map::TSStateForInvalidation;
+use style::invalidation::element::invalidator::{InvalidationResult, SiblingTraversalMap};
+use style::invalidation::element::relative_selector::{DomMutationOperation, RelativeSelectorInvalidator};
 use style::selector_parser::PseudoElement;
 use style::selector_parser::RestyleDamage;
 use style::stylesheets::layer_rule::LayerOrder;
@@ -1358,11 +1361,12 @@ impl<'a> TElement for BlitzNode<'a> {
         self.tree().container_query_sizes.lock().unwrap().entry(self.id).or_default().size
     }
 
+    // lightningpanda: elements have no custom states (`:state()`), which the
+    // relative selector invalidator asks about. This was `todo!()`.
     fn each_custom_state<F>(&self, _callback: F)
     where
         F: FnMut(&AtomIdent),
     {
-        todo!()
     }
 
     fn has_selector_flags(&self, flags: ElementSelectorFlags) -> bool {
@@ -1469,6 +1473,166 @@ impl<'a> RecalcStyle<'a> {
 }
 
 #[allow(unsafe_code)]
+/// lightningpanda: what the style traversal must reach once Stylo's relative selector
+/// invalidator invalidated `element` (as Gecko's `relative_selector_invalidated_at`): the
+/// hints are set, the dirty-descendants bits lead to them.
+fn relative_selector_invalidated_at(element: BlitzNode<'_>, result: &InvalidationResult) {
+    if result.has_invalidated_siblings() {
+        if let Some(parent) = <BlitzNode<'_> as TNode>::parent_element(&element) {
+            Node::set_dirty_descendants(parent);
+            parent.mark_ancestors_dirty();
+        }
+    } else if result.has_invalidated_descendants() {
+        Node::set_dirty_descendants(element);
+        element.mark_ancestors_dirty();
+    } else if result.has_invalidated_self() {
+        element.mark_ancestors_dirty();
+    }
+}
+
+impl crate::BaseDocument {
+    /// lightningpanda: the `:has()` anchors whose answer the insertion of `node_id` can change
+    /// restyle. Stylo's relative selector invalidator (as Gecko's
+    /// `MaybeInvalidateRelativeSelectorForInsertion`) looks the element's, and its
+    /// descendants', tags, ids, classes and attributes up in the stylist's relative selector
+    /// invalidation map, so an element no `:has()` argument can match invalidates nothing, and
+    /// an anchor restyles itself and what the rest of its selector reaches, not its subtree.
+    /// Called with the element linked in the document. It takes over its parent's and previous
+    /// sibling's search-direction flags: a `:has()` search that reached them reaches it.
+    pub(crate) fn invalidate_relative_selectors_for_insertion(&self, node_id: NodeId) {
+        let node = &self.nodes[node_id];
+        if !node.is_element() || !node.flags.is_in_document() {
+            return;
+        }
+        let mut inherited = ElementSelectorFlags::empty();
+        if let Some(parent) = <BlitzNode<'_> as TNode>::parent_element(&node) {
+            inherited |= parent.relative_selector_search_direction();
+        }
+        if let Some(prev) = node.prev_sibling_element() {
+            inherited |= prev.relative_selector_search_direction();
+        }
+        let operation = if node.next_sibling_element().is_none() {
+            DomMutationOperation::Append
+        } else {
+            DomMutationOperation::Insert
+        };
+        self.invalidate_relative_selectors(node, inherited, operation);
+    }
+
+    /// lightningpanda: as [`Self::invalidate_relative_selectors_for_insertion`] for an element
+    /// about to be removed (or moved away), called while it is still linked: the anchors are
+    /// found through its parent and earlier siblings.
+    pub(crate) fn invalidate_relative_selectors_for_removal(&self, node_id: NodeId) {
+        let node = &self.nodes[node_id];
+        if !node.is_element() || !node.flags.is_in_document() {
+            return;
+        }
+        self.invalidate_relative_selectors(node, ElementSelectorFlags::empty(), DomMutationOperation::Remove);
+    }
+
+    fn invalidate_relative_selectors(
+        &self,
+        node: BlitzNode<'_>,
+        inherited: ElementSelectorFlags,
+        operation: DomMutationOperation,
+    ) {
+        let _layout_thread_scope = LayoutThreadScope::enter();
+        fn invalidator<'dom>(
+            element: BlitzNode<'dom>,
+            sibling_traversal_map: SiblingTraversalMap<BlitzNode<'dom>>,
+        ) -> RelativeSelectorInvalidator<'dom, 'dom, BlitzNode<'dom>> {
+            RelativeSelectorInvalidator {
+                element,
+                quirks_mode: QuirksMode::NoQuirks,
+                snapshots: None,
+                invalidated: relative_selector_invalidated_at,
+                sibling_traversal_map,
+            }
+        }
+        let prev = node.prev_sibling_element();
+        let next = node.next_sibling_element();
+        invalidator(node, SiblingTraversalMap::default()).invalidate_relative_selectors_for_dom_mutation(
+            !node.children.is_empty(),
+            &self.stylist,
+            inherited,
+            operation,
+        );
+        // The neighbours' sibling relations changed too (`:has(+ .a + .b)`). The next
+        // sibling's previous one is the element's: what it was before an insertion, what it
+        // is after a removal.
+        if let Some(prev) = prev {
+            invalidator(prev, SiblingTraversalMap::default()).invalidate_relative_selectors_for_dom_mutation(
+                false,
+                &self.stylist,
+                ElementSelectorFlags::empty(),
+                DomMutationOperation::SideEffectPrevSibling,
+            );
+        }
+        if let Some(next) = next {
+            let map = SiblingTraversalMap::new(next, prev, next.next_sibling_element());
+            invalidator(next, map).invalidate_relative_selectors_for_dom_mutation(
+                false,
+                &self.stylist,
+                ElementSelectorFlags::empty(),
+                DomMutationOperation::SideEffectNextSibling,
+            );
+        }
+    }
+
+    /// lightningpanda: the `:has()` anchors whose answer a change of `node_id`'s emptiness or
+    /// sibling position can flip restyle (as Gecko's
+    /// `MaybeInvalidateRelativeSelectorForEmptyDependency`, `...ForNthEdgeDependency` and
+    /// `...ForNthDependencyFromSibling`). `:empty`, `:nth-child()` and `:first-child`/
+    /// `:last-child` in an argument match by the tree around an element, not by its identity,
+    /// so the element that came or went (`.z` in `.a:has(> .x:first-child)` with `.z` inserted
+    /// before `.x`, a text node in `.a:has(> .p:empty)`) tells the mutation invalidator nothing:
+    /// instead the element whose condition changed is looked up in the stylist's
+    /// tree-structural dependency map for the `state`s given. Called after the mutation, with
+    /// `node_id` linked in the document; an element no `:has()` search has reached cannot
+    /// change an anchor's answer and is skipped.
+    pub(crate) fn invalidate_relative_selectors_for_ts_state(
+        &self,
+        node_id: NodeId,
+        state: TSStateForInvalidation,
+    ) {
+        let node = &self.nodes[node_id];
+        if !node.is_element()
+            || !node.flags.is_in_document()
+            || node.relative_selector_search_direction().is_empty()
+        {
+            return;
+        }
+        let _layout_thread_scope = LayoutThreadScope::enter();
+        let invalidator = RelativeSelectorInvalidator {
+            element: node,
+            quirks_mode: QuirksMode::NoQuirks,
+            snapshots: None,
+            invalidated: relative_selector_invalidated_at,
+            sibling_traversal_map: SiblingTraversalMap::default(),
+        };
+        invalidator.invalidate_relative_selectors_for_this(
+            &self.stylist,
+            |element, scope, data, quirks_mode, collector| {
+                data.relative_invalidation_map_attributes()
+                    .ts_state_to_selector
+                    .lookup_with_additional(
+                        *element,
+                        quirks_mode,
+                        None,
+                        &[],
+                        ElementState::empty(),
+                        |dependency| {
+                            if dependency.state.intersects(state) {
+                                collector.add_dependency(&dependency.dep, *element, scope);
+                            }
+                            true
+                        },
+                    );
+            },
+        );
+    }
+}
+
 impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
     fn process_preorder<F: FnMut(BlitzNode<'dom>)>(
         &self,
@@ -1751,4 +1915,612 @@ fn parse_inline() {
     // );
 
     // let val = CSSInlineStyleDeclaration();
+}
+
+/// lightningpanda: `:has()` anchors follow insertions and removals through Stylo's relative
+/// selector invalidator (`invalidate_relative_selectors_for_insertion`/`_removal`), and
+/// emptiness and sibling-position changes inside an argument through its tree-structural
+/// dependencies (`invalidate_relative_selectors_for_ts_state`).
+#[cfg(test)]
+mod relative_selector_invalidation_tests {
+    use super::*;
+    use crate::{Attribute, BaseDocument, DocumentConfig, DocumentMutator, qual_name};
+    use blitz_traits::shell::{ColorScheme, Viewport};
+
+    /// `<html><head><style>{css}</style></head><body>`, resolved; the body's id. `tag` keeps
+    /// the sheet text apart from other tests' (author sheets are shared per thread by text).
+    fn make_doc(css: &str, tag: &str) -> (BaseDocument, NodeId) {
+        let mut doc = BaseDocument::new(DocumentConfig {
+            viewport: Some(Viewport::new(400, 300, 1.0, ColorScheme::Light)),
+            ..Default::default()
+        });
+        let root_id = doc.root_node().id;
+        let mut m = doc.mutate();
+        let html = m.create_element(qual_name!("html"), vec![]);
+        let head = m.create_element(qual_name!("head"), vec![]);
+        let style = m.create_element(qual_name!("style"), vec![]);
+        let text = m.create_text_node(&format!("/* {tag} */ {css}"));
+        m.append_children(style, &[text]);
+        m.append_children(head, &[style]);
+        let body = m.create_element(qual_name!("body"), vec![]);
+        m.append_children(html, &[head, body]);
+        m.append_children(root_id, &[html]);
+        drop(m);
+        doc.resolve(0.0);
+        (doc, body)
+    }
+
+    fn div(m: &mut DocumentMutator<'_>, class: &str) -> NodeId {
+        m.create_element(qual_name!("div"), vec![Attribute { name: qual_name!("class"), value: class.to_string() }])
+    }
+
+    /// The computed `order` of `id`: 7 where the test's `:has()` rule matched, else 0.
+    fn order(doc: &BaseDocument, id: NodeId) -> i32 {
+        doc.nodes[id].primary_styles().unwrap().get_position().order
+    }
+
+    /// The restyle hint waiting on `id` for the next resolve.
+    fn hint(doc: &BaseDocument, id: NodeId) -> RestyleHint {
+        doc.nodes[id].stylo_element_data().get().unwrap().hint
+    }
+
+    #[test]
+    fn subject_anchor_follows_insertions_and_removals() {
+        let (mut d, body) = make_doc(".a:has(.x) { order: 7 }", "has-subject");
+        let mut m = d.mutate();
+        let (a, p, b) = (div(&mut m, "a"), div(&mut m, "p"), div(&mut m, "b"));
+        m.append_children(a, &[p]);
+        m.append_children(body, &[a, b]);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 0);
+
+        // An element no `:has()` argument can match invalidates no anchor.
+        let mut m = d.mutate();
+        let y = div(&mut m, "y");
+        m.append_children(p, &[y]);
+        drop(m);
+        assert!(hint(&d, a).is_empty(), "nothing matches .y");
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 0);
+
+        let mut m = d.mutate();
+        let x = div(&mut m, "x");
+        m.append_children(p, &[x]);
+        drop(m);
+        assert!(hint(&d, a).contains(RestyleHint::RESTYLE_SELF), "the anchor restyles itself");
+        assert!(hint(&d, p).is_empty(), "not the rest of its subtree");
+        assert!(hint(&d, b).is_empty(), "nor a sibling that anchors nothing");
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 7);
+
+        let mut m = d.mutate();
+        m.remove_node(x);
+        drop(m);
+        assert!(hint(&d, a).contains(RestyleHint::RESTYLE_SELF));
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 0);
+    }
+
+    #[test]
+    fn child_combinator_argument_needs_a_direct_child() {
+        let (mut d, body) = make_doc(".a:has(> .x) { order: 7 }", "has-child");
+        let mut m = d.mutate();
+        let (a, p) = (div(&mut m, "a"), div(&mut m, "p"));
+        m.append_children(a, &[p]);
+        m.append_children(body, &[a]);
+        drop(m);
+        d.resolve(0.0);
+        let mut m = d.mutate();
+        let x = div(&mut m, "x");
+        m.append_children(p, &[x]);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 0, "a grandchild");
+        let mut m = d.mutate();
+        let x2 = div(&mut m, "x");
+        m.append_children(a, &[x2]);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 7, "a child");
+        let mut m = d.mutate();
+        m.remove_node(x2);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 0);
+    }
+
+    #[test]
+    fn next_sibling_argument_follows_what_comes_between() {
+        let (mut d, body) = make_doc(".a:has(+ .x) { order: 7 }", "has-next-sibling");
+        let mut m = d.mutate();
+        let (a, q) = (div(&mut m, "a"), div(&mut m, "q"));
+        m.append_children(body, &[a, q]);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 0);
+        let mut m = d.mutate();
+        let x = div(&mut m, "x");
+        m.insert_nodes_before(q, &[x]);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 7, ".x right after .a");
+        let mut m = d.mutate();
+        let z = div(&mut m, "z");
+        m.insert_nodes_before(x, &[z]);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 0, ".z came between");
+        let mut m = d.mutate();
+        m.remove_node(z);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 7, ".z went away");
+    }
+
+    #[test]
+    fn later_sibling_subtree_argument_sees_a_deep_insertion() {
+        let (mut d, body) = make_doc(".a:has(~ .s .x) { order: 7 }", "has-later-sibling");
+        let mut m = d.mutate();
+        let (a, s, p) = (div(&mut m, "a"), div(&mut m, "s"), div(&mut m, "p"));
+        m.append_children(s, &[p]);
+        m.append_children(body, &[a, s]);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 0);
+        let mut m = d.mutate();
+        let x = div(&mut m, "x");
+        m.append_children(p, &[x]);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 7);
+        let mut m = d.mutate();
+        m.remove_node(x);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 0);
+    }
+
+    #[test]
+    fn non_subject_anchor_restyles_what_its_selector_reaches() {
+        let (mut d, body) = make_doc(".a:has(.x) .d { order: 7 }", "has-non-subject");
+        let mut m = d.mutate();
+        let (a, dd, p) = (div(&mut m, "a"), div(&mut m, "d"), div(&mut m, "p"));
+        m.append_children(a, &[dd, p]);
+        m.append_children(body, &[a]);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, dd), 0);
+        let mut m = d.mutate();
+        let x = div(&mut m, "x");
+        m.append_children(p, &[x]);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, dd), 7);
+        let mut m = d.mutate();
+        m.remove_node(x);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, dd), 0);
+    }
+
+    #[test]
+    fn an_inserted_subtree_is_searched() {
+        let (mut d, body) = make_doc(".a:has(.x) { order: 7 }", "has-subtree");
+        let mut m = d.mutate();
+        let a = div(&mut m, "a");
+        m.append_children(body, &[a]);
+        drop(m);
+        d.resolve(0.0);
+        let mut m = d.mutate();
+        let (w, v, x) = (div(&mut m, "w"), div(&mut m, "v"), div(&mut m, "x"));
+        m.append_children(v, &[x]);
+        m.append_children(w, &[v]);
+        m.append_children(a, &[w]);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 7, ".x deep in the inserted subtree");
+        let mut m = d.mutate();
+        m.remove_node(w);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 0);
+    }
+
+    #[test]
+    fn a_moved_argument_updates_both_anchors() {
+        let (mut d, body) = make_doc(".a:has(.x) { order: 7 }", "has-move");
+        let mut m = d.mutate();
+        let (a1, a2, x) = (div(&mut m, "a"), div(&mut m, "a"), div(&mut m, "x"));
+        m.append_children(a1, &[x]);
+        m.append_children(body, &[a1, a2]);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!((order(&d, a1), order(&d, a2)), (7, 0));
+        let mut m = d.mutate();
+        m.append_children(a2, &[x]);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!((order(&d, a1), order(&d, a2)), (0, 7));
+    }
+
+    // Arguments that match by position or emptiness: the element that came or went is not
+    // what the argument matches, the sibling (or parent) whose condition flipped is.
+
+    #[test]
+    fn first_child_argument_follows_an_unrelated_sibling() {
+        let (mut d, body) = make_doc(".a:has(> .x:first-child) { order: 7 }", "has-first-child");
+        let mut m = d.mutate();
+        let (a, x) = (div(&mut m, "a"), div(&mut m, "x"));
+        m.append_children(a, &[x]);
+        m.append_children(body, &[a]);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 7);
+        let mut m = d.mutate();
+        let z = div(&mut m, "z");
+        m.insert_nodes_before(x, &[z]);
+        drop(m);
+        assert!(hint(&d, a).contains(RestyleHint::RESTYLE_SELF), "the anchor restyles itself");
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 0, ".z inserted before .x");
+        let mut m = d.mutate();
+        m.remove_node(z);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 7, ".z removed");
+    }
+
+    #[test]
+    fn last_child_argument_follows_an_appended_sibling() {
+        let (mut d, body) = make_doc(".a:has(> .x:last-child) { order: 7 }", "has-last-child");
+        let mut m = d.mutate();
+        let (a, x) = (div(&mut m, "a"), div(&mut m, "x"));
+        m.append_children(a, &[x]);
+        m.append_children(body, &[a]);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 7);
+        let mut m = d.mutate();
+        let z = div(&mut m, "z");
+        m.append_children(a, &[z]);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 0, ".z appended after .x");
+        let mut m = d.mutate();
+        m.remove_node(z);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 7, ".z removed");
+        // A same-parent move: `.x` leaves its position and comes back last.
+        let mut m = d.mutate();
+        let y = div(&mut m, "y");
+        m.append_children(a, &[y]);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 0);
+        let mut m = d.mutate();
+        m.append_children(a, &[x]);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 7, ".x moved last");
+    }
+
+    #[test]
+    fn nth_child_argument_follows_a_sibling_inserted_before_it() {
+        let (mut d, body) = make_doc(".a:has(> .x:nth-child(2)) { order: 7 }", "has-nth-child");
+        let mut m = d.mutate();
+        let (a, x) = (div(&mut m, "a"), div(&mut m, "x"));
+        m.append_children(a, &[x]);
+        m.append_children(body, &[a]);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 0);
+        let mut m = d.mutate();
+        let z = div(&mut m, "z");
+        m.insert_nodes_before(x, &[z]);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 7, ".z inserted before .x");
+        // Not at the front: `.x` is a later sibling of the change.
+        let mut m = d.mutate();
+        let w = div(&mut m, "w");
+        m.insert_nodes_before(x, &[w]);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 0, ".w inserted between");
+        let mut m = d.mutate();
+        m.remove_node(z);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 7, ".z removed");
+    }
+
+    #[test]
+    fn nth_last_child_argument_follows_a_sibling_appended_after_it() {
+        let (mut d, body) =
+            make_doc(".a:has(> .x:nth-last-child(2)) { order: 7 }", "has-nth-last-child");
+        let mut m = d.mutate();
+        let (a, x) = (div(&mut m, "a"), div(&mut m, "x"));
+        m.append_children(a, &[x]);
+        m.append_children(body, &[a]);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 0);
+        let mut m = d.mutate();
+        let z = div(&mut m, "z");
+        m.append_children(a, &[z]);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 7, ".z appended after .x");
+    }
+
+    #[test]
+    fn empty_argument_follows_the_children_of_its_element() {
+        let (mut d, body) = make_doc(".a:has(> .p:empty) { order: 7 }", "has-empty");
+        let mut m = d.mutate();
+        let (a, p, q) = (div(&mut m, "a"), div(&mut m, "p"), div(&mut m, "q"));
+        m.append_children(p, &[q]);
+        m.append_children(a, &[p]);
+        m.append_children(body, &[a]);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 0);
+        let mut m = d.mutate();
+        m.remove_node(q);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 7, ".q removed, .p empty");
+        let mut m = d.mutate();
+        let q2 = div(&mut m, "q");
+        m.append_children(p, &[q2]);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 0, ".q appended again");
+        // Text nodes count for `:empty` too, though no `:has()` argument matches them.
+        let mut m = d.mutate();
+        m.remove_and_drop_all_children(p);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 7, "all children dropped");
+        let mut m = d.mutate();
+        let t = m.create_text_node("text");
+        m.append_children(p, &[t]);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 0, "a text node");
+        let mut m = d.mutate();
+        m.remove_node(t);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 7, "the text node removed");
+    }
+
+    #[test]
+    fn dropping_all_children_leaves_their_anchors() {
+        let (mut d, body) = make_doc(".a:has(.x) { order: 7 }", "has-drop-all");
+        let mut m = d.mutate();
+        let (a, p, x) = (div(&mut m, "a"), div(&mut m, "p"), div(&mut m, "x"));
+        m.append_children(p, &[x]);
+        m.append_children(a, &[p]);
+        m.append_children(body, &[a]);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 7);
+        let mut m = d.mutate();
+        m.remove_and_drop_all_children(p);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 0, ".x dropped with its siblings");
+    }
+}
+
+/// lightningpanda: Stylo skips the eager `::before`/`::after` match and cascade when no rule
+/// that can generate a box matches (`Stylist::may_generate_box_for_pseudo`). What generates,
+/// and the styles Stylo keeps, must not change.
+#[cfg(test)]
+mod box_generating_pseudo_tests {
+    use super::*;
+    use crate::{Attribute, BaseDocument, DocumentConfig, QualName, UserAgentStylesheet, qual_name};
+    use blitz_traits::shell::{ColorScheme, Viewport};
+    use style::stylist::RuleInclusion;
+    use style::traversal::resolve_style;
+
+    struct Doc {
+        doc: BaseDocument,
+        style: NodeId,
+        body: NodeId,
+    }
+
+    /// `<html><head><style>{css}</style></head><body>` with a `div` per `(id class, class)`.
+    /// A per-test `tag` keeps the sheet text apart from other tests' (author sheets are shared
+    /// per thread by text, and one test edits its sheet through the CSSOM).
+    fn make_doc(ua: Option<&str>, css: &str, tag: &str, divs: &[(&str, &str)]) -> (Doc, Vec<NodeId>) {
+        let mut doc = BaseDocument::new(DocumentConfig {
+            viewport: Some(Viewport::new(400, 300, 1.0, ColorScheme::Light)),
+            ..Default::default()
+        });
+        if let Some(ua) = ua {
+            doc.add_user_agent_stylesheet(UserAgentStylesheet::parse(ua));
+        }
+        let root_id = doc.root_node().id;
+        let attr = |name, value: &str| Attribute { name, value: value.to_string() };
+        let mut ids = Vec::new();
+        let mut m = doc.mutate();
+        let html = m.create_element(qual_name!("html"), vec![]);
+        let head = m.create_element(qual_name!("head"), vec![]);
+        let style = m.create_element(qual_name!("style"), vec![]);
+        let text = m.create_text_node(&format!("/* {tag} */ {css}"));
+        m.append_children(style, &[text]);
+        m.append_children(head, &[style]);
+        let body = m.create_element(qual_name!("body"), vec![]);
+        for (tag, class) in divs {
+            let local = LocalName::from(*tag);
+            let name = QualName::new(None, ns!(html), local);
+            let el = m.create_element(name, vec![attr(qual_name!("class"), class)]);
+            m.append_children(body, &[el]);
+            ids.push(el);
+        }
+        m.append_children(html, &[head, body]);
+        m.append_children(root_id, &[html]);
+        drop(m);
+        doc.resolve(0.0);
+        (Doc { doc, style, body }, ids)
+    }
+
+    /// The eager (`before`, `after`) styles Stylo kept for `id`.
+    fn kept(doc: &BaseDocument, id: NodeId) -> (bool, bool) {
+        let data = doc.nodes[id].stylo_element_data().get().unwrap();
+        let pseudos = data.styles.pseudos.as_array();
+        (pseudos[1].is_some(), pseudos[0].is_some())
+    }
+
+    /// The (`::before`, `::after`) boxes of `id`.
+    fn boxes(doc: &BaseDocument, id: NodeId) -> (bool, bool) {
+        let node = &doc.nodes[id];
+        (node.before().is_some(), node.after().is_some())
+    }
+
+    #[test]
+    fn non_generating_rules_keep_no_pseudo_style() {
+        let css = "*::before, *::after { box-sizing: border-box; color: red } \
+                   .x::before { content: '' } .y::after { content: 'y' } \
+                   .d::before { display: inherit } .v::before { content: var(--c) } \
+                   .all::after { all: inherit } .an::before { animation-name: a }";
+        let (d, ids) = make_doc(
+            Some("q:before { content: open-quote } q:after { content: close-quote }"),
+            css,
+            "non-generating",
+            &[("div", ""), ("div", "x"), ("div", "y"), ("q", ""), ("div", "d"), ("div", "v"), ("div", "all"), ("div", "an")],
+        );
+        let doc = &d.doc;
+        assert_eq!(kept(doc, ids[0]), (false, false), "box-sizing and color alone generate nothing");
+        assert_eq!(boxes(doc, ids[0]), (false, false));
+        assert_eq!(boxes(doc, ids[1]), (true, false), ".x::before");
+        assert_eq!(boxes(doc, ids[2]), (false, true), ".y::after");
+        assert_eq!(boxes(doc, ids[3]), (true, true), "q's UA quotes");
+        // `display: inherit` and `content: var()` keep the style as upstream does
+        // (`DISPLAY_OR_CONTENT_DEPEND_ON_INHERITED_STYLE`); `content` stays `normal`, no box.
+        assert_eq!(kept(doc, ids[4]), (true, false), "display: inherit");
+        assert_eq!(boxes(doc, ids[4]), (false, false));
+        assert_eq!(kept(doc, ids[5]), (true, false), "content: var(--c)");
+        assert_eq!(kept(doc, ids[6]), (false, true), "all: inherit");
+        assert_eq!(kept(doc, ids[7]), (false, false), "animation-name alone: content is normal");
+    }
+
+    /// Which declaration blocks the index files: a value that cannot make the box appear
+    /// (`content: normal | none`, `animation-name: none`) keeps a rule out of it, so the UA
+    /// `*::before, *::after { animation: none !important }` does not match every element.
+    #[test]
+    fn index_ignores_declarations_that_cannot_generate_a_box() {
+        use style::properties::declaration_block::parse_style_attribute;
+        use style::stylesheets::CssRuleType;
+        use style::stylist::declarations_may_generate_pseudo_box;
+        let (d, _) = make_doc(None, "", "index-decls", &[]);
+        let url = d.doc.url.url_extra_data();
+        let generates = |css: &str| {
+            let block = parse_style_attribute(css, &url, None, QuirksMode::NoQuirks, CssRuleType::Style);
+            declarations_may_generate_pseudo_box(&block)
+        };
+        assert!(!generates("transition: none; animation: none"));
+        assert!(!generates("animation-name: none, none"));
+        assert!(!generates("content: normal"));
+        assert!(!generates("content: none; color: red"));
+        assert!(generates("animation-name: a"));
+        assert!(generates("animation-name: none, a"));
+        assert!(generates("animation: var(--a)"));
+        assert!(generates("animation-name: inherit"));
+        assert!(generates("content: ''"));
+        assert!(generates("content: var(--c)"));
+        assert!(generates("content: inherit"));
+        assert!(generates("display: none"));
+        assert!(generates("all: unset"));
+    }
+
+    /// `PseudoElementResolution::Force` (out-of-document styles) still resolves every eager
+    /// pseudo-element any rule matches.
+    #[test]
+    fn forced_resolution_keeps_non_generating_pseudo_styles() {
+        let (mut d, ids) = make_doc(
+            None,
+            "div::before { color: red } .h { display: none }",
+            "forced",
+            &[("div", ""), ("div", "h")],
+        );
+        assert_eq!(kept(&d.doc, ids[0]), (false, false));
+        // An element in a `display: none` subtree is left unstyled, as `resolve_style` wants.
+        let mut m = d.doc.mutate();
+        let hidden = m.create_element(qual_name!("div"), vec![]);
+        m.append_children(ids[1], &[hidden]);
+        drop(m);
+        d.doc.resolve(0.0);
+        let doc = &d.doc;
+
+        let _layout_thread_scope = LayoutThreadScope::enter();
+        let guard = &doc.guard;
+        let guards = StylesheetGuards { author: &guard.read(), ua_or_user: &guard.read() };
+        let shared = SharedStyleContext {
+            traversal_flags: TraversalFlags::empty(),
+            stylist: &doc.stylist,
+            options: GLOBAL_STYLE_DATA.options.clone(),
+            guards,
+            visited_styles_enabled: false,
+            animations: doc.animations.clone(),
+            current_time_for_animations: 0.0,
+            snapshot_map: &doc.snapshots,
+            registered_speculative_painters: &RegisteredPaintersImpl,
+        };
+        let mut thread_local = ThreadLocalStyleContext::new();
+        let mut context = StyleContext { shared: &shared, thread_local: &mut thread_local };
+        let node = &doc.nodes[hidden];
+        let styles = resolve_style(&mut context, node, RuleInclusion::All, None, None);
+        assert!(styles.pseudos.get(&PseudoElement::Before).is_some(), "forced ::before");
+        assert!(styles.pseudos.get(&PseudoElement::After).is_none(), "nothing matches ::after");
+    }
+
+    /// The index is rebuilt with the rules: a CSSOM edit that adds `content` makes the box
+    /// appear. This fails if `RuleChangeKind::StyleRuleDeclarations` stops rebuilding the
+    /// cascade data (stylesheet_set.rs).
+    #[test]
+    fn cssom_declaration_edit_makes_the_pseudo_appear() {
+        let (mut d, ids) = make_doc(None, ".c::before { color: red }", "cssom", &[("div", "c")]);
+        assert_eq!(boxes(&d.doc, ids[0]), (false, false));
+        d.doc
+            .stylesheet_rule_style_set_property(d.style, &[0], "content", "\"a\"", false)
+            .unwrap();
+        d.doc.resolve(0.0);
+        assert_eq!(boxes(&d.doc, ids[0]), (true, false), "content set through the CSSOM");
+        d.doc.stylesheet_rule_style_remove_property(d.style, &[0], "content").unwrap();
+        d.doc.resolve(0.0);
+        assert_eq!(boxes(&d.doc, ids[0]), (false, false), "and removed");
+    }
+
+    /// Selector flags from the index's own match drive sibling invalidation.
+    #[test]
+    fn last_child_after_follows_appends_and_removals() {
+        let (mut d, ids) = make_doc(
+            None,
+            ".a:last-child::after { content: '' } .a::after { color: red }",
+            "last-child",
+            &[("div", "a"), ("div", "a")],
+        );
+        assert_eq!(boxes(&d.doc, ids[0]), (false, false));
+        assert_eq!(boxes(&d.doc, ids[1]), (false, true));
+
+        let body = d.body;
+        let mut m = d.doc.mutate();
+        let attr = Attribute { name: qual_name!("class"), value: "a".into() };
+        let added = m.create_element(qual_name!("div"), vec![attr]);
+        m.append_children(body, &[added]);
+        drop(m);
+        d.doc.resolve(0.0);
+        assert_eq!(boxes(&d.doc, ids[1]), (false, false), "no longer the last child");
+        assert_eq!(boxes(&d.doc, added), (false, true), "the new last child");
+
+        let mut m = d.doc.mutate();
+        m.remove_node(added);
+        drop(m);
+        d.doc.resolve(0.0);
+        assert_eq!(boxes(&d.doc, ids[1]), (false, true), "the last child again");
+    }
 }

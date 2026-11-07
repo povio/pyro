@@ -32,8 +32,8 @@ use crate::invalidation::stylesheets::{RuleChangeKind, StylesheetInvalidationSet
 #[cfg(feature = "gecko")]
 use crate::properties::StyleBuilder;
 use crate::properties::{
-    self, AnimationDeclarations, CascadeMode, ComputedValues, FirstLineReparenting,
-    PropertyDeclarationBlock, PropertyIdRef,
+    self, AnimationDeclarations, CascadeMode, ComputedValues, FirstLineReparenting, LonghandId,
+    PropertyDeclarationBlock, PropertyDeclarationId, PropertyIdRef,
 };
 use crate::properties_and_values::registry::{
     PropertyRegistration, ScriptRegistry as CustomPropertyScriptRegistry,
@@ -1181,6 +1181,62 @@ impl Stylist {
         }
 
         doc_author_rules_apply && f(&self.cascade_data.author)
+    }
+
+    /// lightningpanda: whether a rule that can make `pseudo` (`::before` or `::after`, eagerly
+    /// cascaded for `element`) generate a box matches `element`, so that the full match and
+    /// cascade of the pseudo-element can give a style that is kept. When this is `false`, every
+    /// rule that matches leaves `content` at `normal` (it is not inherited) and declares neither
+    /// `display` nor `content` (so `DISPLAY_OR_CONTENT_DEPEND_ON_INHERITED_STYLE` stays unset),
+    /// and `eager_pseudo_is_definitely_not_generated` would drop the style.
+    ///
+    /// The index covers the document's origins. Elements that shadow-tree, `::slotted()`,
+    /// `:host` or `::part()` rules could reach for `pseudo` answer `true`, as do pseudo-elements
+    /// of pseudo-elements. Matching the index is a subset of what the full match does with the
+    /// same `context`, so the selector flags it sets are ones the full match would set; the
+    /// ones it leaves unset belong to rules that cannot generate a box.
+    ///
+    /// `scratch` must be empty, and is left empty.
+    pub fn may_generate_box_for_pseudo<E>(
+        &self,
+        element: E,
+        pseudo: &PseudoElement,
+        scratch: &mut ApplicableDeclarationList,
+        context: &mut MatchingContext<E::Impl>,
+    ) -> bool
+    where
+        E: TElement,
+    {
+        debug_assert!(scratch.is_empty());
+        if !pseudo.is_before_or_after()
+            || element.implemented_pseudo_element().is_some()
+            || element.has_part_attr()
+        {
+            return true;
+        }
+        let mut in_shadow_rules = false;
+        element.each_applicable_non_document_style_rule_data(|data, _| {
+            in_shadow_rules = in_shadow_rules || data.has_rules_for_pseudo(pseudo);
+        });
+        if in_shadow_rules {
+            return true;
+        }
+        for (data, origin) in self.cascade_data.iter_origins() {
+            let Some(map) = data.box_generating_pseudo_rules(pseudo) else {
+                continue;
+            };
+            let level = match origin {
+                Origin::UserAgent => CascadeLevel::new(CascadeOrigin::UA),
+                Origin::User => CascadeLevel::new(CascadeOrigin::User),
+                Origin::Author => CascadeLevel::same_tree_author_normal(),
+            };
+            map.get_all_matching_rules(element, element, scratch, context, level, data, self);
+            if !scratch.is_empty() {
+                scratch.clear();
+                return true;
+            }
+        }
+        false
     }
 
     /// Execute callback for all applicable style rule data.
@@ -2821,6 +2877,82 @@ impl PartElementAndPseudoRules {
     }
 }
 
+/// lightningpanda: the `::before` and `::after` rules (one pseudo-element level, in
+/// `normal_rules`) whose declarations can make the pseudo-element generate a box: they declare
+/// `content`, `display` or `animation-name`, looked up on the block's longhand set, so `all`,
+/// `var()` and the CSS-wide keywords count. Without one of them matching, `content` is `normal`
+/// and `display` is not inherited, so the style `match_pseudo` would compute is dropped by
+/// `eager_pseudo_is_definitely_not_generated` (see `Stylist::may_generate_box_for_pseudo`).
+///
+/// A copy of the rules kept in `normal_rules`, filled by the same `add_styles` and cleared with
+/// it; a CSSOM declaration edit rebuilds both (`RuleChangeKind::StyleRuleDeclarations` is
+/// `DataValidity::FullyInvalid`).
+/// lightningpanda: whether a `::before`/`::after` rule with these declarations can make the
+/// pseudo-element generate a box (see `BoxGeneratingPseudoRules`).
+pub fn declarations_may_generate_pseudo_box(block: &PropertyDeclarationBlock) -> bool {
+    BoxGeneratingPseudoRules::declarations_may_generate_box(block)
+}
+
+#[derive(Clone, Debug, Default, MallocSizeOf)]
+struct BoxGeneratingPseudoRules {
+    before: SelectorMap<Rule>,
+    after: SelectorMap<Rule>,
+}
+
+impl BoxGeneratingPseudoRules {
+    /// Whether a rule with these declarations goes in the index (when it is a single-level
+    /// `::before` or `::after` rule).
+    ///
+    /// `content: normal | none` and `animation-name: none` cannot make the box appear, so they
+    /// do not count: lightningpanda's UA `*::before, *::after { animation: none !important }`
+    /// would otherwise put a rule matching every element in the index. Their CSS-wide keyword
+    /// and `var()` forms still count.
+    fn declarations_may_generate_box(block: &PropertyDeclarationBlock) -> bool {
+        use crate::properties::PropertyDeclaration;
+        use crate::values::generics::counters::GenericContent;
+        block.declarations().iter().any(|decl| match decl {
+            PropertyDeclaration::AnimationName(names) => !names.0.iter().all(|n| n.is_none()),
+            PropertyDeclaration::Content(GenericContent::Normal | GenericContent::None) => false,
+            other => matches!(
+                other.id(),
+                PropertyDeclarationId::Longhand(
+                    LonghandId::Content | LonghandId::Display | LonghandId::AnimationName
+                )
+            ),
+        })
+    }
+
+    fn map(&self, pseudo: &PseudoElement) -> Option<&SelectorMap<Rule>> {
+        if pseudo.is_before() {
+            Some(&self.before)
+        } else if pseudo.is_after() {
+            Some(&self.after)
+        } else {
+            None
+        }
+    }
+
+    fn map_mut(&mut self, pseudo: &PseudoElement) -> Option<&mut SelectorMap<Rule>> {
+        if pseudo.is_before() {
+            Some(&mut self.before)
+        } else if pseudo.is_after() {
+            Some(&mut self.after)
+        } else {
+            None
+        }
+    }
+
+    fn clear(&mut self) {
+        self.before.clear();
+        self.after.clear();
+    }
+
+    fn shrink_if_needed(&mut self) {
+        self.before.shrink_if_needed();
+        self.after.shrink_if_needed();
+    }
+}
+
 /// The id of a given layer, a sequentially-increasing identifier.
 #[derive(Clone, Copy, Debug, Eq, MallocSizeOf, PartialEq, PartialOrd, Ord)]
 pub struct LayerId(u16);
@@ -3245,6 +3377,10 @@ pub struct CascadeData {
     /// cascade level.
     normal_rules: ElementAndPseudoRules,
 
+    /// lightningpanda: the rules of `normal_rules` that can make a `::before` or `::after`
+    /// generate a box.
+    box_generating_pseudo_rules: BoxGeneratingPseudoRules,
+
     /// The `:host` pseudo rules that are the rightmost selector (without
     /// accounting for pseudo-elements), or `:scope` rules that may match
     /// the featureless host.
@@ -3408,6 +3544,7 @@ impl CascadeData {
     pub fn new() -> Self {
         Self {
             normal_rules: ElementAndPseudoRules::default(),
+            box_generating_pseudo_rules: BoxGeneratingPseudoRules::default(),
             featureless_host_rules: None,
             slotted_rules: None,
             part_rules: None,
@@ -3601,6 +3738,25 @@ impl CascadeData {
         self.normal_rules.rules(pseudo_elements)
     }
 
+    /// lightningpanda: the rules of `normal_rules(&[pseudo])` that can make `pseudo` (`::before`
+    /// or `::after`) generate a box. `None` for other pseudo-elements.
+    #[inline]
+    pub fn box_generating_pseudo_rules(&self, pseudo: &PseudoElement) -> Option<&SelectorMap<Rule>> {
+        self.box_generating_pseudo_rules.map(pseudo)
+    }
+
+    /// lightningpanda: whether any rule here is for `pseudo`, in any of the maps the rule
+    /// collector reads for it.
+    fn has_rules_for_pseudo(&self, pseudo: &PseudoElement) -> bool {
+        let pseudos = std::slice::from_ref(pseudo);
+        self.normal_rules(pseudos).is_some_and(|m| !m.is_empty())
+            || self
+                .featureless_host_rules(pseudos)
+                .is_some_and(|m| !m.is_empty())
+            || self.slotted_rules(pseudos).is_some_and(|m| !m.is_empty())
+            || self.part_rules(pseudos).is_some_and(|m| !m.is_empty())
+    }
+
     /// Returns the featureless pseudo rule map for a given pseudo-element.
     #[inline]
     pub fn featureless_host_rules(
@@ -3719,6 +3875,7 @@ impl CascadeData {
 
     fn shrink_maps_if_needed(&mut self) {
         self.normal_rules.shrink_if_needed();
+        self.box_generating_pseudo_rules.shrink_if_needed();
         if let Some(ref mut host_rules) = self.featureless_host_rules {
             host_rules.shrink_if_needed();
         }
@@ -3855,7 +4012,9 @@ impl CascadeData {
         quirks_mode: QuirksMode,
         mut collected_scope_dependencies: Option<&mut Vec<Dependency>>,
     ) -> Result<(), AllocErr> {
-        self.num_declarations += declarations.read_with(guard).len();
+        let block = declarations.read_with(guard);
+        self.num_declarations += block.len();
+        let may_generate_box = BoxGeneratingPseudoRules::declarations_may_generate_box(block);
         for selector in selectors.slice() {
             self.num_selectors += 1;
 
@@ -4010,6 +4169,15 @@ impl CascadeData {
                 // :scope may match featureless shadow host if the scope
                 // root is the shadow root.
                 // See https://github.com/w3c/csswg-drafts/issues/9025
+                let in_normal_rules = !matches_featureless_host_only && !rule.selector.is_slotted();
+                if in_normal_rules && may_generate_box && pseudo_elements.len() == 1 {
+                    if let Some(map) = self
+                        .box_generating_pseudo_rules
+                        .map_mut(pseudo_elements[0])
+                    {
+                        map.insert(rule.clone(), quirks_mode)?;
+                    }
+                }
                 let rules = if matches_featureless_host_only {
                     self.featureless_host_rules.get_or_insert_with(Box::default)
                 } else if rule.selector.is_slotted() {
@@ -4708,6 +4876,7 @@ impl CascadeData {
     /// Clears the cascade data, but not the invalidation data.
     fn clear_cascade_data(&mut self) {
         self.normal_rules.clear();
+        self.box_generating_pseudo_rules.clear();
         if let Some(ref mut slotted_rules) = self.slotted_rules {
             slotted_rules.clear();
         }
