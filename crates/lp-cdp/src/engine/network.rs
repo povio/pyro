@@ -424,6 +424,17 @@ impl EngineHost {
                 self.apply_network_overrides(cmd.page);
                 Ok(Some(json!({})))
             }
+            "setBypassServiceWorker" => {
+                #[derive(Deserialize)]
+                struct Params {
+                    bypass: bool,
+                }
+                let params: Params = cmd.command.params()?;
+                self.sessions.get_mut(cmd.session_id).ok_or_else(|| CdpError::server("session is gone"))?.bypass_service_worker =
+                    params.bypass;
+                self.apply_network_overrides(cmd.page);
+                Ok(Some(json!({})))
+            }
             "clearBrowserCache" => {
                 // Chrome clears the cache shared by the target's browser
                 // context: other pages of that context miss afterwards. With
@@ -481,6 +492,9 @@ impl EngineHost {
         // requests left to apply them to.
         let _ = self.thread.browser.set_extra_http_headers(state.id, headers);
         let _ = self.thread.browser.set_cache_disabled(state.id, cache_disabled);
+        // Not tied to Network.enable, as in Chrome.
+        let bypass = state.sessions.iter().filter_map(|s| self.sessions.get(s)).any(|s| s.bypass_service_worker);
+        let _ = self.thread.browser.set_bypass_service_worker(state.id, bypass);
     }
 
     pub(super) fn update_network_subscriptions(&mut self) {

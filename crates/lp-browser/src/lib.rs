@@ -466,6 +466,7 @@ pub struct Page {
     max_touch_points: u32,
     extra_http_headers: lp_net::http::HeaderMap,
     cache_disabled: bool,
+    bypass_service_worker: bool,
     request_defaults: lp_net::RequestDefaults,
     viewport: lp_dom::media::Viewport,
     pending_resize: Option<LoaderId>,
@@ -991,6 +992,7 @@ impl Browser {
             max_touch_points: 0,
             extra_http_headers: Default::default(),
             cache_disabled: false,
+            bypass_service_worker: false,
             request_defaults: Default::default(),
             viewport: Default::default(),
             pending_resize: None,
@@ -1154,6 +1156,19 @@ impl Browser {
         }
         state.cache_disabled = disabled;
         state.request_defaults.cache_disabled = disabled;
+        self.refresh_frame_settings(page);
+        true
+    }
+
+    /// Makes this page's fetch/XHR skip the controlling service worker
+    /// (`Network.setBypassServiceWorker`), in all its frames and across
+    /// navigation. Returns false if there is no such page.
+    pub fn set_bypass_service_worker(&mut self, page: PageId, bypass: bool) -> bool {
+        let Some(state) = self.page_mut(page) else { return false };
+        if let Some(bindings) = &state.main_frame.page_dom {
+            bindings.set_bypass_service_worker(bypass);
+        }
+        state.bypass_service_worker = bypass;
         self.refresh_frame_settings(page);
         true
     }

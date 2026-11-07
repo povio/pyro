@@ -57,7 +57,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use bytes::Bytes;
-use lp_js::{JsError, JsResult, Object, Persistent, Scope, Value};
+use lp_js::{WeakRealm, JsError, JsResult, Object, Persistent, Scope, Value};
 use lp_net::{Destination, NetClient, Request, RequestId, RequestMode, ResponseEvent, ResponseSink};
 use lp_runtime::LoopHandle;
 use rustc_hash::FxHashMap;
@@ -487,7 +487,7 @@ pub(crate) fn client_gone(page: &PageDom) {
 
 /// `fetch()` and asynchronous XHR: the controller's `fetch` event, or the network.
 pub(crate) fn route(page: &PageDom, net: &NetClient, id: RequestId, request: Request, sink: ResponseSink) {
-    if page.sw_controlled.get() && !request.skip_interception && matches!(request.url.scheme(), "http" | "https") {
+    if page.sw_controlled.get() && !request.skip_interception && !page.bypass_service_worker() && matches!(request.url.scheme(), "http" | "https") {
         let target =
             page.sw_client.borrow().as_ref().and_then(|c| Some((c.id.clone(), c.controller.borrow().clone()?)));
         if let Some((client_id, version)) = target {
@@ -754,21 +754,24 @@ fn unregister(registration: &Rc<Registration>) -> bool {
 struct Settle {
     page: Weak<PageDom>,
     id: u64,
+    /// The realm whose module made the promise: an isolated world's calls
+    /// settle there, not in the main world.
+    realm: WeakRealm,
 }
 
 impl Settle {
     fn done(&self, result: Result<String, (String, String)>) {
         let Some(page) = self.page.upgrade() else { return };
         let id = self.id;
-        post_to_module(&page, false, move |s, glue| match result {
-            Ok(json) => call(s, glue, "settle", &[s.number(id as f64), s.boolean(true), s.string(&json)]),
-            Err((name, message)) => call(
-                s,
-                glue,
-                "settle",
-                &[s.number(id as f64), s.boolean(false), s.undefined(), s.string(&name), s.string(&message)],
-            ),
-        });
+        let realm = self.realm.clone();
+        let weak = Rc::downgrade(&page);
+        page.post_task(Box::new(move || {
+            let Some(page) = weak.upgrade().filter(|p| !p.is_disposed()) else { return };
+            let Some(realm) = realm.upgrade() else { return };
+            let Ok(s) = realm.scope() else { return };
+            let Some(glue) = existing(&s, &page).ok().flatten() else { return };
+            settle(&s, glue, id, result);
+        }));
     }
 
     fn registration(&self, registration: &Registration) {
@@ -780,6 +783,19 @@ impl Settle {
                 .is_some_and(|r| r.id == registration.id)
         });
         self.done(Ok(format!("{{\"reg\":{}}}", registration.json(matches))));
+    }
+}
+
+/// Settles promise `id` of a realm's module (`settle` of its glue).
+fn settle(s: &Scope<'_>, glue: Object<'_>, id: u64, result: Result<String, (String, String)>) {
+    match result {
+        Ok(json) => call(s, glue, "settle", &[s.number(id as f64), s.boolean(true), s.string(&json)]),
+        Err((name, message)) => call(
+            s,
+            glue,
+            "settle",
+            &[s.number(id as f64), s.boolean(false), s.undefined(), s.string(&name), s.string(&message)],
+        ),
     }
 }
 
@@ -860,8 +876,7 @@ fn register(
             format!("{prefix}: Service workers cannot start in a prepared template."),
         ));
     }
-    let _ = s;
-    let settle = Settle { page: Rc::downgrade(page), id };
+    let settle = Settle { page: Rc::downgrade(page), id, realm: s.realm().downgrade() };
     let context = page.context_services();
     let registry = &context.service_workers;
     let scope = scope_url.to_string();
@@ -1280,7 +1295,7 @@ fn module<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Object<'s>> {
             }
             url.to_string()
         };
-        let settle = Settle { page: Rc::downgrade(&page), id };
+        let settle = Settle { page: Rc::downgrade(&page), id, realm: s.realm().downgrade() };
         match page.context_services().service_workers.matching(&url) {
             Some(registration) => settle.registration(&registration),
             None => settle.done(Ok("{\"reg\":null}".into())),
@@ -1306,7 +1321,7 @@ fn module<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Object<'s>> {
             out.push_str(&registration.json(mine.as_ref().is_some_and(|m| Rc::ptr_eq(m, registration))));
         }
         out.push_str("]}");
-        Settle { page: Rc::downgrade(&page), id }.done(Ok(out));
+        Settle { page: Rc::downgrade(&page), id, realm: s.realm().downgrade() }.done(Ok(out));
         Ok(s.undefined())
     })?;
     native.set_atom("getRegistrations", f.value())?;
@@ -1315,14 +1330,14 @@ fn module<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Object<'s>> {
         let id = a.get(0).to_number()? as u64;
         let registration = same_origin_registration(&page, a.get(1).to_number()? as u64);
         let done = registration.is_some_and(|r| unregister(&r));
-        Settle { page: Rc::downgrade(&page), id }.done(Ok(format!("{{\"value\":{done}}}")));
+        Settle { page: Rc::downgrade(&page), id, realm: s.realm().downgrade() }.done(Ok(format!("{{\"value\":{done}}}")));
         Ok(s.undefined())
     })?;
     native.set_atom("unregister", f.value())?;
     let f = s.function("update", |s, _, a| {
         let page = crate::target::page_of(s)?;
         let id = a.get(0).to_number()? as u64;
-        let settle = Settle { page: Rc::downgrade(&page), id };
+        let settle = Settle { page: Rc::downgrade(&page), id, realm: s.realm().downgrade() };
         let registration = same_origin_registration(&page, a.get(1).to_number()? as u64);
         let Some(registration) = registration.filter(|r| !r.uninstalling.get()) else {
             settle.done(reply_error(

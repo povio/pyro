@@ -499,6 +499,7 @@ impl Browser {
             user_agent: state.user_agent_override.clone(),
             extra_headers: state.extra_http_headers.clone(),
             cache_disabled: state.cache_disabled,
+            bypass_service_worker: state.bypass_service_worker,
             scripts: state.init_scripts.clone(),
             bindings: state.bindings.clone(),
         };
@@ -635,6 +636,7 @@ pub(crate) fn create(
         .map_err(|e| JsError::Type(format!("invalid request defaults: {e}")))?;
     bindings.set_extra_http_headers(settings.extra_headers);
     bindings.set_cache_disabled(settings.cache_disabled);
+    bindings.set_bypass_service_worker(settings.bypass_service_worker);
     bindings.set_scripting_disabled(frame.sandbox.scripts_disabled);
     bindings.set_request_context(lp_webapi::RequestContext {
         frame_id: Some(frame.id.0),

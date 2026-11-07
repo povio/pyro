@@ -109,6 +109,12 @@ connection when the browser-level `Target.setAutoAttach` is on), with the
 `context.on('serviceworker')`, `context.serviceWorkers()` and
 `serviceWorker.evaluate()` work. Its target id starts with `SW`.
 
+`Network.setBypassServiceWorker` on a page session makes that page's fetch()
+and XHR (all frames, across navigation) skip the worker, as Playwright's
+`serviceWorkers: 'block'` and its storage-state page expect. Promises of
+`navigator.serviceWorker` settle in the world that made the call, so
+isolated worlds (Playwright's utility world) can use it too.
+
 ## Not supported
 
 - Navigation requests and the document's subresources (scripts, stylesheets,

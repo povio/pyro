@@ -478,3 +478,30 @@ fn message_ports_and_streams_cross_to_a_dedicated_worker() {
     assert_eq!(log, ["back:hello", "pong:ping", "ready"]);
     assert_eq!(eval(&thread, page, "detachedPost + ':' + locked"), "DataCloneError:true");
 }
+
+/// A call from an isolated world settles in that world (Playwright's storage
+/// state restore awaits `getRegistrations()` from its utility world).
+#[test]
+fn service_worker_promises_settle_in_an_isolated_world() {
+    let (server, mut thread) = setup();
+    let page = open(&mut thread, &server, "/page");
+    let world = thread.browser.isolated_world(page, "utility").unwrap();
+    {
+        let scope = world.scope().unwrap();
+        scope
+            .eval(
+                "globalThis.out = 'pending';
+                 navigator.serviceWorker.getRegistrations().then((r) => out = 'regs:' + r.length, (e) => out = 'error:' + e)",
+                None,
+                1,
+            )
+            .unwrap();
+    }
+    let result = thread.run_until(Some(Instant::now() + Duration::from_secs(10)), |_| {
+        let scope = world.scope().unwrap();
+        scope.eval("out !== 'pending'", None, 1).is_ok_and(|v| v.to_bool())
+    });
+    assert_eq!(result, lp_runtime::RunOutcome::Done, "getRegistrations() never settled in the isolated world");
+    let scope = world.scope().unwrap();
+    assert_eq!(scope.eval("out", None, 1).unwrap().to_string().unwrap(), "regs:0");
+}

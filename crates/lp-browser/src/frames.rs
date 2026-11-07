@@ -100,6 +100,7 @@ pub(crate) struct Settings {
     pub user_agent: Option<lp_webapi::UserAgentOverride>,
     pub extra_headers: lp_net::http::HeaderMap,
     pub cache_disabled: bool,
+    pub bypass_service_worker: bool,
     pub scripts: Vec<InitScript>,
     pub bindings: Vec<crate::Binding>,
 }
@@ -196,6 +197,7 @@ impl FrameHost {
                 user_agent: None,
                 extra_headers: Default::default(),
                 cache_disabled: false,
+                bypass_service_worker: false,
                 scripts: Vec::new(),
                 bindings: Vec::new(),
             }),
@@ -1267,6 +1269,7 @@ impl Browser {
             settings.user_agent = p.user_agent_override.clone();
             settings.extra_headers = p.extra_http_headers.clone();
             settings.cache_disabled = p.cache_disabled;
+            settings.bypass_service_worker = p.bypass_service_worker;
             settings.viewport = p.viewport.clone();
             settings.max_touch_points = p.max_touch_points;
         }
@@ -1276,6 +1279,7 @@ impl Browser {
             let _ = dom.set_user_agent_override(settings.user_agent.clone());
             dom.set_extra_http_headers(settings.extra_headers.clone());
             dom.set_cache_disabled(settings.cache_disabled);
+            dom.set_bypass_service_worker(settings.bypass_service_worker);
             dom.set_max_touch_points(settings.max_touch_points);
         }
     }
