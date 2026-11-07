@@ -154,7 +154,11 @@ fn main() {
             h.call(Some(&session), "Runtime.callFunctionOn", json!({"functionDeclaration": big, "objectId": realm, "arguments":[{"value":1}], "returnByValue": true}));
             n += 1;
         }
-        eprintln!("spin: {n} big callFunctionOn ({} bytes) in {secs}s = {:.1}us each", big.len(), secs as f64 * 1e6 / n as f64);
+        eprintln!(
+            "spin: {n} big callFunctionOn ({} bytes) in {secs}s = {:.1}us each",
+            big.len(),
+            secs as f64 * 1e6 / n as f64
+        );
         std::process::exit(0);
     }
     for (label, source) in

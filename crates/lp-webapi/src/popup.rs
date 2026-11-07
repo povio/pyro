@@ -30,7 +30,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 
-use lp_js::{Args, ClassDef, JsClass, JsError, JsResult, NoParent, Persistent, Scope, Value};
+use lp_js::{Args, ClassDef, JsClass, JsError, JsResult, NoParent, Scope, Value};
 
 use crate::page::PageDom;
 use crate::storage::StorageNamespace;
@@ -305,17 +305,7 @@ pub(crate) fn deliver_message(page: &Rc<PageDom>, message: crate::structured_clo
         }
         let (Some(window), Some(realm)) = (page.window_target(), page.main_world_realm()) else { return };
         let Ok(scope) = realm.scope() else { return };
-        let (ty, data) = match crate::structured_clone::decode_message(&scope, &message) {
-            Ok(value) => ("message", Some(Persistent::new(&scope, value))),
-            Err(_) => ("messageerror", None),
-        };
-        let ev = crate::event::EventCore::trusted(&page, crate::event::EventInterface::MessageEvent, ty, false, false);
-        {
-            let mut f = ev.fields.borrow_mut();
-            f.message_data = data;
-            f.origin = origin;
-        }
-        crate::target::fire(&page, window, &ev);
+        crate::message_channel::fire_wire_message(&scope, &page, window, &message, origin);
     }));
 }
 

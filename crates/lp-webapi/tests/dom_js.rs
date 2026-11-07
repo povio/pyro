@@ -2923,7 +2923,10 @@ fn canvas_2d_measures_text_without_pixels() {
     );
     assert_eq!(eval(&e.main, "x.save(); x.font = '20px monospace'; x.restore(); x.font"), "32px system-ui");
     assert_eq!(
-        eval(&e.main, "x.fillText('9', 0, 10); try { x.getImageData(0, 0, 1, 1); 'returned' } catch (err) { err.name }"),
+        eval(
+            &e.main,
+            "x.fillText('9', 0, 10); try { x.getImageData(0, 0, 1, 1); 'returned' } catch (err) { err.name }"
+        ),
         "NotSupportedError"
     );
     // The TOS pattern: drawing.font = getComputedStyle(input).font.
@@ -3512,19 +3515,20 @@ fn worker_constructor_checks_and_load_failure_without_a_network() {
     e.page.set_hooks(Some(tasks.clone()));
     let r = &e.main;
     let base = e.page.pinned_count();
-    // These fail before a worker exists; `SharedWorker` and `ServiceWorker` stay absent.
+    // These fail before a worker exists; `SharedWorker` stays absent (`ServiceWorker` is the
+    // service worker interface, made on first use).
     assert_eq!(
         eval(
             r,
             "const err = (f) => { try { f(); return 'ok'; } catch (e) { return e.name; } };
              [err(() => new Worker('http://[')), err(() => new Worker()), err(() => Worker('w.js')),
               err(() => new Worker('w.js', {type: 'module'}).terminate()), err(() => new Worker('w.js', {type: 'other'})),
-              err(() => new Worker('https://example.test/w.js')), typeof SharedWorker, typeof ServiceWorker].join()",
+              err(() => new Worker('https://example.test/w.js')), typeof SharedWorker, 'ServiceWorker' in window].join()",
         ),
         if lp_js::Capabilities::detect().modules {
-            "SyntaxError,TypeError,TypeError,ok,TypeError,SecurityError,undefined,undefined"
+            "SyntaxError,TypeError,TypeError,ok,TypeError,SecurityError,undefined,true"
         } else {
-            "SyntaxError,TypeError,TypeError,NotSupportedError,TypeError,SecurityError,undefined,undefined"
+            "SyntaxError,TypeError,TypeError,NotSupportedError,TypeError,SecurityError,undefined,true"
         }
     );
     assert_eq!(e.page.pinned_count(), base, "a rejected construction leaves nothing behind");

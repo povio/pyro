@@ -560,6 +560,7 @@ pub(crate) fn create(
     if page.child.is_some() {
         bindings.set_frame_viewport_source(frame_viewport_source(host, &frame));
     }
+    bindings.set_nested_frame(page.child.is_some());
     bindings.set_context_services(settings.services);
     bindings.set_max_touch_points(settings.max_touch_points);
     bindings

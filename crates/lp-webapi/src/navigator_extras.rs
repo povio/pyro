@@ -155,7 +155,7 @@ impl UserAgentMetadata {
 }
 
 /// A JSON string literal.
-fn quote(s: &str) -> String {
+pub(crate) fn quote(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     out.push('"');
     for c in s.chars() {
@@ -211,6 +211,8 @@ pub struct ContextServices {
     watchers: RefCell<Vec<std::rc::Weak<PageDom>>>,
     /// `Emulation.setGeolocationOverride`. Outer `None`: no override.
     geolocation: RefCell<Option<Option<GeolocationFix>>>,
+    /// Service worker registrations and clients (`crate::service_worker`).
+    pub(crate) service_workers: crate::service_worker::Registry,
 }
 
 /// A position `navigator.geolocation` reports. CDP's optional coordinates are

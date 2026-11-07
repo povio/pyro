@@ -752,7 +752,9 @@ pub(crate) fn install(s: &Scope<'_>) -> JsResult<()> {
                 let page_id = page.id();
                 PAGES.with(|pages| pages.borrow_mut().insert(page_id, Rc::downgrade(&page)));
                 let mut keepalive = extras.keepalive;
-                net.fetch_with_id(
+                crate::service_worker::route(
+                    &page,
+                    &net,
                     id,
                     request,
                     Box::new(move |event| {

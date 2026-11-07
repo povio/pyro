@@ -627,7 +627,9 @@ impl Xhr {
             }
         }
         let page_id = page.id();
-        net.fetch_with_id(
+        crate::service_worker::route(
+            &page,
+            &net,
             id,
             request,
             Box::new(move |event| delivery::receive(&wire, page_id, id, &poster, limits, event)),

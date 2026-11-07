@@ -1,0 +1,370 @@
+//! `ServiceWorkerGlobalScope`: the part of a service worker that runs on its
+//! thread. The thread, VM, loop and empty document are a dedicated worker's
+//! (`worker_scope`); what differs is the global (`ServiceWorkerGlobalScope`,
+//! with `clients`, `registration`, `serviceWorker`, `skipWaiting()` and the
+//! `install`/`activate`/`fetch`/`message` handlers) and the script-level glue
+//! (`service_worker_scope.js`): the event classes, `Clients`/`Client`, and the
+//! dispatch of what the browser thread sends (`service_worker.rs`).
+//!
+//! Intercepted requests: the page's `fetch()`/XHR hand their `lp_net::Request`
+//! and response sink here ([`FetchJob`]). The `fetch` event gets a `Request`
+//! made from it. `respondWith(response)` reads the response's body whole and
+//! answers the sink as the network would (status, headers, one data chunk);
+//! no `respondWith` sends the request on to the network with the sink, so
+//! Playwright's routing and the Network domain see it as any other request;
+//! a rejected or invalid response is a network error. A job the worker never
+//! answers (it stopped) fails the request; one that never reached the worker
+//! goes to the network.
+use std::cell::{Cell, RefCell};
+use std::rc::Rc;
+
+use bytes::Bytes;
+use lp_js::{JsError, JsResult, Persistent, Scope, Value};
+use lp_net::http::{HeaderMap, HeaderName, HeaderValue, StatusCode};
+use lp_net::{NetClient, NetError, Request, RequestId, ResponseEvent, ResponseHead, ResponseKind, ResponseSink};
+use rustc_hash::FxHashMap;
+
+use crate::page::{PageDom, RemotePoster};
+use crate::service_worker::{deliver, Lifecycle, QueryKind, SwUp};
+
+/// What a service worker's thread is started with.
+#[derive(Clone)]
+pub(crate) struct ServiceStart {
+    pub version: u64,
+    pub registration: u64,
+    pub scope: String,
+    pub script_url: String,
+    pub update_via_cache: String,
+}
+
+/// A request a controlled client made, on its way through the worker.
+pub(crate) struct FetchJob {
+    pub id: RequestId,
+    pub request: Option<Request>,
+    pub sink: Option<ResponseSink>,
+    pub net: NetClient,
+    pub client_id: String,
+    /// A `fetch` event has it: dropping it unanswered is a network error.
+    pub dispatched: bool,
+}
+
+impl Drop for FetchJob {
+    fn drop(&mut self) {
+        let (Some(request), Some(mut sink)) = (self.request.take(), self.sink.take()) else { return };
+        if self.dispatched {
+            sink(ResponseEvent::Failed(NetError::Other("The service worker stopped before it responded".into())));
+        } else {
+            self.net.fetch_with_id(self.id, request, sink);
+        }
+    }
+}
+
+thread_local! {
+    /// This worker's glue object (service_worker_scope.js); cleared before the VM goes.
+    static GLUE: RefCell<Option<Persistent>> = const { RefCell::new(None) };
+    /// Fetch events waiting for their answer, by key.
+    static PENDING: RefCell<FxHashMap<u64, FetchJob>> = RefCell::default();
+    static NEXT_KEY: Cell<u64> = const { Cell::new(1) };
+}
+
+/// Drops what holds handles into the VM, and the unanswered fetches (each
+/// fails its request).
+pub(crate) fn tear_down() {
+    drop(GLUE.with(|g| g.take()));
+    drop(PENDING.with(|p| std::mem::take(&mut *p.borrow_mut())));
+}
+
+fn next_key() -> u64 {
+    NEXT_KEY.with(|k| {
+        let key = k.get();
+        k.set(key + 1);
+        key
+    })
+}
+
+fn glue<'s>(s: &Scope<'s>) -> JsResult<lp_js::Object<'s>> {
+    let value = GLUE.with(|g| g.borrow().as_ref().map(|p| p.get(s)));
+    value.and_then(|v| v.as_object()).ok_or(JsError::ContextDestroyed)
+}
+
+/// A member of the glue object (`clients`, `registration`, ...).
+pub(crate) fn member<'s>(s: &Scope<'s>, name: &str) -> JsResult<Value<'s>> {
+    glue(s)?.get(name)
+}
+
+fn call(s: &Scope<'_>, name: &str, args: &[Value<'_>]) {
+    let result = (|| {
+        let function = glue(s)?.get(name)?;
+        let function = function.as_object().ok_or(JsError::ContextDestroyed)?;
+        let args: Vec<Value<'_>> = args.iter().map(|v| s.rehome(*v)).collect();
+        function.call(None, &args)
+    })();
+    if let Err(error) = result {
+        if !matches!(error, JsError::Terminated | JsError::ContextDestroyed) {
+            s.report_exception(&error);
+        }
+    }
+}
+
+/// Makes the glue in a new service worker realm, before its script runs.
+pub(crate) fn install(s: &Scope<'_>, start: &ServiceStart, poster: RemotePoster) -> JsResult<()> {
+    let version = start.version;
+    let native = s.object();
+    let up = move |poster: &RemotePoster, message: SwUp| {
+        poster(Box::new(move || deliver(version, message)));
+    };
+    let (p, next_query) = (poster.clone(), Rc::new(Cell::new(1u64)));
+    let query = s.function("query", move |s, _, a| {
+        let id = next_query.get();
+        next_query.set(id + 1);
+        let kind = match a.get(0).to_string()?.as_str() {
+            "skipWaiting" => QueryKind::SkipWaiting,
+            "claim" => QueryKind::Claim,
+            "matchAll" => QueryKind::MatchAll { include_uncontrolled: a.get(1).to_bool(), kind: a.get(2).to_string()? },
+            "get" => QueryKind::Get(a.get(1).to_string()?),
+            "unregister" => QueryKind::Unregister,
+            "update" => QueryKind::Update,
+            other => return Err(JsError::Type(format!("unknown query {other}"))),
+        };
+        up(&p, SwUp::Query { id, kind });
+        Ok(s.number(id as f64))
+    })?;
+    native.set_atom("query", query.value())?;
+    let p = poster.clone();
+    let post = s.function("postToClient", move |s, _, a| {
+        let client = a.get(0).to_string()?;
+        let options = crate::structured_clone::transfer_options(s, a.opt(2))?;
+        let message = crate::structured_clone::encode_message(s, a.get(1), options)?;
+        up(&p, SwUp::PostToClient { client, message });
+        Ok(s.undefined())
+    })?;
+    native.set_atom("postToClient", post.value())?;
+    let p = poster.clone();
+    let done = s.function("done", move |s, _, a| {
+        let kind = if a.get(0).to_string()? == "install" { Lifecycle::Install } else { Lifecycle::Activate };
+        up(&p, SwUp::Done { kind, ok: a.get(1).to_bool() });
+        Ok(s.undefined())
+    })?;
+    native.set_atom("done", done.value())?;
+    let respond = s.function("respond", |s, _, a| {
+        let key = a.get(0).to_number()? as u64;
+        let Some(job) = PENDING.with(|p| p.borrow_mut().remove(&key)) else { return Ok(s.undefined()) };
+        respond(s, job, &a)?;
+        Ok(s.undefined())
+    })?;
+    native.set_atom("respond", respond.value())?;
+    let passthrough = s.function("passthrough", |s, _, a| {
+        let key = a.get(0).to_number()? as u64;
+        if let Some(mut job) = PENDING.with(|p| p.borrow_mut().remove(&key)) {
+            // Dropped undispatched: the request goes to the network.
+            job.dispatched = false;
+        }
+        Ok(s.undefined())
+    })?;
+    native.set_atom("passthrough", passthrough.value())?;
+    let fail = s.function("failFetch", |s, _, a| {
+        let key = a.get(0).to_number()? as u64;
+        if let Some(mut job) = PENDING.with(|p| p.borrow_mut().remove(&key)) {
+            let reason = a.get(1).to_string().unwrap_or_default();
+            job.request.take();
+            if let Some(mut sink) = job.sink.take() {
+                sink(ResponseEvent::Failed(NetError::Other(format!("The service worker's response failed: {reason}"))));
+            }
+        }
+        Ok(s.undefined())
+    })?;
+    native.set_atom("failFetch", fail.value())?;
+    let info = s.object();
+    info.set_atom("scope", s.string(&start.scope))?;
+    info.set_atom("scriptURL", s.string(&start.script_url))?;
+    info.set_atom("updateViaCache", s.string(&start.update_via_cache))?;
+    info.set_atom("registrationId", s.number(start.registration as f64))?;
+    info.set_atom("versionId", s.number(start.version as f64))?;
+    let roots = (Persistent::new(s, native.value()), Persistent::new(s, info.value()));
+    let factory =
+        s.eval(include_str!("service_worker_scope.js"), Some("lightningpanda://internal/service-worker-scope.js"), 1)?;
+    let factory = factory.as_object().ok_or_else(|| JsError::Type("service worker glue".into()))?;
+    let glue = factory.call(None, &[roots.0.get(s), roots.1.get(s)])?;
+    GLUE.with(|g| *g.borrow_mut() = Some(Persistent::new(s, glue)));
+    Ok(())
+}
+
+/// The `respondWith` response, as the network would have given it.
+fn respond(s: &Scope<'_>, mut job: FetchJob, a: &lp_js::Args<'_>) -> JsResult<()> {
+    let (Some(request), Some(mut sink)) = (job.request.take(), job.sink.take()) else { return Ok(()) };
+    let fail = |mut sink: ResponseSink, reason: &str| {
+        sink(ResponseEvent::Failed(NetError::Other(format!("The service worker's response failed: {reason}"))));
+    };
+    let kind = match a.get(6).to_string()?.as_str() {
+        "opaque" => ResponseKind::Opaque,
+        "opaqueredirect" => ResponseKind::OpaqueRedirect,
+        "cors" => ResponseKind::Cors,
+        _ => ResponseKind::Basic,
+    };
+    let status = a.get(1).to_number()? as u16;
+    let status = match (StatusCode::from_u16(status), kind) {
+        (_, ResponseKind::Opaque | ResponseKind::OpaqueRedirect) => StatusCode::OK,
+        (Ok(status), _) => status,
+        (Err(_), _) => {
+            fail(sink, "invalid status");
+            return Ok(());
+        }
+    };
+    let mut headers = HeaderMap::new();
+    if let Some(list) = a.get(3).as_object() {
+        let count = list.get_atom("length")?.to_number()? as u32;
+        let mut i = 0;
+        while i + 1 < count {
+            let (name, value) = (list.get_index(i)?.to_string()?, list.get_index(i + 1)?.to_string()?);
+            if let (Ok(name), Ok(value)) = (HeaderName::from_bytes(name.as_bytes()), HeaderValue::from_str(&value)) {
+                headers.append(name, value);
+            }
+            i += 2;
+        }
+    }
+    let body = crate::encoding::buffer_source_bytes(s, a.get(4))?.map(Bytes::from).unwrap_or_default();
+    let url = a.get(5).to_string().ok().filter(|u| !u.is_empty()).and_then(|u| lp_net::Url::parse(&u).ok());
+    let (mime, charset) = headers
+        .get(lp_net::http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(lp_net::parse_content_type)
+        .unwrap_or_default();
+    let head = ResponseHead {
+        url: url.unwrap_or_else(|| request.url.clone()),
+        status,
+        status_text: a.get(2).to_string()?,
+        headers,
+        mime,
+        charset,
+        redirected: false,
+        from_cache: false,
+        kind,
+        remote_addr: None,
+        protocol: lp_net::http::Version::HTTP_11,
+    };
+    let len = body.len() as u64;
+    sink(ResponseEvent::Response(head));
+    if !body.is_empty() {
+        sink(ResponseEvent::Data(body));
+    }
+    sink(ResponseEvent::Finished { encoded_len: len, decoded_len: len });
+    Ok(())
+}
+
+/// Moves this worker's own `state` (the browser thread's lifecycle step).
+pub(crate) fn set_state(s: &Scope<'_>, state: &str) {
+    call(s, "state", &[s.string(state)]);
+}
+
+pub(crate) fn lifecycle(s: &Scope<'_>, kind: Lifecycle) {
+    call(s, if kind == Lifecycle::Install { "install" } else { "activate" }, &[]);
+}
+
+pub(crate) fn reply(s: &Scope<'_>, id: u64, result: Result<String, (String, String)>) {
+    match result {
+        Ok(json) => call(s, "reply", &[s.number(id as f64), s.boolean(true), s.string(&json)]),
+        Err((name, message)) => call(
+            s,
+            "reply",
+            &[s.number(id as f64), s.boolean(false), s.undefined(), s.string(&name), s.string(&message)],
+        ),
+    }
+}
+
+/// A message from a client (`ServiceWorker.postMessage`); `source` is the
+/// client's JSON description.
+pub(crate) fn message(
+    s: &Scope<'_>,
+    page: &Rc<PageDom>,
+    message: &crate::structured_clone::WireMessage,
+    source: &str,
+    origin: &str,
+) {
+    let source = s.parse_json(source).unwrap_or_else(|| s.null());
+    let _ = page;
+    match crate::structured_clone::decode_message_with_ports(s, message) {
+        Ok((data, ports)) => {
+            call(s, "dispatchMessage", &[data, ports.unwrap_or_else(|| s.undefined()), source, s.string(origin)])
+        }
+        Err(JsError::Terminated) => {}
+        Err(_) => call(s, "dispatchMessageError", &[source, s.string(origin)]),
+    }
+}
+
+fn mode_name(mode: lp_net::RequestMode) -> &'static str {
+    match mode {
+        lp_net::RequestMode::Navigate => "navigate",
+        lp_net::RequestMode::SameOrigin => "same-origin",
+        lp_net::RequestMode::NoCors => "no-cors",
+        lp_net::RequestMode::Cors => "cors",
+    }
+}
+
+fn credentials_name(credentials: lp_net::Credentials) -> &'static str {
+    match credentials {
+        lp_net::Credentials::Omit => "omit",
+        lp_net::Credentials::SameOrigin => "same-origin",
+        lp_net::Credentials::Include => "include",
+    }
+}
+
+fn cache_name(cache: lp_net::CacheMode) -> &'static str {
+    match cache {
+        lp_net::CacheMode::Default => "default",
+        lp_net::CacheMode::NoStore => "no-store",
+        lp_net::CacheMode::Reload => "reload",
+        lp_net::CacheMode::NoCache => "no-cache",
+        lp_net::CacheMode::ForceCache => "force-cache",
+        lp_net::CacheMode::OnlyIfCached => "only-if-cached",
+    }
+}
+
+fn redirect_name(redirect: lp_net::RedirectMode) -> &'static str {
+    match redirect {
+        lp_net::RedirectMode::Follow => "follow",
+        lp_net::RedirectMode::Error => "error",
+        lp_net::RedirectMode::Manual => "manual",
+    }
+}
+
+fn destination_name(destination: lp_net::Destination) -> &'static str {
+    match lp_net::referrer::fetch_dest(destination) {
+        "empty" => "",
+        other => other,
+    }
+}
+
+/// Fires a `fetch` event for `job`.
+pub(crate) fn fetch(s: &Scope<'_>, mut job: FetchJob) {
+    let Some(request) = job.request.as_ref() else { return };
+    let headers = request
+        .headers
+        .iter()
+        .map(|(n, v)| (n.as_str().to_owned(), String::from_utf8_lossy(v.as_bytes()).into_owned()))
+        .collect();
+    let intercepted = crate::request::Intercepted {
+        method: request.method.as_str().to_owned(),
+        url: request.url.to_string(),
+        mode: mode_name(request.mode),
+        credentials: credentials_name(request.credentials),
+        cache: cache_name(request.cache),
+        redirect: redirect_name(request.redirect),
+        referrer: request.referrer.as_ref().map_or_else(|| "no-referrer".to_owned(), |u| u.to_string()),
+        referrer_policy: request.referrer_policy.as_str().to_owned(),
+        integrity: String::new(),
+        keepalive: false,
+        destination: destination_name(request.destination),
+        headers,
+        body: request.body.clone(),
+    };
+    let value = match crate::request::intercepted(s, intercepted) {
+        Ok(value) => value,
+        // The job drops undispatched: the request goes to the network.
+        Err(_) => return,
+    };
+    let key = next_key();
+    let client = job.client_id.clone();
+    job.dispatched = true;
+    PENDING.with(|p| p.borrow_mut().insert(key, job));
+    call(s, "dispatchFetch", &[s.number(key as f64), value, s.string(&client), s.string("")]);
+}

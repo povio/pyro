@@ -2656,7 +2656,10 @@ fn emulated_media_flips_match_media_and_fires_change() {
 #[test]
 fn scrollable_overflow_of_body_overflow_fixed_and_empty_boxes() {
     let mut h = Harness::new();
-    h.page("Emulation.setDeviceMetricsOverride", json!({"width":800,"height":600,"deviceScaleFactor":1,"mobile":false}));
+    h.page(
+        "Emulation.setDeviceMetricsOverride",
+        json!({"width":800,"height":600,"deviceScaleFactor":1,"mobile":false}),
+    );
     let wide = r#"<div style="width:2000px;height:50px"></div>"#;
     let tall = r#"<div style="width:50px;height:1000px"></div>"#;
     let far = "left:1900px;top:2000px";
@@ -2665,21 +2668,41 @@ fn scrollable_overflow_of_body_overflow_fixed_and_empty_boxes() {
         (format!(r#"<body style="margin:0;overflow:hidden;width:300px">{wide}"#), [2000, 600]),
         (format!(r#"<body style="margin:0;overflow:hidden;height:100px">{tall}"#), [800, 1000]),
         // Stays on `body`: the root has its own.
-        (format!(r#"<html style="overflow:hidden"><body style="margin:0;overflow:hidden;width:300px">{wide}"#), [800, 600]),
-        (format!(r#"<html style="overflow:hidden"><body style="margin:0;overflow:hidden;height:100px">{tall}"#), [800, 600]),
+        (
+            format!(r#"<html style="overflow:hidden"><body style="margin:0;overflow:hidden;width:300px">{wide}"#),
+            [800, 600],
+        ),
+        (
+            format!(r#"<html style="overflow:hidden"><body style="margin:0;overflow:hidden;height:100px">{tall}"#),
+            [800, 600],
+        ),
         // Empty boxes count for nothing, wherever they are.
         (r#"<body style="margin:0"><div style="width:2000px;height:0"></div>"#.into(), [800, 600]),
-        (format!(r#"<body style="margin:0"><div style="position:absolute;{far};width:0;height:10px"></div>"#), [800, 600]),
+        (
+            format!(r#"<body style="margin:0"><div style="position:absolute;{far};width:0;height:10px"></div>"#),
+            [800, 600],
+        ),
         // Fixed does not count, absolute does.
-        (format!(r#"<body style="margin:0"><div style="position:fixed;{far};width:50px;height:10px"></div>"#), [800, 600]),
-        (format!(r#"<body style="margin:0"><div style="position:absolute;{far};width:50px;height:10px"></div>"#), [1950, 2010]),
+        (
+            format!(r#"<body style="margin:0"><div style="position:fixed;{far};width:50px;height:10px"></div>"#),
+            [800, 600],
+        ),
+        (
+            format!(r#"<body style="margin:0"><div style="position:absolute;{far};width:50px;height:10px"></div>"#),
+            [1950, 2010],
+        ),
     ] {
         load_html(&mut h, &format!("<!doctype html>{doc}"));
-        let scroll = eval_value(&mut h, "[document.documentElement.scrollWidth, document.documentElement.scrollHeight]");
+        let scroll =
+            eval_value(&mut h, "[document.documentElement.scrollWidth, document.documentElement.scrollHeight]");
         assert_eq!(scroll, json!(chrome), "{doc}");
         let metrics = h.page("Page.getLayoutMetrics", json!({}));
         let content = &metrics["result"]["cssContentSize"];
-        assert_eq!([content["width"].as_f64().unwrap(), content["height"].as_f64().unwrap()], chrome.map(f64::from), "{doc}");
+        assert_eq!(
+            [content["width"].as_f64().unwrap(), content["height"].as_f64().unwrap()],
+            chrome.map(f64::from),
+            "{doc}"
+        );
     }
     // `body` keeps its own scroll sizes, 2000 px wide inside 300 px, either way.
     load_html(&mut h, &format!(r#"<!doctype html><body style="margin:0;overflow:hidden;width:300px">{wide}"#));

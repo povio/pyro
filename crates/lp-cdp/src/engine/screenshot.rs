@@ -442,22 +442,23 @@ impl EngineHost {
                 parse_page_ranges(ranges).ok_or_else(|| CdpError::invalid_params("Page range syntax error"))?
             }
         };
-        let opts = lp_render::PdfOptions {
-            page_selector: ".pz-page".into(),
-            paper,
-            margins,
-            page_area: Some(page_area),
-            scale,
-            print_background: p.print_background,
-            page_ranges,
-            // `preferCSSPageSize` writes pages of the box's own size (close to Chrome's @page size).
-            place_on_paper: p.prefer_css_page_size != Some(true),
-            print_media: self.pages.get(&cmd.page).and_then(|state| state.emulated_media.as_ref()).is_none_or(|raw| {
-                !matches!(raw.get("media").and_then(|m| m.as_str()).map(str::trim), Some("screen"))
-            }),
-            // Chrome's default: tagged.
-            tagged: p.generate_tagged_pdf.unwrap_or(true),
-        };
+        let opts =
+            lp_render::PdfOptions {
+                page_selector: ".pz-page".into(),
+                paper,
+                margins,
+                page_area: Some(page_area),
+                scale,
+                print_background: p.print_background,
+                page_ranges,
+                // `preferCSSPageSize` writes pages of the box's own size (close to Chrome's @page size).
+                place_on_paper: p.prefer_css_page_size != Some(true),
+                print_media: self.pages.get(&cmd.page).and_then(|state| state.emulated_media.as_ref()).is_none_or(
+                    |raw| !matches!(raw.get("media").and_then(|m| m.as_str()).map(str::trim), Some("screen")),
+                ),
+                // Chrome's default: tagged.
+                tagged: p.generate_tagged_pdf.unwrap_or(true),
+            };
         let pid = self.pages.get(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?.id;
         let started = Instant::now();
         let stream = p.transfer_mode.as_deref() == Some("ReturnAsStream");

@@ -90,6 +90,13 @@ pub struct PageDom {
     pub(crate) worker_wire: RefCell<FxHashMap<RealmId, Persistent>>,
     /// Workers this document started that have not ended (`crate::worker`).
     pub(crate) workers: RefCell<Vec<Rc<crate::worker::WorkerInner>>>,
+    /// This document as a service worker client, once it is one.
+    pub(crate) sw_client: RefCell<Option<Rc<crate::service_worker::ClientInner>>>,
+    /// A service worker controls this document: its requests go there
+    /// (`service_worker::route`). The one test uncontrolled requests pay.
+    pub(crate) sw_controlled: Cell<bool>,
+    /// The document is shown in a child frame (a client's `frameType`).
+    nested_frame: Cell<bool>,
     /// Each realm's original `Object.defineProperty` ([Replaceable] setters).
     pub(crate) define_properties: RefCell<FxHashMap<RealmId, Persistent>>,
     /// MessagePorts whose peer was collected; their pins are reconciled at
@@ -478,6 +485,9 @@ impl PageDom {
         Rc::new_cyclic(|this| PageDom {
             this: this.clone(),
             frame_sized: Cell::new(false),
+            sw_client: RefCell::new(None),
+            sw_controlled: Cell::new(false),
+            nested_frame: Cell::new(false),
             frame_resize_queued: Cell::new(false),
             frame_resize_next: Cell::new(None),
             frame_resize_wake: Cell::new(false),
@@ -602,8 +612,20 @@ impl PageDom {
     }
 
     /// Shares the browser context's permissions and clipboard.
+    /// Also where a new document of a context with service worker
+    /// registrations finds its controller (one emptiness test otherwise).
     pub fn set_context_services(&self, services: Rc<crate::navigator_extras::ContextServices>) {
         *self.context_services.borrow_mut() = services;
+        if let Some(this) = self.this.upgrade() {
+            crate::service_worker::document_created(&this);
+        }
+    }
+    /// The document is shown in a child frame (set before the context services).
+    pub fn set_nested_frame(&self, nested: bool) {
+        self.nested_frame.set(nested);
+    }
+    pub(crate) fn is_nested_frame(&self) -> bool {
+        self.nested_frame.get()
     }
     pub fn context_services(&self) -> Rc<crate::navigator_extras::ContextServices> {
         self.context_services.borrow().clone()
@@ -672,6 +694,7 @@ impl PageDom {
         crate::intersection_observer::dispose(self);
         crate::resize_observer::dispose(self);
         crate::worker::dispose(self);
+        crate::service_worker::client_gone(self);
         crate::indexeddb::dispose(self);
         self.realms.borrow_mut().clear();
         drop(self.main_world.take());

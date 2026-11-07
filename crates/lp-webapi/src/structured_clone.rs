@@ -142,12 +142,14 @@ pub struct WireMessage {
     buffers: Vec<Vec<u8>>,
     /// Bytes of the Blobs and Files it holds (shared, immutable).
     blobs: Vec<bytes::Bytes>,
+    /// Transferred MessagePorts, in transfer-list order (the event's `ports`).
+    ports: Vec<crate::message_channel::LinkEnd>,
 }
 
 impl WireMessage {
     #[cfg(test)]
     pub(crate) fn empty() -> Self {
-        WireMessage { text: String::new(), buffers: Vec::new(), blobs: Vec::new() }
+        WireMessage { text: String::new(), buffers: Vec::new(), blobs: Vec::new(), ports: Vec::new() }
     }
     /// What the message holds in memory while queued.
     pub(crate) fn size(&self) -> usize {
@@ -162,6 +164,8 @@ thread_local! {
     /// Blob bytes of the message being encoded or decoded on this thread
     /// (saved and restored around each, so nested messages keep their own).
     static WIRE_BLOBS: std::cell::RefCell<Vec<bytes::Bytes>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// Ports moved out by the message being encoded on this thread.
+    static WIRE_PORTS: std::cell::RefCell<Vec<crate::message_channel::LinkEnd>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// `host` of worker_wire.js.
@@ -193,6 +197,12 @@ fn wire_host<'s>(s: &Scope<'s>, args: &lp_js::Args<'s>) -> JsResult<lp_js::Value
                 }
                 return Ok(files.value());
             }
+            Ok(s.undefined())
+        }
+        3 => Ok(s.boolean(crate::message_channel::is_transferable_port(s, value)?)),
+        4 => {
+            let end = crate::message_channel::transfer_out(s, value)?;
+            WIRE_PORTS.with(|p| p.borrow_mut().push(end));
             Ok(s.undefined())
         }
         1 => {
@@ -254,8 +264,10 @@ pub fn encode_message<'s>(s: &Scope<'s>, value: lp_js::Value<'s>, options: lp_js
     let clone = clone.ok_or_else(|| JsError::dom("NotSupportedError", "structured clone is unavailable"))?;
     let (encode, _) = wire_functions(s)?;
     let saved = WIRE_BLOBS.with(|b| b.take());
+    let saved_ports = WIRE_PORTS.with(|p| p.take());
     let pair = encode.call(None, &[clone, value, options]);
     let blobs = WIRE_BLOBS.with(|b| b.replace(saved));
+    let ports = WIRE_PORTS.with(|p| p.replace(saved_ports));
     let pair = pair?;
     let pair = pair.as_object().expect("encoded pair");
     let text = pair.get_index(0)?.to_string()?;
@@ -267,18 +279,40 @@ pub fn encode_message<'s>(s: &Scope<'s>, value: lp_js::Value<'s>, options: lp_js
         let bytes = crate::encoding::buffer_source_bytes(s, list.get_index(i)?)?;
         buffers.push(bytes.ok_or_else(|| JsError::dom("DataCloneError", "Detached ArrayBuffer"))?);
     }
-    Ok(WireMessage { text, buffers, blobs })
+    Ok(WireMessage { text, buffers, blobs, ports })
 }
 
-/// StructuredDeserialize into `s`'s realm.
+/// StructuredDeserialize into `s`'s realm. The ports a message carries are
+/// left out: see [`decode_message_with_ports`].
 pub fn decode_message<'s>(s: &Scope<'s>, message: &WireMessage) -> JsResult<lp_js::Value<'s>> {
+    decode(s, message, s.undefined())
+}
+
+/// [`decode_message`] that also makes the message's transferred ports in
+/// `s`'s realm: their array (a `MessageEvent`'s `ports`) when it has any.
+pub(crate) fn decode_message_with_ports<'s>(
+    s: &Scope<'s>,
+    message: &WireMessage,
+) -> JsResult<(lp_js::Value<'s>, Option<lp_js::Value<'s>>)> {
+    if message.ports.is_empty() {
+        return Ok((decode_message(s, message)?, None));
+    }
+    let ports = s.array(&[])?;
+    for (i, end) in message.ports.iter().enumerate() {
+        ports.set_index(i as u32, crate::message_channel::transfer_in(s, end.clone())?)?;
+    }
+    let value = decode(s, message, ports.value())?;
+    Ok((value, Some(ports.value())))
+}
+
+fn decode<'s>(s: &Scope<'s>, message: &WireMessage, ports: lp_js::Value<'s>) -> JsResult<lp_js::Value<'s>> {
     let (_, decode) = wire_functions(s)?;
     let list = s.array(&[])?;
     for (i, bytes) in message.buffers.iter().enumerate() {
         list.set_index(i as u32, crate::encoding::array_buffer(s, bytes)?)?;
     }
     let saved = WIRE_BLOBS.with(|b| b.replace(message.blobs.clone()));
-    let result = decode.call(None, &[s.string(&message.text), list.value()]);
+    let result = decode.call(None, &[s.string(&message.text), list.value(), ports]);
     WIRE_BLOBS.with(|b| *b.borrow_mut() = saved);
     result
 }
