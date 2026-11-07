@@ -119,6 +119,15 @@ test.describe('aria snapshots', () => {
     expect(await page.locator('select').nth(1).ariaSnapshot()).toBe('- listbox "Pick":\n  - group:\n    - option "A"\n  - option "B"');
   });
 
+  test('a list box is `size` rows tall, as in Chromium', async ({ page }) => {
+    await page.goto('/simple');
+    await page.setContent(`<select size="3"><option>A</option><option>B</option><option>C</option><option>D</option><option>E</option></select>
+      <select multiple><option>A</option><option>B</option><option>C</option><option>D</option><option>E</option><option>F</option></select>
+      <select size="6"><option>A</option><option>B</option></select>`);
+    const heights = await page.locator('select').evaluateAll((els) => els.map((e) => [e.getBoundingClientRect().height, e.clientHeight, e.scrollHeight]));
+    expect(heights).toEqual([[53, 51, 85], [70, 68, 102], [104, 102, 102]]);
+  });
+
   test('hidden, unslotted and owned elements as Playwright walks them', async ({ page }) => {
     await page.goto('/simple');
     await page.setContent(`<div aria-hidden="true"><nav aria-label="Hidden"><a href="/x">x</a></nav></div>

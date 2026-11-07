@@ -11,6 +11,7 @@ mod accessibility;
 mod aria_snapshot;
 mod blitz_geometry;
 mod coverage;
+mod fn_names;
 #[cfg(feature = "render")]
 pub(crate) use blitz_geometry::set_fork_template;
 mod dialog;

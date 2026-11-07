@@ -215,11 +215,92 @@ impl LayoutPassState<'_> {
         {
             inputs.available_space.width = AvailableSpace::MaxContent;
         }
+        // lightningpanda: a list box (`<select multiple>` or `size` > 1) with
+        // an auto height is `size` rows tall (4 for `multiple`), however many
+        // options it has, as in Chromium: its options scroll inside.
+        if inputs.known_dimensions.height.is_none() {
+            if let Some(height) = self.listbox_height(dom_node_id(node_id), inputs.parent_size.width) {
+                inputs.known_dimensions.height = Some(height);
+            }
+        }
         let mut output = self.dispatch_child_layout(node_id, inputs, block_ctx);
         if inputs.run_mode == RunMode::PerformLayout {
             compute_oof_layout(self, node_id, &mut output);
         }
         output
+    }
+
+    /// The border-box height of a list-box `<select>` whose height is auto:
+    /// `size` rows (4 for `multiple`) of its first option's height (a line
+    /// of the select's font with nothing to measure), plus its padding and
+    /// border. Chromium's `LayoutListBox` sizing; `min-`/`max-height` clamp.
+    fn listbox_height(&self, id: blitz_traits::NodeId, parent_width: Option<f32>) -> Option<f32> {
+        let node = &self.nodes[id];
+        let el = node.data.downcast_element()?;
+        if el.name.local != local_name!("select") {
+            return None;
+        }
+        let size = el.attr(local_name!("size")).and_then(|s| s.trim().parse::<u32>().ok());
+        let rows = match (el.attr(local_name!("multiple")).is_some(), size) {
+            (_, Some(n)) if n > 1 => n,
+            (true, None | Some(0)) => 4,
+            (true, Some(_)) => 1,
+            (false, _) => return None,
+        };
+        let style = node.primary_styles()?;
+        if style.writing_mode.is_vertical()
+            || stylo_taffy::convert::dimension(&style.clone_height()).into_option().is_some()
+        {
+            return None;
+        }
+        let line = |s: &style::properties::ComputedValues| {
+            use style::values::computed::font::LineHeight;
+            let font_size = s.clone_font_size().used_size().px();
+            match s.clone_line_height() {
+                // As the option's line box: whole pixels.
+                LineHeight::Normal => (font_size * 1.2).round(),
+                LineHeight::Number(num) => font_size * num.0,
+                LineHeight::Length(value) => value.0.px(),
+            }
+        };
+        let edges = |n: &Node| {
+            let st = n.layout_style();
+            let pb = st.padding().resolve_or_zero(parent_width, resolve_calc_value)
+                + st.border().resolve_or_zero(parent_width, resolve_calc_value);
+            pb.vertical_axis_sum()
+        };
+        // The first option that is displayed, in an optgroup too.
+        let mut first = None;
+        let mut stack: Vec<blitz_traits::NodeId> = node.children.iter().rev().copied().collect();
+        while let Some(c) = stack.pop() {
+            let n = &self.nodes[c];
+            let Some(e) = n.data.downcast_element() else { continue };
+            if n.primary_styles().is_none_or(|s| s.get_box().display.is_none()) {
+                continue;
+            }
+            if e.name.local == local_name!("option") {
+                first = Some(c);
+                break;
+            }
+            if e.name.local == local_name!("optgroup") {
+                stack.extend(n.children.iter().rev().copied());
+            }
+        }
+        let item = match first {
+            Some(o) => {
+                let o = &self.nodes[o];
+                let st = o.primary_styles()?;
+                let min = o.layout_style().min_size().height.resolve_or_zero(parent_width, resolve_calc_value);
+                line(&st).max(min) + edges(o)
+            }
+            None => line(&style),
+        };
+        let height = rows as f32 * item + edges(node);
+        let st = node.layout_style();
+        let min = st.min_size().height.resolve_or_zero(parent_width, resolve_calc_value);
+        let max = st.max_size().height;
+        let max = if max.is_auto() { f32::INFINITY } else { max.resolve_or_zero(parent_width, resolve_calc_value) };
+        Some(height.max(min).min(max))
     }
 
     /// The style of a node being laid out *by* the node whose algorithm is currently running,

@@ -217,7 +217,7 @@ pub(super) fn aria_tree_ai(
     let dom = page.dom.borrow();
     let layout = page.layout();
     let doc = page.document();
-    let active = dom.focused(doc).ok().flatten().or_else(|| dom.body(doc).ok().flatten());
+    let active = dom.active_element(doc).ok().flatten();
     let mut w = Walk::new(&dom, &layout, doc, Some(Ai { prefix, refs, active, iframes: Vec::new() }));
     if let Some(ai) = &mut w.ai {
         ai.refs.last.clear();

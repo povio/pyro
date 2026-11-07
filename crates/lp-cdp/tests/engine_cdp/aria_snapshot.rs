@@ -171,7 +171,10 @@ fn generated_content_names_and_snapshots() {
     assert_eq!(name(&mut h, "#e"), "Disp");
     assert_eq!(name(&mut h, "#f"), "Var");
     assert_eq!(aria(&mut h, "#p")["children"][0]["children"], json!(["Note: Text!"]));
-    let r = h.page("LP.query", json!({"locator": {"role": "button", "name": "Hello World!", "exact": true}, "read": "count"}));
+    let r = h.page(
+        "LP.query",
+        json!({"locator": {"role": "button", "name": "Hello World!", "exact": true}, "read": "count"}),
+    );
     assert_eq!(r["result"]["value"], 1, "{r}");
     assert_eq!(
         eval_value(
@@ -275,4 +278,62 @@ fn aria_ai_mode_names_frame_refs_by_seq() {
     // A frame ref is looked up in its frame from the page.
     let name = run_read(&mut h, json!({"locator": {"ariaRef": "f3e2"}, "read": "name", "as": "v"}));
     assert_eq!(name, "Inner");
+}
+
+#[test]
+fn aria_ai_mode_marks_the_shadow_host_active() {
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<!doctype html><body><p>top</p><div id="host"></div>
+<script>host.attachShadow({ mode: 'open' }).innerHTML = '<button id="in">Inner</button> tail'; host.shadowRoot.getElementById('in').focus();</script></body>"#,
+    );
+    // document.activeElement is the host, so the host is [active], not the button.
+    assert_eq!(eval_value(&mut h, "document.activeElement.id"), "host");
+    assert_eq!(eval_value(&mut h, "host.shadowRoot.activeElement.id"), "in");
+    let tree = run_read(&mut h, json!({"locator": {"css": "body"}, "read": "aria", "mode": "ai", "as": "v"}));
+    let s = serde_json::to_string(&tree).unwrap();
+    assert_eq!(s.matches("\"active\":true").count(), 1, "{s}");
+    let body = &tree["children"][0];
+    assert!(body.get("active").is_none(), "{tree}");
+    let host = &body["children"][1];
+    assert_eq!(host["active"], true, "{tree}");
+    assert!(host["children"][0].get("active").is_none(), "{tree}");
+}
+
+#[test]
+fn list_boxes_are_size_rows_tall() {
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<!doctype html><body>
+<select id="a" size="3"><option>A</option><option>B</option><option>C</option><option>D</option><option>E</option></select>
+<select id="b" multiple><option>A</option><option>B</option><option>C</option><option>D</option><option>E</option><option>F</option></select>
+<select id="c" size="6"><option>A</option><option>B</option></select>
+<select id="d" size="2"></select>
+<select id="e" size="3" style="font-size:20px"><option>A</option><option>B</option><option>C</option><option>D</option></select>
+<select id="f" size="3" style="height:30px"><option>A</option><option>B</option><option>C</option><option>D</option></select>
+<select id="g" size="2"><optgroup label="G"><option>A</option></optgroup><option>B</option><option>C</option></select>
+<select id="h" size="3" style="padding:5px"><option style="padding:6px">A</option><option>B</option><option>C</option><option>D</option></select>
+</body>"#,
+    );
+    // Chromium's heights: `size` rows (4 for multiple) of the first option,
+    // however many options there are, plus padding and border.
+    let heights = eval_value(
+        &mut h,
+        "[...document.querySelectorAll('select')].map(e => [e.id, e.getBoundingClientRect().height, e.clientHeight])",
+    );
+    assert_eq!(
+        heights,
+        json!([
+            ["a", 53, 51],
+            ["b", 70, 68],
+            ["c", 104, 102],
+            ["d", 34, 32],
+            ["e", 77, 75],
+            ["f", 30, 28],
+            ["g", 36, 34],
+            ["h", 96, 94]
+        ])
+    );
 }

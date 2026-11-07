@@ -1020,7 +1020,10 @@ impl JsClass for ShadowRoot {
         def.method("setHTMLUnsafe", 1, set_html_unsafe);
         def.method("elementFromPoint", 2, crate::layout_api::shadow_element_from_point);
         def.method("elementsFromPoint", 2, crate::layout_api::shadow_elements_from_point);
-        def.getter("activeElement", |s, _n| Ok(s.null()));
+        def.getter("activeElement", |s, n| {
+            let f = n.page().dom.borrow().active_element(n.id).js()?;
+            node_value(s, n.page(), f)
+        });
         def.accessor(
             "innerHTML",
             |s, n| Ok(s.string(&n.page().dom.borrow().inner_html(n.id).js()?)),
@@ -1321,7 +1324,7 @@ impl JsClass for Element {
                     return Err(JsError::dom(
                         "SyntaxError",
                         "The value provided is not one of 'beforeBegin', 'afterBegin', 'beforeEnd', or 'afterEnd'.",
-                    ))
+                    ));
                 }
             };
             let frag = lp_dom::parse::parse_fragment(&mut dom, ctx, &html).js()?;
@@ -1366,7 +1369,7 @@ impl JsClass for Element {
                 _ => {
                     return Err(JsError::Type(format!(
                         "The provided value '{mode}' is not a valid enum value of type ShadowRootMode."
-                    )))
+                    )));
                 }
             };
             if o.get_atom("serializable")?.to_bool() {
@@ -1380,7 +1383,7 @@ impl JsClass for Element {
                     other => {
                         return Err(JsError::Type(format!(
                             "The provided value '{other}' is not a valid enum value of type SlotAssignmentMode."
-                        )))
+                        )));
                     }
                 }
             }
@@ -1562,9 +1565,7 @@ impl JsClass for Document {
         def.getter("hidden", |s, _n| Ok(s.boolean(false)));
         def.getter("defaultView", |s, n| Ok(if n.page().document() == n.id { s.global().value() } else { s.null() }));
         def.getter("activeElement", |s, n| {
-            let dom = n.page().dom.borrow();
-            let f = dom.focused(n.id).js()?.or(dom.body(n.id).js()?);
-            drop(dom);
+            let f = n.page().dom.borrow().active_element(n.id).js()?;
             node_value(s, n.page(), f)
         });
         def.method("hasFocus", 0, |s, n, _a| Ok(s.boolean(n.page().document() == n.id)));

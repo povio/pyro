@@ -18,6 +18,19 @@ const MODULE_JS = `export function fromModule() { return 'module'; }
 export function notFromModule() { return 'nope'; }
 document.getElementById('mod').textContent = fromModule();
 `;
+// Anonymous functions: V8 names them after what they are assigned to.
+const NAMES_JS = `var ns = { deep: {} };
+ns.a = function () { return 1; };
+ns.deep.b = () => 2;
+ns['lit'] = function () { return 3; };
+function Ctor() { this.m = function () { return 4; }; }
+Ctor.prototype.p = function () { return 5; };
+var o = { g: [function () { return 6; }] };
+ns.paren = (function () { return 7; });
+class K {}
+class L extends K {}
+window.run = () => [ns.a(), ns.deep.b(), ns.lit(), new Ctor().m(), new Ctor().p(), o.g[0](), ns.paren(), new L()];
+`;
 const STYLE_CSS = `.used { color: red; }
 .unused { color: blue; }
 `;
@@ -42,6 +55,8 @@ async function serve(page: any) {
       '/cov/style.css': ['text/css', STYLE_CSS],
       '/cov/nice.html': ['text/html', '<!doctype html><script>function nice() { return 1; } nice();\n//# sourceURL=nicename.js</script>'],
       '/cov/lp.html': ['text/html', '<!doctype html><script>function widget() { return 1; } widget();\n//# sourceURL=lp-widget.js</script>'],
+      '/cov/names.html': ['text/html', '<!doctype html><script src="/cov/names.js"></script>'],
+      '/cov/names.js': ['application/javascript', NAMES_JS],
       '/cov/brief.html': ['text/html', '<!doctype html><style>.brief { color: teal; } .never { color: navy; }</style><body></body>'],
     };
     const [contentType, text] = body[path] ?? ['text/plain', ''];
@@ -262,4 +277,16 @@ test('coverage listeners go with the page when it closes without stopping', asyn
   // Nothing left to stop.
   expect(await page.coverage.stopJSCoverage().catch(() => [])).toEqual([]);
   expect(await page.coverage.stopCSSCoverage().catch(() => [])).toEqual([]);
+});
+
+test('JS coverage: anonymous functions named as V8 names them', async ({ page }) => {
+  await serve(page);
+  await page.coverage.startJSCoverage();
+  await page.goto('/cov/names.html');
+  await page.evaluate(() => (window as any).run());
+  const entries = await page.coverage.stopJSCoverage();
+  const names = entries.find((e) => e.url.endsWith('/cov/names.js'))!;
+  // A function right after `(` keeps no inferred name, and a class's
+  // implicit constructor is no function of the script.
+  expect(names.functions.map((f) => f.functionName)).toEqual(['', 'ns.a', 'ns.deep.b', 'ns.lit', 'Ctor', 'Ctor.m', 'Ctor.p', 'o.g', '', 'window.run']);
 });

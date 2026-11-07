@@ -207,7 +207,7 @@ impl Dom {
             "textarea" => true,
             "input" => matches!(self.input_type_idx(idx).value_mode(), ValueMode::Value),
             _ => {
-                return e.attr_local(&local_name!("contenteditable")).is_some_and(|v| !v.eq_ignore_ascii_case("false"))
+                return e.attr_local(&local_name!("contenteditable")).is_some_and(|v| !v.eq_ignore_ascii_case("false"));
             }
         };
         textual && e.attr_local(&local_name!("readonly")).is_none() && !self.is_disabled_idx(idx)
@@ -759,6 +759,36 @@ impl Dom {
     pub fn focused(&self, doc: NodeId) -> DomResult<Option<NodeId>> {
         let d = self.check(doc)?;
         Ok(self.opt_id(self.focused_idx(d)))
+    }
+    /// `DocumentOrShadowRoot.activeElement` of `root` (a document or a
+    /// shadow root): the focused element retargeted against `root` (a
+    /// focused element in a shadow tree is seen as its host from outside),
+    /// `None` when that is not in `root`; a document with nothing focused
+    /// gives its body, else its document element.
+    pub fn active_element(&self, root: NodeId) -> DomResult<Option<NodeId>> {
+        let doc = self.owner_document(root)?.unwrap_or(root);
+        // The roots `root` is in: itself, then its hosts' roots outward.
+        let mut around = Vec::new();
+        let mut x = Some(root);
+        while let Some(n) = x {
+            let r = self.root_node(n, false)?;
+            around.push(r);
+            x = if self.is_shadow_root(r)? { self.fragment_host(r)? } else { None };
+        }
+        let mut candidate = self.focused(doc)?;
+        while let Some(c) = candidate {
+            let r = self.root_node(c, false)?;
+            if around.contains(&r) || !self.is_shadow_root(r)? {
+                break;
+            }
+            candidate = self.fragment_host(r)?;
+        }
+        match candidate {
+            Some(c) if self.root_node(c, false)? == root => Ok(Some(c)),
+            Some(_) => Ok(None),
+            None if root == doc => Ok(self.body(doc)?.or(self.document_element(doc)?)),
+            None => Ok(None),
+        }
     }
     /// Sets the focused element. Event dispatch (blur/focusout/focus/focusin)
     /// is the caller's responsibility; returns the previously focused node.

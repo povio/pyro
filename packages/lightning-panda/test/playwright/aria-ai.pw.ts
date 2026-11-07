@@ -110,4 +110,17 @@ test.describe('aria snapshot, ai mode', () => {
     // A locator inside the frame snapshots with the frame's prefix.
     expect(await page.frameLocator('iframe').getByRole('link').ariaSnapshot({ mode: 'ai' })).toBe(`- link "link" [ref=${frame}e3] [cursor=pointer]:\n  - /url: /x`);
   });
+
+  test('focus in a shadow root marks the host [active]', async ({ page }) => {
+    await page.goto('/simple');
+    await page.setContent('<p>top</p><div id="host"></div>');
+    await page.evaluate(() => {
+      const root = document.getElementById('host')!.attachShadow({ mode: 'open' });
+      root.innerHTML = '<button>Inner</button> tail';
+      (root.querySelector('button') as HTMLElement).focus();
+    });
+    expect(await page.evaluate(() => document.activeElement!.id)).toBe('host');
+    expect(await page.ariaSnapshot({ mode: 'ai' })).toMatch(/^ {2}- generic \[active\] \[ref=e\d+\]:\n {4}- button "Inner" \[ref=e\d+\]\n {4}- text: tail$/m);
+  });
 });
+

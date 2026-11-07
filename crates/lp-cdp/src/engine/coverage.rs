@@ -843,9 +843,9 @@ fn v8_functions(script: &ScriptCoverage, length: usize, source: &str) -> Vec<Val
     // Fold it into the wrapper (its blocks then count for the wrapper).
     let mut folded = vec![false; functions.len()];
     for i in 0..functions.len() {
-        let enclosing = (0..i).rev().find(|&j| {
-            !folded[j] && functions[j].start <= functions[i].start && functions[j].end >= functions[i].end
-        });
+        let enclosing = (0..i)
+            .rev()
+            .find(|&j| !folded[j] && functions[j].start <= functions[i].start && functions[j].end >= functions[i].end);
         if let Some(j) = enclosing {
             if functions[j].end == functions[i].end && functions[j].name == functions[i].name {
                 folded[i] = true;
@@ -912,18 +912,49 @@ fn v8_functions(script: &ScriptCoverage, length: usize, source: &str) -> Vec<Val
             if body.starts_with('{') {
                 continue;
             }
-            let body_start =
-                f.start + own[..arrow + 2 + (after.len() - body.len())].encode_utf16().count() as u32;
+            let body_start = f.start + own[..arrow + 2 + (after.len() - body.len())].encode_utf16().count() as u32;
             f.unexecuted.retain(|&(s, e)| !(s <= body_start + 1 && e >= f.end.saturating_sub(1)));
         }
         // JSC's block for the implicit return after a `return` covers only
         // the closing brace: nothing that could run, and V8 has no range there.
         let only_brace = |s: u32, e: u32| {
             (e as usize) < text.len()
-                && String::from_utf16_lossy(&text[s as usize..=e as usize]).trim_matches(|c: char| c.is_whitespace() || c == ';') == "}"
+                && String::from_utf16_lossy(&text[s as usize..=e as usize])
+                    .trim_matches(|c: char| c.is_whitespace() || c == ';')
+                    == "}"
         };
         for f in &mut functions {
             f.unexecuted.retain(|&(s, e)| !(e == f.end && only_brace(s, e)));
+        }
+    }
+
+    // A class's implicit constructor comes with the range of JSC's own
+    // source for it (`(function (...args) { super(...args); })`), not the
+    // page's; V8 has no function for it. Every function in the source ends
+    // with `}` or is an arrow.
+    if !source.is_empty() {
+        let text: Vec<u16> = source.encode_utf16().collect();
+        functions.retain(|f| {
+            let (s, e) = (f.start as usize, f.end as usize);
+            e < text.len()
+                && s <= e
+                && (text[e] == u16::from(b'}') || String::from_utf16_lossy(&text[s..=e]).contains("=>"))
+        });
+    }
+
+    // V8 names an anonymous function after what it is assigned to
+    // (`ns.a = function () {}` is `ns.a`); JSC has only the function's own
+    // name.
+    if !source.is_empty() && functions.iter().any(|f| f.name.is_empty()) {
+        let mut by_end: HashMap<u32, Vec<(u32, String)>> = HashMap::new();
+        for ((start, end), name) in super::fn_names::inferred_names(source) {
+            by_end.entry(end).or_default().push((start, name));
+        }
+        for f in functions.iter_mut().filter(|f| f.name.is_empty()) {
+            if let Some((_, name)) = by_end.get(&f.end).and_then(|c| c.iter().min_by_key(|(s, _)| s.abs_diff(f.start)))
+            {
+                f.name = name.clone();
+            }
         }
     }
 
@@ -1407,6 +1438,17 @@ mod tests {
         // Nothing ran since: nothing to report.
         let idle = script(vec![(0, 99, 0)], vec![(10, 50, false, "f")]);
         assert!(v8_functions(&idle, 100, "").is_empty());
+    }
+
+    #[test]
+    fn v8_shape_names_anonymous_functions_as_v8_and_drops_implicit_constructors() {
+        let src = "ns.a = function () { return 1; }; class L extends K {}";
+        let f_end = src.find("};").unwrap() as u32;
+        // JSC's implicit constructor of L: a range in its own source.
+        let s = script(vec![(0, 51, 1)], vec![(7, f_end, true, ""), (1, 39, false, "L")]);
+        let f = v8_functions(&s, src.len(), src);
+        let names: Vec<&str> = f.iter().map(|f| f["functionName"].as_str().unwrap()).collect();
+        assert_eq!(names, ["", "ns.a"], "{f:?}");
     }
 
     #[test]

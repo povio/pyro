@@ -260,6 +260,8 @@ infer argument and return types. Deprecated APIs (`locator.type`,
   zero, and a function is listed only when it ran since (or the listed
   function around it did), so a script's top level and functions that do
   not run again are left out. Start it before `goto` for whole scripts.
+  Anonymous functions carry V8's inferred names (`ns.a = function () {}`
+  is `ns.a`), from a parse of the script that follows V8's own rules.
   One gap: an async function or generator that was suspended when coverage
   started and resumes after it is not reported (it resumes in code compiled
   without the profiler)
