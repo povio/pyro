@@ -66,6 +66,73 @@ impl PageHooks for Hooks {
         });
     }
 
+    fn fetch_media(
+        &self,
+        request: lp_webapi::MediaRequest,
+        done: Box<dyn FnOnce(Result<lp_webapi::MediaResponse, String>)>,
+    ) -> Option<lp_webapi::MediaFetchHandle> {
+        let handle = crate::media::MediaFetch {
+            cancelled: Rc::new(std::cell::Cell::new(false)),
+            cancel: Rc::new(std::cell::RefCell::new(None)),
+        };
+        let (cancelled, slot) = (handle.cancelled.clone(), handle.cancel.clone());
+        // A finished request has nothing to cancel.
+        let finished = slot.clone();
+        let done: crate::media::MediaDone = Box::new(move |result| {
+            let cancel = finished.borrow_mut().take();
+            if let Some(cancel) = cancel {
+                cancel.disarm();
+            }
+            done(result);
+        });
+        let page = self.page;
+        let loader = self.loader.clone();
+        self.sched.post(TaskSource::Networking, move |b| {
+            if cancelled.get() || !b.doc(page).is_some_and(|p| p.main_frame.loader_id == loader) {
+                return;
+            }
+            let cancel = b.fetch_media(page, loader, request, done);
+            if cancelled.get() {
+                drop(cancel);
+            } else {
+                *slot.borrow_mut() = cancel;
+            }
+        });
+        Some(Box::new(handle))
+    }
+
+    fn set_media_timer(&self, delay: std::time::Duration, task: Box<dyn FnOnce()>) -> Option<u64> {
+        let page = self.page;
+        let loader = self.loader.clone();
+        let task = std::cell::RefCell::new(Some(task));
+        // Playback must not keep `run_until_idle` (or network idle) busy.
+        let id = self.sched.set_timer(delay, false, false, move |b| {
+            if b.doc(page).is_some_and(|p| p.main_frame.loader_id == loader) {
+                let task = task.borrow_mut().take();
+                if let Some(task) = task {
+                    task();
+                }
+            }
+        });
+        Some(u64::from(id.0))
+    }
+
+    fn clear_media_timer(&self, id: u64) {
+        if let Ok(id) = u32::try_from(id) {
+            self.sched.clear_timer(lp_runtime::TimerId(id));
+        }
+    }
+
+    fn media_load_delay_released(&self) {
+        let page = self.page;
+        let loader = self.loader.clone();
+        self.sched.post(TaskSource::Networking, move |b| {
+            if b.doc(page).is_some_and(|p| p.main_frame.loader_id == loader) {
+                b.maybe_fire_load(page);
+            }
+        });
+    }
+
     fn navigate(&self, request: NavigationRequest) {
         let page = self.page;
         let loader = self.loader.clone();

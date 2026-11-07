@@ -230,6 +230,7 @@ impl Dom {
     /// Called before `node` is unlinked from a connected parent.
     pub(crate) fn resources_before_remove(&mut self, node: u32) {
         self.iframes_before_remove(node);
+        self.media_before_remove(node);
         if !self.resources.enabled || !self.connected_for_resources(node) {
             return;
         }

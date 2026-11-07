@@ -11,6 +11,7 @@ pub mod clock;
 mod focus;
 mod frames;
 mod images;
+mod media;
 mod loader;
 mod nav;
 mod network_idle;

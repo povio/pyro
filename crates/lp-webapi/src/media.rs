@@ -1,13 +1,21 @@
-//! `HTMLMediaElement` as a browser without media decoding runs it: the
-//! IDL state of a real element (currentTime, volume, muted, playback rates,
-//! paused, networkState, error, TimeRanges) and the load, resource
-//! selection and play/pause algorithms, where every resource fails as
-//! unsupported. Setting `src` fires `loadstart`, then `error` with a
-//! `MediaError` of code 4 (MEDIA_ERR_SRC_NOT_SUPPORTED); `<source>` children
-//! each get an `error` event; `play()` fires `play` and `waiting` and its
-//! promise is rejected with NotSupportedError when the source fails (or
-//! AbortError by `pause()`/a new load). Nothing is fetched: no resource
-//! could be decoded.
+//! `HTMLMediaElement` as a browser that reads media containers but decodes
+//! nothing runs it. The resource is fetched through the embedder (a Media
+//! request, so CDP and request interception see it) and its container
+//! headers are read (`media_format`): duration, video size and tracks. A
+//! playable resource then walks the ready states with their events
+//! (`durationchange`, `resize`, `loadedmetadata`, `loadeddata`, `canplay`,
+//! `canplaythrough`); one that is not fails with MEDIA_ERR_SRC_NOT_SUPPORTED.
+//!
+//! Playback runs a clock on the document's time (`performance.now()`, so
+//! virtual time moves it too): `currentTime` advances at `playbackRate`
+//! while the element is potentially playing, `timeupdate` fires every
+//! 250 ms, and the end fires `ended` (or seeks back to 0 with `loop`).
+//! Exactly one timer exists per playing element and none otherwise.
+//!
+//! Autoplay follows Chrome's default policy: muted media may always play;
+//! unmuted media needs sticky user activation of the document (trusted
+//! input, or a CDP evaluation with `userGesture`). Otherwise `play()`
+//! rejects with NotAllowedError and the `autoplay` attribute does nothing.
 //!
 //! The DOM queues what starts a load (`lp_dom::media_element`); the queue is
 //! drained with the iframe post-connection steps. Per-element state exists
@@ -15,9 +23,11 @@
 //!
 //! TimeRanges, MediaError and TextTrackList are made in JS (media.js) on a
 //! realm's first use.
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
+use std::time::Duration;
 
+use bytes::Bytes;
 use lp_dom::media_element::{MediaChange, MediaEvent};
 use lp_dom::NodeId;
 use lp_js::{ClassDef, Deferred, JsClass, JsError, JsResult, Scope, Value, WeakRealm};
@@ -25,8 +35,9 @@ use rustc_hash::FxHashMap;
 
 use crate::html::HtmlMediaElement;
 use crate::lazy_module::{lazy_globals, LazyModule};
+use crate::media_format::{self, MediaInfo};
 use crate::node::{node_value, NodeData};
-use crate::page::PageDom;
+use crate::page::{MediaFetchHandle, MediaRequest, MediaResponse, PageDom};
 use crate::util::*;
 use crate::window::WindowHost;
 
@@ -50,16 +61,44 @@ const NETWORK_EMPTY: u8 = 0;
 const NETWORK_IDLE: u8 = 1;
 const NETWORK_LOADING: u8 = 2;
 const NETWORK_NO_SOURCE: u8 = 3;
+const HAVE_NOTHING: u8 = 0;
+const HAVE_METADATA: u8 = 1;
+const HAVE_CURRENT_DATA: u8 = 2;
+const HAVE_FUTURE_DATA: u8 = 3;
+const HAVE_ENOUGH_DATA: u8 = 4;
 const MEDIA_ERR_SRC_NOT_SUPPORTED: u16 = 4;
-const UNSUPPORTED: &str = "MEDIA_ELEMENT_ERROR: Format error";
+/// Chrome's message for a source that could not be fetched.
+const FORMAT_ERROR: &str = "MEDIA_ELEMENT_ERROR: Format error";
 const NO_SOURCES: &str = "The element has no supported sources.";
+const NOT_ALLOWED: &str = "play() failed because the user didn't interact with the document first. https://goo.gl/xX8pDD";
+/// Chrome's periodic `timeupdate` interval.
+const TIMEUPDATE_MS: f64 = 250.0;
+
+/// Where a load's media data comes from.
+enum Resource {
+    Url(String),
+    Bytes(Bytes),
+    /// A `srcObject` that is not a Blob (MediaStream, MediaSource): nothing
+    /// can be read from it.
+    Unreadable,
+}
 
 struct MediaState {
     network: u8,
+    ready: u8,
     paused: bool,
     /// HTML "default playback start position": what `currentTime` sets while
     /// there is no media data.
     default_start: f64,
+    /// The official playback position while the clock is stopped.
+    position: f64,
+    /// While potentially playing: the document time (ms) and position the
+    /// clock started from.
+    clock: Option<(f64, f64)>,
+    duration: f64,
+    video: (u32, u32),
+    seeking: bool,
+    seek_serial: u32,
     volume: f64,
     /// The muted IDL attribute once set; until then the `muted` content
     /// attribute's presence.
@@ -67,24 +106,51 @@ struct MediaState {
     rate: f64,
     default_rate: f64,
     preserves_pitch: bool,
-    /// The current MediaError: code and a serial for its object's identity.
-    error: Option<(u16, u32)>,
+    /// The current MediaError: code, message and a serial for its object's identity.
+    error: Option<(u16, &'static str, u32)>,
     error_serial: u32,
     /// Bumped by each load: tasks of an earlier load do nothing.
     generation: u32,
     /// Resource selection ran out of `<source>` children and waits for more.
     awaiting_source: bool,
+    /// The `<source>` child resource selection tried last.
+    pointer: Option<NodeId>,
     current_src: String,
-    has_src_object: bool,
+    /// `srcObject`: `Some(Some(bytes))` for a Blob, `Some(None)` for another object.
+    src_object: Option<Option<Bytes>>,
     pending_play: Vec<(WeakRealm, Deferred)>,
+    /// HTML "can autoplay flag".
+    can_autoplay: bool,
+    /// `preload=none` stopped the load before fetching: what to fetch once
+    /// playback is requested, and the `<source>` it came from.
+    suspended: Option<(Resource, Option<NodeId>)>,
+    /// The fetch in flight; dropping it cancels the request.
+    fetch: Option<MediaFetchHandle>,
+    fetching: bool,
+    timer: Option<u64>,
+    timer_serial: u32,
+    /// HTML "delaying-the-load-event flag".
+    delaying_load: bool,
+    /// The element holds a DOM reference (fetching or playing), so an
+    /// unreferenced `new Audio()` keeps loading and playing.
+    pinned: bool,
+    /// Played ranges, merged and sorted.
+    played: Vec<(f64, f64)>,
 }
 
 impl Default for MediaState {
     fn default() -> Self {
         MediaState {
             network: NETWORK_EMPTY,
+            ready: HAVE_NOTHING,
             paused: true,
             default_start: 0.0,
+            position: 0.0,
+            clock: None,
+            duration: f64::NAN,
+            video: (0, 0),
+            seeking: false,
+            seek_serial: 0,
             volume: 1.0,
             muted: None,
             rate: 1.0,
@@ -94,21 +160,115 @@ impl Default for MediaState {
             error_serial: 0,
             generation: 0,
             awaiting_source: false,
+            pointer: None,
             current_src: String::new(),
-            has_src_object: false,
+            src_object: None,
             pending_play: Vec::new(),
+            can_autoplay: true,
+            suspended: None,
+            fetch: None,
+            fetching: false,
+            timer: None,
+            timer_serial: 0,
+            delaying_load: false,
+            pinned: false,
+            played: Vec::new(),
         }
     }
+}
+
+impl MediaState {
+    /// The current playback position at document time `now`.
+    fn position_at(&self, now: f64) -> f64 {
+        match self.clock {
+            Some((t0, p0)) => {
+                let p = p0 + (now - t0).max(0.0) / 1000.0 * self.rate;
+                if self.duration.is_finite() {
+                    p.clamp(0.0, self.duration)
+                } else {
+                    p.max(0.0)
+                }
+            }
+            None => self.position,
+        }
+    }
+    fn at_end(&self, position: f64) -> bool {
+        self.ready >= HAVE_METADATA && self.duration.is_finite() && position >= self.duration
+    }
+    /// HTML "potentially playing", less "ended playback" (the clock stops at the end itself).
+    fn potentially_playing(&self) -> bool {
+        !self.paused && self.ready >= HAVE_FUTURE_DATA && !self.seeking && self.error.is_none()
+    }
+    /// Stops the clock at `now`, recording the played range.
+    fn fold(&mut self, now: f64) {
+        if let Some((_, start)) = self.clock {
+            let end = self.position_at(now);
+            self.position = end;
+            self.clock = None;
+            add_range(&mut self.played, start.min(end), start.max(end));
+        }
+    }
+    fn wants_pin(&self) -> bool {
+        self.fetching || (!self.paused && self.ready >= HAVE_METADATA)
+    }
+}
+
+fn add_range(ranges: &mut Vec<(f64, f64)>, start: f64, end: f64) {
+    ranges.push((start, end));
+    ranges.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let mut merged: Vec<(f64, f64)> = Vec::with_capacity(ranges.len());
+    for &(s, e) in ranges.iter() {
+        match merged.last_mut() {
+            Some(last) if s <= last.1 => last.1 = last.1.max(e),
+            _ => merged.push((s, e)),
+        }
+    }
+    *ranges = merged;
 }
 
 /// The media state of a page's elements, made on an element's first use.
 #[derive(Default)]
 pub(crate) struct MediaElements {
     elements: RefCell<FxHashMap<NodeId, MediaState>>,
+    /// Entry count at which those of collected elements are dropped.
+    sweep_at: Cell<usize>,
+    /// Elements whose delaying-the-load-event flag is set.
+    delaying_load: Cell<usize>,
+}
+
+impl PageDom {
+    /// Whether a media element of this document delays its load event
+    /// (HTML "delaying-the-load-event flag"): its load has started and
+    /// has not reached HAVE_CURRENT_DATA, failed or suspended.
+    pub fn media_delays_load(&self) -> bool {
+        self.media.delaying_load.get() != 0
+    }
+    /// Playback timers of this document's media elements: one per element
+    /// that is playing, none otherwise.
+    pub fn media_timers(&self) -> usize {
+        self.media.elements.borrow().values().filter(|st| st.timer.is_some()).count()
+    }
 }
 
 fn with<R>(page: &PageDom, node: NodeId, f: impl FnOnce(&mut MediaState) -> R) -> R {
-    f(page.media.elements.borrow_mut().entry(node).or_default())
+    let mut elements = page.media.elements.borrow_mut();
+    if !elements.contains_key(&node) && elements.len() >= page.media.sweep_at.get() {
+        sweep(page, &mut elements);
+    }
+    f(elements.entry(node).or_default())
+}
+
+/// Drops the state of collected elements (a pinned element is alive).
+fn sweep(page: &PageDom, elements: &mut FxHashMap<NodeId, MediaState>) {
+    let Ok(dom) = page.dom.try_borrow() else { return };
+    elements.retain(|id, st| {
+        let keep = st.pinned || dom.is_alive(*id);
+        if !keep && st.delaying_load {
+            page.media.delaying_load.set(page.media.delaying_load.get().saturating_sub(1));
+        }
+        keep
+    });
+    page.media.sweep_at.set((elements.len() * 2).max(64));
 }
 
 /// Reads state without making it: an untouched element's defaults.
@@ -116,6 +276,69 @@ fn peek<R>(page: &PageDom, node: NodeId, f: impl FnOnce(&MediaState) -> R) -> R 
     match page.media.elements.borrow().get(&node) {
         Some(state) => f(state),
         None => f(&MediaState::default()),
+    }
+}
+
+fn now(page: &PageDom) -> f64 {
+    crate::event::page_now_ms(page)
+}
+
+fn attr(page: &PageDom, node: NodeId, name: &str) -> bool {
+    page.dom.borrow().has_attribute(node, name).unwrap_or(false)
+}
+
+fn is_video(page: &PageDom, node: NodeId) -> bool {
+    page.dom.borrow().element(node).is_ok_and(|e| e.is_html() && &*e.name.local == "video")
+}
+
+fn muted(page: &PageDom, node: NodeId) -> bool {
+    match peek(page, node, |st| st.muted) {
+        Some(m) => m,
+        None => attr(page, node, "muted"),
+    }
+}
+
+/// Chrome's autoplay policy: muted media, or a document with sticky user activation.
+fn may_play(page: &PageDom, node: NodeId) -> bool {
+    muted(page, node) || page.has_sticky_activation()
+}
+
+/// Sets the element's delaying-the-load-event flag.
+fn set_delaying(page: &PageDom, node: NodeId, delaying: bool) {
+    let changed = with(page, node, |st| std::mem::replace(&mut st.delaying_load, delaying) != delaying);
+    if !changed {
+        return;
+    }
+    let count = page.media.delaying_load.get();
+    if delaying {
+        page.media.delaying_load.set(count + 1);
+    } else {
+        page.media.delaying_load.set(count.saturating_sub(1));
+        if count == 1 {
+            if let Some(hooks) = page.hooks() {
+                hooks.media_load_delay_released();
+            }
+        }
+    }
+}
+
+/// Holds or releases the element's DOM reference to match its state.
+fn update_pin(page: &PageDom, node: NodeId) {
+    let change = with(page, node, |st| {
+        let want = st.wants_pin();
+        (want != st.pinned).then(|| {
+            st.pinned = want;
+            want
+        })
+    });
+    match change {
+        Some(true) => {
+            if page.dom.borrow_mut().add_ref(node).is_err() {
+                with(page, node, |st| st.pinned = false);
+            }
+        }
+        Some(false) => page.dom.borrow_mut().release(node),
+        None => {}
     }
 }
 
@@ -146,6 +369,29 @@ pub(crate) fn flush(page: &PageDom, this: &Weak<PageDom>) {
     }
 }
 
+/// Releases everything the page's media elements hold: timers, fetches,
+/// DOM references. Called by `PageDom::dispose` while hooks still exist.
+pub(crate) fn dispose(page: &PageDom) {
+    let states = std::mem::take(&mut *page.media.elements.borrow_mut());
+    page.media.delaying_load.set(0);
+    let hooks = page.hooks();
+    let mut pinned = Vec::new();
+    for (node, mut st) in states {
+        if let (Some(id), Some(hooks)) = (st.timer.take(), &hooks) {
+            hooks.clear_media_timer(id);
+        }
+        drop(st.fetch.take());
+        if st.pinned {
+            pinned.push(node);
+        }
+    }
+    if let Ok(mut dom) = page.dom.try_borrow_mut() {
+        for node in pinned {
+            dom.release(node);
+        }
+    }
+}
+
 fn handle(page: &Rc<PageDom>, event: &MediaEvent) {
     let node = event.node;
     if !page.dom.borrow().is_alive(node) {
@@ -154,12 +400,20 @@ fn handle(page: &Rc<PageDom>, event: &MediaEvent) {
     match event.change {
         MediaChange::Src => load(page, node),
         MediaChange::Inserted => {
-            let (empty, has_object) = peek(page, node, |st| (st.network == NETWORK_EMPTY, st.has_src_object));
+            let (empty, has_object) = peek(page, node, |st| (st.network == NETWORK_EMPTY, st.src_object.is_some()));
             if empty && (has_object || has_src(page, node) || !source_children(page, node).is_empty()) {
                 resource_selection(page, node);
             }
         }
-        MediaChange::SourceInserted(source) => {
+        MediaChange::Removed => {
+            // HTML: removed from a document (and not put back in this
+            // task), the element pauses.
+            let connected = page.dom.borrow().is_connected(node).unwrap_or(false);
+            if !connected && !peek(page, node, |st| st.paused) {
+                internal_pause(page, node);
+            }
+        }
+        MediaChange::SourceInserted(_) => {
             let (network, awaiting, generation) =
                 peek(page, node, |st| (st.network, st.awaiting_source, st.generation));
             if network == NETWORK_EMPTY {
@@ -169,13 +423,12 @@ fn handle(page: &Rc<PageDom>, event: &MediaEvent) {
                 }
             } else if awaiting {
                 // The waiting resource selection tries the new candidate.
-                with(page, node, |st| st.network = NETWORK_LOADING);
-                let src = source_url(page, source);
-                queue(page, node, generation, move |page| {
-                    with(page, node, |st| st.current_src = src);
-                    crate::input::fire_simple(page, source, "error", false, false);
-                    with(page, node, |st| st.network = NETWORK_NO_SOURCE);
+                with(page, node, |st| {
+                    st.awaiting_source = false;
+                    st.network = NETWORK_LOADING;
                 });
+                set_delaying(page, node, true);
+                next_source(page, node, generation);
             }
         }
     }
@@ -189,14 +442,6 @@ fn source_children(page: &PageDom, node: NodeId) -> Vec<NodeId> {
     let dom = page.dom.borrow();
     let Ok(children) = dom.children(node) else { return Vec::new() };
     children.into_iter().filter(|&c| dom.element(c).is_ok_and(|e| e.is_html() && &*e.name.local == "source")).collect()
-}
-
-fn source_url(page: &PageDom, source: NodeId) -> String {
-    let dom = page.dom.borrow();
-    match dom.get_attribute(source, "src").ok().flatten() {
-        Some(src) if !src.is_empty() => crate::html::resolve_url(&dom, source, src),
-        _ => String::new(),
-    }
 }
 
 /// Queues a media element task of the load `generation`: it does nothing
@@ -218,6 +463,12 @@ fn queue_event(page: &Rc<PageDom>, node: NodeId, generation: u32, ty: &'static s
     });
 }
 
+/// Fires `ty` at the element; false if a listener started another load.
+fn fire(page: &Rc<PageDom>, node: NodeId, generation: u32, ty: &str) -> bool {
+    crate::input::fire_simple(page, node, ty, false, false);
+    !page.is_disposed() && peek(page, node, |st| st.generation) == generation
+}
+
 /// Rejects promises (in their realms) with a DOMException.
 fn reject_all(promises: Vec<(WeakRealm, Deferred)>, name: &'static str, message: &'static str) {
     for (realm, deferred) in promises {
@@ -225,6 +476,14 @@ fn reject_all(promises: Vec<(WeakRealm, Deferred)>, name: &'static str, message:
         let Ok(s) = realm.scope() else { continue };
         let error = JsError::dom(name, message).to_value(&s);
         let _ = deferred.reject(&s, error);
+    }
+}
+
+fn resolve_all(promises: Vec<(WeakRealm, Deferred)>) {
+    for (realm, deferred) in promises {
+        let Some(realm) = realm.upgrade() else { continue };
+        let Ok(s) = realm.scope() else { continue };
+        let _ = deferred.resolve(&s, s.undefined());
     }
 }
 
@@ -236,32 +495,196 @@ fn queue_reject(page: &Rc<PageDom>, promises: Vec<(WeakRealm, Deferred)>, name: 
     page.post_task(Box::new(move || reject_all(promises, name, message)));
 }
 
+/// Stops or (re)starts the playback clock to match the element's state, and
+/// keeps exactly one timer for it while it advances.
+fn sync_clock(page: &Rc<PageDom>, node: NodeId) {
+    let t = now(page);
+    let (old, plan) = with(page, node, |st| {
+        st.fold(t);
+        let old = st.timer.take();
+        st.timer_serial = st.timer_serial.wrapping_add(1);
+        let mut plan = None;
+        if st.potentially_playing() {
+            st.clock = Some((t, st.position));
+            if st.rate > 0.0 {
+                let remaining = if st.duration.is_finite() {
+                    (st.duration - st.position).max(0.0) / st.rate * 1000.0
+                } else {
+                    f64::INFINITY
+                };
+                plan = Some((remaining.min(TIMEUPDATE_MS), st.timer_serial));
+            }
+        }
+        (old, plan)
+    });
+    let hooks = page.hooks();
+    if let (Some(id), Some(hooks)) = (old, &hooks) {
+        hooks.clear_media_timer(id);
+    }
+    let Some((delay, serial)) = plan else { return };
+    let weak = Rc::downgrade(page);
+    let task: Box<dyn FnOnce()> = Box::new(move || {
+        if let Some(page) = weak.upgrade() {
+            if !page.is_disposed() {
+                tick(&page, node, serial);
+            }
+        }
+    });
+    let delay = Duration::from_secs_f64(delay.max(0.0) / 1000.0);
+    match hooks {
+        Some(hooks) => {
+            let id = hooks.set_media_timer(delay, task);
+            with(page, node, |st| st.timer = id);
+        }
+        None => page.post_task(task),
+    }
+}
+
+/// The playback timer: `timeupdate`, or the end of the resource.
+fn tick(page: &Rc<PageDom>, node: NodeId, serial: u32) {
+    let t = now(page);
+    let ended = with(page, node, |st| {
+        if st.timer_serial != serial || st.clock.is_none() {
+            return None;
+        }
+        st.timer = None;
+        let position = st.position_at(t);
+        // Timer granularity: within half a millisecond of the end is the end.
+        let remaining = if st.duration.is_finite() && st.rate > 0.0 {
+            (st.duration - position) / st.rate * 1000.0
+        } else {
+            f64::INFINITY
+        };
+        Some(st.at_end(position) || remaining < 0.5)
+    });
+    match ended {
+        None => {}
+        Some(true) => reached_end(page, node),
+        Some(false) => {
+            crate::input::fire_simple(page, node, "timeupdate", false, false);
+            sync_clock(page, node);
+        }
+    }
+}
+
+/// HTML: playback reached the end of the media resource.
+fn reached_end(page: &Rc<PageDom>, node: NodeId) {
+    if attr(page, node, "loop") {
+        seek(page, node, 0.0);
+        return;
+    }
+    let t = now(page);
+    let (generation, timer) = with(page, node, |st| {
+        st.fold(t);
+        st.position = st.duration;
+        st.timer_serial = st.timer_serial.wrapping_add(1);
+        (st.generation, st.timer.take())
+    });
+    // The clock stays stopped: restarting it at the end would end again.
+    if let (Some(id), Some(hooks)) = (timer, page.hooks()) {
+        hooks.clear_media_timer(id);
+    }
+    if !fire(page, node, generation, "timeupdate") {
+        return;
+    }
+    let pending = with(page, node, |st| {
+        if !st.paused && st.at_end(st.position) {
+            st.paused = true;
+            Some(std::mem::take(&mut st.pending_play))
+        } else {
+            None
+        }
+    });
+    update_pin(page, node);
+    if let Some(pending) = pending {
+        if !fire(page, node, generation, "pause") {
+            return;
+        }
+        reject_all(pending, "AbortError", "The play() request was interrupted by a call to pause().");
+    }
+    crate::input::fire_simple(page, node, "ended", false, false);
+}
+
+/// HTML "seek" to `to`, with media data (readyState at least HAVE_METADATA).
+fn seek(page: &Rc<PageDom>, node: NodeId, to: f64) {
+    let t = now(page);
+    let (serial, generation) = with(page, node, |st| {
+        st.fold(t);
+        let max = if st.duration.is_finite() { st.duration } else { f64::MAX };
+        st.position = to.clamp(0.0, max.max(0.0));
+        st.seeking = true;
+        st.seek_serial = st.seek_serial.wrapping_add(1);
+        (st.seek_serial, st.generation)
+    });
+    sync_clock(page, node);
+    queue_event(page, node, generation, "seeking");
+    // Every byte is at hand: the seek completes in the next task.
+    queue(page, node, generation, move |page| {
+        let current = with(page, node, |st| {
+            let current = st.seek_serial == serial && st.seeking;
+            if current {
+                st.seeking = false;
+            }
+            current
+        });
+        if !current || !fire(page, node, generation, "timeupdate") || !fire(page, node, generation, "seeked") {
+            return;
+        }
+        sync_clock(page, node);
+    });
+}
+
+/// HTML "notify about playing": `playing`, then the pending play() promises resolve.
+fn notify_playing(page: &Rc<PageDom>, node: NodeId, generation: u32) {
+    if !fire(page, node, generation, "playing") {
+        return;
+    }
+    let pending = with(page, node, |st| std::mem::take(&mut st.pending_play));
+    resolve_all(pending);
+}
+
 /// HTML "media element load algorithm".
 fn load(page: &Rc<PageDom>, node: NodeId) {
-    let (network, generation) = with(page, node, |st| {
+    let t = now(page);
+    let (network, generation, old_timer, old_fetch) = with(page, node, |st| {
         st.generation = st.generation.wrapping_add(1);
-        (st.network, st.generation)
+        st.fold(t);
+        st.timer_serial = st.timer_serial.wrapping_add(1);
+        st.fetching = false;
+        st.suspended = None;
+        (st.network, st.generation, st.timer.take(), st.fetch.take())
     });
+    drop(old_fetch);
+    if let (Some(id), Some(hooks)) = (old_timer, page.hooks()) {
+        hooks.clear_media_timer(id);
+    }
     if matches!(network, NETWORK_LOADING | NETWORK_IDLE) {
         queue_event(page, node, generation, "abort");
     }
     if network != NETWORK_EMPTY {
         queue_event(page, node, generation, "emptied");
-        let (aborted, seeked) = with(page, node, |st| {
+        let (aborted, moved) = with(page, node, |st| {
             st.network = NETWORK_EMPTY;
             st.awaiting_source = false;
+            st.ready = HAVE_NOTHING;
+            st.seeking = false;
             let aborted = if st.paused {
                 Vec::new()
             } else {
                 st.paused = true;
                 std::mem::take(&mut st.pending_play)
             };
-            let seeked = st.default_start != 0.0;
+            let moved = st.position != 0.0 || st.default_start != 0.0;
+            st.position = 0.0;
             st.default_start = 0.0;
-            (aborted, seeked)
+            st.duration = f64::NAN;
+            st.video = (0, 0);
+            st.played.clear();
+            (aborted, moved)
         });
+        page.dom.borrow_mut().set_natural_size(node, None);
         queue_reject(page, aborted, "AbortError", "The play() request was interrupted by a new load request.");
-        if seeked {
+        if moved {
             queue_event(page, node, generation, "timeupdate");
         }
     }
@@ -269,7 +692,10 @@ fn load(page: &Rc<PageDom>, node: NodeId) {
         st.rate = st.default_rate;
         st.error = None;
         st.current_src.clear();
+        st.can_autoplay = true;
+        st.pointer = None;
     });
+    update_pin(page, node);
     resource_selection(page, node);
 }
 
@@ -281,56 +707,281 @@ fn resource_selection(page: &Rc<PageDom>, node: NodeId) {
         st.awaiting_source = false;
         st.generation
     });
+    set_delaying(page, node, true);
     queue(page, node, generation, move |page| select(page, node, generation));
 }
 
 fn select(page: &Rc<PageDom>, node: NodeId, generation: u32) {
-    let has_object = peek(page, node, |st| st.has_src_object);
+    let object = peek(page, node, |st| st.src_object.clone());
     let src = page.dom.borrow().get_attribute(node, "src").ok().flatten().map(str::to_owned);
-    let sources = if has_object || src.is_some() { Vec::new() } else { source_children(page, node) };
-    if !has_object && src.is_none() && sources.is_empty() {
+    if object.is_none() && src.is_none() && source_children(page, node).is_empty() {
         with(page, node, |st| st.network = NETWORK_EMPTY);
+        set_delaying(page, node, false);
         return;
     }
     with(page, node, |st| st.network = NETWORK_LOADING);
     queue_event(page, node, generation, "loadstart");
-    if has_object || src.is_some() {
-        // Attribute or object mode: the resource cannot be decoded.
-        let current = match src.as_deref() {
-            Some(v) if !has_object && !v.is_empty() => crate::html::resolve_url(&page.dom.borrow(), node, v),
-            _ => String::new(),
+    if let Some(object) = object {
+        let resource = match object {
+            Some(bytes) => Resource::Bytes(bytes),
+            None => Resource::Unreadable,
         };
-        with(page, node, |st| st.current_src = current);
-        queue(page, node, generation, move |page| media_source_failed(page, node));
+        fetch_resource(page, node, generation, resource, None);
         return;
     }
-    // Children mode: each candidate fails at its `<source>`; then the
-    // algorithm waits for another one.
-    for source in sources {
-        let url = source_url(page, source);
-        queue(page, node, generation, move |page| {
-            with(page, node, |st| st.current_src = url);
-            crate::input::fire_simple(page, source, "error", false, false);
-        });
+    if let Some(src) = src {
+        // Attribute mode.
+        let url = if src.is_empty() { None } else { resolve(page, node, &src) };
+        let Some(url) = url else {
+            queue(page, node, generation, move |page| media_source_failed(page, node, FORMAT_ERROR));
+            return;
+        };
+        with(page, node, |st| st.current_src = url.clone());
+        fetch_resource(page, node, generation, Resource::Url(url), None);
+        return;
+    }
+    next_source(page, node, generation);
+}
+
+fn resolve(page: &PageDom, node: NodeId, value: &str) -> Option<String> {
+    let dom = page.dom.borrow();
+    let resolved = crate::html::resolve_url(&dom, node, value);
+    url::Url::parse(&resolved).ok().map(|u| u.to_string())
+}
+
+/// Children mode: tries the `<source>` children after the pointer in turn;
+/// each one that cannot be used gets an `error` event. Out of candidates,
+/// the element waits for another `<source>`.
+fn next_source(page: &Rc<PageDom>, node: NodeId, generation: u32) {
+    let sources = source_children(page, node);
+    let pointer = peek(page, node, |st| st.pointer);
+    let start = pointer.and_then(|p| sources.iter().position(|&s| s == p)).map_or(0, |i| i + 1);
+    for &source in &sources[start.min(sources.len())..] {
+        with(page, node, |st| st.pointer = Some(source));
+        let (src, ty) = {
+            let dom = page.dom.borrow();
+            let get = |name| dom.get_attribute(source, name).ok().flatten().map(str::to_owned);
+            (get("src"), get("type"))
+        };
+        let supported = ty.as_deref().is_none_or(|t| media_format::can_play_type(t) != media_format::CanPlay::No);
+        let url = src.filter(|s| !s.is_empty() && supported).and_then(|s| resolve(page, source, &s));
+        let Some(url) = url else {
+            queue(page, node, generation, move |page| {
+                crate::input::fire_simple(page, source, "error", false, false);
+            });
+            continue;
+        };
+        with(page, node, |st| st.current_src = url.clone());
+        fetch_resource(page, node, generation, Resource::Url(url), Some(source));
+        return;
     }
     queue(page, node, generation, move |page| {
         with(page, node, |st| {
             st.network = NETWORK_NO_SOURCE;
             st.awaiting_source = true;
         });
+        set_delaying(page, node, false);
+    });
+}
+
+/// HTML "resource fetch algorithm" for `resource` (from `source` in children mode).
+fn fetch_resource(page: &Rc<PageDom>, node: NodeId, generation: u32, resource: Resource, source: Option<NodeId>) {
+    let preload_none = page
+        .dom
+        .borrow()
+        .get_attribute(node, "preload")
+        .ok()
+        .flatten()
+        .is_some_and(|p| p.eq_ignore_ascii_case("none"));
+    if preload_none && !attr(page, node, "autoplay") && peek(page, node, |st| st.paused) {
+        with(page, node, |st| st.suspended = Some((resource, source)));
+        queue(page, node, generation, move |page| {
+            if peek(page, node, |st| st.suspended.is_none()) {
+                return;
+            }
+            with(page, node, |st| st.network = NETWORK_IDLE);
+            set_delaying(page, node, false);
+            crate::input::fire_simple(page, node, "suspend", false, false);
+        });
+        return;
+    }
+    with(page, node, |st| st.fetching = true);
+    update_pin(page, node);
+    let weak = Rc::downgrade(page);
+    let done = move |result: Result<MediaResponse, String>| {
+        let Some(page) = weak.upgrade() else { return };
+        if page.is_disposed() || peek(&page, node, |st| st.generation) != generation {
+            return;
+        }
+        fetched(&page, node, generation, source, result);
+    };
+    match resource {
+        Resource::Bytes(body) => {
+            let response = MediaResponse { status: 200, mime: String::new(), body: body.to_vec() };
+            page.post_task(Box::new(move || done(Ok(response))));
+        }
+        Resource::Unreadable => page.post_task(Box::new(move || done(Err("unreadable srcObject".into())))),
+        Resource::Url(url) if url.starts_with("blob:") => {
+            let result = page
+                .blob_url(&url)
+                .map(|(bytes, mime)| MediaResponse { status: 200, mime, body: bytes.to_vec() })
+                .ok_or_else(|| "revoked or unknown blob URL".to_owned());
+            page.post_task(Box::new(move || done(result)));
+        }
+        Resource::Url(url) => {
+            let crossorigin = page.dom.borrow().get_attribute(node, "crossorigin").ok().flatten().map(str::to_owned);
+            let request = MediaRequest { url, video: is_video(page, node), crossorigin };
+            match page.hooks() {
+                Some(hooks) => {
+                    let handle = hooks.fetch_media(request, Box::new(done));
+                    with(page, node, |st| st.fetch = handle);
+                }
+                None => page.post_task(Box::new(move || done(Err("no resource loader".into())))),
+            }
+        }
+    }
+}
+
+/// The fetch of the current load finished.
+fn fetched(
+    page: &Rc<PageDom>,
+    node: NodeId,
+    generation: u32,
+    source: Option<NodeId>,
+    result: Result<MediaResponse, String>,
+) {
+    with(page, node, |st| {
+        st.fetching = false;
+        st.fetch = None;
+    });
+    update_pin(page, node);
+    let probed = match result {
+        Ok(r) if (200..300).contains(&r.status) && !r.body.is_empty() => {
+            media_format::probe(&r.body).map_err(|e| e.message())
+        }
+        _ => Err(FORMAT_ERROR),
+    };
+    match probed {
+        Ok(info) => media_ready(page, node, generation, info),
+        Err(message) => match source {
+            // Children mode: this candidate failed; try the next one.
+            Some(source) => {
+                crate::input::fire_simple(page, source, "error", false, false);
+                if peek(page, node, |st| st.generation) == generation {
+                    next_source(page, node, generation);
+                }
+            }
+            None => media_source_failed(page, node, message),
+        },
+    }
+}
+
+/// The metadata is known: the ready states follow, one task each.
+fn media_ready(page: &Rc<PageDom>, node: NodeId, generation: u32, info: MediaInfo) {
+    let video = is_video(page, node);
+    let size = if video { info.video.unwrap_or((0, 0)) } else { (0, 0) };
+    if !fire(page, node, generation, "progress") {
+        return;
+    }
+    with(page, node, |st| {
+        st.duration = info.duration;
+        st.video = size;
+        st.ready = HAVE_METADATA;
+        st.position = 0.0;
+    });
+    if size != (0, 0) {
+        page.dom.borrow_mut().set_natural_size(node, Some((f64::from(size.0), f64::from(size.1))));
+    }
+    if !fire(page, node, generation, "durationchange") {
+        return;
+    }
+    if size != (0, 0) && !fire(page, node, generation, "resize") {
+        return;
+    }
+    if !fire(page, node, generation, "loadedmetadata") {
+        return;
+    }
+    let start = with(page, node, |st| std::mem::take(&mut st.default_start));
+    if start != 0.0 {
+        seek(page, node, start);
+    }
+    queue(page, node, generation, move |page| {
+        with(page, node, |st| st.ready = HAVE_CURRENT_DATA);
+        set_delaying(page, node, false);
+        fire(page, node, generation, "loadeddata");
+    });
+    queue(page, node, generation, move |page| {
+        let playing = with(page, node, |st| {
+            st.ready = HAVE_FUTURE_DATA;
+            !st.paused
+        });
+        update_pin(page, node);
+        if !fire(page, node, generation, "canplay") {
+            return;
+        }
+        if playing && !peek(page, node, |st| st.paused) {
+            sync_clock(page, node);
+            notify_playing(page, node, generation);
+        }
+    });
+    queue(page, node, generation, move |page| {
+        with(page, node, |st| st.ready = HAVE_ENOUGH_DATA);
+        if !fire(page, node, generation, "canplaythrough") {
+            return;
+        }
+        // HTML: autoplay once enough data is there.
+        let autoplay = peek(page, node, |st| st.can_autoplay && st.paused)
+            && attr(page, node, "autoplay")
+            && may_play(page, node);
+        if autoplay {
+            with(page, node, |st| st.paused = false);
+            update_pin(page, node);
+            sync_clock(page, node);
+            if fire(page, node, generation, "play") {
+                notify_playing(page, node, generation);
+            }
+        }
+    });
+    queue(page, node, generation, move |page| {
+        with(page, node, |st| st.network = NETWORK_IDLE);
+        fire(page, node, generation, "suspend");
     });
 }
 
 /// HTML "dedicated media source failure steps".
-fn media_source_failed(page: &Rc<PageDom>, node: NodeId) {
+fn media_source_failed(page: &Rc<PageDom>, node: NodeId, message: &'static str) {
     let pending = with(page, node, |st| {
         st.error_serial = st.error_serial.wrapping_add(1);
-        st.error = Some((MEDIA_ERR_SRC_NOT_SUPPORTED, st.error_serial));
+        st.error = Some((MEDIA_ERR_SRC_NOT_SUPPORTED, message, st.error_serial));
         st.network = NETWORK_NO_SOURCE;
         std::mem::take(&mut st.pending_play)
     });
+    set_delaying(page, node, false);
+    update_pin(page, node);
     crate::input::fire_simple(page, node, "error", false, false);
     reject_all(pending, "NotSupportedError", "Failed to load because no supported source was found.");
+}
+
+/// HTML "internal pause steps".
+fn internal_pause(page: &Rc<PageDom>, node: NodeId) {
+    if peek(page, node, |st| st.network == NETWORK_EMPTY) {
+        resource_selection(page, node);
+    }
+    let (pending, generation) = with(page, node, |st| {
+        st.can_autoplay = false;
+        if st.paused {
+            return (None, st.generation);
+        }
+        st.paused = true;
+        (Some(std::mem::take(&mut st.pending_play)), st.generation)
+    });
+    sync_clock(page, node);
+    update_pin(page, node);
+    if let Some(pending) = pending {
+        queue_event(page, node, generation, "timeupdate");
+        queue_event(page, node, generation, "pause");
+        queue_reject(page, pending, "AbortError", "The play() request was interrupted by a call to pause().");
+    }
 }
 
 fn finite(v: Value<'_>, what: &str) -> JsResult<f64> {
@@ -347,9 +998,14 @@ fn page_rc(n: &NodeData) -> Rc<PageDom> {
     n.page().clone()
 }
 
+/// `videoWidth`/`videoHeight`: the video track's size once its metadata is known.
+pub(crate) fn video_size(n: &NodeData) -> (u32, u32) {
+    peek(n.page(), n.id, |st| if st.ready >= HAVE_METADATA { st.video } else { (0, 0) })
+}
+
 /// The element's MediaError in this realm: one object per error.
 fn error_value<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
-    let Some((code, serial)) = peek(n.page(), n.id, |st| st.error) else { return Ok(s.null()) };
+    let Some((code, message, serial)) = peek(n.page(), n.id, |st| st.error) else { return Ok(s.null()) };
     let wrapper = node_value(s, n.page(), Some(n.id))?;
     let wrapper = wrapper.as_object().ok_or(JsError::ContextDestroyed)?;
     if let Some(cached) = s.get_hidden(wrapper, "__lpMediaError")?.and_then(|v| v.as_object()) {
@@ -357,12 +1013,54 @@ fn error_value<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
             return cached.get_atom("error");
         }
     }
-    let error = MODULE.helper(s, n.page(), "mediaError", &[s.number(f64::from(code)), s.string(UNSUPPORTED)])?;
+    let error = MODULE.helper(s, n.page(), "mediaError", &[s.number(f64::from(code)), s.string(message)])?;
     let holder = s.object();
     holder.set_atom("serial", s.number(f64::from(serial)))?;
     holder.set_atom("error", error)?;
     s.set_hidden(wrapper, "__lpMediaError", holder.value())?;
     Ok(error)
+}
+
+fn time_ranges<'s>(s: &Scope<'s>, n: &NodeData, ranges: &[(f64, f64)]) -> JsResult<Value<'s>> {
+    let flat: Vec<Value<'s>> = ranges.iter().flat_map(|&(a, b)| [s.number(a), s.number(b)]).collect();
+    let list = s.array(&flat)?;
+    MODULE.helper(s, n.page(), "timeRanges", &[list.value()])
+}
+
+/// The whole resource once it is loaded: every byte is buffered and seekable.
+fn loaded_range(n: &NodeData) -> Vec<(f64, f64)> {
+    peek(n.page(), n.id, |st| {
+        if st.ready >= HAVE_METADATA && st.duration.is_finite() {
+            vec![(0.0, st.duration)]
+        } else {
+            Vec::new()
+        }
+    })
+}
+
+/// A rate setter's shared steps: fold the clock, set, replan, `ratechange`.
+fn set_rate(n: &NodeData, rate: f64, default: bool) {
+    let page = page_rc(n);
+    let t = now(&page);
+    let (changed, generation) = with(&page, n.id, |st| {
+        let old = if default { st.default_rate } else { st.rate };
+        let changed = old != rate;
+        if changed && !default {
+            st.fold(t);
+        }
+        if default {
+            st.default_rate = rate;
+        } else {
+            st.rate = rate;
+        }
+        (changed, st.generation)
+    });
+    if changed {
+        if !default {
+            sync_clock(&page, n.id);
+        }
+        queue_event(&page, n.id, generation, "ratechange");
+    }
 }
 
 /// The HTMLMediaElement members (`html.rs` keeps the reflected attributes).
@@ -385,19 +1083,34 @@ pub(crate) fn define(def: &mut ClassDef<HtmlMediaElement>) {
         flush(n.page(), &Rc::downgrade(n.page()));
         Ok(s.number(f64::from(peek(n.page(), n.id, |st| st.network))))
     });
-    def.getter("readyState", |s, _n| Ok(s.number(0.0)));
+    def.getter("readyState", |s, n| Ok(s.number(f64::from(peek(n.page(), n.id, |st| st.ready)))));
     def.getter("error", |s, n| {
         flush(n.page(), &Rc::downgrade(n.page()));
         error_value(s, n)
     });
     def.getter("currentSrc", |s, n| Ok(s.string(&peek(n.page(), n.id, |st| st.current_src.clone()))));
     def.getter("paused", |s, n| Ok(s.boolean(peek(n.page(), n.id, |st| st.paused))));
-    def.getter("ended", |s, _n| Ok(s.boolean(false)));
-    def.getter("seeking", |s, _n| Ok(s.boolean(false)));
-    def.getter("duration", |s, _n| Ok(s.number(f64::NAN)));
-    for name in ["buffered", "played", "seekable"] {
-        def.getter(name, |s, n| MODULE.helper(s, n.page(), "timeRanges", &[]));
-    }
+    def.getter("ended", |s, n| {
+        let t = now(n.page());
+        let ended = peek(n.page(), n.id, |st| st.at_end(st.position_at(t)));
+        Ok(s.boolean(ended && !attr(n.page(), n.id, "loop")))
+    });
+    def.getter("seeking", |s, n| Ok(s.boolean(peek(n.page(), n.id, |st| st.seeking))));
+    def.getter("duration", |s, n| Ok(s.number(peek(n.page(), n.id, |st| st.duration))));
+    def.getter("buffered", |s, n| time_ranges(s, n, &loaded_range(n)));
+    def.getter("seekable", |s, n| time_ranges(s, n, &loaded_range(n)));
+    def.getter("played", |s, n| {
+        let t = now(n.page());
+        let ranges = peek(n.page(), n.id, |st| {
+            let mut ranges = st.played.clone();
+            if let Some((_, start)) = st.clock {
+                let end = st.position_at(t);
+                add_range(&mut ranges, start.min(end), start.max(end));
+            }
+            ranges
+        });
+        time_ranges(s, n, &ranges)
+    });
     def.getter("textTracks", |s, n| {
         let wrapper = node_value(s, n.page(), Some(n.id))?;
         let wrapper = wrapper.as_object().ok_or(JsError::ContextDestroyed)?;
@@ -410,18 +1123,26 @@ pub(crate) fn define(def: &mut ClassDef<HtmlMediaElement>) {
     });
     def.accessor(
         "currentTime",
-        |s, n| Ok(s.number(peek(n.page(), n.id, |st| st.default_start))),
+        |s, n| {
+            let t = now(n.page());
+            Ok(s.number(peek(n.page(), n.id, |st| {
+                if st.ready == HAVE_NOTHING {
+                    st.default_start
+                } else {
+                    st.position_at(t)
+                }
+            })))
+        },
         |_s, n, v| {
-            // No media data (HAVE_NOTHING): the default playback start position.
             let t = finite(v, "currentTime")?;
-            with(n.page(), n.id, |st| st.default_start = t);
+            set_current_time(n, t);
             Ok(())
         },
     );
     def.method("fastSeek", 1, |s, n, a| {
         a.require(1, "HTMLMediaElement.fastSeek")?;
         let t = finite(a.get(0), "currentTime")?;
-        with(n.page(), n.id, |st| st.default_start = t);
+        set_current_time(n, t);
         Ok(s.undefined())
     });
     def.accessor(
@@ -448,16 +1169,10 @@ pub(crate) fn define(def: &mut ClassDef<HtmlMediaElement>) {
     );
     def.accessor(
         "muted",
-        |s, n| {
-            let muted = peek(n.page(), n.id, |st| st.muted);
-            Ok(s.boolean(match muted {
-                Some(m) => m,
-                None => n.page().dom.borrow().has_attribute(n.id, "muted").unwrap_or(false),
-            }))
-        },
+        |s, n| Ok(s.boolean(muted(n.page(), n.id))),
         |_s, n, v| {
             let muted = v.to_bool();
-            let attr = n.page().dom.borrow().has_attribute(n.id, "muted").unwrap_or(false);
+            let attr = attr(n.page(), n.id, "muted");
             let (changed, generation) = with(n.page(), n.id, |st| {
                 let changed = st.muted.unwrap_or(attr) != muted;
                 st.muted = Some(muted);
@@ -481,14 +1196,7 @@ pub(crate) fn define(def: &mut ClassDef<HtmlMediaElement>) {
                     format!("Failed to set the 'playbackRate' property on 'HTMLMediaElement': The provided playback rate ({rate}) is not in the supported playback range."),
                 ));
             }
-            let (changed, generation) = with(n.page(), n.id, |st| {
-                let changed = st.rate != rate;
-                st.rate = rate;
-                (changed, st.generation)
-            });
-            if changed {
-                queue_event(&page_rc(n), n.id, generation, "ratechange");
-            }
+            set_rate(n, rate, false);
             Ok(())
         },
     );
@@ -497,14 +1205,7 @@ pub(crate) fn define(def: &mut ClassDef<HtmlMediaElement>) {
         |s, n| Ok(s.number(peek(n.page(), n.id, |st| st.default_rate))),
         |_s, n, v| {
             let rate = finite(v, "defaultPlaybackRate")?;
-            let (changed, generation) = with(n.page(), n.id, |st| {
-                let changed = st.default_rate != rate;
-                st.default_rate = rate;
-                (changed, st.generation)
-            });
-            if changed {
-                queue_event(&page_rc(n), n.id, generation, "ratechange");
-            }
+            set_rate(n, rate, true);
             Ok(())
         },
     );
@@ -534,7 +1235,9 @@ pub(crate) fn define(def: &mut ClassDef<HtmlMediaElement>) {
                 ));
             }
             s.set_hidden(wrapper, "__lpSrcObject", value)?;
-            with(n.page(), n.id, |st| st.has_src_object = !value.is_null());
+            // A Blob is read as it is now (a Blob is immutable).
+            let object = (!value.is_null()).then(|| crate::file::blob_parts_of(s, value).map(|(bytes, _, _)| bytes));
+            with(n.page(), n.id, |st| st.src_object = object);
             load(&page_rc(n), n.id);
             Ok(())
         },
@@ -548,53 +1251,78 @@ pub(crate) fn define(def: &mut ClassDef<HtmlMediaElement>) {
     def.method("play", 0, |s, n, _a| {
         let page = page_rc(n);
         flush(&page, &Rc::downgrade(&page));
-        if peek(&page, n.id, |st| st.error.is_some_and(|(code, _)| code == MEDIA_ERR_SRC_NOT_SUPPORTED)) {
-            let error = JsError::dom("NotSupportedError", NO_SOURCES).to_value(s);
+        let rejected = |name: &'static str, message: &'static str| -> JsResult<Value<'_>> {
+            let error = JsError::dom(name, message).to_value(s);
             let deferred = s.deferred()?;
             deferred.reject(s, error)?;
-            return Ok(deferred.promise.get(s));
+            Ok(deferred.promise.get(s))
+        };
+        if peek(&page, n.id, |st| st.error.is_some_and(|(code, _, _)| code == MEDIA_ERR_SRC_NOT_SUPPORTED)) {
+            return rejected("NotSupportedError", NO_SOURCES);
+        }
+        if !may_play(&page, n.id) {
+            return rejected("NotAllowedError", NOT_ALLOWED);
         }
         let deferred = s.deferred()?;
         let promise = deferred.promise.get(s);
-        let (empty, was_paused, generation) = with(&page, n.id, |st| {
+        let t = now(&page);
+        let (empty, suspended, ended, generation) = with(&page, n.id, |st| {
             st.pending_play.push((s.realm().downgrade(), deferred));
-            (st.network == NETWORK_EMPTY, st.paused, st.generation)
+            (st.network == NETWORK_EMPTY, st.suspended.take(), st.at_end(st.position_at(t)), st.generation)
         });
         if empty {
             resource_selection(&page, n.id);
         }
+        if ended {
+            seek(&page, n.id, 0.0);
+        }
+        let (was_paused, ready) = with(&page, n.id, |st| {
+            let was_paused = st.paused;
+            st.paused = false;
+            st.can_autoplay = false;
+            (was_paused, st.ready)
+        });
+        if let Some((resource, source)) = suspended {
+            // preload=none: playback requested, the fetch goes ahead.
+            with(&page, n.id, |st| st.network = NETWORK_LOADING);
+            set_delaying(&page, n.id, true);
+            fetch_resource(&page, n.id, generation, resource, source);
+        }
+        update_pin(&page, n.id);
+        sync_clock(&page, n.id);
         if was_paused {
-            with(&page, n.id, |st| st.paused = false);
             queue_event(&page, n.id, generation, "play");
-            // readyState is HAVE_NOTHING: playback waits for data.
-            queue_event(&page, n.id, generation, "waiting");
+            if ready <= HAVE_CURRENT_DATA {
+                queue_event(&page, n.id, generation, "waiting");
+            } else {
+                let node = n.id;
+                queue(&page, node, generation, move |page| notify_playing(page, node, generation));
+            }
+        } else if ready >= HAVE_FUTURE_DATA {
+            let pending = with(&page, n.id, |st| std::mem::take(&mut st.pending_play));
+            page.post_task(Box::new(move || resolve_all(pending)));
         }
         Ok(promise)
     });
     def.method("pause", 0, |s, n, _a| {
         let page = page_rc(n);
         flush(&page, &Rc::downgrade(&page));
-        if peek(&page, n.id, |st| st.network == NETWORK_EMPTY) {
-            resource_selection(&page, n.id);
-        }
-        let (pending, generation) = with(&page, n.id, |st| {
-            if st.paused {
-                return (None, st.generation);
-            }
-            st.paused = true;
-            (Some(std::mem::take(&mut st.pending_play)), st.generation)
-        });
-        if let Some(pending) = pending {
-            queue_event(&page, n.id, generation, "timeupdate");
-            queue_event(&page, n.id, generation, "pause");
-            queue_reject(&page, pending, "AbortError", "The play() request was interrupted by a call to pause().");
-        }
+        internal_pause(&page, n.id);
         Ok(s.undefined())
     });
     def.method("canPlayType", 1, |s, _n, a| {
         a.require(1, "HTMLMediaElement.canPlayType")?;
-        dom_string(a.get(0))?;
-        // No decoder: nothing can be played.
-        Ok(s.string(""))
+        let ty = dom_string(a.get(0))?;
+        Ok(s.string(media_format::can_play_type(&ty).as_str()))
     });
+}
+
+fn set_current_time(n: &NodeData, t: f64) {
+    let page = page_rc(n);
+    if peek(&page, n.id, |st| st.ready) == HAVE_NOTHING {
+        // No media data: the default playback start position.
+        with(&page, n.id, |st| st.default_start = t);
+    } else {
+        seek(&page, n.id, t);
+    }
 }

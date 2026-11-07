@@ -53,6 +53,7 @@ pub mod layout_api;
 pub mod lifecycle;
 pub(crate) mod lazy_module;
 pub(crate) mod media;
+pub(crate) mod media_format;
 pub mod media_source;
 pub mod message_channel;
 pub mod mutation_observer;
@@ -101,7 +102,7 @@ pub use navigator_extras::{ContextServices, GeolocationFix, PermissionSetting, U
 pub use node::{wrap_node, NodeData};
 pub use page::{
     DialogAnswer, DocumentTiming, DownloadRequest, FocusTarget, FocusTransition, FrameViewportSource, IframeAttribute,
-    NavigationRequest, PageDom, PageHooks, RemotePoster,
+    MediaFetchHandle, MediaRequest, MediaResponse, NavigationRequest, PageDom, PageHooks, RemotePoster,
 };
 pub use popup::{PopupCommand, PopupState, PopupTicket};
 pub use structured_clone::{decode_message as deserialize_message, encode_message as serialize_message, WireMessage};

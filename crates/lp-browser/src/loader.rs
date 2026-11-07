@@ -74,6 +74,10 @@ pub enum ResourceKind {
     Image,
     /// A web font (a renderer's `@font-face` source).
     Font,
+    /// An `<audio>` element's media resource.
+    Audio,
+    /// A `<video>` element's media resource.
+    Video,
     /// A hyperlink download (`<a download>`).
     Download,
 }
@@ -222,6 +226,8 @@ impl ResourceLoader for NetLoader {
             ResourceKind::Iframe => lp_net::Destination::Iframe,
             ResourceKind::Image => lp_net::Destination::Image,
             ResourceKind::Font => lp_net::Destination::Font,
+            ResourceKind::Audio => lp_net::Destination::Audio,
+            ResourceKind::Video => lp_net::Destination::Video,
             ResourceKind::Download => lp_net::Destination::Other,
         };
         let mut req = lp_net::Request::get(url, destination);
@@ -1512,6 +1518,7 @@ impl Browser {
             || !state.main_frame.dom_content_loaded
             || state.stylesheets.pending() != 0
             || state.images.blocking_load() != 0
+            || state.main_frame.page_dom.as_ref().is_some_and(|d| d.media_delays_load())
         {
             return;
         }

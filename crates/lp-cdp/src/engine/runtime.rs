@@ -257,6 +257,17 @@ struct EvaluateParams {
     object_group: Option<String>,
     #[serde(default)]
     generate_preview: bool,
+    /// The evaluation is a user gesture: the document gets sticky
+    /// activation (Playwright sets it on every evaluation).
+    #[serde(default)]
+    user_gesture: bool,
+}
+
+/// CDP `userGesture`: activation of the document of `scope`'s realm.
+fn user_activation(scope: &lp_js::Scope<'_>) {
+    if let Ok(page) = lp_webapi::target::page_of(scope) {
+        page.notify_user_activation();
+    }
 }
 
 #[derive(Deserialize)]
@@ -276,6 +287,10 @@ struct CallFunctionOnParams<'a> {
     object_group: Option<String>,
     #[serde(default)]
     generate_preview: bool,
+    /// The evaluation is a user gesture: the document gets sticky
+    /// activation (Playwright sets it on every evaluation).
+    #[serde(default)]
+    user_gesture: bool,
 }
 
 #[derive(Deserialize)]
@@ -510,6 +525,9 @@ impl EngineHost {
         let reply = self.reply_for(cmd, p.return_by_value, p.generate_preview, group, &realm)?;
         let exception_id = self.next_exception_id();
         let scope = realm.scope().map_err(remote::js_to_cdp)?;
+        if p.user_gesture {
+            user_activation(&scope);
+        }
         let eval = crate::perf::span("js.eval");
         let evaluated = scope.eval(&p.expression, None, 1);
         drop(eval);
@@ -545,6 +563,9 @@ impl EngineHost {
         let reply = self.reply_for(cmd, p.return_by_value, p.generate_preview, group, &realm)?;
         let exception_id = self.next_exception_id();
         let scope = realm.scope().map_err(remote::js_to_cdp)?;
+        if p.user_gesture {
+            user_activation(&scope);
+        }
         // Arguments live on the heap while the function source is compiled
         // and called, so they must be GC roots (docs/ARCHITECTURE.md rule 1).
         let mut args = RootedVec::new();
