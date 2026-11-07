@@ -15,12 +15,12 @@ markup5ever = "0.40"
 precomputed-hash = "0.1"
 quick-xml = "0.42"
 rustc-hash = "2"
-selectors = "0.41"
+selectors = "0.42"
 # The cascade: Stylo (Servo's style system), as blitz-dom uses it.
-style = { version = "0.22.0", package = "stylo" }
-style_dom = { version = "0.22.0", package = "stylo_dom" }
-style_traits = { version = "0.22.0", package = "stylo_traits" }
-style_config = { version = "0.22.0", package = "stylo_static_prefs" }
+style = { version = "0.23.0", package = "stylo" }
+style_dom = { version = "0.23.0", package = "stylo_dom" }
+style_traits = { version = "0.23.0", package = "stylo_traits" }
+style_config = { version = "0.23.0", package = "stylo_static_prefs" }
 url = "2"
 unicode-bidi = "0.3"
 app_units = "0.7.5"

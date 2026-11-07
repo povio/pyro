@@ -171,12 +171,16 @@ opt-level = 0
 [profile.dev.package.find-msvc-tools]
 opt-level = 0
 
-# blitz-dom 0.3.0-beta.4 with one change (class atoms cached per element);
-# see vendor/blitz-dom/README.lightningpanda.md.
+# Blitz from upstream main (past 0.3.0-beta.4) with lightningpanda's changes; see
+# vendor/blitz-dom/README.lightningpanda.md. blitz-traits, blitz-html and stylo_taffy are
+# upstream main unchanged (blitz-dom main needs them).
 [patch.crates-io]
 blitz-dom = { path = "vendor/blitz-dom" }
 blitz-paint = { path = "vendor/blitz-paint" }
-# Flex fit-content clamp; see vendor/taffy/README.lightningpanda.md.
+blitz-traits = { path = "vendor/blitz-traits" }
+blitz-html = { path = "vendor/blitz-html" }
+stylo_taffy = { path = "vendor/stylo_taffy" }
+# Taffy main with lightningpanda's changes; see vendor/taffy/README.lightningpanda.md.
 taffy = { path = "vendor/taffy" }
 # Chromium's ascent for Times/Helvetica/Courier; see vendor/parley_engine/README.lightningpanda.md.
 parley_engine = { path = "vendor/parley_engine" }

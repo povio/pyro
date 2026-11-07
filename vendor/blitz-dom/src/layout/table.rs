@@ -1,6 +1,7 @@
 use blitz_traits::node_id::NodeId;
 use std::{ops::Range, sync::Arc};
 use style::logical_geometry::WritingMode;
+use stylo_taffy::CopyStyleGetters;
 
 use atomic_refcell::AtomicRefCell;
 use markup5ever::local_name;
@@ -1093,8 +1094,8 @@ fn physical_size(node: &crate::Node) -> Option<taffy::Size<taffy::Dimension>> {
     match node.table_part_taffy_style() {
         Some(style) => Some(style.size),
         None => node.primary_styles().map(|style| taffy::Size {
-            width: stylo_taffy::convert::dimension(&style.clone_width()),
-            height: stylo_taffy::convert::dimension(&style.clone_height()),
+            width: stylo_taffy::convert::dimension(style.get_width()),
+            height: stylo_taffy::convert::dimension(style.get_height()),
         }),
     }
 }
@@ -2501,7 +2502,7 @@ fn collect_table_cells(
             }
             let node = &mut doc.nodes[node_id];
             let stylo_style = &node.primary_styles().unwrap();
-            let percent_width = stylo_taffy::convert::dimension(&stylo_style.clone_width()).tag() == taffy::CompactLength::PERCENT_TAG;
+            let percent_width = stylo_taffy::convert::dimension(stylo_style.get_width()).tag() == taffy::CompactLength::PERCENT_TAG;
             let colspan: u16 = node
                 .attr(local_name!("colspan"))
                 .and_then(|val| val.parse().ok())
@@ -2663,7 +2664,8 @@ fn collect_table_cells(
         DisplayInside::Flow
         | DisplayInside::FlowRoot
         | DisplayInside::Flex
-        | DisplayInside::Grid => {
+        | DisplayInside::Grid
+        | DisplayInside::GridLanes => {
             node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
             // Probably a table caption: ignore
             // println!(

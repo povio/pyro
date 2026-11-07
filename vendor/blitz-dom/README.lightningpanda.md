@@ -1,36 +1,25 @@
-# blitz-dom 0.3.0-beta.4, patched
+# blitz-dom main (be60597), patched
 
-This is the published `blitz-dom` 0.3.0-beta.4 crate (crates.io, upstream commit
-`92b11f1bd8ab7975411328b0406a95a09445b4e7`, `packages/blitz-dom` in
-[DioxusLabs/blitz](https://github.com/dioxuslabs/blitz)), used through `[patch.crates-io]` in the
-workspace `Cargo.toml`. License: MIT OR Apache-2.0, as upstream. Only `.cargo_vcs_info.json` and
-`Cargo.toml.orig` were left out of the copy.
+`packages/blitz-dom` of [DioxusLabs/blitz](https://github.com/dioxuslabs/blitz) main at commit
+`be60597f67b3cece0456d26e8d7ff5a88600bbc5` (#1456, 124 commits past 0.3.0-beta.4 = `92b11f1b`; its version
+is still 0.3.0-beta.4), used through `[patch.crates-io]` in the workspace `Cargo.toml`. License: MIT OR
+Apache-2.0, as upstream. `src/` and `assets/` are copied; `Cargo.toml` is the package manifest with the
+workspace's dependency versions written in, git dependencies replaced by their crates.io releases (Taffy and
+Stylo come from `vendor/`, anyrender 0.14 from crates.io: main's anyrender API is unchanged). blitz-traits,
+blitz-html and stylo_taffy are vendored from the same commit unchanged (`vendor/blitz-traits`,
+`vendor/blitz-html`, `vendor/stylo_taffy`): blitz-dom main needs them.
 
-## The change
-
-`UPSTREAM.patch` (applies with `git apply` from the root of an upstream checkout) is the whole diff:
-
-- `src/node/attributes.rs`: `Attributes` keeps the `class` attribute's tokens as interned atoms
-  (`class_atoms()`), computed on first use and dropped by every mutation (`set`, `remove`,
-  `DerefMut`).
-- `src/stylo.rs`: `has_class` and `each_class` read those atoms instead of splitting the attribute
-  and interning every token on every call.
-
-Stylo calls `has_class` once per class selector it tests and `each_class` for the bloom filter, rule
-lookup and the style-sharing cache. Upstream interns each token every time (a global lock and a
-hash), which was about 18% of the main thread rendering a Tailwind page (25 classes per element):
-style resolution on the TOS positions list went from 24 to 9 ms. Matching is unchanged, and so are
-the rendered display lists. lp-render's tests cover it (`class_selectors_match_as_before`,
-`class_changes_invalidate_the_cached_tokens`).
+`UPSTREAM.patch` (applies with `git apply` from the root of an upstream checkout at the commit above) is
+the whole diff: every section below.
 
 ## Updating or dropping the patch
 
-- When upstream has the change: delete this directory and the `[patch.crates-io]` entry, then
-  `cargo update -p blitz-dom`.
-- To move to a newer blitz-dom: copy the published crate from `~/.cargo/registry/src/*/blitz-dom-<version>`
-  over this directory, apply `UPSTREAM.patch` (the cached atoms field is the only structural
-  change), bump the `=` versions of the blitz crates in `crates/lp-render/Cargo.toml`, and update the
-  version and commit above.
+- To move to a newer blitz main: in a blitz checkout, commit this directory's `src/` and `assets/` over
+  `packages/blitz-dom` at the commit above (or apply `UPSTREAM.patch`) and merge or cherry-pick onto the new
+  main; copy `src/` and `assets/` back, regenerate `Cargo.toml` from the package and workspace manifests,
+  and update the commit above and `UPSTREAM.patch`. Check `assets/default.css` by hand: a merged CSS
+  conflict that drops a `}` silently drops the rest of the user-agent sheet.
+- A section upstream has: delete it from `UPSTREAM.patch` and from here, naming the upstream PR below.
 
 ## Screenshot correctness follow-ups
 
@@ -303,3 +292,58 @@ inserts and removals, spans, collapsed borders, nested and vertical tables, stac
 changes (`table_*_match_fresh_builds`), and counts what an edit, an append, a removal and an insert collect and lay
 out (`a_cell_edit_collects_only_its_row`). `blitz_tables` and `blitz_table_grids` (lp-render) report tables built, cells
 collected and grids laid out whole or again.
+
+## Moving from 0.3.0-beta.4 to main
+
+The local changes were merged with main's 124 commits. Upstream now has these, so the local versions were
+dropped:
+
+- Class tokens interned once per element: upstream #1240 (`ElementData::classes`, kept by `set_attribute`).
+  This was the original `UPSTREAM.patch`; `class_selectors_match_as_before` still covers it.
+- `font-optical-sizing: auto` as an `opsz` variation: #1360.
+- Unresolvable URLs load nothing instead of panicking (`resolve_url` returns an `Option`): #1374.
+- `:focus-within`: #1226 (the local `set_focus_within` went; upstream's ancestor-chain diff remains).
+- Narrow restyles on child-list changes, `:empty` and `:has()` anchor parents: #1276
+  (`restyle_for_child_list_change`). The local `:has()` invalidation (`invalidate_has_anchors*`) stays: it
+  reaches anchors among ancestors and their earlier siblings, which #1276 does not.
+- `::before`/`::after` boxes voting in the flow classification: #1280.
+- Mid-line floats that do not fit placed below the line: #1378 and #1390 (with line retry), replacing the
+  local pending-float queue in inline layout.
+- Paint children kept in order without a key buffer: #1445 sorts precomputed keys (a sorted run is linear),
+  replacing the local `is_sorted_by_key` check. The table paint-children bookkeeping is unchanged.
+
+Kept, adapted to main:
+
+- `layout/inline/build.rs`, `layout/inline/layout.rs`: main split `layout/inline.rs` (#1233); the local
+  `<br>`, strut and text-node tracking moved with the build half. The skip of a line break with the same
+  inputs (`TextLayout::last_break`) is keyed on main's `max_advance` (which carries #1449's rounding
+  slack) instead of the width. Shrink-to-fit widths still round up to a layout unit (`ceil_layout_unit`);
+  main dropped the whole-pixel ceil (#1375), so this keeps Chromium's 1/64 px instead of the raw width.
+- `layout/writing_mode.rs`: incremental rounding with main's `ScrollableOverflow` (#1372). Upstream's
+  `content_box_subpixel_offset` (#1382: text drawn from the unrounded content box) is left at zero:
+  screenshots keep whole-pixel text as before and print moves text to its layout-unit x itself
+  (`fractional_text_x` in blitz-paint). The scroll-container check `physical_layout` needs is only made
+  under a vertical placer, the only case that reads it.
+- `src/document.rs`: Stylo 0.23 renamed the prefs (`layout.css.*`); the local ones are set in main's
+  `init_stylo_prefs`. Main shares parsed user-agent sheets through a read-only lock, which the thread's
+  shared author lock can read.
+- `src/net.rs`: main decodes linked sheets from bytes (#1388); `linked_page_css` keeps the text of one with
+  `@page` rules from the same bytes.
+- `paint_tree.rs`: the out-of-flow stacking-context fix (for upstream #807) and `table_paint_children_kept`
+  sit on #1445's positioned-descendant lifting.
+
+New, because main narrows attribute restyles to the element (#1276) where 0.3.0-beta.4 restyled the
+parent's subtree and damaged the element:
+
+- `src/mutator.rs` (`restyle_siblings_for_attribute_change`): an attribute change restyles the element's
+  siblings when the parent carries `HAS_SLOW_SELECTOR_NTH_OF` (Stylo leaves `:nth-child(of S)` to the
+  embedder, as Gecko's `RestyleSiblingsForNthOf`), and a change of lightningpanda's form-state attribute
+  (`urn:x-lightningpanda:state`) restyles the element and its siblings (its pseudo-classes are not element
+  states, so snapshots cannot see them change) and is layout damage when its `natural=W,H` token changes.
+  Covered by `sibling_and_fragment_invalidation_stays_exact`, `radio_group_changes_invalidate_selectively_*`,
+  `form_state_writes_invalidate_selectively_*` and `loaded_image_natural_size_reaches_flow_through_the_dom`
+  (lp-layout).
+- `src/stylo.rs` (`RecalcStyle::process_preorder`): a paint-only restyle of a table part in a
+  `border-collapse: collapse` table that changes its borders or `color` is damage on it: the collapsed
+  edges (`CollapsedEdges`) hold resolved colours, collected again with the part's row. Covered by
+  `tables_lay_out_from_the_styles_written_at_restyle` (lp-render).

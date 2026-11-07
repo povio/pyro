@@ -18,7 +18,7 @@ data-url = "0.3"
 roxmltree = "0.20"
 app_units = "0.7"
 rustc-hash = "2"
-style = { package = "stylo", version = "0.22.0" }
+style = { package = "stylo", version = "0.23.0" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 url = "2"
@@ -26,6 +26,8 @@ blitz-dom = { version = "=0.3.0-beta.4", default-features = false, features = ["
 blitz-html = { version = "=0.3.0-beta.4", default-features = false }
 blitz-traits = { version = "=0.3.0-beta.4", default-features = false }
 blitz-paint = { version = "=0.3.0-beta.4", default-features = false, features = ["svg"] }
+# By-value getters for `Copy` computed values (Stylo 0.23 names the others `slow_clone_*`).
+stylo_taffy = { version = "=0.3.0-beta.4", default-features = false }
 anyrender = "0.14.0"
 anyrender_vello_cpu = { version = "0.18.0", features = ["multithreading"] }
 anyrender_vello = { version = "0.15.0", optional = true }

@@ -13,7 +13,9 @@ use crate::util::sys::f32_max;
 use crate::util::{MaybeMath, MaybeResolve, ResolveOrZero};
 
 #[cfg(feature = "content_size")]
-use crate::compute::common::scrollable_overflow::compute_scrollable_overflow_contribution;
+use crate::compute::common::scrollable_overflow::{
+    compute_scrollable_overflow_contribution, ScrollableOverflowContainer,
+};
 use crate::compute::common::sizing_keyword::{resolve_sizing_keyword, SizingKeywordResolution};
 use crate::{AbsoluteAxis, BoxSizing, Direction, LayoutGridContainer};
 
@@ -95,9 +97,8 @@ pub(super) fn align_and_position_item(
     container_alignment_styles: InBothAbsAxis<AlignItems>,
     baseline_shim: f32,
     direction: Direction,
-    container_border_box_width: f32,
-    container_border: Rect<f32>,
-    #[cfg(feature = "content_size")] container_is_scroll_container: bool,
+    #[cfg(feature = "content_size")] padding_box_inset: Rect<f32>,
+    #[cfg(feature = "content_size")] overflow_container: &ScrollableOverflowContainer,
     bubbled_candidates: &mut OofCandidates,
 ) -> PositionedItem {
     let grid_area_size = Size { width: grid_area.right - grid_area.left, height: grid_area.bottom - grid_area.top };
@@ -428,13 +429,6 @@ pub(super) fn align_and_position_item(
     };
     tree.set_unrounded_layout(node, &layout);
 
-    // Contributions to the container's scrollable overflow rect are measured from the
-    // container's padding-box origin (mirrored for RTL), matching the scrollable overflow region.
-    let contribution_x = if direction.is_rtl() {
-        container_border_box_width - (x + width) - container_border.right
-    } else {
-        x - container_border.left
-    };
     let mut positioned = PositionedItem {
         contribution: Rect::ZERO,
         y_position: y_without_relative_offset,
@@ -444,14 +438,14 @@ pub(super) fn align_and_position_item(
         area: grid_area,
         y_offset,
         y_relative,
-        contribution_x,
-        border_top: container_border.top,
+        #[cfg(feature = "content_size")]
+        padding_box_inset: Point { x: padding_box_inset.left, y: padding_box_inset.top },
         #[cfg(feature = "content_size")]
         overflow,
         #[cfg(feature = "content_size")]
         contain,
         #[cfg(feature = "content_size")]
-        parent_is_scroll_container: container_is_scroll_container,
+        overflow_container: *overflow_container,
     };
     positioned.contribution = positioned.compute_contribution();
     positioned
@@ -473,27 +467,32 @@ pub(super) struct PositionedItem {
     /// Its block offset within the area (`align_item_within_area`) and its relative offset
     pub y_offset: f32,
     pub y_relative: f32,
-    /// The inline position and the container's top border its overflow contribution is measured with
-    pub contribution_x: f32,
-    pub border_top: f32,
+    /// The container's padding box offset its overflow contribution is measured from
+    #[cfg(feature = "content_size")]
+    padding_box_inset: Point<f32>,
     #[cfg(feature = "content_size")]
     overflow: Point<Overflow>,
     #[cfg(feature = "content_size")]
     contain: crate::style::Contain,
     #[cfg(feature = "content_size")]
-    parent_is_scroll_container: bool,
+    overflow_container: ScrollableOverflowContainer,
 }
 
 impl PositionedItem {
     #[cfg(feature = "content_size")]
     fn compute_contribution(&self) -> Rect<f32> {
         compute_scrollable_overflow_contribution(
-            Point { x: self.contribution_x, y: self.layout.location.y - self.border_top },
+            Point {
+                x: self.layout.location.x - self.padding_box_inset.x,
+                y: self.layout.location.y - self.padding_box_inset.y,
+            },
             self.layout.size,
-            self.layout.scrollable_overflow_rect,
+            self.layout.scrollable_overflow_rect.rect(),
+            self.layout.border,
             self.overflow,
             self.contain,
-            self.parent_is_scroll_container,
+            &self.overflow_container,
+            self.layout.margin,
         )
     }
 

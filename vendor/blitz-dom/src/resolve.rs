@@ -1,5 +1,6 @@
 //! Resolve style and layout
 
+use stylo_taffy::CopyStyleGetters;
 use blitz_traits::node_id::NodeId;
 use std::cell::RefCell;
 
@@ -23,11 +24,12 @@ use taffy::AvailableSpace;
 use crate::{
     layout::{
         construct::{
-            build_inline_layout_into, collect_layout_children, ConstructionTask, ConstructionTaskData,
-            ConstructionTaskResult, ConstructionTaskResultData, LayoutChildren,
+            ConstructionTask, ConstructionTaskData, ConstructionTaskResult,
+            ConstructionTaskResultData, LayoutChildren, collect_layout_children,
         },
         damage::{ALL_DAMAGE, CONSTRUCT_BOX, CONSTRUCT_DESCENDENT, CONSTRUCT_FC},
         LayoutPassState,
+        inline::build_inline_layout_into,
     },
     node::TextBrush,
     BaseDocument,
@@ -70,7 +72,7 @@ impl BaseDocument {
                             use style::values::specified::ContainerType;
                             style
                                 .get_box()
-                                .clone_container_type()
+                                .slow_clone_container_type()
                                 .intersects(ContainerType::SIZE | ContainerType::INLINE_SIZE)
                         })
                 })
@@ -254,7 +256,7 @@ impl BaseDocument {
                 return false;
             }
             let Some(values) = node.primary_styles() else { return false };
-            let kind = values.get_box().clone_container_type();
+            let kind = values.get_box().slow_clone_container_type();
             let both = kind.intersects(ContainerType::SIZE);
             let inline = kind.intersects(ContainerType::INLINE_SIZE);
             if !both && !inline {

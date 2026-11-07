@@ -1,4 +1,5 @@
 use std::fmt;
+use stylo_taffy::CopyStyleGetters;
 use std::ops::Deref;
 use std::{cell::UnsafeCell, ops::DerefMut};
 use style::data::{ElementDataMut, ElementDataRef, ElementDataWrapper};

@@ -164,8 +164,8 @@ fn the_first_layout_waits_for_web_fonts() {
 
 #[test]
 fn class_selectors_match_as_before() {
-    // blitz-dom is patched to intern class tokens once per element
-    // (vendor/blitz-dom); matching must not change.
+    // blitz-dom interns class tokens once per element (upstream #1240,
+    // formerly a local patch); matching must not change.
     let html = "<!doctype html><html><head><style>
       body { margin: 0 } div { width: 10px; height: 10px; background: #000 }
       .a.b { background: #f00 } [class~=c] { background: #0f0 } .D { background: #00f }
