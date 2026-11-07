@@ -15,6 +15,7 @@ default-members = [
     "crates/lp-js",
     "crates/lp-layout",
     "crates/lp-jsc-sys",
+    "crates/lp-media",
     "crates/lp-net",
     "crates/lp-psl",
     "crates/lp-render",
@@ -43,6 +44,7 @@ lp-cdp = { path = "crates/lp-cdp" }
 lp-render = { path = "crates/lp-render" }
 lp-layout = { path = "crates/lp-layout" }
 lp-canvas = { path = "crates/lp-canvas" }
+lp-media = { path = "crates/lp-media", default-features = false }
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
