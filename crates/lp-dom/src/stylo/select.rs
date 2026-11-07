@@ -76,3 +76,36 @@ pub(crate) fn closest(dom: &Dom, el: u32, list: &List) -> Option<u32> {
     })
     .filter(|&i| i != NIL)
 }
+
+#[cfg(test)]
+mod tests {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    use style_dom::ElementState;
+
+    use super::*;
+    use crate::parse::{parse_document, DomRef};
+
+    #[test]
+    fn element_state_carries_every_state_the_matcher_answers() {
+        // Stylo's style sharing and state invalidation compare only
+        // `TElement::state()` for state pseudo-classes, so the bits must
+        // follow what `:in-range`/`:out-of-range` match.
+        let dom_ref: DomRef = Rc::new(RefCell::new(Dom::new()));
+        let doc = parse_document(
+            &dom_ref,
+            "http://test/",
+            "<!doctype html><input id=a type=number min=0 max=10 value=5><input id=b type=number min=0 max=10 value=50>",
+        );
+        let dom = dom_ref.borrow();
+        let state = |id: &str| {
+            let el = dom.get_element_by_id(doc, id).unwrap().unwrap();
+            let i = dom.check(el).unwrap();
+            with_cx(&dom, i, |cx| SNode::with_cx(cx, i).state())
+        };
+        let (a, b) = (state("a"), state("b"));
+        assert!(a.contains(ElementState::INRANGE) && !a.contains(ElementState::OUTOFRANGE), "{a:?}");
+        assert!(b.contains(ElementState::OUTOFRANGE) && !b.contains(ElementState::INRANGE), "{b:?}");
+    }
+}

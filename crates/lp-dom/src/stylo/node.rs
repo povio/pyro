@@ -664,6 +664,10 @@ impl<'a, C: CxSource<'a>> TElement for SNode<'a, C> {
         set(PseudoClass::Open, ElementState::OPEN);
         set(PseudoClass::Modal, ElementState::MODAL);
         set(PseudoClass::Target, ElementState::URLTARGET);
+        set(PseudoClass::InRange, ElementState::INRANGE);
+        set(PseudoClass::OutOfRange, ElementState::OUTOFRANGE);
+        set(PseudoClass::UserValid, ElementState::USER_VALID);
+        set(PseudoClass::UserInvalid, ElementState::USER_INVALID);
         if self.cx().popovers.contains(&self.i()) || self.matches(PseudoClass::PopoverOpen) {
             s |= ElementState::POPOVER_OPEN;
         }
