@@ -14,7 +14,8 @@ The DOM (`crates/lp-dom/src/media_element.rs`) queues what starts a load for
 a document with a browsing context: `src` set or changed (the media element
 load algorithm), a media element inserted or created by the parser (resource
 selection, when its `networkState` is `NETWORK_EMPTY` and it has a source),
-a `<source>` child inserted, and a media element removed from the document.
+a `<source>` child inserted or removed, and a media element removed from
+the document.
 The queue is drained with the iframe post-connection steps, after the
 native call that changed the tree and at the event loop's checkpoints.
 Documents that never had a media element pay one flag test per attribute
@@ -26,12 +27,24 @@ change, insertion and removal.
   `canPlayType()`, or without `src`, gets an `error` event and is not
   fetched; a candidate whose fetch or probe fails gets `error` and the next
   one is tried; out of candidates the element waits for another `<source>`.
+  Removing the `<source>` being tried keeps the selection's place (the next
+  candidate is the one after it), as HTML's source pointer does.
 - The fetch goes through the embedder (`PageHooks::fetch_media`;
   lp-browser's `crates/lp-browser/src/media.rs`) as an Audio or Video
   request: CDP reports resource type `Media`, `Sec-Fetch-Dest` is
   `audio`/`video`, and Playwright routes see it. `blob:` URLs read the
-  page's blob store. The whole body is fetched (no Range requests);
-  starting a new load drops (cancels) the fetch in flight.
+  page's blob store. Only the container headers are needed: a body whose
+  `Content-Length` is at most 16 MB is read whole; a longer one, or one
+  without a length (a live stream), is cut once its headers are in (from
+  64 KB, at the latest at 16 MB) and the transfer stops (CDP sees the
+  request canceled). An MP4 whose `moov` box comes after that prefix is
+  read with `Range: bytes=<moov offset>-` requests (at most four box hops;
+  a server that ignores `Range` fails the load). Starting a new load drops
+  (cancels) the fetch in flight.
+- Durations from a cut body: header values where the container has them
+  (MP4, WebM, FLAC, WAV with a data size, MP3 Xing/VBRI); otherwise
+  proportional to `Content-Length` (Ogg, ADTS, CBR MP3, WAV without a data
+  size), or `Infinity` without a length.
 - The body is sniffed, as Chrome does (the MIME type does not matter):
   MP4/QuickTime (`mvhd`/`mehd`/`mdhd` duration, `tkhd` size with quarter
   turns applied, sample entry codec), WebM/Matroska (`Info` duration,
@@ -126,10 +139,10 @@ size is the video track's size once known, else the poster's, else
 - No decoding: no frames, no audio output, `requestVideoFrameCallback`,
   `getVideoPlaybackQuality`, `captureStream` and Web Audio sources are
   missing. A playing `<video>` still shows its poster.
-- The whole resource is fetched before the metadata is read: no Range
-  requests, no progressive `progress` events, no streaming (a live stream
-  never finishes loading). Fragmented MP4 without `mehd` reports the
-  longest track (or `Infinity`).
+- No progressive `progress` events or buffered ranges: the metadata is read
+  once from the prefix. Durations of long Ogg, ADTS and CBR MP3 resources
+  are estimated from their length rather than read from the end.
+  Fragmented MP4 without `mehd` reports the longest track (or `Infinity`).
 - `MediaSource`/`MediaStream` sources are not playable (MSE
   `isTypeSupported()` is still false).
 - No `addTextTrack`, `audioTracks`/`videoTracks`, `setSinkId`, media

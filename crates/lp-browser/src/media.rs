@@ -1,8 +1,9 @@
 //! Media element resources for `lp_webapi::PageHooks::fetch_media`: fetched
-//! whole through the page's resource loader with an Audio or Video
-//! destination (CDP resource type "Media"), so request interception and the
-//! Network domain see them. Only the container headers are read
-//! (`lp_webapi`'s media module); nothing is decoded.
+//! through the page's resource loader with an Audio or Video destination
+//! (CDP resource type "Media"), so request interception and the Network
+//! domain see them. Only the container headers are read (`lp_webapi`'s
+//! media module), so the request's `BodyPart` cuts a long or endless body
+//! once they are in; nothing is decoded.
 use crate::frames::FrameKey;
 use crate::{Browser, FetchRequest, LoaderId, ResourceCancellation, ResourceKind};
 use lp_runtime::TaskSource;
@@ -57,13 +58,19 @@ impl Browser {
             } else {
                 lp_webapi::resource_timing::Initiator::Audio
             }),
+            part: Some(request.part),
         };
         resource_loader.fetch_cancellable(
             self,
             fetch,
             Box::new(move |b, result| {
                 if b.doc(page).is_some_and(|p| p.main_frame.loader_id == loader) {
-                    done(result.map(|r| MediaResponse { status: r.status, mime: r.mime, body: r.body }));
+                    done(result.map(|r| MediaResponse {
+                        status: r.status,
+                        mime: r.mime,
+                        body: r.body,
+                        partial: r.partial,
+                    }));
                 }
             }),
         )

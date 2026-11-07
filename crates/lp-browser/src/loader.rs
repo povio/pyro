@@ -99,6 +99,25 @@ pub struct FetchRequest {
     /// navigation or a renderer's fetch). An iframe's navigation reports to
     /// the parent document.
     pub initiator: Option<lp_webapi::resource_timing::Initiator>,
+    /// Only part of the body is needed (a media element's headers):
+    /// `Resource::partial` says when the body was cut.
+    pub part: Option<lp_webapi::BodyPart>,
+}
+
+/// Where a `BodyPart` fetch cuts `body` (a prefix of the response body of
+/// `total` bytes, if known): the length to keep, if any. `checked` is the
+/// size `enough` is next asked at; it doubles past `body`'s length.
+fn body_cut(part: &lp_webapi::BodyPart, body: &[u8], total: Option<u64>, checked: &mut usize) -> Option<usize> {
+    if body.len() >= part.limit {
+        return Some(part.limit);
+    }
+    if body.len() < *checked {
+        return None;
+    }
+    while *checked <= body.len() {
+        *checked = checked.saturating_mul(2);
+    }
+    (part.enough)(body, total).then_some(body.len())
 }
 
 #[derive(Debug, Clone)]
@@ -122,6 +141,9 @@ pub struct Resource {
     /// A navigation's fetch as the network saw it (Navigation Timing of the
     /// document it commits); `None` for other kinds and other loaders.
     pub timing: Option<Box<lp_webapi::resource_timing::FetchReport>>,
+    /// `Some`: `body` is a prefix of the response body, cut as the
+    /// request's `part` asked (the transfer stopped there).
+    pub partial: Option<lp_webapi::Partial>,
 }
 
 impl Resource {
@@ -269,6 +291,12 @@ impl ResourceLoader for NetLoader {
             }
             req.max_body = Some(crate::stylesheets::MAX_SHEET_BYTES.min(self.client.config().max_body));
         }
+        let part = request.part;
+        if let Some(start) = part.map(|p| p.start).filter(|&s| s > 0) {
+            if let Ok(value) = lp_net::http::HeaderValue::from_str(&format!("bytes={start}-")) {
+                req.headers.insert(lp_net::http::header::RANGE, value);
+            }
+        }
         if let Some((body, content_type)) = request.post {
             req.method = lp_net::http::Method::POST;
             req.body = Some(body.into());
@@ -333,6 +361,7 @@ impl ResourceLoader for NetLoader {
                 referrer_policy: None,
                 body: hit.file.body.to_vec(),
                 timing: report.filter(|_| document).map(Box::new),
+                partial: None,
             };
             browser.scheduler().post(TaskSource::Networking, move |b| b.complete_fetch(id, Ok(resource)));
             return None;
@@ -346,10 +375,50 @@ impl ResourceLoader for NetLoader {
         let start = std::time::Instant::now();
         let navigation_url = document.then(|| req.url.as_str().to_owned());
         let url = req.url.clone();
+        let native_id = self.client.next_request_id();
+        // A `part` fetch: the length of the whole body, when known; when
+        // `enough` is next asked; whether the body was already delivered.
+        let mut total: Option<u64> = None;
+        let mut checked = lp_webapi::BodyPart::FIRST_CHECK;
+        let mut cut = false;
+        let net = self.client.clone();
         let sink: lp_net::ResponseSink = Box::new(move |ev| match ev {
+            // A cut body was delivered: the rest (and the cancellation's
+            // failure) is dropped.
+            _ if cut => {}
             lp_net::ResponseEvent::Redirect { .. } => {}
-            lp_net::ResponseEvent::Response(h) => head = Some(h),
-            lp_net::ResponseEvent::Data(chunk) => body.extend_from_slice(&chunk),
+            lp_net::ResponseEvent::Response(h) => {
+                if part.is_some() && !h.headers.contains_key(http::header::CONTENT_ENCODING) {
+                    total =
+                        h.headers.get(http::header::CONTENT_LENGTH).and_then(|v| v.to_str().ok()?.trim().parse().ok());
+                }
+                head = Some(h);
+            }
+            lp_net::ResponseEvent::Data(chunk) => {
+                body.extend_from_slice(&chunk);
+                let Some(part) = part.as_ref() else { return };
+                let Some(keep) = body_cut(part, &body, total, &mut checked) else { return };
+                let Some(h) = head.take() else { return };
+                body.truncate(keep);
+                cut = true;
+                let whole = total == Some(body.len() as u64);
+                let resource = Resource {
+                    url: h.url.to_string(),
+                    status: h.status.as_u16(),
+                    mime: h.mime,
+                    charset: h.charset,
+                    body: std::mem::take(&mut body),
+                    content_disposition: None,
+                    header_csp: false,
+                    refresh: None,
+                    referrer_policy: None,
+                    timing: None,
+                    partial: (!whole).then_some(lp_webapi::Partial { total }),
+                };
+                let _ = handle.post(move |b: &mut Browser| b.complete_fetch(id, Ok(resource)));
+                // Stop the transfer: a live stream never ends.
+                net.cancel(native_id);
+            }
             lp_net::ResponseEvent::Finished { encoded_len, decoded_len } => {
                 let timing = |h: &lp_net::ResponseHead| {
                     let url = navigation_url.clone()?;
@@ -371,6 +440,7 @@ impl ResourceLoader for NetLoader {
                 let result = match head.take() {
                     Some(h) => Ok(Resource {
                         timing: timing(&h),
+                        partial: None,
                         url: h.url.to_string(),
                         status: h.status.as_u16(),
                         mime: h.mime,
@@ -406,7 +476,7 @@ impl ResourceLoader for NetLoader {
             }
             None => sink,
         };
-        let native_id = self.client.fetch(req, sink);
+        self.client.fetch_with_id(native_id, req, sink);
         let client = self.client.clone();
         Some(ResourceCancellation::new(move || client.cancel(native_id)))
     }
@@ -446,25 +516,56 @@ impl StaticLoader {
 
 impl ResourceLoader for StaticLoader {
     fn fetch(&self, browser: &mut Browser, request: FetchRequest, done: FetchDone) {
-        self.log.borrow_mut().push(request.url.clone());
+        let start = request.part.map_or(0, |p| p.start);
+        self.log.borrow_mut().push(if start > 0 {
+            format!("{} bytes={start}-", request.url)
+        } else {
+            request.url.clone()
+        });
         let entry = self.entries.borrow().get(&request.url).cloned();
         let url = request.url;
+        let part = request.part;
         let delay = entry.as_ref().map_or(Duration::ZERO, |e| e.2);
         let id = browser.register_completion(done);
         browser.scheduler().set_timer(delay, false, true, move |b| {
             let result = match entry.clone() {
-                Some((mime, body, _)) => Ok(Resource {
-                    url: url.clone(),
-                    status: 200,
-                    mime,
-                    charset: None,
-                    body,
-                    content_disposition: None,
-                    header_csp: false,
-                    refresh: None,
-                    referrer_policy: None,
-                    timing: None,
-                }),
+                Some((mime, mut body, _)) => {
+                    // A `part` request: the range, cut as the network
+                    // loader cuts it (all bytes arrive at once here).
+                    let status = if start > 0 && (start as usize) < body.len() {
+                        body.drain(..start as usize);
+                        206
+                    } else {
+                        200
+                    };
+                    let total = body.len() as u64;
+                    let mut checked = lp_webapi::BodyPart::FIRST_CHECK;
+                    let mut keep = None;
+                    if let Some(part) = &part {
+                        while keep.is_none() && checked <= body.len().min(part.limit) {
+                            let at = checked;
+                            keep = body_cut(part, &body[..at], Some(total), &mut checked);
+                        }
+                        keep = keep.or_else(|| (body.len() > part.limit).then_some(part.limit));
+                    }
+                    let partial = keep.filter(|&k| k < body.len()).map(|k| {
+                        body.truncate(k);
+                        lp_webapi::Partial { total: Some(total) }
+                    });
+                    Ok(Resource {
+                        url: url.clone(),
+                        status,
+                        mime,
+                        charset: None,
+                        body,
+                        content_disposition: None,
+                        header_csp: false,
+                        refresh: None,
+                        referrer_policy: None,
+                        timing: None,
+                        partial,
+                    })
+                }
                 None => Err(format!("net::ERR_FILE_NOT_FOUND {url}")),
             };
             b.complete_fetch(id, result);
@@ -784,6 +885,7 @@ impl Browser {
             loader_id: Some(loader_id.0.clone()),
             crossorigin: None,
             initiator: page.child.map(|_| lp_webapi::resource_timing::Initiator::Iframe),
+            part: None,
         };
         let pending_id = loader_id.clone();
         let cancel = loader.fetch_cancellable(
@@ -1210,6 +1312,7 @@ impl Browser {
             loader_id,
             crossorigin,
             initiator,
+            part: None,
         };
         loader.fetch(
             self,
@@ -1520,6 +1623,7 @@ impl Browser {
                     loader_id,
                     crossorigin: None,
                     initiator: None,
+                    part: None,
                 };
                 loader.fetch(
                     self,

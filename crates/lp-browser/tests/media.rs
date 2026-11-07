@@ -380,6 +380,36 @@ fn preload_none_waits_for_play_and_audio_containers_load() {
 }
 
 #[test]
+fn long_resources_are_read_in_part() {
+    // Past the 16 MB a media element keeps: an MP4 whose moov follows its
+    // media data is read with a Range request from the moov box, and a WAV
+    // keeps its declared length (both used to be buffered whole, and failed
+    // past the network's 256 MB body limit).
+    let mp4 = samples::mp4(2.5, (320, 240));
+    let moov_at = mp4.windows(4).position(|w| w == b"moov").unwrap() - 4;
+    let moov_len = u32::from_be_bytes(mp4[moov_at..moov_at + 4].try_into().unwrap()) as usize;
+    let mdat_len = 20 << 20;
+    let mut mdat = (mdat_len as u32).to_be_bytes().to_vec();
+    mdat.extend_from_slice(b"mdat");
+    mdat.resize(mdat_len, 0);
+    let late = [&mp4[..moov_at], &mdat, &mp4[moov_at..moov_at + moov_len]].concat();
+    let offset = moov_at + mdat_len;
+    let (thread, page, loader) = setup_with(
+        "<video id=v src=late.mp4></video><audio id=w src=long.wav></audio>",
+        &[
+            ("late.mp4", "video/mp4", late, Duration::ZERO),
+            ("long.wav", "audio/wav", samples::wav(1500.0), Duration::ZERO),
+        ],
+    );
+    assert_eq!(
+        eval(&thread, page, "var v = document.getElementById('v'), w = document.getElementById('w'); [v.duration, v.videoWidth, v.readyState, w.duration, w.readyState].join()"),
+        "2.5,320,4,1500,4"
+    );
+    let log = loader.log.borrow();
+    assert!(log.iter().any(|u| *u == format!("http://site.test/late.mp4 bytes={offset}-")), "{log:?}");
+}
+
+#[test]
 fn removing_the_current_source_keeps_the_pointer_in_place() {
     // HTML: the source pointer keeps its place when the `<source>` being
     // tried is removed, so a failure moves on to the next candidate rather

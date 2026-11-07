@@ -301,21 +301,56 @@ pub struct DocumentTiming {
 }
 
 /// A media element's resource request (`PageHooks::fetch_media`).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub struct MediaRequest {
     pub url: String,
     /// `<video>` (else `<audio>`): the request's destination.
     pub video: bool,
     /// The element's `crossorigin` attribute.
     pub crossorigin: Option<String>,
+    /// How much of the body the element needs.
+    pub part: BodyPart,
 }
 
-/// A media resource's response: the whole body.
+/// A fetch that needs only part of a response body (a media element reads
+/// container headers): it completes with a prefix and stops the transfer
+/// once `enough` or `limit` says so, instead of buffering the whole body
+/// (which a live stream never finishes).
+#[derive(Clone, Copy, Debug)]
+pub struct BodyPart {
+    /// Request the body from this offset (`Range: bytes=start-`; 0 sends no
+    /// `Range`). A server may ignore it and answer 200 with the whole body.
+    pub start: u64,
+    /// At most this many body bytes are kept: reaching it completes the
+    /// fetch with them.
+    pub limit: usize,
+    /// Asked at doubling sizes with the body so far and the response's
+    /// length (`Content-Length` of an unencoded body, when sent): `true`
+    /// completes the fetch with those bytes.
+    pub enough: fn(&[u8], Option<u64>) -> bool,
+}
+
+impl BodyPart {
+    /// The body size `enough` is first asked at; then at each doubling.
+    pub const FIRST_CHECK: usize = 16 * 1024;
+}
+
+/// A response body cut short by `BodyPart`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Partial {
+    /// The whole body's length, when the response said.
+    pub total: Option<u64>,
+}
+
+/// A media resource's response: the body, or the prefix of it that the
+/// request's `BodyPart` asked for.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MediaResponse {
     pub status: u16,
     pub mime: String,
     pub body: Vec<u8>,
+    /// `Some`: `body` is a prefix of the response body.
+    pub partial: Option<Partial>,
 }
 
 /// A media fetch in flight: dropping it cancels the request.
