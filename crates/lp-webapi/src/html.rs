@@ -2496,14 +2496,14 @@ simple_class!(HtmlCanvasElement, "HTMLCanvasElement", HtmlElement, |def| {
             crate::canvas::canvas_resized(s, n.page(), n.id)
         },
     );
-    // "2d": text measurement and state without a rasterizer (canvas.rs);
+    // "2d": a rasterized 2D context (canvas.rs);
     // other context types are unsupported (null).
     def.method("getContext", 1, |s, n, a| {
         let kind = arg_string(&a, 0, "HTMLCanvasElement.getContext")?;
         crate::canvas::get_context(s, n.page(), n.id, &kind)
     });
-    def.method("toDataURL", 0, |s, _n, _a| Ok(s.string("data:,")));
-    def.method("toBlob", 1, |s, n, a| crate::canvas::to_blob(s, n.page(), a));
+    def.method("toDataURL", 0, |s, n, a| crate::canvas::to_data_url(s, n.page(), n.id, a));
+    def.method("toBlob", 1, |s, n, a| crate::canvas::to_blob(s, n.page(), n.id, a));
 });
 simple_class!(HtmlMediaElement, "HTMLMediaElement", HtmlElement, |def| {
     reflect_url!(def, "src", "src");

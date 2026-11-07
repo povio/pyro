@@ -2898,10 +2898,10 @@ fn svg_graphics_elements_report_get_bbox() {
 }
 
 #[test]
-fn canvas_2d_measures_text_without_pixels() {
+fn canvas_2d_measures_and_draws_text() {
     // TOS terms-layout sizes Days inputs with canvas measureText. The 2D
-    // context measures with the flow layout's text measure; there is no
-    // rasterizer, so pixel readback is explicitly unsupported.
+    // context measures and draws text with the system fonts (Parley); the
+    // text it draws has pixels.
     let e = env("<body><canvas id=c></canvas><input id=i style='font: 600 15px system-ui'></body>");
     assert_eq!(
         eval(
@@ -2923,8 +2923,8 @@ fn canvas_2d_measures_text_without_pixels() {
     );
     assert_eq!(eval(&e.main, "x.save(); x.font = '20px monospace'; x.restore(); x.font"), "32px system-ui");
     assert_eq!(
-        eval(&e.main, "x.fillText('9', 0, 10); try { x.getImageData(0, 0, 1, 1); 'returned' } catch (err) { err.name }"),
-        "NotSupportedError"
+        eval(&e.main, "x.fillText('9', 0, 30); x.getImageData(0, 0, 40, 40).data.some(v => v > 0)"),
+        "true"
     );
     // The TOS pattern: drawing.font = getComputedStyle(input).font.
     assert_eq!(

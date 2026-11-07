@@ -149,6 +149,9 @@ pub struct Dom {
     /// An `<audio>` or `<video>` element was created; until then no
     /// mutation looks for media load triggers (`media_element`).
     pub(crate) media_seen: bool,
+    /// A `<canvas>` element was created: loaded images keep their bytes
+    /// for canvas drawing (`Dom::canvas_seen`).
+    pub(crate) canvas_seen: bool,
     pub(crate) media: crate::media_element::MediaQueue,
     live: u32,
     /// Bumped whenever a node is removed from its parent.
@@ -245,6 +248,7 @@ impl Dom {
             pending_inline_handlers: Vec::new(),
             base_seen: false,
             media_seen: false,
+            canvas_seen: false,
             media: Default::default(),
             mutation: MutationState::default(),
             live_ranges: Vec::new(),
@@ -320,6 +324,10 @@ impl Dom {
     }
     pub fn node(&self, id: NodeId) -> DomResult<&Node> {
         Ok(self.live(id)?.1)
+    }
+    /// Whether a `<canvas>` element was ever created in this DOM.
+    pub fn canvas_seen(&self) -> bool {
+        self.canvas_seen
     }
     /// Natural (intrinsic) size of a loaded image element, in CSS px.
     pub fn natural_size(&self, el: NodeId) -> Option<(f64, f64)> {
@@ -820,7 +828,11 @@ impl Dom {
         let owner = self.owner_for(doc)?;
         let is_template = name.ns == ns!(html) && name.local == local_name!("template");
         self.base_seen |= name.local == local_name!("base");
-        self.media_seen |= matches!(name.local, local_name!("audio") | local_name!("video"));
+        match name.local {
+            local_name!("audio") | local_name!("video") => self.media_seen = true,
+            local_name!("canvas") => self.canvas_seen = true,
+            _ => {}
+        }
         let idx = self.alloc_raw(NodeKind::Element(Box::new(ElementData::new(name))), owner);
         if is_template {
             let inert = self.inert_doc_for(owner);
