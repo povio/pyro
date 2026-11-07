@@ -39,7 +39,9 @@ use std::rc::Rc;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
-use std::sync::{Arc, LazyLock, Mutex, MutexGuard, OnceLock, RwLockReadGuard, RwLockWriteGuard};
+use std::sync::{
+    Arc, LazyLock, Mutex, MutexGuard, Once, OnceLock, RwLockReadGuard, RwLockWriteGuard,
+};
 use std::task::{Context as TaskContext, Waker};
 use style::Atom;
 use style::animation::DocumentAnimationSet;
@@ -65,6 +67,7 @@ use style::{
     stylist::Stylist,
 };
 use style_dom::ElementState;
+use stylo_taffy::CopyStyleGetters;
 use thin_vec::ThinVec;
 use url::Url;
 use web_time::Instant;
@@ -79,8 +82,68 @@ use thread_local::ThreadLocal;
 #[derive(Clone, Debug, PartialEq)]
 pub struct UserAgentStylesheet(DocumentStyleSheet);
 
+pub(crate) fn init_stylo_prefs() {
+    static INIT: Once = Once::new();
+    INIT.call_once(|| {
+        style_config::set_pref!("layout.css.flexbox-balance.enabled", true);
+        style_config::set_pref!("layout.css.background-clip.text.enabled", true);
+        style_config::set_pref!("layout.css.webkit-text-fill-color.enabled", true);
+        style_config::set_pref!("layout.css.columns.enabled", true);
+        style_config::set_pref!("layout.css.basic-shape-shape.enabled", true);
+        style_config::set_pref!("layout.css.tree-counting-functions.enabled", true);
+        style_config::set_pref!("layout.css.progress-function.enabled", true);
+        style_config::set_pref!("layout.css.font-variations.enabled", true);
+        style_config::set_pref!("layout.css.text-indent-keywords.enabled", true);
+        style_config::set_pref!("layout.css.word-break.break-word.enabled", true);
+        #[cfg(feature = "writing-mode")]
+        {
+            style_config::set_pref!("layout.css.writing-mode.enabled", true);
+            style_config::set_pref!("layout.css.writing-mode.sideways.enabled", true);
+        }
+
+        // Properties that were previously enabled by the `layout.unimplemented` pref
+        style_config::set_pref!("layout.css.appearance.enabled", true);
+        style_config::set_pref!("layout.css.backdrop-filter.enabled", true);
+        style_config::set_pref!("layout.css.contain.enabled", true);
+        style_config::set_pref!("layout.css.content.alt-text.enabled", true);
+        style_config::set_pref!("layout.css.corner-shape.enabled", true);
+        style_config::set_pref!("layout.css.counters.enabled", true);
+        style_config::set_pref!("layout.css.font-size-adjust.enabled", true);
+        style_config::set_pref!("layout.css.forced-color-adjust.enabled", true);
+        style_config::set_pref!("layout.css.masking.enabled", true);
+        style_config::set_pref!("layout.css.math-properties.enabled", true);
+        style_config::set_pref!("layout.css.motion-path.enabled", true);
+        style_config::set_pref!("layout.css.overscroll-behavior.enabled", true);
+        style_config::set_pref!("layout.css.scroll-driven-animations.enabled", true);
+        style_config::set_pref!("layout.css.scroll-behavior.enabled", true);
+        style_config::set_pref!("layout.css.scrollbar-styling.enabled", true);
+        style_config::set_pref!("layout.css.text-decoration-inset.enabled", true);
+        style_config::set_pref!("layout.css.text-overflow.enabled", true);
+        style_config::set_pref!("layout.css.text-underline.enabled", true);
+        style_config::set_pref!("layout.css.view-transitions.enabled", true);
+        style_config::set_pref!("layout.css.writing-mode.text-orientation.enabled", true);
+        style_config::set_pref!("layout.css.zoom.enabled", true);
+        // lightningpanda: the features lp-dom's cascade enables. Prefs are process-wide and read
+        // while parsing, so without these a sheet parsed here before lp-dom's first cascade dropped
+        // such rules. `:has()` comes with invalidation (`invalidate_has_anchors`).
+        style_config::set_pref!("layout.css.has-selector.enabled", true);
+        style_config::set_pref!("layout.css.container-queries.enabled", true);
+        style_config::set_pref!("layout.css.nth-child-of.enabled", true);
+        style_config::set_pref!("layout.css.starting-style-at-rules.enabled", true);
+        style_config::set_pref!("layout.css.at-scope.enabled", true);
+        style_config::set_pref!("layout.css.style-queries.enabled", true);
+        style_config::set_pref!("layout.css.line-clamp.enabled", true);
+        style_config::set_pref!("layout.css.fit-content-function.enabled", true);
+        style_config::set_pref!("layout.css.supports.at-rule.enabled", true);
+        style_config::set_pref!("layout.threads", -1);
+    });
+}
+
 impl UserAgentStylesheet {
     pub fn parse(css: &str) -> Self {
+        // Pref-gated UA declarations must be enabled before parsing.
+        init_stylo_prefs();
+
         let lock = SharedRwLock::read_only();
         let data = Stylesheet::from_str(
             css,
@@ -359,13 +422,21 @@ pub struct BaseDocument {
     /// Load state (abort controller and in-flight request id) for each
     /// `<iframe>` element whose sub-document is loaded automatically
     pub(crate) iframe_loads: HashMap<NodeId, crate::iframe::IframeLoad>,
-    /// Set of changed nodes for updating the accessibility tree
-    pub(crate) changed_nodes: HashSet<NodeId>,
+    /// Whether the DOM or focus changed since the accessibility tree was last pushed
+    pub(crate) has_changes: bool,
     /// Set of changed nodes for updating the accessibility tree
     pub(crate) deferred_construction_nodes: Vec<ConstructionTask>,
     /// Boxes laid out by an out-of-flow containing block (`oof_containing_block`
     /// set), so paint-tree passes visit them instead of every node.
     pub(crate) oof_hoisted: HashSet<NodeId>,
+    /// lightningpanda: nodes the style traversal gave a `position: sticky`
+    /// style (`BaseDocument::has_sticky`). Entries whose node is gone or no
+    /// longer sticky are dropped after each traversal.
+    pub(crate) sticky_nodes: HashSet<NodeId>,
+    /// lightningpanda: the boxes that left a container's list (`Node::layout_child_of`) during
+    /// `resolve_layout_children`; those no container collected again by its end leave the layout
+    /// tree with their subtrees (`BaseDocument::leave_layout_tree`). Empty between passes.
+    pub(crate) left_layout_lists: Vec<NodeId>,
 
     /// Nodes that contain custom widgets
     #[cfg(feature = "custom-widget")]
@@ -406,11 +477,33 @@ pub struct BaseDocument {
     /// it cancels all in-flight fetches tied to this document. Set via
     /// [`DocumentConfig::abort_signal`].
     pub(crate) abort_signal: Option<AbortSignal>,
+    /// Devtools provider notified of DOM mutations. Set via
+    /// [`DocumentConfig::devtools_provider`] or [`Self::set_devtools_provider`].
+    #[cfg(feature = "devtools")]
+    pub(crate) devtools_provider: Option<Arc<dyn blitz_traits::devtools::DevtoolsProvider>>,
+    /// Title shown for this document in devtools (instead of its `<title>`).
+    /// Set via [`Self::set_devtools_title`].
+    #[cfg(feature = "devtools")]
+    pub(crate) devtools_title: Option<String>,
+    /// Reusable buffers for document-wide passes.
+    pub(crate) scratch: DocumentScratch,
+}
+
+/// Buffers reused across runs of document-wide passes to avoid reallocating
+/// them. Recursive passes use them as stacks: each level pushes above the
+/// length it found and truncates back to it before returning.
+#[derive(Default)]
+pub(crate) struct DocumentScratch {
+    /// `(paint order, node)` pairs of the paint lists under construction in
+    /// `build_paint_tree_impl`.
+    pub(crate) keyed_children: Vec<((i32, i32), NodeId)>,
 }
 
 impl BaseDocument {
     /// Create a new (empty) [`BaseDocument`] with the specified configuration
     pub fn new(config: DocumentConfig) -> Self {
+        init_stylo_prefs();
+
         static ID_GENERATOR: AtomicUsize = AtomicUsize::new(1);
 
         let id = ID_GENERATOR.fetch_add(1, Ordering::SeqCst);
@@ -440,32 +533,6 @@ impl BaseDocument {
                 font_ctx
             });
         let font_ctx = Arc::new(Mutex::new(font_ctx));
-
-        // Make sure we turn on stylo features *before* creating the Stylist
-        style_config::set_pref!("layout.grid.enabled", true);
-        // lightningpanda: `:has()` (with invalidation, `invalidate_has_anchors`).
-        style_config::set_pref!("layout.css.has-selector.enabled", true);
-        style_config::set_pref!("layout.flexbox.balance", true);
-        style_config::set_pref!("layout.unimplemented", true);
-        style_config::set_pref!("layout.columns.enabled", true);
-        style_config::set_pref!("layout.css.basic-shape-shape.enabled", true);
-        style_config::set_pref!("layout.css.tree-counting-functions.enabled", true);
-        style_config::set_pref!("layout.css.progress-function.enabled", true);
-        style_config::set_pref!("layout.variable_fonts.enabled", true);
-        #[cfg(feature = "writing-mode")]
-        style_config::set_pref!("layout.writing-mode.enabled", true);
-        style_config::set_pref!("layout.threads", -1);
-        // lightningpanda: the features lp-dom's cascade enables. Prefs are
-        // process-wide and read while parsing, so without these a sheet
-        // parsed here before lp-dom's first cascade dropped such rules.
-        style_config::set_pref!("layout.container-queries.enabled", true);
-        style_config::set_pref!("layout.css.nth-child-of.enabled", true);
-        style_config::set_pref!("layout.css.starting-style-at-rules.enabled", true);
-        style_config::set_pref!("layout.css.at-scope.enabled", true);
-        style_config::set_pref!("layout.css.style-queries.enabled", true);
-        style_config::set_pref!("layout.css.line-clamp.enabled", true);
-        style_config::set_pref!("layout.css.fit-content-function.enabled", true);
-        style_config::set_pref!("layout.css.supports.at-rule.enabled", true);
 
         let viewport = config.viewport.unwrap_or_default();
         let media_type = config.media_type.unwrap_or_else(MediaType::screen);
@@ -548,9 +615,11 @@ impl BaseDocument {
             #[cfg(feature = "custom-widget")]
             pending_resource_deallocations: Vec::new(),
 
-            changed_nodes: HashSet::new(),
+            has_changes: false,
             deferred_construction_nodes: Vec::new(),
             oof_hoisted: HashSet::new(),
+            sticky_nodes: HashSet::new(),
+            left_layout_lists: Vec::new(),
             image_cache: HashMap::new(),
             pending_images: HashMap::new(),
             pending_style_image_nodes: Vec::new(),
@@ -561,6 +630,10 @@ impl BaseDocument {
             shell_provider,
             html_parser_provider,
             abort_signal: config.abort_signal,
+            #[cfg(feature = "devtools")]
+            devtools_provider: config.devtools_provider,
+            #[cfg(feature = "devtools")]
+            devtools_title: None,
             last_mousedown_time: None,
             mousedown_position: taffy::Point::ZERO,
             click_count: 0,
@@ -569,6 +642,7 @@ impl BaseDocument {
             scrollbar_activity: HashMap::new(),
             scroll_animation: ScrollAnimationState::None,
             text_selection: TextSelection::default(),
+            scratch: DocumentScratch::default(),
         };
 
         // Initialise document with root Document node
@@ -609,6 +683,30 @@ impl BaseDocument {
     /// Set the Document's shell provider
     pub fn set_shell_provider(&mut self, shell_provider: Arc<dyn ShellProvider>) {
         self.shell_provider = shell_provider;
+    }
+
+    /// Set (or clear) the Document's devtools provider, which is notified of DOM mutations
+    #[cfg(feature = "devtools")]
+    pub fn set_devtools_provider(
+        &mut self,
+        devtools_provider: Option<Arc<dyn blitz_traits::devtools::DevtoolsProvider>>,
+    ) {
+        self.devtools_provider = devtools_provider;
+    }
+
+    /// The title shown for this document in devtools, if overridden with
+    /// [`Self::set_devtools_title`]
+    #[cfg(feature = "devtools")]
+    pub fn devtools_title(&self) -> Option<&str> {
+        self.devtools_title.as_deref()
+    }
+
+    /// Set (or clear) the title shown for this document in devtools (e.g. as
+    /// the CDP target title). Defaults to the document's `<title>`, which an
+    /// application's UI document may use for its window title instead.
+    #[cfg(feature = "devtools")]
+    pub fn set_devtools_title(&mut self, title: Option<String>) {
+        self.devtools_title = title;
     }
 
     /// Set the Document's html parser provider
@@ -921,8 +1019,7 @@ impl BaseDocument {
             .nodes
             .insert_with_key(|id| Node::new(tree_ptr, id, guard, node_data));
 
-        // Mark the new node as changed.
-        self.changed_nodes.insert(id);
+        self.has_changes = true;
         id
     }
 
@@ -986,9 +1083,23 @@ impl BaseDocument {
             self.active_node_id = self.nearest_surviving_element_ancestor(node_id);
         }
         if self.focus_node_id == Some(node_id) {
-            self.set_focus_within(node_id, false);
             let shell_provider = self.shell_provider.clone();
             self.nodes[node_id].blur(shell_provider);
+            // Nothing on the chain contains the focus anymore. Only the surviving
+            // ancestors need a snapshot for restyling: nodes in the removed subtree had
+            // theirs dropped already and may be freed entirely.
+            let mut maybe_id = Some(node_id);
+            while let Some(node) = maybe_id.and_then(|id| self.get_node(id)) {
+                let id = node.id;
+                maybe_id = node.parent;
+                if node.flags.is_in_document() {
+                    self.snapshot_node_and(id, ElementState::FOCUS_WITHIN, |node| {
+                        node.remove_focus_within()
+                    });
+                } else {
+                    self.nodes[id].remove_focus_within();
+                }
+            }
             self.focus_node_id = None;
         }
         if self.mousedown_node_id == Some(node_id) {
@@ -1068,9 +1179,39 @@ impl BaseDocument {
         self.remove_node_from_tree(anon_id);
     }
 
-    /// Whether the document has been mutated
+    /// lightningpanda: `node_id` is out of the layout tree (no container lists it: it is
+    /// `display: none` or below one, a part a table ignores, or out of the document), and so is
+    /// what its subtree built, as a fresh build has none there: its layout children that still
+    /// point at it leave its list (`Node::layout_child_of`), and theirs in turn, and its anonymous
+    /// blocks are freed. A box that comes back is built again: styled from scratch (below
+    /// `display: none`), added (`process_added_subtree`), or damaged on its way in (a table's
+    /// cells, `enter_layout_tree`; a former table's other children, `damage_former_table_parts`).
+    pub(crate) fn leave_layout_tree(&mut self, node_id: NodeId) {
+        let Some(node) = self.nodes.get(node_id) else { return };
+        let children = node.layout_children.borrow_mut().take();
+        for child_id in children.into_iter().flatten() {
+            let Some(child) = self.nodes.get(child_id) else { continue };
+            if child.layout_child_of.get() != Some(node_id) {
+                continue;
+            }
+            child.layout_child_of.set(None);
+            self.leave_layout_tree(child_id);
+        }
+        let anonymous_blocks = std::mem::take(&mut self.nodes[node_id].anonymous_blocks);
+        for anon_id in anonymous_blocks {
+            self.deallocate_anonymous_block(anon_id);
+        }
+    }
+
+    /// Whether the DOM or focus changed since the last [`Self::clear_changes`]
+    /// (i.e. whether the accessibility tree is out of date)
     pub fn has_changes(&self) -> bool {
-        self.changed_nodes.is_empty()
+        self.has_changes
+    }
+
+    /// Mark the accessibility tree as up to date
+    pub fn clear_changes(&mut self) {
+        self.has_changes = false;
     }
 
     pub fn create_text_node(&mut self, text: &str) -> NodeId {
@@ -1138,8 +1279,6 @@ impl BaseDocument {
         node
     }
 
-    /// `raw` against the document's URL; `None` when it cannot be resolved
-    /// (a relative URL under a `data:` document): nothing is fetched.
     pub(crate) fn resolve_url(&self, raw: &str) -> Option<url::Url> {
         self.url.resolve_relative(raw)
     }
@@ -1162,10 +1301,9 @@ impl BaseDocument {
             if element.name.local == local_name!("link") {
                 if let Some(href) = element.attr(local_name!("href")) {
                     // println!("Node {node_id} {href} {href_to_reload} {} {}", resolved_href.as_str(), resolved_href.as_str() == url_to_reload);
-                    if href == href_to_reload {
-                        let Some(resolved_href) = self.resolve_url(href) else {
-                            continue;
-                        };
+                    if href == href_to_reload
+                        && let Some(resolved_href) = self.resolve_url(href)
+                    {
                         self.net_provider.fetch(
                             self.id(),
                             self.build_request(resolved_href.clone()),
@@ -1337,6 +1475,15 @@ impl BaseDocument {
             DocumentEvent::ResourceLoad(resource) => self.load_resource(resource),
             DocumentEvent::NavigateIframe { node_id, url } => self.navigate_iframe(node_id, url),
         }
+    }
+
+    /// lightningpanda: whether any node of the document (attached or not) is
+    /// styled `position: sticky`, from the set the style traversal keeps
+    /// (O(sticky nodes), not a scan of the document).
+    pub fn has_sticky(&self) -> bool {
+        self.sticky_nodes
+            .iter()
+            .any(|id| self.nodes.get(*id).is_some_and(crate::stylo::is_sticky))
     }
 
     /// lightningpanda: whether a `resolve` could change anything: a resource arrived (it is
@@ -1549,16 +1696,17 @@ impl BaseDocument {
 
     /// Snapshot the node's pre-mutation state (element state and attributes) ahead of
     /// an attribute mutation, so that the next style traversal can diff selector matches
-    /// then-vs-now and invalidate the affected elements.
-    pub fn snapshot_node(&mut self, node_id: NodeId) {
-        self.snapshot_node_impl(node_id, true)
+    /// then-vs-now and invalidate the affected elements. `attr` is the attribute about to
+    /// change; it is recorded as changed even if the element does not have it yet.
+    pub fn snapshot_node(&mut self, node_id: NodeId, attr: &LocalName) {
+        self.snapshot_node_impl(node_id, Some(attr))
     }
 
     /// Snapshot only the node's pre-change [`ElementState`] ahead of a state change
     /// (hover/focus/active/etc). Cheaper than [`Self::snapshot_node`] as it does not
     /// copy attributes or trigger attribute/class/id invalidation work.
     pub fn snapshot_node_state_only(&mut self, node_id: NodeId) {
-        self.snapshot_node_impl(node_id, false)
+        self.snapshot_node_impl(node_id, None)
     }
 
     /// lightningpanda: `:has()` invalidation. Stylo leaves it to the embedder
@@ -1637,7 +1785,7 @@ impl BaseDocument {
         }
     }
 
-    fn snapshot_node_impl(&mut self, node_id: NodeId, capture_attrs: bool) {
+    fn snapshot_node_impl(&mut self, node_id: NodeId, changed_attr: Option<&LocalName>) {
         self.invalidate_has_anchors(node_id);
         let node = &mut self.nodes[node_id];
 
@@ -1660,7 +1808,7 @@ impl BaseDocument {
         // semantics): state is captured at most once, and attributes are captured at most
         // once, but a state-only snapshot is upgraded to also capture attributes if an
         // attribute mutation follows.
-        let needs_attrs = capture_attrs
+        let needs_attrs = changed_attr.is_some()
             && self
                 .snapshots
                 .get_mut(&opaque_node_id)
@@ -1697,10 +1845,15 @@ impl BaseDocument {
                     .collect()
             });
 
-            let changed_attrs: Vec<_> = attrs
+            let mut changed_attrs: Vec<_> = attrs
                 .as_ref()
                 .map(|attrs| attrs.iter().map(|attr| attr.0.name.clone()).collect())
                 .unwrap_or_default();
+            if let Some(attr) = changed_attr {
+                if !changed_attrs.iter().any(|name| name.0 == *attr) {
+                    changed_attrs.push(GenericAtomIdent(attr.clone()));
+                }
+            }
 
             (attrs, changed_attrs)
         } else {
@@ -1716,6 +1869,10 @@ impl BaseDocument {
                 snapshot.class_changed = true;
                 snapshot.id_changed = true;
                 snapshot.other_attributes_changed = true;
+            } else if let Some(attr) = changed_attr {
+                if !snapshot.changed_attrs.iter().any(|name| name.0 == *attr) {
+                    snapshot.changed_attrs.push(GenericAtomIdent(attr.clone()));
+                }
             }
         } else {
             self.snapshots.insert(
@@ -1863,30 +2020,20 @@ impl BaseDocument {
     }
 
     /// Clear the focussed node
-    /// lightningpanda: `:focus-within`: sets (or clears) `FOCUS_WITHIN` on
-    /// `node_id` and its element ancestors.
-    fn set_focus_within(&mut self, node_id: NodeId, on: bool) {
-        let mut cur = Some(node_id);
-        while let Some(id) = cur {
-            if self.nodes[id].is_element() {
-                self.snapshot_node_and(id, ElementState::FOCUS_WITHIN, |node| {
-                    if let Some(e) = node.element_data_mut() {
-                        e.element_state.set(ElementState::FOCUS_WITHIN, on);
-                    }
-                });
-            }
-            cur = self.nodes[id].parent;
-        }
-    }
-
     pub fn clear_focus(&mut self) {
         if let Some(id) = self.focus_node_id {
-            self.set_focus_within(id, false);
             let shell_provider = self.shell_provider.clone();
             self.snapshot_node_and(id, ElementState::FOCUS | ElementState::FOCUSRING, |node| {
                 node.blur(shell_provider)
             });
+            for &ancestor in self.node_element_ancestors(id).iter() {
+                self.snapshot_node_and(ancestor, ElementState::FOCUS_WITHIN, |node| {
+                    node.remove_focus_within()
+                });
+            }
             self.focus_node_id = None;
+            self.has_changes = true;
+            self.shell_provider.request_redraw();
         }
     }
 
@@ -1900,6 +2047,10 @@ impl BaseDocument {
         if Some(focus_node_id) == self.focus_node_id {
             return false;
         }
+        // A node that is not in the document cannot be focused
+        if !self.nodes[focus_node_id].flags.is_in_document() {
+            return false;
+        }
 
         #[cfg(feature = "tracing")]
         tracing::info!("Focussed node {focus_node_id}");
@@ -1908,7 +2059,6 @@ impl BaseDocument {
 
         // Remove focus from the old node
         if let Some(id) = self.focus_node_id {
-            self.set_focus_within(id, false);
             self.snapshot_node_and(id, ElementState::FOCUS | ElementState::FOCUSRING, |node| {
                 node.blur(shell_provider.clone())
             });
@@ -1921,8 +2071,32 @@ impl BaseDocument {
             |node| node.focus(shell_provider),
         );
 
+        // Update :focus-within on the ancestor chains (shared prefix stays)
+        let old_node_path = self.maybe_node_element_ancestors(self.focus_node_id);
+        let new_node_path = self.node_element_ancestors(focus_node_id);
+        let same_count = old_node_path
+            .iter()
+            .zip(&new_node_path)
+            .take_while(|(o, n)| o == n)
+            .count();
+        for &id in old_node_path.iter().skip(same_count) {
+            self.snapshot_node_and(id, ElementState::FOCUS_WITHIN, |node| {
+                node.remove_focus_within()
+            });
+        }
+        for &id in new_node_path.iter().skip(same_count) {
+            self.snapshot_node_and(id, ElementState::FOCUS_WITHIN, |node| {
+                node.add_focus_within()
+            });
+        }
+
         self.focus_node_id = Some(focus_node_id);
-        self.set_focus_within(focus_node_id, true);
+        self.has_changes = true;
+
+        // The focus is styled (:focus, :focus-visible, :focus-within), so
+        // moving it changes what is on screen. Nothing else asks for the
+        // frame: a keyboard focus change touches no layout and no content.
+        self.shell_provider.request_redraw();
 
         true
     }
@@ -2390,7 +2564,7 @@ impl BaseDocument {
             device.set_root_style(root_style);
 
             let font = root_style.get_font();
-            let font_size = font.clone_font_size().computed_size();
+            let font_size = font.slow_clone_font_size().computed_size();
             device.set_root_font_size(root_style.effective_zoom.unzoom(font_size.px()));
 
             let line_height = device
@@ -2457,11 +2631,15 @@ impl BaseDocument {
         // Prefer the precise hit node: `cursor` and `user-select` may be set on
         // a pseudo-element or resolved on an anonymous box, and text hits carry
         // is_text via the hit node. Fall back to the canonical hover node if
-        // the hit node has been removed (it is transient across resolves).
-        let node_id = self
+        // the hit node has been removed (it is transient across resolves), and
+        // to the default cursor if the pointer is over no box.
+        let Some(node_id) = self
             .hover_hit_node_id
             .filter(|&id| self.nodes.contains_key(id))
-            .or(self.get_hover_node_id())?;
+            .or(self.get_hover_node_id())
+        else {
+            return Some(CursorIcon::Default);
+        };
         let node = &self.nodes[node_id];
 
         if let Some(subdoc) = node.subdoc().map(|doc| doc.inner())
@@ -2472,7 +2650,7 @@ impl BaseDocument {
 
         let style = node.primary_styles()?;
         let user_select = style.clone_user_select();
-        let keyword = style.clone_cursor().keyword;
+        let keyword = style.get_cursor().keyword;
 
         // Return cursor from style if it is non-auto
         if keyword != CursorKind::Auto {
@@ -2487,14 +2665,16 @@ impl BaseDocument {
             return Some(CursorIcon::Text);
         }
 
-        // Use "pointer" cursor if any ancestor is a link
+        // Use "pointer" cursor if any ancestor is a link. Walk DOM parents: an atomic
+        // inline's layout parent is its inline root, which skips the inline elements
+        // (such as `<a>`) between them.
         let mut maybe_node = Some(node);
         while let Some(node) = maybe_node {
             if node.is_link() {
                 return Some(CursorIcon::Pointer);
             }
 
-            maybe_node = node.layout_parent.get().map(|node_id| node.with(node_id));
+            maybe_node = node.parent.map(|node_id| node.with(node_id));
         }
 
         // Return text cursor for text nodes
@@ -3067,6 +3247,15 @@ fn snap_to_layout_unit(value: f64) -> f64 {
     (value * 64.0).round() / 64.0
 }
 
+impl Drop for BaseDocument {
+    fn drop(&mut self) {
+        #[cfg(feature = "devtools")]
+        if let Some(provider) = &self.devtools_provider {
+            provider.document_dropped();
+        }
+    }
+}
+
 impl AsRef<BaseDocument> for BaseDocument {
     fn as_ref(&self) -> &BaseDocument {
         self
@@ -3202,6 +3391,16 @@ mod hover_state_tests {
         doc.set_hover_to(250.0, 8.0);
         assert!(!doc.hover_node_is_text);
         assert_eq!(doc.get_hover_node_id(), Some(container));
+        assert_eq!(doc.get_cursor(), Some(CursorIcon::Default));
+    }
+
+    /// Hovering below the content hits no box: default cursor (`None` would hide it).
+    #[test]
+    fn hovering_below_content_reports_default_cursor() {
+        let (mut doc, _) = make_doc();
+
+        doc.set_hover_to(5.0, 250.0);
+        assert_eq!(doc.get_hover_node_id(), None);
         assert_eq!(doc.get_cursor(), Some(CursorIcon::Default));
     }
 }
@@ -3573,6 +3772,243 @@ mod hover_invalidation_tests {
 }
 
 #[cfg(test)]
+mod picture_display_tests {
+    use super::*;
+    use crate::qual_name;
+    use blitz_traits::shell::ColorScheme;
+
+    /// `<picture>` must generate a box (inline, as in browsers): the
+    /// aspect-ratio wrapper pattern relies on it for its absolutely positioned
+    /// child. `display: contents` would leave the `<img>` in flow instead.
+    #[test]
+    fn picture_is_not_display_contents() {
+        let mut doc = BaseDocument::new(DocumentConfig {
+            viewport: Some(Viewport::new(400, 300, 1.0, ColorScheme::Light)),
+            ..Default::default()
+        });
+        let root_id = doc.root_node().id;
+        let mut mutator = doc.mutate();
+        let html = mutator.create_element(qual_name!("html"), vec![]);
+        let body = mutator.create_element(qual_name!("body"), vec![]);
+        let picture = mutator.create_element(qual_name!("picture"), vec![]);
+        mutator.append_children(body, &[picture]);
+        mutator.append_children(html, &[body]);
+        mutator.append_children(root_id, &[html]);
+        drop(mutator);
+
+        doc.resolve(0.0);
+        let display = doc.nodes[picture]
+            .primary_styles()
+            .expect("picture should be styled")
+            .get_box()
+            .display;
+        assert!(!display.is_contents());
+    }
+}
+
+#[cfg(test)]
+mod inline_with_only_block_children_tests {
+    use super::*;
+    use crate::qual_name;
+    use blitz_traits::shell::ColorScheme;
+
+    #[test]
+    fn inline_with_only_block_children_is_detected() {
+        let mut doc = BaseDocument::new(DocumentConfig {
+            viewport: Some(Viewport::new(400, 300, 1.0, ColorScheme::Light)),
+            ..Default::default()
+        });
+        doc.add_user_agent_stylesheet(crate::UserAgentStylesheet::parse(
+            "html, body, div { display: block } b { display: contents }",
+        ));
+        let root_id = doc.root_node().id;
+        let mut mutator = doc.mutate();
+        let html = mutator.create_element(qual_name!("html"), vec![]);
+        mutator.append_children(root_id, &[html]);
+        let body = mutator.create_element(qual_name!("body"), vec![]);
+        mutator.append_children(html, &[body]);
+
+        let inline_with_block = mutator.create_element(qual_name!("span"), vec![]);
+        mutator.append_children(body, &[inline_with_block]);
+        let block_child = mutator.create_element(qual_name!("div"), vec![]);
+        mutator.append_children(inline_with_block, &[block_child]);
+
+        let inline_with_whitespace_and_block = mutator.create_element(qual_name!("span"), vec![]);
+        mutator.append_children(body, &[inline_with_whitespace_and_block]);
+        let whitespace = mutator.create_text_node("\n  ");
+        mutator.append_children(inline_with_whitespace_and_block, &[whitespace]);
+        let block_child = mutator.create_element(qual_name!("div"), vec![]);
+        mutator.append_children(inline_with_whitespace_and_block, &[block_child]);
+
+        let inline_with_text_and_block = mutator.create_element(qual_name!("span"), vec![]);
+        mutator.append_children(body, &[inline_with_text_and_block]);
+        let text = mutator.create_text_node("text");
+        mutator.append_children(inline_with_text_and_block, &[text]);
+        let block_child = mutator.create_element(qual_name!("div"), vec![]);
+        mutator.append_children(inline_with_text_and_block, &[block_child]);
+
+        // The nested span is itself laid out as a block box, so the outer span has
+        // block-level content only. Chrome paints nothing for the outer span either.
+        let inline_with_nested_block = mutator.create_element(qual_name!("span"), vec![]);
+        mutator.append_children(body, &[inline_with_nested_block]);
+        let nested_inline = mutator.create_element(qual_name!("span"), vec![]);
+        mutator.append_children(inline_with_nested_block, &[nested_inline]);
+        let block_child = mutator.create_element(qual_name!("div"), vec![]);
+        mutator.append_children(nested_inline, &[block_child]);
+
+        let inline_with_comment_and_block = mutator.create_element(qual_name!("span"), vec![]);
+        mutator.append_children(body, &[inline_with_comment_and_block]);
+        let comment = mutator.create_comment_node("comment");
+        mutator.append_children(inline_with_comment_and_block, &[comment]);
+        let block_child = mutator.create_element(qual_name!("div"), vec![]);
+        mutator.append_children(inline_with_comment_and_block, &[block_child]);
+
+        let inline_with_contents_text_and_block =
+            mutator.create_element(qual_name!("span"), vec![]);
+        mutator.append_children(body, &[inline_with_contents_text_and_block]);
+        let contents = mutator.create_element(qual_name!("b"), vec![]);
+        mutator.append_children(inline_with_contents_text_and_block, &[contents]);
+        let text = mutator.create_text_node("text");
+        mutator.append_children(contents, &[text]);
+        let block_child = mutator.create_element(qual_name!("div"), vec![]);
+        mutator.append_children(inline_with_contents_text_and_block, &[block_child]);
+
+        let inline_with_text = mutator.create_element(qual_name!("span"), vec![]);
+        mutator.append_children(body, &[inline_with_text]);
+        let text = mutator.create_text_node("text");
+        mutator.append_children(inline_with_text, &[text]);
+
+        let empty_inline = mutator.create_element(qual_name!("span"), vec![]);
+        mutator.append_children(body, &[empty_inline]);
+
+        let block_with_block = mutator.create_element(qual_name!("div"), vec![]);
+        mutator.append_children(body, &[block_with_block]);
+        let nested_block = mutator.create_element(qual_name!("div"), vec![]);
+        mutator.append_children(block_with_block, &[nested_block]);
+        drop(mutator);
+
+        doc.resolve(0.0);
+        assert!(doc.nodes[inline_with_block].is_inline_with_only_block_children());
+        assert!(doc.nodes[inline_with_whitespace_and_block].is_inline_with_only_block_children());
+        assert!(!doc.nodes[inline_with_text_and_block].is_inline_with_only_block_children());
+        assert!(doc.nodes[inline_with_nested_block].is_inline_with_only_block_children());
+        assert!(doc.nodes[inline_with_comment_and_block].is_inline_with_only_block_children());
+        assert!(
+            !doc.nodes[inline_with_contents_text_and_block].is_inline_with_only_block_children()
+        );
+        assert!(!doc.nodes[inline_with_text].is_inline_with_only_block_children());
+        assert!(!doc.nodes[empty_inline].is_inline_with_only_block_children());
+        assert!(!doc.nodes[block_with_block].is_inline_with_only_block_children());
+    }
+
+    #[test]
+    fn inline_with_only_block_children_follows_child_edits() {
+        let mut doc = BaseDocument::new(DocumentConfig {
+            viewport: Some(Viewport::new(400, 300, 1.0, ColorScheme::Light)),
+            ..Default::default()
+        });
+        doc.add_user_agent_stylesheet(crate::UserAgentStylesheet::parse(
+            "html, body, div { display: block }",
+        ));
+        let root_id = doc.root_node().id;
+        let mut mutator = doc.mutate();
+        let html = mutator.create_element(qual_name!("html"), vec![]);
+        mutator.append_children(root_id, &[html]);
+        let body = mutator.create_element(qual_name!("body"), vec![]);
+        mutator.append_children(html, &[body]);
+        let span = mutator.create_element(qual_name!("span"), vec![]);
+        mutator.append_children(body, &[span]);
+        let text = mutator.create_text_node("text");
+        mutator.append_children(span, &[text]);
+        let block_child = mutator.create_element(qual_name!("div"), vec![]);
+        mutator.append_children(span, &[block_child]);
+        drop(mutator);
+        doc.resolve(0.0);
+        assert!(!doc.nodes[span].is_inline_with_only_block_children());
+
+        let mut mutator = doc.mutate();
+        mutator.remove_and_drop_node(text);
+        drop(mutator);
+        doc.resolve(0.0);
+        assert!(doc.nodes[span].is_inline_with_only_block_children());
+
+        let mut mutator = doc.mutate();
+        let inline_child = mutator.create_element(qual_name!("span"), vec![]);
+        mutator.append_children(span, &[inline_child]);
+        drop(mutator);
+        doc.resolve(0.0);
+        assert!(!doc.nodes[span].is_inline_with_only_block_children());
+    }
+
+    #[test]
+    fn inline_with_only_block_children_follows_text_edits() {
+        let mut doc = BaseDocument::new(DocumentConfig {
+            viewport: Some(Viewport::new(400, 300, 1.0, ColorScheme::Light)),
+            ..Default::default()
+        });
+        doc.add_user_agent_stylesheet(crate::UserAgentStylesheet::parse(
+            "html, body, div { display: block }",
+        ));
+        let root_id = doc.root_node().id;
+        let mut mutator = doc.mutate();
+        let html = mutator.create_element(qual_name!("html"), vec![]);
+        mutator.append_children(root_id, &[html]);
+        let body = mutator.create_element(qual_name!("body"), vec![]);
+        mutator.append_children(html, &[body]);
+        let span = mutator.create_element(qual_name!("span"), vec![]);
+        mutator.append_children(body, &[span]);
+        let whitespace = mutator.create_text_node("\n  ");
+        mutator.append_children(span, &[whitespace]);
+        let block_child = mutator.create_element(qual_name!("div"), vec![]);
+        mutator.append_children(span, &[block_child]);
+        drop(mutator);
+        doc.resolve(0.0);
+        assert!(doc.nodes[span].is_inline_with_only_block_children());
+
+        let mut mutator = doc.mutate();
+        mutator.append_text_to_node(whitespace, "x").unwrap();
+        drop(mutator);
+        doc.resolve(0.0);
+        assert!(!doc.nodes[span].is_inline_with_only_block_children());
+    }
+
+    #[test]
+    fn inline_with_only_block_children_follows_contents_descendant_edits() {
+        let mut doc = BaseDocument::new(DocumentConfig {
+            viewport: Some(Viewport::new(400, 300, 1.0, ColorScheme::Light)),
+            ..Default::default()
+        });
+        doc.add_user_agent_stylesheet(crate::UserAgentStylesheet::parse(
+            "html, body, div { display: block } b { display: contents }",
+        ));
+        let root_id = doc.root_node().id;
+        let mut mutator = doc.mutate();
+        let html = mutator.create_element(qual_name!("html"), vec![]);
+        mutator.append_children(root_id, &[html]);
+        let body = mutator.create_element(qual_name!("body"), vec![]);
+        mutator.append_children(html, &[body]);
+        let span = mutator.create_element(qual_name!("span"), vec![]);
+        mutator.append_children(body, &[span]);
+        let contents = mutator.create_element(qual_name!("b"), vec![]);
+        mutator.append_children(span, &[contents]);
+        let block_in_contents = mutator.create_element(qual_name!("div"), vec![]);
+        mutator.append_children(contents, &[block_in_contents]);
+        let block_child = mutator.create_element(qual_name!("div"), vec![]);
+        mutator.append_children(span, &[block_child]);
+        drop(mutator);
+        doc.resolve(0.0);
+        assert!(doc.nodes[span].is_inline_with_only_block_children());
+
+        let mut mutator = doc.mutate();
+        let text = mutator.create_text_node("text");
+        mutator.append_children(contents, &[text]);
+        drop(mutator);
+        doc.resolve(0.0);
+        assert!(!doc.nodes[span].is_inline_with_only_block_children());
+    }
+}
+
+#[cfg(test)]
 mod font_face_override_tests {
     use super::*;
     use crate::net::{FontFaceOverrides, Resource, ResourceLoadResponse};
@@ -3642,5 +4078,46 @@ mod font_face_override_tests {
             "registered family should report the CSS-declared name, \
              not the font file's internal `name` table entry",
         );
+    }
+}
+
+#[cfg(test)]
+mod change_tracking_tests {
+    use super::*;
+    use crate::qual_name;
+    use blitz_traits::shell::ColorScheme;
+
+    #[test]
+    fn mutations_and_focus_changes_are_tracked() {
+        let mut doc = BaseDocument::new(DocumentConfig {
+            viewport: Some(Viewport::new(400, 300, 1.0, ColorScheme::Light)),
+            ..Default::default()
+        });
+        let root_id = doc.root_node().id;
+        let mut mutator = doc.mutate();
+        let html = mutator.create_element(qual_name!("html"), vec![]);
+        let body = mutator.create_element(qual_name!("body"), vec![]);
+        let button = mutator.create_element(qual_name!("button"), vec![]);
+        mutator.append_children(body, &[button]);
+        mutator.append_children(html, &[body]);
+        mutator.append_children(root_id, &[html]);
+        drop(mutator);
+        doc.resolve(0.0);
+        assert!(doc.has_changes());
+
+        doc.clear_changes();
+        assert!(!doc.has_changes());
+
+        doc.mutate()
+            .set_attribute(button, qual_name!("aria-label"), "Submit");
+        assert!(doc.has_changes());
+
+        doc.clear_changes();
+        assert!(doc.set_focus_to(button));
+        assert!(doc.has_changes());
+
+        doc.clear_changes();
+        doc.clear_focus();
+        assert!(doc.has_changes());
     }
 }

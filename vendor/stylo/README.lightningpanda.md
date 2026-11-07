@@ -1,6 +1,7 @@
-# stylo 0.22.0, patched
+# stylo 0.23.0, patched
 
-This is the published `stylo` 0.22.0 crate (crates.io), used through `[patch.crates-io]` in the
+This is the published `stylo` 0.23.0 crate (crates.io, servo/stylo commit
+`2dca34592ced37c6aa01733e94206a767194cf9d`, the one Blitz main pins), used through `[patch.crates-io]` in the
 workspace `Cargo.toml`. License: MPL-2.0, as upstream. Only `.cargo_vcs_info.json`, `.cargo-ok` and
 `Cargo.toml.orig` were left out of the copy. `UPSTREAM.patch` is the whole diff against the published
 crate (`diff -ruN`).
@@ -29,6 +30,23 @@ crate (`diff -ruN`).
 - `properties/longhands.toml`, `properties/counted_unknown_properties.py`: `orphans` and `widows`
   are added (upstream has neither; both were counted unknown properties), inherited, in
   `inherited_text`. lp-render's PDF output reads them to place page cuts of paper-cut documents.
+
+## Container queries, typed values
+
+- `stylesheets/rule_parser.rs`, `properties/shorthands.rs`, `properties/shorthands.toml`: `@container` rules
+  and the `container` shorthand are parsed for servo too (upstream: gecko only). The shorthand's
+  `servo_pref` is `layout.css.container-queries.enabled`: upstream names a pref that no longer exists in
+  0.23 (`layout.container-queries.enabled`), which only compiles while the shorthand is gecko-only.
+- `stylist.rs`: `Stylist::has_container_queries` tells blitz-dom whether a restyle has container
+  conditions to evaluate.
+- `values/generics/mod.rs`: `GreaterThanOrEqualToOne` derives `ToTyped` (for `orphans`/`widows`).
+
+## Moving from 0.22 to 0.23
+
+The patch applied to 0.23.0 with offsets only. Two adjustments: 0.23 names the by-value getters of
+non-`Copy` values `slow_clone_*`, so the rule cache's inherited resets (`rule_cache.rs`,
+`properties/helpers.mako.rs`) call `slow_clone_box_sizing` and friends; and the `container` shorthand's
+pref name above.
 
 ## Updating or dropping the patch
 

@@ -1,9 +1,10 @@
 use blitz_traits::node_id::NodeId;
 #[cfg(feature = "svg")]
 use markup5ever::local_name;
+use stylo_taffy::CopyStyleGetters;
 
 use crate::net::ResourceHandler;
-use crate::node::{Node, NodeFlags};
+use crate::node::{LayoutStyles, Node, NodeFlags};
 use crate::tree::NodeTree;
 use crate::{
     BaseDocument, net::ImageHandler, node::ImageResourceData, node::Status, util::ImageLayerKind,
@@ -63,6 +64,7 @@ impl BaseDocument {
             return RestyleDamage::empty();
         };
         let mut damage = own_damage;
+        self.nodes[node_id].flags.set(NodeFlags::OWN_DAMAGE, !own_damage.is_empty());
 
         // Skip subtrees which contain no damage. Anonymous nodes are never
         // skipped themselves because damage marking walks the DOM parent
@@ -149,6 +151,12 @@ impl BaseDocument {
         // Store damage for current node
         node.set_damage(damage);
 
+        // lightningpanda: a table cell whose subtree changed is measured and laid out again
+        // (`TableContext::changed_cells`).
+        if !damage.is_empty() {
+            self.note_changed_table_cell(node_id);
+        }
+
         // Anonymous boxes between this node and its nearest element ancestor
         // are not visited by the DOM walk, so invalidate them here by walking
         // `layout_parent`. Stop at the first non-anonymous node: elements are
@@ -194,6 +202,31 @@ impl BaseDocument {
         damage_for_parent
     }
 
+    /// Adds `node_id` to its table's changed cells if it is a table cell.
+    fn note_changed_table_cell(&self, node_id: NodeId) {
+        let node = &self.nodes[node_id];
+        let index = node.layout_data().table_cell_index;
+        if index == u32::MAX {
+            return;
+        }
+        let Some(table) = node.layout_parent.get().and_then(|id| self.nodes.get(id)) else { return };
+        let Some(element) = table.data.downcast_element() else { return };
+        if let crate::node::SpecialElementData::TableRoot(ctx) = &element.special_data {
+            if ctx.cells.get(index as usize).is_some_and(|cell| cell.node_id == node_id) {
+                let mut changed = ctx.changed_cells.borrow_mut();
+                changed.push(index as usize);
+                // (A table that is not laid out keeps them: no more than one per cell.)
+                if changed.len() > 2 * ctx.cells.len() {
+                    changed.sort_unstable();
+                    changed.dedup();
+                }
+                drop(changed);
+                ctx.widths.borrow_mut().changed(index as usize);
+                ctx.placed.borrow_mut().damaged(index as usize, ctx.cells.len());
+            }
+        }
+    }
+
     /// Refresh owned anonymous boxes without revisiting their DOM children.
     fn refresh_anonymous_block_styles(&mut self, node_id: NodeId) -> RestyleDamage {
         // Skip owners with no anonymous boxes to refresh.
@@ -219,7 +252,7 @@ impl BaseDocument {
         let anonymous_blocks = std::mem::take(&mut self.nodes[node_id].anonymous_blocks);
         let mut damage_for_parent = RestyleDamage::empty();
         for &anonymous_id in &anonymous_blocks {
-            let (mut damage, changed) = {
+            let (mut damage, changed, layout_changed) = {
                 // Skip boxes whose node, style data, or previous style is unavailable.
                 let Some(node) = self.nodes.get_mut(anonymous_id) else {
                     continue;
@@ -239,8 +272,16 @@ impl BaseDocument {
                     data.styles.primary = Some(style.clone());
                     data.set_restyled();
                 }
-                (data.damage | diff.damage, changed)
+                let layout_changed = changed && LayoutStyles::affected_by(diff.damage);
+                (data.damage | diff.damage, changed, layout_changed)
             };
+            // A paint-only change keeps the layout styles derived from the old style.
+            if layout_changed {
+                self.nodes[anonymous_id].update_layout_styles();
+            } else if changed {
+                #[cfg(debug_assertions)]
+                self.nodes[anonymous_id].assert_layout_styles_are_current();
+            }
 
             // Refresh nested owned boxes unless reconstruction will replace them.
             if changed && !damage.intersects(CONSTRUCT_BOX | CONSTRUCT_FC) {
@@ -326,6 +367,7 @@ impl BaseDocument {
         node.anonymous_blocks = anonymous_blocks;
         node.children = children;
         node.clear_damage_mut();
+        node.flags.remove(NodeFlags::OWN_DAMAGE);
         node.unset_damaged_descendants();
         node.unset_dirty_descendants();
     }
@@ -411,6 +453,14 @@ pub(crate) fn compute_layout_damage(old: &ComputedValues, new: &ComputedValues) 
             return true;
         }
 
+        // lightningpanda: a table keeps the layout styles of its parts in its `TableContext`, built
+        // with its box: a part's (or the table's) layout change builds it again, as a mutation does.
+        if new_box.display.outside() == DisplayOutside::InternalTable
+            || new_box.display.inside() == DisplayInside::Table
+        {
+            return true;
+        }
+
         false
     };
 
@@ -439,6 +489,24 @@ pub(crate) fn compute_layout_damage(old: &ComputedValues, new: &ComputedValues) 
         false
     };
 
+    // Table layout bakes the sizes of the table and its internal boxes into the table
+    // context when the table is constructed.
+    let table_needs_rebuild = || {
+        matches!(
+            new.get_box().display.inside(),
+            DisplayInside::Table
+                | DisplayInside::TableRowGroup
+                | DisplayInside::TableColumn
+                | DisplayInside::TableColumnGroup
+                | DisplayInside::TableHeaderGroup
+                | DisplayInside::TableFooterGroup
+                | DisplayInside::TableRow
+                | DisplayInside::TableCell
+        ) && (old.get_position() != new.get_position()
+            || old.get_padding() != new.get_padding()
+            || old.get_border() != new.get_border())
+    };
+
     #[allow(
         clippy::if_same_then_else,
         reason = "these branches will soon be different"
@@ -446,6 +514,8 @@ pub(crate) fn compute_layout_damage(old: &ComputedValues, new: &ComputedValues) 
     if box_tree_needs_rebuild() {
         ALL_DAMAGE
     } else if text_shaping_needs_recollect() {
+        ALL_DAMAGE
+    } else if table_needs_rebuild() {
         ALL_DAMAGE
     } else if old.get_position().order != new.get_position().order
         // `position` is unchanged here (else the box tree would be rebuilt), so

@@ -13,6 +13,7 @@ use std::sync::Arc;
 use style::Atom;
 use style::values::computed::CSSPixelLength;
 use style::values::computed::length_percentage::CalcLengthPercentage;
+use stylo_taffy::CopyStyleGetters;
 use stylo_taffy::TaffyStyloStyle;
 use taffy::{
     AxisStaticEdge, AxisStaticPosition, BlockContext, CoreStyle as _, DetailedLayoutInfo,
@@ -210,7 +211,7 @@ impl LayoutPassState<'_> {
             && inputs.available_space.width == AvailableSpace::MinContent
             && self.nodes[dom_node_id(node_id)].primary_styles().is_some_and(|style| {
                 !style.writing_mode.is_vertical()
-                    && matches!(style.clone_min_width(), style::values::computed::Size::MaxContent)
+                    && matches!(style.get_min_width(), style::values::computed::Size::MaxContent)
             })
         {
             inputs.available_space.width = AvailableSpace::MaxContent;
@@ -289,7 +290,7 @@ impl LayoutPassState<'_> {
         let font_styles = node.primary_styles().map(|style| {
             use style::values::computed::font::LineHeight;
 
-            let font_size = style.clone_font_size().used_size().px();
+            let font_size = style.slow_clone_font_size().used_size().px();
             let line_height = match style.clone_line_height() {
                 LineHeight::Normal => font_size * 1.2,
                 LineHeight::Number(num) => font_size * num.0,
@@ -742,14 +743,16 @@ impl LayoutPassState<'_> {
                     }
 
                     // HACK: Cap scrollable overflow at node size to prevent scrolling
-                    output.scrollable_overflow_rect.left = 0.0;
-                    output.scrollable_overflow_rect.top = 0.0;
-                    output.scrollable_overflow_rect.right =
-                        output.scrollable_overflow_rect.right.min(output.size.width);
-                    output.scrollable_overflow_rect.bottom = output
-                        .scrollable_overflow_rect
-                        .bottom
-                        .min(output.size.height);
+                    let overflow = output.scrollable_overflow_rect;
+                    output.scrollable_overflow_rect = taffy::ScrollableOverflow::new(
+                        taffy::Rect {
+                            left: 0.0,
+                            top: 0.0,
+                            right: overflow.right().min(output.size.width),
+                            bottom: overflow.bottom().min(output.size.height),
+                        },
+                        output.scrollable_overflow_rect.is_reversed(),
+                    );
 
                     return output;
                 }
@@ -1066,11 +1069,25 @@ impl RoundTree for LayoutPassState<'_> {
     }
 
     fn set_final_layout(&mut self, node_id: NodeId, layout: &Layout) {
-        *self.node_from_id_mut(node_id).final_layout_mut() = *layout;
+        let node = self.node_from_id_mut(node_id);
+        let size_changed = node.final_layout().size != layout.size;
+        *node.final_layout_mut() = *layout;
+        // lightningpanda: a transform resolves against the rounded size
+        // (`Node::set_transform`), and rounding moves with the box's absolute
+        // position: a box that only moved (or sits inside one) can change its
+        // rounded size with no unrounded layout of its own changing. Mark it, so
+        // `resolve_transforms` resolves its transform again instead of reusing
+        // the one for the old size. The style decides, not `transform()`: one
+        // that was the identity at the old size is stored as `None`.
+        if size_changed && node.has_transform_style() {
+            node.mark_layout_changed(Some(node.id));
+        }
     }
 
     fn is_out_of_flow(&self, node_id: NodeId) -> bool {
-        self.node_from_id(node_id).is_out_of_flow()
+        self.node_from_id(node_id)
+            .out_of_flow
+            .load(core::sync::atomic::Ordering::Relaxed)
     }
 
     fn hoisted_child_count(&self, node_id: NodeId) -> usize {

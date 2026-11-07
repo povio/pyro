@@ -125,6 +125,32 @@ textarea {
     overflow-wrap: break-word;
 }
 
+/* https://html.spec.whatwg.org/multipage/rendering.html#form-controls */
+input,
+button,
+textarea {
+    letter-spacing: initial;
+    word-spacing: initial;
+    line-height: initial;
+}
+
+input,
+select,
+button,
+textarea {
+    text-transform: initial;
+    text-indent: initial;
+    text-shadow: initial;
+}
+
+/* https://html.spec.whatwg.org/multipage/rendering.html#the-select-element-2
+   (select only has native appearance here) */
+select {
+    letter-spacing: initial;
+    word-spacing: initial;
+    line-height: initial;
+}
+
 input:focus,
 textarea:focus {
     outline: 2px solid #4D90FE;
@@ -189,10 +215,6 @@ legend {
 
 option {
     display: none;
-}
-
-picture {
-    display: contents;
 }
 
 source {

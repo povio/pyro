@@ -29,6 +29,7 @@ pub mod pdf;
 mod svg_use;
 pub mod worker;
 
+use stylo_taffy::CopyStyleGetters;
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, Mutex};
 
@@ -103,6 +104,18 @@ pub fn blitz_passes() -> (u64, u64) {
 /// Layout nodes Blitz's rounding reached on this thread, and subtrees it skipped.
 pub fn blitz_rounding() -> (u64, u64) {
     blitz_dom::phase_profile::rounding()
+}
+
+/// Tables Blitz built from scratch on this thread, and the table cells it read from their styles
+/// (by those builds and by updates of the rows that changed).
+pub fn blitz_tables() -> (u64, u64) {
+    blitz_dom::phase_profile::tables()
+}
+
+/// Table grids Blitz laid out on this thread: whole, and again from their last layout in the rows
+/// that changed.
+pub fn blitz_table_grids() -> (u64, u64) {
+    blitz_dom::phase_profile::table_grids()
 }
 
 pub fn blitz_phases() -> [f64; 9] {
@@ -1565,7 +1578,7 @@ fn unrounded_document_height(root: &blitz_dom::Node, doc_h: f64, dpr: f64) -> f6
         return doc_h;
     }
     let l = root.unrounded_layout();
-    let h = (l.size.height as f64).max(l.scrollable_overflow_rect.bottom as f64) * dpr;
+    let h = (l.size.height as f64).max(l.scrollable_overflow_rect.rect().bottom as f64) * dpr;
     if doc_h > (h / dpr).round() * dpr {
         doc_h
     } else {
@@ -1736,15 +1749,15 @@ impl Breaks {
                 let atomic_inline =
                     display.outside() == DisplayOutside::Inline && display.inside() != DisplayInside::Flow;
                 if !atomic_inline {
-                    if forces(b.clone_break_before()) {
+                    if forces(b.slow_clone_break_before()) {
                         let at = top - if in_flow { margin_top } else { 0.0 };
                         out.forced.push((at, at));
                     }
-                    if forces(b.clone_break_after()) {
+                    if forces(b.slow_clone_break_after()) {
                         out.forced_after.push(bottom);
                     }
                 }
-                let avoids = matches!(b.clone_break_inside(), BreakWithin::Avoid | BreakWithin::AvoidPage);
+                let avoids = matches!(b.slow_clone_break_inside(), BreakWithin::Avoid | BreakWithin::AvoidPage);
                 let replaced = node.element_data().is_some_and(|e| {
                     matches!(
                         &*e.name.local,
@@ -1768,8 +1781,8 @@ impl Breaks {
                 monolithic = replaced
                     || atomic_inline
                     || writes_otherwise
-                    || b.clone_contain().contains(Contain::SIZE)
-                    || b.clone_container_type().contains(ContainerType::SIZE);
+                    || b.slow_clone_contain().contains(Contain::SIZE)
+                    || b.slow_clone_container_type().contains(ContainerType::SIZE);
                 // An inline-level box is in a line, which already holds it.
                 if avoids || (monolithic && !atomic_inline) {
                     out.unbroken.push(Unbroken {
@@ -1814,8 +1827,8 @@ impl Breaks {
                 out.contexts.push(LineContext {
                     first: first as u32,
                     count: (out.lines.len() - first) as u32,
-                    orphans: limit(text_style.map(|t| t.clone_orphans().0)),
-                    widows: limit(text_style.map(|t| t.clone_widows().0)),
+                    orphans: limit(text_style.map(|t| t.slow_clone_orphans().0)),
+                    widows: limit(text_style.map(|t| t.slow_clone_widows().0)),
                 });
             }
             if let Some(children) = children.as_ref() {
@@ -2109,8 +2122,8 @@ fn avoids_break(doc: &blitz_dom::BaseDocument, node: &blitz_dom::Node, edge: Edg
         let Some(styles) = node.primary_styles() else { return false };
         let b = styles.get_box();
         let value = match edge {
-            Edge::Before => b.clone_break_before(),
-            Edge::After => b.clone_break_after(),
+            Edge::Before => b.slow_clone_break_before(),
+            Edge::After => b.slow_clone_break_after(),
         };
         if matches!(value, BreakBetween::Avoid | BreakBetween::AvoidPage) {
             return true;

@@ -551,8 +551,8 @@ impl Mirror {
                     for n in sub {
                         let want = kids_of.remove(&n.key).unwrap_or_default();
                         let e = &nodes[&n.key];
-                        for old in e.children.iter().filter(|k| !want.contains(k)) {
-                            dropped.push((*old, Some(n.key)));
+                        for old in missing_from(&e.children, &want) {
+                            dropped.push((old, Some(n.key)));
                         }
                         if e.children != want || !want.is_empty() {
                             let id = e.id;
@@ -565,8 +565,8 @@ impl Mirror {
                         Some(p) => (nodes[p].id, nodes[p].children.clone()),
                         None => (m.doc.root_node().id, top.clone()),
                     };
-                    for k in old.iter().filter(|k| !kids.contains(k)) {
-                        dropped.push((*k, *parent));
+                    for k in missing_from(&old, kids) {
+                        dropped.push((k, *parent));
                     }
                     mutations += reorder(&mut m, pid, kids, nodes);
                     match parent {
@@ -626,6 +626,26 @@ impl Mirror {
         });
         now != before
     }
+}
+
+/// The keys of `old` that are not in `new`, in `old`'s order. Keys are
+/// unique within a list, so the two lists' common prefix and suffix hold
+/// none of them: only what lies between is compared, and an append, or an
+/// edit near either end, of a long children list costs what changed, not
+/// `old.len() * new.len()`.
+fn missing_from(old: &[u64], new: &[u64]) -> Vec<u64> {
+    let prefix = old.iter().zip(new).take_while(|(a, b)| a == b).count();
+    let (old, new) = (&old[prefix..], &new[prefix..]);
+    let suffix = old.iter().rev().zip(new.iter().rev()).take_while(|(a, b)| a == b).count();
+    let (old, new) = (&old[..old.len() - suffix], &new[..new.len() - suffix]);
+    if old.is_empty() {
+        return Vec::new();
+    }
+    if old.len().saturating_mul(new.len()) <= 256 {
+        return old.iter().copied().filter(|k| !new.contains(k)).collect();
+    }
+    let new: FxHashSet<u64> = new.iter().copied().collect();
+    old.iter().copied().filter(|k| !new.contains(k)).collect()
 }
 
 /// Records `key` (or none) as the key of Blitz node `id`.

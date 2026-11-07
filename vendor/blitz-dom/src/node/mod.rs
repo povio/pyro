@@ -17,6 +17,7 @@ pub use attributes::{Attribute, Attributes};
 pub use custom_widget::{
     ComputedStyles, CustomWidgetData, CustomWidgetStatus, ProxyRenderContext, Widget,
 };
+pub(crate) use element::parse_classes;
 pub use element::{
     CanvasData, DocumentData, ElementData, ImageData, ImageResourceData, LayoutData,
     ListItemLayout, ListItemLayoutPosition, Marker, RasterImageData, SpecialElementData,
@@ -25,6 +26,7 @@ pub use element::{
 pub use node::*;
 pub use scrollbar::{ScrollbarColor, ScrollbarRef, ScrollbarWidth};
 pub use stylo_data::ComputedStyleRef;
+pub(crate) use stylo_data::LayoutStyles;
 #[cfg(feature = "svg")]
 pub use svg::{SvgImageData, SvgIntrinsicDimensions};
 pub use text::{GeneratedTextInputEvent, TextBrush, TextInputData, TextLayout};

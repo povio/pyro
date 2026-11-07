@@ -6,7 +6,7 @@ use std::borrow::Borrow;
 use std::fmt;
 use std::rc::Rc;
 
-use cssparser::{CowRcStr, ParseError, Parser as CssParser, ToCss};
+use cssparser::{ParseError, Parser as CssParser, ToCss};
 use markup5ever::{local_name, ns, LocalName, Namespace};
 use precomputed_hash::PrecomputedHash;
 use rustc_hash::FxHashMap;
@@ -245,7 +245,7 @@ impl<'i> selectors::parser::Parser<'i> for SelParser<'_> {
     fn is_is_alias(&self, name: &str) -> bool {
         name.eq_ignore_ascii_case("-webkit-any") || name.eq_ignore_ascii_case("matches")
     }
-    fn parse_non_ts_pseudo_class(&self, name: CowRcStr<'i>) -> Result<PseudoClass, ParseError<Self::Error>> {
+    fn parse_non_ts_pseudo_class(&self, name: &str) -> Result<PseudoClass, ParseError<Self::Error>> {
         use PseudoClass::*;
         let pc = match_ignore_ascii_case(
             &name,
@@ -281,7 +281,7 @@ impl<'i> selectors::parser::Parser<'i> for SelParser<'_> {
     }
     fn parse_non_ts_functional_pseudo_class(
         &self,
-        name: CowRcStr<'i>,
+        name: &str,
         parser: &mut CssParser<'i>,
         _after_part: bool,
     ) -> Result<PseudoClass, ParseError<Self::Error>> {
@@ -301,7 +301,7 @@ impl<'i> selectors::parser::Parser<'i> for SelParser<'_> {
         }
         Err(ParseError::custom(SelectorParseErrorKind::UnsupportedPseudoClassOrElement))
     }
-    fn parse_pseudo_element(&self, name: CowRcStr<'i>) -> Result<PseudoElement, ParseError<Self::Error>> {
+    fn parse_pseudo_element(&self, name: &str) -> Result<PseudoElement, ParseError<Self::Error>> {
         let lower = name.to_ascii_lowercase();
         // Unknown pseudo-elements are invalid selectors, except the
         // `-webkit-` prefixed ones browsers accept (and never match).
@@ -312,7 +312,7 @@ impl<'i> selectors::parser::Parser<'i> for SelParser<'_> {
     }
     fn parse_functional_pseudo_element(
         &self,
-        name: CowRcStr<'i>,
+        name: &str,
         parser: &mut CssParser<'i>,
     ) -> Result<PseudoElement, ParseError<Self::Error>> {
         let lower = name.to_ascii_lowercase();
@@ -921,7 +921,7 @@ impl Dom {
         if scope != NIL && self.n(scope).is_element() {
             ctx.scope_element = Some(OpaqueElement::new(self.n(scope)));
         }
-        matches_selector_list(sel, &self.element_ref(idx), &mut ctx)
+        matches_selector_list(sel, self.element_ref(idx), &mut ctx)
     }
 
     /// `Element.matches(selectors)`.
@@ -1021,7 +1021,7 @@ impl Dom {
                         let want = if html_doc && e.is_html() { lower } else { name };
                         e.attrs.iter().any(|a| a.name.ns == ns!() && a.name.local == **want)
                     }
-                    Some(Simple::Id(_)) | None => matches_selector_list(sel, &self.element_ref(cur), &mut ctx),
+                    Some(Simple::Id(_)) | None => matches_selector_list(sel, self.element_ref(cur), &mut ctx),
                 };
                 if hit && !found(cur) {
                     return;
