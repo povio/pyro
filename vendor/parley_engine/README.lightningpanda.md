@@ -30,3 +30,17 @@ inputs, so it serves a document only the glyphs of the very same font data. blit
 files per thread so documents loading the same font share its blob. Bounded at 16384 runs. On the
 `cmr-overflow` PDF case, laid out once per document after a reload, pagination went from about 460 to
 388 ms per run (interleaved A/B, load average 27-75); the PDFs of the long cases are byte-identical.
+
+## Run metrics without a font parse per run
+
+`shape/shaped_text.rs`, `RunMetrics` and `ShapedText::push_run`: a run's font metrics (the font's
+units per em and its `FontMetrics` at the run's size and variation location) were computed from
+scratch for every run, parsing the font (`FontRef::from_index`) twice and reading its metric tables
+(`skrifa::Metrics::new`) once, although `ShapedText::fonts` already deduplicates the font instances.
+Now a `ShapedText` keeps one `RunMetricsEntry` per font, size and variation location it has runs
+for, and a run of a combination seen before takes that entry (one parse for the rest). The glyph
+cache (`shape/cache.rs`) stores the metrics of a run beside its glyphs — its key holds everything
+they depend on — so a run it serves costs no font parse at all. `shape/shaper.rs` builds the
+harfrust shaper (and parses the font) only for a run the glyph cache does not hold; a cached run's
+variation coords are the shaper instance's, which are what the shaper would report. Metric values
+are unchanged: the same `skrifa` computation runs, once per combination instead of once per run.

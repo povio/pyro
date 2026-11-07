@@ -577,3 +577,66 @@ fn screenshot_text_keeps_the_box_x() {
     let (b, _, _) = r.render(&snap(&page("38px")), Area::Viewport, Backend::Cpu, &fetcher()).unwrap();
     assert!(compare(&a, &b, 0, None).equal);
 }
+
+/// Mixed fonts, sizes, scripts and a missing first family: every shaping path
+/// (font fallback, bold/italic synthesis, run metrics, style metrics).
+const TEXT_PAGE: &str = r#"<!doctype html><html><head><style>
+  body { margin: 8px; font: 14px/1.4 Helvetica, Arial, sans-serif; width: 380px; }
+  h1 { font: bold 22px Times, serif; }
+  code { font-family: Courier, monospace; font-size: 12px; }
+  .big { font-size: 18px; } .small { font-size: 10px; vertical-align: super; }
+</style></head><body>
+<h1>Shaping <i>twice</i></h1>
+<p>Plain <b>bold</b> and <i>italic</i>, <span class="big">bigger</span> and <span class="small">smaller</span>, <code>mono text</code>.</p>
+<p>Кириллица, Ελληνικά, 中文字, العربية, עברית, emoji 😀🎉 and ﬁ ligatures.</p>
+<p style="font-family: 'No Such Font', Helvetica">Missing first family then Helvetica <b>bold</b>.</p>
+</body></html>"#;
+
+/// Text laid out again on a thread (its glyph cache holds the runs and their
+/// metrics) renders what a thread shaping it for the first time renders.
+#[test]
+fn text_shaped_from_the_glyph_cache_renders_as_shaped_fresh() {
+    let fresh = std::thread::spawn(|| {
+        let mut r = Renderer::new();
+        let (img, hash, _) = r.render(&snap(TEXT_PAGE), Area::Viewport, Backend::Cpu, &fetcher()).unwrap();
+        (img, hash)
+    })
+    .join()
+    .unwrap();
+    let mut r = Renderer::new();
+    let (a, ha, _) = r.render(&snap(TEXT_PAGE), Area::Viewport, Backend::Cpu, &fetcher()).unwrap();
+    let (b, hb, _) = r.render(&snap(TEXT_PAGE), Area::Viewport, Backend::Cpu, &fetcher()).unwrap();
+    let mut other = Renderer::new();
+    let (c, hc, _) = other.render(&snap(TEXT_PAGE), Area::Viewport, Backend::Cpu, &fetcher()).unwrap();
+    assert!(a.data.chunks_exact(4).any(|p| p[0] < 128), "text was drawn");
+    assert_eq!((ha, hb, hc), (fresh.1, fresh.1, fresh.1));
+    assert!(compare(&a, &fresh.0, 0, None).equal);
+    assert!(compare(&a, &b, 0, None).equal);
+    assert!(compare(&a, &c, 0, None).equal);
+    // The PNG row filter keeps the pixels.
+    assert_eq!(decode_png(&encode_png(&a)).unwrap(), a);
+}
+
+/// JPEG screenshots decode to the render within the usual lossy error, and
+/// `quality` keeps libjpeg's meaning (higher is larger and closer).
+#[test]
+fn jpeg_screenshots_decode_close_to_the_render() {
+    let mut r = Renderer::new();
+    let (img, _, _) = r.render(&snap(TEXT_PAGE), Area::Viewport, Backend::Cpu, &fetcher()).unwrap();
+    let psnr = |quality: u8| -> (f64, usize) {
+        let bytes = encode_jpeg(&img, quality).unwrap();
+        assert_eq!(&bytes[..2], &[0xff, 0xd8], "JPEG magic");
+        let decoded = image::load_from_memory_with_format(&bytes, image::ImageFormat::Jpeg).unwrap().to_rgb8();
+        assert_eq!(decoded.dimensions(), (img.width, img.height));
+        let src = img.data.chunks_exact(4).flat_map(|p| [p[0], p[1], p[2]]);
+        let mse = decoded.iter().zip(src).map(|(a, b)| (*a as f64 - b as f64).powi(2)).sum::<f64>()
+            / (img.width as f64 * img.height as f64 * 3.0);
+        (10.0 * (255.0f64 * 255.0 / mse.max(1e-9)).log10(), bytes.len())
+    };
+    let (low, low_size) = psnr(30);
+    let (mid, mid_size) = psnr(80);
+    let (high, high_size) = psnr(95);
+    assert!(mid > 32.0, "q80 PSNR {mid:.1} dB");
+    assert!(low < mid && mid < high, "PSNR {low:.1} < {mid:.1} < {high:.1}");
+    assert!(low_size < mid_size && mid_size < high_size, "sizes {low_size} < {mid_size} < {high_size}");
+}

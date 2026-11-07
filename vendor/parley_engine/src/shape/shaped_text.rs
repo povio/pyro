@@ -173,6 +173,54 @@ fn chromium_ascent_adjustment(font_ref: &skrifa::FontRef<'_>, metrics: &skrifa::
     (height * 0.15 + 0.5).floor()
 }
 
+/// lightningpanda: the font metrics of a shaped run, which depend on the font instance, the font
+/// size and the variation location only. Computed once per such combination in a
+/// [`ShapedText`] (see [`ShapedText::push_run`]) and kept with the run's glyphs in the shaper's
+/// glyph cache, so a run shaped before costs no font parse.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct RunMetrics {
+    /// The font's units per em, which scale glyph advances to the font size.
+    pub(crate) units_per_em: f32,
+    pub(crate) font_metrics: FontMetrics,
+}
+
+impl RunMetrics {
+    /// The metrics of `font` at `font_size` and the normalized `coords`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the font data cannot be parsed (the shaper has parsed it already).
+    pub(crate) fn new(
+        font: &FontInstance,
+        font_size: f32,
+        coords: &[harfrust::NormalizedCoord],
+    ) -> Self {
+        let font_ref =
+            skrifa::FontRef::from_index(font.font.data.as_ref(), font.font.index).unwrap();
+        let metrics = skrifa::metrics::Metrics::new(
+            &font_ref,
+            skrifa::prelude::Size::new(font_size),
+            coords,
+        );
+        Self {
+            units_per_em: metrics.units_per_em as f32,
+            font_metrics: FontMetrics::from_skrifa_metrics(&font_ref, &metrics, font_size),
+        }
+    }
+}
+
+/// The metrics of the runs of one font at one size and variation location in a [`ShapedText`].
+#[derive(Clone, Debug, PartialEq)]
+struct RunMetricsEntry {
+    /// Index into [`ShapedText::fonts`].
+    font_index: usize,
+    /// The font size's bits.
+    font_size: u32,
+    /// Range into [`ShapedText::normalized_coords`].
+    normalized_coords_range: Range<usize>,
+    metrics: RunMetrics,
+}
+
 /// The result of shaping.
 ///
 /// After [analyzing][crate::Analysis] your text, [shape the text][crate::Shaper::shape_text],
@@ -193,6 +241,9 @@ pub struct ShapedText {
     glyphs: Vec<Glyph>,
     fonts: Vec<FontInstance>,
     normalized_coords: Vec<NormalizedCoord>,
+    /// lightningpanda: the metrics of the runs' fonts, one entry per font, size and variation
+    /// location; a run of a combination seen before takes its entry.
+    run_metrics: Vec<RunMetricsEntry>,
 }
 
 impl ShapedText {
@@ -220,6 +271,7 @@ impl ShapedText {
         self.glyphs.clear();
         self.fonts.clear();
         self.normalized_coords.clear();
+        self.run_metrics.clear();
     }
 
     /// Get a [`ShapedSlice`] of the run at `run_index`.
@@ -314,7 +366,8 @@ impl ShapedText {
         font: &FontInstance,
         glyph_buffer: &harfrust::GlyphBuffer,
         normalized_coords: &[harfrust::NormalizedCoord],
-    ) {
+        metrics: Option<RunMetrics>,
+    ) -> RunMetrics {
         debug_assert_eq!(
             range.char_range.len(),
             text[range.byte_range.clone()].chars().count(),
@@ -343,23 +396,36 @@ impl ShapedText {
                 index
             });
 
+        // lightningpanda: the entry of this font, size and location in this text; the first run
+        // of a combination enters the metrics the caller shaped it with before, or computes them.
+        // The table is the same whatever the caller had cached.
         let metrics = {
-            let font = &self.fonts[font_index];
-            let font_ref =
-                skrifa::FontRef::from_index(font.font.data.as_ref(), font.font.index).unwrap();
-            skrifa::metrics::Metrics::new(
-                &font_ref,
-                skrifa::prelude::Size::new(options.font_size),
-                normalized_coords,
-            )
+            let font_size = options.font_size.to_bits();
+            let coords = &self.normalized_coords[normalized_coords_range.clone()];
+            let entry = self.run_metrics.iter().find(|e| {
+                e.font_index == font_index
+                    && e.font_size == font_size
+                    && self.normalized_coords[e.normalized_coords_range.clone()] == *coords
+            });
+            match entry {
+                Some(entry) => entry.metrics,
+                None => {
+                    let metrics = metrics.unwrap_or_else(|| {
+                        // The same coords, in harfrust's type (bit-copied above).
+                        RunMetrics::new(&self.fonts[font_index], options.font_size, normalized_coords)
+                    });
+                    self.run_metrics.push(RunMetricsEntry {
+                        font_index,
+                        font_size,
+                        normalized_coords_range: normalized_coords_range.clone(),
+                        metrics,
+                    });
+                    metrics
+                }
+            }
         };
-        let units_per_em = metrics.units_per_em as f32;
-        let font_metrics = {
-            let font = &self.fonts[font_index];
-            let font_ref =
-                skrifa::FontRef::from_index(font.font.data.as_ref(), font.font.index).unwrap();
-            FontMetrics::from_skrifa_metrics(&font_ref, &metrics, options.font_size)
-        };
+        let units_per_em = metrics.units_per_em;
+        let font_metrics = metrics.font_metrics;
 
         // `HarfRust` returns glyphs in visual order, so we need to process them as such while
         // maintaining logical ordering of clusters.
@@ -442,6 +508,7 @@ impl ShapedText {
             advance: run_advance,
             font_metrics,
         });
+        metrics
     }
 }
 
