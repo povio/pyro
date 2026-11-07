@@ -17,7 +17,7 @@ use super::alignment::PositionedItem;
 use super::explicit_grid::initialize_grid_tracks;
 use super::placement::{place_grid_items, ItemPlacement};
 use super::track_sizing::{determine_if_item_crosses_flexible_or_intrinsic_tracks, resolve_item_track_indexes};
-use super::types::{CellOccupancyMatrix, GridItem, GridTrack, GridTrackKind, NamedLineResolver, TrackCounts};
+use super::types::{CellOccupancyMatrix, GridItem, GridTrack, GridTrackKind, NamedLineResolver, OriginZeroLine, TrackCounts};
 use super::GridContainerConstants;
 use crate::geometry::{AbsoluteAxis, InBothAbsAxis};
 use crate::style::{AlignItems, GridAutoFlow};
@@ -208,29 +208,76 @@ pub(super) fn prepare<Tree: LayoutGridContainer>(
     old_items.truncate(splice.items.start);
     let mut items = old_items;
     let mut inserted: Vec<GridItem> = Vec::with_capacity(splice.inserted);
-    let mut placements: Vec<ItemPlacement> = Vec::with_capacity(splice.inserted);
+    // A tree that places the items itself (`LayoutGridContainer::track_counts`) answers the inserted
+    // items' areas as well; otherwise they are placed as the whole grid's placement places them.
+    let tree_extent = tree.track_counts(node);
+    let mut placements: Vec<ItemPlacement> = Vec::with_capacity(if tree_extent.is_some() { 0 } else { splice.inserted });
     for index in splice.items.start..after {
         let child_style = tree.get_grid_child_style(child_id(index));
         if child_style.box_generation_mode() == BoxGenerationMode::None || child_style.position().is_out_of_flow() {
             return None;
         }
-        placements.push(InBothAbsAxis {
-            horizontal: name_resolver.resolve_column_names(&child_style.grid_column()).into_origin_zero(explicit_col_count),
-            vertical: name_resolver.resolve_row_names(&child_style.grid_row()).into_origin_zero(explicit_row_count),
-        });
-        inserted.push(GridItem::new_with_style_and_order(child_id(index), child_style, align_items, justify_items, index as u16));
+        if tree_extent.is_none() {
+            placements.push(InBothAbsAxis {
+                horizontal: name_resolver.resolve_column_names(&child_style.grid_column()).into_origin_zero(explicit_col_count),
+                vertical: name_resolver.resolve_row_names(&child_style.grid_row()).into_origin_zero(explicit_row_count),
+            });
+        }
+        let mut item = GridItem::new_with_style_and_order(child_id(index), child_style, align_items, justify_items, index as u16);
+        if tree_extent.is_some() {
+            let area = tree
+                .resolved_placement(node, child_id(index))
+                .expect("a tree answering track_counts answers resolved_placement for every in-flow child");
+            item.column = area.width.map(|line| OriginZeroLine(line as i16));
+            item.row = area.height.map(|line| OriginZeroLine(line as i16));
+        }
+        inserted.push(item);
         changed[index] = true;
     }
     if !inserted.is_empty() {
-        // The inserted items go to the inserted rows, which no other item reaches: they are placed
-        // there as the whole grid's placement places them.
-        let mut matrix = CellOccupancyMatrix::with_track_counts(col_counts, row_counts);
-        place_grid_items(&mut matrix, &mut inserted, &placements, grid_auto_flow);
+        // The inserted items go to the inserted rows, which no other item reaches, and make no
+        // implicit track.
+        match tree_extent {
+            Some(extent) => {
+                if extent.width > explicit_col_count || extent.height > explicit_row_count {
+                    return None;
+                }
+                #[cfg(debug_assertions)]
+                {
+                    let mut placed: Vec<GridItem> = Vec::with_capacity(inserted.len());
+                    let mut placements: Vec<ItemPlacement> = Vec::with_capacity(inserted.len());
+                    for item in &inserted {
+                        let child_style = tree.get_grid_child_style(item.node);
+                        placements.push(InBothAbsAxis {
+                            horizontal: name_resolver.resolve_column_names(&child_style.grid_column()).into_origin_zero(explicit_col_count),
+                            vertical: name_resolver.resolve_row_names(&child_style.grid_row()).into_origin_zero(explicit_row_count),
+                        });
+                        placed.push(GridItem::new_with_style_and_order(item.node, child_style, align_items, justify_items, item.source_order));
+                    }
+                    let mut matrix = CellOccupancyMatrix::with_track_counts(col_counts, row_counts);
+                    place_grid_items(&mut matrix, &mut placed, &placements, grid_auto_flow);
+                    for (item, expected) in inserted.iter().zip(&placed) {
+                        debug_assert_eq!(
+                            (item.column, item.row),
+                            (expected.column, expected.row),
+                            "the tree's placement of inserted grid item {:?} (columns, rows) differs from the grid's",
+                            item.node
+                        );
+                    }
+                }
+            }
+            None => {
+                let mut matrix = CellOccupancyMatrix::with_track_counts(col_counts, row_counts);
+                place_grid_items(&mut matrix, &mut inserted, &placements, grid_auto_flow);
+                if *matrix.track_counts(AbsoluteAxis::Horizontal) != col_counts
+                    || *matrix.track_counts(AbsoluteAxis::Vertical) != row_counts
+                {
+                    return None;
+                }
+            }
+        }
         let rows_inserted = first_row..first_row + splice.inserted_rows as i16;
-        if *matrix.track_counts(AbsoluteAxis::Horizontal) != col_counts
-            || *matrix.track_counts(AbsoluteAxis::Vertical) != row_counts
-            || inserted.iter().any(|item| !rows_inserted.contains(&item.row.start.0) || item.row.end.0 > rows_inserted.end)
-        {
+        if inserted.iter().any(|item| !rows_inserted.contains(&item.row.start.0) || item.row.end.0 > rows_inserted.end) {
             return None;
         }
         resolve_item_track_indexes(&mut inserted, col_counts, row_counts);

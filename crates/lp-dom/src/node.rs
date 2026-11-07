@@ -255,6 +255,9 @@ pub struct ElementData {
     pub(crate) control: Option<Box<ControlState>>,
     /// `element_flags` bits.
     pub flags: u8,
+    /// An HTML `<style>`: the `Dom::style_text_revision` at which its child
+    /// text content last changed (0: not since it was created).
+    pub(crate) style_text_revision: u64,
 }
 
 pub mod element_flags {
@@ -288,6 +291,7 @@ impl ElementData {
             shadow_root: NIL,
             control: None,
             flags: 0,
+            style_text_revision: 0,
         }
     }
     pub fn local_name(&self) -> &LocalName {

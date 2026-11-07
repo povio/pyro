@@ -8114,9 +8114,16 @@ fn network_get_request_post_data_returns_the_body() {
     server.join().unwrap();
 }
 
+/// `LP.geometryStats` resets process-wide counters (layouts, layoutMs,
+/// resolveMs, ...): tests that call it take this lock, so one test's reset
+/// does not land between another's two calls.
+#[cfg(feature = "render")]
+static GEOMETRY_STATS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[cfg(feature = "render")]
 #[test]
 fn performance_get_metrics_reports_chrome_names() {
+    let _stats = GEOMETRY_STATS.lock().unwrap_or_else(|e| e.into_inner());
     let mut h = Harness::new();
     load_html(&mut h, "<!doctype html><div><p>a</p><p>b</p></div>");
     h.page("Performance.enable", json!({}));
@@ -8143,6 +8150,30 @@ fn performance_get_metrics_reports_chrome_names() {
     }
     assert!(metrics["Nodes"] >= 5.0 && metrics["Frames"] == 1.0, "{r}");
     assert!(metrics["LayoutCount"] >= 1.0, "geometryStats ({stats}) did not reset it: {r}");
+}
+
+#[cfg(feature = "render")]
+#[test]
+fn geometry_stats_time_layouts_once_requested() {
+    let _stats = GEOMETRY_STATS.lock().unwrap_or_else(|e| e.into_inner());
+    let mut h = Harness::new();
+    load_html(&mut h, "<!doctype html><div><p>a</p><p>b</p></div>");
+    // The first call turns the timers on (and resets the counters).
+    h.page("LP.geometryStats", json!({}));
+    eval_value(
+        &mut h,
+        "for (const w of [10, 20, 30]) { document.querySelector('p').style.width = w + 'px'; \
+         document.querySelector('p').getBoundingClientRect(); } 0",
+    );
+    let r = h.page("LP.geometryStats", json!({}));
+    let stats = &r["result"];
+    assert!(stats["layouts"].as_u64().unwrap_or(0) >= 3, "{r}");
+    assert!(stats["layoutMs"].as_f64().unwrap_or(0.0) > 0.0, "layout time reads zero: {r}");
+    // The sync's split: settle may already have resolved (resolveMs then
+    // reads ~0), so the three together are what must be non-zero.
+    let sync_ms: f64 = ["mirrorMs", "settleMs", "resolveMs"].iter().map(|k| stats[k].as_f64().unwrap_or(0.0)).sum();
+    assert!(sync_ms > 0.0, "sync time reads zero: {r}");
+    assert!(stats["blitzCumulative"]["phasesMs"]["layout"].as_f64().unwrap_or(0.0) > 0.0, "{r}");
 }
 
 #[test]

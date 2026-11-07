@@ -216,6 +216,11 @@ impl LayoutPassState<'_> {
         {
             inputs.available_space.width = AvailableSpace::MaxContent;
         }
+        if inputs.run_mode == RunMode::PerformLayout {
+            let node = &self.nodes[dom_node_id(node_id)];
+            let is_root = node.parent.is_some_and(|parent| self.nodes[parent].parent.is_none());
+            crate::resolve::phase_profile::performed(is_root);
+        }
         let mut output = self.dispatch_child_layout(node_id, inputs, block_ctx);
         if inputs.run_mode == RunMode::PerformLayout {
             compute_oof_layout(self, node_id, &mut output);

@@ -16,6 +16,7 @@ mod render_html;
 mod select_fast;
 mod select_forms;
 mod select_query;
+mod style_text_revision;
 mod stylo_select;
 mod text_content;
 mod top_layer;

@@ -880,6 +880,61 @@ fn a_pass_without_damage_runs_no_layout() {
     assert!(blitz_passes().1 > after.1, "damage runs layout");
 }
 
+/// A node brought back to what Blitz holds (text set and reset, attributes
+/// removed and set again in another order) changes nothing in the document,
+/// by delta or by whole tree: the mirror compares against Blitz's own text
+/// and attributes.
+#[test]
+fn a_node_set_back_to_what_blitz_holds_changes_nothing() {
+    let page = Page::new(PAGE);
+    let (mut r, mut w) = (Renderer::new(), Renderer::new());
+    check(&mut w, &page, "the first render");
+    r.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
+    let text = page.dom.borrow().first_child(page.find("#panel p")).unwrap().unwrap();
+    let el = page.find("#list");
+    let delta = |r: &mut Renderer, step: &dyn Fn(&mut Dom)| {
+        let since = page.dom.borrow().version();
+        step(&mut page.dom.borrow_mut());
+        let ops = delta_ops(page.dom.borrow().render_delta(page.doc, since, &Page::opts()).expect("a delta"));
+        assert!(!ops.is_empty(), "the journal records the change");
+        r.sync_delta(1, &ops, (640, 480, 1.0, false, false), false).unwrap();
+    };
+    let attr_names = |page: &Page| -> Vec<String> {
+        let key = lp_dom::snapshot::render_key(el);
+        let tree = page.tree();
+        let n = tree.nodes.iter().find(|n| n.key == key).unwrap();
+        let TreeKind::Element { attrs, .. } = &n.kind else { unreachable!() };
+        attrs.iter().map(|(a, _)| a.local.to_string()).collect()
+    };
+
+    // Synced with `class` before `title`.
+    delta(&mut r, &|d| {
+        d.set_attribute(el, "class", "on").unwrap();
+        d.set_attribute(el, "title", "t").unwrap();
+    });
+    assert!(check(&mut w, &page, "class and title set").mutations > 0);
+    assert_eq!(attr_names(&page), ["id", "class", "title"]);
+
+    let steps: [(&str, &dyn Fn(&mut Dom)); 2] = [
+        ("text set and reset", &|d| {
+            d.set_text_content(text, "changed").unwrap();
+            d.set_text_content(text, "one").unwrap();
+        }),
+        ("attributes reordered", &|d| {
+            d.remove_attribute(el, "class").unwrap();
+            d.set_attribute(el, "class", "on").unwrap();
+        }),
+    ];
+    for (what, step) in steps {
+        let before = blitz_passes();
+        delta(&mut r, step);
+        assert_eq!(blitz_passes().1, before.1, "{what}: the delta lays nothing out");
+        assert_eq!(check(&mut w, &page, what).mutations, 0, "{what}: the whole tree mutates nothing");
+        assert_eq!(r.mirrored_html(1), w.mirrored_html(1), "{what}");
+    }
+    assert_eq!(attr_names(&page), ["id", "title", "class"]);
+}
+
 // Incremental rounding: a persistent document must round as a fresh build does, whatever a
 // relayout moved. Every box paints, and sizes are fractional so that rounding shows.
 
@@ -1620,9 +1675,10 @@ fn table_rows_added_and_removed_match_fresh_builds() {
     table_steps_match_fresh_builds(&page, steps);
 }
 
-/// A cell's text edit collects the cells of its row again, not the table's, and lays out the grid
-/// again from its last layout; appending a row collects only its cells and lays out the grid again too,
-/// and so does removing a row, which collects no cell.
+/// A cell's text edit collects no cell again (the cell's box and its row are as they were; construction
+/// damage stops at the cell, which is noted as changed) and lays out the grid again from its last layout;
+/// appending a row collects only its cells and lays out the grid again too, and so does removing a row,
+/// which collects no cell.
 #[test]
 fn a_cell_edit_collects_only_its_row() {
     let rows = table_rows("c", 50);
@@ -1646,7 +1702,7 @@ fn a_cell_edit_collects_only_its_row() {
         let td = p.find("#c20 td:nth-child(2)");
         p.dom.borrow_mut().set_text_content(td, "edited").unwrap();
     });
-    assert_eq!(tables, (0, 3), "a text edit");
+    assert_eq!(tables, (0, 0), "a text edit");
     assert_eq!(grids, (0, 1), "a text edit");
     let (tables, grids) = edit("an append", &page, &mut r, &|p| {
         let tbody = p.find("#b");
@@ -3437,4 +3493,81 @@ fn adv_min_two_cells_moved_small_collapsed_table() {
 #[test]
 fn adv_min_cell_holding_a_table_made_a_block_and_back() {
     adv_min("", vec![set_style("#oa", "display: block; border: 1px solid"), set_style("#oa", "border: 1px solid")]);
+}
+
+/// A checkbox checked while it has no box (inside `display: none`): blitz-dom
+/// would push a second, HTML-namespaced `checked` for a value that parses as
+/// a bool, which the mirror then takes away on the next sync of the same
+/// tree. Nothing is left to sync: the unchanged tree mutates nothing, and the
+/// box built later shows the state the tree has.
+#[test]
+fn a_checkbox_checked_without_a_box_leaves_nothing_to_sync() {
+    let page = Page::new(
+        r#"<!doctype html><html><body><div id="h" style="display:none"><input id="c" type="checkbox"></div><p>x</p></body></html>"#,
+    );
+    let mut r = Renderer::new();
+    check(&mut r, &page, "the first render");
+    let (c, h) = (page.find("#c"), page.find("#h"));
+    page.dom.borrow_mut().set_checked(c, true).unwrap();
+    assert!(check(&mut r, &page, "checked").mutations > 0);
+    assert_eq!(check(&mut r, &page, "checked, unchanged").mutations, 0, "checked, unchanged");
+    page.dom.borrow_mut().remove_attribute(h, "style").unwrap();
+    check(&mut r, &page, "shown checked");
+    page.dom.borrow_mut().set_attribute(h, "style", "display:none").unwrap();
+    check(&mut r, &page, "hidden again");
+    page.dom.borrow_mut().set_checked(c, false).unwrap();
+    check(&mut r, &page, "unchecked");
+    assert_eq!(check(&mut r, &page, "unchecked, unchanged").mutations, 0, "unchecked, unchanged");
+    page.dom.borrow_mut().remove_attribute(h, "style").unwrap();
+    check(&mut r, &page, "shown unchecked");
+}
+
+/// `Renderer::has_sticky` reads Blitz's set of elements the style traversal
+/// gave a `position: sticky` style (`BaseDocument::has_sticky`), kept as
+/// styles are written and nodes dropped: it must follow every way an element
+/// stops or starts being sticky, through deltas, and agree with a whole-tree
+/// sync. (A sticky `::before` is not in the set: it shifts no element's box,
+/// which is what `has_sticky` gates in lp-dom.)
+#[test]
+fn sticky_set_follows_style_changes_and_removals() {
+    let page = Page::new(
+        "<!doctype html><html><head><style>.s{position:sticky;top:0}</style></head>\
+         <body><div id=h><div id=a></div></div><div id=b></div><div id=c></div><div id=p></div></body></html>",
+    );
+    let (mut r, mut w) = (Renderer::new(), Renderer::new());
+    r.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
+    assert!(!r.has_sticky(1), "nothing is sticky at first");
+    let (h, a, b, c) = (page.find("#h"), page.find("#a"), page.find("#b"), page.find("#c"));
+    let body = page.find("body");
+    let set = |n: NodeId, k: &'static str, v: &'static str| move |pg: &Page| pg.dom.borrow_mut().set_attribute(n, k, v).unwrap();
+    let unset = |n: NodeId, k: &'static str| move |pg: &Page| {
+        pg.dom.borrow_mut().remove_attribute(n, k).unwrap();
+    };
+    let remove = |n: NodeId| move |pg: &Page| {
+        pg.dom.borrow_mut().remove_child(body, n).unwrap();
+    };
+    let steps: Vec<(&str, Box<dyn Fn(&Page)>, bool)> = vec![
+        ("a class switches to sticky", Box::new(set(a, "class", "s")), true),
+        ("and back", Box::new(unset(a, "class")), false),
+        ("sticky again", Box::new(set(a, "class", "s")), true),
+        ("its ancestor is display:none", Box::new(set(h, "style", "display:none")), false),
+        ("the ancestor is shown again", Box::new(unset(h, "style")), true),
+        ("the sticky element's subtree is removed", Box::new(remove(h)), false),
+        ("two sticky elements", Box::new(move |pg: &Page| {
+            set(b, "class", "s")(pg);
+            set(c, "class", "s")(pg);
+        }), true),
+        ("one of the two is removed", Box::new(remove(b)), true),
+        ("the other is removed", Box::new(remove(c)), false),
+    ];
+    for (what, step, sticky) in &steps {
+        let since = page.dom.borrow().version();
+        step(&page);
+        let delta = page.dom.borrow().render_delta(page.doc, since, &Page::opts()).expect("a delta");
+        r.sync_delta(1, &delta_ops(delta), (640, 480, 1.0, false, false), false)
+            .unwrap_or_else(|e| panic!("{what}: {e:?}"));
+        w.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
+        assert_eq!(r.has_sticky(1), *sticky, "delta sync: {what}");
+        assert_eq!(w.has_sticky(1), *sticky, "whole-tree sync: {what}");
+    }
 }

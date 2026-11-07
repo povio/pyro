@@ -699,7 +699,8 @@ impl RuleNode {
 fn sheet_source(page: &PageDom, owner: NodeId) -> String {
     let dom = page.dom.borrow();
     if dom.element(owner).is_ok_and(|e| *e.local_name() == *"style") {
-        return dom.text_content(owner).ok().flatten().unwrap_or_default();
+        // Its child text content, as the style engine reads it.
+        return dom.child_text_content(owner).into_owned();
     }
     page.layout().style().sheet_text(owner).unwrap_or_default().to_owned()
 }

@@ -96,6 +96,10 @@ fn paint_scene_inner(
     backgrounds: bool,
     fractional_text_x: bool,
 ) {
+    // Painting walks `paint_children` and the stacking contexts, which a
+    // resolve only marks stale.
+    doc.ensure_paint_tree();
+
     // Run `.paint()` on every custom widget in the document (and all subdocuments) ahead of time.
     // This helps us avoid borrow-checker issues as we recurse down the tree (`.paint()` require `&mut self`).
     //
@@ -202,6 +206,9 @@ pub fn paint_scene_recording_text(
     y_offset: u32,
     backgrounds: bool,
 ) -> Vec<TextRun> {
+    // Painting walks `paint_children` and the stacking contexts, which a
+    // resolve only marks stale.
+    doc.ensure_paint_tree();
     #[allow(unused_mut)]
     let mut custom_widget_scenes: CustomWidgetSceneMap = HashMap::new();
     #[cfg(feature = "custom-widget")]

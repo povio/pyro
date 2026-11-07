@@ -84,6 +84,14 @@ in `crates/lp-render/tests/mirror.rs` fails if the skip stops firing; `LP.geomet
 
 `compute/mod.rs`: `compute_root_layout_in` takes an initial containing block of another size than the root's available space (print: Blink's rounds down, the page area up).
 
+`compute/mod.rs`, the root positioning pass: a root whose own layout comes from its cache, and which claims no
+out-of-flow box itself, records this pass's hoisted boxes again instead of keeping the last run's. blitz-dom
+relays an out-of-flow box whose containing block is the initial containing block without relaying its
+ancestors (`POS_CHILD_RELAYOUT` in `layout/damage.rs`), so the root's layout is cached while the box, relaid
+here, can surface other candidates (a `position: fixed` box added inside it). A root that claims boxes is
+always relaid when one of them changes, and keeps its list. The hunk is in the `src/compute/mod.rs` section of
+`UPSTREAM.patch`. Covered by `crates/lp-render/tests/out_of_flow_boundary.rs`.
+
 ## Table grids laid out again from their last layout
 
 `compute/grid/table_reuse.rs` (new), `compute/grid/mod.rs`, `compute/grid/track_sizing.rs`, `compute/grid/alignment.rs`
@@ -112,6 +120,38 @@ baseline-aligned item, no item spanning rows or with out-of-flow descendants bub
 sizing. Otherwise, or with other inputs, the grid is laid out whole. blitz-dom's tables use it (see "Incremental
 tables" in `vendor/blitz-dom/README.lightningpanda.md`). `crates/lp-render/tests/mirror.rs` checks replayed layouts
 against fresh builds (`table_*_match_fresh_builds`) and that edits, appends, removals and inserts replay (`a_cell_edit_collects_only_its_row`).
+
+## The grid's min-content re-check
+
+`compute/grid/mod.rs` and `compute/grid/types/grid_item.rs`: the re-check of the items' min-content widths
+after row sizing skips an item the first column pass read nothing from that depends on its content or its
+grid area (`GridItem::inline_contribution_consumed`, set when a min-content or max-content contribution is
+computed in the inline axis, or a minimum contribution that resolves a percentage or uses an aspect ratio).
+Upstream measured every item crossing an intrinsic column and compared it with a cache the first pass never
+filled for such items, so an `fr` column holding a `min-width: 0` item re-ran column sizing on every layout.
+The columns of the first pass do not depend on a skipped item. The skip is limited to grids of a definite
+width, so the inline percentage basis and `fr` expansion space are the same in both passes. The re-run is
+not a no-op, though: it estimates the rows from their base sizes and re-reads every other item's max-content
+and minimum contributions. So when a skipped item was the only reason for the re-run, the result can change.
+That happens when another item's max-content width changes with its row but its min-content width does not.
+Before, the re-run picked up the new max-content width. Now the first pass's value stays, the same result
+the grid gives without the skipped item, and the same as css-grid-1 §12.1 step 3, which re-runs only on a
+changed min-content contribution. `an_unread_item_does_not_change_the_other_columns` pins this. Covered by the `rerun_tests` module at the end of `compute/grid/mod.rs` (run them from a
+copy of this directory with an empty `[workspace]` table, as the crate is not a workspace member).
+
+## A tree placing its own grid items
+
+`compute/grid/mod.rs` and `tree/traits.rs`: a tree can place a grid's items itself.
+`LayoutGridContainer::track_counts` (default `None`) answers how many columns and rows the placed items reach,
+and `resolved_placement` each in-flow item's area in origin-zero lines. The grid then skips named-line
+resolution, the grid size estimate, auto-placement and its occupancy matrix, and sizes the explicit tracks
+plus whatever the items reach past them (no negative implicit tracks). Empty `auto-fit` tracks are found from
+the items' areas. blitz-dom's tables answer it from `TableContext::placement`, computed once as the table is
+built (`place_cells` in `layout/table.rs`, the same `row dense` placement). A table grid laid out again from
+its last layout (`table_reuse::prepare`) takes the inserted rows' items from it as well, instead of placing them
+over an occupancy matrix of the whole grid. In debug builds `debug_assert_tree_placement` runs the grid's own
+placement as well and asserts the areas and track counts are equal, and the replay asserts the same for the
+inserted items.
 
 ## Moving from v0.15.1 to main
 

@@ -1,7 +1,8 @@
 //! Construction of the paint tree (`Node::paint_children` and
 //! `Node::stacking_context`) from the laid-out box tree.
 //!
-//! The pass runs once per frame after layout and builds *topology* only: which
+//! The pass runs before the first paint or hit test after layout
+//! (`BaseDocument::ensure_paint_tree`) and builds *topology* only: which
 //! node ids each node paints itself and which z-indexed descendants are hoisted
 //! to the nearest stacking-context root. Geometry (a hoisted box's offset from
 //! its stacking-context root) is derived at use time from `final_layout()` and
@@ -15,6 +16,7 @@ use stylo_taffy::CopyStyleGetters;
 use thin_vec::ThinVec;
 
 use crate::layout::damage::ALL_DAMAGE;
+use crate::node::NodeFlags;
 use crate::tree::NodeTree;
 use crate::{BaseDocument, Node};
 use style::properties::generated::longhands::position::computed_value::T as Position;
@@ -229,6 +231,71 @@ impl StackingContext {
 }
 
 impl BaseDocument {
+    /// Bring `paint_children` and `stacking_context` up to date with the last
+    /// resolve, here and in every sub-document. Everything that reads them
+    /// calls this first: the blitz-paint entry points and hit testing
+    /// ([`hit`](Self::hit) and the methods built on it). Resolve only marks
+    /// the tree stale, so a run of forced layouts with no paint or hit test
+    /// in between builds it once.
+    pub fn ensure_paint_tree(&mut self) {
+        if std::mem::take(&mut self.paint_tree_dirty)
+            && let Some(root_id) = self.try_root_element().map(|root| root.id)
+        {
+            self.build_paint_tree(root_id);
+            debug_assert!(
+                self.paint_tree_matches_fresh_build(),
+                "the incrementally built paint tree differs from a fresh build"
+            );
+        }
+        for &node_id in &self.sub_document_nodes {
+            if let Some(mut sub_doc) = self
+                .nodes
+                .get_mut(node_id)
+                .and_then(|node| node.subdoc_mut())
+                .map(|doc| doc.inner_mut())
+            {
+                sub_doc.ensure_paint_tree();
+            }
+        }
+    }
+
+    /// Whether the paint tree equals one built from scratch: snapshots every
+    /// node's paint lists, rebuilds the whole tree with every node dirty and
+    /// compares. Leaves the fresh build in place. For tests and debug
+    /// assertions; it costs a full build.
+    #[doc(hidden)]
+    pub fn paint_tree_matches_fresh_build(&mut self) -> bool {
+        let Some(root_id) = self.try_root_element().map(|root| root.id) else {
+            return true;
+        };
+        let incremental = self.paint_tree_snapshot();
+        for (_, node) in self.nodes.iter_mut() {
+            node.flags
+                .insert(NodeFlags::PAINT_TREE_DIRTY | NodeFlags::PAINT_TREE_OWN_DAMAGE);
+        }
+        self.build_paint_tree(root_id);
+        incremental == self.paint_tree_snapshot()
+    }
+
+    /// Every node's paint lists, in slab order.
+    fn paint_tree_snapshot(&self) -> Vec<PaintTreeEntry> {
+        let hoisted = |children: &[HoistedPaintChild]| -> Vec<(NodeId, i32)> {
+            children.iter().map(|c| (c.node_id, c.z_index)).collect()
+        };
+        self.nodes
+            .iter()
+            .map(|(id, node)| PaintTreeEntry {
+                id,
+                paint_children: node.paint_children.borrow().as_ref().map(|c| c.to_vec()),
+                stacking_context: node
+                    .stacking_context
+                    .as_ref()
+                    .map(|sc| (hoisted(&sc.children), sc.negative_z_count)),
+                contribution: hoisted(&node.sc_contribution_cache.borrow()),
+            })
+            .collect()
+    }
+
     /// Rebuild `paint_children` and `stacking_context` for the tree rooted at
     /// `root_id` from the laid-out box tree.
     ///
@@ -236,10 +303,11 @@ impl BaseDocument {
     /// (sorted by paint order) or, when they have a non-zero `z-index` and are
     /// positioned or flex/grid items, in the nearest ancestor stacking context.
     ///
-    /// Subtrees whose stored damage lacks `REBUILD_STACKING_CONTEXT` are skipped: their
+    /// Subtrees not flagged `PAINT_TREE_DIRTY` (no resolve since the last
+    /// build stored `REBUILD_STACKING_CONTEXT` damage on them) are skipped: their
     /// own lists are still valid and the entries they contributed to the
     /// enclosing stacking context are replayed from `Node::sc_contribution_cache`.
-    pub(crate) fn build_paint_tree(&mut self, root_id: NodeId) {
+    fn build_paint_tree(&mut self, root_id: NodeId) {
         self.build_paint_tree_impl(root_id, None);
         self.restore_out_of_flow_stacking_owners(root_id);
     }
@@ -310,7 +378,12 @@ impl BaseDocument {
             // node itself, so the role the caller resolved must match the one
             // this node was last built with.
             let role_unchanged = node.stacking_context.is_some() == stacking_context.is_none();
+            // The build runs after the resolves it catches up with, whose
+            // damage is gone by then: `PAINT_TREE_DIRTY` records it. Damage
+            // still stored (none after a resolve, as every resolve clears it)
+            // is honoured too, so a build can only be more thorough.
             let clean = role_unchanged
+                && !node.flags.contains(NodeFlags::PAINT_TREE_DIRTY)
                 && !node
                     .damage()
                     .unwrap_or(ALL_DAMAGE)
@@ -324,9 +397,14 @@ impl BaseDocument {
             }
         }
 
+        let own_damage = self.nodes[node_id].flags.contains(NodeFlags::PAINT_TREE_OWN_DAMAGE);
+        self.nodes[node_id]
+            .flags
+            .remove(NodeFlags::PAINT_TREE_DIRTY | NodeFlags::PAINT_TREE_OWN_DAMAGE);
+
         // lightningpanda: a table whose cells are all plain boxes in it visits again only the cells
         // that changed (`TableContext::placed`).
-        if self.table_paint_children_kept(node_id) {
+        if !own_damage && self.table_paint_children_kept(node_id) {
             return;
         }
 
@@ -500,12 +578,13 @@ impl BaseDocument {
     /// plain boxes in it when the paint tree last visited it: no stacking context, nothing hoisted out
     /// of their subtrees, one paint order. The cells damaged or appended since are visited again, and
     /// if they still are plain boxes its paint children are the same, plus the appended cells, and it
-    /// adds nothing to the stacking context. `false`: the table is to be visited as any box.
+    /// adds nothing to the stacking context. `false`: the table is to be visited as any box. (The
+    /// caller asks only for a table without damage of its own since the last build,
+    /// `PAINT_TREE_OWN_DAMAGE`.)
     fn table_paint_children_kept(&mut self, node_id: NodeId) -> bool {
-        use crate::node::{NodeFlags, SpecialElementData};
+        use crate::node::SpecialElementData;
         let node = &self.nodes[node_id];
         if !node.flags.is_table_root()
-            || node.flags.contains(NodeFlags::OWN_DAMAGE)
             || node.before().is_some()
             || node.after().is_some()
             || !node.hoisted_children.borrow().is_empty()
@@ -674,6 +753,15 @@ impl Node {
             Some(_) => Some(hoisted_child_position(self.tree(), painter_id, self.id)),
         }
     }
+}
+
+/// One node's paint lists, for [`BaseDocument::paint_tree_matches_fresh_build`].
+#[derive(PartialEq)]
+struct PaintTreeEntry {
+    id: NodeId,
+    paint_children: Option<Vec<NodeId>>,
+    stacking_context: Option<(Vec<(NodeId, i32)>, u32)>,
+    contribution: Vec<(NodeId, i32)>,
 }
 
 #[inline(always)]

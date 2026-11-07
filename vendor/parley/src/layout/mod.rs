@@ -7,6 +7,7 @@ mod alignment;
 mod cluster;
 mod line;
 mod line_break;
+pub(crate) mod resume;
 mod run;
 mod spacing;
 pub(crate) mod style_metrics;

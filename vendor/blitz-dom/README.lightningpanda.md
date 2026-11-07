@@ -34,8 +34,8 @@ the whole diff: every section below.
 - `layout/table.rs`: auto-table width preferences, backported from
   https://github.com/DioxusLabs/blitz/pull/1345 (no duplicate PR opened).
 
-The original `UPSTREAM.patch` covers only the class-atom optimization above;
-these additional local changes are covered by lp-render's rendering tests.
+`UPSTREAM.patch` carries these sections with the rest (it is regenerated from `src/` and `assets/`
+against the upstream commit above); they are covered by lp-render's rendering tests.
 
 ## `<br>` as inline text
 
@@ -102,6 +102,20 @@ lp-render's mirror tests (incremental documents against fresh builds after rando
 - `src/mutator.rs`: a child moved to another parent leaves its old one as `remove_node` does: the old
   parent's `:empty` and `:has()` anchors are restyled (they were not, so `ul:empty` stayed unmatched
   after its last child moved out).
+- `src/stylo.rs`, `src/mutator.rs`: an inserted or removed element invalidates `:has()` anchors through
+  Stylo's `RelativeSelectorInvalidator` (`invalidate_relative_selectors_for_insertion`/`_removal`, as
+  Gecko's `MaybeInvalidateRelativeSelectorForInsertion`/`ForRemoval`), which looks the element's and its
+  descendants' tags, ids, classes and attributes up in the stylist's relative selector invalidation map
+  and restyles an anchor itself (and what the rest of its selector reaches). An argument's `:empty`,
+  `:nth-child()`, `:first-child` or `:last-child` matches by the tree around an element, not by its
+  identity, so `restyle_for_child_list_change` looks the parent (`:empty`) and the siblings whose
+  position changed up in the stylist's tree-structural dependencies
+  (`invalidate_relative_selectors_for_ts_state`, as Gecko's
+  `MaybeInvalidateRelativeSelectorForEmptyDependency`/`ForNthEdgeDependency`/`ForNthDependencyFromSibling`);
+  `remove_and_drop_all_children` invalidates for the dropped elements as `remove_node` does. Blitz's own
+  walk (`invalidate_has_anchors`, kept for attribute and state snapshots) restyled the subtree of every
+  anchor that could see the position on every insertion: a `.sheet:has(.top)` page restyled whole for
+  each row appended to it. `each_custom_state` is a no-op (it was `todo!()`; the invalidator asks).
 - `src/document.rs`, `src/util.rs`: the documents of a thread share one Stylo lock, and an author sheet
   without `@import` is parsed once per thread for its text and base URL (`make_stylesheet`): every
   document of a PDF template or a test suite carries the same bundle, which each new document parsed
@@ -140,6 +154,11 @@ lp-render's mirror tests (incremental documents against fresh builds after rando
 
 `BaseDocument::set_layout_size` lays out at a fractional CSS size instead of the viewport's whole pixels (`make_device`); printing uses it for the paper's content box.
 
+`src/resolve.rs` (`phase_profile`): cumulative time per `resolve` phase and counters (resolves, restyles,
+rebuilds, tables, rounding) read by lp-render's profiling. The phase timers run only while
+`phase_profile::set_timing(true)` (lp-render's `profiling::enable`, turned on by `LP.geometryStats`,
+`Performance.enable` and `LP_GEOMETRY_PROFILE`) is on: `mark` is a no-op otherwise. The counters always count.
+
 ## Inline layouts in vertical writing modes
 
 Layout keeps a vertical inline root's lines logical (x inline, y block). `Node::vertical_block_axis` says which
@@ -165,6 +184,20 @@ first cell's borders. A table whose collapsed borders are not one uniform grid n
 rules: each cell keeps half of the borders around it (`LayoutData::collapsed_border`, applied to the cell's
 `LayoutStyles::cell`) and the table half of its outer ones, as Chromium's boxes do. Uniform tables keep the gutter.
 Values in `bench/pdf/fixtures/chrome-156/table-collapse.json`, tests in `crates/lp-render/tests/table_collapsed_borders.rs`.
+
+`src/layout/table.rs`: the table places its cells once, as it is built (`place_cells`, stored as
+`TableContext::placement`), and hands the areas to the grid through taffy's `LayoutGridContainer::track_counts`
+and `resolved_placement` (see `vendor/taffy/README.lightningpanda.md`). It runs the grid's `row dense`
+placement over each row's occupied column ranges (`OccupiedColumns`: sorted, adjacent ranges merged, so a
+row of contiguous cells is one range and a wide row is not rescanned per cell), which is not always the column `ColumnCursor` gave the cell
+(`TableCell::column`): a colspan cell that does not fit beside a rowspan hole moves past it and a later cell
+backfills the hole. Upstream ran taffy's placement on every layout of the table. A cell whose `grid-row` is
+not a positive line and a span (or whose `colspan` is 0) leaves the placement to the grid.
+`table_cell_placement_is_the_grids` compares the grid info and every box's layout with the grid placing the cells.
+An incremental table (see "Incremental tables": no cell spans rows) keeps the placement up to date in `update_rows`:
+the areas of the rows collected again are spliced in from the cells' rows and cursor columns (`unspanned_cell_area`,
+where dense placement puts a cell when nothing spans rows), and the rows after them are renumbered with the cells.
+`updated_rows_keep_the_cells_placement` checks appends, inserts and removals against `place_cells`.
 
 Time inputs use the existing text-editor construction and intrinsic measurement paths so captured values are painted.
 
@@ -251,7 +284,9 @@ its inputs.
   damaged cell in its table (`LayoutData::table_cell_index`, the cell's index in `TableContext::cells`).
 - `src/resolve.rs`, `src/layout/table.rs` (`update_table_context`): a table whose rows or cells changed collects
   again only the rows with damage of their own or a cell with it, and rows added to or removed from a row group
-  between rows it keeps; the other rows and cells stay. Its layout children are listed again only when cells were
+  between rows it keeps; the other rows and cells stay. A change inside a cell (its text, its children) reaches the
+  table as relayout only (`propagate_damage_flags` stops construction damage at the cell's box, see "Construction
+  damage stops at the box that owns it"): no row is collected again, the cell is noted as changed. Its layout children are listed again only when cells were
   added or removed, and `resolve_layout_children` visits only the cells that changed. A change it cannot place (a
   `rowspan`, an out-of-flow part, a new column, a change to the first row, which gives the columns their widths and
   the first cell the gutters, the table's own damage, ...) builds the table again.
@@ -341,6 +376,61 @@ changes (`table_*_match_fresh_builds`), and counts what an edit, an append, a re
 out (`a_cell_edit_collects_only_its_row`). `blitz_tables` and `blitz_table_grids` (lp-render) report tables built, cells
 collected and grids laid out whole or again.
 
+## Construction damage stops at the box that owns it
+
+`src/layout/damage.rs` (`propagate_damage_flags`, `forwards_construction`), `src/mutator.rs`: the mutator marks a
+parent whose child list or text changed with `CHILDREN_CHANGED` (`CONSTRUCT_FC`: collect its layout children again),
+not `ALL_DAMAGE`; `CONSTRUCT_BOX` means the node's own box changed. A reconstructing node forwards `RELAYOUT |
+CONSTRUCT_DESCENDENT` to its parent, plus `CONSTRUCT_FC` only when its own box changed or when its children are laid
+out by an ancestor: `display: inline` boxes (to the inline root, replaced ones included since `is_or_contains_block`
+looks through them), `display: contents`, table rows, row groups, columns and column groups (to the table) and list
+items (to the list). A paragraph appended deep in a page collects its container's children again, not every
+ancestor's. `phase_profile::constructions` counts the collections (and, with it, the tables built from scratch).
+Covered by `crates/lp-render/tests/incremental_construction.rs` (each change compared with a fresh build, boxes and
+pixels).
+
+## Out-of-flow boxes of the root containing block relaid without their ancestors
+
+`src/layout/damage.rs` (`POS_CHILD_RELAYOUT`, `is_relayout_boundary`, `is_containing_block_for_some`): a dirty
+absolutely or fixed positioned box (a box of its own, below the root element, whose own damage has no relayout or
+box change and which forwards no construction) returns `POS_CHILD_RELAYOUT` to its parent in place of
+`ONLY_RELAYOUT`, keeping `RECALCULATE_OVERFLOW`. Ancestors pass it on without clearing their layout caches; one
+that can be a containing block (positioned, transformed, filtered, contained, `will-change`, a size container, or an
+inline root claiming for a positioned span, `TextLayout::span_cb_flags`, also through the anonymous boxes it owns)
+turns it back into `RELAYOUT`, since its out-of-flow pass runs inside its cached layout. So only the initial
+containing block is a boundary: the root's in-flow layout hits its cache and the root positioning pass relays the
+dirty box. Taffy's side: a cached root that claims no out-of-flow box records the pass's hoisted boxes again (see
+`vendor/taffy/README.lightningpanda.md`). `phase_profile::performed_layouts` counts layout algorithm runs that place
+children. Covered by `crates/lp-render/tests/out_of_flow_boundary.rs`.
+
+## The paint tree is built when something paints or hit-tests
+
+`src/resolve.rs`, `src/layout/paint_tree.rs` (`ensure_paint_tree`), `src/layout/damage.rs`
+(`clear_damage_and_dirty_flags`), `src/document.rs`: a resolve no longer builds `paint_children` and the stacking
+contexts; it flags the nodes whose propagated damage reached `REBUILD_STACKING_CONTEXT` with
+`NodeFlags::PAINT_TREE_DIRTY` (and `PAINT_TREE_OWN_DAMAGE` when the damage was the node's own, which
+`table_paint_children_kept` reads in place of `OWN_DAMAGE`, cleared by every resolve) before dropping the damage,
+and sets `BaseDocument::paint_tree_dirty`. The first paint (blitz-paint's entry points) or hit test
+(`hit_with_scrollbar`, so `hit`, `element_from_point`, `find_text_position`, hover, the pointer handlers, which take
+`&mut self`) builds the tree once for all the resolves since the last build, in sub-documents too. A run of forced
+layouts (`getBoundingClientRect` and the like) builds it once, not once per resolve.
+`paint_tree_matches_fresh_build` (debug-asserted by `ensure_paint_tree`) compares the incremental tree with a fresh
+build of every node, tables visited as any box. Covered by lp-render's `settle_resolution_tests`
+(`resolve_leaves_the_paint_tree_to_the_first_hit_test`, `element_from_point_sees_every_resolve_since_the_last_paint`).
+
+## Line breaking resumes after the lines whose text did not change
+
+`src/layout/construct.rs`, `src/resolve.rs`, `src/layout/inline/build.rs`, `src/layout/inline/layout.rs`: an inline
+root built again keeps its parley layout (the rest of its `TextLayout` is reset), builds with
+`build_into_keeping_lines` (parley keeps the lines its last break decided over the shaped content that is the same,
+see `vendor/parley/README.lightningpanda.md`) and, with no floats involved and the text not justified, resumes the
+break after them (`BreakLines::resume` with main's `max_advance` for the lines after the first; the float
+bookkeeping of #1378/#1390 starts at the kept lines). `phase_profile::line_breaks` counts breaks, lines kept and
+the text bytes the breaker went over. Covered by `crates/lp-render/tests/line_break_resume.rs`.
+`TextLayout::content_widths`, a memo nothing read (intrinsic sizing and list markers call
+`calculate_content_widths`), is gone with `Node::invalidate_layout_cache`, which only cleared it besides the layout
+cache (`clear_layout_cache`).
+
 ## Moving from 0.3.0-beta.4 to main
 
 The local changes were merged with main's 124 commits. Upstream now has these, so the local versions were
@@ -352,8 +442,16 @@ dropped:
 - Unresolvable URLs load nothing instead of panicking (`resolve_url` returns an `Option`): #1374.
 - `:focus-within`: #1226 (the local `set_focus_within` went; upstream's ancestor-chain diff remains).
 - Narrow restyles on child-list changes, `:empty` and `:has()` anchor parents: #1276
-  (`restyle_for_child_list_change`). The local `:has()` invalidation (`invalidate_has_anchors*`) stays: it
-  reaches anchors among ancestors and their earlier siblings, which #1276 does not.
+  (`restyle_for_child_list_change`). The local `:has()` invalidation stays: an inserted or removed element
+  goes through Stylo's relative selector invalidator (`invalidate_relative_selectors_for_insertion`/`_removal`,
+  below), a child-list change that flips an argument's `:empty` or sibling position through the stylist's
+  tree-structural dependencies (`invalidate_relative_selectors_for_ts_state`), an attribute or state change
+  through `invalidate_has_anchors`, which reaches anchors among ancestors and their earlier siblings; #1276's
+  own anchor-parent hint (a `RESTYLE_SELF` of an anchor on every change of its child list) went with them.
+  On top of #1276,
+  `restyle_for_child_list_change` leaves the siblings alone when no element came or went (text nodes move
+  no index or edge status) and restyles the styled children of the inserted range, which are moves within
+  the same parent: `add_children_to_parent` no longer restyles their subtrees, their ancestors being unchanged.
 - `::before`/`::after` boxes voting in the flow classification: #1280.
 - Mid-line floats that do not fit placed below the line: #1378 and #1390 (with line retry), replacing the
   local pending-float queue in inline layout.

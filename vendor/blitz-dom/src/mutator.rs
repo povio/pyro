@@ -8,7 +8,7 @@ use std::collections::HashSet;
 use std::mem;
 use std::ops::{Deref, DerefMut, Range};
 
-use crate::layout::damage::ALL_DAMAGE;
+use crate::layout::damage::{ALL_DAMAGE, CHILDREN_CHANGED};
 use crate::net::{ImageHandler, ResourceHandler, StylesheetHandler};
 use crate::node::{CanvasData, NodeFlags, SpecialElementData};
 use crate::stylo_device::DeviceChanges;
@@ -19,6 +19,7 @@ use crate::{
 use blitz_traits::shell::Viewport;
 use selectors::matching::ElementSelectorFlags;
 use style::Atom;
+use style::invalidation::element::invalidation_map::TSStateForInvalidation;
 use style::invalidation::element::restyle_hints::RestyleHint;
 use style::stylesheets::OriginSet;
 use style_dom::ElementState;
@@ -273,7 +274,7 @@ impl DocumentMutator<'_> {
             // affect the parent's layout (text may wrap differently, change size, etc.)
             if let Some(parent_id) = parent_id {
                 let parent = &mut self.doc.nodes[parent_id];
-                parent.insert_damage(ALL_DAMAGE);
+                parent.insert_damage(CHILDREN_CHANGED);
             }
 
             self.maybe_record_node(parent_id);
@@ -301,7 +302,7 @@ impl DocumentMutator<'_> {
                     );
                 }
                 if let Some(parent_id) = parent_id {
-                    self.doc.nodes[parent_id].insert_damage(ALL_DAMAGE);
+                    self.doc.nodes[parent_id].insert_damage(CHILDREN_CHANGED);
                 }
                 Ok(())
             }
@@ -654,10 +655,7 @@ impl DocumentMutator<'_> {
     /// Remove the node from it's parent but don't drop it
     pub fn remove_node(&mut self, node_id: NodeId) {
         // A removed element inside a `:has()` argument changes its anchors.
-        self.doc.invalidate_has_anchors_around(node_id);
-        if let Some(parent_id) = self.doc.nodes[node_id].parent {
-            self.doc.invalidate_has_anchors(parent_id);
-            }
+        self.doc.invalidate_relative_selectors_for_removal(node_id);
         let node_is_in_document = self.doc.nodes[node_id].flags.is_in_document();
         // Process the subtree *before* severing the parent link so that
         // interaction state referencing removed nodes can retarget to the
@@ -670,11 +668,12 @@ impl DocumentMutator<'_> {
         if let Some(parent_id) = node.parent.take() {
             self.mutations_occurred |= node_is_in_document;
             let parent = &mut self.doc.nodes[parent_id];
-            parent.insert_damage(ALL_DAMAGE);
+            parent.insert_damage(CHILDREN_CHANGED);
             let index = parent.index_of_child(node_id).unwrap_or(0);
             parent.children.retain(|id| *id != node_id);
             if node_is_in_document {
-                self.restyle_for_child_list_change(parent_id, index..index);
+                let removed_element = self.doc.nodes[node_id].is_element();
+                self.restyle_for_child_list_change(parent_id, index..index, removed_element);
                 devtools!(
                     self,
                     MutationRecord::NodeRemoved(NodeRemoved { parent_id, node_id })
@@ -697,10 +696,7 @@ impl DocumentMutator<'_> {
     ) -> Option<Node> {
         // lightningpanda: a dropped element inside a `:has()` argument
         // changes its anchors, as in `remove_node`.
-        self.doc.invalidate_has_anchors_around(node_id);
-        if let Some(parent_id) = self.doc.nodes[node_id].parent {
-            self.doc.invalidate_has_anchors(parent_id);
-            }
+        self.doc.invalidate_relative_selectors_for_removal(node_id);
         let node_is_in_document = self.doc.nodes[node_id].flags.is_in_document();
         self.process_removed_subtree(node_id);
 
@@ -710,13 +706,14 @@ impl DocumentMutator<'_> {
         // Update child_idx values
         if let Some(parent_id) = node.as_ref().and_then(|node| node.parent) {
             let parent = &mut self.doc.nodes[parent_id];
-            parent.insert_damage(ALL_DAMAGE);
+            parent.insert_damage(CHILDREN_CHANGED);
             let parent_is_in_doc = parent.flags.is_in_document();
             let index = parent.index_of_child(node_id).unwrap_or(0);
             parent.children.retain(|id| *id != node_id);
 
             if parent_is_in_doc {
-                self.restyle_for_child_list_change(parent_id, index..index);
+                let removed_element = node.as_ref().is_some_and(|node| node.is_element());
+                self.restyle_for_child_list_change(parent_id, index..index, removed_element);
                 devtools!(
                     self,
                     MutationRecord::NodeRemoved(NodeRemoved { parent_id, node_id })
@@ -730,13 +727,19 @@ impl DocumentMutator<'_> {
     }
 
     pub fn remove_and_drop_all_children(&mut self, node_id: NodeId) {
+        // lightningpanda: dropped elements inside a `:has()` argument change their anchors,
+        // as in `remove_node`; checked while they are still linked.
+        for &child_id in &self.doc.nodes[node_id].children {
+            self.doc.invalidate_relative_selectors_for_removal(child_id);
+        }
         let parent = &mut self.doc.nodes[node_id];
         let parent_is_in_doc = parent.flags.is_in_document();
         let children = mem::take(&mut parent.children);
         self.mutations_occurred |= parent_is_in_doc && !children.is_empty();
 
         if parent_is_in_doc {
-            self.restyle_for_child_list_change(node_id, 0..0);
+            let removed_element = children.iter().any(|id| self.doc.nodes[*id].is_element());
+            self.restyle_for_child_list_change(node_id, 0..0, removed_element);
         }
 
         for child_id in children {
@@ -856,27 +859,45 @@ impl DocumentMutator<'_> {
     }
 
     /// Restyle an in-document element whose child list changed, `changed` being the position
-    /// of the inserted children (empty, at the former position of a removed child). New
-    /// children are styled by the traversal regardless; the element and its other children
-    /// only need restyling where its selector flags record a selector that depends on them.
-    fn restyle_for_child_list_change(&mut self, parent_id: NodeId, changed: Range<usize>) {
+    /// of the inserted children (empty, at the former position of a removed child;
+    /// `removed_element` says whether that child was an element). New children are styled by
+    /// the traversal regardless; the element and its other children only need restyling where
+    /// its selector flags record a selector that depends on them.
+    ///
+    /// lightningpanda: a change of text (or other non-element) children alone moves no
+    /// element's index or edge status, so the siblings are left alone (`:empty` still restyles
+    /// the parent). Inserted children that already have a style were moved here from this same
+    /// parent (`add_children_to_parent` skips their subtree restyle, their ancestors being
+    /// unchanged): they are restyled whenever the parent carries a sibling-dependent flag. The
+    /// same conditions inside a `:has()` argument reach their anchors through
+    /// `invalidate_relative_selectors_for_ts_state`.
+    fn restyle_for_child_list_change(
+        &mut self,
+        parent_id: NodeId,
+        changed: Range<usize>,
+        removed_element: bool,
+    ) {
         let parent = &self.doc.nodes[parent_id];
         let flags = parent.selector_flags().get();
         let mut hint = RestyleHint::empty();
-        if flags.intersects(
-            ElementSelectorFlags::HAS_EMPTY_SELECTOR
-                | ElementSelectorFlags::ANCHORS_RELATIVE_SELECTOR
-                | ElementSelectorFlags::ANCHORS_RELATIVE_SELECTOR_NON_SUBJECT,
-        ) {
+        // lightningpanda: a `:has()` anchor among the ancestors is restyled by Stylo's relative
+        // selector invalidator when an element it can match comes or goes
+        // (`invalidate_relative_selectors_for_insertion`), not here; an argument's `:empty`
+        // matches by the child list alone, so the parent is looked up for one.
+        if flags.contains(ElementSelectorFlags::HAS_EMPTY_SELECTOR) {
             hint |= RestyleHint::RESTYLE_SELF;
+            self.doc
+                .invalidate_relative_selectors_for_ts_state(parent_id, TSStateForInvalidation::EMPTY);
         }
+        let is_element = |id: &NodeId| self.doc.nodes[*id].is_element();
+        let element_changed = removed_element || parent.children[changed.clone()].iter().any(is_element);
         // A change with no earlier element sibling restyles all children with one hint rather
         // than hinting each later sibling, so inserting or removing at the front stays linear.
         let front_change = flags.contains(ElementSelectorFlags::HAS_SLOW_SELECTOR_LATER_SIBLINGS)
-            && !parent.children[..changed.start]
-                .iter()
-                .any(|id| self.doc.nodes[*id].is_element());
-        if front_change
+            && !parent.children[..changed.start].iter().any(is_element);
+        if !element_changed {
+            // No element came or went: no index or edge status moved.
+        } else if front_change
             || flags.intersects(
                 ElementSelectorFlags::HAS_SLOW_SELECTOR
                     | ElementSelectorFlags::HAS_SLOW_SELECTOR_NTH_OF
@@ -884,18 +905,43 @@ impl DocumentMutator<'_> {
             )
         {
             hint |= RestyleHint::RESTYLE_DESCENDANTS;
+            // lightningpanda: every other child's position may have changed, and with it an
+            // argument's `:nth-child()`, `:first-child` or `:last-child`
+            // (`invalidate_relative_selectors_for_ts_state`); the inserted children are
+            // covered by their own insertion.
+            let positional = TSStateForInvalidation::NTH
+                | TSStateForInvalidation::NTH_EDGE_FIRST
+                | TSStateForInvalidation::NTH_EDGE_LAST;
+            for id in parent.children[..changed.start]
+                .iter()
+                .chain(&parent.children[changed.end..])
+            {
+                self.doc.invalidate_relative_selectors_for_ts_state(*id, positional);
+            }
         } else {
             let children = mem::take(&mut self.doc.nodes[parent_id].children);
+            let is_element = |id: &NodeId| self.doc.nodes[*id].is_element();
+            // The moved-in children, whose index or edge status may have changed (new ones
+            // have no style data for the hint and are styled regardless).
+            let moved_in = if flags.intersects(
+                ElementSelectorFlags::HAS_SLOW_SELECTOR_LATER_SIBLINGS
+                    | ElementSelectorFlags::HAS_EDGE_CHILD_SELECTOR,
+            ) {
+                changed.clone()
+            } else {
+                0..0
+            };
             let later = if flags.contains(ElementSelectorFlags::HAS_SLOW_SELECTOR_LATER_SIBLINGS) {
                 changed.end..children.len()
             } else {
                 0..0
             };
-            // The element children that were first/last before an insertion, or are after a
-            // removal; text nodes don't count for `:first-child`/`:last-child`.
+            // The element children whose `:first-child`/`:last-child` status flipped: the one
+            // after the change when no element precedes it (it was or now is first), the one
+            // before when no element follows it (it was or now is last); text nodes don't
+            // count. No other element's edge status moved.
             let mut edge = [None, None];
             if flags.contains(ElementSelectorFlags::HAS_EDGE_CHILD_SELECTOR) {
-                let is_element = |id: &NodeId| self.doc.nodes[*id].is_element();
                 if !children[..changed.start].iter().any(is_element) {
                     edge[0] = children[changed.end..].iter().copied().find(is_element);
                 }
@@ -907,10 +953,30 @@ impl DocumentMutator<'_> {
                         .find(is_element);
                 }
             }
-            for id in children[later].iter().chain(edge.iter().flatten()) {
+            for id in children[moved_in]
+                .iter()
+                .chain(children[later.clone()].iter())
+                .chain(edge.iter().flatten())
+            {
                 self.doc.nodes[*id].set_restyle_hint(RestyleHint::restyle_subtree());
             }
             self.doc.nodes[parent_id].children = children;
+            // lightningpanda: the arguments that match by position
+            // (`invalidate_relative_selectors_for_ts_state`), once the child list is back for
+            // the sibling walk: `:nth-child()` on the later siblings, `:first-child`/
+            // `:last-child` on the children whose edge status flipped. The moved-in children
+            // are covered by their own insertion.
+            let children = &self.doc.nodes[parent_id].children;
+            for id in &children[later] {
+                self.doc
+                    .invalidate_relative_selectors_for_ts_state(*id, TSStateForInvalidation::NTH);
+            }
+            let edge_states = [TSStateForInvalidation::NTH_EDGE_FIRST, TSStateForInvalidation::NTH_EDGE_LAST];
+            for (id, state) in edge.iter().zip(edge_states) {
+                if let Some(id) = id {
+                    self.doc.invalidate_relative_selectors_for_ts_state(*id, state);
+                }
+            }
         }
 
         let parent = &mut self.doc.nodes[parent_id];
@@ -972,21 +1038,6 @@ impl DocumentMutator<'_> {
         child_ids: &[NodeId],
         insert_children_fn: &dyn Fn(&mut Node, &[NodeId]) -> usize,
     ) {
-        // New children of an element in a `:has()` search path (or of an
-        // anchor) can change what the anchors match.
-        self.doc.invalidate_has_anchors(parent_id);
-        if self.doc.nodes[parent_id].is_element()
-            && self.doc.nodes[parent_id]
-            .selector_flags()
-            .get()
-            .intersects(
-                selectors::matching::ElementSelectorFlags::ANCHORS_RELATIVE_SELECTOR
-                    | selectors::matching::ElementSelectorFlags::ANCHORS_RELATIVE_SELECTOR_NON_SUBJECT,
-            )
-            && self.doc.nodes[parent_id].primary_styles().is_some()
-        {
-            self.doc.nodes[parent_id].set_restyle_hint(style::invalidation::element::restyle_hints::RestyleHint::restyle_subtree());
-        }
         let new_parent_is_in_document = self.doc.nodes[parent_id].flags.is_in_document();
         self.mutations_occurred |= new_parent_is_in_document && !child_ids.is_empty();
 
@@ -1001,13 +1052,23 @@ impl DocumentMutator<'_> {
         // would remove both the old and the newly-inserted entries from the
         // parent's child list, and anchor indices would be computed against a
         // child list that still contains the moved nodes.
+        // lightningpanda: children moved within this element parent keep their ancestors, so
+        // only their siblings changed, and `restyle_for_child_list_change` restyles them for
+        // that; a move under a non-element parent keeps the subtree restyle.
+        let parent_is_element = self.doc.nodes[parent_id].is_element();
+        let mut same_parent_moves: Vec<NodeId> = Vec::new();
         for child_id in child_ids.iter().copied() {
+            if parent_is_element
+                && self.doc.nodes[child_id].parent == Some(parent_id)
+                && self.doc.nodes[child_id].flags.is_in_document()
+            {
+                same_parent_moves.push(child_id);
+            }
             // lightningpanda: a moved child leaves its old parent as
             // `remove_node` does (`:has()` anchors, `:empty`), checked while
             // it is still linked.
-            if let Some(old_parent_id) = self.doc.nodes[child_id].parent {
-                self.doc.invalidate_has_anchors_around(child_id);
-                self.doc.invalidate_has_anchors(old_parent_id);
+            if self.doc.nodes[child_id].parent.is_some() {
+                self.doc.invalidate_relative_selectors_for_removal(child_id);
             }
             let child = &self.doc.nodes[child_id];
             if child.contains_focus() {
@@ -1022,12 +1083,13 @@ impl DocumentMutator<'_> {
             };
 
             let old_parent = &mut self.doc.nodes[old_parent_id];
-            old_parent.insert_damage(ALL_DAMAGE);
+            old_parent.insert_damage(CHILDREN_CHANGED);
             let index = old_parent.index_of_child(child_id).unwrap_or(0);
             old_parent.children.retain(|id| *id != child_id);
 
             if child_was_in_doc {
-                self.restyle_for_child_list_change(old_parent_id, index..index);
+                let removed_element = self.doc.nodes[child_id].is_element();
+                self.restyle_for_child_list_change(old_parent_id, index..index, removed_element);
                 devtools!(
                     self,
                     MutationRecord::NodeRemoved(NodeRemoved {
@@ -1041,11 +1103,11 @@ impl DocumentMutator<'_> {
         }
 
         let new_parent = &mut self.doc.nodes[parent_id];
-        new_parent.insert_damage(ALL_DAMAGE);
+        new_parent.insert_damage(CHILDREN_CHANGED);
         let index = insert_children_fn(new_parent, child_ids);
 
         if new_parent_is_in_document {
-            self.restyle_for_child_list_change(parent_id, index..index + child_ids.len());
+            self.restyle_for_child_list_change(parent_id, index..index + child_ids.len(), false);
         }
 
         // lightningpanda: whether the children land under a `display: none` element (see below).
@@ -1056,14 +1118,14 @@ impl DocumentMutator<'_> {
             let child = &mut self.doc.nodes[child_id];
             let child_was_in_doc = child.flags.is_in_document();
             child.parent = Some(parent_id);
-            // lightningpanda: the anchors that can see the new position
-            // (ancestors, their previous siblings) may match differently.
-            if new_parent_is_in_document {
-                self.doc.invalidate_has_anchors_around(child_id);
-            }
             let child = &mut self.doc.nodes[child_id];
             // A moved or re-attached subtree keeps its styles, but everything above it changed.
-            if new_parent_is_in_document && child.primary_styles().is_some() {
+            // lightningpanda: a move within the same parent changed no ancestor (see
+            // `same_parent_moves`).
+            if new_parent_is_in_document
+                && child.primary_styles().is_some()
+                && !same_parent_moves.contains(&child_id)
+            {
                 child.set_restyle_hint(RestyleHint::restyle_subtree());
             }
 
@@ -1108,6 +1170,13 @@ impl DocumentMutator<'_> {
                 self.process_added_subtree(child_id);
             } else if !new_parent_is_in_document && child_was_in_doc {
                 self.process_removed_subtree(child_id);
+            }
+        }
+        // lightningpanda: the `:has()` anchors that can see the new positions,
+        // once every child is linked (a sibling inserted with it counts).
+        if new_parent_is_in_document {
+            for &child_id in child_ids {
+                self.doc.invalidate_relative_selectors_for_insertion(child_id);
             }
         }
 
@@ -3362,5 +3431,256 @@ mod test {
                 m.insert_nodes_before(ids[1], &[new]);
             },
         );
+    }
+}
+
+/// lightningpanda: child-list restyle hints are narrowed to what selector
+/// flags say can change (a move within one parent keeps its ancestors; only
+/// the neighbour whose edge status flipped is restyled for
+/// `:first-child`/`:last-child`; text children alone restyle nothing). The
+/// narrowed hints must still give every element the style a freshly built
+/// document gives it.
+#[cfg(test)]
+mod child_list_restyle_tests {
+    use crate::{Attribute, BaseDocument, DocumentConfig, NodeId, local_name, qual_name};
+    use blitz_traits::shell::{ColorScheme, Viewport};
+
+    struct Doc {
+        doc: BaseDocument,
+        body: NodeId,
+        divs: Vec<NodeId>,
+    }
+
+    /// `<html><head><style>{css}</style></head><body>` with a `div` per
+    /// class, resolved. `tag` keeps the sheet text apart from other tests'.
+    fn make_doc(css: &str, tag: &str, classes: &[&str]) -> Doc {
+        let mut doc = BaseDocument::new(DocumentConfig {
+            viewport: Some(Viewport::new(400, 300, 1.0, ColorScheme::Light)),
+            ..Default::default()
+        });
+        let root_id = doc.root_node().id;
+        let mut m = doc.mutate();
+        let html = m.create_element(qual_name!("html"), vec![]);
+        let head = m.create_element(qual_name!("head"), vec![]);
+        let style = m.create_element(qual_name!("style"), vec![]);
+        let text = m.create_text_node(&format!("/* {tag} */ {css}"));
+        m.append_children(style, &[text]);
+        m.append_children(head, &[style]);
+        let body = m.create_element(qual_name!("body"), vec![]);
+        let mut divs = Vec::new();
+        for class in classes {
+            let attr = Attribute { name: qual_name!("class"), value: class.to_string() };
+            let el = m.create_element(qual_name!("div"), vec![attr]);
+            let inner = m.create_element(qual_name!("span"), vec![]);
+            m.append_children(el, &[inner]);
+            m.append_children(body, &[el]);
+            divs.push(el);
+        }
+        m.append_children(html, &[head, body]);
+        m.append_children(root_id, &[html]);
+        drop(m);
+        doc.resolve(0.0);
+        Doc { doc, body, divs }
+    }
+
+    /// Already-styled elements the next traversal will restyle.
+    fn restyles(doc: &BaseDocument) -> Vec<NodeId> {
+        doc.nodes
+            .iter()
+            .filter(|(_, n)| n.is_element() && n.primary_styles().is_some())
+            .filter(|(_, n)| {
+                n.try_stylo_element_data()
+                    .and_then(|s| s.get())
+                    .is_some_and(|d| !d.hint.is_empty())
+            })
+            .map(|(_, n)| n.id)
+            .collect()
+    }
+
+    /// The (`color`, `width`) of each body element child and of its `span`,
+    /// in tree order.
+    fn styles(doc: &BaseDocument, body: NodeId) -> Vec<String> {
+        let mut out = Vec::new();
+        for &id in &doc.nodes[body].children {
+            let node = &doc.nodes[id];
+            if !node.is_element() {
+                continue;
+            }
+            for id in std::iter::once(id).chain(node.children.iter().copied()) {
+                let style = doc.nodes[id].primary_styles().expect("styled");
+                out.push(format!(
+                    "{:?} {:?}",
+                    style.get_inherited_text().color,
+                    style.get_position().width
+                ));
+            }
+        }
+        out
+    }
+
+    /// The styles a fresh document with the same body children (by class,
+    /// in order) gets.
+    fn fresh_styles(d: &Doc, css: &str, tag: &str) -> Vec<String> {
+        let classes: Vec<String> = d.doc.nodes[d.body]
+            .children
+            .iter()
+            .filter_map(|&id| d.doc.nodes[id].element_data())
+            .map(|e| e.attr(local_name!("class")).unwrap_or_default().to_string())
+            .collect();
+        let classes: Vec<&str> = classes.iter().map(String::as_str).collect();
+        let fresh = make_doc(css, tag, &classes);
+        styles(&fresh.doc, fresh.body)
+    }
+
+    const SIBLING_CSS: &[(&str, &str)] = &[
+        ("first", "div:first-child { color: red } div:first-child span { width: 7px }"),
+        ("last", "div:last-child { color: red } div:last-child span { width: 7px }"),
+        ("nth", "div:nth-child(2n) { color: red } div:nth-child(3) span { width: 7px }"),
+        ("next", ".a + div { color: red } .b + div span { width: 7px }"),
+        ("later", ".a ~ .b { color: red } .c ~ div span { width: 7px }"),
+        ("only", "div:only-child { color: red } div:nth-last-child(2) span { width: 7px }"),
+    ];
+
+    /// Each step mutates the body's children; after every step the styles
+    /// equal a fresh document's.
+    #[test]
+    fn narrowed_hints_match_a_fresh_document() {
+        type Step = fn(&mut Doc);
+        let steps: &[(&str, Step)] = &[
+            ("move last to front", |d| {
+                let (first, last) = (d.divs[0], *d.divs.last().unwrap());
+                d.doc.mutate().insert_nodes_before(first, &[last]);
+            }),
+            ("move front to end", |d| {
+                let first = d.doc.nodes[d.body].children[0];
+                d.doc.mutate().append_children(d.body, &[first]);
+            }),
+            ("move middle forward", |d| {
+                let kids = d.doc.nodes[d.body].children.clone();
+                d.doc.mutate().insert_nodes_before(kids[0], &[kids[2]]);
+            }),
+            ("text at both ends", |d| {
+                let first = d.doc.nodes[d.body].children[0];
+                let mut m = d.doc.mutate();
+                let t1 = m.create_text_node("x");
+                let t2 = m.create_text_node("y");
+                m.insert_nodes_before(first, &[t1]);
+                m.append_children(d.body, &[t2]);
+            }),
+            ("remove first element", |d| {
+                let first = *d.doc.nodes[d.body]
+                    .children
+                    .iter()
+                    .find(|&&id| d.doc.nodes[id].is_element())
+                    .unwrap();
+                d.doc.mutate().remove_node(first);
+            }),
+            ("append new", |d| {
+                let mut m = d.doc.mutate();
+                let attr = Attribute { name: qual_name!("class"), value: "a".into() };
+                let el = m.create_element(qual_name!("div"), vec![attr]);
+                let inner = m.create_element(qual_name!("span"), vec![]);
+                m.append_children(el, &[inner]);
+                m.append_children(d.body, &[el]);
+            }),
+            ("remove last element", |d| {
+                let last = *d.doc.nodes[d.body]
+                    .children
+                    .iter()
+                    .rev()
+                    .find(|&&id| d.doc.nodes[id].is_element())
+                    .unwrap();
+                d.doc.mutate().remove_node(last);
+            }),
+            ("swap the remaining", |d| {
+                let els: Vec<NodeId> = d.doc.nodes[d.body]
+                    .children
+                    .iter()
+                    .copied()
+                    .filter(|&id| d.doc.nodes[id].is_element())
+                    .collect();
+                d.doc.mutate().insert_nodes_before(els[0], &[els[els.len() - 1]]);
+            }),
+            ("down to one", |d| {
+                let els: Vec<NodeId> = d.doc.nodes[d.body]
+                    .children
+                    .iter()
+                    .copied()
+                    .filter(|&id| d.doc.nodes[id].is_element())
+                    .collect();
+                let mut m = d.doc.mutate();
+                for &id in &els[1..] {
+                    m.remove_node(id);
+                }
+            }),
+        ];
+        for (tag, css) in SIBLING_CSS {
+            let tag = format!("child-list-{tag}");
+            let mut d = make_doc(css, &tag, &["a", "b", "c", "a", "b"]);
+            assert_eq!(styles(&d.doc, d.body), fresh_styles(&d, css, &tag), "{tag}: initial");
+            for (name, step) in steps {
+                step(&mut d);
+                d.doc.resolve(0.0);
+                assert_eq!(styles(&d.doc, d.body), fresh_styles(&d, css, &tag), "{tag}: {name}");
+            }
+        }
+    }
+
+    /// A move within one parent restyles nothing when no sibling-dependent
+    /// selector was tested on its children.
+    #[test]
+    fn same_parent_move_without_sibling_selectors_restyles_nothing() {
+        let d = &mut make_doc(".a { color: red } .b span { width: 7px }", "child-list-plain", &["a", "b", "c"]);
+        d.doc.mutate().insert_nodes_before(d.divs[0], &[d.divs[2]]);
+        assert_eq!(restyles(&d.doc), Vec::<NodeId>::new());
+        d.doc.mutate().append_children(d.body, &[d.divs[1]]);
+        assert_eq!(restyles(&d.doc), Vec::<NodeId>::new());
+        d.doc.resolve(0.0);
+        let order: Vec<NodeId> = d.doc.nodes[d.body].children.to_vec();
+        assert_eq!(order, vec![d.divs[2], d.divs[0], d.divs[1]]);
+    }
+
+    /// A move to another parent still restyles the moved subtree.
+    #[test]
+    fn move_to_another_parent_restyles_the_moved_element() {
+        let d = &mut make_doc(".a .b { color: red }", "child-list-reparent", &["a", "b"]);
+        d.doc.mutate().append_children(d.divs[0], &[d.divs[1]]);
+        assert_eq!(restyles(&d.doc), vec![d.divs[1]]);
+    }
+
+    /// Text children coming and going move no element's index or edge
+    /// status.
+    #[test]
+    fn text_children_alone_restyle_nothing() {
+        let css = "div:first-child, div:last-child { color: red } div:nth-child(2) { width: 3px } .a + div, .a ~ div { width: 5px }";
+        let d = &mut make_doc(css, "child-list-text", &["a", "b", "c"]);
+        let mut m = d.doc.mutate();
+        let t1 = m.create_text_node("x");
+        let t2 = m.create_text_node("y");
+        m.insert_nodes_before(d.divs[0], &[t1]);
+        m.append_children(d.body, &[t2]);
+        m.remove_node(t1);
+        drop(m);
+        assert_eq!(restyles(&d.doc), Vec::<NodeId>::new());
+    }
+
+    /// `:first-child`/`:last-child` restyle only the element whose edge
+    /// status flipped: appending restyles the old last element, not the
+    /// first one.
+    #[test]
+    fn edge_selectors_restyle_only_the_flipped_neighbour() {
+        let css = "div:first-child { color: red } div:last-child { color: blue }";
+        let d = &mut make_doc(css, "child-list-edge", &["a", "b", "c"]);
+        let mut m = d.doc.mutate();
+        let el = m.create_element(qual_name!("div"), vec![]);
+        m.append_children(d.body, &[el]);
+        drop(m);
+        assert_eq!(restyles(&d.doc), vec![d.divs[2]]);
+        d.doc.resolve(0.0);
+
+        d.doc.mutate().remove_node(d.divs[1]);
+        assert_eq!(restyles(&d.doc), Vec::<NodeId>::new(), "a middle element left");
+        d.doc.mutate().remove_node(d.divs[0]);
+        assert_eq!(restyles(&d.doc), vec![d.divs[2]], "the next one became first");
     }
 }

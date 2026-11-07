@@ -64,6 +64,17 @@ bitflags! {
         /// descendants', when this pass propagated damage. Set by `propagate_damage_flags`, cleared
         /// with the damage; tables read it to rebuild only the rows and cells that changed.
         const OWN_DAMAGE = 0b00010000;
+        /// The node's `paint_children`, `stacking_context` or
+        /// `sc_contribution_cache` may be out of date: some resolve since the
+        /// last paint-tree build stored `REBUILD_STACKING_CONTEXT` damage on it
+        /// (set by `clear_damage_and_dirty_flags`, removed when
+        /// `ensure_paint_tree` rebuilds the node). New nodes start dirty.
+        const PAINT_TREE_DIRTY = 0b00100000;
+        /// The node itself had damage that reaches the paint tree (`OWN_DAMAGE` with
+        /// `REBUILD_STACKING_CONTEXT`) in some resolve since the last paint-tree build: a table
+        /// reads it where it used to read `OWN_DAMAGE`, which each resolve clears
+        /// (`table_paint_children_kept`). Set and cleared with `PAINT_TREE_DIRTY`.
+        const PAINT_TREE_OWN_DAMAGE = 0b01000000;
     }
 }
 
@@ -245,19 +256,6 @@ impl Node {
     pub fn clear_layout_cache(&mut self) {
         if let Some(layout_data) = self.try_layout_data_mut() {
             layout_data.cache.clear();
-        }
-    }
-
-    /// Clear this node's taffy layout cache and any cached inline
-    /// `content_widths`, forcing a full relayout of it on the next pass.
-    pub fn invalidate_layout_cache(&mut self) {
-        self.clear_layout_cache();
-        if let Some(inline_layout) = self
-            .data
-            .downcast_element_mut()
-            .and_then(|el| el.inline_layout_data.as_mut())
-        {
-            inline_layout.content_widths = None;
         }
     }
 
@@ -449,7 +447,7 @@ impl Node {
             stacking_context: None,
             sc_contribution_cache: RefCell::new(ThinVec::new()),
 
-            flags: NodeFlags::empty(),
+            flags: NodeFlags::PAINT_TREE_DIRTY,
             out_of_flow: AtomicBool::new(false),
             data,
         }
@@ -1294,14 +1292,14 @@ impl Node {
     /// table-part Taffy style does not depend on them and stays.
     ///
     /// lightningpanda: the cell's own layout reads its layout style, so a change clears what its
-    /// last layout measured (`invalidate_layout_cache`), whichever path changed it: a table built
+    /// last layout measured (`clear_layout_cache`), whichever path changed it: a table built
     /// again (`build_table_context`) leaves its undamaged cells' layouts in place otherwise.
     pub(crate) fn set_collapsed_border(&mut self, collapsed_border: Option<[f32; 4]>) {
         if self.collapsed_border() == collapsed_border {
             return;
         }
         self.layout_data_mut().collapsed_border = collapsed_border;
-        self.invalidate_layout_cache();
+        self.clear_layout_cache();
         let Some(stylo) = self.try_stylo_element_data_mut() else {
             return;
         };

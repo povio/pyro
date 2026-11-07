@@ -31,6 +31,22 @@ crate (`diff -ruN`).
   are added (upstream has neither; both were counted unknown properties), inherited, in
   `inherited_text`. lp-render's PDF output reads them to place page cuts of paper-cut documents.
 
+- `stylist.rs`, `style_resolver.rs`: each origin's `CascadeData` also files its single-level
+  `::before`/`::after` rules that declare `content`, `display` or `animation-name` (on the
+  block's longhand set, so `all`, `var()` and CSS-wide keywords count; `content: normal | none`
+  and `animation-name: none` do not, so lightningpanda's UA
+  `*::before, *::after { animation: none !important }` stays out) in a second pair of
+  `SelectorMap`s, filled by `add_styles` next to `normal_rules` and cleared with it.
+  `match_pseudo` (unvisited pass, not `PseudoElementResolution::Force`) matches only those first
+  and returns `None` when none matches: every other rule leaves `content` at `normal` without
+  setting `DISPLAY_OR_CONTENT_DEPEND_ON_INHERITED_STYLE`, so the matched and cascaded style was
+  dropped by `eager_pseudo_is_definitely_not_generated` anyway. Universal resets
+  (`*, ::before, ::after { box-sizing: ... }`, Tailwind's `--tw-*` block) made every element
+  match and cascade both pseudo-elements. Elements that shadow-tree, `::slotted()`, `:host` or
+  `::part()` rules for the pseudo-element can reach take the full path. A CSSOM declaration
+  edit rebuilds the index with the rules (`RuleChangeKind::StyleRuleDeclarations` is
+  `FullyInvalid`); debug builds check, on every skip, that no matched rule could generate a box.
+
 - `invalidation/element/invalidation_map.rs`: `AdditionalRelativeSelectorInvalidationMap::state_dependencies`
   is the union of the element states the relative selector map depends on (every `:has()` argument's
   pseudo-classes), kept as dependencies are added and reset by `clear`. Blitz reads it to tell with one
@@ -55,7 +71,8 @@ crate (`diff -ruN`).
 The patch applied to 0.23.0 with offsets only. Two adjustments: 0.23 names the by-value getters of
 non-`Copy` values `slow_clone_*`, so the rule cache's inherited resets (`rule_cache.rs`,
 `properties/helpers.mako.rs`) call `slow_clone_box_sizing` and friends; and the `container` shorthand's
-pref name above.
+pref name above. The `::before`/`::after` index (`stylist.rs`, `style_resolver.rs`) was written
+on 0.22 and ported onto 0.23's `stylist.rs` as is.
 
 ## Updating or dropping the patch
 
