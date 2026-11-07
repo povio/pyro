@@ -405,7 +405,7 @@ pub(super) fn set_file_input(page: &Rc<PageDom>, id: NodeId, files: &[UploadFile
         .collect();
     page.set_input_files(id, entries).map_err(|e| format!("{e:?}"))?;
     input::fire_simple(page, id, "input", true, false);
-    input::fire_simple(page, id, "change", true, false);
+    input::fire_user_change(page, id);
     Ok(())
 }
 
@@ -2522,7 +2522,7 @@ fn act(page: &Rc<PageDom>, id: NodeId, action: Action, value: &str, opts: Pointe
                     return Attempt::Retry(format!("{error:?}"));
                 }
                 input::fire_simple(page, id, "input", true, false);
-                input::fire_simple(page, id, "change", true, false);
+                input::fire_user_change(page, id);
                 return Attempt::Done(json!({}));
             }
             if is_control {

@@ -221,6 +221,9 @@ pub struct ControlState {
     pub(crate) selection_direction: Option<(bool, (u32, u32))>,
     /// Value changed by user editing (enables tooLong/tooShort).
     pub user_edited: bool,
+    /// HTML "user validity": the user committed a change, or a submission
+    /// validated the form (`:user-valid` / `:user-invalid`); reset clears it.
+    pub user_validity: bool,
     /// `setCustomValidity` message.
     pub custom_validity: Option<String>,
     /// `<option>` selectedness when explicitly set.
