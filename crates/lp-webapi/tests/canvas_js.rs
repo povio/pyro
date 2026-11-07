@@ -498,6 +498,11 @@ fn offscreen_canvas_and_image_bitmaps() {
     assert_eq!(eval(r, "made"), "4|4|0,0,255,255|0,0,0,0");
     eval(r, "window.rejected = null; createImageBitmap({}).catch(e => rejected = e.name);");
     assert_eq!(eval(r, "rejected"), "TypeError");
+    // Arrays (or proxies of them) are not image sources.
+    assert_eq!(
+        eval(r, "var hits = 0; var fake = new Proxy([3, new Blob([])], { get(t, k) { hits++; return t[k]; } }); try { x.drawImage(fake, 0, 0); 'drawn' } catch (e) { e.name + hits }"),
+        "TypeError0"
+    );
 }
 
 #[test]

@@ -696,13 +696,13 @@
       }
       const flip = o.imageOrientation === 'flipY';
       const smooth = o.resizeQuality !== 'pixelated';
-      const made = natives.makeBitmap(sourceOf(image, true), crop, rw, rh, flip, smooth);
+      const made = natives.makeBitmap(image, crop, rw, rh, flip, smooth);
       return PromiseC.resolve(newBitmap(made));
     } catch (e) {
       return PromiseC.reject(e);
     }
   }
-  // An image argument as canvas.rs takes it: element wrappers as they are,
+  // An image argument that is not an element as canvas.rs takes it, or null:
   // [0, handle] for an ImageBitmap, [1, context or null, width, height] for
   // an OffscreenCanvas, [2, data, width, height] for an ImageData (only
   // where `imageData` allows it), [3, blob] for a Blob.
@@ -722,7 +722,7 @@
       if (d) return [2, d.data, d.width, d.height];
       if (natives.isBlob(image)) return [3, image];
     }
-    return image;
+    return null;
   }
 
   // ---- OffscreenCanvas -------------------------------------------------

@@ -133,7 +133,8 @@ it). Pages without canvases pay a flag test per image load.
 - Shadow offsets are rounded to whole pixels.
 - No WebGL, `bitmaprenderer`, `transferControlToOffscreen`, or
   `OffscreenCanvas` in workers. `drawFocusIfNeeded` draws nothing.
-- `display-p3` ImageData holds sRGB values.
+- `display-p3` ImageData holds sRGB values. `ImageBitmap` and
+  `OffscreenCanvas` cannot be posted (`postMessage`, `structuredClone`).
 - Path2D SVG data with an error draws nothing (browsers keep the part
   before the error). `isPointInStroke` ignores the dash pattern;
   `clip()` does not affect hit testing.

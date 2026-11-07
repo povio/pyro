@@ -335,6 +335,9 @@ impl Surface {
 
     fn changed(&mut self) {
         self.generation += 1;
+        // The straight copy is stale: release it now rather than at the next
+        // snapshot.
+        self.straight = None;
     }
 
     /// The bitmap as it is now (premultiplied), `None` while nothing was
