@@ -384,32 +384,6 @@ impl Url {
         url
     }
 
-    /// https://url.spec.whatwg.org/#potentially-strip-trailing-spaces-from-an-opaque-path
-    fn strip_trailing_spaces_from_opaque_path(&mut self) {
-        if !self.cannot_be_a_base() {
-            return;
-        }
-
-        if self.fragment_start.is_some() {
-            return;
-        }
-
-        if self.query_start.is_some() {
-            return;
-        }
-
-        let trailing_space_count = self
-            .serialization
-            .chars()
-            .rev()
-            .take_while(|c| *c == ' ')
-            .count();
-
-        let start = self.serialization.len() - trailing_space_count;
-
-        self.serialization.truncate(start);
-    }
-
     /// Parse a string as an URL, with this URL as the base URL.
     ///
     /// The inverse of this is [`make_relative`].
@@ -1591,8 +1565,9 @@ impl Url {
             self.serialization.push('#');
             self.mutate(|parser| parser.parse_fragment(parser::Input::new_no_trim(input)))
         } else {
+            // lightningpanda: the standard no longer strips trailing spaces from an opaque
+            // path here; the parser writes a space before "?" or "#" as "%20" instead.
             self.fragment_start = None;
-            self.strip_trailing_spaces_from_opaque_path();
         }
     }
 
@@ -1657,10 +1632,8 @@ impl Url {
                 )
             });
         } else {
+            // lightningpanda: no trailing-space stripping, as in `set_fragment`.
             self.query_start = None;
-            if fragment.is_none() {
-                self.strip_trailing_spaces_from_opaque_path();
-            }
         }
 
         self.restore_already_parsed_fragment(fragment);
@@ -1769,6 +1742,7 @@ impl Url {
         let old_after_path_pos = to_u32(self.serialization.len()).unwrap();
         let cannot_be_a_base = self.cannot_be_a_base();
         let scheme_type = SchemeType::from(self.scheme());
+        let host_is_null = !cannot_be_a_base && !self.has_authority();
         self.serialization.truncate(self.path_start as usize);
         self.mutate(|parser| {
             if cannot_be_a_base {
@@ -1786,6 +1760,20 @@ impl Url {
                 );
             }
         });
+        // lightningpanda: without a host, "/." goes before a path that starts with an empty
+        // segment, so it does not read as an authority, and goes away when it does not.
+        if host_is_null {
+            let dot_start = self.scheme_end as usize + 1;
+            let has_dot = self.path_start as usize == dot_start + 2;
+            let needs_dot = self.slice(self.path_start..).starts_with("//");
+            if has_dot && !needs_dot {
+                self.serialization.replace_range(dot_start..dot_start + 2, "");
+                self.path_start -= 2;
+            } else if needs_dot && !has_dot {
+                self.serialization.insert_str(self.path_start as usize, "/.");
+                self.path_start += 2;
+            }
+        }
         self.restore_after_path(old_after_path_pos, &after_path);
     }
 
@@ -2084,7 +2072,10 @@ impl Url {
 
     /// opt_new_port: None means leave unchanged, Some(None) means remove any port number.
     fn set_host_internal(&mut self, host: Host<Cow<'_, str>>, opt_new_port: Option<Option<u16>>) {
-        let old_suffix_pos = if opt_new_port.is_some() {
+        // lightningpanda: a URL without a host may serialize "/." before a path that starts
+        // with an empty segment (`non-spec:/.//p`); once there is a host it goes.
+        let dot_prefix = !self.has_authority() && self.path_start == self.host_end + 2;
+        let old_suffix_pos = if opt_new_port.is_some() || dot_prefix {
             self.path_start
         } else {
             self.host_end

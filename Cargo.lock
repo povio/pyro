@@ -2033,6 +2033,7 @@ dependencies = [
  "rand_core",
  "rsa",
  "rustc-hash 2.1.3",
+ "serde_json",
  "sha1",
  "sha2",
  "tokio",

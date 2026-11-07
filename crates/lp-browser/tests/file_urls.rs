@@ -101,3 +101,33 @@ fn web_pages_cannot_navigate_frames_to_local_files() {
     assert_eq!(failures.0.borrow().as_slice(), ["net::ERR_ACCESS_DENIED", "net::ERR_ACCESS_DENIED"]);
     assert_eq!(eval(&t, page, "location.protocol"), "http:");
 }
+
+/// WHATWG URL parsing of `file:` (vendor/url): empty leading path segments are kept, as in
+/// browsers, so `location` reports the URL as navigated and the file still loads.
+#[test]
+fn file_urls_keep_empty_leading_path_segments_in_location() {
+    let dir = TempDir(std::env::temp_dir().join(format!("lp-browser-file-urls-slashes-{}", std::process::id())));
+    let _ = std::fs::remove_dir_all(&dir.0);
+    std::fs::create_dir_all(&dir.0).unwrap();
+    std::fs::write(dir.0.join("index.html"), "<!doctype html><p id=p>hi</p>").unwrap();
+    let plain = url::Url::from_file_path(dir.0.join("index.html")).unwrap().to_string();
+    let url = plain.replacen("file:///", "file:////", 1);
+
+    let mut t = crate::browser_thread().unwrap();
+    t.enable_network(lp_net::NetConfig::default()).unwrap();
+    let failures = Rc::new(Failures::default());
+    t.browser.set_observer(Some(failures.clone()));
+    let page = t.browser.create_page().unwrap();
+    t.browser.navigate(page, NavigateOpts::address_bar(&url)).unwrap();
+    wait_for(&mut t, page, "document.readyState === 'complete' && location.protocol === 'file:'");
+
+    assert!(failures.0.borrow().is_empty(), "{:?}", failures.0.borrow());
+    assert_eq!(eval(&t, page, "location.href"), url);
+    assert_eq!(eval(&t, page, "location.pathname.slice(0, 2) + location.host"), "//");
+    assert_eq!(eval(&t, page, "document.getElementById('p').textContent"), "hi");
+    // A host next to a Windows drive letter is kept, and `..` stops at the drive letter.
+    assert_eq!(eval(&t, page, "new URL('../../x', 'file://h/C:/a').href"), "file://h/C:/x");
+    // Location's setters reparse the URL; the empty leading segment survives a hash change.
+    eval(&t, page, "location.hash = 'h'");
+    assert_eq!(eval(&t, page, "location.href"), format!("{url}#h"));
+}

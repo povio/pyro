@@ -253,6 +253,15 @@ pub fn set_port(url: &mut Url, new_port: &str) -> Result<(), ()> {
         if !url.has_host() || url.host() == Some(Host::Domain("")) || scheme == "file" {
             return Err(());
         }
+        // lightningpanda: only the empty string clears the port. A value that is empty
+        // once tabs and newlines are removed, or starts with a non-digit, changes nothing.
+        if new_port.is_empty() {
+            url.set_port_internal(None);
+            return Ok(());
+        }
+        if !Input::new_no_trim(new_port).starts_with(|c: char| c.is_ascii_digit()) {
+            return Err(());
+        }
         result = Parser::parse_port(
             Input::new_no_trim(new_port),
             || default_port(scheme),
@@ -286,7 +295,9 @@ pub fn set_pathname(url: &mut Url, new_pathname: &str) {
         url.set_path(new_pathname)
     } else if SchemeType::from(url.scheme()).is_special()
         || !new_pathname.is_empty()
-        || !url.has_host()
+        // lightningpanda: an empty path is kept only with a host, even an empty one
+        // (`foo://`); a null host means no authority.
+        || !url.has_authority()
     {
         let mut path_to_set = String::from("/");
         path_to_set.push_str(new_pathname);

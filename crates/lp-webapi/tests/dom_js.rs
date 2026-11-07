@@ -35,10 +35,10 @@ impl JsClass for TestWindow {
     }
 }
 
-struct Env {
+pub(crate) struct Env {
     engine: Engine,
     page: Rc<PageDom>,
-    main: Realm,
+    pub(crate) main: Realm,
 }
 
 /// Loads no sub-resources (the layout tests' pages have none).
@@ -49,7 +49,7 @@ impl lp_render::Fetcher for NoFetch {
     }
 }
 
-fn env(html: &str) -> Env {
+pub(crate) fn env(html: &str) -> Env {
     lp_layout::install(std::sync::Arc::new(NoFetch));
     let engine = Engine::new().expect("engine");
     register(&engine);
@@ -96,7 +96,7 @@ fn new_realm_with_origin(
     realm
 }
 
-fn eval(realm: &Realm, src: &str) -> String {
+pub(crate) fn eval(realm: &Realm, src: &str) -> String {
     let s = realm.scope().unwrap();
     match s.eval(src, Some("test.js"), 1) {
         Ok(v) => v.to_string().unwrap(),
