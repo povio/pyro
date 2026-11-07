@@ -271,3 +271,43 @@ fn images_removed_or_given_expandos_while_loading_still_fire_load() {
     settle(&mut thread);
     assert_eq!(eval(&thread, page, "gc.sort().join('|')"), "expando|removed");
 }
+
+/// A 1x1 opaque red PNG.
+const RED_PNG: [u8; 70] = [
+    137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0, 31, 21, 196,
+    137, 0, 0, 0, 13, 73, 68, 65, 84, 120, 156, 99, 248, 207, 192, 240, 31, 0, 5, 0, 1, 255, 137, 153, 61, 29, 0, 0, 0,
+    0, 73, 69, 78, 68, 174, 66, 96, 130,
+];
+
+#[test]
+fn canvas_origin_clean_uses_the_documents_actual_origin() {
+    let (mut thread, page, loader) = setup(
+        "<canvas></canvas><img id=i src=/red.png>\
+         <iframe sandbox=allow-scripts src=/child.html></iframe>\
+         <iframe srcdoc='<canvas></canvas><img id=i src=/red.png>'></iframe>",
+    );
+    loader.insert_bytes("http://site.test/red.png", "image/png", &RED_PNG, Duration::ZERO);
+    loader.insert(
+        "http://site.test/child.html",
+        "text/html",
+        "<canvas></canvas><img id=i src=/red.png>",
+        Duration::ZERO,
+    );
+    thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    settle(&mut thread);
+    let read = "(() => { const c = document.createElement('canvas'); c.width = c.height = 1; \
+        const x = c.getContext('2d'); x.drawImage(document.getElementById('i'), 0, 0); \
+        try { return String(x.getImageData(0, 0, 1, 1).data[0]) } catch (e) { return e.name } })()";
+    let in_frame = |thread: &BrowserThread, url: &str| {
+        let frame = thread.browser.frames(page).into_iter().find(|f| f.url == url).unwrap();
+        let realm = thread.browser.frame(page, &frame.id).unwrap().main_realm().unwrap().clone();
+        let scope = realm.scope().unwrap();
+        scope.eval(read, None, 1).unwrap_or_else(|e| panic!("{}", e.details(&scope).text())).to_string().unwrap()
+    };
+    // Same-origin: readable.
+    assert_eq!(eval(&thread, page, read), "255");
+    // A sandboxed document's origin is opaque: the same-URL-origin image taints.
+    assert_eq!(in_frame(&thread, "http://site.test/child.html"), "SecurityError");
+    // about:srcdoc inherits the parent's origin: its same-origin image is clean.
+    assert_eq!(in_frame(&thread, "about:srcdoc"), "255");
+}

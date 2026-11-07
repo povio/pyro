@@ -25,9 +25,11 @@ accessor with the usual data property.
   another operator, or 4096 batched draws). Other operators and shadows
   render the source image alone and composite it per pixel.
 - Limits: a side of at most 16384 px and 32 Mi pixels per bitmap (larger
-  canvases draw nothing and read transparent); 2 GiB of bitmaps per process
-  (past it a canvas without a bitmap draws nothing); `getImageData` of more
-  than 32 Mi pixels is a `RangeError`.
+  canvases draw nothing and read transparent); 2 GiB of bitmaps per process,
+  counted for as long as any holder of the pixels lives (canvas bitmaps,
+  snapshots, `ImageBitmap`s, patterns, decoded images): past it a draw that
+  needs a new bitmap draws nothing and an image source that needs decoding
+  has no pixels; `getImageData` of more than 32 Mi pixels is a `RangeError`.
 - Hostile geometry is bounded: paths with points far outside the bitmap are
   flattened and clipped to a box that far out, pens are at most a few canvas
   sizes wide, more than 100000 dash periods along one stroke draw it solid
@@ -97,7 +99,9 @@ accessor with the usual data property.
   is a `CanvasRenderingContext2D` whose `canvas` is the OffscreenCanvas;
   `instanceof OffscreenCanvasRenderingContext2D` recognizes it.
 - Origin-clean: drawing a cross-origin `<img>` (one whose final response URL
-  is not same-origin with the document; `data:` and `blob:` are clean), or
+  is not same-origin with the document's origin, which is opaque in a
+  sandboxed frame and inherited in `about:blank`/`about:srcdoc`; `data:`
+  and `blob:` are clean), or
   a pattern, canvas or bitmap made from one, taints the canvas:
   `getImageData`, `toDataURL`, `toBlob` and `convertToBlob` throw
   `SecurityError`.
@@ -113,10 +117,12 @@ accessor with the usual data property.
 lp-browser fetches `<img>` resources to learn their natural size and drops
 the body. When the document may draw images (it created a `<canvas>`
 element, a flag set at element creation, or used a canvas API), the body is
-kept in `PageDom` (`set_image_bytes`, at most 64 MiB per document) with its
-origin-clean flag, and decoded on the first `drawImage`/`createPattern`/
-`createImageBitmap` of the image (the decoded pixels are then kept with
-it). Pages without canvases pay a flag test per image load.
+kept in `PageDom` (`set_image_bytes`, at most 64 MiB per document, a
+running total) with its origin-clean flag, and decoded on the first
+`drawImage`/`createPattern`/`createImageBitmap` of the image (the decoded
+pixels are then kept with it while the document's cached decodes fit
+256 MiB; past that an image is decoded again on each use). Pages without
+canvases pay a flag test per image load.
 
 ## Gaps
 

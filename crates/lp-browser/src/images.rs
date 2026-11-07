@@ -292,8 +292,10 @@ impl Browser {
             return true;
         }
         let Some(state) = self.doc(page) else { return false };
-        let document = crate::loader::origin_of(&state.main_frame.url);
-        document != "null" && document == crate::loader::origin_of(url)
+        // The document's origin: opaque in a sandboxed frame, inherited by
+        // about:blank and about:srcdoc documents.
+        let document = &state.main_frame.origin;
+        document != "null" && *document == crate::loader::origin_of(url)
     }
 
     fn image_error_task(&self, page: FrameKey, loader: LoaderId, bindings: &Rc<PageDom>, node: NodeId) {
