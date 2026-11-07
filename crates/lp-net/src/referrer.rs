@@ -84,18 +84,23 @@ pub fn referrer_for(referrer: &Url, target: &Url, policy: ReferrerPolicy) -> Opt
     }
     let origin = || referrer.origin().ascii_serialization() + "/";
     let full = || {
-        let mut url = referrer.clone();
-        url.set_fragment(None);
-        let _ = url.set_username("");
-        let _ = url.set_password(None);
-        let full = String::from(url);
+        let full = if referrer.fragment().is_none() && referrer.username().is_empty() && referrer.password().is_none() {
+            // Nothing to strip (a document URL usually).
+            referrer.as_str().to_owned()
+        } else {
+            let mut url = referrer.clone();
+            url.set_fragment(None);
+            let _ = url.set_username("");
+            let _ = url.set_password(None);
+            String::from(url)
+        };
         if full.len() > MAX_REFERRER_LEN {
             origin()
         } else {
             full
         }
     };
-    let same_origin = referrer.origin() == target.origin();
+    let same_origin = crate::cors::same_origin(referrer, target);
     let downgrade = is_trustworthy(referrer) && !is_trustworthy(target);
     match policy {
         ReferrerPolicy::NoReferrer => None,
@@ -131,7 +136,7 @@ impl FetchSite {
     /// opaque (`null`) one.
     pub fn of(initiator: Option<&Url>, target: &Url) -> FetchSite {
         let Some(initiator) = initiator else { return FetchSite::CrossSite };
-        if initiator.origin() == target.origin() {
+        if crate::cors::same_origin(initiator, target) {
             return FetchSite::SameOrigin;
         }
         let same_site = initiator.scheme() == target.scheme()
@@ -189,6 +194,37 @@ mod tests {
 
     fn u(s: &str) -> Url {
         Url::parse(s).unwrap()
+    }
+
+    #[test]
+    fn same_origin_matches_url_origins() {
+        let urls = [
+            "http://a.example/x",
+            "http://A.example:80/y",
+            "http://a.example:8080/",
+            "https://a.example/",
+            "https://a.example:443/z#f",
+            "ws://a.example/",
+            "wss://a.example:443/",
+            "http://127.0.0.1/",
+            "http://[::1]/",
+            "ftp://a.example/",
+            "file:///tmp/a",
+            "data:text/plain,a",
+            "blob:https://a.example/uuid",
+            "about:blank",
+        ];
+        for a in urls {
+            for b in urls {
+                let (a, b) = (u(a), u(b));
+                assert_eq!(crate::cors::same_origin(&a, &b), a.origin() == b.origin(), "{a} {b}");
+            }
+        }
+        // Nothing to strip: the URL as it is.
+        assert_eq!(
+            referrer_for(&u("https://a.example/p?q"), &u("https://a.example/"), ReferrerPolicy::UnsafeUrl).as_deref(),
+            Some("https://a.example/p?q")
+        );
     }
 
     #[test]

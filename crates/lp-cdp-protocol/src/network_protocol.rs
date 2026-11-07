@@ -18,20 +18,24 @@ use crate::msg::{CdpError, CdpResult};
 /// CDP `Network.Headers`: an object; repeated headers are joined with "\n"
 /// as Chrome does.
 pub fn headers_json(headers: &HeaderMap) -> Value {
-    let mut map = Map::new();
+    // A header map yields a name's values one after another, so repeated
+    // lines join the entry just pushed; the map is built once, from the
+    // list (every request and response event: no lookup per header).
+    let mut list: Vec<(String, Value)> = Vec::with_capacity(headers.keys_len());
+    let mut last: Option<&str> = None;
     for (name, value) in headers {
-        let value = String::from_utf8_lossy(value.as_bytes()).into_owned();
-        match map.get_mut(name.as_str()) {
-            Some(Value::String(existing)) => {
+        let value = String::from_utf8_lossy(value.as_bytes());
+        if last == Some(name.as_str()) {
+            if let Some((_, Value::String(existing))) = list.last_mut() {
                 existing.push('\n');
                 existing.push_str(&value);
             }
-            _ => {
-                map.insert(name.as_str().to_owned(), Value::String(value));
-            }
+            continue;
         }
+        last = Some(name.as_str());
+        list.push((name.as_str().to_owned(), Value::String(value.into_owned())));
     }
-    Value::Object(map)
+    Value::Object(list.into_iter().collect::<Map<String, Value>>())
 }
 
 fn response_json(head: &ResponseHead, encoded_len: u64) -> Value {

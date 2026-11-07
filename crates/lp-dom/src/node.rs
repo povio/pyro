@@ -60,6 +60,9 @@ pub struct DocumentData {
     /// Encoding name (`document.characterSet`).
     pub charset: &'static str,
     pub url: Box<str>,
+    /// `url` parsed, made on first use (`Dom::document_url_parsed`) and
+    /// reset when the URL changes; `None` inside when it does not parse.
+    pub(crate) parsed_url: std::cell::OnceCell<Option<url::Url>>,
     /// Embedder-supplied inherited base for initial blank/srcdoc documents.
     pub(crate) base_url: Option<Box<str>>,
     /// Resolved first `<base href>`, computed on demand and reset when a

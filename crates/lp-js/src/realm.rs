@@ -295,6 +295,10 @@ pub(crate) struct RealmInner {
     /// What makes each lazy constant attribute's value on its first read
     /// ([`Scope::define_lazy_global_constant`]).
     lazy_constants: RefCell<Vec<(&'static str, LazyGlobalConstant)>>,
+    /// The global class's own members were defined on the global itself at
+    /// creation and its interface prototype object is still empty: its first
+    /// population copies them there (`populate_class`).
+    global_members_on_instance: Cell<bool>,
     /// `console.count` counters and `console.time` timers by label (empty,
     /// and unallocated, until script uses them).
     console_counts: RefCell<rustc_hash::FxHashMap<String, u64>>,
@@ -1898,6 +1902,7 @@ pub(crate) fn create(engine: &Rc<EngineInner>, options: RealmOptions) -> JsResul
         global_target: Cell::new(ptr::null_mut()),
         global_constants: Cell::new(false),
         lazy_constants: RefCell::new(Vec::new()),
+        global_members_on_instance: Cell::new(false),
         console_counts: RefCell::new(Default::default()),
         console_timers: RefCell::new(Default::default()),
     });
@@ -2013,37 +2018,60 @@ fn install_classes(scope: &Scope<'_>) -> JsResult<()> {
     });
     let global_name = realm.global_class.map(|gid| reg.classes[gid as usize].name);
     // The pure getters of the global's classes, root-first (see below).
-    let global_pure: Vec<(&'static str, u16, bool)> = global_chain
+    let global_pure: Vec<(ClassId, &'static str, u16, bool)> = global_chain
         .iter()
         .flatten()
-        .flat_map(|c| reg.classes[*c as usize].def.accessors.iter())
-        .filter_map(|a| Some((a.name, a.slot.filter(|_| a.pure)?, a.set.is_some())))
+        .flat_map(|c| reg.classes[*c as usize].def.accessors.iter().map(move |a| (*c, a)))
+        .filter_map(|(c, a)| Some((c, a.name, a.slot.filter(|_| a.pure)?, a.set.is_some())))
         .collect();
     drop(reg);
     *realm.protos.borrow_mut() = protos;
     *realm.interfaces.borrow_mut() = Some(interfaces);
     *realm.populated.borrow_mut() = vec![false; n];
     if let (Some(chain), Some(name)) = (global_chain, global_name) {
+        let gid = *chain.last().expect("non-empty");
+        let target = realm.global_target.get();
+        // WebIDL puts a [Global] interface's members on the global itself.
+        // They are defined there directly (custom accessors on the object
+        // behind the proxy), and the interface prototype object stays empty
+        // until a script reaches the interface, whose population then copies
+        // them (`copy_global_members`). Populating the prototype and copying
+        // every member from it cost each realm two definitions per member.
+        // Without the proxy's target, the members are copied from the
+        // populated prototype as before.
+        let on_instance = !target.is_null();
+        if on_instance {
+            if let Some(&parent) = chain.iter().rev().nth(1) {
+                populate_class(scope, parent)?;
+            }
+            materialize(scope, gid)?;
+        } else {
+            populate_class(scope, gid)?;
+        }
         // Chain root-first: copy members onto the global, brand instanceof.
-        populate_class(scope, *chain.last().expect("non-empty"))?;
         let install_global = realm.helper(scope, "installGlobal")?;
         let mut ps = crate::RootedVec::new();
         let mut cs = crate::RootedVec::new();
+        let mut ts = crate::RootedVec::new();
         for c in &chain {
             ps.push(scope, realm.interface_object(scope, 0, *c)?);
             cs.push(scope, realm.interface_object(scope, 2, *c)?);
+            ts.push(scope, realm.interface_object(scope, 1, *c)?);
         }
         let ps = rooted_array(scope, &ps)?;
         let cs = rooted_array(scope, &cs)?;
-        install_global.call(None, &[global.value(), ps.value(), cs.value(), scope.string(name)])?;
+        let ts = rooted_array(scope, &ts)?;
+        install_global.call(
+            None,
+            &[global.value(), ps.value(), cs.value(), ts.value(), scope.string(name), scope.boolean(on_instance)],
+        )?;
         // `installGlobal` copied each attribute as an accessor of functions,
         // which a global variable read (`document`) calls through a host
         // call frame. A pure getter is a custom accessor of the global
         // instead, as on its prototype, so an inline cache calls it directly
         // and its dispatch takes the lean path for the global's payload.
-        let target = realm.global_target.get();
         if let (Some(install), false) = (sys::spi::get().set_custom_accessor, target.is_null()) {
-            for (name, slot, has_set) in global_pure {
+            for (_, name, slot, has_set) in global_pure.into_iter().filter(|e| !on_instance || e.0 != gid) {
                 let n = JsString::new(name);
                 let setter = has_set.then(|| crate::accessors::SETTERS[usize::from(slot)]);
                 let getter = Some(crate::accessors::GETTERS[usize::from(slot)]);
@@ -2055,6 +2083,16 @@ fn install_classes(scope: &Scope<'_>) -> JsResult<()> {
                     install(scope.ctx, target, n.as_raw(), getter, setter, sys::kJSPropertyAttributeNone);
                 }
             }
+        }
+        if on_instance {
+            // After the parents' copies: a member of the same name replaces
+            // one, as its copy did.
+            let helpers = realm.helpers.borrow().as_ref().ok_or(JsError::ContextDestroyed)?.get(scope);
+            let helpers = helpers.as_object().ok_or(JsError::ContextDestroyed)?;
+            let interface = realm.interface_object(scope, 1, gid)?.as_object().ok_or(JsError::ContextDestroyed)?;
+            let part = MemberPart::Instance(target);
+            install_members_raw(scope.ctx, &realm.engine, Some(realm), gid, global, interface, helpers, part)?;
+            realm.global_members_on_instance.set(true);
         }
     }
     Ok(())
@@ -2142,7 +2180,12 @@ pub(crate) fn populate_class(scope: &Scope<'_>, id: ClassId) -> JsResult<()> {
         // Marked first: member installation does not re-enter population
         // (it defines on the prototype and the proxy target directly).
         realm.populated.borrow_mut()[c as usize] = true;
-        let done = materialize(scope, c).and_then(|()| install_members(scope, c)).and_then(|()| mirror_populated(scope, c));
+        let done = materialize(scope, c)
+            .and_then(|()| match realm.global_class == Some(c) && realm.global_members_on_instance.get() {
+                true => copy_global_members(scope, c),
+                false => install_members(scope, c, MemberPart::All),
+            })
+            .and_then(|()| mirror_populated(scope, c));
         if let Err(e) = done {
             realm.populated.borrow_mut()[c as usize] = false;
             return Err(e);
@@ -2175,7 +2218,26 @@ fn mirror_populated(scope: &Scope<'_>, id: ClassId) -> JsResult<()> {
     flags.set_index(id, scope.boolean(true))
 }
 
-fn install_members(scope: &Scope<'_>, id: ClassId) -> JsResult<()> {
+/// The global class's own members, already on the global (see
+/// `install_classes`): defined on its interface prototype object as the
+/// global has them (the same functions), then the interface's other steps.
+fn copy_global_members(scope: &Scope<'_>, id: ClassId) -> JsResult<()> {
+    let realm = scope.realm;
+    let names: Vec<&'static str> = {
+        let reg = realm.engine.classes.borrow();
+        let d = &reg.classes.get(id as usize).ok_or(JsError::Type("unknown class".into()))?.def;
+        d.methods.iter().map(|m| m.name).chain(d.accessors.iter().map(|a| a.name)).collect()
+    };
+    let names_array = scope.array(&[])?;
+    for (i, n) in names.iter().enumerate() {
+        names_array.set_index(i as u32, scope.string(n))?;
+    }
+    let proto = realm.interface_object(scope, 0, id)?;
+    realm.helper(scope, "copyMembers")?.call(None, &[scope.global().value(), proto, names_array.value()])?;
+    install_members(scope, id, MemberPart::Interface)
+}
+
+fn install_members(scope: &Scope<'_>, id: ClassId, part: MemberPart) -> JsResult<()> {
     let realm = scope.realm;
     let proto = realm.interface_object(scope, 0, id)?;
     let target = realm.interface_object(scope, 1, id)?;
@@ -2184,7 +2246,18 @@ fn install_members(scope: &Scope<'_>, id: ClassId) -> JsResult<()> {
     else {
         return Err(JsError::Type("invalid interface state".into()));
     };
-    install_members_raw(scope.ctx, &realm.engine, Some(realm), id, proto, target, helpers)
+    install_members_raw(scope.ctx, &realm.engine, Some(realm), id, proto, target, helpers, part)
+}
+
+/// Which members of a class one installation defines.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MemberPart {
+    All,
+    /// Methods and attributes only, onto the global (`proto` is its proxy);
+    /// custom accessors go on the object behind the proxy, given here.
+    Instance(sys::JSObjectRef),
+    /// Everything but those: constants, statics, iteration, hooks.
+    Interface,
 }
 
 /// Installs `id`'s members onto `proto`/`target` using only `ctx` and the
@@ -2263,6 +2336,7 @@ impl<'a> MemberKeys<'a> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn install_members_raw(
     ctx: sys::JSContextRef,
     engine: &EngineInner,
@@ -2271,6 +2345,7 @@ fn install_members_raw(
     proto: Object<'_>,
     target: Object<'_>,
     helpers: Object<'_>,
+    part: MemberPart,
 ) -> JsResult<()> {
     // Copied out so no registry borrow spans calls into JavaScript.
     let (methods, accessors, constants, statics, iterable, on_global) = {
@@ -2330,6 +2405,15 @@ fn install_members_raw(
     };
     let native = |name: &str, length: u32, call: class::MemberCall| native_pure(name, length, call, false);
     let members = helper("members")?;
+    // Where custom accessors go: for the global's own members, the object
+    // behind its proxy.
+    let (holder, instance, interface) = match part {
+        MemberPart::All => (proto.raw, true, true),
+        MemberPart::Instance(holder) => (holder, true, false),
+        MemberPart::Interface => (proto.raw, false, true),
+    };
+    let methods = if instance { methods } else { Vec::new() };
+    let accessors = if instance { accessors } else { Vec::new() };
     let mut batch = MemberBatch::new(ctx, &members, &[proto.raw]);
     for (name, length, call, pure) in methods {
         batch.push(name, native_pure(name, length, call, pure)?.raw as sys::JSValueRef)?;
@@ -2353,7 +2437,7 @@ fn install_members_raw(
                 (Some(result), Some(fast)) if !on_global => unsafe {
                     fast(
                         ctx,
-                        proto.raw,
+                        holder,
                         n.as_raw(),
                         getter,
                         setter,
@@ -2364,7 +2448,7 @@ fn install_members_raw(
                         true,
                     )
                 },
-                _ => unsafe { install(ctx, proto.raw, n.as_raw(), getter, setter, sys::kJSPropertyAttributeNone) },
+                _ => unsafe { install(ctx, holder, n.as_raw(), getter, setter, sys::kJSPropertyAttributeNone) },
             };
             if ok {
                 continue;
@@ -2377,6 +2461,9 @@ fn install_members_raw(
             None => undefined,
         };
         accessor.call(None, &[proto.value(), string(name), g.value(), st])?;
+    }
+    if !interface {
+        return Ok(());
     }
     // Each on the interface object, then on the prototype; one call into
     // JavaScript per batch instead of two per constant.
@@ -2492,7 +2579,7 @@ fn populate_disposed(ctx: sys::JSContextRef, id: ClassId, h: Object<'_>) -> JsRe
             return Err(JsError::ContextDestroyed);
         };
         populated.set_index(c, yes)?;
-        if let Err(e) = install_members_raw(ctx, &engine, None, c, proto, target, h) {
+        if let Err(e) = install_members_raw(ctx, &engine, None, c, proto, target, h, MemberPart::All) {
             populated.set_index(c, no)?;
             return Err(e);
         }
