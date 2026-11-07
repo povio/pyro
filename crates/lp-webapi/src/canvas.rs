@@ -37,7 +37,7 @@ use lp_dom::NodeId;
 use lp_js::sys;
 use lp_js::{Args, ClassDef, JsClass, JsError, JsResult, NoParent, Object, Persistent, Scope, Value};
 
-use crate::canvas_path::{closed, point_in_fill, replay, stroke_outline, on_outline, Builder, Path};
+use crate::canvas_path::{closed, on_outline, point_in_fill, replay, stroke_outline, Builder, Path};
 use crate::lazy_module::{lazy_globals, LazyModule};
 use crate::node::node_value;
 use crate::page::PageDom;
@@ -90,7 +90,8 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         })
     })?;
     natives.set_atom("parseColor", parse.value())?;
-    let is_blob = s.function("isBlob", |s, _this, a| Ok(s.boolean(s.unwrap::<crate::file::Blob>(a.get(0)).is_some())))?;
+    let is_blob =
+        s.function("isBlob", |s, _this, a| Ok(s.boolean(s.unwrap::<crate::file::Blob>(a.get(0)).is_some())))?;
     natives.set_atom("isBlob", is_blob.value())?;
     let make_bitmap = s.function("makeBitmap", |s, _this, a| make_bitmap(s, a))?;
     natives.set_atom("makeBitmap", make_bitmap.value())?;
@@ -299,7 +300,8 @@ impl State {
             "bevel" => kurbo::Join::Bevel,
             _ => kurbo::Join::Miter,
         };
-        let stroke = kurbo::Stroke::new(self.line_width).with_caps(cap).with_join(join).with_miter_limit(self.miter_limit);
+        let stroke =
+            kurbo::Stroke::new(self.line_width).with_caps(cap).with_join(join).with_miter_limit(self.miter_limit);
         // A dash pattern of zeros draws a solid line, as no pattern does.
         if self.line_dash.iter().any(|d| *d > 0.0) {
             stroke.with_dashes(self.line_dash_offset, self.line_dash.iter().copied())
@@ -399,11 +401,7 @@ pub fn get_context<'s>(s: &Scope<'s>, page: &Rc<PageDom>, canvas: NodeId, kind: 
 }
 
 /// The 2D context of a canvas element, if it has one.
-fn element_context<'s>(
-    s: &Scope<'s>,
-    page: &Rc<PageDom>,
-    canvas: NodeId,
-) -> JsResult<Option<Value<'s>>> {
+fn element_context<'s>(s: &Scope<'s>, page: &Rc<PageDom>, canvas: NodeId) -> JsResult<Option<Value<'s>>> {
     let element = node_value(s, page, Some(canvas))?;
     let Some(element) = element.as_object() else { return Ok(None) };
     Ok(s.get_hidden(element, CONTEXT_2D)?.filter(|c| s.unwrap::<CanvasRenderingContext2D>(*c).is_some()))
@@ -541,7 +539,13 @@ fn bitmap_triple<'s>(s: &Scope<'s>, handle: ImageHandle) -> JsResult<Value<'s>> 
 
 /// An image argument's pixels: `Ok(None)` when it has none to give yet
 /// (an image still loading, a video), errors as HTML specifies.
-fn image_source(s: &Scope<'_>, page: &Rc<PageDom>, value: Value<'_>, what: &str, image_data: bool) -> JsResult<Option<ImageHandle>> {
+fn image_source(
+    s: &Scope<'_>,
+    page: &Rc<PageDom>,
+    value: Value<'_>,
+    what: &str,
+    image_data: bool,
+) -> JsResult<Option<ImageHandle>> {
     let not_source = || {
         JsError::Type(format!(
             "Failed to execute '{what}': The provided value is not of type '(CSSImageValue or HTMLCanvasElement or HTMLImageElement or HTMLVideoElement or ImageBitmap or OffscreenCanvas or SVGImageElement or VideoFrame)'."
@@ -563,7 +567,10 @@ fn image_source(s: &Scope<'_>, page: &Rc<PageDom>, value: Value<'_>, what: &str,
                     return Ok(None);
                 }
                 if source_page.dom.borrow().natural_size(n.id).is_none_or(|(w, h)| w == 0.0 || h == 0.0) {
-                    return Err(JsError::dom("InvalidStateError", "The HTMLImageElement provided is in the 'broken' state."));
+                    return Err(JsError::dom(
+                        "InvalidStateError",
+                        "The HTMLImageElement provided is in the 'broken' state.",
+                    ));
                 }
                 Ok(source_page.image_pixmap(n.id).map(|(pixmap, clean)| ImageHandle {
                     width: u32::from(pixmap.width()),
@@ -575,7 +582,10 @@ fn image_source(s: &Scope<'_>, page: &Rc<PageDom>, value: Value<'_>, what: &str,
             "canvas" => {
                 let (w, h) = canvas_size(&source_page, n.id);
                 if w == 0 || h == 0 {
-                    return Err(JsError::dom("InvalidStateError", "The image argument is a canvas element with a width or height of 0."));
+                    return Err(JsError::dom(
+                        "InvalidStateError",
+                        "The image argument is a canvas element with a width or height of 0.",
+                    ));
                 }
                 // The context is hidden on the wrapper passed in (the realm that
                 // made it may be another same-origin window's).
@@ -609,7 +619,10 @@ fn image_source(s: &Scope<'_>, page: &Rc<PageDom>, value: Value<'_>, what: &str,
         1 => {
             let (w, h) = (size_u32(desc.get_index(2)?.to_number()?), size_u32(desc.get_index(3)?.to_number()?));
             if w == 0 || h == 0 {
-                return Err(JsError::dom("InvalidStateError", "The image argument is an OffscreenCanvas with a width or height of 0."));
+                return Err(JsError::dom(
+                    "InvalidStateError",
+                    "The image argument is an OffscreenCanvas with a width or height of 0.",
+                ));
             }
             Ok(Some(match s.unwrap::<CanvasRenderingContext2D>(desc.get_index(1)?) {
                 Some(c) => {
@@ -760,7 +773,9 @@ fn gradient_paint(record: Object<'_>) -> JsResult<Option<lp_canvas::Gradient>> {
     let p = |i: usize| Point::new(v[i], v[i + 1]);
     let kind = match (kind.as_str(), v.len()) {
         ("linear", 4) => lp_canvas::GradientKind::Linear { start: p(0), end: p(2) },
-        ("radial", 6) => lp_canvas::GradientKind::Radial { start: p(0), start_radius: v[2], end: p(3), end_radius: v[5] },
+        ("radial", 6) => {
+            lp_canvas::GradientKind::Radial { start: p(0), start_radius: v[2], end: p(3), end_radius: v[5] }
+        }
         ("conic", 3) => lp_canvas::GradientKind::Conic { center: p(1), angle: v[0] },
         _ => return Ok(None),
     };
@@ -797,7 +812,11 @@ fn with_paint(
     c.sync_size();
     let style = {
         let state = c.state.borrow();
-        if fill { state.fill_style.clone() } else { state.stroke_style.clone() }
+        if fill {
+            state.fill_style.clone()
+        } else {
+            state.stroke_style.clone()
+        }
     };
     // No page script runs while the state is borrowed: reading the style
     // object (canvas2d.js records) happens before.
@@ -965,12 +984,18 @@ fn get_image_data<'s>(s: &Scope<'s>, c: &ContextData, a: Args<'s>) -> JsResult<V
     }
     let space = if a.get(4).is_object() {
         let settings = a.get(4).as_object().expect("object").get_atom("colorSpace")?;
-        if settings.is_undefined() { "srgb".to_owned() } else { dom_string(settings)? }
+        if settings.is_undefined() {
+            "srgb".to_owned()
+        } else {
+            dom_string(settings)?
+        }
     } else {
         "srgb".to_owned()
     };
     if space != "srgb" && space != "display-p3" {
-        return Err(JsError::Type(format!("The provided value '{space}' is not a valid enum value of type PredefinedColorSpace.")));
+        return Err(JsError::Type(format!(
+            "The provided value '{space}' is not a valid enum value of type PredefinedColorSpace."
+        )));
     }
     if !c.clean.get() {
         return Err(security_error());
@@ -1031,7 +1056,14 @@ fn put_image_data<'s>(s: &Scope<'s>, c: &ContextData, a: Args<'s>) -> JsResult<V
     }
     let data = typed_bytes(s, info.get_index(2)?)?;
     c.sync_size();
-    c.surface.borrow_mut().put_image_data(&data, iw as u32, ih as u32, dx, dy, (bx as u32, by as u32, bw as u32, bh as u32));
+    c.surface.borrow_mut().put_image_data(
+        &data,
+        iw as u32,
+        ih as u32,
+        dx,
+        dy,
+        (bx as u32, by as u32, bw as u32, bh as u32),
+    );
     Ok(s.undefined())
 }
 
@@ -1654,7 +1686,9 @@ impl JsClass for CanvasRenderingContext2D {
                 other => {
                     return Err(JsError::dom(
                         "SyntaxError",
-                        format!("The provided type ('{other}') is not one of 'repeat', 'no-repeat', 'repeat-x', or 'repeat-y'."),
+                        format!(
+                        "The provided type ('{other}') is not one of 'repeat', 'no-repeat', 'repeat-x', or 'repeat-y'."
+                    ),
                     ))
                 }
             };

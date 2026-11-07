@@ -24,8 +24,8 @@
 
 pub mod codec;
 mod composite;
-mod guard;
 pub mod fonts;
+mod guard;
 pub mod text;
 
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -127,11 +127,22 @@ impl Composite {
 /// A canvas gradient's geometry (user space).
 #[derive(Clone, Debug, PartialEq)]
 pub enum GradientKind {
-    Linear { start: Point, end: Point },
-    Radial { start: Point, start_radius: f64, end: Point, end_radius: f64 },
+    Linear {
+        start: Point,
+        end: Point,
+    },
+    Radial {
+        start: Point,
+        start_radius: f64,
+        end: Point,
+        end_radius: f64,
+    },
     /// `createConicGradient(angle, x, y)`: clockwise from `angle` (radians
     /// from the positive x axis).
-    Conic { center: Point, angle: f64 },
+    Conic {
+        center: Point,
+        angle: f64,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -190,8 +201,7 @@ pub struct DrawState<'a> {
 
 impl DrawState<'_> {
     fn visible_shadow(&self) -> Option<Shadow> {
-        self.shadow
-            .filter(|s| s.color.components[3] > 0.0 && (s.blur > 0.0 || s.offset.x != 0.0 || s.offset.y != 0.0))
+        self.shadow.filter(|s| s.color.components[3] > 0.0 && (s.blur > 0.0 || s.offset.x != 0.0 || s.offset.y != 0.0))
     }
 }
 
@@ -250,7 +260,11 @@ fn settings(width: u16, height: u16) -> RenderContext {
 
 /// Whether a `width` by `height` bitmap can be allocated.
 pub fn valid_size(width: u32, height: u32) -> bool {
-    width > 0 && height > 0 && width <= MAX_SIDE && height <= MAX_SIDE && u64::from(width) * u64::from(height) <= MAX_AREA
+    width > 0
+        && height > 0
+        && width <= MAX_SIDE
+        && height <= MAX_SIDE
+        && u64::from(width) * u64::from(height) <= MAX_AREA
 }
 
 impl Surface {
@@ -427,8 +441,7 @@ impl Surface {
         let to_dst = Affine::translate(dst.origin().to_vec2())
             * Affine::scale_non_uniform(sx, sy)
             * Affine::translate(-clipped.origin().to_vec2());
-        let pattern =
-            Pattern { image: image.clone(), repeat_x: false, repeat_y: false, transform: to_dst };
+        let pattern = Pattern { image: image.clone(), repeat_x: false, repeat_y: false, transform: to_dst };
         let paint = Paint::Pattern(Arc::new(pattern));
         let t = state.transform;
         if !invertible(t) {
@@ -438,7 +451,6 @@ impl Surface {
         let path = guard_path(&(t * dst.to_path(0.1)), self.width, self.height);
         self.draw(&paint, state, Affine::IDENTITY, &mut |ctx, _| ctx.fill_path(&path));
     }
-
 
     /// Draws a laid out text at `origin` (user space: the alphabetic baseline
     /// of the first glyph), squeezed horizontally by `x_scale`.
@@ -547,7 +559,15 @@ impl Surface {
     /// `putImageData`: straight RGBA `data` (`width` by `height`) written at
     /// (`dx`, `dy`), only its `dirty` rectangle (in `data`'s pixels, already
     /// clamped to it). No compositing, transform or clipping.
-    pub fn put_image_data(&mut self, data: &[u8], width: u32, height: u32, dx: i64, dy: i64, dirty: (u32, u32, u32, u32)) {
+    pub fn put_image_data(
+        &mut self,
+        data: &[u8],
+        width: u32,
+        height: u32,
+        dx: i64,
+        dy: i64,
+        dirty: (u32, u32, u32, u32),
+    ) {
         if data.len() < width as usize * height as usize * 4 {
             return;
         }
@@ -558,8 +578,10 @@ impl Surface {
         let Some((pw, ph)) = self.drawable() else { return };
         // Nothing of it lands on the bitmap: nothing to allocate.
         let (x0, y0) = ((dx + i64::from(bx)).max(0), (dy + i64::from(by)).max(0));
-        let (x1, y1) =
-            ((dx + i64::from(bx) + i64::from(bw)).min(i64::from(pw)), (dy + i64::from(by) + i64::from(bh)).min(i64::from(ph)));
+        let (x1, y1) = (
+            (dx + i64::from(bx) + i64::from(bw)).min(i64::from(pw)),
+            (dy + i64::from(by) + i64::from(bh)).min(i64::from(ph)),
+        );
         if x0 >= x1 || y0 >= y1 {
             return;
         }
@@ -609,9 +631,9 @@ impl Surface {
             if full {
                 self.flush();
             }
-            let batch = self.batch.get_or_insert_with(|| {
-                Box::new(Batch { ctx: settings(w, h), resources: Resources::new(), ops: 0 })
-            });
+            let batch = self
+                .batch
+                .get_or_insert_with(|| Box::new(Batch { ctx: settings(w, h), resources: Resources::new(), ops: 0 }));
             emit(&mut batch.ctx, &mut batch.resources, paint, state, geometry, state.alpha, state.clip, (w, h), draw);
             batch.ops += 1;
             self.changed();
@@ -642,8 +664,10 @@ impl Surface {
             return None;
         }
         let (w, h) = self.drawable()?;
-        let paths: Vec<ClipPath> =
-            clip.iter().map(|c| ClipPath { path: guard_path(&c.path, self.width, self.height), evenodd: c.evenodd }).collect();
+        let paths: Vec<ClipPath> = clip
+            .iter()
+            .map(|c| ClipPath { path: guard_path(&c.path, self.width, self.height), evenodd: c.evenodd })
+            .collect();
         Some(coverage(w, h, &mut |ctx| {
             for c in &paths {
                 ctx.set_fill_rule(if c.evenodd { Fill::EvenOdd } else { Fill::NonZero });

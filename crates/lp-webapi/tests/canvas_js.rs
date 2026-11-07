@@ -264,7 +264,10 @@ fn pixels_are_transparent_until_something_is_drawn() {
     assert_eq!(eval(r, "x.fillRect(0, 0, 5, 5); x.getImageData(0, 0, 1, 1).data.join()"), "0,0,0,255");
     assert_eq!(eval(r, "x.clearRect(0, 0, c.width, c.height); x.getImageData(0, 0, 1, 1).data.join()"), "0,0,0,0");
     assert_eq!(
-        eval(r, "x.fillRect(0, 0, 5, 5); c.height = 50; [x.getImageData(0, 0, 1, 1).data.join(), x.fillStyle].join('|')"),
+        eval(
+            r,
+            "x.fillRect(0, 0, 5, 5); c.height = 50; [x.getImageData(0, 0, 1, 1).data.join(), x.fillStyle].join('|')"
+        ),
         "0,0,0,0|#000000",
         "resizing clears the bitmap and resets the state"
     );
@@ -327,7 +330,10 @@ fn rects_paint_exact_pixels() {
     );
     // Semi-transparent colors and globalAlpha read back unpremultiplied.
     assert_eq!(eval(r, "x.fillStyle = 'rgba(0, 0, 255, 0.5)'; x.fillRect(80, 0, 5, 5); px(81, 1)"), "0,0,255,128");
-    assert_eq!(eval(r, "x.globalAlpha = 0.5; x.fillStyle = '#0000ff'; x.fillRect(90, 0, 5, 5); x.globalAlpha = 1; px(91, 1)"), "0,0,255,128");
+    assert_eq!(
+        eval(r, "x.globalAlpha = 0.5; x.fillStyle = '#0000ff'; x.fillRect(90, 0, 5, 5); x.globalAlpha = 1; px(91, 1)"),
+        "0,0,255,128"
+    );
 }
 
 #[test]
@@ -432,7 +438,10 @@ fn image_data_round_trips_and_draw_image() {
         eval(r, "x.putImageData(d, 10, 10, 1, 1, 1, 1); [px(10, 10), px(11, 11)].join('|')"),
         "0,0,0,0|10,20,30,255"
     );
-    assert_eq!(eval(r, "Array.from(x.getImageData(5, 6, -2, -2).data).join()"), "255,0,0,255,0,255,0,255,0,0,255,255,10,20,30,255");
+    assert_eq!(
+        eval(r, "Array.from(x.getImageData(5, 6, -2, -2).data).join()"),
+        "255,0,0,255,0,255,0,255,0,0,255,255,10,20,30,255"
+    );
     // Outside the canvas reads transparent.
     assert_eq!(eval(r, "px(-5, -5) + '|' + px(200, 200)"), "0,0,0,0|0,0,0,0");
     // drawImage from a canvas, scaled 2x with nearest-neighbour sampling.
@@ -446,7 +455,13 @@ fn image_data_round_trips_and_draw_image() {
         "0,255,0,255|255,0,0,255"
     );
     assert_eq!(eval(r, "try { x.drawImage(t, 0, 0, 1) } catch (e) { e.name }"), "TypeError");
-    assert_eq!(eval(r, "var z = document.createElement('canvas'); z.width = 0; try { x.drawImage(z, 0, 0) } catch (e) { e.name }"), "InvalidStateError");
+    assert_eq!(
+        eval(
+            r,
+            "var z = document.createElement('canvas'); z.width = 0; try { x.drawImage(z, 0, 0) } catch (e) { e.name }"
+        ),
+        "InvalidStateError"
+    );
 }
 
 #[test]
@@ -480,14 +495,23 @@ fn offscreen_canvas_and_image_bitmaps() {
         eval(r, "var o = new OffscreenCanvas(4, 4); var ox = o.getContext('2d'); [ox === o.getContext('2d'), ox.canvas === o, ox instanceof OffscreenCanvasRenderingContext2D, x instanceof OffscreenCanvasRenderingContext2D, o.getContext('webgl')].join()"),
         "true,true,true,false,"
     );
-    assert_eq!(eval(r, "ox.fillStyle = 'lime'; ox.fillRect(0, 0, 2, 2); px(1, 1, ox) + '|' + px(3, 3, ox)"), "0,255,0,255|0,0,0,0");
+    assert_eq!(
+        eval(r, "ox.fillStyle = 'lime'; ox.fillRect(0, 0, 2, 2); px(1, 1, ox) + '|' + px(3, 3, ox)"),
+        "0,255,0,255|0,0,0,0"
+    );
     assert_eq!(eval(r, "x.drawImage(o, 0, 0); px(1, 1)"), "0,255,0,255");
     // transferToImageBitmap takes the pixels and clears the canvas.
     assert_eq!(
         eval(r, "var bm = o.transferToImageBitmap(); x.drawImage(bm, 10, 0); [bm instanceof ImageBitmap, bm.width, px(11, 1), px(1, 1, ox)].join('|')"),
         "true|4|0,255,0,255|0,0,0,0"
     );
-    assert_eq!(eval(r, "bm.close(); [bm.width, (() => { try { x.drawImage(bm, 0, 0) } catch (e) { return e.name } })()].join()"), "0,InvalidStateError");
+    assert_eq!(
+        eval(
+            r,
+            "bm.close(); [bm.width, (() => { try { x.drawImage(bm, 0, 0) } catch (e) { return e.name } })()].join()"
+        ),
+        "0,InvalidStateError"
+    );
     eval(r, "window.blobType = null; ox.fillRect(0, 0, 1, 1); o.convertToBlob({type: 'image/webp'}).then(b => blobType = b.type + ':' + (b.size > 0));");
     assert_eq!(eval(r, "blobType"), "image/webp:true");
     // createImageBitmap with a crop and a resize.

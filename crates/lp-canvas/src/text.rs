@@ -76,7 +76,8 @@ pub fn layout(text: &str, style: &TextStyle<'_>) -> TextLayout {
     let text = prepare(text);
     CONTEXT.with(|cell| {
         let mut cell = cell.borrow_mut();
-        let cx = cell.get_or_insert_with(|| Context { fonts: crate::fonts::font_context(), layout: LayoutContext::new() });
+        let cx =
+            cell.get_or_insert_with(|| Context { fonts: crate::fonts::font_context(), layout: LayoutContext::new() });
         if text.is_empty() {
             // No glyphs: the metrics of the font a space would use.
             let space = shape(cx, " ", style);
@@ -124,10 +125,8 @@ fn shape(cx: &mut Context, text: &str, style: &TextStyle<'_>) -> TextLayout {
             out.descent = f64::from(metrics.descent);
             first = false;
         }
-        let glyphs: Vec<vello_cpu::Glyph> = glyph_run
-            .positioned_glyphs()
-            .map(|g| vello_cpu::Glyph { id: g.id, x: g.x, y: g.y - baseline })
-            .collect();
+        let glyphs: Vec<vello_cpu::Glyph> =
+            glyph_run.positioned_glyphs().map(|g| vello_cpu::Glyph { id: g.id, x: g.x, y: g.y - baseline }).collect();
         let coords: Vec<i16> = bytemuck::cast_slice(run.normalized_coords()).to_vec();
         let font = run.font().clone();
         let ink = ink_bounds(&font, run.font_size(), &coords, &glyphs);
@@ -155,12 +154,7 @@ fn ink_bounds(font: &FontData, size: f32, coords: &[i16], glyphs: &[vello_cpu::G
         }
         let Some(r) = pen.rect() else { continue };
         // Font units are y up.
-        let r = Rect::new(
-            f64::from(g.x) + r.x0,
-            f64::from(g.y) - r.y1,
-            f64::from(g.x) + r.x1,
-            f64::from(g.y) - r.y0,
-        );
+        let r = Rect::new(f64::from(g.x) + r.x0, f64::from(g.y) - r.y1, f64::from(g.x) + r.x1, f64::from(g.y) - r.y0);
         bounds = Some(bounds.map_or(r, |b| b.union(r)));
     }
     bounds

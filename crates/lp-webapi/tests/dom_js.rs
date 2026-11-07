@@ -2922,10 +2922,7 @@ fn canvas_2d_measures_and_draws_text() {
         "true,true,true,true"
     );
     assert_eq!(eval(&e.main, "x.save(); x.font = '20px monospace'; x.restore(); x.font"), "32px system-ui");
-    assert_eq!(
-        eval(&e.main, "x.fillText('9', 0, 30); x.getImageData(0, 0, 40, 40).data.some(v => v > 0)"),
-        "true"
-    );
+    assert_eq!(eval(&e.main, "x.fillText('9', 0, 30); x.getImageData(0, 0, 40, 40).data.some(v => v > 0)"), "true");
     // The TOS pattern: drawing.font = getComputedStyle(input).font.
     assert_eq!(
         eval(&e.main, "x.font = getComputedStyle(document.getElementById('i')).font; x.font"),

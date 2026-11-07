@@ -168,7 +168,14 @@ fn hostile_geometry_finishes() {
     // Text at an absurd scale.
     let layout = text::layout(
         "W",
-        &text::TextStyle { family: "sans-serif", size: 10.0, weight: 400.0, italic: false, letter_spacing: 0.0, word_spacing: 0.0 },
+        &text::TextStyle {
+            family: "sans-serif",
+            size: 10.0,
+            weight: 400.0,
+            italic: false,
+            letter_spacing: 0.0,
+            word_spacing: 0.0,
+        },
     );
     st.transform = Affine::scale(1e200);
     s.text(&layout, Point::ZERO, 1.0, None, &rgb(0, 0, 0), &st);

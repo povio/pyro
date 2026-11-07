@@ -19,7 +19,11 @@ fn byte(v: f32) -> u8 {
 fn bounded(op: Composite) -> bool {
     !matches!(
         op,
-        Composite::SourceIn | Composite::SourceOut | Composite::DestinationIn | Composite::DestinationAtop | Composite::Copy
+        Composite::SourceIn
+            | Composite::SourceOut
+            | Composite::DestinationIn
+            | Composite::DestinationAtop
+            | Composite::Copy
     )
 }
 
@@ -67,7 +71,8 @@ pub(crate) fn clear(dst: &mut [u8], coverage: &[u8], mask: Option<&[u8]>) {
 /// One premultiplied pixel `s` (alpha applied) over `d` with `op`.
 fn pixel(s: [f32; 4], d: [f32; 4], op: Composite) -> [f32; 4] {
     let (sa, da) = (s[3], d[3]);
-    let porter_duff = |fa: f32, fb: f32| [s[0] * fa + d[0] * fb, s[1] * fa + d[1] * fb, s[2] * fa + d[2] * fb, sa * fa + da * fb];
+    let porter_duff =
+        |fa: f32, fb: f32| [s[0] * fa + d[0] * fb, s[1] * fa + d[1] * fb, s[2] * fa + d[2] * fb, sa * fa + da * fb];
     match op {
         Composite::SourceOver => porter_duff(1.0, 1.0 - sa),
         Composite::SourceIn => porter_duff(da, 0.0),
@@ -79,7 +84,9 @@ fn pixel(s: [f32; 4], d: [f32; 4], op: Composite) -> [f32; 4] {
         Composite::DestinationAtop => porter_duff(1.0 - da, sa),
         Composite::Copy => s,
         Composite::Xor => porter_duff(1.0 - da, 1.0 - sa),
-        Composite::Lighter => [(s[0] + d[0]).min(1.0), (s[1] + d[1]).min(1.0), (s[2] + d[2]).min(1.0), (sa + da).min(1.0)],
+        Composite::Lighter => {
+            [(s[0] + d[0]).min(1.0), (s[1] + d[1]).min(1.0), (s[2] + d[2]).min(1.0), (sa + da).min(1.0)]
+        }
         _ => blend(s, d, op),
     }
 }

@@ -236,8 +236,20 @@ impl Mirror {
                 set_key(&mut keys, id, Some(n.key));
             }
         }
-        let mirror =
-            Mirror { doc, bridge, scope, base_url, viewport, sheets, tree, nodes, keys, top, scrolled: Vec::new(), canvases: Vec::new() };
+        let mirror = Mirror {
+            doc,
+            bridge,
+            scope,
+            base_url,
+            viewport,
+            sheets,
+            tree,
+            nodes,
+            keys,
+            top,
+            scrolled: Vec::new(),
+            canvases: Vec::new(),
+        };
         mirror.debug_check_keys();
         Ok(mirror)
     }
@@ -286,7 +298,8 @@ impl Mirror {
         }
         for (id, canvas) in now {
             let Some(element) = self.doc.get_node_mut(id).and_then(|n| n.element_data_mut()) else { continue };
-            if &*element.name.local != "canvas" || canvas.rgba.len() != canvas.width as usize * canvas.height as usize * 4
+            if &*element.name.local != "canvas"
+                || canvas.rgba.len() != canvas.width as usize * canvas.height as usize * 4
             {
                 continue;
             }

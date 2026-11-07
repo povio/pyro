@@ -96,7 +96,17 @@ impl Builder<'_> {
         self.path.last = Some(p);
     }
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn ellipse(&mut self, cx: f64, cy: f64, rx: f64, ry: f64, rotation: f64, start: f64, end: f64, ccw: bool) {
+    pub(crate) fn ellipse(
+        &mut self,
+        cx: f64,
+        cy: f64,
+        rx: f64,
+        ry: f64,
+        rotation: f64,
+        start: f64,
+        end: f64,
+        ccw: bool,
+    ) {
         let sweep = if !ccw && end - start >= TAU {
             TAU
         } else if ccw && start - end >= TAU {
