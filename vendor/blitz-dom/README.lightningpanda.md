@@ -102,6 +102,20 @@ lp-render's mirror tests (incremental documents against fresh builds after rando
 - `src/mutator.rs`: a child moved to another parent leaves its old one as `remove_node` does: the old
   parent's `:empty` and `:has()` anchors are restyled (they were not, so `ul:empty` stayed unmatched
   after its last child moved out).
+- `src/stylo.rs`, `src/mutator.rs`: an inserted or removed element invalidates `:has()` anchors through
+  Stylo's `RelativeSelectorInvalidator` (`invalidate_relative_selectors_for_insertion`/`_removal`, as
+  Gecko's `MaybeInvalidateRelativeSelectorForInsertion`/`ForRemoval`), which looks the element's and its
+  descendants' tags, ids, classes and attributes up in the stylist's relative selector invalidation map
+  and restyles an anchor itself (and what the rest of its selector reaches). An argument's `:empty`,
+  `:nth-child()`, `:first-child` or `:last-child` matches by the tree around an element, not by its
+  identity, so `restyle_for_child_list_change` looks the parent (`:empty`) and the siblings whose
+  position changed up in the stylist's tree-structural dependencies
+  (`invalidate_relative_selectors_for_ts_state`, as Gecko's
+  `MaybeInvalidateRelativeSelectorForEmptyDependency`/`ForNthEdgeDependency`/`ForNthDependencyFromSibling`);
+  `remove_and_drop_all_children` invalidates for the dropped elements as `remove_node` does. Blitz's own
+  walk (`invalidate_has_anchors`, kept for attribute and state snapshots) restyled the subtree of every
+  anchor that could see the position on every insertion: a `.sheet:has(.top)` page restyled whole for
+  each row appended to it. `each_custom_state` is a no-op (it was `todo!()`; the invalidator asks).
 - `src/document.rs`, `src/util.rs`: the documents of a thread share one Stylo lock, and an author sheet
   without `@import` is parsed once per thread for its text and base URL (`make_stylesheet`): every
   document of a PDF template or a test suite carries the same bundle, which each new document parsed
@@ -304,8 +318,16 @@ dropped:
 - Unresolvable URLs load nothing instead of panicking (`resolve_url` returns an `Option`): #1374.
 - `:focus-within`: #1226 (the local `set_focus_within` went; upstream's ancestor-chain diff remains).
 - Narrow restyles on child-list changes, `:empty` and `:has()` anchor parents: #1276
-  (`restyle_for_child_list_change`). The local `:has()` invalidation (`invalidate_has_anchors*`) stays: it
-  reaches anchors among ancestors and their earlier siblings, which #1276 does not.
+  (`restyle_for_child_list_change`). The local `:has()` invalidation stays: an inserted or removed element
+  goes through Stylo's relative selector invalidator (`invalidate_relative_selectors_for_insertion`/`_removal`,
+  below), a child-list change that flips an argument's `:empty` or sibling position through the stylist's
+  tree-structural dependencies (`invalidate_relative_selectors_for_ts_state`), an attribute or state change
+  through `invalidate_has_anchors`, which reaches anchors among ancestors and their earlier siblings; #1276's
+  own anchor-parent hint (a `RESTYLE_SELF` of an anchor on every change of its child list) went with them.
+  On top of #1276,
+  `restyle_for_child_list_change` leaves the siblings alone when no element came or went (text nodes move
+  no index or edge status) and restyles the styled children of the inserted range, which are moves within
+  the same parent: `add_children_to_parent` no longer restyles their subtrees, their ancestors being unchanged.
 - `::before`/`::after` boxes voting in the flow classification: #1280.
 - Mid-line floats that do not fit placed below the line: #1378 and #1390 (with line retry), replacing the
   local pending-float queue in inline layout.

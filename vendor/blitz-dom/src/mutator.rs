@@ -19,6 +19,7 @@ use crate::{
 use blitz_traits::shell::Viewport;
 use selectors::matching::ElementSelectorFlags;
 use style::Atom;
+use style::invalidation::element::invalidation_map::TSStateForInvalidation;
 use style::invalidation::element::restyle_hints::RestyleHint;
 use style::stylesheets::OriginSet;
 use style_dom::ElementState;
@@ -612,10 +613,7 @@ impl DocumentMutator<'_> {
     /// Remove the node from it's parent but don't drop it
     pub fn remove_node(&mut self, node_id: NodeId) {
         // A removed element inside a `:has()` argument changes its anchors.
-        self.doc.invalidate_has_anchors_around(node_id);
-        if let Some(parent_id) = self.doc.nodes[node_id].parent {
-            self.doc.invalidate_has_anchors(parent_id);
-            }
+        self.doc.invalidate_relative_selectors_for_removal(node_id);
         let node_is_in_document = self.doc.nodes[node_id].flags.is_in_document();
         // Process the subtree *before* severing the parent link so that
         // interaction state referencing removed nodes can retarget to the
@@ -656,10 +654,7 @@ impl DocumentMutator<'_> {
     ) -> Option<Node> {
         // lightningpanda: a dropped element inside a `:has()` argument
         // changes its anchors, as in `remove_node`.
-        self.doc.invalidate_has_anchors_around(node_id);
-        if let Some(parent_id) = self.doc.nodes[node_id].parent {
-            self.doc.invalidate_has_anchors(parent_id);
-            }
+        self.doc.invalidate_relative_selectors_for_removal(node_id);
         let node_is_in_document = self.doc.nodes[node_id].flags.is_in_document();
         self.process_removed_subtree(node_id);
 
@@ -690,6 +685,11 @@ impl DocumentMutator<'_> {
     }
 
     pub fn remove_and_drop_all_children(&mut self, node_id: NodeId) {
+        // lightningpanda: dropped elements inside a `:has()` argument change their anchors,
+        // as in `remove_node`; checked while they are still linked.
+        for &child_id in &self.doc.nodes[node_id].children {
+            self.doc.invalidate_relative_selectors_for_removal(child_id);
+        }
         let parent = &mut self.doc.nodes[node_id];
         let parent_is_in_doc = parent.flags.is_in_document();
         let children = mem::take(&mut parent.children);
@@ -828,7 +828,9 @@ impl DocumentMutator<'_> {
     /// element's index or edge status, so the siblings are left alone (`:empty` still restyles
     /// the parent). Inserted children that already have a style were moved here from this same
     /// parent (`add_children_to_parent` skips their subtree restyle, their ancestors being
-    /// unchanged): they are restyled whenever the parent carries a sibling-dependent flag.
+    /// unchanged): they are restyled whenever the parent carries a sibling-dependent flag. The
+    /// same conditions inside a `:has()` argument reach their anchors through
+    /// `invalidate_relative_selectors_for_ts_state`.
     fn restyle_for_child_list_change(
         &mut self,
         parent_id: NodeId,
@@ -838,12 +840,14 @@ impl DocumentMutator<'_> {
         let parent = &self.doc.nodes[parent_id];
         let flags = parent.selector_flags().get();
         let mut hint = RestyleHint::empty();
-        if flags.intersects(
-            ElementSelectorFlags::HAS_EMPTY_SELECTOR
-                | ElementSelectorFlags::ANCHORS_RELATIVE_SELECTOR
-                | ElementSelectorFlags::ANCHORS_RELATIVE_SELECTOR_NON_SUBJECT,
-        ) {
+        // lightningpanda: a `:has()` anchor among the ancestors is restyled by Stylo's relative
+        // selector invalidator when an element it can match comes or goes
+        // (`invalidate_relative_selectors_for_insertion`), not here; an argument's `:empty`
+        // matches by the child list alone, so the parent is looked up for one.
+        if flags.contains(ElementSelectorFlags::HAS_EMPTY_SELECTOR) {
             hint |= RestyleHint::RESTYLE_SELF;
+            self.doc
+                .invalidate_relative_selectors_for_ts_state(parent_id, TSStateForInvalidation::EMPTY);
         }
         let is_element = |id: &NodeId| self.doc.nodes[*id].is_element();
         let element_changed = removed_element || parent.children[changed.clone()].iter().any(is_element);
@@ -861,6 +865,19 @@ impl DocumentMutator<'_> {
             )
         {
             hint |= RestyleHint::RESTYLE_DESCENDANTS;
+            // lightningpanda: every other child's position may have changed, and with it an
+            // argument's `:nth-child()`, `:first-child` or `:last-child`
+            // (`invalidate_relative_selectors_for_ts_state`); the inserted children are
+            // covered by their own insertion.
+            let positional = TSStateForInvalidation::NTH
+                | TSStateForInvalidation::NTH_EDGE_FIRST
+                | TSStateForInvalidation::NTH_EDGE_LAST;
+            for id in parent.children[..changed.start]
+                .iter()
+                .chain(&parent.children[changed.end..])
+            {
+                self.doc.invalidate_relative_selectors_for_ts_state(*id, positional);
+            }
         } else {
             let children = mem::take(&mut self.doc.nodes[parent_id].children);
             let is_element = |id: &NodeId| self.doc.nodes[*id].is_element();
@@ -898,12 +915,28 @@ impl DocumentMutator<'_> {
             }
             for id in children[moved_in]
                 .iter()
-                .chain(children[later].iter())
+                .chain(children[later.clone()].iter())
                 .chain(edge.iter().flatten())
             {
                 self.doc.nodes[*id].set_restyle_hint(RestyleHint::restyle_subtree());
             }
             self.doc.nodes[parent_id].children = children;
+            // lightningpanda: the arguments that match by position
+            // (`invalidate_relative_selectors_for_ts_state`), once the child list is back for
+            // the sibling walk: `:nth-child()` on the later siblings, `:first-child`/
+            // `:last-child` on the children whose edge status flipped. The moved-in children
+            // are covered by their own insertion.
+            let children = &self.doc.nodes[parent_id].children;
+            for id in &children[later] {
+                self.doc
+                    .invalidate_relative_selectors_for_ts_state(*id, TSStateForInvalidation::NTH);
+            }
+            let edge_states = [TSStateForInvalidation::NTH_EDGE_FIRST, TSStateForInvalidation::NTH_EDGE_LAST];
+            for (id, state) in edge.iter().zip(edge_states) {
+                if let Some(id) = id {
+                    self.doc.invalidate_relative_selectors_for_ts_state(*id, state);
+                }
+            }
         }
 
         let parent = &mut self.doc.nodes[parent_id];
@@ -965,21 +998,6 @@ impl DocumentMutator<'_> {
         child_ids: &[NodeId],
         insert_children_fn: &dyn Fn(&mut Node, &[NodeId]) -> usize,
     ) {
-        // New children of an element in a `:has()` search path (or of an
-        // anchor) can change what the anchors match.
-        self.doc.invalidate_has_anchors(parent_id);
-        if self.doc.nodes[parent_id].is_element()
-            && self.doc.nodes[parent_id]
-            .selector_flags()
-            .get()
-            .intersects(
-                selectors::matching::ElementSelectorFlags::ANCHORS_RELATIVE_SELECTOR
-                    | selectors::matching::ElementSelectorFlags::ANCHORS_RELATIVE_SELECTOR_NON_SUBJECT,
-            )
-            && self.doc.nodes[parent_id].primary_styles().is_some()
-        {
-            self.doc.nodes[parent_id].set_restyle_hint(style::invalidation::element::restyle_hints::RestyleHint::restyle_subtree());
-        }
         let new_parent_is_in_document = self.doc.nodes[parent_id].flags.is_in_document();
         self.mutations_occurred |= new_parent_is_in_document && !child_ids.is_empty();
 
@@ -1009,9 +1027,8 @@ impl DocumentMutator<'_> {
             // lightningpanda: a moved child leaves its old parent as
             // `remove_node` does (`:has()` anchors, `:empty`), checked while
             // it is still linked.
-            if let Some(old_parent_id) = self.doc.nodes[child_id].parent {
-                self.doc.invalidate_has_anchors_around(child_id);
-                self.doc.invalidate_has_anchors(old_parent_id);
+            if self.doc.nodes[child_id].parent.is_some() {
+                self.doc.invalidate_relative_selectors_for_removal(child_id);
             }
             let child = &self.doc.nodes[child_id];
             if child.contains_focus() {
@@ -1061,11 +1078,6 @@ impl DocumentMutator<'_> {
             let child = &mut self.doc.nodes[child_id];
             let child_was_in_doc = child.flags.is_in_document();
             child.parent = Some(parent_id);
-            // lightningpanda: the anchors that can see the new position
-            // (ancestors, their previous siblings) may match differently.
-            if new_parent_is_in_document {
-                self.doc.invalidate_has_anchors_around(child_id);
-            }
             let child = &mut self.doc.nodes[child_id];
             // A moved or re-attached subtree keeps its styles, but everything above it changed.
             // lightningpanda: a move within the same parent changed no ancestor (see
@@ -1118,6 +1130,13 @@ impl DocumentMutator<'_> {
                 self.process_added_subtree(child_id);
             } else if !new_parent_is_in_document && child_was_in_doc {
                 self.process_removed_subtree(child_id);
+            }
+        }
+        // lightningpanda: the `:has()` anchors that can see the new positions,
+        // once every child is linked (a sibling inserted with it counts).
+        if new_parent_is_in_document {
+            for &child_id in child_ids {
+                self.doc.invalidate_relative_selectors_for_insertion(child_id);
             }
         }
 
