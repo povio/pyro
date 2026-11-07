@@ -465,6 +465,11 @@ pub fn timed_sink(
     }
     let page_id = page.id();
     let inbox = page.resource_timings.inbox.clone();
+    // A navigation's response is the frame's, not the document's: another
+    // origin's (or one reached through another origin) keeps its status and
+    // type to itself.
+    let navigation_origin = (initiator == Initiator::Iframe)
+        .then(|| page.document_url_parsed().map_or_else(|| "null".to_owned(), |u| u.origin().ascii_serialization()));
     let start = Instant::now();
     let mut report = Some(FetchReport {
         url: url.as_str().to_owned(),
@@ -478,7 +483,14 @@ pub fn timed_sink(
         match &event {
             ResponseEvent::Response(head) => {
                 if let Some(report) = report.as_mut() {
-                    report.response = Some(ReportedResponse::of(head));
+                    let mut response = ReportedResponse::of(head);
+                    if navigation_origin.as_ref().is_some_and(|origin| {
+                        head.timing.cross_origin_redirect || head.url.origin().ascii_serialization() != *origin
+                    }) {
+                        response.opaque = true;
+                        response.mime.clear();
+                    }
+                    report.response = Some(response);
                 }
             }
             ResponseEvent::Finished { encoded_len, decoded_len } => {

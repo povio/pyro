@@ -7,6 +7,10 @@ JavaScriptCore promises. No browser/runtime wiring is added by this change.
 
 Over HTTP/2 `Response.statusText` is empty, as the protocol has no reason phrase.
 
+Each HTTP(S) fetch (and `navigator.sendBeacon`) adds a Resource Timing entry
+to its document's timeline when it ends (`resource_timing::timed_sink`; see
+`PERFORMANCE_TIMELINE.md`).
+
 Before fetching, the embedder must provide:
 
 - `page.net`: the context's `NetClient`.

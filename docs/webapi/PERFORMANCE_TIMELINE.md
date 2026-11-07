@@ -57,7 +57,9 @@ cross-origin hop passes when the header lists `*` or that origin. A failure
 keeps `startTime`, `fetchStart`, `responseEnd` and `duration`, and zeroes
 the redirect, lookup, connect, request and response times, the sizes and
 `nextHopProtocol` ("opaque timing info"). `responseStatus` and
-`contentType` are 0 / empty for opaque (`no-cors` cross-origin) responses.
+`contentType` are 0 / empty for opaque (`no-cors` cross-origin) responses,
+and in an iframe's entry for a frame document of another origin (or reached
+through one).
 
 Sizes: `encodedBodySize` and `decodedBodySize` as received;
 `transferSize` is `encodedBodySize + 300` (Resource Timing's header
@@ -107,8 +109,6 @@ case each new entry makes its object for the observing realms.
   backgrounds are fetched only by the renderer, which reports no entries),
   `input`, `video`, `audio`, `track`, `object`, `embed`, `body`; workers'
   scripts report `script`. Parser-blocking scripts are `non-blocking`.
-- A synchronous XHR's entry appears after the call returns (a later task),
-  not when it returns.
 - `serverTiming` is always empty; `workerStart` and
   `firstInterimResponseStart` are 0; `finalResponseHeadersStart` equals
   `responseStart`; HTTP/3 is never used.

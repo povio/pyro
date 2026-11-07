@@ -189,6 +189,38 @@ fn every_kind_of_subresource_has_an_entry_with_network_phases() {
         ),
         "true,true,0,0,0,0,0,0,,true,true,5"
     );
+    // An iframe's entry is the parent's: its own origin's shows status and
+    // type, another origin's neither (nor, without TAO, its phases).
+    eval(
+        &thread,
+        page,
+        "const f = document.createElement('iframe'); f.src = other + '/frame'; document.body.append(f);",
+    );
+    until(&mut thread, page, "performance.getEntriesByName(other + '/frame').length == 1");
+    assert_eq!(
+        eval(
+            &thread,
+            page,
+            &format!(
+                "const same = performance.getEntriesByName('{o}/frame')[0]; \
+                 const cross = performance.getEntriesByName(other + '/frame')[0]; \
+                 [same.responseStatus, same.contentType, same.requestStart > 0, \
+                  cross.initiatorType, cross.responseStatus, cross.contentType, cross.requestStart, \
+                  cross.responseEnd > 0].join()"
+            )
+        ),
+        "200,text/html,true,iframe,0,,0,true"
+    );
+    // A synchronous XHR's entry is there when `send()` returns.
+    assert_eq!(
+        eval(
+            &thread,
+            page,
+            "const s = new XMLHttpRequest(); s.open('GET', '/sync', false); s.send(); \
+             performance.getEntriesByName(location.origin + '/sync').map(e => e.initiatorType + ':' + e.responseStatus).join()"
+        ),
+        "xmlhttprequest:200"
+    );
 }
 
 #[test]
