@@ -189,7 +189,7 @@ fn idl_state_is_settable_in_strict_code() {
     settle(&mut thread);
     assert_eq!(eval(&thread, page, "ev()"), "a:volumechange:0 a:ratechange:0 a:ratechange:0 a:volumechange:0");
     assert_eq!(
-        eval(&thread, page, "[HTMLMediaElement.HAVE_ENOUGH_DATA, a.NETWORK_NO_SOURCE, MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED, a.canPlayType('audio/mpeg'), a.canPlayType('video/webm; codecs=\"vp9, opus\"'), a.canPlayType('video/mp4'), a.canPlayType('video/x-fictional')].join()"),
+        eval(&thread, page, "[HTMLMediaElement.HAVE_ENOUGH_DATA, a.NETWORK_NO_SOURCE, MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED, a.canPlayType('audio/mpeg'), a.canPlayType('video/webm; codecs=\"av01.0.04M.08, opus\"'), a.canPlayType('video/mp4'), a.canPlayType('video/x-fictional')].join()"),
         "4,3,4,probably,probably,maybe,"
     );
 }

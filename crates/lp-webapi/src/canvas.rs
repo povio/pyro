@@ -15,7 +15,8 @@
 //!   `fillText`/`strokeText` and `measureText`.
 //! - Images reach the canvas through `drawImage`, `createPattern` and
 //!   `createImageBitmap`: `<img>` pixels are decoded on first use from the
-//!   bytes the embedder kept ([`PageDom::set_image_bytes`]), canvases and
+//!   bytes the embedder kept ([`PageDom::set_image_bytes`]), `<video>`s give
+//!   their current frame (`media::current_frame`), canvases and
 //!   `OffscreenCanvas`es by snapshot, `ImageBitmap`s by their handle.
 //! - Cross-origin images make the canvas origin-unclean: pixel reads
 //!   (`getImageData`, `toDataURL`, `toBlob`, `convertToBlob`) then throw
@@ -603,8 +604,14 @@ fn image_source(
                 };
                 Ok(Some(handle))
             }
-            // No video frames (no media decoding) and no SVG images.
-            "video" | "image" => Ok(None),
+            // The frame shown now (lp-media); nothing before HAVE_CURRENT_DATA
+            // or without a decoder for the video.
+            "video" => Ok(crate::media::current_frame(&source_page, n.id).and_then(|(frame, clean)| {
+                let pixmap = lp_canvas::pixmap_from_straight((*frame.rgba).clone(), frame.width, frame.height)?;
+                Some(ImageHandle { pixmap: Bitmap::new(pixmap), width: frame.width, height: frame.height, clean })
+            })),
+            // No SVG images.
+            "image" => Ok(None),
             _ => Err(not_source()),
         };
     }

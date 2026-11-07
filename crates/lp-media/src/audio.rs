@@ -47,7 +47,8 @@ pub fn decode(bytes: &[u8]) -> Result<Decoded, String> {
     // The Opus pre-skip, from OpusHead when the container has no delay.
     let delay = track.delay.map(|d| d as usize).or_else(|| {
         let head = params.extra_data.as_deref()?;
-        (head.starts_with(b"OpusHead") && head.len() >= 12).then(|| usize::from(u16::from_le_bytes([head[10], head[11]])))
+        (head.starts_with(b"OpusHead") && head.len() >= 12)
+            .then(|| usize::from(u16::from_le_bytes([head[10], head[11]])))
     });
     let delay = delay.unwrap_or(0);
     let frames = track.num_frames.and_then(|n| usize::try_from(n).ok());

@@ -974,6 +974,17 @@ fn codec_support(family: Family, codec: &str) -> (CanPlay, bool) {
             _ => No,
         }))
     };
+    // Video codecs answer as this build decodes them (lp-media): H.264 and
+    // AV1 with their cargo features; VP8, VP9 and HEVC never.
+    let video_decodes = |c: &str| {
+        if c.starts_with("avc") {
+            lp_media::video::H264
+        } else if c.starts_with("av01") {
+            lp_media::video::AV1
+        } else {
+            false
+        }
+    };
     let found = match family {
         Family::Mp4 => mp4_video(codec)
             .or_else(|| vpx_av1(codec).filter(|_| codec.starts_with("vp09") || codec.starts_with("av01")))
@@ -999,7 +1010,11 @@ fn codec_support(family: Family, codec: &str) -> (CanPlay, bool) {
         Family::Flac => (codec == "flac").then_some(audio(Probably)),
         Family::Aac => aac(codec),
     };
-    found.unwrap_or((No, false))
+    match found {
+        Some((_, true)) if !video_decodes(codec) => (No, true),
+        Some(found) => found,
+        None => (No, false),
+    }
 }
 
 #[cfg(test)]
@@ -1404,9 +1419,14 @@ pub(crate) mod tests {
         assert_eq!(t("audio/MP3"), "probably");
         assert_eq!(t("audio/wav"), "maybe");
         assert_eq!(t("audio/wav; codecs=\"1\""), "probably");
-        assert_eq!(t("video/webm; codecs=\"vp8, vorbis\""), "probably");
-        assert_eq!(t("video/webm; codecs=\"vp9, opus\""), "probably");
-        assert_eq!(t("video/webm; codecs=\"vp09.00.10.08\""), "probably");
+        // No VP8/VP9/HEVC decoder: those codecs are not playable.
+        assert_eq!(t("video/webm; codecs=\"vp8, vorbis\""), "");
+        assert_eq!(t("video/webm; codecs=\"vp9, opus\""), "");
+        assert_eq!(t("video/webm; codecs=\"vp09.00.10.08\""), "");
+        assert_eq!(t("video/mp4; codecs=\"hvc1.1.6.L93.B0\""), "");
+        assert_eq!(t("video/webm; codecs=\"av01.0.04M.08\""), "probably");
+        assert_eq!(t("video/mp4; codecs=\"av01.0.04M.08, opus\""), "probably");
+        assert_eq!(t("video/webm; codecs=\"av01.0.04M.08, opus\""), "probably");
         assert_eq!(t("video/webm; codecs=\"bogus\""), "");
         assert_eq!(t("audio/webm; codecs=\"vp8\""), "");
         assert_eq!(t("audio/ogg"), "maybe");

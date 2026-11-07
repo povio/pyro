@@ -9,7 +9,10 @@ pub enum Codec {
     Av1,
     /// H.264 with length-prefixed NAL units (`avcC`): the prefix size and
     /// the SPS/PPS, already in Annex B form.
-    H264 { length_size: usize, parameter_sets: Vec<u8> },
+    H264 {
+        length_size: usize,
+        parameter_sets: Vec<u8>,
+    },
     /// A codec without a decoder here (VP8, VP9, HEVC, ...): its four-cc
     /// or Matroska codec ID.
     Other(String),
@@ -179,16 +182,13 @@ fn mp4_track(file: &[u8], trak: &[u8], mdia: &[u8], movie_scale: Option<u32>) ->
             }
         }
     }
-    let sizes: Vec<u32> = if let Some(stsz) = child(stbl, b"stsz") {
-        let fixed = be32(stsz, 4)?;
-        let n = be32(stsz, 8)? as usize;
-        if fixed != 0 {
-            vec![fixed; n.min(count)]
-        } else {
-            (0..n.min(count)).map_while(|i| be32(stsz, 12 + i * 4)).collect()
-        }
+    let stsz = child(stbl, b"stsz")?;
+    let fixed = be32(stsz, 4)?;
+    let n = be32(stsz, 8)? as usize;
+    let sizes: Vec<u32> = if fixed != 0 {
+        vec![fixed; n.min(count)]
     } else {
-        return None;
+        (0..n.min(count)).map_while(|i| be32(stsz, 12 + i * 4)).collect()
     };
     let chunks: Vec<u64> = if let Some(stco) = child(stbl, b"stco") {
         (0..be32(stco, 4)? as usize).map_while(|i| be32(stco, 8 + i * 4).map(u64::from)).collect()

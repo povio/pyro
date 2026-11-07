@@ -7,8 +7,8 @@ use std::ptr::NonNull;
 use rav1d::include::dav1d::data::Dav1dData;
 use rav1d::include::dav1d::dav1d::{Dav1dContext, Dav1dSettings};
 use rav1d::include::dav1d::headers::{
-    DAV1D_MC_BT2020_NCL, DAV1D_MC_BT470BG, DAV1D_MC_BT601, DAV1D_MC_BT709, DAV1D_MC_UNKNOWN,
-    DAV1D_PIXEL_LAYOUT_I400, DAV1D_PIXEL_LAYOUT_I420, DAV1D_PIXEL_LAYOUT_I422,
+    DAV1D_MC_BT2020_NCL, DAV1D_MC_BT470BG, DAV1D_MC_BT601, DAV1D_MC_BT709, DAV1D_MC_UNKNOWN, DAV1D_PIXEL_LAYOUT_I400,
+    DAV1D_PIXEL_LAYOUT_I420, DAV1D_PIXEL_LAYOUT_I422,
 };
 use rav1d::include::dav1d::picture::Dav1dPicture;
 use rav1d::src::lib::{
@@ -51,7 +51,7 @@ impl Av1 {
             let mut pic = MaybeUninit::<Dav1dPicture>::zeroed();
             // SAFETY: the context is open; the picture is written by
             // dav1d_get_picture and released with dav1d_picture_unref.
-            let r = unsafe { dav1d_get_picture(self.ctx.clone(), NonNull::new(pic.as_mut_ptr())) }.0;
+            let r = unsafe { dav1d_get_picture(self.ctx, NonNull::new(pic.as_mut_ptr())) }.0;
             if r == eagain() {
                 return Ok(());
             }
@@ -127,7 +127,7 @@ impl Decoder for Av1 {
         data.m.timestamp = tag as i64;
         let result = loop {
             // SAFETY: the context is open and `data` is a dav1d buffer.
-            let r = unsafe { dav1d_send_data(self.ctx.clone(), NonNull::new(&mut data)) }.0;
+            let r = unsafe { dav1d_send_data(self.ctx, NonNull::new(&mut data)) }.0;
             if r < 0 && r != eagain() {
                 break Err(format!("AV1 decode error {r}"));
             }

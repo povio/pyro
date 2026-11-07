@@ -8,6 +8,7 @@ use std::sync::Arc;
 use bytes::Bytes;
 
 pub mod demux;
+#[cfg(any(feature = "av1", feature = "h264"))]
 mod yuv;
 
 #[cfg(feature = "av1")]
@@ -41,8 +42,13 @@ pub(crate) struct Decoded {
 pub(crate) trait Decoder {
     /// Sends one sample; pictures that come out go to `out`, converted
     /// when `want` says so.
-    fn feed(&mut self, sample: &[u8], tag: u64, want: &mut dyn FnMut(u64) -> bool, out: &mut Vec<Decoded>)
-        -> Result<(), String>;
+    fn feed(
+        &mut self,
+        sample: &[u8],
+        tag: u64,
+        want: &mut dyn FnMut(u64) -> bool,
+        out: &mut Vec<Decoded>,
+    ) -> Result<(), String>;
     /// The end of the stream: the pictures still held.
     fn finish(&mut self, want: &mut dyn FnMut(u64) -> bool, out: &mut Vec<Decoded>) -> Result<(), String>;
 }

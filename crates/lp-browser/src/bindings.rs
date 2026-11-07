@@ -382,6 +382,16 @@ impl PageHooks for Hooks {
         }
     }
 
+    fn request_animation_frame(&self) {
+        if let Some(host) = self.frames.upgrade() {
+            if host.matches(self.page, &self.loader) {
+                if let Some(realm) = host.frame(self.page).and_then(|f| f.main_realm().cloned()) {
+                    crate::window::request_frame(&realm);
+                }
+            }
+        }
+    }
+
     fn iframe_connected(&self, node: lp_dom::NodeId) {
         if let Some(host) = self.frames.upgrade() {
             if let Err(e) = host.connected(self.page, &self.loader, node) {

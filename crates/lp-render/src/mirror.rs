@@ -105,9 +105,13 @@ pub(crate) struct Mirror {
     top: Vec<u64>,
     /// Nodes given a scroll offset by [`Mirror::set_element_scroll`].
     scrolled: Vec<NodeId>,
-    /// Canvas elements given a bitmap by [`Mirror::set_canvases`], with it.
-    canvases: Vec<(NodeId, Arc<Vec<u8>>)>,
+    /// Canvas and video elements given a bitmap by [`Mirror::set_canvases`],
+    /// with it and, for a video, the poster image it replaced.
+    canvases: Vec<CanvasEntry>,
 }
+
+/// A bitmap given to an element, and the poster image it replaced (videos).
+type CanvasEntry = (NodeId, Arc<Vec<u8>>, Option<Box<blitz_dom::node::ImageData>>);
 
 fn hash_kind(kind: &TreeKind) -> u64 {
     let mut h = Xxh3::new();
@@ -278,10 +282,11 @@ impl Mirror {
         }
     }
 
-    /// Gives the canvases in `canvases` their bitmap as their content (a
-    /// raster image, painted like an `<img>`'s) and takes it from those
-    /// given one last time and absent now. Unchanged bitmaps (the same
-    /// `Arc`) are left as they are.
+    /// Gives the canvases and videos in `canvases` their bitmap (a video's
+    /// current frame) as their content (a raster image, painted like an
+    /// `<img>`'s) and takes it from those given one last time and absent
+    /// now: a canvas then paints nothing, a video its poster again.
+    /// Unchanged bitmaps (the same `Arc`) are left as they are.
     pub(crate) fn set_canvases(&mut self, canvases: &[crate::CanvasImage]) {
         use blitz_dom::node::{ImageData, RasterImageData, SpecialElementData};
         if canvases.is_empty() && self.canvases.is_empty() {
@@ -289,28 +294,46 @@ impl Mirror {
         }
         let now: Vec<(NodeId, &crate::CanvasImage)> =
             canvases.iter().filter_map(|c| Some((self.node(c.key)?, c))).collect();
-        for (id, _) in std::mem::take(&mut self.canvases) {
-            if !now.iter().any(|(n, _)| *n == id) {
-                if let Some(element) = self.doc.get_node_mut(id).and_then(|n| n.element_data_mut()) {
-                    element.special_data = SpecialElementData::None;
-                }
+        let mut posters = Vec::new();
+        for (id, rgba, poster) in std::mem::take(&mut self.canvases) {
+            if now.iter().any(|(n, _)| *n == id) {
+                posters.push((id, rgba, poster));
+            } else if let Some(element) = self.doc.get_node_mut(id).and_then(|n| n.element_data_mut()) {
+                element.special_data = match poster {
+                    Some(image) => SpecialElementData::Image(image),
+                    None => SpecialElementData::None,
+                };
             }
         }
         for (id, canvas) in now {
             let Some(element) = self.doc.get_node_mut(id).and_then(|n| n.element_data_mut()) else { continue };
-            if &*element.name.local != "canvas"
+            let video = &*element.name.local == "video";
+            if !(video || &*element.name.local == "canvas")
                 || canvas.rgba.len() != canvas.width as usize * canvas.height as usize * 4
             {
                 continue;
             }
+            let ours = |image: &ImageData, rgba: &Arc<Vec<u8>>| matches!(image, ImageData::Raster(r) if std::ptr::eq(r.data.data().as_ptr(), rgba.as_ptr()));
+            let (previous, mut poster) = match posters.iter_mut().find(|(n, _, _)| *n == id) {
+                Some((_, rgba, poster)) => (Some(rgba.clone()), poster.take()),
+                None => (None, None),
+            };
             let same = matches!(&element.special_data, SpecialElementData::Image(image)
-                if matches!(&**image, ImageData::Raster(r) if r.width == canvas.width && r.height == canvas.height
-                    && std::ptr::eq(r.data.data().as_ptr(), canvas.rgba.as_ptr())));
+                if matches!(&**image, ImageData::Raster(r) if r.width == canvas.width && r.height == canvas.height)
+                    && ours(image, &canvas.rgba));
             if !same {
+                let replaced = std::mem::take(&mut element.special_data);
+                // A video's poster (loaded before the frame, or since) comes
+                // back when it shows no frame.
+                if let SpecialElementData::Image(image) = replaced {
+                    if video && !previous.as_ref().is_some_and(|p| ours(&image, p)) {
+                        poster = Some(image);
+                    }
+                }
                 let raster = RasterImageData::new(canvas.width, canvas.height, canvas.rgba.clone());
                 element.special_data = SpecialElementData::Image(Box::new(ImageData::Raster(raster)));
             }
-            self.canvases.push((id, canvas.rgba.clone()));
+            self.canvases.push((id, canvas.rgba.clone(), poster));
         }
     }
 

@@ -27,7 +27,13 @@ impl H264 {
         Some(H264 { decoder, length_size, parameter_sets, unit: Vec::new() })
     }
 
-    fn take(&mut self, info: &SBufferInfo, dst: &[*mut u8; 3], want: &mut dyn FnMut(u64) -> bool, out: &mut Vec<Decoded>) {
+    fn take(
+        &mut self,
+        info: &SBufferInfo,
+        dst: &[*mut u8; 3],
+        want: &mut dyn FnMut(u64) -> bool,
+        out: &mut Vec<Decoded>,
+    ) {
         if info.iBufferStatus != 1 || dst.iter().any(|p| p.is_null()) {
             return;
         }
@@ -40,10 +46,7 @@ impl H264 {
         let mut n: DECODER_OPTION = 0;
         // SAFETY: the option is an int the decoder writes.
         unsafe {
-            self.decoder.raw_api().get_option(
-                DECODER_OPTION_NUM_OF_FRAMES_REMAINING_IN_BUFFER,
-                (&raw mut n).cast(),
-            );
+            self.decoder.raw_api().get_option(DECODER_OPTION_NUM_OF_FRAMES_REMAINING_IN_BUFFER, (&raw mut n).cast());
         }
         usize::try_from(n).unwrap_or(0)
     }
@@ -52,7 +55,7 @@ impl H264 {
 fn convert(info: &SBufferInfo, dst: &[*mut u8; 3]) -> Option<(u32, u32, Vec<u8>)> {
     // SAFETY: a ready buffer describes its system-memory planes.
     let buf = unsafe { info.UsrData.sSystemBuffer };
-    if buf.iFormat != videoFormatI420 as i32 {
+    if buf.iFormat != videoFormatI420 {
         return None;
     }
     let (w, h) = (usize::try_from(buf.iWidth).ok()?, usize::try_from(buf.iHeight).ok()?);
@@ -110,12 +113,7 @@ impl Decoder for H264 {
         let unit = std::mem::take(&mut self.unit);
         // SAFETY: the decoder reads `unit` and writes plane pointers and info.
         let state = unsafe {
-            self.decoder.raw_api().decode_frame_no_delay(
-                unit.as_ptr(),
-                unit.len() as i32,
-                dst.as_mut_ptr(),
-                &mut info,
-            )
+            self.decoder.raw_api().decode_frame_no_delay(unit.as_ptr(), unit.len() as i32, dst.as_mut_ptr(), &mut info)
         };
         self.unit = unit;
         // Errors are concealed frames; the picture, if any, still counts.
