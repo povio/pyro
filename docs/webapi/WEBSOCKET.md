@@ -25,13 +25,15 @@ browser context's I/O thread. Where the spec and Chrome differ, Chrome wins.
     CONNECT tunnel (for `ws:` as well), and rustls with the context's certificate
     policy for `wss:`. Only HTTP/1.1 is offered by ALPN.
   - The request carries Chrome's headers: `Origin`, `User-Agent`,
-    `Accept-Language`, `Sec-WebSocket-Version: 13`, `Sec-WebSocket-Key` and
-    `Sec-WebSocket-Protocol`. It also carries the jar's cookies for the
+    `Accept-Language`, `Sec-WebSocket-Version: 13`, `Sec-WebSocket-Key`,
+    `Sec-WebSocket-Extensions: permessage-deflate; client_max_window_bits`
+    (Chrome's offer) and `Sec-WebSocket-Protocol`. It also carries the jar's cookies for the
     `http(s)` form of the URL (credentials mode "include"), the context's and
     page's extra headers, and Basic credentials taken from URL user info. No
     `Referer` is sent.
   - The connection fails when the response is not 101, the Upgrade, Connection
-    or Accept headers are wrong, or the server sends extensions.
+    or Accept headers are wrong, or the extension negotiation is bad (see
+    permessage-deflate below).
   - It also fails on a subprotocol the client did not offer, or on no
     subprotocol when the client offered some. That last case is Chrome's rule.
   - Redirects are not followed.
@@ -65,8 +67,42 @@ browser context's I/O thread. Where the spec and Chrome differ, Chrome wins.
   - A received Close is echoed with its code. Its code is checked with
     Chromium's rules, and its reason must be UTF-8.
   - A Close without a code reports 1005.
+- **permessage-deflate (RFC 7692).** `crates/lp-net/src/ws_deflate.rs`.
+  - The response's `Sec-WebSocket-Extensions` is checked as Chromium checks
+    it. The connection fails, with Chromium's message, on a value that does
+    not parse, an extension other than `permessage-deflate`, a second
+    `permessage-deflate`, an unknown or repeated parameter, a value on
+    `server_no_context_takeover`/`client_no_context_takeover`, or window bits
+    that are missing or not 8–15 (no leading zero; quoted values are
+    unquoted first).
+  - `extensions` is the response's header values joined with `", "`, as in
+    Chromium, or `""` when the server accepted nothing.
+  - Inbound messages with RSV1 set are inflated with a 32 KiB window, which
+    decodes any `server_max_window_bits`. The window carries over between
+    messages; it is reset after a final DEFLATE block and with
+    `server_no_context_takeover`. Uncompressed messages (RSV1 clear) are
+    accepted too.
+  - Inflation stops at the message size limit, so a small compressed
+    message cannot expand without bound: going over fails the connection
+    with 1009. Data that does not inflate fails it with 1002 "Invalid frame
+    header" (Chromium's message). RSV1 on a control or continuation frame is
+    1002 as well.
+  - Every outbound data message is deflated (level 6, sync flush, the
+    trailing `00 00 ff ff` removed) and sent with RSV1. The window carries
+    over unless the server sent `client_no_context_takeover`.
+  - The compressor always uses a 32 KiB window. When the server sets
+    `client_max_window_bits` below 15, the compressor is reset before every
+    message, and a message longer than that window is sent uncompressed.
+    RFC 7692 allows this for any message.
+  - The compressor (about 300 KiB) and decompressor (about 40 KiB) are
+    allocated on a connection's first message in each direction. Connections
+    without the extension do not allocate them, and their per-frame cost is
+    one flag test.
+  - `bufferedAmount` and CDP count and show uncompressed payloads, as in
+    Chrome.
 - **Receiving.**
-  - Server frames must be unmasked and have no reserved bits.
+  - Server frames must be unmasked. RSV2 and RSV3 must be clear, and RSV1
+    too unless permessage-deflate was negotiated.
   - Control frames must not be fragmented and carry at most 125 bytes.
   - Continuation frames must follow a fragmented message.
   - Text must be valid UTF-8.
@@ -86,7 +122,10 @@ browser context's I/O thread. Where the spec and Chrome differ, Chrome wins.
   - `Network.webSocketCreated`, `webSocketWillSendHandshakeRequest`,
     `webSocketHandshakeResponseReceived`, `webSocketFrameSent` and
     `webSocketFrameReceived` are sent in Chrome's shapes. Data messages only:
-    text payloads as is, binary as base64.
+    text payloads as is, binary as base64. With permessage-deflate, the
+    payloads are the uncompressed messages, the handshake request headers
+    show the offer, and the response headers show the server's answer, as
+    in Chrome.
   - `webSocketFrameError` (with the failure message) and `webSocketClosed` are
     sent too.
   - They go to the sessions of the page that owns the creating frame, while
@@ -99,8 +138,15 @@ browser context's I/O thread. Where the spec and Chrome differ, Chrome wins.
 
 ## Not implemented
 
-- No extensions are offered, so `extensions` is always `""` and there is no
-  permessage-deflate.
+- permessage-deflate is the only extension. Others in the response fail
+  the connection, as in Chrome. A server that accepts permessage-deflate
+  cannot be refused: no setting turns the offer off.
+- The compression level is fixed, and every message is compressed, even
+  when that makes it larger. Chrome does the same.
+- Compression and inflation run on the context's I/O thread in one pass per
+  message, so a very large message delays the context's other network work
+  while it is processed.
+- Extra HTTP headers cannot replace the `Sec-WebSocket-Extensions` offer.
 - WebSockets over HTTP/2 (RFC 8441) are not supported.
 - Connections in shared and service workers are not supported (those workers
   do not exist).

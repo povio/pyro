@@ -14,6 +14,7 @@ pub mod request;
 pub mod secure_context;
 pub mod static_files;
 mod subscription;
+mod ws_deflate;
 pub use subscription::{NetSubscription, NetWake, SubscriptionError, SubscriptionLimits};
 
 pub use cache::{SharedAssetCache, SHARED_ASSET_CACHE_ENV};
