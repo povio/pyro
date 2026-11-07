@@ -2485,19 +2485,24 @@ fn inline_content_moved_into_a_hidden_container_matches_fresh_builds() {
     let page = Page::new(
         r#"<!doctype html><html><head><style>body { margin: 0; font: 14px sans-serif }</style></head><body>
 <div id=list><p id=p1>para <span id=s1>in<b id=b1>bold</b></span> text</p><p id=p2>two <i id=i2>it</i></p></div>
-<div id=hid style="display:none"><p>already hidden <span>x</span></p></div><div id=after>after</div>
+<div id=hid style="display:none"><p id=hp>already hidden <span>x</span></p></div><div id=after>after</div>
+<div id=new></div>
 </body></html>"#,
     );
-    let mv = |what: &'static str, sel: &'static str| -> (String, Mutate) {
+    let mv = |what: &'static str, to: &'static str, sel: &'static str| -> (String, Mutate) {
         edit(what, move |p| {
-            let (hid, n) = (p.find("#hid"), p.find(sel));
+            let (hid, n) = (p.find(to), p.find(sel));
             p.dom.borrow_mut().append_child(hid, n).unwrap();
         })
     };
     let steps: Vec<(String, Mutate)> = vec![
-        mv("a paragraph moved into the hidden container", "#p1"),
-        mv("an inline moved into the hidden container", "#i2"),
+        mv("a paragraph moved into the hidden container", "#hid", "#p1"),
+        mv("an inline moved into the hidden container", "#hid", "#i2"),
+        // Into an element below the hidden one (which has no styles of its own).
+        mv("a paragraph moved below the hidden container", "#hp", "#p2"),
         attr("#hid", "style", ""),
+        // Into a shown element: it keeps its styles.
+        mv("a paragraph moved out of it", "#new", "#p1"),
     ];
     page_steps_match_fresh_builds(&page, steps);
 }

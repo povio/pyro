@@ -271,10 +271,11 @@ its inputs.
   cleared the damage no pass consumed, so its subtree is damaged and its layout caches cleared: a cell edited while
   its row was `display: contents` kept the text it had. For this `resolve_layout_children` takes the previous layout
   children out of the list (`layout_child_of`) after collecting the new ones, not before.
-- `src/mutator.rs` (`add_children_to_parent`): an element moved under a `display: none` or unstyled parent drops its
-  style data, inline layout and construction flags, as Stylo keeps none under `display: none` (it clears descendants
-  when an element becomes `display: none` and never visits the children of one). The moved element kept its styles,
-  and lp-render reported the box its old inline layout gave it.
+- `src/mutator.rs` (`add_children_to_parent`, `is_under_display_none`): an element moved into a `display: none`
+  element or below one (the nearest styled element from the new parent up is `display: none`) drops its style data,
+  inline layout and construction flags, as Stylo keeps none there (it clears descendants when an element becomes
+  `display: none` and never visits the children of one). The moved element kept its styles, and lp-render reported
+  the box its old inline layout gave it. Only moves of styled elements look up the ancestors.
 
 `crates/lp-render/tests/mirror.rs` compares the incremental document with fresh builds after cell edits, row appends,
 inserts and removals, spans, collapsed borders, nested and vertical tables, stacking contexts in cells and `display`

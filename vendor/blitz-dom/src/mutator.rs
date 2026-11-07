@@ -818,10 +818,10 @@ impl DocumentMutator<'_> {
             self.restyle_for_child_list_change(parent_id, start..end);
         }
 
-        let parent_is_unstyled = self.doc.nodes[parent_id].is_element()
-            && self.doc.nodes[parent_id]
-                .primary_styles()
-                .is_none_or(|style| style.get_box().display.is_none());
+        // lightningpanda: whether the children land under a `display: none` element (see below).
+        // Only children styled before need it (a new node has no style data).
+        let under_display_none = child_ids.iter().any(|&id| self.doc.nodes[id].primary_styles().is_some())
+            && self.is_under_display_none(parent_id);
         for child_id in child_ids.iter().copied() {
             let child = &mut self.doc.nodes[child_id];
             let child_was_in_doc = child.flags.is_in_document();
@@ -847,10 +847,9 @@ impl DocumentMutator<'_> {
             // lightningpanda: Stylo keeps no style data under a `display: none` element (it drops
             // it when an element becomes one, `clear_descendant_data`, and never visits the
             // children of one), but a moved element kept its own: styles, inline layout and the
-            // flags built from them, which no pass would replace. Under a parent that the style
-            // traversal does not reach (display: none, or unstyled itself) it has none, as a
-            // fresh build has, and is styled and built from scratch if it is shown.
-            if parent_is_unstyled {
+            // flags built from them, which no pass would replace. Under a `display: none` element
+            // it has none, as a fresh build has, and is styled and built from scratch if shown.
+            if under_display_none {
                 self.doc.iter_subtree_mut(child_id, |id, doc| {
                     let node = &mut doc.nodes[id];
                     node.flags.reset_construction_flags();
@@ -870,6 +869,23 @@ impl DocumentMutator<'_> {
         }
 
         self.maybe_record_node(parent_id);
+    }
+
+    /// lightningpanda: whether `node_id` is or is inside a `display: none` element: the nearest
+    /// styled element from it up says so (the elements below one have no styles; an element not
+    /// styled yet below a shown one will be).
+    fn is_under_display_none(&self, node_id: NodeId) -> bool {
+        let mut at = Some(node_id);
+        while let Some(id) = at {
+            let node = &self.doc.nodes[id];
+            if node.is_element() {
+                if let Some(style) = node.primary_styles() {
+                    return style.get_box().display.is_none();
+                }
+            }
+            at = node.parent;
+        }
+        false
     }
 
     // Tree mutation methods (that defer to other methods)
