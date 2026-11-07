@@ -159,6 +159,15 @@ rebuilds, tables, rounding) read by lp-render's profiling. The phase timers run 
 `phase_profile::set_timing(true)` (lp-render's `profiling::enable`, turned on by `LP.geometryStats`,
 `Performance.enable` and `LP_GEOMETRY_PROFILE`) is on: `mark` is a no-op otherwise. The counters always count.
 
+## Style changes for transitions
+
+- `src/stylo.rs`, `src/document.rs`: while `BaseDocument::set_track_style_changes(true)`, the style traversal
+  records every element whose primary style it replaces, with the style before and after
+  (`StyleChange`; one restyled again before the embedder reads keeps its first old and last new style);
+  `take_style_changes` hands them over. A first style, or styles dropped, is no change. lp-webapi's
+  transition events read them instead of scanning the document for elements that may transition on every
+  style flush: the cost is the elements restyled, as in Chrome, where transitions start in style recalc.
+
 ## Inline layouts in vertical writing modes
 
 Layout keeps a vertical inline root's lines logical (x inline, y block). `Node::vertical_block_axis` says which

@@ -801,6 +801,8 @@ pub struct StyleEngine {
     gecko_rules: RefCell<Option<(AuthorSheetsKey, Rc<Vec<crate::gecko_only::Rule>>)>>,
     /// Sheet revisions handed out so far.
     revisions: u64,
+    /// [`Self::set_track_style_changes`].
+    track_style_changes: Cell<bool>,
     /// Debug builds: the last [`StyleEngine::author_sheets_key`] and a hash
     /// of the sheet texts it stood for, to check the key moves whenever the
     /// texts do.
@@ -867,6 +869,7 @@ impl StyleEngine {
             active_styled: Cell::new(true),
             gecko_rules: RefCell::new(None),
             revisions: 0,
+            track_style_changes: Cell::new(false),
             #[cfg(debug_assertions)]
             checked_key: RefCell::new(None),
             registered_properties: Vec::new(),
@@ -884,6 +887,35 @@ impl StyleEngine {
     ) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
         self.owns(dom, el)?;
         self.external_style(dom, el)
+    }
+
+    /// Whether the layout engine records the elements whose computed style a
+    /// restyle replaces, for [`Self::take_style_changes`] (told to the engine
+    /// before every sync).
+    pub fn set_track_style_changes(&self, on: bool) {
+        self.track_style_changes.set(on);
+    }
+
+    pub fn track_style_changes(&self) -> bool {
+        self.track_style_changes.get()
+    }
+
+    /// The elements of this document whose computed style the engine
+    /// replaced since the last call (while tracked), with the style before
+    /// and after: a transition's before-change and after-change styles.
+    /// Elements gone from `dom` are left out.
+    pub fn take_style_changes(&self, dom: &Dom) -> Vec<(NodeId, crate::timing::StyleSnapshot, crate::timing::StyleSnapshot)> {
+        let external = self.external.borrow();
+        let Some((source, _)) = &*external else { return Vec::new() };
+        source
+            .take_style_changes()
+            .into_iter()
+            .filter_map(|(key, before, after)| {
+                let el = crate::geometry::node_of(dom, key)?;
+                self.owns(dom, el)?;
+                Some((el, before, after))
+            })
+            .collect()
     }
 
     /// Records a `CSS.registerProperty()` registration; `false` (and nothing

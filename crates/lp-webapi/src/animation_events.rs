@@ -17,17 +17,20 @@
 //! `infinite` animation fires `animationstart` only.
 //!
 //! Transitions need a before-change style. Once a transition listener
-//! exists, every style flush script forces (`getComputedStyle`, `offset*`,
-//! `client*`, `scroll*`, `getBoundingClientRect`, `getClientRects`) and each
-//! frame after a change is a style change event of the elements that may
-//! transition (a rule or their `style` attribute declares a transition, see
-//! `TimingRules::transition_candidates`): their style then becomes their
-//! before-change style. A property of an element's transition list whose
-//! computed value differs from the one at its previous style change
+//! exists, the layout engine records the elements whose computed style a
+//! restyle replaces, with the style before and after
+//! (`StyleEngine::take_style_changes`: the traversal sees both, so this
+//! costs the restyled elements, not a scan of the document). Every style
+//! flush script forces (`getComputedStyle`, `offset*`, `client*`, `scroll*`,
+//! `getBoundingClientRect`, `getClientRects`) and each frame after a change
+//! is a style change event of those elements: a property of an element's
+//! transition list whose computed value differs between the two styles
 //! transitions: `transitionrun`, then `transitionstart` after the delay and
 //! `transitionend` after the duration. So the usual
 //! `el.offsetHeight; el.classList.add('open')` starts a transition, as does
-//! a change made in a task after the element was first rendered.
+//! a change made in a task after the element was first rendered. An element
+//! styled for the first time has no before-change style and transitions
+//! nothing.
 //!
 //! Once script called `getAnimations()` the timelines are kept the same way
 //! without listeners, and `getAnimations()` lists them as `CSSAnimation` and
@@ -39,7 +42,6 @@ use std::time::Duration;
 
 use lp_dom::timing::{ElementTiming, StyleSnapshot, TimingRules};
 use lp_dom::NodeId;
-use rustc_hash::FxHashMap;
 
 use crate::event::{EventCore, EventInterface};
 use crate::page::PageDom;
@@ -48,8 +50,6 @@ use crate::page::PageDom;
 const FRAME: Duration = Duration::from_millis(16);
 /// Iteration events one animation may schedule.
 const MAX_ITERATIONS: usize = 1024;
-/// Elements whose before-change style is kept.
-const MAX_OBSERVED: usize = 1024;
 
 type Stamp = (u64, u64, u32, u32);
 
@@ -88,13 +88,6 @@ pub(crate) struct State {
     queued: Cell<bool>,
     animations: RefCell<Vec<Timeline>>,
     transitions: RefCell<Vec<Timeline>>,
-    /// Elements that may transition (and those script read the computed
-    /// style of): their style at the last style change, and the stamp it was
-    /// taken at.
-    observed: RefCell<FxHashMap<NodeId, (StyleSnapshot, Stamp)>>,
-    /// The style stamp of the last style change event of every element that
-    /// may transition.
-    flushed: Cell<Option<Stamp>>,
     /// Script called `getAnimations()`: timelines are kept without listeners.
     listed: Cell<bool>,
     /// The last timeline id handed out.
@@ -132,8 +125,6 @@ impl State {
         for timeline in self.animations.take().into_iter().chain(self.transitions.take()) {
             timeline.live.set(false);
         }
-        self.observed.borrow_mut().clear();
-        self.flushed.set(None);
         self.rules.borrow_mut().take();
     }
 
@@ -206,7 +197,7 @@ pub(crate) fn after_task(page: &Rc<PageDom>) {
     );
 }
 
-/// A frame: the document's animations and the observed elements' transitions.
+/// A frame: the document's animations and the transitions its style changes start.
 /// `defer`: events due now fire in a task of their own.
 fn update(page: &Rc<PageDom>, defer: bool) {
     if page.is_disposed() || page.scripting_disabled() {
@@ -218,6 +209,7 @@ fn update(page: &Rc<PageDom>, defer: bool) {
         let dom = page.dom.borrow();
         let layout = page.layout();
         let style = layout.style();
+        track_style_changes(state, &dom, style);
         // Styles first: syncing them registers new `<style>` sheets.
         style.engine_styled(&dom);
         let rules = state.rules(&dom, style);
@@ -292,18 +284,9 @@ fn update(page: &Rc<PageDom>, defer: bool) {
             animations.push(timeline);
         }
         drop(animations);
-        // Style change events of the observed elements, and of the others
-        // that may transition now.
-        let observed: Vec<NodeId> = state.observed.borrow().keys().copied().collect();
-        for el in observed {
-            if !dom.is_alive(el) || !dom.is_connected(el).unwrap_or(false) {
-                state.observed.borrow_mut().remove(&el);
-                continue;
-            }
-            style_change(state, &dom, style, Some(&rules), el, now_ms, &mut planned);
-        }
+        // Style change events of the elements whose style changed.
         if state.transitions_tracked(&dom) {
-            transition_candidates_changed(state, &dom, style, &rules, page.document(), now_ms, &mut planned);
+            transitions_from_changes(state, &dom, style, now_ms, &mut planned);
         }
         state.transitions.borrow_mut().retain(|t| t.live.get() && !t.ended.get() && dom.is_alive(t.el));
     }
@@ -351,43 +334,14 @@ pub(crate) fn runs(page: &Rc<PageDom>) -> Vec<Run> {
         .collect()
 }
 
-/// Script read `el`'s computed style: a style change event of the element
-/// (and, as for any style flush, of the elements that may transition).
-pub(crate) fn observe(page: &Rc<PageDom>, el: NodeId) {
-    let state = &page.animation_events;
-    let mut planned = Vec::new();
-    {
-        let Ok(dom) = page.dom.try_borrow() else { return };
-        if !state.tracking(&dom) || page.is_disposed() || page.scripting_disabled() {
-            return;
-        }
-        let Some(layout) = page.try_layout() else { return };
-        let style = layout.style();
-        style.engine_styled(&dom);
-        let stamp = style.observation_stamp(&dom);
-        let seen = state.observed.borrow().get(&el).is_some_and(|(_, at)| *at == stamp);
-        let flushed = state.flushed.get() == Some(stamp) || !state.transitions_tracked(&dom);
-        if seen && flushed {
-            return;
-        }
-        let now_ms = crate::event::page_now_ms(page);
-        if !seen && dom.is_connected(el).unwrap_or(false) {
-            // The rules are read only once the element's style is known to have
-            // changed: a first observation never needs them.
-            style_change(state, &dom, style, None, el, now_ms, &mut planned);
-        }
-        if !flushed {
-            let rules = state.rules(&dom, style);
-            transition_candidates_changed(state, &dom, style, &rules, page.document(), now_ms, &mut planned);
-        }
-    }
-    // Events never fire inside the read itself.
-    schedule(page, planned, true);
+/// Script read `el`'s computed style: a style flush, as any layout read.
+pub(crate) fn observe(page: &Rc<PageDom>, _el: NodeId) {
+    style_flush(page);
 }
 
-/// Script forced a style flush (a layout read): a style change event of
-/// the elements that may transition. Costs one flag check without a
-/// transition listener, and one stamp check while the style is unchanged.
+/// Script forced a style flush (a style or layout read): a style change
+/// event of the elements whose style changed. Costs one flag check without
+/// a transition listener, and one stamp check while the style is unchanged.
 pub(crate) fn style_flush(page: &Rc<PageDom>) {
     let state = &page.animation_events;
     let mut planned = Vec::new();
@@ -398,81 +352,68 @@ pub(crate) fn style_flush(page: &Rc<PageDom>) {
         }
         let Some(layout) = page.try_layout() else { return };
         let style = layout.style();
+        track_style_changes(state, &dom, style);
         // The flush itself: syncing styles registers new `<style>` sheets.
         style.engine_styled(&dom);
-        if state.flushed.get() == Some(style.observation_stamp(&dom)) {
-            return;
-        }
-        let rules = state.rules(&dom, style);
         let now_ms = crate::event::page_now_ms(page);
-        transition_candidates_changed(state, &dom, style, &rules, page.document(), now_ms, &mut planned);
+        transitions_from_changes(state, &dom, style, now_ms, &mut planned);
     }
     schedule(page, planned, true);
 }
 
-/// A style change event of every connected element of `doc` that may
-/// transition, once per style stamp.
-fn transition_candidates_changed(
+/// Once transitions are tracked, the engine keeps the elements whose style a
+/// restyle replaces ([`lp_dom::style::StyleEngine::take_style_changes`]).
+/// Set before every style sync, so that the first sync after a transition
+/// listener appeared records its changes.
+fn track_style_changes(state: &State, dom: &lp_dom::Dom, style: &lp_dom::style::StyleEngine) {
+    if state.transitions_tracked(dom) {
+        style.set_track_style_changes(true);
+    }
+}
+
+/// A style change event of the elements whose computed style the engine
+/// replaced since the last one: the transitions their before-change and
+/// after-change styles start. Nothing to read when nothing changed.
+fn transitions_from_changes(
     state: &State,
     dom: &lp_dom::Dom,
     style: &lp_dom::style::StyleEngine,
-    rules: &TimingRules,
-    doc: NodeId,
     now_ms: f64,
     planned: &mut Vec<Planned>,
 ) {
-    let stamp = style.observation_stamp(dom);
-    if state.flushed.replace(Some(stamp)) == Some(stamp) {
+    let changes = style.take_style_changes(dom);
+    if changes.is_empty() {
         return;
     }
-    for el in rules.transition_candidates(dom, doc) {
-        if state.observed.borrow().get(&el).is_some_and(|(_, at)| *at == stamp) {
-            continue;
-        }
+    let rules = state.rules(dom, style);
+    for (el, before, now) in changes {
         if dom.is_connected(el).unwrap_or(false) {
-            style_change(state, dom, style, Some(rules), el, now_ms, planned);
+            start_transitions(state, dom, &rules, el, &before, &now, now_ms, planned);
         }
     }
 }
 
-/// A style change event of `el`: the properties of its transition list whose
-/// computed value differs from the before-change style start transitions,
-/// and the current style becomes the before-change style. `rules` is read
-/// from the sheets when not given, and only if the style changed.
-fn style_change(
+/// The transitions a style change of `el` from `before` to `now` starts: the
+/// properties of its transition list whose computed value differs. A
+/// transition of the property still under way is replaced.
+#[allow(clippy::too_many_arguments)]
+fn start_transitions(
     state: &State,
     dom: &lp_dom::Dom,
-    style: &lp_dom::style::StyleEngine,
-    rules: Option<&TimingRules>,
+    rules: &TimingRules,
     el: NodeId,
+    before: &StyleSnapshot,
+    now: &StyleSnapshot,
     now_ms: f64,
     planned: &mut Vec<Planned>,
 ) {
-    let Some(now) = style.stylo_style(dom, el) else { return };
-    let stamp = style.observation_stamp(dom);
-    let before = {
-        let mut observed = state.observed.borrow_mut();
-        if observed.len() >= MAX_OBSERVED && !observed.contains_key(&el) {
-            observed.retain(|id, _| dom.is_alive(*id) && dom.is_connected(*id).unwrap_or(false));
-            if observed.len() >= MAX_OBSERVED {
-                return;
-            }
-        }
-        observed.insert(el, (now.clone(), stamp)).map(|(before, _)| before)
-    };
-    let Some(before) = before.filter(|before| !StyleSnapshot::ptr_eq(before, &now)) else { return };
-    let read;
-    let rules = match rules {
-        Some(rules) => rules,
-        None => {
-            read = state.rules(dom, style);
-            &*read
-        }
-    };
+    if StyleSnapshot::ptr_eq(before, now) {
+        return;
+    }
     let ElementTiming { transitions, .. } = rules.element(dom, el);
     let mut started: Vec<&'static str> = Vec::new();
     for transition in &transitions {
-        for longhand in lp_dom::timing::changed_longhands(&before, &now, &transition.property) {
+        for longhand in lp_dom::timing::changed_longhands(before, now, &transition.property) {
             if started.contains(&longhand) {
                 continue;
             }

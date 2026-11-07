@@ -1137,6 +1137,29 @@ impl Renderer {
         (!unstyled).then_some(true)
     }
 
+    /// lightningpanda: whether `page`'s document records the elements whose
+    /// primary style a restyle replaces
+    /// (`BaseDocument::set_track_style_changes`); no page, nothing.
+    pub fn set_track_style_changes(&mut self, page: u64, on: bool) {
+        if let Some(m) = self.mirrors.get_mut(&page) {
+            m.doc.set_track_style_changes(on);
+        }
+    }
+
+    /// The mirrored elements of `page` whose primary style was replaced since
+    /// the last call (while tracked), by render key, with the styles before
+    /// and after (`BaseDocument::take_style_changes`); elements no longer
+    /// mirrored are left out.
+    pub fn take_style_changes(
+        &mut self,
+        page: u64,
+    ) -> Vec<(u64, style::servo_arc::Arc<style::properties::ComputedValues>, style::servo_arc::Arc<style::properties::ComputedValues>)>
+    {
+        let Some(m) = self.mirrors.get_mut(&page) else { return Vec::new() };
+        let changes = m.doc.take_style_changes();
+        changes.into_iter().filter_map(|c| Some((m.key_of(c.node)?, c.before, c.after))).collect()
+    }
+
     /// The computed style of pseudo-element `pseudo` of the element keyed
     /// `key` in `page`'s persistent document (`getComputedStyle(el,
     /// pseudo)`; see `BaseDocument::pseudo_element_style`, which
