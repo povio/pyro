@@ -292,10 +292,6 @@ impl ResourceTimings {
     pub fn is_empty(&self) -> bool {
         self.buffer.borrow().is_empty()
     }
-    /// The next entry's sequence number.
-    pub fn next_seq(&self) -> u64 {
-        self.next_seq.get()
-    }
     /// `setResourceTimingBufferSize(n)`: entries over a smaller size stay.
     pub fn set_limit(&self, limit: usize) {
         self.limit.set(limit);
@@ -337,6 +333,25 @@ thread_local! {
 impl PageDom {
     pub fn resource_timings(&self) -> &ResourceTimings {
         &self.resource_timings
+    }
+
+    /// Queues the report of a fetch that ended on this thread: a task adds
+    /// it (the caller may be in the middle of a DOM operation, and adding an
+    /// entry can run observers' script).
+    pub fn queue_resource_timing(self: &Rc<Self>, report: FetchReport) {
+        let first = {
+            let mut inbox = self.resource_timings.inbox.lock().unwrap_or_else(|e| e.into_inner());
+            inbox.push(report);
+            inbox.len() == 1
+        };
+        if first {
+            let page = Rc::downgrade(self);
+            self.post_task(Box::new(move || {
+                if let Some(page) = page.upgrade() {
+                    page.add_finished_fetches();
+                }
+            }));
+        }
     }
 
     /// Adds the entries of the fetches that ended on the I/O thread and are

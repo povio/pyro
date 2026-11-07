@@ -314,7 +314,7 @@ impl ResourceLoader for NetLoader {
                 }
             });
             if let (Some((_, page)), Some(report)) = (&timed, &report) {
-                page.add_resource_timing(report);
+                page.queue_resource_timing(report.clone());
             }
             let resource = Resource {
                 url: head.url.to_string(),

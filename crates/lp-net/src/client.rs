@@ -1348,10 +1348,10 @@ impl Io {
 
         // Resource Timing's TAO check runs against the requesting document's
         // origin (an iframe's navigation: its parent's, the referrer).
+        // An iframe whose parent is unknown fails closed (an opaque origin).
         let timing_origin = req.origin.clone().or_else(|| {
             (req.destination == Destination::Iframe)
-                .then(|| req.referrer.as_ref().map(|r| r.origin().ascii_serialization()))
-                .flatten()
+                .then(|| req.referrer.as_ref().map_or_else(|| "null".into(), |r| r.origin().ascii_serialization()))
         });
         loop {
             crate::timing::note(|t| {
