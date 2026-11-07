@@ -379,6 +379,12 @@ impl Dom {
                     let mut attrs: Vec<RAttr<'_>> = Vec::with_capacity(e.attrs.len() + 1);
                     for a in &e.attrs {
                         let name: &str = &a.name.local;
+                        // The state namespace is the snapshot's own: a page's
+                        // `setAttributeNS` in it would fake pseudo-classes or
+                        // the top layer for the renderer.
+                        if &*a.name.ns == STATE_NS {
+                            continue;
+                        }
                         if a.name.ns == ns!() {
                             let skip = match (local, name) {
                                 ("input", "value" | "checked") => input_type.is_some(),
@@ -766,6 +772,14 @@ impl Dom {
                 }
                 out.push_str(name);
             }
+        }
+        // The top layer's paint order: renderers paint these elements above
+        // the document by rank (one empty check without a top layer).
+        if let Some(rank) = self.top_layer_rank(self.id_of(n)) {
+            if !out.is_empty() {
+                out.push(' ');
+            }
+            let _ = std::fmt::Write::write_fmt(&mut out, format_args!("top-layer={rank}"));
         }
         (!out.is_empty()).then_some(out)
     }

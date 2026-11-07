@@ -108,6 +108,12 @@ text inputs retain their current values. Time inputs render their saved value in
 empty. The comparison worker accepts embedded `data:` resources without fetching them, while
 retaining origin and filesystem-root checks for external resources.
 
+## Top layer
+
+Modal dialogs and showing popovers are painted above the document in top-layer order, each over its `::backdrop`
+(see [POPOVER_DIALOG.md](../webapi/POPOVER_DIALOG.md#painting-screenshots-pdf)). Deferred HTML captures do not carry
+the top layer.
+
 ## Not captured
 
 - Canvas, video and WebGL pixels.

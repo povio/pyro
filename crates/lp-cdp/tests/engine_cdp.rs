@@ -6164,6 +6164,134 @@ mod screenshot {
         assert_eq!(pixel(&shot(&mut h), 5, 5), [0, 0, 255, 255]);
     }
 
+    /// Modal dialogs and showing popovers paint above everything, in
+    /// top-layer order, over their `::backdrop`, whatever their ancestors'
+    /// z-index, opacity or overflow clip; hit testing and clicks follow.
+    #[test]
+    fn top_layer_paints_above_everything_over_its_backdrop() {
+        let mut h = Harness::new();
+        h.page(
+            "Emulation.setDeviceMetricsOverride",
+            json!({"width": 400, "height": 300, "deviceScaleFactor": 1, "mobile": false}),
+        );
+        load_html(
+            &mut h,
+            r#"<!doctype html><style>
+              body { margin: 0; background: #fff; }
+              #cover { position: fixed; inset: 0; z-index: 2147483647; background: rgb(0, 0, 255); }
+              #clip { position: relative; z-index: 1; opacity: 0.5; overflow: hidden; width: 10px; height: 10px; }
+              #d { width: 100px; height: 60px; padding: 0; border: 0; background: rgb(255, 0, 0); }
+              #d button { display: block; width: 100px; height: 60px; padding: 0; border: 0; background: transparent; }
+              #p { width: 40px; height: 40px; padding: 0; border: 0; background: rgb(255, 255, 0); }
+            </style>
+            <div id="clip"><dialog id="d"><button id="in">in</button></dialog><div id="p" popover></div></div>
+            <div id="cover"></div>"#,
+        );
+        let shot = |h: &mut Harness| png_of(&h.page("Page.captureScreenshot", json!({}))["result"]["data"]);
+        let click = |h: &mut Harness, x: u32, y: u32| {
+            for (kind, buttons) in [("mousePressed", 1), ("mouseReleased", 0)] {
+                let r = h.page(
+                    "Input.dispatchMouseEvent",
+                    json!({"type": kind, "x": x, "y": y, "button": "left", "buttons": buttons, "clickCount": 1}),
+                );
+                assert_eq!(r["result"], json!({}), "{r}");
+            }
+        };
+        eval_value(
+            &mut h,
+            "globalThis.clicks = []; for (const id of ['in', 'cover', 'd']) document.getElementById(id).addEventListener('click', e => clicks.push(id + ':' + e.target.id))",
+        );
+        let img = shot(&mut h);
+        assert_eq!(pixel(&img, 200, 150), [0, 0, 255, 255], "closed: the cover");
+        assert_eq!(eval_value(&mut h, "document.elementFromPoint(200, 150).id"), "cover");
+
+        // The modal dialog is centered in the viewport above the cover, at
+        // full opacity and unclipped; the rest is under its backdrop
+        // (rgba(0, 0, 0, 0.1) over blue).
+        eval_value(&mut h, "d.showModal()");
+        let img = shot(&mut h);
+        assert_eq!(pixel(&img, 165, 170), [255, 0, 0, 255], "dialog (away from its text)");
+        assert_eq!(pixel(&img, 248, 178), [255, 0, 0, 255], "dialog bottom-right corner");
+        assert_eq!(pixel(&img, 151, 121), [255, 0, 0, 255], "dialog top-left corner");
+        assert_eq!(pixel(&img, 148, 150), [0, 0, 229, 255], "backdrop left of the dialog");
+        assert_eq!(pixel(&img, 10, 10), [0, 0, 229, 255], "backdrop");
+        assert_eq!(
+            eval_value(
+                &mut h,
+                "[document.elementFromPoint(200, 150).id, document.elementFromPoint(10, 10).id, JSON.stringify(d.getBoundingClientRect())]"
+            ),
+            json!(["in", "d", r#"{"x":150,"y":120,"width":100,"height":60,"top":120,"right":250,"bottom":180,"left":150}"#])
+        );
+        // A click reaches the dialog's button; one outside lands on the
+        // backdrop (the dialog), never on the inert cover.
+        click(&mut h, 200, 150);
+        click(&mut h, 10, 10);
+        assert_eq!(eval_value(&mut h, "clicks.join()"), "in:in,d:in,d:d");
+
+        // An author `::backdrop`.
+        eval_value(&mut h, "document.head.insertAdjacentHTML('beforeend', '<style>#d::backdrop { background: rgb(0, 255, 0) }</style>')");
+        assert_eq!(pixel(&shot(&mut h), 10, 10), [0, 255, 0, 255], "author backdrop");
+
+        // A popover shown later is above the dialog; its backdrop is
+        // transparent.
+        eval_value(&mut h, "p.showPopover()");
+        let img = shot(&mut h);
+        assert_eq!(pixel(&img, 200, 150), [255, 255, 0, 255], "popover above the dialog");
+        assert_eq!(pixel(&img, 170, 150), [255, 0, 0, 255], "dialog around the popover");
+        assert_eq!(pixel(&img, 10, 10), [0, 255, 0, 255], "the popover's backdrop is transparent");
+        assert_eq!(eval_value(&mut h, "document.elementFromPoint(170, 150).id"), "in");
+
+        // Hiding and closing put everything back where it was.
+        eval_value(&mut h, "p.hidePopover(); d.close()");
+        let img = shot(&mut h);
+        assert_eq!(pixel(&img, 200, 150), [0, 0, 255, 255], "closed again: the cover");
+        assert_eq!(pixel(&img, 10, 10), [0, 0, 255, 255], "no backdrop");
+
+        // A popover alone: above the cover, no backdrop color.
+        eval_value(&mut h, "p.showPopover()");
+        let img = shot(&mut h);
+        assert_eq!(pixel(&img, 200, 150), [255, 255, 0, 255], "popover above the cover");
+        assert_eq!(pixel(&img, 10, 10), [0, 0, 255, 255], "the cover, not dimmed");
+        assert_eq!(eval_value(&mut h, "document.elementFromPoint(200, 150).id"), "p");
+    }
+
+    /// On a scrolled page the top layer stays fixed to the viewport, and a
+    /// popover shown inside a modal dialog paints above it by its own rank.
+    #[test]
+    fn top_layer_is_fixed_to_the_viewport_and_nests() {
+        let mut h = Harness::new();
+        h.page(
+            "Emulation.setDeviceMetricsOverride",
+            json!({"width": 400, "height": 300, "deviceScaleFactor": 1, "mobile": false}),
+        );
+        load_html(
+            &mut h,
+            r#"<!doctype html><style>
+              body { margin: 0; background: rgb(0, 0, 255); }
+              #d { width: 100px; height: 60px; padding: 0; border: 0; background: rgb(255, 0, 0); }
+              #q { width: 20px; height: 20px; padding: 0; border: 0; margin: 0; top: 0; left: 0; background: rgb(0, 255, 0); }
+              #d::backdrop { background: rgb(255, 255, 255); }
+            </style>
+            <div style="height: 3000px"></div><dialog id="d"><div id="q" popover></div></dialog>"#,
+        );
+        let shot = |h: &mut Harness| png_of(&h.page("Page.captureScreenshot", json!({}))["result"]["data"]);
+        eval_value(&mut h, "scrollTo(0, 1000); d.showModal(); q.showPopover()");
+        assert_eq!(eval_value(&mut h, "scrollY"), json!(1000));
+        let img = shot(&mut h);
+        assert_eq!(pixel(&img, 165, 170), [255, 0, 0, 255], "dialog centered in the scrolled viewport");
+        assert_eq!(pixel(&img, 10, 290), [255, 255, 255, 255], "backdrop covers the viewport");
+        assert_eq!(pixel(&img, 5, 5), [0, 255, 0, 255], "the nested popover, above its dialog's backdrop");
+        assert_eq!(eval_value(&mut h, "document.elementFromPoint(5, 5).id"), "q");
+        // Hidden, the popover is not painted where its dialog would put it.
+        eval_value(&mut h, "q.hidePopover()");
+        let img = shot(&mut h);
+        assert_eq!(pixel(&img, 5, 5), [255, 255, 255, 255], "backdrop where the popover was");
+        // A full-page capture keeps the dialog on the viewport it was laid out in.
+        let r = h.page("Page.captureScreenshot", json!({"captureBeyondViewport": true}));
+        let full = png_of(&r["result"]["data"]);
+        assert!(full.height >= 3000, "{}", full.height);
+    }
+
     #[test]
     fn default_background_override_paints_under_the_document() {
         let mut h = Harness::new();

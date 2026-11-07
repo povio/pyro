@@ -142,6 +142,11 @@ impl DocumentMutator<'_> {
     }
 
     pub fn create_element(&mut self, name: QualName, attrs: Vec<Attribute>) -> NodeId {
+        // lightningpanda: the top layer is marked in lp-dom's state attribute.
+        let lp_state = attrs
+            .iter()
+            .find(|a| is_lp_state(&a.name))
+            .map(|a| a.value.clone());
         let mut data = ElementData::new(name, attrs);
         data.flush_style_attribute(self.doc.guard(), &self.doc.url.url_extra_data());
 
@@ -154,6 +159,9 @@ impl DocumentMutator<'_> {
             ..Default::default()
         };
 
+        if let Some(state) = lp_state {
+            self.doc.note_lp_state(id, Some(&state));
+        }
         id
     }
 
@@ -266,6 +274,9 @@ impl DocumentMutator<'_> {
     }
 
     pub fn set_attribute(&mut self, node_id: NodeId, name: QualName, value: &str) {
+        if is_lp_state(&name) && self.doc.nodes[node_id].is_element() {
+            self.doc.note_lp_state(node_id, Some(value));
+        }
         // lightningpanda: `:has()` anchors that can see the element follow
         // the change (`has_invalidation`); `None` (one flag test) when no
         // `:has()` search visited it.
@@ -421,6 +432,9 @@ impl DocumentMutator<'_> {
     }
 
     pub fn clear_attribute(&mut self, node_id: NodeId, name: QualName) {
+        if is_lp_state(&name) {
+            self.doc.note_lp_state(node_id, None);
+        }
         // lightningpanda: as in `set_attribute`.
         let change = crate::has_invalidation::AttributeChange::before(self.doc, node_id, &name);
         self.clear_attribute_impl(node_id, name);
@@ -625,6 +639,7 @@ impl DocumentMutator<'_> {
 
         let node = self.doc.drop_node_ignoring_parent_with(node_id, on_drop);
         self.mutations_occurred |= node_is_in_document;
+        self.doc.prune_top_layer();
 
         // Update child_idx values
         if let Some(parent_id) = node.as_ref().and_then(|node| node.parent) {
@@ -670,6 +685,7 @@ impl DocumentMutator<'_> {
             self.process_removed_subtree(child_id);
             let _ = self.doc.drop_node_ignoring_parent(child_id);
         }
+        self.doc.prune_top_layer();
         self.maybe_record_node(node_id);
     }
 
@@ -1456,6 +1472,12 @@ impl<'doc> DocumentMutator<'doc> {
 fn is_state_attribute(element: &QualName, name: &QualName) -> bool {
     (&*name.ns == crate::LP_STATE_NS && &*name.local == "state")
         || (element.local == local_name!("option") && name.local == local_name!("selected"))
+}
+
+/// lightningpanda: lp-dom's `urn:x-lightningpanda:state` `state` attribute.
+#[inline]
+fn is_lp_state(name: &QualName) -> bool {
+    &*name.local == "state" && &*name.ns == crate::LP_STATE_NS
 }
 
 /// Set 'checked' state on an input based on given attributevalue

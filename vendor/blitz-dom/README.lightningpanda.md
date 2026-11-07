@@ -178,3 +178,10 @@ Time inputs use the existing text-editor construction and intrinsic measurement 
   `custom-states` attribute instead of panicking.
 
 Covered by `crates/lp-layout/tests/has_state.rs` and `crates/lp-browser/tests/has_state.rs`.
+
+## Top layer
+
+- `src/layout/paint_tree.rs` (`note_lp_state`, `top_layer_nodes`, `top_layer_position`), `src/mutator.rs`
+  (`create_element`, `set_attribute`, `clear_attribute`, node drops), `src/document.rs` (`top_layer`): elements whose
+  `urn:x-lightningpanda:state` `state` attribute has a `top-layer=N` token (lp-dom's render tree) are kept in a list
+  sorted by `N`, maintained when that attribute changes. blitz-paint paints them above the document.
