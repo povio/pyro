@@ -129,6 +129,8 @@ pub struct Dom {
     version: u64,
     /// See `tree_version()`.
     tree_version: u64,
+    /// See `style_text_revision()`.
+    style_text_revision: u64,
     /// Bumped whenever one of the queues the embedder's post-callback hook
     /// drains gets an entry: a queued observer, iframe event, custom element
     /// reaction, upgrade candidate or slot change. A mutation alone does not
@@ -222,6 +224,7 @@ impl Dom {
             free: Vec::new(),
             version: 0,
             tree_version: 0,
+            style_text_revision: 0,
             hook_epoch: 0,
             named_item_hook: None,
             names: std::cell::RefCell::new(NameCache::default()),
@@ -417,9 +420,55 @@ impl Dom {
         self.journal.push((self.version, change));
     }
 
+    /// Bumped whenever the child text content of an HTML `<style>` element
+    /// may have changed (a child inserted or removed, a child's data
+    /// changed), and by the changes that are never refined from `Unknown`
+    /// (a document reset, a shadow root attached). With the style engine's
+    /// sheet generation and which sheets are connected, it says when the
+    /// author sheets' texts may have changed.
+    pub fn style_text_revision(&self) -> u64 {
+        self.style_text_revision
+    }
+
+    /// The [`Dom::style_text_revision`] at which the child text content of
+    /// the HTML `<style>` element `el` last changed (0: not since it was
+    /// created); `None` for a stale id or another node.
+    pub fn style_element_text_revision(&self, el: NodeId) -> Option<u64> {
+        let e = self.node(el).ok()?.element()?;
+        (e.is_html() && e.name.local == local_name!("style")).then_some(e.style_text_revision)
+    }
+
+    /// The changes no `note` refines: everything may have changed.
+    fn bump_style_text(&mut self) {
+        self.style_text_revision = self.style_text_revision.wrapping_add(1);
+    }
+
+    /// `change` changed the children of an HTML `<style>`, or a child's
+    /// data: its sheet text may differ.
+    #[inline]
+    fn note_style_text(&mut self, change: Change) {
+        let parent = match change {
+            Change::Inserted(p, _) | Change::Removed(p, _, _) => p,
+            Change::Text(i) => self.n(i).parent,
+            _ => return,
+        };
+        if parent == NIL {
+            return;
+        }
+        let revision = self.style_text_revision.wrapping_add(1);
+        if let NodeKind::Element(e) = &mut self.n_mut(parent).kind {
+            if e.is_html() && e.name.local == local_name!("style") {
+                e.style_text_revision = revision;
+                self.style_text_revision = revision;
+            }
+        }
+    }
+
     /// Refines what the latest `version` bump changed (replacing its
     /// `Unknown` entry).
     pub(crate) fn note(&mut self, change: Change) {
+        // Before the journal: an overflow may have cleared it.
+        self.note_style_text(change);
         match self.journal.last_mut() {
             Some((v, c)) if *v == self.version => *c = change,
             _ => {}
@@ -428,6 +477,7 @@ impl Dom {
 
     /// Adds another change to the latest `version` bump (after `note`).
     fn note_more(&mut self, change: Change) {
+        self.note_style_text(change);
         if self.journal.last().is_some_and(|(v, _)| *v == self.version) {
             self.push_change(change);
         }
@@ -773,6 +823,7 @@ impl Dom {
             d.quirks = QuirksMode::NoQuirks;
         }
         self.bump();
+        self.bump_style_text();
         Ok(())
     }
 
@@ -984,6 +1035,7 @@ impl Dom {
         self.n_mut(h).element_mut().unwrap().shadow_root = sr;
         self.shadow_roots = self.shadow_roots.saturating_add(1);
         self.bump();
+        self.bump_style_text();
         sr
     }
 
@@ -2711,6 +2763,32 @@ impl Dom {
                 }
             }
             cur = self.following_in(cur, root);
+        }
+        out.map_or(std::borrow::Cow::Borrowed(first), std::borrow::Cow::Owned)
+    }
+
+    /// The child text content of `id` (HTML): the data of its Text (and
+    /// CDATA) children, in order, not of deeper descendants. Borrowed while
+    /// at most one of them is non-empty; empty for a stale id.
+    pub fn child_text_content(&self, id: NodeId) -> std::borrow::Cow<'_, str> {
+        let Ok(i) = self.check(id) else { return std::borrow::Cow::Borrowed("") };
+        let mut first: &str = "";
+        let mut out: Option<String> = None;
+        let mut cur = self.n(i).first_child;
+        while cur != NIL {
+            if let NodeKind::Text(s) | NodeKind::CData(s) = &self.n(cur).kind {
+                if let Some(out) = &mut out {
+                    out.push_str(s);
+                } else if first.is_empty() {
+                    first = s;
+                } else if !s.is_empty() {
+                    let mut o = String::with_capacity(2 * (first.len() + s.len()));
+                    o.push_str(first);
+                    o.push_str(s);
+                    out = Some(o);
+                }
+            }
+            cur = self.n(cur).next;
         }
         out.map_or(std::borrow::Cow::Borrowed(first), std::borrow::Cow::Owned)
     }

@@ -908,6 +908,9 @@ impl EngineHost {
             // Blitz-backed layout queries since the last call.
             #[cfg(feature = "render")]
             "LP" if action == "geometryStats" => {
+                // The timers run from the first call on; its durations cover
+                // only what ran since (callers reset with a first call).
+                lp_render::profiling::enable();
                 let (layouts, deltas, snapshot_ms, layout_ms, read_ms) = blitz_geometry::take_stats();
                 let (mirror_ms, settle_ms, resolve_ms) = lp_render::sync_profile::take();
                 // Blitz counters are cumulative on this browser thread. Unlike
@@ -950,6 +953,12 @@ impl EngineHost {
             "Log" if matches!(action, "enable" | "disable") => Ok(Some(serde_json::json!({}))),
             // puppeteer enables both on every page; there are no issues to
             // report.
+            // `Performance.getMetrics` reports durations, timed from here on.
+            #[cfg(feature = "render")]
+            "Performance" if action == "enable" => {
+                lp_render::profiling::enable();
+                Ok(Some(serde_json::json!({})))
+            }
             "Audits" | "Performance" if matches!(action, "enable" | "disable") => Ok(Some(serde_json::json!({}))),
             #[cfg(feature = "render")]
             "Performance" if action == "getMetrics" => self.performance_metrics(cmd).map(Some),

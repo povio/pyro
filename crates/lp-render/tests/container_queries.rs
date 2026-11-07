@@ -136,12 +136,12 @@ fn style_only_reads_without_container_queries_never_force_layout() {
     );
     doc.resolve(0.0);
     assert_eq!(size(&doc, "#target"), (80.0, 20.0));
-    let before = lp_render::blitz_phases()[4];
+    let before = lp_render::blitz_passes().1;
     let target = doc.query_selector("#target").unwrap().unwrap();
     doc.set_style_property(target, "width", "120px");
     doc.resolve_style(0.0);
     assert!(doc.get_node(target).unwrap().primary_styles().is_some());
-    assert_eq!(lp_render::blitz_phases()[4], before);
+    assert_eq!(lp_render::blitz_passes().1, before);
     assert_eq!(size(&doc, "#target"), (80.0, 20.0));
     doc.resolve(0.0);
     assert_eq!(size(&doc, "#target"), (120.0, 20.0));
@@ -156,9 +156,9 @@ fn removing_and_readding_container_rules_updates_style_only_layout_dependencies(
     let style_node = doc.query_selector("style").unwrap().unwrap();
     let plain = doc.make_stylesheet("#target{width:10px;height:20px}", style::stylesheets::Origin::Author);
     doc.add_stylesheet_for_node(plain, style_node);
-    let before = lp_render::blitz_phases()[4];
+    let before = lp_render::blitz_passes().1;
     doc.resolve_style(0.0);
-    assert_eq!(lp_render::blitz_phases()[4], before, "removing the last query must restore style-only resolution");
+    assert_eq!(lp_render::blitz_passes().1, before, "removing the last query must restore style-only resolution");
     assert_eq!(size(&doc, "#target"), (80.0, 20.0));
     doc.resolve(0.0);
     assert_eq!(size(&doc, "#target"), (10.0, 20.0));
@@ -201,9 +201,9 @@ fn style_queries_on_normal_containers_preserve_style_only_no_layout() {
     assert_eq!(size(&doc, "#target"), (80.0, 30.0));
     let target = doc.query_selector("#target").unwrap().unwrap();
     doc.set_style_property(target, "width", "120px");
-    let before = lp_render::blitz_phases()[4];
+    let before = lp_render::blitz_passes().1;
     doc.resolve_style(0.0);
-    assert_eq!(lp_render::blitz_phases()[4], before);
+    assert_eq!(lp_render::blitz_passes().1, before);
     assert_eq!(size(&doc, "#target"), (80.0, 30.0));
     doc.resolve(0.0);
     assert_eq!(size(&doc, "#target"), (120.0, 30.0));
@@ -215,13 +215,13 @@ fn clean_container_query_style_reads_reuse_layout_until_geometry_dependencies_ch
     doc.viewport_mut().window_size = (800, 600);
     doc.resolve(0.0);
     let generation = doc.tree().geometry_generation();
-    let layout_phase = lp_render::blitz_phases()[4];
+    let layout_passes = lp_render::blitz_passes().1;
     for _ in 0..3 {
         doc.resolve_style(0.0);
     }
     assert_eq!(
-        (doc.tree().geometry_generation(), lp_render::blitz_phases()[4]),
-        (generation, layout_phase),
+        (doc.tree().geometry_generation(), lp_render::blitz_passes().1),
+        (generation, layout_passes),
         "clean style reads must reuse geometry without running layout",
     );
     assert_eq!(size(&doc, "#target"), (80.0, 20.0));
@@ -236,11 +236,11 @@ fn clean_container_query_style_reads_reuse_layout_until_geometry_dependencies_ch
 
     doc.set_style_property(outer, "display", "none");
     doc.resolve_style(0.0);
-    let hidden_clean = (doc.tree().geometry_generation(), lp_render::blitz_phases()[4]);
+    let hidden_clean = (doc.tree().geometry_generation(), lp_render::blitz_passes().1);
     for _ in 0..3 {
         doc.resolve_style(0.0);
     }
-    assert_eq!((doc.tree().geometry_generation(), lp_render::blitz_phases()[4]), hidden_clean);
+    assert_eq!((doc.tree().geometry_generation(), lp_render::blitz_passes().1), hidden_clean);
     doc.set_style_property(outer, "display", "block");
     doc.resolve_style(0.0);
     assert_eq!(size(&doc, "#target"), (10.0, 20.0));

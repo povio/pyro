@@ -62,7 +62,7 @@ struct Timeline {
 #[derive(Default)]
 pub(crate) struct State {
     /// The sheets' key and the rules read from them.
-    rules: RefCell<Option<(u64, Rc<TimingRules>)>>,
+    rules: RefCell<Option<(lp_dom::style::AuthorSheetsKey, Rc<TimingRules>)>>,
     /// The style stamp the rules' key was last computed at.
     rules_stamp: Cell<Option<Stamp>>,
     /// The style stamp of the last frame update.
@@ -237,7 +237,7 @@ fn update(page: &Rc<PageDom>) {
                 state.observed.borrow_mut().remove(&el);
                 continue;
             }
-            style_change(state, &dom, style, &rules, el, &mut planned);
+            style_change(state, &dom, style, Some(&rules), el, &mut planned);
         }
         state.transitions.borrow_mut().retain(|t| t.live.get() && !t.ended.get() && dom.is_alive(t.el));
     }
@@ -262,8 +262,9 @@ pub(crate) fn observe(page: &Rc<PageDom>, el: NodeId) {
         if !dom.is_connected(el).unwrap_or(false) {
             return;
         }
-        let rules = state.rules(&dom, style);
-        style_change(state, &dom, style, &rules, el, &mut planned);
+        // The rules are read only once the element's style is known to have
+        // changed: a first observation never needs them.
+        style_change(state, &dom, style, None, el, &mut planned);
     }
     // Events never fire inside the read itself.
     schedule(page, planned, true);
@@ -271,12 +272,13 @@ pub(crate) fn observe(page: &Rc<PageDom>, el: NodeId) {
 
 /// A style change event of `el`: the properties of its transition list whose
 /// computed value differs from the before-change style start transitions,
-/// and the current style becomes the before-change style.
+/// and the current style becomes the before-change style. `rules` is read
+/// from the sheets when not given, and only if the style changed.
 fn style_change(
     state: &State,
     dom: &lp_dom::Dom,
     style: &lp_dom::style::StyleEngine,
-    rules: &TimingRules,
+    rules: Option<&TimingRules>,
     el: NodeId,
     planned: &mut Vec<Planned>,
 ) {
@@ -293,6 +295,14 @@ fn style_change(
         observed.insert(el, (now.clone(), stamp)).map(|(before, _)| before)
     };
     let Some(before) = before.filter(|before| !StyleSnapshot::ptr_eq(before, &now)) else { return };
+    let read;
+    let rules = match rules {
+        Some(rules) => rules,
+        None => {
+            read = state.rules(dom, style);
+            &*read
+        }
+    };
     let ElementTiming { transitions, .. } = rules.element(dom, el);
     let mut started: Vec<&'static str> = Vec::new();
     for transition in &transitions {

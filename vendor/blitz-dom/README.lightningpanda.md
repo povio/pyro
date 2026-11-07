@@ -131,6 +131,11 @@ lp-render's mirror tests (incremental documents against fresh builds after rando
 
 `BaseDocument::set_layout_size` lays out at a fractional CSS size instead of the viewport's whole pixels (`make_device`); printing uses it for the paper's content box.
 
+`src/resolve.rs` (`phase_profile`): cumulative time per `resolve` phase and counters (resolves, restyles,
+rebuilds, tables, rounding) read by lp-render's profiling. The phase timers run only while
+`phase_profile::set_timing(true)` (lp-render's `profiling::enable`, turned on by `LP.geometryStats`,
+`Performance.enable` and `LP_GEOMETRY_PROFILE`) is on: `mark` is a no-op otherwise. The counters always count.
+
 ## Inline layouts in vertical writing modes
 
 Layout keeps a vertical inline root's lines logical (x inline, y block). `Node::vertical_block_axis` says which
