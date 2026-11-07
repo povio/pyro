@@ -62,6 +62,63 @@ self.addEventListener('message', async (e) => {
 });
 "#;
 
+/// A worker for `/nav/`: answers the document `/nav/doc` and its script,
+/// stylesheet and iframe, records every fetch event, and leaves the rest
+/// (`/nav/net`, the image) to the network.
+const NAV_SW: &str = r#"
+self.addEventListener('install', (e) => e.waitUntil(self.skipWaiting()));
+self.addEventListener('activate', (e) => e.waitUntil(self.clients.claim()));
+const seen = [];
+const html = { 'content-type': 'text/html' };
+self.addEventListener('fetch', (e) => {
+  const r = e.request;
+  const path = new URL(r.url).pathname;
+  if (path === '/nav/seen') {
+    e.respondWith((async () => {
+      const doc = seen.find((s) => s.path === '/nav/doc');
+      const client = doc && await self.clients.get(doc.resulting);
+      return new Response(JSON.stringify({ seen, client: client ? client.url : null }));
+    })());
+    return;
+  }
+  seen.push({ path, mode: r.mode, destination: r.destination, client: e.clientId, resulting: e.resultingClientId });
+  if (path === '/nav/doc') {
+    e.respondWith(new Response('<!doctype html><title>from sw</title><link rel=stylesheet href="/nav/style.css"><p id=p>doc</p><img src="/nav/img.png"><iframe src="/nav/frame"></iframe><script src="/nav/script.js"></script>', { headers: html }));
+  } else if (path === '/nav/script.js') {
+    e.respondWith(new Response('window.scripted = "sw script";', { headers: { 'content-type': 'text/javascript' } }));
+  } else if (path === '/nav/style.css') {
+    e.respondWith(new Response('#p { color: rgb(1, 2, 3) }', { headers: { 'content-type': 'text/css' } }));
+  } else if (path === '/nav/frame') {
+    e.respondWith(new Response('<!doctype html><p>framed by sw</p>', { headers: html }));
+  } else if (path === '/nav/fetched') {
+    e.respondWith(fetch(r));
+  }
+});
+"#;
+
+/// A worker that fills a cache while installing and answers from it.
+const CACHE_SW: &str = r#"
+self.addEventListener('install', (e) => e.waitUntil(caches.open('sw').then((c) => c.addAll(['/real'])).then(() => self.skipWaiting())));
+self.addEventListener('activate', (e) => e.waitUntil(self.clients.claim()));
+self.addEventListener('fetch', (e) => {
+  const path = new URL(e.request.url).pathname;
+  if (path === '/cached') {
+    e.respondWith(caches.match('/real'));
+  } else if (path === '/cache-put') {
+    e.respondWith(caches.open('sw').then((c) => c.put('/from-sw', new Response('sw put', { headers: { 'x-sw': '1' } })))
+      .then(() => new Response('stored')));
+  } else if (path === '/offline-doc') {
+    e.respondWith(caches.match('/offline-doc').then((r) => r || fetch(e.request)));
+  }
+});
+"#;
+
+/// A dedicated worker that stores a response in the shared caches.
+const CACHES_WORKER: &str = r#"
+caches.open('worker').then((c) => c.put('/from-worker', new Response('worker put')))
+  .then(() => caches.keys()).then((names) => postMessage(names.join()), (e) => postMessage('error:' + e.name));
+"#;
+
 /// A dedicated worker that answers on transferred ports and streams.
 const PORTS_WORKER: &str = r#"
 onmessage = async (e) => {
@@ -154,6 +211,24 @@ impl Server {
                           </script>",
                     ),
                     "/sw.js" => respond(&mut stream, "200 OK", &js, SW.as_bytes()),
+                    "/cache-sw.js" => respond(&mut stream, "200 OK", &js, CACHE_SW.as_bytes()),
+                    "/caches-worker.js" => respond(&mut stream, "200 OK", &js, CACHES_WORKER.as_bytes()),
+                    "/sandboxed-caches" => respond(
+                        &mut stream,
+                        "200 OK",
+                        &[("Content-Type", "text/html")],
+                        b"<!doctype html><script>
+                          let access; try { access = typeof caches; } catch (e) { access = e.name; }
+                          parent.postMessage(access, '*');
+                          </script>",
+                    ),
+                    "/nav-sw.js" => respond(&mut stream, "200 OK", &js, NAV_SW.as_bytes()),
+                    p if p.starts_with("/nav/") => respond(
+                        &mut stream,
+                        "200 OK",
+                        &[("Content-Type", "text/html")],
+                        b"<!doctype html><title>network</title><p>network</p>",
+                    ),
                     "/mockServiceWorker.js" => respond(&mut stream, "200 OK", &js, MSW.as_bytes()),
                     "/sub/sw.js" => respond(&mut stream, "200 OK", &js, SW.as_bytes()),
                     "/sub/allowed.js" => respond(
@@ -683,4 +758,256 @@ fn a_full_port_queue_throws_before_the_transfer_list_is_consumed() {
     );
     until(&mut thread, page, "log.length === 1");
     assert_eq!(eval(&thread, page, "result + '|' + log[0]"), "DataCloneError:8|kept");
+}
+
+/// Registers /nav-sw.js for /nav/ from `page` and waits for it to be active.
+fn register_nav(thread: &mut BrowserThread, page: PageId) {
+    eval(thread, page, "navigator.serviceWorker.register('/nav-sw.js', {scope: '/nav/'}).then((r) => globalThis.navReg = r); 'ok'");
+    until(thread, page, "globalThis.navReg !== undefined && navReg.active !== null && navReg.active.state === 'activated'");
+}
+
+#[test]
+fn service_worker_answers_navigations_and_subresources() {
+    let (server, mut thread) = setup();
+    let page = open(&mut thread, &server, "/page");
+    register_nav(&mut thread, page);
+
+    // The document, its stylesheet, script and iframe come from the worker.
+    navigate(&mut thread, &server, page, "/nav/doc");
+    assert_eq!(eval(&thread, page, "document.title"), "from sw");
+    assert_eq!(server.hits("/nav/doc"), 0);
+    until(&mut thread, page, "globalThis.scripted === 'sw script'");
+    assert_eq!(eval(&thread, page, "getComputedStyle(document.getElementById('p')).color"), "rgb(1, 2, 3)");
+    until(&mut thread, page, "document.querySelector('iframe').contentDocument?.body?.textContent === 'framed by sw'");
+    assert_eq!(server.hits("/nav/script.js") + server.hits("/nav/style.css") + server.hits("/nav/frame"), 0);
+    assert_eq!(eval(&thread, page, "String(navigator.serviceWorker.controller !== null)"), "true");
+    assert_eq!(
+        eval(&thread, page, "String(document.querySelector('iframe').contentWindow.navigator.serviceWorker.controller !== null)"),
+        "true"
+    );
+
+    // What the worker saw: modes, destinations and client ids.
+    eval(&thread, page, "fetch('/nav/seen').then((r) => r.json()).then((j) => globalThis.seen = j); 'ok'");
+    until(&mut thread, page, "globalThis.seen !== undefined && seen.seen.some((s) => s.path === '/nav/img.png')");
+    let by = |path: &str, field: &str| {
+        eval(&thread, page, &format!("String(seen.seen.find((s) => s.path === '{path}').{field})"))
+    };
+    assert_eq!(by("/nav/doc", "mode"), "navigate");
+    assert_eq!(by("/nav/doc", "destination"), "document");
+    assert_eq!(by("/nav/doc", "client"), "");
+    let resulting = by("/nav/doc", "resulting");
+    assert_eq!(resulting.len(), 36, "{resulting}");
+    assert_eq!(eval(&thread, page, "seen.client"), format!("{}/nav/doc", server.origin));
+    assert_eq!(by("/nav/script.js", "destination"), "script");
+    assert_eq!(by("/nav/script.js", "mode"), "no-cors");
+    assert_eq!(by("/nav/script.js", "client"), resulting);
+    assert_eq!(by("/nav/style.css", "destination"), "style");
+    assert_eq!(by("/nav/style.css", "client"), resulting);
+    assert_eq!(by("/nav/img.png", "destination"), "image");
+    assert_eq!(by("/nav/frame", "mode"), "navigate");
+    assert_eq!(by("/nav/frame", "destination"), "iframe");
+    assert_ne!(by("/nav/frame", "resulting"), resulting);
+    // The image was not answered: it went to the network.
+    assert_eq!(server.hits("/nav/img.png"), 1);
+
+    // A navigation the worker leaves alone, or answers with fetch(), goes to the network.
+    navigate(&mut thread, &server, page, "/nav/net");
+    assert_eq!(eval(&thread, page, "document.title"), "network");
+    assert_eq!(eval(&thread, page, "String(navigator.serviceWorker.controller !== null)"), "true");
+    navigate(&mut thread, &server, page, "/nav/fetched");
+    assert_eq!(eval(&thread, page, "document.title"), "network");
+    assert_eq!(server.hits("/nav/fetched"), 1);
+}
+
+#[test]
+fn bypassing_service_workers_skips_navigations_and_subresources() {
+    let (server, mut thread) = setup();
+    let page = open(&mut thread, &server, "/page");
+    register_nav(&mut thread, page);
+    assert!(thread.browser.set_bypass_service_worker(page, true));
+    navigate(&mut thread, &server, page, "/nav/doc");
+    assert_eq!(eval(&thread, page, "document.title"), "network");
+    assert_eq!(server.hits("/nav/doc"), 1);
+    eval(
+        &thread,
+        page,
+        "const s = document.createElement('script'); s.src = '/nav/script.js';
+         s.onload = s.onerror = () => globalThis.loaded = String(globalThis.scripted);
+         document.head.append(s); 'ok'",
+    );
+    until(&mut thread, page, "globalThis.loaded !== undefined");
+    assert_eq!(eval(&thread, page, "loaded"), "undefined");
+    assert_eq!(server.hits("/nav/script.js"), 1);
+}
+
+const CACHE_API: &str = r#"
+globalThis.out = {};
+(async () => {
+  const c = await caches.open('v1');
+  out.same = (await caches.open('v1')) !== c;
+  await c.put('/a?x=1#frag', new Response('A', { headers: { 'content-type': 'text/plain', 'x-h': '1' } }));
+  await c.put(new Request('/b', { headers: { accept: 'x' } }), new Response('B', { headers: { vary: 'Accept' } }));
+  const r = await c.match('/a?x=1');
+  out.text = await r.text() + '|' + r.type + '|' + r.headers.get('x-h') + '|' + r.status + '|' + r.url;
+  out.blob = (await (await c.match('/a?x=1')).blob()).type;
+  out.noSearch = String(await c.match('/a'));
+  out.ignoreSearch = await (await c.match('/a', { ignoreSearch: true })).text();
+  out.vary = String(await c.match('/b'));
+  out.varyMatch = await (await c.match(new Request('/b', { headers: { accept: 'x' } }))).text();
+  out.ignoreVary = await (await c.match('/b', { ignoreVary: true })).text();
+  out.post = String(await c.match(new Request('/a?x=1', { method: 'POST' })));
+  out.ignoreMethod = await (await c.match(new Request('/a?x=1', { method: 'POST' }), { ignoreMethod: true })).text();
+  out.keys = (await c.keys()).map((k) => { const u = new URL(k.url); return u.pathname + u.search; }).join();
+  out.keyHeader = (await c.keys('/b', { ignoreVary: true }))[0].headers.get('accept');
+  out.all = (await c.matchAll()).length + ':' + (await c.matchAll('/a', { ignoreSearch: true })).length;
+  await c.put('/a?x=1', new Response('A2'));
+  out.replaced = (await c.matchAll()).length + ':' + await (await c.match('/a?x=1')).text();
+  await c.add('/real');
+  const network = await caches.match('/real');
+  out.added = await network.text() + '|' + network.type + '|' + network.url.endsWith('/real');
+  out.addFail = await c.add('/missing').then(() => 'ok', (e) => e.name);
+  out.dup = await c.addAll(['/page', '/page']).then(() => 'ok', (e) => e.name);
+  out.dupKept = String(await c.match('/page'));
+  out.putPost = await c.put(new Request('/p', { method: 'POST', body: 'x' }), new Response('')).then(() => 'ok', (e) => e.name);
+  out.putScheme = await c.put('data:text/plain,x', new Response('')).then(() => 'ok', (e) => e.name);
+  out.putVary = await c.put('/v', new Response('', { headers: { vary: '*' } })).then(() => 'ok', (e) => e.name);
+  const used = new Response('used'); await used.text();
+  out.putUsed = await c.put('/u', used).then(() => 'ok', (e) => e.name);
+  out.noArgs = await c.match().then(() => 'ok', (e) => e.name);
+  out.del = await c.delete('/a?x=1') + ':' + await c.delete('/a?x=1');
+  out.names = (await caches.keys()).join();
+  await caches.open('v2');
+  out.names2 = (await caches.keys()).join();
+  out.has = await caches.has('v1') + ':' + await caches.has('nope');
+  out.matchName = String(await caches.match('/real', { cacheName: 'nope' })) + ':' + await (await caches.match('/real', { cacheName: 'v1' })).text();
+  out.deleted = await caches.delete('v1') + ':' + await caches.delete('v1');
+  out.after = (await caches.keys()).join();
+  out.orphan = await (await c.match('/real')).text();
+  out.ifaces = [typeof Cache, typeof CacheStorage, caches instanceof CacheStorage, c instanceof Cache, caches === caches,
+    Object.prototype.toString.call(c)].join();
+  out.illegal = (() => { try { new Cache(); return 'ok'; } catch (e) { return e.name; } })();
+  out.done = true;
+})().catch((e) => { out.error = e.name + ':' + e.message; out.done = true; });
+"#;
+
+#[test]
+fn cache_storage_api() {
+    let (server, mut thread) = setup();
+    let page = open(&mut thread, &server, "/page");
+    eval(&thread, page, CACHE_API);
+    until(&mut thread, page, "out.done === true");
+    let get = |k: &str| eval(&thread, page, &format!("String(out.{k})"));
+    assert_eq!(get("error"), "undefined");
+    assert_eq!(get("same"), "true");
+    assert_eq!(get("text"), "A|default|1|200|");
+    assert_eq!(get("blob"), "text/plain");
+    assert_eq!(get("noSearch"), "undefined");
+    assert_eq!(get("ignoreSearch"), "A");
+    assert_eq!(get("vary"), "undefined");
+    assert_eq!(get("varyMatch"), "B");
+    assert_eq!(get("ignoreVary"), "B");
+    assert_eq!(get("post"), "undefined");
+    assert_eq!(get("ignoreMethod"), "A");
+    assert_eq!(get("keys"), "/a?x=1,/b");
+    assert_eq!(get("keyHeader"), "x");
+    assert_eq!(get("all"), "2:1");
+    assert_eq!(get("replaced"), "2:A2");
+    assert_eq!(get("added"), "from network|basic|true");
+    assert_eq!(server.hits("/real"), 1);
+    assert_eq!(get("addFail"), "TypeError");
+    assert_eq!(get("dup"), "InvalidStateError");
+    assert_eq!(get("dupKept"), "undefined");
+    assert_eq!(get("putPost"), "TypeError");
+    assert_eq!(get("putScheme"), "TypeError");
+    assert_eq!(get("putVary"), "TypeError");
+    assert_eq!(get("putUsed"), "TypeError");
+    assert_eq!(get("noArgs"), "TypeError");
+    assert_eq!(get("del"), "true:false");
+    assert_eq!(get("names"), "v1");
+    assert_eq!(get("names2"), "v1,v2");
+    assert_eq!(get("has"), "true:false");
+    assert_eq!(get("matchName"), "undefined:from network");
+    assert_eq!(get("deleted"), "true:false");
+    assert_eq!(get("after"), "v2");
+    assert_eq!(get("orphan"), "from network");
+    assert_eq!(get("ifaces"), "function,function,true,true,true,[object Cache]");
+    assert_eq!(get("illegal"), "TypeError");
+
+    // The context's documents share the origin's caches, across navigation.
+    eval(&thread, page, "caches.open('v2').then((c) => c.put('/kept', new Response('kept'))).then(() => globalThis.kept = 1); 'ok'");
+    until(&mut thread, page, "globalThis.kept === 1");
+    navigate(&mut thread, &server, page, "/page2");
+    eval(&thread, page, "caches.match('/kept').then((r) => r.text()).then((t) => globalThis.kept = t); 'ok'");
+    until(&mut thread, page, "globalThis.kept !== undefined");
+    assert_eq!(eval(&thread, page, "kept"), "kept");
+    // So do the dedicated workers they start.
+    eval(&thread, page, "new Worker('/caches-worker.js').onmessage = (e) => globalThis.fromWorker = e.data; 'ok'");
+    until(&mut thread, page, "globalThis.fromWorker !== undefined");
+    assert_eq!(eval(&thread, page, "fromWorker"), "v2,worker");
+    eval(&thread, page, "caches.match('/from-worker').then((r) => r.text()).then((t) => globalThis.workerPut = t); 'ok'");
+    until(&mut thread, page, "globalThis.workerPut !== undefined");
+    assert_eq!(eval(&thread, page, "workerPut"), "worker put");
+    // Another context starts empty.
+    let other = thread.browser.create_context().unwrap();
+    let isolated = thread.browser.create_page_in(other).unwrap();
+    thread.browser.navigate(isolated, NavigateOpts::address_bar(format!("{}/page", server.origin))).unwrap();
+    until(&mut thread, isolated, "location.pathname === '/page' && document.readyState === 'complete'");
+    eval(&thread, isolated, "caches.keys().then((k) => globalThis.names = k.length); 'ok'");
+    until(&mut thread, isolated, "globalThis.names !== undefined");
+    assert_eq!(eval(&thread, isolated, "String(names)"), "0");
+}
+
+#[test]
+fn service_worker_and_page_share_cache_storage() {
+    let (server, mut thread) = setup();
+    let page = open(&mut thread, &server, "/page");
+    eval(&thread, page, "navigator.serviceWorker.register('/cache-sw.js'); 'ok'");
+    until(&mut thread, page, "navigator.serviceWorker.controller !== null && navigator.serviceWorker.controller.state === 'activated'");
+    // The worker's install filled a cache the page sees.
+    eval(&thread, page, "caches.match('/real').then((r) => r.text()).then((t) => globalThis.pre = t); 'ok'");
+    until(&mut thread, page, "globalThis.pre !== undefined");
+    assert_eq!(eval(&thread, page, "pre"), "from network");
+    assert_eq!(server.hits("/real"), 1);
+    // The worker answers from it, and stores what the page then reads.
+    eval(&thread, page, "fetch('/cached').then((r) => r.text()).then((t) => globalThis.cached = t); 'ok'");
+    until(&mut thread, page, "globalThis.cached !== undefined");
+    assert_eq!(eval(&thread, page, "cached"), "from network");
+    assert_eq!(server.hits("/real"), 1);
+    eval(
+        &thread,
+        page,
+        "fetch('/cache-put').then(() => caches.open('sw')).then((c) => c.match('/from-sw'))
+           .then((r) => r.text().then((t) => globalThis.swPut = t + '|' + r.headers.get('x-sw'))); 'ok'",
+    );
+    until(&mut thread, page, "globalThis.swPut !== undefined");
+    assert_eq!(eval(&thread, page, "swPut"), "sw put|1");
+    // A document the page cached is the worker's answer to its navigation.
+    eval(
+        &thread,
+        page,
+        "caches.open('sw').then((c) => c.put('/offline-doc', new Response('<!doctype html><title>offline</title>', { headers: { 'content-type': 'text/html' } })))
+           .then(() => globalThis.stored = true); 'ok'",
+    );
+    until(&mut thread, page, "globalThis.stored === true");
+    navigate(&mut thread, &server, page, "/offline-doc");
+    assert_eq!(eval(&thread, page, "document.title"), "offline");
+    assert_eq!(server.hits("/offline-doc"), 0);
+}
+
+#[test]
+fn sandboxed_frame_has_no_cache_storage() {
+    let (server, mut thread) = setup();
+    let page = open(&mut thread, &server, "/page");
+    assert_eq!(eval(&thread, page, "typeof caches"), "object");
+    eval(
+        &thread,
+        page,
+        "addEventListener('message', (e) => globalThis.sandboxed = e.data);
+         const f = document.createElement('iframe');
+         f.setAttribute('sandbox', 'allow-scripts');
+         f.src = '/sandboxed-caches';
+         document.body.append(f); 'ok'",
+    );
+    until(&mut thread, page, "globalThis.sandboxed !== undefined");
+    assert_eq!(eval(&thread, page, "sandboxed"), "SecurityError");
 }

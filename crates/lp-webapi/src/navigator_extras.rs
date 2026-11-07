@@ -229,6 +229,12 @@ pub struct GeolocationFix {
 }
 
 impl ContextServices {
+    /// Whether loads of this context's frames may go through a service
+    /// worker (it has registrations): the one test a load pays otherwise.
+    pub fn may_route_loads(&self) -> bool {
+        self.service_workers.has_registrations()
+    }
+
     /// `Browser.grantPermissions`: `names` (permission names as
     /// `navigator.permissions.query` takes them) become granted for
     /// `origin` (`None`: every origin) and the rest denied.

@@ -48,6 +48,8 @@ pub(crate) struct FetchJob {
     pub sink: Option<ResponseSink>,
     pub net: NetClient,
     pub client_id: String,
+    /// A navigation's: the id of the client it creates.
+    pub resulting_client_id: String,
     /// A `fetch` event has it: dropping it unanswered is a network error.
     pub dispatched: bool,
 }
@@ -428,8 +430,8 @@ pub(crate) fn fetch(s: &Scope<'_>, mut job: FetchJob) {
         Err(_) => return,
     };
     let key = next_key();
-    let client = job.client_id.clone();
+    let (client, resulting) = (job.client_id.clone(), job.resulting_client_id.clone());
     job.dispatched = true;
     PENDING.with(|p| p.borrow_mut().insert(key, job));
-    call(s, "dispatchFetch", &[s.number(key as f64), value, s.string(&client), s.string("")]);
+    call(s, "dispatchFetch", &[s.number(key as f64), value, s.string(&client), s.string(&resulting)]);
 }

@@ -4,7 +4,8 @@
 lifecycle, clients, request routing), `service_worker.js` (the page's
 `navigator.serviceWorker`, `ServiceWorkerRegistration`, `ServiceWorker`),
 `service_worker_scope.rs` and `service_worker_scope.js` (the worker's
-`ServiceWorkerGlobalScope`). Enough of the Service Workers spec for real apps
+`ServiceWorkerGlobalScope`), `cache_storage.rs` and `cache_storage.js` (Cache
+Storage). Enough of the Service Workers spec for real apps
 and for MSW (Mock Service Worker) browser mode, whose unmodified
 `mockServiceWorker.js` and `setupWorker()` run and mock `fetch()` and XHR.
 
@@ -15,6 +16,12 @@ and for MSW (Mock Service Worker) browser mode, whose unmodified
   module is compiled on a realm's first use of one of them.
 - A request of a document that no worker controls pays one flag test
   (`PageDom::sw_controlled`) in `fetch()`/XHR.
+- A loader fetch (navigation or subresource) in a browser context without
+  registrations pays one emptiness test (`ContextServices::may_route_loads`);
+  with registrations, a subresource pays the requesting document's flag test
+  and a navigation the scope match of its URL.
+- `caches`, `Cache` and `CacheStorage` are lazy too: `cache_storage.js` is
+  compiled on a realm's first use of one of them.
 - A new document pays one emptiness test of its context's registrations;
   disposal one `Option` test.
 
@@ -76,9 +83,24 @@ and `clients.openWindow()` reject.
 ## Requests
 
 A controlled document's `fetch()` and asynchronous XHR to http(s) URLs become
-`fetch` events of its controller. The event's `request` has the request's
-method, URL, headers, body, `mode`, `credentials`, `cache`, `redirect`,
-`referrer`, `referrerPolicy` and `destination`; `clientId` is the document's.
+`fetch` events of its controller, and so do the requests the loader makes for
+it: classic and module scripts (`script`, module ones `cors`), stylesheets
+(`style`), images, fonts, audio and video, preloads and downloads. The
+event's `request` has the request's method, URL, headers, body, `mode`,
+`credentials`, `cache`, `redirect`, `referrer`, `referrerPolicy` and
+`destination`; `clientId` is the document's.
+
+Navigations: a top-level or iframe navigation (form POSTs included) to a URL
+in the scope of a registration with an active worker is a `fetch` event of
+that worker, whether or not the navigating frame was controlled: `mode` is
+`navigate`, `destination` `document` or `iframe`, `clientId` empty and
+`resultingClientId` the id of the client the navigation creates, which is the
+new document's (`clients.get(resultingClientId)` finds it once it exists).
+The response of `respondWith` becomes the document (its URL is the
+response's, or the request's for a script-made one); without `respondWith` the
+navigation goes to the network. The new document is controlled by the worker
+of its URL's registration, as before. `fetch(event.request)` in the worker
+fetches a navigation request as one (no CORS, a `basic` response).
 
 - `respondWith(response | promise)`: the response's body is read whole and
   answers the request with its status, status text, headers and type (an
@@ -120,21 +142,51 @@ connection when the browser-level `Target.setAutoAttach` is on), with the
 `context.on('serviceworker')`, `context.serviceWorkers()` and
 `serviceWorker.evaluate()` work. Its target id starts with `SW`.
 
-`Network.setBypassServiceWorker` on a page session makes that page's fetch()
-and XHR (all frames, across navigation) skip the worker, as Playwright's
+`Network.setBypassServiceWorker` on a page session makes that page's
+navigations, subresources, fetch() and XHR (all frames, across navigation)
+skip the worker, as Playwright's
 `serviceWorkers: 'block'` and its storage-state page expect. Promises of
 `navigator.serviceWorker` settle in the world that made the call, so
 isolated worlds (Playwright's utility world) can use it too.
 
+## Cache Storage
+
+`caches` (on windows, dedicated workers and service workers), `CacheStorage`
+(`open`, `has`, `delete`, `keys`, `match` with `cacheName`) and `Cache`
+(`match`, `matchAll`, `add`, `addAll`, `put`, `delete`, `keys`, with
+`ignoreSearch`, `ignoreMethod` and `ignoreVary`):
+
+- In memory, per browser context and origin, in the context's local storage
+  partition like [IndexedDB](INDEXEDDB.md): the context's documents, frames,
+  worlds, dedicated workers and service workers of one origin share the
+  caches; they survive navigation; another context starts empty; nothing is
+  written to disk. Cache names keep their creation order.
+- Entries keep insertion order; a `put` replaces the entries its request
+  matches (Vary included) and appends. `put`, `add` and `addAll` read the
+  response body whole; `addAll` stores all or nothing (a duplicate request is
+  an InvalidStateError). The checks and errors are the spec's: GET and
+  http(s) only, no 206, no `Vary: *`, no used body, and for `add`/`addAll`
+  an ok response.
+- A matched response is a new `Response` with the stored type (`default`,
+  `basic`, `cors`, `opaque`, ...), URL, status, status text, headers and
+  body; `keys()` gives new `Request`s with the stored URL, method and headers.
+  A `Cache` object keeps working after `caches.delete()` dropped its name.
+- `caches` is `undefined` outside secure contexts and throws a SecurityError
+  in a document with an opaque origin (a frame sandboxed without
+  `allow-same-origin`), as in Chromium.
+- `add`/`addAll` fetch with the realm's `fetch` as it was when the module was
+  made. No quota, no persistence, no CDP `CacheStorage` domain.
+
 ## Not supported
 
-- Navigation requests and the document's subresources (scripts, stylesheets,
-  images, iframes) do not go through the worker; nor do requests of dedicated
-  workers a controlled page starts.
+- Requests of dedicated workers a controlled page starts (their scripts and
+  their own fetches) do not go through the worker. A redirect the worker
+  answers a navigation with (`Response.redirect()`) commits as a document
+  instead of being followed.
 - Responses are read whole before the page sees them (no streaming from the
   worker); `FetchEvent.preloadResponse` is always `undefined`, and navigation
   preload does nothing.
-- No Cache Storage (`caches`), Push, Background Sync, Notifications from the
+- No Push, Background Sync, Notifications from the
   worker, or idle termination of a worker.
 - A worker's `registration.update()` does nothing; `clients.matchAll` and
   `claim()` see the documents that are clients (above), not every document of
@@ -143,6 +195,8 @@ isolated worlds (Playwright's utility world) can use it too.
 - A page that touches `navigator.serviceWorker` in an isolated world gets its
   updates in the main world only.
 
-Tests: `crates/lp-browser/tests/service_worker.rs` (lifecycle, interception,
-messages and ports, registration errors, MSW's real worker script),
+Tests: `crates/lp-browser/tests/service_worker.rs` (lifecycle, interception of
+fetch/XHR, navigations and subresources, bypass, Cache Storage in pages,
+workers and service workers, messages and ports, registration errors, MSW's
+real worker script),
 `tests/e2e/msw.mjs` (msw 2.15.0's `setupWorker` through Playwright).

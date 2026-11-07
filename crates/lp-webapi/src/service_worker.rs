@@ -29,10 +29,15 @@
 //! client is controlled by them any more.
 //!
 //! Requests: [`route`] is what `fetch()` and asynchronous XHR call instead of
-//! the network. For a document that no worker controls it costs one flag
-//! test. A controlled document's http(s) requests become `fetch` events of its
-//! controller (see `service_worker_scope`); synchronous XHR bypasses the
-//! worker, which may need the blocked thread to answer.
+//! the network, and [`subresource_route`] what the loader asks for a
+//! document's scripts, stylesheets, images and other loads. For a document
+//! that no worker controls it costs one flag test. A controlled document's
+//! http(s) requests become `fetch` events of its controller (see
+//! `service_worker_scope`); synchronous XHR bypasses the worker, which may need
+//! the blocked thread to answer. Navigations ([`navigation_route`]) go to the
+//! active worker of the registration their URL matches, with the id of the
+//! client they create reserved under the frame's id: the new document takes
+//! it (`resultingClientId`).
 //!
 //! Messages: `ServiceWorker.postMessage` and `Client.postMessage` cross as
 //! serialized messages in the cross-VM format of dedicated workers
@@ -42,10 +47,10 @@
 //! `MAX_QUEUED_BYTES` wait for a worker.
 //!
 //! Gaps (explicit): no persistence (registrations live as long as the
-//! context); navigations and subresources of the document (scripts, images,
-//! stylesheets) do not go through the worker; responses are read whole before
-//! the page sees them (no streaming); no Push, Background Sync, Cache Storage,
-//! navigation preload or `Clients.openWindow`; a worker does not stop when idle;
+//! context); requests of workers a controlled page starts do not go through
+//! the worker; responses are read whole before the page sees them (no
+//! streaming); no Push, Background Sync, navigation preload or
+//! `Clients.openWindow`; a worker does not stop when idle;
 //! `clients.matchAll` and `claim` see the context's documents that are
 //! clients (above), not every document; templates of `serve --fork` refuse
 //! registration (NotSupportedError).
@@ -74,6 +79,8 @@ use crate::worker_scope::{WorkerLoop, WorkerStart};
 pub(crate) const MAX_REGISTRATIONS: usize = 32;
 /// Register jobs that may wait for one registration's update.
 const MAX_QUEUED_JOBS: usize = 16;
+/// Navigations whose reserved client id waits for its document.
+const MAX_RESERVED: usize = 64;
 /// Live service worker versions of one browser thread (each is a thread).
 pub(crate) const MAX_VERSIONS: usize = 64;
 /// Largest service worker script.
@@ -153,6 +160,10 @@ impl State {
 pub struct Registry {
     registrations: RefCell<Vec<Rc<Registration>>>,
     clients: RefCell<Vec<Weak<ClientInner>>>,
+    /// Navigations a worker handled: (frame id, the id reserved for the
+    /// client the navigation creates, its `resultingClientId`). Taken when
+    /// the frame's next document is created.
+    reserved: RefCell<Vec<(String, String)>>,
 }
 
 impl Registry {
@@ -175,6 +186,26 @@ impl Registry {
             .filter(|r| !r.uninstalling.get() && url.starts_with(r.scope.as_str()))
             .max_by_key(|r| r.scope.len())
             .cloned()
+    }
+
+    /// Reserves the id of the client a navigation of `frame` creates.
+    fn reserve(&self, frame: &str) -> String {
+        let id = random_id();
+        let mut reserved = self.reserved.borrow_mut();
+        reserved.retain(|(f, _)| f != frame);
+        // Navigations that never made a document (failed, downloads) leave
+        // theirs behind; a frame's next navigation replaces its own.
+        if reserved.len() >= MAX_RESERVED {
+            reserved.remove(0);
+        }
+        reserved.push((frame.to_owned(), id.clone()));
+        id
+    }
+
+    fn take_reserved(&self, frame: &str) -> Option<String> {
+        let mut reserved = self.reserved.borrow_mut();
+        let i = reserved.iter().position(|(f, _)| f == frame)?;
+        Some(reserved.swap_remove(i).1)
     }
 
     fn by_id(&self, id: u64) -> Option<Rc<Registration>> {
@@ -430,6 +461,12 @@ fn opaque_origin(page: &PageDom) -> bool {
 
 /// The page's client, made on first need.
 fn client_of(page: &Rc<PageDom>) -> Option<Rc<ClientInner>> {
+    client_with_id(page, None)
+}
+
+/// The page's client; a new one takes `reserved` as its id (the
+/// `resultingClientId` of the navigation that made the document).
+fn client_with_id(page: &Rc<PageDom>, reserved: Option<String>) -> Option<Rc<ClientInner>> {
     if let Some(client) = page.sw_client.borrow().clone() {
         return Some(client);
     }
@@ -439,7 +476,7 @@ fn client_of(page: &Rc<PageDom>) -> Option<Rc<ClientInner>> {
     let url = page.document_url_parsed()?;
     let origin = tuple_origin(&url)?;
     let client = Rc::new(ClientInner {
-        id: random_id(),
+        id: reserved.unwrap_or_else(random_id),
         page: Rc::downgrade(page),
         url: url.to_string(),
         origin,
@@ -469,6 +506,7 @@ pub(crate) fn document_created(page: &Rc<PageDom>) {
     if context.service_workers.registrations.borrow().is_empty() {
         return;
     }
+    let reserved = page.request_context().frame_id.and_then(|f| context.service_workers.take_reserved(&f));
     let Some(url) = page.document_url_parsed() else { return };
     if !matches!(url.scheme(), "http" | "https") {
         return;
@@ -476,7 +514,7 @@ pub(crate) fn document_created(page: &Rc<PageDom>) {
     let Some(active) = context.service_workers.matching(url.as_str()).and_then(|r| r.active.borrow().clone()) else {
         return;
     };
-    if let Some(client) = client_of(page) {
+    if let Some(client) = client_with_id(page, reserved) {
         set_controller(&client, Some(active));
     }
 }
@@ -504,26 +542,78 @@ pub(crate) fn client_gone(page: &PageDom) {
 
 /// `fetch()` and asynchronous XHR: the controller's `fetch` event, or the network.
 pub(crate) fn route(page: &PageDom, net: &NetClient, id: RequestId, request: Request, sink: ResponseSink) {
-    if page.sw_controlled.get() && !request.skip_interception && !page.bypass_service_worker() && matches!(request.url.scheme(), "http" | "https") {
-        let target =
-            page.sw_client.borrow().as_ref().and_then(|c| Some((c.id.clone(), c.controller.borrow().clone()?)));
-        if let Some((client_id, version)) = target {
-            if version.state.get() != State::Redundant {
-                let job = FetchJob {
-                    id,
-                    request: Some(request),
-                    sink: Some(sink),
-                    net: net.clone(),
-                    client_id,
-                    dispatched: false,
-                };
-                // A worker that is gone drops the job, which then goes to the network.
-                version.run(move |s, _| crate::service_worker_scope::fetch(s, job));
-                return;
-            }
-        }
+    match subresource_route(page, &request) {
+        Some(route) => route.dispatch(net, id, request, sink),
+        None => net.fetch_with_id(id, request, sink),
     }
-    net.fetch_with_id(id, request, sink);
+}
+
+/// A request on its way to a service worker's `fetch` event (see
+/// [`navigation_route`] and [`subresource_route`]).
+pub struct LoadRoute {
+    version: Rc<Version>,
+    client_id: String,
+    resulting_client_id: String,
+}
+
+impl LoadRoute {
+    /// Fires the `fetch` event; without `respondWith` (or when the worker is
+    /// gone before it ran) the request goes on to `net` with `sink`.
+    pub fn dispatch(self, net: &NetClient, id: RequestId, request: Request, sink: ResponseSink) {
+        let job = FetchJob {
+            id,
+            request: Some(request),
+            sink: Some(sink),
+            net: net.clone(),
+            client_id: self.client_id,
+            resulting_client_id: self.resulting_client_id,
+            dispatched: false,
+        };
+        // A worker that is gone drops the job, which then goes to the network.
+        self.version.run(move |s, _| crate::service_worker_scope::fetch(s, job));
+    }
+}
+
+/// A request `document` makes (its `fetch()`, XHR, scripts, stylesheets,
+/// images, ...): its controller's route, if any. One flag test for a
+/// document that no worker controls.
+pub fn subresource_route(document: &PageDom, request: &Request) -> Option<LoadRoute> {
+    if !document.sw_controlled.get()
+        || request.skip_interception
+        || document.bypass_service_worker()
+        || !matches!(request.url.scheme(), "http" | "https")
+    {
+        return None;
+    }
+    let client = document.sw_client.borrow();
+    let client = client.as_ref()?;
+    let version = client.controller.borrow().clone()?;
+    if version.state.get() == State::Redundant {
+        return None;
+    }
+    Some(LoadRoute { version, client_id: client.id.clone(), resulting_client_id: String::new() })
+}
+
+/// A navigation request of a frame of `services`' context (mode `navigate`,
+/// destination `document` or `iframe`): the route through the active worker
+/// of the registration its URL matches, if any. The id of the client the
+/// navigation creates is reserved under the request's frame id, so the new
+/// document is the client the worker saw as `resultingClientId`. Callers test
+/// [`ContextServices::may_route_loads`] first.
+pub fn navigation_route(services: &ContextServices, request: &Request) -> Option<LoadRoute> {
+    if request.skip_interception || !matches!(request.url.scheme(), "http" | "https") {
+        return None;
+    }
+    let registry = &services.service_workers;
+    let version = registry.matching(request.url.as_str())?.active.borrow().clone()?;
+    if version.state.get() == State::Redundant {
+        return None;
+    }
+    let resulting_client_id = match request.frame_id.as_deref() {
+        Some(frame) => registry.reserve(frame),
+        None => random_id(),
+    };
+    Some(LoadRoute { version, client_id: String::new(), resulting_client_id })
 }
 
 /// Runs on the browser thread, as a task of its loop.

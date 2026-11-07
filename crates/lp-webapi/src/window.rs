@@ -163,6 +163,7 @@ where
         |s, w, value| replace_window_attribute(s, w.page(), "event", value),
     );
     def.getter("indexedDB", |s, w| crate::indexeddb::window_factory(s, w.page()));
+    def.getter("caches", |s, w| crate::cache_storage::caches(s, w.page()));
     def.getter("localStorage", |s, w| crate::storage::window_storage(s, w.page(), false));
     def.getter("sessionStorage", |s, w| crate::storage::window_storage(s, w.page(), true));
     def.getter("customElements", |s, w| crate::custom::registry(s, w.page()));
@@ -176,6 +177,7 @@ where
     crate::crypto::define_globals(def);
     crate::storage_manager::define_globals(def);
     crate::service_worker::define_globals(def);
+    crate::cache_storage::define_globals(def);
     crate::event_source::define_globals(def);
     crate::websocket::define_globals(def);
     crate::indexeddb::define_globals(def);

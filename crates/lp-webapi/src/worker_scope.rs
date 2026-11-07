@@ -79,6 +79,8 @@ pub(crate) struct WorkerStart {
     cache_disabled: bool,
     /// The owner's context partition: the worker's IndexedDB shares its data.
     indexed_db: crate::indexeddb::Namespace,
+    /// Its Cache Storage, likewise.
+    caches: crate::cache_storage::Namespace,
     /// `new Worker(url, {type: 'module'})`: the script is a module.
     pub(crate) module: bool,
     pub(crate) early: Vec<Early>,
@@ -113,6 +115,7 @@ impl WorkerStart {
             extra_headers: page.extra_http_headers(),
             cache_disabled: page.cache_disabled(),
             indexed_db: page.local_storage.borrow().indexed_db(),
+            caches: page.local_storage.borrow().caches(),
             module: false,
             early: Vec::new(),
             service: None,
@@ -150,6 +153,7 @@ impl WorkerStart {
             extra_headers: page.extra_http_headers(),
             cache_disabled: page.cache_disabled(),
             indexed_db: page.local_storage.borrow().indexed_db(),
+            caches: page.local_storage.borrow().caches(),
             module,
             early: Vec::new(),
             service: Some(service),
@@ -434,7 +438,7 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
     page.set_extra_http_headers(start.extra_headers.clone());
     page.set_cache_disabled(start.cache_disabled);
     page.set_storage_namespaces(
-        crate::storage::StorageNamespace::with_indexed_db(start.indexed_db.clone()),
+        crate::storage::StorageNamespace::with_shared(start.indexed_db.clone(), start.caches.clone()),
         Default::default(),
     );
     page.set_request_context(crate::RequestContext { frame_id: start.frame_id.clone(), loader_id: None });
@@ -790,6 +794,8 @@ impl JsClass for WorkerGlobalScope {
         crate::websocket::define_worker_globals(def);
         def.getter("indexedDB", |s, g| crate::indexeddb::window_factory(s, &g.target.page));
         crate::indexeddb::define_globals(def);
+        def.getter("caches", |s, g| crate::cache_storage::caches(s, &g.target.page));
+        crate::cache_storage::define_globals(def);
         def.method("setTimeout", 1, |s, g, a| set_timer(s, g, a, false));
         def.method("setInterval", 1, |s, g, a| set_timer(s, g, a, true));
         def.method("clearTimeout", 0, clear_timer);
@@ -1037,11 +1043,12 @@ fn register(engine: &Engine, service: bool) -> lp_js::ClassId {
     engine.register::<crate::xhr::WorkerXMLHttpRequest>();
     engine.register::<crate::xhr::XMLHttpRequestUpload>();
     engine.register::<crate::indexeddb::IdbFactory>();
+    engine.register::<crate::cache_storage::CacheHandle>();
+    engine.register::<crate::request::Request>();
     engine.register::<WorkerLocation>();
     engine.register::<WorkerNavigator>();
     engine.register::<WorkerGlobalScope>();
     if service {
-        engine.register::<crate::request::Request>();
         return engine.register::<ServiceWorkerGlobalScope>();
     }
     engine.register::<DedicatedWorkerGlobalScope>()

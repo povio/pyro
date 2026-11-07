@@ -16,6 +16,7 @@
 //!    `page.dispose()`. Per-world removal can use `lifecycle::realm_disposed`.
 
 pub mod abort;
+mod cache_storage;
 mod animation_events;
 mod animations;
 pub mod canvas;
@@ -113,6 +114,7 @@ pub use page::{
 pub use popup::{PopupCommand, PopupState, PopupTicket};
 pub use structured_clone::{decode_message as deserialize_message, encode_message as serialize_message, WireMessage};
 pub use render_blocking::RenderBlocker;
+pub use service_worker::{navigation_route, subresource_route, LoadRoute};
 pub use storage::{StorageNamespace, StorageSeed};
 pub use target::{EventTarget, EventTargetData};
 pub use window::{define_members, WindowHost};
@@ -157,6 +159,7 @@ pub fn register(engine: &lp_js::Engine) {
     xpath::register(engine);
     engine.register::<storage::Storage>();
     engine.register::<indexeddb::IdbFactory>();
+    engine.register::<cache_storage::CacheHandle>();
     engine.register::<headers::Headers>();
     engine.register::<url::URL>();
     engine.register::<url_search_params::URLSearchParams>();

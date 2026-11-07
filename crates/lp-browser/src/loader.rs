@@ -342,9 +342,12 @@ impl ResourceLoader for NetLoader {
         req.frame_id = request.frame_id;
         req.loader_id = request.loader_id;
         let document = matches!(request.kind, ResourceKind::Document | ResourceKind::Iframe);
+        // A service worker's `fetch` event first, in a context with
+        // registrations; one emptiness test otherwise.
+        let service_worker = service_worker_route(browser, request.page, &req, document);
         // A preloaded static file: answered here, on the browser thread, with
         // no I/O-thread round trip. Observers still get the Network events.
-        if let Some(hit) = self.client.static_direct(&req) {
+        if let Some(hit) = self.client.static_direct(&req).filter(|_| service_worker.is_none()) {
             if request.kind == ResourceKind::ModuleScript {
                 module_trace!("served from the static directory {}", req.url);
             }
@@ -492,10 +495,39 @@ impl ResourceLoader for NetLoader {
             }
             None => sink,
         };
-        self.client.fetch_with_id(native_id, req, sink);
+        match service_worker {
+            Some(route) => route.dispatch(&self.client, native_id, req, sink),
+            None => self.client.fetch_with_id(native_id, req, sink),
+        }
         let client = self.client.clone();
         Some(ResourceCancellation::new(move || client.cancel(native_id)))
     }
+}
+
+/// The service worker route of a loader fetch: a navigation goes to the
+/// worker whose registration its URL matches (unless the page bypasses
+/// service workers), any other request to the requesting document's
+/// controller. `None` at the cost of one emptiness test when the context has
+/// no registrations.
+fn service_worker_route(
+    browser: &Browser,
+    page: PageId,
+    req: &lp_net::Request,
+    document: bool,
+) -> Option<lp_webapi::LoadRoute> {
+    let page = browser.page(page)?;
+    let settings = page.frames.settings.borrow();
+    if !settings.services.may_route_loads() {
+        return None;
+    }
+    if document {
+        if page.bypass_service_worker {
+            return None;
+        }
+        return lp_webapi::navigation_route(&settings.services, req);
+    }
+    let key = page.frames.key_of(req.frame_id.as_deref()?)?;
+    lp_webapi::subresource_route(&*page.frames.page_dom(key)?, req)
 }
 
 /// The document whose timeline gets the Resource Timing entry of `request`:
