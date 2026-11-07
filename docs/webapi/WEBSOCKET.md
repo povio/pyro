@@ -79,9 +79,10 @@ browser context's I/O thread. Where the spec and Chrome differ, Chrome wins.
     Chromium, or `""` when the server accepted nothing.
   - Inbound messages with RSV1 set are inflated with a 32 KiB window, which
     decodes any `server_max_window_bits`. The window carries over between
-    messages; it is reset after a final DEFLATE block and with
-    `server_no_context_takeover`. Uncompressed messages (RSV1 clear) are
-    accepted too.
+    messages; it is reset with `server_no_context_takeover` and after a
+    final DEFLATE block. Bytes after a final block in the same message are
+    inflated as a new stream, as in Chromium. Uncompressed messages (RSV1
+    clear) are accepted too.
   - Inflation stops at the message size limit, so a small compressed
     message cannot expand without bound: going over fails the connection
     with 1009. Data that does not inflate fails it with 1002 "Invalid frame
@@ -143,9 +144,10 @@ browser context's I/O thread. Where the spec and Chrome differ, Chrome wins.
   cannot be refused: no setting turns the offer off.
 - The compression level is fixed, and every message is compressed, even
   when that makes it larger. Chrome does the same.
-- Compression and inflation run on the context's I/O thread in one pass per
-  message, so a very large message delays the context's other network work
-  while it is processed.
+- Compression and inflation run on the context's I/O thread. They work in
+  slices (256 KiB of input to deflate, 1 MiB of output to inflate) and
+  yield between them, so other network work interleaves with a large
+  message, but the I/O thread still spends the whole CPU cost of it.
 - Extra HTTP headers cannot replace the `Sec-WebSocket-Extensions` offer.
 - WebSockets over HTTP/2 (RFC 8441) are not supported.
 - Connections in shared and service workers are not supported (those workers
