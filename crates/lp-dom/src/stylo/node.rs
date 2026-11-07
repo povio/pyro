@@ -418,7 +418,7 @@ impl<'a, C: CxSource<'a>> selectors::Element for SNode<'a, C> {
 
     fn opaque(&self) -> OpaqueElement {
         let ptr = NonNull::new((self.idx).wrapping_add(1) as *mut ()).expect("non-null");
-        OpaqueElement::from_non_null_ptr(ptr)
+        OpaqueElement::from_ptr(ptr)
     }
     fn parent_element(&self) -> Option<Self> {
         self.parent_node().filter(|p| p.is_element())
@@ -753,6 +753,8 @@ impl<'a, C: CxSource<'a>> TElement for SNode<'a, C> {
     fn may_have_animations(&self) -> bool {
         false
     }
+    // lp-dom's cascade runs no animations.
+    fn set_may_have_animations(&self) {}
     fn has_animations(&self, _context: &SharedStyleContext) -> bool {
         false
     }

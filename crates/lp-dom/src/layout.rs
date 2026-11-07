@@ -1264,7 +1264,7 @@ impl Layout {
         let mut current = Some(el);
         while let Some(node) = current {
             if let Some(style) = self.style.stylo_style(dom, node) {
-                if let ClipPath::Shape(shape, reference) = style.clone_clip_path() {
+                if let ClipPath::Shape(shape, reference) = style.slow_clone_clip_path() {
                     // The default reference box for inset() is the border box.
                     if matches!(
                         reference,

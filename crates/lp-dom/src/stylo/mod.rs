@@ -20,22 +20,48 @@ use style::values::computed::CSSPixelLength;
 /// makes its first document. Prefs are process-wide and read while parsing:
 /// without this, a property or value lp-dom parsed before the first layout
 /// (an `element.style` write, say `gridTemplateColumns`) would be unknown,
-/// and the property cached as such. Values as in blitz-dom's
-/// `BaseDocument::new`.
+/// and the property cached as such. The list is blitz-dom's
+/// `init_stylo_prefs` (Stylo 0.23 names).
 pub(crate) fn enable_features() {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {
-        style_config::set_pref!("layout.grid.enabled", true);
-        style_config::set_pref!("layout.css.has-selector.enabled", true);
-        style_config::set_pref!("layout.flexbox.balance", true);
-        style_config::set_pref!("layout.unimplemented", true);
-        style_config::set_pref!("layout.columns.enabled", true);
+        style_config::set_pref!("layout.css.flexbox-balance.enabled", true);
+        style_config::set_pref!("layout.css.background-clip.text.enabled", true);
+        style_config::set_pref!("layout.css.webkit-text-fill-color.enabled", true);
+        style_config::set_pref!("layout.css.columns.enabled", true);
         style_config::set_pref!("layout.css.basic-shape-shape.enabled", true);
         style_config::set_pref!("layout.css.tree-counting-functions.enabled", true);
         style_config::set_pref!("layout.css.progress-function.enabled", true);
-        style_config::set_pref!("layout.variable_fonts.enabled", true);
-        style_config::set_pref!("layout.writing-mode.enabled", true);
-        style_config::set_pref!("layout.container-queries.enabled", true);
+        style_config::set_pref!("layout.css.font-variations.enabled", true);
+        style_config::set_pref!("layout.css.text-indent-keywords.enabled", true);
+        style_config::set_pref!("layout.css.word-break.break-word.enabled", true);
+        // lp-render builds Blitz with its `writing-mode` feature.
+        style_config::set_pref!("layout.css.writing-mode.enabled", true);
+        style_config::set_pref!("layout.css.writing-mode.sideways.enabled", true);
+        // Properties Stylo 0.22 enabled with `layout.unimplemented`.
+        style_config::set_pref!("layout.css.appearance.enabled", true);
+        style_config::set_pref!("layout.css.backdrop-filter.enabled", true);
+        style_config::set_pref!("layout.css.contain.enabled", true);
+        style_config::set_pref!("layout.css.content.alt-text.enabled", true);
+        style_config::set_pref!("layout.css.corner-shape.enabled", true);
+        style_config::set_pref!("layout.css.counters.enabled", true);
+        style_config::set_pref!("layout.css.font-size-adjust.enabled", true);
+        style_config::set_pref!("layout.css.forced-color-adjust.enabled", true);
+        style_config::set_pref!("layout.css.masking.enabled", true);
+        style_config::set_pref!("layout.css.math-properties.enabled", true);
+        style_config::set_pref!("layout.css.motion-path.enabled", true);
+        style_config::set_pref!("layout.css.overscroll-behavior.enabled", true);
+        style_config::set_pref!("layout.css.scroll-driven-animations.enabled", true);
+        style_config::set_pref!("layout.css.scroll-behavior.enabled", true);
+        style_config::set_pref!("layout.css.scrollbar-styling.enabled", true);
+        style_config::set_pref!("layout.css.text-decoration-inset.enabled", true);
+        style_config::set_pref!("layout.css.text-overflow.enabled", true);
+        style_config::set_pref!("layout.css.text-underline.enabled", true);
+        style_config::set_pref!("layout.css.view-transitions.enabled", true);
+        style_config::set_pref!("layout.css.writing-mode.text-orientation.enabled", true);
+        style_config::set_pref!("layout.css.zoom.enabled", true);
+        style_config::set_pref!("layout.css.has-selector.enabled", true);
+        style_config::set_pref!("layout.css.container-queries.enabled", true);
         style_config::set_pref!("layout.css.nth-child-of.enabled", true);
         style_config::set_pref!("layout.css.starting-style-at-rules.enabled", true);
         style_config::set_pref!("layout.css.at-scope.enabled", true);
@@ -160,27 +186,7 @@ pub fn is_property(name: &str) -> bool {
 /// same process-wide prefs when it makes its first document): `CSS.supports`
 /// can run before any document was laid out.
 fn ensure_parse_prefs() {
-    static ONCE: std::sync::Once = std::sync::Once::new();
-    ONCE.call_once(|| {
-        style_config::set_pref!("layout.grid.enabled", true);
-        style_config::set_pref!("layout.css.has-selector.enabled", true);
-        style_config::set_pref!("layout.unimplemented", true);
-        style_config::set_pref!("layout.columns.enabled", true);
-        style_config::set_pref!("layout.css.basic-shape-shape.enabled", true);
-        style_config::set_pref!("layout.css.tree-counting-functions.enabled", true);
-        style_config::set_pref!("layout.css.progress-function.enabled", true);
-        style_config::set_pref!("layout.variable_fonts.enabled", true);
-        // lp-render builds Blitz with its `writing-mode` feature.
-        style_config::set_pref!("layout.writing-mode.enabled", true);
-        style_config::set_pref!("layout.container-queries.enabled", true);
-        style_config::set_pref!("layout.css.nth-child-of.enabled", true);
-        style_config::set_pref!("layout.css.starting-style-at-rules.enabled", true);
-        style_config::set_pref!("layout.css.at-scope.enabled", true);
-        style_config::set_pref!("layout.css.style-queries.enabled", true);
-        style_config::set_pref!("layout.css.line-clamp.enabled", true);
-        style_config::set_pref!("layout.css.fit-content-function.enabled", true);
-        style_config::set_pref!("layout.css.supports.at-rule.enabled", true);
-    });
+    enable_features();
 }
 
 /// `CSS.supports(property, value)` (CSS Conditional 3): whether `property`
@@ -220,7 +226,7 @@ pub fn supports_condition(text: &str) -> bool {
     use style::stylesheets::{CssRuleType, Origin};
     ensure_parse_prefs();
     let url = url_data();
-    let context = style::parser::ParserContext::new(
+    let mut context = style::parser::ParserContext::new(
         Origin::Author,
         &url,
         Some(CssRuleType::Style),
@@ -236,8 +242,8 @@ pub fn supports_condition(text: &str) -> bool {
         parser.parse_entirely(|p| SupportsCondition::parse(p)).ok()
     };
     match parse(text) {
-        Some(condition) => condition.eval(&context),
-        None => parse(&format!("({text})")).is_some_and(|condition| condition.eval(&context)),
+        Some(condition) => condition.eval(&mut context),
+        None => parse(&format!("({text})")).is_some_and(|condition| condition.eval(&mut context)),
     }
 }
 
@@ -303,9 +309,10 @@ pub fn validate_property_registration(
     use style::properties_and_values::rule::PropertyRegistrationError;
     use style::properties_and_values::syntax::Descriptor;
     ensure_parse_prefs();
-    if style::custom_properties::parse_name(name).is_err() {
+    let Ok(custom_name) = style::custom_properties::parse_name(name) else {
         return Err("The name provided is not a valid custom property name.");
-    }
+    };
+    let custom_name = style::custom_properties::Name::from(custom_name);
     let syntax = Descriptor::from_str(syntax, false)
         .map_err(|_| "The syntax provided is not a valid custom property syntax.")?;
     let value = match initial {
@@ -319,7 +326,12 @@ pub fn validate_property_registration(
         }
         None => None,
     };
-    PropertyRegistration::validate_initial_value(&syntax, value.as_ref()).map_err(|e| match e {
+    PropertyRegistration::validate_initial_value(
+        style::properties::PropertyIdRef::Custom(&custom_name),
+        &syntax,
+        value.as_ref(),
+    )
+    .map_err(|e| match e {
         PropertyRegistrationError::NoInitialValue => "An initial value must be provided if the syntax is not '*'",
         PropertyRegistrationError::InvalidInitialValue => {
             "The initial value provided does not parse for the given syntax."

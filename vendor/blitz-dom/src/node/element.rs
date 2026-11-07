@@ -42,12 +42,22 @@ macro_rules! local_names {
     };
 }
 
+pub(crate) fn parse_classes(value: &str) -> ThinVec<Atom> {
+    value.split_ascii_whitespace().map(Atom::from).collect()
+}
+
 pub struct ElementData {
     /// The elements tag name, namespace and prefix
     pub name: QualName,
 
     /// The elements id attribute parsed as an atom (if it has one)
     pub id: Option<Atom>,
+
+    /// The elements class attribute split into atoms (empty if it has none).
+    /// Kept in sync with `attrs` by `ElementData::new` and the mutator's
+    /// `set_attribute`/`remove_attribute`, so selector matching can compare
+    /// atoms instead of re-splitting and re-interning the attribute string.
+    pub classes: ThinVec<Atom>,
 
     /// The element's attributes
     pub attrs: Attributes,
@@ -100,6 +110,10 @@ pub struct ElementData {
     /// Whether this node or any of its descendants may carry `RestyleDamage`.
     /// Used by the damage propagation pass to skip unchanged subtrees.
     pub damaged_descendants: AtomicBool,
+    /// Whether an animation or transition set has ever been stored for this
+    /// element (or its pseudo-elements). Lets Stylo skip the animation lookups
+    /// for elements that have never animated.
+    pub may_have_animations: AtomicBool,
 
     // Pseudo element nodes
     pub before: Option<NodeId>,
@@ -135,6 +149,8 @@ pub struct LayoutData {
     /// lightningpanda: the half collapsed borders of a cell in a table without uniform ones (top,
     /// right, bottom, left; see `CollapsedEdges`).
     pub collapsed_border: Option<[f32; 4]>,
+    /// lightningpanda: a table cell's index in its table's `TableContext::cells` (`u32::MAX`: none).
+    pub table_cell_index: u32,
     /// The writing mode this node's layout algorithm ran in (the root takes it from `<body>`),
     /// recorded by the layout pass for CSSOM geometry lookups.
     #[cfg(feature = "writing-mode")]
@@ -151,6 +167,7 @@ impl LayoutData {
             scrollable_overflow: KurboRect::ZERO,
             rounded_from: None,
             collapsed_border: None,
+            table_cell_index: u32::MAX,
             #[cfg(feature = "writing-mode")]
             writing_mode: stylo_taffy::WritingMode::empty(),
         }
@@ -308,6 +325,7 @@ impl Clone for ElementData {
         Self {
             name: self.name.clone(),
             id: self.id.clone(),
+            classes: self.classes.clone(),
             attrs: self.attrs.clone(),
             is_focussable: self.is_focussable,
             style_attribute: self.style_attribute.clone(),
@@ -327,6 +345,7 @@ impl Clone for ElementData {
             snapshot_handled: AtomicBool::new(false),
             dirty_descendants: AtomicBool::new(true),
             damaged_descendants: AtomicBool::new(true),
+            may_have_animations: AtomicBool::new(false),
             before: None,
             after: None,
             detailed_layout_info: taffy::DetailedLayoutInfo::None,
@@ -412,10 +431,16 @@ impl ElementData {
             .find(|attr| &attr.name.local == "id")
             .map(|attr| attr.value.as_ref())
             .map(|value: &str| Atom::from(value));
+        let classes = attrs
+            .iter()
+            .find(|attr| &attr.name.local == "class")
+            .map(|attr| parse_classes(&attr.value))
+            .unwrap_or_default();
 
         let mut data = ElementData {
             name,
             id: id_attr_atom,
+            classes,
             attrs: Attributes::new(attrs),
             is_focussable: false,
             style_attribute: Default::default(),
@@ -434,6 +459,7 @@ impl ElementData {
             snapshot_handled: AtomicBool::new(false),
             dirty_descendants: AtomicBool::new(true),
             damaged_descendants: AtomicBool::new(true),
+            may_have_animations: AtomicBool::new(false),
             before: None,
             after: None,
             detailed_layout_info: taffy::DetailedLayoutInfo::None,
@@ -470,6 +496,8 @@ impl ElementData {
                     false => ElementState::ENABLED,
                 });
         }
+
+        data.flush_open_state();
 
         data
     }
@@ -516,6 +544,14 @@ impl ElementData {
         if self.is_link() {
             self.element_state.insert(ElementState::UNVISITED);
         }
+    }
+
+    pub fn flush_open_state(&mut self) {
+        let is_open = matches!(
+            self.name.local,
+            local_name!("details") | local_name!("dialog")
+        ) && self.has_attr(local_name!("open"));
+        self.element_state.set(ElementState::OPEN, is_open);
     }
 
     pub fn image_data(&self) -> Option<&ImageData> {
@@ -716,7 +752,7 @@ impl ElementData {
         guard: &SharedRwLock,
         url_extra_data: UrlExtraData,
     ) -> bool {
-        let context = ParserContext::new(
+        let mut context = ParserContext::new(
             Origin::Author,
             &url_extra_data,
             Some(CssRuleType::Style),
@@ -738,7 +774,7 @@ impl ElementData {
         let Ok(_) = PropertyDeclaration::parse_into(
             &mut source_property_declaration,
             property_id,
-            &context,
+            &mut context,
             &mut parser,
         ) else {
             #[cfg(feature = "tracing")]
@@ -823,8 +859,11 @@ impl ElementData {
     }
 
     #[cfg(feature = "custom-widget")]
-    pub fn set_custom_widget(&mut self, widget: Box<dyn crate::Widget>) {
+    pub fn set_custom_widget(&mut self, mut widget: Box<dyn crate::Widget>) {
         use crate::node::custom_widget::CustomWidgetData;
+        for attr in self.attrs.iter() {
+            widget.attribute_changed(&attr.name.local, None, Some(&attr.value));
+        }
         self.special_data = SpecialElementData::CustomWidget(CustomWidgetData::new(widget));
     }
 
@@ -950,6 +989,10 @@ impl std::fmt::Debug for SpecialElementData {
 pub struct ListItemLayout {
     pub marker: Marker,
     pub position: ListItemLayoutPosition,
+    /// Offset (in physical CSS px) of the unrounded content box origin from the rounded one in
+    /// `final_layout`. Paint draws text from the unrounded origin so that it keeps its sub-pixel
+    /// position while box edges stay snapped. Set by the `writing-mode` layout pass; zero otherwise.
+    pub content_box_subpixel_offset: taffy::Point<f32>,
 }
 
 //We seperate chars from strings in order to optimise rendering - ie not needing to

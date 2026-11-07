@@ -14,11 +14,12 @@
 //! Boxes are computed per element on request; transforms along the
 //! containing-block chains are memoized until the document changes.
 
+use stylo_taffy::CopyStyleGetters;
 use std::cell::RefCell;
 
 use blitz_dom::{BaseDocument, NodeId};
 use kurbo::{Affine, Rect};
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 
 /// One element's boxes, CSS px.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -100,57 +101,34 @@ impl LayoutBox {
 #[derive(Default)]
 pub(crate) struct Geometry {
     transforms: RefCell<FxHashMap<NodeId, (Affine, bool)>>,
-    has_sticky: std::cell::Cell<Option<bool>>,
-    /// The layout (and hoisted) children of each layout parent with many,
-    /// indexed on first use: [`Geometry::in_layout_tree`] is O(1) where a
-    /// scan of the parent's list made reading every box quadratic in the
-    /// width of the tree.
-    layout_children: RefCell<FxHashMap<NodeId, FxHashSet<NodeId>>>,
 }
-
-/// Layout parents with at most this many children are scanned, not indexed.
-const SCAN_CHILDREN: usize = 16;
 
 impl Geometry {
     pub(crate) fn clear(&self) {
         self.transforms.borrow_mut().clear();
-        self.has_sticky.set(None);
-        self.layout_children.borrow_mut().clear();
     }
 
     /// Whether `id` is a box of the current layout: the root element, or a
-    /// layout child of its layout parent.
+    /// layout (or hoisted) child of its layout parent. O(1): Blitz records
+    /// which list holds each layout child when it builds the lists
+    /// (`Node::layout_child_of`), and Taffy the containing block of each
+    /// hoisted box (`Node::oof_containing_block`).
     fn in_layout_tree(&self, doc: &BaseDocument, id: NodeId) -> bool {
         if doc.root_element().id == id {
             return true;
         }
-        let Some(parent) = doc.get_node(id).and_then(|n| n.layout_parent.get()) else { return false };
-        let Some(p) = doc.get_node(parent) else { return false };
-        let layout_children = p.layout_children.borrow();
-        let hoisted = p.hoisted_children.borrow();
-        let count = layout_children.as_ref().map_or(0, |c| c.len()) + hoisted.len();
-        if count <= SCAN_CHILDREN {
-            return layout_children.as_ref().is_some_and(|c| c.contains(&id)) || hoisted.contains(&id);
-        }
-        let mut index = self.layout_children.borrow_mut();
-        let set = index
-            .entry(parent)
-            .or_insert_with(|| layout_children.iter().flatten().chain(hoisted.iter()).copied().collect());
-        let found = set.contains(&id);
-        debug_assert_eq!(found, in_layout_tree(doc, id), "layout child index of {parent}");
+        let Some(node) = doc.get_node(id) else { return false };
+        let Some(parent) = node.layout_parent.get() else { return false };
+        let found = doc.get_node(parent).is_some()
+            && (node.layout_child_of.get() == Some(parent) || node.oof_containing_block.get() == Some(parent));
+        debug_assert_eq!(found, in_layout_tree(doc, id), "layout tree membership of {id:?} under {parent:?}");
         found
     }
 
-    /// Whether any element is `position: sticky`.
+    /// Whether any element is `position: sticky` (the set Blitz's style
+    /// traversal keeps, not a scan of the document).
     pub(crate) fn has_sticky(&self, doc: &BaseDocument) -> bool {
-        if let Some(v) = self.has_sticky.get() {
-            return v;
-        }
-        let v = doc.tree().iter().any(|(_, n)| {
-            n.primary_styles().is_some_and(|s| s.clone_position() == style::computed_values::position::T::Sticky)
-        });
-        self.has_sticky.set(Some(v));
-        v
+        doc.has_sticky()
     }
 
     /// `id`'s border box to the document and whether it is in a fixed box.
@@ -272,10 +250,10 @@ impl Geometry {
             Some((px, (hundred - px) / 100.0))
         };
         let insets = [
-            inset(&style.clone_top()),
-            inset(&style.clone_right()),
-            inset(&style.clone_bottom()),
-            inset(&style.clone_left()),
+            inset(&style.slow_clone_top()),
+            inset(&style.slow_clone_right()),
+            inset(&style.slow_clone_bottom()),
+            inset(&style.slow_clone_left()),
         ];
         // Containing block: the table for table parts, else the parent.
         let mut cb = doc.get_node(id).and_then(|n| n.parent);
@@ -373,6 +351,11 @@ impl Geometry {
             table = doc.get_node(table)?.parent?;
         }
         if doc.get_node(table)?.primary_styles()?.writing_mode.is_vertical() {
+            return None;
+        }
+        // A table out of the layout tree (in a cell made a block) keeps the context of its last
+        // layout, which places no row now.
+        if !self.in_layout_tree(doc, table) {
             return None;
         }
         // Table/ancestor transforms are handled below. Keep the old child
@@ -834,7 +817,7 @@ pub(crate) fn describe(doc: &BaseDocument, id: NodeId) -> String {
             let class: String = e.attr(blitz_dom::local_name!("class")).unwrap_or("").chars().take(300).collect();
             let s = n.primary_styles();
             let display = s.as_ref().map(|s| format!("{:?}", s.clone_display())).unwrap_or_default();
-            let height = s.as_ref().map(|s| format!("{:?}", s.clone_height())).unwrap_or_default();
+            let height = s.as_ref().map(|s| format!("{:?}", s.slow_clone_height())).unwrap_or_default();
             let l = n.unrounded_layout();
             let text: String = n.text_content().chars().take(40).collect();
             let kids: Vec<String> = n

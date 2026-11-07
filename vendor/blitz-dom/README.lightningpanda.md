@@ -1,36 +1,25 @@
-# blitz-dom 0.3.0-beta.4, patched
+# blitz-dom main (be60597), patched
 
-This is the published `blitz-dom` 0.3.0-beta.4 crate (crates.io, upstream commit
-`92b11f1bd8ab7975411328b0406a95a09445b4e7`, `packages/blitz-dom` in
-[DioxusLabs/blitz](https://github.com/dioxuslabs/blitz)), used through `[patch.crates-io]` in the
-workspace `Cargo.toml`. License: MIT OR Apache-2.0, as upstream. Only `.cargo_vcs_info.json` and
-`Cargo.toml.orig` were left out of the copy.
+`packages/blitz-dom` of [DioxusLabs/blitz](https://github.com/dioxuslabs/blitz) main at commit
+`be60597f67b3cece0456d26e8d7ff5a88600bbc5` (#1456, 124 commits past 0.3.0-beta.4 = `92b11f1b`; its version
+is still 0.3.0-beta.4), used through `[patch.crates-io]` in the workspace `Cargo.toml`. License: MIT OR
+Apache-2.0, as upstream. `src/` and `assets/` are copied; `Cargo.toml` is the package manifest with the
+workspace's dependency versions written in, git dependencies replaced by their crates.io releases (Taffy and
+Stylo come from `vendor/`, anyrender 0.14 from crates.io: main's anyrender API is unchanged). blitz-traits,
+blitz-html and stylo_taffy are vendored from the same commit unchanged (`vendor/blitz-traits`,
+`vendor/blitz-html`, `vendor/stylo_taffy`): blitz-dom main needs them.
 
-## The change
-
-`UPSTREAM.patch` (applies with `git apply` from the root of an upstream checkout) is the whole diff:
-
-- `src/node/attributes.rs`: `Attributes` keeps the `class` attribute's tokens as interned atoms
-  (`class_atoms()`), computed on first use and dropped by every mutation (`set`, `remove`,
-  `DerefMut`).
-- `src/stylo.rs`: `has_class` and `each_class` read those atoms instead of splitting the attribute
-  and interning every token on every call.
-
-Stylo calls `has_class` once per class selector it tests and `each_class` for the bloom filter, rule
-lookup and the style-sharing cache. Upstream interns each token every time (a global lock and a
-hash), which was about 18% of the main thread rendering a Tailwind page (25 classes per element):
-style resolution on the TOS positions list went from 24 to 9 ms. Matching is unchanged, and so are
-the rendered display lists. lp-render's tests cover it (`class_selectors_match_as_before`,
-`class_changes_invalidate_the_cached_tokens`).
+`UPSTREAM.patch` (applies with `git apply` from the root of an upstream checkout at the commit above) is
+the whole diff: every section below.
 
 ## Updating or dropping the patch
 
-- When upstream has the change: delete this directory and the `[patch.crates-io]` entry, then
-  `cargo update -p blitz-dom`.
-- To move to a newer blitz-dom: copy the published crate from `~/.cargo/registry/src/*/blitz-dom-<version>`
-  over this directory, apply `UPSTREAM.patch` (the cached atoms field is the only structural
-  change), bump the `=` versions of the blitz crates in `crates/lp-render/Cargo.toml`, and update the
-  version and commit above.
+- To move to a newer blitz main: in a blitz checkout, commit this directory's `src/` and `assets/` over
+  `packages/blitz-dom` at the commit above (or apply `UPSTREAM.patch`) and merge or cherry-pick onto the new
+  main; copy `src/` and `assets/` back, regenerate `Cargo.toml` from the package and workspace manifests,
+  and update the commit above and `UPSTREAM.patch`. Check `assets/default.css` by hand: a merged CSS
+  conflict that drops a `}` silently drops the rest of the user-agent sheet.
+- A section upstream has: delete it from `UPSTREAM.patch` and from here, naming the upstream PR below.
 
 ## Screenshot correctness follow-ups
 
@@ -66,9 +55,34 @@ these additional local changes are covered by lp-render's rendering tests.
   `RECALCULATE_OVERFLOW`).
 - `src/layout/writing_mode.rs`, `src/layout/mod.rs`, `src/node/element.rs`: incremental rounding, keyed by
   `LayoutData::rounded_from` (see "Incremental rounding" in `vendor/taffy/README.lightningpanda.md`).
-  `Node::update_unrounded_layout` is the only writer of unrounded layouts, and marks changes as damage.
+  `Node::update_unrounded_layout` is the only writer of unrounded layouts, and marks changes as damage. A box that
+  only moved (its location alone changed: the rows below a table cell that grew) is marked on its ancestors, not on
+  itself: what it holds in its own coordinates (scrollable overflow, its subtree's layouts) is unchanged, so
+  `resolve_layout_children`, `resolve_transforms` and `clear_damage_and_dirty_flags` no longer descend into every
+  moved subtree. Its rounding still follows the move: the `rounded_from` key holds its location.
+  A transform resolves against the rounded size (`Node::set_transform`), which a fractional move of the box or an
+  ancestor can change: `LayoutPassState::set_final_layout` marks a box with a transform style
+  (`Node::has_transform_style`; one that was the identity at the old size is stored as no transform) whose rounded
+  size changed (`Node::mark_layout_changed`), so `resolve_transforms` resolves it again instead of reusing the old
+  one. Nothing else the passes after layout keep depends on the rounded size or the absolute position: scrollable
+  overflow uses unrounded sizes, and paint (radii, backgrounds), sticky offsets and lp-render's geometry derive
+  positions from the layouts when they are used.
 - `src/resolve.rs` (`resolve_layout`): no Taffy pass or rounding with nothing damaged and the same viewport.
   `BaseDocument::needs_resolve` tells a caller whether a `resolve` could change anything.
+- `src/node/node.rs`, `src/resolve.rs` (`resolve_layout_children`): `Node::layout_child_of` names the node whose
+  `layout_children` list holds a node, entered and left where those lists are rebuilt (a child another container
+  collected in the same pass keeps pointing there). A node is a box of the current layout when it equals its
+  `layout_parent`, which inline content of an inline root also has without being listed, or when it is a hoisted
+  (out-of-flow) box whose `oof_containing_block` is its `layout_parent`: lp-render answers that in O(1) instead of
+  indexing the parent's list (a table's cells) after every sync. The incremental table update keeps it too: when it
+  lists a table's cells again (`update_rows`) and when a former box becomes a table part (`drop_part_box`), the
+  boxes that left a list leave it (`leave_layout_children`) and the new ones enter it.
+- `src/layout/paint_tree.rs` (`build_paint_tree_impl`): a rebuilt paint list already in paint order (tree order with
+  no positioned, floated or z-indexed children: a table's cells) is not sorted again.
+- `src/stylo.rs`, `src/document.rs` (`BaseDocument::has_sticky`): the style traversal records the elements it styles
+  `position: sticky`, and drops the entries whose node is gone or no longer sticky after each traversal, so whether a
+  document has sticky boxes is not a scan of every node per sync. Pseudo-elements are not recorded (lightningpanda
+  reports sticky offsets for elements only).
 
 lp-render's mirror tests (incremental documents against fresh builds after random mutations) cover them.
 - `assets/default.css`: text inputs take Chromium's UA box (`border: 2px inset`, `padding: 1px 2px`; a
@@ -148,8 +162,8 @@ printing. The servo build of Stylo parses neither `size` nor `page`, so the pars
 
 `src/layout/table.rs` (`CollapsedEdges`), `src/node/stylo_data.rs`, `src/node/element.rs`: upstream has one gutter, from the
 first cell's borders. A table whose collapsed borders are not one uniform grid now resolves them by the spec's conflict
-rules: each cell keeps half of the borders around it (`LayoutData::collapsed_border`, read through
-`for_table_cell_layout`) and the table half of its outer ones, as Chromium's boxes do. Uniform tables keep the gutter.
+rules: each cell keeps half of the borders around it (`LayoutData::collapsed_border`, applied to the cell's
+`LayoutStyles::cell`) and the table half of its outer ones, as Chromium's boxes do. Uniform tables keep the gutter.
 Values in `bench/pdf/fixtures/chrome-156/table-collapse.json`, tests in `crates/lp-render/tests/table_collapsed_borders.rs`.
 
 Time inputs use the existing text-editor construction and intrinsic measurement paths so captured values are painted.
@@ -192,3 +206,193 @@ Covered by `crates/lp-layout/tests/has_state.rs` and `crates/lp-browser/tests/ha
   leaves the slab. A top-layer element always roots a stacking context in the paint tree
   (`is_paint_stacking_context_root`), so its z-indexed and fixed descendants paint with it. blitz-paint paints
   them above the document.
+
+## Layout styles written with the style
+
+`src/node/stylo_data.rs` (`LayoutStyles`), `src/stylo.rs`, `src/node/node.rs`, `src/layout/{table,construct,damage}.rs`:
+what layout reads of a primary style in another form is derived when the primary style is written, not on every
+layout pass. `StyloData` keeps, next to Stylo's data:
+
+- `table_part`: the physical `taffy::Style` (`stylo_taffy::to_taffy_style`) of a table, row, column or cell.
+  Table construction (`table_taffy_style`, transposed into the table's writing mode) and the column-width and row-height
+  reads (`physical_size`) clone or read it instead of converting every cell of the table again.
+- `cell`: a table cell's style as its own layout sees it (no definite height; collapsed borders replaced by its half
+  of them), which `Node::layout_style` used to clone from the primary style on every call (each Taffy style read of a
+  cell in a `border-collapse: collapse` table).
+
+They are rewritten only when what they are derived from changes:
+
+- The style traversal (`RecalcStyle::process_preorder`, and `sync_pseudo_element_styles` for pseudo-elements) derives
+  them for a first style, and for a replaced primary style only when Stylo's restyle damage for it reaches layout
+  (`LayoutStyles::affected_by`: the `RELAYOUT` bit). Every property they read gives that damage when it changes; a
+  paint-only restyle (colour, background, `:hover`, a class that changes only paint) keeps them, and debug builds
+  assert there that they still equal what the new style gives.
+- `Node::update_layout_styles` wherever a primary style is set outside the traversal (anonymous blocks,
+  pseudo-elements, refreshed anonymous styles, the latter again only on layout damage).
+- `Node::set_collapsed_border` rewrites only `cell` when table construction changes a cell's collapsed borders
+  (`table_part` does not depend on them).
+- `StyloData::clear` drops them with the style.
+
+Debug builds also assert at every read that they are what the current primary style gives
+(`assert_layout_styles_are_current`). lp-render's mirror tests `tables_lay_out_from_the_styles_written_at_restyle`
+(text edits, rows, spans, collapsed borders, display changes, paint-only restyles of every table part) and
+`vertical_tables_lay_out_from_the_styles_written_at_restyle` (the same in a `vertical-rl` table, through the transposed
+table style) cover them. On a 1,200-row table, `to_taffy_style` was ~6% of a cell edit and the cell style clone ~15%
+of a width resize.
+
+## Incremental tables
+
+A change inside a table updates what it touched instead of building the table again. What a table keeps is its
+`TableContext` (`src/layout/table.rs`), updated from what changed; nothing in it is a memo of a computation keyed on
+its inputs.
+
+- `src/layout/damage.rs`, `src/node/node.rs`: `propagate_damage_flags` sets `NodeFlags::OWN_DAMAGE` on a node with
+  damage of its own (a mutation or a restyle, not only its descendants'), cleared with the damage, and notes every
+  damaged cell in its table (`LayoutData::table_cell_index`, the cell's index in `TableContext::cells`).
+- `src/resolve.rs`, `src/layout/table.rs` (`update_table_context`): a table whose rows or cells changed collects
+  again only the rows with damage of their own or a cell with it, and rows added to or removed from a row group
+  between rows it keeps; the other rows and cells stay. Its layout children are listed again only when cells were
+  added or removed, and `resolve_layout_children` visits only the cells that changed. A change it cannot place (a
+  `rowspan`, an out-of-flow part, a new column, a change to the first row, which gives the columns their widths and
+  the first cell the gutters, the table's own damage, ...) builds the table again.
+- The collapsed borders (`CollapsedEdges`) are resolved again only on the grid lines of the rows collected again and
+  the cells beside them (`offer_box` with an `EdgeRange`); a uniform table keeps its edges too (`spare_edges`) to
+  tell when it stops being uniform.
+- `TableTreeWrapper::auto_column_widths`: each cell's min-content and max-content widths are kept with the table's
+  content width they were measured for (`CellWidths`), and so are the columns' widths summed from them. A cell that
+  changed is measured again; a column's widths are summed again only when a cell that set them got narrower. Once
+  more cells changed than it holds widths for, it drops them all (every cell is measured again), possibly halfway
+  through `update_rows`, so each row replacement checks again whether the widths still follow the cells.
+- The grid is laid out again from its last layout when the columns are the same (see "Table grids laid out again
+  from their last layout" in `vendor/taffy/README.lightningpanda.md`): `take_table_grid_state` gives back the cells
+  that changed (`TableContext::changed_cells`) and the rows replaced since (`grid_splice`: one replacement between
+  two layouts; more lay the grid out whole). The indices the table keeps (changed cells, cells to measure, round,
+  transform and visit in the paint tree, the cells' overflow, a plain table's paint children) move with the cells
+  (`splice_indices`, `PlacedCells::splice`).
+- `src/layout/writing_mode.rs`, `src/resolve.rs` (`table_cells_overflow`): rounding and `resolve_transforms` visit
+  again only the cells the grid placed or that changed since (`TableContext::placed`), with each cell's overflow in
+  the table kept; the others' are as they were. Horizontal tables without out-of-flow parts only.
+- `src/layout/paint_tree.rs` (`table_paint_children_kept`): a table whose cells were all plain boxes in it (no
+  stacking context, nothing hoisted out of them, one paint order) visits again only the cells damaged or appended
+  since, and keeps its paint children while they stay plain.
+- `src/node/node.rs` (`update_unrounded_layout`): a box that only moved marks only its ancestors as having changed
+  (see "Incremental passes for layout queries", which also covers a moved box whose rounded size, and so its
+  transform, changes). The rows below a cell that grew move without their cells' subtrees being transformed again.
+- `src/layout/damage.rs` (`compute_layout_damage`): a layout change in the style of a table part or a table (from a
+  style sheet as from an attribute) builds its box again, as a mutation does: the table keeps its parts' layout
+  styles. Restyles used to relayout with the styles the table was built with.
+- `src/layout/construct.rs`, `src/layout/table.rs` (`damage_former_table_parts`, `drop_part_box`): a table built as
+  another box (`display: block`) builds its row groups and rows as boxes, which they never were in the table, and a
+  table built in place of another box drops the boxes its parts had. The parts are those of the table's last
+  `TableContext` (its rows, and their row groups and `display: contents` boxes up to the table), whatever their
+  `display` is now: a row group of a table made a flex container is blockified into a block item, and its rows had
+  lost their boxes all the same. The context is dropped with them (the box is no table; lp-render reads a table's
+  collapsed borders from it).
+
+### Incremental layout that differed from fresh builds
+
+- `src/node/node.rs` (`Node::set_collapsed_border`): a change of a cell's half collapsed borders clears its layout
+  cache, as its layout style changed. `build_table_context` (a table built again: its first row changed, a rowspan,
+  an out-of-flow part) gave the cells beside a change their new borders without laying them out again: removing or
+  moving the first row of a table with row borders, or giving a cell beside a rowspan a border, left them 0.5-1.25px
+  off. Only `update_rows` invalidated them.
+- `src/layout/table.rs` (`release_cell`, `release_former_cells`): a node keeps half collapsed borders only while it is
+  a cell of a collapsed table. A cell taken out of flow, one no longer collected (made a block, its row removed or
+  `display: contents`), and the cells of a table built as another box lose them, and their `table_cell_index`: such a
+  box laid out with the table's borders, and paint, which draws a node's own borders only without them, dropped its
+  own. `build_table_context` compares the cells of the context it replaces, `update_rows` the cells it replaced; one
+  another container collected since (`Node::layout_child_of`) is left to it.
+- `src/layout/table.rs` (`enter_layout_tree`), `src/resolve.rs`: a cell collected while no container lists it is new,
+  or back in the layout tree from outside it (its row was `display: contents`, which Blitz's tables treat as
+  `display: none`, or it was a block the table ignored). Stylo styled it meanwhile, and `clear_damage_and_dirty_flags`
+  cleared the damage no pass consumed, so its subtree is damaged and its layout caches cleared: a cell edited while
+  its row was `display: contents` kept the text it had. For this `resolve_layout_children` takes the previous layout
+  children out of the list (`layout_child_of`) after collecting the new ones, not before.
+- `src/mutator.rs` (`add_children_to_parent`, `is_under_display_none`): an element moved into a `display: none`
+  element or below one (the nearest styled element from the new parent up is `display: none`) drops its style data,
+  inline layout and construction flags, as Stylo keeps none there (it clears descendants when an element becomes
+  `display: none` and never visits the children of one). The moved element kept its styles, and lp-render reported
+  the box its old inline layout gave it. Its pseudo-elements and layout tree (`leave_layout_tree`) go too. Every
+  insertion looks up the ancestors, not only one of a styled element: lp-dom builds a new wrapper by moving styled
+  children into the new, unstyled element before inserting it, and the paragraph so moved under a hidden element was
+  never laid out once shown.
+- `src/document.rs` (`leave_layout_tree`, `left_layout_lists`), `src/resolve.rs`: a box that left its container's list
+  in a pass (`resolve_layout_children`, `update_rows`, `drop_part_box`) and that no container collected again by the
+  pass's end is out of the layout tree, with what its subtree built: its layout children leave its list in turn, and
+  its anonymous blocks are freed. A fresh build has none there; the stale lists kept boxes under a `display: none`
+  element (and in a cell made a block) in lp-render's layout tree, and tripped `assert_layout_parents_consistent`
+  (a float moved out of an element hidden in the same pass). A box that comes back is built again: styled from
+  scratch, added (`process_added_subtree`), or damaged on its way in (`enter_layout_tree`, `damage_former_table_parts`).
+  A table with no layout children (it left) is built again, not updated (`is_incremental`).
+- `src/layout/table.rs` (`damage_former_table_parts`): the children a table ignored (captions, columns) have their
+  subtrees built when the table becomes another box: no pass had built them (`collect_table_cells` drops their
+  damage), and a caption was 0px tall.
+- `src/layout/table.rs` (`TableContext::group_borders`, `group_border_kept`): a collapsed table whose row group is
+  restyled with another border is built again: `update_rows` collects only the group's rows, and the collapsed
+  borders kept the group's old border.
+- `src/layout/table.rs` (`apply_collapsed_borders`): a cell outside the grid's columns has no collapsed borders, not
+  those it had where it was before (a cell pushed past the last column by a rowspan laid out 1px wider).
+- `src/layout/list.rs` (`marker_changed`): a list item whose marker changed (its number, after an item before it was
+  moved) is built and laid out again: an `inside` marker is text of its inline layout, which kept the old number.
+
+`crates/lp-render/tests/mirror.rs` compares the incremental document with fresh builds after cell edits, row appends,
+inserts and removals, spans, collapsed borders, nested and vertical tables, stacking contexts in cells and `display`
+changes (`table_*_match_fresh_builds`), and counts what an edit, an append, a removal and an insert collect and lay
+out (`a_cell_edit_collects_only_its_row`). `blitz_tables` and `blitz_table_grids` (lp-render) report tables built, cells
+collected and grids laid out whole or again.
+
+## Moving from 0.3.0-beta.4 to main
+
+The local changes were merged with main's 124 commits. Upstream now has these, so the local versions were
+dropped:
+
+- Class tokens interned once per element: upstream #1240 (`ElementData::classes`, kept by `set_attribute`).
+  This was the original `UPSTREAM.patch`; `class_selectors_match_as_before` still covers it.
+- `font-optical-sizing: auto` as an `opsz` variation: #1360.
+- Unresolvable URLs load nothing instead of panicking (`resolve_url` returns an `Option`): #1374.
+- `:focus-within`: #1226 (the local `set_focus_within` went; upstream's ancestor-chain diff remains).
+- Narrow restyles on child-list changes, `:empty` and `:has()` anchor parents: #1276
+  (`restyle_for_child_list_change`). The local `:has()` invalidation (`invalidate_has_anchors*`) stays: it
+  reaches anchors among ancestors and their earlier siblings, which #1276 does not.
+- `::before`/`::after` boxes voting in the flow classification: #1280.
+- Mid-line floats that do not fit placed below the line: #1378 and #1390 (with line retry), replacing the
+  local pending-float queue in inline layout.
+- Paint children kept in order without a key buffer: #1445 sorts precomputed keys (a sorted run is linear),
+  replacing the local `is_sorted_by_key` check. The table paint-children bookkeeping is unchanged.
+
+Kept, adapted to main:
+
+- `layout/inline/build.rs`, `layout/inline/layout.rs`: main split `layout/inline.rs` (#1233); the local
+  `<br>`, strut and text-node tracking moved with the build half. The skip of a line break with the same
+  inputs (`TextLayout::last_break`) is keyed on main's `max_advance` (which carries #1449's rounding
+  slack) instead of the width. Shrink-to-fit widths still round up to a layout unit (`ceil_layout_unit`);
+  main dropped the whole-pixel ceil (#1375), so this keeps Chromium's 1/64 px instead of the raw width.
+- `layout/writing_mode.rs`: incremental rounding with main's `ScrollableOverflow` (#1372). Upstream's
+  `content_box_subpixel_offset` (#1382: text drawn from the unrounded content box) is left at zero:
+  screenshots keep whole-pixel text as before and print moves text to its layout-unit x itself
+  (`fractional_text_x` in blitz-paint). The scroll-container check `physical_layout` needs is only made
+  under a vertical placer, the only case that reads it.
+- `src/document.rs`: Stylo 0.23 renamed the prefs (`layout.css.*`); the local ones are set in main's
+  `init_stylo_prefs`. Main shares parsed user-agent sheets through a read-only lock, which the thread's
+  shared author lock can read.
+- `src/net.rs`: main decodes linked sheets from bytes (#1388); `linked_page_css` keeps the text of one with
+  `@page` rules from the same bytes.
+- `paint_tree.rs`: the out-of-flow stacking-context fix (for upstream #807) and `table_paint_children_kept`
+  sit on #1445's positioned-descendant lifting.
+
+New, because main narrows attribute restyles to the element (#1276) where 0.3.0-beta.4 restyled the
+parent's subtree and damaged the element:
+
+- `src/mutator.rs` (`restyle_siblings_for_attribute_change`): an attribute change restyles the element's
+  siblings when the parent carries `HAS_SLOW_SELECTOR_NTH_OF` (Stylo leaves `:nth-child(of S)` to the
+  embedder, as Gecko's `RestyleSiblingsForNthOf`), and a change of lightningpanda's state attribute
+  (`urn:x-lightningpanda:state`) is layout damage when its `natural=W,H` token changes. Its pseudo-classes
+  are element states (`sync_lp_attribute_state`, "`:has()` invalidation for state and attribute changes"
+  above), so the snapshot sees them change and Stylo's state invalidation reaches the siblings; nothing
+  restyles them here. Covered by `sibling_and_fragment_invalidation_stays_exact`,
+  `radio_group_changes_invalidate_selectively_*`, `form_state_writes_invalidate_selectively_*` and
+  `loaded_image_natural_size_reaches_flow_through_the_dom` (lp-layout).
+- `src/stylo.rs` (`RecalcStyle::process_preorder`): a paint-only restyle of a table part in a
+  `border-collapse: collapse` table that changes its borders or `color` is damage on it: the collapsed
+  edges (`CollapsedEdges`) hold resolved colours, collected again with the part's row. Covered by
+  `tables_lay_out_from_the_styles_written_at_restyle` (lp-render).

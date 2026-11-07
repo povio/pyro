@@ -1,6 +1,7 @@
 //! Enable the dom to participate in styling by servo
 //!
 
+use stylo_taffy::CopyStyleGetters;
 use blitz_traits::node_id::NodeId;
 use std::ptr::NonNull;
 use std::sync::Mutex;
@@ -10,6 +11,7 @@ use crate::StyleThreading;
 use crate::layout::damage::compute_layout_damage;
 use crate::node::Node;
 use crate::node::NodeData;
+use crate::node::LayoutStyles;
 use markup5ever::{LocalName, LocalNameStaticSet, Namespace, NamespaceStaticSet, local_name, ns};
 use selectors::bloom::BLOOM_HASH_MASK;
 use selectors::{
@@ -26,6 +28,13 @@ use style::bloom::each_relevant_element_hash;
 use style::color::AbsoluteColor;
 use style::data::{ElementDataMut, ElementDataRef};
 use style::global_style_data::STYLE_THREAD_POOL;
+
+/// Serialises `Parallel` style traversals across documents. Stylo's per-worker
+/// caches (`StyleSharingCache`, `StyleBloom`) live in native thread-locals that
+/// a traversal borrows mutably for its whole duration, so two traversals in
+/// flight on the shared pool at once panic with `already mutably borrowed`
+/// (<https://github.com/DioxusLabs/blitz/issues/430>).
+static PARALLEL_TRAVERSAL_LOCK: Mutex<()> = Mutex::new(());
 use style::invalidation::element::restyle_hints::RestyleHint;
 use style::properties::ComputedValues;
 use style::properties::{Importance, PropertyDeclaration};
@@ -176,17 +185,31 @@ impl crate::document::BaseDocument {
             // Style the elements, resolving their data
             let mut traverser = RecalcStyle::new(context);
             // `Sequential` bypasses Stylo's global pool. See `StyleThreading`.
-            let pool_guard = matches!(self.style_threading, StyleThreading::Parallel)
-                .then(|| STYLE_THREAD_POOL.pool());
+            let parallel = matches!(self.style_threading, StyleThreading::Parallel);
+            let _traversal_lock = parallel.then(|| {
+                PARALLEL_TRAVERSAL_LOCK
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+            });
+            let pool_guard = parallel.then(|| STYLE_THREAD_POOL.pool());
             let rayon_pool = pool_guard.as_ref().and_then(|g| g.as_ref());
             style::driver::traverse_dom(&traverser, token, rayon_pool);
             nodes_needing_style_image_flush =
                 std::mem::take(traverser.nodes_needing_style_image_flush.get_mut().unwrap());
+            self.sticky_nodes
+                .extend(std::mem::take(traverser.sticky_nodes.get_mut().unwrap()));
             // Sticky: set once an element is styled with a generated
             // `::before` / `::after`, never cleared.
             if traverser.generated_before_after.into_inner() {
                 self.generated_before_after = true;
             }
+        }
+        // lightningpanda: restyled nodes that stopped being sticky, and
+        // removed ones, leave the set (only nodes that were sticky are in it).
+        if !self.sticky_nodes.is_empty() {
+            let nodes = &self.nodes;
+            self.sticky_nodes
+                .retain(|id| nodes.get(*id).is_some_and(|node| is_sticky(node)));
         }
         self.pending_style_image_nodes
             .extend(nodes_needing_style_image_flush);
@@ -209,7 +232,25 @@ impl crate::document::BaseDocument {
                 transition.is_new = false;
             }
         }
-        sets.retain(|_, state| !state.is_empty());
+        let mut finished = Vec::new();
+        sets.retain(|key, state| {
+            let keep = !state.is_empty();
+            if !keep {
+                finished.push(key.node);
+            }
+            keep
+        });
+        // Clear `may_have_animations` on elements whose last set (including
+        // their pseudo-elements' sets) was just removed.
+        for node in finished {
+            if sets.keys().any(|key| key.node == node) {
+                continue;
+            }
+            let node_id = NodeId::from_u64(node.id() as u64);
+            if let Some(data) = self.nodes.get(node_id).and_then(|node| node.element_data()) {
+                data.may_have_animations.store(false, Ordering::Relaxed);
+            }
+        }
         self.has_active_animations = sets.values().any(|state| state.needs_animation_ticks());
 
         // Maybe run garbage collection. Stylo has internal to determine whether to run or not.
@@ -384,12 +425,17 @@ impl crate::document::BaseDocument {
             snapshot_map: &self.snapshots,
             registered_speculative_painters: &RegisteredPaintersImpl,
         };
-        let mut thread_local = ThreadLocalStyleContext::new();
-        let mut context = StyleContext {
-            shared: &shared,
-            thread_local: &mut thread_local,
+        // The thread-local context's sequential task list asserts the LAYOUT state when dropped
+        let styles = {
+            let mut thread_local = ThreadLocalStyleContext::new();
+            let mut context = StyleContext {
+                shared: &shared,
+                thread_local: &mut thread_local,
+            };
+            resolve_style(&mut context, node, RuleInclusion::All, None, None)
         };
-        Some(resolve_style(&mut context, node, RuleInclusion::All, None, None))
+
+        Some(styles)
     }
 }
 
@@ -536,7 +582,7 @@ impl selectors::Element for BlitzNode<'_> {
         // Shadow DOM functionality in Stylo.
         let non_null =
             NonNull::new((self.id.as_u64() as usize).wrapping_add(1) as *mut ()).unwrap();
-        OpaqueElement::from_non_null_ptr(non_null)
+        OpaqueElement::from_ptr(non_null)
     }
 
     fn parent_element(&self) -> Option<Self> {
@@ -661,6 +707,7 @@ impl selectors::Element for BlitzNode<'_> {
 
             NonTSPseudoClass::InRange => self.element_state().contains(ElementState::INRANGE),
             NonTSPseudoClass::Modal => self.element_state().contains(ElementState::MODAL),
+            NonTSPseudoClass::MozInert => self.element_state().contains(ElementState::INERT),
             NonTSPseudoClass::Open => self.element_state().contains(ElementState::OPEN),
             NonTSPseudoClass::Optional => self.element_state().contains(ElementState::OPTIONAL_),
             NonTSPseudoClass::OutOfRange => self.element_state().contains(ElementState::OUTOFRANGE),
@@ -741,11 +788,10 @@ impl selectors::Element for BlitzNode<'_> {
         search_name: &<Self::Impl as selectors::SelectorImpl>::Identifier,
         case_sensitivity: selectors::attr::CaseSensitivity,
     ) -> bool {
-        self.element_data().is_some_and(|el| {
-            el.attrs
-                .class_atoms()
+        self.element_data().is_some_and(|data| {
+            data.classes
                 .iter()
-                .any(|atom| case_sensitivity.eq_atom(atom, search_name))
+                .any(|class| case_sensitivity.eq_atom(class, search_name))
         })
     }
 
@@ -863,9 +909,9 @@ impl<'a> TElement for BlitzNode<'a> {
     where
         F: FnMut(&style::values::AtomIdent),
     {
-        if let Some(el) = self.element_data() {
-            for atom in el.attrs.class_atoms() {
-                callback(AtomIdent::cast(atom));
+        if let Some(data) = self.element_data() {
+            for class in &data.classes {
+                callback(AtomIdent::cast(class));
             }
         }
     }
@@ -876,7 +922,7 @@ impl<'a> TElement for BlitzNode<'a> {
     {
         if let Some(attrs) = self.data.attrs() {
             for attr in attrs.iter() {
-                callback(&GenericAtomIdent(attr.name.local.clone()));
+                callback(GenericAtomIdent::cast(&attr.name.local));
             }
         }
     }
@@ -934,14 +980,12 @@ impl<'a> TElement for BlitzNode<'a> {
     }
 
     fn borrow_data(&self) -> Option<ElementDataRef<'_>> {
-        // lightningpanda: elements get their data when created, before they
-        // are styled. Until then they are unstyled to Stylo (as in Gecko and
-        // Servo, which give an element data when they style it): the
-        // traversal styles them from scratch, and invalidation must not read
-        // their (missing) styles.
+        // Stylo reads the existence of element data as "has been styled" (its invalidator
+        // unwraps the primary style of every element with data it descends into), but an
+        // element here can carry data before it has styles.
         self.try_stylo_element_data()
             .and_then(|s| s.get())
-            .filter(|data| data.styles.get_primary().is_some())
+            .filter(|data| data.styles.primary.is_some())
     }
 
     fn mutate_data(&self) -> Option<ElementDataMut<'_>> {
@@ -953,11 +997,24 @@ impl<'a> TElement for BlitzNode<'a> {
     }
 
     fn may_have_animations(&self) -> bool {
-        true
+        self.element_data()
+            .is_some_and(|data| data.may_have_animations.load(Ordering::Relaxed))
+    }
+
+    fn set_may_have_animations(&self) {
+        if let Some(data) = self.element_data() {
+            data.may_have_animations.store(true, Ordering::Relaxed);
+        }
     }
 
     fn has_animations(&self, context: &SharedStyleContext) -> bool {
-        self.has_css_animations(context, None) || self.has_css_transitions(context, None)
+        if !self.may_have_animations() {
+            return false;
+        }
+        let key = AnimationSetKey::new_for_non_pseudo(TNode::opaque(&TElement::as_node(self)));
+        context
+            .animations
+            .has_active_animations_or_transitions(&key)
     }
 
     fn has_css_animations(
@@ -965,6 +1022,9 @@ impl<'a> TElement for BlitzNode<'a> {
         context: &SharedStyleContext,
         pseudo_element: Option<PseudoElement>,
     ) -> bool {
+        if !self.may_have_animations() {
+            return false;
+        }
         let key = AnimationSetKey::new(TNode::opaque(&TElement::as_node(self)), pseudo_element);
         context.animations.has_active_animations(&key)
     }
@@ -974,6 +1034,9 @@ impl<'a> TElement for BlitzNode<'a> {
         context: &SharedStyleContext,
         pseudo_element: Option<PseudoElement>,
     ) -> bool {
+        if !self.may_have_animations() {
+            return false;
+        }
         let key = AnimationSetKey::new(TNode::opaque(&TElement::as_node(self)), pseudo_element);
         context.animations.has_active_transitions(&key)
     }
@@ -1359,6 +1422,18 @@ impl<'a> TElement for BlitzNode<'a> {
                 }
             }
 
+            // https://html.spec.whatwg.org/multipage/rendering.html#tables-2
+            if *name == local_name!("cellspacing") && *tag == local_name!("table") {
+                if let Ok(px) = style::servo::attr::parse_unsigned_integer(value.chars()) {
+                    use style::values::specified::{BorderSpacing, NonNegativeLength};
+                    let spacing = NonNegativeLength::from_px(px as f32);
+                    push_style(PropertyDeclaration::BorderSpacing(BorderSpacing::new(
+                        spacing.clone(),
+                        spacing,
+                    )));
+                }
+            }
+
             if *name == local_name!("bgcolor") {
                 use style::values::specified::Color;
                 if let Some((r, g, b, a)) = parse_color_attr(value) {
@@ -1371,6 +1446,44 @@ impl<'a> TElement for BlitzNode<'a> {
             if *name == local_name!("hidden") {
                 use style::values::specified::Display;
                 push_style(PropertyDeclaration::Display(Display::None));
+            }
+        }
+
+        // A table's `cellpadding` attribute maps to the padding of its cells (not
+        // those of nested tables), as a pixel length. The table is the first
+        // ancestor that isn't a row or row group.
+        // https://html.spec.whatwg.org/multipage/rendering.html#tables-2
+        if *tag == local_name!("td") || *tag == local_name!("th") {
+            let mut ancestor = self.parent_node();
+            let mut cellpadding = None;
+            while let Some(node) = ancestor {
+                let Some(elem) = node.data.downcast_element() else {
+                    break;
+                };
+                let name = &elem.name.local;
+                let is_table_internal = *name == local_name!("tr")
+                    || *name == local_name!("tbody")
+                    || *name == local_name!("thead")
+                    || *name == local_name!("tfoot");
+                if !is_table_internal {
+                    if *name == local_name!("table") {
+                        cellpadding = elem.attr(local_name!("cellpadding")).and_then(|value| {
+                            style::servo::attr::parse_unsigned_integer(value.chars()).ok()
+                        });
+                    }
+                    break;
+                }
+                ancestor = node.parent_node();
+            }
+            if let Some(px) = cellpadding {
+                use style::values::generics::NonNegative;
+                use style::values::specified::{LengthPercentage, NoCalcLength};
+                let padding =
+                    NonNegative(LengthPercentage::Length(NoCalcLength::from_px(px as f32)));
+                push_style(PropertyDeclaration::PaddingTop(padding.clone()));
+                push_style(PropertyDeclaration::PaddingRight(padding.clone()));
+                push_style(PropertyDeclaration::PaddingBottom(padding.clone()));
+                push_style(PropertyDeclaration::PaddingLeft(padding));
             }
         }
 
@@ -1508,6 +1621,9 @@ pub struct RecalcStyle<'a> {
     /// lightningpanda: an element styled in this traversal kept a
     /// `::before` / `::after` style (one its rules generate).
     generated_before_after: std::sync::atomic::AtomicBool,
+    /// lightningpanda: elements styled `position: sticky` in this traversal
+    /// (`BaseDocument::sticky_nodes`).
+    sticky_nodes: Mutex<Vec<NodeId>>,
 }
 
 impl<'a> RecalcStyle<'a> {
@@ -1516,6 +1632,7 @@ impl<'a> RecalcStyle<'a> {
             context,
             nodes_needing_style_image_flush: Mutex::new(Vec::new()),
             generated_before_after: std::sync::atomic::AtomicBool::new(false),
+            sticky_nodes: Mutex::new(Vec::new()),
         }
     }
 }
@@ -1533,7 +1650,61 @@ impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
             // let mut data = el.mutate_data().unwrap();
             let mut data = unsafe { el.ensure_data() };
             let before = context.thread_local.statistics.clone();
+            // Held (not just its address) so that a replacement cannot reuse the allocation.
+            let old_primary = data.styles.get_primary().cloned();
             recalc_style_at(self, context, el, &mut data, note_child);
+            // lightningpanda: a replaced primary style rewrites what layout reads of it.
+            let new_primary = data.styles.get_primary();
+            let replaced = match (&old_primary, new_primary) {
+                (Some(old), Some(new)) => !Arc::ptr_eq(old, new),
+                (None, None) => false,
+                _ => true,
+            };
+            // Stylo diffs the old and new style into `data.damage` (nothing when there was no old
+            // style, so a first style is always derived). A replacement without layout damage
+            // (colour, background, :hover, a class that changes only paint) leaves the derived
+            // layout styles as they are.
+            let derive =
+                replaced && (old_primary.is_none() || LayoutStyles::affected_by(data.damage));
+            // A table without uniform collapsed borders resolves their colours when it collects
+            // its rows (`CollapsedEdges`): a paint-only restyle of a table part that changes its
+            // borders or `color` collects its row again. Upstream gave every attribute change
+            // layout damage, which hid this.
+            let collapsed_edges_changed = !derive
+                && match (&old_primary, new_primary) {
+                    (Some(old), Some(new)) if replaced => {
+                        use style::computed_values::border_collapse::T as BorderCollapse;
+                        let display = *new.get_display();
+                        new.get_inherited_table().border_collapse == BorderCollapse::Collapse
+                            && (display.outside() == style::values::specified::box_::DisplayOutside::InternalTable
+                                || display.inside() == style::values::specified::box_::DisplayInside::Table)
+                            && (old.get_border() != new.get_border()
+                                || old.get_inherited_text().color != new.get_inherited_text().color)
+                    }
+                    _ => false,
+                };
+            drop(old_primary);
+            if derive {
+                let derived = match new_primary {
+                    Some(style) => LayoutStyles::derive(style, el.collapsed_border()),
+                    None => LayoutStyles::default(),
+                };
+                // SAFETY: the traversal has exclusive access to `el`, and nothing reads its
+                // layout styles while it runs.
+                if let Some(stylo) = el.try_stylo_element_data() {
+                    unsafe { stylo.set_layout_styles(derived) };
+                }
+            } else if replaced {
+                #[cfg(debug_assertions)]
+                if let (Some(style), Some(stylo)) = (new_primary, el.try_stylo_element_data()) {
+                    stylo
+                        .layout_styles()
+                        .assert_current(style, el.collapsed_border(), el.id);
+                }
+            }
+            if collapsed_edges_changed {
+                data.damage.insert(crate::layout::damage::ALL_DAMAGE);
+            }
             let after = &context.thread_local.statistics;
             crate::resolve::phase_profile::style_stats([
                 after.elements_styled - before.elements_styled,
@@ -1543,6 +1714,15 @@ impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
             ]);
 
             sync_pseudo_element_styles(el, &data, &self.nodes_needing_style_image_flush);
+            if let Some(style) = data.styles.get_primary() {
+                el.record_out_of_flow(style);
+            }
+
+            if data.styles.get_primary().is_some_and(|style| {
+                style.clone_position() == style::computed_values::position::T::Sticky
+            }) {
+                self.sticky_nodes.lock().unwrap().push(el.id);
+            }
 
             // One empty check for an element without eager pseudo styles.
             if !data.styles.pseudos.is_empty() {
@@ -1594,6 +1774,12 @@ impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
     fn shared_context(&self) -> &SharedStyleContext<'_> {
         &self.context
     }
+}
+
+/// lightningpanda: whether `node`'s primary style is `position: sticky`.
+pub(crate) fn is_sticky(node: &Node) -> bool {
+    node.primary_styles()
+        .is_some_and(|style| style.clone_position() == style::computed_values::position::T::Sticky)
 }
 
 /// Flush updated pseudo-element (`::before`/`::after`) styles from the owning
@@ -1668,6 +1854,17 @@ fn sync_pseudo_element_styles(
                     .push(pe_node_id);
             }
         }
+        if LayoutStyles::affected_by(diff.damage) {
+            let derived = LayoutStyles::derive(&pe_style, pe_node.collapsed_border());
+            // SAFETY: as for `pe_data` above (only the owner's `process_preorder` reaches it).
+            unsafe { stylo_data.set_layout_styles(derived) };
+        } else {
+            #[cfg(debug_assertions)]
+            stylo_data
+                .layout_styles()
+                .assert_current(&pe_style, pe_node.collapsed_border(), pe_node_id);
+        }
+        pe_node.record_out_of_flow(&pe_style);
         pe_data.styles.primary = Some(pe_style);
         pe_data.set_restyled();
     }

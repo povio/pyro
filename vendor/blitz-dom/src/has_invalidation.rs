@@ -28,6 +28,7 @@ use selectors::matching::ElementSelectorFlags as F;
 use smallvec::SmallVec;
 use style::Atom;
 use style::values::GenericAtomIdent;
+use style::invalidation::element::element_wrapper::Snapshots;
 use style::invalidation::element::invalidator::{InvalidationResult, SiblingTraversalMap};
 use style::invalidation::element::relative_selector::RelativeSelectorInvalidator;
 use style::values::AtomIdent;
@@ -141,7 +142,7 @@ fn names_of(node: &Node, kind: AttrKind) -> SmallVec<[Atom; 4]> {
     let Some(el) = node.element_data() else { return out };
     match kind {
         AttrKind::Id => out.extend(el.id.clone()),
-        AttrKind::Class => out.extend(el.attrs.class_atoms().iter().cloned()),
+        AttrKind::Class => out.extend(el.classes.iter().cloned()),
         AttrKind::CustomStates => out.extend(lp_custom_states(custom_states_attr(node)).map(Atom::from)),
         AttrKind::Other => {}
     }
@@ -248,13 +249,13 @@ impl BaseDocument {
         if !matches!(node.data, NodeData::Element(_)) {
             return;
         }
+        let snapshots = Snapshots::new(&self.snapshots);
         let invalidator = RelativeSelectorInvalidator {
             element: node,
             quirks_mode: self.stylist.quirks_mode(),
-            snapshot_table: Some(&self.snapshots),
+            snapshots: Some(&snapshots),
             invalidated: anchor_invalidated,
             sibling_traversal_map: SiblingTraversalMap::default(),
-            _marker: std::marker::PhantomData,
         };
         invalidator.invalidate_relative_selectors_for_this(
             &self.stylist,

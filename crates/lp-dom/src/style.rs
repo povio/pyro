@@ -1533,7 +1533,7 @@ fn derive_computed(
         } else {
             TextTransform::parse(&get("text-transform")).unwrap_or_default()
         },
-        white_space: match style.get_inherited_text().clone_white_space_collapse() {
+        white_space: match style.get_inherited_text().slow_clone_white_space_collapse() {
             style::computed_values::white_space_collapse::T::Collapse => WhiteSpace::Collapse,
             style::computed_values::white_space_collapse::T::PreserveBreaks => WhiteSpace::PreserveBreaks,
             _ => WhiteSpace::Preserve,
