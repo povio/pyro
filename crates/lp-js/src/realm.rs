@@ -107,9 +107,38 @@ pub trait ModuleFetcher {
     }
 }
 
+/// The `type` import attribute of a module request (HTML "module type").
+/// Engines without import-attribute support report every request as
+/// [`ModuleType::JavaScript`] ([`crate::Capabilities::typed_modules`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModuleType {
+    /// No `type` attribute: a JavaScript module script.
+    JavaScript,
+    /// `with { type: "json" }`: resolve with [`ModuleRequest::resolve_json`].
+    Json,
+    /// `with { type: "css" }`: resolve with [`ModuleRequest::resolve_object`]
+    /// (a `CSSStyleSheet`).
+    Css,
+    /// A type JavaScriptCore parses but HTML does not allow here
+    /// (`"webassembly"`): reject it with a TypeError.
+    Unsupported,
+}
+
+impl ModuleType {
+    fn from_raw(raw: std::os::raw::c_int) -> ModuleType {
+        match raw {
+            sys::modules::MODULE_TYPE_JAVASCRIPT => ModuleType::JavaScript,
+            sys::modules::MODULE_TYPE_JSON => ModuleType::Json,
+            sys::modules::MODULE_TYPE_CSS => ModuleType::Css,
+            _ => ModuleType::Unsupported,
+        }
+    }
+}
+
 /// A pending module fetch; complete exactly once (drop = reject).
 pub struct ModuleRequest {
     url: String,
+    ty: ModuleType,
     /// The identifier JSC requested (module registry key); differs from `url`
     /// for root-relative specifiers remapped from `file://`.
     key: String,
@@ -134,11 +163,34 @@ impl ModuleRequest {
         &self.url
     }
 
-    /// Provides module source text.
-    pub fn resolve(mut self, scope: &Scope<'_>, source: &str) -> JsResult<()> {
+    /// The request's `type` import attribute.
+    pub fn module_type(&self) -> ModuleType {
+        self.ty
+    }
+
+    /// Provides module source text (a [`ModuleType::JavaScript`] request).
+    pub fn resolve(self, scope: &Scope<'_>, source: &str) -> JsResult<()> {
+        let source = module_source_with_url(source, &self.key);
+        self.resolve_source(scope, &source, sys::modules::MODULE_TYPE_JAVASCRIPT)
+    }
+
+    /// Provides the text of a [`ModuleType::Json`] request; the module's
+    /// `default` export is `JSON.parse(text)`, and text that is not JSON
+    /// fails the import with a SyntaxError.
+    pub fn resolve_json(self, scope: &Scope<'_>, text: &str) -> JsResult<()> {
+        self.resolve_source(scope, text, sys::modules::MODULE_TYPE_JSON)
+    }
+
+    /// Provides the `default` export of a [`ModuleType::Css`] request (the
+    /// module's `CSSStyleSheet`).
+    pub fn resolve_object(mut self, scope: &Scope<'_>, value: Object<'_>) -> JsResult<()> {
+        self.done = true;
+        self.resolve.get(scope).as_object().expect("resolve fn").call(None, &[value.value()]).map(|_| ())
+    }
+
+    fn resolve_source(mut self, scope: &Scope<'_>, source: &str, module_type: std::os::raw::c_int) -> JsResult<()> {
         self.done = true;
         let mut err: sys::JSStringRef = ptr::null();
-        let source = module_source_with_url(source, &self.key);
         let script = unsafe {
             sys::modules::lp_jsc_module_script_create(
                 scope.realm.global_ctx()?,
@@ -146,6 +198,7 @@ impl ModuleRequest {
                 source.len(),
                 self.key.as_ptr().cast(),
                 self.key.len(),
+                module_type,
                 &mut err,
             )
         };
@@ -2793,6 +2846,7 @@ unsafe extern "C" fn module_fetch(
     _userdata: *mut c_void,
     ctx: sys::JSGlobalContextRef,
     identifier: sys::JSStringRef,
+    module_type: std::os::raw::c_int,
     resolve: sys::JSObjectRef,
     reject: sys::JSObjectRef,
 ) {
@@ -2804,15 +2858,18 @@ unsafe extern "C" fn module_fetch(
             let url = remap_module_url(&key, origin.as_deref());
             let request = ModuleRequest {
                 url: url.clone(),
+                ty: ModuleType::from_raw(module_type),
                 key,
                 realm: Rc::downgrade(realm),
                 resolve: Persistent::new(scope, Value::from_raw(scope.ctx, resolve as sys::JSValueRef)),
                 reject: Persistent::new(scope, Value::from_raw(scope.ctx, reject as sys::JSValueRef)),
                 done: false,
             };
-            let inline = realm.inline_modules.borrow_mut().remove(&request.key);
-            if let Some(src) = inline {
-                return request.resolve(scope, &src);
+            if request.ty == ModuleType::JavaScript {
+                let inline = realm.inline_modules.borrow_mut().remove(&request.key);
+                if let Some(src) = inline {
+                    return request.resolve(scope, &src);
+                }
             }
             let fetcher = realm.module_fetcher.borrow().clone();
             match fetcher {
