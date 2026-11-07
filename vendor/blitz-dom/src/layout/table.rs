@@ -2102,7 +2102,13 @@ fn update_rows(doc: &mut BaseDocument, table: NodeId, ctx: &mut TableContext) ->
             .chain(ctx.cells.iter().map(|cell| cell.node_id))
             .chain(ctx.oof_children.iter().map(|(node_id, _)| *node_id))
             .chain(after)
-            .collect();
+            .collect::<thin_vec::ThinVec<NodeId>>();
+        // The boxes that left the list leave it in `Node::layout_child_of` too, and the new ones
+        // enter it (as `resolve_layout_children` does when it lists a node's children).
+        leave_layout_children(doc, table);
+        for &child in layout_children.iter() {
+            doc.nodes[child].layout_child_of.set(Some(table));
+        }
         *doc.nodes[table].layout_children.borrow_mut() = Some(layout_children);
     }
     Some(boxes_changed)
@@ -2228,9 +2234,24 @@ pub(crate) fn damage_former_table_parts(doc: &mut BaseDocument, node_id: NodeId)
     doc.nodes[node_id].children = children;
 }
 
+/// lightningpanda: `node_id`'s layout children that are still listed there (`Node::layout_child_of`)
+/// leave its list; one another container collected since points there and is left alone.
+fn leave_layout_children(doc: &BaseDocument, node_id: NodeId) {
+    if let Some(children) = doc.nodes[node_id].layout_children.borrow().as_ref() {
+        for &child in children.iter() {
+            if let Some(child) = doc.nodes.get(child) {
+                if child.layout_child_of.get() == Some(node_id) {
+                    child.layout_child_of.set(None);
+                }
+            }
+        }
+    }
+}
+
 /// A row group or row is a part of its table, not a box: it has no layout children of its own
 /// (those of a box it was before: a table built in place of a block).
 fn drop_part_box(doc: &mut BaseDocument, node_id: NodeId) {
+    leave_layout_children(doc, node_id);
     *doc.nodes[node_id].layout_children.borrow_mut() = None;
     *doc.nodes[node_id].paint_children.borrow_mut() = None;
     for anonymous in std::mem::take(&mut doc.nodes[node_id].anonymous_blocks) {

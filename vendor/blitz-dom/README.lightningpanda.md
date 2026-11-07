@@ -85,7 +85,9 @@ these additional local changes are covered by lp-render's rendering tests.
   collected in the same pass keeps pointing there). A node is a box of the current layout when it equals its
   `layout_parent`, which inline content of an inline root also has without being listed, or when it is a hoisted
   (out-of-flow) box whose `oof_containing_block` is its `layout_parent`: lp-render answers that in O(1) instead of
-  indexing the parent's list (a table's cells) after every sync.
+  indexing the parent's list (a table's cells) after every sync. The incremental table update keeps it too: when it
+  lists a table's cells again (`update_rows`) and when a former box becomes a table part (`drop_part_box`), the
+  boxes that left a list leave it (`leave_layout_children`) and the new ones enter it.
 - `src/layout/paint_tree.rs` (`build_paint_tree_impl`): a rebuilt paint list already in paint order (tree order with
   no positioned, floated or z-indexed children: a table's cells) is not sorted again.
 - `src/stylo.rs`, `src/document.rs` (`BaseDocument::has_sticky`): the style traversal records the elements it styles
