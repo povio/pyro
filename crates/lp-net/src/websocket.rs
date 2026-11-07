@@ -803,7 +803,7 @@ impl Io {
                             continue;
                         }
                         let payload = match (compressed, deflate.as_mut()) {
-                            (true, Some(deflate)) => match deflate.decompress(&payload, max) {
+                            (true, Some(deflate)) => match deflate.decompress(&payload, max).await {
                                 Ok(inflated) => Bytes::from(inflated),
                                 Err(InflateError(code, message)) => {
                                     return self.ws_fail(&mut io, delivery, close_sent, code, message).await;
@@ -854,7 +854,10 @@ impl Io {
                     if close_sent {
                         continue;
                     }
-                    let compressed = deflate.as_mut().and_then(|d| d.compress(&payload));
+                    let compressed = match deflate.as_mut() {
+                        Some(d) => d.compress(&payload).await,
+                        None => None,
+                    };
                     let written = match &compressed {
                         Some(wire) => write_frame(&mut io, opcode, true, wire).await,
                         None => write_frame(&mut io, opcode, false, &payload).await,
