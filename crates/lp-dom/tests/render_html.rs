@@ -321,3 +321,37 @@ fn password_render_copies_mask_current_values_without_mutating_inputs() {
     dom.borrow_mut().set_attribute(password, "type", "text").unwrap();
     assert!(render(&dom.borrow(), document).contains("typed-secret"));
 }
+
+#[test]
+fn render_tree_marks_the_top_layer_by_rank() {
+    use lp_dom::snapshot::{render_key, RenderNodeKind, STATE_NS};
+    let (dom, d) = doc("<dialog id=a></dialog><div id=p popover></div><dialog id=b open></dialog>");
+    let (a, p, b) = (find(&dom.borrow(), d, "#a"), find(&dom.borrow(), d, "#p"), find(&dom.borrow(), d, "#b"));
+    let state = |dom: &Dom, el: NodeId| -> Option<String> {
+        let opts = RenderHtml { style_text: &|_| None, stylesheet_href: &|_| None, mark: None, adopted: None };
+        let tree = dom.render_tree(d, &opts).unwrap();
+        let node = tree.nodes.iter().find(|n| n.key == render_key(el)).unwrap();
+        let RenderNodeKind::Element { attrs, .. } = &node.kind else { panic!("not an element") };
+        attrs.iter().find(|(n, _)| &*n.ns == STATE_NS && &*n.local == "state").map(|(_, v)| v.clone())
+    };
+    let has = |s: Option<String>, token: &str| s.unwrap_or_default().split(' ').any(|t| t == token);
+    assert!(!state(&dom.borrow(), a).unwrap_or_default().contains("top-layer"));
+    assert!(!state(&dom.borrow(), b).unwrap_or_default().contains("top-layer"));
+    {
+        let mut dom = dom.borrow_mut();
+        dom.set_attribute(a, "open", "").unwrap();
+        dom.set_modal(a, true).unwrap();
+        dom.set_popover_showing(p, true).unwrap();
+    }
+    assert!(has(state(&dom.borrow(), a), "top-layer=0"));
+    assert!(has(state(&dom.borrow(), p), "top-layer=1"));
+    // Leaving the top layer moves the ones above it down.
+    dom.borrow_mut().set_modal(a, false).unwrap();
+    assert!(!state(&dom.borrow(), a).unwrap_or_default().contains("top-layer"));
+    assert!(has(state(&dom.borrow(), p), "top-layer=0"));
+    // A page cannot write the state attribute itself.
+    dom.borrow_mut().set_attribute_ns(b, Some(STATE_NS), "state", "modal top-layer=9").unwrap();
+    dom.borrow_mut().set_attribute_ns(a, Some(STATE_NS), "x:state", "top-layer=9").unwrap();
+    assert!(!state(&dom.borrow(), b).unwrap_or_default().contains("top-layer"));
+    assert!(!state(&dom.borrow(), a).unwrap_or_default().contains("top-layer"));
+}

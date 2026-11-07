@@ -36,6 +36,12 @@ This is the published MIT/Apache-2.0 `blitz-paint` crate from upstream commit
 - `src/render/border.rs`: `draw_collapsed_edges` paints the winning borders of a collapsed table without uniform ones,
   snapped to whole pixels of the page as Chromium does. Cells and tables in it draw no border of their own.
 
+- `src/render.rs` (`paint_top_layer`, `paint_backdrop`): the document's top layer (blitz-dom's
+  `top_layer_nodes`) is skipped in tree order and painted after the root element, bottom first, each element over
+  its `::backdrop` (background color, opacity, `backdrop-filter` over the painted area), positioned as a box hoisted
+  to the root element. With an empty top layer the only cost is one emptiness check per box. Covered by
+  `crates/lp-cdp/tests/engine_cdp.rs` (`top_layer_*`).
+
 The linked blitz-dom patch supplies `Node::is_root_element`. Rendering regressions
 are covered in `crates/lp-render/tests/render.rs`; persistent-tree behavior is
 covered by `crates/lp-render/tests/mirror.rs`.

@@ -99,15 +99,48 @@ not. Code: `crates/lp-webapi/src/popover.rs` (algorithms and bindings),
   inert (not hit-testable, not focusable by `focus()`, by a click or by Tab,
   and left out of the CDP accessibility tree). A point outside the dialog
   hits the dialog (its `::backdrop`).
-- `:modal` and `:popover-open` match; the UA style of popovers
-  (`position: fixed`, centered) applies.
+- `:modal` and `:popover-open` match; the UA styles apply in lp-dom's
+  cascade and in the renderer's: `dialog:modal` is `position: fixed`,
+  centered (`inset: 0`, `margin: auto`, fit-content size, `max-width` /
+  `max-height` of `100% - 6px - 2em`), `[popover]` is `position: fixed`,
+  centered, with a border and padding.
+
+## Painting (screenshots, PDF)
+
+- The render tree marks each top-layer element with its rank (a
+  `top-layer=N` token in the `urn:x-lightningpanda:state` `state`
+  attribute, which only lp-dom writes: page-set attributes in that
+  namespace are dropped from the snapshot). blitz-dom keeps the marked
+  elements in a small list when the attribute is set or cleared, so an empty
+  top layer costs one emptiness check per painted box.
+- blitz-paint skips a top-layer element where the tree puts it and, after
+  the whole document, paints the top layer bottom first: each element's
+  `::backdrop`, then the element in its own root stacking context, at the
+  position its containing-block chain gives it (the viewport for the UA's
+  `position: fixed`, not scrolled), unaffected by its ancestors' z-index,
+  opacity, filters, clip-path and overflow clip. A popover shown inside a
+  modal dialog paints above the dialog when it entered the top layer after
+  it.
+- `::backdrop` is computed by the cascade (`dialog::backdrop` is
+  `rgba(0, 0, 0, 0.1)`, a popover's is transparent; author rules apply) and
+  painted as a box over the painted area (the viewport, or the whole
+  document for a full-page capture): its `background-color`, `opacity` and
+  `backdrop-filter`. `display: none` or `visibility: hidden` hides it.
+- Tests: `crates/lp-cdp/tests/engine_cdp.rs` (`top_layer_*`: pixels,
+  `elementFromPoint` and CDP clicks), `crates/lp-dom/tests/render_html.rs`
+  (`render_tree_marks_the_top_layer_by_rank`).
 
 ## Not implemented
 
-- Painting: screenshots (lp-render/Blitz) do not paint the top layer above
-  everything, and `::backdrop` is not painted or laid out as a box.
-- Layout: a top-layer element inside a transformed or `contain`ed ancestor
-  uses that ancestor as its containing block, as a normal fixed box would.
+- `::backdrop` is not a laid-out box: its `inset`/size, borders,
+  background images and gradients, `filter` and box shadows are ignored.
+- Layout: a top-layer element inside a transformed, filtered or `contain`ed
+  ancestor uses that ancestor as its containing block, as a normal fixed box
+  would, and is painted at that position without the ancestor's transform.
+- An author `position` other than `fixed`/`absolute` on a top-layer element
+  is not forced to `absolute`.
+- Deferred (`captureOnly`) HTML captures carry no top layer (nor `:modal` /
+  `:popover-open`): they paint it in tree order.
 - Close watcher abuse prevention and user-activation rules: Escape's
   `cancel` is always cancelable.
 - `source` is not retargeted across shadow trees.

@@ -157,3 +157,10 @@ Time inputs use the existing text-editor construction and intrinsic measurement 
 - `assets/default.css`: the popover rules (`[popover]` is `position: fixed`, centered, with a border and
   padding, `:popover-open` is in the top layer) are not behind Gecko's `dom.element.popover.enabled` pref,
   which no embedder sets: a showing popover is laid out as Chrome lays it out.
+
+## Top layer
+
+- `src/layout/paint_tree.rs` (`note_lp_state`, `top_layer_nodes`, `top_layer_position`), `src/mutator.rs`
+  (`create_element`, `set_attribute`, `clear_attribute`, node drops), `src/document.rs` (`top_layer`): elements whose
+  `urn:x-lightningpanda:state` `state` attribute has a `top-layer=N` token (lp-dom's render tree) are kept in a list
+  sorted by `N`, maintained when that attribute changes. blitz-paint paints them above the document.

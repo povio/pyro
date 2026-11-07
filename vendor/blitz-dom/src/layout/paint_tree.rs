@@ -532,3 +532,75 @@ fn node_to_paint_order(node: &Node, is_flex_or_grid: bool) -> (i32, i32) {
         )
     }
 }
+
+/// lightningpanda: the namespace of the state attribute lp-dom's render tree
+/// writes (see `BaseDocument::top_layer`).
+pub(crate) const LP_STATE_NS: &str = "urn:x-lightningpanda:state";
+
+/// The rank of a `top-layer=N` token in a state attribute value.
+fn top_layer_rank(value: &str) -> Option<u32> {
+    value
+        .split_ascii_whitespace()
+        .find_map(|t| t.strip_prefix("top-layer="))
+        .and_then(|n| n.parse().ok())
+}
+
+impl BaseDocument {
+    /// lightningpanda: element `id`'s state attribute is now `value` (`None`:
+    /// removed). Keeps [`Self::top_layer_nodes`] in step: an element with a
+    /// `top-layer=N` token is in the top layer at rank `N`.
+    pub(crate) fn note_lp_state(&mut self, id: NodeId, value: Option<&str>) {
+        let rank = value.and_then(top_layer_rank);
+        if self.top_layer.is_empty() && rank.is_none() {
+            return;
+        }
+        self.top_layer.retain(|&(_, n)| n != id);
+        if let Some(rank) = rank {
+            // A handful of entries, kept sorted by rank.
+            let at = self.top_layer.partition_point(|&(r, _)| r <= rank);
+            self.top_layer.insert(at, (rank, id));
+        }
+    }
+
+    /// lightningpanda: forgets dropped elements of the top layer.
+    pub(crate) fn prune_top_layer(&mut self) {
+        if !self.top_layer.is_empty() {
+            let nodes = &self.nodes;
+            self.top_layer.retain(|&(_, id)| nodes.get(id).is_some());
+        }
+    }
+
+    /// lightningpanda: whether any element is in the top layer (one length
+    /// check).
+    #[inline]
+    pub fn has_top_layer(&self) -> bool {
+        !self.top_layer.is_empty()
+    }
+
+    /// lightningpanda: whether `id` is in the top layer: painted above the
+    /// whole document (see [`Self::top_layer_nodes`]), not in its place.
+    #[inline]
+    pub fn is_in_top_layer(&self, id: NodeId) -> bool {
+        !self.top_layer.is_empty() && self.top_layer.iter().any(|&(_, n)| n == id)
+    }
+
+    /// lightningpanda: the elements of the top layer that are in the
+    /// document, bottom first.
+    pub fn top_layer_nodes(&self) -> impl Iterator<Item = NodeId> + '_ {
+        self.top_layer.iter().map(|&(_, id)| id).filter(|&id| {
+            self.nodes
+                .get(id)
+                .is_some_and(|n| n.flags.is_in_document() && n.is_element())
+        })
+    }
+
+    /// lightningpanda: the offset of top-layer element `id` from the root
+    /// element's border box (with the root's scroll applied), excluding its
+    /// own location: where it paints, hoisted to the root's stacking context.
+    pub fn top_layer_position(&self, id: NodeId) -> Point<f32> {
+        match self.try_root_element() {
+            Some(root) => hoisted_child_position(self.tree(), root.id, id),
+            None => Point::ZERO,
+        }
+    }
+}

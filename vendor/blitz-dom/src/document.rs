@@ -396,6 +396,13 @@ pub struct BaseDocument {
     /// `BaseDocument::may_have_generated_before_after`).
     pub(crate) generated_before_after: bool,
 
+    /// lightningpanda: the top layer (modal dialogs, showing popovers) as
+    /// the embedder marks it, by rank (bottom first): elements whose
+    /// `urn:x-lightningpanda:state` `state` attribute has a `top-layer=N`
+    /// token. Maintained when that attribute is set or cleared; usually
+    /// empty, and then painting costs one emptiness check per box.
+    pub(crate) top_layer: Vec<(u32, NodeId)>,
+
     // Tracks in-flight "critical" resources (e.g. stylesheets linked from the `<head>`),
     // keyed by request id
     pub(crate) pending_critical_resources: HashSet<usize>,
@@ -564,6 +571,7 @@ impl BaseDocument {
             pending_images: HashMap::new(),
             pending_style_image_nodes: Vec::new(),
             generated_before_after: false,
+            top_layer: Vec::new(),
             pending_critical_resources: HashSet::new(),
             controls_to_form: HashMap::new(),
             net_provider,
