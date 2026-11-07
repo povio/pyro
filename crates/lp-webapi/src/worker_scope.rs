@@ -82,6 +82,8 @@ pub(crate) struct WorkerStart {
     /// `new Worker(url, {type: 'module'})`: the script is a module.
     pub(crate) module: bool,
     pub(crate) early: Vec<Early>,
+    /// A service worker version: its global is a `ServiceWorkerGlobalScope`.
+    pub(crate) service: Option<crate::service_worker_scope::ServiceStart>,
 }
 
 impl WorkerStart {
@@ -113,6 +115,42 @@ impl WorkerStart {
             indexed_db: page.local_storage.borrow().indexed_db(),
             module: false,
             early: Vec::new(),
+            service: None,
+        })
+    }
+
+    /// A service worker version whose script `page` fetched. Its requests carry
+    /// `page`'s frame id, so they are reported (and routed) on that page.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn for_service(
+        id: u64,
+        page: &Rc<PageDom>,
+        url: lp_net::Url,
+        origin: String,
+        shared: Arc<Shared>,
+        script: Bytes,
+        service: crate::service_worker_scope::ServiceStart,
+        module: bool,
+    ) -> Option<WorkerStart> {
+        let net = page.net.borrow().clone()?;
+        let poster = page.remote_poster()?;
+        Some(WorkerStart {
+            id,
+            url,
+            name: String::new(),
+            script: Some(script),
+            net,
+            poster,
+            shared,
+            frame_id: page.request_context().frame_id,
+            origin: Some(origin),
+            user_agent: page.identity.borrow().value.clone(),
+            extra_headers: page.extra_http_headers(),
+            cache_disabled: page.cache_disabled(),
+            indexed_db: page.local_storage.borrow().indexed_db(),
+            module,
+            early: Vec::new(),
+            service: Some(service),
         })
     }
 }
@@ -252,6 +290,15 @@ impl WorkerLoop {
         fire_message(&s, &self.page, target, &message);
     }
 
+    /// Runs `f` with the realm (a service worker's browser-thread request).
+    pub(crate) fn service(&mut self, f: impl FnOnce(&Scope<'_>, &Rc<PageDom>)) {
+        if self.shared.closing.load(Ordering::Acquire) {
+            return;
+        }
+        let Ok(s) = self.realm.scope() else { return };
+        f(&s, &self.page);
+    }
+
     pub(crate) fn inspect(&mut self, task: InspectTask) {
         task(&WorkerContext { engine: &self.engine, realm: &self.realm, events: &self.events });
     }
@@ -333,17 +380,28 @@ fn run(start: WorkerStart, ready: mpsc::SyncSender<LoopHandle<WorkerLoop>>) {
         return;
     }
     let (id, shared, poster, module) = (start.id, start.shared.clone(), start.poster.clone(), start.module);
+    let service = start.service.as_ref().map(|s| s.version);
+    // A service worker's version learns whether its script ran.
+    let evaluated = |ok: bool| {
+        if let Some(version) = service {
+            poster(Box::new(move || {
+                crate::service_worker::deliver(version, crate::service_worker::SwUp::Evaluated(ok))
+            }));
+        }
+    };
     match set_up(&event_loop, start) {
         Ok((mut state, script)) => {
             let closing = shared.clone();
             if let Some(script) = script {
-                if !shared.closing.load(Ordering::Acquire) {
-                    run_script(&state, &script, module);
-                }
+                let ok = !shared.closing.load(Ordering::Acquire) && run_script(&state, &script, module);
+                evaluated(ok);
                 event_loop.run_until(&mut state, None, false, move |_| closing.closing.load(Ordering::Acquire));
+            } else {
+                evaluated(false);
             }
             tear_down(event_loop, state);
         }
+        Err(_) if service.is_some() => evaluated(false),
         Err(_) => poster(Box::new(move || deliver_up(id, Up::LoadFailed))),
     }
 }
@@ -358,7 +416,7 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
             terminate.terminate();
         }
     }
-    let class = register(&engine);
+    let class = register(&engine, start.service.is_some());
     let events = Rc::new(WorkerEvents {
         buffer: RefCell::new(VecDeque::new()),
         inspector: RefCell::new(None),
@@ -397,7 +455,11 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
         websocket_module: RefCell::new(None),
         module: start.module,
     };
-    realm.set_global_data::<DedicatedWorkerGlobalScope>(scope)?;
+    if start.service.is_some() {
+        realm.set_global_data::<ServiceWorkerGlobalScope>(scope)?;
+    } else {
+        realm.set_global_data::<DedicatedWorkerGlobalScope>(scope)?;
+    }
     // Static imports of a module worker and `import()` in any worker: the
     // worker's own fetches, like `importScripts`.
     realm.set_module_fetcher(Some(Rc::new(WorkerModuleFetcher {
@@ -410,7 +472,10 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
     })));
     {
         let s = realm.scope()?;
-        install(&s, &page)?;
+        install(&s, &page, start.service.is_some())?;
+        if let Some(service) = &start.service {
+            crate::service_worker_scope::install(&s, service, start.poster.clone())?;
+        }
     }
     // A synchronous request parks this thread: `terminate()` must still end it.
     let closing = start.shared.clone();
@@ -426,7 +491,7 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
         poster: start.poster.clone(),
         in_error: false,
     };
-    if script.is_none() && !start.shared.closing.load(Ordering::Acquire) {
+    if script.is_none() && start.service.is_none() && !start.shared.closing.load(Ordering::Acquire) {
         let id = start.id;
         (start.poster)(Box::new(move || deliver_up(id, Up::LoadFailed)));
     }
@@ -465,13 +530,16 @@ fn script_text(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).into_owned()
 }
 
-fn run_script(state: &WorkerLoop, script: &(String, String), module: bool) {
-    let Ok(s) = state.realm.scope() else { return };
+/// Whether a classic script ran to its end (a module's evaluation is
+/// asynchronous: its failure is reported, and this says true).
+fn run_script(state: &WorkerLoop, script: &(String, String), module: bool) -> bool {
+    let Ok(s) = state.realm.scope() else { return false };
     if !module {
         if let Err(e) = s.eval(&script.0, Some(&script.1), 1) {
             s.report_exception(&e);
+            return false;
         }
-        return;
+        return true;
     }
     // A module's graph loads, then it evaluates: an import that fails or a
     // throw at its top level rejects the evaluation promise, which reports
@@ -481,7 +549,9 @@ fn run_script(state: &WorkerLoop, script: &(String, String), module: bool) {
     });
     if let Err(e) = evaluated {
         s.report_exception(&e);
+        return false;
     }
+    true
 }
 
 /// The ES module source of a worker's realm: each module is fetched in a task
@@ -541,6 +611,7 @@ impl lp_js::ModuleFetcher for WorkerModuleFetcher {
 /// The VM goes last: everything holding handles into it is released first.
 fn tear_down(event_loop: EventLoop<WorkerLoop>, state: WorkerLoop) {
     state.events.release();
+    crate::service_worker_scope::tear_down();
     state.page.dispose();
     drop(event_loop);
     state.engine.set_hooks(None);
@@ -641,7 +712,7 @@ fn set_timer<'s>(s: &Scope<'s>, g: &ScopeData, a: Args<'s>, repeat: bool) -> JsR
         let Some(realm) = realm.upgrade() else { return };
         let Ok(scope) = realm.scope() else { return };
         if !repeat {
-            if let Some(g) = scope.global_data::<DedicatedWorkerGlobalScope>() {
+            if let Some(g) = scope.global_data::<WorkerGlobalScope>() {
                 g.timers.borrow_mut().remove(&handle);
             }
         }
@@ -843,6 +914,34 @@ impl JsClass for DedicatedWorkerGlobalScope {
     }
 }
 
+/// A service worker's global (`service_worker_scope` makes what it returns).
+pub struct ServiceWorkerGlobalScope;
+impl JsClass for ServiceWorkerGlobalScope {
+    const NAME: &'static str = "ServiceWorkerGlobalScope";
+    type Data = ScopeData;
+    type Parent = WorkerGlobalScope;
+    fn define(def: &mut ClassDef<Self>) {
+        def.getter("clients", |s, _g| crate::service_worker_scope::member(s, "clients"));
+        def.getter("registration", |s, _g| crate::service_worker_scope::member(s, "registration"));
+        def.getter("serviceWorker", |s, _g| crate::service_worker_scope::member(s, "serviceWorker"));
+        def.method("skipWaiting", 0, |s, _g, _a| {
+            let f = crate::service_worker_scope::member(s, "skipWaiting")?;
+            f.as_object().ok_or(JsError::ContextDestroyed)?.call(None, &[])
+        });
+        macro_rules! handlers {
+            ($($attr:literal => $name:literal),+) => {$(
+                def.accessor(
+                    $attr,
+                    |s, g| crate::target::event_handler(s, &g.target, $name),
+                    |s, g, value| crate::target::set_event_handler(s, &g.target, $name, value),
+                );
+            )+};
+        }
+        handlers!("oninstall" => "install", "onactivate" => "activate", "onfetch" => "fetch",
+            "onmessage" => "message", "onmessageerror" => "messageerror");
+    }
+}
+
 pub struct WorkerLocation;
 impl JsClass for WorkerLocation {
     const NAME: &'static str = "WorkerLocation";
@@ -894,7 +993,7 @@ fn navigator<'s>(s: &Scope<'s>, g: &ScopeData) -> JsResult<lp_js::Object<'s>> {
 /// StorageManager) hang from as hidden properties: the realm's `navigator`.
 pub(crate) fn module_holder<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<lp_js::Object<'s>> {
     let unavailable = || JsError::Type("this realm has no navigator".into());
-    match s.global_data::<DedicatedWorkerGlobalScope>() {
+    match s.global_data::<WorkerGlobalScope>() {
         Some(g) => navigator(s, g),
         None => crate::window::navigator(s, page)?.as_object().ok_or_else(unavailable),
     }
@@ -903,11 +1002,11 @@ pub(crate) fn module_holder<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<l
 /// Whether `s` runs in a worker global scope rather than a Window: the XHR
 /// steps conditioned on "the current global object is a Window object".
 pub(crate) fn is_worker(s: &Scope<'_>) -> bool {
-    s.global_data::<DedicatedWorkerGlobalScope>().is_some()
+    s.global_data::<WorkerGlobalScope>().is_some()
 }
 
 /// The classes a worker's realm exposes; returns its global's class.
-fn register(engine: &Engine) -> lp_js::ClassId {
+fn register(engine: &Engine, service: bool) -> lp_js::ClassId {
     engine.register::<EventTarget>();
     crate::event::register_for_worker(engine);
     crate::abort::register(engine);
@@ -929,11 +1028,15 @@ fn register(engine: &Engine) -> lp_js::ClassId {
     engine.register::<WorkerLocation>();
     engine.register::<WorkerNavigator>();
     engine.register::<WorkerGlobalScope>();
+    if service {
+        engine.register::<crate::request::Request>();
+        return engine.register::<ServiceWorkerGlobalScope>();
+    }
     engine.register::<DedicatedWorkerGlobalScope>()
 }
 
 /// The part of `crate::install` that applies without a window.
-fn install(s: &Scope<'_>, page: &Rc<PageDom>) -> JsResult<()> {
+fn install(s: &Scope<'_>, page: &Rc<PageDom>, service: bool) -> JsResult<()> {
     let realm = s.realm();
     page.register_realm(&realm);
     realm.set_embedder(page.clone());
@@ -955,8 +1058,9 @@ fn install(s: &Scope<'_>, page: &Rc<PageDom>) -> JsResult<()> {
     crate::structured_clone::prepare_wire(s)?;
     // The global is JSC's default one, whose prototype cannot be replaced
     // (docs/ARCHITECTURE.md), and libraries read `self.constructor.name`.
+    let global = if service { "ServiceWorkerGlobalScope" } else { "DedicatedWorkerGlobalScope" };
     s.eval(
-        "Object.defineProperty(self, 'constructor', {value: DedicatedWorkerGlobalScope, writable: true, configurable: true})",
+        &format!("Object.defineProperty(self, 'constructor', {{value: {global}, writable: true, configurable: true}})"),
         Some("lightningpanda://internal/worker-scope.js"),
         1,
     )?;

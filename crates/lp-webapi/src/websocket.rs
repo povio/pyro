@@ -27,8 +27,8 @@ const KEY: &str = "lpWebSocket";
 
 macro_rules! lazy_globals {
     ($def:ident) => {
-        $def.accessor("WebSocket", |s, _| global(s, "WebSocket"), |s, _, value| replace(s, "WebSocket", value));
-        $def.accessor("CloseEvent", |s, _| global(s, "CloseEvent"), |s, _, value| replace(s, "CloseEvent", value));
+        $def.global_value_accessor("WebSocket", |s, _| global(s, "WebSocket"), |s, _, value| replace(s, "WebSocket", value));
+        $def.global_value_accessor("CloseEvent", |s, _| global(s, "CloseEvent"), |s, _, value| replace(s, "CloseEvent", value));
     };
 }
 

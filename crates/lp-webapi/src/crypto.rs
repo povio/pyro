@@ -239,7 +239,7 @@ where
     W: JsClass,
     W::Data: WindowHost,
 {
-    def.accessor("CryptoKey", |s, w| crypto_key(s, w.page()), |s, w, value| replace(s, w.page(), value));
+    def.global_value_accessor("CryptoKey", |s, w| crypto_key(s, w.page()), |s, w, value| replace(s, w.page(), value));
 }
 
 fn crypto_key<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Value<'s>> {

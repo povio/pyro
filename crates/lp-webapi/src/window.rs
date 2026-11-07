@@ -175,6 +175,7 @@ where
     crate::observable::define_globals(def);
     crate::crypto::define_globals(def);
     crate::storage_manager::define_globals(def);
+    crate::service_worker::define_globals(def);
     crate::event_source::define_globals(def);
     crate::websocket::define_globals(def);
     crate::indexeddb::define_globals(def);
@@ -379,6 +380,7 @@ impl JsClass for Navigator {
         def.getter("permissions", |s, p| crate::navigator_extras::member(s, p, "permissions"));
         def.getter("clipboard", |s, p| crate::navigator_extras::member(s, p, "clipboard"));
         def.getter("storage", |s, p| crate::storage_manager::storage(s, p));
+        def.getter("serviceWorker", |s, p| crate::service_worker::container(s, p));
         def.getter("webdriver", |s, _p| Ok(s.boolean(true)));
         def.getter("doNotTrack", |s, _p| Ok(s.null()));
         def.getter("pdfViewerEnabled", |s, _p| Ok(s.boolean(false)));

@@ -636,7 +636,7 @@ impl Xhr {
             false,
             sink,
         );
-        net.fetch_with_id(id, request, sink);
+        crate::service_worker::route(&page, &net, id, request, sink);
         Ok(())
     }
     /// The synchronous flag of `send()`: parks this thread until the I/O thread

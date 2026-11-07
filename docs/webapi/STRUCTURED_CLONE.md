@@ -64,8 +64,9 @@ capability-gated JSC SPI and fail explicitly if unavailable.
 
 Users: `structuredClone`, MessagePort and `window.postMessage` (cloned straight
 into the receiving realm, which may be another frame or page of the thread's
-VM). The cross-VM format (`worker_wire.js`: workers, MessagePorts entangled
-across threads, popups, BroadcastChannel, IndexedDB and history state) encodes
+VM). The cross-VM format (`worker_wire.js`: dedicated and service workers
+and their clients, MessagePorts entangled across threads, popups,
+BroadcastChannel, IndexedDB and history state) encodes
 the same types, Error, DOMException, Blob, File, FileList and CryptoKey
 included; Blob bytes travel beside the text, shared rather than copied. Its
 transfer list takes ArrayBuffers (copied, then detached), MessagePorts and
