@@ -1236,8 +1236,9 @@ impl Io {
             }
         }
         if let Some(r) = &req.referrer {
+            // A serialized URL is ASCII: the value takes the string as it is.
             if let Some(v) = crate::referrer::referrer_for(r, &req.url, req.referrer_policy)
-                .and_then(|v| HeaderValue::from_str(&v).ok())
+                .and_then(|v| HeaderValue::from_maybe_shared(Bytes::from(v)).ok())
             {
                 h.entry(header::REFERER).or_insert(v);
             }
@@ -1348,7 +1349,9 @@ impl Io {
             site = site.max(hop_site(&req, origin_url.as_ref()));
             let mut headers = self.build_headers(&req, origin_url.as_ref(), cors_cross, site);
             let cache_mode = self.cache_mode(&req, &mut headers);
-            let info = RequestInfo {
+            // The request as sent, made for each consumer (the observers here,
+            // an interceptor below) instead of copied for both up front.
+            let info = |headers: &HeaderMap| RequestInfo {
                 url: req.url.clone(),
                 method: req.method.clone(),
                 headers: headers.clone(),
@@ -1359,7 +1362,7 @@ impl Io {
             };
             self.shared.emit(NetEvent::RequestWillBeSent {
                 id,
-                request: Box::new(info.clone()),
+                request: Box::new(info(&headers)),
                 redirect_response: redirect_response.take().map(Box::new),
                 timestamp: self.shared.now(),
                 wall_time: wall_time(),
@@ -1394,9 +1397,10 @@ impl Io {
             // CDP Fetch interception (request stage).
             let interceptor =
                 if req.skip_interception { None } else { self.shared.interceptor.lock().unwrap().clone() };
+            let paused = interceptor.as_ref().map(|_| info(&headers));
             let (mut method, mut url, mut headers, mut body) =
                 (req.method.clone(), req.url.clone(), headers, req.body.clone());
-            if let Some(i) = &interceptor {
+            if let (Some(i), Some(info)) = (&interceptor, paused) {
                 let (tx, rx) = oneshot::channel();
                 let paused_info = info.clone();
                 i.paused(PausedRequest { id, request: info }, tx);

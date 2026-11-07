@@ -610,9 +610,12 @@ impl EngineHost {
         {
             state.network.post_data.observe(&event);
         }
+        // The params borrow from the translator: the page's sessions are read
+        // field by field next to it.
         if let Some((method, params)) = state.network.translator.translate(&event) {
-            for session in self.sessions_of(page, |s| s.network_enabled) {
-                self.event(method, &params, &session);
+            let sessions = &self.sessions;
+            for session in state.sessions.iter().filter(|s| sessions.get(*s).is_some_and(|s| s.network_enabled)) {
+                self.out.push(crate::msg::event_frame(method, &params, Some(session)));
             }
         }
     }
