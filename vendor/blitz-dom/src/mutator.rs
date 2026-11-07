@@ -547,9 +547,8 @@ impl DocumentMutator<'_> {
     /// Remove the node from it's parent but don't drop it
     pub fn remove_node(&mut self, node_id: NodeId) {
         // A removed element inside a `:has()` argument changes its anchors.
-        self.doc.invalidate_has_anchors_around(node_id);
+        self.doc.invalidate_relative_selectors_for_removal(node_id);
         if let Some(parent_id) = self.doc.nodes[node_id].parent {
-            self.doc.invalidate_has_anchors(parent_id);
             self.restyle_if_empty_matters(parent_id);
         }
         let node_is_in_document = self.doc.nodes[node_id].flags.is_in_document();
@@ -590,9 +589,8 @@ impl DocumentMutator<'_> {
     ) -> Option<Node> {
         // lightningpanda: a dropped element inside a `:has()` argument
         // changes its anchors, as in `remove_node`.
-        self.doc.invalidate_has_anchors_around(node_id);
+        self.doc.invalidate_relative_selectors_for_removal(node_id);
         if let Some(parent_id) = self.doc.nodes[node_id].parent {
-            self.doc.invalidate_has_anchors(parent_id);
             self.restyle_if_empty_matters(parent_id);
         }
         let node_is_in_document = self.doc.nodes[node_id].flags.is_in_document();
@@ -785,22 +783,7 @@ impl DocumentMutator<'_> {
         child_ids: &[NodeId],
         insert_children_fn: &dyn Fn(&mut Node, &[NodeId]),
     ) {
-        // New children of an element in a `:has()` search path (or of an
-        // anchor) can change what the anchors match.
-        self.doc.invalidate_has_anchors(parent_id);
         self.restyle_if_empty_matters(parent_id);
-        if self.doc.nodes[parent_id].is_element()
-            && self.doc.nodes[parent_id]
-            .selector_flags()
-            .get()
-            .intersects(
-                selectors::matching::ElementSelectorFlags::ANCHORS_RELATIVE_SELECTOR
-                    | selectors::matching::ElementSelectorFlags::ANCHORS_RELATIVE_SELECTOR_NON_SUBJECT,
-            )
-            && self.doc.nodes[parent_id].primary_styles().is_some()
-        {
-            self.doc.nodes[parent_id].set_restyle_hint(style::invalidation::element::restyle_hints::RestyleHint::restyle_subtree());
-        }
         let new_parent_is_in_document = self.doc.nodes[parent_id].flags.is_in_document();
         self.mutations_occurred |= new_parent_is_in_document && !child_ids.is_empty();
         // Detach the children from their old parents *before* inserting them into
@@ -825,8 +808,7 @@ impl DocumentMutator<'_> {
             // `remove_node` does (`:has()` anchors, `:empty`), checked while
             // it is still linked.
             if let Some(old_parent_id) = self.doc.nodes[child_id].parent {
-                self.doc.invalidate_has_anchors_around(child_id);
-                self.doc.invalidate_has_anchors(old_parent_id);
+                self.doc.invalidate_relative_selectors_for_removal(child_id);
                 self.restyle_if_empty_matters(old_parent_id);
             }
             let child = &mut self.doc.nodes[child_id];
@@ -873,11 +855,6 @@ impl DocumentMutator<'_> {
             let child = &mut self.doc.nodes[child_id];
             let child_was_in_doc = child.flags.is_in_document();
             child.parent = Some(parent_id);
-            // lightningpanda: the anchors that can see the new position
-            // (ancestors, their previous siblings) may match differently.
-            if new_parent_is_in_document {
-                self.doc.invalidate_has_anchors_around(child_id);
-            }
             let child = &mut self.doc.nodes[child_id];
             // A moved element's ancestors (inherited styles, descendant
             // selectors) changed; new ones have no style yet. Either way the
@@ -896,6 +873,13 @@ impl DocumentMutator<'_> {
                 self.process_added_subtree(child_id);
             } else if !new_parent_is_in_document && child_was_in_doc {
                 self.process_removed_subtree(child_id);
+            }
+        }
+        // lightningpanda: the `:has()` anchors that can see the new positions,
+        // once every child is linked (a sibling inserted with it counts).
+        if new_parent_is_in_document {
+            for &child_id in child_ids {
+                self.doc.invalidate_relative_selectors_for_insertion(child_id);
             }
         }
 
