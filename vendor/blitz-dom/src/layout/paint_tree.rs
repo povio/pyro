@@ -429,8 +429,13 @@ impl BaseDocument {
                 self.attach_hoisted_past_parent(hoisted_id, &mut paint_children, &mut entries);
             }
 
-            paint_children
-                .sort_by_cached_key(|id| node_to_paint_order(&self.nodes[*id], is_flex_or_grid));
+            // lightningpanda: children in tree order are usually in paint
+            // order already (no positioned, floated or z-indexed ones): the
+            // stable sort would keep them, without its key buffer.
+            let paint_order = |id: &NodeId| node_to_paint_order(&self.nodes[*id], is_flex_or_grid);
+            if !paint_children.is_sorted_by_key(paint_order) {
+                paint_children.sort_by_cached_key(paint_order);
+            }
 
             let node = &self.nodes[node_id];
             *node.paint_children.borrow_mut() = Some(paint_children);

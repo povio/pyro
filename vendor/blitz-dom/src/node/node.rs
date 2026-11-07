@@ -97,6 +97,11 @@ pub struct Node {
     pub layout_parent: Cell<Option<NodeId>>,
     /// A separate child list that includes anonymous collections of inline elements
     pub layout_children: RefCell<Option<ThinVec<NodeId>>>,
+    /// lightningpanda: the node whose `layout_children` list holds this node,
+    /// kept where those lists are built (`resolve_layout_children`). The node
+    /// is a box of the current layout when it equals `layout_parent` (which
+    /// inline content of an inline root also has, without being listed).
+    pub layout_child_of: Cell<Option<NodeId>>,
     /// Out-of-flow (absolutely/fixed positioned) boxes for which this node is the
     /// containing block. Recorded by Taffy's out-of-flow positioning pass. The
     /// `Layout.location` of these boxes is relative to this node's border box.
@@ -267,7 +272,21 @@ impl Node {
         let before = *layout;
         update(layout);
         if *layout != before {
-            self.mark_layout_changed();
+            // lightningpanda: a box that only moved (rows below an edited
+            // table cell) keeps what is in its own coordinates (its scrollable
+            // overflow, its subtree's layouts): only its ancestors are marked.
+            // Its rounding still follows the move, keyed by its location
+            // (`LayoutData::rounded_from`), and the passes after layout no
+            // longer descend into every moved subtree.
+            let moved = {
+                let mut unmoved = *layout;
+                unmoved.location = before.location;
+                unmoved == before
+            };
+            match (moved, self.parent) {
+                (true, Some(parent)) => self.tree()[parent].mark_layout_changed(),
+                _ => self.mark_layout_changed(),
+            }
         }
     }
 
@@ -416,6 +435,7 @@ impl Node {
             parent: None,
             children: ThinVec::new(),
             layout_parent: Cell::new(None),
+            layout_child_of: Cell::new(None),
             oof_containing_block: Cell::new(None),
             layout_children: RefCell::new(None),
             hoisted_children: RefCell::new(ThinVec::new()),
@@ -427,6 +447,22 @@ impl Node {
             flags: NodeFlags::empty(),
             data,
         }
+    }
+
+    /// lightningpanda: whether a `transform`, `translate`, `rotate` or `scale` style applies,
+    /// which [`Self::set_transform`] resolves against the rounded size. A transform that
+    /// resolves to the identity at one size (`translate: 50%` at width 0) is stored as
+    /// `None`, so `transform().is_some()` alone does not tell whether a new size changes it.
+    pub(crate) fn has_transform_style(&self) -> bool {
+        use style::values::computed::Rotate;
+        use style::values::generics::transform::{Scale, Translate};
+        self.primary_styles().is_some_and(|s| {
+            let b = s.get_box();
+            !b.transform.0.is_empty()
+                || !matches!(b.translate, Translate::None)
+                || !matches!(b.rotate, Rotate::None)
+                || !matches!(b.scale, Scale::None)
+        })
     }
 
     pub fn set_transform(&mut self, scale: f32) -> Option<Affine> {
@@ -668,7 +704,7 @@ impl Node {
 
     /// [`Self::mark_damaged`], all the way up: a flag can outlast its ancestors' (a node moved
     /// while flagged), and rounding must never miss a change.
-    fn mark_layout_changed(&self) {
+    pub(crate) fn mark_layout_changed(&self) {
         let mut current = Some(self.id);
         while let Some(id) = current {
             let node = &self.tree()[id];

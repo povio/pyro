@@ -1148,3 +1148,276 @@ fn rounding_skips_what_a_change_did_not_touch() {
     assert!(after.1 - before.1 >= 190, "skipped {} subtrees", after.1 - before.1);
     assert!(after.0 - before.0 < whole / 2, "reached {} of {whole} nodes", after.0 - before.0);
 }
+
+/// Boxes that only move (the rows below a cell that grew, the blocks below a
+/// block that grew by a fraction of a pixel) are marked on their ancestors only:
+/// their rounding and overflow still follow the move. (A transformed box that
+/// moves paints differently from a fresh build, whether or not it is marked
+/// itself: a known gap of blitz-dom's incremental passes, left out here.)
+#[test]
+fn rounding_follows_boxes_that_only_moved() {
+    let rows: String = (0..12)
+        .map(|i| format!("<tr><td id=c{i} style=\"font-size:13.3px\">cell {i}</td><td><div style=\"overflow:auto;height:10.5px\"><p style=\"margin:0;height:30px\">s</p></div></td></tr>"))
+        .collect();
+    let blocks: String = (0..12)
+        .map(|i| format!("<div id=d{i} style=\"height:7.3px\"><span style=\"display:inline-block;width:5.5px;height:3.3px\"></span>b{i}<p style=\"margin:0;width:20.5px;height:2.5px\"></p></div>"))
+        .collect();
+    rounds_as_a_fresh_build(
+        &format!("<table id=t style=\"width:300.5px\">{rows}</table><div id=top style=\"height:3.3px\"></div>{blocks}"),
+        vec![
+            (
+                "a taller cell".into(),
+                Box::new(|p| {
+                    let n = p.find("#c1");
+                    p.dom.borrow_mut().set_text_content(n, "a taller cell that wraps onto lines of its own").unwrap();
+                }),
+            ),
+            style("#top", "height:4.7px"),
+            style("#top", "height:4.7px;margin-bottom:0.4px"),
+            style("#c3", "font-size:13.3px;padding-top:2.25px"),
+        ],
+    );
+}
+
+/// Layout queries synced from lp-dom's change journal on a long table and long
+/// lists: cell text edits, rows appended, moved and removed, spans, collapsed
+/// borders, display flips of cells, rows and children of a long list
+/// (layout-tree membership, `Node::layout_child_of`) and `position: sticky`
+/// turned on and off (`BaseDocument::has_sticky`) report what a fresh build
+/// of the same tree does.
+#[test]
+fn deltas_on_long_tables_and_lists_match_fresh_builds() {
+    let rows: String =
+        (0..24).map(|i| format!("<tr id=r{i}><td id=a{i}>a{i}</td><td id=b{i}>cell {i}</td></tr>")).collect();
+    let items: String = (0..24).map(|i| format!("<p id=p{i}>para {i} <span id=s{i}>in</span> text</p>")).collect();
+    let others: String = (0..20).map(|i| format!("<div id=q{i}>q{i}</div>")).collect();
+    let page = Page::new(&format!(
+        "<!doctype html><html><head><style>body {{ margin: 0; font: 14px sans-serif }} td {{ padding: 2px }}</style></head><body>\
+         <table id=t style=\"width:400px\"><thead><tr><th id=h>head</th><th>h2</th></tr></thead><tbody id=tb>{rows}</tbody></table>\
+         <div id=list>{items}</div><div id=other>{others}</div></body></html>"
+    ));
+    type Step = (&'static str, Box<dyn Fn(&Page)>);
+    let attr = |sel: &'static str, name: &'static str, value: &'static str| -> Box<dyn Fn(&Page)> {
+        Box::new(move |p: &Page| {
+            let n = p.find(sel);
+            p.dom.borrow_mut().set_attribute(n, name, value).unwrap();
+        })
+    };
+    let text = |sel: &'static str, value: &'static str| -> Box<dyn Fn(&Page)> {
+        Box::new(move |p: &Page| {
+            let n = p.find(sel);
+            p.dom.borrow_mut().set_text_content(n, value).unwrap();
+        })
+    };
+    let steps: Vec<Step> = vec![
+        ("cell text", text("#b7", "a much longer cell text that wraps over several lines in the cell")),
+        ("another cell text", text("#a3", "x")),
+        (
+            "row appended",
+            Box::new(|p| {
+                let tb = p.find("#tb");
+                let mut d = p.dom.borrow_mut();
+                let tr = d.create_element(p.doc, "tr").unwrap();
+                for s in ["new", "row"] {
+                    let td = d.create_element(p.doc, "td").unwrap();
+                    let t = d.create_text(p.doc, s).unwrap();
+                    d.append_child(td, t).unwrap();
+                    d.append_child(tr, td).unwrap();
+                }
+                d.append_child(tb, tr).unwrap();
+            }),
+        ),
+        (
+            "row moved to the top",
+            Box::new(|p| {
+                let (tb, r, first) = (p.find("#tb"), p.find("#r20"), p.find("#r0"));
+                p.dom.borrow_mut().insert_before(tb, r, Some(first)).unwrap();
+            }),
+        ),
+        (
+            "row removed",
+            Box::new(|p| {
+                let (tb, r) = (p.find("#tb"), p.find("#r5"));
+                p.dom.borrow_mut().remove_child(tb, r).unwrap();
+            }),
+        ),
+        ("colspan", attr("#a9", "colspan", "2")),
+        ("rowspan", attr("#a11", "rowspan", "2")),
+        ("collapsed borders", attr("#t", "style", "width:400px;border-collapse:collapse;border:2px solid")),
+        ("cell border", attr("#b12", "style", "border:3px solid red")),
+        ("cell hidden", attr("#b13", "style", "display:none")),
+        ("cell shown", attr("#b13", "style", "display:table-cell")),
+        ("row hidden", attr("#r14", "style", "display:none")),
+        ("row shown", attr("#r14", "style", "")),
+        ("sticky header", attr("#h", "style", "position:sticky;top:0")),
+        ("sticky cell text", text("#b2", "edited under a sticky header")),
+        ("sticky off", attr("#h", "style", "position:relative")),
+        ("sticky list item", attr("#p10", "style", "position:sticky;top:5px")),
+        (
+            "sticky item removed",
+            Box::new(|p| {
+                let (list, item) = (p.find("#list"), p.find("#p10"));
+                p.dom.borrow_mut().remove_child(list, item).unwrap();
+            }),
+        ),
+        // (A block among blocks made inline is left out: blitz-dom's
+        // incremental layout misplaces the boxes after it, before and after
+        // this change.)
+        ("span made an inline block", attr("#s4", "style", "display:inline-block;width:30px")),
+        ("span made a block", attr("#s6", "style", "display:block")),
+        ("span made inline again", attr("#s4", "style", "")),
+        ("other span made inline again", attr("#s6", "style", "")),
+        ("paragraph hidden", attr("#p8", "style", "display:none")),
+        ("paragraph contents", attr("#p9", "style", "display:contents")),
+        (
+            "paragraph moved to the other list",
+            Box::new(|p| {
+                let (other, item) = (p.find("#other"), p.find("#p12"));
+                p.dom.borrow_mut().append_child(other, item).unwrap();
+            }),
+        ),
+        (
+            "paragraph appended",
+            Box::new(|p| {
+                let list = p.find("#list");
+                let mut d = p.dom.borrow_mut();
+                let e = d.create_element(p.doc, "p").unwrap();
+                let t = d.create_text(p.doc, "appended").unwrap();
+                d.append_child(e, t).unwrap();
+                d.append_child(list, e).unwrap();
+            }),
+        ),
+        ("list made inline", attr("#other", "style", "display:inline")),
+        ("list made a block again", attr("#other", "style", "")),
+    ];
+    let mut r = Renderer::new();
+    r.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
+    let mut deltas = 0;
+    for (what, step) in &steps {
+        let since = page.dom.borrow().version();
+        step(&page);
+        let delta = page.dom.borrow().render_delta(page.doc, since, &Page::opts());
+        if delta.is_some_and(|d| r.sync_delta(1, &delta_ops(d), (640, 480, 1.0, false, false), false).is_ok()) {
+            deltas += 1;
+        } else {
+            r.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
+        }
+        let mut fresh = Renderer::new();
+        fresh.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
+        let sticky_now = matches!(*what, "sticky header" | "sticky cell text" | "sticky list item");
+        assert_eq!(r.has_sticky(1), sticky_now, "sticky after {what}");
+        assert_eq!(fresh.has_sticky(1), sticky_now, "sticky in a fresh build after {what}");
+        for ((k, a), (_, b)) in boxes(&r, &page).into_iter().zip(boxes(&fresh, &page)) {
+            assert_eq!(a, b, "box {k:x} after {what}");
+        }
+        let sticky = |r: &Renderer| r.page_layout(1).map(|l| l.sticky.len());
+        assert_eq!(sticky(&r), sticky(&fresh), "sticky boxes after {what}");
+    }
+    assert!(deltas * 2 > steps.len(), "most steps sync as deltas ({deltas} of {})", steps.len());
+}
+
+/// A transform resolves against the box's rounded size, and rounding follows
+/// the box's absolute position: a transformed box that only moved by a
+/// fractional amount (or sits inside one) can round to a different size with
+/// no unrounded layout of its own changing. Delta-synced boxes, quads,
+/// document size and paint must match a fresh build after each move.
+#[test]
+fn transformed_boxes_that_only_moved_match_fresh_builds() {
+    let cases: &[(&str, &str, [&str; 3])] = &[
+        // Identity at the first rounded size (`translateY(100%)` of a 0px
+        // high box is stored as no transform), not after the move.
+        (
+            r#"<div id=a style="height:3.7px"></div><div id=tb style="transform:translateY(100%);width:10px;height:0.4px"></div>"#,
+            "#a",
+            ["height:3.3px", "height:3.7px", "height:3.3px"],
+        ),
+        // The individual transform properties, percentages and a percentage origin.
+        (
+            r#"<div id=a style="height:3.3px"></div><div id=tb style="translate:50% 25%;rotate:15deg;scale:1.25;transform-origin:0 100%;width:7.5px;height:5.5px"></div>"#,
+            "#a",
+            ["height:3.7px", "height:0.4px", "height:3.7px"],
+        ),
+        // Nested transforms in a moved box: both resolve against sizes that
+        // follow the move.
+        (
+            r#"<div id=a style="height:3.3px"></div><div style="transform:rotate(10deg) translate(10%,30%);width:20.5px;height:9.5px"><div style="transform:scale(2) translate(50%,50%);width:5.5px;height:3.5px"><div style="transform:rotate(-30deg);height:2.5px"></div></div></div>"#,
+            "#a",
+            ["height:3.7px", "height:0.4px", "height:3.7px"],
+        ),
+        // Moved horizontally by a fractional amount (a flex sibling that grew).
+        (
+            r#"<div style="display:flex"><div id=a style="width:3.3px"></div><div style="transform:translateX(-50%) rotate(45deg);width:7.5px;height:7.5px"></div><div style="transform:translate(25%,0);width:2.5px;height:2.5px"></div></div>"#,
+            "#a",
+            ["width:3.7px", "width:0.4px", "width:12.6px"],
+        ),
+        // Out of flow: an absolutely positioned transformed box placed after a
+        // static sibling in its containing block moves with that sibling.
+        (
+            r#"<div style="position:relative"><div id=a style="height:3.3px"></div><div style="position:absolute;transform:rotate(30deg) translateY(50%);width:6.5px;height:4.5px"></div></div>"#,
+            "#a",
+            ["height:3.7px", "height:0.4px", "height:3.7px"],
+        ),
+        (
+            r#"<div id=a style="height:3.3px"></div><div id=tb style="transform:rotate(45deg);width:5.5px;height:5.5px"></div>"#,
+            "#a",
+            ["height:3.7px", "height:0.4px", "height:3.7px"],
+        ),
+        (
+            r#"<div style="display:flex;gap:2.5px"><div id=a style="width:10.5px">a</div><div id=tb style="transform:scale(1.5);width:5.5px;height:5.5px"></div></div>"#,
+            "#a",
+            ["width:30.25px", "width:2.2px", "width:30.25px"],
+        ),
+        // A transformed descendant of a box that only moved: its own position
+        // in its parent is unchanged, its absolute position (and rounding) is not.
+        (
+            r#"<div id=a style="height:3.3px"></div><div id=m><div id=tb style="transform:translate(50%,25%) rotate(20deg);width:7.5px;height:5.5px"></div></div>"#,
+            "#a",
+            ["height:3.7px", "height:0.4px", "height:3.7px"],
+        ),
+        (
+            r#"<table style="width:200.5px"><tr><td id=a style="height:3.3px">a</td></tr><tr><td style="transform:rotate(30deg);width:5.5px;height:5.5px">r</td></tr></table>"#,
+            "#a",
+            ["height:23.7px", "height:20.4px", "height:23.7px"],
+        ),
+        (
+            r#"<div style="overflow:auto;height:20px"><div id=a style="height:3.3px"></div><div id=tb style="transform:translateY(50%) scale(2);width:5.5px;height:15.5px"></div></div>"#,
+            "#a",
+            ["height:3.7px", "height:0.4px", "height:3.7px"],
+        ),
+    ];
+    let quads = |r: &Renderer, page: &Page| -> Vec<(u64, String)> {
+        page.tree()
+            .nodes
+            .iter()
+            .filter(|n| matches!(n.kind, TreeKind::Element { .. }))
+            .map(|n| (n.key, format!("{:?}", r.element_quads(1, n.key))))
+            .collect()
+    };
+    for (body, sel, values) in cases {
+        let page = Page::new(&format!("{PAINT_BOXES}{body}</body></html>"));
+        let mut r = Renderer::new();
+        r.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
+        let mut painted = Renderer::new();
+        paint(&mut painted, &page.snapshot(1, page.tree()));
+        for value in values {
+            let since = page.dom.borrow().version();
+            let n = page.find(sel);
+            page.dom.borrow_mut().set_attribute(n, "style", value).unwrap();
+            let delta = page.dom.borrow().render_delta(page.doc, since, &Page::opts()).expect("a delta");
+            r.sync_delta(1, &delta_ops(delta), (640, 480, 1.0, false, false), false).unwrap();
+            let mut fresh = Renderer::new();
+            fresh.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
+            let what = format!("{body}: {sel} {{ {value} }}");
+            for ((k, a), (_, b)) in boxes(&r, &page).into_iter().zip(boxes(&fresh, &page)) {
+                assert_eq!(a, b, "box {k:x} after {what}");
+            }
+            assert_eq!(quads(&r, &page), quads(&fresh, &page), "quads after {what}");
+            let size = |r: &Renderer| r.page_layout(1).map(|l| (l.document_width, l.document_height));
+            assert_eq!(size(&r), size(&fresh), "document size after {what}");
+            let tree = page.tree();
+            let mirrored = paint(&mut painted, &page.snapshot(1, tree.clone()));
+            let freshp = paint(&mut Renderer::new(), &page.snapshot(1, tree));
+            assert_eq!(mirrored.hash, freshp.hash, "paint after {what}");
+        }
+    }
+}
