@@ -28,7 +28,10 @@ and for MSW (Mock Service Worker) browser mode, whose unmodified
   document (SecurityError) and free of `%2f`/`%5c` (TypeError). The default
   scope is the script's directory. The script is fetched on the page's network
   (CDP and Playwright routing see it) with `Service-Worker: script`, cache mode
-  `no-cache` unless `updateViaCache: 'all'`. A non-2xx status is a TypeError
+  `no-cache` unless `updateViaCache: 'all'`, and redirect mode `error`: a
+  redirected script is a TypeError (the max scope is the requested URL's). The
+  job outlives the page: a navigation during the fetch or install does not
+  wedge the registration. A non-2xx status is a TypeError
   naming the status (MSW looks for "(404)"), a non-JavaScript MIME type a
   SecurityError, and a scope outside the script's directory a SecurityError
   unless `Service-Worker-Allowed` allows it. A script that throws at its top
@@ -37,7 +40,10 @@ and for MSW (Mock Service Worker) browser mode, whose unmodified
   a different script updates it. Jobs on one registration run one at a time
   (at most 16 waiting).
 - `navigator.serviceWorker` exists only in secure contexts (`http://localhost`,
-  `127.0.0.1`, https); elsewhere the getter returns `undefined`.
+  `127.0.0.1`, https); elsewhere the getter returns `undefined`. In a document
+  with an opaque origin (a frame sandboxed without `allow-same-origin`) the
+  getter throws a SecurityError (as Chromium), and such a document is never a
+  client nor controlled.
 - Templates of `serve --fork` and prepared pages refuse registration
   (NotSupportedError): a template must not start threads.
 
@@ -46,8 +52,8 @@ and for MSW (Mock Service Worker) browser mode, whose unmodified
 Each version is a worker thread with its own VM (the dedicated worker
 machinery). Its script runs, then: `installing` (`updatefound`; the `register()`
 promise resolves), `install` with `waitUntil`, `installed` (`waiting`), then
-`activating` once no client is controlled by the previous active worker or
-`skipWaiting()` was called, `activate` with `waitUntil`, `activated`.
+`activating` once no client is controlled by the previous active worker (also
+checked when such a client goes away) or `skipWaiting()` was called, `activate` with `waitUntil`, `activated`.
 `statechange` fires on every `ServiceWorker` object of each client page; the
 same version is the same object in a realm. A replaced or failed version is
 `redundant` and its thread stops. `registration.update()` fetches the script
@@ -98,7 +104,12 @@ CryptoKeys cross, and the transfer list takes ArrayBuffers, MessagePorts
 (entangled across threads by the shared `port_link.rs` pipe, see
 [MessageChannel](MESSAGE_CHANNEL.md)) and Readable, Writable and Transform
 streams (over such ports, see [Streams](STREAMS.md)); at most 64 MiB wait for
-a worker. MSW's `MOCK_RESPONSE` sends its body stream to the worker this way.
+a worker (more is a DataCloneError), and a worker's `Client.postMessage` past
+64 MiB waiting for the browser thread blocks until it catches up, as a
+dedicated worker's does. A worker has at most 4096 unanswered `clients`/
+`skipWaiting`/`update` requests (more reject with QuotaExceededError).
+Messages and requests keep flowing after the page that registered the worker
+navigated or closed. MSW's `MOCK_RESPONSE` sends its body stream to the worker this way.
 
 ## CDP
 

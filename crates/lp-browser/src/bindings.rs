@@ -473,6 +473,13 @@ impl PageHooks for Hooks {
             });
         }))
     }
+
+    fn thread_poster(&self) -> Option<RemotePoster> {
+        let handle = self.handle.clone();
+        Some(Arc::new(move |task| {
+            let _ = handle.post(move |_| task());
+        }))
+    }
 }
 
 impl Browser {
@@ -628,6 +635,7 @@ pub(crate) fn create(
         bindings.set_frame_viewport_source(frame_viewport_source(host, &frame));
     }
     bindings.set_nested_frame(page.child.is_some());
+    bindings.set_opaque_origin(frame.sandbox.opaque);
     bindings.set_context_services(settings.services);
     bindings.set_max_touch_points(settings.max_touch_points);
     bindings

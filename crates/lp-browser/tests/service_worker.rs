@@ -25,6 +25,8 @@ self.addEventListener('fetch', (e) => {
     }), { status: 201, statusText: 'Made', headers: { 'content-type': 'application/json', 'x-sw': 'yes' } })));
   } else if (url.pathname === '/broken') {
     e.respondWith(Promise.reject(new Error('nope')));
+  } else if (url.pathname === '/client-url') {
+    e.respondWith(self.clients.get(e.clientId).then((c) => new Response(c ? c.url : 'none')));
   } else if (url.pathname === '/via-fetch') {
     e.respondWith(fetch('/real'));
   } else if (url.pathname === '/teed') {
@@ -38,6 +40,11 @@ self.addEventListener('fetch', (e) => {
   }
 });
 self.addEventListener('message', async (e) => {
+  if (e.data === 'flood') {
+    // More than the upward message budget, faster than the page takes it.
+    for (let i = 0; i < 80; i++) e.source.postMessage(new ArrayBuffer(1 << 20));
+    return;
+  }
   if (e.data && e.data.kind === 'wire') {
     // A CryptoKey and a WritableStream in, a TransformStream back on the port.
     const { key, writable } = e.data;
@@ -120,6 +127,32 @@ impl Server {
                 seen.lock().unwrap().push(path.clone());
                 let js = [("Content-Type", "text/javascript")];
                 match path.as_str() {
+                    // Answered later, on its own thread: the page may navigate meanwhile.
+                    "/slow-sw.js" => {
+                        thread::spawn(move || {
+                            thread::sleep(Duration::from_millis(500));
+                            respond(&mut stream, "200 OK", &[("Content-Type", "text/javascript")], SW.as_bytes());
+                        });
+                    }
+                    // A new script on every fetch, which never skips waiting.
+                    "/wait.js" => {
+                        let version = seen.lock().unwrap().iter().filter(|p| *p == "/wait.js").count();
+                        let body = format!(
+                            "self.addEventListener('fetch', (e) => {{ if (new URL(e.request.url).pathname === '/version') e.respondWith(new Response('{version}')); }});"
+                        );
+                        respond(&mut stream, "200 OK", &js, body.as_bytes());
+                    }
+                    "/go-sw.js" => respond(&mut stream, "302 Found", &[("Location", "/sub/sw.js")], b""),
+                    "/sandboxed" => respond(
+                        &mut stream,
+                        "200 OK",
+                        &[("Content-Type", "text/html")],
+                        b"<!doctype html><script>
+                          let access; try { access = typeof navigator.serviceWorker; } catch (e) { access = e.name; }
+                          fetch('/api/sandboxed').then((r) => r.status, (e) => e.name)
+                            .then((status) => parent.postMessage(access + '|' + status, '*'));
+                          </script>",
+                    ),
                     "/sw.js" => respond(&mut stream, "200 OK", &js, SW.as_bytes()),
                     "/mockServiceWorker.js" => respond(&mut stream, "200 OK", &js, MSW.as_bytes()),
                     "/sub/sw.js" => respond(&mut stream, "200 OK", &js, SW.as_bytes()),
@@ -366,9 +399,10 @@ fn service_worker_registration_errors() {
          r('allowed', navigator.serviceWorker.register('/sub/allowed.js', {scope: '/other/'}));
          r('cross', navigator.serviceWorker.register('http://example.invalid/sw.js'));
          r('slash', navigator.serviceWorker.register('/a%2fb/sw.js'));
+         r('redirect', navigator.serviceWorker.register('/go-sw.js', {scope: '/'}));
          'ok'",
     );
-    until(&mut thread, page, "Object.keys(results).length === 7");
+    until(&mut thread, page, "Object.keys(results).length === 8");
     let get = |k: &str| eval(&thread, page, &format!("results.{k}"));
     assert!(get("missing").starts_with("TypeError:") && get("missing").contains("(404)"), "{}", get("missing"));
     assert!(get("mime").starts_with("SecurityError:") && get("mime").contains("MIME"), "{}", get("mime"));
@@ -381,6 +415,8 @@ fn service_worker_registration_errors() {
     assert_eq!(get("allowed"), format!("ok:{}/other/", server.origin));
     assert!(get("cross").starts_with("SecurityError:"), "{}", get("cross"));
     assert!(get("slash").starts_with("TypeError:"), "{}", get("slash"));
+    // A redirected script would escape the max scope of the URL it was registered with.
+    assert!(get("redirect").starts_with("TypeError:"), "{}", get("redirect"));
     eval(
         &thread,
         page,
@@ -477,4 +513,99 @@ fn message_ports_and_streams_cross_to_a_dedicated_worker() {
     log.sort();
     assert_eq!(log, ["back:hello", "pong:ping", "ready"]);
     assert_eq!(eval(&thread, page, "detachedPost + ':' + locked"), "DataCloneError:true");
+}
+
+fn navigate(thread: &mut BrowserThread, server: &Server, page: PageId, path: &str) {
+    thread.browser.navigate(page, NavigateOpts::address_bar(format!("{}{path}", server.origin))).unwrap();
+    until(thread, page, &format!("location.pathname === '{path}' && document.readyState === 'complete'"));
+}
+
+#[test]
+fn sandboxed_frame_is_not_a_service_worker_client() {
+    let (server, mut thread) = setup();
+    let page = open(&mut thread, &server, "/page");
+    register(&mut thread, page);
+    // In scope of the active worker, but its origin is opaque: no access, not controlled.
+    eval(
+        &thread,
+        page,
+        "addEventListener('message', (e) => globalThis.sandboxed = e.data);
+         const f = document.createElement('iframe');
+         f.setAttribute('sandbox', 'allow-scripts');
+         f.src = '/sandboxed';
+         document.body.append(f); 'ok'",
+    );
+    until(&mut thread, page, "globalThis.sandboxed !== undefined");
+    let result = eval(&thread, page, "sandboxed");
+    let (access, status) = result.split_once('|').unwrap();
+    assert_eq!(access, "SecurityError");
+    assert_ne!(status, "201", "the worker answered the sandboxed frame's fetch");
+    eval(&thread, page, "navigator.serviceWorker.getRegistrations().then((l) => globalThis.regs = l.length); 'ok'");
+    until(&mut thread, page, "globalThis.regs !== undefined");
+    assert_eq!(eval(&thread, page, "String(regs)"), "1");
+}
+
+#[test]
+fn service_worker_keeps_working_after_the_registering_page_navigates() {
+    let (server, mut thread) = setup();
+    let page = open(&mut thread, &server, "/page");
+    register(&mut thread, page);
+    // The worker's clients.get() answers for the new document of the same page.
+    navigate(&mut thread, &server, page, "/page2");
+    assert_eq!(eval(&thread, page, "navigator.serviceWorker.controller.state"), "activated");
+    eval(&thread, page, "fetch('/client-url').then((r) => r.text()).then((t) => globalThis.client = t); 'ok'");
+    until(&mut thread, page, "globalThis.client !== undefined");
+    assert_eq!(eval(&thread, page, "client"), format!("{}/page2", server.origin));
+    // Client.postMessage reaches it too, past the upward message budget.
+    eval(
+        &thread,
+        page,
+        "globalThis.received = 0;
+         navigator.serviceWorker.onmessage = (e) => { received += e.data.byteLength === 1 << 20 ? 1 : 0; };
+         navigator.serviceWorker.controller.postMessage('flood'); 'ok'",
+    );
+    until(&mut thread, page, "received === 80");
+}
+
+#[test]
+fn register_survives_a_navigation_during_the_script_fetch() {
+    let (server, mut thread) = setup();
+    let page = open(&mut thread, &server, "/page");
+    eval(&thread, page, "navigator.serviceWorker.register('/slow-sw.js'); 'ok'");
+    navigate(&mut thread, &server, page, "/page2");
+    eval(
+        &thread,
+        page,
+        "navigator.serviceWorker.register('/slow-sw.js').then((r) => globalThis.done = 'ok:' + r.scope, (e) => globalThis.done = e.name + ':' + e.message); 'ok'",
+    );
+    until(&mut thread, page, "globalThis.done !== undefined");
+    assert_eq!(eval(&thread, page, "done"), format!("ok:{}/", server.origin));
+    until(&mut thread, page, "navigator.serviceWorker.controller !== null");
+}
+
+#[test]
+fn waiting_worker_activates_when_the_last_client_goes() {
+    let (server, mut thread) = setup();
+    let page = open(&mut thread, &server, "/page");
+    eval(
+        &thread,
+        page,
+        "navigator.serviceWorker.register('/wait.js').then((r) => globalThis.reg = r);
+         navigator.serviceWorker.ready.then(() => globalThis.ready = true); 'ok'",
+    );
+    until(&mut thread, page, "globalThis.ready === true && reg.active.state === 'activated'");
+    // A new page in scope is controlled by the first version.
+    let second = open(&mut thread, &server, "/page2");
+    eval(&thread, second, "fetch('/version').then((r) => r.text()).then((t) => globalThis.version = t); 'ok'");
+    until(&mut thread, second, "globalThis.version !== undefined");
+    assert_eq!(eval(&thread, second, "version"), "1");
+    // The second version waits for that page.
+    eval(&thread, page, "reg.update(); 'ok'");
+    until(&mut thread, page, "reg.waiting !== null && reg.waiting.state === 'installed'");
+    assert!(thread.browser.close_page(second));
+    until(&mut thread, page, "reg.waiting === null && reg.active !== null && reg.active.state === 'activated'");
+    let third = open(&mut thread, &server, "/page3");
+    eval(&thread, third, "fetch('/version').then((r) => r.text()).then((t) => globalThis.version = t); 'ok'");
+    until(&mut thread, third, "globalThis.version !== undefined");
+    assert_eq!(eval(&thread, third, "version"), "2");
 }

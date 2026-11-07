@@ -133,7 +133,9 @@ impl WorkerStart {
         module: bool,
     ) -> Option<WorkerStart> {
         let net = page.net.borrow().clone()?;
-        let poster = page.remote_poster()?;
+        // The version outlives `page`'s document: its messages must not be
+        // dropped when that page navigates or closes.
+        let poster = page.thread_poster()?;
         Some(WorkerStart {
             id,
             url,
@@ -474,7 +476,7 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
         let s = realm.scope()?;
         install(&s, &page, start.service.is_some())?;
         if let Some(service) = &start.service {
-            crate::service_worker_scope::install(&s, service, start.poster.clone())?;
+            crate::service_worker_scope::install(&s, service, start.poster.clone(), start.shared.clone())?;
         }
     }
     // A synchronous request parks this thread: `terminate()` must still end it.
