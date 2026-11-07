@@ -27,17 +27,17 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
      border: none;
 -    margin: 3px 3px 3px 4px;
 +    margin: 3px 3px 0 5px;
- }
- 
--input,
++}
++
 +/* Chromium's UA sheet: text inputs are 2px-inset-bordered with 1px 2px
 +   padding (a 40x30 input's box is 48x36), textareas 1px solid with 2px. */
 +input {
 +    border: 2px inset #767676;
 +    padding: 1px 2px;
 +    background-color: white;
-+}
-+
+ }
+ 
+-input,
  textarea {
      border: 1px solid #999;
      padding: 2px;
@@ -45,15 +45,15 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  }
  
 +/* Chromium's `font: -webkit-small-control`: form controls default to 13.333px. */
- input,
- select,
++input,
++select,
 +button,
 +textarea {
 +    font-size: 13.333px;
 +}
 +
-+input,
-+select,
+ input,
+ select,
  button {
      font-family: system-ui, sans-serif;
  }
@@ -97,17 +97,17 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  /* https://html.spec.whatwg.org/#the-fieldset-and-legend-elements */
  fieldset {
      display: block;
-@@ -849,6 +893,10 @@
- 
- canvas {
+@@ -851,6 +895,10 @@
      user-select: none;
-+}
-+
-+:focus-visible {
-+    outline: auto 1px;
  }
  
++:focus-visible {
++    outline: auto 1px;
++}
++
  iframe:focus-visible,
+ body:focus-visible,
+ html:focus-visible {
 diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/document.rs
 --- a/packages/blitz-dom/src/document.rs
 +++ b/packages/blitz-dom/src/document.rs
@@ -161,7 +161,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Incremented whenever `nodes_to_stylesheet` changes (a stylesheet is
      /// added, replaced or removed), so that CSSOM wrappers can detect that
      /// their cached rule data is stale.
-@@ -401,6 +426,13 @@
+@@ -401,6 +426,17 @@
      pub(crate) has_changes: bool,
      /// Set of changed nodes for updating the accessibility tree
      pub(crate) deferred_construction_nodes: Vec<ConstructionTask>,
@@ -172,10 +172,14 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
 +    /// style (`BaseDocument::has_sticky`). Entries whose node is gone or no
 +    /// longer sticky are dropped after each traversal.
 +    pub(crate) sticky_nodes: HashSet<NodeId>,
++    /// lightningpanda: the boxes that left a container's list (`Node::layout_child_of`) during
++    /// `resolve_layout_children`; those no container collected again by its end leave the layout
++    /// tree with their subtrees (`BaseDocument::leave_layout_tree`). Empty between passes.
++    pub(crate) left_layout_lists: Vec<NodeId>,
  
      /// Nodes that contain custom widgets
      #[cfg(feature = "custom-widget")]
-@@ -500,11 +532,13 @@
+@@ -500,11 +536,13 @@
  
          let viewport = config.viewport.unwrap_or_default();
          let media_type = config.media_type.unwrap_or_else(MediaType::screen);
@@ -191,7 +195,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let nodes_to_id = HashMap::new();
  
          let base_url = config
-@@ -541,13 +575,18 @@
+@@ -541,13 +579,18 @@
              nodes_to_id,
              viewport,
              media_type,
@@ -210,16 +214,17 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
              stylesheet_generation: 0,
              font_ctx,
              #[cfg(feature = "parallel-construct")]
-@@ -574,6 +613,8 @@
+@@ -574,6 +617,9 @@
  
              has_changes: false,
              deferred_construction_nodes: Vec::new(),
 +            oof_hoisted: HashSet::new(),
 +            sticky_nodes: HashSet::new(),
++            left_layout_lists: Vec::new(),
              image_cache: HashMap::new(),
              pending_images: HashMap::new(),
              pending_style_image_nodes: Vec::new(),
-@@ -726,6 +767,12 @@
+@@ -726,6 +772,12 @@
              .or(self.try_root_element().map(|el| el.id))
      }
  
@@ -232,7 +237,38 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      pub fn mutate<'doc>(&'doc mut self) -> DocumentMutator<'doc> {
          DocumentMutator::new(self)
      }
-@@ -1290,6 +1337,26 @@
+@@ -1127,6 +1179,30 @@
+         self.remove_node_from_tree(anon_id);
+     }
+ 
++    /// lightningpanda: `node_id` is out of the layout tree (no container lists it: it is
++    /// `display: none` or below one, a part a table ignores, or out of the document), and so is
++    /// what its subtree built, as a fresh build has none there: its layout children that still
++    /// point at it leave its list (`Node::layout_child_of`), and theirs in turn, and its anonymous
++    /// blocks are freed. A box that comes back is built again: styled from scratch (below
++    /// `display: none`), added (`process_added_subtree`), or damaged on its way in (a table's
++    /// cells, `enter_layout_tree`; a former table's other children, `damage_former_table_parts`).
++    pub(crate) fn leave_layout_tree(&mut self, node_id: NodeId) {
++        let Some(node) = self.nodes.get(node_id) else { return };
++        let children = node.layout_children.borrow_mut().take();
++        for child_id in children.into_iter().flatten() {
++            let Some(child) = self.nodes.get(child_id) else { continue };
++            if child.layout_child_of.get() != Some(node_id) {
++                continue;
++            }
++            child.layout_child_of.set(None);
++            self.leave_layout_tree(child_id);
++        }
++        let anonymous_blocks = std::mem::take(&mut self.nodes[node_id].anonymous_blocks);
++        for anon_id in anonymous_blocks {
++            self.deallocate_anonymous_block(anon_id);
++        }
++    }
++
+     /// Whether the DOM or focus changed since the last [`Self::clear_changes`]
+     /// (i.e. whether the accessibility tree is out of date)
+     pub fn has_changes(&self) -> bool {
+@@ -1290,6 +1366,26 @@
      }
  
      pub fn make_stylesheet(&self, css: impl AsRef<str>, origin: Origin) -> DocumentStyleSheet {
@@ -259,7 +295,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let data = Stylesheet::from_str(
              css.as_ref(),
              self.url.url_extra_data(),
-@@ -1381,6 +1448,46 @@
+@@ -1381,6 +1477,46 @@
          }
      }
  
@@ -306,7 +342,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Whether the Document has pending requests for "critical" resources (that should block rendering)
      pub fn has_pending_critical_resources(&self) -> bool {
          !self.pending_critical_resources.is_empty()
-@@ -1414,9 +1521,17 @@
+@@ -1414,9 +1550,17 @@
          };
  
          match resource {
@@ -325,7 +361,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
              }
              Resource::ImportedCss(import_rule, sheet) => {
                  let mut guard = self.guard.write();
-@@ -1454,7 +1569,7 @@
+@@ -1454,7 +1598,7 @@
                  self.apply_iframe_html(node_id, res.request_id, res.resolved_url, &html);
              }
              Resource::Font(bytes, overrides) => {
@@ -334,7 +370,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  
                  // Build a `FontInfoOverride` from the `@font-face` descriptors
                  // captured during stylesheet parsing. Without this, parley
-@@ -1565,7 +1680,84 @@
+@@ -1565,7 +1709,75 @@
          self.snapshot_node_impl(node_id, None)
      }
  
@@ -347,25 +383,16 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
 +    /// search path, the anchors that can see it (its ancestors and their
 +    /// previous siblings, and its own previous siblings) restyle their
 +    /// subtrees.
++    /// Insertions and removals go through Stylo's relative selector invalidator instead
++    /// (`invalidate_relative_selectors_for_insertion`, stylo.rs).
 +    pub fn invalidate_has_anchors(&mut self, node_id: NodeId) {
-+        self.invalidate_has_anchors_impl(node_id, true);
-+    }
-+
-+    /// lightningpanda: as [`Self::invalidate_has_anchors`] for a node just
-+    /// inserted at (or removed from) a position: the node carries no search
-+    /// flags yet, so every anchor that can see the position restyles.
-+    pub fn invalidate_has_anchors_around(&mut self, node_id: NodeId) {
-+        self.invalidate_has_anchors_impl(node_id, false);
-+    }
-+
-+    fn invalidate_has_anchors_impl(&mut self, node_id: NodeId, require_search_flags: bool) {
 +        use selectors::matching::ElementSelectorFlags as F;
 +        let search = F::RELATIVE_SELECTOR_SEARCH_DIRECTION_ANCESTOR
 +            | F::RELATIVE_SELECTOR_SEARCH_DIRECTION_SIBLING
 +            | F::RELATIVE_SELECTOR_SEARCH_DIRECTION_ANCESTOR_SIBLING;
 +        let flags = |n: &Node| if n.is_element() { n.selector_flags().get() } else { F::empty() };
 +        let Some(node) = self.nodes.get(node_id) else { return };
-+        if require_search_flags && !flags(node).intersects(search) {
++        if !flags(node).intersects(search) {
 +            return;
 +        }
 +        let mut anchors = Vec::new();
@@ -419,7 +446,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let node = &mut self.nodes[node_id];
  
          // Do not snapshot nodes that have never been styled. A snapshot records an element's
-@@ -2063,6 +2255,28 @@
+@@ -2063,6 +2275,28 @@
          true
      }
  
@@ -448,7 +475,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      pub fn clear_hover(&mut self) -> bool {
          // The pointer is no longer over the document, so stop re-resolving
          // hover state against it.
-@@ -2132,12 +2346,46 @@
+@@ -2132,12 +2366,46 @@
          self.mousedown_node_id
      }
  
@@ -495,7 +522,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Returns the current CSS media type used to evaluate `@media` rules.
      pub fn media_type(&self) -> &MediaType {
          &self.media_type
-@@ -2251,6 +2499,7 @@
+@@ -2251,6 +2519,7 @@
  
          self.set_stylist_device(make_device(
              &self.viewport,
@@ -503,7 +530,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
              self.media_type.clone(),
              self.font_ctx.clone(),
          ));
-@@ -2300,6 +2549,15 @@
+@@ -2300,6 +2569,15 @@
          let viewport_size_changed = old_device.au_viewport_size() != device.au_viewport_size();
          let styles_use_viewport_units = old_device.used_viewport_size();
  
@@ -519,18 +546,18 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let origins = {
              let guard = &self.guard;
              let guards = StylesheetGuards {
-@@ -2445,6 +2703,11 @@
-             current = node.containing_block();
-         }
+@@ -2447,6 +2725,11 @@
          (pos, *self.nodes[node_id].unrounded_layout())
-+    }
-+
+     }
+ 
 +    /// The text of the `<link>` sheet of `node_id`, when it has `@page` rules.
 +    pub fn linked_page_css(&self, node_id: NodeId) -> Option<&str> {
 +        self.linked_page_css.get(&node_id).map(String::as_str)
-     }
- 
++    }
++
      /// Computes the size and position of the `Node` relative to the viewport
+     pub fn get_client_bounding_rect(&self, node_id: NodeId) -> Option<BoundingRect> {
+         // Non-atomic inline elements have no layout box of their own: return
 diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src/layout/construct.rs
 --- a/packages/blitz-dom/src/layout/construct.rs
 +++ b/packages/blitz-dom/src/layout/construct.rs
@@ -650,6 +677,10 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
 -            let node_styles = &mut node_styles.as_mut().unwrap();
 -            node_styles.damage.insert(ALL_DAMAGE);
 -            let primary_styles = &mut node_styles.styles.primary;
+-
+-            if !std::ptr::eq(&**primary_styles.as_ref().unwrap(), &*pe_style) {
+-                *primary_styles = Some(pe_style);
+-                node_styles.set_restyled();
 +            let replaced = {
 +                let mut node_styles = doc.nodes[pe_node_id]
 +                    .try_stylo_element_data_mut()
@@ -657,10 +688,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
 +                let node_styles = &mut node_styles.as_mut().unwrap();
 +                node_styles.damage.insert(ALL_DAMAGE);
 +                let primary_styles = &mut node_styles.styles.primary;
- 
--            if !std::ptr::eq(&**primary_styles.as_ref().unwrap(), &*pe_style) {
--                *primary_styles = Some(pe_style);
--                node_styles.set_restyled();
++
 +                let replaced = !std::ptr::eq(&**primary_styles.as_ref().unwrap(), &*pe_style);
 +                if replaced {
 +                    *primary_styles = Some(pe_style);
@@ -873,10 +901,11 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
 diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/src/layout/inline/build.rs
 --- a/packages/blitz-dom/src/layout/inline/build.rs
 +++ b/packages/blitz-dom/src/layout/inline/build.rs
-@@ -29,6 +29,25 @@
+@@ -28,6 +28,25 @@
+     text_layout: &mut TextLayout,
      scale: f32,
      inline_context_root_node_id: NodeId,
- ) {
++) {
 +    build_inline_layout_with(nodes, layout_ctx, font_ctx, text_layout, scale, inline_context_root_node_id, false);
 +    // A line holding atomic inlines but no text still has its strut (CSS 2.1
 +    // 10.8.1): the root's font and line height. Parley makes no line height
@@ -895,10 +924,9 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +    scale: f32,
 +    inline_context_root_node_id: NodeId,
 +    strut: bool,
-+) {
+ ) {
      // Get the inline context's root node's text styles
      let root_node = &nodes[inline_context_root_node_id];
-     let root_node_style = root_node.primary_styles().or_else(|| {
 @@ -37,7 +56,7 @@
              .and_then(|parent_id| nodes[parent_id].primary_styles())
      });
@@ -1182,6 +1210,31 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
 -            let state = breaker.state_mut();
 -            state.set_layout_max_advance(max_advance);
 -            set_line_slot(state, &line_slot, scale, slack);
+-
+-            // The state at the start of the current line, which is reverted to when the line
+-            // needs to be retried lower down (or narrower) to avoid floats.
+-            // `None` if the line can't be retried (no floats beside it, or a float was placed
+-            // part way through it).
+-            let mut line_start_state = has_active_floats.then(|| breaker.state().clone());
+-
+-            while let Some(yield_data) = breaker.break_next() {
+-                match yield_data {
+-                    YieldData::LineBreak(line_break_data) => {
+-                        if let Some(saved_state) = line_start_state.take()
+-                            && let Some(retry_slot) = retry_line_slot(
+-                                &block_ctx,
+-                                &line_slot,
+-                                &line_break_data,
+-                                wraps,
+-                                scale,
+-                            )
+-                        {
+-                            // Floats queued during this line attempt will be encountered again
+-                            pending_floats.clear();
+-                            line_slot = retry_slot;
+-                            has_active_floats = line_slot.segment_id.is_some();
+-                            breaker.revert_to(saved_state);
+-                            set_line_slot(breaker.state_mut(), &line_slot, scale, slack);
 +            // lightningpanda: breaking again with the inputs of the last break (no floats
 +            // involved) gives the same lines.
 +            let break_key = {
@@ -1210,36 +1263,13 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
 +                let state = breaker.state_mut();
 +                state.set_layout_max_advance(max_advance);
 +                set_line_slot(state, &line_slot, scale, slack);
- 
--            // The state at the start of the current line, which is reverted to when the line
--            // needs to be retried lower down (or narrower) to avoid floats.
--            // `None` if the line can't be retried (no floats beside it, or a float was placed
--            // part way through it).
--            let mut line_start_state = has_active_floats.then(|| breaker.state().clone());
++
 +                // The state at the start of the current line, which is reverted to when the line
 +                // needs to be retried lower down (or narrower) to avoid floats.
 +                // `None` if the line can't be retried (no floats beside it, or a float was placed
 +                // part way through it).
 +                let mut line_start_state = has_active_floats.then(|| breaker.state().clone());
- 
--            while let Some(yield_data) = breaker.break_next() {
--                match yield_data {
--                    YieldData::LineBreak(line_break_data) => {
--                        if let Some(saved_state) = line_start_state.take()
--                            && let Some(retry_slot) = retry_line_slot(
--                                &block_ctx,
--                                &line_slot,
--                                &line_break_data,
--                                wraps,
--                                scale,
--                            )
--                        {
--                            // Floats queued during this line attempt will be encountered again
--                            pending_floats.clear();
--                            line_slot = retry_slot;
--                            has_active_floats = line_slot.segment_id.is_some();
--                            breaker.revert_to(saved_state);
--                            set_line_slot(breaker.state_mut(), &line_slot, scale, slack);
++
 +                while let Some(yield_data) = breaker.break_next() {
 +                    match yield_data {
 +                        YieldData::LineBreak(line_break_data) => {
@@ -1303,8 +1333,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
 +                        YieldData::InlineBoxBreak(box_break_data) => {
 +                            let state = breaker.state_mut();
 +                            let node_id = NodeId::from_u64(box_break_data.inline_box_id);
- 
--                        let state = breaker.state_mut();
++
 +                            let (direction, clear, margin) = {
 +                                let style = self.child_layout_style(&self.nodes[node_id]);
 +                                // We can assume that the box is a float because we only set `break_on_box: true` for floats
@@ -1322,9 +1351,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
 +                                )
 +                            };
  
--                        if !pending_floats.is_empty() {
--                            let min_y = state.line_y() as f32 / scale;
--                            for float in pending_floats.drain(..) {
+-                        let state = breaker.state_mut();
 +                            let output = self.compute_child_layout(
 +                                crate::taffy_node_id(node_id),
 +                                float_child_inputs,
@@ -1337,7 +1364,10 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
 +                                direction,
 +                                clear,
 +                            };
-+
+ 
+-                        if !pending_floats.is_empty() {
+-                            let min_y = state.line_y() as f32 / scale;
+-                            for float in pending_floats.drain(..) {
 +                            // A float that doesn't fit beside the content already on the line is
 +                            // placed below the line (CSS 2.1 §9.5.1), as are any floats after it
 +                            // (a float may not be higher than an earlier float).
@@ -1386,10 +1416,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
 -                    YieldData::InlineBoxBreak(box_break_data) => {
 -                        let state = breaker.state_mut();
 -                        let node_id = NodeId::from_u64(box_break_data.inline_box_id);
-+                                // The float can't be unplaced, so the line can no longer be retried
-+                                line_start_state = None;
-+                            }
- 
+-
 -                        let (direction, clear, margin) = {
 -                            let style = self.child_layout_style(&self.nodes[node_id]);
 -                            // We can assume that the box is a float because we only set `break_on_box: true` for floats
@@ -1419,7 +1446,10 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
 -                            direction,
 -                            clear,
 -                        };
--
++                                // The float can't be unplaced, so the line can no longer be retried
++                                line_start_state = None;
++                            }
+ 
 -                        // A float that doesn't fit beside the content already on the line is
 -                        // placed below the line (CSS 2.1 §9.5.1), as are any floats after it
 -                        // (a float may not be higher than an earlier float).
@@ -1542,7 +1572,47 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
 diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layout/list.rs
 --- a/packages/blitz-dom/src/layout/list.rs
 +++ b/packages/blitz-dom/src/layout/list.rs
-@@ -133,6 +133,19 @@
+@@ -28,19 +28,37 @@
+     for child in children.into_iter() {
+         if let Some(layout) = node_list_item_child(doc, child, *index) {
+             let node = &mut doc.nodes[child];
+-            node.element_data_mut().unwrap().list_item_data = Some(Box::new(layout));
++            let element_data = node.element_data_mut().unwrap();
++            let inside = matches!(layout.position, ListItemLayoutPosition::Inside);
++            let same = element_data.list_item_data.as_ref().is_some_and(|old| {
++                old.marker == layout.marker && matches!(old.position, ListItemLayoutPosition::Inside) == inside
++            });
++            element_data.list_item_data = Some(Box::new(layout));
++            if !same {
++                marker_changed(node);
++            }
+             *index += 1;
+             collect_list_item_children(doc, index, reversed, child);
+         } else {
+             // Unset marker in case it was previously set
+             let node = &mut doc.nodes[child];
+             if let Some(element_data) = node.element_data_mut() {
+-                element_data.list_item_data = None;
++                if element_data.list_item_data.take().is_some() {
++                    marker_changed(node);
++                }
+             }
+         }
+     }
+ }
+ 
++/// lightningpanda: a list item whose marker changed (its number, after an item was added, moved or
++/// removed before it) is built and laid out again: an `inside` marker is text of its inline layout,
++/// and an `outside` one sizes its line.
++fn marker_changed(node: &mut crate::Node) {
++    node.insert_damage(super::damage::ALL_DAMAGE);
++    node.invalidate_layout_cache();
++}
++
+ // Return a child node which is of display: list-item
+ fn node_list_item_child(
+     doc: &mut BaseDocument,
+@@ -133,6 +151,19 @@
                  Marker::String(format!("{}. ", marker.to_ascii_uppercase()))
              }
              "decimal" => Marker::String(format!("{}. ", index + 1)),
@@ -1562,12 +1632,10 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
              "disc" => Marker::Char('•'),
              "circle" => Marker::Char('◦'),
              "square" => Marker::Char('▪'),
-@@ -169,6 +182,36 @@
-     }
- 
+@@ -171,6 +202,36 @@
      None
-+}
-+
+ }
+ 
 +// A roman numeral (the `upper-roman` counter style, 1 to 3999, then decimal).
 +fn roman(n: usize) -> String {
 +    if n >= 4000 {
@@ -1596,9 +1664,11 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
 +        }
 +    }
 +    out
- }
- 
++}
++
  const ALPHABET: [char; 26] = [
+     'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's',
+     't', 'u', 'v', 'w', 'x', 'y', 'z',
 diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layout/mod.rs
 --- a/packages/blitz-dom/src/layout/mod.rs
 +++ b/packages/blitz-dom/src/layout/mod.rs
@@ -2100,11 +2170,10 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  }
  
  pub(crate) struct TaffyDebugTree<'doc>(pub(crate) &'doc BaseDocument);
-@@ -971,4 +1218,13 @@
-             taffy_node_id(*id)
+@@ -972,3 +1219,12 @@
          })
      }
-+}
+ }
 +
 +/// lightningpanda: the `natural=W,H` token of the element's
 +/// `urn:x-lightningpanda:state` attribute.
@@ -2113,7 +2182,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +    let token = attr.value.split_ascii_whitespace().find_map(|t| t.strip_prefix("natural="))?;
 +    let (w, h) = token.split_once(',')?;
 +    Some((w.parse().ok()?, h.parse().ok()?))
- }
++}
 diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/src/layout/paint_tree.rs
 --- a/packages/blitz-dom/src/layout/paint_tree.rs
 +++ b/packages/blitz-dom/src/layout/paint_tree.rs
@@ -2168,13 +2237,13 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
      position
  }
  
-@@ -215,8 +241,54 @@
+@@ -215,6 +241,52 @@
      /// enclosing stacking context are replayed from `Node::sc_contribution_cache`.
      pub(crate) fn build_paint_tree(&mut self, root_id: NodeId) {
          self.build_paint_tree_impl(root_id, None);
 +        self.restore_out_of_flow_stacking_owners(root_id);
-     }
- 
++    }
++
 +    /// Layout ownership follows containing blocks; paint ownership follows
 +    /// ancestor stacking contexts. Fixed descendants must not escape their
 +    /// modal/opacity context merely because layout positions them at the root.
@@ -2218,11 +2287,9 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
 +                sc.hoisted_content_bbox.set((0, Rect::ZERO));
 +            }
 +        }
-+    }
-+
+     }
+ 
      /// `stacking_context` is the entry list of the nearest ancestor stacking
-     /// context, or `None` when `node_id` is itself a stacking-context root.
-     fn build_paint_tree_impl(
 @@ -252,6 +324,12 @@
              }
          }
@@ -2244,12 +2311,10 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
              let node = &self.nodes[node_id];
              *node.paint_children.borrow_mut() = Some(paint_children);
              *node.layout_children.borrow_mut() = Some(children);
-@@ -406,6 +485,98 @@
-             node.sc_contribution_cache.borrow_mut().clear();
-             node.stacking_context = Some(Box::new(StackingContext::from_children(entries)));
+@@ -408,6 +487,98 @@
          }
-+    }
-+
+     }
+ 
 +    /// The table `node_id` (with `TableContext::placed` holding what changed) whose cells were all
 +    /// plain boxes in it when the paint tree last visited it: no stacking context, nothing hoisted out
 +    /// of their subtrees, one paint order. The cells damaged or appended since are visited again, and
@@ -2340,9 +2405,11 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
 +                !child.is_stacking_context_root(false) && Some(node_to_paint_order(child, false)) == first
 +            });
 +        placed.plain_paint_order = if plain { first } else { None };
-     }
- 
++    }
++
      /// The layout child of `node_id` whose subtree contains `id`, following
+     /// `layout_parent`.
+     fn layout_child_containing(&self, node_id: NodeId, id: NodeId) -> Option<NodeId> {
 diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/layout/replaced.rs
 --- a/packages/blitz-dom/src/layout/replaced.rs
 +++ b/packages/blitz-dom/src/layout/replaced.rs
@@ -2389,11 +2456,10 @@ diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/
              }
              RequestedAxis::Vertical => {
                  style_size.height = None;
-@@ -294,6 +319,18 @@
-             RequestedAxis::Both => {}
+@@ -295,6 +320,18 @@
          }
      }
-+
+ 
 +    // As above for a height the parent resolved (a flex row item's definite
 +    // or stretched height): a min-content width does not transfer it.
 +    let known_dimensions = if sizing_mode == SizingMode::ContentSize
@@ -2405,9 +2471,10 @@ diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/
 +    } else {
 +        known_dimensions
 +    };
- 
++
      // Known dimensions are the parent's current sizing inputs. Clamp them before transferring
      // an aspect ratio so provisional cross-axis sizes do not bypass replaced-element limits.
+     if known_dimensions.width.is_some() | known_dimensions.height.is_some() {
 diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/layout/table.rs
 --- a/packages/blitz-dom/src/layout/table.rs
 +++ b/packages/blitz-dom/src/layout/table.rs
@@ -2427,14 +2494,14 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
  
  use super::damage::{CONSTRUCT_BOX, CONSTRUCT_DESCENDENT, CONSTRUCT_FC};
  use super::resolve_calc_value;
-@@ -34,8 +34,448 @@
+@@ -34,6 +34,446 @@
  pub struct TableTreeWrapper<'a, 'doc> {
      pub(crate) doc: &'a mut LayoutPassState<'doc>,
      pub(crate) ctx: Arc<TableContext>,
 +    /// The table's style with the column widths of [`Self::auto_column_widths`].
 +    pub(crate) style: Option<taffy::Style<Atom>>,
- }
- 
++}
++
 +impl TableTreeWrapper<'_, '_> {
 +    /// The table's style for a layout at `inputs`, with the column widths the
 +    /// automatic table layout algorithm gives its columns when they are all
@@ -2871,12 +2938,10 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +            .collect();
 +        Some(style)
 +    }
-+}
-+
+ }
+ 
  // Deliberately not `Clone`: `style` may hold raw pointers into `calc_values`.
- #[derive(Debug)]
- pub struct TableContext {
-@@ -46,22 +486,470 @@
+@@ -46,21 +486,473 @@
      pub oof_children: Vec<(NodeId, taffy::Position)>,
      pub rows: Vec<TableRow>,
      pub columns: Vec<TableColumn>,
@@ -2889,6 +2954,10 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +    /// half of the borders around them as their own, and the table half of its outer ones. A
 +    /// uniform table instead has them as gutters of the grid (`style.gap`) and this is `None`.
 +    pub collapsed_edges: Option<CollapsedEdges>,
++    /// lightningpanda: the borders of a collapsed table's row groups its collapsed borders were
++    /// resolved with: a row group restyled with others is built again (`update_rows` collects only
++    /// the rows of a group).
++    group_borders: Vec<(NodeId, ServoArc<Border>)>,
 +    /// lightningpanda: the collapsed borders of a collapsed table that has them as gutters (when
 +    /// `collapsed_edges` is `None`), kept so that a change can be resolved locally, and the
 +    /// gutters the first cell's borders give.
@@ -3146,7 +3215,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +}
 +
 +/// The collapsed borders of a table's grid lines, in the order of `css-tables-3` conflict resolution.
- #[derive(Debug, Clone)]
++#[derive(Debug, Clone)]
 +pub struct CollapsedEdges {
 +    pub rows: usize,
 +    pub columns: usize,
@@ -3343,11 +3412,10 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +    }
 +}
 +
-+#[derive(Debug, Clone)]
+ #[derive(Debug, Clone)]
  pub struct TableCell {
      // kind: TableItemKind,
-     pub node_id: NodeId,
-@@ -69,6 +957,27 @@
+@@ -69,6 +961,27 @@
      pub row: u16,
      /// Index of the column the cell originates in
      pub column: u16,
@@ -3375,7 +3443,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
      style: taffy::Style<Atom>,
  }
  
-@@ -133,6 +1042,10 @@
+@@ -133,6 +1046,10 @@
      /// specified length `height`. Such rows do not receive excess table height when there
      /// are unconstrained rows to receive it instead.
      pub is_constrained: bool,
@@ -3386,7 +3454,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
  }
  
  /// The used width of one border side: border widths are not adjusted for
-@@ -156,10 +1069,33 @@
+@@ -156,8 +1073,31 @@
  }
  
  /// Convert a table part's style into the table's writing mode
@@ -3406,8 +3474,8 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +        }
 +        None => stylo_taffy::to_taffy_style_in(&node.primary_styles().unwrap(), table_wm),
 +    }
- }
- 
++}
++
 +/// A table part's computed physical `width` and `height` (`None` without styles).
 +fn physical_size(node: &crate::Node) -> Option<taffy::Size<taffy::Dimension>> {
 +    match node.table_part_taffy_style() {
@@ -3417,12 +3485,10 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +            height: stylo_taffy::convert::dimension(style.get_height()),
 +        }),
 +    }
-+}
-+
+ }
+ 
  fn side_width(width: app_units::Au, style: BorderStyle) -> f32 {
-     if style.none_or_hidden() {
-         0.0
-@@ -200,6 +1136,33 @@
+@@ -200,6 +1140,33 @@
      dim.into()
  }
  
@@ -3456,7 +3522,16 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
  pub(crate) fn build_table_context(
      doc: &mut BaseDocument,
      table_root_node_id: NodeId,
-@@ -219,7 +1182,7 @@
+@@ -211,6 +1178,8 @@
+     let mut cursor = ColumnCursor::default();
+ 
+     let wm = table_wm(doc, table_root_node_id);
++    // lightningpanda: the cells of the table built last time, released below if they are no longer.
++    let former = former_table_context(doc, table_root_node_id);
+     let root_node = &mut doc.nodes[table_root_node_id];
+ 
+     let children = std::mem::take(&mut root_node.children);
+@@ -219,7 +1188,7 @@
          panic!("Ignoring table because it has no styles");
      };
  
@@ -3465,7 +3540,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
      style.item_is_table = true;
      // Use `dense` row-flow so that each cell scans the row from its
      // leftmost column for the first free track. Without `dense`,
-@@ -246,10 +1209,13 @@
+@@ -246,10 +1215,13 @@
      for child_id in children.iter().copied() {
          collect_columns(doc, child_id, wm, &mut columns, &mut column_sizes);
      }
@@ -3481,7 +3556,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
                  *column = style_helpers::auto();
              }
          }
-@@ -291,6 +1257,18 @@
+@@ -291,6 +1263,18 @@
              );
          }
      }
@@ -3500,7 +3575,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
      let remaining_column = if is_fixed {
          style_helpers::minmax(style_helpers::length(0.0), style_helpers::fr(1.0))
      } else {
-@@ -308,6 +1286,11 @@
+@@ -308,6 +1292,11 @@
      }
      let num_columns = cursor.num_columns.max(column_sizes.len() as u16);
      column_sizes.resize(num_columns as usize, remaining_column);
@@ -3512,7 +3587,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
      if is_fixed {
          // In the fixed table layout algorithm, percentage column widths resolve against
          // the table's content width minus the horizontal border-spacing between columns,
-@@ -343,29 +1326,52 @@
+@@ -343,29 +1332,52 @@
                  *column = percent_track(percent, extra);
              }
          }
@@ -3585,7 +3660,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
  
      style.gap = match border_collapse {
          BorderCollapse::Separate => {
-@@ -411,6 +1417,32 @@
+@@ -411,6 +1423,32 @@
          };
      }
  
@@ -3618,7 +3693,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
      let layout_children = cells
          .iter()
          .map(|cell| cell.node_id)
-@@ -418,6 +1450,12 @@
+@@ -418,6 +1456,26 @@
          .collect();
      let root_node = &mut doc.nodes[table_root_node_id];
      root_node.children = children;
@@ -3628,10 +3703,24 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +    for (at, cell) in cells.iter().enumerate() {
 +        doc.nodes[cell.node_id].layout_data_mut().table_cell_index = at as u32;
 +    }
++    if let Some(former) = former {
++        release_former_cells(doc, table_root_node_id, &former.cells, &cells);
++    }
++    let mut group_borders: Vec<(NodeId, ServoArc<Border>)> = Vec::new();
++    if border_collapse == BorderCollapse::Collapse {
++        for group in rows.iter().filter_map(|row| row.group) {
++            if group_borders.last().is_some_and(|(last, _)| *last == group) {
++                continue;
++            }
++            if let Some(styles) = doc.nodes[group].primary_styles() {
++                group_borders.push((group, styles.clone_border()));
++            }
++        }
++    }
  
      (
          TableContext {
-@@ -426,15 +1464,675 @@
+@@ -426,15 +1484,701 @@
              oof_children,
              rows,
              columns,
@@ -3640,6 +3729,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
              border_collapse,
              border_style: first_cell_border,
 +            collapsed_edges,
++            group_borders,
 +            spare_edges,
 +            collapse_gap,
 +            is_fixed,
@@ -3685,6 +3775,9 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +    edges: &CollapsedEdges,
 +) -> bool {
 +    if r0 >= r1 || c0 >= c1 {
++        // lightningpanda: a cell outside the grid's columns has no collapsed borders, as in a
++        // fresh build (not those it had where it was before).
++        doc.nodes[cell.node_id].set_collapsed_border(None);
 +        return false;
 +    }
 +    let top = (c0..c1).map(|i| edges.horizontal_at(r0, i).width).fold(0.0, f32::max) / 2.0;
@@ -3733,6 +3826,20 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +
 +/// Whether the node or its subtree changed in this pass (a restyle damages a node without marking
 +/// it as having damaged descendants).
++/// lightningpanda: whether a row group of a collapsed table has the border its collapsed borders
++/// were resolved with (`TableContext::group_borders`).
++fn group_border_kept(ctx: &TableContext, group: &crate::Node) -> bool {
++    if ctx.border_collapse != BorderCollapse::Collapse {
++        return true;
++    }
++    let Some(styles) = group.primary_styles() else { return false };
++    let border = styles.get_border();
++    ctx.group_borders
++        .iter()
++        .find(|(id, _)| *id == group.id)
++        .is_some_and(|(_, kept)| std::ptr::eq(&**kept, border) || **kept == *border)
++}
++
 +fn changed(node: &crate::Node) -> bool {
 +    node.flags.contains(NodeFlags::OWN_DAMAGE) || node.has_damaged_descendants()
 +}
@@ -3879,7 +3986,9 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +/// Whether `table` is a table whose `TableContext` `update_table_context` can update.
 +pub(crate) fn is_incremental(doc: &BaseDocument, table: NodeId) -> bool {
 +    let node = &doc.nodes[table];
++    // (A table that left the layout tree, `BaseDocument::leave_layout_tree`, lists no cells.)
 +    node.flags.is_table_root()
++        && node.layout_children.borrow().is_some()
 +        && node.data.downcast_element().is_some_and(|element| {
 +            matches!(&element.special_data, SpecialElementData::TableRoot(ctx) if ctx.incremental)
 +        })
@@ -3954,6 +4063,10 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +        }
 +        match display.inside() {
 +            DisplayInside::TableRowGroup => {
++                // A collapsed table resolves its borders with its row groups'.
++                if own && !group_border_kept(ctx, node) {
++                    return None;
++                }
 +                if !group_changes(doc, ctx, child, own, &mut changes) {
 +                    return None;
 +                }
@@ -4282,6 +4395,8 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +            doc.nodes[child].layout_child_of.set(Some(table));
 +        }
 +        *doc.nodes[table].layout_children.borrow_mut() = Some(layout_children);
++        // The cells replaced and not collected again are no longer cells.
++        release_former_cells(doc, table, &removed, &ctx.cells);
 +    }
 +    Some(boxes_changed)
 +}
@@ -4307,7 +4422,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
  /// Collect `<col>` elements (and `display: table-column` elements) along with their
  /// widths, which take precedence over cell widths in the fixed table layout algorithm.
  /// Columns without a specified width are recorded as `auto`.
-@@ -466,7 +2164,7 @@
+@@ -466,7 +2210,7 @@
              }
          }
          DisplayInside::TableColumn => {
@@ -4316,44 +4431,114 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
              let span: u16 = node
                  .attr(local_name!("span"))
                  .and_then(|val| val.parse::<u16>().ok())
-@@ -511,6 +2209,57 @@
+@@ -511,6 +2255,127 @@
      }
  }
  
-+/// The row groups and rows (through `display: contents` boxes) of a table that is now built as
-+/// another box: built as boxes in their turn (`collect_layout_children_with_wrap`).
++/// lightningpanda: the `TableContext` `table` was last built with, if it was a table.
++fn former_table_context(doc: &BaseDocument, table: NodeId) -> Option<Arc<TableContext>> {
++    match &doc.nodes[table].data.downcast_element()?.special_data {
++        SpecialElementData::TableRoot(ctx) => Some(Arc::clone(ctx)),
++        _ => None,
++    }
++}
++
++/// The row groups and rows (and the `display: contents` boxes between them and the table) of a table
++/// that is now built as another box: built as boxes in their turn (`collect_layout_children_with_wrap`).
++/// They are those of the table's last `TableContext`, whatever their `display` is now (a row group of
++/// a table made a flex container is a block item now): table construction dropped the boxes they had
++/// (`drop_part_box`). Its cells are released (`release_cell`), and the context dropped: the box is no
++/// table (lp-render reads a table's collapsed borders from it).
 +pub(crate) fn damage_former_table_parts(doc: &mut BaseDocument, node_id: NodeId) {
-+    let children = std::mem::take(&mut doc.nodes[node_id].children);
-+    for &child in children.iter() {
-+        let node = &mut doc.nodes[child];
-+        let part = node.is_element()
-+            && node.display_style().is_some_and(|display| {
-+                matches!(
-+                    display.inside(),
-+                    DisplayInside::TableRowGroup
-+                        | DisplayInside::TableHeaderGroup
-+                        | DisplayInside::TableFooterGroup
-+                        | DisplayInside::TableRow
-+                        | DisplayInside::Contents
-+                )
-+            });
-+        if part {
++    let Some(element) = doc.nodes[node_id].data.downcast_element_mut() else { return };
++    if !matches!(element.special_data, SpecialElementData::TableRoot(_)) {
++        return;
++    }
++    let SpecialElementData::TableRoot(ctx) = std::mem::take(&mut element.special_data) else { return };
++    // A row and its ancestors below the table (one moved out of the table since is left alone).
++    let below_table = |doc: &BaseDocument, part: NodeId| -> Vec<NodeId> {
++        let mut parts = Vec::new();
++        let mut at = Some(part);
++        while let Some(id) = at {
++            if id == node_id {
++                return parts;
++            }
++            parts.push(id);
++            at = doc.nodes.get(id).and_then(|node| node.parent);
++        }
++        Vec::new()
++    };
++    let mut row_parts = std::collections::HashSet::new();
++    for row in &ctx.rows {
++        let parts = below_table(doc, row.node_id);
++        row_parts.extend(parts.last().copied());
++        for part in parts {
++            let node = &mut doc.nodes[part];
 +            node.insert_damage(super::damage::ALL_DAMAGE);
 +            node.invalidate_layout_cache();
-+            damage_former_table_parts(doc, child);
 +        }
 +    }
-+    doc.nodes[node_id].children = children;
++    // The children the table ignored (captions, columns, empty row groups): no pass built their
++    // subtrees (`collect_table_cells` drops their damage), which are boxes now.
++    let children = doc.nodes[node_id].children.clone();
++    for child in children {
++        if doc.nodes[child].is_element() && !row_parts.contains(&child) {
++            enter_layout_tree(doc, child);
++        }
++    }
++    release_former_cells(doc, node_id, &ctx.cells, &[]);
++}
++
++/// lightningpanda: a cell collected while no container lists it (`Node::layout_child_of`): new, or
++/// back from outside the layout tree (its row was `display: contents`, it was a block the table
++/// ignored). Stylo styled it meanwhile and `clear_damage_and_dirty_flags` cleared the damage that no
++/// pass consumed (no pass reached it), so what its subtree built before is stale: built again, as a
++/// fresh build does.
++fn enter_layout_tree(doc: &mut BaseDocument, node_id: NodeId) {
++    doc.iter_subtree_mut(node_id, |id, doc| {
++        let node = &mut doc.nodes[id];
++        if node.is_element() {
++            node.insert_damage(super::damage::ALL_DAMAGE);
++        }
++        node.invalidate_layout_cache();
++    });
++}
++
++/// lightningpanda: a node that is no longer one of a table's cells (a box of its own, out of flow, or
++/// its table gone) has no half collapsed borders (its layout style and paint, which draws a node's
++/// own borders only without them, follow) and no index into the table's cells.
++fn release_cell(doc: &mut BaseDocument, node_id: NodeId) {
++    let Some(node) = doc.nodes.get_mut(node_id) else { return };
++    node.set_collapsed_border(None);
++    node.layout_data_mut().table_cell_index = u32::MAX;
++}
++
++/// lightningpanda: `table`'s former cells (`old`) that it lists no more (`cells`, whose nodes hold
++/// their index) are released (`release_cell`), except one another container collected since.
++fn release_former_cells(doc: &mut BaseDocument, table: NodeId, old: &[TableCell], cells: &[TableCell]) {
++    for cell in old {
++        let Some(node) = doc.nodes.get(cell.node_id) else { continue };
++        let index = node.layout_data().table_cell_index as usize;
++        if cells.get(index).is_some_and(|kept| kept.node_id == cell.node_id) {
++            continue;
++        }
++        if node.layout_child_of.get().is_some_and(|other| other != table) {
++            continue;
++        }
++        release_cell(doc, cell.node_id);
++    }
 +}
 +
 +/// lightningpanda: `node_id`'s layout children that are still listed there (`Node::layout_child_of`)
 +/// leave its list; one another container collected since points there and is left alone.
-+fn leave_layout_children(doc: &BaseDocument, node_id: NodeId) {
-+    if let Some(children) = doc.nodes[node_id].layout_children.borrow().as_ref() {
-+        for &child in children.iter() {
-+            if let Some(child) = doc.nodes.get(child) {
++fn leave_layout_children(doc: &mut BaseDocument, node_id: NodeId) {
++    let BaseDocument { nodes, left_layout_lists, .. } = doc;
++    if let Some(children) = nodes[node_id].layout_children.borrow().as_ref() {
++        for &child_id in children.iter() {
++            if let Some(child) = nodes.get(child_id) {
 +                if child.layout_child_of.get() == Some(node_id) {
 +                    child.layout_child_of.set(None);
++                    left_layout_lists.push(child_id);
 +                }
 +            }
 +        }
@@ -4374,7 +4559,16 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
  #[allow(clippy::too_many_arguments)]
  fn collect_table_cells(
      doc: &mut BaseDocument,
-@@ -557,6 +2306,7 @@
+@@ -548,6 +2413,8 @@
+     // block rather than as part of the table grid.
+     let position = node.primary_styles().unwrap().clone_position();
+     if position.is_absolutely_positioned() {
++        // lightningpanda: a box of its own, laid out and painted with its own borders.
++        release_cell(doc, node_id);
+         oof_children.push((node_id, stylo_taffy::convert::position(position)));
+         return;
+     }
+@@ -557,6 +2424,7 @@
          | DisplayInside::TableHeaderGroup
          | DisplayInside::TableFooterGroup
          | DisplayInside::Contents => {
@@ -4382,7 +4576,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
              let first_row = rows.len();
              let children = std::mem::take(&mut doc.nodes[node_id].children);
              for child_id in children.iter().copied() {
-@@ -590,16 +2340,20 @@
+@@ -590,16 +2458,20 @@
              *row += 1;
              cursor.start_row();
  
@@ -4406,7 +4600,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
  
              let children = std::mem::take(&mut doc.nodes[node_id].children);
              for child_id in children.iter().copied() {
-@@ -620,10 +2374,13 @@
+@@ -620,10 +2492,17 @@
                  );
              }
              doc.nodes[node_id].children = children;
@@ -4415,12 +4609,16 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
          }
          DisplayInside::TableCell => {
              // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
++            if node.layout_child_of.get().is_none() {
++                enter_layout_tree(doc, node_id);
++            }
++            let node = &mut doc.nodes[node_id];
              let stylo_style = &node.primary_styles().unwrap();
 +            let percent_width = stylo_taffy::convert::dimension(stylo_style.get_width()).tag() == taffy::CompactLength::PERCENT_TAG;
              let colspan: u16 = node
                  .attr(local_name!("colspan"))
                  .and_then(|val| val.parse().ok())
-@@ -633,7 +2390,7 @@
+@@ -633,7 +2512,7 @@
                  .and_then(|val| val.parse::<u16>().ok())
                  .map(|v| v.clamp(1, 65534))
                  .unwrap_or(1);
@@ -4429,7 +4627,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
              let col = cursor.next_free();
  
              // In the collapsed borders model the borders are laid out as gutters between
-@@ -653,34 +2410,28 @@
+@@ -653,34 +2532,28 @@
                  style.min_size.width = style_helpers::length(0.0);
              }
  
@@ -4477,7 +4675,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
                              // Resolved in `build_table_context` once the column count is known
                              percent_columns.push((col, style.size.width.value(), extra));
                              style_helpers::percent(style.size.width.value())
-@@ -726,11 +2477,63 @@
+@@ -726,11 +2599,63 @@
                  }
              }
  
@@ -4541,7 +4739,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
                  style,
              });
  
-@@ -801,7 +2604,7 @@
+@@ -801,7 +2726,7 @@
      type CustomIdent = Atom;
  
      fn get_core_container_style(&self, _node_id: taffy::NodeId) -> &taffy::Style<Atom> {
@@ -4550,7 +4748,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
      }
  
      fn resolve_calc_value(&self, calc_ptr: *const (), parent_size: f32) -> f32 {
-@@ -809,7 +2612,9 @@
+@@ -809,7 +2734,9 @@
      }
  
      fn set_unrounded_layout(&mut self, node_id: taffy::NodeId, layout: &taffy::Layout) {
@@ -4561,7 +4759,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
          self.doc.set_unrounded_layout(node_id, layout)
      }
  
-@@ -820,7 +2625,48 @@
+@@ -820,7 +2747,48 @@
      ) -> taffy::LayoutOutput {
          let cell = &self.ctx.cells[usize::from(node_id)];
          let node_id = crate::taffy_node_id(cell.node_id);
@@ -4611,12 +4809,10 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
      }
  }
  
-@@ -841,6 +2687,24 @@
- 
-     fn get_grid_child_style(&self, child_node_id: taffy::NodeId) -> Self::GridItemStyle<'_> {
+@@ -843,6 +2811,24 @@
          &self.ctx.cells[usize::from(child_node_id)].style
-+    }
-+
+     }
+ 
 +    fn grid_rows_are_table_rows(&self, _node_id: taffy::NodeId) -> bool {
 +        true
 +    }
@@ -4633,9 +4829,11 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +    fn store_table_grid_state(&mut self, _node_id: taffy::NodeId, state: Box<taffy::TableGridState>) {
 +        crate::resolve::phase_profile::table_grid_laid_out(state.laid_out_again());
 +        *self.ctx.grid_state.borrow_mut() = Some(state);
-     }
- 
++    }
++
      fn set_detailed_grid_info(
+         &mut self,
+         _node_id: taffy::NodeId,
 diff --git a/packages/blitz-dom/src/layout/writing_mode.rs b/packages/blitz-dom/src/layout/writing_mode.rs
 --- a/packages/blitz-dom/src/layout/writing_mode.rs
 +++ b/packages/blitz-dom/src/layout/writing_mode.rs
@@ -4688,17 +4886,7 @@ diff --git a/packages/blitz-dom/src/layout/writing_mode.rs b/packages/blitz-dom/
 -            x: parent_pos.x + unrounded.location.x,
 -            y: parent_pos.y + unrounded.location.y,
 -        };
-+        // Keyed on the physical layout: a `*-rl` box's x depends on its placer's size. That, the offset
-+        // (`rounded_parent_pos` is `parent_pos` rounded) and the subtree's unrounded layouts, whose
-+        // changes are damage, are all the rounding below reads.
-+        if self.rounded_unchanged(node_id, &unrounded, parent_pos.x, parent_pos.y) {
-+            self.round_counts.1 += 1;
-+            return;
-+        }
-+        self.record_rounded(node_id, &unrounded, parent_pos.x, parent_pos.y);
-+
-+        let (layout, pos, rounded_pos) = rounded_layout(unrounded, parent_pos, rounded_parent_pos);
-         let size = unrounded.size;
+-        let size = unrounded.size;
 -        // As in `taffy::round_layout`: the box's outer edges are rounded in absolute coordinates and
 -        // every inner edge is rounded relative to them, so adjacent boxes never overlap or gap.
 -        let rounded_pos = Point {
@@ -4713,7 +4901,7 @@ diff --git a/packages/blitz-dom/src/layout/writing_mode.rs b/packages/blitz-dom/
 -        let from_top = |v: f32| (pos.y + v).round() - rounded_pos.y;
 -        let from_right = |v: f32| rounded_end.x - (pos.x + size.width - v).round();
 -        let from_bottom = |v: f32| rounded_end.y - (pos.y + size.height - v).round();
- 
+-
 -        let mut layout = unrounded;
 -        layout.location = Point {
 -            x: rounded_pos.x - rounded_parent_pos.x,
@@ -4746,14 +4934,24 @@ diff --git a/packages/blitz-dom/src/layout/writing_mode.rs b/packages/blitz-dom/
 -            },
 -            unrounded.scrollable_overflow_rect.is_reversed(),
 -        );
--
++        // Keyed on the physical layout: a `*-rl` box's x depends on its placer's size. That, the offset
++        // (`rounded_parent_pos` is `parent_pos` rounded) and the subtree's unrounded layouts, whose
++        // changes are damage, are all the rounding below reads.
++        if self.rounded_unchanged(node_id, &unrounded, parent_pos.x, parent_pos.y) {
++            self.round_counts.1 += 1;
++            return;
++        }
++        self.record_rounded(node_id, &unrounded, parent_pos.x, parent_pos.y);
+ 
 -        let content_box_subpixel_offset = Point {
 -            x: (pos.x + unrounded.border.left + unrounded.padding.left)
 -                - (rounded_pos.x + layout.border.left + layout.padding.left),
 -            y: (pos.y + unrounded.border.top + unrounded.padding.top)
 -                - (rounded_pos.y + layout.border.top + layout.padding.top),
 -        };
--
++        let (layout, pos, rounded_pos) = rounded_layout(unrounded, parent_pos, rounded_parent_pos);
++        let size = unrounded.size;
+ 
          // `unrounded_layout` is left in the placer's writing mode: Taffy's cache may skip re-placing
          // this node on a later layout, and only `final_layout` is read downstream.
          self.set_final_layout(node_id, &layout);
@@ -4764,6 +4962,9 @@ diff --git a/packages/blitz-dom/src/layout/writing_mode.rs b/packages/blitz-dom/
 -        if let Some(element) = node.element_data_mut() {
 -            if let Some(inline_layout) = element.inline_layout_data.as_mut() {
 -                inline_layout.content_box_subpixel_offset = content_box_subpixel_offset;
+-            }
+-            if let Some(list_item) = element.list_item_data.as_mut() {
+-                list_item.content_box_subpixel_offset = content_box_subpixel_offset;
 +        // lightningpanda: `content_box_subpixel_offset` (upstream #1382) stays zero: screenshots keep
 +        // text at the whole-pixel content box, and print moves text to its layout-unit x itself
 +        // (`fractional_text_x` in blitz-paint).
@@ -4782,20 +4983,17 @@ diff --git a/packages/blitz-dom/src/layout/writing_mode.rs b/packages/blitz-dom/
 +                    self.physicalise_and_round_inner(child, wm, size, pos, rounded_pos);
 +                }
              }
--            if let Some(list_item) = element.list_item_data.as_mut() {
--                list_item.content_box_subpixel_offset = content_box_subpixel_offset;
+-            if let Some(text_input) = element.text_input_data_mut() {
+-                text_input.content_box_subpixel_offset = content_box_subpixel_offset;
 +            for index in 0..self.hoisted_child_count(node_id) {
 +                let child = self.get_hoisted_child_id(node_id, index);
 +                self.physicalise_and_round_inner(child, wm, size, pos, rounded_pos);
              }
--            if let Some(text_input) = element.text_input_data_mut() {
--                text_input.content_box_subpixel_offset = content_box_subpixel_offset;
--            }
 +            return;
          }
          for index in 0..self.child_count(node_id) {
              let child = self.get_child_id(node_id, index);
-@@ -342,8 +310,109 @@
+@@ -342,6 +310,107 @@
              self.physicalise_and_round_inner(child, wm, size, pos, rounded_pos);
          }
      }
@@ -4839,8 +5037,8 @@ diff --git a/packages/blitz-dom/src/layout/writing_mode.rs b/packages/blitz-dom/
 +            self.assert_rounding_is_current(child, wm, unrounded.size, pos, rounded_pos);
 +        }
 +    }
- }
- 
++}
++
 +/// `unrounded` (physical) rounded, as in `taffy::round_layout`: the box's outer edges are rounded in
 +/// absolute coordinates and every inner edge is rounded relative to them, so adjacent boxes never
 +/// overlap or gap. Also returns its absolute position, unrounded and rounded.
@@ -4900,12 +5098,27 @@ diff --git a/packages/blitz-dom/src/layout/writing_mode.rs b/packages/blitz-dom/
 +        unrounded.scrollable_overflow_rect.is_reversed(),
 +    );
 +    (layout, pos, rounded_pos)
+ }
+ 
+ /// Map the static positions of `output`'s out-of-flow candidates (relative to the border box of a
+@@ -486,6 +555,16 @@
+ 
+ /// `logical`, written by a placing algorithm running in `placer_wm` within a box of physical size
+ /// `placer_size`, in physical coordinates.
++/// lightningpanda: whether `node` is a scroll container, for CSSOM geometry queries. These reach
++/// boxes outside the layout tree too (below a `display: none` element, which have no styles), and
++/// an unstyled box is not one.
++fn is_styled_scroll_container(node: &Node) -> bool {
++    node.primary_styles().is_some_and(|style| {
++        let b = style.get_box();
++        b.overflow_x.is_scrollable() || b.overflow_y.is_scrollable()
++    })
 +}
 +
- /// Map the static positions of `output`'s out-of-flow candidates (relative to the border box of a
- /// node laid out in `child_wm`) into `parent_wm`, ahead of [`LayoutOutput::transpose`],
- /// which leaves them untouched. The block axis of `vertical-rl` runs against Taffy's
-@@ -531,11 +600,23 @@
+ fn physical_layout(
+     logical: Layout,
+     placer_wm: WritingMode,
+@@ -531,11 +610,23 @@
  }
  
  impl BaseDocument {
@@ -4930,6 +5143,34 @@ diff --git a/packages/blitz-dom/src/layout/writing_mode.rs b/packages/blitz-dom/
          &self,
          node_id: crate::NodeId,
      ) -> (crate::util::Point<f32>, Layout) {
+@@ -557,12 +648,11 @@
+         let root_id = self.try_root_element().map(|root| root.id);
+         let node = &self.nodes[node_id];
+         let (mut pos, placer_wm, placer_size) = self.placer_geometry(node, node_id, root_id);
+-        let overflow = node.layout_style().overflow();
+         let layout = physical_layout(
+             *node.unrounded_layout(),
+             placer_wm,
+             placer_size,
+-            overflow.x.is_scroll_container() || overflow.y.is_scroll_container(),
++            is_styled_scroll_container(node),
+         );
+         pos.x += layout.location.x - node.scroll_offset().x as f32;
+         pos.y += layout.location.y - node.scroll_offset().y as f32;
+@@ -592,12 +682,11 @@
+         let (mut pos, grand_wm, grand_size) = self.placer_geometry(placer, placer_id, root_id);
+         let logical = placer.unrounded_layout();
+         let (location, size) = if grand_wm.is_vertical() {
+-            let overflow = placer.layout_style().overflow();
+             let physical = physical_layout(
+                 *logical,
+                 grand_wm,
+                 grand_size,
+-                overflow.x.is_scroll_container() || overflow.y.is_scroll_container(),
++                is_styled_scroll_container(placer),
+             );
+             (physical.location, physical.size)
+         } else {
 diff --git a/packages/blitz-dom/src/lib.rs b/packages/blitz-dom/src/lib.rs
 --- a/packages/blitz-dom/src/lib.rs
 +++ b/packages/blitz-dom/src/lib.rs
@@ -4948,7 +5189,15 @@ diff --git a/packages/blitz-dom/src/lib.rs b/packages/blitz-dom/src/lib.rs
 diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.rs
 --- a/packages/blitz-dom/src/mutator.rs
 +++ b/packages/blitz-dom/src/mutator.rs
-@@ -326,6 +326,7 @@
+@@ -19,6 +19,7 @@
+ use blitz_traits::shell::Viewport;
+ use selectors::matching::ElementSelectorFlags;
+ use style::Atom;
++use style::invalidation::element::invalidation_map::TSStateForInvalidation;
+ use style::invalidation::element::restyle_hints::RestyleHint;
+ use style::stylesheets::OriginSet;
+ use style_dom::ElementState;
+@@ -326,6 +327,7 @@
              self.doc.snapshot_node(node_id, &name.local);
  
              self.restyle_for_attribute_change(node_id, &name.local);
@@ -4956,7 +5205,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          }
  
          if name.local == local_name!("id") && node_is_in_document {
-@@ -440,7 +441,14 @@
+@@ -440,7 +442,14 @@
  
          if (tag, attr) == tag_and_attr!("input", "checked") {
              set_input_checked_state(element, value.to_string());
@@ -4972,7 +5221,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
              self.load_image(node_id);
          } else if (tag, attr) == tag_and_attr!("canvas", "src") {
              self.load_custom_paint_src(node_id);
-@@ -461,6 +469,7 @@
+@@ -461,6 +470,7 @@
              self.doc.snapshot_node(node_id, &name.local);
  
              self.restyle_for_attribute_change(node_id, &name.local);
@@ -4980,32 +5229,67 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          }
  
          if name.local == local_name!("id") && node_is_in_document {
-@@ -602,6 +611,11 @@
+@@ -602,6 +612,8 @@
  
      /// Remove the node from it's parent but don't drop it
      pub fn remove_node(&mut self, node_id: NodeId) {
 +        // A removed element inside a `:has()` argument changes its anchors.
-+        self.doc.invalidate_has_anchors_around(node_id);
-+        if let Some(parent_id) = self.doc.nodes[node_id].parent {
-+            self.doc.invalidate_has_anchors(parent_id);
-+            }
++        self.doc.invalidate_relative_selectors_for_removal(node_id);
          let node_is_in_document = self.doc.nodes[node_id].flags.is_in_document();
          // Process the subtree *before* severing the parent link so that
          // interaction state referencing removed nodes can retarget to the
-@@ -639,6 +653,12 @@
+@@ -618,7 +630,8 @@
+             let index = parent.index_of_child(node_id).unwrap_or(0);
+             parent.children.retain(|id| *id != node_id);
+             if node_is_in_document {
+-                self.restyle_for_child_list_change(parent_id, index..index);
++                let removed_element = self.doc.nodes[node_id].is_element();
++                self.restyle_for_child_list_change(parent_id, index..index, removed_element);
+                 devtools!(
+                     self,
+                     MutationRecord::NodeRemoved(NodeRemoved { parent_id, node_id })
+@@ -639,6 +652,9 @@
          node_id: NodeId,
          on_drop: &mut dyn FnMut(NodeId),
      ) -> Option<Node> {
 +        // lightningpanda: a dropped element inside a `:has()` argument
 +        // changes its anchors, as in `remove_node`.
-+        self.doc.invalidate_has_anchors_around(node_id);
-+        if let Some(parent_id) = self.doc.nodes[node_id].parent {
-+            self.doc.invalidate_has_anchors(parent_id);
-+            }
++        self.doc.invalidate_relative_selectors_for_removal(node_id);
          let node_is_in_document = self.doc.nodes[node_id].flags.is_in_document();
          self.process_removed_subtree(node_id);
  
-@@ -697,6 +717,54 @@
+@@ -654,7 +670,8 @@
+             parent.children.retain(|id| *id != node_id);
+ 
+             if parent_is_in_doc {
+-                self.restyle_for_child_list_change(parent_id, index..index);
++                let removed_element = node.as_ref().is_some_and(|node| node.is_element());
++                self.restyle_for_child_list_change(parent_id, index..index, removed_element);
+                 devtools!(
+                     self,
+                     MutationRecord::NodeRemoved(NodeRemoved { parent_id, node_id })
+@@ -668,13 +685,19 @@
+     }
+ 
+     pub fn remove_and_drop_all_children(&mut self, node_id: NodeId) {
++        // lightningpanda: dropped elements inside a `:has()` argument change their anchors,
++        // as in `remove_node`; checked while they are still linked.
++        for &child_id in &self.doc.nodes[node_id].children {
++            self.doc.invalidate_relative_selectors_for_removal(child_id);
++        }
+         let parent = &mut self.doc.nodes[node_id];
+         let parent_is_in_doc = parent.flags.is_in_document();
+         let children = mem::take(&mut parent.children);
+         self.mutations_occurred |= parent_is_in_doc && !children.is_empty();
+ 
+         if parent_is_in_doc {
+-            self.restyle_for_child_list_change(node_id, 0..0);
++            let removed_element = children.iter().any(|id| self.doc.nodes[*id].is_element());
++            self.restyle_for_child_list_change(node_id, 0..0, removed_element);
+         }
+ 
+         for child_id in children {
+@@ -697,6 +720,54 @@
      /// is hinted: its snapshot lets Stylo's invalidator find the siblings and descendants
      /// whose selectors depend on the attribute. `style`, `class` and `id` reach layout only
      /// through the computed style (whose diff yields the damage); other attributes may not.
@@ -5060,56 +5344,278 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
      fn restyle_for_attribute_change(&mut self, node_id: NodeId, attr: &LocalName) {
          let node = &mut self.doc.nodes[node_id];
          let is_style = *attr == local_name!("style");
-@@ -864,6 +932,21 @@
-         child_ids: &[NodeId],
-         insert_children_fn: &dyn Fn(&mut Node, &[NodeId]) -> usize,
-     ) {
-+        // New children of an element in a `:has()` search path (or of an
-+        // anchor) can change what the anchors match.
-+        self.doc.invalidate_has_anchors(parent_id);
-+        if self.doc.nodes[parent_id].is_element()
-+            && self.doc.nodes[parent_id]
-+            .selector_flags()
-+            .get()
-+            .intersects(
-+                selectors::matching::ElementSelectorFlags::ANCHORS_RELATIVE_SELECTOR
-+                    | selectors::matching::ElementSelectorFlags::ANCHORS_RELATIVE_SELECTOR_NON_SUBJECT,
-+            )
-+            && self.doc.nodes[parent_id].primary_styles().is_some()
-+        {
-+            self.doc.nodes[parent_id].set_restyle_hint(style::invalidation::element::restyle_hints::RestyleHint::restyle_subtree());
-+        }
-         let new_parent_is_in_document = self.doc.nodes[parent_id].flags.is_in_document();
-         self.mutations_occurred |= new_parent_is_in_document && !child_ids.is_empty();
+@@ -748,27 +819,45 @@
+     }
  
-@@ -879,6 +962,13 @@
+     /// Restyle an in-document element whose child list changed, `changed` being the position
+-    /// of the inserted children (empty, at the former position of a removed child). New
+-    /// children are styled by the traversal regardless; the element and its other children
+-    /// only need restyling where its selector flags record a selector that depends on them.
+-    fn restyle_for_child_list_change(&mut self, parent_id: NodeId, changed: Range<usize>) {
++    /// of the inserted children (empty, at the former position of a removed child;
++    /// `removed_element` says whether that child was an element). New children are styled by
++    /// the traversal regardless; the element and its other children only need restyling where
++    /// its selector flags record a selector that depends on them.
++    ///
++    /// lightningpanda: a change of text (or other non-element) children alone moves no
++    /// element's index or edge status, so the siblings are left alone (`:empty` still restyles
++    /// the parent). Inserted children that already have a style were moved here from this same
++    /// parent (`add_children_to_parent` skips their subtree restyle, their ancestors being
++    /// unchanged): they are restyled whenever the parent carries a sibling-dependent flag. The
++    /// same conditions inside a `:has()` argument reach their anchors through
++    /// `invalidate_relative_selectors_for_ts_state`.
++    fn restyle_for_child_list_change(
++        &mut self,
++        parent_id: NodeId,
++        changed: Range<usize>,
++        removed_element: bool,
++    ) {
+         let parent = &self.doc.nodes[parent_id];
+         let flags = parent.selector_flags().get();
+         let mut hint = RestyleHint::empty();
+-        if flags.intersects(
+-            ElementSelectorFlags::HAS_EMPTY_SELECTOR
+-                | ElementSelectorFlags::ANCHORS_RELATIVE_SELECTOR
+-                | ElementSelectorFlags::ANCHORS_RELATIVE_SELECTOR_NON_SUBJECT,
+-        ) {
++        // lightningpanda: a `:has()` anchor among the ancestors is restyled by Stylo's relative
++        // selector invalidator when an element it can match comes or goes
++        // (`invalidate_relative_selectors_for_insertion`), not here; an argument's `:empty`
++        // matches by the child list alone, so the parent is looked up for one.
++        if flags.contains(ElementSelectorFlags::HAS_EMPTY_SELECTOR) {
+             hint |= RestyleHint::RESTYLE_SELF;
++            self.doc
++                .invalidate_relative_selectors_for_ts_state(parent_id, TSStateForInvalidation::EMPTY);
+         }
++        let is_element = |id: &NodeId| self.doc.nodes[*id].is_element();
++        let element_changed = removed_element || parent.children[changed.clone()].iter().any(is_element);
+         // A change with no earlier element sibling restyles all children with one hint rather
+         // than hinting each later sibling, so inserting or removing at the front stays linear.
+         let front_change = flags.contains(ElementSelectorFlags::HAS_SLOW_SELECTOR_LATER_SIBLINGS)
+-            && !parent.children[..changed.start]
+-                .iter()
+-                .any(|id| self.doc.nodes[*id].is_element());
+-        if front_change
++            && !parent.children[..changed.start].iter().any(is_element);
++        if !element_changed {
++            // No element came or went: no index or edge status moved.
++        } else if front_change
+             || flags.intersects(
+                 ElementSelectorFlags::HAS_SLOW_SELECTOR
+                     | ElementSelectorFlags::HAS_SLOW_SELECTOR_NTH_OF
+@@ -776,18 +865,43 @@
+             )
+         {
+             hint |= RestyleHint::RESTYLE_DESCENDANTS;
++            // lightningpanda: every other child's position may have changed, and with it an
++            // argument's `:nth-child()`, `:first-child` or `:last-child`
++            // (`invalidate_relative_selectors_for_ts_state`); the inserted children are
++            // covered by their own insertion.
++            let positional = TSStateForInvalidation::NTH
++                | TSStateForInvalidation::NTH_EDGE_FIRST
++                | TSStateForInvalidation::NTH_EDGE_LAST;
++            for id in parent.children[..changed.start]
++                .iter()
++                .chain(&parent.children[changed.end..])
++            {
++                self.doc.invalidate_relative_selectors_for_ts_state(*id, positional);
++            }
+         } else {
+             let children = mem::take(&mut self.doc.nodes[parent_id].children);
++            let is_element = |id: &NodeId| self.doc.nodes[*id].is_element();
++            // The moved-in children, whose index or edge status may have changed (new ones
++            // have no style data for the hint and are styled regardless).
++            let moved_in = if flags.intersects(
++                ElementSelectorFlags::HAS_SLOW_SELECTOR_LATER_SIBLINGS
++                    | ElementSelectorFlags::HAS_EDGE_CHILD_SELECTOR,
++            ) {
++                changed.clone()
++            } else {
++                0..0
++            };
+             let later = if flags.contains(ElementSelectorFlags::HAS_SLOW_SELECTOR_LATER_SIBLINGS) {
+                 changed.end..children.len()
+             } else {
+                 0..0
+             };
+-            // The element children that were first/last before an insertion, or are after a
+-            // removal; text nodes don't count for `:first-child`/`:last-child`.
++            // The element children whose `:first-child`/`:last-child` status flipped: the one
++            // after the change when no element precedes it (it was or now is first), the one
++            // before when no element follows it (it was or now is last); text nodes don't
++            // count. No other element's edge status moved.
+             let mut edge = [None, None];
+             if flags.contains(ElementSelectorFlags::HAS_EDGE_CHILD_SELECTOR) {
+-                let is_element = |id: &NodeId| self.doc.nodes[*id].is_element();
+                 if !children[..changed.start].iter().any(is_element) {
+                     edge[0] = children[changed.end..].iter().copied().find(is_element);
+                 }
+@@ -799,10 +913,30 @@
+                         .find(is_element);
+                 }
+             }
+-            for id in children[later].iter().chain(edge.iter().flatten()) {
++            for id in children[moved_in]
++                .iter()
++                .chain(children[later.clone()].iter())
++                .chain(edge.iter().flatten())
++            {
+                 self.doc.nodes[*id].set_restyle_hint(RestyleHint::restyle_subtree());
+             }
+             self.doc.nodes[parent_id].children = children;
++            // lightningpanda: the arguments that match by position
++            // (`invalidate_relative_selectors_for_ts_state`), once the child list is back for
++            // the sibling walk: `:nth-child()` on the later siblings, `:first-child`/
++            // `:last-child` on the children whose edge status flipped. The moved-in children
++            // are covered by their own insertion.
++            let children = &self.doc.nodes[parent_id].children;
++            for id in &children[later] {
++                self.doc
++                    .invalidate_relative_selectors_for_ts_state(*id, TSStateForInvalidation::NTH);
++            }
++            let edge_states = [TSStateForInvalidation::NTH_EDGE_FIRST, TSStateForInvalidation::NTH_EDGE_LAST];
++            for (id, state) in edge.iter().zip(edge_states) {
++                if let Some(id) = id {
++                    self.doc.invalidate_relative_selectors_for_ts_state(*id, state);
++                }
++            }
+         }
+ 
+         let parent = &mut self.doc.nodes[parent_id];
+@@ -878,7 +1012,24 @@
+         // would remove both the old and the newly-inserted entries from the
          // parent's child list, and anchor indices would be computed against a
          // child list that still contains the moved nodes.
++        // lightningpanda: children moved within this element parent keep their ancestors, so
++        // only their siblings changed, and `restyle_for_child_list_change` restyles them for
++        // that; a move under a non-element parent keeps the subtree restyle.
++        let parent_is_element = self.doc.nodes[parent_id].is_element();
++        let mut same_parent_moves: Vec<NodeId> = Vec::new();
          for child_id in child_ids.iter().copied() {
++            if parent_is_element
++                && self.doc.nodes[child_id].parent == Some(parent_id)
++                && self.doc.nodes[child_id].flags.is_in_document()
++            {
++                same_parent_moves.push(child_id);
++            }
 +            // lightningpanda: a moved child leaves its old parent as
 +            // `remove_node` does (`:has()` anchors, `:empty`), checked while
 +            // it is still linked.
-+            if let Some(old_parent_id) = self.doc.nodes[child_id].parent {
-+                self.doc.invalidate_has_anchors_around(child_id);
-+                self.doc.invalidate_has_anchors(old_parent_id);
++            if self.doc.nodes[child_id].parent.is_some() {
++                self.doc.invalidate_relative_selectors_for_removal(child_id);
 +            }
              let child = &self.doc.nodes[child_id];
              if child.contains_focus() {
                  focus_within_old_chain = Some(self.doc.maybe_node_element_ancestors(child.parent));
-@@ -922,6 +1012,12 @@
+@@ -897,7 +1048,8 @@
+             old_parent.children.retain(|id| *id != child_id);
+ 
+             if child_was_in_doc {
+-                self.restyle_for_child_list_change(old_parent_id, index..index);
++                let removed_element = self.doc.nodes[child_id].is_element();
++                self.restyle_for_child_list_change(old_parent_id, index..index, removed_element);
+                 devtools!(
+                     self,
+                     MutationRecord::NodeRemoved(NodeRemoved {
+@@ -915,15 +1067,25 @@
+         let index = insert_children_fn(new_parent, child_ids);
+ 
+         if new_parent_is_in_document {
+-            self.restyle_for_child_list_change(parent_id, index..index + child_ids.len());
++            self.restyle_for_child_list_change(parent_id, index..index + child_ids.len(), false);
+         }
+ 
++        // lightningpanda: whether the children land under a `display: none` element (see below).
++        // Any child may hold styled elements: a new element (no style data) may hold a moved
++        // one (lp-dom builds a new wrapper by moving children into it before inserting it).
++        let under_display_none = self.is_under_display_none(parent_id);
+         for child_id in child_ids.iter().copied() {
              let child = &mut self.doc.nodes[child_id];
              let child_was_in_doc = child.flags.is_in_document();
              child.parent = Some(parent_id);
-+            // lightningpanda: the anchors that can see the new position
-+            // (ancestors, their previous siblings) may match differently.
-+            if new_parent_is_in_document {
-+                self.doc.invalidate_has_anchors_around(child_id);
-+            }
 +            let child = &mut self.doc.nodes[child_id];
              // A moved or re-attached subtree keeps its styles, but everything above it changed.
-             if new_parent_is_in_document && child.primary_styles().is_some() {
+-            if new_parent_is_in_document && child.primary_styles().is_some() {
++            // lightningpanda: a move within the same parent changed no ancestor (see
++            // `same_parent_moves`).
++            if new_parent_is_in_document
++                && child.primary_styles().is_some()
++                && !same_parent_moves.contains(&child_id)
++            {
                  child.set_restyle_hint(RestyleHint::restyle_subtree());
-@@ -1223,6 +1319,15 @@
+             }
+ 
+@@ -938,12 +1100,45 @@
+                 );
+             }
+ 
++            // lightningpanda: Stylo keeps no style data under a `display: none` element (it drops
++            // it when an element becomes one, `clear_descendant_data`, and never visits the
++            // children of one), but a moved element kept its own: styles, inline layout and the
++            // flags built from them, which no pass would replace. Under a `display: none` element
++            // it has none, as a fresh build has, and is styled and built from scratch if shown.
++            if under_display_none {
++                self.doc.iter_subtree_mut(child_id, |id, doc| {
++                    doc.nodes[id].flags.reset_construction_flags();
++                    // Nor pseudo-elements, built from its styles: built again if it is shown.
++                    for idx in 0..2 {
++                        if let Some(pe) = doc.nodes[id].pe_by_index(idx) {
++                            doc.nodes[id].set_pe_by_index(idx, None);
++                            doc.remove_and_drop_pe(pe);
++                        }
++                    }
++                    let node = &mut doc.nodes[id];
++                    if let Some(element) = node.element_data_mut() {
++                        element.take_inline_layout();
++                        // SAFETY: no style traversal is running while the DOM is mutated.
++                        unsafe { element.stylo_element_data.clear() };
++                    }
++                });
++                // Nor a layout tree (its old container takes it out of its own list).
++                self.doc.leave_layout_tree(child_id);
++            }
++
+             if new_parent_is_in_document && !child_was_in_doc {
+                 self.process_added_subtree(child_id);
+             } else if !new_parent_is_in_document && child_was_in_doc {
+                 self.process_removed_subtree(child_id);
+             }
+         }
++        // lightningpanda: the `:has()` anchors that can see the new positions,
++        // once every child is linked (a sibling inserted with it counts).
++        if new_parent_is_in_document {
++            for &child_id in child_ids {
++                self.doc.invalidate_relative_selectors_for_insertion(child_id);
++            }
++        }
+ 
+         // Transfer :focus-within from the old ancestor chain to the new one (the
+         // shared prefix stays). If the subtree left the document, the focus was
+@@ -975,6 +1170,23 @@
+         self.maybe_record_node(parent_id);
+     }
+ 
++    /// lightningpanda: whether `node_id` is or is inside a `display: none` element: the nearest
++    /// styled element from it up says so (the elements below one have no styles; an element not
++    /// styled yet below a shown one will be).
++    fn is_under_display_none(&self, node_id: NodeId) -> bool {
++        let mut at = Some(node_id);
++        while let Some(id) = at {
++            let node = &self.doc.nodes[id];
++            if node.is_element() {
++                if let Some(style) = node.primary_styles() {
++                    return style.get_box().display.is_none();
++                }
++            }
++            at = node.parent;
++        }
++        false
++    }
++
+     /// The nearest preceding sibling of `node_id` in `parent_id`'s children
+     /// that devtools show (not a whitespace-only text node or anonymous block)
+     #[cfg(feature = "devtools")]
+@@ -1223,6 +1435,15 @@
                  _ if has_custom_widget => {}
                  "link" => self.eager_op_queue.push(SpecialOp::LoadStylesheet(node_id)),
                  "img" => self.eager_op_queue.push(SpecialOp::LoadImage(node_id)),
@@ -5125,7 +5631,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                  "iframe" => self.eager_op_queue.push(SpecialOp::LoadIframe(node_id)),
                  "canvas" => self
                      .eager_op_queue
-@@ -1420,6 +1525,7 @@
+@@ -1420,6 +1641,7 @@
              .force_stylesheet_origins_dirty(OriginSet::all());
  
          self.doc.nodes_to_stylesheet.remove(&node_id);
@@ -5133,6 +5639,261 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          self.doc.stylesheet_generation += 1;
      }
  
+@@ -3088,3 +3310,254 @@
+         );
+     }
+ }
++
++/// lightningpanda: child-list restyle hints are narrowed to what selector
++/// flags say can change (a move within one parent keeps its ancestors; only
++/// the neighbour whose edge status flipped is restyled for
++/// `:first-child`/`:last-child`; text children alone restyle nothing). The
++/// narrowed hints must still give every element the style a freshly built
++/// document gives it.
++#[cfg(test)]
++mod child_list_restyle_tests {
++    use crate::{Attribute, BaseDocument, DocumentConfig, NodeId, local_name, qual_name};
++    use blitz_traits::shell::{ColorScheme, Viewport};
++
++    struct Doc {
++        doc: BaseDocument,
++        body: NodeId,
++        divs: Vec<NodeId>,
++    }
++
++    /// `<html><head><style>{css}</style></head><body>` with a `div` per
++    /// class, resolved. `tag` keeps the sheet text apart from other tests'.
++    fn make_doc(css: &str, tag: &str, classes: &[&str]) -> Doc {
++        let mut doc = BaseDocument::new(DocumentConfig {
++            viewport: Some(Viewport::new(400, 300, 1.0, ColorScheme::Light)),
++            ..Default::default()
++        });
++        let root_id = doc.root_node().id;
++        let mut m = doc.mutate();
++        let html = m.create_element(qual_name!("html"), vec![]);
++        let head = m.create_element(qual_name!("head"), vec![]);
++        let style = m.create_element(qual_name!("style"), vec![]);
++        let text = m.create_text_node(&format!("/* {tag} */ {css}"));
++        m.append_children(style, &[text]);
++        m.append_children(head, &[style]);
++        let body = m.create_element(qual_name!("body"), vec![]);
++        let mut divs = Vec::new();
++        for class in classes {
++            let attr = Attribute { name: qual_name!("class"), value: class.to_string() };
++            let el = m.create_element(qual_name!("div"), vec![attr]);
++            let inner = m.create_element(qual_name!("span"), vec![]);
++            m.append_children(el, &[inner]);
++            m.append_children(body, &[el]);
++            divs.push(el);
++        }
++        m.append_children(html, &[head, body]);
++        m.append_children(root_id, &[html]);
++        drop(m);
++        doc.resolve(0.0);
++        Doc { doc, body, divs }
++    }
++
++    /// Already-styled elements the next traversal will restyle.
++    fn restyles(doc: &BaseDocument) -> Vec<NodeId> {
++        doc.nodes
++            .iter()
++            .filter(|(_, n)| n.is_element() && n.primary_styles().is_some())
++            .filter(|(_, n)| {
++                n.try_stylo_element_data()
++                    .and_then(|s| s.get())
++                    .is_some_and(|d| !d.hint.is_empty())
++            })
++            .map(|(_, n)| n.id)
++            .collect()
++    }
++
++    /// The (`color`, `width`) of each body element child and of its `span`,
++    /// in tree order.
++    fn styles(doc: &BaseDocument, body: NodeId) -> Vec<String> {
++        let mut out = Vec::new();
++        for &id in &doc.nodes[body].children {
++            let node = &doc.nodes[id];
++            if !node.is_element() {
++                continue;
++            }
++            for id in std::iter::once(id).chain(node.children.iter().copied()) {
++                let style = doc.nodes[id].primary_styles().expect("styled");
++                out.push(format!(
++                    "{:?} {:?}",
++                    style.get_inherited_text().color,
++                    style.get_position().width
++                ));
++            }
++        }
++        out
++    }
++
++    /// The styles a fresh document with the same body children (by class,
++    /// in order) gets.
++    fn fresh_styles(d: &Doc, css: &str, tag: &str) -> Vec<String> {
++        let classes: Vec<String> = d.doc.nodes[d.body]
++            .children
++            .iter()
++            .filter_map(|&id| d.doc.nodes[id].element_data())
++            .map(|e| e.attr(local_name!("class")).unwrap_or_default().to_string())
++            .collect();
++        let classes: Vec<&str> = classes.iter().map(String::as_str).collect();
++        let fresh = make_doc(css, tag, &classes);
++        styles(&fresh.doc, fresh.body)
++    }
++
++    const SIBLING_CSS: &[(&str, &str)] = &[
++        ("first", "div:first-child { color: red } div:first-child span { width: 7px }"),
++        ("last", "div:last-child { color: red } div:last-child span { width: 7px }"),
++        ("nth", "div:nth-child(2n) { color: red } div:nth-child(3) span { width: 7px }"),
++        ("next", ".a + div { color: red } .b + div span { width: 7px }"),
++        ("later", ".a ~ .b { color: red } .c ~ div span { width: 7px }"),
++        ("only", "div:only-child { color: red } div:nth-last-child(2) span { width: 7px }"),
++    ];
++
++    /// Each step mutates the body's children; after every step the styles
++    /// equal a fresh document's.
++    #[test]
++    fn narrowed_hints_match_a_fresh_document() {
++        type Step = fn(&mut Doc);
++        let steps: &[(&str, Step)] = &[
++            ("move last to front", |d| {
++                let (first, last) = (d.divs[0], *d.divs.last().unwrap());
++                d.doc.mutate().insert_nodes_before(first, &[last]);
++            }),
++            ("move front to end", |d| {
++                let first = d.doc.nodes[d.body].children[0];
++                d.doc.mutate().append_children(d.body, &[first]);
++            }),
++            ("move middle forward", |d| {
++                let kids = d.doc.nodes[d.body].children.clone();
++                d.doc.mutate().insert_nodes_before(kids[0], &[kids[2]]);
++            }),
++            ("text at both ends", |d| {
++                let first = d.doc.nodes[d.body].children[0];
++                let mut m = d.doc.mutate();
++                let t1 = m.create_text_node("x");
++                let t2 = m.create_text_node("y");
++                m.insert_nodes_before(first, &[t1]);
++                m.append_children(d.body, &[t2]);
++            }),
++            ("remove first element", |d| {
++                let first = *d.doc.nodes[d.body]
++                    .children
++                    .iter()
++                    .find(|&&id| d.doc.nodes[id].is_element())
++                    .unwrap();
++                d.doc.mutate().remove_node(first);
++            }),
++            ("append new", |d| {
++                let mut m = d.doc.mutate();
++                let attr = Attribute { name: qual_name!("class"), value: "a".into() };
++                let el = m.create_element(qual_name!("div"), vec![attr]);
++                let inner = m.create_element(qual_name!("span"), vec![]);
++                m.append_children(el, &[inner]);
++                m.append_children(d.body, &[el]);
++            }),
++            ("remove last element", |d| {
++                let last = *d.doc.nodes[d.body]
++                    .children
++                    .iter()
++                    .rev()
++                    .find(|&&id| d.doc.nodes[id].is_element())
++                    .unwrap();
++                d.doc.mutate().remove_node(last);
++            }),
++            ("swap the remaining", |d| {
++                let els: Vec<NodeId> = d.doc.nodes[d.body]
++                    .children
++                    .iter()
++                    .copied()
++                    .filter(|&id| d.doc.nodes[id].is_element())
++                    .collect();
++                d.doc.mutate().insert_nodes_before(els[0], &[els[els.len() - 1]]);
++            }),
++            ("down to one", |d| {
++                let els: Vec<NodeId> = d.doc.nodes[d.body]
++                    .children
++                    .iter()
++                    .copied()
++                    .filter(|&id| d.doc.nodes[id].is_element())
++                    .collect();
++                let mut m = d.doc.mutate();
++                for &id in &els[1..] {
++                    m.remove_node(id);
++                }
++            }),
++        ];
++        for (tag, css) in SIBLING_CSS {
++            let tag = format!("child-list-{tag}");
++            let mut d = make_doc(css, &tag, &["a", "b", "c", "a", "b"]);
++            assert_eq!(styles(&d.doc, d.body), fresh_styles(&d, css, &tag), "{tag}: initial");
++            for (name, step) in steps {
++                step(&mut d);
++                d.doc.resolve(0.0);
++                assert_eq!(styles(&d.doc, d.body), fresh_styles(&d, css, &tag), "{tag}: {name}");
++            }
++        }
++    }
++
++    /// A move within one parent restyles nothing when no sibling-dependent
++    /// selector was tested on its children.
++    #[test]
++    fn same_parent_move_without_sibling_selectors_restyles_nothing() {
++        let d = &mut make_doc(".a { color: red } .b span { width: 7px }", "child-list-plain", &["a", "b", "c"]);
++        d.doc.mutate().insert_nodes_before(d.divs[0], &[d.divs[2]]);
++        assert_eq!(restyles(&d.doc), Vec::<NodeId>::new());
++        d.doc.mutate().append_children(d.body, &[d.divs[1]]);
++        assert_eq!(restyles(&d.doc), Vec::<NodeId>::new());
++        d.doc.resolve(0.0);
++        let order: Vec<NodeId> = d.doc.nodes[d.body].children.to_vec();
++        assert_eq!(order, vec![d.divs[2], d.divs[0], d.divs[1]]);
++    }
++
++    /// A move to another parent still restyles the moved subtree.
++    #[test]
++    fn move_to_another_parent_restyles_the_moved_element() {
++        let d = &mut make_doc(".a .b { color: red }", "child-list-reparent", &["a", "b"]);
++        d.doc.mutate().append_children(d.divs[0], &[d.divs[1]]);
++        assert_eq!(restyles(&d.doc), vec![d.divs[1]]);
++    }
++
++    /// Text children coming and going move no element's index or edge
++    /// status.
++    #[test]
++    fn text_children_alone_restyle_nothing() {
++        let css = "div:first-child, div:last-child { color: red } div:nth-child(2) { width: 3px } .a + div, .a ~ div { width: 5px }";
++        let d = &mut make_doc(css, "child-list-text", &["a", "b", "c"]);
++        let mut m = d.doc.mutate();
++        let t1 = m.create_text_node("x");
++        let t2 = m.create_text_node("y");
++        m.insert_nodes_before(d.divs[0], &[t1]);
++        m.append_children(d.body, &[t2]);
++        m.remove_node(t1);
++        drop(m);
++        assert_eq!(restyles(&d.doc), Vec::<NodeId>::new());
++    }
++
++    /// `:first-child`/`:last-child` restyle only the element whose edge
++    /// status flipped: appending restyles the old last element, not the
++    /// first one.
++    #[test]
++    fn edge_selectors_restyle_only_the_flipped_neighbour() {
++        let css = "div:first-child { color: red } div:last-child { color: blue }";
++        let d = &mut make_doc(css, "child-list-edge", &["a", "b", "c"]);
++        let mut m = d.doc.mutate();
++        let el = m.create_element(qual_name!("div"), vec![]);
++        m.append_children(d.body, &[el]);
++        drop(m);
++        assert_eq!(restyles(&d.doc), vec![d.divs[2]]);
++        d.doc.resolve(0.0);
++
++        d.doc.mutate().remove_node(d.divs[1]);
++        assert_eq!(restyles(&d.doc), Vec::<NodeId>::new(), "a middle element left");
++        d.doc.mutate().remove_node(d.divs[0]);
++        assert_eq!(restyles(&d.doc), vec![d.divs[2]], "the next one became first");
++    }
++}
 diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
 --- a/packages/blitz-dom/src/net.rs
 +++ b/packages/blitz-dom/src/net.rs
@@ -5443,7 +6204,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  flags |= stylo_taffy::StyleFlags::IS_REPLACED;
              }
              if el.name.local == local_name!("button") {
-@@ -1192,6 +1267,69 @@
+@@ -1192,6 +1267,74 @@
          }
      }
  
@@ -5472,11 +6233,16 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
 +
 +    /// Set a table cell's half collapsed borders, and its layout style with them. The cell's
 +    /// table-part Taffy style does not depend on them and stays.
++    ///
++    /// lightningpanda: the cell's own layout reads its layout style, so a change clears what its
++    /// last layout measured (`invalidate_layout_cache`), whichever path changed it: a table built
++    /// again (`build_table_context`) leaves its undamaged cells' layouts in place otherwise.
 +    pub(crate) fn set_collapsed_border(&mut self, collapsed_border: Option<[f32; 4]>) {
 +        if self.collapsed_border() == collapsed_border {
 +            return;
 +        }
 +        self.layout_data_mut().collapsed_border = collapsed_border;
++        self.invalidate_layout_cache();
 +        let Some(stylo) = self.try_stylo_element_data_mut() else {
 +            return;
 +        };
@@ -5513,7 +6279,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      /// The node's style for Taffy, expressed in the axes of the writing mode `layout_wm` (the writing
      /// mode of the box laying this node out). Used for the child-style getters.
      #[cfg(feature = "writing-mode")]
-@@ -1234,6 +1372,19 @@
+@@ -1234,6 +1377,19 @@
              .unwrap_or(stylo_taffy::WritingMode::empty())
      }
  
@@ -5533,7 +6299,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      /// The node's `display` as a [`taffy::Display`]. Returns [`taffy::Display::Block`]
      /// for nodes without computed styles (e.g. text nodes).
      pub fn taffy_display(&self) -> taffy::Display {
-@@ -1579,7 +1730,7 @@
+@@ -1579,7 +1735,7 @@
                  // against the viewport and do not scroll with it. (A fixed box
                  // whose containing block is a transformed ancestor scrolls with
                  // that ancestor like any other out-of-flow box.)
@@ -5542,7 +6308,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                      child_x -= self.scroll_offset().x as f32;
                      child_y -= self.scroll_offset().y as f32;
                      let viewport_scroll = self.tree().viewport_scroll();
-@@ -1818,8 +1969,21 @@
+@@ -1818,8 +1974,21 @@
  
          let root_layout = inline_root.unrounded_layout();
          let content_box_inset = root_layout.padding + root_layout.border;
@@ -5566,7 +6332,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
          fn union(acc: &mut Option<taffy::Rect<f32>>, left: f32, top: f32, right: f32, bottom: f32) {
              *acc = Some(match *acc {
-@@ -1877,11 +2041,28 @@
+@@ -1877,11 +2046,28 @@
                  }
              }
  
@@ -5708,14 +6474,14 @@ diff --git a/packages/blitz-dom/src/node/stylo_data.rs b/packages/blitz-dom/src/
  impl fmt::Debug for StyloData {
      fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
          f.debug_struct("StyloData").finish_non_exhaustive()
-@@ -83,9 +166,38 @@
+@@ -83,7 +166,36 @@
  
      /// Borrow the primary computed style directly (rather than the `Arc` containing it).
      pub fn computed_styles(&self) -> Option<ComputedStyleRef<'_>> {
 -        self.primary_styles().map(ComputedStyleRef)
 +        self.primary_styles().map(|primary| ComputedStyleRef { primary, layout: None })
-     }
- 
++    }
++
 +    /// The primary computed style as the node's own layout reads it: a table cell's
 +    /// [`LayoutStyles::cell`] when it has one.
 +    pub(crate) fn layout_computed_styles(&self) -> Option<ComputedStyleRef<'_>> {
@@ -5743,11 +6509,9 @@ diff --git a/packages/blitz-dom/src/node/stylo_data.rs b/packages/blitz-dom/src/
 +    /// exclusive access to the node it restyles and never reads them, upholds this.
 +    pub(crate) unsafe fn set_layout_styles(&self, styles: LayoutStyles) {
 +        unsafe { *self.layout.get() = styles };
-+    }
-+
+     }
+ 
      /// Get a mutable reference to the data
-     pub unsafe fn unsafe_stylo_only_mut(&self) -> Option<ElementDataMut<'_>> {
-         let opt = unsafe { &mut *self.inner.get() };
 @@ -115,6 +227,7 @@
      /// when this method is called
      pub unsafe fn clear(&self) {
@@ -5766,7 +6530,7 @@ diff --git a/packages/blitz-dom/src/node/stylo_data.rs b/packages/blitz-dom/src/
 +    // Layout-derived table internals never replace the authored primary style.
 +    layout: Option<&'a style::properties::ComputedValues>,
 +}
- 
++
 +/// A table cell's style as its own layout reads it, when that differs from its primary style
 +/// `style`. `collapsed_border` is the cell's half of the collapsed borders around it in a table
 +/// without uniform ones. Stored as [`LayoutStyles::cell`].
@@ -5816,7 +6580,7 @@ diff --git a/packages/blitz-dom/src/node/stylo_data.rs b/packages/blitz-dom/src/
 +        Some(derived)
 +    }
 +}
-+
+ 
  impl Deref for ComputedStyleRef<'_> {
      type Target = style::properties::ComputedValues;
  
@@ -5978,14 +6742,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +                self.nodes.container_query_sizes.lock().unwrap().clear();
 +            }
 +            phase_profile::mark(0, &mut phase_t);
- 
--        // Non-incremental mode is "every node is damaged every frame": mark the
--        // whole tree and let the same damage pipeline reconstruct and relayout
--        // everything.
--        if !self.incremental_layout {
--            self.mark_all_damaged();
--            timer.record_time("mark_all");
--        }
++
 +            // Non-incremental mode is "every node is damaged every frame": mark the
 +            // whole tree and let the same damage pipeline reconstruct and relayout
 +            // everything.
@@ -5994,32 +6751,22 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +                timer.record_time("mark_all");
 +            }
  
--        // Propagate damage flags (from mutation and restyles) up and down the tree
--        self.propagate_damage_flags(root_node_id);
--        timer.record_time("damage");
+-        // Non-incremental mode is "every node is damaged every frame": mark the
+-        // whole tree and let the same damage pipeline reconstruct and relayout
+-        // everything.
+-        if !self.incremental_layout {
 +            // Propagate damage flags (from mutation and restyles) up and down the tree
 +            self.propagate_damage_flags(root_node_id);
 +            timer.record_time("damage");
 +            phase_profile::mark(1, &mut phase_t);
- 
--        // Fix up tree for layout (insert anonymous blocks as necessary, etc)
--        self.resolve_layout_children();
--        #[cfg(debug_assertions)]
--        self.assert_layout_parents_consistent();
--        timer.record_time("construct");
++
 +            // Fix up tree for layout (insert anonymous blocks as necessary, etc)
 +            self.resolve_layout_children();
 +            #[cfg(debug_assertions)]
 +            self.assert_layout_parents_consistent();
 +            timer.record_time("construct");
 +            phase_profile::mark(2, &mut phase_t);
- 
--        self.resolve_deferred_tasks();
--        // Flush background/mask images from style to dedicated storage on the
--        // nodes whose style changed (queued by the style traversal and by
--        // pseudo-element box construction), fetching any not-yet-loaded images.
--        self.flush_pending_style_images();
--        timer.record_time("pconstruct");
++
 +            self.resolve_deferred_tasks();
 +            // Flush background/mask images from style to dedicated storage on the
 +            // nodes whose style changed (queued by the style traversal and by
@@ -6027,10 +6774,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +            self.flush_pending_style_images();
 +            timer.record_time("pconstruct");
 +            phase_profile::mark(3, &mut phase_t);
- 
--        // Next we resolve layout with the data resolved by stlist
--        self.resolve_layout();
--        timer.record_time("layout");
++
 +            // Next we resolve layout with the data resolved by stlist
 +            self.resolve_layout();
 +            timer.record_time("layout");
@@ -6043,8 +6787,30 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +            for (_, node) in self.nodes.iter_mut() {
 +                node.invalidate_layout_cache();
 +            }
-+            self.mark_all_damaged();
-+        }
+             self.mark_all_damaged();
+-            timer.record_time("mark_all");
+         }
+-
+-        // Propagate damage flags (from mutation and restyles) up and down the tree
+-        self.propagate_damage_flags(root_node_id);
+-        timer.record_time("damage");
+-
+-        // Fix up tree for layout (insert anonymous blocks as necessary, etc)
+-        self.resolve_layout_children();
+-        #[cfg(debug_assertions)]
+-        self.assert_layout_parents_consistent();
+-        timer.record_time("construct");
+-
+-        self.resolve_deferred_tasks();
+-        // Flush background/mask images from style to dedicated storage on the
+-        // nodes whose style changed (queued by the style traversal and by
+-        // pseudo-element box construction), fetching any not-yet-loaded images.
+-        self.flush_pending_style_images();
+-        timer.record_time("pconstruct");
+-
+-        // Next we resolve layout with the data resolved by stlist
+-        self.resolve_layout();
+-        timer.record_time("layout");
          self.nodes.bump_geometry_generation();
  
          // Resolve transforms
@@ -6151,6 +6917,12 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
          }
  
          let scale = self.viewport.scale_f64();
+-
+-        if !self.nodes[node_id]
+-            .damage()
+-            .map(|d| d.contains(style::selector_parser::RestyleDamage::RECALCULATE_OVERFLOW))
+-            .unwrap_or(false)
+-        {
 +        // CSS scroll extents must use the same unrounded boxes as client sizes.
 +        // Pixel-rounded paint widths can otherwise make fitting text overflow by 1px.
 +        // Only vertical placement needs the containing-block physicalisation walk.
@@ -6160,12 +6932,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +                .containing_block()
 +                .is_some_and(|parent| self.nodes[parent].layout_data().writing_mode.is_vertical());
 +        let layout = if vertical { self.physical_unrounded_geometry(node_id).1 } else { *node.unrounded_layout() };
- 
--        if !self.nodes[node_id]
--            .damage()
--            .map(|d| d.contains(style::selector_parser::RestyleDamage::RECALCULATE_OVERFLOW))
--            .unwrap_or(false)
--        {
++
 +        // The cached overflow holds only while nothing in the subtree changed:
 +        // a descendant's relayout (its overflow shrinking) reaches its
 +        // ancestors as their damage, not as `RECALCULATE_OVERFLOW`.
@@ -6254,8 +7021,8 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
              let child_rect_in_self = self.resolve_transforms(pseudo);
 -            overflow = overflow.union(child_rect_in_self);
 +            overflow = unite_overflow(overflow, child_rect_in_self);
-         }
- 
++        }
++
 +        // lightningpanda: the lines of an inline formatting context are
 +        // overflow too (a nowrap name in a 100px `truncate` cell scrolls), and
 +        // a scroll container adds its end padding after them.
@@ -6311,8 +7078,8 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +                };
 +                overflow = overflow.union(lines);
 +            }
-+        }
-+
+         }
+ 
          *self.nodes[node_id].scrollable_overflow_mut() = overflow;
          *self.nodes[node_id].layout_children.get_mut() = layout_children;
  
@@ -6323,15 +7090,15 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
  
          let full = if let Some(t) = transform {
              Affine::translate((scaled_x, scaled_y)) * t
-@@ -243,9 +467,56 @@
+@@ -243,12 +467,67 @@
              Affine::translate((scaled_x, scaled_y))
          };
  
 -        full.transform_rect_bbox(overflow)
 +        let contribution = self.overflow_contribution(node_id, overflow, layout.size, scale);
 +        full.transform_rect_bbox(contribution)
-     }
- 
++    }
++
 +    /// lightningpanda: what a box adds to its parent's scrollable overflow
 +    /// (its own coordinates): its border box, plus its own scrollable overflow
 +    /// on the axes it does not clip. A scroll container keeps its content's
@@ -6376,12 +7143,23 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +            && html.clone_overflow_y() == Overflow::Visible
 +            && body.clone_contain() == Contain::empty()
 +            && html.clone_contain() == Contain::empty()
-+    }
-+
+     }
+ 
      /// Ensure that the layout_children field is populated for all nodes
      pub fn resolve_layout_children(&mut self) {
++        // lightningpanda: the boxes that left a container's list this pass and that no container
++        // collected again are out of the layout tree, with what their subtrees built
++        // (`BaseDocument::leave_layout_tree`).
          resolve_layout_children_recursive(self, self.root_node().id);
-@@ -260,9 +531,64 @@
++        for node_id in std::mem::take(&mut self.left_layout_lists) {
++            if self.nodes.get(node_id).is_some_and(|node| node.layout_child_of.get().is_none()) {
++                self.leave_layout_tree(node_id);
++            }
++        }
+ 
+         fn resolve_layout_children_recursive(doc: &mut BaseDocument, node_id: NodeId) {
+             // Anonymous blocks and pseudo-elements can be removed from the slab
+@@ -260,6 +539,47 @@
              let mut damage = doc.nodes[node_id].damage().unwrap_or(ALL_DAMAGE);
              let _flags = doc.nodes[node_id].flags;
  
@@ -6429,24 +7207,30 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
              if damage.intersects(CONSTRUCT_FC | CONSTRUCT_BOX) {
                  //} || flags.contains(NodeFlags::IS_INLINE_ROOT) {
  
+@@ -275,18 +595,32 @@
+                 let mut collected = LayoutChildren::default();
+                 collect_layout_children(doc, node_id, &mut collected);
+                 let layout_children = collected.children;
++
 +                // lightningpanda: the previous layout children leave the list
 +                // (`Node::layout_child_of`); the new ones are entered below. A
 +                // child already collected by another container this pass points
-+                // there and is left alone.
++                // there and is left alone. (Left after collecting: while it runs,
++                // a child that is still listed tells one that enters the layout
++                // tree again, see `table::enter_layout_tree`.)
 +                if let Some(old) = doc.nodes[node_id].layout_children.borrow().as_ref() {
 +                    for &child_id in old.iter() {
 +                        if let Some(child) = doc.nodes.get(child_id) {
 +                            if child.layout_child_of.get() == Some(node_id) {
 +                                child.layout_child_of.set(None);
++                                doc.left_layout_lists.push(child_id);
 +                            }
 +                        }
 +                    }
 +                }
-+
-                 // Deallocate the anonymous blocks created for this node in the
-                 // previous construction round. They live only in the slab, so
-                 // reconstructing without freeing them would leak a slab entry per
-@@ -281,12 +607,9 @@
+                 doc.nodes[node_id].anonymous_blocks = collected.anonymous_blocks;
+ 
+                 // Recurse into newly collected layout children
                  for child_id in layout_children.iter().copied() {
                      resolve_layout_children_recursive(doc, child_id);
                      doc.nodes[child_id].layout_parent.set(Some(node_id));
@@ -6462,7 +7246,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                      }
                  }
  
-@@ -296,7 +619,16 @@
+@@ -296,7 +630,16 @@
                  damage.remove(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
                  // damage.insert(RestyleDamage::RELAYOUT | RestyleDamage::REPAINT);
              } else {
@@ -6480,7 +7264,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                  let layout_children = doc.nodes[node_id].layout_children.borrow_mut().take();
                  if let Some(layout_children) = layout_children {
                      for child_id in layout_children.iter().copied() {
-@@ -363,9 +695,7 @@
+@@ -363,9 +706,7 @@
              .map(|task: ConstructionTask| match task.data {
                  ConstructionTaskData::InlineLayout(mut layout) => {
                      #[cfg(feature = "parallel-construct")]
@@ -6491,7 +7275,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                      #[cfg(feature = "parallel-construct")]
                      let layout_ctx_mut = &mut layout_ctx;
  
-@@ -383,6 +713,7 @@
+@@ -383,6 +724,7 @@
                      let font_ctx_mut = &mut *self.font_ctx.lock().unwrap();
  
                      layout.content_widths = None;
@@ -6499,7 +7283,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                      build_inline_layout_into(
                          &self.nodes,
                          layout_ctx_mut,
-@@ -391,6 +722,7 @@
+@@ -391,6 +733,7 @@
                          self.viewport.scale(),
                          task.node_id,
                      );
@@ -6507,7 +7291,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
  
                      #[cfg(feature = "parallel-construct")]
                      {
-@@ -415,10 +747,7 @@
+@@ -415,10 +758,7 @@
              match result.data {
                  ConstructionTaskResultData::InlineLayout(layout) => {
                      self.nodes[result.node_id].clear_layout_cache();
@@ -6519,7 +7303,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                  }
              }
          }
-@@ -433,26 +762,43 @@
+@@ -433,10 +773,27 @@
      pub fn resolve_layout(&mut self) {
          let size = self.stylist.device().au_viewport_size();
  
@@ -6534,7 +7318,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +            }
 +            None => initial_containing_block,
 +        };
- 
++
 +        // lightningpanda: same viewport and nothing damaged, so the last pass's layout stands.
 +        let root = self.root_element();
 +        if self.last_layout_space == Some(available_space)
@@ -6545,10 +7329,10 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +        }
 +        self.last_layout_space = Some(available_space);
 +        phase_profile::laid_out();
-+
+ 
          let root_element_id = crate::taffy_node_id(self.root_element().id);
  
-         // println!("\n\nRESOLVE LAYOUT\n===========\n");
+@@ -444,15 +801,15 @@
  
          let mut state = LayoutPassState::new(self);
          #[cfg(feature = "writing-mode")]
@@ -6568,12 +7352,10 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
          #[cfg(feature = "writing-mode")]
          state.physicalise_and_round_layout(root_element_id);
          #[cfg(not(feature = "writing-mode"))]
-@@ -460,5 +806,181 @@
- 
-         // println!("\n\n");
+@@ -462,3 +819,179 @@
          // taffy::print_tree(self, root_node_id)
-+    }
-+}
+     }
+ }
 +
 +/// lightningpanda: `overflow` with what a child adds to it. An empty rect (a
 +/// box of no width or no height, with nothing reaching out of it) adds nothing,
@@ -6748,8 +7530,8 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +    /// Milliseconds per phase on this thread so far.
 +    pub fn peek() -> [f64; 9] {
 +        NS.with(|ns| ns.get().map(|n| n as f64 / 1e6))
-     }
- }
++    }
++}
 diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 --- a/packages/blitz-dom/src/stylo.rs
 +++ b/packages/blitz-dom/src/stylo.rs
@@ -6769,7 +7551,17 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  use markup5ever::{LocalName, LocalNameStaticSet, Namespace, NamespaceStaticSet, local_name, ns};
  use selectors::bloom::BLOOM_HASH_MASK;
  use selectors::{
-@@ -66,9 +68,38 @@
+@@ -38,6 +40,9 @@
+ use style::properties::{Importance, PropertyDeclaration};
+ use style::rule_tree::CascadeLevel;
+ use style::rule_tree::CascadeOrigin;
++use style::invalidation::element::invalidation_map::TSStateForInvalidation;
++use style::invalidation::element::invalidator::{InvalidationResult, SiblingTraversalMap};
++use style::invalidation::element::relative_selector::{DomMutationOperation, RelativeSelectorInvalidator};
+ use style::selector_parser::PseudoElement;
+ use style::selector_parser::RestyleDamage;
+ use style::stylesheets::layer_rule::LayerOrder;
+@@ -66,9 +71,38 @@
  
  use style::values::computed::text::TextAlign as StyloTextAlign;
  
@@ -6809,24 +7601,23 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  
          let guard = &self.guard;
          let guards = StylesheetGuards {
-@@ -165,7 +196,16 @@
+@@ -165,6 +199,15 @@
              style::driver::traverse_dom(&traverser, token, rayon_pool);
              nodes_needing_style_image_flush =
                  std::mem::take(traverser.nodes_needing_style_image_flush.get_mut().unwrap());
 +            self.sticky_nodes
 +                .extend(std::mem::take(traverser.sticky_nodes.get_mut().unwrap()));
-         }
++        }
 +        // lightningpanda: restyled nodes that stopped being sticky, and
 +        // removed ones, leave the set (only nodes that were sticky are in it).
 +        if !self.sticky_nodes.is_empty() {
 +            let nodes = &self.nodes;
 +            self.sticky_nodes
 +                .retain(|id| nodes.get(*id).is_some_and(|node| is_sticky(node)));
-+        }
+         }
          self.pending_style_image_nodes
              .extend(nodes_needing_style_image_flush);
- 
-@@ -210,8 +250,6 @@
+@@ -210,8 +253,6 @@
  
          // Maybe run garbage collection. Stylo has internal to determine whether to run or not.
          self.stylist.rule_tree().maybe_gc();
@@ -6835,7 +7626,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      }
  
      /// Compute the style of an element which the regular style traversal
-@@ -228,7 +266,7 @@
+@@ -228,7 +269,7 @@
              return None;
          }
  
@@ -6844,7 +7635,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  
          let guard = &self.guard;
          let guards = StylesheetGuards {
-@@ -256,8 +294,6 @@
+@@ -256,8 +297,6 @@
              resolve_style(&mut context, node, RuleInclusion::All, None, None)
          };
  
@@ -6853,7 +7644,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          Some(styles.primary().clone())
      }
  }
-@@ -501,8 +537,8 @@
+@@ -501,8 +540,8 @@
                  .element_state()
                  .intersects(ElementState::VISITED_OR_UNVISITED),
              NonTSPseudoClass::Checked => self.element_state().contains(ElementState::CHECKED),
@@ -6864,7 +7655,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              NonTSPseudoClass::Defined => false,
              NonTSPseudoClass::Disabled => self.element_state().contains(ElementState::DISABLED),
              NonTSPseudoClass::Enabled => self.element_state().contains(ElementState::ENABLED),
-@@ -510,30 +546,32 @@
+@@ -510,30 +549,32 @@
              NonTSPseudoClass::FocusWithin => {
                  self.element_state().contains(ElementState::FOCUS_WITHIN)
              }
@@ -6908,7 +7699,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              NonTSPseudoClass::UserInvalid => false,
              NonTSPseudoClass::UserValid => false,
              NonTSPseudoClass::MozMeterOptimum => false,
-@@ -1309,10 +1347,15 @@
+@@ -1309,17 +1350,23 @@
  
      fn query_container_size(
          &self,
@@ -6926,8 +7717,17 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +        self.tree().container_query_sizes.lock().unwrap().entry(self.id).or_default().size
      }
  
++    // lightningpanda: elements have no custom states (`:state()`), which the
++    // relative selector invalidator asks about. This was `todo!()`.
      fn each_custom_state<F>(&self, _callback: F)
-@@ -1410,6 +1453,9 @@
+     where
+         F: FnMut(&AtomIdent),
+     {
+-        todo!()
+     }
+ 
+     fn has_selector_flags(&self, flags: ElementSelectorFlags) -> bool {
+@@ -1410,6 +1457,9 @@
      /// dedicated storage on the node (see `flush_image_layers_from_style`)
      /// because their style changed during this traversal.
      nodes_needing_style_image_flush: Mutex<Vec<NodeId>>,
@@ -6937,7 +7737,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  }
  
  impl<'a> RecalcStyle<'a> {
-@@ -1417,6 +1463,7 @@
+@@ -1417,11 +1467,172 @@
          RecalcStyle {
              context,
              nodes_needing_style_image_flush: Mutex::new(Vec::new()),
@@ -6945,7 +7745,172 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          }
      }
  }
-@@ -1429,16 +1476,85 @@
+ 
+ #[allow(unsafe_code)]
++/// lightningpanda: what the style traversal must reach once Stylo's relative selector
++/// invalidator invalidated `element` (as Gecko's `relative_selector_invalidated_at`): the
++/// hints are set, the dirty-descendants bits lead to them.
++fn relative_selector_invalidated_at(element: BlitzNode<'_>, result: &InvalidationResult) {
++    if result.has_invalidated_siblings() {
++        if let Some(parent) = <BlitzNode<'_> as TNode>::parent_element(&element) {
++            Node::set_dirty_descendants(parent);
++            parent.mark_ancestors_dirty();
++        }
++    } else if result.has_invalidated_descendants() {
++        Node::set_dirty_descendants(element);
++        element.mark_ancestors_dirty();
++    } else if result.has_invalidated_self() {
++        element.mark_ancestors_dirty();
++    }
++}
++
++impl crate::BaseDocument {
++    /// lightningpanda: the `:has()` anchors whose answer the insertion of `node_id` can change
++    /// restyle. Stylo's relative selector invalidator (as Gecko's
++    /// `MaybeInvalidateRelativeSelectorForInsertion`) looks the element's, and its
++    /// descendants', tags, ids, classes and attributes up in the stylist's relative selector
++    /// invalidation map, so an element no `:has()` argument can match invalidates nothing, and
++    /// an anchor restyles itself and what the rest of its selector reaches, not its subtree.
++    /// Called with the element linked in the document. It takes over its parent's and previous
++    /// sibling's search-direction flags: a `:has()` search that reached them reaches it.
++    pub(crate) fn invalidate_relative_selectors_for_insertion(&self, node_id: NodeId) {
++        let node = &self.nodes[node_id];
++        if !node.is_element() || !node.flags.is_in_document() {
++            return;
++        }
++        let mut inherited = ElementSelectorFlags::empty();
++        if let Some(parent) = <BlitzNode<'_> as TNode>::parent_element(&node) {
++            inherited |= parent.relative_selector_search_direction();
++        }
++        if let Some(prev) = node.prev_sibling_element() {
++            inherited |= prev.relative_selector_search_direction();
++        }
++        let operation = if node.next_sibling_element().is_none() {
++            DomMutationOperation::Append
++        } else {
++            DomMutationOperation::Insert
++        };
++        self.invalidate_relative_selectors(node, inherited, operation);
++    }
++
++    /// lightningpanda: as [`Self::invalidate_relative_selectors_for_insertion`] for an element
++    /// about to be removed (or moved away), called while it is still linked: the anchors are
++    /// found through its parent and earlier siblings.
++    pub(crate) fn invalidate_relative_selectors_for_removal(&self, node_id: NodeId) {
++        let node = &self.nodes[node_id];
++        if !node.is_element() || !node.flags.is_in_document() {
++            return;
++        }
++        self.invalidate_relative_selectors(node, ElementSelectorFlags::empty(), DomMutationOperation::Remove);
++    }
++
++    fn invalidate_relative_selectors(
++        &self,
++        node: BlitzNode<'_>,
++        inherited: ElementSelectorFlags,
++        operation: DomMutationOperation,
++    ) {
++        let _layout_thread_scope = LayoutThreadScope::enter();
++        fn invalidator<'dom>(
++            element: BlitzNode<'dom>,
++            sibling_traversal_map: SiblingTraversalMap<BlitzNode<'dom>>,
++        ) -> RelativeSelectorInvalidator<'dom, 'dom, BlitzNode<'dom>> {
++            RelativeSelectorInvalidator {
++                element,
++                quirks_mode: QuirksMode::NoQuirks,
++                snapshots: None,
++                invalidated: relative_selector_invalidated_at,
++                sibling_traversal_map,
++            }
++        }
++        let prev = node.prev_sibling_element();
++        let next = node.next_sibling_element();
++        invalidator(node, SiblingTraversalMap::default()).invalidate_relative_selectors_for_dom_mutation(
++            !node.children.is_empty(),
++            &self.stylist,
++            inherited,
++            operation,
++        );
++        // The neighbours' sibling relations changed too (`:has(+ .a + .b)`). The next
++        // sibling's previous one is the element's: what it was before an insertion, what it
++        // is after a removal.
++        if let Some(prev) = prev {
++            invalidator(prev, SiblingTraversalMap::default()).invalidate_relative_selectors_for_dom_mutation(
++                false,
++                &self.stylist,
++                ElementSelectorFlags::empty(),
++                DomMutationOperation::SideEffectPrevSibling,
++            );
++        }
++        if let Some(next) = next {
++            let map = SiblingTraversalMap::new(next, prev, next.next_sibling_element());
++            invalidator(next, map).invalidate_relative_selectors_for_dom_mutation(
++                false,
++                &self.stylist,
++                ElementSelectorFlags::empty(),
++                DomMutationOperation::SideEffectNextSibling,
++            );
++        }
++    }
++
++    /// lightningpanda: the `:has()` anchors whose answer a change of `node_id`'s emptiness or
++    /// sibling position can flip restyle (as Gecko's
++    /// `MaybeInvalidateRelativeSelectorForEmptyDependency`, `...ForNthEdgeDependency` and
++    /// `...ForNthDependencyFromSibling`). `:empty`, `:nth-child()` and `:first-child`/
++    /// `:last-child` in an argument match by the tree around an element, not by its identity,
++    /// so the element that came or went (`.z` in `.a:has(> .x:first-child)` with `.z` inserted
++    /// before `.x`, a text node in `.a:has(> .p:empty)`) tells the mutation invalidator nothing:
++    /// instead the element whose condition changed is looked up in the stylist's
++    /// tree-structural dependency map for the `state`s given. Called after the mutation, with
++    /// `node_id` linked in the document; an element no `:has()` search has reached cannot
++    /// change an anchor's answer and is skipped.
++    pub(crate) fn invalidate_relative_selectors_for_ts_state(
++        &self,
++        node_id: NodeId,
++        state: TSStateForInvalidation,
++    ) {
++        let node = &self.nodes[node_id];
++        if !node.is_element()
++            || !node.flags.is_in_document()
++            || node.relative_selector_search_direction().is_empty()
++        {
++            return;
++        }
++        let _layout_thread_scope = LayoutThreadScope::enter();
++        let invalidator = RelativeSelectorInvalidator {
++            element: node,
++            quirks_mode: QuirksMode::NoQuirks,
++            snapshots: None,
++            invalidated: relative_selector_invalidated_at,
++            sibling_traversal_map: SiblingTraversalMap::default(),
++        };
++        invalidator.invalidate_relative_selectors_for_this(
++            &self.stylist,
++            |element, scope, data, quirks_mode, collector| {
++                data.relative_invalidation_map_attributes()
++                    .ts_state_to_selector
++                    .lookup_with_additional(
++                        *element,
++                        quirks_mode,
++                        None,
++                        &[],
++                        ElementState::empty(),
++                        |dependency| {
++                            if dependency.state.intersects(state) {
++                                collector.add_dependency(&dependency.dep, *element, scope);
++                            }
++                            true
++                        },
++                    );
++            },
++        );
++    }
++}
++
+ impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
+     fn process_preorder<F: FnMut(BlitzNode<'dom>)>(
+         &self,
+@@ -1429,16 +1640,85 @@
          node: BlitzNode<'dom>,
          note_child: F,
      ) {
@@ -7031,7 +7996,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              if !data.damage.is_empty() {
                  // Mark the ancestor chain so that the damage propagation pass
                  // visits this element.
-@@ -1480,6 +1596,12 @@
+@@ -1480,6 +1760,12 @@
      }
  }
  
@@ -7044,11 +8009,10 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  /// Flush updated pseudo-element (`::before`/`::after`) styles from the owning
  /// element's freshly-computed stylo data to the pseudo-element's anonymous node.
  ///
-@@ -1551,6 +1673,16 @@
-                     .unwrap()
+@@ -1552,6 +1838,16 @@
                      .push(pe_node_id);
              }
-+        }
+         }
 +        if LayoutStyles::affected_by(diff.damage) {
 +            let derived = LayoutStyles::derive(&pe_style, pe_node.collapsed_border());
 +            // SAFETY: as for `pe_data` above (only the owner's `process_preorder` reaches it).
@@ -7058,9 +8022,622 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +            stylo_data
 +                .layout_styles()
 +                .assert_current(&pe_style, pe_node.collapsed_border(), pe_node_id);
-         }
++        }
          pe_node.record_out_of_flow(&pe_style);
          pe_data.styles.primary = Some(pe_style);
+         pe_data.set_restyled();
+@@ -1620,3 +1916,611 @@
+ 
+     // let val = CSSInlineStyleDeclaration();
+ }
++
++/// lightningpanda: `:has()` anchors follow insertions and removals through Stylo's relative
++/// selector invalidator (`invalidate_relative_selectors_for_insertion`/`_removal`), and
++/// emptiness and sibling-position changes inside an argument through its tree-structural
++/// dependencies (`invalidate_relative_selectors_for_ts_state`).
++#[cfg(test)]
++mod relative_selector_invalidation_tests {
++    use super::*;
++    use crate::{Attribute, BaseDocument, DocumentConfig, DocumentMutator, qual_name};
++    use blitz_traits::shell::{ColorScheme, Viewport};
++
++    /// `<html><head><style>{css}</style></head><body>`, resolved; the body's id. `tag` keeps
++    /// the sheet text apart from other tests' (author sheets are shared per thread by text).
++    fn make_doc(css: &str, tag: &str) -> (BaseDocument, NodeId) {
++        let mut doc = BaseDocument::new(DocumentConfig {
++            viewport: Some(Viewport::new(400, 300, 1.0, ColorScheme::Light)),
++            ..Default::default()
++        });
++        let root_id = doc.root_node().id;
++        let mut m = doc.mutate();
++        let html = m.create_element(qual_name!("html"), vec![]);
++        let head = m.create_element(qual_name!("head"), vec![]);
++        let style = m.create_element(qual_name!("style"), vec![]);
++        let text = m.create_text_node(&format!("/* {tag} */ {css}"));
++        m.append_children(style, &[text]);
++        m.append_children(head, &[style]);
++        let body = m.create_element(qual_name!("body"), vec![]);
++        m.append_children(html, &[head, body]);
++        m.append_children(root_id, &[html]);
++        drop(m);
++        doc.resolve(0.0);
++        (doc, body)
++    }
++
++    fn div(m: &mut DocumentMutator<'_>, class: &str) -> NodeId {
++        m.create_element(qual_name!("div"), vec![Attribute { name: qual_name!("class"), value: class.to_string() }])
++    }
++
++    /// The computed `order` of `id`: 7 where the test's `:has()` rule matched, else 0.
++    fn order(doc: &BaseDocument, id: NodeId) -> i32 {
++        doc.nodes[id].primary_styles().unwrap().get_position().order
++    }
++
++    /// The restyle hint waiting on `id` for the next resolve.
++    fn hint(doc: &BaseDocument, id: NodeId) -> RestyleHint {
++        doc.nodes[id].stylo_element_data().get().unwrap().hint
++    }
++
++    #[test]
++    fn subject_anchor_follows_insertions_and_removals() {
++        let (mut d, body) = make_doc(".a:has(.x) { order: 7 }", "has-subject");
++        let mut m = d.mutate();
++        let (a, p, b) = (div(&mut m, "a"), div(&mut m, "p"), div(&mut m, "b"));
++        m.append_children(a, &[p]);
++        m.append_children(body, &[a, b]);
++        drop(m);
++        d.resolve(0.0);
++        assert_eq!(order(&d, a), 0);
++
++        // An element no `:has()` argument can match invalidates no anchor.
++        let mut m = d.mutate();
++        let y = div(&mut m, "y");
++        m.append_children(p, &[y]);
++        drop(m);
++        assert!(hint(&d, a).is_empty(), "nothing matches .y");
++        d.resolve(0.0);
++        assert_eq!(order(&d, a), 0);
++
++        let mut m = d.mutate();
++        let x = div(&mut m, "x");
++        m.append_children(p, &[x]);
++        drop(m);
++        assert!(hint(&d, a).contains(RestyleHint::RESTYLE_SELF), "the anchor restyles itself");
++        assert!(hint(&d, p).is_empty(), "not the rest of its subtree");
++        assert!(hint(&d, b).is_empty(), "nor a sibling that anchors nothing");
++        d.resolve(0.0);
++        assert_eq!(order(&d, a), 7);
++
++        let mut m = d.mutate();
++        m.remove_node(x);
++        drop(m);
++        assert!(hint(&d, a).contains(RestyleHint::RESTYLE_SELF));
++        d.resolve(0.0);
++        assert_eq!(order(&d, a), 0);
++    }
++
++    #[test]
++    fn child_combinator_argument_needs_a_direct_child() {
++        let (mut d, body) = make_doc(".a:has(> .x) { order: 7 }", "has-child");
++        let mut m = d.mutate();
++        let (a, p) = (div(&mut m, "a"), div(&mut m, "p"));
++        m.append_children(a, &[p]);
++        m.append_children(body, &[a]);
++        drop(m);
++        d.resolve(0.0);
++        let mut m = d.mutate();
++        let x = div(&mut m, "x");
++        m.append_children(p, &[x]);
++        drop(m);
++        d.resolve(0.0);
++        assert_eq!(order(&d, a), 0, "a grandchild");
++        let mut m = d.mutate();
++        let x2 = div(&mut m, "x");
++        m.append_children(a, &[x2]);
++        drop(m);
++        d.resolve(0.0);
++        assert_eq!(order(&d, a), 7, "a child");
++        let mut m = d.mutate();
++        m.remove_node(x2);
++        drop(m);
++        d.resolve(0.0);
++        assert_eq!(order(&d, a), 0);
++    }
++
++    #[test]
++    fn next_sibling_argument_follows_what_comes_between() {
++        let (mut d, body) = make_doc(".a:has(+ .x) { order: 7 }", "has-next-sibling");
++        let mut m = d.mutate();
++        let (a, q) = (div(&mut m, "a"), div(&mut m, "q"));
++        m.append_children(body, &[a, q]);
++        drop(m);
++        d.resolve(0.0);
++        assert_eq!(order(&d, a), 0);
++        let mut m = d.mutate();
++        let x = div(&mut m, "x");
++        m.insert_nodes_before(q, &[x]);
++        drop(m);
++        d.resolve(0.0);
++        assert_eq!(order(&d, a), 7, ".x right after .a");
++        let mut m = d.mutate();
++        let z = div(&mut m, "z");
++        m.insert_nodes_before(x, &[z]);
++        drop(m);
++        d.resolve(0.0);
++        assert_eq!(order(&d, a), 0, ".z came between");
++        let mut m = d.mutate();
++        m.remove_node(z);
++        drop(m);
++        d.resolve(0.0);
++        assert_eq!(order(&d, a), 7, ".z went away");
++    }
++
++    #[test]
++    fn later_sibling_subtree_argument_sees_a_deep_insertion() {
++        let (mut d, body) = make_doc(".a:has(~ .s .x) { order: 7 }", "has-later-sibling");
++        let mut m = d.mutate();
++        let (a, s, p) = (div(&mut m, "a"), div(&mut m, "s"), div(&mut m, "p"));
++        m.append_children(s, &[p]);
++        m.append_children(body, &[a, s]);
++        drop(m);
++        d.resolve(0.0);
++        assert_eq!(order(&d, a), 0);
++        let mut m = d.mutate();
++        let x = div(&mut m, "x");
++        m.append_children(p, &[x]);
++        drop(m);
++        d.resolve(0.0);
++        assert_eq!(order(&d, a), 7);
++        let mut m = d.mutate();
++        m.remove_node(x);
++        drop(m);
++        d.resolve(0.0);
++        assert_eq!(order(&d, a), 0);
++    }
++
++    #[test]
++    fn non_subject_anchor_restyles_what_its_selector_reaches() {
++        let (mut d, body) = make_doc(".a:has(.x) .d { order: 7 }", "has-non-subject");
++        let mut m = d.mutate();
++        let (a, dd, p) = (div(&mut m, "a"), div(&mut m, "d"), div(&mut m, "p"));
++        m.append_children(a, &[dd, p]);
++        m.append_children(body, &[a]);
++        drop(m);
++        d.resolve(0.0);
++        assert_eq!(order(&d, dd), 0);
++        let mut m = d.mutate();
++        let x = div(&mut m, "x");
++        m.append_children(p, &[x]);
++        drop(m);
++        d.resolve(0.0);
++        assert_eq!(order(&d, dd), 7);
++        let mut m = d.mutate();
++        m.remove_node(x);
++        drop(m);
++        d.resolve(0.0);
++        assert_eq!(order(&d, dd), 0);
++    }
++
++    #[test]
++    fn an_inserted_subtree_is_searched() {
++        let (mut d, body) = make_doc(".a:has(.x) { order: 7 }", "has-subtree");
++        let mut m = d.mutate();
++        let a = div(&mut m, "a");
++        m.append_children(body, &[a]);
++        drop(m);
++        d.resolve(0.0);
++        let mut m = d.mutate();
++        let (w, v, x) = (div(&mut m, "w"), div(&mut m, "v"), div(&mut m, "x"));
++        m.append_children(v, &[x]);
++        m.append_children(w, &[v]);
++        m.append_children(a, &[w]);
++        drop(m);
++        d.resolve(0.0);
++        assert_eq!(order(&d, a), 7, ".x deep in the inserted subtree");
++        let mut m = d.mutate();
++        m.remove_node(w);
++        drop(m);
++        d.resolve(0.0);
++        assert_eq!(order(&d, a), 0);
++    }
++
++    #[test]
++    fn a_moved_argument_updates_both_anchors() {
++        let (mut d, body) = make_doc(".a:has(.x) { order: 7 }", "has-move");
++        let mut m = d.mutate();
++        let (a1, a2, x) = (div(&mut m, "a"), div(&mut m, "a"), div(&mut m, "x"));
++        m.append_children(a1, &[x]);
++        m.append_children(body, &[a1, a2]);
++        drop(m);
++        d.resolve(0.0);
++        assert_eq!((order(&d, a1), order(&d, a2)), (7, 0));
++        let mut m = d.mutate();
++        m.append_children(a2, &[x]);
++        drop(m);
++        d.resolve(0.0);
++        assert_eq!((order(&d, a1), order(&d, a2)), (0, 7));
++    }
++
++    // Arguments that match by position or emptiness: the element that came or went is not
++    // what the argument matches, the sibling (or parent) whose condition flipped is.
++
++    #[test]
++    fn first_child_argument_follows_an_unrelated_sibling() {
++        let (mut d, body) = make_doc(".a:has(> .x:first-child) { order: 7 }", "has-first-child");
++        let mut m = d.mutate();
++        let (a, x) = (div(&mut m, "a"), div(&mut m, "x"));
++        m.append_children(a, &[x]);
++        m.append_children(body, &[a]);
++        drop(m);
++        d.resolve(0.0);
++        assert_eq!(order(&d, a), 7);
++        let mut m = d.mutate();
++        let z = div(&mut m, "z");
++        m.insert_nodes_before(x, &[z]);
++        drop(m);
++        assert!(hint(&d, a).contains(RestyleHint::RESTYLE_SELF), "the anchor restyles itself");
++        d.resolve(0.0);
++        assert_eq!(order(&d, a), 0, ".z inserted before .x");
++        let mut m = d.mutate();
++        m.remove_node(z);
++        drop(m);
++        d.resolve(0.0);
++        assert_eq!(order(&d, a), 7, ".z removed");
++    }
++
++    #[test]
++    fn last_child_argument_follows_an_appended_sibling() {
++        let (mut d, body) = make_doc(".a:has(> .x:last-child) { order: 7 }", "has-last-child");
++        let mut m = d.mutate();
++        let (a, x) = (div(&mut m, "a"), div(&mut m, "x"));
++        m.append_children(a, &[x]);
++        m.append_children(body, &[a]);
++        drop(m);
++        d.resolve(0.0);
++        assert_eq!(order(&d, a), 7);
++        let mut m = d.mutate();
++        let z = div(&mut m, "z");
++        m.append_children(a, &[z]);
++        drop(m);
++        d.resolve(0.0);
++        assert_eq!(order(&d, a), 0, ".z appended after .x");
++        let mut m = d.mutate();
++        m.remove_node(z);
++        drop(m);
++        d.resolve(0.0);
++        assert_eq!(order(&d, a), 7, ".z removed");
++        // A same-parent move: `.x` leaves its position and comes back last.
++        let mut m = d.mutate();
++        let y = div(&mut m, "y");
++        m.append_children(a, &[y]);
++        drop(m);
++        d.resolve(0.0);
++        assert_eq!(order(&d, a), 0);
++        let mut m = d.mutate();
++        m.append_children(a, &[x]);
++        drop(m);
++        d.resolve(0.0);
++        assert_eq!(order(&d, a), 7, ".x moved last");
++    }
++
++    #[test]
++    fn nth_child_argument_follows_a_sibling_inserted_before_it() {
++        let (mut d, body) = make_doc(".a:has(> .x:nth-child(2)) { order: 7 }", "has-nth-child");
++        let mut m = d.mutate();
++        let (a, x) = (div(&mut m, "a"), div(&mut m, "x"));
++        m.append_children(a, &[x]);
++        m.append_children(body, &[a]);
++        drop(m);
++        d.resolve(0.0);
++        assert_eq!(order(&d, a), 0);
++        let mut m = d.mutate();
++        let z = div(&mut m, "z");
++        m.insert_nodes_before(x, &[z]);
++        drop(m);
++        d.resolve(0.0);
++        assert_eq!(order(&d, a), 7, ".z inserted before .x");
++        // Not at the front: `.x` is a later sibling of the change.
++        let mut m = d.mutate();
++        let w = div(&mut m, "w");
++        m.insert_nodes_before(x, &[w]);
++        drop(m);
++        d.resolve(0.0);
++        assert_eq!(order(&d, a), 0, ".w inserted between");
++        let mut m = d.mutate();
++        m.remove_node(z);
++        drop(m);
++        d.resolve(0.0);
++        assert_eq!(order(&d, a), 7, ".z removed");
++    }
++
++    #[test]
++    fn nth_last_child_argument_follows_a_sibling_appended_after_it() {
++        let (mut d, body) =
++            make_doc(".a:has(> .x:nth-last-child(2)) { order: 7 }", "has-nth-last-child");
++        let mut m = d.mutate();
++        let (a, x) = (div(&mut m, "a"), div(&mut m, "x"));
++        m.append_children(a, &[x]);
++        m.append_children(body, &[a]);
++        drop(m);
++        d.resolve(0.0);
++        assert_eq!(order(&d, a), 0);
++        let mut m = d.mutate();
++        let z = div(&mut m, "z");
++        m.append_children(a, &[z]);
++        drop(m);
++        d.resolve(0.0);
++        assert_eq!(order(&d, a), 7, ".z appended after .x");
++    }
++
++    #[test]
++    fn empty_argument_follows_the_children_of_its_element() {
++        let (mut d, body) = make_doc(".a:has(> .p:empty) { order: 7 }", "has-empty");
++        let mut m = d.mutate();
++        let (a, p, q) = (div(&mut m, "a"), div(&mut m, "p"), div(&mut m, "q"));
++        m.append_children(p, &[q]);
++        m.append_children(a, &[p]);
++        m.append_children(body, &[a]);
++        drop(m);
++        d.resolve(0.0);
++        assert_eq!(order(&d, a), 0);
++        let mut m = d.mutate();
++        m.remove_node(q);
++        drop(m);
++        d.resolve(0.0);
++        assert_eq!(order(&d, a), 7, ".q removed, .p empty");
++        let mut m = d.mutate();
++        let q2 = div(&mut m, "q");
++        m.append_children(p, &[q2]);
++        drop(m);
++        d.resolve(0.0);
++        assert_eq!(order(&d, a), 0, ".q appended again");
++        // Text nodes count for `:empty` too, though no `:has()` argument matches them.
++        let mut m = d.mutate();
++        m.remove_and_drop_all_children(p);
++        drop(m);
++        d.resolve(0.0);
++        assert_eq!(order(&d, a), 7, "all children dropped");
++        let mut m = d.mutate();
++        let t = m.create_text_node("text");
++        m.append_children(p, &[t]);
++        drop(m);
++        d.resolve(0.0);
++        assert_eq!(order(&d, a), 0, "a text node");
++        let mut m = d.mutate();
++        m.remove_node(t);
++        drop(m);
++        d.resolve(0.0);
++        assert_eq!(order(&d, a), 7, "the text node removed");
++    }
++
++    #[test]
++    fn dropping_all_children_leaves_their_anchors() {
++        let (mut d, body) = make_doc(".a:has(.x) { order: 7 }", "has-drop-all");
++        let mut m = d.mutate();
++        let (a, p, x) = (div(&mut m, "a"), div(&mut m, "p"), div(&mut m, "x"));
++        m.append_children(p, &[x]);
++        m.append_children(a, &[p]);
++        m.append_children(body, &[a]);
++        drop(m);
++        d.resolve(0.0);
++        assert_eq!(order(&d, a), 7);
++        let mut m = d.mutate();
++        m.remove_and_drop_all_children(p);
++        drop(m);
++        d.resolve(0.0);
++        assert_eq!(order(&d, a), 0, ".x dropped with its siblings");
++    }
++}
++
++/// lightningpanda: Stylo skips the eager `::before`/`::after` match and cascade when no rule
++/// that can generate a box matches (`Stylist::may_generate_box_for_pseudo`). What generates,
++/// and the styles Stylo keeps, must not change.
++#[cfg(test)]
++mod box_generating_pseudo_tests {
++    use super::*;
++    use crate::{Attribute, BaseDocument, DocumentConfig, QualName, UserAgentStylesheet, qual_name};
++    use blitz_traits::shell::{ColorScheme, Viewport};
++    use style::stylist::RuleInclusion;
++    use style::traversal::resolve_style;
++
++    struct Doc {
++        doc: BaseDocument,
++        style: NodeId,
++        body: NodeId,
++    }
++
++    /// `<html><head><style>{css}</style></head><body>` with a `div` per `(id class, class)`.
++    /// A per-test `tag` keeps the sheet text apart from other tests' (author sheets are shared
++    /// per thread by text, and one test edits its sheet through the CSSOM).
++    fn make_doc(ua: Option<&str>, css: &str, tag: &str, divs: &[(&str, &str)]) -> (Doc, Vec<NodeId>) {
++        let mut doc = BaseDocument::new(DocumentConfig {
++            viewport: Some(Viewport::new(400, 300, 1.0, ColorScheme::Light)),
++            ..Default::default()
++        });
++        if let Some(ua) = ua {
++            doc.add_user_agent_stylesheet(UserAgentStylesheet::parse(ua));
++        }
++        let root_id = doc.root_node().id;
++        let attr = |name, value: &str| Attribute { name, value: value.to_string() };
++        let mut ids = Vec::new();
++        let mut m = doc.mutate();
++        let html = m.create_element(qual_name!("html"), vec![]);
++        let head = m.create_element(qual_name!("head"), vec![]);
++        let style = m.create_element(qual_name!("style"), vec![]);
++        let text = m.create_text_node(&format!("/* {tag} */ {css}"));
++        m.append_children(style, &[text]);
++        m.append_children(head, &[style]);
++        let body = m.create_element(qual_name!("body"), vec![]);
++        for (tag, class) in divs {
++            let local = LocalName::from(*tag);
++            let name = QualName::new(None, ns!(html), local);
++            let el = m.create_element(name, vec![attr(qual_name!("class"), class)]);
++            m.append_children(body, &[el]);
++            ids.push(el);
++        }
++        m.append_children(html, &[head, body]);
++        m.append_children(root_id, &[html]);
++        drop(m);
++        doc.resolve(0.0);
++        (Doc { doc, style, body }, ids)
++    }
++
++    /// The eager (`before`, `after`) styles Stylo kept for `id`.
++    fn kept(doc: &BaseDocument, id: NodeId) -> (bool, bool) {
++        let data = doc.nodes[id].stylo_element_data().get().unwrap();
++        let pseudos = data.styles.pseudos.as_array();
++        (pseudos[1].is_some(), pseudos[0].is_some())
++    }
++
++    /// The (`::before`, `::after`) boxes of `id`.
++    fn boxes(doc: &BaseDocument, id: NodeId) -> (bool, bool) {
++        let node = &doc.nodes[id];
++        (node.before().is_some(), node.after().is_some())
++    }
++
++    #[test]
++    fn non_generating_rules_keep_no_pseudo_style() {
++        let css = "*::before, *::after { box-sizing: border-box; color: red } \
++                   .x::before { content: '' } .y::after { content: 'y' } \
++                   .d::before { display: inherit } .v::before { content: var(--c) } \
++                   .all::after { all: inherit } .an::before { animation-name: a }";
++        let (d, ids) = make_doc(
++            Some("q:before { content: open-quote } q:after { content: close-quote }"),
++            css,
++            "non-generating",
++            &[("div", ""), ("div", "x"), ("div", "y"), ("q", ""), ("div", "d"), ("div", "v"), ("div", "all"), ("div", "an")],
++        );
++        let doc = &d.doc;
++        assert_eq!(kept(doc, ids[0]), (false, false), "box-sizing and color alone generate nothing");
++        assert_eq!(boxes(doc, ids[0]), (false, false));
++        assert_eq!(boxes(doc, ids[1]), (true, false), ".x::before");
++        assert_eq!(boxes(doc, ids[2]), (false, true), ".y::after");
++        assert_eq!(boxes(doc, ids[3]), (true, true), "q's UA quotes");
++        // `display: inherit` and `content: var()` keep the style as upstream does
++        // (`DISPLAY_OR_CONTENT_DEPEND_ON_INHERITED_STYLE`); `content` stays `normal`, no box.
++        assert_eq!(kept(doc, ids[4]), (true, false), "display: inherit");
++        assert_eq!(boxes(doc, ids[4]), (false, false));
++        assert_eq!(kept(doc, ids[5]), (true, false), "content: var(--c)");
++        assert_eq!(kept(doc, ids[6]), (false, true), "all: inherit");
++        assert_eq!(kept(doc, ids[7]), (false, false), "animation-name alone: content is normal");
++    }
++
++    /// Which declaration blocks the index files: a value that cannot make the box appear
++    /// (`content: normal | none`, `animation-name: none`) keeps a rule out of it, so the UA
++    /// `*::before, *::after { animation: none !important }` does not match every element.
++    #[test]
++    fn index_ignores_declarations_that_cannot_generate_a_box() {
++        use style::properties::declaration_block::parse_style_attribute;
++        use style::stylesheets::CssRuleType;
++        use style::stylist::declarations_may_generate_pseudo_box;
++        let (d, _) = make_doc(None, "", "index-decls", &[]);
++        let url = d.doc.url.url_extra_data();
++        let generates = |css: &str| {
++            let block = parse_style_attribute(css, &url, None, QuirksMode::NoQuirks, CssRuleType::Style);
++            declarations_may_generate_pseudo_box(&block)
++        };
++        assert!(!generates("transition: none; animation: none"));
++        assert!(!generates("animation-name: none, none"));
++        assert!(!generates("content: normal"));
++        assert!(!generates("content: none; color: red"));
++        assert!(generates("animation-name: a"));
++        assert!(generates("animation-name: none, a"));
++        assert!(generates("animation: var(--a)"));
++        assert!(generates("animation-name: inherit"));
++        assert!(generates("content: ''"));
++        assert!(generates("content: var(--c)"));
++        assert!(generates("content: inherit"));
++        assert!(generates("display: none"));
++        assert!(generates("all: unset"));
++    }
++
++    /// `PseudoElementResolution::Force` (out-of-document styles) still resolves every eager
++    /// pseudo-element any rule matches.
++    #[test]
++    fn forced_resolution_keeps_non_generating_pseudo_styles() {
++        let (mut d, ids) = make_doc(
++            None,
++            "div::before { color: red } .h { display: none }",
++            "forced",
++            &[("div", ""), ("div", "h")],
++        );
++        assert_eq!(kept(&d.doc, ids[0]), (false, false));
++        // An element in a `display: none` subtree is left unstyled, as `resolve_style` wants.
++        let mut m = d.doc.mutate();
++        let hidden = m.create_element(qual_name!("div"), vec![]);
++        m.append_children(ids[1], &[hidden]);
++        drop(m);
++        d.doc.resolve(0.0);
++        let doc = &d.doc;
++
++        let _layout_thread_scope = LayoutThreadScope::enter();
++        let guard = &doc.guard;
++        let guards = StylesheetGuards { author: &guard.read(), ua_or_user: &guard.read() };
++        let shared = SharedStyleContext {
++            traversal_flags: TraversalFlags::empty(),
++            stylist: &doc.stylist,
++            options: GLOBAL_STYLE_DATA.options.clone(),
++            guards,
++            visited_styles_enabled: false,
++            animations: doc.animations.clone(),
++            current_time_for_animations: 0.0,
++            snapshot_map: &doc.snapshots,
++            registered_speculative_painters: &RegisteredPaintersImpl,
++        };
++        let mut thread_local = ThreadLocalStyleContext::new();
++        let mut context = StyleContext { shared: &shared, thread_local: &mut thread_local };
++        let node = &doc.nodes[hidden];
++        let styles = resolve_style(&mut context, node, RuleInclusion::All, None, None);
++        assert!(styles.pseudos.get(&PseudoElement::Before).is_some(), "forced ::before");
++        assert!(styles.pseudos.get(&PseudoElement::After).is_none(), "nothing matches ::after");
++    }
++
++    /// The index is rebuilt with the rules: a CSSOM edit that adds `content` makes the box
++    /// appear. This fails if `RuleChangeKind::StyleRuleDeclarations` stops rebuilding the
++    /// cascade data (stylesheet_set.rs).
++    #[test]
++    fn cssom_declaration_edit_makes_the_pseudo_appear() {
++        let (mut d, ids) = make_doc(None, ".c::before { color: red }", "cssom", &[("div", "c")]);
++        assert_eq!(boxes(&d.doc, ids[0]), (false, false));
++        d.doc
++            .stylesheet_rule_style_set_property(d.style, &[0], "content", "\"a\"", false)
++            .unwrap();
++        d.doc.resolve(0.0);
++        assert_eq!(boxes(&d.doc, ids[0]), (true, false), "content set through the CSSOM");
++        d.doc.stylesheet_rule_style_remove_property(d.style, &[0], "content").unwrap();
++        d.doc.resolve(0.0);
++        assert_eq!(boxes(&d.doc, ids[0]), (false, false), "and removed");
++    }
++
++    /// Selector flags from the index's own match drive sibling invalidation.
++    #[test]
++    fn last_child_after_follows_appends_and_removals() {
++        let (mut d, ids) = make_doc(
++            None,
++            ".a:last-child::after { content: '' } .a::after { color: red }",
++            "last-child",
++            &[("div", "a"), ("div", "a")],
++        );
++        assert_eq!(boxes(&d.doc, ids[0]), (false, false));
++        assert_eq!(boxes(&d.doc, ids[1]), (false, true));
++
++        let body = d.body;
++        let mut m = d.doc.mutate();
++        let attr = Attribute { name: qual_name!("class"), value: "a".into() };
++        let added = m.create_element(qual_name!("div"), vec![attr]);
++        m.append_children(body, &[added]);
++        drop(m);
++        d.doc.resolve(0.0);
++        assert_eq!(boxes(&d.doc, ids[1]), (false, false), "no longer the last child");
++        assert_eq!(boxes(&d.doc, added), (false, true), "the new last child");
++
++        let mut m = d.doc.mutate();
++        m.remove_node(added);
++        drop(m);
++        d.doc.resolve(0.0);
++        assert_eq!(boxes(&d.doc, ids[1]), (false, true), "the last child again");
++    }
++}
 diff --git a/packages/blitz-dom/src/stylo_device.rs b/packages/blitz-dom/src/stylo_device.rs
 --- a/packages/blitz-dom/src/stylo_device.rs
 +++ b/packages/blitz-dom/src/stylo_device.rs
@@ -7165,11 +8742,10 @@ diff --git a/packages/blitz-dom/src/util.rs b/packages/blitz-dom/src/util.rs
  }
  
  pub trait ToColorColor {
-@@ -253,4 +273,83 @@
-             local: $crate::local_name!($local),
+@@ -254,3 +274,82 @@
          }
      };
-+}
+ }
 +
 +/// lightningpanda: the font a downloaded (or `data:`) font file becomes,
 +/// one per distinct file on this thread. Documents that load the same web
@@ -7248,4 +8824,4 @@ diff --git a/packages/blitz-dom/src/util.rs b/packages/blitz-dom/src/util.rs
 +        }
 +        s.entry(sheet_key(css)).or_default().push((css.into(), url.to_owned(), sheet.clone()));
 +    });
- }
++}

@@ -34,8 +34,8 @@ the whole diff: every section below.
 - `layout/table.rs`: auto-table width preferences, backported from
   https://github.com/DioxusLabs/blitz/pull/1345 (no duplicate PR opened).
 
-The original `UPSTREAM.patch` covers only the class-atom optimization above;
-these additional local changes are covered by lp-render's rendering tests.
+`UPSTREAM.patch` carries these sections with the rest (it is regenerated from `src/` and `assets/`
+against the upstream commit above); they are covered by lp-render's rendering tests.
 
 ## `<br>` as inline text
 
