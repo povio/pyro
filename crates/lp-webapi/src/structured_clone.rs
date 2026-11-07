@@ -245,6 +245,14 @@ impl WireMessage {
             + self.blobs.iter().map(bytes::Bytes::len).sum::<usize>()
             + 64 * (1 + self.ports.len())
     }
+    /// The pipe sides it carries.
+    pub(crate) fn transit_ends(&self) -> &[crate::port_link::TransitEnd] {
+        &self.ports
+    }
+    #[cfg(test)]
+    pub(crate) fn sized(bytes: usize) -> Self {
+        WireMessage { text: "x".repeat(bytes), ..Self::empty() }
+    }
     /// Whether it transfers the port on the other side of `link` (posting
     /// a port's entangled peer through it loses the message, as in HTML).
     pub(crate) fn carries_peer_of(&self, link: &crate::port_link::Link) -> bool {
@@ -372,14 +380,23 @@ pub fn encode_message<'s>(s: &Scope<'s>, value: lp_js::Value<'s>, options: lp_js
         let bytes = crate::encoding::buffer_source_bytes(s, list.get_index(i)?)?;
         buffers.push(bytes.ok_or_else(|| JsError::dom("DataCloneError", "Detached ArrayBuffer"))?);
     }
-    // The whole message serialized: only now are its ports detached (each
-    // was checked by the transfer-list step, so this cannot fail half way).
+    // The whole message serialized: only now are its ports detached. All
+    // are checked again first (user code ran during the walk), so none is
+    // detached unless all can be.
     let list = pair.get_index(2)?;
     let list = list.as_object().expect("port list");
     let count = list.get_atom("length")?.to_number()? as u32;
-    let mut ports = Vec::with_capacity(count as usize);
+    let mut sent = Vec::with_capacity(count as usize);
     for i in 0..count {
-        ports.push(crate::message_channel::export_port(s, list.get_index(i)?)?);
+        let port = list.get_index(i)?;
+        if !crate::message_channel::is_transferable_port(s, port)? {
+            return Err(JsError::dom("DataCloneError", "Invalid MessagePort transfer"));
+        }
+        sent.push(port);
+    }
+    let mut ports = Vec::with_capacity(sent.len());
+    for port in sent {
+        ports.push(crate::message_channel::export_port(s, port)?);
     }
     let listed_ports = (pair.get_index(3)?.to_number()? as usize).min(ports.len());
     Ok(WireMessage { text, buffers, blobs, ports, listed_ports })

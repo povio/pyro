@@ -478,3 +478,51 @@ fn message_ports_and_streams_cross_to_a_dedicated_worker() {
     assert_eq!(log, ["back:hello", "pong:ping", "ready"]);
     assert_eq!(eval(&thread, page, "detachedPost + ':' + locked"), "DataCloneError:true");
 }
+
+#[test]
+fn a_failed_cross_thread_transfer_consumes_nothing() {
+    let (server, mut thread) = setup();
+    let page = open(&mut thread, &server, "/page");
+    // A getter run by the clone transfers a listed port elsewhere: the post
+    // throws, and the buffer and the port listed before it are intact.
+    eval(
+        &thread,
+        page,
+        "globalThis.log = [];
+         const w = new Worker('/ports-worker.js');
+         const x = new MessageChannel(), y = new MessageChannel(), other = new MessageChannel();
+         x.port2.onmessage = (e) => log.push(e.data);
+         const buf = new ArrayBuffer(8);
+         const value = { get sneaky() { other.port1.postMessage(null, [y.port1]); return 1; } };
+         let error;
+         try { w.postMessage(value, [buf, x.port1, y.port1]); } catch (e) { error = e.name; }
+         x.port1.postMessage('still entangled');
+         globalThis.result = [error, buf.byteLength].join(':'); 'ok'",
+    );
+    until(&mut thread, page, "log.length === 1");
+    assert_eq!(eval(&thread, page, "result + '|' + log[0]"), "DataCloneError:8|still entangled");
+}
+
+#[test]
+fn a_full_port_queue_throws_before_the_transfer_list_is_consumed() {
+    let (server, mut thread) = setup();
+    let page = open(&mut thread, &server, "/page");
+    // The worker holds port2 without starting it: port1's posts pile up.
+    eval(
+        &thread,
+        page,
+        "const w = new Worker('/ports-worker.js');
+         const ch = new MessageChannel(), passenger = new MessageChannel();
+         w.postMessage({ kind: 'hold' }, [ch.port2]);
+         ch.port1.postMessage(new ArrayBuffer(64 * 1024 * 1024));
+         globalThis.log = [];
+         passenger.port2.onmessage = (e) => log.push(e.data);
+         const buf = new ArrayBuffer(8);
+         let error;
+         try { ch.port1.postMessage(buf, [buf, passenger.port1]); } catch (e) { error = e.name; }
+         passenger.port1.postMessage('kept');
+         globalThis.result = [error, buf.byteLength].join(':'); 'ok'",
+    );
+    until(&mut thread, page, "log.length === 1");
+    assert_eq!(eval(&thread, page, "result + '|' + log[0]"), "DataCloneError:8|kept");
+}
