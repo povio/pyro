@@ -128,10 +128,19 @@ const PREBOOT_LIMIT: std::time::Duration = std::time::Duration::from_secs(30);
 /// No command for this long after a prepared page was taken: boot the next.
 const REFILL_QUIET: std::time::Duration = std::time::Duration::from_millis(15);
 /// With no command for this long, a closed page whose collection was put off
-/// (`Engine::release_closed`) is collected, and compiled code dropped
-/// (`Engine::settle_idle`): the client may stay idle for good. A test suite's
-/// gap between tests is shorter, so a running suite keeps its bytecode.
+/// (`Engine::release_closed`) is collected (`Engine::settle`): a page close
+/// itself only leaves the collection pending, so the closing command returns
+/// at once and the next page does not re-commit the pages a purge on the
+/// command's stack had just returned. A test suite's gap between tests is
+/// shorter than this.
 const RELEASE_QUIET: std::time::Duration = std::time::Duration::from_secs(1);
+/// With no command for this long after a close, every realm's compiled code
+/// is dropped too (`Engine::settle_idle`, the bytecode cache included): the
+/// client may stay idle for good. Longer than a test's pause between
+/// actions: dropped after every quiet second, Playwright's 293 KB injected
+/// script was re-parsed by the next test (2-3 ms CPU), and a page waiting
+/// on a timer lost its compiled code.
+const CODE_QUIET: std::time::Duration = std::time::Duration::from_secs(5);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServeOptions {
@@ -758,9 +767,15 @@ pub(crate) fn serve_browser(
             browser.refill_prepared();
             continue;
         }
-        let release_at = browser.host().thread.browser.engine.release_pending().then(|| quiet_since + RELEASE_QUIET);
+        let engine = &browser.host().thread.browser.engine;
+        let code_at = engine.code_release_pending().then(|| quiet_since + CODE_QUIET);
+        let release_at = engine.release_pending().then(|| quiet_since + RELEASE_QUIET).or(code_at);
         if release_at.is_some_and(|at| std::time::Instant::now() >= at) && inbox.is_empty() {
-            browser.host().thread.browser.engine.settle_idle();
+            if code_at.is_some_and(|at| std::time::Instant::now() >= at) {
+                engine.settle_idle();
+            } else {
+                engine.settle();
+            }
             continue;
         }
         let quiet_at = match (quiet_at, release_at) {

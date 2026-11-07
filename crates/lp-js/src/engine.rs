@@ -183,8 +183,15 @@ struct ReleaseGate {
     low: Cell<u64>,
     /// A closed page has not been collected yet.
     pending: Cell<bool>,
+    /// A closed page's compiled code has not been dropped yet
+    /// ([`Engine::settle_idle`]).
+    code_pending: Cell<bool>,
     /// (minimum growth in bytes, percent of the footprint).
     growth: Cell<(u64, u64)>,
+    /// The growth past which a close collects at once instead of leaving
+    /// the collection to an idle moment ([`Engine::release_closed`]):
+    /// [`RELEASE_CEILING_FACTOR`] times `growth`.
+    ceiling: Cell<(u64, u64)>,
 }
 
 /// A loop of small pages levels off about 20 MB above its first reading under
@@ -193,10 +200,31 @@ struct ReleaseGate {
 /// 4.5 ms of CPU per navigation, at 32 MB 2.6 ms, and collecting always 4.9 ms.
 const RELEASE_GROWTH_MIN: u64 = 32 << 20;
 const RELEASE_GROWTH_PERCENT: u64 = 25;
+/// A close past the gate leaves its collection to the idle loop; past this
+/// many times the gate (128 MB or 100% of the low reading by default) it
+/// collects at once: a process that never idles (back-to-back navigations
+/// of an app) is still held, and at `LIGHTNINGPANDA_RELEASE_GROWTH=0`
+/// every close collects, as before.
+const RELEASE_CEILING_FACTOR: u64 = 4;
 
 impl ReleaseGate {
     fn new(growth: (u64, u64)) -> ReleaseGate {
-        ReleaseGate { low: Cell::new(u64::MAX), pending: Cell::new(false), growth: Cell::new(growth) }
+        let gate = ReleaseGate {
+            low: Cell::new(u64::MAX),
+            pending: Cell::new(false),
+            code_pending: Cell::new(false),
+            growth: Cell::new(growth),
+            ceiling: Cell::new((0, 0)),
+        };
+        gate.set_growth(growth);
+        gate
+    }
+
+    /// Sets the thresholds, the ceiling along with them.
+    fn set_growth(&self, growth: (u64, u64)) {
+        self.growth.set(growth);
+        let (min, percent) = growth;
+        self.ceiling.set((min.saturating_mul(RELEASE_CEILING_FACTOR), percent.saturating_mul(RELEASE_CEILING_FACTOR)));
     }
 
     /// `LIGHTNINGPANDA_RELEASE_GROWTH=<MB>[:<percent>]` overrides the
@@ -219,11 +247,22 @@ impl ReleaseGate {
         due
     }
 
+    /// Whether the process has grown past the ceiling: a collection that
+    /// is due runs at once instead of waiting for an idle moment. Without a
+    /// footprint always, as [`ReleaseGate::should_collect`].
+    fn past_ceiling(&self, footprint: Option<u64>) -> bool {
+        let Some(now) = footprint else { return true };
+        let low = self.observe(now);
+        let (min, percent) = self.ceiling.get();
+        now - low >= min.max(low / 100 * percent)
+    }
+
     /// Leaves a collection pending only when one is due (without a
     /// footprint always, as [`ReleaseGate::should_collect`] then collects).
     fn defer_if_due(&self, footprint: Option<u64>) {
         if footprint.is_none_or(|now| self.due(now)) {
             self.pending.set(true);
+            self.code_pending.set(true);
         }
     }
 
@@ -246,6 +285,7 @@ impl ReleaseGate {
     fn forked(&self) {
         self.low.set(u64::MAX);
         self.pending.set(false);
+        self.code_pending.set(false);
     }
 }
 
@@ -667,10 +707,19 @@ impl Engine {
     /// Frees what a closed page (or a navigated-away document) left behind,
     /// once there is enough of it ([`ReleaseGate`]): a collection of the
     /// engine's heap, then the allocator's retained free pages are returned
-    /// to the OS (`release_memory`). A closed page's wrappers and DOM are
-    /// otherwise kept until the next collection, which an idle test process
-    /// may never run: a caller with an idle moment checks
-    /// [`Engine::release_pending`].
+    /// to the OS (`release_memory`). The collection is left to the caller's
+    /// next idle moment ([`Engine::release_pending`], then
+    /// [`Engine::settle`]): run inside the command that closed the page it
+    /// cost that command 5-8 ms, with the closing code on the stack, which
+    /// JavaScriptCore scans conservatively, and a compilation still running
+    /// keeps its realm too, so the closed page's heap could survive it
+    /// (measured: a React app's 30 MB stayed until the next close) and the
+    /// idle loop had to collect again anyway; and the allocator's pages it
+    /// returned were re-committed by the next page at once. Only a process
+    /// grown past the gate's ceiling ([`RELEASE_CEILING_FACTOR`]) collects
+    /// at once, so one that never idles is still held. A closed page's
+    /// wrappers and DOM are otherwise kept until the next collection, which
+    /// an idle test process may never run: every close leaves one pending.
     ///
     /// Measured on 20 open/boot/close cycles of a 2 MB app: the process
     /// plateaus at 270 MB instead of 339 MB. `LIGHTNINGPANDA_RELEASE_ON_CLOSE=0`
@@ -679,16 +728,13 @@ impl Engine {
         if std::env::var("LIGHTNINGPANDA_RELEASE_ON_CLOSE").is_ok_and(|v| v == "0") {
             return;
         }
-        if self.inner.release_gate.should_collect(process_footprint()) {
+        let gate = &self.inner.release_gate;
+        let footprint = process_footprint();
+        if gate.should_collect(footprint) && gate.past_ceiling(footprint) {
             self.settle();
-            // This collection runs inside the command that closed the page,
-            // with the closing code on the stack: JavaScriptCore scans that
-            // stack conservatively, and a compilation still running keeps its
-            // realm too, so the closed page's heap can survive it (measured:
-            // a React app's 30 MB stayed until the next close). A second
-            // collection from the idle loop, where neither holds, frees it.
-            self.inner.release_gate.pending.set(true);
         }
+        gate.pending.set(true);
+        gate.code_pending.set(true);
     }
 
     /// [`Engine::release_closed`] for a document whose replacement leaves
@@ -726,13 +772,28 @@ impl Engine {
     /// `LIGHTNINGPANDA_RELEASE_GROWTH` sets it, for this engine (tests).
     #[doc(hidden)]
     pub fn set_release_growth(&self, min_bytes: u64, percent: u64) {
-        self.inner.release_gate.growth.set((min_bytes, percent));
+        self.inner.release_gate.set_growth((min_bytes, percent));
+    }
+
+    /// The ceiling past which [`Engine::release_closed`] collects at once,
+    /// set apart from the gate (tests).
+    #[doc(hidden)]
+    pub fn set_release_ceiling(&self, min_bytes: u64, percent: u64) {
+        self.inner.release_gate.ceiling.set((min_bytes, percent));
     }
 
     /// Whether a closed page is still waiting for the collection
     /// [`Engine::release_closed`] put off. [`Engine::settle`] runs it.
     pub fn release_pending(&self) -> bool {
         self.inner.release_gate.pending.get()
+    }
+
+    /// Whether a closed page's compiled code is still kept
+    /// ([`Engine::settle_idle`] drops it). Set with every close, cleared by
+    /// `settle_idle` only: a caller keeps the code through short idle
+    /// moments (a test suite's gaps) and drops it after a long one.
+    pub fn code_release_pending(&self) -> bool {
+        self.inner.release_gate.code_pending.get()
     }
 
     /// A full synchronous collection, finalized wrappers released, free
@@ -766,6 +827,7 @@ impl Engine {
             unsafe { f(self.inner.group()) };
         }
         self.settle();
+        self.inner.release_gate.code_pending.set(false);
     }
 
     /// Requests a full garbage collection (asynchronous in JSC).
@@ -1191,6 +1253,20 @@ mod tests {
         assert!(gate.pending.get());
         gate.defer_if_due(Some(41 * MB));
         assert!(gate.pending.get(), "a close left it pending");
+    }
+
+    #[test]
+    fn release_gate_ceiling_is_a_multiple_of_the_gate() {
+        let gate = ReleaseGate::new((16 * MB, 25));
+        assert!(!gate.should_collect(Some(40 * MB)));
+        assert!(gate.should_collect(Some(60 * MB)), "due: left to an idle moment");
+        assert!(!gate.past_ceiling(Some(60 * MB)));
+        assert!(!gate.past_ceiling(Some(100 * MB)), "64 MB = 4 x 16 MB, and 100% of 40 MB, not reached");
+        assert!(gate.past_ceiling(Some(104 * MB)), "past 4 x the gate: collected at once");
+        assert!(ReleaseGate::new((0, 0)).past_ceiling(Some(100 * MB)), "no gate: every close collects");
+        assert!(gate.past_ceiling(None), "no footprint: collects");
+        gate.set_growth((8 * MB, 0));
+        assert_eq!(gate.ceiling.get(), (32 * MB, 0));
     }
 
     #[test]

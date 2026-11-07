@@ -991,6 +991,39 @@ fn release_gate_due(t: &BrowserThread, due: bool) {
 }
 
 #[test]
+fn a_close_leaves_the_collection_and_the_code_drop_to_idle_moments() {
+    // A close past the gate (but under its ceiling) collects nothing on the
+    // closing command's stack: it leaves the collection pending for the idle
+    // loop (`settle` after a quiet second), and the code drop pending for a
+    // longer quiet moment (`settle_idle`), which `settle` alone keeps.
+    let (mut t, _rec, page) = setup();
+    release_gate_due(&t, true);
+    t.browser.engine.set_release_ceiling(u64::MAX, 0);
+    eval(&t, page, "for (let i = 0; i < 200; i++) document.body.appendChild(document.createElement('div'))");
+    t.run_until_idle(Some(Instant::now() + Duration::from_secs(2)));
+    *t.browser.released_payloads.borrow_mut() = 0;
+    assert!(t.browser.close_page(page));
+    assert_eq!(*t.browser.released_payloads.borrow(), 0, "the close itself collected");
+    assert!(t.browser.engine.release_pending());
+    assert!(t.browser.engine.code_release_pending());
+    t.browser.engine.settle();
+    assert!(!t.browser.engine.release_pending());
+    assert!(t.browser.engine.code_release_pending(), "a short idle moment keeps the compiled code");
+    t.browser.engine.settle_idle();
+    assert!(!t.browser.engine.code_release_pending());
+    // Past the ceiling, the close collects at once (as every close did).
+    let page = t.browser.create_page().unwrap();
+    t.browser.engine.set_release_ceiling(0, 0);
+    eval(&t, page, "for (let i = 0; i < 200; i++) document.body.appendChild(document.createElement('div'))");
+    t.run_until_idle(Some(Instant::now() + Duration::from_secs(2)));
+    *t.browser.released_payloads.borrow_mut() = 0;
+    assert!(t.browser.close_page(page));
+    t.browser.checkpoint();
+    assert!(t.browser.engine.release_pending(), "a second collection from the idle loop is still due");
+    t.browser.engine.settle();
+}
+
+#[test]
 fn replacing_the_untouched_initial_document_leaves_nothing_to_release() {
     // A page's first navigation (a test's first `goto`): its blank document
     // and two realms are not worth a full collection, and the initial
