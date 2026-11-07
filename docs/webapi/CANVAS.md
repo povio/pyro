@@ -1,67 +1,142 @@
 # Canvas 2D
 
-`crates/lp-webapi/src/canvas.rs` implements `CanvasRenderingContext2D`
-without a rasterizer: it keeps the state and geometry a page can observe,
-and it draws no pixels. The value types are made in JS
+`crates/lp-webapi/src/canvas.rs` implements `CanvasRenderingContext2D`,
+`OffscreenCanvas` 2D contexts, `ImageBitmap` and canvas pixels. Pixels are
+painted by `crates/lp-canvas` (vello_cpu on the CPU, the same rasterizer
+screenshots use). The value types are made in JS
 (`crates/lp-webapi/src/canvas2d.js`) on a realm's first use of any of them:
 `Path2D`, `ImageData`, `CanvasGradient`, `CanvasPattern`, `TextMetrics`,
-`DOMMatrixReadOnly`, `DOMMatrix` (also `WebKitCSSMatrix`), `DOMPointReadOnly`
-and `DOMPoint`. A realm that never uses them has one global accessor pair
-per name; the first read replaces the accessor with the usual data property.
+`ImageBitmap`, `OffscreenCanvas`, `OffscreenCanvasRenderingContext2D`,
+`createImageBitmap`, `DOMMatrixReadOnly`, `DOMMatrix` (also
+`WebKitCSSMatrix`), `DOMPointReadOnly` and `DOMPoint`. A realm that never
+uses them has one global accessor pair per name; the first read replaces the
+accessor with the usual data property.
+
+## Bitmaps and memory
+
+- Each 2D context owns an `lp_canvas::Surface`. Its bitmap (premultiplied
+  RGBA) is allocated on the first draw or pixel write. Reading a canvas that
+  was never drawn on (`getImageData`, `toDataURL`, `drawImage` of it)
+  allocates nothing and reads transparent black.
+- Setting `width`/`height` (the IDL attributes, or `setAttribute`) clears and
+  releases the bitmap and resets the context state.
+- Source-over draws without a shadow are batched into one vello scene and
+  rasterized onto the bitmap when pixels are needed (a read, a snapshot,
+  another operator, or 4096 batched draws). Other operators and shadows
+  render the source image alone and composite it per pixel.
+- Limits: a side of at most 16384 px and 32 Mi pixels per bitmap (larger
+  canvases draw nothing and read transparent); 2 GiB of bitmaps per process
+  (past it a canvas without a bitmap draws nothing); `getImageData` of more
+  than 32 Mi pixels is a `RangeError`.
+- Hostile geometry is bounded: paths with points far outside the bitmap are
+  flattened and clipped to a box that far out, pens are at most a few canvas
+  sizes wide, more than 100000 dash periods along one stroke draw it solid
+  (Skia's behaviour past its limit), glyphs over 100000 device px draw
+  nothing.
 
 ## Implemented
 
 - `getContext('2d')` returns one context per canvas; other context types
   return null (no WebGL, no `bitmaprenderer`).
 - Drawing state, saved and restored by `save()`/`restore()` and reset by
-  `reset()` and by setting the canvas's `width` or `height`: `fillStyle` and
-  `strokeStyle` (CSS colors serialized as Chrome does, `#rrggbb` or
-  `rgba(...)`, or a `CanvasGradient`/`CanvasPattern` object), `globalAlpha`,
-  `globalCompositeOperation`, `lineWidth`, `lineCap`, `lineJoin`,
-  `miterLimit`, `setLineDash`/`getLineDash`, `lineDashOffset`, shadows,
-  `font`, `textAlign`, `textBaseline`, `direction`, `letterSpacing`,
-  `wordSpacing`, `fontKerning`, `fontStretch`, `fontVariantCaps`,
-  `textRendering`, `filter`, `imageSmoothingEnabled`/`Quality`, and the
-  current transform. Invalid values are ignored, as in browsers.
-- Transforms: `translate`, `rotate`, `scale`, `transform`, `setTransform`
-  (six numbers or a `DOMMatrix2DInit`), `resetTransform`, `getTransform`
-  (a `DOMMatrix`).
-- Paths: the current path is built with the transform applied when points
-  are added (kurbo geometry): `moveTo`, `lineTo`, `quadraticCurveTo`,
-  `bezierCurveTo`, `arcTo`, `arc`, `ellipse`, `rect`, `roundRect`,
-  `closePath`, `beginPath`. `isPointInPath` (nonzero/evenodd, points on an
-  edge are inside) and `isPointInStroke` (line width, caps, joins and miter
-  limit; no dashes) answer for it and for a `Path2D`. `Path2D` records the
-  same commands, `addPath(path, transform)` and SVG path data.
-- `createLinearGradient`, `createRadialGradient`, `createConicGradient`
-  (`addColorStop` validates its offset and color), `createPattern`
-  (canvas, and loaded images; a video has no frame, so null).
-- `measureText` returns a `TextMetrics` from the flow layout's text measure:
-  width, bounding boxes from the font's ascent and descent, and the
-  baselines relative to `textBaseline`.
-- `ImageData` (constructor from a size or a `Uint8ClampedArray`,
-  `colorSpace`), `createImageData`.
+  `reset()` and by resizing: `fillStyle`/`strokeStyle` (CSS colors
+  serialized as Chrome does, or a `CanvasGradient`/`CanvasPattern`),
+  `globalAlpha`, `globalCompositeOperation` (all 26: the Porter-Duff
+  operators, `lighter`, and the W3C blend modes), `lineWidth`, `lineCap`,
+  `lineJoin`, `miterLimit`, `setLineDash`/`getLineDash`, `lineDashOffset`,
+  shadows (`shadowColor`, `shadowBlur` as a three-box-blur Gaussian,
+  offsets in device pixels), `font`, `textAlign`, `textBaseline`,
+  `direction`, `letterSpacing`, `wordSpacing`, `imageSmoothingEnabled`
+  (bilinear or nearest), the current transform and the clipping region.
+  `fontKerning`, `fontStretch`, `fontVariantCaps`, `textRendering`,
+  `imageSmoothingQuality` and `filter` are kept and do not change pixels.
+- Transforms: `translate`, `rotate`, `scale`, `transform`, `setTransform`,
+  `resetTransform`, `getTransform`. Strokes are traced in user space and
+  transformed, so non-uniform scales shear the pen.
+- Paths (kurbo geometry, built with the transform applied):
+  `moveTo`, `lineTo`, `quadraticCurveTo`, `bezierCurveTo`, `arcTo`, `arc`,
+  `ellipse`, `rect`, `roundRect`, `closePath`, `beginPath`; `fill` and
+  `clip` (nonzero/evenodd), `stroke`, for the current path or a `Path2D`
+  (commands, `addPath`, SVG path data). `isPointInPath`/`isPointInStroke`.
+- `fillRect`, `strokeRect` (a zero width or height strokes a line),
+  `clearRect` (within the clipping region).
+- `createLinearGradient`, `createRadialGradient` (two-point conical),
+  `createConicGradient`; stops interpolate unpremultiplied as HTML says,
+  stops added after a gradient was set apply to later draws.
+  `createPattern` with every repetition and `CanvasPattern.setTransform`;
+  the pattern captures the source's pixels when it is made.
+- Text: `fillText`, `strokeText` (with `maxWidth` squeezing) and
+  `measureText` shape one line with Parley on the system fonts (the fonts
+  page rendering uses, `lp_canvas::fonts`): advance width, the primary
+  font's ascent/descent, ink bounds from the glyph outlines, baselines for
+  `textBaseline`. Whitespace becomes spaces as HTML's text preparation says.
+  Font fallback, synthetic bold/oblique and variable fonts come from Parley.
+- `drawImage` (3, 5 and 9 arguments) and `createPattern` from: a loaded
+  `<img>` (decoded on first use: PNG, JPEG, GIF first frame, WebP), a
+  `<canvas>` (its bitmap now, itself included), an `ImageBitmap`, an
+  `OffscreenCanvas`. An `<img>` still loading draws nothing and a broken one
+  throws `InvalidStateError`; a zero-sized canvas throws; a closed
+  `ImageBitmap` throws.
+- `createImageData`, `getImageData` (negative sizes, outside areas read
+  transparent), `putImageData` (dirty rectangle; no compositing, transform
+  or clip), `ImageData` with `colorSpace`. Pixels read back unpremultiplied
+  with Chrome's rounding.
+- `HTMLCanvasElement.toDataURL(type, quality)` and `toBlob(callback, type,
+  quality)`: PNG, JPEG (`image/jpeg`, transparent pixels over black,
+  quality 0-1, default 0.92) and WebP (`image/webp`, lossless); other types
+  give PNG. A canvas without pixels (zero-sized or over the limits) gives
+  `data:,` and a null blob. `toBlob` encodes at the call and calls back in a
+  task.
+- `createImageBitmap(source[, sx, sy, sw, sh][, options])` from the image
+  sources above, an `ImageData` or a `Blob` (decoded), with crop,
+  `resizeWidth`/`resizeHeight`/`resizeQuality` and
+  `imageOrientation: 'flipY'`. `ImageBitmap.width/height/close()`.
+- `OffscreenCanvas(width, height)`: `width`/`height` (resizing clears),
+  `getContext('2d')` (one context; `webgl`/`bitmaprenderer` are null),
+  `convertToBlob({type, quality})`, `transferToImageBitmap()`. Its context
+  is a `CanvasRenderingContext2D` whose `canvas` is the OffscreenCanvas;
+  `instanceof OffscreenCanvasRenderingContext2D` recognizes it.
+- Origin-clean: drawing a cross-origin `<img>` (one whose final response URL
+  is not same-origin with the document; `data:` and `blob:` are clean), or
+  a pattern, canvas or bitmap made from one, taints the canvas:
+  `getImageData`, `toDataURL`, `toBlob` and `convertToBlob` throw
+  `SecurityError`.
 - `getContextAttributes()`, `isContextLost()` (false).
-- `HTMLCanvasElement.toBlob(callback)` calls back with null in a task: there
-  are no pixels to encode. `toDataURL()` returns `data:,`.
+- Screenshots: render snapshots carry the bitmaps of drawn canvases
+  (`PageDom::canvas_bitmaps`), and the render mirror gives each canvas
+  element its bitmap as raster content, so `Page.captureScreenshot` (and
+  PDFs of a live page) show canvases, scaled by CSS like an image.
+  Unchanged bitmaps are passed as the same `Arc` and not copied again.
 
-## Pixels
+## How `<img>` pixels reach a canvas
 
-There is no rasterizer. `getImageData` returns transparent black while
-nothing was drawn since the bitmap was cleared (created, resized, `reset()`
-or a `clearRect` over the whole canvas with the identity transform), and
-throws `NotSupportedError` once anything was drawn (`fill`, `stroke`, the
-rect and text calls, `drawImage`, `putImageData`), so no page receives
-invented pixels. Drawing calls accept their arguments and draw nothing.
+lp-browser fetches `<img>` resources to learn their natural size and drops
+the body. When the document may draw images (it created a `<canvas>`
+element, a flag set at element creation, or used a canvas API), the body is
+kept in `PageDom` (`set_image_bytes`, at most 64 MiB per document) with its
+origin-clean flag, and decoded on the first `drawImage`/`createPattern`/
+`createImageBitmap` of the image (the decoded pixels are then kept with
+it). Pages without canvases pay a flag test per image load.
 
 ## Gaps
 
-- No pixels, so canvas fingerprinting, image export and pixel-based tests
-  do not work; `toDataURL` is `data:,` for any canvas.
+- An `<img>` that finished loading before the document had a `<canvas>` or
+  used a canvas API, and images past the 64 MiB budget, draw nothing.
+- SVG images and video frames draw nothing (`createPattern` returns null
+  for them); `<img crossorigin>` CORS loads are not made, so every
+  cross-origin image taints.
+- `filter` is kept but not applied; `imageSmoothingQuality` does not change
+  the (bilinear) filter; `fontKerning`, `fontStretch`, `fontVariantCaps`,
+  `textRendering` are not applied. `direction: inherit` is left-to-right.
+- `measureText`'s em-height and hanging/ideographic baselines are derived
+  from ascent/descent, not from the font's BASE table.
+- Shadow offsets are rounded to whole pixels.
+- No WebGL, `bitmaprenderer`, `transferControlToOffscreen`, or
+  `OffscreenCanvas` in workers. `drawFocusIfNeeded` draws nothing.
+- `display-p3` ImageData holds sRGB values. `ImageBitmap` and
+  `OffscreenCanvas` cannot be posted (`postMessage`, `structuredClone`).
 - Path2D SVG data with an error draws nothing (browsers keep the part
-  before the error). `isPointInStroke` ignores the dash pattern.
-- `clip()` does not affect hit testing; `drawFocusIfNeeded` draws nothing.
-- Glyph bounding boxes are the font's ascent/descent, not per-glyph ink.
-- No `OffscreenCanvas`, `ImageBitmap`, `createImageBitmap`, WebGL.
+  before the error). `isPointInStroke` ignores the dash pattern;
+  `clip()` does not affect hit testing.
 - `DOMMatrix` string parsing accepts absolute lengths and angles only (as in
   Chrome, relative units are a SyntaxError).

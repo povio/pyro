@@ -29,6 +29,7 @@ hkdf = "0.12"
 hmac = "0.12"
 # Canvas path geometry (isPointInPath, Path2D SVG data); already in the tree via lp-render/blitz.
 kurbo = "0.13.1"
+lp-canvas = { workspace = true }
 lp-dom = { workspace = true }
 lp-js = { workspace = true }
 lp-net = { workspace = true }

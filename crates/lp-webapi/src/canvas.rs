@@ -1,32 +1,43 @@
-//! `CanvasRenderingContext2D` without a rasterizer: drawing state, paths and
-//! text measurement, but no pixels.
+//! `CanvasRenderingContext2D`, `OffscreenCanvas` 2D contexts, `ImageBitmap`
+//! and canvas pixels, rasterized by lp-canvas (vello_cpu).
 //!
 //! - The drawing state (styles, line and shadow settings, text settings,
-//!   the current transform) is kept, saved and restored like a browser's.
-//! - `font` parses and serializes the CSS shorthand, defaulting to `10px sans-serif`.
-//! - `measureText` uses the same text measure as the flow layout
-//!   (`lp_dom::text_metrics`) and returns a `TextMetrics`.
-//! - The current path is built (with the transform applied, kurbo geometry),
-//!   so `isPointInPath`/`isPointInStroke` answer for it and for a `Path2D`.
-//! - Drawing calls draw nothing. Pixel readback (`getImageData`) returns the
-//!   transparent pixels of a canvas nothing was drawn on since it was last
-//!   cleared, and throws `NotSupportedError` once something was, so no page
-//!   receives invented pixels.
+//!   the current transform, the clipping region) is kept, saved and
+//!   restored like a browser's; `font` parses and serializes the CSS
+//!   shorthand, defaulting to `10px sans-serif`.
+//! - The current path is built with the transform applied (kurbo geometry,
+//!   `canvas_path`), so `isPointInPath`/`isPointInStroke` answer for it and
+//!   for a `Path2D`, and the rasterizer gets device-space paths.
+//! - Each context owns an `lp_canvas::Surface`: its bitmap is allocated on
+//!   the first draw or pixel write (reading a canvas nothing was drawn on
+//!   allocates nothing) and released when the canvas is resized.
+//! - Text is shaped with Parley on the system fonts (`lp_canvas::text`), for
+//!   `fillText`/`strokeText` and `measureText`.
+//! - Images reach the canvas through `drawImage`, `createPattern` and
+//!   `createImageBitmap`: `<img>` pixels are decoded on first use from the
+//!   bytes the embedder kept ([`PageDom::set_image_bytes`]), canvases and
+//!   `OffscreenCanvas`es by snapshot, `ImageBitmap`s by their handle.
+//! - Cross-origin images make the canvas origin-unclean: pixel reads
+//!   (`getImageData`, `toDataURL`, `toBlob`, `convertToBlob`) then throw
+//!   `SecurityError`.
 //!
 //! The value types (`CanvasGradient`, `CanvasPattern`, `Path2D`, `ImageData`,
-//! `TextMetrics`, `DOMMatrix`, `DOMPoint`) are made in JS (canvas2d.js) on a
-//! realm's first use of any of them. Glyph bounding boxes are the font's
-//! ascent/descent, not per-glyph ink.
+//! `TextMetrics`, `ImageBitmap`, `OffscreenCanvas`, `DOMMatrix`, `DOMPoint`)
+//! and `createImageBitmap` are made in JS (canvas2d.js) on a realm's first
+//! use of any of them.
 
 use std::cell::{Cell, RefCell};
-use std::f64::consts::{FRAC_PI_2, PI, TAU};
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
+use std::sync::Arc;
 
-use kurbo::{Affine, BezPath, ParamCurveNearest, PathEl, Point, Shape, Vec2};
+use kurbo::{Affine, BezPath, Point, Rect};
+use lp_canvas::{ClipPath, Color, Composite, DrawState, Paint, Pixmap, Surface};
 use lp_dom::text_metrics::{self, FontSpec};
 use lp_dom::NodeId;
+use lp_js::sys;
 use lp_js::{Args, ClassDef, JsClass, JsError, JsResult, NoParent, Object, Persistent, Scope, Value};
 
+use crate::canvas_path::{closed, on_outline, point_in_fill, replay, stroke_outline, Builder, Path};
 use crate::lazy_module::{lazy_globals, LazyModule};
 use crate::node::node_value;
 use crate::page::PageDom;
@@ -34,6 +45,8 @@ use crate::util::*;
 use crate::window::WindowHost;
 
 const CONTEXT_2D: &str = "__lpCanvas2d";
+/// The OffscreenCanvas of an offscreen context (hidden on its wrapper).
+const OFFSCREEN: &str = "__lpOffscreen";
 
 static MODULE: LazyModule = LazyModule {
     key: "lpCanvas2d",
@@ -61,6 +74,10 @@ where
         "CanvasGradient",
         "CanvasPattern",
         "TextMetrics",
+        "ImageBitmap",
+        "OffscreenCanvas",
+        "OffscreenCanvasRenderingContext2D",
+        "createImageBitmap",
     );
 }
 
@@ -73,12 +90,81 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         })
     })?;
     natives.set_atom("parseColor", parse.value())?;
+    let is_blob =
+        s.function("isBlob", |s, _this, a| Ok(s.boolean(s.unwrap::<crate::file::Blob>(a.get(0)).is_some())))?;
+    natives.set_atom("isBlob", is_blob.value())?;
+    let make_bitmap = s.function("makeBitmap", |s, _this, a| make_bitmap(s, a))?;
+    natives.set_atom("makeBitmap", make_bitmap.value())?;
+    let offscreen = s.function("offscreenContext", |s, _this, a| {
+        let page = crate::target::page_of(s)?;
+        let (w, h) = (a.get(1).to_number()?, a.get(2).to_number()?);
+        let context = new_context(s, &page, Target::Offscreen, size_u32(w), size_u32(h))?;
+        s.set_hidden(context, OFFSCREEN, a.get(0))?;
+        page.canvas_used.set(true);
+        Ok(context.value())
+    })?;
+    natives.set_atom("offscreenContext", offscreen.value())?;
+    let resize = s.function("resizeContext", |s, _this, a| {
+        if let Some(c) = s.unwrap::<CanvasRenderingContext2D>(a.get(0)) {
+            let (w, h) = (size_u32(a.get(1).to_number()?), size_u32(a.get(2).to_number()?));
+            c.reset();
+            c.surface.borrow_mut().resize(w, h);
+        }
+        Ok(s.undefined())
+    })?;
+    natives.set_atom("resizeContext", resize.value())?;
+    let transfer = s.function("transferContext", |s, _this, a| {
+        let c = s.unwrap::<CanvasRenderingContext2D>(a.get(0)).ok_or(JsError::ContextDestroyed)?;
+        let handle = {
+            let mut surface = c.surface.borrow_mut();
+            let handle = ImageHandle {
+                pixmap: surface.snapshot(),
+                width: surface.width(),
+                height: surface.height(),
+                clean: c.clean.get(),
+            };
+            let (w, h) = (surface.width(), surface.height());
+            surface.resize(w, h);
+            handle
+        };
+        bitmap_triple(s, handle)
+    })?;
+    natives.set_atom("transferContext", transfer.value())?;
+    let encode = s.function("encodeContext", |s, _this, a| {
+        let mime = dom_string(a.get(3))?;
+        let quality = if a.get(4).is_undefined() { None } else { Some(a.get(4).to_number()?) };
+        let (encoding, mime) = lp_canvas::codec::encoding_for(&mime, quality);
+        let bytes = match s.unwrap::<CanvasRenderingContext2D>(a.get(0)) {
+            Some(c) => {
+                if !c.clean.get() {
+                    return Err(security_error());
+                }
+                c.surface.borrow_mut().encode(encoding)
+            }
+            None => Surface::new(size_u32(a.get(1).to_number()?), size_u32(a.get(2).to_number()?)).encode(encoding),
+        };
+        let bytes = bytes.ok_or_else(|| JsError::dom("EncodingError", "The canvas could not be encoded."))?;
+        crate::file::make_blob(s, bytes.into(), mime.into(), None)
+    })?;
+    natives.set_atom("encodeContext", encode.value())?;
     Ok(natives)
+}
+
+fn size_u32(v: f64) -> u32 {
+    if v.is_finite() && v > 0.0 {
+        v.min(f64::from(u32::MAX)) as u32
+    } else {
+        0
+    }
+}
+
+fn security_error() -> JsError {
+    JsError::dom("SecurityError", "The canvas has been tainted by cross-origin data.")
 }
 
 /// A CSS color as canvas serializes it: `#rrggbb` when opaque, else
 /// `rgba(r, g, b, a)`. `currentcolor` is black (no element style applies).
-fn canvas_color(value: &str) -> Option<String> {
+pub(crate) fn canvas_color(value: &str) -> Option<String> {
     let css = lp_dom::computed::serialize_color(value, &mut || Some("rgb(0, 0, 0)".into()))?;
     let Some(inner) = css.strip_prefix("rgb(").and_then(|r| r.strip_suffix(')')) else { return Some(css) };
     let mut hex = String::from("#");
@@ -89,15 +175,36 @@ fn canvas_color(value: &str) -> Option<String> {
     Some(hex)
 }
 
+/// The color of a [`canvas_color`] serialization.
+fn color_of(serialized: &str) -> Color {
+    if let Some(hex) = serialized.strip_prefix('#') {
+        let v = u32::from_str_radix(hex, 16).unwrap_or(0);
+        return Color::from_rgba8((v >> 16) as u8, (v >> 8) as u8, v as u8, 255);
+    }
+    let inner = serialized
+        .strip_prefix("rgba(")
+        .or_else(|| serialized.strip_prefix("rgb("))
+        .and_then(|r| r.strip_suffix(')'))
+        .unwrap_or("");
+    let mut parts = inner.split(',').map(|p| p.trim().parse::<f32>().unwrap_or(0.0));
+    let (r, g, b) = (parts.next().unwrap_or(0.0), parts.next().unwrap_or(0.0), parts.next().unwrap_or(0.0));
+    let a = parts.next().unwrap_or(1.0);
+    Color::new([r / 255.0, g / 255.0, b / 255.0, a.clamp(0.0, 1.0)])
+}
+
+/// A gradient or pattern's paint, made again when its record's version
+/// changes (`addColorStop`, `setTransform`).
+type PaintCache = Rc<RefCell<Option<(f64, Paint, bool)>>>;
+
 #[derive(Clone)]
 enum Style {
-    Color(String),
+    Color(String, Color),
     /// A CanvasGradient or CanvasPattern of the context's realm.
-    Object(Persistent),
+    Object(Persistent, PaintCache),
 }
 
 #[derive(Clone)]
-struct State {
+pub(crate) struct State {
     font: FontSpec,
     text_align: &'static str,
     text_baseline: &'static str,
@@ -106,10 +213,10 @@ struct State {
     stroke_style: Style,
     global_alpha: f64,
     composite: &'static str,
-    line_width: f64,
-    line_cap: &'static str,
-    line_join: &'static str,
-    miter_limit: f64,
+    pub(crate) line_width: f64,
+    pub(crate) line_cap: &'static str,
+    pub(crate) line_join: &'static str,
+    pub(crate) miter_limit: f64,
     line_dash: Vec<f64>,
     line_dash_offset: f64,
     shadow_blur: f64,
@@ -125,18 +232,21 @@ struct State {
     font_stretch: &'static str,
     font_variant_caps: &'static str,
     text_rendering: &'static str,
-    transform: Affine,
+    pub(crate) transform: Affine,
+    /// The clipping region: the intersection of these (device space).
+    clip: Rc<Vec<ClipPath>>,
 }
 
 impl State {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
+        let black = Style::Color("#000000".into(), Color::BLACK);
         State {
             font: default_font(),
             text_align: "start",
             text_baseline: "alphabetic",
             direction: "inherit",
-            fill_style: Style::Color("#000000".into()),
-            stroke_style: Style::Color("#000000".into()),
+            fill_style: black.clone(),
+            stroke_style: black,
             global_alpha: 1.0,
             composite: "source-over",
             line_width: 1.0,
@@ -159,19 +269,66 @@ impl State {
             font_variant_caps: "normal",
             text_rendering: "auto",
             transform: Affine::IDENTITY,
+            clip: Rc::new(Vec::new()),
+        }
+    }
+
+    fn draw_state(&self) -> DrawState<'_> {
+        let shadow_color = color_of(&self.shadow_color);
+        DrawState {
+            transform: self.transform,
+            alpha: self.global_alpha as f32,
+            composite: Composite::from_name(self.composite).unwrap_or(Composite::SourceOver),
+            clip: &self.clip,
+            shadow: (shadow_color.components[3] > 0.0).then(|| lp_canvas::Shadow {
+                color: shadow_color,
+                blur: self.shadow_blur,
+                offset: kurbo::Vec2::new(self.shadow_offset_x, self.shadow_offset_y),
+            }),
+            smoothing: self.image_smoothing,
+        }
+    }
+
+    fn stroke(&self) -> kurbo::Stroke {
+        let cap = match self.line_cap {
+            "round" => kurbo::Cap::Round,
+            "square" => kurbo::Cap::Square,
+            _ => kurbo::Cap::Butt,
+        };
+        let join = match self.line_join {
+            "round" => kurbo::Join::Round,
+            "bevel" => kurbo::Join::Bevel,
+            _ => kurbo::Join::Miter,
+        };
+        let stroke =
+            kurbo::Stroke::new(self.line_width).with_caps(cap).with_join(join).with_miter_limit(self.miter_limit);
+        // A dash pattern of zeros draws a solid line, as no pattern does.
+        if self.line_dash.iter().any(|d| *d > 0.0) {
+            stroke.with_dashes(self.line_dash_offset, self.line_dash.iter().copied())
+        } else {
+            stroke
         }
     }
 }
 
+/// What a context draws into.
+#[derive(Clone, Copy, PartialEq)]
+enum Target {
+    /// A `<canvas>`: its `width`/`height` attributes size the bitmap.
+    Element(NodeId),
+    /// An `OffscreenCanvas` (hidden on the wrapper as [`OFFSCREEN`]).
+    Offscreen,
+}
+
 pub struct ContextData {
     page: Rc<PageDom>,
-    canvas: NodeId,
+    target: Target,
     state: RefCell<State>,
     stack: RefCell<Vec<State>>,
     path: RefCell<Path>,
-    /// Something was drawn since the bitmap was last cleared: its pixels
-    /// are unknown here.
-    drawn: Cell<bool>,
+    surface: Rc<RefCell<Surface>>,
+    /// HTML "origin-clean": nothing cross-origin was drawn.
+    clean: Cell<bool>,
 }
 
 impl ContextData {
@@ -179,12 +336,50 @@ impl ContextData {
         *self.state.borrow_mut() = State::new();
         self.stack.borrow_mut().clear();
         *self.path.borrow_mut() = Path::default();
-        self.drawn.set(false);
+    }
+
+    /// An element canvas whose size attributes changed without its IDL
+    /// setters (`setAttribute`): reset as HTML does, before drawing or
+    /// reading.
+    fn sync_size(&self) {
+        let Target::Element(canvas) = self.target else { return };
+        let (w, h) = canvas_size(&self.page, canvas);
+        let mut surface = self.surface.borrow_mut();
+        if surface.width() != w || surface.height() != h {
+            surface.resize(w, h);
+            drop(surface);
+            self.reset();
+        }
     }
 }
 
 fn default_font() -> FontSpec {
     text_metrics::parse_font("10px sans-serif", 10.0).expect("default canvas font")
+}
+
+/// A canvas element's bitmap size: its `width`/`height` attributes.
+fn canvas_size(page: &PageDom, canvas: NodeId) -> (u32, u32) {
+    let dom = page.dom.borrow();
+    let attr = |name: &str, default: u32| {
+        dom.get_attribute(canvas, name).ok().flatten().and_then(|v| v.trim().parse::<u32>().ok()).unwrap_or(default)
+    };
+    (attr("width", 300), attr("height", 150))
+}
+
+fn new_context<'s>(s: &Scope<'s>, page: &Rc<PageDom>, target: Target, w: u32, h: u32) -> JsResult<Object<'s>> {
+    let data = ContextData {
+        page: page.clone(),
+        target,
+        state: RefCell::new(State::new()),
+        stack: RefCell::new(Vec::new()),
+        path: RefCell::new(Path::default()),
+        surface: Rc::new(RefCell::new(Surface::new(w, h))),
+        clean: Cell::new(true),
+    };
+    if let Target::Element(canvas) = target {
+        page.register_canvas(canvas, Rc::downgrade(&data.surface));
+    }
+    s.wrap::<CanvasRenderingContext2D>(data, None)
 }
 
 /// `HTMLCanvasElement.getContext(type)`: one 2D context per canvas; other
@@ -198,35 +393,80 @@ pub fn get_context<'s>(s: &Scope<'s>, page: &Rc<PageDom>, canvas: NodeId, kind: 
     if let Some(existing) = s.get_hidden(element, CONTEXT_2D)? {
         return Ok(existing);
     }
-    let data = ContextData {
-        page: page.clone(),
-        canvas,
-        state: RefCell::new(State::new()),
-        stack: RefCell::new(Vec::new()),
-        path: RefCell::new(Path::default()),
-        drawn: Cell::new(false),
-    };
-    let context = s.wrap::<CanvasRenderingContext2D>(data, None)?;
+    let (w, h) = canvas_size(page, canvas);
+    let context = new_context(s, page, Target::Element(canvas), w, h)?;
+    page.canvas_used.set(true);
     s.set_hidden(element, CONTEXT_2D, context.value())?;
     Ok(context.value())
+}
+
+/// The 2D context of a canvas element, if it has one.
+fn element_context<'s>(s: &Scope<'s>, page: &Rc<PageDom>, canvas: NodeId) -> JsResult<Option<Value<'s>>> {
+    let element = node_value(s, page, Some(canvas))?;
+    let Some(element) = element.as_object() else { return Ok(None) };
+    Ok(s.get_hidden(element, CONTEXT_2D)?.filter(|c| s.unwrap::<CanvasRenderingContext2D>(*c).is_some()))
 }
 
 /// HTML: setting a canvas's `width` or `height` clears its bitmap and resets
 /// its context to the default state.
 pub(crate) fn canvas_resized(s: &Scope<'_>, page: &Rc<PageDom>, canvas: NodeId) -> JsResult<()> {
-    let element = node_value(s, page, Some(canvas))?;
-    let Some(element) = element.as_object() else { return Ok(()) };
-    if let Some(context) = s.get_hidden(element, CONTEXT_2D)? {
-        if let Some(c) = s.unwrap::<CanvasRenderingContext2D>(context) {
-            c.reset();
-        }
+    if let Some(c) = element_context(s, page, canvas)?.and_then(|v| s.unwrap::<CanvasRenderingContext2D>(v)) {
+        c.reset();
+        let (w, h) = canvas_size(page, canvas);
+        c.surface.borrow_mut().resize(w, h);
     }
     Ok(())
 }
 
-/// `HTMLCanvasElement.toBlob(callback)`: the callback gets null (the
-/// serialization fails: there are no pixels to encode), in a task.
-pub(crate) fn to_blob<'s>(s: &Scope<'s>, page: &Rc<PageDom>, a: Args<'s>) -> JsResult<Value<'s>> {
+/// The canvas's pixels in `type` (PNG unless JPEG or WebP is asked for), or
+/// `None` for a canvas without pixels (zero-sized or too large).
+fn encode_canvas(
+    s: &Scope<'_>,
+    page: &Rc<PageDom>,
+    canvas: NodeId,
+    mime: &str,
+    quality: Option<f64>,
+) -> JsResult<Option<(Vec<u8>, &'static str)>> {
+    let (encoding, mime) = lp_canvas::codec::encoding_for(mime, quality);
+    let bytes = match element_context(s, page, canvas)?.and_then(|v| s.unwrap::<CanvasRenderingContext2D>(v)) {
+        Some(c) => {
+            if !c.clean.get() {
+                return Err(security_error());
+            }
+            c.sync_size();
+            c.surface.borrow_mut().encode(encoding)
+        }
+        None => {
+            let (w, h) = canvas_size(page, canvas);
+            Surface::new(w, h).encode(encoding)
+        }
+    };
+    Ok(bytes.map(|b| (b, mime)))
+}
+
+fn quality_arg(v: Value<'_>) -> JsResult<Option<f64>> {
+    Ok(if v.is_number() { Some(v.to_number()?) } else { None })
+}
+
+/// `HTMLCanvasElement.toDataURL(type, quality)`: `data:,` for a canvas
+/// without pixels.
+pub(crate) fn to_data_url<'s>(s: &Scope<'s>, page: &Rc<PageDom>, canvas: NodeId, a: Args<'s>) -> JsResult<Value<'s>> {
+    let mime = if a.get(0).is_undefined() { String::new() } else { dom_string(a.get(0))? };
+    let quality = quality_arg(a.get(1))?;
+    Ok(match encode_canvas(s, page, canvas, &mime, quality)? {
+        Some((bytes, mime)) => {
+            use base64::Engine as _;
+            let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
+            s.string(&format!("data:{mime};base64,{encoded}"))
+        }
+        None => s.string("data:,"),
+    })
+}
+
+/// `HTMLCanvasElement.toBlob(callback, type, quality)`: the canvas is
+/// encoded now; the callback gets the Blob (null for a canvas without
+/// pixels) in a task.
+pub(crate) fn to_blob<'s>(s: &Scope<'s>, page: &Rc<PageDom>, canvas: NodeId, a: Args<'s>) -> JsResult<Value<'s>> {
     a.require(1, "HTMLCanvasElement.toBlob")?;
     let callback = a.get(0);
     if !callback.is_function() {
@@ -234,13 +474,22 @@ pub(crate) fn to_blob<'s>(s: &Scope<'s>, page: &Rc<PageDom>, a: Args<'s>) -> JsR
             "Failed to execute 'toBlob' on 'HTMLCanvasElement': parameter 1 is not of type 'Function'.".into(),
         ));
     }
+    let mime = if a.get(1).is_undefined() { String::new() } else { dom_string(a.get(1))? };
+    let encoded = encode_canvas(s, page, canvas, &mime, quality_arg(a.get(2))?)?;
     let callback = Persistent::new(s, callback);
     let realm = s.realm().downgrade();
     page.post_task(Box::new(move || {
         let Some(realm) = realm.upgrade() else { return };
         let Ok(s) = realm.scope() else { return };
+        let blob = match encoded {
+            Some((bytes, mime)) => match crate::file::make_blob(&s, bytes.into(), mime.into(), None) {
+                Ok(b) => b,
+                Err(e) => return crate::lifecycle::report_diagnostic(&s, &e),
+            },
+            None => s.null(),
+        };
         if let Some(f) = callback.get(&s).as_object() {
-            if let Err(e) = f.call(None, &[s.null()]) {
+            if let Err(e) = f.call(None, &[blob]) {
                 crate::lifecycle::report_diagnostic(&s, &e);
             }
         }
@@ -248,388 +497,580 @@ pub(crate) fn to_blob<'s>(s: &Scope<'s>, page: &Rc<PageDom>, a: Args<'s>) -> JsR
     Ok(s.undefined())
 }
 
-// ---- Paths --------------------------------------------------------------
+// ---- Image handles ---------------------------------------------------------
 
-/// A path in canvas (device) coordinates, as HTML builds it: each point is
-/// transformed by the transform current when it is added.
-#[derive(Default)]
-struct Path {
-    bez: BezPath,
-    /// First point of the last subpath.
-    start: Option<Point>,
-    /// Last point of the last subpath.
-    last: Option<Point>,
-    /// The last subpath was closed: the next segment starts a new subpath at
-    /// its first point.
-    closed: bool,
+/// Pixels an `ImageBitmap` or `CanvasPattern` holds.
+#[derive(Clone)]
+struct ImageHandle {
+    /// `None`: transparent black.
+    pixmap: Option<Arc<Pixmap>>,
+    width: u32,
+    height: u32,
+    clean: bool,
 }
 
-const TOLERANCE: f64 = 0.01;
-
-/// The flattening tolerance for an arc of `radius` (user units) drawn through
-/// `t`: [`TOLERANCE`] in device pixels, but never below a millionth of the
-/// radius. kurbo's segment count grows with radius / tolerance, so a page's
-/// `arc(0, 0, 1e300, 0, 6)` would otherwise never finish.
-fn arc_tolerance(radius: f64, t: Affine) -> f64 {
-    let scale = t.determinant().abs().sqrt();
-    let device = if scale.is_finite() && scale > 0.0 { TOLERANCE / scale } else { TOLERANCE };
-    device.max(radius * 1e-6)
+thread_local! {
+    static HANDED: RefCell<Option<ImageHandle>> = const { RefCell::new(None) };
 }
 
-impl Path {
-    fn move_to(&mut self, p: Point) {
-        self.bez.move_to(p);
-        self.start = Some(p);
-        self.last = Some(p);
-        self.closed = false;
-    }
-    /// HTML "ensure there is a subpath" for `p` (device coordinates).
-    fn ensure(&mut self, p: Point) {
-        match self.last {
-            None => self.move_to(p),
-            Some(last) if self.closed => self.move_to(last),
-            Some(_) => {}
-        }
-    }
-    fn line_to(&mut self, p: Point) {
-        if self.last.is_none() {
-            return self.move_to(p);
-        }
-        self.ensure(p);
-        self.bez.line_to(p);
-        self.last = Some(p);
-    }
-    fn close(&mut self) {
-        if self.last.is_some() && !self.closed {
-            self.bez.close_path();
-            self.last = self.start;
-            self.closed = true;
-        }
-    }
+/// A JS value holding `handle`: a native function whose call hands it over
+/// ([`handle_of`]), so the pixels live exactly as long as the JS object
+/// that keeps it (canvas2d.js keeps it private).
+fn handle_object<'s>(s: &Scope<'s>, handle: ImageHandle) -> JsResult<Object<'s>> {
+    s.function("", move |s, _this, _a| {
+        HANDED.with(|h| *h.borrow_mut() = Some(handle.clone()));
+        Ok(s.undefined())
+    })
 }
 
-/// Adds segments to a [`Path`] in user coordinates, through `t`.
-struct Builder<'a> {
-    path: &'a mut Path,
-    t: Affine,
+fn handle_of(v: Value<'_>) -> JsResult<Option<ImageHandle>> {
+    let Some(f) = v.as_object().filter(|_| v.is_function()) else { return Ok(None) };
+    HANDED.with(|h| h.borrow_mut().take());
+    f.call(None, &[])?;
+    Ok(HANDED.with(|h| h.borrow_mut().take()))
 }
 
-impl Builder<'_> {
-    fn move_to(&mut self, x: f64, y: f64) {
-        self.path.move_to(self.t * Point::new(x, y));
-    }
-    fn line_to(&mut self, x: f64, y: f64) {
-        self.path.line_to(self.t * Point::new(x, y));
-    }
-    fn quad_to(&mut self, cx: f64, cy: f64, x: f64, y: f64) {
-        let c = self.t * Point::new(cx, cy);
-        self.path.ensure(c);
-        let p = self.t * Point::new(x, y);
-        self.path.bez.quad_to(c, p);
-        self.path.last = Some(p);
-    }
-    fn cubic_to(&mut self, c1: (f64, f64), c2: (f64, f64), x: f64, y: f64) {
-        let c1 = self.t * Point::new(c1.0, c1.1);
-        self.path.ensure(c1);
-        let p = self.t * Point::new(x, y);
-        self.path.bez.curve_to(c1, self.t * Point::new(c2.0, c2.1), p);
-        self.path.last = Some(p);
-    }
-    #[allow(clippy::too_many_arguments)]
-    fn ellipse(&mut self, cx: f64, cy: f64, rx: f64, ry: f64, rotation: f64, start: f64, end: f64, ccw: bool) {
-        let sweep = if !ccw && end - start >= TAU {
-            TAU
-        } else if ccw && start - end >= TAU {
-            -TAU
-        } else if ccw {
-            -(start - end).rem_euclid(TAU)
-        } else {
-            (end - start).rem_euclid(TAU)
+/// `[handle, width, height]` for canvas2d.js's `ImageBitmap`.
+fn bitmap_triple<'s>(s: &Scope<'s>, handle: ImageHandle) -> JsResult<Value<'s>> {
+    let (w, h) = (handle.width, handle.height);
+    let object = handle_object(s, handle)?;
+    Ok(s.array(&[object.value(), s.number(f64::from(w)), s.number(f64::from(h))])?.value())
+}
+
+/// An image argument's pixels: `Ok(None)` when it has none to give yet
+/// (an image still loading, a video), errors as HTML specifies.
+fn image_source(
+    s: &Scope<'_>,
+    page: &Rc<PageDom>,
+    value: Value<'_>,
+    what: &str,
+    image_data: bool,
+) -> JsResult<Option<ImageHandle>> {
+    let not_source = || {
+        JsError::Type(format!(
+            "Failed to execute '{what}': The provided value is not of type '(CSSImageValue or HTMLCanvasElement or HTMLImageElement or HTMLVideoElement or ImageBitmap or OffscreenCanvas or SVGImageElement or VideoFrame)'."
+        ))
+    };
+    if let Some(n) = s.unwrap::<crate::node::Node>(value) {
+        let source_page = n.page().clone();
+        let local = {
+            let dom = source_page.dom.borrow();
+            let e = dom.element(n.id).map_err(|_| not_source())?;
+            if !e.is_html() && &*e.name.local != "image" {
+                return Err(not_source());
+            }
+            e.name.local.to_string()
         };
-        let center = Point::new(cx, cy);
-        let radii = Vec2::new(rx, ry);
-        let rot = Affine::rotate(rotation);
-        let first = center + (rot * Point::new(rx * start.cos(), ry * start.sin())).to_vec2();
-        let p = self.t * first;
-        if self.path.last.is_some() {
-            self.path.line_to(p);
-        } else {
-            self.path.move_to(p);
-        }
-        if rx == 0.0 || ry == 0.0 || sweep == 0.0 {
-            let last = center + (rot * Point::new(rx * (start + sweep).cos(), ry * (start + sweep).sin())).to_vec2();
-            return self.path.line_to(self.t * last);
-        }
-        let arc = kurbo::Arc { center, radii, start_angle: start, sweep_angle: sweep, x_rotation: rotation };
-        let mut end_point = p;
-        for el in arc.append_iter(arc_tolerance(rx.max(ry), self.t)) {
-            if let PathEl::CurveTo(a, b, c) = el {
-                end_point = self.t * c;
-                self.path.bez.curve_to(self.t * a, self.t * b, end_point);
-            }
-        }
-        self.path.last = Some(end_point);
-    }
-    fn arc_to(&mut self, x1: f64, y1: f64, x2: f64, y2: f64, r: f64) {
-        let p1 = Point::new(x1, y1);
-        self.path.ensure(self.t * p1);
-        let Some(last) = self.path.last else { return };
-        // The last point, back in user coordinates.
-        let p0 = if self.t.determinant() == 0.0 { last } else { self.t.inverse() * last };
-        let p2 = Point::new(x2, y2);
-        let (v1, v2) = (p0 - p1, p2 - p1);
-        let cross = v1.x * v2.y - v1.y * v2.x;
-        if p0 == p1 || p1 == p2 || r == 0.0 || cross.abs() < 1e-12 {
-            return self.line_to(x1, y1);
-        }
-        let (u1, u2) = (v1.normalize(), v2.normalize());
-        let angle = u1.dot(u2).clamp(-1.0, 1.0).acos();
-        let distance = r / (angle / 2.0).tan();
-        let t1 = p1 + u1 * distance;
-        let t2 = p1 + u2 * distance;
-        let bisector = (u1 + u2).normalize();
-        let center = p1 + bisector * (r / (angle / 2.0).sin());
-        let a1 = (t1.y - center.y).atan2(t1.x - center.x);
-        let a2 = (t2.y - center.y).atan2(t2.x - center.x);
-        // The arc runs the short way from t1 to t2: anticlockwise when p0,
-        // p1, p2 turn clockwise.
-        self.ellipse(center.x, center.y, r, r, 0.0, a1, a2, cross > 0.0);
-    }
-    fn rect(&mut self, x: f64, y: f64, w: f64, h: f64) {
-        self.move_to(x, y);
-        self.line_to(x + w, y);
-        self.line_to(x + w, y + h);
-        self.line_to(x, y + h);
-        self.path.close();
-        self.move_to(x, y);
-    }
-    /// `roundRect` with radii [tl.x, tl.y, tr.x, tr.y, br.x, br.y, bl.x, bl.y].
-    fn round_rect(&mut self, mut x: f64, mut y: f64, mut w: f64, mut h: f64, r: [f64; 8]) {
-        let (mut tl, mut tr, mut br, mut bl) = ((r[0], r[1]), (r[2], r[3]), (r[4], r[5]), (r[6], r[7]));
-        if w < 0.0 {
-            x += w;
-            w = -w;
-            std::mem::swap(&mut tl, &mut tr);
-            std::mem::swap(&mut bl, &mut br);
-        }
-        if h < 0.0 {
-            y += h;
-            h = -h;
-            std::mem::swap(&mut tl, &mut bl);
-            std::mem::swap(&mut tr, &mut br);
-        }
-        let mut scale: f64 = 1.0;
-        for (sum, side) in [(tl.0 + tr.0, w), (tr.1 + br.1, h), (br.0 + bl.0, w), (tl.1 + bl.1, h)] {
-            if sum > 0.0 {
-                scale = scale.min(side / sum);
-            }
-        }
-        let s = |c: (f64, f64)| (c.0 * scale, c.1 * scale);
-        let (tl, tr, br, bl) = (s(tl), s(tr), s(br), s(bl));
-        self.move_to(x + tl.0, y);
-        self.line_to(x + w - tr.0, y);
-        self.ellipse(x + w - tr.0, y + tr.1, tr.0, tr.1, 0.0, -FRAC_PI_2, 0.0, false);
-        self.line_to(x + w, y + h - br.1);
-        self.ellipse(x + w - br.0, y + h - br.1, br.0, br.1, 0.0, 0.0, FRAC_PI_2, false);
-        self.line_to(x + bl.0, y + h);
-        self.ellipse(x + bl.0, y + h - bl.1, bl.0, bl.1, 0.0, FRAC_PI_2, PI, false);
-        self.line_to(x, y + tl.1);
-        self.ellipse(x + tl.0, y + tl.1, tl.0, tl.1, 0.0, PI, PI + FRAC_PI_2, false);
-        self.path.close();
-        self.move_to(x, y);
-    }
-    fn svg(&mut self, data: &str) {
-        // A path whose data has an error draws nothing here (HTML keeps the
-        // part before the error). kurbo flattens SVG arcs at a fixed
-        // tolerance, so arcs with huge numbers would take forever: such
-        // data draws nothing either.
-        if svg_arc_too_large(data) {
-            return;
-        }
-        let Ok(bez) = BezPath::from_svg(data) else { return };
-        for el in bez.elements() {
-            match *el {
-                PathEl::MoveTo(p) => self.path.move_to(self.t * p),
-                PathEl::LineTo(p) => self.path.line_to(self.t * p),
-                PathEl::QuadTo(c, p) => self.quad_to(c.x, c.y, p.x, p.y),
-                PathEl::CurveTo(a, b, p) => self.cubic_to((a.x, a.y), (b.x, b.y), p.x, p.y),
-                PathEl::ClosePath => self.path.close(),
-            }
-        }
-    }
-}
-
-/// Whether SVG path `data` has an arc command and a number of magnitude
-/// 1e12 or more (an integer part of 13+ digits or a positive exponent of 12+):
-/// kurbo would cut such an arc into millions of curves.
-fn svg_arc_too_large(data: &str) -> bool {
-    if !data.bytes().any(|b| b == b'A' || b == b'a') {
-        return false;
-    }
-    let bytes = data.as_bytes();
-    let mut i = 0;
-    let mut digits = 0;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'0'..=b'9' => {
-                digits += 1;
-                if digits >= 13 {
-                    return true;
+        return match local.as_str() {
+            "img" => {
+                if !source_page.image_complete(n.id) {
+                    return Ok(None);
                 }
+                if source_page.dom.borrow().natural_size(n.id).is_none_or(|(w, h)| w == 0.0 || h == 0.0) {
+                    return Err(JsError::dom(
+                        "InvalidStateError",
+                        "The HTMLImageElement provided is in the 'broken' state.",
+                    ));
+                }
+                Ok(source_page.image_pixmap(n.id).map(|(pixmap, clean)| ImageHandle {
+                    width: u32::from(pixmap.width()),
+                    height: u32::from(pixmap.height()),
+                    pixmap: Some(pixmap),
+                    clean,
+                }))
             }
-            b'e' | b'E' => {
-                digits = 0;
-                let mut j = i + 1;
-                let negative = bytes.get(j) == Some(&b'-');
-                if matches!(bytes.get(j), Some(b'-' | b'+')) {
-                    j += 1;
+            "canvas" => {
+                let (w, h) = canvas_size(&source_page, n.id);
+                if w == 0 || h == 0 {
+                    return Err(JsError::dom(
+                        "InvalidStateError",
+                        "The image argument is a canvas element with a width or height of 0.",
+                    ));
                 }
-                let mut exponent = 0u32;
-                while let Some(d @ b'0'..=b'9') = bytes.get(j) {
-                    exponent = exponent.saturating_mul(10).saturating_add(u32::from(d - b'0'));
-                    j += 1;
-                }
-                if !negative && exponent >= 12 {
-                    return true;
-                }
-                i = j;
-                continue;
+                // The context is hidden on the wrapper passed in (the realm that
+                // made it may be another same-origin window's).
+                let context = match value.as_object() {
+                    Some(o) => s.get_hidden(o, CONTEXT_2D)?,
+                    None => None,
+                };
+                let handle = match context.and_then(|v| s.unwrap::<CanvasRenderingContext2D>(v)) {
+                    Some(c) => {
+                        c.sync_size();
+                        let pixmap = c.surface.borrow_mut().snapshot();
+                        ImageHandle { pixmap, width: w, height: h, clean: c.clean.get() }
+                    }
+                    None => ImageHandle { pixmap: None, width: w, height: h, clean: true },
+                };
+                Ok(Some(handle))
             }
-            _ => digits = 0,
-        }
-        i += 1;
-    }
-    false
-}
-
-/// Replays the ops of a Path2D (canvas2d.js) into `path` through `t`.
-fn replay(ops: Object<'_>, path: &mut Path, t: Affine) -> JsResult<()> {
-    let len = ops.get_atom("length")?.to_number()? as u32;
-    let mut stack = vec![t];
-    let mut i = 0;
-    let num = |k: u32| -> JsResult<f64> { ops.get_index(k)?.to_number() };
-    let args = |k: u32, n: u32| -> JsResult<Vec<f64>> { (k..k + n).map(num).collect() };
-    while i < len {
-        let op = num(i)? as u32;
-        let t = *stack.last().expect("transform stack");
-        let mut b = Builder { path, t };
-        let n = match op {
-            0 | 1 => 2,
-            2 | 7 => 4,
-            3 | 10 => 6,
-            4 => 5,
-            5 => 6,
-            6 => 8,
-            9 => 12,
-            8 | 11 => 0,
-            12 => 1,
-            _ => return Err(JsError::Type("corrupt Path2D".into())),
+            // No video frames (no media decoding) and no SVG images.
+            "video" | "image" => Ok(None),
+            _ => Err(not_source()),
         };
-        if op == 12 {
-            b.svg(&ops.get_index(i + 1)?.to_string()?);
-            i += 2;
-            continue;
-        }
-        let v = args(i + 1, n)?;
-        match op {
-            0 => b.move_to(v[0], v[1]),
-            1 => b.line_to(v[0], v[1]),
-            2 => b.quad_to(v[0], v[1], v[2], v[3]),
-            3 => b.cubic_to((v[0], v[1]), (v[2], v[3]), v[4], v[5]),
-            4 => b.arc_to(v[0], v[1], v[2], v[3], v[4]),
-            5 => b.ellipse(v[0], v[1], v[2], v[2], 0.0, v[3], v[4], v[5] != 0.0),
-            6 => b.ellipse(v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7] != 0.0),
-            7 => b.rect(v[0], v[1], v[2], v[3]),
-            8 => b.path.close(),
-            9 => b.round_rect(v[0], v[1], v[2], v[3], v[4..12].try_into().expect("8 radii")),
-            10 => stack.push(t * Affine::new([v[0], v[1], v[2], v[3], v[4], v[5]])),
-            _ => {
-                if stack.len() > 1 {
-                    stack.pop();
+    }
+    if !value.is_object() {
+        return Err(not_source());
+    }
+    let source = MODULE.helper(s, page, "sourceOf", &[value, s.boolean(image_data)])?;
+    let Some(desc) = source.as_object().filter(|_| source.is_array()) else { return Err(not_source()) };
+    let kind = desc.get_index(0)?.to_number()? as u32;
+    match kind {
+        0 => handle_of(desc.get_index(1)?),
+        1 => {
+            let (w, h) = (size_u32(desc.get_index(2)?.to_number()?), size_u32(desc.get_index(3)?.to_number()?));
+            if w == 0 || h == 0 {
+                return Err(JsError::dom(
+                    "InvalidStateError",
+                    "The image argument is an OffscreenCanvas with a width or height of 0.",
+                ));
+            }
+            Ok(Some(match s.unwrap::<CanvasRenderingContext2D>(desc.get_index(1)?) {
+                Some(c) => {
+                    let pixmap = c.surface.borrow_mut().snapshot();
+                    ImageHandle { pixmap, width: w, height: h, clean: c.clean.get() }
                 }
+                None => ImageHandle { pixmap: None, width: w, height: h, clean: true },
+            }))
+        }
+        2 => {
+            let (w, h) = (size_u32(desc.get_index(2)?.to_number()?), size_u32(desc.get_index(3)?.to_number()?));
+            let data = typed_bytes(s, desc.get_index(1)?)?;
+            let pixmap = lp_canvas::pixmap_from_straight(data, w, h).map(Arc::new);
+            Ok(Some(ImageHandle { pixmap, width: w, height: h, clean: true }))
+        }
+        3 => {
+            let blob = s.unwrap::<crate::file::Blob>(desc.get_index(1)?).ok_or_else(not_source)?;
+            let pixmap = lp_canvas::codec::decode(&blob.bytes)
+                .ok_or_else(|| JsError::dom("InvalidStateError", "The source image could not be decoded."))?;
+            let (w, h) = (u32::from(pixmap.width()), u32::from(pixmap.height()));
+            Ok(Some(ImageHandle { pixmap: Some(Arc::new(pixmap)), width: w, height: h, clean: true }))
+        }
+        _ => Err(not_source()),
+    }
+}
+
+/// `createImageBitmap` (canvas2d.js): `[handle, width, height]` of the
+/// source's pixels, cropped, resized and flipped as asked.
+fn make_bitmap<'s>(s: &Scope<'s>, a: Args<'s>) -> JsResult<Value<'s>> {
+    let page = crate::target::page_of(s)?;
+    page.canvas_used.set(true);
+    let what = "Window.createImageBitmap";
+    let Some(source) = image_source(s, &page, a.get(0), what, true)? else {
+        return Err(JsError::dom("InvalidStateError", "The source image could not be decoded."));
+    };
+    let crop = match a.get(1).as_object() {
+        Some(c) => {
+            let v: Vec<f64> = (0..4).map(|i| c.get_index(i).and_then(|v| v.to_number())).collect::<JsResult<_>>()?;
+            Rect::new(v[0], v[1], v[0] + v[2], v[1] + v[3]).abs()
+        }
+        None => Rect::new(0.0, 0.0, f64::from(source.width), f64::from(source.height)),
+    };
+    let (rw, rh) = (size_u32(a.get(2).to_number()?), size_u32(a.get(3).to_number()?));
+    let flip = a.get(4).to_bool();
+    let smooth = a.get(5).to_bool();
+    let (cw, ch) = (crop.width(), crop.height());
+    let (w, h) = match (rw, rh) {
+        (0, 0) => (cw.round() as u32, ch.round() as u32),
+        (w, 0) => (w, ((f64::from(w) * ch / cw).round() as u32).max(1)),
+        (0, h) => (((f64::from(h) * cw / ch).round() as u32).max(1), h),
+        (w, h) => (w, h),
+    };
+    if !lp_canvas::valid_size(w, h) {
+        return Err(JsError::dom("InvalidStateError", "The ImageBitmap could not be allocated."));
+    }
+    let whole = crop == Rect::new(0.0, 0.0, f64::from(source.width), f64::from(source.height));
+    let pixmap = if whole && (w, h) == (source.width, source.height) && !flip {
+        source.pixmap
+    } else if let Some(image) = source.pixmap {
+        let mut surface = Surface::new(w, h);
+        let mut state = State::new();
+        state.image_smoothing = smooth;
+        if flip {
+            state.transform = Affine::new([1.0, 0.0, 0.0, -1.0, 0.0, f64::from(h)]);
+        }
+        surface.draw_image(&image, crop, Rect::new(0.0, 0.0, f64::from(w), f64::from(h)), &state.draw_state());
+        surface.snapshot()
+    } else {
+        None
+    };
+    bitmap_triple(s, ImageHandle { pixmap, width: w, height: h, clean: source.clean })
+}
+
+/// A copy of the bytes of a typed array (an `ImageData`'s data).
+fn typed_bytes(s: &Scope<'_>, v: Value<'_>) -> JsResult<Vec<u8>> {
+    Ok(crate::encoding::buffer_source_bytes(s, v)?.unwrap_or_default())
+}
+
+/// A new `Uint8ClampedArray` holding `bytes`.
+fn clamped_array<'s>(s: &Scope<'s>, bytes: &[u8]) -> JsResult<Value<'s>> {
+    let ctx = s.ctx();
+    let mut exc = std::ptr::null();
+    // SAFETY: JSObjectMakeTypedArray allocates a zeroed array of `len` bytes
+    // owned by JSC; the bytes are copied in before control returns to JS.
+    unsafe {
+        let obj = sys::JSObjectMakeTypedArray(ctx, sys::kJSTypedArrayTypeUint8ClampedArray, bytes.len(), &mut exc);
+        if !exc.is_null() || obj.is_null() {
+            return Err(JsError::Range("Out of memory at ImageData creation.".into()));
+        }
+        if !bytes.is_empty() {
+            let ptr = sys::JSObjectGetTypedArrayBytesPtr(ctx, obj, &mut exc) as *mut u8;
+            if !exc.is_null() {
+                return Err(JsError::Range("Out of memory at ImageData creation.".into()));
+            }
+            if !ptr.is_null() {
+                std::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr, bytes.len());
             }
         }
-        i += 1 + n;
+        Ok(Value::from_raw(ctx, obj as sys::JSValueRef))
     }
+}
+
+// ---- Paints ------------------------------------------------------------------
+
+/// The paint of a style, and whether it is origin-clean. `None`: it paints
+/// nothing.
+fn paint_of(s: &Scope<'_>, c: &ContextData, style: &Style) -> JsResult<Option<(Paint, bool)>> {
+    let (object, cache) = match style {
+        Style::Color(_, color) => return Ok(Some((Paint::Color(*color), true))),
+        Style::Object(o, cache) => (o.get(s), cache),
+    };
+    let record = module_helper(s, c, "paintRecord", &[object])?;
+    let Some(record) = record.as_object() else { return Ok(None) };
+    let version = record.get_atom("version")?.to_number()?;
+    if let Some((v, paint, clean)) = &*cache.borrow() {
+        if *v == version {
+            return Ok(Some((paint.clone(), *clean)));
+        }
+    }
+    let made = if record.get_atom("stops")?.is_object() {
+        gradient_paint(record)?.map(|g| (Paint::Gradient(Arc::new(g)), true))
+    } else {
+        pattern_paint(record)?
+    };
+    if let Some((paint, clean)) = &made {
+        *cache.borrow_mut() = Some((version, paint.clone(), *clean));
+    }
+    Ok(made)
+}
+
+fn numbers(array: Object<'_>) -> JsResult<Vec<f64>> {
+    let len = array.get_atom("length")?.to_number()? as u32;
+    (0..len).map(|i| array.get_index(i)?.to_number()).collect()
+}
+
+fn gradient_paint(record: Object<'_>) -> JsResult<Option<lp_canvas::Gradient>> {
+    let kind = record.get_atom("kind")?.to_string()?;
+    let Some(args) = record.get_atom("args")?.as_object() else { return Ok(None) };
+    let v = numbers(args)?;
+    let Some(stops) = record.get_atom("stops")?.as_object() else { return Ok(None) };
+    let len = stops.get_atom("length")?.to_number()? as u32;
+    let mut list = Vec::with_capacity(len as usize / 2);
+    for i in (0..len).step_by(2) {
+        let offset = stops.get_index(i)?.to_number()? as f32;
+        let color = color_of(&stops.get_index(i + 1)?.to_string()?);
+        list.push((offset, color));
+    }
+    let p = |i: usize| Point::new(v[i], v[i + 1]);
+    let kind = match (kind.as_str(), v.len()) {
+        ("linear", 4) => lp_canvas::GradientKind::Linear { start: p(0), end: p(2) },
+        ("radial", 6) => {
+            lp_canvas::GradientKind::Radial { start: p(0), start_radius: v[2], end: p(3), end_radius: v[5] }
+        }
+        ("conic", 3) => lp_canvas::GradientKind::Conic { center: p(1), angle: v[0] },
+        _ => return Ok(None),
+    };
+    Ok(Some(lp_canvas::Gradient { kind, stops: list }))
+}
+
+fn pattern_paint(record: Object<'_>) -> JsResult<Option<(Paint, bool)>> {
+    let Some(handle) = handle_of(record.get_atom("image")?)? else { return Ok(None) };
+    let repetition = record.get_atom("repetition")?.to_string()?;
+    let t = record.get_atom("transform")?.as_object().map(numbers).transpose()?.unwrap_or_default();
+    let transform = if t.len() == 6 { Affine::new([t[0], t[1], t[2], t[3], t[4], t[5]]) } else { Affine::IDENTITY };
+    // A transparent source paints nothing visible: a 1x1 transparent image
+    // keeps the pattern's geometry rules simple.
+    let image = handle.pixmap.unwrap_or_else(|| Arc::new(Pixmap::new(1, 1)));
+    let pattern = lp_canvas::Pattern {
+        image,
+        repeat_x: matches!(repetition.as_str(), "repeat" | "repeat-x"),
+        repeat_y: matches!(repetition.as_str(), "repeat" | "repeat-y"),
+        transform,
+    };
+    Ok(Some((Paint::Pattern(Arc::new(pattern)), handle.clean)))
+}
+
+// ---- Drawing -------------------------------------------------------------------
+
+/// Draws with the fill or stroke style: `draw` gets the surface, the paint
+/// and the state.
+fn with_paint(
+    s: &Scope<'_>,
+    c: &ContextData,
+    fill: bool,
+    draw: impl FnOnce(&mut Surface, &Paint, &State),
+) -> JsResult<()> {
+    c.sync_size();
+    let style = {
+        let state = c.state.borrow();
+        if fill {
+            state.fill_style.clone()
+        } else {
+            state.stroke_style.clone()
+        }
+    };
+    // No page script runs while the state is borrowed: reading the style
+    // object (canvas2d.js records) happens before.
+    let Some((paint, clean)) = paint_of(s, c, &style)? else { return Ok(()) };
+    if !clean {
+        c.clean.set(false);
+    }
+    let state = c.state.borrow();
+    draw(&mut c.surface.borrow_mut(), &paint, &state);
     Ok(())
 }
 
-/// `path` with every subpath closed (filling closes them implicitly).
-fn closed(path: &BezPath) -> BezPath {
-    let mut out = BezPath::new();
-    let mut open = false;
-    for el in path.elements() {
-        match el {
-            PathEl::MoveTo(_) => {
-                if open {
-                    out.close_path();
-                }
-                open = true;
-            }
-            PathEl::ClosePath => open = false,
-            _ => {}
+/// The fill rule argument at `a[i]` (absent: nonzero).
+fn fill_rule(a: &Args<'_>, i: usize, what: &str) -> JsResult<bool> {
+    let rule = a.get(i);
+    if rule.is_undefined() {
+        return Ok(false);
+    }
+    match dom_string(rule)?.as_str() {
+        "nonzero" => Ok(false),
+        "evenodd" => Ok(true),
+        other => Err(JsError::Type(format!(
+            "Failed to execute '{what}': The provided value '{other}' is not a valid enum value of type CanvasFillRule."
+        ))),
+    }
+}
+
+/// The path of `fill`/`stroke`/`clip` (a Path2D at `a[0]`, else the current
+/// path) in device coordinates, and the index of the next argument.
+fn path_arg(s: &Scope<'_>, c: &ContextData, a: &Args<'_>, what: &str) -> JsResult<(BezPath, usize)> {
+    if a.get(0).is_object() {
+        let Some(ops) = path2d_arg(s, c, a)? else {
+            return Err(JsError::Type(format!("Failed to execute '{what}': parameter 1 is not of type 'Path2D'.")));
+        };
+        let mut path = Path::default();
+        replay(ops, &mut path, c.state.borrow().transform)?;
+        return Ok((path.bez, 1));
+    }
+    Ok((c.path.borrow().bez.clone(), 0))
+}
+
+/// `fillText`/`strokeText`.
+fn draw_text(s: &Scope<'_>, c: &ContextData, a: Args<'_>, fill: bool) -> JsResult<()> {
+    let what = if fill { "CanvasRenderingContext2D.fillText" } else { "CanvasRenderingContext2D.strokeText" };
+    a.require(3, what)?;
+    let text = dom_string(a.get(0))?;
+    let (x, y) = (a.get(1).to_number()?, a.get(2).to_number()?);
+    let max_width = if a.get(3).is_undefined() { None } else { Some(a.get(3).to_number()?) };
+    if !x.is_finite() || !y.is_finite() || max_width.is_some_and(|m| !m.is_finite() || m <= 0.0) {
+        return Ok(());
+    }
+    let state = c.state.borrow();
+    let layout = layout_text(&text, &state);
+    if layout.runs.is_empty() {
+        return Ok(());
+    }
+    let scale = match max_width {
+        Some(m) if layout.width > m => m / layout.width,
+        _ => 1.0,
+    };
+    let width = layout.width * scale;
+    let dx = match align_of(&state) {
+        Align::Center => -width / 2.0,
+        Align::Right => -width,
+        Align::Left => 0.0,
+    };
+    let dy = baseline_shift(state.text_baseline, layout.ascent, layout.descent);
+    let stroke = (!fill).then(|| state.stroke());
+    drop(state);
+    with_paint(s, c, fill, |surface, paint, state| {
+        surface.text(&layout, Point::new(x + dx, y + dy), scale, stroke.as_ref(), paint, &state.draw_state());
+    })
+}
+
+enum Align {
+    Left,
+    Center,
+    Right,
+}
+
+/// `textAlign` resolved for the direction (`inherit` is left-to-right).
+fn align_of(state: &State) -> Align {
+    let rtl = state.direction == "rtl";
+    match state.text_align {
+        "center" => Align::Center,
+        "left" => Align::Left,
+        "right" => Align::Right,
+        "end" if !rtl => Align::Right,
+        "start" if rtl => Align::Right,
+        _ => Align::Left,
+    }
+}
+
+fn spacing_px(value: &str, font_size: f64) -> f32 {
+    let v = value.trim();
+    let (number, unit) = v.find(|ch: char| ch.is_ascii_alphabetic()).map_or((v, ""), |i| v.split_at(i));
+    let n: f64 = number.trim().parse().unwrap_or(0.0);
+    (match unit {
+        "em" => n * font_size,
+        _ => n,
+    }) as f32
+}
+
+fn layout_text(text: &str, state: &State) -> lp_canvas::text::TextLayout {
+    let font = &state.font;
+    let style = lp_canvas::text::TextStyle {
+        family: &font.family,
+        size: font.size as f32,
+        weight: f32::from(font.weight),
+        italic: font.style != "normal",
+        letter_spacing: spacing_px(&state.letter_spacing, font.size),
+        word_spacing: spacing_px(&state.word_spacing, font.size),
+    };
+    lp_canvas::text::layout(text, &style)
+}
+
+/// `drawImage` with 3, 5 or 9 arguments.
+fn draw_image<'s>(s: &Scope<'s>, c: &ContextData, a: Args<'s>) -> JsResult<Value<'s>> {
+    let what = "CanvasRenderingContext2D.drawImage";
+    a.require(3, what)?;
+    let n = a.len();
+    if !matches!(n, 3 | 5) && n < 9 {
+        return Err(JsError::Type(format!("Failed to execute 'drawImage' on 'CanvasRenderingContext2D': Valid arities are: [3, 5, 9], but {n} arguments provided.")));
+    }
+    let Some(source) = image_source(s, &c.page, a.get(0), what, false)? else { return Ok(s.undefined()) };
+    let v = finite_args_from(&a, 1, if n >= 9 { 8 } else { n - 1 })?;
+    let Some(v) = v else { return Ok(s.undefined()) };
+    let (sw, sh) = (f64::from(source.width), f64::from(source.height));
+    let (src, dst) = match v.len() {
+        2 => (Rect::new(0.0, 0.0, sw, sh), Rect::new(v[0], v[1], v[0] + sw, v[1] + sh)),
+        4 => (Rect::new(0.0, 0.0, sw, sh), Rect::new(v[0], v[1], v[0] + v[2], v[1] + v[3])),
+        _ => (Rect::new(v[0], v[1], v[0] + v[2], v[1] + v[3]), Rect::new(v[4], v[5], v[4] + v[6], v[5] + v[7])),
+    };
+    if !source.clean {
+        c.clean.set(false);
+    }
+    let Some(image) = source.pixmap else { return Ok(s.undefined()) };
+    // The source's size may differ from its pixels' (a canvas snapshot is
+    // its bitmap); map the source rectangle onto the pixels.
+    let (px, py) = (f64::from(image.width()) / sw.max(1.0), f64::from(image.height()) / sh.max(1.0));
+    let src = Rect::new(src.x0 * px, src.y0 * py, src.x1 * px, src.y1 * py);
+    c.sync_size();
+    let state = c.state.borrow().clone();
+    c.surface.borrow_mut().draw_image(&image, src, dst, &state.draw_state());
+    Ok(s.undefined())
+}
+
+fn finite_args_from(a: &Args<'_>, from: usize, n: usize) -> JsResult<Option<Vec<f64>>> {
+    let mut v = Vec::with_capacity(n);
+    for i in from..from + n {
+        v.push(a.get(i).to_number()?);
+    }
+    Ok(v.iter().all(|x| x.is_finite()).then_some(v))
+}
+
+/// `getImageData(sx, sy, sw, sh, settings)`.
+fn get_image_data<'s>(s: &Scope<'s>, c: &ContextData, a: Args<'s>) -> JsResult<Value<'s>> {
+    a.require(4, "CanvasRenderingContext2D.getImageData")?;
+    let (mut x, mut y, mut w, mut h) = (long(a.get(0))?, long(a.get(1))?, long(a.get(2))?, long(a.get(3))?);
+    if w == 0 || h == 0 {
+        return Err(JsError::dom(
+            "IndexSizeError",
+            format!("The source {} is 0.", if w == 0 { "width" } else { "height" }),
+        ));
+    }
+    let space = if a.get(4).is_object() {
+        let settings = a.get(4).as_object().expect("object").get_atom("colorSpace")?;
+        if settings.is_undefined() {
+            "srgb".to_owned()
+        } else {
+            dom_string(settings)?
         }
-        out.push(*el);
-    }
-    if open {
-        out.close_path();
-    }
-    out
-}
-
-/// Whether `p` is on one of `path`'s segments (counts as inside).
-fn on_outline(path: &BezPath, p: Point) -> bool {
-    path.segments().any(|seg| seg.nearest(p, 1e-9).distance_sq < 1e-12)
-}
-
-fn point_in_fill(path: &BezPath, p: Point, evenodd: bool) -> bool {
-    if !p.x.is_finite() || !p.y.is_finite() {
-        return false;
-    }
-    let path = closed(path);
-    let winding = path.winding(p);
-    (if evenodd { winding % 2 != 0 } else { winding != 0 }) || on_outline(&path, p)
-}
-
-/// The outline of `path` stroked with `state`'s line settings, and the
-/// factor it was scaled by: wide strokes are computed scaled down to a width
-/// of 1 (scale the query point by the same factor), because kurbo flattens
-/// round joins and caps at a fixed tolerance and a page's
-/// `lineWidth = 1e300` would otherwise never finish.
-fn stroke_outline(path: &BezPath, state: &State) -> (BezPath, f64) {
-    let t = state.transform;
-    let scale = t.determinant().abs().sqrt();
-    let width = state.line_width * scale;
-    let k = if width > 1.0 { 1.0 / width } else { 1.0 };
-    let cap = match state.line_cap {
-        "round" => kurbo::Cap::Round,
-        "square" => kurbo::Cap::Square,
-        _ => kurbo::Cap::Butt,
+    } else {
+        "srgb".to_owned()
     };
-    let join = match state.line_join {
-        "round" => kurbo::Join::Round,
-        "bevel" => kurbo::Join::Bevel,
-        _ => kurbo::Join::Miter,
+    if space != "srgb" && space != "display-p3" {
+        return Err(JsError::Type(format!(
+            "The provided value '{space}' is not a valid enum value of type PredefinedColorSpace."
+        )));
+    }
+    if !c.clean.get() {
+        return Err(security_error());
+    }
+    if w < 0 {
+        x += w;
+        w = -w;
+    }
+    if h < 0 {
+        y += h;
+        h = -h;
+    }
+    if (w as u64) * (h as u64) > lp_canvas::MAX_AREA {
+        return Err(JsError::Range("Out of memory at ImageData creation.".into()));
+    }
+    c.sync_size();
+    let pixels = c.surface.borrow_mut().get_image_data(x, y, w as u32, h as u32);
+    let data = clamped_array(s, &pixels)?;
+    module_helper(s, c, "imageDataOf", &[data, s.number(w as f64), s.number(h as f64), s.string(&space)])
+}
+
+/// `putImageData(imagedata, dx, dy, dirtyX, dirtyY, dirtyWidth, dirtyHeight)`.
+fn put_image_data<'s>(s: &Scope<'s>, c: &ContextData, a: Args<'s>) -> JsResult<Value<'s>> {
+    a.require(3, "CanvasRenderingContext2D.putImageData")?;
+    let info = module_helper(s, c, "imageInfo", &[a.get(0)])?;
+    let Some(info) = info.as_object() else {
+        return Err(JsError::Type(
+            "Failed to execute 'putImageData' on 'CanvasRenderingContext2D': parameter 1 is not of type 'ImageData'."
+                .into(),
+        ));
     };
-    let style = kurbo::Stroke::new(width * k).with_caps(cap).with_join(join).with_miter_limit(state.miter_limit);
-    let scaled = Affine::scale(k);
-    let outline = kurbo::stroke(
-        path.elements().iter().map(|el| scaled * *el),
-        &style,
-        &kurbo::StrokeOpts::default(),
-        (TOLERANCE * k).max(1e-6),
+    let (iw, ih) = (info.get_index(0)?.to_number()? as i64, info.get_index(1)?.to_number()? as i64);
+    let (dx, dy) = (long(a.get(1))?, long(a.get(2))?);
+    let (mut bx, mut by, mut bw, mut bh) = (0, 0, iw, ih);
+    if a.len() >= 7 {
+        (bx, by, bw, bh) = (long(a.get(3))?, long(a.get(4))?, long(a.get(5))?, long(a.get(6))?);
+        if bw < 0 {
+            bx += bw;
+            bw = -bw;
+        }
+        if bh < 0 {
+            by += bh;
+            bh = -bh;
+        }
+        if bx < 0 {
+            bw += bx;
+            bx = 0;
+        }
+        if by < 0 {
+            bh += by;
+            by = 0;
+        }
+        bw = bw.min(iw - bx);
+        bh = bh.min(ih - by);
+    }
+    if bw <= 0 || bh <= 0 {
+        return Ok(s.undefined());
+    }
+    let data = typed_bytes(s, info.get_index(2)?)?;
+    c.sync_size();
+    c.surface.borrow_mut().put_image_data(
+        &data,
+        iw as u32,
+        ih as u32,
+        dx,
+        dy,
+        (bx as u32, by as u32, bw as u32, bh as u32),
     );
-    (outline, k)
+    Ok(s.undefined())
 }
 
 // ---- The context ----------------------------------------------------------
 
 fn finite_args(a: &Args<'_>, n: usize) -> JsResult<Option<Vec<f64>>> {
-    let mut v = Vec::with_capacity(n);
-    for i in 0..n {
-        v.push(a.get(i).to_number()?);
-    }
-    Ok(v.iter().all(|x| x.is_finite()).then_some(v))
+    finite_args_from(a, 0, n)
 }
 
 /// Web IDL `double` arguments: non-finite values throw.
@@ -657,25 +1098,26 @@ fn module_helper<'s>(s: &Scope<'s>, c: &ContextData, name: &str, args: &[Value<'
 
 fn style_value<'s>(s: &Scope<'s>, style: &Style) -> Value<'s> {
     match style {
-        Style::Color(c) => s.string(c),
-        Style::Object(o) => o.get(s),
+        Style::Color(c, _) => s.string(c),
+        Style::Object(o, _) => o.get(s),
     }
 }
 
 fn set_style(s: &Scope<'_>, c: &ContextData, v: Value<'_>, fill: bool) -> JsResult<()> {
+    let color = |text: String| canvas_color(&text).map(|c| Style::Color(c.clone(), color_of(&c)));
     let style = if v.is_object() {
         if !module_helper(s, c, "isFillStyle", &[v])?.to_bool() {
             // Any other object is converted to a string, as for a color.
-            match canvas_color(&dom_string(v)?) {
-                Some(color) => Style::Color(color),
+            match color(dom_string(v)?) {
+                Some(style) => style,
                 None => return Ok(()),
             }
         } else {
-            Style::Object(Persistent::new(s, v))
+            Style::Object(Persistent::new(s, v), Rc::default())
         }
     } else {
-        match canvas_color(&dom_string(v)?) {
-            Some(color) => Style::Color(color),
+        match color(dom_string(v)?) {
+            Some(style) => style,
             None => return Ok(()),
         }
     };
@@ -737,47 +1179,6 @@ macro_rules! string_state {
     };
 }
 
-const COMPOSITE: [&str; 26] = [
-    "source-over",
-    "source-in",
-    "source-out",
-    "source-atop",
-    "destination-over",
-    "destination-in",
-    "destination-out",
-    "destination-atop",
-    "lighter",
-    "copy",
-    "xor",
-    "multiply",
-    "screen",
-    "overlay",
-    "darken",
-    "lighten",
-    "color-dodge",
-    "color-burn",
-    "hard-light",
-    "soft-light",
-    "difference",
-    "exclusion",
-    "hue",
-    "saturation",
-    "color",
-    "luminosity",
-];
-
-fn canvas_size(c: &ContextData) -> (f64, f64) {
-    let dom = c.page.dom.borrow();
-    let attr = |name: &str, default: f64| {
-        dom.get_attribute(c.canvas, name)
-            .ok()
-            .flatten()
-            .and_then(|v| v.trim().parse::<u32>().ok())
-            .map_or(default, f64::from)
-    };
-    (attr("width", 300.0), attr("height", 150.0))
-}
-
 /// The path argument of `fill`/`stroke`/`clip`/`isPointIn*`: a Path2D at
 /// `a[0]`, or None.
 fn path2d_arg<'s>(s: &Scope<'s>, c: &ContextData, a: &Args<'s>) -> JsResult<Option<Object<'s>>> {
@@ -799,20 +1200,7 @@ fn is_point_in<'s>(s: &Scope<'s>, c: &ContextData, a: Args<'s>, stroke: bool) ->
     a.require(base + 2, what)?;
     let x = a.get(base).to_number()?;
     let y = a.get(base + 1).to_number()?;
-    let rule = a.get(base + 2);
-    let evenodd = if rule.is_undefined() {
-        false
-    } else {
-        match dom_string(rule)?.as_str() {
-            "nonzero" => false,
-            "evenodd" => true,
-            other => {
-                return Err(JsError::Type(format!(
-                    "Failed to execute '{what}': The provided value '{other}' is not a valid enum value of type CanvasFillRule."
-                )));
-            }
-        }
-    };
+    let evenodd = fill_rule(&a, base + 2, what)?;
     let p = Point::new(x, y);
     if !x.is_finite() || !y.is_finite() {
         return Ok(s.boolean(false));
@@ -850,19 +1238,7 @@ fn baseline_shift(baseline: &str, ascent: f64, descent: f64) -> f64 {
     }
 }
 
-fn image_source_kind(s: &Scope<'_>, v: Value<'_>) -> Option<(Rc<PageDom>, NodeId, String)> {
-    let n = s.unwrap::<crate::node::Node>(v)?;
-    let page = n.page().clone();
-    let local = {
-        let dom = page.dom.borrow();
-        let e = dom.element(n.id).ok()?;
-        if !e.is_html() && &*e.name.local != "image" {
-            return None;
-        }
-        e.name.local.to_string()
-    };
-    Some((page, n.id, local))
-}
+use kurbo::Shape as _;
 
 pub struct CanvasRenderingContext2D;
 impl JsClass for CanvasRenderingContext2D {
@@ -870,7 +1246,10 @@ impl JsClass for CanvasRenderingContext2D {
     type Data = ContextData;
     type Parent = NoParent;
     fn define(def: &mut ClassDef<Self>) {
-        def.getter("canvas", |s, c| node_value(s, &c.page, Some(c.canvas)));
+        def.getter_this("canvas", |s, c, this| match c.target {
+            Target::Element(canvas) => node_value(s, &c.page, Some(canvas)),
+            Target::Offscreen => Ok(s.get_hidden(this, OFFSCREEN)?.unwrap_or_else(|| s.null())),
+        });
         def.method("getContextAttributes", 0, |s, _c, _a| {
             let o = s.object();
             o.set_atom("alpha", s.boolean(true))?;
@@ -882,6 +1261,9 @@ impl JsClass for CanvasRenderingContext2D {
         def.method("isContextLost", 0, |s, _c, _a| Ok(s.boolean(false)));
         def.method("reset", 0, |s, c, _a| {
             c.reset();
+            let mut surface = c.surface.borrow_mut();
+            let (w, h) = (surface.width(), surface.height());
+            surface.resize(w, h);
             Ok(s.undefined())
         });
         def.accessor(
@@ -950,8 +1332,8 @@ impl JsClass for CanvasRenderingContext2D {
             |s, c| Ok(s.string(c.state.borrow().composite)),
             |_s, c, v| {
                 let v = dom_string(v)?;
-                if let Some(&op) = COMPOSITE.iter().find(|k| **k == v) {
-                    c.state.borrow_mut().composite = op;
+                if let Some((name, _)) = Composite::ALL.iter().find(|(k, _)| *k == v) {
+                    c.state.borrow_mut().composite = name;
                 }
                 Ok(())
             },
@@ -986,35 +1368,32 @@ impl JsClass for CanvasRenderingContext2D {
         );
         def.method("measureText", 1, |s, c, a| {
             let text = arg_string(&a, 0, "CanvasRenderingContext2D.measureText")?;
-            let state = c.state.borrow().clone();
-            let font = &state.font;
-            let width = if font.is_monospace() {
-                text_metrics::monospace_width(&text, font.size)
-            } else {
-                text_metrics::text_width(&text, font.size, font.weight)
-            };
-            let (ascent, descent) = text_metrics::vertical_metrics(font.size);
-            // Left-to-right: start/left align at x, end/right end at x.
-            let left = match state.text_align {
-                "center" => width / 2.0,
-                "end" | "right" => width,
-                _ => 0.0,
+            let state = c.state.borrow();
+            let layout = layout_text(&text, &state);
+            let (width, ascent, descent) = (layout.width, layout.ascent, layout.descent);
+            // Where the text starts relative to the alignment point.
+            let start = match align_of(&state) {
+                Align::Center => -width / 2.0,
+                Align::Right => -width,
+                Align::Left => 0.0,
             };
             let shift = baseline_shift(state.text_baseline, ascent, descent);
+            let ink = layout.ink.unwrap_or_default();
             let values = [
                 width,
-                left,
-                width - left,
+                -(start + ink.x0),
+                start + ink.x1,
                 ascent - shift,
                 descent + shift,
-                ascent - shift,
-                descent + shift,
+                -ink.y0 - shift,
+                ink.y1 + shift,
                 ascent - shift,
                 descent + shift,
                 ascent * 0.8 - shift,
                 -shift,
                 -descent - shift,
             ];
+            drop(state);
             let values: Vec<Value<'_>> = values.iter().map(|v| s.number(*v)).collect();
             let array = s.array(&values)?;
             module_helper(s, c, "textMetrics", &[array.value()])
@@ -1174,30 +1553,81 @@ impl JsClass for CanvasRenderingContext2D {
         def.method("isPointInPath", 2, |s, c, a| is_point_in(s, c, a, false));
         def.method("isPointInStroke", 2, |s, c, a| is_point_in(s, c, a, true));
 
-        // Drawing: no pixels. The bitmap's content is unknown afterwards.
-        for name in
-            ["fillRect", "strokeRect", "fillText", "strokeText", "fill", "stroke", "drawImage", "drawFocusIfNeeded"]
-        {
-            def.method(name, 0, |s, c, _a| {
-                c.drawn.set(true);
-                Ok(s.undefined())
-            });
-        }
-        def.method("clip", 0, |s, _c, _a| Ok(s.undefined()));
+        // Drawing.
+        def.method("fill", 0, |s, c, a| {
+            let (path, next) = path_arg(s, c, &a, "CanvasRenderingContext2D.fill")?;
+            let evenodd = fill_rule(&a, next, "CanvasRenderingContext2D.fill")?;
+            let path = closed(&path);
+            with_paint(s, c, true, |surface, paint, state| surface.fill(&path, evenodd, paint, &state.draw_state()))?;
+            Ok(s.undefined())
+        });
+        def.method("stroke", 0, |s, c, a| {
+            let (path, _) = path_arg(s, c, &a, "CanvasRenderingContext2D.stroke")?;
+            with_paint(s, c, false, |surface, paint, state| {
+                surface.stroke(&path, &state.stroke(), paint, &state.draw_state())
+            })?;
+            Ok(s.undefined())
+        });
+        def.method("clip", 0, |s, c, a| {
+            let (path, next) = path_arg(s, c, &a, "CanvasRenderingContext2D.clip")?;
+            let evenodd = fill_rule(&a, next, "CanvasRenderingContext2D.clip")?;
+            let clip = ClipPath { path: closed(&path), evenodd };
+            Rc::make_mut(&mut c.state.borrow_mut().clip).push(clip);
+            Ok(s.undefined())
+        });
+        def.method("fillRect", 4, |s, c, a| {
+            a.require(4, "CanvasRenderingContext2D.fillRect")?;
+            let Some(v) = finite_args(&a, 4)? else { return Ok(s.undefined()) };
+            if v[2] == 0.0 || v[3] == 0.0 {
+                return Ok(s.undefined());
+            }
+            let t = c.state.borrow().transform;
+            let mut path = Path::default();
+            Builder { path: &mut path, t }.rect(v[0], v[1], v[2], v[3]);
+            with_paint(s, c, true, |surface, paint, state| surface.fill(&path.bez, false, paint, &state.draw_state()))?;
+            Ok(s.undefined())
+        });
+        def.method("strokeRect", 4, |s, c, a| {
+            a.require(4, "CanvasRenderingContext2D.strokeRect")?;
+            let Some(v) = finite_args(&a, 4)? else { return Ok(s.undefined()) };
+            let t = c.state.borrow().transform;
+            let mut path = Path::default();
+            let mut b = Builder { path: &mut path, t };
+            if v[2] == 0.0 && v[3] == 0.0 {
+                return Ok(s.undefined());
+            } else if v[2] == 0.0 || v[3] == 0.0 {
+                // A line, with caps.
+                b.move_to(v[0], v[1]);
+                b.line_to(v[0] + v[2], v[1] + v[3]);
+            } else {
+                b.rect(v[0], v[1], v[2], v[3]);
+            }
+            with_paint(s, c, false, |surface, paint, state| {
+                surface.stroke(&path.bez, &state.stroke(), paint, &state.draw_state())
+            })?;
+            Ok(s.undefined())
+        });
         def.method("clearRect", 4, |s, c, a| {
             a.require(4, "CanvasRenderingContext2D.clearRect")?;
-            // Clearing the whole bitmap makes its pixels known again.
             if let Some(v) = finite_args(&a, 4)? {
-                let (w, h) = canvas_size(c);
-                let (x0, x1) = (v[0].min(v[0] + v[2]), v[0].max(v[0] + v[2]));
-                let (y0, y1) = (v[1].min(v[1] + v[3]), v[1].max(v[1] + v[3]));
-                let t = c.state.borrow().transform;
-                if t == Affine::IDENTITY && x0 <= 0.0 && y0 <= 0.0 && x1 >= w && y1 >= h {
-                    c.drawn.set(false);
-                }
+                c.sync_size();
+                let state = c.state.borrow();
+                let rect = Rect::new(v[0], v[1], v[0] + v[2], v[1] + v[3]);
+                c.surface.borrow_mut().clear_rect(rect, state.transform, &state.clip);
             }
             Ok(s.undefined())
         });
+        def.method("fillText", 3, |s, c, a| {
+            draw_text(s, c, a, true)?;
+            Ok(s.undefined())
+        });
+        def.method("strokeText", 3, |s, c, a| {
+            draw_text(s, c, a, false)?;
+            Ok(s.undefined())
+        });
+        def.method("drawImage", 3, draw_image);
+        // Focus rings are not drawn.
+        def.method("drawFocusIfNeeded", 1, |s, _c, _a| Ok(s.undefined()));
         def.method("setLineDash", 1, |s, c, a| {
             a.require(1, "CanvasRenderingContext2D.setLineDash")?;
             let list = a.get(0).as_object().ok_or_else(|| {
@@ -1207,7 +1637,7 @@ impl JsClass for CanvasRenderingContext2D {
                 )
             })?;
             let len = list.get_atom("length")?.to_number()? as u32;
-            let mut dash = Vec::with_capacity(len as usize);
+            let mut dash = Vec::with_capacity(len.min(1024) as usize);
             for i in 0..len {
                 let v = list.get_index(i)?.to_number()?;
                 if !v.is_finite() || v < 0.0 {
@@ -1244,14 +1674,9 @@ impl JsClass for CanvasRenderingContext2D {
             gradient(s, c, "conic", &v)
         });
         def.method("createPattern", 2, |s, c, a| {
-            a.require(2, "CanvasRenderingContext2D.createPattern")?;
-            let not_source = || {
-                JsError::Type(
-                    "Failed to execute 'createPattern' on 'CanvasRenderingContext2D': The provided value is not of type '(CSSImageValue or HTMLCanvasElement or HTMLImageElement or HTMLVideoElement or ImageBitmap or OffscreenCanvas or SVGImageElement or VideoFrame)'."
-                        .into(),
-                )
-            };
-            let (page, node, local) = image_source_kind(s, a.get(0)).ok_or_else(not_source)?;
+            let what = "CanvasRenderingContext2D.createPattern";
+            a.require(2, what)?;
+            let source = image_source(s, &c.page, a.get(0), what, false)?;
             let repetition = if a.get(1).is_null() { String::new() } else { dom_string(a.get(1))? };
             let repetition = match repetition.as_str() {
                 "" | "repeat" => "repeat",
@@ -1261,40 +1686,15 @@ impl JsClass for CanvasRenderingContext2D {
                 other => {
                     return Err(JsError::dom(
                         "SyntaxError",
-                        format!("The provided type ('{other}') is not one of 'repeat', 'no-repeat', 'repeat-x', or 'repeat-y'."),
+                        format!(
+                        "The provided type ('{other}') is not one of 'repeat', 'no-repeat', 'repeat-x', or 'repeat-y'."
+                    ),
                     ))
                 }
             };
-            match local.as_str() {
-                "canvas" => {
-                    let size = {
-                        let dom = page.dom.borrow();
-                        let attr = |name: &str, default: u32| {
-                            dom.get_attribute(node, name)
-                                .ok()
-                                .flatten()
-                                .and_then(|v| v.trim().parse::<u32>().ok())
-                                .unwrap_or(default)
-                        };
-                        (attr("width", 300), attr("height", 150))
-                    };
-                    if size.0 == 0 || size.1 == 0 {
-                        return Err(JsError::dom("InvalidStateError", "The image argument is a canvas element with a width or height of 0."));
-                    }
-                }
-                "img" => {
-                    if !page.image_complete(node) {
-                        return Ok(s.null());
-                    }
-                    if page.dom.borrow().natural_size(node).is_none_or(|(w, h)| w == 0.0 || h == 0.0) {
-                        return Err(JsError::dom("InvalidStateError", "The HTMLImageElement provided is in the 'broken' state."));
-                    }
-                }
-                // No video frames (no media decoding) and no SVG images.
-                "video" | "image" => return Ok(s.null()),
-                _ => return Err(not_source()),
-            }
-            module_helper(s, c, "pattern", &[s.string(repetition)])
+            let Some(source) = source else { return Ok(s.null()) };
+            let handle = handle_object(s, source)?;
+            module_helper(s, c, "pattern", &[s.string(repetition), handle.value()])
         });
 
         // Pixels.
@@ -1322,35 +1722,8 @@ impl JsClass for CanvasRenderingContext2D {
             }
             module_helper(s, c, "imageData", &[s.number(w.abs() as f64), s.number(h.abs() as f64), a.get(2)])
         });
-        def.method("getImageData", 4, |s, c, a| {
-            a.require(4, "CanvasRenderingContext2D.getImageData")?;
-            let (w, h) = (long(a.get(2))?, long(a.get(3))?);
-            if w == 0 || h == 0 {
-                return Err(JsError::dom(
-                    "IndexSizeError",
-                    format!("The source {} is 0.", if w == 0 { "width" } else { "height" }),
-                ));
-            }
-            if c.drawn.get() {
-                return Err(JsError::dom(
-                    "NotSupportedError",
-                    "Canvas pixels are not available: there is no rasterizer for what was drawn.",
-                ));
-            }
-            // Nothing drawn since the bitmap was cleared: transparent black.
-            module_helper(s, c, "imageData", &[s.number(w.abs() as f64), s.number(h.abs() as f64), a.get(4)])
-        });
-        def.method("putImageData", 3, |s, c, a| {
-            a.require(3, "CanvasRenderingContext2D.putImageData")?;
-            if module_helper(s, c, "imageSize", &[a.get(0)])?.is_null() {
-                return Err(JsError::Type(
-                    "Failed to execute 'putImageData' on 'CanvasRenderingContext2D': parameter 1 is not of type 'ImageData'."
-                        .into(),
-                ));
-            }
-            c.drawn.set(true);
-            Ok(s.undefined())
-        });
+        def.method("getImageData", 4, get_image_data);
+        def.method("putImageData", 3, put_image_data);
     }
 }
 
@@ -1364,67 +1737,33 @@ pub(crate) fn register(engine: &lp_js::Engine) {
     engine.register::<CanvasRenderingContext2D>();
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+/// A canvas bitmap for rendering: its element, size and straight RGBA rows.
+pub type CanvasBitmap = (NodeId, u32, u32, Arc<Vec<u8>>);
 
-    #[test]
-    fn colors_serialize_like_canvas() {
-        assert_eq!(canvas_color("red").as_deref(), Some("#ff0000"));
-        assert_eq!(canvas_color("rgba(0, 128, 255, 0.5)").as_deref(), Some("rgba(0, 128, 255, 0.5)"));
-        assert_eq!(canvas_color("not a color"), None);
+impl PageDom {
+    pub(crate) fn register_canvas(&self, canvas: NodeId, surface: Weak<RefCell<Surface>>) {
+        let mut list = self.canvas_surfaces.borrow_mut();
+        list.retain(|(_, s)| s.strong_count() > 0);
+        list.push((canvas, surface));
     }
 
-    #[test]
-    fn paths_answer_point_queries() {
-        let mut path = Path::default();
-        let mut b = Builder { path: &mut path, t: Affine::IDENTITY };
-        b.rect(0.0, 0.0, 10.0, 10.0);
-        assert!(point_in_fill(&path.bez, Point::new(5.0, 5.0), false));
-        assert!(point_in_fill(&path.bez, Point::new(10.0, 5.0), false), "edges are inside");
-        assert!(!point_in_fill(&path.bez, Point::new(11.0, 5.0), false));
-        // An open subpath is closed for filling; arcs bulge.
-        let mut path = Path::default();
-        let mut b = Builder { path: &mut path, t: Affine::translate((100.0, 0.0)) };
-        b.ellipse(0.0, 50.0, 20.0, 20.0, 0.0, 0.0, TAU, false);
-        assert!(point_in_fill(&path.bez, Point::new(100.0, 50.0), false));
-        assert!(point_in_fill(&path.bez, Point::new(118.0, 50.0), false));
-        assert!(!point_in_fill(&path.bez, Point::new(0.0, 50.0), false));
-    }
-
-    #[test]
-    fn huge_arcs_and_strokes_finish() {
-        let mut path = Path::default();
-        let mut b = Builder { path: &mut path, t: Affine::IDENTITY };
-        b.ellipse(0.0, 0.0, 1e300, 1e300, 0.0, 0.0, TAU, false);
-        assert!(path.bez.elements().len() < 100);
-        assert!(point_in_fill(&path.bez, Point::new(5.0, 5.0), false));
-
-        let mut path = Path::default();
-        let mut b = Builder { path: &mut path, t: Affine::IDENTITY };
-        b.move_to(0.0, 0.0);
-        b.line_to(100.0, 0.0);
-        b.line_to(100.0, 100.0);
-        let mut state = State::new();
-        state.line_join = "round";
-        state.line_cap = "round";
-        state.line_width = 1e300;
-        stroke_outline(&path.bez, &state);
-        state.line_width = 1e6;
-        let (outline, k) = stroke_outline(&path.bez, &state);
-        assert!(outline.winding(Point::new(50.0 * k, 50.0 * k)) != 0);
-        assert!(outline.winding(Point::new(0.0, 600_000.0 * k)) == 0);
-        state.line_width = 4.0;
-        let (outline, k) = stroke_outline(&path.bez, &state);
-        assert!(outline.winding(Point::new(50.0 * k, 1.0 * k)) != 0);
-        assert!(outline.winding(Point::new(50.0 * k, 3.0 * k)) == 0);
-
-        assert!(svg_arc_too_large("M0 0 A1e300 1e300 0 1 1 1 1"));
-        assert!(svg_arc_too_large("M0 0a9999999999999 1 0 1 1 1 1"));
-        assert!(!svg_arc_too_large("M0 0 A10 10 0 1 1 1e-20 1"));
-        assert!(!svg_arc_too_large("M0 0 L1e300 0"));
-        let mut path = Path::default();
-        Builder { path: &mut path, t: Affine::IDENTITY }.svg("M0 0 A1e300 1e300 0 1 1 1 1");
-        assert!(path.bez.elements().is_empty());
+    /// The bitmaps of this document's canvases that were drawn on, for
+    /// painting them (a screenshot). Empty, at the cost of a borrow, on a
+    /// page that never made a 2D context.
+    pub fn canvas_bitmaps(&self) -> Vec<CanvasBitmap> {
+        let list = self.canvas_surfaces.borrow();
+        let mut out = Vec::new();
+        for (canvas, surface) in list.iter() {
+            let Some(surface) = surface.upgrade() else { continue };
+            let mut surface = surface.borrow_mut();
+            let (w, h) = canvas_size(self, *canvas);
+            if (surface.width(), surface.height()) != (w, h) || !surface.is_allocated() {
+                continue;
+            }
+            if let Some(rgba) = surface.straight_rgba() {
+                out.push((*canvas, w, h, rgba));
+            }
+        }
+        out
     }
 }

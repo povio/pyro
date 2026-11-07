@@ -8,6 +8,7 @@ members = ["crates/*"]
 default-members = [
     "crates/lightningpanda",
     "crates/lp-browser",
+    "crates/lp-canvas",
     "crates/lp-cdp",
     "crates/lp-cdp-protocol",
     "crates/lp-dom",
@@ -41,6 +42,7 @@ lp-cdp-protocol = { path = "crates/lp-cdp-protocol" }
 lp-cdp = { path = "crates/lp-cdp" }
 lp-render = { path = "crates/lp-render" }
 lp-layout = { path = "crates/lp-layout" }
+lp-canvas = { path = "crates/lp-canvas" }
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

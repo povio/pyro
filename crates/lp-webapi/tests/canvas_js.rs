@@ -1,5 +1,5 @@
-//! CanvasRenderingContext2D without a rasterizer: state, styles, paths,
-//! transforms and the value types made in JS on first use.
+//! CanvasRenderingContext2D: state, styles, paths, transforms, the value
+//! types made in JS on first use, and pixels (rasterized by lp-canvas).
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -261,12 +261,16 @@ fn pixels_are_transparent_until_something_is_drawn() {
     assert_eq!(eval(r, "var k = new ImageData(new Uint8ClampedArray(16), 2); [k.width, k.height].join()"), "2,2");
     assert_eq!(eval(r, "try { new ImageData(new Uint8ClampedArray(6), 1) } catch (e) { e.name }"), "InvalidStateError");
     assert_eq!(eval(r, "try { new ImageData(new Uint8ClampedArray(16), 3) } catch (e) { e.name }"), "IndexSizeError");
-    assert_eq!(
-        eval(r, "x.fillRect(0, 0, 5, 5); try { x.getImageData(0, 0, 1, 1); 'pixels' } catch (e) { e.name }"),
-        "NotSupportedError"
-    );
+    assert_eq!(eval(r, "x.fillRect(0, 0, 5, 5); x.getImageData(0, 0, 1, 1).data.join()"), "0,0,0,255");
     assert_eq!(eval(r, "x.clearRect(0, 0, c.width, c.height); x.getImageData(0, 0, 1, 1).data.join()"), "0,0,0,0");
-    assert_eq!(eval(r, "x.fillRect(0, 0, 5, 5); c.height = 50; x.getImageData(0, 0, 1, 1).width"), "1");
+    assert_eq!(
+        eval(
+            r,
+            "x.fillRect(0, 0, 5, 5); c.height = 50; [x.getImageData(0, 0, 1, 1).data.join(), x.fillStyle].join('|')"
+        ),
+        "0,0,0,0|#000000",
+        "resizing clears the bitmap and resets the state"
+    );
     assert_eq!(eval(r, "try { x.putImageData({}, 0, 0) } catch (e) { e.name }"), "TypeError");
     assert_eq!(
         eval(
@@ -305,4 +309,262 @@ fn canvas_interfaces_are_lazy_globals() {
         "function,true,false"
     );
     assert_eq!(eval(r, "window.ImageData = 1; ImageData"), "1");
+}
+
+/// `px(x, y)`: the pixel at (x, y) as "r,g,b,a".
+const PX: &str = "var c = document.getElementById('c'), x = c.getContext('2d'); \
+    var px = (X, Y, ctx) => Array.from((ctx || x).getImageData(X, Y, 1, 1).data).join();";
+
+#[test]
+fn rects_paint_exact_pixels() {
+    let e = env(CANVAS);
+    let r = &e.main;
+    eval(r, PX);
+    assert_eq!(eval(r, "x.fillStyle = 'red'; x.fillRect(10, 10, 20, 10); [px(10, 10), px(29, 19), px(30, 10), px(9, 10)].join('|')"),
+        "255,0,0,255|255,0,0,255|0,0,0,0|0,0,0,0");
+    assert_eq!(eval(r, "x.clearRect(12, 12, 4, 4); [px(13, 13), px(16, 13)].join('|')"), "0,0,0,0|255,0,0,255");
+    // A 2px stroke centred on integer edges covers one pixel each side.
+    assert_eq!(
+        eval(r, "x.strokeStyle = '#00ff00'; x.lineWidth = 2; x.strokeRect(50, 10, 20, 20); [px(49, 20), px(50, 20), px(51, 20), px(60, 20)].join('|')"),
+        "0,255,0,255|0,255,0,255|0,0,0,0|0,0,0,0"
+    );
+    // Semi-transparent colors and globalAlpha read back unpremultiplied.
+    assert_eq!(eval(r, "x.fillStyle = 'rgba(0, 0, 255, 0.5)'; x.fillRect(80, 0, 5, 5); px(81, 1)"), "0,0,255,128");
+    assert_eq!(
+        eval(r, "x.globalAlpha = 0.5; x.fillStyle = '#0000ff'; x.fillRect(90, 0, 5, 5); x.globalAlpha = 1; px(91, 1)"),
+        "0,0,255,128"
+    );
+}
+
+#[test]
+fn paths_transforms_and_clips() {
+    let e = env(CANVAS);
+    let r = &e.main;
+    eval(r, PX);
+    // A circle: its centre is painted, a corner of its box is not.
+    assert_eq!(
+        eval(r, "x.beginPath(); x.arc(20, 20, 10, 0, Math.PI * 2); x.fill(); [px(20, 20), px(11, 11), px(28, 20)].join('|')"),
+        "0,0,0,255|0,0,0,0|0,0,0,255"
+    );
+    // evenodd leaves the inner square's hole.
+    assert_eq!(
+        eval(r, "x.beginPath(); x.fillStyle = 'blue'; x.rect(40, 0, 20, 20); x.rect(45, 5, 10, 10); x.fill('evenodd'); [px(42, 2), px(50, 10)].join('|')"),
+        "0,0,255,255|0,0,0,0"
+    );
+    // save/translate/scale/restore.
+    assert_eq!(
+        eval(r, "x.save(); x.translate(70, 0); x.scale(2, 2); x.fillStyle = 'lime'; x.fillRect(0, 0, 5, 5); x.restore(); x.fillRect(0, 40, 2, 2); [px(79, 9), px(80, 10), px(0, 40)].join('|')"),
+        "0,255,0,255|0,0,0,0|0,0,255,255"
+    );
+    // clip() limits drawing until restore().
+    assert_eq!(
+        eval(r, "x.clearRect(0, 0, 100, 50); x.save(); x.beginPath(); x.rect(0, 0, 10, 10); x.clip(); x.fillStyle = 'red'; x.fillRect(0, 0, 50, 50); x.restore(); x.fillRect(20, 20, 2, 2); [px(5, 5), px(15, 5), px(20, 20)].join('|')"),
+        "255,0,0,255|0,0,0,0|0,0,255,255"
+    );
+    // Dashes: 4 on, 4 off along a horizontal line.
+    assert_eq!(
+        eval(r, "x.clearRect(0, 0, 100, 50); x.setLineDash([4, 4]); x.lineWidth = 2; x.strokeStyle = 'black'; x.beginPath(); x.moveTo(0, 31); x.lineTo(40, 31); x.stroke(); x.setLineDash([]); [px(1, 31), px(5, 31), px(9, 31)].join('|')"),
+        "0,0,0,255|0,0,0,0|0,0,0,255"
+    );
+    // A Path2D, and a bezier.
+    assert_eq!(
+        eval(r, "x.clearRect(0, 0, 100, 50); var p = new Path2D('M60 0 h20 v20 h-20 z'); x.fillStyle = 'red'; x.fill(p); [px(70, 10), px(85, 10)].join('|')"),
+        "255,0,0,255|0,0,0,0"
+    );
+    assert_eq!(
+        eval(r, "x.beginPath(); x.moveTo(0, 49); x.bezierCurveTo(10, 30, 20, 30, 30, 49); x.closePath(); x.fill(); px(15, 45)"),
+        "255,0,0,255"
+    );
+}
+
+#[test]
+fn gradients_patterns_and_compositing() {
+    let e = env(CANVAS);
+    let r = &e.main;
+    eval(r, PX);
+    let ends = eval(
+        r,
+        "var g = x.createLinearGradient(0, 0, 100, 0); g.addColorStop(0, 'red'); g.addColorStop(1, 'blue'); x.fillStyle = g; x.fillRect(0, 0, 100, 10); [px(0, 5), px(99, 5)].join('|')",
+    );
+    let parts: Vec<Vec<u32>> = ends.split('|').map(|p| p.split(',').map(|v| v.parse().unwrap()).collect()).collect();
+    assert!(parts[0][0] > 240 && parts[0][2] < 15 && parts[1][2] > 240 && parts[1][0] < 15, "{ends}");
+    // Stops added after the style was set apply to later draws.
+    assert_eq!(eval(r, "g.addColorStop(0.5, 'lime'); x.fillRect(0, 10, 100, 10); var m = x.getImageData(50, 15, 1, 1).data; m[1] > 245 && m[0] < 10 && m[2] < 10"), "true");
+    assert_eq!(
+        eval(r, "var rg = x.createRadialGradient(50, 35, 0, 50, 35, 10); rg.addColorStop(0, 'white'); rg.addColorStop(1, 'black'); x.fillStyle = rg; x.fillRect(40, 25, 20, 20); var m = x.getImageData(50, 35, 1, 1).data; [m[0] > 230, px(40, 25)].join()"),
+        "true,0,0,0,255"
+    );
+    // A pattern from another canvas, repeating.
+    assert_eq!(
+        eval(r, "var t = document.createElement('canvas'); t.width = 2; t.height = 2; var tx = t.getContext('2d'); tx.fillStyle = 'red'; tx.fillRect(0, 0, 1, 1); x.clearRect(0, 0, 100, 50); x.imageSmoothingEnabled = false; x.fillStyle = x.createPattern(t, 'repeat'); x.fillRect(0, 0, 10, 10); [px(0, 0), px(1, 0), px(4, 4), px(5, 4)].join('|')"),
+        "255,0,0,255|0,0,0,0|255,0,0,255|0,0,0,0"
+    );
+    // Operators: destination-out erases, copy replaces everything, source-in
+    // keeps the overlap only.
+    assert_eq!(
+        eval(r, "x.clearRect(0, 0, 100, 50); x.fillStyle = 'red'; x.fillRect(0, 0, 20, 20); x.globalCompositeOperation = 'destination-out'; x.fillRect(0, 0, 10, 20); x.globalCompositeOperation = 'source-over'; [px(5, 5), px(15, 5)].join('|')"),
+        "0,0,0,0|255,0,0,255"
+    );
+    assert_eq!(
+        eval(r, "x.fillRect(50, 0, 10, 10); x.globalCompositeOperation = 'copy'; x.fillStyle = 'blue'; x.fillRect(0, 30, 5, 5); x.globalCompositeOperation = 'source-over'; [px(15, 5), px(55, 5), px(2, 32)].join('|')"),
+        "0,0,0,0|0,0,0,0|0,0,255,255"
+    );
+    assert_eq!(
+        eval(r, "x.fillStyle = 'lime'; x.globalCompositeOperation = 'source-in'; x.fillRect(0, 30, 10, 10); x.globalCompositeOperation = 'source-over'; [px(2, 32), px(7, 32)].join('|')"),
+        "0,255,0,255|0,0,0,0"
+    );
+    assert_eq!(
+        eval(r, "x.fillStyle = '#808080'; x.globalCompositeOperation = 'multiply'; x.fillRect(0, 30, 5, 5); x.globalCompositeOperation = 'lighter'; x.fillStyle = '#ff0000'; x.fillRect(0, 30, 5, 5); px(2, 32)"),
+        "255,128,0,255"
+    );
+    // A hard shadow, offset.
+    assert_eq!(
+        eval(r, "x.globalCompositeOperation = 'source-over'; x.clearRect(0, 0, 100, 50); x.shadowColor = 'black'; x.shadowOffsetX = 10; x.fillStyle = 'red'; x.fillRect(0, 0, 5, 5); x.shadowColor = 'transparent'; [px(2, 2), px(12, 2), px(17, 2)].join('|')"),
+        "255,0,0,255|0,0,0,255|0,0,0,0"
+    );
+}
+
+#[test]
+fn image_data_round_trips_and_draw_image() {
+    let e = env(CANVAS);
+    let r = &e.main;
+    eval(r, PX);
+    assert_eq!(
+        eval(r, "var d = x.createImageData(2, 2); d.data.set([255,0,0,255, 0,255,0,255, 0,0,255,255, 10,20,30,255]); x.putImageData(d, 3, 4); Array.from(x.getImageData(3, 4, 2, 2).data).join()"),
+        "255,0,0,255,0,255,0,255,0,0,255,255,10,20,30,255"
+    );
+    // The dirty rectangle, and a negative source size.
+    assert_eq!(
+        eval(r, "x.putImageData(d, 10, 10, 1, 1, 1, 1); [px(10, 10), px(11, 11)].join('|')"),
+        "0,0,0,0|10,20,30,255"
+    );
+    assert_eq!(
+        eval(r, "Array.from(x.getImageData(5, 6, -2, -2).data).join()"),
+        "255,0,0,255,0,255,0,255,0,0,255,255,10,20,30,255"
+    );
+    // Outside the canvas reads transparent.
+    assert_eq!(eval(r, "px(-5, -5) + '|' + px(200, 200)"), "0,0,0,0|0,0,0,0");
+    // drawImage from a canvas, scaled 2x with nearest-neighbour sampling.
+    assert_eq!(
+        eval(r, "var t = document.createElement('canvas'); t.width = 2; t.height = 1; t.getContext('2d').putImageData(d, 0, 0); x.imageSmoothingEnabled = false; x.drawImage(t, 40, 0, 4, 2); [px(40, 0), px(41, 1), px(42, 0), px(43, 1), px(44, 0)].join('|')"),
+        "255,0,0,255|255,0,0,255|0,255,0,255|0,255,0,255|0,0,0,0"
+    );
+    // Source rectangle (9 arguments) and drawing a canvas onto itself.
+    assert_eq!(
+        eval(r, "x.drawImage(t, 1, 0, 1, 1, 60, 0, 1, 1); x.drawImage(c, 40, 0, 2, 2, 70, 0, 2, 2); [px(60, 0), px(70, 0)].join('|')"),
+        "0,255,0,255|255,0,0,255"
+    );
+    assert_eq!(eval(r, "try { x.drawImage(t, 0, 0, 1) } catch (e) { e.name }"), "TypeError");
+    assert_eq!(
+        eval(
+            r,
+            "var z = document.createElement('canvas'); z.width = 0; try { x.drawImage(z, 0, 0) } catch (e) { e.name }"
+        ),
+        "InvalidStateError"
+    );
+}
+
+#[test]
+fn canvas_encodes_png_jpeg_and_blobs() {
+    let e = env(CANVAS);
+    let r = &e.main;
+    eval(r, PX);
+    assert_eq!(eval(r, "c.toDataURL().slice(0, 22)"), "data:image/png;base64,");
+    assert_eq!(eval(r, "c.toDataURL('image/jpeg', 0.5).slice(0, 23)"), "data:image/jpeg;base64,");
+    assert_eq!(eval(r, "c.toDataURL('image/bogus').slice(0, 15)"), "data:image/png;");
+    assert_eq!(eval(r, "var z = document.createElement('canvas'); z.width = 0; z.toDataURL()"), "data:,");
+    // The PNG round-trips: decode it through createImageBitmap from a Blob.
+    eval(
+        r,
+        "x.fillStyle = 'red'; x.fillRect(0, 0, 1, 1); window.blobInfo = null; c.toBlob(b => { window.blobInfo = [b instanceof Blob, b.type, b.size > 50].join(); window.blob = b; });",
+    );
+    assert_eq!(eval(r, "blobInfo"), "true,image/png,true");
+    eval(
+        r,
+        "window.decoded = 'pending'; createImageBitmap(blob).then(bm => { var y = document.createElement('canvas').getContext('2d'); y.drawImage(bm, 0, 0); decoded = [bm.width, bm.height, px(0, 0, y), px(1, 0, y)].join('|'); }, err => decoded = 'ERR ' + err);",
+    );
+    assert_eq!(eval(r, "decoded"), "100|50|255,0,0,255|0,0,0,0");
+}
+
+#[test]
+fn offscreen_canvas_and_image_bitmaps() {
+    let e = env(CANVAS);
+    let r = &e.main;
+    eval(r, PX);
+    assert_eq!(
+        eval(r, "var o = new OffscreenCanvas(4, 4); var ox = o.getContext('2d'); [ox === o.getContext('2d'), ox.canvas === o, ox instanceof OffscreenCanvasRenderingContext2D, x instanceof OffscreenCanvasRenderingContext2D, o.getContext('webgl')].join()"),
+        "true,true,true,false,"
+    );
+    assert_eq!(
+        eval(r, "ox.fillStyle = 'lime'; ox.fillRect(0, 0, 2, 2); px(1, 1, ox) + '|' + px(3, 3, ox)"),
+        "0,255,0,255|0,0,0,0"
+    );
+    assert_eq!(eval(r, "x.drawImage(o, 0, 0); px(1, 1)"), "0,255,0,255");
+    // transferToImageBitmap takes the pixels and clears the canvas.
+    assert_eq!(
+        eval(r, "var bm = o.transferToImageBitmap(); x.drawImage(bm, 10, 0); [bm instanceof ImageBitmap, bm.width, px(11, 1), px(1, 1, ox)].join('|')"),
+        "true|4|0,255,0,255|0,0,0,0"
+    );
+    assert_eq!(
+        eval(
+            r,
+            "bm.close(); [bm.width, (() => { try { x.drawImage(bm, 0, 0) } catch (e) { return e.name } })()].join()"
+        ),
+        "0,InvalidStateError"
+    );
+    eval(r, "window.blobType = null; ox.fillRect(0, 0, 1, 1); o.convertToBlob({type: 'image/webp'}).then(b => blobType = b.type + ':' + (b.size > 0));");
+    assert_eq!(eval(r, "blobType"), "image/webp:true");
+    // createImageBitmap with a crop and a resize.
+    eval(
+        r,
+        "window.made = null; x.fillStyle = 'blue'; x.fillRect(20, 20, 2, 2); createImageBitmap(c, 20, 20, 2, 2, {resizeWidth: 4, resizeHeight: 4, resizeQuality: 'pixelated'}).then(b => { x.clearRect(0, 0, 100, 50); x.drawImage(b, 0, 0); made = [b.width, b.height, px(3, 3), px(4, 4)].join('|'); });",
+    );
+    assert_eq!(eval(r, "made"), "4|4|0,0,255,255|0,0,0,0");
+    eval(r, "window.rejected = null; createImageBitmap({}).catch(e => rejected = e.name);");
+    assert_eq!(eval(r, "rejected"), "TypeError");
+    // Arrays (or proxies of them) are not image sources.
+    assert_eq!(
+        eval(r, "var hits = 0; var fake = new Proxy([3, new Blob([])], { get(t, k) { hits++; return t[k]; } }); try { x.drawImage(fake, 0, 0); 'drawn' } catch (e) { e.name + hits }"),
+        "TypeError0"
+    );
+}
+
+#[test]
+fn text_draws_with_real_font_metrics() {
+    let e = env(CANVAS);
+    let r = &e.main;
+    eval(r, PX);
+    assert_eq!(
+        eval(r, "x.font = '30px sans-serif'; var m = x.measureText('Hello'); [m.width > 50 && m.width < 90, m.actualBoundingBoxAscent > 15, m.actualBoundingBoxAscent < m.fontBoundingBoxAscent + 1, m.actualBoundingBoxDescent < 2, m.actualBoundingBoxLeft < 3].join()"),
+        "true,true,true,true,true"
+    );
+    assert_eq!(eval(r, "x.measureText('Hello').width === m.width && x.measureText('Hellooo').width > m.width"), "true");
+    // fillText paints ink above the baseline only.
+    let inked = "var ink = (y0, y1) => { var d = x.getImageData(0, y0, 100, y1 - y0).data; for (var i = 3; i < d.length; i += 4) if (d[i]) return true; return false; };";
+    eval(r, inked);
+    assert_eq!(eval(r, "x.fillText('Hello', 5, 35); [ink(5, 35), ink(36, 50)].join()"), "true,false");
+    // textAlign right ends the text at x; maxWidth squeezes it.
+    assert_eq!(
+        eval(r, "x.clearRect(0, 0, 100, 50); x.textAlign = 'right'; x.fillText('Hello', 50, 35, 20); var d = x.getImageData(0, 0, 100, 50).data, minX = 100, maxX = 0; for (var i = 3; i < d.length; i += 4) if (d[i]) { var X = (i >> 2) % 100; minX = Math.min(minX, X); maxX = Math.max(maxX, X); } [minX >= 28, maxX <= 50].join()"),
+        "true,true"
+    );
+}
+
+#[test]
+fn canvas_bitmaps_are_lazy_and_reported_for_rendering() {
+    let e = env(CANVAS);
+    let r = &e.main;
+    eval(r, PX);
+    // Reading allocates nothing; nothing is reported until something is drawn.
+    eval(r, "x.getImageData(0, 0, 10, 10); x.clearRect(0, 0, 10, 10);");
+    assert!(e.page.canvas_bitmaps().is_empty());
+    eval(r, "x.fillStyle = 'red'; x.fillRect(0, 0, 1, 1);");
+    let bitmaps = e.page.canvas_bitmaps();
+    assert_eq!(bitmaps.len(), 1);
+    let (_, w, h, rgba) = &bitmaps[0];
+    assert_eq!((*w, *h, rgba.len()), (100, 50, 100 * 50 * 4));
+    assert_eq!(&rgba[..8], &[255, 0, 0, 255, 0, 0, 0, 0]);
+    // setAttribute resizes (and clears) as the IDL attribute does.
+    assert_eq!(eval(r, "c.setAttribute('width', '10'); px(0, 0)"), "0,0,0,0");
+    assert!(e.page.canvas_bitmaps().is_empty());
 }

@@ -19,6 +19,18 @@ static NEXT_PAGE: AtomicU64 = AtomicU64::new(1);
 pub(crate) const OTHER_NS: u64 = 1 << 63;
 pub(crate) const EVENT_NS: u64 = 1 << 62;
 
+/// Most encoded image bytes a document keeps for canvas use.
+pub const MAX_IMAGE_BYTES_KEPT: usize = 64 * 1024 * 1024;
+
+/// A loaded `<img>`'s encoded bytes ([`PageDom::set_image_bytes`]).
+struct ImageBytes {
+    bytes: Vec<u8>,
+    clean: bool,
+    /// The decoded pixels once a canvas used them (`Some(None)`: they do
+    /// not decode).
+    decoded: Option<Option<std::sync::Arc<lp_canvas::Pixmap>>>,
+}
+
 pub struct PageDom {
     pub dom: DomRef,
     id: u64,
@@ -178,6 +190,15 @@ pub struct PageDom {
     images_sweep_at: Cell<usize>,
     /// Pending `HTMLImageElement.decode()` promises (`crate::image_decode`).
     pub(crate) image_decodes: RefCell<FxHashMap<NodeId, Vec<crate::image_decode::PendingDecode>>>,
+    /// Encoded bytes of loaded `<img>`s the embedder kept for canvas use
+    /// ([`PageDom::set_image_bytes`]), decoded on first use.
+    image_bytes: RefCell<FxHashMap<NodeId, ImageBytes>>,
+    /// Bitmaps of canvas elements with a 2D context (`canvas.rs`), for
+    /// painting them.
+    pub(crate) canvas_surfaces: RefCell<Vec<(NodeId, std::rc::Weak<RefCell<lp_canvas::Surface>>)>>,
+    /// A 2D context, `OffscreenCanvas` or `createImageBitmap` was used:
+    /// image bytes are worth keeping ([`PageDom::wants_image_bytes`]).
+    pub(crate) canvas_used: Cell<bool>,
     /// HTMLMediaElement state of the elements script or a load touched.
     pub(crate) media: crate::media::MediaElements,
     /// The last mouse input's position and state, for boundary events when
@@ -601,6 +622,9 @@ impl PageDom {
             images: RefCell::new(FxHashMap::default()),
             images_sweep_at: Cell::new(64),
             image_decodes: RefCell::new(FxHashMap::default()),
+            image_bytes: RefCell::new(FxHashMap::default()),
+            canvas_surfaces: RefCell::new(Vec::new()),
+            canvas_used: Cell::new(false),
             media: Default::default(),
             pointer: RefCell::new(None),
             hover_update_queued: Cell::new(false),
@@ -1516,6 +1540,59 @@ impl PageDom {
                 crate::image_decode::reject_all(self, el);
             }
         }
+        // A new load, or none: the old bytes are not the image's any more.
+        if pending || src.is_none() {
+            self.forget_image_bytes(el);
+        }
+    }
+
+    /// Whether loaded images' bytes should be kept for canvas use
+    /// ([`PageDom::set_image_bytes`]): the document has a `<canvas>`, or a
+    /// canvas API was used. A flag test for pages without canvases.
+    pub fn wants_image_bytes(&self) -> bool {
+        self.canvas_used.get() || self.dom.borrow().canvas_seen()
+    }
+
+    /// Embedder: the encoded bytes of `el`'s loaded image, kept so canvas
+    /// `drawImage`/`createPattern`/`createImageBitmap` can decode it (on
+    /// first use). `clean`: the response was same-origin (or CORS), so its
+    /// pixels may be read back. At most [`MAX_IMAGE_BYTES_KEPT`] are kept
+    /// per document; images past that draw nothing.
+    pub fn set_image_bytes(&self, el: NodeId, bytes: Vec<u8>, clean: bool) {
+        self.forget_image_bytes(el);
+        let mut map = self.image_bytes.borrow_mut();
+        let total: usize = map.values().map(|i| i.bytes.len()).sum();
+        if total + bytes.len() > MAX_IMAGE_BYTES_KEPT {
+            if let Ok(dom) = self.dom.try_borrow() {
+                map.retain(|id, _| dom.is_alive(*id));
+            }
+            let total: usize = map.values().map(|i| i.bytes.len()).sum();
+            if total + bytes.len() > MAX_IMAGE_BYTES_KEPT {
+                return;
+            }
+        }
+        map.insert(el, ImageBytes { bytes, clean, decoded: None });
+    }
+
+    fn forget_image_bytes(&self, el: NodeId) {
+        if let Ok(mut map) = self.image_bytes.try_borrow_mut() {
+            if !map.is_empty() {
+                map.remove(&el);
+            }
+        }
+    }
+
+    /// `el`'s image pixels (premultiplied) and whether they are
+    /// origin-clean; decoded on first use. `None`: no bytes were kept, or
+    /// they do not decode (SVG included).
+    pub(crate) fn image_pixmap(&self, el: NodeId) -> Option<(std::sync::Arc<lp_canvas::Pixmap>, bool)> {
+        let mut map = self.image_bytes.borrow_mut();
+        let entry = map.get_mut(&el)?;
+        if entry.decoded.is_none() {
+            entry.decoded = Some(lp_canvas::codec::decode(&entry.bytes).map(std::sync::Arc::new));
+        }
+        let pixmap = entry.decoded.clone().flatten()?;
+        Some((pixmap, entry.clean))
     }
     /// HTMLImageElement.complete: no `src`, or the current `src` has
     /// finished loading (successfully or not). A `src` set since the last

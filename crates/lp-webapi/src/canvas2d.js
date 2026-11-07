@@ -614,11 +614,13 @@
   webidl(ImageData, 'ImageData');
 
   // ---- CanvasGradient / CanvasPattern / TextMetrics ----------------------
+  // The records canvas.rs reads to paint (`paintRecord`): `version` changes
+  // with every change that affects painting.
   const gradients = new WeakMap();
   class CanvasGradient {
     constructor(token, kind, args) {
       if (token !== secret) throw illegal();
-      gradients.set(this, { kind, args, stops: [] });
+      gradients.set(this, { kind, args, stops: [], version: 0 });
     }
     addColorStop(offset, color) {
       const g = gradients.get(this);
@@ -628,24 +630,170 @@
       if (o < 0 || o > 1) throw domError('IndexSizeError', `The provided value (${o}) is outside the range (0.0, 1.0).`);
       const parsed = parseColor(String(color));
       if (parsed === null) throw domError('SyntaxError', `The value provided ('${color}') could not be parsed as a color.`);
-      g.stops.push([o, parsed]);
+      g.stops.push(o, parsed);
+      g.version++;
     }
   }
   webidl(CanvasGradient, 'CanvasGradient');
+  // `image` is the native handle of the pixels captured at creation.
   const patterns = new WeakMap();
   class CanvasPattern {
-    constructor(token, repetition) {
+    constructor(token, repetition, image) {
       if (token !== secret) throw illegal();
-      patterns.set(this, { repetition, transform: [1, 0, 0, 1, 0, 0] });
+      patterns.set(this, { repetition, image, transform: [1, 0, 0, 1, 0, 0], version: 0, stops: null });
     }
     setTransform(transform) {
       const p = patterns.get(this);
       if (!p) throw new TypeErrorC('Illegal invocation');
       const m = fixup(transform, true).m;
       p.transform = [m[0], m[1], m[4], m[5], m[12], m[13]];
+      p.version++;
     }
   }
   webidl(CanvasPattern, 'CanvasPattern');
+
+  // ---- ImageBitmap / createImageBitmap ---------------------------------
+  // `image` is the native handle of the pixels (canvas.rs); `close()` drops
+  // it, so the pixels go with the next collection.
+  const bitmaps = new WeakMap();
+  function bm(self) {
+    const b = bitmaps.get(self);
+    if (!b) throw new TypeErrorC('Illegal invocation');
+    return b;
+  }
+  class ImageBitmap {
+    constructor(token, image, width, height) {
+      if (token !== secret) throw illegal();
+      bitmaps.set(this, { image, width, height });
+    }
+    get width() { const b = bm(this); return b.image ? b.width : 0; }
+    get height() { const b = bm(this); return b.image ? b.height : 0; }
+    close() { bm(this).image = null; }
+  }
+  webidl(ImageBitmap, 'ImageBitmap');
+  function newBitmap(made) { return new ImageBitmap(secret, made[0], made[1], made[2]); }
+  const PromiseC = Promise;
+  function createImageBitmap(image, sx, sy, sw, sh, options) {
+    try {
+      if (arguments.length < 1) throw new TypeErrorC(`Failed to execute 'createImageBitmap' on 'Window': 1 argument required, but only 0 present.`);
+      let crop = null;
+      if (arguments.length >= 5) {
+        crop = [+sx, +sy, +sw, +sh];
+        if (crop[2] === 0 || crop[3] === 0) throw new RangeErrorC(`The crop rect ${crop[2] === 0 ? 'width' : 'height'} is 0.`);
+        if (!isFinite(crop[0]) || !isFinite(crop[1]) || !isFinite(crop[2]) || !isFinite(crop[3])) {
+          throw new TypeErrorC(`Failed to execute 'createImageBitmap' on 'Window': The provided crop rect is not finite.`);
+        }
+      } else if (arguments.length > 2) {
+        throw new TypeErrorC(`Failed to execute 'createImageBitmap' on 'Window': Overload resolution failed.`);
+      } else {
+        options = sx;
+      }
+      const o = dict(options);
+      const rw = o.resizeWidth === undefined ? 0 : +o.resizeWidth >>> 0;
+      const rh = o.resizeHeight === undefined ? 0 : +o.resizeHeight >>> 0;
+      if ((o.resizeWidth !== undefined && rw === 0) || (o.resizeHeight !== undefined && rh === 0)) {
+        throw domError('InvalidStateError', 'The resize width or height is 0.');
+      }
+      const flip = o.imageOrientation === 'flipY';
+      const smooth = o.resizeQuality !== 'pixelated';
+      const made = natives.makeBitmap(image, crop, rw, rh, flip, smooth);
+      return PromiseC.resolve(newBitmap(made));
+    } catch (e) {
+      return PromiseC.reject(e);
+    }
+  }
+  // An image argument that is not an element as canvas.rs takes it, or null:
+  // [0, handle] for an ImageBitmap, [1, context or null, width, height] for
+  // an OffscreenCanvas, [2, data, width, height] for an ImageData (only
+  // where `imageData` allows it), [3, blob] for a Blob.
+  function sourceOf(image, imageData) {
+    const b = bitmaps.get(image);
+    if (b) {
+      if (!b.image) throw domError('InvalidStateError', 'The image source is detached.');
+      return [0, b.image];
+    }
+    const o = offscreens.get(image);
+    if (o) {
+      if (o.detached) throw domError('InvalidStateError', 'The image source is detached.');
+      return [1, o.context, o.width, o.height];
+    }
+    if (imageData) {
+      const d = images.get(image);
+      if (d) return [2, d.data, d.width, d.height];
+      if (natives.isBlob(image)) return [3, image];
+    }
+    return null;
+  }
+
+  // ---- OffscreenCanvas -------------------------------------------------
+  // Its 2D context is a CanvasRenderingContext2D (canvas.rs) drawing into
+  // its own bitmap; `OffscreenCanvasRenderingContext2D` recognizes it.
+  const offscreens = new WeakMap();
+  const offscreenContexts = new WeakSet();
+  function oc(self) {
+    const o = offscreens.get(self);
+    if (!o) throw new TypeErrorC('Illegal invocation');
+    return o;
+  }
+  function offscreenSize(value, what) {
+    // [EnforceRange] unsigned long long.
+    const n = MathC.trunc(+value);
+    if (!isFinite(n) || n < 0 || n > NumberC.MAX_SAFE_INTEGER) {
+      throw new TypeErrorC(`Value is outside the 'unsigned long long' value range (${what}).`);
+    }
+    return n;
+  }
+  class OffscreenCanvas {
+    constructor(width, height) {
+      if (arguments.length < 2) throw new TypeErrorC(`Failed to construct 'OffscreenCanvas': 2 arguments required, but only ${arguments.length} present.`);
+      offscreens.set(this, { width: offscreenSize(width, 'width'), height: offscreenSize(height, 'height'), context: null, detached: false });
+    }
+    get width() { return oc(this).width; }
+    set width(v) { const o = oc(this); o.width = offscreenSize(v, 'width'); if (o.context) natives.resizeContext(o.context, o.width, o.height); }
+    get height() { return oc(this).height; }
+    set height(v) { const o = oc(this); o.height = offscreenSize(v, 'height'); if (o.context) natives.resizeContext(o.context, o.width, o.height); }
+    getContext(type, options) {
+      const o = oc(this);
+      if (arguments.length < 1) throw new TypeErrorC(`Failed to execute 'getContext' on 'OffscreenCanvas': 1 argument required, but only 0 present.`);
+      type = String(type);
+      if (!['2d', 'webgl', 'webgl2', 'bitmaprenderer', 'webgpu'].includes(type)) {
+        throw new TypeErrorC(`Failed to execute 'getContext' on 'OffscreenCanvas': The provided value '${type}' is not a valid enum value of type OffscreenRenderingContextType.`);
+      }
+      if (o.detached) throw domError('InvalidStateError', 'OffscreenCanvas object is detached.');
+      if (type !== '2d') return null;
+      if (!o.context) {
+        o.context = natives.offscreenContext(this, o.width, o.height);
+        offscreenContexts.add(o.context);
+      }
+      return o.context;
+    }
+    transferToImageBitmap() {
+      const o = oc(this);
+      if (o.detached) throw domError('InvalidStateError', 'Cannot transfer an ImageBitmap from a detached OffscreenCanvas');
+      if (!o.context) throw domError('InvalidStateError', 'Cannot transfer an ImageBitmap from an OffscreenCanvas with no context');
+      return newBitmap(natives.transferContext(o.context));
+    }
+    convertToBlob(options) {
+      try {
+        const o = oc(this);
+        if (o.detached) throw domError('InvalidStateError', 'OffscreenCanvas object is detached.');
+        if (o.width === 0 || o.height === 0) throw domError('IndexSizeError', 'The canvas has no pixels.');
+        const d = dict(options);
+        const type = d.type === undefined ? 'image/png' : String(d.type);
+        const quality = d.quality === undefined ? undefined : +d.quality;
+        return PromiseC.resolve(natives.encodeContext(o.context, o.width, o.height, type, quality));
+      } catch (e) {
+        return PromiseC.reject(e);
+      }
+    }
+  }
+  webidl(OffscreenCanvas, 'OffscreenCanvas');
+  function OffscreenCanvasRenderingContext2D() { throw illegal(); }
+  defineProperty(OffscreenCanvasRenderingContext2D, Symbol.hasInstance, {
+    value: (v) => offscreenContexts.has(v), configurable: true,
+  });
+  defineProperty(OffscreenCanvasRenderingContext2D, 'prototype', { value: Object.create(null), writable: false });
+  defineProperty(OffscreenCanvasRenderingContext2D.prototype, Symbol.toStringTag, { value: 'OffscreenCanvasRenderingContext2D', configurable: true });
   const metrics = new WeakMap();
   const METRICS = [
     'width', 'actualBoundingBoxLeft', 'actualBoundingBoxRight', 'fontBoundingBoxAscent', 'fontBoundingBoxDescent',
@@ -673,11 +821,23 @@
   return {
     DOMPointReadOnly, DOMPoint, DOMMatrixReadOnly, DOMMatrix, WebKitCSSMatrix: DOMMatrix,
     Path2D, ImageData, CanvasGradient, CanvasPattern, TextMetrics,
+    ImageBitmap, OffscreenCanvas, OffscreenCanvasRenderingContext2D, createImageBitmap,
     // Helpers for canvas.rs.
     gradient(kind, args) { return new CanvasGradient(secret, kind, args); },
-    pattern(repetition) { return new CanvasPattern(secret, repetition); },
+    pattern(repetition, image) { return new CanvasPattern(secret, repetition, image); },
     textMetrics(values) { return new TextMetrics(secret, values); },
     imageData(width, height, settings) { return new ImageData(width, height, settings); },
+    // An ImageData over `data` (a Uint8ClampedArray the native side filled).
+    imageDataOf(data, width, height, space) {
+      const o = Object.create(ImageData.prototype);
+      images.set(o, { width, height, data, colorSpace: space });
+      return o;
+    },
+    // [width, height, data] of an ImageData, or null.
+    imageInfo(value) { const s = images.get(value); return s ? [s.width, s.height, s.data] : null; },
+    // The gradient or pattern record of a fill/stroke style.
+    paintRecord(value) { return gradients.get(value) || patterns.get(value) || null; },
+    sourceOf,
     // [a, b, c, d, e, f] of a DOMMatrix2DInit (validated), for setTransform.
     matrix2D(init) {
       const m = matrixState.has(init) ? matrixState.get(init).m : fixup(init, true).m;

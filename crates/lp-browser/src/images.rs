@@ -1,6 +1,8 @@
 //! `<img>` resources: fetched through the page's resource loader (Image
 //! destination, so CDP sees an Image request) to learn the natural size
-//! from the file header. Pixels are never decoded or painted.
+//! from the file header. Pixels are not decoded here: when the document may
+//! draw images on a canvas, the bytes are kept for it to decode on use
+//! (`PageDom::set_image_bytes`).
 //!
 //! - An `<img src>` starts a load when its resolved URL (against the
 //!   document base URL, so `<base href>` counts) changes, connected or not:
@@ -249,10 +251,12 @@ impl Browser {
         // header parser; a PNG/GIF/JPEG/WebP whose header does not parse is
         // corrupt.
         let mut decodable = false;
+        let mut raster = None;
         let outcome = result.ok().filter(|r| (200..300).contains(&r.status) && !r.body.is_empty()).and_then(|r| {
             let body = &r.body[..r.body.len().min(MAX_IMAGE_BYTES)];
             if let Some((w, h)) = lp_dom::image::dimensions(body) {
                 decodable = true;
+                raster = Some(r);
                 return Some(Some((w as f64, h as f64)));
             }
             if r.mime == "image/svg+xml" || body.trim_ascii_start().starts_with(b"<svg") {
@@ -265,12 +269,30 @@ impl Browser {
         let decodable = decodable && outcome.is_some();
         bindings.dom.borrow_mut().set_natural_size(node, outcome.flatten());
         bindings.image_loaded(node, &src, decodable);
+        // Canvas drawing decodes the pixels from the bytes, when the
+        // document may draw images (it has a canvas or used canvas APIs).
+        if let Some(r) = raster.filter(|r| r.body.len() <= MAX_IMAGE_BYTES && bindings.wants_image_bytes()) {
+            let clean = self.image_origin_clean(page, &r.url);
+            bindings.set_image_bytes(node, r.body, clean);
+        }
         // A later owner-thread task: no DOM/state borrow survives dispatch.
         lp_webapi::lifecycle::resource_loaded(bindings, node, outcome.is_some());
         bindings.keep_loading_image(node, false);
         drop(hold);
 
         self.maybe_fire_load(page);
+    }
+
+    /// HTML "origin-clean" for an image response at `url` (no CORS mode:
+    /// images load without `crossorigin`): same-origin with the document,
+    /// or a `data:`/`blob:` URL.
+    fn image_origin_clean(&self, page: FrameKey, url: &str) -> bool {
+        if url.starts_with("data:") || url.starts_with("blob:") {
+            return true;
+        }
+        let Some(state) = self.doc(page) else { return false };
+        let document = crate::loader::origin_of(&state.main_frame.url);
+        document != "null" && document == crate::loader::origin_of(url)
     }
 
     fn image_error_task(&self, page: FrameKey, loader: LoaderId, bindings: &Rc<PageDom>, node: NodeId) {

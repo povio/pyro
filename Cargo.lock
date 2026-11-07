@@ -1881,6 +1881,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "lp-canvas"
+version = "0.0.17"
+dependencies = [
+ "bytemuck",
+ "image",
+ "kurbo",
+ "parley",
+ "peniko",
+ "png",
+ "skrifa 0.44.0",
+ "vello_cpu",
+]
+
+[[package]]
 name = "lp-cdp"
 version = "0.0.17"
 dependencies = [
@@ -2020,6 +2034,7 @@ dependencies = [
  "image",
  "krilla",
  "kurbo",
+ "lp-canvas",
  "lp-dom",
  "miniz_oxide 0.8.9",
  "parley",
@@ -2062,6 +2077,7 @@ dependencies = [
  "hkdf",
  "hmac",
  "kurbo",
+ "lp-canvas",
  "lp-dom",
  "lp-js",
  "lp-layout",

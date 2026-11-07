@@ -284,6 +284,7 @@ impl BlitzGeometry {
             resource_scope: format!("geometry-{}", self.page),
             live: Some(Live { page: self.page, tree, clip: None, interaction: None }),
             background: None,
+            canvases: Vec::new(),
             element_scroll: None,
         };
         SNAPSHOT_NS.fetch_add(t.elapsed().as_nanos() as u64, Ordering::Relaxed);
