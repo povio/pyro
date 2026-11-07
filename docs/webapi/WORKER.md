@@ -11,28 +11,67 @@ implement `new Worker(url)`. A worker runs its script off the page's thread.
   model as a browser thread. A page without workers pays one empty-list check
   when disposed; `worker_wire.js` is compiled on a realm's first worker use.
 - **Global.** `DedicatedWorkerGlobalScope` (`WorkerGlobalScope`, `EventTarget`):
-  `self`, `location`, `navigator` (subset), `name`, `origin`, `isSecureContext`,
+  `self`, `location`, `navigator` (subset), `name`, `origin`, `isSecureContext`
+  (the script URL is potentially trustworthy), `crossOriginIsolated` (false),
+  `reportError`,
   `postMessage`, `close`, `onmessage`, `onmessageerror`, `onerror`,
   `importScripts`, `setTimeout`/`setInterval` and their clears, `queueMicrotask`,
-  `atob`/`btoa`, `structuredClone`, `crypto`, `performance.now()`, `console`,
-  `fetch` with `Headers`/`Response`/`FormData`/`Blob`/`File`, `AbortController`,
-  `URL`/`URLSearchParams`, `TextEncoder`/`TextDecoder`, `MessageChannel`, `Event`
-  and its message, error, progress and rejection subclasses, `XMLHttpRequest`
-  without `responseXML` (see [XHR](XHR.md)). Everything else is undefined,
-  including `document`, `indexedDB` and `Worker`.
+  `atob`/`btoa`, `structuredClone`, `crypto` with `CryptoKey` (see
+  [Web Crypto](CRYPTO.md)), `performance` (the worker's own timeline: User
+  Timing, Resource Timing for its fetches, `PerformanceObserver`; see
+  [Performance Timeline](PERFORMANCE_TIMELINE.md)), `console`,
+  `fetch` with `Headers`/`Request`/`Response`/`FormData`/`Blob`/`File`, `FileReader`,
+  `AbortController`, `URL`/`URLSearchParams`, `TextEncoder`/`TextDecoder`,
+  `MessageChannel`, `Event` and its message, error, progress and rejection
+  subclasses, `XMLHttpRequest` without `responseXML` (see [XHR](XHR.md)),
+  `EventSource` (see [Fetch](FETCH.md)), `OffscreenCanvas` with its 2D
+  context, `ImageBitmap`, `createImageBitmap` and the other canvas value types
+  (made on first use; see [Canvas 2D](CANVAS.md)), `WebSocket`/`CloseEvent` (see
+  [WebSocket](WEBSOCKET.md)), `indexedDB` with the `IDB*` interfaces, over the
+  owner context's databases (see [IndexedDB](INDEXEDDB.md)), `caches`
+  (`Cache`, `CacheStorage`) over the owner context's Cache Storage (see
+  [Service workers](SERVICE_WORKER.md)),
+  `navigator.storage` (`StorageManager`), and the [streams](STREAMS.md)
+  (`ReadableStream`, `WritableStream`, `TransformStream`, the queuing
+  strategies, `TextEncoderStream`/`TextDecoderStream`,
+  `CompressionStream`/`DecompressionStream`, `response.body`), which, as on a
+  window, are made on the realm's first use of one of their names. Everything
+  else is undefined, including `document`, `FileReaderSync` and `Worker`.
 - **Script fetch.** On the worker's thread, blocking only it, through the page's
   context `NetClient` (cookies, interception, Network events) with the page's
   user agent, extra headers and cache setting. The URL must be same-origin with
   the document (SecurityError otherwise), or `data:`, or `blob:` (bytes captured
   at construction). Non-2xx or a failed load fires a plain `error` Event at the
-  `Worker`. The MIME type is not checked. Requests carry the owner's frame id and
+  `Worker`. A classic script's MIME type is not checked. Requests carry the owner's frame id and
   no loader id: they appear on the owner's page and do not delay its network idle.
+- **Modules.** `new Worker(url, {type: 'module'})` evaluates the script as a module:
+  static imports, top-level `await` and `import.meta.url`. Every worker's realm has
+  a module fetcher, so `import()` works in classic workers too. Each module is
+  fetched in a task of the worker's loop the way `importScripts` fetches (CORS mode,
+  `blob:` URLs of the worker's own store). A module that fails to load or throws at
+  its top level reports the error (`error` at the `Worker`). `importScripts` throws
+  TypeError in a module worker. Import attributes work as in a window (patched
+  JavaScriptCore): `with { type: "json" }` loads a JSON module, while a CSS module
+  (`type: "css"`) fails with TypeError before any fetch, since workers have no
+  `CSSStyleSheet`. Module responses (the module worker's own script included, over
+  http) must have the MIME type of their module type, and decode as UTF-8.
 - **Messages.** `postMessage` validates and copies with the realm's original
   `structuredClone`, then encodes the copy to text plus ArrayBuffer bytes
   (`worker_wire.js`), which cross as a task of the other side's event loop and
-  are rebuilt there; failing to rebuild fires `messageerror`. Transferring an
-  ArrayBuffer copies it and detaches the sender's. Messages to a worker wait until
-  its script has run. A navigation drops messages on their way to the old document.
+  are rebuilt there; failing to rebuild fires `messageerror`. Errors,
+  DOMExceptions, Blobs, Files and FileLists cross too (Blob bytes are shared,
+  not copied), and so do CryptoKeys and ImageBitmaps (pixels shared, not
+  copied). An ImageBitmap or an OffscreenCanvas without a context in the
+  transfer list moves and the sender's is detached; an OffscreenCanvas from
+  `transferControlToOffscreen` keeps showing its frames on its `<canvas>`
+  (see [Canvas 2D](CANVAS.md)). Transferring an ArrayBuffer copies it
+  and detaches the sender's. MessagePorts transfer both ways and stay
+  entangled across the threads (messages both ways, `start`/`onmessage`,
+  `close`, `messageerror`; see [MessageChannel](MESSAGE_CHANNEL.md)), and
+  arrive in `event.ports`; ReadableStream, WritableStream and TransformStream
+  transfer as the Streams standard specifies, over such ports (see
+  [Streams](STREAMS.md)). Messages to a worker wait until its script has
+  run. A navigation drops messages on their way to the old document.
 - **Errors.** An uncaught exception fires `ErrorEvent` at the global and, if not
   canceled, at the `Worker`, with message `Uncaught <text>`. It does not continue
   to the owner's window, and `error` is null on the page side.
@@ -75,13 +114,15 @@ times out.
 
 ## Not supported
 
-- `new Worker(url, {type: 'module'})` throws NotSupportedError. `import()` in a worker
-  rejects, since no module loader is installed there.
-- `SharedWorker` and `ServiceWorker` stay undefined, as does `navigator.serviceWorker`:
-  `typeof` feature detection is what sites use, and a constructor that throws would
-  send them down a path that then fails.
-- Transferring anything but an ArrayBuffer (MessagePort) throws NotSupportedError,
-  as does cloning what `structuredClone` rejects (Blob, File and other host objects).
+- Module workers have no import maps of their own, and `import.meta.resolve` follows
+  the engine. Without the engine's module loader (system JavaScriptCore),
+  `{type: 'module'}` throws NotSupportedError.
+- `SharedWorker` stays undefined: `typeof` feature detection is what sites use, and
+  a constructor that throws would send them down a path that then fails. Service
+  workers reuse this machinery (threads, the cross-VM message format and
+  cross-thread ports): see [Service workers](SERVICE_WORKER.md).
+- Host objects other than Blob, File, FileList, CryptoKey, ImageBitmap and
+  OffscreenCanvas do not cross (DataCloneError), ImageData included.
 - Nested workers. `Worker` is undefined inside a worker.
 - `importScripts` of a page-created `blob:` URL (the store is the owner document's).
 - A worker whose wrapper became unreachable runs until its document goes.
@@ -93,5 +134,7 @@ times out.
 - A worker started on a page prebooted by `serve --prepare` outside fork mode runs,
   but has no CDP target: the connection did not exist to record it.
 
-Tests: `crates/lp-browser/src/tests.rs` (`worker_*`), `crates/lp-webapi/tests/dom_js.rs`
+Tests: `crates/lp-browser/src/tests.rs` (`worker_*`, `message_ports_cross_*`,
+`a_port_from_a_worker_*`, `two_workers_talk_*`, `streams_transfer_*`,
+`crypto_keys_cross_*`), `crates/lp-webapi/tests/dom_js.rs`
 (`worker_*`), `tests/e2e/about-blank.mjs`.

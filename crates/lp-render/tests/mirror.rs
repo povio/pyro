@@ -38,7 +38,7 @@ impl Page {
         self.dom.borrow().query_selector(self.doc, &parse_selectors(css).unwrap()).unwrap().unwrap()
     }
     fn opts() -> RenderHtml<'static> {
-        RenderHtml { style_text: &|_| None, stylesheet_href: &|_| None, mark: None }
+        RenderHtml { style_text: &|_| None, stylesheet_href: &|_| None, mark: None, adopted: None }
     }
     fn tree(&self) -> Arc<Tree> {
         Arc::new(convert(self.dom.borrow().render_tree(self.doc, &Self::opts()).unwrap()))
@@ -523,6 +523,7 @@ fn element_captures_find_their_element_by_key() {
                     style_text: &|_| None,
                     stylesheet_href: &|_| None,
                     mark: Some((page.find("#t"), CLIP_ATTRIBUTE)),
+                    adopted: None,
                 },
             )
             .unwrap(),
@@ -546,7 +547,10 @@ fn linked_sheet_edits_reach_the_persistent_document() {
         Arc::new(convert(
             page.dom
                 .borrow()
-                .render_tree(page.doc, &RenderHtml { style_text: &|_| None, stylesheet_href: &href, mark: None })
+                .render_tree(
+                    page.doc,
+                    &RenderHtml { style_text: &|_| None, stylesheet_href: &href, mark: None, adopted: None },
+                )
                 .unwrap(),
         ))
     };

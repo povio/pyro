@@ -433,6 +433,15 @@
       return P;
     },
     accessor: defineAccessor,
+    // The global class's members, on the global since its creation, onto
+    // its interface prototype object when a script first reaches it: the
+    // same functions and attributes (realm.rs `copy_global_members`).
+    copyMembers(from, to, names) {
+      for (let i = 0; i < names.length; i++) {
+        const d = getOwnPropertyDescriptor(from, names[i]);
+        if (d !== undefined) defineProperty(to, names[i], d);
+      }
+    },
     // Methods or statics of a population step, `list` as name, function,
     // name, function, ... (realm.rs `MemberBatch`). Defined, not assigned:
     // a page may have put an accessor of the same name on Object.prototype
@@ -511,16 +520,20 @@
     // Emulates a host global class on the default JSC global, whose
     // [[Prototype]] is immutable: copy the interface members of the chain
     // (root first) onto the global and make `instanceof` accept it.
-    installGlobal(global, protos, ctors, name) {
-      for (let i = 0; i < protos.length; i++) {
+    // `ownLast`: the global class's own members are on the global already
+    // (realm.rs `install_classes`); its prototype is still empty. The
+    // brand goes on the constructor functions (`targets`), not through the
+    // interface objects, whose traps would populate the prototypes.
+    installGlobal(global, protos, ctors, targets, name, ownLast) {
+      for (let i = 0; i < protos.length - (ownLast ? 1 : 0); i++) {
         const proto = protos[i];
         for (const key of apply(arrayConcat, getOwnPropertyNames(proto), [getOwnPropertySymbols(proto)])) {
           if (key === 'constructor' || key === toStringTag) continue;
           defineProperty(global, key, getOwnPropertyDescriptor(proto, key));
         }
       }
-      for (let i = 0; i < ctors.length; i++) {
-        const C = ctors[i];
+      for (let i = 0; i < targets.length; i++) {
+        const C = targets[i];
         defineProperty(C, Symbol.hasInstance, {
           value: { [Symbol.hasInstance](v) { return v === global || apply(hasInstance, this, [v]); } }[Symbol.hasInstance],
           configurable: true,

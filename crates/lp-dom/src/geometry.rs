@@ -145,6 +145,11 @@ pub trait GeometrySource {
     fn active(&self) -> bool {
         true
     }
+    /// Whether a style rule of the engine's sheets depends on `:active`
+    /// (as of the last sync); true when the engine cannot tell.
+    fn styles_depend_on_active(&self) -> bool {
+        true
+    }
     /// Whether the engine must sync again although the document did not
     /// change (a sub-resource it laid out without arrived since).
     fn stale(&self) -> bool {
@@ -154,6 +159,24 @@ pub trait GeometrySource {
     /// has none for it, and the document's own cascade answers).
     fn element_style(&self, _key: u64) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
         None
+    }
+    /// The computed style of one element's pseudo-element `pseudo`
+    /// (`getComputedStyle(el, pseudo)`) as of the last sync; with
+    /// `generated_only`, only a stored style of a pseudo-element its rules
+    /// generate.
+    fn element_pseudo_style(
+        &self,
+        _key: u64,
+        _pseudo: &style::selector_parser::PseudoElement,
+        _generated_only: bool,
+    ) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
+        None
+    }
+    /// `false` when [`Self::element_pseudo_style`] with `generated_only`
+    /// answers `None` for `::before` / `::after` of every element as of the
+    /// last sync (no element is styled with a generated one).
+    fn may_have_generated_before_after(&self) -> bool {
+        true
     }
 }
 

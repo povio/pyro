@@ -41,7 +41,7 @@ macro_rules! global_events {
     ($callback:ident!($($args:tt)*)) => {
         $callback!($($args)* [
             "abort", "auxclick", "beforeinput", "beforetoggle", "blur", "cancel", "canplay", "canplaythrough",
-            "change", "click", "close", "contextlost", "contextmenu", "contextrestored", "copy", "cuechange", "cut",
+            "change", "click", "close", "command", "contextlost", "contextmenu", "contextrestored", "copy", "cuechange", "cut",
             "dblclick", "drag", "dragend", "dragenter", "dragleave", "dragover", "dragstart", "drop",
             "durationchange", "emptied", "ended", "error", "focus", "formdata", "input", "invalid", "keydown",
             "keypress", "keyup", "load", "loadeddata", "loadedmetadata", "loadstart", "mousedown", "mouseenter",

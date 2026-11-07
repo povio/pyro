@@ -23,8 +23,9 @@ fn boxes(html: &str, ids: &[&str]) -> Vec<LayoutBox> {
     let doc = parse_document(&dom, "http://test/", html);
     let d = dom.borrow();
     let keys: Vec<_> = ids.iter().map(|id| render_key(d.get_element_by_id(doc, id).unwrap().unwrap())).collect();
-    let tree =
-        d.render_tree(doc, &RenderHtml { style_text: &|_| None, stylesheet_href: &|_| None, mark: None }).unwrap();
+    let tree = d
+        .render_tree(doc, &RenderHtml { style_text: &|_| None, stylesheet_href: &|_| None, mark: None, adopted: None })
+        .unwrap();
     let tree = Tree {
         nodes: tree
             .nodes

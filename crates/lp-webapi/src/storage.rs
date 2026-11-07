@@ -167,6 +167,7 @@ fn seed_origin(text: &str) -> Result<String, String> {
 
 struct Namespace {
     indexed_db: crate::indexeddb::Namespace,
+    caches: crate::cache_storage::Namespace,
     origins: RefCell<FxHashMap<String, Rc<RefCell<Area>>>>,
     quota: usize,
     /// Pages attached to this namespace (`PageDom::set_storage_namespaces`):
@@ -190,10 +191,22 @@ impl StorageNamespace {
     pub fn with_quota(bytes: usize) -> Self {
         Self(Rc::new(Namespace {
             indexed_db: Default::default(),
+            caches: Default::default(),
             origins: RefCell::new(FxHashMap::default()),
             quota: bytes,
             pages: RefCell::new(Vec::new()),
         }))
+    }
+
+    /// A fresh namespace whose IndexedDB data and caches are `indexed_db`'s
+    /// and `caches`' (a worker shares its owner's databases and Cache
+    /// Storage; workers have no Web Storage).
+    pub(crate) fn with_shared(indexed_db: crate::indexeddb::Namespace, caches: crate::cache_storage::Namespace) -> Self {
+        let namespace = Self::default();
+        let mut inner = Rc::try_unwrap(namespace.0).ok().expect("fresh namespace");
+        inner.indexed_db = indexed_db;
+        inner.caches = caches;
+        Self(Rc::new(inner))
     }
 
     /// A namespace with the default quota holding a copy of `seed`'s entries.
@@ -236,6 +249,12 @@ impl StorageNamespace {
         value
     }
 
+    /// UTF-16 bytes stored under `origin` (keys and values), as counted
+    /// against the quota; `navigator.storage.estimate()` reports it.
+    pub(crate) fn usage(&self, origin: &str) -> usize {
+        self.0.origins.borrow().get(origin).map_or(0, |area| area.borrow().bytes)
+    }
+
     /// Registers a page that uses this namespace (for `storage` events).
     pub(crate) fn attach(&self, page: &Rc<PageDom>) {
         let mut pages = self.0.pages.borrow_mut();
@@ -251,6 +270,10 @@ impl StorageNamespace {
 
     pub(crate) fn indexed_db(&self) -> crate::indexeddb::Namespace {
         self.0.indexed_db.clone()
+    }
+
+    pub(crate) fn caches(&self) -> crate::cache_storage::Namespace {
+        self.0.caches.clone()
     }
 
     fn area(&self, origin: String) -> Rc<RefCell<Area>> {

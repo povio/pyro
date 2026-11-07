@@ -373,6 +373,9 @@ pub struct BaseDocument {
     pub(crate) focus_node_id: Option<NodeId>,
     /// The node which is currently active (if any)
     pub(crate) active_node_id: Option<NodeId>,
+    /// The focused node matches `:focus-visible` (FOCUSRING), as the
+    /// embedder decides it.
+    pub(crate) focus_ring: bool,
     /// The node which recieved a mousedown event (if any)
     pub(crate) mousedown_node_id: Option<NodeId>,
     /// The last time a mousedown was made (for double-click detection)
@@ -458,6 +461,18 @@ pub struct BaseDocument {
     /// dedicated storage on the node because their style changed (populated by
     /// the style traversal and by pseudo-element box construction).
     pub(crate) pending_style_image_nodes: Vec<NodeId>,
+
+    /// lightningpanda: a style traversal kept a generated `::before` /
+    /// `::after` style for some element (sticky; see
+    /// `BaseDocument::may_have_generated_before_after`).
+    pub(crate) generated_before_after: bool,
+
+    /// lightningpanda: the top layer (modal dialogs, showing popovers) as
+    /// the embedder marks it, by rank (bottom first): elements whose
+    /// `urn:x-lightningpanda:state` `state` attribute has a `top-layer=N`
+    /// token. Maintained when that attribute is set or cleared; usually
+    /// empty, and then painting costs one emptiness check per box.
+    pub(crate) top_layer: crate::layout::paint_tree::TopLayer,
 
     // Tracks in-flight "critical" resources (e.g. stylesheets linked from the `<head>`),
     // keyed by request id
@@ -603,6 +618,7 @@ impl BaseDocument {
             last_client_pointer_position: None,
             focus_node_id: None,
             active_node_id: None,
+            focus_ring: false,
             mousedown_node_id: None,
             has_active_animations: false,
             subdoc_is_animating: false,
@@ -623,6 +639,8 @@ impl BaseDocument {
             image_cache: HashMap::new(),
             pending_images: HashMap::new(),
             pending_style_image_nodes: Vec::new(),
+            generated_before_after: false,
+            top_layer: Default::default(),
             pending_critical_resources: HashSet::new(),
             controls_to_form: HashMap::new(),
             net_provider,
@@ -1028,6 +1046,10 @@ impl BaseDocument {
     /// it so that stale NodeIds are never dereferenced after the slot is freed.
     pub(crate) fn remove_node_from_tree(&mut self, node_id: NodeId) -> Option<Node> {
         self.clear_interaction_state_for_removed_node(node_id);
+        // lightningpanda: a dropped element leaves the top layer.
+        if !self.top_layer.is_empty() {
+            self.top_layer.remove(node_id);
+        }
         self.nodes.remove(node_id)
     }
 
@@ -1375,7 +1397,13 @@ impl BaseDocument {
         let shared = origin == Origin::Author && !css.contains("@import");
         if shared {
             if let Some(sheet) = crate::util::shared_sheet(css, self.url.as_str()) {
-                return sheet;
+                // A stylist holds a sheet once: another element of this
+                // document with the same text (two `<style>`s alike, adopted
+                // sheets reordered) parses its own.
+                if !self.nodes_to_stylesheet.values().any(|s| *s == sheet) {
+                    return sheet;
+                }
+                return self.parse_stylesheet(css, origin);
             }
         }
         let sheet = self.parse_stylesheet(css, origin);
@@ -1709,10 +1737,9 @@ impl BaseDocument {
         self.snapshot_node_impl(node_id, None)
     }
 
-    /// lightningpanda: `:has()` invalidation. Stylo leaves it to the embedder
-    /// (Gecko runs its `RelativeSelectorInvalidator` on every DOM mutation),
-    /// so a change inside a `:has()` argument left the anchor's styles stale
-    /// until something else restyled it. Matching flags every element a
+    /// lightningpanda: `:has()` invalidation for DOM insertions and removals
+    /// (state and attribute changes go through Stylo's relative selector
+    /// invalidation instead, `has_invalidation`). Matching flags every element a
     /// `:has()` search visits (`RELATIVE_SELECTOR_SEARCH_DIRECTION_*`) and
     /// every anchor (`ANCHORS_RELATIVE_SELECTOR[_NON_SUBJECT]`); when `node_id` is in a
     /// search path, the anchors that can see it (its ancestors and their
@@ -1786,7 +1813,8 @@ impl BaseDocument {
     }
 
     fn snapshot_node_impl(&mut self, node_id: NodeId, changed_attr: Option<&LocalName>) {
-        self.invalidate_has_anchors(node_id);
+        // `:has()` anchors are invalidated after the change, from the
+        // relative selector map (`has_invalidation`).
         let node = &mut self.nodes[node_id];
 
         // Do not snapshot nodes that have never been styled. A snapshot records an element's
@@ -1906,10 +1934,18 @@ impl BaseDocument {
         state: ElementState,
         cb: impl FnOnce(&mut Node),
     ) {
-        if self.style_depends_on_state(state) {
-            self.snapshot_node_state_only(node_id);
+        if !self.style_depends_on_state(state) {
+            cb(&mut self.nodes[node_id]);
+            return;
         }
+        self.snapshot_node_state_only(node_id);
+        let state_of = |n: &Node| if n.is_element() { *n.element_state() } else { ElementState::empty() };
+        let before = state_of(&self.nodes[node_id]);
         cb(&mut self.nodes[node_id]);
+        // lightningpanda: the `:has()` anchors that can see the element (a
+        // flag test when no `:has()` depends on these states).
+        let changed = before ^ state_of(&self.nodes[node_id]);
+        self.invalidate_relative_state(node_id, changed);
     }
 
     // Takes (x, y) co-ordinates (relative to the )
@@ -2065,10 +2101,16 @@ impl BaseDocument {
         }
 
         // Focus the new node
+        let ring = self.focus_ring;
         self.snapshot_node_and(
             focus_node_id,
             ElementState::FOCUS | ElementState::FOCUSRING,
-            |node| node.focus(shell_provider),
+            |node| {
+                node.focus(shell_provider);
+                if let Some(data) = node.element_data_mut() {
+                    data.element_state.set(ElementState::FOCUSRING, ring);
+                }
+            },
         );
 
         // Update :focus-within on the ancestor chains (shared prefix stays)
@@ -2098,6 +2140,38 @@ impl BaseDocument {
         // frame: a keyboard focus change touches no layout and no content.
         self.shell_provider.request_redraw();
 
+        true
+    }
+
+    /// Whether the focused node (now and later) matches `:focus-visible`;
+    /// true when a focused node's state changed.
+    pub fn set_focus_ring(&mut self, on: bool) -> bool {
+        if self.focus_ring == on {
+            return false;
+        }
+        self.focus_ring = on;
+        let Some(id) = self.focus_node_id else { return false };
+        self.snapshot_node_and(id, ElementState::FOCUSRING, |node| {
+            if let Some(data) = node.element_data_mut() {
+                data.element_state.set(ElementState::FOCUSRING, on);
+            }
+            node.mark_ancestors_dirty();
+        });
+        true
+    }
+
+    /// Puts `:active` on `node` and its ancestors (off the previous active
+    /// node's); true when anything changed.
+    pub fn set_active_to(&mut self, node: Option<NodeId>) -> bool {
+        let node = node.and_then(|id| self.nearest_non_anonymous_ancestor(id));
+        if node == self.active_node_id {
+            return false;
+        }
+        self.unactive_node();
+        for &id in self.maybe_node_element_ancestors(node).iter() {
+            self.snapshot_node_and(id, ElementState::ACTIVE, |node| node.active());
+        }
+        self.active_node_id = node;
         true
     }
 

@@ -391,6 +391,7 @@ impl<'s> Object<'s> {
     /// the heap); JSC roots them for the duration of the call.
     pub fn call(&self, this: Option<Object<'_>>, args: &[Value<'_>]) -> JsResult<Value<'s>> {
         let _pool = crate::autorelease::Pool::new();
+        let _entry = crate::engine::EntryGuard::enter(self.ctx);
         let raw_args = RawArgs::new(args);
         let mut exc = ptr::null();
         let this_raw = this.map_or(ptr::null_mut(), |o| o.raw);
@@ -411,6 +412,7 @@ impl<'s> Object<'s> {
     /// many arguments that were produced one by one (each conversion may GC).
     pub fn call_rooted(&self, this: Option<Object<'_>>, args: &crate::RootedVec) -> JsResult<Value<'s>> {
         let _pool = crate::autorelease::Pool::new();
+        let _entry = crate::engine::EntryGuard::enter(self.ctx);
         let raw = args.raw();
         let mut exc = ptr::null();
         let this_raw = this.map_or(ptr::null_mut(), |o| o.raw);
@@ -421,6 +423,7 @@ impl<'s> Object<'s> {
 
     pub fn construct(&self, args: &[Value<'_>]) -> JsResult<Object<'s>> {
         let _pool = crate::autorelease::Pool::new();
+        let _entry = crate::engine::EntryGuard::enter(self.ctx);
         let raw_args = RawArgs::new(args);
         let mut exc = ptr::null();
         let o =
@@ -697,6 +700,15 @@ impl<'s> Scope<'s> {
         let raw = RawArgs::new(items);
         let mut exc = ptr::null();
         let o = unsafe { sys::JSObjectMakeArray(self.ctx, raw.len(), raw.as_ptr(), &mut exc) };
+        check(self.ctx, exc)?;
+        Ok(unsafe { Object::from_raw(self.ctx, o) })
+    }
+    /// `new Date(time)` with the realm's intrinsic `Date`.
+    pub fn date(&self, time: f64) -> JsResult<Object<'s>> {
+        let arg = self.number(time);
+        let raw = RawArgs::new(std::slice::from_ref(&arg));
+        let mut exc = ptr::null();
+        let o = unsafe { sys::JSObjectMakeDate(self.ctx, raw.len(), raw.as_ptr(), &mut exc) };
         check(self.ctx, exc)?;
         Ok(unsafe { Object::from_raw(self.ctx, o) })
     }

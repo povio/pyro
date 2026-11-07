@@ -1,6 +1,83 @@
+diff --color -ruN -x README.lightningpanda.md -x UPSTREAM.patch -x .cargo_vcs_info.json -x .cargo-ok -x Cargo.toml.orig a/invalidation/element/invalidation_map.rs b/invalidation/element/invalidation_map.rs
+--- a/invalidation/element/invalidation_map.rs	2006-07-24 03:21:28
++++ b/invalidation/element/invalidation_map.rs	2026-11-07 14:08:05
+@@ -399,6 +399,11 @@
+     pub used: bool,
+     /// Flag indicating if invalidating a relative selector requires ancestor traversal.
+     pub needs_ancestors_traversal: bool,
++    /// lightningpanda: every element state some relative selector's
++    /// argument depends on (the union of `state_affecting_selectors`' states
++    /// in the relative selector map), so an embedder can tell with one flag
++    /// test that a state change cannot change any `:has()` match.
++    pub state_dependencies: ElementState,
+ }
+ 
+ impl Default for AdditionalRelativeSelectorInvalidationMap {
+@@ -416,6 +421,7 @@
+             any_to_selector: SmallVec::default(),
+             used: false,
+             needs_ancestors_traversal: false,
++            state_dependencies: ElementState::empty(),
+         }
+     }
+ 
+@@ -424,6 +430,7 @@
+         self.ts_state_to_selector.clear();
+         self.type_to_selector.clear();
+         self.any_to_selector.clear();
++        self.state_dependencies = ElementState::empty();
+     }
+ 
+     /// Shrink the capacity of hash maps if needed.
+@@ -595,6 +602,11 @@
+     fn this_scope_dependencies(&mut self) -> &mut Option<Vec<Dependency>>;
+     fn update_states(&mut self, element_state: ElementState, document_state: DocumentState);
+ 
++    /// lightningpanda: `element_state` goes into `state_map()`; a relative
++    /// selector map records the union
++    /// (`AdditionalRelativeSelectorInvalidationMap::state_dependencies`).
++    fn note_state_dependency(&mut self, element_state: ElementState);
++
+     // In normal invalidations, type-based dependencies don't need to be explicitly tracked;
+     // elements don't change their types, and mutations cause invalidations to go descendant
+     // (Where they are about to be styled anyway), and/or later-sibling direction (Where they
+@@ -720,6 +732,7 @@
+     if element_state.is_empty() {
+         return Ok(());
+     }
++    collector.note_state_dependency(element_state);
+     let dependency = collector.dependency();
+     collector.state_map().insert(
+         StateDependency {
+@@ -913,6 +926,13 @@
+         }
+     }
+ 
++    fn note_state_dependency(&mut self, element_state: ElementState) {
++        if self.relative_inner_collector.is_some() {
++            self.additional_relative_selector_invalidation_map
++                .state_dependencies |= element_state;
++        }
++    }
++
+     fn attribute_map(&mut self) -> &mut LocalNameDependencyMap {
+         if self.relative_inner_collector.is_none() {
+             &mut self.map.other_attribute_affecting_selectors
+@@ -1436,6 +1456,11 @@
+         &mut self
+             .relative_selector_invalidation_map
+             .state_affecting_selectors
++    }
++
++    fn note_state_dependency(&mut self, element_state: ElementState) {
++        self.additional_relative_selector_invalidation_map
++            .state_dependencies |= element_state;
+     }
+ 
+     fn attribute_map(&mut self) -> &mut LocalNameDependencyMap {
 diff --color -ruN -x README.lightningpanda.md -x UPSTREAM.patch -x .cargo_vcs_info.json -x .cargo-ok -x Cargo.toml.orig a/properties/counted_unknown_properties.py b/properties/counted_unknown_properties.py
---- a/properties/counted_unknown_properties.py	2026-11-07 02:27:16
-+++ b/properties/counted_unknown_properties.py	2026-11-07 02:27:17
+--- a/properties/counted_unknown_properties.py	2006-07-24 03:21:28
++++ b/properties/counted_unknown_properties.py	2026-11-04 14:07:40
 @@ -7,8 +7,6 @@
      "speak",
      "text-size-adjust",
@@ -11,8 +88,8 @@ diff --color -ruN -x README.lightningpanda.md -x UPSTREAM.patch -x .cargo_vcs_in
      "-webkit-margin-before",
      "-webkit-margin-after",
 diff --color -ruN -x README.lightningpanda.md -x UPSTREAM.patch -x .cargo_vcs_info.json -x .cargo-ok -x Cargo.toml.orig a/properties/helpers.mako.rs b/properties/helpers.mako.rs
---- a/properties/helpers.mako.rs	2026-11-07 02:27:16
-+++ b/properties/helpers.mako.rs	2026-11-07 02:27:17
+--- a/properties/helpers.mako.rs	2006-07-24 03:21:28
++++ b/properties/helpers.mako.rs	2026-11-07 14:08:05
 @@ -64,7 +64,17 @@
                      % endif
                      CSSWideKeyword::Inherit => {
@@ -32,8 +109,8 @@ diff --color -ruN -x README.lightningpanda.md -x UPSTREAM.patch -x .cargo_vcs_in
                          % if property.is_zoom_dependent():
                              if !context.builder.effective_zoom_for_inheritance.is_one() {
 diff --color -ruN -x README.lightningpanda.md -x UPSTREAM.patch -x .cargo_vcs_info.json -x .cargo-ok -x Cargo.toml.orig a/properties/longhands.toml b/properties/longhands.toml
---- a/properties/longhands.toml	2026-11-07 02:27:16
-+++ b/properties/longhands.toml	2026-11-07 02:27:17
+--- a/properties/longhands.toml	2006-07-24 03:21:28
++++ b/properties/longhands.toml	2026-11-07 14:08:05
 @@ -474,7 +474,6 @@
  type = "BreakBetween"
  initial = "computed::BreakBetween::Auto"
@@ -79,8 +156,8 @@ diff --color -ruN -x README.lightningpanda.md -x UPSTREAM.patch -x .cargo_vcs_in
  
  [caption-side]
 diff --color -ruN -x README.lightningpanda.md -x UPSTREAM.patch -x .cargo_vcs_info.json -x .cargo-ok -x Cargo.toml.orig a/properties/shorthands.rs b/properties/shorthands.rs
---- a/properties/shorthands.rs	2026-11-07 02:27:16
-+++ b/properties/shorthands.rs	2026-11-07 02:27:17
+--- a/properties/shorthands.rs	2006-07-24 03:21:28
++++ b/properties/shorthands.rs	2026-11-07 14:08:05
 @@ -542,7 +542,6 @@
      }
  }
@@ -90,8 +167,8 @@ diff --color -ruN -x README.lightningpanda.md -x UPSTREAM.patch -x .cargo_vcs_in
      use super::*;
      pub use crate::properties::generated::shorthands::container::*;
 diff --color -ruN -x README.lightningpanda.md -x UPSTREAM.patch -x .cargo_vcs_info.json -x .cargo-ok -x Cargo.toml.orig a/properties/shorthands.toml b/properties/shorthands.toml
---- a/properties/shorthands.toml	2026-11-07 02:27:16
-+++ b/properties/shorthands.toml	2026-11-07 02:27:17
+--- a/properties/shorthands.toml	2006-07-24 03:21:28
++++ b/properties/shorthands.toml	2026-11-07 14:08:05
 @@ -209,7 +209,7 @@
  kind = "two_properties"
  
@@ -122,8 +199,8 @@ diff --color -ruN -x README.lightningpanda.md -x UPSTREAM.patch -x .cargo_vcs_in
  sub_properties = ["break-inside"]
  spec = "https://drafts.csswg.org/css-break-3/#page-break-properties"
 diff --color -ruN -x README.lightningpanda.md -x UPSTREAM.patch -x .cargo_vcs_info.json -x .cargo-ok -x Cargo.toml.orig a/rule_cache.rs b/rule_cache.rs
---- a/rule_cache.rs	2026-11-07 02:27:16
-+++ b/rule_cache.rs	2026-11-07 02:27:17
+--- a/rule_cache.rs	2006-07-24 03:21:28
++++ b/rule_cache.rs	2026-11-07 14:08:05
 @@ -26,9 +26,53 @@
      line_height: Option<NonNegativeLength>,
      writing_mode: Option<WritingMode>,
@@ -205,9 +282,20 @@ diff --color -ruN -x README.lightningpanda.md -x UPSTREAM.patch -x .cargo_vcs_in
          };
          self.map
              .entry(rules)
+diff --color -ruN -x README.lightningpanda.md -x UPSTREAM.patch -x .cargo_vcs_info.json -x .cargo-ok -x Cargo.toml.orig a/servo/selector_parser.rs b/servo/selector_parser.rs
+--- a/servo/selector_parser.rs	2006-07-24 03:21:28
++++ b/servo/selector_parser.rs	2026-11-07 14:08:05
+@@ -629,6 +629,7 @@
+             "focus-within" => NonTSPseudoClass::FocusWithin,
+             "fullscreen" => NonTSPseudoClass::Fullscreen,
+             "hover" => NonTSPseudoClass::Hover,
++            "in-range" => NonTSPseudoClass::InRange,
+             "indeterminate" => NonTSPseudoClass::Indeterminate,
+             "invalid" => NonTSPseudoClass::Invalid,
+             "link" => NonTSPseudoClass::Link,
 diff --color -ruN -x README.lightningpanda.md -x UPSTREAM.patch -x .cargo_vcs_info.json -x .cargo-ok -x Cargo.toml.orig a/stylesheets/rule_parser.rs b/stylesheets/rule_parser.rs
---- a/stylesheets/rule_parser.rs	2026-11-07 02:27:17
-+++ b/stylesheets/rule_parser.rs	2026-11-07 02:27:17
+--- a/stylesheets/rule_parser.rs	2006-07-24 03:21:28
++++ b/stylesheets/rule_parser.rs	2026-11-07 14:08:05
 @@ -282,7 +282,7 @@
              "counter-style" if cfg!(feature = "gecko") => Self::CounterStyle,
              "media" => Self::Media,
@@ -218,8 +306,8 @@ diff --color -ruN -x README.lightningpanda.md -x UPSTREAM.patch -x .cargo_vcs_in
              "keyframes" => Self::Keyframes(None),
              "-webkit-keyframes" => Self::Keyframes(Some(VendorPrefix::WebKit)),
 diff --color -ruN -x README.lightningpanda.md -x UPSTREAM.patch -x .cargo_vcs_info.json -x .cargo-ok -x Cargo.toml.orig a/stylist.rs b/stylist.rs
---- a/stylist.rs	2026-11-07 02:27:16
-+++ b/stylist.rs	2026-11-07 02:27:17
+--- a/stylist.rs	2006-07-24 03:21:28
++++ b/stylist.rs	2026-11-07 14:08:05
 @@ -999,6 +999,13 @@
          ExtraStyleDataIterator(self.cascade_data.iter_origins_rev())
      }
@@ -235,8 +323,8 @@ diff --color -ruN -x README.lightningpanda.md -x UPSTREAM.patch -x .cargo_vcs_in
      pub fn num_selectors(&self) -> usize {
          self.cascade_data
 diff --color -ruN -x README.lightningpanda.md -x UPSTREAM.patch -x .cargo_vcs_info.json -x .cargo-ok -x Cargo.toml.orig a/values/generics/mod.rs b/values/generics/mod.rs
---- a/values/generics/mod.rs	2026-11-07 02:27:16
-+++ b/values/generics/mod.rs	2026-11-07 02:27:17
+--- a/values/generics/mod.rs	2006-07-24 03:21:28
++++ b/values/generics/mod.rs	2026-11-07 14:08:05
 @@ -110,6 +110,7 @@
      ToCss,
      ToResolvedValue,
@@ -246,8 +334,8 @@ diff --color -ruN -x README.lightningpanda.md -x UPSTREAM.patch -x .cargo_vcs_in
  #[repr(transparent)]
  pub struct GreaterThanOrEqualToOne<T>(pub T);
 diff --color -ruN -x README.lightningpanda.md -x UPSTREAM.patch -x .cargo_vcs_info.json -x .cargo-ok -x Cargo.toml.orig a/values/specified/box.rs b/values/specified/box.rs
---- a/values/specified/box.rs	2026-11-07 02:27:16
-+++ b/values/specified/box.rs	2026-11-07 02:27:17
+--- a/values/specified/box.rs	2006-07-24 03:21:28
++++ b/values/specified/box.rs	2026-11-07 14:08:05
 @@ -2013,6 +2013,8 @@
      Auto,
      Page,

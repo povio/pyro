@@ -16,17 +16,26 @@
 //!    `page.dispose()`. Per-world removal can use `lifecycle::realm_disposed`.
 
 pub mod abort;
+mod cache_storage;
 mod animation_events;
+mod animations;
 pub mod canvas;
+mod canvas_path;
+mod clipboard;
 pub mod collections;
+mod compression;
 pub mod crypto;
+mod crypto_subtle;
 pub mod css;
 pub mod custom;
 pub mod data_transfer;
 pub mod dom_parser;
+mod edit_commands;
 pub mod editing;
+mod editing_globals;
 pub mod encoding;
 pub mod event;
+mod event_source;
 pub mod fetch;
 pub mod file;
 pub mod file_reader;
@@ -36,26 +45,43 @@ pub mod handlers;
 pub mod headers;
 pub mod html;
 pub mod identity;
+mod image_decode;
 pub mod indexeddb;
 pub mod input;
+mod integrity;
+mod internals;
 pub mod intersection_observer;
 pub mod layout_api;
 pub mod lifecycle;
+pub(crate) mod lazy_module;
+pub mod media;
+pub(crate) mod media_format;
 pub mod media_source;
 pub mod message_channel;
+pub mod module_script;
 pub mod mutation_observer;
 pub mod navigator_extras;
 pub mod node;
+pub mod observable;
 pub mod page;
+pub mod performance;
+mod popover;
+mod pointer_capture;
 mod popup;
+mod port_link;
 pub mod range;
 pub mod render_blocking;
 pub mod render_snapshot;
-pub mod resize_observer;
+pub mod report_error;
 pub mod request;
-pub mod observable;
+pub mod resize_observer;
+pub mod resource_timing;
 pub mod response;
+mod service_worker;
+mod service_worker_scope;
+pub mod sri;
 pub mod storage;
+mod storage_manager;
 mod streams;
 mod structured_clone;
 pub mod target;
@@ -64,7 +90,10 @@ pub mod url;
 pub mod url_search_params;
 pub mod util;
 pub mod validity;
+pub(crate) mod webaudio;
+pub mod websocket;
 pub mod window;
+pub mod window_message;
 pub mod worker;
 mod worker_scope;
 pub mod xhr;
@@ -81,11 +110,13 @@ pub use identity::UserAgentOverride;
 pub use navigator_extras::{ContextServices, GeolocationFix, PermissionSetting, UserAgentMetadata};
 pub use node::{wrap_node, NodeData};
 pub use page::{
-    DialogAnswer, DownloadRequest, FocusTarget, FocusTransition, FrameViewportSource, IframeAttribute,
-    NavigationRequest, PageDom, PageHooks, RemotePoster,
+    DialogAnswer, DocumentTiming, DownloadRequest, FocusTarget, FocusTransition, FrameViewportSource, IframeAttribute,
+    BodyPart, MediaFetchHandle, MediaRequest, MediaResponse, NavigationRequest, Partial, PageDom, PageHooks, RemotePoster,
 };
 pub use popup::{PopupCommand, PopupState, PopupTicket};
+pub use structured_clone::{decode_message as deserialize_message, encode_message as serialize_message, WireMessage};
 pub use render_blocking::RenderBlocker;
+pub use service_worker::{navigation_route, subresource_route, LoadRoute};
 pub use storage::{StorageNamespace, StorageSeed};
 pub use target::{EventTarget, EventTargetData};
 pub use window::{define_members, WindowHost};
@@ -114,6 +145,7 @@ pub fn register(engine: &lp_js::Engine) {
     media_source::register(engine);
     worker::register(engine);
     custom::register(engine);
+    internals::register(engine);
     file::register(engine);
     engine.register::<file_reader::FileReader>();
     data_transfer::register(engine);
@@ -129,6 +161,7 @@ pub fn register(engine: &lp_js::Engine) {
     xpath::register(engine);
     engine.register::<storage::Storage>();
     engine.register::<indexeddb::IdbFactory>();
+    engine.register::<cache_storage::CacheHandle>();
     engine.register::<headers::Headers>();
     engine.register::<url::URL>();
     engine.register::<url_search_params::URLSearchParams>();
@@ -163,14 +196,15 @@ pub fn install(scope: &Scope<'_>, page: Rc<PageDom>) -> JsResult<()> {
     form_data::install(scope)?;
     fetch::install(scope)?;
     structured_clone::install(scope, &page)?;
-    if let Some(define) = scope.global().get_atom("Object")?.as_object().map(|o| o.get_atom("defineProperty")).transpose()? {
+    if let Some(define) =
+        scope.global().get_atom("Object")?.as_object().map(|o| o.get_atom("defineProperty")).transpose()?
+    {
         page.define_properties.borrow_mut().insert(scope.realm_id(), lp_js::Persistent::new(scope, define));
     }
     if page.max_touch_points() > 0 {
         handlers::define_touch_handlers(scope)?;
     }
     let global = scope.global();
-    global.set_atom("CSS", window::css_namespace(scope)?)?;
     // A window's `document` and `window` ([LegacyUnforgeable]) never change:
     // they are the global's own constant attributes (not members of
     // Window.prototype, see `window::has_window_constants`), which read with

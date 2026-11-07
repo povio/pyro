@@ -116,6 +116,113 @@ fn import_maps_map_bare_specifiers() {
     assert!(errors[0].contains("Invalid import map"), "{log:?}");
 }
 
+const TYPED_MODULES_PAGE: &str = r#"<!doctype html><html><head>
+<script type="module">
+import data from './data.json' with { type: 'json' };
+import sheet from './s.css' with { type: 'css' };
+document.adoptedStyleSheets = [sheet];
+const t = document.getElementById('t');
+console.log('typed', data.n, sheet instanceof CSSStyleSheet, sheet.cssRules.length, sheet.cssRules[0].cssText,
+  getComputedStyle(t).color);
+const name = p => p.then(m => 'ok', e => e.constructor.name);
+const results = await Promise.all([
+  import('./data.json'),
+  import('./s.css'),
+  import('./plain.json', { with: { type: 'json' } }),
+  import('./code.js', { with: { type: 'json' } }),
+  import('./data.json', { with: { type: 'css' } }),
+  import('./missing.json', { with: { type: 'json' } }),
+  import('./code.js', { with: { type: 'text' } }),
+  import('./bad.json', { with: { type: 'json' } }),
+  import('./code.js'),
+].map(name));
+console.log('outcomes', results.join());
+const again = await import('./s.css', { with: { type: 'css' } });
+console.log('same sheet', again.default === sheet);
+// A page's `then` on CSSStyleSheet does not make the module's sheet a thenable.
+CSSStyleSheet.prototype.then = function () { console.log('then called'); };
+const other = await import('./s2.css', { with: { type: 'css' } });
+delete CSSStyleSheet.prototype.then;
+console.log('not thenable', other.default instanceof CSSStyleSheet, other.default !== sheet);
+</script>
+<script type="module" src="/data.json"></script>
+</head><body><p id="t">x</p></body></html>"#;
+
+#[test]
+fn json_and_css_module_scripts_load_with_import_attributes() {
+    if unsafe { lp_js::sys::modules::lp_jsc_typed_modules_available() } != 1 {
+        eprintln!("import attributes need the patched JavaScriptCore; skipping");
+        return;
+    }
+    let mut thread = crate::browser_thread().unwrap();
+    let rec = Rc::new(Recorder::default());
+    thread.browser.set_observer(Some(rec.clone()));
+    thread.browser.set_engine_hooks(Some(rec.clone()));
+    let loader = Rc::new(StaticLoader::default());
+    for (path, mime, body) in [
+        ("/", "text/html", TYPED_MODULES_PAGE),
+        ("/data.json", "application/json", r#"{"n": 5}"#),
+        ("/bad.json", "application/json", "{nope"),
+        ("/plain.json", "text/plain", r#"{"n": 5}"#),
+        ("/s.css", "text/css", "@import url(other.css); p { color: rgb(0, 128, 0) }"),
+        ("/code.js", "text/javascript", "export default 1"),
+        ("/s2.css", "text/css", "p { margin: 0 }"),
+    ] {
+        loader.insert(&format!("http://site.test{path}"), mime, body, Duration::ZERO);
+    }
+    thread.browser.set_loader(Some(loader.clone()));
+    let page = thread.browser.create_page().unwrap();
+    rec.log.borrow_mut().clear();
+    thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    run(&mut thread, &rec);
+    let log = rec.log.borrow();
+    assert!(!log.iter().any(|l| l == "then called"), "{log:?}");
+    for line in [
+        "not thenable true true",
+        "typed 5 true 1 p { color: rgb(0, 128, 0); } rgb(0, 128, 0)",
+        // Untyped JSON and CSS, a JSON request answered with text/plain or
+        // JavaScript, a CSS one answered with JSON, a 404 and the "text" type
+        // are TypeErrors; invalid JSON is a SyntaxError.
+        "outcomes TypeError,TypeError,TypeError,TypeError,TypeError,TypeError,TypeError,SyntaxError,ok",
+        "same sheet true",
+    ] {
+        assert!(log.iter().any(|l| l == line), "missing {line:?} in {log:?}");
+    }
+}
+
+/// The system framework does not pass import attributes to the loader: a JSON
+/// module fails with an error that says so instead of loading as JavaScript.
+#[test]
+fn typed_imports_fail_clearly_without_import_attribute_support() {
+    let modules = unsafe { lp_js::sys::modules::lp_jsc_modules_available() } == 1;
+    if !modules || unsafe { lp_js::sys::modules::lp_jsc_typed_modules_available() } == 1 {
+        eprintln!("checks the system framework fallback; skipping");
+        return;
+    }
+    let mut thread = crate::browser_thread().unwrap();
+    let rec = Rc::new(Recorder::default());
+    thread.browser.set_observer(Some(rec.clone()));
+    thread.browser.set_engine_hooks(Some(rec.clone()));
+    let loader = Rc::new(StaticLoader::default());
+    let page_src = r#"<!doctype html><script type="module">
+      import('./data.json', { with: { type: 'json' } }).then(
+        m => console.log('loaded', typeof m.default),
+        e => console.log('failed', e.constructor.name, e.message));
+    </script>"#;
+    loader.insert("http://site.test/", "text/html", page_src, Duration::ZERO);
+    loader.insert("http://site.test/data.json", "application/json", "[1, 2]", Duration::ZERO);
+    thread.browser.set_loader(Some(loader.clone()));
+    let page = thread.browser.create_page().unwrap();
+    rec.log.borrow_mut().clear();
+    thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    run(&mut thread, &rec);
+    let log = rec.log.borrow();
+    let line = log.iter().find(|l| l.starts_with("loaded") || l.starts_with("failed")).cloned();
+    let line = line.unwrap_or_else(|| panic!("no outcome in {log:?}"));
+    assert!(line.starts_with("failed TypeError"), "{line}");
+    assert!(line.contains("source-built JavaScriptCore") || line.contains("is not valid"), "{line}");
+}
+
 fn run(thread: &mut BrowserThread, rec: &Recorder) {
     let r = thread.run_until(Some(Instant::now() + Duration::from_secs(10)), |_| {
         rec.log.borrow().iter().any(|l| l == "event:load")

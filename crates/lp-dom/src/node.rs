@@ -60,6 +60,9 @@ pub struct DocumentData {
     /// Encoding name (`document.characterSet`).
     pub charset: &'static str,
     pub url: Box<str>,
+    /// `url` parsed, made on first use (`Dom::document_url_parsed`) and
+    /// reset when the URL changes; `None` inside when it does not parse.
+    pub(crate) parsed_url: std::cell::OnceCell<Option<url::Url>>,
     /// Embedder-supplied inherited base for initial blank/srcdoc documents.
     pub(crate) base_url: Option<Box<str>>,
     /// Resolved first `<base href>`, computed on demand and reset when a
@@ -96,6 +99,12 @@ pub struct DocumentData {
     pub(crate) focused: u32,
     /// Element under the (virtual) pointer for :hover.
     pub(crate) hovered: u32,
+    /// Element being activated (a primary press or Space on it) for
+    /// `:active`, which also matches its shadow-including ancestors.
+    pub(crate) activated: u32,
+    /// The focused element matches `:focus-visible` (Chrome's heuristics,
+    /// decided by the bindings when focus moves).
+    pub(crate) focus_visible: bool,
     /// The document element (first element child), its first HTML `head`
     /// child and its first HTML `body` or `frameset` child; NIL for none.
     /// Kept by `tree_linked`/`tree_unlinking`, which every link and unlink
@@ -188,6 +197,10 @@ pub mod shadow_flags {
     pub const MANUAL_SLOTS: u8 = 8;
     /// Made by the parser and not yet claimed by `attachShadow`.
     pub const DECLARATIVE: u8 = 16;
+    /// "Available to element internals": attached while the host was a
+    /// custom element (state "precustomized" or "custom"), so
+    /// `ElementInternals.shadowRoot` returns it.
+    pub const AVAILABLE_TO_INTERNALS: u8 = 32;
 }
 
 /// Mutable form-control state that is not reflected in attributes.
@@ -208,6 +221,9 @@ pub struct ControlState {
     pub(crate) selection_direction: Option<(bool, (u32, u32))>,
     /// Value changed by user editing (enables tooLong/tooShort).
     pub user_edited: bool,
+    /// HTML "user validity": the user committed a change, or a submission
+    /// validated the form (`:user-valid` / `:user-invalid`); reset clears it.
+    pub user_validity: bool,
     /// `setCustomValidity` message.
     pub custom_validity: Option<String>,
     /// `<option>` selectedness when explicitly set.
@@ -250,6 +266,15 @@ pub mod element_flags {
     pub const FRAGMENT_PARSED: u8 = 4;
     /// Custom element has been defined/upgraded (`:defined`).
     pub const CUSTOM_DEFINED: u8 = 8;
+    /// The element's custom element definition observes attributes
+    /// (`observedAttributes` with an `attributeChangedCallback`): attribute
+    /// changes queue reactions. Unset, an attribute change pays one test.
+    pub const OBSERVES_ATTRIBUTES: u8 = 16;
+    /// Custom element state "failed": its constructor threw, so it is
+    /// never upgraded again.
+    pub const CUSTOM_FAILED: u8 = 32;
+    /// A form-associated custom element (`static formAssociated = true`).
+    pub const FORM_ASSOCIATED: u8 = 64;
 }
 
 impl ElementData {

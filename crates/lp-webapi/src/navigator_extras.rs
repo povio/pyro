@@ -1,5 +1,5 @@
 //! `navigator.userAgentData`, `navigator.permissions`, `navigator.clipboard`,
-//! `navigator.geolocation` and `ClipboardItem`. Their classes are made in JS (navigator_extras.js) on
+//! `navigator.geolocation`, `ClipboardItem` and `Notification`. Their classes are made in JS (navigator_extras.js) on
 //! a realm's first use of any of them, so realms that never touch them pay
 //! nothing. Permissions and the clipboard belong to the browser context
 //! ([`ContextServices`], shared by its pages); client hints come from the
@@ -155,7 +155,7 @@ impl UserAgentMetadata {
 }
 
 /// A JSON string literal.
-fn quote(s: &str) -> String {
+pub(crate) fn quote(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     out.push('"');
     for c in s.chars() {
@@ -211,6 +211,8 @@ pub struct ContextServices {
     watchers: RefCell<Vec<std::rc::Weak<PageDom>>>,
     /// `Emulation.setGeolocationOverride`. Outer `None`: no override.
     geolocation: RefCell<Option<Option<GeolocationFix>>>,
+    /// Service worker registrations and clients (`crate::service_worker`).
+    pub(crate) service_workers: crate::service_worker::Registry,
 }
 
 /// A position `navigator.geolocation` reports. CDP's optional coordinates are
@@ -227,6 +229,12 @@ pub struct GeolocationFix {
 }
 
 impl ContextServices {
+    /// Whether loads of this context's frames may go through a service
+    /// worker (it has registrations): the one test a load pays otherwise.
+    pub fn may_route_loads(&self) -> bool {
+        self.service_workers.has_registrations()
+    }
+
     /// `Browser.grantPermissions`: `names` (permission names as
     /// `navigator.permissions.query` takes them) become granted for
     /// `origin` (`None`: every origin) and the rest denied.
@@ -311,6 +319,16 @@ impl ContextServices {
     /// The clipboard's `text/plain` entry (CDP-side inspection and tests).
     pub fn clipboard_text(&self) -> Option<String> {
         self.clipboard.borrow().iter().find(|e| e.0 == "text/plain").map(|e| e.1.clone())
+    }
+
+    /// The clipboard's text entries (MIME type, data), as a paste reads them.
+    pub(crate) fn clipboard_strings(&self) -> Vec<(String, String)> {
+        self.clipboard.borrow().iter().filter(|e| !e.2).map(|e| (e.0.clone(), e.1.clone())).collect()
+    }
+
+    /// Replaces the clipboard with text entries (copy, cut).
+    pub(crate) fn write_clipboard_strings(&self, items: Vec<(String, String)>) {
+        *self.clipboard.borrow_mut() = items.into_iter().map(|(ty, data)| (ty, data, false)).collect();
     }
 }
 

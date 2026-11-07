@@ -125,7 +125,6 @@ fn options_collection_indices_can_be_written() {
 
 #[test]
 fn supported_property_names_are_own_keys_but_not_enumerable() {
-
     let env = env();
     assert_eq!(
         env.eval(

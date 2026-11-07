@@ -244,6 +244,9 @@ fn event_bytes(event: &NetEvent) -> usize {
                 | crate::NetError::UnsupportedScheme(s) => s.capacity(),
                 _ => 0,
             },
+            NetEvent::WebSocket { activity, .. } => {
+                std::mem::size_of::<crate::WebSocketActivity>() + activity.retained_bytes()
+            }
         }
 }
 

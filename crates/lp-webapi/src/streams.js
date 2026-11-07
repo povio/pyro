@@ -1,15 +1,17 @@
 // WHATWG Streams for one realm, made on first use: ReadableStream (default and
-// byte), WritableStream, TransformStream, the queuing strategies and
-// TextEncoderStream/TextDecoderStream, plus the helpers streams.rs calls for
+// byte), WritableStream, TransformStream, the queuing strategies,
+// TextEncoderStream/TextDecoderStream and CompressionStream/DecompressionStream
+// (over `natives.zlib`, compression.rs), plus the helpers streams.rs calls for
 // Response bodies and Blob.stream(). Operations follow the spec's abstract
 // operations and keep their names, shortened; public classes hold a state
 // object in a private field, so page code cannot reach the internals.
 //
 // Byte streams are simplified: chunks are copied rather than transferred, and
 // `byobRequest` views a private buffer whose bytes are enqueued on respond().
-(function () {
+(function (natives) {
   'use strict';
   const token = Symbol('lightningpanda');
+  const zlib = natives.zlib;
   const PromiseC = Promise;
   const promiseThen = PromiseC.prototype.then;
   const promiseAll = PromiseC.all.bind(PromiseC);
@@ -37,6 +39,20 @@
   const addListener = EventTarget.prototype.addEventListener;
   const removeListener = EventTarget.prototype.removeEventListener;
   const fetchFn = fetch;
+  const DOMExceptionC = DOMException;
+  // What stream transfer uses, if the realm still has it (without it,
+  // streams are not transferable).
+  let MessageChannelC, eventData, portPost, portStart, portClose, port1Of, port2Of;
+  try {
+    const own = Object.getOwnPropertyDescriptor;
+    eventData = own(MessageEvent.prototype, 'data').get;
+    portPost = MessagePort.prototype.postMessage;
+    portStart = MessagePort.prototype.start;
+    portClose = MessagePort.prototype.close;
+    port1Of = own(MessageChannel.prototype, 'port1').get;
+    port2Of = own(MessageChannel.prototype, 'port2').get;
+    MessageChannelC = MessageChannel;
+  } catch (_) {}
   const asyncIterator = Symbol.asyncIterator;
   const iterator = Symbol.iterator;
   const AsyncIteratorPrototype = getPrototypeOf(getPrototypeOf((async function* () {}).prototype));
@@ -1422,9 +1438,20 @@
       tcTerminate(this.#c);
     }
   }
+  let tsOf;
+  let isTS;
   class TransformStream {
     #s;
+    static {
+      tsOf = (v) => v.#s;
+      isTS = (v) => isObject(v) && #s in v;
+    }
     constructor(transformer = undefined, writableStrategy = undefined, readableStrategy = undefined) {
+      // A transferred TransformStream: its two sides, made by `transferIn`.
+      if (transformer === token) {
+        this.#s = writableStrategy;
+        return;
+      }
       const wStrat = strategyOf(writableStrategy, 'TransformStream');
       const rStrat = strategyOf(readableStrategy, 'TransformStream');
       if (transformer !== undefined && transformer !== null && !isObject(transformer)) {
@@ -1604,10 +1631,69 @@
     }
   }
 
+  // ----- Compression streams ---------------------------------------------
+
+  const FORMATS = ['deflate', 'deflate-raw', 'gzip'];
+  // A transform over a native codec: each chunk must be a BufferSource; the
+  // codec's TypeErrors (corrupt or truncated data) error both sides.
+  const codecTransform = (kind, format, compress) => {
+    const name = `${format}`;
+    if (FORMATS.indexOf(name) < 0) {
+      throw new TypeErrorC(`Failed to construct '${kind}': The provided value '${name}' is not a valid enum value of type CompressionFormat.`);
+    }
+    const codec = zlib(name, compress);
+    const push = codec.push, finish = codec.finish;
+    const t = makeTransform(undefined, (chunk) => {
+      try {
+        const out = push(chunk);
+        if (out.length > 0) tcEnqueue(t.controller, out);
+        return resolved();
+      } catch (e) {
+        return rejected(e);
+      }
+    }, () => {
+      try {
+        const out = finish();
+        if (out.length > 0) tcEnqueue(t.controller, out);
+        return resolved();
+      } catch (e) {
+        return rejected(e);
+      }
+    }, () => resolved(), 1, () => 1, 0, () => 1);
+    return t;
+  };
+  class CompressionStream {
+    #t;
+    constructor(format) {
+      if (arguments.length < 1) throw new TypeErrorC("Failed to construct 'CompressionStream': 1 argument required, but only 0 present.");
+      this.#t = codecTransform('CompressionStream', format, true);
+    }
+    get readable() {
+      return this.#t.readable.wrapper;
+    }
+    get writable() {
+      return this.#t.writable.wrapper;
+    }
+  }
+  class DecompressionStream {
+    #t;
+    constructor(format) {
+      if (arguments.length < 1) throw new TypeErrorC("Failed to construct 'DecompressionStream': 1 argument required, but only 0 present.");
+      this.#t = codecTransform('DecompressionStream', format, false);
+    }
+    get readable() {
+      return this.#t.readable.wrapper;
+    }
+    get writable() {
+      return this.#t.writable.wrapper;
+    }
+  }
+
   for (const C of [
     ReadableStream, ReadableStreamDefaultReader, ReadableStreamBYOBReader, ReadableStreamDefaultController, ReadableByteStreamController,
     ReadableStreamBYOBRequest, WritableStream, WritableStreamDefaultWriter, WritableStreamDefaultController, TransformStream,
     TransformStreamDefaultController, ByteLengthQueuingStrategy, CountQueuingStrategy, TextEncoderStream, TextDecoderStream,
+    CompressionStream, DecompressionStream,
   ]) {
     idl(C, C.name);
   }
@@ -1652,6 +1738,173 @@
     step();
     return d.promise;
   };
+  // ----- Transfer (HTML structured clone, Streams §8) ---------------------
+  // A transferred stream is a cross-realm transform over a MessageChannel:
+  // the original is piped into (or from) one port, the new stream wraps the
+  // other, which goes wherever the message goes (another frame or thread).
+
+  const dataClone = (message) => new DOMExceptionC(message, 'DataCloneError');
+  const pack = (port, type, value) => apply(portPost, port, [{ type, value }]);
+  const sendError = (port, e) => {
+    try {
+      pack(port, 'error', e);
+    } catch (_) {}
+  };
+  const packHandlingError = (port, type, value) => {
+    try {
+      pack(port, type, value);
+    } catch (e) {
+      sendError(port, e);
+      throw e;
+    }
+  };
+  const disentangle = (port) => apply(portClose, port, []);
+  // `onMessage(type, value)` for each well-formed message; `onError(e)` when
+  // one cannot be deserialized here.
+  const listen = (port, onMessage, onError) => {
+    apply(addListener, port, ['message', (event) => {
+      const data = apply(eventData, event, []);
+      if (!isObject(data)) return;
+      onMessage(data.type, data.value);
+    }]);
+    apply(addListener, port, ['messageerror', () => {
+      const e = dataClone('A message from the transferred stream could not be deserialized');
+      sendError(port, e);
+      onError(e);
+      disentangle(port);
+    }]);
+    apply(portStart, port, []);
+  };
+  // SetUpCrossRealmTransformReadable.
+  function crossReadable(port) {
+    const st = rsNew();
+    st.wrapper = new ReadableStream(token, st);
+    let c;
+    listen(port, (type, value) => {
+      if (type === 'chunk') {
+        try {
+          rcEnqueue(c, value);
+        } catch (_) {}
+      } else if (type === 'close') {
+        rcClose(c);
+        disentangle(port);
+      } else if (type === 'error') {
+        rcError(c, value);
+        disentangle(port);
+      }
+    }, (e) => rcError(c, e));
+    c = rcSetup(st, false, undefined, () => {
+      pack(port, 'pull', undefined);
+      return resolved();
+    }, (reason) => {
+      try {
+        packHandlingError(port, 'error', reason);
+      } catch (e) {
+        disentangle(port);
+        return rejected(e);
+      }
+      disentangle(port);
+      return resolved();
+    }, 0, () => 1);
+    return st;
+  }
+  // SetUpCrossRealmTransformWritable.
+  function crossWritable(port) {
+    const st = wsNew();
+    st.wrapper = new WritableStream(token, st);
+    let backpressure = defer();
+    const release = () => {
+      if (backpressure) backpressure.resolve(undefined);
+      backpressure = undefined;
+    };
+    let c;
+    listen(port, (type, value) => {
+      if (type === 'pull') {
+        release();
+      } else if (type === 'error') {
+        wcErrorIfNeeded(c, value);
+        release();
+      }
+    }, (e) => wcErrorIfNeeded(c, e));
+    c = wsSetup(st, noop, (chunk) => {
+      if (!backpressure) backpressure = settledDefer(resolved());
+      return then(backpressure.promise, () => {
+        backpressure = defer();
+        try {
+          packHandlingError(port, 'chunk', chunk);
+        } catch (e) {
+          disentangle(port);
+          throw e;
+        }
+      });
+    }, () => {
+      pack(port, 'close', undefined);
+      disentangle(port);
+      return resolved();
+    }, (reason) => {
+      try {
+        packHandlingError(port, 'error', reason);
+      } catch (e) {
+        disentangle(port);
+        return rejected(e);
+      }
+      disentangle(port);
+      return resolved();
+    }, 1, () => 1);
+    return st;
+  }
+  // The transfer steps of a ReadableStream (state `st`): the port to send.
+  const readableOut = (st) => {
+    if (rsLocked(st)) throw dataClone('A ReadableStream could not be cloned because it was locked');
+    const channel = new MessageChannelC();
+    const writable = crossWritable(apply(port1Of, channel, []));
+    handled(rsPipe(st, writable, false, false, false, undefined));
+    return apply(port2Of, channel, []);
+  };
+  const writableOut = (st) => {
+    if (st.writer !== undefined) throw dataClone('A WritableStream could not be cloned because it was locked');
+    const channel = new MessageChannelC();
+    const readable = crossReadable(apply(port1Of, channel, []));
+    handled(rsPipe(readable, st, false, false, false, undefined));
+    return apply(port2Of, channel, []);
+  };
+  // 'R', 'W' or 'T' for a transferable stream of this realm, undefined for
+  // anything else; DataCloneError for a locked one. No side effects.
+  const transferKind = (value) => {
+    if (!MessageChannelC) return undefined;
+    if (isRS(value)) {
+      if (rsLocked(rsOf(value))) throw dataClone('A ReadableStream could not be cloned because it was locked');
+      return 'R';
+    }
+    if (isWS(value)) {
+      if (wsOf(value).writer !== undefined) throw dataClone('A WritableStream could not be cloned because it was locked');
+      return 'W';
+    }
+    if (isTS(value)) {
+      const ts = tsOf(value);
+      if (rsLocked(ts.readable) || ts.writable.writer !== undefined) {
+        throw dataClone('A TransformStream could not be cloned because it was locked');
+      }
+      return 'T';
+    }
+    return undefined;
+  };
+  // The transfer steps: the ports (one, or two for a TransformStream) that
+  // stand for `value` from now on.
+  const transferOut = (value) => {
+    if (isRS(value)) return [readableOut(rsOf(value))];
+    if (isWS(value)) return [writableOut(wsOf(value))];
+    const ts = tsOf(value);
+    return [readableOut(ts.readable), writableOut(ts.writable)];
+  };
+  // The transfer-receiving steps: a stream of this realm over `ports`.
+  const transferIn = (kind, ports) => {
+    if (kind === 'R') return crossReadable(ports[0]).wrapper;
+    if (kind === 'W') return crossWritable(ports[0]).wrapper;
+    const ts = { readable: crossReadable(ports[0]), writable: crossWritable(ports[1]) };
+    return new TransformStream(token, ts);
+  };
+
   const byteBody = (pull, cancel) => {
     const st = rsNew();
     st.wrapper = new ReadableStream(token, st);
@@ -1662,7 +1915,11 @@
     ReadableStream, ReadableStreamDefaultReader, ReadableStreamBYOBReader, ReadableStreamDefaultController, ReadableByteStreamController,
     ReadableStreamBYOBRequest, WritableStream, WritableStreamDefaultWriter, WritableStreamDefaultController, TransformStream,
     TransformStreamDefaultController, ByteLengthQueuingStrategy, CountQueuingStrategy, TextEncoderStream, TextDecoderStream,
+    CompressionStream, DecompressionStream,
     isStream: isRS,
+    transferKind,
+    transferOut,
+    transferIn,
     // Body "unusable" check.
     isLocked: (s) => rsLocked(rsOf(s)),
     isDisturbed: (s) => rsOf(s).disturbed,

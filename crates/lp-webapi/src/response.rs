@@ -275,6 +275,7 @@ fn construct<'s>(
         kind: ResponseKind::Basic,
         remote_addr: None,
         protocol: lp_net::http::Version::HTTP_11,
+        timing: Default::default(),
     };
     let body = crate::fetch::Body::constructed(s, bytes, mime);
     wrap_script(s, new_target, origin, head, body, headers)
@@ -397,6 +398,49 @@ pub(crate) fn wrap<'s>(
         s.set_hidden(wrapper, SIGNAL, signal)?;
     }
     Ok(wrapper.value())
+}
+
+/// A response read back from a cache (`cache_storage`): its stored type
+/// ("default" for a script's, "error", or a network one's), URL, status,
+/// status text, headers (as script saw them) and body, in a new object.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn stored<'s>(
+    s: &Scope<'s>,
+    kind: &str,
+    url: &str,
+    status: u16,
+    status_text: String,
+    headers: Vec<(String, String)>,
+    redirected: bool,
+    body: Option<Bytes>,
+) -> JsResult<Value<'s>> {
+    let (origin, kind) = match kind {
+        "default" => (Origin::Script, ResponseKind::Basic),
+        "error" => (Origin::Error, ResponseKind::Basic),
+        "cors" => (Origin::Network, ResponseKind::Cors),
+        "opaque" => (Origin::Network, ResponseKind::Opaque),
+        "opaqueredirect" => (Origin::Network, ResponseKind::OpaqueRedirect),
+        _ => (Origin::Network, ResponseKind::Basic),
+    };
+    let mime = headers.iter().find(|(n, _)| n.eq_ignore_ascii_case("content-type")).map(|(_, v)| v.clone());
+    let head = ResponseHead {
+        url: lp_net::Url::parse(url).unwrap_or_else(|_| lp_net::Url::parse("about:blank").expect("static URL")),
+        // Opaque and error responses read 0 through their kind and origin.
+        status: lp_net::http::StatusCode::from_u16(status).unwrap_or(lp_net::http::StatusCode::OK),
+        status_text,
+        headers: Default::default(),
+        mime: mime.clone().unwrap_or_default(),
+        charset: None,
+        redirected,
+        from_cache: false,
+        kind,
+        remote_addr: None,
+        protocol: lp_net::http::Version::HTTP_11,
+        timing: Default::default(),
+    };
+    let body = crate::fetch::Body::constructed(s, body, mime.unwrap_or_default());
+    let headers = HeadersData::from_pairs(headers, origin != Origin::Script);
+    wrap_script(s, None, origin, head, body, headers)
 }
 
 pub(crate) fn filtered_headers(head: &ResponseHead, credentials: Credentials) -> HeadersData {

@@ -118,7 +118,8 @@ impl Env {
 }
 
 /// `make(tag, parent, props)`: a new element appended to `parent`.
-const PRELUDE: &str = "var make = (tag, parent, props = {}) => Object.assign(parent.appendChild(document.createElement(tag)), props);";
+const PRELUDE: &str =
+    "var make = (tag, parent, props = {}) => Object.assign(parent.appendChild(document.createElement(tag)), props);";
 
 #[test]
 fn a_click_has_one_activation_target() {
@@ -324,10 +325,8 @@ fn submit_buttons_and_forms() {
 
 #[test]
 fn a_label_forwards_clicks_outside_interactive_content() {
-    let e = env(
-        "<body><label id=label><input id=box type=checkbox><span id=text>text</span>\
-         <select id=select><option>o</option></select><button id=plain type=button>b</button></label></body>",
-    );
+    let e = env("<body><label id=label><input id=box type=checkbox><span id=text>text</span>\
+         <select id=select><option>o</option></select><button id=plain type=button>b</button></label></body>");
     assert_eq!(
         e.eval(
             "(() => {
@@ -392,10 +391,8 @@ fn related_target_is_retargeted_and_reset() {
 
 #[test]
 fn offset_is_relative_to_the_targets_padding_edge() {
-    let e = env(
-        "<!doctype html><html><body style='margin:8px'>\
-         <div id=target style='border:3px solid;height:20px'>Hello</div></body></html>",
-    );
+    let e = env("<!doctype html><html><body style='margin:8px'>\
+         <div id=target style='border:3px solid;height:20px'>Hello</div></body></html>");
     assert_eq!(
         e.eval(
             "(() => {

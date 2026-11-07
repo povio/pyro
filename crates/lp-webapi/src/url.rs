@@ -52,7 +52,10 @@ impl JsClass for URL {
                 return Ok(s.string(&crate::media_source::object_url(s, &page)?));
             }
             let blob = s.unwrap::<crate::file::Blob>(args.get(0)).ok_or_else(|| {
-                JsError::Type("Failed to execute 'createObjectURL' on 'URL': parameter 1 is not of type 'Blob' or 'MediaSource'.".into())
+                JsError::Type(
+                    "Failed to execute 'createObjectURL' on 'URL': parameter 1 is not of type 'Blob' or 'MediaSource'."
+                        .into(),
+                )
             })?;
             let origin = crate::storage::tuple_origin(s, &page).unwrap_or_else(|| "null".into());
             let url = format!("blob:{origin}/{}", crate::crypto::random_uuid()?);

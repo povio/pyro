@@ -166,3 +166,30 @@ fn external_script_in_markup_written_to_a_loaded_document() {
     );
     assert_eq!(log, ["closed false loading", "one", "done a one b c complete"], "{log:?}");
 }
+
+#[test]
+fn new_iframe_initial_document_opens_at_once() {
+    // react-frame-component and print helpers: append, then
+    // contentDocument.open/write/close in the same script, during loading.
+    let log = load(
+        r#"<!doctype html><body><script>
+        const iframe = document.createElement('iframe');
+        document.body.append(iframe);
+        const d = iframe.contentDocument;
+        let loads = 0;
+        iframe.addEventListener('load', () => {
+            loads++;
+            setTimeout(() => console.log('done', loads, d.readyState, d.getElementById('x').textContent,
+                iframe.contentDocument === d));
+        });
+        try {
+            d.open();
+            d.write('<p id=x>hi</p><script>parent.console.log("inner", document.getElementById("x").textContent)<\/script>');
+            d.close();
+            console.log('written', d.getElementById('x').textContent);
+        } catch (e) { console.log(e.name) }
+        </script></body>"#,
+        &[],
+    );
+    assert_eq!(log, ["inner hi", "written hi", "done 1 complete hi true"], "{log:?}");
+}

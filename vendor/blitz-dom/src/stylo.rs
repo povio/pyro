@@ -84,14 +84,14 @@ impl Drop for LayoutThreadScope {
 }
 
 impl Node {
-    /// lightningpanda: whether the element's `urn:x-lightningpanda:state`
-    /// attribute (written by lp-dom's render tree) lists `state`: the
-    /// pseudo-classes Blitz cannot derive itself (validity, placeholder
-    /// shown, read-write, ...).
-    fn has_lp_state(&self, state: &str) -> bool {
+    /// `:state(name)`: lightningpanda's custom states attribute (names
+    /// separated by U+001F).
+    fn has_lp_custom_state(&self, state: &str) -> bool {
         self.element_data().is_some_and(|e| {
             e.attrs.iter().any(|a| {
-                &*a.name.ns == "urn:x-lightningpanda:state" && a.value.split_ascii_whitespace().any(|s| s == state)
+                &*a.name.ns == "urn:x-lightningpanda:state"
+                    && &*a.name.local == "custom-states"
+                    && a.value.split('\u{1f}').any(|s| s == state)
             })
         })
     }
@@ -198,6 +198,11 @@ impl crate::document::BaseDocument {
                 std::mem::take(traverser.nodes_needing_style_image_flush.get_mut().unwrap());
             self.sticky_nodes
                 .extend(std::mem::take(traverser.sticky_nodes.get_mut().unwrap()));
+            // Sticky: set once an element is styled with a generated
+            // `::before` / `::after`, never cleared.
+            if traverser.generated_before_after.into_inner() {
+                self.generated_before_after = true;
+            }
         }
         // lightningpanda: restyled nodes that stopped being sticky, and
         // removed ones, leave the set (only nodes that were sticky are in it).
@@ -261,6 +266,142 @@ impl crate::document::BaseDocument {
     /// (styling any unstyled ancestors along the way) without storing it on the
     /// node. Returns `None` for non-elements and elements outside the document.
     pub fn resolve_undisplayed_style(&self, node_id: NodeId) -> Option<Arc<ComputedValues>> {
+        Some(self.resolve_undisplayed_styles(node_id)?.primary().clone())
+    }
+
+    /// lightningpanda: `false` while no style traversal has kept a
+    /// `::before` / `::after` style for any element, so
+    /// [`Self::pseudo_element_style`] with `generated_only` answers `None`
+    /// for every element (it may stay `true` after they are gone).
+    pub fn may_have_generated_before_after(&self) -> bool {
+        self.generated_before_after
+    }
+
+    /// lightningpanda: the style `getComputedStyle(element, pseudo)` reads
+    /// for the element `node_id`: an eagerly cascaded pseudo-element's
+    /// (`::before`, `::after`, `::first-letter`, `::selection`) as the
+    /// traversal kept it (resolved on demand inside `display: none`), a
+    /// lazily cascaded one's computed from its rules, and otherwise (no rule
+    /// generates it) a style with no rules of its own, inheriting from the
+    /// element. `None` for non-elements and elements outside the document.
+    /// With `generated_only`, only a stored eagerly cascaded style (a
+    /// generated `::before` / `::after` of a rendered element), and no
+    /// work otherwise.
+    pub fn pseudo_element_style(
+        &self,
+        node_id: NodeId,
+        pseudo: &style::selector_parser::PseudoElement,
+        generated_only: bool,
+    ) -> Option<Arc<ComputedValues>> {
+        let node = self.nodes.get(node_id)?;
+        if !node.is_element() || !node.flags.is_in_document() {
+            return None;
+        }
+        let stored = node.try_stylo_element_data().and_then(|d| d.get()).and_then(|d| {
+            let primary = d.styles.get_primary()?.clone();
+            let eager = if pseudo.is_eager() { d.styles.pseudos.get(pseudo).cloned() } else { None };
+            Some((primary, eager))
+        });
+        if generated_only {
+            return stored.and_then(|(_, eager)| eager);
+        }
+        let (primary, eager) = match stored {
+            Some(styles) => styles,
+            None => {
+                let styles = self.resolve_undisplayed_styles(node_id)?;
+                let eager = if pseudo.is_eager() { styles.pseudos.get(pseudo).cloned() } else { None };
+                (styles.primary().clone(), eager)
+            }
+        };
+        if eager.is_some() {
+            return eager;
+        }
+        if pseudo.is_before_or_after() {
+            // The traversal drops a `::before` / `::after` that generates no
+            // box (`content: none`), but its rules still apply to its
+            // computed style (Chromium): match them against this element
+            // alone. With no `::before` / `::after` rules this is an empty
+            // selector-map lookup.
+            use selectors::context::{MatchingForInvalidation, NeedsSelectorFlags, SelectorCaches};
+            use selectors::matching::MatchingMode;
+            let _layout_thread_scope = LayoutThreadScope::enter();
+            let guard = &self.guard;
+            let guards = StylesheetGuards {
+                author: &guard.read(),
+                ua_or_user: &guard.read(),
+            };
+            let mut caches = SelectorCaches::default();
+            let mut matching = MatchingContext::<SelectorImpl>::new(
+                MatchingMode::ForStatelessPseudoElement,
+                None,
+                &mut caches,
+                self.stylist.quirks_mode(),
+                NeedsSelectorFlags::No,
+                MatchingForInvalidation::No,
+            );
+            matching.extra_data.originating_element_style = Some(&primary);
+            let mut declarations = style::applicable_declarations::ApplicableDeclarationList::new();
+            self.stylist.push_applicable_declarations(
+                node,
+                Some(pseudo),
+                None,
+                None,
+                Default::default(),
+                RuleInclusion::All,
+                &mut declarations,
+                &mut matching,
+            );
+            if !declarations.is_empty() {
+                let flags = matching.extra_data.cascade_input_flags;
+                let rules = self.stylist.rule_tree().compute_rule_node(&mut declarations, &guards);
+                let inputs = style::context::CascadeInputs {
+                    rules: Some(rules),
+                    flags,
+                    ..Default::default()
+                };
+                return Some(self.stylist.compute_pseudo_element_style_with_inputs(
+                    inputs,
+                    pseudo,
+                    &guards,
+                    Some(&primary),
+                    Some(node),
+                ));
+            }
+        }
+        if pseudo.is_lazy() {
+            let _layout_thread_scope = LayoutThreadScope::enter();
+            let guard = &self.guard;
+            let guards = StylesheetGuards {
+                author: &guard.read(),
+                ua_or_user: &guard.read(),
+            };
+            let lazy = self.stylist.lazily_compute_pseudo_element_style(
+                &guards,
+                node,
+                pseudo,
+                RuleInclusion::All,
+                &primary,
+                false,
+                None,
+            );
+            if lazy.is_some() {
+                return lazy;
+            }
+        }
+        Some(
+            style::properties::StyleBuilder::for_inheritance(
+                self.stylist.device(),
+                Some(&self.stylist),
+                Some(&primary),
+                Some(pseudo),
+            )
+            .build(),
+        )
+    }
+
+    /// The styles [`Self::resolve_undisplayed_style`] resolves, eagerly
+    /// cascaded pseudo-elements included.
+    fn resolve_undisplayed_styles(&self, node_id: NodeId) -> Option<style::data::ElementStyles> {
         let node = self.nodes.get(node_id)?;
         if !node.is_element() || !node.flags.is_in_document() {
             return None;
@@ -294,7 +435,7 @@ impl crate::document::BaseDocument {
             resolve_style(&mut context, node, RuleInclusion::All, None, None)
         };
 
-        Some(styles.primary().clone())
+        Some(styles)
     }
 }
 
@@ -537,43 +678,47 @@ impl selectors::Element for BlitzNode<'_> {
                 .element_state()
                 .intersects(ElementState::VISITED_OR_UNVISITED),
             NonTSPseudoClass::Checked => self.element_state().contains(ElementState::CHECKED),
-            NonTSPseudoClass::Valid => self.has_lp_state("valid"),
-            NonTSPseudoClass::Invalid => self.has_lp_state("invalid"),
+            NonTSPseudoClass::Valid => self.element_state().contains(ElementState::VALID),
+            NonTSPseudoClass::Invalid => self.element_state().contains(ElementState::INVALID),
             NonTSPseudoClass::Defined => false,
             NonTSPseudoClass::Disabled => self.element_state().contains(ElementState::DISABLED),
             NonTSPseudoClass::Enabled => self.element_state().contains(ElementState::ENABLED),
             NonTSPseudoClass::Focus => self.element_state().contains(ElementState::FOCUS),
-            NonTSPseudoClass::FocusWithin => {
-                self.element_state().contains(ElementState::FOCUS_WITHIN)
-            }
-            NonTSPseudoClass::FocusVisible => self.element_state().contains(ElementState::FOCUS),
+            NonTSPseudoClass::FocusWithin => self.element_state().contains(ElementState::FOCUS_WITHIN),
+            NonTSPseudoClass::FocusVisible => self.element_state().contains(ElementState::FOCUSRING),
             NonTSPseudoClass::Fullscreen => false,
             NonTSPseudoClass::Hover => self.element_state().contains(ElementState::HOVER),
-            NonTSPseudoClass::Indeterminate => self.has_lp_state("indeterminate"),
+            NonTSPseudoClass::Indeterminate => {
+                self.element_state().contains(ElementState::INDETERMINATE)
+            }
             NonTSPseudoClass::Lang(_) => false,
-            NonTSPseudoClass::CustomState(_) => false,
+            NonTSPseudoClass::CustomState(ref state) => self.has_lp_custom_state(&state.0),
             NonTSPseudoClass::Link => self.element_state().contains(ElementState::UNVISITED),
-            NonTSPseudoClass::PlaceholderShown => self.has_lp_state("placeholder-shown"),
-            NonTSPseudoClass::ReadWrite => self.has_lp_state("read-write"),
-            NonTSPseudoClass::ReadOnly => !self.has_lp_state("read-write"),
+            NonTSPseudoClass::PlaceholderShown => {
+                self.element_state().contains(ElementState::PLACEHOLDER_SHOWN)
+            }
+            NonTSPseudoClass::ReadWrite => self.element_state().contains(ElementState::READWRITE),
+            NonTSPseudoClass::ReadOnly => self.element_state().contains(ElementState::READONLY),
             NonTSPseudoClass::ServoNonZeroBorder => false,
             NonTSPseudoClass::Target => false,
             NonTSPseudoClass::Visited => false,
             NonTSPseudoClass::Autofill => false,
-            NonTSPseudoClass::Default => self.has_lp_state("default"),
+            NonTSPseudoClass::Default => self.element_state().contains(ElementState::DEFAULT),
 
-            NonTSPseudoClass::InRange => false,
-            NonTSPseudoClass::Modal => self.has_lp_state("modal"),
+            NonTSPseudoClass::InRange => self.element_state().contains(ElementState::INRANGE),
+            NonTSPseudoClass::Modal => self.element_state().contains(ElementState::MODAL),
             NonTSPseudoClass::MozInert => self.element_state().contains(ElementState::INERT),
-            NonTSPseudoClass::Open => {
-                self.has_lp_state("open") || self.element_state().contains(ElementState::OPEN)
+            NonTSPseudoClass::Open => self.element_state().contains(ElementState::OPEN),
+            NonTSPseudoClass::Optional => self.element_state().contains(ElementState::OPTIONAL_),
+            NonTSPseudoClass::OutOfRange => self.element_state().contains(ElementState::OUTOFRANGE),
+            NonTSPseudoClass::PopoverOpen => {
+                self.element_state().contains(ElementState::POPOVER_OPEN)
             }
-            NonTSPseudoClass::Optional => self.has_lp_state("optional"),
-            NonTSPseudoClass::OutOfRange => false,
-            NonTSPseudoClass::PopoverOpen => self.has_lp_state("popover-open"),
-            NonTSPseudoClass::Required => self.has_lp_state("required"),
-            NonTSPseudoClass::UserInvalid => false,
-            NonTSPseudoClass::UserValid => false,
+            NonTSPseudoClass::Required => self.element_state().contains(ElementState::REQUIRED),
+            NonTSPseudoClass::UserInvalid => {
+                self.element_state().contains(ElementState::USER_INVALID)
+            }
+            NonTSPseudoClass::UserValid => self.element_state().contains(ElementState::USER_VALID),
             NonTSPseudoClass::MozMeterOptimum => false,
             NonTSPseudoClass::MozMeterSubOptimum => false,
             NonTSPseudoClass::MozMeterSubSubOptimum => false,
@@ -679,6 +824,16 @@ impl selectors::Element for BlitzNode<'_> {
     }
 
     fn add_element_unique_hashes(&self, filter: &mut selectors::bloom::BloomFilter) -> bool {
+        // lightningpanda: this element is in the subtree (or among the
+        // siblings) a `:has()` bloom filter covers, and a search the filter
+        // fast-rejects visits nothing and so flags nothing. Flag it as
+        // searched in both directions, as a full search would have, so a
+        // later change to it still reaches the anchors
+        // (`has_invalidation`). Filters are built only for `:has()`.
+        self.selector_flags().set(
+            self.selector_flags().get()
+                | ElementSelectorFlags::RELATIVE_SELECTOR_SEARCH_DIRECTION_ANCESTOR_SIBLING,
+        );
         each_relevant_element_hash(*self, |hash| filter.insert_hash(hash & BLOOM_HASH_MASK));
         true
     }
@@ -1358,11 +1513,21 @@ impl<'a> TElement for BlitzNode<'a> {
         self.tree().container_query_sizes.lock().unwrap().entry(self.id).or_default().size
     }
 
-    fn each_custom_state<F>(&self, _callback: F)
+    fn each_custom_state<F>(&self, mut callback: F)
     where
         F: FnMut(&AtomIdent),
     {
-        todo!()
+        // lightningpanda: lp-dom's render tree lists them (`has_lp_custom_state`).
+        let value = self.attrs().and_then(|attrs| {
+            attrs
+                .iter()
+                .find(|a| &*a.name.ns == crate::LP_STATE_NS && &*a.name.local == "custom-states")
+        });
+        if let Some(attr) = value {
+            for state in crate::has_invalidation::lp_custom_states(Some(&attr.value)) {
+                callback(AtomIdent::cast(&style::Atom::from(state)));
+            }
+        }
     }
 
     fn has_selector_flags(&self, flags: ElementSelectorFlags) -> bool {
@@ -1453,6 +1618,9 @@ pub struct RecalcStyle<'a> {
     /// dedicated storage on the node (see `flush_image_layers_from_style`)
     /// because their style changed during this traversal.
     nodes_needing_style_image_flush: Mutex<Vec<NodeId>>,
+    /// lightningpanda: an element styled in this traversal kept a
+    /// `::before` / `::after` style (one its rules generate).
+    generated_before_after: std::sync::atomic::AtomicBool,
     /// lightningpanda: elements styled `position: sticky` in this traversal
     /// (`BaseDocument::sticky_nodes`).
     sticky_nodes: Mutex<Vec<NodeId>>,
@@ -1463,6 +1631,7 @@ impl<'a> RecalcStyle<'a> {
         RecalcStyle {
             context,
             nodes_needing_style_image_flush: Mutex::new(Vec::new()),
+            generated_before_after: std::sync::atomic::AtomicBool::new(false),
             sticky_nodes: Mutex::new(Vec::new()),
         }
     }
@@ -1553,6 +1722,17 @@ impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
                 style.clone_position() == style::computed_values::position::T::Sticky
             }) {
                 self.sticky_nodes.lock().unwrap().push(el.id);
+            }
+
+            // One empty check for an element without eager pseudo styles.
+            if !data.styles.pseudos.is_empty() {
+                use style::selector_parser::PseudoElement;
+                if data.styles.pseudos.get(&PseudoElement::Before).is_some()
+                    || data.styles.pseudos.get(&PseudoElement::After).is_some()
+                {
+                    self.generated_before_after
+                        .store(true, std::sync::atomic::Ordering::Relaxed);
+                }
             }
 
             if !data.damage.is_empty() {
