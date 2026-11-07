@@ -38,8 +38,15 @@ Gaps:
   views a private buffer whose bytes are enqueued on `respond()`. A BYOB read
   does transfer the caller's buffer.
 - `tee()` of a byte stream uses the default algorithm with copied chunks.
-- `clone()` of a fetched Response shares one body: reading one clone through
-  `.body` takes the bytes from the other.
+- `clone()` of a fetched Response shares one body: while a clone will still
+  read the whole body, the other's `.body` stream copies the bytes it delivers
+  and leaves them buffered; two clones that both read through `.body` take the
+  bytes from each other.
 - A stream from another realm is not recognized as a body.
-- There is no `Request` class, so no `Request.body`; streams are not
-  transferable through `postMessage`. `CompressionStream` has no `"brotli"`.
+- There is no `Request` class, so no `Request.body`. `CompressionStream` has no
+  `"brotli"`.
+- Transfer (`structuredClone(s, {transfer: [s]})`, `postMessage`): the new
+  stream reads the transferred one, which the transfer locks; to or from a
+  worker it is pumped through a cross-thread MessagePort (chunks are pushed and
+  serialized, with no backpressure beyond the port's 64 MiB queue). A locked
+  stream throws DataCloneError.

@@ -44,6 +44,21 @@ self.addEventListener('message', (e) => {
 });
 "#;
 
+/// A dedicated worker that answers on transferred ports and streams.
+const PORTS_WORKER: &str = r#"
+onmessage = async (e) => {
+  if (e.data.kind === 'port') {
+    const port = e.ports[0];
+    port.onmessage = (m) => port.postMessage('pong:' + m.data);
+    port.postMessage('ready');
+  } else if (e.data.kind === 'stream') {
+    const text = await new Response(e.data.stream).text();
+    const back = new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode('back:' + text)); c.close(); } });
+    postMessage({ stream: back }, [back]);
+  }
+};
+"#;
+
 struct Server {
     origin: String,
     hits: Arc<Mutex<Vec<String>>>,
@@ -105,6 +120,7 @@ impl Server {
                     ),
                     "/html.js" => respond(&mut stream, "200 OK", &[("Content-Type", "text/html")], SW.as_bytes()),
                     "/throws.js" => respond(&mut stream, "200 OK", &js, b"throw new Error('top level')"),
+                    "/ports-worker.js" => respond(&mut stream, "200 OK", &js, PORTS_WORKER.as_bytes()),
                     "/real" | "/api/passthrough" => {
                         respond(&mut stream, "200 OK", &[("Content-Type", "text/plain")], b"from network")
                     }
@@ -401,4 +417,32 @@ fn msw_mock_service_worker_mocks_fetch() {
     assert_eq!(eval(&thread, page, "pass"), "from network");
     assert_eq!(server.hits("/api/passthrough"), 1);
     assert!(eval(&thread, page, "log.join()").contains("REQUEST"));
+}
+
+#[test]
+fn message_ports_and_streams_cross_to_a_dedicated_worker() {
+    let (server, mut thread) = setup();
+    let page = open(&mut thread, &server, "/page");
+    eval(
+        &thread,
+        page,
+        "globalThis.log = [];
+         const w = new Worker('/ports-worker.js');
+         const channel = new MessageChannel();
+         channel.port1.onmessage = (e) => {
+           log.push(e.data);
+           if (e.data === 'ready') channel.port1.postMessage('ping');
+         };
+         w.postMessage({ kind: 'port', port: channel.port2 }, [channel.port2]);
+         globalThis.detachedPost = (() => { try { w.postMessage(1, [channel.port2]); return 'ok'; } catch (e) { return e.name; } })();
+         const body = new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode('hello')); c.close(); } });
+         w.onmessage = (e) => new Response(e.data.stream).text().then((t) => log.push(t));
+         w.postMessage({ kind: 'stream', stream: body }, [body]);
+         globalThis.locked = body.locked; 'ok'",
+    );
+    until(&mut thread, page, "log.length === 3");
+    let mut log: Vec<String> = eval(&thread, page, "log.join('|')").split('|').map(str::to_owned).collect();
+    log.sort();
+    assert_eq!(log, ["back:hello", "pong:ping", "ready"]);
+    assert_eq!(eval(&thread, page, "detachedPost + ':' + locked"), "DataCloneError:true");
 }

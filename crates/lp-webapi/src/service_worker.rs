@@ -70,6 +70,10 @@ use crate::worker_scope::{WorkerLoop, WorkerStart};
 
 /// Registrations one browser context may hold.
 pub(crate) const MAX_REGISTRATIONS: usize = 32;
+/// Register jobs that may wait for one registration's update.
+const MAX_QUEUED_JOBS: usize = 16;
+/// Live service worker versions of one browser thread (each is a thread).
+pub(crate) const MAX_VERSIONS: usize = 64;
 /// Largest service worker script.
 const MAX_SCRIPT_BYTES: usize = 16 * 1024 * 1024;
 /// Hidden property of the realm's navigator that holds the page module.
@@ -148,6 +152,10 @@ pub struct Registry {
 }
 
 impl Registry {
+    pub(crate) fn has_registrations(&self) -> bool {
+        !self.registrations.borrow().is_empty()
+    }
+
     fn live_clients(&self) -> Vec<Rc<ClientInner>> {
         let mut clients = self.clients.borrow_mut();
         clients.retain(|c| c.upgrade().and_then(|c| c.page.upgrade()).is_some_and(|p| !p.is_disposed()));
@@ -210,6 +218,8 @@ pub(crate) struct Registration {
     updating: Cell<bool>,
     /// Register jobs waiting for it, oldest first.
     jobs: RefCell<VecDeque<(Weak<PageDom>, lp_net::Url, Settle)>>,
+    /// The version whose script runs for the first time (before `installing`).
+    evaluating: RefCell<Option<Rc<Version>>>,
 }
 
 pub(crate) struct Version {
@@ -222,12 +232,15 @@ pub(crate) struct Version {
     shared: Arc<Shared>,
     skip_waiting: Cell<bool>,
     /// What runs once the script was evaluated (the update job's continuation).
-    evaluated: RefCell<Option<Box<dyn FnOnce(bool)>>>,
+    evaluated: RefCell<Option<Evaluated>>,
     /// Message bytes on their way to the worker.
     queued: Arc<AtomicUsize>,
-    /// The CDP target, while one was announced.
-    announced: RefCell<Option<Weak<PageDom>>>,
+    /// The hooks that announced its CDP target (they outlive the page that
+    /// registered it, which may go first), until the end is told.
+    announced: RefCell<Option<Rc<dyn crate::page::PageHooks>>>,
 }
+
+type Evaluated = Box<dyn FnOnce(bool)>;
 
 impl Drop for Version {
     fn drop(&mut self) {
@@ -254,10 +267,8 @@ impl Version {
         }
         let id = self.id;
         let _ = VERSIONS.try_with(|v| v.borrow_mut().remove(&id));
-        if let Some(page) = self.announced.take().and_then(|p| p.upgrade()) {
-            if let Some(hooks) = page.hooks() {
-                hooks.worker_event(crate::worker::WorkerEvent::Destroyed(id));
-            }
+        if let Some(hooks) = self.announced.take() {
+            hooks.worker_event(crate::worker::WorkerEvent::Destroyed(id));
         }
     }
 
@@ -276,12 +287,22 @@ impl Version {
         )
     }
 
+    /// Ends the version; its `ServiceWorker` objects in client pages, which no
+    /// registration slot reaches any more, learn it (`statechange`).
     fn redundant(&self) {
         if self.state.get() == State::Redundant {
             return;
         }
         self.state.set(State::Redundant);
         self.stop();
+        let Some(registration) = self.registration.upgrade() else { return };
+        let Some(context) = registration.context.upgrade() else { return };
+        let json = self.json();
+        for client in context.service_workers.live_clients() {
+            let Some(page) = client.page.upgrade().filter(|_| client.origin == registration.origin) else { continue };
+            let json = json.clone();
+            post_to_module(&page, false, move |s, glue| call(s, glue, "worker", &[s.string(&json)]));
+        }
     }
 
     fn controls_any(self: &Rc<Self>) -> bool {
@@ -323,7 +344,7 @@ impl Registration {
 
     /// Ends every version (the registration is gone).
     fn clear(&self) {
-        for slot in [&self.installing, &self.waiting, &self.active] {
+        for slot in [&self.evaluating, &self.installing, &self.waiting, &self.active] {
             if let Some(version) = slot.take() {
                 version.redundant();
             }
@@ -454,13 +475,11 @@ pub(crate) fn client_gone(page: &PageDom) {
     let controller = client.controller.take();
     drop(client);
     let Some(registration) = controller.and_then(|v| v.registration.upgrade()) else { return };
-    if registration.uninstalling.get() && !registration.newest().is_some_and(|v| v.controls_any()) {
-        let any = [&registration.installing, &registration.waiting, &registration.active]
-            .iter()
-            .any(|slot| slot.borrow().as_ref().is_some_and(|v| v.controls_any()));
-        if !any {
-            registration.clear();
-        }
+    let controls = [&registration.installing, &registration.waiting, &registration.active]
+        .iter()
+        .any(|slot| slot.borrow().as_ref().is_some_and(|v| v.controls_any()));
+    if registration.uninstalling.get() && !controls {
+        registration.clear();
     }
 }
 
@@ -851,6 +870,12 @@ fn register(
                 && registration.update_via_cache == update_via_cache;
             if registration.updating.get() {
                 // Jobs on one registration run one after another.
+                if registration.jobs.borrow().len() >= MAX_QUEUED_JOBS {
+                    return Err(JsError::dom(
+                        "QuotaExceededError",
+                        format!("{prefix}: Too many pending registrations."),
+                    ));
+                }
                 registration.jobs.borrow_mut().push_back((Rc::downgrade(page), script_url, settle));
                 return Ok(());
             }
@@ -878,6 +903,7 @@ fn register(
                 seq: Cell::new(0),
                 updating: Cell::new(false),
                 jobs: RefCell::new(VecDeque::new()),
+                evaluating: RefCell::new(None),
             });
             registry.registrations.borrow_mut().push(registration.clone());
             registration
@@ -924,11 +950,10 @@ fn update(page: &Rc<PageDom>, registration: &Rc<Registration>, script_url: lp_ne
     let reported = Arc::new(AtomicBool::new(false));
     let (page_weak, registration_weak) = (Rc::downgrade(page), Rc::downgrade(registration));
     // The continuation runs on this thread; the sink, on the I/O thread.
-    let finish: Rc<RefCell<Option<Box<dyn FnOnce(Result<(lp_net::ResponseHead, Bytes), String>)>>>> =
-        Rc::new(RefCell::new(Some(Box::new(move |result| {
-            let (Some(page), Some(registration)) = (page_weak.upgrade(), registration_weak.upgrade()) else { return };
-            fetched_script(&page, &registration, script_url, result, settle);
-        }))));
+    let finish: Finisher = Rc::new(RefCell::new(Some(Box::new(move |result| {
+        let (Some(page), Some(registration)) = (page_weak.upgrade(), registration_weak.upgrade()) else { return };
+        fetched_script(&page, &registration, script_url, result, settle);
+    }))));
     let token = FINISHERS.with(|f| {
         let mut f = f.borrow_mut();
         let token = NEXT_ID.fetch_add(1, Ordering::Relaxed);
@@ -1091,6 +1116,11 @@ fn start_version(
     script: Bytes,
     settle: Settle,
 ) {
+    if VERSIONS.with(|v| v.borrow().len()) >= MAX_VERSIONS {
+        settle.done(reply_error("QuotaExceededError", "Too many service workers are running."));
+        end_update(registration);
+        return;
+    }
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
     let shared = crate::worker::new_shared();
     let service = ServiceStart {
@@ -1129,12 +1159,18 @@ fn start_version(
         announced: RefCell::new(None),
     });
     VERSIONS.with(|v| v.borrow_mut().insert(id, Rc::downgrade(&version)));
-    // Held until the job decides: the registration's slots keep it afterwards.
-    let keep = version.clone();
-    let registration_weak = Rc::downgrade(registration);
+    // The registration holds it until the job decides, then its slots do.
+    if let Some(old) = registration.evaluating.replace(Some(version.clone())) {
+        old.redundant();
+    }
+    let (registration_weak, version_weak) = (Rc::downgrade(registration), Rc::downgrade(&version));
     *version.evaluated.borrow_mut() = Some(Box::new(move |ok| {
-        let version = keep;
-        let Some(registration) = registration_weak.upgrade() else { return };
+        let (Some(registration), Some(version)) = (registration_weak.upgrade(), version_weak.upgrade()) else {
+            return;
+        };
+        if registration.evaluating.borrow().as_ref().is_some_and(|v| Rc::ptr_eq(v, &version)) {
+            registration.evaluating.take();
+        }
         if !ok {
             version.redundant();
             settle.done(reply_error(
@@ -1151,7 +1187,7 @@ fn start_version(
             crate::worker::track_thread(thread);
             *version.thread.borrow_mut() = Some(handle);
             if let Some(hooks) = page.hooks() {
-                *version.announced.borrow_mut() = Some(Rc::downgrade(page));
+                *version.announced.borrow_mut() = Some(hooks.clone());
                 hooks.worker_event(crate::worker::WorkerEvent::ServiceCreated(crate::worker::WorkerHandle::service(
                     id,
                     version.script_url.clone(),
@@ -1183,6 +1219,12 @@ fn install(registration: &Rc<Registration>, version: &Rc<Version>, settle: Settl
 
 // ---------------------------------------------------------------------------
 // The page module (service_worker.js).
+
+/// Registration `id` when it belongs to the page's origin.
+fn same_origin_registration(page: &Rc<PageDom>, id: u64) -> Option<Rc<Registration>> {
+    let client = client_of(page)?;
+    page.context_services().service_workers.by_id(id).filter(|r| r.origin == client.origin)
+}
 
 fn existing<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Option<Object<'s>>> {
     let holder = crate::worker_scope::module_holder(s, page)?;
@@ -1269,7 +1311,7 @@ fn module<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Object<'s>> {
     let f = s.function("unregister", |s, _, a| {
         let page = crate::target::page_of(s)?;
         let id = a.get(0).to_number()? as u64;
-        let registration = page.context_services().service_workers.by_id(a.get(1).to_number()? as u64);
+        let registration = same_origin_registration(&page, a.get(1).to_number()? as u64);
         let done = registration.is_some_and(|r| unregister(&r));
         Settle { page: Rc::downgrade(&page), id }.done(Ok(format!("{{\"value\":{done}}}")));
         Ok(s.undefined())
@@ -1279,7 +1321,7 @@ fn module<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Object<'s>> {
         let page = crate::target::page_of(s)?;
         let id = a.get(0).to_number()? as u64;
         let settle = Settle { page: Rc::downgrade(&page), id };
-        let registration = page.context_services().service_workers.by_id(a.get(1).to_number()? as u64);
+        let registration = same_origin_registration(&page, a.get(1).to_number()? as u64);
         let Some(registration) = registration.filter(|r| !r.uninstalling.get()) else {
             settle.done(reply_error(
                 "InvalidStateError",
@@ -1310,6 +1352,9 @@ fn module<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Object<'s>> {
             return Ok(s.undefined());
         }
         let Some(client) = client_of(&page) else { return Ok(s.undefined()) };
+        if !version.registration.upgrade().is_some_and(|r| r.origin == client.origin) {
+            return Ok(s.undefined());
+        }
         let size = message.size();
         let queued = version.queued.load(Ordering::Acquire);
         if queued > 0 && queued.saturating_add(size) > MAX_QUEUED_BYTES {

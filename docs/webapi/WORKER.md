@@ -51,7 +51,9 @@ implement `new Worker(url)`. A worker runs its script off the page's thread.
   are rebuilt there; failing to rebuild fires `messageerror`. Errors,
   DOMExceptions, Blobs, Files and FileLists cross too (Blob bytes are shared,
   not copied). Transferring an ArrayBuffer copies it and detaches the
-  sender's; transferring a MessagePort throws NotSupportedError. Messages to a worker wait until
+  sender's. MessagePorts (as event `ports` or in the data) and ReadableStreams
+  in the transfer list cross as cross-thread links (see
+  [MessageChannel](MESSAGE_CHANNEL.md) and [Streams](STREAMS.md)). Messages to a worker wait until
   its script has run. A navigation drops messages on their way to the old document.
 - **Errors.** An uncaught exception fires `ErrorEvent` at the global and, if not
   canceled, at the `Worker`, with message `Uncaught <text>`. It does not continue
@@ -98,11 +100,11 @@ times out.
 - Module workers have no import maps of their own, and `import.meta.resolve` follows
   the engine. Without the engine's module loader (system JavaScriptCore),
   `{type: 'module'}` throws NotSupportedError.
-- `SharedWorker` and `ServiceWorker` stay undefined, as does `navigator.serviceWorker`:
-  `typeof` feature detection is what sites use, and a constructor that throws would
-  send them down a path that then fails.
-- Transferring a MessagePort throws NotSupportedError. Host objects other than
-  Blob, File and FileList (a `CryptoKey` included) do not cross.
+- `SharedWorker` stays undefined: `typeof` feature detection is what sites use, and
+  a constructor that throws would send them down a path that then fails. Service
+  workers reuse this machinery: see [Service workers](SERVICE_WORKER.md).
+- Host objects other than Blob, File, FileList, MessagePort and ReadableStream
+  (a `CryptoKey` included) do not cross.
 - Nested workers. `Worker` is undefined inside a worker.
 - `importScripts` of a page-created `blob:` URL (the store is the owner document's).
 - A worker whose wrapper became unreachable runs until its document goes.

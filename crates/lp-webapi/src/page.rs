@@ -615,9 +615,12 @@ impl PageDom {
     /// Also where a new document of a context with service worker
     /// registrations finds its controller (one emptiness test otherwise).
     pub fn set_context_services(&self, services: Rc<crate::navigator_extras::ContextServices>) {
+        let registrations = services.service_workers.has_registrations();
         *self.context_services.borrow_mut() = services;
-        if let Some(this) = self.this.upgrade() {
-            crate::service_worker::document_created(&this);
+        if registrations {
+            if let Some(this) = self.this.upgrade() {
+                crate::service_worker::document_created(&this);
+            }
         }
     }
     /// The document is shown in a child frame (set before the context services).

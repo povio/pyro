@@ -30,7 +30,8 @@ returns their copy or undefined. It copies a `CryptoKey` of the realm (see
 [Web Crypto](CRYPTO.md)); it runs only on that rejection path, so ordinary
 graphs pay nothing. Worker messages do not carry CryptoKeys.
 
-Transfer lists (`{transfer}`) take ArrayBuffers and MessagePorts. Entries are
+Transfer lists (`{transfer}`) take ArrayBuffers, MessagePorts and
+ReadableStreams (see [Streams](STREAMS.md)). Entries are
 validated first: a duplicate, a detached ArrayBuffer, an already transferred
 port or any other object throws DataCloneError, a non-object TypeError. Nothing
 is detached unless the whole value clones. A transferred ArrayBuffer is copied
@@ -52,7 +53,10 @@ into the receiving realm, which may be another frame or page of the thread's
 VM). The cross-VM format (`worker_wire.js`: workers, BroadcastChannel and
 history state) encodes the same types, Error, DOMException, Blob, File and
 FileList included; Blob bytes travel beside the text, shared rather than
-copied. MessagePorts cannot cross VMs (NotSupportedError).
+copied. MessagePorts and ReadableStreams in a worker message's transfer list
+cross VMs as cross-thread links ([MESSAGE_CHANNEL](MESSAGE_CHANNEL.md)); the
+message's ports are its event's `ports`, and a ['P'] or ['S'] node stands for a
+port or stream in its data.
 
 A remaining conformance limitation is significant: JSC's available C API does
 not provide a complete exotic-object classifier. An exotic object deliberately

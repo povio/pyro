@@ -201,6 +201,19 @@ fn respond(s: &Scope<'_>, mut job: FetchJob, a: &lp_js::Args<'_>) -> JsResult<()
         "cors" => ResponseKind::Cors,
         _ => ResponseKind::Basic,
     };
+    // Fetch's "handle fetch" checks: an opaque response only answers a no-cors
+    // request, a CORS one not a same-origin request, an opaque redirect only a
+    // manual-redirect one.
+    let unsuitable = match kind {
+        ResponseKind::Opaque => request.mode != lp_net::RequestMode::NoCors,
+        ResponseKind::Cors => request.mode == lp_net::RequestMode::SameOrigin,
+        ResponseKind::OpaqueRedirect => request.redirect != lp_net::RedirectMode::Manual,
+        ResponseKind::Basic => false,
+    };
+    if unsuitable {
+        fail(sink, "its type does not suit the request's mode");
+        return Ok(());
+    }
     let status = a.get(1).to_number()? as u16;
     let status = match (StatusCode::from_u16(status), kind) {
         (_, ResponseKind::Opaque | ResponseKind::OpaqueRedirect) => StatusCode::OK,

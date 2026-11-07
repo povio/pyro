@@ -9,6 +9,7 @@
 //   native.postMessage(versionId, message, options) serializes now.
 // The browser thread calls, each in its own task:
 //   registration(json, updateFound): a registration's new state
+//   worker(json): a version no registration holds any more became redundant
 //   controller(json, fire): the new controller (controllerchange if fire)
 //   message(versionJson, data, ports, origin), messageError(versionJson, origin)
 // `initial`: {controller, ready, clientId, url} (JSON strings or null).
@@ -324,6 +325,9 @@
     settle,
     registration(json, updateFound) {
       registrationOf(parse(json), updateFound);
+    },
+    worker(json) {
+      workerOf(parse(json));
     },
     controller(json, fire) {
       controller = json === null ? null : workerOf(parse(json));

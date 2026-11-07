@@ -81,10 +81,19 @@ their own), across all pages of the browser thread.
 Tests: `crates/lp-browser/tests/popups.rs`
 (`broadcast_channel_reaches_same_origin_documents_of_the_browser_context`).
 
+Across threads: a port in the transfer list of a dedicated worker, service
+worker or `Client` message becomes one end of a link (`message_channel.rs`
+`Link`); the port it was entangled with keeps the other end. A message between
+the ends is serialized into the receiving end's inbox (at most 64 MiB, else
+DataCloneError) and its thread is woken with a task; a started port delivers
+one message per task, decoded into its realm (`messageerror` if it cannot be).
+An end in transit keeps its inbox until its new port claims it, and one never
+decoded closes its link. Closing either port, or the collection of one, closes
+the link, which releases the other port's pin.
+
 Gaps of MessageChannel, all explicit:
-- Ports cannot be transferred to or from a worker (another VM): such a
-  transfer throws NotSupportedError.
-- No `messageerror` events: deserialization in the same VM cannot fail.
+- No `messageerror` events between ports of one thread: deserialization in the
+  same VM cannot fail.
 - `new MessageEvent(type, {ports})` keeps the ports; `source` in the init
   dictionary is ignored.
 
