@@ -1,6 +1,7 @@
 //! Where a node is, kept up to date when it moves (as Blink does): the
 //! `tree_flags` in every node header (connected, in a shadow tree) and, per
-//! tree scope (a document or a shadow root), its elements by id.
+//! tree scope (a document or a shadow root), its elements by id and its
+//! `<label>` elements by `for` (`element.labels`).
 //!
 //! A parentless node other than a document or shadow root has no flags, so
 //! linking a node under a parent gives its subtree the parent's flags and
@@ -47,14 +48,16 @@ struct IdEntry {
     count: u32,
 }
 
-/// One tree scope's elements by (non-empty) id.
+/// One tree scope's index: its elements by (non-empty) id, and its HTML
+/// `<label>` elements by (non-empty) `for`.
 #[derive(Debug, Default)]
-pub(crate) struct IdMap(FxHashMap<IdKey, IdEntry>);
-
-impl IdMap {
-    fn len(&self) -> usize {
-        self.0.len()
-    }
+pub(crate) struct ScopeIndex {
+    ids: FxHashMap<IdKey, IdEntry>,
+    /// The HTML `<label>` elements of the scope with a non-empty `for`, by
+    /// its value, in the order they were indexed (few per value: sorted
+    /// into tree order when read). Every tree or `for` write goes through
+    /// `label_for_added` / `label_for_removed`.
+    labels_for: FxHashMap<Box<str>, Vec<u32>>,
 }
 
 impl Dom {
@@ -110,6 +113,7 @@ impl Dom {
             if let NodeKind::Element(e) = &n.kind {
                 let sr = e.shadow_root;
                 let id = e.id_atom().filter(|a| !a.is_empty()).cloned();
+                let label_for = label_for_of(e).map(Box::<str>::from);
                 base_moved |= doc_tree && e.is_html() && e.name.local == local_name!("base");
                 if let Some(id) = id {
                     if scope == NIL {
@@ -119,6 +123,16 @@ impl Dom {
                         self.id_added(scope, &id, cur, Some(node));
                     } else {
                         self.id_removed(scope, &id, cur);
+                    }
+                }
+                if let Some(f) = label_for {
+                    if scope == NIL {
+                        scope = self.root_idx(node);
+                    }
+                    if entering {
+                        self.label_for_added(scope, f, cur);
+                    } else {
+                        self.label_for_removed(scope, &f, cur);
                     }
                 }
                 if sr != NIL {
@@ -155,10 +169,10 @@ impl Dom {
         }
     }
 
-    // ----- id maps -------------------------------------------------------
+    // ----- scope indexes -------------------------------------------------
 
-    /// The id map of tree scope `scope` (a document or shadow root).
-    fn id_map(&self, scope: u32) -> Option<&IdMap> {
+    /// The index of tree scope `scope` (a document or shadow root).
+    fn scope_index(&self, scope: u32) -> Option<&ScopeIndex> {
         match &self.n(scope).kind {
             NodeKind::Document(d) => Some(&d.ids),
             NodeKind::Fragment(f) if f.shadow.is_some() => f.ids.as_deref(),
@@ -166,7 +180,7 @@ impl Dom {
         }
     }
 
-    fn id_map_mut(&mut self, scope: u32) -> &mut IdMap {
+    fn scope_index_mut(&mut self, scope: u32) -> &mut ScopeIndex {
         match &mut self.n_mut(scope).kind {
             NodeKind::Document(d) => &mut d.ids,
             NodeKind::Fragment(f) if f.shadow.is_some() => f.ids.get_or_insert_with(Default::default),
@@ -174,11 +188,23 @@ impl Dom {
         }
     }
 
+    /// The index of the tree scope rooted at `root` for lookups: `None`
+    /// when `root` is no tree scope, or a fragment parser's host document
+    /// (callers walk).
+    fn lookup_index(&self, root: u32) -> Option<Option<&ScopeIndex>> {
+        match &self.n(root).kind {
+            NodeKind::Document(d) if d.fragment_parse_host => None,
+            NodeKind::Document(d) => Some(Some(&d.ids)),
+            NodeKind::Fragment(f) if f.shadow.is_some() => Some(f.ids.as_deref()),
+            _ => None,
+        }
+    }
+
     /// Element `el` with id `id` joined `scope`: as part of the subtree
     /// `entering` (linked into the scope, its elements added in tree order),
     /// or alone (`None`: its `id` was set).
     fn id_added(&mut self, scope: u32, id: &Atom, el: u32, entering: Option<u32>) {
-        let first = self.id_map(scope).and_then(|m| m.0.get(&**id)).map(|e| e.first.get());
+        let first = self.scope_index(scope).and_then(|m| m.ids.get(&**id)).map(|e| e.first.get());
         let first = match (first, entering) {
             (None, _) => el,
             (Some(NIL), _) => NIL,
@@ -197,13 +223,13 @@ impl Dom {
             (Some(f), None) => f,
         };
         let entry =
-            self.id_map_mut(scope).0.entry(IdKey(id.clone())).or_insert(IdEntry { first: Cell::new(el), count: 0 });
+            self.scope_index_mut(scope).ids.entry(IdKey(id.clone())).or_insert(IdEntry { first: Cell::new(el), count: 0 });
         entry.count += 1;
         entry.first.set(first);
     }
 
     fn id_removed(&mut self, scope: u32, id: &Atom, el: u32) {
-        let map = &mut self.id_map_mut(scope).0;
+        let map = &mut self.scope_index_mut(scope).ids;
         let Some(entry) = map.get_mut(&**id) else {
             debug_assert!(false, "indexed id missing");
             return;
@@ -244,16 +270,8 @@ impl Dom {
     /// [`Dom::indexed_by_id`] and how many elements of the scope have the
     /// id: `Some((NIL, 0))` for none.
     pub(crate) fn indexed_by_id_count(&self, root: u32, id: &str) -> Option<(u32, u32)> {
-        let map = match &self.n(root).kind {
-            NodeKind::Document(d) if d.fragment_parse_host => return None,
-            NodeKind::Document(d) => &d.ids,
-            NodeKind::Fragment(f) if f.shadow.is_some() => match f.ids.as_deref() {
-                Some(m) => m,
-                None => return Some((NIL, 0)),
-            },
-            _ => return None,
-        };
-        let Some(entry) = map.0.get(id) else { return Some((NIL, 0)) };
+        let Some(map) = self.lookup_index(root)? else { return Some((NIL, 0)) };
+        let Some(entry) = map.ids.get(id) else { return Some((NIL, 0)) };
         let first = entry.first.get();
         if first != NIL {
             return Some((first, entry.count));
@@ -285,6 +303,58 @@ impl Dom {
             return NIL;
         }
         self.indexed_by_id(root, id).unwrap_or_else(|| self.walk_by_id(root, id))
+    }
+
+    // ----- labels by `for` -----------------------------------------------
+
+    /// HTML `<label>` `el` with the non-empty `for` value `f` joined `scope`
+    /// (linked into it, or its `for` was set).
+    fn label_for_added(&mut self, scope: u32, f: Box<str>, el: u32) {
+        self.scope_index_mut(scope).labels_for.entry(f).or_default().push(el);
+    }
+
+    fn label_for_removed(&mut self, scope: u32, f: &str, el: u32) {
+        let map = &mut self.scope_index_mut(scope).labels_for;
+        let Some(labels) = map.get_mut(f) else {
+            debug_assert!(false, "indexed label missing");
+            return;
+        };
+        match labels.iter().position(|&l| l == el) {
+            Some(k) => {
+                labels.swap_remove(k);
+            }
+            None => debug_assert!(false, "indexed label missing"),
+        }
+        if labels.is_empty() {
+            map.remove(f);
+        }
+    }
+
+    /// HTML `<label>` `i`'s `for` changed from `old` (attribute write).
+    pub(crate) fn label_for_attr_changed(&mut self, i: u32, old: Option<Box<str>>) {
+        if self.n(i).tree_flags() == 0 {
+            return;
+        }
+        let new = self.n(i).element().and_then(label_for_of).map(Box::<str>::from);
+        let old = old.filter(|f| !f.is_empty());
+        if new == old {
+            return;
+        }
+        let scope = self.root_idx(i);
+        if let Some(old) = old {
+            self.label_for_removed(scope, &old, i);
+        }
+        if let Some(new) = new {
+            self.label_for_added(scope, new, i);
+        }
+    }
+
+    /// The HTML `<label>` elements of the tree under `root` whose `for` is
+    /// `id` (non-empty), in no particular order: `None` when `root` is no
+    /// tree scope (callers walk).
+    pub(crate) fn labels_for_indexed(&self, root: u32, id: &str) -> Option<&[u32]> {
+        let Some(index) = self.lookup_index(root)? else { return Some(&[]) };
+        Some(index.labels_for.get(id).map(Vec::as_slice).unwrap_or(&[]))
     }
 
     // ----- verification (tests) ------------------------------------------
@@ -326,20 +396,41 @@ impl Dom {
         }
         for scope in scopes {
             let mut want: FxHashMap<Atom, (u32, u32)> = FxHashMap::default();
+            let mut want_labels: FxHashMap<Box<str>, Vec<u32>> = FxHashMap::default();
             let mut cur = self.n(scope).first_child;
             while cur != NIL {
-                if let Some(id) = self.n(cur).element().and_then(|e| e.id_atom()).filter(|a| !a.is_empty()) {
-                    want.entry(id.clone()).or_insert((cur, 0)).1 += 1;
+                if let Some(e) = self.n(cur).element() {
+                    if let Some(id) = e.id_atom().filter(|a| !a.is_empty()) {
+                        want.entry(id.clone()).or_insert((cur, 0)).1 += 1;
+                    }
+                    if let Some(f) = label_for_of(e) {
+                        want_labels.entry(f.into()).or_default().push(cur);
+                    }
                 }
                 cur = self.following_in(cur, scope);
             }
-            let have = self.id_map(scope);
-            let have_len = have.map_or(0, IdMap::len);
+            let have = self.scope_index(scope);
+            let have_len = have.map_or(0, |m| m.ids.len());
             if have_len != want.len() {
                 return Err(format!("scope {scope}: {have_len} ids indexed, {} in the tree", want.len()));
             }
+            let have_labels = have.map_or(0, |m| m.labels_for.len());
+            if have_labels != want_labels.len() {
+                return Err(format!(
+                    "scope {scope}: {have_labels} label `for` values indexed, {} in the tree",
+                    want_labels.len()
+                ));
+            }
+            for (f, mut labels) in want_labels {
+                let mut indexed = have.and_then(|m| m.labels_for.get(&*f)).cloned().unwrap_or_default();
+                labels.sort_unstable();
+                indexed.sort_unstable();
+                if indexed != labels {
+                    return Err(format!("scope {scope}: labels for {f:?} indexed {indexed:?}, tree {labels:?}"));
+                }
+            }
             for (id, (first, count)) in want {
-                let Some(entry) = have.and_then(|m| m.0.get(&*id)) else {
+                let Some(entry) = have.and_then(|m| m.ids.get(&*id)) else {
                     return Err(format!("scope {scope}: id {id:?} not indexed"));
                 };
                 let indexed_first = entry.first.get();
@@ -485,4 +576,14 @@ impl Dom {
             }
         }
     }
+}
+
+/// The non-empty `for` of an HTML `<label>` element, which the scope index
+/// keys it by.
+#[inline]
+pub(crate) fn label_for_of(e: &crate::node::ElementData) -> Option<&str> {
+    if !(e.is_html() && e.name.local == local_name!("label")) {
+        return None;
+    }
+    e.attr_local(&local_name!("for")).filter(|f| !f.is_empty())
 }

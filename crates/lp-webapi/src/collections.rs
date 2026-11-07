@@ -482,7 +482,13 @@ impl CollectionData {
             c.0 = version;
             return;
         }
-        *c = (version, shared_members(&self.root.page, dom, self.root.id, &self.kind));
+        // Labels come from the DOM's own index (an ancestor walk and a map
+        // lookup): cheaper than the shared list's lookup and eviction.
+        let members = match self.kind {
+            CollectionKind::Labels => Rc::new(compute(dom, self.root.id, &self.kind)),
+            _ => shared_members(&self.root.page, dom, self.root.id, &self.kind),
+        };
+        *c = (version, members);
     }
     fn items(&self) -> Vec<NodeId> {
         let dom = self.root.page.dom.borrow();

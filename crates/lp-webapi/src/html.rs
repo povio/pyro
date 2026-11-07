@@ -2049,29 +2049,13 @@ simple_class!(HtmlLabelElement, "HTMLLabelElement", HtmlElement, |def| {
 
 /// The labeled control of a `<label>` (HTML §4.10.4).
 pub fn labeled_control(dom: &Dom, label: NodeId) -> Option<NodeId> {
-    let labelable = |id: NodeId| {
-        dom.element(id).is_ok_and(|e| {
-            e.is_html()
-                && (matches!(&*e.name.local, "button" | "meter" | "output" | "progress" | "select" | "textarea")
-                    || (&*e.name.local == "input"
-                        && dom.input_type(id).map(|t| t != InputType::Hidden).unwrap_or(false))
-                    || dom.is_form_associated(id))
-        })
-    };
-    if let Ok(Some(f)) = dom.get_attribute(label, "for") {
-        let root = dom.root_node(label, false).ok()?;
-        let target = dom.get_element_by_id(root, f).ok()??;
-        return labelable(target).then_some(target);
-    }
-    dom.descendants(label).ok()?.skip(1).find(|&d| labelable(d))
+    dom.labeled_control(label).ok().flatten()
 }
 
+/// `element.labels`: from the tree scope's index of labels by `for` and the
+/// control's ancestors (lp-dom), not a walk of the document.
 pub(crate) fn labels_for(dom: &Dom, control: NodeId) -> Vec<NodeId> {
-    let Ok(root) = dom.root_node(control, false) else { return Vec::new() };
-    let Ok(desc) = dom.descendants(root) else { return Vec::new() };
-    desc.filter(|&n| dom.element(n).is_ok_and(|e| e.is_html() && &*e.name.local == "label"))
-        .filter(|&l| labeled_control(dom, l) == Some(control))
-        .collect()
+    dom.labels(control).unwrap_or_default()
 }
 
 simple_class!(HtmlFieldSetElement, "HTMLFieldSetElement", HtmlElement, |def| {

@@ -9,6 +9,7 @@ mod custom_reactions;
 mod dispatch_targets;
 mod forms_values;
 mod id_index;
+mod labels;
 mod loader;
 mod move_before;
 mod post_connection;

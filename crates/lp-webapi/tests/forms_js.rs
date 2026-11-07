@@ -413,3 +413,67 @@ fn numeric_edge_cases_and_argument_order() {
     assert_eq!(e.eval("document.getElementById('s').value"), "b");
     e.page.dispose();
 }
+
+#[test]
+fn labels_follow_for_changes_insertions_removals_nesting_and_shadow_trees() {
+    let e = env(r#"<body>
+        <label id=l1 for=a>A1</label><label id=l2><input id=a></label><label id=l3 for=a>A3</label>
+        <label id=l4><label id=l5><input id=b></label></label>
+        <div id=host></div><input id=c>
+    </body>"#);
+    // Elements held in variables: ids change below, so named access cannot.
+    let ids = "(c) => [...c].map(l => l.id).join()";
+    assert_eq!(
+        e.eval(&format!("const ids = {ids}; const A = a, B = b, C = c, L1 = l1, L2 = l2, L3 = l3, L4 = l4, L5 = l5, H = host; ids(A.labels)")),
+        "l1,l2,l3"
+    );
+    assert_eq!(e.eval("ids(B.labels)"), "l4,l5");
+    assert_eq!(e.eval("A.labels === A.labels"), "true");
+    // Dynamic `for`: retargeted, same value, emptied, removed.
+    assert_eq!(e.eval("L1.htmlFor = 'c'; [ids(A.labels), ids(C.labels)].join('|')"), "l2,l3|l1");
+    assert_eq!(e.eval("L1.setAttribute('for', 'c'); ids(C.labels)"), "l1");
+    assert_eq!(e.eval("L1.htmlFor = ''; [ids(A.labels), ids(C.labels), String(L1.control)].join('|')"), "l2,l3||null");
+    assert_eq!(e.eval("L2.htmlFor = 'c'; [ids(A.labels), ids(C.labels)].join('|')"), "l3|l2");
+    assert_eq!(e.eval("L2.removeAttribute('for'); ids(A.labels)"), "l2,l3");
+    // The control's id changes.
+    assert_eq!(e.eval("A.id = 'z'; [ids(A.labels), String(L3.control)].join('|')"), "l2|null");
+    assert_eq!(e.eval("A.id = 'a'; ids(A.labels)"), "l2,l3");
+    // Label insertion and removal, parsed and created.
+    assert_eq!(
+        e.eval("document.body.insertAdjacentHTML('afterbegin', '<label id=l0 for=a>A0</label>'); ids(A.labels)"),
+        "l0,l2,l3"
+    );
+    assert_eq!(
+        e.eval("const L6 = document.createElement('label'); L6.htmlFor = 'a'; L6.id = 'l6'; document.body.append(L6); ids(A.labels)"),
+        "l0,l2,l3,l6"
+    );
+    assert_eq!(e.eval("document.getElementById('l0').remove(); L6.remove(); ids(A.labels)"), "l2,l3");
+    assert_eq!(e.eval("L6.htmlFor = 'b'; document.body.prepend(L6); ids(B.labels)"), "l6,l4,l5");
+    // The wrapping label pair: the inner control moves out and back.
+    assert_eq!(e.eval("document.body.append(B); ids(B.labels)"), "l6");
+    assert_eq!(e.eval("L5.append(B); ids(B.labels)"), "l6,l4,l5");
+    // A hidden input has no labels; back to text it has them again.
+    assert_eq!(
+        e.eval("B.type = 'hidden'; [B.labels === null || B.labels.length === 0, String(L6.control)].join('|')"),
+        "true|null"
+    );
+    assert_eq!(e.eval("B.type = 'text'; ids(B.labels)"), "l6,l4,l5");
+    // Shadow trees: `for` resolves in the label's own tree.
+    assert_eq!(
+        e.eval(
+            "const sr = H.attachShadow({mode: 'open'});
+             sr.innerHTML = '<label id=s1 for=a>S</label><label id=s2><input id=a></label>';
+             const SA = sr.querySelector('input'), S1 = sr.getElementById('s1');
+             [ids(A.labels), ids(SA.labels), S1.control === SA].join('|')"
+        ),
+        "l2,l3|s1,s2|true"
+    );
+    assert_eq!(e.eval("document.body.append(S1); [ids(A.labels), ids(SA.labels)].join('|')"), "l2,l3,s1|s2");
+    assert_eq!(e.eval("sr.prepend(S1); [ids(A.labels), ids(SA.labels)].join('|')"), "l2,l3|s1,s2");
+    assert_eq!(e.eval("H.remove(); ids(SA.labels)"), "s1,s2");
+    // A detached tree still answers.
+    assert_eq!(
+        e.eval("const t = document.createElement('div'); t.innerHTML = '<label id=d1 for=q>1</label><label id=d2><input id=q></label>'; ids(t.querySelector('input').labels)"),
+        "d1,d2"
+    );
+}

@@ -275,7 +275,7 @@ impl Dom {
     fn render_walk(&self, doc: NodeId, opts: &RenderHtml<'_>, sink: &mut dyn Sink) -> DomResult<()> {
         let d = self.check(doc)?;
         let root = self.child_idx_iter(d).find(|&c| self.n(c).is_element()).unwrap_or(NIL);
-        self.render_walk_from(self.child_idx_iter(d).collect(), opts, sink, root);
+        self.render_walk_from(self.child_idx_iter(d).collect(), opts, sink, root, false);
         Ok(())
     }
 
@@ -303,7 +303,9 @@ impl Dom {
     /// The render walk over the subtrees of `roots` (in order), outside any
     /// shadow tree. `root` is the document element (whose rendered children
     /// end with the document's adopted sheets), `NIL` when not walked.
-    fn render_walk_from(&self, roots: Vec<u32>, opts: &RenderHtml<'_>, sink: &mut dyn Sink, root: u32) {
+    /// `single`: stop after the first node written to `sink` (its own
+    /// content, no subtree).
+    fn render_walk_from(&self, roots: Vec<u32>, opts: &RenderHtml<'_>, sink: &mut dyn Sink, root: u32, single: bool) {
         let mark = opts.mark.and_then(|(id, _)| self.check(id).ok());
         // Shadow hosts entered: (host, the host's own scope).
         let mut hosts: Vec<(u32, Scope)> = Vec::new();
@@ -335,7 +337,12 @@ impl Dom {
             };
             match &self.n(n).kind {
                 NodeKind::Doctype(dt) => sink.doctype(&dt.name),
-                NodeKind::Text(s) | NodeKind::CData(s) => sink.text(render_key(self.id_of(n)), s, TextKind::Node),
+                NodeKind::Text(s) | NodeKind::CData(s) => {
+                    sink.text(render_key(self.id_of(n)), s, TextKind::Node);
+                    if single {
+                        return;
+                    }
+                }
                 NodeKind::Comment(_) | NodeKind::ProcessingInstruction(_) | NodeKind::Attr(_) => {}
                 NodeKind::Document(_) | NodeKind::Fragment(_) => {
                     push_children(&mut stack, self.child_idx_iter(n).collect(), scope);
@@ -444,6 +451,9 @@ impl Dom {
                     let tag = self.serialized_tag(n);
                     let void = html && is_void(local);
                     sink.open(render_key(id), &tag, &e.name, &attrs, mark == Some(n), void);
+                    if single {
+                        return;
+                    }
                     if void {
                         continue;
                     }
@@ -632,7 +642,7 @@ impl Dom {
             let kids: Vec<u32> = self.child_idx_iter(p).filter(|&k| self.render_child(k)).collect();
             let fresh: Vec<u32> = kids.iter().copied().filter(|k| inserted.contains(k)).collect();
             let mut sink = TreeSink::default();
-            self.render_walk_from(fresh, opts, &mut sink, NIL);
+            self.render_walk_from(fresh, opts, &mut sink, NIL, false);
             ops.push(DeltaOp::Children {
                 parent: (p != d).then(|| render_key(self.id_of(p))),
                 kids: kids.iter().map(|&k| render_key(self.id_of(k))).collect(),
@@ -682,9 +692,10 @@ impl Dom {
             if covered(i) || inserted.contains(&i) {
                 continue;
             }
-            // The node alone (its subtree walk, first node).
+            // The node alone: the walk stops at the first node it writes
+            // (the node's own content, not its subtree).
             let mut sink = TreeSink::default();
-            self.render_walk_from(vec![i], opts, &mut sink, NIL);
+            self.render_walk_from(vec![i], opts, &mut sink, NIL, true);
             let Some(first) = sink.tree.nodes.into_iter().next() else { continue };
             if first.key != render_key(self.id_of(i)) {
                 return None;
