@@ -778,6 +778,16 @@ impl selectors::Element for BlitzNode<'_> {
     }
 
     fn add_element_unique_hashes(&self, filter: &mut selectors::bloom::BloomFilter) -> bool {
+        // lightningpanda: this element is in the subtree (or among the
+        // siblings) a `:has()` bloom filter covers, and a search the filter
+        // fast-rejects visits nothing and so flags nothing. Flag it as
+        // searched in both directions, as a full search would have, so a
+        // later change to it still reaches the anchors
+        // (`has_invalidation`). Filters are built only for `:has()`.
+        self.selector_flags().set(
+            self.selector_flags().get()
+                | ElementSelectorFlags::RELATIVE_SELECTOR_SEARCH_DIRECTION_ANCESTOR_SIBLING,
+        );
         each_relevant_element_hash(*self, |hash| filter.insert_hash(hash & BLOOM_HASH_MASK));
         true
     }
