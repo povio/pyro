@@ -184,3 +184,5 @@ parley = { path = "vendor/parley" }
 stylo = { path = "vendor/stylo" }
 # ASCII hosts with invalid xn-- labels pass through; see vendor/idna/README.lightningpanda.md.
 idna = { path = "vendor/idna" }
+# WHATWG URL Standard fixes over url 2.5.8; see vendor/url/README.lightningpanda.md.
+url = { path = "vendor/url" }
