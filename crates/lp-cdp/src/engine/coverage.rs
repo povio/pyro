@@ -944,15 +944,15 @@ fn v8_functions(script: &ScriptCoverage, length: usize, source: &str) -> Vec<Val
 
     // V8 names an anonymous function after what it is assigned to
     // (`ns.a = function () {}` is `ns.a`); JSC has only the function's own
-    // name.
-    if !source.is_empty() && functions.iter().any(|f| f.name.is_empty()) {
-        let mut by_end: HashMap<u32, Vec<(u32, String)>> = HashMap::new();
-        for ((start, end), name) in super::fn_names::inferred_names(source) {
-            by_end.entry(end).or_default().push((start, name));
+    // name; getters and setters are `get g` / `set g`, where JSC has `g`.
+    if !source.is_empty() {
+        let mut by_end: HashMap<u32, Vec<(u32, String, bool)>> = HashMap::new();
+        for ((start, end), (name, replaces)) in super::fn_names::inferred_names(source) {
+            by_end.entry(end).or_default().push((start, name, replaces));
         }
-        for f in functions.iter_mut().filter(|f| f.name.is_empty()) {
-            if let Some((_, name)) = by_end.get(&f.end).and_then(|c| c.iter().min_by_key(|(s, _)| s.abs_diff(f.start)))
-            {
+        for f in functions.iter_mut() {
+            let best = by_end.get(&f.end).and_then(|c| c.iter().min_by_key(|(s, ..)| s.abs_diff(f.start)));
+            if let Some((_, name, _)) = best.filter(|(_, _, replaces)| *replaces || f.name.is_empty()) {
                 f.name = name.clone();
             }
         }

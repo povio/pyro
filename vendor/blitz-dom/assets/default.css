@@ -207,6 +207,24 @@ optgroup {
     font-weight: bolder;
 }
 
+/* lightningpanda: an optgroup's label row (Chromium's
+   -internal-optgroup-label in its shadow root), built in its ::before slot
+   (layout/construct.rs). The text-control pseudo-element's name is reused:
+   Blitz does not use it, and only the UA sheet can select it. */
+optgroup::-servo-text-control-inner-container {
+    display: block;
+    padding-block: 0 1px;
+    padding-inline: 2px;
+    white-space: nowrap;
+    min-block-size: 1.2em;
+}
+
+/* Chromium: `select:-internal-list-box optgroup option`. */
+select[multiple] optgroup option,
+select[size]:not([size="0"], [size="1"], [size=""]) optgroup option {
+    padding-inline-start: 20px;
+}
+
 picture {
     display: contents;
 }

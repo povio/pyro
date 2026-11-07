@@ -27,10 +27,19 @@
 
 use std::collections::HashMap;
 
-/// The inferred name of each anonymous function in `source`, by its UTF-16
-/// `(start, end)` (end inclusive: the last character of the function).
-pub(super) fn inferred_names(source: &str) -> HashMap<(u32, u32), String> {
-    anonymous_functions(source).into_iter().flatten().filter_map(|f| Some(((f.start, f.end), f.name?))).collect()
+/// V8's name for functions in `source`, by their UTF-16 `(start, end)` (end
+/// inclusive: the last character of the function): the inferred name of
+/// each anonymous function (`false`), and the name of each getter and
+/// setter (`get g`, `true`: it replaces the engine's own name).
+pub(super) fn inferred_names(source: &str) -> HashMap<(u32, u32), (String, bool)> {
+    anonymous_functions(source)
+        .into_iter()
+        .flatten()
+        .filter_map(|f| match f.accessor {
+            Some(name) => Some(((f.start, f.end), (name, true))),
+            None => Some(((f.start, f.end), (f.name?, false))),
+        })
+        .collect()
 }
 
 /// Every anonymous function, with its inferred name if it has one; `None`
@@ -49,7 +58,7 @@ fn anonymous_functions(source: &str) -> Option<Vec<Func>> {
         pife: false,
     };
     p.program().ok()?;
-    Some(p.funcs.into_iter().filter(|f| f.anonymous).collect())
+    Some(p.funcs.into_iter().filter(|f| f.anonymous || f.accessor.is_some()).collect())
 }
 
 // ---------------------------------------------------------------- lexer
@@ -371,6 +380,8 @@ struct Func {
     /// name for it.
     eager: bool,
     name: Option<String>,
+    /// A getter or setter's name, `get g` / `set g`.
+    accessor: Option<String>,
 }
 
 /// What V8's checks need to know about a parsed expression.
@@ -1358,12 +1369,14 @@ impl Parser {
         let start = self.t[self.i].start;
         let mut is_async = false;
         let mut generator = false;
+        let mut accessor = None;
         // `get`/`set`/`async` are modifiers when a key follows them.
         let key_follows = |p: &Parser, n: usize| {
             !matches!(p.peek_at(n), K::Punct("(" | ":" | "," | "}" | "=" | ";") | K::Eof)
                 && !(class && p.t[p.i + n].nl && !matches!(p.peek_at(n), K::Punct("[" | "*")))
         };
         if (self.is_word("get") || self.is_word("set")) && key_follows(self, 1) {
+            accessor = Some(if self.is_word("get") { "get" } else { "set" });
             self.bump()?;
         } else if self.is_word("async") && key_follows(self, 1) && !self.t[self.i + 1].nl {
             self.bump()?;
@@ -1374,8 +1387,18 @@ impl Parser {
         }
         let key = self.property_key()?;
         if self.is("(") {
-            // A method: named, so not inferred.
-            self.function_rest(start, is_async, generator, key.as_deref(), false)?;
+            // A method: named, so not inferred, except in an object literal
+            // with a computed key (V8 gives the function no name of its own
+            // there, so it takes the object's).
+            let f = self.function_rest(start, is_async, generator, key.as_deref(), false)?;
+            match (&key, accessor) {
+                (Some(key), Some(kind)) => self.funcs[f].accessor = Some(format!("{kind} {key}")),
+                (None, _) if !class => {
+                    self.funcs[f].anonymous = true;
+                    self.fni.add(f);
+                }
+                _ => {}
+            }
             return Ok(());
         }
         if class {
@@ -1537,7 +1560,14 @@ impl Parser {
         self.in_async = a;
         self.in_generator = g;
         r?;
-        self.funcs.push(Func { start, end: self.last_end() - 1, anonymous: false, eager: false, name: None });
+        self.funcs.push(Func {
+            start,
+            end: self.last_end() - 1,
+            anonymous: false,
+            eager: false,
+            name: None,
+            accessor: None,
+        });
         Ok(self.funcs.len() - 1)
     }
 
@@ -1612,7 +1642,7 @@ impl Parser {
         self.in_async = a;
         self.in_generator = g;
         r?;
-        self.funcs.push(Func { start, end: self.last_end() - 1, anonymous: true, eager, name: None });
+        self.funcs.push(Func { start, end: self.last_end() - 1, anonymous: true, eager, name: None, accessor: None });
         let f = self.funcs.len() - 1;
         self.fni.add(f);
         Ok(E::Func(f))
@@ -1626,7 +1656,7 @@ mod tests {
     fn names(src: &str) -> Vec<(String, String)> {
         let mut v: Vec<_> = inferred_names(src)
             .into_iter()
-            .map(|((s, e), n)| {
+            .map(|((s, e), (n, _))| {
                 let text: String =
                     src.encode_utf16().skip(s as usize).take((e - s + 1) as usize).map(|u| u as u8 as char).collect();
                 (s, text, n)
@@ -1706,6 +1736,7 @@ ns.v = function () { ns2.u = function () { return 11; }; return 1; }();
         assert_eq!(
             names(src),
             pairs(&[
+                ("get g() { return 3; }", "get g"),
                 ("function () { return 5; }", "window.q"),
                 ("function () { return 6; }", "window.r"),
                 ("function* () { yield 7; }", "window.s"),
@@ -1724,8 +1755,29 @@ ns.v = function () { ns2.u = function () { return 11; }; return 1; }();
         let funcs = anonymous_functions(&src);
         println!("parsed={}", funcs.is_some());
         for f in funcs.into_iter().flatten() {
-            println!("NAME\t{}\t{}\t{}", f.start, f.end + 1, f.name.unwrap_or_default());
+            println!("NAME\t{}\t{}\t{}", f.start, f.end + 1, f.accessor.or(f.name).unwrap_or_default());
         }
+    }
+
+    /// Checked against Chrome: getters and setters are `get k` / `set k`;
+    /// an object literal's methods with a computed key take the object's
+    /// name, a class's get none.
+    #[test]
+    fn accessors_and_computed_methods() {
+        let src = "var o = { get g() { return 1; }, set 'q r'(v) {}, get 5() {}, [k]() {}, get [k]() {}, m() {} };
+class K { static get s() {} set #p(v) {} [k]() {} get [k]() {} }";
+        assert_eq!(
+            names(src),
+            pairs(&[
+                ("get g() { return 1; }", "get g"),
+                ("set 'q r'(v) {}", "set q r"),
+                ("get 5() {}", "get 5"),
+                ("[k]() {}", "o"),
+                ("get [k]() {}", "o"),
+                ("get s() {}", "get s"),
+                ("set #p(v) {}", "set #p"),
+            ])
+        );
     }
 
     #[test]

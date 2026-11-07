@@ -337,3 +337,38 @@ fn list_boxes_are_size_rows_tall() {
         ])
     );
 }
+
+#[test]
+fn list_box_optgroups_have_a_label_row() {
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<!doctype html><body>
+<select id="g" size="2"><optgroup label="G"><option>A</option></optgroup><option>B</option><option>C</option></select>
+<select id="i" size="6"><optgroup label="G1"><option>A</option><option>B</option></optgroup><optgroup label="G2"><option>C</option></optgroup></select>
+<select id="j" size="4"><optgroup label=""></optgroup><option>A</option></select>
+<select id="k" multiple style="font-size:20px"><optgroup label="G" style="padding:4px"><option>A</option></optgroup></select>
+</body>"#,
+    );
+    // Chromium's boxes: a label row as tall as an option, then the group's
+    // options, indented 20px.
+    let boxes = eval_value(
+        &mut h,
+        "[...document.querySelectorAll('select')].map(s => { const t = s.getBoundingClientRect().y; \
+         return [s.id, s.scrollHeight, ...[...s.querySelectorAll('optgroup,option')].map(e => { const r = e.getBoundingClientRect(); return [r.y - t, r.height]; })]; })",
+    );
+    assert_eq!(
+        boxes,
+        json!([
+            ["g", 68, [1, 34], [18, 17], [35, 17], [52, 17]],
+            ["i", 102, [1, 51], [18, 17], [35, 17], [52, 34], [69, 17]],
+            ["j", 68, [1, 17], [18, 17]],
+            ["k", 100, [1, 58], [30, 25]]
+        ])
+    );
+    let indent = eval_value(
+        &mut h,
+        "[...document.querySelectorAll('#g option')].map(o => getComputedStyle(o).paddingInlineStart).concat(getComputedStyle(document.querySelector('optgroup'), '::before').content)",
+    );
+    assert_eq!(indent, json!(["20px", "2px", "2px", "none"]));
+}

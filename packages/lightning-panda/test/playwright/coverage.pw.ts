@@ -27,9 +27,11 @@ function Ctor() { this.m = function () { return 4; }; }
 Ctor.prototype.p = function () { return 5; };
 var o = { g: [function () { return 6; }] };
 ns.paren = (function () { return 7; });
+var acc = { get v() { return 8; } };
+class M { static set s(x) {} }
 class K {}
 class L extends K {}
-window.run = () => [ns.a(), ns.deep.b(), ns.lit(), new Ctor().m(), new Ctor().p(), o.g[0](), ns.paren(), new L()];
+window.run = () => [ns.a(), ns.deep.b(), ns.lit(), new Ctor().m(), new Ctor().p(), o.g[0](), ns.paren(), new L(), acc.v, (M.s = 1)];
 `;
 const STYLE_CSS = `.used { color: red; }
 .unused { color: blue; }
@@ -286,7 +288,8 @@ test('JS coverage: anonymous functions named as V8 names them', async ({ page })
   await page.evaluate(() => (window as any).run());
   const entries = await page.coverage.stopJSCoverage();
   const names = entries.find((e) => e.url.endsWith('/cov/names.js'))!;
-  // A function right after `(` keeps no inferred name, and a class's
-  // implicit constructor is no function of the script.
-  expect(names.functions.map((f) => f.functionName)).toEqual(['', 'ns.a', 'ns.deep.b', 'ns.lit', 'Ctor', 'Ctor.m', 'Ctor.p', 'o.g', '', 'window.run']);
+  // A function right after `(` keeps no inferred name, getters and setters
+  // are `get v` / `set s`, and a class's implicit constructor is no
+  // function of the script.
+  expect(names.functions.map((f) => f.functionName)).toEqual(['', 'ns.a', 'ns.deep.b', 'ns.lit', 'Ctor', 'Ctor.m', 'Ctor.p', 'o.g', '', 'get v', 'set s', 'window.run']);
 });

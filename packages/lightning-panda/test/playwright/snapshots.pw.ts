@@ -128,6 +128,16 @@ test.describe('aria snapshots', () => {
     expect(heights).toEqual([[53, 51, 85], [70, 68, 102], [104, 102, 102]]);
   });
 
+  test('a list box optgroup has a label row, as in Chromium', async ({ page }) => {
+    await page.goto('/simple');
+    await page.setContent(`<select size="6"><optgroup label="G1"><option>A</option><option>B</option></optgroup><optgroup label="G2"><option>C</option></optgroup></select>`);
+    const boxes = await page.locator('select').evaluate((s) => {
+      const top = s.getBoundingClientRect().y;
+      return [s.scrollHeight, ...[...s.querySelectorAll('optgroup,option')].map((e) => [e.getBoundingClientRect().y - top, e.getBoundingClientRect().height])];
+    });
+    expect(boxes).toEqual([102, [1, 51], [18, 17], [35, 17], [52, 34], [69, 17]]);
+  });
+
   test('hidden, unslotted and owned elements as Playwright walks them', async ({ page }) => {
     await page.goto('/simple');
     await page.setContent(`<div aria-hidden="true"><nav aria-label="Hidden"><a href="/x">x</a></nav></div>
