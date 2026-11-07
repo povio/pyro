@@ -627,11 +627,16 @@ impl Xhr {
             }
         }
         let page_id = page.id();
-        net.fetch_with_id(
-            id,
-            request,
-            Box::new(move |event| delivery::receive(&wire, page_id, id, &poster, limits, event)),
+        let sink: lp_net::ResponseSink =
+            Box::new(move |event| delivery::receive(&wire, page_id, id, &poster, limits, event));
+        let sink = crate::resource_timing::timed_sink(
+            &page,
+            crate::resource_timing::Initiator::XmlHttpRequest,
+            &request.url,
+            false,
+            sink,
         );
+        net.fetch_with_id(id, request, sink);
         Ok(())
     }
     /// The synchronous flag of `send()`: parks this thread until the I/O thread
@@ -657,11 +662,16 @@ impl Xhr {
         });
         let sink = wire.clone();
         let page_id = page.id();
-        net.fetch_with_id(
-            id,
-            request,
-            Box::new(move |event| delivery::receive(&sink, page_id, id, &poster, limits, event)),
+        let sink: lp_net::ResponseSink =
+            Box::new(move |event| delivery::receive(&sink, page_id, id, &poster, limits, event));
+        let sink = crate::resource_timing::timed_sink(
+            page,
+            crate::resource_timing::Initiator::XmlHttpRequest,
+            &request.url,
+            false,
+            sink,
         );
+        net.fetch_with_id(id, request, sink);
         let timeout = Some(self.timeout.get()).filter(|t| *t != 0).map(|t| Duration::from_millis(t as u64));
         let deadline = Instant::now() + timeout.unwrap_or(SYNC_WAIT).min(SYNC_WAIT);
         let watch = page.xhr_state.sync_watch.borrow().is_some();

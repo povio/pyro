@@ -290,7 +290,8 @@ pub trait Interceptor: Send + Sync {
 }
 
 enum Cmd {
-    Fetch(RequestId, Box<Request>, ResponseSink),
+    /// The request, its sink and when the caller started it.
+    Fetch(RequestId, Box<Request>, ResponseSink, Instant),
     Cancel(RequestId),
     WebSocket(Box<websocket::Start>),
 }
@@ -505,8 +506,9 @@ impl NetClient {
             Some(loader) => self.track(loader, sink),
             None => sink,
         };
-        if let Err(mpsc::error::SendError(Cmd::Fetch(_, _, mut sink))) =
-            self.inner.tx.lock().unwrap_or_else(|e| e.into_inner()).send(Cmd::Fetch(id, Box::new(req), sink))
+        let start = Instant::now();
+        if let Err(mpsc::error::SendError(Cmd::Fetch(_, _, mut sink, _))) =
+            self.inner.tx.lock().unwrap_or_else(|e| e.into_inner()).send(Cmd::Fetch(id, Box::new(req), sink, start))
         {
             sink(ResponseEvent::Failed(NetError::Other("network thread stopped".into())));
         }
@@ -676,7 +678,7 @@ impl rustls::client::danger::ServerCertVerifier for AnyCertificate {
 
 /// An HTTP(S) client over `tls`, with this context's connect settings.
 fn http_client(config: &NetConfig, tls: &rustls::ClientConfig, proxy: Option<Arc<ProxyState>>) -> HttpClient {
-    let mut connector = HttpConnector::new();
+    let mut connector = HttpConnector::new_with_resolver(crate::timing::TimedResolver::new());
     connector.set_connect_timeout(Some(config.connect_timeout));
     connector.set_nodelay(true);
     connector.enforce_http(false);
@@ -838,13 +840,15 @@ fn io_main(mut rx: mpsc::UnboundedReceiver<Cmd>, shared: Arc<Shared>, cookies: A
                 idle.touch();
             }
             match cmd {
-                Cmd::Fetch(id, req, sink) => {
+                Cmd::Fetch(id, req, sink, start) => {
                     let destination = req.destination;
                     let sink = std::rc::Rc::new(std::cell::RefCell::new(Some(sink)));
                     let (io2, tasks2, sink2, idle2) = (io.clone(), tasks.clone(), sink.clone(), idle.clone());
                     let handle = tokio::task::spawn_local(async move {
                         let dest = req.destination;
-                        let result = io2.run(id, *req, &sink2).await;
+                        let timing = crate::timing::NetTiming { start: Some(start), ..Default::default() };
+                        let running = io2.run(id, *req, &sink2);
+                        let result = crate::timing::FETCH_TIMING.scope(std::cell::Cell::new(timing), running).await;
                         if let Err(e) = result {
                             io2.shared.emit(NetEvent::LoadingFailed {
                                 id,
@@ -1341,7 +1345,21 @@ impl Io {
         let mut tainted = false; // cross-origin redirect in cors mode => Origin "null"
         let mut unconditional = false; // a 304 no longer matched its entry: refetch without validators
         let mut pause_response: Option<RequestInfo> = None; // set by `PauseResponse`: the final hop's response is paused
+
+        // Resource Timing's TAO check runs against the requesting document's
+        // origin (an iframe's navigation: its parent's, the referrer).
+        let timing_origin = req.origin.clone().or_else(|| {
+            (req.destination == Destination::Iframe)
+                .then(|| req.referrer.as_ref().map(|r| r.origin().ascii_serialization()))
+                .flatten()
+        });
         loop {
+            crate::timing::note(|t| {
+                t.fetch_start = if redirects == 0 { t.start } else { Some(Instant::now()) };
+                t.connection = None;
+                t.request_start = None;
+                t.response_start = None;
+            });
             if tainted {
                 req.origin = Some("null".into());
             }
@@ -1503,6 +1521,7 @@ impl Io {
             }
 
             let permit = self.origin_semaphore(&url).acquire_owned().await;
+            let request_start = Instant::now();
             let mut auth_attempts = 0;
             let auth_interceptor = interceptor.as_ref().filter(|i| i.handles_auth());
             let resp = loop {
@@ -1589,6 +1608,21 @@ impl Io {
             let status = resp.status();
             let resp_headers = resp.headers().clone();
             let protocol = resp.version();
+            // A connection opened for this request reports its phases; the
+            // request went out once it was ready.
+            let connection = resp
+                .extensions()
+                .get::<crate::timing::ConnInfo>()
+                .map(crate::timing::ConnInfo::timing)
+                .filter(|c| c.start >= request_start);
+            let allowed =
+                timing_origin.as_deref().is_none_or(|o| crate::timing::timing_allowed(&url, &resp_headers, o));
+            crate::timing::note(|t| {
+                t.response_start = Some(Instant::now());
+                t.connection = connection;
+                t.request_start = Some(connection.map_or(request_start, |c| c.end.max(request_start)));
+                t.timing_allow_failed |= !allowed;
+            });
             if protocol == Version::HTTP_2 {
                 self.multiplexing(&url);
             }
@@ -1661,6 +1695,12 @@ impl Io {
                     if redirects > self.shared.config.max_redirects {
                         return Err(NetError::TooManyRedirects);
                     }
+                    let cross_origin = !cors::same_origin(&url, &target);
+                    crate::timing::note(|t| {
+                        t.redirect_end = Some(Instant::now());
+                        t.redirect_count = t.redirect_count.saturating_add(1);
+                        t.cross_origin_redirect |= cross_origin;
+                    });
                     let head = self
                         .head(&url, status, resp_headers.clone(), ResponseKind::Basic, redirects > 1)
                         .over(protocol);
@@ -1907,6 +1947,7 @@ impl Io {
         if body.len() > req.max_body.unwrap_or(self.shared.config.max_body) {
             return Err(NetError::TooLarge);
         }
+        crate::timing::served_locally();
         let mut head = self.head(url, cached.status, cached.headers, kind, redirected).over(cached.protocol);
         head.from_cache = from_cache;
         self.shared.emit(NetEvent::ResponseReceived {
@@ -1952,6 +1993,7 @@ impl Io {
             kind,
             remote_addr: None,
             protocol: Version::HTTP_11,
+            timing: crate::timing::current(),
         }
     }
 
@@ -2022,6 +2064,7 @@ impl Io {
         hit: crate::static_files::StaticHit,
         cors_cross: bool,
     ) -> Result<(), NetError> {
+        crate::timing::served_locally();
         let document = req.destination == Destination::Document;
         let body = match self.shared.config.static_files.lookup(url, document) {
             Some(memory) if memory.file.path == hit.path => memory.file.body.clone(),
@@ -2063,6 +2106,7 @@ impl Io {
         body: Bytes,
     ) -> Result<(), NetError> {
         let status = StatusCode::from_u16(status).map_err(|_| NetError::Other("invalid status".into()))?;
+        crate::timing::served_locally();
         let head = self.head(&req.url, status, headers, ResponseKind::Basic, false);
         self.deliver_body(id, req, sink, head, body)
     }
@@ -2255,6 +2299,7 @@ impl NetClient {
             kind: ResponseKind::Basic,
             remote_addr: None,
             protocol: Version::HTTP_11,
+            timing: Default::default(),
         };
         if !shared.observed() {
             return head;

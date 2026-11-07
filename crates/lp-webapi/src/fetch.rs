@@ -601,7 +601,7 @@ pub(crate) fn extract_body(s: &Scope<'_>, body: Value<'_>) -> JsResult<(Bytes, S
 /// It is not one of the document's fetches, so it outlives the document.
 /// Returns false when the body exceeds the keepalive quota or the page has
 /// no network.
-pub(crate) fn send_beacon(s: &Scope<'_>, page: &PageDom, url: lp_net::Url, data: Value<'_>) -> JsResult<bool> {
+pub(crate) fn send_beacon(s: &Scope<'_>, page: &Rc<PageDom>, url: lp_net::Url, data: Value<'_>) -> JsResult<bool> {
     let (body, mime) = if data.is_null() || data.is_undefined() {
         (Bytes::new(), String::new())
     } else if crate::streams::is_stream(s, data)? {
@@ -634,14 +634,14 @@ pub(crate) fn send_beacon(s: &Scope<'_>, page: &PageDom, url: lp_net::Url, data:
     request.loader_id = context.loader_id;
     page.apply_request_defaults(&mut request);
     let mut guard = Some(guard);
-    net.fetch(
-        request,
-        Box::new(move |event| {
-            if matches!(event, ResponseEvent::Finished { .. } | ResponseEvent::Failed(_)) {
-                guard.take();
-            }
-        }),
-    );
+    let sink: lp_net::ResponseSink = Box::new(move |event| {
+        if matches!(event, ResponseEvent::Finished { .. } | ResponseEvent::Failed(_)) {
+            guard.take();
+        }
+    });
+    let sink =
+        crate::resource_timing::timed_sink(page, crate::resource_timing::Initiator::Beacon, &request.url, false, sink);
+    net.fetch(request, sink);
     Ok(true)
 }
 
@@ -752,16 +752,20 @@ pub(crate) fn install(s: &Scope<'_>) -> JsResult<()> {
                 let page_id = page.id();
                 PAGES.with(|pages| pages.borrow_mut().insert(page_id, Rc::downgrade(&page)));
                 let mut keepalive = extras.keepalive;
-                net.fetch_with_id(
-                    id,
-                    request,
-                    Box::new(move |event| {
-                        if matches!(event, ResponseEvent::Finished { .. } | ResponseEvent::Failed(_)) {
-                            keepalive.take();
-                        }
-                        receive(&wire, page_id, id, &poster, limits, event)
-                    }),
+                let sink: lp_net::ResponseSink = Box::new(move |event| {
+                    if matches!(event, ResponseEvent::Finished { .. } | ResponseEvent::Failed(_)) {
+                        keepalive.take();
+                    }
+                    receive(&wire, page_id, id, &poster, limits, event)
+                });
+                let sink = crate::resource_timing::timed_sink(
+                    &page,
+                    crate::resource_timing::Initiator::Fetch,
+                    &request.url,
+                    false,
+                    sink,
                 );
+                net.fetch_with_id(id, request, sink);
             }
         }
         Ok(promise)

@@ -911,6 +911,7 @@ mod tests {
             kind: ResponseKind::Basic,
             remote_addr: remote.map(Into::into),
             protocol: if h2 { lp_net::http::Version::HTTP_2 } else { lp_net::http::Version::HTTP_11 },
+            timing: Default::default(),
         };
         let heads = [
             head(headers.clone(), Some("utf-8"), Some("[::1]:8443"), true),
@@ -1076,6 +1077,7 @@ mod tests {
                 kind: ResponseKind::Basic,
                 remote_addr: Some("127.0.0.1:8080".into()),
                 protocol: lp_net::http::Version::HTTP_11,
+                timing: Default::default(),
             }),
             destination: Destination::Fetch,
             frame_id: Some("F".into()),

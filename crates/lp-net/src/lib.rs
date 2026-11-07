@@ -14,7 +14,9 @@ pub mod request;
 pub mod secure_context;
 pub mod static_files;
 mod subscription;
+pub mod timing;
 pub use subscription::{NetSubscription, NetWake, SubscriptionError, SubscriptionLimits};
+pub use timing::{timing_allowed, ConnectionTiming, NetTiming};
 
 pub use cache::{SharedAssetCache, SHARED_ASSET_CACHE_ENV};
 pub use client::set_idle_release;

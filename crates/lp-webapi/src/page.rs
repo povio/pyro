@@ -160,6 +160,8 @@ pub struct PageDom {
     /// Navigation Timing of the document, recorded as the lifecycle steps
     /// run (`lifecycle`).
     timing: Cell<DocumentTiming>,
+    /// Resource Timing: the document's entry buffer (`resource_timing`).
+    pub(crate) resource_timings: crate::resource_timing::ResourceTimings,
     pub(crate) focus_values: RefCell<FxHashMap<NodeId, String>>,
     pub(crate) focus_transition: RefCell<Option<FocusTransition>>,
     pub(crate) editing_target: Cell<Option<NodeId>>,
@@ -544,6 +546,7 @@ impl PageDom {
             ready: RefCell::new(FxHashMap::default()),
             hidden: Cell::new(false),
             timing: Cell::new(DocumentTiming::default()),
+            resource_timings: Default::default(),
             focus_values: RefCell::new(FxHashMap::default()),
             focus_transition: RefCell::new(None),
             editing_target: Cell::new(None),
@@ -667,6 +670,7 @@ impl PageDom {
         crate::fetch::dispose(self);
         crate::websocket::dispose(self);
         crate::xhr::dispose(self);
+        crate::resource_timing::dispose(self);
         crate::file_reader::dispose(self);
         crate::mutation_observer::dispose(self);
         crate::intersection_observer::dispose(self);

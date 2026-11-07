@@ -313,6 +313,7 @@ mod tests {
                 kind: ResponseKind::Basic,
                 remote_addr: None,
                 protocol: lp_net::http::Version::HTTP_11,
+                timing: Default::default(),
             }),
             destination: Destination::Fetch,
             frame_id: Some("F".into()),

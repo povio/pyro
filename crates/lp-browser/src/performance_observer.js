@@ -7,6 +7,7 @@
 //     Registered while some observer observes, so a realm without one pays
 //     nothing per mark.
 //   reportException(error): HTML "report an exception" (a callback threw).
+//   droppedResources(): resource entries the buffer dropped so far.
 // Callbacks run in a task after the entries were queued, as in Chrome.
 (function (performance, native) {
   'use strict';
@@ -19,7 +20,7 @@
   const ArrayFrom = Array.from;
   const setTimeoutC = setTimeout;
   const getEntriesByType = performance.getEntriesByType;
-  const SUPPORTED = freeze(['mark', 'measure', 'navigation', 'paint']);
+  const SUPPORTED = freeze(['mark', 'measure', 'navigation', 'paint', 'resource']);
   const tag = (C, name) => defineProperty(C.prototype, Symbol.toStringTag, { value: name, configurable: true });
   const illegal = (name) => new TypeErrorC(`Failed to construct '${name}': Illegal constructor`);
   const observeError = (rest) => new TypeErrorC(`Failed to execute 'observe' on 'PerformanceObserver': ${rest}`);
@@ -68,8 +69,8 @@
       d.buffer = [];
       const options = {};
       if (d.requiresDropped) {
-        // No buffer here ever drops entries.
-        options.droppedEntriesCount = 0;
+        // Only the resource timing buffer drops entries.
+        options.droppedEntriesCount = d.types.has('resource') ? native.droppedResources() : 0;
         d.requiresDropped = false;
       }
       try {

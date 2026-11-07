@@ -275,6 +275,7 @@ fn construct<'s>(
         kind: ResponseKind::Basic,
         remote_addr: None,
         protocol: lp_net::http::Version::HTTP_11,
+        timing: Default::default(),
     };
     let body = crate::fetch::Body::constructed(s, bytes, mime);
     wrap_script(s, new_target, origin, head, body, headers)

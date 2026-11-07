@@ -69,6 +69,7 @@ pub mod render_snapshot;
 pub mod report_error;
 pub mod request;
 pub mod resize_observer;
+pub mod resource_timing;
 pub mod response;
 pub mod sri;
 pub mod storage;
