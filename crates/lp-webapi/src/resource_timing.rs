@@ -458,6 +458,29 @@ pub fn timed_sink(
     initiator: Initiator,
     url: &lp_net::Url,
     render_blocking: bool,
+    sink: ResponseSink,
+) -> ResponseSink {
+    timed_sink_with(page, initiator, url, render_blocking, true, sink)
+}
+
+/// [`timed_sink`] for a consumer whose own page-thread task for the fetch's
+/// end calls [`PageDom::add_finished_fetches`] (`fetch()`): the report rides
+/// that task instead of posting one of its own.
+pub fn timed_sink_carried(
+    page: &Rc<PageDom>,
+    initiator: Initiator,
+    url: &lp_net::Url,
+    sink: ResponseSink,
+) -> ResponseSink {
+    timed_sink_with(page, initiator, url, false, false, sink)
+}
+
+fn timed_sink_with(
+    page: &Rc<PageDom>,
+    initiator: Initiator,
+    url: &lp_net::Url,
+    render_blocking: bool,
+    post: bool,
     mut sink: ResponseSink,
 ) -> ResponseSink {
     if !matches!(url.scheme(), "http" | "https") || page.is_disposed() {
@@ -504,7 +527,7 @@ pub fn timed_sink(
                         r.encoded = *encoded_len;
                         r.decoded = *decoded_len;
                     }
-                    post_report(&poster, &inbox, page_id, report);
+                    post_report(post.then_some(&poster), &inbox, page_id, report);
                 }
             }
             ResponseEvent::Failed(error) => {
@@ -512,7 +535,7 @@ pub fn timed_sink(
                     if *error != lp_net::NetError::Aborted {
                         report.end = Instant::now();
                         report.response = None;
-                        post_report(&poster, &inbox, page_id, report);
+                        post_report(post.then_some(&poster), &inbox, page_id, report);
                     }
                 }
             }
@@ -523,14 +546,14 @@ pub fn timed_sink(
 }
 
 /// Queues `report` for its page (I/O thread); the first one queued posts the
-/// task that adds them.
-fn post_report(poster: &crate::page::RemotePoster, inbox: &Inbox, page_id: u64, report: FetchReport) {
+/// task that adds them, unless the consumer's own task adds them (`None`).
+fn post_report(poster: Option<&crate::page::RemotePoster>, inbox: &Inbox, page_id: u64, report: FetchReport) {
     let first = {
         let mut inbox = inbox.lock().unwrap_or_else(|e| e.into_inner());
         inbox.push(report);
         inbox.len() == 1
     };
-    if first {
+    if let Some(poster) = poster.filter(|_| first) {
         poster(Box::new(move || {
             if let Some(page) = PAGES.with(|pages| pages.borrow().get(&page_id).and_then(Weak::upgrade)) {
                 page.add_finished_fetches();

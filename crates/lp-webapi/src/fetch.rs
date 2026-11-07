@@ -758,11 +758,10 @@ pub(crate) fn install(s: &Scope<'_>) -> JsResult<()> {
                     }
                     receive(&wire, page_id, id, &poster, limits, event)
                 });
-                let sink = crate::resource_timing::timed_sink(
+                let sink = crate::resource_timing::timed_sink_carried(
                     &page,
                     crate::resource_timing::Initiator::Fetch,
                     &request.url,
-                    false,
                     sink,
                 );
                 net.fetch_with_id(id, request, sink);
@@ -858,6 +857,10 @@ fn pump(page_id: u64, id: RequestId) {
         wire.scheduled = false;
         (wire.head.take(), wire.terminal.clone(), wire.frontier)
     };
+    if terminal.is_some() {
+        // The fetch's Resource Timing entry rides this task (`timed_sink_carried`).
+        page.add_finished_fetches();
+    }
     *job.body.visible_terminal.borrow_mut() = terminal.clone();
     page.network_delivery(id, frontier);
     if page.is_disposed() || job.body.disposed.get() || job.body.aborted.get() {
