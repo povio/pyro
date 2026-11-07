@@ -152,6 +152,27 @@ fn hostile_geometry_finishes() {
     s.fill(&path, false, &rgb(255, 0, 0), &state(&[]));
     s.stroke(&path, &Stroke::new(1e300), &rgb(255, 0, 0), &state(&[]));
     let _ = px(&mut s, 0, 0);
+    // Tiny dashes along a long line, and a pen through a huge transform.
+    let mut line = BezPath::new();
+    line.move_to((0.0, 10.5));
+    line.line_to((1e6, 10.5));
+    s.stroke(&line, &Stroke::new(1.0).with_dashes(0.0, [1e-3, 1e-3]), &rgb(0, 0, 255), &state(&[]));
+    assert_eq!(px(&mut s, 5, 10)[2], 255, "too many dashes draw solid");
+    let mut st = state(&[]);
+    st.transform = Affine::new([1e-9, 0.0, 0.0, 1e9, 0.0, 0.0]);
+    s.stroke(&(st.transform * line.clone()), &Stroke::new(1e9).with_caps(kurbo::Cap::Round), &rgb(0, 0, 255), &st);
+    // drawImage into a huge, rotated rectangle.
+    let image = Arc::new(Pixmap::new(2, 2));
+    st.transform = Affine::rotate(0.3);
+    s.draw_image(&image, Rect::new(0.0, 0.0, 2.0, 2.0), Rect::new(-1e12, -1e12, 1e12, 1e12), &st);
+    // Text at an absurd scale.
+    let layout = text::layout(
+        "W",
+        &text::TextStyle { family: "sans-serif", size: 10.0, weight: 400.0, italic: false, letter_spacing: 0.0, word_spacing: 0.0 },
+    );
+    st.transform = Affine::scale(1e200);
+    s.text(&layout, Point::ZERO, 1.0, None, &rgb(0, 0, 0), &st);
+    let _ = px(&mut s, 0, 0);
     let mut big = Surface::new(MAX_SIDE + 1, 1);
     big.fill(&rect(0.0, 0.0, 5.0, 5.0), false, &rgb(255, 0, 0), &state(&[]));
     assert!(!big.is_allocated());

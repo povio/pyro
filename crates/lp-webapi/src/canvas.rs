@@ -577,7 +577,13 @@ fn image_source(s: &Scope<'_>, page: &Rc<PageDom>, value: Value<'_>, what: &str,
                 if w == 0 || h == 0 {
                     return Err(JsError::dom("InvalidStateError", "The image argument is a canvas element with a width or height of 0."));
                 }
-                let handle = match element_context(s, &source_page, n.id)?.and_then(|v| s.unwrap::<CanvasRenderingContext2D>(v)) {
+                // The context is hidden on the wrapper passed in (the realm that
+                // made it may be another same-origin window's).
+                let context = match value.as_object() {
+                    Some(o) => s.get_hidden(o, CONTEXT_2D)?,
+                    None => None,
+                };
+                let handle = match context.and_then(|v| s.unwrap::<CanvasRenderingContext2D>(v)) {
                     Some(c) => {
                         c.sync_size();
                         let pixmap = c.surface.borrow_mut().snapshot();
@@ -789,12 +795,17 @@ fn with_paint(
     draw: impl FnOnce(&mut Surface, &Paint, &State),
 ) -> JsResult<()> {
     c.sync_size();
-    let state = c.state.borrow().clone();
-    let style = if fill { &state.fill_style } else { &state.stroke_style };
-    let Some((paint, clean)) = paint_of(s, c, style)? else { return Ok(()) };
+    let style = {
+        let state = c.state.borrow();
+        if fill { state.fill_style.clone() } else { state.stroke_style.clone() }
+    };
+    // No page script runs while the state is borrowed: reading the style
+    // object (canvas2d.js records) happens before.
+    let Some((paint, clean)) = paint_of(s, c, &style)? else { return Ok(()) };
     if !clean {
         c.clean.set(false);
     }
+    let state = c.state.borrow();
     draw(&mut c.surface.borrow_mut(), &paint, &state);
     Ok(())
 }
@@ -838,7 +849,7 @@ fn draw_text(s: &Scope<'_>, c: &ContextData, a: Args<'_>, fill: bool) -> JsResul
     if !x.is_finite() || !y.is_finite() || max_width.is_some_and(|m| !m.is_finite() || m <= 0.0) {
         return Ok(());
     }
-    let state = c.state.borrow().clone();
+    let state = c.state.borrow();
     let layout = layout_text(&text, &state);
     if layout.runs.is_empty() {
         return Ok(());
@@ -855,6 +866,7 @@ fn draw_text(s: &Scope<'_>, c: &ContextData, a: Args<'_>, fill: bool) -> JsResul
     };
     let dy = baseline_shift(state.text_baseline, layout.ascent, layout.descent);
     let stroke = (!fill).then(|| state.stroke());
+    drop(state);
     with_paint(s, c, fill, |surface, paint, state| {
         surface.text(&layout, Point::new(x + dx, y + dy), scale, stroke.as_ref(), paint, &state.draw_state());
     })
@@ -1324,7 +1336,7 @@ impl JsClass for CanvasRenderingContext2D {
         );
         def.method("measureText", 1, |s, c, a| {
             let text = arg_string(&a, 0, "CanvasRenderingContext2D.measureText")?;
-            let state = c.state.borrow().clone();
+            let state = c.state.borrow();
             let layout = layout_text(&text, &state);
             let (width, ascent, descent) = (layout.width, layout.ascent, layout.descent);
             // Where the text starts relative to the alignment point.
@@ -1349,6 +1361,7 @@ impl JsClass for CanvasRenderingContext2D {
                 -shift,
                 -descent - shift,
             ];
+            drop(state);
             let values: Vec<Value<'_>> = values.iter().map(|v| s.number(*v)).collect();
             let array = s.array(&values)?;
             module_helper(s, c, "textMetrics", &[array.value()])

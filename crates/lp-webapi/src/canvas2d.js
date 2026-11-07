@@ -640,7 +640,7 @@
   class CanvasPattern {
     constructor(token, repetition, image) {
       if (token !== secret) throw illegal();
-      patterns.set(this, { repetition, image, transform: [1, 0, 0, 1, 0, 0], version: 0 });
+      patterns.set(this, { repetition, image, transform: [1, 0, 0, 1, 0, 0], version: 0, stops: null });
     }
     setTransform(transform) {
       const p = patterns.get(this);

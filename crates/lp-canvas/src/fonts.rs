@@ -27,6 +27,11 @@ pub fn font_context() -> FontContext {
     FONTS.lock().unwrap_or_else(|e| e.into_inner()).clone()
 }
 
+/// Adds `font` to the process's fonts: clones made after see it.
+pub fn register_fonts(font: parley::fontique::Blob<u8>) {
+    FONTS.lock().unwrap_or_else(|e| e.into_inner()).collection.register_fonts(font, None);
+}
+
 /// Loads system fonts without the platform font API, now, on this thread
 /// (`serve --fork`). macOS's CoreText starts dispatch threads and Objective-C
 /// initializers that a later `fork()` cannot survive ("+[NSFontCollection

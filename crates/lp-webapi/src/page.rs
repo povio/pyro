@@ -1514,7 +1514,9 @@ impl PageDom {
 
     fn forget_image_bytes(&self, el: NodeId) {
         if let Ok(mut map) = self.image_bytes.try_borrow_mut() {
-            map.remove(&el);
+            if !map.is_empty() {
+                map.remove(&el);
+            }
         }
     }
 

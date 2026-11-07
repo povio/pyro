@@ -30,7 +30,9 @@ mod svg_use;
 pub mod worker;
 
 use std::collections::HashMap;
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::Arc;
+#[cfg(test)]
+use std::sync::Mutex;
 
 use std::time::{Duration, Instant};
 
@@ -512,14 +514,6 @@ impl std::fmt::Display for RenderError {
 
 impl std::error::Error for RenderError {}
 
-/// The process's fonts (`lp_canvas::fonts`, shared with canvas text) plus
-/// Blitz's list bullet font: every [`Renderer`] works on a clone.
-static FONTS: LazyLock<Mutex<FontContext>> = LazyLock::new(|| {
-    let mut font_ctx = lp_canvas::fonts::font_context();
-    font_ctx.collection.register_fonts(Blob::new(Arc::new(blitz_dom::BULLET_FONT) as _), None);
-    Mutex::new(font_ctx)
-});
-
 /// Loads system fonts without the platform font API, now, on this thread
 /// (`serve --fork`): see [`lp_canvas::fonts::use_fork_safe_fonts`]. Call
 /// before any render.
@@ -533,8 +527,12 @@ pub fn fork_safe_fonts() -> bool {
     lp_canvas::fonts::fork_safe_fonts()
 }
 
+/// The process's fonts (`lp_canvas::fonts`, shared with canvas text), with
+/// Blitz's list bullet font added once: every [`Renderer`] works on a clone.
 fn process_fonts() -> FontContext {
-    FONTS.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    static BULLET: std::sync::Once = std::sync::Once::new();
+    BULLET.call_once(|| lp_canvas::fonts::register_fonts(Blob::new(Arc::new(blitz_dom::BULLET_FONT) as _)));
+    lp_canvas::fonts::font_context()
 }
 
 /// Warms the process-wide state a first render would otherwise pay for, on a

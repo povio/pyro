@@ -28,6 +28,7 @@ mod guard;
 pub mod fonts;
 pub mod text;
 
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 pub use kurbo;
@@ -35,7 +36,7 @@ pub use peniko;
 pub use vello_cpu::Pixmap;
 
 use guard::guard_path;
-use kurbo::{Affine, BezPath, Point, Rect, Shape, Stroke, Vec2};
+use kurbo::{Affine, BezPath, PathEl, Point, Rect, Shape, Stroke, Vec2};
 use peniko::color::{AlphaColor, Srgb};
 use peniko::{Extend, Fill, ImageQuality, ImageSampler};
 use vello_cpu::{
@@ -224,7 +225,22 @@ pub struct Surface {
     /// The straight-alpha RGBA of [`Surface::straight_rgba`], for the
     /// generation it was made at.
     straight: Option<(u64, Arc<Vec<u8>>)>,
+    /// Bytes of [`ALLOCATED`] this surface holds (its bitmap, once drawing
+    /// started).
+    reserved: usize,
 }
+
+impl Drop for Surface {
+    fn drop(&mut self) {
+        self.release();
+    }
+}
+
+/// Bitmap bytes of the process's drawn surfaces ([`Surface::reserve`]).
+static ALLOCATED: AtomicUsize = AtomicUsize::new(0);
+/// Most bitmap bytes the process's surfaces hold: past it, draws on a
+/// surface without a bitmap draw nothing (as a browser's failed allocation).
+const MAX_TOTAL: usize = 2 << 30;
 
 fn settings(width: u16, height: u16) -> RenderContext {
     // One thread: a page's canvas work stays on its thread, like its JS.
@@ -239,7 +255,7 @@ pub fn valid_size(width: u32, height: u32) -> bool {
 
 impl Surface {
     pub fn new(width: u32, height: u32) -> Surface {
-        Surface { width, height, pixmap: None, batch: None, generation: 0, straight: None }
+        Surface { width, height, pixmap: None, batch: None, generation: 0, straight: None, reserved: 0 }
     }
 
     pub fn width(&self) -> u32 {
@@ -268,15 +284,36 @@ impl Surface {
         self.batch = None;
         self.straight = None;
         self.generation += 1;
+        self.release();
     }
 
     fn drawable(&self) -> Option<(u16, u16)> {
         valid_size(self.width, self.height).then_some((self.width as u16, self.height as u16))
     }
 
+    /// [`Surface::drawable`], once the process's canvas memory has room for
+    /// this bitmap (counted from the first draw until resized or dropped).
+    fn reserve(&mut self) -> Option<(u16, u16)> {
+        let (w, h) = self.drawable()?;
+        if self.reserved == 0 {
+            let bytes = usize::from(w) * usize::from(h) * 4;
+            let total = ALLOCATED.fetch_add(bytes, Ordering::Relaxed) + bytes;
+            if total > MAX_TOTAL {
+                ALLOCATED.fetch_sub(bytes, Ordering::Relaxed);
+                return None;
+            }
+            self.reserved = bytes;
+        }
+        Some((w, h))
+    }
+
+    fn release(&mut self) {
+        ALLOCATED.fetch_sub(std::mem::take(&mut self.reserved), Ordering::Relaxed);
+    }
+
     /// The bitmap, allocated, for writing.
     fn pixmap_mut(&mut self) -> Option<&mut Pixmap> {
-        let (w, h) = self.drawable()?;
+        let (w, h) = self.reserve()?;
         let pixmap = self.pixmap.get_or_insert_with(|| Arc::new(Pixmap::new(w, h)));
         Some(Arc::make_mut(pixmap))
     }
@@ -346,10 +383,18 @@ impl Surface {
         let mut stroke = stroke.clone();
         // A pen wider than the canvas many times over covers what the
         // canvas shows; the stroker's work grows with the width.
-        let scale = t.determinant().abs().sqrt();
+        let scale = stretch(t);
         let limit = 4.0 * f64::from(self.width + self.height) / scale.max(1e-9);
         if stroke.width > limit {
             stroke.width = limit;
+        }
+        // Too many dashes to trace (a tiny pattern along a long path) draw
+        // the path solid, as Skia does past its dash count limit.
+        if !stroke.dash_pattern.is_empty() {
+            let period: f64 = stroke.dash_pattern.iter().sum();
+            if period.is_nan() || period <= 0.0 || control_length(&user) / period > MAX_DASHES {
+                stroke.dash_pattern.clear();
+            }
         }
         self.draw(paint, state, t, &mut |ctx, _| {
             ctx.set_stroke(stroke.clone());
@@ -386,12 +431,11 @@ impl Surface {
         if !invertible(t) {
             return;
         }
-        self.draw_pattern_rect(&paint, state, t, dst);
+        // The destination as a device path, guarded like any other.
+        let path = guard_path(&(t * dst.to_path(0.1)), self.width, self.height);
+        self.draw(&paint, state, Affine::IDENTITY, &mut |ctx, _| ctx.fill_path(&path));
     }
 
-    fn draw_pattern_rect(&mut self, paint: &Paint, state: &DrawState<'_>, t: Affine, rect: Rect) {
-        self.draw(paint, state, t, &mut |ctx, _| ctx.fill_rect(&rect));
-    }
 
     /// Draws a laid out text at `origin` (user space: the alphabetic baseline
     /// of the first glyph), squeezed horizontally by `x_scale`.
@@ -409,6 +453,14 @@ impl Surface {
             return;
         }
         let g = t * Affine::translate(origin.to_vec2()) * Affine::scale_non_uniform(x_scale, 1.0);
+        // Glyphs this large (device px) or this far away would take the
+        // rasterizer long to outline and show nothing a canvas can hold.
+        let device_size = stretch(g) * f64::from(layout.runs[0].size);
+        let far = 1e7 + 64.0 * f64::from(self.width.max(self.height));
+        let [.., e, f] = g.as_coeffs();
+        if device_size.is_nan() || device_size > 1e5 || !(e.abs() <= far && f.abs() <= far) {
+            return;
+        }
         self.draw(paint, state, g, &mut |ctx, resources| {
             if let Some(stroke) = stroke {
                 ctx.set_stroke(stroke.clone());
@@ -544,7 +596,7 @@ impl Surface {
         geometry: Affine,
         draw: &mut dyn FnMut(&mut RenderContext, &mut Resources),
     ) {
-        let Some((w, h)) = self.drawable() else { return };
+        let Some((w, h)) = self.reserve() else { return };
         if !state.alpha.is_finite() || state.alpha <= 0.0 && state.composite == Composite::SourceOver {
             return;
         }
@@ -612,6 +664,47 @@ fn coverage(w: u16, h: u16, draw: &mut dyn FnMut(&mut RenderContext)) -> Vec<u8>
     ctx.flush();
     ctx.render(&mut pixmap, &mut resources);
     pixmap.data_as_u8_slice().chunks_exact(4).map(|p| p[3]).collect()
+}
+
+/// How much `t` stretches lengths at most (a bound on its largest singular
+/// value).
+fn stretch(t: Affine) -> f64 {
+    let [a, b, c, d, _, _] = t.as_coeffs();
+    (a.abs() + c.abs()).max(b.abs() + d.abs())
+}
+
+/// Dash periods along one stroke past which dashes are dropped.
+const MAX_DASHES: f64 = 100_000.0;
+
+/// The length of `path`'s control polygon: at least its length, in O(n).
+fn control_length(path: &BezPath) -> f64 {
+    let mut last = Point::ZERO;
+    let mut start = Point::ZERO;
+    let mut length = 0.0;
+    let mut to = |p: Point, last: &mut Point| {
+        length += last.distance(p);
+        *last = p;
+    };
+    for el in path.elements() {
+        match *el {
+            PathEl::MoveTo(p) => {
+                last = p;
+                start = p;
+            }
+            PathEl::LineTo(p) => to(p, &mut last),
+            PathEl::QuadTo(a, b) => {
+                to(a, &mut last);
+                to(b, &mut last);
+            }
+            PathEl::CurveTo(a, b, c) => {
+                to(a, &mut last);
+                to(b, &mut last);
+                to(c, &mut last);
+            }
+            PathEl::ClosePath => to(start, &mut last),
+        }
+    }
+    length
 }
 
 fn invertible(t: Affine) -> bool {
