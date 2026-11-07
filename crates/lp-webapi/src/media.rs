@@ -70,7 +70,8 @@ const MEDIA_ERR_SRC_NOT_SUPPORTED: u16 = 4;
 /// Chrome's message for a source that could not be fetched.
 const FORMAT_ERROR: &str = "MEDIA_ELEMENT_ERROR: Format error";
 const NO_SOURCES: &str = "The element has no supported sources.";
-const NOT_ALLOWED: &str = "play() failed because the user didn't interact with the document first. https://goo.gl/xX8pDD";
+const NOT_ALLOWED: &str =
+    "play() failed because the user didn't interact with the document first. https://goo.gl/xX8pDD";
 /// Chrome's periodic `timeupdate` interval.
 const TIMEUPDATE_MS: f64 = 250.0;
 
@@ -213,15 +214,27 @@ impl MediaState {
     }
 }
 
+/// Most disjoint played ranges kept; past it the closest neighbours merge
+/// (a page seeking around cannot grow the list without bound).
+const MAX_PLAYED_RANGES: usize = 64;
+
+/// Adds [start, end] to sorted, disjoint `ranges`.
 fn add_range(ranges: &mut Vec<(f64, f64)>, start: f64, end: f64) {
-    ranges.push((start, end));
-    ranges.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let at = ranges.partition_point(|r| r.0 < start);
+    ranges.insert(at, (start, end));
     let mut merged: Vec<(f64, f64)> = Vec::with_capacity(ranges.len());
     for &(s, e) in ranges.iter() {
         match merged.last_mut() {
             Some(last) if s <= last.1 => last.1 = last.1.max(e),
             _ => merged.push((s, e)),
         }
+    }
+    if merged.len() > MAX_PLAYED_RANGES {
+        let gap = (1..merged.len())
+            .min_by(|&a, &b| (merged[a].0 - merged[a - 1].1).total_cmp(&(merged[b].0 - merged[b - 1].1)))
+            .unwrap_or(1);
+        merged[gap - 1].1 = merged[gap].1;
+        merged.remove(gap);
     }
     *ranges = merged;
 }
@@ -261,6 +274,7 @@ fn with<R>(page: &PageDom, node: NodeId, f: impl FnOnce(&mut MediaState) -> R) -
 /// Drops the state of collected elements (a pinned element is alive).
 fn sweep(page: &PageDom, elements: &mut FxHashMap<NodeId, MediaState>) {
     let Ok(dom) = page.dom.try_borrow() else { return };
+    let delaying = page.media.delaying_load.get();
     elements.retain(|id, st| {
         let keep = st.pinned || dom.is_alive(*id);
         if !keep && st.delaying_load {
@@ -269,6 +283,12 @@ fn sweep(page: &PageDom, elements: &mut FxHashMap<NodeId, MediaState>) {
         keep
     });
     page.media.sweep_at.set((elements.len() * 2).max(64));
+    // A collected element no longer delays the load event.
+    if delaying != 0 && page.media.delaying_load.get() == 0 {
+        if let Some(hooks) = page.hooks() {
+            hooks.media_load_delay_released();
+        }
+    }
 }
 
 /// Reads state without making it: an untouched element's defaults.
@@ -531,12 +551,10 @@ fn sync_clock(page: &Rc<PageDom>, node: NodeId) {
         }
     });
     let delay = Duration::from_secs_f64(delay.max(0.0) / 1000.0);
-    match hooks {
-        Some(hooks) => {
-            let id = hooks.set_media_timer(delay, task);
-            with(page, node, |st| st.timer = id);
-        }
-        None => page.post_task(task),
+    // Without an embedder there is no event loop to time playback with.
+    if let Some(hooks) = hooks {
+        let id = hooks.set_media_timer(delay, task);
+        with(page, node, |st| st.timer = id);
     }
 }
 
@@ -786,13 +804,8 @@ fn next_source(page: &Rc<PageDom>, node: NodeId, generation: u32) {
 
 /// HTML "resource fetch algorithm" for `resource` (from `source` in children mode).
 fn fetch_resource(page: &Rc<PageDom>, node: NodeId, generation: u32, resource: Resource, source: Option<NodeId>) {
-    let preload_none = page
-        .dom
-        .borrow()
-        .get_attribute(node, "preload")
-        .ok()
-        .flatten()
-        .is_some_and(|p| p.eq_ignore_ascii_case("none"));
+    let preload_none =
+        page.dom.borrow().get_attribute(node, "preload").ok().flatten().is_some_and(|p| p.eq_ignore_ascii_case("none"));
     if preload_none && !attr(page, node, "autoplay") && peek(page, node, |st| st.paused) {
         with(page, node, |st| st.suspended = Some((resource, source)));
         queue(page, node, generation, move |page| {
@@ -930,9 +943,8 @@ fn media_ready(page: &Rc<PageDom>, node: NodeId, generation: u32, info: MediaInf
             return;
         }
         // HTML: autoplay once enough data is there.
-        let autoplay = peek(page, node, |st| st.can_autoplay && st.paused)
-            && attr(page, node, "autoplay")
-            && may_play(page, node);
+        let autoplay =
+            peek(page, node, |st| st.can_autoplay && st.paused) && attr(page, node, "autoplay") && may_play(page, node);
         if autoplay {
             with(page, node, |st| st.paused = false);
             update_pin(page, node);
@@ -1257,11 +1269,12 @@ pub(crate) fn define(def: &mut ClassDef<HtmlMediaElement>) {
             deferred.reject(s, error)?;
             Ok(deferred.promise.get(s))
         };
-        if peek(&page, n.id, |st| st.error.is_some_and(|(code, _, _)| code == MEDIA_ERR_SRC_NOT_SUPPORTED)) {
-            return rejected("NotSupportedError", NO_SOURCES);
-        }
+        // Chrome asks the autoplay policy first.
         if !may_play(&page, n.id) {
             return rejected("NotAllowedError", NOT_ALLOWED);
+        }
+        if peek(&page, n.id, |st| st.error.is_some_and(|(code, _, _)| code == MEDIA_ERR_SRC_NOT_SUPPORTED)) {
+            return rejected("NotSupportedError", NO_SOURCES);
         }
         let deferred = s.deferred()?;
         let promise = deferred.promise.get(s);

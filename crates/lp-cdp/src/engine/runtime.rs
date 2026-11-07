@@ -265,7 +265,7 @@ struct EvaluateParams {
 
 /// CDP `userGesture`: activation of the document of `scope`'s realm.
 fn user_activation(scope: &lp_js::Scope<'_>) {
-    if let Ok(page) = lp_webapi::target::page_of(scope) {
+    if let Some(page) = scope.embedder::<lp_webapi::PageDom>() {
         page.notify_user_activation();
     }
 }

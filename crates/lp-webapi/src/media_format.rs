@@ -38,9 +38,27 @@ impl ProbeError {
 
 type Probe = Result<MediaInfo, ProbeError>;
 
+/// Chrome's limits on a video frame (`media::limits`): a larger video
+/// track cannot be decoded.
+const MAX_DIMENSION: u32 = (1 << 15) - 1;
+const MAX_AREA: u64 = 1 << 28;
+
 /// Reads `body`'s container metadata, sniffing the format from its bytes
 /// (like Chrome, the response's MIME type does not matter).
 pub(crate) fn probe(body: &[u8]) -> Probe {
+    let mut info = sniff(body)?;
+    if let Some((w, h)) = info.video {
+        if w > MAX_DIMENSION || h > MAX_DIMENSION || u64::from(w) * u64::from(h) > MAX_AREA {
+            info.video = None;
+            if !info.audio {
+                return Err(ProbeError::NoSupportedStreams);
+            }
+        }
+    }
+    Ok(info)
+}
+
+fn sniff(body: &[u8]) -> Probe {
     if body.starts_with(&[0x1A, 0x45, 0xDF, 0xA3]) {
         return matroska(body);
     }
@@ -158,8 +176,7 @@ const MP4_AUDIO: &[&[u8; 4]] = &[b"mp4a", b"Opus", b"fLaC", b".mp3", b"lpcm", b"
 
 fn mp4(body: &[u8]) -> Probe {
     let moov = child(body, b"moov").ok_or(ProbeError::Unrecognized)?;
-    let (timescale, mut duration) =
-        child(moov, b"mvhd").and_then(header_duration).ok_or(ProbeError::Unrecognized)?;
+    let (timescale, mut duration) = child(moov, b"mvhd").and_then(header_duration).ok_or(ProbeError::Unrecognized)?;
     let mut seconds = if timescale > 0 { duration as f64 / f64::from(timescale) } else { 0.0 };
     if duration == 0 {
         // A fragmented file: the fragment duration, else the longest track.
@@ -394,13 +411,14 @@ fn matroska(body: &[u8]) -> Probe {
 }
 
 fn matroska_video(codec: &str, webm: bool) -> bool {
-    matches!(codec, "V_VP8" | "V_VP9" | "V_AV1")
-        || (!webm && matches!(codec, "V_MPEG4/ISO/AVC" | "V_MPEGH/ISO/HEVC"))
+    matches!(codec, "V_VP8" | "V_VP9" | "V_AV1") || (!webm && matches!(codec, "V_MPEG4/ISO/AVC" | "V_MPEGH/ISO/HEVC"))
 }
 
 fn matroska_audio(codec: &str, webm: bool) -> bool {
     matches!(codec, "A_VORBIS" | "A_OPUS")
-        || (!webm && (codec.starts_with("A_AAC") || matches!(codec, "A_FLAC" | "A_MPEG/L3" | "A_PCM/INT/LIT" | "A_PCM/FLOAT/IEEE")))
+        || (!webm
+            && (codec.starts_with("A_AAC")
+                || matches!(codec, "A_FLAC" | "A_MPEG/L3" | "A_PCM/INT/LIT" | "A_PCM/FLOAT/IEEE")))
 }
 
 // ---------------------------------------------------------------------------
@@ -441,9 +459,7 @@ fn ogg(body: &[u8]) -> Probe {
         if flags & 0x02 != 0 {
             // Beginning of a stream: its first packet names the codec.
             match ogg_codec(data) {
-                Some((rate, skip)) if rate > 0.0 => {
-                    streams.push(OggStream { serial, rate, skip, last_granule: None })
-                }
+                Some((rate, skip)) if rate > 0.0 => streams.push(OggStream { serial, rate, skip, last_granule: None }),
                 _ => unsupported += 1,
             }
         } else if streams.is_empty() && unsupported == 0 {
@@ -761,9 +777,8 @@ pub(crate) fn can_play_type(mime: &str) -> CanPlay {
             codecs = Some(value.to_owned());
         }
     }
-    let codecs: Vec<&str> = codecs.as_deref().map_or_else(Vec::new, |c| {
-        c.split(',').map(str::trim).filter(|c| !c.is_empty()).collect()
-    });
+    let codecs: Vec<&str> =
+        codecs.as_deref().map_or_else(Vec::new, |c| c.split(',').map(str::trim).filter(|c| !c.is_empty()).collect());
     if codecs.is_empty() {
         return match family {
             Family::Mp3 | Family::Flac | Family::Aac => CanPlay::Probably,
@@ -805,7 +820,8 @@ fn codec_support(family: Family, codec: &str) -> (CanPlay, bool) {
             return Some(video(Probably));
         }
         if let Some(rest) = c.strip_prefix("vp09.") {
-            let ok = rest.split('.').count() >= 3 && rest.split('.').all(|p| p.len() == 2 && p.bytes().all(|b| b.is_ascii_digit()));
+            let ok = rest.split('.').count() >= 3
+                && rest.split('.').all(|p| p.len() == 2 && p.bytes().all(|b| b.is_ascii_digit()));
             return Some(video(if ok { Probably } else { No }));
         }
         if let Some(rest) = c.strip_prefix("av01.") {
@@ -817,15 +833,20 @@ fn codec_support(family: Family, codec: &str) -> (CanPlay, bool) {
         let rest = c.strip_prefix("mp4a.")?;
         Some(audio(match rest {
             "40" => Maybe,
-            "40.2" | "40.02" | "40.5" | "40.05" | "40.29" | "40.42" | "69" | "6B" | "6b" | "67" | "66" | "68" => Probably,
+            "40.2" | "40.02" | "40.5" | "40.05" | "40.29" | "40.42" | "69" | "6B" | "6b" | "67" | "66" | "68" => {
+                Probably
+            }
             _ => No,
         }))
     };
     let found = match family {
-        Family::Mp4 => mp4_video(codec).or_else(|| vpx_av1(codec).filter(|_| codec.starts_with("vp09") || codec.starts_with("av01"))).or_else(|| aac(codec)).or(match codec {
-            "opus" | "Opus" | "flac" | "fLaC" | "mp3" => Some(audio(Probably)),
-            _ => None,
-        }),
+        Family::Mp4 => mp4_video(codec)
+            .or_else(|| vpx_av1(codec).filter(|_| codec.starts_with("vp09") || codec.starts_with("av01")))
+            .or_else(|| aac(codec))
+            .or(match codec {
+                "opus" | "Opus" | "flac" | "fLaC" | "mp3" => Some(audio(Probably)),
+                _ => None,
+            }),
         Family::WebM => vpx_av1(codec).or(match codec {
             "opus" | "vorbis" => Some(audio(Probably)),
             _ => None,
@@ -929,7 +950,11 @@ pub(crate) mod tests {
                 &[
                     ebml(0x83, &[1]),
                     ebml(0x86, b"V_VP9"),
-                    ebml(0xE0, &[ebml(0xB0, &(size.0 as u16).to_be_bytes()), ebml(0xBA, &(size.1 as u16).to_be_bytes())].concat()),
+                    ebml(
+                        0xE0,
+                        &[ebml(0xB0, &(size.0 as u16).to_be_bytes()), ebml(0xBA, &(size.1 as u16).to_be_bytes())]
+                            .concat(),
+                    ),
                 ]
                 .concat(),
             );
@@ -1045,6 +1070,45 @@ pub(crate) mod tests {
         // Box and element sizes that point far beyond the data.
         let _ = probe(b"\x00\x00\x00\x01moov\xff\xff\xff\xff\xff\xff\xff\xff");
         let _ = probe(&[0x1A, 0x45, 0xDF, 0xA3, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]);
+    }
+
+    #[test]
+    fn random_bytes_after_every_magic_never_panic() {
+        let mut x = 0x9E37_79B9_7F4A_7C15u64;
+        let mut next = move || {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            x
+        };
+        let magics: [&[u8]; 9] = [
+            &[0x1A, 0x45, 0xDF, 0xA3],
+            b"OggS",
+            b"RIFF\0\0\0\0WAVE",
+            b"\0\0\0\x10ftyp",
+            b"\0\0\0\x10moov",
+            b"ID3\x04\0\0\0\0\0\x01",
+            b"fLaC",
+            &[0xFF, 0xF1],
+            &[0xFF, 0xFB],
+        ];
+        for round in 0..4000 {
+            let magic = magics[round % magics.len()];
+            let len = (next() % 512) as usize;
+            let mut data = magic.to_vec();
+            data.extend((0..len).map(|_| next() as u8));
+            let _ = probe(&data);
+        }
+    }
+
+    #[test]
+    fn oversized_video_cannot_play() {
+        assert_eq!(probe(&samples::webm(1.0, (40_000, 10))).map(|i| i.video), Ok(None));
+        let mut huge = samples::mp4(1.0, (30_000, 30_000));
+        // Only the video track: drop the audio trak by renaming its handler.
+        let at = huge.windows(4).position(|w| w == b"soun").unwrap();
+        huge[at..at + 4].copy_from_slice(b"text");
+        assert_eq!(probe(&huge), Err(ProbeError::NoSupportedStreams));
     }
 
     #[test]

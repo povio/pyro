@@ -187,10 +187,7 @@ fn idl_state_is_settable_in_strict_code() {
         "false,true,true"
     );
     settle(&mut thread);
-    assert_eq!(
-        eval(&thread, page, "ev()"),
-        "a:volumechange:0 a:ratechange:0 a:ratechange:0 a:volumechange:0"
-    );
+    assert_eq!(eval(&thread, page, "ev()"), "a:volumechange:0 a:ratechange:0 a:ratechange:0 a:volumechange:0");
     assert_eq!(
         eval(&thread, page, "[HTMLMediaElement.HAVE_ENOUGH_DATA, a.NETWORK_NO_SOURCE, MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED, a.canPlayType('audio/mpeg'), a.canPlayType('video/webm; codecs=\"vp9, opus\"'), a.canPlayType('video/mp4'), a.canPlayType('video/x-fictional')].join()"),
         "4,3,4,probably,probably,maybe,"
@@ -238,8 +235,7 @@ fn a_playable_video_walks_the_ready_states_before_the_load_event() {
 
 #[test]
 fn playback_advances_on_the_page_clock_and_ends() {
-    let (mut thread, page, _) =
-        setup_with("<video id=v muted src=v.mp4></video>", &[mp4_file("v.mp4", 1.0, 0)]);
+    let (mut thread, page, _) = setup_with("<video id=v muted src=v.mp4></video>", &[mp4_file("v.mp4", 1.0, 0)]);
     eval(&thread, page, "events.length = 0; globalThis.results = []; var v = document.getElementById('v'); v.play().then(() => results.push('resolved:' + v.paused));");
     settle(&mut thread);
     assert_eq!(eval(&thread, page, "events.join(' ') + '|' + results.join()"), "v:play:1 v:playing:1|resolved:false");
@@ -264,7 +260,10 @@ fn playback_advances_on_the_page_clock_and_ends() {
         eval(&thread, page, "[v.ended, v.paused, v.currentTime, v.played.length, v.played.end(0)].join()"),
         "true,true,1,1,1"
     );
-    assert_eq!(eval(&thread, page, "events.filter(e => !/timeupdate/.test(e)).join(' ')"), "v:ratechange:1 v:play:1 v:playing:1 v:pause:1 v:ended:1");
+    assert_eq!(
+        eval(&thread, page, "events.filter(e => !/timeupdate/.test(e)).join(' ')"),
+        "v:ratechange:1 v:play:1 v:playing:1 v:pause:1 v:ended:1"
+    );
     assert!(!has_timers(&thread, page));
     // play() at the end starts over.
     eval(&thread, page, "events.length = 0; v.play();");
@@ -275,11 +274,13 @@ fn playback_advances_on_the_page_clock_and_ends() {
 
 #[test]
 fn seeking_and_loop() {
-    let (mut thread, page, _) =
-        setup_with("<video id=v muted loop src=v.mp4></video>", &[mp4_file("v.mp4", 1.0, 0)]);
+    let (mut thread, page, _) = setup_with("<video id=v muted loop src=v.mp4></video>", &[mp4_file("v.mp4", 1.0, 0)]);
     eval(&thread, page, "events.length = 0; var v = document.getElementById('v'); v.currentTime = 0.75; globalThis.during = [v.seeking, v.currentTime].join();");
     settle(&mut thread);
-    assert_eq!(eval(&thread, page, "during + '|' + v.seeking + '|' + events.join(' ')"), "true,0.75|false|v:seeking:1 v:timeupdate:1 v:seeked:1");
+    assert_eq!(
+        eval(&thread, page, "during + '|' + v.seeking + '|' + events.join(' ')"),
+        "true,0.75|false|v:seeking:1 v:timeupdate:1 v:seeked:1"
+    );
     // Out of range seeks clamp to the duration.
     eval(&thread, page, "v.currentTime = 9;");
     settle(&mut thread);
@@ -291,7 +292,10 @@ fn seeking_and_loop() {
     advance(&mut thread, 0);
     let t: f64 = eval(&thread, page, "v.currentTime").parse().unwrap();
     assert!(t < 0.2, "looped back: {t}");
-    assert_eq!(eval(&thread, page, "[v.paused, v.ended, events.includes('v:ended:1'), events.includes('v:seeked:1')].join()"), "false,false,false,true");
+    assert_eq!(
+        eval(&thread, page, "[v.paused, v.ended, events.includes('v:ended:1'), events.includes('v:seeked:1')].join()"),
+        "false,false,false,true"
+    );
     // Removing a playing element pauses it.
     eval(&thread, page, "events.length = 0; v.onpause = v.ontimeupdate = e => events.push('v:' + e.type + ':' + v.networkState); v.remove();");
     settle(&mut thread);
@@ -306,7 +310,11 @@ fn autoplay_follows_chromes_policy() {
         &[mp4_file("a.mp4", 1.0, 0), mp4_file("b.mp4", 1.0, 0)],
     );
     assert_eq!(
-        eval(&thread, page, "[loud.paused, quiet.paused, events.includes('quiet:playing:2'), events.includes('loud:play:1')].join()"),
+        eval(
+            &thread,
+            page,
+            "[loud.paused, quiet.paused, events.includes('quiet:playing:2'), events.includes('loud:play:1')].join()"
+        ),
         "true,false,true,false"
     );
     // Unmuted play() needs user activation.
@@ -329,8 +337,17 @@ fn source_children_skip_unplayable_types_and_garbage() {
             mp4_file("c.mp4", 3.0, 0),
         ],
     );
-    let of = |prefixes: &str| eval(&thread, page, &format!("events.filter(e => /^({prefixes}):/.test(e)).map(e => e.replace(/:\\d*$/, '')).join(' ')"));
-    assert_eq!(of("v|s1|s2|s3").split(' ').take(4).collect::<Vec<_>>().join(" "), "v:loadstart s1:error s2:error v:progress");
+    let of = |prefixes: &str| {
+        eval(
+            &thread,
+            page,
+            &format!("events.filter(e => /^({prefixes}):/.test(e)).map(e => e.replace(/:\\d*$/, '')).join(' ')"),
+        )
+    };
+    assert_eq!(
+        of("v|s1|s2|s3").split(' ').take(4).collect::<Vec<_>>().join(" "),
+        "v:loadstart s1:error s2:error v:progress"
+    );
     assert_eq!(eval(&thread, page, "[v.currentSrc, v.duration, v.readyState].join()"), "http://site.test/c.mp4,3,4");
     // The unplayable type was never fetched.
     assert!(!loader.log.borrow().iter().any(|u| u.ends_with("a.ogv")));
