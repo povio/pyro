@@ -401,7 +401,7 @@ pub struct BaseDocument {
     /// `urn:x-lightningpanda:state` `state` attribute has a `top-layer=N`
     /// token. Maintained when that attribute is set or cleared; usually
     /// empty, and then painting costs one emptiness check per box.
-    pub(crate) top_layer: Vec<(u32, NodeId)>,
+    pub(crate) top_layer: crate::layout::paint_tree::TopLayer,
 
     // Tracks in-flight "critical" resources (e.g. stylesheets linked from the `<head>`),
     // keyed by request id
@@ -571,7 +571,7 @@ impl BaseDocument {
             pending_images: HashMap::new(),
             pending_style_image_nodes: Vec::new(),
             generated_before_after: false,
-            top_layer: Vec::new(),
+            top_layer: Default::default(),
             pending_critical_resources: HashSet::new(),
             controls_to_form: HashMap::new(),
             net_provider,
@@ -949,6 +949,10 @@ impl BaseDocument {
     /// it so that stale NodeIds are never dereferenced after the slot is freed.
     pub(crate) fn remove_node_from_tree(&mut self, node_id: NodeId) -> Option<Node> {
         self.clear_interaction_state_for_removed_node(node_id);
+        // lightningpanda: a dropped element leaves the top layer.
+        if !self.top_layer.is_empty() {
+            self.top_layer.remove(node_id);
+        }
         self.nodes.remove(node_id)
     }
 

@@ -641,7 +641,6 @@ impl DocumentMutator<'_> {
 
         let node = self.doc.drop_node_ignoring_parent_with(node_id, on_drop);
         self.mutations_occurred |= node_is_in_document;
-        self.doc.prune_top_layer();
 
         // Update child_idx values
         if let Some(parent_id) = node.as_ref().and_then(|node| node.parent) {
@@ -687,7 +686,6 @@ impl DocumentMutator<'_> {
             self.process_removed_subtree(child_id);
             let _ = self.doc.drop_node_ignoring_parent(child_id);
         }
-        self.doc.prune_top_layer();
         self.maybe_record_node(node_id);
     }
 
@@ -2025,5 +2023,49 @@ mod test {
             assert_eq!(in_rule_tree.read_with(&guard).declarations().len(), 2);
             assert_eq!(after_remove.read_with(&guard).declarations().len(), 1);
         }
+    }
+
+    /// lightningpanda: the top layer follows `top-layer=N` state tokens by
+    /// rank (re-ranking, leaving, many entries) and forgets dropped elements.
+    #[test]
+    fn top_layer_follows_state_tokens_and_drops() {
+        use markup5ever::{LocalName, Namespace, QualName};
+        let state = || QualName::new(None, Namespace::from(crate::LP_STATE_NS), LocalName::from("state"));
+        let mut document = BaseDocument::new(DocumentConfig::default());
+        let ids: Vec<_> = {
+            let mut mutator = document.mutate();
+            (0..2000).map(|_| mutator.create_element(qual_name!("div"), vec![])).collect()
+        };
+        let order = |doc: &BaseDocument| doc.top_layer.iter().collect::<Vec<_>>();
+        {
+            let mut mutator = document.mutate();
+            // Enter top first: ranks, not arrival, give the order.
+            for (rank, &id) in ids.iter().enumerate().rev() {
+                mutator.set_attribute(id, state(), &format!("popover-open top-layer={rank}"));
+            }
+        }
+        assert_eq!(order(&document), ids);
+        assert!(ids.iter().all(|&id| document.is_in_top_layer(id)));
+        {
+            // The bottom one leaves; the rest move down a rank.
+            let mut mutator = document.mutate();
+            mutator.set_attribute(ids[0], state(), "popover-open");
+            for (rank, &id) in ids[1..].iter().enumerate() {
+                mutator.set_attribute(id, state(), &format!("popover-open top-layer={rank}"));
+            }
+            // An element re-entering goes on top.
+            mutator.set_attribute(ids[0], state(), &format!("modal top-layer={}", ids.len() - 1));
+        }
+        let mut expected = ids[1..].to_vec();
+        expected.push(ids[0]);
+        assert_eq!(order(&document), expected);
+        {
+            let mut mutator = document.mutate();
+            mutator.clear_attribute(ids[5], state());
+            mutator.remove_and_drop_node(ids[6]);
+        }
+        assert!(!document.is_in_top_layer(ids[5]) && !document.is_in_top_layer(ids[6]));
+        expected.retain(|&id| id != ids[5] && id != ids[6]);
+        assert_eq!(order(&document), expected);
     }
 }

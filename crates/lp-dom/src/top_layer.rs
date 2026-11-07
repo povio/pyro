@@ -29,8 +29,14 @@ pub(crate) struct TopLayer {
     /// Popovers whose visibility state is "showing".
     popovers: FxHashSet<NodeId>,
     /// The document's top layer, bottom first: modal dialogs and showing
-    /// popovers in the order they entered it. A handful of entries.
+    /// popovers in the order they entered it.
     order: Vec<NodeId>,
+    /// Each element's index in `order`, so its rank (asked per element of
+    /// every render snapshot and hit test) costs no scan of the top layer.
+    /// Entering on top and leaving from the top keep it; leaving from below
+    /// marks it stale (`None`), and the next read rebuilds it once, so
+    /// hiding many popovers in a row costs no renumbering each.
+    rank: std::cell::RefCell<Option<FxHashMap<NodeId, usize>>>,
     /// Showing `popover=auto` popovers, bottom first.
     auto_stack: Vec<NodeId>,
     /// Showing `popover=hint` popovers, bottom first.
@@ -41,8 +47,37 @@ pub(crate) struct TopLayer {
 }
 
 impl TopLayer {
+    /// Puts `el` on top of the top layer (out of its place first, if in it).
+    fn enter(&mut self, el: NodeId) {
+        self.exit(el);
+        if let Some(rank) = self.rank.get_mut() {
+            rank.insert(el, self.order.len());
+        }
+        self.order.push(el);
+    }
+
+    /// Takes `el` out of the top layer's order; the ones above it move down.
+    fn exit(&mut self, el: NodeId) {
+        let at = match self.rank.get_mut() {
+            Some(rank) => rank.remove(&el),
+            None => self.order.iter().position(|&e| e == el),
+        };
+        let Some(at) = at else { return };
+        self.order.remove(at);
+        if at != self.order.len() {
+            *self.rank.get_mut() = None;
+        }
+    }
+
+    /// `el`'s index in `order`.
+    fn rank_of(&self, el: NodeId) -> Option<usize> {
+        let mut rank = self.rank.borrow_mut();
+        let rank = rank.get_or_insert_with(|| self.order.iter().enumerate().map(|(i, &e)| (e, i)).collect());
+        rank.get(&el).copied()
+    }
+
     fn leave(&mut self, el: NodeId) {
-        self.order.retain(|&e| e != el);
+        self.exit(el);
         self.auto_stack.retain(|&e| e != el);
         self.hint_stack.retain(|&e| e != el);
         self.invokers.remove(&el);
@@ -64,9 +99,10 @@ impl Dom {
         let changed = if modal { self.top_layer.modal.insert(el) } else { self.top_layer.modal.remove(&el) };
         if changed {
             let tl = &mut self.top_layer;
-            tl.order.retain(|&e| e != el);
             if modal {
-                tl.order.push(el);
+                tl.enter(el);
+            } else {
+                tl.exit(el);
             }
             // An un-annotated bump: styles that read `:modal`, the inertness
             // the modal causes and the paint order start over.
@@ -90,7 +126,9 @@ impl Dom {
         if self.top_layer.modal.is_empty() {
             return None;
         }
-        self.top_layer.order.iter().rev().copied().find(|e| self.top_layer.modal.contains(e))
+        // The modal dialogs are a handful, the top layer can be large.
+        let tl = &self.top_layer;
+        tl.modal.iter().filter_map(|&e| Some((tl.rank_of(e)?, e))).max_by_key(|&(r, _)| r).map(|(_, e)| e)
     }
 
     /// Sets a popover's visibility state: showing (`true`) or hidden. A
@@ -101,8 +139,7 @@ impl Dom {
         let changed = if showing { self.top_layer.popovers.insert(el) } else { self.top_layer.popovers.remove(&el) };
         if changed {
             if showing {
-                self.top_layer.order.retain(|&e| e != el);
-                self.top_layer.order.push(el);
+                self.top_layer.enter(el);
             } else {
                 self.top_layer.leave(el);
             }
@@ -165,7 +202,7 @@ impl Dom {
         if self.top_layer.order.is_empty() {
             return None;
         }
-        self.top_layer.order.iter().position(|&e| e == el)
+        self.top_layer.rank_of(el)
     }
 
     /// Whether `el` is inert: it or a shadow-including ancestor has the
