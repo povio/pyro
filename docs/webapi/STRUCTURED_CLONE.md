@@ -28,18 +28,33 @@ Platform objects the script does not recognize go to one native hook before
 they are rejected: `guard(value, true)` (`crypto::clone_platform_object`)
 returns their copy or undefined. It copies a `CryptoKey` of the realm (see
 [Web Crypto](CRYPTO.md)); it runs only on that rejection path, so ordinary
-graphs pay nothing. Worker messages do not carry CryptoKeys.
+graphs pay nothing. The cross-VM format carries CryptoKeys too (see
+[Web Crypto](CRYPTO.md)).
 
-Transfer lists (`{transfer}`) take ArrayBuffers and MessagePorts. Entries are
-validated first: a duplicate, a detached ArrayBuffer, an already transferred
-port or any other object throws DataCloneError, a non-object TypeError. Nothing
-is detached unless the whole value clones. A transferred ArrayBuffer is copied
+Transfer lists (`{transfer}`) take ArrayBuffers, MessagePorts and
+ReadableStream, WritableStream and TransformStream. Entries are validated
+first: a duplicate, a detached ArrayBuffer, an already transferred port, a
+locked stream or any other object throws DataCloneError, a non-object
+TypeError. Nothing is detached unless the whole value clones. A transferred ArrayBuffer is copied
 into the clone and then detached with `ArrayBuffer.prototype.transfer` (the
 bytes are copied, not moved); a resizable one stays resizable. A transferred
 MessagePort is replaced by a new port in the destination realm that takes over
 its entanglement and undelivered messages, and the original is detached
 ([MESSAGE_CHANNEL](MESSAGE_CHANNEL.md)). A length-tracking typed array or
 DataView becomes a fixed-length view.
+
+A transferred stream is the Streams standard's cross-realm transform: the
+validation step makes, in the destination realm, the new stream over new
+unentangled ports (no side effect on the original); once the whole value has
+cloned, the original is piped into (a ReadableStream) or from (a
+WritableStream) a new MessageChannel of its realm whose other port moves into
+the new stream's (`streams.js` `transferKind`/`transferIn`/`transferOut`). A
+TransformStream transfers its two sides. Chunks are structured-cloned through
+the ports with the standard's `pull` backpressure, errors and cancellation
+travel both ways, and a chunk that cannot be cloned errors both streams.
+Across realms (`clone_into`'s second pass), the poster realm's streams module
+handles the first copy's streams (`CLONE_SOURCE`), so a stream posted to
+another frame crosses two channels.
 
 Functions, symbol values, proxies, other native host wrappers/globals, shared
 buffers and other normally tagged unsupported types are rejected. Custom
@@ -49,10 +64,18 @@ capability-gated JSC SPI and fail explicitly if unavailable.
 
 Users: `structuredClone`, MessagePort and `window.postMessage` (cloned straight
 into the receiving realm, which may be another frame or page of the thread's
-VM). The cross-VM format (`worker_wire.js`: workers, BroadcastChannel and
-history state) encodes the same types, Error, DOMException, Blob, File and
-FileList included; Blob bytes travel beside the text, shared rather than
-copied. MessagePorts cannot cross VMs (NotSupportedError).
+VM). The cross-VM format (`worker_wire.js`: workers, MessagePorts entangled
+across threads, popups, BroadcastChannel, IndexedDB and history state) encodes
+the same types, Error, DOMException, Blob, File, FileList and CryptoKey
+included; Blob bytes travel beside the text, shared rather than copied. Its
+transfer list takes ArrayBuffers (copied, then detached), MessagePorts and
+streams: transferred ports travel beside the text as sides of a thread-safe
+pipe (`port_link.rs`, see [MESSAGE_CHANNEL](MESSAGE_CHANNEL.md)), listed ports
+first, then each stream's ports, and only the listed ones become the event's
+`ports`. A message's ports are claimed by its first deserialization; a
+message dropped before that closes them. BroadcastChannel, IndexedDB and
+history state transfer nothing, so a port or stream in their values throws
+DataCloneError.
 
 A remaining conformance limitation is significant: JSC's available C API does
 not provide a complete exotic-object classifier. An exotic object deliberately

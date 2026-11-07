@@ -2,8 +2,9 @@
 
 `crates/lp-webapi/src/message_channel.rs` implements HTML §9.4 channel
 messaging between the realms of a browser thread's VM (frames, popups,
-isolated worlds). The behaviour follows upstream Lightpanda (`MessagePort.zig`)
-and Chromium, except for the gaps below.
+isolated worlds) and, through `port_link.rs`, between threads (the page and
+its dedicated workers, or two workers). The behaviour follows upstream
+Lightpanda (`MessagePort.zig`) and Chromium, except for the gaps below.
 
 - **Construction.** `new MessageChannel()` creates two entangled ports.
   `port1`/`port2` always return the same objects. Ports are `EventTarget`s with
@@ -28,6 +29,33 @@ and Chromium, except for the gaps below.
   data where the original was and in `event.ports`, in transfer-list order.
   The original is detached: it is closed, its posts are dropped and
   transferring it again throws DataCloneError.
+- **Across threads.** A port transferred through `Worker.postMessage`, the
+  worker global's `postMessage`, a port that is itself entangled across
+  threads, or a popup's `postMessage` leaves the VM. The first time one port
+  of a pair does, the pair switches to a thread-safe pipe: each side has an
+  inbox of serialized messages (the [cross-VM format](STRUCTURED_CLONE.md))
+  and an owner, the poster of the thread whose port stands for it and that
+  port's id in the thread's registry. The port that stays takes over its
+  side; the leaving port's undelivered messages are serialized into the head
+  of its side's inbox, and the side travels inside the message, without an
+  owner, until the receiving realm deserializes it into a new port.
+  - Posting serializes the message in the sender's realm, pushes it on the
+    other side's inbox and posts one wake-up task to the owner's event loop,
+    which sleeps until then (no polling). A side in transit collects its
+    messages until its new port exists.
+  - The receiving port deserializes a message only when it delivers it, one
+    task per message, so messages that are still queued follow it if it
+    moves again. A message that cannot be deserialized there fires
+    `messageerror` (a plain trusted MessageEvent without data).
+  - `close()` closes the side: its queued messages are dropped, later posts
+    from either side are dropped, and the other side's owner is told so its
+    pin is re-evaluated. The same happens when the port is collected, when
+    its document goes away (the worker ends, or the page navigates), and
+    when a message carrying a side is dropped before it was deserialized.
+  - Posting the entangled port through a port drops the message (the
+    channel is lost), as within a thread.
+  - One side's inbox holds at most 64 MiB of messages: past that, posting
+    throws DataCloneError (unless the inbox is empty).
 - **Delivery.**
   - A started port delivers each message in its own task, in FIFO order, after
     the current task's microtasks.
@@ -82,9 +110,18 @@ Tests: `crates/lp-browser/tests/popups.rs`
 (`broadcast_channel_reaches_same_origin_documents_of_the_browser_context`).
 
 Gaps of MessageChannel, all explicit:
-- Ports cannot be transferred to or from a worker (another VM): such a
-  transfer throws NotSupportedError.
-- No `messageerror` events: deserialization in the same VM cannot fail.
+- Within one thread no `messageerror` fires: deserialization in the same VM
+  cannot fail.
+- MessagePort has no `close` event (fired by recent Chromium when the
+  entangled port goes away).
+- A port transferred to a page while its document navigates away, or whose
+  pipe was made by a page that went away while both its ports were in
+  transit, arrives closed: a page's disposal closes the pipes it made whose
+  sides no port owns (which also releases ports that travel inside each
+  other's undelivered messages).
+- A port's undelivered messages are serialized when it leaves the thread;
+  past 16 levels of ports nested in undelivered messages of ports, the inner
+  messages are dropped.
 - `new MessageEvent(type, {ports})` keeps the ports; `source` in the init
   dictionary is ignored.
 
@@ -139,6 +176,9 @@ without hooks retain the existing inline fallback.
 
 Tests: `crates/lp-webapi/tests/dom_js.rs` (`message_channel_*`,
 `message_port_*`), `crates/lp-webapi/tests/messaging_js.rs` (clone types,
-transfers, event ports, same-window postMessage, the cross-VM format) and
-`crates/lp-browser/tests/messaging.rs` (frames, cross-origin windows, popups,
-history state).
+transfers, event ports, same-window postMessage, the cross-VM format, stream
+transfer), `crates/lp-webapi/src/port_link.rs` (the pipe),
+`crates/lp-browser/src/tests.rs` (`message_ports_cross_*`,
+`a_port_from_a_worker_*`, `two_workers_talk_*`, `streams_transfer_*`,
+`crypto_keys_cross_*`) and `crates/lp-browser/tests/messaging.rs` (frames,
+cross-origin windows, popups, history state, streams to a frame).

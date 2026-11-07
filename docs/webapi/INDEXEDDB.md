@@ -17,8 +17,10 @@ and Playwright's `storageState({indexedDB: true})` work as in Chrome.
   ASCII strings whose byte order is key order (number < date < string <
   binary < array, strings by code unit, arrays element-wise). Values are
   stored in the worker wire format after a structured clone, so each read
-  returns fresh objects. Blob and File values are not cloneable here and throw
-  `DataCloneError` (localForage detects that and falls back to base64).
+  returns fresh objects. CryptoKeys are stored with their key material, so a
+  non-extractable key reads back as a usable non-extractable key. Blob and
+  File values are not cloneable here and throw `DataCloneError` (localForage
+  detects that and falls back to base64).
 - `indexedDB.databases()` lists the partition's databases with a version.
 - Opaque origins (`data:`, sandboxed documents) throw `SecurityError` from
   `open`/`deleteDatabase` and reject `databases()`; the `IDB*` interfaces still

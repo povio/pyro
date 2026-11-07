@@ -3541,7 +3541,7 @@ fn worker_constructor_checks_and_load_failure_without_a_network() {
              [w instanceof Worker, w instanceof EventTarget, typeof w.onerror, err(() => w.postMessage()),
               err(() => w.postMessage(() => 1)), err(() => w.postMessage(1, [{}])), b.byteLength, log.length].join()",
         ),
-        "true,true,function,TypeError,DataCloneError,NotSupportedError,0,0"
+        "true,true,function,TypeError,DataCloneError,DataCloneError,0,0"
     );
     assert_eq!(e.page.pinned_count(), base + 1);
     tasks.drain();

@@ -170,3 +170,89 @@ fn wire_format_carries_errors_dom_exceptions_and_files() {
     env.until("out !== null");
     assert_eq!(env.eval("out"), "true|r|1||true|AbortError|m|true|n|5|q|false|a/b|true|true|0");
 }
+
+#[test]
+fn wire_format_carries_crypto_keys_but_not_untransferred_ports() {
+    let env = env();
+    env.eval(
+        r#"globalThis.out = null;
+          const tx = new BroadcastChannel('keys'), rx = new BroadcastChannel('keys');
+          rx.onmessage = async (e) => {
+            const {secret, pair, again} = e.data;
+            const signed = await crypto.subtle.sign('HMAC', secret, new Uint8Array([1]));
+            const ok = await crypto.subtle.verify('HMAC', original, signed, new Uint8Array([1]));
+            const sig = await crypto.subtle.sign({name: 'ECDSA', hash: 'SHA-256'}, pair.privateKey, new Uint8Array([2]));
+            const ec = await crypto.subtle.verify({name: 'ECDSA', hash: 'SHA-256'}, keys.publicKey, sig, new Uint8Array([2]));
+            out = [secret instanceof CryptoKey, secret !== original, secret.extractable, secret.algorithm.hash.name,
+              secret.algorithm.length, secret.usages.join('+'), again === secret, ok, pair.privateKey.type,
+              pair.publicKey.algorithm.namedCurve, ec].join('|');
+          };
+          let failed = '';
+          try { tx.postMessage(new MessageChannel().port1); } catch (e) { failed = e.name; }
+          globalThis.cloneError = failed;
+          (async () => {
+            globalThis.original = await crypto.subtle.generateKey({name: 'HMAC', hash: 'SHA-384'}, false, ['sign', 'verify']);
+            globalThis.keys = await crypto.subtle.generateKey({name: 'ECDSA', namedCurve: 'P-256'}, true, ['sign', 'verify']);
+            tx.postMessage({secret: original, pair: keys, again: original});
+          })();"#,
+    );
+    env.until("out !== null");
+    assert_eq!(env.eval("cloneError"), "DataCloneError");
+    assert_eq!(env.eval("out"), "true|true|false|SHA-384|1024|sign+verify|true|true|private|P-256|true");
+}
+
+#[test]
+fn streams_transfer_through_structured_clone_and_ports() {
+    let env = env();
+    env.eval(
+        r#"globalThis.out = null;
+          (async () => {
+            const log = [];
+            const err = (f) => { try { f(); return 'ok'; } catch (e) { return e.name; } };
+            // ReadableStream: the original is locked, the copy reads its chunks.
+            const source = new ReadableStream({start(c) { c.enqueue('a'); c.enqueue({n: 1}); c.close(); }});
+            const copy = structuredClone(source, {transfer: [source]});
+            log.push(copy instanceof ReadableStream, copy !== source, source.locked);
+            const chunks = [];
+            for await (const chunk of copy) chunks.push(typeof chunk === 'object' ? chunk.n : chunk);
+            log.push(chunks.join('+'));
+            // Locked streams and streams listed but not transferred.
+            const locked = new ReadableStream(); locked.getReader();
+            log.push(err(() => structuredClone(locked, {transfer: [locked]})), err(() => structuredClone(new ReadableStream())));
+            // WritableStream: writes reach the original sink, close too.
+            const written = [];
+            const sink = new WritableStream({write(chunk) { written.push(chunk); }, close() { written.push('closed'); }});
+            const remote = structuredClone(sink, {transfer: [sink]});
+            log.push(sink.locked);
+            const writer = remote.getWriter();
+            await writer.write('x'); await writer.write('y'); await writer.close();
+            await new Promise((r) => setTimeout(r, 10));
+            log.push(written.join('+'));
+            // TransformStream, through a MessagePort.
+            const upper = new TransformStream({transform(chunk, c) { c.enqueue(chunk.toUpperCase()); }});
+            const ch = new MessageChannel();
+            const got = new Promise((resolve) => { ch.port2.onmessage = (e) => resolve(e.data); });
+            ch.port1.postMessage({t: upper}, [upper]);
+            const moved = (await got).t;
+            const w = moved.writable.getWriter(); w.write('hi'); w.close();
+            const r = moved.readable.getReader();
+            log.push(moved instanceof TransformStream, (await r.read()).value, (await r.read()).done);
+            // An error from the original side reaches the copy.
+            const failing = new ReadableStream({pull(c) { c.error(new RangeError('boom')); }});
+            const failingCopy = structuredClone(failing, {transfer: [failing]});
+            try { await failingCopy.getReader().read(); } catch (e) { log.push(e.name + ':' + e.message); }
+            // Cancelling the copy cancels the original.
+            let cancelled;
+            const cancellable = new ReadableStream({cancel(reason) { cancelled = reason; }});
+            await structuredClone(cancellable, {transfer: [cancellable]}).cancel('why');
+            await new Promise((r) => setTimeout(r, 10));
+            log.push(cancelled);
+            out = log.join('|');
+          })().catch((e) => { out = 'threw:' + e; });"#,
+    );
+    env.until("out !== null");
+    assert_eq!(
+        env.eval("out"),
+        "true|true|true|a+1|DataCloneError|DataCloneError|true|x+y+closed|true|HI|true|RangeError:boom|why"
+    );
+}

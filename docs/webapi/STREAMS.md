@@ -6,6 +6,21 @@ Blob. A realm that never touches streams only has one global accessor pair per
 interface name; the first read of a name replaces its accessor with the usual
 data property, and assigning a name replaces it too.
 
+Transfer: `ReadableStream`, `WritableStream` and `TransformStream` are
+transferable (`structuredClone(s, {transfer: [s]})`, `postMessage(m, [s])`
+on a MessagePort, a window or a worker). Transfer is the standard's
+cross-realm transform (`transferKind`/`transferOut`/`transferIn` in
+streams.js): the original is piped into (or from) one port of a new
+MessageChannel, and the receiving realm's new stream wraps the other port,
+with `pull` messages for backpressure (high-water mark 0 on the readable
+side, 1 on the writable side), and `close`, `error` and cancellation
+travelling both ways. A locked stream throws DataCloneError; the original is
+locked once transferred. Through a worker the ports cross threads like any
+transferred MessagePort ([MessageChannel](MESSAGE_CHANNEL.md)). A realm
+that never used streams pays nothing: the transfer step asks its streams
+module only for an entry of a transfer list that is neither an ArrayBuffer
+nor a MessagePort, and only if that module exists.
+
 Implemented: `ReadableStream` (start/pull/cancel, strategies, `getReader`,
 `tee`, `pipeTo`, `pipeThrough`, async iteration, `ReadableStream.from`),
 default and BYOB readers, `WritableStream` and its writer, `TransformStream`,
@@ -41,5 +56,10 @@ Gaps:
 - `clone()` of a fetched Response shares one body: reading one clone through
   `.body` takes the bytes from the other.
 - A stream from another realm is not recognized as a body.
-- There is no `Request` class, so no `Request.body`; streams are not
-  transferable through `postMessage`. `CompressionStream` has no `"brotli"`.
+- There is no `Request` class, so no `Request.body`. `CompressionStream` has
+  no `"brotli"`.
+- A transferred byte stream arrives as a default stream (as the standard's
+  cross-realm transform makes it): no BYOB reader on the receiving side.
+- TextEncoderStream, TextDecoderStream, CompressionStream and
+  DecompressionStream are not transferable themselves (as in browsers);
+  their `readable` and `writable` are.

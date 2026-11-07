@@ -273,6 +273,27 @@ pub(crate) fn clone_platform_object<'s>(s: &Scope<'s>, value: Value<'s>) -> JsRe
     module.get_atom("cloneKey")?.as_object().ok_or_else(unavailable)?.call(None, &[value])
 }
 
+/// The cross-VM form of a CryptoKey of this realm (`worker_wire.js`):
+/// `[type, extractable, algorithm, usages, key bytes]` as plain data, or
+/// `None` when `value` is not one. Costs a realm without subtle.js one lookup.
+pub(crate) fn serialize_key<'s>(s: &Scope<'s>, value: Value<'s>) -> JsResult<Option<Value<'s>>> {
+    let page = crate::target::page_of(s)?;
+    let holder = crate::worker_scope::module_holder(s, &page)?;
+    let Some(module) = s.get_hidden(holder, SUBTLE_KEY)?.and_then(|v| v.as_object()) else {
+        return Ok(None);
+    };
+    let parts = module.get_atom("serializeKey")?.as_object().ok_or_else(unavailable)?.call(None, &[value])?;
+    Ok((!parts.is_undefined()).then_some(parts))
+}
+
+/// The CryptoKey, in this realm, of parts made by [`serialize_key`]
+/// (making the realm's subtle.js if it has none yet).
+pub(crate) fn deserialize_key<'s>(s: &Scope<'s>, parts: Value<'s>) -> JsResult<Value<'s>> {
+    let page = crate::target::page_of(s)?;
+    let module = subtle_module(s, &page)?;
+    module.get_atom("deserializeKey")?.as_object().ok_or_else(unavailable)?.call(None, &[parts])
+}
+
 /// `window.crypto` (one Crypto object per realm).
 pub fn crypto_value<'s>(s: &Scope<'s>) -> JsResult<Value<'s>> {
     let key = IdentityKey(1 << 55, 1);

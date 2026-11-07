@@ -582,6 +582,247 @@ fn worker_report_error_reaches_its_error_event_and_the_page() {
 }
 
 #[test]
+fn message_ports_cross_to_and_from_a_worker_and_stay_entangled() {
+    let (mut t, rec, page) = worker_setup();
+    // The worker echoes on every port it gets, keeps a port of its own for
+    // the page, and answers through a port the page made after a round trip.
+    let script = data_url(
+        "const own = new MessageChannel();
+         own.port1.onmessage = (e) => own.port1.postMessage('own:' + e.data);
+         onmessage = (e) => {
+           if (e.data === 'own') return postMessage({own: own.port2}, [own.port2]);
+           const [port] = e.ports;
+           const shape = [e.ports.length, port instanceof MessagePort, e.data.port === port, e.data.n].join();
+           port.onmessage = (m) => {
+             if (m.data === 'close') return port.close();
+             if (m.data === 'back') {
+               const reply = new MessageChannel();
+               reply.port1.onmessage = (r) => port.postMessage('via-reply:' + r.data);
+               return port.postMessage({reply: reply.port2}, [reply.port2]);
+             }
+             port.postMessage('echo:' + m.data + ':' + m.ports.length);
+           };
+           port.postMessage('shape:' + shape);
+         };",
+    );
+    eval(
+        &t,
+        page,
+        &format!(
+            r#"const w = new Worker({script:?});
+            globalThis.w = w;
+            const ch = new MessageChannel();
+            ch.port1.onmessage = (e) => {{
+                if (e.data && e.data.reply) {{
+                    e.data.reply.onmessage = (r) => console.log('reply-port:' + r.data);
+                    e.data.reply.postMessage('ping');
+                    return;
+                }}
+                console.log(e.data);
+                if (e.data === 'echo:two:0') ch.port1.postMessage('back');
+            }};
+            w.postMessage({{port: ch.port2, n: 7}}, [ch.port2]);
+            // Transferred: posting it again fails, its posts go nowhere.
+            try {{ w.postMessage(null, [ch.port2]); }} catch (e) {{ console.log('again:' + e.name); }}
+            ch.port1.postMessage('one');
+            ch.port1.postMessage('two');
+            w.onmessage = (e) => {{
+                const own = e.data.own;
+                own.onmessage = (m) => console.log(m.data);
+                // A port that came from the worker moves on within the page.
+                const moved = structuredClone(own, {{transfer: [own]}});
+                moved.onmessage = (m) => console.log('moved:' + m.data);
+                moved.postMessage('hi');
+            }};
+            w.postMessage('own');"#
+        ),
+    );
+    until_console(&mut t, &rec, "shape:1,true,true,7");
+    until_console(&mut t, &rec, "echo:one:0");
+    until_console(&mut t, &rec, "echo:two:0");
+    until_console(&mut t, &rec, "via-reply:ping");
+    until_console(&mut t, &rec, "moved:own:hi");
+    let console = rec.console.borrow().join("\n");
+    assert!(console.contains("log:again:DataCloneError"), "{console}");
+    // FIFO on the port: shape, one, two.
+    let order: Vec<_> =
+        rec.console.borrow().iter().filter(|c| c.contains("shape:") || c.contains("echo:")).cloned().collect();
+    assert_eq!(order, ["log:shape:1,true,true,7", "log:echo:one:0", "log:echo:two:0"]);
+    drop(console);
+    assert!(rec.errors.borrow().is_empty(), "{:?}", rec.errors.borrow());
+    t.browser.close_all();
+    assert!(lp_webapi::join_stopped(Duration::from_secs(5)), "worker threads end");
+}
+
+#[test]
+fn a_port_from_a_worker_waits_for_start_and_close_disentangles() {
+    let (mut t, rec, page) = worker_setup();
+    let script = data_url(
+        "const ch = new MessageChannel();
+         ch.port1.postMessage('a'); ch.port1.postMessage('b');
+         postMessage(ch.port2, [ch.port2]);
+         ch.port1.postMessage('c');
+         ch.port1.onmessage = (e) => {
+           if (e.data === 'close-me') { ch.port1.close(); return postMessage('closed'); }
+           postMessage('worker-got:' + e.data);
+         };
+         onmessage = () => { ch.port1.postMessage('after-close'); postMessage('posted-after-close'); };",
+    );
+    eval(
+        &t,
+        page,
+        &format!(
+            r#"const w = new Worker({script:?});
+            globalThis.w = w;
+            const got = [];
+            w.onmessage = (e) => {{
+                if (e.data instanceof MessagePort) {{
+                    globalThis.port = e.data;
+                    // A listener does not start the port: nothing arrives yet.
+                    port.addEventListener('message', (m) => {{ got.push(m.data); if (got.length === 3) console.log('got:' + got.join()); }});
+                    setTimeout(() => {{ console.log('before-start:' + got.length); port.start(); port.postMessage('x'); }}, 50);
+                    return;
+                }}
+                console.log(e.data);
+                if (e.data === 'worker-got:x') port.postMessage('close-me');
+                if (e.data === 'closed') w.postMessage('again');
+                if (e.data === 'posted-after-close') setTimeout(() => console.log('end:' + got.join()), 50);
+            }};"#
+        ),
+    );
+    until_console(&mut t, &rec, "before-start:0");
+    until_console(&mut t, &rec, "got:a,b,c");
+    until_console(&mut t, &rec, "worker-got:x");
+    until_console(&mut t, &rec, "end:a,b,c");
+    assert!(rec.errors.borrow().is_empty(), "{:?}", rec.errors.borrow());
+    t.browser.close_all();
+    assert!(lp_webapi::join_stopped(Duration::from_secs(5)), "worker threads end");
+}
+
+#[test]
+fn two_workers_talk_over_a_channel_the_page_made() {
+    let (mut t, rec, page) = worker_setup();
+    let ping = data_url(
+        "onmessage = (e) => {
+           const port = e.ports[0];
+           let n = 0;
+           port.onmessage = (m) => { if (++n === 3) postMessage('ping-done:' + m.data); else port.postMessage(n); };
+           port.postMessage(0);
+         };",
+    );
+    let pong = data_url(
+        "onmessage = (e) => { const port = e.ports[0]; port.onmessage = (m) => port.postMessage('pong' + m.data); };",
+    );
+    eval(
+        &t,
+        page,
+        &format!(
+            r#"const a = new Worker({ping:?}), b = new Worker({pong:?});
+            globalThis.workers = [a, b];
+            const ch = new MessageChannel();
+            a.onmessage = (e) => console.log(e.data);
+            b.postMessage(null, [ch.port2]);
+            a.postMessage(null, [ch.port1]);"#
+        ),
+    );
+    until_console(&mut t, &rec, "ping-done:pong2");
+    assert!(rec.errors.borrow().is_empty(), "{:?}", rec.errors.borrow());
+    t.browser.close_all();
+    assert!(lp_webapi::join_stopped(Duration::from_secs(5)), "worker threads end");
+}
+
+#[test]
+fn streams_transfer_to_and_from_a_worker() {
+    let (mut t, rec, page) = worker_setup();
+    // The worker reads the page's stream, writes into the page's sink, and
+    // hands the page a TransformStream that runs in the worker.
+    let script = data_url(
+        "onmessage = async (e) => {
+           const {readable, writable} = e.data;
+           const parts = [];
+           for await (const chunk of readable) parts.push(chunk);
+           const writer = writable.getWriter();
+           await writer.write('w:' + parts.join('+'));
+           await writer.close();
+           const upper = new TransformStream({transform(chunk, c) { c.enqueue(self.name + ':' + chunk.toUpperCase()); }});
+           postMessage({upper, ports: e.ports.length}, [upper]);
+         };",
+    );
+    eval(
+        &t,
+        page,
+        &format!(
+            r#"const w = new Worker({script:?}, {{name: 'in-worker'}});
+            globalThis.w = w;
+            const readable = new ReadableStream({{start(c) {{ c.enqueue('a'); c.enqueue('b'); c.close(); }}}});
+            const writable = new WritableStream({{write(chunk) {{ console.log('sink:' + chunk); }}, close() {{ console.log('sink-closed'); }}}});
+            w.onmessage = async (e) => {{
+                const {{upper, ports}} = e.data;
+                const writer = upper.writable.getWriter();
+                writer.write('hey');
+                writer.close();
+                const reader = upper.readable.getReader();
+                console.log('upper:' + (await reader.read()).value + ':' + (await reader.read()).done + ':' + ports + ':' + e.ports.length);
+            }};
+            w.postMessage({{readable, writable}}, [readable, writable]);
+            console.log('locked:' + readable.locked + ':' + writable.locked);"#
+        ),
+    );
+    until_console(&mut t, &rec, "locked:true:true");
+    until_console(&mut t, &rec, "sink:w:a+b");
+    until_console(&mut t, &rec, "sink-closed");
+    until_console(&mut t, &rec, "upper:in-worker:HEY:true:0:0");
+    assert!(rec.errors.borrow().is_empty(), "{:?}", rec.errors.borrow());
+    t.browser.close_all();
+    assert!(lp_webapi::join_stopped(Duration::from_secs(5)), "worker threads end");
+}
+
+#[test]
+fn crypto_keys_cross_to_a_worker_and_back() {
+    let (mut t, rec, page) = worker_setup();
+    let script = data_url(
+        "onmessage = async (e) => {
+           const {key, data} = e.data;
+           const iv = new Uint8Array(12);
+           const sealed = await crypto.subtle.encrypt({name: 'AES-GCM', iv}, key, data);
+           postMessage({key, sealed, shape: [key instanceof CryptoKey, key.type, key.extractable, key.algorithm.name,
+             key.algorithm.length, key.usages.join('+')].join()});
+         };",
+    );
+    eval(
+        &t,
+        page,
+        &format!(
+            r#"const w = new Worker({script:?});
+            globalThis.w = w;
+            (async () => {{
+                const key = await crypto.subtle.generateKey({{name: 'AES-GCM', length: 128}}, false, ['encrypt', 'decrypt']);
+                w.onmessage = async (e) => {{
+                    console.log('shape:' + e.data.shape);
+                    const back = e.data.key;
+                    const iv = new Uint8Array(12);
+                    const open = await crypto.subtle.decrypt({{name: 'AES-GCM', iv}}, key, e.data.sealed);
+                    const again = await crypto.subtle.encrypt({{name: 'AES-GCM', iv}}, back, new TextEncoder().encode('secret'));
+                    console.log('round:' + new TextDecoder().decode(open) + ':' + (back !== key));
+                    console.log('same:' + (new Uint8Array(again).join() === new Uint8Array(e.data.sealed).join()));
+                }};
+                w.postMessage({{key, data: new TextEncoder().encode('secret')}});
+            }})();"#
+        ),
+    );
+    until_console(&mut t, &rec, "shape:");
+    until_console(&mut t, &rec, "same:");
+    let console = rec.console.borrow().join("\n");
+    assert!(console.contains("log:shape:true,secret,false,AES-GCM,128,encrypt+decrypt"), "{console}");
+    assert!(console.contains("log:round:secret:true"), "{console}");
+    assert!(console.contains("log:same:true"), "{console}");
+    drop(console);
+    assert!(rec.errors.borrow().is_empty(), "{:?}", rec.errors.borrow());
+    t.browser.close_all();
+    assert!(lp_webapi::join_stopped(Duration::from_secs(5)), "worker threads end");
+}
+
+#[test]
 fn navigating_away_ends_a_documents_workers() {
     let (mut t, rec, page) = worker_setup();
     let script = data_url("postMessage('up'); setInterval(() => postMessage('tick'), 1);");

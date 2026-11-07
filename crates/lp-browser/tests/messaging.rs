@@ -101,6 +101,41 @@ fn same_origin_frames_post_cloned_messages_with_the_incumbent_source_and_origin(
 }
 
 #[test]
+fn streams_transfer_to_a_cross_origin_frame() {
+    let (mut t, _) = loaded(&["https://a.test/main", "https://b.test/child"]);
+    let page = open_page(&mut t, "https://a.test/main");
+    let root = main_realm(&t, page);
+    eval(
+        &root,
+        "globalThis.f = document.createElement('iframe'); f.src = 'https://b.test/child'; document.body.appendChild(f)",
+    );
+    settle(&mut t);
+    let child = child_realm(&t, page, 0);
+    eval(
+        &child,
+        "globalThis.got = null; addEventListener('message', async (e) => {
+           const {stream, sink} = e.data;
+           const parts = [];
+           for await (const chunk of stream) parts.push(chunk.v);
+           const writer = sink.getWriter();
+           await writer.write(parts.join('+'));
+           await writer.close();
+           got = [stream instanceof ReadableStream, sink instanceof WritableStream, e.ports.length, parts.join('+')].join();
+         })",
+    );
+    eval(
+        &root,
+        "globalThis.written = [];
+         const stream = new ReadableStream({start(c) { c.enqueue({v: 1}); c.enqueue({v: 2}); c.close(); }});
+         const sink = new WritableStream({write(chunk) { written.push(chunk); }});
+         f.contentWindow.postMessage({stream, sink}, 'https://b.test', [stream, sink]);",
+    );
+    settle(&mut t);
+    assert_eq!(eval(&child, "got"), "true,true,0,1+2");
+    assert_eq!(eval(&root, "written.join()"), "1+2");
+}
+
+#[test]
 fn cross_origin_frames_message_each_other_and_navigate_through_location() {
     let (mut t, _) =
         loaded(&["https://a.test/main", "https://b.test/child", "https://b.test/two", "https://b.test/three"]);

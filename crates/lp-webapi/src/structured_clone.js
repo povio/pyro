@@ -4,7 +4,11 @@
 // prepares the transfer of a transferable one (a MessagePort: its new port
 // here, undefined if the value is not transferable, DataCloneError if it is
 // detached); mode 2 completes the transfer prepared for `value` as `extra`;
-// mode 3 copies a platform object made in JS (CryptoKey) or returns undefined.
+// mode 3 copies a platform object made in JS (CryptoKey) or returns undefined;
+// mode 4 is unused here; mode 5 prepares the transfer of a stream ([its new
+// stream here, the new ports it reads or writes], undefined if the value is
+// not a stream, DataCloneError if it is locked) and mode 6 completes it (the
+// original is piped through a channel whose other ports become `extra`'s).
 ((guard, fail, DOMExceptionC) => {
     const host = (value, mode, extra) => guard(value, mode, extra);
     const O = Object, A = Array, M = Map, S = Set, D = Date, R = RegExp, TE = TypeError;
@@ -49,8 +53,14 @@
         return result;
     }
     // `ports` (internal callers) receives the transferred MessagePorts' new ports.
-    function clone(value, options, ports) {
+    // `keep` (worker_wire.js) lists MessagePorts and streams, already
+    // validated, that stay themselves in the copy: the cross-VM format
+    // transfers them afterwards. `streams` (internal callers) receives the
+    // transferred streams' new streams.
+    function clone(value, options, ports, keep, streams) {
         const memory = new M(), buffers = [], moved = [];
+        let piped;
+        if (keep) for (let i = 0; i < keep.length; ++i) call(mapSet, memory, [keep[i], keep[i]]);
         if (options != null) {
             if (typeof options !== 'object' && typeof options !== 'function')
                 throw new TE('structuredClone options must be an object');
@@ -78,8 +88,19 @@
                         put(buffers, buffers.length, entry);
                         continue;
                     }
-                    const port = guard(entry) ? undefined : host(entry, 1);
-                    if (port === undefined) fail('Value is not transferable');
+                    const ordinary = guard(entry);
+                    const port = ordinary ? undefined : host(entry, 1);
+                    if (port === undefined) {
+                        // A stream: its new stream, over new ports that the
+                        // original is piped into once the whole value cloned.
+                        const stream = ordinary ? host(entry, 5) : undefined;
+                        if (stream === undefined) fail('Value is not transferable');
+                        call(mapSet, memory, [entry, stream[0]]);
+                        if (!piped) piped = [];
+                        put(piped, piped.length, entry);
+                        put(piped, piped.length, stream);
+                        continue;
+                    }
                     call(mapSet, memory, [entry, port]);
                     put(moved, moved.length, entry);
                     put(moved, moved.length, port);
@@ -204,6 +225,10 @@
         for (let i = 0; i < moved.length; i += 2) {
             host(moved[i], 2, moved[i + 1]);
             if (ports) put(ports, ports.length, moved[i + 1]);
+        }
+        if (piped) for (let i = 0; i < piped.length; i += 2) {
+            host(piped[i], 6, piped[i + 1]);
+            if (streams) put(streams, streams.length, piped[i + 1][0]);
         }
         return result;
     }
