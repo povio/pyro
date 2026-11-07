@@ -635,6 +635,7 @@ fn waiting_worker_activates_when_the_last_client_goes() {
     eval(&thread, third, "fetch('/version').then((r) => r.text()).then((t) => globalThis.version = t); 'ok'");
     until(&mut thread, third, "globalThis.version !== undefined");
     assert_eq!(eval(&thread, third, "version"), "2");
+}
 
 #[test]
 fn a_failed_cross_thread_transfer_consumes_nothing() {

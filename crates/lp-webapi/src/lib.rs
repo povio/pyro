@@ -108,7 +108,7 @@ pub use navigator_extras::{ContextServices, GeolocationFix, PermissionSetting, U
 pub use node::{wrap_node, NodeData};
 pub use page::{
     DialogAnswer, DocumentTiming, DownloadRequest, FocusTarget, FocusTransition, FrameViewportSource, IframeAttribute,
-    MediaFetchHandle, MediaRequest, MediaResponse, NavigationRequest, PageDom, PageHooks, RemotePoster,
+    BodyPart, MediaFetchHandle, MediaRequest, MediaResponse, NavigationRequest, Partial, PageDom, PageHooks, RemotePoster,
 };
 pub use popup::{PopupCommand, PopupState, PopupTicket};
 pub use structured_clone::{decode_message as deserialize_message, encode_message as serialize_message, WireMessage};

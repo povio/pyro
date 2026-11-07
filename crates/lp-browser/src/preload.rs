@@ -252,6 +252,7 @@ impl Browser {
             crossorigin,
             initiator: Some(lp_webapi::resource_timing::Initiator::Link),
             module: None,
+            part: None,
         };
         resource_loader.fetch(self, request, Box::new(finish));
     }

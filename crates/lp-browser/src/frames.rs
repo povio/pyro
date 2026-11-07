@@ -1215,6 +1215,7 @@ impl Browser {
                     refresh: None,
                     referrer_policy: None,
                     timing: None,
+                    partial: None,
                 },
                 HistoryHandling::Replace,
             )

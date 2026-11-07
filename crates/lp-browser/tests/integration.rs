@@ -25,6 +25,7 @@ mod link_fragment;
 mod loading;
 mod messaging;
 mod media;
+mod media_http;
 mod microtask_species;
 mod named_access;
 mod navigation_api;

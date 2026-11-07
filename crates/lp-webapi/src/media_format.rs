@@ -46,7 +46,123 @@ const MAX_AREA: u64 = 1 << 28;
 /// Reads `body`'s container metadata, sniffing the format from its bytes
 /// (like Chrome, the response's MIME type does not matter).
 pub(crate) fn probe(body: &[u8]) -> Probe {
-    let mut info = sniff(body)?;
+    decodable(sniff(body, Body::Whole)?)
+}
+
+/// What a media element keeps of a resource: enough for any container's
+/// headers (the `moov` box of a long movie is a few MB). A longer body, or
+/// one of unknown length (a live stream), is cut once its headers are read.
+pub(crate) const PREFIX_LIMIT: usize = 16 << 20;
+/// A prefix is not judged before this size.
+const PREFIX_MIN: usize = 64 * 1024;
+/// MP4 boxes followed to find a `moov` after the prefix.
+pub(crate) const MAX_SEEKS: u8 = 4;
+
+/// Whether the fetched body is all of the resource.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Body {
+    Whole,
+    /// The first bytes of a resource of this length (if known).
+    Prefix(Option<u64>),
+}
+
+impl Body {
+    /// The whole resource's duration from `seconds` of media found in its
+    /// first `measured` bytes: proportional when its length is known, else
+    /// unknown (`Infinity`, as for a live stream).
+    fn extrapolate(self, seconds: f64, measured: usize) -> f64 {
+        match self {
+            Body::Whole => seconds,
+            Body::Prefix(Some(total)) if measured > 0 => seconds * total as f64 / measured as f64,
+            Body::Prefix(_) => f64::INFINITY,
+        }
+    }
+}
+
+/// What a fetched part of a resource tells.
+#[derive(Debug, PartialEq)]
+pub(crate) enum PartProbe {
+    Done(Probe),
+    /// An MP4 whose `moov` box is not in the part: the box at this offset
+    /// of the part (> 0) is the next to read.
+    Seek(u64),
+}
+
+/// `BodyPart::enough` for a media resource.
+pub(crate) fn prefix_enough(prefix: &[u8], total: Option<u64>) -> bool {
+    // A body of known length that fits is read whole, so durations that
+    // need its end stay exact.
+    if total.is_some_and(|t| t <= PREFIX_LIMIT as u64) || prefix.len() < PREFIX_MIN {
+        return false;
+    }
+    !iso_bmff(prefix, false) || moov_extent(prefix) != Moov::Cut
+}
+
+/// Probes a fetched part of a resource: `prefix` when the body was cut
+/// (with the whole length, if known), `start` its offset in the resource
+/// (> 0: a later part of an MP4, read for its `moov`).
+pub(crate) fn probe_part(body: &[u8], prefix: Option<Option<u64>>, start: u64) -> PartProbe {
+    let after = start > 0;
+    let Some(total) = prefix else {
+        return PartProbe::Done(if after { mp4(body).and_then(decodable) } else { probe(body) });
+    };
+    if iso_bmff(body, after) {
+        if let Moov::After(offset) = moov_extent(body) {
+            return if offset > 0 { PartProbe::Seek(offset) } else { PartProbe::Done(Err(ProbeError::Unrecognized)) };
+        }
+        // A `moov` cut by the limit yields what is there.
+        return PartProbe::Done(mp4(body).and_then(decodable));
+    }
+    PartProbe::Done(sniff(body, Body::Prefix(total)).and_then(decodable))
+}
+
+fn iso_bmff(body: &[u8], after: bool) -> bool {
+    after || (body.len() >= 8 && is_iso_bmff_box(&body[4..8]))
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Moov {
+    /// Wholly in the data.
+    Inside,
+    /// Starts in the data and continues past it.
+    Cut,
+    /// The top-level box at this offset starts at or past the end of the
+    /// data (or its header does not fit): `moov` may follow.
+    After(u64),
+    /// The boxes cannot be followed.
+    Broken,
+}
+
+/// Where the top-level `moov` box is, following box sizes (which may point
+/// past the data).
+fn moov_extent(data: &[u8]) -> Moov {
+    let len = data.len() as u64;
+    let mut at = 0u64;
+    while at < len {
+        let i = at as usize;
+        let (Some(size32), Some(kind)) = (be32(data, i), data.get(i + 4..i + 8)) else { return Moov::After(at) };
+        let size = match size32 {
+            1 => match be64(data, i + 8) {
+                Some(size) => size,
+                None => return Moov::After(at),
+            },
+            // To the end of the file.
+            0 => u64::MAX,
+            size => u64::from(size),
+        };
+        if kind == b"moov" {
+            return if at.saturating_add(size) <= len { Moov::Inside } else { Moov::Cut };
+        }
+        if size < 8 || size == u64::MAX {
+            return Moov::Broken;
+        }
+        at = at.saturating_add(size);
+    }
+    Moov::After(at)
+}
+
+/// Drops a video track too large for Chrome's decoders.
+fn decodable(mut info: MediaInfo) -> Probe {
     if let Some((w, h)) = info.video {
         if w > MAX_DIMENSION || h > MAX_DIMENSION || u64::from(w) * u64::from(h) > MAX_AREA {
             info.video = None;
@@ -58,15 +174,15 @@ pub(crate) fn probe(body: &[u8]) -> Probe {
     Ok(info)
 }
 
-fn sniff(body: &[u8]) -> Probe {
+fn sniff(body: &[u8], whole: Body) -> Probe {
     if body.starts_with(&[0x1A, 0x45, 0xDF, 0xA3]) {
         return matroska(body);
     }
     if body.starts_with(b"OggS") {
-        return ogg(body);
+        return ogg(body, whole);
     }
     if body.len() >= 12 && &body[..4] == b"RIFF" && &body[8..12] == b"WAVE" {
-        return wav(body);
+        return wav(body, whole);
     }
     if body.len() >= 8 && is_iso_bmff_box(&body[4..8]) {
         return mp4(body);
@@ -77,10 +193,10 @@ fn sniff(body: &[u8]) -> Probe {
     if rest.starts_with(b"fLaC") {
         return flac(rest);
     }
-    if let Some(info) = adts(rest) {
+    if let Some(info) = adts(rest, whole) {
         return Ok(info);
     }
-    mp3(body, start)
+    mp3(body, start, whole)
 }
 
 // ---------------------------------------------------------------------------
@@ -163,8 +279,9 @@ fn header_duration(payload: &[u8]) -> Option<(u32, u64)> {
             let d = be32(payload, 16)?;
             Some((be32(payload, 12)?, if d == u32::MAX { 0 } else { u64::from(d) }))
         }
+        // version/flags, creation (8), modification (8), timescale, duration (8).
         1 => {
-            let d = be64(payload, 28)?;
+            let d = be64(payload, 24)?;
             Some((be32(payload, 20)?, if d == u64::MAX { 0 } else { d }))
         }
         _ => None,
@@ -425,7 +542,6 @@ fn matroska_audio(codec: &str, webm: bool) -> bool {
 // Ogg
 
 struct OggStream {
-    serial: u32,
     /// Granule positions per second.
     rate: f64,
     /// Granules before the first sample (Opus pre-skip).
@@ -433,8 +549,11 @@ struct OggStream {
     last_granule: Option<u64>,
 }
 
-fn ogg(body: &[u8]) -> Probe {
-    let mut streams: Vec<OggStream> = Vec::new();
+fn ogg(body: &[u8], whole: Body) -> Probe {
+    // Keyed by serial: every page looks its stream up, and a hostile body
+    // can begin any number of streams (one per ~40-byte page), so a linear
+    // search would be quadratic.
+    let mut streams: std::collections::HashMap<u32, OggStream> = std::collections::HashMap::new();
     let mut unsupported = 0usize;
     let mut at = 0;
     while at + 27 <= body.len() {
@@ -459,7 +578,9 @@ fn ogg(body: &[u8]) -> Probe {
         if flags & 0x02 != 0 {
             // Beginning of a stream: its first packet names the codec.
             match ogg_codec(data) {
-                Some((rate, skip)) if rate > 0.0 => streams.push(OggStream { serial, rate, skip, last_granule: None }),
+                Some((rate, skip)) if rate > 0.0 => {
+                    streams.entry(serial).or_insert(OggStream { rate, skip, last_granule: None });
+                }
                 _ => unsupported += 1,
             }
         } else if streams.is_empty() && unsupported == 0 {
@@ -467,7 +588,7 @@ fn ogg(body: &[u8]) -> Probe {
         }
         // -1: no packet ends on this page.
         if granule != u64::MAX {
-            if let Some(s) = streams.iter_mut().find(|s| s.serial == serial) {
+            if let Some(s) = streams.get_mut(&serial) {
                 s.last_granule = Some(granule);
             }
         }
@@ -477,9 +598,10 @@ fn ogg(body: &[u8]) -> Probe {
         return Err(if unsupported > 0 { ProbeError::NoSupportedStreams } else { ProbeError::Unrecognized });
     }
     let seconds = streams
-        .iter()
+        .values()
         .filter_map(|s| s.last_granule.map(|g| g.saturating_sub(s.skip) as f64 / s.rate))
         .fold(0.0, f64::max);
+    let seconds = whole.extrapolate(seconds, body.len());
     Ok(MediaInfo { duration: finite_or_infinite(seconds), video: None, audio: true })
 }
 
@@ -503,7 +625,7 @@ fn ogg_codec(packet: &[u8]) -> Option<(f64, u64)> {
 // ---------------------------------------------------------------------------
 // WAV
 
-fn wav(body: &[u8]) -> Probe {
+fn wav(body: &[u8], whole: Body) -> Probe {
     let mut at = 12;
     let mut format = None;
     while at + 8 <= body.len() {
@@ -536,8 +658,16 @@ fn wav(body: &[u8]) -> Probe {
                 // A streamed WAV leaves the size 0 or -1; a truncated one
                 // has less than it says.
                 let available = body.len() - start;
-                let len = if size == 0 || size == u32::MAX as usize { available } else { size.min(available) };
-                let seconds = len as f64 / f64::from(byte_rate);
+                let unsized_data = size == 0 || size == u32::MAX as usize;
+                let rate = f64::from(byte_rate);
+                let seconds = match whole {
+                    Body::Whole => (if unsized_data { available } else { size.min(available) }) as f64 / rate,
+                    // A prefix: the declared size, else the rest of the resource.
+                    Body::Prefix(_) if !unsized_data => size as f64 / rate,
+                    Body::Prefix(total) => {
+                        total.map_or(f64::INFINITY, |t| t.saturating_sub(start as u64) as f64 / rate)
+                    }
+                };
                 return Ok(MediaInfo { duration: finite_or_infinite(seconds), video: None, audio: true });
             }
             _ => {}
@@ -585,7 +715,7 @@ fn id3_len(body: &[u8]) -> usize {
 
 const ADTS_RATES: [u32; 13] = [96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350];
 
-fn adts(body: &[u8]) -> Option<MediaInfo> {
+fn adts(body: &[u8], whole: Body) -> Option<MediaInfo> {
     let header = |at: usize| -> Option<(u32, usize)> {
         let b = body.get(at..at + 7)?;
         if b[0] != 0xFF || b[1] & 0xF6 != 0xF0 {
@@ -606,7 +736,8 @@ fn adts(body: &[u8]) -> Option<MediaInfo> {
         frames += 1;
         at += len;
     }
-    Some(MediaInfo { duration: finite_or_infinite(frames as f64 * 1024.0 / f64::from(rate)), video: None, audio: true })
+    let seconds = whole.extrapolate(frames as f64 * 1024.0 / f64::from(rate), at);
+    Some(MediaInfo { duration: finite_or_infinite(seconds), video: None, audio: true })
 }
 
 #[derive(Clone, Copy)]
@@ -677,7 +808,7 @@ fn mp3_frame(b: &[u8], at: usize) -> Option<Mp3Frame> {
     Some(Mp3Frame { version, layer, bitrate, rate, len, samples, mono: (h >> 6) & 3 == 3 })
 }
 
-fn mp3(body: &[u8], start: usize) -> Probe {
+fn mp3(body: &[u8], start: usize, whole: Body) -> Probe {
     // The first frame starts at once, or after a little padding.
     let window = body.len().min(start.saturating_add(4096));
     let (at, frame) = (start..window)
@@ -709,8 +840,12 @@ fn mp3(body: &[u8], start: usize) -> Probe {
         Some(n) => f64::from(n) * f64::from(frame.samples) / f64::from(frame.rate),
         None => {
             let tail = if body.len() >= 128 && &body[body.len() - 128..body.len() - 125] == b"TAG" { 128 } else { 0 };
-            let bytes = body.len().saturating_sub(at + tail);
-            bytes as f64 * 8.0 / f64::from(frame.bitrate)
+            let bytes = match whole {
+                Body::Whole => body.len().saturating_sub(at + tail) as f64,
+                Body::Prefix(Some(total)) => total.saturating_sub(at as u64) as f64,
+                Body::Prefix(None) => f64::INFINITY,
+            };
+            bytes * 8.0 / f64::from(frame.bitrate)
         }
     };
     Ok(MediaInfo { duration: finite_or_infinite(seconds), video: None, audio: true })
@@ -1098,7 +1233,138 @@ pub(crate) mod tests {
             let mut data = magic.to_vec();
             data.extend((0..len).map(|_| next() as u8));
             let _ = probe(&data);
+            let _ = probe_part(&data, Some(None), 0);
+            let _ = probe_part(&data, Some(Some(next())), next() % 4);
+            let _ = prefix_enough(&data, Some(next()));
         }
+    }
+
+    #[test]
+    fn prefixes_of_long_or_endless_resources() {
+        // A body of known length that fits the limit is read whole.
+        let big = vec![0u8; PREFIX_MIN];
+        assert!(!prefix_enough(&samples::ogg_opus(3.0), Some(PREFIX_LIMIT as u64)));
+        assert!(!prefix_enough(&big[..PREFIX_MIN - 1], None));
+        // An endless Ogg stream: its headers suffice, duration unknown.
+        let mut ogg = samples::ogg_opus(3.0);
+        ogg.resize(PREFIX_MIN, 0);
+        assert!(prefix_enough(&ogg, None));
+        let live = probe_part(&ogg, Some(None), 0);
+        assert_eq!(live, PartProbe::Done(Ok(MediaInfo { duration: f64::INFINITY, video: None, audio: true })));
+        // A long one: proportional to its length.
+        let file = samples::ogg_opus(3.0);
+        let long = probe_part(&file, Some(Some(file.len() as u64 * 10)), 0);
+        assert_eq!(long, PartProbe::Done(Ok(MediaInfo { duration: 30.0, video: None, audio: true })));
+        // WAV: the declared data size, not the bytes at hand.
+        let wav = samples::wav(10.0);
+        assert_eq!(
+            probe_part(&wav[..PREFIX_MIN], Some(Some(wav.len() as u64)), 0),
+            PartProbe::Done(Ok(MediaInfo { duration: 10.0, video: None, audio: true }))
+        );
+        // MP3 without a frame count: CBR over the whole length, else unknown.
+        let mp3 = samples::mp3(2.0);
+        let PartProbe::Done(Ok(info)) = probe_part(&mp3[..mp3.len() / 2], Some(Some(mp3.len() as u64)), 0) else {
+            panic!()
+        };
+        assert!((info.duration - 2.0).abs() < 0.05, "{}", info.duration);
+        let PartProbe::Done(Ok(info)) = probe_part(&mp3[..mp3.len() / 2], Some(None), 0) else { panic!() };
+        assert_eq!(info.duration, f64::INFINITY);
+    }
+
+    #[test]
+    fn mp4_with_moov_after_the_prefix_seeks_to_it() {
+        // ftyp, a large mdat, then moov: the prefix ends inside mdat.
+        let file = samples::mp4(2.5, (320, 240));
+        let moov_at = file.windows(4).position(|w| w == b"moov").unwrap() - 4;
+        let moov_len = u32::from_be_bytes(file[moov_at..moov_at + 4].try_into().unwrap()) as usize;
+        let moov = &file[moov_at..moov_at + moov_len];
+        let ftyp = &file[..moov_at];
+        let mdat_len = PREFIX_MIN * 4;
+        let mut mdat = (mdat_len as u32).to_be_bytes().to_vec();
+        mdat.extend_from_slice(b"mdat");
+        mdat.resize(mdat_len, 0);
+        let whole = [ftyp, &mdat, moov].concat();
+        let prefix = &whole[..PREFIX_MIN];
+        assert!(prefix_enough(prefix, None), "the moov is not in this prefix: seek");
+        let offset = (ftyp.len() + mdat_len) as u64;
+        assert_eq!(probe_part(prefix, Some(Some(whole.len() as u64)), 0), PartProbe::Seek(offset));
+        // The range from there: the moov box (whole, then cut).
+        let expect = MediaInfo { duration: 2.5, video: Some((320, 240)), audio: true };
+        assert_eq!(probe_part(moov, None, offset), PartProbe::Done(Ok(expect)));
+        // A moov that begins in the prefix but continues: more is needed.
+        let mut cut = [ftyp, moov].concat();
+        cut.truncate(ftyp.len() + 40);
+        cut.resize(PREFIX_MIN, 0);
+        let at = ftyp.len();
+        cut[at..at + 4].copy_from_slice(&((PREFIX_MIN * 2) as u32).to_be_bytes());
+        assert!(!prefix_enough(&cut, None));
+        // A 64-bit box size and a broken chain.
+        let mut large = 1u32.to_be_bytes().to_vec();
+        large.extend_from_slice(b"mdat");
+        large.extend_from_slice(&(u64::from(u32::MAX) + 16).to_be_bytes());
+        large.resize(PREFIX_MIN, 0);
+        assert_eq!(probe_part(&large, Some(None), 0), PartProbe::Seek(u64::from(u32::MAX) + 16));
+        let mut broken = 4u32.to_be_bytes().to_vec();
+        broken.extend_from_slice(b"ftyp");
+        assert_eq!(moov_extent(&broken), Moov::Broken);
+    }
+
+    #[test]
+    fn ogg_with_many_streams_is_linear() {
+        // 200k streams, each begun by a minimal Opus BOS page: a linear
+        // stream lookup per page made this quadratic (~2e10 comparisons).
+        let mut head = b"OpusHead\x01\x02".to_vec();
+        head.extend_from_slice(&[0; 9]);
+        let mut page = b"OggS\0\x02".to_vec();
+        page.extend_from_slice(&[0; 8]);
+        let serial_at = page.len();
+        page.extend_from_slice(&[0; 12]);
+        page.push(1);
+        page.push(head.len() as u8);
+        page.extend_from_slice(&head);
+        let mut body = Vec::with_capacity(page.len() * 200_000);
+        for serial in 0..200_000u32 {
+            page[serial_at..serial_at + 4].copy_from_slice(&serial.to_le_bytes());
+            body.extend_from_slice(&page);
+        }
+        let start = std::time::Instant::now();
+        assert_eq!(probe(&body).map(|i| i.audio), Ok(true));
+        assert!(start.elapsed() < std::time::Duration::from_secs(5), "{:?}", start.elapsed());
+    }
+
+    #[test]
+    fn version_1_movie_header_duration() {
+        // A v1 mvhd: version/flags, 64-bit creation and modification times,
+        // the timescale, a 64-bit duration, then the rate (0x00010000).
+        let mut v1 = vec![1, 0, 0, 0];
+        v1.extend_from_slice(&[0; 16]);
+        v1.extend_from_slice(&1000u32.to_be_bytes());
+        v1.extend_from_slice(&10_000u64.to_be_bytes());
+        v1.extend_from_slice(&0x0001_0000u32.to_be_bytes());
+        v1.extend_from_slice(&[0; 76]);
+        assert_eq!(header_duration(&v1), Some((1000, 10_000)));
+        // A fragmented file's zero duration stays zero (the mehd fallback).
+        v1[24..32].copy_from_slice(&0u64.to_be_bytes());
+        assert_eq!(header_duration(&v1), Some((1000, 0)));
+        // Swapped into a whole file.
+        let mut file = samples::mp4(2.5, (320, 240));
+        let at = file.windows(4).position(|w| w == b"mvhd").unwrap() - 4;
+        let old = u32::from_be_bytes(file[at..at + 4].try_into().unwrap()) as usize;
+        let mut v1 = vec![1, 0, 0, 0];
+        v1.extend_from_slice(&[0; 16]);
+        v1.extend_from_slice(&1000u32.to_be_bytes());
+        v1.extend_from_slice(&2_500u64.to_be_bytes());
+        v1.extend_from_slice(&0x0001_0000u32.to_be_bytes());
+        v1.extend_from_slice(&[0; 76]);
+        let mut mvhd = ((v1.len() + 8) as u32).to_be_bytes().to_vec();
+        mvhd.extend_from_slice(b"mvhd");
+        mvhd.extend_from_slice(&v1);
+        let grow = mvhd.len() - old;
+        file.splice(at..at + old, mvhd);
+        let moov = file.windows(4).position(|w| w == b"moov").unwrap() - 4;
+        let size = u32::from_be_bytes(file[moov..moov + 4].try_into().unwrap()) + grow as u32;
+        file[moov..moov + 4].copy_from_slice(&size.to_be_bytes());
+        assert_eq!(probe(&file).map(|i| i.duration), Ok(2.5));
     }
 
     #[test]

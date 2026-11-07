@@ -35,7 +35,7 @@ use rustc_hash::FxHashMap;
 
 use crate::html::HtmlMediaElement;
 use crate::lazy_module::{lazy_globals, LazyModule};
-use crate::media_format::{self, MediaInfo};
+use crate::media_format::{self, MediaInfo, PartProbe};
 use crate::node::{node_value, NodeData};
 use crate::page::{MediaFetchHandle, MediaRequest, MediaResponse, PageDom};
 use crate::util::*;
@@ -380,13 +380,27 @@ pub(crate) fn flush(page: &PageDom, this: &Weak<PageDom>) {
             handle(&page, event);
         }
     }
+    release_events(page, events);
+}
+
+fn release_events(page: &PageDom, events: Vec<MediaEvent>) {
     let mut dom = page.dom.borrow_mut();
     for event in events {
-        if let MediaChange::SourceInserted(source) = event.change {
-            dom.release(source);
+        for held in event.change.held() {
+            dom.release(held);
         }
         dom.release(event.node);
     }
+}
+
+/// HTML keeps the source pointer's place when the `<source>` it is after
+/// is removed: it moves to after that node's previous sibling.
+fn source_removed(page: &PageDom, node: NodeId, source: NodeId, previous: Option<NodeId>) {
+    with(page, node, |st| {
+        if st.pointer == Some(source) {
+            st.pointer = previous;
+        }
+    });
 }
 
 /// Releases everything the page's media elements hold: timers, fetches,
@@ -433,6 +447,7 @@ fn handle(page: &Rc<PageDom>, event: &MediaEvent) {
                 internal_pause(page, node);
             }
         }
+        MediaChange::SourceRemoved { source, previous } => source_removed(page, node, source, previous),
         MediaChange::SourceInserted(_) => {
             let (network, awaiting, generation) =
                 peek(page, node, |st| (st.network, st.awaiting_source, st.generation));
@@ -771,10 +786,28 @@ fn resolve(page: &PageDom, node: NodeId, value: &str) -> Option<String> {
 /// each one that cannot be used gets an `error` event. Out of candidates,
 /// the element waits for another `<source>`.
 fn next_source(page: &Rc<PageDom>, node: NodeId, generation: u32) {
-    let sources = source_children(page, node);
+    // Removals since the pointer last moved (still queued) keep its place.
+    let removals = page.dom.borrow_mut().take_source_removals(node);
+    if !removals.is_empty() {
+        for event in &removals {
+            if let MediaChange::SourceRemoved { source, previous } = event.change {
+                source_removed(page, node, source, previous);
+            }
+        }
+        release_events(page, removals);
+    }
     let pointer = peek(page, node, |st| st.pointer);
-    let start = pointer.and_then(|p| sources.iter().position(|&s| s == p)).map_or(0, |i| i + 1);
-    for &source in &sources[start.min(sources.len())..] {
+    let sources = {
+        let dom = page.dom.borrow();
+        let first = match pointer {
+            Some(p) if dom.parent(p).ok().flatten() == Some(node) => dom.next_sibling(p).ok().flatten(),
+            _ => dom.first_child(node).ok().flatten(),
+        };
+        std::iter::successors(first, |&c| dom.next_sibling(c).ok().flatten())
+            .filter(|&c| dom.element(c).is_ok_and(|e| e.is_html() && &*e.name.local == "source"))
+            .collect::<Vec<_>>()
+    };
+    for &source in &sources {
         with(page, node, |st| st.pointer = Some(source));
         let (src, ty) = {
             let dom = page.dom.borrow();
@@ -818,6 +851,25 @@ fn fetch_resource(page: &Rc<PageDom>, node: NodeId, generation: u32, resource: R
         });
         return;
     }
+    start_fetch(page, node, generation, resource, source, Seek::default());
+}
+
+/// Where a fetch starts in the resource: past the boxes of an MP4 that come
+/// before its `moov` (a `Range` request), after `count` such hops.
+#[derive(Clone, Copy, Default)]
+struct Seek {
+    start: u64,
+    count: u8,
+}
+
+fn start_fetch(
+    page: &Rc<PageDom>,
+    node: NodeId,
+    generation: u32,
+    resource: Resource,
+    source: Option<NodeId>,
+    seek: Seek,
+) {
     with(page, node, |st| st.fetching = true);
     update_pin(page, node);
     let weak = Rc::downgrade(page);
@@ -826,24 +878,31 @@ fn fetch_resource(page: &Rc<PageDom>, node: NodeId, generation: u32, resource: R
         if page.is_disposed() || peek(&page, node, |st| st.generation) != generation {
             return;
         }
-        fetched(&page, node, generation, source, result);
+        fetched(&page, node, generation, source, seek, result);
     };
     match resource {
         Resource::Bytes(body) => {
-            let response = MediaResponse { status: 200, mime: String::new(), body: body.to_vec() };
+            let response = MediaResponse { status: 200, mime: String::new(), body: body.to_vec(), partial: None };
             page.post_task(Box::new(move || done(Ok(response))));
         }
         Resource::Unreadable => page.post_task(Box::new(move || done(Err("unreadable srcObject".into())))),
         Resource::Url(url) if url.starts_with("blob:") => {
             let result = page
                 .blob_url(&url)
-                .map(|(bytes, mime)| MediaResponse { status: 200, mime, body: bytes.to_vec() })
+                .map(|(bytes, mime)| MediaResponse { status: 200, mime, body: bytes.to_vec(), partial: None })
                 .ok_or_else(|| "revoked or unknown blob URL".to_owned());
             page.post_task(Box::new(move || done(result)));
         }
         Resource::Url(url) => {
             let crossorigin = page.dom.borrow().get_attribute(node, "crossorigin").ok().flatten().map(str::to_owned);
-            let request = MediaRequest { url, video: is_video(page, node), crossorigin };
+            // Only the container headers are read: a long or endless body
+            // is cut once they are in (the load event waits for them only).
+            let part = crate::page::BodyPart {
+                start: seek.start,
+                limit: media_format::PREFIX_LIMIT,
+                enough: media_format::prefix_enough,
+            };
+            let request = MediaRequest { url, video: is_video(page, node), crossorigin, part };
             match page.hooks() {
                 Some(hooks) => {
                     let handle = hooks.fetch_media(request, Box::new(done));
@@ -861,16 +920,30 @@ fn fetched(
     node: NodeId,
     generation: u32,
     source: Option<NodeId>,
+    seek: Seek,
     result: Result<MediaResponse, String>,
 ) {
+    // Dropping the fetch stops a transfer cut short.
     with(page, node, |st| {
         st.fetching = false;
         st.fetch = None;
     });
     update_pin(page, node);
     let probed = match result {
+        // A server that ignored the `Range` answers 200 from the start.
+        Ok(r) if seek.start > 0 && r.status != 206 => Err(FORMAT_ERROR),
         Ok(r) if (200..300).contains(&r.status) && !r.body.is_empty() => {
-            media_format::probe(&r.body).map_err(|e| e.message())
+            match media_format::probe_part(&r.body, r.partial.map(|p| p.total), seek.start) {
+                PartProbe::Done(probe) => probe.map_err(|e| e.message()),
+                // An MP4 with its `moov` after the media data.
+                PartProbe::Seek(offset) if seek.count < media_format::MAX_SEEKS => {
+                    let url = peek(page, node, |st| st.current_src.clone());
+                    let next = Seek { start: seek.start.saturating_add(offset), count: seek.count + 1 };
+                    start_fetch(page, node, generation, Resource::Url(url), source, next);
+                    return;
+                }
+                PartProbe::Seek(_) => Err(media_format::ProbeError::Unrecognized.message()),
+            }
         }
         _ => Err(FORMAT_ERROR),
     };

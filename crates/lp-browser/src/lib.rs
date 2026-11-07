@@ -931,6 +931,7 @@ impl Browser {
             crossorigin: None,
             initiator: None,
             module: None,
+            part: None,
         };
         loader.fetch(self, request, done);
     }
