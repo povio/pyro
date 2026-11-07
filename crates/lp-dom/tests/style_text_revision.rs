@@ -152,7 +152,7 @@ fn a_style_sheet_text_is_its_child_text_content() {
     // not part of the sheet, for the engine and the renderer alike.
     let (dom, d) = doc("<head><style id=s>p{}</style></head><body></body>");
     let s = find(&dom.borrow(), d, "#s");
-    let opts = RenderHtml { style_text: &|_| None, stylesheet_href: &|_| None, mark: None };
+    let opts = RenderHtml { style_text: &|_| None, stylesheet_href: &|_| None, mark: None, adopted: None };
     let (em, inner) = {
         let mut dom = dom.borrow_mut();
         let em = dom.create_element(d, "em").unwrap();

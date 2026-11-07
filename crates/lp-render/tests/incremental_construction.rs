@@ -35,7 +35,7 @@ impl Page {
         self.dom.borrow().first_child(el).unwrap().unwrap()
     }
     pub(crate) fn snapshot(&self) -> Snapshot {
-        let opts = RenderHtml { style_text: &|_| None, stylesheet_href: &|_| None, mark: None };
+        let opts = RenderHtml { style_text: &|_| None, stylesheet_href: &|_| None, mark: None, adopted: None };
         let tree = self.dom.borrow().render_tree(self.doc, &opts).unwrap();
         let tree = Tree {
             nodes: tree
