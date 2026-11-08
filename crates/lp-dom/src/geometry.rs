@@ -90,18 +90,39 @@ pub struct ExternalSticky {
     pub limit: Option<(f64, f64, f64, f64)>,
 }
 
-/// The whole document as the external engine laid it out, keyed by
-/// [`crate::snapshot::render_key`].
+/// The whole document's boxes as the external engine laid it out, keyed
+/// by [`crate::snapshot::render_key`] (the words: [`GeometrySource::text_words`]).
 #[derive(Clone, Debug, Default)]
 pub struct ExternalGeometry {
     /// Element boxes in tree order.
     pub boxes: Vec<(u64, ExternalBox)>,
-    /// Words of text nodes, in layout order.
-    pub words: Vec<(u64, ExternalWord)>,
     pub sticky: Vec<(u64, ExternalSticky)>,
     /// Scroll size (at least the viewport).
     pub document_width: f64,
     pub document_height: f64,
+}
+
+/// A viewport point to hit-test ([`GeometrySource::hit_candidates`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HitProbe {
+    pub x: f64,
+    pub y: f64,
+    /// Only `y` counts (WebDriver's vertical hit test).
+    pub ignore_x: bool,
+    /// The window scroll offset: a box outside every `position: fixed` box
+    /// lies at the point plus it in document coordinates.
+    pub window_scroll: (f64, f64),
+}
+
+/// One element [`GeometrySource::hit_candidates`] reports: a candidate
+/// (`hit`: its box may hold the point) or an ancestor of one, with its box
+/// and its place in tree order among the reported elements.
+#[derive(Clone, Debug, PartialEq)]
+pub struct HitVisit {
+    pub key: u64,
+    pub order: u32,
+    pub bounds: ExternalBox,
+    pub hit: bool,
 }
 
 /// An element's CSS boxes as quads (CDP `DOM.getBoxModel` and
@@ -145,8 +166,42 @@ pub trait GeometrySource {
     fn element_quads(&self, _key: u64) -> Option<ExternalQuads> {
         None
     }
-    /// The whole document as of the last sync.
+    /// The whole document's boxes as of the last sync.
     fn geometry(&self) -> Option<ExternalGeometry>;
+    /// Every word of every text node as of the last sync, in layout order
+    /// (`None`: the engine reports none).
+    fn text_words(&self) -> Option<Vec<(u64, ExternalWord)>> {
+        None
+    }
+    /// [`GeometrySource::text_words`] for the text nodes below the element
+    /// `key` (more words may come; the caller filters), as of the last sync,
+    /// in the same order (`None`: the engine reads no part of the document
+    /// alone, or `key` is not one of its nodes).
+    fn subtree_words(&self, _key: u64) -> Option<Vec<(u64, ExternalWord)>> {
+        None
+    }
+    /// The `position: sticky` elements as of the last sync, with their
+    /// inputs: [`ExternalGeometry::sticky`] without the boxes.
+    fn sticky_elements(&self) -> Vec<(u64, ExternalSticky)> {
+        self.geometry().map(|g| g.sticky).unwrap_or_default()
+    }
+    /// The elements whose box may hold `probe` and their ancestors, in
+    /// tree order, from a descent of the engine's tree that skips the
+    /// subtrees that cannot hold it (`None`: the engine has no such
+    /// descent, and the whole document's boxes are tested). `shifted`: the
+    /// keys of the elements this document moves from where the engine laid
+    /// them out (scrolled containers, sticky boxes); `offset`: how far any
+    /// element's box is moved (document px added to the point), consulted
+    /// when `shifted` is not empty. The candidates are a superset: the
+    /// caller tests each box itself.
+    fn hit_candidates(
+        &self,
+        _probe: &HitProbe,
+        _offset: &dyn Fn(u64) -> (f64, f64),
+        _shifted: &[u64],
+    ) -> Option<Vec<HitVisit>> {
+        None
+    }
     /// The document's scroll size as of the last sync.
     fn document_size(&self) -> Option<(f64, f64)>;
     /// Whether any element is `position: sticky` (as of the last sync).
@@ -289,14 +344,12 @@ impl TextRun {
     }
 }
 
-/// The whole document's geometry.
+/// The whole document's boxes (or, for one hit test, the boxes of the
+/// elements it may hit and of their ancestors: see
+/// [`crate::layout::Layout::element_from_point`]).
 #[derive(Clone, Debug, Default)]
 pub struct LayoutResult {
     pub boxes: FxHashMap<NodeId, LayoutBox>,
-    /// Text nodes: the union of their words, and whether inside a fixed box.
-    pub texts: FxHashMap<NodeId, (Rect, bool)>,
-    /// Every word, in layout order.
-    pub text_runs: Vec<TextRun>,
     /// Document scroll size (at least the viewport).
     pub document_width: f64,
     pub document_height: f64,
@@ -305,6 +358,39 @@ pub struct LayoutResult {
     /// only on the tree, the styles and the boxes, which this result is
     /// valid for (a new result is read after any of them change).
     pub(crate) hit: RefCell<HitTestData>,
+}
+
+/// The whole document's words, for text ranges, carets and selection.
+#[derive(Clone, Debug, Default)]
+pub struct TextResult {
+    /// Text nodes: the union of their words, and whether inside a fixed box.
+    pub texts: FxHashMap<NodeId, (Rect, bool)>,
+    /// Every word, in layout order.
+    pub text_runs: Vec<TextRun>,
+}
+
+impl TextResult {
+    pub fn from_words(dom: &Dom, words: Vec<(u64, ExternalWord)>) -> TextResult {
+        let mut out = TextResult::default();
+        let mut seen = FxHashSet::default();
+        for (key, w) in words {
+            let Some(node) = node_of(dom, key) else { continue };
+            let (Some(first), Some(last)) = (w.edges.first(), w.edges.last()) else { continue };
+            let rect = Rect { x: w.x, y: w.y, width: w.width, height: w.height };
+            let (start, end) = (first.0.min(last.0), first.0.max(last.0));
+            let union = out.texts.entry(node).or_insert((rect, w.fixed));
+            if seen.insert(node) {
+                *union = (rect, w.fixed);
+            } else {
+                let r = union.0;
+                let (x0, y0) = (r.x.min(rect.x), r.y.min(rect.y));
+                let (x1, y1) = ((r.x + r.width).max(rect.x + rect.width), (r.y + r.height).max(rect.y + rect.height));
+                union.0 = Rect { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
+            }
+            out.text_runs.push(TextRun { node, start, end, rect, fixed: w.fixed, edges: w.edges.into() });
+        }
+        out
+    }
 }
 
 /// One stacking level of a paint key: (layer, z-index, box order).
@@ -352,34 +438,8 @@ impl LayoutResult {
         // Tree order: an element's ancestors are in before it.
         for (i, (key, b)) in g.boxes.iter().enumerate() {
             if let Some(el) = node_of(dom, *key) {
-                let mut b = LayoutBox::from_external(b, i as u32 + 1);
-                let mut cur = dom.parent_element(el).ok().flatten();
-                while let Some(p) = cur {
-                    if let Some(pb) = out.boxes.get(&p) {
-                        b.in_positioned |= pb.in_positioned;
-                        break;
-                    }
-                    cur = dom.parent_element(p).ok().flatten();
-                }
-                out.boxes.insert(el, b);
+                out.insert_box(dom, el, LayoutBox::from_external(b, i as u32 + 1));
             }
-        }
-        let mut seen = FxHashSet::default();
-        for (key, w) in g.words {
-            let Some(node) = node_of(dom, key) else { continue };
-            let (Some(first), Some(last)) = (w.edges.first(), w.edges.last()) else { continue };
-            let rect = Rect { x: w.x, y: w.y, width: w.width, height: w.height };
-            let (start, end) = (first.0.min(last.0), first.0.max(last.0));
-            let union = out.texts.entry(node).or_insert((rect, w.fixed));
-            if seen.insert(node) {
-                *union = (rect, w.fixed);
-            } else {
-                let r = union.0;
-                let (x0, y0) = (r.x.min(rect.x), r.y.min(rect.y));
-                let (x1, y1) = ((r.x + r.width).max(rect.x + rect.width), (r.y + r.height).max(rect.y + rect.height));
-                union.0 = Rect { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
-            }
-            out.text_runs.push(TextRun { node, start, end, rect, fixed: w.fixed, edges: w.edges.into() });
         }
         for (key, s) in g.sticky {
             if let Some(el) = node_of(dom, key) {
@@ -387,5 +447,20 @@ impl LayoutResult {
             }
         }
         out
+    }
+
+    /// Adds `el`'s box, inheriting the positioned layer from the nearest
+    /// ancestor with a box (the ancestors are added before their
+    /// descendants).
+    pub(crate) fn insert_box(&mut self, dom: &Dom, el: NodeId, mut b: LayoutBox) {
+        let mut cur = dom.parent_element(el).ok().flatten();
+        while let Some(p) = cur {
+            if let Some(pb) = self.boxes.get(&p) {
+                b.in_positioned |= pb.in_positioned;
+                break;
+            }
+            cur = dom.parent_element(p).ok().flatten();
+        }
+        self.boxes.insert(el, b);
     }
 }

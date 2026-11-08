@@ -143,6 +143,12 @@ pub struct LayoutData {
     pub final_layout: Layout,
     pub scroll_offset: crate::Point<f64>,
     pub scrollable_overflow: KurboRect,
+    /// lightningpanda: a bound of what hit testing finds in this box's subtree
+    /// (device px, its own coordinates, like `scrollable_overflow`): the
+    /// scrollable overflow with the boxes and lines of no area that it drops
+    /// (a `line-height: 0` line, a box of no width), and the glyph runs' content
+    /// areas reaching past the line boxes (`BaseDocument::resolve_transforms`).
+    pub hit_overflow: KurboRect,
     /// The unrounded layout and the fractional part of the parent's absolute position the final
     /// layout was last rounded from (incremental rounding: `RoundTree::rounded_unchanged`).
     pub rounded_from: Option<(Layout, f32, f32)>,
@@ -165,6 +171,7 @@ impl LayoutData {
             final_layout: Layout::new(),
             scroll_offset: crate::Point::ZERO,
             scrollable_overflow: KurboRect::ZERO,
+            hit_overflow: KurboRect::ZERO,
             rounded_from: None,
             collapsed_border: None,
             table_cell_index: u32::MAX,

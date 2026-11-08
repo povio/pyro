@@ -823,6 +823,7 @@ impl LayoutPassState<'_> {
         #[cfg(not(feature = "floats"))]
         {
             inline_layout.layout.break_all_lines(Some(max_advance));
+            inline_layout.hit_reach = None;
         }
 
         // Out-of-flow candidates bubbled up from this container and its in-flow subtree.
@@ -861,6 +862,7 @@ impl LayoutPassState<'_> {
                 let wraps = self.nodes[node_id].primary_styles().is_none_or(|s| {
                     s.clone_text_wrap_mode() == stylo_to_parley::stylo::TextWrapMode::Wrap
                 });
+                inline_layout.hit_reach = None;
                 let mut breaker = inline_layout.layout.break_lines();
                 let mut line_slot = block_ctx.find_content_slot(0.0, 0.0, Clear::None, None);
                 let mut has_active_floats = line_slot.segment_id.is_some();
@@ -1061,6 +1063,16 @@ impl LayoutPassState<'_> {
             })
             .unwrap_or((parley::layout::Alignment::Start, None));
 
+        // lightningpanda: aligning moves each line with its runs (the glyph
+        // reach is measured per line, `TextLayout::hit_reach`), except that
+        // justification spaces the runs out within it: justifying now or
+        // before measures again.
+        let justified = alignment == parley::layout::Alignment::Justify
+            || last_line_alignment == Some(parley::layout::Alignment::Justify);
+        if justified || inline_layout.justified {
+            inline_layout.hit_reach = None;
+        }
+        inline_layout.justified = justified;
         inline_layout.layout.align(
             alignment,
             AlignmentOptions {

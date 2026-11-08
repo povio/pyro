@@ -51,6 +51,13 @@ pub struct TextLayout {
     /// (`Layout::calculate_content_widths`, which walks every cluster): every width the text is
     /// measured or laid out at reads them instead.
     pub text_content_widths: Option<parley::layout::ContentWidths>,
+    /// lightningpanda: how far (device px) the content areas of the glyph runs
+    /// reach outside their line boxes (see `BaseDocument::resolve_transforms`),
+    /// measured by the first transform pass after the lines were last broken
+    /// (or justified); `None` until then (breaking resets it).
+    pub hit_reach: Option<f64>,
+    /// lightningpanda: the last alignment justified some lines.
+    pub justified: bool,
 }
 
 impl TextLayout {

@@ -655,6 +655,17 @@ pub struct ComputedStyle {
     pub translucent: bool,
     /// `isolation: isolate`.
     pub isolated: bool,
+    /// The element is the containing block of its `position: absolute`
+    /// descendants: positioned, or [`Self::contains_fixed`], or
+    /// `will-change: position` (as Blitz lays them out:
+    /// `stylo_taffy::convert::containing_block_claims`).
+    pub contains_absolute: bool,
+    /// The element is the containing block of its `position: fixed` (and
+    /// absolute) descendants without being positioned: a transform,
+    /// perspective, filter, backdrop filter, `contain: layout | paint`, a
+    /// size container, or `will-change` of those. A non-atomic inline box
+    /// only through a filter or `will-change`.
+    pub contains_fixed: bool,
     /// Own computed `user-select`.
     pub user_select: UserSelect,
 }
@@ -1566,6 +1577,43 @@ impl StyleEngine {
     }
 }
 
+/// Whether `style` makes its element the containing block of `position:
+/// fixed` descendants (and so of absolute ones), and whether it makes it one
+/// of absolute descendants without that (`will-change: position`), whatever
+/// its `position`: the rules Blitz lays out by
+/// (`stylo_taffy::convert::containing_block_claims` and
+/// `inline_containing_block_claims`, for a non-atomic inline box, to which
+/// transforms and containment do not apply).
+fn containing_block_claims(
+    style: &style::properties::ComputedValues,
+    display: style::values::specified::box_::Display,
+) -> (bool, bool) {
+    use style::values::computed::{Perspective, Rotate, Scale, Translate};
+    use style::values::specified::box_::{Contain, ContainerType, WillChangeBits};
+    let b = style.get_box();
+    let effects = style.get_effects();
+    let filtered = !effects.filter.0.is_empty() || !effects.backdrop_filter.0.is_empty();
+    let absolute_only = b.will_change.bits.intersects(WillChangeBits::POSITION);
+    if display.is_inline_flow() {
+        return (filtered || b.will_change.bits.intersects(WillChangeBits::FIXPOS_CB_NON_SVG), absolute_only);
+    }
+    let fixed = !b.transform.0.is_empty()
+        || !matches!(b.translate, Translate::None)
+        || !matches!(b.rotate, Rotate::None)
+        || !matches!(b.scale, Scale::None)
+        || !matches!(b.perspective, Perspective::None)
+        || b.will_change.bits.intersects(
+            WillChangeBits::TRANSFORM
+                | WillChangeBits::PERSPECTIVE
+                | WillChangeBits::FIXPOS_CB_NON_SVG
+                | WillChangeBits::CONTAIN,
+        )
+        || b.contain.intersects(Contain::LAYOUT | Contain::PAINT)
+        || b.container_type.intersects(ContainerType::SIZE | ContainerType::INLINE_SIZE)
+        || filtered;
+    (fixed, absolute_only)
+}
+
 /// The [`ComputedStyle`] of an element whose Stylo computed values are
 /// `style`, below a flat-tree parent computed as `above`. Values read
 /// typed; only non-initial values of the rarely set properties go through
@@ -1612,6 +1660,7 @@ fn derive_computed(
     let position = style.get_position();
     let ua = if e.is_html() { ua_display_of(&e.name.local) } else { "inline" };
     let effects = style.get_effects();
+    let (contains_fixed, contains_absolute_only) = containing_block_claims(style, d);
     ComputedStyle {
         display,
         block_flex_or_grid: d == D::Flex || d == D::Grid,
@@ -1667,6 +1716,8 @@ fn derive_computed(
         transformed: !b.transform.0.is_empty(),
         translucent: effects.opacity < 1.0,
         isolated: b.isolation == style::computed_values::isolation::T::Isolate,
+        contains_absolute: b.position != PositionProperty::Static || contains_fixed || contains_absolute_only,
+        contains_fixed,
         user_select: {
             use style::values::specified::ui::UserSelect as U;
             match style.get_ui().user_select {

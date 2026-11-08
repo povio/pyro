@@ -1529,9 +1529,16 @@ impl BaseDocument {
     /// styled `position: sticky`, from the set the style traversal keeps
     /// (O(sticky nodes), not a scan of the document).
     pub fn has_sticky(&self) -> bool {
+        self.sticky_node_ids().next().is_some()
+    }
+
+    /// lightningpanda: the nodes styled `position: sticky` (see
+    /// [`Self::has_sticky`]), in no particular order.
+    pub fn sticky_node_ids(&self) -> impl Iterator<Item = NodeId> + '_ {
         self.sticky_nodes
             .iter()
-            .any(|id| self.nodes.get(*id).is_some_and(crate::stylo::is_sticky))
+            .copied()
+            .filter(|id| self.nodes.get(*id).is_some_and(crate::stylo::is_sticky))
     }
 
     /// lightningpanda: whether a `resolve` could change anything: a resource arrived (it is

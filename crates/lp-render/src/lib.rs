@@ -23,6 +23,7 @@
 mod compare;
 mod geometry;
 mod hash;
+mod hit;
 mod mirror;
 mod net;
 mod page_box;
@@ -65,6 +66,7 @@ pub enum ElementDisplay {
 pub use compare::{compare, decode_png, diff_image, encode_jpeg, encode_png, CompareResult};
 pub use geometry::{BoxPosition, BoxQuads, LayoutBox, StickyBox, TextWord};
 pub use hash::scene_hash;
+pub use hit::{HitProbe, HitVisit};
 pub use mirror::{DeltaOp, MirrorStats, Rebuild, Tree, TreeKind, TreeNode, TOP};
 pub use net::Fetcher;
 
@@ -267,8 +269,6 @@ pub const CLIP_ATTRIBUTE: &str = "data-lp-render-clip";
 pub struct LayoutBoxes {
     /// By render key (`lp_dom::snapshot::render_key`).
     pub boxes: Vec<(u64, LayoutBox)>,
-    /// Each word of each text node (by its key), in layout order.
-    pub words: Vec<(u64, TextWord)>,
     /// `position: sticky` elements (their boxes are laid out as if static).
     pub sticky: Vec<(u64, StickyBox)>,
     pub document_width: f64,
@@ -1290,7 +1290,8 @@ impl Renderer {
     }
 
     /// Every element's box ([`Renderer::element_box`]) after
-    /// [`Renderer::sync_layout`], and the document's scroll size.
+    /// [`Renderer::sync_layout`], and the document's scroll size (the words:
+    /// [`Renderer::page_words`]).
     pub fn layout_boxes(&mut self, snap: &Snapshot, fetcher: &Arc<dyn Fetcher>) -> Result<LayoutBoxes, RenderError> {
         let timings = self.sync_layout(snap, fetcher)?;
         let page = snap.live.as_ref().map(|l| l.page).unwrap_or_default();
@@ -1300,8 +1301,9 @@ impl Renderer {
     }
 
     /// `page`'s persistent document as last synced: every element's box
-    /// ([`Renderer::element_box`]), every word, the sticky elements and the
-    /// document's scroll size (at least the viewport).
+    /// ([`Renderer::element_box`]), the sticky elements and the document's
+    /// scroll size (at least the viewport). The words, which cost a pass
+    /// over every line, are [`Renderer::page_words`]'s.
     pub fn page_layout(&self, page: u64) -> Option<LayoutBoxes> {
         let t = Instant::now();
         let m = self.mirrors.get(&page)?;
@@ -1328,16 +1330,72 @@ impl Renderer {
             }
             boxes.push((key, b));
         }
-        let words = g.text_words(doc).into_iter().filter_map(|w| Some((m.key_of(w.node)?, w))).collect();
         let (document_width, document_height) = self.document_size(page)?;
         Some(LayoutBoxes {
             boxes,
-            words,
             sticky,
             document_width,
             document_height,
             timings: Timings { scene: t.elapsed(), ..Timings::default() },
         })
+    }
+
+    /// Every word of every text node of `page`'s persistent document as
+    /// last synced (by the node's key), in layout order.
+    pub fn page_words(&self, page: u64) -> Option<Vec<(u64, TextWord)>> {
+        let m = self.mirrors.get(&page)?;
+        let g = self.geometry.get(&page)?;
+        Some(g.text_words(&m.doc).into_iter().filter_map(|w| Some((m.key_of(w.node)?, w))).collect())
+    }
+
+    /// [`Renderer::page_words`] for the text nodes below the element `key`
+    /// (with others: see `Geometry::subtree_words`), reading only the inline
+    /// formatting contexts in and around it. `None`: not a node of the page.
+    pub fn subtree_words(&self, page: u64, key: u64) -> Option<Vec<(u64, TextWord)>> {
+        let m = self.mirrors.get(&page)?;
+        let g = self.geometry.get(&page)?;
+        let within = m.node(key)?;
+        Some(g.subtree_words(&m.doc, within).into_iter().filter_map(|w| Some((m.key_of(w.node)?, w))).collect())
+    }
+
+    /// The `position: sticky` elements of `page`'s persistent document as
+    /// last synced (by key, with their sticky inputs): the set Blitz's style
+    /// traversal keeps, not a pass over the document.
+    pub fn sticky_elements(&self, page: u64) -> Option<Vec<(u64, StickyBox)>> {
+        let m = self.mirrors.get(&page)?;
+        let g = self.geometry.get(&page)?;
+        let doc = &m.doc;
+        let mut out: Vec<(u64, StickyBox)> = doc
+            .sticky_node_ids()
+            .filter_map(|id| {
+                let node = doc.get_node(id)?;
+                if !node.is_element() || !node.primary_styles().is_some_and(|s| !s.clone_display().is_none()) {
+                    return None;
+                }
+                let key = m.key_of(id)?;
+                let b = g.element_box(doc, id)?;
+                (b.position == BoxPosition::Sticky).then(|| (key, g.sticky_box(doc, id)))
+            })
+            .collect();
+        out.sort_by_key(|(key, _)| *key);
+        Some(out)
+    }
+
+    /// The elements of `page`'s persistent document whose box may hold
+    /// `probe`, and their ancestors, in tree order (see [`HitVisit`] and
+    /// `hit`): what lp-dom hit-tests instead of every element's box.
+    /// `shifted`: the keys of the elements lp-dom moves (scrolled
+    /// containers, sticky boxes), `offset`: how far it moves any element.
+    pub fn hit_candidates(
+        &self,
+        page: u64,
+        probe: &HitProbe,
+        offset: &dyn Fn(u64) -> (f64, f64),
+        shifted: &[u64],
+    ) -> Option<Vec<HitVisit>> {
+        let m = self.mirrors.get(&page)?;
+        let g = self.geometry.get(&page)?;
+        Some(hit::candidates(g, m, probe, offset, shifted))
     }
 
     /// `page`'s document scroll size (at least the viewport), as last synced.
