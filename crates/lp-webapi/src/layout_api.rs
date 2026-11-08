@@ -672,6 +672,21 @@ fn property_attribute_names() -> &'static [Vec<(&'static str, bool)>] {
     })
 }
 
+/// Every name of [`property_attribute_names`], with its property's index (a
+/// name defined twice: the later, as on the prototype).
+fn property_index_by_name() -> &'static rustc_hash::FxHashMap<&'static str, usize> {
+    static INDEX: std::sync::OnceLock<rustc_hash::FxHashMap<&'static str, usize>> = std::sync::OnceLock::new();
+    INDEX.get_or_init(|| {
+        let mut index = rustc_hash::FxHashMap::default();
+        for (i, names) in property_attribute_names().iter().enumerate() {
+            for &(name, _) in names {
+                index.insert(name, i);
+            }
+        }
+        index
+    })
+}
+
 /// Assigning to a computed style's property: Chrome's error, in sloppy code
 /// too.
 fn computed_read_only<'s>(_s: &Scope<'s>, _c: &ComputedData, _v: Value<'s>) -> JsResult<()> {
@@ -685,17 +700,13 @@ impl JsClass for ComputedStyle {
     type Parent = NoParent;
     fn define(def: &mut ClassDef<Self>) {
         def.not_exposed();
-        // About 1,600 attributes, defined on the realm's first
-        // `getComputedStyle`: as JIT-called DOM getters (JavaScriptCore
-        // interns each by a linear search) they cost each realm ~1.5 ms;
-        // a read's cost is the style lookup, not the call.
-        def.attributes_without_jit_getters();
         // Every property, by its dashed name and its IDL attribute names, as
         // attributes of the prototype (CSSOM `CSSStyleDeclaration`). No named
         // property hook: a class with one sends every property read through
         // it, which defeats the inline cache.
         let names = property_attribute_names();
         assert!(names.len() <= MAX_PROPERTIES, "CSS properties beyond the getter table: raise MAX_PROPERTIES");
+        let mut own = Vec::with_capacity(names.len() * 2);
         for (i, names) in names.iter().enumerate() {
             let get = PROPERTY_GETTERS[i / 16][i % 16];
             for &(name, enumerable) in names {
@@ -703,8 +714,36 @@ impl JsClass for ComputedStyle {
                 if !enumerable {
                     def.unenumerable_last_accessor();
                 }
+                // Chrome has the properties as named properties of the object
+                // itself: the camel-cased names listed and enumerable, the
+                // dashed and `Webkit` names own but unlisted, the `epub*`
+                // aliases listed by getOwnPropertyNames only; `cssFloat` is
+                // an attribute of the interface. The values stay with the
+                // prototype's accessors, so reads stay inline-cached.
+                let how = if name == "cssFloat" {
+                    continue;
+                } else if crate::computed_properties::EPUB_ALIASES.iter().any(|&(alias, _)| alias == name) {
+                    lp_js::OwnName::LISTED_HIDDEN
+                } else if enumerable {
+                    lp_js::OwnName::ENUMERABLE
+                } else {
+                    lp_js::OwnName::UNLISTED
+                };
+                own.push((name, how));
             }
         }
+        // In Chrome's order: by code unit.
+        own.sort_unstable_by_key(|&(name, _)| name);
+        for (name, how) in own {
+            def.own_property_name(name, how);
+        }
+        // An own name's value (a descriptor, spread, `Object.entries`) is
+        // the property's, as Chrome's named property is, not whatever the
+        // prototype chain holds after `Object.setPrototypeOf`.
+        def.own_property_value(|s, c, name| {
+            let Some(&i) = property_index_by_name().get(name) else { return Ok(None) };
+            Ok(Some(PROPERTY_GETTERS[i / 16][i % 16](s, c)?))
+        });
         def.method("getPropertyValue", 1, |s, c, a| {
             let name = arg_string(&a, 0, "CSSStyleDeclaration.getPropertyValue")?;
             Ok(computed_string(s, &c.value(&name)))

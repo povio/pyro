@@ -494,14 +494,14 @@ fn custom_element_reactions_survive_a_long_task_drain() {
     assert_eq!(eval(&root, "conn + ':' + disc"), "300:300");
 }
 
-/// Chrome's shape of a computed style (Chrome 157), except for one thing:
-/// Chrome answers the CSS properties as own properties of the object (a
-/// named-property interceptor), here they are attributes of the prototype,
-/// read through the inline cache; making them own properties without losing
-/// that needs a JavaScriptCore change. So `hasOwnProperty`, `Object.keys`,
-/// `getOwnPropertyNames`, spread and `JSON.stringify` see only the indexed
-/// longhands (as Firefox, and the CSSOM IDL, have it). `for..in`, `in` and
-/// every read match.
+/// Chrome's shape of a computed style (Chrome 157). Chrome answers the CSS
+/// properties as named properties of the object; here the values come from
+/// attributes of the prototype, read through the inline cache, and the
+/// patched JavaScriptCore (`JSClassSetOwnPropertyNames`) makes the names own
+/// properties to own-property lookups and key listings, as Chrome has them.
+/// Still different: the prototype has the attributes too
+/// (`getOwnPropertyDescriptor(proto, 'color')` is defined, undefined in
+/// Chrome), and `defineProperty(cs, 'color', ..)` succeeds (Chrome throws).
 #[test]
 fn computed_style_shape_matches_chrome() {
     let (_t, _page, root) = page();
@@ -541,8 +541,59 @@ fn computed_style_shape_matches_chrome() {
         ),
         "750,750,true,true,true,true,true,true,true,false"
     );
-    // The one difference (see above).
-    assert_eq!(eval(&root, "getComputedStyle(document.body).hasOwnProperty('color')"), "false");
+    // Own properties as in Chrome: camel-cased names (and `float`, `webkit*`)
+    // listed and enumerable; dashed and `Webkit` names own but unlisted; the
+    // `epub*` aliases listed by getOwnPropertyNames only; `cssFloat` and the
+    // interface's attributes on the prototype.
+    assert_eq!(
+        eval(
+            &root,
+            "(() => { const cs = getComputedStyle(document.body);
+               return ['color', 'background-color', 'WebkitTransform', 'webkitTransform', 'float', 'cssFloat',
+                       'epubWritingMode', 'length', 'cssText', '0', 'foo'].map(n => n + ':' + cs.hasOwnProperty(n)).join(' '); })()"
+        ),
+        "color:true background-color:true WebkitTransform:true webkitTransform:true float:true cssFloat:false \
+         epubWritingMode:false length:false cssText:false 0:true foo:false"
+    );
+    assert_eq!(
+        eval(
+            &root,
+            "(() => { const cs = getComputedStyle(document.body);
+               const d = n => { const x = Object.getOwnPropertyDescriptor(cs, n);
+                 return x ? [typeof x.value, x.writable, x.enumerable, x.configurable, typeof x.get].join('/') : 'undefined'; };
+               return [d('color'), d('background-color'), d('0'), d('cssFloat'), d('epubWritingMode'),
+                       cs.color === Object.getOwnPropertyDescriptor(cs, 'color').value].join(' '); })()"
+        ),
+        "string/true/true/true/undefined string/true/true/true/undefined string/false/true/true/undefined undefined undefined true"
+    );
+    // Key listings: indices first, then the names by code unit; spread, Object.assign
+    // and JSON.stringify copy the enumerable ones, values read through the prototype.
+    assert_eq!(
+        eval(
+            &root,
+            "(() => { const cs = getComputedStyle(document.body); const named = a => a.filter(k => isNaN(+k));
+               const own = named(Object.getOwnPropertyNames(cs)), keys = named(Object.keys(cs));
+               const spread = { ...cs }, json = JSON.parse(JSON.stringify(cs));
+               return [own.length - keys.length, own.filter(k => !keys.includes(k)).every(k => k.startsWith('epub')),
+                       JSON.stringify(own) === JSON.stringify([...own].sort()), keys.includes('backgroundColor'),
+                       keys.includes('webkitTransform'), own.some(k => k.includes('-') || /^Webkit/.test(k)),
+                       keys.includes('cssFloat'), Object.getOwnPropertyNames(cs)[0] === '0',
+                       Object.keys(spread).length === Object.keys(cs).length, spread.color === cs.color,
+                       Object.keys(Object.assign({}, cs)).length === Object.keys(cs).length,
+                       Object.keys(json).length === Object.keys(cs).length, json.display === cs.display,
+                       named(Object.keys(getComputedStyle(document.createElement('i')))).length === keys.length].join(); })()"
+        ),
+        "9,true,true,true,true,false,false,true,true,true,true,true,true,true"
+    );
+    // Reads, `in` and deletion are unchanged: `delete` answers true and the value stays.
+    assert_eq!(
+        eval(
+            &root,
+            "(() => { const cs = getComputedStyle(document.body); const c = cs.color;
+               return [delete cs.color, cs.color === c, 'color' in cs].join(); })()"
+        ),
+        "true,true,true"
+    );
 }
 
 /// A listener added to a detached node that is then connected: the
