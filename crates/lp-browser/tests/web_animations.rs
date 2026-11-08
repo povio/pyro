@@ -483,9 +483,9 @@ fn review_inherited_custom_property_and_structural_selectors_reach_the_journal()
     );
     t.run_until_idle(Some(Instant::now() + Duration::from_millis(30)));
     eval(&root, "document.body.style.setProperty('--w', '120px'); s.className = 'on'; k.className = 'in'; 0");
-    let mut log: Vec<String> = settle(&mut t, &root, "transitionend:width:c").split(' ').map(str::to_owned).collect();
+    settle(&mut t, &root, "transitionend:width:c");
     run_until(&mut t, &root, "log.includes('transitionend:width:a') && log.includes('transitionend:width:b')");
-    log = eval(&root, "log.join(' ')").split(' ').map(str::to_owned).collect();
+    let mut log: Vec<String> = eval(&root, "log.join(' ')").split(' ').map(str::to_owned).collect();
     log.sort();
     assert_eq!(log.len(), 9, "{log:?}");
     for id in ["a", "b", "c"] {
