@@ -276,3 +276,39 @@ fn selector_cache_by_characters() {
     }
     assert!(cache.entry_count() <= 3 * 512, "{} entries", cache.entry_count());
 }
+
+/// The slot summaries the compiled queries reject elements on (name hash,
+/// class bits) follow every way an element's classes change: attribute
+/// writes and removals, namespaced `class` (not the classes), clones, parsed
+/// fragments and elements with more classes than the filter has bits.
+#[test]
+fn summaries_follow_class_changes() {
+    let (dom, d) = doc(PAGE);
+    let mut dom = dom.borrow_mut();
+    let q = |dom: &Dom, css: &str| dom.query_first(d, &parse_query(css).unwrap()).unwrap().unwrap();
+    let b = q(&dom, "span#b");
+    let m = q(&dom, "#m");
+    let link = q(&dom, "#link");
+    dom.set_attribute(b, "class", "z q").unwrap();
+    dom.set_attribute(link, "CLASS", "z").unwrap();
+    dom.remove_attribute(m, "id").unwrap();
+    dom.set_attribute_ns(m, None, "class", "y z").unwrap();
+    dom.set_attribute_ns(m, Some("urn:x"), "p:class", "q").unwrap();
+    let section = q(&dom, "#s");
+    let sx = q(&dom, "section > div.x");
+    dom.remove_attribute(sx, "class").unwrap();
+    let copy = dom.clone_node(section, true, None).unwrap();
+    let body = q(&dom, "body");
+    dom.append_child(body, copy).unwrap();
+    let many: String = (0..40).map(|i| format!("k{i} ")).collect();
+    let el = dom.create_element(d, "span").unwrap();
+    dom.set_attribute(el, "class", &many).unwrap();
+    dom.append_child(m, el).unwrap();
+    lp_dom::parse::set_inner_html(&mut dom, link, "<b class='z k3'>b</b><i class=q>i</i>").unwrap();
+    for css in [".x", ".y", ".z", ".q", ".x.y", ".z.q", "span.z", "b.z", ".k3", ".k39.k0", "div .z", "main .y > span"]
+        .iter()
+        .chain(SELECTORS)
+    {
+        agree(&dom, d, css);
+    }
+}

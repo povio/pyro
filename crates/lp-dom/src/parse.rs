@@ -885,13 +885,17 @@ fn parse_fragment_with(
 ) -> DomResult<NodeId> {
     let ctx = dom.check(context)?;
     let (ctx_name, ctx_attrs) = match &dom.n(ctx).kind {
-        NodeKind::Element(e) => (
+        // The tree builder reads one attribute of the context element: a
+        // MathML `annotation-xml`'s `encoding` (HTML integration point).
+        // Others' copies would only be parsed (id, classes) and dropped.
+        NodeKind::Element(e) if e.name.ns == ns!(mathml) && e.name.local == local_name!("annotation-xml") => (
             e.name.clone(),
             e.attrs
                 .iter()
                 .map(|a| Attribute { name: a.name.clone(), value: StrTendril::from_slice(&a.value) })
                 .collect::<Vec<_>>(),
         ),
+        NodeKind::Element(e) => (e.name.clone(), Vec::new()),
         _ => return Err(DomError::Type("fragment context must be an element")),
     };
     let owner = dom.n(ctx).owner_doc;
@@ -942,13 +946,71 @@ pub fn set_inner_html(dom: &mut Dom, element: NodeId, html: &str) -> DomResult<(
         Some(e) if e.template_contents != NIL => dom.id_of(e.template_contents),
         _ => element,
     };
-    let ctx = if matches!(dom.n(i).kind, NodeKind::Element(_)) {
-        element
-    } else {
-        return Err(DomError::Type("innerHTML context must be an element"));
+    let ctx = match &dom.n(i).kind {
+        NodeKind::Element(e) => {
+            if parses_as_text(e, html) {
+                // What the fragment parser would build: one text node with
+                // the string (none for ""), replacing all children.
+                let text = if html.is_empty() {
+                    None
+                } else {
+                    let owner = dom.id_of(dom.n(i).owner_doc);
+                    Some(dom.create_text(owner, html)?)
+                };
+                return dom.replace_all(target, text);
+            }
+            element
+        }
+        _ => return Err(DomError::Type("innerHTML context must be an element")),
     };
     let frag = parse_fragment(dom, ctx, html)?;
     dom.replace_all(target, Some(frag))
+}
+
+/// Whether the HTML fragment parsing algorithm, run on `html` in the
+/// context of `ctx`, yields exactly one text node holding `html` (or nothing
+/// for ""): the input has no markup (`<`), no character reference (`&`) and
+/// nothing the input stream or tree builder rewrites (CR, NUL, a leading
+/// byte order mark, which html5ever's tokenizer drops), and the context puts
+/// the tokenizer in its data state and the tree builder "in body" (an HTML
+/// element that is no table part, `select`, `template`, `html`, `head`,
+/// `frameset` or a raw-text/RCDATA/plaintext element).
+fn parses_as_text(ctx: &ElementData, html: &str) -> bool {
+    if ctx.name.ns != ns!(html)
+        || html.starts_with('\u{feff}')
+        || html.bytes().any(|b| matches!(b, b'<' | b'&' | b'\r' | b'\0'))
+    {
+        return false;
+    }
+    !matches!(
+        ctx.name.local,
+        local_name!("table")
+            | local_name!("tbody")
+            | local_name!("thead")
+            | local_name!("tfoot")
+            | local_name!("tr")
+            | local_name!("td")
+            | local_name!("th")
+            | local_name!("caption")
+            | local_name!("colgroup")
+            | local_name!("col")
+            | local_name!("select")
+            | local_name!("template")
+            | local_name!("html")
+            | local_name!("head")
+            | local_name!("frameset")
+            | local_name!("frame")
+            | local_name!("title")
+            | local_name!("textarea")
+            | local_name!("style")
+            | local_name!("xmp")
+            | local_name!("iframe")
+            | local_name!("noembed")
+            | local_name!("noframes")
+            | local_name!("noscript")
+            | local_name!("script")
+            | local_name!("plaintext")
+    )
 }
 
 /// `Element.setHTMLUnsafe` / `ShadowRoot.setHTMLUnsafe`: as `innerHTML`, with
