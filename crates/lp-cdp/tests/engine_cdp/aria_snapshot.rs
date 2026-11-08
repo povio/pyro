@@ -372,3 +372,22 @@ fn list_box_optgroups_have_a_label_row() {
     );
     assert_eq!(indent, json!(["20px", "2px", "2px", "none"]));
 }
+
+#[test]
+fn selects_sit_on_the_baseline_as_in_chromium() {
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<!doctype html><body><div style="font-size:16px"><span id="b" style="display:inline-block;width:1px;height:0"></span><select><option>A</option></select><select style="padding:3px"><option>A</option></select><select style="font-size:20px"><option>A</option></select><select size="3"><option>A</option></select><select size="3" style="margin:5px 0 9px"><optgroup label="G"><option>A</option></optgroup></select></div></body>"#,
+    );
+    // A drop-down's baseline is its text's; a list box is `vertical-align:
+    // text-bottom`. [top, bottom] relative to the line's baseline.
+    let boxes = eval_value(
+        &mut h,
+        "(() => { const b = document.getElementById('b').getBoundingClientRect().y; \
+         return [...document.querySelectorAll('select')].map(s => { const r = s.getBoundingClientRect(); return [r.y - b, r.bottom - b]; }); })()",
+    );
+    assert_eq!(boxes, json!([[-14, 5], [-17, 8], [-20, 6], [-49, 4], [-58, -5]]));
+    let va = eval_value(&mut h, "[...document.querySelectorAll('select')].map(s => getComputedStyle(s).verticalAlign)");
+    assert_eq!(va, json!(["baseline", "baseline", "baseline", "text-bottom", "text-bottom"]));
+}

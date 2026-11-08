@@ -497,12 +497,30 @@ impl LayoutPassState<'_> {
 
                 // lightningpanda: a drop-down select is an atomic box: its
                 // longest option's label (about half an em per character)
-                // plus the arrow, and a line of the control's font tall
-                // (Chromium's menu list: `line-height` is `normal`). Without
-                // this it had no box at all (its options are hidden).
+                // plus the arrow, and, as Chromium's menu list, a line of
+                // the control's font (`line-height: normal`) plus 2px tall,
+                // the line half of that lower (rounded down), its baseline
+                // the select's. Chromium's own control font (the UA's
+                // `system-ui, sans-serif` here) is a pixel shorter than
+                // `system-ui`: 1px there. Without this it had no box at all
+                // (its options are hidden).
                 if let Some((false, chars)) = select_label_chars {
                     let font_size = font_size.unwrap_or(13.333);
                     let style = node.layout_style();
+                    let line_height = select_line.map(|line| line.line_height / scale);
+                    let extra = if node.primary_styles().is_some_and(|st| {
+                        use style::values::computed::font::{GenericFontFamily, SingleFontFamily};
+                        let list = &st.get_font().font_family.families;
+                        let names: Vec<_> = list.iter().collect();
+                        matches!(
+                            names.as_slice(),
+                            [SingleFontFamily::Generic(GenericFontFamily::SystemUi), SingleFontFamily::Generic(GenericFontFamily::SansSerif)]
+                        )
+                    }) {
+                        1.0
+                    } else {
+                        2.0
+                    };
                     let mut output = compute_leaf_layout(
                         inputs,
                         &style,
@@ -513,17 +531,16 @@ impl LayoutPassState<'_> {
                             } else {
                                 (chars as f32 * 0.5 * font_size + 21.0).ceil()
                             },
-                            height: (font_size * 1.25).ceil(),
+                            height: line_height.map_or((font_size * 1.25).ceil(), |h| h + extra),
                         },
                     );
                     if let Some(line) = select_line {
                         let parent = inputs.parent_size.width;
                         let padding = style.padding().resolve_or_zero(parent, resolve_calc_value);
                         let border = style.border().resolve_or_zero(parent, resolve_calc_value);
-                        let content_top = padding.top + border.top;
-                        let content_height = output.size.height - content_top - padding.bottom - border.bottom;
-                        let (line_height, baseline) = (line.line_height / scale, line.baseline / scale);
-                        let baseline = content_top + (content_height - line_height) / 2.0 + baseline;
+                        let content_height = output.size.height - padding.vertical_axis_sum() - border.vertical_axis_sum();
+                        let offset = ((content_height - line.line_height / scale) / 2.0).floor().max(0.0);
+                        let baseline = padding.top + border.top + offset + line.baseline / scale;
                         output.baselines = taffy::Baselines { first: Some(baseline), last: Some(baseline) };
                     }
                     return output;

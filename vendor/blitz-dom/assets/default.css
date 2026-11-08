@@ -116,6 +116,12 @@ select {
     line-height: normal !important;
 }
 
+/* Chromium: `select:-internal-list-box { vertical-align: text-bottom }`. */
+select[multiple],
+select[size]:not([size="0"], [size="1"], [size=""]) {
+    vertical-align: text-bottom;
+}
+
 textarea {
     font-family: monospace;
 }
