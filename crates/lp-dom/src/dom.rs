@@ -18,6 +18,63 @@ struct Slot {
     node: Option<Node>,
 }
 
+/// What a tree walk needs of a slot, 16 bytes, in an array beside the slots
+/// (`Dom::walk`): the links a pre-order walk follows (copies of the node's,
+/// written by `link` and `unlink` with them) and the node's [`summary`]
+/// (written by every change of what it digests). Four fit a cache line
+/// where a slot (72 bytes) needs more than one, so a selector query walks
+/// a tree reading this array, and the node and its boxed `ElementData`
+/// only for the elements the summary does not rule out.
+#[derive(Clone, Copy)]
+pub(crate) struct Walk {
+    pub(crate) first_child: u32,
+    pub(crate) next: u32,
+    pub(crate) parent: u32,
+    pub(crate) sum: u32,
+}
+
+/// [`summary`]'s bit for an element (0 for any other node).
+pub(crate) const SUM_ELEMENT: u32 = 1 << 15;
+/// [`summary`]'s bits for the element's name.
+pub(crate) const SUM_NAME: u32 = SUM_ELEMENT | (SUM_ELEMENT - 1);
+
+/// A 32-bit digest of a node for selector queries (`crate::select_query`):
+/// 0 for a node that is no element; for an element, bit 15 is set, bits
+/// 0-14 are a hash of its local name and bits 16-31 a one-bit-per-token
+/// Bloom filter of its classes. Equal names have equal hashes, and a class
+/// the element has sets its bit, so a mismatch proves a type or class test
+/// fails; a match proves nothing.
+#[inline]
+pub(crate) fn summary(kind: &NodeKind) -> u32 {
+    match kind {
+        NodeKind::Element(e) => {
+            let mut bloom = 0u32;
+            for c in e.classes() {
+                bloom |= class_bit(c);
+            }
+            name_hash(&e.name.local) | bloom
+        }
+        _ => 0,
+    }
+}
+
+/// [`summary`]'s name bits (and element bit) for an element named `local`.
+#[inline]
+pub(crate) fn name_hash(local: &markup5ever::LocalName) -> u32 {
+    SUM_ELEMENT | (mix(local.get_hash()) >> 49) as u32
+}
+
+/// The bit of [`summary`]'s class filter that class `class` sets.
+#[inline]
+pub(crate) fn class_bit(class: &Atom) -> u32 {
+    1 << (16 + (mix(class.get_hash()) >> 60) as u32)
+}
+
+#[inline]
+fn mix(h: u64) -> u64 {
+    (h ^ (h >> 29)).wrapping_mul(0x9E37_79B9_7F4A_7C15)
+}
+
 /// Style invalidation's view of attribute writes (see `note_style_attr`).
 #[derive(Default)]
 pub(crate) struct StyleSnapshots {
@@ -123,6 +180,8 @@ pub struct Dom {
     /// Process-unique id (caches keyed by DOM identity and `version`).
     uid: u64,
     slots: Vec<Slot>,
+    /// One [`Walk`] per slot, kept in step with the node in it.
+    walk: Vec<Walk>,
     free: Vec<u32>,
     /// Bumped on every tree, attribute or character-data mutation. Live
     /// collections compare against it to reuse cached results.
@@ -232,6 +291,7 @@ impl Dom {
         Dom {
             uid: NEXT_UID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             slots: Vec::new(),
+            walk: Vec::new(),
             free: Vec::new(),
             version: 0,
             tree_version: 0,
@@ -282,6 +342,25 @@ impl Dom {
     #[inline]
     pub(crate) fn n_mut(&mut self, idx: u32) -> &mut Node {
         self.slots[idx as usize].node.as_mut().expect("live slot")
+    }
+    /// Node `idx`'s walk links and [`summary`].
+    #[inline]
+    pub(crate) fn w(&self, idx: u32) -> Walk {
+        let w = self.walk[idx as usize];
+        #[cfg(debug_assertions)]
+        {
+            let n = self.n(idx);
+            debug_assert_eq!(
+                (w.first_child, w.next, w.parent, w.sum),
+                (n.first_child, n.next, n.parent, summary(&n.kind)),
+                "walk entry out of step"
+            );
+        }
+        w
+    }
+    /// Recomputes element `idx`'s [`summary`] after its classes changed.
+    pub(crate) fn resummarize(&mut self, idx: u32) {
+        self.walk[idx as usize].sum = summary(&self.n(idx).kind);
     }
     #[inline]
     pub(crate) fn id_of(&self, idx: u32) -> NodeId {
@@ -637,13 +716,16 @@ impl Dom {
     }
 
     fn alloc(&mut self, kind: NodeKind, owner_doc: u32) -> u32 {
+        let walk = Walk { first_child: NIL, next: NIL, parent: NIL, sum: summary(&kind) };
         let node = Node::new(kind, owner_doc);
         let idx = if let Some(idx) = self.free.pop() {
             self.slots[idx as usize].node = Some(node);
+            self.walk[idx as usize] = walk;
             idx
         } else {
             let idx = u32::try_from(self.slots.len()).ok().filter(|&i| i != NIL).expect("DOM node limit");
             self.slots.push(Slot { gen: 1, node: Some(node) });
+            self.walk.push(walk);
             idx
         };
         self.live += 1;
@@ -2052,11 +2134,16 @@ impl Dom {
             n.parent = parent;
             n.prev = prev;
             n.next = before;
+            let w = &mut self.walk[node as usize];
+            w.parent = parent;
+            w.next = before;
         }
         if prev == NIL {
             self.n_mut(parent).first_child = node;
+            self.walk[parent as usize].first_child = node;
         } else {
             self.n_mut(prev).next = node;
+            self.walk[prev as usize].next = node;
         }
         if before == NIL {
             self.n_mut(parent).last_child = node;
@@ -2077,8 +2164,10 @@ impl Dom {
         };
         if prev == NIL {
             self.n_mut(parent).first_child = next;
+            self.walk[parent as usize].first_child = next;
         } else {
             self.n_mut(prev).next = next;
+            self.walk[prev as usize].next = next;
         }
         if next == NIL {
             self.n_mut(parent).last_child = prev;
@@ -2090,6 +2179,9 @@ impl Dom {
         n.parent = NIL;
         n.prev = NIL;
         n.next = NIL;
+        let w = &mut self.walk[node as usize];
+        w.parent = NIL;
+        w.next = NIL;
     }
 
     fn remove(&mut self, node: u32, suppress: bool) {
@@ -2355,6 +2447,7 @@ impl Dom {
                 el.set_attr_state(attrs);
                 el.control = control;
                 el.flags |= started;
+                self.resummarize(id.idx);
                 self.note_inline_handlers(id.idx);
                 id.idx
             }
@@ -2452,17 +2545,9 @@ impl Dom {
     }
 
     fn find_attr_qualified(&self, i: u32, name: &str) -> Option<usize> {
-        let el = self.n(i).element()?;
-        let name = self.html_lower(el, self.n(i).owner_doc, name);
-        el.attrs.iter().position(|a| match &a.name.prefix {
-            Some(p) if !p.is_empty() => {
-                name.len() == p.len() + 1 + a.name.local.len()
-                    && name.starts_with(&**p)
-                    && name.as_bytes()[p.len()] == b':'
-                    && name.ends_with(&*a.name.local)
-            }
-            _ => *a.name.local == *name,
-        })
+        let n = self.n(i);
+        let el = n.element()?;
+        find_attr_lowered(el, &self.html_lower(el, n.owner_doc, name))
     }
 
     /// The content attribute `name` as the element's own behaviour reads it
@@ -2470,11 +2555,12 @@ impl Dom {
     /// with that local name, so `setAttributeNS(ns, "src", ..)` is not the
     /// element's `src`. A prefixed name (`xlink:href`) is a qualified name.
     fn find_attr_content(&self, i: u32, name: &str) -> Option<usize> {
-        let el = self.n(i).element()?;
-        let local = self.html_lower(el, self.n(i).owner_doc, name);
+        let n = self.n(i);
+        let el = n.element()?;
+        let local = self.html_lower(el, n.owner_doc, name);
         let found = el.attrs.iter().position(|a| a.name.ns == ns!() && *a.name.local == *local);
         match found {
-            None if name.contains(':') => self.find_attr_qualified(i, name),
+            None if name.contains(':') => find_attr_lowered(el, &local),
             found => found,
         }
     }
@@ -2523,12 +2609,14 @@ impl Dom {
     /// `setAttribute(qualifiedName, value)`.
     pub fn set_attribute(&mut self, id: NodeId, name: &str, value: &str) -> DomResult<()> {
         validate_attribute_name(name)?;
-        let (i, el) = self.el(id)?;
-        match self.find_attr_qualified(i, name) {
+        let (i, n) = self.live(id)?;
+        let el = n.element().ok_or(DomError::Type("not an element"))?;
+        // Lowercased once, for the lookup and the new attribute's name.
+        let name = self.html_lower(el, n.owner_doc, name);
+        match find_attr_lowered(el, &name) {
             Some(k) => self.change_attr(i, k, value),
             None => {
-                let local = self.html_lower(el, self.n(i).owner_doc, name);
-                let qn = QualName::new(None, ns!(), LocalName::from(&*local));
+                let qn = QualName::new(None, ns!(), LocalName::from(&*name));
                 self.append_attr(i, qn, value);
             }
         }
@@ -2591,6 +2679,9 @@ impl Dom {
         let r = f(el);
         debug_assert!(el.derived_in_step());
         let base = plain && name.local == local_name!("href") && el.is_html() && el.name.local == local_name!("base");
+        if plain && name.local == local_name!("class") {
+            self.resummarize(i);
+        }
         if let Some(old) = old_id {
             self.id_attr_changed(i, old);
         }
@@ -3427,6 +3518,21 @@ impl Iterator for Descendants<'_> {
 /// `body` or `frameset`: the local names of a document's body element.
 pub(crate) fn is_body_name(local: &LocalName) -> bool {
     *local == local_name!("body") || *local == local_name!("frameset")
+}
+
+/// The first attribute of `el` whose qualified name is `name`, which is
+/// already lowercased as `Dom::html_lower` says.
+#[inline]
+fn find_attr_lowered(el: &ElementData, name: &str) -> Option<usize> {
+    el.attrs.iter().position(|a| match &a.name.prefix {
+        Some(p) if !p.is_empty() => {
+            name.len() == p.len() + 1 + a.name.local.len()
+                && name.starts_with(&**p)
+                && name.as_bytes()[p.len()] == b':'
+                && name.ends_with(&*a.name.local)
+        }
+        _ => *a.name.local == *name,
+    })
 }
 
 /// The id `:target` matches for a document at `url`: its fragment,
