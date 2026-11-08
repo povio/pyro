@@ -173,10 +173,16 @@ pub fn set_idle_release(release: fn()) {
     let _ = IDLE_RELEASE.set(release);
 }
 
+/// The render thread's stack: a main thread's, as the browser threads have.
+const RENDER_STACK_BYTES: usize = 8 * 1024 * 1024;
+
 impl RenderWorker {
     pub fn spawn() -> std::io::Result<RenderWorker> {
         let (tx, rx) = channel::<Job>();
-        std::thread::Builder::new().name("lp-render".into()).spawn(move || {
+        // The browser thread's stack (lp-cdp `BROWSER_STACK_BYTES`): the render lays the page out
+        // again, once per tree level as there, and paints it recursively. A spawned thread's default
+        // 2 MB aborted the whole server on a screenshot past about 430 nested blocks.
+        std::thread::Builder::new().name("lp-render".into()).stack_size(RENDER_STACK_BYTES).spawn(move || {
             let mut renderer = None;
             // A job ran since the idle hook did.
             let mut due = false;

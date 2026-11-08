@@ -101,6 +101,11 @@ pub(crate) struct State {
     /// transition, by element, with their root: the engine styles none of
     /// them while the root is hidden, and styles them afresh once shown.
     hidden_content: RefCell<FxHashMap<NodeId, (NodeId, StyleSnapshot)>>,
+    /// `Dom::removal_count` when `hidden_roots` last dropped the roots that
+    /// left the document: a removed subtree loses its styles (Chrome), so a
+    /// root removed and inserted again has no before-change styles, and a
+    /// removed root does not keep its content's styles until navigation.
+    hidden_roots_removals: Cell<u64>,
 }
 
 /// A CSS animation or transition `getAnimations()` lists.
@@ -411,6 +416,7 @@ fn transitions_from_changes(
     now_ms: f64,
     planned: &mut Vec<Planned>,
 ) {
+    drop_removed_hidden_roots(state, dom);
     let changes = style.take_style_changes(dom);
     if changes.is_empty() {
         return;
@@ -517,19 +523,7 @@ fn style_read_hidden_content(state: &State, dom: &lp_dom::Dom, style: &lp_dom::s
     if style.engine_displayed(dom, el) != Some(false) {
         return;
     }
-    // The top of the engine's `display: none` subtree holding `el`.
-    let mut top = el;
-    loop {
-        let Some(parent) = dom.parent_element(top).ok().flatten() else { break };
-        match style.engine_displayed(dom, parent) {
-            Some(false) => top = parent,
-            Some(true) => break,
-            None => return,
-        }
-    }
-    if !hides_content(dom, top) || !style.stylo_style(dom, top).is_some_and(|s| displays_none(&s)) {
-        return;
-    }
+    let Some(top) = hidden_content_root(dom, style, el) else { return };
     if el == top && dom.element(top).is_ok_and(until_found) {
         return;
     }
@@ -543,6 +537,44 @@ fn style_read_hidden_content(state: &State, dom: &lp_dom::Dom, style: &lp_dom::s
     }
     if let Some(snapshot) = style.stylo_style(dom, el) {
         state.hidden_content.borrow_mut().insert(el, (top, snapshot));
+    }
+}
+
+/// The top of the engine's `display: none` subtree holding `el` (not
+/// displayed), if it is a content root ([`hides_content`]): the nearest
+/// content root, by its attributes, whose parent the engine displays. The
+/// engine is asked only at content roots, so for an element under a plain
+/// `display: none` this is a walk over attributes.
+fn hidden_content_root(dom: &lp_dom::Dom, style: &lp_dom::style::StyleEngine, el: NodeId) -> Option<NodeId> {
+    let mut at = Some(el);
+    let top = loop {
+        let x = at?;
+        let parent = dom.parent_element(x).ok().flatten();
+        if hides_content(dom, x) {
+            match parent.map_or(Some(true), |p| style.engine_displayed(dom, p)) {
+                Some(true) => break x,
+                Some(false) => {}
+                None => return None,
+            }
+        }
+        at = parent;
+    };
+    style.stylo_style(dom, top).is_some_and(|s| displays_none(&s)).then_some(top)
+}
+
+/// Drops the hidden roots that left the document since the last style
+/// change event, and their content's kept styles. One counter check while
+/// nothing was removed.
+fn drop_removed_hidden_roots(state: &State, dom: &lp_dom::Dom) {
+    let removals = dom.removal_count();
+    if state.hidden_roots_removals.replace(removals) == removals || state.hidden_roots.borrow().is_empty() {
+        return;
+    }
+    let mut roots = state.hidden_roots.borrow_mut();
+    let before = roots.len();
+    roots.retain(|r| dom.in_document_tree(*r));
+    if roots.len() != before {
+        state.hidden_content.borrow_mut().retain(|d, (r, _)| dom.is_alive(*d) && roots.contains(r));
     }
 }
 
@@ -581,6 +613,15 @@ fn reveal_hidden_content(
     };
     for (d, before) in revealed {
         if !dom.in_document_tree(d) || !is_ancestor(dom, root, d) {
+            continue;
+        }
+        // Not rendered yet: still hidden content of a root inside this one
+        // (it keeps its style there), or under a real `display: none`.
+        if style.engine_displayed(dom, d) != Some(true) {
+            if let Some(inner) = hidden_content_root(dom, style, d).filter(|inner| *inner != d) {
+                state.hidden_roots.borrow_mut().insert(inner);
+                state.hidden_content.borrow_mut().entry(d).or_insert((inner, before));
+            }
             continue;
         }
         if let Some(now) = style.stylo_style(dom, d).filter(|now| !displays_none(now)) {
