@@ -422,3 +422,167 @@ fn import_without_a_script_url_uses_the_document_base() {
     settle(&mut thread);
     assert_eq!(eval(&thread, page, "out.join()"), "http://site.test/a/rel.js,http://site.test/b/rel.js");
 }
+
+// ---- Review (perf/realms): deferred isolated worlds against worlds made at commit ----
+
+/// What a world sees of its window: every install.js piece, the frames, the document.
+const WORLD_PROBE: &str = r#"[
+    Object.getOwnPropertyNames(window).join(),
+    Object.getOwnPropertyNames(window).map(k => { const d = Object.getOwnPropertyDescriptor(window, k);
+        return ('value' in d ? typeof d.value : 'acc') + (d.writable ? 'w' : '') + (d.enumerable ? 'e' : '') + (d.configurable ? 'c' : ''); }).join(),
+    Object.keys(window).join(), location.href, document.readyState, window.length, typeof window[0],
+    window[0] && window[0].document.querySelector('span').textContent, window.origin, self === window,
+    structuredClone({a: [1, {b: 2}]}).a[1].b, new TextDecoder().decode(new DataView(new Uint8Array([104, 105]).buffer)),
+    new Headers({a: 'b'}).get('a'), [...new Headers([['x', 'y']])].join(), [...new URLSearchParams('a=1&b=2')].join(';'),
+    (() => { const f = new FormData(); f.append('k', 'v'); let s = ''; f.forEach((v, k) => s += k + v); return [...f].join() + s; })(),
+    Object.keys(Element.prototype[Symbol.unscopables]).join(), Object.keys(Document.prototype[Symbol.unscopables]).join(),
+    String(new IntersectionObserver(() => {}, {threshold: [0.5, 0]}).thresholds),
+    (() => { try { new MutationObserver(() => {}).observe(document.body, {attributeFilter: null}); return 'no'; } catch (e) { return e.constructor.name; } })(),
+    Object.prototype.toString.call(new URLSearchParams().entries()), Object.prototype.toString.call(new FormData().entries()),
+    document.querySelector('p').textContent, typeof performance.timeOrigin, Node.name, Object.getPrototypeOf(HTMLElement) === Element,
+    typeof NodeFilter, 'prototype' in NodeFilter, delete window.Node, typeof Node,
+].join('|')"#;
+
+fn world_eval(realm: &lp_js::Realm, source: &str) -> String {
+    let scope = realm.scope().unwrap();
+    scope.eval(source, None, 1).unwrap_or_else(|e| panic!("{}", e.details(&scope).text())).to_string().unwrap()
+}
+
+fn two_worlds_page(html: &str) -> (BrowserThread, PageId) {
+    let mut thread = crate::browser_thread().unwrap();
+    let page = thread.browser.create_page().unwrap();
+    let script = |id: &str, world: &str, source: &str| InitScript { id: id.into(), world: Some(world.into()), source: source.into() };
+    thread.browser.add_init_script(page, script("l", "lazy", " \n"));
+    thread.browser.add_init_script(page, script("m", "made", "void 0"));
+    let loader = Rc::new(StaticLoader::default());
+    loader.insert("http://site.test/top", "text/html", html, Duration::ZERO);
+    loader.insert("http://site.test/child", "text/html", "<span>child</span>", Duration::ZERO);
+    thread.browser.set_loader(Some(loader));
+    thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/top")).unwrap();
+    settle(&mut thread);
+    (thread, page)
+}
+
+#[test]
+fn review_a_deferred_world_sees_what_a_world_made_at_commit_sees() {
+    let (mut thread, page) = two_worlds_page("<p>top</p><iframe src=/child></iframe>");
+    let frame = thread.browser.page(page).unwrap().main_frame.clone();
+    let lazy = frame.world("lazy").unwrap().clone();
+    let made = frame.world("made").unwrap().clone();
+    assert!(lazy.is_deferred() && !made.is_deferred());
+    // Frames come and go while it waits.
+    eval(&thread, page, "const f = document.createElement('iframe'); document.body.appendChild(f); f.remove(); 1");
+    settle(&mut thread);
+    assert!(lazy.is_deferred());
+    let a = world_eval(&lazy, WORLD_PROBE);
+    let b = world_eval(&made, WORLD_PROBE);
+    assert_eq!(a, b);
+    assert!(a.contains("|top|"), "{a}");
+    // The child frame's worlds too.
+    let child = thread.browser.frames(page).into_iter().find(|f| f.parent.is_some()).unwrap();
+    let child = thread.browser.frame(page, &child.id).unwrap();
+    let (cl, cm) = (child.world("lazy").unwrap().clone(), child.world("made").unwrap().clone());
+    let probe = "[document.querySelector('span').textContent, location.href, window.frameElement === null, parent === top, parent.length, Object.getOwnPropertyNames(window).length].join()";
+    assert_eq!(world_eval(&cl, probe), world_eval(&cm, probe));
+}
+
+#[test]
+fn review_a_frame_added_after_a_deferred_world_was_made_gets_its_index() {
+    let (mut thread, page) = two_worlds_page("<p>top</p>");
+    let lazy = thread.browser.page(page).unwrap().main_frame.world("lazy").unwrap().clone();
+    assert_eq!(world_eval(&lazy, "window.length"), "0");
+    eval(&thread, page, "document.body.appendChild(document.createElement('iframe')); 1");
+    settle(&mut thread);
+    assert_eq!(world_eval(&lazy, "[window.length, typeof window[0], Object.keys(window).includes('0')].join()"), "1,object,true");
+    eval(&thread, page, "document.querySelector('iframe').remove(); 1");
+    settle(&mut thread);
+    assert_eq!(world_eval(&lazy, "[window.length, typeof window[0]].join()"), "0,undefined");
+}
+
+#[test]
+fn review_the_page_clock_turned_on_while_a_world_waits_reaches_it() {
+    let (mut thread, page) = two_worlds_page("<p>top</p>");
+    let frame = thread.browser.page(page).unwrap().main_frame.clone();
+    let lazy = frame.world("lazy").unwrap().clone();
+    let made = frame.world("made").unwrap().clone();
+    assert!(lazy.is_deferred());
+    thread.browser.advance_time_explicit(Duration::from_secs(10 * 86_400)).unwrap();
+    settle(&mut thread);
+    assert!(lazy.is_deferred(), "turning the clock on does not make the world");
+    let skew = "Math.round((Date.now() - Date_real_now()) / 86400000)";
+    let real = format!("{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis());
+    let probe = skew.replace("Date_real_now()", &real);
+    assert_eq!(world_eval(&made, &probe), "10");
+    assert_eq!(world_eval(&lazy, &probe), "10", "the deferred world's Date reads the page clock");
+    assert_eq!(world_eval(&lazy, "Math.round((new Date().getTime() - Date.now()) / 1000)"), "0");
+    assert_eq!(eval(&thread, page, &probe), "10");
+}
+
+#[test]
+fn review_bindings_make_only_the_worlds_they_apply_to_and_once() {
+    let (mut thread, page) = two_worlds_page("<p>top</p>");
+    fn thread_world(thread: &BrowserThread, page: PageId, name: &str) -> lp_js::Realm {
+        thread.browser.page(page).unwrap().main_frame.world(name).unwrap().clone()
+    }
+    let w = thread_world(&thread, page, "lazy");
+    assert!(w.is_deferred());
+    // A binding of another world, then its removal: the deferred world stays deferred.
+    thread.browser.add_binding(page, lp_browser::Binding { name: "other".into(), world: Some("made".into()) });
+    assert!(w.is_deferred());
+    assert!(thread.browser.remove_binding(page, "other"));
+    assert!(w.is_deferred());
+    // A binding of this world makes it, defined once.
+    thread.browser.add_binding(page, lp_browser::Binding { name: "mine".into(), world: Some("lazy".into()) });
+    assert!(!w.is_deferred());
+    assert_eq!(
+        world_eval(&w, "[typeof mine, Object.getOwnPropertyNames(window).filter(k => k === 'mine').length, Object.keys(window).includes('mine')].join()"),
+        "function,1,false"
+    );
+    assert_eq!(eval(&thread, page, "typeof mine"), "undefined");
+    assert!(thread.browser.remove_binding(page, "mine"));
+    assert_eq!(world_eval(&w, "typeof mine"), "undefined");
+    // The next document's world is deferred again (no binding left).
+    let loader = Rc::new(StaticLoader::default());
+    loader.insert("http://site.test/next", "text/html", "<p>next</p>", Duration::ZERO);
+    thread.browser.set_loader(Some(loader));
+    thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/next")).unwrap();
+    settle(&mut thread);
+    assert!(w.is_disposed());
+    assert!(thread_world(&thread, page, "lazy").is_deferred());
+    // A binding for every world (Runtime.addBinding without a name) reaches it too.
+    thread.browser.add_binding(page, lp_browser::Binding { name: "all".into(), world: None });
+    assert_eq!(world_eval(&thread_world(&thread, page, "lazy"), "typeof all"), "function");
+}
+
+#[test]
+fn review_every_announced_deferred_world_is_destroyed_with_its_document_and_page() {
+    #[derive(Default)]
+    struct Life(RefCell<Vec<(bool, lp_js::RealmId)>>);
+    impl PageObserver for Life {
+        fn on_page_event(&self, _page: PageId, event: &PageEvent) {
+            match event {
+                PageEvent::RealmCreated { realm, .. } => self.0.borrow_mut().push((true, *realm)),
+                PageEvent::RealmDestroyed { realm, .. } => self.0.borrow_mut().push((false, *realm)),
+                _ => {}
+            }
+        }
+    }
+    let (mut thread, page) = two_worlds_page("<p>top</p><iframe src=/child></iframe>");
+    let life = Rc::new(Life::default());
+    thread.browser.set_observer(Some(life.clone()));
+    let lazy = thread.browser.page(page).unwrap().main_frame.world("lazy").unwrap().clone();
+    let loader = Rc::new(StaticLoader::default());
+    loader.insert("http://site.test/next", "text/html", "<p>next</p><iframe src=/child></iframe>", Duration::ZERO);
+    loader.insert("http://site.test/child", "text/html", "<span>child</span>", Duration::ZERO);
+    thread.browser.set_loader(Some(loader));
+    thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/next")).unwrap();
+    settle(&mut thread);
+    assert!(lazy.is_disposed(), "never made, disposed with its document");
+    assert!(life.0.borrow().contains(&(false, lazy.id())), "{:?}", life.0.borrow());
+    let created: Vec<_> = life.0.borrow().iter().filter(|(c, _)| *c).map(|(_, id)| *id).collect();
+    assert!(thread.browser.close_page(page));
+    settle(&mut thread);
+    for id in created {
+        assert!(life.0.borrow().contains(&(false, id)), "realm {id:?} announced but never destroyed: {:?}", life.0.borrow());
+    }
+}
