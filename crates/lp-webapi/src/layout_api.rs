@@ -570,6 +570,98 @@ impl ComputedData {
     }
 }
 
+/// A computed value as a JavaScript string: the realm's one string for a
+/// keyword (`block`, `none`, `auto`: the same few dozen texts come back for
+/// every element), a new string for anything else (lengths, colours, lists:
+/// mostly distinct, where a shared string would cost more than it saves).
+fn computed_string<'s>(s: &Scope<'s>, value: &str) -> Value<'s> {
+    if !value.is_empty() && value.len() <= 24 && value.bytes().all(|b| b.is_ascii_lowercase() || b == b'-') {
+        s.text_string(value)
+    } else {
+        s.string(value)
+    }
+}
+
+/// The CSS properties a computed style has attributes for: every one Stylo
+/// parses (longhands, shorthands, aliases) and the ones Chrome has that it
+/// does not (their values read as an inline style or the default).
+fn computed_property_names() -> &'static [&'static str] {
+    static NAMES: std::sync::OnceLock<Vec<&'static str>> = std::sync::OnceLock::new();
+    NAMES.get_or_init(|| lp_dom::stylo::property_names().iter().copied().chain(crate::css::unparsed_names()).collect())
+}
+
+/// Getter of the property `computed_property_names()[I]` (under each of its
+/// names): an attribute of `CSSStyleDeclaration.prototype`, read through the
+/// inline cache like any other, with the property chosen when the class is
+/// defined. The property list is Stylo's, known at run time, so the getters
+/// are made by index, [`MAX_PROPERTIES`] of them.
+fn property_getter<'s, const I: usize>(s: &Scope<'s>, c: &ComputedData) -> JsResult<Value<'s>> {
+    Ok(computed_string(s, &c.value(computed_property_names()[I])))
+}
+
+type ComputedGetter = for<'s> fn(&Scope<'s>, &ComputedData) -> JsResult<Value<'s>>;
+
+macro_rules! property_getters_block {
+    ($b:literal; $($i:literal),*) => { [ $( property_getter::<{ $b * 16 + $i }> as ComputedGetter ),* ] };
+}
+macro_rules! property_getters {
+    ($($b:literal),*) => {
+        [ $( property_getters_block!($b; 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15) ),* ]
+    };
+}
+
+/// Room for the property list (Stylo's and the unparsed ones); the class
+/// definition asserts that it fits.
+const MAX_PROPERTIES: usize = 640;
+/// The getters by property index, in blocks of 16.
+static PROPERTY_GETTERS: [[ComputedGetter; 16]; MAX_PROPERTIES / 16] = property_getters!(
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29,
+    30, 31, 32, 33, 34, 35, 36, 37, 38, 39
+);
+
+/// The IDL attribute names of a CSS property besides the dashed name itself
+/// (CSSOM "camel-cased attribute" and, for `-webkit-` names, "webkit-cased
+/// attribute"): `background-color` -> `backgroundColor`,
+/// `-webkit-text-security` -> `webkitTextSecurity` and `WebkitTextSecurity`,
+/// `float` -> `cssFloat`.
+fn property_attribute_names() -> &'static [Vec<&'static str>] {
+    static NAMES: std::sync::OnceLock<Vec<Vec<&'static str>>> = std::sync::OnceLock::new();
+    NAMES.get_or_init(|| {
+        computed_property_names()
+            .iter()
+            .map(|&name| {
+                let camel = |name: &str, upper_first: bool| {
+                    let mut out = String::with_capacity(name.len());
+                    let mut upper = upper_first;
+                    for ch in name.chars() {
+                        if ch == '-' {
+                            upper = upper_first || !out.is_empty();
+                        } else if upper {
+                            out.push(ch.to_ascii_uppercase());
+                            upper = false;
+                        } else {
+                            out.push(ch);
+                        }
+                    }
+                    out
+                };
+                let mut names: Vec<String> = Vec::new();
+                if name == "float" {
+                    names.push("cssFloat".into());
+                }
+                let lower = camel(name, false);
+                if lower != name {
+                    names.push(lower);
+                }
+                if name.starts_with("-webkit-") {
+                    names.push(camel(name, true));
+                }
+                names.into_iter().map(|n| &*Box::leak(n.into_boxed_str())).collect()
+            })
+            .collect()
+    })
+}
+
 pub struct ComputedStyle;
 impl JsClass for ComputedStyle {
     const NAME: &'static str = "CSSStyleDeclaration";
@@ -577,9 +669,22 @@ impl JsClass for ComputedStyle {
     type Parent = NoParent;
     fn define(def: &mut ClassDef<Self>) {
         def.not_exposed();
+        // Every property, by its dashed name and its IDL attribute names, as
+        // attributes of the prototype (CSSOM `CSSStyleDeclaration`). No named
+        // property hook: a class with one sends every property read through
+        // it, which defeats the inline cache.
+        let names = computed_property_names();
+        assert!(names.len() <= MAX_PROPERTIES, "CSS properties beyond the getter table: raise MAX_PROPERTIES");
+        for (i, (&name, others)) in names.iter().zip(property_attribute_names()).enumerate() {
+            let get = PROPERTY_GETTERS[i / 16][i % 16];
+            def.pure_getter_typed(name, lp_js::GetterResult::String, get);
+            for &other in others {
+                def.pure_getter_typed(other, lp_js::GetterResult::String, get);
+            }
+        }
         def.method("getPropertyValue", 1, |s, c, a| {
             let name = arg_string(&a, 0, "CSSStyleDeclaration.getPropertyValue")?;
-            Ok(s.string(&c.value(&name)))
+            Ok(computed_string(s, &c.value(&name)))
         });
         def.method("getPropertyPriority", 1, |s, _c, _a| Ok(s.string("")));
         // The longhands, as indexed properties; an element without computed
@@ -597,25 +702,6 @@ impl JsClass for ComputedStyle {
                 "NoModificationAllowedError",
                 "These styles are computed, and therefore read-only.",
             ))
-        });
-        def.named(false, |s, c, name| {
-            // camelCase IDL attributes (`backgroundColor`) and the dashed
-            // property names themselves (`background-color`).
-            let dashed = name.contains('-');
-            if !name.chars().next().is_some_and(|ch| ch.is_ascii_lowercase())
-                || !name.chars().all(|ch| ch.is_ascii_alphanumeric() || (dashed && ch == '-'))
-            {
-                return Ok(None);
-            }
-            let prop = if dashed {
-                if !lp_dom::stylo::is_property(name) {
-                    return Ok(None);
-                }
-                name.to_owned()
-            } else {
-                crate::css::camel_to_css(name)
-            };
-            Ok(Some(s.string(&c.value(&prop))))
         });
     }
 }

@@ -24,6 +24,7 @@
 
 use markup5ever::{local_name, ns};
 use rustc_hash::FxHashMap;
+use std::borrow::Cow;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -2129,7 +2130,7 @@ impl Layout {
             return String::new();
         }
         let Some(style) = self.style.stylo_pseudo_style(dom, el, pseudo, false) else { return String::new() };
-        let name = if name.starts_with("--") { name.to_owned() } else { name.to_ascii_lowercase() };
+        let name = if name.starts_with("--") { Cow::Borrowed(name) } else { lowercase(name) };
         let value = crate::stylo::serialize(&style, &name).unwrap_or_default();
         if name == "content" && pseudo.is_before_or_after() && value == "normal" {
             return "none".into();
@@ -2152,8 +2153,9 @@ impl Layout {
             return String::new();
         }
         let custom = name.starts_with("--");
-        let name = if custom { name.to_owned() } else { name.to_ascii_lowercase() };
-        match name.as_str() {
+        let name = if custom { Cow::Borrowed(name) } else { lowercase(name) };
+        let name: &str = &name;
+        match name {
             "display" if self.style.has_display_none(dom, el) => return "none".into(),
             "display" => return self.style.computed_display(dom, el).unwrap_or_default(),
             "visibility" if self.style.has_visibility_hidden_inherited(dom, el) => return "hidden".into(),
@@ -2163,7 +2165,7 @@ impl Layout {
                 let x = self.style.used_value(dom, el, "overflow-x");
                 let y = self.style.used_value(dom, el, "overflow-y");
                 let (x, y) = crate::style::computed_overflow_keywords(x.as_deref(), y.as_deref());
-                return match name.as_str() {
+                return match name {
                     "overflow-x" => x,
                     "overflow-y" => y,
                     _ if x == y => x,
@@ -2176,8 +2178,8 @@ impl Layout {
             // A registered property no declaration sets has its initial value.
             return self
                 .style
-                .custom_property_value(dom, el, &name)
-                .or_else(|| self.style.registered_property(&name)?.initial_value.clone())
+                .custom_property_value(dom, el, name)
+                .or_else(|| self.style.registered_property(name)?.initial_value.clone())
                 .unwrap_or_default();
         }
         if name == "font-size" {
@@ -2187,7 +2189,7 @@ impl Layout {
                 .computed_value(dom, el, "font-size")
                 .unwrap_or_else(|| format!("{}px", self.style.computed_font_size(dom, Some(el))));
         }
-        let declared = self.style.computed_value(dom, el, &name);
+        let declared = self.style.computed_value(dom, el, name);
         if name == "width" || name == "height" {
             if !self.is_visible(dom, el) {
                 return "auto".into();
@@ -2205,16 +2207,26 @@ impl Layout {
                 if border_box { 0.0 } else { b.border[start] + b.border[end] + b.padding[start] + b.padding[end] };
             return format!("{}px", crate::computed::fmt_num((size - inset).max(0.0)));
         }
-        if let Some(v) = declared.as_deref().and_then(|v| self.resolved_value(dom, el, &name, v)) {
+        if let Some(v) = declared.as_deref().and_then(|v| self.resolved_value(dom, el, name, v)) {
             return v;
         }
         if let Some(v) = declared {
             return v;
         }
-        if let Some(v) = self.style.inline_style_value(dom, el, &name) {
+        if let Some(v) = self.style.inline_style_value(dom, el, name) {
             return v;
         }
-        default_property_value(dom, el, &name).to_owned()
+        default_property_value(dom, el, name).to_owned()
+    }
+}
+
+/// A property name ASCII-lowercased, borrowed when it is lowercase already
+/// (the names the bindings pass are).
+fn lowercase(name: &str) -> Cow<'_, str> {
+    if name.bytes().any(|b| b.is_ascii_uppercase()) {
+        Cow::Owned(name.to_ascii_lowercase())
+    } else {
+        Cow::Borrowed(name)
     }
 }
 

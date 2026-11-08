@@ -154,3 +154,21 @@ fn an_event_dispatched_again_elsewhere_reports_its_new_target() {
         "ABODY,A,BBODY,B,ABODY,A,0,"
     );
 }
+
+#[test]
+fn computed_style_longhands_are_prototype_attributes() {
+    let e = env("<body><div id=a style='float: left; background-color: rgb(1, 2, 3)'></div></body>");
+    assert_eq!(
+        eval(
+            &e.main,
+            "(() => { const a = document.getElementById('a'), cs = getComputedStyle(a), proto = Object.getPrototypeOf(cs); \
+               const d = Object.getOwnPropertyDescriptor(proto, 'backgroundColor'); \
+               return [cs.display, cs['background-color'], cs.backgroundColor, cs.cssFloat, cs.float, cs.getPropertyValue('float'), \
+                       typeof d.get, d.set, 'display' in cs, cs.hasOwnProperty('display'), Object.getOwnPropertyDescriptor(proto, 'display') !== undefined, \
+                       cs.length > 200, cs.item(0) === cs[0], getComputedStyle(document.createElement('p')).display === '', \
+                       cs.display === getComputedStyle(a).display, \
+                       typeof cs.margin, typeof cs.webkitLineClamp, typeof cs.WebkitTextSecurity, cs.fooBar === undefined, cs['--x'] === undefined].join(); })()"
+        ),
+        "block,rgb(1, 2, 3),rgb(1, 2, 3),left,left,left,function,,true,false,true,true,true,true,true,string,string,string,true,true"
+    );
+}
