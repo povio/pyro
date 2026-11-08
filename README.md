@@ -80,6 +80,22 @@ whose dylibs record where they were linked. Workspace crates are compiled increm
 sccache passes through, so edit rebuilds are unchanged (lp-dom edit: 4.6-5.3 s with it, 5.8-5.9 s without).
 `sccache --show-stats` shows the hit rate.
 
+### Profile-guided optimization (optional)
+
+`scripts/pgo/build.sh` builds `target/release-pgo/lightningpanda` in three steps that can also run
+separately: `generate.sh` (instrumented build, `-Cprofile-generate`), `train.sh` (one `serve` runs
+`bench/playwright-suite` three times and `bench/scripts/css-bench.mjs`, plus `LP_PGO_EXTRA=<script>` for a
+workload outside the repository, for example an application's own E2E suite against `LP_WS`), `use.sh`
+(`llvm-profdata merge` from rustup's `llvm-tools` component, then `-Cprofile-use`). The `release-pgo` profile
+is `release` in another directory; the flags come from the scripts, and `release` stays the default because
+the flow costs about 2.5 release builds and the profile goes stale as hot code changes. Measured on an M1 Max
+with this training against the same tree at `release` (CPU time of the `serve` process, binaries alternated, two
+sessions of 3-4 runs each): Playwright suite -5% and -7%, 1,200-row table text-edit loop -5% and -12%,
+paragraph-append and mixed layout loops -7% to -16%, PDF generation over 44 templates -2%, a React SPA load within
+noise; PDF output byte-identical. Adding your own workload with `LP_PGO_EXTRA` focuses the profile on it.
+Fat LTO on top of PGO and a thin-LTO JavaScriptCore were measured and not adopted; see the notes
+in `Cargo.toml` and `scripts/jsc/build.sh`.
+
 ## Usage
 
 ```sh

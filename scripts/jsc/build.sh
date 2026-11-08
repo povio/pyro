@@ -15,6 +15,14 @@
 #   LP_WEBKIT_SRC  WebKit checkout, created if missing (default $LP_JSC_CACHE/../webkit-src)
 #   LP_JSC_BUILD   ninja build dir (default $LP_JSC_CACHE/../webkit-build)
 #   JOBS           parallel jobs (default: number of CPUs)
+#
+# No LTO on purpose. A -DLTO_MODE=thin build (about twice the build time) was
+# measured against this one on the M1 Max, serve CPU, binaries alternated:
+# Playwright suite -1%/+5%, 1,200-row table loops -3..+6%, PDF templates -4%,
+# ToS SPA load within noise: no reproducible gain. It also needs
+# llint/LowLevelInterpreter.cpp compiled with -fno-lto: the LTO backend moves
+# the offlineasm IPInt handlers and IPInt::initialize()'s alignment
+# RELEASE_ASSERT kills the process at startup.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/../.." && pwd)"
