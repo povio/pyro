@@ -613,8 +613,12 @@ level. The red zone covers what one level runs between two checkpoints: a level 
   `flush_inline_pseudos_recursive`, `find_inline_layout_embedded_boxes_recursive`,
   `collect_list_item_children`, `build_inline_layout_recursive`, `propagate_damage_flags`,
   `refresh_anonymous_block_styles`, `clear_damage_and_dirty_flags`.
-- After layout: `resolve_transforms` (overflow), `physicalise_and_round_inner` (rounding) and its debug check
-  `assert_rounding_is_current`, `build_paint_tree_impl` (paint tree), `hit_inner` (hit testing).
+- After layout: `resolve_transforms` (overflow, including a kept-cells table's cells in
+  `table_cells_overflow`), `resolve_hit_overflow` (the hit bounds brought up to date at the first hit test,
+  including `table_cells_hit`), `physicalise_and_round_inner` (rounding) and its debug check
+  `assert_rounding_is_current`, `build_paint_tree_impl` (paint tree), `hit_inner` (hit testing). The walks
+  that skip children with no damage below them (`propagate_damage_flags`, `clear_damage_and_dirty_flags`,
+  `resolve_layout_children_recursive`) make the calls they still make through `ensure_stack`.
 - `layout/writing_mode.rs` (`placer_geometry`): the position of a box in a vertical tree recursed up its
   containing-block chain; it is a loop over the chain, outermost first, with the same arithmetic.
 - Tree upkeep: `iter_subtree_mut_inner`, `collect_all_inline_roots_in_subtree`, `is_or_contains_block`,
