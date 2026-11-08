@@ -1110,12 +1110,23 @@ impl Renderer {
     /// The elements (by key) whose computed style the syncs of `page`'s
     /// persistent document replaced or first computed since the last call,
     /// each with whether the element had a style before (`false`: it was
-    /// not rendered before). `None`: unknown, every element may have (no
-    /// document, not recording, or the document was built anew since).
-    pub fn take_style_changes(&mut self, page: u64) -> Option<Vec<(u64, bool)>> {
+    /// not rendered before), and whether its style is `display: none` now
+    /// (one load from the style the traversal just stored). `None`:
+    /// unknown, every element may have (no document, not recording, or the
+    /// document was built anew since).
+    pub fn take_style_changes(&mut self, page: u64) -> Option<Vec<(u64, bool, bool)>> {
         let m = self.mirrors.get_mut(&page)?;
         let changes = m.doc.take_style_changes()?;
-        Some(changes.into_iter().filter_map(|(id, had_style)| Some((m.key_of(id)?, had_style))).collect())
+        Some(
+            changes
+                .into_iter()
+                .filter_map(|(id, had_style)| {
+                    let display_none =
+                        m.doc.get_node(id)?.primary_styles().is_some_and(|s| s.clone_display().is_none());
+                    Some((m.key_of(id)?, had_style, display_none))
+                })
+                .collect(),
+        )
     }
 
     /// The computed style of the element keyed `key` in `page`'s persistent
@@ -2872,7 +2883,7 @@ mod settle_resolution_tests {
         // A replaced style.
         let kind = red.live.as_ref().unwrap().tree.nodes.iter().find(|n| n.key == key).unwrap().kind.clone();
         renderer.sync_delta(1, &[DeltaOp::Node { key, kind }], (200, 100, 1.0, false, false), true).unwrap();
-        assert_eq!(renderer.take_style_changes(1), Some(vec![(key, true)]));
+        assert_eq!(renderer.take_style_changes(1), Some(vec![(key, true, false)]));
         renderer.sync_delta(1, &[], (200, 100, 1.0, false, false), false).unwrap();
         assert_eq!(renderer.take_style_changes(1), Some(Vec::new()), "nothing changed");
         // An inserted element: a first style.
@@ -2888,8 +2899,8 @@ mod settle_resolution_tests {
             .key;
         renderer.sync_layout(&grown, &fetcher).unwrap();
         let changes = renderer.take_style_changes(1).unwrap();
-        assert!(changes.contains(&(new_key, false)), "{changes:?}");
-        assert!(!changes.contains(&(key, true)) || changes.len() <= 3, "{changes:?}");
+        assert!(changes.contains(&(new_key, false, false)), "{changes:?}");
+        assert!(!changes.contains(&(key, true, false)) || changes.len() <= 3, "{changes:?}");
         // Turned off: nothing is journaled, and turning it on again starts over.
         renderer.record_style_changes(1, false);
         assert_eq!(renderer.take_style_changes(1), None);

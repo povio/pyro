@@ -72,7 +72,7 @@ impl GeometrySource for Counted {
     fn record_style_changes(&self, on: bool) {
         self.inner.record_style_changes(on)
     }
-    fn take_style_changes(&self) -> Option<Vec<(u64, bool)>> {
+    fn take_style_changes(&self) -> Option<Vec<(u64, bool, bool)>> {
         self.inner.take_style_changes()
     }
 }
@@ -211,16 +211,16 @@ fn the_engine_journals_the_elements_whose_style_a_sync_replaced() {
     let el = p.append("box");
     p.layout.bounding_client_rect(&p.dom, el);
     let changes = p.layout.style().take_style_changes(&p.dom).unwrap();
-    assert!(changes.contains(&(el, false)), "{changes:?}");
-    assert!(changes.iter().all(|(id, _)| p.dom.is_alive(*id)), "{changes:?}");
+    assert!(changes.contains(&(el, false, false)), "{changes:?}");
+    assert!(changes.iter().all(|(id, ..)| p.dom.is_alive(*id)), "{changes:?}");
     // A changed element: its style replaced.
     p.dom.set_attribute(el, "style", "color: red").unwrap();
     p.layout.bounding_client_rect(&p.dom, el);
-    assert_eq!(p.layout.style().take_style_changes(&p.dom), Some(vec![(el, true)]));
+    assert_eq!(p.layout.style().take_style_changes(&p.dom), Some(vec![(el, true, false)]));
     // A style-only sync journals too; nothing changed journals nothing.
     p.dom.set_attribute(el, "style", "color: blue").unwrap();
     assert_eq!(p.layout.style().stylo_value(&p.dom, el, "color").as_deref(), Some("rgb(0, 0, 255)"));
-    assert_eq!(p.layout.style().take_style_changes(&p.dom), Some(vec![(el, true)]));
+    assert_eq!(p.layout.style().take_style_changes(&p.dom), Some(vec![(el, true, false)]));
     p.layout.bounding_client_rect(&p.dom, el);
     assert_eq!(p.layout.style().take_style_changes(&p.dom), Some(Vec::new()));
     // Shown again after `display: none` on its parent: styled afresh.
@@ -228,9 +228,9 @@ fn the_engine_journals_the_elements_whose_style_a_sync_replaced() {
     p.dom.set_attribute(host, "style", "display: none").unwrap();
     p.layout.bounding_client_rect(&p.dom, el);
     let hidden = p.layout.style().take_style_changes(&p.dom).unwrap();
-    assert!(hidden.contains(&(host, true)) && !hidden.iter().any(|(id, _)| *id == el), "{hidden:?}");
+    assert!(hidden.contains(&(host, true, true)) && !hidden.iter().any(|(id, ..)| *id == el), "{hidden:?}");
     p.dom.set_attribute(host, "style", "").unwrap();
     p.layout.bounding_client_rect(&p.dom, el);
     let shown = p.layout.style().take_style_changes(&p.dom).unwrap();
-    assert!(shown.contains(&(host, true)) && shown.contains(&(el, false)), "{shown:?}");
+    assert!(shown.contains(&(host, true, false)) && shown.contains(&(el, false, false)), "{shown:?}");
 }

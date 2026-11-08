@@ -647,7 +647,7 @@ impl GeometrySource for BlitzGeometry {
         self.with_renderer(|r| r.record_style_changes(self.page, on));
     }
 
-    fn take_style_changes(&self) -> Option<Vec<(u64, bool)>> {
+    fn take_style_changes(&self) -> Option<Vec<(u64, bool, bool)>> {
         self.with_renderer(|r| r.take_style_changes(self.page)).flatten()
     }
 

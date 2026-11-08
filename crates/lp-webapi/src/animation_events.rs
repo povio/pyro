@@ -477,7 +477,7 @@ fn transition_candidates_changed(
         state.journaled.set(journal.is_some());
         return;
     };
-    for (el, had_style) in changes {
+    for (el, had_style, display_none) in changes {
         if !had_style {
             // Not rendered before: no before-change style, unless the
             // element was hidden content (Chrome keeps its style then).
@@ -495,7 +495,7 @@ fn transition_candidates_changed(
         if !state.observed.borrow().get(&el).is_some_and(|(_, at, _)| *at == stamp) && rules.may_transition(dom, el) {
             style_change(state, dom, style, Some(rules), el, now_ms, planned);
         }
-        if hides_content(dom, el) {
+        if display_none && hides_content(dom, el) {
             // Blitz styles this element `display: none` and nothing under
             // it, so the journal never lists its descendants; Chrome keeps
             // their styles (`content-visibility: hidden`). Those that may
@@ -516,7 +516,8 @@ fn transition_candidates_changed(
 /// Whether Blitz has `el` `display: none` where Chrome has
 /// `content-visibility: hidden`: a child of a closed `<details>` other than
 /// its first `<summary>`, or a `hidden=until-found` element. Two attribute
-/// reads (the engine's `ElementDisplay::ContentHidden` reads the same).
+/// reads, asked only of journal entries styled `display: none` (the
+/// engine's `ElementDisplay::ContentHidden` reads the same).
 fn hides_content(dom: &lp_dom::Dom, el: NodeId) -> bool {
     use markup5ever::local_name;
     let Ok(e) = dom.element(el) else { return false };

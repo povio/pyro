@@ -966,17 +966,20 @@ impl StyleEngine {
     /// first computed since the last call, each with whether the element
     /// had a style before (`false`: it was not rendered before, as an
     /// element just inserted or whose ancestor stopped being
-    /// `display: none`). `None`: unknown, every element may have (no engine,
+    /// `display: none`), and whether it is styled `display: none` now.
+    /// `None`: unknown, every element may have (no engine,
     /// [`Self::record_style_changes`] not called, or the engine's document
     /// was built anew since).
-    pub fn take_style_changes(&self, dom: &Dom) -> Option<Vec<(NodeId, bool)>> {
+    pub fn take_style_changes(&self, dom: &Dom) -> Option<Vec<(NodeId, bool, bool)>> {
         let external = self.external.borrow();
         let (source, _) = external.as_ref()?;
         let changes = source.take_style_changes()?;
         Some(
             changes
                 .into_iter()
-                .filter_map(|(key, had_style)| Some((crate::snapshot::node_of_render_key(dom, key)?, had_style)))
+                .filter_map(|(key, had_style, display_none)| {
+                    Some((crate::snapshot::node_of_render_key(dom, key)?, had_style, display_none))
+                })
                 .collect(),
         )
     }

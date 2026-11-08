@@ -180,10 +180,10 @@ pub trait GeometrySource {
     fn record_style_changes(&self, _on: bool) {}
     /// The elements (by key) whose computed style the syncs replaced or
     /// first computed since the last call, each with whether the element
-    /// had a style before (`false`: it was not rendered before). `None`:
-    /// unknown, every element may have (not recording, or the engine's
-    /// document was built anew since).
-    fn take_style_changes(&self) -> Option<Vec<(u64, bool)>> {
+    /// had a style before (`false`: it was not rendered before) and whether
+    /// it is styled `display: none` now. `None`: unknown, every element may
+    /// have (not recording, or the engine's document was built anew since).
+    fn take_style_changes(&self) -> Option<Vec<(u64, bool, bool)>> {
         None
     }
     /// Whether the element is outside every `display: none` subtree of the
