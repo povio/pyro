@@ -586,3 +586,435 @@ fn serve(
     });
     (addr, h)
 }
+
+// ---------------------------------------------------------------------------
+// Review (adversarial) cases.
+
+impl Manual {
+    /// Runs until `path` has been requested `n` times (or 3 s pass).
+    fn wait_count(&mut self, path: &str, n: usize) -> bool {
+        let loader = self.loader.clone();
+        let url = format!("{ORIGIN}{path}");
+        let r = self.thread.run_until(Some(Instant::now() + Duration::from_secs(3)), |_| {
+            loader.requests.borrow().iter().filter(|u| **u == url).count() >= n
+        });
+        r == lp_runtime::RunOutcome::Done
+    }
+
+    fn try_wait_load(&mut self, secs: u64) -> bool {
+        let rec = self.rec.clone();
+        let r = self.thread.run_until(Some(Instant::now() + Duration::from_secs(secs)), |_| {
+            rec.log.borrow().iter().any(|l| l == "event:load")
+        });
+        r == lp_runtime::RunOutcome::Done
+    }
+}
+
+/// Two `<img>` with the same URL after a blocking script: the first claims
+/// the pending speculative fetch, the second must not steal its completion
+/// (both load, the load event fires).
+#[test]
+fn review_duplicate_image_urls_while_speculation_pending() {
+    let mut m = Manual::start(
+        r#"<!doctype html><body><script src="/s1.js"></script>
+        <img id=a src="/i.png" onload="console.log('a load')" onerror="console.log('a error')">
+        <img id=b src="/i.png" onload="console.log('b load')" onerror="console.log('b error')">
+        <script>console.log('inline')</script></body>"#,
+        &[("/s1.js", "console.log('s1')"), ("/i.png", "not a png")],
+    );
+    m.wait_pending(&["/s1.js", "/i.png"]);
+    m.complete("/s1.js");
+    m.thread.run_until_idle(Some(Instant::now() + Duration::from_millis(200)));
+    assert_eq!(m.console(), ["s1", "inline"]);
+    // Every request for /i.png still outstanding is answered.
+    while m.loader.pending_urls().iter().any(|u| u.ends_with("/i.png")) {
+        m.complete("/i.png");
+        m.thread.run_until_idle(Some(Instant::now() + Duration::from_millis(50)));
+    }
+    assert!(m.try_wait_load(3), "load event: requested {:?}, log {:?}", m.loader.requests.borrow(), m.rec.log.borrow());
+    let console = m.console();
+    assert!(console.contains(&"a error".to_string()) && console.contains(&"b error".to_string()), "{console:?}");
+}
+
+/// Two `<link rel=stylesheet>` with the same URL after a blocking script,
+/// then a script that waits for them: both sheets load and the script runs.
+#[test]
+fn review_duplicate_stylesheets_while_speculation_pending() {
+    let mut m = Manual::start(
+        r#"<!doctype html><head><script src="/s1.js"></script>
+        <link rel=stylesheet href="/a.css"><link rel=stylesheet href="/a.css">
+        <script>console.log('inline', getComputedStyle(document.documentElement).color)</script></head><body></body>"#,
+        &[("/s1.js", "console.log('s1')"), ("/a.css", "html { color: rgb(1, 2, 3) }")],
+    );
+    m.wait_pending(&["/s1.js", "/a.css"]);
+    m.complete("/s1.js");
+    m.thread.run_until_idle(Some(Instant::now() + Duration::from_millis(200)));
+    while m.loader.pending_urls().iter().any(|u| u.ends_with("/a.css")) {
+        m.complete("/a.css");
+        m.thread.run_until_idle(Some(Instant::now() + Duration::from_millis(50)));
+    }
+    assert!(m.try_wait_load(3), "load event: requested {:?}, log {:?}", m.loader.requests.borrow(), m.rec.log.borrow());
+    assert_eq!(m.console(), ["s1", "inline rgb(1, 2, 3)"]);
+}
+
+/// `<link rel=preload as=image>` and an `<img>` of the same URL: both
+/// claim the one speculative fetch; both must complete.
+#[test]
+fn review_preload_and_image_of_same_url() {
+    let mut m = Manual::start(
+        r#"<!doctype html><head><script src="/s1.js"></script>
+        <link rel=preload as=image href="/i.png" onload="console.log('preload load')" onerror="console.log('preload error')">
+        </head><body><img src="/i.png" onload="console.log('img load')" onerror="console.log('img error')"></body>"#,
+        &[("/s1.js", "console.log('s1')"), ("/i.png", "not a png")],
+    );
+    m.wait_pending(&["/s1.js", "/i.png"]);
+    m.complete("/s1.js");
+    m.thread.run_until_idle(Some(Instant::now() + Duration::from_millis(200)));
+    while m.loader.pending_urls().iter().any(|u| u.ends_with("/i.png")) {
+        m.complete("/i.png");
+        m.thread.run_until_idle(Some(Instant::now() + Duration::from_millis(50)));
+    }
+    assert!(m.try_wait_load(3), "load event: requested {:?}, log {:?}", m.loader.requests.borrow(), m.rec.log.borrow());
+    let console = m.console();
+    assert!(console.iter().any(|l| l.starts_with("preload ")), "{console:?}");
+    assert!(console.iter().any(|l| l.starts_with("img ")), "{console:?}");
+}
+
+/// An image claims the pending speculative fetch, a script then points it
+/// elsewhere (its request is cancelled), and a later `<img>` uses the first
+/// URL again: that one must get a response (its own request), not wait on
+/// the cancelled one forever.
+#[test]
+fn review_cancelled_claim_then_same_url_again() {
+    let mut m = Manual::start(
+        r#"<!doctype html><body><script src="/s1.js"></script>
+        <img id=a src="/i.png">
+        <script src="/s2.js"></script>
+        <img id=b src="/i.png" onload="console.log('b load')" onerror="console.log('b error')">
+        <script>console.log('inline')</script></body>"#,
+        &[
+            ("/s1.js", "console.log('s1')"),
+            ("/s2.js", "document.getElementById('a').src = '/other.png'; console.log('s2')"),
+            ("/i.png", "not a png"),
+            ("/other.png", "not a png"),
+        ],
+    );
+    m.wait_pending(&["/s1.js", "/i.png", "/s2.js"]);
+    m.complete("/s1.js");
+    m.thread.run_until_idle(Some(Instant::now() + Duration::from_millis(100)));
+    m.complete("/s2.js");
+    m.thread.run_until_idle(Some(Instant::now() + Duration::from_millis(200)));
+    assert!(m.loader.cancelled.borrow().contains(&format!("{ORIGIN}/i.png")), "{:?}", m.loader.cancelled.borrow());
+    // A real network client never answers a cancelled request: b needs its
+    // own.
+    assert!(m.wait_count("/i.png", 2), "b's request: {:?}", m.loader.requests.borrow());
+}
+
+/// A script writes a `<base href>`: the scripts after it resolve against
+/// the new base; the speculative request for the old URL is wasted and
+/// cancelled, never executed.
+#[test]
+fn review_written_base_changes_later_script_url() {
+    let mut m = Manual::start(
+        r#"<!doctype html><head><script src="/s1.js"></script><script src="b.js"></script>
+        <script>console.log('inline', document.baseURI)</script></head><body></body>"#,
+        &[
+            ("/s1.js", r#"console.log('s1'); document.write('<base href="/other/">')"#),
+            ("/b.js", "console.log('WRONG b')"),
+            ("/other/b.js", "console.log('other b')"),
+        ],
+    );
+    m.wait_pending(&["/s1.js", "/b.js"]);
+    m.complete("/b.js");
+    m.complete("/s1.js");
+    m.wait_pending(&["/other/b.js"]);
+    m.complete("/other/b.js");
+    m.wait_load();
+    assert_eq!(m.console(), ["s1", "other b", "inline http://site.test/other/"]);
+    assert_eq!(m.loader.count("/b.js"), 1);
+}
+
+/// A written script duplicates a speculated URL: the written one takes the
+/// speculation, the document's own element fetches again (as without
+/// speculation, no cache) and both run, in order.
+#[test]
+fn review_written_script_duplicates_speculated_url() {
+    let mut m = Manual::start(
+        r#"<!doctype html><body><script src="/s1.js"></script><script src="/s2.js"></script>
+        <script>console.log('inline')</script></body>"#,
+        &[
+            ("/s1.js", r#"console.log('s1'); document.write('<script src="/s2.js"><\/script>')"#),
+            ("/s2.js", "console.log('s2', document.scripts.length)"),
+        ],
+    );
+    m.wait_pending(&["/s1.js", "/s2.js"]);
+    m.complete("/s1.js");
+    m.complete("/s2.js");
+    m.thread.run_until_idle(Some(Instant::now() + Duration::from_millis(100)));
+    while m.loader.pending_urls().iter().any(|u| u.ends_with("/s2.js")) {
+        m.complete("/s2.js");
+        m.thread.run_until_idle(Some(Instant::now() + Duration::from_millis(50)));
+    }
+    m.wait_load();
+    assert_eq!(m.console(), ["s1", "s2 2", "s2 3", "inline"]);
+    assert_eq!(m.loader.count("/s2.js"), 2, "{:?}", m.loader.requests.borrow());
+}
+
+/// Scripts the document never executes are not requested: data-block
+/// types, nomodule classics, `src` on SVG's script, script text inside
+/// `<math>`/`<svg>` CDATA, and `<iframe srcdoc>` markup (the iframe makes
+/// its own request, once).
+#[test]
+fn review_non_executable_scripts_are_not_requested() {
+    let mut m = Manual::start(
+        r#"<!doctype html><body><script src="/s1.js"></script>
+        <script type="text/template" src="/tpl.js"></script>
+        <script type="text/javascript; charset=utf-8" src="/param.js"></script>
+        <script language="vbscript" src="/vb.js"></script>
+        <script type="module" nomodule src="/modnomod.js"></script>
+        <svg><script src="/svg.js"></script><![CDATA[ <script src="/cdata.js"></script> ]]></svg>
+        <math><mtext><b>x</b></mtext><annotation-xml><script src="/mathx.js"></script></annotation-xml></math>
+        <iframe srcdoc="<script src='/srcdoc.js'></script>"></iframe>
+        <script>console.log('inline')</script></body>"#,
+        &[
+            ("/s1.js", "console.log('s1')"),
+            ("/modnomod.js", "console.log('modnomod')"),
+            ("/srcdoc.js", "console.log('srcdoc')"),
+        ],
+    );
+    m.wait_pending(&["/s1.js"]);
+    m.thread.run_until_idle(Some(Instant::now() + Duration::from_millis(100)));
+    // What the scan requested while s1 blocks the parser (the document
+    // URL and s1 are the parser's own).
+    let ahead: Vec<String> = m.loader.requests.borrow()[2..].to_vec();
+    assert_eq!(ahead, [format!("{ORIGIN}/modnomod.js")], "requested ahead");
+    m.complete("/s1.js");
+    // Answer whatever the document itself goes on to request.
+    let rec = m.rec.clone();
+    for _ in 0..50 {
+        m.thread.run_until_idle(Some(Instant::now() + Duration::from_millis(50)));
+        for u in m.loader.pending_urls() {
+            let path = u.trim_start_matches(ORIGIN).to_owned();
+            m.complete(&path);
+        }
+        if rec.log.borrow().iter().any(|l| l == "event:load") {
+            break;
+        }
+    }
+    assert_eq!(m.loader.count("/modnomod.js"), 1, "{:?}", m.loader.requests.borrow());
+}
+
+/// Script data that looks like a tag after an escaped `<script>` inside it
+/// (`<!--<script>`): the real tokenizer never ends the element at the inner
+/// `</script>`, so nothing in it is a request.
+#[test]
+fn review_double_escaped_script_text_is_not_scanned() {
+    let mut m = Manual::start(
+        r#"<!doctype html><body><script src="/s1.js"></script>
+        <script><!--<script></script><img src="/esc.png">--></script>
+        <script>console.log('inline')</script></body>"#,
+        &[("/s1.js", "console.log('s1')")],
+    );
+    m.wait_pending(&["/s1.js"]);
+    m.thread.run_until_idle(Some(Instant::now() + Duration::from_millis(100)));
+    let ahead = m.loader.requests.borrow().clone();
+    m.complete("/s1.js");
+    m.wait_load();
+    assert_eq!(m.loader.count("/esc.png"), 0, "ahead: {ahead:?}");
+}
+
+/// A classic `nomodule` script waiting for a stylesheet: the browser never
+/// fetches it, so the early fetch for the stylesheet-blocked script must
+/// not either.
+#[test]
+fn review_stylesheet_blocked_nomodule_script_is_not_fetched() {
+    let mut m = Manual::start(
+        r#"<!doctype html><head><link rel="stylesheet" href="/slow.css"><script nomodule src="/nm.js"></script>
+        <script type="text/x-template" src="/tpl.js"></script>
+        </head><body><script>console.log('inline')</script></body>"#,
+        &[("/slow.css", "body { color: red }"), ("/nm.js", "console.log('nm')")],
+    );
+    m.wait_pending(&["/slow.css"]);
+    m.thread.run_until_idle(Some(Instant::now() + Duration::from_millis(100)));
+    let ahead = m.loader.requests.borrow().clone();
+    m.complete("/slow.css");
+    m.wait_load();
+    assert_eq!(m.console(), ["inline"]);
+    assert_eq!(m.loader.count("/nm.js"), 0, "ahead: {ahead:?}");
+}
+
+/// Markup an inline script writes after the parser consumed part of the
+/// scanned input: the written scripts after the first written blocking one
+/// are requested ahead too (the report: written markup is scanned at the
+/// next block).
+#[test]
+fn review_written_markup_after_consumed_input_is_scanned() {
+    let filler = "<p>filler paragraph text</p>".repeat(40);
+    let html = format!(
+        r#"<!doctype html><body><script src="/s1.js"></script>{filler}
+        <script>document.write('<script src="/w1.js"><\/script><script src="/w2.js"><\/script>')</script>
+        <script>console.log('inline')</script></body>"#
+    );
+    let mut m = Manual::start(
+        &html,
+        &[("/s1.js", "console.log('s1')"), ("/w1.js", "console.log('w1')"), ("/w2.js", "console.log('w2')")],
+    );
+    m.wait_pending(&["/s1.js"]);
+    m.complete("/s1.js");
+    m.wait_pending(&["/w1.js"]);
+    m.thread.run_until_idle(Some(Instant::now() + Duration::from_millis(100)));
+    let w2_ahead = m.loader.count("/w2.js");
+    m.complete("/w1.js");
+    if !m.loader.pending_urls().iter().any(|u| u.ends_with("/w2.js")) {
+        m.wait_pending(&["/w2.js"]);
+    }
+    m.complete("/w2.js");
+    m.wait_load();
+    assert_eq!(m.console(), ["s1", "w1", "w2", "inline"]);
+    assert_eq!(w2_ahead, 1, "w2 requested while w1 was pending: {:?}", m.loader.requests.borrow());
+}
+
+/// Like `serve`, with a per-path handler: (status, extra headers, body,
+/// delay). Records each request's head.
+#[allow(clippy::type_complexity)]
+fn serve_with(
+    handler: Arc<dyn Fn(&str) -> (u16, Vec<(String, String)>, String, u64) + Send + Sync>,
+    heads: Arc<Mutex<Vec<(String, String)>>>,
+) -> String {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = format!("http://{}", listener.local_addr().unwrap());
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { break };
+            let (handler, heads) = (handler.clone(), heads.clone());
+            std::thread::spawn(move || loop {
+                let mut buf = Vec::new();
+                let mut byte = [0u8; 1];
+                while !buf.ends_with(b"\r\n\r\n") {
+                    match stream.read(&mut byte) {
+                        Ok(1) => buf.push(byte[0]),
+                        _ => return,
+                    }
+                }
+                let req = String::from_utf8_lossy(&buf).to_string();
+                let path = req.split_whitespace().nth(1).unwrap_or("/").to_string();
+                heads.lock().unwrap().push((path.clone(), req));
+                let (status, extra, body, delay) = handler(&path);
+                std::thread::sleep(Duration::from_millis(delay));
+                let mut head = format!(
+                    "HTTP/1.1 {status} X\r\nContent-Length: {}\r\nCache-Control: no-store\r\n",
+                    body.len()
+                );
+                for (k, v) in extra {
+                    head.push_str(&format!("{k}: {v}\r\n"));
+                }
+                head.push_str("\r\n");
+                if stream.write_all(head.as_bytes()).and_then(|_| stream.write_all(body.as_bytes())).is_err() {
+                    return;
+                }
+            });
+        }
+    });
+    addr
+}
+
+fn http_load(origin: &str, secs: u64) -> (bool, Vec<String>) {
+    let mut thread = crate::browser_thread().unwrap();
+    let rec = Rc::new(Recorder::default());
+    thread.browser.set_observer(Some(rec.clone()));
+    thread.browser.set_engine_hooks(Some(rec.clone()));
+    let client = lp_net::NetClient::new(lp_net::NetConfig::default()).unwrap();
+    thread.browser.set_loader(Some(Rc::new(NetLoader::new(client))));
+    let page = thread.browser.create_page().unwrap();
+    rec.log.borrow_mut().clear();
+    thread.browser.navigate(page, NavigateOpts::address_bar(format!("{origin}/"))).unwrap();
+    let r = thread.run_until(Some(Instant::now() + Duration::from_secs(secs)), |_| {
+        rec.log.borrow().iter().any(|l| l == "event:load")
+    });
+    thread.run_until_idle(Some(Instant::now() + Duration::from_millis(200)));
+    let console = rec.log.borrow().iter().filter(|l| !l.starts_with("event:")).cloned().collect();
+    (r == lp_runtime::RunOutcome::Done, console)
+}
+
+fn js(body: &str) -> (u16, Vec<(String, String)>, String, u64) {
+    (200, vec![("Content-Type".into(), "text/javascript".into())], body.into(), 30)
+}
+
+/// Speculated scripts answered 404, 500 and through a redirect: errors fire
+/// `error` events (no execution of the error body), the redirect target
+/// runs, each URL is requested once.
+#[test]
+fn review_http_errors_and_redirects_of_speculated_scripts() {
+    let heads: Arc<Mutex<Vec<(String, String)>>> = Arc::default();
+    let handler: Arc<dyn Fn(&str) -> (u16, Vec<(String, String)>, String, u64) + Send + Sync> =
+        Arc::new(|path: &str| match path {
+            "/" => (
+                200,
+                vec![("Content-Type".into(), "text/html".into())],
+                r#"<!doctype html><body><script src="/s1.js"></script>
+                <script src="/missing.js" onerror="console.log('404 error')"></script>
+                <script src="/boom.js" onerror="console.log('500 error')"></script>
+                <script src="/redir.js"></script>
+                <link rel=stylesheet href="/redir.css">
+                <script>console.log('inline', getComputedStyle(document.body).color)</script></body>"#
+                    .into(),
+                0,
+            ),
+            "/s1.js" => (200, vec![("Content-Type".into(), "text/javascript".into())], "console.log('s1')".into(), 200),
+            "/missing.js" => {
+                (404, vec![("Content-Type".into(), "text/javascript".into())], "console.log('404 body ran')".into(), 0)
+            }
+            "/boom.js" => {
+                (500, vec![("Content-Type".into(), "text/javascript".into())], "console.log('500 body ran')".into(), 0)
+            }
+            "/redir.js" => (302, vec![("Location".into(), "/target.js".into())], String::new(), 0),
+            "/target.js" => js("console.log('target', document.currentScript.src)"),
+            "/redir.css" => (302, vec![("Location".into(), "/target.css".into())], String::new(), 0),
+            "/target.css" => {
+                (200, vec![("Content-Type".into(), "text/css".into())], "body { color: rgb(4, 5, 6) }".into(), 0)
+            }
+            _ => (404, vec![], "nope".into(), 0),
+        });
+    let origin = serve_with(handler, heads.clone());
+    let (loaded, console) = http_load(&origin, 20);
+    assert!(loaded, "{console:?}");
+    let console: Vec<String> = console.into_iter().filter(|l| !l.starts_with("exception: TypeError: Failed to load script")).collect();
+    let target = format!("target {origin}/redir.js");
+    assert_eq!(
+        console,
+        ["s1", "404 error", "500 error", target.as_str(), "inline rgb(4, 5, 6)"],
+        "{console:?}"
+    );
+    let heads = heads.lock().unwrap();
+    for p in ["/s1.js", "/missing.js", "/boom.js", "/redir.js", "/target.js", "/redir.css", "/target.css"] {
+        assert_eq!(heads.iter().filter(|(h, _)| h == p).count(), 1, "{p}: {:?}", heads.iter().map(|h| &h.0).collect::<Vec<_>>());
+    }
+}
+
+/// A cookie an earlier blocking script sets: a later script's request
+/// carried it before speculation (it was made after the cookie was set).
+/// Recorded, not asserted either way: Chrome's preload scanner has the same
+/// race. The test prints what the later request carried.
+#[test]
+fn review_cookie_set_by_earlier_script() {
+    let heads: Arc<Mutex<Vec<(String, String)>>> = Arc::default();
+    let handler: Arc<dyn Fn(&str) -> (u16, Vec<(String, String)>, String, u64) + Send + Sync> =
+        Arc::new(|path: &str| match path {
+            "/" => (
+                200,
+                vec![("Content-Type".into(), "text/html".into())],
+                r#"<!doctype html><body><script src="/s1.js"></script><script src="/s2.js"></script></body>"#.into(),
+                0,
+            ),
+            "/s1.js" => js("document.cookie = 'k=v; path=/'"),
+            "/s2.js" => js("console.log('s2')"),
+            _ => (404, vec![], "nope".into(), 0),
+        });
+    let origin = serve_with(handler, heads.clone());
+    let (loaded, console) = http_load(&origin, 20);
+    assert!(loaded, "{console:?}");
+    let heads = heads.lock().unwrap();
+    let s2 = heads.iter().find(|(p, _)| p == "/s2.js").expect("s2 requested");
+    let has_cookie = s2.1.to_ascii_lowercase().contains("cookie: k=v");
+    eprintln!("REVIEW cookie on speculated /s2.js: {has_cookie}");
+}
