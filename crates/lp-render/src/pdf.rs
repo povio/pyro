@@ -390,7 +390,7 @@ fn tag_tree(ex: &Extras, leaves: Leaves) -> krilla::tagging::TagTree {
         placed[i] = true;
         match ex.structs[i].parent {
             Some(parent) => {
-                place(parent, ex, placed, children, root);
+                blitz_dom::util::ensure_stack(|| place(parent, ex, placed, children, root));
                 children[parent as usize].push(Child::Struct(s));
             }
             None => root.push(Child::Struct(s)),
@@ -413,7 +413,8 @@ fn tag_tree(ex: &Extras, leaves: Leaves) -> krilla::tagging::TagTree {
                     StructKind::Link(_) => Tag::Link.into(),
                 };
                 let kids = std::mem::take(&mut children[s as usize]);
-                let nodes = kids.into_iter().map(|c| build(c, ex, children)).collect();
+                let nodes =
+                    kids.into_iter().map(|c| blitz_dom::util::ensure_stack(|| build(c, ex, children))).collect();
                 TagGroup::with_children(kind, nodes).into()
             }
         }

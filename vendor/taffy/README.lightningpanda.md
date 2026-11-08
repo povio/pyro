@@ -169,6 +169,16 @@ over an occupancy matrix of the whole grid. In debug builds `debug_assert_tree_p
 placement as well and asserts the areas and track counts are equal, and the replay asserts the same for the
 inserted items.
 
+## Small stack frames per level of block layout
+
+`compute/block.rs`: block layout recurses through `compute_block_layout` -> `compute_inner` ->
+`perform_final_layout_on_in_flow_children` -> the child's layout, once per level of a nested tree.
+`generate_item_list` and `determine_content_based_container_width` are no longer inlined into `compute_inner`
+(their locals are dead by the time it recurses), and a box that establishes a block formatting context
+creates it in `compute_inner_in_new_bfc` (not inlined) instead of in the frame of `compute_block_layout`
+that every block pays for. About 0.3 KB less per level (blitz-dom's README has the whole picture). No
+behaviour change.
+
 ## Moving from v0.15.1 to main
 
 The local commit was cherry-picked onto main (base `v0.15.1`, a release branch). Upstream has none of the

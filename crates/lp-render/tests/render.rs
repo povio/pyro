@@ -880,3 +880,52 @@ fn diff_limits_take_the_smaller_one() {
     // 0.0015 * 10000 = 15: 15 differing pixels pass, 16 fail (count > limit).
     assert_eq!(o(None, Some(0.00155)).allowed(100, 100), 15);
 }
+
+/// `depth` nested boxes of one kind around a line of text.
+fn deep_tree(kind: &str, depth: usize) -> String {
+    let (open, close) = match kind {
+        "table" => {
+            ("<table style=\"border-spacing:0\"><tr><td style=\"padding:0 0 0 1px\">".to_string(), "</td></tr></table>")
+        }
+        style => (format!("<div style=\"{style};padding-left:1px;padding-top:1px\">"), "</div>"),
+    };
+    format!(
+        "<!doctype html><body style=\"margin:0\">{}<span style=\"white-space:nowrap\">deep text</span>{}",
+        open.repeat(depth),
+        close.repeat(depth)
+    )
+}
+
+#[test]
+fn deep_trees_lay_out_paint_and_print_on_a_small_stack() {
+    // Layout, the paint tree and paint recurse once per tree level; they grow the stack on demand
+    // (blitz-dom `util::ensure_stack`), so a tree far deeper than this thread's 512 KB holds
+    // renders instead of aborting the process.
+    std::thread::Builder::new()
+        .stack_size(512 * 1024)
+        .spawn(|| {
+            for kind in [
+                "display:block",
+                "display:flex",
+                "display:grid",
+                "display:inline-block",
+                "writing-mode:vertical-rl",
+                "table",
+            ] {
+                // A nested table is four element levels (and its construction walks its subtree:
+                // quadratic in nesting, so fewer of them).
+                let html = deep_tree(kind, if kind == "table" { 600 } else { 3000 });
+                let mut r = Renderer::new();
+                let (img, _, _) = r.render(&snap(&html), Area::Viewport, Backend::Cpu, &fetcher()).unwrap();
+                assert_eq!((img.width, img.height), (400, 300), "{kind}");
+                r.render(&snap(&html), Area::FullPage, Backend::Cpu, &fetcher()).unwrap();
+                let pdf = Renderer::new()
+                    .print_pdf(&snap(&html), &fetcher(), &PdfOptions::new(".pz-page", (816.0, 1056.0)))
+                    .unwrap();
+                assert!(!pdf.pages.is_empty() && pdf.bytes.starts_with(b"%PDF"), "{kind}");
+            }
+        })
+        .unwrap()
+        .join()
+        .expect("no stack overflow");
+}

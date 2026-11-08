@@ -1498,7 +1498,7 @@ impl StyleEngine {
     /// Whether the layout engine has `el` outside every `display: none`
     /// subtree of the rendered (flat) tree, as of its styles brought up to
     /// `dom`; `None` when there is no engine or it cannot tell.
-    fn engine_displayed(&self, dom: &Dom, el: NodeId) -> Option<bool> {
+    pub fn engine_displayed(&self, dom: &Dom, el: NodeId) -> Option<bool> {
         self.owns(dom, el)?;
         self.engine_styled(dom)?;
         let external = self.external.borrow();

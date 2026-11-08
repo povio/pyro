@@ -3954,7 +3954,25 @@ fn text_clip_facts_fixed_absolute_and_contents_wrappers() {
 
 #[test]
 fn text_clip_facts_deep_nesting_without_recursion() {
-    let depth = 400;
+    // On a test thread's default 2 MB stack: layout itself recurses once per
+    // level (Taffy), about 2.4 KB here (5.3 KB before its per-level frames
+    // were trimmed, which overflowed at about 380 levels).
+    deep_nesting(400);
+}
+
+#[test]
+fn deep_nesting_lays_out_on_a_browser_thread_stack() {
+    // A browser thread's 8 MB stack (lp-cdp `BROWSER_STACK_BYTES`, a main
+    // thread's): 2,000 nested blocks lay out, in debug builds too.
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| deep_nesting(2000))
+        .unwrap()
+        .join()
+        .expect("no stack overflow");
+}
+
+fn deep_nesting(depth: usize) {
     let open: String = (0..depth).map(|i| format!("<div id=n{i} style=\"padding-left:1px\">")).collect();
     let close = "</div>".repeat(depth);
     let html = format!(
@@ -3963,6 +3981,7 @@ fn text_clip_facts_deep_nesting_without_recursion() {
     let p = page(&html);
     assert!(sw(&p, "n0") > 0.0);
     assert!(sw(&p, &format!("n{}", depth - 1)) > 0.0);
+    assert_eq!(p.layout.bounding_client_rect(&p.dom, p.id("leaf")).x, depth as f64 + 8.0);
 }
 
 #[test]
@@ -4654,4 +4673,79 @@ fn table_cell_declared_height_is_minimum() {
     );
     assert_eq!(p.metrics("short")[3], 26.0);
     assert!(p.metrics("footer")[3] >= 68.0, "footer {:?}, content {:?}", p.metrics("footer"), p.metrics("content"));
+}
+
+// review (misc2): the frame trimming covers block layout; the other algorithms recurse through
+// larger frames. On a browser thread's 8 MB (release): block and flow-root about 3,000 levels,
+// flex about 2,000, grid and inline-block about 1,200-1,500. Each kind lays out 600 levels on
+// 8 MB in a debug build.
+#[test]
+fn review_misc2_deep_nesting_of_each_algorithm_on_a_browser_thread_stack() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            for kind in [
+                "display:flex",
+                "display:flex;flex-direction:column",
+                "display:grid",
+                "display:inline-block",
+                "display:flow-root",
+                "position:relative",
+            ] {
+                let depth = 600;
+                let open: String =
+                    (0..depth).map(|i| format!("<div id=n{i} style=\"{kind};padding-left:1px\">")).collect();
+                let html = format!(
+                    "<body style=\"margin:8px\">{open}<span id=leaf style=\"white-space:nowrap\">deep</span>{}",
+                    "</div>".repeat(depth)
+                );
+                let p = page(&html);
+                assert_eq!(p.layout.bounding_client_rect(&p.dom, p.id("leaf")).x, depth as f64 + 8.0, "{kind}");
+            }
+        })
+        .unwrap()
+        .join()
+        .expect("no stack overflow");
+}
+
+#[test]
+fn deep_nesting_of_each_algorithm_lays_out_on_any_stack() {
+    // Layout grows its stack on demand (blitz-dom `util::ensure_stack`): 5,000 levels of each
+    // algorithm lay out on a 256 KB thread, which holds about 100 levels of nested blocks.
+    std::thread::Builder::new()
+        .stack_size(256 * 1024)
+        .spawn(|| {
+            for kind in [
+                "display:block",
+                "display:flex",
+                "display:flex;flex-direction:column",
+                "display:grid",
+                "display:inline-block",
+                "display:table",
+                "display:flow-root",
+                "position:relative",
+                "writing-mode:vertical-lr",
+                "writing-mode:vertical-rl",
+            ] {
+                let depth = 5000;
+                let vertical = kind.starts_with("writing-mode");
+                let pad = if vertical { "padding-top" } else { "padding-left" };
+                let open: String = (0..depth).map(|i| format!("<div id=n{i} style=\"{kind};{pad}:1px\">")).collect();
+                let html = format!(
+                    "<body style=\"margin:8px\">{open}<span id=leaf style=\"white-space:nowrap\">deep</span>{}",
+                    "</div>".repeat(depth)
+                );
+                let p = page(&html);
+                // Each level moves the leaf 1px along its padding (widths run out long before).
+                let leaf = p.layout.bounding_client_rect(&p.dom, p.id("leaf"));
+                // (`display: table` boxes nested in each other place their content differently, as on
+                // 267ac8c5 at any depth: only that they lay out is checked for them.)
+                if kind != "display:table" {
+                    assert_eq!(if vertical { leaf.y } else { leaf.x }, depth as f64 + 8.0, "{kind}");
+                }
+            }
+        })
+        .unwrap()
+        .join()
+        .expect("no stack overflow");
 }

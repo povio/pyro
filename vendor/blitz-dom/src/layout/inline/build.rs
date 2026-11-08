@@ -247,7 +247,7 @@ fn build_inline_layout_with(
                         );
                         for child_id in node.children.iter().copied() {
                             // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
-                            build_inline_layout_recursive(
+                            crate::util::ensure_stack(|| build_inline_layout_recursive(
                                 builder,
                                 text_transformer,
                                 nodes,
@@ -255,7 +255,7 @@ fn build_inline_layout_with(
                                 &text_transform,
                                 text_nodes,
                                 strut,
-                            );
+                            ));
                         }
                         builder.pop_style_span();
                     }
@@ -296,7 +296,7 @@ fn build_inline_layout_with(
                             builder.push_style_span(style);
 
                             if let Some(before_id) = node.before() {
-                                build_inline_layout_recursive(
+                                crate::util::ensure_stack(|| build_inline_layout_recursive(
                                     builder,
                                     text_transformer,
                                     nodes,
@@ -304,11 +304,11 @@ fn build_inline_layout_with(
                                     &text_transform,
                                     text_nodes,
                                     strut,
-                                );
+                                ));
                             }
 
                             for child_id in node.children.iter().copied() {
-                                build_inline_layout_recursive(
+                                crate::util::ensure_stack(|| build_inline_layout_recursive(
                                     builder,
                                     text_transformer,
                                     nodes,
@@ -316,10 +316,10 @@ fn build_inline_layout_with(
                                     &text_transform,
                                     text_nodes,
                                     strut,
-                                );
+                                ));
                             }
                             if let Some(after_id) = node.after() {
-                                build_inline_layout_recursive(
+                                crate::util::ensure_stack(|| build_inline_layout_recursive(
                                     builder,
                                     text_transformer,
                                     nodes,
@@ -327,7 +327,7 @@ fn build_inline_layout_with(
                                     &text_transform,
                                     text_nodes,
                                     strut,
-                                );
+                                ));
                             }
 
                             builder.pop_style_span();

@@ -1209,14 +1209,14 @@ impl BaseDocument {
         if let Some(node) = &mut node {
             on_drop(node_id);
             if let Some(before) = node.before() {
-                self.drop_node_ignoring_parent_with(before, on_drop);
+                crate::util::ensure_stack(|| self.drop_node_ignoring_parent_with(before, on_drop));
             }
             if let Some(after) = node.after() {
-                self.drop_node_ignoring_parent_with(after, on_drop);
+                crate::util::ensure_stack(|| self.drop_node_ignoring_parent_with(after, on_drop));
             }
 
             for &child in &node.children {
-                self.drop_node_ignoring_parent_with(child, on_drop);
+                crate::util::ensure_stack(|| self.drop_node_ignoring_parent_with(child, on_drop));
             }
 
             // Anonymous blocks live only in the slab, so deallocate the ones this
@@ -1240,7 +1240,7 @@ impl BaseDocument {
         // Free any anonymous blocks that this block owns before removing it.
         let nested = std::mem::take(&mut self.nodes[anon_id].anonymous_blocks);
         for nested_id in nested {
-            self.deallocate_anonymous_block(nested_id);
+            crate::util::ensure_stack(|| self.deallocate_anonymous_block(nested_id));
         }
 
         self.remove_node_from_tree(anon_id);
@@ -1262,7 +1262,7 @@ impl BaseDocument {
                 continue;
             }
             child.layout_child_of.set(None);
-            self.leave_layout_tree(child_id);
+            crate::util::ensure_stack(|| self.leave_layout_tree(child_id));
         }
         let anonymous_blocks = std::mem::take(&mut self.nodes[node_id].anonymous_blocks);
         for anon_id in anonymous_blocks {
@@ -1326,7 +1326,7 @@ impl BaseDocument {
             let mut node = doc.remove_node_from_tree(node_id);
             if let Some(node) = &mut node {
                 for &child in &node.children {
-                    remove_pe_ignoring_parent(doc, child);
+                    crate::util::ensure_stack(|| remove_pe_ignoring_parent(doc, child));
                 }
                 for &anon_id in &node.anonymous_blocks {
                     doc.deallocate_anonymous_block(anon_id);

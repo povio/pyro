@@ -43,6 +43,10 @@ from the root of an upstream checkout at that commit) is the whole diff.
   to the root element. With an empty top layer the only cost is one emptiness check per box. Covered by
   `crates/lp-cdp/tests/engine_cdp.rs` (`top_layer_*`).
 
+- `src/render.rs` (`render_node`): each level of the paint recursion runs through blitz-dom's `util::ensure_stack`,
+  which grows the stack on demand, so a tree of any depth paints instead of overflowing the thread's stack and
+  aborting the process (see blitz-dom's "Deep trees grow the stack on demand").
+
 The linked blitz-dom patch supplies `Node::is_root_element`. Rendering regressions
 are covered in `crates/lp-render/tests/render.rs`; persistent-tree behavior is
 covered by `crates/lp-render/tests/mirror.rs`.
