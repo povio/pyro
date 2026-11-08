@@ -472,4 +472,73 @@ mod tests {
         fake.gate.notify_waiters();
         assert_eq!(sub.await.unwrap().unwrap(), vec![ADDR]);
     }
+
+    /// Review (perf/network C6): dropping a follower leaves the leader and
+    /// the other followers alone; a leader dropped while two followers wait
+    /// leaves the name free for a fresh leader; every waiter gets the
+    /// failure's kind.
+    #[tokio::test]
+    async fn review_follower_drop_and_releader_after_leader_drop() {
+        let fake = Fake::new(false);
+        let resolver = TimedResolver::over(fake.clone());
+        let spawn = |host: &'static str| {
+            let mut r = resolver.clone();
+            tokio::spawn(async move { r.call(name(host)).await.map(|a| a.collect::<Vec<_>>()) })
+        };
+        let leader = spawn("a.test");
+        settle().await;
+        let f1 = spawn("a.test");
+        let f2 = spawn("a.test");
+        settle().await;
+        f1.abort();
+        let _ = f1.await;
+        settle().await;
+        assert_eq!(fake.calls(), 1, "a dropped follower costs nothing");
+        fake.gate.notify_waiters();
+        assert_eq!(leader.await.unwrap().unwrap(), vec![ADDR]);
+        assert_eq!(f2.await.unwrap().unwrap(), vec![ADDR]);
+        assert!(resolver.inflight.lock().unwrap().is_empty());
+
+        // Leader dropped with two followers: both look up on their own, and a
+        // later caller leads a new shared lookup (the old entry is gone).
+        let leader = spawn("b.test");
+        settle().await;
+        let (g1, g2) = (spawn("b.test"), spawn("b.test"));
+        settle().await;
+        leader.abort();
+        let _ = leader.await;
+        settle().await;
+        assert_eq!(fake.calls(), 4, "1 (a) + 1 (dropped leader) + 2 (followers on their own)");
+        let late = spawn("b.test");
+        let late2 = spawn("b.test");
+        settle().await;
+        assert_eq!(fake.calls(), 5, "the late callers share one new lookup");
+        assert_eq!(resolver.inflight.lock().unwrap().len(), 1);
+        fake.gate.notify_waiters();
+        for t in [g1, g2, late, late2] {
+            assert_eq!(t.await.unwrap().unwrap(), vec![ADDR]);
+        }
+        assert!(resolver.inflight.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn review_localhost_spellings_and_subdomains() {
+        let fake = Fake::new(true);
+        let mut resolver = TimedResolver::over(fake.clone());
+        for host in ["LOCALHOST", "LOCALHOST.", "localhost"] {
+            let addrs: Vec<_> = resolver.call(name(host)).await.unwrap().collect();
+            assert_eq!(addrs.len(), 2, "{host}");
+            assert!(addrs.iter().all(|a| a.ip().is_loopback()), "{host}");
+        }
+        assert_eq!(fake.calls(), 0);
+        // Not localhost: the system resolver (here failing) decides.
+        for host in ["localhost..", "localhostx", "a.localhost", "localhost.test"] {
+            let mut r = resolver.clone();
+            let t = tokio::spawn(async move { r.call(name(host)).await.map(|a| a.collect::<Vec<_>>()) });
+            settle().await;
+            fake.gate.notify_waiters();
+            assert!(t.await.unwrap().is_err(), "{host}");
+        }
+        assert_eq!(fake.calls(), 4);
+    }
 }

@@ -854,4 +854,31 @@ mod tests {
         c.clear();
         assert_eq!(c.usage(), (0, 0));
     }
+
+    /// Review (perf/network C4): the key is the URL up to its fragment;
+    /// an encoded `#` in the path or query stays part of the key.
+    #[test]
+    fn review_cache_key_slices_off_only_the_fragment() {
+        let k = |s: &str| key(&Url::parse(s).unwrap()).to_owned();
+        assert_eq!(k("http://a.test/p?q=1#frag"), "http://a.test/p?q=1");
+        assert_eq!(k("http://a.test/p?q=%23x#f#g"), "http://a.test/p?q=%23x");
+        assert_eq!(k("http://a.test/a%23b"), "http://a.test/a%23b");
+        assert_eq!(k("http://a.test/p#"), "http://a.test/p");
+        assert_eq!(k("http://u%23:p%23@a.test/"), "http://u%23:p%23@a.test/");
+        let mut u = Url::parse("http://a.test/").unwrap();
+        u.set_path("/x#y");
+        u.set_query(Some("k=#v"));
+        assert_eq!(key(&u), { let mut c = u.clone(); c.set_fragment(None); String::from(c) });
+        // Lookups through a fragment hit; a different query does not.
+        let mut c = HttpCache::new(1 << 20, 1 << 20);
+        let req = HeaderMap::new();
+        let resp = h(&[("cache-control", "max-age=100")]);
+        c.insert(&url("/r?q=1#one"), &req, StatusCode::OK, &resp, Bytes::from_static(b"x"), T0, T0, Version::HTTP_11);
+        assert!(matches!(c.lookup(&url("/r?q=1#two"), &req, CacheMode::Default, T0 + 1.0), Lookup::Hit(_)));
+        assert!(matches!(c.lookup(&url("/r?q=1"), &req, CacheMode::Default, T0 + 1.0), Lookup::Hit(_)));
+        assert!(matches!(c.lookup(&url("/r?q=2#one"), &req, CacheMode::Default, T0 + 1.0), Lookup::Miss));
+        assert!(matches!(c.lookup(&url("/r?q=1%23one"), &req, CacheMode::Default, T0 + 1.0), Lookup::Miss));
+        c.invalidate(&url("/r?q=1#zzz"));
+        assert!(matches!(c.lookup(&url("/r?q=1"), &req, CacheMode::Default, T0 + 1.0), Lookup::Miss));
+    }
 }

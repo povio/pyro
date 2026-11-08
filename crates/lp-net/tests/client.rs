@@ -896,3 +896,118 @@ fn observer_wakes_once_per_io_thread_turn() {
     assert!(count() <= 4, "{} wakes for the response's three events", count() - 2);
     assert_eq!(drained.lock().unwrap().as_slice(), ["response", "data", "finished"]);
 }
+
+/// Review (perf/network C6): `localhost` (any case, with the root dot)
+/// connects whether the server listens only on `::1` or only on
+/// `127.0.0.1`, and many parallel connects to an unresolvable name all fail
+/// as a name-resolution error.
+#[test]
+fn review_localhost_reaches_either_loopback_family() {
+    fn serve_once(listener: TcpListener) -> std::thread::JoinHandle<()> {
+        std::thread::spawn(move || {
+            for stream in listener.incoming().take(3) {
+                let mut stream = stream.unwrap();
+                if read_request(&mut stream).is_some() {
+                    respond(&mut stream, "200 OK", &[("connection", "close".into())], b"ok");
+                }
+            }
+        })
+    }
+    for bind in ["[::1]:0", "127.0.0.1:0"] {
+        let Ok(listener) = TcpListener::bind(bind) else {
+            eprintln!("skip {bind}: cannot bind");
+            continue;
+        };
+        let port = listener.local_addr().unwrap().port();
+        let server = serve_once(listener);
+        let c = NetClient::new(NetConfig::default()).unwrap();
+        for host in ["localhost", "LOCALHOST", "localhost."] {
+            let u = Url::parse(&format!("http://{host}:{port}/")).unwrap();
+            let start = std::time::Instant::now();
+            let (k, _, body, err) = collect(&c, Request::get(u, Destination::Fetch));
+            assert_eq!((k.as_slice(), body.as_slice(), err.is_none()), (&["response 200".to_string(), "finished".into()][..], &b"ok"[..], true), "{bind} {host}: {err:?}");
+            assert!(start.elapsed() < Duration::from_secs(2), "{bind} {host}: {:?}", start.elapsed());
+        }
+        server.join().unwrap();
+    }
+}
+
+#[test]
+fn review_parallel_lookups_of_a_missing_host_all_fail_as_name_not_resolved() {
+    let c = NetClient::new(NetConfig::default()).unwrap();
+    let rxs: Vec<_> = (0..6)
+        .map(|i| {
+            let (tx, rx) = mpsc::channel();
+            let u = Url::parse(&format!("http://lp-review-nxdomain.invalid/{i}")).unwrap();
+            c.fetch(Request::get(u, Destination::Fetch), Box::new(move |ev| tx.send(ev).unwrap()));
+            rx
+        })
+        .collect();
+    for rx in rxs {
+        loop {
+            match rx.recv_timeout(Duration::from_secs(30)).expect("event") {
+                ResponseEvent::Failed(e) => {
+                    let text = format!("{e:?} {e}");
+                    assert!(matches!(e, NetError::NameNotResolved), "{text}");
+                    break;
+                }
+                ResponseEvent::Finished { .. } => panic!("resolved a .invalid host"),
+                _ => {}
+            }
+        }
+    }
+}
+
+/// Review (perf/network C2): an observer that drains whenever it is woken
+/// (as the CDP inbox does) must keep up with a large fast response. With the
+/// I/O thread's wakes deferred until it parks, a body that keeps the socket
+/// readable never lets it park: the queue reaches its cap and the
+/// subscription overflows (CDP then closes the connection with 1008).
+#[test]
+fn review_observer_keeps_up_with_a_large_fast_body() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    const SIZE: usize = 48 << 20;
+    std::thread::spawn(move || {
+        for stream in listener.incoming().take(1) {
+            let mut stream = stream.unwrap();
+            if read_request(&mut stream).is_some() {
+                let head = format!("HTTP/1.1 200 OK\r\nContent-Length: {SIZE}\r\nContent-Type: application/octet-stream\r\n\r\n");
+                let _ = stream.write_all(head.as_bytes());
+                let chunk = vec![b'x'; 1 << 16];
+                for _ in 0..SIZE / chunk.len() {
+                    if stream.write_all(&chunk).is_err() {
+                        return;
+                    }
+                }
+            }
+        }
+    });
+    let c = NetClient::new(NetConfig::default()).unwrap();
+    let slot: Arc<Mutex<Option<NetSubscription>>> = Arc::default();
+    let failure: Arc<Mutex<Option<String>>> = Arc::default();
+    let (sl, f) = (slot.clone(), failure.clone());
+    let sub = c.subscribe_with(
+        SubscriptionLimits::default(),
+        Some(Arc::new(move || {
+            if let Some(sub) = sl.lock().unwrap().as_ref() {
+                loop {
+                    match sub.try_recv() {
+                        Ok(_) => {}
+                        Err(SubscriptionError::Empty) => break,
+                        Err(e) => {
+                            *f.lock().unwrap() = Some(format!("{e:?}"));
+                            break;
+                        }
+                    }
+                }
+            }
+        })),
+    );
+    *slot.lock().unwrap() = Some(sub);
+    let u = Url::parse(&format!("http://127.0.0.1:{port}/big")).unwrap();
+    let (k, _, body, err) = collect(&c, Request::get(u, Destination::Fetch));
+    assert!(err.is_none() && body.len() == SIZE, "{k:?} {err:?}");
+    std::thread::sleep(Duration::from_millis(50));
+    assert_eq!(failure.lock().unwrap().take(), None, "the observer was overrun");
+}

@@ -876,4 +876,40 @@ mod tests {
         assert_eq!(doc_cookie_after(&["d=1; domain=.parser.test"]), "");
         assert_eq!(doc_cookie_after(&["e=1; Domain="]), "e=1");
     }
+
+    /// Review (perf/network C4): the empty-jar early exit and the borrowed
+    /// host keep matching and expiry purging as before.
+    #[test]
+    fn review_matching_on_empty_and_trailing_dot_hosts_and_expiry() {
+        let mut jar = CookieJar::new();
+        let url = Url::parse("https://www.example.com./p").unwrap();
+        assert!(jar.matching(&url, Access::Http, SiteContext::SameSite, 10.0).is_empty());
+        assert_eq!(jar.header_for(&url, SiteContext::SameSite, 10.0), None);
+        // A trailing-dot host shares the dotless host's cookies (and domain cookies).
+        let plain = Url::parse("https://www.example.com/").unwrap();
+        assert!(jar.set_from_header(&plain, "a=1", Access::Http, 10.0));
+        assert!(jar.set_from_header(&plain, "d=2; Domain=example.com", Access::Http, 10.0));
+        assert!(jar.set_from_header(&plain, "e=3; Max-Age=5", Access::Http, 10.0));
+        assert_eq!(jar.header_for(&url, SiteContext::SameSite, 11.0).as_deref(), Some("a=1; d=2; e=3"));
+        // Upper case in the input is lowercased by the URL parser; the bucket is found.
+        let upper = Url::parse("https://WWW.Example.COM/").unwrap();
+        assert_eq!(jar.header_for(&upper, SiteContext::SameSite, 11.0).as_deref(), Some("a=1; d=2; e=3"));
+        // Expiry is still enforced and purged on lookup, also via the parent domain bucket.
+        assert_eq!(jar.header_for(&plain, SiteContext::SameSite, 20.0).as_deref(), Some("a=1; d=2"));
+        assert_eq!(jar.len(), 2);
+        // A jar emptied by expiry takes the early exit and stays consistent.
+        let mut jar = CookieJar::new();
+        assert!(jar.set_from_header(&plain, "x=1; Max-Age=1", Access::Http, 1.0));
+        assert_eq!(jar.header_for(&plain, SiteContext::SameSite, 5.0), None);
+        assert!(jar.by_domain.is_empty());
+        assert_eq!(jar.count, 0);
+        assert!(jar.matching(&plain, Access::Http, SiteContext::SameSite, 5.0).is_empty());
+        // IP hosts.
+        let ip = Url::parse("http://127.0.0.1:8080/").unwrap();
+        assert!(jar.set_from_header(&ip, "i=1", Access::Http, 5.0));
+        assert_eq!(jar.header_for(&ip, SiteContext::SameSite, 6.0).as_deref(), Some("i=1"));
+        let v6 = Url::parse("http://[::1]:8080/").unwrap();
+        assert!(jar.set_from_header(&v6, "j=1", Access::Http, 5.0));
+        assert_eq!(jar.header_for(&v6, SiteContext::SameSite, 6.0).as_deref(), Some("j=1"));
+    }
 }
