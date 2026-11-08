@@ -29,7 +29,7 @@ pub use engine::{
 pub use engine::set_allocator_release;
 pub use error::{JsError, JsException, JsResult};
 pub use interned::InternedId;
-pub use persistent::{Persistent, RootedVec};
+pub use persistent::{HeldValue, Persistent, RootedVec};
 pub use realm::{
     Deferred, IdentityKey, LazyGlobalConstant, ModuleFetcher, ModuleRequest, ModuleType, NameUnits, NamedProperties,
     NativeCallbackHook, Realm, RealmId, RealmOptions, Scope, UnhandledRejectionHandler, ValueDescription, WeakRealm,

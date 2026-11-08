@@ -3,7 +3,7 @@
 use std::cell::Cell;
 
 use lp_dom::{DomError, NodeId};
-use lp_js::{Args, IdentityKey, JsError, JsResult, Object, Persistent, Scope, Value, WeakRealm};
+use lp_js::{Args, HeldValue, IdentityKey, JsError, JsResult, Object, Scope, Value, WeakRealm};
 
 /// A wrapper found again through its realm's identity map. A native payload
 /// keeps JS values its wrapper owns in hidden properties on that wrapper,
@@ -75,12 +75,13 @@ pub(crate) fn upper_local_name<'s>(s: &Scope<'s>, local: &markup5ever::LocalName
 /// handle) is three dependent cache lines once the page has read a few
 /// hundred distinct ids. The atom is held, so its bits name its text for as
 /// long as the entry lives: a changed attribute (another atom) is told apart
-/// exactly, and the entry follows it. The string is protected from the
-/// second read on (a wrapper read once costs one small allocation and no
-/// handle), and released with the payload at a safe point, or when another
-/// atom takes its place.
+/// exactly, and the entry follows it. The string is held from the second
+/// read on (a wrapper read once costs one small allocation and no slot), in
+/// the engine's array of held values ([`HeldValue`]: no root per string, no
+/// protect-table entry for every collection to walk), and released with the
+/// payload at a safe point, or when another atom takes its place.
 #[derive(Default)]
-pub(crate) struct AtomString(Cell<Option<Box<(lp_dom::Atom, Option<Persistent>)>>>);
+pub(crate) struct AtomString(Cell<Option<Box<(lp_dom::Atom, Option<HeldValue>)>>>);
 
 impl AtomString {
     #[inline]
@@ -91,7 +92,7 @@ impl AtomString {
                 Some(string) => string.get(s),
                 None => {
                     let v = atom.js(s);
-                    e.1 = Some(Persistent::new(s, v));
+                    e.1 = Some(HeldValue::new(s, v));
                     v
                 }
             },

@@ -164,6 +164,8 @@ pub(crate) struct EngineInner {
     retired_members: RefCell<Vec<RetiredMembers>>,
     /// Garbage collections seen, for sweeping the realms' interned strings.
     pub(crate) collections: crate::interned::Collections,
+    /// The values [`crate::HeldValue`]s keep alive.
+    pub(crate) held: RefCell<crate::persistent::HeldValues>,
 }
 
 /// Decides when a closed page's garbage is worth a full collection: once the
@@ -593,6 +595,7 @@ impl Engine {
             member_payloads: RefCell::new(Vec::new()),
             retired_members: RefCell::new(Vec::new()),
             collections: crate::interned::Collections::new(),
+            held: RefCell::new(crate::persistent::HeldValues::default()),
         });
         if caps.termination {
             // Poll the termination flag every 50 ms of continuous JS execution.
