@@ -2409,7 +2409,7 @@ pub(crate) unsafe extern "C" fn member_call_data(
     unsafe {
         let payload = data as *const MemberPayload;
         if !payload.is_null() && (*payload).pure {
-            if let Some(v) = pure_member_call(&*payload, this, argc, argv) {
+            if let Some(v) = pure_member_call(&*payload, ctx, this, argc, argv, exc) {
                 return v;
             }
         }
@@ -2433,12 +2433,16 @@ pub(crate) unsafe extern "C" fn member_call_data(
 
 /// The lean dispatch of a pure operation (`ClassDef::pure_method`), in the
 /// receiver's realm: `None` sends the call through the full dispatch (a
-/// receiver that is not a wrapper, a disposed realm, an error, a panic).
+/// receiver that is not a wrapper, a disposed realm, an object argument, a
+/// panic, termination, or an error in a realm other than the one JSC calls
+/// the function in).
 unsafe fn pure_member_call(
     payload: &MemberPayload,
+    caller_ctx: sys::JSContextRef,
     this: sys::JSObjectRef,
     argc: usize,
     argv: *const sys::JSValueRef,
+    exc: *mut sys::JSValueRef,
 ) -> Option<sys::JSValueRef> {
     unsafe {
         if this.is_null() {
@@ -2461,10 +2465,20 @@ unsafe fn pure_member_call(
         let scope = Scope::new(ctx, realm);
         let call = payload.call;
         let _lean = LeanCall::enter();
-        match catch_unwind(AssertUnwindSafe(|| (call.invoke)(&scope, this, Args::from_raw(ctx, argc, argv), call.f))) {
-            Ok(Ok(v)) if !v.is_null() => Some(v),
+        catch_unwind(AssertUnwindSafe(|| match (call.invoke)(&scope, this, Args::from_raw(ctx, argc, argv), call.f) {
+            Ok(v) if !v.is_null() => Some(v),
+            // The full dispatch would run the same body in the same realm
+            // (the one of `caller_ctx`) and throw the same error: throw it
+            // here instead of running the operation a second time. Its
+            // post-callback steps have nothing to do after a pure operation.
+            Err(e) if ctx == caller_ctx && !matches!(e, JsError::Terminated | JsError::ContextDestroyed) => {
+                throw_into(&scope, &e, exc);
+                Some(ptr::null())
+            }
             _ => None,
-        }
+        }))
+        .ok()
+        .flatten()
     }
 }
 

@@ -287,6 +287,17 @@ impl JsClass for Coerce {
             let n = a.get(0).to_string()?;
             Ok(s.string(&n))
         });
+        def.pure_method("fail", 1, |_s, d, a| {
+            d.calls.set(d.calls.get() + 1);
+            let _ = a.get(0).to_number()?;
+            Err(JsError::dom_named("IndexSizeError", "offset out of range"))
+        });
+        def.method("failFull", 1, |_s, d, a| {
+            d.calls.set(d.calls.get() + 1);
+            let _ = a.get(0).to_number()?;
+            Err(JsError::dom_named("IndexSizeError", "offset out of range"))
+        });
+        def.method("calls", 0, |s, d, _a| Ok(s.number(f64::from(d.calls.get()))));
         def.pure_method("num", 1, |s, _d, a| Ok(s.number(a.get(0).to_number()?)));
         def.method("numFull", 1, |s, _d, a| Ok(s.number(a.get(0).to_number()?)));
     }
@@ -399,4 +410,38 @@ fn unconvertible_primitive_arguments_throw_as_the_full_dispatch_does() {
         .to_string()
         .unwrap();
     assert_eq!(r, "TypeError: Cannot convert a symbol to a string / no throw");
+}
+
+/// A pure operation that throws runs once: the lean dispatch throws its own
+/// error (the full dispatch would run the same body in the same realm), and
+/// the error is the one the full dispatch throws.
+#[test]
+fn a_throwing_pure_operation_runs_once_and_throws_as_the_full_dispatch_does() {
+    let engine = Engine::new().unwrap();
+    engine.register::<Coerce>();
+    let realm = engine.create_realm(RealmOptions::default()).unwrap();
+    let s = realm.scope().unwrap();
+    let w = s.wrap::<Coerce>(data(1), None).unwrap();
+    s.global().set_atom("c", w.value()).unwrap();
+    let r = s
+        .eval(
+            "(() => {
+               const err = f => { try { f(); return 'no throw' } catch (e) { return e.constructor.name + '/' + e.name + ': ' + e.message } };
+               for (let i = 0; i < 20000; i++) {
+                 const before = c.calls();
+                 const a = err(() => c.fail(i));
+                 const mid = c.calls();
+                 const b = err(() => c.failFull(i));
+                 const after = c.calls();
+                 if (a !== b || mid - before !== 1 || after - mid !== 1) return i + ': ' + a + ' | ' + b + ' | ' + (mid - before);
+               }
+               return err(() => c.fail(0));
+             })()",
+            None,
+            1,
+        )
+        .unwrap()
+        .to_string()
+        .unwrap();
+    assert!(r.contains("IndexSizeError: offset out of range"), "{r}");
 }
