@@ -669,8 +669,10 @@ enum ParsePhase {
 pub(crate) struct DocumentLoad {
     pub loader_id: LoaderId,
     url: String,
-    dom: DomRef,
-    parser: Option<DocumentParser>,
+    pub(crate) dom: DomRef,
+    pub(crate) parser: Option<DocumentParser>,
+    /// Requests started ahead of the parser (`speculate`).
+    pub(crate) speculation: crate::speculate::Speculation,
     phase: ParsePhase,
     blocked: bool,
     stylesheet_blocked_script: Option<Rc<ResourceNode>>,
@@ -772,7 +774,7 @@ pub(crate) fn origin_of(url: &str) -> String {
     }
 }
 
-fn resolve_url(base: &str, href: &str) -> Option<String> {
+pub(crate) fn resolve_url(base: &str, href: &str) -> Option<String> {
     url::Url::parse(base).ok()?.join(href).ok().map(|u| u.to_string())
 }
 
@@ -1098,6 +1100,7 @@ impl Browser {
             url: p.main_frame.base_url.clone(),
             dom,
             parser: Some(parser),
+            speculation: Default::default(),
             phase: ParsePhase::Feed(resource.body),
             blocked: false,
             stylesheet_blocked_script: None,
@@ -1114,11 +1117,11 @@ impl Browser {
         Ok(())
     }
 
-    fn load_mut(&mut self, page: FrameKey) -> Option<crate::frames::StateMut<'_, DocumentLoad>> {
+    pub(crate) fn load_mut(&mut self, page: FrameKey) -> Option<crate::frames::StateMut<'_, DocumentLoad>> {
         self.doc_mut(page)?.filter_map(|p| p.load.as_mut())
     }
 
-    fn current_loader(&self, page: FrameKey) -> Option<LoaderId> {
+    pub(crate) fn current_loader(&self, page: FrameKey) -> Option<LoaderId> {
         self.doc(page)?.load.as_ref().map(|l| l.loader_id.clone())
     }
 
@@ -1165,6 +1168,7 @@ impl Browser {
                                 p.end();
                             }
                             load.parsing_done = true;
+                            load.speculation.end_of_parsing();
                             drop(load);
                             if let Some(dom) = self.doc(page).and_then(|p| p.main_frame.page_dom.clone()) {
                                 dom.set_parser_position(None);
@@ -1198,6 +1202,13 @@ impl Browser {
             if load.dom.borrow_mut().add_ref(node).is_ok() {
                 load.stylesheet_blocked_script = Some(Rc::new(ResourceNode { dom: load.dom.clone(), node }));
                 load.blocked = true;
+                drop(load);
+                // The script's fetch, and the requests after it, overlap the
+                // stylesheets' (the script runs when they are done).
+                if !self.doc(page).is_some_and(|d| d.main_frame.sandbox.scripts_disabled) {
+                    self.speculate_script(page, node);
+                    self.speculate_ahead(page);
+                }
                 return;
             }
         }
@@ -1308,6 +1319,7 @@ impl Browser {
                     }
                     b.continue_parsing(page);
                 });
+                self.speculate_ahead(page);
             }
             (ScriptType::Module, Some(url)) if info.async_ => {
                 self.fetch_async(page, ty, url, element, ScriptFetch::of(&info))
@@ -1376,8 +1388,9 @@ impl Browser {
             module,
             part: None,
         };
-        loader.fetch(
-            self,
+        let cancel = self.fetch_document_resource(
+            page,
+            &loader,
             req,
             Box::new(move |b, res| {
                 let res = match res {
@@ -1388,7 +1401,9 @@ impl Browser {
                                 let origin = b.doc(page).map(|p| p.main_frame.origin.clone()).unwrap_or_default();
                                 integrity_error(&r, Some(i), cors, &origin)
                             })
-                            .or_else(|| module.and_then(|ty| lp_webapi::module_script::mime_error(ty, &r.mime, &r.url)));
+                            .or_else(|| {
+                                module.and_then(|ty| lp_webapi::module_script::mime_error(ty, &r.mime, &r.url))
+                            });
                         match blocked {
                             Some(e) => Err(e),
                             // A module script is UTF-8 whatever its charset
@@ -1403,6 +1418,9 @@ impl Browser {
                 done(b, res)
             }),
         );
+        if let Some(cancel) = cancel {
+            cancel.disarm();
+        }
     }
 
     fn fetch_deferred(

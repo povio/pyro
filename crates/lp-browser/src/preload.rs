@@ -254,6 +254,8 @@ impl Browser {
             module: None,
             part: None,
         };
-        resource_loader.fetch(self, request, Box::new(finish));
+        if let Some(cancel) = self.fetch_document_resource(page, &resource_loader, request, Box::new(finish)) {
+            cancel.disarm();
+        }
     }
 }

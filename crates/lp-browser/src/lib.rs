@@ -18,6 +18,7 @@ mod network_idle;
 mod preload;
 mod quiet;
 mod refresh;
+mod speculate;
 mod stylesheets;
 mod viewport;
 mod window;

@@ -523,6 +523,17 @@ pub struct DocumentParser {
     sniff: Vec<u8>,
     /// Outer input set aside by `open_insertion_point` (innermost last).
     saved: Vec<BufferQueue>,
+    /// Bytes appended to the back of the network input (`feed`,
+    /// `push_input` outside an insertion point) since creation: with
+    /// `unconsumed_input`, a preload scan tells apart input it has not
+    /// seen at the front (written) from input at the back.
+    appended: usize,
+    /// The least `outer input length - appended` at the times written
+    /// input was put in front of the network input (`close_insertion_point`
+    /// with input left over), since `take_written_low_mark`: the network
+    /// input consumed meanwhile is only measurable then, as written input
+    /// is consumed before it.
+    written_low_mark: Option<isize>,
     /// An XML document: the response is parsed whole at end of input, then
     /// its scripts are yielded one by one.
     xml: Option<XmlLoad>,
@@ -604,6 +615,8 @@ impl DocumentParser {
             decoded: String::new(),
             sniff: Vec::new(),
             saved: Vec::new(),
+            appended: 0,
+            written_low_mark: None,
             xml: None,
         })
     }
@@ -734,9 +747,56 @@ impl DocumentParser {
             return ParseStep::NeedInput;
         }
         if !chunk.is_empty() {
+            if self.saved.is_empty() {
+                self.appended += chunk.len();
+            }
             self.input.push_back(StrTendril::from_slice(chunk));
         }
         self.resume()
+    }
+
+    /// Bytes ever appended to the back of the network input (not the
+    /// markup scripts wrote, which goes in front of what remains).
+    pub fn appended_input(&self) -> usize {
+        self.appended
+    }
+
+    /// Whether a script's insertion point is open (its writes are being
+    /// parsed; the network input is set aside).
+    pub fn in_insertion_point(&self) -> bool {
+        !self.saved.is_empty()
+    }
+
+    /// What the input held behind written markup, as the least
+    /// `length - appended_input()` seen each time a script's written input
+    /// was left in front of it since the last call (`None`: no such time).
+    /// A preload scan adds the appended count of its previous scan to tell
+    /// how much of what it scanned then is still unconsumed: the parser
+    /// consumes written input first, so only at those times is the input
+    /// behind it all network input.
+    pub fn take_written_low_mark(&mut self) -> Option<isize> {
+        self.written_low_mark.take()
+    }
+
+    /// The input the tokenizer has not consumed, front to back, as `f` sees
+    /// it; `None` inside an insertion point (a script is writing). Nothing
+    /// is consumed. The total length is the first value.
+    pub fn unconsumed_input<R>(&self, f: impl FnOnce(usize, &[&str]) -> R) -> Option<R> {
+        if !self.saved.is_empty() || self.xml.is_some() {
+            return None;
+        }
+        let mut chunks = Vec::new();
+        while let Some(chunk) = self.input.pop_front() {
+            chunks.push(chunk);
+        }
+        let views: Vec<&str> = chunks.iter().map(|c| &**c).collect();
+        let total = views.iter().map(|c| c.len()).sum();
+        let r = f(total, &views);
+        drop(views);
+        for chunk in chunks.into_iter().rev() {
+            self.input.push_front(chunk);
+        }
+        Some(r)
     }
 
     /// A script this parser yielded for is about to run: its
@@ -758,6 +818,19 @@ impl DocumentParser {
             rest.push(chunk);
         }
         self.input.swap_with(&outer);
+        if self.saved.is_empty() && !rest.is_empty() {
+            let mut outer_len = 0;
+            let mut chunks = Vec::new();
+            while let Some(chunk) = self.input.pop_front() {
+                outer_len += chunk.len();
+                chunks.push(chunk);
+            }
+            for chunk in chunks.into_iter().rev() {
+                self.input.push_front(chunk);
+            }
+            let mark = outer_len as isize - self.appended as isize;
+            self.written_low_mark = Some(self.written_low_mark.map_or(mark, |m| m.min(mark)));
+        }
         for chunk in rest.into_iter().rev() {
             self.input.push_front(chunk);
         }
@@ -766,6 +839,9 @@ impl DocumentParser {
     /// Queues input without tokenizing: a written blocking script is pending.
     pub fn push_input(&mut self, chunk: &str) {
         if !self.ended && !chunk.is_empty() {
+            if self.saved.is_empty() {
+                self.appended += chunk.len();
+            }
             self.input.push_back(StrTendril::from_slice(chunk));
         }
     }
