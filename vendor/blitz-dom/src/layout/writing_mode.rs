@@ -102,23 +102,7 @@ impl LayoutPassState<'_> {
         let mirror_x = node_block_reversed && !parent_wm.is_vertical();
         let mirror_y = (node_block_reversed && parent_wm.is_vertical()) ^ parent_block_reversed;
         if mirror_x || mirror_y {
-            let style = self.nodes[dom_node_id(node_id)].layout_style_in(parent_wm);
-            let border = style
-                .border()
-                .resolve_or_zero(inputs.parent_size.width, resolve_calc_value);
-            let client_size = output.size - border.sum_axes();
-            let overflow = style.overflow();
-            let is_scroll_container =
-                overflow.x.is_scroll_container() || overflow.y.is_scroll_container();
-            output.scrollable_overflow_rect = mirror_overflow(
-                output.scrollable_overflow_rect,
-                client_size,
-                Point {
-                    x: mirror_x,
-                    y: mirror_y,
-                },
-                is_scroll_container,
-            );
+            self.mirror_child_overflow(node_id, inputs, parent_wm, &mut output, mirror_x, mirror_y);
         }
 
         self.layout_wm = parent_wm;
@@ -126,6 +110,38 @@ impl LayoutPassState<'_> {
         output
     }
 
+    /// lightningpanda: kept out of the frame of `compute_child_layout_in_own_wm`, which is on the
+    /// stack once per tree level of a recursive layout.
+    #[inline(never)]
+    fn mirror_child_overflow(
+        &self,
+        node_id: NodeId,
+        inputs: LayoutInput,
+        parent_wm: WritingMode,
+        output: &mut LayoutOutput,
+        mirror_x: bool,
+        mirror_y: bool,
+    ) {
+        let style = self.nodes[dom_node_id(node_id)].layout_style_in(parent_wm);
+        let border = style
+            .border()
+            .resolve_or_zero(inputs.parent_size.width, resolve_calc_value);
+        let client_size = output.size - border.sum_axes();
+        let overflow = style.overflow();
+        let is_scroll_container =
+            overflow.x.is_scroll_container() || overflow.y.is_scroll_container();
+        output.scrollable_overflow_rect = mirror_overflow(
+            output.scrollable_overflow_rect,
+            client_size,
+            Point {
+                x: mirror_x,
+                y: mirror_y,
+            },
+            is_scroll_container,
+        );
+    }
+
+    #[inline(never)]
     fn compute_orthogonal_child_layout(
         &mut self,
         node_id: NodeId,

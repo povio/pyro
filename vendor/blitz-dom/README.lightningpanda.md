@@ -557,6 +557,23 @@ property on cells, inline roots, flex and grid items, floats and absolutely posi
 boxes, document size and paint against a fresh build, no layout algorithm run, no text shaped, the paint changed)
 and `text_style_changes_shape_again_and_match_fresh_builds`.
 
+## Small stack frames per level of the layout recursion
+
+`layout/mod.rs`, `layout/writing_mode.rs`: Taffy's algorithms lay out a child through
+`compute_child_layout` -> `compute_child_layout_internal` -> `compute_child_layout_in_own_wm` ->
+`compute_child_layout_in_current_wm` -> `dispatch_child_layout` -> the child's algorithm, so every level of a
+nested tree keeps these frames on the stack. `dispatch_child_layout` had the leaf boxes (form controls,
+selects, replaced elements) and the table code inlined, about 2 KB of frame per level. It now only picks the
+algorithm: `leaf_layout_or_algorithm` (not inlined) lays out a leaf box or names the algorithm
+(`ChildLayout`), and tables (`compute_table_root_layout`), inline, flex and grid layout are not inlined into
+it; `compute_child_layout_in_current_wm` keeps its input adjustments (`adjusted_child_inputs`) and the
+out-of-flow pass (`lay_out_out_of_flow_boxes`) out of its frame, and `compute_child_layout_in_own_wm` its
+overflow mirroring (`mirror_child_overflow`) and orthogonal flows. With Taffy's part (its README), a nested
+block costs about 2.7 KB of stack in a release build instead of 4.9 KB (2.4 KB instead of 5.3 KB in a debug
+build): a 2 MB thread lays out about 770 levels instead of 430. Nothing else changes; the layout results are
+the same (lp-layout and lp-render tests). Covered by lp-layout `text_clip_facts_deep_nesting_without_recursion`
+(400 levels on a test thread's 2 MB) and `deep_nesting_lays_out_on_a_browser_thread_stack` (2,000 on 8 MB).
+
 ## Moving from 0.3.0-beta.4 to main
 
 The local changes were merged with main's 124 commits. Upstream now has these, so the local versions were

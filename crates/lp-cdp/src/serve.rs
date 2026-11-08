@@ -125,6 +125,15 @@ JSC_useDFGJIT is set.
 /// How long a spare thread keeps booting prepared pages before it just waits.
 const PREBOOT_LIMIT: std::time::Duration = std::time::Duration::from_secs(30);
 
+/// The stack of a browser thread: a main thread's (8 MB on macOS and Linux),
+/// as `lightningpanda fetch`/`eval` run their page on, and as Chrome's
+/// renderer main thread and our worker threads have. Layout recurses once
+/// per tree level (Taffy's algorithms), about 2.7 KB per nested block in a
+/// release build: a spawned thread's default 2 MB aborted the whole server
+/// past about 770 nested blocks, 8 MB lays out about 3,000. JSC bounds its
+/// own recursion by the stack it finds (`maxPerThreadStackUsage`, 5 MB), as
+/// on those threads. Untouched stack pages cost no memory.
+const BROWSER_STACK_BYTES: usize = 8 * 1024 * 1024;
 /// No command for this long after a prepared page was taken: boot the next.
 const REFILL_QUIET: std::time::Duration = std::time::Duration::from_millis(15);
 /// With no command for this long, a closed page whose collection was put off
@@ -549,7 +558,8 @@ impl ThreadPerConnection {
         let n = self.next.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = std::sync::mpsc::channel::<Assignment>();
         let profile = self.profile.clone();
-        std::thread::Builder::new().name(format!("lp-browser-{n}")).spawn(move || {
+        let builder = std::thread::Builder::new().name(format!("lp-browser-{n}")).stack_size(BROWSER_STACK_BYTES);
+        builder.spawn(move || {
             let mut prepared = EngineHost::prepare_thread_with(&profile).map(|mut thread| {
                 let prebooted = EngineHost::preboot(&mut thread, &profile.prepared);
                 (thread, prebooted)

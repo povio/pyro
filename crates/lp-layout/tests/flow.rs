@@ -3954,7 +3954,25 @@ fn text_clip_facts_fixed_absolute_and_contents_wrappers() {
 
 #[test]
 fn text_clip_facts_deep_nesting_without_recursion() {
-    let depth = 400;
+    // On a test thread's default 2 MB stack: layout itself recurses once per
+    // level (Taffy), about 2.4 KB here (5.3 KB before its per-level frames
+    // were trimmed, which overflowed at about 380 levels).
+    deep_nesting(400);
+}
+
+#[test]
+fn deep_nesting_lays_out_on_a_browser_thread_stack() {
+    // A browser thread's 8 MB stack (lp-cdp `BROWSER_STACK_BYTES`, a main
+    // thread's): 2,000 nested blocks lay out, in debug builds too.
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| deep_nesting(2000))
+        .unwrap()
+        .join()
+        .expect("no stack overflow");
+}
+
+fn deep_nesting(depth: usize) {
     let open: String = (0..depth).map(|i| format!("<div id=n{i} style=\"padding-left:1px\">")).collect();
     let close = "</div>".repeat(depth);
     let html = format!(
@@ -3963,6 +3981,7 @@ fn text_clip_facts_deep_nesting_without_recursion() {
     let p = page(&html);
     assert!(sw(&p, "n0") > 0.0);
     assert!(sw(&p, &format!("n{}", depth - 1)) > 0.0);
+    assert_eq!(p.layout.bounding_client_rect(&p.dom, p.id("leaf")).x, depth as f64 + 8.0);
 }
 
 #[test]
