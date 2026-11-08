@@ -2586,11 +2586,16 @@ impl Dom {
         let plain = name.ns == ns!();
         let el = self.n_mut(i).element_mut().expect("element");
         let old_id = (plain && name.local == local_name!("id")).then(|| el.id_atom().cloned());
+        let old_for = (plain && name.local == local_name!("for") && el.is_html() && el.name.local == local_name!("label"))
+            .then(|| el.attr_local(&local_name!("for")).map(Box::<str>::from));
         let r = f(el);
         debug_assert!(el.derived_in_step());
         let base = plain && name.local == local_name!("href") && el.is_html() && el.name.local == local_name!("base");
         if let Some(old) = old_id {
             self.id_attr_changed(i, old);
+        }
+        if let Some(old) = old_for {
+            self.label_for_attr_changed(i, old);
         }
         if base && self.n(i).in_document_tree() {
             let doc = self.n(i).owner_doc;
@@ -2880,6 +2885,17 @@ impl Dom {
             NodeKind::Attr(_) => self.set_attr_node_value(id, value),
             k if k.char_data().is_some() => self.replace_data(id, 0, u32::MAX, value),
             _ => {
+                // Its one text child holds this text already: nothing to
+                // do, as in Chrome (no records, the child stays; the spec's
+                // "replace all" would swap it for an equal one).
+                let first = self.n(i).first_child;
+                if !value.is_empty()
+                    && first != NIL
+                    && self.n(first).next == NIL
+                    && matches!(&self.n(first).kind, NodeKind::Text(s) if s == value)
+                {
+                    return Ok(());
+                }
                 let t = if value.is_empty() {
                     None
                 } else {

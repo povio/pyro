@@ -14,6 +14,7 @@ pub mod forms;
 pub(crate) mod gecko_only;
 pub mod geometry;
 pub mod iframe;
+mod labels;
 mod window_names;
 pub mod image;
 pub mod cssom;
