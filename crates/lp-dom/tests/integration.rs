@@ -22,6 +22,7 @@ mod text_content;
 mod top_layer;
 mod tree;
 mod tree_scope;
+mod walk_summary;
 mod xml;
 mod xml_template;
 mod xpath;
