@@ -671,6 +671,13 @@ impl GeometrySource for BlitzGeometry {
             ignore_x: probe.ignore_x,
             window_scroll: probe.window_scroll,
         };
+        // (The hit bounds are brought up to date under a borrow of their own:
+        // `offset` reads scroll offsets through the renderer.)
+        RENDERER.with(|r| {
+            if let Some(r) = r.try_borrow_mut().ok().as_mut().and_then(|r| r.as_mut()) {
+                r.ensure_hit_bounds(self.page);
+            }
+        });
         let visits =
             RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.hit_candidates(self.page, &probe, offset, shifted))?;
         if let Some(t) = t {

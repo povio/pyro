@@ -1868,6 +1868,56 @@ fn rounding_follows_boxes_that_only_moved() {
 /// of the same tree does.
 #[test]
 fn deltas_on_long_tables_and_lists_match_fresh_builds() {
+    long_tables_and_lists(1);
+}
+
+/// The same steps with a hit test only after every third (and the last):
+/// the hit bounds of the boxes several resolves computed again, and the cells
+/// of the rows they appended, moved and removed, are brought up to date at
+/// once by the next hit test (`BaseDocument::ensure_hit_overflow`).
+#[test]
+fn hit_bounds_after_runs_of_deltas_match_fresh_builds() {
+    long_tables_and_lists(3);
+}
+
+/// Cells of a fixed-layout table edited one per sync, with no hit test in
+/// between: the first edit makes a cell's text overflow sideways (its hit
+/// bound grows, its box does not), later ones touch other rows. The hit test
+/// after them sees every edited cell's bound and its row's union, not only
+/// the last sync's (`PlacedCells::transformed` keeps the cells of every pass
+/// until the next hit pass).
+#[test]
+fn hit_bounds_of_cells_edited_over_several_syncs_match_fresh_builds() {
+    let rows: String = (0..12)
+        .map(|i| format!("<tr id=r{i}><td id=a{i} style=\"white-space:nowrap\">a{i}</td><td id=b{i}>b{i}</td><td>c{i}</td></tr>"))
+        .collect();
+    let page = Page::new(&format!(
+        "<!doctype html><html><head><style>body {{ margin: 0; font: 14px sans-serif }} table {{ table-layout: fixed; width: 300px }} td {{ width: 100px; padding: 0 }}</style></head><body>\
+         <table id=t><tbody>{rows}</tbody></table></body></html>"
+    ));
+    let mut r = Renderer::new();
+    r.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
+    let edits: [(&str, &str); 4] = [
+        ("#a3", "a long run of text that overflows its cell sideways"),
+        ("#b7", "b"),
+        ("#a9", "another long run of text that overflows sideways too"),
+        ("#b1", "bb"),
+    ];
+    for (round, edits) in [&edits[..2], &edits[2..]].into_iter().enumerate() {
+        for (sel, text) in edits {
+            let since = page.dom.borrow().version();
+            let n = page.find(sel);
+            page.dom.borrow_mut().set_text_content(n, text).unwrap();
+            let delta = page.dom.borrow().render_delta(page.doc, since, &Page::opts()).expect("a delta");
+            r.sync_delta(1, &delta_ops(delta), (640, 480, 1.0, false, false), false).unwrap();
+        }
+        let mut fresh = Renderer::new();
+        fresh.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
+        hit_candidates_match(&mut r, &mut fresh, &format!("round {round} of cell edits"));
+    }
+}
+
+fn long_tables_and_lists(hit_every: usize) {
     let rows: String =
         (0..24).map(|i| format!("<tr id=r{i}><td id=a{i}>a{i}</td><td id=b{i}>cell {i}</td></tr>")).collect();
     let items: String = (0..24).map(|i| format!("<p id=p{i}>para {i} <span id=s{i}>in</span> text</p>")).collect();
@@ -1979,7 +2029,7 @@ fn deltas_on_long_tables_and_lists_match_fresh_builds() {
     let mut r = Renderer::new();
     r.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
     let mut deltas = 0;
-    for (what, step) in &steps {
+    for (i, (what, step)) in steps.iter().enumerate() {
         let since = page.dom.borrow().version();
         step(&page);
         let delta = page.dom.borrow().render_delta(page.doc, since, &Page::opts());
@@ -1998,7 +2048,9 @@ fn deltas_on_long_tables_and_lists_match_fresh_builds() {
         }
         let sticky = |r: &Renderer| r.page_layout(1).map(|l| l.sticky.len());
         assert_eq!(sticky(&r), sticky(&fresh), "sticky boxes after {what}");
-        hit_candidates_match(&r, &fresh, what);
+        if (i + 1) % hit_every == 0 || i + 1 == steps.len() {
+            hit_candidates_match(&mut r, &mut fresh, what);
+        }
         subtree_words_match(&r, &page.tree(), what);
     }
     assert!(deltas * 2 > steps.len(), "most steps sync as deltas ({deltas} of {})", steps.len());
@@ -2038,7 +2090,9 @@ fn subtree_words_match(r: &Renderer, tree: &Tree, what: &str) {
 /// a fresh build's does, in the same order and with the same boxes; its
 /// words and sticky elements are the fresh build's too.
 #[track_caller]
-fn hit_candidates_match(r: &Renderer, fresh: &Renderer, what: &str) {
+fn hit_candidates_match(r: &mut Renderer, fresh: &mut Renderer, what: &str) {
+    r.ensure_hit_bounds(1);
+    fresh.ensure_hit_bounds(1);
     let zero = |_: u64| (0.0, 0.0);
     let strip = |v: Vec<HitVisit>| v.into_iter().map(|v| (v.key, v.bounds, v.hit)).collect::<Vec<_>>();
     for y in (2..480).step_by(9) {
@@ -2062,7 +2116,7 @@ fn hit_candidates_match(r: &Renderer, fresh: &Renderer, what: &str) {
             w
         })
     };
-    assert_eq!(words(r), words(fresh), "words after {what}");
+    assert_eq!(words(&*r), words(&*fresh), "words after {what}");
     assert_eq!(r.sticky_elements(1), fresh.sticky_elements(1), "sticky elements after {what}");
 }
 
