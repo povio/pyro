@@ -201,6 +201,13 @@ impl JsClass for Node {
 9. **Heap-collected call arguments** (for example CDP `callFunctionOn` converting arguments one by one, where each
    conversion can GC) must use `RootedVec` with `Object::call_rooted` or `Scope::call_function_rooted`, never a
    `Vec<Value>`.
+10. **`Number.prototype.toLocaleString(locales, options)`:** JSC built a new ICU formatter per call, and the first
+    format on one loads `DecimalFormatSymbols` from the system ICU's locale data: about 176 µs a call, against
+    Chrome's 12 µs with its trimmed ICU (pdfgen formats every amount this way). `webkit/patches/0022-to-locale-string-shares-number-formatters.patch`
+    still reads the options on every call, as the spec requires (getters and proxies observe the reads), but formats
+    with the ICU formatter of one of the last four calls whose options resolved to the same skeleton and data
+    locale, as JSC already did for `toLocaleString()` and `toLocaleString(locale)`: 2 µs a call. Formatting does not
+    observe which formatter formats. A language change (the `languagesEpoch`) drops them.
 
 ### Private SPI (runtime-resolved, capability-gated)
 

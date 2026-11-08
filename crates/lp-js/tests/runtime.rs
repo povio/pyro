@@ -144,6 +144,35 @@ fn evaluates_and_reports_syntax_errors() {
     assert_eq!(d.line, Some(1));
 }
 
+/// `Number.prototype.toLocaleString(locales, options)` formats like a fresh
+/// `Intl.NumberFormat` while it shares the ICU formatter of an earlier call
+/// with the same resolved options (JSC patch 0022): the options are still read
+/// on every call, and other options or locales do not share.
+#[test]
+fn to_locale_string_with_options_reads_options_each_call_and_formats_like_number_format() {
+    let e = engine();
+    let r = e.create_realm(RealmOptions::default()).unwrap();
+    let out = eval_str(
+        &r,
+        "const o = { minimumFractionDigits: 2, maximumFractionDigits: 2 };
+         const cases = [
+           [1234.5, 'de-DE', o], [1234.5, 'en-US', o], [0.125, 'de-DE', o],
+           [1234.5, 'en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2, useGrouping: false }],
+           [1234.5, 'en-US', { style: 'currency', currency: 'EUR' }],
+           [1234.5, 'de-DE', o], [1234.5, 'fr-FR', o], [1234.5, 'ja-JP', o], [1234.5, 'en-US', o],
+           [-7, 'en-US', { signDisplay: 'always' }], [1234.5, 'de-DE', o],
+         ];
+         const mismatched = cases.filter(([n, l, opts]) => n.toLocaleString(l, opts) !== new Intl.NumberFormat(l, opts).format(n));
+         let reads = 0;
+         const counted = { get minimumFractionDigits() { reads++; return 3; } };
+         const a = (1.5).toLocaleString('en-US', counted), b = (1.5).toLocaleString('en-US', counted);
+         [mismatched.length, a, b, reads > 0 && reads % 2 === 0].join('|')",
+    );
+    assert_eq!(out, "0|1.500|1.500|true", "mismatches, two calls, and the getter read on both");
+    assert_eq!(eval_str(&r, "(1).toLocaleString('en-US', { minimumFractionDigits: 101 })").split(':').next(), Some("THROW RangeError"));
+    assert_eq!(eval_str(&r, "(1234.5).toLocaleString('de-DE', { minimumFractionDigits: 2 })"), "1.234,50");
+}
+
 #[test]
 fn only_one_engine_per_thread() {
     let _e = engine();
@@ -872,15 +901,19 @@ fn interrupt_check_stops_running_javascript_from_the_same_thread() {
     let start = std::time::Instant::now();
     let polls = Rc::new(Cell::new(0u32));
     let seen = polls.clone();
+    // Terminates on the second check: the first returned false and the script
+    // went on. Not a wall-clock deadline: JSC's watchdog budget is the thread's
+    // CPU time, so on a loaded machine its first check can come after any
+    // fixed number of milliseconds.
     e.set_interrupt_check(Some(Rc::new(move || {
         seen.set(seen.get() + 1);
-        start.elapsed() > std::time::Duration::from_millis(100)
+        seen.get() >= 2
     })));
     let s = r.scope().unwrap();
     let res = s.eval("for (;;) {}", None, 1);
     assert!(matches!(res, Err(JsError::Terminated)), "{res:?}");
-    assert!(start.elapsed() < std::time::Duration::from_secs(5));
-    assert!(polls.get() >= 2, "checked while the script ran");
+    assert!(start.elapsed() < std::time::Duration::from_secs(30));
+    assert_eq!(polls.get(), 2, "checked while the script ran, and stopped at the check that asked");
     // Without the check the engine runs normally again.
     e.set_interrupt_check(None);
     assert_eq!(s.eval("1 + 1", None, 1).unwrap().to_number().unwrap(), 2.0);
