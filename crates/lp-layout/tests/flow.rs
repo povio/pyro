@@ -4674,3 +4674,36 @@ fn table_cell_declared_height_is_minimum() {
     assert_eq!(p.metrics("short")[3], 26.0);
     assert!(p.metrics("footer")[3] >= 68.0, "footer {:?}, content {:?}", p.metrics("footer"), p.metrics("content"));
 }
+
+// review (misc2): the frame trimming covers block layout; the other algorithms recurse through
+// larger frames. On a browser thread's 8 MB (release): block and flow-root about 3,000 levels,
+// flex about 2,000, grid and inline-block about 1,200-1,500. Each kind lays out 600 levels on
+// 8 MB in a debug build.
+#[test]
+fn review_misc2_deep_nesting_of_each_algorithm_on_a_browser_thread_stack() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            for kind in [
+                "display:flex",
+                "display:flex;flex-direction:column",
+                "display:grid",
+                "display:inline-block",
+                "display:flow-root",
+                "position:relative",
+            ] {
+                let depth = 600;
+                let open: String =
+                    (0..depth).map(|i| format!("<div id=n{i} style=\"{kind};padding-left:1px\">")).collect();
+                let html = format!(
+                    "<body style=\"margin:8px\">{open}<span id=leaf style=\"white-space:nowrap\">deep</span>{}",
+                    "</div>".repeat(depth)
+                );
+                let p = page(&html);
+                assert_eq!(p.layout.bounding_client_rect(&p.dom, p.id("leaf")).x, depth as f64 + 8.0, "{kind}");
+            }
+        })
+        .unwrap()
+        .join()
+        .expect("no stack overflow");
+}

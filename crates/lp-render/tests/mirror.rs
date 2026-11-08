@@ -4766,3 +4766,82 @@ fn kept_inline_layouts_keep_matching_content_widths() {
         }
     }
 }
+
+// ---------------- review (misc2): the layout dispatch split into non-inlined helpers
+// (`leaf_layout_or_algorithm`, `compute_table_root_layout`, `adjusted_child_inputs`,
+// `lay_out_out_of_flow_boxes`, `mirror_child_overflow`, `compute_inner_in_new_bfc`): every leaf
+// and algorithm path, delta-synced against fresh builds ----------------
+
+#[test]
+fn review_misc2_every_dispatch_path_matches_fresh_builds() {
+    steps_match_fresh_builds_at(
+        r#"<div id=f style="display:flex;flex-wrap:wrap;gap:3px;width:400.5px"><input id=i1><input id=cb type=checkbox><input id=pw type=password size=7><input id=hid type=hidden><input id=num type=number><textarea id=ta rows=2>t</textarea><select id=dd><option>One<option id=lo>Longest option label</select><select id=lb multiple><option>a<option>b</select><select id=sz size=3><option>a</select><img id=img width=30 height=20 alt=i><svg id=svg width=40 height=10></svg><button id=btn>Btn</button></div>
+<div id=col style="display:flex;flex-direction:column"><div id=mm style="min-width:max-content">max content min width text</div><div id=half style="width:50%"><input id=pct style="width:100%"></div></div>
+<div id=g style="display:grid;grid-template-columns:1fr 2fr"><div id=sp style="grid-column:span 2">span</div><div id=gf style="display:flex">a</div><div id=gc style="display:flex;flex-direction:column">b</div></div>
+<div id=rel style="position:relative;height:80px"><table id=at style="position:absolute;left:-20px;right:-30px;top:5px"><tr><td id=atd>abs table<div id=oofc style="position:absolute;top:3px">oof in cell</div></td></tr></table></div>
+<table id=t2 style="position:relative"><tr><td>t</td></tr><div id=toof style="position:absolute;left:4px">oof child</div></table>
+<div id=vrl style="writing-mode:vertical-rl;height:120px"><p id=vp>vertical rl text <span id=orth style="display:inline-block;writing-mode:horizontal-tb;width:60px">orthogonal box</span></p><div id=vf style="display:flex">flex in vrl</div></div>
+<div id=vlr style="writing-mode:vertical-lr;height:120px"><p>vertical lr</p><div id=hz style="writing-mode:horizontal-tb">horizontal in vertical</div><div id=opp style="writing-mode:vertical-rl">opp</div></div>
+<div id=vsc style="writing-mode:vertical-rl;overflow:auto;width:80px;height:60px"><div id=vin style="width:200px;height:10px"></div></div>
+<div id=fl style="float:left;width:50.5px">float</div><p id=bes>text beside the float text beside the float</p><div id=fr style="display:flow-root">flow root</div>
+<span id=ib style="display:inline-block;padding:3px">ib <span style="display:inline-block">nested</span></span>"#,
+        vec![
+            (640, style("#f", "display:flex;flex-wrap:wrap;gap:3px;width:250.5px")),
+            (640, attr("#pw", "size", "15")),
+            (640, attr("#hid", "type", "text")),
+            (640, attr("#cb", "type", "radio")),
+            (640, text("#lo", "an even longer longest option label")),
+            (640, attr("#lb", "size", "5")),
+            (640, attr("#sz", "size", "1")),
+            (640, style("#img", "width:44.5px")),
+            (640, style("#mm", "min-width:min-content")),
+            (640, style("#col", "display:flex;flex-direction:row")),
+            (640, style("#g", "display:grid;grid-template-columns:2fr 1fr;width:300px")),
+            (480, style("#at", "position:absolute;left:-40px;right:-60px;top:5px;margin:0 7px")),
+            (480, style("#oofc", "position:absolute;top:9px;left:2px")),
+            (480, style("#toof", "position:absolute;right:4px")),
+            (480, style("#vrl", "writing-mode:vertical-lr;height:150px")),
+            (480, style("#orth", "display:inline-block;writing-mode:horizontal-tb;width:90px")),
+            (480, style("#vlr", "writing-mode:vertical-rl;height:100px")),
+            (480, style("#vin", "width:300px;height:10px")),
+            (480, style("#fl", "float:right;width:80px")),
+            (800, style("#fr", "display:block")),
+            (800, style("#ib", "display:inline-flex;padding:3px")),
+            (800, style("#t2", "position:static")),
+            (800, style("#hz", "display:none")),
+            (800, style("#lb", "display:none")),
+            (800, style("#lb", "")),
+        ],
+    );
+}
+
+#[test]
+fn review_misc2_deep_mixed_nesting_matches_fresh_builds() {
+    // 240 levels cycling through every algorithm (block, flow-root, flex, column flex, grid,
+    // inline-block, table, vertical writing mode, positioned), then edits deep inside.
+    let kinds = [
+        "padding-left:1px",
+        "display:flow-root;padding-left:1px",
+        "display:flex;padding-left:1px",
+        "display:flex;flex-direction:column;padding-left:1px",
+        "display:grid;padding-left:1px",
+        "display:inline-block;padding-left:1px",
+        "display:table;padding-left:1px",
+        "writing-mode:vertical-lr;padding-left:1px",
+        "writing-mode:horizontal-tb;position:relative;padding-left:1px",
+    ];
+    let depth = 240;
+    let open: String = (0..depth).map(|i| format!("<div id=n{i} style=\"{}\">", kinds[i % kinds.len()])).collect();
+    let body = format!("{open}<span id=leaf>deep text</span>{}", "</div>".repeat(depth));
+    let page = Page::new(&format!("{PAINT_BOXES}{body}</body></html>"));
+    let mut r = Renderer::new();
+    check_boxes_at(&mut r, &page, 640, "the first render");
+    for (i, what) in [(200usize, "padding-left:9px"), (120, "display:flex;padding-left:2px"), (60, "display:grid;width:300px")] {
+        let n = page.find(&format!("#n{i}"));
+        page.dom.borrow_mut().set_attribute(n, "style", what).unwrap();
+        check_boxes_at(&mut r, &page, 500, &format!("#n{i} {what}"));
+    }
+    let leaf = page.find("#leaf");
+    page.dom.borrow_mut().set_text_content(leaf, "a longer deep text that may wrap").unwrap();
+    check_boxes_at(&mut r, &page, 640, "#leaf text");
+}
