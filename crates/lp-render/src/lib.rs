@@ -1325,6 +1325,8 @@ impl Renderer {
     /// `hit`): what lp-dom hit-tests instead of every element's box.
     /// `shifted`: the keys of the elements lp-dom moves (scrolled
     /// containers, sticky boxes), `offset`: how far it moves any element.
+    /// `None` while the document's hit bounds are stale: call
+    /// [`Self::ensure_hit_bounds`] first.
     pub fn hit_candidates(
         &self,
         page: u64,
@@ -1333,8 +1335,20 @@ impl Renderer {
         shifted: &[u64],
     ) -> Option<Vec<HitVisit>> {
         let m = self.mirrors.get(&page)?;
+        if m.doc.hit_overflow_is_stale() {
+            return None;
+        }
         let g = self.geometry.get(&page)?;
         Some(hit::candidates(g, m, probe, offset, shifted))
+    }
+
+    /// Brings the hit bounds of `page`'s persistent document up to date with
+    /// its last sync (`BaseDocument::ensure_hit_overflow`: a sync only marks
+    /// them stale), for [`Self::hit_candidates`].
+    pub fn ensure_hit_bounds(&mut self, page: u64) {
+        if let Some(m) = self.mirrors.get_mut(&page) {
+            m.doc.ensure_hit_overflow();
+        }
     }
 
     /// `page`'s document scroll size (at least the viewport), as last synced.

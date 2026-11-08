@@ -481,6 +481,10 @@ pub struct BaseDocument {
     /// rebuilds the nodes flagged `PAINT_TREE_DIRTY` before the next paint or
     /// hit test.
     pub(crate) paint_tree_dirty: bool,
+    /// lightningpanda: a resolve ran since the hit bounds were last brought up
+    /// to date: `ensure_hit_overflow` computes the boxes flagged
+    /// `LayoutData::hit_stale` again before the next hit test.
+    pub(crate) hit_overflow_dirty: bool,
 
     /// Nodes that contain custom widgets
     #[cfg(feature = "custom-widget")]
@@ -681,6 +685,7 @@ impl BaseDocument {
             track_style_changes: false,
             left_layout_lists: Vec::new(),
             paint_tree_dirty: true,
+            hit_overflow_dirty: true,
             image_cache: HashMap::new(),
             pending_images: HashMap::new(),
             pending_style_image_nodes: Vec::new(),

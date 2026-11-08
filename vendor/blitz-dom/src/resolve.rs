@@ -190,7 +190,7 @@ impl BaseDocument {
         self.nodes.bump_geometry_generation();
 
         // Resolve transforms
-        let _ = self.resolve_transforms(root_node_id);
+        self.resolve_transforms(root_node_id);
         timer.record_time("transform");
         phase_profile::mark(5, &mut phase_t);
 
@@ -200,6 +200,8 @@ impl BaseDocument {
         // Forced layouts (`getBoundingClientRect` and the like) never read
         // them, so a run of them builds the tree once, not once per resolve.
         self.paint_tree_dirty = true;
+        // lightningpanda: so are the hit bounds (`ensure_hit_overflow`).
+        self.hit_overflow_dirty = true;
         timer.record_time("paint_tree");
         phase_profile::mark(6, &mut phase_t);
 
@@ -207,6 +209,8 @@ impl BaseDocument {
         // marked as (potentially) containing damage.
         let doc_node_id = self.root_node().id;
         self.clear_damage_and_dirty_flags(doc_node_id);
+        #[cfg(debug_assertions)]
+        self.assert_no_damage_left();
         timer.record_time("c_damage");
         phase_profile::mark(7, &mut phase_t);
 
@@ -303,15 +307,11 @@ impl BaseDocument {
         changed
     }
 
-    /// The transforms and overflow of `node_id`'s subtree: what it adds to its
-    /// parent's scrollable overflow and (lightningpanda) to its hit bound
-    /// (`LayoutData::hit_overflow`), in the parent's coordinates.
-    fn resolve_transforms(&mut self, node_id: NodeId) -> (Rect, Rect) {
-        if !self.nodes.contains_key(node_id) {
-            return (Rect::ZERO, Rect::ZERO);
-        }
-
-        let scale = self.viewport.scale_f64();
+    /// The layout `resolve_transforms` and `resolve_hit_overflow` place
+    /// `node_id` by: its unrounded box, physical when it or its containing
+    /// block is in a vertical writing mode.
+    #[inline]
+    fn transform_pass_layout(&self, node_id: NodeId) -> taffy::Layout {
         // CSS scroll extents must use the same unrounded boxes as client sizes.
         // Pixel-rounded paint widths can otherwise make fitting text overflow by 1px.
         // Only vertical placement needs the containing-block physicalisation walk.
@@ -320,7 +320,23 @@ impl BaseDocument {
             || node
                 .containing_block()
                 .is_some_and(|parent| self.nodes[parent].layout_data().writing_mode.is_vertical());
-        let layout = if vertical { self.physical_unrounded_geometry(node_id).1 } else { *node.unrounded_layout() };
+        if vertical { self.physical_unrounded_geometry(node_id).1 } else { *node.unrounded_layout() }
+    }
+
+    /// The transforms and overflow of `node_id`'s subtree: what it adds to its
+    /// parent's scrollable overflow, in the parent's coordinates.
+    ///
+    /// lightningpanda: each box this pass computes again is flagged
+    /// `LayoutData::hit_stale`; the next hit test brings their hit bounds up
+    /// to date (`ensure_hit_overflow`), so a run of forced layouts with no
+    /// hit test in between pays nothing for them.
+    fn resolve_transforms(&mut self, node_id: NodeId) -> Rect {
+        if !self.nodes.contains_key(node_id) {
+            return Rect::ZERO;
+        }
+
+        let scale = self.viewport.scale_f64();
+        let layout = self.transform_pass_layout(node_id);
 
         // The cached overflow holds only while nothing in the subtree changed:
         // a descendant's relayout (its overflow shrinking) reaches its
@@ -332,37 +348,24 @@ impl BaseDocument {
         if unchanged {
             let node = &self.nodes[node_id];
             let location = layout.location.map(|v| v as f64 * scale);
-            let [overflow, hit] =
-                self.overflow_contributions(node_id, [*node.scrollable_overflow(), *node.hit_overflow()], layout.size, scale);
-            let place = placement((location.x, location.y), node.transform().as_deref());
-            return (place(overflow), place(hit));
+            let overflow = self.overflow_contribution(node_id, *node.scrollable_overflow(), layout.size, scale);
+            return placement((location.x, location.y), node.transform().as_deref())(overflow);
         }
 
         let transform = self.nodes[node_id].set_transform(scale as f32);
+        self.nodes[node_id].layout_data_mut().hit_stale = true;
 
-        let w = layout.size.width as f64 * scale;
-        let h = layout.size.height as f64 * scale;
         // lightningpanda: the scrollable overflow starts at the padding box
         // (CSS Overflow 3 2.2), not the border box.
-        let b = layout.border;
-        let mut overflow = Rect::new(
-            b.left as f64 * scale,
-            b.top as f64 * scale,
-            (w - b.right as f64 * scale).max(b.left as f64 * scale),
-            (h - b.bottom as f64 * scale).max(b.top as f64 * scale),
-        );
-        let mut hit = overflow;
+        let mut overflow = padding_box(&layout, scale);
 
         let layout_children = std::mem::take(self.nodes[node_id].layout_children.get_mut());
 
         // lightningpanda: a table's cells, transformed again only where its grid placed them or
         // they changed since the last pass (`TableContext::placed`); the others' overflow stands.
-        if let Some((cells_overflow, cells_hit)) = self.table_cells_overflow(node_id, scale) {
+        if let Some(cells_overflow) = self.table_cells_overflow(node_id, scale) {
             if let Some(cells_overflow) = cells_overflow {
                 overflow = overflow.union(cells_overflow);
-            }
-            if let Some(cells_hit) = cells_hit {
-                hit = hit.union(cells_hit);
             }
         } else if let Some(ref children) = layout_children {
             for &child_id in children {
@@ -372,9 +375,8 @@ impl BaseDocument {
                 if self.nodes[child_id].is_out_of_flow() {
                     continue;
                 }
-                let (child_rect_in_self, child_hit) = crate::util::ensure_stack(|| self.resolve_transforms(child_id));
+                let child_rect_in_self = crate::util::ensure_stack(|| self.resolve_transforms(child_id));
                 overflow = unite_overflow(overflow, child_rect_in_self);
-                hit = unite_hit(hit, child_hit);
             }
         }
         let hoisted_children = std::mem::take(&mut *self.nodes[node_id].hoisted_children.borrow_mut());
@@ -383,16 +385,177 @@ impl BaseDocument {
             if !self.nodes.contains_key(child_id) {
                 continue;
             }
-            let (child_rect_in_self, child_hit) = crate::util::ensure_stack(|| self.resolve_transforms(child_id));
+            let child_rect_in_self = crate::util::ensure_stack(|| self.resolve_transforms(child_id));
             // lightningpanda: a box fixed to the viewport is not in the
             // document's scrollable overflow, whatever it reaches.
-            let fixed = self.nodes[child_id]
-                .primary_styles()
-                .is_some_and(|s| s.clone_position() == style::computed_values::position::T::Fixed);
-            if viewport_contains_fixed && fixed {
+            if viewport_contains_fixed && self.is_fixed(child_id) {
                 continue;
             }
             overflow = unite_overflow(overflow, child_rect_in_self);
+        }
+        *self.nodes[node_id].hoisted_children.borrow_mut() = hoisted_children;
+        for pseudo in [self.nodes[node_id].before(), self.nodes[node_id].after()] {
+            let Some(pseudo) = pseudo else { continue };
+            if self.nodes[pseudo].is_out_of_flow() {
+                continue;
+            }
+            let child_rect_in_self = crate::util::ensure_stack(|| self.resolve_transforms(pseudo));
+            overflow = unite_overflow(overflow, child_rect_in_self);
+        }
+
+        // lightningpanda: the lines of an inline formatting context are
+        // overflow too (a nowrap name in a 100px `truncate` cell scrolls), and
+        // a scroll container adds its end padding after them.
+        if let Some((lines, true)) = self.line_bounds(node_id, &layout, scale) {
+            overflow = overflow.union(lines);
+        }
+
+        *self.nodes[node_id].scrollable_overflow_mut() = overflow;
+        *self.nodes[node_id].layout_children.get_mut() = layout_children;
+
+        let scaled_x = layout.location.x as f64 * scale;
+        let scaled_y = layout.location.y as f64 * scale;
+
+        let contribution = self.overflow_contribution(node_id, overflow, layout.size, scale);
+        placement((scaled_x, scaled_y), transform.as_ref())(contribution)
+    }
+
+    /// lightningpanda: whether `node_id` is `position: fixed`.
+    fn is_fixed(&self, node_id: NodeId) -> bool {
+        self.nodes[node_id]
+            .primary_styles()
+            .is_some_and(|s| s.clone_position() == style::computed_values::position::T::Fixed)
+    }
+
+    /// lightningpanda: the box of the lines of `node_id`'s inline formatting
+    /// context or text control (its own coordinates, device px; a scroll
+    /// container's end padding added after them), and whether they reach
+    /// anywhere (a width or a height). `None`: it lays out no lines.
+    fn line_bounds(&self, node_id: NodeId, l: &taffy::Layout, scale: f64) -> Option<(Rect, bool)> {
+        let element = self.nodes[node_id].element_data();
+        let editor_layout = element.and_then(|e| e.text_input_data()).and_then(|i| i.editor.try_layout());
+        let inline = element.and_then(|e| e.inline_layout_data.as_deref());
+        let (text_layout, block_offset) = inline.map(|t| (&t.layout, t.block_offset)).or(editor_layout.map(|l| (l, 0.0)))?;
+        let width = text_layout
+            .lines()
+            .map(|line| {
+                let m = line.metrics();
+                (m.offset + m.advance - m.hanging_advance) as f64
+            })
+            .fold(0.0, f64::max);
+        // The empty line parley adds after a final hard break (`<br>`)
+        // is not content.
+        let height = text_layout
+            .lines()
+            .filter(|line| !line.text_range().is_empty())
+            .map(|line| line.metrics().block_max_coord as f64)
+            .fold(0.0, f64::max);
+        let x0 = (l.border.left + l.padding.left) as f64 * scale;
+        let y0 = (l.border.top + l.padding.top + block_offset) as f64 * scale;
+        let style = self.nodes[node_id].primary_styles();
+        // Text controls scroll their value whatever their `overflow`.
+        let scrolls = editor_layout.is_some()
+            || style.as_ref().is_some_and(|s| {
+                s.clone_overflow_x() != style::values::computed::Overflow::Visible
+                    || s.clone_overflow_y() != style::values::computed::Overflow::Visible
+            });
+        let (end_x, end_y) = if scrolls {
+            (l.padding.right as f64 * scale, l.padding.bottom as f64 * scale)
+        } else {
+            (0.0, 0.0)
+        };
+        // The lines of a vertical writing mode are logical: `width` runs along y, `height` along x.
+        let lines = match self.nodes[node_id].vertical_block_axis() {
+            None => Rect::new(x0, y0, x0 + width + end_x, y0 + height + end_y),
+            Some(block_lr) => {
+                let offset = block_offset as f64 * scale;
+                let top = y0 - offset;
+                let (b0, b1) = if block_lr {
+                    (x0 + offset, x0 + offset + height + end_x)
+                } else {
+                    let start = (l.size.width - l.border.right - l.padding.right) as f64 * scale - offset;
+                    (start - height - end_x, start)
+                };
+                Rect::new(b0, top, b1, top + width + end_y)
+            }
+        };
+        Some((lines, width > 0.0 || height > 0.0))
+    }
+
+    /// lightningpanda: brings every box's hit bound (`LayoutData::hit_overflow`)
+    /// up to date with the last resolve: the boxes the transform passes since
+    /// the last call computed again (`LayoutData::hit_stale`) and their tables'
+    /// per-row unions (`TableContext::row_hit_extents`). Hit testing calls
+    /// this first; a resolve only marks the bounds stale.
+    pub fn ensure_hit_overflow(&mut self) {
+        if std::mem::take(&mut self.hit_overflow_dirty)
+            && let Some(root_id) = self.try_root_element().map(|root| root.id)
+        {
+            let _ = self.resolve_hit_overflow(root_id);
+        }
+        for &node_id in &self.sub_document_nodes {
+            if let Some(mut sub_doc) = self
+                .nodes
+                .get_mut(node_id)
+                .and_then(|node| node.subdoc_mut())
+                .map(|doc| doc.inner_mut())
+            {
+                sub_doc.ensure_hit_overflow();
+            }
+        }
+    }
+
+    /// lightningpanda: whether a resolve ran since the hit bounds were last
+    /// brought up to date (`ensure_hit_overflow`).
+    pub fn hit_overflow_is_stale(&self) -> bool {
+        self.hit_overflow_dirty
+    }
+
+    /// lightningpanda: the hit bound of `node_id`'s subtree (see
+    /// `LayoutData::hit_overflow`), computed again for the boxes flagged
+    /// `hit_stale`, and what it adds to its parent's, in the parent's
+    /// coordinates. It walks the tree `resolve_transforms` walks: a box is
+    /// flagged only when that pass computed it again, and so were its
+    /// ancestors.
+    fn resolve_hit_overflow(&mut self, node_id: NodeId) -> Rect {
+        if !self.nodes.contains_key(node_id) {
+            return Rect::ZERO;
+        }
+        let scale = self.viewport.scale_f64();
+        let layout = self.transform_pass_layout(node_id);
+        let location = layout.location.map(|v| v as f64 * scale);
+        if !self.nodes[node_id].layout_data().hit_stale {
+            let node = &self.nodes[node_id];
+            let hit = self.overflow_contribution(node_id, *node.hit_overflow(), layout.size, scale);
+            return placement((location.x, location.y), node.transform().as_deref())(hit);
+        }
+
+        let mut hit = padding_box(&layout, scale);
+        let layout_children = std::mem::take(self.nodes[node_id].layout_children.get_mut());
+        if let Some(cells_hit) = self.table_cells_hit(node_id, scale) {
+            if let Some(cells_hit) = cells_hit {
+                hit = hit.union(cells_hit);
+            }
+        } else if let Some(ref children) = layout_children {
+            for &child_id in children {
+                if self.nodes[child_id].is_out_of_flow() {
+                    continue;
+                }
+                let child_hit = crate::util::ensure_stack(|| self.resolve_hit_overflow(child_id));
+                hit = unite_hit(hit, child_hit);
+            }
+        }
+        *self.nodes[node_id].layout_children.get_mut() = layout_children;
+        let hoisted_children = std::mem::take(&mut *self.nodes[node_id].hoisted_children.borrow_mut());
+        let viewport_contains_fixed = node_id == self.root_element().id;
+        for &child_id in &hoisted_children {
+            if !self.nodes.contains_key(child_id) {
+                continue;
+            }
+            let child_hit = crate::util::ensure_stack(|| self.resolve_hit_overflow(child_id));
+            if viewport_contains_fixed && self.is_fixed(child_id) {
+                continue;
+            }
             hit = unite_hit(hit, child_hit);
         }
         *self.nodes[node_id].hoisted_children.borrow_mut() = hoisted_children;
@@ -401,18 +564,10 @@ impl BaseDocument {
             if self.nodes[pseudo].is_out_of_flow() {
                 continue;
             }
-            let (child_rect_in_self, child_hit) = crate::util::ensure_stack(|| self.resolve_transforms(pseudo));
-            overflow = unite_overflow(overflow, child_rect_in_self);
+            let child_hit = crate::util::ensure_stack(|| self.resolve_hit_overflow(pseudo));
             hit = unite_hit(hit, child_hit);
         }
 
-        // lightningpanda: the lines of an inline formatting context are
-        // overflow too (a nowrap name in a 100px `truncate` cell scrolls), and
-        // a scroll container adds its end padding after them.
-        let element = self.nodes[node_id].element_data();
-        let editor_layout = element.and_then(|e| e.text_input_data()).and_then(|i| i.editor.try_layout());
-        let inline = element.and_then(|e| e.inline_layout_data.as_deref());
-        let lines = inline.map(|t| (&t.layout, t.block_offset)).or(editor_layout.map(|l| (l, 0.0)));
         // lightningpanda: a glyph run's content area (whole-pixel ascent and
         // descent around its baseline, its advance rounded up to a layout
         // unit) can reach outside the line boxes: a tight `line-height`,
@@ -420,113 +575,46 @@ impl BaseDocument {
         // from those areas, so the hit bound holds the line boxes grown by the
         // largest such reach, measured once after each line breaking
         // (`TextLayout::hit_reach`). Text controls lay out no inline elements.
-        let mut hit_lines = None;
-        if let Some((text_layout, block_offset)) = lines {
-            let l = &layout;
-            let width = text_layout
-                .lines()
-                .map(|line| {
-                    let m = line.metrics();
-                    (m.offset + m.advance - m.hanging_advance) as f64
-                })
-                .fold(0.0, f64::max);
-            // The empty line parley adds after a final hard break (`<br>`)
-            // is not content.
-            let height = text_layout
-                .lines()
-                .filter(|line| !line.text_range().is_empty())
-                .map(|line| line.metrics().block_max_coord as f64)
-                .fold(0.0, f64::max);
-            let x0 = (l.border.left + l.padding.left) as f64 * scale;
-            let y0 = (l.border.top + l.padding.top + block_offset) as f64 * scale;
-            let style = self.nodes[node_id].primary_styles();
-            // Text controls scroll their value whatever their `overflow`.
-            let scrolls = editor_layout.is_some()
-                || style.as_ref().is_some_and(|s| {
-                    s.clone_overflow_x() != style::values::computed::Overflow::Visible
-                        || s.clone_overflow_y() != style::values::computed::Overflow::Visible
-                });
-            let (end_x, end_y) = if scrolls {
-                (l.padding.right as f64 * scale, l.padding.bottom as f64 * scale)
-            } else {
-                (0.0, 0.0)
-            };
-            // The lines of a vertical writing mode are logical: `width` runs along y, `height` along x.
-            let lines = match self.nodes[node_id].vertical_block_axis() {
-                None => Rect::new(x0, y0, x0 + width + end_x, y0 + height + end_y),
-                Some(block_lr) => {
-                    let offset = block_offset as f64 * scale;
-                    let top = y0 - offset;
-                    let (b0, b1) = if block_lr {
-                        (x0 + offset, x0 + offset + height + end_x)
-                    } else {
-                        let start = (l.size.width - l.border.right - l.padding.right) as f64 * scale - offset;
-                        (start - height - end_x, start)
-                    };
-                    Rect::new(b0, top, b1, top + width + end_y)
-                }
-            };
-            if width > 0.0 || height > 0.0 {
-                overflow = overflow.union(lines);
+        if let Some((lines, reaches)) = self.line_bounds(node_id, &layout, scale) {
+            if reaches {
                 hit = hit.union(lines);
             }
-            if let Some(text) = inline {
-                hit_lines = Some(match text.hit_reach {
-                    Some(reach) => (lines, reach, false),
-                    None => (lines, glyph_reach(text_layout), true),
-                });
+            let text = self.nodes[node_id].element_data_mut().and_then(|e| e.inline_layout_data.as_deref_mut());
+            if let Some(text) = text {
+                let reach = *text.hit_reach.get_or_insert_with(|| glyph_reach(&text.layout));
+                let reach = reach + scale / 64.0;
+                hit = hit.union(lines.inflate(reach, reach));
             }
         }
-        if let Some((lines, reach, measured)) = hit_lines {
-            if measured {
-                let text = self.nodes[node_id].element_data_mut().and_then(|e| e.inline_layout_data.as_deref_mut());
-                if let Some(text) = text {
-                    text.hit_reach = Some(reach);
-                }
-            }
-            let reach = reach + scale / 64.0;
-            hit = hit.union(lines.inflate(reach, reach));
-        }
 
-        *self.nodes[node_id].scrollable_overflow_mut() = overflow;
-        *self.nodes[node_id].hit_overflow_mut() = hit;
-        *self.nodes[node_id].layout_children.get_mut() = layout_children;
-
-        let scaled_x = layout.location.x as f64 * scale;
-        let scaled_y = layout.location.y as f64 * scale;
-
-        let [contribution, hit] = self.overflow_contributions(node_id, [overflow, hit], layout.size, scale);
-        let place = placement((scaled_x, scaled_y), transform.as_ref());
-        (place(contribution), place(hit))
+        let data = self.nodes[node_id].layout_data_mut();
+        data.hit_overflow = hit;
+        data.hit_stale = false;
+        let node = &self.nodes[node_id];
+        let hit = self.overflow_contribution(node_id, hit, layout.size, scale);
+        placement((location.x, location.y), node.transform().as_deref())(hit)
     }
 
     /// lightningpanda: what a box adds to its parent's scrollable overflow
     /// (its own coordinates): its border box, plus its own scrollable overflow
     /// on the axes it does not clip. A scroll container keeps its content's
-    /// overflow to itself.
+    /// overflow to itself. (The same for its hit bound.)
     pub fn overflow_contribution(&self, node_id: NodeId, overflow: Rect, size: taffy::Size<f32>, scale: f64) -> Rect {
-        self.overflow_contributions(node_id, [overflow, overflow], size, scale)[0]
-    }
-
-    /// lightningpanda: [`Self::overflow_contribution`] of a box's scrollable
-    /// and hit overflow, reading its style once.
-    fn overflow_contributions(&self, node_id: NodeId, overflow: [Rect; 2], size: taffy::Size<f32>, scale: f64) -> [Rect; 2] {
         use style::values::computed::Overflow;
         let border_box = Rect::new(0.0, 0.0, size.width as f64 * scale, size.height as f64 * scale);
-        let [mut a, mut b] = [overflow[0].union(border_box), overflow[1].union(border_box)];
-        let clips = self.nodes[node_id].primary_styles().and_then(|style| {
+        let mut out = overflow.union(border_box);
+        if let Some(style) = self.nodes[node_id].primary_styles() {
             let (x, y) = (style.clone_overflow_x() != Overflow::Visible, style.clone_overflow_y() != Overflow::Visible);
-            ((x || y) && !self.body_overflow_goes_to_viewport(node_id)).then_some((x, y))
-        });
-        if let Some((x, y)) = clips {
-            if x {
-                (a.x0, a.x1, b.x0, b.x1) = (border_box.x0, border_box.x1, border_box.x0, border_box.x1);
-            }
-            if y {
-                (a.y0, a.y1, b.y0, b.y1) = (border_box.y0, border_box.y1, border_box.y0, border_box.y1);
+            if (x || y) && !self.body_overflow_goes_to_viewport(node_id) {
+                if x {
+                    (out.x0, out.x1) = (border_box.x0, border_box.x1);
+                }
+                if y {
+                    (out.y0, out.y1) = (border_box.y0, border_box.y1);
+                }
             }
         }
-        [a, b]
+        out
     }
 
     /// lightningpanda: whether `node_id` is a `body` whose `overflow` applies
@@ -596,11 +684,7 @@ impl BaseDocument {
                     None => layout_children.to_vec(),
                 };
                 for child_id in visit {
-                    let child = &doc.nodes[child_id];
-                    if !child.has_damaged_descendants()
-                        && !child.is_anonymous()
-                        && child.layout_parent.get() == Some(node_id)
-                    {
+                    if doc.nodes[child_id].is_clean_layout_child_of(node_id) {
                         continue;
                     }
                     crate::util::ensure_stack(|| resolve_layout_children_recursive(doc, child_id));
@@ -678,10 +762,18 @@ impl BaseDocument {
                 }
                 let layout_children = doc.nodes[node_id].layout_children.borrow_mut().take();
                 if let Some(layout_children) = layout_children {
-                    for child_id in layout_children.iter().copied() {
+                    // lightningpanda: a table whose cells it keeps visits the cells noted as changed
+                    // (`table::cells_to_visit`), not all of them.
+                    let noted = crate::layout::table::cells_to_visit(doc, node_id);
+                    for child_id in noted.as_deref().unwrap_or(&layout_children[..]).iter().copied() {
                         // Anonymous blocks and pseudo-elements can be removed from the
                         // slab between render passes; skip stale IDs.
-                        if !doc.nodes.contains_key(child_id) {
+                        let Some(child) = doc.nodes.get(child_id) else { continue };
+                        // lightningpanda: only the children on a damaged path are visited: a child
+                        // whose subtree has no damage (and is still listed here) would return at
+                        // the skip above without changing anything. A cell edit in a long table
+                        // visits that cell, not its thousands of siblings.
+                        if child.is_clean_layout_child_of(node_id) {
                             continue;
                         }
                         crate::util::ensure_stack(|| resolve_layout_children_recursive(doc, child_id));
@@ -696,6 +788,26 @@ impl BaseDocument {
             }
 
             doc.nodes[node_id].set_damage(damage);
+        }
+    }
+
+    /// lightningpanda: `clear_damage_and_dirty_flags` reached every node with damage: the walks
+    /// that follow damage skip a subtree whose root's `damaged_descendants` flag is clear
+    /// (`Node::has_no_damage_below`), so damage set without its flag would outlive the pass.
+    #[cfg(debug_assertions)]
+    fn assert_no_damage_left(&self) {
+        use crate::node::NodeFlags;
+        for (id, node) in self.nodes.iter() {
+            if !node.flags.contains(NodeFlags::IS_IN_DOCUMENT) {
+                continue;
+            }
+            debug_assert!(
+                !node.damage().is_some_and(|damage| !damage.is_empty()),
+                "{id:?} ({:?}, anonymous: {}) keeps damage {:?} after the pass",
+                node.data.downcast_element().map(|el| &el.name.local),
+                node.is_anonymous(),
+                node.damage(),
+            );
         }
     }
 
@@ -857,46 +969,41 @@ impl BaseDocument {
 /// box of no width or no height, with nothing reaching out of it) adds nothing,
 /// wherever it is: a 2000 x 0 px box does not make a page scroll.
 impl BaseDocument {
-    /// The union of the overflow of `table`'s cells in it (see `resolve_transforms`; `None` inside:
-    /// none has any), and of their hit contributions (`unite_hit`), or `None` if `table` is not a
-    /// table whose cells it keeps (its layout children are visited as any others').
-    fn table_cells_overflow(&mut self, table: NodeId, scale: f64) -> Option<(Option<Rect>, Option<Rect>)> {
+    /// `table`'s `TableContext` when it is a table whose cells it keeps (`None`: its layout
+    /// children are visited as any others').
+    fn kept_cells_table(&self, table: NodeId) -> Option<std::sync::Arc<crate::layout::table::TableContext>> {
         use crate::node::SpecialElementData;
         let node = &self.nodes[table];
         if !node.flags.is_table_root() {
             return None;
         }
         let SpecialElementData::TableRoot(ctx) = &node.data.downcast_element()?.special_data else { return None };
-        if !crate::layout::table::keeps_cells(ctx) {
-            return None;
-        }
-        let ctx = std::sync::Arc::clone(ctx);
+        crate::layout::table::keeps_cells(ctx).then(|| std::sync::Arc::clone(ctx))
+    }
+
+    /// The union of the overflow of `table`'s cells in it (see `resolve_transforms`; `None` inside:
+    /// none has any), or `None` if `table` is not a table whose cells it keeps (its layout children
+    /// are visited as any others').
+    fn table_cells_overflow(&mut self, table: NodeId, scale: f64) -> Option<Option<Rect>> {
+        let ctx = self.kept_cells_table(table)?;
         let cells = ctx.cells.len();
         let mut placed = ctx.placed.borrow_mut();
-        let again = placed
-            .take_transform()
-            .filter(|_| placed.overflow.len() == cells && placed.hit.len() == cells && placed.overflow_scale == scale);
+        let again = placed.take_transform().filter(|_| placed.overflow.len() == cells && placed.overflow_scale == scale);
+        // lightningpanda: the next hit test brings these cells' hit contributions up to date
+        // (`table_cells_hit`).
+        placed.transformed(again.as_deref(), cells);
         let mut overflow = std::mem::take(&mut placed.overflow);
-        let mut hit = std::mem::take(&mut placed.hit);
         drop(placed);
-        // The rows of the cells transformed again (`None`: all).
-        let mut changed_rows: Option<Vec<usize>> = None;
         match again {
             Some(again) => {
-                let mut rows = Vec::with_capacity(again.len());
                 for index in again {
-                    (overflow[index], hit[index]) = self.resolve_transforms(ctx.cells[index].node_id);
-                    rows.push(ctx.cells[index].row as usize);
+                    overflow[index] = crate::util::ensure_stack(|| self.resolve_transforms(ctx.cells[index].node_id));
                 }
-                changed_rows = Some(rows);
             }
             None => {
                 overflow.clear();
-                hit.clear();
                 for cell in &ctx.cells {
-                    let (o, h) = self.resolve_transforms(cell.node_id);
-                    overflow.push(o);
-                    hit.push(h);
+                    overflow.push(crate::util::ensure_stack(|| self.resolve_transforms(cell.node_id)));
                 }
             }
         }
@@ -905,6 +1012,41 @@ impl BaseDocument {
             .iter()
             .filter(|cell| cell.width() > 0.0 && cell.height() > 0.0)
             .fold(None, |united: Option<Rect>, &cell| Some(united.map_or(cell, |united| united.union(cell))));
+        let mut placed = ctx.placed.borrow_mut();
+        placed.overflow = overflow;
+        placed.overflow_scale = scale;
+        Some(united)
+    }
+
+    /// lightningpanda: `table_cells_overflow` for the hit pass (`resolve_hit_overflow`): the union
+    /// of `table`'s cells' hit contributions (`unite_hit`), computed again for the cells the
+    /// transform passes since the last hit pass visited, and the per-row unions
+    /// (`TableContext::row_hit_extents`) of their rows.
+    fn table_cells_hit(&mut self, table: NodeId, scale: f64) -> Option<Option<Rect>> {
+        let ctx = self.kept_cells_table(table)?;
+        let cells = ctx.cells.len();
+        let mut placed = ctx.placed.borrow_mut();
+        let again = placed.take_hit().filter(|_| placed.hit.len() == cells && placed.hit_scale == scale);
+        let mut hit = std::mem::take(&mut placed.hit);
+        drop(placed);
+        // The rows of the cells computed again (`None`: all).
+        let mut changed_rows: Option<Vec<usize>> = None;
+        match again {
+            Some(again) => {
+                let mut rows = Vec::with_capacity(again.len());
+                for index in again {
+                    hit[index] = crate::util::ensure_stack(|| self.resolve_hit_overflow(ctx.cells[index].node_id));
+                    rows.push(ctx.cells[index].row as usize);
+                }
+                changed_rows = Some(rows);
+            }
+            None => {
+                hit.clear();
+                for cell in &ctx.cells {
+                    hit.push(crate::util::ensure_stack(|| self.resolve_hit_overflow(cell.node_id)));
+                }
+            }
+        }
         let hit_united = hit
             .iter()
             .filter(|cell| cell.width() > 0.0 || cell.height() > 0.0)
@@ -913,7 +1055,7 @@ impl BaseDocument {
         // lightningpanda: the union of the hit contributions per row (the
         // cells originating in it: a hit-test bound of the row,
         // `TableContext::row_hit_extents`), for the rows of the cells
-        // transformed again only.
+        // computed again only.
         let rows = ctx.rows.len();
         let mut row_start = Vec::with_capacity(rows + 1);
         row_start.push(0usize);
@@ -945,11 +1087,24 @@ impl BaseDocument {
                 placed.row_overflow = (0..rows).map(|row| row_union(row, &hit)).collect();
             }
         }
-        placed.overflow = overflow;
         placed.hit = hit;
-        placed.overflow_scale = scale;
-        Some((united, hit_united))
+        placed.hit_scale = scale;
+        Some(hit_united)
     }
+}
+
+/// lightningpanda: a box's padding box (its own coordinates, device px), where
+/// its scrollable overflow and hit bound start (CSS Overflow 3 2.2).
+fn padding_box(layout: &taffy::Layout, scale: f64) -> Rect {
+    let w = layout.size.width as f64 * scale;
+    let h = layout.size.height as f64 * scale;
+    let b = layout.border;
+    Rect::new(
+        b.left as f64 * scale,
+        b.top as f64 * scale,
+        (w - b.right as f64 * scale).max(b.left as f64 * scale),
+        (h - b.bottom as f64 * scale).max(b.top as f64 * scale),
+    )
 }
 
 /// lightningpanda: a box's rect in its parent: moved to `location`, through

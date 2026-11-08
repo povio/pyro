@@ -828,6 +828,9 @@ fn flush_pseudo_elements(doc: &mut BaseDocument, node_id: NodeId) {
                 .stylo_element_data_mut()
                 .ensure_init_mut() = element_data;
             doc.nodes[new_node_id].update_layout_styles();
+            // lightningpanda: damage is set with its flag (`Node::mark_damaged`), which the walks
+            // that follow damage rely on to skip a subtree (`Node::has_no_damage_below`).
+            doc.nodes[new_node_id].mark_damaged();
 
             let node = &mut doc.nodes[node_id];
             node.set_pe_by_index(idx, Some(new_node_id));
@@ -891,6 +894,8 @@ fn flush_pseudo_elements(doc: &mut BaseDocument, node_id: NodeId) {
                 }
                 replaced
             };
+            // lightningpanda: with its flag, as above.
+            doc.nodes[pe_node_id].mark_damaged();
             if replaced {
                 doc.nodes[pe_node_id].update_layout_styles();
                 doc.pending_style_image_nodes.push(pe_node_id);
