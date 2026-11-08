@@ -540,6 +540,21 @@ pub struct TableContext {
     calc_values: Vec<LengthPercentage>,
 }
 
+impl TableContext {
+    /// lightningpanda: each row's hit-test extent (parallel to `rows`): the union of its cells'
+    /// overflow contributions in the table's coordinates at `scale` (`BaseDocument::resolve_transforms`,
+    /// device px), as of the last transform pass; `f` gets an empty slice when the pass has not
+    /// covered the current rows (the caller then computes from the cells).
+    pub fn row_hit_extents<R>(&self, f: impl FnOnce(&[kurbo::Rect], f64) -> R) -> R {
+        let placed = self.placed.borrow();
+        if placed.row_overflow.len() == self.rows.len() {
+            f(&placed.row_overflow, placed.overflow_scale)
+        } else {
+            f(&[], placed.overflow_scale)
+        }
+    }
+}
+
 /// The cells a table's grid placed since its last rounding and transform pass (`TableContext::placed`).
 #[derive(Debug, Default)]
 pub(crate) struct PlacedCells {
@@ -551,6 +566,10 @@ pub(crate) struct PlacedCells {
     transform: Option<Vec<usize>>,
     pub(crate) overflow: Vec<kurbo::Rect>,
     pub(crate) overflow_scale: f64,
+    /// lightningpanda: the union of `overflow` over the cells originating in each row (parallel to
+    /// `TableContext::rows`, `Rect::ZERO` without cells), kept with `overflow`; empty when the rows
+    /// changed since (`splice`) until the next transform pass.
+    pub(crate) row_overflow: Vec<kurbo::Rect>,
     /// Cells damaged or appended since the paint tree last visited the table (all of them when
     /// `None`), and, when every cell then was a plain box in it (no stacking context, nothing
     /// hoisted out of its subtree), their paint order (`build_paint_tree_impl`).
@@ -591,6 +610,7 @@ impl PlacedCells {
         if !self.overflow.is_empty() {
             self.overflow.splice(removed.clone(), std::iter::repeat_n(kurbo::Rect::ZERO, inserted));
         }
+        self.row_overflow.clear();
         for index in removed.start..removed.start + inserted {
             self.damaged(index, cells);
         }

@@ -674,20 +674,20 @@ fn page_layout_reports_words_and_hits() {
     );
     let mut r = Renderer::new();
     r.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
-    let out = r.page_layout(1).unwrap();
+    let words_out = r.page_words(1).unwrap();
     let text_key = |sel: &str, i: usize| {
         let dom = page.dom.borrow();
         let el = page.find(sel);
         lp_dom::snapshot::render_key(dom.children(el).unwrap().nth(i).unwrap())
     };
     let words: Vec<(u64, u32, u32)> =
-        out.words.iter().map(|(k, w)| (*k, w.edges[0].0, w.edges.last().unwrap().0)).collect();
+        words_out.iter().map(|(k, w)| (*k, w.edges[0].0, w.edges.last().unwrap().0)).collect();
     let (p0, b0, p2) = (text_key("#p", 0), text_key("#b", 0), text_key("#p", 2));
     assert_eq!(words, vec![(p0, 2, 7), (p0, 10, 15), (b0, 0, 4), (p2, 1, 3), (p2, 3, 4)]);
-    let hello = &out.words[0].1;
+    let hello = &words_out[0].1;
     assert!(hello.width > 20.0 && hello.height > 10.0 && hello.edges.len() == 6, "{hello:?}");
     assert!(hello.edges.windows(2).all(|e| e[0].1 < e[1].1));
-    let bold = &out.words[2].1;
+    let bold = &words_out[2].1;
     let hit = r.elements_from_point(1, bold.x + 2.0, bold.y + 2.0);
     let dom = page.dom.borrow();
     assert_eq!(hit[0], lp_dom::snapshot::render_key(page.find("#b")));
@@ -1993,8 +1993,43 @@ fn deltas_on_long_tables_and_lists_match_fresh_builds() {
         }
         let sticky = |r: &Renderer| r.page_layout(1).map(|l| l.sticky.len());
         assert_eq!(sticky(&r), sticky(&fresh), "sticky boxes after {what}");
+        hit_candidates_match(&r, &fresh, what);
     }
     assert!(deltas * 2 > steps.len(), "most steps sync as deltas ({deltas} of {})", steps.len());
+}
+
+/// The hit-test descent of a delta-synced document (`Renderer::hit_candidates`:
+/// bounds from the per-row cell unions and the inline hit margin the
+/// incremental passes keep) reports, at every point of a grid, the elements
+/// a fresh build's does, in the same order and with the same boxes; its
+/// words and sticky elements are the fresh build's too.
+#[track_caller]
+fn hit_candidates_match(r: &Renderer, fresh: &Renderer, what: &str) {
+    let zero = |_: u64| (0.0, 0.0);
+    let strip = |v: Vec<HitVisit>| v.into_iter().map(|v| (v.key, v.bounds, v.hit)).collect::<Vec<_>>();
+    for y in (2..480).step_by(9) {
+        for x in (2..640).step_by(11) {
+            let probe = HitProbe { x: x as f64, y: y as f64, ignore_x: false, window_scroll: (0.0, 0.0) };
+            let a = strip(r.hit_candidates(1, &probe, &zero, &[]).unwrap());
+            let b = strip(fresh.hit_candidates(1, &probe, &zero, &[]).unwrap());
+            assert_eq!(a, b, "hit candidates at ({x}, {y}) after {what}");
+        }
+    }
+    // (The Blitz node ids of the words differ between the documents, and
+    // their order follows the node slab: a delta-synced document lists an
+    // appended row's words last.)
+    let words = |r: &Renderer| {
+        r.page_words(1).map(|w| {
+            let mut w: Vec<_> = w
+                .into_iter()
+                .map(|(k, w)| (k, w.x.to_bits(), w.y.to_bits(), w.width, w.height, w.fixed, w.edges))
+                .collect();
+            w.sort_by(|a, b| (a.0, a.1, a.2).cmp(&(b.0, b.1, b.2)));
+            w
+        })
+    };
+    assert_eq!(words(r), words(fresh), "words after {what}");
+    assert_eq!(r.sticky_elements(1), fresh.sticky_elements(1), "sticky elements after {what}");
 }
 
 /// A transform resolves against the box's rounded size, and rounding follows

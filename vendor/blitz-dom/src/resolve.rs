@@ -407,6 +407,7 @@ impl BaseDocument {
         let editor_layout = element.and_then(|e| e.text_input_data()).and_then(|i| i.editor.try_layout());
         let inline = element.and_then(|e| e.inline_layout_data.as_deref());
         let lines = inline.map(|t| (&t.layout, t.block_offset)).or(editor_layout.map(|l| (l, 0.0)));
+        let mut inline_hit_margin = 0.0f64;
         if let Some((text_layout, block_offset)) = lines {
             let l = &layout;
             let width = text_layout
@@ -416,6 +417,32 @@ impl BaseDocument {
                     (m.offset + m.advance - m.hanging_advance) as f64
                 })
                 .fold(0.0, f64::max);
+            // lightningpanda: a glyph run's content area (whole-pixel ascent
+            // and descent around its baseline, its advance rounded up to a
+            // layout unit) can reach outside the line boxes: a tight
+            // `line-height`, hanging white space. Layout queries report an
+            // inline element's box from those areas, so a hit-test bound
+            // built from the line boxes grows by the largest such reach
+            // (`BaseDocument::inline_hit_margin`). Text controls lay out no
+            // inline elements.
+            if inline.is_some() {
+                let height = text_layout
+                    .lines()
+                    .filter(|line| !line.text_range().is_empty())
+                    .map(|line| line.metrics().block_max_coord as f64)
+                    .fold(0.0, f64::max);
+                for line in text_layout.lines() {
+                    for item in line.items() {
+                        let parley::PositionedLayoutItem::GlyphRun(run) = item else { continue };
+                        let metrics = run.run().font_metrics();
+                        let (x, baseline) = (run.offset() as f64, run.baseline() as f64);
+                        let x1 = x + run.advance() as f64 + scale / 64.0;
+                        let y0 = baseline - metrics.ascent.round() as f64;
+                        let y1 = baseline + metrics.descent.round() as f64;
+                        inline_hit_margin = inline_hit_margin.max(-x).max(x1 - width).max(-y0).max(y1 - height);
+                    }
+                }
+            }
             // The empty line parley adds after a final hard break (`<br>`)
             // is not content.
             let height = text_layout
@@ -459,6 +486,9 @@ impl BaseDocument {
 
         *self.nodes[node_id].scrollable_overflow_mut() = overflow;
         *self.nodes[node_id].layout_children.get_mut() = layout_children;
+        if inline_hit_margin > self.inline_hit_margin {
+            self.inline_hit_margin = inline_hit_margin;
+        }
 
         let scaled_x = layout.location.x as f64 * scale;
         let scaled_y = layout.location.y as f64 * scale;
@@ -477,7 +507,7 @@ impl BaseDocument {
     /// (its own coordinates): its border box, plus its own scrollable overflow
     /// on the axes it does not clip. A scroll container keeps its content's
     /// overflow to itself.
-    fn overflow_contribution(&self, node_id: NodeId, overflow: Rect, size: taffy::Size<f32>, scale: f64) -> Rect {
+    pub fn overflow_contribution(&self, node_id: NodeId, overflow: Rect, size: taffy::Size<f32>, scale: f64) -> Rect {
         use style::values::computed::Overflow;
         let node = &self.nodes[node_id];
         let border_box = Rect::new(0.0, 0.0, size.width as f64 * scale, size.height as f64 * scale);
@@ -843,6 +873,7 @@ impl BaseDocument {
         let again = placed.take_transform().filter(|_| placed.overflow.len() == cells && placed.overflow_scale == scale);
         let mut overflow = std::mem::take(&mut placed.overflow);
         drop(placed);
+        let again_rows = again.clone();
         match again {
             Some(again) => {
                 for index in again {
@@ -862,6 +893,38 @@ impl BaseDocument {
             .filter(|cell| cell.width() > 0.0 && cell.height() > 0.0)
             .fold(None, |united: Option<Rect>, &cell| Some(united.map_or(cell, |united| united.union(cell))));
         let mut placed = ctx.placed.borrow_mut();
+        // lightningpanda: the same union per row (the cells originating in
+        // it: a hit-test bound of the row, `TableContext::row_hit_extents`),
+        // for the rows of the cells transformed again only.
+        let rows = ctx.rows.len();
+        let mut row_start = Vec::with_capacity(rows + 1);
+        row_start.push(0usize);
+        for row in &ctx.rows {
+            row_start.push(row_start.last().unwrap() + row.cell_count as usize);
+        }
+        let row_union = |row: usize, overflow: &[Rect]| {
+            let (start, end) = (row_start[row], row_start[row + 1]);
+            overflow[start.min(overflow.len())..end.min(overflow.len())]
+                .iter()
+                .filter(|cell| cell.width() > 0.0 && cell.height() > 0.0)
+                .fold(None, |united: Option<Rect>, &cell| Some(united.map_or(cell, |united| united.union(cell))))
+                .unwrap_or(Rect::ZERO)
+        };
+        match &again_rows {
+            Some(changed) if placed.row_overflow.len() == rows => {
+                let mut changed: Vec<usize> = changed.iter().map(|&i| ctx.cells[i].row as usize).collect();
+                changed.sort_unstable();
+                changed.dedup();
+                for row in changed {
+                    if row < rows {
+                        placed.row_overflow[row] = row_union(row, &overflow);
+                    }
+                }
+            }
+            _ => {
+                placed.row_overflow = (0..rows).map(|row| row_union(row, &overflow)).collect();
+            }
+        }
         placed.overflow = overflow;
         placed.overflow_scale = scale;
         Some(united)

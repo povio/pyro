@@ -3674,7 +3674,7 @@ fn caret_from_point_takes_the_nearest_character_boundary_like_chromium() {
     let (tp, tq) = (p.dom.first_child(p.id("p")).unwrap().unwrap(), p.dom.first_child(p.id("q")).unwrap().unwrap());
     let r = p.layout.text_rect(&p.dom, tp).unwrap();
     // The engine's advances: the x of each character boundary of "abcdefghij".
-    let result = p.layout.layout_result(&p.dom);
+    let result = p.layout.text_result(&p.dom);
     let edges = result.text_runs.iter().find(|t| t.node == tp).unwrap().edges().to_vec();
     let w = |s: &str| {
         let at = |o: u32| edges.iter().find(|e| e.0 == o).unwrap().1;

@@ -2110,7 +2110,7 @@ fn text_select_move(page: &Rc<PageDom>, target: NodeId, m: &MouseInput) {
             Some(hit)
         } else {
             let after = crate::editing::compare(page, (hit.0, 0), anchor) > 0;
-            let result = layout.layout_result(&dom);
+            let result = layout.text_result(&dom);
             let runs = result
                 .text_runs
                 .iter()

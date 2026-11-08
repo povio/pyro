@@ -418,6 +418,34 @@ layouts (`getBoundingClientRect` and the like) builds it once, not once per reso
 build of every node, tables visited as any box. Covered by lp-render's `settle_resolution_tests`
 (`resolve_leaves_the_paint_tree_to_the_first_hit_test`, `element_from_point_sees_every_resolve_since_the_last_paint`).
 
+## Bounds for hit testing by tree descent
+
+lp-render answers `elementFromPoint` by descending the tree from the root and skipping the subtrees whose bound
+cannot hold the point (`crates/lp-render/src/hit.rs`), instead of reading every element's box. The bound of a box
+is its border box and its scrollable overflow, which the passes here already keep; two things they did not keep
+are added, and two things are exposed:
+
+- `src/resolve.rs` (`resolve_transforms`), `src/document.rs` (`inline_hit_margin`): an inline formatting
+  context's glyph runs reach outside its line boxes (a tight `line-height` puts the whole-pixel ascent and descent
+  past the line box; hanging white space past the line's advance), and layout queries report an inline element's
+  box from those content areas (lp-render's `Geometry::inline_items`). The pass that adds the lines to the
+  overflow also measures how far the runs reach past them and keeps the document-wide maximum
+  (`BaseDocument::inline_hit_margin`, device px); every bound grows by it. It only grows (a stale value is a
+  looser bound, never a wrong one) and is reset with the document.
+- `src/resolve.rs` (`table_cells_overflow`), `src/layout/table.rs` (`PlacedCells::row_overflow`,
+  `TableContext::row_hit_extents`): rows and row groups have no box, and a cell can span later rows, so a row's
+  bound is the union of the overflow contributions of the cells originating in it, kept per row next to the
+  per-cell overflow the transform pass already keeps, recomputed for the rows of the cells transformed again
+  (all rows when the rows changed: `splice` clears it). A table whose cells the pass does not keep
+  (`keeps_cells`) reports none and lp-render computes the contributions from the cells.
+- `src/document.rs` (`sticky_node_ids`): the sticky set behind `has_sticky`, so lp-dom learns the sticky
+  elements without a pass over the document; `BaseDocument::overflow_contribution` is `pub` for the table
+  fallback above.
+
+Covered by `crates/lp-layout/tests/hit_descent.rs` (the descent against the scan of every box) and
+`crates/lp-render/tests/mirror.rs` (`deltas_on_long_tables_and_lists_match_fresh_builds`, which compares the descent's
+candidates of a delta-synced document with a fresh build's).
+
 ## Line breaking resumes after the lines whose text did not change
 
 `src/layout/construct.rs`, `src/resolve.rs`, `src/layout/inline/build.rs`, `src/layout/inline/layout.rs`: an inline

@@ -509,8 +509,20 @@ impl BlitzGeometry {
         READ_NS.fetch_add(out.timings.scene.as_nanos() as u64, Ordering::Relaxed);
         Some(ExternalGeometry {
             boxes: out.boxes.into_iter().map(|(k, b)| (k, external(b))).collect(),
-            words: out
-                .words
+            sticky: out.sticky.into_iter().map(|(k, s)| (k, external_sticky(s))).collect(),
+            document_width: out.document_width,
+            document_height: out.document_height,
+        })
+    }
+
+    fn text_words_inner(&self) -> Option<Vec<(u64, ExternalWord)>> {
+        let t = lp_render::profiling::on().then(Instant::now);
+        let words = RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.page_words(self.page))?;
+        if let Some(t) = t {
+            READ_NS.fetch_add(t.elapsed().as_nanos() as u64, Ordering::Relaxed);
+        }
+        Some(
+            words
                 .into_iter()
                 .map(|(k, w)| {
                     (
@@ -526,15 +538,12 @@ impl BlitzGeometry {
                     )
                 })
                 .collect(),
-            sticky: out
-                .sticky
-                .into_iter()
-                .map(|(k, s)| (k, ExternalSticky { insets: s.insets, limit: s.limit }))
-                .collect(),
-            document_width: out.document_width,
-            document_height: out.document_height,
-        })
+        )
     }
+}
+
+fn external_sticky(s: lp_render::StickyBox) -> ExternalSticky {
+    ExternalSticky { insets: s.insets, limit: s.limit }
 }
 
 impl GeometrySource for BlitzGeometry {
@@ -601,6 +610,55 @@ impl GeometrySource for BlitzGeometry {
             profile::add(2, t.elapsed());
         }
         g
+    }
+
+    fn text_words(&self) -> Option<Vec<(u64, ExternalWord)>> {
+        let t = profile::on().then(Instant::now);
+        let w = self.text_words_inner();
+        if let Some(t) = t {
+            profile::add(2, t.elapsed());
+        }
+        w
+    }
+
+    fn sticky_elements(&self) -> Vec<(u64, ExternalSticky)> {
+        RENDERER
+            .with(|r| r.try_borrow().ok()?.as_ref()?.sticky_elements(self.page))
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(k, s)| (k, external_sticky(s)))
+            .collect()
+    }
+
+    fn hit_candidates(
+        &self,
+        probe: &lp_dom::layout::HitProbe,
+        offset: &dyn Fn(u64) -> (f64, f64),
+        shifted: &[u64],
+    ) -> Option<Vec<lp_dom::layout::HitVisit>> {
+        let t = lp_render::profiling::on().then(Instant::now);
+        let probe = lp_render::HitProbe {
+            x: probe.x,
+            y: probe.y,
+            ignore_x: probe.ignore_x,
+            window_scroll: probe.window_scroll,
+        };
+        let visits =
+            RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.hit_candidates(self.page, &probe, offset, shifted))?;
+        if let Some(t) = t {
+            READ_NS.fetch_add(t.elapsed().as_nanos() as u64, Ordering::Relaxed);
+        }
+        Some(
+            visits
+                .into_iter()
+                .map(|v| lp_dom::layout::HitVisit {
+                    key: v.key,
+                    order: v.order,
+                    bounds: external(v.bounds),
+                    hit: v.hit,
+                })
+                .collect(),
+        )
     }
 
     fn document_size(&self) -> Option<(f64, f64)> {

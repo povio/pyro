@@ -444,6 +444,12 @@ pub struct BaseDocument {
     /// rebuilds the nodes flagged `PAINT_TREE_DIRTY` before the next paint or
     /// hit test.
     pub(crate) paint_tree_dirty: bool,
+    /// lightningpanda: how far (device px) the content area of a glyph run
+    /// has reached outside its inline formatting context's line boxes in any
+    /// layout of this document (`resolve_transforms`): a hit-test bound built
+    /// from scrollable overflow (which holds the line boxes) grows by it. It
+    /// only ever grows; a stale value is a looser bound, never a wrong one.
+    pub(crate) inline_hit_margin: f64,
 
     /// Nodes that contain custom widgets
     #[cfg(feature = "custom-widget")]
@@ -641,6 +647,7 @@ impl BaseDocument {
             sticky_nodes: HashSet::new(),
             left_layout_lists: Vec::new(),
             paint_tree_dirty: true,
+            inline_hit_margin: 0.0,
             image_cache: HashMap::new(),
             pending_images: HashMap::new(),
             pending_style_image_nodes: Vec::new(),
@@ -1514,9 +1521,21 @@ impl BaseDocument {
     /// styled `position: sticky`, from the set the style traversal keeps
     /// (O(sticky nodes), not a scan of the document).
     pub fn has_sticky(&self) -> bool {
+        self.sticky_node_ids().next().is_some()
+    }
+
+    /// lightningpanda: the nodes styled `position: sticky` (see
+    /// [`Self::has_sticky`]), in no particular order.
+    pub fn sticky_node_ids(&self) -> impl Iterator<Item = NodeId> + '_ {
         self.sticky_nodes
             .iter()
-            .any(|id| self.nodes.get(*id).is_some_and(crate::stylo::is_sticky))
+            .copied()
+            .filter(|id| self.nodes.get(*id).is_some_and(crate::stylo::is_sticky))
+    }
+
+    /// lightningpanda: see `inline_hit_margin` (device px).
+    pub fn inline_hit_margin(&self) -> f64 {
+        self.inline_hit_margin
     }
 
     /// lightningpanda: whether a `resolve` could change anything: a resource arrived (it is
