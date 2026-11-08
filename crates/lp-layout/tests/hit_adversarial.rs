@@ -875,3 +875,139 @@ fn realigned_lines_match_the_scan() {
         p.compare(align);
     }
 }
+
+// ---- review (lay2): hit bounds are brought up to date at the first hit test after a resolve
+// (`BaseDocument::ensure_hit_overflow`), not in every transform pass. Hit tests interleaved with
+// mutations, forced layouts, scrolling and viewport changes in every order. ----
+
+/// The descent against the scan at a coarse grid and some random points; the descent asked first,
+/// straight after whatever came before (so it is the query that syncs the layout when one is due).
+fn lay2_compare_points(p: &Page, r: &mut Rng, label: &str, failures: &mut Vec<String>) {
+    let mut points = vec![(r.below(800) as f64 + 0.5, r.below(600) as f64)];
+    for y in (5..600).step_by(43) {
+        for x in (5..800).step_by(37) {
+            points.push((x as f64, y as f64));
+        }
+    }
+    for _ in 0..40 {
+        points.push((r.below(1600) as f64 / 2.0, r.below(1200) as f64 / 2.0));
+    }
+    for (x, y) in points {
+        let descent = p.layout.element_from_point(&p.dom, x, y);
+        let scan = p.layout.element_from_point_scan(&p.dom, x, y);
+        if scan != descent {
+            failures.push(format!("{label} at ({x}, {y}): scan {} descent {}", p.describe(scan), p.describe(descent)));
+            return;
+        }
+    }
+}
+
+#[test]
+fn random_pages_with_hit_tests_interleaved_with_mutations_match_the_scan() {
+    let env = |k: &str| std::env::var(k).ok().and_then(|v| v.parse::<u64>().ok());
+    let pages = env("LP_HIT_LAY2_PAGES").unwrap_or(if cfg!(debug_assertions) { 6 } else { 40 });
+    let from = env("LP_HIT_LAY2_FROM").unwrap_or(0);
+    let rounds = env("LP_HIT_LAY2_ROUNDS").unwrap_or(14);
+    let mut failures: Vec<String> = Vec::new();
+    for seed in from..from + pages {
+        let mut r = Rng(0x51ed_270b_27a4_c3f9 ^ seed.wrapping_mul(0x2545_f491_4f6c_dd1d));
+        let mut body = String::new();
+        let mut id = 0;
+        random_children(&mut r, 0, &mut body, &mut id);
+        let html = format!(
+            "<!doctype html><html><head><style>
+              body {{ margin: 0; font: 13px/15px sans-serif }}
+              .pb::before {{ content: 'B'; display: block; width: 40px; height: 20px; background: #f0f }}
+              .pa::after {{ content: 'A'; position: absolute; left: 30px; top: 40px; width: 50px; height: 30px; background: #0ff }}
+              .wide {{ width: 700px !important }} .gone {{ display: none }} .far {{ margin-left: 300px }}
+            </style></head><body>{body}<div style=\"height:{}px\"></div></body></html>",
+            r.below(2000)
+        );
+        let mut p = page(&html);
+        let el = |p: &Page, r: &mut Rng| -> Option<NodeId> {
+            if id == 0 {
+                return None;
+            }
+            p.dom.get_element_by_id(p.doc, &format!("e{}", 1 + r.below(id as u64))).ok().flatten()
+        };
+        let mut log: Vec<String> = Vec::new();
+        let before = failures.len();
+        for round in 0..rounds {
+            // One to three mutations, with forced layouts (no hit test) between some of them.
+            for _ in 0..1 + r.below(3) {
+                let Some(e) = el(&p, &mut r) else { break };
+                match r.below(7) {
+                    0 => {
+                        let s = random_style(&mut r, 1);
+                        p.dom.set_attribute(e, "style", &s).unwrap();
+                        log.push(format!("style e: {s}"));
+                    }
+                    1 => {
+                        let t = random_text(&mut r);
+                        p.dom.set_text_content(e, &t).unwrap();
+                        log.push("text".into());
+                    }
+                    2 => {
+                        let c = r.pick(&["wide", "gone", "far", "pb", "pa", ""]);
+                        p.dom.set_attribute(e, "class", c).unwrap();
+                        log.push(format!("class {c}"));
+                    }
+                    3 => {
+                        let x = p.dom.create_element(p.doc, "div").unwrap();
+                        p.dom.set_attribute(x, "style", &random_style(&mut r, 2)).unwrap();
+                        let t = p.dom.create_text(p.doc, &random_text(&mut r)).unwrap();
+                        p.dom.append_child(x, t).unwrap();
+                        if p.dom.append_child(e, x).is_err() {
+                            continue;
+                        }
+                        log.push("insert".into());
+                    }
+                    4 => {
+                        if let Ok(Some(parent)) = p.dom.parent(e) {
+                            p.dom.remove_child(parent, e).unwrap();
+                            log.push("remove".into());
+                        }
+                    }
+                    5 => {
+                        // A forced layout with no hit test after it.
+                        let _ = p.layout.bounding_client_rect(&p.dom, e);
+                        log.push("rect".into());
+                    }
+                    _ => {
+                        p.layout.set_scroll_top(&p.dom, e, r.below(60) as i32);
+                        p.layout.set_scroll_left(&p.dom, e, r.below(40) as i32);
+                        log.push("scroll element".into());
+                    }
+                }
+            }
+            match r.below(6) {
+                0 => {
+                    p.layout.window_scroll_to(&p.dom, Some(r.below(30) as i32), Some(r.below(200) as i32));
+                    log.push("window scroll".into());
+                }
+                1 => {
+                    // A forced layout, then the hit test.
+                    let body = p.dom.body(p.doc).ok().flatten().unwrap_or(p.doc);
+                    let _ = p.layout.offset_height(&p.dom, body);
+                }
+                2 if round % 5 == 4 => {
+                    let w = 640 + r.below(320) as u32;
+                    p.layout.set_viewport(Viewport::new(w, 600));
+                    log.push(format!("viewport {w}"));
+                }
+                _ => {}
+            }
+            // Hit tests only after some rounds: several resolves between them.
+            if r.below(3) != 0 {
+                lay2_compare_points(&p, &mut r, &format!("seed {seed} round {round}"), &mut failures);
+                if failures.len() > before {
+                    let tail = &log[log.len().saturating_sub(10)..];
+                    let last = failures.pop().unwrap();
+                    failures.push(format!("{last} after {tail:?}"));
+                    break;
+                }
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{} failing seeds:\n{}", failures.len(), failures.join("\n"));
+}
