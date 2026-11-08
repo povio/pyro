@@ -1917,6 +1917,94 @@ fn hit_bounds_of_cells_edited_over_several_syncs_match_fresh_builds() {
     }
 }
 
+/// A deep descendant of one cell changes while other cells' subtrees carry
+/// damage flags that lead to no layout change: a paint-only restyle deep in a
+/// cell, an attribute set to the value it has, a node inserted and removed in
+/// the same delta, a `::after` whose `content` changes, and, in the next
+/// syncs, cells flagged by the previous one. The walks that follow damage
+/// visit only the children on a damaged path (`Node::is_clean_layout_child_of`,
+/// `Node::has_no_damage_below`); the boxes, hit candidates and paint match a
+/// fresh build after each sync.
+#[test]
+fn a_deep_cell_edit_beside_cells_with_flags_but_no_layout_change_matches_fresh_builds() {
+    let rows: String = (0..10)
+        .map(|i| {
+            format!(
+                "<tr id=r{i}>\
+                 <td><div class=f><span class=dot></span><span id=s{i}><b id=b{i}>item {i}</b></span></div></td>\
+                 <td><div style=\"display:contents\"><p id=p{i}>text {i} <i id=i{i}>it</i></p></div></td>\
+                 <td><span id=c{i} class=after data-x=\"{i}\">c</span></td></tr>"
+            )
+        })
+        .collect();
+    let page = Page::new(&format!(
+        "<!doctype html><html><head><style>body {{ margin: 0; font: 14px sans-serif }} td {{ padding: 2px }} \
+         .f {{ display: flex; gap: 4px; align-items: center }} .dot {{ display: inline-block; width: 6px; height: 6px; background: #0a0 }} \
+         .after::after {{ content: attr(data-x) }} p {{ margin: 0 }}</style></head><body>\
+         <table id=t style=\"width:500px\"><tbody id=tb>{rows}</tbody></table></body></html>"
+    ));
+    type Step = (&'static str, Box<dyn Fn(&Page)>);
+    let text = |p: &Page, sel: &str, value: &str| {
+        let n = p.find(sel);
+        p.dom.borrow_mut().set_text_content(n, value).unwrap();
+    };
+    let attr = |p: &Page, sel: &str, name: &str, value: &str| {
+        let n = p.find(sel);
+        p.dom.borrow_mut().set_attribute(n, name, value).unwrap();
+    };
+    let steps: Vec<Step> = vec![
+        (
+            "deep text beside a paint-only restyle, a same-value attribute and a new ::after content",
+            Box::new(move |p| {
+                text(p, "#b3", "a much longer item text that wraps over several lines in its cell");
+                attr(p, "#i5", "style", "color:red");
+                attr(p, "#s6", "id", "s6");
+                attr(p, "#c7", "data-x", "seven and more");
+            }),
+        ),
+        (
+            "a node inserted and removed beside a deep edit",
+            Box::new(move |p| {
+                let host = p.find("#p8");
+                let mut d = p.dom.borrow_mut();
+                let e = d.create_element(p.doc, "em").unwrap();
+                d.append_child(host, e).unwrap();
+                d.remove_child(host, e).unwrap();
+                drop(d);
+                text(p, "#b1", "x");
+            }),
+        ),
+        ("the next deep edit alone", Box::new(move |p| text(p, "#b9", "nine, wider than it was"))),
+        ("a paint-only restyle alone", Box::new(move |p| attr(p, "#i2", "style", "color:blue"))),
+        (
+            "a deep inline-block resized beside a reverted paint restyle",
+            Box::new(move |p| {
+                attr(p, "#i4", "style", "display:inline-block;width:80px");
+                attr(p, "#i5", "style", "");
+            }),
+        ),
+        ("deep text back", Box::new(move |p| text(p, "#b3", "item 3"))),
+    ];
+    let mut r = Renderer::new();
+    r.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
+    for (what, step) in &steps {
+        let since = page.dom.borrow().version();
+        step(&page);
+        let delta = page.dom.borrow().render_delta(page.doc, since, &Page::opts()).expect("a delta");
+        r.sync_delta(1, &delta_ops(delta), (640, 480, 1.0, false, false), false).unwrap();
+        let mut fresh = Renderer::new();
+        fresh.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
+        for ((k, a), (_, b)) in boxes(&r, &page).into_iter().zip(boxes(&fresh, &page)) {
+            assert_eq!(a, b, "box {k:x} after {what}");
+        }
+        hit_candidates_match(&mut r, &mut fresh, what);
+        let tree = page.tree();
+        let mirrored = paint(&mut r, &page.snapshot(1, tree.clone()));
+        let painted = paint(&mut fresh, &page.snapshot(1, tree));
+        assert_eq!(mirrored.hash, painted.hash, "paint after {what}");
+    }
+}
+
 fn long_tables_and_lists(hit_every: usize) {
     let rows: String =
         (0..24).map(|i| format!("<tr id=r{i}><td id=a{i}>a{i}</td><td id=b{i}>cell {i}</td></tr>")).collect();

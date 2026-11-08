@@ -141,6 +141,11 @@ impl BaseDocument {
         let mut damage_from_children = RestyleDamage::empty();
         let children = std::mem::take(&mut self.nodes[node_id].children);
         for child in children.iter() {
+            // lightningpanda: a child with no damage below it would return empty at the skip above
+            // (`Node::has_no_damage_below`); it is not entered.
+            if self.nodes[*child].has_no_damage_below() {
+                continue;
+            }
             damage_from_children |= self.propagate_damage_flags(*child);
         }
         if let Some(before_id) = self.nodes[node_id].before() {
@@ -492,6 +497,11 @@ impl BaseDocument {
         }
         if !is_anonymous {
             for child in children.iter() {
+                // lightningpanda: a child with no damage below it would return at the skip above
+                // (`Node::has_no_damage_below`); it is not entered.
+                if self.nodes.get(*child).is_none_or(|child| child.has_no_damage_below()) {
+                    continue;
+                }
                 self.clear_damage_and_dirty_flags(*child);
             }
         }

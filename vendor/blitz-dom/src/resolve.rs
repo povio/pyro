@@ -209,6 +209,8 @@ impl BaseDocument {
         // marked as (potentially) containing damage.
         let doc_node_id = self.root_node().id;
         self.clear_damage_and_dirty_flags(doc_node_id);
+        #[cfg(debug_assertions)]
+        self.assert_no_damage_left();
         timer.record_time("c_damage");
         phase_profile::mark(7, &mut phase_t);
 
@@ -682,11 +684,7 @@ impl BaseDocument {
                     None => layout_children.to_vec(),
                 };
                 for child_id in visit {
-                    let child = &doc.nodes[child_id];
-                    if !child.has_damaged_descendants()
-                        && !child.is_anonymous()
-                        && child.layout_parent.get() == Some(node_id)
-                    {
+                    if doc.nodes[child_id].is_clean_layout_child_of(node_id) {
                         continue;
                     }
                     resolve_layout_children_recursive(doc, child_id);
@@ -764,10 +762,18 @@ impl BaseDocument {
                 }
                 let layout_children = doc.nodes[node_id].layout_children.borrow_mut().take();
                 if let Some(layout_children) = layout_children {
-                    for child_id in layout_children.iter().copied() {
+                    // lightningpanda: a table whose cells it keeps visits the cells noted as changed
+                    // (`table::cells_to_visit`), not all of them.
+                    let noted = crate::layout::table::cells_to_visit(doc, node_id);
+                    for child_id in noted.as_deref().unwrap_or(&layout_children[..]).iter().copied() {
                         // Anonymous blocks and pseudo-elements can be removed from the
                         // slab between render passes; skip stale IDs.
-                        if !doc.nodes.contains_key(child_id) {
+                        let Some(child) = doc.nodes.get(child_id) else { continue };
+                        // lightningpanda: only the children on a damaged path are visited: a child
+                        // whose subtree has no damage (and is still listed here) would return at
+                        // the skip above without changing anything. A cell edit in a long table
+                        // visits that cell, not its thousands of siblings.
+                        if child.is_clean_layout_child_of(node_id) {
                             continue;
                         }
                         resolve_layout_children_recursive(doc, child_id);
@@ -782,6 +788,26 @@ impl BaseDocument {
             }
 
             doc.nodes[node_id].set_damage(damage);
+        }
+    }
+
+    /// lightningpanda: `clear_damage_and_dirty_flags` reached every node with damage: the walks
+    /// that follow damage skip a subtree whose root's `damaged_descendants` flag is clear
+    /// (`Node::has_no_damage_below`), so damage set without its flag would outlive the pass.
+    #[cfg(debug_assertions)]
+    fn assert_no_damage_left(&self) {
+        use crate::node::NodeFlags;
+        for (id, node) in self.nodes.iter() {
+            if !node.flags.contains(NodeFlags::IS_IN_DOCUMENT) {
+                continue;
+            }
+            debug_assert!(
+                !node.damage().is_some_and(|damage| !damage.is_empty()),
+                "{id:?} ({:?}, anonymous: {}) keeps damage {:?} after the pass",
+                node.data.downcast_element().map(|el| &el.name.local),
+                node.is_anonymous(),
+                node.damage(),
+            );
         }
     }
 

@@ -1948,6 +1948,50 @@ pub(crate) fn keeps_cells(ctx: &TableContext) -> bool {
     ctx.incremental && ctx.oof_children.is_empty()
 }
 
+/// lightningpanda: the layout children `resolve_layout_children` visits in `table` when the table is
+/// neither built again nor updated (a change inside its cells): the cells damage propagation noted
+/// as changed in layout since the grid's last layout (`TableContext::changed_cells`), and the
+/// pseudo-elements. `None`: `table` does not keep its cells, and all its layout children are visited.
+///
+/// Any other cell has nothing to build below it: construction anywhere in a cell's subtree reaches
+/// the cell as layout damage, and `note_changed_table_cell` lists it. A cell edit in a long table
+/// visits that cell, without a loop over its thousands of siblings.
+pub(crate) fn cells_to_visit(doc: &BaseDocument, table: NodeId) -> Option<Vec<NodeId>> {
+    let node = &doc.nodes[table];
+    if !node.flags.is_table_root() {
+        return None;
+    }
+    let SpecialElementData::TableRoot(ctx) = &node.data.downcast_element()?.special_data else { return None };
+    if !keeps_cells(ctx) {
+        return None;
+    }
+    let mut changed = ctx.changed_cells.borrow().clone();
+    changed.sort_unstable();
+    changed.dedup();
+    #[cfg(debug_assertions)]
+    for (index, cell) in ctx.cells.iter().enumerate() {
+        if changed.binary_search(&index).is_err() {
+            let Some(cell) = doc.nodes.get(cell.node_id) else { continue };
+            debug_assert!(
+                cell.is_clean_layout_child_of(table)
+                    || (cell.layout_parent.get() == Some(table)
+                        && !cell.damage().is_none_or(super::damage::reaches_layout)),
+                "cell {index} ({:?}) of {table:?} is not listed as changed but has damage {:?}",
+                cell.id,
+                cell.damage(),
+            );
+        }
+    }
+    let pseudos = [node.before(), node.after()];
+    Some(
+        changed
+            .into_iter()
+            .filter_map(|index| ctx.cells.get(index).map(|cell| cell.node_id))
+            .chain(pseudos.into_iter().flatten())
+            .collect(),
+    )
+}
+
 /// Whether `table` is a table whose `TableContext` `update_table_context` can update.
 pub(crate) fn is_incremental(doc: &BaseDocument, table: NodeId) -> bool {
     let node = &doc.nodes[table];

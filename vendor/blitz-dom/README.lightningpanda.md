@@ -50,6 +50,23 @@ against the upstream commit above); they are covered by lp-render's rendering te
 
 - `src/resolve.rs` (`resolve_layout_children`): an undamaged subtree without damaged descendants is not
   walked (its layout children are those of the last pass); anonymous boxes are always visited.
+- `src/resolve.rs` (`resolve_layout_children`), `src/layout/damage.rs` (`propagate_damage_flags`,
+  `clear_damage_and_dirty_flags`), `src/node/node.rs` (`Node::is_clean_layout_child_of`,
+  `Node::has_no_damage_below`): the walks that follow damage skip a child whose `damaged_descendants` flag is
+  clear from the parent's loop (an element, for `resolve_layout_children`; any node but an anonymous box for the
+  DOM walks) instead of entering it to return. This relies on the invariant `mark_damaged` keeps: a node with damage
+  has its flag set, and so do its ancestors. Debug builds assert it at each skip, and assert after every resolve
+  that no node in the document keeps damage (`assert_no_damage_left`). The two places that set a pseudo-element's
+  damage without its flag (`flush_pseudo_elements`, creating and updating one) now call `mark_damaged`.
+- `src/layout/table.rs` (`cells_to_visit`), `src/resolve.rs`: a change inside a table's cells reaches the table as
+  `CONSTRUCT_DESCENDENT` without `RELAYOUT` (`propagate_damage_flags` drops `ONLY_RELAYOUT`), so the table is neither
+  built again nor updated. When the table keeps its cells (`keeps_cells`), `resolve_layout_children` visits only the
+  cells `note_changed_table_cell` listed as changed in layout (`TableContext::changed_cells`, read before the grid
+  takes it) and the pseudo-elements. Any other cell has nothing to build: construction below a cell reaches it as
+  layout damage. Debug builds assert that every unlisted cell is clean or has no layout damage. Before this, a cell
+  edit in a 1,200-row table entered all 4,800 cells to return, about a quarter of the CPU of an edit-and-measure
+  loop. Covered by `a_deep_cell_edit_beside_cells_with_flags_but_no_layout_change_matches_fresh_builds` and the
+  other table mirror tests in lp-render.
 - `src/resolve.rs` (`resolve_transforms`): a node's cached scrollable overflow is reused only when it and
   its subtree are undamaged (a descendant's relayout reaches ancestors as damage, not as
   `RECALCULATE_OVERFLOW`).
