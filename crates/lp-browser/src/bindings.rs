@@ -203,7 +203,7 @@ impl PageHooks for Hooks {
             let result = if new_context
                 || (page.child.is_some() && request.target.as_deref().is_some_and(|t| matches!(t, "_top" | "_parent")))
             {
-                Err(JsError::Unsupported("form POST to a new window and cross-frame navigation targets"))
+                Err(JsError::Unsupported(&"form POST to a new window and cross-frame navigation targets"))
             } else {
                 b.navigate_frame_with_handling(
                     named.unwrap_or(page),
@@ -633,12 +633,12 @@ pub(crate) fn create(
     } else {
         dom.borrow_mut().create_document(lp_dom::DocumentKind::Html, url)
     };
-    dom.borrow_mut().set_document_active(doc, true).map_err(|e| JsError::Type(format!("{e:?}")))?;
-    dom.borrow_mut().set_allow_declarative_shadow_roots(doc, true).map_err(|e| JsError::Type(format!("{e:?}")))?;
+    dom.borrow_mut().set_document_active(doc, true).map_err(|e| JsError::type_error(format!("{e:?}")))?;
+    dom.borrow_mut().set_allow_declarative_shadow_roots(doc, true).map_err(|e| JsError::type_error(format!("{e:?}")))?;
     dom.borrow_mut().set_resource_tracking(true);
     dom.borrow_mut()
         .set_document_base_url(doc, matches!(url, "about:blank" | "about:srcdoc").then_some(frame.base_url.as_str()))
-        .map_err(|e| JsError::Type(format!("{e:?}")))?;
+        .map_err(|e| JsError::type_error(format!("{e:?}")))?;
     let bindings = PageDom::new(dom, doc);
     bindings.set_storage_namespaces(settings.local, settings.session);
     bindings.set_viewport(settings.viewport);
@@ -650,7 +650,7 @@ pub(crate) fn create(
     bindings.set_max_touch_points(settings.max_touch_points);
     bindings
         .set_user_agent_override(settings.user_agent)
-        .map_err(|e| JsError::Type(format!("invalid request defaults: {e}")))?;
+        .map_err(|e| JsError::type_error(format!("invalid request defaults: {e}")))?;
     bindings.set_extra_http_headers(settings.extra_headers);
     bindings.set_cache_disabled(settings.cache_disabled);
     bindings.set_bypass_service_worker(settings.bypass_service_worker);

@@ -418,7 +418,7 @@ impl JsClass for FormData {
             d.release(s, &removed);
             Ok(s.undefined())
         });
-        def.method("get", 1, |s, d, a| {
+        def.pure_method("get", 1, |s, d, a| {
             let name = name_arg(&a, "FormData.get")?;
             let found = d.entries.borrow().iter().find(|(n, _)| *n == name).map(|(_, e)| e.clone());
             match found {
@@ -426,7 +426,7 @@ impl JsClass for FormData {
                 Some(e) => read_entry(s, d, &mut None, &e),
             }
         });
-        def.method("getAll", 1, |s, d, a| {
+        def.pure_method("getAll", 1, |s, d, a| {
             let name = name_arg(&a, "FormData.getAll")?;
             let matching: Vec<Entry> =
                 d.entries.borrow().iter().filter(|(n, _)| *n == name).map(|(_, e)| e.clone()).collect();
@@ -438,7 +438,7 @@ impl JsClass for FormData {
             }
             Ok(s.array(&items.iter(s).collect::<Vec<_>>())?.value())
         });
-        def.method("has", 1, |s, d, a| {
+        def.pure_method("has", 1, |s, d, a| {
             let name = name_arg(&a, "FormData.has")?;
             Ok(s.boolean(d.entries.borrow().iter().any(|(n, _)| *n == name)))
         });
@@ -594,47 +594,10 @@ fn parse_multipart(bytes: &[u8], boundary: &str) -> Option<Vec<MultipartPart>> {
 /// Installs `@@iterator` and `forEach` on `FormData.prototype` and shapes the
 /// iterator prototype like a WebIDL default iterator object (inherits
 /// `%IteratorPrototype%`, `@@toStringTag` "FormData Iterator", no constructor
-/// and no global).
-pub(crate) fn install(s: &Scope<'_>) -> JsResult<()> {
-    // The steps completing FormData.prototype and the iterator prototype,
-    // run once their members are installed (`after_populate`).
-    let hooks = s.eval(
-        r#"(() => {
-        const apply = Reflect.apply, define = Object.defineProperty, setPrototypeOf = Object.setPrototypeOf;
-        const symbol = Symbol.iterator, tag = Symbol.toStringTag, TypeError_ = TypeError;
-        const iteratorPrototypeOfArrays = Object.getPrototypeOf(Object.getPrototypeOf([][symbol]()));
-        // Native methods do not see their receiver: each shim passes `this` as
-        // the (hidden) first argument of the native it replaces. All of this
-        // runs when a page first uses the interface: descriptors without a
-        // prototype.
-        const shim = (object, name) => {
-            const native = object[name];
-            const fn = function () { return apply(native, this, [this]); };
-            define(fn, 'name', { __proto__: null, value: name, configurable: true });
-            define(object, name, { __proto__: null, value: fn, writable: true, enumerable: true, configurable: true });
-            return fn;
-        };
-        const populated = (proto) => {
-            const entries = shim(proto, 'entries');
-            shim(proto, 'keys');
-            shim(proto, 'values');
-            define(proto, symbol, { __proto__: null, value: entries, writable: true, configurable: true });
-            define(proto, 'forEach', { __proto__: null, value: function (callback, thisArg) {
-                if (typeof callback !== 'function') throw new TypeError_('callback must be callable');
-                for (const pair of apply(entries, this, [])) apply(callback, thisArg, [pair[1], pair[0], this]);
-            }, writable: true, enumerable: true, configurable: true });
-        };
-        const iteratorPopulated = (iteratorPrototype) => {
-            shim(iteratorPrototype, 'next');
-            delete iteratorPrototype.constructor;
-            setPrototypeOf(iteratorPrototype, iteratorPrototypeOfArrays);
-            define(iteratorPrototype, tag, { __proto__: null, value: 'FormData Iterator', configurable: true });
-        };
-        return [populated, iteratorPopulated];
-    })()"#,
-        Some("lightningpanda://internal/form-data.js"),
-        1,
-    )?;
+/// and no global). `hooks` is install.js `formData`: the steps completing
+/// FormData.prototype and the iterator prototype, run once their members are
+/// installed (`after_populate`).
+pub(crate) fn install(s: &Scope<'_>, hooks: lp_js::Value<'_>) -> JsResult<()> {
     let hooks = hooks.as_object().expect("FormData hooks");
     let hook = |i: u32| hooks.get_index(i).map(|v| v.as_object().expect("FormData hook"));
     s.after_populate::<FormData>(hook(0)?)?;

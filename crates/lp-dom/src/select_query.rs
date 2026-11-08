@@ -88,6 +88,19 @@ struct Compound {
     /// The combinator to the compound on the left: the parent must match it
     /// (`>`), or an ancestor (descendant).
     child: bool,
+    /// What the type and class tests need of an element's summary
+    /// (`crate::dom::summary`): the name's hash (a name compared as written
+    /// in some elements and lowercased in others has none) and the bits of
+    /// its classes.
+    sum_name: Option<u32>,
+    sum_classes: u32,
+}
+
+impl Compound {
+    fn seal(&mut self) {
+        self.sum_name = self.local.as_ref().filter(|n| !n.mixed_case).map(|n| crate::dom::name_hash(&n.lower));
+        self.sum_classes = self.classes.iter().fold(0, |m, c| m | crate::dom::class_bit(c));
+    }
 }
 
 /// One complex selector: its compounds from the subject leftwards.
@@ -153,6 +166,7 @@ pub(crate) fn compile<I: Source>(list: &SelectorList<I>) -> Option<FastList> {
                     cur.child = *comb == Combinator::Child;
                     cur.classes = std::mem::take(&mut classes).into();
                     cur.attrs = std::mem::take(&mut attrs).into();
+                    cur.seal();
                     compounds.push(std::mem::take(&mut cur));
                 }
                 _ => return None,
@@ -160,6 +174,7 @@ pub(crate) fn compile<I: Source>(list: &SelectorList<I>) -> Option<FastList> {
         }
         cur.classes = classes.into();
         cur.attrs = attrs.into();
+        cur.seal();
         compounds.push(cur);
         selectors.push(Complex { compounds: compounds.into() });
     }
@@ -212,6 +227,25 @@ impl<'a> Cx<'a> {
         list.selectors.iter().any(|sel| self.complex(sel, n, e))
     }
 
+    /// Whether the summary `sum` of an element proves that no selector of
+    /// `list` matches it.
+    #[inline]
+    pub(crate) fn rejects_all(&self, list: &FastList, sum: u32) -> bool {
+        list.selectors.iter().all(|sel| sel.compounds.first().is_none_or(|subject| self.rejects(subject, sum)))
+    }
+
+    /// Whether the summary `sum` of an element proves that `c` fails on it.
+    #[inline(always)]
+    fn rejects(&self, c: &Compound, sum: u32) -> bool {
+        if let Some(h) = c.sum_name {
+            if sum & crate::dom::SUM_NAME != h {
+                return true;
+            }
+        }
+        // Quirks mode compares classes ASCII case-insensitively.
+        !self.quirks && sum & c.sum_classes != c.sum_classes
+    }
+
     #[inline]
     fn complex(&self, sel: &Complex, n: &Node, e: &ElementData) -> bool {
         let Some((subject, rest)) = sel.compounds.split_first() else { return false };
@@ -220,7 +254,9 @@ impl<'a> Cx<'a> {
 
     /// `rest[0]` (and what follows it) against the parent of `node` (`child`)
     /// or its ancestors, nearest first. A shadow root or document ends the
-    /// walk: these selectors have no `:host`.
+    /// walk: these selectors have no `:host`. The walk reads the dense walk
+    /// array (`crate::dom::Walk`), and an ancestor's data only when its
+    /// summary does not rule out `rest[0]`.
     fn ancestors(&self, child: bool, rest: &[Compound], node: &Node) -> Res {
         let (c, more) = rest.split_first().expect("a compound");
         let mut parent = node.parent;
@@ -228,18 +264,25 @@ impl<'a> Cx<'a> {
             if parent == NIL {
                 return Res::Global;
             }
-            let node = self.dom.n(parent);
-            parent = node.parent;
-            let NodeKind::Element(e) = &node.kind else { return Res::Global };
-            if self.compound(c, e) {
-                let r = if more.is_empty() { Res::Matched } else { self.ancestors(c.child, more, node) };
-                if r != Res::Restart {
-                    return r;
+            let w = self.dom.w(parent);
+            if w.sum == 0 {
+                // No element: a document or shadow root (or fragment).
+                return Res::Global;
+            }
+            if !self.rejects(c, w.sum) {
+                let node = self.dom.n(parent);
+                let NodeKind::Element(e) = &node.kind else { return Res::Global };
+                if self.compound(c, e) {
+                    let r = if more.is_empty() { Res::Matched } else { self.ancestors(c.child, more, node) };
+                    if r != Res::Restart {
+                        return r;
+                    }
                 }
             }
             if child {
                 return Res::Restart;
             }
+            parent = w.parent;
         }
     }
 
@@ -367,33 +410,38 @@ impl Dom {
                 Some(_) => {}
             }
         }
-        let mut cur = self.n(start).first_child;
+        // The walk reads the dense walk array (`crate::dom::Walk`), and a
+        // node only when it is an element its summary does not rule out.
+        let mut cur = self.w(start).first_child;
         while cur != NIL {
-            let n = self.n(cur);
-            if let NodeKind::Element(e) = &n.kind {
-                if cx.matches(list, n, e) && !found(cur) {
-                    return;
+            let w = self.w(cur);
+            if w.sum != 0 && !cx.rejects_all(list, w.sum) {
+                let n = self.n(cur);
+                if let NodeKind::Element(e) = &n.kind {
+                    if cx.matches(list, n, e) && !found(cur) {
+                        return;
+                    }
                 }
             }
-            // The pre-order successor within `start`, from the node in hand.
-            if n.first_child != NIL {
-                cur = n.first_child;
+            // The pre-order successor within `start`, from the entry in hand.
+            if w.first_child != NIL {
+                cur = w.first_child;
                 continue;
             }
             let mut c = cur;
-            let mut cn = n;
+            let mut cw = w;
             cur = loop {
                 if c == start {
                     break NIL;
                 }
-                if cn.next != NIL {
-                    break cn.next;
+                if cw.next != NIL {
+                    break cw.next;
                 }
-                c = cn.parent;
+                c = cw.parent;
                 if c == NIL {
                     break NIL;
                 }
-                cn = self.n(c);
+                cw = self.w(c);
             };
         }
     }

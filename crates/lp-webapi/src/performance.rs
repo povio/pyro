@@ -333,7 +333,7 @@ pub fn mark_data<'s>(s: &Scope<'s>, name: &str, options: Value<'s>, now: f64) ->
                 return Err(JsError::Type("startTime is not a finite number.".into()));
             }
             if t < 0.0 {
-                return Err(JsError::Type(format!("'{name}' cannot have a negative start time.")));
+                return Err(JsError::Type(format!("'{name}' cannot have a negative start time.").into()));
             }
             t
         }
@@ -597,7 +597,7 @@ pub fn observer_module<'s>(
     })?;
     natives.set_atom("watch", watch.value())?;
     let report = s.function("reportException", |s, _this, a| {
-        s.report_exception(&JsError::Thrown(Persistent::new(s, a.get(0))));
+        s.report_exception(&JsError::thrown(Persistent::new(s, a.get(0))));
         Ok(s.undefined())
     })?;
     natives.set_atom("reportException", report.value())?;
@@ -681,7 +681,7 @@ fn worker_entries<'s>(
 /// In a worker, a `PerformanceTiming` attribute name is no timestamp.
 fn worker_name_timestamp(name: &str) -> Option<JsResult<f64>> {
     TIMING_ATTRIBUTES.contains(&name).then(|| {
-        Err(JsError::Type(format!("Failed to execute 'measure' on 'Performance': '{name}' is not a mark in a worker.")))
+        Err(JsError::Type(format!("Failed to execute 'measure' on 'Performance': '{name}' is not a mark in a worker.").into()))
     })
 }
 
@@ -694,7 +694,7 @@ impl JsClass for WorkerPerformance {
 
     fn define(def: &mut ClassDef<Self>) {
         def.upcast(|p: &WorkerPerformanceData| &p.target);
-        def.method("now", 0, |s, p, _a| Ok(s.number(p.now_ms())));
+        def.pure_method("now", 0, |s, p, _a| Ok(s.number(p.now_ms())));
         def.getter("timeOrigin", |s, p| Ok(s.number(p.origin_wall_ms)));
         def.method("mark", 1, |s, p, a| {
             let mark = p.user.mark(s, &a, p.now_ms())?;
@@ -708,14 +708,14 @@ impl JsClass for WorkerPerformance {
         });
         def.method("clearMarks", 0, |s, p, a| p.user.clear(true, &a).map(|()| s.undefined()));
         def.method("clearMeasures", 0, |s, p, a| p.user.clear(false, &a).map(|()| s.undefined()));
-        def.method("getEntries", 0, |s, p, _a| worker_entries(s, p, None, None));
-        def.method("getEntriesByName", 1, |s, p, a| {
+        def.pure_method("getEntries", 0, |s, p, _a| worker_entries(s, p, None, None));
+        def.pure_method("getEntriesByName", 1, |s, p, a| {
             a.require(1, "Performance.getEntriesByName")?;
             let name = a.get(0).to_string()?;
             let ty = a.opt(1).filter(|v| !v.is_undefined()).map(|v| v.to_string()).transpose()?;
             worker_entries(s, p, Some(&name), ty.as_deref())
         });
-        def.method("getEntriesByType", 1, |s, p, a| {
+        def.pure_method("getEntriesByType", 1, |s, p, a| {
             a.require(1, "Performance.getEntriesByType")?;
             let ty = a.get(0).to_string()?;
             worker_entries(s, p, None, Some(&ty))

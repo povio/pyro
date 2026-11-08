@@ -2,7 +2,8 @@
 //! reject proxies and host wrappers without consulting user properties.
 use lp_js::{JsError, JsResult, Persistent, Scope};
 
-pub(crate) fn install(s: &Scope<'_>, page: &crate::page::PageDom) -> JsResult<()> {
+/// `factory` is structured_clone.js (install.js `structuredClone`).
+pub(crate) fn install(s: &Scope<'_>, page: &crate::page::PageDom, factory: lp_js::Value<'_>) -> JsResult<()> {
     // One native function serves the JS clone: `guard(value)` says whether
     // `value` is an ordinary object (no proxy, no host wrapper); with a mode
     // it is structured_clone.js's `host` (serializable/transferable hosts).
@@ -53,8 +54,6 @@ pub(crate) fn install(s: &Scope<'_>, page: &crate::page::PageDom) -> JsResult<()
     })?;
     let fail_root = Persistent::new(s, fail.value());
     let dom_exception = s.dom_exception().ok_or(JsError::ContextDestroyed)?;
-    let factory =
-        s.eval(include_str!("structured_clone.js"), Some("lightningpanda://internal/structured-clone.js"), 1)?;
     let pair = factory
         .as_object()
         .expect("clone factory")
@@ -213,7 +212,7 @@ pub(crate) fn clone_into<'s, 'r>(
     let second = |value: lp_js::Value<'r>, options: lp_js::Value<'r>| {
         clone_with_ports(rs, value, options).map_err(|error| match error {
             JsError::Terminated | JsError::ContextDestroyed => error,
-            JsError::Dom { name, message } if name == "DataCloneError" => JsError::Dom { name, message },
+            JsError::Dom(e) if e.name == "DataCloneError" => JsError::Dom(e),
             _ => JsError::dom("DataCloneError", "The message could not be cloned into the receiving realm."),
         })
     };

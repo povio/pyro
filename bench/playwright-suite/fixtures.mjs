@@ -77,7 +77,14 @@ export const test = base.extend({
       await b.close();
       return;
     }
-    if (!BIN) throw new Error('set BIN=/abs/path/to/binary, or TARGET=chrome');
+    if (process.env.LP_PORT) {
+      // A `serve` someone else started (scripts/pgo/train.sh, profiling): connect, do not spawn.
+      const b = await chromium.connectOverCDP(`http://127.0.0.1:${process.env.LP_PORT}`, { timeout: 15000 });
+      await use(b);
+      await b.close().catch(() => {});
+      return;
+    }
+    if (!BIN) throw new Error('set BIN=/abs/path/to/binary, or TARGET=chrome, or LP_PORT=<running serve>');
     const port = await freePort();
     const child = spawn(BIN, ['serve', '--host', '127.0.0.1', '--port', String(port), ...FLAGS, ...(process.env.SERVE_ARGS?.split(' ') ?? [])],
       { stdio: ['ignore', 'ignore', 'pipe'], env: { ...process.env, LIGHTPANDA_DISABLE_TELEMETRY: 'true' }, detached: true });

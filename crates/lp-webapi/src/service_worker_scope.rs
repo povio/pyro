@@ -158,7 +158,7 @@ pub(crate) fn install(s: &Scope<'_>, start: &ServiceStart, poster: RemotePoster,
             "get" => QueryKind::Get(a.get(1).to_string()?),
             "unregister" => QueryKind::Unregister,
             "update" => QueryKind::Update,
-            other => return Err(JsError::Type(format!("unknown query {other}"))),
+            other => return Err(JsError::Type(format!("unknown query {other}").into())),
         };
         QUERIES.with(|q| q.set(q.get() + 1));
         up(&p, SwUp::Query { id, kind });

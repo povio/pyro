@@ -591,8 +591,11 @@ impl EngineHost {
                 (page.context == context && self.owns_frame(page.id, frame_id)).then_some(*key)
             });
             let Some(page) = page else { return };
-            let logged = self.pages.get(&page).is_some_and(|p| p.network.log.is_some());
-            if !logged && self.sessions_of(page, |s| s.network_enabled).is_empty() {
+            let wanted = self.pages.get(&page).is_some_and(|p| {
+                p.network.log.is_some()
+                    || p.sessions.iter().any(|s| self.sessions.get(s).is_some_and(|s| s.network_enabled))
+            });
+            if !wanted {
                 return;
             }
             let context = self.contexts.get_mut(&context).expect("subscribed context");

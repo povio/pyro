@@ -216,7 +216,7 @@ pub(crate) fn construct_html_element<'s>(s: &Scope<'s>, new_target: Object<'s>) 
 /// form-associated callbacks.
 fn upgrade<'s>(s: &Scope<'s>, page: &Rc<PageDom>, el: NodeId, ctor: Value<'s>) -> JsResult<()> {
     upgrade_with(s, page, el, ctor, |name| {
-        JsError::Type(format!("Failed to upgrade \"{name}\": the constructor did not return the element it upgraded."))
+        JsError::Type(format!("Failed to upgrade \"{name}\": the constructor did not return the element it upgraded.").into())
     })
 }
 
@@ -662,7 +662,7 @@ impl JsClass for CustomElementRegistry {
                     return Ok(None);
                 }
                 if !value.as_object().is_some_and(|f| f.is_function()) {
-                    return Err(JsError::Type(format!("Failed to execute 'define' on 'CustomElementRegistry': {name} is not a function")));
+                    return Err(JsError::Type(format!("Failed to execute 'define' on 'CustomElementRegistry': {name} is not a function").into()));
                 }
                 Ok(Some(Persistent::new(s, value)))
             };
@@ -754,11 +754,11 @@ impl JsClass for CustomElementRegistry {
             }
             Ok(s.undefined())
         });
-        def.method("get", 1, |s, page, a| {
+        def.pure_method("get", 1, |s, page, a| {
             let name = with_arg_str(&a, 0, "CustomElementRegistry.get", |name| Ok(LocalName::from(name)))?;
             Ok(with_registry(page, |r| r.ctor(s, s.realm_id(), &name)).unwrap_or(s.undefined()))
         });
-        def.method("getName", 1, |s, page, a| {
+        def.pure_method("getName", 1, |s, page, a| {
             let ctor = a.get(0);
             let name = with_registry(page, |r| {
                 r.defs

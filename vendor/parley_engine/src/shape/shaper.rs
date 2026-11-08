@@ -302,14 +302,17 @@ fn shape_segment(
 
     // Shape a run of the segment with a single font, appending it to `shaped_text`.
     let mut shape_run = |font: &FontInstance, range: TextRange| {
+        // lightningpanda: the font is parsed only when something has to be built from it (shaper
+        // data, instance, or the shaper of a run the glyph cache does not hold); a cached run needs
+        // none of them, and its variation coords are the instance's.
         // TODO: How do we want to handle errors like this?
         let font_ref =
-            harfrust::FontRef::from_index(font.font.data.as_ref(), font.font.index).unwrap();
+            || harfrust::FontRef::from_index(font.font.data.as_ref(), font.font.index).unwrap();
 
         // Create harfrust shaper
         let shaper_data = scx.shape_data_cache.entry(
             cache::ShapeDataKey::new(font.font.data.id(), font.font.index),
-            || harfrust::ShaperData::new(&font_ref),
+            || harfrust::ShaperData::new(&font_ref()),
         );
         let instance = scx.shape_instance_cache.entry(
             cache::ShapeInstanceKey::new(
@@ -320,16 +323,11 @@ fn shape_segment(
             ),
             || {
                 harfrust::ShaperInstance::from_variations(
-                    &font_ref,
+                    &font_ref(),
                     variations_iter(&font.synthesis, options.variations),
                 )
             },
         );
-
-        let harf_shaper = shaper_data
-            .shaper(&font_ref)
-            .instance(Some(instance))
-            .build();
 
         // Use the entire run text including newlines.
         let run_text = &text[range.byte_range.clone()];
@@ -350,7 +348,7 @@ fn shape_segment(
             post_context,
         };
         let cached = with_glyph_cache!(scx, |cache: &mut cache::GlyphCache| {
-            let glyphs = cache.get(&glyph_key)?;
+            let (glyphs, metrics) = cache.get(&glyph_key)?;
             shaped_text.push_run(
                 text,
                 range.clone(),
@@ -360,13 +358,19 @@ fn shape_segment(
                 char_style_indices,
                 font,
                 glyphs,
-                harf_shaper.coords(),
+                instance.coords(),
+                Some(metrics),
             );
             Some(())
         });
         if cached.is_some() {
             return;
         }
+        let font_ref = font_ref();
+        let harf_shaper = shaper_data
+            .shaper(&font_ref)
+            .instance(Some(instance))
+            .build();
         let shaper_plan = scx.shape_plan_cache.entry(
             cache::ShapePlanKey::new(
                 font.font.data.id(),
@@ -424,7 +428,7 @@ fn shape_segment(
                 .point_size(Some(options.font_size)),
         );
 
-        shaped_text.push_run(
+        let metrics = shaped_text.push_run(
             text,
             range,
             segment,
@@ -434,10 +438,15 @@ fn shape_segment(
             font,
             &glyph_buffer,
             harf_shaper.coords(),
+            None,
         );
 
         // The glyphs stay in the cache; the next run gets a new buffer.
-        with_glyph_cache!(scx, |cache: &mut cache::GlyphCache| cache.insert(&glyph_key, glyph_buffer));
+        with_glyph_cache!(scx, |cache: &mut cache::GlyphCache| cache.insert(
+            &glyph_key,
+            glyph_buffer,
+            metrics
+        ));
         scx.unicode_buffer = Some(harfrust::UnicodeBuffer::new());
     };
 

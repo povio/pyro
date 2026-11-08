@@ -24,21 +24,27 @@
 
 use markup5ever::{local_name, ns};
 use rustc_hash::FxHashMap;
+use std::borrow::Cow;
 use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::dom::Dom;
-pub use crate::geometry::{ExternalBox, ExternalGeometry, ExternalQuads, ExternalSticky, ExternalWord, GeometrySource};
-use crate::geometry::{LayoutBox, LayoutResult, PaintChain, PaintEntry, BOTTOM, LEFT, RIGHT, TOP};
+use crate::geometry::{node_of, LayoutBox, LayoutResult, PaintChain, PaintEntry, TextResult, BOTTOM, LEFT, RIGHT, TOP};
+pub use crate::geometry::{
+    ExternalBox, ExternalGeometry, ExternalQuads, ExternalSticky, ExternalWord, GeometrySource, HitProbe, HitVisit,
+};
 /// Overflow clips an out-of-flow box escapes while walking up to its
 /// containing block (`Layout::clip_escape`).
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum ClipEscape {
     None,
-    /// `position: fixed`: no ancestor clips (the viewport contains it).
+    /// `position: fixed`: no ancestor clips up to the nearest one that is
+    /// a fixed containing block (a transform, filter, `contain: paint`, ...;
+    /// `ComputedStyle::contains_fixed`), if any.
     Viewport,
-    /// `position: absolute`: non-positioned ancestors do not clip, up to the
-    /// nearest positioned one.
+    /// `position: absolute`: no ancestor clips up to the nearest containing
+    /// block (positioned, or a fixed containing block;
+    /// `ComputedStyle::contains_absolute`).
     Positioned,
 }
 /// Geometry memoization is confined to one synchronous hit test. Input
@@ -191,8 +197,13 @@ pub struct Layout {
     external_synced: std::cell::Cell<Option<SyncedAt>>,
     /// Syncs so far (the whole document's geometry is read again after one).
     syncs: std::cell::Cell<u64>,
-    /// The whole document's geometry, with the sync it was read at.
+    /// The whole document's boxes, with the sync they were read at.
     result: RefCell<Option<(u64, Rc<LayoutResult>)>>,
+    /// The whole document's words, with the sync they were read at.
+    text: RefCell<Option<(u64, Rc<TextResult>)>>,
+    /// The `position: sticky` elements' inputs, with the sync they were
+    /// read at.
+    sticky: RefCell<Option<(u64, Rc<FxHashMap<NodeId, ExternalSticky>>)>>,
 }
 
 /// The observation stamp and viewport a geometry source was synced at.
@@ -234,6 +245,8 @@ impl Layout {
             external_synced: std::cell::Cell::new(None),
             syncs: std::cell::Cell::new(0),
             result: RefCell::new(None),
+            text: RefCell::new(None),
+            sticky: RefCell::new(None),
         }
     }
 
@@ -244,6 +257,8 @@ impl Layout {
         self.external = source;
         self.external_synced.set(None);
         self.result.borrow_mut().take();
+        self.text.borrow_mut().take();
+        self.sticky.borrow_mut().take();
     }
 
     /// The geometry source, brought up to the document (synced when
@@ -282,8 +297,9 @@ impl Layout {
         }
     }
 
-    /// The whole document's geometry, read again when the DOM, styles,
-    /// focus/hover or viewport changed.
+    /// The whole document's boxes, read again when the DOM, styles,
+    /// focus/hover or viewport changed (scroll anchoring, and hit testing
+    /// when the engine offers no descent: see [`Layout::element_from_point`]).
     pub fn layout_result(&self, dom: &Dom) -> Rc<LayoutResult> {
         let Some(source) = self.synced_geometry_source(dom) else { return Rc::default() };
         let key = self.syncs.get();
@@ -299,6 +315,62 @@ impl Layout {
         }
         *self.result.borrow_mut() = Some((key, result.clone()));
         result
+    }
+
+    /// The whole document's words, read again when the DOM, styles,
+    /// focus/hover or viewport changed (text ranges, carets, selection).
+    pub fn text_result(&self, dom: &Dom) -> Rc<TextResult> {
+        let Some(source) = self.synced_geometry_source(dom) else { return Rc::default() };
+        let key = self.syncs.get();
+        if let Some((k, r)) = self.text.borrow().as_ref() {
+            if *k == key {
+                return r.clone();
+            }
+        }
+        let started = flow_stats::enabled().then(std::time::Instant::now);
+        let result = Rc::new(source.text_words().map(|w| TextResult::from_words(dom, w)).unwrap_or_default());
+        if let Some(t) = started {
+            flow_stats::record(None, self.sync_key(dom), t.elapsed());
+        }
+        *self.text.borrow_mut() = Some((key, result.clone()));
+        result
+    }
+
+    /// The words of the text nodes below `within` (with others), for one
+    /// query: the document's when they are read already since the last
+    /// change ([`Self::text_result`]), else only those of the inline
+    /// formatting contexts in and around `within`
+    /// ([`GeometrySource::subtree_words`]).
+    fn text_result_within(&self, dom: &Dom, within: NodeId) -> Rc<TextResult> {
+        let Some(source) = self.synced_geometry_source(dom) else { return Rc::default() };
+        let key = self.syncs.get();
+        if let Some((k, r)) = self.text.borrow().as_ref() {
+            if *k == key {
+                return r.clone();
+            }
+        }
+        match source.subtree_words(crate::snapshot::render_key(within)) {
+            Some(words) => Rc::new(TextResult::from_words(dom, words)),
+            None => self.text_result(dom),
+        }
+    }
+
+    /// The `position: sticky` elements' inputs, read again when the DOM,
+    /// styles, focus/hover or viewport changed; empty while the engine lays
+    /// out no sticky element (one flag check: no read).
+    fn sticky_map(&self, dom: &Dom) -> Rc<FxHashMap<NodeId, ExternalSticky>> {
+        let Some(source) = self.synced_geometry_source(dom).filter(|s| s.has_sticky()) else { return Rc::default() };
+        let key = self.syncs.get();
+        if let Some((k, m)) = self.sticky.borrow().as_ref() {
+            if *k == key {
+                return m.clone();
+            }
+        }
+        let map: FxHashMap<NodeId, ExternalSticky> =
+            source.sticky_elements().into_iter().filter_map(|(k, s)| Some((node_of(dom, k)?, s))).collect();
+        let map = Rc::new(map);
+        *self.sticky.borrow_mut() = Some((key, map.clone()));
+        map
     }
 
     /// One element's box, synced only when something the engine lays out
@@ -693,10 +765,10 @@ impl Layout {
     /// uses it (Chromium reports text boxes, even inside a `display:
     /// contents` parent that has no box).
     pub fn text_rect(&self, dom: &Dom, text: NodeId) -> Option<Rect> {
-        let result = self.layout_result(dom);
+        let result = self.text_result(dom);
         let &(r, fixed) = result.texts.get(&text)?;
         let (dx, dy) = self.ancestor_scroll_offset(dom, text);
-        let (kx, ky) = self.sticky_shift(dom, &result, text);
+        let (kx, ky) = self.sticky_shift_in(dom, &self.sticky_map(dom), text);
         let (sx, sy) = if fixed { (0.0, 0.0) } else { (self.window_scroll.0 as f64, self.window_scroll.1 as f64) };
         Some(Rect { x: r.x - sx - dx + kx, y: r.y - sy - dy + ky, width: r.width, height: r.height })
     }
@@ -716,7 +788,8 @@ impl Layout {
         y: f64,
         selectable: &dyn Fn(NodeId) -> bool,
     ) -> Option<(NodeId, u32, bool)> {
-        let result = self.layout_result(dom);
+        let result = self.text_result_within(dom, within);
+        let sticky = self.sticky_map(dom);
         let (wx, wy) = (self.window_scroll.0 as f64, self.window_scroll.1 as f64);
         let mut best: Option<((f64, f64), u32, NodeId, f64)> = None;
         for (i, run) in result.text_runs.iter().enumerate() {
@@ -730,7 +803,7 @@ impl Layout {
                 continue;
             }
             let (dx, dy) = self.ancestor_scroll_offset(dom, run.node);
-            let (kx, ky) = self.sticky_shift(dom, &result, run.node);
+            let (kx, ky) = self.sticky_shift_in(dom, &sticky, run.node);
             let (sx, sy) = if run.fixed { (0.0, 0.0) } else { (wx, wy) };
             let (left, top) = (run.rect.x - sx - dx + kx, run.rect.y - sy - dy + ky);
             if self.text_clipped(dom, run.node, left, top, run.rect.width, run.rect.height) {
@@ -766,10 +839,12 @@ impl Layout {
     /// Whether an overflow-clipping ancestor of `node` clips it, as `out`
     /// decides for each one that applies (its clipped axes given). An
     /// out-of-flow box escapes the clips between it and its containing
-    /// block (CSS 2.1 10.1): every ancestor for `position: fixed` (the
-    /// viewport; transforms are not laid out), the non-positioned ones below
-    /// the nearest positioned ancestor for `position: absolute`. In-flow
-    /// content escapes with its out-of-flow ancestors.
+    /// block (CSS 2.1 10.1, CSS Transforms 1 3): for `position: fixed`, every
+    /// ancestor below the nearest one that a transform, filter, containment
+    /// (...) makes its containing block, if any, else the viewport; for
+    /// `position: absolute`, every ancestor below the nearest positioned one
+    /// or such a one. Blitz lays them out in the same containing blocks. In-
+    /// flow content escapes with its out-of-flow ancestors.
     fn clipped_by_ancestor(&self, dom: &Dom, node: NodeId, mut out: impl FnMut(NodeId, ScrollAxes) -> bool) -> bool {
         self.for_each_clip(dom, node, &mut out)
     }
@@ -804,19 +879,18 @@ impl Layout {
                 cur = dom.parent_element(a).ok().flatten();
                 continue;
             }
-            let positioned = c.position.is_positioned();
+            // The containing block of the out-of-flow box escaping: its clip
+            // applies, and above it the escape is its own.
             let applies = match escape {
                 ClipEscape::None => true,
-                ClipEscape::Viewport => false,
-                ClipEscape::Positioned => positioned,
+                ClipEscape::Viewport => c.contains_fixed,
+                ClipEscape::Positioned => c.contains_absolute,
             };
             if applies {
                 let clips = ScrollAxes { x: c.overflow_x_clips, y: c.overflow_y_clips };
                 if (clips.x || clips.y) && out(a, clips) {
                     return true;
                 }
-            }
-            if escape == ClipEscape::None || (escape == ClipEscape::Positioned && positioned) {
                 escape = self.clip_escape(dom, a);
             }
             cur = dom.parent_element(a).ok().flatten();
@@ -825,7 +899,7 @@ impl Layout {
     }
 
     /// Which overflow clips above `el` do not apply to it, from its
-    /// `position`.
+    /// `position` (the containing blocks are found by `for_each_clip`).
     fn clip_escape(&self, dom: &Dom, el: NodeId) -> ClipEscape {
         if dom.node_type(el).ok() != Some(crate::node::NodeType::Element) {
             return ClipEscape::None;
@@ -878,10 +952,7 @@ impl Layout {
         let source = self.synced_geometry_source(dom)?;
         let mut q = source.element_quads(crate::snapshot::render_key(el))?;
         let (dx, dy) = self.ancestor_scroll_offset(dom, el);
-        let (kx, ky) = match source.has_sticky() {
-            true => self.sticky_shift(dom, &self.layout_result(dom), el),
-            false => (0.0, 0.0),
-        };
+        let (kx, ky) = self.sticky_shift_in(dom, &self.sticky_map(dom), el);
         let (sx, sy) = if q.fixed { (0.0, 0.0) } else { (self.window_scroll.0 as f64, self.window_scroll.1 as f64) };
         let (ox, oy) = (kx - sx - dx, ky - sy - dy);
         for quad in std::iter::once(&mut q.border).chain(q.fragments.iter_mut()) {
@@ -933,10 +1004,7 @@ impl Layout {
             return r;
         }
         let Some(b) = self.layout_box(dom, el) else { return Rect::default() };
-        let (kx, ky) = match self.external.as_ref().is_some_and(|s| s.has_sticky()) {
-            true => self.sticky_shift(dom, &self.layout_result(dom), el),
-            false => (0.0, 0.0),
-        };
+        let (kx, ky) = self.sticky_shift_in(dom, &self.sticky_map(dom), el);
         let (sx, sy) = if b.fixed { (0.0, 0.0) } else { (self.window_scroll.0 as f64, self.window_scroll.1 as f64) };
         Rect { x: b.rect.x - sx - dx + kx, y: b.rect.y - sy - dy + ky, width: b.rect.width, height: b.rect.height }
     }
@@ -1051,16 +1119,35 @@ impl Layout {
     }
 
     /// The scroll-dependent offset of `node`'s sticky ancestors (and itself):
-    /// each sticky box moves with its descendants.
+    /// each sticky box moves with its descendants. The boxes are `result`'s.
     fn sticky_shift(&self, dom: &Dom, result: &LayoutResult, node: NodeId) -> (f64, f64) {
         if result.sticky.is_empty() {
             return (0.0, 0.0);
         }
+        self.sticky_shift_with(dom, node, &|n| result.sticky.get(&n).copied(), &|n| result.get(n).copied())
+    }
+
+    /// [`Layout::sticky_shift`] with the sticky elements `sticky`
+    /// ([`Layout::sticky_map`]) and the engine's boxes as they are.
+    fn sticky_shift_in(&self, dom: &Dom, sticky: &FxHashMap<NodeId, ExternalSticky>, node: NodeId) -> (f64, f64) {
+        if sticky.is_empty() {
+            return (0.0, 0.0);
+        }
+        self.sticky_shift_with(dom, node, &|n| sticky.get(&n).copied(), &|n| self.layout_box(dom, n))
+    }
+
+    fn sticky_shift_with(
+        &self,
+        dom: &Dom,
+        node: NodeId,
+        sticky_of: &dyn Fn(NodeId) -> Option<ExternalSticky>,
+        box_of: &dyn Fn(NodeId) -> Option<LayoutBox>,
+    ) -> (f64, f64) {
         let (mut x, mut y) = (0.0, 0.0);
         let mut cur = Some(node);
         while let Some(n) = cur {
-            if result.sticky.contains_key(&n) {
-                let (dx, dy) = self.sticky_offset(dom, result, n);
+            if let Some(sticky) = sticky_of(n) {
+                let (dx, dy) = self.sticky_offset(dom, n, &sticky, box_of);
                 x += dx;
                 y += dy;
             }
@@ -1077,8 +1164,14 @@ impl Layout {
     /// `right`. Inside `position: fixed` the window scroll moves nothing, so
     /// with no scroll container in between the scrollport is the viewport at
     /// the origin.
-    fn sticky_offset(&self, dom: &Dom, result: &LayoutResult, el: NodeId) -> (f64, f64) {
-        let (Some(b), Some(sticky)) = (result.get(el), result.sticky.get(&el)) else { return (0.0, 0.0) };
+    fn sticky_offset(
+        &self,
+        dom: &Dom,
+        el: NodeId,
+        sticky: &ExternalSticky,
+        box_of: &dyn Fn(NodeId) -> Option<LayoutBox>,
+    ) -> (f64, f64) {
+        let Some(b) = box_of(el) else { return (0.0, 0.0) };
         // Scrollport in document coordinates of the scrolled content.
         let mut port = None;
         let mut a = dom.parent_element(el).ok().flatten();
@@ -1088,7 +1181,7 @@ impl Layout {
             }
             let axes = self.style.overflow_clip_axes(dom, p);
             if axes.x || axes.y {
-                if let Some(pb) = result.get(p) {
+                if let Some(pb) = box_of(p) {
                     port = Some(Rect {
                         x: pb.rect.x + pb.border[LEFT] + pb.padding[LEFT] + self.scroll_left(p) as f64,
                         y: pb.rect.y + pb.border[TOP] + pb.padding[TOP] + self.scroll_top(p) as f64,
@@ -1308,20 +1401,112 @@ impl Layout {
         false
     }
 
+    /// The element under viewport point (`x`, `y`): the topmost in paint
+    /// order of the hit-testable boxes holding the point, as the engine
+    /// reports its candidates ([`GeometrySource::hit_candidates`]: a
+    /// descent of its tree reaching the boxes that may hold the point and
+    /// their ancestors) or, without that, among every box of the document.
     fn element_from_point_impl(&self, dom: &Dom, x: f64, y: f64, ignore_x: bool) -> Option<NodeId> {
+        let source = self.synced_geometry_source(dom)?.clone();
+        let has_element_scroll = self.element_scroll.values().any(|&(x, y)| x != 0 || y != 0);
+        let sticky = self.sticky_map(dom);
+        let has_sticky = !sticky.is_empty();
+        let geometry = RefCell::new(HitTestGeometry { has_element_scroll, has_sticky, ..Default::default() });
+        let probe =
+            HitProbe { x, y, ignore_x, window_scroll: (self.window_scroll.0 as f64, self.window_scroll.1 as f64) };
+        // How far this document moves an element's box from where the
+        // engine laid it out: its scrolled ancestors' offsets, less its
+        // sticky ancestors' (the same as `hit_test_client_rect` applies).
+        let offset = |key: u64| -> (f64, f64) {
+            let Some(el) = node_of(dom, key) else { return (0.0, 0.0) };
+            let (dx, dy) = match has_element_scroll {
+                true => self.hit_test_scroll_offset(dom, el, &mut geometry.borrow_mut().scroll_offsets),
+                false => (0.0, 0.0),
+            };
+            let (kx, ky) = self.sticky_shift_in(dom, &sticky, el);
+            (dx - kx, dy - ky)
+        };
+        let mut shifted: Vec<u64> = Vec::new();
+        if has_element_scroll {
+            shifted.extend(self.scrolled_elements().into_iter().map(|(key, _)| key));
+        }
+        shifted.extend(sticky.keys().map(|&el| crate::snapshot::render_key(el)));
+        let Some(visits) = source.hit_candidates(&probe, &offset, &shifted) else {
+            return self.hit_test_scan(dom, x, y, ignore_x);
+        };
+        let (document_width, document_height) = source.document_size().unwrap_or((0.0, 0.0));
+        let mut result =
+            LayoutResult { document_width, document_height, sticky: (*sticky).clone(), ..LayoutResult::default() };
+        // Tree order: an element's ancestors are in before it.
+        for v in &visits {
+            if let Some(el) = node_of(dom, v.key) {
+                result.insert_box(dom, el, LayoutBox::from_external(&v.bounds, v.order));
+            }
+        }
+        // The topmost modal dialog's box, for the fallback below.
+        if let Some(m) = dom.topmost_modal() {
+            if !result.boxes.contains_key(&m) {
+                if let Some(b) = self.layout_box(dom, m) {
+                    result.insert_box(dom, m, b);
+                }
+            }
+        }
+        let candidates: Vec<NodeId> = visits.iter().filter(|v| v.hit).filter_map(|v| node_of(dom, v.key)).collect();
+        let mut geometry = geometry.into_inner();
+        self.hit_select(dom, &result, candidates.into_iter(), x, y, ignore_x, &mut geometry)
+    }
+
+    /// [`Layout::element_from_point_impl`] over every box of the document
+    /// (the whole document's geometry is read).
+    fn hit_test_scan(&self, dom: &Dom, x: f64, y: f64, ignore_x: bool) -> Option<NodeId> {
         let result = self.layout_result(dom);
         let mut geometry = HitTestGeometry {
             has_element_scroll: self.element_scroll.values().any(|&(x, y)| x != 0 || y != 0),
             has_sticky: self.external.as_ref().is_some_and(|source| source.has_sticky()),
             ..Default::default()
         };
+        let mut all: Vec<NodeId> = result.boxes.keys().copied().collect();
+        all.sort_by_key(|el| result.boxes[el].order);
+        self.hit_select(dom, &result, all.into_iter(), x, y, ignore_x, &mut geometry)
+    }
+
+    /// `document.elementFromPoint(x, y)` answered from every box of the
+    /// document instead of the engine's candidates: the reference the
+    /// descent is checked against (tests).
+    #[doc(hidden)]
+    pub fn element_from_point_scan(&self, dom: &Dom, x: f64, y: f64) -> Option<NodeId> {
+        self.hit_test_scan(dom, x, y, false)
+    }
+
+    /// [`Layout::element_from_vertical_point`] answered from every box of
+    /// the document (tests).
+    #[doc(hidden)]
+    pub fn element_from_vertical_point_scan(&self, dom: &Dom, y: f64) -> Option<NodeId> {
+        self.hit_test_scan(dom, 0.0, y, true)
+    }
+
+    /// The topmost hit-testable box among `candidates` (in tree order)
+    /// holding the point, in paint order; else the topmost modal dialog
+    /// (everything outside it is inert: the point hits its `::backdrop`).
+    #[allow(clippy::too_many_arguments)]
+    fn hit_select(
+        &self,
+        dom: &Dom,
+        result: &LayoutResult,
+        candidates: impl Iterator<Item = NodeId>,
+        x: f64,
+        y: f64,
+        ignore_x: bool,
+        geometry: &mut HitTestGeometry,
+    ) -> Option<NodeId> {
         let inside = |r: &Rect| (ignore_x || (x >= r.x && x <= r.x + r.width)) && y >= r.y && y <= r.y + r.height;
         let mut best: Option<(Rc<[PaintEntry]>, NodeId)> = None;
-        for (&el, b) in &result.boxes {
+        for el in candidates {
+            let Some(b) = result.get(el) else { continue };
             if b.rect.width <= 0.0 && b.rect.height <= 0.0 {
                 continue;
             }
-            let r = self.hit_test_client_rect(dom, &result, el, &mut geometry);
+            let r = self.hit_test_client_rect(dom, result, el, geometry);
             if !inside(&r) || !self.is_visible(dom, el) || !self.style.is_hit_testable(dom, el) {
                 continue;
             }
@@ -1329,11 +1514,11 @@ impl Layout {
                 continue;
             }
             if self.outside_inset_clip_path(dom, el, x, y, ignore_x, |node| {
-                self.hit_test_client_rect(dom, &result, node, &mut geometry)
+                self.hit_test_client_rect(dom, result, node, geometry)
             }) {
                 continue;
             }
-            let key = self.paint_key(dom, &result, el);
+            let key = self.paint_key(dom, result, el);
             if let Some((top_key, top_node)) = &best {
                 let same_layer = key.len() == top_key.len()
                     && key[..key.len() - 1] == top_key[..top_key.len() - 1]
@@ -1346,11 +1531,11 @@ impl Layout {
                     continue;
                 }
             }
-            let clipped = self.hit_test_clips(dom, &result, el).iter().any(|&(a, clips)| {
+            let clipped = self.hit_test_clips(dom, result, el).iter().any(|&(a, clips)| {
                 if result.get(a).is_none() {
                     return false;
                 }
-                let ar = self.hit_test_client_rect(dom, &result, a, &mut geometry);
+                let ar = self.hit_test_client_rect(dom, result, a, geometry);
                 let out_x = clips.x && !ignore_x && (x < ar.x || x > ar.x + ar.width);
                 let out_y = clips.y && (y < ar.y || y > ar.y + ar.height);
                 out_x || out_y
@@ -2122,7 +2307,7 @@ impl Layout {
             return String::new();
         }
         let Some(style) = self.style.stylo_pseudo_style(dom, el, pseudo, false) else { return String::new() };
-        let name = if name.starts_with("--") { name.to_owned() } else { name.to_ascii_lowercase() };
+        let name = if name.starts_with("--") { Cow::Borrowed(name) } else { lowercase(name) };
         let value = crate::stylo::serialize(&style, &name).unwrap_or_default();
         if name == "content" && pseudo.is_before_or_after() && value == "normal" {
             return "none".into();
@@ -2145,8 +2330,9 @@ impl Layout {
             return String::new();
         }
         let custom = name.starts_with("--");
-        let name = if custom { name.to_owned() } else { name.to_ascii_lowercase() };
-        match name.as_str() {
+        let name = if custom { Cow::Borrowed(name) } else { lowercase(name) };
+        let name: &str = &name;
+        match name {
             "display" if self.style.has_display_none(dom, el) => return "none".into(),
             "display" => return self.style.computed_display(dom, el).unwrap_or_default(),
             "visibility" if self.style.has_visibility_hidden_inherited(dom, el) => return "hidden".into(),
@@ -2156,7 +2342,7 @@ impl Layout {
                 let x = self.style.used_value(dom, el, "overflow-x");
                 let y = self.style.used_value(dom, el, "overflow-y");
                 let (x, y) = crate::style::computed_overflow_keywords(x.as_deref(), y.as_deref());
-                return match name.as_str() {
+                return match name {
                     "overflow-x" => x,
                     "overflow-y" => y,
                     _ if x == y => x,
@@ -2169,8 +2355,8 @@ impl Layout {
             // A registered property no declaration sets has its initial value.
             return self
                 .style
-                .custom_property_value(dom, el, &name)
-                .or_else(|| self.style.registered_property(&name)?.initial_value.clone())
+                .custom_property_value(dom, el, name)
+                .or_else(|| self.style.registered_property(name)?.initial_value.clone())
                 .unwrap_or_default();
         }
         if name == "font-size" {
@@ -2180,7 +2366,7 @@ impl Layout {
                 .computed_value(dom, el, "font-size")
                 .unwrap_or_else(|| format!("{}px", self.style.computed_font_size(dom, Some(el))));
         }
-        let declared = self.style.computed_value(dom, el, &name);
+        let declared = self.style.computed_value(dom, el, name);
         if name == "width" || name == "height" {
             if !self.is_visible(dom, el) {
                 return "auto".into();
@@ -2198,16 +2384,26 @@ impl Layout {
                 if border_box { 0.0 } else { b.border[start] + b.border[end] + b.padding[start] + b.padding[end] };
             return format!("{}px", crate::computed::fmt_num((size - inset).max(0.0)));
         }
-        if let Some(v) = declared.as_deref().and_then(|v| self.resolved_value(dom, el, &name, v)) {
+        if let Some(v) = declared.as_deref().and_then(|v| self.resolved_value(dom, el, name, v)) {
             return v;
         }
         if let Some(v) = declared {
             return v;
         }
-        if let Some(v) = self.style.inline_style_value(dom, el, &name) {
+        if let Some(v) = self.style.inline_style_value(dom, el, name) {
             return v;
         }
-        default_property_value(dom, el, &name).to_owned()
+        default_property_value(dom, el, name).to_owned()
+    }
+}
+
+/// A property name ASCII-lowercased, borrowed when it is lowercase already
+/// (the names the bindings pass are).
+fn lowercase(name: &str) -> Cow<'_, str> {
+    if name.bytes().any(|b| b.is_ascii_uppercase()) {
+        Cow::Owned(name.to_ascii_lowercase())
+    } else {
+        Cow::Borrowed(name)
     }
 }
 

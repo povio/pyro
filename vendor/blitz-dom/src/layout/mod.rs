@@ -1217,16 +1217,22 @@ impl RoundTree for LayoutPassState<'_> {
     // (`Node::update_unrounded_layout`). Anonymous boxes are always rounded
     // (damage marking walks the DOM parent chain, so their descendant flags are
     // not maintained), and so are nodes without style data, which have no damage.
-    fn rounded_unchanged(&self, node_id: NodeId, unrounded: &Layout, absolute_x: f32, absolute_y: f32) -> bool {
+    //
+    // lightningpanda: the offset is the fractional part of the parent's absolute
+    // position (`writing_mode::rounded_layout` rounds relative to the pixel grid),
+    // so a subtree moved by whole pixels, the rows below a table cell that grew,
+    // is skipped as well.
+    fn rounded_unchanged(&self, node_id: NodeId, unrounded: &Layout, parent_frac_x: f32, parent_frac_y: f32) -> bool {
         let node = self.node_from_id(node_id);
         !node.is_anonymous()
             && !node.has_damaged_descendants()
             && node.damage().is_some_and(|d| d.is_empty())
-            && node.layout_data().rounded_from == Some((*unrounded, absolute_x, absolute_y))
+            && node.layout_data().rounded_from == Some((*unrounded, parent_frac_x, parent_frac_y))
     }
 
-    fn record_rounded(&mut self, node_id: NodeId, unrounded: &Layout, absolute_x: f32, absolute_y: f32) {
-        self.node_from_id_mut(node_id).layout_data_mut().rounded_from = Some((*unrounded, absolute_x, absolute_y));
+    fn record_rounded(&mut self, node_id: NodeId, unrounded: &Layout, parent_frac_x: f32, parent_frac_y: f32) {
+        self.node_from_id_mut(node_id).layout_data_mut().rounded_from =
+            Some((*unrounded, parent_frac_x, parent_frac_y));
     }
 }
 

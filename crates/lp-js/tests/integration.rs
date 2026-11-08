@@ -6,6 +6,7 @@ mod binding_shortcuts;
 mod callback_hook;
 mod callback_lock;
 mod class_lengths;
+mod deferred_realm;
 mod host_strings;
 mod interned_strings;
 mod lazy_interfaces;

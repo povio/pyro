@@ -2,14 +2,17 @@
 
 use crate::RgbaImage;
 
-/// PNG at `Compression::Fast`: encoding is the largest cost of a classic
-/// screenshot after layout.
+/// PNG at `Compression::Fast` with the `Sub` row filter: encoding is the
+/// largest cost of a classic screenshot after layout, and the `png` crate's
+/// default `Adaptive` filter tries all five filters per row (three quarters
+/// of the encode) for a few percent of size on rendered pages.
 pub fn encode_png(img: &RgbaImage) -> Vec<u8> {
     let mut out = Vec::with_capacity(img.data.len() / 8);
     let mut enc = png::Encoder::new(&mut out, img.width, img.height);
     enc.set_color(png::ColorType::Rgba);
     enc.set_depth(png::BitDepth::Eight);
     enc.set_compression(png::Compression::Fast);
+    enc.set_filter(png::Filter::Sub);
     // In-memory writes of a well-formed image cannot fail.
     let mut w = enc.write_header().expect("png header");
     w.write_image_data(&img.data).expect("png data");
@@ -17,13 +20,16 @@ pub fn encode_png(img: &RgbaImage) -> Vec<u8> {
     out
 }
 
-/// JPEG at `quality` (0-100), alpha dropped.
+/// Baseline JPEG at `quality` (1-100, libjpeg's scale), alpha dropped, no
+/// chroma subsampling (as the `image` crate's encoder it replaces).
 pub fn encode_jpeg(img: &RgbaImage, quality: u8) -> Result<Vec<u8>, String> {
-    let rgb: Vec<u8> = img.data.chunks_exact(4).flat_map(|p| [p[0], p[1], p[2]]).collect();
-    let mut out = Vec::new();
-    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, quality.clamp(1, 100))
-        .encode(&rgb, img.width, img.height, image::ExtendedColorType::Rgb8)
-        .map_err(|e| e.to_string())?;
+    let (Ok(width), Ok(height)) = (u16::try_from(img.width), u16::try_from(img.height)) else {
+        return Err(format!("{}x{} exceeds the JPEG limit of 65535", img.width, img.height));
+    };
+    let mut out = Vec::with_capacity(img.data.len() / 16);
+    let mut enc = jpeg_encoder::Encoder::new(&mut out, quality.clamp(1, 100));
+    enc.set_sampling_factor(jpeg_encoder::SamplingFactor::R_4_4_4);
+    enc.encode(&img.data, width, height, jpeg_encoder::ColorType::Rgba).map_err(|e| e.to_string())?;
     Ok(out)
 }
 

@@ -433,14 +433,14 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
     engine.set_hooks(Some(events.clone()));
     let dom: DomRef = Rc::new(RefCell::new(Dom::new()));
     let document = dom.borrow_mut().create_document(lp_dom::DocumentKind::Html, start.url.as_str());
-    dom.borrow_mut().set_document_active(document, true).map_err(|e| JsError::Type(format!("{e:?}")))?;
+    dom.borrow_mut().set_document_active(document, true).map_err(|e| JsError::Type(format!("{e:?}").into()))?;
     let page = PageDom::new(dom, document);
     // The worker's time origin: `performance.now()`, `Event.timeStamp` and
     // its Resource Timing entries count from here.
     let started = Instant::now();
     let origin_wall_ms = epoch_ms();
     page.set_event_clock(Rc::new(move || crate::performance::now_since(started)));
-    page.set_user_agent_override(start.user_agent.clone()).map_err(|e| JsError::Type(e.to_string()))?;
+    page.set_user_agent_override(start.user_agent.clone()).map_err(|e| JsError::Type(e.to_string().into()))?;
     page.set_extra_http_headers(start.extra_headers.clone());
     page.set_cache_disabled(start.cache_disabled);
     page.set_storage_namespaces(
@@ -561,7 +561,7 @@ fn run_script(state: &WorkerLoop, script: &(String, String), module: bool) -> bo
     // throw at its top level rejects the evaluation promise, which reports
     // the error (`error` at the Worker).
     let evaluated = s.eval_module(&script.0, &script.1).and_then(|promise| {
-        s.then(promise, |_, _| {}, |s, error| s.report_exception(&JsError::Thrown(lp_js::Persistent::new(s, error))))
+        s.then(promise, |_, _| {}, |s, error| s.report_exception(&JsError::thrown(lp_js::Persistent::new(s, error))))
     });
     if let Err(e) = evaluated {
         s.report_exception(&e);
@@ -621,9 +621,9 @@ impl lp_js::ModuleFetcher for WorkerModuleFetcher {
             let done = match source {
                 Ok((bytes, mime)) => match crate::module_script::mime_error(request.module_type(), &mime, &url) {
                     None => crate::module_script::complete(&s, request, &script_text(&bytes)),
-                    Some(e) => request.reject(&s, &JsError::Type(e)),
+                    Some(e) => request.reject(&s, &JsError::Type(e.into())),
                 },
-                Err(_) => request.reject(&s, &JsError::Type(format!("Failed to fetch module: {url}"))),
+                Err(_) => request.reject(&s, &JsError::Type(format!("Failed to fetch module: {url}").into())),
             };
             if let Err(e) = done {
                 s.report_exception(&e);
@@ -1108,13 +1108,14 @@ fn install(s: &Scope<'_>, page: &Rc<PageDom>, service: bool) -> JsResult<()> {
     page.register_realm(&realm);
     realm.set_embedder(page.clone());
     realm.set_unhandled_rejection_handler(crate::event::dispatch_unhandled_rejection);
-    crate::encoding::install(s)?;
-    crate::headers::install(s)?;
-    crate::url_search_params::install(s)?;
-    crate::form_data::install(s)?;
+    let helpers = crate::install_helpers(s)?;
+    crate::encoding::install(s, helpers.get_atom("dataView")?)?;
+    crate::headers::install(s, helpers.get_atom("headers")?)?;
+    crate::url_search_params::install(s, helpers.get_atom("urlSearchParams")?)?;
+    crate::form_data::install(s, helpers.get_atom("formData")?)?;
     crate::fetch::install(s)?;
     crate::xhr::install(s, page)?;
-    crate::structured_clone::install(s, page)?;
+    crate::structured_clone::install(s, page, helpers.get_atom("structuredClone")?)?;
     // What the lazy globals (streams, CryptoKey) replace themselves with.
     if let Some(define) =
         s.global().get_atom("Object")?.as_object().map(|o| o.get_atom("defineProperty")).transpose()?

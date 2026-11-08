@@ -173,17 +173,17 @@ impl JsClass for Headers {
             list.sorted = None;
             Ok(s.undefined())
         });
-        def.method("has", 1, |s, data, args| {
+        def.pure_method("has", 1, |s, data, args| {
             args.require(1, "Headers.has")?;
             let name = header_name(args.get(0))?;
             Ok(s.boolean(data.0.borrow().values.contains_key(&name)))
         });
-        def.method("get", 1, |s, data, args| {
+        def.pure_method("get", 1, |s, data, args| {
             args.require(1, "Headers.get")?;
             let name = header_name(args.get(0))?;
             Ok(data.0.borrow().values.get(&name).map_or(s.null(), |values| s.string(&values.join(", "))))
         });
-        def.method("getSetCookie", 0, |s, data, _args| {
+        def.pure_method("getSetCookie", 0, |s, data, _args| {
             let mut values = lp_js::RootedVec::new();
             if let Some(cookies) = data.0.borrow().values.get("set-cookie") {
                 for cookie in cookies {
@@ -276,56 +276,9 @@ pub(crate) fn cors_safelisted(name: &str, value: &str) -> bool {
     lp_net::http::HeaderValue::from_str(value).is_ok_and(|v| lp_net::cors::is_safelisted_header(name, &v))
 }
 
-pub(crate) fn install(s: &Scope<'_>) -> JsResult<()> {
-    // [helpers, the step that completes Headers.prototype once its members
-    // are installed (`after_populate`)].
-    let pair = s.eval(
-        r#"(() => {
-        const symbol = Symbol.iterator, keys = Reflect.ownKeys;
-        const descriptor = Object.getOwnPropertyDescriptor, define = Object.defineProperty;
-        const apply = Reflect.apply, TypeError_ = TypeError;
-        // Runs when a page first uses Headers: descriptors without a prototype.
-        const populated = (proto) => {
-            const entries = proto.entries;
-            define(proto, symbol, {__proto__: null, value: entries, writable: true, configurable: true});
-            define(proto, 'forEach', {__proto__: null, value: function(callback, thisArg) {
-                const iterator = apply(entries, this, []);
-                if (typeof callback !== 'function') throw new TypeError_('callback must be callable');
-                for (const pair of iterator) apply(callback, thisArg, [pair[1], pair[0], this]);
-            }, writable: true, enumerable: true, configurable: true});
-        };
-        return [{
-            iterator(next) { return {next, [symbol]() { return this; }}; },
-            fill(init, convert) {
-                const result = [];
-                const append = (a, value) => define(a, a.length, {value, writable:true, enumerable:true, configurable:true});
-                if ((typeof init !== 'object' && typeof init !== 'function') || init === null)
-                    throw new TypeError_('Headers init must be an object');
-                const method = init[symbol];
-                if (method !== undefined && method !== null) {
-                    if (typeof method !== 'function') throw new TypeError_('Invalid iterator');
-                    for (const pair of {[symbol]() { return apply(method, init, []); }}) {
-                        if ((typeof pair !== 'object' && typeof pair !== 'function') || pair === null)
-                            throw new TypeError_('Header entry must be an iterable pair');
-                        const values = [];
-                        for (const value of pair) append(values, convert(value));
-                        append(result, values);
-                    }
-                } else {
-                    for (const key of keys(init)) {
-                        if (descriptor(init, key)?.enumerable) {
-                            const name = convert(key);
-                            append(result, [name, convert(init[key])]);
-                        }
-                    }
-                }
-                return result;
-            }
-        }, populated];
-    })()"#,
-        Some("lp-headers.js"),
-        1,
-    )?;
+/// `pair` is install.js `headers`: [helpers, the step that completes
+/// Headers.prototype once its members are installed (`after_populate`)].
+pub(crate) fn install(s: &Scope<'_>, pair: lp_js::Value<'_>) -> JsResult<()> {
     let pair = pair.as_object().expect("headers helpers");
     let helpers = pair.get_index(0)?;
     page_of(s)?.header_helpers.borrow_mut().insert(s.realm_id(), Persistent::new(s, helpers));

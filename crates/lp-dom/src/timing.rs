@@ -230,6 +230,11 @@ impl TimingRules {
 /// properties a later one changed.
 pub type StyleSnapshot = style::servo_arc::Arc<style::properties::ComputedValues>;
 
+/// Whether `style` is `display: none` (the element is not rendered).
+pub fn displays_none(style: &StyleSnapshot) -> bool {
+    style.get_box().display.is_none()
+}
+
 /// The longhands `property` (a longhand, a shorthand or `all`) covers whose
 /// computed value differs between `before` and `after`: the ones a
 /// transition of `property` starts for.

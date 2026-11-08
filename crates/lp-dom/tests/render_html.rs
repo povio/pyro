@@ -355,3 +355,45 @@ fn render_tree_marks_the_top_layer_by_rank() {
     assert!(!state(&dom.borrow(), b).unwrap_or_default().contains("top-layer"));
     assert!(!state(&dom.borrow(), a).unwrap_or_default().contains("top-layer"));
 }
+
+#[test]
+fn a_changed_container_delta_carries_the_node_alone_as_the_fresh_tree_has_it() {
+    use lp_dom::snapshot::{render_key, DeltaOp};
+    // A wide, deep subtree under the changed nodes: the delta must not
+    // depend on it (one op per changed node, equal to the fresh tree's).
+    let mut rows = String::new();
+    for i in 0..200 {
+        rows.push_str(&format!("<tr><td>r{i}</td><td><div class=flex><span>{i}</span></div></td></tr>"));
+    }
+    let (dom, d) = doc(&format!("<body><div class=page id=page><table><tbody>{rows}</tbody></table></div></body>"));
+    let opts = RenderHtml { style_text: &|_| None, stylesheet_href: &|_| None, mark: None, adopted: None };
+    let page = find(&dom.borrow(), d, "#page");
+    let body = find(&dom.borrow(), d, "body");
+    let td = find(&dom.borrow(), d, "td");
+    let text = dom.borrow().first_child(td).unwrap().unwrap();
+    let version = dom.borrow().version();
+    {
+        let mut dom = dom.borrow_mut();
+        dom.set_attribute(page, "style", "width: 607px").unwrap();
+        dom.set_attribute(body, "class", "dark").unwrap();
+        dom.set_char_data(text, "changed").unwrap();
+    }
+    let after = dom.borrow().render_tree(d, &opts).unwrap();
+    let delta = dom.borrow().render_delta(d, version, &opts).expect("incremental");
+    let mut keys: Vec<u64> = delta
+        .ops
+        .iter()
+        .map(|op| match op {
+            DeltaOp::Node { key, kind } => {
+                let fresh = after.nodes.iter().find(|n| n.key == *key).expect("rendered");
+                assert_eq!(*kind, fresh.kind, "op for {key:#x}");
+                *key
+            }
+            other => panic!("{other:?}"),
+        })
+        .collect();
+    keys.sort_unstable();
+    let mut want = vec![render_key(page), render_key(body), render_key(text)];
+    want.sort_unstable();
+    assert_eq!(keys, want);
+}

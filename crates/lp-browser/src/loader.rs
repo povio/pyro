@@ -288,9 +288,9 @@ impl ResourceLoader for NetLoader {
             req.origin = Some(
                 request
                     .frame_id
-                    .as_ref()
-                    .and_then(|id| browser.frame(request.page, &crate::FrameId(id.clone())))
-                    .map_or_else(|| "null".into(), |f| f.origin),
+                    .as_deref()
+                    .and_then(|id| frame_origin(browser, request.page, id))
+                    .unwrap_or_else(|| "null".into()),
             );
         }
         if request.kind == ResourceKind::Stylesheet {
@@ -311,11 +311,7 @@ impl ResourceLoader for NetLoader {
             if let Ok(value) = lp_net::http::HeaderValue::from_str(&content_type) {
                 req.headers.insert(lp_net::http::header::CONTENT_TYPE, value);
             }
-            req.origin = request
-                .frame_id
-                .as_ref()
-                .and_then(|id| browser.frame(request.page, &crate::FrameId(id.clone())))
-                .map(|f| f.origin);
+            req.origin = request.frame_id.as_deref().and_then(|id| frame_origin(browser, request.page, id));
         }
         // Resource Timing: an iframe navigation's entry goes to the parent,
         // so its TAO check runs against the parent's origin, not `origin`
@@ -547,7 +543,15 @@ fn requesting_document(browser: &Browser, request: &FetchRequest) -> Option<Rc<l
 fn parent_origin(browser: &Browser, page: PageId, frame_id: Option<&str>) -> Option<String> {
     let key = browser.page(page)?.frames.key_of(frame_id?)?;
     let parent = browser.doc(key)?.main_frame.parent.clone()?;
-    browser.frame(page, &parent).map(|f| f.origin)
+    frame_origin(browser, page, &parent.0)
+}
+
+/// The serialized origin of frame `id`'s document, read in place (the
+/// loader asks for it on every subresource; `Browser::frame` would clone
+/// the whole frame, realms included, to answer).
+fn frame_origin(browser: &Browser, page: PageId, id: &str) -> Option<String> {
+    let key = browser.page(page)?.frames.key_of(id)?;
+    Some(browser.doc(key)?.main_frame.origin.clone())
 }
 
 /// (MIME, body, response delay) per URL.
@@ -669,8 +673,10 @@ enum ParsePhase {
 pub(crate) struct DocumentLoad {
     pub loader_id: LoaderId,
     url: String,
-    dom: DomRef,
-    parser: Option<DocumentParser>,
+    pub(crate) dom: DomRef,
+    pub(crate) parser: Option<DocumentParser>,
+    /// Requests started ahead of the parser (`speculate`).
+    pub(crate) speculation: crate::speculate::Speculation,
     phase: ParsePhase,
     blocked: bool,
     stylesheet_blocked_script: Option<Rc<ResourceNode>>,
@@ -739,7 +745,7 @@ impl ModuleFetcher for PageModuleFetcher {
                 };
                 let r = match res {
                     Ok(text) => lp_webapi::module_script::complete(&scope, request, &text),
-                    Err(e) => request.reject(&scope, &JsError::Type(e)),
+                    Err(e) => request.reject(&scope, &JsError::type_error(e)),
                 };
                 match &r {
                     Ok(()) => module_trace!("handed to engine {traced}"),
@@ -772,8 +778,9 @@ pub(crate) fn origin_of(url: &str) -> String {
     }
 }
 
-fn resolve_url(base: &str, href: &str) -> Option<String> {
-    url::Url::parse(base).ok()?.join(href).ok().map(|u| u.to_string())
+pub(crate) fn resolve_url(base: &str, href: &str) -> Option<String> {
+    // `String::from` takes the serialization; `to_string` would copy it.
+    url::Url::parse(base).ok()?.join(href).ok().map(String::from)
 }
 
 /// The object a `blob:` URL names, from the blob URL store of a document of
@@ -792,8 +799,13 @@ fn blob_body(browser: &Browser, page: PageId, url: &str) -> Option<lp_net::BlobB
 /// The base URL `node`'s document resolves its URLs against: its first
 /// `<base href>`, else the document's fallback base URL.
 pub(crate) fn node_base_url(dom: &lp_dom::Dom, node: NodeId) -> Option<String> {
+    node_base_str(dom, node).map(str::to_owned)
+}
+
+/// [`node_base_url`] borrowed from the DOM.
+fn node_base_str(dom: &lp_dom::Dom, node: NodeId) -> Option<&str> {
     let doc = dom.node_document(node).ok()?;
-    dom.document_base_url(doc).ok().map(str::to_owned)
+    dom.document_base_url(doc).ok()
 }
 
 /// The `integrity` and `crossorigin` attributes a script fetch honours.
@@ -901,7 +913,7 @@ impl Browser {
         history: HistoryHandling,
     ) -> Result<(), JsError> {
         let Some(loader) = self.loader_for(page) else {
-            return Err(JsError::Unsupported("navigation without a resource loader"));
+            return Err(JsError::Unsupported(&"navigation without a resource loader"));
         };
         let frame_id = self.doc(page).map(|p| p.main_frame.id.0.clone());
         // Not an automation client's (`Page.navigate`) or a traversal, which
@@ -1087,7 +1099,7 @@ impl Browser {
         } else {
             DocumentParser::new(dom.clone(), doc, !page_dom.scripting_disabled())
         }
-        .map_err(|e| JsError::Type(format!("{e:?}")))?;
+        .map_err(|e| JsError::type_error(format!("{e:?}")))?;
         parser.set_transport_charset(resource.charset.as_deref());
         let mut p = self.doc_mut(page).ok_or(JsError::Type("no such page".into()))?;
         p.main_frame.dom = Some(dom.clone());
@@ -1098,6 +1110,7 @@ impl Browser {
             url: p.main_frame.base_url.clone(),
             dom,
             parser: Some(parser),
+            speculation: Default::default(),
             phase: ParsePhase::Feed(resource.body),
             blocked: false,
             stylesheet_blocked_script: None,
@@ -1114,11 +1127,11 @@ impl Browser {
         Ok(())
     }
 
-    fn load_mut(&mut self, page: FrameKey) -> Option<crate::frames::StateMut<'_, DocumentLoad>> {
+    pub(crate) fn load_mut(&mut self, page: FrameKey) -> Option<crate::frames::StateMut<'_, DocumentLoad>> {
         self.doc_mut(page)?.filter_map(|p| p.load.as_mut())
     }
 
-    fn current_loader(&self, page: FrameKey) -> Option<LoaderId> {
+    pub(crate) fn current_loader(&self, page: FrameKey) -> Option<LoaderId> {
         self.doc(page)?.load.as_ref().map(|l| l.loader_id.clone())
     }
 
@@ -1165,6 +1178,7 @@ impl Browser {
                                 p.end();
                             }
                             load.parsing_done = true;
+                            load.speculation.end_of_parsing();
                             drop(load);
                             if let Some(dom) = self.doc(page).and_then(|p| p.main_frame.page_dom.clone()) {
                                 dom.set_parser_position(None);
@@ -1198,6 +1212,13 @@ impl Browser {
             if load.dom.borrow_mut().add_ref(node).is_ok() {
                 load.stylesheet_blocked_script = Some(Rc::new(ResourceNode { dom: load.dom.clone(), node }));
                 load.blocked = true;
+                drop(load);
+                // The script's fetch, and the requests after it, overlap the
+                // stylesheets' (the script runs when they are done).
+                if !self.doc(page).is_some_and(|d| d.main_frame.sandbox.scripts_disabled) {
+                    self.speculate_script(page, node);
+                    self.speculate_ahead(page);
+                }
                 return;
             }
         }
@@ -1262,8 +1283,11 @@ impl Browser {
         let src_url = match info.src.as_deref() {
             Some(s) => {
                 // `<base href>` aware; the inline-script URL stays `base`.
-                let src_base = node_base_url(&element.dom.borrow(), node).unwrap_or_else(|| base.clone());
-                match resolve_url(&src_base, s) {
+                let resolved = {
+                    let dom = element.dom.borrow();
+                    resolve_url(node_base_str(&dom, node).unwrap_or(&base), s)
+                };
+                match resolved {
                     Some(u) => Some(u),
                     None => return, // spec: error event (needs lp-webapi)
                 }
@@ -1308,6 +1332,7 @@ impl Browser {
                     }
                     b.continue_parsing(page);
                 });
+                self.speculate_ahead(page);
             }
             (ScriptType::Module, Some(url)) if info.async_ => {
                 self.fetch_async(page, ty, url, element, ScriptFetch::of(&info))
@@ -1376,8 +1401,9 @@ impl Browser {
             module,
             part: None,
         };
-        loader.fetch(
-            self,
+        let cancel = self.fetch_document_resource(
+            page,
+            &loader,
             req,
             Box::new(move |b, res| {
                 let res = match res {
@@ -1388,7 +1414,9 @@ impl Browser {
                                 let origin = b.doc(page).map(|p| p.main_frame.origin.clone()).unwrap_or_default();
                                 integrity_error(&r, Some(i), cors, &origin)
                             })
-                            .or_else(|| module.and_then(|ty| lp_webapi::module_script::mime_error(ty, &r.mime, &r.url)));
+                            .or_else(|| {
+                                module.and_then(|ty| lp_webapi::module_script::mime_error(ty, &r.mime, &r.url))
+                            });
                         match blocked {
                             Some(e) => Err(e),
                             // A module script is UTF-8 whatever its charset
@@ -1403,6 +1431,9 @@ impl Browser {
                 done(b, res)
             }),
         );
+        if let Some(cancel) = cancel {
+            cancel.disarm();
+        }
     }
 
     fn fetch_deferred(
@@ -1574,8 +1605,11 @@ impl Browser {
                 return;
             }
             Some(s) => {
-                let src_base = node_base_url(&element.dom.borrow(), node).unwrap_or_else(|| base.clone());
-                match resolve_url(&src_base, s) {
+                let resolved = {
+                    let dom = element.dom.borrow();
+                    resolve_url(node_base_str(&dom, node).unwrap_or(&base), s)
+                };
+                match resolved {
                     Some(u) => Some(u),
                     None => {
                         self.script_loaded(page, &element, false);
@@ -1962,10 +1996,8 @@ impl Browser {
             info
         };
         let base = self.doc(page).map(|p| p.main_frame.base_url.clone()).unwrap_or_default();
-        let src_url = info.src.as_deref().and_then(|s| {
-            let src_base = node_base_url(&dom.borrow(), node).unwrap_or_else(|| base.clone());
-            resolve_url(&src_base, s)
-        });
+        let src_url =
+            info.src.as_deref().and_then(|s| resolve_url(node_base_str(&dom.borrow(), node).unwrap_or(&base), s));
         let blocking = bindings.written_script_pending() == Some(node);
         let Some(url) = src_url else {
             if blocking {
@@ -2082,7 +2114,7 @@ impl Browser {
             promise,
             move |_s, _v| ok(true),
             move |s, e| {
-                s.report_exception(&JsError::Thrown(Persistent::new(s, e)));
+                s.report_exception(&JsError::thrown(Persistent::new(s, e)));
                 err(false)
             },
         );
@@ -2103,14 +2135,14 @@ impl Browser {
     fn report_load_error(&mut self, page: FrameKey, error: &str) {
         let Some(realm) = self.main_realm(page) else { return };
         let Ok(scope) = realm.scope() else { return };
-        lp_webapi::lifecycle::report_diagnostic(&scope, &JsError::Type(format!("Failed to load script: {error}")));
+        lp_webapi::lifecycle::report_diagnostic(&scope, &JsError::type_error(format!("Failed to load script: {error}")));
     }
 
     /// A subresource failure the console reports (no `error` event at the Window).
     pub(crate) fn report_console_error(&mut self, page: FrameKey, error: &str) {
         let Some(realm) = self.main_realm(page) else { return };
         let Ok(scope) = realm.scope() else { return };
-        lp_webapi::lifecycle::report_diagnostic(&scope, &JsError::Type(error.to_owned()));
+        lp_webapi::lifecycle::report_diagnostic(&scope, &JsError::type_error(error.to_owned()));
     }
 }
 

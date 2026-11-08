@@ -1853,9 +1853,11 @@ impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
             let derive =
                 replaced && (old_primary.is_none() || LayoutStyles::affected_by(data.damage));
             // A table without uniform collapsed borders resolves their colours when it collects
-            // its rows (`CollapsedEdges`): a paint-only restyle of a table part that changes its
-            // borders or `color` collects its row again. Upstream gave every attribute change
-            // layout damage, which hid this.
+            // its rows (`CollapsedEdges`): a paint-only restyle of a table part that changes the
+            // colour of one of its borders (a border colour, or `color` under a `currentColor`
+            // border) collects its row again, with the text in its cells shaped as it was
+            // (`BOX_DAMAGE`). Its widths and styles reach layout on their own. Upstream gave
+            // every attribute change layout damage, which hid this.
             let collapsed_edges_changed = !derive
                 && match (&old_primary, new_primary) {
                     (Some(old), Some(new)) if replaced => {
@@ -1864,8 +1866,7 @@ impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
                         new.get_inherited_table().border_collapse == BorderCollapse::Collapse
                             && (display.outside() == style::values::specified::box_::DisplayOutside::InternalTable
                                 || display.inside() == style::values::specified::box_::DisplayInside::Table)
-                            && (old.get_border() != new.get_border()
-                                || old.get_inherited_text().color != new.get_inherited_text().color)
+                            && resolved_border_colors(old) != resolved_border_colors(new)
                     }
                     _ => false,
                 };
@@ -1889,7 +1890,7 @@ impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
                 }
             }
             if collapsed_edges_changed {
-                data.damage.insert(crate::layout::damage::ALL_DAMAGE);
+                data.damage.insert(crate::layout::damage::BOX_DAMAGE);
             }
             let after = &context.thread_local.statistics;
             crate::resolve::phase_profile::style_stats([
@@ -2054,6 +2055,25 @@ fn sync_pseudo_element_styles(
         pe_data.styles.primary = Some(pe_style);
         pe_data.set_restyled();
     }
+}
+
+/// The colours of a style's four visible borders (top, right, bottom, left; `None` for one with no
+/// width or style) with `currentColor` resolved: what a collapsed table's `CollapsedEdges` keep of
+/// them.
+fn resolved_border_colors(style: &ComputedValues) -> [Option<AbsoluteColor>; 4] {
+    use style::values::computed::{BorderStyle, Color};
+    let border = style.get_border();
+    let current = style.clone_color();
+    let resolve = |width: f32, border_style: BorderStyle, color: &Color| {
+        (width > 0.0 && !matches!(border_style, BorderStyle::None | BorderStyle::Hidden))
+            .then(|| color.resolve_to_absolute(&current))
+    };
+    [
+        resolve(border.border_top_width.0.to_f32_px(), border.border_top_style, &border.border_top_color),
+        resolve(border.border_right_width.0.to_f32_px(), border.border_right_style, &border.border_right_color),
+        resolve(border.border_bottom_width.0.to_f32_px(), border.border_bottom_style, &border.border_bottom_color),
+        resolve(border.border_left_width.0.to_f32_px(), border.border_left_style, &border.border_left_color),
+    ]
 }
 
 /// Whether a node's `background-image`/`mask-image` layers need flushing to

@@ -59,7 +59,14 @@ against the upstream commit above); they are covered by lp-render's rendering te
   only moved (its location alone changed: the rows below a table cell that grew) is marked on its ancestors, not on
   itself: what it holds in its own coordinates (scrollable overflow, its subtree's layouts) is unchanged, so
   `resolve_layout_children`, `resolve_transforms` and `clear_damage_and_dirty_flags` no longer descend into every
-  moved subtree. Its rounding still follows the move: the `rounded_from` key holds its location.
+  moved subtree. Its rounding still follows the move: the `rounded_from` key holds its location. The key's offset
+  is the fractional part of the parent's absolute position, and `rounded_layout` rounds relative to the pixel grid
+  (half up, as Blink), so the subtree of a box moved by whole pixels is not rounded again either: an edit of a cell
+  in a 200-row table reaches the cells of the rows below, not what is in them
+  (`rounding_skips_subtrees_moved_by_whole_pixels`). `Node::mark_layout_changed` stops at a node already flagged,
+  as `mark_damaged` does: a flag is only set with its ancestors' and cleared after those below it, which debug
+  builds assert at both early exits (`debug_assert_ancestors_flagged`; anonymous boxes' flags are not maintained
+  and are passed through). The rows below a cell that grew walked to the document each, thousands of times per edit.
   A transform resolves against the rounded size (`Node::set_transform`), which a fractional move of the box or an
   ancestor can change: `LayoutPassState::set_final_layout` marks a box with a transform style
   (`Node::has_transform_style`; one that was the identity at the old size is stored as no transform) whose rounded
@@ -311,7 +318,13 @@ its inputs.
   content width they were measured for (`CellWidths`), and so are the columns' widths summed from them. A cell that
   changed is measured again; a column's widths are summed again only when a cell that set them got narrower. Once
   more cells changed than it holds widths for, it drops them all (every cell is measured again), possibly halfway
-  through `update_rows`, so each row replacement checks again whether the widths still follow the cells.
+  through `update_rows`, so each row replacement checks again whether the widths still follow the cells. Another
+  table content width (a shrink-to-fit table whose container got wider or narrower) changes the intrinsic widths of
+  the cells with a percentage or `calc()` `width`, `min-width`, `max-width`, padding or margin of their own alone
+  (`TableCell::percent_lengths`): those are measured again, the others keep their widths. With the same columns and
+  cells and only the available width changed, the grid's last layout stands (`table_reuse::stands` in Taffy;
+  `store_table_grid_state` counts no layout for a state marked `stood`). Covered by
+  `tables_keep_their_layout_when_only_the_available_width_changes` in `crates/lp-render/tests/mirror.rs`.
 - The grid is laid out again from its last layout when the columns are the same (see "Table grids laid out again
   from their last layout" in `vendor/taffy/README.lightningpanda.md`): `take_table_grid_state` gives back the cells
   that changed (`TableContext::changed_cells`) and the rows replaced since (`grid_splice`: one replacement between
@@ -432,6 +445,46 @@ layouts (`getBoundingClientRect` and the like) builds it once, not once per reso
 build of every node, tables visited as any box. Covered by lp-render's `settle_resolution_tests`
 (`resolve_leaves_the_paint_tree_to_the_first_hit_test`, `element_from_point_sees_every_resolve_since_the_last_paint`).
 
+## Bounds for hit testing by tree descent
+
+lp-render answers `elementFromPoint` by descending the tree from the root and skipping the subtrees whose bound
+cannot hold the point (`crates/lp-render/src/hit.rs`), instead of reading every element's box. The bound of a box
+is its border box and its hit overflow, kept by the transform pass next to the scrollable overflow; and two things
+are exposed:
+
+- `src/resolve.rs` (`resolve_transforms`, `unite_hit`, `glyph_reach`), `src/node/element.rs`
+  (`LayoutData::hit_overflow`), `src/node/text.rs` (`TextLayout::hit_reach`), `src/layout/inline/layout.rs`:
+  `resolve_transforms` returns, besides a box's contribution to its parent's scrollable overflow, its contribution
+  to the parent's hit overflow, and keeps the box's own (`Node::hit_overflow`, device px, like
+  `scrollable_overflow`). It is the scrollable overflow except for two things. First, the contributions of no area
+  that have a width or a height count (`unite_hit`; `unite_overflow` drops them for the scroll size: a 2000 x 0 px
+  box does not make a page scroll, but text overflowing sideways on lines of `line-height: 0`, or a zero-width
+  box, is hit). Second, an inline formatting context's glyph runs reach outside its line boxes (a tight
+  `line-height` puts the whole-pixel ascent and descent past the line box; hanging white space past the line's
+  advance), and layout queries report an inline element's box from those content areas (lp-render's
+  `Geometry::inline_items`): the hit overflow holds the line boxes grown by the largest such reach of the context
+  (`glyph_reach`, plus a layout unit of advance rounding). The reach is measured per line (past the line's start,
+  end and block extent), which aligning does not change, by the first transform pass after the lines were broken
+  (`TextLayout::hit_reach`: breaking resets it, a rebuilt `TextLayout` starts without it, and so does aligning when
+  it justifies now or did before, `TextLayout::justified`), so a pass over a context whose lines did not break again
+  (an anonymous block visited again, a cell relaid at the same width) does not go over its glyph runs. Overflow
+  clips apply to the hit overflow as to the scrollable one (`overflow_contributions` reads the style once for
+  both; a box placed by a translation alone adds its location instead of going through `transform_rect_bbox`,
+  which gives the same values: `placement`).
+- `src/resolve.rs` (`table_cells_overflow`), `src/layout/table.rs` (`PlacedCells::hit`,
+  `PlacedCells::row_overflow`, `TableContext::row_hit_extents`): rows and row groups have no box, and a cell can
+  span later rows, so a row's bound is the union of the hit contributions of the cells originating in it (kept per
+  cell in `PlacedCells::hit`, next to the per-cell overflow the transform pass already keeps), kept per row,
+  recomputed for the rows of the cells transformed again (all rows when the rows changed: `splice` clears it). A table whose cells the pass does not keep
+  (`keeps_cells`) reports none and lp-render computes the contributions from the cells.
+- `src/document.rs` (`sticky_node_ids`): the sticky set behind `has_sticky`, so lp-dom learns the sticky
+  elements without a pass over the document; `BaseDocument::overflow_contribution` is `pub` for the table
+  fallback above.
+
+Covered by `crates/lp-layout/tests/hit_descent.rs` and `hit_adversarial.rs` (the descent against the scan of every
+box, also on random pages) and `crates/lp-render/tests/mirror.rs` (`deltas_on_long_tables_and_lists_match_fresh_builds`, which compares the descent's
+candidates of a delta-synced document with a fresh build's).
+
 ## Line breaking resumes after the lines whose text did not change
 
 `src/layout/construct.rs`, `src/resolve.rs`, `src/layout/inline/build.rs`, `src/layout/inline/layout.rs`: an inline
@@ -444,6 +497,65 @@ the text bytes the breaker went over. Covered by `crates/lp-render/tests/line_br
 `TextLayout::content_widths`, a memo nothing read (intrinsic sizing and list markers call
 `calculate_content_widths`), is gone with `Node::invalidate_layout_cache`, which only cleared it besides the layout
 cache (`clear_layout_cache`).
+
+## Content widths kept with the shaped text
+
+`src/node/text.rs`, `src/layout/inline/build.rs`, `src/layout/inline/layout.rs`: `calculate_content_widths` walks
+every cluster, and inline layout called it once per measurement (min-content, max-content) and once per layout (for
+the slack it gives the line breaker when content is sized to fit): three walks per cell and width on a table
+resize, 9-10% of the pass. The min-content and max-content widths of a layout without in-flow inline boxes depend on
+the shaped text and the text indent alone, so `build_inline_layout_into` measures them once, with no indent, as part
+of the build (`TextLayout::text_content_widths`, part of the shaped text and replaced with it), and
+`TextLayout::content_widths(indent)` answers from them with no indent set, else measures. Layouts with in-flow
+inline boxes, whose sizes each measurement sets, keep measuring. Debug builds check the kept widths against a
+measurement at every read. Covered by `content_widths_kept_with_the_shaped_text_match_fresh_builds` in
+`crates/lp-render/tests/mirror.rs`.
+
+## Paint-only restyles run no layout and shape no text
+
+`src/layout/damage.rs`, `src/stylo.rs`, `src/layout/construct.rs`, `src/layout/table.rs`, `src/node/node.rs`: a restyle
+that changes only what paints (colour, background, outline, `visibility`, opacity, text decorations, box shadows, a
+border's colour, `:hover`, a class on `body` that recolours a table) used to run a Taffy pass, collect the cell's row
+again and shape its text again. Three causes, each fixed where it is:
+
+- Stylo's property table gave every longhand without an explicit `servo_restyle_damage` the `rebuild_box` (relayout)
+  damage: `border-*-color`, `visibility`, `box-shadow`, the border radii, `mask-*`, `appearance`, `scrollbar-color`,
+  ... The vendored stylo derives the default from each property's `affects` (see
+  `vendor/stylo/README.lightningpanda.md`), so a paint property's change is `REPAINT` and never reaches
+  `compute_layout_damage`. `compute_layout_damage` no longer rebuilds the box for `visibility` (nothing in layout
+  reads it: hit testing and paint read the style).
+- A collapsed table resolves the colours of its borders into `CollapsedEdges` when it collects a row, so
+  `RecalcStyle::process_preorder` gave a table part whose border struct or `color` changed full damage: `color` on a
+  cell with `border: 1px solid #ddd` collected its row and shaped its text again. It now compares the four borders'
+  resolved colours (`resolved_border_colors`: `currentColor` resolved, invisible borders ignored) and gives
+  `BOX_DAMAGE` only when one changed.
+- `RestyleDamage` has a new bit, `INLINE_CONTENT`: the node's text, the styles it is shaped with, its children or a
+  box among them changed. It is part of `ALL_DAMAGE` and `CHILDREN_CHANGED` (so mutations, new nodes, font and
+  text-style changes carry it) and propagates to every ancestor. `BOX_DAMAGE` is `ALL_DAMAGE` without it: a box
+  built again with its inline content as it was, which `compute_layout_damage` gives a table part (or table) whose
+  layout style changed (the table keeps the part's layout style in its `TableContext`; it used to give `ALL_DAMAGE`
+  from `box_tree_needs_rebuild`, which shaped the cell's text again) and `process_preorder` a collapsed border's
+  colour change. An inline root collected again whose damage, read after
+  `flush_pseudo_elements`, has no `INLINE_CONTENT` keeps its `TextLayout` instead of queueing a rebuild; debug
+  builds shape it again and assert the text, text nodes and inline boxes are the same, and that the
+  content widths kept with the shaped text (`TextLayout::text_content_widths`) are what the new build measures
+  (`assert_kept_inline_layout_is_current`). `white-space: nowrap` (`text-wrap-mode`) and a span's `vertical-align`
+  (the `baseline-*` longhands) are shaped into the parley layout and gave `RELAYOUT` only, so the layout kept the old
+  value: `text_shaping_needs_recollect` rebuilds for them too.
+- `NodeFlags::OWN_LAYOUT_DAMAGE`: `OWN_DAMAGE` whose damage reaches layout (`damage::reaches_layout`: relayout,
+  construction, reordering), set and cleared with it. Tables read it in place of `OWN_DAMAGE` (`row_changed`,
+  `group_changes`, `update_table_context`, `update_rows`): a cell or a table whose colour, background or opacity
+  changed is no changed row and no reason to build the table again. `note_changed_table_cell` notes such a cell for
+  the transform pass and the paint tree (`PlacedCells::damaged`) but not as a cell to measure and lay out again. Whether
+  the damage reaches layout is read before `ONLY_RELAYOUT` is dropped from the stored damage: a cell relaid out
+  for a change inside it (a block's width, an inline-block's width) is a changed cell.
+
+On a 1,200-row collapsed table, a `color` toggle on a cell no longer runs layout (0.45 ms to the restyle's cost),
+`.dark td { color }` on `body` no longer shapes 2,400 inline layouts, and a `padding` change on every cell shapes
+none. `crates/lp-render/tests/mirror.rs`: `paint_only_restyles_run_no_layout_and_match_fresh_builds` (every paint
+property on cells, inline roots, flex and grid items, floats and absolutely positioned boxes, synced as deltas:
+boxes, document size and paint against a fresh build, no layout algorithm run, no text shaped, the paint changed)
+and `text_style_changes_shape_again_and_match_fresh_builds`.
 
 ## Moving from 0.3.0-beta.4 to main
 

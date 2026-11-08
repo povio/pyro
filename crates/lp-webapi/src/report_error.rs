@@ -17,7 +17,7 @@ pub fn report_error<'s>(
     if a.len() == 0 {
         return Err(JsError::Type(format!(
             "Failed to execute 'reportError' on '{interface}': 1 argument required, but only 0 present."
-        )));
+        ).into()));
     }
     let value = a.get(0);
     // `this`'s relevant global: `otherWindow.reportError` called with a
@@ -36,6 +36,6 @@ fn report<'s>(s: &Scope<'s>, value: Value<'s>, window: bool) {
     if window {
         crate::observable::report_exception(s, value);
     } else {
-        s.report_exception(&JsError::Thrown(Persistent::new(s, value)));
+        s.report_exception(&JsError::thrown(Persistent::new(s, value)));
     }
 }

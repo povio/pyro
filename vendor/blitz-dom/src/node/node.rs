@@ -62,7 +62,8 @@ bitflags! {
         const IS_INLINE_WITH_ONLY_BLOCK_CHILDREN = 0b00001000;
         /// lightningpanda: the node had damage of its own (a mutation or a restyle), not only its
         /// descendants', when this pass propagated damage. Set by `propagate_damage_flags`, cleared
-        /// with the damage; tables read it to rebuild only the rows and cells that changed.
+        /// with the damage; the paint tree reads it (`PAINT_TREE_OWN_DAMAGE`), tables read
+        /// `OWN_LAYOUT_DAMAGE`.
         const OWN_DAMAGE = 0b00010000;
         /// The node's `paint_children`, `stacking_context` or
         /// `sc_contribution_cache` may be out of date: some resolve since the
@@ -75,6 +76,11 @@ bitflags! {
         /// reads it where it used to read `OWN_DAMAGE`, which each resolve clears
         /// (`table_paint_children_kept`). Set and cleared with `PAINT_TREE_DIRTY`.
         const PAINT_TREE_OWN_DAMAGE = 0b01000000;
+        /// lightningpanda: `OWN_DAMAGE` whose damage reaches layout (`damage::reaches_layout`:
+        /// relayout, construction, reordering), not only paint. Tables read it to tell a cell or
+        /// row that is to be collected again from one whose colour, background or opacity
+        /// changed. Set and cleared with `OWN_DAMAGE`.
+        const OWN_LAYOUT_DAMAGE = 0b10000000;
     }
 }
 
@@ -321,6 +327,17 @@ impl Node {
     #[inline]
     pub fn scrollable_overflow_mut(&mut self) -> &mut KurboRect {
         &mut self.layout_data_mut().scrollable_overflow
+    }
+
+    /// lightningpanda: see `LayoutData::hit_overflow`.
+    #[inline]
+    pub fn hit_overflow(&self) -> &KurboRect {
+        &self.layout_data().hit_overflow
+    }
+
+    #[inline]
+    pub fn hit_overflow_mut(&mut self) -> &mut KurboRect {
+        &mut self.layout_data_mut().hit_overflow
     }
 
     /// Style data from stylo, if this node kind carries it (element or document
@@ -701,6 +718,8 @@ impl Node {
     pub fn mark_damaged(&self) {
         if let Some(flag) = self.damaged_descendants_flag() {
             if flag.swap(true, Ordering::Relaxed) {
+                #[cfg(debug_assertions)]
+                self.debug_assert_ancestors_flagged(self);
                 return;
             }
         }
@@ -711,6 +730,8 @@ impl Node {
             // because all further ancestors must also have it set
             if let Some(flag) = parent.damaged_descendants_flag() {
                 if flag.swap(true, Ordering::Relaxed) {
+                    #[cfg(debug_assertions)]
+                    self.debug_assert_ancestors_flagged(parent);
                     break;
                 }
             }
@@ -718,17 +739,52 @@ impl Node {
         }
     }
 
-    /// [`Self::mark_damaged`], all the way up: a flag can outlast its ancestors' (a node moved
-    /// while flagged), and rounding must never miss a change.
-    /// Marks `from` and its ancestors as having damaged descendants.
+    /// [`Self::mark_damaged`], from `from`: marks it and its ancestors as having damaged
+    /// descendants (a layout change: `update_unrounded_layout`, a rounded size a transform
+    /// resolves against).
+    ///
+    /// lightningpanda: the walk stops at a node already flagged, as `mark_damaged` does. A flag is
+    /// only set together with those of every ancestor (here, in `mark_damaged`, and a node joining
+    /// the tree flags its new parent: `add_children_to_parent`), and
+    /// `clear_damage_and_dirty_flags` clears a node's flag after those below it, so a flagged
+    /// node's ancestors are flagged. The rows below a cell that grew used to walk to the document
+    /// each: thousands of walks per edit of a long table. An anonymous box's flag is not maintained
+    /// (`rounded_unchanged`): the walk goes on past it.
     pub(crate) fn mark_layout_changed(&self, from: Option<NodeId>) {
         let mut current = from;
         while let Some(id) = current {
             let node = &self.tree()[id];
             if let Some(flag) = node.damaged_descendants_flag() {
-                flag.store(true, Ordering::Relaxed);
+                if flag.swap(true, Ordering::Relaxed) && !node.is_anonymous() {
+                    #[cfg(debug_assertions)]
+                    self.debug_assert_ancestors_flagged(node);
+                    return;
+                }
             }
             current = node.parent;
+        }
+    }
+
+    /// The invariant the early exits of [`Self::mark_damaged`] and [`Self::mark_layout_changed`]
+    /// rely on: a flagged node's ancestors are flagged (anonymous boxes' flags aside, which are
+    /// not maintained). A violation leaves a flag, and the damage below it, out of reach of
+    /// `clear_damage_and_dirty_flags` and lets rounding skip a subtree whose layout changed.
+    #[cfg(debug_assertions)]
+    fn debug_assert_ancestors_flagged(&self, flagged: &Node) {
+        let mut current = flagged.parent;
+        while let Some(id) = current {
+            let ancestor = &self.tree()[id];
+            if let Some(flag) = ancestor.damaged_descendants_flag() {
+                debug_assert!(
+                    flag.load(Ordering::Relaxed) || ancestor.is_anonymous(),
+                    "{:?} ({:?}) has damaged_descendants set while its ancestor {:?} ({:?}) has not",
+                    flagged.id,
+                    flagged.data.downcast_element().map(|el| &el.name.local),
+                    ancestor.id,
+                    ancestor.data.downcast_element().map(|el| &el.name.local),
+                );
+            }
+            current = ancestor.parent;
         }
     }
 

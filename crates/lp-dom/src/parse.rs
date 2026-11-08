@@ -523,6 +523,17 @@ pub struct DocumentParser {
     sniff: Vec<u8>,
     /// Outer input set aside by `open_insertion_point` (innermost last).
     saved: Vec<BufferQueue>,
+    /// Bytes appended to the back of the network input (`feed`,
+    /// `push_input` outside an insertion point) since creation: with
+    /// `unconsumed_input`, a preload scan tells apart input it has not
+    /// seen at the front (written) from input at the back.
+    appended: usize,
+    /// The least `outer input length - appended` at the times written
+    /// input was put in front of the network input (`close_insertion_point`
+    /// with input left over), since `take_written_low_mark`: the network
+    /// input consumed meanwhile is only measurable then, as written input
+    /// is consumed before it.
+    written_low_mark: Option<isize>,
     /// An XML document: the response is parsed whole at end of input, then
     /// its scripts are yielded one by one.
     xml: Option<XmlLoad>,
@@ -604,6 +615,8 @@ impl DocumentParser {
             decoded: String::new(),
             sniff: Vec::new(),
             saved: Vec::new(),
+            appended: 0,
+            written_low_mark: None,
             xml: None,
         })
     }
@@ -734,9 +747,56 @@ impl DocumentParser {
             return ParseStep::NeedInput;
         }
         if !chunk.is_empty() {
+            if self.saved.is_empty() {
+                self.appended += chunk.len();
+            }
             self.input.push_back(StrTendril::from_slice(chunk));
         }
         self.resume()
+    }
+
+    /// Bytes ever appended to the back of the network input (not the
+    /// markup scripts wrote, which goes in front of what remains).
+    pub fn appended_input(&self) -> usize {
+        self.appended
+    }
+
+    /// Whether a script's insertion point is open (its writes are being
+    /// parsed; the network input is set aside).
+    pub fn in_insertion_point(&self) -> bool {
+        !self.saved.is_empty()
+    }
+
+    /// What the input held behind written markup, as the least
+    /// `length - appended_input()` seen each time a script's written input
+    /// was left in front of it since the last call (`None`: no such time).
+    /// A preload scan adds the appended count of its previous scan to tell
+    /// how much of what it scanned then is still unconsumed: the parser
+    /// consumes written input first, so only at those times is the input
+    /// behind it all network input.
+    pub fn take_written_low_mark(&mut self) -> Option<isize> {
+        self.written_low_mark.take()
+    }
+
+    /// The input the tokenizer has not consumed, front to back, as `f` sees
+    /// it; `None` inside an insertion point (a script is writing). Nothing
+    /// is consumed. The total length is the first value.
+    pub fn unconsumed_input<R>(&self, f: impl FnOnce(usize, &[&str]) -> R) -> Option<R> {
+        if !self.saved.is_empty() || self.xml.is_some() {
+            return None;
+        }
+        let mut chunks = Vec::new();
+        while let Some(chunk) = self.input.pop_front() {
+            chunks.push(chunk);
+        }
+        let views: Vec<&str> = chunks.iter().map(|c| &**c).collect();
+        let total = views.iter().map(|c| c.len()).sum();
+        let r = f(total, &views);
+        drop(views);
+        for chunk in chunks.into_iter().rev() {
+            self.input.push_front(chunk);
+        }
+        Some(r)
     }
 
     /// A script this parser yielded for is about to run: its
@@ -758,6 +818,19 @@ impl DocumentParser {
             rest.push(chunk);
         }
         self.input.swap_with(&outer);
+        if self.saved.is_empty() && !rest.is_empty() {
+            let mut outer_len = 0;
+            let mut chunks = Vec::new();
+            while let Some(chunk) = self.input.pop_front() {
+                outer_len += chunk.len();
+                chunks.push(chunk);
+            }
+            for chunk in chunks.into_iter().rev() {
+                self.input.push_front(chunk);
+            }
+            let mark = outer_len as isize - self.appended as isize;
+            self.written_low_mark = Some(self.written_low_mark.map_or(mark, |m| m.min(mark)));
+        }
         for chunk in rest.into_iter().rev() {
             self.input.push_front(chunk);
         }
@@ -766,6 +839,9 @@ impl DocumentParser {
     /// Queues input without tokenizing: a written blocking script is pending.
     pub fn push_input(&mut self, chunk: &str) {
         if !self.ended && !chunk.is_empty() {
+            if self.saved.is_empty() {
+                self.appended += chunk.len();
+            }
             self.input.push_back(StrTendril::from_slice(chunk));
         }
     }
@@ -885,13 +961,17 @@ fn parse_fragment_with(
 ) -> DomResult<NodeId> {
     let ctx = dom.check(context)?;
     let (ctx_name, ctx_attrs) = match &dom.n(ctx).kind {
-        NodeKind::Element(e) => (
+        // The tree builder reads one attribute of the context element: a
+        // MathML `annotation-xml`'s `encoding` (HTML integration point).
+        // Others' copies would only be parsed (id, classes) and dropped.
+        NodeKind::Element(e) if e.name.ns == ns!(mathml) && e.name.local == local_name!("annotation-xml") => (
             e.name.clone(),
             e.attrs
                 .iter()
                 .map(|a| Attribute { name: a.name.clone(), value: StrTendril::from_slice(&a.value) })
                 .collect::<Vec<_>>(),
         ),
+        NodeKind::Element(e) => (e.name.clone(), Vec::new()),
         _ => return Err(DomError::Type("fragment context must be an element")),
     };
     let owner = dom.n(ctx).owner_doc;
@@ -942,13 +1022,71 @@ pub fn set_inner_html(dom: &mut Dom, element: NodeId, html: &str) -> DomResult<(
         Some(e) if e.template_contents != NIL => dom.id_of(e.template_contents),
         _ => element,
     };
-    let ctx = if matches!(dom.n(i).kind, NodeKind::Element(_)) {
-        element
-    } else {
-        return Err(DomError::Type("innerHTML context must be an element"));
+    let ctx = match &dom.n(i).kind {
+        NodeKind::Element(e) => {
+            if parses_as_text(e, html) {
+                // What the fragment parser would build: one text node with
+                // the string (none for ""), replacing all children.
+                let text = if html.is_empty() {
+                    None
+                } else {
+                    let owner = dom.id_of(dom.n(i).owner_doc);
+                    Some(dom.create_text(owner, html)?)
+                };
+                return dom.replace_all(target, text);
+            }
+            element
+        }
+        _ => return Err(DomError::Type("innerHTML context must be an element")),
     };
     let frag = parse_fragment(dom, ctx, html)?;
     dom.replace_all(target, Some(frag))
+}
+
+/// Whether the HTML fragment parsing algorithm, run on `html` in the
+/// context of `ctx`, yields exactly one text node holding `html` (or nothing
+/// for ""): the input has no markup (`<`), no character reference (`&`) and
+/// nothing the input stream or tree builder rewrites (CR, NUL, a leading
+/// byte order mark, which html5ever's tokenizer drops), and the context puts
+/// the tokenizer in its data state and the tree builder "in body" (an HTML
+/// element that is no table part, `select`, `template`, `html`, `head`,
+/// `frameset` or a raw-text/RCDATA/plaintext element).
+fn parses_as_text(ctx: &ElementData, html: &str) -> bool {
+    if ctx.name.ns != ns!(html)
+        || html.starts_with('\u{feff}')
+        || html.bytes().any(|b| matches!(b, b'<' | b'&' | b'\r' | b'\0'))
+    {
+        return false;
+    }
+    !matches!(
+        ctx.name.local,
+        local_name!("table")
+            | local_name!("tbody")
+            | local_name!("thead")
+            | local_name!("tfoot")
+            | local_name!("tr")
+            | local_name!("td")
+            | local_name!("th")
+            | local_name!("caption")
+            | local_name!("colgroup")
+            | local_name!("col")
+            | local_name!("select")
+            | local_name!("template")
+            | local_name!("html")
+            | local_name!("head")
+            | local_name!("frameset")
+            | local_name!("frame")
+            | local_name!("title")
+            | local_name!("textarea")
+            | local_name!("style")
+            | local_name!("xmp")
+            | local_name!("iframe")
+            | local_name!("noembed")
+            | local_name!("noframes")
+            | local_name!("noscript")
+            | local_name!("script")
+            | local_name!("plaintext")
+    )
 }
 
 /// `Element.setHTMLUnsafe` / `ShadowRoot.setHTMLUnsafe`: as `innerHTML`, with

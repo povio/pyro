@@ -540,16 +540,16 @@ impl JsClass for CssStyleDeclaration {
             |s, st| Ok(s.string(&st.get("float"))),
             |_s, st, v| st.set("float", &dom_string(v)?, false),
         );
-        def.method("item", 1, |s, st, a| {
+        def.pure_method("item", 1, |s, st, a| {
             let i = to_u32(a.get(0))? as usize;
             Ok(s.string(st.block().names().get(i).map(String::as_str).unwrap_or("")))
         });
         def.indexed(|s, st, i| Ok(st.block().names().get(i as usize).map(|name| s.string(name))));
-        def.method("getPropertyValue", 1, |s, st, a| {
+        def.pure_method("getPropertyValue", 1, |s, st, a| {
             let name = property_arg(arg_string(&a, 0, "CSSStyleDeclaration.getPropertyValue")?);
             Ok(s.string(&st.get(&name)))
         });
-        def.method("getPropertyPriority", 1, |s, st, a| {
+        def.pure_method("getPropertyPriority", 1, |s, st, a| {
             let name = property_arg(arg_string(&a, 0, "CSSStyleDeclaration.getPropertyPriority")?);
             Ok(s.string(if st.important(&name) { "important" } else { "" }))
         });
@@ -1158,7 +1158,7 @@ impl JsClass for MediaList {
             |_s, sh, v| MediaList::set(sh, &null_to_empty(v)?),
         );
         def.getter("length", |s, sh| Ok(s.number(media_queries(&MediaList::text(sh)).len() as f64)));
-        def.method("item", 1, |s, sh, a| {
+        def.pure_method("item", 1, |s, sh, a| {
             let i = to_u32(a.get(0))? as usize;
             Ok(media_queries(&MediaList::text(sh)).get(i).map_or(s.null(), |q| s.string(q)))
         });
@@ -1183,7 +1183,7 @@ impl JsClass for MediaList {
             MediaList::set(sh, &queries.join(", "))?;
             Ok(s.undefined())
         });
-        def.method("toString", 0, |s, sh, _a| Ok(s.string(&MediaList::text(sh))));
+        def.pure_method("toString", 0, |s, sh, _a| Ok(s.string(&MediaList::text(sh))));
     }
 }
 
@@ -1451,7 +1451,7 @@ impl JsClass for StyleSheetList {
     type Parent = NoParent;
     fn define(def: &mut ClassDef<Self>) {
         def.getter("length", |s, root| Ok(s.number(StyleSheetList::owners(root).len() as f64)));
-        def.method("item", 1, |s, root, a| match StyleSheetList::owners(root).get(to_u32(a.get(0))? as usize) {
+        def.pure_method("item", 1, |s, root, a| match StyleSheetList::owners(root).get(to_u32(a.get(0))? as usize) {
             Some(&owner) => sheet_object(s, &root.page, owner),
             None => Ok(s.null()),
         });

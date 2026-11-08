@@ -287,6 +287,43 @@ impl FrameHost {
         let frame = self.frame(key).ok_or(JsError::ContextDestroyed)?;
         let dom = frame.page_dom.ok_or(JsError::ContextDestroyed)?;
         let class = self.window_class();
+        let (scripts, bindings) = {
+            let settings = self.settings.borrow();
+            let scripts: Vec<InitScript> = settings.scripts.iter().filter(|s| s.world == world).cloned().collect();
+            let bindings: Vec<Binding> =
+                settings.bindings.iter().filter(|b| b.applies_to(world.as_deref())).cloned().collect();
+            (scripts, bindings)
+        };
+        let options = RealmOptions {
+            name: world.clone().unwrap_or_default(),
+            global_class: Some(class),
+            origin: Some(frame.origin.clone()),
+        };
+        // An isolated world that nothing fills when its document is made
+        // (no init script with any source, no binding) is made when first
+        // entered: Playwright's utility world, announced for every document
+        // (`Page.addScriptToEvaluateOnNewDocument` with an empty source,
+        // then `Page.createIsolatedWorld`), is entered only by its actions,
+        // and a realm costs about 1.3 ms of CPU (as much as the main world).
+        // The realm exists now, with its id and origin, for the events and
+        // lookups; its context, bindings and init scripts (all empty) come
+        // with its first `scope()`, wherever that happens.
+        let deferred = world.is_some()
+            && bindings.is_empty()
+            && scripts.iter().all(|script| script.source.trim().is_empty());
+        if deferred {
+            let host = Rc::downgrade(self);
+            let (setup_nav, setup_dom, setup_world) = (nav, dom, world.clone());
+            let setup: lp_js::DeferredSetup = Box::new(move |realm: &Realm| {
+                let host = host.upgrade().ok_or(JsError::ContextDestroyed)?;
+                host.setup_realm(realm, key, setup_nav, &setup_dom)?;
+                host.finish_realm(realm, key, &setup_world, &[], &[])
+            });
+            let realm = Engine::defer_realm_in_current_thread(options, setup)?;
+            self.push_realm(key, world.clone(), &realm)?;
+            self.emit(PageEvent::RealmCreated { frame_id: frame.id, realm: realm.id(), world, origin: frame.origin });
+            return Ok(realm);
+        }
         // A main-world realm prepared while this thread was idle (see
         // `prepare_spare_realm`) only needs its origin; otherwise build one.
         let spare = if world.is_none() { SPARE_REALM.with(|s| s.borrow_mut().take()) } else { None };
@@ -295,61 +332,81 @@ impl FrameHost {
                 realm.set_origin(Some(frame.origin.clone()));
                 realm
             }
-            None => Engine::create_realm_in_current_thread(RealmOptions {
-                name: world.clone().unwrap_or_default(),
-                global_class: Some(class),
-                origin: Some(frame.origin.clone()),
-            })?,
+            None => Engine::create_realm_in_current_thread(options)?,
         };
+        self.setup_realm(&realm, key, nav, &dom)?;
+        self.push_realm(key, world.clone(), &realm)?;
+        self.finish_realm(&realm, key, &world, &bindings, &scripts)?;
+        self.emit(PageEvent::RealmCreated { frame_id: frame.id, realm: realm.id(), world, origin: frame.origin });
+        Ok(realm)
+    }
+    /// A made realm's frame state and bindings: the Window's data, the
+    /// page's bindings (lp-webapi), the module fetcher.
+    fn setup_realm(
+        self: &Rc<Self>,
+        realm: &Realm,
+        key: FrameKey,
+        nav: Rc<PageNav>,
+        dom: &Rc<lp_webapi::PageDom>,
+    ) -> Result<(), JsError> {
         realm.set_global_data::<Window>(WindowData::for_frame(
             self.sched.clone(),
             nav,
-            &dom,
+            dom,
             Rc::downgrade(self),
             key,
         ))?;
         {
             // Engine code only, up to the bindings and init scripts below.
             let _setup = realm.setup_without_watchdog();
-            lp_webapi::install(&realm.scope()?, dom)?;
+            let scope = realm.scope()?;
+            let helpers = lp_webapi::install_with_helpers(&scope, dom.clone())?;
             // Uncaught exceptions of the realm's callbacks fire `error` at the Window.
             realm.set_exception_reporter(Some(lp_webapi::lifecycle::report_exception));
             if crate::clock::page_clock_enabled() {
-                realm.scope()?.eval(crate::clock::DATE_SCRIPT, Some("lightningpanda://internal/clock.js"), 1)?;
+                scope.eval(crate::clock::DATE_SCRIPT, Some("lightningpanda://internal/clock.js"), 1)?;
             }
-            window::init_frame_indices(&realm)?;
+            window::init_frame_indices(&scope, helpers.get_atom("accessor")?)?;
         }
-        loader::install_module_fetcher(self.sched.clone(), key, &realm);
-        let entry = FrameRealm { world: world.clone(), realm: realm.clone() };
+        loader::install_module_fetcher(self.sched.clone(), key, realm);
+        Ok(())
+    }
+    /// Lists the realm among its frame's (before any script of it runs:
+    /// `world_of` finds it there).
+    fn push_realm(&self, key: FrameKey, world: Option<String>, realm: &Realm) -> Result<(), JsError> {
+        let entry = FrameRealm { world, realm: realm.clone() };
         match key.child {
             None => self.root.borrow_mut().realms.push(entry),
             Some(id) => {
                 self.children.borrow_mut().get_mut(&id).ok_or(JsError::ContextDestroyed)?.main_frame.realms.push(entry)
             }
         }
-        window::refresh_frame_indices(&realm, self, key)?;
-        let bindings = {
-            let settings = self.settings.borrow();
-            match settings.bindings.is_empty() {
-                true => Vec::new(),
-                false => settings.bindings.clone(),
-            }
-        };
+        Ok(())
+    }
+    /// What runs in a listed realm: frame indices, `bindings` (the ones
+    /// that apply to the world) and `scripts` (the world's init scripts).
+    fn finish_realm(
+        self: &Rc<Self>,
+        realm: &Realm,
+        key: FrameKey,
+        world: &Option<String>,
+        bindings: &[Binding],
+        scripts: &[InitScript],
+    ) -> Result<(), JsError> {
+        window::refresh_frame_indices(realm, self, key)?;
         for binding in bindings.iter().filter(|b| b.applies_to(world.as_deref())) {
             let scope = realm.scope()?;
             if let Err(e) = scope.install_binding(&binding.name) {
                 scope.report_exception(&e);
             }
         }
-        let scripts = self.settings.borrow().scripts.clone();
-        for script in scripts.iter().filter(|s| s.world == world) {
+        for script in scripts.iter().filter(|s| s.world == *world) {
             let scope = realm.scope()?;
             if let Err(e) = scope.eval(&script.source, Some(&format!("init-script:{}", script.id)), 1) {
                 scope.report_exception(&e);
             }
         }
-        self.emit(PageEvent::RealmCreated { frame_id: frame.id, realm: realm.id(), world, origin: frame.origin });
-        Ok(realm)
+        Ok(())
     }
     fn window_class(&self) -> lp_js::ClassId {
         self.class.get()
@@ -357,7 +414,8 @@ impl FrameHost {
 
     fn refresh_indices(self: &Rc<Self>, key: FrameKey) {
         let realms = self.frame(key).map(|f| f.realms).unwrap_or_default();
-        for world in realms {
+        // A deferred realm defines its indices when it is made.
+        for world in realms.into_iter().filter(|w| !w.realm.is_deferred()) {
             if let Err(e) = window::refresh_frame_indices(&world.realm, self, key) {
                 if let Ok(scope) = world.realm.scope() {
                     scope.report_exception(&e);
@@ -422,7 +480,7 @@ impl FrameHost {
             loaded: false,
             sandbox,
         };
-        self.dom.borrow_mut().add_ref(node).map_err(|e| JsError::Type(format!("{e:?}")))?;
+        self.dom.borrow_mut().add_ref(node).map_err(|e| JsError::type_error(format!("{e:?}")))?;
         self.children.borrow_mut().insert(
             id,
             DocumentState {
@@ -677,7 +735,11 @@ impl FrameHost {
                 }
             }
         };
-        let of = |frame: &Frame| frame.realms.iter().find(|r| r.world == world).map(|r| r.realm.clone());
+        // A deferred realm has run no script: it holds no wrapper, no
+        // listener and no event, which is what these lookups are after.
+        let of = |frame: &Frame| {
+            frame.realms.iter().find(|r| r.world == world && !r.realm.is_deferred()).map(|r| r.realm.clone())
+        };
         let mut realms = Vec::new();
         if source.child.is_some() {
             realms.extend(of(&self.root.borrow()));

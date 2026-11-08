@@ -250,8 +250,7 @@ impl HttpCache {
         }
         self.tick += 1;
         let tick = self.tick;
-        let Some(entry) = self.entries.get_mut(&key(url)).and_then(|v| v.iter_mut().find(|e| e.matches(request)))
-        else {
+        let Some(entry) = self.entries.get_mut(key(url)).and_then(|v| v.iter_mut().find(|e| e.matches(request))) else {
             return Lookup::Miss;
         };
         entry.used = tick;
@@ -331,7 +330,7 @@ impl HttpCache {
         let id = self.next_id;
         let used = self.tick;
         let entry = Entry { id, vary, status, headers, body, request_time, response_time, protocol, used, size };
-        let variants = self.entries.entry(k).or_default();
+        let variants = self.entries.entry(k.to_owned()).or_default();
         if let Some(i) = variants.iter().position(|e| e.vary == entry.vary) {
             self.bytes -= variants.remove(i).size;
         }
@@ -356,7 +355,7 @@ impl HttpCache {
         response_time: f64,
     ) -> Option<Cached> {
         let k = key(url);
-        let variants = self.entries.get_mut(&k)?;
+        let variants = self.entries.get_mut(k)?;
         let i = variants.iter().position(|e| e.id == id)?;
         let stored_etag = variants[i].headers.get(header::ETAG).cloned();
         if let (Some(new), Some(old)) = (not_modified.get(header::ETAG), stored_etag.as_ref()) {
@@ -391,7 +390,7 @@ impl HttpCache {
 
     /// Drops every stored response for `url` (RFC 9111 §4.4).
     pub fn invalidate(&mut self, url: &Url) {
-        if let Some(v) = self.entries.remove(&key(url)) {
+        if let Some(v) = self.entries.remove(key(url)) {
             self.bytes -= v.iter().map(|e| e.size).sum::<usize>();
         }
     }
@@ -509,10 +508,12 @@ impl SharedAssetCache {
     }
 }
 
-fn key(url: &Url) -> String {
-    let mut u = url.clone();
-    u.set_fragment(None);
-    u.into()
+/// The URL without its fragment, as serialized: `#` is percent-encoded
+/// everywhere else in a serialized URL, so the text up to the first one is
+/// what `set_fragment(None)` would leave, without the copy.
+fn key(url: &Url) -> &str {
+    let s = url.as_str();
+    &s[..s.find('#').unwrap_or(s.len())]
 }
 
 /// `Vary` field names, `None` for `Vary: *`.
@@ -851,5 +852,36 @@ mod tests {
         );
         c.clear();
         assert_eq!(c.usage(), (0, 0));
+    }
+
+    /// Review (perf/network C4): the key is the URL up to its fragment;
+    /// an encoded `#` in the path or query stays part of the key.
+    #[test]
+    fn review_cache_key_slices_off_only_the_fragment() {
+        let k = |s: &str| key(&Url::parse(s).unwrap()).to_owned();
+        assert_eq!(k("http://a.test/p?q=1#frag"), "http://a.test/p?q=1");
+        assert_eq!(k("http://a.test/p?q=%23x#f#g"), "http://a.test/p?q=%23x");
+        assert_eq!(k("http://a.test/a%23b"), "http://a.test/a%23b");
+        assert_eq!(k("http://a.test/p#"), "http://a.test/p");
+        assert_eq!(k("http://u%23:p%23@a.test/"), "http://u%23:p%23@a.test/");
+        let mut u = Url::parse("http://a.test/").unwrap();
+        u.set_path("/x#y");
+        u.set_query(Some("k=#v"));
+        assert_eq!(key(&u), {
+            let mut c = u.clone();
+            c.set_fragment(None);
+            String::from(c)
+        });
+        // Lookups through a fragment hit; a different query does not.
+        let mut c = HttpCache::new(1 << 20, 1 << 20);
+        let req = HeaderMap::new();
+        let resp = h(&[("cache-control", "max-age=100")]);
+        c.insert(&url("/r?q=1#one"), &req, StatusCode::OK, &resp, Bytes::from_static(b"x"), T0, T0, Version::HTTP_11);
+        assert!(matches!(c.lookup(&url("/r?q=1#two"), &req, CacheMode::Default, T0 + 1.0), Lookup::Hit(_)));
+        assert!(matches!(c.lookup(&url("/r?q=1"), &req, CacheMode::Default, T0 + 1.0), Lookup::Hit(_)));
+        assert!(matches!(c.lookup(&url("/r?q=2#one"), &req, CacheMode::Default, T0 + 1.0), Lookup::Miss));
+        assert!(matches!(c.lookup(&url("/r?q=1%23one"), &req, CacheMode::Default, T0 + 1.0), Lookup::Miss));
+        c.invalidate(&url("/r?q=1#zzz"));
+        assert!(matches!(c.lookup(&url("/r?q=1"), &req, CacheMode::Default, T0 + 1.0), Lookup::Miss));
     }
 }

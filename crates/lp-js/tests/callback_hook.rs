@@ -100,7 +100,7 @@ fn return_and_thrown_values_survive_hook_gc_and_payloads_are_released() {
                 .function("make", move |s, _, _| {
                     let v = s.wrap::<Token>(Payload(drops.clone()), None)?.value();
                     if throwing {
-                        Err(JsError::Thrown(Persistent::new(s, v)))
+                        Err(JsError::thrown(Persistent::new(s, v)))
                     } else {
                         Ok(v)
                     }

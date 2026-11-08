@@ -72,8 +72,9 @@ pub struct DocumentData {
     /// The URL's fragment, percent-decoded, as an id (`:target`); `None`
     /// without one (or when it does not decode to UTF-8).
     pub(crate) url_target: Option<Atom>,
-    /// Elements of the document tree by id (`getElementById`).
-    pub(crate) ids: crate::tree_scope::IdMap,
+    /// Elements of the document tree by id (`getElementById`) and labels
+    /// by `for`.
+    pub(crate) ids: crate::tree_scope::ScopeIndex,
     /// Owner of `<template>` contents created while parsing this document.
     pub(crate) inert_doc: u32,
     /// Number of live nodes (including itself) whose owner document is this.
@@ -177,8 +178,9 @@ pub struct FragmentData {
     pub(crate) shadow: Option<ShadowRootMode>,
     /// `shadow_flags` of a shadow root.
     pub(crate) flags: u8,
-    /// A shadow root's elements by id, made when the first id enters it.
-    pub(crate) ids: Option<Box<crate::tree_scope::IdMap>>,
+    /// A shadow root's elements by id and labels by `for`, made when the
+    /// first enters it.
+    pub(crate) ids: Option<Box<crate::tree_scope::ScopeIndex>>,
 }
 
 impl FragmentData {

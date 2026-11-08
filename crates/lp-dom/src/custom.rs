@@ -310,6 +310,7 @@ impl Dom {
             }
         }
         e.set_attrs(all);
+        self.resummarize(i);
         self.note_inline_handlers(i);
     }
 

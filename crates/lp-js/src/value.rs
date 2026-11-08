@@ -147,7 +147,7 @@ impl<'s> Value<'s> {
     /// Non-objects return false. Objects require the optional proxy-target SPI.
     pub fn has_proxy_target(&self) -> JsResult<bool> {
         let Some(object) = self.as_object() else { return Ok(false) };
-        let get_target = sys::spi::get().get_proxy_target.ok_or(JsError::Unsupported("proxy target inspection"))?;
+        let get_target = sys::spi::get().get_proxy_target.ok_or(JsError::Unsupported(&"proxy target inspection"))?;
         // SAFETY: live object on its owning VM thread; SPI only reads its native
         // type/target under the VM lock. The target is neither exposed nor kept.
         Ok(unsafe { !get_target(object.raw).is_null() })
@@ -570,7 +570,7 @@ impl<'s> Args<'s> {
                 "Failed to execute '{what}': {n} argument{} required, but only {} present.",
                 if n == 1 { "" } else { "s" },
                 self.raw.len()
-            )));
+            ).into()));
         }
         Ok(())
     }
@@ -702,6 +702,25 @@ impl<'s> Scope<'s> {
         let o = unsafe { sys::JSObjectMakeArray(self.ctx, raw.len(), raw.as_ptr(), &mut exc) };
         check(self.ctx, exc)?;
         Ok(unsafe { Object::from_raw(self.ctx, o) })
+    }
+    /// A new `Int32Array` holding a copy of `items`.
+    pub fn int32_array(&self, items: &[i32]) -> JsResult<Object<'s>> {
+        let mut exc = ptr::null();
+        // SAFETY: a zeroed array of `len` elements owned by JSC, filled
+        // before any script can see it.
+        unsafe {
+            let o = sys::JSObjectMakeTypedArray(self.ctx, sys::kJSTypedArrayTypeInt32Array, items.len(), &mut exc);
+            check(self.ctx, exc)?;
+            if !items.is_empty() {
+                let bytes = sys::JSObjectGetTypedArrayBytesPtr(self.ctx, o, &mut exc) as *mut i32;
+                check(self.ctx, exc)?;
+                if bytes.is_null() {
+                    return Err(JsError::Type("typed array without a backing store".into()));
+                }
+                ptr::copy_nonoverlapping(items.as_ptr(), bytes, items.len());
+            }
+            Ok(Object::from_raw(self.ctx, o))
+        }
     }
     /// `new Date(time)` with the realm's intrinsic `Date`.
     pub fn date(&self, time: f64) -> JsResult<Object<'s>> {

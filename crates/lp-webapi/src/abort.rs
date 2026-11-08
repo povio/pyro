@@ -217,7 +217,7 @@ impl JsClass for AbortSignal {
         def.method("throwIfAborted", 0, |s, d, _a| {
             if d.aborted() {
                 let r = d.reason(s);
-                return Err(JsError::Thrown(Persistent::new(s, r)));
+                return Err(JsError::thrown(Persistent::new(s, r)));
             }
             Ok(s.undefined())
         });

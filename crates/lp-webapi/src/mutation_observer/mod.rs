@@ -432,24 +432,19 @@ pub(crate) fn after_task(page: &PageDom) {
         checkpoint(&page)
     }
 }
-pub(crate) fn install(s: &Scope<'_>, page: &Rc<PageDom>) -> JsResult<()> {
+/// `helper` converts a MutationObserverInit (install.js `mutationOptions`).
+pub(crate) fn install(s: &Scope<'_>, page: &Rc<PageDom>, helper: lp_js::Value<'_>) -> JsResult<()> {
     *page.mutations.owner.borrow_mut() = Rc::downgrade(page);
-    let helper=s.eval(r#"(()=>{const str=String, TypeError_=TypeError, create=Object.create;
-        return options=>{
-            if(options==null)options={};
-            if(typeof options!=='object'&&typeof options!=='function')throw new TypeError_('Observer options must be a dictionary');
-            let filter=options.attributeFilter;
-            if(filter!==undefined){
-                if(filter===null||(typeof filter!=='object'&&typeof filter!=='function'))throw new TypeError_('attributeFilter must be a sequence');
-                const list=create(null);let n=0;for(const item of filter){if(typeof item==='symbol')throw new TypeError_('Cannot convert symbol to string');list[n++]=str(item);}list.length=n;filter=list;
-            }
-            const old=options.attributeOldValue, attributes=options.attributes, chars=options.characterData, charOld=options.characterDataOldValue;
-            return [filter,old===undefined?undefined:!!old,attributes===undefined?undefined:!!attributes,chars===undefined?undefined:!!chars,charOld===undefined?undefined:!!charOld,!!options.childList,!!options.subtree];
-        };})()"#,None,1)?;
     page.mutations.helpers.borrow_mut().insert(s.realm_id(), Persistent::new(s, helper));
     let weak = Rc::downgrade(page);
-    s.realm().set_native_callback_hook(Some(Rc::new(move |_| {
+    s.realm().set_native_callback_hook(Some(Rc::new(move |s| {
         if let Some(page) = weak.upgrade() {
+            // First: the payloads of finalized wrappers, whose destructors
+            // release DOM nodes the sweep below then frees.
+            if s.realm().pending_finalizers() >= FINALIZER_DRAIN && s.drain_finalized_in_outermost_callback().is_some()
+            {
+                page.sweep_released_nodes();
+            }
             page.flush_iframe_events();
             page.update_render_blocking();
             crate::custom::run_reactions(&page);
@@ -458,10 +453,21 @@ pub(crate) fn install(s: &Scope<'_>, page: &Rc<PageDom>) -> JsResult<()> {
         }
     })))?;
     let weak = Rc::downgrade(page);
-    s.realm()
-        .set_native_callback_pending(Some(Rc::new(move || weak.upgrade().is_some_and(|page| hook_pending(&page)))))?;
+    let realm = s.realm().downgrade();
+    s.realm().set_native_callback_pending(Some(Rc::new(move || {
+        weak.upgrade().is_some_and(|page| hook_pending(&page))
+            || realm.upgrade().is_some_and(|realm| realm.pending_finalizers() >= FINALIZER_DRAIN)
+    })))?;
     Ok(())
 }
+
+/// Finalized wrappers whose payloads wait for a safe point, from which the
+/// hook drains them inside the task instead of after it (`Browser::checkpoint`):
+/// a task that creates and drops wrappers by the million (an `innerHTML`
+/// rebuild loop, a big render) otherwise keeps every payload and DOM node
+/// until it ends. A collection finalizes wrappers by the tens of thousands,
+/// so a drain follows nearly every collection and costs nothing between.
+const FINALIZER_DRAIN: usize = 4096;
 
 /// Whether the native callback hook (iframe events, then [`checkpoint`]) has
 /// anything to do. Conservative: true whenever either could act.

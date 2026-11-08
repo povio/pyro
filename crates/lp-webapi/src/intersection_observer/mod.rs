@@ -342,19 +342,13 @@ pub(crate) fn dispose(page: &PageDom) {
         cancel_realm(page, realm);
     }
 }
-pub(crate) fn install(s: &Scope<'_>, page: &Rc<PageDom>) -> JsResult<()> {
+/// `helper` is install.js `intersection`: [the threshold list of an init,
+/// Object.freeze].
+pub(crate) fn install(s: &Scope<'_>, page: &Rc<PageDom>, helper: lp_js::Value<'_>) -> JsResult<()> {
     *page.intersections.owner.borrow_mut() = Rc::downgrade(page);
     if page.intersections.origin.get().is_none() {
         page.intersections.origin.set(Some(Instant::now()));
     }
-    let helper=s.eval(r#"(()=>{const freeze=Object.freeze, sort=Array.prototype.sort, push=Array.prototype.push, apply=Reflect.apply, finite=Number.isFinite, Range=RangeError, Type=TypeError;
-        return [value=>{let list=[];
-            if(value===undefined)list=[0];
-            else if(value!==null&&(typeof value==='object'||typeof value==='function')){for(const item of value)apply(push,list,[+item]);}
-            else list=[+value];
-            for(let i=0;i<list.length;i++){const n=list[i];if(!finite(n))throw new Type('threshold must be finite'); if(n<0||n>1)throw new Range('threshold must be between zero and one');}
-            if(list.length===0)apply(push,list,[0]);apply(sort,list,[(a,b)=>a-b]);return freeze(list);
-        },freeze];})()"#,None,1)?;
     page.intersections.helpers.borrow_mut().insert(s.realm_id(), Persistent::new(s, helper));
     Ok(())
 }

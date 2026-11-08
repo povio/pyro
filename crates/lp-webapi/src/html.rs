@@ -875,7 +875,7 @@ pub(crate) fn define_element_extras(def: &mut ClassDef<Element>) {
     });
     def.method("setPointerCapture", 1, crate::pointer_capture::set_pointer_capture);
     def.method("releasePointerCapture", 1, crate::pointer_capture::release_pointer_capture);
-    def.method("hasPointerCapture", 1, crate::pointer_capture::has_pointer_capture);
+    def.pure_method("hasPointerCapture", 1, crate::pointer_capture::has_pointer_capture);
     def.method("animate", 1, |s, n, a| {
         let el = crate::node::wrap_node(s, n.page(), n.id)?.value();
         crate::animations::animate(s, n.page(), el, &a)
@@ -1302,7 +1302,7 @@ fn define_hyperlink<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
     reflect_enum!(def, "referrerPolicy", "referrerpolicy", REFERRER_POLICY);
     reflect_str!(def, "ping", "ping");
     reflect_tokens!(def, "relList", "rel");
-    def.method("toString", 0, |s, n, _a| {
+    def.pure_method("toString", 0, |s, n, _a| {
         let dom = n.page().dom.borrow();
         Ok(s.string(&dom.get_attribute(n.id, "href").js()?.map(|h| resolve_url(&dom, n.id, h)).unwrap_or_default()))
     });
@@ -1548,7 +1548,7 @@ fn define_text_selection<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
                     other => {
                         return Err(JsError::Type(format!(
                             "Failed to execute 'setRangeText': The provided value '{other}' is not a valid enum value of type SelectionMode."
-                        )))
+                        ).into()))
                     }
                 },
             };
@@ -1810,7 +1810,7 @@ simple_class!(HtmlSelectElement, "HTMLSelectElement", HtmlElement, |def| {
             n.page().dom.borrow_mut().set_value(n.id, &arg0).js()
         },
     );
-    def.method("item", 1, |s, n, a| {
+    def.pure_method("item", 1, |s, n, a| {
         let i = to_u32(a.get(0))? as usize;
         let o = n.page().dom.borrow().select_options(n.id).js()?.get(i).copied();
         node_value(s, n.page(), o)
@@ -1822,7 +1822,7 @@ simple_class!(HtmlSelectElement, "HTMLSelectElement", HtmlElement, |def| {
             None => Ok(None),
         }
     });
-    def.method("namedItem", 1, |s, n, a| {
+    def.pure_method("namedItem", 1, |s, n, a| {
         let name = dom_string(a.get(0))?;
         let dom = n.page().dom.borrow();
         let found = dom.select_options(n.id).js()?.into_iter().find(|&o| {
@@ -2049,29 +2049,13 @@ simple_class!(HtmlLabelElement, "HTMLLabelElement", HtmlElement, |def| {
 
 /// The labeled control of a `<label>` (HTML §4.10.4).
 pub fn labeled_control(dom: &Dom, label: NodeId) -> Option<NodeId> {
-    let labelable = |id: NodeId| {
-        dom.element(id).is_ok_and(|e| {
-            e.is_html()
-                && (matches!(&*e.name.local, "button" | "meter" | "output" | "progress" | "select" | "textarea")
-                    || (&*e.name.local == "input"
-                        && dom.input_type(id).map(|t| t != InputType::Hidden).unwrap_or(false))
-                    || dom.is_form_associated(id))
-        })
-    };
-    if let Ok(Some(f)) = dom.get_attribute(label, "for") {
-        let root = dom.root_node(label, false).ok()?;
-        let target = dom.get_element_by_id(root, f).ok()??;
-        return labelable(target).then_some(target);
-    }
-    dom.descendants(label).ok()?.skip(1).find(|&d| labelable(d))
+    dom.labeled_control(label).ok().flatten()
 }
 
+/// `element.labels`: from the tree scope's index of labels by `for` and the
+/// control's ancestors (lp-dom), not a walk of the document.
 pub(crate) fn labels_for(dom: &Dom, control: NodeId) -> Vec<NodeId> {
-    let Ok(root) = dom.root_node(control, false) else { return Vec::new() };
-    let Ok(desc) = dom.descendants(root) else { return Vec::new() };
-    desc.filter(|&n| dom.element(n).is_ok_and(|e| e.is_html() && &*e.name.local == "label"))
-        .filter(|&l| labeled_control(dom, l) == Some(control))
-        .collect()
+    dom.labels(control).unwrap_or_default()
 }
 
 simple_class!(HtmlFieldSetElement, "HTMLFieldSetElement", HtmlElement, |def| {
@@ -3209,7 +3193,7 @@ pub(crate) fn written_script_fetched(page: &Rc<PageDom>, node: NodeId, url: &str
                 if let Ok(scope) = realm.scope() {
                     crate::lifecycle::report_diagnostic(
                         &scope,
-                        &JsError::Type(format!("Failed to load script: {error}")),
+                        &JsError::Type(format!("Failed to load script: {error}").into()),
                     );
                 }
             }
@@ -3294,7 +3278,7 @@ impl JsClass for DomImplementation {
             drop(dom);
             Ok(wrap_node(s, &h.page, dt)?.value())
         });
-        def.method("hasFeature", 0, |s, _h, _a| Ok(s.boolean(true)));
+        def.pure_method("hasFeature", 0, |s, _h, _a| Ok(s.boolean(true)));
     }
 }
 

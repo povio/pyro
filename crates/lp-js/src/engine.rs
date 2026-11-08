@@ -164,6 +164,10 @@ pub(crate) struct EngineInner {
     retired_members: RefCell<Vec<RetiredMembers>>,
     /// Garbage collections seen, for sweeping the realms' interned strings.
     pub(crate) collections: crate::interned::Collections,
+    /// The property hooks' switches (see [`class::HookState`]).
+    pub(crate) hook_state: class::HookState,
+    /// The values [`crate::HeldValue`]s keep alive.
+    pub(crate) held: RefCell<crate::persistent::HeldValues>,
     /// Block coverage: enables not yet matched by a disable, and while on,
     /// every realm by its global context address, dead ones too, so that
     /// a source can be traced to its realm after a navigation.
@@ -223,8 +227,21 @@ struct ReleaseGate {
     low: Cell<u64>,
     /// A closed page has not been collected yet.
     pending: Cell<bool>,
+    /// A closed page's compiled code has not been dropped yet
+    /// ([`Engine::settle_idle`]).
+    code_pending: Cell<bool>,
     /// (minimum growth in bytes, percent of the footprint).
     growth: Cell<(u64, u64)>,
+    /// The growth past which a close collects at once instead of leaving
+    /// the collection to an idle moment ([`Engine::release_closed`]):
+    /// [`RELEASE_CEILING_FACTOR`] times `growth`.
+    ceiling: Cell<(u64, u64)>,
+    /// Closes past the gate whose collection was left to an idle moment
+    /// that has not come yet ([`Engine::settle`] resets it).
+    put_off: Cell<u32>,
+    /// How many such closes in a row may wait before one collects at once
+    /// ([`RELEASE_PUT_OFF_CLOSES`]).
+    put_off_limit: u32,
 }
 
 /// A loop of small pages levels off about 20 MB above its first reading under
@@ -233,10 +250,47 @@ struct ReleaseGate {
 /// 4.5 ms of CPU per navigation, at 32 MB 2.6 ms, and collecting always 4.9 ms.
 const RELEASE_GROWTH_MIN: u64 = 32 << 20;
 const RELEASE_GROWTH_PERCENT: u64 = 25;
+/// A close past the gate leaves its collection to the idle loop; past this
+/// many times the gate (128 MB or 100% of the low reading by default) it
+/// collects at once: a process that never idles (back-to-back navigations
+/// of an app) is still held, and at `LIGHTNINGPANDA_RELEASE_GROWTH=0`
+/// every close collects, as before.
+const RELEASE_CEILING_FACTOR: u64 = 4;
+/// A close past the gate collects at once when this many closes before it
+/// left theirs to an idle moment that never came: a process that never idles
+/// holds one closed page's garbage past the gate, not up to the ceiling.
+/// Measured over 60 s of back-to-back newContext/newPage/goto/close of a
+/// small page: the footprint levelled off at 73-75 MB when only the ceiling
+/// collected, 46-49 MB collecting at every close past the gate (as before
+/// the idle release), 48-49 MB with one close left waiting, at 10.6 ms of
+/// CPU per page against 10.2 and 12.4.
+/// `LIGHTNINGPANDA_RELEASE_PUT_OFF=<closes>` overrides it (benchmark
+/// comparison).
+const RELEASE_PUT_OFF_CLOSES: u32 = 1;
 
 impl ReleaseGate {
     fn new(growth: (u64, u64)) -> ReleaseGate {
-        ReleaseGate { low: Cell::new(u64::MAX), pending: Cell::new(false), growth: Cell::new(growth) }
+        let gate = ReleaseGate {
+            low: Cell::new(u64::MAX),
+            pending: Cell::new(false),
+            code_pending: Cell::new(false),
+            growth: Cell::new(growth),
+            ceiling: Cell::new((0, 0)),
+            put_off: Cell::new(0),
+            put_off_limit: std::env::var("LIGHTNINGPANDA_RELEASE_PUT_OFF")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(RELEASE_PUT_OFF_CLOSES),
+        };
+        gate.set_growth(growth);
+        gate
+    }
+
+    /// Sets the thresholds, the ceiling along with them.
+    fn set_growth(&self, growth: (u64, u64)) {
+        self.growth.set(growth);
+        let (min, percent) = growth;
+        self.ceiling.set((min.saturating_mul(RELEASE_CEILING_FACTOR), percent.saturating_mul(RELEASE_CEILING_FACTOR)));
     }
 
     /// `LIGHTNINGPANDA_RELEASE_GROWTH=<MB>[:<percent>]` overrides the
@@ -259,11 +313,33 @@ impl ReleaseGate {
         due
     }
 
+    /// Whether the process has grown past the ceiling: a collection that
+    /// is due runs at once instead of waiting for an idle moment. Without a
+    /// footprint always, as [`ReleaseGate::should_collect`].
+    fn past_ceiling(&self, footprint: Option<u64>) -> bool {
+        let Some(now) = footprint else { return true };
+        let low = self.observe(now);
+        let (min, percent) = self.ceiling.get();
+        now - low >= min.max(low / 100 * percent)
+    }
+
+    /// Whether a close past the gate collects at once: past the ceiling, or
+    /// after as many closes left theirs waiting with no idle moment since.
+    /// Otherwise it counts as one more.
+    fn collect_due_now(&self, footprint: Option<u64>) -> bool {
+        if self.past_ceiling(footprint) || self.put_off.get() >= self.put_off_limit {
+            return true;
+        }
+        self.put_off.set(self.put_off.get() + 1);
+        false
+    }
+
     /// Leaves a collection pending only when one is due (without a
     /// footprint always, as [`ReleaseGate::should_collect`] then collects).
     fn defer_if_due(&self, footprint: Option<u64>) {
         if footprint.is_none_or(|now| self.due(now)) {
             self.pending.set(true);
+            self.code_pending.set(true);
         }
     }
 
@@ -286,6 +362,8 @@ impl ReleaseGate {
     fn forked(&self) {
         self.low.set(u64::MAX);
         self.pending.set(false);
+        self.code_pending.set(false);
+        self.put_off.set(0);
     }
 }
 
@@ -410,6 +488,20 @@ impl EngineInner {
         self.shut_down.get()
     }
 
+    /// [`Engine::drain_finalized`]: the finalized payloads dropped, dead
+    /// interned strings swept, dead realms' member payloads freed.
+    pub(crate) fn drain_finalized(&self) -> usize {
+        let n = class::drain_finalized(self);
+        crate::interned::sweep_realms(self, false);
+        self.release_dead_members();
+        n
+    }
+
+    /// Payloads of finalized wrappers waiting for [`Self::drain_finalized`].
+    pub(crate) fn pending_finalizers(&self) -> usize {
+        self.finalized.len()
+    }
+
     /// Finds the realm owning global context `global`.
     pub(crate) fn realm_for_global(&self, global: sys::JSGlobalContextRef) -> Option<Rc<RealmInner>> {
         self.realms.borrow().get(&(global as usize)).and_then(Weak::upgrade)
@@ -467,6 +559,7 @@ impl EngineInner {
         let was_current = self.is_current();
         class::drain_finalized(self);
         self.classes.borrow_mut().release_all();
+        self.hook_state.placeholders.set(0);
         // Payload destructors above may have created a new engine on this
         // thread: only clear the thread state if it still refers to us.
         if was_current && self.is_current() {
@@ -593,7 +686,7 @@ impl Engine {
         // referenced keeps running until they go; it is no longer "current".
         let caps = Capabilities::detect();
         if !caps.weak_refs {
-            return Err(JsError::Unsupported("JSWeak (wrapper identity maps)"));
+            return Err(JsError::Unsupported(&"JSWeak (wrapper identity maps)"));
         }
         // SAFETY: plain object creation; ownership tracked by EngineInner.
         let (group, root) = unsafe {
@@ -619,6 +712,8 @@ impl Engine {
             member_payloads: RefCell::new(Vec::new()),
             retired_members: RefCell::new(Vec::new()),
             collections: crate::interned::Collections::new(),
+            hook_state: class::HookState::default(),
+            held: RefCell::new(crate::persistent::HeldValues::default()),
             coverage_users: Cell::new(0),
             coverage_cursor: Cell::new(0),
             coverage_realms: RefCell::new(None),
@@ -663,6 +758,19 @@ impl Engine {
         crate::realm::create(&inner, options)
     }
 
+    /// [`Engine::create_realm_in_current_thread`] for a realm made when it
+    /// is first entered: its id, name and origin exist now (so it can be
+    /// announced and found), its context, interfaces and `setup` are made
+    /// by the first [`Realm::scope`], wherever that happens. Disposing it
+    /// before then costs nothing.
+    pub fn defer_realm_in_current_thread(
+        options: RealmOptions,
+        setup: crate::realm::DeferredSetup,
+    ) -> Result<Realm, JsError> {
+        let inner = current_inner().ok_or(JsError::ContextDestroyed)?;
+        crate::realm::create_deferred(&inner, options, setup)
+    }
+
     /// Installs a check this thread runs at every watchdog poll (about every
     /// 50 ms) while JavaScript executes; when it returns true the running
     /// script is terminated as by [`TerminateHandle::terminate`]. Lets the
@@ -675,7 +783,7 @@ impl Engine {
     /// Thread-safe handle to request termination of running JavaScript.
     pub fn terminate_handle(&self) -> Result<TerminateHandle, JsError> {
         if !self.inner.caps.termination {
-            return Err(JsError::Unsupported("JSContextGroupSetExecutionTimeLimit"));
+            return Err(JsError::Unsupported(&"JSContextGroupSetExecutionTimeLimit"));
         }
         Ok(TerminateHandle(self.inner.terminate.clone()))
     }
@@ -688,19 +796,27 @@ impl Engine {
     /// Releases payloads of wrappers finalized by the GC. Call at safe points
     /// (the event loop does this after each task).
     pub fn drain_finalized(&self) -> usize {
-        let n = class::drain_finalized(&self.inner);
-        crate::interned::sweep_realms(&self.inner, false);
-        self.inner.release_dead_members();
-        n
+        self.inner.drain_finalized()
     }
 
     /// Frees what a closed page (or a navigated-away document) left behind,
     /// once there is enough of it ([`ReleaseGate`]): a collection of the
     /// engine's heap, then the allocator's retained free pages are returned
-    /// to the OS (`release_memory`). A closed page's wrappers and DOM are
-    /// otherwise kept until the next collection, which an idle test process
-    /// may never run: a caller with an idle moment checks
-    /// [`Engine::release_pending`].
+    /// to the OS (`release_memory`). The collection is left to the caller's
+    /// next idle moment ([`Engine::release_pending`], then
+    /// [`Engine::settle`]): run inside the command that closed the page it
+    /// cost that command 5-8 ms, with the closing code on the stack, which
+    /// JavaScriptCore scans conservatively, and a compilation still running
+    /// keeps its realm too, so the closed page's heap could survive it
+    /// (measured: a React app's 30 MB stayed until the next close) and the
+    /// idle loop had to collect again anyway; and the allocator's pages it
+    /// returned were re-committed by the next page at once. Only a process
+    /// grown past the gate's ceiling ([`RELEASE_CEILING_FACTOR`]) collects
+    /// at once, or a close past the gate after one that left its collection
+    /// waiting with no idle moment since ([`RELEASE_PUT_OFF_CLOSES`]), so
+    /// one that never idles is still held. A closed page's
+    /// wrappers and DOM are otherwise kept until the next collection, which
+    /// an idle test process may never run: every close leaves one pending.
     ///
     /// Measured on 20 open/boot/close cycles of a 2 MB app: the process
     /// plateaus at 270 MB instead of 339 MB. `LIGHTNINGPANDA_RELEASE_ON_CLOSE=0`
@@ -709,16 +825,19 @@ impl Engine {
         if std::env::var("LIGHTNINGPANDA_RELEASE_ON_CLOSE").is_ok_and(|v| v == "0") {
             return;
         }
-        if self.inner.release_gate.should_collect(process_footprint()) {
+        let gate = &self.inner.release_gate;
+        let footprint = process_footprint();
+        if gate.should_collect(footprint) && gate.collect_due_now(footprint) {
             self.settle();
-            // This collection runs inside the command that closed the page,
-            // with the closing code on the stack: JavaScriptCore scans that
-            // stack conservatively, and a compilation still running keeps its
-            // realm too, so the closed page's heap can survive it (measured:
-            // a React app's 30 MB stayed until the next close). A second
-            // collection from the idle loop, where neither holds, frees it.
-            self.inner.release_gate.pending.set(true);
+        } else {
+            // The allocator's cheap pass only: the thread's delayed frees
+            // and empty pages, no purge of retained memory (the idle
+            // `settle` does that), so the page closed just now does not
+            // keep its Rust-side pages until then.
+            trim_memory();
         }
+        gate.pending.set(true);
+        gate.code_pending.set(true);
     }
 
     /// [`Engine::release_closed`] for a document whose replacement leaves
@@ -756,13 +875,35 @@ impl Engine {
     /// `LIGHTNINGPANDA_RELEASE_GROWTH` sets it, for this engine (tests).
     #[doc(hidden)]
     pub fn set_release_growth(&self, min_bytes: u64, percent: u64) {
-        self.inner.release_gate.growth.set((min_bytes, percent));
+        self.inner.release_gate.set_growth((min_bytes, percent));
+    }
+
+    /// The ceiling past which [`Engine::release_closed`] collects at once,
+    /// set apart from the gate (tests).
+    #[doc(hidden)]
+    pub fn set_release_ceiling(&self, min_bytes: u64, percent: u64) {
+        self.inner.release_gate.ceiling.set((min_bytes, percent));
+    }
+
+    /// How many closes past the gate left their collection waiting since
+    /// the last one ran (tests; [`RELEASE_PUT_OFF_CLOSES`]).
+    #[doc(hidden)]
+    pub fn release_put_off(&self) -> u32 {
+        self.inner.release_gate.put_off.get()
     }
 
     /// Whether a closed page is still waiting for the collection
     /// [`Engine::release_closed`] put off. [`Engine::settle`] runs it.
     pub fn release_pending(&self) -> bool {
         self.inner.release_gate.pending.get()
+    }
+
+    /// Whether a closed page's compiled code is still kept
+    /// ([`Engine::settle_idle`] drops it). Set with every close, cleared by
+    /// `settle_idle` only: a caller keeps the code through short idle
+    /// moments (a test suite's gaps) and drops it after a long one.
+    pub fn code_release_pending(&self) -> bool {
+        self.inner.release_gate.code_pending.get()
     }
 
     /// A full synchronous collection, finalized wrappers released, free
@@ -784,6 +925,7 @@ impl Engine {
             unsafe { f(self.inner.group()) };
         }
         self.inner.release_gate.pending.set(false);
+        self.inner.release_gate.put_off.set(0);
     }
 
     /// [`Engine::settle`] for a process that has gone idle: first drops every
@@ -796,6 +938,7 @@ impl Engine {
             unsafe { f(self.inner.group()) };
         }
         self.settle();
+        self.inner.release_gate.code_pending.set(false);
     }
 
     /// Requests a full garbage collection (asynchronous in JSC).
@@ -852,7 +995,7 @@ impl Engine {
     /// copy-on-write with the parent.
     pub fn prepare_for_fork(&self) -> Result<(), JsError> {
         let Some((prepare, _, _)) = sys::spi::get().fork() else {
-            return Err(JsError::Unsupported("fork (patched JavaScriptCore)"));
+            return Err(JsError::Unsupported(&"fork (patched JavaScriptCore)"));
         };
         self.drain_finalized();
         // SAFETY: the group is alive and used by this thread only.
@@ -904,7 +1047,7 @@ impl Engine {
             return if id.is_none() {
                 Ok(true)
             } else {
-                Err(JsError::Unsupported("time zone override (patched JavaScriptCore)"))
+                Err(JsError::Unsupported(&"time zone override (patched JavaScriptCore)"))
             };
         };
         let id = match id.map(std::ffi::CString::new) {
@@ -929,7 +1072,7 @@ impl Engine {
     /// no JavaScript runs. The last disable forgets what was counted.
     pub fn set_coverage(&self, enabled: bool) -> Result<(), JsError> {
         let Some((set, _, _)) = sys::spi::get().coverage() else {
-            return Err(JsError::Unsupported("block coverage (patched JavaScriptCore)"));
+            return Err(JsError::Unsupported(&"block coverage (patched JavaScriptCore)"));
         };
         let users = self.inner.coverage_users.get();
         if !enabled && users == 0 {
@@ -1217,6 +1360,24 @@ pub fn set_allocator_release(release: fn()) {
     let _ = ALLOCATOR_RELEASE.set(release);
 }
 
+/// What frees the process allocator's empty pages without purging its
+/// retained memory ([`set_allocator_trim`]).
+static ALLOCATOR_TRIM: std::sync::OnceLock<fn()> = std::sync::OnceLock::new();
+
+/// Registers the executable's global allocator's cheap collection
+/// (mimalloc's `mi_collect(false)`): what [`Engine::release_closed`] runs
+/// when it leaves the full release to an idle moment.
+pub fn set_allocator_trim(trim: fn()) {
+    let _ = ALLOCATOR_TRIM.set(trim);
+}
+
+/// The allocator's cheap collection, if the executable registered one.
+fn trim_memory() {
+    if let Some(trim) = ALLOCATOR_TRIM.get() {
+        trim();
+    }
+}
+
 /// Returns the allocator's free pages to the operating system (what
 /// `malloc_trim(0)` does on glibc; `malloc_zone_pressure_relief` on macOS).
 pub fn release_memory() {
@@ -1325,6 +1486,44 @@ mod tests {
         assert!(gate.pending.get());
         gate.defer_if_due(Some(41 * MB));
         assert!(gate.pending.get(), "a close left it pending");
+    }
+
+    #[test]
+    fn release_gate_ceiling_is_a_multiple_of_the_gate() {
+        let gate = ReleaseGate::new((16 * MB, 25));
+        assert!(!gate.should_collect(Some(40 * MB)));
+        assert!(gate.should_collect(Some(60 * MB)), "due: left to an idle moment");
+        assert!(!gate.past_ceiling(Some(60 * MB)));
+        assert!(!gate.past_ceiling(Some(100 * MB)), "64 MB = 4 x 16 MB, and 100% of 40 MB, not reached");
+        assert!(gate.past_ceiling(Some(104 * MB)), "past 4 x the gate: collected at once");
+        assert!(ReleaseGate::new((0, 0)).past_ceiling(Some(100 * MB)), "no gate: every close collects");
+        assert!(gate.past_ceiling(None), "no footprint: collects");
+        gate.set_growth((8 * MB, 0));
+        assert_eq!(gate.ceiling.get(), (32 * MB, 0));
+    }
+
+    #[test]
+    fn release_gate_collects_a_close_after_one_left_waiting() {
+        // A process that never idles: the first close past the gate leaves
+        // its collection to an idle moment, the next one collects.
+        let mut gate = ReleaseGate::new((16 * MB, 25));
+        gate.put_off_limit = 1;
+        assert!(!gate.should_collect(Some(40 * MB)));
+        assert!(gate.should_collect(Some(60 * MB)));
+        assert!(!gate.collect_due_now(Some(60 * MB)), "the first one waits");
+        assert!(gate.collect_due_now(Some(62 * MB)), "the next one collects");
+        gate.put_off.set(0); // what `Engine::settle` does
+        assert!(!gate.collect_due_now(Some(60 * MB)), "an idle collection starts the count again");
+        gate.forked();
+        assert_eq!(gate.put_off.get(), 0);
+        // A limit of 2 lets two wait.
+        gate.put_off_limit = 2;
+        assert!(!gate.collect_due_now(Some(60 * MB)));
+        assert!(!gate.collect_due_now(Some(60 * MB)));
+        assert!(gate.collect_due_now(Some(60 * MB)));
+        // Past the ceiling collects regardless.
+        gate.put_off.set(0);
+        assert!(gate.collect_due_now(Some(200 * MB)));
     }
 
     #[test]

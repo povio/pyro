@@ -21,16 +21,16 @@ mod value;
 
 pub use accessors::slot_usage as accessor_slot_usage;
 pub use class::{ClassDef, ClassId, GetterResult, GetterThisFn, JsClass, MethodThisFn, NoParent};
-pub use engine::set_allocator_release;
 pub use engine::{
     configure_process, entry_realm, prepare_process_for_fork, Capabilities, ConsoleLevel, Engine, EngineHooks, FunctionCoverage,
     ImpureNames, ScriptCoverage, TerminateHandle, WrapperPropertyHook,
 };
-pub use error::{JsError, JsException, JsResult};
+pub use engine::{set_allocator_release, set_allocator_trim};
+pub use error::{DomError, JsError, JsException, JsResult, Message};
 pub use interned::InternedId;
-pub use persistent::{Persistent, RootedVec};
+pub use persistent::{HeldValue, Persistent, RootedVec};
 pub use realm::{
-    Deferred, IdentityKey, LazyGlobalConstant, ModuleFetcher, ModuleRequest, ModuleType, NameUnits, NamedProperties,
+    Deferred, DeferredSetup, IdentityKey, LazyGlobalConstant, ModuleFetcher, ModuleRequest, ModuleType, NameUnits, NamedProperties,
     NativeCallbackHook, Realm, RealmId, RealmOptions, Scope, UnhandledRejectionHandler, ValueDescription, WeakRealm,
     WrapperRef,
 };

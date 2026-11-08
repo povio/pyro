@@ -45,7 +45,7 @@ fn check_exc(s: &Scope<'_>, exc: sys::JSValueRef) -> JsResult<()> {
     // SAFETY: `exc` is a live exception value JSC just returned on this thread
     // for this context; wrapping it roots it for the scope's lifetime.
     let v = unsafe { Value::from_raw(s.ctx(), exc) };
-    Err(JsError::Thrown(lp_js::Persistent::new(s, v)))
+    Err(JsError::thrown(lp_js::Persistent::new(s, v)))
 }
 
 /// Copies the bytes viewed by an ArrayBuffer, TypedArray or DataView.
@@ -111,24 +111,10 @@ pub fn buffer_source_bytes(s: &Scope<'_>, v: Value<'_>) -> JsResult<Option<Vec<u
     }
 }
 
-/// Capture builtins before page scripts can replace them. Each reader accepts
-/// only a native DataView and produces a genuine Uint8Array over the same view.
-pub(crate) fn install(s: &Scope<'_>) -> JsResult<()> {
-    let reader = s.eval(
-        r#"(() => {
-        const get = Object.getOwnPropertyDescriptor, apply = Reflect.apply, U8 = Uint8Array;
-        const buffer = get(DataView.prototype, 'buffer').get;
-        const offset = get(DataView.prototype, 'byteOffset').get;
-        const length = get(DataView.prototype, 'byteLength').get;
-        return value => {
-            let backing;
-            try { backing = apply(buffer, value, []); } catch (_) { return null; }
-            return new U8(backing, apply(offset, value, []), apply(length, value, []));
-        };
-    })()"#,
-        Some("lightningpanda://internal/dataview.js"),
-        1,
-    )?;
+/// Keeps the realm's DataView reader (install.js `dataView`, made before
+/// page scripts can replace the builtins it captures): it accepts only a
+/// native DataView and produces a genuine Uint8Array over the same view.
+pub(crate) fn install(s: &Scope<'_>, reader: lp_js::Value<'_>) -> JsResult<()> {
     crate::target::page_of(s)?.data_view_readers.borrow_mut().insert(s.realm_id(), lp_js::Persistent::new(s, reader));
     Ok(())
 }
@@ -168,7 +154,7 @@ impl JsClass for TextEncoder {
     fn define(def: &mut ClassDef<Self>) {
         def.constructor(0, |s, nt, _a| s.wrap_new::<TextEncoder>((), nt, None));
         def.getter("encoding", |s, _d| Ok(s.string("utf-8")));
-        def.method("encode", 0, |s, _d, a| {
+        def.pure_method("encode", 0, |s, _d, a| {
             let text = if a.get(0).is_undefined() { String::new() } else { dom_string(a.get(0))? };
             uint8_array(s, text.as_bytes())
         });
@@ -215,7 +201,7 @@ impl JsClass for TextDecoder {
         def.constructor(0, |s, nt, a| {
             let label = if a.get(0).is_undefined() { "utf-8".to_owned() } else { dom_string(a.get(0))? };
             let encoding = encoding_rs::Encoding::for_label(label.as_bytes())
-                .ok_or_else(|| JsError::Range(format!("The encoding label provided ('{label}') is invalid.")))?;
+                .ok_or_else(|| JsError::Range(format!("The encoding label provided ('{label}') is invalid.").into()))?;
             let (fatal, ignore_bom) = match a.get(1).as_object() {
                 Some(o) => (o.get_atom("fatal")?.to_bool(), o.get_atom("ignoreBOM")?.to_bool()),
                 None => (false, false),

@@ -16,14 +16,15 @@
 //!    `page.dispose()`. Per-world removal can use `lifecycle::realm_disposed`.
 
 pub mod abort;
-mod cache_storage;
 mod animation_events;
 mod animations;
+mod cache_storage;
 pub mod canvas;
 mod canvas_path;
 mod clipboard;
 pub mod collections;
 mod compression;
+mod computed_properties;
 pub mod crypto;
 mod crypto_subtle;
 pub mod css;
@@ -52,8 +53,8 @@ mod integrity;
 mod internals;
 pub mod intersection_observer;
 pub mod layout_api;
-pub mod lifecycle;
 pub(crate) mod lazy_module;
+pub mod lifecycle;
 pub mod media;
 pub(crate) mod media_format;
 pub mod media_source;
@@ -65,8 +66,8 @@ pub mod node;
 pub mod observable;
 pub mod page;
 pub mod performance;
-mod popover;
 mod pointer_capture;
+mod popover;
 mod popup;
 mod port_link;
 pub mod range;
@@ -101,7 +102,7 @@ pub mod xpath;
 
 use std::rc::Rc;
 
-use lp_js::{JsResult, Scope, Value};
+use lp_js::{JsResult, Object, Scope, Value};
 
 pub use event::{EventCore, EventData, EventInterface};
 pub use fetch::{FetchLimits, RequestContext};
@@ -110,14 +111,15 @@ pub use identity::UserAgentOverride;
 pub use navigator_extras::{ContextServices, GeolocationFix, PermissionSetting, UserAgentMetadata};
 pub use node::{wrap_node, NodeData};
 pub use page::{
-    DialogAnswer, DocumentTiming, DownloadRequest, FocusTarget, FocusTransition, FrameViewportSource, IframeAttribute,
-    BodyPart, MediaFetchHandle, MediaRequest, MediaResponse, NavigationRequest, Partial, PageDom, PageHooks, RemotePoster,
+    BodyPart, DialogAnswer, DocumentTiming, DownloadRequest, FocusTarget, FocusTransition, FrameViewportSource,
+    IframeAttribute, MediaFetchHandle, MediaRequest, MediaResponse, NavigationRequest, PageDom, PageHooks, Partial,
+    RemotePoster,
 };
 pub use popup::{PopupCommand, PopupState, PopupTicket};
-pub use structured_clone::{decode_message as deserialize_message, encode_message as serialize_message, WireMessage};
 pub use render_blocking::RenderBlocker;
 pub use service_worker::{navigation_route, subresource_route, LoadRoute};
 pub use storage::{StorageNamespace, StorageSeed};
+pub use structured_clone::{decode_message as deserialize_message, encode_message as serialize_message, WireMessage};
 pub use target::{EventTarget, EventTargetData};
 pub use window::{define_members, WindowHost};
 pub use worker::{
@@ -173,8 +175,68 @@ pub fn register(engine: &lp_js::Engine) {
     engine.register::<xhr::XMLHttpRequestUpload>();
 }
 
+/// The JavaScript the bindings of a realm capture before page script runs
+/// (install.js, with structured_clone.js as its argument): one script, one
+/// evaluation per realm.
+const INSTALL_JS: &str = concat!("(", include_str!("install.js"), ")(", include_str!("structured_clone.js"), ")");
+
+/// Evaluates install.js in the realm: its pieces by name.
+pub(crate) fn install_helpers<'s>(scope: &Scope<'s>) -> JsResult<Object<'s>> {
+    let helpers = scope.eval(INSTALL_JS, Some("lightningpanda://internal/install.js"), 1)?;
+    helpers.as_object().ok_or_else(|| lp_js::JsError::Type("install.js helpers".into()))
+}
+
+thread_local! {
+    /// The pages of each `Dom` (by address) that keep node wrappers: the
+    /// documents of an iframe share their parent's `Dom`, each page with its
+    /// own wrapper table.
+    static DOM_PAGES: std::cell::RefCell<rustc_hash::FxHashMap<usize, Rc<std::cell::RefCell<Vec<std::rc::Weak<PageDom>>>>>> =
+        Default::default();
+}
+
+/// A node holding listeners keeps its wrapper (and so the listeners) from the
+/// moment an insertion connects it (`Dom::set_listener_connected_hook`), in
+/// every page sharing the `Dom`.
+fn install_listener_connected_hook(page: &Rc<PageDom>) {
+    let key = Rc::as_ptr(&page.dom) as usize;
+    let (pages, new) = DOM_PAGES.with(|map| {
+        let mut map = map.borrow_mut();
+        map.retain(|_, pages| pages.borrow().iter().any(|p| p.strong_count() > 0));
+        match map.get(&key) {
+            Some(pages) => (pages.clone(), false),
+            None => {
+                let pages = Rc::new(std::cell::RefCell::new(Vec::new()));
+                map.insert(key, pages.clone());
+                (pages, true)
+            }
+        }
+    });
+    {
+        let mut list = pages.borrow_mut();
+        list.retain(|p| p.strong_count() > 0);
+        if !list.iter().any(|p| std::ptr::eq(p.as_ptr(), Rc::as_ptr(page))) {
+            list.push(Rc::downgrade(page));
+        }
+    }
+    let mut dom = page.dom.borrow_mut();
+    if new || !dom.has_listener_connected_hook() {
+        dom.set_listener_connected_hook(Some(Rc::new(move |idx, all, callbacks| {
+            let Ok(list) = pages.try_borrow() else { return };
+            for page in list.iter().filter_map(std::rc::Weak::upgrade) {
+                page.keep_connected_listener_node(idx, all, callbacks);
+            }
+        })));
+    }
+}
+
 /// Installs the page's bindings into a freshly created realm.
 pub fn install(scope: &Scope<'_>, page: Rc<PageDom>) -> JsResult<()> {
+    install_with_helpers(scope, page).map(drop)
+}
+
+/// [`install`], returning the realm's install.js helpers for the embedder's
+/// own setup (`accessor`: an enumerable, configurable getter on the global).
+pub fn install_with_helpers<'s>(scope: &Scope<'s>, page: Rc<PageDom>) -> JsResult<Object<'s>> {
     if page.is_disposed() {
         return Err(lp_js::JsError::ContextDestroyed);
     }
@@ -184,18 +246,20 @@ pub fn install(scope: &Scope<'_>, page: Rc<PageDom>) -> JsResult<()> {
     // caches of a name when an element that may be named it appears.
     let names = scope.impure_names();
     page.dom.borrow_mut().set_named_item_hook(Some(Rc::new(move |name: &str| names.announce(name))));
+    install_listener_connected_hook(&page);
     xhr::install(scope, &page)?;
     realm.set_embedder(page.clone());
     realm.set_named_properties(Rc::new(window::WindowNamedProperties(page.clone())));
     realm.set_unhandled_rejection_handler(event::dispatch_unhandled_rejection);
-    mutation_observer::install(scope, &page)?;
-    intersection_observer::install(scope, &page)?;
-    encoding::install(scope)?;
-    headers::install(scope)?;
-    url_search_params::install(scope)?;
-    form_data::install(scope)?;
+    let helpers = install_helpers(scope)?;
+    mutation_observer::install(scope, &page, helpers.get_atom("mutationOptions")?)?;
+    intersection_observer::install(scope, &page, helpers.get_atom("intersection")?)?;
+    encoding::install(scope, helpers.get_atom("dataView")?)?;
+    headers::install(scope, helpers.get_atom("headers")?)?;
+    url_search_params::install(scope, helpers.get_atom("urlSearchParams")?)?;
+    form_data::install(scope, helpers.get_atom("formData")?)?;
     fetch::install(scope)?;
-    structured_clone::install(scope, &page)?;
+    structured_clone::install(scope, &page, helpers.get_atom("structuredClone")?)?;
     if let Some(define) =
         scope.global().get_atom("Object")?.as_object().map(|o| o.get_atom("defineProperty")).transpose()?
     {
@@ -222,21 +286,10 @@ pub fn install(scope: &Scope<'_>, page: Rc<PageDom>) -> JsResult<()> {
         scope.define_global_constant("window", global.value());
     }
     // [Unscopable] members of ChildNode and ParentNode, defined with each
-    // interface's members: reading `Element.prototype` here would install
-    // Element, Node, Document and the rest in every new realm.
-    let unscopables = scope.eval(
-        r#"(() => {
-        const create = Object.create, define = Object.defineProperty, symbol = Symbol.unscopables;
-        // Runs when a page first uses the interface: no iteration, no
-        // descriptor that could inherit from a changed Object.prototype.
-        const u = (names) => (proto) => { const o = create(null); for (let i = 0; i < names.length; i++) o[names[i]] = true;
-            define(proto, symbol, { __proto__: null, value: o, configurable: true }); };
-        const child = ['before', 'after', 'replaceWith', 'remove'], parent = ['prepend', 'append', 'replaceChildren'];
-        return [u([...child, ...parent]), u(child), u(child), u(parent), u(parent)];
-    })()"#,
-        Some("lightningpanda://internal/unscopables.js"),
-        1,
-    )?;
+    // interface's members (install.js `unscopables`): reading
+    // `Element.prototype` here would install Element, Node, Document and the
+    // rest in every new realm.
+    let unscopables = helpers.get_atom("unscopables")?;
     let unscopables = unscopables.as_object().expect("unscopables hooks");
     let hook = |i: u32| -> JsResult<lp_js::Object<'_>> {
         unscopables.get_index(i)?.as_object().ok_or_else(|| lp_js::JsError::Type("unscopables hook".into()))
@@ -246,7 +299,7 @@ pub fn install(scope: &Scope<'_>, page: Rc<PageDom>) -> JsResult<()> {
     scope.after_populate::<node::DocumentType>(hook(2)?)?;
     scope.after_populate::<node::Document>(hook(3)?)?;
     scope.after_populate::<node::DocumentFragment>(hook(4)?)?;
-    Ok(())
+    Ok(helpers)
 }
 
 /// The value of a window's `document` constant, made on its first read: the

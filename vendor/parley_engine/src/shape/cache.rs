@@ -5,6 +5,8 @@ use alloc::boxed::Box;
 use hashbrown::Equivalent;
 use parlance::FontVariation;
 
+use super::shaped_text::RunMetrics;
+
 #[derive(PartialEq, Copy, Clone)]
 pub(crate) struct ShapeDataKey {
     /// The font collection's blob ID.
@@ -226,6 +228,9 @@ struct GlyphEntry {
     pre_context: Box<str>,
     post_context: Box<str>,
     glyphs: harfrust::GlyphBuffer,
+    /// lightningpanda: the run's font metrics, computed when it was shaped (the key holds
+    /// everything they depend on: font, synthesis, variations and size).
+    metrics: RunMetrics,
 }
 
 impl GlyphEntry {
@@ -258,15 +263,20 @@ pub(crate) struct GlyphCache {
 impl GlyphCache {
     const MAX_ENTRIES: usize = 16384;
 
-    pub(crate) fn get(&self, key: &GlyphKey<'_>) -> Option<&harfrust::GlyphBuffer> {
+    pub(crate) fn get(&self, key: &GlyphKey<'_>) -> Option<(&harfrust::GlyphBuffer, RunMetrics)> {
         self.entries
             .get(&key.hash(&self.hasher))?
             .iter()
             .find(|e| e.matches(key))
-            .map(|e| &e.glyphs)
+            .map(|e| (&e.glyphs, e.metrics))
     }
 
-    pub(crate) fn insert(&mut self, key: &GlyphKey<'_>, glyphs: harfrust::GlyphBuffer) {
+    pub(crate) fn insert(
+        &mut self,
+        key: &GlyphKey<'_>,
+        glyphs: harfrust::GlyphBuffer,
+        metrics: RunMetrics,
+    ) {
         if self.len >= Self::MAX_ENTRIES {
             self.entries.clear();
             self.len = 0;
@@ -287,6 +297,7 @@ impl GlyphCache {
             pre_context: key.pre_context.into(),
             post_context: key.post_context.into(),
             glyphs,
+            metrics,
         });
     }
 }

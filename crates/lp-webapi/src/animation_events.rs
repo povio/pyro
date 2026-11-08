@@ -40,8 +40,9 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::Duration;
 
-use lp_dom::timing::{ElementTiming, StyleSnapshot, TimingRules};
+use lp_dom::timing::{displays_none, ElementTiming, StyleSnapshot, TimingRules};
 use lp_dom::NodeId;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::event::{EventCore, EventInterface};
 use crate::page::PageDom;
@@ -92,6 +93,14 @@ pub(crate) struct State {
     listed: Cell<bool>,
     /// The last timeline id handed out.
     ids: Cell<u64>,
+    /// Content roots seen styled `display: none` where Chrome has
+    /// `content-visibility: hidden` (see [`hides_content`]): their content
+    /// keeps a before-change style while hidden.
+    hidden_roots: RefCell<FxHashSet<NodeId>>,
+    /// The before-change styles of the elements under such a root that may
+    /// transition, by element, with their root: the engine styles none of
+    /// them while the root is hidden, and styles them afresh once shown.
+    hidden_content: RefCell<FxHashMap<NodeId, (NodeId, StyleSnapshot)>>,
 }
 
 /// A CSS animation or transition `getAnimations()` lists.
@@ -126,6 +135,8 @@ impl State {
             timeline.live.set(false);
         }
         self.rules.borrow_mut().take();
+        self.hidden_roots.borrow_mut().clear();
+        self.hidden_content.borrow_mut().clear();
     }
 
     /// The rules of the document's sheets, read again only when the sheets changed.
@@ -401,10 +412,135 @@ fn transitions_from_changes(
     }
     let rules = state.rules(dom, style);
     for (el, before, now) in changes {
-        if dom.is_connected(el).unwrap_or(false) {
+        // The document's own tree only: the rules are the document's (a
+        // document rule does not style a shadow tree's elements).
+        if !dom.in_document_tree(el) {
+            continue;
+        }
+        let (was_none, is_none) = (displays_none(&before), displays_none(&now));
+        if !was_none && !is_none {
+            start_transitions(state, dom, &rules, el, &before, &now, now_ms, planned);
+            continue;
+        }
+        // `display: none` at either style change event: not rendered then, so
+        // no transitions (and no before-change style once shown), unless the
+        // engine's `display: none` is Chrome's `content-visibility: hidden`
+        // (a closed `<details>`'s content, `hidden=until-found`), which keeps
+        // the style.
+        let content = is_none && hides_content(dom, el);
+        let was_content = was_none && !is_none && state.hidden_roots.borrow_mut().remove(&el);
+        if content {
+            keep_hidden_content(state, dom, style, &rules, el);
+        } else if is_none {
+            drop_hidden_content(state, dom, el);
+        }
+        if was_content {
+            reveal_hidden_content(state, dom, style, &rules, el, now_ms, planned);
+        }
+        if (content || !is_none) && (was_content || content || !was_none) {
             start_transitions(state, dom, &rules, el, &before, &now, now_ms, planned);
         }
     }
+}
+
+/// Whether the engine's `display: none` of `el` is where Chrome has
+/// `content-visibility: hidden`: a child of a closed `<details>` other than
+/// its first `<summary>`, or a `hidden=until-found` element. Two attribute
+/// reads, asked only of elements styled `display: none`.
+fn hides_content(dom: &lp_dom::Dom, el: NodeId) -> bool {
+    use markup5ever::local_name;
+    let Ok(e) = dom.element(el) else { return false };
+    if e.attr_local(&local_name!("hidden")).is_some_and(|v| v.eq_ignore_ascii_case("until-found")) {
+        return true;
+    }
+    let Some(parent) = dom.parent_element(el).ok().flatten() else { return false };
+    let Ok(p) = dom.element(parent) else { return false };
+    if !p.is_html() || p.name.local != local_name!("details") || p.attr_local(&local_name!("open")).is_some() {
+        return false;
+    }
+    let is_summary =
+        |id: &NodeId| dom.element(*id).is_ok_and(|c| c.is_html() && c.name.local == local_name!("summary"));
+    let first_summary = dom.children(parent).ok().and_then(|mut c| c.find(is_summary));
+    first_summary != Some(el)
+}
+
+/// `root` became hidden content: the elements under it that may transition
+/// keep their style as it is now as their before-change style (the engine
+/// computes it on demand; it styles none of them while `root` is hidden).
+/// An element already kept keeps its older style.
+fn keep_hidden_content(
+    state: &State,
+    dom: &lp_dom::Dom,
+    style: &lp_dom::style::StyleEngine,
+    rules: &TimingRules,
+    root: NodeId,
+) {
+    state.hidden_roots.borrow_mut().insert(root);
+    let Ok(descendants) = dom.descendants(root) else { return };
+    let mut kept = state.hidden_content.borrow_mut();
+    for d in descendants.filter(|d| *d != root) {
+        if kept.contains_key(&d) || dom.element(d).is_err() || rules.element(dom, d).transitions.is_empty() {
+            continue;
+        }
+        if let Some(snapshot) = style.stylo_style(dom, d) {
+            kept.insert(d, (root, snapshot));
+        }
+    }
+}
+
+/// `el` is now really `display: none`: the hidden content it holds (or is)
+/// is no longer rendered and loses its before-change styles.
+fn drop_hidden_content(state: &State, dom: &lp_dom::Dom, el: NodeId) {
+    state.hidden_roots.borrow_mut().remove(&el);
+    let mut kept = state.hidden_content.borrow_mut();
+    if !kept.is_empty() {
+        kept.retain(|d, (root, _)| dom.is_alive(*d) && *root != el && !is_ancestor(dom, el, *root));
+    }
+}
+
+/// The hidden content root `root` is shown: its elements' kept styles meet
+/// the styles the engine gave them afresh.
+fn reveal_hidden_content(
+    state: &State,
+    dom: &lp_dom::Dom,
+    style: &lp_dom::style::StyleEngine,
+    rules: &TimingRules,
+    root: NodeId,
+    now_ms: f64,
+    planned: &mut Vec<Planned>,
+) {
+    let revealed: Vec<(NodeId, StyleSnapshot)> = {
+        let mut kept = state.hidden_content.borrow_mut();
+        let mut out = Vec::new();
+        kept.retain(|d, (r, snapshot)| {
+            if *r != root {
+                return dom.is_alive(*d);
+            }
+            out.push((*d, snapshot.clone()));
+            false
+        });
+        out
+    };
+    for (d, before) in revealed {
+        if !dom.in_document_tree(d) || !is_ancestor(dom, root, d) {
+            continue;
+        }
+        if let Some(now) = style.stylo_style(dom, d).filter(|now| !displays_none(now)) {
+            start_transitions(state, dom, rules, d, &before, &now, now_ms, planned);
+        }
+    }
+}
+
+/// Whether `ancestor` is a proper ancestor of `node`.
+fn is_ancestor(dom: &lp_dom::Dom, ancestor: NodeId, node: NodeId) -> bool {
+    let mut at = dom.parent(node).ok().flatten();
+    while let Some(p) = at {
+        if p == ancestor {
+            return true;
+        }
+        at = dom.parent(p).ok().flatten();
+    }
+    false
 }
 
 /// The transitions a style change of `el` from `before` to `now` starts: the

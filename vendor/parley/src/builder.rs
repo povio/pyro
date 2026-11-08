@@ -443,6 +443,7 @@ fn build_into_layout<B: Brush>(
             text,
             layout,
             &lcx.analysis_data_sources,
+            &mut lcx.style_first_fonts,
         );
     }
 
@@ -452,6 +453,7 @@ fn build_into_layout<B: Brush>(
         fcx,
         &lcx.style_table,
         &layout.data.shaped_text,
+        &lcx.style_first_fonts,
         options.quantize,
         &mut layout.data.style_metrics,
     );

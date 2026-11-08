@@ -1149,7 +1149,7 @@ fn finite(v: Value<'_>, what: &str) -> JsResult<f64> {
     if !n.is_finite() {
         return Err(JsError::Type(format!(
             "Failed to set the '{what}' property on 'HTMLMediaElement': The provided double value is non-finite."
-        )));
+        ).into()));
     }
     Ok(n)
 }
@@ -1616,7 +1616,7 @@ pub(crate) fn define(def: &mut ClassDef<HtmlMediaElement>) {
         internal_pause(&page, n.id);
         Ok(s.undefined())
     });
-    def.method("canPlayType", 1, |s, _n, a| {
+    def.pure_method("canPlayType", 1, |s, _n, a| {
         a.require(1, "HTMLMediaElement.canPlayType")?;
         let ty = dom_string(a.get(0))?;
         Ok(s.string(media_format::can_play_type(&ty).as_str()))

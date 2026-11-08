@@ -231,19 +231,21 @@ impl LayoutPassState<'_> {
         };
         let root_wm = self.layout_wm_of(dom_node_id(root));
         self.round_counts = (0, 0);
-        self.physicalise_and_round_inner(root, root_wm, viewport, Point::ZERO, Point::ZERO);
+        self.physicalise_and_round_inner(root, root_wm, viewport, Point::ZERO);
         crate::resolve::phase_profile::rounded(self.round_counts);
         #[cfg(debug_assertions)]
-        self.assert_rounding_is_current(root, root_wm, viewport, Point::ZERO, Point::ZERO);
+        self.assert_rounding_is_current(root, root_wm, viewport, Point::ZERO);
     }
 
+    /// `parent_frac` is the fractional part (in `[0, 1)`) of the parent's unrounded absolute
+    /// position: all the rounding of a box and its subtree depends on besides their own layouts
+    /// (see [`rounded_layout`]).
     fn physicalise_and_round_inner(
         &mut self,
         node_id: NodeId,
         placer_wm: WritingMode,
         placer_size: Size<f32>,
-        parent_pos: Point<f32>,
-        rounded_parent_pos: Point<f32>,
+        parent_frac: Point<f32>,
     ) {
         // lightningpanda: only a vertical placer reads it (`physical_layout`).
         let is_scroll_container = placer_wm.is_vertical() && {
@@ -258,16 +260,16 @@ impl LayoutPassState<'_> {
         );
         self.round_counts.0 += 1;
 
-        // Keyed on the physical layout: a `*-rl` box's x depends on its placer's size. That, the offset
-        // (`rounded_parent_pos` is `parent_pos` rounded) and the subtree's unrounded layouts, whose
-        // changes are damage, are all the rounding below reads.
-        if self.rounded_unchanged(node_id, &unrounded, parent_pos.x, parent_pos.y) {
+        // Keyed on the physical layout: a `*-rl` box's x depends on its placer's size. That, the
+        // parent's fractional offset and the subtree's unrounded layouts, whose changes are damage,
+        // are all the rounding below reads: a subtree moved by whole pixels rounds as it did.
+        if self.rounded_unchanged(node_id, &unrounded, parent_frac.x, parent_frac.y) {
             self.round_counts.1 += 1;
             return;
         }
-        self.record_rounded(node_id, &unrounded, parent_pos.x, parent_pos.y);
+        self.record_rounded(node_id, &unrounded, parent_frac.x, parent_frac.y);
 
-        let (layout, pos, rounded_pos) = rounded_layout(unrounded, parent_pos, rounded_parent_pos);
+        let (layout, frac) = rounded_layout(unrounded, parent_frac);
         let size = unrounded.size;
 
         // `unrounded_layout` is left in the placer's writing mode: Taffy's cache may skip re-placing
@@ -282,7 +284,7 @@ impl LayoutPassState<'_> {
         // lightningpanda: a table where it was rounds again only the cells its grid placed since:
         // the others' layouts and offsets, all their rounding reads, are the same.
         let table_cells = (self.nodes[dom_node_id(node_id)].flags.is_table_root() && !wm.is_vertical())
-            .then(|| crate::layout::table::table_cells_to_round(self, dom_node_id(node_id), (pos, rounded_pos)))
+            .then(|| crate::layout::table::table_cells_to_round(self, dom_node_id(node_id), frac))
             .flatten();
         if let Some(cells) = table_cells {
             let node = &self.nodes[dom_node_id(node_id)];
@@ -290,24 +292,24 @@ impl LayoutPassState<'_> {
             for child in cells.into_iter().chain(pseudos.into_iter().flatten()) {
                 let child = crate::taffy_node_id(child);
                 if !self.is_out_of_flow(child) {
-                    self.physicalise_and_round_inner(child, wm, size, pos, rounded_pos);
+                    self.physicalise_and_round_inner(child, wm, size, frac);
                 }
             }
             for index in 0..self.hoisted_child_count(node_id) {
                 let child = self.get_hoisted_child_id(node_id, index);
-                self.physicalise_and_round_inner(child, wm, size, pos, rounded_pos);
+                self.physicalise_and_round_inner(child, wm, size, frac);
             }
             return;
         }
         for index in 0..self.child_count(node_id) {
             let child = self.get_child_id(node_id, index);
             if !self.is_out_of_flow(child) {
-                self.physicalise_and_round_inner(child, wm, size, pos, rounded_pos);
+                self.physicalise_and_round_inner(child, wm, size, frac);
             }
         }
         for index in 0..self.hoisted_child_count(node_id) {
             let child = self.get_hoisted_child_id(node_id, index);
-            self.physicalise_and_round_inner(child, wm, size, pos, rounded_pos);
+            self.physicalise_and_round_inner(child, wm, size, frac);
         }
     }
 
@@ -319,15 +321,14 @@ impl LayoutPassState<'_> {
         node_id: NodeId,
         placer_wm: WritingMode,
         placer_size: Size<f32>,
-        parent_pos: Point<f32>,
-        rounded_parent_pos: Point<f32>,
+        parent_frac: Point<f32>,
     ) {
         let is_scroll_container = placer_wm.is_vertical() && {
             let overflow = self.doc.nodes[dom_node_id(node_id)].layout_style().overflow();
             overflow.x.is_scroll_container() || overflow.y.is_scroll_container()
         };
         let unrounded = physical_layout(self.get_unrounded_layout(node_id), placer_wm, placer_size, is_scroll_container);
-        let (layout, pos, rounded_pos) = rounded_layout(unrounded, parent_pos, rounded_parent_pos);
+        let (layout, frac) = rounded_layout(unrounded, parent_frac);
         let node = self.node_from_id(node_id);
         // Formatted, as NaNs (never equal) must not fail this.
         let current = node.final_layout();
@@ -342,46 +343,59 @@ impl LayoutPassState<'_> {
         for index in 0..self.child_count(node_id) {
             let child = self.get_child_id(node_id, index);
             if !self.is_out_of_flow(child) {
-                self.assert_rounding_is_current(child, wm, unrounded.size, pos, rounded_pos);
+                self.assert_rounding_is_current(child, wm, unrounded.size, frac);
             }
         }
         for index in 0..self.hoisted_child_count(node_id) {
             let child = self.get_hoisted_child_id(node_id, index);
-            self.assert_rounding_is_current(child, wm, unrounded.size, pos, rounded_pos);
+            self.assert_rounding_is_current(child, wm, unrounded.size, frac);
         }
     }
 }
 
+/// Rounds half up (`-2.5` to `-2`, as Blink's `LayoutUnit::Round`): the only rounding that moves
+/// with the pixel grid, `round(k + v) == k + round(v)` for every integer `k`, which `f32::round`
+/// (half away from zero) is not across zero. Exact for `f32` values.
+#[inline]
+fn round_half_up(v: f32) -> f32 {
+    let rounded = v.round();
+    if v - rounded == 0.5 { rounded + 1.0 } else { rounded }
+}
+
 /// `unrounded` (physical) rounded, as in `taffy::round_layout`: the box's outer edges are rounded in
 /// absolute coordinates and every inner edge is rounded relative to them, so adjacent boxes never
-/// overlap or gap. Also returns its absolute position, unrounded and rounded.
-fn rounded_layout(
-    unrounded: Layout,
-    parent_pos: Point<f32>,
-    rounded_parent_pos: Point<f32>,
-) -> (Layout, Point<f32>, Point<f32>) {
+/// overlap or gap.
+///
+/// lightningpanda: the absolute coordinates are kept modulo whole pixels. `parent_frac` is the
+/// fractional part of the parent's absolute position; the box's position in the pixel grid is
+/// `parent_frac + location`, rounded half up, and the parent's is `parent_frac` rounded. Moving the
+/// parent by whole pixels changes nothing here (the arithmetic never sees the whole pixels), so
+/// a subtree moved that way needs no rounding again (`RoundTree::rounded_unchanged`), and the
+/// sums are taken near zero, where `f32` is finest. Also returns the box's fractional offset, for
+/// its children.
+fn rounded_layout(unrounded: Layout, parent_frac: Point<f32>) -> (Layout, Point<f32>) {
     let pos = Point {
-        x: parent_pos.x + unrounded.location.x,
-        y: parent_pos.y + unrounded.location.y,
+        x: parent_frac.x + unrounded.location.x,
+        y: parent_frac.y + unrounded.location.y,
     };
     let size = unrounded.size;
     let rounded_pos = Point {
-        x: pos.x.round(),
-        y: pos.y.round(),
+        x: round_half_up(pos.x),
+        y: round_half_up(pos.y),
     };
     let rounded_end = Point {
-        x: (pos.x + size.width).round(),
-        y: (pos.y + size.height).round(),
+        x: round_half_up(pos.x + size.width),
+        y: round_half_up(pos.y + size.height),
     };
-    let from_left = |v: f32| (pos.x + v).round() - rounded_pos.x;
-    let from_top = |v: f32| (pos.y + v).round() - rounded_pos.y;
-    let from_right = |v: f32| rounded_end.x - (pos.x + size.width - v).round();
-    let from_bottom = |v: f32| rounded_end.y - (pos.y + size.height - v).round();
+    let from_left = |v: f32| round_half_up(pos.x + v) - rounded_pos.x;
+    let from_top = |v: f32| round_half_up(pos.y + v) - rounded_pos.y;
+    let from_right = |v: f32| rounded_end.x - round_half_up(pos.x + size.width - v);
+    let from_bottom = |v: f32| rounded_end.y - round_half_up(pos.y + size.height - v);
 
     let mut layout = unrounded;
     layout.location = Point {
-        x: rounded_pos.x - rounded_parent_pos.x,
-        y: rounded_pos.y - rounded_parent_pos.y,
+        x: rounded_pos.x - round_half_up(parent_frac.x),
+        y: rounded_pos.y - round_half_up(parent_frac.y),
     };
     layout.size = Size {
         width: rounded_end.x - rounded_pos.x,
@@ -410,7 +424,12 @@ fn rounded_layout(
         },
         unrounded.scrollable_overflow_rect.is_reversed(),
     );
-    (layout, pos, rounded_pos)
+    // The box's fractional offset: `pos` less its whole pixels (exact in `f32`).
+    let frac = Point {
+        x: pos.x - pos.x.floor(),
+        y: pos.y - pos.y.floor(),
+    };
+    (layout, frac)
 }
 
 /// Map the static positions of `output`'s out-of-flow candidates (relative to the border box of a

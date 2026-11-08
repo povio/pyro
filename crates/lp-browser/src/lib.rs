@@ -18,6 +18,7 @@ mod network_idle;
 mod preload;
 mod quiet;
 mod refresh;
+mod speculate;
 mod stylesheets;
 mod viewport;
 mod window;
@@ -732,7 +733,8 @@ impl Browser {
             for page in &self.pages {
                 for info in self.frames(page.id) {
                     if let Some(frame) = self.frame(page.id, &info.id) {
-                        for realm in &frame.realms {
+                        // A deferred realm's setup reads the clock's state when it is made.
+                        for realm in frame.realms.iter().filter(|r| !r.realm.is_deferred()) {
                             realm.realm.scope()?.eval(
                                 clock::DATE_SCRIPT,
                                 Some("lightningpanda://internal/clock.js"),
@@ -1100,14 +1102,14 @@ impl Browser {
             .as_ref()
             .map(lp_webapi::UserAgentOverride::request_defaults)
             .transpose()
-            .map_err(|e| JsError::Type(format!("invalid user agent request defaults: {e}")))?
+            .map_err(|e| JsError::type_error(format!("invalid user agent request defaults: {e}")))?
             .unwrap_or_default();
         // The user agent override owns none of the page's other request options.
         state.apply_request_options(&mut defaults);
         if let Some(bindings) = &state.main_frame.page_dom {
             bindings
                 .set_user_agent_override(value.clone())
-                .map_err(|e| JsError::Type(format!("invalid user agent request defaults: {e}")))?;
+                .map_err(|e| JsError::type_error(format!("invalid user agent request defaults: {e}")))?;
         }
         state.user_agent_override = value;
         state.request_defaults = defaults;
@@ -1227,7 +1229,9 @@ impl Browser {
             return false;
         }
         p.frames.settings.borrow_mut().bindings = p.bindings.clone();
-        for realm in self.page_realms(page) {
+        // A deferred realm defines nothing yet (`add_binding` makes it to
+        // define one): nothing to delete, and not worth making it for.
+        for realm in self.page_realms(page).iter().filter(|r| !r.realm.is_deferred()) {
             if let Ok(scope) = realm.realm.scope() {
                 let _ = scope.global().delete(name);
             }
@@ -1320,7 +1324,7 @@ impl Browser {
         if opts.url != "about:blank" {
             let error = "net::ERR_NOT_IMPLEMENTED (no resource loader configured)".to_string();
             self.navigation_failed(page, &opts, loader_id, error);
-            return Err(JsError::Unsupported("navigation to non-blank URLs"));
+            return Err(JsError::Unsupported(&"navigation to non-blank URLs"));
         }
         self.commit_document(page, &opts, loader_id.clone(), "null", history)?;
         self.finish_blank_document(page);

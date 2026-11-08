@@ -63,6 +63,14 @@ fn release_allocator() {
     unsafe { mi_collect(true) }
 }
 
+/// mimalloc's cheap collection: the calling thread's delayed frees and
+/// empty pages, without purging what it retains
+/// ([`lp_js::Engine::release_closed`] when the full release waits for idle).
+fn trim_allocator() {
+    // SAFETY: mimalloc's public API, callable from any thread at any time.
+    unsafe { mi_collect(false) }
+}
+
 const USAGE: &str = "\
 usage: lightningpanda <command> [options]
 
@@ -75,8 +83,30 @@ commands:
                                load a page (scripts run), dump the DOM after `load`
 ";
 
+/// PGO training builds (`scripts/pgo/generate.sh`, `--cfg lp_pgo_training`) exit
+/// normally on SIGTERM/SIGINT so the LLVM profile runtime's atexit hook writes the
+/// `.profraw`; the default disposition would kill the process without it. `serve`
+/// has no shutdown command, so this is how the training harness stops it.
+/// Not compiled into other builds.
+#[cfg(lp_pgo_training)]
+fn exit_on_termination_signals() {
+    extern "C" fn exit_now(_signal: libc::c_int) {
+        std::process::exit(0);
+    }
+    // SAFETY: installs a plain C handler before any thread exists; `exit`
+    // is not async-signal-safe, which a training run accepts.
+    let handler = exit_now as *const () as libc::sighandler_t;
+    unsafe {
+        libc::signal(libc::SIGTERM, handler);
+        libc::signal(libc::SIGINT, handler);
+    }
+}
+
 fn main() -> ExitCode {
+    #[cfg(lp_pgo_training)]
+    exit_on_termination_signals();
     lp_js::set_allocator_release(release_allocator);
+    lp_js::set_allocator_trim(trim_allocator);
     lp_net::set_idle_release(release_allocator);
     #[cfg(feature = "render")]
     lp_render::worker::set_idle_release(release_allocator);
