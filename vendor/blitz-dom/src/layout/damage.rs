@@ -238,6 +238,9 @@ impl BaseDocument {
 
         // If the node or any of it's children have been mutated or their layout styles
         // have changed, then we should clear it's layout cache.
+        // (Read before `ONLY_RELAYOUT` is dropped below: a cell relaid out for a change inside
+        // it, with no construction, is a changed cell too.)
+        let damage_reaches_layout = reaches_layout(damage);
         let mut invalidate_anonymous_ancestors = false;
         if damage.intersects(ONLY_RELAYOUT | CONSTRUCT_BOX | CONSTRUCT_FC) {
             node.clear_layout_cache();
@@ -252,7 +255,7 @@ impl BaseDocument {
         // (`TableContext::changed_cells`); one whose paint alone changed is transformed and
         // visited in the paint tree again.
         if !damage.is_empty() {
-            self.note_changed_table_cell(node_id, reaches_layout(damage));
+            self.note_changed_table_cell(node_id, damage_reaches_layout);
         }
 
         // Anonymous boxes between this node and its nearest element ancestor

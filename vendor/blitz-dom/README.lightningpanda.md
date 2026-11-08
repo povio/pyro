@@ -465,7 +465,9 @@ again and shape its text again. Three causes, each fixed where it is:
   construction, reordering), set and cleared with it. Tables read it in place of `OWN_DAMAGE` (`row_changed`,
   `group_changes`, `update_table_context`, `update_rows`): a cell or a table whose colour, background or opacity
   changed is no changed row and no reason to build the table again. `note_changed_table_cell` notes such a cell for
-  the transform pass and the paint tree (`PlacedCells::damaged`) but not as a cell to measure and lay out again.
+  the transform pass and the paint tree (`PlacedCells::damaged`) but not as a cell to measure and lay out again. Whether
+  the damage reaches layout is read before `ONLY_RELAYOUT` is dropped from the stored damage: a cell relaid out
+  for a change inside it (a block's width, an inline-block's width) is a changed cell.
 
 On a 1,200-row collapsed table, a `color` toggle on a cell no longer runs layout (0.45 ms to the restyle's cost),
 `.dark td { color }` on `body` no longer shapes 2,400 inline layouts, and a `padding` change on every cell shapes

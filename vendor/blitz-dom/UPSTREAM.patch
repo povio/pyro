@@ -1624,7 +1624,7 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
          }
  
          // An inline `<svg>` is rendered from a snapshot of its subtree (with
-@@ -131,18 +214,33 @@
+@@ -131,18 +214,36 @@
  
          // Reconstruction replaces the anonymous boxes with freshly styled ones.
          if !own_damage.is_empty() && !damage.intersects(CONSTRUCT_BOX | CONSTRUCT_FC) {
@@ -1653,6 +1653,9 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
  
          // If the node or any of it's children have been mutated or their layout styles
          // have changed, then we should clear it's layout cache.
++        // (Read before `ONLY_RELAYOUT` is dropped below: a cell relaid out for a change inside
++        // it, with no construction, is a changed cell too.)
++        let damage_reaches_layout = reaches_layout(damage);
          let mut invalidate_anonymous_ancestors = false;
 -        if damage.intersects(ONLY_RELAYOUT | CONSTRUCT_BOX) {
 -            node.invalidate_layout_cache();
@@ -1661,7 +1664,7 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
              invalidate_anonymous_ancestors = true;
              damage.remove(ONLY_RELAYOUT);
          }
-@@ -150,6 +248,13 @@
+@@ -150,6 +251,13 @@
          // Store damage for current node
          node.set_damage(damage);
  
@@ -1669,13 +1672,13 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
 +        // (`TableContext::changed_cells`); one whose paint alone changed is transformed and
 +        // visited in the paint tree again.
 +        if !damage.is_empty() {
-+            self.note_changed_table_cell(node_id, reaches_layout(damage));
++            self.note_changed_table_cell(node_id, damage_reaches_layout);
 +        }
 +
          // Anonymous boxes between this node and its nearest element ancestor
          // are not visited by the DOM walk, so invalidate them here by walking
          // `layout_parent`. Stop at the first non-anonymous node: elements are
-@@ -169,7 +274,7 @@
+@@ -169,7 +277,7 @@
                  if !ancestor.is_anonymous() {
                      break;
                  }
@@ -1684,7 +1687,7 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
                  current = ancestor.layout_parent.get();
              }
          }
-@@ -195,6 +300,69 @@
+@@ -195,6 +303,69 @@
          damage_for_parent
      }
  
@@ -1754,7 +1757,7 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
      /// Refresh owned anonymous boxes without revisiting their DOM children.
      fn refresh_anonymous_block_styles(&mut self, node_id: NodeId) -> RestyleDamage {
          // Skip owners with no anonymous boxes to refresh.
-@@ -220,7 +388,7 @@
+@@ -220,7 +391,7 @@
          let anonymous_blocks = std::mem::take(&mut self.nodes[node_id].anonymous_blocks);
          let mut damage_for_parent = RestyleDamage::empty();
          for &anonymous_id in &anonymous_blocks {
@@ -1763,7 +1766,7 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
                  // Skip boxes whose node, style data, or previous style is unavailable.
                  let Some(node) = self.nodes.get_mut(anonymous_id) else {
                      continue;
-@@ -240,8 +408,16 @@
+@@ -240,8 +411,16 @@
                      data.styles.primary = Some(style.clone());
                      data.set_restyled();
                  }
@@ -1781,7 +1784,7 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
  
              // Refresh nested owned boxes unless reconstruction will replace them.
              if changed && !damage.intersects(CONSTRUCT_BOX | CONSTRUCT_FC) {
-@@ -257,7 +433,7 @@
+@@ -257,7 +436,7 @@
              // Invalidate cached layout and consume only the relayout bit.
              let node = &mut self.nodes[anonymous_id];
              if damage.intersects(ONLY_RELAYOUT | CONSTRUCT_BOX) {
@@ -1790,7 +1793,7 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
                  damage.remove(ONLY_RELAYOUT);
              }
  
-@@ -326,12 +502,98 @@
+@@ -326,12 +505,98 @@
          let node = &mut self.nodes[node_id];
          node.anonymous_blocks = anonymous_blocks;
          node.children = children;
@@ -1889,7 +1892,7 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
  // fn is_fc_root(style: &ComputedValues) -> bool {
  //     let display = style.clone_display();
  //     let display_inside = display.inside();
-@@ -364,11 +626,12 @@
+@@ -364,11 +629,12 @@
          let old_box = old.get_box();
          let new_box = new.get_box();
  
@@ -1903,7 +1906,7 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
          {
              return true;
          }
-@@ -415,6 +678,8 @@
+@@ -415,6 +681,8 @@
          false
      };
  
@@ -1912,7 +1915,7 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
      let text_shaping_needs_recollect = || {
          if old.clone_direction() != new.clone_direction()
              || old.clone_unicode_bidi() != new.clone_unicode_bidi()
-@@ -426,6 +691,7 @@
+@@ -426,6 +694,7 @@
          let new_text = new.get_inherited_text();
          if !std::ptr::eq(old_text, new_text)
              && (old_text.white_space_collapse != new_text.white_space_collapse
@@ -1920,7 +1923,7 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
                  || old_text.text_transform != new_text.text_transform
                  || old_text.word_break != new_text.word_break
                  || old_text.line_break != new_text.line_break
-@@ -437,25 +703,26 @@
+@@ -437,25 +706,26 @@
              return true;
          }
  
@@ -1962,7 +1965,7 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
      };
  
      #[allow(
-@@ -467,7 +734,7 @@
+@@ -467,7 +737,7 @@
      } else if text_shaping_needs_recollect() {
          ALL_DAMAGE
      } else if table_needs_rebuild() {
@@ -1971,7 +1974,7 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
      } else if old.get_position().order != new.get_position().order
          // `position` is unchanged here (else the box tree would be rebuilt), so
          // checking the new style suffices. Out-of-flow children are not flex/grid
-@@ -502,6 +769,8 @@
+@@ -502,6 +772,8 @@
  impl BaseDocument {
      pub(crate) fn invalidate_inline_contexts(&mut self) {
          let scale = self.viewport.scale();

@@ -172,6 +172,18 @@ fn augmented_restyle_damage_rebuild_stacking_context(
 ) -> bool {
     restyle_damage_rebuild_stacking_context(old, new)
         || old.guarantees_stacking_context() != new.guarantees_stacking_context()
+        // lightningpanda: a mask makes a stacking context in Blitz's paint tree
+        // (`applies_atomic_paint_effect`); `mask-image` is otherwise `repaint` damage.
+        || has_mask_image(old) != has_mask_image(new)
+}
+
+fn has_mask_image(style: &ComputedValues) -> bool {
+    style
+        .get_svg()
+        .mask_image
+        .0
+        .iter()
+        .any(|image| !matches!(image, crate::values::generics::image::GenericImage::None))
 }
 
 fn compute_damage(old: &ComputedValues, new: &ComputedValues) -> ServoRestyleDamage {

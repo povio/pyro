@@ -62,7 +62,9 @@ crate (`diff -ruN`).
   or `scrollbar-color` was relayout damage (`RELAYOUT`), and Blitz relaid out and rebuilt boxes for it. Explicit
   annotations are unchanged. `servo/restyle_damage.rs`: `backdrop-filter` (now `recalculate_overflow`) makes a
   containing block for fixed boxes as `filter` does, so a change between none and some stays `RELAYOUT`
-  (`augmented_restyle_damage_rebuild_box`). Blitz's `compute_layout_damage` runs only on `RELAYOUT`, so this is what
+  (`augmented_restyle_damage_rebuild_box`). A `mask-image` (now `repaint`) makes a stacking context in Blitz's paint tree
+  (`applies_atomic_paint_effect`), so a change between none and some is `REBUILD_STACKING_CONTEXT`
+  (`augmented_restyle_damage_rebuild_stacking_context`, `has_mask_image`). Blitz's `compute_layout_damage` runs only on `RELAYOUT`, so this is what
   lets a paint-only restyle of a table cell run no layout (`vendor/blitz-dom/README.lightningpanda.md`, "Paint-only
   restyles run no layout and shape no text").
 
