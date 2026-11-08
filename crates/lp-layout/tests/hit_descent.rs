@@ -23,14 +23,14 @@ impl lp_render::Fetcher for NoFetch {
     }
 }
 
-struct Page {
-    dom: Dom,
-    doc: NodeId,
-    layout: Layout,
+pub(crate) struct Page {
+    pub(crate) dom: Dom,
+    pub(crate) doc: NodeId,
+    pub(crate) layout: Layout,
 }
 
 /// Fills shadow root `root` with `html` (parsed in a scratch element).
-fn fill_shadow(p: &mut Page, root: NodeId, html: &str) {
+pub(crate) fn fill_shadow(p: &mut Page, root: NodeId, html: &str) {
     let scratch = p.dom.create_element(p.doc, "div").unwrap();
     set_inner_html(&mut p.dom, scratch, html).unwrap();
     while let Some(child) = p.dom.first_child(scratch).unwrap() {
@@ -38,7 +38,7 @@ fn fill_shadow(p: &mut Page, root: NodeId, html: &str) {
     }
 }
 
-fn page(html: &str) -> Page {
+pub(crate) fn page(html: &str) -> Page {
     lp_layout::install(std::sync::Arc::new(NoFetch));
     let dom_ref: DomRef = Rc::new(RefCell::new(Dom::new()));
     let doc = parse_document(&dom_ref, "http://test/", html);
@@ -50,11 +50,11 @@ fn page(html: &str) -> Page {
 }
 
 impl Page {
-    fn id(&self, id: &str) -> NodeId {
+    pub(crate) fn id(&self, id: &str) -> NodeId {
         self.dom.get_element_by_id(self.doc, id).unwrap().unwrap_or_else(|| panic!("#{id}"))
     }
 
-    fn describe(&self, node: Option<NodeId>) -> String {
+    pub(crate) fn describe(&self, node: Option<NodeId>) -> String {
         let Some(n) = node else { return "none".into() };
         let e = self.dom.element(n).ok();
         let tag = e.map(|e| e.name.local.to_string()).unwrap_or_else(|| "?".into());
@@ -67,7 +67,7 @@ impl Page {
     /// over the viewport and at pseudo-random points; `label` names the
     /// page in failures. Returns how many distinct elements were hit (the
     /// page must exercise more than its root).
-    fn compare(&self, label: &str) -> usize {
+    pub(crate) fn compare(&self, label: &str) -> usize {
         let mut distinct = std::collections::HashSet::new();
         let mut points = Vec::new();
         let mut y = 1.0;
