@@ -458,7 +458,10 @@ mod tests {
             let addrs: Vec<_> = resolver.call(name(host)).await.unwrap().collect();
             assert_eq!(
                 addrs,
-                [SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0), SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)],
+                [
+                    SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0),
+                    SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)
+                ],
                 "{host}"
             );
         }

@@ -925,7 +925,11 @@ fn review_localhost_reaches_either_loopback_family() {
             let u = Url::parse(&format!("http://{host}:{port}/")).unwrap();
             let start = std::time::Instant::now();
             let (k, _, body, err) = collect(&c, Request::get(u, Destination::Fetch));
-            assert_eq!((k.as_slice(), body.as_slice(), err.is_none()), (&["response 200".to_string(), "finished".into()][..], &b"ok"[..], true), "{bind} {host}: {err:?}");
+            assert_eq!(
+                (k.as_slice(), body.as_slice(), err.is_none()),
+                (&["response 200".to_string(), "finished".into()][..], &b"ok"[..], true),
+                "{bind} {host}: {err:?}"
+            );
             assert!(start.elapsed() < Duration::from_secs(2), "{bind} {host}: {:?}", start.elapsed());
         }
         server.join().unwrap();
@@ -972,7 +976,9 @@ fn review_observer_keeps_up_with_a_large_fast_body() {
         for stream in listener.incoming().take(1) {
             let mut stream = stream.unwrap();
             if read_request(&mut stream).is_some() {
-                let head = format!("HTTP/1.1 200 OK\r\nContent-Length: {SIZE}\r\nContent-Type: application/octet-stream\r\n\r\n");
+                let head = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {SIZE}\r\nContent-Type: application/octet-stream\r\n\r\n"
+                );
                 let _ = stream.write_all(head.as_bytes());
                 let chunk = vec![b'x'; 1 << 16];
                 for _ in 0..SIZE / chunk.len() {

@@ -301,14 +301,6 @@ impl Deflate {
         if out.ends_with(&TAIL) {
             out.truncate(out.len() - TAIL.len());
         }
-        // An empty message: zlib emits nothing for a sync flush with no
-        // input (miniz_oxide an empty stored block, which the cut above
-        // leaves as this byte). RFC 7692 §7.2.3.6: the peer's inflater needs
-        // an empty block ahead of the tail it appends, `0x00`, as Chromium
-        // sends.
-        if out.is_empty() {
-            out.push(0);
-        }
         if limited || self.params.client_no_context_takeover {
             c.reset();
         }
@@ -475,12 +467,7 @@ mod tests {
             }
             assert_eq!(b.decompress(&first, 1 << 20).await.unwrap(), msg);
             assert_eq!(b.decompress(&second, 1 << 20).await.unwrap(), msg);
-            // An empty message is the one-byte empty block (RFC 7692
-            // §7.2.3.6), and the streams stay in step past it.
-            let empty = a.compress(b"").await.unwrap();
-            assert_eq!(empty, [0]);
-            assert_eq!(b.decompress(&empty, 10).await.unwrap(), b"");
-            assert_eq!(b.decompress(&a.compress(&msg).await.unwrap(), 1 << 20).await.unwrap(), msg);
+            assert_eq!(b.decompress(&a.compress(b"").await.unwrap(), 10).await.unwrap(), b"");
         }
     }
 

@@ -250,8 +250,7 @@ impl HttpCache {
         }
         self.tick += 1;
         let tick = self.tick;
-        let Some(entry) = self.entries.get_mut(key(url)).and_then(|v| v.iter_mut().find(|e| e.matches(request)))
-        else {
+        let Some(entry) = self.entries.get_mut(key(url)).and_then(|v| v.iter_mut().find(|e| e.matches(request))) else {
             return Lookup::Miss;
         };
         entry.used = tick;
@@ -868,7 +867,11 @@ mod tests {
         let mut u = Url::parse("http://a.test/").unwrap();
         u.set_path("/x#y");
         u.set_query(Some("k=#v"));
-        assert_eq!(key(&u), { let mut c = u.clone(); c.set_fragment(None); String::from(c) });
+        assert_eq!(key(&u), {
+            let mut c = u.clone();
+            c.set_fragment(None);
+            String::from(c)
+        });
         // Lookups through a fragment hit; a different query does not.
         let mut c = HttpCache::new(1 << 20, 1 << 20);
         let req = HeaderMap::new();

@@ -8,6 +8,7 @@ pub mod cookies;
 pub mod cors;
 pub mod data_url;
 mod h2_probe;
+mod inflate;
 pub mod proxy;
 pub mod range;
 pub mod referrer;

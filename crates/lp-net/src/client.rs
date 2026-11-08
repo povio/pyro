@@ -29,6 +29,7 @@ use crate::auth::auth_challenge;
 use crate::cookies::{site_context, CookieJar, SiteContext};
 use crate::cors::{self, PreflightCache};
 use crate::h2_probe::{H2Sessions, ProbeConnector};
+use crate::inflate::{Format as InflateFormat, Inflater};
 use crate::proxy::{basic_authorization, ProxyConfig, ProxyConnector, ProxyError, ProxyState};
 use crate::referrer::FetchSite;
 use crate::request::*;
@@ -840,14 +841,11 @@ fn io_main(mut rx: mpsc::UnboundedReceiver<Cmd>, shared: Arc<Shared>, cookies: A
     // request's terminal event reaches its sink (`deliver`). Dropped before
     // the observers close.
     let _deferred_wakes = DeferredWakes::enter();
-    let rt = match tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .on_thread_park(flush_deferred_wakes)
-        .build()
-    {
-        Ok(rt) => rt,
-        Err(_) => return,
-    };
+    let rt =
+        match tokio::runtime::Builder::new_current_thread().enable_all().on_thread_park(flush_deferred_wakes).build() {
+            Ok(rt) => rt,
+            Err(_) => return,
+        };
     let local = tokio::task::LocalSet::new();
     local.block_on(&rt, async move {
         let sessions = Arc::new(H2Sessions::default());
@@ -986,11 +984,9 @@ fn default_accept(d: Destination) -> &'static str {
 
 /// One content coding of a response body.
 enum Stage {
-    Gzip(flate2::write::GzDecoder<Vec<u8>>),
-    Zlib(flate2::write::ZlibDecoder<Vec<u8>>),
-    /// `deflate` sent without its zlib wrapper (legacy IIS and others),
-    /// which Chromium also accepts.
-    RawDeflate(flate2::write::DeflateDecoder<Vec<u8>>),
+    /// `gzip`; `deflate` as a zlib stream (RFC 9110), or sent without its
+    /// zlib wrapper (legacy IIS and others), which Chromium also accepts.
+    Inflate(Inflater),
     /// `deflate` until its first two bytes show a zlib header or not: the
     /// bytes so far, and an output that stays empty.
     Sniff(Vec<u8>, Vec<u8>),
@@ -1006,9 +1002,7 @@ fn is_zlib_header(cmf: u8, flg: u8) -> bool {
 impl Stage {
     fn write_all(&mut self, chunk: &[u8]) -> std::io::Result<()> {
         match self {
-            Stage::Gzip(d) => d.write_all(chunk),
-            Stage::Zlib(d) => d.write_all(chunk),
-            Stage::RawDeflate(d) => d.write_all(chunk),
+            Stage::Inflate(d) => d.write_all(chunk),
             Stage::Brotli(d) => d.write_all(chunk),
             Stage::Sniff(head, _) => {
                 head.extend_from_slice(chunk);
@@ -1016,11 +1010,11 @@ impl Stage {
                     return Ok(());
                 }
                 let head = std::mem::take(head);
-                *self = if is_zlib_header(head[0], head[1]) {
-                    Stage::Zlib(flate2::write::ZlibDecoder::new(Vec::new()))
+                *self = Stage::Inflate(Inflater::new(if is_zlib_header(head[0], head[1]) {
+                    InflateFormat::Zlib
                 } else {
-                    Stage::RawDeflate(flate2::write::DeflateDecoder::new(Vec::new()))
-                };
+                    InflateFormat::Raw
+                }));
                 self.write_all(&head)
             }
         }
@@ -1029,9 +1023,7 @@ impl Stage {
     /// The decoded output written so far, which the caller empties.
     fn out(&mut self) -> &mut Vec<u8> {
         match self {
-            Stage::Gzip(d) => d.get_mut(),
-            Stage::Zlib(d) => d.get_mut(),
-            Stage::RawDeflate(d) => d.get_mut(),
+            Stage::Inflate(d) => d.out(),
             Stage::Brotli(d) => d.get_mut(),
             Stage::Sniff(_, out) => out,
         }
@@ -1040,14 +1032,12 @@ impl Stage {
     fn finish(self) -> Result<Vec<u8>, NetError> {
         let err = |e: std::io::Error| NetError::Decode(e.to_string());
         match self {
-            Stage::Gzip(d) => d.finish().map_err(err),
-            Stage::Zlib(d) => d.finish().map_err(err),
-            Stage::RawDeflate(d) => d.finish().map_err(err),
+            Stage::Inflate(d) => d.finish().map_err(err),
             Stage::Brotli(d) => d.into_inner().map_err(|_| NetError::Decode("truncated brotli stream".into())),
             Stage::Sniff(head, _) if head.is_empty() => Ok(Vec::new()),
             // A one-byte body: no zlib stream, so raw deflate decides.
             Stage::Sniff(head, _) => {
-                let mut d = flate2::write::DeflateDecoder::new(Vec::new());
+                let mut d = Inflater::new(InflateFormat::Raw);
                 d.write_all(&head).map_err(err)?;
                 d.finish().map_err(err)
             }
@@ -1073,7 +1063,7 @@ impl Decoder {
         let mut stages = Vec::new();
         for token in enc.split(',').map(str::trim).filter(|t| !t.is_empty()) {
             let stage = if token.eq_ignore_ascii_case("gzip") || token.eq_ignore_ascii_case("x-gzip") {
-                Stage::Gzip(flate2::write::GzDecoder::new(Vec::new()))
+                Stage::Inflate(Inflater::new(InflateFormat::Gzip))
             } else if token.eq_ignore_ascii_case("deflate") {
                 Stage::Sniff(Vec::new(), Vec::new())
             } else if token.eq_ignore_ascii_case("br") {
