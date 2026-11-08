@@ -341,7 +341,7 @@ impl JsClass for CustomStateSet {
             let state = dom_string(a.get(0))?;
             Ok(s.boolean(h.page.dom.borrow_mut().set_custom_state(h.id, &state, false).js()?))
         });
-        def.method("has", 1, |s, h, a| {
+        def.pure_method("has", 1, |s, h, a| {
             a.require(1, "CustomStateSet.has")?;
             let state = dom_string(a.get(0))?;
             Ok(s.boolean(h.page.dom.borrow().has_custom_state(h.id, &state)))

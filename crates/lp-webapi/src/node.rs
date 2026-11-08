@@ -195,7 +195,7 @@ pub fn node_value<'s>(s: &Scope<'s>, page: &PageDom, id: Option<NodeId>) -> JsRe
 /// Extracts a Node argument (WebIDL `Node`), with a TypeError otherwise.
 pub fn node_arg(s: &Scope<'_>, v: Value<'_>, what: &str) -> JsResult<NodeId> {
     node_id_of(s, v)
-        .ok_or_else(|| JsError::Type(format!("Failed to execute '{what}': parameter is not of type 'Node'.")))
+        .ok_or_else(|| JsError::Type(format!("Failed to execute '{what}': parameter is not of type 'Node'.").into()))
 }
 
 /// The node of a Node wrapper value: its id is read at once, so no
@@ -448,7 +448,7 @@ impl JsClass for Node {
             let doc = dom.node_document(n.id).js()?;
             Ok(s.string(dom.document_base_url(doc).js()?))
         });
-        def.method("hasChildNodes", 0, |s, n, _a| Ok(s.boolean(n.page().dom.borrow().child_count(n.id).js()? > 0)));
+        def.pure_method("hasChildNodes", 0, |s, n, _a| Ok(s.boolean(n.page().dom.borrow().child_count(n.id).js()? > 0)));
         def.method("getRootNode", 0, |s, n, a| {
             let composed = match a.get(0).as_object() {
                 Some(o) => o.get_atom("composed")?.to_bool(),
@@ -514,7 +514,7 @@ impl JsClass for Node {
             n.page().dom.borrow_mut().normalize(n.id).js()?;
             Ok(s.undefined())
         });
-        def.method("lookupPrefix", 1, |s, n, a| {
+        def.pure_method("lookupPrefix", 1, |s, n, a| {
             let namespace = opt_dom_string(a.get(0))?;
             let dom = n.page().dom.borrow();
             Ok(match dom.lookup_prefix(n.id, namespace.as_deref()).js()? {
@@ -522,7 +522,7 @@ impl JsClass for Node {
                 None => s.null(),
             })
         });
-        def.method("lookupNamespaceURI", 1, |s, n, a| {
+        def.pure_method("lookupNamespaceURI", 1, |s, n, a| {
             let prefix = opt_dom_string(a.get(0))?;
             let dom = n.page().dom.borrow();
             Ok(match dom.lookup_namespace_uri(n.id, prefix.as_deref()).js()? {
@@ -530,7 +530,7 @@ impl JsClass for Node {
                 None => s.null(),
             })
         });
-        def.method("isDefaultNamespace", 1, |s, n, a| {
+        def.pure_method("isDefaultNamespace", 1, |s, n, a| {
             let namespace = opt_dom_string(a.get(0))?;
             let dom = n.page().dom.borrow();
             Ok(s.boolean(dom.lookup_namespace_uri(n.id, None).js()? == namespace.as_deref().filter(|s| !s.is_empty())))
@@ -751,7 +751,7 @@ impl JsClass for CharacterData {
             },
         );
         def.getter("length", |s, n| Ok(s.number(n.page().dom.borrow().char_length(n.id).js()? as f64)));
-        def.method("substringData", 2, |s, n, a| {
+        def.pure_method("substringData", 2, |s, n, a| {
             a.require(2, "CharacterData.substringData")?;
             let (off, cnt) = (to_u32(a.get(0))?, to_u32(a.get(1))?);
             let r = n.page().dom.borrow().substring_data(n.id, off, cnt).js()?;
@@ -1200,7 +1200,7 @@ impl JsClass for Element {
                 })
             })
         });
-        def.method("getAttributeNS", 2, |s, n, a| {
+        def.pure_method("getAttributeNS", 2, |s, n, a| {
             a.require(2, "Element.getAttributeNS")?;
             let ns = opt_dom_string(a.get(0))?;
             let local = dom_string(a.get(1))?;
@@ -1249,7 +1249,7 @@ impl JsClass for Element {
                 Ok(s.boolean(n.page().dom.borrow().has_attribute_qualified(n.id, name).js()?))
             })
         });
-        def.method("hasAttributeNS", 2, |s, n, a| {
+        def.pure_method("hasAttributeNS", 2, |s, n, a| {
             let ns = opt_dom_string(a.get(0))?;
             let local = dom_string(a.get(1))?;
             Ok(s.boolean(n.page().dom.borrow().get_attribute_ns(n.id, ns.as_deref(), &local).js()?.is_some()))
@@ -1262,24 +1262,24 @@ impl JsClass for Element {
             Ok(s.boolean(present))
         });
         def.pure_method("matches", 1, element_matches);
-        def.method("webkitMatchesSelector", 1, element_matches);
+        def.pure_method("webkitMatchesSelector", 1, element_matches);
         def.pure_method("closest", 1, |s, n, a| {
             let page = n.page();
             let r =
                 with_selector(&a, 0, "Element.closest", page, |q| page.dom.borrow().element_closest(n.id, q))?.js()?;
             node_value(s, page, r)
         });
-        def.method("getElementsByTagName", 1, |s, n, a| {
+        def.pure_method("getElementsByTagName", 1, |s, n, a| {
             let name = arg_string(&a, 0, "getElementsByTagName")?;
             Ok(collections::collection(s, n.page(), n.id, CollectionKind::TagName(name))?.value())
         });
-        def.method("getElementsByTagNameNS", 2, |s, n, a| {
+        def.pure_method("getElementsByTagNameNS", 2, |s, n, a| {
             a.require(2, "getElementsByTagNameNS")?;
             let namespace = opt_dom_string(a.get(0))?.unwrap_or_default();
             let local = dom_string(a.get(1))?;
             Ok(collections::collection(s, n.page(), n.id, CollectionKind::TagNameNs(namespace, local))?.value())
         });
-        def.method("getElementsByClassName", 1, |s, n, a| {
+        def.pure_method("getElementsByClassName", 1, |s, n, a| {
             let names = arg_string(&a, 0, "getElementsByClassName")?;
             Ok(collections::collection(s, n.page(), n.id, CollectionKind::ClassName(names))?.value())
         });
@@ -1381,7 +1381,7 @@ impl JsClass for Element {
                 _ => {
                     return Err(JsError::Type(format!(
                         "The provided value '{mode}' is not a valid enum value of type ShadowRootMode."
-                    )))
+                    ).into()))
                 }
             };
             if o.get_atom("serializable")?.to_bool() {
@@ -1395,7 +1395,7 @@ impl JsClass for Element {
                     other => {
                         return Err(JsError::Type(format!(
                             "The provided value '{other}' is not a valid enum value of type SlotAssignmentMode."
-                        )))
+                        ).into()))
                     }
                 }
             }
@@ -1591,7 +1591,7 @@ impl JsClass for Document {
             let f = n.page().dom.borrow().active_element(n.id).js()?;
             node_value(s, n.page(), f)
         });
-        def.method("hasFocus", 0, |s, n, _a| Ok(s.boolean(n.page().document() == n.id)));
+        def.pure_method("hasFocus", 0, |s, n, _a| Ok(s.boolean(n.page().document() == n.id)));
         def.getter("currentScript", |s, n| node_value(s, n.page(), n.page().current_script()));
         def.getter("implementation", |s, n| Ok(crate::html::dom_implementation(s, n)?.value()));
         def.getter("forms", |s, n| {
@@ -1708,21 +1708,21 @@ impl JsClass for Document {
             let r = with_arg_str(&a, 0, "getElementById", |id| n.page().dom.borrow().get_element_by_id(n.id, id).js())?;
             node_value(s, n.page(), r)
         });
-        def.method("getElementsByTagName", 1, |s, n, a| {
+        def.pure_method("getElementsByTagName", 1, |s, n, a| {
             let name = arg_string(&a, 0, "getElementsByTagName")?;
             Ok(collections::collection(s, n.page(), n.id, CollectionKind::TagName(name))?.value())
         });
-        def.method("getElementsByTagNameNS", 2, |s, n, a| {
+        def.pure_method("getElementsByTagNameNS", 2, |s, n, a| {
             a.require(2, "getElementsByTagNameNS")?;
             let namespace = opt_dom_string(a.get(0))?.unwrap_or_default();
             let local = dom_string(a.get(1))?;
             Ok(collections::collection(s, n.page(), n.id, CollectionKind::TagNameNs(namespace, local))?.value())
         });
-        def.method("getElementsByClassName", 1, |s, n, a| {
+        def.pure_method("getElementsByClassName", 1, |s, n, a| {
             let names = arg_string(&a, 0, "getElementsByClassName")?;
             Ok(collections::collection(s, n.page(), n.id, CollectionKind::ClassName(names))?.value())
         });
-        def.method("getElementsByName", 1, |s, n, a| {
+        def.pure_method("getElementsByName", 1, |s, n, a| {
             let name = arg_string(&a, 0, "getElementsByName")?;
             Ok(collections::collection(s, n.page(), n.id, CollectionKind::Name(name))?.value())
         });

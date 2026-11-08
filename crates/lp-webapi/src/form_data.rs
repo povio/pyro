@@ -418,7 +418,7 @@ impl JsClass for FormData {
             d.release(s, &removed);
             Ok(s.undefined())
         });
-        def.method("get", 1, |s, d, a| {
+        def.pure_method("get", 1, |s, d, a| {
             let name = name_arg(&a, "FormData.get")?;
             let found = d.entries.borrow().iter().find(|(n, _)| *n == name).map(|(_, e)| e.clone());
             match found {
@@ -426,7 +426,7 @@ impl JsClass for FormData {
                 Some(e) => read_entry(s, d, &mut None, &e),
             }
         });
-        def.method("getAll", 1, |s, d, a| {
+        def.pure_method("getAll", 1, |s, d, a| {
             let name = name_arg(&a, "FormData.getAll")?;
             let matching: Vec<Entry> =
                 d.entries.borrow().iter().filter(|(n, _)| *n == name).map(|(_, e)| e.clone()).collect();
@@ -438,7 +438,7 @@ impl JsClass for FormData {
             }
             Ok(s.array(&items.iter(s).collect::<Vec<_>>())?.value())
         });
-        def.method("has", 1, |s, d, a| {
+        def.pure_method("has", 1, |s, d, a| {
             let name = name_arg(&a, "FormData.has")?;
             Ok(s.boolean(d.entries.borrow().iter().any(|(n, _)| *n == name)))
         });

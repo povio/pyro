@@ -202,7 +202,7 @@ impl JsClass for DataTransfer {
             }
             files.finish(s)
         });
-        def.method("getData", 1, |s, d, a| {
+        def.pure_method("getData", 1, |s, d, a| {
             let format = normalize_format(&arg_string(&a, 0, "DataTransfer.getData")?);
             if !d.store.readable() {
                 return Ok(s.string(""));
@@ -342,7 +342,7 @@ impl JsClass for DataTransferItem {
             Ok(s.string(kind.unwrap_or("")))
         });
         def.getter("type", |s, it| Ok(s.string(&it.with(|e| e.ty.clone()).unwrap_or_default())));
-        def.method("getAsFile", 0, |s, it, _a| {
+        def.pure_method("getAsFile", 0, |s, it, _a| {
             let entries = it.store.entries.borrow();
             let file = match entries.iter().find(|e| e.id == it.id).filter(|_| it.store.readable()) {
                 Some(e) => it.store.file(s, e)?,

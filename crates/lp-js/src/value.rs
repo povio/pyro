@@ -147,7 +147,7 @@ impl<'s> Value<'s> {
     /// Non-objects return false. Objects require the optional proxy-target SPI.
     pub fn has_proxy_target(&self) -> JsResult<bool> {
         let Some(object) = self.as_object() else { return Ok(false) };
-        let get_target = sys::spi::get().get_proxy_target.ok_or(JsError::Unsupported("proxy target inspection"))?;
+        let get_target = sys::spi::get().get_proxy_target.ok_or(JsError::Unsupported(&"proxy target inspection"))?;
         // SAFETY: live object on its owning VM thread; SPI only reads its native
         // type/target under the VM lock. The target is neither exposed nor kept.
         Ok(unsafe { !get_target(object.raw).is_null() })
@@ -570,7 +570,7 @@ impl<'s> Args<'s> {
                 "Failed to execute '{what}': {n} argument{} required, but only {} present.",
                 if n == 1 { "" } else { "s" },
                 self.raw.len()
-            )));
+            ).into()));
         }
         Ok(())
     }

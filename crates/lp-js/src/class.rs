@@ -42,6 +42,10 @@ pub trait JsClass: 'static {
     type Data: 'static;
     /// Parent interface, or [`NoParent`].
     type Parent: JsClass;
+    /// Interfaces above this one (0 for a root): where the class sits in
+    /// every subclass's brand display ([`ClassInfo::display`]). Not to be
+    /// overridden.
+    const DEPTH: u32 = <Self::Parent as JsClass>::DEPTH.wrapping_add(1);
     fn define(def: &mut ClassDef<Self>)
     where
         Self: Sized;
@@ -51,6 +55,7 @@ impl JsClass for NoParent {
     const NAME: &'static str = "";
     type Data = ();
     type Parent = NoParent;
+    const DEPTH: u32 = u32::MAX;
     fn define(_: &mut ClassDef<Self>) {}
 }
 
@@ -768,8 +773,28 @@ pub(crate) struct ClassInfo {
     /// one, and a member finds its receiver's data by walking these without
     /// touching the registry.
     pub parent_info: *const ClassInfo,
+    /// The brand display: entry `d` is this class's ancestor at depth `d`
+    /// (`JsClass::DEPTH`), the last one the class itself. "Is a `C`" is one
+    /// compare at a constant index, whatever the depth (a range over
+    /// registration-order ids cannot express it: classes register in use
+    /// order, per engine, and a member knows its class only as a type).
+    pub display: Box<[Brand]>,
     pub instance_class: sys::JSClassRef,
     pub def: ClassDefErased,
+    /// The engine's [`HookState`] (it outlives the registry's entries): an
+    /// indexed read finds it from the receiver's payload, with no
+    /// thread-local lookup.
+    pub hook_state: *const HookState,
+}
+
+/// An entry of [`ClassInfo::display`].
+#[derive(Clone, Copy)]
+pub(crate) struct Brand {
+    /// The ancestor's `JsClass` type.
+    pub class_type: TypeId,
+    /// No `upcast` between the class and this ancestor: the ancestor's data
+    /// is the payload's own data, at the payload's fixed data offset.
+    pub direct: bool,
 }
 
 /// `ClassDef` without the marker type parameter.
@@ -890,9 +915,9 @@ impl ClassRegistry {
         self.classes.clear();
         self.spec_names.clear();
         self.spec_data.clear();
-        // The VM is gone, and the placeholder properties with it.
-        let gone = std::mem::take(&mut self.placeholders).len();
-        let _ = PLACEHOLDERS_PENDING.try_with(|p| p.set(p.get().saturating_sub(gone)));
+        // The VM is gone, and the placeholder properties with it (the
+        // engine resets its `HookState::placeholders`).
+        self.placeholders.clear();
     }
 }
 
@@ -975,6 +1000,17 @@ pub(crate) fn register<C: JsClass>(engine: &EngineInner) -> ClassId {
         Some(p) => &*reg.classes[p as usize],
         None => ptr::null(),
     };
+    let own_upcast = def.upcast.is_some();
+    let mut display: Vec<Brand> = match parent {
+        Some(p) => reg.classes[p as usize]
+            .display
+            .iter()
+            .map(|b| Brand { class_type: b.class_type, direct: b.direct && !own_upcast })
+            .collect(),
+        None => Vec::new(),
+    };
+    display.push(Brand { class_type: TypeId::of::<C>(), direct: true });
+    debug_assert_eq!(display.len() - 1, C::DEPTH as usize, "{}: depth from the registry", C::NAME);
     reg.push_spec(C::NAME, parent, def.ctor_length, def.exposed, def.callback_interface);
     reg.classes.push(Box::new(ClassInfo {
         upcast: def.upcast,
@@ -984,7 +1020,9 @@ pub(crate) fn register<C: JsClass>(engine: &EngineInner) -> ClassId {
         class_type: TypeId::of::<C>(),
         parent,
         parent_info,
+        display: display.into_boxed_slice(),
         instance_class,
+        hook_state: &engine.hook_state,
         def: ClassDefErased {
             methods: def.methods,
             statics: def.statics,
@@ -1054,6 +1092,9 @@ pub(crate) struct Header {
     /// dispatch its candidate realm (`guard_in`), cross-realm calls their
     /// receiver's realm and finalization the identity map to prune.
     pub realm_ref: std::rc::Weak<crate::realm::RealmInner>,
+    /// The same realm for the lean member dispatch: its context and the
+    /// realm itself in two loads, with no reference count touched.
+    pub core: Rc<crate::realm::RealmCore>,
     /// An owned wrapper (`IdentityKey::OWNED`): nonzero while its owner wants
     /// the object kept. The collector reads it while marking, possibly from
     /// another thread (`JSWeakCreateKeptWhile`).
@@ -1123,6 +1164,7 @@ pub(crate) fn new_payload<T: 'static>(
             class,
             info,
             realm_ref,
+            core: realm.core.clone(),
             keep_alive: std::sync::atomic::AtomicU8::new(0),
             weak: std::cell::Cell::new(ptr::null_mut()),
             owned_prev: std::cell::Cell::new(ptr::null_mut()),
@@ -1425,6 +1467,64 @@ unsafe fn guard_erased(
     }
 }
 
+/// Debug check of the invariant the lean dispatch rests on: a lean callback
+/// (pure getter, pure method, lean indexed getter) never runs page script.
+/// `RealmCore::live` lends the receiver's realm without a reference count on
+/// that premise; script could drop the realm's last handle mid-call. So
+/// `pure_member_call` sends any call with an object argument (whose
+/// conversion may call `toString`/`valueOf`/`Symbol.toPrimitive`) to the full
+/// dispatch, and primitive conversions run no script (a Symbol or BigInt that
+/// cannot convert throws a TypeError without calling out).
+///
+/// Debug builds mark the thread while a lean callback runs, and
+/// `RealmInner::dispose` (which every drop of a realm runs first) aborts if
+/// the mark is set: that is the event the invariant exists to exclude. The
+/// check sits there rather than on every entry into script because a lean
+/// getter may legitimately run the engine's own helper script (lazy
+/// prototype population on a class's first wrapper in a realm), which
+/// drops no realm. Release builds compile it away.
+pub(crate) struct LeanCall {
+    #[cfg(debug_assertions)]
+    prev: bool,
+}
+
+#[cfg(debug_assertions)]
+thread_local! {
+    static IN_LEAN_CALL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+impl LeanCall {
+    #[inline(always)]
+    pub(crate) fn enter() -> LeanCall {
+        #[cfg(debug_assertions)]
+        {
+            LeanCall { prev: IN_LEAN_CALL.with(|c| c.replace(true)) }
+        }
+        #[cfg(not(debug_assertions))]
+        LeanCall {}
+    }
+}
+
+impl Drop for LeanCall {
+    #[inline(always)]
+    fn drop(&mut self) {
+        #[cfg(debug_assertions)]
+        IN_LEAN_CALL.with(|c| c.set(self.prev));
+    }
+}
+
+/// Asserts (debug builds) that no lean callback is on the stack: called
+/// where a realm is disposed (see [`LeanCall`]).
+#[inline(always)]
+pub(crate) fn assert_not_in_lean_call() {
+    #[cfg(debug_assertions)]
+    if IN_LEAN_CALL.with(|c| c.get()) {
+        // Not unwound into JS (where page code could catch it): abort loudly.
+        eprintln!("lp-js invariant violated: a realm was disposed inside a lean (refcount-free) callback");
+        std::process::abort();
+    }
+}
+
 /// Tracks native-callback nesting (see `engine::DEPTH`).
 pub(crate) struct DepthGuard(&'static std::cell::Cell<u32>);
 
@@ -1481,7 +1581,7 @@ fn in_receiver_realm<R: CallbackResult>(
     }
     result.map_err(|e| match e {
         JsError::Thrown(_) | JsError::Terminated | JsError::ContextDestroyed => e,
-        e => JsError::Thrown(crate::Persistent::new(&receiver, e.to_value(&receiver))),
+        e => JsError::thrown(crate::Persistent::new(&receiver, e.to_value(&receiver))),
     })
 }
 
@@ -1621,6 +1721,21 @@ pub(crate) unsafe fn data_of_header<'a, C: JsClass>(h: *mut Header) -> Option<&'
         if (*h).kind != Kind::Instance || (*h).info.is_null() {
             return None;
         }
+        // The brand: one compare at `C`'s depth in the receiver's display.
+        let info: &ClassInfo = &*(*h).info;
+        let brand = info.display.get(C::DEPTH as usize)?;
+        if brand.class_type != TypeId::of::<C>() {
+            return None;
+        }
+        if brand.direct {
+            // `C`'s data is the payload's own (no upcast on the way, so the
+            // same type): a `Boxed<C::Data>`, at its constant offset.
+            let p = (h as *const u8).add(std::mem::offset_of!(Boxed<C::Data>, data));
+            debug_assert_eq!(p, ((*h).data_ptr)(h));
+            debug_assert_eq!((*h).data_type, TypeId::of::<C::Data>(), "a direct brand's payload holds `C::Data`");
+            return Some(&*(p as *const C::Data));
+        }
+        // Upcasts on the way: project the data class by class.
         let mut info = (*h).info;
         let mut ptr = ((*h).data_ptr)(h);
         loop {
@@ -1810,7 +1925,7 @@ unsafe fn put_forwards_invoke<C: JsClass>(
             forwards.name,
             C::NAME,
             forwards.name
-        )));
+        ).into()));
     };
     // A missing argument is `undefined` (Args::get), like any attribute setter.
     target.set(forwards.target, args.get(0))?;
@@ -2016,7 +2131,9 @@ unsafe fn hook_ctx(scope: &Scope<'_>, object: sys::JSObjectRef) -> Option<HookCt
     if h.is_null() {
         return None;
     }
-    if PLACEHOLDERS_PENDING.get() != 0 && !scope.engine_inner().classes.borrow().placeholders.is_empty() {
+    if scope.engine_inner().hook_state.placeholders.get() != 0
+        && !scope.engine_inner().classes.borrow().placeholders.is_empty()
+    {
         unsafe { sweep_placeholders(scope) };
     }
     // The hooks from the payload's own class entry (inherited ones are
@@ -2045,30 +2162,57 @@ unsafe fn hook_ctx(scope: &Scope<'_>, object: sys::JSObjectRef) -> Option<HookCt
     })
 }
 
-thread_local! {
+/// The property hooks' switches, one per engine (`EngineInner::hook_state`).
+/// Every object whose hooks read them is a wrapper of that engine, whose
+/// payload leads here through its class entry (`ClassInfo::hook_state`):
+/// the hot indexed read gets them with the loads it makes anyway, not with
+/// thread-local lookups.
+#[derive(Default)]
+pub(crate) struct HookState {
     /// Set while a hook asks JavaScriptCore about a wrapper's ordinary
     /// properties: the property hooks then answer nothing, so the operation
     /// sees only the wrapper's real own properties and its prototype chain.
-    static ORDINARY_ONLY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    /// Placeholders awaiting removal ([`leave_placeholder`]) in all of the
-    /// thread's engines: the lean dispatch paths, which do not sweep, step
-    /// aside for the full one while it is nonzero, and [`hook_ctx`] looks at
-    /// its engine's list only then.
-    static PLACEHOLDERS_PENDING: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub ordinary_only: std::cell::Cell<bool>,
+    /// Placeholders awaiting removal ([`leave_placeholder`]): the lean
+    /// dispatch paths, which do not sweep, step aside for the full one while
+    /// it is nonzero, and [`hook_ctx`] looks at the list only then.
+    pub placeholders: std::cell::Cell<usize>,
 }
 
-/// Runs `f` with the property hooks switched off (see [`ORDINARY_ONLY`]).
-fn ordinary_only<R>(f: impl FnOnce() -> R) -> R {
-    let was = ORDINARY_ONLY.replace(true);
+/// The hook switches of the engine `object` (a wrapper with property hooks)
+/// belongs to; `None` for an object without a wrapper payload, whose hooks
+/// answer nothing anyway.
+#[inline]
+unsafe fn hook_state_of<'a>(h: *mut Header) -> Option<&'a HookState> {
+    unsafe {
+        if h.is_null() || (*h).tag != PayloadTag::Wrapper || (*h).info.is_null() {
+            return None;
+        }
+        Some(&*(*(*h).info).hook_state)
+    }
+}
+
+/// Whether the property hooks of `object` are switched off (see
+/// [`HookState::ordinary_only`]).
+#[inline]
+unsafe fn ordinary_only_on(object: sys::JSObjectRef) -> bool {
+    unsafe { hook_state_of(sys::JSObjectGetPrivate(object) as *mut Header) }.is_some_and(|s| s.ordinary_only.get())
+}
+
+/// Runs `f` with the property hooks switched off (see
+/// [`HookState::ordinary_only`]).
+fn ordinary_only<R>(scope: &Scope<'_>, f: impl FnOnce() -> R) -> R {
+    let state = &scope.engine_inner().hook_state;
+    let was = state.ordinary_only.replace(true);
     let out = f();
-    ORDINARY_ONLY.set(was);
+    state.ordinary_only.set(was);
     out
 }
 
 /// True if `name` resolves without the hooks: a real own property of the
 /// wrapper (an expando) or a property on its prototype chain.
-unsafe fn has_ordinary_property(ctx: sys::JSContextRef, object: sys::JSObjectRef, name: sys::JSStringRef) -> bool {
-    ordinary_only(|| unsafe { sys::JSObjectHasProperty(ctx, object, name) })
+unsafe fn has_ordinary_property(scope: &Scope<'_>, object: sys::JSObjectRef, name: sys::JSStringRef) -> bool {
+    ordinary_only(scope, || unsafe { sys::JSObjectHasProperty(scope.ctx, object, name) })
 }
 
 /// Puts a placeholder on the wrapper: a real own property `name` that is
@@ -2095,7 +2239,7 @@ unsafe fn has_ordinary_property(ctx: sys::JSContextRef, object: sys::JSObjectRef
 unsafe fn leave_placeholder(scope: &Scope<'_>, object: sys::JSObjectRef, name: sys::JSStringRef) {
     unsafe {
         let mut exc: sys::JSValueRef = ptr::null();
-        ordinary_only(|| {
+        ordinary_only(scope, || {
             sys::JSObjectSetProperty(
                 scope.ctx,
                 object,
@@ -2108,17 +2252,19 @@ unsafe fn leave_placeholder(scope: &Scope<'_>, object: sys::JSObjectRef, name: s
         sys::JSValueProtect(scope.ctx, object);
         let name = JsString::from_utf16(utf16_of(name));
         scope.engine_inner().classes.borrow_mut().placeholders.push((object, name));
-        PLACEHOLDERS_PENDING.set(PLACEHOLDERS_PENDING.get() + 1);
+        let pending = &scope.engine_inner().hook_state.placeholders;
+        pending.set(pending.get() + 1);
     }
 }
 
 /// Removes the pending placeholders ([`leave_placeholder`]).
 unsafe fn sweep_placeholders(scope: &Scope<'_>) {
     let pending = std::mem::take(&mut scope.engine_inner().classes.borrow_mut().placeholders);
-    PLACEHOLDERS_PENDING.set(PLACEHOLDERS_PENDING.get().saturating_sub(pending.len()));
+    let count = &scope.engine_inner().hook_state.placeholders;
+    count.set(count.get().saturating_sub(pending.len()));
     for (object, name) in pending {
         unsafe {
-            ordinary_only(|| sys::JSObjectDeleteProperty(scope.ctx, object, name.as_raw(), ptr::null_mut()));
+            ordinary_only(scope, || sys::JSObjectDeleteProperty(scope.ctx, object, name.as_raw(), ptr::null_mut()));
             sys::JSValueUnprotect(scope.ctx, object);
         }
     }
@@ -2139,7 +2285,7 @@ unsafe extern "C" fn get_property_hook(
     name: sys::JSStringRef,
     exc: *mut sys::JSValueRef,
 ) -> sys::JSValueRef {
-    if ORDINARY_ONLY.get() {
+    if unsafe { ordinary_only_on(object) } {
         return ptr::null();
     }
     unsafe {
@@ -2159,7 +2305,7 @@ unsafe extern "C" fn get_property_hook(
                     return Ok(match f(scope, hc.header, units)? {
                         // An own property shadows the named property.
                         Some(_)
-                            if hc.legacy && !hc.override_builtins && has_ordinary_property(scope.ctx, object, name) =>
+                            if hc.legacy && !hc.override_builtins && has_ordinary_property(scope, object, name) =>
                         {
                             ptr::null()
                         }
@@ -2193,12 +2339,17 @@ unsafe extern "C" fn get_by_index_hook(
     // (collections wrap their items): the lean dispatch first, the full one
     // for a receiver of another realm, an error, a panic, or while a
     // termination propagates (see `ClassDef::pure_getter`).
-    if ORDINARY_ONLY.get() {
-        return ptr::null();
-    }
-    if PLACEHOLDERS_PENDING.get() == 0 {
-        if let Some(v) = unsafe { get_by_index_lean(ctx, object, index) } {
-            return v;
+    // The switches come from the receiver's payload, which the lean read
+    // needs anyway.
+    let h = unsafe { sys::JSObjectGetPrivate(object) } as *mut Header;
+    if let Some(state) = unsafe { hook_state_of(h) } {
+        if state.ordinary_only.get() {
+            return ptr::null();
+        }
+        if state.placeholders.get() == 0 {
+            if let Some(v) = unsafe { get_by_index_lean(h, index) } {
+                return v;
+            }
         }
     }
     unsafe {
@@ -2217,20 +2368,15 @@ unsafe extern "C" fn get_by_index_hook(
 }
 
 /// The lean half of [`get_by_index_hook`]: `Some` when it answered.
-unsafe fn get_by_index_lean(ctx: sys::JSContextRef, object: sys::JSObjectRef, index: u32) -> Option<sys::JSValueRef> {
+/// `h` is the receiver's wrapper payload, its class entry set
+/// ([`hook_state_of`] checked both).
+unsafe fn get_by_index_lean(h: *mut Header, index: u32) -> Option<sys::JSValueRef> {
     unsafe {
-        let h = sys::JSObjectGetPrivate(object) as *mut Header;
-        if h.is_null() || (*h).tag != PayloadTag::Wrapper || (*h).info.is_null() {
-            return None;
-        }
         let f = (*(*h).info).def.hooks.indexed?;
-        let _ = ctx;
-        let realm = (*h).realm_ref.upgrade()?;
-        let ctx = realm.ctx.get() as sys::JSContextRef;
-        if ctx.is_null() {
-            return None;
-        }
-        let scope = Scope::new(ctx, &realm);
+        // Lent without a count: an indexed getter runs no script (`LeanCall`).
+        let (ctx, realm) = (*h).core.live()?;
+        let scope = Scope::new(ctx, realm);
+        let _lean = LeanCall::enter();
         match catch_unwind(AssertUnwindSafe(|| f(&scope, h, index))) {
             Ok(Ok(v)) => Some(v.unwrap_or(ptr::null())),
             _ => None,
@@ -2248,7 +2394,7 @@ unsafe extern "C" fn set_by_index_hook(
     value: sys::JSValueRef,
     exc: *mut sys::JSValueRef,
 ) -> bool {
-    if ORDINARY_ONLY.get() {
+    if unsafe { ordinary_only_on(object) } {
         return false;
     }
     unsafe {
@@ -2260,7 +2406,7 @@ unsafe extern "C" fn set_by_index_hook(
                 // ordinary put that follows stops at the placeholder.
                 if hc.legacy && hc.indexed.is_some() {
                     let name = JsString::new(&index.to_string());
-                    if !has_ordinary_property(scope.ctx, object, name.as_raw()) {
+                    if !has_ordinary_property(scope, object, name.as_raw()) {
                         leave_placeholder(scope, object, name.as_raw());
                         return Ok(false);
                     }
@@ -2291,7 +2437,7 @@ pub(crate) unsafe extern "C" fn member_call_data(
     unsafe {
         let payload = data as *const MemberPayload;
         if !payload.is_null() && (*payload).pure {
-            if let Some(v) = pure_member_call(&*payload, this, argc, argv) {
+            if let Some(v) = pure_member_call(&*payload, ctx, this, argc, argv, exc) {
                 return v;
             }
         }
@@ -2315,12 +2461,16 @@ pub(crate) unsafe extern "C" fn member_call_data(
 
 /// The lean dispatch of a pure operation (`ClassDef::pure_method`), in the
 /// receiver's realm: `None` sends the call through the full dispatch (a
-/// receiver that is not a wrapper, a disposed realm, an error, a panic).
+/// receiver that is not a wrapper, a disposed realm, an object argument, a
+/// panic, termination, or an error in a realm other than the one JSC calls
+/// the function in).
 unsafe fn pure_member_call(
     payload: &MemberPayload,
+    caller_ctx: sys::JSContextRef,
     this: sys::JSObjectRef,
     argc: usize,
     argv: *const sys::JSValueRef,
+    exc: *mut sys::JSValueRef,
 ) -> Option<sys::JSValueRef> {
     unsafe {
         if this.is_null() {
@@ -2330,17 +2480,33 @@ unsafe fn pure_member_call(
         if h.is_null() || (*h).tag != PayloadTag::Wrapper || (*h).kind != Kind::Instance {
             return None;
         }
-        let realm = (*h).realm_ref.upgrade()?;
-        let ctx = realm.ctx.get() as sys::JSContextRef;
-        if ctx.is_null() {
+        // `live` lends the realm without a count: sound only because nothing
+        // below runs page script (see `LeanCall`).
+        let (ctx, realm) = (*h).core.live()?;
+        // An object argument's conversion (`toString`, `valueOf`,
+        // `Symbol.toPrimitive`, a getter) runs page script, which may drop
+        // the receiver's realm (borrowed here without a count) and must not
+        // run twice when the call then falls back to the full dispatch.
+        if argc > 0 && std::slice::from_raw_parts(argv, argc).iter().any(|&v| sys::JSValueIsObject(ctx, v)) {
             return None;
         }
-        let scope = Scope::new(ctx, &realm);
+        let scope = Scope::new(ctx, realm);
         let call = payload.call;
-        match catch_unwind(AssertUnwindSafe(|| (call.invoke)(&scope, this, Args::from_raw(ctx, argc, argv), call.f))) {
-            Ok(Ok(v)) if !v.is_null() => Some(v),
+        let _lean = LeanCall::enter();
+        catch_unwind(AssertUnwindSafe(|| match (call.invoke)(&scope, this, Args::from_raw(ctx, argc, argv), call.f) {
+            Ok(v) if !v.is_null() => Some(v),
+            // The full dispatch would run the same body in the same realm
+            // (the one of `caller_ctx`) and throw the same error: throw it
+            // here instead of running the operation a second time. Its
+            // post-callback steps have nothing to do after a pure operation.
+            Err(e) if ctx == caller_ctx && !matches!(e, JsError::Terminated | JsError::ContextDestroyed) => {
+                throw_into(&scope, &e, exc);
+                Some(ptr::null())
+            }
             _ => None,
-        }
+        }))
+        .ok()
+        .flatten()
     }
 }
 
@@ -2397,7 +2563,7 @@ unsafe extern "C" fn set_property_hook(
     value: sys::JSValueRef,
     exc: *mut sys::JSValueRef,
 ) -> bool {
-    if ORDINARY_ONLY.get() {
+    if unsafe { ordinary_only_on(object) } {
         return false;
     }
     unsafe {
@@ -2407,7 +2573,7 @@ unsafe extern "C" fn set_property_hook(
             if hc.indexed.is_some() && array_index(units).is_some() && hc.named_set.is_none() {
                 // Indexed properties without a setter are read-only, and no
                 // index past the end can be defined either.
-                if hc.legacy && !has_ordinary_property(scope.ctx, object, name) {
+                if hc.legacy && !has_ordinary_property(scope, object, name) {
                     leave_placeholder(scope, object, name);
                     return Ok(false);
                 }
@@ -2427,7 +2593,7 @@ unsafe extern "C" fn set_property_hook(
                     } else {
                         visible(scope)?
                     };
-                    if visible && !has_ordinary_property(scope.ctx, object, name) {
+                    if visible && !has_ordinary_property(scope, object, name) {
                         leave_placeholder(scope, object, name);
                     }
                     return Ok(false);
@@ -2460,7 +2626,7 @@ unsafe extern "C" fn delete_property_hook(
     name: sys::JSStringRef,
     exc: *mut sys::JSValueRef,
 ) -> bool {
-    if ORDINARY_ONLY.get() {
+    if unsafe { ordinary_only_on(object) } {
         return false;
     }
     unsafe {
@@ -2528,7 +2694,7 @@ unsafe extern "C" fn property_names_hook(
                 // properties, when the caller wants non-enumerable keys too.
                 for n in &names {
                     let visible = !(hc.indexed.is_some() && array_index(n.utf16()).is_some())
-                        && !has_ordinary_property(ctx, object, n.as_raw());
+                        && !has_ordinary_property(scope, object, n.as_raw());
                     if visible {
                         leave_placeholder(scope, object, n.as_raw());
                     }

@@ -100,7 +100,7 @@ pub fn replace_window_attribute<'s>(
     let define = page.define_properties.borrow().get(&s.realm_id()).map(|p| p.get(s));
     let define = define
         .and_then(|v| v.as_object())
-        .ok_or_else(|| lp_js::JsError::Type(format!("window.{name} cannot be replaced in this realm")))?;
+        .ok_or_else(|| lp_js::JsError::Type(format!("window.{name} cannot be replaced in this realm").into()))?;
     let desc = s.object();
     desc.set_atom("value", value)?;
     for k in ["writable", "enumerable", "configurable"] {
@@ -122,7 +122,7 @@ pub fn define_global_interface<'s>(
     let define = page.define_properties.borrow().get(&s.realm_id()).map(|p| p.get(s));
     let define = define
         .and_then(|v| v.as_object())
-        .ok_or_else(|| lp_js::JsError::Type(format!("{name} is unavailable in this realm")))?;
+        .ok_or_else(|| lp_js::JsError::Type(format!("{name} is unavailable in this realm").into()))?;
     let desc = s.object();
     desc.set_atom("value", value)?;
     desc.set_atom("writable", s.boolean(true))?;
@@ -393,7 +393,7 @@ impl JsClass for Navigator {
             let url = crate::util::dom_string(a.get(0))?;
             let url = crate::html::resolve_url(&p.dom.borrow(), p.document(), &url);
             let Some(url) = lp_net::Url::parse(&url).ok().filter(|u| matches!(u.scheme(), "http" | "https")) else {
-                return Err(JsError::Type(format!("Failed to execute 'sendBeacon': invalid URL '{url}'.")));
+                return Err(JsError::Type(format!("Failed to execute 'sendBeacon': invalid URL '{url}'.").into()));
             };
             Ok(s.boolean(crate::fetch::send_beacon(s, p, url, a.get(1))?))
         });
@@ -800,7 +800,7 @@ fn copy_session_storage(s: &Scope<'_>, page: &Rc<PageDom>) -> crate::storage::St
             }
         }
         let seed = crate::storage::StorageSeed::new(vec![(origin, entries)])
-            .map_err(|e| JsError::Type(format!("cannot copy session storage: {e}")))?;
+            .map_err(|e| JsError::Type(format!("cannot copy session storage: {e}").into()))?;
         Ok(Some(crate::storage::StorageNamespace::seeded(&seed)))
     })();
     match copy {

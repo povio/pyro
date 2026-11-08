@@ -514,7 +514,7 @@ fn parse_request<'s>(
     // Referrer: init, else the Request input's, else "client" (the document).
     let referrer = match option(s, init, "referrer")? {
         v if v.is_undefined() => request_input.as_ref().map_or_else(|| "client".to_owned(), |r| r.referrer.clone()),
-        v => crate::request::parse_referrer(page, &dom_string(v)?).map_err(JsError::Type)?,
+        v => crate::request::parse_referrer(page, &dom_string(v)?).map_err(JsError::type_error)?,
     };
     request.referrer = match referrer.as_str() {
         "no-referrer" => None,
@@ -525,7 +525,7 @@ fn parse_request<'s>(
         v if v.is_undefined() => request_input.as_ref().map(|r| r.referrer_policy.clone()).unwrap_or_default(),
         v => {
             let policy = dom_string(v)?;
-            crate::request::check_referrer_policy(&policy).map_err(JsError::Type)?;
+            crate::request::check_referrer_policy(&policy).map_err(JsError::type_error)?;
             policy
         }
     };
@@ -692,7 +692,7 @@ pub(crate) fn install(s: &Scope<'_>) -> JsResult<()> {
             if let Some(signal) = &signal {
                 let signal = s.unwrap::<AbortSignal>(signal.get(s)).expect("validated signal");
                 if signal.aborted() {
-                    return Err(JsError::Thrown(Persistent::new(s, signal.reason(s))));
+                    return Err(JsError::thrown(Persistent::new(s, signal.reason(s))));
                 }
             }
             let limits = page.fetch_state.limits.get();
@@ -972,7 +972,7 @@ fn pump(page_id: u64, id: RequestId) {
         let deferred = job.promise.borrow_mut().take();
         if let Some(deferred) = deferred {
             let error = result.err().unwrap_or_else(|| NetError::Other("Missing response headers".into()));
-            let _ = deferred.reject(&s, JsError::Type(error.to_string()).to_value(&s));
+            let _ = deferred.reject(&s, JsError::Type(error.to_string().into()).to_value(&s));
         }
         page.fetch_state.jobs.borrow_mut().remove(&id);
         job.body.settle_readers();
@@ -1103,7 +1103,7 @@ impl Body {
         if self.disposed.get() {
             Some(JsError::dom("AbortError", "Document disposed").to_value(s))
         } else {
-            error.map(|e| JsError::Type(e.to_string()).to_value(s))
+            error.map(|e| JsError::Type(e.to_string().into()).to_value(s))
         }
     }
     pub(crate) fn read<'s>(&self, s: &Scope<'s>, kind: ReadKind, already_used: bool) -> JsResult<Value<'s>> {
@@ -1183,7 +1183,7 @@ impl Body {
                         }
                     }
                 } else {
-                    Err(JsError::Type(format!("Cannot parse a '{essence}' body as FormData")))
+                    Err(JsError::Type(format!("Cannot parse a '{essence}' body as FormData").into()))
                 }
             }
         };

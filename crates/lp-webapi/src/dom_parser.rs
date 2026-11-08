@@ -26,7 +26,7 @@ impl JsClass for DomParser {
             if mime != "text/html" && !XML_TYPES.contains(&mime.as_str()) {
                 return Err(JsError::Type(format!(
                     "Failed to execute 'parseFromString' on 'DOMParser': The provided value '{mime}' is not a valid enum value of type DOMParserSupportedType."
-                )));
+                ).into()));
             }
             let page = page_of(s)?;
             let url = page.dom.borrow().document_data(page.document()).map(|d| d.url.to_string()).unwrap_or_default();

@@ -61,7 +61,7 @@ impl JsClass for Response {
             let body = a.get(0);
             let body = if body.is_null() || body.is_undefined() { None } else { Some(body) };
             if body.is_some() && is_null_body_status(status) {
-                return Err(JsError::Type(format!("Response with null body status {status} cannot have a body")));
+                return Err(JsError::Type(format!("Response with null body status {status} cannot have a body").into()));
             }
             if let Some(stream) = body.filter(|b| crate::streams::is_stream(s, *b).unwrap_or(false)) {
                 let page = crate::target::page_of(s)?;
@@ -96,7 +96,7 @@ impl JsClass for Response {
             let url = resolve(s, &target)?;
             let status = if a.get(1).is_undefined() { 302 } else { crate::util::to_u32(a.get(1))? as u16 };
             if !matches!(status, 301 | 302 | 303 | 307 | 308) {
-                return Err(JsError::Range(format!("Invalid redirect status {status}")));
+                return Err(JsError::Range(format!("Invalid redirect status {status}").into()));
             }
             let headers = HeadersData::from_pairs([("location".to_owned(), url)], true);
             construct(s, None, Origin::Script, status, String::new(), headers, None)
@@ -105,7 +105,7 @@ impl JsClass for Response {
             let json = a.get(0).to_json(0)?.ok_or_else(|| JsError::Type("Value is not JSON serializable".into()))?;
             let (status, status_text, headers) = parse_init(s, a.get(1))?;
             if is_null_body_status(status) {
-                return Err(JsError::Type(format!("Response with null body status {status} cannot have a body")));
+                return Err(JsError::Type(format!("Response with null body status {status} cannot have a body").into()));
             }
             if !headers.contains("content-type") {
                 headers.append_raw("content-type", "application/json");
@@ -224,7 +224,7 @@ fn parse_init(s: &Scope<'_>, init: Value<'_>) -> JsResult<(u16, String, HeadersD
     if !(200..=599).contains(&status) {
         return Err(JsError::Range(format!(
             "Failed to construct 'Response': The status provided ({status}) is outside the range [200, 599]."
-        )));
+        ).into()));
     }
     let text = get("statusText")?;
     let status_text = if text.is_undefined() { String::new() } else { crate::headers::byte_string(text)? };
@@ -248,7 +248,7 @@ fn resolve(s: &Scope<'_>, target: &str) -> JsResult<String> {
     };
     parsed
         .map(|u| u.to_string())
-        .map_err(|_| JsError::Type(format!("Failed to execute 'redirect' on 'Response': Invalid URL '{target}'")))
+        .map_err(|_| JsError::Type(format!("Failed to execute 'redirect' on 'Response': Invalid URL '{target}'").into()))
 }
 
 fn construct<'s>(

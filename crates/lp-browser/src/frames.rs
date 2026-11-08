@@ -480,7 +480,7 @@ impl FrameHost {
             loaded: false,
             sandbox,
         };
-        self.dom.borrow_mut().add_ref(node).map_err(|e| JsError::Type(format!("{e:?}")))?;
+        self.dom.borrow_mut().add_ref(node).map_err(|e| JsError::type_error(format!("{e:?}")))?;
         self.children.borrow_mut().insert(
             id,
             DocumentState {

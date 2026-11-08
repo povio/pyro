@@ -29,7 +29,7 @@ fn check_exc(s: &Scope<'_>, exc: sys::JSValueRef) -> JsResult<()> {
     }
     // SAFETY: `exc` is the live exception JSC just returned for this context.
     let v = unsafe { Value::from_raw(s.ctx(), exc) };
-    Err(JsError::Thrown(lp_js::Persistent::new(s, v)))
+    Err(JsError::thrown(lp_js::Persistent::new(s, v)))
 }
 
 fn fill_random(buf: &mut [u8]) -> JsResult<()> {

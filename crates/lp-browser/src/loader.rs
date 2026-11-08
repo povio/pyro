@@ -745,7 +745,7 @@ impl ModuleFetcher for PageModuleFetcher {
                 };
                 let r = match res {
                     Ok(text) => lp_webapi::module_script::complete(&scope, request, &text),
-                    Err(e) => request.reject(&scope, &JsError::Type(e)),
+                    Err(e) => request.reject(&scope, &JsError::type_error(e)),
                 };
                 match &r {
                     Ok(()) => module_trace!("handed to engine {traced}"),
@@ -913,7 +913,7 @@ impl Browser {
         history: HistoryHandling,
     ) -> Result<(), JsError> {
         let Some(loader) = self.loader_for(page) else {
-            return Err(JsError::Unsupported("navigation without a resource loader"));
+            return Err(JsError::Unsupported(&"navigation without a resource loader"));
         };
         let frame_id = self.doc(page).map(|p| p.main_frame.id.0.clone());
         // Not an automation client's (`Page.navigate`) or a traversal, which
@@ -1099,7 +1099,7 @@ impl Browser {
         } else {
             DocumentParser::new(dom.clone(), doc, !page_dom.scripting_disabled())
         }
-        .map_err(|e| JsError::Type(format!("{e:?}")))?;
+        .map_err(|e| JsError::type_error(format!("{e:?}")))?;
         parser.set_transport_charset(resource.charset.as_deref());
         let mut p = self.doc_mut(page).ok_or(JsError::Type("no such page".into()))?;
         p.main_frame.dom = Some(dom.clone());
@@ -2114,7 +2114,7 @@ impl Browser {
             promise,
             move |_s, _v| ok(true),
             move |s, e| {
-                s.report_exception(&JsError::Thrown(Persistent::new(s, e)));
+                s.report_exception(&JsError::thrown(Persistent::new(s, e)));
                 err(false)
             },
         );
@@ -2135,14 +2135,14 @@ impl Browser {
     fn report_load_error(&mut self, page: FrameKey, error: &str) {
         let Some(realm) = self.main_realm(page) else { return };
         let Ok(scope) = realm.scope() else { return };
-        lp_webapi::lifecycle::report_diagnostic(&scope, &JsError::Type(format!("Failed to load script: {error}")));
+        lp_webapi::lifecycle::report_diagnostic(&scope, &JsError::type_error(format!("Failed to load script: {error}")));
     }
 
     /// A subresource failure the console reports (no `error` event at the Window).
     pub(crate) fn report_console_error(&mut self, page: FrameKey, error: &str) {
         let Some(realm) = self.main_realm(page) else { return };
         let Ok(scope) = realm.scope() else { return };
-        lp_webapi::lifecycle::report_diagnostic(&scope, &JsError::Type(error.to_owned()));
+        lp_webapi::lifecycle::report_diagnostic(&scope, &JsError::type_error(error.to_owned()));
     }
 }
 

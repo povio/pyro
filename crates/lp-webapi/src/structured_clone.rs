@@ -212,7 +212,7 @@ pub(crate) fn clone_into<'s, 'r>(
     let second = |value: lp_js::Value<'r>, options: lp_js::Value<'r>| {
         clone_with_ports(rs, value, options).map_err(|error| match error {
             JsError::Terminated | JsError::ContextDestroyed => error,
-            JsError::Dom { name, message } if name == "DataCloneError" => JsError::Dom { name, message },
+            JsError::Dom(e) if e.name == "DataCloneError" => JsError::Dom(e),
             _ => JsError::dom("DataCloneError", "The message could not be cloned into the receiving realm."),
         })
     };

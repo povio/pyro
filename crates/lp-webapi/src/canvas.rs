@@ -599,7 +599,7 @@ fn image_source(
     let not_source = || {
         JsError::Type(format!(
             "Failed to execute '{what}': The provided value is not of type '(CSSImageValue or HTMLCanvasElement or HTMLImageElement or HTMLVideoElement or ImageBitmap or OffscreenCanvas or SVGImageElement or VideoFrame)'."
-        ))
+        ).into())
     };
     if let Some(n) = s.unwrap::<crate::node::Node>(value) {
         let source_page = n.page().clone();
@@ -903,7 +903,7 @@ fn fill_rule(a: &Args<'_>, i: usize, what: &str) -> JsResult<bool> {
         "evenodd" => Ok(true),
         other => Err(JsError::Type(format!(
             "Failed to execute '{what}': The provided value '{other}' is not a valid enum value of type CanvasFillRule."
-        ))),
+        ).into())),
     }
 }
 
@@ -912,7 +912,7 @@ fn fill_rule(a: &Args<'_>, i: usize, what: &str) -> JsResult<bool> {
 fn path_arg(s: &Scope<'_>, c: &ContextData, a: &Args<'_>, what: &str) -> JsResult<(BezPath, usize)> {
     if a.get(0).is_object() {
         let Some(ops) = path2d_arg(s, c, a)? else {
-            return Err(JsError::Type(format!("Failed to execute '{what}': parameter 1 is not of type 'Path2D'.")));
+            return Err(JsError::Type(format!("Failed to execute '{what}': parameter 1 is not of type 'Path2D'.").into()));
         };
         let mut path = Path::default();
         replay(ops, &mut path, c.state.borrow().transform)?;
@@ -1002,7 +1002,7 @@ fn draw_image<'s>(s: &Scope<'s>, c: &ContextData, a: Args<'s>) -> JsResult<Value
     a.require(3, what)?;
     let n = a.len();
     if !matches!(n, 3 | 5) && n < 9 {
-        return Err(JsError::Type(format!("Failed to execute 'drawImage' on 'CanvasRenderingContext2D': Valid arities are: [3, 5, 9], but {n} arguments provided.")));
+        return Err(JsError::Type(format!("Failed to execute 'drawImage' on 'CanvasRenderingContext2D': Valid arities are: [3, 5, 9], but {n} arguments provided.").into()));
     }
     let Some(source) = image_source(s, &c.page, a.get(0), what, false)? else { return Ok(s.undefined()) };
     let v = finite_args_from(&a, 1, if n >= 9 { 8 } else { n - 1 })?;
@@ -1058,7 +1058,7 @@ fn get_image_data<'s>(s: &Scope<'s>, c: &ContextData, a: Args<'s>) -> JsResult<V
     if space != "srgb" && space != "display-p3" {
         return Err(JsError::Type(format!(
             "The provided value '{space}' is not a valid enum value of type PredefinedColorSpace."
-        )));
+        ).into()));
     }
     if !c.clean.get() {
         return Err(security_error());
@@ -1141,7 +1141,7 @@ fn doubles(a: &Args<'_>, n: usize, what: &str) -> JsResult<Vec<f64>> {
     a.require(n, what)?;
     let v = (0..n).map(|i| a.get(i).to_number()).collect::<JsResult<Vec<_>>>()?;
     if v.iter().any(|x| !x.is_finite()) {
-        return Err(JsError::Type(format!("Failed to execute '{what}': The provided double value is non-finite.")));
+        return Err(JsError::Type(format!("Failed to execute '{what}': The provided double value is non-finite.").into()));
     }
     Ok(v)
 }
@@ -1257,7 +1257,7 @@ fn is_point_in<'s>(s: &Scope<'s>, c: &ContextData, a: Args<'s>, stroke: bool) ->
         if stroke { "CanvasRenderingContext2D.isPointInStroke" } else { "CanvasRenderingContext2D.isPointInPath" };
     let ops = path2d_arg(s, c, &a)?;
     if a.get(0).is_object() && ops.is_none() {
-        return Err(JsError::Type(format!("Failed to execute '{what}': parameter 1 is not of type 'Path2D'.")));
+        return Err(JsError::Type(format!("Failed to execute '{what}': parameter 1 is not of type 'Path2D'.").into()));
     }
     let base = usize::from(ops.is_some());
     a.require(base + 2, what)?;
@@ -1321,7 +1321,7 @@ impl JsClass for CanvasRenderingContext2D {
             o.set_atom("willReadFrequently", s.boolean(false))?;
             Ok(o.value())
         });
-        def.method("isContextLost", 0, |s, _c, _a| Ok(s.boolean(false)));
+        def.pure_method("isContextLost", 0, |s, _c, _a| Ok(s.boolean(false)));
         def.method("reset", 0, |s, c, _a| {
             c.reset();
             let mut surface = c.surface.borrow_mut();
@@ -1613,8 +1613,8 @@ impl JsClass for CanvasRenderingContext2D {
             Builder { path: &mut c.path.borrow_mut(), t }.round_rect(v[0], v[1], v[2], v[3], r);
             Ok(s.undefined())
         });
-        def.method("isPointInPath", 2, |s, c, a| is_point_in(s, c, a, false));
-        def.method("isPointInStroke", 2, |s, c, a| is_point_in(s, c, a, true));
+        def.pure_method("isPointInPath", 2, |s, c, a| is_point_in(s, c, a, false));
+        def.pure_method("isPointInStroke", 2, |s, c, a| is_point_in(s, c, a, true));
 
         // Drawing.
         def.method("fill", 0, |s, c, a| {
@@ -1714,7 +1714,7 @@ impl JsClass for CanvasRenderingContext2D {
             c.state.borrow_mut().line_dash = dash;
             Ok(s.undefined())
         });
-        def.method("getLineDash", 0, |s, c, _a| {
+        def.pure_method("getLineDash", 0, |s, c, _a| {
             let values: Vec<Value<'_>> = c.state.borrow().line_dash.iter().map(|v| s.number(*v)).collect();
             Ok(s.array(&values)?.value())
         });

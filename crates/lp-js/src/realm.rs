@@ -208,7 +208,7 @@ impl ModuleRequest {
             } else {
                 unsafe { JsString::from_raw_owned(err) }.to_string()
             };
-            let e = JsError::Type(msg).to_value(scope);
+            let e = JsError::Type(msg.into()).to_value(scope);
             return self.reject.get(scope).as_object().expect("reject fn").call(None, &[e]).map(|_| ());
         }
         let script = unsafe { Value::from_raw(scope.ctx, script) };
@@ -232,7 +232,7 @@ impl Drop for ModuleRequest {
         let Some(realm) = self.realm.upgrade() else { return };
         let Ok(ctx) = realm.global_ctx() else { return };
         let scope = Scope::new(ctx as sys::JSContextRef, &realm);
-        let e = JsError::Type(format!("Failed to fetch dynamically imported module: {}", self.url)).to_value(&scope);
+        let e = JsError::Type(format!("Failed to fetch dynamically imported module: {}", self.url).into()).to_value(&scope);
         if let Some(f) = self.reject.get(&scope).as_object() {
             let _ = f.call(None, &[e]);
         }
@@ -270,6 +270,42 @@ pub type ExceptionReporter = for<'s> fn(&Scope<'s>, &JsException) -> bool;
 /// first entered.
 pub type DeferredSetup = Box<dyn FnOnce(&Realm) -> JsResult<()>>;
 
+/// What the lean member dispatch needs of a realm, behind one pointer that
+/// every wrapper payload of the realm holds ([`Header::core`]): the context
+/// (null once the realm is disposed) and the realm. It outlives the realm
+/// (the payloads share it), so a payload whose realm is gone still reads a
+/// null context here instead of a freed realm.
+pub(crate) struct RealmCore {
+    ctx: Cell<sys::JSContextRef>,
+    /// The realm's own `Rc`, aliased without a count of its own (never
+    /// dropped): handed out as `&Rc<RealmInner>` only while `ctx` is set,
+    /// i.e. before `RealmInner::dispose`, which every drop of the realm runs
+    /// first.
+    realm: std::cell::OnceCell<std::mem::ManuallyDrop<Rc<RealmInner>>>,
+}
+
+impl RealmCore {
+    fn new() -> RealmCore {
+        RealmCore { ctx: Cell::new(ptr::null()), realm: std::cell::OnceCell::new() }
+    }
+
+    /// The live realm's context and the realm, with no reference count
+    /// changed. The realm stays alive for as long as a lean callback uses it.
+    ///
+    /// Invariant: lean callbacks never run page script, so nothing can drop
+    /// a realm handle while one holds this borrow. `pure_member_call` keeps it
+    /// by sending calls with object arguments (whose conversion runs script)
+    /// to the full dispatch; debug builds check it (`crate::class::LeanCall`).
+    #[inline]
+    pub(crate) fn live(&self) -> Option<(sys::JSContextRef, &Rc<RealmInner>)> {
+        let ctx = self.ctx.get();
+        if ctx.is_null() {
+            return None;
+        }
+        Some((ctx, self.realm.get()?))
+    }
+}
+
 pub(crate) struct RealmInner {
     pub(crate) id: RealmId,
     name: String,
@@ -284,6 +320,8 @@ pub(crate) struct RealmInner {
     /// document and entered only by its actions, and a realm costs about
     /// 1.3 ms of CPU.
     deferred: RefCell<Option<DeferredSetup>>,
+    /// The lean dispatch's view of this realm (see [`RealmCore`]).
+    pub(crate) core: Rc<RealmCore>,
     /// Interface prototype objects by class id, null until the class is
     /// first populated (`materialize`) and past the classes this realm was
     /// created with. Kept alive by `interfaces[0]`, which only `materialize`
@@ -462,6 +500,11 @@ impl RealmInner {
     }
 
     pub(crate) fn dispose(&self) {
+        // A lean callback on the stack may hold this realm by `live()`'s
+        // uncounted borrow: page script ran inside one (debug check).
+        crate::class::assert_not_in_lean_call();
+        // First: no lean callback may reach the realm from here on.
+        self.core.ctx.set(ptr::null());
         let ctx = self.ctx.replace(ptr::null_mut());
         if ctx.is_null() {
             return;
@@ -688,9 +731,9 @@ impl Realm {
             .classes
             .borrow()
             .id_of::<C>()
-            .ok_or_else(|| JsError::Type(format!("{} not registered", C::NAME)))?;
+            .ok_or_else(|| JsError::Type(format!("{} not registered", C::NAME).into()))?;
         if self.inner.global_class != Some(id) {
-            return Err(JsError::Type(format!("realm global is not a {}", C::NAME)));
+            return Err(JsError::Type(format!("realm global is not a {}", C::NAME).into()));
         }
         if !self.inner.global_payload.get().is_null() {
             return Err(JsError::Type("global data already set".into()));
@@ -922,7 +965,7 @@ impl<'s> Scope<'s> {
     /// never add one resolve specifiers without consulting a map.
     pub fn add_import_map(&self, source: &str, base: &str) -> JsResult<Vec<String>> {
         if !self.realm.engine.caps.import_maps {
-            return Err(JsError::Unsupported("import maps (patched JavaScriptCore)"));
+            return Err(JsError::Unsupported(&"import maps (patched JavaScriptCore)"));
         }
         let mut messages: sys::JSStringRef = ptr::null();
         // SAFETY: the slices outlive the call, which copies them; `messages` comes back owned.
@@ -939,7 +982,7 @@ impl<'s> Scope<'s> {
         let messages =
             if messages.is_null() { String::new() } else { unsafe { JsString::from_raw_owned(messages) }.to_string() };
         if !merged {
-            return Err(JsError::Type(format!("Invalid import map: {messages}")));
+            return Err(JsError::Type(format!("Invalid import map: {messages}").into()));
         }
         Ok(messages.lines().map(str::to_owned).collect())
     }
@@ -959,7 +1002,7 @@ impl<'s> Scope<'s> {
     /// browser layer appends a fragment, which leaves relative resolution intact).
     pub fn eval_module(&self, source: &str, url: &str) -> JsResult<Value<'s>> {
         if !self.realm.engine.caps.modules {
-            return Err(JsError::Unsupported("ES modules (JSScript module SPI)"));
+            return Err(JsError::Unsupported(&"ES modules (JSScript module SPI)"));
         }
         self.realm.inline_modules.borrow_mut().insert(url.to_string(), source.to_string());
         // Module top-level code runs with this realm as the entry realm (as
@@ -983,7 +1026,7 @@ impl<'s> Scope<'s> {
             } else {
                 unsafe { JsString::from_raw_owned(err) }.to_string()
             };
-            return Err(JsError::Type(msg));
+            return Err(JsError::Type(msg.into()));
         }
         Ok(unsafe { Value::from_raw(self.ctx, v) })
     }
@@ -1304,7 +1347,7 @@ impl<'s> Scope<'s> {
         let key = key.filter(|k| !k.is_owned());
         let spi = sys::spi::get();
         let kept_while = match owned {
-            Some(_) => Some(spi.weak_create_kept_while.ok_or(JsError::Unsupported("JSWeakCreateKeptWhile"))?),
+            Some(_) => Some(spi.weak_create_kept_while.ok_or(JsError::Unsupported(&"JSWeakCreateKeptWhile"))?),
             None => None,
         };
         let h = class::new_payload(&self.realm.engine, id, Kind::Instance, self.realm, key, data);
@@ -1364,7 +1407,7 @@ impl<'s> Scope<'s> {
             }
         }
         if let Some(k) = key {
-            let (create, release, _) = sys::spi::get().weak().ok_or(JsError::Unsupported("JSWeak"))?;
+            let (create, release, _) = sys::spi::get().weak().ok_or(JsError::Unsupported(&"JSWeak"))?;
             let weak = unsafe { create(self.realm.engine.group(), obj.raw) };
             if let Some(old) = self.realm.identity.borrow_mut().insert(k, weak) {
                 unsafe { release(self.realm.engine.group(), old) };
@@ -1526,7 +1569,7 @@ impl<'s> Scope<'s> {
         }
         let get_context = sys::spi::get()
             .get_object_global_context
-            .ok_or(JsError::Unsupported("object global-context inspection"))?;
+            .ok_or(JsError::Unsupported(&"object global-context inspection"))?;
         // SAFETY: object is live in this VM. Its native realm remains reachable
         // through the object, independently of the Rust Realm handle. Reading
         // the global identity does not execute script or retain another realm.
@@ -1688,7 +1731,7 @@ impl<'s> Scope<'s> {
             .classes
             .borrow()
             .id_of::<C>()
-            .ok_or_else(|| JsError::Type(format!("class {} is not registered", C::NAME)))
+            .ok_or_else(|| JsError::Type(format!("class {} is not registered", C::NAME).into()))
     }
 
     fn proto(&self, id: ClassId) -> JsResult<Value<'s>> {
@@ -1726,7 +1769,7 @@ impl<'s> Scope<'s> {
     }
 
     fn set_hidden_raw(&self, object: Object<'_>, key: sys::JSStringRef, value: Value<'_>) -> JsResult<()> {
-        let f = sys::spi::get().set_private_property.ok_or(JsError::Unsupported("JSObjectSetPrivateProperty"))?;
+        let f = sys::spi::get().set_private_property.ok_or(JsError::Unsupported(&"JSObjectSetPrivateProperty"))?;
         let ok = unsafe { f(self.ctx, object.raw, key, value.raw) };
         if ok {
             Ok(())
@@ -1736,7 +1779,7 @@ impl<'s> Scope<'s> {
     }
 
     fn get_hidden_raw(&self, object: Object<'_>, key: sys::JSStringRef) -> JsResult<Option<Value<'s>>> {
-        let f = sys::spi::get().get_private_property.ok_or(JsError::Unsupported("JSObjectGetPrivateProperty"))?;
+        let f = sys::spi::get().get_private_property.ok_or(JsError::Unsupported(&"JSObjectGetPrivateProperty"))?;
         let v = unsafe { f(self.ctx, object.raw, key) };
         Ok((!v.is_null()).then(|| unsafe { Value::from_raw(self.ctx, v) }))
     }
@@ -1966,6 +2009,7 @@ fn allocate(engine: &Rc<EngineInner>, options: RealmOptions) -> JsResult<Realm> 
         engine: engine.clone(),
         ctx: Cell::new(ptr::null_mut()),
         deferred: RefCell::new(None),
+        core: Rc::new(RealmCore::new()),
         protos: RefCell::new(Vec::new()),
         shapes: RefCell::new(Vec::new()),
         interfaces: RefCell::new(None),
@@ -2037,6 +2081,11 @@ fn make_context(realm: &Realm) -> JsResult<()> {
         inner.global_target.set(t as sys::JSObjectRef);
     }
     engine.realms.borrow_mut().insert(ctx as usize, Rc::downgrade(inner));
+    // SAFETY: an alias of `inner` that is never dropped (no count of its
+    // own); `RealmCore::live` hands it out only until `dispose`.
+    let alias = std::mem::ManuallyDrop::new(unsafe { Rc::from_raw(Rc::as_ptr(inner)) });
+    let _ = inner.core.realm.set(alias);
+    inner.core.ctx.set(ctx as sys::JSContextRef);
     {
         let _watchdog = crate::engine::WatchdogPause::new(engine);
         let scope = realm.scope()?;

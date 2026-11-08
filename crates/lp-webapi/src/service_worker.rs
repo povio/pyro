@@ -915,7 +915,7 @@ fn settle(s: &Scope<'_>, glue: Object<'_>, id: u64, result: Result<String, (Stri
 }
 
 fn type_error(message: String) -> JsError {
-    JsError::Type(message)
+    JsError::Type(message.into())
 }
 
 fn has_encoded_slash(url: &lp_net::Url) -> bool {
@@ -1429,7 +1429,7 @@ fn module<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Object<'s>> {
             let url = lp_net::Url::options()
                 .base_url(base.as_ref())
                 .parse(&input)
-                .map_err(|_| JsError::Type(format!("Failed to execute 'getRegistration' on 'ServiceWorkerContainer': The URL provided ('{input}') is invalid.")))?;
+                .map_err(|_| JsError::Type(format!("Failed to execute 'getRegistration' on 'ServiceWorkerContainer': The URL provided ('{input}') is invalid.").into()))?;
             if tuple_origin(&url).as_deref() != Some(client.origin.as_str()) {
                 return Err(JsError::dom("SecurityError", "Failed to execute 'getRegistration' on 'ServiceWorkerContainer': The origin of the provided documentURL does not match the current origin."));
             }

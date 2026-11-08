@@ -116,23 +116,25 @@ impl NodeListData {
             NodeListSource::FormNamed(h, _) => self.items(&h.page.dom.borrow()).len(),
         }
     }
-    fn get(&self, i: usize) -> Option<(Rc<PageDom>, NodeId)> {
+    /// Member `i` and the page it belongs to (borrowed: an indexed read
+    /// clones no `Rc`).
+    fn get(&self, i: usize) -> Option<(&Rc<PageDom>, NodeId)> {
         match &self.source {
-            NodeListSource::Static(v) => v.as_ref().and_then(|h| Some((h.page.clone(), *h.ids.get(i)?))),
+            NodeListSource::Static(v) => v.as_ref().and_then(|h| Some((&h.page, *h.ids.get(i)?))),
             NodeListSource::Children(h) => {
                 let dom = h.page.dom.borrow();
                 {
                     let c = self.cache.borrow();
                     if c.0 == dom.version() {
-                        return c.1.get(i).map(|&id| (h.page.clone(), id));
+                        return c.1.get(i).map(|&id| (&h.page, id));
                     }
                 }
                 self.items(&dom);
-                self.cache.borrow().1.get(i).map(|&id| (h.page.clone(), id))
+                self.cache.borrow().1.get(i).map(|&id| (&h.page, id))
             }
             NodeListSource::FormNamed(h, _) => {
                 let items = self.items(&h.page.dom.borrow());
-                items.get(i).map(|&id| (h.page.clone(), id))
+                items.get(i).map(|&id| (&h.page, id))
             }
         }
     }
@@ -145,16 +147,16 @@ impl JsClass for NodeList {
     type Parent = NoParent;
     fn define(def: &mut ClassDef<Self>) {
         def.pure_getter_typed("length", lp_js::GetterResult::Number, |s, l| Ok(s.number(l.len() as f64)));
-        def.method("item", 1, |s, l, a| {
+        def.pure_method("item", 1, |s, l, a| {
             let i = to_u32(a.get(0))? as usize;
             match l.get(i) {
-                Some((p, id)) => Ok(wrap_node(s, &p, id)?.value()),
+                Some((p, id)) => Ok(wrap_node(s, p, id)?.value()),
                 None => Ok(s.null()),
             }
         });
         def.legacy_platform_object();
         def.indexed(|s, l, i| match l.get(i as usize) {
-            Some((p, id)) => Ok(Some(wrap_node(s, &p, id)?.value())),
+            Some((p, id)) => Ok(Some(wrap_node(s, p, id)?.value())),
             None => Ok(None),
         });
         def.indexed_iterable();
@@ -545,7 +547,7 @@ impl JsClass for HtmlCollection {
         def.pure_getter_typed("length", lp_js::GetterResult::Number, |s, c| {
             Ok(s.number(c.with_items(|v| v.len()) as f64))
         });
-        def.method("item", 1, |s, c, a| {
+        def.pure_method("item", 1, |s, c, a| {
             let i = to_u32(a.get(0))? as usize;
             let id = c.with_items(|v| v.get(i).copied());
             match id {
@@ -553,7 +555,7 @@ impl JsClass for HtmlCollection {
                 None => Ok(s.null()),
             }
         });
-        def.method("namedItem", 1, |s, c, a| {
+        def.pure_method("namedItem", 1, |s, c, a| {
             let name = dom_string(a.get(0))?;
             match c.named(&name) {
                 Some(id) => Ok(wrap_node(s, &c.root.page, id)?.value()),
@@ -595,7 +597,7 @@ pub(crate) fn options_add<'s>(
     if !is_html(&dom, el, &["option", "optgroup"]) {
         return Err(JsError::Type(format!(
             "Failed to execute 'add' on '{iface}': The provided value is not of type '(HTMLOptGroupElement or HTMLOptionElement)'."
-        )));
+        ).into()));
     }
     if dom.contains(el, select).js()? {
         return Err(JsError::dom("HierarchyRequestError", "The new child element contains the parent."));
@@ -882,15 +884,15 @@ impl JsClass for DomTokenList {
             |s, t| t.value(s),
             |_s, t, v| with_str(v, |value| t.el.page.dom.borrow_mut().set_attribute(t.el.id, t.attr, value).js()),
         );
-        def.method("toString", 0, |s, t, _a| t.value(s));
-        def.method("item", 1, |s, t, a| {
+        def.pure_method("toString", 0, |s, t, _a| t.value(s));
+        def.pure_method("item", 1, |s, t, a| {
             let i = to_u32(a.get(0))? as usize;
             Ok(t.token(s, &t.el.page.dom.borrow(), i).unwrap_or_else(|| s.null()))
         });
         def.legacy_platform_object();
         def.indexed(|s, t, i| Ok(t.token(s, &t.el.page.dom.borrow(), i as usize)));
 
-        def.method("contains", 1, |s, t, a| {
+        def.pure_method("contains", 1, |s, t, a| {
             let v = a.get(0);
             Ok(s.boolean(t.contains(&str_of(&v)?)))
         });
@@ -959,7 +961,7 @@ impl JsClass for DomTokenList {
             })?;
             Ok(s.boolean(true))
         });
-        def.method("supports", 1, |s, t, a| {
+        def.pure_method("supports", 1, |s, t, a| {
             let tok = dom_string(a.get(0))?;
             let supported: &[&str] = match t.attr {
                 "rel" => &[
@@ -1011,7 +1013,7 @@ impl JsClass for DomTokenList {
                     return Err(JsError::Type(format!(
                         "DOMTokenList has no supported tokens for the '{}' attribute.",
                         t.attr
-                    )))
+                    ).into()))
                 }
             };
             Ok(s.boolean(supported.iter().any(|k| k.eq_ignore_ascii_case(&tok))))
@@ -1095,7 +1097,7 @@ impl JsClass for NamedNodeMap {
     type Parent = NoParent;
     fn define(def: &mut ClassDef<Self>) {
         def.getter("length", |s, m| Ok(s.number(m.el.page.dom.borrow().attributes(m.el.id).js()?.len() as f64)));
-        def.method("item", 1, |s, m, a| {
+        def.pure_method("item", 1, |s, m, a| {
             let i = to_u32(a.get(0))? as usize;
             attr_at(s, m, i).map(|o| o.unwrap_or(s.null()))
         });

@@ -101,7 +101,7 @@ pub(crate) fn class_name<'s>(s: &Scope<'s>, el: &lp_dom::node::ElementData) -> V
 pub fn dom_err(e: DomError) -> JsError {
     match e {
         DomError::Exception { kind, message } => JsError::dom(kind.name(), message),
-        DomError::Type(m) => JsError::Type(m.to_owned()),
+        DomError::Type(m) => JsError::Type(m.to_owned().into()),
         DomError::StaleNode => JsError::dom("InvalidStateError", "The node is no longer available."),
     }
 }

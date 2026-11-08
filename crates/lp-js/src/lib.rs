@@ -27,7 +27,7 @@ pub use engine::{
     WrapperPropertyHook,
 };
 pub use engine::{set_allocator_release, set_allocator_trim};
-pub use error::{JsError, JsException, JsResult};
+pub use error::{DomError, JsError, JsException, JsResult, Message};
 pub use interned::InternedId;
 pub use persistent::{Persistent, RootedVec};
 pub use realm::{
