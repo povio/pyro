@@ -3571,3 +3571,237 @@ fn sticky_set_follows_style_changes_and_removals() {
         assert_eq!(w.has_sticky(1), *sticky, "whole-tree sync: {what}");
     }
 }
+
+// ---------------- layout-change flags, rounding of moved subtrees, tables and the available width,
+// content widths kept with the shaped text ----------------
+
+/// The early exits of `Node::mark_damaged` and `Node::mark_layout_changed` rely on a flagged node's
+/// ancestors being flagged, which debug builds assert there. Nodes carrying flags move: a row edited
+/// and moved to another table in one change, a row detached and attached again later (edited in
+/// between), pseudo-elements and anonymous boxes appearing in a subtree nothing else changed in,
+/// subtrees leaving and rejoining the layout, and a restyled subtree moved.
+#[test]
+fn flagged_nodes_moved_between_syncs_match_fresh_builds() {
+    let rows = |p: &str| -> String {
+        (0..6)
+            .map(|i| format!("<tr id={p}{i}><td>{p} {i} a</td><td><span>{p} {i} b</span><div><i>n {i}</i></div></td></tr>"))
+            .collect()
+    };
+    let page = Page::new(&format!(
+        "{PAINT_BOXES}<style>.pb::before {{ content: 'pre'; display: block }} .hide {{ display: none }} \
+         .big {{ font-size: 20.5px }}</style>\
+         <table id=t1 style=\"width:300.5px\"><tbody id=ta>{}</tbody></table>\
+         <table id=t2 style=\"width:200.25px\"><tbody id=tb>{}</tbody></table>\
+         <div id=w><span id=s>inline <b id=k>text</b> here</span></div>\
+         <div id=pe>owner <span>x</span></div></body></html>",
+        rows("a"),
+        rows("b")
+    ));
+    let mut r = Renderer::new();
+    check(&mut r, &page, "the first render");
+    let detached: Rc<std::cell::Cell<Option<NodeId>>> = Rc::new(std::cell::Cell::new(None));
+    let (d1, d2) = (detached.clone(), detached.clone());
+    let steps: Vec<(String, Mutate)> = vec![
+        edit("a row edited and moved to another table", |p| {
+            let cell = p.find("#a2 td");
+            let row = p.find("#a2");
+            let other = p.find("#tb");
+            let mut d = p.dom.borrow_mut();
+            d.set_text_content(cell, "edited and moved elsewhere").unwrap();
+            d.append_child(other, row).unwrap();
+        }),
+        edit("a row edited and detached", move |p| {
+            let cell = p.find("#b1 td");
+            let row = p.find("#b1");
+            let mut d = p.dom.borrow_mut();
+            d.set_text_content(cell, "edited, then detached").unwrap();
+            let parent = d.parent(row).unwrap().unwrap();
+            d.remove_child(parent, row).unwrap();
+            d1.set(Some(row));
+        }),
+        edit("the detached row edited and attached to the other table", move |p| {
+            let row = d2.get().unwrap();
+            let first = p.find("#a0");
+            let body = p.find("#ta");
+            let mut d = p.dom.borrow_mut();
+            let cell = d.first_child(row).unwrap().unwrap();
+            d.set_text_content(cell, "edited while detached").unwrap();
+            d.insert_before(body, row, Some(first)).unwrap();
+        }),
+        class("#pe", "pb"),
+        class("#pe", ""),
+        class("#pe", "pb"),
+        style("#k", "display:block"),
+        style("#k", "display:inline"),
+        class("#t1", "hide"),
+        class("#t1", ""),
+        class("#s", "big"),
+        edit("a restyled subtree moved", |p| {
+            let w = p.find("#w");
+            let body = p.find("body");
+            p.dom.borrow_mut().append_child(body, w).unwrap();
+        }),
+    ];
+    for (what, mutate) in steps {
+        mutate(&page);
+        check(&mut r, &page, &what);
+    }
+}
+
+/// A subtree moved by whole pixels rounds as it did (its rounding is keyed on the fractional part of
+/// its parent's position, `LayoutData::rounded_from`): the cells of the rows below a cell that grew
+/// by a line are visited, their subtrees are not.
+#[test]
+fn rounding_skips_subtrees_moved_by_whole_pixels() {
+    let rows: String = (0..200)
+        .map(|i| format!("<tr id=r{i}><td id=c{i}>cell {i}</td><td><div><span>n {i}</span><p>d</p></div></td></tr>"))
+        .collect();
+    let page = Page::new(&format!(
+        "{PAINT_BOXES}<style>body {{ margin: 0; font: 13px/20px sans-serif }} td {{ padding: 0; height: 20px; vertical-align: top }} p {{ margin: 0 }}</style>\
+         <table style=\"table-layout:fixed;width:300px;border-spacing:0\">{rows}</table></body></html>"
+    ));
+    let mut r = Renderer::new();
+    check(&mut r, &page, "the first render");
+
+    let c1 = page.find("#c1");
+    page.dom.borrow_mut().set_text_content(c1, "a longer cell text that wraps onto a second line of its own").unwrap();
+    let tree = page.tree();
+    let before = blitz_rounding();
+    let painted = paint(&mut r, &page.snapshot(1, tree.clone()));
+    let after = blitz_rounding();
+    assert_eq!(painted.hash, Renderer::new().paint(&page.snapshot(1, tree), Area::Viewport, &fetcher()).unwrap().hash);
+    let (visited, skipped) = (after.0 - before.0, after.1 - before.1);
+    // The 198 rows below moved by 20px: their 396 cells are reached, the subtrees of the second
+    // cells (a div, a span, a p and their text) are skipped (a skipped root counts as reached).
+    assert!(skipped >= 198, "skipped {skipped} subtrees");
+    assert!(visited - skipped < 396 + 60, "rounding went through {} nodes", visited - skipped);
+}
+
+/// Subtrees moved by whole and by fractional amounts, with what the rounding of a subtree can
+/// depend on inside them: nested boxes, scroll containers, transforms (resolved against the rounded
+/// size), vertical writing, inline-blocks; a fractional parent moved by whole pixels; and boxes at
+/// negative half-pixel positions (rounded up, as Blink rounds them).
+#[test]
+fn rounding_follows_subtrees_moved_by_whole_and_fractional_pixels() {
+    rounds_as_a_fresh_build(
+        r#"<table style="width:300px;border-spacing:0"><tr><td id=g style="padding:0;height:20px">g</td></tr><tr><td style="padding:0"><div style="overflow:auto;height:15.5px"><p style="margin:0;height:40.5px">s</p></div><div style="transform:rotate(10deg);width:10.5px;height:4.5px"></div><div style="writing-mode:vertical-rl;height:30.5px"><span>v</span><div style="width:7.5px">x</div></div><div><div><span style="display:inline-block;width:5.5px;height:3.5px"></span>n</div></div></td></tr></table>"#,
+        vec![
+            style("#g", "padding:0;height:40px"),
+            style("#g", "padding:0;height:40.5px"),
+            style("#g", "padding:0;height:41px"),
+            style("#g", "padding:0;height:20.25px"),
+            style("#g", "padding:0;height:20px"),
+        ],
+    );
+    rounds_as_a_fresh_build(
+        r#"<div id=h style="height:20.5px"></div><div style="margin-left:0.3px"><div style="height:7.3px"><span>q</span><div style="width:3.7px;height:1.5px"></div></div></div>"#,
+        vec![style("#h", "height:40.5px"), style("#h", "height:41px"), style("#h", "height:20.5px")],
+    );
+    rounds_as_a_fresh_build(
+        r#"<div id=n style="margin-left:-2.5px;width:10px;height:5px"><div style="height:2.5px"></div></div><div id=m style="position:relative;left:-0.5px;top:-1.5px;width:10.5px;height:3.5px">a</div>"#,
+        vec![
+            style("#n", "margin-left:-3.5px;width:10px;height:5px"),
+            style("#n", "margin-left:-0.5px;width:10px;height:5px"),
+            style("#m", "position:relative;left:-2.5px;top:-0.5px;width:10.5px;height:3.5px"),
+            style("#n", "margin-left:0;width:10px;height:5px"),
+        ],
+    );
+}
+
+/// An auto table whose container got wider or narrower, but not past the table's own width, keeps
+/// its layout: its cells are not measured again (`CellWidths`) and its grid is not laid out (the
+/// last layout stands). Tables whose width follows the container, cells with percentage padding
+/// (which their intrinsic widths depend on the table's content width through) and cells with a
+/// minimum width lay out as fresh builds do.
+#[test]
+fn tables_keep_their_layout_when_only_the_available_width_changes() {
+    let rows = |n: usize| -> String {
+        (0..n).map(|i| format!("<tr><td>cell {i}</td><td>some text {i} here</td><td>{i}.5</td></tr>")).collect()
+    };
+    let page = Page::new(&format!(
+        "{PAINT_BOXES}<div id=w style=\"width:500px\"><table id=t style=\"border-spacing:2.5px\">{}</table></div></body></html>",
+        rows(8)
+    ));
+    let mut r = Renderer::new();
+    check(&mut r, &page, "the first render");
+    let w = page.find("#w");
+    // (container width, whether the table's grid is laid out)
+    for (width, laid_out) in [("450px", false), ("600.5px", false), ("100px", true), ("400.25px", true), ("500px", false)] {
+        page.dom.borrow_mut().set_attribute(w, "style", &format!("width:{width}")).unwrap();
+        let tree = page.tree();
+        let before = blitz_table_grids();
+        let painted = paint(&mut r, &page.snapshot(1, tree.clone()));
+        let after = blitz_table_grids();
+        let mut fresh = Renderer::new();
+        let fresh_paint = paint(&mut fresh, &page.snapshot(1, tree));
+        for ((k, a), (_, b)) in boxes(&r, &page).into_iter().zip(boxes(&fresh, &page)) {
+            assert_eq!(a, b, "box {k:x} at width {width}");
+        }
+        if painted.hash != fresh_paint.hash {
+            let again = paint(&mut r, &page.snapshot(1, page.tree()));
+            let describe = |r: &Renderer| {
+                r.page_layout(1).map(|l| {
+                    let words: Vec<_> = l.words.iter().map(|(k, w)| (*k, w.x, w.y, w.width, w.height)).collect();
+                    format!("{}x{} {words:?}", l.document_width, l.document_height)
+                })
+            };
+            let live_layout = describe(&r);
+            let fresh_layout = describe(&fresh);
+            assert_eq!(live_layout, fresh_layout, "page layout at width {width}");
+            panic!(
+                "paint at width {width}: live {} fresh {} (live painted again {}; grids laid out {:?})",
+                painted.hash,
+                fresh_paint.hash,
+                again.hash,
+                (after.0 - before.0, after.1 - before.1)
+            );
+        }
+        assert_eq!((after.0 + after.1) > (before.0 + before.1), laid_out, "width {width}: grid laid out");
+    }
+
+    let widths = |table: &str| -> Vec<(String, Mutate)> {
+        vec![
+            style("#w", "width:450px"),
+            style("#w", "width:600.5px"),
+            style("#w", "width:100px"),
+            style("#w", "width:400.25px"),
+            style("#w", "width:500px"),
+        ]
+        .into_iter()
+        .map(|(what, mutate)| (format!("{table}: {what}"), mutate))
+        .collect()
+    };
+    for table in [
+        format!("<table style=\"width:100%\">{}</table>", rows(5)),
+        format!("<style>td {{ padding: 0 2% }}</style><table>{}</table>", rows(5)),
+        format!("<style>td {{ padding: 1px calc(2px + 1%) }}</style><table>{}</table>", rows(5)),
+        format!("<style>td {{ min-width: 40px }}</style><table>{}</table>", rows(5)),
+        format!("<table><tr><td width=120>wide</td><td>b</td><td>c</td></tr>{}</table>", rows(4)),
+        format!("<table><tr><td style=\"width:30%\">p</td><td>b</td><td>c</td></tr>{}</table>", rows(4)),
+        format!("<table style=\"max-width:80%\">{}</table>", rows(5)),
+    ] {
+        rounds_as_a_fresh_build(&format!("<div id=w style=\"width:500px\">{table}</div>"), widths(&table));
+    }
+}
+
+/// The min-content and max-content widths of an inline layout without in-flow inline boxes are kept
+/// with its shaped text (`TextLayout::text_content_widths`; debug builds check them against the
+/// layout's): text indents (which they are measured without), inline boxes, floats, forced breaks,
+/// preserved white space and shrink-to-fit widths read them or go without.
+#[test]
+fn content_widths_kept_with_the_shaped_text_match_fresh_builds() {
+    rounds_as_a_fresh_build(
+        r#"<div id=c style="width:120.5px"><p id=p1 style="text-indent:10%">lorem ipsum dolor sit amet consectetur adipiscing</p><p id=p2 style="text-indent:-7.5px">negative indent words here and there</p><p id=p3 style="text-indent:5px hanging each-line">hang<br>each line words wrap</p><p id=p4><span style="display:inline-block;width:30.5px;height:4px"></span> boxes between words <span style="display:inline-block;width:12.5px;height:3px"></span></p><p id=p5 style="white-space:pre">trailing   </p><p id=p6 style="float:left">shrink to fit</p><p id=p7><span style="float:right;width:20.5px;height:5px"></span>a float in text that wraps</p><span id=p8 style="display:inline-block">an inline-block of its own width</span></div>"#,
+        vec![
+            text("#p1", "shorter"),
+            text("#p2", "a longer text than before for the negative indent to act on"),
+            style("#c", "width:80.25px"),
+            style("#p1", "text-indent:0"),
+            style("#p2", "text-indent:0"),
+            style("#p3", "text-indent:12%"),
+            text("#p4", "no boxes any more"),
+            style("#c", "width:300px"),
+            text("#p8", "another width"),
+        ],
+    );
+}

@@ -59,7 +59,14 @@ against the upstream commit above); they are covered by lp-render's rendering te
   only moved (its location alone changed: the rows below a table cell that grew) is marked on its ancestors, not on
   itself: what it holds in its own coordinates (scrollable overflow, its subtree's layouts) is unchanged, so
   `resolve_layout_children`, `resolve_transforms` and `clear_damage_and_dirty_flags` no longer descend into every
-  moved subtree. Its rounding still follows the move: the `rounded_from` key holds its location.
+  moved subtree. Its rounding still follows the move: the `rounded_from` key holds its location. The key's offset
+  is the fractional part of the parent's absolute position, and `rounded_layout` rounds relative to the pixel grid
+  (half up, as Blink), so the subtree of a box moved by whole pixels is not rounded again either: an edit of a cell
+  in a 200-row table reaches the cells of the rows below, not what is in them
+  (`rounding_skips_subtrees_moved_by_whole_pixels`). `Node::mark_layout_changed` stops at a node already flagged,
+  as `mark_damaged` does: a flag is only set with its ancestors' and cleared after those below it, which debug
+  builds assert at both early exits (`debug_assert_ancestors_flagged`; anonymous boxes' flags are not maintained
+  and are passed through). The rows below a cell that grew walked to the document each, thousands of times per edit.
   A transform resolves against the rounded size (`Node::set_transform`), which a fractional move of the box or an
   ancestor can change: `LayoutPassState::set_final_layout` marks a box with a transform style
   (`Node::has_transform_style`; one that was the identity at the old size is stored as no transform) whose rounded
@@ -297,7 +304,13 @@ its inputs.
   content width they were measured for (`CellWidths`), and so are the columns' widths summed from them. A cell that
   changed is measured again; a column's widths are summed again only when a cell that set them got narrower. Once
   more cells changed than it holds widths for, it drops them all (every cell is measured again), possibly halfway
-  through `update_rows`, so each row replacement checks again whether the widths still follow the cells.
+  through `update_rows`, so each row replacement checks again whether the widths still follow the cells. Another
+  table content width (a shrink-to-fit table whose container got wider or narrower) changes the intrinsic widths of
+  the cells with a percentage or `calc()` `width`, `min-width`, `max-width`, padding or margin of their own alone
+  (`TableCell::percent_lengths`): those are measured again, the others keep their widths. With the same columns and
+  cells and only the available width changed, the grid's last layout stands (`table_reuse::stands` in Taffy;
+  `store_table_grid_state` counts no layout for a state marked `stood`). Covered by
+  `tables_keep_their_layout_when_only_the_available_width_changes` in `crates/lp-render/tests/mirror.rs`.
 - The grid is laid out again from its last layout when the columns are the same (see "Table grids laid out again
   from their last layout" in `vendor/taffy/README.lightningpanda.md`): `take_table_grid_state` gives back the cells
   that changed (`TableContext::changed_cells`) and the rows replaced since (`grid_splice`: one replacement between
@@ -430,6 +443,19 @@ the text bytes the breaker went over. Covered by `crates/lp-render/tests/line_br
 `TextLayout::content_widths`, a memo nothing read (intrinsic sizing and list markers call
 `calculate_content_widths`), is gone with `Node::invalidate_layout_cache`, which only cleared it besides the layout
 cache (`clear_layout_cache`).
+
+## Content widths kept with the shaped text
+
+`src/node/text.rs`, `src/layout/inline/build.rs`, `src/layout/inline/layout.rs`: `calculate_content_widths` walks
+every cluster, and inline layout called it once per measurement (min-content, max-content) and once per layout (for
+the slack it gives the line breaker when content is sized to fit): three walks per cell and width on a table
+resize, 9-10% of the pass. The min-content and max-content widths of a layout without in-flow inline boxes depend on
+the shaped text and the text indent alone, so `build_inline_layout_into` measures them once, with no indent, as part
+of the build (`TextLayout::text_content_widths`, part of the shaped text and replaced with it), and
+`TextLayout::content_widths(indent)` answers from them with no indent set, else measures. Layouts with in-flow
+inline boxes, whose sizes each measurement sets, keep measuring. Debug builds check the kept widths against a
+measurement at every read. Covered by `content_widths_kept_with_the_shaped_text_match_fresh_builds` in
+`crates/lp-render/tests/mirror.rs`.
 
 ## Moving from 0.3.0-beta.4 to main
 

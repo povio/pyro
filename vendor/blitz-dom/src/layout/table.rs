@@ -132,8 +132,19 @@ impl TableTreeWrapper<'_, '_> {
         let mut max = min.clone();
         // lightningpanda: the cells' widths are those last measured, but for the cells that changed
         // (`CellWidths`); a column's are summed again only when a cell that set them got narrower.
+        // Another table content width (a shrink-to-fit table whose container got wider or
+        // narrower) changes the intrinsic widths of the cells with percentage or `calc()` lengths
+        // of their own alone (`TableCell::percent_lengths`): those are measured again.
         let mut widths = ctx.widths.borrow_mut();
-        if widths.cells.len() != ctx.cells.len() || widths.inner != inner {
+        if widths.cells.len() == ctx.cells.len() && widths.inner != inner {
+            widths.inner = inner;
+            for (idx, cell) in ctx.cells.iter().enumerate() {
+                if cell.percent_lengths {
+                    widths.changed(idx);
+                }
+            }
+        }
+        if widths.cells.len() != ctx.cells.len() {
             *widths = CellWidths { inner, cells: vec![None; ctx.cells.len()], ..CellWidths::default() };
         }
         widths.update(&ctx, n, |idx| {
@@ -543,9 +554,10 @@ pub struct TableContext {
 /// The cells a table's grid placed since its last rounding and transform pass (`TableContext::placed`).
 #[derive(Debug, Default)]
 pub(crate) struct PlacedCells {
-    /// Cells placed since the last rounding (all of them when `None`), and where the table was then
+    /// Cells placed since the last rounding (all of them when `None`), and the fractional part of
+    /// the table's position then (all its cells' rounding depends on: `rounded_layout`)
     round: Option<Vec<usize>>,
-    rounded_at: Option<(taffy::Point<f32>, taffy::Point<f32>)>,
+    rounded_at: Option<taffy::Point<f32>>,
     /// Cells placed or damaged since the last transform pass (all of them when `None`), and each
     /// cell's overflow in the table as the last pass computed it, at its scale
     transform: Option<Vec<usize>>,
@@ -605,8 +617,9 @@ impl PlacedCells {
         })
     }
 
-    /// The cells to round again for a table now at `at` (all of them: `None`), and the next ones.
-    pub(crate) fn take_round(&mut self, at: (taffy::Point<f32>, taffy::Point<f32>)) -> Option<Vec<usize>> {
+    /// The cells to round again for a table whose position's fractional part is now `at` (all of
+    /// them: `None`), and the next ones.
+    pub(crate) fn take_round(&mut self, at: taffy::Point<f32>) -> Option<Vec<usize>> {
         let same_place = self.rounded_at == Some(at);
         self.rounded_at = Some(at);
         let cells = std::mem::replace(&mut self.round, Some(Vec::new()));
@@ -645,6 +658,8 @@ fn splice_indices(list: &mut Vec<usize>, removed: Range<usize>, inserted: usize)
 /// The widths of a table's cells (`TableContext::widths`), measured for a table content width.
 #[derive(Debug, Default)]
 pub(crate) struct CellWidths {
+    /// The table content width the cells with percentage or `calc()` lengths
+    /// (`TableCell::percent_lengths`) were measured for; the other cells' widths do not depend on it.
     inner: f32,
     cells: Vec<Option<(f32, f32)>>,
     /// The cells to measure again (they changed, or are new): their last widths, if any, are still
@@ -1085,6 +1100,9 @@ pub struct TableCell {
     rowspan: u16,
     /// Whether its computed `width` is a percentage (`TableTreeWrapper::has_percent_cell`).
     percent_width: bool,
+    /// lightningpanda: whether its intrinsic widths depend on the table's content width: a
+    /// percentage or `calc()` `width`, `min-width`, `max-width`, padding or margin (`CellWidths`).
+    percent_lengths: bool,
     /// In the auto table layout algorithm, the larger of the cell's and its column's
     /// length `width`. That width is a minimum: the column still grows to fit the
     /// min-content width of its cells, but not to their max-content width. Both of the
@@ -1209,6 +1227,12 @@ fn table_taffy_style(node: &crate::Node, table_wm: WritingMode) -> taffy::Style<
 }
 
 /// A table part's computed physical `width` and `height` (`None` without styles).
+/// Whether a length resolves against the containing block's width: a percentage or a `calc()`
+/// (a calc's `tag()` carries pointer bits: `uses_percentage` tests the bit both set).
+fn resolves_against_parent_width(length: taffy::CompactLength) -> bool {
+    length.uses_percentage()
+}
+
 fn physical_size(node: &crate::Node) -> Option<taffy::Size<taffy::Dimension>> {
     match node.table_part_taffy_style() {
         Some(style) => Some(style.size),
@@ -1839,12 +1863,13 @@ fn group_changes(
     true
 }
 
-/// The cells of `table` (at `at`, its position and rounded position) whose rounding may have changed
-/// since it was last rounded: those its grid placed since, if it is where it was then (`None`: all).
+/// The cells of `table` (at `at`, the fractional part of its position) whose rounding may have changed
+/// since it was last rounded: those its grid placed since, if it sits on the pixel grid as it did then
+/// (`None`: all).
 pub(crate) fn table_cells_to_round(
     doc: &BaseDocument,
     table: NodeId,
-    at: (taffy::Point<f32>, taffy::Point<f32>),
+    at: taffy::Point<f32>,
 ) -> Option<Vec<NodeId>> {
     let node = &doc.nodes[table];
     if !node.flags.is_table_root() {
@@ -2786,6 +2811,16 @@ fn collect_table_cells(
             style.size.width = style_helpers::auto();
             crate::resolve::phase_profile::table_cell_collected();
             let length_width = if is_fixed { None } else { length_width };
+            let percent_lengths = percent_width
+                || [style.padding.left, style.padding.right, style.padding.top, style.padding.bottom]
+                    .into_iter()
+                    .any(|length| resolves_against_parent_width(length.into_raw()))
+                || [style.margin.left, style.margin.right, style.margin.top, style.margin.bottom]
+                    .into_iter()
+                    .any(|length| resolves_against_parent_width(length.into_raw()))
+                || [style.min_size.width, style.max_size.width]
+                    .into_iter()
+                    .any(|length| resolves_against_parent_width(length.into_raw()));
             cells.push(TableCell {
                 node_id,
                 row: row.saturating_sub(1),
@@ -2793,6 +2828,7 @@ fn collect_table_cells(
                 colspan,
                 rowspan,
                 percent_width,
+                percent_lengths,
                 min_width: length_width,
                 min_height,
                 height_base,
@@ -2968,7 +3004,10 @@ impl taffy::LayoutGridContainer for TableTreeWrapper<'_, '_> {
     }
 
     fn store_table_grid_state(&mut self, _node_id: taffy::NodeId, state: Box<taffy::TableGridState>) {
-        crate::resolve::phase_profile::table_grid_laid_out(state.laid_out_again());
+        // (A layout that stood as it was, with only the available width changed, laid out nothing.)
+        if !state.stood() {
+            crate::resolve::phase_profile::table_grid_laid_out(state.laid_out_again());
+        }
         *self.ctx.grid_state.borrow_mut() = Some(state);
     }
 

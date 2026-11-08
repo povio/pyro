@@ -701,6 +701,8 @@ impl Node {
     pub fn mark_damaged(&self) {
         if let Some(flag) = self.damaged_descendants_flag() {
             if flag.swap(true, Ordering::Relaxed) {
+                #[cfg(debug_assertions)]
+                self.debug_assert_ancestors_flagged(self);
                 return;
             }
         }
@@ -711,6 +713,8 @@ impl Node {
             // because all further ancestors must also have it set
             if let Some(flag) = parent.damaged_descendants_flag() {
                 if flag.swap(true, Ordering::Relaxed) {
+                    #[cfg(debug_assertions)]
+                    self.debug_assert_ancestors_flagged(parent);
                     break;
                 }
             }
@@ -718,17 +722,52 @@ impl Node {
         }
     }
 
-    /// [`Self::mark_damaged`], all the way up: a flag can outlast its ancestors' (a node moved
-    /// while flagged), and rounding must never miss a change.
-    /// Marks `from` and its ancestors as having damaged descendants.
+    /// [`Self::mark_damaged`], from `from`: marks it and its ancestors as having damaged
+    /// descendants (a layout change: `update_unrounded_layout`, a rounded size a transform
+    /// resolves against).
+    ///
+    /// lightningpanda: the walk stops at a node already flagged, as `mark_damaged` does. A flag is
+    /// only set together with those of every ancestor (here, in `mark_damaged`, and a node joining
+    /// the tree flags its new parent: `add_children_to_parent`), and
+    /// `clear_damage_and_dirty_flags` clears a node's flag after those below it, so a flagged
+    /// node's ancestors are flagged. The rows below a cell that grew used to walk to the document
+    /// each: thousands of walks per edit of a long table. An anonymous box's flag is not maintained
+    /// (`rounded_unchanged`): the walk goes on past it.
     pub(crate) fn mark_layout_changed(&self, from: Option<NodeId>) {
         let mut current = from;
         while let Some(id) = current {
             let node = &self.tree()[id];
             if let Some(flag) = node.damaged_descendants_flag() {
-                flag.store(true, Ordering::Relaxed);
+                if flag.swap(true, Ordering::Relaxed) && !node.is_anonymous() {
+                    #[cfg(debug_assertions)]
+                    self.debug_assert_ancestors_flagged(node);
+                    return;
+                }
             }
             current = node.parent;
+        }
+    }
+
+    /// The invariant the early exits of [`Self::mark_damaged`] and [`Self::mark_layout_changed`]
+    /// rely on: a flagged node's ancestors are flagged (anonymous boxes' flags aside, which are
+    /// not maintained). A violation leaves a flag, and the damage below it, out of reach of
+    /// `clear_damage_and_dirty_flags` and lets rounding skip a subtree whose layout changed.
+    #[cfg(debug_assertions)]
+    fn debug_assert_ancestors_flagged(&self, flagged: &Node) {
+        let mut current = flagged.parent;
+        while let Some(id) = current {
+            let ancestor = &self.tree()[id];
+            if let Some(flag) = ancestor.damaged_descendants_flag() {
+                debug_assert!(
+                    flag.load(Ordering::Relaxed) || ancestor.is_anonymous(),
+                    "{:?} ({:?}) has damaged_descendants set while its ancestor {:?} ({:?}) has not",
+                    flagged.id,
+                    flagged.data.downcast_element().map(|el| &el.name.local),
+                    ancestor.id,
+                    ancestor.data.downcast_element().map(|el| &el.name.local),
+                );
+            }
+            current = ancestor.parent;
         }
     }
 

@@ -1,7 +1,7 @@
 use blitz_traits::node_id::NodeId;
 use markup5ever::local_name;
 use parley::{
-    FontContext, InlineBox, InlineBoxKind, LayoutContext, TreeBuilder, WhiteSpaceCollapse,
+    FontContext, IndentOptions, InlineBox, InlineBoxKind, LayoutContext, TreeBuilder, WhiteSpaceCollapse,
 };
 use style::{
     computed_values::position::T as PositionProperty,
@@ -160,6 +160,15 @@ fn build_inline_layout_with(
         builder.build_into_keeping_lines(&mut text_layout.layout)
     };
     text_layout.text_nodes = std::mem::take(text_nodes);
+    // lightningpanda: the shaped text's content widths, for every layout of it (`TextLayout::
+    // content_widths`): a function of the shaped clusters alone while no in-flow inline box, whose
+    // size each layout sets, takes part in them. Measured with no text indent; the layout sets its
+    // own before it reads them.
+    let text_only = text_layout.layout.inline_boxes().all(|inline_box| inline_box.kind != InlineBoxKind::InFlow);
+    text_layout.text_content_widths = text_only.then(|| {
+        text_layout.layout.set_text_indent(0.0, IndentOptions::default());
+        text_layout.layout.calculate_content_widths()
+    });
     return;
 
     fn build_inline_layout_recursive(

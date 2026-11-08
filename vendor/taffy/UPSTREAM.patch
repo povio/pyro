@@ -281,7 +281,7 @@ index b84e8751..adc2f827 100644
  
  /// The offset applied to an item in a single axis by its `inset` if it is `position: relative`
 diff --git a/src/compute/grid/mod.rs b/src/compute/grid/mod.rs
-index f0109c6e..63e4fe5f 100644
+index f0109c6e..c6b3ca8b 100644
 --- a/src/compute/grid/mod.rs
 +++ b/src/compute/grid/mod.rs
 @@ -39,12 +39,15 @@ mod alignment;
@@ -311,7 +311,7 @@ index f0109c6e..63e4fe5f 100644
      let style = tree.get_grid_container_style(node);
      let constants = compute_container_constants(tree, &style, inputs);
      let GridContainerConstants {
-@@ -336,105 +342,197 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -336,105 +342,227 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
      // Absolutely positioned children do not take part in grid placement and do not create implicit tracks,
      // so they are excluded here. Each child's style is read and its named lines resolved exactly once; the
      // results drive both the grid size estimate and item placement below.
@@ -327,7 +327,34 @@ index f0109c6e..63e4fe5f 100644
 -        let child_style = tree.get_grid_child_style(child_node);
 -        if child_style.box_generation_mode() == BoxGenerationMode::None || child_style.position().is_out_of_flow() {
 -            continue;
--        }
++    // lightningpanda: nothing changed since the table's last layout and the inputs differ at most in
++    // the available width (its container got wider or narrower, the table not): that layout stands.
++    let reuse = match reuse {
++        Some(reuse)
++            if table_reuse::stands::<Tree>(
++                &reuse,
++                &style,
++                &inputs,
++                &constants,
++                child_count,
++                explicit_col_count,
++                explicit_row_count,
++                col_auto_repetition_count,
++                row_auto_repetition_count,
++            ) =>
++        {
++            drop(name_resolver);
++            drop(grid_template_rows);
++            drop(grid_template_columns);
++            drop(grid_auto_rows);
++            drop(grid_auto_columns);
++            drop(style);
++            let mut state = reuse.state;
++            state.stood = true;
++            let output = state.output.clone();
++            tree.store_table_grid_state(node, state);
++            return output;
+         }
 -        placements.push(InBothAbsAxis {
 -            horizontal: name_resolver
 -                .resolve_column_names(&child_style.grid_column())
@@ -337,6 +364,8 @@ index f0109c6e..63e4fe5f 100644
 -        items.push(GridItem::new_with_style_and_order(
 -            child_node,
 -            child_style,
++        reuse => reuse,
++    };
 +    let mut replay = reuse.and_then(|reuse| {
 +        table_reuse::prepare(
 +            tree,
@@ -460,28 +489,6 @@ index f0109c6e..63e4fe5f 100644
 +                (area.start.0 as isize) <= index as isize && (index as isize) < area.end.0 as isize
 +            }),
 +        };
-+
-+        // 5. Initialize Tracks
-+        // Initialize (explicit and implicit) grid tracks (and gutters)
-+        // This resolves the min and max track sizing functions for all tracks and gutters
-+        let mut columns = GridTrackVec::new();
-+        let mut rows = GridTrackVec::new();
-+        initialize_grid_tracks(
-+            &mut columns,
-+            final_col_counts,
-+            &style,
-+            AbsoluteAxis::Horizontal,
-+            col_auto_repetition_count,
-+            |column_index| track_has_items(column_index, AbsoluteAxis::Horizontal),
-+        );
-+        initialize_grid_tracks(
-+            &mut rows,
-+            final_row_counts,
-+            &style,
-+            AbsoluteAxis::Vertical,
-+            row_auto_repetition_count,
-+            |row_index| track_has_items(row_index, AbsoluteAxis::Vertical),
-+        );
  
 -    // 5. Grid Item Placement
 -    // Match items (children) to a definite grid position (row start/end and column start/end position)
@@ -515,7 +522,29 @@ index f0109c6e..63e4fe5f 100644
 -        row_auto_repetition_count,
 -        |row_index| cell_occupancy_matrix.row_is_occupied(row_index),
 -    );
++        // 5. Initialize Tracks
++        // Initialize (explicit and implicit) grid tracks (and gutters)
++        // This resolves the min and max track sizing functions for all tracks and gutters
++        let mut columns = GridTrackVec::new();
++        let mut rows = GridTrackVec::new();
++        initialize_grid_tracks(
++            &mut columns,
++            final_col_counts,
++            &style,
++            AbsoluteAxis::Horizontal,
++            col_auto_repetition_count,
++            |column_index| track_has_items(column_index, AbsoluteAxis::Horizontal),
++        );
++        initialize_grid_tracks(
++            &mut rows,
++            final_row_counts,
++            &style,
++            AbsoluteAxis::Vertical,
++            row_auto_repetition_count,
++            |row_index| track_has_items(row_index, AbsoluteAxis::Vertical),
++        );
  
++
 +        // 6. Track Sizing
 +
 +        // Convert grid placements in origin-zero coordinates to indexes into the GridTrack (rows and columns) vectors
@@ -592,7 +621,7 @@ index f0109c6e..63e4fe5f 100644
      let initial_column_sum = columns.iter().map(|track| track.base_size).sum::<f32>();
      inner_node_size.width = inner_node_size.width.or_else(|| initial_column_sum.into());
  
-@@ -448,9 +546,18 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -448,9 +576,18 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
          return LayoutOutput::from_outer_size(Size { width, height: 0.0 });
      }
  
@@ -612,7 +641,7 @@ index f0109c6e..63e4fe5f 100644
      track_sizing_algorithm(
          tree,
          AbstractAxis::Block,
-@@ -465,6 +572,9 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -465,6 +602,9 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
          &mut items,
          |track: &GridTrack, _, _| Some(track.base_size),
          false, // TODO: Support baseline alignment in the vertical axis
@@ -622,7 +651,7 @@ index f0109c6e..63e4fe5f 100644
      );
      let initial_row_sum = rows.iter().map(|track| track.base_size).sum::<f32>();
  
-@@ -517,6 +627,19 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -517,6 +657,19 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
          // Note: every item must be visited (no short-circuiting) as the closure updates each item's caches
          intrinsic_column_contribution_changed =
              items.iter_mut().filter(|item| item.crosses_intrinsic_column).fold(false, |any_changed, item| {
@@ -642,7 +671,7 @@ index f0109c6e..63e4fe5f 100644
                  let grid_area_size = item.grid_area_size(
                      AbstractAxis::Inline,
                      &columns,
-@@ -567,6 +690,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -567,6 +720,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
          });
      }
  
@@ -650,7 +679,7 @@ index f0109c6e..63e4fe5f 100644
      if rerun_column_sizing {
          // Re-run track sizing algorithm for Inline axis
          track_sizing_algorithm(
-@@ -583,6 +707,9 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -583,6 +737,9 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
              &mut items,
              |track: &GridTrack, _, _| Some(track.base_size),
              has_baseline_aligned_item,
@@ -660,7 +689,7 @@ index f0109c6e..63e4fe5f 100644
          );
  
          // The column widths may have changed, so the items' intrinsic height contributions need to be recomputed
-@@ -632,6 +759,9 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -632,6 +789,9 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
              &mut items,
              |track: &GridTrack, _, _| Some(track.base_size),
              false, // TODO: Support baseline alignment in the vertical axis
@@ -670,7 +699,7 @@ index f0109c6e..63e4fe5f 100644
          );
      }
  
-@@ -721,6 +851,13 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -721,6 +881,13 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
      };
  
      // Position in-flow children (stored in items vector)
@@ -684,7 +713,7 @@ index f0109c6e..63e4fe5f 100644
      for (index, item) in items.iter_mut().enumerate() {
          // Tracks are stored in logical order. In RTL the physical offsets are assigned
          // right-to-left, so an item's physical left edge is derived from its logical end
-@@ -739,25 +876,65 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -739,25 +906,65 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
                  columns[item.column_indexes.end as usize].offset
              },
          };
@@ -768,7 +797,7 @@ index f0109c6e..63e4fe5f 100644
  
          #[cfg(feature = "content_size")]
          {
-@@ -765,6 +942,24 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -765,6 +972,24 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
          }
      }
  
@@ -793,7 +822,7 @@ index f0109c6e..63e4fe5f 100644
      // Position hidden and absolutely positioned children, merging in the candidates bubbled out
      // of in-flow children's subtrees (`items` is sorted by `source_order`, i.e. child index)
      let mut order = items.len() as u32;
-@@ -980,9 +1175,80 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -980,9 +1205,82 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
      );
      output.oof_candidates = oof_candidates;
      output.oof_positioning_area = oof_positioning_area;
@@ -803,6 +832,7 @@ index f0109c6e..63e4fe5f 100644
 +            Box::new(TableGridState {
 +                inputs,
 +                constants,
++                output: output.clone(),
 +                col_counts: final_col_counts,
 +                row_counts: final_row_counts,
 +                columns,
@@ -811,6 +841,7 @@ index f0109c6e..63e4fe5f 100644
 +                items,
 +                positioned,
 +                laid_out_again: replay.is_some(),
++                stood: false,
 +            }),
 +        );
 +    }
@@ -874,7 +905,7 @@ index f0109c6e..63e4fe5f 100644
  /// Resolve the static-position rectangle (the grid area determined by the grid-placement
  /// properties) for an out-of-flow child of a positioned grid container.
  ///
-@@ -1454,3 +1720,131 @@ impl DetailedGridItemsInfo {
+@@ -1454,3 +1752,131 @@ impl DetailedGridItemsInfo {
          }
      }
  }
@@ -1008,10 +1039,10 @@ index f0109c6e..63e4fe5f 100644
 +}
 diff --git a/src/compute/grid/table_reuse.rs b/src/compute/grid/table_reuse.rs
 new file mode 100644
-index 00000000..acd0755c
+index 00000000..9a97edf9
 --- /dev/null
 +++ b/src/compute/grid/table_reuse.rs
-@@ -0,0 +1,365 @@
+@@ -0,0 +1,444 @@
 +//! lightningpanda: a table's grid laid out again from its last layout.
 +//!
 +//! A table's rows are a grid's (`LayoutGridContainer::grid_rows_are_table_rows`). After a full layout
@@ -1035,7 +1066,8 @@ index 00000000..acd0755c
 +use super::GridContainerConstants;
 +use crate::geometry::{AbsoluteAxis, InBothAbsAxis};
 +use crate::style::{AlignItems, GridAutoFlow};
-+use crate::tree::{LayoutInput, NodeId};
++use crate::geometry::Size;
++use crate::tree::{LayoutInput, LayoutOutput, NodeId};
 +use crate::util::sys::{Box, GridTrackVec, Vec};
 +use crate::{BoxGenerationMode, CoreStyle, GridItemStyle, LayoutGridContainer};
 +
@@ -1045,6 +1077,8 @@ index 00000000..acd0755c
 +pub struct TableGridState {
 +    pub(super) inputs: LayoutInput,
 +    pub(super) constants: GridContainerConstants,
++    /// What the layout computed for the grid itself, for a layout that stands as it is (`stands`)
++    pub(super) output: LayoutOutput,
 +    pub(super) col_counts: TrackCounts,
 +    pub(super) row_counts: TrackCounts,
 +    /// The columns as finally sized and aligned
@@ -1057,12 +1091,20 @@ index 00000000..acd0755c
 +    pub(super) positioned: Vec<PositionedItem>,
 +    /// Whether this layout was itself laid out again from the last one
 +    pub(super) laid_out_again: bool,
++    /// Whether this layout stood as it was for the latest layout of the grid (`stands`): nothing was
++    /// laid out
++    pub(super) stood: bool,
 +}
 +
 +impl TableGridState {
 +    /// Whether this layout was laid out again from the one before (rather than the whole grid)
 +    pub fn laid_out_again(&self) -> bool {
 +        self.laid_out_again
++    }
++
++    /// Whether the grid's latest layout kept this one as it was, laying out nothing
++    pub fn stood(&self) -> bool {
++        self.stood
 +    }
 +}
 +
@@ -1121,6 +1163,72 @@ index 00000000..acd0755c
 +        && a.max_track_sizing_function == b.max_track_sizing_function
 +}
 +
++/// Whether two layout inputs differ at most in the available width and the parent's width. A table
++/// grid's columns are fixed tracks (the state is recorded for no other), which neither sizes; what
++/// of the grid's own style resolves against the parent's width is in its `GridContainerConstants`,
++/// compared besides.
++fn same_but_for_available_width(a: &LayoutInput, b: &LayoutInput) -> bool {
++    LayoutInput {
++        available_space: Size { width: b.available_space.width, height: a.available_space.height },
++        parent_size: Size { width: b.parent_size.width, height: a.parent_size.height },
++        ..*a
++    } == *b
++}
++
++impl GridContainerConstants {
++    /// Whether the constants differ at most in the available grid width (see
++    /// [`same_but_for_available_width`]).
++    fn same_but_for_available_width(&self, other: &Self) -> bool {
++        Self {
++            available_grid_space: Size {
++                width: other.available_grid_space.width,
++                height: self.available_grid_space.height,
++            },
++            ..*self
++        } == *other
++    }
++}
++
++/// lightningpanda: whether `reuse.state` is the layout at `inputs` as it is: nothing changed since it
++/// was laid out (no item, no row replaced or appended, the same tracks) and the inputs differ at most
++/// in the available width (and the parent's width, where the grid's own style resolves nothing against
++/// it). A shrink-to-fit table in a container that got wider or narrower, but not past the table's
++/// width, was laid out again cell by cell for the same result.
++#[allow(clippy::too_many_arguments)]
++pub(super) fn stands<Tree: LayoutGridContainer>(
++    reuse: &TableGridReuse,
++    style: &Tree::GridContainerStyle<'_>,
++    inputs: &LayoutInput,
++    constants: &GridContainerConstants,
++    child_count: usize,
++    explicit_col_count: u16,
++    explicit_row_count: u16,
++    col_auto_repetition_count: u16,
++    row_auto_repetition_count: u16,
++) -> bool {
++    let state = &*reuse.state;
++    if !reuse.changed.is_empty() || reuse.splice.is_some() || child_count != state.items.len() {
++        return false;
++    }
++    if !same_but_for_available_width(&state.inputs, inputs) || !constants.same_but_for_available_width(&state.constants)
++    {
++        return false;
++    }
++    let col_counts = TrackCounts::from_raw(0, explicit_col_count, 0);
++    let row_counts = TrackCounts::from_raw(0, explicit_row_count, 0);
++    if state.col_counts != col_counts || state.row_counts != row_counts {
++        return false;
++    }
++    let mut columns = GridTrackVec::new();
++    initialize_grid_tracks(&mut columns, col_counts, style, AbsoluteAxis::Horizontal, col_auto_repetition_count, |_| true);
++    let mut rows = GridTrackVec::new();
++    initialize_grid_tracks(&mut rows, row_counts, style, AbsoluteAxis::Vertical, row_auto_repetition_count, |_| true);
++    columns.len() == state.columns.len()
++        && columns.iter().zip(&state.columns).all(|(a, b)| same_sizing(a, b))
++        && rows.len() == state.rows_sized.len()
++        && rows.iter().zip(&state.rows_sized).all(|(a, b)| same_sizing(a, b))
++}
++
 +/// The grid of `state` brought up to date with the grid's style and children, or `None` if it can't be
 +/// (its inputs, its columns or its explicit grid changed, or children were removed).
 +#[allow(clippy::too_many_arguments)]
@@ -1143,7 +1251,9 @@ index 00000000..acd0755c
 +) -> Option<Replay> {
 +    let TableGridReuse { state, changed: changed_indices, splice } = reuse;
 +    let state = *state;
-+    if state.inputs != inputs || state.constants != constants {
++    // (The available width sizes no fixed column: see `same_but_for_available_width`.)
++    if !same_but_for_available_width(&state.inputs, &inputs) || !constants.same_but_for_available_width(&state.constants)
++    {
 +        return None;
 +    }
 +    let old_len = state.items.len();
