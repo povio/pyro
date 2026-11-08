@@ -4743,6 +4743,16 @@ fn deep_nesting_of_each_algorithm_lays_out_on_any_stack() {
                 if kind != "display:table" {
                     assert_eq!(if vertical { leaf.y } else { leaf.x }, depth as f64 + 8.0, "{kind}");
                 }
+                // The first hit test brings the hit bounds up to date (`ensure_hit_overflow`, a walk
+                // as deep as the tree), descends to the leaf and reads its computed style (an
+                // ancestor chain as long as the tree). Not for vertical trees: their physical
+                // geometry walks the containing-block chain per box, quadratic in depth (pre-existing).
+                if !vertical {
+                    let hit = p.layout.element_from_point(&p.dom, leaf.x + leaf.width / 2.0, leaf.y + leaf.height / 2.0);
+                    if kind != "display:table" {
+                        assert_eq!(hit, Some(p.id("leaf")), "{kind}: hit");
+                    }
+                }
             }
         })
         .unwrap()

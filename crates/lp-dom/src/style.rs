@@ -1174,9 +1174,41 @@ impl StyleEngine {
         }
         let style = self.stylo_style(dom, el)?;
         let parent = flat_tree_parent_element(dom, idx).map(|p| dom.id_of(p));
-        let above = parent.and_then(|p| self.computed_stylo(dom, p)).unwrap_or_default();
+        // The ancestors not memoized yet, nearest first, up to the first that is memoized or has
+        // no computed style (its descendants derive from the default, as for the root). A loop,
+        // not a call per level: a tree thousands of levels deep needs no stack for it.
+        let mut chain = Vec::new();
+        let mut above = ComputedStyle::default();
+        let mut next = parent;
+        while let Some(p) = next {
+            if let Some(c) = self.memo.borrow().get(p) {
+                above = c;
+                break;
+            }
+            let Some(p_idx) = self.owns(dom, p) else { break };
+            let Some(p_style) = self.stylo_style(dom, p) else { break };
+            next = flat_tree_parent_element(dom, p_idx).map(|pp| dom.id_of(pp));
+            chain.push((p, p_idx, p_style, next));
+        }
+        for (p, p_idx, p_style, p_parent) in chain.into_iter().rev() {
+            above = self.derive_and_memoize(dom, p, p_idx, &p_style, p_parent, &above);
+        }
+        Some(self.derive_and_memoize(dom, el, idx, &style, parent, &above))
+    }
+
+    /// `computed_stylo` for one element whose parent's computed style is `above`: derives it,
+    /// applies the menu-list and modal-dialog rules and memoizes it.
+    fn derive_and_memoize(
+        &self,
+        dom: &Dom,
+        el: NodeId,
+        idx: u32,
+        style: &style::servo_arc::Arc<style::properties::ComputedValues>,
+        parent: Option<NodeId>,
+        above: &ComputedStyle,
+    ) -> ComputedStyle {
         let e = dom.n(idx).element().expect("element");
-        let mut c = derive_computed(&style, e, &above);
+        let mut c = derive_computed(style, e, above);
         // A drop-down select's children (its options) keep their computed
         // `display` but generate no box, as in Chromium's menu list.
         if parent.is_some_and(|p| dom.element(p).is_ok_and(is_menu_list)) {
@@ -1193,7 +1225,7 @@ impl StyleEngine {
             }
         }
         self.memo.borrow_mut().insert(el, c);
-        Some(c)
+        c
     }
 
     pub fn document(&self) -> NodeId {
