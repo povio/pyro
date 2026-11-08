@@ -625,17 +625,14 @@ fn review_closed_details_content_transitions_when_opened() {
 }
 
 #[test]
-#[ignore = "since #283: content hidden from its first style on has no before-change style (see below)"]
 fn review_hidden_until_found_content_transitions_when_revealed() {
-    // Since #283 the before-change style comes from the engine's restyle.
-    // `p` is `display: none` from its first style, which the engine does not
-    // record as a change, and it never styles `a` under it: nothing gives
-    // `a` a style before the reveal. Content that was rendered (or hidden
-    // after its first style) keeps its style: see
-    // `content_of_a_details_closed_after_its_first_style_keeps_it`. Chrome
-    // gives the content a style at the layout read, which would need the
-    // read's element here.
-    // As closed `<details>`: Chrome (and base) transition. FAILS on b3bc5b71.
+    // `p` is `display: none` here from its first style, which the engine
+    // does not record as a change, and the engine never styles `a` under
+    // it. Chrome styles `a` when script reads it (`p` is
+    // content-visibility: hidden there); the read here keeps that style as
+    // `a`'s before-change style, so the change made while hidden
+    // transitions once `p` is shown. As closed `<details>`: Chrome (and
+    // 34f0f2ba) transition.
     let (mut t, root) = transition_page(TRANSITION_CSS);
     eval(
         &root,
@@ -744,4 +741,58 @@ fn an_element_changed_together_with_its_own_display_none_does_not_transition() {
         settle(&mut t, &root, "transitionend:width:a"),
         "transitionrun:width:a transitionstart:width:a transitionend:width:a"
     );
+}
+
+#[test]
+fn hidden_until_found_content_never_read_before_it_is_revealed_does_not_transition() {
+    // Chrome: content-visibility: hidden content no script read has no style
+    // until it is shown; its first style is no change.
+    let (mut t, root) = transition_page(TRANSITION_CSS);
+    eval(
+        &root,
+        "globalThis.p = el('p'); p.setAttribute('hidden', 'until-found'); globalThis.a = el('a', 't', p); p.offsetHeight; 0",
+    );
+    t.run_until_idle(Some(Instant::now() + Duration::from_millis(30)));
+    eval(&root, "a.classList.add('w'); p.offsetHeight; 0");
+    t.run_until_idle(Some(Instant::now() + Duration::from_millis(30)));
+    eval(&root, "p.removeAttribute('hidden'); 0");
+    assert_eq!(quiet(&mut t, &root, 150), "");
+}
+
+#[test]
+fn nested_content_of_a_details_closed_from_its_first_style_transitions_when_read_and_opened() {
+    // As `hidden=until-found`: the read styles the closed details' content
+    // (Chrome), so a change made while closed transitions once opened. `w`
+    // is the content root (the details' child), `a` an element under it.
+    let (mut t, root) = transition_page(TRANSITION_CSS);
+    eval(
+        &root,
+        "globalThis.d = document.createElement('details'); document.body.appendChild(d);
+         globalThis.w = el('w', '', d); globalThis.a = el('a', 't', w); a.getBoundingClientRect(); 0",
+    );
+    t.run_until_idle(Some(Instant::now() + Duration::from_millis(30)));
+    eval(&root, "a.classList.add('w'); a.offsetHeight; 0");
+    t.run_until_idle(Some(Instant::now() + Duration::from_millis(30)));
+    eval(&root, "d.open = true; 0");
+    assert_eq!(
+        settle(&mut t, &root, "transitionend:width:a"),
+        "transitionrun:width:a transitionstart:width:a transitionend:width:a"
+    );
+}
+
+#[test]
+fn hidden_until_found_content_read_under_display_none_does_not_transition() {
+    // A real `display: none` above the until-found root: the read styles
+    // nothing for transitions (Chrome: not rendered).
+    let (mut t, root) = transition_page(TRANSITION_CSS);
+    eval(
+        &root,
+        "globalThis.q = el('q', 'h'); globalThis.p = el('p', '', q); p.setAttribute('hidden', 'until-found');
+         globalThis.a = el('a', 't', p); a.offsetHeight; 0",
+    );
+    t.run_until_idle(Some(Instant::now() + Duration::from_millis(30)));
+    eval(&root, "a.classList.add('w'); a.offsetHeight; 0");
+    t.run_until_idle(Some(Instant::now() + Duration::from_millis(30)));
+    eval(&root, "q.classList.remove('h'); p.removeAttribute('hidden'); 0");
+    assert_eq!(quiet(&mut t, &root, 150), "");
 }
