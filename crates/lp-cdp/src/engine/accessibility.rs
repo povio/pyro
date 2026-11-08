@@ -25,7 +25,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use super::dom::NodeParams;
-use super::driver::{accessible_name, aria_true, attr, id_refs, labels, local, normalize, role_of, text_of};
+use super::driver::{accessible_name_in, aria_true, attr, id_refs, labels, local, normalize, role_of, text_of};
 use super::EngineHost;
 use crate::msg::{CdpError, CdpResult};
 use crate::target::PageCommand;
@@ -76,6 +76,13 @@ impl AxNode {
     fn role(&self) -> &str {
         self.custom_role.as_deref().unwrap_or(self.role)
     }
+}
+
+/// Outside the topmost modal dialog: neither it, inside it, nor one of its
+/// shadow-including ancestors (Chromium leaves what a modal dialog blocks
+/// out of the tree). One empty-set check without a modal dialog.
+fn blocked_by_modal(dom: &Dom, el: NodeId) -> bool {
+    dom.blocked_by_modal(el)
 }
 
 /// Inherited walk state.
@@ -276,6 +283,8 @@ struct Builder<'a> {
     flattened: Option<HashMap<NodeId, usize>>,
     stack: Vec<Work>,
     over_budget: bool,
+    /// Shared by every name the tree computes.
+    pseudo_content: super::driver::PseudoContent,
 }
 
 /// A DOM node waiting to be added under tree node `parent`.
@@ -296,6 +305,7 @@ impl<'a> Builder<'a> {
             flattened: track.then(HashMap::new),
             stack: Vec::new(),
             over_budget: false,
+            pseudo_content: Default::default(),
         }
     }
 
@@ -492,8 +502,8 @@ impl<'a> Builder<'a> {
             return;
         }
         ctx.invisible = false;
-        let hidden_root =
-            ctx.hidden.is_none() && (aria_true(dom, el, "aria-hidden") || attr(dom, el, "inert").is_some());
+        let hidden_root = ctx.hidden.is_none()
+            && (aria_true(dom, el, "aria-hidden") || attr(dom, el, "inert").is_some() || blocked_by_modal(dom, el));
         if hidden_root {
             ctx.hidden = Some(el);
         }
@@ -712,7 +722,7 @@ impl<'a> Builder<'a> {
             {
                 String::new()
             }
-            _ => accessible_name(dom, self.layout, self.doc, el),
+            _ => accessible_name_in(dom, self.layout, self.doc, el, &self.pseudo_content),
         };
         let input_type = (tag == Some("input")).then(|| dom.input_type(el).unwrap_or(InputType::Text));
         let text_field =

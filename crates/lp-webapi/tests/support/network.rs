@@ -317,6 +317,11 @@ impl Server {
                         let _ = stream.write_all(b"0\r\n\r\n");
                         continue;
                     }
+                    "/sse-retry" => (
+                        "200 OK",
+                        "Content-Type: text/event-stream; charset=utf-8\r\n".into(),
+                        "\u{feff}retry: 10\r\n: comment\r\nid: 7\r\ndata: a\r\ndata\r\n\r\nevent: ping\rdata: b\r\r".as_bytes().to_vec(),
+                    ),
                     "/split-utf8" => {
                         let _=stream.write_all(b"HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 3\r\n\r\n\xe2\x82");
                         let _=stream.flush();let _=gate.recv_timeout(Duration::from_secs(5));let _=stream.write_all(b"\xac");continue;

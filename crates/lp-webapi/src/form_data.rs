@@ -183,7 +183,7 @@ fn name_arg(a: &Args<'_>, what: &str) -> JsResult<String> {
 }
 
 /// HTML "submit button": `<input type=submit|image>` or a `<button>` in the
-/// Submit Button state (its `type` is neither `reset` nor `button`).
+/// Submit Button state (`type=submit`, or Auto without `command`/`commandfor`).
 fn is_submit_button(dom: &lp_dom::Dom, id: lp_dom::NodeId) -> bool {
     let Ok(e) = dom.element(id) else { return false };
     if !e.is_html() {
@@ -194,9 +194,7 @@ fn is_submit_button(dom: &lp_dom::Dom, id: lp_dom::NodeId) -> bool {
             dom.input_type(id),
             Ok(lp_dom::forms::InputType::Submit | lp_dom::forms::InputType::Image)
         ),
-        "button" => {
-            !matches!(e.attr("type").map(str::to_ascii_lowercase).as_deref(), Some("reset" | "button"))
-        }
+        "button" => dom.button_is_submit(id),
         _ => false,
     }
 }
@@ -338,22 +336,30 @@ impl JsClass for FormData {
                         Some(id)
                     }
                 };
-                let entries = crate::formdata::form_entries(&page, form_id, submitter);
-                let mut list = Vec::with_capacity(entries.len());
-                for (name, v) in entries {
-                    let e = match v {
-                        EntryValue::Text(t) => Entry::Text(t),
-                        EntryValue::File(f) => {
-                            let file = s.wrap::<File>(
-                                BlobData { bytes: f.bytes, mime: f.mime, file: Some((f.name, f.last_modified)) },
-                                None,
-                            )?;
-                            Entry::File(data.store(&files, file.value())?)
+                match crate::formdata::construct_entry_list(Some(s), &page, form_id, submitter, "UTF-8") {
+                    None => {
+                        return Err(JsError::dom(
+                            "InvalidStateError",
+                            "Failed to construct 'FormData': The form is constructing its entry list.",
+                        ))
+                    }
+                    Some(crate::formdata::EntryList::Entries(entries)) => fill(s, &data, &files, entries)?,
+                    // The event's FormData, as its listeners left it; its
+                    // Files keep their identity.
+                    Some(crate::formdata::EntryList::FormData(fd)) => {
+                        let src = s.unwrap::<FormData>(fd.value()).ok_or(JsError::ContextDestroyed)?;
+                        let src_files = src.files(s)?;
+                        let mut list = Vec::new();
+                        for (name, e) in src.copy_entries() {
+                            let e = match e {
+                                Entry::Text(t) => Entry::Text(t),
+                                Entry::File(slot) => Entry::File(data.store(&files, src_files.get_index(slot)?)?),
+                            };
+                            list.push((name, e));
                         }
-                    };
-                    list.push((name, e));
+                        *data.entries.borrow_mut() = list;
+                    }
                 }
-                *data.entries.borrow_mut() = list;
             }
             let fd = s.wrap_new::<FormData>(data, nt, Some(identity))?;
             s.set_hidden(fd, FILES, files.value())?;
@@ -442,6 +448,46 @@ impl JsClass for FormData {
         def.method("keys", 0, |s, d, a| iterator(s, d, a.get(0), IterKind::Keys));
         def.method("values", 0, |s, d, a| iterator(s, d, a.get(0), IterKind::Values));
     }
+}
+
+/// Stores `entries` in `data`, File entries as new File objects in `files`.
+fn fill(s: &Scope<'_>, data: &FormDataData, files: &Object<'_>, entries: Vec<(String, EntryValue)>) -> JsResult<()> {
+    let mut list = Vec::with_capacity(entries.len());
+    for (name, v) in entries {
+        let e = match v {
+            EntryValue::Text(t) => Entry::Text(t),
+            EntryValue::File(f) => {
+                let file = s.wrap::<File>(
+                    BlobData { bytes: f.bytes, mime: f.mime, file: Some((f.name, f.last_modified)) },
+                    None,
+                )?;
+                Entry::File(data.store(files, file.value())?)
+            }
+        };
+        list.push((name, e));
+    }
+    *data.entries.borrow_mut() = list;
+    Ok(())
+}
+
+/// A new FormData of `s`'s realm holding `entries`.
+pub(crate) fn with_entries<'s>(s: &Scope<'s>, entries: Vec<(String, EntryValue)>) -> JsResult<Object<'s>> {
+    let page = crate::target::page_of(s)?;
+    let identity = page.event_identity(page.next_event_id());
+    let data = FormDataData::new(WrapperRef::new(s, identity));
+    let files = s.array(&[])?;
+    files.set_prototype(s.null());
+    let fd = s.wrap::<FormData>(data, Some(identity))?;
+    s.set_hidden(fd, FILES, files.value())?;
+    let d = s.unwrap::<FormData>(fd.value()).expect("fresh FormData");
+    fill(s, &d, &files, entries)?;
+    Ok(fd)
+}
+
+/// The entries of the FormData `fd`.
+pub(crate) fn entries_of(s: &Scope<'_>, fd: Object<'_>) -> JsResult<Vec<(String, EntryValue)>> {
+    let d = s.unwrap::<FormData>(fd.value()).ok_or(JsError::ContextDestroyed)?;
+    d.entry_values(s, fd.value())
 }
 
 /// A new FormData holding a parsed `application/x-www-form-urlencoded` body.

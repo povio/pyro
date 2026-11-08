@@ -490,6 +490,7 @@ impl JsClass for Node {
         def.method("cloneNode", 0, |s, n, a| {
             let deep = a.get(0).to_bool();
             let c = n.page().dom.borrow_mut().clone_node(n.id, deep, None).js()?;
+            crate::custom::upgrade_clone(s, n.page(), c);
             Ok(wrap_node(s, n.page(), c)?.value())
         });
         def.pure_method("contains", 1, |s, n, a| {
@@ -1018,12 +1019,23 @@ impl JsClass for ShadowRoot {
         });
         def.method("getHTML", 0, get_html);
         def.method("setHTMLUnsafe", 1, set_html_unsafe);
+        def.method("getAnimations", 0, |s, n, _a| {
+            let root = wrap_node(s, n.page(), n.id)?.value();
+            crate::animations::root_animations(s, n.page(), root)
+        });
+        def.accessor("adoptedStyleSheets", crate::css::adopted_style_sheets, crate::css::set_adopted_style_sheets);
         def.method("elementFromPoint", 2, crate::layout_api::shadow_element_from_point);
         def.method("elementsFromPoint", 2, crate::layout_api::shadow_elements_from_point);
         def.getter("activeElement", |s, n| {
             let f = n.page().dom.borrow().active_element(n.id).js()?;
             node_value(s, n.page(), f)
         });
+        def.getter("styleSheets", crate::css::style_sheets);
+        def.accessor(
+            "onslotchange",
+            |s, n| crate::target::event_handler(s, &n.target, "slotchange"),
+            |s, n, v| crate::target::set_event_handler(s, &n.target, "slotchange", v),
+        );
         def.accessor(
             "innerHTML",
             |s, n| Ok(s.string(&n.page().dom.borrow().inner_html(n.id).js()?)),
@@ -1387,6 +1399,11 @@ impl JsClass for Element {
                     }
                 }
             }
+            // A host whose upgrade constructor runs ("precustomized") makes
+            // the root available to its internals (a custom one does in lp-dom).
+            if crate::custom::is_being_constructed(n.page(), n.id) {
+                flags |= lp_dom::shadow_flags::AVAILABLE_TO_INTERNALS;
+            }
             let sr = n.page().dom.borrow_mut().attach_shadow_with(n.id, mode, flags).js()?;
             Ok(wrap_node(s, n.page(), sr)?.value())
         });
@@ -1494,6 +1511,12 @@ impl JsClass for Document {
             node_value(s, n.page(), e)
         });
         def.getter("styleSheets", crate::css::style_sheets);
+        def.getter("timeline", |s, n| crate::animations::timeline(s, n.page()));
+        def.method("getAnimations", 0, |s, n, _a| {
+            let root = wrap_node(s, n.page(), n.id)?.value();
+            crate::animations::root_animations(s, n.page(), root)
+        });
+        def.accessor("adoptedStyleSheets", crate::css::adopted_style_sheets, crate::css::set_adopted_style_sheets);
         def.getter("doctype", |s, n| {
             let e = n.page().dom.borrow().doctype(n.id).js()?;
             node_value(s, n.page(), e)
@@ -1561,8 +1584,8 @@ impl JsClass for Document {
         def.getter("inputEncoding", |s, n| Ok(s.string(n.page().dom.borrow().document_data(n.id).js()?.charset)));
         def.getter("contentType", |s, n| Ok(s.string(&n.page().dom.borrow().document_data(n.id).js()?.content_type)));
         def.getter("readyState", |s, n| Ok(s.string(crate::html::ready_state(n.page(), n.id))));
-        def.getter("visibilityState", |s, _n| Ok(s.string("visible")));
-        def.getter("hidden", |s, _n| Ok(s.boolean(false)));
+        def.getter("visibilityState", |s, n| Ok(s.string(if n.page().is_hidden() { "hidden" } else { "visible" })));
+        def.getter("hidden", |s, n| Ok(s.boolean(n.page().is_hidden())));
         def.getter("defaultView", |s, n| Ok(if n.page().document() == n.id { s.global().value() } else { s.null() }));
         def.getter("activeElement", |s, n| {
             let f = n.page().dom.borrow().active_element(n.id).js()?;
@@ -1637,11 +1660,16 @@ impl JsClass for Document {
                 }
             }
         });
+        const HTML_NS: &str = "http://www.w3.org/1999/xhtml";
         def.getter("images", |s, n| {
-            Ok(collections::collection(s, n.page(), n.id, CollectionKind::TagName("img".into()))?.value())
+            // HTML `img` elements only (not foreign elements of that name).
+            let kind = CollectionKind::TagNameNs(HTML_NS.into(), "img".into());
+            Ok(collections::collection(s, n.page(), n.id, kind)?.value())
         });
         def.getter("scripts", |s, n| {
-            Ok(collections::collection(s, n.page(), n.id, CollectionKind::TagName("script".into()))?.value())
+            // HTML `script` elements only (not foreign elements of that name).
+            let kind = CollectionKind::TagNameNs(HTML_NS.into(), "script".into());
+            Ok(collections::collection(s, n.page(), n.id, kind)?.value())
         });
         def.getter("links", |s, n| Ok(collections::collection(s, n.page(), n.id, CollectionKind::Links)?.value()));
         def.accessor(
@@ -1660,7 +1688,10 @@ impl JsClass for Document {
                 Ok(())
             },
         );
-        def.getter("referrer", |s, _n| Ok(s.string("")));
+        def.getter("referrer", |s, n| {
+            let page = n.page();
+            Ok(s.string(&if page.document() == n.id { page.document_referrer() } else { String::new() }))
+        });
         def.getter("domain", |s, n| {
             if s.realm().origin().as_deref() == Some("null") {
                 return Ok(s.string(""));
@@ -1780,6 +1811,7 @@ impl JsClass for Document {
                 None => a.get(1).to_bool(),
             };
             let c = n.page().dom.borrow_mut().clone_node(src, deep, Some(n.id)).js()?;
+            crate::custom::upgrade_clone(s, n.page(), c);
             Ok(wrap_node(s, n.page(), c)?.value())
         });
         def.method("adoptNode", 1, |s, n, a| {
@@ -1795,9 +1827,30 @@ impl JsClass for Document {
         def.method("execCommand", 1, |s, n, a| {
             let command = arg_string(&a, 0, "Document.execCommand")?;
             let value = if a.get(2).is_undefined() { String::new() } else { dom_string(a.get(2))? };
-            Ok(s.boolean(crate::editing::exec_command(n.page(), &command, &value)))
+            Ok(s.boolean(crate::edit_commands::exec_command(n.page(), &command, &value)))
         });
-        def.method("queryCommandSupported", 0, |s, _n, _a| Ok(s.boolean(false)));
+        def.method("queryCommandSupported", 1, |s, _n, a| {
+            let command = arg_string(&a, 0, "Document.queryCommandSupported")?;
+            Ok(s.boolean(crate::edit_commands::query_supported(&command)))
+        });
+        def.method("queryCommandEnabled", 1, |s, n, a| {
+            let command = arg_string(&a, 0, "Document.queryCommandEnabled")?;
+            Ok(s.boolean(crate::edit_commands::query_enabled(n.page(), &command)))
+        });
+        def.method("queryCommandState", 1, |s, n, a| {
+            let command = arg_string(&a, 0, "Document.queryCommandState")?;
+            Ok(s.boolean(crate::edit_commands::query_state(n.page(), &command)))
+        });
+        def.method("queryCommandIndeterm", 1, |s, n, a| {
+            let command = arg_string(&a, 0, "Document.queryCommandIndeterm")?;
+            Ok(s.boolean(crate::edit_commands::query_indeterm(n.page(), &command)))
+        });
+        def.method("queryCommandValue", 1, |s, n, a| {
+            let command = arg_string(&a, 0, "Document.queryCommandValue")?;
+            Ok(s.string(&crate::edit_commands::query_value(n.page(), &command)))
+        });
+        def.method("caretRangeFromPoint", 0, crate::editing_globals::caret_range_from_point);
+        def.method("caretPositionFromPoint", 2, crate::editing_globals::caret_position_from_point);
         def.method("open", 0, crate::html::document_open);
         def.method("close", 0, |s, n, _a| crate::html::document_close(s, n));
         def.method("write", 0, |s, n, a| crate::html::document_write(s, n, a, false));

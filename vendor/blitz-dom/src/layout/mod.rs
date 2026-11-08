@@ -13,6 +13,7 @@ use std::sync::Arc;
 use style::Atom;
 use style::values::computed::CSSPixelLength;
 use style::values::computed::length_percentage::CalcLengthPercentage;
+use stylo_taffy::CopyStyleGetters;
 use stylo_taffy::TaffyStyloStyle;
 use taffy::{
     AxisStaticEdge, AxisStaticPosition, BlockContext, CoreStyle as _, DetailedLayoutInfo,
@@ -210,7 +211,7 @@ impl LayoutPassState<'_> {
             && inputs.available_space.width == AvailableSpace::MinContent
             && self.nodes[dom_node_id(node_id)].primary_styles().is_some_and(|style| {
                 !style.writing_mode.is_vertical()
-                    && matches!(style.clone_min_width(), style::values::computed::Size::MaxContent)
+                    && matches!(style.get_min_width(), style::values::computed::Size::MaxContent)
             })
         {
             inputs.available_space.width = AvailableSpace::MaxContent;
@@ -222,6 +223,11 @@ impl LayoutPassState<'_> {
             if let Some(height) = self.listbox_height(dom_node_id(node_id), inputs.parent_size.width) {
                 inputs.known_dimensions.height = Some(height);
             }
+        }
+        if inputs.run_mode == RunMode::PerformLayout {
+            let node = &self.nodes[dom_node_id(node_id)];
+            let is_root = node.parent.is_some_and(|parent| self.nodes[parent].parent.is_none());
+            crate::resolve::phase_profile::performed(is_root);
         }
         let mut output = self.dispatch_child_layout(node_id, inputs, block_ctx);
         if inputs.run_mode == RunMode::PerformLayout {
@@ -249,13 +255,13 @@ impl LayoutPassState<'_> {
         };
         let style = node.primary_styles()?;
         if style.writing_mode.is_vertical()
-            || stylo_taffy::convert::dimension(&style.clone_height()).into_option().is_some()
+            || stylo_taffy::convert::dimension(&style.slow_clone_height()).into_option().is_some()
         {
             return None;
         }
         let line = |s: &style::properties::ComputedValues| {
             use style::values::computed::font::LineHeight;
-            let font_size = s.clone_font_size().used_size().px();
+            let font_size = s.slow_clone_font_size().used_size().px();
             match s.clone_line_height() {
                 // As the option's line box: whole pixels.
                 LineHeight::Normal => (font_size * 1.2).round(),
@@ -370,7 +376,7 @@ impl LayoutPassState<'_> {
         let font_styles = node.primary_styles().map(|style| {
             use style::values::computed::font::LineHeight;
 
-            let font_size = style.clone_font_size().used_size().px();
+            let font_size = style.slow_clone_font_size().used_size().px();
             let line_height = match style.clone_line_height() {
                 LineHeight::Normal => font_size * 1.2,
                 LineHeight::Number(num) => font_size * num.0,
@@ -681,6 +687,13 @@ impl LayoutPassState<'_> {
                                     DEFAULT_OBJECT_SIZE,
                                 )
                             }
+                            // lightningpanda: a `<video>` whose poster did not load
+                            // keeps the default object size.
+                            ImageData::None
+                                if element_data.name.local == local_name!("video") =>
+                            {
+                                tag_intrinsic_sizes(element_data, attr_size)
+                            }
                             ImageData::None => (IntrinsicSizes::default(), taffy::Size::ZERO),
                         },
                         SpecialElementData::Canvas(_)
@@ -730,8 +743,11 @@ impl LayoutPassState<'_> {
                     // attribute (`natural=W,H`).
                     let loaded = matches!(&element_data.special_data, SpecialElementData::Image(d) if !matches!(&**d, ImageData::None));
                     let is_image = *element_data.name.local == *"img" || is_image_input(element_data);
+                    // A `<video>` with known metadata is sized by its video
+                    // track, whatever its poster's size.
+                    let is_video = element_data.name.local == local_name!("video");
                     let (intrinsic_sizes, default_object_size) = match lp_natural_size(element_data) {
-                        Some((width, height)) if !loaded && is_image => (
+                        Some((width, height)) if is_video || (!loaded && is_image) => (
                             IntrinsicSizes {
                                 width: Some(width),
                                 height: Some(height),
@@ -840,14 +856,16 @@ impl LayoutPassState<'_> {
                     }
 
                     // HACK: Cap scrollable overflow at node size to prevent scrolling
-                    output.scrollable_overflow_rect.left = 0.0;
-                    output.scrollable_overflow_rect.top = 0.0;
-                    output.scrollable_overflow_rect.right =
-                        output.scrollable_overflow_rect.right.min(output.size.width);
-                    output.scrollable_overflow_rect.bottom = output
-                        .scrollable_overflow_rect
-                        .bottom
-                        .min(output.size.height);
+                    let overflow = output.scrollable_overflow_rect;
+                    output.scrollable_overflow_rect = taffy::ScrollableOverflow::new(
+                        taffy::Rect {
+                            left: 0.0,
+                            top: 0.0,
+                            right: overflow.right().min(output.size.width),
+                            bottom: overflow.bottom().min(output.size.height),
+                        },
+                        output.scrollable_overflow_rect.is_reversed(),
+                    );
 
                     return output;
                 }
@@ -1164,11 +1182,25 @@ impl RoundTree for LayoutPassState<'_> {
     }
 
     fn set_final_layout(&mut self, node_id: NodeId, layout: &Layout) {
-        *self.node_from_id_mut(node_id).final_layout_mut() = *layout;
+        let node = self.node_from_id_mut(node_id);
+        let size_changed = node.final_layout().size != layout.size;
+        *node.final_layout_mut() = *layout;
+        // lightningpanda: a transform resolves against the rounded size
+        // (`Node::set_transform`), and rounding moves with the box's absolute
+        // position: a box that only moved (or sits inside one) can change its
+        // rounded size with no unrounded layout of its own changing. Mark it, so
+        // `resolve_transforms` resolves its transform again instead of reusing
+        // the one for the old size. The style decides, not `transform()`: one
+        // that was the identity at the old size is stored as `None`.
+        if size_changed && node.has_transform_style() {
+            node.mark_layout_changed(Some(node.id));
+        }
     }
 
     fn is_out_of_flow(&self, node_id: NodeId) -> bool {
-        self.node_from_id(node_id).is_out_of_flow()
+        self.node_from_id(node_id)
+            .out_of_flow
+            .load(core::sync::atomic::Ordering::Relaxed)
     }
 
     fn hoisted_child_count(&self, node_id: NodeId) -> usize {
@@ -1304,7 +1336,8 @@ impl Iterator for RefCellChildIter<'_> {
 /// lightningpanda: the `natural=W,H` token of the element's
 /// `urn:x-lightningpanda:state` attribute.
 fn lp_natural_size(element: &crate::node::ElementData) -> Option<(f32, f32)> {
-    let attr = element.attrs.iter().find(|a| &*a.name.ns == "urn:x-lightningpanda:state")?;
+    let attr =
+        element.attrs.iter().find(|a| &*a.name.ns == "urn:x-lightningpanda:state" && &*a.name.local == "state")?;
     let token = attr.value.split_ascii_whitespace().find_map(|t| t.strip_prefix("natural="))?;
     let (w, h) = token.split_once(',')?;
     Some((w.parse().ok()?, h.parse().ok()?))

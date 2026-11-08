@@ -1,7 +1,8 @@
-# blitz-paint 0.3.0-beta.4, patched
+# blitz-paint main (be60597), patched
 
-This is the published MIT/Apache-2.0 `blitz-paint` crate from upstream commit
-`92b11f1bd8ab7975411328b0406a95a09445b4e7` (`packages/blitz-paint`).
+`packages/blitz-paint` of DioxusLabs/blitz main at commit `be60597f67b3cece0456d26e8d7ff5a88600bbc5` (see
+`vendor/blitz-dom/README.lightningpanda.md`), MIT/Apache-2.0. `UPSTREAM.patch` (applies with `git apply`
+from the root of an upstream checkout at that commit) is the whole diff.
 
 - `src/text.rs`: paint non-atomic inline ancestor backgrounds behind nested text,
   from outermost to innermost; stop at block/atomic boxes and skip contents boxes.
@@ -36,6 +37,25 @@ This is the published MIT/Apache-2.0 `blitz-paint` crate from upstream commit
 - `src/render/border.rs`: `draw_collapsed_edges` paints the winning borders of a collapsed table without uniform ones,
   snapped to whole pixels of the page as Chromium does. Cells and tables in it draw no border of their own.
 
+- `src/render.rs` (`paint_top_layer`, `paint_backdrop`): the document's top layer (blitz-dom's
+  `top_layer_nodes`) is skipped in tree order and painted after the root element, bottom first, each element over
+  its `::backdrop` (background color, opacity, `backdrop-filter` over the painted area), positioned as a box hoisted
+  to the root element. With an empty top layer the only cost is one emptiness check per box. Covered by
+  `crates/lp-cdp/tests/engine_cdp.rs` (`top_layer_*`).
+
 The linked blitz-dom patch supplies `Node::is_root_element`. Rendering regressions
 are covered in `crates/lp-render/tests/render.rs`; persistent-tree behavior is
 covered by `crates/lp-render/tests/mirror.rs`.
+
+## Moving from 0.3.0-beta.4 to main
+
+- `src/render.rs`: main computes clipping in `should_clip_node`; `overflow` on `body` that is the
+  viewport's is left out there. Print's `backgrounds` switch also guards main's `paints_own_box` branch
+  (#1319).
+- `src/render.rs`: main draws inline text from the unrounded content box origin (#1382); the offset stays
+  zero (see blitz-dom), so screenshots and print are as before. Vertical writing modes return before it.
+- `src/text.rs`: glyph runs are recorded (`TextRun`) before main's zero-size check (#1402), and the
+  vertical-line and source-text arguments go with main's `TextPaintOptions`; the `background-clip: text`
+  mask (#1340) passes none.
+- Font embolden (#1357, #1361, #1364, #1444) stays off: lightningpanda enables neither `font-embolden`
+  feature.

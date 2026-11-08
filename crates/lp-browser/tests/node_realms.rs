@@ -151,10 +151,7 @@ fn a_removed_frames_nodes_keep_one_wrapper_and_their_realm_until_its_realm_is_di
     );
     settle(&mut t);
     // The frame's realm is gone: a node never reached before is this window's.
-    assert_eq!(
-        eval(&root, "document.body.lastChild.firstChild.firstChild.firstChild instanceof Text"),
-        "true"
-    );
+    assert_eq!(eval(&root, "document.body.lastChild.firstChild.firstChild.firstChild instanceof Text"), "true");
 }
 
 #[test]

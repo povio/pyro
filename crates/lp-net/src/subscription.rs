@@ -235,18 +235,6 @@ fn event_bytes(event: &NetEvent) -> usize {
             }
             NetEvent::DataReceived { data, .. } => data.len(),
             NetEvent::LoadingFinished { .. } => 0,
-            NetEvent::WebSocketCreated { url, frame_id, loader_id, .. } => {
-                url.len() + opt_bytes(frame_id) + opt_bytes(loader_id)
-            }
-            NetEvent::WebSocketWillSendHandshakeRequest { headers, .. } => header_bytes(headers),
-            NetEvent::WebSocketHandshakeResponseReceived { status_text, headers, request_headers, .. } => {
-                status_text.len() + header_bytes(headers) + header_bytes(request_headers)
-            }
-            NetEvent::WebSocketFrameSent { payload, .. } | NetEvent::WebSocketFrameReceived { payload, .. } => {
-                payload.len()
-            }
-            NetEvent::WebSocketFrameError { message, .. } => message.len(),
-            NetEvent::WebSocketClosed { .. } => 0,
             NetEvent::LoadingFailed { error, .. } => match error {
                 crate::NetError::Cors(s)
                 | crate::NetError::Decode(s)
@@ -256,6 +244,9 @@ fn event_bytes(event: &NetEvent) -> usize {
                 | crate::NetError::UnsupportedScheme(s) => s.capacity(),
                 _ => 0,
             },
+            NetEvent::WebSocket { activity, .. } => {
+                std::mem::size_of::<crate::WebSocketActivity>() + activity.retained_bytes()
+            }
         }
 }
 

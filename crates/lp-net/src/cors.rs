@@ -11,6 +11,14 @@ use url::Url;
 use crate::request::{Credentials, Request, RequestMode};
 
 pub fn same_origin(a: &Url, b: &Url) -> bool {
+    // A tuple origin compared in place: `Url::origin` allocates its host,
+    // and every request asks (CORS, referrer, `Sec-Fetch-Site`).
+    let tuple = |u: &Url| matches!(u.scheme(), "http" | "https" | "ws" | "wss" | "ftp");
+    if tuple(a) && tuple(b) {
+        return a.scheme() == b.scheme()
+            && a.host() == b.host()
+            && a.port_or_known_default() == b.port_or_known_default();
+    }
     a.origin() == b.origin()
 }
 

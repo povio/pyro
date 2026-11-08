@@ -932,3 +932,166 @@ fn fetch_body_stream_abort_rejects_pending_read_with_reason() {
     env.finish_network_tasks();
     assert_eq!(env.page.fetch_usage(), (0, 0));
 }
+
+/// The recorded request whose first line contains `needle`, waiting for the
+/// server to see it.
+fn recorded(server: &Server, needle: &str) -> (String, String, Vec<u8>) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        if let Some(r) = server.requests.lock().unwrap().iter().find(|(first, _, _)| first.contains(needle)) {
+            return r.clone();
+        }
+        assert!(std::time::Instant::now() < deadline, "no request {needle}");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+fn header<'a>(headers: &'a str, name: &str) -> Option<&'a str> {
+    headers.lines().find_map(|l| {
+        let (n, v) = l.split_once(':')?;
+        n.trim().eq_ignore_ascii_case(name).then(|| v.trim())
+    })
+}
+
+/// keepalive, referrer, referrerPolicy and integrity are accepted (they used
+/// to reject) and honoured: the Referer follows the referrer and policy.
+#[test]
+fn fetch_referrer_policy_keepalive_and_init_members() {
+    let server = Server::new();
+    let env = Env::new(&server.url);
+    let origin = server.url.trim_end_matches("/page");
+    env.eval(
+        "globalThis.result='pending';Promise.all([\
+         fetch('/json?default'),\
+         fetch('/json?origin',{referrerPolicy:'origin',keepalive:true}),\
+         fetch('/json?none',{referrer:''}),\
+         fetch('/json?custom',{referrer:'/from/here?x#y',referrerPolicy:'unsafe-url'}),\
+         fetch(new Request('/json?request',{referrerPolicy:'no-referrer'})),\
+         fetch('/json?other',{referrer:'https://elsewhere.test/'}),\
+        ]).then(rs=>result=rs.map(r=>r.status).join(),e=>result='ERROR '+e)",
+    );
+    env.until("result!=='pending'");
+    assert_eq!(env.eval("result"), "200,200,200,200,200,200");
+    let referer = |q: &str| header(&recorded(&server, q).1, "referer").map(str::to_owned);
+    assert_eq!(referer("?default").as_deref(), Some(server.url.as_str()));
+    assert_eq!(referer("?origin"), Some(format!("{origin}/")));
+    assert_eq!(referer("?none"), None);
+    assert_eq!(referer("?custom"), Some(format!("{origin}/from/here?x")));
+    assert_eq!(referer("?request"), None);
+    // A cross-origin referrer falls back to the document ("client").
+    assert_eq!(referer("?other").as_deref(), Some(server.url.as_str()));
+    assert_eq!(header(&recorded(&server, "?default").1, "sec-fetch-mode"), Some("cors"));
+    assert_eq!(header(&recorded(&server, "?default").1, "sec-fetch-site"), Some("same-origin"));
+    assert_eq!(env.eval("String(new Request('/x',{referrer:'https://elsewhere.test/'}).referrer)"), "about:client");
+    env.eval("globalThis.bad='pending';fetch('/json',{referrerPolicy:'bogus'}).then(()=>bad='ok',e=>bad=e.name)");
+    env.until("bad!=='pending'");
+    assert_eq!(env.eval("bad"), "TypeError");
+    // Keepalive bodies share a 64 KiB quota.
+    env.eval("globalThis.big='pending';fetch('/echo',{method:'POST',body:'x'.repeat(70000),keepalive:true}).then(()=>big='ok',e=>big=e.name)");
+    env.until("big!=='pending'");
+    assert_eq!(env.eval("big"), "TypeError");
+    let _ = server.release.send(());
+}
+
+/// The document's `<meta name=referrer>` sets the policy of its requests.
+#[test]
+fn fetch_uses_the_document_meta_referrer_policy() {
+    let server = Server::new();
+    let env = Env::new(&server.url);
+    env.eval(
+        "const m=document.createElement('meta');m.name='referrer';m.content='no-referrer';document.head.append(m);\
+         globalThis.result='pending';fetch('/json?meta').then(r=>result=r.status,e=>result='ERROR '+e)",
+    );
+    env.until("result!=='pending'");
+    assert_eq!(header(&recorded(&server, "?meta").1, "referer"), None);
+    assert_eq!(env.page.referrer_policy(), lp_net::ReferrerPolicy::NoReferrer);
+    let _ = server.release.send(());
+}
+
+/// Subresource Integrity: a matching digest delivers the response, a
+/// mismatch or an opaque response rejects with a TypeError.
+#[test]
+fn fetch_integrity_checks_the_whole_body() {
+    use base64::Engine as _;
+    use sha2::Digest as _;
+    let server = Server::new();
+    let env = Env::new(&server.url);
+    let good = format!(
+        "sha256-{}",
+        base64::engine::general_purpose::STANDARD.encode(sha2::Sha256::digest(b"{\"answer\":42}"))
+    );
+    let bad = format!("sha512-{}", base64::engine::general_purpose::STANDARD.encode(sha2::Sha512::digest(b"no")));
+    env.eval(&format!(
+        "globalThis.result='pending';const run=(i)=>fetch('/json',i).then(r=>r.text(),e=>e.name);\
+         Promise.all([run({{integrity:'{good}'}}),run({{integrity:'{bad}'}}),run({{integrity:'{good} {bad}'}}),\
+         run({{integrity:'md5-zzz'}}),run({{integrity:'{good}',mode:'no-cors'}})])\
+         .then(v=>result=v.join('|'))"
+    ));
+    env.until("result!=='pending'");
+    assert_eq!(env.eval("result"), "{\"answer\":42}|TypeError|TypeError|{\"answer\":42}|TypeError");
+    env.finish_network_tasks();
+    assert_eq!(env.page.fetch_usage(), (0, 0));
+    let _ = server.release.send(());
+}
+
+/// A keepalive fetch outlives its document: disposal leaves the transport
+/// running to completion, where an ordinary fetch is canceled.
+#[test]
+fn keepalive_fetch_survives_document_disposal() {
+    let server = Server::new();
+    let env = Env::new(&server.url);
+    // The browser context keeps its client after a document goes.
+    let context_client = env.page.net.borrow().clone().unwrap();
+    let events = context_client.subscribe();
+    env.eval("globalThis.result='pending';fetch('/gated',{keepalive:true}).then(()=>result='headers')");
+    env.until("result!=='pending'");
+    env.page.dispose();
+    server.release.send(()).unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        match events.try_recv() {
+            Ok(lp_net::NetEvent::LoadingFinished { .. }) => break,
+            Ok(lp_net::NetEvent::LoadingFailed { error, .. }) => panic!("keepalive fetch failed: {error:?}"),
+            Ok(_) => {}
+            Err(_) => {
+                assert!(std::time::Instant::now() < deadline, "no terminal event");
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        }
+    }
+}
+
+/// `navigator.sendBeacon` sends a credentialed POST with its body and type
+/// that no document state owns; over the keepalive quota it returns false.
+#[test]
+fn send_beacon_posts_its_body() {
+    let server = Server::new();
+    let env = Env::new(&server.url);
+    assert_eq!(env.eval("navigator.sendBeacon('/beacon-text', 'hello')"), "true");
+    let (first, headers, body) = recorded(&server, "/beacon-text");
+    assert!(first.starts_with("POST "), "{first}");
+    assert_eq!(body, b"hello");
+    assert_eq!(header(&headers, "content-type"), Some("text/plain;charset=UTF-8"));
+    assert_eq!(header(&headers, "sec-fetch-mode"), Some("no-cors"));
+    assert_eq!(header(&headers, "sec-fetch-dest"), Some("empty"));
+    assert_eq!(header(&headers, "referer"), Some(server.url.as_str()));
+    assert_eq!(env.eval("navigator.sendBeacon('/beacon-empty')"), "true");
+    let (first, _, body) = recorded(&server, "/beacon-empty");
+    assert!(first.starts_with("POST ") && body.is_empty(), "{first}");
+    assert_eq!(env.eval("navigator.sendBeacon('/beacon-params', new URLSearchParams({a:'1'}))"), "true");
+    assert_eq!(recorded(&server, "/beacon-params").2, b"a=1");
+    assert_eq!(env.eval("navigator.sendBeacon('/beacon-big', 'x'.repeat(70000))"), "false");
+    env.page.dispose();
+    let _ = server.release.send(());
+}
+
+/// XHR sends the document as its Referer, under the document's policy.
+#[test]
+fn xhr_sends_the_document_referrer() {
+    let server = Server::new();
+    let env = Env::new(&server.url);
+    env.eval("globalThis.result='pending';const x=new XMLHttpRequest();x.open('GET','/json?xhr');x.onloadend=()=>result=x.status;x.send()");
+    env.until("result!=='pending'");
+    assert_eq!(header(&recorded(&server, "?xhr").1, "referer"), Some(server.url.as_str()));
+    let _ = server.release.send(());
+}

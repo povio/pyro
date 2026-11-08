@@ -50,12 +50,14 @@ static CALLS: AtomicU64 = AtomicU64::new(0);
 static TOTAL_CALLS: AtomicU64 = AtomicU64::new(0);
 /// Syncs from lp-dom's change journal (the rest sent the whole tree).
 static DELTAS: AtomicU64 = AtomicU64::new(0);
+/// Timers, running only while `lp_render::profiling` is on.
 static SNAPSHOT_NS: AtomicU64 = AtomicU64::new(0);
 static LAYOUT_NS: AtomicU64 = AtomicU64::new(0);
 static READ_NS: AtomicU64 = AtomicU64::new(0);
 
 /// `LP_GEOMETRY_PROFILE=1`: time in syncs, whole-document reads and box
-/// reads, printed to stderr every 250 syncs (diagnostic).
+/// reads, printed to stderr every 250 syncs (diagnostic; turns
+/// `lp_render::profiling` on for the counters it prints).
 mod profile {
     use std::cell::Cell;
     use std::time::Duration;
@@ -105,7 +107,8 @@ pub fn resources_changed() {
 const BLANK: &str = "about:blank";
 
 /// Layouts since the last call: count, journal syncs, and milliseconds
-/// building the node list, applying it and laying out, and reading boxes.
+/// building the node list, applying it and laying out, and reading boxes
+/// (the milliseconds only while `lp_render::profiling` is on).
 pub fn take_stats() -> (u64, u64, f64, f64, f64) {
     let ms = |a: &AtomicU64| a.swap(0, Ordering::Relaxed) as f64 / 1e6;
     (
@@ -126,13 +129,16 @@ pub fn peek_layout_count() -> u64 {
 /// Makes this thread's new documents take their geometry from Blitz,
 /// loading sub-resources through `fetcher`.
 pub fn install(fetcher: Arc<dyn Fetcher>) {
+    if profile::on() {
+        lp_render::profiling::enable();
+    }
     lp_dom::layout::set_geometry_source_factory(Some(Rc::new(move || {
         Rc::new(BlitzGeometry {
             page: NEXT_PAGE.fetch_add(1, Ordering::Relaxed),
             synced: Default::default(),
             sheets: Default::default(),
             resources: std::cell::Cell::new(RESOURCES.load(Ordering::Relaxed)),
-            base_url: RefCell::new(BLANK.into()),
+            base_url: RefCell::new(BaseUrl::new(BLANK)),
             fetcher: fetcher.clone(),
         }) as Rc<dyn GeometrySource>
     })));
@@ -143,9 +149,23 @@ pub fn install(fetcher: Arc<dyn Fetcher>) {
 /// ratio bits, dark) and style invalidations.
 type SyncedAt = (u64, u64, (u32, u32, u64, bool, bool), u64);
 
+/// A document's base URL as given, and parsed once when it is set: links
+/// resolve against the parsed form on every sync, while the snapshot keeps
+/// the original text (`Url` normalizes it).
+struct BaseUrl {
+    text: String,
+    parsed: Option<url::Url>,
+}
+
+impl BaseUrl {
+    fn new(text: &str) -> Self {
+        Self { text: text.to_owned(), parsed: url::Url::parse(text).ok() }
+    }
+}
+
 pub struct BlitzGeometry {
     page: u64,
-    base_url: RefCell<String>,
+    base_url: RefCell<BaseUrl>,
     fetcher: Arc<dyn Fetcher>,
     /// The DOM version, style generation, viewport and style invalidations
     /// it was last synced at.
@@ -236,15 +256,14 @@ impl BlitzGeometry {
     fn render_opts<'a>(
         dom: &'a Dom,
         style: &'a StyleEngine,
-        base_url: &str,
+        base: Option<&'a url::Url>,
         sheets: Option<&'a RefCell<HashMap<String, String>>>,
     ) -> (impl Fn(NodeId) -> Option<String> + 'a, impl Fn(NodeId) -> Option<String> + 'a) {
-        let base = url::Url::parse(base_url).ok();
         let style_text = move |owner: NodeId| style.sheet_text(owner).map(str::to_owned);
         let stylesheet_href = move |link: NodeId| {
             let text = style.sheet_text(link)?;
             let href = dom.get_attribute(link, "href").ok().flatten()?;
-            let url = base.as_ref()?.join(href.trim()).ok()?.to_string();
+            let url = base?.join(href.trim()).ok()?.to_string();
             if let Some(sheets) = sheets {
                 sheets.borrow_mut().insert(url.clone(), text.to_owned());
             }
@@ -255,18 +274,24 @@ impl BlitzGeometry {
 
     /// The document as a keyed node list for this page's Blitz document.
     fn snapshot(&self, dom: &Dom, style: &StyleEngine) -> Option<Snapshot> {
-        let t = Instant::now();
-        let base_url = self.base_url.borrow().clone();
+        let t = lp_render::profiling::on().then(Instant::now);
+        let base = self.base_url.borrow();
         let sheets = RefCell::new(HashMap::new());
         let tree = {
-            let (style_text, stylesheet_href) = Self::render_opts(dom, style, &base_url, Some(&sheets));
-            let opts = RenderHtml { style_text: &style_text, stylesheet_href: &stylesheet_href, mark: None };
+            let (style_text, stylesheet_href) = Self::render_opts(dom, style, base.parsed.as_ref(), Some(&sheets));
+            let adopted = |scope: NodeId| style.adopted_sheets(scope);
+            let opts = RenderHtml {
+                style_text: &style_text,
+                stylesheet_href: &stylesheet_href,
+                mark: None,
+                adopted: style.has_adopted().then_some(&adopted as _),
+            };
             Arc::new(convert(dom.render_tree(style.document(), &opts).ok()?))
         };
         let v = style.viewport();
         let snap = Snapshot {
             html: String::new(),
-            base_url,
+            base_url: base.text.clone(),
             sheets: sheets.into_inner(),
             width: v.width,
             height: v.height,
@@ -278,9 +303,12 @@ impl BlitzGeometry {
             resource_scope: format!("geometry-{}", self.page),
             live: Some(Live { page: self.page, tree, clip: None, interaction: None }),
             background: None,
+            canvases: Vec::new(),
             element_scroll: None,
         };
-        SNAPSHOT_NS.fetch_add(t.elapsed().as_nanos() as u64, Ordering::Relaxed);
+        if let Some(t) = t {
+            SNAPSHOT_NS.fetch_add(t.elapsed().as_nanos() as u64, Ordering::Relaxed);
+        }
         Some(snap)
     }
 
@@ -289,10 +317,12 @@ impl BlitzGeometry {
         let doc = style.document();
         let hovered = dom.hovered(doc).map(lp_dom::snapshot::render_key);
         let focused = dom.focused(doc).ok().flatten().map(lp_dom::snapshot::render_key);
+        let active = dom.activated(doc).map(lp_dom::snapshot::render_key);
+        let focus_visible = dom.focus_visible(doc);
         RENDERER.with(|r| {
             if let Ok(mut r) = r.try_borrow_mut() {
                 if let Some(r) = r.as_mut() {
-                    r.set_interaction(self.page, hovered, focused, style_only);
+                    r.set_interaction_states(self.page, hovered, focused, active, focus_visible, style_only);
                 }
             }
         });
@@ -322,35 +352,49 @@ impl BlitzGeometry {
                 None
             };
             if let (Some(restyled), true) = (restyled, vp == viewport) {
-                let t = Instant::now();
-                let base_url = self.base_url.borrow().clone();
-                let (style_text, stylesheet_href) = Self::render_opts(dom, style, &base_url, None);
-                let opts = RenderHtml { style_text: &style_text, stylesheet_href: &stylesheet_href, mark: None };
-                let delta = dom.render_delta(style.document(), version, &opts).map(|mut delta| {
-                    delta.ops.extend(restyled.iter().filter_map(|&owner| dom.render_style_text(owner, &opts)));
-                    delta
-                });
-                SNAPSHOT_NS.fetch_add(t.elapsed().as_nanos() as u64, Ordering::Relaxed);
+                let profiling = lp_render::profiling::on();
+                let t = profiling.then(Instant::now);
+                let delta = {
+                    let base = self.base_url.borrow();
+                    let (style_text, stylesheet_href) = Self::render_opts(dom, style, base.parsed.as_ref(), None);
+                    let adopted = |scope: NodeId| style.adopted_sheets(scope);
+                    let opts = RenderHtml {
+                        style_text: &style_text,
+                        stylesheet_href: &stylesheet_href,
+                        mark: None,
+                        adopted: style.has_adopted().then_some(&adopted as _),
+                    };
+                    dom.render_delta(style.document(), version, &opts).map(|mut delta| {
+                        delta.ops.extend(restyled.iter().filter_map(|&owner| dom.render_style_text(owner, &opts)));
+                        delta
+                    })
+                };
+                if let Some(t) = t {
+                    SNAPSHOT_NS.fetch_add(t.elapsed().as_nanos() as u64, Ordering::Relaxed);
+                }
                 if let Some(delta) = delta {
                     let ops = convert_delta(delta);
                     let dpr = v.device_scale_factor;
                     let timings = RENDERER.with(|r| {
                         let mut r = r.try_borrow_mut().ok()?;
-                        r.as_mut()?
-                            .sync_delta(
+                        let r = r.as_mut()?;
+                        guarded(r, self.page, |r| {
+                            r.sync_delta(
                                 self.page,
                                 &ops,
                                 (viewport.0, viewport.1, dpr, viewport.3, viewport.4),
                                 style_only,
                             )
                             .ok()
+                        })
                     });
                     if let Some(t) = timings {
                         CALLS.fetch_add(1, Ordering::Relaxed);
                         TOTAL_CALLS.fetch_add(1, Ordering::Relaxed);
-                        TOTAL_CALLS.fetch_add(1, Ordering::Relaxed);
                         DELTAS.fetch_add(1, Ordering::Relaxed);
-                        LAYOUT_NS.fetch_add((t.fetch + t.layout).as_nanos() as u64, Ordering::Relaxed);
+                        if profiling {
+                            LAYOUT_NS.fetch_add((t.fetch + t.layout).as_nanos() as u64, Ordering::Relaxed);
+                        }
                         return;
                     }
                 }
@@ -361,14 +405,26 @@ impl BlitzGeometry {
         let fetcher = self.fetcher.clone();
         let timings = RENDERER.with(|r| {
             let mut r = r.try_borrow_mut().ok()?;
-            r.get_or_insert_with(Renderer::new).sync_layout(&snap, &fetcher).ok()
+            guarded(r.get_or_insert_with(Renderer::new), self.page, |r| r.sync_layout(&snap, &fetcher).ok())
         });
         if let Some(t) = timings {
             CALLS.fetch_add(1, Ordering::Relaxed);
             TOTAL_CALLS.fetch_add(1, Ordering::Relaxed);
-            LAYOUT_NS.fetch_add((t.fetch + t.layout).as_nanos() as u64, Ordering::Relaxed);
+            if lp_render::profiling::on() {
+                LAYOUT_NS.fetch_add((t.fetch + t.layout).as_nanos() as u64, Ordering::Relaxed);
+            }
         }
     }
+}
+
+/// Runs a sync of `page`'s persistent document; a panic drops that document (it may be half
+/// updated, for example a table missing its context) so that the next sync builds it afresh,
+/// instead of every later layout query of the page failing.
+fn guarded<T>(r: &mut Renderer, page: u64, f: impl FnOnce(&mut Renderer) -> Option<T>) -> Option<T> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(&mut *r))).unwrap_or_else(|_| {
+        r.forget(page);
+        None
+    })
 }
 
 impl BlitzGeometry {
@@ -427,6 +483,16 @@ impl BlitzGeometry {
             });
             self.synced.set(None);
         }
+        // Told before every sync, so the first restyle after the engine
+        // learns to track (and the first sync, which creates the document)
+        // records what it replaces.
+        if style.track_style_changes() {
+            RENDERER.with(|r| {
+                if let Some(r) = r.try_borrow_mut().ok().as_deref_mut().and_then(Option::as_mut) {
+                    r.set_track_style_changes(self.page, true);
+                }
+            });
+        }
         let t = (rebuild && profile::on()).then(Instant::now);
         self.sync_document(dom, style, style_only);
         if let Some(t) = t {
@@ -436,9 +502,11 @@ impl BlitzGeometry {
     }
 
     fn element_box_inner(&self, key: u64) -> Option<ExternalBox> {
-        let t = Instant::now();
+        let t = lp_render::profiling::on().then(Instant::now);
         let b = RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.element_box(self.page, key));
-        READ_NS.fetch_add(t.elapsed().as_nanos() as u64, Ordering::Relaxed);
+        if let Some(t) = t {
+            READ_NS.fetch_add(t.elapsed().as_nanos() as u64, Ordering::Relaxed);
+        }
         if b.is_some_and(|b| b.width == 0.0 || b.height == 0.0) && geometry_debug() {
             let what = RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.describe_element(self.page, key));
             eprintln!("lp-geometry: empty box {b:?}\n  {}", what.unwrap_or_default());
@@ -489,7 +557,7 @@ impl GeometrySource for BlitzGeometry {
     }
 
     fn set_base_url(&self, url: &str) {
-        *self.base_url.borrow_mut() = url.to_owned();
+        *self.base_url.borrow_mut() = BaseUrl::new(url);
     }
 
     fn stale(&self) -> bool {
@@ -553,17 +621,48 @@ impl GeometrySource for BlitzGeometry {
         RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.element_style(self.page, key))
     }
 
-    fn pseudo_style(
+    fn element_displayed(&self, key: u64) -> Option<bool> {
+        RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.element_displayed(self.page, key))
+    }
+
+    fn take_style_changes(
+        &self,
+    ) -> Vec<(u64, style::servo_arc::Arc<style::properties::ComputedValues>, style::servo_arc::Arc<style::properties::ComputedValues>)>
+    {
+        RENDERER.with(|r| {
+            r.try_borrow_mut()
+                .ok()
+                .as_deref_mut()
+                .and_then(Option::as_mut)
+                .map(|r| r.take_style_changes(self.page))
+                .unwrap_or_default()
+        })
+    }
+
+    fn element_pseudo_style(
         &self,
         key: u64,
-        after: bool,
-        synthesize: bool,
+        pseudo: &style::selector_parser::PseudoElement,
+        generated_only: bool,
     ) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
-        RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.pseudo_style(self.page, key, after, synthesize))
+        RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.element_pseudo_style(self.page, key, pseudo, generated_only))
+    }
+
+    fn may_have_generated_before_after(&self) -> bool {
+        RENDERER.with(|r| {
+            r.try_borrow()
+                .ok()
+                .and_then(|r| Some(r.as_ref()?.may_have_generated_before_after(self.page)))
+                .unwrap_or(true)
+        })
     }
 
     fn has_sticky(&self) -> bool {
         RENDERER.with(|r| r.try_borrow().ok().and_then(|r| Some(r.as_ref()?.has_sticky(self.page))).unwrap_or(false))
+    }
+
+    fn styles_depend_on_active(&self) -> bool {
+        RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.styles_depend_on_active(self.page)).unwrap_or(true)
     }
 }
 
@@ -639,6 +738,31 @@ mod tests {
 
     fn find(dom: &Dom, doc: NodeId, css: &str) -> NodeId {
         dom.query_selector(doc, &parse_selectors(css).unwrap()).unwrap().unwrap()
+    }
+
+    #[test]
+    fn base_url_is_parsed_when_set_and_keeps_its_text() {
+        use lp_dom::layout::GeometrySource;
+        let g = super::BlitzGeometry {
+            page: 0,
+            synced: Default::default(),
+            sheets: Default::default(),
+            resources: Default::default(),
+            base_url: RefCell::new(super::BaseUrl::new(super::BLANK)),
+            fetcher: std::sync::Arc::new(NoFetch),
+        };
+        assert_eq!(g.base_url.borrow().text, "about:blank");
+        assert_eq!(g.base_url.borrow().parsed.as_ref().map(|u| u.as_str()), Some("about:blank"));
+        // Navigation sets a new base; the text stays as given while links
+        // resolve against the parsed (normalized) form.
+        g.set_base_url("HTTP://Example.COM/a/b.html");
+        let base = g.base_url.borrow();
+        assert_eq!(base.text, "HTTP://Example.COM/a/b.html");
+        let parsed = base.parsed.as_ref().unwrap();
+        assert_eq!(parsed.join("s.css").unwrap().as_str(), "http://example.com/a/s.css");
+        drop(base);
+        g.set_base_url("not a url");
+        assert!(g.base_url.borrow().parsed.is_none());
     }
 
     #[test]

@@ -1,5 +1,6 @@
 //! Resolve style and layout
 
+use stylo_taffy::CopyStyleGetters;
 use blitz_traits::node_id::NodeId;
 use std::cell::RefCell;
 
@@ -23,13 +24,14 @@ use taffy::AvailableSpace;
 use crate::{
     layout::{
         construct::{
-            build_inline_layout_into, collect_layout_children, ConstructionTask, ConstructionTaskData,
-            ConstructionTaskResult, ConstructionTaskResultData, LayoutChildren,
+            ConstructionTask, ConstructionTaskData, ConstructionTaskResult,
+            ConstructionTaskResultData, LayoutChildren, collect_layout_children,
         },
         damage::{ALL_DAMAGE, CONSTRUCT_BOX, CONSTRUCT_DESCENDENT, CONSTRUCT_FC},
         LayoutPassState,
+        inline::build_inline_layout_into,
     },
-    node::TextBrush,
+    node::{TextBrush, TextLayout},
     BaseDocument,
 };
 
@@ -70,7 +72,7 @@ impl BaseDocument {
                             use style::values::specified::ContainerType;
                             style
                                 .get_box()
-                                .clone_container_type()
+                                .slow_clone_container_type()
                                 .intersects(ContainerType::SIZE | ContainerType::INLINE_SIZE)
                         })
                 })
@@ -126,7 +128,7 @@ impl BaseDocument {
 
         let root_node_id = self.root_element().id;
         debug_timer!(timer, feature = "log-phase-times");
-        let mut phase_t = std::time::Instant::now();
+        let mut phase_t = phase_profile::start();
 
         // Apply any device changes (viewport resize, zoom, color-scheme, etc)
         // accumulated since the last resolve as a single device rebuild.
@@ -181,7 +183,7 @@ impl BaseDocument {
             self.nodes[root_node_id]
                 .set_restyle_hint(style::invalidation::element::restyle_hints::RestyleHint::restyle_subtree());
             for (_, node) in self.nodes.iter_mut() {
-                node.invalidate_layout_cache();
+                node.clear_layout_cache();
             }
             self.mark_all_damaged();
         }
@@ -192,10 +194,12 @@ impl BaseDocument {
         timer.record_time("transform");
         phase_profile::mark(5, &mut phase_t);
 
-        // Build paint children / stacking contexts for damaged subtrees. Runs
-        // after layout and transforms so that stacking-context roots created by
-        // this frame's transforms are picked up, and before damage is cleared.
-        self.build_paint_tree(root_node_id);
+        // Paint children / stacking contexts are rebuilt lazily, by the first
+        // paint or hit test after this resolve (`ensure_paint_tree`), for the
+        // nodes `clear_damage_and_dirty_flags` flags `PAINT_TREE_DIRTY` below.
+        // Forced layouts (`getBoundingClientRect` and the like) never read
+        // them, so a run of them builds the tree once, not once per resolve.
+        self.paint_tree_dirty = true;
         timer.record_time("paint_tree");
         phase_profile::mark(6, &mut phase_t);
 
@@ -254,7 +258,7 @@ impl BaseDocument {
                 return false;
             }
             let Some(values) = node.primary_styles() else { return false };
-            let kind = values.get_box().clone_container_type();
+            let kind = values.get_box().slow_clone_container_type();
             let both = kind.intersects(ContainerType::SIZE);
             let inline = kind.intersects(ContainerType::INLINE_SIZE);
             if !both && !inline {
@@ -351,7 +355,13 @@ impl BaseDocument {
 
         let layout_children = std::mem::take(self.nodes[node_id].layout_children.get_mut());
 
-        if let Some(ref children) = layout_children {
+        // lightningpanda: a table's cells, transformed again only where its grid placed them or
+        // they changed since the last pass (`TableContext::placed`); the others' overflow stands.
+        if let Some(cells_overflow) = self.table_cells_overflow(node_id, scale) {
+            if let Some(cells_overflow) = cells_overflow {
+                overflow = overflow.union(cells_overflow);
+            }
+        } else if let Some(ref children) = layout_children {
             for &child_id in children {
                 // Out-of-flow children are laid out relative to their containing
                 // block, not their DOM parent: they are visited (and their overflow
@@ -511,7 +521,15 @@ impl BaseDocument {
 
     /// Ensure that the layout_children field is populated for all nodes
     pub fn resolve_layout_children(&mut self) {
+        // lightningpanda: the boxes that left a container's list this pass and that no container
+        // collected again are out of the layout tree, with what their subtrees built
+        // (`BaseDocument::leave_layout_tree`).
         resolve_layout_children_recursive(self, self.root_node().id);
+        for node_id in std::mem::take(&mut self.left_layout_lists) {
+            if self.nodes.get(node_id).is_some_and(|node| node.layout_child_of.get().is_none()) {
+                self.leave_layout_tree(node_id);
+            }
+        }
 
         fn resolve_layout_children_recursive(doc: &mut BaseDocument, node_id: NodeId) {
             // Anonymous blocks and pseudo-elements can be removed from the slab
@@ -522,6 +540,47 @@ impl BaseDocument {
 
             let mut damage = doc.nodes[node_id].damage().unwrap_or(ALL_DAMAGE);
             let _flags = doc.nodes[node_id].flags;
+
+            // lightningpanda: a table whose rows or cells changed (their damage reaches it) updates
+            // the rows that did and keeps its layout children; what it can't update is built again.
+            let table_changed =
+                damage.intersects(CONSTRUCT_FC | CONSTRUCT_BOX) || damage.contains(style::selector_parser::RestyleDamage::RELAYOUT);
+            let updated = if table_changed && crate::layout::table::is_incremental(doc, node_id) {
+                let updated = crate::layout::table::update_table_context(doc, node_id);
+                if updated.is_none() {
+                    damage.insert(CONSTRUCT_BOX);
+                }
+                updated
+            } else {
+                None
+            };
+            if let Some(changed_cells) = updated {
+                let layout_children = doc.nodes[node_id].layout_children.borrow_mut().take().unwrap_or_default();
+                // The cells that changed and the pseudo-elements, or all of them.
+                let pseudos = [doc.nodes[node_id].before(), doc.nodes[node_id].after()];
+                let visit: Vec<NodeId> = match changed_cells {
+                    Some(cells) => cells.into_iter().chain(pseudos.into_iter().flatten()).collect(),
+                    None => layout_children.to_vec(),
+                };
+                for child_id in visit {
+                    let child = &doc.nodes[child_id];
+                    if !child.has_damaged_descendants()
+                        && !child.is_anonymous()
+                        && child.layout_parent.get() == Some(node_id)
+                    {
+                        continue;
+                    }
+                    resolve_layout_children_recursive(doc, child_id);
+                    doc.nodes[child_id].layout_parent.set(Some(node_id));
+                    if let Some(mut data) = doc.nodes[child_id].try_stylo_element_data_mut().and_then(|s| s.get_mut()) {
+                        data.damage.remove(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
+                    }
+                }
+                *doc.nodes[node_id].layout_children.borrow_mut() = Some(layout_children);
+                damage.remove(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
+                doc.nodes[node_id].set_damage(damage);
+                return;
+            }
 
             if damage.intersects(CONSTRUCT_FC | CONSTRUCT_BOX) {
                 //} || flags.contains(NodeFlags::IS_INLINE_ROOT) {
@@ -536,14 +595,33 @@ impl BaseDocument {
                 }
 
                 let mut collected = LayoutChildren::default();
+                phase_profile::collected();
                 collect_layout_children(doc, node_id, &mut collected);
                 let layout_children = collected.children;
+
+                // lightningpanda: the previous layout children leave the list
+                // (`Node::layout_child_of`); the new ones are entered below. A
+                // child already collected by another container this pass points
+                // there and is left alone. (Left after collecting: while it runs,
+                // a child that is still listed tells one that enters the layout
+                // tree again, see `table::enter_layout_tree`.)
+                if let Some(old) = doc.nodes[node_id].layout_children.borrow().as_ref() {
+                    for &child_id in old.iter() {
+                        if let Some(child) = doc.nodes.get(child_id) {
+                            if child.layout_child_of.get() == Some(node_id) {
+                                child.layout_child_of.set(None);
+                                doc.left_layout_lists.push(child_id);
+                            }
+                        }
+                    }
+                }
                 doc.nodes[node_id].anonymous_blocks = collected.anonymous_blocks;
 
                 // Recurse into newly collected layout children
                 for child_id in layout_children.iter().copied() {
                     resolve_layout_children_recursive(doc, child_id);
                     doc.nodes[child_id].layout_parent.set(Some(node_id));
+                    doc.nodes[child_id].layout_child_of.set(Some(node_id));
                     if let Some(mut data) = doc.nodes[child_id].try_stylo_element_data_mut().and_then(|s| s.get_mut()) {
                         data.damage.remove(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
                     }
@@ -648,8 +726,11 @@ impl BaseDocument {
                     #[cfg(not(feature = "parallel-construct"))]
                     let font_ctx_mut = &mut *self.font_ctx.lock().unwrap();
 
-                    layout.content_widths = None;
-                    layout.last_break = None;
+                    // Only the parley layout carries over (see `build_inline_layout_into`).
+                    *layout = TextLayout {
+                        layout: std::mem::take(&mut layout.layout),
+                        ..TextLayout::new()
+                    };
                     build_inline_layout_into(
                         &self.nodes,
                         layout_ctx_mut,
@@ -664,12 +745,6 @@ impl BaseDocument {
                     {
                         LAYOUT_CTX.set(Some(layout_ctx));
                     }
-
-                    // If layout doesn't contain any inline boxes, then it is safe to populate the content_widths
-                    // cache during this parallelized stage.
-                    // if layout.layout.inline_boxes().is_empty() {
-                    //     layout.content_widths();
-                    // }
 
                     ConstructionTaskResult {
                         node_id: task.node_id,
@@ -748,6 +823,51 @@ impl BaseDocument {
 /// lightningpanda: `overflow` with what a child adds to it. An empty rect (a
 /// box of no width or no height, with nothing reaching out of it) adds nothing,
 /// wherever it is: a 2000 x 0 px box does not make a page scroll.
+impl BaseDocument {
+    /// The union of the overflow of `table`'s cells in it (see `resolve_transforms`; `None` inside:
+    /// none has any), or `None` if `table` is not a table whose cells it keeps (its layout children
+    /// are visited as any others').
+    fn table_cells_overflow(&mut self, table: NodeId, scale: f64) -> Option<Option<Rect>> {
+        use crate::node::SpecialElementData;
+        let node = &self.nodes[table];
+        if !node.flags.is_table_root() {
+            return None;
+        }
+        let SpecialElementData::TableRoot(ctx) = &node.data.downcast_element()?.special_data else { return None };
+        if !crate::layout::table::keeps_cells(ctx) {
+            return None;
+        }
+        let ctx = std::sync::Arc::clone(ctx);
+        let cells = ctx.cells.len();
+        let mut placed = ctx.placed.borrow_mut();
+        let again = placed.take_transform().filter(|_| placed.overflow.len() == cells && placed.overflow_scale == scale);
+        let mut overflow = std::mem::take(&mut placed.overflow);
+        drop(placed);
+        match again {
+            Some(again) => {
+                for index in again {
+                    overflow[index] = self.resolve_transforms(ctx.cells[index].node_id);
+                }
+            }
+            None => {
+                overflow.clear();
+                for cell in &ctx.cells {
+                    overflow.push(self.resolve_transforms(cell.node_id));
+                }
+            }
+        }
+        // `unite_overflow` in any order: a union of the cells that are not empty.
+        let united = overflow
+            .iter()
+            .filter(|cell| cell.width() > 0.0 && cell.height() > 0.0)
+            .fold(None, |united: Option<Rect>, &cell| Some(united.map_or(cell, |united| united.union(cell))));
+        let mut placed = ctx.placed.borrow_mut();
+        placed.overflow = overflow;
+        placed.overflow_scale = scale;
+        Some(united)
+    }
+}
+
 fn unite_overflow(overflow: Rect, child: Rect) -> Rect {
     if child.width() > 0.0 && child.height() > 0.0 {
         overflow.union(child)
@@ -758,14 +878,30 @@ fn unite_overflow(overflow: Rect, child: Rect) -> Rect {
 
 /// lightningpanda: cumulative time per `resolve` phase (style, damage,
 /// construct, pconstruct, layout, transform, paint_tree, c_damage, subdocs),
-/// for profiling incremental relayout.
+/// for profiling incremental relayout. The phases are timed only while
+/// [`set_timing`] has turned timing on; the counters below always count.
 pub mod phase_profile {
     use std::cell::Cell;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::Instant;
     std::thread_local! {
         static NS: Cell<[u64; 9]> = const { Cell::new([0; 9]) };
     }
-    pub(crate) fn mark(i: usize, t: &mut Instant) {
+    static TIMING: AtomicBool = AtomicBool::new(false);
+    /// Turns the phase timers on or off for the whole process.
+    pub fn set_timing(on: bool) {
+        TIMING.store(on, Ordering::Relaxed);
+    }
+    /// Whether the phase timers are on.
+    pub fn timing() -> bool {
+        TIMING.load(Ordering::Relaxed)
+    }
+    /// The start of a `resolve`'s first phase, when timing is on.
+    pub(crate) fn start() -> Option<Instant> {
+        timing().then(Instant::now)
+    }
+    pub(crate) fn mark(i: usize, t: &mut Option<Instant>) {
+        let Some(t) = t else { return };
         let now = Instant::now();
         let d = (now - *t).as_nanos() as u64;
         *t = now;
@@ -788,6 +924,31 @@ pub mod phase_profile {
     /// Inline layouts built on this thread so far, and their text bytes.
     pub fn rebuilds() -> (u64, u64) {
         REBUILDS.with(|r| r.get())
+    }
+    std::thread_local! {
+        static COLLECTED: Cell<u64> = const { Cell::new(0) };
+    }
+    /// A container's layout children were collected again.
+    pub(crate) fn collected() {
+        COLLECTED.with(|c| c.set(c.get() + 1));
+    }
+    /// Layout-children collections and table context builds (from scratch: `tables().0`) on
+    /// this thread so far.
+    pub fn constructions() -> (u64, u64) {
+        (COLLECTED.with(|c| c.get()), tables().0)
+    }
+    std::thread_local! {
+        static PERFORMED: Cell<(u64, u64)> = const { Cell::new((0, 0)) };
+    }
+    /// A box's layout algorithm ran to place its children (not a size
+    /// measurement, not a cache hit); `root` for the root element.
+    pub(crate) fn performed(root: bool) {
+        PERFORMED.with(|p| p.set((p.get().0 + 1, p.get().1 + root as u64)));
+    }
+    /// Layout algorithm runs that placed children on this thread so far, and
+    /// how many of them were the root element's.
+    pub fn performed_layouts() -> (u64, u64) {
+        PERFORMED.with(|p| p.get())
     }
     std::thread_local! {
         static RESTYLED: Cell<u64> = const { Cell::new(0) };
@@ -842,8 +1003,241 @@ pub mod phase_profile {
     pub fn rounding() -> (u64, u64) {
         ROUNDING.with(|r| r.get())
     }
+    std::thread_local! {
+        static TABLES: Cell<(u64, u64)> = const { Cell::new((0, 0)) };
+    }
+    pub(crate) fn table_built() {
+        TABLES.with(|t| t.set((t.get().0 + 1, t.get().1)));
+    }
+    pub(crate) fn table_cell_collected() {
+        TABLES.with(|t| t.set((t.get().0, t.get().1 + 1)));
+    }
+    /// Tables whose structure was built from scratch on this thread so far, and table cells read
+    /// from their styles (by those builds and by the updates of the rows that changed).
+    pub fn tables() -> (u64, u64) {
+        TABLES.with(|t| t.get())
+    }
+    std::thread_local! {
+        static TABLE_GRIDS: Cell<(u64, u64)> = const { Cell::new((0, 0)) };
+    }
+    pub(crate) fn table_grid_laid_out(again: bool) {
+        TABLE_GRIDS.with(|t| {
+            let (whole, again_count) = t.get();
+            t.set(if again { (whole, again_count + 1) } else { (whole + 1, again_count) });
+        });
+    }
+    /// Table grids laid out (and kept for the next layout) on this thread so far: whole, and again
+    /// from their last layout in the rows that changed.
+    pub fn table_grids() -> (u64, u64) {
+        TABLE_GRIDS.with(|t| t.get())
+    }
+    std::thread_local! {
+        static BREAKS: Cell<(u64, u64, u64)> = const { Cell::new((0, 0, 0)) };
+    }
+    /// An inline layout was broken into lines, continuing after `kept` lines of its last break
+    /// and going over `bytes` of its text.
+    pub(crate) fn broke(kept: usize, bytes: usize) {
+        BREAKS.with(|b| {
+            let (n, k, t) = b.get();
+            b.set((n + 1, k + kept as u64, t + bytes as u64));
+        });
+    }
+    /// Inline layouts broken into lines on this thread so far, the lines kept from their last
+    /// break (resumed), and the text bytes the line breaker went over.
+    pub fn line_breaks() -> (u64, u64, u64) {
+        BREAKS.with(|b| b.get())
+    }
     /// Milliseconds per phase on this thread so far.
     pub fn peek() -> [f64; 9] {
         NS.with(|ns| ns.get().map(|n| n as f64 / 1e6))
+    }
+}
+
+#[cfg(test)]
+mod layout_children_owner_tests {
+    use crate::{Attribute, BaseDocument, DocumentConfig, Node, qual_name};
+    use blitz_traits::shell::{ColorScheme, Viewport};
+
+    /// Whether the node is in its `layout_parent`'s `layout_children` list, by the list owner it
+    /// records (`Node::layout_child_of`).
+    pub(super) fn is_layout_child(node: &Node) -> bool {
+        node.layout_parent.get().is_some() && node.layout_child_of.get() == node.layout_parent.get()
+    }
+
+    /// `Node::layout_child_of` agrees with a scan of every node's layout
+    /// parent's `layout_children` list.
+    fn assert_owners_match_lists(doc: &BaseDocument, when: &str) {
+        let mut members = 0;
+        for (id, node) in doc.tree().iter() {
+            let parent = node.layout_parent.get().and_then(|p| doc.get_node(p));
+            let scan = parent.is_some_and(|p| p.layout_children.borrow().as_ref().is_some_and(|c| c.contains(&id)));
+            assert_eq!(is_layout_child(node) && parent.is_some(), scan, "{when}: node {id:?}");
+            members += scan as usize;
+        }
+        assert!(members > 3, "{when}: the document has layout children ({members})");
+    }
+
+    #[test]
+    fn owner_tracks_list_membership_through_reconstruction() {
+        let mut doc = BaseDocument::new(DocumentConfig {
+            viewport: Some(Viewport::new(400, 300, 1.0, ColorScheme::Light)),
+            ..Default::default()
+        });
+        let root_id = doc.root_node().id;
+        let style = |value: &str| Attribute { name: qual_name!("style"), value: value.to_string() };
+        let mut m = doc.mutate();
+        let html = m.create_element(qual_name!("html"), vec![style("display:block")]);
+        let body = m.create_element(qual_name!("body"), vec![style("display:block")]);
+        let outer = m.create_element(qual_name!("div"), vec![style("display:block")]);
+        let x = m.create_element(qual_name!("div"), vec![style("display:block")]);
+        let x_text = m.create_text_node("x");
+        let span = m.create_element(qual_name!("span"), vec![]);
+        let inner = m.create_element(qual_name!("div"), vec![style("display:inline-block")]);
+        let inner_text = m.create_text_node("inner");
+        let y = m.create_element(qual_name!("div"), vec![style("display:block")]);
+        let abs = m.create_element(qual_name!("div"), vec![style("display:block;position:absolute")]);
+        m.append_children(x, &[x_text]);
+        m.append_children(inner, &[inner_text]);
+        m.append_children(span, &[inner]);
+        m.append_children(outer, &[x, span, y, abs]);
+        m.append_children(body, &[outer]);
+        m.append_children(html, &[body]);
+        m.append_children(root_id, &[html]);
+        drop(m);
+        doc.resolve(0.0);
+        assert_owners_match_lists(&doc, "first layout");
+
+        // Children leave `outer`'s list while keeping it as layout parent:
+        // one is no longer displayed, the rest become its inline content.
+        let mut m = doc.mutate();
+        m.set_attribute(x, qual_name!("style"), "display:none");
+        m.set_attribute(y, qual_name!("style"), "display:inline");
+        m.set_attribute(abs, qual_name!("style"), "display:none");
+        drop(m);
+        doc.resolve(0.0);
+        assert_owners_match_lists(&doc, "children leave the list");
+        assert_eq!(doc.nodes[y].layout_parent.get(), Some(outer));
+        assert!(!is_layout_child(&doc.nodes[y]));
+
+        // A block turns inline: it leaves `outer`'s list for an anonymous
+        // block's inline content, and the inline-block becomes a block.
+        let mut m = doc.mutate();
+        m.set_attribute(x, qual_name!("style"), "display:inline");
+        m.set_attribute(inner, qual_name!("style"), "display:block");
+        drop(m);
+        doc.resolve(0.0);
+        assert_owners_match_lists(&doc, "display changes");
+
+        // A container turns inline with a block child left in its old list,
+        // a child is dropped, and a new block arrives.
+        let mut m = doc.mutate();
+        m.set_attribute(outer, qual_name!("style"), "display:inline");
+        m.remove_and_drop_node(y);
+        let z = m.create_element(qual_name!("div"), vec![style("display:block")]);
+        m.append_children(body, &[z]);
+        drop(m);
+        doc.resolve(0.0);
+        assert_owners_match_lists(&doc, "container turns inline");
+
+        // And back, so the old lists are replaced again.
+        let mut m = doc.mutate();
+        m.set_attribute(outer, qual_name!("style"), "display:block");
+        m.set_attribute(x, qual_name!("style"), "display:block");
+        drop(m);
+        doc.resolve(0.0);
+        assert_owners_match_lists(&doc, "restored");
+    }
+}
+
+#[cfg(test)]
+mod layout_children_owner_reparent_tests {
+    use super::layout_children_owner_tests::is_layout_child;
+    use crate::{Attribute, BaseDocument, DocumentConfig, qual_name};
+    use blitz_traits::shell::{ColorScheme, Viewport};
+
+    fn scan(doc: &BaseDocument, id: crate::NodeId) -> bool {
+        let node = &doc.nodes[id];
+        node.layout_parent
+            .get()
+            .and_then(|p| doc.get_node(p))
+            .is_some_and(|p| p.layout_children.borrow().as_ref().is_some_and(|c| c.contains(&id)))
+    }
+
+    fn check(doc: &BaseDocument, when: &str) {
+        for (id, node) in doc.tree().iter() {
+            assert_eq!(is_layout_child(node), scan(doc, id), "{when}: node {id:?}");
+        }
+    }
+
+    /// A node moved between layout containers, in both traversal orders (its
+    /// new container visited before and after its old one), and a node
+    /// detached but kept alive.
+    #[test]
+    fn owner_follows_nodes_moved_between_containers() {
+        let mut doc = BaseDocument::new(DocumentConfig {
+            viewport: Some(Viewport::new(400, 300, 1.0, ColorScheme::Light)),
+            ..Default::default()
+        });
+        let root_id = doc.root_node().id;
+        let block = || vec![Attribute { name: qual_name!("style"), value: "display:block".to_string() }];
+        let mut m = doc.mutate();
+        let html = m.create_element(qual_name!("html"), block());
+        let body = m.create_element(qual_name!("body"), block());
+        let a = m.create_element(qual_name!("div"), block());
+        let b = m.create_element(qual_name!("div"), block());
+        let x = m.create_element(qual_name!("div"), block());
+        let y = m.create_element(qual_name!("div"), block());
+        let z = m.create_element(qual_name!("div"), block());
+        m.append_children(a, &[x, y]);
+        m.append_children(b, &[z]);
+        m.append_children(body, &[a, b]);
+        m.append_children(html, &[body]);
+        m.append_children(root_id, &[html]);
+        drop(m);
+        doc.resolve(0.0);
+        check(&doc, "first layout");
+        assert!(is_layout_child(&doc.nodes[x]));
+
+        // Later sibling container: `a` (old) is visited before `b` (new).
+        let mut m = doc.mutate();
+        m.append_children(b, &[x]);
+        drop(m);
+        doc.resolve(0.0);
+        check(&doc, "moved to a later container");
+        assert_eq!(doc.nodes[x].layout_parent.get(), Some(b));
+        assert!(is_layout_child(&doc.nodes[x]));
+
+        // Back: `a` (new) is visited before `b` (old).
+        let mut m = doc.mutate();
+        m.append_children(a, &[x]);
+        drop(m);
+        doc.resolve(0.0);
+        check(&doc, "moved to an earlier container");
+        assert!(is_layout_child(&doc.nodes[x]));
+
+        // Up to the ancestor, before and after its old container.
+        let mut m = doc.mutate();
+        m.insert_nodes_before(a, &[x]);
+        drop(m);
+        doc.resolve(0.0);
+        check(&doc, "moved up before its old container");
+        let mut m = doc.mutate();
+        m.append_children(a, &[x]);
+        drop(m);
+        doc.resolve(0.0);
+        let mut m = doc.mutate();
+        m.append_children(body, &[x]);
+        drop(m);
+        doc.resolve(0.0);
+        check(&doc, "moved up after its old container");
+        assert_eq!(doc.nodes[x].layout_parent.get(), Some(body));
+
+        // Detached but alive: in no list.
+        let mut m = doc.mutate();
+        m.remove_node(y);
+        drop(m);
+        doc.resolve(0.0);
+        check(&doc, "detached");
+        assert!(!is_layout_child(&doc.nodes[y]));
     }
 }

@@ -316,8 +316,7 @@ impl RequestLog {
                     (e.error, e.done, e.end) = (Some(error.to_string()), true, Some(*timestamp));
                 }
             }
-            // WebSockets are not logged requests.
-            _ => {}
+            NetEvent::WebSocket { .. } => {}
         }
     }
 }
@@ -425,6 +424,17 @@ impl EngineHost {
                 self.apply_network_overrides(cmd.page);
                 Ok(Some(json!({})))
             }
+            "setBypassServiceWorker" => {
+                #[derive(Deserialize)]
+                struct Params {
+                    bypass: bool,
+                }
+                let params: Params = cmd.command.params()?;
+                self.sessions.get_mut(cmd.session_id).ok_or_else(|| CdpError::server("session is gone"))?.bypass_service_worker =
+                    params.bypass;
+                self.apply_network_overrides(cmd.page);
+                Ok(Some(json!({})))
+            }
             "clearBrowserCache" => {
                 // Chrome clears the cache shared by the target's browser
                 // context: other pages of that context miss afterwards. With
@@ -482,6 +492,9 @@ impl EngineHost {
         // requests left to apply them to.
         let _ = self.thread.browser.set_extra_http_headers(state.id, headers);
         let _ = self.thread.browser.set_cache_disabled(state.id, cache_disabled);
+        // Not tied to Network.enable, as in Chrome.
+        let bypass = state.sessions.iter().filter_map(|s| self.sessions.get(s)).any(|s| s.bypass_service_worker);
+        let _ = self.thread.browser.set_bypass_service_worker(state.id, bypass);
     }
 
     pub(super) fn update_network_subscriptions(&mut self) {
@@ -556,13 +569,24 @@ impl EngineHost {
         if let NetEvent::LoadingFinished { id, .. } | NetEvent::LoadingFailed { id, .. } = &event {
             self.finish_fetch(context, *id);
         }
-        let id = event.id();
-        let announced_frame = match &event {
+        let id = match &event {
+            NetEvent::RequestWillBeSent { id, .. }
+            | NetEvent::ResponseReceived { id, .. }
+            | NetEvent::DataReceived { id, .. }
+            | NetEvent::LoadingFinished { id, .. }
+            | NetEvent::LoadingFailed { id, .. }
+            | NetEvent::WebSocket { id, .. } => *id,
+        };
+        // A connection is routed by the frame that created it, like a request.
+        let starting_frame = match &event {
             NetEvent::RequestWillBeSent { request, .. } => Some(request.frame_id.as_ref()),
-            NetEvent::WebSocketCreated { frame_id, .. } => Some(frame_id.as_ref()),
+            NetEvent::WebSocket { activity, .. } => match &**activity {
+                lp_net::WebSocketActivity::Created { frame_id, .. } => Some(frame_id.as_ref()),
+                _ => None,
+            },
             _ => None,
         };
-        if let Some(frame_id) = announced_frame {
+        if let Some(frame_id) = starting_frame {
             let page = self.pages.iter().find_map(|(key, page)| {
                 (page.context == context && self.owns_frame(page.id, frame_id)).then_some(*key)
             });
@@ -579,10 +603,12 @@ impl EngineHost {
             context.routes.insert(id, page);
         }
         let Some(page) = self.contexts.get(&context).and_then(|c| c.routes.get(&id)).copied() else { return };
-        if matches!(
-            event,
-            NetEvent::LoadingFinished { .. } | NetEvent::LoadingFailed { .. } | NetEvent::WebSocketClosed { .. }
-        ) {
+        let ended = match &event {
+            NetEvent::LoadingFinished { .. } | NetEvent::LoadingFailed { .. } => true,
+            NetEvent::WebSocket { activity, .. } => matches!(**activity, lp_net::WebSocketActivity::Closed),
+            _ => false,
+        };
+        if ended {
             self.contexts.get_mut(&context).expect("subscribed context").routes.remove(&id);
         }
         let Some(state) = self.pages.get_mut(&page) else { return };
@@ -598,9 +624,12 @@ impl EngineHost {
         {
             state.network.post_data.observe(&event);
         }
+        // The params borrow from the translator: the page's sessions are read
+        // field by field next to it.
         if let Some((method, params)) = state.network.translator.translate(&event) {
-            for session in self.sessions_of(page, |s| s.network_enabled) {
-                self.event(method, &params, &session);
+            let sessions = &self.sessions;
+            for session in state.sessions.iter().filter(|s| sessions.get(*s).is_some_and(|s| s.network_enabled)) {
+                self.out.push(crate::msg::event_frame(method, &params, Some(session)));
             }
         }
     }

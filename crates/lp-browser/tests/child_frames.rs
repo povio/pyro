@@ -249,6 +249,10 @@ fn detached_pending_navigation_is_cancelled_and_late_completion_cannot_resurrect
             body: b"<iframe></iframe><script>globalThis.late=true</script>".to_vec(),
             content_disposition: None,
             header_csp: false,
+            refresh: None,
+            referrer_policy: None,
+            timing: None,
+            partial: None,
         }),
     );
     settle(&mut t);

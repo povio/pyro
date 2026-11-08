@@ -1,6 +1,7 @@
 //! lp-render: renders a page [`Snapshot`] to pixels with Blitz (html5ever,
 //! Stylo, Taffy, Parley; painted by Vello) and compares the result against a
-//! baseline. No JS engine and no lightningpanda crate: the browser thread
+//! baseline. No JS engine and no lightningpanda crate but lp-canvas (the
+//! process's fonts, shared with canvas text): the browser thread
 //! builds the snapshot (`lp_webapi::PageDom::render_snapshot`), this crate
 //! renders it on a [`worker::RenderWorker`] thread.
 //!
@@ -30,7 +31,10 @@ mod svg_use;
 pub mod worker;
 
 use std::collections::HashMap;
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::Arc;
+#[cfg(test)]
+use std::sync::Mutex;
+use stylo_taffy::CopyStyleGetters;
 
 use std::time::{Duration, Instant};
 
@@ -40,7 +44,7 @@ use anyrender_vello_cpu::VelloCpuImageRenderer;
 use blitz_dom::{DocumentConfig, StyleThreading};
 use blitz_traits::shell::{ColorScheme, Viewport as BlitzViewport};
 use kurbo::{Affine, Rect};
-use parley::fontique::{Blob, Collection, CollectionOptions, SourceCache};
+use parley::fontique::Blob;
 use parley::FontContext;
 use peniko::{Color, Fill};
 
@@ -50,7 +54,31 @@ pub use hash::scene_hash;
 pub use mirror::{DeltaOp, MirrorStats, Rebuild, Tree, TreeKind, TreeNode, TOP};
 pub use net::Fetcher;
 
-/// Where document syncs spend their time (diagnostics, `LP.geometryStats`).
+/// Whether the diagnostic timers run (`LP.geometryStats`,
+/// `Performance.getMetrics` durations): off until a client asks for them, so
+/// layout syncs read no clocks only to add their readings up. Counters, and
+/// the clocks behaviour depends on (fetch deadlines), are not affected.
+pub mod profiling {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    static ON: AtomicBool = AtomicBool::new(false);
+
+    /// Turns the timers on for the rest of the process, Blitz's phase timers
+    /// included.
+    pub fn enable() {
+        ON.store(true, Ordering::Relaxed);
+        blitz_dom::phase_profile::set_timing(true);
+    }
+
+    /// Whether the timers are on.
+    #[inline]
+    pub fn on() -> bool {
+        ON.load(Ordering::Relaxed)
+    }
+}
+
+/// Where document syncs spend their time (diagnostics, `LP.geometryStats`;
+/// only while [`profiling`] is on).
 pub mod sync_profile {
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::Duration;
@@ -65,14 +93,14 @@ pub mod sync_profile {
         RESOLVE.fetch_add(resolve.as_nanos() as u64, Ordering::Relaxed);
     }
 
-    /// Milliseconds applying node lists, settling sub-resources and resolving
-    /// (style + layout) since the last call.
     /// As [`take`], without resetting.
     pub fn peek() -> (f64, f64, f64) {
         let ms = |a: &AtomicU64| a.load(Ordering::Relaxed) as f64 / 1e6;
         (ms(&MIRROR), ms(&SETTLE), ms(&RESOLVE))
     }
 
+    /// Milliseconds applying node lists, settling sub-resources and resolving
+    /// (style + layout) since the last call.
     pub fn take() -> (f64, f64, f64) {
         let ms = |a: &AtomicU64| a.swap(0, Ordering::Relaxed) as f64 / 1e6;
         (ms(&MIRROR), ms(&SETTLE), ms(&RESOLVE))
@@ -95,6 +123,23 @@ pub fn blitz_style_stats() -> [u64; 4] {
     blitz_dom::phase_profile::style_stats_peek()
 }
 
+/// Layout-children collections and table context builds Blitz made on this thread.
+pub fn blitz_constructions() -> (u64, u64) {
+    blitz_dom::phase_profile::constructions()
+}
+
+/// Inline layouts Blitz broke into lines on this thread, the lines it kept from their last
+/// break (resumed after text changed past them), and the text bytes the line breaker went over.
+pub fn blitz_line_breaks() -> (u64, u64, u64) {
+    blitz_dom::phase_profile::line_breaks()
+}
+
+/// Layout algorithm runs Blitz made to place children on this thread (cache
+/// misses, not size measurements), and how many were the root element's.
+pub fn blitz_performed_layouts() -> (u64, u64) {
+    blitz_dom::phase_profile::performed_layouts()
+}
+
 /// `resolve` calls Blitz made on this thread, and how many of their layout passes ran Taffy.
 pub fn blitz_passes() -> (u64, u64) {
     blitz_dom::phase_profile::passes()
@@ -103,6 +148,18 @@ pub fn blitz_passes() -> (u64, u64) {
 /// Layout nodes Blitz's rounding reached on this thread, and subtrees it skipped.
 pub fn blitz_rounding() -> (u64, u64) {
     blitz_dom::phase_profile::rounding()
+}
+
+/// Tables Blitz built from scratch on this thread, and the table cells it read from their styles
+/// (by those builds and by updates of the rows that changed).
+pub fn blitz_tables() -> (u64, u64) {
+    blitz_dom::phase_profile::tables()
+}
+
+/// Table grids Blitz laid out on this thread: whole, and again from their last layout in the rows
+/// that changed.
+pub fn blitz_table_grids() -> (u64, u64) {
+    blitz_dom::phase_profile::table_grids()
 }
 
 pub fn blitz_phases() -> [f64; 9] {
@@ -154,6 +211,21 @@ pub struct Snapshot {
     /// Straight RGBA painted under the document where it has no background
     /// (CDP `Emulation.setDefaultBackgroundColorOverride`); `None`: white.
     pub background: Option<[u8; 4]>,
+    /// Bitmaps of the drawn canvases of a [`Live`] document, painted as
+    /// their elements' content (other canvases paint nothing).
+    pub canvases: Vec<CanvasImage>,
+}
+
+/// A canvas element's bitmap ([`Snapshot::canvases`]).
+#[derive(Clone, Debug)]
+pub struct CanvasImage {
+    /// The canvas element's render key.
+    pub key: u64,
+    pub width: u32,
+    pub height: u32,
+    /// Straight-alpha RGBA rows. The same `Arc` as the previous render's
+    /// means the pixels did not change.
+    pub rgba: Arc<Vec<u8>>,
 }
 
 /// A snapshot of a page whose Blitz document the renderer keeps between
@@ -497,107 +569,25 @@ impl std::fmt::Display for RenderError {
 
 impl std::error::Error for RenderError {}
 
-/// The process's fonts: the system font scan (fontique, tens of ms) runs
-/// once, and every [`Renderer`] works on a clone. Clones share the scanned
-/// system fonts and the loaded font data; fonts a renderer registers stay its
-/// own.
-static FONTS: LazyLock<Mutex<FontContext>> = LazyLock::new(|| {
-    let mut font_ctx = FontContext {
-        source_cache: SourceCache::new_shared(),
-        collection: if FORK_SAFE_FONTS.load(std::sync::atomic::Ordering::Relaxed) {
-            fork_safe_collection()
-        } else {
-            Collection::new(CollectionOptions { shared: false, system_fonts: true })
-        },
-    };
-    font_ctx.collection.register_fonts(Blob::new(Arc::new(blitz_dom::BULLET_FONT) as _), None);
-    Mutex::new(font_ctx)
-});
-
-static FORK_SAFE_FONTS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
 /// Loads system fonts without the platform font API, now, on this thread
-/// (`serve --fork`). macOS's CoreText starts dispatch threads and Objective-C
-/// initializers that a later `fork()` cannot survive ("+[NSFontCollection
-/// initialize] may have been in progress"); a fork template, and children
-/// that fork again, must not use it. Fonts are read from the system font
-/// directories instead (memory-mapped), with the generic families and
-/// script fallbacks the platform backend would pick. Call before any render.
+/// (`serve --fork`): see [`lp_canvas::fonts::use_fork_safe_fonts`]. Call
+/// before any render.
 pub fn use_fork_safe_fonts() {
-    FORK_SAFE_FONTS.store(true, std::sync::atomic::Ordering::Relaxed);
+    lp_canvas::fonts::use_fork_safe_fonts();
     drop(process_fonts());
 }
 
 /// Whether [`use_fork_safe_fonts`] was called (fonts never touch CoreText).
 pub fn fork_safe_fonts() -> bool {
-    FORK_SAFE_FONTS.load(std::sync::atomic::Ordering::Relaxed)
+    lp_canvas::fonts::fork_safe_fonts()
 }
 
-/// The system fonts by directory scan: see [`use_fork_safe_fonts`].
-fn fork_safe_collection() -> Collection {
-    use parley::fontique::{GenericFamily, Script};
-    let mut c = Collection::new(CollectionOptions { shared: false, system_fonts: false });
-    let mut dirs: Vec<std::path::PathBuf> = if cfg!(target_os = "macos") {
-        ["/System/Library/Fonts", "/Library/Fonts"].iter().map(Into::into).collect()
-    } else {
-        ["/usr/share/fonts", "/usr/local/share/fonts"].iter().map(Into::into).collect()
-    };
-    if let Some(home) = std::env::var_os("HOME") {
-        let home = std::path::PathBuf::from(home);
-        dirs.push(if cfg!(target_os = "macos") { home.join("Library/Fonts") } else { home.join(".local/share/fonts") });
-    }
-    c.load_fonts_from_paths(dirs.iter().filter(|d| d.is_dir()));
-    let ids = |c: &mut Collection, names: &[&str]| -> Vec<parley::fontique::FamilyId> {
-        names.iter().filter_map(|n| c.family_id(n)).collect()
-    };
-    // As fontique's CoreText backend (Chromium's macOS defaults), then
-    // common Linux families.
-    let generics: &[(GenericFamily, &[&str])] = &[
-        (GenericFamily::Serif, &["Times", "Times New Roman", "DejaVu Serif", "Liberation Serif"]),
-        (GenericFamily::SansSerif, &["Helvetica", "Arial", "DejaVu Sans", "Liberation Sans"]),
-        (GenericFamily::Monospace, &["Courier", "Courier New", "Menlo", "DejaVu Sans Mono", "Liberation Mono"]),
-        (GenericFamily::Cursive, &["Apple Chancery"]),
-        (GenericFamily::Fantasy, &["Papyrus"]),
-        (GenericFamily::SystemUi, &["System Font", ".SF NS", "SF Pro", "Helvetica Neue", "Helvetica", "DejaVu Sans"]),
-        (GenericFamily::UiSansSerif, &["System Font", ".SF NS", "SF Pro", "Helvetica Neue", "Helvetica"]),
-        (GenericFamily::UiSerif, &["New York", "Times"]),
-        (GenericFamily::UiMonospace, &["SF Mono", "Menlo", "Courier"]),
-        (GenericFamily::Emoji, &["Apple Color Emoji", "Noto Color Emoji"]),
-        (GenericFamily::Math, &["STIX Two Math"]),
-    ];
-    for (generic, names) in generics {
-        let families = ids(&mut c, names);
-        c.set_generic_families(*generic, families.into_iter());
-    }
-    // Script fallbacks CoreText would answer for the usual scripts.
-    let fallbacks: &[(&[u8; 4], &[&str])] = &[
-        (b"Latn", &["Helvetica", "Lucida Grande", "Arial Unicode MS", "DejaVu Sans"]),
-        (b"Grek", &["Helvetica", "Lucida Grande", "Arial Unicode MS", "DejaVu Sans"]),
-        (b"Cyrl", &["Helvetica", "Lucida Grande", "Arial Unicode MS", "DejaVu Sans"]),
-        (b"Hani", &["PingFang SC", "Heiti SC", "Hiragino Sans GB", "Noto Sans CJK SC"]),
-        (b"Hans", &["PingFang SC", "Heiti SC", "Hiragino Sans GB", "Noto Sans CJK SC"]),
-        (b"Hant", &["PingFang TC", "Heiti TC", "Noto Sans CJK TC"]),
-        (b"Jpan", &["Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans CJK JP"]),
-        (b"Hira", &["Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans CJK JP"]),
-        (b"Kana", &["Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans CJK JP"]),
-        (b"Hang", &["Apple SD Gothic Neo", "Noto Sans CJK KR"]),
-        (b"Kore", &["Apple SD Gothic Neo", "Noto Sans CJK KR"]),
-        (b"Arab", &["Geeza Pro", "Noto Sans Arabic", "DejaVu Sans"]),
-        (b"Hebr", &["Arial Hebrew", "Noto Sans Hebrew", "DejaVu Sans"]),
-        (b"Thai", &["Thonburi", "Noto Sans Thai"]),
-        (b"Deva", &["Kohinoor Devanagari", "Devanagari Sangam MN", "Noto Sans Devanagari"]),
-        (b"Zsym", &["Apple Symbols", "Apple Color Emoji", "Noto Color Emoji"]),
-        (b"Zsye", &["Apple Color Emoji", "Noto Color Emoji"]),
-    ];
-    for (script, names) in fallbacks {
-        let families = ids(&mut c, names);
-        c.set_fallbacks(Script::from_bytes(**script), families.into_iter());
-    }
-    c
-}
-
+/// The process's fonts (`lp_canvas::fonts`, shared with canvas text), with
+/// Blitz's list bullet font added once: every [`Renderer`] works on a clone.
 fn process_fonts() -> FontContext {
-    FONTS.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    static BULLET: std::sync::Once = std::sync::Once::new();
+    BULLET.call_once(|| lp_canvas::fonts::register_fonts(Blob::new(Arc::new(blitz_dom::BULLET_FONT) as _)));
+    lp_canvas::fonts::font_context()
 }
 
 /// Warms the process-wide state a first render would otherwise pay for, on a
@@ -649,7 +639,8 @@ pub struct Renderer {
     /// Persistent documents of [`Live`] snapshots, by page.
     mirrors: HashMap<u64, mirror::Mirror>,
     pdf_cache: pdf::PdfCache,
-    /// Layout-query memos of persistent documents, by page.
+    /// Layout queries of persistent documents, by page (present once the
+    /// page's document has been laid out for them).
     geometry: HashMap<u64, geometry::Geometry>,
     /// External SVG sprite files of persistent documents, by resource
     /// scope and URL.
@@ -826,6 +817,7 @@ impl Renderer {
                         if let Some(offsets) = &snap.element_scroll {
                             m.set_element_scroll(offsets);
                         }
+                        m.set_canvases(&snap.canvases);
                         let clip = live.clip.and_then(|k| m.node(k));
                         (&mut m.doc, &m.bridge, clip)
                     }
@@ -856,19 +848,19 @@ impl Renderer {
                 (doc, &*bridge, clip)
             }
         };
-        let mirrored = started.elapsed();
+        let profiling = profiling::on();
+        let mirrored = profiling.then(|| started.elapsed());
         let (fetch, passes, resolved_latest) =
             bridge.settle(doc, started + self.fetch_timeout, self.first_layout_wait, false);
         timings.layout_passes = passes;
-        let resolving = Instant::now();
+        let resolving = profiling.then(Instant::now);
         if !resolved_latest {
             doc.resolve(0.0);
         }
-        sync_profile::record(
-            mirrored,
-            started.elapsed().saturating_sub(mirrored + resolving.elapsed()),
-            resolving.elapsed(),
-        );
+        if let (Some(mirrored), Some(resolving)) = (mirrored, resolving) {
+            let resolved = resolving.elapsed();
+            sync_profile::record(mirrored, started.elapsed().saturating_sub(mirrored + resolved), resolved);
+        }
         timings.fetch = fetch;
         timings.layout = started.elapsed().saturating_sub(fetch);
         Ok((doc, clip))
@@ -976,14 +968,15 @@ impl Renderer {
         let mut timings = Timings::default();
         let mut fresh = None;
         self.prepare(snap, fetcher, &mut fresh, &mut timings)?;
-        self.geometry.entry(live.page).or_default().clear();
+        self.geometry.entry(live.page).or_default();
         Ok(timings)
     }
 
     /// [`Renderer::sync_layout`] from the changes since the page's last tree
     /// or delta (lp-dom's change journal) instead of the whole tree. `Err`
     /// (nothing applied) when the page has no document at this viewport or
-    /// the delta does not fit it: sync the whole tree instead.
+    /// the delta does not fit it: sync the whole tree instead. The returned
+    /// [`Timings::layout`] is measured only while [`profiling`] is on.
     pub fn sync_delta(
         &mut self,
         page: u64,
@@ -999,28 +992,30 @@ impl Renderer {
             return Err(RenderError::BadArea("the viewport changed".into()));
         }
         m.apply_delta(ops).map_err(|_| RenderError::BadArea("the delta does not fit the document".into()))?;
-        let mirrored = started.elapsed();
+        let profiling = profiling::on();
+        let mirrored = profiling.then(|| started.elapsed());
         let mirror::Mirror { doc, bridge, .. } = m;
         let geometry_generation = doc.root_node().tree().geometry_generation();
         let (fetch, passes, resolved_latest) =
             bridge.settle(doc, started + self.fetch_timeout, self.first_layout_wait, style_only);
-        let resolving = Instant::now();
+        let resolving = profiling.then(Instant::now);
         if !resolved_latest {
             match style_only {
                 true => doc.resolve_style(0.0),
                 false => doc.resolve(0.0),
             }
         }
-        sync_profile::record(
-            mirrored,
-            started.elapsed().saturating_sub(mirrored + resolving.elapsed()),
-            resolving.elapsed(),
-        );
         timings.layout_passes = passes;
         timings.fetch = fetch;
-        timings.layout = started.elapsed().saturating_sub(fetch);
+        // Diagnostics only (`LP.geometryStats`): zero while profiling is off.
+        if let (Some(mirrored), Some(resolving)) = (mirrored, resolving) {
+            let resolved = resolving.elapsed();
+            let total = started.elapsed();
+            sync_profile::record(mirrored, total.saturating_sub(mirrored + resolved), resolved);
+            timings.layout = total.saturating_sub(fetch);
+        }
         if !style_only || doc.root_node().tree().geometry_generation() != geometry_generation {
-            self.geometry.entry(page).or_default().clear();
+            self.geometry.entry(page).or_default();
         }
         Ok(timings)
     }
@@ -1031,6 +1026,35 @@ impl Renderer {
     /// changes.
     pub fn set_interaction(&mut self, page: u64, hovered: Option<u64>, focused: Option<u64>, style_only: bool) {
         let changed = self.mark_interaction(page, hovered, focused);
+        self.settle_interaction(page, changed, style_only);
+    }
+
+    /// [`Renderer::set_interaction`] with `:active` on the element keyed
+    /// `active` (and its ancestors) and whether the focused element matches
+    /// `:focus-visible`.
+    pub fn set_interaction_states(
+        &mut self,
+        page: u64,
+        hovered: Option<u64>,
+        focused: Option<u64>,
+        active: Option<u64>,
+        focus_visible: bool,
+        style_only: bool,
+    ) {
+        // The ring first, so a newly focused node gets it as it is focused.
+        let changed = match self.mirrors.get_mut(&page) {
+            Some(m) => {
+                let active = active.and_then(|k| m.node(k));
+                let ring = m.doc.set_focus_ring(focus_visible);
+                m.doc.set_active_to(active) || ring
+            }
+            None => false,
+        };
+        let changed = self.mark_interaction(page, hovered, focused) || changed;
+        self.settle_interaction(page, changed, style_only);
+    }
+
+    fn settle_interaction(&mut self, page: u64, changed: bool, style_only: bool) {
         let Some(m) = self.mirrors.get_mut(&page) else { return };
         // Called on every geometry read: without news a pass would change nothing.
         let changed = changed || m.doc.needs_resolve();
@@ -1038,11 +1062,11 @@ impl Renderer {
             let generation = m.doc.root_node().tree().geometry_generation();
             m.doc.resolve_style(0.0);
             if m.doc.root_node().tree().geometry_generation() != generation {
-                self.geometry.entry(page).or_default().clear();
+                self.geometry.entry(page).or_default();
             }
         } else if changed {
             m.doc.resolve(0.0);
-            self.geometry.entry(page).or_default().clear();
+            self.geometry.entry(page).or_default();
         }
     }
 
@@ -1080,19 +1104,106 @@ impl Renderer {
         }
     }
 
-    /// The computed style of the `::before` (`after: false`) or `::after`
-    /// pseudo-element of the element keyed `key` in `page`'s persistent
-    /// document (see `BaseDocument::pseudo_style`); `synthesize` answers for
-    /// one no rule generates too. `None`: not mirrored, or no such style.
-    pub fn pseudo_style(
+    /// Whether the element keyed `key` in `page`'s persistent document is
+    /// outside every `display: none` subtree of the rendered (flat) tree, as
+    /// of the last style sync, read from the styles Stylo keeps on the nodes
+    /// instead of deriving a computed style per ancestor.
+    ///
+    /// Stylo styles an element only when its parent is displayed, and drops
+    /// the styles under an element it styles `display: none`; an element
+    /// moved under a hidden parent keeps its old styles, which the traversal
+    /// does not reach. So the walk goes all the way up: some element on the
+    /// way with `display: none` hides it. When none is found but an element
+    /// on the way has no styles, the styles cannot tell, and this answers
+    /// `None`, as it does for elements that are not mirrored or not in the
+    /// document.
+    pub fn element_displayed(&self, page: u64, key: u64) -> Option<bool> {
+        let m = self.mirrors.get(&page)?;
+        let mut id = m.node(key)?;
+        let mut unstyled = false;
+        let start = id;
+        loop {
+            let node = m.doc.get_node(id)?;
+            if !node.is_element() {
+                break;
+            }
+            if !node.flags.is_in_document() {
+                return None;
+            }
+            // A drop-down select's descendants (its options) generate no
+            // boxes, as in Chromium's menu list (their `display` stays).
+            if id != start
+                && node.data.downcast_element().is_some_and(|el| {
+                    &*el.name.local == "select"
+                        && el.attr(blitz_dom::local_name!("multiple")).is_none()
+                        && !el
+                            .attr(blitz_dom::local_name!("size"))
+                            .and_then(|s| s.trim().parse::<u32>().ok())
+                            .is_some_and(|s| s > 1)
+                })
+            {
+                return Some(false);
+            }
+            match node.primary_styles() {
+                Some(s) if s.clone_display().is_none() => return Some(false),
+                Some(_) => {}
+                None => unstyled = true,
+            }
+            match node.parent {
+                Some(p) => id = p,
+                None => break,
+            }
+        }
+        (!unstyled).then_some(true)
+    }
+
+    /// lightningpanda: whether `page`'s document records the elements whose
+    /// primary style a restyle replaces
+    /// (`BaseDocument::set_track_style_changes`); no page, nothing.
+    pub fn set_track_style_changes(&mut self, page: u64, on: bool) {
+        if let Some(m) = self.mirrors.get_mut(&page) {
+            m.doc.set_track_style_changes(on);
+        }
+    }
+
+    /// The mirrored elements of `page` whose primary style was replaced since
+    /// the last call (while tracked), by render key, with the styles before
+    /// and after (`BaseDocument::take_style_changes`); elements no longer
+    /// mirrored are left out.
+    pub fn take_style_changes(
+        &mut self,
+        page: u64,
+    ) -> Vec<(
+        u64,
+        style::servo_arc::Arc<style::properties::ComputedValues>,
+        style::servo_arc::Arc<style::properties::ComputedValues>,
+    )> {
+        let Some(m) = self.mirrors.get_mut(&page) else { return Vec::new() };
+        let changes = m.doc.take_style_changes();
+        changes.into_iter().filter_map(|c| Some((m.key_of(c.node)?, c.before, c.after))).collect()
+    }
+
+    /// The computed style of pseudo-element `pseudo` of the element keyed
+    /// `key` in `page`'s persistent document (`getComputedStyle(el,
+    /// pseudo)`; see `BaseDocument::pseudo_element_style`, which
+    /// `generated_only` is passed to). `None`: not mirrored.
+    pub fn element_pseudo_style(
         &self,
         page: u64,
         key: u64,
-        after: bool,
-        synthesize: bool,
+        pseudo: &style::selector_parser::PseudoElement,
+        generated_only: bool,
     ) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
         let m = self.mirrors.get(&page)?;
-        m.doc.pseudo_style(m.node(key)?, after, synthesize)
+        m.doc.pseudo_element_style(m.node(key)?, pseudo, generated_only)
+    }
+
+    /// `false` while no element of `page`'s persistent document has been
+    /// styled with a generated `::before` / `::after`: then
+    /// [`Renderer::element_pseudo_style`] with `generated_only` answers
+    /// `None` for every element.
+    pub fn may_have_generated_before_after(&self, page: u64) -> bool {
+        self.mirrors.get(&page).is_some_and(|m| m.doc.may_have_generated_before_after())
     }
 
     /// The box of the element keyed `key` in `page`'s persistent document,
@@ -1179,6 +1290,13 @@ impl Renderer {
         Some(((size.width as f64).max(overflow.x1).max(vw), (size.height as f64).max(overflow.y1).max(vh)))
     }
 
+    /// Whether a style rule of `page`'s document depends on `:active`
+    /// (Stylo's state dependencies, kept as sheets are flushed). `None`:
+    /// not mirrored.
+    pub fn styles_depend_on_active(&self, page: u64) -> Option<bool> {
+        Some(self.mirrors.get(&page)?.doc.style_depends_on_state(style_dom::ElementState::ACTIVE))
+    }
+
     /// Whether any element of `page`'s document is `position: sticky`.
     pub fn has_sticky(&self, page: u64) -> bool {
         match (self.mirrors.get(&page), self.geometry.get(&page)) {
@@ -1190,8 +1308,8 @@ impl Renderer {
     /// The keys of the elements at viewport point (`x`, `y`) of `page`'s
     /// persistent document, topmost first (`document.elementsFromPoint`;
     /// the first is `elementFromPoint`'s).
-    pub fn elements_from_point(&self, page: u64, x: f64, y: f64) -> Vec<u64> {
-        let Some(m) = self.mirrors.get(&page) else { return Vec::new() };
+    pub fn elements_from_point(&mut self, page: u64, x: f64, y: f64) -> Vec<u64> {
+        let Some(m) = self.mirrors.get_mut(&page) else { return Vec::new() };
         let mut out = Vec::new();
         let mut cur = m.doc.element_from_point(x as f32, y as f32);
         while let Some(id) = cur {
@@ -1251,7 +1369,7 @@ impl Renderer {
         let m = self.mirrors.get_mut(&page).ok_or(RenderError::NoElement)?;
         let paint = paint_document(&mut m.doc, viewport, dpr.clamp(0.1, 16.0), opts, Timings::default())?;
         if paint.relaid {
-            self.geometry.entry(page).or_default().clear();
+            self.geometry.entry(page).or_default();
         }
         Ok(paint)
     }
@@ -1387,15 +1505,7 @@ fn paint_document(
     let (w, h) = (extent_w.ceil() as u32, extent_h.ceil() as u32);
     blitz_paint::paint_scene_for_print(&mut scene, doc, dpr, w, h, 0, 0, opts.print_background);
     timings.scene = t.elapsed();
-    Ok(PdfPaint {
-        scene,
-        pages,
-        by_selector: true,
-        scale: pdf::PX_TO_PT / dpr,
-        extras: None,
-        relaid: false,
-        timings,
-    })
+    Ok(PdfPaint { scene, pages, by_selector: true, scale: pdf::PX_TO_PT / dpr, extras: None, relaid: false, timings })
 }
 
 /// The CSS text with `@page` rules of the document's `<style>` elements and `<link>` sheets, in
@@ -1585,7 +1695,7 @@ fn unrounded_document_height(root: &blitz_dom::Node, doc_h: f64, dpr: f64) -> f6
         return doc_h;
     }
     let l = root.unrounded_layout();
-    let h = (l.size.height as f64).max(l.scrollable_overflow_rect.bottom as f64) * dpr;
+    let h = (l.size.height as f64).max(l.scrollable_overflow_rect.rect().bottom as f64) * dpr;
     if doc_h > (h / dpr).round() * dpr {
         doc_h
     } else {
@@ -1756,15 +1866,15 @@ impl Breaks {
                 let atomic_inline =
                     display.outside() == DisplayOutside::Inline && display.inside() != DisplayInside::Flow;
                 if !atomic_inline {
-                    if forces(b.clone_break_before()) {
+                    if forces(b.slow_clone_break_before()) {
                         let at = top - if in_flow { margin_top } else { 0.0 };
                         out.forced.push((at, at));
                     }
-                    if forces(b.clone_break_after()) {
+                    if forces(b.slow_clone_break_after()) {
                         out.forced_after.push(bottom);
                     }
                 }
-                let avoids = matches!(b.clone_break_inside(), BreakWithin::Avoid | BreakWithin::AvoidPage);
+                let avoids = matches!(b.slow_clone_break_inside(), BreakWithin::Avoid | BreakWithin::AvoidPage);
                 let replaced = node.element_data().is_some_and(|e| {
                     matches!(
                         &*e.name.local,
@@ -1788,8 +1898,8 @@ impl Breaks {
                 monolithic = replaced
                     || atomic_inline
                     || writes_otherwise
-                    || b.clone_contain().contains(Contain::SIZE)
-                    || b.clone_container_type().contains(ContainerType::SIZE);
+                    || b.slow_clone_contain().contains(Contain::SIZE)
+                    || b.slow_clone_container_type().contains(ContainerType::SIZE);
                 // An inline-level box is in a line, which already holds it.
                 if avoids || (monolithic && !atomic_inline) {
                     out.unbroken.push(Unbroken {
@@ -1834,8 +1944,8 @@ impl Breaks {
                 out.contexts.push(LineContext {
                     first: first as u32,
                     count: (out.lines.len() - first) as u32,
-                    orphans: limit(text_style.map(|t| t.clone_orphans().0)),
-                    widows: limit(text_style.map(|t| t.clone_widows().0)),
+                    orphans: limit(text_style.map(|t| t.slow_clone_orphans().0)),
+                    widows: limit(text_style.map(|t| t.slow_clone_widows().0)),
                 });
             }
             if let Some(children) = children.as_ref() {
@@ -2129,8 +2239,8 @@ fn avoids_break(doc: &blitz_dom::BaseDocument, node: &blitz_dom::Node, edge: Edg
         let Some(styles) = node.primary_styles() else { return false };
         let b = styles.get_box();
         let value = match edge {
-            Edge::Before => b.clone_break_before(),
-            Edge::After => b.clone_break_after(),
+            Edge::Before => b.slow_clone_break_before(),
+            Edge::After => b.slow_clone_break_after(),
         };
         if matches!(value, BreakBetween::Avoid | BreakBetween::AvoidPage) {
             return true;
@@ -2502,8 +2612,12 @@ mod settle_resolution_tests {
         let doc = parse_document(&dom, "http://test/", html);
         let d = dom.borrow();
         let target = render_key(d.get_element_by_id(doc, "box").unwrap().unwrap());
-        let tree =
-            d.render_tree(doc, &RenderHtml { style_text: &|_| None, stylesheet_href: &|_| None, mark: None }).unwrap();
+        let tree = d
+            .render_tree(
+                doc,
+                &RenderHtml { style_text: &|_| None, stylesheet_href: &|_| None, mark: None, adopted: None },
+            )
+            .unwrap();
         let tree = Tree {
             nodes: tree
                 .nodes
@@ -2768,6 +2882,88 @@ mod settle_resolution_tests {
         );
         eprintln!("clean full delta resolve generation advances={advances}");
         assert_eq!(advances, 1, "normal successful settling already resolved this mutation");
+    }
+
+    /// The blitz node of the element with `id` in `page`'s mirrored document.
+    fn blitz_by_id(renderer: &Renderer, page: u64, id: &str) -> blitz_dom::NodeId {
+        let doc = &renderer.mirrors[&page].doc;
+        let attr = blitz_dom::local_name!("id");
+        doc.root_node()
+            .tree()
+            .iter()
+            .find(|(_, node)| node.element_data().is_some_and(|el| el.attr(attr.clone()) == Some(id)))
+            .map(|(node_id, _)| node_id)
+            .unwrap()
+    }
+
+    fn set_style(renderer: &mut Renderer, page: u64, node: blitz_dom::NodeId, style: &str) {
+        let doc = &mut renderer.mirrors.get_mut(&page).unwrap().doc;
+        let name = blitz_dom::QualName::new(None, blitz_dom::ns!(), blitz_dom::local_name!("style"));
+        doc.mutate().set_attribute(node, name, style);
+    }
+
+    fn resolve(renderer: &mut Renderer, page: u64) {
+        renderer.mirrors.get_mut(&page).unwrap().doc.resolve(0.0);
+    }
+
+    const STACKED: &str =
+        "<!doctype html><style>body{margin:0}div{position:absolute;left:0;top:0;width:50px;height:50px}</style>\
+        <div id=box style=z-index:1></div><div id=other style=z-index:2></div><p id=far style=margin-top:80px>x</p>";
+
+    #[test]
+    fn resolve_leaves_the_paint_tree_to_the_first_hit_test() {
+        let (snap, _) = fixture(STACKED);
+        let fetcher: Arc<dyn Fetcher> = Arc::new(NoFetch);
+        let mut renderer = Renderer::new();
+        renderer.sync_layout(&snap, &fetcher).unwrap();
+        let other = blitz_by_id(&renderer, 1, "other");
+        // `sync_layout` resolves but neither paints nor hit-tests.
+        let doc = &mut renderer.mirrors.get_mut(&1).unwrap().doc;
+        assert!(doc.get_node(other).unwrap().stacking_context.is_none(), "resolve built the paint tree");
+        doc.ensure_paint_tree();
+        assert!(doc.get_node(other).unwrap().stacking_context.is_some());
+        assert!(doc.paint_tree_matches_fresh_build());
+        // Further resolves leave the built tree as it was until the next build.
+        set_style(&mut renderer, 1, other, "z-index:2;opacity:0.5");
+        resolve(&mut renderer, 1);
+        let doc = &mut renderer.mirrors.get_mut(&1).unwrap().doc;
+        assert!(doc.get_node(other).unwrap().flags.contains(blitz_dom::node::NodeFlags::PAINT_TREE_DIRTY));
+        doc.ensure_paint_tree();
+        assert!(!doc.get_node(other).unwrap().flags.contains(blitz_dom::node::NodeFlags::PAINT_TREE_DIRTY));
+        assert!(doc.paint_tree_matches_fresh_build());
+    }
+
+    #[test]
+    fn element_from_point_sees_every_resolve_since_the_last_paint() {
+        let (snap, key) = fixture(STACKED);
+        let fetcher: Arc<dyn Fetcher> = Arc::new(NoFetch);
+        let mut renderer = Renderer::new();
+        renderer.paint(&snap, Area::Viewport, &fetcher).unwrap();
+        let (bx, other, far) =
+            (blitz_by_id(&renderer, 1, "box"), blitz_by_id(&renderer, 1, "other"), blitz_by_id(&renderer, 1, "far"));
+        let other_key = renderer.mirrors[&1].key_of(other).unwrap();
+        assert_eq!(renderer.elements_from_point(1, 10.0, 10.0).first(), Some(&other_key));
+
+        // Raise #box, then make an unrelated change in a second resolve: the
+        // hit test (no paint in between) must still see the first one.
+        set_style(&mut renderer, 1, bx, "z-index:3");
+        resolve(&mut renderer, 1);
+        set_style(&mut renderer, 1, far, "margin-top:81px");
+        resolve(&mut renderer, 1);
+        assert_eq!(renderer.elements_from_point(1, 10.0, 10.0).first(), Some(&key));
+        assert!(renderer.mirrors.get_mut(&1).unwrap().doc.paint_tree_matches_fresh_build());
+
+        // Lower it again across two resolves, then drop #other: #box is on top.
+        set_style(&mut renderer, 1, bx, "z-index:1");
+        resolve(&mut renderer, 1);
+        resolve(&mut renderer, 1);
+        assert_eq!(renderer.elements_from_point(1, 10.0, 10.0).first(), Some(&other_key));
+        renderer.mirrors.get_mut(&1).unwrap().doc.mutate().remove_node(other);
+        resolve(&mut renderer, 1);
+        set_style(&mut renderer, 1, far, "margin-top:82px");
+        resolve(&mut renderer, 1);
+        assert_eq!(renderer.elements_from_point(1, 10.0, 10.0).first(), Some(&key));
+        assert!(renderer.mirrors.get_mut(&1).unwrap().doc.paint_tree_matches_fresh_build());
     }
 }
 

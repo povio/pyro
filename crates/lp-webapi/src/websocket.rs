@@ -1,442 +1,486 @@
-//! `WebSocket` (WHATWG WebSockets) on `lp_net`'s RFC 6455 client.
+//! HTML WebSocket and CloseEvent, in windows and dedicated workers.
 //!
-//! The constructor parses and checks the URL and subprotocols, then opens the
-//! socket on the context's I/O thread. Each thing the socket reports (open,
-//! each message, the close) becomes its own task on the page's event loop,
-//! in order: `open`, `message` (`MessageEvent`, data a string, `Blob` or
-//! `ArrayBuffer` per `binaryType`), and finally `error` (when the connection
-//! failed) and `close` (`CloseEvent`).
-//!
-//! Lifetime: a socket that is not yet closed is pinned, so its listeners run
-//! without a JS reference (as HTML keeps such sockets alive); the pin is
-//! released when `close` is delivered. Navigating away or closing the page
-//! closes its sockets (1001, going away) without further events.
-//!
-//! Gaps (explicit): workers have no WebSocket; no extensions are negotiated.
+//! The interfaces are made in JS (websocket.js) on a realm's first use of
+//! either name, like streams: a realm that never touches them pays one global
+//! accessor pair per name and nothing else. The connection itself is lp-net's
+//! ([`lp_net::NetClient::websocket`]), on the context's I/O thread with its
+//! cookies, proxy, TLS and CDP observation. Its events come back as tasks
+//! posted to the owner's event loop through the page's remote poster (one
+//! task per event; `bufferedAmount` updates are coalesced), so nothing polls
+//! and a page without sockets has nothing on its paths. Sockets are closed
+//! (aborted) when their realm or document goes away.
 use std::cell::{Cell, RefCell};
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::Arc;
 
-use lp_js::{ClassDef, JsClass, JsError, JsResult, RealmId, Scope, Value, WeakRealm};
-use lp_net::{Destination, Request, WebSocketHandle, WsEvent, WsMessage, WsRequest};
+use lp_js::{ClassDef, JsClass, JsError, JsResult, Object, Persistent, RealmId, Scope, Value, WeakRealm};
+use lp_net::{Destination, Request, WebSocketHandle, WebSocketRequest, WsEvent};
 use rustc_hash::FxHashMap;
 
-use crate::event::{EventCore, EventInterface};
 use crate::page::PageDom;
-use crate::target::{fire, page_of, pin_target, unpin_target, EventTarget, EventTargetData};
-use crate::util::dom_string;
-use lp_dom::events::TargetKey;
+use crate::target::{page_of, EventTarget};
+use crate::window::WindowHost;
 
-const CONNECTING: u16 = 0;
-const OPEN: u16 = 1;
-const CLOSING: u16 = 2;
-const CLOSED: u16 = 3;
+/// Kept on the realm's `navigator` (a hidden property) in a window.
+const KEY: &str = "lpWebSocket";
 
-thread_local! {
-    /// Sockets not yet closed, by their registry id. Strong: a socket lives
-    /// until it is closed or its page goes.
-    static SOCKETS: RefCell<FxHashMap<u64, Rc<SocketInner>>> = RefCell::default();
-    static NEXT_ID: Cell<u64> = const { Cell::new(1) };
+macro_rules! lazy_globals {
+    ($def:ident) => {
+        $def.global_value_accessor("WebSocket", |s, _| global(s, "WebSocket"), |s, _, value| replace(s, "WebSocket", value));
+        $def.global_value_accessor("CloseEvent", |s, _| global(s, "CloseEvent"), |s, _, value| replace(s, "CloseEvent", value));
+    };
 }
 
-pub(crate) struct SocketInner {
-    id: u64,
-    target: EventTargetData,
+/// Adds the lazy interface names to lp-browser's `Window` class.
+pub(crate) fn define_globals<W>(def: &mut ClassDef<W>)
+where
+    W: JsClass,
+    W::Data: WindowHost,
+{
+    lazy_globals!(def);
+}
+
+/// Adds them to a worker's global scope class.
+pub(crate) fn define_worker_globals<W: JsClass>(def: &mut ClassDef<W>) {
+    lazy_globals!(def);
+}
+
+fn global<'s>(s: &Scope<'s>, name: &str) -> JsResult<Value<'s>> {
+    let value = module(s)?.get(name)?;
+    replace(s, name, value)?;
+    Ok(value)
+}
+
+/// Shadows the accessor with the interface object's usual data property; also
+/// what assigning the name does, so page polyfills keep working.
+fn replace(s: &Scope<'_>, name: &str, value: Value<'_>) -> JsResult<()> {
+    let page = page_of(s)?;
+    // A window's `Object.defineProperty`, captured before page script ran.
+    let define = page.define_properties.borrow().get(&s.realm_id()).map(|p| p.get(s));
+    let target = [s.global().value(), s.string(name), value];
+    match define.and_then(|v| v.as_object()) {
+        Some(define) => {
+            let desc = s.object();
+            desc.set_atom("value", value)?;
+            desc.set_atom("writable", s.boolean(true))?;
+            desc.set_atom("enumerable", s.boolean(false))?;
+            desc.set_atom("configurable", s.boolean(true))?;
+            define.call(None, &[target[0], target[1], desc.value()])?;
+        }
+        // A worker: the module's, captured when it was made.
+        None => {
+            module(s)?.get_atom("define")?.as_object().ok_or_else(unavailable)?.call(None, &target)?;
+        }
+    }
+    Ok(())
+}
+
+fn unavailable() -> JsError {
+    JsError::Type("WebSocket is unavailable".into())
+}
+
+/// The realm's module when it was made.
+fn existing<'s>(s: &Scope<'s>) -> JsResult<Option<Object<'s>>> {
+    if let Some(g) = s.global_data::<crate::worker_scope::DedicatedWorkerGlobalScope>() {
+        return Ok(g.websocket_module.borrow().as_ref().and_then(|p| p.get(s).as_object()));
+    }
+    let page = page_of(s)?;
+    let navigator = crate::window::navigator(s, &page)?.as_object().ok_or_else(unavailable)?;
+    Ok(s.get_hidden(navigator, KEY)?.and_then(|v| v.as_object()))
+}
+
+/// This realm's module, made on first use.
+fn module<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
+    if let Some(module) = existing(s)? {
+        return Ok(module);
+    }
+    let make = s.eval(include_str!("websocket.js"), Some("lightningpanda://internal/websocket.js"), 1)?;
+    let module = make.as_object().ok_or_else(unavailable)?.call(None, &[natives(s)?.value()])?;
+    if let Some(g) = s.global_data::<crate::worker_scope::DedicatedWorkerGlobalScope>() {
+        *g.websocket_module.borrow_mut() = Some(Persistent::new(s, module));
+    } else {
+        let page = page_of(s)?;
+        let navigator = crate::window::navigator(s, &page)?.as_object().ok_or_else(unavailable)?;
+        s.set_hidden(navigator, KEY, module)?;
+    }
+    module.as_object().ok_or_else(unavailable)
+}
+
+/// One connection, owned by its realm's thread.
+struct Socket {
     realm: WeakRealm,
     realm_id: RealmId,
-    url: String,
-    /// Origin of the socket's URL: `MessageEvent.origin`.
-    origin: String,
-    ready: Cell<u16>,
-    protocol: RefCell<String>,
-    extensions: RefCell<String>,
-    binary_arraybuffer: Cell<bool>,
+    page: Weak<PageDom>,
+    /// The `WebSocket` object: kept alive until the connection is closed.
+    object: Persistent,
+    url: lp_net::Url,
     handle: RefCell<Option<WebSocketHandle>>,
-    /// Bytes `send` was given after the socket started closing (they are
-    /// counted, never sent).
-    discarded: Cell<u64>,
-    /// `close()` was called while connecting: the connection is failed.
-    failed_connecting: Cell<bool>,
+    /// Bytes written since the last `sent` delivery, and whether one is posted.
+    sent: Arc<AtomicUsize>,
+    sent_posted: Arc<AtomicBool>,
 }
 
-impl SocketInner {
-    fn page(&self) -> &Rc<PageDom> {
-        &self.target.page
-    }
-
-    fn buffered_amount(&self) -> u64 {
-        self.handle.borrow().as_ref().map_or(0, |h| h.buffered_amount()) + self.discarded.get()
-    }
-
-    fn unpin(&self) {
-        if let Some(realm) = self.realm.upgrade() {
-            if let Ok(s) = realm.scope() {
-                unpin_target(&s, self.page(), self.target.key);
-            }
-        }
-    }
-
-    /// Runs on the page's event loop, one task per socket event.
-    fn on_event(self: &Rc<Self>, event: WsEvent) {
-        if self.page().is_disposed() || self.ready.get() == CLOSED {
-            return;
-        }
-        match event {
-            WsEvent::Open { protocol, extensions } => {
-                if self.ready.get() != CONNECTING {
-                    return;
-                }
-                self.ready.set(OPEN);
-                *self.protocol.borrow_mut() = protocol;
-                *self.extensions.borrow_mut() = extensions;
-                self.fire_simple("open");
-            }
-            WsEvent::Message(message) => {
-                if self.ready.get() != OPEN {
-                    return;
-                }
-                let Some(realm) = self.realm.upgrade() else { return };
-                let Ok(s) = realm.scope() else { return };
-                let data = match message {
-                    WsMessage::Text(text) => Ok(s.string(&text)),
-                    WsMessage::Binary(bytes) if self.binary_arraybuffer.get() => {
-                        crate::encoding::array_buffer(&s, &bytes)
-                    }
-                    WsMessage::Binary(bytes) => s
-                        .wrap::<crate::file::Blob>(
-                            crate::file::BlobData { bytes, mime: String::new(), file: None },
-                            None,
-                        )
-                        .map(|o| o.value()),
-                };
-                let data = match data {
-                    Ok(d) => d,
-                    Err(e) => {
-                        s.report_exception(&e);
-                        return;
-                    }
-                };
-                let ev = EventCore::trusted(self.page(), EventInterface::MessageEvent, "message", false, false);
-                {
-                    let mut f = ev.fields.borrow_mut();
-                    f.message_data = Some(lp_js::Persistent::new(&s, data));
-                    f.origin = self.origin.clone();
-                }
-                fire(self.page(), self.target.key, &ev);
-            }
-            WsEvent::Closed { code, reason, clean, error } => {
-                self.ready.set(CLOSED);
-                self.handle.borrow_mut().take();
-                SOCKETS.with(|m| m.borrow_mut().remove(&self.id));
-                let failed = self.failed_connecting.get();
-                if error.is_some() || failed || !clean {
-                    self.fire_simple("error");
-                }
-                let (code, reason, clean) = if failed { (1006, String::new(), false) } else { (code, reason, clean) };
-                let ev = EventCore::trusted(self.page(), EventInterface::CloseEvent, "close", false, false);
-                {
-                    let mut f = ev.fields.borrow_mut();
-                    f.was_clean = clean;
-                    f.close_code = code;
-                    f.close_reason = reason;
-                }
-                fire(self.page(), self.target.key, &ev);
-                self.unpin();
-            }
-        }
-    }
-
-    fn fire_simple(&self, ty: &str) {
-        let ev = EventCore::trusted(self.page(), EventInterface::Event, ty, false, false);
-        fire(self.page(), self.target.key, &ev);
-    }
-
-    /// Drops the connection without events (page or realm gone).
-    fn abandon(&self) {
-        self.ready.set(CLOSED);
-        self.handle.borrow_mut().take();
-    }
+thread_local! {
+    /// The thread's open connections by key. Empty unless script opened one.
+    static SOCKETS: RefCell<FxHashMap<u64, Rc<Socket>>> = RefCell::new(FxHashMap::default());
+    static NEXT: Cell<u64> = const { Cell::new(1) };
 }
 
-pub struct WebSocketData(Rc<SocketInner>);
+fn socket(key: u64) -> Option<Rc<Socket>> {
+    SOCKETS.with(|sockets| sockets.borrow().get(&key).cloned())
+}
 
-/// Parses `url` against the document (WHATWG WebSockets "new WebSocket" steps
-/// 1-7): http(s) become ws(s), anything else but ws(s) and fragments fail.
+/// Whether `name` is an RFC 7230 token (a subprotocol name).
+fn is_token(name: &str) -> bool {
+    !name.is_empty() && name.bytes().all(|b| (0x21..0x7f).contains(&b) && !b"()<>@,;:\\\"/[]?={}".contains(&b))
+}
+
+fn syntax_error(message: String) -> JsError {
+    JsError::dom("SyntaxError", format!("Failed to construct 'WebSocket': {message}"))
+}
+
+/// The URL steps of `new WebSocket(url)`: the resolved `ws:`/`wss:` URL.
 fn parse_url(page: &PageDom, input: &str) -> JsResult<lp_net::Url> {
     let resolved = crate::html::resolve_url_utf8(&page.dom.borrow(), page.document(), input);
-    let mut url = lp_net::Url::parse(&resolved).map_err(|_| {
-        JsError::dom("SyntaxError", format!("Failed to construct 'WebSocket': The URL '{input}' is invalid."))
-    })?;
+    let mut url = lp_net::Url::parse(&resolved).map_err(|_| syntax_error(format!("The URL '{input}' is invalid.")))?;
     match url.scheme() {
+        "ws" | "wss" => {}
         "http" => {
             let _ = url.set_scheme("ws");
         }
         "https" => {
             let _ = url.set_scheme("wss");
         }
-        "ws" | "wss" => {}
         other => {
-            return Err(JsError::dom(
-                "SyntaxError",
-                format!(
-                    "Failed to construct 'WebSocket': The URL's scheme must be either 'http', 'https', 'ws', or 'wss'. '{other}' is not allowed."
-                ),
-            ))
+            return Err(syntax_error(format!(
+                "The URL's scheme must be either 'http', 'https', 'ws', or 'wss'. '{other}' is not allowed."
+            )))
         }
     }
-    if url.fragment().is_some() {
-        return Err(JsError::dom(
-            "SyntaxError",
-            format!("Failed to construct 'WebSocket': The URL contains a fragment identifier ('{}'). Fragment identifiers are not allowed in WebSocket URLs.", url.fragment().unwrap_or("")),
-        ));
+    if let Some(fragment) = url.fragment() {
+        return Err(syntax_error(format!(
+            "The URL contains a fragment identifier ('{fragment}'). Fragment identifiers are not allowed in WebSocket URLs."
+        )));
     }
     Ok(url)
 }
 
-/// A subprotocol is an HTTP token (RFC 7230 §3.2.6).
-fn is_token(s: &str) -> bool {
-    !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b))
+fn validate_protocols(protocols: &[String]) -> JsResult<()> {
+    for (i, protocol) in protocols.iter().enumerate() {
+        if !is_token(protocol) {
+            return Err(syntax_error(format!("The subprotocol '{protocol}' is invalid.")));
+        }
+        if protocols[..i].iter().any(|p| p.eq_ignore_ascii_case(protocol)) {
+            return Err(syntax_error(format!("The subprotocol '{protocol}' is duplicated.")));
+        }
+    }
+    Ok(())
 }
 
-fn protocols(s: &Scope<'_>, value: Value<'_>) -> JsResult<Vec<String>> {
-    if value.is_undefined() {
-        return Ok(Vec::new());
+/// Posts `event` for socket `key` to the owner's loop. Runs on the I/O thread.
+fn sink(
+    key: u64,
+    poster: crate::page::RemotePoster,
+    sent: Arc<AtomicUsize>,
+    sent_posted: Arc<AtomicBool>,
+) -> lp_net::WsSink {
+    Box::new(move |event| match event {
+        WsEvent::Sent(n) => {
+            sent.fetch_add(n, Ordering::AcqRel);
+            if !sent_posted.swap(true, Ordering::AcqRel) {
+                poster(Box::new(move || deliver_sent(key)));
+            }
+        }
+        event => poster(Box::new(move || deliver(key, event))),
+    })
+}
+
+/// Calls the module's `deliver(ws, kind, ...)` in the socket's realm.
+fn call_deliver(socket: &Socket, kind: &str, args: impl for<'s> FnOnce(&Scope<'s>) -> JsResult<[Value<'s>; 4]>) {
+    let Some(page) = socket.page.upgrade() else { return };
+    if page.is_disposed() {
+        return;
     }
-    // `(DOMString or sequence<DOMString>)`: an object is a sequence.
-    let list = if value.as_object().is_some() {
-        let seq = s.sequence(value, "Failed to construct 'WebSocket'")?;
-        let len = seq.get("length")?.to_number()? as u32;
-        (0..len).map(|i| seq.get_index(i).and_then(dom_string)).collect::<JsResult<Vec<_>>>()?
-    } else {
-        vec![dom_string(value)?]
+    let Some(realm) = socket.realm.upgrade() else { return };
+    let Ok(s) = realm.scope() else { return };
+    let run = || -> JsResult<()> {
+        let module = existing(&s)?.ok_or_else(unavailable)?;
+        let deliver = module.get_atom("deliver")?.as_object().ok_or_else(unavailable)?;
+        let [a, b, c, d] = args(&s)?;
+        deliver.call(None, &[socket.object.get(&s), s.string(kind), a, b, c, d])?;
+        Ok(())
     };
-    for (i, p) in list.iter().enumerate() {
-        if !is_token(p) {
-            return Err(JsError::dom(
-                "SyntaxError",
-                format!("Failed to construct 'WebSocket': The subprotocol '{p}' is invalid."),
-            ));
-        }
-        if list[..i].contains(p) {
-            return Err(JsError::dom(
-                "SyntaxError",
-                format!("Failed to construct 'WebSocket': The subprotocol '{p}' is duplicated."),
-            ));
-        }
+    if let Err(error) = run() {
+        s.report_exception(&error);
     }
-    Ok(list)
 }
 
-pub struct WebSocket;
-impl JsClass for WebSocket {
-    const NAME: &'static str = "WebSocket";
-    type Data = WebSocketData;
-    type Parent = EventTarget;
-    fn define(def: &mut ClassDef<Self>) {
-        def.upcast(|d: &WebSocketData| &d.0.target);
-        def.constructor(1, |s, nt, a| {
-            a.require(1, "WebSocket")?;
-            let page = page_of(s)?;
-            if page.is_disposed() {
-                return Err(JsError::ContextDestroyed);
-            }
-            let input = dom_string(a.get(0))?;
-            let url = parse_url(&page, &input)?;
-            let protocols = protocols(s, a.get(1))?;
-            let net =
-                page.net.borrow().clone().ok_or_else(|| JsError::Type("Page networking is not installed".into()))?;
-            let poster =
-                page.remote_poster().ok_or_else(|| JsError::Type("Browser task poster is not installed".into()))?;
-            let document_url =
-                page.dom.borrow().document_data(page.document()).map(|d| d.url.to_string()).unwrap_or_default();
-            let mut request = WsRequest::new(url.clone());
-            request.protocols = protocols;
-            request.origin = Some(crate::storage::tuple_origin(s, &page).unwrap_or_else(|| "null".into()));
-            request.document_url = lp_net::Url::parse(&document_url).ok();
-            {
-                let mut defaults =
-                    Request::get(lp_net::Url::parse("http://localhost/").expect("static URL"), Destination::WebSocket);
-                page.apply_request_defaults(&mut defaults);
-                request.defaults = defaults.defaults;
-            }
-            let context = page.request_context();
-            request.frame_id = context.frame_id;
-            request.loader_id = context.loader_id;
+fn deliver_sent(key: u64) {
+    let Some(socket) = socket(key) else { return };
+    socket.sent_posted.store(false, Ordering::Release);
+    let n = socket.sent.swap(0, Ordering::AcqRel);
+    call_deliver(&socket, "sent", |s| Ok([s.number(n as f64), s.undefined(), s.undefined(), s.undefined()]));
+}
 
-            let target = EventTargetData::new(&page);
-            let TargetKey::Other(k) = target.key else { unreachable!() };
-            let key = page.other_identity(k);
-            let id = NEXT_ID.with(|n| n.replace(n.get() + 1));
-            let origin = url.origin().ascii_serialization();
-            let inner = Rc::new(SocketInner {
-                id,
-                target,
-                realm: s.realm().downgrade(),
-                realm_id: s.realm_id(),
-                url: url.to_string(),
-                origin,
-                ready: Cell::new(CONNECTING),
-                protocol: RefCell::new(String::new()),
-                extensions: RefCell::new(String::new()),
-                binary_arraybuffer: Cell::new(false),
-                handle: RefCell::new(None),
-                discarded: Cell::new(0),
-                failed_connecting: Cell::new(false),
+fn deliver(key: u64, event: WsEvent) {
+    let Some(socket) = socket(key) else { return };
+    match event {
+        WsEvent::Open { protocol, extensions, headers } => {
+            // The handshake's cookies become visible to script now.
+            if let Some(page) = socket.page.upgrade() {
+                if let Some(net) = page.net.borrow().as_ref() {
+                    net.store_websocket_cookies(&socket.url, &headers);
+                }
+            }
+            call_deliver(&socket, "open", |s| {
+                Ok([s.string(&protocol), s.string(&extensions), s.undefined(), s.undefined()])
             });
-            let object = s.wrap_new::<WebSocket>(WebSocketData(inner.clone()), nt, Some(key))?;
-            pin_target(s, &page, inner.target.key, object);
-            SOCKETS.with(|m| m.borrow_mut().insert(id, inner.clone()));
-            let handle = net.websocket(
-                request,
-                Box::new(move |event| {
-                    poster(Box::new(move || {
-                        let socket = SOCKETS.with(|m| m.borrow().get(&id).cloned());
-                        if let Some(socket) = socket {
-                            socket.on_event(event);
-                        }
-                    }))
-                }),
-            );
-            *inner.handle.borrow_mut() = Some(handle);
-            Ok(object)
-        });
-        for (name, value) in [("CONNECTING", CONNECTING), ("OPEN", OPEN), ("CLOSING", CLOSING), ("CLOSED", CLOSED)] {
-            def.constant(name, value as f64);
         }
-        def.getter("url", |s, d| Ok(s.string(&d.0.url)));
-        def.getter("readyState", |s, d| Ok(s.number(d.0.ready.get() as f64)));
-        def.getter("bufferedAmount", |s, d| Ok(s.number(d.0.buffered_amount() as f64)));
-        def.getter("extensions", |s, d| Ok(s.string(&d.0.extensions.borrow())));
-        def.getter("protocol", |s, d| Ok(s.string(&d.0.protocol.borrow())));
-        def.accessor(
-            "binaryType",
-            |s, d| Ok(s.string(if d.0.binary_arraybuffer.get() { "arraybuffer" } else { "blob" })),
-            |_s, d, value| {
-                // An enumeration attribute ignores values outside the enum.
-                match dom_string(value)?.as_str() {
-                    "arraybuffer" => d.0.binary_arraybuffer.set(true),
-                    "blob" => d.0.binary_arraybuffer.set(false),
-                    _ => {}
-                }
-                Ok(())
-            },
-        );
-        def.method("send", 1, |s, d, a| {
-            a.require(1, "WebSocket.send")?;
-            let data = a.get(0);
-            let message = if let Some(blob) = s.unwrap::<crate::file::Blob>(data) {
-                WsMessage::Binary(blob.bytes.clone())
-            } else if let Some(bytes) = crate::encoding::buffer_source_bytes(s, data)? {
-                WsMessage::Binary(bytes.into())
-            } else {
-                WsMessage::Text(dom_string(data)?)
-            };
-            match d.0.ready.get() {
-                CONNECTING => {
-                    return Err(JsError::dom(
-                        "InvalidStateError",
-                        "Failed to execute 'send' on 'WebSocket': Still in CONNECTING state.",
-                    ))
-                }
-                OPEN => {
-                    if let Some(handle) = d.0.handle.borrow().as_ref() {
-                        handle.send(message);
-                    }
-                }
-                _ => d.0.discarded.set(d.0.discarded.get() + message.len() as u64),
-            }
-            Ok(s.undefined())
-        });
-        def.method("close", 0, |s, d, a| {
-            let code = match a.opt(0).filter(|v| !v.is_undefined()) {
-                Some(v) => {
-                    let n = v.to_number()?;
-                    // `[Clamp] unsigned short`.
-                    let n = if n.is_nan() { 0.0 } else { n.clamp(0.0, 65535.0).round_ties_even() };
-                    let code = n as u16;
-                    if code != 1000 && !(3000..=4999).contains(&code) {
-                        return Err(JsError::dom(
-                            "InvalidAccessError",
-                            format!("Failed to execute 'close' on 'WebSocket': The close code must be either 1000, or between 3000 and 4999. {code} is neither."),
-                        ));
-                    }
-                    Some(code)
-                }
-                None => None,
-            };
-            let reason = match a.opt(1).filter(|v| !v.is_undefined()) {
-                Some(v) => dom_string(v)?,
-                None => String::new(),
-            };
-            if reason.len() > 123 {
-                return Err(JsError::dom(
-                    "SyntaxError",
-                    "Failed to execute 'close' on 'WebSocket': The close reason must not be greater than 123 UTF-8 bytes.",
-                ));
-            }
-            match d.0.ready.get() {
-                CLOSING | CLOSED => {}
-                CONNECTING => {
-                    d.0.ready.set(CLOSING);
-                    d.0.failed_connecting.set(true);
-                    if let Some(handle) = d.0.handle.borrow().as_ref() {
-                        handle.close(code.or(Some(1000)), reason);
-                    }
-                }
-                _ => {
-                    d.0.ready.set(CLOSING);
-                    if let Some(handle) = d.0.handle.borrow().as_ref() {
-                        // A reason needs a code; close() without one sends none.
-                        handle.close(code.or(if reason.is_empty() { None } else { Some(1000) }), reason);
-                    }
-                }
-            }
-            Ok(s.undefined())
-        });
-        macro_rules! handler {
-            ($name:literal, $ty:literal) => {
-                def.accessor(
-                    $name,
-                    |s, d| crate::target::event_handler(s, &d.0.target, $ty),
-                    |s, d, value| crate::target::set_event_handler(s, &d.0.target, $ty, value),
-                );
-            };
+        WsEvent::Text(text) => {
+            call_deliver(&socket, "message", |s| Ok([s.string(&text), s.undefined(), s.undefined(), s.undefined()]))
         }
-        handler!("onopen", "open");
-        handler!("onmessage", "message");
-        handler!("onerror", "error");
-        handler!("onclose", "close");
+        WsEvent::Binary(bytes) => call_deliver(&socket, "message", |s| {
+            Ok([crate::encoding::array_buffer(s, &bytes)?, s.undefined(), s.undefined(), s.undefined()])
+        }),
+        WsEvent::Sent(_) => {}
+        WsEvent::Closed { clean, code, reason, failed } => {
+            SOCKETS.with(|sockets| sockets.borrow_mut().remove(&key));
+            socket.handle.borrow_mut().take();
+            call_deliver(&socket, "close", |s| {
+                Ok([s.boolean(clean), s.number(code as f64), s.string(&reason), s.boolean(failed)])
+            });
+        }
     }
 }
 
-/// The page's sockets go away with it.
+/// "Fail the WebSocket connection" without a network connection.
+fn fail_soon(page: &PageDom, key: u64) {
+    let closed = WsEvent::Closed { clean: false, code: 1006, reason: String::new(), failed: true };
+    match page.remote_poster() {
+        Some(poster) => poster(Box::new(move || deliver(key, closed))),
+        None => {
+            SOCKETS.with(|sockets| sockets.borrow_mut().remove(&key));
+        }
+    }
+}
+
+fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
+    let natives = s.object();
+    // `connect(ws, url, protocols)`: [key, url, origin of url].
+    let connect = s.function("connect", |s, _this, a| {
+        let page = page_of(s)?;
+        if page.is_disposed() {
+            return Err(JsError::ContextDestroyed);
+        }
+        let input = a.get(1).to_string()?;
+        let url = parse_url(&page, &input)?;
+        let list = a.get(2).as_object().ok_or_else(unavailable)?;
+        let len = list.get_atom("length")?.to_number()? as u32;
+        let mut protocols = Vec::with_capacity(len as usize);
+        for i in 0..len {
+            protocols.push(list.get_index(i)?.to_string()?);
+        }
+        validate_protocols(&protocols)?;
+        let key = NEXT.with(|n| n.replace(n.get() + 1));
+        let socket = Rc::new(Socket {
+            realm: s.realm().downgrade(),
+            realm_id: s.realm_id(),
+            page: Rc::downgrade(&page),
+            object: Persistent::new(s, a.get(0)),
+            url: url.clone(),
+            handle: RefCell::new(None),
+            sent: Arc::default(),
+            sent_posted: Arc::default(),
+        });
+        SOCKETS.with(|sockets| sockets.borrow_mut().insert(key, socket.clone()));
+        // The realm's origin, else its document's (as fetch does).
+        let origin = s.realm().origin().unwrap_or_else(|| {
+            let document = page.dom.borrow().document_data(page.document()).map(|d| d.url.to_string()).ok();
+            document
+                .and_then(|u| lp_net::Url::parse(&u).ok())
+                .map_or_else(|| "null".into(), |u| u.origin().ascii_serialization())
+        });
+        let mut http_url = url.clone();
+        let _ = http_url.set_scheme(if url.scheme() == "wss" { "https" } else { "http" });
+        // Mixed content: a secure context only opens secure connections.
+        let insecure = origin.starts_with("https:") && !lp_net::cookies::is_trustworthy(&http_url);
+        let net = page.net.borrow().clone();
+        let poster = page.remote_poster();
+        match (net, poster) {
+            (Some(net), Some(poster)) if !insecure => {
+                let mut defaults = Request::get(http_url, Destination::WebSocket);
+                page.apply_request_defaults(&mut defaults);
+                let request = WebSocketRequest {
+                    url: url.clone(),
+                    protocols,
+                    origin,
+                    frame_id: page.request_context().frame_id,
+                    defaults: defaults.defaults,
+                };
+                let sink = sink(key, poster, socket.sent.clone(), socket.sent_posted.clone());
+                let (_, handle) = net.websocket(request, sink);
+                *socket.handle.borrow_mut() = Some(handle);
+            }
+            _ => fail_soon(&page, key),
+        }
+        let result =
+            s.array(&[s.number(key as f64), s.string(url.as_str()), s.string(&url.origin().ascii_serialization())])?;
+        Ok(result.value())
+    })?;
+    natives.set_atom("connect", connect.value())?;
+    // `send(key, data, live)`: the message's byte length; sent when `live`.
+    let send = s.function("send", |s, _this, a| {
+        let key = a.get(0).to_number()? as u64;
+        let data = a.get(1);
+        let live = a.get(2).to_bool();
+        let handle = |f: &dyn Fn(&WebSocketHandle)| {
+            if live {
+                if let Some(socket) = socket(key) {
+                    if let Some(handle) = socket.handle.borrow().as_ref() {
+                        f(handle);
+                    }
+                }
+            }
+        };
+        if !data.is_string() {
+            let bytes = match s.unwrap::<crate::file::Blob>(data) {
+                Some(blob) => Some(blob.bytes.clone()),
+                None => crate::encoding::buffer_source_bytes(s, data)?.map(bytes::Bytes::from),
+            };
+            if let Some(bytes) = bytes {
+                let len = bytes.len();
+                handle(&|h| h.send_binary(bytes.clone()));
+                return Ok(s.number(len as f64));
+            }
+        }
+        // USVString: lone surrogates become U+FFFD.
+        let text = data.to_string()?;
+        let len = text.len();
+        handle(&|h| h.send_text(text.clone()));
+        Ok(s.number(len as f64))
+    })?;
+    natives.set_atom("send", send.value())?;
+    // `close(key, code or -1, reason)`: the closing handshake.
+    let close = s.function("close", |s, _this, a| {
+        let key = a.get(0).to_number()? as u64;
+        let code = a.get(1).to_number()?;
+        let reason = a.get(2).to_string()?;
+        if let Some(socket) = socket(key) {
+            if let Some(handle) = socket.handle.borrow().as_ref() {
+                handle.close((code >= 0.0).then_some(code as u16), reason);
+            }
+        }
+        Ok(s.undefined())
+    })?;
+    natives.set_atom("close", close.value())?;
+    // `abort(key)`: close() while connecting fails the connection.
+    let abort = s.function("abort", |s, _this, a| {
+        let key = a.get(0).to_number()? as u64;
+        if let Some(socket) = socket(key) {
+            drop(socket.handle.borrow_mut().take());
+            if let Some(page) = socket.page.upgrade() {
+                fail_soon(&page, key);
+            }
+        }
+        Ok(s.undefined())
+    })?;
+    natives.set_atom("abort", abort.value())?;
+    // The reason as a USVString of at most 123 UTF-8 bytes.
+    let reason = s.function("closeReason", |s, _this, a| {
+        let reason = a.get(0).to_string()?;
+        if reason.len() > 123 {
+            return Err(JsError::dom(
+                "SyntaxError",
+                "Failed to execute 'close' on 'WebSocket': The close reason must not be greater than 123 UTF-8 bytes.",
+            ));
+        }
+        Ok(s.string(&reason))
+    })?;
+    natives.set_atom("closeReason", reason.value())?;
+    // `dispatch(target, event)`: fires `event` as the user agent does (trusted).
+    let dispatch = s.function("dispatch", |s, _this, a| {
+        let target = s.unwrap::<EventTarget>(a.get(0)).ok_or_else(|| JsError::Type("Illegal invocation".into()))?;
+        let event = s.unwrap::<crate::event::Event>(a.get(1)).ok_or_else(unavailable)?.clone();
+        event.state.borrow_mut().is_trusted = true;
+        crate::target::fire(&target.page, target.key, &event);
+        Ok(s.undefined())
+    })?;
+    natives.set_atom("dispatch", dispatch.value())?;
+    let get = s.function("getHandler", |s, _this, a| {
+        let target = s.unwrap::<EventTarget>(a.get(0)).ok_or_else(|| JsError::Type("Illegal invocation".into()))?;
+        crate::target::event_handler(s, &target, handler_type(&a.get(1).to_string()?)?)
+    })?;
+    natives.set_atom("getHandler", get.value())?;
+    let set = s.function("setHandler", |s, _this, a| {
+        let target = s.unwrap::<EventTarget>(a.get(0)).ok_or_else(|| JsError::Type("Illegal invocation".into()))?;
+        crate::target::set_event_handler(s, &target, handler_type(&a.get(1).to_string()?)?, a.get(2))?;
+        Ok(s.undefined())
+    })?;
+    natives.set_atom("setHandler", set.value())?;
+    Ok(natives)
+}
+
+fn handler_type(name: &str) -> JsResult<&'static str> {
+    Ok(match name {
+        "open" => "open",
+        "message" => "message",
+        "error" => "error",
+        "close" => "close",
+        _ => return Err(unavailable()),
+    })
+}
+
+/// Aborts the connections of `realm` (navigation, world removal).
+pub(crate) fn cancel_realm(realm: RealmId) {
+    let closed: Vec<Rc<Socket>> = SOCKETS.with(|sockets| {
+        let mut sockets = sockets.borrow_mut();
+        if sockets.is_empty() {
+            return Vec::new();
+        }
+        let keys: Vec<u64> = sockets.iter().filter(|(_, s)| s.realm_id == realm).map(|(k, _)| *k).collect();
+        keys.into_iter().filter_map(|k| sockets.remove(&k)).collect()
+    });
+    for socket in closed {
+        drop(socket.handle.borrow_mut().take());
+    }
+}
+
+/// Aborts the connections of `page`'s realms (document teardown).
 pub(crate) fn dispose(page: &PageDom) {
-    let gone: Vec<Rc<SocketInner>> = SOCKETS.with(|m| {
-        let mut m = m.borrow_mut();
-        let ids: Vec<u64> =
-            m.values().filter(|sock| std::ptr::eq(Rc::as_ptr(sock.page()), page)).map(|sock| sock.id).collect();
-        ids.into_iter().filter_map(|id| m.remove(&id)).collect()
-    });
-    for socket in gone {
-        socket.abandon();
-    }
-}
-
-/// A disposed realm's sockets close.
-pub(crate) fn cancel_realm(page: &PageDom, realm: RealmId) {
-    let gone: Vec<Rc<SocketInner>> = SOCKETS.with(|m| {
-        let mut m = m.borrow_mut();
-        let ids: Vec<u64> = m
-            .values()
-            .filter(|sock| sock.realm_id == realm && std::ptr::eq(Rc::as_ptr(sock.page()), page))
-            .map(|sock| sock.id)
+    let closed: Vec<Rc<Socket>> = SOCKETS.with(|sockets| {
+        let mut sockets = sockets.borrow_mut();
+        if sockets.is_empty() {
+            return Vec::new();
+        }
+        let keys: Vec<u64> = sockets
+            .iter()
+            .filter(|(_, s)| s.page.upgrade().is_none_or(|p| std::ptr::eq(&*p, page)))
+            .map(|(k, _)| *k)
             .collect();
-        ids.into_iter().filter_map(|id| m.remove(&id)).collect()
+        keys.into_iter().filter_map(|k| sockets.remove(&k)).collect()
     });
-    for socket in gone {
-        socket.abandon();
+    for socket in closed {
+        drop(socket.handle.borrow_mut().take());
     }
 }
 
-pub(crate) fn register(engine: &lp_js::Engine) {
-    engine.register::<WebSocket>();
+/// Open connections of this thread (diagnostics, tests).
+pub fn open_websockets() -> usize {
+    SOCKETS.with(|sockets| sockets.borrow().len())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn subprotocols_are_distinct_tokens() {
+        assert!(validate_protocols(&["chat".into(), "superchat".into()]).is_ok());
+        assert!(validate_protocols(&["echo".into(), "eCho".into()]).is_err());
+        assert!(validate_protocols(&["/echo".into()]).is_err());
+        assert!(validate_protocols(&["a b".into()]).is_err());
+        assert!(validate_protocols(&["".into()]).is_err());
+        assert!(validate_protocols(&["\u{e9}".into()]).is_err());
+    }
 }

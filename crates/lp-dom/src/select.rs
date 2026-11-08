@@ -6,7 +6,7 @@ use std::borrow::Borrow;
 use std::fmt;
 use std::rc::Rc;
 
-use cssparser::{CowRcStr, ParseError, Parser as CssParser, ToCss};
+use cssparser::{ParseError, Parser as CssParser, ToCss};
 use markup5ever::{local_name, ns, LocalName, Namespace};
 use precomputed_hash::PrecomputedHash;
 use rustc_hash::FxHashMap;
@@ -141,6 +141,12 @@ pub enum PseudoClass {
     Open,
     Modal,
     PopoverOpen,
+    InRange,
+    OutOfRange,
+    UserValid,
+    UserInvalid,
+    /// `:state(ident)`: a custom state of the element's `CustomStateSet`.
+    State(Atom),
 }
 
 impl ToCss for PseudoClass {
@@ -149,10 +155,15 @@ impl ToCss for PseudoClass {
         match self {
             Lang(r) => return write!(dest, ":lang({r})"),
             Dir(d) => return write!(dest, ":dir({d})"),
+            State(s) => {
+                dest.write_str(":state(")?;
+                cssparser::serialize_identifier(s, dest)?;
+                return dest.write_str(")");
+            }
             _ => {}
         }
         dest.write_str(match self {
-            Lang(_) | Dir(_) => unreachable!(),
+            Lang(_) | Dir(_) | State(_) => unreachable!(),
             AnyLink => ":any-link",
             Link => ":link",
             Visited => ":visited",
@@ -179,6 +190,10 @@ impl ToCss for PseudoClass {
             Open => ":open",
             Modal => ":modal",
             PopoverOpen => ":popover-open",
+            InRange => ":in-range",
+            OutOfRange => ":out-of-range",
+            UserValid => ":user-valid",
+            UserInvalid => ":user-invalid",
         })
     }
 }
@@ -245,7 +260,7 @@ impl<'i> selectors::parser::Parser<'i> for SelParser<'_> {
     fn is_is_alias(&self, name: &str) -> bool {
         name.eq_ignore_ascii_case("-webkit-any") || name.eq_ignore_ascii_case("matches")
     }
-    fn parse_non_ts_pseudo_class(&self, name: CowRcStr<'i>) -> Result<PseudoClass, ParseError<Self::Error>> {
+    fn parse_non_ts_pseudo_class(&self, name: &str) -> Result<PseudoClass, ParseError<Self::Error>> {
         use PseudoClass::*;
         let pc = match_ignore_ascii_case(
             &name,
@@ -275,13 +290,17 @@ impl<'i> selectors::parser::Parser<'i> for SelParser<'_> {
                 ("open", Open),
                 ("modal", Modal),
                 ("popover-open", PopoverOpen),
+                ("in-range", InRange),
+                ("out-of-range", OutOfRange),
+                ("user-valid", UserValid),
+                ("user-invalid", UserInvalid),
             ],
         );
         pc.ok_or_else(|| ParseError::custom(SelectorParseErrorKind::UnsupportedPseudoClassOrElement))
     }
     fn parse_non_ts_functional_pseudo_class(
         &self,
-        name: CowRcStr<'i>,
+        name: &str,
         parser: &mut CssParser<'i>,
         _after_part: bool,
     ) -> Result<PseudoClass, ParseError<Self::Error>> {
@@ -299,9 +318,12 @@ impl<'i> selectors::parser::Parser<'i> for SelParser<'_> {
             let d = parser.expect_ident()?.to_ascii_lowercase();
             return Ok(PseudoClass::Dir(d.into()));
         }
+        if name.eq_ignore_ascii_case("state") {
+            return Ok(PseudoClass::State(Atom::from(parser.expect_ident()?.as_ref())));
+        }
         Err(ParseError::custom(SelectorParseErrorKind::UnsupportedPseudoClassOrElement))
     }
-    fn parse_pseudo_element(&self, name: CowRcStr<'i>) -> Result<PseudoElement, ParseError<Self::Error>> {
+    fn parse_pseudo_element(&self, name: &str) -> Result<PseudoElement, ParseError<Self::Error>> {
         let lower = name.to_ascii_lowercase();
         // Unknown pseudo-elements are invalid selectors, except the
         // `-webkit-` prefixed ones browsers accept (and never match).
@@ -312,7 +334,7 @@ impl<'i> selectors::parser::Parser<'i> for SelParser<'_> {
     }
     fn parse_functional_pseudo_element(
         &self,
-        name: CowRcStr<'i>,
+        name: &str,
         parser: &mut CssParser<'i>,
     ) -> Result<PseudoElement, ParseError<Self::Error>> {
         let lower = name.to_ascii_lowercase();
@@ -753,8 +775,8 @@ impl selectors::Element for ElemRef<'_> {
             CaseSensitivity::AsciiCaseInsensitive => classes.iter().any(|c| c.eq_ignore_ascii_case(&name.0)),
         }
     }
-    fn has_custom_state(&self, _name: &CssIdent) -> bool {
-        false
+    fn has_custom_state(&self, name: &CssIdent) -> bool {
+        self.dom.has_custom_state_idx(self.idx, &name.0)
     }
     fn imported_part(&self, _name: &CssIdent) -> Option<CssIdent> {
         None
@@ -814,12 +836,23 @@ impl Dom {
                 _ => false,
             },
             AnyLink | Link => self.is_link(idx),
-            Visited | Active => false,
+            Visited => false,
+            Active => {
+                let a = self.activated_idx(self.n(idx).owner_doc);
+                a != NIL && self.shadow_including_inclusive_ancestor(idx, a)
+            }
             Target => self.is_url_target(idx),
             Checked => self.checkedness_idx(idx) || self.option_selected_idx(idx),
-            Indeterminate => e.control.as_ref().is_some_and(|c| c.indeterminate),
+            Indeterminate => {
+                e.control.as_ref().is_some_and(|c| c.indeterminate)
+                    // A progress bar without a value (HTML §4.16.3).
+                    || (e.is_html()
+                        && e.name.local == local_name!("progress")
+                        && e.attr_local(&local_name!("value")).is_none())
+            }
             Disabled => self.is_disabled_idx(idx),
-            Enabled => self.is_form_control_idx(idx) && !self.is_disabled_idx(idx),
+            Enabled => (self.is_form_control_idx(idx) || self.is_face_idx(idx)) && !self.is_disabled_idx(idx),
+            State(s) => self.has_custom_state_idx(idx, s),
             Required => self.is_form_control_idx(idx) && e.attr_local(&local_name!("required")).is_some(),
             Optional => self.is_form_control_idx(idx) && e.attr_local(&local_name!("required")).is_none(),
             ReadWrite => self.is_mutable_text_idx(idx),
@@ -829,7 +862,11 @@ impl Dom {
                     && self.is_mutable_text_idx(idx)
                     && self.control_value_idx(idx).is_empty()
             }
-            Focus | FocusVisible => self.focused_idx(self.n(idx).owner_doc) == idx,
+            Focus => self.focused_idx(self.n(idx).owner_doc) == idx,
+            FocusVisible => {
+                let doc = self.n(idx).owner_doc;
+                self.focused_idx(doc) == idx && self.focus_visible_flag(doc)
+            }
             FocusWithin => {
                 let f = self.focused_idx(self.n(idx).owner_doc);
                 f != NIL && self.shadow_including_inclusive_ancestor(idx, f)
@@ -846,6 +883,14 @@ impl Dom {
                         && e.attr_local(&local_name!("selected")).is_some())
             }
             Empty => false,
+            InRange | OutOfRange => self.range_state_idx(idx).is_some_and(|in_range| in_range == (*pc == InRange)),
+            // User validity (HTML §4.10.18.6): set once the user commits a
+            // change or a submission validates the form, cleared by reset.
+            // Only controls get it, so `Valid`/`Invalid` see a candidate.
+            UserValid | UserInvalid => {
+                e.control.as_ref().is_some_and(|c| c.user_validity)
+                    && self.matches_state(idx, if *pc == UserValid { &Valid } else { &Invalid })
+            }
             Valid | Invalid => {
                 let id = self.id_of(idx);
                 let is_form = e.is_html() && matches!(&*e.name.local, "form" | "fieldset");
@@ -921,7 +966,7 @@ impl Dom {
         if scope != NIL && self.n(scope).is_element() {
             ctx.scope_element = Some(OpaqueElement::new(self.n(scope)));
         }
-        matches_selector_list(sel, &self.element_ref(idx), &mut ctx)
+        matches_selector_list(sel, self.element_ref(idx), &mut ctx)
     }
 
     /// `Element.matches(selectors)`.
@@ -1021,7 +1066,7 @@ impl Dom {
                         let want = if html_doc && e.is_html() { lower } else { name };
                         e.attrs.iter().any(|a| a.name.ns == ns!() && a.name.local == **want)
                     }
-                    Some(Simple::Id(_)) | None => matches_selector_list(sel, &self.element_ref(cur), &mut ctx),
+                    Some(Simple::Id(_)) | None => matches_selector_list(sel, self.element_ref(cur), &mut ctx),
                 };
                 if hit && !found(cur) {
                     return;

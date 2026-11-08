@@ -322,6 +322,16 @@ impl EngineHost {
                 interaction: Some((s.hovered, s.focused)),
             }),
             background: self.pages.values().find(|p| p.id == pid).and_then(|p| p.background_override),
+            canvases: s
+                .canvases
+                .into_iter()
+                .map(|(node, width, height, rgba)| lp_render::CanvasImage {
+                    key: lp_dom::snapshot::render_key(node),
+                    width,
+                    height,
+                    rgba,
+                })
+                .collect(),
             element_scroll: Some(s.element_scroll),
         })
     }

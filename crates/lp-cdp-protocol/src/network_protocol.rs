@@ -9,7 +9,9 @@ use std::collections::{HashMap, VecDeque};
 
 use bytes::Bytes;
 use http::HeaderMap;
-use lp_net::{NetEvent, RequestId, ResponseHead};
+use lp_net::{NetEvent, RequestId, RequestInfo, ResponseHead};
+use serde::ser::{SerializeMap, Serializer};
+use serde::Serialize;
 use serde_json::{json, Map, Value};
 
 use crate::fetch_protocol::ResourceType;
@@ -18,47 +20,276 @@ use crate::msg::{CdpError, CdpResult};
 /// CDP `Network.Headers`: an object; repeated headers are joined with "\n"
 /// as Chrome does.
 pub fn headers_json(headers: &HeaderMap) -> Value {
-    let mut map = Map::new();
+    // A header map yields a name's values one after another, so repeated
+    // lines join the entry just pushed; the map is built once, from the
+    // list (every request and response event: no lookup per header).
+    let mut list: Vec<(String, Value)> = Vec::with_capacity(headers.keys_len());
+    let mut last: Option<&str> = None;
     for (name, value) in headers {
-        let value = String::from_utf8_lossy(value.as_bytes()).into_owned();
-        match map.get_mut(name.as_str()) {
-            Some(Value::String(existing)) => {
+        let value = String::from_utf8_lossy(value.as_bytes());
+        if last == Some(name.as_str()) {
+            if let Some((_, Value::String(existing))) = list.last_mut() {
                 existing.push('\n');
                 existing.push_str(&value);
             }
-            _ => {
-                map.insert(name.as_str().to_owned(), Value::String(value));
-            }
+            continue;
         }
+        last = Some(name.as_str());
+        list.push((name.as_str().to_owned(), Value::String(value.into_owned())));
     }
-    Value::Object(map)
+    Value::Object(list.into_iter().collect::<Map<String, Value>>())
 }
 
-fn response_json(head: &ResponseHead, encoded_len: u64) -> Value {
-    let mut response = json!({
-        "url": head.url.as_str(),
-        "status": head.status.as_u16(),
-        "statusText": head.status_text,
-        "headers": headers_json(&head.headers),
-        "mimeType": head.mime,
-        "connectionReused": false,
-        "connectionId": 0,
-        "encodedDataLength": encoded_len,
-        "securityState": if head.url.scheme() == "https" { "secure" } else { "neutral" },
-        "fromDiskCache": head.from_cache,
-        "fromServiceWorker": false,
-        "protocol": if head.protocol == lp_net::http::Version::HTTP_2 { "h2" } else { "http/1.1" },
-    });
-    if let Some(charset) = &head.charset {
-        response["charset"] = json!(charset);
+/// CDP `Network.Headers` written straight to the serializer: the same text
+/// as serializing [`headers_json`] (names sorted, as a JSON object map keeps
+/// them; a name's lines joined with "\n"), without building the map, a
+/// `String` per name or one per value.
+pub struct Headers<'a>(pub &'a HeaderMap);
+
+impl Serialize for Headers<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut lines: Vec<(&str, &[u8])> = Vec::with_capacity(self.0.len());
+        lines.extend(self.0.iter().map(|(name, value)| (name.as_str(), value.as_bytes())));
+        // Stable, and a header map yields a name's values one after another:
+        // a name's lines stay together and in order.
+        lines.sort_by(|a, b| a.0.cmp(b.0));
+        let mut map = serializer.serialize_map(None)?;
+        let mut rest = &lines[..];
+        while let [(name, first), tail @ ..] = rest {
+            let repeated = tail.iter().take_while(|(n, _)| n == name).count();
+            if repeated == 0 {
+                map.serialize_entry(name, &*String::from_utf8_lossy(first))?;
+            } else {
+                let mut joined = String::from_utf8_lossy(first).into_owned();
+                for (_, value) in &tail[..repeated] {
+                    joined.push('\n');
+                    joined.push_str(&String::from_utf8_lossy(value));
+                }
+                map.serialize_entry(name, &joined)?;
+            }
+            rest = &tail[repeated..];
+        }
+        map.end()
     }
-    if let Some(addr) = &head.remote_addr {
-        if let Some((ip, port)) = addr.rsplit_once(':') {
-            response["remoteIPAddress"] = json!(ip.trim_start_matches('[').trim_end_matches(']'));
-            response["remotePort"] = json!(port.parse::<u16>().unwrap_or(0));
+}
+
+/// CDP `Network.Response`. Fields are declared in sorted order, the order a
+/// JSON object map writes them, so the text is that of the `Value` it
+/// replaced (`translation_text_matches_value_translation` checks it).
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ResponseJson<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    charset: Option<&'a str>,
+    connection_id: u8,
+    connection_reused: bool,
+    encoded_data_length: u64,
+    from_disk_cache: bool,
+    from_service_worker: bool,
+    headers: Headers<'a>,
+    mime_type: &'a str,
+    protocol: &'static str,
+    #[serde(rename = "remoteIPAddress", skip_serializing_if = "Option::is_none")]
+    remote_ip_address: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    remote_port: Option<u16>,
+    security_state: &'static str,
+    status: u16,
+    status_text: &'a str,
+    url: &'a str,
+}
+
+fn response_json(head: &ResponseHead, encoded_len: u64) -> ResponseJson<'_> {
+    let remote = head.remote_addr.as_deref().and_then(|addr| addr.rsplit_once(':'));
+    ResponseJson {
+        charset: head.charset.as_deref(),
+        connection_id: 0,
+        connection_reused: false,
+        encoded_data_length: encoded_len,
+        from_disk_cache: head.from_cache,
+        from_service_worker: false,
+        headers: Headers(&head.headers),
+        mime_type: &head.mime,
+        protocol: if head.protocol == lp_net::http::Version::HTTP_2 { "h2" } else { "http/1.1" },
+        remote_ip_address: remote.map(|(ip, _)| ip.trim_start_matches('[').trim_end_matches(']')),
+        remote_port: remote.map(|(_, port)| port.parse::<u16>().unwrap_or(0)),
+        security_state: if head.url.scheme() == "https" { "secure" } else { "neutral" },
+        status: head.status.as_u16(),
+        status_text: &head.status_text,
+        url: head.url.as_str(),
+    }
+}
+
+/// CDP `Network.Request` of `Network.requestWillBeSent` (fields in sorted
+/// order, see [`ResponseJson`]); `hasPostData` only with a body.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RequestJson<'a> {
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    has_post_data: bool,
+    headers: Headers<'a>,
+    initial_priority: &'static str,
+    method: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    post_data: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    post_data_entries: Option<[PostDataEntry; 1]>,
+    referrer_policy: &'static str,
+    url: &'a str,
+}
+
+fn request_json(request: &RequestInfo) -> RequestJson<'_> {
+    let post = PostData::of(request.post_data.as_ref());
+    RequestJson {
+        has_post_data: post.has,
+        headers: Headers(&request.headers),
+        initial_priority: "High",
+        method: request.method.as_str(),
+        post_data: post.text,
+        post_data_entries: post.entries,
+        referrer_policy: "strict-origin-when-cross-origin",
+        url: request.url.as_str(),
+    }
+}
+
+/// CDP `Network.Request` of `Fetch.requestPaused` (fields in sorted order,
+/// see [`ResponseJson`]); `hasPostData` always.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PausedRequestJson<'a> {
+    has_post_data: bool,
+    headers: Headers<'a>,
+    method: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    post_data: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    post_data_entries: Option<[PostDataEntry; 1]>,
+    url: &'a str,
+}
+
+impl<'a> PausedRequestJson<'a> {
+    pub fn new(request: &'a RequestInfo) -> Self {
+        let post = PostData::of(request.post_data.as_ref());
+        PausedRequestJson {
+            has_post_data: post.has,
+            headers: Headers(&request.headers),
+            method: request.method.as_str(),
+            post_data: post.text,
+            post_data_entries: post.entries,
+            url: request.url.as_str(),
         }
     }
-    response
+}
+
+/// `hasPostData`, `postData` and `postDataEntries` of a CDP
+/// `Network.Request`.
+///
+/// Playwright builds `request.postData()` / `postDataJSON()` only from
+/// `postDataEntries[].bytes` (base64), so the binary-safe entry must be
+/// present. `postData` is the deprecated text form; it is omitted for bodies
+/// that are not valid UTF-8 rather than sent lossily. Bodies over
+/// [`MAX_POST_DATA`] report only `hasPostData`.
+struct PostData<'a> {
+    has: bool,
+    text: Option<&'a str>,
+    entries: Option<[PostDataEntry; 1]>,
+}
+
+impl<'a> PostData<'a> {
+    fn of(body: Option<&'a Bytes>) -> Self {
+        let inline = body.filter(|body| body.len() <= MAX_POST_DATA);
+        PostData {
+            has: body.is_some(),
+            text: inline.and_then(|body| std::str::from_utf8(body).ok()),
+            entries: inline.map(|body| [PostDataEntry { bytes: base64_encode(body) }]),
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct PostDataEntry {
+    bytes: String,
+}
+
+#[derive(Serialize)]
+struct Initiator {
+    #[serde(rename = "type")]
+    kind: &'static str,
+}
+
+/// `Network.requestWillBeSent` (fields in sorted order, see [`ResponseJson`]).
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RequestWillBeSent<'a> {
+    #[serde(rename = "documentURL")]
+    document_url: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    frame_id: Option<&'a str>,
+    initiator: Initiator,
+    loader_id: &'a str,
+    redirect_has_extra_info: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    redirect_response: Option<ResponseJson<'a>>,
+    request: RequestJson<'a>,
+    request_id: &'a str,
+    timestamp: f64,
+    #[serde(rename = "type")]
+    resource_type: &'static str,
+    wall_time: f64,
+}
+
+/// `Network.responseReceived` (fields in sorted order, see [`ResponseJson`]).
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResponseReceived<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    frame_id: Option<&'a str>,
+    has_extra_info: bool,
+    loader_id: &'a str,
+    request_id: &'a str,
+    response: ResponseJson<'a>,
+    timestamp: f64,
+    #[serde(rename = "type")]
+    resource_type: &'static str,
+}
+
+/// `Network.dataReceived`.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DataReceived<'a> {
+    data_length: usize,
+    encoded_data_length: usize,
+    request_id: &'a str,
+    timestamp: f64,
+}
+
+/// `Network.loadingFinished`.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LoadingFinished {
+    encoded_data_length: u64,
+    request_id: String,
+    timestamp: f64,
+}
+
+/// Params of a translated `Network.*` event. The events every request has
+/// are written straight from the event they translate; the others go
+/// through a `Value`.
+#[derive(Serialize)]
+#[serde(untagged)]
+pub enum NetworkParams<'a> {
+    RequestWillBeSent(RequestWillBeSent<'a>),
+    ResponseReceived(ResponseReceived<'a>),
+    DataReceived(DataReceived<'a>),
+    LoadingFinished(LoadingFinished),
+    Value(Value),
+}
+
+impl NetworkParams<'_> {
+    /// The params as a JSON value.
+    pub fn to_value(&self) -> Value {
+        serde_json::to_value(self).expect("CDP params serialize")
+    }
 }
 
 /// Chromium identifies a document navigation by requestId == loaderId.
@@ -105,53 +336,43 @@ pub const MAX_INFLIGHT: usize = 16 * 1024;
 impl NetworkTranslator {
     /// Returns `(method, params)` for the CDP event, or `None` for events of
     /// requests this translator did not see start (or over budget).
-    pub fn translate(&mut self, event: &NetEvent) -> Option<(&'static str, Value)> {
+    ///
+    /// The per-request events borrow from `event` and the translator rather
+    /// than copying into a `Value` (several header maps' worth of `String`s
+    /// per request).
+    pub fn translate<'a>(&'a mut self, event: &'a NetEvent) -> Option<(&'static str, NetworkParams<'a>)> {
         match event {
             NetEvent::RequestWillBeSent { id, request, redirect_response, timestamp, wall_time } => {
                 let resource_type = request.destination.cdp_type();
-                let loader_id = request.loader_id.clone().unwrap_or_default();
                 if !self.inflight.contains_key(id) && self.inflight.len() >= MAX_INFLIGHT {
                     return None;
                 }
                 let request_id = protocol_request_id(*id, request.destination, request.loader_id.as_deref());
-                self.inflight.insert(
-                    *id,
-                    Inflight {
-                        request_id: request_id.clone(),
-                        loader_id: loader_id.clone(),
+                let inflight = self
+                    .inflight
+                    .entry(*id)
+                    .insert_entry(Inflight {
+                        request_id,
+                        loader_id: request.loader_id.clone().unwrap_or_default(),
                         frame_id: request.frame_id.clone(),
                         resource_type,
                         download: false,
-                    },
-                );
-                let mut req = json!({
-                    "url": request.url.as_str(),
-                    "method": request.method.as_str(),
-                    "headers": headers_json(&request.headers),
-                    "initialPriority": "High",
-                    "referrerPolicy": "strict-origin-when-cross-origin",
-                });
-                write_post_data(&mut req, request.post_data.as_ref());
-                let document_url =
-                    if resource_type == "Document" { request.url.as_str().to_owned() } else { String::new() };
-                let mut params = json!({
-                    "requestId": request_id,
-                    "loaderId": loader_id,
-                    "documentURL": document_url,
-                    "request": req,
-                    "timestamp": timestamp,
-                    "wallTime": wall_time,
-                    "initiator": { "type": "other" },
-                    "redirectHasExtraInfo": false,
-                    "type": resource_type,
-                });
-                if let Some(frame) = &request.frame_id {
-                    params["frameId"] = json!(frame);
-                }
-                if let Some(redirect) = redirect_response {
-                    params["redirectResponse"] = response_json(redirect, 0);
-                }
-                Some(("Network.requestWillBeSent", params))
+                    })
+                    .into_mut();
+                let params = RequestWillBeSent {
+                    document_url: if resource_type == "Document" { request.url.as_str() } else { "" },
+                    frame_id: request.frame_id.as_deref(),
+                    initiator: Initiator { kind: "other" },
+                    loader_id: request.loader_id.as_deref().unwrap_or_default(),
+                    redirect_has_extra_info: false,
+                    redirect_response: redirect_response.as_deref().map(|redirect| response_json(redirect, 0)),
+                    request: request_json(request),
+                    request_id: &inflight.request_id,
+                    timestamp: *timestamp,
+                    resource_type,
+                    wall_time: *wall_time,
+                };
+                Some(("Network.requestWillBeSent", NetworkParams::RequestWillBeSent(params)))
             }
             NetEvent::ResponseReceived { id, head, timestamp, .. } => {
                 let inflight = self.inflight.get_mut(id)?;
@@ -159,124 +380,64 @@ impl NetworkTranslator {
                     && (200..300).contains(&head.status.as_u16())
                     && is_attachment(head);
                 let inflight = &*inflight;
-                let mut params = json!({
-                    "requestId": inflight.request_id,
-                    "loaderId": inflight.loader_id,
-                    "timestamp": timestamp,
-                    "type": inflight.resource_type,
-                    "response": response_json(head, 0),
-                    "hasExtraInfo": false,
-                });
-                if let Some(frame) = &inflight.frame_id {
-                    params["frameId"] = json!(frame);
-                }
-                Some(("Network.responseReceived", params))
+                let params = ResponseReceived {
+                    frame_id: inflight.frame_id.as_deref(),
+                    has_extra_info: false,
+                    loader_id: &inflight.loader_id,
+                    request_id: &inflight.request_id,
+                    response: response_json(head, 0),
+                    timestamp: *timestamp,
+                    resource_type: inflight.resource_type,
+                };
+                Some(("Network.responseReceived", NetworkParams::ResponseReceived(params)))
             }
             NetEvent::DataReceived { id, data, timestamp } => {
                 let inflight = self.inflight.get(id).filter(|i| !i.download)?;
-                Some((
-                    "Network.dataReceived",
-                    json!({
-                        "requestId": inflight.request_id,
-                        "timestamp": timestamp,
-                        "dataLength": data.len(),
-                        "encodedDataLength": data.len(),
-                    }),
-                ))
+                let params = DataReceived {
+                    data_length: data.len(),
+                    encoded_data_length: data.len(),
+                    request_id: &inflight.request_id,
+                    timestamp: *timestamp,
+                };
+                Some(("Network.dataReceived", NetworkParams::DataReceived(params)))
             }
             NetEvent::LoadingFinished { id, encoded_len, timestamp } => {
                 let inflight = self.inflight.remove(id)?;
                 if inflight.download {
                     return Some((
                         "Network.loadingFailed",
-                        json!({
+                        NetworkParams::Value(json!({
                             "requestId": inflight.request_id,
                             "timestamp": timestamp,
                             "type": inflight.resource_type,
                             "errorText": "net::ERR_ABORTED",
                             "canceled": true,
-                        }),
+                        })),
                     ));
                 }
-                Some((
-                    "Network.loadingFinished",
-                    json!({ "requestId": inflight.request_id, "timestamp": timestamp, "encodedDataLength": encoded_len }),
-                ))
+                let params = LoadingFinished {
+                    encoded_data_length: *encoded_len,
+                    request_id: inflight.request_id,
+                    timestamp: *timestamp,
+                };
+                Some(("Network.loadingFinished", NetworkParams::LoadingFinished(params)))
             }
             NetEvent::LoadingFailed { id, error, canceled, timestamp, .. } => {
                 let inflight = self.inflight.remove(id)?;
                 Some((
                     "Network.loadingFailed",
-                    json!({
+                    NetworkParams::Value(json!({
                         "requestId": inflight.request_id,
                         "timestamp": timestamp,
                         "type": inflight.resource_type,
                         "errorText": error.error_text(),
                         "canceled": canceled,
-                    }),
+                    })),
                 ))
             }
-            // WebSockets: the shapes Chrome sends (and Playwright's crPage reads).
-            NetEvent::WebSocketCreated { id, url, .. } => Some((
-                "Network.webSocketCreated",
-                json!({ "requestId": id.to_string(), "url": url, "initiator": { "type": "other" } }),
-            )),
-            NetEvent::WebSocketWillSendHandshakeRequest { id, headers, timestamp, wall_time } => Some((
-                "Network.webSocketWillSendHandshakeRequest",
-                json!({
-                    "requestId": id.to_string(),
-                    "timestamp": timestamp,
-                    "wallTime": wall_time,
-                    "request": { "headers": headers_json(headers) },
-                }),
-            )),
-            NetEvent::WebSocketHandshakeResponseReceived {
-                id,
-                status,
-                status_text,
-                headers,
-                request_headers,
-                timestamp,
-            } => Some((
-                "Network.webSocketHandshakeResponseReceived",
-                json!({
-                    "requestId": id.to_string(),
-                    "timestamp": timestamp,
-                    "response": {
-                        "status": status,
-                        "statusText": status_text,
-                        "headers": headers_json(headers),
-                        "requestHeaders": headers_json(request_headers),
-                    },
-                }),
-            )),
-            NetEvent::WebSocketFrameSent { id, opcode, mask, payload, timestamp }
-            | NetEvent::WebSocketFrameReceived { id, opcode, mask, payload, timestamp } => {
-                let method = if matches!(event, NetEvent::WebSocketFrameSent { .. }) {
-                    "Network.webSocketFrameSent"
-                } else {
-                    "Network.webSocketFrameReceived"
-                };
-                // Text frames carry their text, others base64 (Chrome's `payloadData`).
-                let data = match (*opcode, std::str::from_utf8(payload)) {
-                    (1, Ok(text)) => text.to_owned(),
-                    _ => base64_encode(payload),
-                };
-                Some((
-                    method,
-                    json!({
-                        "requestId": id.to_string(),
-                        "timestamp": timestamp,
-                        "response": { "opcode": opcode, "mask": mask, "payloadData": data },
-                    }),
-                ))
-            }
-            NetEvent::WebSocketFrameError { id, message, timestamp } => Some((
-                "Network.webSocketFrameError",
-                json!({ "requestId": id.to_string(), "timestamp": timestamp, "errorMessage": message }),
-            )),
-            NetEvent::WebSocketClosed { id, timestamp } => {
-                Some(("Network.webSocketClosed", json!({ "requestId": id.to_string(), "timestamp": timestamp })))
+            NetEvent::WebSocket { id, activity, timestamp } => {
+                let (method, params) = websocket_event(*id, activity, *timestamp);
+                Some((method, NetworkParams::Value(params)))
             }
         }
     }
@@ -286,41 +447,77 @@ impl NetworkTranslator {
     }
 }
 
+/// `Network.webSocket*` of a connection's activity, in Chrome's shapes (what
+/// Playwright's `crPage.js` reads for `page.on('websocket')`). Stateless: the
+/// request id is the connection's.
+fn websocket_event(id: RequestId, activity: &lp_net::WebSocketActivity, timestamp: f64) -> (&'static str, Value) {
+    use lp_net::WebSocketActivity as A;
+    let request_id = id.to_string();
+    let frame = |opcode: u8, payload: &Bytes, mask: bool| {
+        let data = if opcode == 1 { String::from_utf8_lossy(payload).into_owned() } else { base64_encode(payload) };
+        json!({ "opcode": opcode, "mask": mask, "payloadData": data })
+    };
+    match activity {
+        A::Created { url, .. } => (
+            "Network.webSocketCreated",
+            json!({ "requestId": request_id, "url": url.as_str(), "initiator": { "type": "script" } }),
+        ),
+        A::WillSendHandshakeRequest { headers, wall_time } => (
+            "Network.webSocketWillSendHandshakeRequest",
+            json!({
+                "requestId": request_id,
+                "timestamp": timestamp,
+                "wallTime": wall_time,
+                "request": { "headers": headers_json(headers) },
+            }),
+        ),
+        A::HandshakeResponseReceived { status, status_text, headers, request_headers } => (
+            "Network.webSocketHandshakeResponseReceived",
+            json!({
+                "requestId": request_id,
+                "timestamp": timestamp,
+                "response": {
+                    "status": status,
+                    "statusText": status_text,
+                    "headers": headers_json(headers),
+                    "requestHeaders": headers_json(request_headers),
+                },
+            }),
+        ),
+        A::FrameSent { opcode, payload } => (
+            "Network.webSocketFrameSent",
+            json!({ "requestId": request_id, "timestamp": timestamp, "response": frame(*opcode, payload, true) }),
+        ),
+        A::FrameReceived { opcode, payload } => (
+            "Network.webSocketFrameReceived",
+            json!({ "requestId": request_id, "timestamp": timestamp, "response": frame(*opcode, payload, false) }),
+        ),
+        A::FrameError { message } => (
+            "Network.webSocketFrameError",
+            json!({ "requestId": request_id, "timestamp": timestamp, "errorMessage": message }),
+        ),
+        A::Closed => ("Network.webSocketClosed", json!({ "requestId": request_id, "timestamp": timestamp })),
+    }
+}
+
 /// Largest request body included inline in `Network.requestWillBeSent` and
 /// `Fetch.requestPaused` (upstream's default `maxPostDataSize`, 64 KiB).
 /// Larger bodies report only `hasPostData: true`, as Chrome and upstream do.
 pub const MAX_POST_DATA: usize = 64 * 1024;
-
-/// Sets `hasPostData`, `postData` and `postDataEntries` on a CDP
-/// `Network.Request` object.
-///
-/// Playwright builds `request.postData()` / `postDataJSON()` only from
-/// `postDataEntries[].bytes` (base64), so the binary-safe entry must be
-/// present. `postData` is the deprecated text form; it is omitted for bodies
-/// that are not valid UTF-8 rather than sent lossily.
-pub fn write_post_data(request: &mut Value, body: Option<&Bytes>) {
-    let Some(body) = body else { return };
-    request["hasPostData"] = json!(true);
-    if body.len() > MAX_POST_DATA {
-        return;
-    }
-    if let Ok(text) = std::str::from_utf8(body) {
-        request["postData"] = json!(text);
-    }
-    request["postDataEntries"] = json!([{ "bytes": base64_encode(body) }]);
-}
 
 /// Fetch-domain resource type of a request destination.
 pub fn fetch_resource_type(destination: lp_net::Destination) -> ResourceType {
     use lp_net::Destination as D;
     match destination {
         D::Document | D::Iframe => ResourceType::Document,
-        D::Script => ResourceType::Script,
+        D::Script | D::Json => ResourceType::Script,
         D::Style => ResourceType::Stylesheet,
         D::Image => ResourceType::Image,
+        D::Audio | D::Video => ResourceType::Media,
         D::Font => ResourceType::Font,
         D::Xhr | D::Fetch | D::EventSource => ResourceType::XHR,
         D::WebSocket => ResourceType::WebSocket,
+        D::Beacon => ResourceType::Ping,
         D::Other => ResourceType::Other,
     }
 }
@@ -467,7 +664,7 @@ impl BodyStore {
                 }
             }
             NetEvent::LoadingFailed { id, .. } => self.remove(*id),
-            _ => {}
+            NetEvent::RequestWillBeSent { .. } | NetEvent::WebSocket { .. } => {}
         }
     }
 
@@ -605,6 +802,246 @@ mod tests {
     use http::{Method, StatusCode};
     use lp_net::{Destination, NetError, RequestInfo, ResponseKind, Url};
 
+    fn tr(t: &mut NetworkTranslator, event: &NetEvent) -> Option<(&'static str, Value)> {
+        t.translate(event).map(|(method, params)| (method, params.to_value()))
+    }
+
+    /// The `Value` translation the written-out params replaced, kept to
+    /// check that the text is unchanged.
+    mod reference {
+        use super::*;
+
+        pub fn response_json(head: &ResponseHead, encoded_len: u64) -> Value {
+            let mut response = json!({
+                "url": head.url.as_str(),
+                "status": head.status.as_u16(),
+                "statusText": head.status_text,
+                "headers": headers_json(&head.headers),
+                "mimeType": head.mime,
+                "connectionReused": false,
+                "connectionId": 0,
+                "encodedDataLength": encoded_len,
+                "securityState": if head.url.scheme() == "https" { "secure" } else { "neutral" },
+                "fromDiskCache": head.from_cache,
+                "fromServiceWorker": false,
+                "protocol": if head.protocol == lp_net::http::Version::HTTP_2 { "h2" } else { "http/1.1" },
+            });
+            if let Some(charset) = &head.charset {
+                response["charset"] = json!(charset);
+            }
+            if let Some(addr) = &head.remote_addr {
+                if let Some((ip, port)) = addr.rsplit_once(':') {
+                    response["remoteIPAddress"] = json!(ip.trim_start_matches('[').trim_end_matches(']'));
+                    response["remotePort"] = json!(port.parse::<u16>().unwrap_or(0));
+                }
+            }
+            response
+        }
+
+        pub fn write_post_data(request: &mut Value, body: Option<&Bytes>) {
+            let Some(body) = body else { return };
+            request["hasPostData"] = json!(true);
+            if body.len() > MAX_POST_DATA {
+                return;
+            }
+            if let Ok(text) = std::str::from_utf8(body) {
+                request["postData"] = json!(text);
+            }
+            request["postDataEntries"] = json!([{ "bytes": base64_encode(body) }]);
+        }
+
+        pub fn request_will_be_sent(event: &NetEvent) -> Value {
+            let NetEvent::RequestWillBeSent { id, request, redirect_response, timestamp, wall_time } = event else {
+                unreachable!()
+            };
+            let resource_type = request.destination.cdp_type();
+            let mut req = json!({
+                "url": request.url.as_str(),
+                "method": request.method.as_str(),
+                "headers": headers_json(&request.headers),
+                "initialPriority": "High",
+                "referrerPolicy": "strict-origin-when-cross-origin",
+            });
+            write_post_data(&mut req, request.post_data.as_ref());
+            let document_url =
+                if resource_type == "Document" { request.url.as_str().to_owned() } else { String::new() };
+            let mut params = json!({
+                "requestId": protocol_request_id(*id, request.destination, request.loader_id.as_deref()),
+                "loaderId": request.loader_id.clone().unwrap_or_default(),
+                "documentURL": document_url,
+                "request": req,
+                "timestamp": timestamp,
+                "wallTime": wall_time,
+                "initiator": { "type": "other" },
+                "redirectHasExtraInfo": false,
+                "type": resource_type,
+            });
+            if let Some(frame) = &request.frame_id {
+                params["frameId"] = json!(frame);
+            }
+            if let Some(redirect) = redirect_response {
+                params["redirectResponse"] = response_json(redirect, 0);
+            }
+            params
+        }
+    }
+
+    /// The written-out params serialize to the very text of the `Value`s
+    /// they replaced: same keys, values and key order.
+    #[test]
+    fn translation_text_matches_value_translation() {
+        let mut headers = HeaderMap::new();
+        headers.append("user-agent", "UA".parse().unwrap());
+        headers.append("accept", "a".parse().unwrap());
+        headers.append("sec-fetch-site", "same-origin".parse().unwrap());
+        headers.append("x-multi", "1".parse().unwrap());
+        headers.append("x-multi", "2".parse().unwrap());
+        headers.append("x-multi", "3".parse().unwrap());
+        headers.append("referer", "http://h/".parse().unwrap());
+        headers.append("x-obs", http::HeaderValue::from_bytes(b"caf\xe9").unwrap());
+        headers.append("accept-language", "en".parse().unwrap());
+        let head = |headers: HeaderMap, charset: Option<&str>, remote: Option<&str>, h2: bool| ResponseHead {
+            url: Url::parse("https://h/r").unwrap(),
+            status: StatusCode::FOUND,
+            status_text: "Found \"x\"".into(),
+            headers,
+            mime: "text/html".into(),
+            charset: charset.map(Into::into),
+            redirected: false,
+            from_cache: true,
+            kind: ResponseKind::Basic,
+            remote_addr: remote.map(Into::into),
+            protocol: if h2 { lp_net::http::Version::HTTP_2 } else { lp_net::http::Version::HTTP_11 },
+            timing: Default::default(),
+        };
+        let heads = [
+            head(headers.clone(), Some("utf-8"), Some("[::1]:8443"), true),
+            head(HeaderMap::new(), None, Some("no-port"), false),
+            head(headers.clone(), None, None, false),
+        ];
+        let bodies = [
+            None,
+            Some(Bytes::new()),
+            Some(Bytes::from_static(b"{\"a\":\"\\u00e9\"}")),
+            Some(Bytes::from_static(&[0xff, 0])),
+            Some(Bytes::from(vec![b'a'; MAX_POST_DATA + 1])),
+        ];
+        let mut n = 0;
+        for destination in [Destination::Document, Destination::Fetch] {
+            for loader_id in [None, Some("L")] {
+                for frame_id in [None, Some("F")] {
+                    for body in &bodies {
+                        for redirect in [None, Some(&heads[0]), Some(&heads[1])] {
+                            n += 1;
+                            let event = NetEvent::RequestWillBeSent {
+                                id: RequestId(n),
+                                request: Box::new(RequestInfo {
+                                    url: Url::parse("http://h/api?x=1#f").unwrap(),
+                                    method: Method::POST,
+                                    headers: headers.clone(),
+                                    post_data: body.clone(),
+                                    destination,
+                                    frame_id: frame_id.map(Into::into),
+                                    loader_id: loader_id.map(Into::into),
+                                }),
+                                redirect_response: redirect.cloned().map(Box::new),
+                                timestamp: 1.25,
+                                wall_time: 1_700_000_000.5,
+                            };
+                            let mut t = NetworkTranslator::default();
+                            let (_, params) = t.translate(&event).unwrap();
+                            assert_eq!(
+                                serde_json::to_string(&params).unwrap(),
+                                serde_json::to_string(&reference::request_will_be_sent(&event)).unwrap()
+                            );
+                            for head in &heads {
+                                assert_eq!(
+                                    serde_json::to_string(&response_json(head, 7)).unwrap(),
+                                    serde_json::to_string(&reference::response_json(head, 7)).unwrap()
+                                );
+                            }
+                            let received = NetEvent::ResponseReceived {
+                                id: RequestId(n),
+                                head: Box::new(heads[0].clone()),
+                                destination,
+                                frame_id: None,
+                                loader_id: None,
+                                timestamp: f64::NAN,
+                            };
+                            let (_, params) = t.translate(&received).unwrap();
+                            let mut expected = json!({
+                                "requestId": protocol_request_id(RequestId(n), destination, loader_id),
+                                "loaderId": loader_id.unwrap_or_default(),
+                                "timestamp": f64::NAN,
+                                "type": destination.cdp_type(),
+                                "response": reference::response_json(&heads[0], 0),
+                                "hasExtraInfo": false,
+                            });
+                            if let Some(frame) = frame_id {
+                                expected["frameId"] = json!(frame);
+                            }
+                            assert_eq!(
+                                serde_json::to_string(&params).unwrap(),
+                                serde_json::to_string(&expected).unwrap()
+                            );
+                            let event = data(n, b"xyz");
+                            let (_, params) = t.translate(&event).unwrap();
+                            let expected = json!({
+                                "requestId": protocol_request_id(RequestId(n), destination, loader_id),
+                                "timestamp": 4.0,
+                                "dataLength": 3,
+                                "encodedDataLength": 3,
+                            });
+                            assert_eq!(
+                                serde_json::to_string(&params).unwrap(),
+                                serde_json::to_string(&expected).unwrap()
+                            );
+                            let event = finished(n);
+                            let (_, params) = t.translate(&event).unwrap();
+                            let expected = json!({
+                                "requestId": protocol_request_id(RequestId(n), destination, loader_id),
+                                "timestamp": 5.0,
+                                "encodedDataLength": 7,
+                            });
+                            assert_eq!(
+                                serde_json::to_string(&params).unwrap(),
+                                serde_json::to_string(&expected).unwrap()
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// `Fetch.requestPaused`'s request: `hasPostData` always, the rest as in
+    /// `Network.requestWillBeSent`.
+    #[test]
+    fn paused_request_text_matches_value_translation() {
+        let mut headers = HeaderMap::new();
+        headers.append("b", "1".parse().unwrap());
+        headers.append("a", "2".parse().unwrap());
+        headers.append("b", "3".parse().unwrap());
+        for body in [None, Some(Bytes::from_static(b"x=1")), Some(Bytes::from(vec![0u8; MAX_POST_DATA + 1]))] {
+            let info = RequestInfo {
+                url: Url::parse("http://h/p").unwrap(),
+                method: Method::PUT,
+                headers: headers.clone(),
+                post_data: body.clone(),
+                destination: Destination::Fetch,
+                frame_id: None,
+                loader_id: None,
+            };
+            let mut expected = json!({"url":info.url.as_str(),"method":info.method.as_str(),"headers":headers_json(&info.headers),
+                "hasPostData":false});
+            reference::write_post_data(&mut expected, body.as_ref());
+            assert_eq!(
+                serde_json::to_string(&PausedRequestJson::new(&info)).unwrap(),
+                serde_json::to_string(&expected).unwrap()
+            );
+        }
+    }
+
     fn request(id: u64, destination: Destination) -> NetEvent {
         let mut headers = HeaderMap::new();
         headers.append("accept", "a".parse().unwrap());
@@ -641,6 +1078,7 @@ mod tests {
                 kind: ResponseKind::Basic,
                 remote_addr: Some("127.0.0.1:8080".into()),
                 protocol: lp_net::http::Version::HTTP_11,
+                timing: Default::default(),
             }),
             destination: Destination::Fetch,
             frame_id: Some("F".into()),
@@ -660,28 +1098,68 @@ mod tests {
     #[test]
     fn translates_a_request_lifecycle() {
         let mut t = NetworkTranslator::default();
-        let (m, p) = t.translate(&request(7, Destination::Fetch)).unwrap();
+        let (m, p) = tr(&mut t, &request(7, Destination::Fetch)).unwrap();
         assert_eq!(m, "Network.requestWillBeSent");
         assert_eq!(p["requestId"], "7");
         assert_eq!(p["type"], "Fetch");
         assert_eq!(p["frameId"], "F");
         assert_eq!(p["request"]["headers"]["accept"], "a\nb");
         assert_eq!(p["request"]["postData"], "{\"a\":1}");
-        let (m, p) = t.translate(&response(7, "application/json")).unwrap();
+        let (m, p) = tr(&mut t, &response(7, "application/json")).unwrap();
         assert_eq!(m, "Network.responseReceived");
         assert_eq!(p["response"]["status"], 200);
         assert_eq!(p["response"]["remotePort"], 8080);
         assert_eq!(p["loaderId"], "L");
-        assert_eq!(t.translate(&data(7, b"x")).unwrap().0, "Network.dataReceived");
-        assert_eq!(t.translate(&finished(7)).unwrap().0, "Network.loadingFinished");
+        assert_eq!(tr(&mut t, &data(7, b"x")).unwrap().0, "Network.dataReceived");
+        assert_eq!(tr(&mut t, &finished(7)).unwrap().0, "Network.loadingFinished");
         assert_eq!(t.inflight(), 0);
-        assert!(t.translate(&finished(7)).is_none(), "unknown request ignored");
+        assert!(tr(&mut t, &finished(7)).is_none(), "unknown request ignored");
+    }
+
+    #[test]
+    fn websocket_activity_translates_to_chrome_events() {
+        use lp_net::WebSocketActivity as A;
+        let mut t = NetworkTranslator::default();
+        let ws = |activity| NetEvent::WebSocket { id: RequestId(4), activity: Box::new(activity), timestamp: 2.0 };
+        let (m, p) =
+            tr(&mut t, &ws(A::Created { url: "wss://h/s".parse().unwrap(), frame_id: Some("F".into()) })).unwrap();
+        assert_eq!(
+            (m, p["requestId"].as_str(), p["url"].as_str()),
+            ("Network.webSocketCreated", Some("4"), Some("wss://h/s"))
+        );
+        let mut headers = HeaderMap::new();
+        headers.insert("upgrade", "websocket".parse().unwrap());
+        let (m, p) = tr(&mut t, &ws(A::WillSendHandshakeRequest { headers: headers.clone(), wall_time: 9.0 })).unwrap();
+        assert_eq!(m, "Network.webSocketWillSendHandshakeRequest");
+        assert_eq!(p["request"]["headers"]["upgrade"], "websocket");
+        let (m, p) = tr(
+            &mut t,
+            &ws(A::HandshakeResponseReceived {
+                status: 101,
+                status_text: "Switching Protocols".into(),
+                headers,
+                request_headers: HeaderMap::new(),
+            }),
+        )
+        .unwrap();
+        assert_eq!((m, p["response"]["status"].as_u64()), ("Network.webSocketHandshakeResponseReceived", Some(101)));
+        let (m, p) = tr(&mut t, &ws(A::FrameSent { opcode: 1, payload: "hi".into() })).unwrap();
+        assert_eq!(m, "Network.webSocketFrameSent");
+        assert_eq!(p["response"], json!({"opcode": 1, "mask": true, "payloadData": "hi"}));
+        let (m, p) = tr(&mut t, &ws(A::FrameReceived { opcode: 2, payload: vec![0xff, 0].into() })).unwrap();
+        assert_eq!(m, "Network.webSocketFrameReceived");
+        assert_eq!(p["response"], json!({"opcode": 2, "mask": false, "payloadData": "/wA="}));
+        let (m, p) = tr(&mut t, &ws(A::FrameError { message: "boom".into() })).unwrap();
+        assert_eq!((m, p["errorMessage"].as_str()), ("Network.webSocketFrameError", Some("boom")));
+        let (m, p) = tr(&mut t, &ws(A::Closed)).unwrap();
+        assert_eq!((m, p["timestamp"].as_f64()), ("Network.webSocketClosed", Some(2.0)));
+        assert_eq!(t.inflight(), 0, "connections keep no translator state");
     }
 
     #[test]
     fn failures_carry_error_text() {
         let mut t = NetworkTranslator::default();
-        t.translate(&request(1, Destination::Document));
+        tr(&mut t, &request(1, Destination::Document));
         let failed = NetEvent::LoadingFailed {
             id: RequestId(1),
             error: NetError::ConnectionRefused,
@@ -689,7 +1167,7 @@ mod tests {
             destination: Destination::Document,
             timestamp: 9.0,
         };
-        let (m, p) = t.translate(&failed).unwrap();
+        let (m, p) = tr(&mut t, &failed).unwrap();
         assert_eq!(m, "Network.loadingFailed");
         assert_eq!(p["errorText"], "net::ERR_CONNECTION_REFUSED");
         assert_eq!(p["type"], "Document");
@@ -815,9 +1293,20 @@ mod tests {
 
     #[test]
     fn post_data_entries_carry_exact_bytes() {
+        // The post data fields of a `Network.requestWillBeSent` request.
         let write = |body: Option<Bytes>| {
-            let mut request = json!({});
-            write_post_data(&mut request, body.as_ref());
+            let info = RequestInfo {
+                url: Url::parse("http://h/").unwrap(),
+                method: Method::POST,
+                headers: HeaderMap::new(),
+                post_data: body,
+                destination: Destination::Fetch,
+                frame_id: None,
+                loader_id: None,
+            };
+            let mut request = serde_json::to_value(request_json(&info)).unwrap();
+            let fields = request.as_object_mut().unwrap();
+            fields.retain(|name, _| name.contains("PostData") || name.starts_with("postData"));
             request
         };
         assert_eq!(write(None), json!({}), "no body: nothing added");
@@ -847,7 +1336,7 @@ mod tests {
     #[test]
     fn request_will_be_sent_includes_post_data_entries() {
         let mut t = NetworkTranslator::default();
-        let (_, p) = t.translate(&request(9, Destination::Fetch)).unwrap();
+        let (_, p) = tr(&mut t, &request(9, Destination::Fetch)).unwrap();
         assert_eq!(p["request"]["postDataEntries"], json!([{"bytes":"eyJhIjoxfQ=="}]));
         assert_eq!(p["request"]["postData"], "{\"a\":1}");
         assert_eq!(p["request"]["hasPostData"], true);

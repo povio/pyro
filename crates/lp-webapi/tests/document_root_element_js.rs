@@ -71,7 +71,10 @@ fn env(html: &str) -> Env {
         .expect("realm");
     let key = page.window_target().unwrap_or_else(|| page.create_window_target(page.document()));
     realm
-        .set_global_data::<TestWindow>(TestWindowData { page: page.clone(), target: EventTargetData::window(&page, key) })
+        .set_global_data::<TestWindow>(TestWindowData {
+            page: page.clone(),
+            target: EventTargetData::window(&page, key),
+        })
         .unwrap();
     install(&realm.scope().unwrap(), page.clone()).unwrap();
     Env { engine, page, main: realm }

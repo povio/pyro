@@ -133,6 +133,18 @@ fn start_server() -> Server {
                             b"ok",
                         ),
                         (_, "/cookie") => respond(&mut stream, "200 OK", &[], hv("cookie").as_bytes()),
+                        (_, "/no-referrer-redirect") => respond(
+                            &mut stream,
+                            "302 Found",
+                            &[("Location", "/headers".into()), ("Referrer-Policy", "unknown, no-referrer".into())],
+                            b"",
+                        ),
+                        (_, "/cross-redirect") => respond(
+                            &mut stream,
+                            "302 Found",
+                            &[("Location", format!("http://localhost:{port}/headers"))],
+                            b"",
+                        ),
                         (_, "/headers") => {
                             let all: String = headers.iter().map(|(k, v)| format!("{k}: {v}\n")).collect();
                             respond(&mut stream, "200 OK", &[], all.as_bytes())
@@ -553,7 +565,7 @@ fn observer_starts_data_and_early_failure_requests() {
                 NetEvent::DataReceived { .. } => "data",
                 NetEvent::LoadingFinished { .. } => "finished",
                 NetEvent::LoadingFailed { .. } => "failed",
-                _ => "websocket",
+                NetEvent::WebSocket { .. } => "websocket",
             });
         }
         assert_eq!(observed, expected, "{url} offline={offline} same_origin={same_origin}");
@@ -756,4 +768,65 @@ fn self_signed_certificate_fails_unless_errors_are_ignored() {
     c.set_ignore_certificate_errors(false);
     let (_, _, _, e) = collect(&c, Request::get(url, Destination::Fetch));
     assert_eq!(e.map(|e| e.error_text().to_owned()).as_deref(), Some("net::ERR_CERT_AUTHORITY_INVALID"));
+}
+
+fn header_lines(c: &NetClient, req: Request) -> Vec<String> {
+    let (_, _, b, e) = collect(c, req);
+    assert_eq!(e, None);
+    String::from_utf8(b).unwrap().lines().map(str::to_owned).collect()
+}
+
+fn has(lines: &[String], line: &str) -> bool {
+    lines.iter().any(|l| l == line)
+}
+
+/// Referer follows the request's policy (Chrome's default
+/// strict-origin-when-cross-origin), a redirect's Referrer-Policy header
+/// changes the next hop's, and Fetch Metadata goes to trustworthy URLs.
+#[test]
+fn referrer_policy_and_fetch_metadata() {
+    let s = start_server();
+    let c = NetClient::new(NetConfig::default()).unwrap();
+    let page = format!("http://127.0.0.1:{}/page?q=1#frag", s.port);
+    let fetch = |path: &str, policy: ReferrerPolicy| {
+        let mut req = Request::get(url(&s, path), Destination::Fetch);
+        req.origin = Some(format!("http://127.0.0.1:{}", s.port));
+        req.referrer = Some(Url::parse(&page).unwrap());
+        req.referrer_policy = policy;
+        req
+    };
+    let lines = header_lines(&c, fetch("/headers", ReferrerPolicy::default()));
+    assert!(has(&lines, &format!("referer: http://127.0.0.1:{}/page?q=1", s.port)), "{lines:?}");
+    assert!(has(&lines, "sec-fetch-site: same-origin"), "{lines:?}");
+    assert!(has(&lines, "sec-fetch-mode: cors"), "{lines:?}");
+    assert!(has(&lines, "sec-fetch-dest: empty"), "{lines:?}");
+    assert!(!lines.iter().any(|l| l.starts_with("sec-fetch-user")), "{lines:?}");
+
+    let lines = header_lines(&c, fetch("/headers", ReferrerPolicy::Origin));
+    assert!(has(&lines, &format!("referer: http://127.0.0.1:{}/", s.port)), "{lines:?}");
+    let lines = header_lines(&c, fetch("/headers", ReferrerPolicy::NoReferrer));
+    assert!(!lines.iter().any(|l| l.starts_with("referer")), "{lines:?}");
+
+    let lines = header_lines(&c, fetch("/no-referrer-redirect", ReferrerPolicy::UnsafeUrl));
+    assert!(!lines.iter().any(|l| l.starts_with("referer")), "redirect policy applies: {lines:?}");
+
+    // A cross-origin hop: the referrer is cut to its origin and the site
+    // relation keeps the most cross-site value of the chain.
+    let mut cross = fetch("/cross-redirect", ReferrerPolicy::default());
+    cross.mode = RequestMode::NoCors;
+    let lines = header_lines(&c, cross);
+    assert!(has(&lines, &format!("referer: http://127.0.0.1:{}/", s.port)), "{lines:?}");
+    assert!(has(&lines, "sec-fetch-site: cross-site"), "{lines:?}");
+
+    // A browser-initiated navigation: none, navigate, document, ?1.
+    let lines = header_lines(&c, Request::get(url(&s, "/headers"), Destination::Document));
+    for want in ["sec-fetch-site: none", "sec-fetch-mode: navigate", "sec-fetch-dest: document", "sec-fetch-user: ?1"] {
+        assert!(has(&lines, want), "{want}: {lines:?}");
+    }
+    // A navigation a document started: relative to its referrer.
+    let mut nav = Request::get(url(&s, "/headers"), Destination::Iframe);
+    nav.referrer = Some(Url::parse(&page).unwrap());
+    let lines = header_lines(&c, nav);
+    assert!(has(&lines, "sec-fetch-site: same-origin") && has(&lines, "sec-fetch-dest: iframe"), "{lines:?}");
+    assert!(!lines.iter().any(|l| l.starts_with("sec-fetch-user")), "{lines:?}");
 }

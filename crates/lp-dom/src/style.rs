@@ -672,6 +672,8 @@ pub struct ComputedStyle {
     pub atomic_inline: bool,
     /// Own computed `display` is a table row or row group.
     pub table_row_or_group: bool,
+    /// The box kind of the own computed (blockified) `display`.
+    pub box_kind: BoxKind,
     /// Own computed `z-index` (`None`: `auto`).
     pub z_index: Option<i32>,
     /// A `transform` other than `none`.
@@ -682,6 +684,30 @@ pub struct ComputedStyle {
     pub isolated: bool,
     /// Own computed `user-select`.
     pub user_select: UserSelect,
+}
+
+/// The kind of box an element's computed `display` generates, after
+/// Stylo's blockification of flex/grid items, floats and absolutely
+/// positioned boxes (what `innerText` breaks lines at).
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum BoxKind {
+    /// `display: none`.
+    None,
+    /// `display: contents`: no box of its own.
+    Contents,
+    /// An inline-level box (`inline`, `inline-block`, `inline-flex`,
+    /// `inline-table`, ...).
+    #[default]
+    Inline,
+    /// A block-level box (`block`, `flow-root`, `flex`, `grid`,
+    /// `list-item`, `table`) or `table-caption`.
+    Block,
+    TableCell,
+    TableRow,
+    /// A table row group (`table-row-group`, `-header-group`, `-footer-group`).
+    TableRowGroup,
+    /// `table-column` / `table-column-group`.
+    TableColumn,
 }
 
 /// Computed `position`.
@@ -793,21 +819,59 @@ pub struct StyleEngine {
     external: RefCell<Option<Engine>>,
     /// Set while the engine syncs (it reads the sheets here, not styles).
     external_syncing: Cell<bool>,
+    /// Whether a style rule of the engine's sheets depends on `:active`, as
+    /// of its last sync (true until one tells otherwise).
+    active_styled: Cell<bool>,
     /// The rules declaring properties the engine's Stylo does not parse
     /// ([`crate::gecko_only`]), for an observation stamp.
     /// for the [`StyleEngine::author_sheets_key`] they were parsed at.
-    gecko_rules: RefCell<Option<(u64, Rc<Vec<crate::gecko_only::Rule>>)>>,
+    gecko_rules: RefCell<Option<(AuthorSheetsKey, Rc<Vec<crate::gecko_only::Rule>>)>>,
     /// Sheet revisions handed out so far.
     revisions: u64,
-    /// [`StyleEngine::author_sheets_key`] for the sheet generation and the
-    /// DOM's tree version it was computed at (`<style>` texts only change
-    /// with the tree).
-    sheets_key: Cell<Option<((u64, u64), u64)>>,
     /// Called before the layout engine computes styles anew (CSS rule
     /// usage tracking, `CSS.startRuleUsageTracking`), with the stamp it last
     /// ran for.
     recalc_hook: RefCell<Option<RecalcHook>>,
     recalc_hooked_at: Cell<Option<ObservationStamp>>,
+    /// [`Self::set_track_style_changes`].
+    track_style_changes: Cell<bool>,
+    /// Debug builds: the last [`StyleEngine::author_sheets_key`] and a hash
+    /// of the sheet texts it stood for, to check the key moves whenever the
+    /// texts do.
+    #[cfg(debug_assertions)]
+    checked_key: RefCell<Option<(AuthorSheetsKey, u64)>>,
+    /// The constructed sheets each document or shadow root adopts
+    /// (`adoptedStyleSheets`), by sheet id, in order; empty unless a
+    /// script adopted one.
+    adopted: std::collections::BTreeMap<NodeId, Vec<u64>>,
+    /// The text of each adopted constructed sheet.
+    constructed: rustc_hash::FxHashMap<u64, Rc<str>>,
+    /// The document's `CSS.registerProperty()` registrations, in order.
+    registered_properties: Vec<RegisteredProperty>,
+}
+
+/// One `CSS.registerProperty()` registration (validated by
+/// [`crate::stylo::validate_property_registration`]).
+#[derive(Clone, Debug)]
+pub struct RegisteredProperty {
+    pub name: String,
+    pub syntax: String,
+    pub inherits: bool,
+    pub initial_value: Option<String>,
+}
+
+/// [`StyleEngine::author_sheets_key`]: equal keys, equal author sheet texts.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AuthorSheetsKey {
+    /// The sheet generation: sheets added, removed or given text, viewport
+    /// and other invalidations.
+    generation: u64,
+    /// [`Dom::style_text_revision`]: a `<style>`'s child text changed.
+    text_revision: u64,
+    /// Which sheets (in cascade order) have a connected owner: bits 0-63,
+    /// then the rest 64 per word (empty for at most 64 sheets).
+    connected: u64,
+    connected_rest: Vec<u64>,
 }
 
 /// [`StyleEngine::set_recalc_hook`].
@@ -837,9 +901,15 @@ impl StyleEngine {
             memo_at: Cell::new(None),
             external: RefCell::new(None),
             external_syncing: Cell::new(false),
+            active_styled: Cell::new(true),
             gecko_rules: RefCell::new(None),
             revisions: 0,
-            sheets_key: Cell::new(None),
+            track_style_changes: Cell::new(false),
+            #[cfg(debug_assertions)]
+            checked_key: RefCell::new(None),
+            registered_properties: Vec::new(),
+            adopted: Default::default(),
+            constructed: Default::default(),
             recalc_hook: RefCell::new(None),
             recalc_hooked_at: Cell::new(None),
         }
@@ -876,6 +946,80 @@ impl StyleEngine {
         self.external_style(dom, el)
     }
 
+    /// Whether the layout engine records the elements whose computed style a
+    /// restyle replaces, for [`Self::take_style_changes`] (told to the engine
+    /// before every sync).
+    pub fn set_track_style_changes(&self, on: bool) {
+        self.track_style_changes.set(on);
+    }
+
+    pub fn track_style_changes(&self) -> bool {
+        self.track_style_changes.get()
+    }
+
+    /// The elements of this document whose computed style the engine
+    /// replaced since the last call (while tracked), with the style before
+    /// and after: a transition's before-change and after-change styles.
+    /// Elements gone from `dom` are left out.
+    pub fn take_style_changes(
+        &self,
+        dom: &Dom,
+    ) -> Vec<(NodeId, crate::timing::StyleSnapshot, crate::timing::StyleSnapshot)> {
+        let external = self.external.borrow();
+        let Some((source, _)) = &*external else { return Vec::new() };
+        source
+            .take_style_changes()
+            .into_iter()
+            .filter_map(|(key, before, after)| {
+                let el = crate::geometry::node_of(dom, key)?;
+                self.owns(dom, el)?;
+                Some((el, before, after))
+            })
+            .collect()
+    }
+
+    /// Records a `CSS.registerProperty()` registration; `false` (and nothing
+    /// changes) when the name is registered already.
+    pub fn register_property(&mut self, property: RegisteredProperty) -> bool {
+        if self.registered_property(&property.name).is_some() {
+            return false;
+        }
+        self.registered_properties.push(property);
+        true
+    }
+
+    /// The registration of custom property `name`, if script made one.
+    pub fn registered_property(&self, name: &str) -> Option<&RegisteredProperty> {
+        self.registered_properties.iter().find(|p| p.name == name)
+    }
+
+    /// The layout engine's style of `el`'s pseudo-element `pseudo` (see
+    /// [`crate::geometry::GeometrySource::element_pseudo_style`]).
+    pub fn stylo_pseudo_style(
+        &self,
+        dom: &Dom,
+        el: NodeId,
+        pseudo: &style::selector_parser::PseudoElement,
+        generated_only: bool,
+    ) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
+        self.owns(dom, el)?;
+        self.engine_styled(dom)?;
+        let external = self.external.borrow();
+        external.as_ref()?.0.element_pseudo_style(crate::snapshot::render_key(el), pseudo, generated_only)
+    }
+
+    /// `false` when no element of the document has a generated `::before` /
+    /// `::after` (styles brought up to `dom` first): then
+    /// [`Self::stylo_pseudo_style`] with `generated_only` answers `None` for
+    /// both of every element. One flag read on the layout engine.
+    pub fn may_have_generated_before_after(&self, dom: &Dom) -> bool {
+        if self.engine_styled(dom).is_none() {
+            return false;
+        }
+        let external = self.external.borrow();
+        external.as_ref().is_some_and(|(source, _)| source.may_have_generated_before_after())
+    }
+
     /// The layout engine's style of `el` (its styles brought up to `dom`).
     fn external_style(
         &self,
@@ -896,8 +1040,21 @@ impl StyleEngine {
     /// The layout engine synced `dom` (styles and layout).
     pub fn engine_synced(&self, dom: &Dom) {
         let stamp = self.observation_stamp(dom);
-        if let Some((_, at)) = self.external.borrow_mut().as_mut() {
+        if let Some((source, at)) = self.external.borrow_mut().as_mut() {
             *at = Some(stamp);
+            self.active_styled.set(source.styles_depend_on_active());
+        }
+    }
+
+    /// Whether which element is `:active` can change a computed style: some
+    /// sheet depends on it, or no layout engine answers for the sheets (see
+    /// [`crate::Dom::set_activated`]). Sheets change only with the DOM
+    /// version or the sheet generation, both in the observation stamp, so
+    /// the engine syncs for a change before styles are read again.
+    pub fn active_styled(&self) -> bool {
+        match self.external.borrow().as_ref() {
+            Some((source, _)) if source.active() => self.active_styled.get(),
+            _ => true,
         }
     }
 
@@ -936,10 +1093,9 @@ impl StyleEngine {
     }
 
     /// The computed style of `el`'s `::before` / `::after` from the layout
-    /// engine: `None` when no rule gives it a style that could generate a
-    /// box (`content: none | normal` or `display: none`), unless
-    /// `synthesize`, which then answers with the style of a pseudo-element
-    /// without rules (`getComputedStyle(el, '::before')`).
+    /// engine: `None` when it generates no box of a rendered element, unless
+    /// `synthesize`, which then answers as `getComputedStyle(el, '::before')`
+    /// does ([`Self::stylo_pseudo_style`]).
     pub fn pseudo_style(
         &self,
         dom: &Dom,
@@ -947,20 +1103,11 @@ impl StyleEngine {
         pseudo: PseudoElement,
         synthesize: bool,
     ) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
-        self.owns(dom, el)?;
-        self.engine_styled(dom)?;
-        let external = self.external.borrow();
-        external.as_ref()?.0.pseudo_style(crate::snapshot::render_key(el), pseudo == PseudoElement::After, synthesize)
-    }
-
-    /// `getComputedStyle(el, pseudo).getPropertyValue(name)` for `::before`
-    /// and `::after`; `None` as for [`Self::stylo_value`]. `content: normal`
-    /// computes to `none` on these pseudo-elements (CSS Content 3 §2), as
-    /// Chromium reports it.
-    pub fn pseudo_value(&self, dom: &Dom, el: NodeId, pseudo: PseudoElement, name: &str) -> Option<String> {
-        let style = self.pseudo_style(dom, el, pseudo, true)?;
-        let value = crate::stylo::serialize(&style, name)?;
-        Some(if value == "normal" && name.eq_ignore_ascii_case("content") { "none".into() } else { value })
+        let pseudo = match pseudo {
+            PseudoElement::Before => style::selector_parser::PseudoElement::Before,
+            PseudoElement::After => style::selector_parser::PseudoElement::After,
+        };
+        self.stylo_pseudo_style(dom, el, &pseudo, !synthesize)
     }
 
     /// Playwright's `getCSSContent`: the text CSS `content` puts in
@@ -1023,6 +1170,16 @@ impl StyleEngine {
         // `display` but generate no box, as in Chromium's menu list.
         if parent.is_some_and(|p| dom.element(p).is_ok_and(is_menu_list)) {
             c.in_display_none = true;
+        }
+        // A modal dialog blocks its document: the root is inert and the
+        // topmost modal dialog's subtree is not (HTML "blocked by a modal
+        // dialog"). One empty-set check when there is no modal dialog.
+        if let Some(modal) = dom.topmost_modal() {
+            if modal == el {
+                c.inert = e.is_html() && e.attr("inert").is_some();
+            } else if parent.is_none() && dom.check(modal).is_ok_and(|m| dom.n(m).owner_doc == dom.n(idx).owner_doc) {
+                c.inert = true;
+            }
         }
         self.memo.borrow_mut().insert(el, c);
         Some(c)
@@ -1117,7 +1274,10 @@ impl StyleEngine {
     }
 
     /// Calls `f` with the text of each author sheet whose owner is connected,
-    /// in cascade order (CSSOM edits included).
+    /// in cascade order (CSSOM edits included), then of the constructed
+    /// sheets connected documents and shadow roots adopt. A `<style>`'s text
+    /// is its child text content (HTML: "the child text content of the style
+    /// element"), not the text of deeper descendants.
     pub fn for_each_author_sheet(&self, dom: &Dom, f: &mut dyn FnMut(&str)) {
         for sheet in &self.sheets {
             if !dom.is_alive(sheet.owner) || !dom.is_connected(sheet.owner).unwrap_or(false) {
@@ -1125,54 +1285,118 @@ impl StyleEngine {
             }
             match &sheet.source {
                 SheetSource::Text(text) => f(text),
-                SheetSource::StyleElement => f(&dom.text_content(sheet.owner).ok().flatten().unwrap_or_default()),
+                SheetSource::StyleElement => f(&dom.child_text_content(sheet.owner)),
             }
         }
+        for (scope, ids) in &self.adopted {
+            if !dom.is_alive(*scope) || !dom.is_connected(*scope).unwrap_or(false) {
+                continue;
+            }
+            for text in ids.iter().filter_map(|id| self.constructed.get(id)) {
+                f(text);
+            }
+        }
+    }
+
+    /// `scope.adoptedStyleSheets = sheets` (a document or shadow root):
+    /// each constructed sheet's id and text, in order.
+    pub fn set_adopted(&mut self, scope: NodeId, sheets: Vec<(u64, Rc<str>)>) {
+        if sheets.is_empty() && !self.adopted.contains_key(&scope) {
+            return;
+        }
+        let ids: Vec<u64> = sheets.iter().map(|(id, _)| *id).collect();
+        for (id, text) in sheets {
+            self.constructed.insert(id, text);
+        }
+        let old = if ids.is_empty() { self.adopted.remove(&scope) } else { self.adopted.insert(scope, ids) };
+        // Texts no scope adopts any more are dropped.
+        for id in old.unwrap_or_default() {
+            if !self.adopted.values().any(|ids| ids.contains(&id)) {
+                self.constructed.remove(&id);
+            }
+        }
+        // Rendered as elements the render delta does not track: a whole sync.
+        self.invalidate();
+    }
+
+    /// A constructed sheet's text changed (`replaceSync`, `insertRule`, ...).
+    pub fn set_constructed_text(&mut self, id: u64, text: &str) {
+        let Some(old) = self.constructed.get_mut(&id) else { return };
+        if **old != *text {
+            *old = text.into();
+            self.invalidate();
+        }
+    }
+
+    /// The constructed sheets (id and text) `scope` adopts, in order.
+    pub fn adopted_sheets(&self, scope: NodeId) -> Vec<(u64, Rc<str>)> {
+        let Some(ids) = self.adopted.get(&scope) else { return Vec::new() };
+        ids.iter().filter_map(|id| Some((*id, self.constructed.get(id)?.clone()))).collect()
+    }
+
+    /// Whether any document or shadow root adopts a constructed sheet.
+    pub fn has_adopted(&self) -> bool {
+        !self.adopted.is_empty()
     }
 
     /// A key that changes when the author sheets' texts may have: the sheet
-    /// generation (a sheet added, removed or given text) and the text of
-    /// every `<style>` element, which is read from the DOM. Those texts are
-    /// hashed again only after the tree changed.
-    pub fn author_sheets_key(&self, dom: &Dom) -> u64 {
-        use std::hash::{Hash, Hasher};
-        let at = (self.generation, dom.tree_version());
-        if let Some((k, key)) = self.sheets_key.get() {
-            if k == at {
-                return key;
+    /// generation (a sheet added, removed or given text), the DOM's
+    /// [`Dom::style_text_revision`] (a `<style>`'s child text changed) and
+    /// which sheets have a connected owner. Nothing is hashed or read from
+    /// the sheets' texts.
+    pub fn author_sheets_key(&self, dom: &Dom) -> AuthorSheetsKey {
+        let mut connected = 0u64;
+        let mut connected_rest = Vec::new();
+        for (i, sheet) in self.sheets.iter().enumerate() {
+            let on = dom.is_alive(sheet.owner) && dom.is_connected(sheet.owner).unwrap_or(false);
+            if i < 64 {
+                connected |= u64::from(on) << i;
+            } else {
+                let (word, bit) = ((i - 64) / 64, (i - 64) % 64);
+                if word == connected_rest.len() {
+                    connected_rest.push(0);
+                }
+                connected_rest[word] |= u64::from(on) << bit;
             }
         }
-        let mut hasher = rustc_hash::FxHasher::default();
-        self.generation.hash(&mut hasher);
-        for sheet in &self.sheets {
-            // Which sheets apply (connected owners), and the texts read
-            // from the DOM.
-            let alive = dom.is_alive(sheet.owner);
-            (alive && dom.is_connected(sheet.owner).unwrap_or(false)).hash(&mut hasher);
-            if alive && matches!(sheet.source, SheetSource::StyleElement) {
-                hash_text_content(dom, sheet.owner, &mut hasher);
-            }
-        }
-        let key = hasher.finish();
-        self.sheets_key.set(Some((at, key)));
+        let key = AuthorSheetsKey {
+            generation: self.generation,
+            text_revision: dom.style_text_revision(),
+            connected,
+            connected_rest,
+        };
+        #[cfg(debug_assertions)]
+        self.check_sheets_key(dom, &key);
         key
     }
 
-    /// An identity of `owner`'s sheet text as it is now: its revision for a
-    /// loader or CSSOM text (set only through this engine), a hash of the
-    /// element's text for a `<style>` read from the DOM. `None`: no sheet.
-    pub fn sheet_revision(&self, dom: &Dom, owner: NodeId) -> Option<u64> {
-        use std::hash::{Hash, Hasher};
-        let sheet = self.sheets.iter().find(|s| s.owner == owner)?;
+    /// Debug builds: the sheet texts are the same while the key is.
+    #[cfg(debug_assertions)]
+    fn check_sheets_key(&self, dom: &Dom, key: &AuthorSheetsKey) {
+        use std::hash::Hasher;
         let mut hasher = rustc_hash::FxHasher::default();
-        match &sheet.source {
-            SheetSource::Text(_) => (0u8, sheet.revision).hash(&mut hasher),
-            SheetSource::StyleElement => {
-                1u8.hash(&mut hasher);
-                hash_text_content(dom, owner, &mut hasher);
-            }
+        self.for_each_author_sheet(dom, &mut |text| {
+            hasher.write(text.as_bytes());
+            hasher.write_u8(0xff);
+        });
+        let hash = hasher.finish();
+        let mut last = self.checked_key.borrow_mut();
+        if let Some((k, h)) = &*last {
+            debug_assert!(k != key || *h == hash, "author sheet texts changed under the same key {key:?}");
         }
-        Some(hasher.finish())
+        *last = Some((key.clone(), hash));
+    }
+
+    /// An identity of `owner`'s sheet text as it is now: its revision for a
+    /// loader or CSSOM text (set only through this engine), the element's
+    /// [`Dom::style_element_text_revision`] for a `<style>` read from the
+    /// DOM (the low bit tells the two apart). `None`: no sheet.
+    pub fn sheet_revision(&self, dom: &Dom, owner: NodeId) -> Option<u64> {
+        let sheet = self.sheets.iter().find(|s| s.owner == owner)?;
+        Some(match &sheet.source {
+            SheetSource::Text(_) => sheet.revision << 1,
+            SheetSource::StyleElement => (dom.style_element_text_revision(owner).unwrap_or_default() << 1) | 1,
+        })
     }
 
     pub fn sheet_owners(&self) -> Vec<NodeId> {
@@ -1246,15 +1470,35 @@ impl StyleEngine {
 
     /// isHidden (StyleManager.zig:627-631). Elements without a style (stale,
     /// other document) are hidden.
+    ///
+    /// The `display: none` part comes from the layout engine's styles on
+    /// the rendered tree ([`StyleEngine::engine_displayed`]) when it can
+    /// tell, so the common query (no visibility or opacity check) derives
+    /// no [`ComputedStyle`] up the ancestor chain.
     pub fn is_hidden(&self, dom: &Dom, el: NodeId, opts: CheckVisibilityOptions) -> bool {
+        match self.engine_displayed(dom, el) {
+            Some(false) => return true,
+            Some(true) if !opts.check_visibility && !opts.check_opacity => return false,
+            _ => {}
+        }
         self.computed(dom, el).is_none_or(|c| c.is_hidden(opts))
+    }
+
+    /// Whether the layout engine has `el` outside every `display: none`
+    /// subtree of the rendered (flat) tree, as of its styles brought up to
+    /// `dom`; `None` when there is no engine or it cannot tell.
+    fn engine_displayed(&self, dom: &Dom, el: NodeId) -> Option<bool> {
+        self.owns(dom, el)?;
+        self.engine_styled(dom)?;
+        let external = self.external.borrow();
+        external.as_ref()?.0.element_displayed(crate::snapshot::render_key(el))
     }
 
     /// StyleManager.zig:638-644.
     pub fn rendering(&self, dom: &Dom, el: NodeId) -> Rendering {
         match self.computed(dom, el) {
             None => Rendering::Visible,
-            Some(c) if c.is_hidden(CheckVisibilityOptions::default()) => Rendering::None,
+            Some(_) if self.is_hidden(dom, el, CheckVisibilityOptions::default()) => Rendering::None,
             Some(c) if c.visibility_hidden => Rendering::Invisible,
             Some(_) => Rendering::Visible,
         }
@@ -1497,7 +1741,7 @@ fn derive_computed(
         } else {
             TextTransform::parse(&get("text-transform")).unwrap_or_default()
         },
-        white_space: match style.get_inherited_text().clone_white_space_collapse() {
+        white_space: match style.get_inherited_text().slow_clone_white_space_collapse() {
             style::computed_values::white_space_collapse::T::Collapse => WhiteSpace::Collapse,
             style::computed_values::white_space_collapse::T::PreserveBreaks => WhiteSpace::PreserveBreaks,
             _ => WhiteSpace::Preserve,
@@ -1519,6 +1763,7 @@ fn derive_computed(
             || d == D::TableRowGroup
             || d == D::TableHeaderGroup
             || d == D::TableFooterGroup,
+        box_kind: box_kind_of(d),
         z_index: match position.z_index {
             style::values::generics::position::GenericZIndex::Integer(z) => Some(z),
             style::values::generics::position::GenericZIndex::Auto => None,
@@ -1536,6 +1781,30 @@ fn derive_computed(
                 U::All => UserSelect::All,
             }
         },
+    }
+}
+
+/// The [`BoxKind`] of a computed Stylo `display`.
+fn box_kind_of(d: style::values::specified::box_::Display) -> BoxKind {
+    use style::values::specified::box_::{Display as D, DisplayInside as I, DisplayOutside as O};
+    if d == D::None {
+        return BoxKind::None;
+    }
+    if d == D::Contents {
+        return BoxKind::Contents;
+    }
+    match d.outside() {
+        O::None => BoxKind::None,
+        O::Inline => BoxKind::Inline,
+        O::Block | O::TableCaption => BoxKind::Block,
+        O::InternalTable => match d.inside() {
+            I::TableCell => BoxKind::TableCell,
+            I::TableRow => BoxKind::TableRow,
+            I::TableColumn | I::TableColumnGroup => BoxKind::TableColumn,
+            _ => BoxKind::TableRowGroup,
+        },
+        #[allow(unreachable_patterns)]
+        _ => BoxKind::Inline,
     }
 }
 
@@ -1574,20 +1843,6 @@ impl StyleMemo {
         self.sparse[slot] = self.dense.len() as u32;
         self.dense.push((el, c));
     }
-}
-
-/// Hashes `el`'s text content (its descendant text, as `textContent`
-/// concatenates it) without building the string; nothing for a stale id.
-fn hash_text_content(dom: &Dom, el: NodeId, hasher: &mut impl std::hash::Hasher) {
-    let Ok(root) = dom.check(el) else { return };
-    let mut cur = dom.n(root).first_child;
-    while cur != NIL {
-        if let NodeKind::Text(t) | NodeKind::CData(t) = &dom.n(cur).kind {
-            hasher.write(t.as_bytes());
-        }
-        cur = dom.following_in(cur, root);
-    }
-    hasher.write_u8(0xff);
 }
 
 /// Whether `e` is a drop-down `<select>` (Chromium's menu list: neither

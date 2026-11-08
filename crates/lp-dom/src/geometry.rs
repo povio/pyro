@@ -145,6 +145,11 @@ pub trait GeometrySource {
     fn active(&self) -> bool {
         true
     }
+    /// Whether a style rule of the engine's sheets depends on `:active`
+    /// (as of the last sync); true when the engine cannot tell.
+    fn styles_depend_on_active(&self) -> bool {
+        true
+    }
     /// Whether the engine must sync again although the document did not
     /// change (a sub-resource it laid out without arrived since).
     fn stale(&self) -> bool {
@@ -155,17 +160,39 @@ pub trait GeometrySource {
     fn element_style(&self, _key: u64) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
         None
     }
-    /// The computed style of one element's `::before` (`after: false`) or
-    /// `::after` as of the last sync: `None` when no rule gives it one that
-    /// could generate a box, unless `synthesize` (the style of a
-    /// pseudo-element without rules).
-    fn pseudo_style(
+    /// Whether the element is outside every `display: none` subtree of the
+    /// rendered tree, from the styles the engine keeps as of the last style
+    /// sync (`None`: the engine cannot tell, and the derived
+    /// [`crate::style::ComputedStyle`] answers).
+    fn element_displayed(&self, _key: u64) -> Option<bool> {
+        None
+    }
+    /// The elements whose style was replaced since the last call, by key,
+    /// with the style before and after; recorded while the engine's
+    /// [`crate::style::StyleEngine::track_style_changes`] is on.
+    fn take_style_changes(
+        &self,
+    ) -> Vec<(u64, style::servo_arc::Arc<style::properties::ComputedValues>, style::servo_arc::Arc<style::properties::ComputedValues>)>
+    {
+        Vec::new()
+    }
+    /// The computed style of one element's pseudo-element `pseudo`
+    /// (`getComputedStyle(el, pseudo)`) as of the last sync; with
+    /// `generated_only`, only a stored style of a pseudo-element its rules
+    /// generate.
+    fn element_pseudo_style(
         &self,
         _key: u64,
-        _after: bool,
-        _synthesize: bool,
+        _pseudo: &style::selector_parser::PseudoElement,
+        _generated_only: bool,
     ) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
         None
+    }
+    /// `false` when [`Self::element_pseudo_style`] with `generated_only`
+    /// answers `None` for `::before` / `::after` of every element as of the
+    /// last sync (no element is styled with a generated one).
+    fn may_have_generated_before_after(&self) -> bool {
+        true
     }
 }
 

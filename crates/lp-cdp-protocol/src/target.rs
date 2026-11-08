@@ -35,8 +35,18 @@ pub type WorkerKey = u64;
 
 /// A dedicated worker started or ended ([`Host::take_worker_changes`]).
 pub enum WorkerChange {
-    Started { worker: WorkerKey, page: PageKey, url: String },
-    Stopped { worker: WorkerKey },
+    /// `service`: a service worker version, a `service_worker` target of the
+    /// page's browser context (attached by the browser-level auto-attach)
+    /// rather than a `worker` below the page.
+    Started {
+        worker: WorkerKey,
+        page: PageKey,
+        url: String,
+        service: bool,
+    },
+    Stopped {
+        worker: WorkerKey,
+    },
 }
 
 /// Receives encoded protocol messages in emission order.
@@ -304,6 +314,9 @@ struct WorkerEntry {
     page: PageKey,
     target_id: String,
     url: String,
+    service: bool,
+    /// The browser context, kept: a service worker outlives the page.
+    context_id: Option<String>,
 }
 
 /// Per-connection browser protocol state.
@@ -943,10 +956,11 @@ impl<H: Host> Browser<H> {
                     session.auto_attach_workers = wanted;
                 }
                 if wanted {
-                    let existing: Vec<usize> =
-                        (0..self.workers.len()).filter(|i| self.workers[*i].page == page).collect();
+                    let existing: Vec<usize> = (0..self.workers.len())
+                        .filter(|i| self.workers[*i].page == page && !self.workers[*i].service)
+                        .collect();
                     for index in existing {
-                        self.attach_worker(index, session_id, out);
+                        self.attach_worker(index, Some(session_id), out);
                     }
                 }
             }
@@ -1152,6 +1166,13 @@ impl<H: Host> Browser<H> {
                 if self.auto_attach || self.tab_attach {
                     for target_id in unattached {
                         self.auto_attach_new(&target_id, false, out)?;
+                    }
+                    if self.auto_attach {
+                        let services: Vec<usize> =
+                            (0..self.workers.len()).filter(|i| self.workers[*i].service).collect();
+                        for index in services {
+                            self.attach_worker(index, None, out);
+                        }
                     }
                 } else {
                     // Tab sessions first detach their pages' sessions.
@@ -1666,13 +1687,22 @@ impl<H: Host> Browser<H> {
 
     fn worker_changed(&mut self, change: WorkerChange, out: &mut dyn Sink) {
         match change {
-            WorkerChange::Started { worker, page, url } => {
-                let target_id = self.mint("");
-                self.workers.push(WorkerEntry { key: worker, page, target_id, url });
+            WorkerChange::Started { worker, page, url, service } => {
+                // A service worker's target is a browser-level one, beside the
+                // pages, whose ids the host picks: a prefix keeps them apart.
+                let target_id = self.mint(if service { "SW" } else { "" });
+                let context_id = self.targets.iter().find(|t| t.page == page).map(|t| t.context_id.clone());
+                self.workers.push(WorkerEntry { key: worker, page, target_id, url, service, context_id });
                 let index = self.workers.len() - 1;
                 if self.discover {
                     let params = serde_json::json!({ "targetInfo": self.worker_info(index, false) });
                     out.send(msg::event_frame("Target.targetCreated", &params, None));
+                }
+                if service {
+                    if self.auto_attach {
+                        self.attach_worker(index, None, out);
+                    }
+                    return;
                 }
                 let Some(target_id) = self.targets.iter().find(|t| t.page == page).map(|t| t.id.clone()) else {
                     return;
@@ -1684,7 +1714,7 @@ impl<H: Host> Browser<H> {
                     .map(|(id, _)| id.clone())
                     .collect();
                 for parent in parents {
-                    self.attach_worker(index, &parent, out);
+                    self.attach_worker(index, Some(&parent), out);
                 }
             }
             WorkerChange::Stopped { worker } => {
@@ -1705,18 +1735,19 @@ impl<H: Host> Browser<H> {
 
     fn worker_info(&self, index: usize, attached: bool) -> serde_json::Value {
         let worker = &self.workers[index];
-        let context = self.targets.iter().find(|t| t.page == worker.page).map(|t| t.context_id.as_str());
         serde_json::json!({
-            "targetId": worker.target_id, "type": "worker", "title": "", "url": worker.url,
-            "attached": attached, "canAccessOpener": false, "browserContextId": context,
+            "targetId": worker.target_id, "type": if worker.service { "service_worker" } else { "worker" },
+            "title": "", "url": worker.url,
+            "attached": attached, "canAccessOpener": false, "browserContextId": worker.context_id,
         })
     }
 
-    /// Attaches `parent`, a session of the worker's page, once. Past the session
-    /// limit the worker simply has no session there.
-    fn attach_worker(&mut self, index: usize, parent: &str, out: &mut dyn Sink) {
+    /// Attaches `parent`, a session of the worker's page (`None`: the browser
+    /// connection, for a service worker), once. Past the session limit the
+    /// worker simply has no session there.
+    fn attach_worker(&mut self, index: usize, parent: Option<&str>, out: &mut dyn Sink) {
         let worker = self.workers[index].key;
-        if self.sessions.values().any(|s| s.worker == Some(worker) && s.parent.as_deref() == Some(parent))
+        if self.sessions.values().any(|s| s.worker == Some(worker) && s.parent.as_deref() == parent)
             || self.sessions.len() + self.browser_sessions.len() >= MAX_SESSIONS
         {
             return;
@@ -1726,7 +1757,7 @@ impl<H: Host> Browser<H> {
             session_id.clone(),
             SessionEntry {
                 target_id: self.workers[index].target_id.clone(),
-                parent: Some(parent.to_owned()),
+                parent: parent.map(str::to_owned),
                 auto_attached: true,
                 tab: false,
                 worker: Some(worker),
@@ -1738,7 +1769,7 @@ impl<H: Host> Browser<H> {
         let params = serde_json::json!({
             "sessionId": session_id, "targetInfo": self.worker_info(index, true), "waitingForDebugger": false,
         });
-        out.send(msg::event_frame("Target.attachedToTarget", &params, Some(parent)));
+        out.send(msg::event_frame("Target.attachedToTarget", &params, parent));
     }
 
     fn detach_worker_sessions(&mut self, parent: &str, out: &mut dyn Sink) {

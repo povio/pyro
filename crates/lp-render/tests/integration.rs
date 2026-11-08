@@ -4,13 +4,18 @@
 
 mod br_flex_item;
 mod container_queries;
+mod containing_block_chain;
 mod font_optical_sizing;
 mod fractional_scroll_overflow;
 mod image_input_replaced;
+mod incremental_construction;
 mod incremental_flex_overflow;
 mod input_percentage_min_content;
+mod line_break_resume;
 mod mirror;
+mod out_of_flow_boundary;
 mod pdf_fidelity;
+mod profiling_timers;
 mod render;
 mod table_cell_height;
 mod table_cell_width;

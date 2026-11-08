@@ -65,6 +65,9 @@ pub(crate) struct IdentityState {
     extra_headers: HeaderMap,
     /// Page-scoped `Network.setCacheDisabled`.
     cache_disabled: bool,
+    /// Page-scoped `Network.setBypassServiceWorker`: fetch/XHR skip the
+    /// controlling service worker.
+    bypass_service_worker: bool,
 }
 impl PageDom {
     /// Applies atomically to existing navigator wrappers/worlds and future
@@ -96,6 +99,12 @@ impl PageDom {
     }
     pub fn cache_disabled(&self) -> bool {
         self.identity.borrow().cache_disabled
+    }
+    pub fn set_bypass_service_worker(&self, bypass: bool) {
+        self.identity.borrow_mut().bypass_service_worker = bypass;
+    }
+    pub fn bypass_service_worker(&self) -> bool {
+        self.identity.borrow().bypass_service_worker
     }
     pub(crate) fn apply_request_defaults(&self, request: &mut Request) {
         let identity = self.identity.borrow();

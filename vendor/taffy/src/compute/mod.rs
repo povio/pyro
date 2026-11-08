@@ -50,6 +50,8 @@ pub use self::flexbox::compute_flexbox_layout;
 pub use self::grid::compute_grid_layout;
 
 #[cfg(feature = "float_layout")]
+pub use self::block::FloatMark;
+#[cfg(feature = "float_layout")]
 pub use self::float::{BfcSlot, ContentSlot, FloatContext, FloatIntrinsicWidthCalculator};
 
 use crate::geometry::{Line, Point, Size};
@@ -183,11 +185,21 @@ pub fn compute_root_layout_in(
             // The root is the initial containing block and claims all remaining candidates
             ContainingBlockClaims::ALL,
             overflow,
+            Point { x: direction.is_rtl(), y: false },
             &mut hoisted,
             &mut unclaimed,
         );
         debug_assert!(unclaimed.is_empty(), "the root positioning pass must claim all remaining candidates");
         if !root_is_cached {
+            tree.add_hoisted_children(root, &hoisted);
+        } else if {
+            let claims = tree.get_core_container_style(root).is_containing_block();
+            !claims.absolute && !claims.fixed
+        } {
+            // lightningpanda: a root which claims no out-of-flow box itself hoists exactly the boxes
+            // of this pass, which may differ from the last run's even when its own layout is cached:
+            // a box relaid here (its ancestors' layout untouched) can surface other candidates.
+            tree.clear_hoisted_children(root);
             tree.add_hoisted_children(root, &hoisted);
         }
     }
@@ -455,14 +467,29 @@ pub fn round_layout(tree: &mut impl RoundTree, node_id: NodeId) {
     /// This is split into a separate function to make it easier to feature flag.
     fn round_scrollable_overflow_rect(
         layout: &mut Layout,
-        unrounded_rect: crate::geometry::Rect<f32>,
+        unrounded_overflow: crate::tree::ScrollableOverflow,
         cumulative_x: f32,
         cumulative_y: f32,
     ) {
-        layout.scrollable_overflow_rect.left = round(cumulative_x + unrounded_rect.left) - round(cumulative_x);
-        layout.scrollable_overflow_rect.right = round(cumulative_x + unrounded_rect.right) - round(cumulative_x);
-        layout.scrollable_overflow_rect.top = round(cumulative_y + unrounded_rect.top) - round(cumulative_y);
-        layout.scrollable_overflow_rect.bottom = round(cumulative_y + unrounded_rect.bottom) - round(cumulative_y);
+        let unrounded_rect = unrounded_overflow.rect();
+        let round_edge = |offset: f32, edge: f32| {
+            let rounded = round(offset + edge) - round(offset);
+            if rounded == 0.0 {
+                // Keep left/top -0.0; ScrollableOverflow::new only re-packs right/bottom signs from reversed.
+                crate::util::sys::copysign(rounded, edge)
+            } else {
+                rounded
+            }
+        };
+        layout.scrollable_overflow_rect = crate::tree::ScrollableOverflow::new(
+            crate::geometry::Rect {
+                left: round_edge(cumulative_x, unrounded_rect.left),
+                right: round_edge(cumulative_x, unrounded_rect.right),
+                top: round_edge(cumulative_y, unrounded_rect.top),
+                bottom: round_edge(cumulative_y, unrounded_rect.bottom),
+            },
+            unrounded_overflow.is_reversed(),
+        );
     }
 }
 
@@ -486,7 +513,8 @@ pub fn compute_hidden_layout(tree: &mut (impl LayoutPartialTree + CacheTree), no
 pub mod detailed_info {
     #[cfg(feature = "grid")]
     pub use super::grid::{
-        DetailedGridInfo, DetailedGridItemsInfo, DetailedGridTracksInfo, GridLineNames, GridLineNamesIter,
+        DetailedGridInfo, DetailedGridItemsInfo, DetailedGridTracksInfo, GridLineNames, GridLineNamesIter, TableGridReuse, TableGridSplice,
+        TableGridState,
     };
 }
 

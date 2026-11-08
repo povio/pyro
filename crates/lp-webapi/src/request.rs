@@ -30,6 +30,8 @@ pub struct RequestData {
     pub(crate) referrer_policy: String,
     pub(crate) integrity: String,
     pub(crate) keepalive: bool,
+    /// Set only on a service worker's FetchEvent request; "" otherwise.
+    pub(crate) destination: String,
     pub(crate) body: Rc<Body>,
     used: Rc<Cell<bool>>,
     /// `body` was read: its source holds this Request's body consumer.
@@ -64,6 +66,39 @@ impl RequestData {
 }
 
 const METHODS: &[&str] = &["DELETE", "GET", "HEAD", "OPTIONS", "POST", "PUT"];
+/// RequestInit `referrer`: `""` is `no-referrer`; `about:client` or a URL of
+/// another origin than the document's is `client`; else the parsed URL.
+pub(crate) fn parse_referrer(page: &crate::page::PageDom, referrer: &str) -> Result<String, String> {
+    if referrer.is_empty() {
+        return Ok("no-referrer".into());
+    }
+    let dom = page.dom.borrow();
+    let base = dom.document_base_url(page.document()).ok().and_then(|b| lp_net::Url::parse(b).ok());
+    let parsed = lp_net::Url::options()
+        .base_url(base.as_ref())
+        .parse(referrer)
+        .map_err(|_| format!("Invalid referrer '{referrer}'"))?;
+    let document = dom.document_data(page.document()).ok().and_then(|d| lp_net::Url::parse(&d.url).ok());
+    Ok(
+        if (parsed.scheme() == "about" && parsed.path() == "client")
+            || document.is_none_or(|d| d.origin() != parsed.origin())
+        {
+            "client".into()
+        } else {
+            parsed.to_string()
+        },
+    )
+}
+
+/// A RequestInit `referrerPolicy` must be a ReferrerPolicy enum value.
+pub(crate) fn check_referrer_policy(policy: &str) -> Result<(), String> {
+    if REFERRER_POLICIES.contains(&policy) {
+        Ok(())
+    } else {
+        Err(format!("The provided value '{policy}' is not a valid enum value of type ReferrerPolicy."))
+    }
+}
+
 const REFERRER_POLICIES: &[&str] = &[
     "",
     "no-referrer",
@@ -77,10 +112,7 @@ const REFERRER_POLICIES: &[&str] = &[
 ];
 
 fn is_token(s: &str) -> bool {
-    !s.is_empty()
-        && s.bytes().all(|b| {
-            b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b)
-        })
+    !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b))
 }
 
 fn option<'s>(s: &Scope<'s>, init: Value<'s>, key: &str) -> JsResult<Value<'s>> {
@@ -114,7 +146,7 @@ impl JsClass for Request {
         def.getter("method", |s, d| Ok(s.string(&d.method)));
         def.getter("url", |s, d| Ok(s.string(&d.url)));
         def.getter("headers", |s, d| hidden(s, d, HEADERS));
-        def.getter("destination", |s, _d| Ok(s.string("")));
+        def.getter("destination", |s, d| Ok(s.string(&d.destination)));
         def.getter("referrer", |s, d| {
             Ok(s.string(match d.referrer.as_str() {
                 "no-referrer" => "",
@@ -185,6 +217,7 @@ struct Fields {
     referrer_policy: String,
     integrity: String,
     keepalive: bool,
+    destination: String,
 }
 impl Fields {
     fn copy(d: &RequestData) -> Fields {
@@ -199,6 +232,7 @@ impl Fields {
             referrer_policy: d.referrer_policy.clone(),
             integrity: d.integrity.clone(),
             keepalive: d.keepalive,
+            destination: d.destination.clone(),
         }
     }
 }
@@ -214,20 +248,27 @@ fn construct<'s>(
     let input_request = s.unwrap::<Request>(input);
     let has_init = init.as_object().is_some_and(|o| {
         [
-            "method", "headers", "body", "referrer", "referrerPolicy", "mode", "credentials", "cache",
-            "redirect", "integrity", "keepalive", "signal", "duplex", "priority", "window",
+            "method",
+            "headers",
+            "body",
+            "referrer",
+            "referrerPolicy",
+            "mode",
+            "credentials",
+            "cache",
+            "redirect",
+            "integrity",
+            "keepalive",
+            "signal",
+            "duplex",
+            "priority",
+            "window",
         ]
         .iter()
         .any(|k| o.get(k).is_ok_and(|v| !v.is_undefined()))
     });
     let (mut fields, mut headers, mut body_bytes, mut body_mime, mut signal) = match &input_request {
-        Some(r) => (
-            Fields::copy(r),
-            r.header_pairs(s),
-            None::<Bytes>,
-            r.body.mime.borrow().clone(),
-            r.signal(s),
-        ),
+        Some(r) => (Fields::copy(r), r.header_pairs(s), None::<Bytes>, r.body.mime.borrow().clone(), r.signal(s)),
         None => {
             let input = crate::util::dom_string(input)?;
             let resolved = crate::html::resolve_url_utf8(&page.dom.borrow(), page.document(), &input);
@@ -249,6 +290,7 @@ fn construct<'s>(
                     referrer_policy: String::new(),
                     integrity: String::new(),
                     keepalive: false,
+                    destination: String::new(),
                 },
                 Vec::new(),
                 None,
@@ -265,28 +307,11 @@ fn construct<'s>(
         fields.mode = "same-origin".into();
     }
     if let Some(referrer) = string_option(s, init, "referrer")? {
-        if referrer.is_empty() {
-            fields.referrer = "no-referrer".into();
-        } else {
-            let base = page.dom.borrow().document_base_url(page.document()).ok().map(str::to_owned);
-            let parsed = match base.as_deref().and_then(|b| lp_net::Url::parse(b).ok()) {
-                Some(b) => b.join(&referrer),
-                None => lp_net::Url::parse(&referrer),
-            }
-            .map_err(|_| JsError::Type(format!("Failed to construct 'Request': Invalid referrer '{referrer}'")))?;
-            fields.referrer = if parsed.scheme() == "about" && parsed.path() == "client" {
-                "client".into()
-            } else {
-                parsed.to_string()
-            };
-        }
+        fields.referrer = parse_referrer(&page, &referrer)
+            .map_err(|e| JsError::Type(format!("Failed to construct 'Request': {e}")))?;
     }
     if let Some(policy) = string_option(s, init, "referrerPolicy")? {
-        if !REFERRER_POLICIES.contains(&policy.as_str()) {
-            return Err(JsError::Type(format!(
-                "Failed to construct 'Request': The provided value '{policy}' is not a valid enum value of type ReferrerPolicy."
-            )));
-        }
+        check_referrer_policy(&policy).map_err(|e| JsError::Type(format!("Failed to construct 'Request': {e}")))?;
         fields.referrer_policy = policy;
     }
     if let Some(mode) = string_option(s, init, "mode")? {
@@ -309,7 +334,8 @@ fn construct<'s>(
         fields.credentials = credentials;
     }
     if let Some(cache) = string_option(s, init, "cache")? {
-        if !matches!(cache.as_str(), "default" | "no-store" | "reload" | "no-cache" | "force-cache" | "only-if-cached") {
+        if !matches!(cache.as_str(), "default" | "no-store" | "reload" | "no-cache" | "force-cache" | "only-if-cached")
+        {
             return Err(JsError::Type(format!(
                 "Failed to construct 'Request': The provided value '{cache}' is not a valid enum value of type RequestCache."
             )));
@@ -317,7 +343,9 @@ fn construct<'s>(
         fields.cache = cache;
     }
     if fields.cache == "only-if-cached" && fields.mode != "same-origin" {
-        return Err(JsError::Type("Failed to construct 'Request': 'only-if-cached' can be set only with 'same-origin' mode".into()));
+        return Err(JsError::Type(
+            "Failed to construct 'Request': 'only-if-cached' can be set only with 'same-origin' mode".into(),
+        ));
     }
     if let Some(redirect) = string_option(s, init, "redirect")? {
         if !matches!(redirect.as_str(), "follow" | "error" | "manual") {
@@ -336,11 +364,15 @@ fn construct<'s>(
     }
     if let Some(method) = string_option(s, init, "method")? {
         if !is_token(&method) {
-            return Err(JsError::Type(format!("Failed to construct 'Request': '{method}' is not a valid HTTP method.")));
+            return Err(JsError::Type(format!(
+                "Failed to construct 'Request': '{method}' is not a valid HTTP method."
+            )));
         }
         let upper = method.to_ascii_uppercase();
         if matches!(upper.as_str(), "CONNECT" | "TRACE" | "TRACK") {
-            return Err(JsError::Type(format!("Failed to construct 'Request': '{method}' HTTP method is unsupported.")));
+            return Err(JsError::Type(format!(
+                "Failed to construct 'Request': '{method}' HTTP method is unsupported."
+            )));
         }
         fields.method = if METHODS.contains(&upper.as_str()) { upper } else { method };
     }
@@ -350,7 +382,9 @@ fn construct<'s>(
             signal = None;
         } else {
             if s.unwrap::<crate::abort::AbortSignal>(signal_option).is_none() {
-                return Err(JsError::Type("Failed to construct 'Request': member signal is not of type AbortSignal.".into()));
+                return Err(JsError::Type(
+                    "Failed to construct 'Request': member signal is not of type AbortSignal.".into(),
+                ));
             }
             signal = Some(signal_option);
         }
@@ -368,10 +402,14 @@ fn construct<'s>(
     let body_option = option(s, init, "body")?;
     if !body_option.is_undefined() && !body_option.is_null() {
         if matches!(fields.method.as_str(), "GET" | "HEAD") {
-            return Err(JsError::Type("Failed to construct 'Request': Request with GET/HEAD method cannot have body.".into()));
+            return Err(JsError::Type(
+                "Failed to construct 'Request': Request with GET/HEAD method cannot have body.".into(),
+            ));
         }
         if crate::streams::is_stream(s, body_option)? {
-            return Err(JsError::Type("Failed to construct 'Request': ReadableStream bodies are not supported.".into()));
+            return Err(JsError::Type(
+                "Failed to construct 'Request': ReadableStream bodies are not supported.".into(),
+            ));
         }
         let (bytes, mime) = crate::fetch::extract_body(s, body_option)?;
         if !mime.is_empty() && !headers.iter().any(|(n, _)| n == "content-type") {
@@ -383,7 +421,9 @@ fn construct<'s>(
         // The input's body moves to the new request.
         if !r.body.is_null() {
             if matches!(fields.method.as_str(), "GET" | "HEAD") {
-                return Err(JsError::Type("Failed to construct 'Request': Request with GET/HEAD method cannot have body.".into()));
+                return Err(JsError::Type(
+                    "Failed to construct 'Request': Request with GET/HEAD method cannot have body.".into(),
+                ));
             }
             body_bytes = Some(r.take_body()?.unwrap_or_default());
         }
@@ -394,6 +434,44 @@ fn construct<'s>(
     }
     let headers = HeadersData::from_pairs(headers, false).guard_request(fields.mode == "no-cors");
     wrap(s, new_target, fields, headers, body_bytes, body_mime, signal)
+}
+
+/// A service worker's view of an intercepted request (FetchEvent `request`):
+/// its fields as the client's fetch resolved them, `navigate` mode and a
+/// cross-origin referrer included, which `new Request` would refuse.
+pub(crate) struct Intercepted {
+    pub method: String,
+    pub url: String,
+    pub mode: &'static str,
+    pub credentials: &'static str,
+    pub cache: &'static str,
+    pub redirect: &'static str,
+    pub referrer: String,
+    pub referrer_policy: String,
+    pub integrity: String,
+    pub keepalive: bool,
+    pub destination: &'static str,
+    pub headers: Vec<(String, String)>,
+    pub body: Option<Bytes>,
+}
+
+pub(crate) fn intercepted<'s>(s: &Scope<'s>, r: Intercepted) -> JsResult<Value<'s>> {
+    let mime = r.headers.iter().find(|(n, _)| n.eq_ignore_ascii_case("content-type")).map(|(_, v)| v.clone());
+    let headers = HeadersData::from_pairs(r.headers, false).guard_request(r.mode == "no-cors");
+    let fields = Fields {
+        method: r.method,
+        url: r.url,
+        mode: r.mode.into(),
+        credentials: r.credentials.into(),
+        cache: r.cache.into(),
+        redirect: r.redirect.into(),
+        referrer: r.referrer,
+        referrer_policy: r.referrer_policy,
+        integrity: r.integrity,
+        keepalive: r.keepalive,
+        destination: r.destination.into(),
+    };
+    wrap(s, None, fields, headers, r.body, mime.unwrap_or_default(), None)
 }
 
 fn wrap<'s>(
@@ -421,6 +499,7 @@ fn wrap<'s>(
         referrer_policy: fields.referrer_policy,
         integrity: fields.integrity,
         keepalive: fields.keepalive,
+        destination: fields.destination,
         body,
         used: Rc::new(Cell::new(false)),
         source_made: Cell::new(false),
@@ -433,9 +512,7 @@ fn wrap<'s>(
     s.set_hidden(wrapper, HEADERS, headers.value())?;
     let signal = match signal {
         Some(v) => v,
-        None => {
-            crate::abort::new_signal(s)?.value()
-        }
+        None => crate::abort::new_signal(s)?.value(),
     };
     s.set_hidden(wrapper, SIGNAL, signal)?;
     Ok(wrapper.value())

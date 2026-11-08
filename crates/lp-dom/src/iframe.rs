@@ -46,9 +46,14 @@ impl Dom {
     /// Releases queued nodes for a replaced/disposed browsing context.
     pub fn unwatch_iframes(&mut self, document: NodeId) {
         self.iframes.documents.remove(&document);
+        self.drop_media_events(document);
         for event in self.take_iframe_events(document) {
             self.release(event.node);
         }
+    }
+    /// Whether `document` is a watched browsing-context document.
+    pub(crate) fn is_watched_document(&self, document: NodeId) -> bool {
+        self.iframes.documents.contains(&document)
     }
     /// Transfers pinned events to the caller. Call `release(event.node)` once
     /// per event after callbacks, including skipped events. Other documents'

@@ -27,6 +27,7 @@ use style::values::generics::position::{Inset as GenericInset, PreferredRatio};
 use style::values::resolved;
 use style::values::specified::box_::{DisplayInside, DisplayOutside};
 use style_traits::{CssStringWriter, ParsingMode, ToCss};
+use stylo_taffy::CopyStyleGetters;
 
 use blitz_traits::node_id::NodeId;
 use url::Url;
@@ -298,7 +299,7 @@ impl BaseDocument {
         };
 
         let url_data = self.url.url_extra_data();
-        let context = ParserContext::new(
+        let mut context = ParserContext::new(
             Origin::Author,
             &url_data,
             Some(CssRuleType::Style),
@@ -309,7 +310,7 @@ impl BaseDocument {
             None,
             Default::default(),
         );
-        condition.eval(&context)
+        condition.eval(&mut context)
     }
 
     /// Register a custom property via script (`CSS.registerProperty()`).
@@ -465,7 +466,7 @@ impl BaseDocument {
             "width" | "height" if has_layout_box => {
                 // Used value: the layout size interpreted according to `box-sizing`
                 // (border-box size for `border-box`, content-box size for `content-box`)
-                let layout = node.final_layout();
+                let layout = node.unrounded_layout();
                 let border_box = styles.get_position().box_sizing == BoxSizing::BorderBox;
                 let size = if property_name == "width" {
                     if border_box {

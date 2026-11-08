@@ -49,14 +49,14 @@ and must not contain the parent; `child` must be a child of the parent
   for insertions and removals, when the DOM call that caused them returns. The
   callbacks are the prototype's at `define` time. Not implemented:
   `attributeChangedCallback`, `adoptedCallback`, upgrades by the parser.
-- `dialog.showModal()` sets the modal flag (`:modal`); `close()` and removal
-  clear it. It throws InvalidStateError for a disconnected dialog, one open as
-  non-modal, or one showing as a popover. No top layer, backdrop or inertness
-  of the rest of the document.
+- `dialog.showModal()` sets the modal flag (`:modal`) and puts the dialog in
+  the top layer, which makes the rest of the document inert; `close()` and
+  removal clear it. It throws InvalidStateError for a disconnected dialog,
+  one open as non-modal, or one showing as a popover.
 - `showPopover()`, `hidePopover()`, `togglePopover()` keep the popover
   visibility state (`:popover-open`, and the UA rule that hides a closed
-  popover). Removal hides the popover. Not implemented: `beforetoggle` and
-  `toggle` events, light dismiss, the auto popover stack, invokers.
+  popover). Removal hides the popover without events. Events, the popover
+  stacks, light dismiss and invokers: see [POPOVER_DIALOG.md](POPOVER_DIALOG.md).
 - `selectionDirection` and the third argument of `setSelectionRange()`.
 - `window.name`: the name of the frame (its iframe's `name` attribute) or popup.
 - `<picture>`: an `<img>` child loads the first preceding `<source>` whose

@@ -133,6 +133,32 @@ textarea {
     overflow-wrap: break-word;
 }
 
+/* https://html.spec.whatwg.org/multipage/rendering.html#form-controls */
+input,
+button,
+textarea {
+    letter-spacing: initial;
+    word-spacing: initial;
+    line-height: initial;
+}
+
+input,
+select,
+button,
+textarea {
+    text-transform: initial;
+    text-indent: initial;
+    text-shadow: initial;
+}
+
+/* https://html.spec.whatwg.org/multipage/rendering.html#the-select-element-2
+   (select only has native appearance here) */
+select {
+    letter-spacing: initial;
+    word-spacing: initial;
+    line-height: initial;
+}
+
 input:focus,
 textarea:focus {
     outline: 2px solid #4D90FE;
@@ -229,10 +255,6 @@ optgroup::-servo-text-control-inner-container {
 select[multiple] optgroup option,
 select[size]:not([size="0"], [size="1"], [size=""]) optgroup option {
     padding-inline-start: 20px;
-}
-
-picture {
-    display: contents;
 }
 
 source {
@@ -1194,37 +1216,35 @@ slot {
 }
 
 /* Popover UA style, https://html.spec.whatwg.org/#flow-content-3 */
-/* stylelint-disable-next-line media-query-no-invalid */
-@media (-moz-bool-pref: "dom.element.popover.enabled") {
-    [popover]:not(:popover-open):not(dialog[open]) {
-        display: none;
-    }
+/* lightningpanda: not behind Gecko's pref (Chrome's UA has these rules). */
+[popover]:not(:popover-open):not(dialog[open]) {
+    display: none;
+}
 
-    dialog:popover-open {
-        display: block;
-    }
+dialog:popover-open {
+    display: block;
+}
 
-    [popover] {
-        position: fixed;
-        inset: 0;
-        width: fit-content;
-        height: fit-content;
-        margin: auto;
-        border: solid;
-        padding: 0.25em;
-        overflow: auto;
-        color: CanvasText;
-        background-color: Canvas;
-    }
+[popover] {
+    position: fixed;
+    inset: 0;
+    width: fit-content;
+    height: fit-content;
+    margin: auto;
+    border: solid;
+    padding: 0.25em;
+    overflow: auto;
+    color: CanvasText;
+    background-color: Canvas;
+}
 
-    :popover-open {
-        -moz-top-layer: top;
-    }
+:popover-open {
+    -moz-top-layer: top;
+}
 
-    :popover-open::backdrop {
-        position: fixed;
-        inset: 0;
-        pointer-events: none !important;
-        background-color: transparent;
-    }
+:popover-open::backdrop {
+    position: fixed;
+    inset: 0;
+    pointer-events: none !important;
+    background-color: transparent;
 }

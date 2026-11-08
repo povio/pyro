@@ -4,13 +4,16 @@
 
 //! Selector matching.
 
+use crate::AllocErr;
+use crate::ArcSlice;
+use crate::FxHashMap;
 use crate::applicable_declarations::{
     ApplicableDeclarationBlock, ApplicableDeclarationList, CascadePriority, ScopeProximity,
 };
 use crate::computed_value_flags::ComputedValueFlags;
 use crate::context::{CascadeInputs, QuirksMode, TreeCountingCaches};
 use crate::custom_properties::ComputedCustomProperties;
-use crate::custom_properties::{parse_name, SpecifiedValue};
+use crate::custom_properties::{SpecifiedValue, parse_name};
 use crate::derives::*;
 use crate::device::Device;
 use crate::dom::TElement;
@@ -19,8 +22,8 @@ use crate::dom::TShadowRoot;
 #[cfg(feature = "gecko")]
 use crate::gecko_bindings::structs::{ServoStyleSetSizes, StyleRuleInclusion};
 use crate::invalidation::element::invalidation_map::{
-    note_selector_for_invalidation, AdditionalRelativeSelectorInvalidationMap, Dependency,
-    DependencyInvalidationKind, InvalidationMap, ScopeDependencyInvalidationKind,
+    AdditionalRelativeSelectorInvalidationMap, Dependency, DependencyInvalidationKind,
+    InvalidationMap, ScopeDependencyInvalidationKind, note_selector_for_invalidation,
 };
 use crate::invalidation::media_queries::{
     EffectiveMediaQueryResults, MediaListKey, ToMediaListKey,
@@ -29,8 +32,8 @@ use crate::invalidation::stylesheets::{RuleChangeKind, StylesheetInvalidationSet
 #[cfg(feature = "gecko")]
 use crate::properties::StyleBuilder;
 use crate::properties::{
-    self, AnimationDeclarations, CascadeMode, ComputedValues, FirstLineReparenting,
-    PropertyDeclarationBlock,
+    self, AnimationDeclarations, CascadeMode, ComputedValues, FirstLineReparenting, LonghandId,
+    PropertyDeclarationBlock, PropertyDeclarationId, PropertyIdRef,
 };
 use crate::properties_and_values::registry::{
     PropertyRegistration, ScriptRegistry as CustomPropertyScriptRegistry,
@@ -52,15 +55,15 @@ use crate::shared_lock::{Locked, SharedRwLockReadGuard, StylesheetGuards};
 use crate::sharing::{RevalidationResult, ScopeRevalidationResult};
 use crate::stylesheet_set::{DataValidity, DocumentStylesheetSet, SheetRebuildKind};
 use crate::stylesheet_set::{DocumentStylesheetFlusher, SheetCollectionFlusher};
+use crate::stylesheets::UrlExtraData;
 use crate::stylesheets::container_rule::{ContainerAttributeDependencyKind, ContainerCondition};
 use crate::stylesheets::import_rule::ImportLayer;
 use crate::stylesheets::keyframes_rule::KeyframesAnimation;
 use crate::stylesheets::layer_rule::{LayerName, LayerOrder};
 use crate::stylesheets::scope_rule::{
-    collect_scope_roots, element_is_outside_of_scope, scope_selector_list_is_trivial,
-    ImplicitScopeRoot, ScopeRootCandidate, ScopeSubjectMap, ScopeTarget,
+    ImplicitScopeRoot, ScopeRootCandidate, ScopeSubjectMap, ScopeTarget, collect_scope_roots,
+    element_is_outside_of_scope, scope_selector_list_is_trivial,
 };
-use crate::stylesheets::UrlExtraData;
 use crate::stylesheets::{
     CounterStyleRule, CssRule, CssRuleRef, EffectiveRulesIterator, FontFaceRule,
     FontFeatureValuesRule, FontPaletteValuesRule, Origin, OriginSet, PagePseudoClassFlags,
@@ -71,20 +74,17 @@ use crate::stylesheets::{CustomMediaEvaluator, CustomMediaMap};
 #[cfg(feature = "gecko")]
 use crate::values::specified::position::PositionTryFallbacksItem;
 use crate::values::specified::position::PositionTryFallbacksTryTactic;
-use crate::values::{computed, AtomIdent, Parser, SourceLocation};
-use crate::AllocErr;
-use crate::ArcSlice;
+use crate::values::{AtomIdent, Parser, SourceLocation, computed};
 use crate::{Atom, LocalName, Namespace, ShrinkIfNeeded, WeakAtom};
 use dom::{DocumentState, ElementState};
 #[cfg(feature = "gecko")]
 use malloc_size_of::MallocUnconditionalShallowSizeOf;
 use malloc_size_of::{MallocShallowSizeOf, MallocSizeOf, MallocSizeOfOps};
-use rustc_hash::FxHashMap;
 use selectors::attr::{CaseSensitivity, NamespaceConstraint};
 use selectors::bloom::BloomFilter;
 use selectors::matching::{
-    matches_complex_selector, matches_selector, selector_may_match, MatchingContext, MatchingMode,
-    NeedsSelectorFlags, SelectorCaches, SubjectOrPseudoElement,
+    MatchingContext, MatchingMode, NeedsSelectorFlags, SelectorCaches, SubjectOrPseudoElement,
+    matches_complex_selector, matches_selector, selector_may_match,
 };
 use selectors::matching::{MatchingForInvalidation, VisitedHandlingMode};
 use selectors::parser::{
@@ -236,7 +236,7 @@ where
     where
         S: StylesheetInDocument + PartialEq + 'static,
     {
-        use std::collections::hash_map::Entry as HashMapEntry;
+        use hashbrown::hash_map::Entry as HashMapEntry;
         debug!("StyleSheetCache::lookup({})", self.len());
 
         if !collection.dirty() {
@@ -674,17 +674,12 @@ impl From<StyleRuleInclusion> for RuleInclusion {
 /// If used outside of `@scope`, it cannot possibly match the host.
 /// Even when inside of `@scope`, it's conditional if the selector will
 /// match the shadow host.
-#[derive(Clone, Copy, Eq, PartialEq)]
+#[derive(Clone, Copy, Eq, PartialEq, Default)]
 enum ScopeMatchesShadowHost {
+    #[default]
     NotApplicable,
     No,
     Yes,
-}
-
-impl Default for ScopeMatchesShadowHost {
-    fn default() -> Self {
-        Self::NotApplicable
-    }
 }
 
 impl ScopeMatchesShadowHost {
@@ -1067,7 +1062,10 @@ impl Stylist {
 
         self.num_rebuilds += 1;
 
-        let (flusher, mut invalidations) = self.stylesheets.flush();
+        let cascade_data = &self.cascade_data;
+        let (flusher, mut invalidations) = self.stylesheets.flush(&self.device, guards, |origin| {
+            &cascade_data.borrow_for_origin(origin).custom_media
+        });
 
         self.cascade_data
             .rebuild(
@@ -1111,21 +1109,13 @@ impl Stylist {
         before_sheet: StylistSheet,
         guard: &SharedRwLockReadGuard,
     ) {
-        let custom_media = self.cascade_data.custom_media_for_sheet(&sheet, guard);
-        self.stylesheets.insert_stylesheet_before(
-            Some(&self.device),
-            custom_media,
-            sheet,
-            before_sheet,
-            guard,
-        )
+        self.stylesheets
+            .insert_stylesheet_before(sheet, before_sheet, guard)
     }
 
     /// Appends a new stylesheet to the current set.
     pub fn append_stylesheet(&mut self, sheet: StylistSheet, guard: &SharedRwLockReadGuard) {
-        let custom_media = self.cascade_data.custom_media_for_sheet(&sheet, guard);
-        self.stylesheets
-            .append_stylesheet(Some(&self.device), custom_media, sheet, guard)
+        self.stylesheets.append_stylesheet(sheet, guard)
     }
 
     /// Remove a given stylesheet to the current set.
@@ -1191,6 +1181,62 @@ impl Stylist {
         }
 
         doc_author_rules_apply && f(&self.cascade_data.author)
+    }
+
+    /// lightningpanda: whether a rule that can make `pseudo` (`::before` or `::after`, eagerly
+    /// cascaded for `element`) generate a box matches `element`, so that the full match and
+    /// cascade of the pseudo-element can give a style that is kept. When this is `false`, every
+    /// rule that matches leaves `content` at `normal` (it is not inherited) and declares neither
+    /// `display` nor `content` (so `DISPLAY_OR_CONTENT_DEPEND_ON_INHERITED_STYLE` stays unset),
+    /// and `eager_pseudo_is_definitely_not_generated` would drop the style.
+    ///
+    /// The index covers the document's origins. Elements that shadow-tree, `::slotted()`,
+    /// `:host` or `::part()` rules could reach for `pseudo` answer `true`, as do pseudo-elements
+    /// of pseudo-elements. Matching the index is a subset of what the full match does with the
+    /// same `context`, so the selector flags it sets are ones the full match would set; the
+    /// ones it leaves unset belong to rules that cannot generate a box.
+    ///
+    /// `scratch` must be empty, and is left empty.
+    pub fn may_generate_box_for_pseudo<E>(
+        &self,
+        element: E,
+        pseudo: &PseudoElement,
+        scratch: &mut ApplicableDeclarationList,
+        context: &mut MatchingContext<E::Impl>,
+    ) -> bool
+    where
+        E: TElement,
+    {
+        debug_assert!(scratch.is_empty());
+        if !pseudo.is_before_or_after()
+            || element.implemented_pseudo_element().is_some()
+            || element.has_part_attr()
+        {
+            return true;
+        }
+        let mut in_shadow_rules = false;
+        element.each_applicable_non_document_style_rule_data(|data, _| {
+            in_shadow_rules = in_shadow_rules || data.has_rules_for_pseudo(pseudo);
+        });
+        if in_shadow_rules {
+            return true;
+        }
+        for (data, origin) in self.cascade_data.iter_origins() {
+            let Some(map) = data.box_generating_pseudo_rules(pseudo) else {
+                continue;
+            };
+            let level = match origin {
+                Origin::UserAgent => CascadeLevel::new(CascadeOrigin::UA),
+                Origin::User => CascadeLevel::new(CascadeOrigin::User),
+                Origin::Author => CascadeLevel::same_tree_author_normal(),
+            };
+            map.get_all_matching_rules(element, element, scratch, context, level, data, self);
+            if !scratch.is_empty() {
+                scratch.clear();
+                return true;
+            }
+        }
+        false
     }
 
     /// Execute callback for all applicable style rule data.
@@ -1917,7 +1963,7 @@ impl Stylist {
                                 &selector_and_hashes.selector,
                                 selector_and_hashes.selector_offset,
                                 Some(&selector_and_hashes.hashes),
-                                &element,
+                                element,
                                 matching_context,
                             ));
                             true
@@ -1940,7 +1986,7 @@ impl Stylist {
                         &selector_and_hashes.selector,
                         selector_and_hashes.selector_offset,
                         Some(&selector_and_hashes.hashes),
-                        &element,
+                        element,
                         &mut matching_context,
                     ));
                     true
@@ -2143,9 +2189,11 @@ impl Stylist {
             None => None,
         };
 
-        if let Err(error) =
-            PropertyRegistration::validate_initial_value(&syntax, initial_value.as_deref())
-        {
+        if let Err(error) = PropertyRegistration::validate_initial_value(
+            PropertyIdRef::from(&name),
+            &syntax,
+            initial_value.as_deref(),
+        ) {
             return match error {
                 PropertyRegistrationError::InitialValueNotComputationallyIndependent => {
                     InitialValueNotComputationallyIndependent
@@ -2214,25 +2262,25 @@ impl<T: 'static> LayerOrderedMap<T> {
     fn clear(&mut self) {
         self.0.clear();
     }
-    fn try_insert(&mut self, name: Atom, v: T, id: LayerId) -> Result<(), AllocErr> {
+    fn try_insert(&mut self, name: &Atom, v: T, id: LayerId) -> Result<(), AllocErr> {
         self.try_insert_with(name, v, id, |_, _| Ordering::Equal)
     }
     fn try_insert_with(
         &mut self,
-        name: Atom,
+        name: &Atom,
         v: T,
         id: LayerId,
         cmp: impl Fn(&T, &T) -> Ordering,
     ) -> Result<(), AllocErr> {
         self.0.try_reserve(1)?;
-        let vec = self.0.entry(name).or_default();
-        if let Some(&mut (ref mut val, ref last_id)) = vec.last_mut() {
-            if *last_id == id {
-                if cmp(val, &v) != Ordering::Greater {
-                    *val = v;
-                }
-                return Ok(());
+        let vec = self.0.entry_ref(name).or_default();
+        if let Some(&mut (ref mut val, ref last_id)) = vec.last_mut()
+            && *last_id == id
+        {
+            if cmp(val, &v) != Ordering::Greater {
+                *val = v;
             }
+            return Ok(());
         }
         vec.push((v, id));
         Ok(())
@@ -2408,7 +2456,7 @@ impl ExtraStyleData {
         rule: &Arc<Locked<CounterStyleRule>>,
         layer: LayerId,
     ) -> Result<(), AllocErr> {
-        let name = rule.read_with(guard).name().0.clone();
+        let name = &rule.read_with(guard).name().0;
         self.counter_styles.try_insert(name, rule.clone(), layer)
     }
 
@@ -2419,7 +2467,7 @@ impl ExtraStyleData {
         rule: Arc<Locked<PositionTryRule>>,
         layer: LayerId,
     ) -> Result<(), AllocErr> {
-        self.position_try_rules.try_insert(name, rule, layer)
+        self.position_try_rules.try_insert(&name, rule, layer)
     }
 
     /// Add the given @page rule.
@@ -2430,18 +2478,18 @@ impl ExtraStyleData {
         layer: LayerId,
     ) -> Result<(), AllocErr> {
         let page_rule = rule.read_with(guard);
-        let mut add_rule = |name| {
-            let vec = self.pages.rules.entry(name).or_default();
+        let mut add_rule = |name: &Atom| {
+            let vec = self.pages.rules.entry_ref(name).or_default();
             vec.push(PageRuleData {
                 layer,
                 rule: rule.clone(),
             });
         };
         if page_rule.selectors.0.is_empty() {
-            add_rule(atom!(""));
+            add_rule(&atom!(""));
         } else {
             for selector in page_rule.selectors.as_slice() {
-                add_rule(selector.name.0.clone());
+                add_rule(&selector.name.0);
             }
         }
         Ok(())
@@ -2508,13 +2556,9 @@ impl MallocSizeOf for ExtraStyleData {
 }
 
 /// SelectorMapEntry implementation for use in our revalidation selector map.
-#[cfg_attr(feature = "gecko", derive(MallocSizeOf))]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, MallocSizeOf)]
 struct RevalidationSelectorAndHashes {
-    #[cfg_attr(
-        feature = "gecko",
-        ignore_malloc_size_of = "CssRules have primary refs, we measure there"
-    )]
+    #[ignore_malloc_size_of = "CssRules have primary refs, we measure there"]
     selector: Selector<SelectorImpl>,
     selector_offset: usize,
     hashes: AncestorHashes,
@@ -2833,6 +2877,82 @@ impl PartElementAndPseudoRules {
     }
 }
 
+/// lightningpanda: the `::before` and `::after` rules (one pseudo-element level, in
+/// `normal_rules`) whose declarations can make the pseudo-element generate a box: they declare
+/// `content`, `display` or `animation-name`, looked up on the block's longhand set, so `all`,
+/// `var()` and the CSS-wide keywords count. Without one of them matching, `content` is `normal`
+/// and `display` is not inherited, so the style `match_pseudo` would compute is dropped by
+/// `eager_pseudo_is_definitely_not_generated` (see `Stylist::may_generate_box_for_pseudo`).
+///
+/// A copy of the rules kept in `normal_rules`, filled by the same `add_styles` and cleared with
+/// it; a CSSOM declaration edit rebuilds both (`RuleChangeKind::StyleRuleDeclarations` is
+/// `DataValidity::FullyInvalid`).
+/// lightningpanda: whether a `::before`/`::after` rule with these declarations can make the
+/// pseudo-element generate a box (see `BoxGeneratingPseudoRules`).
+pub fn declarations_may_generate_pseudo_box(block: &PropertyDeclarationBlock) -> bool {
+    BoxGeneratingPseudoRules::declarations_may_generate_box(block)
+}
+
+#[derive(Clone, Debug, Default, MallocSizeOf)]
+struct BoxGeneratingPseudoRules {
+    before: SelectorMap<Rule>,
+    after: SelectorMap<Rule>,
+}
+
+impl BoxGeneratingPseudoRules {
+    /// Whether a rule with these declarations goes in the index (when it is a single-level
+    /// `::before` or `::after` rule).
+    ///
+    /// `content: normal | none` and `animation-name: none` cannot make the box appear, so they
+    /// do not count: lightningpanda's UA `*::before, *::after { animation: none !important }`
+    /// would otherwise put a rule matching every element in the index. Their CSS-wide keyword
+    /// and `var()` forms still count.
+    fn declarations_may_generate_box(block: &PropertyDeclarationBlock) -> bool {
+        use crate::properties::PropertyDeclaration;
+        use crate::values::generics::counters::GenericContent;
+        block.declarations().iter().any(|decl| match decl {
+            PropertyDeclaration::AnimationName(names) => !names.0.iter().all(|n| n.is_none()),
+            PropertyDeclaration::Content(GenericContent::Normal | GenericContent::None) => false,
+            other => matches!(
+                other.id(),
+                PropertyDeclarationId::Longhand(
+                    LonghandId::Content | LonghandId::Display | LonghandId::AnimationName
+                )
+            ),
+        })
+    }
+
+    fn map(&self, pseudo: &PseudoElement) -> Option<&SelectorMap<Rule>> {
+        if pseudo.is_before() {
+            Some(&self.before)
+        } else if pseudo.is_after() {
+            Some(&self.after)
+        } else {
+            None
+        }
+    }
+
+    fn map_mut(&mut self, pseudo: &PseudoElement) -> Option<&mut SelectorMap<Rule>> {
+        if pseudo.is_before() {
+            Some(&mut self.before)
+        } else if pseudo.is_after() {
+            Some(&mut self.after)
+        } else {
+            None
+        }
+    }
+
+    fn clear(&mut self) {
+        self.before.clear();
+        self.after.clear();
+    }
+
+    fn shrink_if_needed(&mut self) {
+        self.before.shrink_if_needed();
+        self.after.shrink_if_needed();
+    }
+}
+
 /// The id of a given layer, a sequentially-increasing identifier.
 #[derive(Clone, Copy, Debug, Eq, MallocSizeOf, PartialEq, PartialOrd, Ord)]
 pub struct LayerId(u16);
@@ -3088,6 +3208,10 @@ where
         None => return ScopeRootCandidates::default(),
         Some(ref c) => c,
     };
+    if id.0 <= condition_ref.parent.0 {
+        debug_assert!(false, "@scope bookkeeping is corrupt.");
+        return ScopeRootCandidates::default();
+    }
     // Make sure the parent scopes ara evaluated first. This runs a bit counter to normal
     // selector matching where rightmost selectors match first. However, this avoids having
     // to traverse through descendants (i.e. Avoids tree traversal vs linear traversal).
@@ -3189,11 +3313,11 @@ where
                 .zip(end.hashes.iter())
                 .all(|(selector, hashes)| {
                     // Like checking for scope-start, use the bloom filter here.
-                    if let Some(filter) = context.bloom_filter {
-                        if !selector_may_match(hashes, filter) {
-                            // Selector this hash belongs to won't cause us to be out of this scope.
-                            return true;
-                        }
+                    if let Some(filter) = context.bloom_filter
+                        && !selector_may_match(hashes, filter)
+                    {
+                        // Selector this hash belongs to won't cause us to be out of this scope.
+                        return true;
                     }
 
                     !element_is_outside_of_scope(
@@ -3252,6 +3376,10 @@ pub struct CascadeData {
     /// The data coming from normal style rules that apply to elements at this
     /// cascade level.
     normal_rules: ElementAndPseudoRules,
+
+    /// lightningpanda: the rules of `normal_rules` that can make a `::before` or `::after`
+    /// generate a box.
+    box_generating_pseudo_rules: BoxGeneratingPseudoRules,
 
     /// The `:host` pseudo rules that are the rightmost selector (without
     /// accounting for pseudo-elements), or `:scope` rules that may match
@@ -3416,6 +3544,7 @@ impl CascadeData {
     pub fn new() -> Self {
         Self {
             normal_rules: ElementAndPseudoRules::default(),
+            box_generating_pseudo_rules: BoxGeneratingPseudoRules::default(),
             featureless_host_rules: None,
             slotted_rules: None,
             part_rules: None,
@@ -3609,6 +3738,25 @@ impl CascadeData {
         self.normal_rules.rules(pseudo_elements)
     }
 
+    /// lightningpanda: the rules of `normal_rules(&[pseudo])` that can make `pseudo` (`::before`
+    /// or `::after`) generate a box. `None` for other pseudo-elements.
+    #[inline]
+    pub fn box_generating_pseudo_rules(&self, pseudo: &PseudoElement) -> Option<&SelectorMap<Rule>> {
+        self.box_generating_pseudo_rules.map(pseudo)
+    }
+
+    /// lightningpanda: whether any rule here is for `pseudo`, in any of the maps the rule
+    /// collector reads for it.
+    fn has_rules_for_pseudo(&self, pseudo: &PseudoElement) -> bool {
+        let pseudos = std::slice::from_ref(pseudo);
+        self.normal_rules(pseudos).is_some_and(|m| !m.is_empty())
+            || self
+                .featureless_host_rules(pseudos)
+                .is_some_and(|m| !m.is_empty())
+            || self.slotted_rules(pseudos).is_some_and(|m| !m.is_empty())
+            || self.part_rules(pseudos).is_some_and(|m| !m.is_empty())
+    }
+
     /// Returns the featureless pseudo rule map for a given pseudo-element.
     #[inline]
     pub fn featureless_host_rules(
@@ -3727,6 +3875,7 @@ impl CascadeData {
 
     fn shrink_maps_if_needed(&mut self) {
         self.normal_rules.shrink_if_needed();
+        self.box_generating_pseudo_rules.shrink_if_needed();
         if let Some(ref mut host_rules) = self.featureless_host_rules {
             host_rules.shrink_if_needed();
         }
@@ -3863,7 +4012,9 @@ impl CascadeData {
         quirks_mode: QuirksMode,
         mut collected_scope_dependencies: Option<&mut Vec<Dependency>>,
     ) -> Result<(), AllocErr> {
-        self.num_declarations += declarations.read_with(guard).len();
+        let block = declarations.read_with(guard);
+        self.num_declarations += block.len();
+        let may_generate_box = BoxGeneratingPseudoRules::declarations_may_generate_box(block);
         for selector in selectors.slice() {
             self.num_selectors += 1;
 
@@ -3899,9 +4050,11 @@ impl CascadeData {
                 }
             }
 
-            debug_assert!(!pseudo_elements
-                .iter()
-                .any(|p| p.is_precomputed() || p.is_unknown_webkit_pseudo_element()));
+            debug_assert!(
+                !pseudo_elements
+                    .iter()
+                    .any(|p| p.is_precomputed() || p.is_unknown_webkit_pseudo_element())
+            );
 
             let selector = match ancestor_selectors {
                 Some(s) => selector.replace_parent_selector(s),
@@ -3986,7 +4139,7 @@ impl CascadeData {
                     .get_or_insert_with(Box::default)
                     .for_insertion(&pseudo_elements);
                 map.try_reserve(1)?;
-                let vec = map.entry(parts.last().unwrap().clone().0).or_default();
+                let vec = map.entry_ref(&parts.last().unwrap().0).or_default();
                 vec.try_reserve(1)?;
                 vec.push(rule);
             } else {
@@ -4016,6 +4169,15 @@ impl CascadeData {
                 // :scope may match featureless shadow host if the scope
                 // root is the shadow root.
                 // See https://github.com/w3c/csswg-drafts/issues/9025
+                let in_normal_rules = !matches_featureless_host_only && !rule.selector.is_slotted();
+                if in_normal_rules && may_generate_box && pseudo_elements.len() == 1 {
+                    if let Some(map) = self
+                        .box_generating_pseudo_rules
+                        .map_mut(pseudo_elements[0])
+                    {
+                        map.insert(rule.clone(), quirks_mode)?;
+                    }
+                }
                 let rules = if matches_featureless_host_only {
                     self.featureless_host_rules.get_or_insert_with(Box::default)
                 } else if rule.selector.is_slotted() {
@@ -4129,7 +4291,7 @@ impl CascadeData {
                 CssRule::Keyframes(ref keyframes_rule) => {
                     debug!("Found valid keyframes rule: {:?}", *keyframes_rule);
                     let keyframes_rule = keyframes_rule.read_with(guard);
-                    let name = keyframes_rule.name.as_atom().clone();
+                    let name = keyframes_rule.name.as_atom();
                     let animation = KeyframesAnimation::from_keyframes(
                         &keyframes_rule.keyframes,
                         keyframes_rule.vendor_prefix.clone(),
@@ -4144,7 +4306,7 @@ impl CascadeData {
                 },
                 CssRule::Property(ref registration) => {
                     self.custom_property_registrations.try_insert(
-                        registration.name.0.clone(),
+                        &registration.name.0,
                         Arc::clone(registration),
                         containing_rule_state.layer_id,
                     )?;
@@ -4364,7 +4526,7 @@ impl CascadeData {
                         .cascade_flags
                         .insert(RuleCascadeFlags::APPEARANCE_BASE);
                 },
-                CssRule::Scope(ref rule) => {
+                CssRule::Scope(ref rule) if self.scope_conditions.len() <= u16::MAX.into() => {
                     containing_rule_state.nested_declarations_context =
                         NestedDeclarationsContext::Scope;
                     let id = ScopeConditionId(self.scope_conditions.len() as u16);
@@ -4714,6 +4876,7 @@ impl CascadeData {
     /// Clears the cascade data, but not the invalidation data.
     fn clear_cascade_data(&mut self) {
         self.normal_rules.clear();
+        self.box_generating_pseudo_rules.clear();
         if let Some(ref mut slotted_rules) = self.slotted_rules {
             slotted_rules.clear();
         }
@@ -5025,14 +5188,14 @@ impl Rule {
         mut element: E,
         context: &mut MatchingContext<E::Impl>,
     ) -> bool {
-        if self.bucket_matches == BucketMatches::Full {
-            return true;
-        }
         if context
             .bloom_filter
             .is_some_and(|f| !selector_may_match(&self.hashes, f))
         {
             return false;
+        }
+        if self.bucket_matches == BucketMatches::Full {
+            return true;
         }
         let mut iter = self.selector.iter();
         let mut subject = SubjectOrPseudoElement::Yes;
@@ -5040,7 +5203,7 @@ impl Rule {
             (element, iter) = Self::iter_past_subject(&self.selector, element, context);
             subject = SubjectOrPseudoElement::No;
         }
-        matches_complex_selector(iter, &element, context, subject).to_bool(true)
+        matches_complex_selector(iter, element, context, subject).to_bool(true)
     }
 }
 

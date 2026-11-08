@@ -22,6 +22,7 @@ use tower_service::Service;
 use url::Url;
 
 use crate::auth::auth_challenge;
+use crate::timing::{ConnInfo, ConnTimes, TimedResolver, CONNECTING};
 
 /// Largest CONNECT response head accepted from a proxy.
 const MAX_TUNNEL_HEAD: usize = 64 * 1024;
@@ -291,14 +292,23 @@ impl std::error::Error for ProxyError {}
 /// TCP connector under hyper-rustls: a direct connection, or one to the proxy.
 #[derive(Clone)]
 pub(crate) struct ProxyConnector {
-    tcp: HttpConnector,
+    tcp: HttpConnector<TimedResolver>,
     proxy: Option<Arc<ProxyState>>,
     timeout: Duration,
+    /// Tunnel http targets too (WebSocket: the upgrade must reach the target,
+    /// not the proxy).
+    tunnel_plain: bool,
 }
 
 impl ProxyConnector {
-    pub(crate) fn new(tcp: HttpConnector, proxy: Option<Arc<ProxyState>>, timeout: Duration) -> Self {
-        ProxyConnector { tcp, proxy, timeout }
+    pub(crate) fn new(tcp: HttpConnector<TimedResolver>, proxy: Option<Arc<ProxyState>>, timeout: Duration) -> Self {
+        ProxyConnector { tcp, proxy, timeout, tunnel_plain: false }
+    }
+
+    /// Opens a CONNECT tunnel for every target, `http` ones included.
+    pub(crate) fn tunneling(mut self) -> Self {
+        self.tunnel_plain = true;
+        self
     }
 }
 
@@ -314,23 +324,34 @@ impl Service<Uri> for ProxyConnector {
     }
 
     fn call(&mut self, dst: Uri) -> Self::Future {
+        // Resource Timing: the resolver notes its lookup on `times` (a
+        // task-local while the TCP connector runs), the stream the rest.
+        let times = ConnTimes::new(dst.scheme_str() == Some("https"));
         let Some(proxy) = self.proxy.clone().filter(|p| p.applies_to_uri(&dst)) else {
-            let connecting = self.tcp.call(dst);
-            return Box::pin(async move { Ok(ProxyStream { io: connecting.await?, absolute_form: false }) });
+            let connecting = CONNECTING.scope(times.clone(), self.tcp.call(dst));
+            return Box::pin(async move {
+                let io = connecting.await?;
+                times.tcp_connected();
+                Ok(ProxyStream { io, absolute_form: false, times })
+            });
         };
-        let connecting = self.tcp.call(proxy.config.uri.clone());
+        let connecting = CONNECTING.scope(times.clone(), self.tcp.call(proxy.config.uri.clone()));
         let timeout = self.timeout;
+        let tunnel_plain = self.tunnel_plain;
         Box::pin(async move {
             let mut io = connecting.await.map_err(|e| ProxyError::Unreachable(e.into()))?;
-            if dst.scheme_str() != Some("https") {
-                return Ok(ProxyStream { io, absolute_form: true });
+            let https = dst.scheme_str() == Some("https");
+            if !https && !tunnel_plain {
+                times.tcp_connected();
+                return Ok(ProxyStream { io, absolute_form: true, times });
             }
             let host = dst.host().ok_or_else(|| ProxyError::Tunnel("no host".into()))?;
-            let target = format!("{host}:{}", dst.port_u16().unwrap_or(443));
+            let target = format!("{host}:{}", dst.port_u16().unwrap_or(if https { 443 } else { 80 }));
             let authorization = proxy.authorization();
             let opening = open_tunnel(io.inner_mut(), &target, authorization.as_ref());
             tokio::time::timeout(timeout, opening).await.map_err(|_| ProxyError::Tunnel("timed out".into()))??;
-            Ok(ProxyStream { io, absolute_form: false })
+            times.tcp_connected();
+            Ok(ProxyStream { io, absolute_form: false, times })
         })
     }
 }
@@ -394,11 +415,15 @@ fn tunnel_answer(status: u16, headers: &[httparse::Header<'_>], extra: usize) ->
 pub(crate) struct ProxyStream {
     io: TokioIo<TcpStream>,
     absolute_form: bool,
+    times: Arc<ConnTimes>,
 }
 
 impl Connection for ProxyStream {
+    /// Called by hyper once the connection is ready (after TLS for https):
+    /// its times go with every response over it.
     fn connected(&self) -> Connected {
-        self.io.connected().proxy(self.absolute_form)
+        self.times.ready();
+        self.io.connected().proxy(self.absolute_form).extra(ConnInfo(self.times.clone()))
     }
 }
 

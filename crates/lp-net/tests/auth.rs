@@ -152,8 +152,7 @@ fn basic_retries_preserve_body_id_and_single_lifecycle() {
             NetEvent::ResponseReceived { id, .. } => (id, "response"),
             NetEvent::DataReceived { id, .. } => (id, "data"),
             NetEvent::LoadingFinished { id, .. } => (id, "finished"),
-            NetEvent::LoadingFailed { .. } => panic!("unexpected failure"),
-            other => panic!("unexpected {other:?}"),
+            NetEvent::LoadingFailed { .. } | NetEvent::WebSocket { .. } => panic!("unexpected event"),
         };
         assert_eq!(event_id, id);
         kinds.push(kind);

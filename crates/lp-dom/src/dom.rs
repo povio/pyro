@@ -129,6 +129,8 @@ pub struct Dom {
     version: u64,
     /// See `tree_version()`.
     tree_version: u64,
+    /// See `style_text_revision()`.
+    style_text_revision: u64,
     /// Bumped whenever one of the queues the embedder's post-callback hook
     /// drains gets an entry: a queued observer, iframe event, custom element
     /// reaction, upgrade candidate or slot change. A mutation alone does not
@@ -146,6 +148,13 @@ pub struct Dom {
     candidates: Vec<u32>,
     /// A `<base>` element was created; until then no document walks for one.
     pub(crate) base_seen: bool,
+    /// An `<audio>` or `<video>` element was created; until then no
+    /// mutation looks for media load triggers (`media_element`).
+    pub(crate) media_seen: bool,
+    /// A `<canvas>` element was created: loaded images keep their bytes
+    /// for canvas drawing (`Dom::canvas_seen`).
+    pub(crate) canvas_seen: bool,
+    pub(crate) media: crate::media_element::MediaQueue,
     live: u32,
     /// Bumped whenever a node is removed from its parent.
     removals: u64,
@@ -185,8 +194,12 @@ pub struct Dom {
     pub(crate) iframes: crate::iframe::IframeQueue,
     /// Custom element callback reactions awaiting the bindings (`custom`).
     pub(crate) reactions: crate::custom::ReactionQueue,
+    /// `ElementInternals` state (`internals`).
+    pub(crate) internals: crate::internals::InternalsStore,
     /// Modal dialogs and showing popovers (`top_layer`).
     pub(crate) top_layer: crate::top_layer::TopLayer,
+    /// Queued `<details>` toggles and whether accordions are in use.
+    pub(crate) details: crate::details::DetailsState,
     /// Nonces hidden from content attributes (`nonce`).
     pub(crate) nonces: crate::nonce::NonceState,
     /// Natural sizes of loaded `<img>` elements, set by the embedder.
@@ -222,6 +235,7 @@ impl Dom {
             free: Vec::new(),
             version: 0,
             tree_version: 0,
+            style_text_revision: 0,
             hook_epoch: 0,
             named_item_hook: None,
             names: std::cell::RefCell::new(NameCache::default()),
@@ -236,6 +250,9 @@ impl Dom {
             shadow_roots: 0,
             pending_inline_handlers: Vec::new(),
             base_seen: false,
+            media_seen: false,
+            canvas_seen: false,
+            media: Default::default(),
             mutation: MutationState::default(),
             live_ranges: Vec::new(),
             live_iterators: Vec::new(),
@@ -246,7 +263,9 @@ impl Dom {
             resources: Default::default(),
             iframes: Default::default(),
             reactions: Default::default(),
+            internals: Default::default(),
             top_layer: Default::default(),
+            details: Default::default(),
             nonces: Default::default(),
             natural_sizes: Default::default(),
             window_names: Default::default(),
@@ -308,6 +327,10 @@ impl Dom {
     }
     pub fn node(&self, id: NodeId) -> DomResult<&Node> {
         Ok(self.live(id)?.1)
+    }
+    /// Whether a `<canvas>` element was ever created in this DOM.
+    pub fn canvas_seen(&self) -> bool {
+        self.canvas_seen
     }
     /// Natural (intrinsic) size of a loaded image element, in CSS px.
     pub fn natural_size(&self, el: NodeId) -> Option<(f64, f64)> {
@@ -417,9 +440,55 @@ impl Dom {
         self.journal.push((self.version, change));
     }
 
+    /// Bumped whenever the child text content of an HTML `<style>` element
+    /// may have changed (a child inserted or removed, a child's data
+    /// changed), and by the changes that are never refined from `Unknown`
+    /// (a document reset, a shadow root attached). With the style engine's
+    /// sheet generation and which sheets are connected, it says when the
+    /// author sheets' texts may have changed.
+    pub fn style_text_revision(&self) -> u64 {
+        self.style_text_revision
+    }
+
+    /// The [`Dom::style_text_revision`] at which the child text content of
+    /// the HTML `<style>` element `el` last changed (0: not since it was
+    /// created); `None` for a stale id or another node.
+    pub fn style_element_text_revision(&self, el: NodeId) -> Option<u64> {
+        let e = self.node(el).ok()?.element()?;
+        (e.is_html() && e.name.local == local_name!("style")).then_some(e.style_text_revision)
+    }
+
+    /// The changes no `note` refines: everything may have changed.
+    fn bump_style_text(&mut self) {
+        self.style_text_revision = self.style_text_revision.wrapping_add(1);
+    }
+
+    /// `change` changed the children of an HTML `<style>`, or a child's
+    /// data: its sheet text may differ.
+    #[inline]
+    fn note_style_text(&mut self, change: Change) {
+        let parent = match change {
+            Change::Inserted(p, _) | Change::Removed(p, _, _) => p,
+            Change::Text(i) => self.n(i).parent,
+            _ => return,
+        };
+        if parent == NIL {
+            return;
+        }
+        let revision = self.style_text_revision.wrapping_add(1);
+        if let NodeKind::Element(e) = &mut self.n_mut(parent).kind {
+            if e.is_html() && e.name.local == local_name!("style") {
+                e.style_text_revision = revision;
+                self.style_text_revision = revision;
+            }
+        }
+    }
+
     /// Refines what the latest `version` bump changed (replacing its
     /// `Unknown` entry).
     pub(crate) fn note(&mut self, change: Change) {
+        // Before the journal: an overflow may have cleared it.
+        self.note_style_text(change);
         match self.journal.last_mut() {
             Some((v, c)) if *v == self.version => *c = change,
             _ => {}
@@ -428,6 +497,7 @@ impl Dom {
 
     /// Adds another change to the latest `version` bump (after `note`).
     fn note_more(&mut self, change: Change) {
+        self.note_style_text(change);
         if self.journal.last().is_some_and(|(v, _)| *v == self.version) {
             self.push_change(change);
         }
@@ -650,6 +720,7 @@ impl Dom {
             content_type: content_type.into(),
             charset: "UTF-8",
             url: url.into(),
+            parsed_url: Default::default(),
             base_url: None,
             html_base: Default::default(),
             url_target: url_target(url),
@@ -662,6 +733,8 @@ impl Dom {
             fragment_parse_host: false,
             focused: NIL,
             hovered: NIL,
+            activated: NIL,
+            focus_visible: false,
             document_element: NIL,
             head: NIL,
             body: NIL,
@@ -700,11 +773,19 @@ impl Dom {
             _ => Err(DomError::Type("not a document")),
         }
     }
+    /// `doc`'s URL parsed (`None` if it does not parse): made on the first
+    /// request for it and dropped when the URL changes, so a document's
+    /// requests (each one's referrer) do not parse it again.
+    pub fn document_url_parsed(&self, doc: NodeId) -> DomResult<Option<&url::Url>> {
+        let d = self.document_data(doc)?;
+        Ok(d.parsed_url.get_or_init(|| url::Url::parse(&d.url).ok()).as_ref())
+    }
     pub fn set_document_url(&mut self, doc: NodeId, url: &str) -> DomResult<()> {
         let i = self.check(doc)?;
         match &mut self.n_mut(i).kind {
             NodeKind::Document(d) => {
                 d.url = url.into();
+                d.parsed_url.take();
                 d.url_target = url_target(url);
             }
             _ => return Err(DomError::Type("not a document")),
@@ -773,6 +854,7 @@ impl Dom {
             d.quirks = QuirksMode::NoQuirks;
         }
         self.bump();
+        self.bump_style_text();
         Ok(())
     }
 
@@ -797,6 +879,11 @@ impl Dom {
         let owner = self.owner_for(doc)?;
         let is_template = name.ns == ns!(html) && name.local == local_name!("template");
         self.base_seen |= name.local == local_name!("base");
+        match name.local {
+            local_name!("audio") | local_name!("video") => self.media_seen = true,
+            local_name!("canvas") => self.canvas_seen = true,
+            _ => {}
+        }
         let idx = self.alloc_raw(NodeKind::Element(Box::new(ElementData::new(name))), owner);
         if is_template {
             let inert = self.inert_doc_for(owner);
@@ -976,7 +1063,13 @@ impl Dom {
         Ok(self.id_of(sr))
     }
 
-    fn new_shadow_root(&mut self, h: u32, mode: ShadowRootMode, flags: u8) -> u32 {
+    fn new_shadow_root(&mut self, h: u32, mode: ShadowRootMode, mut flags: u8) -> u32 {
+        // A custom host makes it available to its internals; a
+        // precustomized one (its constructor running) is the bindings' to
+        // tell, with the flag.
+        if self.n(h).element().is_some_and(|e| e.flags & element_flags::CUSTOM_DEFINED != 0) {
+            flags |= shadow_flags::AVAILABLE_TO_INTERNALS;
+        }
         let owner = self.n(h).owner_doc;
         let sr = self.alloc(NodeKind::Fragment(FragmentData::new(h, Some(mode), flags)), owner);
         let tree = self.shadow_root_flags_for(h);
@@ -984,6 +1077,7 @@ impl Dom {
         self.n_mut(h).element_mut().unwrap().shadow_root = sr;
         self.shadow_roots = self.shadow_roots.saturating_add(1);
         self.bump();
+        self.bump_style_text();
         sr
     }
 
@@ -1923,6 +2017,9 @@ impl Dom {
         for &k in nodes {
             self.resources_after_insert(k);
             self.picture_images_changed(parent, k);
+            if self.internals.faces != 0 {
+                self.faces_after_tree_change(k);
+            }
             if connected {
                 self.note_connected_listeners(k);
                 self.enqueue_custom_reactions(k, crate::custom::CustomReaction::Connected);
@@ -2004,9 +2101,7 @@ impl Dom {
         self.picture_images_changed(parent, node);
         self.options_before_remove(node);
         self.top_layer_before_remove(node);
-        if self.reactions.any_custom && self.is_connected_idx(parent) {
-            self.enqueue_custom_reactions(node, crate::custom::CustomReaction::Disconnected);
-        }
+        let disconnect = self.reactions.any_custom && self.is_connected_idx(parent);
         self.note_removal(node);
         self.add_transient_observers(parent, node);
         if !self.live_ranges.is_empty() {
@@ -2016,6 +2111,13 @@ impl Dom {
             self.iterators_before_remove(node);
         }
         self.unlink(node);
+        // Removing steps (form owners) come before disconnectedCallback.
+        if self.internals.faces != 0 {
+            self.faces_after_tree_change(node);
+        }
+        if disconnect {
+            self.enqueue_custom_reactions(node, crate::custom::CustomReaction::Disconnected);
+        }
         self.slots_after_child_change(parent, &[node]);
         self.unfocus_removed(node);
         self.bump_tree();
@@ -2094,6 +2196,9 @@ impl Dom {
                 // Attr nodes share their element's node document.
                 stack.extend_from_slice(self.attr_nodes_of(i));
             }
+        }
+        if self.reactions.any_custom {
+            self.enqueue_adopted(node, old, doc);
         }
         self.doc_data_mut(old).owned -= moved;
         self.doc_data_mut(doc).owned += moved;
@@ -2309,7 +2414,7 @@ impl Dom {
         if src_sr != NIL {
             if let NodeKind::Fragment(FragmentData { shadow: Some(mode), flags, .. }) = self.n(src_sr).kind {
                 if flags & shadow_flags::CLONABLE != 0 {
-                    let dst_sr = self.new_shadow_root(copy, mode, flags);
+                    let dst_sr = self.new_shadow_root(copy, mode, flags & !shadow_flags::AVAILABLE_TO_INTERNALS);
                     let kids: Vec<u32> = self.child_idx_iter(src_sr).collect();
                     for k in kids {
                         let kc = self.clone_idx(k, doc, true)?;
@@ -2511,6 +2616,10 @@ impl Dom {
             self.note(Change::attr(i, &name));
         }
         self.queue_attribute(i, &name, Some(&old));
+        self.attribute_changed(i, &name, Some(&old), Some(value));
+        if self.internals.faces != 0 {
+            self.faces_after_attr(&name);
+        }
         self.announce_named_attr(i, &name);
         if !drives_element_behaviour(&name) {
             return;
@@ -2518,6 +2627,7 @@ impl Dom {
         self.resources_after_attr(i, &name.local, false);
         if *old != *value {
             self.slots_after_attr_change(i, &name.local);
+            self.details_after_attr(i, &name, None);
         }
     }
     pub(crate) fn append_attr(&mut self, i: u32, name: QualName, value: &str) {
@@ -2527,12 +2637,17 @@ impl Dom {
         self.bump_tree();
         self.note(Change::attr(i, &name));
         self.queue_attribute(i, &name, None);
+        self.attribute_changed(i, &name, None, Some(value));
+        if self.internals.faces != 0 {
+            self.faces_after_attr(&name);
+        }
         self.announce_named_attr(i, &name);
         if !drives_element_behaviour(&name) {
             return;
         }
         self.slots_after_attr_change(i, &name.local);
         self.resources_after_attr(i, &name.local, true);
+        self.details_after_attr(i, &name, Some(true));
     }
 
     /// `removeAttribute(qualifiedName)`. Returns whether an attribute was removed.
@@ -2567,11 +2682,16 @@ impl Dom {
         self.bump_tree();
         self.note(Change::attr(i, &attr.name));
         self.queue_attribute(i, &attr.name, Some(&attr.value));
+        self.attribute_changed(i, &attr.name, Some(&attr.value), None);
+        if self.internals.faces != 0 {
+            self.faces_after_attr(&attr.name);
+        }
         if !drives_element_behaviour(&attr.name) {
             return;
         }
         self.resources_after_attr(i, &attr.name.local, false);
         self.slots_after_attr_change(i, &attr.name.local);
+        self.details_after_attr(i, &attr.name, Some(false));
     }
 
     /// `toggleAttribute(name, force)`.
@@ -2711,6 +2831,32 @@ impl Dom {
                 }
             }
             cur = self.following_in(cur, root);
+        }
+        out.map_or(std::borrow::Cow::Borrowed(first), std::borrow::Cow::Owned)
+    }
+
+    /// The child text content of `id` (HTML): the data of its Text (and
+    /// CDATA) children, in order, not of deeper descendants. Borrowed while
+    /// at most one of them is non-empty; empty for a stale id.
+    pub fn child_text_content(&self, id: NodeId) -> std::borrow::Cow<'_, str> {
+        let Ok(i) = self.check(id) else { return std::borrow::Cow::Borrowed("") };
+        let mut first: &str = "";
+        let mut out: Option<String> = None;
+        let mut cur = self.n(i).first_child;
+        while cur != NIL {
+            if let NodeKind::Text(s) | NodeKind::CData(s) = &self.n(cur).kind {
+                if let Some(out) = &mut out {
+                    out.push_str(s);
+                } else if first.is_empty() {
+                    first = s;
+                } else if !s.is_empty() {
+                    let mut o = String::with_capacity(2 * (first.len() + s.len()));
+                    o.push_str(first);
+                    o.push_str(s);
+                    out = Some(o);
+                }
+            }
+            cur = self.n(cur).next;
         }
         out.map_or(std::borrow::Cow::Borrowed(first), std::borrow::Cow::Owned)
     }
@@ -3196,6 +3342,9 @@ impl Dom {
         self.mutation.forget_node(i);
         self.events.forget(crate::events::TargetKey::Node(i));
         self.forget_attr_nodes(i);
+        if !self.internals.is_empty() {
+            self.forget_internals(i);
+        }
         if !self.creation_docs.is_empty() {
             self.creation_docs.remove(&i);
         }

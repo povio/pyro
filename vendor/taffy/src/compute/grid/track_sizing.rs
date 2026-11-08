@@ -6,7 +6,7 @@ use crate::geometry::{AbstractAxis, Line, Size};
 use crate::style::{AlignContent, AlignContentKeyword, AvailableSpace};
 use crate::style_helpers::TaffyMinContent;
 use crate::tree::{LayoutPartialTree, LayoutPartialTreeExt, SizingMode};
-use crate::util::sys::{f32_max, f32_min, Vec};
+use crate::util::sys::{f32_max, f32_min, GridTrackVec, Vec};
 use crate::util::{FrontBackVecBuilder, MaybeMath, ResolveOrZero};
 use crate::CompactLength;
 
@@ -236,11 +236,15 @@ pub(super) fn resolve_item_track_indexes(items: &mut [GridItem], column_counts: 
 /// Determine (in each axis) whether the item crosses any flexible tracks
 #[inline(always)]
 pub(super) fn determine_if_item_crosses_flexible_or_intrinsic_tracks(
-    items: &mut Vec<GridItem>,
+    items: &mut [GridItem],
     columns: &[GridTrack],
     rows: &[GridTrack],
+    only: Option<&[bool]>,
 ) {
-    for item in items {
+    for (index, item) in items.iter_mut().enumerate() {
+        if only.is_some_and(|only| !only[index]) {
+            continue;
+        }
         item.crosses_flexible_column =
             item.track_range_excluding_lines(AbstractAxis::Inline).any(|i| columns[i].is_flexible());
         item.crosses_intrinsic_column =
@@ -270,11 +274,22 @@ pub(super) fn track_sizing_algorithm<Tree: LayoutPartialTree>(
     get_track_size_estimate: fn(&GridTrack, Option<f32>, &Tree) -> Option<f32>,
     has_baseline_aligned_item: bool,
     table_rows: bool,
+    // lightningpanda: the tracks to size from their items (the others are as their items sized them
+    // last time: `table_reuse`), and where to keep the tracks as their items sized them.
+    only_tracks: Option<&[bool]>,
+    sized: Option<&mut GridTrackVec<GridTrack>>,
 ) {
     // 11.4 Initialise Track sizes
     // Initialize each track’s base size and growth limit.
     let percentage_basis = inner_node_size.get(axis).or(axis_min_size);
-    initialize_track_sizes(tree, axis_tracks, percentage_basis);
+    match only_tracks {
+        None => initialize_track_sizes(tree, axis_tracks, percentage_basis),
+        Some(only) => {
+            for (track, _) in axis_tracks.iter_mut().zip(only).filter(|(_, only)| **only) {
+                initialize_track_sizes(tree, core::slice::from_mut(track), percentage_basis);
+            }
+        }
+    }
 
     // Resolve fit-content() limits against the container's inner size (these are fixed for the rest of this pass)
     let axis_inner_node_size = inner_node_size.get(axis);
@@ -291,7 +306,8 @@ pub(super) fn track_sizing_algorithm<Tree: LayoutPartialTree>(
     // then the track sizes are already final and we can skip the rest of this function.
     // Note that tracks with an intrinsic min track sizing function can still grow beyond
     // a fixed growth limit (e.g. minmax(auto, 0px)), so they cannot be skipped.
-    if axis_tracks.iter().all(|track| {
+    // (A grid sized again in part was not skipped when its state was recorded: `sized`.)
+    if only_tracks.is_none() && axis_tracks.iter().all(|track| {
         track.base_size == track.growth_limit
             && track
                 .min_track_sizing_function
@@ -330,7 +346,12 @@ pub(super) fn track_sizing_algorithm<Tree: LayoutPartialTree>(
         inner_node_size,
         get_track_size_estimate,
         table_rows && axis == AbstractAxis::Block,
+        only_tracks,
     );
+    if let Some(sized) = sized {
+        sized.clear();
+        sized.extend(axis_tracks.iter().cloned());
+    }
 
     // 11.6. Maximise Tracks
     // Distributes free space (if any) to tracks with FINITE growth limits, up to their limits.
@@ -554,6 +575,7 @@ fn resolve_intrinsic_track_sizes<Tree: LayoutPartialTree>(
     inner_node_size: Size<Option<f32>>,
     get_track_size_estimate: impl Fn(&GridTrack, Option<f32>, &Tree) -> Option<f32>,
     table_rows: bool,
+    only_tracks: Option<&[bool]>,
 ) {
     // lightningpanda: the first tracks of the items spanning several table rows (rows where a
     // rowspan starts, for `distribute_rowspan_to_table_rows`).
@@ -580,9 +602,12 @@ fn resolve_intrinsic_track_sizes<Tree: LayoutPartialTree>(
     // Items that cross a flexible track are all processed together in a single batch (regardless of their span), so
     // they only need to be moved to the end of the list. And the order in which items within a batch are processed
     // does not affect the result, so the remaining items only need to be sorted if any of them span more than one track.
-    let mut partitioned_items: FrontBackVecBuilder<&mut GridItem> = FrontBackVecBuilder::with_capacity(items.len());
+    // lightningpanda: only the items of the tracks being sized again (all of them span one track).
+    let only_item = |item: &GridItem| only_tracks.is_none_or(|only| only[item.placement_indexes(axis).start as usize + 1]);
+    let count = if only_tracks.is_some() { items.iter().filter(|item| only_item(item)).count() } else { items.len() };
+    let mut partitioned_items: FrontBackVecBuilder<&mut GridItem> = FrontBackVecBuilder::with_capacity(count);
     let mut needs_sort = false;
-    for item in items.iter_mut() {
+    for item in items.iter_mut().filter(|item| only_item(item)) {
         if item.crosses_flexible_track(axis) {
             partitioned_items.push_back(item);
         } else {

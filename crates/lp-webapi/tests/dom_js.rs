@@ -35,10 +35,10 @@ impl JsClass for TestWindow {
     }
 }
 
-struct Env {
+pub(crate) struct Env {
     engine: Engine,
     page: Rc<PageDom>,
-    main: Realm,
+    pub(crate) main: Realm,
 }
 
 /// Loads no sub-resources (the layout tests' pages have none).
@@ -49,7 +49,7 @@ impl lp_render::Fetcher for NoFetch {
     }
 }
 
-fn env(html: &str) -> Env {
+pub(crate) fn env(html: &str) -> Env {
     lp_layout::install(std::sync::Arc::new(NoFetch));
     let engine = Engine::new().expect("engine");
     register(&engine);
@@ -96,7 +96,7 @@ fn new_realm_with_origin(
     realm
 }
 
-fn eval(realm: &Realm, src: &str) -> String {
+pub(crate) fn eval(realm: &Realm, src: &str) -> String {
     let s = realm.scope().unwrap();
     match s.eval(src, Some("test.js"), 1) {
         Ok(v) => v.to_string().unwrap(),
@@ -431,10 +431,10 @@ fn arrow_up_and_down_move_the_caret_in_text_controls() {
     press("ArrowDown", false);
     assert_eq!(sel("t"), "2,2");
 
-    // Number inputs step values in browsers (not modelled): untouched here.
+    // Number inputs step their value instead.
     eval(r, "document.getElementById('n').focus();");
     press("ArrowUp", false);
-    assert_eq!(eval(r, "document.getElementById('n').value"), "5");
+    assert_eq!(eval(r, "document.getElementById('n').value"), "6");
 }
 
 #[test]
@@ -1450,9 +1450,6 @@ fn indexeddb_empty_restore_preserves_context_and_origin_isolation() {
     );
     eval(&realm, "indexedDB.databases().then(a=>{a.push({name:'injected',version:1});return indexedDB.databases()}).then(a=>result=String(a.length))");
     assert_eq!(eval(&realm, "result"), "0");
-    // The unsupported nonempty restore must fail before clearing existing data.
-    eval(&realm, "restore({indexedDB:[{name:'db',version:1,stores:[]}],localStorage:[]}).then(()=>result='WRONG',e=>result=e.name)");
-    assert_eq!(eval(&realm, "result+':'+localStorage.getItem('auth-test')"), "NotSupportedError:synthetic");
     let (_next, navigated) =
         storage_page(&engine, "http://example.test/next", local.clone(), StorageNamespace::default());
     assert_eq!(eval(&navigated, "localStorage.getItem('auth-test')"), "synthetic");
@@ -1479,7 +1476,7 @@ fn indexeddb_opaque_origin_rejects_and_nonempty_operations_are_explicit() {
     assert_eq!(eval(&realm, "try{indexedDB.open('db')}catch(e){e.name}"), "SecurityError");
     let (_page, realm) =
         storage_page(&engine, "http://example.test", StorageNamespace::default(), StorageNamespace::default());
-    assert_eq!(eval(&realm, "try{indexedDB.deleteDatabase('db')}catch(e){e.name}"), "NotSupportedError");
+    assert_eq!(eval(&realm, "indexedDB.deleteDatabase('db') instanceof IDBOpenDBRequest"), "true");
     assert_eq!(eval(&realm, "try{new IDBFactory()}catch(e){e.name}"), "TypeError");
 }
 
@@ -2133,10 +2130,10 @@ fn structured_clone_rejects_unsupported_values_without_proxy_traps_or_detachment
           getPrototypeOf(){traps++;throw 3}});
         const revoked=Proxy.revocable({},{});revoked.revoke();
         const values=[proxy,revoked.proxy,document,window,()=>{},Symbol('x'),new WeakMap(),Promise.resolve(1),
-          new URL('https://example.test/'),new Error('not yet supported')];
+          new URL('https://example.test/')];
         const errors=values.map(v=>{try{structuredClone(v);return 'accepted'}catch(e){return e.name}});
         const buffer=new ArrayBuffer(4);let transfer;
-        try {structuredClone({buffer},{transfer:[buffer]})}catch(e){transfer=e.name}
+        try {structuredClone({buffer,f(){}},{transfer:[buffer]})}catch(e){transfer=e.name}
         let custom=0;const tagged={get [Symbol.toStringTag](){custom++;return 'Object'}};
         let customError;try{structuredClone(tagged)}catch(e){customError=e.name}
         return [errors.every(n=>n==='DataCloneError'),traps,transfer,buffer.byteLength,
@@ -2144,7 +2141,7 @@ fn structured_clone_rejects_unsupported_values_without_proxy_traps_or_detachment
       })()
     "#
         ),
-        "true|0|NotSupportedError|4|1|0|NotSupportedError"
+        "true|0|DataCloneError|4|1|0|NotSupportedError"
     );
 }
 
@@ -2698,7 +2695,8 @@ fn web_crypto_random_and_digest() {
     assert_eq!(out, "started");
     assert_eq!(
         eval(r, "res"),
-        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad|a9993e364706816aba3e25717850c26c9cd0d89d|NotSupportedError|NotSupportedError|true"
+        // sign() without arguments: a WebIDL argument error rejects the promise.
+        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad|a9993e364706816aba3e25717850c26c9cd0d89d|NotSupportedError|TypeError|true"
     );
 }
 
@@ -2900,10 +2898,10 @@ fn svg_graphics_elements_report_get_bbox() {
 }
 
 #[test]
-fn canvas_2d_measures_text_without_pixels() {
+fn canvas_2d_measures_and_draws_text() {
     // TOS terms-layout sizes Days inputs with canvas measureText. The 2D
-    // context measures with the flow layout's text measure; there is no
-    // rasterizer, so pixel readback is explicitly unsupported.
+    // context measures and draws text with the system fonts (Parley); the
+    // text it draws has pixels.
     let e = env("<body><canvas id=c></canvas><input id=i style='font: 600 15px system-ui'></body>");
     assert_eq!(
         eval(
@@ -2924,10 +2922,7 @@ fn canvas_2d_measures_text_without_pixels() {
         "true,true,true,true"
     );
     assert_eq!(eval(&e.main, "x.save(); x.font = '20px monospace'; x.restore(); x.font"), "32px system-ui");
-    assert_eq!(
-        eval(&e.main, "try { x.getImageData(0, 0, 1, 1); 'returned' } catch (err) { err.name }"),
-        "NotSupportedError"
-    );
+    assert_eq!(eval(&e.main, "x.fillText('9', 0, 30); x.getImageData(0, 0, 40, 40).data.some(v => v > 0)"), "true");
     // The TOS pattern: drawing.font = getComputedStyle(input).font.
     assert_eq!(
         eval(&e.main, "x.font = getComputedStyle(document.getElementById('i')).font; x.font"),
@@ -3514,16 +3509,21 @@ fn worker_constructor_checks_and_load_failure_without_a_network() {
     e.page.set_hooks(Some(tasks.clone()));
     let r = &e.main;
     let base = e.page.pinned_count();
-    // These fail before a worker exists; `SharedWorker` and `ServiceWorker` stay absent.
+    // These fail before a worker exists; `SharedWorker` stays absent (`ServiceWorker` is the
+    // service worker interface, made on first use).
     assert_eq!(
         eval(
             r,
             "const err = (f) => { try { f(); return 'ok'; } catch (e) { return e.name; } };
              [err(() => new Worker('http://[')), err(() => new Worker()), err(() => Worker('w.js')),
-              err(() => new Worker('w.js', {type: 'module'})), err(() => new Worker('w.js', {type: 'other'})),
-              err(() => new Worker('https://example.test/w.js')), typeof SharedWorker, typeof ServiceWorker].join()",
+              err(() => new Worker('w.js', {type: 'module'}).terminate()), err(() => new Worker('w.js', {type: 'other'})),
+              err(() => new Worker('https://example.test/w.js')), typeof SharedWorker, 'ServiceWorker' in window].join()",
         ),
-        "SyntaxError,TypeError,TypeError,NotSupportedError,TypeError,SecurityError,undefined,undefined"
+        if lp_js::Capabilities::detect().modules {
+            "SyntaxError,TypeError,TypeError,ok,TypeError,SecurityError,undefined,true"
+        } else {
+            "SyntaxError,TypeError,TypeError,NotSupportedError,TypeError,SecurityError,undefined,true"
+        }
     );
     assert_eq!(e.page.pinned_count(), base, "a rejected construction leaves nothing behind");
     // This embedder has no network: the error comes in a later task, as a plain trusted Event.
@@ -3539,7 +3539,7 @@ fn worker_constructor_checks_and_load_failure_without_a_network() {
              [w instanceof Worker, w instanceof EventTarget, typeof w.onerror, err(() => w.postMessage()),
               err(() => w.postMessage(() => 1)), err(() => w.postMessage(1, [{}])), b.byteLength, log.length].join()",
         ),
-        "true,true,function,TypeError,DataCloneError,NotSupportedError,0,0"
+        "true,true,function,TypeError,DataCloneError,DataCloneError,0,0"
     );
     assert_eq!(e.page.pinned_count(), base + 1);
     tasks.drain();
@@ -3618,7 +3618,8 @@ fn message_port_start_close_transfer_and_clone_errors() {
     eval(r, "log = []; a.port1.onmessage = (ev) => log.push('back:' + ev.data); a.port2.postMessage('b'); a.port1.postMessage('pending'); a.port2.close(); a.port1.postMessage('after'); a.port2.postMessage('afterClose');");
     tasks.drain();
     assert_eq!(eval(r, "log.join()"), "back:b");
-    // Transfers are explicitly unsupported; non-cloneable data and ports throw.
+    // Transfers work (posting the peer port loses the channel); non-cloneable
+    // data and ports as data throw.
     assert_eq!(
         eval(
             r,
@@ -3627,7 +3628,7 @@ fn message_port_start_close_transfer_and_clone_errors() {
               err(() => c.port1.postMessage(() => 1)), err(() => c.port1.postMessage({p: c.port2})), err(() => c.port1.postMessage()),
               err(() => c.port1.postMessage(1, [])), err(() => c.port1.postMessage(1, {}))].join()",
         ),
-        "NotSupportedError,NotSupportedError,DataCloneError,DataCloneError,TypeError,ok,ok"
+        "ok,ok,DataCloneError,DataCloneError,TypeError,ok,ok"
     );
     // Page reassignment of structuredClone does not affect port cloning.
     eval(r, "log = []; structuredClone = () => { throw Error('page clone'); }; const d = new MessageChannel(); d.port2.onmessage = (ev) => log.push(ev.data.k); d.port1.postMessage({k: 'native'});");
@@ -4429,7 +4430,10 @@ fn dom_parser_xml_types_case_cdata_errors_and_inert_adoption() {
     );
     // A DOCTYPE (without entity declarations) is a DocumentType node.
     assert_eq!(
-        eval(&e.main, r#"const dt=new DOMParser().parseFromString("<!DOCTYPE r SYSTEM 'file:///unused'><r/>",'text/xml'); dt.doctype.name+':'+dt.doctype.systemId+':'+dt.documentElement.localName"#),
+        eval(
+            &e.main,
+            r#"const dt=new DOMParser().parseFromString("<!DOCTYPE r SYSTEM 'file:///unused'><r/>",'text/xml'); dt.doctype.name+':'+dt.doctype.systemId+':'+dt.documentElement.localName"#
+        ),
         "r:file:///unused:r"
     );
     assert_eq!(
@@ -6786,37 +6790,84 @@ fn removing_one_of_many_expando_rows_unpins_only_its_subtree() {
 
 #[test]
 fn attr_nodes_aria_token_lists_and_named_properties() {
-    let e = env(
-        "<!doctype html><html><body><div id=app class='a b' aria-label=hi></div>\
-         <form name=f1></form><img id=pic name=picname><iframe name=fr></iframe></body></html>",
-    );
+    let e = env("<!doctype html><html><body><div id=app class='a b' aria-label=hi></div>\
+         <form name=f1></form><img id=pic name=picname><iframe name=fr></iframe></body></html>");
     let r = &e.main;
     // Attr nodes keep their identity, move between elements and detach.
     assert_eq!(eval(r, "const app = document.getElementById('app'); app.getAttributeNode('class') === app.attributes.getNamedItem('class') && app.attributes[0].name === 'id'"), "true");
-    assert_eq!(eval(r, "const at = document.createAttribute('data-x'); at.value = '1'; String(at.ownerElement) + at.name"), "nulldata-x");
-    assert_eq!(eval(r, "app.setAttributeNode(at) === null && app.getAttributeNode('data-x') === at && at.ownerElement === app"), "true");
-    assert_eq!(eval(r, "const other = document.createElement('b'); try { other.setAttributeNode(at); 'no' } catch (e) { e.name }"), "InUseAttributeError");
-    assert_eq!(eval(r, "app.removeAttributeNode(at) === at && at.ownerElement === null && at.value + app.hasAttribute('data-x')"), "1false");
-    assert_eq!(eval(r, "const ns = document.createAttributeNS('urn:x', 'p:q'); ns.prefix + ns.localName + ns.namespaceURI"), "pqurn:x");
+    assert_eq!(
+        eval(r, "const at = document.createAttribute('data-x'); at.value = '1'; String(at.ownerElement) + at.name"),
+        "nulldata-x"
+    );
+    assert_eq!(
+        eval(
+            r,
+            "app.setAttributeNode(at) === null && app.getAttributeNode('data-x') === at && at.ownerElement === app"
+        ),
+        "true"
+    );
+    assert_eq!(
+        eval(
+            r,
+            "const other = document.createElement('b'); try { other.setAttributeNode(at); 'no' } catch (e) { e.name }"
+        ),
+        "InUseAttributeError"
+    );
+    assert_eq!(
+        eval(
+            r,
+            "app.removeAttributeNode(at) === at && at.ownerElement === null && at.value + app.hasAttribute('data-x')"
+        ),
+        "1false"
+    );
+    assert_eq!(
+        eval(r, "const ns = document.createAttributeNS('urn:x', 'p:q'); ns.prefix + ns.localName + ns.namespaceURI"),
+        "pqurn:x"
+    );
     // ARIAMixin reflects every attribute as a nullable string.
     assert_eq!(eval(r, "app.ariaLabel + ':' + String(app.ariaBusy)"), "hi:null");
-    assert_eq!(eval(r, "app.ariaBusy = 'true'; app.ariaBusy = undefined; String(app.ariaBusy) + app.hasAttribute('aria-busy')"), "nullfalse");
+    assert_eq!(
+        eval(
+            r,
+            "app.ariaBusy = 'true'; app.ariaBusy = undefined; String(app.ariaBusy) + app.hasAttribute('aria-busy')"
+        ),
+        "nullfalse"
+    );
     assert_eq!(eval(r, "app.ariaRowIndexText = 'x'; app.getAttribute('aria-rowindextext')"), "x");
     // DOMTokenList update steps and supports().
-    assert_eq!(eval(r, "const d = document.createElement('div'); d.classList.remove('a'); String(d.getAttribute('class'))"), "null");
+    assert_eq!(
+        eval(r, "const d = document.createElement('div'); d.classList.remove('a'); String(d.getAttribute('class'))"),
+        "null"
+    );
     assert_eq!(eval(r, "d.classList.add('a'); d.classList.replace('a', 'a'); d.getAttribute('class')"), "a");
     assert_eq!(eval(r, "try { d.classList.replace(' ', '') } catch (e) { e.name }"), "SyntaxError");
     assert_eq!(eval(r, "try { d.classList.supports('a') } catch (e) { e.constructor.name }"), "TypeError");
     assert_eq!(eval(r, "d.classList = 'x y'; d.className"), "x y");
     // Document named properties and collections.
-    assert_eq!(eval(r, "document.f1 === document.forms[0] && 'f1' in document && document.picname === document.pic"), "true");
+    assert_eq!(
+        eval(r, "document.f1 === document.forms[0] && 'f1' in document && document.picname === document.pic"),
+        "true"
+    );
     assert_eq!(eval(r, "Object.getOwnPropertyNames(document).includes('picname') && document.embeds.length === 0 && document.applets.length === 0"), "true");
-    assert_eq!(eval(r, "typeof document.fr === 'object' && document.fr !== null"), "true", "an iframe by name is its window");
+    assert_eq!(
+        eval(r, "typeof document.fr === 'object' && document.fr !== null"),
+        "true",
+        "an iframe by name is its window"
+    );
     // Namespace lookups, textContent and moveBefore.
-    assert_eq!(eval(r, "String(app.lookupPrefix('http://www.w3.org/1999/xhtml')) + app.lookupNamespaceURI('xml')"), "nullhttp://www.w3.org/XML/1998/namespace");
+    assert_eq!(
+        eval(r, "String(app.lookupPrefix('http://www.w3.org/1999/xhtml')) + app.lookupNamespaceURI('xml')"),
+        "nullhttp://www.w3.org/XML/1998/namespace"
+    );
     assert_eq!(eval(r, "app.textContent = undefined; JSON.stringify(app.textContent)"), "\"\"");
-    assert_eq!(eval(r, "const f = document.forms[0]; document.body.moveBefore(f, app); document.body.firstElementChild === f"), "true");
-    assert_eq!(eval(r, "try { document.body.moveBefore(document.createElement('x'), null); 'no' } catch (e) { e.name }"), "HierarchyRequestError");
+    assert_eq!(
+        eval(r, "const f = document.forms[0]; document.body.moveBefore(f, app); document.body.firstElementChild === f"),
+        "true"
+    );
+    assert_eq!(
+        eval(r, "try { document.body.moveBefore(document.createElement('x'), null); 'no' } catch (e) { e.name }"),
+        "HierarchyRequestError"
+    );
 }
 
 #[test]
@@ -6829,11 +6880,23 @@ fn legacy_events_request_and_observable() {
     assert_eq!(eval(r, "try { new UIEvent('x', {view: {}}); 'no' } catch (e) { e.constructor.name }"), "TypeError");
     assert_eq!(eval(r, "const se = document.createEvent('StorageEvent'); se.initStorageEvent('storage', false, false, 'k', null, 'v'); se.key + se.oldValue + se.newValue"), "knullv");
     assert_eq!(eval(r, "window.onblur = null; document.body.setAttribute('onblur', 'return'); typeof window.onblur + (window.onblur === document.body.onblur)"), "functiontrue");
-    assert_eq!(eval(r, "'remove' in Element.prototype[Symbol.unscopables] && 'append' in Document.prototype[Symbol.unscopables]"), "true");
+    assert_eq!(
+        eval(
+            r,
+            "'remove' in Element.prototype[Symbol.unscopables] && 'append' in Document.prototype[Symbol.unscopables]"
+        ),
+        "true"
+    );
     // Request: fields, headers guard, body and fetch input.
     assert_eq!(eval(r, "const rq = new Request('/x?y', {method: 'post', body: 'hi', headers: {'X-A': '1', 'Cookie': 'no'}}); rq.method + rq.url + rq.headers.get('x-a') + String(rq.headers.get('cookie')) + rq.headers.get('content-type')"), "POSThttp://localhost:5173/x?y1nulltext/plain;charset=UTF-8");
-    assert_eq!(eval(r, "rq.mode + rq.credentials + rq.cache + rq.redirect + rq.referrer + rq.bodyUsed"), "corssame-origindefaultfollowabout:clientfalse");
-    assert_eq!(eval(r, "try { new Request('/x', {method: 'TRACE'}); 'no' } catch (e) { e.constructor.name }"), "TypeError");
+    assert_eq!(
+        eval(r, "rq.mode + rq.credentials + rq.cache + rq.redirect + rq.referrer + rq.bodyUsed"),
+        "corssame-origindefaultfollowabout:clientfalse"
+    );
+    assert_eq!(
+        eval(r, "try { new Request('/x', {method: 'TRACE'}); 'no' } catch (e) { e.constructor.name }"),
+        "TypeError"
+    );
     assert_eq!(eval(r, "try { new Request('http://u:p@h/'); 'no' } catch (e) { e.constructor.name }"), "TypeError");
     assert_eq!(eval(r, "const c = rq.clone(); c.bodyUsed + ':' + (c.headers !== rq.headers)"), "false:true");
     assert_eq!(eval(r, "new Request(rq).bodyUsed + ':' + rq.bodyUsed"), "false:true");
@@ -6950,7 +7013,10 @@ fn ids_read_once_do_not_accumulate() {
     }
     let n = e.main.interned_string_count();
     assert!(n <= 6000, "{n} interned strings for 40000 distinct values read once");
-    assert_eq!(eval(r, "const last = document.getElementById('list').lastChild; last.id + '|' + last.className"), "row-9-1999|cell cell-9-1999");
+    assert_eq!(
+        eval(r, "const last = document.getElementById('list').lastChild; last.id + '|' + last.className"),
+        "row-9-1999|cell cell-9-1999"
+    );
     lp_webapi::lifecycle::realm_disposed(&e.page, e.main.id());
     e.main.dispose();
     assert_eq!(e.main.interned_string_count(), 0);

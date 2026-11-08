@@ -971,9 +971,18 @@ pub mod modules {
         userdata: *mut c_void,
         ctx: JSGlobalContextRef,
         identifier: JSStringRef,
+        module_type: c_int,
         resolve: JSObjectRef,
         reject: JSObjectRef,
     );
+
+    /// `module_type` values of [`lp_module_fetch_cb`] and
+    /// [`lp_jsc_module_script_create`] (the request's `type` import attribute).
+    pub const MODULE_TYPE_JAVASCRIPT: c_int = 0;
+    pub const MODULE_TYPE_JSON: c_int = 1;
+    pub const MODULE_TYPE_CSS: c_int = 2;
+    pub const MODULE_TYPE_WEBASSEMBLY: c_int = 3;
+    pub const MODULE_TYPE_TEXT: c_int = 4;
 
     /// The document base URL as an owned string, or null.
     pub type lp_module_base_url_cb = unsafe extern "C" fn(ctx: JSGlobalContextRef) -> JSStringRef;
@@ -990,6 +999,9 @@ pub mod modules {
         pub fn lp_jsc_module_loader_release(handle: *mut c_void);
         /// 1 when `lp_jsc_import_map_add` works (source-built JavaScriptCore).
         pub fn lp_jsc_import_maps_available() -> c_int;
+        /// 1 when fetch callbacks see the `type` import attribute and JSON
+        /// and CSS module scripts can load (source-built JavaScriptCore).
+        pub fn lp_jsc_typed_modules_available() -> c_int;
         pub fn lp_jsc_import_map_add(
             ctx: JSGlobalContextRef,
             src: *const c_char,
@@ -1004,6 +1016,7 @@ pub mod modules {
             src_len: usize,
             url: *const c_char,
             url_len: usize,
+            module_type: c_int,
             error: *mut JSStringRef,
         ) -> JSValueRef;
         pub fn lp_jsc_module_evaluate(

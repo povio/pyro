@@ -418,7 +418,7 @@ impl<'a, C: CxSource<'a>> selectors::Element for SNode<'a, C> {
 
     fn opaque(&self) -> OpaqueElement {
         let ptr = NonNull::new((self.idx).wrapping_add(1) as *mut ()).expect("non-null");
-        OpaqueElement::from_non_null_ptr(ptr)
+        OpaqueElement::from_ptr(ptr)
     }
     fn parent_element(&self) -> Option<Self> {
         self.parent_node().filter(|p| p.is_element())
@@ -480,7 +480,8 @@ impl<'a, C: CxSource<'a>> selectors::Element for SNode<'a, C> {
     fn match_non_ts_pseudo_class(&self, pc: &NonTSPseudoClass, _ctx: &mut MatchingContext<SelectorImpl>) -> bool {
         use NonTSPseudoClass as N;
         match pc {
-            N::Active | N::Visited | N::Fullscreen | N::Autofill => false,
+            N::Active => self.matches(PseudoClass::Active),
+            N::Visited | N::Fullscreen | N::Autofill => false,
             N::Target => self.matches(PseudoClass::Target),
             N::AnyLink | N::Link => self.matches(PseudoClass::Link),
             N::Checked => self.matches(PseudoClass::Checked),
@@ -503,7 +504,12 @@ impl<'a, C: CxSource<'a>> selectors::Element for SNode<'a, C> {
             N::Open => self.matches(PseudoClass::Open),
             N::Modal => self.matches(PseudoClass::Modal),
             N::PopoverOpen => self.cx().popovers.contains(&self.i()) || self.matches(PseudoClass::PopoverOpen),
+            N::InRange => self.matches(PseudoClass::InRange),
+            N::OutOfRange => self.matches(PseudoClass::OutOfRange),
+            N::UserValid => self.matches(PseudoClass::UserValid),
+            N::UserInvalid => self.matches(PseudoClass::UserInvalid),
             N::Lang(lang) => self.match_element_lang(None, lang),
+            N::CustomState(state) => self.cx().dom.has_custom_state_idx(self.i(), &state.0 .0),
             _ => false,
         }
     }
@@ -563,8 +569,8 @@ impl<'a, C: CxSource<'a>> selectors::Element for SNode<'a, C> {
         let p = self.node().parent;
         p != NIL && matches!(self.cx().dom.n(p).kind, NodeKind::Document(_))
     }
-    fn has_custom_state(&self, _name: &AtomIdent) -> bool {
-        false
+    fn has_custom_state(&self, name: &AtomIdent) -> bool {
+        self.cx().dom.has_custom_state_idx(self.i(), &name.0)
     }
     fn add_element_unique_hashes(&self, filter: &mut BloomFilter) -> bool {
         each_relevant_element_hash(*self, |hash| filter.insert_hash(hash & BLOOM_HASH_MASK));
@@ -637,6 +643,7 @@ impl<'a, C: CxSource<'a>> TElement for SNode<'a, C> {
         // Every state `match_non_ts_pseudo_class` answers from, so
         // invalidation snapshots see each one change.
         set(PseudoClass::Hover, ElementState::HOVER);
+        set(PseudoClass::Active, ElementState::ACTIVE);
         set(PseudoClass::Focus, ElementState::FOCUS);
         set(PseudoClass::FocusWithin, ElementState::FOCUS_WITHIN);
         set(PseudoClass::FocusVisible, ElementState::FOCUSRING);
@@ -657,6 +664,10 @@ impl<'a, C: CxSource<'a>> TElement for SNode<'a, C> {
         set(PseudoClass::Open, ElementState::OPEN);
         set(PseudoClass::Modal, ElementState::MODAL);
         set(PseudoClass::Target, ElementState::URLTARGET);
+        set(PseudoClass::InRange, ElementState::INRANGE);
+        set(PseudoClass::OutOfRange, ElementState::OUTOFRANGE);
+        set(PseudoClass::UserValid, ElementState::USER_VALID);
+        set(PseudoClass::UserInvalid, ElementState::USER_INVALID);
         if self.cx().popovers.contains(&self.i()) || self.matches(PseudoClass::PopoverOpen) {
             s |= ElementState::POPOVER_OPEN;
         }
@@ -742,6 +753,8 @@ impl<'a, C: CxSource<'a>> TElement for SNode<'a, C> {
     fn may_have_animations(&self) -> bool {
         false
     }
+    // lp-dom's cascade runs no animations.
+    fn set_may_have_animations(&self) {}
     fn has_animations(&self, _context: &SharedStyleContext) -> bool {
         false
     }

@@ -2458,9 +2458,8 @@ fn push_state_event_precedes_the_evaluate_reply() {
 
 /// Playwright on macOS sends the editing commands its table derives from the
 /// key (crInput `_commandsForCode`), e.g. ArrowRight -> ["moveRight"]. Those are
-/// accepted and the engine's own key default actions run (TOS batch 12,
-/// docubox-templates `keyboard.press("ArrowRight")`). Commands that are not the
-/// key's own encoding still fail explicitly, before any event is delivered.
+/// accepted and run in place of the key's default action (TOS batch 12,
+/// docubox-templates `keyboard.press("ArrowRight")`).
 #[test]
 fn input_accepts_mac_key_derived_editing_commands() {
     let mut h = Harness::new();
@@ -2535,9 +2534,10 @@ fn input_accepts_mac_key_derived_editing_commands() {
             "ArrowDown"
         ])
     );
-    // Commands are advisory (Playwright derives scrolling, clipboard, undo
-    // and word movement too, and Emacs-style aliases): the key events are
-    // delivered and the key's own default action runs, as on Linux.
+    // Other commands (scrolling, clipboard, undo, word movement, Emacs-style
+    // aliases): the key events are delivered; handled commands act on the
+    // focused element (here a button: nothing to edit), the others leave the
+    // key's own default action.
     let advisory = [
         ("ArrowLeft", "ArrowLeft", 1, json!(["moveWordLeft"])),
         ("z", "KeyZ", 4, json!(["undo"])),
@@ -2750,7 +2750,8 @@ fn navigation_history_traverses_same_document_entries_with_popstate() {
         location.hash = 'x';"#,
     );
     h.run_for(50);
-    assert_eq!(eval_value(&mut h, "seen"), json!([["hashchange", "", "#x"]]));
+    // A fragment navigation fires popstate (state null) before hashchange, as Chrome does.
+    assert_eq!(eval_value(&mut h, "seen"), json!([["popstate", "/two#x", null], ["hashchange", "", "#x"]]));
     let (index, entries) = history(&mut h);
     let urls: Vec<_> = entries.iter().map(|(_, u)| u.as_str()).collect();
     let base = format!("http://{address}");
@@ -2769,7 +2770,7 @@ fn navigation_history_traverses_same_document_entries_with_popstate() {
     let within = position(&messages, "navigatedWithinDocument", |m| m["method"] == "Page.navigatedWithinDocument");
     assert_eq!(messages[within]["params"]["url"], format!("{base}/one"));
     assert!(!messages.iter().any(|m| m["method"] == "Page.frameNavigated"), "same-document: {messages:#?}");
-    assert_eq!(eval_value(&mut h, "seen.slice(1)"), json!([["popstate", "/one", {"n": 1}]]));
+    assert_eq!(eval_value(&mut h, "seen.slice(2)"), json!([["popstate", "/one", {"n": 1}]]));
     assert_eq!(history(&mut h).0, 1);
 
     // Forward to the fragment entry of the same pushState entry: popstate (no
@@ -2782,11 +2783,11 @@ fn navigation_history_traverses_same_document_entries_with_popstate() {
     let frame = h.page("Page.getFrameTree", json!({}));
     assert_eq!(frame["result"]["frameTree"]["frame"]["url"], format!("{base}/two#x"));
     // /one -> /two#x is not a fragment-only change: no hashchange.
-    assert_eq!(eval_value(&mut h, "seen.slice(2)"), json!([["popstate", "/two#x", null]]));
+    assert_eq!(eval_value(&mut h, "seen.slice(3)"), json!([["popstate", "/two#x", null]]));
     // history.back() over a fragment entry fires both events.
     eval_value(&mut h, "history.back()");
     h.run_for(50);
-    assert_eq!(eval_value(&mut h, "seen.slice(3)"), json!([["popstate", "/two", {"n": 2}], ["hashchange", "#x", ""]]));
+    assert_eq!(eval_value(&mut h, "seen.slice(4)"), json!([["popstate", "/two", {"n": 2}], ["hashchange", "#x", ""]]));
 }
 
 /// Cross-document traversal re-fetches the entry (no bfcache) and commits as an
@@ -3361,6 +3362,9 @@ mod accessibility;
 
 #[path = "engine_cdp/frames.rs"]
 mod frames;
+
+#[path = "engine_cdp/layout_text.rs"]
+mod layout_text;
 
 #[path = "engine_cdp/tier3_g2.rs"]
 mod tier3_g2;
@@ -6314,6 +6318,194 @@ mod screenshot {
         assert_eq!(pixel(&shot(&mut h), 5, 5), [0, 0, 255, 255]);
     }
 
+    /// Modal dialogs and showing popovers paint above everything, in
+    /// top-layer order, over their `::backdrop`, whatever their ancestors'
+    /// z-index, opacity or overflow clip; hit testing and clicks follow.
+    #[test]
+    fn top_layer_paints_above_everything_over_its_backdrop() {
+        let mut h = Harness::new();
+        h.page(
+            "Emulation.setDeviceMetricsOverride",
+            json!({"width": 400, "height": 300, "deviceScaleFactor": 1, "mobile": false}),
+        );
+        load_html(
+            &mut h,
+            r#"<!doctype html><style>
+              body { margin: 0; background: #fff; }
+              #cover { position: fixed; inset: 0; z-index: 2147483647; background: rgb(0, 0, 255); }
+              #clip { position: relative; z-index: 1; opacity: 0.5; overflow: hidden; width: 10px; height: 10px; }
+              #d { width: 100px; height: 60px; padding: 0; border: 0; background: rgb(255, 0, 0); }
+              #d button { display: block; width: 100px; height: 60px; padding: 0; border: 0; background: transparent; }
+              #p { width: 40px; height: 40px; padding: 0; border: 0; background: rgb(255, 255, 0); }
+            </style>
+            <div id="clip"><dialog id="d"><button id="in">in</button></dialog><div id="p" popover></div></div>
+            <div id="cover"></div>"#,
+        );
+        let shot = |h: &mut Harness| png_of(&h.page("Page.captureScreenshot", json!({}))["result"]["data"]);
+        let click = |h: &mut Harness, x: u32, y: u32| {
+            for (kind, buttons) in [("mousePressed", 1), ("mouseReleased", 0)] {
+                let r = h.page(
+                    "Input.dispatchMouseEvent",
+                    json!({"type": kind, "x": x, "y": y, "button": "left", "buttons": buttons, "clickCount": 1}),
+                );
+                assert_eq!(r["result"], json!({}), "{r}");
+            }
+        };
+        eval_value(
+            &mut h,
+            "globalThis.clicks = []; for (const id of ['in', 'cover', 'd']) document.getElementById(id).addEventListener('click', e => clicks.push(id + ':' + e.target.id))",
+        );
+        let img = shot(&mut h);
+        assert_eq!(pixel(&img, 200, 150), [0, 0, 255, 255], "closed: the cover");
+        assert_eq!(eval_value(&mut h, "document.elementFromPoint(200, 150).id"), "cover");
+
+        // The modal dialog is centered in the viewport above the cover, at
+        // full opacity and unclipped; the rest is under its backdrop
+        // (rgba(0, 0, 0, 0.1) over blue).
+        eval_value(&mut h, "d.showModal()");
+        let img = shot(&mut h);
+        assert_eq!(pixel(&img, 165, 170), [255, 0, 0, 255], "dialog (away from its text)");
+        assert_eq!(pixel(&img, 248, 178), [255, 0, 0, 255], "dialog bottom-right corner");
+        assert_eq!(pixel(&img, 151, 121), [255, 0, 0, 255], "dialog top-left corner");
+        assert_eq!(pixel(&img, 148, 150), [0, 0, 229, 255], "backdrop left of the dialog");
+        assert_eq!(pixel(&img, 10, 10), [0, 0, 229, 255], "backdrop");
+        assert_eq!(
+            eval_value(
+                &mut h,
+                "[document.elementFromPoint(200, 150).id, document.elementFromPoint(10, 10).id, JSON.stringify(d.getBoundingClientRect())]"
+            ),
+            json!(["in", "d", r#"{"x":150,"y":120,"width":100,"height":60,"top":120,"right":250,"bottom":180,"left":150}"#])
+        );
+        // A click reaches the dialog's button; one outside lands on the
+        // backdrop (the dialog), never on the inert cover.
+        click(&mut h, 200, 150);
+        click(&mut h, 10, 10);
+        assert_eq!(eval_value(&mut h, "clicks.join()"), "in:in,d:in,d:d");
+
+        // An author `::backdrop`.
+        eval_value(&mut h, "document.head.insertAdjacentHTML('beforeend', '<style>#d::backdrop { background: rgb(0, 255, 0) }</style>')");
+        assert_eq!(pixel(&shot(&mut h), 10, 10), [0, 255, 0, 255], "author backdrop");
+
+        // A popover shown later is above the dialog; its backdrop is
+        // transparent.
+        eval_value(&mut h, "p.showPopover()");
+        let img = shot(&mut h);
+        assert_eq!(pixel(&img, 200, 150), [255, 255, 0, 255], "popover above the dialog");
+        assert_eq!(pixel(&img, 170, 150), [255, 0, 0, 255], "dialog around the popover");
+        assert_eq!(pixel(&img, 10, 10), [0, 255, 0, 255], "the popover's backdrop is transparent");
+        assert_eq!(eval_value(&mut h, "document.elementFromPoint(170, 150).id"), "in");
+
+        // Hiding and closing put everything back where it was.
+        eval_value(&mut h, "p.hidePopover(); d.close()");
+        let img = shot(&mut h);
+        assert_eq!(pixel(&img, 200, 150), [0, 0, 255, 255], "closed again: the cover");
+        assert_eq!(pixel(&img, 10, 10), [0, 0, 255, 255], "no backdrop");
+
+        // A popover alone: above the cover, no backdrop color.
+        eval_value(&mut h, "p.showPopover()");
+        let img = shot(&mut h);
+        assert_eq!(pixel(&img, 200, 150), [255, 255, 0, 255], "popover above the cover");
+        assert_eq!(pixel(&img, 10, 10), [0, 0, 255, 255], "the cover, not dimmed");
+        assert_eq!(eval_value(&mut h, "document.elementFromPoint(200, 150).id"), "p");
+    }
+
+    /// On a scrolled page the top layer stays fixed to the viewport, and a
+    /// popover shown inside a modal dialog paints above it by its own rank.
+    #[test]
+    fn top_layer_is_fixed_to_the_viewport_and_nests() {
+        let mut h = Harness::new();
+        h.page(
+            "Emulation.setDeviceMetricsOverride",
+            json!({"width": 400, "height": 300, "deviceScaleFactor": 1, "mobile": false}),
+        );
+        load_html(
+            &mut h,
+            r#"<!doctype html><style>
+              body { margin: 0; background: rgb(0, 0, 255); }
+              #d { width: 100px; height: 60px; padding: 0; border: 0; background: rgb(255, 0, 0); }
+              #q { width: 20px; height: 20px; padding: 0; border: 0; margin: 0; top: 0; left: 0; background: rgb(0, 255, 0); }
+              #d::backdrop { background: rgb(255, 255, 255); }
+            </style>
+            <div style="height: 3000px"></div><dialog id="d"><div id="q" popover></div></dialog>"#,
+        );
+        let shot = |h: &mut Harness| png_of(&h.page("Page.captureScreenshot", json!({}))["result"]["data"]);
+        eval_value(&mut h, "scrollTo(0, 1000); d.showModal(); q.showPopover()");
+        assert_eq!(eval_value(&mut h, "scrollY"), json!(1000));
+        let img = shot(&mut h);
+        assert_eq!(pixel(&img, 165, 170), [255, 0, 0, 255], "dialog centered in the scrolled viewport");
+        assert_eq!(pixel(&img, 10, 290), [255, 255, 255, 255], "backdrop covers the viewport");
+        assert_eq!(pixel(&img, 5, 5), [0, 255, 0, 255], "the nested popover, above its dialog's backdrop");
+        assert_eq!(eval_value(&mut h, "document.elementFromPoint(5, 5).id"), "q");
+        // Hidden, the popover is not painted where its dialog would put it.
+        eval_value(&mut h, "q.hidePopover()");
+        let img = shot(&mut h);
+        assert_eq!(pixel(&img, 5, 5), [255, 255, 255, 255], "backdrop where the popover was");
+        // A full-page capture keeps the dialog on the viewport it was laid out in.
+        let r = h.page("Page.captureScreenshot", json!({"captureBeyondViewport": true}));
+        let full = png_of(&r["result"]["data"]);
+        assert!(full.height >= 3000, "{}", full.height);
+    }
+
+    /// A top-layer element is a stacking context whatever its style: an
+    /// author `position: absolute` popover (no z-index, opacity or
+    /// transform) keeps its z-indexed and fixed descendants, which paint
+    /// with it above the document, not in place under it.
+    #[test]
+    fn top_layer_element_keeps_its_z_indexed_and_fixed_descendants() {
+        let mut h = Harness::new();
+        h.page(
+            "Emulation.setDeviceMetricsOverride",
+            json!({"width": 400, "height": 300, "deviceScaleFactor": 1, "mobile": false}),
+        );
+        load_html(
+            &mut h,
+            r#"<!doctype html><style>
+              body { margin: 0; background: #fff; }
+              #cover { position: fixed; inset: 0; z-index: 2147483647; background: rgb(0, 0, 255); }
+              #p { position: absolute; inset: auto; left: 50px; top: 50px; width: 100px; height: 100px;
+                   margin: 0; padding: 0; border: 0; overflow: visible; background: rgb(255, 0, 0); }
+              #z { position: relative; z-index: 1; width: 40px; height: 40px; background: rgb(0, 255, 0); }
+              #f { position: fixed; left: 300px; top: 200px; width: 20px; height: 20px; background: rgb(255, 255, 0); }
+            </style>
+            <div id="p" popover="manual"><div id="z"></div><div id="f"></div></div>
+            <div id="cover"></div>"#,
+        );
+        let shot = |h: &mut Harness| png_of(&h.page("Page.captureScreenshot", json!({}))["result"]["data"]);
+        eval_value(&mut h, "p.showPopover()");
+        let img = shot(&mut h);
+        assert_eq!(pixel(&img, 120, 120), [255, 0, 0, 255], "the popover above the cover");
+        assert_eq!(pixel(&img, 70, 70), [0, 255, 0, 255], "its z-indexed child above it");
+        assert_eq!(pixel(&img, 310, 210), [255, 255, 0, 255], "its fixed child above the cover");
+        assert_eq!(pixel(&img, 10, 10), [0, 0, 255, 255], "the cover elsewhere");
+    }
+
+    /// The root element in the top layer (`<html popover>`) paints with its
+    /// own transform applied once, as in the document pass.
+    #[test]
+    fn root_element_in_the_top_layer_paints_its_transform_once() {
+        let mut h = Harness::new();
+        h.page(
+            "Emulation.setDeviceMetricsOverride",
+            json!({"width": 400, "height": 300, "deviceScaleFactor": 1, "mobile": false}),
+        );
+        load_html(
+            &mut h,
+            r#"<!doctype html><html popover="manual"><style>
+              html, html:popover-open { position: static; margin: 0; padding: 0; border: 0; width: auto; height: auto;
+                overflow: visible; inset: auto; background: rgb(0, 0, 255); transform: translateX(100px); }
+              body { margin: 0; }
+              #b { width: 50px; height: 50px; background: rgb(255, 0, 0); }
+            </style><div id="b"></div></html>"#,
+        );
+        let shot = |h: &mut Harness| png_of(&h.page("Page.captureScreenshot", json!({}))["result"]["data"]);
+        // (Hidden, the root popover is `display: none`.)
+        eval_value(&mut h, "document.documentElement.showPopover()");
+        assert_eq!(eval_value(&mut h, "document.documentElement.matches(':popover-open')"), json!(true));
+        let img = shot(&mut h);
+        assert_eq!(pixel(&img, 125, 25), [255, 0, 0, 255], "shown: still translated once");
+        assert_ne!(pixel(&img, 225, 25), [255, 0, 0, 255], "not translated twice");
+    }
+
     #[test]
     fn default_background_override_paints_under_the_document() {
         let mut h = Harness::new();
@@ -8076,9 +8268,16 @@ fn network_get_request_post_data_returns_the_body() {
     server.join().unwrap();
 }
 
+/// `LP.geometryStats` resets process-wide counters (layouts, layoutMs,
+/// resolveMs, ...): tests that call it take this lock, so one test's reset
+/// does not land between another's two calls.
+#[cfg(feature = "render")]
+static GEOMETRY_STATS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[cfg(feature = "render")]
 #[test]
 fn performance_get_metrics_reports_chrome_names() {
+    let _stats = GEOMETRY_STATS.lock().unwrap_or_else(|e| e.into_inner());
     let mut h = Harness::new();
     load_html(&mut h, "<!doctype html><div><p>a</p><p>b</p></div>");
     h.page("Performance.enable", json!({}));
@@ -8105,6 +8304,30 @@ fn performance_get_metrics_reports_chrome_names() {
     }
     assert!(metrics["Nodes"] >= 5.0 && metrics["Frames"] == 1.0, "{r}");
     assert!(metrics["LayoutCount"] >= 1.0, "geometryStats ({stats}) did not reset it: {r}");
+}
+
+#[cfg(feature = "render")]
+#[test]
+fn geometry_stats_time_layouts_once_requested() {
+    let _stats = GEOMETRY_STATS.lock().unwrap_or_else(|e| e.into_inner());
+    let mut h = Harness::new();
+    load_html(&mut h, "<!doctype html><div><p>a</p><p>b</p></div>");
+    // The first call turns the timers on (and resets the counters).
+    h.page("LP.geometryStats", json!({}));
+    eval_value(
+        &mut h,
+        "for (const w of [10, 20, 30]) { document.querySelector('p').style.width = w + 'px'; \
+         document.querySelector('p').getBoundingClientRect(); } 0",
+    );
+    let r = h.page("LP.geometryStats", json!({}));
+    let stats = &r["result"];
+    assert!(stats["layouts"].as_u64().unwrap_or(0) >= 3, "{r}");
+    assert!(stats["layoutMs"].as_f64().unwrap_or(0.0) > 0.0, "layout time reads zero: {r}");
+    // The sync's split: settle may already have resolved (resolveMs then
+    // reads ~0), so the three together are what must be non-zero.
+    let sync_ms: f64 = ["mirrorMs", "settleMs", "resolveMs"].iter().map(|k| stats[k].as_f64().unwrap_or(0.0)).sum();
+    assert!(sync_ms > 0.0, "sync time reads zero: {r}");
+    assert!(stats["blitzCumulative"]["phasesMs"]["layout"].as_f64().unwrap_or(0.0) > 0.0, "{r}");
 }
 
 #[test]

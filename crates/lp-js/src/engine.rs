@@ -21,6 +21,9 @@ pub struct Capabilities {
     pub modules: bool,
     /// Import maps, bare specifiers and `import.meta.resolve` (patched JavaScriptCore).
     pub import_maps: bool,
+    /// JSON and CSS module scripts (`with { type: "json" }`): the fetcher sees
+    /// each request's [`crate::ModuleType`] (patched JavaScriptCore).
+    pub typed_modules: bool,
     /// `JSGlobalContextSetUnhandledRejectionCallback`.
     pub unhandled_rejections: bool,
     /// `JSContextGroupSetExecutionTimeLimit`: termination of running scripts.
@@ -48,6 +51,8 @@ impl Capabilities {
             modules: unsafe { sys::modules::lp_jsc_modules_available() } == 1,
             // SAFETY: plain capability probe without arguments.
             import_maps: unsafe { sys::modules::lp_jsc_import_maps_available() } == 1,
+            // SAFETY: plain capability probe without arguments.
+            typed_modules: unsafe { sys::modules::lp_jsc_typed_modules_available() } == 1,
             unhandled_rejections: spi.set_unhandled_rejection_callback.is_some(),
             termination: spi.set_execution_time_limit.is_some() && spi.clear_execution_time_limit.is_some(),
             hidden_properties: spi.get_private_property.is_some() && spi.set_private_property.is_some(),
@@ -72,6 +77,7 @@ pub enum ConsoleLevel {
     Warning,
     Error,
     Dir,
+    Dirxml,
     Table,
     Trace,
     Assert,
@@ -93,6 +99,7 @@ impl ConsoleLevel {
             ConsoleLevel::Warning => "warning",
             ConsoleLevel::Error => "error",
             ConsoleLevel::Dir => "dir",
+            ConsoleLevel::Dirxml => "dirxml",
             ConsoleLevel::Table => "table",
             ConsoleLevel::Trace => "trace",
             ConsoleLevel::Assert => "assert",
@@ -487,14 +494,51 @@ pub(crate) struct CallbackTls {
     pub depth: Cell<u32>,
     /// A termination is propagating through the VM on this thread.
     pub terminating: Cell<bool>,
+    /// Context of the innermost Rust-to-JavaScript entry (script evaluation
+    /// or a call from native code) still running, null when none is: the
+    /// realm whose script is running, which the embedder reads as the
+    /// incumbent realm (`window.postMessage`'s source). See [`entry_realm`].
+    pub entry: Cell<sys::JSContextRef>,
 }
 
 thread_local! {
     static CURRENT: RefCell<Weak<EngineInner>> = const { RefCell::new(Weak::new()) };
-    static CALLBACK: CallbackTls = const { CallbackTls { depth: Cell::new(0), terminating: Cell::new(false) } };
+    static CALLBACK: CallbackTls =
+        const { CallbackTls { depth: Cell::new(0), terminating: Cell::new(false), entry: Cell::new(std::ptr::null()) } };
     /// Asked at each watchdog poll while JavaScript runs on this thread;
     /// returning true terminates it (see [`Engine::set_interrupt_check`]).
     static INTERRUPT_CHECK: RefCell<Option<Rc<dyn Fn() -> bool>>> = const { RefCell::new(None) };
+}
+
+/// Marks a Rust-to-JavaScript entry in `ctx` for its duration (see
+/// [`CallbackTls::entry`]). One thread-local swap on entry and one on exit.
+pub(crate) struct EntryGuard(sys::JSContextRef);
+
+impl EntryGuard {
+    #[inline]
+    pub(crate) fn enter(ctx: sys::JSContextRef) -> Self {
+        Self(callback_tls().entry.replace(ctx))
+    }
+}
+
+impl Drop for EntryGuard {
+    #[inline]
+    fn drop(&mut self) {
+        callback_tls().entry.set(self.0);
+    }
+}
+
+/// The realm of the innermost script evaluation or native-to-JavaScript call
+/// still running on this thread: inside a native callback, the realm whose
+/// script (or event listener, timer, ...) led to the call. It approximates
+/// HTML's incumbent realm; a JavaScript function of another realm called
+/// directly from JavaScript does not change it. `None` outside JavaScript.
+pub fn entry_realm() -> Option<crate::Realm> {
+    let ctx = callback_tls().entry.get();
+    if ctx.is_null() {
+        return None;
+    }
+    crate::realm::realm_for_ctx(ctx).map(|inner| crate::Realm { inner })
 }
 
 /// The live engine whose VM `ctx` belongs to, even if its owner was dropped

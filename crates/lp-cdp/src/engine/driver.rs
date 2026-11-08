@@ -530,7 +530,7 @@ pub(super) fn set_file_input(page: &Rc<PageDom>, id: NodeId, files: &[UploadFile
         .collect();
     page.set_input_files(id, entries).map_err(|e| format!("{e:?}"))?;
     input::fire_simple(page, id, "input", true, false);
-    input::fire_simple(page, id, "change", true, false);
+    input::fire_user_change(page, id);
     Ok(())
 }
 
@@ -2038,8 +2038,8 @@ pub(super) fn hidden_for_aria(dom: &Dom, layout: &Layout, id: NodeId, ancestors:
         return true;
     }
     let style = layout.style();
-    let select =
-        (local(dom, id) == Some("option")).then(|| self_and_ancestors(dom, id).find(|a| local(dom, *a) == Some("select")));
+    let select = (local(dom, id) == Some("option"))
+        .then(|| self_and_ancestors(dom, id).find(|a| local(dom, *a) == Some("select")));
     if let Some(Some(select)) = select {
         // Playwright's `isOptionInsideSelect` skips only the box and
         // visibility check (an option of a drop-down select has no box):
@@ -2147,9 +2147,23 @@ struct Names<'a> {
     layout: &'a Layout,
     doc: NodeId,
     visited: RefCell<HashSet<NodeId>>,
+    /// Whether any element may have a generated `::before` / `::after`
+    /// (asked on first use, once per [`PseudoContent`] scope: `false` skips
+    /// the per-element lookups).
+    pseudo_content: &'a PseudoContent,
 }
 
 impl Names<'_> {
+    /// Playwright's `getPseudoContent` of `id`'s `pseudo`; "" without a
+    /// generated one.
+    fn pseudo_content(&self, id: NodeId, pseudo: &lp_dom::stylo::PseudoElement) -> String {
+        let any = *self.pseudo_content.get_or_init(|| self.layout.style().may_have_generated_before_after(self.dom));
+        if !any {
+            return String::new();
+        }
+        self.layout.pseudo_name_content(self.dom, id, pseudo)
+    }
+
     fn alternative(&self, id: NodeId, opts: NameOpts) -> String {
         let dom = self.dom;
         if self.visited.borrow().contains(&id) {
@@ -2404,16 +2418,14 @@ impl Names<'_> {
     /// Playwright's `innerAccumulatedElementText`: child text with a space
     /// around every child that is not `display:inline` (and `<br>`).
     fn inner_text(&self, id: NodeId, opts: NameOpts) -> String {
-        use lp_dom::style::PseudoElement;
         let dom = self.dom;
-        let style = self.layout.style();
-        // CSS generated content around the element's (Playwright's
-        // `getCSSContent`); the element's own `content` alternative text
+        // Generated `::before` / `::after` text counts (Playwright's
+        // `getPseudoContent`); the element's own `content` alternative text
         // replaces its children.
-        let mut out = style.css_content(dom, id, Some(PseudoElement::Before)).unwrap_or_default();
-        if let Some(content) = style.css_content(dom, id, None) {
+        let mut out = self.pseudo_content(id, &lp_dom::stylo::PseudoElement::Before);
+        if let Some(content) = self.layout.style().css_content(dom, id, None) {
             out.push_str(&content);
-            out.push_str(&style.css_content(dom, id, Some(PseudoElement::After)).unwrap_or_default());
+            out.push_str(&self.pseudo_content(id, &lp_dom::stylo::PseudoElement::After));
             return out;
         }
         for c in dom.children(id).into_iter().flatten() {
@@ -2433,13 +2445,30 @@ impl Names<'_> {
                 _ => {}
             }
         }
-        out.push_str(&style.css_content(dom, id, Some(PseudoElement::After)).unwrap_or_default());
+        out.push_str(&self.pseudo_content(id, &lp_dom::stylo::PseudoElement::After));
         out
     }
 }
 
+/// Whether the document may have a generated `::before` / `::after`, asked
+/// once for every name computed with it (one DOM state: no mutation between
+/// the names).
+pub(super) type PseudoContent = std::cell::OnceCell<bool>;
+
 /// The accessible name of an element, whitespace-normalized.
 pub(super) fn accessible_name(dom: &Dom, layout: &Layout, doc: NodeId, id: NodeId) -> String {
+    accessible_name_in(dom, layout, doc, id, &PseudoContent::new())
+}
+
+/// [`accessible_name`] for one of many elements named in one DOM state,
+/// sharing `pseudo_content`.
+pub(super) fn accessible_name_in(
+    dom: &Dom,
+    layout: &Layout,
+    doc: NodeId,
+    id: NodeId,
+    pseudo_content: &PseudoContent,
+) -> String {
     // Playwright's `getElementAccessibleName`: these roles prohibit naming.
     let prohibits = matches!(
         role_of(dom, id).as_deref(),
@@ -2465,7 +2494,7 @@ pub(super) fn accessible_name(dom: &Dom, layout: &Layout, doc: NodeId, id: NodeI
     if prohibits {
         return String::new();
     }
-    let names = Names { dom, layout, doc, visited: RefCell::new(HashSet::new()) };
+    let names = Names { dom, layout, doc, visited: RefCell::new(HashSet::new()), pseudo_content };
     normalize(&names.alternative(id, NameOpts { target: Target::Own, ..NameOpts::default() }))
 }
 
@@ -2674,13 +2703,16 @@ impl Locator {
         } else if let Some(role) = &self.role {
             let role = role.to_ascii_lowercase();
             let layout = page.layout();
+            let pseudo_content = PseudoContent::new();
             found = elements(&dom, root)
                 .filter(inside)
                 .filter(|n| role_of(&dom, *n).as_deref() == Some(role.as_str()))
                 .filter(|n| self.include_hidden || !hidden_for_aria(&dom, &layout, *n, true))
                 .filter(|n| self.role_states_hold(&dom, *n))
                 .filter(|n| match &self.name {
-                    Some(want) => want.matches(&accessible_name(&dom, &layout, doc, *n), self.exact),
+                    Some(want) => {
+                        want.matches(&accessible_name_in(&dom, &layout, doc, *n, &pseudo_content), self.exact)
+                    }
                     None => true,
                 })
                 .collect();
@@ -2948,7 +2980,7 @@ fn act(page: &Rc<PageDom>, id: NodeId, action: Action, value: &str, opts: Pointe
                     return Attempt::Retry(format!("{error:?}"));
                 }
                 input::fire_simple(page, id, "input", true, false);
-                input::fire_simple(page, id, "change", true, false);
+                input::fire_user_change(page, id);
                 return Attempt::Done(json!({}));
             }
             if is_control {

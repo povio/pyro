@@ -29,7 +29,7 @@ fn render_with(
     href: &dyn Fn(NodeId) -> Option<String>,
     mark: Option<(NodeId, &str)>,
 ) -> String {
-    dom.render_html(d, &RenderHtml { style_text, stylesheet_href: href, mark }).unwrap()
+    dom.render_html(d, &RenderHtml { style_text, stylesheet_href: href, mark, adopted: None }).unwrap()
 }
 
 #[test]
@@ -136,7 +136,8 @@ fn render_tree_has_the_html_content_with_stable_keys() {
     let (dom, d) = doc("<style>p{}</style><p id=p class=a>hi</p><textarea id=t>x</textarea><script>1</script>");
     let (p, t) = (find(&dom.borrow(), d, "#p"), find(&dom.borrow(), d, "#t"));
     dom.borrow_mut().set_value(t, "typed").unwrap();
-    let opts = RenderHtml { style_text: &|_| None, stylesheet_href: &|_| None, mark: Some((p, "data-x")) };
+    let opts =
+        RenderHtml { style_text: &|_| None, stylesheet_href: &|_| None, mark: Some((p, "data-x")), adopted: None };
     let tree = dom.borrow().render_tree(d, &opts).unwrap();
     assert_eq!(tree.mark, Some(render_key(p)));
     assert_eq!(tree.nodes[0].parent, TOP);
@@ -176,7 +177,7 @@ fn textarea_attribute_delta_preserves_typed_value_and_synthetic_child() {
     use lp_dom::snapshot::{render_key, DeltaOp, SYNTHETIC_TEXT};
     let (dom, d) = doc("<form><textarea id=t>default</textarea></form>");
     let textarea = find(&dom.borrow(), d, "#t");
-    let opts = RenderHtml { style_text: &|_| None, stylesheet_href: &|_| None, mark: None };
+    let opts = RenderHtml { style_text: &|_| None, stylesheet_href: &|_| None, mark: None, adopted: None };
     dom.borrow_mut().set_value(textarea, "typed\n<keep>").unwrap();
     let before = dom.borrow().render_tree(d, &opts).unwrap();
     let version = dom.borrow().version();
@@ -213,7 +214,7 @@ fn iframe_attribute_delta_carries_the_frame_element() {
     use lp_dom::snapshot::{render_key, DeltaOp};
     let (dom, d) = doc("<body><iframe id=f></iframe></body>");
     let frame = find(&dom.borrow(), d, "#f");
-    let opts = RenderHtml { style_text: &|_| None, stylesheet_href: &|_| None, mark: None };
+    let opts = RenderHtml { style_text: &|_| None, stylesheet_href: &|_| None, mark: None, adopted: None };
     let version = dom.borrow().version();
     dom.borrow_mut().set_attribute(frame, "style", "width:500px").unwrap();
     let after = dom.borrow().render_tree(d, &opts).unwrap();
@@ -229,7 +230,7 @@ fn iframe_attribute_delta_carries_the_frame_element() {
 
 #[test]
 fn textarea_non_attribute_changes_and_special_trees_keep_the_full_snapshot_fallback() {
-    let opts = RenderHtml { style_text: &|_| None, stylesheet_href: &|_| None, mark: None };
+    let opts = RenderHtml { style_text: &|_| None, stylesheet_href: &|_| None, mark: None, adopted: None };
     for case in ["value-then-attribute", "attribute-then-value", "text", "children", "shadow", "link"] {
         let (dom, d) =
             doc("<div id=host></div><textarea id=t>default</textarea><link id=sheet rel=stylesheet href=a.css>");
@@ -278,7 +279,7 @@ fn scrolled_render_copy_preserves_offsets_without_mutating_document() {
     let dom = dom.borrow();
     let outer = find(&dom, document, "#outer");
     let inner = find(&dom, document, "#inner");
-    let opts = RenderHtml { style_text: &|_| None, stylesheet_href: &|_| None, mark: None };
+    let opts = RenderHtml { style_text: &|_| None, stylesheet_href: &|_| None, mark: None, adopted: None };
     let html = dom
         .render_html_scrolled(
             document,
@@ -307,7 +308,7 @@ fn password_render_copies_mask_current_values_without_mutating_inputs() {
     assert!(html.contains(&format!("value=\"{}\"", "•".repeat(12))));
     assert!(html.contains(r#"<input id="plain" value="visible">"#));
     assert!(html.contains(r#"<input id="empty" type="password">"#));
-    let opts = RenderHtml { style_text: &|_| None, stylesheet_href: &|_| None, mark: None };
+    let opts = RenderHtml { style_text: &|_| None, stylesheet_href: &|_| None, mark: None, adopted: None };
     let tree = dom.borrow().render_tree(document, &opts).unwrap();
     let node = tree.nodes.iter().find(|node| node.key == render_key(password)).unwrap();
     match &node.kind {
@@ -319,4 +320,38 @@ fn password_render_copies_mask_current_values_without_mutating_inputs() {
     assert_eq!(dom.borrow().value(password).unwrap(), "typed-secret");
     dom.borrow_mut().set_attribute(password, "type", "text").unwrap();
     assert!(render(&dom.borrow(), document).contains("typed-secret"));
+}
+
+#[test]
+fn render_tree_marks_the_top_layer_by_rank() {
+    use lp_dom::snapshot::{render_key, RenderNodeKind, STATE_NS};
+    let (dom, d) = doc("<dialog id=a></dialog><div id=p popover></div><dialog id=b open></dialog>");
+    let (a, p, b) = (find(&dom.borrow(), d, "#a"), find(&dom.borrow(), d, "#p"), find(&dom.borrow(), d, "#b"));
+    let state = |dom: &Dom, el: NodeId| -> Option<String> {
+        let opts = RenderHtml { style_text: &|_| None, stylesheet_href: &|_| None, mark: None, adopted: None };
+        let tree = dom.render_tree(d, &opts).unwrap();
+        let node = tree.nodes.iter().find(|n| n.key == render_key(el)).unwrap();
+        let RenderNodeKind::Element { attrs, .. } = &node.kind else { panic!("not an element") };
+        attrs.iter().find(|(n, _)| &*n.ns == STATE_NS && &*n.local == "state").map(|(_, v)| v.clone())
+    };
+    let has = |s: Option<String>, token: &str| s.unwrap_or_default().split(' ').any(|t| t == token);
+    assert!(!state(&dom.borrow(), a).unwrap_or_default().contains("top-layer"));
+    assert!(!state(&dom.borrow(), b).unwrap_or_default().contains("top-layer"));
+    {
+        let mut dom = dom.borrow_mut();
+        dom.set_attribute(a, "open", "").unwrap();
+        dom.set_modal(a, true).unwrap();
+        dom.set_popover_showing(p, true).unwrap();
+    }
+    assert!(has(state(&dom.borrow(), a), "top-layer=0"));
+    assert!(has(state(&dom.borrow(), p), "top-layer=1"));
+    // Leaving the top layer moves the ones above it down.
+    dom.borrow_mut().set_modal(a, false).unwrap();
+    assert!(!state(&dom.borrow(), a).unwrap_or_default().contains("top-layer"));
+    assert!(has(state(&dom.borrow(), p), "top-layer=0"));
+    // A page cannot write the state attribute itself.
+    dom.borrow_mut().set_attribute_ns(b, Some(STATE_NS), "state", "modal top-layer=9").unwrap();
+    dom.borrow_mut().set_attribute_ns(a, Some(STATE_NS), "x:state", "top-layer=9").unwrap();
+    assert!(!state(&dom.borrow(), b).unwrap_or_default().contains("top-layer"));
+    assert!(!state(&dom.borrow(), a).unwrap_or_default().contains("top-layer"));
 }

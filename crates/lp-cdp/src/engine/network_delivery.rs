@@ -87,20 +87,14 @@ struct Staged {
 }
 
 fn request_id(event: &NetEvent) -> RequestId {
-    event.id()
-}
-
-/// WebSocket events are not tied to a binding's delivery frontier: they are
-/// published as they come, as request announcements are.
-fn websocket(event: &NetEvent) -> bool {
-    !matches!(
-        event,
-        NetEvent::RequestWillBeSent { .. }
-            | NetEvent::ResponseReceived { .. }
-            | NetEvent::DataReceived { .. }
-            | NetEvent::LoadingFinished { .. }
-            | NetEvent::LoadingFailed { .. }
-    )
+    match event {
+        NetEvent::RequestWillBeSent { id, .. }
+        | NetEvent::ResponseReceived { id, .. }
+        | NetEvent::DataReceived { id, .. }
+        | NetEvent::LoadingFinished { id, .. }
+        | NetEvent::LoadingFailed { id, .. }
+        | NetEvent::WebSocket { id, .. } => *id,
+    }
 }
 
 impl Staged {
@@ -139,7 +133,8 @@ impl Staged {
         }
         let bytes_reserved = event.retained_bytes() + std::mem::size_of::<Pending>() - std::mem::size_of::<NetEvent>();
         let observed = Observed { event, _charge: budget.reserve(bytes_reserved)? };
-        if owner_task || matches!(observed.event, NetEvent::RequestWillBeSent { .. }) || websocket(&observed.event) {
+        // WebSocket activity has no delivery frontier to wait for.
+        if owner_task || matches!(observed.event, NetEvent::RequestWillBeSent { .. } | NetEvent::WebSocket { .. }) {
             self.ready.push_back(observed);
         } else {
             self.pending.push_back(Pending { observed, identity, bytes });
@@ -164,7 +159,7 @@ impl Staged {
                     NetEvent::ResponseReceived { .. } => response,
                     NetEvent::DataReceived { .. } => item.bytes <= bytes,
                     NetEvent::LoadingFinished { .. } | NetEvent::LoadingFailed { .. } => terminal,
-                    _ => false,
+                    NetEvent::RequestWillBeSent { .. } | NetEvent::WebSocket { .. } => false,
                 };
             if eligible {
                 self.ready.push_back(item.observed);
@@ -318,6 +313,7 @@ mod tests {
                 kind: ResponseKind::Basic,
                 remote_addr: None,
                 protocol: lp_net::http::Version::HTTP_11,
+                timing: Default::default(),
             }),
             destination: Destination::Fetch,
             frame_id: Some("F".into()),
@@ -344,7 +340,7 @@ mod tests {
                 NetEvent::DataReceived { id, data, .. } => format!("data {} {}", id.0, data.len()),
                 NetEvent::LoadingFinished { id, .. } => format!("finished {}", id.0),
                 NetEvent::LoadingFailed { id, .. } => format!("failed {}", id.0),
-                other => format!("{other:?}"),
+                NetEvent::WebSocket { id, .. } => format!("websocket {}", id.0),
             })
             .collect()
     }
@@ -372,6 +368,17 @@ mod tests {
         assert!(ready(&mut s).is_empty());
         s.publish_through(RequestId(1), "L", true, 7, true);
         assert_eq!(ready(&mut s), ["data 1 4", "finished 1"]);
+    }
+
+    #[test]
+    fn websocket_activity_is_ready_at_once() {
+        let ws = |activity| NetEvent::WebSocket { id: RequestId(9), activity: Box::new(activity), timestamp: 0.0 };
+        let (mut s, _budget) = staged(vec![
+            ws(lp_net::WebSocketActivity::Created { url: "ws://127.0.0.1/".parse().unwrap(), frame_id: None }),
+            ws(lp_net::WebSocketActivity::FrameReceived { opcode: 1, payload: "hi".into() }),
+            ws(lp_net::WebSocketActivity::Closed),
+        ]);
+        assert_eq!(ready(&mut s), ["websocket 9", "websocket 9", "websocket 9"]);
     }
 
     #[test]
