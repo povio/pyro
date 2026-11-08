@@ -640,3 +640,228 @@ fn jpeg_screenshots_decode_close_to_the_render() {
     assert!(low < mid && mid < high, "PSNR {low:.1} < {mid:.1} < {high:.1}");
     assert!(low_size < mid_size && mid_size < high_size, "sizes {low_size} < {mid_size} < {high_size}");
 }
+
+// Review (perf/encoders-and-shaping): the style metrics take each style's first available font
+// from the shaper's font selector, and the glyph cache carries run metrics. Pages that stress
+// font matching must render the same on a fresh thread (empty glyph cache, every font queried)
+// and on a thread warmed by other pages (runs and metrics served from the cache).
+
+/// First families without the text's glyphs, all-missing families, symbol and emoji fonts first,
+/// script fallback, generic families, and empty styled spans that only feed the strut.
+const FALLBACK_PAGE: &str = r#"<!doctype html><html><head><meta charset="utf-8"><style>
+  body { margin: 4px; font: 14px Helvetica, Arial, sans-serif; width: 390px; }
+  p { margin: 2px 0; }
+</style></head><body>
+<p style="font-family:'Hiragino Sans',Helvetica">Latin then 日本語 and 한국어 and 中文.</p>
+<p style="font-family:Helvetica,'PingFang SC'" lang="ja">直角 骨 ひらがな then Latin.</p>
+<p style="font-family:'No Such Font','Hiragino Sans GB',serif">繁體 简体 「括弧」、。 Latin</p>
+<p style="font-family:'Apple Color Emoji',Helvetica">Emoji family first then Latin 😀 ok.</p>
+<p style="font-family:NoSuchA,NoSuchB">All missing: Latin 😀 Ж 中.</p>
+<p style="font-family:Webdings,Helvetica">Webdings first abc 123</p>
+<p style="font-family:Zapfino,Times;font-size:11px">Zapfino first fi fl</p>
+<p style="font-family:LastResort,Helvetica">LastResort first</p>
+<p>ZWJ 👨‍👩‍👧 flag 🇸🇮 keycap 1️⃣ ❤️ ❤︎ 👍🏽 &#xE000; ᱚᱛ ⵜⵉ 𒀀 𝔸 a&#x0301;</p>
+<p><span style="font-family:Times">T</span><span>😀</span><span style="font-family:Courier">😀C</span><span style="font-family:Georgia">🎉</span></p>
+<p><span style="font-family:serif">se</span> <span style="font-family:monospace">mo</span> <span style="font-family:cursive">cu</span> <span style="font-family:fantasy">fa</span> <span style="font-family:system-ui">ui</span> <span style="font-family:emoji">em😀</span> <span style="font-family:math">∑</span></p>
+<p>a<span style="font-family:Zapfino;font-size:40px"></span>b<span style="font-family:'Apple Color Emoji';font-size:30px"></span>c<span style="font-family:NoSuch;font-size:30px"></span>d</p>
+<p style="font-family:'Apple Color Emoji'">x</p>
+<p style="font-family:Webdings">x</p>
+<p><span style="font-size:30px;font-family:Zapfino;vertical-align:middle">M</span><span style="vertical-align:text-top;font-family:'Hiragino Sans';font-size:20px">漢</span><span style="vertical-align:text-bottom;font-family:Webdings">q</span><sub style="font-family:Chalkduster">s</sub><sup style="font-family:'Apple Color Emoji'">😀</sup></p>
+</body></html>"#;
+
+/// The same words at sizes and variation locations that differ only slightly, so glyph cache
+/// keys differ only in size bits or variations.
+const VARIATION_PAGE: &str = r#"<!doctype html><html><head><meta charset="utf-8"><style>
+  body { margin: 4px; font: 14px Skia, Helvetica; width: 390px; }
+  p { margin: 1px 0; }
+</style></head><body>
+<p>same words</p>
+<p style="font-variation-settings:'wght' 0.5">same words</p>
+<p style="font-variation-settings:'wght' 2.5">same words</p>
+<p style="font-variation-settings:'wdth' 0.7">same words</p>
+<p style="font-weight:900">same words</p>
+<p style="font-family:system-ui">same words <b>b</b> <i>i</i></p>
+<p style="font-family:system-ui;font-weight:350">same words</p>
+<p style="font-family:system-ui;font-variation-settings:'wght' 700,'opsz' 28">same words</p>
+<p style="font-family:system-ui;font-size:30px">same words</p>
+<p style="font-family:system-ui;font-size:30px;font-optical-sizing:none">same words</p>
+<p style="font-family:system-ui;font-size:12px">same words</p>
+<p style="font-family:system-ui;font-size:12.0001px">same words</p>
+<p style="font-family:system-ui"><span style="font-size:10px">same</span><span style="font-size:20px">same</span><span style="font-size:10px">same</span><span style="font-size:20px;font-variation-settings:'wght' 800">same</span><span style="font-size:20px">same</span></p>
+<p><span style="font-variation-settings:'wght' 0.5">Skia</span><span style="font-variation-settings:'wght' 2.5">Skia</span><span>Skia</span><span style="font-variation-settings:'wght' 0.5">Skia</span></p>
+</body></html>"#;
+
+/// Synthetic bold and italic of families without such faces.
+const SYNTHESIS_PAGE: &str = r#"<!doctype html><html><head><meta charset="utf-8"><style>
+  body { margin: 4px; font: 16px Chalkduster, Helvetica; width: 390px; }
+  p { margin: 1px 0; }
+</style></head><body>
+<p>plain <b>bold</b> <i>italic</i> <b><i>both</i></b> <span style="font-style:oblique 30deg">obl</span></p>
+<p style="font-family:Zapfino;font-size:11px">Zap <b>bold</b> <i>ital</i></p>
+<p style="font-family:'Apple Chancery'">Ch <b>bold</b> <i>ital</i> 日本 😀</p>
+<p style="font-family:'Hiragino Sans'"><b>漢字 b</b> <i>漢字 i</i> 漢字</p>
+<p style="font-family:Helvetica;font-weight:600">600 <span style="font-weight:300">300</span> <span style="font-weight:800">800</span></p>
+<p style="font-synthesis:none"><b>no synth b</b> <i>no synth i</i></p>
+</body></html>"#;
+
+fn render_full(r: &mut Renderer, html: &str) -> (RgbaImage, u64) {
+    let (img, hash, _) = r.render(&snap(html), Area::FullPage, Backend::Cpu, &fetcher()).unwrap();
+    (img, hash)
+}
+
+#[test]
+#[ignore = "pre-existing on 34f0f2ba: parley_engine chromium_ascent_adjustment caches per font data address, a reused address gets a stale answer"]
+fn font_matching_pages_render_alike_on_fresh_and_warm_threads() {
+    let pages = [FALLBACK_PAGE, VARIATION_PAGE, SYNTHESIS_PAGE, TEXT_PAGE];
+    let fresh: Vec<(RgbaImage, u64)> = pages
+        .iter()
+        .map(|&p| std::thread::spawn(move || render_full(&mut Renderer::new(), p)).join().unwrap())
+        .collect();
+    // One thread renders every page in reverse order, then in order, then each page again with a
+    // second renderer: every run of the later passes comes from the glyph cache.
+    let warm = std::thread::spawn(move || {
+        let mut r = Renderer::new();
+        let mut out = Vec::new();
+        for &p in pages.iter().rev() {
+            out.push(render_full(&mut r, p));
+        }
+        out.reverse();
+        let again: Vec<_> = pages.iter().map(|&p| render_full(&mut r, p)).collect();
+        let other: Vec<_> = pages.iter().map(|&p| render_full(&mut Renderer::new(), p)).collect();
+        (out, again, other)
+    })
+    .join()
+    .unwrap();
+    for (i, f) in fresh.iter().enumerate() {
+        for (pass, w) in [("reverse", &warm.0[i]), ("again", &warm.1[i]), ("other", &warm.2[i])] {
+            assert_eq!((f.0.width, f.0.height), (w.0.width, w.0.height), "page {i} {pass}: size (fresh vs warm)");
+            assert_eq!(f.1, w.1, "page {i} {pass}: paint hash");
+            assert!(compare(&f.0, &w.0, 0, None).equal, "page {i} {pass}: pixels");
+        }
+        assert_eq!(decode_png(&encode_png(&f.0)).unwrap(), f.0, "page {i}: PNG round trip");
+    }
+}
+
+/// One paragraph per variant, rendered on a thread that shaped the same words with a
+/// neighbouring size, variation or synthesis first.
+#[test]
+fn neighbouring_sizes_and_variations_do_not_share_cached_metrics() {
+    let variant = |style: &str| {
+        format!(
+            r#"<!doctype html><html><head><meta charset="utf-8"><style>body {{ margin: 0; width: 390px; }}</style></head><body><p style="{style}">Same words Ågh 日本 😀</p></body></html>"#
+        )
+    };
+    let styles = [
+        "font: 20px Skia",
+        "font: 20px Skia; font-variation-settings: 'wght' 3",
+        "font: 20.001px Skia",
+        "font: 20px system-ui",
+        "font: 20px system-ui; font-optical-sizing: none",
+        "font: 20px system-ui; font-variation-settings: 'opsz' 80",
+        "font: bold 20px system-ui",
+        "font: italic 20px Chalkduster",
+        "font: 20px Chalkduster",
+        "font: 20px 'Apple Color Emoji', Helvetica",
+        "font: 20px Helvetica",
+        "font: 40px Helvetica; line-height: normal",
+    ];
+    let pages: Vec<String> = styles.iter().map(|s| variant(s)).collect();
+    let fresh: Vec<(RgbaImage, u64)> = pages
+        .iter()
+        .cloned()
+        .map(|p| std::thread::spawn(move || render_full(&mut Renderer::new(), &p)).join().unwrap())
+        .collect();
+    let warm = std::thread::spawn(move || {
+        let mut r = Renderer::new();
+        // Every page after every other page: the glyph cache holds all neighbours.
+        let mut out = Vec::new();
+        for round in 0..2 {
+            for i in 0..pages.len() {
+                let j = if round == 0 { pages.len() - 1 - i } else { i };
+                out.push((j, render_full(&mut r, &pages[j])));
+            }
+        }
+        out
+    })
+    .join()
+    .unwrap();
+    for (j, (img, hash)) in warm {
+        assert_eq!(hash, fresh[j].1, "style {:?}: paint hash", styles[j]);
+        assert!(compare(&img, &fresh[j].0, 0, None).equal, "style {:?}: pixels", styles[j]);
+    }
+}
+
+/// A family that matches nothing first, then the same family registered on the renderer: the
+/// recorded first available font must be the registered font, not the earlier fallback.
+#[test]
+fn first_available_font_follows_a_font_registered_between_layouts() {
+    let page = r#"<!doctype html><html><head><style>
+      body { margin: 0; font: 30px Lato, 'Apple Color Emoji', serif; line-height: normal; }
+    </style></head><body>Hamburg 日本 😀<span style="font-size:50px"></span></body></html>"#;
+    let expected = std::thread::spawn(move || {
+        let mut r = Renderer::new();
+        r.register_font(LATO.to_vec());
+        render_full(&mut r, page)
+    })
+    .join()
+    .unwrap();
+    let unregistered = std::thread::spawn(move || render_full(&mut Renderer::new(), page)).join().unwrap();
+    let mut r = Renderer::new();
+    let before = render_full(&mut r, page);
+    assert_eq!(before.1, unregistered.1);
+    r.register_font(LATO.to_vec());
+    let after = render_full(&mut r, page);
+    assert_ne!(after.1, before.1, "the registered font is used");
+    assert_eq!(after.1, expected.1, "same as a renderer that had Lato from the start");
+    assert!(compare(&after.0, &expected.0, 0, None).equal);
+}
+
+/// JPEG quality keeps libjpeg's meaning at the extremes, and a JPEG of a capture taller than
+/// the JPEG limit is an error rather than a panic.
+#[test]
+fn jpeg_quality_extremes_and_limits() {
+    let mut r = Renderer::new();
+    let (img, _) = render_full(&mut r, FALLBACK_PAGE);
+    let sizes: Vec<usize> = [0u8, 1, 2, 50, 99, 100, 255].iter().map(|&q| encode_jpeg(&img, q).unwrap().len()).collect();
+    assert_eq!(sizes[0], sizes[1], "quality 0 is clamped to 1");
+    assert_eq!(sizes[5], sizes[6], "quality 255 is clamped to 100");
+    assert!(sizes[1] <= sizes[2] && sizes[2] < sizes[3] && sizes[3] < sizes[4] && sizes[4] < sizes[5], "{sizes:?}");
+    for q in [1u8, 50, 100] {
+        let bytes = encode_jpeg(&img, q).unwrap();
+        let decoded = image::load_from_memory_with_format(&bytes, image::ImageFormat::Jpeg).unwrap();
+        assert_eq!((decoded.width(), decoded.height()), (img.width, img.height));
+    }
+    let tall = RgbaImage { width: 1, height: 70_000, data: vec![255; 70_000 * 4] };
+    assert!(encode_jpeg(&tall, 80).is_err());
+    let one = RgbaImage { width: 1, height: 1, data: vec![10, 20, 30, 0] };
+    assert_eq!(decode_png(&encode_png(&one)).unwrap(), one, "alpha kept by PNG");
+    assert!(encode_jpeg(&one, 80).is_ok());
+}
+
+/// The fallback page after exactly one other page on the same thread (or itself): its layout
+/// changes with what the thread laid out before, on 34f0f2ba too. Passes with the address-keyed
+/// `ADJUSTED` list in `chromium_ascent_adjustment` bypassed.
+#[test]
+#[ignore = "pre-existing on 34f0f2ba: parley_engine chromium_ascent_adjustment caches per font data address, a reused address gets a stale answer"]
+fn fallback_page_after_one_other_page() {
+    let fresh = std::thread::spawn(|| render_full(&mut Renderer::new(), FALLBACK_PAGE)).join().unwrap();
+    let mut bad = Vec::new();
+    for (name, other) in [("variation", VARIATION_PAGE), ("synthesis", SYNTHESIS_PAGE), ("text", TEXT_PAGE), ("self", FALLBACK_PAGE)] {
+        let (w, same_renderer) = std::thread::spawn(move || {
+            let mut r = Renderer::new();
+            render_full(&mut r, other);
+            let a = render_full(&mut r, FALLBACK_PAGE);
+            let b = render_full(&mut Renderer::new(), FALLBACK_PAGE);
+            (a, b)
+        })
+        .join()
+        .unwrap();
+        for (k, x) in [("same renderer", &w), ("new renderer", &same_renderer)] {
+            if (x.0.width, x.0.height, x.1) != (fresh.0.width, fresh.0.height, fresh.1) {
+                bad.push(format!("after {name} ({k}): {}x{} vs fresh {}x{}", x.0.width, x.0.height, fresh.0.width, fresh.0.height));
+            }
+        }
+    }
+    assert!(bad.is_empty(), "{bad:#?}");
+}
+
