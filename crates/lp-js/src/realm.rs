@@ -584,7 +584,10 @@ pub struct Realm {
 }
 
 impl Realm {
-    /// The live realm `id` of this thread's engine.
+    /// The live realm `id` of this thread's engine. A deferred realm is not
+    /// found until it is made (its first [`Realm::scope`]): the lookup walks
+    /// the engine's contexts, and it has none yet. Callers that must reach
+    /// one keep its handle (a frame's world list) instead.
     pub fn by_id(id: RealmId) -> Option<Realm> {
         let inner = crate::engine::current_inner()?.realm_by_id(id)?;
         (!inner.ctx.get().is_null()).then_some(Realm { inner })
@@ -2006,7 +2009,9 @@ fn allocate(engine: &Rc<EngineInner>, options: RealmOptions) -> JsResult<Realm> 
 fn make_context(realm: &Realm) -> JsResult<()> {
     let inner = &realm.inner;
     let engine = &inner.engine;
-    if engine.is_shut_down() {
+    // Not once the owner was dropped either, as `Engine::create_realm_in_current_thread`
+    // refuses then: a deferred realm first entered after that is not made.
+    if !engine.is_live() {
         return Err(JsError::ContextDestroyed);
     }
     // Always the default global implementation (JSAPIGlobalObject): only it

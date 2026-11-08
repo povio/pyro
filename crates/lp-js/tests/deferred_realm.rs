@@ -154,7 +154,6 @@ fn review_a_setup_that_disposes_its_realm_fails_the_entry() {
 }
 
 #[test]
-#[ignore = "review finding (low): a deferred realm is made in an engine whose owner was dropped, where Engine::create_realm_in_current_thread refuses (make_context checks is_shut_down, not is_live)"]
 fn review_a_deferred_realm_after_the_engine_shut_down() {
     let engine = Engine::new().unwrap();
     let root = engine.create_realm(RealmOptions::default()).unwrap();

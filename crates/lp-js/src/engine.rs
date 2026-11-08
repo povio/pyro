@@ -192,6 +192,12 @@ struct ReleaseGate {
     /// the collection to an idle moment ([`Engine::release_closed`]):
     /// [`RELEASE_CEILING_FACTOR`] times `growth`.
     ceiling: Cell<(u64, u64)>,
+    /// Closes past the gate whose collection was left to an idle moment
+    /// that has not come yet ([`Engine::settle`] resets it).
+    put_off: Cell<u32>,
+    /// How many such closes in a row may wait before one collects at once
+    /// ([`RELEASE_PUT_OFF_CLOSES`]).
+    put_off_limit: u32,
 }
 
 /// A loop of small pages levels off about 20 MB above its first reading under
@@ -206,6 +212,17 @@ const RELEASE_GROWTH_PERCENT: u64 = 25;
 /// of an app) is still held, and at `LIGHTNINGPANDA_RELEASE_GROWTH=0`
 /// every close collects, as before.
 const RELEASE_CEILING_FACTOR: u64 = 4;
+/// A close past the gate collects at once when this many closes before it
+/// left theirs to an idle moment that never came: a process that never idles
+/// holds one closed page's garbage past the gate, not up to the ceiling.
+/// Measured over 60 s of back-to-back newContext/newPage/goto/close of a
+/// small page: the footprint levelled off at 73-75 MB when only the ceiling
+/// collected, 46-49 MB collecting at every close past the gate (as before
+/// the idle release), 48-49 MB with one close left waiting, at 10.6 ms of
+/// CPU per page against 10.2 and 12.4.
+/// `LIGHTNINGPANDA_RELEASE_PUT_OFF=<closes>` overrides it (benchmark
+/// comparison).
+const RELEASE_PUT_OFF_CLOSES: u32 = 1;
 
 impl ReleaseGate {
     fn new(growth: (u64, u64)) -> ReleaseGate {
@@ -215,6 +232,11 @@ impl ReleaseGate {
             code_pending: Cell::new(false),
             growth: Cell::new(growth),
             ceiling: Cell::new((0, 0)),
+            put_off: Cell::new(0),
+            put_off_limit: std::env::var("LIGHTNINGPANDA_RELEASE_PUT_OFF")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(RELEASE_PUT_OFF_CLOSES),
         };
         gate.set_growth(growth);
         gate
@@ -257,6 +279,17 @@ impl ReleaseGate {
         now - low >= min.max(low / 100 * percent)
     }
 
+    /// Whether a close past the gate collects at once: past the ceiling, or
+    /// after as many closes left theirs waiting with no idle moment since.
+    /// Otherwise it counts as one more.
+    fn collect_due_now(&self, footprint: Option<u64>) -> bool {
+        if self.past_ceiling(footprint) || self.put_off.get() >= self.put_off_limit {
+            return true;
+        }
+        self.put_off.set(self.put_off.get() + 1);
+        false
+    }
+
     /// Leaves a collection pending only when one is due (without a
     /// footprint always, as [`ReleaseGate::should_collect`] then collects).
     fn defer_if_due(&self, footprint: Option<u64>) {
@@ -286,6 +319,7 @@ impl ReleaseGate {
         self.low.set(u64::MAX);
         self.pending.set(false);
         self.code_pending.set(false);
+        self.put_off.set(0);
     }
 }
 
@@ -717,7 +751,9 @@ impl Engine {
     /// idle loop had to collect again anyway; and the allocator's pages it
     /// returned were re-committed by the next page at once. Only a process
     /// grown past the gate's ceiling ([`RELEASE_CEILING_FACTOR`]) collects
-    /// at once, so one that never idles is still held. A closed page's
+    /// at once, or a close past the gate after one that left its collection
+    /// waiting with no idle moment since ([`RELEASE_PUT_OFF_CLOSES`]), so
+    /// one that never idles is still held. A closed page's
     /// wrappers and DOM are otherwise kept until the next collection, which
     /// an idle test process may never run: every close leaves one pending.
     ///
@@ -730,7 +766,7 @@ impl Engine {
         }
         let gate = &self.inner.release_gate;
         let footprint = process_footprint();
-        if gate.should_collect(footprint) && gate.past_ceiling(footprint) {
+        if gate.should_collect(footprint) && gate.collect_due_now(footprint) {
             self.settle();
         } else {
             // The allocator's cheap pass only: the thread's delayed frees
@@ -788,6 +824,13 @@ impl Engine {
         self.inner.release_gate.ceiling.set((min_bytes, percent));
     }
 
+    /// How many closes past the gate left their collection waiting since
+    /// the last one ran (tests; [`RELEASE_PUT_OFF_CLOSES`]).
+    #[doc(hidden)]
+    pub fn release_put_off(&self) -> u32 {
+        self.inner.release_gate.put_off.get()
+    }
+
     /// Whether a closed page is still waiting for the collection
     /// [`Engine::release_closed`] put off. [`Engine::settle`] runs it.
     pub fn release_pending(&self) -> bool {
@@ -821,6 +864,7 @@ impl Engine {
             unsafe { f(self.inner.group()) };
         }
         self.inner.release_gate.pending.set(false);
+        self.inner.release_gate.put_off.set(0);
     }
 
     /// [`Engine::settle`] for a process that has gone idle: first drops every
@@ -1291,6 +1335,30 @@ mod tests {
         assert!(gate.past_ceiling(None), "no footprint: collects");
         gate.set_growth((8 * MB, 0));
         assert_eq!(gate.ceiling.get(), (32 * MB, 0));
+    }
+
+    #[test]
+    fn release_gate_collects_a_close_after_one_left_waiting() {
+        // A process that never idles: the first close past the gate leaves
+        // its collection to an idle moment, the next one collects.
+        let mut gate = ReleaseGate::new((16 * MB, 25));
+        gate.put_off_limit = 1;
+        assert!(!gate.should_collect(Some(40 * MB)));
+        assert!(gate.should_collect(Some(60 * MB)));
+        assert!(!gate.collect_due_now(Some(60 * MB)), "the first one waits");
+        assert!(gate.collect_due_now(Some(62 * MB)), "the next one collects");
+        gate.put_off.set(0); // what `Engine::settle` does
+        assert!(!gate.collect_due_now(Some(60 * MB)), "an idle collection starts the count again");
+        gate.forked();
+        assert_eq!(gate.put_off.get(), 0);
+        // A limit of 2 lets two wait.
+        gate.put_off_limit = 2;
+        assert!(!gate.collect_due_now(Some(60 * MB)));
+        assert!(!gate.collect_due_now(Some(60 * MB)));
+        assert!(gate.collect_due_now(Some(60 * MB)));
+        // Past the ceiling collects regardless.
+        gate.put_off.set(0);
+        assert!(gate.collect_due_now(Some(200 * MB)));
     }
 
     #[test]

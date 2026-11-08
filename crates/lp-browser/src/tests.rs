@@ -1024,6 +1024,34 @@ fn a_close_leaves_the_collection_and_the_code_drop_to_idle_moments() {
 }
 
 #[test]
+fn a_close_after_one_left_waiting_collects_when_no_idle_moment_came() {
+    // A process that never idles (back-to-back pages): the first close past
+    // the gate leaves its collection to an idle moment, the next close
+    // collects, so the process holds one closed page's garbage, not up to
+    // the ceiling. An idle collection in between starts the count again.
+    let (mut t, _rec, page) = setup();
+    release_gate_due(&t, true);
+    t.browser.engine.set_release_ceiling(u64::MAX, 0);
+    let close = |t: &mut BrowserThread, page: PageId| {
+        eval(t, page, "for (let i = 0; i < 200; i++) document.body.appendChild(document.createElement('div'))");
+        t.run_until_idle(Some(Instant::now() + Duration::from_secs(2)));
+        assert!(t.browser.close_page(page));
+        assert!(t.browser.engine.release_pending(), "a collection from the idle loop is due after every close");
+        t.browser.engine.release_put_off()
+    };
+    assert_eq!(close(&mut t, page), 1, "the first close waits");
+    let page = t.browser.create_page().unwrap();
+    assert_eq!(close(&mut t, page), 0, "the second close collected");
+    let page = t.browser.create_page().unwrap();
+    assert_eq!(close(&mut t, page), 1, "and the next one waits again");
+    t.browser.engine.settle();
+    assert_eq!(t.browser.engine.release_put_off(), 0, "an idle collection starts the count again");
+    let page = t.browser.create_page().unwrap();
+    assert_eq!(close(&mut t, page), 1);
+    t.browser.engine.settle();
+}
+
+#[test]
 fn replacing_the_untouched_initial_document_leaves_nothing_to_release() {
     // A page's first navigation (a test's first `goto`): its blank document
     // and two realms are not worth a full collection, and the initial
