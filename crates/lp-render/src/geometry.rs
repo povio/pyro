@@ -295,7 +295,10 @@ impl Geometry {
 
     fn adjusted_box(&self, doc: &BaseDocument, id: NodeId) -> Option<LayoutBox> {
         let mut b = self.laid_out(doc, id)?;
-        if is_cell(doc, id) {
+        // A cell with no box now (not in the layout tree: a `<td>` in a
+        // block, which Blitz does not wrap in an anonymous table) gets no
+        // gutters either: grown by them, its empty box would be hit.
+        if is_cell(doc, id) && self.in_layout_tree(doc, id) {
             if let Some((gx, top, bottom)) = cell_gutters(doc, id) {
                 b.x -= gx;
                 b.y -= top;
@@ -761,12 +764,73 @@ impl Geometry {
     /// layout order.
     pub(crate) fn text_words(&self, doc: &BaseDocument) -> Vec<TextWord> {
         let mut out = Vec::new();
-        for (id, node) in doc.tree().iter() {
-            let Some(text) = node.element_data().and_then(|e| e.inline_layout_data.as_ref()) else { continue };
-            if !node.flags.is_inline_root() || text.text_nodes.is_empty() || !self.in_layout_tree(doc, id) {
+        for (id, _) in doc.tree().iter() {
+            self.root_words(doc, id, &mut out);
+        }
+        out
+    }
+
+    /// The words [`Geometry::text_words`] reports for the text nodes in
+    /// `within`'s subtree, in the same order, with others: the words of the
+    /// inline formatting contexts inside it (in the flat tree lp-dom mirrors,
+    /// where a slotted node lies below its host) and of the one it lies in.
+    /// Only those contexts are read, not the document.
+    pub(crate) fn subtree_words(&self, doc: &BaseDocument, within: NodeId) -> Vec<TextWord> {
+        let mut roots = Vec::new();
+        // The context `within` lies in when it is inline content (or no box,
+        // `display: contents`): the nearest ancestor that is an inline root,
+        // or that wraps inline content in anonymous blocks (all of them).
+        let boxless = doc
+            .get_node(within)
+            .and_then(|n| n.primary_styles())
+            .is_some_and(|s| s.clone_display().is_inline_flow() || s.clone_display().is_contents());
+        let mut cur = doc.get_node(within).and_then(|n| n.parent).filter(|_| boxless);
+        while let Some(r) = cur {
+            let Some(n) = doc.get_node(r) else { break };
+            if n.flags.is_inline_root() {
+                roots.push(r);
+                break;
+            }
+            if !n.anonymous_blocks.is_empty() {
+                roots.extend(n.anonymous_blocks.iter().copied());
+                break;
+            }
+            cur = n.parent;
+        }
+        // The contexts inside it: inline roots, and the anonymous blocks
+        // wrapping inline children.
+        let mut stack = vec![within];
+        while let Some(id) = stack.pop() {
+            let Some(node) = doc.get_node(id) else { continue };
+            if !node.is_element() {
                 continue;
             }
-            let Some((t, fixed)) = self.transform(doc, id) else { continue };
+            if node.flags.is_inline_root() {
+                roots.push(id);
+            }
+            roots.extend(node.anonymous_blocks.iter().copied());
+            stack.extend(node.children.iter().copied());
+        }
+        // `text_words`' order: the slab's.
+        roots.sort_unstable_by_key(|id| id.as_u64() as u32);
+        roots.dedup();
+        let mut out = Vec::new();
+        for id in roots {
+            self.root_words(doc, id, &mut out);
+        }
+        out
+    }
+
+    /// The words of inline formatting context `id` (nothing when it is not
+    /// one laid out now), appended to `out`.
+    fn root_words(&self, doc: &BaseDocument, id: NodeId, out: &mut Vec<TextWord>) {
+        let Some(node) = doc.get_node(id) else { return };
+        {
+            let Some(text) = node.element_data().and_then(|e| e.inline_layout_data.as_ref()) else { return };
+            if !node.flags.is_inline_root() || text.text_nodes.is_empty() || !self.in_layout_tree(doc, id) {
+                return;
+            }
+            let Some((t, fixed)) = self.transform(doc, id) else { return };
             let origin = t * line_box_origin(doc, id, text);
             let scale = text.layout.scale() as f64;
             // Per text node: the UTF-16 offset of each byte of its laid-out text.
@@ -843,7 +907,6 @@ impl Geometry {
                 }
             }
         }
-        out
     }
 }
 

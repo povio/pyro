@@ -190,7 +190,7 @@ impl BaseDocument {
         self.nodes.bump_geometry_generation();
 
         // Resolve transforms
-        self.resolve_transforms(root_node_id);
+        let _ = self.resolve_transforms(root_node_id);
         timer.record_time("transform");
         phase_profile::mark(5, &mut phase_t);
 
@@ -303,9 +303,12 @@ impl BaseDocument {
         changed
     }
 
-    fn resolve_transforms(&mut self, node_id: NodeId) -> Rect {
+    /// The transforms and overflow of `node_id`'s subtree: what it adds to its
+    /// parent's scrollable overflow and (lightningpanda) to its hit bound
+    /// (`LayoutData::hit_overflow`), in the parent's coordinates.
+    fn resolve_transforms(&mut self, node_id: NodeId) -> (Rect, Rect) {
         if !self.nodes.contains_key(node_id) {
-            return Rect::ZERO;
+            return (Rect::ZERO, Rect::ZERO);
         }
 
         let scale = self.viewport.scale_f64();
@@ -329,14 +332,10 @@ impl BaseDocument {
         if unchanged {
             let node = &self.nodes[node_id];
             let location = layout.location.map(|v| v as f64 * scale);
-
-            let mut transform = Affine::translate((location.x, location.y));
-            if let Some(t) = node.transform().as_deref() {
-                transform *= *t
-            }
-
-            let overflow = self.overflow_contribution(node_id, *node.scrollable_overflow(), layout.size, scale);
-            return transform.transform_rect_bbox(overflow);
+            let [overflow, hit] =
+                self.overflow_contributions(node_id, [*node.scrollable_overflow(), *node.hit_overflow()], layout.size, scale);
+            let place = placement((location.x, location.y), node.transform().as_deref());
+            return (place(overflow), place(hit));
         }
 
         let transform = self.nodes[node_id].set_transform(scale as f32);
@@ -352,14 +351,18 @@ impl BaseDocument {
             (w - b.right as f64 * scale).max(b.left as f64 * scale),
             (h - b.bottom as f64 * scale).max(b.top as f64 * scale),
         );
+        let mut hit = overflow;
 
         let layout_children = std::mem::take(self.nodes[node_id].layout_children.get_mut());
 
         // lightningpanda: a table's cells, transformed again only where its grid placed them or
         // they changed since the last pass (`TableContext::placed`); the others' overflow stands.
-        if let Some(cells_overflow) = self.table_cells_overflow(node_id, scale) {
+        if let Some((cells_overflow, cells_hit)) = self.table_cells_overflow(node_id, scale) {
             if let Some(cells_overflow) = cells_overflow {
                 overflow = overflow.union(cells_overflow);
+            }
+            if let Some(cells_hit) = cells_hit {
+                hit = hit.union(cells_hit);
             }
         } else if let Some(ref children) = layout_children {
             for &child_id in children {
@@ -369,8 +372,9 @@ impl BaseDocument {
                 if self.nodes[child_id].is_out_of_flow() {
                     continue;
                 }
-                let child_rect_in_self = self.resolve_transforms(child_id);
+                let (child_rect_in_self, child_hit) = self.resolve_transforms(child_id);
                 overflow = unite_overflow(overflow, child_rect_in_self);
+                hit = unite_hit(hit, child_hit);
             }
         }
         let hoisted_children = std::mem::take(&mut *self.nodes[node_id].hoisted_children.borrow_mut());
@@ -379,7 +383,7 @@ impl BaseDocument {
             if !self.nodes.contains_key(child_id) {
                 continue;
             }
-            let child_rect_in_self = self.resolve_transforms(child_id);
+            let (child_rect_in_self, child_hit) = self.resolve_transforms(child_id);
             // lightningpanda: a box fixed to the viewport is not in the
             // document's scrollable overflow, whatever it reaches.
             let fixed = self.nodes[child_id]
@@ -389,6 +393,7 @@ impl BaseDocument {
                 continue;
             }
             overflow = unite_overflow(overflow, child_rect_in_self);
+            hit = unite_hit(hit, child_hit);
         }
         *self.nodes[node_id].hoisted_children.borrow_mut() = hoisted_children;
         for pseudo in [self.nodes[node_id].before(), self.nodes[node_id].after()] {
@@ -396,8 +401,9 @@ impl BaseDocument {
             if self.nodes[pseudo].is_out_of_flow() {
                 continue;
             }
-            let child_rect_in_self = self.resolve_transforms(pseudo);
+            let (child_rect_in_self, child_hit) = self.resolve_transforms(pseudo);
             overflow = unite_overflow(overflow, child_rect_in_self);
+            hit = unite_hit(hit, child_hit);
         }
 
         // lightningpanda: the lines of an inline formatting context are
@@ -407,7 +413,14 @@ impl BaseDocument {
         let editor_layout = element.and_then(|e| e.text_input_data()).and_then(|i| i.editor.try_layout());
         let inline = element.and_then(|e| e.inline_layout_data.as_deref());
         let lines = inline.map(|t| (&t.layout, t.block_offset)).or(editor_layout.map(|l| (l, 0.0)));
-        let mut inline_hit_margin = 0.0f64;
+        // lightningpanda: a glyph run's content area (whole-pixel ascent and
+        // descent around its baseline, its advance rounded up to a layout
+        // unit) can reach outside the line boxes: a tight `line-height`,
+        // hanging white space. Layout queries report an inline element's box
+        // from those areas, so the hit bound holds the line boxes grown by the
+        // largest such reach, measured once after each line breaking
+        // (`TextLayout::hit_reach`). Text controls lay out no inline elements.
+        let mut hit_lines = None;
         if let Some((text_layout, block_offset)) = lines {
             let l = &layout;
             let width = text_layout
@@ -417,32 +430,6 @@ impl BaseDocument {
                     (m.offset + m.advance - m.hanging_advance) as f64
                 })
                 .fold(0.0, f64::max);
-            // lightningpanda: a glyph run's content area (whole-pixel ascent
-            // and descent around its baseline, its advance rounded up to a
-            // layout unit) can reach outside the line boxes: a tight
-            // `line-height`, hanging white space. Layout queries report an
-            // inline element's box from those areas, so a hit-test bound
-            // built from the line boxes grows by the largest such reach
-            // (`BaseDocument::inline_hit_margin`). Text controls lay out no
-            // inline elements.
-            if inline.is_some() {
-                let height = text_layout
-                    .lines()
-                    .filter(|line| !line.text_range().is_empty())
-                    .map(|line| line.metrics().block_max_coord as f64)
-                    .fold(0.0, f64::max);
-                for line in text_layout.lines() {
-                    for item in line.items() {
-                        let parley::PositionedLayoutItem::GlyphRun(run) = item else { continue };
-                        let metrics = run.run().font_metrics();
-                        let (x, baseline) = (run.offset() as f64, run.baseline() as f64);
-                        let x1 = x + run.advance() as f64 + scale / 64.0;
-                        let y0 = baseline - metrics.ascent.round() as f64;
-                        let y1 = baseline + metrics.descent.round() as f64;
-                        inline_hit_margin = inline_hit_margin.max(-x).max(x1 - width).max(-y0).max(y1 - height);
-                    }
-                }
-            }
             // The empty line parley adds after a final hard break (`<br>`)
             // is not content.
             let height = text_layout
@@ -450,57 +437,67 @@ impl BaseDocument {
                 .filter(|line| !line.text_range().is_empty())
                 .map(|line| line.metrics().block_max_coord as f64)
                 .fold(0.0, f64::max);
+            let x0 = (l.border.left + l.padding.left) as f64 * scale;
+            let y0 = (l.border.top + l.padding.top + block_offset) as f64 * scale;
+            let style = self.nodes[node_id].primary_styles();
+            // Text controls scroll their value whatever their `overflow`.
+            let scrolls = editor_layout.is_some()
+                || style.as_ref().is_some_and(|s| {
+                    s.clone_overflow_x() != style::values::computed::Overflow::Visible
+                        || s.clone_overflow_y() != style::values::computed::Overflow::Visible
+                });
+            let (end_x, end_y) = if scrolls {
+                (l.padding.right as f64 * scale, l.padding.bottom as f64 * scale)
+            } else {
+                (0.0, 0.0)
+            };
+            // The lines of a vertical writing mode are logical: `width` runs along y, `height` along x.
+            let lines = match self.nodes[node_id].vertical_block_axis() {
+                None => Rect::new(x0, y0, x0 + width + end_x, y0 + height + end_y),
+                Some(block_lr) => {
+                    let offset = block_offset as f64 * scale;
+                    let top = y0 - offset;
+                    let (b0, b1) = if block_lr {
+                        (x0 + offset, x0 + offset + height + end_x)
+                    } else {
+                        let start = (l.size.width - l.border.right - l.padding.right) as f64 * scale - offset;
+                        (start - height - end_x, start)
+                    };
+                    Rect::new(b0, top, b1, top + width + end_y)
+                }
+            };
             if width > 0.0 || height > 0.0 {
-                let x0 = (l.border.left + l.padding.left) as f64 * scale;
-                let y0 = (l.border.top + l.padding.top + block_offset) as f64 * scale;
-                let style = self.nodes[node_id].primary_styles();
-                // Text controls scroll their value whatever their `overflow`.
-                let scrolls = editor_layout.is_some()
-                    || style.as_ref().is_some_and(|s| {
-                        s.clone_overflow_x() != style::values::computed::Overflow::Visible
-                            || s.clone_overflow_y() != style::values::computed::Overflow::Visible
-                    });
-                let (end_x, end_y) = if scrolls {
-                    (l.padding.right as f64 * scale, l.padding.bottom as f64 * scale)
-                } else {
-                    (0.0, 0.0)
-                };
-                // The lines of a vertical writing mode are logical: `width` runs along y, `height` along x.
-                let lines = match self.nodes[node_id].vertical_block_axis() {
-                    None => Rect::new(x0, y0, x0 + width + end_x, y0 + height + end_y),
-                    Some(block_lr) => {
-                        let offset = block_offset as f64 * scale;
-                        let top = y0 - offset;
-                        let (b0, b1) = if block_lr {
-                            (x0 + offset, x0 + offset + height + end_x)
-                        } else {
-                            let start = (l.size.width - l.border.right - l.padding.right) as f64 * scale - offset;
-                            (start - height - end_x, start)
-                        };
-                        Rect::new(b0, top, b1, top + width + end_y)
-                    }
-                };
                 overflow = overflow.union(lines);
+                hit = hit.union(lines);
             }
+            if let Some(text) = inline {
+                hit_lines = Some(match text.hit_reach {
+                    Some(reach) => (lines, reach, false),
+                    None => (lines, glyph_reach(text_layout), true),
+                });
+            }
+        }
+        if let Some((lines, reach, measured)) = hit_lines {
+            if measured {
+                let text = self.nodes[node_id].element_data_mut().and_then(|e| e.inline_layout_data.as_deref_mut());
+                if let Some(text) = text {
+                    text.hit_reach = Some(reach);
+                }
+            }
+            let reach = reach + scale / 64.0;
+            hit = hit.union(lines.inflate(reach, reach));
         }
 
         *self.nodes[node_id].scrollable_overflow_mut() = overflow;
+        *self.nodes[node_id].hit_overflow_mut() = hit;
         *self.nodes[node_id].layout_children.get_mut() = layout_children;
-        if inline_hit_margin > self.inline_hit_margin {
-            self.inline_hit_margin = inline_hit_margin;
-        }
 
         let scaled_x = layout.location.x as f64 * scale;
         let scaled_y = layout.location.y as f64 * scale;
 
-        let full = if let Some(t) = transform {
-            Affine::translate((scaled_x, scaled_y)) * t
-        } else {
-            Affine::translate((scaled_x, scaled_y))
-        };
-
-        let contribution = self.overflow_contribution(node_id, overflow, layout.size, scale);
-        full.transform_rect_bbox(contribution)
+        let [contribution, hit] = self.overflow_contributions(node_id, [overflow, hit], layout.size, scale);
+        let place = placement((scaled_x, scaled_y), transform.as_ref());
+        (place(contribution), place(hit))
     }
 
     /// lightningpanda: what a box adds to its parent's scrollable overflow
@@ -508,22 +505,28 @@ impl BaseDocument {
     /// on the axes it does not clip. A scroll container keeps its content's
     /// overflow to itself.
     pub fn overflow_contribution(&self, node_id: NodeId, overflow: Rect, size: taffy::Size<f32>, scale: f64) -> Rect {
+        self.overflow_contributions(node_id, [overflow, overflow], size, scale)[0]
+    }
+
+    /// lightningpanda: [`Self::overflow_contribution`] of a box's scrollable
+    /// and hit overflow, reading its style once.
+    fn overflow_contributions(&self, node_id: NodeId, overflow: [Rect; 2], size: taffy::Size<f32>, scale: f64) -> [Rect; 2] {
         use style::values::computed::Overflow;
-        let node = &self.nodes[node_id];
         let border_box = Rect::new(0.0, 0.0, size.width as f64 * scale, size.height as f64 * scale);
-        let mut out = overflow.union(border_box);
-        if let Some(style) = node.primary_styles() {
-            let (x, y) = (style.clone_overflow_x(), style.clone_overflow_y());
-            if (x != Overflow::Visible || y != Overflow::Visible) && !self.body_overflow_goes_to_viewport(node_id) {
-                if x != Overflow::Visible {
-                    (out.x0, out.x1) = (border_box.x0, border_box.x1);
-                }
-                if y != Overflow::Visible {
-                    (out.y0, out.y1) = (border_box.y0, border_box.y1);
-                }
+        let [mut a, mut b] = [overflow[0].union(border_box), overflow[1].union(border_box)];
+        let clips = self.nodes[node_id].primary_styles().and_then(|style| {
+            let (x, y) = (style.clone_overflow_x() != Overflow::Visible, style.clone_overflow_y() != Overflow::Visible);
+            ((x || y) && !self.body_overflow_goes_to_viewport(node_id)).then_some((x, y))
+        });
+        if let Some((x, y)) = clips {
+            if x {
+                (a.x0, a.x1, b.x0, b.x1) = (border_box.x0, border_box.x1, border_box.x0, border_box.x1);
+            }
+            if y {
+                (a.y0, a.y1, b.y0, b.y1) = (border_box.y0, border_box.y1, border_box.y0, border_box.y1);
             }
         }
-        out
+        [a, b]
     }
 
     /// lightningpanda: whether `node_id` is a `body` whose `overflow` applies
@@ -855,9 +858,9 @@ impl BaseDocument {
 /// wherever it is: a 2000 x 0 px box does not make a page scroll.
 impl BaseDocument {
     /// The union of the overflow of `table`'s cells in it (see `resolve_transforms`; `None` inside:
-    /// none has any), or `None` if `table` is not a table whose cells it keeps (its layout children
-    /// are visited as any others').
-    fn table_cells_overflow(&mut self, table: NodeId, scale: f64) -> Option<Option<Rect>> {
+    /// none has any), and of their hit contributions (`unite_hit`), or `None` if `table` is not a
+    /// table whose cells it keeps (its layout children are visited as any others').
+    fn table_cells_overflow(&mut self, table: NodeId, scale: f64) -> Option<(Option<Rect>, Option<Rect>)> {
         use crate::node::SpecialElementData;
         let node = &self.nodes[table];
         if !node.flags.is_table_root() {
@@ -870,20 +873,30 @@ impl BaseDocument {
         let ctx = std::sync::Arc::clone(ctx);
         let cells = ctx.cells.len();
         let mut placed = ctx.placed.borrow_mut();
-        let again = placed.take_transform().filter(|_| placed.overflow.len() == cells && placed.overflow_scale == scale);
+        let again = placed
+            .take_transform()
+            .filter(|_| placed.overflow.len() == cells && placed.hit.len() == cells && placed.overflow_scale == scale);
         let mut overflow = std::mem::take(&mut placed.overflow);
+        let mut hit = std::mem::take(&mut placed.hit);
         drop(placed);
-        let again_rows = again.clone();
+        // The rows of the cells transformed again (`None`: all).
+        let mut changed_rows: Option<Vec<usize>> = None;
         match again {
             Some(again) => {
+                let mut rows = Vec::with_capacity(again.len());
                 for index in again {
-                    overflow[index] = self.resolve_transforms(ctx.cells[index].node_id);
+                    (overflow[index], hit[index]) = self.resolve_transforms(ctx.cells[index].node_id);
+                    rows.push(ctx.cells[index].row as usize);
                 }
+                changed_rows = Some(rows);
             }
             None => {
                 overflow.clear();
+                hit.clear();
                 for cell in &ctx.cells {
-                    overflow.push(self.resolve_transforms(cell.node_id));
+                    let (o, h) = self.resolve_transforms(cell.node_id);
+                    overflow.push(o);
+                    hit.push(h);
                 }
             }
         }
@@ -892,43 +905,104 @@ impl BaseDocument {
             .iter()
             .filter(|cell| cell.width() > 0.0 && cell.height() > 0.0)
             .fold(None, |united: Option<Rect>, &cell| Some(united.map_or(cell, |united| united.union(cell))));
+        let hit_united = hit
+            .iter()
+            .filter(|cell| cell.width() > 0.0 || cell.height() > 0.0)
+            .fold(None, |united: Option<Rect>, &cell| Some(united.map_or(cell, |united| united.union(cell))));
         let mut placed = ctx.placed.borrow_mut();
-        // lightningpanda: the same union per row (the cells originating in
-        // it: a hit-test bound of the row, `TableContext::row_hit_extents`),
-        // for the rows of the cells transformed again only.
+        // lightningpanda: the union of the hit contributions per row (the
+        // cells originating in it: a hit-test bound of the row,
+        // `TableContext::row_hit_extents`), for the rows of the cells
+        // transformed again only.
         let rows = ctx.rows.len();
         let mut row_start = Vec::with_capacity(rows + 1);
         row_start.push(0usize);
         for row in &ctx.rows {
             row_start.push(row_start.last().unwrap() + row.cell_count as usize);
         }
-        let row_union = |row: usize, overflow: &[Rect]| {
+        let row_union = |row: usize, hit: &[Rect]| {
             let (start, end) = (row_start[row], row_start[row + 1]);
-            overflow[start.min(overflow.len())..end.min(overflow.len())]
+            hit[start.min(hit.len())..end.min(hit.len())]
                 .iter()
-                .filter(|cell| cell.width() > 0.0 && cell.height() > 0.0)
+                .filter(|cell| cell.width() > 0.0 || cell.height() > 0.0)
                 .fold(None, |united: Option<Rect>, &cell| Some(united.map_or(cell, |united| united.union(cell))))
                 .unwrap_or(Rect::ZERO)
         };
-        match &again_rows {
-            Some(changed) if placed.row_overflow.len() == rows => {
-                let mut changed: Vec<usize> = changed.iter().map(|&i| ctx.cells[i].row as usize).collect();
-                changed.sort_unstable();
+        match changed_rows {
+            Some(mut changed) if placed.row_overflow.len() == rows => {
+                // The cells come in index order, which is row order.
+                if !changed.is_sorted() {
+                    changed.sort_unstable();
+                }
                 changed.dedup();
                 for row in changed {
                     if row < rows {
-                        placed.row_overflow[row] = row_union(row, &overflow);
+                        placed.row_overflow[row] = row_union(row, &hit);
                     }
                 }
             }
             _ => {
-                placed.row_overflow = (0..rows).map(|row| row_union(row, &overflow)).collect();
+                placed.row_overflow = (0..rows).map(|row| row_union(row, &hit)).collect();
             }
         }
         placed.overflow = overflow;
+        placed.hit = hit;
         placed.overflow_scale = scale;
-        Some(united)
+        Some((united, hit_united))
     }
+}
+
+/// lightningpanda: a box's rect in its parent: moved to `location`, through
+/// its `transform` (the bounding box), as `transform_rect_bbox` of the
+/// composed affine computes it (a translation alone adds the same values).
+fn placement(location: (f64, f64), transform: Option<&Affine>) -> impl Fn(Rect) -> Rect {
+    let full = transform.map(|t| Affine::translate(location) * *t);
+    move |r: Rect| match &full {
+        Some(full) => full.transform_rect_bbox(r),
+        None => r + kurbo::Vec2::new(location.0, location.1),
+    }
+}
+
+/// lightningpanda: `hit` with what a child adds to it: as `unite_overflow`, but
+/// a rect of no area that has a width or a height counts (text overflowing
+/// sideways on lines of `line-height: 0`, a box of no width: hit testing finds
+/// what such a box holds, or the box itself).
+fn unite_hit(hit: Rect, child: Rect) -> Rect {
+    if child.width() > 0.0 || child.height() > 0.0 {
+        hit.union(child)
+    } else {
+        hit
+    }
+}
+
+/// lightningpanda: how far (device px) the content areas of `layout`'s glyph
+/// runs (whole-pixel ascent and descent around the baseline) reach outside
+/// their line's box, in any direction: before the line's start, past its end
+/// less hanging white space, above and below its block extent. Aligning moves
+/// a line with its runs, so it keeps it (see `TextLayout::hit_reach`; the rounding of
+/// advances to a layout unit is added by the caller). The lines' union grown
+/// by it holds every run.
+fn glyph_reach(layout: &parley::Layout<crate::node::TextBrush>) -> f64 {
+    let mut reach = 0.0f64;
+    for line in layout.lines() {
+        let m = line.metrics();
+        let offset = m.offset as f64;
+        let end = offset + (m.advance - m.hanging_advance) as f64;
+        let (top, bottom) = (m.block_min_coord as f64, m.block_max_coord as f64);
+        for item in line.items() {
+            let parley::PositionedLayoutItem::GlyphRun(run) = item else { continue };
+            let metrics = run.run().font_metrics();
+            let (x, baseline) = (run.offset() as f64, run.baseline() as f64);
+            let x1 = x + run.advance() as f64;
+            let y0 = baseline - metrics.ascent.round() as f64;
+            let y1 = baseline + metrics.descent.round() as f64;
+            // Before the line's start, wherever aligning puts it from the
+            // layout's start on (a line overflowing to the left stays put).
+            let before = offset - x - offset.min(0.0);
+            reach = reach.max(before).max(x1 - end).max(top - y0).max(y1 - bottom);
+        }
+    }
+    reach
 }
 
 fn unite_overflow(overflow: Rect, child: Rect) -> Rect {

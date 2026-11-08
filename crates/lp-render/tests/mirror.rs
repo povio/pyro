@@ -1968,6 +1968,11 @@ fn deltas_on_long_tables_and_lists_match_fresh_builds() {
                 d.append_child(list, e).unwrap();
             }),
         ),
+        // Lines of no height overflowing sideways (the hit overflow keeps
+        // them, the scrollable overflow does not), then tight lines.
+        ("zero line height", attr("#p5", "style", "line-height:0;white-space:nowrap;width:20px;font-size:30px")),
+        ("tight line height", attr("#p5", "style", "line-height:4px;width:20px")),
+        ("line height reverted", attr("#p5", "style", "")),
         ("list made inline", attr("#other", "style", "display:inline")),
         ("list made a block again", attr("#other", "style", "")),
     ];
@@ -1994,12 +1999,41 @@ fn deltas_on_long_tables_and_lists_match_fresh_builds() {
         let sticky = |r: &Renderer| r.page_layout(1).map(|l| l.sticky.len());
         assert_eq!(sticky(&r), sticky(&fresh), "sticky boxes after {what}");
         hit_candidates_match(&r, &fresh, what);
+        subtree_words_match(&r, &page.tree(), what);
     }
     assert!(deltas * 2 > steps.len(), "most steps sync as deltas ({deltas} of {})", steps.len());
 }
 
+/// `Renderer::subtree_words` of every element of `tree` reports, among
+/// others, the words `Renderer::page_words` reports for the text nodes
+/// below it, in the same order.
+#[track_caller]
+fn subtree_words_match(r: &Renderer, tree: &Tree, what: &str) {
+    let below = |i: usize, mut j: usize| loop {
+        if j == i {
+            return true;
+        }
+        match tree.nodes[j].parent {
+            TOP => return false,
+            parent => j = parent as usize,
+        }
+    };
+    let all = r.page_words(1).unwrap();
+    let index: std::collections::HashMap<u64, usize> = tree.nodes.iter().enumerate().map(|(i, n)| (n.key, i)).collect();
+    for (i, node) in tree.nodes.iter().enumerate() {
+        if !matches!(node.kind, TreeKind::Element { .. }) {
+            continue;
+        }
+        let mine = |words: Vec<(u64, TextWord)>| -> Vec<(u64, TextWord)> {
+            words.into_iter().filter(|(k, _)| index.get(k).is_some_and(|&j| below(i, j))).collect()
+        };
+        let sub = r.subtree_words(1, node.key).expect("a node of the page");
+        assert_eq!(mine(sub), mine(all.clone()), "words below node {i} after {what}");
+    }
+}
+
 /// The hit-test descent of a delta-synced document (`Renderer::hit_candidates`:
-/// bounds from the per-row cell unions and the inline hit margin the
+/// bounds from the per-row cell unions and the hit overflow the
 /// incremental passes keep) reports, at every point of a grid, the elements
 /// a fresh build's does, in the same order and with the same boxes; its
 /// words and sticky elements are the fresh build's too.

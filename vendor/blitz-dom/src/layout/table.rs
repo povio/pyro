@@ -542,7 +542,7 @@ pub struct TableContext {
 
 impl TableContext {
     /// lightningpanda: each row's hit-test extent (parallel to `rows`): the union of its cells'
-    /// overflow contributions in the table's coordinates at `scale` (`BaseDocument::resolve_transforms`,
+    /// hit contributions in the table's coordinates at `scale` (`BaseDocument::resolve_transforms`,
     /// device px), as of the last transform pass; `f` gets an empty slice when the pass has not
     /// covered the current rows (the caller then computes from the cells).
     pub fn row_hit_extents<R>(&self, f: impl FnOnce(&[kurbo::Rect], f64) -> R) -> R {
@@ -565,9 +565,12 @@ pub(crate) struct PlacedCells {
     /// cell's overflow in the table as the last pass computed it, at its scale
     transform: Option<Vec<usize>>,
     pub(crate) overflow: Vec<kurbo::Rect>,
+    /// lightningpanda: each cell's hit contribution in the table (parallel to `overflow`; see
+    /// `LayoutData::hit_overflow`).
+    pub(crate) hit: Vec<kurbo::Rect>,
     pub(crate) overflow_scale: f64,
-    /// lightningpanda: the union of `overflow` over the cells originating in each row (parallel to
-    /// `TableContext::rows`, `Rect::ZERO` without cells), kept with `overflow`; empty when the rows
+    /// lightningpanda: the union of `hit` over the cells originating in each row (parallel to
+    /// `TableContext::rows`, `Rect::ZERO` without cells), kept with `hit`; empty when the rows
     /// changed since (`splice`) until the next transform pass.
     pub(crate) row_overflow: Vec<kurbo::Rect>,
     /// Cells damaged or appended since the paint tree last visited the table (all of them when
@@ -609,6 +612,9 @@ impl PlacedCells {
         }
         if !self.overflow.is_empty() {
             self.overflow.splice(removed.clone(), std::iter::repeat_n(kurbo::Rect::ZERO, inserted));
+        }
+        if !self.hit.is_empty() {
+            self.hit.splice(removed.clone(), std::iter::repeat_n(kurbo::Rect::ZERO, inserted));
         }
         self.row_overflow.clear();
         for index in removed.start..removed.start + inserted {

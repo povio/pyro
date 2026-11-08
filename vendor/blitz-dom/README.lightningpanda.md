@@ -422,28 +422,40 @@ build of every node, tables visited as any box. Covered by lp-render's `settle_r
 
 lp-render answers `elementFromPoint` by descending the tree from the root and skipping the subtrees whose bound
 cannot hold the point (`crates/lp-render/src/hit.rs`), instead of reading every element's box. The bound of a box
-is its border box and its scrollable overflow, which the passes here already keep; two things they did not keep
-are added, and two things are exposed:
+is its border box and its hit overflow, kept by the transform pass next to the scrollable overflow; and two things
+are exposed:
 
-- `src/resolve.rs` (`resolve_transforms`), `src/document.rs` (`inline_hit_margin`): an inline formatting
-  context's glyph runs reach outside its line boxes (a tight `line-height` puts the whole-pixel ascent and descent
-  past the line box; hanging white space past the line's advance), and layout queries report an inline element's
-  box from those content areas (lp-render's `Geometry::inline_items`). The pass that adds the lines to the
-  overflow also measures how far the runs reach past them and keeps the document-wide maximum
-  (`BaseDocument::inline_hit_margin`, device px); every bound grows by it. It only grows (a stale value is a
-  looser bound, never a wrong one) and is reset with the document.
-- `src/resolve.rs` (`table_cells_overflow`), `src/layout/table.rs` (`PlacedCells::row_overflow`,
-  `TableContext::row_hit_extents`): rows and row groups have no box, and a cell can span later rows, so a row's
-  bound is the union of the overflow contributions of the cells originating in it, kept per row next to the
-  per-cell overflow the transform pass already keeps, recomputed for the rows of the cells transformed again
-  (all rows when the rows changed: `splice` clears it). A table whose cells the pass does not keep
+- `src/resolve.rs` (`resolve_transforms`, `unite_hit`, `glyph_reach`), `src/node/element.rs`
+  (`LayoutData::hit_overflow`), `src/node/text.rs` (`TextLayout::hit_reach`), `src/layout/inline/layout.rs`:
+  `resolve_transforms` returns, besides a box's contribution to its parent's scrollable overflow, its contribution
+  to the parent's hit overflow, and keeps the box's own (`Node::hit_overflow`, device px, like
+  `scrollable_overflow`). It is the scrollable overflow except for two things. First, the contributions of no area
+  that have a width or a height count (`unite_hit`; `unite_overflow` drops them for the scroll size: a 2000 x 0 px
+  box does not make a page scroll, but text overflowing sideways on lines of `line-height: 0`, or a zero-width
+  box, is hit). Second, an inline formatting context's glyph runs reach outside its line boxes (a tight
+  `line-height` puts the whole-pixel ascent and descent past the line box; hanging white space past the line's
+  advance), and layout queries report an inline element's box from those content areas (lp-render's
+  `Geometry::inline_items`): the hit overflow holds the line boxes grown by the largest such reach of the context
+  (`glyph_reach`, plus a layout unit of advance rounding). The reach is measured per line (past the line's start,
+  end and block extent), which aligning does not change, by the first transform pass after the lines were broken
+  (`TextLayout::hit_reach`: breaking resets it, a rebuilt `TextLayout` starts without it, and so does aligning when
+  it justifies now or did before, `TextLayout::justified`), so a pass over a context whose lines did not break again
+  (an anonymous block visited again, a cell relaid at the same width) does not go over its glyph runs. Overflow
+  clips apply to the hit overflow as to the scrollable one (`overflow_contributions` reads the style once for
+  both; a box placed by a translation alone adds its location instead of going through `transform_rect_bbox`,
+  which gives the same values: `placement`).
+- `src/resolve.rs` (`table_cells_overflow`), `src/layout/table.rs` (`PlacedCells::hit`,
+  `PlacedCells::row_overflow`, `TableContext::row_hit_extents`): rows and row groups have no box, and a cell can
+  span later rows, so a row's bound is the union of the hit contributions of the cells originating in it (kept per
+  cell in `PlacedCells::hit`, next to the per-cell overflow the transform pass already keeps), kept per row,
+  recomputed for the rows of the cells transformed again (all rows when the rows changed: `splice` clears it). A table whose cells the pass does not keep
   (`keeps_cells`) reports none and lp-render computes the contributions from the cells.
 - `src/document.rs` (`sticky_node_ids`): the sticky set behind `has_sticky`, so lp-dom learns the sticky
   elements without a pass over the document; `BaseDocument::overflow_contribution` is `pub` for the table
   fallback above.
 
-Covered by `crates/lp-layout/tests/hit_descent.rs` (the descent against the scan of every box) and
-`crates/lp-render/tests/mirror.rs` (`deltas_on_long_tables_and_lists_match_fresh_builds`, which compares the descent's
+Covered by `crates/lp-layout/tests/hit_descent.rs` and `hit_adversarial.rs` (the descent against the scan of every
+box, also on random pages) and `crates/lp-render/tests/mirror.rs` (`deltas_on_long_tables_and_lists_match_fresh_builds`, which compares the descent's
 candidates of a delta-synced document with a fresh build's).
 
 ## Line breaking resumes after the lines whose text did not change

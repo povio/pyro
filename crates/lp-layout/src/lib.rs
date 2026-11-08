@@ -515,9 +515,18 @@ impl BlitzGeometry {
         })
     }
 
-    fn text_words_inner(&self) -> Option<Vec<(u64, ExternalWord)>> {
+    /// The page's words (`within`: only those below that element's key, with
+    /// others; see `Renderer::subtree_words`).
+    fn text_words_inner(&self, within: Option<u64>) -> Option<Vec<(u64, ExternalWord)>> {
         let t = lp_render::profiling::on().then(Instant::now);
-        let words = RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.page_words(self.page))?;
+        let words = RENDERER.with(|r| {
+            let r = r.try_borrow().ok()?;
+            let r = r.as_ref()?;
+            match within {
+                Some(key) => r.subtree_words(self.page, key),
+                None => r.page_words(self.page),
+            }
+        })?;
         if let Some(t) = t {
             READ_NS.fetch_add(t.elapsed().as_nanos() as u64, Ordering::Relaxed);
         }
@@ -614,7 +623,16 @@ impl GeometrySource for BlitzGeometry {
 
     fn text_words(&self) -> Option<Vec<(u64, ExternalWord)>> {
         let t = profile::on().then(Instant::now);
-        let w = self.text_words_inner();
+        let w = self.text_words_inner(None);
+        if let Some(t) = t {
+            profile::add(2, t.elapsed());
+        }
+        w
+    }
+
+    fn subtree_words(&self, key: u64) -> Option<Vec<(u64, ExternalWord)>> {
+        let t = profile::on().then(Instant::now);
+        let w = self.text_words_inner(Some(key));
         if let Some(t) = t {
             profile::add(2, t.elapsed());
         }

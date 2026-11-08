@@ -322,7 +322,7 @@ fn boxes_moving_between_hit_tests_match_the_scan() {
             let first = p.dom.element_children(tb).unwrap().next().unwrap();
             p.dom.remove_child(tb, first).unwrap();
         }),
-        // A tighter line-height (inline_hit_margin grows).
+        // A tighter line-height (the glyph reach past the lines grows).
         Box::new(move |p| p.dom.set_attribute(tight, "style", "font-size: 40px; line-height: 2px").unwrap()),
         Box::new(move |p| p.dom.set_attribute(tight, "style", "").unwrap()),
         // display: none flips (a box, a row, a row group).
@@ -691,11 +691,11 @@ fn minimize_file() {
 
 /// An element that clips its overflow and is the containing block of an
 /// absolutely positioned (or fixed) descendant through something other than
-/// `position` (a transform, a filter, `contain: paint`/`layout`): Blitz's
-/// bound clips the descendant away (the descent skips it, as Chromium does:
-/// `elementFromPoint` answers `html` at these points), while lp-dom's clip
-/// rule (`clip_escape`: only `position` makes a containing block) lets it
-/// escape the clip, so the scan hits it. Fails on 1fa4c241.
+/// `position` (a transform, a filter, `contain: paint`/`layout`): the clip
+/// applies to the descendant (Chromium's `elementFromPoint` answers `html`
+/// over it), in Blitz's bound and in lp-dom's clip rule (`for_each_clip`:
+/// any containing block of the out-of-flow box, not only a positioned one).
+/// Failed on 1fa4c241 (lp-dom let it escape the clip).
 #[test]
 fn clipping_containing_blocks_without_position_match_the_scan() {
     for (label, style, child) in [
@@ -711,6 +711,12 @@ fn clipping_containing_blocks_without_position_match_the_scan() {
              <div style=\"margin:100px;width:200px;height:80px;{style}\"><div id=x style=\"{child};width:200px;height:40px;background:red\">X</div></div>
              <div style=\"height:2000px\"></div></body></html>"
         ));
+        let x = p.id("x");
+        let r = p.layout.bounding_client_rect(&p.dom, x);
+        let (cx, cy) = (r.x + r.width / 2.0, r.y + r.height / 2.0);
+        assert!(r.width > 0.0, "{label}: laid out");
+        assert_ne!(p.layout.element_from_point(&p.dom, cx, cy), Some(x), "{label}: clipped, as in Chromium");
+        assert_ne!(p.layout.element_from_point_scan(&p.dom, cx, cy), Some(x), "{label}: clipped in the scan");
         p.compare(label);
     }
 }
@@ -757,4 +763,115 @@ fn zero_width_box_in_a_block_row_matches_the_scan() {
          <div style=\"height:900px\"></div></body></html>",
     );
     p.compare("zero-width cell");
+}
+
+/// `caret_from_point` (mousedown, `caretPositionFromPoint`) reads only the
+/// words of the inline formatting contexts in and around the element it
+/// resolves in (`GeometrySource::subtree_words`) while the document's words
+/// are not read since the last change: it answers what it answers from the
+/// document's words, for every element and point. Inline content, anonymous
+/// blocks, a table, generated content, a scrolled box, a fixed box, vertical
+/// text, and a shadow tree with slotted content.
+#[test]
+fn caret_from_point_in_a_subtree_matches_the_document_words() {
+    let mut p = page(
+        "<!doctype html><html><head><style>
+          body { margin: 0; font: 14px/16px sans-serif }
+          #sc { height: 60px; overflow: auto; width: 300px }
+          #fx { position: fixed; left: 500px; top: 400px; width: 200px }
+          #v { writing-mode: vertical-rl; height: 120px; position: absolute; left: 600px; top: 10px }
+          .gen::before { content: 'gen '; }
+          td { padding: 3px }
+        </style></head><body>
+        <p id=p1>plain <span id=s1>span <b id=b1>bold</b> more</span> tail <a id=a1 href=#>link</a></p>
+        <div id=mix>loose text <div id=blk>block <i id=i1>child</i></div> after <em id=em>emphasis</em></div>
+        <table id=t><tr id=r1><td id=c1>one cell</td><td id=c2>two <span id=s2>cells</span></td></tr></table>
+        <p id=g class=gen>generated before</p>
+        <div id=sc><p id=sp1>scrolled one</p><p id=sp2>scrolled two</p><p id=sp3>scrolled three</p><p id=sp4>four</p></div>
+        <div id=fx>fixed <span id=fs>box</span></div>
+        <div id=v>vertical <span id=vs>text</span></div>
+        <div id=host><span id=sl>slotted text</span> light</div>
+        <div style=\"height:900px\"></div>
+        </body></html>",
+    );
+    let host = p.id("host");
+    let root = p.dom.attach_shadow(host, ShadowRootMode::Open).unwrap();
+    fill_shadow(&mut p, root, "<p id=inner>shadow words <slot></slot> end</p><div>more shadow</div>");
+    let sc = p.id("sc");
+    p.layout.set_scroll_top(&p.dom, sc, 20);
+    p.layout.window_scroll_to(&p.dom, None, Some(15));
+    let ids = [
+        "p1", "s1", "b1", "a1", "mix", "blk", "i1", "em", "t", "r1", "c1", "c2", "s2", "g", "sc", "sp2", "fx", "fs",
+        "v", "vs", "host", "sl",
+    ];
+    let mut els: Vec<NodeId> = ids.iter().map(|id| p.id(id)).collect();
+    els.push(p.dom.body(p.doc).unwrap().unwrap());
+    let points: Vec<(f64, f64)> =
+        (0..24).flat_map(|i| (0..16).map(move |j| (3.0 + i as f64 * 33.0, 2.0 + j as f64 * 37.0))).collect();
+    let carets = |p: &Page| -> Vec<Option<(NodeId, u32, bool)>> {
+        els.iter()
+            .flat_map(|&el| points.iter().map(move |&(x, y)| (el, x, y)))
+            .map(|(el, x, y)| p.layout.caret_from_point(&p.dom, el, x, y, &|_| true))
+            .collect()
+    };
+    // No document words read yet (nothing above reads them): the subtree's.
+    let subtree = carets(&p);
+    p.layout.text_result(&p.dom);
+    let document = carets(&p);
+    assert_eq!(subtree.len(), document.len());
+    let mut found = 0;
+    for (i, (a, b)) in subtree.iter().zip(&document).enumerate() {
+        let (el, (x, y)) = (els[i / points.len()], points[i % points.len()]);
+        assert_eq!(a, b, "caret in {} at ({x}, {y})", p.describe(Some(el)));
+        found += a.is_some() as usize;
+    }
+    assert!(found > points.len() * 4, "carets found: {found}");
+}
+
+/// A positioned inline element among block siblings: Blitz wraps the
+/// inline content in an anonymous block, which claims the absolutely
+/// positioned boxes the inline element contains. The descent (over DOM
+/// children) opens their paths from the anonymous blocks too, else a box
+/// placed outside its DOM parent's bound (a small block, a table row) is
+/// missed. Random page 103.
+#[test]
+fn out_of_flow_boxes_of_anonymous_blocks_match_the_scan() {
+    for (label, inner) in [
+        ("block in inline", "<div style=\"width:50px;height:20px\"><b id=x style=\"position:absolute;left:300px;top:250px;width:150px;height:90px;background:#123\">abs</b></div>"),
+        ("inline table", "<table style=\"display:inline;position:sticky;top:0\"><tr><td>c<td id=x style=\"position:absolute;left:300px;top:250px;width:150px;height:90px;background:#123\">abs</td></tr><tr><td><p style=\"width:200px;height:300px;margin:0;background:#34a\">tall</p></td></tr></table>"),
+    ] {
+        let p = page(&format!(
+            "<!doctype html><html><head><style>body {{ margin: 0; font: 13px/15px sans-serif }}</style></head><body>
+             <div>block sibling</div>text <span style=\"position:relative\">inline {inner}</span> after
+             <div style=\"height:900px\"></div></body></html>"
+        ));
+        let x = p.id("x");
+        assert_eq!(p.layout.element_from_point_scan(&p.dom, 320.0, 280.0), Some(x), "{label}: the scan hits it");
+        p.compare(label);
+    }
+}
+
+/// The glyph reach past the line boxes is measured once per line breaking
+/// (`TextLayout::hit_reach`) and relative to each line: aligning the lines
+/// again (text-align changed, the lines kept) or justifying them keeps the
+/// bound holding every run. Tight lines, hanging white space, rtl.
+#[test]
+fn realigned_lines_match_the_scan() {
+    let mut p = page(
+        "<!doctype html><html><head><style>
+          body { margin: 0; font: 14px/15px sans-serif }
+          .t { width: 260px; line-height: 3px; font-size: 22px; white-space: pre-wrap; margin: 40px 0 0 120px }
+        </style></head><body>
+        <div id=a class=t><span id=s1>lorem ipsum dolor sit amet</span>    <b id=s2>consectetur adipiscing</b> elit sed do    </div>
+        <div id=b class=t dir=rtl><span id=s3>amet dolor sit</span>   <i id=s4>ipsum lorem do</i> elit   </div>
+        <div style=\"height:900px\"></div></body></html>",
+    );
+    p.compare("start");
+    for align in ["center", "right", "justify", "left", "end", "justify;text-align-last:justify", "center"] {
+        for id in ["a", "b"] {
+            let el = p.id(id);
+            p.dom.set_attribute(el, "style", &format!("text-align:{align}")).unwrap();
+        }
+        p.compare(align);
+    }
 }

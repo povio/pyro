@@ -10,9 +10,10 @@
 //! paint order and the clips), each with its place in tree order.
 //!
 //! A subtree's bound is what Blitz keeps per box after layout: its border
-//! box and its scrollable overflow (the children's boxes and overflow it
-//! does not clip, transformed), grown by the document's inline hit margin
-//! (glyph content areas reaching past their line boxes). Boxes that escape
+//! box and its hit overflow (`Node::hit_overflow`: the children's boxes and
+//! hit overflow it does not clip, transformed, its lines and the glyph
+//! content areas reaching past them; unlike the scrollable overflow it keeps
+//! rects of no area, such as lines of `line-height: 0`). Boxes that escape
 //! it are reached another way:
 //!
 //! - out-of-flow boxes are listed by their containing block
@@ -87,8 +88,6 @@ struct Descent<'a> {
     offset: &'a dyn Fn(u64) -> (f64, f64),
     shifting: bool,
     scale: f64,
-    /// CSS px added around every bound.
-    margin: f64,
     transforms: FxHashMap<NodeId, (Affine, bool)>,
     /// Never culled: shift sources, their ancestors, and the paths opened
     /// to out-of-flow boxes under the point.
@@ -125,7 +124,6 @@ pub(crate) fn candidates(
         offset,
         shifting: !shifted.is_empty(),
         scale,
-        margin: doc.inline_hit_margin() / scale + EPS,
         transforms: FxHashMap::default(),
         no_cull: FxHashSet::default(),
         unions: FxHashMap::default(),
@@ -206,23 +204,22 @@ impl Descent<'_> {
         }
     }
 
-    /// Grows `r` by the margin, scaled for a transform `t` (a bound grown
+    /// Grows `r` by the tolerance, scaled for a transform `t` (a bound grown
     /// before the transform grows by at most the transform's norm).
     fn grown(&self, r: Rect, t: &Affine) -> Rect {
         let [a, b, c, d, _, _] = t.as_coeffs();
-        let m = self.margin * (a * a + b * b + c * c + d * d).sqrt().max(1.0);
+        let m = EPS * (a * a + b * b + c * c + d * d).sqrt().max(1.0);
         Rect::new(r.x0 - m, r.y0 - m, r.x1 + m, r.y1 + m)
     }
 
     /// The bound of an in-tree box `id` (document CSS px): its border box
-    /// and scrollable overflow, transformed and grown by the margin.
+    /// and hit overflow, transformed and grown by the tolerance.
     fn bound(&mut self, id: NodeId) -> Option<(Rect, bool)> {
         let (t, fixed) = self.transform(id)?;
         let l = self.doc.physical_unrounded_layout(id);
         let node = self.doc.get_node(id)?;
         let border = Rect::new(0.0, 0.0, l.size.width as f64, l.size.height as f64);
-        let overflow = node.scrollable_overflow().scale_from_origin(1.0 / self.scale);
-        let local = if overflow.width() > 0.0 && overflow.height() > 0.0 { border.union(overflow) } else { border };
+        let local = border.union(node.hit_overflow().scale_from_origin(1.0 / self.scale));
         Some((self.grown(t.transform_rect_bbox(local), &t), fixed))
     }
 
@@ -296,7 +293,15 @@ impl Descent<'_> {
         }
         // Out-of-flow boxes laid out by this node may lie outside its bound
         // (a fixed box below a short document's root): they open the path.
-        self.open_hoisted(id);
+        // So do those laid out by the anonymous blocks it wraps its inline
+        // children in (whose positioned inline element is their containing
+        // block, an anonymous block claims them), which the descent, going
+        // over DOM children, does not visit.
+        self.open_hoisted(id, id);
+        let anonymous: Vec<NodeId> = node.anonymous_blocks.to_vec();
+        for a in anonymous {
+            self.open_hoisted(a, id);
+        }
         let descend = match cull {
             Some(r) => self.no_cull.contains(&id) || self.contains_any(&r, shift),
             None => true,
@@ -319,11 +324,12 @@ impl Descent<'_> {
         }
     }
 
-    /// Out-of-flow boxes laid out by `id` (their containing block) whose
-    /// bound holds the point open their tree path: `id` and the nodes
-    /// between (whose own bounds may leave them out) are not culled.
-    fn open_hoisted(&mut self, id: NodeId) {
-        let Some(node) = self.doc.get_node(id) else { return };
+    /// Out-of-flow boxes laid out by `cb` (their containing block: `id`, or
+    /// an anonymous block of `id`'s) whose bound holds the point open their
+    /// tree path: the nodes between them and `id` (whose own bounds may
+    /// leave them out) are not culled.
+    fn open_hoisted(&mut self, cb: NodeId, id: NodeId) {
+        let Some(node) = self.doc.get_node(cb) else { return };
         let hoisted: Vec<NodeId> = node.hoisted_children.borrow().to_vec();
         for h in hoisted {
             if self.doc.get_node(h).is_none() || !self.g.in_layout_tree(self.doc, h) {
@@ -392,7 +398,7 @@ impl Descent<'_> {
 
     /// The bounds of the rows and row groups of table `id` (document CSS
     /// px): each row's cells' overflow contributions in the table, grown by
-    /// the collapsed-border gutters its cells' boxes get and the margin.
+    /// the collapsed-border gutters its cells' boxes get and the tolerance.
     fn enter_table(&mut self, id: NodeId) {
         let Some(node) = self.doc.get_node(id) else { return };
         if !node.flags.is_table_root() {
@@ -407,20 +413,20 @@ impl Descent<'_> {
             ctx.row_hit_extents(|rows, at| if at == scale { rows.to_vec() } else { Vec::new() });
         if extents.len() != ctx.rows.len() {
             // The transform pass keeps no per-row union for this table: the
-            // cells' contributions, as that pass computes them.
+            // cells' hit contributions, as that pass computes them.
             extents = vec![Rect::ZERO; ctx.rows.len()];
             for cell in &ctx.cells {
                 let Some(node) = doc.get_node(cell.node_id) else { continue };
                 let l = doc.physical_unrounded_layout(cell.node_id);
-                let contribution = doc.overflow_contribution(cell.node_id, *node.scrollable_overflow(), l.size, scale);
+                let contribution = doc.overflow_contribution(cell.node_id, *node.hit_overflow(), l.size, scale);
                 let mut full = Affine::translate((l.location.x as f64 * scale, l.location.y as f64 * scale));
                 if let Some(t) = node.transform().as_deref() {
                     full *= *t;
                 }
                 let r = full.transform_rect_bbox(contribution);
-                if r.width() > 0.0 && r.height() > 0.0 {
+                if r.width() > 0.0 || r.height() > 0.0 {
                     if let Some(e) = extents.get_mut(cell.row as usize) {
-                        *e = if e.width() > 0.0 && e.height() > 0.0 { e.union(r) } else { r };
+                        *e = if e.width() > 0.0 || e.height() > 0.0 { e.union(r) } else { r };
                     }
                 }
             }

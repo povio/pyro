@@ -323,6 +323,17 @@ impl Node {
         &mut self.layout_data_mut().scrollable_overflow
     }
 
+    /// lightningpanda: see `LayoutData::hit_overflow`.
+    #[inline]
+    pub fn hit_overflow(&self) -> &KurboRect {
+        &self.layout_data().hit_overflow
+    }
+
+    #[inline]
+    pub fn hit_overflow_mut(&mut self) -> &mut KurboRect {
+        &mut self.layout_data_mut().hit_overflow
+    }
+
     /// Style data from stylo, if this node kind carries it (element or document
     /// nodes). Returns `None` for text/comment nodes.
     #[inline]

@@ -159,6 +159,13 @@ pub trait GeometrySource {
     fn text_words(&self) -> Option<Vec<(u64, ExternalWord)>> {
         None
     }
+    /// [`GeometrySource::text_words`] for the text nodes below the element
+    /// `key` (more words may come; the caller filters), as of the last sync,
+    /// in the same order (`None`: the engine reads no part of the document
+    /// alone, or `key` is not one of its nodes).
+    fn subtree_words(&self, _key: u64) -> Option<Vec<(u64, ExternalWord)>> {
+        None
+    }
     /// The `position: sticky` elements as of the last sync, with their
     /// inputs: [`ExternalGeometry::sticky`] without the boxes.
     fn sticky_elements(&self) -> Vec<(u64, ExternalSticky)> {

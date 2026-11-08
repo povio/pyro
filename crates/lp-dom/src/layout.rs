@@ -37,10 +37,13 @@ pub use crate::geometry::{
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum ClipEscape {
     None,
-    /// `position: fixed`: no ancestor clips (the viewport contains it).
+    /// `position: fixed`: no ancestor clips up to the nearest one that is
+    /// a fixed containing block (a transform, filter, `contain: paint`, ...;
+    /// `ComputedStyle::contains_fixed`), if any.
     Viewport,
-    /// `position: absolute`: non-positioned ancestors do not clip, up to the
-    /// nearest positioned one.
+    /// `position: absolute`: no ancestor clips up to the nearest containing
+    /// block (positioned, or a fixed containing block;
+    /// `ComputedStyle::contains_absolute`).
     Positioned,
 }
 /// Geometry memoization is confined to one synchronous hit test. Input
@@ -329,6 +332,25 @@ impl Layout {
         }
         *self.text.borrow_mut() = Some((key, result.clone()));
         result
+    }
+
+    /// The words of the text nodes below `within` (with others), for one
+    /// query: the document's when they are read already since the last
+    /// change ([`Self::text_result`]), else only those of the inline
+    /// formatting contexts in and around `within`
+    /// ([`GeometrySource::subtree_words`]).
+    fn text_result_within(&self, dom: &Dom, within: NodeId) -> Rc<TextResult> {
+        let Some(source) = self.synced_geometry_source(dom) else { return Rc::default() };
+        let key = self.syncs.get();
+        if let Some((k, r)) = self.text.borrow().as_ref() {
+            if *k == key {
+                return r.clone();
+            }
+        }
+        match source.subtree_words(crate::snapshot::render_key(within)) {
+            Some(words) => Rc::new(TextResult::from_words(dom, words)),
+            None => self.text_result(dom),
+        }
     }
 
     /// The `position: sticky` elements' inputs, read again when the DOM,
@@ -764,7 +786,7 @@ impl Layout {
         y: f64,
         selectable: &dyn Fn(NodeId) -> bool,
     ) -> Option<(NodeId, u32, bool)> {
-        let result = self.text_result(dom);
+        let result = self.text_result_within(dom, within);
         let sticky = self.sticky_map(dom);
         let (wx, wy) = (self.window_scroll.0 as f64, self.window_scroll.1 as f64);
         let mut best: Option<((f64, f64), u32, NodeId, f64)> = None;
@@ -815,10 +837,12 @@ impl Layout {
     /// Whether an overflow-clipping ancestor of `node` clips it, as `out`
     /// decides for each one that applies (its clipped axes given). An
     /// out-of-flow box escapes the clips between it and its containing
-    /// block (CSS 2.1 10.1): every ancestor for `position: fixed` (the
-    /// viewport; transforms are not laid out), the non-positioned ones below
-    /// the nearest positioned ancestor for `position: absolute`. In-flow
-    /// content escapes with its out-of-flow ancestors.
+    /// block (CSS 2.1 10.1, CSS Transforms 1 3): for `position: fixed`, every
+    /// ancestor below the nearest one that a transform, filter, containment
+    /// (...) makes its containing block, if any, else the viewport; for
+    /// `position: absolute`, every ancestor below the nearest positioned one
+    /// or such a one. Blitz lays them out in the same containing blocks. In-
+    /// flow content escapes with its out-of-flow ancestors.
     fn clipped_by_ancestor(&self, dom: &Dom, node: NodeId, mut out: impl FnMut(NodeId, ScrollAxes) -> bool) -> bool {
         self.for_each_clip(dom, node, &mut out)
     }
@@ -853,19 +877,18 @@ impl Layout {
                 cur = dom.parent_element(a).ok().flatten();
                 continue;
             }
-            let positioned = c.position.is_positioned();
+            // The containing block of the out-of-flow box escaping: its clip
+            // applies, and above it the escape is its own.
             let applies = match escape {
                 ClipEscape::None => true,
-                ClipEscape::Viewport => false,
-                ClipEscape::Positioned => positioned,
+                ClipEscape::Viewport => c.contains_fixed,
+                ClipEscape::Positioned => c.contains_absolute,
             };
             if applies {
                 let clips = ScrollAxes { x: c.overflow_x_clips, y: c.overflow_y_clips };
                 if (clips.x || clips.y) && out(a, clips) {
                     return true;
                 }
-            }
-            if escape == ClipEscape::None || (escape == ClipEscape::Positioned && positioned) {
                 escape = self.clip_escape(dom, a);
             }
             cur = dom.parent_element(a).ok().flatten();
@@ -874,7 +897,7 @@ impl Layout {
     }
 
     /// Which overflow clips above `el` do not apply to it, from its
-    /// `position`.
+    /// `position` (the containing blocks are found by `for_each_clip`).
     fn clip_escape(&self, dom: &Dom, el: NodeId) -> ClipEscape {
         if dom.node_type(el).ok() != Some(crate::node::NodeType::Element) {
             return ClipEscape::None;

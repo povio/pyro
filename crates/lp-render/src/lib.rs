@@ -1241,6 +1241,16 @@ impl Renderer {
         Some(g.text_words(&m.doc).into_iter().filter_map(|w| Some((m.key_of(w.node)?, w))).collect())
     }
 
+    /// [`Renderer::page_words`] for the text nodes below the element `key`
+    /// (with others: see `Geometry::subtree_words`), reading only the inline
+    /// formatting contexts in and around it. `None`: not a node of the page.
+    pub fn subtree_words(&self, page: u64, key: u64) -> Option<Vec<(u64, TextWord)>> {
+        let m = self.mirrors.get(&page)?;
+        let g = self.geometry.get(&page)?;
+        let within = m.node(key)?;
+        Some(g.subtree_words(&m.doc, within).into_iter().filter_map(|w| Some((m.key_of(w.node)?, w))).collect())
+    }
+
     /// The `position: sticky` elements of `page`'s persistent document as
     /// last synced (by key, with their sticky inputs): the set Blitz's style
     /// traversal keeps, not a pass over the document.
