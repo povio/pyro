@@ -685,6 +685,11 @@ impl JsClass for ComputedStyle {
     type Parent = NoParent;
     fn define(def: &mut ClassDef<Self>) {
         def.not_exposed();
+        // About 1,600 attributes, defined on the realm's first
+        // `getComputedStyle`: as JIT-called DOM getters (JavaScriptCore
+        // interns each by a linear search) they cost each realm ~1.5 ms;
+        // a read's cost is the style lookup, not the call.
+        def.attributes_without_jit_getters();
         // Every property, by its dashed name and its IDL attribute names, as
         // attributes of the prototype (CSSOM `CSSStyleDeclaration`). No named
         // property hook: a class with one sends every property read through

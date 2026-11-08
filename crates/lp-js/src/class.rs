@@ -203,6 +203,8 @@ pub struct ClassDef<C: JsClass> {
     pub(crate) callback_interface: bool,
     /// See [`ClassDef::named_properties_are_announced`].
     pub(crate) announced_names: bool,
+    /// See [`ClassDef::attributes_without_jit_getters`].
+    pub(crate) jit_getters: bool,
     pub(crate) hooks: PropertyHooks,
     pub(crate) exposed: bool,
     pub(crate) indexed_iterable: bool,
@@ -273,6 +275,7 @@ impl<C: JsClass> ClassDef<C> {
             legacy_factories: Vec::new(),
             callback_interface: false,
             announced_names: false,
+            jit_getters: true,
             hooks: PropertyHooks::default(),
             exposed: true,
             indexed_iterable: false,
@@ -555,6 +558,19 @@ impl<C: JsClass> ClassDef<C> {
         self
     }
 
+    /// Installs this class's pure attributes as plain custom accessors, not
+    /// as DOM attributes the JITs call directly (`JSObjectSetFastGetter`).
+    /// Reads stay inline-cached and dispatch the same way; compiled code
+    /// calls the getter through the custom accessor instead. For a class
+    /// with hundreds of attributes whose getters cost far more than the call
+    /// (`CSSStyleDeclaration` of `getComputedStyle`): JavaScriptCore interns
+    /// each fast getter by a linear search of every one the process made, so
+    /// defining hundreds of them on each realm's first use cost milliseconds.
+    pub fn attributes_without_jit_getters(&mut self) -> &mut Self {
+        self.jit_getters = false;
+        self
+    }
+
     pub fn legacy_callback_interface(&mut self) -> &mut Self {
         self.callback_interface = true;
         self
@@ -804,6 +820,7 @@ pub(crate) struct ClassDefErased {
     pub ctor_length: u32,
     pub legacy_factories: Vec<MethodSpec>,
     pub announced_names: bool,
+    pub jit_getters: bool,
     pub hooks: PropertyHooks,
     pub exposed: bool,
     pub indexed_iterable: bool,
@@ -998,6 +1015,7 @@ pub(crate) fn register<C: JsClass>(engine: &EngineInner) -> ClassId {
             ctor_length: def.ctor_length,
             legacy_factories: def.legacy_factories,
             announced_names: def.announced_names,
+            jit_getters: def.jit_getters,
             hooks: def.hooks,
             exposed: def.exposed,
             indexed_iterable: def.indexed_iterable,

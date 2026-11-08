@@ -2451,7 +2451,7 @@ fn install_members_raw(
     part: MemberPart,
 ) -> JsResult<()> {
     // Copied out so no registry borrow spans calls into JavaScript.
-    let (methods, accessors, constants, statics, iterable, on_global) = {
+    let (methods, accessors, constants, statics, iterable, on_global, jit_getters) = {
         let reg = engine.classes.borrow();
         let d = &reg.classes.get(id as usize).ok_or(JsError::Type("unknown class".into()))?.def;
         // Members of the global's class chain run on the global, which is not
@@ -2478,6 +2478,7 @@ fn install_members_raw(
                 None
             },
             on_global,
+            d.jit_getters,
         )
     };
     // SAFETY (all raw constructors below): ctx is the live callback/scope context.
@@ -2530,19 +2531,23 @@ fn install_members_raw(
             // A custom accessor: inline caches call the getter directly
             // (`crate::accessors`); enumerable and configurable like the
             // ordinary form below.
-            let n = JsString::new(name);
+            // The thread's string for the static name: no string made and
+            // released per member and realm.
+            let n = crate::string::atom_raw(name);
             let setter = set.map(|_| crate::accessors::SETTERS[usize::from(slot)]);
             let getter = Some(crate::accessors::GETTERS[usize::from(slot)]);
             // A pure getter is a DOM attribute to the JITs, which then call
             // it with the receiver proven a wrapper (`fast_getter_dispatch`).
             // A global's pure getter keeps the custom accessor, whose
-            // dispatch takes the lean path for the global's payload.
+            // dispatch takes the lean path for the global's payload, as does
+            // one of a class that asked for that
+            // (`ClassDef::attributes_without_jit_getters`).
             let ok = match (crate::accessors::pure_result(slot), sys::spi::get().set_fast_getter) {
-                (Some(result), Some(fast)) if !on_global => unsafe {
+                (Some(result), Some(fast)) if !on_global && jit_getters => unsafe {
                     fast(
                         ctx,
                         holder,
-                        n.as_raw(),
+                        n,
                         getter,
                         setter,
                         attributes,
@@ -2552,7 +2557,7 @@ fn install_members_raw(
                         true,
                     )
                 },
-                _ => unsafe { install(ctx, holder, n.as_raw(), getter, setter, attributes) },
+                _ => unsafe { install(ctx, holder, n, getter, setter, attributes) },
             };
             if ok {
                 continue;
