@@ -105,16 +105,6 @@ pub fn render_key(id: NodeId) -> u64 {
     ((id.generation() as u64) << 32) | id.index() as u64
 }
 
-/// The node [`render_key`] stands for, while it lives in `dom` (`None` for
-/// a synthetic text key or a collected node).
-pub fn node_of_render_key(dom: &Dom, key: u64) -> Option<NodeId> {
-    if key & SYNTHETIC_TEXT != 0 {
-        return None;
-    }
-    let id = NodeId { idx: key as u32, gen: (key >> 32) as u32 };
-    dom.check(id).ok().map(|_| id)
-}
-
 /// Tree scope of a node being serialized: index into the shadow hosts
 /// entered so far, `NONE` for the document.
 type Scope = usize;

@@ -24,20 +24,6 @@ pub enum BoxPosition {
     Sticky,
 }
 
-/// Where an element stands in the rendered (flat) tree, from the styles the
-/// layout engine keeps ([`GeometrySource::element_display`]).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ElementDisplay {
-    /// Outside every `display: none` subtree.
-    Displayed,
-    /// Hidden only by a closed `<details>`'s content or a
-    /// `hidden=until-found` element: Blitz styles those `display: none`,
-    /// Chrome `content-visibility: hidden`, which keeps the styles inside.
-    ContentHidden,
-    /// In a `display: none` subtree.
-    Hidden,
-}
-
 /// Sides of a box: top, right, bottom, left.
 pub const TOP: usize = 0;
 pub const RIGHT: usize = 1;
@@ -229,29 +215,11 @@ pub trait GeometrySource {
     fn element_style(&self, _key: u64) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
         None
     }
-    /// From now on (or no longer) the engine notes the elements whose
-    /// computed style a sync replaces, for
-    /// [`GeometrySource::take_style_changes`].
-    fn record_style_changes(&self, _on: bool) {}
-    /// The elements (by key) whose computed style the syncs replaced or
-    /// first computed since the last call, each with whether the element
-    /// had a style before (`false`: it was not rendered before) and whether
-    /// it is styled `display: none` now. `None`: unknown, every element may
-    /// have (not recording, or the engine's document was built anew since).
-    fn take_style_changes(&self) -> Option<Vec<(u64, bool, bool)>> {
-        None
-    }
     /// Whether the element is outside every `display: none` subtree of the
     /// rendered tree, from the styles the engine keeps as of the last style
     /// sync (`None`: the engine cannot tell, and the derived
     /// [`crate::style::ComputedStyle`] answers).
     fn element_displayed(&self, _key: u64) -> Option<bool> {
-        None
-    }
-    /// [`Self::element_displayed`], telling apart the content Chrome hides
-    /// with `content-visibility: hidden` (closed `<details>`,
-    /// `hidden=until-found`); `None`: the engine cannot tell.
-    fn element_display(&self, _key: u64) -> Option<ElementDisplay> {
         None
     }
     /// The computed style of one element's pseudo-element `pseudo`

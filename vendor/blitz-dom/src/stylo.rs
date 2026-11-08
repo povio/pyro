@@ -186,7 +186,7 @@ impl crate::document::BaseDocument {
         let mut nodes_needing_style_image_flush = Vec::new();
         if token.should_traverse() {
             // Style the elements, resolving their data
-            let mut traverser = RecalcStyle::new(context, self.record_style_changes);
+            let mut traverser = RecalcStyle::new(context);
             // `Sequential` bypasses Stylo's global pool. See `StyleThreading`.
             let parallel = matches!(self.style_threading, StyleThreading::Parallel);
             let _traversal_lock = parallel.then(|| {
@@ -205,18 +205,6 @@ impl crate::document::BaseDocument {
             // `::before` / `::after`, never cleared.
             if traverser.generated_before_after.into_inner() {
                 self.generated_before_after = true;
-            }
-            if let Some(changes) = traverser.style_changes {
-                /// Past this many entries the journal is dropped: its reader
-                /// looks at every element instead (`take_style_changes`).
-                const MOST: usize = 1 << 16;
-                let changes = changes.into_inner().unwrap_or_else(|e| e.into_inner());
-                if self.style_changes.len() + changes.len() > MOST {
-                    self.style_changes.clear();
-                    self.style_changes_lost = true;
-                } else if !self.style_changes_lost {
-                    self.style_changes.extend(changes);
-                }
             }
         }
         // lightningpanda: restyled nodes that stopped being sticky, and
@@ -290,39 +278,6 @@ impl crate::document::BaseDocument {
     /// for every element (it may stay `true` after they are gone).
     pub fn may_have_generated_before_after(&self) -> bool {
         self.generated_before_after
-    }
-
-    /// lightningpanda: from now on (or no longer) the style traversals note
-    /// the elements whose primary style they replace or first compute, for
-    /// [`Self::take_style_changes`]. Styles computed before this was turned
-    /// on are not covered: the first take answers `None`.
-    pub fn set_record_style_changes(&mut self, on: bool) {
-        self.record_style_changes = on;
-        if !on {
-            self.style_changes.clear();
-            self.style_changes_lost = true;
-        }
-    }
-
-    /// lightningpanda: the elements whose primary style the traversals
-    /// replaced or first computed since the last call, each with whether
-    /// it had a primary style before (`false`: it was not rendered before,
-    /// as an element just inserted or whose ancestor stopped being
-    /// `display: none`). Not recorded: pseudo-element styles, and the styles
-    /// [`Self::resolve_undisplayed_style`] resolves on demand under
-    /// `display: none`. `None` when the journal does not cover every style
-    /// since the last call (not recording; a new document; recording turned
-    /// on after styles existed; an overflow): every element may have changed.
-    pub fn take_style_changes(&mut self) -> Option<Vec<(NodeId, bool)>> {
-        if !self.record_style_changes {
-            return None;
-        }
-        if self.style_changes_lost {
-            self.style_changes_lost = false;
-            self.style_changes.clear();
-            return None;
-        }
-        Some(std::mem::take(&mut self.style_changes))
     }
 
     /// lightningpanda: the style `getComputedStyle(element, pseudo)` reads
@@ -1672,22 +1627,15 @@ pub struct RecalcStyle<'a> {
     /// lightningpanda: elements styled `position: sticky` in this traversal
     /// (`BaseDocument::sticky_nodes`).
     sticky_nodes: Mutex<Vec<NodeId>>,
-    /// lightningpanda: the elements whose primary style this traversal
-    /// replaced or first computed, with whether they had one before
-    /// (`BaseDocument::style_changes`); `None` while nothing records them.
-    style_changes: Option<Mutex<Vec<(NodeId, bool)>>>,
 }
 
 impl<'a> RecalcStyle<'a> {
-    /// A traversal; `record_style_changes`: note the elements whose primary
-    /// style it replaces (`BaseDocument::take_style_changes`).
-    pub fn new(context: SharedStyleContext<'a>, record_style_changes: bool) -> Self {
+    pub fn new(context: SharedStyleContext<'a>) -> Self {
         RecalcStyle {
             context,
             nodes_needing_style_image_flush: Mutex::new(Vec::new()),
             generated_before_after: std::sync::atomic::AtomicBool::new(false),
             sticky_nodes: Mutex::new(Vec::new()),
-            style_changes: record_style_changes.then(|| Mutex::new(Vec::new())),
         }
     }
 }
@@ -1875,14 +1823,6 @@ impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
                 (None, None) => false,
                 _ => true,
             };
-            // lightningpanda: the journal of replaced styles (a transition's before-change style
-            // is the one it replaced; an element styled afresh was not rendered before).
-            if let (true, Some(changes)) = (replaced, &self.style_changes) {
-                changes
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .push((el.id, old_primary.is_some()));
-            }
             // Stylo diffs the old and new style into `data.damage` (nothing when there was no old
             // style, so a first style is always derived). A replacement without layout damage
             // (colour, background, :hover, a class that changes only paint) leaves the derived
