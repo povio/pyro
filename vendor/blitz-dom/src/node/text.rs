@@ -45,11 +45,37 @@ pub struct TextLayout {
     /// `final_layout`. Paint draws text from the unrounded origin so that it keeps its sub-pixel
     /// position while box edges stay snapped. Set by the `writing-mode` layout pass; zero otherwise.
     pub content_box_subpixel_offset: taffy::Point<f32>,
+    /// lightningpanda: the min-content and max-content widths of the shaped text, part of the
+    /// build (`build_inline_layout_into`) when no in-flow inline box takes part in them (each
+    /// layout sizes those). With no text indent they are the layout's content widths
+    /// (`Layout::calculate_content_widths`, which walks every cluster): every width the text is
+    /// measured or laid out at reads them instead.
+    pub text_content_widths: Option<parley::layout::ContentWidths>,
 }
 
 impl TextLayout {
     pub fn new() -> Self {
         Default::default()
+    }
+
+    /// The layout's content widths with a text indent of `indent` set on it.
+    pub fn content_widths(&self, indent: f32) -> parley::layout::ContentWidths {
+        match self.text_content_widths {
+            Some(widths) if indent == 0.0 => {
+                // What the layout computes must be what the build kept.
+                #[cfg(debug_assertions)]
+                {
+                    let same = |a: f32, b: f32| a == b || (a.is_nan() && b.is_nan());
+                    let now = self.layout.calculate_content_widths();
+                    debug_assert!(
+                        same(widths.min, now.min) && same(widths.max, now.max),
+                        "content widths kept with the shaped text ({widths:?}) differ from the layout's ({now:?})"
+                    );
+                }
+                widths
+            }
+            _ => self.layout.calculate_content_widths(),
+        }
     }
 }
 

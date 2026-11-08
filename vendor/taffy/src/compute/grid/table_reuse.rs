@@ -21,7 +21,8 @@ use super::types::{CellOccupancyMatrix, GridItem, GridTrack, GridTrackKind, Name
 use super::GridContainerConstants;
 use crate::geometry::{AbsoluteAxis, InBothAbsAxis};
 use crate::style::{AlignItems, GridAutoFlow};
-use crate::tree::{LayoutInput, NodeId};
+use crate::geometry::Size;
+use crate::tree::{LayoutInput, LayoutOutput, NodeId};
 use crate::util::sys::{Box, GridTrackVec, Vec};
 use crate::{BoxGenerationMode, CoreStyle, GridItemStyle, LayoutGridContainer};
 
@@ -31,6 +32,8 @@ use crate::{BoxGenerationMode, CoreStyle, GridItemStyle, LayoutGridContainer};
 pub struct TableGridState {
     pub(super) inputs: LayoutInput,
     pub(super) constants: GridContainerConstants,
+    /// What the layout computed for the grid itself, for a layout that stands as it is (`stands`)
+    pub(super) output: LayoutOutput,
     pub(super) col_counts: TrackCounts,
     pub(super) row_counts: TrackCounts,
     /// The columns as finally sized and aligned
@@ -43,12 +46,20 @@ pub struct TableGridState {
     pub(super) positioned: Vec<PositionedItem>,
     /// Whether this layout was itself laid out again from the last one
     pub(super) laid_out_again: bool,
+    /// Whether this layout stood as it was for the latest layout of the grid (`stands`): nothing was
+    /// laid out
+    pub(super) stood: bool,
 }
 
 impl TableGridState {
     /// Whether this layout was laid out again from the one before (rather than the whole grid)
     pub fn laid_out_again(&self) -> bool {
         self.laid_out_again
+    }
+
+    /// Whether the grid's latest layout kept this one as it was, laying out nothing
+    pub fn stood(&self) -> bool {
+        self.stood
     }
 }
 
@@ -107,6 +118,72 @@ fn same_sizing(a: &GridTrack, b: &GridTrack) -> bool {
         && a.max_track_sizing_function == b.max_track_sizing_function
 }
 
+/// Whether two layout inputs differ at most in the available width and the parent's width. A table
+/// grid's columns are fixed tracks (the state is recorded for no other), which neither sizes; what
+/// of the grid's own style resolves against the parent's width is in its `GridContainerConstants`,
+/// compared besides.
+fn same_but_for_available_width(a: &LayoutInput, b: &LayoutInput) -> bool {
+    LayoutInput {
+        available_space: Size { width: b.available_space.width, height: a.available_space.height },
+        parent_size: Size { width: b.parent_size.width, height: a.parent_size.height },
+        ..*a
+    } == *b
+}
+
+impl GridContainerConstants {
+    /// Whether the constants differ at most in the available grid width (see
+    /// [`same_but_for_available_width`]).
+    fn same_but_for_available_width(&self, other: &Self) -> bool {
+        Self {
+            available_grid_space: Size {
+                width: other.available_grid_space.width,
+                height: self.available_grid_space.height,
+            },
+            ..*self
+        } == *other
+    }
+}
+
+/// lightningpanda: whether `reuse.state` is the layout at `inputs` as it is: nothing changed since it
+/// was laid out (no item, no row replaced or appended, the same tracks) and the inputs differ at most
+/// in the available width (and the parent's width, where the grid's own style resolves nothing against
+/// it). A shrink-to-fit table in a container that got wider or narrower, but not past the table's
+/// width, was laid out again cell by cell for the same result.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn stands<Tree: LayoutGridContainer>(
+    reuse: &TableGridReuse,
+    style: &Tree::GridContainerStyle<'_>,
+    inputs: &LayoutInput,
+    constants: &GridContainerConstants,
+    child_count: usize,
+    explicit_col_count: u16,
+    explicit_row_count: u16,
+    col_auto_repetition_count: u16,
+    row_auto_repetition_count: u16,
+) -> bool {
+    let state = &*reuse.state;
+    if !reuse.changed.is_empty() || reuse.splice.is_some() || child_count != state.items.len() {
+        return false;
+    }
+    if !same_but_for_available_width(&state.inputs, inputs) || !constants.same_but_for_available_width(&state.constants)
+    {
+        return false;
+    }
+    let col_counts = TrackCounts::from_raw(0, explicit_col_count, 0);
+    let row_counts = TrackCounts::from_raw(0, explicit_row_count, 0);
+    if state.col_counts != col_counts || state.row_counts != row_counts {
+        return false;
+    }
+    let mut columns = GridTrackVec::new();
+    initialize_grid_tracks(&mut columns, col_counts, style, AbsoluteAxis::Horizontal, col_auto_repetition_count, |_| true);
+    let mut rows = GridTrackVec::new();
+    initialize_grid_tracks(&mut rows, row_counts, style, AbsoluteAxis::Vertical, row_auto_repetition_count, |_| true);
+    columns.len() == state.columns.len()
+        && columns.iter().zip(&state.columns).all(|(a, b)| same_sizing(a, b))
+        && rows.len() == state.rows_sized.len()
+        && rows.iter().zip(&state.rows_sized).all(|(a, b)| same_sizing(a, b))
+}
+
 /// The grid of `state` brought up to date with the grid's style and children, or `None` if it can't be
 /// (its inputs, its columns or its explicit grid changed, or children were removed).
 #[allow(clippy::too_many_arguments)]
@@ -129,7 +206,9 @@ pub(super) fn prepare<Tree: LayoutGridContainer>(
 ) -> Option<Replay> {
     let TableGridReuse { state, changed: changed_indices, splice } = reuse;
     let state = *state;
-    if state.inputs != inputs || state.constants != constants {
+    // (The available width sizes no fixed column: see `same_but_for_available_width`.)
+    if !same_but_for_available_width(&state.inputs, &inputs) || !constants.same_but_for_available_width(&state.constants)
+    {
         return None;
     }
     let old_len = state.items.len();

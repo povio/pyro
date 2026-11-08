@@ -348,6 +348,36 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
     // skipped (see `LayoutGridContainer::track_counts`).
     let tree_extent = tree.track_counts(node);
     let child_count = tree.child_count(node);
+    // lightningpanda: nothing changed since the table's last layout and the inputs differ at most in
+    // the available width (its container got wider or narrower, the table not): that layout stands.
+    let reuse = match reuse {
+        Some(reuse)
+            if table_reuse::stands::<Tree>(
+                &reuse,
+                &style,
+                &inputs,
+                &constants,
+                child_count,
+                explicit_col_count,
+                explicit_row_count,
+                col_auto_repetition_count,
+                row_auto_repetition_count,
+            ) =>
+        {
+            drop(name_resolver);
+            drop(grid_template_rows);
+            drop(grid_template_columns);
+            drop(grid_auto_rows);
+            drop(grid_auto_columns);
+            drop(style);
+            let mut state = reuse.state;
+            state.stood = true;
+            let output = state.output.clone();
+            tree.store_table_grid_state(node, state);
+            return output;
+        }
+        reuse => reuse,
+    };
     let mut replay = reuse.and_then(|reuse| {
         table_reuse::prepare(
             tree,
@@ -1181,6 +1211,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
             Box::new(TableGridState {
                 inputs,
                 constants,
+                output: output.clone(),
                 col_counts: final_col_counts,
                 row_counts: final_row_counts,
                 columns,
@@ -1189,6 +1220,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
                 items,
                 positioned,
                 laid_out_again: replay.is_some(),
+                stood: false,
             }),
         );
     }

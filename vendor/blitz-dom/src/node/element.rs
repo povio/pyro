@@ -143,8 +143,8 @@ pub struct LayoutData {
     pub final_layout: Layout,
     pub scroll_offset: crate::Point<f64>,
     pub scrollable_overflow: KurboRect,
-    /// The unrounded layout and absolute offset the final layout was last rounded from
-    /// (incremental rounding: `RoundTree::rounded_unchanged`).
+    /// The unrounded layout and the fractional part of the parent's absolute position the final
+    /// layout was last rounded from (incremental rounding: `RoundTree::rounded_unchanged`).
     pub rounded_from: Option<(Layout, f32, f32)>,
     /// lightningpanda: the half collapsed borders of a cell in a table without uniform ones (top,
     /// right, bottom, left; see `CollapsedEdges`).

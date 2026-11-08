@@ -74,13 +74,20 @@ without the feature. Taffy's side is unchanged, as is `UPSTREAM.patch`. A subtre
   chain (`Node::update_unrounded_layout`, the only writer). Inline layout used to write these layouts
   directly, so an inline-block or float could move, beside a resizing float, inside a box with no damage;
 - the same `LayoutData::rounded_from` key: the root's *physical* unrounded layout (a `vertical-rl` box's x
-  depends on its placer's width) and absolute offset. A box that only moved is marked on its ancestors, not
-  itself (`Node::update_unrounded_layout`): the key's location tells its rounding to follow the move.
+  depends on its placer's width) and the fractional part of its parent's absolute position. A box that only
+  moved is marked on its ancestors, not itself (`Node::update_unrounded_layout`): the key's location tells
+  its rounding to follow the move, and a subtree moved by whole pixels (the rows below a table cell that
+  grew by a line) is skipped whole: `writing_mode::rounded_layout` rounds positions relative to the pixel
+  grid (`parent_frac + location`, rounded half up, less the parent's `parent_frac` rounded), never seeing
+  the whole pixels, so moving a parent by them changes nothing it computes. Half up (`-2.5` to `-2`, as
+  Blink's `LayoutUnit::Round`) is the rounding that moves with the grid; `f32::round` (half away from
+  zero) is not across zero. Taffy's `round_layout` still rounds the cumulative positions and passes them to
+  the hooks, whose arguments blitz-dom reads as the fractional parts.
 
 Debug builds round the whole tree again after each pass and assert that it matches
 (`assert_rounding_is_current`), so every test checks the skip. `rounding_skips_what_a_change_did_not_touch`
-in `crates/lp-render/tests/mirror.rs` fails if the skip stops firing; `LP.geometryStats` reports
-`roundedNodes` and `roundingSkips`.
+and `rounding_skips_subtrees_moved_by_whole_pixels` in `crates/lp-render/tests/mirror.rs` fail if the skips
+stop firing; `LP.geometryStats` reports `roundedNodes` and `roundingSkips`.
 
 `compute/mod.rs`: `compute_root_layout_in` takes an initial containing block of another size than the root's available space (print: Blink's rounds down, the page area up).
 
@@ -120,6 +127,15 @@ baseline-aligned item, no item spanning rows or with out-of-flow descendants bub
 sizing. Otherwise, or with other inputs, the grid is laid out whole. blitz-dom's tables use it (see "Incremental
 tables" in `vendor/blitz-dom/README.lightningpanda.md`). `crates/lp-render/tests/mirror.rs` checks replayed layouts
 against fresh builds (`table_*_match_fresh_builds`) and that edits, appends, removals and inserts replay (`a_cell_edit_collects_only_its_row`).
+
+The inputs may differ in the available width and the parent's width (`same_but_for_available_width`, on the
+`LayoutInput` and on the constants but for `available_grid_space.width`): the columns a state is recorded with are
+fixed tracks, which neither sizes, and whatever of the grid's own style resolves against the parent's width is in
+the constants, which must agree. With nothing changed besides (no changed item, no splice, no item appended, the
+same tracks), the last layout stands (`table_reuse::stands`): `compute_grid_layout` gives back its `LayoutOutput`,
+kept in the state, and stores the state again marked `stood` (blitz-dom counts no layout for it). A shrink-to-fit
+table in a container that got wider or narrower, but not past the table's own width, was laid out whole, cell by
+cell, for the same result (`tables_keep_their_layout_when_only_the_available_width_changes` in `mirror.rs`).
 
 ## The grid's min-content re-check
 

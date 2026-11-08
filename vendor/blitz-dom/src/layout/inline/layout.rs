@@ -626,22 +626,19 @@ impl LayoutPassState<'_> {
             hanging: text_indent.hanging,
         };
         // Percentage indents do not contribute to intrinsic widths.
-        inline_layout.layout.set_text_indent(
-            text_indent.length.resolve(CSSPixelLength::new(0.0)).px() * scale,
-            indent_options,
-        );
+        let intrinsic_indent = text_indent.length.resolve(CSSPixelLength::new(0.0)).px() * scale;
+        inline_layout.layout.set_text_indent(intrinsic_indent, indent_options);
 
         let pbw = container_pb.horizontal_components().sum() * scale;
         let width = known_dimensions
             .width
             .map(|w| (w * scale) - pbw)
             .unwrap_or_else(|| {
-                // TODO: Cache content widths.
-                //
-                // This is a little tricky as the size of the inline boxes may depend on whether we are sizing under
-                // and a min-content or max-content constraint. So if we want to compute both widths in one pass then
-                // we need to store both a min-content and max-content size on each box.
-                let content_sizes = inline_layout.layout.calculate_content_widths();
+                // lightningpanda: the content widths of a layout without in-flow inline boxes are
+                // kept with its shaped text (`TextLayout::content_widths`); with inline boxes, whose
+                // sizes depend on whether this measures under a min-content or max-content
+                // constraint, they are measured here.
+                let content_sizes = inline_layout.content_widths(intrinsic_indent);
                 let min_content_width = content_sizes.min;
                 let max_content_width = content_sizes.max;
 
@@ -811,7 +808,7 @@ impl LayoutPassState<'_> {
         // advances in a different order to `calculate_content_widths`. Give the line breaker a
         // few ulps of slack in that case so that the content doesn't wrap.
         let max_advance = {
-            let max_content_width = inline_layout.layout.calculate_content_widths().max;
+            let max_content_width = inline_layout.content_widths(resolved_text_indent * scale).max;
             let fit_width = width.max(max_content_width);
             let rounding_error = (fit_width + pbw).abs() * 8.0 * f32::EPSILON;
             if (max_content_width - width).abs() <= rounding_error {
