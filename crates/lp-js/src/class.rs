@@ -1449,6 +1449,64 @@ unsafe fn guard_erased(
     }
 }
 
+/// Debug check of the invariant the lean dispatch rests on: a lean callback
+/// (pure getter, pure method, lean indexed getter) never runs page script.
+/// `RealmCore::live` lends the receiver's realm without a reference count on
+/// that premise; script could drop the realm's last handle mid-call. So
+/// `pure_member_call` sends any call with an object argument (whose
+/// conversion may call `toString`/`valueOf`/`Symbol.toPrimitive`) to the full
+/// dispatch, and primitive conversions run no script (a Symbol or BigInt that
+/// cannot convert throws a TypeError without calling out).
+///
+/// Debug builds mark the thread while a lean callback runs, and
+/// `RealmInner::dispose` (which every drop of a realm runs first) aborts if
+/// the mark is set: that is the event the invariant exists to exclude. The
+/// check sits there rather than on every entry into script because a lean
+/// getter may legitimately run the engine's own helper script (lazy
+/// prototype population on a class's first wrapper in a realm), which
+/// drops no realm. Release builds compile it away.
+pub(crate) struct LeanCall {
+    #[cfg(debug_assertions)]
+    prev: bool,
+}
+
+#[cfg(debug_assertions)]
+thread_local! {
+    static IN_LEAN_CALL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+impl LeanCall {
+    #[inline(always)]
+    pub(crate) fn enter() -> LeanCall {
+        #[cfg(debug_assertions)]
+        {
+            LeanCall { prev: IN_LEAN_CALL.with(|c| c.replace(true)) }
+        }
+        #[cfg(not(debug_assertions))]
+        LeanCall {}
+    }
+}
+
+impl Drop for LeanCall {
+    #[inline(always)]
+    fn drop(&mut self) {
+        #[cfg(debug_assertions)]
+        IN_LEAN_CALL.with(|c| c.set(self.prev));
+    }
+}
+
+/// Asserts (debug builds) that no lean callback is on the stack: called
+/// where a realm is disposed (see [`LeanCall`]).
+#[inline(always)]
+pub(crate) fn assert_not_in_lean_call() {
+    #[cfg(debug_assertions)]
+    if IN_LEAN_CALL.with(|c| c.get()) {
+        // Not unwound into JS (where page code could catch it): abort loudly.
+        eprintln!("lp-js invariant violated: a realm was disposed inside a lean (refcount-free) callback");
+        std::process::abort();
+    }
+}
+
 /// Tracks native-callback nesting (see `engine::DEPTH`).
 pub(crate) struct DepthGuard(&'static std::cell::Cell<u32>);
 
@@ -1646,6 +1704,7 @@ pub(crate) unsafe fn data_of_header<'a, C: JsClass>(h: *mut Header) -> Option<&'
             // same type): a `Boxed<C::Data>`, at its constant offset.
             let p = (h as *const u8).add(std::mem::offset_of!(Boxed<C::Data>, data));
             debug_assert_eq!(p, ((*h).data_ptr)(h));
+            debug_assert_eq!((*h).data_type, TypeId::of::<C::Data>(), "a direct brand's payload holds `C::Data`");
             return Some(&*(p as *const C::Data));
         }
         // Upcasts on the way: project the data class by class.
@@ -2286,8 +2345,10 @@ unsafe extern "C" fn get_by_index_hook(
 unsafe fn get_by_index_lean(h: *mut Header, index: u32) -> Option<sys::JSValueRef> {
     unsafe {
         let f = (*(*h).info).def.hooks.indexed?;
+        // Lent without a count: an indexed getter runs no script (`LeanCall`).
         let (ctx, realm) = (*h).core.live()?;
         let scope = Scope::new(ctx, realm);
+        let _lean = LeanCall::enter();
         match catch_unwind(AssertUnwindSafe(|| f(&scope, h, index))) {
             Ok(Ok(v)) => Some(v.unwrap_or(ptr::null())),
             _ => None,
@@ -2387,9 +2448,19 @@ unsafe fn pure_member_call(
         if h.is_null() || (*h).tag != PayloadTag::Wrapper || (*h).kind != Kind::Instance {
             return None;
         }
+        // `live` lends the realm without a count: sound only because nothing
+        // below runs page script (see `LeanCall`).
         let (ctx, realm) = (*h).core.live()?;
+        // An object argument's conversion (`toString`, `valueOf`,
+        // `Symbol.toPrimitive`, a getter) runs page script, which may drop
+        // the receiver's realm (borrowed here without a count) and must not
+        // run twice when the call then falls back to the full dispatch.
+        if argc > 0 && std::slice::from_raw_parts(argv, argc).iter().any(|&v| sys::JSValueIsObject(ctx, v)) {
+            return None;
+        }
         let scope = Scope::new(ctx, realm);
         let call = payload.call;
+        let _lean = LeanCall::enter();
         match catch_unwind(AssertUnwindSafe(|| (call.invoke)(&scope, this, Args::from_raw(ctx, argc, argv), call.f))) {
             Ok(Ok(v)) if !v.is_null() => Some(v),
             _ => None,

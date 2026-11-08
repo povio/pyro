@@ -283,6 +283,12 @@ impl JsClass for Coerce {
             let n = a.get(0).to_string()?;
             Ok(s.string(&n))
         });
+        def.method("echoFull", 1, |s, _d, a| {
+            let n = a.get(0).to_string()?;
+            Ok(s.string(&n))
+        });
+        def.pure_method("num", 1, |s, _d, a| Ok(s.number(a.get(0).to_number()?)));
+        def.method("numFull", 1, |s, _d, a| Ok(s.number(a.get(0).to_number()?)));
     }
 }
 
@@ -355,4 +361,42 @@ fn review_throwing_conversion_runs_once() {
         )
         .unwrap();
     assert_eq!(r.to_string().unwrap(), "1,1,ok", "toString calls for one throwing / one plain call");
+}
+
+/// Primitive arguments stay on the lean path: their conversion runs no
+/// script. A Symbol (which cannot become a string) throws the same TypeError
+/// as the full dispatch, and a BigInt converts to a number the same way on
+/// both paths, before and after the JIT tiers take over.
+#[test]
+fn unconvertible_primitive_arguments_throw_as_the_full_dispatch_does() {
+    let engine = Engine::new().unwrap();
+    engine.register::<Coerce>();
+    let realm = engine.create_realm(RealmOptions::default()).unwrap();
+    let s = realm.scope().unwrap();
+    let w = s.wrap::<Coerce>(data(1), None).unwrap();
+    s.global().set_atom("c", w.value()).unwrap();
+    let r = s
+        .eval(
+            "(() => {
+               const err = f => { try { f(); return 'no throw' } catch (e) { return e.constructor.name + ': ' + e.message } };
+               const out = [];
+               for (let i = 0; i < 20000; i++) {
+                 if (c.echo(i & 7) !== String(i & 7) || c.num(i & 7) !== (i & 7)) return 'bad ' + i;
+                 if (i % 4999 === 0) {
+                   const sym = Symbol('x');
+                   const a = err(() => c.echo(sym)), b = err(() => c.echoFull(sym));
+                   const x = err(() => c.num(5n)), y = err(() => c.numFull(5n));
+                   if (a !== b || x !== y) return a + ' | ' + b + ' | ' + x + ' | ' + y;
+                   out.push(a, x);
+                 }
+               }
+               return out.slice(0, 2).join(' / ');
+             })()",
+            None,
+            1,
+        )
+        .unwrap()
+        .to_string()
+        .unwrap();
+    assert_eq!(r, "TypeError: Cannot convert a symbol to a string / no throw");
 }

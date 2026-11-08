@@ -285,8 +285,12 @@ impl RealmCore {
     }
 
     /// The live realm's context and the realm, with no reference count
-    /// changed. The realm stays alive for as long as a lean callback (which
-    /// runs no script, so drops no realm handle) uses it.
+    /// changed. The realm stays alive for as long as a lean callback uses it.
+    ///
+    /// Invariant: lean callbacks never run page script, so nothing can drop
+    /// a realm handle while one holds this borrow. `pure_member_call` keeps it
+    /// by sending calls with object arguments (whose conversion runs script)
+    /// to the full dispatch; debug builds check it (`crate::class::LeanCall`).
     #[inline]
     pub(crate) fn live(&self) -> Option<(sys::JSContextRef, &Rc<RealmInner>)> {
         let ctx = self.ctx.get();
@@ -483,6 +487,9 @@ impl RealmInner {
     }
 
     pub(crate) fn dispose(&self) {
+        // A lean callback on the stack may hold this realm by `live()`'s
+        // uncounted borrow: page script ran inside one (debug check).
+        crate::class::assert_not_in_lean_call();
         // First: no lean callback may reach the realm from here on.
         self.core.ctx.set(ptr::null());
         let ctx = self.ctx.replace(ptr::null_mut());

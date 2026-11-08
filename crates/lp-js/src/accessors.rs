@@ -213,8 +213,11 @@ unsafe fn lean_getter_h(slot: usize, h: *mut Header, this: sys::JSObjectRef) -> 
         // SAFETY: stored from an `InvokeHFn` by `slot_for`.
         let invoke = std::mem::transmute::<usize, InvokeHFn>(invoke);
         let f = GETTER_CALLS[slot].f.load(Ordering::Relaxed) as *const ();
+        // Lent without a count: a pure getter runs no script
+        // (see `crate::class::LeanCall`).
         let (ctx, realm) = (*h).core.live()?;
         let scope = crate::realm::Scope::new(ctx, realm);
+        let _lean = crate::class::LeanCall::enter();
         match catch_unwind(AssertUnwindSafe(|| invoke(&scope, h, this, f))) {
             Ok(Ok(v)) if !v.is_null() => Some(v),
             _ => None,
