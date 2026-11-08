@@ -42,6 +42,10 @@ pub trait JsClass: 'static {
     type Data: 'static;
     /// Parent interface, or [`NoParent`].
     type Parent: JsClass;
+    /// Interfaces above this one (0 for a root): where the class sits in
+    /// every subclass's brand display ([`ClassInfo::display`]). Not to be
+    /// overridden.
+    const DEPTH: u32 = <Self::Parent as JsClass>::DEPTH.wrapping_add(1);
     fn define(def: &mut ClassDef<Self>)
     where
         Self: Sized;
@@ -51,6 +55,7 @@ impl JsClass for NoParent {
     const NAME: &'static str = "";
     type Data = ();
     type Parent = NoParent;
+    const DEPTH: u32 = u32::MAX;
     fn define(_: &mut ClassDef<Self>) {}
 }
 
@@ -768,12 +773,28 @@ pub(crate) struct ClassInfo {
     /// one, and a member finds its receiver's data by walking these without
     /// touching the registry.
     pub parent_info: *const ClassInfo,
+    /// The brand display: entry `d` is this class's ancestor at depth `d`
+    /// (`JsClass::DEPTH`), the last one the class itself. "Is a `C`" is one
+    /// compare at a constant index, whatever the depth (a range over
+    /// registration-order ids cannot express it: classes register in use
+    /// order, per engine, and a member knows its class only as a type).
+    pub display: Box<[Brand]>,
     pub instance_class: sys::JSClassRef,
     pub def: ClassDefErased,
     /// The engine's [`HookState`] (it outlives the registry's entries): an
     /// indexed read finds it from the receiver's payload, with no
     /// thread-local lookup.
     pub hook_state: *const HookState,
+}
+
+/// An entry of [`ClassInfo::display`].
+#[derive(Clone, Copy)]
+pub(crate) struct Brand {
+    /// The ancestor's `JsClass` type.
+    pub class_type: TypeId,
+    /// No `upcast` between the class and this ancestor: the ancestor's data
+    /// is the payload's own data, at the payload's fixed data offset.
+    pub direct: bool,
 }
 
 /// `ClassDef` without the marker type parameter.
@@ -961,6 +982,17 @@ pub(crate) fn register<C: JsClass>(engine: &EngineInner) -> ClassId {
         Some(p) => &*reg.classes[p as usize],
         None => ptr::null(),
     };
+    let own_upcast = def.upcast.is_some();
+    let mut display: Vec<Brand> = match parent {
+        Some(p) => reg.classes[p as usize]
+            .display
+            .iter()
+            .map(|b| Brand { class_type: b.class_type, direct: b.direct && !own_upcast })
+            .collect(),
+        None => Vec::new(),
+    };
+    display.push(Brand { class_type: TypeId::of::<C>(), direct: true });
+    debug_assert_eq!(display.len() - 1, C::DEPTH as usize, "{}: depth from the registry", C::NAME);
     reg.push_spec(C::NAME, parent, def.ctor_length, def.exposed, def.callback_interface);
     reg.classes.push(Box::new(ClassInfo {
         upcast: def.upcast,
@@ -970,6 +1002,7 @@ pub(crate) fn register<C: JsClass>(engine: &EngineInner) -> ClassId {
         class_type: TypeId::of::<C>(),
         parent,
         parent_info,
+        display: display.into_boxed_slice(),
         instance_class,
         hook_state: &engine.hook_state,
         def: ClassDefErased {
@@ -1598,6 +1631,20 @@ pub(crate) unsafe fn data_of_header<'a, C: JsClass>(h: *mut Header) -> Option<&'
         if (*h).kind != Kind::Instance || (*h).info.is_null() {
             return None;
         }
+        // The brand: one compare at `C`'s depth in the receiver's display.
+        let info: &ClassInfo = &*(*h).info;
+        let brand = info.display.get(C::DEPTH as usize)?;
+        if brand.class_type != TypeId::of::<C>() {
+            return None;
+        }
+        if brand.direct {
+            // `C`'s data is the payload's own (no upcast on the way, so the
+            // same type): a `Boxed<C::Data>`, at its constant offset.
+            let p = (h as *const u8).add(std::mem::offset_of!(Boxed<C::Data>, data));
+            debug_assert_eq!(p, ((*h).data_ptr)(h));
+            return Some(&*(p as *const C::Data));
+        }
+        // Upcasts on the way: project the data class by class.
         let mut info = (*h).info;
         let mut ptr = ((*h).data_ptr)(h);
         loop {
