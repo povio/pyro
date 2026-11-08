@@ -3805,3 +3805,302 @@ fn content_widths_kept_with_the_shaped_text_match_fresh_builds() {
         ],
     );
 }
+
+// ---------------- review (layint): adversarial cases for the flag walk, grid-relative rounding,
+// width-only table relayout and kept content widths ----------------
+
+/// Paints at a viewport `width` with the persistent renderer and a fresh one; compares the paint
+/// and every element's box.
+#[track_caller]
+fn check_boxes_at(live: &mut Renderer, page: &Page, width: u32, what: &str) {
+    let tree = page.tree();
+    let s = Snapshot { width, ..page.snapshot(1, tree.clone()) };
+    let mirrored = paint(live, &s);
+    let mut fresh = Renderer::new();
+    let fresh_paint = paint(&mut fresh, &s);
+    for ((k, a), (_, b)) in boxes(live, page).into_iter().zip(boxes(&fresh, page)) {
+        assert_eq!(a, b, "box {k:x} after {what} (viewport {width})");
+    }
+    assert_eq!(mirrored.hash, fresh_paint.hash, "paint after {what} (viewport {width})");
+}
+
+/// Steps, each with the viewport width to paint at, checked by paint and boxes.
+#[track_caller]
+fn steps_match_fresh_builds_at(body: &str, steps: Vec<(u32, (String, Mutate))>) {
+    let page = Page::new(&format!("{PAINT_BOXES}{body}</body></html>"));
+    let mut r = Renderer::new();
+    check_boxes_at(&mut r, &page, 640, "the first render");
+    for (width, (what, mutate)) in steps {
+        mutate(&page);
+        check_boxes_at(&mut r, &page, width, &what);
+    }
+}
+
+#[track_caller]
+fn steps_match_fresh_builds(body: &str, steps: Vec<(String, Mutate)>) {
+    steps_match_fresh_builds_at(body, steps.into_iter().map(|s| (640, s)).collect());
+}
+
+fn noop(what: &'static str) -> (String, Mutate) {
+    (what.into(), Box::new(|_| {}))
+}
+
+fn move_before(what: &'static str, node: &'static str, parent: &'static str, before: Option<&'static str>) -> (String, Mutate) {
+    edit(what, move |p| {
+        let n = p.find(node);
+        let parent = p.find(parent);
+        let before = before.map(|b| p.find(b));
+        p.dom.borrow_mut().insert_before(parent, n, before).unwrap();
+    })
+}
+
+#[test]
+fn review_flags_through_display_contents() {
+    steps_match_fresh_builds(
+        r#"<div id=o style="width:300.5px"><div id=dc style="display:contents"><div id=a style="height:10.5px"><span id=as>a text</span></div><div id=b style="height:3.25px"></div></div><div id=after style="height:7.5px"><i style="display:block;height:1.5px"></i></div></div><div id=dc2 style="display:contents"><p id=q style="margin:0;height:4.5px">q</p></div><div id=tail style="height:2.5px"><b style="display:block;height:1.25px"></b></div>"#,
+        vec![
+            style("#a", "height:20.75px"),
+            text("#as", "a longer text inside display contents that wraps maybe over lines"),
+            style("#dc", "display:block;padding-top:0.5px"),
+            style("#a", "height:11.5px"),
+            style("#dc", "display:contents"),
+            style("#a", "height:13.25px"),
+            move_before("a box moved between display:contents parents", "#a", "#dc2", None),
+            style("#a", "height:30.5px"),
+            style("#q", "margin:0;height:9px"),
+            move_before("moved back", "#a", "#dc", Some("#b")),
+            style("#b", "height:6.5px"),
+            style("#dc2", "display:block"),
+            style("#q", "margin:0;height:9.5px"),
+        ],
+    );
+}
+
+#[test]
+fn review_flags_through_anonymous_blocks_freed_and_recreated() {
+    steps_match_fresh_builds(
+        r#"<div id=m style="width:200.5px">text a <span id=s1>one</span><div id=blk style="height:5.5px">block</div>tail <span id=s2>two</span></div><div id=below style="height:3.5px"><u style="display:block;height:1.5px"></u></div>"#,
+        vec![
+            style("#blk", "height:5.5px;display:inline"),
+            text("#s1", "one one one one one one one one one one one one"),
+            style("#blk", "height:7.25px;display:block"),
+            text("#s2", "two two two two two two two two two two two two two"),
+            style("#blk", "display:none"),
+            text("#s1", "x"),
+            style("#blk", "height:8.5px"),
+            text("#s2", "y"),
+            move_before("the block moved to the front", "#blk", "#m", Some("#s1")),
+            text("#s1", "after the move, more text that makes the anonymous box taller"),
+            edit("the block removed", |p| {
+                let (m, b) = (p.find("#m"), p.find("#blk"));
+                p.dom.borrow_mut().remove_child(m, b).unwrap();
+            }),
+            text("#s2", "the anonymous boxes are gone and the text wraps again over lines"),
+        ],
+    );
+}
+
+#[test]
+fn review_flags_with_table_relisting() {
+    let rows: String = (0..6).map(|i| format!("<tr id=r{i}><td id=c{i}>c {i}</td><td><div><b>d {i}</b></div></td></tr>")).collect();
+    steps_match_fresh_builds(
+        &format!(
+            r#"<table id=t style="border-spacing:1.5px"><caption id=cap style="height:3.5px">cap</caption><thead id=h><tr id=hr><td>h</td><td>h2</td></tr></thead><tbody id=b>{rows}</tbody><tfoot id=f><tr id=fr><td>f</td><td>f2</td></tr></tfoot></table><div id=after style="height:2.5px"><i style="display:block;height:1.5px"></i></div>"#
+        ),
+        vec![
+            text("#c2", "edited c2 with longer text"),
+            move_before("a row moved to thead", "#r2", "#h", None),
+            text("#c2", "edited again in thead"),
+            move_before("a row moved to tfoot", "#r3", "#f", Some("#fr")),
+            style("#cap", "height:9.25px"),
+            text("#c3", "c3 in tfoot grows to a line or two of text"),
+            style("#b", "display:none"),
+            text("#c4", "edited while the tbody is hidden"),
+            style("#b", ""),
+            move_before("a cell moved to another row", "#c5", "#r0", None),
+            text("#c5", "moved cell edited"),
+            style("#h", "display:table-row-group"),
+            style("#t", "border-spacing:2.5px;display:block"),
+            text("#c0", "the table is a block now"),
+            style("#t", "border-spacing:2.5px"),
+            text("#c1", "a table again"),
+        ],
+    );
+}
+
+#[test]
+fn review_flags_with_nodes_leaving_and_rejoining_the_layout() {
+    steps_match_fresh_builds(
+        r#"<div id=w style="width:250.5px"><div id=x style="height:4.5px"><div id=y style="height:2.25px"><span id=z>z</span></div></div><div id=sib style="height:3.5px"><i style="display:block;height:1.5px"></i></div></div><div id=ab style="position:relative"><div id=p style="height:5.5px">p</div></div>"#,
+        vec![
+            style("#x", "display:none;height:4.5px"),
+            style("#y", "height:9.75px"),
+            text("#z", "edited while not laid out"),
+            style("#x", "height:4.5px"),
+            style("#y", "height:10.25px;position:absolute;top:0.5px"),
+            style("#sib", "height:6.5px"),
+            style("#y", "height:10.25px"),
+            style("#p", "height:5.5px;position:fixed;top:1.5px;left:2.5px"),
+            text("#p", "fixed now"),
+            style("#p", "height:7.5px"),
+            style("#p", "height:7.5px;float:left;width:20.5px"),
+            text("#p", "floating now with text"),
+            style("#ab", "position:relative;display:none"),
+            style("#p", "height:2px"),
+            style("#ab", "position:relative"),
+            edit("a subtree detached, edited, attached elsewhere", |p| {
+                let (x, w, body) = (p.find("#x"), p.find("#w"), p.find("body"));
+                let mut d = p.dom.borrow_mut();
+                d.remove_child(w, x).unwrap();
+                let y = d.first_child(x).unwrap().unwrap();
+                d.set_attribute(y, "style", "height:1.5px").unwrap();
+                d.append_child(body, x).unwrap();
+            }),
+            style("#sib", "height:6px"),
+        ],
+    );
+}
+
+#[test]
+fn review_flags_with_moves_inside_one_parent() {
+    let items: String = (0..8).map(|i| format!("<div id=k{i} style=\"height:{i}.5px\"><span>{i}</span><div style=\"height:1.25px\"></div></div>")).collect();
+    steps_match_fresh_builds(
+        &format!("<div id=l style=\"width:120.5px\">{items}</div><div id=tail style=\"height:1.5px\"></div>"),
+        vec![
+            edit("the last item edited and moved first", |p| {
+                let (l, k7, k0) = (p.find("#l"), p.find("#k7"), p.find("#k0"));
+                let mut d = p.dom.borrow_mut();
+                d.set_attribute(k7, "style", "height:11.75px").unwrap();
+                d.insert_before(l, k7, Some(k0)).unwrap();
+            }),
+            edit("items reversed", |p| {
+                let l = p.find("#l");
+                let ids: Vec<_> = (0..8).map(|i| p.find(&format!("#k{i}"))).collect();
+                let mut d = p.dom.borrow_mut();
+                for id in ids {
+                    let first = d.first_child(l).unwrap();
+                    d.insert_before(l, id, first).unwrap();
+                }
+            }),
+            style("#k3", "height:0.3px"),
+            move_before("an item moved to the end", "#k3", "#l", None),
+            style("#k4", "height:2.6px"),
+        ],
+    );
+}
+
+/// Negative and far positions: negative margins, relative offsets, RTL overflow, vertical-rl,
+/// nested transforms, sticky, a scroll container, and positions near 2^24 px.
+#[test]
+fn review_rounding_negative_and_far_positions() {
+    steps_match_fresh_builds(
+        r#"<div id=o style="width:200px;margin-left:30px"><div id=n style="margin-left:-12.5px;height:3.5px"><div id=n2 style="margin-left:-0.5px;width:5.5px;height:1.5px"></div></div><div id=rel style="position:relative;left:-3.5px;top:-2.5px;width:9.5px;height:2.5px"><b style="display:block;margin-left:-1.5px;height:1.5px"></b></div><div dir=rtl style="width:50.5px"><div id=wide style="width:80.5px;height:2.5px"><i style="display:block;width:7.5px;height:1px"></i></div></div><div style="writing-mode:vertical-rl;width:30.5px;height:40px"><div id=vr style="width:50.5px;height:3.5px"><i style="display:block;width:2.5px">v</i></div></div><div style="transform:translateX(-3.5px)"><div id=tr style="transform:scale(1.5);width:9.5px;height:3.5px"><div style="transform:rotate(3deg);width:4.5px;height:2.5px"></div></div></div><div style="overflow:auto;height:20px"><div id=st style="position:sticky;top:-1.5px;height:4.5px">s</div><div style="height:60.5px"></div></div></div><div id=far style="height:16777000.5px"></div><div id=f2 style="margin-left:-0.5px;width:10.5px;height:3.5px"><div style="height:1.5px;margin-left:0.5px"></div></div>"#,
+        vec![
+            style("#n", "margin-left:-13.5px;height:3.5px"),
+            style("#n", "margin-left:-13px;height:3.5px"),
+            style("#rel", "position:relative;left:-4.5px;top:-3.5px;width:9.5px;height:2.5px"),
+            style("#wide", "width:81.5px;height:2.5px"),
+            style("#wide", "width:81.25px;height:2.5px"),
+            style("#vr", "width:51.5px;height:3.5px"),
+            style("#vr", "width:51.75px;height:3.5px"),
+            style("#tr", "transform:scale(1.5);width:10.5px;height:3.5px"),
+            style("#st", "position:sticky;top:-1.5px;height:5.5px"),
+            style("#far", "height:16777001.5px"),
+            style("#far", "height:16777002px"),
+            style("#far", "height:8388607.5px"),
+            style("#far", "height:8388608.5px"),
+            style("#o", "width:200px;margin-left:31px"),
+            style("#o", "width:200px;margin-left:-31.5px"),
+        ],
+    );
+}
+
+/// Width-only relayout of tables whose cells' intrinsic widths could depend on the table's or the
+/// viewport's width in ways other than the cells' own percentages.
+#[test]
+fn review_tables_whose_cells_depend_on_widths_in_other_ways() {
+    let rows = |n: usize| -> String {
+        (0..n).map(|i| format!("<tr><td>cell {i}</td><td>some text {i} here</td></tr>")).collect()
+    };
+    let cases = [
+        format!("<table><tr><td><div style=\"width:20vw\">vw</div></td><td>b</td></tr>{}</table>", rows(3)),
+        format!("<table><tr><td style=\"padding-left:2vw\">vw pad</td><td>b</td></tr>{}</table>", rows(3)),
+        format!("<table><tr><td><div style=\"padding-left:10%\">pct pad inside</div></td><td><div style=\"margin-left:5%\">m</div></td></tr>{}</table>", rows(3)),
+        format!("<table><tr><td><img style=\"max-width:100%;width:200px;height:10px\"></td><td>b</td></tr>{}</table>", rows(3)),
+        format!("<table><tr><td><table style=\"width:100%\"><tr><td>nested</td></tr></table></td><td>b</td></tr>{}</table>", rows(3)),
+        format!("<table><tr><td style=\"width:min-content\">min content words</td><td style=\"width:fit-content\">fit content words</td></tr>{}</table>", rows(3)),
+        format!("<table style=\"table-layout:fixed;width:80%\"><colgroup><col style=\"width:30%\"><col></colgroup>{}</table>", rows(3)),
+        format!("<table><colgroup><col style=\"width:30%\"><col></colgroup>{}</table>", rows(3)),
+        format!("<table id=em style=\"border-spacing:0.5em\"><tr><td style=\"padding:0.3em\">em</td><td>b</td></tr>{}</table>", rows(3)),
+        format!("<table><tr><td><div style=\"width:50cqw\">cq</div></td><td>b</td></tr>{}</table>", rows(3)),
+        format!("<table><tr><td style=\"text-indent:10%\">indent pct words</td><td><input style=\"width:90%\"></td></tr>{}</table>", rows(3)),
+        format!("<table><tr><td><div style=\"display:flex\"><div style=\"flex-basis:40%\">flex</div><div>x</div></div></td><td><div style=\"display:grid;grid-template-columns:30% 1fr\"><i>g</i><b>h</b></div></td></tr>{}</table>", rows(3)),
+    ];
+    for table in cases {
+        let body = format!("<div id=w style=\"width:500px;container-type:inline-size;font-size:13px\">{table}</div>");
+        let steps: Vec<(u32, (String, Mutate))> = vec![
+            (640, style("#w", "width:450px;container-type:inline-size;font-size:13px")),
+            (500, noop("viewport 500")),
+            (500, style("#w", "width:600.5px;container-type:inline-size;font-size:13px")),
+            (800, noop("viewport 800")),
+            (800, style("#w", "width:600.5px;container-type:inline-size;font-size:17px")),
+            (300, style("#w", "width:100px;container-type:inline-size;font-size:17px")),
+            (640, style("#w", "width:500px;container-type:inline-size;font-size:13px")),
+            (1000, noop("viewport 1000")),
+        ];
+        let steps = steps.into_iter().map(|(w, (what, m))| (w, (format!("{table}: {what}"), m))).collect();
+        steps_match_fresh_builds_at(&body, steps);
+    }
+}
+
+/// The table's own width follows the viewport (shrink-to-fit inside a vw-wide container).
+#[test]
+fn review_tables_in_viewport_sized_containers() {
+    let rows: String = (0..6).map(|i| format!("<tr><td>cell {i}</td><td>text {i} that is somewhat long</td><td style=\"width:20%\">p {i}</td></tr>")).collect();
+    steps_match_fresh_builds_at(
+        &format!("<div style=\"width:80vw\"><table style=\"border-spacing:1.5px\">{rows}</table></div><div style=\"width:50vw\"><table><tr><td><div style=\"width:10vw\">x</div></td><td>y y y y y</td></tr></table></div>"),
+        vec![(500, noop("500")), (520, noop("520")), (900, noop("900")), (300, noop("300")), (640, noop("640")), (641, noop("641"))],
+    );
+}
+
+/// Content widths kept with the shaped text across changes that do and don't rebuild the layout.
+#[test]
+fn review_content_widths_with_indents_letters_and_white_space() {
+    steps_match_fresh_builds(
+        r#"<style>#fl::first-letter { font-size: 2.5em; float: left } .hp { hanging-punctuation: first last }</style><div id=c style="width:min-content"><p id=a>alpha beta gamma</p><p id=fl>first letter words</p><p id=h class=hp>"quoted words."</p><p id=ws>keep   these   spaces together</p><span id=sh style="float:left">shrink wrap me please</span></div><div style="display:inline-block"><p id=ib>inline block text</p></div>"#,
+        vec![
+            style("#a", "text-indent:7.5px"),
+            style("#a", "text-indent:0"),
+            style("#a", "text-indent:-3.5px"),
+            edit("an inline box added later", |p| {
+                let a = p.find("#a");
+                let mut d = p.dom.borrow_mut();
+                let s = d.create_element(p.doc, "span").unwrap();
+                d.set_attribute(s, "style", "display:inline-block;width:150.5px;height:3px").unwrap();
+                d.append_child(a, s).unwrap();
+            }),
+            style("#a", "text-indent:0"),
+            edit("the inline box removed", |p| {
+                let a = p.find("#a");
+                let mut d = p.dom.borrow_mut();
+                let s = d.last_child(a).unwrap().unwrap();
+                d.remove_child(a, s).unwrap();
+            }),
+            text("#fl", "Wfirst letter changes"),
+            style("#fl", "font-size:20px"),
+            text("#h", "\u{201c}other quoted words.\u{201d}"),
+            style("#ws", "white-space:pre"),
+            style("#ws", "white-space:nowrap"),
+            style("#ws", "white-space:pre-wrap"),
+            style("#ws", "white-space:normal"),
+            style("#ws", "word-spacing:20.5px"),
+            style("#ws", "letter-spacing:1.5px"),
+            style("#ws", "text-transform:uppercase"),
+            style("#sh", "float:left;font-size:20px"),
+            style("#ib", "text-indent:10px each-line"),
+            style("#ib", "text-indent:0"),
+            style("#c", "width:max-content"),
+            style("#c", "width:fit-content;font-family:monospace"),
+        ],
+    );
+}
